@@ -1,15 +1,15 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-2 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), name="a", addrspace=AddrSpace.ALU)
+2 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), name="b", addrspace=AddrSpace.ALU)
 3 Ops.ADD dtypes.i32 [1, 2]
-4 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), name="c", addrspace=AddrSpace.ALU)
 5 Ops.ADD dtypes.i32 [3, 4]
 6 Ops.MUL dtypes.i32 [1, 2]
 7 Ops.CONST dtypes.weakint [] 2
 8 Ops.MUL dtypes.i32 [6, 7]
-9 Ops.PARAM dtypes.bool [0] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="p", addrspace=AddrSpace.ALU)
-10 Ops.PARAM dtypes.bool [0] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="q", addrspace=AddrSpace.ALU)
+9 Ops.PARAM dtypes.bool [0] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), name="p", addrspace=AddrSpace.ALU)
+10 Ops.PARAM dtypes.bool [0] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), name="q", addrspace=AddrSpace.ALU)
 11 Ops.OR dtypes.bool [9, 10]
 12 Ops.AND dtypes.bool [9, 10]
 13 Ops.SINK dtypes.void [5, 8, 11, 12, 1]

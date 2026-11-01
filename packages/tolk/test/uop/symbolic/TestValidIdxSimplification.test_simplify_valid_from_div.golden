@@ -1,9 +1,9 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.bool [] False
 1 Ops.CONST dtypes.bool [] True
 2 Ops.CUSTOM dtypes.void [0, 1] ("simplify_valid", dtypes.void)
 3 Ops.STACK dtypes.void []
-4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-100, 100), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-100, 100), name="x", addrspace=AddrSpace.ALU)
 5 Ops.CONST dtypes.weakint [] 0
 6 Ops.CMPLT dtypes.bool [4, 5]
 7 Ops.CONST dtypes.weakint [] 100

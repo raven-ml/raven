@@ -1,12 +1,12 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CONST dtypes.weakint [] 7
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
 3 Ops.STACK dtypes.void []
-4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 15), multiple_of=1, name="gidx0", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 15), name="gidx0", addrspace=AddrSpace.ALU)
 5 Ops.CONST dtypes.weakint [] 4
 6 Ops.MUL dtypes.weakint [4, 5]
-7 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="lidx0", addrspace=AddrSpace.ALU)
+7 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), name="lidx0", addrspace=AddrSpace.ALU)
 8 Ops.ADD dtypes.weakint [6, 7]
 9 Ops.CONST dtypes.weakint [] 8
 10 Ops.MOD dtypes.weakint [8, 9]
@@ -26,7 +26,7 @@
 24 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
 25 Ops.SINK dtypes.void [24, 14, 14]
 26 Ops.MUL dtypes.weakint [4, 11]
-27 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 1), multiple_of=1, name="lidx1", addrspace=AddrSpace.ALU)
+27 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 1), name="lidx1", addrspace=AddrSpace.ALU)
 28 Ops.ADD dtypes.weakint [26, 27]
 29 Ops.MOD dtypes.weakint [28, 9]
 30 Ops.MOD dtypes.weakint [4, 5]
@@ -39,9 +39,9 @@
 37 Ops.SINK dtypes.void [22, 32, 32]
 38 Ops.SINK dtypes.void [24, 32, 32]
 39 Ops.CUSTOM dtypes.void [0, 9] ("sym", dtypes.void)
-40 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+40 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), name="a", addrspace=AddrSpace.ALU)
 41 Ops.MUL dtypes.weakint [40, 16]
-42 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 2), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+42 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 2), name="b", addrspace=AddrSpace.ALU)
 43 Ops.ADD dtypes.weakint [41, 42]
 44 Ops.CONST dtypes.weakint [] 9
 45 Ops.MOD dtypes.weakint [43, 44]

@@ -1,9 +1,6 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
-struct sqrt_args { float* arg0; float* arg1; };
-__attribute__((min_vector_width(512))) void sqrt(const struct sqrt_args* args) {
-  float* data0_4 = args->arg0;
-  float* data1_4 = args->arg1;
+__attribute__((min_vector_width(512))) void sqrt(float* restrict data0_4, float* restrict data1_4) {
   float4 val0 = (*((float4*)((data1_4+0))));
   *((float4*)((data0_4+0))) = __builtin_elementwise_sqrt(val0);
 }

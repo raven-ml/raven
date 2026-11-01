@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -13,9 +13,25 @@
 11 Ops.WHERE dtypes.i32 [10, 9, 7]
 12 Ops.STORE dtypes.void [4, 11]
 13 Ops.SINK dtypes.void [12] KernelInfo(name="E", optimized=True)
-14 Ops.SINK dtypes.void [12] KernelInfo(name="E", estimates=Estimates(ops=2, lds=8, mem=8), optimized=True)
-15 Ops.LINEAR dtypes.void [0, 1, 5, 2, 3, 6, 7, 4, 8, 9, 10, 11, 12, 13]
-16 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct E_args { device int* arg0; device int* arg1; };\nkernel void E(constant struct E_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_1 = args->arg0;\n  device int* data1_1 = args->arg1;\n  int val0 = (*(data1_1+0));\n  int alu0 = ((val0<-2147483647)?-2147483647:val0);\n  *(data0_1+0) = alu0;\n}"
-17 Ops.PROGRAM dtypes.void [14, 15, 16] ProgramInfo(params=(%1, %5), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
-18 Ops.SINK dtypes.void [13, 17]
+14 Ops.CONST dtypes.weakint [] 16
+15 Ops.PARAM dtypes.u8 [14] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+16 Ops.BITCAST dtypes.u64 [15] dtypes.u64
+17 Ops.INDEX dtypes.u64 [16, 3]
+18 Ops.LOAD dtypes.u64 [17]
+19 Ops.REFPARAM dtypes.i32 [0, 18] ParamArg(slot=0, dtype=dtypes.i32)
+20 Ops.INDEX dtypes.i32 [19, 3]
+21 Ops.CAST dtypes.i32 [0] dtypes.i32
+22 Ops.INDEX dtypes.u64 [16, 21]
+23 Ops.LOAD dtypes.u64 [22]
+24 Ops.REFPARAM dtypes.i32 [0, 23] ParamArg(slot=1, dtype=dtypes.i32)
+25 Ops.INDEX dtypes.i32 [24, 3]
+26 Ops.LOAD dtypes.i32 [25]
+27 Ops.CMPLT dtypes.bool [26, 9]
+28 Ops.WHERE dtypes.i32 [27, 9, 26]
+29 Ops.STORE dtypes.void [20, 28]
+30 Ops.SINK dtypes.void [29] KernelInfo(name="E", estimates=Estimates(ops=2, lds=8, mem=8), optimized=True)
+31 Ops.LINEAR dtypes.void [14, 15, 0, 21, 16, 22, 23, 24, 2, 3, 25, 26, 17, 18, 19, 20, 8, 9, 27, 28, 29, 30]
+32 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void E(device unsigned char* args_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  unsigned long val0 = (*(((device unsigned long*)(args_16))+1));\n  int val1 = (*(((device int*)(val0))+0));\n  unsigned long val2 = (*(((device unsigned long*)(args_16))+0));\n  int alu0 = ((val1<-2147483647)?-2147483647:val1);\n  *(((device int*)(val2))+0) = alu0;\n}"
+33 Ops.PROGRAM dtypes.void [30, 31, 32] ProgramInfo(params=(%1, %5), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+34 Ops.SINK dtypes.void [13, 33]
 

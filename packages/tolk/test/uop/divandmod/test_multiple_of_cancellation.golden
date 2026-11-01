@@ -1,6 +1,6 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 8), name="n", addrspace=AddrSpace.ALU)
 2 Ops.CONST dtypes.weakint [] -1
 3 Ops.MUL dtypes.weakint [1, 2]
 4 Ops.DIV dtypes.weakint [3, 1]
@@ -34,7 +34,7 @@
 32 Ops.DIV dtypes.weakint [31, 3]
 33 Ops.MUL dtypes.weakint [5, 2]
 34 Ops.DIV dtypes.weakint [33, 2]
-35 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name="n", addrspace=AddrSpace.ALU, val=2)
+35 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 8), name="n", addrspace=AddrSpace.ALU, val=2)
 36 Ops.MUL dtypes.weakint [35, 2]
 37 Ops.DIV dtypes.weakint [36, 35]
 38 Ops.MOD dtypes.weakint [36, 35]
@@ -53,7 +53,7 @@
 51 Ops.MUL dtypes.weakint [29, 35]
 52 Ops.MUL dtypes.weakint [36, 5]
 53 Ops.DIV dtypes.weakint [52, 36]
-54 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(2, 16), multiple_of=2, name="n", addrspace=AddrSpace.ALU)
+54 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(2, 16), name="n", addrspace=AddrSpace.ALU)
 55 Ops.CONST dtypes.weakint [] -2
 56 Ops.MUL dtypes.weakint [54, 55]
 57 Ops.DIV dtypes.weakint [56, 54]
@@ -88,7 +88,7 @@
 86 Ops.DIV dtypes.weakint [85, 62]
 87 Ops.MUL dtypes.weakint [78, 2]
 88 Ops.DIV dtypes.weakint [87, 2]
-89 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(2, 16), multiple_of=2, name="n", addrspace=AddrSpace.ALU, val=4)
+89 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(2, 16), name="n", addrspace=AddrSpace.ALU, val=4)
 90 Ops.MUL dtypes.weakint [89, 55]
 91 Ops.DIV dtypes.weakint [90, 89]
 92 Ops.MOD dtypes.weakint [90, 89]
@@ -113,7 +113,7 @@
 111 Ops.MUL dtypes.weakint [83, 89]
 112 Ops.MUL dtypes.weakint [94, 78]
 113 Ops.DIV dtypes.weakint [112, 94]
-114 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 24), multiple_of=3, name="n", addrspace=AddrSpace.ALU)
+114 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 24), name="n", addrspace=AddrSpace.ALU)
 115 Ops.CONST dtypes.weakint [] -3
 116 Ops.MUL dtypes.weakint [114, 115]
 117 Ops.DIV dtypes.weakint [116, 114]
@@ -154,7 +154,7 @@
 152 Ops.DIV dtypes.weakint [151, 122]
 153 Ops.MUL dtypes.weakint [144, 2]
 154 Ops.DIV dtypes.weakint [153, 2]
-155 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 24), multiple_of=3, name="n", addrspace=AddrSpace.ALU, val=6)
+155 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 24), name="n", addrspace=AddrSpace.ALU, val=6)
 156 Ops.MUL dtypes.weakint [155, 115]
 157 Ops.DIV dtypes.weakint [156, 155]
 158 Ops.MOD dtypes.weakint [156, 155]
@@ -185,7 +185,7 @@
 183 Ops.MUL dtypes.weakint [149, 155]
 184 Ops.MUL dtypes.weakint [160, 144]
 185 Ops.DIV dtypes.weakint [184, 160]
-186 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(4, 32), multiple_of=4, name="n", addrspace=AddrSpace.ALU)
+186 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(4, 32), name="n", addrspace=AddrSpace.ALU)
 187 Ops.CONST dtypes.weakint [] -4
 188 Ops.MUL dtypes.weakint [186, 187]
 189 Ops.DIV dtypes.weakint [188, 186]
@@ -226,7 +226,7 @@
 224 Ops.DIV dtypes.weakint [223, 194]
 225 Ops.MUL dtypes.weakint [216, 2]
 226 Ops.DIV dtypes.weakint [225, 2]
-227 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(4, 32), multiple_of=4, name="n", addrspace=AddrSpace.ALU, val=8)
+227 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(4, 32), name="n", addrspace=AddrSpace.ALU, val=8)
 228 Ops.MUL dtypes.weakint [227, 187]
 229 Ops.DIV dtypes.weakint [228, 227]
 230 Ops.MOD dtypes.weakint [228, 227]
@@ -257,7 +257,7 @@
 255 Ops.MUL dtypes.weakint [221, 227]
 256 Ops.MUL dtypes.weakint [232, 216]
 257 Ops.DIV dtypes.weakint [256, 232]
-258 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(8, 64), multiple_of=8, name="n", addrspace=AddrSpace.ALU)
+258 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(8, 64), name="n", addrspace=AddrSpace.ALU)
 259 Ops.CONST dtypes.weakint [] -8
 260 Ops.MUL dtypes.weakint [258, 259]
 261 Ops.DIV dtypes.weakint [260, 258]
@@ -303,7 +303,7 @@
 301 Ops.DIV dtypes.weakint [300, 266]
 302 Ops.MUL dtypes.weakint [293, 2]
 303 Ops.DIV dtypes.weakint [302, 2]
-304 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(8, 64), multiple_of=8, name="n", addrspace=AddrSpace.ALU, val=16)
+304 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(8, 64), name="n", addrspace=AddrSpace.ALU, val=16)
 305 Ops.MUL dtypes.weakint [304, 259]
 306 Ops.DIV dtypes.weakint [305, 304]
 307 Ops.MOD dtypes.weakint [305, 304]

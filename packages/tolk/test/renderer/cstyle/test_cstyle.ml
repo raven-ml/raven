@@ -1544,7 +1544,9 @@ let windows_group =
           equal (list string)
             [
               "__attribute__((sysv_abi)) __attribute__((min_vector_width(512))) \
-               void E_16_4(const struct E_16_4_args* args) {";
+               void E_16_4(float* restrict data0_64, float* restrict \
+               data1_64, float* restrict data2_64, const int block_lo_, const \
+               int block_hi_) {";
             ]
             (List.filter
                (fun l -> String.starts_with ~prefix:"__attribute__" l)

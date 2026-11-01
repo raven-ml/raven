@@ -1,11 +1,11 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
 3 Ops.INDEX dtypes.f32 [1, 2]
 4 Ops.STACK dtypes.void []
-5 Ops.PARAM dtypes.i32 [4] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-6 Ops.PARAM dtypes.f32 [4] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+5 Ops.PARAM dtypes.i32 [4] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), name="a", addrspace=AddrSpace.ALU)
+6 Ops.PARAM dtypes.f32 [4] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), name="b", addrspace=AddrSpace.ALU)
 7 Ops.ADD dtypes.f32 [5, 6]
 8 Ops.STORE dtypes.void [3, 7]
 9 Ops.SINK dtypes.void [8]
@@ -22,10 +22,10 @@
 20 Ops.COPY dtypes.f32 [10] "DISK:/tmp/x"
 21 Ops.SINK dtypes.void [20]
 22 Ops.CAST dtypes.i32 [2] dtypes.i32
-23 Ops.PARAM dtypes.bool [4] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="g", addrspace=AddrSpace.ALU)
+23 Ops.PARAM dtypes.bool [4] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), name="g", addrspace=AddrSpace.ALU)
 24 Ops.LOAD dtypes.f32 [11, 22, 23]
 25 Ops.SINK dtypes.void [24]
-26 Ops.PARAM dtypes.bool [4] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
+26 Ops.PARAM dtypes.bool [4] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), name="c", addrspace=AddrSpace.ALU)
 27 Ops.CONST dtypes.weakfloat [] 1.5
 28 Ops.CAST dtypes.f32 [27] dtypes.f32
 29 Ops.WHERE dtypes.f32 [26, 5, 28]

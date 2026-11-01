@@ -1,19 +1,19 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CONST dtypes.weakint [] 6
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
 3 Ops.STACK dtypes.void []
-4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), name="x", addrspace=AddrSpace.ALU)
 5 Ops.CONST dtypes.weakint [] 5
 6 Ops.CMPLT dtypes.bool [4, 5]
 7 Ops.CONST dtypes.bool [] False
 8 Ops.CMPEQ dtypes.bool [6, 7]
-9 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-10 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+9 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), name="a", addrspace=AddrSpace.ALU)
+10 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), name="b", addrspace=AddrSpace.ALU)
 11 Ops.WHERE dtypes.weakint [8, 9, 10]
 12 Ops.CONST dtypes.weakint [] 2
 13 Ops.MUL dtypes.weakint [11, 12]
-14 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
+14 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), name="c", addrspace=AddrSpace.ALU)
 15 Ops.WHERE dtypes.weakint [6, 13, 14]
 16 Ops.MUL dtypes.weakint [10, 12]
 17 Ops.WHERE dtypes.weakint [6, 16, 14]

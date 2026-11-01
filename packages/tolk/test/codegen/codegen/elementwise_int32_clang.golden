@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 256
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -14,9 +14,35 @@
 12 Ops.STORE dtypes.void [4, 11]
 13 Ops.END dtypes.void [12, 3]
 14 Ops.SINK dtypes.void [13] KernelInfo(name="elementwise_int32", optimized=True)
-15 Ops.SINK dtypes.void [13] KernelInfo(name="elementwise_int32", estimates=Estimates(ops=256, lds=3072, mem=3072), optimized=True)
-16 Ops.LINEAR dtypes.void [0, 5, 8, 1, 2, 3, 6, 7, 9, 10, 4, 11, 12, 13, 14]
-17 Ops.SOURCE dtypes.void [] "\nstruct elementwise_int32_args { int* arg0; int* arg1; int* arg2; };\n__attribute__((min_vector_width(512))) void elementwise_int32(const struct elementwise_int32_args* args) {\n  int* data0_256 = args->arg0;\n  int* data1_256 = args->arg1;\n  int* data2_256 = args->arg2;\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    int val0 = (*(data0_256+Lidx0));\n    int val1 = (*(data1_256+Lidx0));\n    *(data2_256+Lidx0) = (val0+val1);\n  }\n}\n"
-18 Ops.PROGRAM dtypes.void [15, 16, 17] ProgramInfo(params=(%5, %8, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-19 Ops.SINK dtypes.void [14, 18]
+15 Ops.CONST dtypes.weakint [] 24
+16 Ops.PARAM dtypes.u8 [15] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+17 Ops.BITCAST dtypes.u64 [16] dtypes.u64
+18 Ops.CONST dtypes.weakint [] 2
+19 Ops.CAST dtypes.i32 [18] dtypes.i32
+20 Ops.INDEX dtypes.u64 [17, 19]
+21 Ops.LOAD dtypes.u64 [20]
+22 Ops.REFPARAM dtypes.i32 [0, 21] ParamArg(slot=2, dtype=dtypes.i32)
+23 Ops.INDEX dtypes.i32 [22, 3]
+24 Ops.CONST dtypes.weakint [] 0
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.INDEX dtypes.u64 [17, 25]
+27 Ops.LOAD dtypes.u64 [26]
+28 Ops.REFPARAM dtypes.i32 [0, 27] ParamArg(slot=0, dtype=dtypes.i32)
+29 Ops.INDEX dtypes.i32 [28, 3]
+30 Ops.LOAD dtypes.i32 [29]
+31 Ops.CONST dtypes.weakint [] 1
+32 Ops.CAST dtypes.i32 [31] dtypes.i32
+33 Ops.INDEX dtypes.u64 [17, 32]
+34 Ops.LOAD dtypes.u64 [33]
+35 Ops.REFPARAM dtypes.i32 [0, 34] ParamArg(slot=1, dtype=dtypes.i32)
+36 Ops.INDEX dtypes.i32 [35, 3]
+37 Ops.LOAD dtypes.i32 [36]
+38 Ops.ADD dtypes.i32 [30, 37]
+39 Ops.STORE dtypes.void [23, 38]
+40 Ops.END dtypes.void [39, 3]
+41 Ops.SINK dtypes.void [40] KernelInfo(name="elementwise_int32", estimates=Estimates(ops=256, lds=3072, mem=3072), optimized=True)
+42 Ops.LINEAR dtypes.void [15, 16, 24, 25, 17, 26, 27, 31, 32, 33, 34, 18, 19, 20, 21, 0, 28, 35, 22, 2, 3, 29, 30, 36, 37, 23, 38, 39, 40, 41]
+43 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void elementwise_int32(unsigned char* restrict args_24) {\n  unsigned long val0 = (*(((unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((unsigned long*)(args_24))+2));\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    int val3 = (*(((int*)(val0))+Lidx0));\n    int val4 = (*(((int*)(val1))+Lidx0));\n    *(((int*)(val2))+Lidx0) = (val3+val4);\n  }\n}\n"
+44 Ops.PROGRAM dtypes.void [41, 42, 43] ProgramInfo(params=(%5, %8, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+45 Ops.SINK dtypes.void [14, 44]
 

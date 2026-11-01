@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 case	src	render	simplified
 variable	0	a	a
 bound_variable	1	a	a
@@ -113,7 +113,7 @@ reshape_to_scalar	109	p3.reshape(())	p3.reshape(())
 expand	110	p4.reshape((4,1)).reshape((4,)).expand((8,)).permute((1, 0))	p4.expand((8,)).permute((1, 0))
 permute	111	p0.reshape((4,8)).permute((1, 0))	p0.reshape((4,8)).permute((1, 0))
 permute_three	112	p5.reshape((2,3,4)).permute((2, 0, 1))	p5.reshape((2,3,4)).permute((2, 0, 1))
-permute_one	113	p1.permute((0,))	p1
+permute_one	113	p1.permute((0,))	p1.permute((0,))
 flip	114	p0.reshape((4,8)).permute((1, 0)).pad(((0, 8),(0, 4))).reshape((8,1,4)).pad(((0, 8),(0, 7),(0, 4))).reshape((56,4)).pad(((7, 64),(0, 4))).reshape((8,8,4)).permute((1, 0, 2)).reshape((64,4)).shrink(((7, 56),(0, 4))).reshape((8,7,4)).shrink(((0, 8),(0, 1),(0, 4))).reshape((8,4)).permute((1, 0))	p0.reshape((4,8)).permute((1, 0)).pad(((0, 8),(0, 4))).reshape((8,1,4)).pad(((0, 8),(0, 7),(0, 4))).reshape((56,4)).pad(((7, 64),(0, 4))).reshape((8,8,4)).permute((1, 0, 2)).reshape((64,4)).shrink(((7, 56),(0, 4))).reshape((8,7,4)).shrink(((0, 8),(0, 1),(0, 4))).reshape((8,4)).permute((1, 0))
 flip_all	115	p0.reshape((4,8)).pad(((0, 4),(0, 8))).reshape((4,1,8)).pad(((0, 4),(0, 3),(0, 8))).reshape((12,8)).pad(((3, 16),(0, 8))).reshape((4,4,8)).permute((1, 0, 2)).reshape((16,8)).shrink(((3, 12),(0, 8))).reshape((4,3,8)).shrink(((0, 4),(0, 1),(0, 8))).reshape((4,8)).permute((1, 0)).pad(((0, 8),(0, 4))).reshape((8,1,4)).pad(((0, 8),(0, 7),(0, 4))).reshape((56,4)).pad(((7, 64),(0, 4))).reshape((8,8,4)).permute((1, 0, 2)).reshape((64,4)).shrink(((7, 56),(0, 4))).reshape((8,7,4)).shrink(((0, 8),(0, 1),(0, 4))).reshape((8,4)).permute((1, 0))	p0.reshape((4,8)).pad(((0, 4),(0, 8))).reshape((4,1,8)).pad(((0, 4),(0, 3),(0, 8))).reshape((12,8)).pad(((3, 16),(0, 8))).reshape((4,4,8)).permute((1, 0, 2)).reshape((16,8)).shrink(((3, 12),(0, 8))).reshape((4,3,8)).shrink(((0, 4),(0, 1),(0, 8))).reshape((4,8)).permute((1, 0)).pad(((0, 8),(0, 4))).reshape((8,1,4)).pad(((0, 8),(0, 7),(0, 4))).reshape((56,4)).pad(((7, 64),(0, 4))).reshape((8,8,4)).permute((1, 0, 2)).reshape((64,4)).shrink(((7, 56),(0, 4))).reshape((8,7,4)).shrink(((0, 8),(0, 1),(0, 4))).reshape((8,4)).permute((1, 0))
 pad	116	p0.reshape((4,8)).pad(((0, 6),(1, 12)))	p0.reshape((4,8)).pad(((0, 6),(1, 12)))

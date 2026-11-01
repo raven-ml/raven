@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 file	class	test
 null/test_uop_symbolic.py	TestSymbolic	test_add_1
 null/test_uop_symbolic.py	TestSymbolic	test_add_div
@@ -68,8 +68,8 @@ null/test_uop_symbolic.py	TestSymbolic	test_floordiv_lt
 null/test_uop_symbolic.py	TestSymbolic	test_floordiv_lt_negative_c
 null/test_uop_symbolic.py	TestSymbolic	test_floormod_const_evaluation
 null/test_uop_symbolic.py	TestSymbolic	test_gated_load
-null/test_uop_symbolic.py	TestSymbolic	test_gcd_multiple_of_without_shared_factors
 null/test_uop_symbolic.py	TestSymbolic	test_gcd_with_remainder
+null/test_uop_symbolic.py	TestSymbolic	test_gcd_with_remainder_negative
 null/test_uop_symbolic.py	TestSymbolic	test_ge
 null/test_uop_symbolic.py	TestSymbolic	test_ge_remove
 null/test_uop_symbolic.py	TestSymbolic	test_lt
@@ -81,8 +81,6 @@ null/test_uop_symbolic.py	TestSymbolic	test_lt_simple_factor
 null/test_uop_symbolic.py	TestSymbolic	test_lt_sum_factor_rhs_all
 null/test_uop_symbolic.py	TestSymbolic	test_lt_sum_factor_rhs_partial
 null/test_uop_symbolic.py	TestSymbolic	test_lt_sum_remove
-null/test_uop_symbolic.py	TestSymbolic	test_masked_idiv_fold
-null/test_uop_symbolic.py	TestSymbolic	test_masked_idiv_fold_committed_mask
 null/test_uop_symbolic.py	TestSymbolic	test_masked_shr_fold
 null/test_uop_symbolic.py	TestSymbolic	test_masked_shr_fold_committed_mask
 null/test_uop_symbolic.py	TestSymbolic	test_max_folds

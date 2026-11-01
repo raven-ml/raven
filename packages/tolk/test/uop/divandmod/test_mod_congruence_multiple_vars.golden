@@ -1,10 +1,10 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 9
 1 Ops.STACK dtypes.void []
-2 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+2 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), name="x", addrspace=AddrSpace.ALU)
 3 Ops.MUL dtypes.weakint [0, 2]
 4 Ops.ADD dtypes.weakint [0, 3]
-5 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
+5 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), name="y", addrspace=AddrSpace.ALU)
 6 Ops.MUL dtypes.weakint [0, 5]
 7 Ops.ADD dtypes.weakint [4, 6]
 8 Ops.CONST dtypes.weakint [] 10
@@ -25,13 +25,13 @@
 23 Ops.MUL dtypes.weakint [22, 11]
 24 Ops.ADD dtypes.weakint [21, 23]
 25 Ops.CONST dtypes.weakint [] 7
-26 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 2), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+26 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 2), name="x", addrspace=AddrSpace.ALU)
 27 Ops.MUL dtypes.weakint [0, 26]
 28 Ops.ADD dtypes.weakint [25, 27]
-29 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 2), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
+29 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 2), name="y", addrspace=AddrSpace.ALU)
 30 Ops.MUL dtypes.weakint [0, 29]
 31 Ops.ADD dtypes.weakint [28, 30]
-32 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 2), multiple_of=1, name="z", addrspace=AddrSpace.ALU)
+32 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 2), name="z", addrspace=AddrSpace.ALU)
 33 Ops.ADD dtypes.weakint [31, 32]
 34 Ops.MOD dtypes.weakint [33, 8]
 35 Ops.CONST dtypes.weakint [] -3
@@ -47,7 +47,7 @@
 45 Ops.ADD dtypes.weakint [43, 44]
 46 Ops.ADD dtypes.weakint [45, 10]
 47 Ops.ADD dtypes.weakint [46, 23]
-48 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 4), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
+48 Ops.PARAM dtypes.weakint [1] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 4), name="y", addrspace=AddrSpace.ALU)
 49 Ops.CONST dtypes.weakint [] 3
 50 Ops.MOD dtypes.weakint [48, 49]
 51 Ops.CONST dtypes.weakint [] 12

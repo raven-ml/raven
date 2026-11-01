@@ -1,11 +1,11 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 %0 = [38;2;20;104;111mparam[0m 16 : dtype=f32 slot=0
 %1 = [38;2;192;192;255mspecial[0m 4 : gidx0
 %2 = [38;2;255;255;192mmul[0m %1, 4
 %3 = [38;2;200;160;224mrange[0m 4 : LOOP 0
 %4 = [38;2;255;255;192madd[0m %2, %3
 %5 = [38;2;206;249;183mindex[0m %0, %4
-%6 = [38;2;20;104;111mparam[0m () : "n" dtype=weakint slot=-1 bounds=[1,4] multiple_of=1 addrspace=ALU
+%6 = [38;2;20;104;111mparam[0m () : "n" dtype=weakint slot=-1 bounds=[1,4] addrspace=ALU
 %7 = [38;2;255;255;192mcmplt[0m %3, %6
 %8 = [38;2;20;104;111mparam[0m 16 : dtype=f32 slot=1
 %9 = [38;2;206;249;183mindex[0m %8, %4

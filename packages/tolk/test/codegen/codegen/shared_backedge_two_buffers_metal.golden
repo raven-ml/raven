@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -23,21 +23,38 @@
 21 Ops.PARAM dtypes.bool [20] ParamArg(slot=2, dtype=dtypes.bool)
 22 Ops.BACKEDGE dtypes.void [19, 8, 21]
 23 Ops.SINK dtypes.void [22] KernelInfo(optimized=True)
-24 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=11, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
-25 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=10, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
-26 Ops.AFTER dtypes.i32 [25, 8]
-27 Ops.INDEX dtypes.i32 [26, 3]
-28 Ops.STORE dtypes.void [27, 13]
-29 Ops.BARRIER dtypes.void [28]
-30 Ops.AFTER dtypes.i32 [24, 29]
+24 Ops.CONST dtypes.weakint [] 24
+25 Ops.PARAM dtypes.u8 [24] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+26 Ops.BITCAST dtypes.u64 [25] dtypes.u64
+27 Ops.CAST dtypes.i32 [0] dtypes.i32
+28 Ops.INDEX dtypes.u64 [26, 27]
+29 Ops.LOAD dtypes.u64 [28]
+30 Ops.REFPARAM dtypes.i32 [0, 29] ParamArg(slot=1, dtype=dtypes.i32)
 31 Ops.INDEX dtypes.i32 [30, 3]
-32 Ops.LOAD dtypes.i32 [31]
-33 Ops.STORE dtypes.void [4, 32]
-34 Ops.BACKEDGE dtypes.void [33, 8, 21]
-35 Ops.SINK dtypes.void [34] KernelInfo(estimates=Estimates(lds=16, mem=8), optimized=True)
-36 Ops.SINK dtypes.void [34] KernelInfo(optimized=True)
-37 Ops.LINEAR dtypes.void [0, 11, 1, 20, 21, 25, 24, 2, 3, 12, 13, 7, 4, 8, 26, 27, 28, 29, 30, 31, 32, 33, 34, 36]
-38 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct test_args { device int* arg0; device int* arg1; device bool* arg2; };\nkernel void test(constant struct test_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_1 = args->arg0;\n  device int* data1_1 = args->arg1;\n  device bool* data2_ = args->arg2;\n  threadgroup __attribute__((aligned(16))) int buf0[1];\n  threadgroup __attribute__((aligned(16))) int buf1[1];\n  int val0 = (*(data0_1+0));\n  for (;;) {\n    *(buf0+0) = val0;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n    int val1 = (*(buf1+0));\n    *(data1_1+0) = val1;\n    if (!(data2_)) { break; }\n  }\n}"
-39 Ops.PROGRAM dtypes.void [35, 37, 38] ProgramInfo(params=(%11, %1, %21), globals=(0, 1, 2), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
-40 Ops.SINK dtypes.void [23, 39]
+32 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=11, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
+33 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=10, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
+34 Ops.AFTER dtypes.i32 [33, 8]
+35 Ops.INDEX dtypes.i32 [34, 3]
+36 Ops.INDEX dtypes.u64 [26, 3]
+37 Ops.LOAD dtypes.u64 [36]
+38 Ops.REFPARAM dtypes.i32 [0, 37] ParamArg(slot=0, dtype=dtypes.i32)
+39 Ops.INDEX dtypes.i32 [38, 3]
+40 Ops.LOAD dtypes.i32 [39]
+41 Ops.STORE dtypes.void [35, 40]
+42 Ops.BARRIER dtypes.void [41]
+43 Ops.AFTER dtypes.i32 [32, 42]
+44 Ops.INDEX dtypes.i32 [43, 3]
+45 Ops.LOAD dtypes.i32 [44]
+46 Ops.STORE dtypes.void [31, 45]
+47 Ops.CONST dtypes.weakint [] 2
+48 Ops.CAST dtypes.i32 [47] dtypes.i32
+49 Ops.INDEX dtypes.u64 [26, 48]
+50 Ops.LOAD dtypes.u64 [49]
+51 Ops.REFPARAM dtypes.bool [20, 50] ParamArg(slot=2, dtype=dtypes.bool)
+52 Ops.BACKEDGE dtypes.void [46, 8, 51]
+53 Ops.SINK dtypes.void [52] KernelInfo(estimates=Estimates(lds=16, mem=8), optimized=True)
+54 Ops.LINEAR dtypes.void [24, 25, 0, 33, 32, 2, 3, 26, 36, 37, 38, 39, 40, 27, 28, 29, 47, 48, 49, 50, 7, 30, 20, 51, 31, 8, 34, 35, 41, 42, 43, 44, 45, 46, 52, 53]
+55 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void test(device unsigned char* args_24, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  threadgroup __attribute__((aligned(16))) int buf0[1];\n  threadgroup __attribute__((aligned(16))) int buf1[1];\n  unsigned long val0 = (*(((device unsigned long*)(args_24))+0));\n  int val1 = (*(((device int*)(val0))+0));\n  unsigned long val2 = (*(((device unsigned long*)(args_24))+1));\n  unsigned long val3 = (*(((device unsigned long*)(args_24))+2));\n  for (;;) {\n    *(buf0+0) = val1;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n    int val4 = (*(buf1+0));\n    *(((device int*)(val2))+0) = val4;\n    if (!(((device bool*)(val3)))) { break; }\n  }\n}"
+56 Ops.PROGRAM dtypes.void [53, 54, 55] ProgramInfo(params=(%11, %1, %21), globals=(0, 1, 2), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+57 Ops.SINK dtypes.void [23, 56]
 

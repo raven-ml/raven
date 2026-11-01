@@ -1,9 +1,6 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 
-struct E_args { double* arg0; double* arg1; };
-__attribute__((min_vector_width(512))) void E(const struct E_args* args) {
-  double* data0_1 = args->arg0;
-  double* data1_1 = args->arg1;
+__attribute__((min_vector_width(512))) void E(double* restrict data0_1, double* restrict data1_1) {
   double val0 = (*(data1_1+0));
   _Bool alu0 = (val0!=val0);
   _Bool alu1 = (val0!=((double)(-__builtin_inff())));

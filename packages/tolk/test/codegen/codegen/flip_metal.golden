@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 128
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -38,9 +38,28 @@
 36 Ops.STORE dtypes.void [14, 35]
 37 Ops.AFTER dtypes.void [0, 36]
 38 Ops.SINK dtypes.void [37] KernelInfo(name="E_8_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), optimized=True)
-39 Ops.SINK dtypes.void [37] KernelInfo(name="E_8_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(lds=1024, mem=1024), optimized=True)
-40 Ops.LINEAR dtypes.void [1, 2, 15, 3, 4, 5, 6, 7, 9, 16, 17, 20, 21, 18, 8, 19, 22, 23, 24, 0, 32, 33, 34, 29, 30, 31, 10, 11, 28, 25, 26, 27, 35, 12, 13, 14, 36, 37, 38]
-41 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct E_8_4_4_args { device float* arg0; device float* arg1; };\nkernel void E_8_4_4(constant struct E_8_4_4_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_128 = args->arg0;\n  device float* data1_128 = args->arg1;\n  int lidx0 = lid.x; /* 8 */\n  int lidx1 = lid.y; /* 4 */\n  int alu0 = (lidx0<<4);\n  float4 val0 = (*((device float4*)((data1_128+(alu0+(lidx1*-4)+12)))));\n  *((device float4*)((data0_128+(alu0+(lidx1<<2))))) = float4(val0.w,val0.z,val0.y,val0.x);\n}"
-42 Ops.PROGRAM dtypes.void [39, 40, 41] ProgramInfo(local_size=(8, 4, 1), params=(%2, %15), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
-43 Ops.SINK dtypes.void [38, 42]
+39 Ops.CONST dtypes.weakint [] 16
+40 Ops.PARAM dtypes.u8 [39] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+41 Ops.BITCAST dtypes.u64 [40] dtypes.u64
+42 Ops.INDEX dtypes.u64 [41, 33]
+43 Ops.LOAD dtypes.u64 [42]
+44 Ops.REFPARAM dtypes.f32 [1, 43] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+45 Ops.SHRINK dtypes.f32 [44, 13, 7]
+46 Ops.INDEX dtypes.u64 [41, 30]
+47 Ops.LOAD dtypes.u64 [46]
+48 Ops.REFPARAM dtypes.f32 [1, 47] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+49 Ops.SHRINK dtypes.f32 [48, 22, 7]
+50 Ops.LOAD dtypes.f32 [49]
+51 Ops.INDEX dtypes.f32 [50, 26]
+52 Ops.INDEX dtypes.f32 [50, 11]
+53 Ops.INDEX dtypes.f32 [50, 30]
+54 Ops.INDEX dtypes.f32 [50, 33]
+55 Ops.STACK dtypes.f32 [51, 52, 53, 54]
+56 Ops.STORE dtypes.void [45, 55]
+57 Ops.AFTER dtypes.void [0, 56]
+58 Ops.SINK dtypes.void [57] KernelInfo(name="E_8_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(lds=1024, mem=1024), optimized=True)
+59 Ops.LINEAR dtypes.void [39, 40, 32, 33, 41, 42, 43, 29, 30, 46, 47, 3, 4, 5, 6, 7, 9, 1, 48, 16, 17, 20, 21, 18, 8, 19, 22, 49, 50, 44, 0, 54, 53, 10, 11, 52, 25, 26, 51, 55, 12, 13, 45, 56, 57, 58]
+60 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void E_8_4_4(device unsigned char* args_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  unsigned long val0 = (*(((device unsigned long*)(args_16))+0));\n  unsigned long val1 = (*(((device unsigned long*)(args_16))+1));\n  int lidx0 = lid.x; /* 8 */\n  int lidx1 = lid.y; /* 4 */\n  int alu0 = (lidx0<<4);\n  float4 val2 = (*((device float4*)((((device float*)(val1))+(alu0+(lidx1*-4)+12)))));\n  *((device float4*)((((device float*)(val0))+(alu0+(lidx1<<2))))) = float4(val2.w,val2.z,val2.y,val2.x);\n}"
+61 Ops.PROGRAM dtypes.void [58, 59, 60] ProgramInfo(local_size=(8, 4, 1), params=(%2, %15), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+62 Ops.SINK dtypes.void [38, 61]
 

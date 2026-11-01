@@ -1,11 +1,6 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 
-struct E_28n2A429_args { float* arg0; float* arg1; int arg2; int arg3; };
-__attribute__((min_vector_width(512))) void E_28n2A429(const struct E_28n2A429_args* args) {
-  float* data0_256 = args->arg0;
-  float* data1_256 = args->arg1;
-  int block_lo_ = args->arg2;
-  int block_hi_ = args->arg3;
+__attribute__((min_vector_width(512))) void E_28n2A429(float* restrict data0_256, float* restrict data1_256, const int block_lo_, const int block_hi_) {
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = (block_lo_+Lidx0);
     float val0 = (*(data1_256+alu0));

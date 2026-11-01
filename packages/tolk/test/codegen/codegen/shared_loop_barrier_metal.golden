@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -22,21 +22,33 @@
 20 Ops.BARRIER dtypes.void [19]
 21 Ops.END dtypes.void [20, 8]
 22 Ops.SINK dtypes.void [21] KernelInfo(optimized=True)
-23 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=10, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
-24 Ops.AFTER dtypes.i32 [23, 8]
-25 Ops.INDEX dtypes.i32 [24, 3]
-26 Ops.STORE dtypes.void [25, 13]
-27 Ops.BARRIER dtypes.void [26]
-28 Ops.AFTER dtypes.i32 [23, 27]
-29 Ops.INDEX dtypes.i32 [28, 3]
-30 Ops.LOAD dtypes.i32 [29]
-31 Ops.STORE dtypes.void [4, 30]
-32 Ops.BARRIER dtypes.void [31]
-33 Ops.END dtypes.void [32, 8]
-34 Ops.SINK dtypes.void [33] KernelInfo(estimates=Estimates(lds=28, mem=8), optimized=True)
-35 Ops.SINK dtypes.void [33] KernelInfo(optimized=True)
-36 Ops.LINEAR dtypes.void [0, 11, 1, 23, 2, 3, 12, 13, 4, 6, 7, 8, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35]
-37 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct test_args { device int* arg0; device int* arg1; };\nkernel void test(constant struct test_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_1 = args->arg0;\n  device int* data1_1 = args->arg1;\n  threadgroup __attribute__((aligned(16))) int buf0[1];\n  int val0 = (*(data0_1+0));\n  for (int Lidx19 = 0; Lidx19 < 2; Lidx19++) {\n    *(buf0+0) = val0;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n    int val1 = (*(buf0+0));\n    *(data1_1+0) = val1;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n  }\n}"
-38 Ops.PROGRAM dtypes.void [34, 36, 37] ProgramInfo(params=(%11, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
-39 Ops.SINK dtypes.void [22, 38]
+23 Ops.CONST dtypes.weakint [] 16
+24 Ops.PARAM dtypes.u8 [23] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+25 Ops.BITCAST dtypes.u64 [24] dtypes.u64
+26 Ops.CAST dtypes.i32 [0] dtypes.i32
+27 Ops.INDEX dtypes.u64 [25, 26]
+28 Ops.LOAD dtypes.u64 [27]
+29 Ops.REFPARAM dtypes.i32 [0, 28] ParamArg(slot=1, dtype=dtypes.i32)
+30 Ops.INDEX dtypes.i32 [29, 3]
+31 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=10, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
+32 Ops.AFTER dtypes.i32 [31, 8]
+33 Ops.INDEX dtypes.i32 [32, 3]
+34 Ops.INDEX dtypes.u64 [25, 3]
+35 Ops.LOAD dtypes.u64 [34]
+36 Ops.REFPARAM dtypes.i32 [0, 35] ParamArg(slot=0, dtype=dtypes.i32)
+37 Ops.INDEX dtypes.i32 [36, 3]
+38 Ops.LOAD dtypes.i32 [37]
+39 Ops.STORE dtypes.void [33, 38]
+40 Ops.BARRIER dtypes.void [39]
+41 Ops.AFTER dtypes.i32 [31, 40]
+42 Ops.INDEX dtypes.i32 [41, 3]
+43 Ops.LOAD dtypes.i32 [42]
+44 Ops.STORE dtypes.void [30, 43]
+45 Ops.BARRIER dtypes.void [44]
+46 Ops.END dtypes.void [45, 8]
+47 Ops.SINK dtypes.void [46] KernelInfo(estimates=Estimates(lds=28, mem=8), optimized=True)
+48 Ops.LINEAR dtypes.void [23, 24, 0, 31, 2, 3, 25, 34, 35, 36, 37, 38, 26, 27, 28, 29, 30, 6, 7, 8, 32, 33, 39, 40, 41, 42, 43, 44, 45, 46, 47]
+49 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void test(device unsigned char* args_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  threadgroup __attribute__((aligned(16))) int buf0[1];\n  unsigned long val0 = (*(((device unsigned long*)(args_16))+0));\n  int val1 = (*(((device int*)(val0))+0));\n  unsigned long val2 = (*(((device unsigned long*)(args_16))+1));\n  for (int Lidx19 = 0; Lidx19 < 2; Lidx19++) {\n    *(buf0+0) = val1;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n    int val3 = (*(buf0+0));\n    *(((device int*)(val2))+0) = val3;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n  }\n}"
+50 Ops.PROGRAM dtypes.void [47, 48, 49] ProgramInfo(params=(%11, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+51 Ops.SINK dtypes.void [22, 50]
 

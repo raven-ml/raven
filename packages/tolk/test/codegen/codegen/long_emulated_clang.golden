@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 32
 2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
@@ -72,9 +72,80 @@
 70 Ops.AFTER dtypes.void [0, 37, 69]
 71 Ops.END dtypes.void [70, 6]
 72 Ops.SINK dtypes.void [71] KernelInfo(name="E_16", optimized=True, split=(16, 2, 3))
-73 Ops.SINK dtypes.void [71] KernelInfo(name="E_16", estimates=Estimates(ops=416, lds=256, mem=256), optimized=True, split=(16, 2, 3))
-74 Ops.LINEAR dtypes.void [1, 2, 12, 0, 3, 4, 19, 51, 8, 9, 27, 56, 20, 22, 23, 28, 16, 17, 5, 6, 7, 10, 38, 54, 55, 13, 14, 39, 11, 15, 26, 29, 30, 31, 18, 21, 24, 25, 32, 45, 46, 47, 33, 34, 35, 60, 61, 62, 36, 65, 66, 67, 49, 50, 42, 43, 40, 41, 52, 53, 44, 57, 58, 48, 59, 63, 64, 68, 69, 37, 70, 71, 72]
-75 Ops.SOURCE dtypes.void [] "\nstruct E_16_args { int* arg0; int* arg1; int arg2; int arg3; };\n__attribute__((min_vector_width(512))) void E_16(const struct E_16_args* args) {\n  int* data0_32 = args->arg0;\n  int* data1_32 = args->arg1;\n  int block_lo_ = args->arg2;\n  int block_hi_ = args->arg3;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<1);\n    int alu1 = (alu0+1);\n    int val0 = (*(data1_32+alu1));\n    int val1 = (*(data1_32+alu0));\n    unsigned int cast0 = __builtin_bit_cast(unsigned int, (int)(val1));\n    unsigned int alu2 = (cast0>>16u);\n    unsigned int alu3 = (alu2*3u);\n    unsigned int alu4 = (cast0&65535u);\n    unsigned int alu5 = (alu4*0u);\n    unsigned int alu6 = (alu5<<16u);\n    int alu7 = (__builtin_bit_cast(int, (unsigned int)(alu6))+__builtin_bit_cast(int, (unsigned int)((alu3<<16u))));\n    unsigned int cast1 = __builtin_bit_cast(unsigned int, (int)(alu7));\n    int alu8 = (alu7+__builtin_bit_cast(int, (unsigned int)((alu4*3u))));\n    unsigned int cast2 = __builtin_bit_cast(unsigned int, (int)(alu8));\n    int alu9 = (alu8+1);\n    *(data0_32+alu1) = (__builtin_bit_cast(int, (unsigned int)((alu5>>16u)))+__builtin_bit_cast(int, (unsigned int)((alu3>>16u)))+((int)((cast1<alu6)))+(__builtin_bit_cast(int, (unsigned int)((alu2*0u)))+(val1*0)+(val0*3))+((int)((cast2<cast1)))+0+((int)((__builtin_bit_cast(unsigned int, (int)(alu9))<cast2))));\n    *(data0_32+alu0) = alu9;\n  }\n}\n"
-76 Ops.PROGRAM dtypes.void [73, 74, 75] ProgramInfo(global_size=(16, 1, 1), params=(%2, %12, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-77 Ops.SINK dtypes.void [72, 76]
+73 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+74 Ops.BITCAST dtypes.u64 [73] dtypes.u64
+75 Ops.INDEX dtypes.u64 [74, 51]
+76 Ops.LOAD dtypes.u64 [75]
+77 Ops.REFPARAM dtypes.i32 [1, 76] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+78 Ops.BITCAST dtypes.i32 [73] dtypes.i32
+79 Ops.CONST dtypes.weakint [] 4
+80 Ops.CAST dtypes.i32 [79] dtypes.i32
+81 Ops.INDEX dtypes.i32 [78, 80]
+82 Ops.LOAD dtypes.i32 [81]
+83 Ops.CONST dtypes.weakint [] 5
+84 Ops.CAST dtypes.i32 [83] dtypes.i32
+85 Ops.INDEX dtypes.i32 [78, 84]
+86 Ops.LOAD dtypes.i32 [85]
+87 Ops.SUB dtypes.i32 [86, 82]
+88 Ops.RANGE dtypes.i32 [87] (AxisType.WEAK, 0)
+89 Ops.ADD dtypes.i32 [82, 88]
+90 Ops.SHL dtypes.i32 [89, 9]
+91 Ops.INDEX dtypes.i32 [77, 90]
+92 Ops.INDEX dtypes.u64 [74, 9]
+93 Ops.LOAD dtypes.u64 [92]
+94 Ops.REFPARAM dtypes.i32 [1, 93] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+95 Ops.INDEX dtypes.i32 [94, 90]
+96 Ops.LOAD dtypes.i32 [95]
+97 Ops.BITCAST dtypes.u32 [96] dtypes.u32
+98 Ops.AND dtypes.u32 [97, 17]
+99 Ops.MUL dtypes.u32 [98, 20]
+100 Ops.SHL dtypes.u32 [99, 23]
+101 Ops.BITCAST dtypes.i32 [100] dtypes.i32
+102 Ops.SHR dtypes.u32 [97, 23]
+103 Ops.MUL dtypes.u32 [102, 28]
+104 Ops.SHL dtypes.u32 [103, 23]
+105 Ops.BITCAST dtypes.i32 [104] dtypes.i32
+106 Ops.ADD dtypes.i32 [101, 105]
+107 Ops.MUL dtypes.u32 [98, 28]
+108 Ops.BITCAST dtypes.i32 [107] dtypes.i32
+109 Ops.ADD dtypes.i32 [106, 108]
+110 Ops.ADD dtypes.i32 [109, 9]
+111 Ops.STORE dtypes.void [91, 110]
+112 Ops.ADD dtypes.i32 [90, 9]
+113 Ops.INDEX dtypes.i32 [77, 112]
+114 Ops.SHR dtypes.u32 [99, 23]
+115 Ops.BITCAST dtypes.i32 [114] dtypes.i32
+116 Ops.SHR dtypes.u32 [103, 23]
+117 Ops.BITCAST dtypes.i32 [116] dtypes.i32
+118 Ops.ADD dtypes.i32 [115, 117]
+119 Ops.BITCAST dtypes.u32 [106] dtypes.u32
+120 Ops.CMPLT dtypes.bool [119, 100]
+121 Ops.CAST dtypes.i32 [120] dtypes.i32
+122 Ops.ADD dtypes.i32 [118, 121]
+123 Ops.MUL dtypes.u32 [102, 20]
+124 Ops.BITCAST dtypes.i32 [123] dtypes.i32
+125 Ops.MUL dtypes.i32 [96, 51]
+126 Ops.ADD dtypes.i32 [124, 125]
+127 Ops.INDEX dtypes.i32 [94, 112]
+128 Ops.LOAD dtypes.i32 [127]
+129 Ops.MUL dtypes.i32 [128, 56]
+130 Ops.ADD dtypes.i32 [126, 129]
+131 Ops.ADD dtypes.i32 [122, 130]
+132 Ops.BITCAST dtypes.u32 [109] dtypes.u32
+133 Ops.CMPLT dtypes.bool [132, 119]
+134 Ops.CAST dtypes.i32 [133] dtypes.i32
+135 Ops.ADD dtypes.i32 [131, 134]
+136 Ops.ADD dtypes.i32 [135, 51]
+137 Ops.BITCAST dtypes.u32 [110] dtypes.u32
+138 Ops.CMPLT dtypes.bool [137, 132]
+139 Ops.CAST dtypes.i32 [138] dtypes.i32
+140 Ops.ADD dtypes.i32 [136, 139]
+141 Ops.STORE dtypes.void [113, 140]
+142 Ops.AFTER dtypes.void [0, 111, 141]
+143 Ops.END dtypes.void [142, 88]
+144 Ops.SINK dtypes.void [143] KernelInfo(name="E_16", estimates=Estimates(ops=416, lds=256, mem=256), optimized=True, split=(16, 2, 3))
+145 Ops.LINEAR dtypes.void [1, 73, 79, 80, 78, 81, 82, 83, 84, 85, 86, 19, 51, 74, 75, 76, 8, 9, 92, 93, 77, 94, 0, 27, 56, 20, 22, 23, 28, 16, 17, 87, 88, 89, 90, 112, 127, 128, 95, 96, 113, 91, 97, 102, 103, 104, 105, 98, 99, 100, 101, 106, 119, 120, 121, 107, 108, 109, 132, 133, 134, 110, 137, 138, 139, 123, 124, 116, 117, 114, 115, 125, 126, 118, 129, 130, 122, 131, 135, 136, 140, 141, 111, 142, 143, 144]
+146 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_16(unsigned char* restrict args_32) {\n  int val0 = (*(((int*)(args_32))+4));\n  int val1 = (*(((int*)(args_32))+5));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+1));\n  for (int Lidx0 = 0; Lidx0 < (val1-val0); Lidx0++) {\n    int alu0 = ((val0+Lidx0)<<1);\n    int alu1 = (alu0+1);\n    int val4 = (*(((int*)(val3))+alu1));\n    int val5 = (*(((int*)(val3))+alu0));\n    unsigned int cast0 = __builtin_bit_cast(unsigned int, (int)(val5));\n    unsigned int alu2 = (cast0>>16u);\n    unsigned int alu3 = (alu2*3u);\n    unsigned int alu4 = (cast0&65535u);\n    unsigned int alu5 = (alu4*0u);\n    unsigned int alu6 = (alu5<<16u);\n    int alu7 = (__builtin_bit_cast(int, (unsigned int)(alu6))+__builtin_bit_cast(int, (unsigned int)((alu3<<16u))));\n    unsigned int cast1 = __builtin_bit_cast(unsigned int, (int)(alu7));\n    int alu8 = (alu7+__builtin_bit_cast(int, (unsigned int)((alu4*3u))));\n    unsigned int cast2 = __builtin_bit_cast(unsigned int, (int)(alu8));\n    int alu9 = (alu8+1);\n    *(((int*)(val2))+alu1) = (__builtin_bit_cast(int, (unsigned int)((alu5>>16u)))+__builtin_bit_cast(int, (unsigned int)((alu3>>16u)))+((int)((cast1<alu6)))+(__builtin_bit_cast(int, (unsigned int)((alu2*0u)))+(val5*0)+(val4*3))+((int)((cast2<cast1)))+0+((int)((__builtin_bit_cast(unsigned int, (int)(alu9))<cast2))));\n    *(((int*)(val2))+alu0) = alu9;\n  }\n}\n"
+147 Ops.PROGRAM dtypes.void [144, 145, 146] ProgramInfo(global_size=(16, 1, 1), params=(%2, %12, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+148 Ops.SINK dtypes.void [72, 147]
 

@@ -1,10 +1,7 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 typedef unsigned char unsigned_char4 __attribute__((aligned(1),ext_vector_type(4)));
-struct cast_args { unsigned char* arg0; float* arg1; };
-__attribute__((min_vector_width(512))) void cast(const struct cast_args* args) {
-  unsigned char* data0_4 = args->arg0;
-  float* data1_4 = args->arg1;
+__attribute__((min_vector_width(512))) void cast(unsigned char* restrict data0_4, float* restrict data1_4) {
   float4 val0 = (*((float4*)((data1_4+0))));
   unsigned_char4 cast0 = __builtin_convertvector(val0, unsigned_char4);
   *((unsigned_char4*)((data0_4+0))) = cast0;

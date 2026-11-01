@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -42,23 +42,41 @@
 40 Ops.LOAD dtypes.f32 [39]
 41 Ops.STORE dtypes.void [4, 40]
 42 Ops.SINK dtypes.void [41] KernelInfo(name="sum_reduce", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-43 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
-44 Ops.INDEX dtypes.f32 [43, 3]
-45 Ops.STORE dtypes.void [44, 8]
-46 Ops.AFTER dtypes.f32 [43, 45, 12]
-47 Ops.INDEX dtypes.f32 [46, 3]
-48 Ops.LOAD dtypes.f32 [47]
-49 Ops.ADD dtypes.f32 [48, 34]
-50 Ops.STORE dtypes.void [47, 49]
-51 Ops.END dtypes.void [50, 12]
-52 Ops.AFTER dtypes.f32 [43, 51]
-53 Ops.INDEX dtypes.f32 [52, 3]
-54 Ops.LOAD dtypes.f32 [53]
-55 Ops.STORE dtypes.void [4, 54]
-56 Ops.SINK dtypes.void [55] KernelInfo(name="sum_reduce", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=256, lds=1028, mem=1028), optimized=True)
-57 Ops.SINK dtypes.void [55] KernelInfo(name="sum_reduce", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-58 Ops.LINEAR dtypes.void [16, 17, 0, 1, 43, 2, 3, 44, 7, 8, 26, 18, 19, 31, 32, 21, 22, 10, 11, 45, 12, 46, 47, 48, 20, 23, 24, 25, 27, 29, 33, 28, 30, 34, 49, 50, 51, 52, 53, 54, 4, 55, 57]
-59 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct sum_reduce_args { float* arg0; float* arg1; };\n__attribute__((min_vector_width(512))) void sum_reduce(const struct sum_reduce_args* args) {\n  float* data0_256 = args->arg0;\n  float* data1_1 = args->arg1;\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 64; Lidx0++) {\n    float4 val0 = (*((float4*)((data0_256+(Lidx0<<2)))));\n    *(buf0+0) = ((*(buf0+0))+(val0[0]+val0[1]+val0[2]+val0[3]));\n  }\n  *(data1_1+0) = (*(buf0+0));\n}\n"
-60 Ops.PROGRAM dtypes.void [56, 58, 59] ProgramInfo(params=(%17, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-61 Ops.SINK dtypes.void [42, 60]
+43 Ops.CONST dtypes.weakint [] 16
+44 Ops.PARAM dtypes.u8 [43] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+45 Ops.BITCAST dtypes.u64 [44] dtypes.u64
+46 Ops.INDEX dtypes.u64 [45, 26]
+47 Ops.LOAD dtypes.u64 [46]
+48 Ops.REFPARAM dtypes.f32 [0, 47] ParamArg(slot=1, dtype=dtypes.f32)
+49 Ops.INDEX dtypes.f32 [48, 3]
+50 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+51 Ops.INDEX dtypes.f32 [50, 3]
+52 Ops.STORE dtypes.void [51, 8]
+53 Ops.AFTER dtypes.f32 [50, 52, 12]
+54 Ops.INDEX dtypes.f32 [53, 3]
+55 Ops.LOAD dtypes.f32 [54]
+56 Ops.INDEX dtypes.u64 [45, 3]
+57 Ops.LOAD dtypes.u64 [56]
+58 Ops.REFPARAM dtypes.f32 [16, 57] ParamArg(slot=0, dtype=dtypes.f32)
+59 Ops.SHRINK dtypes.f32 [58, 20, 22]
+60 Ops.LOAD dtypes.f32 [59]
+61 Ops.INDEX dtypes.f32 [60, 3]
+62 Ops.INDEX dtypes.f32 [60, 26]
+63 Ops.ADD dtypes.f32 [61, 62]
+64 Ops.INDEX dtypes.f32 [60, 19]
+65 Ops.ADD dtypes.f32 [63, 64]
+66 Ops.INDEX dtypes.f32 [60, 32]
+67 Ops.ADD dtypes.f32 [65, 66]
+68 Ops.ADD dtypes.f32 [55, 67]
+69 Ops.STORE dtypes.void [54, 68]
+70 Ops.END dtypes.void [69, 12]
+71 Ops.AFTER dtypes.f32 [50, 70]
+72 Ops.INDEX dtypes.f32 [71, 3]
+73 Ops.LOAD dtypes.f32 [72]
+74 Ops.STORE dtypes.void [49, 73]
+75 Ops.SINK dtypes.void [74] KernelInfo(name="sum_reduce", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=256, lds=1028, mem=1028), optimized=True)
+76 Ops.LINEAR dtypes.void [43, 44, 0, 50, 2, 3, 45, 56, 57, 16, 58, 51, 7, 8, 26, 18, 19, 31, 32, 21, 22, 10, 11, 52, 12, 53, 54, 55, 20, 59, 60, 61, 62, 64, 66, 63, 65, 67, 68, 69, 70, 46, 47, 71, 72, 73, 48, 49, 74, 75]
+77 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void sum_reduce(unsigned char* restrict args_16) {\n  float buf0[1];\n  unsigned long val0 = (*(((unsigned long*)(args_16))+0));\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 64; Lidx0++) {\n    float4 val1 = (*((float4*)((((float*)(val0))+(Lidx0<<2)))));\n    *(buf0+0) = ((*(buf0+0))+(val1[0]+val1[1]+val1[2]+val1[3]));\n  }\n  unsigned long val2 = (*(((unsigned long*)(args_16))+1));\n  *(((float*)(val2))+0) = (*(buf0+0));\n}\n"
+78 Ops.PROGRAM dtypes.void [75, 76, 77] ProgramInfo(params=(%17, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+79 Ops.SINK dtypes.void [42, 78]
 

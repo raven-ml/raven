@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 20
 2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
@@ -30,9 +30,20 @@
 28 Ops.STORE dtypes.void [11, 27]
 29 Ops.AFTER dtypes.void [0, 28]
 30 Ops.SINK dtypes.void [29] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-31 Ops.SINK dtypes.void [29] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=25, lds=80, mem=80), optimized=True)
-32 Ops.LINEAR dtypes.void [1, 2, 3, 4, 5, 0, 15, 16, 21, 22, 24, 25, 12, 13, 18, 19, 14, 17, 23, 26, 20, 27, 6, 7, 9, 10, 8, 11, 28, 29, 30]
-33 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct E_5_4_args { device int* arg0; };\nkernel void E_5_4(constant struct E_5_4_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_20 = args->arg0;\n  int gidx0 = gid.x; /* 5 */\n  int alu0 = (gidx0*-20);\n  *((device int4*)((data0_20+(gidx0<<2)))) = int4((alu0+-1),(alu0+-6),(alu0+-11),(alu0+-16));\n}"
-34 Ops.PROGRAM dtypes.void [31, 32, 33] ProgramInfo(global_size=(5, 1, 1), params=(%2,), globals=(0,), outs=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
-35 Ops.SINK dtypes.void [30, 34]
+31 Ops.CONST dtypes.weakint [] 8
+32 Ops.PARAM dtypes.u8 [31] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+33 Ops.BITCAST dtypes.u64 [32] dtypes.u64
+34 Ops.CONST dtypes.weakint [] 0
+35 Ops.CAST dtypes.i32 [34] dtypes.i32
+36 Ops.INDEX dtypes.u64 [33, 35]
+37 Ops.LOAD dtypes.u64 [36]
+38 Ops.REFPARAM dtypes.i32 [1, 37] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+39 Ops.SHRINK dtypes.i32 [38, 8, 10]
+40 Ops.STORE dtypes.void [39, 27]
+41 Ops.AFTER dtypes.void [0, 40]
+42 Ops.SINK dtypes.void [41] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=25, lds=80, mem=80), optimized=True)
+43 Ops.LINEAR dtypes.void [31, 32, 34, 35, 33, 36, 37, 3, 4, 5, 1, 38, 0, 15, 16, 21, 22, 24, 25, 12, 13, 18, 19, 14, 17, 23, 26, 20, 27, 6, 7, 9, 10, 8, 39, 40, 41, 42]
+44 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void E_5_4(device unsigned char* args_8, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  unsigned long val0 = (*(((device unsigned long*)(args_8))+0));\n  int gidx0 = gid.x; /* 5 */\n  int alu0 = (gidx0*-20);\n  *((device int4*)((((device int*)(val0))+(gidx0<<2)))) = int4((alu0+-1),(alu0+-6),(alu0+-11),(alu0+-16));\n}"
+45 Ops.PROGRAM dtypes.void [42, 43, 44] ProgramInfo(global_size=(5, 1, 1), params=(%2,), globals=(0,), outs=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+46 Ops.SINK dtypes.void [30, 45]
 

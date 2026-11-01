@@ -1,9 +1,6 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 
-struct E_args { unsigned short* arg0; unsigned short* arg1; };
-__attribute__((min_vector_width(512))) void E(const struct E_args* args) {
-  unsigned short* data0_1 = args->arg0;
-  unsigned short* data1_1 = args->arg1;
+__attribute__((min_vector_width(512))) void E(unsigned short* restrict data0_1, unsigned short* restrict data1_1) {
   unsigned short val0 = (*(data1_1+0));
   float cast0 = __builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (unsigned short)(val0))))<<16u)));
   _Bool alu0 = (cast0!=((float)(-__builtin_inff())));

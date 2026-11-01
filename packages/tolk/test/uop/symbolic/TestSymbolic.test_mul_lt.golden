@@ -1,9 +1,9 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.bool [] False
 1 Ops.CONST dtypes.bool [] True
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
 3 Ops.STACK dtypes.void []
-4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 5), name="a", addrspace=AddrSpace.ALU)
 5 Ops.CONST dtypes.weakint [] 4
 6 Ops.MUL dtypes.weakint [4, 5]
 7 Ops.CONST dtypes.weakint [] 13
@@ -21,7 +21,7 @@
 19 Ops.CONST dtypes.weakint [] 16
 20 Ops.CMPLT dtypes.bool [6, 19]
 21 Ops.SINK dtypes.void [2, 20, 9]
-22 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-5, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+22 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-5, 5), name="a", addrspace=AddrSpace.ALU)
 23 Ops.MUL dtypes.weakint [22, 5]
 24 Ops.CONST dtypes.weakint [] -13
 25 Ops.CMPLT dtypes.bool [23, 24]
@@ -40,7 +40,7 @@
 38 Ops.SINK dtypes.void [2, 36, 37]
 39 Ops.SINK dtypes.void [15, 37, 37]
 40 Ops.SINK dtypes.void [17, 37, 37]
-41 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 18014398509481985), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+41 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 18014398509481985), name="a", addrspace=AddrSpace.ALU)
 42 Ops.CONST dtypes.weakint [] 2
 43 Ops.MUL dtypes.weakint [41, 42]
 44 Ops.CONST dtypes.weakint [] 18014398509481985
@@ -52,7 +52,7 @@
 50 Ops.SINK dtypes.void [49, 41, 41]
 51 Ops.SINK dtypes.void [15, 47, 47]
 52 Ops.SINK dtypes.void [17, 47, 47]
-53 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 18014398509481983), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+53 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 18014398509481983), name="a", addrspace=AddrSpace.ALU)
 54 Ops.CONST dtypes.weakint [] -2
 55 Ops.MUL dtypes.weakint [53, 54]
 56 Ops.CONST dtypes.weakint [] -18014398509481983

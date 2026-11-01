@@ -1,14 +1,14 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), name="a", addrspace=AddrSpace.ALU)
 2 Ops.CAST dtypes.f32 [1] dtypes.f32
-3 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+3 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), name="b", addrspace=AddrSpace.ALU)
 4 Ops.RECIP dtypes.f32 [3]
 5 Ops.MUL dtypes.f32 [2, 4]
 6 Ops.DIV dtypes.i32 [1, 3]
 7 Ops.MOD dtypes.i32 [1, 3]
-8 Ops.PARAM dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
-9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
+8 Ops.PARAM dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), name="x", addrspace=AddrSpace.ALU)
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), name="y", addrspace=AddrSpace.ALU)
 10 Ops.RECIP dtypes.f32 [9]
 11 Ops.MUL dtypes.f32 [8, 10]
 12 Ops.TRUNC dtypes.f32 [11]
@@ -26,7 +26,7 @@
 24 Ops.MUL dtypes.f32 [12, 9]
 25 Ops.MUL dtypes.f32 [24, 15]
 26 Ops.ADD dtypes.f32 [8, 25]
-27 Ops.PARAM dtypes.bool [0] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="p", addrspace=AddrSpace.ALU)
+27 Ops.PARAM dtypes.bool [0] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), name="p", addrspace=AddrSpace.ALU)
 28 Ops.CAST dtypes.i32 [27] dtypes.i32
 29 Ops.CAST dtypes.f32 [28] dtypes.f32
 30 Ops.RECIP dtypes.f32 [1]

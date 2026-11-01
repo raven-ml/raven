@@ -1,19 +1,18 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 
-struct E_16_args { unsigned char* arg0; unsigned char* arg1; int arg2; int arg3; };
-__attribute__((min_vector_width(512))) void E_16(const struct E_16_args* args) {
-  unsigned char* data0_16 = args->arg0;
-  unsigned char* data1_16 = args->arg1;
-  int block_lo_ = args->arg2;
-  int block_hi_ = args->arg3;
-  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
-    int alu0 = (block_lo_+Lidx0);
-    unsigned char val0 = (*(data1_16+alu0));
-    unsigned int cast0 = ((unsigned int)(((unsigned char)((val0&((unsigned char)(127u)))))));
+__attribute__((min_vector_width(512))) void E_16(unsigned char* restrict args_32) {
+  int val0 = (*(((int*)(args_32))+4));
+  int val1 = (*(((int*)(args_32))+5));
+  unsigned long val2 = (*(((unsigned long*)(args_32))+0));
+  unsigned long val3 = (*(((unsigned long*)(args_32))+1));
+  for (int Lidx0 = 0; Lidx0 < (val1-val0); Lidx0++) {
+    int alu0 = (val0+Lidx0);
+    unsigned char val4 = (*(((unsigned char*)(val3))+alu0));
+    unsigned int cast0 = ((unsigned int)(((unsigned char)((val4&((unsigned char)(127u)))))));
     unsigned int alu1 = (cast0<<20u);
     unsigned int alu2 = ((cast0==127u)?(alu1|2139095040u):(alu1+1006632960u));
     unsigned int alu3 = (((cast0>>3u)==0u)?0u:alu2);
-    unsigned int cast1 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)(((((unsigned int)(((unsigned char)((val0&((unsigned char)(128u)))))))<<24u)|alu3)))*2.0f)));
+    unsigned int cast1 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)(((((unsigned int)(((unsigned char)((val4&((unsigned char)(128u)))))))<<24u)|alu3)))*2.0f)));
     unsigned int alu4 = (cast1&2147483647u);
     unsigned int alu5 = ((alu4<1015021568u)?1015021568u:alu4);
     unsigned int alu6 = (alu5>>20u);
@@ -36,7 +35,7 @@ __attribute__((min_vector_width(512))) void E_16(const struct E_16_args* args) {
     unsigned int alu21 = ((alu16<1013972992u)?0u:(alu20^4294967295u));
     unsigned int alu22 = ((alu16==2139095040u)?127u:alu21);
     unsigned int alu23 = ((2139095040u<alu16)?127u:alu22);
-    *(data0_16+alu0) = ((unsigned char)((((alu15>>24u)&128u)|alu23)));
+    *(((unsigned char*)(val2))+alu0) = ((unsigned char)((((alu15>>24u)&128u)|alu23)));
   }
 }
 

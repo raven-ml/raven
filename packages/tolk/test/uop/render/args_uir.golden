@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 %0 = cast -5 : i32
 %1 = cast 12345678901234 : i64
 %2 = cast 200 : u8
@@ -32,13 +32,13 @@
 %30 = param 8 : dtype=f16 slot=2 device=CPU
 %31 = param 4 : dtype=i32 slot=4 volatile=true
 %32 = param () : dtype=i32 slot=5 bounds=[0,10] addrspace=ALU
-%33 = param () : "x" dtype=f32 slot=-1 bounds=[-1.0,1.0] multiple_of=1 addrspace=ALU
-%34 = param () : "g" dtype=bool slot=-1 bounds=[False,True] multiple_of=1 addrspace=ALU
+%33 = param () : "x" dtype=f32 slot=-1 bounds=[-1.0,1.0] addrspace=ALU
+%34 = param () : "g" dtype=bool slot=-1 bounds=[False,True] addrspace=ALU
 %35 = buffer 4 : dtype=f32 slot=6 addrspace=LOCAL
 %36 = buffer 4 : dtype=i32 slot=7 addrspace=REG
 %37 = alloc 4 : dtype=f32 slot=8
-%38 = param () : "a" dtype=weakint slot=-1 bounds=[1,5] multiple_of=1 addrspace=ALU
-%39 = param () : "a" dtype=weakint slot=-1 bounds=[1,5] multiple_of=1 addrspace=ALU
+%38 = param () : "a" dtype=weakint slot=-1 bounds=[1,5] addrspace=ALU
+%39 = param () : "a" dtype=weakint slot=-1 bounds=[1,5] addrspace=ALU
 %40 = range 4 : GLOBAL 0
 %41 = range 4 : LOCAL 0
 %42 = range 4 : WARP 0

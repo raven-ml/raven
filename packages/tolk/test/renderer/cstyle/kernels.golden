@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="NULL")
 2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="NULL")
@@ -507,7 +507,7 @@
 505 Ops.ADD dtypes.f32 [503, 410]
 506 Ops.STORE dtypes.void [504, 505]
 507 Ops.END dtypes.void [506, 500]
-508 Ops.PARAM dtypes.i32 [4] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 64), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+508 Ops.PARAM dtypes.i32 [4] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 64), name="n", addrspace=AddrSpace.ALU)
 509 Ops.SHL dtypes.i32 [508, 7]
 510 Ops.SINK dtypes.void [507] KernelInfo(name="E_(n*4)", optimized=True, split=(%509, 2, 3))
 511 Ops.LINEAR dtypes.void [28, 65, 29, 4, 497, 498, 409, 410, 499, 500, 501, 502, 503, 504, 505, 506, 507, 510] "clang_shrunk"
@@ -1255,8 +1255,8 @@
 1253 Ops.SINK dtypes.void [1252] KernelInfo(name="volatile_add")
 1254 Ops.LINEAR dtypes.void [9, 1245, 1246, 26, 36, 10, 1235, 1247, 1248, 1249, 1250, 1251, 1252, 1253] "clang_volatile"
 1255 Ops.PARAM dtypes.i64 [9] ParamArg(slot=0, dtype=dtypes.i64)
-1256 Ops.PARAM dtypes.i32 [4] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(0, 8), multiple_of=1, name="start", addrspace=AddrSpace.ALU)
-1257 Ops.PARAM dtypes.i64 [4] ParamArg(slot=2, dtype=dtypes.i64, vmin_vmax=(0, 1099511627776), multiple_of=1, name="offset", addrspace=AddrSpace.ALU)
+1256 Ops.PARAM dtypes.i32 [4] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(0, 8), name="start", addrspace=AddrSpace.ALU)
+1257 Ops.PARAM dtypes.i64 [4] ParamArg(slot=2, dtype=dtypes.i64, vmin_vmax=(0, 1099511627776), name="offset", addrspace=AddrSpace.ALU)
 1258 Ops.INDEX dtypes.i64 [1255, 1235]
 1259 Ops.ADD dtypes.i32 [1235, 1256]
 1260 Ops.CAST dtypes.i64 [1259] dtypes.i64
@@ -1303,7 +1303,7 @@
 1301 Ops.CONST dtypes.weakfloat [] 4.0
 1302 Ops.CAST dtypes.f32 [1301] dtypes.f32
 1303 Ops.STACK dtypes.f32 [410, 1298, 1300, 1302]
-1304 Ops.PARAM dtypes.i32 [4] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(0, 3), multiple_of=1, name="lane", addrspace=AddrSpace.ALU)
+1304 Ops.PARAM dtypes.i32 [4] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(0, 3), name="lane", addrspace=AddrSpace.ALU)
 1305 Ops.INDEX dtypes.f32 [1303, 1304]
 1306 Ops.STORE dtypes.void [1296, 1305]
 1307 Ops.SINK dtypes.void [1306] KernelInfo(name="lane")
@@ -1394,7 +1394,7 @@
 1392 Ops.LINEAR dtypes.void [26, 1317, 31, 32, 1318, 1319, 1320, 1321, 1322, 1323, 1324, 1325, 1326, 1327, 1328, 1329, 1330, 1331, 1332, 1333, 1334, 1335, 1336, 1337, 1338, 1339, 1340, 1341, 1342, 1343, 1344, 1345, 1346, 1347, 1348, 1349, 1350, 1351, 1352, 1353, 1354, 1355, 1356, 1357, 411, 1358, 1359, 1360, 1361, 1362, 1363, 1364, 1365, 1366, 1367, 1368, 1369, 1370, 1371, 1372, 1373, 1374, 1375, 1376, 1377, 1378, 1379, 1380, 1381, 1382, 1383, 1384, 1385, 1386, 1387, 1388, 1389, 1390, 1391] "clang_constants"
 1393 Ops.PARAM dtypes.f32 [9] ParamArg(slot=0, dtype=dtypes.f32, name="input:tile")
 1394 Ops.PARAM dtypes.f32 [9] ParamArg(slot=1, dtype=dtypes.f32, name="output:tile")
-1395 Ops.PARAM dtypes.i32 [4] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 8), multiple_of=1, name="for", addrspace=AddrSpace.ALU)
+1395 Ops.PARAM dtypes.i32 [4] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 8), name="for", addrspace=AddrSpace.ALU)
 1396 Ops.CAST dtypes.f32 [1395] dtypes.f32
 1397 Ops.INDEX dtypes.f32 [1393, 1235]
 1398 Ops.LOAD dtypes.f32 [1397]
@@ -4689,7 +4689,7 @@
 4687 Ops.STORE dtypes.void [4605, 4686]
 4688 Ops.SINK dtypes.void [4687] KernelInfo(name="where")
 4689 Ops.LINEAR dtypes.void [9, 1233, 31, 32, 10, 4605, 1234, 1311, 1312, 4679, 4680, 4681, 4682, 1375, 4683, 4684, 4685, 4686, 4687, 4688] "clang_vector_where_constants"
-4690 Ops.PARAM dtypes.i32 [4] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 1), multiple_of=1, name="p", addrspace=AddrSpace.ALU)
+4690 Ops.PARAM dtypes.i32 [4] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 1), name="p", addrspace=AddrSpace.ALU)
 4691 Ops.CMPLT dtypes.bool [4690, 36]
 4692 Ops.WHERE dtypes.f32 [4691, 1312, 4681]
 4693 Ops.STORE dtypes.void [4605, 4692]
@@ -5283,7 +5283,7 @@
 5281 Ops.AFTER dtypes.void [4, 5280]
 5282 Ops.SINK dtypes.void [5281] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), optimized=True)
 5283 Ops.LINEAR dtypes.void [75, 455, 466, 467, 9, 10, 5124, 7, 8, 5125, 5191, 5192, 5193, 5194, 4, 31, 32, 5195, 26, 36, 5196, 5197, 37, 38, 5198, 5199, 5200, 5201, 5202, 5203, 5204, 5205, 5206, 5207, 5208, 5209, 218, 219, 5210, 5211, 5212, 5213, 5214, 5215, 5216, 5217, 5218, 5219, 5220, 5221, 5222, 5223, 5224, 5225, 5226, 5227, 5228, 5229, 5230, 5231, 5232, 5233, 5234, 5235, 5236, 5237, 5238, 5239, 5240, 5241, 5242, 5243, 5244, 5245, 5246, 5247, 5248, 5249, 5250, 5251, 5252, 5253, 5254, 5255, 5256, 5257, 5258, 5259, 5260, 5261, 5262, 5263, 5264, 5265, 5266, 5267, 5268, 5269, 5270, 5271, 5272, 5273, 5274, 5275, 5276, 5277, 5278, 5279, 5186, 5280, 5281, 5282] "metal_idiv"
-5284 Ops.PARAM dtypes.i32 [4] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(1, 64), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+5284 Ops.PARAM dtypes.i32 [4] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(1, 64), name="n", addrspace=AddrSpace.ALU)
 5285 Ops.SHL dtypes.i32 [5284, 8]
 5286 Ops.SPECIAL dtypes.i32 [5285] "gidx0"
 5287 Ops.INDEX dtypes.f32 [29, 5286]

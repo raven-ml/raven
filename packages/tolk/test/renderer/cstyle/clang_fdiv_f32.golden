@@ -1,10 +1,6 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 
-struct fdiv_args { float* arg0; float* arg1; float* arg2; };
-__attribute__((min_vector_width(512))) void fdiv(const struct fdiv_args* args) {
-  float* data0_16 = args->arg0;
-  float* data1_16 = args->arg1;
-  float* data2_16 = args->arg2;
+__attribute__((min_vector_width(512))) void fdiv(float* restrict data0_16, float* restrict data1_16, float* restrict data2_16) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
     float val0 = (*(data1_16+Lidx0));
     float val1 = (*(data2_16+Lidx0));

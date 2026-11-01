@@ -1,11 +1,7 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
-struct mask_args { float* arg0; float* arg1; float* arg2; };
-__attribute__((min_vector_width(512))) void mask(const struct mask_args* args) {
-  float* data0_4 = args->arg0;
-  float* data1_4 = args->arg1;
-  float* data2_4 = args->arg2;
+__attribute__((min_vector_width(512))) void mask(float* restrict data0_4, float* restrict data1_4, float* restrict data2_4) {
   float4 val0 = (*((float4*)((data1_4+0))));
   float4 val1 = (*((float4*)((data2_4+0))));
   float4 cast0 = __builtin_convertvector(((val0<val1)&1), float4);

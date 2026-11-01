@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 op	dtype	operands	result
 Ops.ADD	dtypes.i8	[0, 0]	0
 Ops.ADD	dtypes.i8	[7, 3]	10
@@ -4352,6 +4352,11 @@ Ops.POW	dtypes.f64	[-2.0, 0.5]	nan
 Ops.POW	dtypes.f64	[-inf, 0.5]	inf
 Ops.POW	dtypes.f64	[-inf, 3.0]	-inf
 Ops.POW	dtypes.f64	[-inf, -0.5]	0.0
+Ops.CMPEQ	dtypes.bool	[9007199254740993, 9007199254740992.0]	False
+Ops.CMPEQ	dtypes.bool	[9007199254740992.0, 9007199254740993]	False
+Ops.CMPEQ	dtypes.bool	[1, 1.0]	True
+Ops.CMPEQ	dtypes.bool	[True, 1]	True
+Ops.CMPEQ	dtypes.bool	[0, -0.0]	True
 Ops.CMPLT	dtypes.bool	[9007199254740993, 9007199254740992.0]	False
 Ops.CMPLT	dtypes.bool	[9007199254740992.0, 9007199254740993]	True
 Ops.CMPLT	dtypes.bool	[1, 1.0]	False
@@ -4362,11 +4367,6 @@ Ops.CMPNE	dtypes.bool	[9007199254740992.0, 9007199254740993]	True
 Ops.CMPNE	dtypes.bool	[1, 1.0]	False
 Ops.CMPNE	dtypes.bool	[True, 1]	False
 Ops.CMPNE	dtypes.bool	[0, -0.0]	False
-Ops.CMPEQ	dtypes.bool	[9007199254740993, 9007199254740992.0]	False
-Ops.CMPEQ	dtypes.bool	[9007199254740992.0, 9007199254740993]	False
-Ops.CMPEQ	dtypes.bool	[1, 1.0]	True
-Ops.CMPEQ	dtypes.bool	[True, 1]	True
-Ops.CMPEQ	dtypes.bool	[0, -0.0]	True
 Ops.ADD	dtypes.weakint	[Invalid, 1]	Invalid
 Ops.ADD	dtypes.weakint	[1, Invalid]	Invalid
 Ops.MUL	dtypes.i32	[Invalid, 1]	Invalid

@@ -1,12 +1,6 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
-struct r_4_4_4_4_16_args { float* arg0; float* arg1; float* arg2; int arg3; int arg4; };
-__attribute__((min_vector_width(512))) void r_4_4_4_4_16(const struct r_4_4_4_4_16_args* args) {
-  float* data0_256 = args->arg0;
-  float* data1_256 = args->arg1;
-  float* data2_256 = args->arg2;
-  int block_lo_ = args->arg3;
-  int block_hi_ = args->arg4;
+__attribute__((min_vector_width(512))) void r_4_4_4_4_16(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256, const int block_lo_, const int block_hi_) {
   float buf0[16];
   for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
     int alu0 = (block_lo_+Lidx1);

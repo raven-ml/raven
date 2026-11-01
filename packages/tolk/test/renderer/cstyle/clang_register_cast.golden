@@ -1,8 +1,6 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 
-struct register_cast_args { unsigned long* arg0; };
-__attribute__((min_vector_width(512))) void register_cast(const struct register_cast_args* args) {
-  unsigned long* data0_1 = args->arg0;
+__attribute__((min_vector_width(512))) void register_cast(unsigned long* restrict data0_1) {
   unsigned int buf0[2];
   *(buf0+0) = 1u;
   *(buf0+1) = 2u;

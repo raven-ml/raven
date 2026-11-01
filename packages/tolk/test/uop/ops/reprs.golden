@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 name	arg
 none	None
 int	42
@@ -25,13 +25,13 @@ binary	b'\x7fELF\x00\n\'"'
 source	"int x = 'a';\n"
 param	ParamArg(3, dtypes.f32)
 scalar param	ParamArg(1, dtypes.i32)
-variable	ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name='n', addrspace=AddrSpace.ALU)
-bound variable	ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name='n', addrspace=AddrSpace.ALU, val=3)
+variable	ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), name='n', addrspace=AddrSpace.ALU)
+bound variable	ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), name='n', addrspace=AddrSpace.ALU, val=3)
 named local buffer	ParamArg(2, dtypes.i32, name='buf', addrspace=AddrSpace.LOCAL)
 volatile param	ParamArg(0, dtypes.u32, device='CPU', volatile=True)
 alloc	ParamArg(7, dtypes.f32, device='CPU')
-kernel	KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0, optimized=False, split=None)
-kernel with opts	KernelInfo(name='kern', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.TC, axis=0, arg=(-1, 2, 1)), Opt(op=OptOps.PADTO, axis=1, arg=32), Opt(op=OptOps.SWAP, axis=0, arg=1)), opts_to_apply=(Opt(op=OptOps.PADTO, axis=0, arg=4),), estimates=Estimates(ops=1, lds=2, mem=3), beam=2, optimized=False, split=None)
+kernel	KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0, optimized=False, kernel=True, split=None)
+kernel with opts	KernelInfo(name='kern', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.TC, axis=0, arg=(-1, 2, 1)), Opt(op=OptOps.PADTO, axis=1, arg=32), Opt(op=OptOps.SWAP, axis=0, arg=1)), opts_to_apply=(Opt(op=OptOps.PADTO, axis=0, arg=4),), estimates=Estimates(ops=1, lds=2, mem=3), beam=2, optimized=False, kernel=True, split=None)
 bufferize	BufferizeOpts(device='CPU', addrspace=AddrSpace.LOCAL, removable=False, broadcast=False)
 bufferize without device	BufferizeOpts(device=None, addrspace=AddrSpace.GLOBAL, removable=True, broadcast=False)
 call	CallInfo(None, 'f', False, False)

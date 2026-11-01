@@ -1,11 +1,11 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 %0 = param 16 : dtype=f32 slot=0
 %1 = special 4 : gidx0
 %2 = mul %1, 4
 %3 = range 4 : LOOP 0
 %4 = add %2, %3
 %5 = index %0, %4
-%6 = param () : "n" dtype=weakint slot=-1 bounds=[1,4] multiple_of=1 addrspace=ALU
+%6 = param () : "n" dtype=weakint slot=-1 bounds=[1,4] addrspace=ALU
 %7 = cmplt %3, %6
 %8 = param 16 : dtype=f32 slot=1
 %9 = index %8, %4

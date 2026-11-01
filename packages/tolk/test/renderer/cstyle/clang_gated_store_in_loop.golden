@@ -1,8 +1,6 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 
-struct test_args { int* arg0; };
-__attribute__((min_vector_width(512))) void test(const struct test_args* args) {
-  int* data0_16 = args->arg0;
+__attribute__((min_vector_width(512))) void test(int* restrict data0_16) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
     if ((Lidx0<8)) {
       *(data0_16+Lidx0) = Lidx0;

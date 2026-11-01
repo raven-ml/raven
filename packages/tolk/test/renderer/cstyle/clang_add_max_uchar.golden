@@ -1,11 +1,7 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 typedef unsigned char unsigned_char4 __attribute__((aligned(1),ext_vector_type(4)));
 typedef unsigned int unsigned_int4 __attribute__((aligned(4),ext_vector_type(4)));
-struct r_256_4_args { unsigned char* arg0; unsigned char* arg1; unsigned char* arg2; };
-__attribute__((min_vector_width(512))) void r_256_4(const struct r_256_4_args* args) {
-  unsigned char* data0_1 = args->arg0;
-  unsigned char* data1_1024 = args->arg1;
-  unsigned char* data2_1024 = args->arg2;
+__attribute__((min_vector_width(512))) void r_256_4(unsigned char* restrict data0_1, unsigned char* restrict data1_1024, unsigned char* restrict data2_1024) {
   unsigned char buf0[1];
   *(buf0+0) = ((unsigned char)(0u));
   for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {

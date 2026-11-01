@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 299
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -16,9 +16,19 @@
 14 Ops.ADD dtypes.f32 [11, 13]
 15 Ops.STORE dtypes.void [4, 14]
 16 Ops.SINK dtypes.void [15] KernelInfo(name="E_299", optimized=True)
-17 Ops.SINK dtypes.void [15] KernelInfo(name="E_299", estimates=Estimates(ops=897, lds=1196, mem=1196), optimized=True)
-18 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 13, 9, 10, 11, 14, 15, 16]
-19 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct E_299_args { device float* arg0; };\nkernel void E_299(constant struct E_299_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_299 = args->arg0;\n  int gidx0 = gid.x; /* 299 */\n  *(data0_299+gidx0) = ((((float)((gidx0+1)))*3.5f)+2.0f);\n}"
-20 Ops.PROGRAM dtypes.void [17, 18, 19] ProgramInfo(global_size=(299, 1, 1), params=(%1,), globals=(0,), outs=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
-21 Ops.SINK dtypes.void [16, 20]
+17 Ops.CONST dtypes.weakint [] 8
+18 Ops.PARAM dtypes.u8 [17] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+19 Ops.BITCAST dtypes.u64 [18] dtypes.u64
+20 Ops.CONST dtypes.weakint [] 0
+21 Ops.CAST dtypes.i32 [20] dtypes.i32
+22 Ops.INDEX dtypes.u64 [19, 21]
+23 Ops.LOAD dtypes.u64 [22]
+24 Ops.REFPARAM dtypes.f32 [0, 23] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+25 Ops.INDEX dtypes.f32 [24, 3]
+26 Ops.STORE dtypes.void [25, 14]
+27 Ops.SINK dtypes.void [26] KernelInfo(name="E_299", estimates=Estimates(ops=897, lds=1196, mem=1196), optimized=True)
+28 Ops.LINEAR dtypes.void [17, 18, 20, 21, 19, 22, 23, 0, 2, 3, 24, 25, 5, 6, 7, 8, 12, 13, 9, 10, 11, 14, 26, 27]
+29 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void E_299(device unsigned char* args_8, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  unsigned long val0 = (*(((device unsigned long*)(args_8))+0));\n  int gidx0 = gid.x; /* 299 */\n  *(((device float*)(val0))+gidx0) = ((((float)((gidx0+1)))*3.5f)+2.0f);\n}"
+30 Ops.PROGRAM dtypes.void [27, 28, 29] ProgramInfo(global_size=(299, 1, 1), params=(%1,), globals=(0,), outs=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+31 Ops.SINK dtypes.void [16, 30]
 

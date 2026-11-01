@@ -1,9 +1,9 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CONST dtypes.weakint [] 10
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
 3 Ops.STACK dtypes.void []
-4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-10, 10), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-10, 10), name="x", addrspace=AddrSpace.ALU)
 5 Ops.CMPLT dtypes.bool [4, 0]
 6 Ops.WHERE dtypes.weakint [5, 0, 4]
 7 Ops.MAX dtypes.weakint [4, 0]
@@ -18,5 +18,26 @@
 16 Ops.CMPLT dtypes.bool [0, 4]
 17 Ops.WHERE dtypes.weakint [16, 4, 0]
 18 Ops.SINK dtypes.void [2, 17, 7]
-19 Ops.SINK dtypes.void [8, 11, 13, 15, 18]
+19 Ops.CONST dtypes.weakint [] 13
+20 Ops.CUSTOM dtypes.void [0, 19] ("sym", dtypes.void)
+21 Ops.CONST dtypes.weakint [] 3
+22 Ops.ADD dtypes.weakint [4, 21]
+23 Ops.CMPLT dtypes.bool [22, 0]
+24 Ops.WHERE dtypes.weakint [23, 0, 22]
+25 Ops.MAX dtypes.weakint [22, 0]
+26 Ops.SINK dtypes.void [20, 24, 25]
+27 Ops.CUSTOM dtypes.void [0, 19] ("commutative", dtypes.void)
+28 Ops.SINK dtypes.void [27, 25, 25]
+29 Ops.CUSTOM dtypes.void [0, 19] ("simplify", dtypes.void)
+30 Ops.SINK dtypes.void [29, 25, 25]
+31 Ops.CONST dtypes.weakint [] 5
+32 Ops.CUSTOM dtypes.void [9, 31] ("sym", dtypes.void)
+33 Ops.CMPLT dtypes.bool [31, 4]
+34 Ops.WHERE dtypes.weakint [33, 31, 4]
+35 Ops.SINK dtypes.void [32, 34, 34]
+36 Ops.CUSTOM dtypes.void [9, 31] ("commutative", dtypes.void)
+37 Ops.SINK dtypes.void [36, 34, 34]
+38 Ops.CUSTOM dtypes.void [9, 31] ("simplify", dtypes.void)
+39 Ops.SINK dtypes.void [38, 34, 34]
+40 Ops.SINK dtypes.void [8, 11, 13, 15, 18, 26, 28, 30, 35, 37, 39]
 

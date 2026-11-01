@@ -1,18 +1,18 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.STACK dtypes.void []
-3 Ops.PARAM dtypes.weakint [2] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 7), multiple_of=1, name="j", addrspace=AddrSpace.ALU)
-4 Ops.PARAM dtypes.weakint [2] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 63), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
+3 Ops.PARAM dtypes.weakint [2] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 7), name="j", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.weakint [2] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 63), name="i", addrspace=AddrSpace.ALU)
 5 Ops.INDEX dtypes.f32 [1, 3, 4]
 6 Ops.CONST dtypes.weakfloat [] 0.0
 7 Ops.CAST dtypes.f32 [6] dtypes.f32
-8 Ops.PARAM dtypes.bool [2] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="g", addrspace=AddrSpace.ALU)
+8 Ops.PARAM dtypes.bool [2] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), name="g", addrspace=AddrSpace.ALU)
 9 Ops.LOAD dtypes.f32 [5, 7, 8]
 10 Ops.CONST dtypes.weakfloat [] 1.0
 11 Ops.CAST dtypes.f32 [10] dtypes.f32
 12 Ops.STORE dtypes.void [5, 11, 8]
-13 Ops.PARAM dtypes.bool [2] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="h", addrspace=AddrSpace.ALU)
+13 Ops.PARAM dtypes.bool [2] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), name="h", addrspace=AddrSpace.ALU)
 14 Ops.CONST dtypes.bool [] Invalid
 15 Ops.WHERE dtypes.weakint [13, 4, 14]
 16 Ops.INDEX dtypes.f32 [1, 3, 15]
@@ -24,7 +24,7 @@
 22 Ops.LOAD dtypes.f32 [21, 7, 8]
 23 Ops.INDEX dtypes.f32 [1, 4]
 24 Ops.LOAD dtypes.f32 [23, 7, 8]
-25 Ops.PARAM dtypes.f32 [2] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-1.0, 1.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+25 Ops.PARAM dtypes.f32 [2] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-1.0, 1.0), name="x", addrspace=AddrSpace.ALU)
 26 Ops.STORE dtypes.void [23, 25, 8]
 27 Ops.CONST dtypes.weakint [] 4
 28 Ops.SHRINK dtypes.f32 [1, 4, 27]
@@ -52,7 +52,7 @@
 50 Ops.CAST dtypes.f64 [24] dtypes.f64
 51 Ops.CAST dtypes.f64 [25] dtypes.f64
 52 Ops.WHERE dtypes.f64 [8, 50, 51]
-53 Ops.PARAM dtypes.f64 [2] ParamArg(slot=-1, dtype=dtypes.f64, vmin_vmax=(-1.0, 1.0), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
+53 Ops.PARAM dtypes.f64 [2] ParamArg(slot=-1, dtype=dtypes.f64, vmin_vmax=(-1.0, 1.0), name="y", addrspace=AddrSpace.ALU)
 54 Ops.CAST dtypes.f32 [53] dtypes.f32
 55 Ops.LOAD dtypes.f32 [23, 54, 8]
 56 Ops.CAST dtypes.f64 [55] dtypes.f64

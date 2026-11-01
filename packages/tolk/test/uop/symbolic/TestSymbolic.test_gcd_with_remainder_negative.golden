@@ -1,0 +1,50 @@
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
+0 Ops.CONST dtypes.weakint [] -14
+1 Ops.CONST dtypes.weakint [] 22
+2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-3, 5), name="a", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakint [] 18
+6 Ops.MUL dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 1
+8 Ops.ADD dtypes.weakint [6, 7]
+9 Ops.CONST dtypes.weakint [] 4
+10 Ops.DIV dtypes.weakint [8, 9]
+11 Ops.CONST dtypes.weakint [] 9
+12 Ops.MUL dtypes.weakint [4, 11]
+13 Ops.CONST dtypes.weakint [] 2
+14 Ops.DIV dtypes.weakint [12, 13]
+15 Ops.SINK dtypes.void [2, 10, 14]
+16 Ops.CONST dtypes.weakint [] -3
+17 Ops.CONST dtypes.weakint [] 5
+18 Ops.CUSTOM dtypes.void [16, 17] ("simplify", dtypes.void)
+19 Ops.SINK dtypes.void [18, 4, 4]
+20 Ops.CUSTOM dtypes.void [0, 1] ("commutative", dtypes.void)
+21 Ops.SINK dtypes.void [20, 14, 14]
+22 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
+23 Ops.SINK dtypes.void [22, 14, 14]
+24 Ops.CONST dtypes.weakint [] 15
+25 Ops.CUSTOM dtypes.void [16, 24] ("sym", dtypes.void)
+26 Ops.CONST dtypes.weakint [] 12
+27 Ops.MUL dtypes.weakint [4, 26]
+28 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 7), name="b", addrspace=AddrSpace.ALU)
+29 Ops.MUL dtypes.weakint [28, 5]
+30 Ops.ADD dtypes.weakint [27, 29]
+31 Ops.ADD dtypes.weakint [30, 17]
+32 Ops.DIV dtypes.weakint [31, 26]
+33 Ops.MUL dtypes.weakint [4, 13]
+34 Ops.CONST dtypes.weakint [] 3
+35 Ops.MUL dtypes.weakint [28, 34]
+36 Ops.ADD dtypes.weakint [33, 35]
+37 Ops.DIV dtypes.weakint [36, 13]
+38 Ops.SINK dtypes.void [25, 32, 37]
+39 Ops.CONST dtypes.weakint [] 0
+40 Ops.CONST dtypes.weakint [] 7
+41 Ops.CUSTOM dtypes.void [39, 40] ("simplify", dtypes.void)
+42 Ops.SINK dtypes.void [41, 28, 28]
+43 Ops.CUSTOM dtypes.void [16, 24] ("commutative", dtypes.void)
+44 Ops.SINK dtypes.void [43, 37, 37]
+45 Ops.CUSTOM dtypes.void [16, 24] ("simplify", dtypes.void)
+46 Ops.SINK dtypes.void [45, 37, 37]
+47 Ops.SINK dtypes.void [15, 19, 21, 23, 38, 42, 44, 46]
+

@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 device	renderer	arch	supports_float4	has_local	has_shared	global_max	local_max	global_prod_max	shared_max	tensor_cores	code_for_op	supported	cachekey
 CPU	CLANG	x86_64,x86-64	True	False	True	1 0 0	2415919103 2415919103 2415919103	-	32768	-	ADD AND CMPEQ CMPLT CMPNE FDIV MUL MULACC NEG OR SHL SHR SQRT SUB TRUNC TRUNCDIV TRUNCMOD WHERE XOR	dtypes.f16 dtypes.bf16 dtypes.f32 dtypes.f64 dtypes.u8 dtypes.u16 dtypes.u32 dtypes.u64 dtypes.i8 dtypes.i16 dtypes.i32 dtypes.i64 dtypes.bool	compile_clang_obj_x86_64_x86-64
 CPU	CLANG	x86_64,znver2,avx	True	False	True	1 0 0	2415919103 2415919103 2415919103	-	32768	-	ADD AND CMPEQ CMPLT CMPNE FDIV MUL MULACC NEG OR SHL SHR SQRT SUB TRUNC TRUNCDIV TRUNCMOD WHERE XOR	dtypes.f16 dtypes.bf16 dtypes.f32 dtypes.f64 dtypes.u8 dtypes.u16 dtypes.u32 dtypes.u64 dtypes.i8 dtypes.i16 dtypes.i32 dtypes.i64 dtypes.bool	compile_clang_obj_x86_64_znver2_avx

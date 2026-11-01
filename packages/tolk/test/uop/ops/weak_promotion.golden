@@ -1,23 +1,23 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), name="a", addrspace=AddrSpace.ALU)
 2 Ops.CONST dtypes.weakint [] 1
 3 Ops.ADD dtypes.i32 [1, 2]
 4 Ops.CAST dtypes.weakfloat [1] dtypes.weakfloat
 5 Ops.CONST dtypes.weakfloat [] 1.5
 6 Ops.ADD dtypes.weakfloat [4, 5]
-7 Ops.PARAM dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+7 Ops.PARAM dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), name="x", addrspace=AddrSpace.ALU)
 8 Ops.CONST dtypes.weakfloat [] 2.0
 9 Ops.ADD dtypes.f32 [7, 8]
-10 Ops.PARAM dtypes.f16 [0] ParamArg(slot=-1, dtype=dtypes.f16, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+10 Ops.PARAM dtypes.f16 [0] ParamArg(slot=-1, dtype=dtypes.f16, vmin_vmax=(-10.0, 10.0), name="x", addrspace=AddrSpace.ALU)
 11 Ops.CAST dtypes.f16 [1] dtypes.f16
 12 Ops.ADD dtypes.f16 [10, 11]
 13 Ops.CONST dtypes.weakfloat [] 1.0
 14 Ops.CONST dtypes.weakfloat [] 2.5
 15 Ops.ADD dtypes.weakfloat [13, 14]
-16 Ops.PARAM dtypes.i8 [0] ParamArg(slot=-1, dtype=dtypes.i8, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+16 Ops.PARAM dtypes.i8 [0] ParamArg(slot=-1, dtype=dtypes.i8, vmin_vmax=(0, 10), name="a", addrspace=AddrSpace.ALU)
 17 Ops.CAST dtypes.i16 [16] dtypes.i16
-18 Ops.PARAM dtypes.u8 [0] ParamArg(slot=-1, dtype=dtypes.u8, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+18 Ops.PARAM dtypes.u8 [0] ParamArg(slot=-1, dtype=dtypes.u8, vmin_vmax=(0, 10), name="b", addrspace=AddrSpace.ALU)
 19 Ops.CAST dtypes.i16 [18] dtypes.i16
 20 Ops.ADD dtypes.i16 [17, 19]
 21 Ops.ADD dtypes.i8 [16, 2]

@@ -1,9 +1,7 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 #include <metal_stdlib>
 using namespace metal;
-struct unbounded_args { device int* arg0; };
-kernel void unbounded(constant struct unbounded_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device int* data0_1 = args->arg0;
+kernel void unbounded(device int* data0_1, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
   for (;;) {
     int val0 = (*(data0_1+0));
     *(data0_1+0) = (val0+1);

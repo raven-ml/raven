@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -49,9 +49,53 @@
 47 Ops.STORE dtypes.void [9, 46]
 48 Ops.AFTER dtypes.void [0, 47]
 49 Ops.SINK dtypes.void [48] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), optimized=True)
-50 Ops.SINK dtypes.void [48] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=48, lds=128, mem=128), optimized=True)
-51 Ops.LINEAR dtypes.void [1, 2, 10, 17, 3, 4, 5, 6, 7, 8, 11, 12, 18, 19, 0, 13, 14, 15, 24, 25, 26, 32, 38, 39, 40, 20, 28, 34, 42, 16, 21, 22, 23, 27, 29, 30, 31, 33, 35, 36, 37, 41, 43, 44, 45, 46, 9, 47, 48, 49]
-52 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct E_4_4_args { device float* arg0; device half* arg1; device half* arg2; };\nkernel void E_4_4(constant struct E_4_4_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_16 = args->arg0;\n  device half* data1_16 = args->arg1;\n  device half* data2_16 = args->arg2;\n  int lidx0 = lid.x; /* 4 */\n  int alu0 = (lidx0<<2);\n  half4 val0 = (*((device half4*)((data1_16+alu0))));\n  half4 val1 = (*((device half4*)((data2_16+alu0))));\n  *((device float4*)((data0_16+alu0))) = float4(((float)((exp2(val0.x)+sqrt(val1.x)))),((float)((exp2(val0.y)+sqrt(val1.y)))),((float)((exp2(val0.z)+sqrt(val1.z)))),((float)((exp2(val0.w)+sqrt(val1.w)))));\n}"
-53 Ops.PROGRAM dtypes.void [50, 51, 52] ProgramInfo(local_size=(4, 1, 1), params=(%2, %10, %17), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
-54 Ops.SINK dtypes.void [49, 53]
+50 Ops.CONST dtypes.weakint [] 24
+51 Ops.PARAM dtypes.u8 [50] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+52 Ops.BITCAST dtypes.u64 [51] dtypes.u64
+53 Ops.INDEX dtypes.u64 [52, 14]
+54 Ops.LOAD dtypes.u64 [53]
+55 Ops.REFPARAM dtypes.f32 [1, 54] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+56 Ops.SHRINK dtypes.f32 [55, 8, 4]
+57 Ops.INDEX dtypes.u64 [52, 25]
+58 Ops.LOAD dtypes.u64 [57]
+59 Ops.REFPARAM dtypes.f16 [1, 58] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
+60 Ops.SHRINK dtypes.f16 [59, 8, 4]
+61 Ops.LOAD dtypes.f16 [60]
+62 Ops.INDEX dtypes.f16 [61, 14]
+63 Ops.EXP2 dtypes.f16 [62]
+64 Ops.INDEX dtypes.u64 [52, 7]
+65 Ops.LOAD dtypes.u64 [64]
+66 Ops.REFPARAM dtypes.f16 [1, 65] ParamArg(slot=2, dtype=dtypes.f16, device="CPU")
+67 Ops.SHRINK dtypes.f16 [66, 8, 4]
+68 Ops.LOAD dtypes.f16 [67]
+69 Ops.INDEX dtypes.f16 [68, 14]
+70 Ops.SQRT dtypes.f16 [69]
+71 Ops.ADD dtypes.f16 [63, 70]
+72 Ops.CAST dtypes.f32 [71] dtypes.f32
+73 Ops.INDEX dtypes.f16 [61, 25]
+74 Ops.EXP2 dtypes.f16 [73]
+75 Ops.INDEX dtypes.f16 [68, 25]
+76 Ops.SQRT dtypes.f16 [75]
+77 Ops.ADD dtypes.f16 [74, 76]
+78 Ops.CAST dtypes.f32 [77] dtypes.f32
+79 Ops.INDEX dtypes.f16 [61, 7]
+80 Ops.EXP2 dtypes.f16 [79]
+81 Ops.INDEX dtypes.f16 [68, 7]
+82 Ops.SQRT dtypes.f16 [81]
+83 Ops.ADD dtypes.f16 [80, 82]
+84 Ops.CAST dtypes.f32 [83] dtypes.f32
+85 Ops.INDEX dtypes.f16 [61, 39]
+86 Ops.EXP2 dtypes.f16 [85]
+87 Ops.INDEX dtypes.f16 [68, 39]
+88 Ops.SQRT dtypes.f16 [87]
+89 Ops.ADD dtypes.f16 [86, 88]
+90 Ops.CAST dtypes.f32 [89] dtypes.f32
+91 Ops.STACK dtypes.f32 [72, 78, 84, 90]
+92 Ops.STORE dtypes.void [56, 91]
+93 Ops.AFTER dtypes.void [0, 92]
+94 Ops.SINK dtypes.void [93] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=48, lds=128, mem=128), optimized=True)
+95 Ops.LINEAR dtypes.void [50, 51, 13, 14, 52, 53, 54, 24, 25, 57, 58, 6, 7, 64, 65, 3, 4, 5, 1, 59, 8, 60, 61, 66, 67, 68, 55, 0, 62, 73, 79, 38, 39, 85, 69, 75, 81, 87, 63, 70, 71, 72, 74, 76, 77, 78, 80, 82, 83, 84, 86, 88, 89, 90, 91, 56, 92, 93, 94]
+96 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void E_4_4(device unsigned char* args_24, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  unsigned long val0 = (*(((device unsigned long*)(args_24))+0));\n  unsigned long val1 = (*(((device unsigned long*)(args_24))+1));\n  unsigned long val2 = (*(((device unsigned long*)(args_24))+2));\n  int lidx0 = lid.x; /* 4 */\n  int alu0 = (lidx0<<2);\n  half4 val3 = (*((device half4*)((((device half*)(val1))+alu0))));\n  half4 val4 = (*((device half4*)((((device half*)(val2))+alu0))));\n  *((device float4*)((((device float*)(val0))+alu0))) = float4(((float)((exp2(val3.x)+sqrt(val4.x)))),((float)((exp2(val3.y)+sqrt(val4.y)))),((float)((exp2(val3.z)+sqrt(val4.z)))),((float)((exp2(val3.w)+sqrt(val4.w)))));\n}"
+97 Ops.PROGRAM dtypes.void [94, 95, 96] ProgramInfo(local_size=(4, 1, 1), params=(%2, %10, %17), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+98 Ops.SINK dtypes.void [49, 97]
 

@@ -1,14 +1,14 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CONST dtypes.weakint [] 6
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
 3 Ops.STACK dtypes.void []
-4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 4), multiple_of=1, name="v3", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 4), name="v3", addrspace=AddrSpace.ALU)
 5 Ops.CONST dtypes.weakint [] 3
 6 Ops.ADD dtypes.weakint [4, 5]
 7 Ops.CONST dtypes.weakint [] 7
 8 Ops.MOD dtypes.weakint [6, 7]
-9 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 8), multiple_of=1, name="v2", addrspace=AddrSpace.ALU)
+9 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 8), name="v2", addrspace=AddrSpace.ALU)
 10 Ops.CONST dtypes.weakint [] -2
 11 Ops.ADD dtypes.weakint [9, 10]
 12 Ops.ADD dtypes.weakint [8, 11]

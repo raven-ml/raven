@@ -1,9 +1,9 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.bool [] False
 1 Ops.CONST dtypes.bool [] True
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
 3 Ops.STACK dtypes.void []
-4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), name="a", addrspace=AddrSpace.ALU)
 5 Ops.CONST dtypes.weakint [] 2
 6 Ops.CMPLT dtypes.bool [4, 5]
 7 Ops.SINK dtypes.void [2, 6, 6]
@@ -33,7 +33,7 @@
 31 Ops.CMPEQ dtypes.bool [26, 1]
 32 Ops.CMPEQ dtypes.bool [31, 0]
 33 Ops.SINK dtypes.void [2, 32, 27]
-34 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+34 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), name="b", addrspace=AddrSpace.ALU)
 35 Ops.ADD dtypes.weakint [4, 34]
 36 Ops.CMPLT dtypes.bool [35, 21]
 37 Ops.CMPEQ dtypes.bool [36, 1]
@@ -61,7 +61,7 @@
 59 Ops.SINK dtypes.void [2, 57, 58]
 60 Ops.SINK dtypes.void [12, 58, 58]
 61 Ops.SINK dtypes.void [14, 58, 58]
-62 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-3, 3), multiple_of=1, name="d", addrspace=AddrSpace.ALU)
+62 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-3, 3), name="d", addrspace=AddrSpace.ALU)
 63 Ops.MUL dtypes.weakint [62, 45]
 64 Ops.ADD dtypes.weakint [44, 63]
 65 Ops.CMPLT dtypes.bool [64, 21]
@@ -76,7 +76,7 @@
 74 Ops.CMPEQ dtypes.bool [65, 0]
 75 Ops.SINK dtypes.void [12, 74, 70]
 76 Ops.SINK dtypes.void [14, 70, 70]
-77 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
+77 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), name="c", addrspace=AddrSpace.ALU)
 78 Ops.MUL dtypes.weakint [77, 5]
 79 Ops.ADD dtypes.weakint [35, 78]
 80 Ops.CMPLT dtypes.bool [79, 21]

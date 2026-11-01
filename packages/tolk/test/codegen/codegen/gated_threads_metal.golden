@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -11,13 +11,19 @@
 9 Ops.CMPNE dtypes.bool [3, 8]
 10 Ops.STORE dtypes.void [4, 6, 9]
 11 Ops.SINK dtypes.void [10] KernelInfo(optimized=True)
-12 Ops.STORE dtypes.void [4, 6]
-13 Ops.SINK dtypes.void [12] KernelInfo(estimates=Estimates(ops=4, lds=16, mem=16), optimized=True)
-14 Ops.IF dtypes.void [9, 4]
-15 Ops.ENDIF dtypes.void [14]
-16 Ops.SINK dtypes.void [12] KernelInfo(optimized=True)
-17 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 7, 8, 5, 6, 9, 14, 12, 15, 16]
-18 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct test_args { device int* arg0; };\nkernel void test(constant struct test_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_4 = args->arg0;\n  int lidx0 = lid.x; /* 4 */\n  if ((lidx0!=0)) {\n    *(data0_4+lidx0) = 1;\n  }\n}"
-19 Ops.PROGRAM dtypes.void [13, 17, 18] ProgramInfo(local_size=(4, 1, 1), params=(%1,), globals=(0,), outs=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
-20 Ops.SINK dtypes.void [11, 19]
+12 Ops.CONST dtypes.weakint [] 8
+13 Ops.PARAM dtypes.u8 [12] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+14 Ops.BITCAST dtypes.u64 [13] dtypes.u64
+15 Ops.INDEX dtypes.u64 [14, 8]
+16 Ops.LOAD dtypes.u64 [15]
+17 Ops.REFPARAM dtypes.i32 [0, 16] ParamArg(slot=0, dtype=dtypes.i32)
+18 Ops.INDEX dtypes.i32 [17, 3]
+19 Ops.STORE dtypes.void [18, 6]
+20 Ops.SINK dtypes.void [19] KernelInfo(estimates=Estimates(ops=4, lds=16, mem=16), optimized=True)
+21 Ops.IF dtypes.void [9, 18]
+22 Ops.ENDIF dtypes.void [21]
+23 Ops.LINEAR dtypes.void [12, 13, 7, 8, 14, 15, 16, 0, 2, 3, 17, 18, 5, 6, 9, 21, 19, 22, 20]
+24 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void test(device unsigned char* args_8, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  unsigned long val0 = (*(((device unsigned long*)(args_8))+0));\n  int lidx0 = lid.x; /* 4 */\n  if ((lidx0!=0)) {\n    *(((device int*)(val0))+lidx0) = 1;\n  }\n}"
+25 Ops.PROGRAM dtypes.void [20, 23, 24] ProgramInfo(local_size=(4, 1, 1), params=(%1,), globals=(0,), outs=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+26 Ops.SINK dtypes.void [11, 25]
 

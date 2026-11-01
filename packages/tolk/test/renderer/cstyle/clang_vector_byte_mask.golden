@@ -1,14 +1,8 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 typedef signed char signed_char4 __attribute__((aligned(1),ext_vector_type(4)));
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
-struct where_args { float* arg0; signed char* arg1; signed char* arg2; float* arg3; float* arg4; };
-__attribute__((min_vector_width(512))) void where(const struct where_args* args) {
-  float* data0_4 = args->arg0;
-  signed char* data1_4 = args->arg1;
-  signed char* data2_4 = args->arg2;
-  float* data3_4 = args->arg3;
-  float* data4_4 = args->arg4;
+__attribute__((min_vector_width(512))) void where(float* restrict data0_4, signed char* restrict data1_4, signed char* restrict data2_4, float* restrict data3_4, float* restrict data4_4) {
   signed_char4 val0 = (*((signed_char4*)((data1_4+0))));
   signed_char4 val1 = (*((signed_char4*)((data2_4+0))));
   float4 val2 = (*((float4*)((data3_4+0))));

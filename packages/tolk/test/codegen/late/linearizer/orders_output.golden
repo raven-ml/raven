@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.SINK dtypes.void []
 1 Ops.LINEAR dtypes.void [0]
 2 Ops.CONST dtypes.weakint [] 16
@@ -17,8 +17,8 @@
 15 Ops.SINK dtypes.void [14]
 16 Ops.LINEAR dtypes.void [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 17 Ops.STACK dtypes.void []
-18 Ops.PARAM dtypes.i32 [17] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 9), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-19 Ops.PARAM dtypes.i32 [17] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 9), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+18 Ops.PARAM dtypes.i32 [17] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 9), name="a", addrspace=AddrSpace.ALU)
+19 Ops.PARAM dtypes.i32 [17] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 9), name="b", addrspace=AddrSpace.ALU)
 20 Ops.ADD dtypes.i32 [19, 18]
 21 Ops.SINK dtypes.void [20]
 22 Ops.LINEAR dtypes.void [17, 18, 19, 20, 21]

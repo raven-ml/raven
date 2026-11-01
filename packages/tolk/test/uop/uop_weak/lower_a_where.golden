@@ -1,11 +1,11 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.bool [0] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
-2 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 4), multiple_of=1, name="w", addrspace=AddrSpace.ALU)
+1 Ops.PARAM dtypes.bool [0] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), name="c", addrspace=AddrSpace.ALU)
+2 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 4), name="w", addrspace=AddrSpace.ALU)
 3 Ops.CONST dtypes.weakint [] 3
 4 Ops.WHERE dtypes.weakint [1, 2, 3]
 5 Ops.SINK dtypes.void [4]
-6 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 4), multiple_of=1, name="w", addrspace=AddrSpace.ALU)
+6 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 4), name="w", addrspace=AddrSpace.ALU)
 7 Ops.WHERE dtypes.i32 [1, 6, 3]
 8 Ops.SINK dtypes.void [7]
 9 Ops.SINK dtypes.void [5, 8]

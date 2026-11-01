@@ -1,7 +1,7 @@
 # tolk
 
 tolk is tinygrad's compiler, ported to OCaml at commit
-`b98af4a4bbfab0afec39b37c122f792d4120812e`. It is two libraries. `tolk`
+`6b7b018dae9ec20264f2a4b6a1322da1bb49b141`. It is two libraries. `tolk`
 is a compiler: it depends on no runtime, takes a sink and a target, and
 returns data. That data is source, binaries and memory plans, and the
 schedules of calls that run them. `tolk.engine` runs that data on rig, which

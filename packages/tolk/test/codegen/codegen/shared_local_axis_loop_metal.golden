@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -21,21 +21,33 @@
 19 Ops.CMPEQ dtypes.bool [8, 3]
 20 Ops.STORE dtypes.void [4, 18, 19]
 21 Ops.SINK dtypes.void [20] KernelInfo(optimized=True)
-22 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=10, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
-23 Ops.AFTER dtypes.i32 [22, 8]
-24 Ops.INDEX dtypes.i32 [23, 3]
-25 Ops.STORE dtypes.void [24, 13]
-26 Ops.BARRIER dtypes.void [25]
-27 Ops.AFTER dtypes.i32 [22, 26]
-28 Ops.INDEX dtypes.i32 [27, 3]
-29 Ops.LOAD dtypes.i32 [28]
-30 Ops.STORE dtypes.void [4, 29]
-31 Ops.SINK dtypes.void [30] KernelInfo(estimates=Estimates(ops=2, lds=28, mem=8), optimized=True)
-32 Ops.IF dtypes.void [19, 4]
-33 Ops.ENDIF dtypes.void [32]
-34 Ops.SINK dtypes.void [30] KernelInfo(optimized=True)
-35 Ops.LINEAR dtypes.void [0, 11, 1, 22, 2, 3, 12, 13, 6, 7, 8, 23, 24, 25, 26, 27, 28, 29, 4, 19, 32, 30, 33, 34]
-36 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct test_args { device int* arg0; device int* arg1; };\nkernel void test(constant struct test_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_1 = args->arg0;\n  device int* data1_1 = args->arg1;\n  threadgroup __attribute__((aligned(16))) int buf0[1];\n  int val0 = (*(data0_1+0));\n  int lidx0 = lid.x; /* 2 */\n  *(buf0+0) = val0;\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  int val1 = (*(buf0+0));\n  if ((lidx0==0)) {\n    *(data1_1+0) = val1;\n  }\n}"
-37 Ops.PROGRAM dtypes.void [31, 35, 36] ProgramInfo(local_size=(2, 1, 1), params=(%11, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
-38 Ops.SINK dtypes.void [21, 37]
+22 Ops.CONST dtypes.weakint [] 16
+23 Ops.PARAM dtypes.u8 [22] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+24 Ops.BITCAST dtypes.u64 [23] dtypes.u64
+25 Ops.CAST dtypes.i32 [0] dtypes.i32
+26 Ops.INDEX dtypes.u64 [24, 25]
+27 Ops.LOAD dtypes.u64 [26]
+28 Ops.REFPARAM dtypes.i32 [0, 27] ParamArg(slot=1, dtype=dtypes.i32)
+29 Ops.INDEX dtypes.i32 [28, 3]
+30 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=10, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
+31 Ops.AFTER dtypes.i32 [30, 8]
+32 Ops.INDEX dtypes.i32 [31, 3]
+33 Ops.INDEX dtypes.u64 [24, 3]
+34 Ops.LOAD dtypes.u64 [33]
+35 Ops.REFPARAM dtypes.i32 [0, 34] ParamArg(slot=0, dtype=dtypes.i32)
+36 Ops.INDEX dtypes.i32 [35, 3]
+37 Ops.LOAD dtypes.i32 [36]
+38 Ops.STORE dtypes.void [32, 37]
+39 Ops.BARRIER dtypes.void [38]
+40 Ops.AFTER dtypes.i32 [30, 39]
+41 Ops.INDEX dtypes.i32 [40, 3]
+42 Ops.LOAD dtypes.i32 [41]
+43 Ops.STORE dtypes.void [29, 42]
+44 Ops.SINK dtypes.void [43] KernelInfo(estimates=Estimates(ops=2, lds=28, mem=8), optimized=True)
+45 Ops.IF dtypes.void [19, 29]
+46 Ops.ENDIF dtypes.void [45]
+47 Ops.LINEAR dtypes.void [22, 23, 0, 30, 2, 3, 24, 33, 34, 35, 36, 37, 6, 7, 8, 31, 32, 38, 39, 40, 41, 42, 25, 26, 27, 28, 29, 19, 45, 43, 46, 44]
+48 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void test(device unsigned char* args_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  threadgroup __attribute__((aligned(16))) int buf0[1];\n  unsigned long val0 = (*(((device unsigned long*)(args_16))+0));\n  int val1 = (*(((device int*)(val0))+0));\n  int lidx0 = lid.x; /* 2 */\n  *(buf0+0) = val1;\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  int val2 = (*(buf0+0));\n  unsigned long val3 = (*(((device unsigned long*)(args_16))+1));\n  if ((lidx0==0)) {\n    *(((device int*)(val3))+0) = val2;\n  }\n}"
+49 Ops.PROGRAM dtypes.void [44, 47, 48] ProgramInfo(local_size=(2, 1, 1), params=(%11, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+50 Ops.SINK dtypes.void [21, 49]
 

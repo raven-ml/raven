@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=23, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 1
@@ -58,7 +58,7 @@
 56 Ops.STACK dtypes.weakint [45, 45]
 57 Ops.RESHAPE dtypes.f32 [55, 56]
 58 Ops.STACK dtypes.void []
-59 Ops.PARAM dtypes.weakint [58] ParamArg(slot=5, dtype=dtypes.weakint, vmin_vmax=(0, 15), multiple_of=1, addrspace=AddrSpace.ALU)
+59 Ops.PARAM dtypes.weakint [58] ParamArg(slot=5, dtype=dtypes.weakint, vmin_vmax=(0, 15), addrspace=AddrSpace.ALU)
 60 Ops.STACK dtypes.weakint [59, 9]
 61 Ops.STACK dtypes.weakint [2, 45]
 62 Ops.SHRINK dtypes.f32 [57, 60, 61]

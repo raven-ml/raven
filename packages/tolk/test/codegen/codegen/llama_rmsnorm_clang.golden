@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 2
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -51,9 +51,56 @@
 49 Ops.STORE dtypes.void [8, 48]
 50 Ops.END dtypes.void [49, 6]
 51 Ops.SINK dtypes.void [50] KernelInfo(name="r_2_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), optimized=True, split=(2, 2, 3))
-52 Ops.SINK dtypes.void [50] KernelInfo(name="r_2_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=36, lds=72, mem=72), optimized=True, split=(2, 2, 3))
-53 Ops.LINEAR dtypes.void [0, 1, 9, 10, 2, 3, 4, 42, 43, 45, 46, 25, 26, 22, 23, 20, 11, 12, 14, 15, 5, 6, 7, 13, 16, 17, 18, 28, 29, 8, 27, 24, 21, 19, 33, 32, 31, 30, 34, 35, 36, 37, 38, 39, 40, 41, 44, 47, 48, 49, 50, 51]
-54 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct r_2_8_args { float* arg0; float* arg1; int arg2; int arg3; };\n__attribute__((min_vector_width(512))) void r_2_8(const struct r_2_8_args* args) {\n  float* data0_2 = args->arg0;\n  float* data1_16 = args->arg1;\n  int block_lo_ = args->arg2;\n  int block_hi_ = args->arg3;\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<3);\n    float4 val0 = (*((float4*)((data1_16+(alu1+4)))));\n    float4 val1 = (*((float4*)((data1_16+alu1))));\n    *(data0_2+alu0) = __builtin_sqrtf(((__builtin_fmaf(val0[3],val0[3],__builtin_fmaf(val0[2],val0[2],__builtin_fmaf(val0[1],val0[1],__builtin_fmaf(val0[0],val0[0],__builtin_fmaf(val1[3],val1[3],__builtin_fmaf(val1[2],val1[2],__builtin_fmaf(val1[1],val1[1],(val1[0]*val1[0]))))))))*0.125f)+9.999999747378752e-06f));\n  }\n}\n"
-55 Ops.PROGRAM dtypes.void [52, 53, 54] ProgramInfo(global_size=(2, 1, 1), params=(%1, %10, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-56 Ops.SINK dtypes.void [51, 55]
+52 Ops.CONST dtypes.weakint [] 32
+53 Ops.PARAM dtypes.u8 [52] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+54 Ops.BITCAST dtypes.u64 [53] dtypes.u64
+55 Ops.INDEX dtypes.u64 [54, 26]
+56 Ops.LOAD dtypes.u64 [55]
+57 Ops.REFPARAM dtypes.f32 [0, 56] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+58 Ops.BITCAST dtypes.i32 [53] dtypes.i32
+59 Ops.INDEX dtypes.i32 [58, 15]
+60 Ops.LOAD dtypes.i32 [59]
+61 Ops.CONST dtypes.weakint [] 5
+62 Ops.CAST dtypes.i32 [61] dtypes.i32
+63 Ops.INDEX dtypes.i32 [58, 62]
+64 Ops.LOAD dtypes.i32 [63]
+65 Ops.SUB dtypes.i32 [64, 60]
+66 Ops.RANGE dtypes.i32 [65] (AxisType.WEAK, 1)
+67 Ops.ADD dtypes.i32 [60, 66]
+68 Ops.INDEX dtypes.f32 [57, 67]
+69 Ops.INDEX dtypes.u64 [54, 23]
+70 Ops.LOAD dtypes.u64 [69]
+71 Ops.REFPARAM dtypes.f32 [9, 70] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+72 Ops.SHL dtypes.i32 [67, 12]
+73 Ops.ADD dtypes.i32 [72, 15]
+74 Ops.SHRINK dtypes.f32 [71, 73, 15]
+75 Ops.LOAD dtypes.f32 [74]
+76 Ops.INDEX dtypes.f32 [75, 12]
+77 Ops.INDEX dtypes.f32 [75, 20]
+78 Ops.INDEX dtypes.f32 [75, 23]
+79 Ops.INDEX dtypes.f32 [75, 26]
+80 Ops.SHRINK dtypes.f32 [71, 72, 15]
+81 Ops.LOAD dtypes.f32 [80]
+82 Ops.INDEX dtypes.f32 [81, 12]
+83 Ops.INDEX dtypes.f32 [81, 20]
+84 Ops.INDEX dtypes.f32 [81, 23]
+85 Ops.INDEX dtypes.f32 [81, 26]
+86 Ops.MUL dtypes.f32 [85, 85]
+87 Ops.MULACC dtypes.f32 [84, 84, 86]
+88 Ops.MULACC dtypes.f32 [83, 83, 87]
+89 Ops.MULACC dtypes.f32 [82, 82, 88]
+90 Ops.MULACC dtypes.f32 [79, 79, 89]
+91 Ops.MULACC dtypes.f32 [78, 78, 90]
+92 Ops.MULACC dtypes.f32 [77, 77, 91]
+93 Ops.MULACC dtypes.f32 [76, 76, 92]
+94 Ops.MUL dtypes.f32 [93, 43]
+95 Ops.ADD dtypes.f32 [94, 46]
+96 Ops.SQRT dtypes.f32 [95]
+97 Ops.STORE dtypes.void [68, 96]
+98 Ops.END dtypes.void [97, 66]
+99 Ops.SINK dtypes.void [98] KernelInfo(name="r_2_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=36, lds=72, mem=72), optimized=True, split=(2, 2, 3))
+100 Ops.LINEAR dtypes.void [52, 53, 14, 15, 58, 59, 60, 61, 62, 63, 64, 25, 26, 54, 55, 56, 22, 23, 69, 70, 0, 57, 9, 71, 42, 43, 45, 46, 20, 11, 12, 65, 66, 67, 72, 73, 74, 75, 80, 81, 68, 79, 78, 77, 76, 85, 84, 83, 82, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99]
+101 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_2_8(unsigned char* restrict args_32) {\n  int val0 = (*(((int*)(args_32))+4));\n  int val1 = (*(((int*)(args_32))+5));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+1));\n  for (int Lidx1 = 0; Lidx1 < (val1-val0); Lidx1++) {\n    int alu0 = (val0+Lidx1);\n    int alu1 = (alu0<<3);\n    float4 val4 = (*((float4*)((((float*)(val3))+(alu1+4)))));\n    float4 val5 = (*((float4*)((((float*)(val3))+alu1))));\n    *(((float*)(val2))+alu0) = __builtin_sqrtf(((__builtin_fmaf(val4[3],val4[3],__builtin_fmaf(val4[2],val4[2],__builtin_fmaf(val4[1],val4[1],__builtin_fmaf(val4[0],val4[0],__builtin_fmaf(val5[3],val5[3],__builtin_fmaf(val5[2],val5[2],__builtin_fmaf(val5[1],val5[1],(val5[0]*val5[0]))))))))*0.125f)+9.999999747378752e-06f));\n  }\n}\n"
+102 Ops.PROGRAM dtypes.void [99, 100, 101] ProgramInfo(global_size=(2, 1, 1), params=(%1, %10, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+103 Ops.SINK dtypes.void [51, 102]
 

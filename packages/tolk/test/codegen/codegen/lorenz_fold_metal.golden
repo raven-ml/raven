@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -68,9 +68,85 @@
 66 Ops.STORE dtypes.void [4, 65]
 67 Ops.END dtypes.void [66, 3]
 68 Ops.SINK dtypes.void [67] KernelInfo(name="lorenz_fold", optimized=True)
-69 Ops.SINK dtypes.void [67] KernelInfo(name="lorenz_fold", estimates=Estimates(ops=704, lds=256, mem=256), optimized=True)
-70 Ops.LINEAR dtypes.void [0, 5, 12, 21, 1, 8, 9, 10, 11, 34, 35, 19, 20, 2, 3, 6, 7, 13, 14, 22, 23, 4, 15, 16, 17, 18, 24, 25, 26, 27, 28, 33, 36, 37, 38, 39, 29, 30, 31, 32, 40, 41, 42, 43, 44, 50, 49, 51, 52, 53, 45, 46, 47, 48, 54, 55, 56, 57, 58, 61, 60, 62, 63, 64, 59, 65, 66, 67, 68]
-71 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct lorenz_fold_args { device float* arg0; device float* arg1; device float* arg2; device float* arg3; };\nkernel void lorenz_fold(constant struct lorenz_fold_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_16 = args->arg0;\n  device float* data1_16 = args->arg1;\n  device float* data2_16 = args->arg2;\n  device float* data3_16 = args->arg3;\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    float val0 = (*(data0_16+Lidx0));\n    float val1 = (*(data1_16+Lidx0));\n    float val2 = (*(data2_16+Lidx0));\n    float alu0 = (val0+(0.0625f*(10.0f*(val1-val0))));\n    float alu1 = (val1+(0.0625f*((val0*(28.0f-val2))-val1)));\n    float alu2 = (val2+(0.0625f*((val0*val1)-(2.5f*val2))));\n    float alu3 = (alu0+(0.0625f*(10.0f*(alu1-alu0))));\n    float alu4 = (alu1+(0.0625f*((alu0*(28.0f-alu2))-alu1)));\n    float alu5 = (alu2+(0.0625f*((alu0*alu1)-(2.5f*alu2))));\n    *(data3_16+Lidx0) = (alu3+(0.0625f*(10.0f*(alu4-alu3)))+(alu4+(0.0625f*((alu3*(28.0f-alu5))-alu4)))+(alu5+(0.0625f*((alu3*alu4)-(2.5f*alu5)))));\n  }\n}"
-72 Ops.PROGRAM dtypes.void [69, 70, 71] ProgramInfo(params=(%5, %12, %21, %1), globals=(0, 1, 2, 3), outs=(3,), ins=(0, 1, 2), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
-73 Ops.SINK dtypes.void [68, 72]
+69 Ops.CONST dtypes.weakint [] 32
+70 Ops.PARAM dtypes.u8 [69] ParamArg(slot=0, dtype=dtypes.u8, name="args")
+71 Ops.BITCAST dtypes.u64 [70] dtypes.u64
+72 Ops.CONST dtypes.weakint [] 3
+73 Ops.CAST dtypes.i32 [72] dtypes.i32
+74 Ops.INDEX dtypes.u64 [71, 73]
+75 Ops.LOAD dtypes.u64 [74]
+76 Ops.REFPARAM dtypes.f32 [0, 75] ParamArg(slot=3, dtype=dtypes.f32)
+77 Ops.INDEX dtypes.f32 [76, 3]
+78 Ops.CONST dtypes.weakint [] 0
+79 Ops.CAST dtypes.i32 [78] dtypes.i32
+80 Ops.INDEX dtypes.u64 [71, 79]
+81 Ops.LOAD dtypes.u64 [80]
+82 Ops.REFPARAM dtypes.f32 [0, 81] ParamArg(slot=0, dtype=dtypes.f32)
+83 Ops.INDEX dtypes.f32 [82, 3]
+84 Ops.LOAD dtypes.f32 [83]
+85 Ops.CONST dtypes.weakint [] 1
+86 Ops.CAST dtypes.i32 [85] dtypes.i32
+87 Ops.INDEX dtypes.u64 [71, 86]
+88 Ops.LOAD dtypes.u64 [87]
+89 Ops.REFPARAM dtypes.f32 [0, 88] ParamArg(slot=1, dtype=dtypes.f32)
+90 Ops.INDEX dtypes.f32 [89, 3]
+91 Ops.LOAD dtypes.f32 [90]
+92 Ops.SUB dtypes.f32 [91, 84]
+93 Ops.MUL dtypes.f32 [11, 92]
+94 Ops.MUL dtypes.f32 [9, 93]
+95 Ops.ADD dtypes.f32 [84, 94]
+96 Ops.CONST dtypes.weakint [] 2
+97 Ops.CAST dtypes.i32 [96] dtypes.i32
+98 Ops.INDEX dtypes.u64 [71, 97]
+99 Ops.LOAD dtypes.u64 [98]
+100 Ops.REFPARAM dtypes.f32 [0, 99] ParamArg(slot=2, dtype=dtypes.f32)
+101 Ops.INDEX dtypes.f32 [100, 3]
+102 Ops.LOAD dtypes.f32 [101]
+103 Ops.SUB dtypes.f32 [20, 102]
+104 Ops.MUL dtypes.f32 [84, 103]
+105 Ops.SUB dtypes.f32 [104, 91]
+106 Ops.MUL dtypes.f32 [9, 105]
+107 Ops.ADD dtypes.f32 [91, 106]
+108 Ops.SUB dtypes.f32 [107, 95]
+109 Ops.MUL dtypes.f32 [11, 108]
+110 Ops.MUL dtypes.f32 [9, 109]
+111 Ops.ADD dtypes.f32 [95, 110]
+112 Ops.MUL dtypes.f32 [84, 91]
+113 Ops.MUL dtypes.f32 [35, 102]
+114 Ops.SUB dtypes.f32 [112, 113]
+115 Ops.MUL dtypes.f32 [9, 114]
+116 Ops.ADD dtypes.f32 [102, 115]
+117 Ops.SUB dtypes.f32 [20, 116]
+118 Ops.MUL dtypes.f32 [95, 117]
+119 Ops.SUB dtypes.f32 [118, 107]
+120 Ops.MUL dtypes.f32 [9, 119]
+121 Ops.ADD dtypes.f32 [107, 120]
+122 Ops.SUB dtypes.f32 [121, 111]
+123 Ops.MUL dtypes.f32 [11, 122]
+124 Ops.MUL dtypes.f32 [9, 123]
+125 Ops.ADD dtypes.f32 [111, 124]
+126 Ops.MUL dtypes.f32 [95, 107]
+127 Ops.MUL dtypes.f32 [35, 116]
+128 Ops.SUB dtypes.f32 [126, 127]
+129 Ops.MUL dtypes.f32 [9, 128]
+130 Ops.ADD dtypes.f32 [116, 129]
+131 Ops.SUB dtypes.f32 [20, 130]
+132 Ops.MUL dtypes.f32 [111, 131]
+133 Ops.SUB dtypes.f32 [132, 121]
+134 Ops.MUL dtypes.f32 [9, 133]
+135 Ops.ADD dtypes.f32 [121, 134]
+136 Ops.ADD dtypes.f32 [125, 135]
+137 Ops.MUL dtypes.f32 [111, 121]
+138 Ops.MUL dtypes.f32 [35, 130]
+139 Ops.SUB dtypes.f32 [137, 138]
+140 Ops.MUL dtypes.f32 [9, 139]
+141 Ops.ADD dtypes.f32 [130, 140]
+142 Ops.ADD dtypes.f32 [136, 141]
+143 Ops.STORE dtypes.void [77, 142]
+144 Ops.END dtypes.void [143, 3]
+145 Ops.SINK dtypes.void [144] KernelInfo(name="lorenz_fold", estimates=Estimates(ops=704, lds=256, mem=256), optimized=True)
+146 Ops.LINEAR dtypes.void [69, 70, 78, 79, 71, 80, 81, 85, 86, 87, 88, 96, 97, 98, 99, 72, 73, 74, 75, 0, 82, 89, 100, 76, 8, 9, 10, 11, 34, 35, 19, 20, 2, 3, 83, 84, 90, 91, 101, 102, 77, 92, 93, 94, 95, 103, 104, 105, 106, 107, 112, 113, 114, 115, 116, 108, 109, 110, 111, 117, 118, 119, 120, 121, 127, 126, 128, 129, 130, 122, 123, 124, 125, 131, 132, 133, 134, 135, 138, 137, 139, 140, 141, 136, 142, 143, 144, 145]
+147 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nkernel void lorenz_fold(device unsigned char* args_32, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  unsigned long val0 = (*(((device unsigned long*)(args_32))+0));\n  unsigned long val1 = (*(((device unsigned long*)(args_32))+1));\n  unsigned long val2 = (*(((device unsigned long*)(args_32))+2));\n  unsigned long val3 = (*(((device unsigned long*)(args_32))+3));\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    float val4 = (*(((device float*)(val0))+Lidx0));\n    float val5 = (*(((device float*)(val1))+Lidx0));\n    float val6 = (*(((device float*)(val2))+Lidx0));\n    float alu0 = (val4+(0.0625f*(10.0f*(val5-val4))));\n    float alu1 = (val5+(0.0625f*((val4*(28.0f-val6))-val5)));\n    float alu2 = (val6+(0.0625f*((val4*val5)-(2.5f*val6))));\n    float alu3 = (alu0+(0.0625f*(10.0f*(alu1-alu0))));\n    float alu4 = (alu1+(0.0625f*((alu0*(28.0f-alu2))-alu1)));\n    float alu5 = (alu2+(0.0625f*((alu0*alu1)-(2.5f*alu2))));\n    *(((device float*)(val3))+Lidx0) = (alu3+(0.0625f*(10.0f*(alu4-alu3)))+(alu4+(0.0625f*((alu3*(28.0f-alu5))-alu4)))+(alu5+(0.0625f*((alu3*alu4)-(2.5f*alu5)))));\n  }\n}"
+148 Ops.PROGRAM dtypes.void [145, 146, 147] ProgramInfo(params=(%5, %12, %21, %1), globals=(0, 1, 2, 3), outs=(3,), ins=(0, 1, 2), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+149 Ops.SINK dtypes.void [68, 148]
 

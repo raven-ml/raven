@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 dtype	value	const
 dtypes.void	True	1
 dtypes.void	False	0
@@ -88,9 +88,9 @@ dtypes.i8	1e-08	0
 dtypes.i8	70000.0	112
 dtypes.i8	1e+39	0
 dtypes.i8	-1e+39	0
-dtypes.i8	inf	raises OverflowError
-dtypes.i8	-inf	raises OverflowError
-dtypes.i8	nan	raises ValueError
+dtypes.i8	inf	127
+dtypes.i8	-inf	-128
+dtypes.i8	nan	0
 dtypes.i8	Invalid	Invalid
 dtypes.u8	True	1
 dtypes.u8	False	0
@@ -111,9 +111,9 @@ dtypes.u8	1e-08	0
 dtypes.u8	70000.0	112
 dtypes.u8	1e+39	0
 dtypes.u8	-1e+39	0
-dtypes.u8	inf	raises OverflowError
-dtypes.u8	-inf	raises OverflowError
-dtypes.u8	nan	raises ValueError
+dtypes.u8	inf	255
+dtypes.u8	-inf	0
+dtypes.u8	nan	0
 dtypes.u8	Invalid	Invalid
 dtypes.i16	True	1
 dtypes.i16	False	0
@@ -134,9 +134,9 @@ dtypes.i16	1e-08	0
 dtypes.i16	70000.0	4464
 dtypes.i16	1e+39	0
 dtypes.i16	-1e+39	0
-dtypes.i16	inf	raises OverflowError
-dtypes.i16	-inf	raises OverflowError
-dtypes.i16	nan	raises ValueError
+dtypes.i16	inf	32767
+dtypes.i16	-inf	-32768
+dtypes.i16	nan	0
 dtypes.i16	Invalid	Invalid
 dtypes.u16	True	1
 dtypes.u16	False	0
@@ -157,9 +157,9 @@ dtypes.u16	1e-08	0
 dtypes.u16	70000.0	4464
 dtypes.u16	1e+39	0
 dtypes.u16	-1e+39	0
-dtypes.u16	inf	raises OverflowError
-dtypes.u16	-inf	raises OverflowError
-dtypes.u16	nan	raises ValueError
+dtypes.u16	inf	65535
+dtypes.u16	-inf	0
+dtypes.u16	nan	0
 dtypes.u16	Invalid	Invalid
 dtypes.i32	True	1
 dtypes.i32	False	0
@@ -180,9 +180,9 @@ dtypes.i32	1e-08	0
 dtypes.i32	70000.0	70000
 dtypes.i32	1e+39	0
 dtypes.i32	-1e+39	0
-dtypes.i32	inf	raises OverflowError
-dtypes.i32	-inf	raises OverflowError
-dtypes.i32	nan	raises ValueError
+dtypes.i32	inf	2147483647
+dtypes.i32	-inf	-2147483648
+dtypes.i32	nan	0
 dtypes.i32	Invalid	Invalid
 dtypes.u32	True	1
 dtypes.u32	False	0
@@ -203,9 +203,9 @@ dtypes.u32	1e-08	0
 dtypes.u32	70000.0	70000
 dtypes.u32	1e+39	0
 dtypes.u32	-1e+39	0
-dtypes.u32	inf	raises OverflowError
-dtypes.u32	-inf	raises OverflowError
-dtypes.u32	nan	raises ValueError
+dtypes.u32	inf	4294967295
+dtypes.u32	-inf	0
+dtypes.u32	nan	0
 dtypes.u32	Invalid	Invalid
 dtypes.i64	True	1
 dtypes.i64	False	0
@@ -226,9 +226,9 @@ dtypes.i64	1e-08	0
 dtypes.i64	70000.0	70000
 dtypes.i64	1e+39	0
 dtypes.i64	-1e+39	0
-dtypes.i64	inf	raises OverflowError
-dtypes.i64	-inf	raises OverflowError
-dtypes.i64	nan	raises ValueError
+dtypes.i64	inf	9223372036854775807
+dtypes.i64	-inf	-9223372036854775808
+dtypes.i64	nan	0
 dtypes.i64	Invalid	Invalid
 dtypes.u64	True	1
 dtypes.u64	False	0
@@ -249,9 +249,9 @@ dtypes.u64	1e-08	0
 dtypes.u64	70000.0	70000
 dtypes.u64	1e+39	0
 dtypes.u64	-1e+39	0
-dtypes.u64	inf	raises OverflowError
-dtypes.u64	-inf	raises OverflowError
-dtypes.u64	nan	raises ValueError
+dtypes.u64	inf	18446744073709551615
+dtypes.u64	-inf	0
+dtypes.u64	nan	0
 dtypes.u64	Invalid	Invalid
 dtypes.weakfloat	True	1.0
 dtypes.weakfloat	False	0.0

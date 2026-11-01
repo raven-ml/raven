@@ -14,7 +14,7 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index f8e43c11d..92b40f9b2 100644
+index f4535a4f7..8989f2251 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,19 +2,19 @@ from dataclasses import replace, dataclass, field
@@ -46,10 +46,10 @@ index f8e43c11d..92b40f9b2 100644
  from tinygrad.codegen.late.coalesce import memory_coalescing, pm_simplify_add_image
 -from tinygrad.helpers import all_same, argsort, partition, to_function_name
 +from tinygrad.helpers import all_same, all_int, argsort, partition, to_function_name, prod
+ from tinygrad.device import TinyELF
  from tinygrad.uop.ops import _broadcast_shape, identity_element
  from tinygrad.schedule.rangeify import BufferizeOpts
- 
-@@ -97,9 +97,15 @@ def broadcast_and_devec_wmma(b:UOp):
+@@ -98,9 +98,15 @@ def broadcast_and_devec_wmma(b:UOp):
      src.append(b.replace(src=tuple([x.index(*idx) for x in src_expanded])))
    return UOp.stack(*src).reshape(b.shape)
  
@@ -67,7 +67,7 @@ index f8e43c11d..92b40f9b2 100644
    # push permute/reshape to the other side of the add
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"), UPat()), name="permute") + UPat.var("add"),
      lambda wmma,permute,add: (wmma + add.permute(argsort(permute.marg))).permute(permute.marg)),
-@@ -112,10 +118,82 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
+@@ -113,10 +119,82 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
    (UPat(Ops.WMMA, name="b"), broadcast_and_devec_wmma),
  ])
  
@@ -151,7 +151,7 @@ index f8e43c11d..92b40f9b2 100644
    src = []
    for idx_c in itertools.product(*[[UOp.const(i) for i in range(x)] for x in b.shape]):
      src.append(b.replace(src=tuple(x.base if x.base.is_invalid else x.index(*idx_c) for x in b.src)))
-@@ -132,9 +210,59 @@ def do_stack_wmma(u:UOp):
+@@ -133,9 +211,59 @@ def do_stack_wmma(u:UOp):
        src.append(b)
    return u.replace(src=tuple(src))
  
@@ -211,7 +211,7 @@ index f8e43c11d..92b40f9b2 100644
    # INDEX without src is nothing (TODO: this should be in mop_cleanup)
    (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),
    # unpack WMMA
-@@ -179,17 +307,58 @@ def merge_reduce_ends(sink:UOp):
+@@ -180,17 +308,58 @@ def merge_reduce_ends(sink:UOp):
        for e in group: subs[e] = merged
    return sink.substitute(subs) if subs else None
  
@@ -274,7 +274,7 @@ index f8e43c11d..92b40f9b2 100644
    return acc.after(acc_out)
  
  pm_reduce_local = pm_wmma_add+PatternMatcher([
-@@ -250,6 +419,38 @@ pm_implicit_barriers = PatternMatcher([
+@@ -251,6 +420,38 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
@@ -313,7 +313,7 @@ index f8e43c11d..92b40f9b2 100644
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if DEBUG >= 5: print(render_uir(ast))
    if SPEC: type_verify(ast, spec_tensor)
-@@ -287,7 +488,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -288,7 +489,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -322,7 +322,7 @@ index f8e43c11d..92b40f9b2 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -300,7 +501,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -301,7 +502,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
@@ -331,7 +331,7 @@ index f8e43c11d..92b40f9b2 100644
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -325,11 +526,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -326,11 +527,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -346,7 +346,7 @@ index f8e43c11d..92b40f9b2 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -344,11 +547,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -345,11 +548,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -360,7 +360,7 @@ index f8e43c11d..92b40f9b2 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -435,9 +639,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -443,9 +647,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -385,6 +385,16 @@ index f8e43c11d..92b40f9b2 100644
  
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp|None:
    if getattr(type(ctx), "asm") is Renderer.asm: return None
+@@ -493,7 +711,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
+     full_sink = full_rewrite_to_sink(ast, renderer, optimize=not ast.arg.optimized)
+     prog_info = ProgramInfo.from_sink(full_sink, renderer.target)
+     if (isinstance(renderer, ISARenderer) or renderer.packed_args) and full_sink.arg.estimates is None:
+-      full_sink = full_sink.replace(arg=replace(full_sink.arg, estimates=Estimates.from_uops(tuple(linearize(full_sink)), ignore_indexing=True)))
++      lst = tuple(linearize(full_sink))
++      full_sink = full_sink.replace(arg=replace(full_sink.arg, estimates=whole_loop(full_sink.arg, lst, Estimates.from_uops(lst, ignore_indexing=True))))
+     if renderer.packed_args and full_sink.arg.kernel: full_sink = pack_args(full_sink, prog_info.params)
+     # instruction selection
+     if isinstance(renderer, ISARenderer):
 diff --git a/tinygrad/codegen/decomp/dtype.py b/tinygrad/codegen/decomp/dtype.py
 index d9fee876d..05df72bcc 100644
 --- a/tinygrad/codegen/decomp/dtype.py
@@ -974,7 +984,7 @@ index 70841c562..b6e75fb6d 100644
    return d.ne(d).where(r.const_like(math.nan), r)
  
 diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
-index f55a6b2e9..feb66e1a8 100644
+index 51791c39e..e8058d967 100644
 --- a/tinygrad/codegen/late/coalesce.py
 +++ b/tinygrad/codegen/late/coalesce.py
 @@ -39,7 +39,9 @@ def _drop_valid_stmts(valid:UOp, idx:UOp, height:int, width:int) -> list[UOp]:
@@ -1420,7 +1430,7 @@ index d7f19cd30..9ab370acb 100644
  
              # get upcast axes for the tensor cores
 diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
-index 6908b1430..2b2138f6a 100644
+index 11825ab3b..b78122318 100644
 --- a/tinygrad/codegen/simplify.py
 +++ b/tinygrad/codegen/simplify.py
 @@ -1,9 +1,9 @@
@@ -1435,7 +1445,7 @@ index 6908b1430..2b2138f6a 100644
  
  def flatten_range(r:UOp) -> UOp|None:
    off = range_start[r.op]
-@@ -18,23 +18,38 @@ pm_flatten_range = PatternMatcher([
+@@ -17,23 +17,39 @@ pm_flatten_range = PatternMatcher([
  
  # index/range arithmetic uses DIV/MOD prior to late rewrite
  def count_divmod(x:UOp) -> int: return sum(u.op in {Ops.DIV, Ops.MOD} for u in x.backward_slice)
@@ -1450,9 +1460,10 @@ index 6908b1430..2b2138f6a 100644
 +  # check if it simplifies
 +  return after.src if count_divmod(after) <= count_divmod(before) else None
 +
-+# check same type, and if the ranges to merge are in the same reduces
++# check same type, neither bound depends on the other range, and if the ranges to merge are in the same reduces
 +def mergeable(reduce_ranges:list, r0:UOp, r1:UOp) -> bool:
-+  return r0.axis_type == r1.axis_type and all((r0 in rngs) == (r1 in rngs) for rngs in reduce_ranges)
++  return r0.axis_type == r1.axis_type and r0 not in r1.ranges and r1 not in r0.ranges and \
++    all((r0 in rngs) == (r1 in rngs) for rngs in reduce_ranges)
 +
 +# on END we only want to merge adjacent ranges. return after one merge so the next rewrite uses the new ranges,
 +# rather than continuing with stale pairs from the original ended_ranges.
@@ -1460,8 +1471,8 @@ index 6908b1430..2b2138f6a 100644
    reduce_ranges = [x.ranges for x in u.backward_slice_with_self if x.op is Ops.REDUCE]
 -  # on END we only want to merge adjacent ranges, on REDUCE we want to try all combinations
 -  for r0, r1 in (zip(u.ended_ranges, u.ended_ranges[1:]) if u.op is Ops.END else itertools.permutations(u.ended_ranges, 2)):
--    # check same type
--    if r0.axis_type == r1.axis_type:
+-    # check same type and neither bound depends on the other range
+-    if r0.axis_type == r1.axis_type and r0 not in r1.ranges and r1 not in r0.ranges:
 -      # check if the ranges to merge are in the same reduces
 -      if all((r0 in rngs) == (r1 in rngs) for rngs in reduce_ranges):
 -        s0, s1 = r0.src[0], r1.src[0]
@@ -1490,7 +1501,7 @@ index 6908b1430..2b2138f6a 100644
    return None
  
  def mark_gated(ctx, idx):
-@@ -56,11 +71,13 @@ def do_substitute(ctx:dict, x: UOp, sub_fxn:Callable[[UOp, UOp], UOp]) -> UOp|No
+@@ -55,11 +71,13 @@ def do_substitute(ctx:dict, x: UOp, sub_fxn:Callable[[UOp, UOp], UOp]) -> UOp|No
    return None if ret is x else ret.simplify()
  
  pm_simplify_ranges = PatternMatcher([
@@ -1506,7 +1517,7 @@ index 6908b1430..2b2138f6a 100644
  ])
  
  def mark_range_mod(ctx:dict[UOp, UOp|None], r:UOp, c:UOp) -> None:
-@@ -78,6 +95,12 @@ pm_split_ranges = PatternMatcher([
+@@ -77,6 +95,12 @@ pm_split_ranges = PatternMatcher([
  
  def no_range(u:UOp) -> bool: return not u.op_in_backward_slice_with_self(Ops.RANGE)
  
@@ -1517,14 +1528,14 @@ index 6908b1430..2b2138f6a 100644
 +  return (0 < count).where(count * val, val.const_like(0.0)) if dtypes.is_float(val.dtype) else count * val
 +
  def reduce_unparented(red:UOp) -> UOp|None:
-   if red.arg[0] not in GroupOp.Reduce: return None
    assert all(x.op is Ops.RANGE for x in red.src[1:]), "some reduce srcs aren't ranges"
-@@ -97,30 +120,34 @@ pm_reduce_unparented = PatternMatcher([
+   reduce_parented, reduce_unparented = partition(red.src[1:], lambda x: x in red.src[0].ranges)
+@@ -95,32 +119,34 @@ pm_reduce_unparented = PatternMatcher([
  pm_reduce_collapse = pm_reduce_unparented + PatternMatcher([
    # lift x+y out of reduce on lt
-   (UPat(Ops.ADD, dtypes.sints+dtypes.floats+dtypes.weaks, [UPat.var("x"), UPat.var("y")]) < UPat.var("c"),
+   (UPat(Ops.ADD, dtypes.sints+(dtypes.weakint,), [UPat.var("x"), UPat.var("y")]) < UPat.var("c"),
 -   lambda x,y,c: (x < (c-y)) if no_range(y) and no_range(c) else None),
-+   lambda x,y,c: (x < (c-y)) if no_range(y) and no_range(c) and dtypes.is_int(y.dtype)
++   lambda x,y,c: (x < (c-y)) if no_range(y) and no_range(c)
 +     and exact(y.dtype, x.vmin+y.vmin, x.vmax+y.vmax, c.vmin-y.vmax, c.vmax-y.vmin) else None),
    # lift x*y out of reduce
    (UPat(Ops.MUL, dtypes.sints+(dtypes.weakint,), [UPat.var("x"), UPat.var("y")]) < UPat.var("c"),
@@ -1555,15 +1566,17 @@ index 6908b1430..2b2138f6a 100644
  
  pm_reduce_load_collapse = pm_reduce_collapse + PatternMatcher([
    # lift x+y out of reduce on eq
--  ((UPat.var("x")+UPat.var("y")).or_casted().eq(UPat.var("c")), lambda x,y,c: x.eq(c.cast(y.dtype)-y) if no_range(y) and no_range(c) else None),
+-  ((UPat.var("x", dtypes.wints)+UPat.var("y")).or_casted("a").eq(UPat.var("c", dtypes.wints)),
+-   lambda x,y,a,c: x.eq(c.cast(y.dtype)-y) if no_range(y) and no_range(c) and
+-   (a.op is not Ops.CAST or not a.src[0].overflows(a.dtype)) and not c.overflows(y.dtype) else None),
 +  ((UPat.var("x")+UPat.var("y")).or_casted(name="s").eq(UPat.var("c")), lambda x,y,c,s: x.eq(c.cast(y.dtype)-y)
 +    if no_range(y) and no_range(c) and dtypes.is_int(y.dtype) and can_lossless_cast(y.dtype, s.dtype)
 +    and exact(y.dtype, c.vmin, c.vmax, x.vmin+y.vmin, x.vmax+y.vmax, c.vmin-y.vmax, c.vmax-y.vmin) else None),
    # reduce on gated load becomes can substitute the range and remove the reduce
-   (UPat.var("idx").eq(UPat(Ops.RANGE, name="r").or_casted()).where(UPat.var("expr"), 0).reduce(UPat.var("r"), arg=Ops.ADD),
-    lambda r,idx,expr: (v:=(idx.cast(r.dtype) >= 0) & (idx.cast(r.dtype) < r.src[0])).where(expr.substitute({r:idx.cast(r.dtype).valid(v)}),0)),
+   (UPat.var("idx", dtypes.wints).eq(UPat(Ops.RANGE, name="r").or_casted("rc")).where(UPat.var("expr"), 0)
+    .reduce(UPat.var("r"), arg=Ops.ADD),
 diff --git a/tinygrad/dtype.py b/tinygrad/dtype.py
-index e404abc69..3181a9850 100644
+index 7210ae355..585691d84 100644
 --- a/tinygrad/dtype.py
 +++ b/tinygrad/dtype.py
 @@ -6,7 +6,7 @@ from tinygrad.helpers import getenv, DEFAULT_FLOAT, DEFAULT_INT
@@ -1584,9 +1597,9 @@ index e404abc69..3181a9850 100644
      return float.__eq__(self, other)
    def __ne__(self, other): return res if (res:=self.__eq__(other)) is NotImplemented else not res  # float.__ne__ disagrees with __eq__ on nan
    def __hash__(self): return hash(self.bits)
-@@ -79,8 +79,8 @@ class DType(metaclass=DTypeMetaClass):
-   def const(self, val: ConstType):
-     if isinstance(val, InvalidType): return val
+@@ -81,8 +81,8 @@ class DType(metaclass=DTypeMetaClass):
+     if self in dtypes.ints and isinstance(val, float) and not math.isfinite(val):
+       val = 0 if math.isnan(val) else self.max if val > 0 else self.min
      if self in dtypes.ints: return truncate[self](int(val))
 -    # NOTE: float('nan') != float('nan'), so we canonicalize here
 -    if isinstance(val, float) and math.isnan(val): val = math.nan
@@ -1595,7 +1608,7 @@ index e404abc69..3181a9850 100644
      # int is the default. wrap floats in ConstFloat to distinguish -0.0 from 0.0 in cache
      return ConstFloat(truncate.get(self, float)(float(val))) if dtypes.is_float(self) else bool(val) if dtypes.is_bool(self) else int(val)
  
-@@ -293,12 +293,71 @@ truncate: dict[DType, Callable] = {dtypes.bool: bool,
+@@ -296,12 +296,71 @@ truncate: dict[DType, Callable] = {dtypes.bool: bool,
    **{getattr(dtypes, n): (lambda x, c=getattr(ctypes, f'c_{n}'): c(x).value)
       for n in ('float', 'double', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64')}}
  
@@ -1717,10 +1730,10 @@ index 761f59c11..bf523239d 100644
  @functools.cache
  def to_function_name(s:str): return ''.join([c if c in (string.ascii_letters+string.digits+'_') else f'{ord(c):02X}' for c in ansistrip(s)])
 diff --git a/tinygrad/renderer/__init__.py b/tinygrad/renderer/__init__.py
-index 59a936953..8a1623b69 100644
+index 7fb5ccac2..8d63d6f63 100644
 --- a/tinygrad/renderer/__init__.py
 +++ b/tinygrad/renderer/__init__.py
-@@ -66,6 +66,8 @@ class Renderer:
+@@ -67,6 +67,8 @@ class Renderer:
    inline_prefix: str|None = None
    # TODO: make this generic with a list of supported types
    supports_float4: bool = True
@@ -1730,7 +1743,7 @@ index 59a936953..8a1623b69 100644
    has_shared: bool = True
    # NOTE: these two should be in (x,y,z) order to match the max_sizes argument in get_grouped_dims
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 770ae5c35..d2b8060ba 100644
+index 6eec3e198..41ec6a82a 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -1782,7 +1795,7 @@ index 770ae5c35..d2b8060ba 100644
    # default const render
    (UPat.cvar("c").cast(), lambda ctx,c: str(c.val)),
  
-@@ -62,7 +77,9 @@ base_rewrite = PatternMatcher([
+@@ -63,7 +78,9 @@ base_rewrite = PatternMatcher([
    # alu/gep
    (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]})"),
    (UPat(GroupOp.ALU, name="x"), lambda ctx,x: ctx.code_for_op[x.op](
@@ -1830,7 +1843,7 @@ index 770ae5c35..d2b8060ba 100644
  class CStyleLanguage(Renderer):
    abi: str = ""
    kernel_typedef: str = "void"
-@@ -159,7 +195,8 @@ class CStyleLanguage(Renderer):
+@@ -158,7 +194,8 @@ class CStyleLanguage(Renderer):
      Ops.ADD: lambda a,b,dtype: f"({a}+{b})", Ops.SUB: lambda a,b,dtype: f"({a}-{b})", Ops.MUL: lambda a,b,dtype: f"({a}*{b})",
      Ops.TRUNCMOD: lambda a,b,dtype: f"({a}%{b})", Ops.TRUNCDIV: lambda a,b,dtype: f"({a}/{b})", Ops.CMPNE: lambda a,b,dtype: f"({a}!={b})",
      Ops.SHR: lambda a,b,dtype: f"({a}>>{b})", Ops.SHL: lambda a,b,dtype: f"({a}<<{b})", Ops.CMPLT: lambda a,b,dtype: f"({a}<{b})",
@@ -1840,7 +1853,7 @@ index 770ae5c35..d2b8060ba 100644
  
    string_rewrite = base_rewrite
  
-@@ -214,6 +251,7 @@ class CStyleLanguage(Renderer):
+@@ -209,6 +246,7 @@ class CStyleLanguage(Renderer):
      else: return f"{self[u]}"
    def render_access(self, u:UOp): return f"*{self.render_ptr(u)}"
    def render_cast(self, u:UOp, val:str) -> str: return f"({self.render_type(u)})({val})"
@@ -1848,7 +1861,7 @@ index 770ae5c35..d2b8060ba 100644
  
    # LEGACY
    def render_dtype(self, dt:DType, mutable=True) -> str:
-@@ -223,6 +261,7 @@ class CStyleLanguage(Renderer):
+@@ -218,6 +256,7 @@ class CStyleLanguage(Renderer):
    def _render(self, uops:list[UOp]) -> tuple[str, list[str], list[tuple[str,tuple[UOp,bool]]]]:
      r: dict[UOp, str] = {}
      self.r = r
@@ -1856,7 +1869,7 @@ index 770ae5c35..d2b8060ba 100644
  
      child_count = Counter(v for ru in uops for v in ru.src)
      # find which PARAMs are stored to with a single toposort
-@@ -270,12 +309,13 @@ class CStyleLanguage(Renderer):
+@@ -265,12 +304,13 @@ class CStyleLanguage(Renderer):
          r[u] = l
        else:
          if u.op not in {Ops.RANGE, Ops.BUFFER, Ops.BINARY} and u.dtype != dtypes.void:
@@ -1872,7 +1885,7 @@ index 770ae5c35..d2b8060ba 100644
  
      # NOTE: this relies on bufs dict preserving order
      return (name, kernel, list(bufs.values()))
-@@ -291,7 +331,94 @@ class CStyleLanguage(Renderer):
+@@ -284,7 +324,94 @@ class CStyleLanguage(Renderer):
                '\n'.join(inlines[b][1]) + "\n}" for b in bodies]
      return self.render_kernel(*self._render(uops), uops+[u for b in inlines for u in b.src], prefix or None)
  
@@ -1967,7 +1980,7 @@ index 770ae5c35..d2b8060ba 100644
    float4 = "(float4)"
    float4_style = ('{', '}')
    gep_arr_threshold = 0
-@@ -308,7 +435,8 @@ class ClangRenderer(CStyleLanguage):
+@@ -301,7 +428,8 @@ class ClangRenderer(CStyleLanguage):
    code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.RECIP]}),
                   Ops.SQRT: lambda x,dtype: f"__builtin_sqrt({x})" if dtype == dtypes.float64 else f"__builtin_sqrtf({x})",
                   Ops.TRUNC: lambda x,dtype: f"__builtin_trunc({x})" if dtype == dtypes.float64 else f"__builtin_truncf({x})",
@@ -1977,7 +1990,7 @@ index 770ae5c35..d2b8060ba 100644
  
    # LLVM legalizes double => half cast on systems that don't support it natively (like x86 cpus without AVX512-FP16) into a compiler-rt libcall.
    extra_matcher = PatternMatcher([(UPat.var("x", dtypes.float64).cast(dtypes.float16), lambda x: x.cast(dtypes.float32).cast(dtypes.float16))]) \
-@@ -320,7 +448,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -313,7 +441,15 @@ class ClangRenderer(CStyleLanguage):
      vec = self._render_dtype(dt, count, AddrSpace.REG)
      return f"typedef {self.render_dtype(dt)} {vec} __attribute__((aligned({alignment}),ext_vector_type({count})));"
  
@@ -1994,7 +2007,7 @@ index 770ae5c35..d2b8060ba 100644
    def _render_body(self, function_name, kernel, bufs, uops, pref=None) -> str: return super().render_kernel(function_name, kernel, bufs, uops, pref)
    def _render_entry(self, function_name:str, bufs:list[tuple[str,tuple[UOp,bool]]]) -> str: return ""
  
-@@ -335,6 +471,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -328,6 +464,15 @@ class ClangRenderer(CStyleLanguage):
      super().__init__(target)
      from tinygrad.runtime.support.compiler_cpu import ClangCompiler
      self.compiler = ClangCompiler(target.arch.split(","))
@@ -2010,7 +2023,7 @@ index 770ae5c35..d2b8060ba 100644
  
  class OpenCLRenderer(CStyleLanguage):
    # language options
-@@ -344,6 +489,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -337,6 +482,7 @@ class OpenCLRenderer(CStyleLanguage):
    smem_prefix = "__local "
    barrier = "barrier(CLK_LOCAL_MEM_FENCE);"
    float4 = "(float4)"
@@ -2018,7 +2031,7 @@ index 770ae5c35..d2b8060ba 100644
    code_for_workitem = {"g": lambda x: f"get_group_id({x})", "l": lambda x: f"get_local_id({x})"}
    type_map = {**CStyleLanguage.type_map, dtypes.i8: "char", dtypes.u8: "uchar", dtypes.u32: "uint", dtypes.u16: "ushort",
                dtypes.u64: "ulong", dtypes.bf16: "ushort"}
-@@ -371,6 +517,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -364,6 +510,7 @@ class OpenCLRenderer(CStyleLanguage):
                                        (d != dtypes.double or "cl_khr_fp64" in self.target.arch) and d not in dtypes.fp8s}
  
  class MetalRenderer(CStyleLanguage):
@@ -2026,7 +2039,7 @@ index 770ae5c35..d2b8060ba 100644
    def __init__(self, target:Target):
      super().__init__(target)
      from tinygrad.runtime.ops_metal import MetalCompiler
-@@ -422,6 +569,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
+@@ -415,6 +562,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
  _nms = list("xyzwabcdefghijkl") + [f'v{i}' for i in range(16, 32)]
  
  class CUDARenderer(CStyleLanguage):
@@ -2034,7 +2047,7 @@ index 770ae5c35..d2b8060ba 100644
    global_max = (2147483647, 65535, 65535)
    local_max = (1024, 1024, 64)
    shared_max = 49152
-@@ -448,7 +596,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -441,7 +589,8 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
@@ -2044,7 +2057,7 @@ index 770ae5c35..d2b8060ba 100644
    type_map = {**CStyleLanguage.type_map, dtypes.u32: "uint", dtypes.bf16: "nv_bfloat16",
                dtypes.fp8e4m3: "__nv_fp8_e4m3", dtypes.fp8e5m2: "__nv_fp8_e5m2"}
    extra_matcher = pm_narrow_uint + create_non_native_float_pats(dtypes.fp8s, casting=False) + PatternMatcher([
-@@ -528,8 +677,9 @@ class HIPRenderer(CStyleLanguage):
+@@ -521,8 +670,9 @@ class HIPRenderer(CStyleLanguage):
      if amd_fp8s(target.arch):
        self.extra_matcher += tc.pm_wmma_fp8(dtypes.uint64 if self.is_cdna(target.arch) else dtypes.uint32)
        self.string_rewrite = PatternMatcher([
@@ -2056,7 +2069,7 @@ index 770ae5c35..d2b8060ba 100644
            f" {fp8_index(x.dtype)})"),
          (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
            lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
-@@ -545,7 +695,8 @@ class HIPRenderer(CStyleLanguage):
+@@ -538,7 +688,8 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),
@@ -2155,7 +2168,7 @@ index b6b36094a..4221512eb 100644
  from tinygrad.engine.realize import capturing, pm_flatten_linear
  from tinygrad.schedule.prepare import prepare_rangeify
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index e557b1619..9f0d1d40f 100644
+index 7c13ba650..c868a5131 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
 @@ -1,17 +1,35 @@
@@ -2301,7 +2314,7 @@ index e557b1619..9f0d1d40f 100644
    return x.replace(src=tuple(create_bufferize_and_index_srcs(ctx, x)))
  
  def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
-@@ -101,6 +149,22 @@ def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
+@@ -102,6 +150,22 @@ def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
    valid: UOp = UOp.const(True).uprod([r.get_valid() for r in ctx.range_map[x][0]])
    return valid.where(bx.src[0], UOp.const(x.dtype.const(0)))
  
@@ -2324,8 +2337,8 @@ index e557b1619..9f0d1d40f 100644
  def convert_reduce_to_reduce_with_ranges(ctx:IndexingContext, x:UOp):
    if x.arg[1] == 0: return None
    if x not in ctx.range_map: raise RuntimeError("REDUCE has no ranges in rangeify, UOp verification failed")
-@@ -132,6 +196,10 @@ pm_apply_rangeify = PatternMatcher([
-   (UPat(Ops.PAD, name="x"), convert_pad_to_where_to_keep_behavior_local),
+@@ -133,6 +197,10 @@ pm_apply_rangeify = PatternMatcher([
+   (UPat((Ops.PAD, Ops.INDEX), name="x"), convert_pad_to_where_to_keep_behavior_local),
    # STACK -> WHERE select on the leading range
    (UPat(Ops.STACK, name="x"), convert_stack_to_where),
 +  # INDEX before ranges -> a load at the loaded index
@@ -2335,7 +2348,7 @@ index e557b1619..9f0d1d40f 100644
    # finally, apply_rangeify
    (UPat(GroupOp.All-{Ops.STAGE, Ops.INDEX}, name="x"), create_bufferize_and_index_based_on_ranges),
    # remove movement op
-@@ -177,6 +245,85 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
+@@ -178,6 +246,85 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
      case _: raise RuntimeError(f"{op} is not a MovementOp")
    return rngs
  
@@ -2421,7 +2434,7 @@ index e557b1619..9f0d1d40f 100644
  @rewrite_group(new_ctx=False)
  def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    if debug: print("**************************")
-@@ -188,6 +335,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -189,6 +336,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    # get the consumer map
    with cpu_profile("consumer map in rangeify", "TINY"):
      tsink_toposort = tsink.toposort(gate_kernel_sink)
@@ -2429,7 +2442,7 @@ index e557b1619..9f0d1d40f 100644
      consumer_map: dict[UOp, dict[UOp, None]] = {x:{} for x in tsink_toposort}
      for c in tsink_toposort:
        for x in data_srcs(c.op, c.src):
-@@ -218,10 +366,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -219,10 +367,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
      #  2. from the single consumer if this op only has one consumer
      #  3. potentially new if this op has 2+ consumers
  
@@ -2446,7 +2459,7 @@ index e557b1619..9f0d1d40f 100644
        # all ranges are ended now
        ending_ranges[x] = []
        # mark all ranges as ended
-@@ -256,14 +407,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -257,14 +408,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
        out_rngs = tuple(_out_rngs)
  
        # we have to (partially) realize here if there's new ranges
@@ -2470,7 +2483,7 @@ index e557b1619..9f0d1d40f 100644
          out_rngs = tuple(rctx.new_range(x.shape[i]) for i in range(len(out_rngs)))
      ending_ranges[x] += broadcast_ending_ranges
  
-@@ -289,7 +445,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -292,7 +448,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
  
      # REDUCE creates ranges for the axes it is reducing
      if x.op is Ops.REDUCE:
@@ -2480,7 +2493,7 @@ index e557b1619..9f0d1d40f 100644
      if debug:
        realized_ranges = rctx.realize_map.get(x, None)
 diff --git a/tinygrad/schedule/prepare.py b/tinygrad/schedule/prepare.py
-index 0cc01e04f..062d081f1 100644
+index 9a24394a6..7f206714e 100644
 --- a/tinygrad/schedule/prepare.py
 +++ b/tinygrad/schedule/prepare.py
 @@ -1,10 +1,10 @@
@@ -2497,7 +2510,7 @@ index 0cc01e04f..062d081f1 100644
  from tinygrad.schedule.allreduce import create_allreduce_function
  from tinygrad.schedule.multi import multi_pm
  
-@@ -61,16 +61,27 @@ pm_fold_moved_after = PatternMatcher([
+@@ -61,15 +61,26 @@ pm_fold_moved_after = PatternMatcher([
    (UPat(GroupOp.ALU, name="alu"), lambda ctx,alu: alu.replace(src=new_src) if (new_src:=tuple(ctx.get(s, s) for s in alu.src)) != alu.src else None),
  ])
  
@@ -2521,13 +2534,12 @@ index 0cc01e04f..062d081f1 100644
    if r.op is Ops.RESHAPE:
      src_prefix = len(r.src[0].shape) - len(r.shape[len(idxs):])
      if src_prefix >= 0 and r.src[0].shape[src_prefix:] == r.shape[len(idxs):]:
-       if src_prefix == 0: return r.src[0]
 -      ret = r.src[0].index(*apply_movement_op(r.op, r.src[0].shape[:src_prefix], r.shape[:len(idxs)], idxs), arg=idx.arg)
 +      ret = r.src[0].index(*_move_index(r.op, r.src[0].shape[:src_prefix], r.shape[:len(idxs)], idxs), arg=idx.arg)
        return ret if ret.shape == idx.shape else None
  
  pm_mops = PatternMatcher([
-@@ -87,6 +98,13 @@ pm_mops = PatternMatcher([
+@@ -86,6 +97,13 @@ pm_mops = PatternMatcher([
    (UPat(GroupOp.Movement, name="r").end(name="a", allow_any_len=True), lambda r,a: a.replace(src=(r.src[0],)+a.src[1:])),
  ])
  
@@ -2541,7 +2553,7 @@ index 0cc01e04f..062d081f1 100644
  # *****************
  # 0. do some cleanup rewrites, mostly copied from the old stuff
  
-@@ -155,13 +173,13 @@ def copy_to_anon_store(x:UOp, copy:UOp):
+@@ -154,13 +172,13 @@ def copy_to_anon_store(x:UOp, copy:UOp):
    # copies are always cross device: pad to the max shape so the copy reads a whole buffer (SDMA can't do offset copies)
    x = x.pad_to(x.max_shape)
    # the buffer takes the DEVICE range from the copy (no-op for single device copies)
@@ -2557,7 +2569,7 @@ index 0cc01e04f..062d081f1 100644
    view = buf.shrink_to(stg.shape)
    return view.after(view.store(x))
  
-@@ -258,7 +276,7 @@ earliest_rewrites = mop_cleanup+PatternMatcher([
+@@ -254,7 +272,7 @@ earliest_rewrites = mop_cleanup+PatternMatcher([
  def prepare_rangeify(sink:UOp) -> UOp:
    # prepare for rangeify
    tsink = graph_rewrite(forward_call_outputs(sink), multi_pm, name="multi_pm")
@@ -2568,11 +2580,11 @@ index 0cc01e04f..062d081f1 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index b6c07a241..66602f979 100644
+index 8238ec207..07f8589e3 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,8 +1,8 @@
- from dataclasses import dataclass, field, replace
+ from dataclasses import dataclass, field
  from typing import cast
  import itertools
 -from tinygrad.dtype import dtypes, AddrSpace, Invalid
@@ -2735,7 +2747,7 @@ index b6c07a241..66602f979 100644
    buf = after.buf_uop
    # NOTE: this is bottom up, so we only add it once
    if buf not in ctx.map: ctx.map[buf] = after
-@@ -345,7 +426,7 @@ def get_kernel_graph(tsink:UOp) -> UOp:
+@@ -342,7 +423,7 @@ def get_kernel_graph(tsink:UOp) -> UOp:
  
    # cleanups for speed and runability
    tsink = graph_rewrite(tsink,
@@ -2745,7 +2757,7 @@ index b6c07a241..66602f979 100644
    next_range = max((x.axis_id[0] for x in tsink.toposort() if x.op is Ops.RANGE), default=-1) + 1
    tsink = graph_rewrite(tsink, pm_limit_bufs, ctx=LimitBufsContext(range_idx=itertools.count(next_range)), name="limit buffers")
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 416e8e983..4312d09a0 100644
+index ed348be38..b75309f2c 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -2756,7 +2768,7 @@ index 416e8e983..4312d09a0 100644
  from dataclasses import dataclass, replace
  from enum import Enum, auto
  from tinygrad.uop import Ops, GroupOp
-@@ -55,10 +56,10 @@ axis_colors = {AxisType.DEVICE: "green", AxisType.GLOBAL: "blue", AxisType.LOCAL
+@@ -54,10 +55,10 @@ axis_colors = {AxisType.DEVICE: "green", AxisType.GLOBAL: "blue", AxisType.LOCAL
  range_start = {Ops.STAGE: 1, Ops.REDUCE: 1, Ops.END: 1, Ops.LINEAR: 0}
  
  # https://en.wikipedia.org/wiki/Identity_element
@@ -2771,7 +2783,7 @@ index 416e8e983..4312d09a0 100644
  
  # With True as the default, this matches the old symbolic behavior
  def resolve(x:UOp|bool, default:bool=True):
-@@ -92,6 +93,25 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
+@@ -91,6 +92,25 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
    return tuple(range(nleft)) + tuple(nleft+i for i,s in enumerate(src_shape) if resolve(s == 1, default=False) and resolve(out_shape[nleft+i] != 1))
  
  def ssimplify(uop:sint): return uop.ssimplify() if isinstance(uop, UOp) else uop
@@ -2797,7 +2809,7 @@ index 416e8e983..4312d09a0 100644
  def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
  
  def range_str(u:UOp, color=False) -> str:
-@@ -1075,8 +1095,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1051,8 +1071,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
    def vmax(self) -> PyConst: return self._min_max[1]
    @functools.cached_property
    def _min_max(self) -> tuple[PyConst, PyConst]:
@@ -2829,14 +2841,17 @@ index 416e8e983..4312d09a0 100644
 +      (s0_vmin, s0_vmax), (s1_vmin, s1_vmax) = self._operand(self.src[0]), self._operand(self.src[1])
        if self.op is Ops.ADD: return wrapped(self.dtype, s0_vmin+s1_vmin, s0_vmax+s1_vmax)
        if self.op is Ops.SUB: return wrapped(self.dtype, s0_vmin-s1_vmax, s0_vmax-s1_vmin)
-       if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax >= 0:
-@@ -1114,28 +1157,55 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
-       if self.op is Ops.CMPEQ: return (s0_vmin == s0_vmax == s1_vmin == s1_vmax, not ((s0_vmax < s1_vmin) or (s1_vmax < s0_vmin)))
+       if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax and (s0_vmin >= 0 or s1_vmax >= 0):
+@@ -1091,31 +1134,56 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
--    if self.op is Ops.WHERE: return min(self.src[1].vmin, self.src[2].vmin), max(self.src[1].vmax, self.src[2].vmax)
-+    if self.op is Ops.WHERE:
+     if self.op is Ops.WHERE:
 +      (x0, x1), (y0, y1) = self._operand(self.src[1]), self._operand(self.src[2])
+       # int (a<b).where(a,b) is min(a,b)
+-      if dtypes.is_int(self.dtype) and self.src[0].op is Ops.CMPLT and self.src[0].src == self.src[1:]:
+-        return min(self.src[1].vmin, self.src[2].vmin), min(self.src[1].vmax, self.src[2].vmax)
+-      return min(self.src[1].vmin, self.src[2].vmin), max(self.src[1].vmax, self.src[2].vmax)
++      if dtypes.is_int(self.dtype) and self.src[0].op is Ops.CMPLT and self.src[0].src == self.src[1:]: return min(x0, y0), min(x1, y1)
 +      # where a float comparison a < b holds, neither is NaN, a is below b's greatest value and b above a's least
 +      if (c:=self.src[0]).op is Ops.CMPLT and dtypes.is_float(c.src[0].dtype):
 +        if self.src[1] is c.src[0]: x1 = min(x1, c.src[1].vmax)
@@ -2895,7 +2910,7 @@ index 416e8e983..4312d09a0 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1169,9 +1239,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1149,9 +1217,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
  
    @staticmethod
    def alloc(shape:tuple[sint, ...], dtype:DType, slot:int|None=None, addrspace=AddrSpace.GLOBAL, device=None, axis:int|None=None,
@@ -2907,16 +2922,16 @@ index 416e8e983..4312d09a0 100644
                             addrspace=addrspace, device=device, spec=spec, bind_on_realize=bind_on_realize, name=name))
      return ret.reshape(()) if not shape else ret.view_as(shape, axis)
    def alloc_like(self, slot:int|None=None, addrspace=AddrSpace.GLOBAL): return UOp.alloc(self.max_shard_shape, self.dtype, slot, addrspace)
-@@ -1318,6 +1388,8 @@ class KernelInfo:
-   estimates: Estimates|None = None
+@@ -1299,6 +1367,8 @@ class KernelInfo:
    beam: int = 0
    optimized: bool = False       # the AST has been through the optimizer, skip re-optimization
+   kernel: bool = True           # launched by the runtime, not called from another kernel
 +  # the loop a host program's launch splits into blocks: its iterations, and the slots of the variables that hold a block's bounds
 +  split: tuple[sint, int, int]|None = None
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1344,6 +1416,7 @@ class ProgramInfo:
+@@ -1325,6 +1395,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -2924,7 +2939,7 @@ index 416e8e983..4312d09a0 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM: _params.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1381,22 +1454,99 @@ class CallInfo:
+@@ -1362,22 +1433,99 @@ class CallInfo:
  
  # ******** ops in python ********
  
@@ -3029,7 +3044,7 @@ index 416e8e983..4312d09a0 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.TRUNCMOD: cmod, Ops.TRUNCDIV: cdiv, Ops.DIV: floordiv, Ops.MOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1407,6 +1557,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
+@@ -1388,6 +1536,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
@@ -3041,10 +3056,10 @@ index 416e8e983..4312d09a0 100644
  
  # ***** pattern matcher *****
 diff --git a/tinygrad/uop/spec.py b/tinygrad/uop/spec.py
-index 624504b1c..eb8e7cff3 100644
+index c359a697f..3b0b25a08 100644
 --- a/tinygrad/uop/spec.py
 +++ b/tinygrad/uop/spec.py
-@@ -226,13 +226,6 @@ spec_program = PatternMatcher([
+@@ -227,13 +227,6 @@ spec_program = PatternMatcher([
    (UPat(Ops.SPECIAL, src=(UPat(dtype=dtypes.int32),), name="s"), lambda s: isinstance(s.arg, str)),
  ])+spec_shared
  
@@ -3058,7 +3073,7 @@ index 624504b1c..eb8e7cff3 100644
  # these are intermediate ops. everything should be deleted from here
  spec_full = PatternMatcher([
    (UPat(Ops.REWRITE_ERROR, dtypes.void, name="x"), lambda x: isinstance(x.arg, str)),
-@@ -246,17 +239,22 @@ spec_full = PatternMatcher([
+@@ -247,17 +240,22 @@ spec_full = PatternMatcher([
  
    # all loads/stores
    (UPat((Ops.LOAD, Ops.STORE)), lambda: True),
@@ -3083,7 +3098,7 @@ index 624504b1c..eb8e7cff3 100644
    # linear for more kernels (TODO: we should enter non sink calls)
    #(UPat(Ops.LINEAR), lambda: True),
    # PARAM is caller-provided storage (or a Variable in the ALU addrspace), ALLOC is call-local storage
-@@ -270,8 +268,13 @@ spec_kernel_graph = PatternMatcher([
+@@ -271,8 +269,13 @@ spec_kernel_graph = PatternMatcher([
    # mstack/mselect
    (UPat(Ops.MSTACK, name="x"), lambda x: all(isinstance(s.device, str) for s in x.src) or (all_same(x.src) and x.src[0].device is None)),
    (UPat(Ops.MSELECT, name="x"), lambda x: isinstance(x.src[0].device, tuple) and x.arg < len(x.src[0].device)),
@@ -3100,7 +3115,7 @@ index 624504b1c..eb8e7cff3 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index 58ede6934..f4b16ff05 100644
+index 4b63fe4cd..88dc8c403 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -3115,7 +3130,7 @@ index 58ede6934..f4b16ff05 100644
  from tinygrad.helpers import partition, all_same, prod, flatten, IMAGE, dedup, ceildiv
  from tinygrad.uop.divandmod import div_and_mod_symbolic
  from tinygrad.uop.movement import mop_cleanup
-@@ -13,24 +13,58 @@ from tinygrad.codegen.decomp.transcendental import xpow, xpow_int
+@@ -13,26 +13,59 @@ from tinygrad.codegen.decomp.transcendental import xpow, xpow_int
  
  # ******** phase 1 of symbolic used to live in ops, it's the most generic folding rules ********
  
@@ -3164,6 +3179,8 @@ index 58ede6934..f4b16ff05 100644
 +# width wraps to it, as on int32 (x*65536)*65536 is x*0, not x*2**32
  # a fold mints a signed const only if it fits, the mint would wrap it. unsigned ring ops wrap by definition
  def fits(x:UOp, v:PyConst) -> bool: return x.dtype not in dtypes.sints or x.dtype.min <= v <= x.dtype.max
+ # a rewrite that introduces a signed intermediate must keep its range in the dtype, overflow is UB
+ def no_overflow(u:UOp) -> bool: return fits(u, u.vmin) and fits(u, u.vmax)
  
 +def wrap_folded(f:UOp, c1:UOp, c2:UOp) -> UOp:
 +  c = c1.alu(f.op, c2)
@@ -3173,15 +3190,14 @@ index 58ede6934..f4b16ff05 100644
 +  return c if (w:=truncate[f.dtype](v)) == v else c1.const_like(w)
 +
 +def max_by_bounds(m:UOp, x:UOp, y:UOp) -> UOp|None:
-+  (x0, x1), (y0, y1) = m._operand(x), m._operand(y)
-+  r = x if x0 >= y1 else y if x1 <= y0 else None
++  if m._operand(x)[0] < m._operand(y)[1]: return None
 +  # the operand kept is committed to the maximum's type
-+  return r.ccast(m.dtype) if r is not None and r.dtype in dtypes.weaks else r
++  return x.ccast(m.dtype) if x.dtype in dtypes.weaks else x
 +
  def _quotient_base(q:UOp, base:UOp, div:int) -> UOp|None:
    # the B with q == B//div and B%div == base%div, or None. only such congruence is needed to recombine, and canonicalization
    # moves consts freely: the quotient may be merged ((x//c + a)//div -> (x + a*c)//(c*div) for div>0) and shifted ((y + k*D)//D == y//D + k)
-@@ -83,6 +117,8 @@ def lift_reduce_gate(red:UOp, cond:UOp, x:UOp, i:UOp) -> UOp|None:
+@@ -85,6 +118,8 @@ def lift_reduce_gate(red:UOp, cond:UOp, x:UOp, i:UOp) -> UOp|None:
    ret = red.replace(src=(inner,)+red.src[1:])
    return lift[0].uprod(*lift[1:]).where(ret, i) if lift else ret
  
@@ -3190,7 +3206,7 @@ index 58ede6934..f4b16ff05 100644
  pm_data_invalid = PatternMatcher([
    (invalid_pat.broadcast(name="s"), lambda i,s: i.expand(s.shape)),
    (UPat(GroupOp.Unary|{Ops.CAST, Ops.BITCAST}, src=(invalid_pat,)), lambda i: i),
-@@ -120,9 +156,16 @@ def fold_const_where(gate:UOp, c0:UOp, c1:UOp, w:UOp) -> UOp:
+@@ -121,9 +156,16 @@ def fold_const_where(gate:UOp, c0:UOp, c1:UOp, w:UOp) -> UOp:
    ret = c0 if gate.val else c1
    return ret.ccast(w.dtype) if ret.op is Ops.CONST and ret.dtype in dtypes.weaks and w.dtype not in dtypes.weaks else ret
  
@@ -3208,7 +3224,7 @@ index 58ede6934..f4b16ff05 100644
    (UPat({Ops.SHL, Ops.SHR}, src=(UPat.var("x"), UPat.const(0))), lambda x: x),          # x<<0 / x>>0 -> x
    (UPat.var("x") * 1, lambda x: x),    # x*1 -> x
    (UPat.var("x") // UPat.var("x"), lambda x: x.const_like(1)), # x//x -> 1
-@@ -169,8 +212,9 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+@@ -168,8 +210,9 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
     a.replace(src=tuple(s.ccast(dt) if s.dtype in dtypes.weaks else s for s in a.src))
     if (dt:=promo_dtype(a.src)) not in dtypes.weaks else None),
    # ** two stage ALU folding **
@@ -3220,7 +3236,7 @@ index 58ede6934..f4b16ff05 100644
      for op in GroupOp.Associative),
    # bool MUL is AND, ADD/MAX is OR. prevents other rules to rewrite bool ADD/MUL incorrectly
    (UPat.var('x', dtype=dtypes.bool) * UPat.var('y', dtype=dtypes.bool), lambda x,y: x&y),
-@@ -178,13 +222,8 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+@@ -177,13 +220,8 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
    (UPat.var('x', dtype=dtypes.bool).maximum(UPat.var('y', dtype=dtypes.bool)), lambda x,y: x|y),
    # *** div rules ***
    (UPat.cvar('x', arg=0) / 0, lambda x: x.const_like(float('nan'))),   # 0/0 -> nan
@@ -3236,12 +3252,16 @@ index 58ede6934..f4b16ff05 100644
    # *** cast/bitcast ***
    (UPat((Ops.CAST, Ops.BITCAST), name="root"), lambda root: root.src[0] if root.dtype == root.src[0].dtype else None),
    # a BITCAST reads its operand at the width it states, so a weak const is nonsense here: the bare arm is bool only
-@@ -199,15 +238,16 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+@@ -196,17 +234,18 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+   (UPat.var("x").cast(dtypes.bool), lambda x: x != 0),
+   # ** pow **
    (UPat.var("x").alu(Ops.POW, UPat.cvar("c")), simplify_pow),
-   # positive const ** x
-   (UPat.cvar("c").alu(Ops.POW, UPat.var("x")),
--   lambda c,x: c if c.val == 1 else (x*math.log2(c.val)).exp2() if c.val > 0 and dtypes.is_float(x.dtype) else None),
-+   lambda c,x: c if c.val == 1 else (x*cr_log2(c.val)).exp2() if 0 < c.val < math.inf and dtypes.is_float(x.dtype) else None),
+-  # positive const ** x
+-  (UPat.cvar("c").alu(Ops.POW, UPat.var("x")),
+-   lambda c,x: (x*math.log2(c.val)).exp2() if c.val > 0 and dtypes.is_float(x.dtype) else None),
++  # positive const ** x, and 1 ** x, which is 1 at every x, nan included
++  (UPat.cvar("c").alu(Ops.POW, UPat.var("x")).named("p"),
++   lambda p,c,x: p.const_like(1) if c.val == 1 else (x*cr_log2(c.val)).exp2() if 0 < c.val < math.inf and dtypes.is_float(x.dtype) else None),
    # unpack a uint64 packed from two uint32 (threefry)
    (((UPat.var(None, dtypes.uint64)<<32) | UPat.var('y', dtypes.uint32).cast(dtypes.uint64)).cast(dtypes.uint32), lambda y: y),
    (((UPat.var('x', dtypes.uint64)<<32) | UPat.var(None, dtypes.uint32).cast(dtypes.uint64))>>32,
@@ -3256,7 +3276,7 @@ index 58ede6934..f4b16ff05 100644
  ])+mop_cleanup
  
  # ******** phase 2 builds on phase 1, it includes the old "symbolic", rules that match deeper ********
-@@ -238,27 +278,43 @@ commutative = PatternMatcher([
+@@ -237,24 +276,39 @@ commutative = PatternMatcher([
    (UPat(GroupOp.Commutative, dtype=dtypes.weakint, name='x'), lambda x: x.replace(src=x.src[::-1]) if x.src[1].tuplize < x.src[0].tuplize else None),
  ])
  
@@ -3289,33 +3309,20 @@ index 58ede6934..f4b16ff05 100644
    # TODO: make a more general or folder like simplify_valid
    (UPat.var("x", dtype=dtypes.bool) | UPat.var("x", dtype=dtypes.bool).logical_not(), lambda x: x.const_like(True)),  # x|!x -> True
 -  # ** combine terms **
--  # (x*c0)+(x*c1) -> x*(c0+c1)
--  (UPat.var("x") * UPat.cvar("c0") + UPat.var("x") * UPat.cvar("c1"), lambda x,c0,c1: x*(c0+c1) if fits(x, c0.vmin+c1.vmin) else None),
--  ((UPat.var("y") + UPat.var("x") * UPat.cvar("c0")) + UPat.var("x") * UPat.cvar("c1"),
 +  # ** combine terms **, for integers: in floats each product and sum rounds
-+  (UPat.var("x", int_or_bool) * UPat.cvar("c0") + UPat.var("x") * UPat.cvar("c1"),
-+   lambda x,c0,c1: x*(c0+c1) if fits(x, c0.vmin+c1.vmin) else None), # (x*c0)+(x*c1) -> x*(c0+c1)
-+  ((UPat.var("y") + UPat.var("x", int_or_bool) * UPat.cvar("c0")) + UPat.var("x") * UPat.cvar("c1"),
-    lambda x,y,c0,c1: y+x*(c0+c1) if fits(x, c0.vmin+c1.vmin) else None),
--  (UPat.var("x") + UPat.var("x") * UPat.cvar("c"), lambda x,c: x*(c+1) if fits(x, c.vmin+1) else None), # (x+x*c)-> x*(c+1)
--  ((UPat.var("y") + UPat.var("x")) + UPat.var("x") * UPat.cvar("c"), lambda x,y,c: y+x*(c+1) if fits(x, c.vmin+1) else None),
--  ((UPat.var("y") + UPat.var("x") * UPat.cvar("c")) + UPat.var("x"), lambda x,y,c: y+x*(c+1) if fits(x, c.vmin+1) else None),
-+  (UPat.var("x", int_or_bool) + UPat.var("x") * UPat.cvar("c"), lambda x,c: x*(c+1) if fits(x, c.vmin+1) else None), # (x+x*c)-> x*(c+1)
-+  ((UPat.var("y") + UPat.var("x", int_or_bool)) + UPat.var("x") * UPat.cvar("c"), lambda x,y,c: y+x*(c+1) if fits(x, c.vmin+1) else None),
-+  ((UPat.var("y") + UPat.var("x", int_or_bool) * UPat.cvar("c")) + UPat.var("x"), lambda x,y,c: y+x*(c+1) if fits(x, c.vmin+1) else None),
-   (UPat.var("x") + UPat.var("x"), lambda x: x*2), # (x+x)-> x*2
--  (((UPat.var("y") + UPat.var("x")) + UPat.var("x")).named("a"),
-+  (((UPat.var("y") + UPat.var("x", int_or_bool)) + UPat.var("x")).named("a"),
-    lambda a,y,x: y+x*2 if fits(a, 2*x.vmin) and fits(a, 2*x.vmax) else None),
-   (UPat.cvar("y") * (UPat.var("x", dtype=dtypes.weakint) + UPat.cvar("c")), lambda x,y,c: (y*x)+(y*c)),  # y*(x+c) -> y*x + y*c
-   # ** where folding **
-@@ -277,38 +333,43 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
-   (UPat(GroupOp.Binary, name="alu", src=(UPat.var("c").where(UPat.var("t"), UPat.var("f")), UPat.var("c").where(UPat.var("tt"), UPat.var("ff")))), \
-    lambda alu,c,t,tt,f,ff: c.where(t.alu(alu.op, tt), f.alu(alu.op, ff)) if t.op == tt.op == Ops.CONST or f.op == ff.op == Ops.CONST else None),
-   # if its a plus we add the associative variation too
--  ((UPat.var("y")+UPat.var("c").where(UPat.var("t"), UPat.var("f"))) + UPat.var("c").where(UPat.var("tt"), UPat.var("ff")), \
-+  ((UPat.var("y", int_or_bool)+UPat.var("c").where(UPat.var("t"), UPat.var("f"))) + UPat.var("c").where(UPat.var("tt"), UPat.var("ff")), \
-    lambda y,c,t,tt,f,ff: y+c.where(t+tt, f+ff) if t.op == tt.op == Ops.CONST or f.op == ff.op == Ops.CONST else None),
+   # (x*c0)+(x*c1) -> x*(c0+c1)
+   (UPat.var("x", dtypes.wints) * UPat.cvar("c0") + UPat.var("x") * UPat.cvar("c1"), lambda x,c0,c1: x*(c0+c1) if fits(x, c0.vmin+c1.vmin) else None),
+   ((UPat.var("y") + UPat.var("x", dtypes.wints) * UPat.cvar("c0")) + UPat.var("x") * UPat.cvar("c1"),
+    lambda x,y,c0,c1: y+m if fits(x, c0.vmin+c1.vmin) and no_overflow(m:=x*(c0+c1)) else None),
+-  (UPat.var("x") + UPat.var("x") * UPat.cvar("c"), # (x+x*c)-> x*(c+1)
+-   lambda x,c: x*(c+1) if (x.dtype in dtypes.wints or c.arg == -1) and fits(x, c.vmin+1) else None),
++  (UPat.var("x", dtypes.wints) + UPat.var("x") * UPat.cvar("c"), lambda x,c: x*(c+1) if fits(x, c.vmin+1) else None), # (x+x*c)-> x*(c+1)
+   ((UPat.var("y") + UPat.var("x", dtypes.wints)) + UPat.var("x") * UPat.cvar("c"),
+    lambda x,y,c: y+m if fits(x, c.vmin+1) and no_overflow(m:=x*(c+1)) else None),
+   ((UPat.var("y") + UPat.var("x", dtypes.wints) * UPat.cvar("c")) + UPat.var("x"),
+@@ -282,26 +336,27 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+   ((UPat.var("y", dtypes.wints)+UPat.var("c").where(UPat.var("t"), UPat.var("f"))) + UPat.var("c").where(UPat.var("tt"), UPat.var("ff")), \
+    lambda y,c,t,tt,f,ff: y+m if (t.op == tt.op == Ops.CONST or f.op == ff.op == Ops.CONST) and no_overflow(m:=c.where(t+tt, f+ff)) else None),
    # complementary zero branches under the same condition select directly
 -  (UPat.var("c").where(UPat.var("t"), 0) + UPat.var("c").where(0, UPat.var("f")), lambda c,t,f: c.where(t, f)),
 +  (UPat.var("c").where(UPat.var("t", int_or_bool), 0) + UPat.var("c").where(0, UPat.var("f")), lambda c,t,f: c.where(t, f)),
@@ -3325,11 +3332,15 @@ index 58ede6934..f4b16ff05 100644
    (UPat(Ops.RANGE, src=(UPat.cvar().or_casted(),), name="x"), lambda x: x.const_like(x.vmin) if x.vmin == x.vmax else None),
 -  # max folding
 -  ((UPat.cvar("a") < UPat.var("b")).where(UPat.var("b"), UPat.cvar("c")), lambda a,b,c: UOp.maximum(a,b) if a.val == c.val else None),
--  ((UPat.var("a") < UPat.cvar("b")).where(UPat.cvar("c"), UPat.var("a")), lambda a,b,c: UOp.maximum(a,b) if b.val == c.val else None),
--  (UPat.maximum(UPat.var("x"), UPat.var("y")), lambda x,y: x if x.vmin >= y.vmax else y if x.vmax <= y.vmin else None),
+-  # (a<b).where(c, a+(c-b)) -> max(a+(c-b), c), the shift needs a signed int so the unselected arm can't wrap
+-  ((UPat.var("a") < UPat.cvar("b")).where(UPat.cvar("c"), UPat.var("y")), lambda a,b,c,y: UOp.maximum(y,c) if (y is a and b.val == c.val) or
+-   (dtypes.is_int(a.dtype) and not dtypes.is_unsigned(a.dtype) and y is a+(c.val-b.val)) else None),
+-  (UPat.maximum(UPat.var("x"), UPat.var("y")), lambda x,y: x if x.vmin >= y.vmax else None),
 +  # max folding, for integers: a float selection keeps IEEE's nan and signed zeros where a maximum does not
 +  ((UPat.cvar("a") < UPat.var("b", int_or_bool)).where(UPat.var("b"), UPat.cvar("c")), lambda a,b,c: UOp.maximum(a,b) if a.val == c.val else None),
-+  ((UPat.var("a", int_or_bool) < UPat.cvar("b")).where(UPat.cvar("c"), UPat.var("a")), lambda a,b,c: UOp.maximum(a,b) if b.val == c.val else None),
++  # (a<b).where(c, a+(c-b)) -> max(a+(c-b), c), the shift needs a signed int whose shifted arm does not wrap
++  ((UPat.var("a", int_or_bool) < UPat.cvar("b")).where(UPat.cvar("c"), UPat.var("y")), lambda a,b,c,y: UOp.maximum(y,c) if (y is a and b.val == c.val) or
++   (dtypes.is_int(a.dtype) and not dtypes.is_unsigned(a.dtype) and exact(a.dtype, d:=c.val-b.val, a.vmin+d, a.vmax+d) and y is a+d) else None),
 +  # a float maximum's bounds leave out nan and the order of zeros
 +  (UPat.maximum(UPat.var("x", int_or_bool), UPat.var("y")).named("m"), max_by_bounds),
    # TODO: why does this rule break beautiful_mnist?
@@ -3344,14 +3355,10 @@ index 58ede6934..f4b16ff05 100644
    ((UPat.cvar("c0") + UPat.var("x", dtype=dtypes.sints+(dtypes.weakint,))) < UPat.cvar("c1"),
 -   lambda x,c0,c1: x<(c1-c0) if fits(x, c1.vmin-c0.vmin) else None),
 +   lambda x,c0,c1: x<(c1-c0) if exact(x.dtype, c0.vmin, c1.vmin, x.vmin+c0.vmin, x.vmax+c0.vmin, c1.vmin-c0.vmin) else None),
-   # x//d<c -> x<c*d for d>0, and -> c*d<x for d<0
+   # x//d<c -> x<c*d for d>0
    ((UPat.var("x", dtype=dtypes.weakint)//UPat.cvar("d"))<UPat.cvar("c"),
-    lambda x,d,c: (x<c.val*d.val) if d.val > 0 else (x>c.val*d.val) if d.val < 0 else None),
-   # ** move add/mul consts to end (NOTE: this is still happening before constant folding) **
--  ((UPat.var("x") + UPat.cvar("c1")) + UPat.var("y"), lambda x,c1,y: (x+y)+c1 if y.op is not Ops.CONST else None),
--  ((UPat.var("x") * UPat.cvar("c1")) * UPat.var("y"), lambda x,c1,y: (x*y)*c1 if y.op is not Ops.CONST else None),
-+  ((UPat.var("x", int_or_bool) + UPat.cvar("c1")) + UPat.var("y"), lambda x,c1,y: (x+y)+c1 if y.op is not Ops.CONST else None),
-+  ((UPat.var("x", int_or_bool) * UPat.cvar("c1")) * UPat.var("y"), lambda x,c1,y: (x*y)*c1 if y.op is not Ops.CONST else None),
+    lambda x,d,c: (x<c.val*d.val) if d.val > 0 else None),
+@@ -312,8 +367,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    # *** rules from symbolic ***
    # generic lt folding
    (UPat.var("x", dtypes.weakint)<UPat.cvar("c"), lambda x,c: lt_folding(x, c.val)),
@@ -3366,10 +3373,10 @@ index 58ede6934..f4b16ff05 100644
    # canonicalize a simplex with positive coefficients > 0. NOTE: not x < 1 means x > 0
    ((UPat.var("x", dtypes.weakint)<1).logical_not(), lambda x: (newx<1).logical_not() if (newx:=canonicalize_simplex(x)) is not None else None),
    # a range mod its own upper bound is just the range
-@@ -319,6 +380,11 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -323,6 +382,11 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+   # if the intermediate cast doesnt narrow we can do it in one cast
    (UPat.var('x').cast(name="a").cast(name="b"), lambda x,a,b: x.cast(b.dtype) if can_lossless_cast(x.dtype, a.dtype) else None),
-   (UPat.var('x', dtypes.ints+(dtypes.weakint,)).cast(dtypes.ints+(dtypes.weakint,), name="a").cast(name="b"),
-     lambda x,a,b: x.ccast(b.dtype) if not x.overflows(a.dtype) else None),
+   (UPat.var('x', dtypes.wints).cast(dtypes.wints, name="a").cast(name="b"), lambda x,a,b: x.ccast(b.dtype) if not x.overflows(a.dtype) else None),
 +  # a zero extension commutes with a mask and with a right shift by less than the operand's width: a widening cast of an
 +  # unsigned x & y or x >> k is the operation on the widened operands, so packed values unpack at their consumer's width
 +  (UPat(Ops.CAST, dtypes.uints, src=(UPat((Ops.AND, Ops.SHR), dtypes.uints, name="u"),), name="c"),
@@ -3378,7 +3385,16 @@ index 58ede6934..f4b16ff05 100644
    # try to do math in int instead of long, keep weak const weak
    (UPat(GroupOp.Binary, src=(UPat.var("x", (dtypes.long, dtypes.weakint)), UPat.var("y", (dtypes.long, dtypes.weakint))), name="u"), lambda u,x,y:
      (UOp.const(x.val) if x.op is Ops.CONST else x.cast(dtypes.int)).alu(u.op,
-@@ -396,8 +462,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
+@@ -335,6 +399,8 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+                         else (UOp(Ops.NOOP).after(y.src[0]).end(*y.src[1:]),) if y.op is Ops.REDUCE else y.src for y in x.src[1:]]))))),
+   # after/end with 1 src is just src[0]
+   (UPat((Ops.AFTER, Ops.END), src=(UPat.var("s"),)), lambda s: s),
++  # ranges can be subbed for CONSTs, remove them from ENDs: a loop of one trip around a call is that call
++  (UPat(Ops.END, name="x"), lambda x: x.replace(src=(x.src[0],)+tuple(r for r in x.src[1:] if r.op is not Ops.CONST))),
+   # the rules above key on bare CONSTs, so a redundantly committed const has to be uncast in the same fixpoint
+ ])+div_and_mod_symbolic+pm_uncast_const
+ 
+@@ -398,8 +464,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
  
  # ******** phase 3 is the complete symbolic ********
  
@@ -3389,7 +3405,7 @@ index 58ede6934..f4b16ff05 100644
    # max(x*m) = max(x)*m needs x*m monotone in x, and an unsigned multiply wraps
    if r.arg[0] is Ops.MAX and dtypes.is_unsigned(r.dtype): return None
    inside, outside = [], []
-@@ -406,7 +473,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
+@@ -408,7 +475,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
      if m not in r.src[1:] and all(r not in m_parents for r in r.src[1:]) and (r.arg[0] != Ops.MAX or m.vmin >= 0): outside.append(m)
      else: inside.append(m)
    if len(outside) == 0: return None
@@ -3405,7 +3421,7 @@ index 58ede6934..f4b16ff05 100644
  
  def drop_and_clauses(cond:UOp, x:UOp, i:UOp) -> UOp|None:
    keep, drop = partition(cond.split_uop(Ops.AND), lambda c: any(r in x.ranges for r in c.ranges))
-@@ -429,10 +503,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
+@@ -431,10 +505,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
    return UOp.const(True).uprod(*keep).where(ret_idx, ret_idx.const_like(0))
  
  # where after gated load becomes alt value, TODO: this is sort of duplicated with rules in devectorizer
@@ -3421,7 +3437,7 @@ index 58ede6934..f4b16ff05 100644
  ])
  
  def gated_given_valid(cond:UOp, x:UOp, i:UOp) -> UOp|None:
-@@ -472,14 +548,11 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -474,9 +550,6 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),
@@ -3431,13 +3447,6 @@ index 58ede6934..f4b16ff05 100644
    # reduce mul chain, move muls after the reduce
    (UPat(Ops.MUL).reduce(name="r", allow_any_len=True), reduce_mul_chain),
    # ** combine terms (opinionated) **
--  # -(x+y) -> -x + -y
--  (-1 * (UPat.var("x") + UPat.var("y")).named("a"), lambda a,x,y: (-x)+(-y) if fits(a, -x.vmin) and fits(a, -y.vmin) else None),
-+  # -(x+y) -> -x + -y, for integers
-+  (-1 * (UPat.var("x", int_or_bool) + UPat.var("y")).named("a"), lambda a,x,y: (-x)+(-y) if fits(a, -x.vmin) and fits(a, -y.vmin) else None),
-   # (x+y)*c -> x*c+y*c. only for int, float has inf*0=nan issue
-   ((UPat.var("x", dtypes.weakint) + UPat.var("y")).named("a") * UPat.cvar("c"),
-    lambda a,x,y,c: x*c+y*c if all(fits(a, v*c.vmin) for v in (x.vmin, x.vmax, y.vmin, y.vmax)) else None),
 diff --git a/tinygrad/uop/upat.py b/tinygrad/uop/upat.py
 index ab8800b84..cd5237d08 100644
 --- a/tinygrad/uop/upat.py

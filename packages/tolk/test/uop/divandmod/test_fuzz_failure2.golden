@@ -1,7 +1,7 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="v3", addrspace=AddrSpace.ALU)
-2 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 5), multiple_of=1, name="v2", addrspace=AddrSpace.ALU)
+1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), name="v3", addrspace=AddrSpace.ALU)
+2 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 5), name="v2", addrspace=AddrSpace.ALU)
 3 Ops.CONST dtypes.weakint [] 2
 4 Ops.MUL dtypes.weakint [2, 3]
 5 Ops.ADD dtypes.weakint [1, 4]
@@ -9,7 +9,7 @@
 7 Ops.ADD dtypes.weakint [5, 6]
 8 Ops.CONST dtypes.weakint [] 3
 9 Ops.DIV dtypes.weakint [7, 8]
-10 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 16), multiple_of=1, name="v1", addrspace=AddrSpace.ALU)
+10 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 16), name="v1", addrspace=AddrSpace.ALU)
 11 Ops.ADD dtypes.weakint [2, 9]
 12 Ops.ADD dtypes.weakint [10, 11]
 13 Ops.CONST dtypes.weakint [] 4
@@ -29,14 +29,15 @@
 27 Ops.ADD dtypes.weakint [25, 26]
 28 Ops.ADD dtypes.weakint [27, 6]
 29 Ops.DIV dtypes.weakint [28, 8]
-30 Ops.CONST dtypes.weakint [] 6
-31 Ops.ADD dtypes.weakint [25, 29]
-32 Ops.ADD dtypes.weakint [30, 31]
-33 Ops.ADD dtypes.weakint [32, 13]
-34 Ops.DIV dtypes.weakint [33, 15]
-35 Ops.ADD dtypes.weakint [34, 17]
-36 Ops.DIV dtypes.weakint [35, 19]
-37 Ops.ADD dtypes.weakint [33, 21]
-38 Ops.DIV dtypes.weakint [37, 23]
-39 Ops.SINK dtypes.void [9, 9, 16, 16, 20, 24, 29, 25, 34, 6, 36, 38]
+30 Ops.ADD dtypes.weakint [27, 25]
+31 Ops.CONST dtypes.weakint [] 6
+32 Ops.ADD dtypes.weakint [25, 29]
+33 Ops.ADD dtypes.weakint [31, 32]
+34 Ops.ADD dtypes.weakint [33, 13]
+35 Ops.DIV dtypes.weakint [34, 15]
+36 Ops.ADD dtypes.weakint [35, 17]
+37 Ops.DIV dtypes.weakint [36, 19]
+38 Ops.ADD dtypes.weakint [34, 21]
+39 Ops.DIV dtypes.weakint [38, 23]
+40 Ops.SINK dtypes.void [9, 9, 16, 16, 20, 24, 29, 30, 37, 39]
 

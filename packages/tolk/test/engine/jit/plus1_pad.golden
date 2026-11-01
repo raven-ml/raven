@@ -1,4 +1,4 @@
-# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 0 Ops.CONST dtypes.weakint [] 30
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 3
@@ -9,7 +9,7 @@
 7 Ops.ADD dtypes.weakint [5, 6]
 8 Ops.INDEX dtypes.f32 [1, 7]
 9 Ops.STACK dtypes.void []
-10 Ops.PARAM dtypes.weakint [9] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
+10 Ops.PARAM dtypes.weakint [9] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 10), name="i", addrspace=AddrSpace.ALU)
 11 Ops.CMPLT dtypes.bool [6, 10]
 12 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
 13 Ops.CONST dtypes.bool [] Invalid
