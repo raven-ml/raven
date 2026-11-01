@@ -331,7 +331,10 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
                      && Option.is_none
                           (Nx.Prim.coerce (Nx.dtype x) (Nx.Placement.devices q)
                              x) ->
-                  decline "Nx.place onto another set of devices"
+                  decline
+                    "Nx.place onto another set of devices: a program over \
+                     several devices keeps what it derives from an argument \
+                     between calls"
               | Place (q, x), Place (_, x0)
                 when argument x0 && gathers q (Nx.placement x) (Nx.shape x) ->
                   decline

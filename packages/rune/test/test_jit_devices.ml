@@ -472,6 +472,53 @@ let gather_kinds set =
         (omap bits (outcome (fun () -> rows x x)))
         (omap bits got)
 
+(* Other sets
+
+   A program that places a value onto another set evaluates, an argument or a
+   value it computes, and gives eager's placements and bits: a split program
+   keeps what it derives from an argument between calls, which would hold a
+   copy on the other set's devices. *)
+
+let others =
+  Array.init 2 (fun k ->
+      Result.get_ok (Rig.memory_device (Printf.sprintf "other-%d" k)))
+
+module Other = (val Nx.devices (Array.to_list others))
+
+(* An offload: weights on one device placed whole on each device of the
+   other set. *)
+let elsewhere_examples =
+  [
+    { n = 2; shape = [| 4; 3 |]; x = Device 0; y = On };
+    { n = 4; shape = [| 3; 2 |]; x = Device 2; y = On };
+  ]
+
+let elsewhere set c =
+  cover "cut across the other set"
+    (match c.y with Split _ -> true | _ -> false);
+  cover "an offload"
+    (match (c.x, c.y) with Device _, (On | Mesh _) -> true | _ -> false);
+  let x = Nx.place (at set c.x) (value c.shape) in
+  let there =
+    match c.y with
+    | On | Mesh _ -> Other.on
+    | Split a -> Other.split ~axis:a
+    | Device k -> Nx.Placement.device Other.v others.(k mod 2)
+  in
+  let back = at set (match c.y with Device _ -> On | y -> y) in
+  let computed x y =
+    let z = Nx.place there (Nx.mul x y) in
+    Nx.place back (Nx.sub (Nx.mul_s z 2.) z)
+  in
+  let argument x _ = Nx.place back (Nx.place there x) in
+  let same f =
+    equal (outcome_t bits_t)
+      (omap bits (outcome (fun () -> f x x)))
+      (omap bits (evaluated f x x))
+  in
+  same computed;
+  same argument
+
 (* Kernels
 
    Each device that holds elements of an operation's results runs a kernel of
@@ -615,6 +662,12 @@ let () =
              test "over two devices" (fun () -> over 2 { law = gather_kinds });
              test "over four and their mesh" (fun () ->
                  over 4 { law = gather_kinds });
+           ];
+         group "other sets"
+           [
+             prop ~count:20 ~examples:elsewhere_examples
+               "a value placed onto another set and back evaluates" cases
+               (fun c -> over c.n { law = (fun set -> elsewhere set c) });
            ];
          group "loops"
            [

@@ -1729,11 +1729,13 @@ val jit :
     or a custom rule; a scan over rows cut along axis 0 or along an axis of one
     element, an iterate that stacks its steps, and a loop whose step gives a
     carry another placement; a check, an addition to a {!Total}, an emission, a
-    traced value placed onto another set, a placement of an argument that gives
-    a device more of it, as a gather of a cut argument whole on each device
-    does, since a compiled call holds all it gathers and every piece of the
-    closings it computes at once, where an evaluated one lets each go after its
-    last read. It also declines a
+    traced value placed onto another set, as weights offloaded to other devices
+    are, since a split program keeps the storage it derives from an argument
+    between calls, and so would hold the copies on that set's devices; or a
+    placement of an argument that gives a device more of it, as a gather of a
+    cut argument whole on each device does, since a compiled call holds all it
+    gathers and every piece of the closings it computes at once, where an
+    evaluated one lets each go after its last read. It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a
     compiled call's are, and a call with donated arguments consumes them. It
