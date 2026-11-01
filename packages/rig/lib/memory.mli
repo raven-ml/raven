@@ -18,9 +18,10 @@
 
     This module implements {!Rig.section-reclaim}. The life of a device's
     allocation goes like this:
-    + {!alloc_entry} drains the device, then takes the memory from its cache,
-      or from its driver within its budget, or reclaims ({!reclaiming}).
-    + {!alloc} wraps the entry in a new lifetime, with its token, and the
+    + {!alloc} drains the device, makes the lifetime's token, then takes
+      the memory into the token's record from its cache, or from its driver
+      within its budget, or reclaims ({!reclaiming}).
+    + {!alloc} wraps the entry in the new lifetime, with that token, and the
       owner's memory record over it.
     + A borrow on another device maps it ({!borrow}). The entry lists each
       mapping.
@@ -43,7 +44,19 @@
     ([pending] in {!Def.live}) until it is Stopped. A device's collected
     memory moves in a drain of that device: its own calls', its stop's, or
     a round of the ladder's ({!reclaiming}), which drains every device.
-    {!Rig.section-reclaim} states the model a caller sees. *)
+    {!Rig.section-reclaim} states the model a caller sees.
+
+    Every driver's call that makes memory or code finds its record made: an
+    allocation's entry in its token or its image, a mapping in its memory's
+    list and its device's table, a mapping of a word among its device's
+    mappings or pending releases. So does a take of memory from the cache.
+    The call stores the driver's answer in the record as it is, allocating
+    nothing, before its count ends ({!Def.cell}), but the image a [Place]'s
+    function lays, which it wraps in an option inside the count
+    ({!Def.loading}). An asynchronous exception once the call
+    returned, such as the [Sys.Break] of a signal that came during the call,
+    leaves what the driver made where the frees that give it back find it. A
+    free skips a record whose call made nothing. *)
 
 open Def
 
@@ -139,6 +152,10 @@ val token : int -> released -> int -> int -> int -> token
 val no_token : token
 (** [no_token] is no token: one that puts nothing on any list. *)
 
+val token_link : token -> unit
+(** [token_link t] puts [t]'s record on its list now, as [t]'s collection
+    would, which then puts nothing. It allocates nothing. *)
+
 val entry : ?access:access -> device -> backing -> int -> int -> entry
 (** [entry owner backing bytes st] is a new entry of [bytes] bytes of
     [owner]'s memory, whose stamps are [st], mapped by no device. [access]
@@ -165,7 +182,12 @@ val size : alloc -> int
     its entry's otherwise. *)
 
 val locate : region -> Rig_edge.location
-(** [locate r] is where [r] lies, as its driver states it. *)
+(** [locate r] is where [r] lies, as its driver states it. Raises
+    [Invalid_argument] if [r]'s driver did not make it. *)
+
+val made : region -> bool
+(** [made r] is [true] iff the driver's call that makes [r] returned it into
+    its record. *)
 
 val allocated : device -> int
 (** [allocated d] is {!Rig.allocated}[ d]. *)
@@ -286,14 +308,19 @@ val mark_reached : entry -> unit
     its mapping of another device's word once its queue passed the waits
     that may read it ({!section-words}). *)
 
-val map_host_range : device -> int -> int -> region option
-(** [map_host_range d p n] is [d]'s mapping of the [n] bytes of host memory
-    at [p], or [None] where [d] maps none. *)
+type making = { region : region; make : unit -> unit }
+(** The type for a mapping about to be made: its record, not yet {!made},
+    and the counted call that makes it. The caller keeps [region] where the
+    frees that give it back find it, then calls [make], which stores the
+    driver's answer in it, or [None], before its count ends. *)
 
-val map_peer_region : device -> region -> region option
-(** [map_peer_region d r] is [d]'s mapping of [r], a region of another
-    device of [d]'s driver, or [None] for another driver's region or where
-    [d] maps none. *)
+val host_making : device -> int -> int -> making option
+(** [host_making d p n] makes [d]'s mapping of the [n] bytes of host memory
+    at [p], or is [None] where [d] maps none. *)
+
+val peer_making : device -> region -> making option
+(** [peer_making d r] makes [d]'s mapping of [r], a region of another device
+    of [d]'s driver, or is [None] for another driver's region. *)
 
 val unmap : device -> region -> Dev.given
 (** [unmap d r] gives back [d]'s mapping [r], which counts in no memory, now,
@@ -303,9 +330,12 @@ val unmap : device -> region -> Dev.given
 (** {2:words Mappings of words}
 
     A device counts the mappings of its word that other devices hold, in
-    their pairs ({!Def.live.pairs}) or among their pending releases as
-    {e retired} mappings ([Unmap_word] of {!Def.pending}), plus one until
-    its slot is freed ({!Def.live.word_unmaps}). A word of its driver's own goes back to the
+    their pairs ({!Def.live.pairs}) or among their pending releases
+    ([Unmap_word] of {!Def.pending}), plus one until its slot is freed
+    ({!Def.live.word_unmaps}). A mapping waits among the pending releases
+    from before the driver's call that makes it until its pair is decided,
+    due only at its device's stop, and as a {e retired} mapping once a later
+    pair replaced it. A word of its driver's own goes back to the
     driver at the first drain ({!drain}) after the count reached [0], when
     no queue can wait on it: a submit gives back mappings of words, and must
     not wait for a driver's free. *)
@@ -329,11 +359,27 @@ val unmap_word : device -> region * device -> Dev.given
     then {!word_unmapped}[ p], or later among [d]'s pending releases, once
     [d] stopped. It is what {!Dev.give} answered. *)
 
-val retire_locked : device -> region * device -> unit
-(** [retire_locked d m] puts [d]'s mapping [m] of a producer's word among
-    [d]'s pending releases at {!Dev.next_value}[ d]: [m] goes back once
-    [d]'s queue ran every submit that may wait through it. The caller holds
-    [d]'s lock. *)
+val record_word : device -> region * device -> bool
+(** [record_word d (r, p)] records [d]'s mapping [r] of [p]'s word, about to
+    be made, among [d]'s pending releases until [d]'s stop, with one of
+    [p]'s word unmaps ({!hold_word}), and is [false], recording nothing,
+    once [p]'s count reached [0]. Raises {!Dev.Lost} if [d]'s stop
+    returned. *)
+
+val drop_word : device -> region * device -> unit
+(** [drop_word d m] takes the mapping [m] that {!record_word} recorded out
+    of [d]'s pending releases and gives it back ({!unmap_word}), unless
+    [d]'s stop's drain took it first. *)
+
+val settle_word_locked :
+  device -> (region * device) option -> (region * device) option -> unit
+(** [settle_word_locked d made retired] takes [made], if any, a mapping
+    {!record_word} recorded, out of [d]'s pending releases, and puts
+    [retired], if any, among them at {!Dev.next_value}[ d]: [retired] goes
+    back once [d]'s queue ran every submit that may wait through it. Its
+    last step is the store of the releases, so a store the caller makes
+    right after it, with nothing that allocates between, goes with it. The
+    caller holds [d]'s lock. *)
 
 val give_retired : device -> unit
 (** [give_retired d] gives back [d]'s retired mappings whose value [d]
@@ -419,15 +465,10 @@ val free_entry : entry -> Dev.given
     last release gives [e] back. A release that does not go back waits
     among its device's pending releases. *)
 
-val retire : device -> entry -> unit
-(** [retire d e] frees [e] once [d] has reached the value it has submitted now,
-    or, if [d] is lost, once it is Stopped. *)
-
-val unload : device -> loaded -> entry option -> unit
-(** [unload d i code] releases what [d]'s driver made for [i] ({!Dev.give}),
-    then gives back [i]'s code memory [code]. Both wait among [d]'s pending
-    releases, as one, until [d] is Stopped if it is lost and not
-    Stopped. *)
+val unload : device -> loaded -> unit
+(** [unload d i] releases what [d]'s driver made for [i] ({!Dev.give}), then
+    gives back [i]'s code memory. Both wait among [d]'s pending releases, as
+    one, until [d] is Stopped if it is lost and not Stopped. *)
 
 val never_collected : int
 (** [never_collected] is the [~seen] of a ladder's first ask
@@ -457,18 +498,22 @@ val kernel_entry : image -> string -> Rig_edge.entry option
     each round of the ladder ({!reclaiming}). Raises {!Dev.Out_of_memory} if
     it still has none after the last. *)
 
-val alloc_entry : device -> Rig_edge.memory -> int -> entry
-(** [alloc_entry d kind n] is a new entry of [n] bytes of [d]'s memory of
-    [kind]. It drains [d], then takes the memory from [d]'s cache or from
-    its driver within the budget the memory counts in, and on a refusal runs
-    {!reclaiming}. [Mapped] memory larger than [d]'s budget, or that a try
-    refuses, is [Pinned] memory instead. Raises {!Dev.Out_of_memory}
-    immediately if [n] exceeds the budget the memory counts in. *)
-
 val alloc : device -> Rig_edge.memory -> int -> memory
-(** [alloc d kind n] is the owner's memory record of a new lifetime of
-    [alloc_entry d kind n], with its token. Raises {!Dev.Lost}, giving the
+(** [alloc d kind n] is the owner's memory record of a new lifetime of a new
+    entry of [n] bytes of [d]'s memory of [kind], with its token. It drains
+    [d], then takes the memory from [d]'s cache or from its driver within
+    the budget the memory counts in, and on a refusal runs {!reclaiming}.
+    [Mapped] memory larger than [d]'s budget, or that a try refuses, is
+    [Pinned] memory instead. Memory from the driver is recorded in its token
+    before the driver is asked. Raises {!Dev.Out_of_memory} immediately if
+    [n] exceeds the budget the memory counts in, and {!Dev.Lost}, giving the
     entry back, if [d]'s slot was freed meanwhile. *)
+
+val code_entry : device -> int -> ('a, 'r, 'i) loading -> entry
+(** [code_entry d n l] is a new entry of [n] bytes of [d]'s [Device] memory,
+    as {!alloc} takes it, kept as [l]'s code memory, which [l]'s unload
+    gives back: memory from the driver is kept so before the driver is
+    asked. *)
 
 val host_buffer : int -> buffer
 (** [host_buffer n] is a new buffer over [n] bytes of the host's heap,

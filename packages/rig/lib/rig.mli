@@ -646,7 +646,11 @@ val signaled : t -> int
     [Stdlib.Out_of_memory], or an exception from a signal handler, a
     finaliser or a [Gc.Memprof] callback, or where a function of the call
     starts, as [Stack_overflow] is. It may leak the memory of the call it
-    interrupts. One that interrupts a driver's stop ({!section-stops}) may
+    interrupts, but none that a driver's call made for it, nor memory an
+    allocation took from the cache: an exception once the driver's call
+    returned leaves it to return as it would have, once unreachable or at
+    the device's stop, and loses no device. One that
+    interrupts a driver's stop ({!section-stops}) may
     leave that device never stopped, holding its memory and its slot for
     the rest of the process.
 

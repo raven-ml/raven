@@ -1184,7 +1184,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~completion:f.completion
       ~waits:f.waits ~hang_ms:f.hang_ms ~maps_host:f.maps_host
       ~alignment:f.alignment ~host_addresses:f.host_addresses ~word
-      ~word_region:(Some (Region { m; h; r = f.word; rid }))
+      ~word_region:(Some (Region { m; h; rid; r = Some f.word }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:[%extension_constructor D.Fault]
       ~capability:(Some f.capability) ~budget:f.budget ~opened

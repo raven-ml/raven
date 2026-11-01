@@ -350,9 +350,17 @@ let size (a : alloc) =
   | Bigarray ba -> Bigarray.Array1.size_in_bytes ba
   | Nothing -> a.entry.bytes
 
+(* Where [r] lies, which its driver made. *)
 let locate (Region { m; r; _ }) =
   let module D = (val m) in
-  D.locate r
+  match r with
+  | Some r -> D.locate r
+  | None -> invalid_arg "Rig: a region its driver did not make"
+
+(* Whether the driver's call that makes [r] returned it into rig's record. *)
+let made (Region { r; _ }) = Option.is_some r
+
+let io_made (Io_region { r; _ }) = Option.is_some r
 
 (* Allocation events *)
 
@@ -371,20 +379,36 @@ let note d =
 type memory_kind = Rig_edge.memory = Device | Pinned | Mapped
 
 (* Gives back a region [d] allocated or mapped, an io region or an image
-   ([Dev.give]). *)
+   ([Dev.give]). A record whose driver's call made nothing gives back
+   nothing. *)
 let free_region d (Region { m; h; r; _ }) =
-  let module D = (val m) in
-  Dev.give d Dev.Any (fun () -> D.free h r)
+  match r with
+  | None -> Dev.Given
+  | Some r ->
+      let module D = (val m) in
+      Dev.give d Dev.Any (fun () -> D.free h r)
 
 let free_io d (Io_region { m; h; r }) =
-  let module I = (val m) in
-  Dev.give d Dev.Faults (fun () -> I.free h r)
+  match r with
+  | None -> Dev.Given
+  | Some r ->
+      let module I = (val m) in
+      Dev.give d Dev.Faults (fun () -> I.free h r)
+
+(* The image the driver's calls returned into [l], if any. *)
+let image_of l =
+  match (l.answer, l.laid) with
+  | Ok (Rig_edge.Loaded i), _ | _, Some i -> Some i
+  | (Ok (Place _) | Error _), None -> None
 
 (* Linked code is unmapped once its record is collected. *)
 let unload_now d = function
-  | Loaded { m; h; i } ->
-      let module D = (val m) in
-      Dev.give d Dev.Any (fun () -> D.unload h i)
+  | Loaded l -> (
+      match image_of l with
+      | Some i ->
+          let module D = (val l.m) in
+          Dev.give d Dev.Any (fun () -> D.unload l.h i)
+      | None -> Dev.Given)
   | Linked _ -> Dev.Given
 
 (* The budget memory of [kind] on [d] counts in. Pinned memory is [d]'s own
@@ -396,12 +420,14 @@ let budget_of d = function
   | Pinned -> if Dev.reaches Dev.host d then Device_budget else Host_budget
 
 (* The budget [e] counts in: io memory its device made counts in the device's,
-   memory a library or a keeper frees in none. *)
+   memory a library or a keeper frees in none, and memory its driver did not
+   make in none, since its allocation gave its room back. *)
 let entry_budget (e : entry) =
   match e.backing with
-  | Driver_memory { memory; _ } -> budget_of e.owner memory
-  | Io_memory { origin = Made; _ } -> Device_budget
-  | Io_memory { origin = Given; _ } | Kept _ -> No_budget
+  | Driver_memory { memory; region } when made region ->
+      budget_of e.owner memory
+  | Io_memory { origin = Made; region } when io_made region -> Device_budget
+  | Driver_memory _ | Io_memory _ | Kept _ -> No_budget
 
 let owns (e : entry) = entry_budget e = Device_budget
 
@@ -471,8 +497,6 @@ let append_pending (d, p) =
 
 let defer d p = Dev.protect d append_pending (d, p)
 
-let retire d e = defer d (Free e)
-
 (* [waits d p given] is [given], [d]'s release [p] having gone back. One that
    did not waits among [d]'s pending releases, after the others, until [d]
    stopped ([Dev.give]). A caller that makes [p] makes it only for a release
@@ -512,38 +536,57 @@ let breaks d n (l : Rig_edge.location) =
              n a d.alignment)
     | None -> None
 
-(* [n] new bytes of [d]'s memory of [kind] as a release record, or [None] if [d]
-   has not the room. An io device's memory has no kind. A region that breaks the
-   facts its driver states is freed and faults the device, as a fault of its
-   driver's [alloc] does. *)
-let new_entry d (kind : memory_kind) n =
-  match d.kind with
-  | Driver { m; h; rid } -> (
-      let module D = (val m) in
+(* A new entry of [n] bytes of [d]'s memory of [kind], whose memory is not
+   made yet ([make_memory]). An io device's memory has no kind. *)
+let fresh_entry d (kind : memory_kind) n =
+  let backing =
+    match d.kind with
+    | Driver { m; h; rid } ->
+        Driver_memory { memory = kind; region = Region { m; h; rid; r = None } }
+    | Io { m; h } ->
+        Io_memory { origin = Made; region = Io_region { m; h; r = None } }
+    | Host -> invalid_arg "Rig: the host's memory has no driver"
+  in
+  entry d backing n (stamps_new ())
+
+(* Whether [e]'s memory is made: a new entry's is once its driver's call
+   returned it into the entry's record. *)
+let made_memory (e : entry) =
+  match e.backing with
+  | Driver_memory { region; _ } -> made region
+  | Io_memory { region; _ } -> io_made region
+  | Kept _ -> true
+
+(* Makes the memory of [d]'s new entry [e], of [kind]. The driver's call
+   stores its answer in [e]'s record as it is, allocating nothing, before its
+   count ends, so an exception once the call returned leaves the memory
+   recorded where [e]'s free finds it. A region that breaks the facts its
+   driver states is taken out of the record and freed, and faults the device,
+   as a fault of its driver's [alloc] does, inside the count: an exception
+   there is one in the driver's call, which loses the device with the region
+   still recorded. *)
+let make_memory d (e : entry) kind =
+  let n = e.bytes in
+  match e.backing with
+  | Driver_memory { region = Region c; _ } ->
+      let module D = (val c.m) in
       let alloc () =
-        match D.alloc h kind n with
-        | Some r as some -> (
+        c.r <- D.alloc c.h kind n;
+        match c.r with
+        | None -> ()
+        | Some r -> (
             match breaks d n (D.locate r) with
-            | None -> some
+            | None -> ()
             | Some why ->
-                D.free h r;
+                c.r <- None;
+                D.free c.h r;
                 raise (D.Fault why))
-        | None -> None
       in
-      match Dev.counted d Dev.Any alloc with
-      | None -> None
-      | Some r ->
-          let region = Region { m; h; r; rid } in
-          Some
-            (entry d (Driver_memory { memory = kind; region }) n (stamps_new ())))
-  | Io { m; h } -> (
-      let module I = (val m) in
-      match Dev.counted d Dev.Faults (fun () -> I.alloc h n) with
-      | None -> None
-      | Some r ->
-          let region = Io_region { m; h; r } in
-          Some (entry d (Io_memory { origin = Made; region }) n (stamps_new ())))
-  | Host -> None
+      Dev.counted d Dev.Any alloc
+  | Io_memory { region = Io_region c; _ } ->
+      let module I = (val c.m) in
+      Dev.counted d Dev.Faults (fun () -> c.r <- I.alloc c.h n)
+  | Kept _ -> ()
 
 let drop_stamps (e : entry) = if e.stamps <> 0 then stamps_unref e.stamps
 
@@ -590,9 +633,55 @@ let rec give_words () =
          | None -> ());
       give_words ()
 
-let retire_locked d m =
+(* A mapping of a word whose pair is not decided waits among its device's
+   pending releases at [at_stop], which only its stop's drain reaches. *)
+let at_stop = max_int
+
+(* Under [d]'s lock: records [m], [d]'s mapping of [p]'s word about to be
+   made, among [d]'s pending releases until its stop, with one of [p]'s word
+   unmaps, unless [p]'s unmaps ended: whether it recorded it. The queue is
+   made first, so nothing allocates between the unmap's count and the store
+   that records it. Raises [Lost] once [d]'s stop returned, as its drain may
+   have given back its pending releases. *)
+let record_word_locked (d, ((_, p) as m)) =
   let l = d.live in
-  l.pending <- insert l.pending (Dev.next_value d) (Unmap_word m)
+  if Dev.stop_returned d then Dev.raise_lost d;
+  let q = insert l.pending at_stop (Unmap_word m) in
+  hold_word p
+  && begin
+    l.pending <- q;
+    true
+  end
+
+let record_word d m = Dev.protect d record_word_locked (d, m)
+
+(* The queue [q] without the release [Unmap_word m]. *)
+let without (front, back) m =
+  let other = function _, Unmap_word m' -> m' != m | _ -> true in
+  (List.filter other front, List.filter other back)
+
+(* Under [l]'s lock: takes [m] out of [l]'s pending releases, whether it was
+   there. *)
+let take_word_map (l, m) =
+  let front, back = l.pending in
+  let there = function _, Unmap_word m' -> m' == m | _ -> false in
+  (List.exists there front || List.exists there back)
+  && begin
+    let front, back = without l.pending m in
+    l.pending <- (if front == [] then (List.rev back, []) else (front, back));
+    true
+  end
+
+let settle_word_locked d made retired =
+  let l = d.live in
+  let q = match made with Some m -> without l.pending m | None -> l.pending in
+  let q = if fst q == [] then (List.rev (snd q), []) else q in
+  let q =
+    match retired with
+    | Some r -> insert q (Dev.next_value d) (Unmap_word r)
+    | None -> q
+  in
+  l.pending <- q
 
 external reraise : exn -> 'a = "%reraise"
 
@@ -608,6 +697,12 @@ let unmap_word d ((r, p) as m) : Dev.given =
   | exception e ->
       word_unmapped p;
       reraise e
+
+(* Gives back [d]'s mapping [m] of a word that [record_word] recorded, if
+   [d]'s stop's drain did not take it first. *)
+let drop_word d m =
+  if Lock.protect d.live.lock take_word_map (d.live, m) then
+    ignore (unmap_word d m : Dev.given)
 
 (* Drops [d]'s own unmap once this call freed its slot. The lock is passed
    first: a refresh that began while [d] held its slot reads the word under
@@ -663,6 +758,9 @@ let give d r e : Dev.given =
   | Given -> entry_unmapped e
   | Later -> waits d (Unmap (r, Some e)) Later
 
+(* The keys of mappings in their devices' tables. *)
+let map_ids = Atomic.make 0
+
 (* Takes the note [id] out of [d]'s table, which, emptied, keeps no buckets
    for the most [d] ever mapped. *)
 let forget_note (d, id) =
@@ -683,7 +781,7 @@ let rec release_maps (e : entry) = function
       | Given -> ignore (entry_unmapped e : Dev.given)
       | Later ->
           ignore (waits mp.on (Unmap (mp.map, Some e)) Later : Dev.given));
-      Dev.protect mp.on forget_note (mp.on, e.id);
+      Dev.protect mp.on forget_note (mp.on, mp.id);
       release_maps e maps
 
 (* A mapping belongs to whichever call takes it out of [e.maps] under the
@@ -710,13 +808,14 @@ let key n kind =
   (n * 4) + k
 
 (* Memory the cache never takes: io memory, host memory a device borrowed,
-   which returns to its keeper once its uses are reached, and memory another
-   PCI function reaches, which may still write it. *)
+   which returns to its keeper once its uses are reached, memory another PCI
+   function reaches, which may still write it, and memory its driver did not
+   make. *)
 let uncached (e : entry) =
   e.reached
   ||
   match e.backing with
-  | Driver_memory _ -> false
+  | Driver_memory { region; _ } -> not (made region)
   | Io_memory _ | Kept _ -> true
 
 let mark_reached (e : entry) =
@@ -829,9 +928,10 @@ let route_one d =
   n <> 0
   && begin
     (match node_record n with
-    | Memory e when cacheable d e -> cache e
-    | Memory e -> retire_entry e
-    | Image (loaded, code) -> append_pending (d, Unload (loaded, code))
+    | Memory r when !r == no_entry -> ()
+    | Memory r when cacheable d !r -> cache !r
+    | Memory r -> retire_entry !r
+    | Image loaded -> append_pending (d, Unload loaded)
     | Release h -> append_pending (d, Let_go h)
     | Stamps st -> stamps_unref st);
     release_pop l.release;
@@ -1292,25 +1392,28 @@ let run_pending d : pending -> Dev.given = function
           Given)
       | Given, None -> Given
       | Later, _ -> Later)
-  | Unload (loaded, code) as p -> (
+  | Unload loaded as p -> (
       match waits d p (unload_now d loaded) with
       | Later -> Later
       | Given -> (
           let_go ();
-          match code with
-          | Some e when Dev.is_lost d || over_budget d e -> free_entry e
-          | Some e ->
-              to_cache e;
+          match loaded with
+          | Loaded { code; _ } when !code == no_entry -> Given
+          | Loaded { code; _ }
+            when Dev.is_lost d || uncached !code || over_budget d !code ->
+              free_entry !code
+          | Loaded { code; _ } ->
+              to_cache !code;
               Given
-          | None -> Given))
+          | Linked _ -> Given))
   | Unmap_word m -> unmap_word d m
   | Let_go _ ->
       let_go ();
       Given
 
-(* Unloads [d]'s image [l] now, then gives back its code memory [code], or
-   does both later ([waits]). *)
-let unload d l code = ignore (run_pending d (Unload (l, code)) : Dev.given)
+(* Unloads [d]'s image [l] now, then gives back its code memory, or does both
+   later ([waits]). *)
+let unload d l = ignore (run_pending d (Unload l) : Dev.given)
 
 (* Runs [d]'s pending releases up to the value [w], one at a time: each
    leaves the queue as it runs, so an exception leaks that one at most. A
@@ -1424,20 +1527,24 @@ let () = Dev.answered := drain
 
 (* The cache *)
 
-let take_cached_key (l, k) =
+(* Under [l]'s lock: the latest entry of the key [k] taken out of the cache
+   into [r], or [no_entry]. Nothing allocates between the cache's store and
+   [r]'s, so an exception leaves the entry in one of the two. *)
+let take_cached_key (l, k, r) =
   match Cache.find l.cache k with
-  | c when c.n = 0 -> None
+  | c when c.n = 0 -> no_entry
   | c ->
       let e = uncache l c in
       (* Every old use has settled. The new buffer has no dependencies on
          its memory's previous lifetime, an unordered use included. *)
       stamps_clear e.stamps;
-      Some e
-  | exception Not_found -> None
+      r := e;
+      e
+  | exception Not_found -> no_entry
 
-let take_cached d kind n =
+let take_cached d kind n r =
   let l = d.live in
-  Lock.protect l.lock take_cached_key (l, key n kind)
+  Lock.protect l.lock take_cached_key (l, key n kind, r)
 
 (* The out-of-memory ladder *)
 
@@ -1463,9 +1570,9 @@ let holds_back (pool, l) =
   Array.exists (charged pool) (Array.sub l.retiring 0 l.nretiring)
   ||
   let holds = function
-    | _, (Free e | Give e | Unmap (_, Some e) | Unload (_, Some e)) ->
-        charged pool e
-    | _, (Unmap (_, None) | Unload (_, None) | Unmap_word _ | Let_go _) ->
+    | _, (Free e | Give e | Unmap (_, Some e)) -> charged pool e
+    | _, Unload (Loaded { code; _ }) -> charged pool !code
+    | _, (Unmap (_, None) | Unload (Linked _) | Unmap_word _ | Let_go _) ->
         false
   in
   let front, back = l.pending in
@@ -1542,7 +1649,9 @@ let entry_scope = Dev.Any_but [%extension_constructor Invalid_argument]
 (* [image] stays reachable until the driver's call returns: its collection
    unloads [i], whose entry a driver may still be compiling, as Metal does. A
    function the device has no memory for is asked again after each round of the
-   ladder. *)
+   ladder. What the driver makes for the entry is [i]'s, which [image]'s
+   record holds, so an exception once the call returned leaves it to the
+   unload. *)
 let kernel_entry image f =
   match image.loaded with
   | Linked c ->
@@ -1552,8 +1661,13 @@ let kernel_entry image f =
         (fun code ->
           { Rig_edge.code; launch = 0n; params = None; threads = None })
         (Host_code.entry c f)
-  | Loaded { m; i; _ } ->
-      let module D = (val m) in
+  | Loaded l ->
+      let module D = (val l.m) in
+      let i =
+        match image_of l with
+        | Some i -> i
+        | None -> invalid_arg "Rig: an image its driver did not make"
+      in
       let d = image.idev in
       let ask () = Dev.counted d entry_scope (fun () -> D.entry i f) in
       let again () =
@@ -1596,8 +1710,55 @@ let grow_queues d ~round ~lacked ~seen =
 
 let room d = Int.max 0 (d.budget - d.live.used)
 
-(* A fresh memory record over the entry [e] of [d], with its token. *)
-let of_entry d e =
+(* Where an allocation's entry is recorded before a try takes it from the
+   cache or asks the driver: in a token of the try's own, which gives the
+   entry back once collected, or as the code memory of an image, whose unload
+   gives it back. *)
+type home = Token | Code of entry ref
+
+(* The token of a try at [n] bytes of [d]'s memory of [kind], whose record
+   holds the entry the try takes, none yet. It paces the collector by the
+   [n] bytes, which a cached entry of the try's key has too, as memory the
+   host shares where the host addresses memory of [kind]: pinned and mapped
+   memory by their kinds, and a device's own memory where its driver states
+   the host addresses all of it. A driver that states nothing gives its
+   device's memory a host address only for Polled with a transport, which
+   this paces as the device's own: the pace then differs from the one the
+   host address implies, which changes how soon the collector runs, never a
+   result. Raises [Lost] if [d]'s list is closed, as it is once [d] has
+   stopped. *)
+let try_token d kind n r =
+  let l = d.live in
+  let shared = kind <> Device || d.host_addresses in
+  let live = if shared && not (Dev.is_io d) then l.used else -1 in
+  let t = token l.release (Memory r) n (room d) live in
+  if t == no_token then Dev.raise_lost d;
+  t
+
+(* Where a try at [n] bytes of [d]'s memory of [kind] records the entry it
+   takes, and the token that holds it, [no_token] for an image's code. *)
+let slot d kind n = function
+  | Token ->
+      let r = ref no_entry in
+      (r, try_token d kind n r)
+  | Code r -> (r, no_token)
+
+(* Lets go of what a try recorded in [r] with [t] and returns to nobody: [t]
+   puts its entry on its list now, as its collection would, so the next drain
+   gives back what the entry holds and its device frees its slot without
+   waiting for a collection. As an image's code, an entry its driver made no
+   memory for leaves the image and its stamps go; made code memory is the
+   image's. *)
+let let_go_try (r, t) =
+  token_link t;
+  let e = !r in
+  if t == no_token && e != no_entry && not (made_memory e) then begin
+    r := no_entry;
+    drop_stamps e
+  end
+
+(* A memory record over the entry [e] of [d], with its token [t]. *)
+let of_entry d e t =
   let m =
     match e.backing with
     | Driver_memory { region; _ } ->
@@ -1605,57 +1766,73 @@ let of_entry d e =
         make ?host:l.host ?address:l.address ~handle:l.handle d e
     | Io_memory _ | Kept _ -> make d e
   in
-  let l = d.live in
-  let live = if m.host >= 0 then l.used else -1 in
-  m.alloc.token <- token l.release (Memory e) e.bytes (room d) live;
-  if m.alloc.token == no_token then begin
-    (* A refused token means [d] has stopped: its driver takes [e] back
-       now. *)
-    ignore (free_entry e : Dev.given);
-    Dev.raise_lost d
-  end;
+  m.alloc.token <- t;
   m
 
-(* [new_entry] within the budget memory of [kind] counts in: its room is taken
-   before the driver is asked, so two domains' allocations never both fit the
-   last room, and given back if the driver refuses. *)
-let new_counted d kind n =
+(* A new entry within the budget memory of [kind] counts in, recorded in [r]
+   before its memory is made. Its room is taken before the driver is asked,
+   so two domains' allocations never both fit the last room, and given back
+   if the driver makes nothing. Once the driver's call returned the memory
+   into the entry's record, the room is the entry's, which gives it back with
+   the memory: an exception then leaves both to the entry's free. Nothing
+   polls between the host's count of made memory and the end of the section
+   it closes. *)
+let new_counted d kind n ((r, _) as s) =
   let budget = budget_of d kind in
-  if not (take_room d budget n) then None
+  if Dev.is_host d || not (take_room d budget n) then None
   else
-    match new_entry d kind n with
-    | Some _ as e ->
-        if budget = Host_budget then heap_made n;
-        e
-    | None ->
-        refuse_room d budget n;
-        None
+    match
+      let e = fresh_entry d kind n in
+      r := e;
+      e
+    with
     | exception x ->
         refuse_room d budget n;
         raise x
+    | e -> (
+        match
+          make_memory d e kind;
+          if budget = Host_budget && made_memory e then heap_made n
+        with
+        | () ->
+            if made_memory e then Some e
+            else begin
+              refuse_room d budget n;
+              None
+            end
+        | exception x ->
+            let bt = Printexc.get_raw_backtrace () in
+            if not (made_memory e) then refuse_room d budget n
+            else if budget = Host_budget then heap_made n;
+            let_go_try s;
+            Printexc.raise_with_backtrace x bt)
 
-(* One try at [n] bytes of [d]'s memory of [kind]: from its cache, else from its
-   driver within the budget. *)
-let try_entry d kind n () =
-  match take_cached d kind n with
-  | Some _ as e -> e
-  | None -> (
-      match new_counted d kind n with
-      | Some _ as e ->
-          note d;
-          e
-      | None -> None)
+(* One try at [n] bytes of [d]'s memory of [kind], recorded in [home] before
+   it takes the memory: from its cache, else from its driver within the
+   budget. A try that takes none lets go of its record. *)
+let try_entry d kind n home () =
+  let ((r, t) as s) = slot d kind n home in
+  let e = take_cached d kind n r in
+  if e != no_entry then Some (e, t)
+  else
+    match new_counted d kind n s with
+    | Some e ->
+        note d;
+        Some (e, t)
+    | None ->
+        let_go_try s;
+        None
 
 (* [n] bytes of [d]'s memory of [kind], through the ladder of the budget it
    counts in once refused. *)
-let laddered d kind n =
-  match try_entry d kind n () with
+let laddered d kind n home =
+  match try_entry d kind n home () with
   | Some e -> e
   | None ->
       let pool = if budget_of d kind = Host_budget then Dev.host else d in
-      reclaiming d ~pool n (try_entry d kind n)
+      reclaiming d ~pool n (try_entry d kind n home)
 
-let alloc_entry d kind n =
+let alloc_entry d kind n home =
   let kind = if kind = Mapped && n > d.budget then Pinned else kind in
   let limit =
     match budget_of d kind with
@@ -1665,15 +1842,19 @@ let alloc_entry d kind n =
   in
   if n > limit then raise (Dev.Out_of_memory (d, n));
   drain d;
-  if kind <> Mapped then laddered d kind n
+  if kind <> Mapped then laddered d kind n home
   else
     (* Mapped memory the window or the budget cannot hold is pinned memory,
        which keeps its promises, and the cache stays. *)
-    match try_entry d Mapped n () with
+    match try_entry d Mapped n home () with
     | Some e -> e
-    | None -> laddered d Pinned n
+    | None -> laddered d Pinned n home
 
-let alloc d kind n = of_entry d (alloc_entry d kind n)
+let alloc d kind n =
+  let e, t = alloc_entry d kind n Token in
+  of_entry d e t
+
+let code_entry d n (l : _ loading) = fst (alloc_entry d Device n (Code l.code))
 let reserve n () = if heap_reserve n Dev.host.budget then Some () else None
 
 (* Reserves what a host buffer of [n] bytes takes of the heap; a refusal
@@ -1746,7 +1927,7 @@ let make_entry (a : alloc) =
   if a.entry == no_entry then begin
     let d = a.owner in
     let e = entry d (Kept a.keep) (size a) (stamps_new ()) in
-    let t = token d.live.release (Memory e) 0 max_int (-1) in
+    let t = token d.live.release (Memory (ref e)) 0 max_int (-1) in
     if t == no_token then begin
       stamps_unref e.stamps;
       Dev.raise_lost d
@@ -1757,63 +1938,85 @@ let make_entry (a : alloc) =
 
 let ensure_entry (a : alloc) = Dev.protect a.owner make_entry a
 
-(* [d]'s mapping among [maps], if any: a loop of its own, so looking builds
-   no closure. *)
+(* [d]'s located mapping among [maps], if any: a loop of its own, so looking
+   builds no closure. *)
 let rec map_on d = function
   | [] -> None
-  | mp :: maps -> if mp.on == d then Some mp else map_on d maps
+  | mp :: maps -> if mp.on == d && mp.located then Some mp else map_on d maps
 
-(* [d]'s mapping of [e], if any. *)
+(* [d]'s located mapping of [e], if any. *)
 let find_map ((e : entry), d) = map_on d e.maps
 
-(* Counts [mp] in [e], and adds it to [e]'s mappings, unless its device
-   mapped [e] meanwhile: that mapping, then. *)
+(* Counts [mp] in [e] and adds it to [e]'s mappings. The list is made first:
+   nothing allocates between the count and its store. *)
 let add_map ((e : entry), mp) =
+  let maps = mp :: e.maps in
   Atomic.Loc.incr [%atomic.loc e.unmaps];
-  match find_map (e, mp.on) with
-  | Some other -> Some other
-  | None ->
-      e.maps <- mp :: e.maps;
-      None
+  e.maps <- maps
 
-(* Notes [e] among the entries [d] maps, with [d]'s mapping [mp] of it, unless
-   [d]'s stop returned, whose drains may have given back its mappings
-   already: whether it noted it. *)
+(* Notes [mp], [d]'s mapping of [e], among [d]'s, unless [d]'s stop returned,
+   whose drains may have given back its mappings already: whether it noted
+   it. *)
 let note_mapped (d, (e : entry), mp) =
   (not (Dev.stop_returned d))
   && begin
-    Cache.replace d.live.mapped e.id (e, mp);
+    Cache.replace d.live.mapped mp.id (e, mp);
     true
   end
 
-let map_host_range d start n =
+(* What became of a mapping once made: located, beaten by another mapping
+   of its device, which it then gives back, or taken out of its memory's
+   mappings by its device's drain once Stopped, which gave it back. *)
+type settled = Located | Beaten of mapping | Taken
+
+(* Locates [mp] at [l], unless its device located another mapping of [e]
+   first, or its drain took [mp]. *)
+let settle_map ((e : entry), mp, (l : Rig_edge.location)) =
+  if not (List.memq mp e.maps) then Taken
+  else
+    match find_map (e, mp.on) with
+    | Some other -> Beaten other
+    | None ->
+        mp.at <- Option.value ~default:(-1) l.address;
+        mp.by <- l.handle;
+        mp.located <- true;
+        Located
+
+(* A record of a region the counted call [make] makes: it stores the
+   driver's answer in the record as it is, allocating nothing, before its
+   count ends. The record is made, and kept where the frees that give the
+   region back find it, before the call, so that an exception once the call
+   returned leaves the region recorded. *)
+type making = { region : region; make : unit -> unit }
+
+let host_making d p n =
   match d.kind with
-  | Driver _ when not d.maps_host -> None
-  | Driver { m = dm; h; rid } -> (
-      let module D = (val dm) in
-      match Dev.counted d Dev.Any (fun () -> D.map_host h start n) with
-      | Some r -> Some (Region { m = dm; h; r; rid })
-      | None -> None)
-  | _ -> None
+  | Driver { m; h; rid } when d.maps_host ->
+      let module D = (val m) in
+      let c = { m; h; rid; r = None } in
+      let map () = c.r <- D.map_host h p n in
+      Some { region = Region c; make = (fun () -> Dev.counted d Dev.Any map) }
+  | Driver _ | Host | Io _ -> None
 
 (* The region's module types the mapping; the keys' equality types [d]'s
    handle. *)
-let map_peer_region d (Region { m = om; h = oh; r; rid }) =
-  match d.kind with
-  | Driver { m = dm; h; _ } -> (
+let peer_making d (Region { m = om; h = oh; r; rid }) =
+  match (d.kind, r) with
+  | Driver { m = dm; h; _ }, Some r -> (
       let module D = (val dm) in
       let module O = (val om) in
       match Type.Id.provably_equal D.key O.key with
-      | Some Type.Equal -> (
-          match Dev.counted d Dev.Any (fun () -> O.map_peer h oh r) with
-          | Some r -> Some (Region { m = om; h; r; rid })
-          | None -> None)
+      | Some Type.Equal ->
+          let c = { m = om; h; rid; r = None } in
+          let map () = c.r <- O.map_peer h oh r in
+          Some
+            { region = Region c; make = (fun () -> Dev.counted d Dev.Any map) }
       | None -> None)
-  | _ -> None
+  | (Driver _ | Host | Io _), _ -> None
 
-let map_peer d (a : alloc) =
+let peer_of d (a : alloc) =
   match a.entry.backing with
-  | Driver_memory { region; _ } -> map_peer_region d region
+  | Driver_memory { region; _ } -> peer_making d region
   | Io_memory _ | Kept _ -> None
 
 (* Whether [d] maps [a] as a peer's memory: memory of a device of [d]'s
@@ -1823,45 +2026,68 @@ let peer_memory d (a : alloc) =
   | Driver _ -> a.owner.key = d.key
   | Host | Io _ -> false
 
+(* Takes [d]'s mapping [mp] of [e] out of [e] and [d], and gives it back if
+   [e] still held it: a refused mapping, or one that lost the race. *)
+let drop_map d (e : entry) mp =
+  if Dev.protect e.owner take_back (e, mp) then
+    ignore (give d mp.map e : Dev.given);
+  Dev.protect d forget_note (d, mp.id)
+
 (* [d]'s new mapping of the allocation [a], whose host address is [host] or
-   [-1]. It counts in the memory and is recorded there first, then noted on
-   [d] unless [d]'s stop returned: a drain of [d] that came first found no
-   note, so the mapping is taken back out of the memory and given back here,
-   and [d] is lost. A drain that comes later finds the note. *)
+   [-1]. It is recorded before the driver's call that makes it: counted in
+   the memory and added to its mappings, which the memory's free gives back,
+   then noted on [d] unless [d]'s stop returned, which [d]'s drain once it is
+   Stopped gives back. An exception from then on leaves it to those. Once
+   made it is located, and serves borrows, unless [d]'s stop's drain gave it
+   back meanwhile, which loses [d]; of two that [d] made at once, the one
+   located second is given back. *)
 let map_new d (a : alloc) host =
+  let e = a.entry in
   (* Memory of a device of [d]'s driver maps as a peer's; other memory the
      host addresses, as host memory. *)
-  let made =
-    if peer_memory d a then map_peer d a
-    else if host >= 0 then map_host_range d host (size a)
-    else map_peer d a
+  let making =
+    if peer_memory d a then peer_of d a
+    else if host >= 0 then host_making d host (size a)
+    else peer_of d a
   in
-  match made with
+  match making with
   | None -> None
-  | Some r -> (
-      let e = a.entry in
-      let loc =
-        match locate r with
-        | loc -> loc
-        | exception x ->
-            ignore (unmap d r : Dev.given);
-            Printexc.raise_with_backtrace x (Printexc.get_raw_backtrace ())
+  | Some { region; make } -> (
+      let mp =
+        {
+          on = d;
+          map = region;
+          id = Atomic.fetch_and_add map_ids 1;
+          at = -1;
+          by = 0n;
+          located = false;
+        }
       in
-      let at = Option.value ~default:(-1) loc.address in
-      let mp = { on = d; map = r; at; by = loc.handle } in
-      (* A mapping that lost the race counts too, until it is given back, so
-         the memory outlives it. *)
-      match Dev.protect a.owner add_map (e, mp) with
-      | Some other ->
-          ignore (give d r e : Dev.given);
-          Some other
-      | None ->
-          if Dev.protect d note_mapped (d, e, mp) then Some mp
-          else begin
-            if Dev.protect a.owner take_back (e, mp) then
-              ignore (give d r e : Dev.given);
-            Dev.raise_lost d
-          end)
+      Dev.protect a.owner add_map (e, mp);
+      if not (Dev.protect d note_mapped (d, e, mp)) then begin
+        drop_map d e mp;
+        Dev.raise_lost d
+      end;
+      (match make () with
+      | () -> ()
+      | exception x ->
+          (* A call that made nothing, such as one a loss refused, takes its
+             record back now. *)
+          let bt = Printexc.get_raw_backtrace () in
+          if not (made region) then drop_map d e mp;
+          Printexc.raise_with_backtrace x bt);
+      if not (made region) then begin
+        drop_map d e mp;
+        None
+      end
+      else
+        let l = locate region in
+        match Dev.protect a.owner settle_map (e, mp, l) with
+        | Located -> Some mp
+        | Beaten other ->
+            drop_map d e mp;
+            Some other
+        | Taken -> Dev.raise_lost d)
 
 (* [d]'s mapping of the allocation [a], whose host address is [host] or [-1],
    made at the first borrow and shared by the later ones. *)
@@ -1885,7 +2111,7 @@ let pages (a : alloc) =
   (match e.pages with
   | Unasked -> (
       match e.backing with
-      | Io_memory { region = Io_region { m = im; h; r }; _ } ->
+      | Io_memory { region = Io_region { m = im; h; r = Some r }; _ } ->
           let module I = (val im) in
           let got =
             match Dev.counted a.owner Dev.Faults (fun () -> I.pages h r) with
@@ -1893,7 +2119,7 @@ let pages (a : alloc) =
             | None -> No_pages
           in
           Dev.protect a.owner set_pages (e, got)
-      | Driver_memory _ | Kept _ -> ())
+      | Io_memory _ | Driver_memory _ | Kept _ -> ())
   | Pages _ | No_pages -> ());
   match e.pages with Pages ba -> ba_address ba | Unasked | No_pages -> -1
 
@@ -1972,7 +2198,7 @@ let borrow d m =
    closure. *)
 let rec mapped_on d = function
   | [] -> false
-  | mp :: maps -> mp.on == d || mapped_on d maps
+  | mp :: maps -> (mp.on == d && mp.located) || mapped_on d maps
 
 let maps d m =
   let a = m.alloc in
@@ -1995,8 +2221,8 @@ let maps d m =
    faults and system errors are dropped. *)
 let prefetch d (m : memory) ~at ~len =
   match m.alloc.entry.backing with
-  | Io_memory { region = Io_region { m = im; h; r }; _ } when not (Dev.is_host d)
-    -> (
+  | Io_memory { region = Io_region { m = im; h; r = Some r }; _ }
+    when not (Dev.is_host d) -> (
       let module I = (val im) in
       try Dev.masked (fun () -> I.prefetch h r ~at ~len)
       with I.Fault _ | Sys_error _ -> ())
@@ -2007,7 +2233,7 @@ let of_io d r ~access n =
   drain d;
   let e = entry ~access d (Io_memory { origin = Given; region = r }) n (stamps_new ()) in
   let m = make d e in
-  m.alloc.token <- token d.live.release (Memory e) n max_int (-1);
+  m.alloc.token <- token d.live.release (Memory (ref e)) n max_int (-1);
   if m.alloc.token == no_token then begin
     stamps_unref e.stamps;
     Dev.raise_lost d

@@ -34,43 +34,85 @@ let place d (e : entry) region code =
       Dev.wait d (Dev.submitted d);
       Buffer.blit_string code 0 dst 0 n
 
-(* The driver's image of [binary] on [d], or the host's linked code, and the
-   memory its code lies in where [d]'s memory holds it. *)
+(* The token that unloads [l] once collected, which paces the collector by
+   the [bytes] of its code memory. Raises [Lost] if [d]'s list is closed, as
+   it is once [d] has stopped. *)
+let image_token d l bytes =
+  let t =
+    Memory.token d.live.release (Image l) bytes (Memory.room d) (-1)
+  in
+  if t == Memory.no_token then Dev.raise_lost d;
+  t
+
+(* [t]'s image, which no caller will hold, goes on its list now, as [t]'s
+   collection would put it, so the next drain unloads what it holds; then
+   [x] is raised again. *)
+let unheld t x =
+  let bt = Printexc.get_raw_backtrace () in
+  Memory.token_link t;
+  Printexc.raise_with_backtrace x bt
+
+(* The driver's image of [binary] on [d], or the host's linked code, with its
+   token. A driver's image is recorded, with its token, before each call that
+   may make it: [D.image], whose record serves an image the driver loads
+   itself, and for an image the driver lays into [d]'s memory, [lay], whose
+   record also holds the code memory, kept there before its driver makes it.
+   Each call stores its answer in its record inside its count, so an
+   exception once the call returned leaves the image to its token, which
+   unloads it, then gives back its code memory once [d]'s work that may use
+   it is done, or, lost, once [d] counts as stopped. [D.image]'s answer is
+   stored as it is, allocating nothing. [lay]'s store wraps the image in its
+   option: an exception at that allocation is one inside the driver's call,
+   which loses [d] with what the call made, as rig.mli states. A record that
+   serves no image goes on its list at once. *)
 let loaded d binary =
   match d.kind with
   | Driver { m; h; rid } -> (
       let module D = (val m) in
-      match Dev.counted d Dev.Any (fun () -> D.image h binary) with
-      | Error why -> Error (strf "%s: %s" d.name why)
-      | Ok (Rig_edge.Loaded i) -> Ok (Loaded { m; h; i }, None)
+      let l =
+        { m; h; answer = Error ""; laid = None; code = ref Memory.no_entry }
+      in
+      let t = image_token d (Loaded l) 0 in
+      let image () = l.answer <- D.image h binary in
+      match
+        Dev.counted d Dev.Any image;
+        l.answer
+      with
+      | exception x -> unheld t x
+      | Error why ->
+          Memory.token_link t;
+          Error (strf "%s: %s" d.name why)
+      | Ok (Rig_edge.Loaded _) -> Ok (Loaded l, t)
       | Ok (Place (n, lay)) -> (
-          let e = Memory.alloc_entry d Rig_edge.Device n in
-          (* [d]'s regions are of [d]'s region type. *)
-          match e.backing with
-          | Driver_memory { region = Region { r; rid = rid'; _ } as region; _ }
-            -> (
-              match Type.Id.provably_equal rid rid' with
-              | Some Type.Equal -> (
-                  (* A failure gives the code memory back once [d]'s work that
-                     may use it is done, or, lost, once [d] counts as stopped,
-                     and raises its own exception. *)
-                  match
-                    let i, code = Dev.counted d Dev.Any (fun () -> lay r) in
-                    (try place d e region code
-                     with x ->
-                       Memory.unload d (Loaded { m; h; i }) None;
-                       raise x);
-                    i
-                  with
-                  | i -> Ok (Loaded { m; h; i }, Some e)
-                  | exception x ->
-                      Memory.retire d e;
-                      raise x)
-              | None -> assert false)
-          | Io_memory _ | Kept _ -> assert false))
+          Memory.token_link t;
+          let l =
+            { m; h; answer = Error ""; laid = None; code = ref Memory.no_entry }
+          in
+          let t = image_token d (Loaded l) n in
+          let laid () =
+            let e = Memory.code_entry d n l in
+            (* [d]'s regions are of [d]'s region type. *)
+            match e.backing with
+            | Driver_memory
+                { region = Region { r = Some r; rid = rid'; _ } as region; _ }
+              -> (
+                match Type.Id.provably_equal rid rid' with
+                | Some Type.Equal ->
+                    let lay () =
+                      let i, code = lay r in
+                      l.laid <- Some i;
+                      code
+                    in
+                    place d e region (Dev.counted d Dev.Any lay)
+                | None -> assert false)
+            | Driver_memory _ | Io_memory _ | Kept _ -> assert false
+          in
+          match laid () with
+          | () -> Ok (Loaded l, t)
+          | exception x -> unheld t x))
   | Host -> (
       match Host_code.link binary with
-      | Ok c -> Ok (Linked c, None)
+      | Ok c -> Ok (Linked c, image_token d (Linked c) 0)
       | Error why -> Error (strf "%s: %s" d.name why))
   | Io _ -> invalid_argf "Rig.Image.load: %s loads no code" d.name
 
@@ -79,16 +121,7 @@ let load d binary =
   if Dev.is_lost d then Dev.raise_lost d;
   match loaded d binary with
   | Error _ as e -> e
-  | Ok (loaded, code) ->
-      let bytes = match code with Some e -> e.bytes | None -> 0 in
-      let itoken =
-        Memory.token d.live.release (Image (loaded, code)) bytes
-          (Memory.room d) (-1)
-      in
-      if itoken == Memory.no_token then begin
-        Memory.unload d loaded code;
-        Dev.raise_lost d
-      end;
+  | Ok (loaded, itoken) ->
       let image = { idev = d; loaded; itoken } in
       if Profile.enabled () then
         Profile.record (Load { image; binary; time = Profile.now () });

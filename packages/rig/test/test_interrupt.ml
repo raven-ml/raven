@@ -13,7 +13,8 @@
    close runs it once, or live, its name answering it, and it runs the
    operation again and closes. Either way
    its name then opens a device that runs the operation. rig promises no
-   return of memory after an asynchronous exception, so the walk checks
+   return of memory after an asynchronous exception but what a driver's call
+   made, which the walks of records before calls check, so this walk checks
    none. *)
 
 open Windtrap
@@ -857,6 +858,233 @@ let test_close_in_open () =
   in
   greater ~msg:"closes that raised" int ~than:0 (from 1 0)
 
+(* Records before calls. A call that makes memory, a mapping or code through
+   Polled runs once with an exception at each of its allocations outside its
+   counted calls, where it lands outside the driver's calls, and
+   once with a SIGINT raised at each of its allocations, wherever it is, as a
+   Ctrl-C comes: one that comes inside a driver's call lands once the call
+   returned. rig records what a driver makes before the call, so after either
+   no device is lost, each serves the call again, and once the call's values
+   are dropped and collected, and the devices drained and their caches
+   freed, the driver holds nothing the call made, but a device's mappings of
+   words, which go back at its stop; once the devices are closed, it holds
+   nothing. *)
+
+(* Whether the allocation [a] is made inside a function whose slot [named]
+   holds for. *)
+let inside named (a : Gc.Memprof.allocation) =
+  let holds s =
+    match Printexc.Slot.name s with Some n -> named n | None -> false
+  in
+  match Printexc.backtrace_slots a.callstack with
+  | Some slots -> Array.exists holds slots
+  | None -> false
+
+(* Whether the allocation [a] is made inside one of Polled's functions, which
+   [Rig_support] defines in its module [Driver], as a give calls them. *)
+let in_polled =
+  inside (fun n ->
+      String.starts_with ~prefix:"Rig_support.Driver." n
+      || String.starts_with ~prefix:"Rig_support.Polled." n)
+
+(* Whether the allocation [a] is made inside a driver's call: in a counted
+   call, or in Polled. An exception there loses the device and may leave the
+   call half done (rig.mli's Errors section). The profile's callback runs at
+   the allocation, on its thread. *)
+let in_call a = S.counted () > 0 || in_polled a
+
+(* A call that makes something through Polled: [setup ()] opens the devices
+   it uses, the first the one it makes on, and is them with the call.
+   [words] says whether it maps words, which go back at the device's
+   stop. *)
+type making = {
+  what : string;
+  words : bool;
+  setup : unit -> (Rig.t * P.t) list * (unit -> unit);
+}
+
+let making ?(words = false) what setup = { what; words; setup }
+
+(* What [p] holds: its memory of each kind, its mappings, none counted with
+   [but_maps], and its images. *)
+let held ?(but_maps = false) p =
+  [
+    P.allocated p Device;
+    P.allocated p Pinned;
+    P.allocated p Mapped;
+    (if but_maps then 0 else P.mapped p);
+    P.images p;
+  ]
+
+(* A submit on [d] whose queue waits on a new producer's value. *)
+let waits_on_producer d =
+  let producer, pp = P.open_ (fresh "making:producer") in
+  let v = once (Sub.Run.make (Sub.make producer [||])) in
+  let run = Sub.Run.make (Sub.make d [||]) in
+  ( [ (producer, pp) ],
+    fun () -> Rig.Point.wait (Rig.submit run ~buffers:[||] ~waits:[| v |]) )
+
+let makings =
+  [
+    making "an allocation of each kind" (fun () ->
+        let d, p = P.open_ (fresh "making:create") in
+        ( [ (d, p) ],
+          fun () ->
+            List.iter
+              (fun memory -> ignore (B.create ~memory d 64 : B.t))
+              [ B.Device; Pinned; Mapped ] ));
+    making "an allocation from the cache" (fun () ->
+        let d, p = P.open_ (fresh "making:cached") in
+        ignore (Sys.opaque_identity (B.create d 64));
+        Gc.full_major ();
+        (* The drain of an empty buffer's creation caches the memory. *)
+        ignore (B.create d 0 : B.t);
+        ([ (d, p) ], fun () -> ignore (B.create d 64 : B.t)));
+    making "a borrow of host memory" (fun () ->
+        let d, p = P.open_ (fresh "making:borrow-host") in
+        let h = B.create Rig.host page in
+        ([ (d, p) ], fun () -> ignore (B.borrow d h : B.t option)));
+    making "a borrow of a peer's memory" (fun () ->
+        let o, po = P.open_ (fresh "making:owner") in
+        let d, p = P.open_ (fresh "making:borrow-peer") in
+        let b = B.create o 64 in
+        ([ (d, p); (o, po) ], fun () -> ignore (B.borrow d b : B.t option)));
+    making "a load of an image its driver places" (fun () ->
+        let d, p = P.open_ (fresh "making:functions") in
+        ( [ (d, p) ],
+          fun () -> ignore (Result.get_ok (Rig.Image.load d "functions")) ));
+    making "a load of an image into the device's memory" (fun () ->
+        let d, p = P.open_ (fresh "making:code") in
+        ( [ (d, p) ],
+          fun () -> ignore (Result.get_ok (Rig.Image.load d "code:64")) ));
+    making ~words:true "a submit that maps rig's array to wait on a producer"
+      (fun () ->
+        let d, p = P.open_ ~waits_on:[ `Host ] (fresh "making:array") in
+        let producers, call = waits_on_producer d in
+        ((d, p) :: producers, call));
+    making ~words:true "a submit that maps a producer's word to wait on it"
+      (fun () ->
+        let d, p =
+          P.open_ ~maps_host:false ~waits_on:[ `Host ] (fresh "making:word")
+        in
+        let producers, call = waits_on_producer d in
+        ((d, p) :: producers, call));
+  ]
+
+(* Runs [m]'s call with [landing] at the [n]-th of its allocations that
+   [from] holds for, then checks what rig left: no device lost, the call
+   served again, and nothing held by the driver once the call's values are
+   collected and the devices closed. Is whether the allocation was
+   reached. *)
+let made m ~from ~landing n =
+  let at = Printf.sprintf ", landing at allocation %d" n in
+  in_child at (fun () ->
+      let run () =
+        let devices, call = m.setup () in
+        Gc.full_major ();
+        let reached = S.interrupted ~from ~landing n call in
+        List.iter
+          (fun (d, _) -> equal ~msg:"lost" (option string) None (Rig.lost d))
+          devices;
+        call ();
+        (devices, reached)
+      in
+      let devices, reached = run () in
+      collect ();
+      List.iter (fun (d, _) -> settle d) devices;
+      List.iter
+        (fun (d, p) ->
+          equal
+            ~msg:(Rig.name d ^ " holds once the values are collected")
+            (list int) [ 0; 0; 0; 0; 0 ]
+            (held ~but_maps:m.words p))
+        devices;
+      List.iter (fun (d, _) -> Rig.close d) devices;
+      List.iter (fun (d, _) -> settle d) devices;
+      List.iter
+        (fun (d, p) ->
+          equal ~msg:(Rig.name d ^ " holds") (list int) [ 0; 0; 0; 0; 0 ]
+            (held p))
+        devices;
+      reached)
+
+let makes m ~from ~landing () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec walk n = if made m ~from ~landing n then walk (n + 1) else n - 1 in
+  greater ~msg:"the landings" int ~than:0 (walk 1)
+
+let raise_once = S.Call (fun () -> raise Exit)
+
+(* Polled, whose facts state that the host addresses its memory, which it
+   does not. *)
+module Overstated = struct
+  include P
+
+  let facts d = { (P.facts d) with host_addresses = true }
+end
+
+(* Allocates on a device whose driver breaks its facts, with an exception at
+   the [n]-th allocation outside the driver's calls, then again: the second
+   allocation loses the device if the first did not, and once it is closed
+   the driver holds no region. Is whether the allocation was reached. *)
+let overstated n =
+  let at = Printf.sprintf ", landing at allocation %d" n in
+  in_child at (fun () ->
+      let p = P.make ~host_visible:false () in
+      let name = fresh "making:overstated" in
+      let make ~word = Ok (P.bind p ~word) in
+      let d =
+        Result.get_ok (Rig.open_ { name; driver = (module Overstated); make })
+      in
+      let create () =
+        match B.create d 64 with _ -> () | exception Rig.Lost _ -> ()
+      in
+      let reached =
+        S.interrupted ~from:(fun a -> not (in_call a)) ~landing:raise_once n
+          create
+      in
+      create ();
+      is_some ~msg:"the loss" (Rig.lost d);
+      Rig.close d;
+      settle d;
+      equal ~msg:"held" (list int) [ 0; 0; 0; 0; 0 ] (held p);
+      reached)
+
+let test_overstated () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec walk n = if overstated n then walk (n + 1) else n - 1 in
+  greater ~msg:"the landings" int ~than:0 (walk 1)
+
+let making_tests =
+  List.concat_map
+    (fun m ->
+      [
+        test (m.what ^ ", an exception outside its driver's calls")
+          (makes m ~from:(fun a -> not (in_call a)) ~landing:raise_once);
+        test (m.what ^ ", a SIGINT at any allocation")
+          (makes m ~from:(fun _ -> true) ~landing:S.Signal);
+      ])
+    makings
+  @ [
+      (* A load the driver places stores its answer as it is: rig allocates
+         nothing in its counted call. *)
+      test
+        "a load of an image its driver places, an exception outside Polled's \
+         functions"
+        (makes
+           (List.find
+              (fun m -> m.what = "a load of an image its driver places")
+              makings)
+           ~from:(fun a -> not (in_polled a))
+           ~landing:raise_once);
+      test
+        "an allocation whose region breaks its driver's facts, an exception \
+         outside its driver's calls"
+        test_overstated;
+    ]
+
 (* Opens [names] devices, as many as make the table of names grow, and checks
    that each name answers the device it opened before. *)
 let names = 40
@@ -921,4 +1149,8 @@ let () =
                   it"
                  test_close_in_open;
              ]);
+         group ~timeout
+           "an exception once a driver's call returned leaves what it made \
+            to rig"
+           making_tests;
        ]

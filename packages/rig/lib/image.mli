@@ -8,12 +8,14 @@
     A driver loads a binary in one of two ways ({!Rig_edge.type-code}). It
     loads it itself and returns its image, or it asks for code memory of a
     size and lays the binary out into it. In the second case {!load} allocates
-    that memory as [Device] memory of the device ({!Memory.alloc_entry}), so
+    that memory as [Device] memory of the device ({!Memory.code_entry}), so
     it counts in the budget, and places the code after the device's queued
     work: by a copy from [Pinned] memory on the copy engine ({!Copy.queued}),
-    or by the host where the device has no copy engine. A failure while laying
-    out or placing the code retires the code memory ({!Memory.retire}), after
-    unloading the image if the driver made one.
+    or by the host where the device has no copy engine. The image's record
+    and token are made before each driver's call that may make the image,
+    and hold the code memory: a failure puts the token's record on the
+    device's release list at once, which unloads the image if the driver
+    made one and gives the code memory back.
 
     An image's token puts the driver's image and its code memory on the
     device's release list once the image is collected. A drain then unloads

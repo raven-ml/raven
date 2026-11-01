@@ -192,8 +192,6 @@ external sub_side : c -> int -> bool -> buffer -> bool -> bool -> unit
 
 external sub_seal : c -> unit = "caml_rig_sub_seal"
 
-external reraise : exn -> 'a = "%reraise"
-
 external sub_id : c -> int = "caml_rig_sub_id" [@@noalloc]
 
 external sub_fixed : c -> int -> int -> use -> unit
@@ -1100,65 +1098,106 @@ external array_of_words : unit -> int * int = "caml_rig_edge_words"
 
 let words_start, words_bytes = array_of_words ()
 
-(* [d]'s mapping of the array, made at its first wait on a word in it: its
-   first byte's address as [d]'s work addresses it, or [host_wait] if [d] maps
-   none. *)
-let map_words d =
-  match Memory.map_host_range d words_start words_bytes with
-  | None -> (host_wait, None)
-  | Some m -> (
-      match (Memory.locate m).address with
-      | Some at -> (at, Some m)
-      | None ->
-          ignore (Memory.unmap d m : Dev.given);
-          (host_wait, None))
+(* Under [d]'s lock: records [r], [d]'s mapping of the array about to be
+   made, among its mappings of the array, which go back once [d] is
+   Stopped, unless [d]'s stop returned, as its drain may have given them back
+   already: whether it recorded it. *)
+let record_words (d, r) =
+  let l = d.live in
+  (not (Dev.stop_returned d))
+  && begin
+    let maps = r :: l.word_maps in
+    l.word_maps <- maps;
+    true
+  end
 
-(* Keeps [d]'s mapping of the array, unless another decision came first or
-   [d]'s stop returned, as [set_pair] does for a pair. *)
-let set_words (d, at, mapping) =
+(* Under [d]'s lock: takes [r] out of [d]'s mappings of the array, whether it
+   was there. *)
+let take_words (d, r) =
+  let l = d.live in
+  List.memq r l.word_maps
+  && begin
+    l.word_maps <- List.filter (fun r' -> r' != r) l.word_maps;
+    true
+  end
+
+(* Gives back [d]'s mapping [r] of the array, unless [d]'s stop's drain took
+   it first. *)
+let drop_words d r =
+  if Lock.protect d.live.lock take_words (d, r) then
+    ignore (Memory.unmap d r : Dev.given)
+
+(* Decides how [d]'s queues read the array, [at], unless another decision
+   came first: that one, then. *)
+let set_words (d, at) =
   let l = d.live in
   if l.words <> 0 then Some l.words
-  else if Option.is_some mapping && Dev.stop_returned d then Some host_wait
   else begin
-    Option.iter (fun m -> l.word_maps <- m :: l.word_maps) mapping;
     l.words <- at;
     None
   end
 
-(* Where [d]'s work reads the array: one mapping for every producer, which [d]
-   keeps until it is Stopped. Racy, as [pair]: the decision that comes second
-   gives its mapping back. *)
+let decide_words d at =
+  match Lock.protect d.live.lock set_words (d, at) with
+  | None -> at
+  | Some first -> first
+
+(* Where [d]'s work reads the array: one mapping for every producer, made at
+   its first wait on a word in it, which [d] keeps until it is Stopped, or
+   [host_wait] if [d] maps none. The mapping is recorded among [d]'s
+   mappings of the array before the driver's call that makes it, so an
+   exception from then on leaves it to [d]'s drain once [d] is Stopped. Racy,
+   as [pair]: the decision that comes second gives its mapping back, as
+   does one that finds no address. *)
 let words_at d =
   let l = d.live in
   if l.words <> 0 then l.words
   else
-    let at, mapping = map_words d in
-    match Lock.protect l.lock set_words (d, at, mapping) with
-    | None -> at
-    | Some first ->
-        Option.iter (fun m -> ignore (Memory.unmap d m : Dev.given)) mapping;
-        first
+    match Memory.host_making d words_start words_bytes with
+    | None -> decide_words d host_wait
+    | Some { region; make } -> (
+        if not (Lock.protect l.lock record_words (d, region)) then
+          Dev.raise_lost d;
+        make ();
+        let at =
+          if Memory.made region then (Memory.locate region).address else None
+        in
+        match at with
+        | None ->
+            drop_words d region;
+            decide_words d host_wait
+        | Some at -> (
+            match Lock.protect l.lock set_words (d, at) with
+            | None -> at
+            | Some first ->
+                drop_words d region;
+                first))
 
 (* How [d], a device of [p]'s driver, waits in its queue for [p]'s word where
    it does not reach rig's array: through its driver's mapping of [p]'s word
-   region [r], which counts among [p]'s word unmaps. A [p] whose unmaps ended
-   has stopped and its points are done: [d] waits on the host. *)
+   region [r], which counts among [p]'s word unmaps. The mapping is recorded
+   with that count among [d]'s pending releases before the driver's call
+   that makes it ([Memory.record_word]), until its pair takes it or, after an
+   exception, [d]'s stop gives it back. A [p] whose unmaps ended has stopped
+   and its points are done: [d] waits on the host, as it does where its
+   driver maps none or the mapping has no address. *)
 let map_word d p r =
-  if not (Memory.hold_word p) then (host_wait, None)
-  else
-    match Memory.map_peer_region d r with
-    | exception e ->
-        Memory.word_unmapped p;
-        reraise e
-    | None ->
-        Memory.word_unmapped p;
-        (host_wait, None)
-    | Some m -> (
-        match (Memory.locate m).address with
-        | Some at -> (at, Some (m, p))
+  match Memory.peer_making d r with
+  | None -> (host_wait, None)
+  | Some { region; make } -> (
+      let m = (region, p) in
+      if not (Memory.record_word d m) then (host_wait, None)
+      else begin
+        make ();
+        let at =
+          if Memory.made region then (Memory.locate region).address else None
+        in
+        match at with
+        | Some at -> (at, Some m)
         | None ->
-            ignore (Memory.unmap_word d (m, p) : Dev.given);
-            (host_wait, None))
+            Memory.drop_word d m;
+            (host_wait, None)
+      end)
 
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
    queue that waits in it, the address of [p]'s word as [d] maps it: inside
@@ -1194,12 +1233,13 @@ type decided = Decided of pair | Replaced of pair | Taken of pair
 
 (* Sets [d]'s pair of [p] to [way] with its mapping [map], unless a decision
    for [p] or a later device of its slot came first, or [d]'s stop returned,
-   after which its drain owns its pairs: then the pair to use, and the caller
-   gives [map] back. A pair decided for an earlier device of the slot is
-   replaced, and its mapping goes among [d]'s pending releases at the value
-   after every submit that may wait through it ({!Dev.next_value}), in the
-   same section, so that a drain finds it in the cell or among them. Nothing
-   allocates between the two stores. *)
+   after which its drain owns its pairs and pending releases: then the pair
+   to use, and the caller gives [map] back. [map] moves from [d]'s pending
+   releases into the cell. A pair decided for an earlier device of the slot
+   is replaced, and its mapping goes among [d]'s pending releases at the
+   value after every submit that may wait through it ({!Dev.next_value}), in
+   the same section, so that a drain finds each mapping in the cell or among
+   them. Nothing allocates between the two stores. *)
 let set_pair (d, (p : device), way, map) =
   let l = d.live and i = p.index in
   let known = known_pair l.pairs i in
@@ -1209,9 +1249,10 @@ let set_pair (d, (p : device), way, map) =
   else begin
     let cell = { occupant = p.opened; way; word_map = map } in
     if i >= Array.length l.pairs then grow l i;
-    (match known.word_map with
-    | Some m -> Memory.retire_locked d m
-    | None -> ());
+    (* The releases' store ends [settle_word_locked], and the cell's follows
+       it with nothing that allocates or polls between: an exception finds
+       [map] in one of the two. *)
+    Memory.settle_word_locked d map known.word_map;
     l.pairs.(i) <- cell;
     if known.occupant >= 0 then Replaced cell else Decided cell
   end
@@ -1234,7 +1275,7 @@ let pair d (p : device) =
     let way, map = decide d p in
     match Lock.protect d.live.lock set_pair (d, p, way, map) with
     | Taken first ->
-        Option.iter (fun m -> ignore (Memory.unmap_word d m : Dev.given)) map;
+        Option.iter (Memory.drop_word d) map;
         first
     | Decided cell -> cell
     | Replaced cell ->

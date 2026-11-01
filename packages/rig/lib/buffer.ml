@@ -60,7 +60,8 @@ let of_io (type r) d (k : r Type.Id.t) (r : r) ~access n =
       let module I = (val m) in
       match Type.Id.provably_equal I.region_key k with
       | Some Type.Equal ->
-          of_memory (Memory.of_io d (Io_region { m; h; r }) ~access n) n
+          let region = Io_region { m; h; r = Some r } in
+          of_memory (Memory.of_io d region ~access n) n
       | None ->
           invalid_argf "Rig.Buffer.of_io: %s is another io library's device"
             d.name)
@@ -72,7 +73,7 @@ let io (type r) b (k : r Type.Id.t) : r option =
   | Io_memory { region = Io_region { m; r; _ }; _ } -> (
       let module I = (val m) in
       match Type.Id.provably_equal I.region_key k with
-      | Some Type.Equal -> Some r
+      | Some Type.Equal -> r
       | None -> None)
   | Driver_memory _ | Kept _ -> None
 
@@ -332,7 +333,7 @@ let dma b ~fn =
   let a = b.mem.alloc in
   let e = a.entry in
   match e.backing with
-  | Driver_memory { region = Region { m; h; r; _ }; _ }
+  | Driver_memory { region = Region { m; h; r = Some r; _ }; _ }
     when not a.owner.memory_device ->
       let module D = (val m) in
       if not (Memory.mark_outside a) then

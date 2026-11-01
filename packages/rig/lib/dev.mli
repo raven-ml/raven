@@ -241,7 +241,12 @@ val counted : device -> scope -> (unit -> 'a) -> 'a
     loses [d] and raises {!Lost}. Another exception loses [d] with its text
     if [scope] names it, and passes through either way. The loss and the
     end of the count are one C call, the handler's first step. Raises
-    {!Lost} without calling [f] if [d] is lost. *)
+    {!Lost} without calling [f] if [d] is lost.
+
+    A call that makes memory or code finds rig's record of it made, and [f]
+    stores the driver's answer in it before it returns ({!Memory}): an
+    exception that lands once [f] returned, such as a signal's as the thread
+    gets its mask back, leaves what the driver made recorded. *)
 
 val masked : (unit -> 'a) -> 'a
 (** [masked f] is [f ()] with the calling thread's signals blocked, as

@@ -30,21 +30,29 @@ type ('a, 'r, 'i) dm =
 (** The type for an io library's module with its types exposed. *)
 type ('a, 'r) im = (module Rig_edge.Io with type t = 'a and type region = 'r)
 
-(** The type for a region of a driver, with the module and the device that
-    hold it, and the witness of its type, which equates the regions of one
-    device. *)
-type region =
-  | Region : {
-      m : ('a, 'r, 'i) dm;
-      h : 'a;
-      r : 'r;
-      rid : 'r Type.Id.t;
-    }
-      -> region
+(** The type for rig's record of a region of a driver: the module and the
+    device that hold it, the witness of its type, which equates the regions
+    of one device, and the region, [None] until the driver's call that makes
+    it returns into the record. rig makes the record before that call,
+    where the frees that give the region back find it, and the call stores
+    the driver's answer as it is, allocating nothing, so that an exception
+    once the call returned leaves the region recorded ({!Memory}). *)
+type ('a, 'r, 'i) cell = {
+  m : ('a, 'r, 'i) dm;
+  h : 'a;
+  rid : 'r Type.Id.t;
+  mutable r : 'r option;
+}
 
-(** The type for a region of an io library, with the module and the device
-    that hold it. *)
-type io_region = Io_region : { m : ('a, 'r) im; h : 'a; r : 'r } -> io_region
+(** The type for a region of a driver, of any driver. *)
+type region = Region : ('a, 'r, 'i) cell -> region
+
+(** The type for rig's record of a region of an io library, with the module
+    and the device that hold it, made as a driver's {!cell} is. *)
+type ('a, 'r) io_cell = { m : ('a, 'r) im; h : 'a; mutable r : 'r option }
+
+(** The type for a region of an io library, of any library. *)
+type io_region = Io_region : ('a, 'r) io_cell -> io_region
 
 type token
 (** The type for custom blocks whose collection puts a release record on a
@@ -196,7 +204,9 @@ and live = {
   mutable pending : (int * pending) list * (int * pending) list; [@atomic]
       (** Releases, each with the value of it it waits for, by nondecreasing
           value, replaced whole under the lock: the front in order, the back
-          reversed, and the front empty only when both are. *)
+          reversed, and the front empty only when both are. A mapping of a
+          word whose pair is not decided waits at [max_int], which only the
+          device's stop reaches. *)
   mutable pairs : pair array;
       (** By producer index, how its queues wait for the values of the slot's
           device it was decided for. A cell holds an immutable pair, so a
@@ -208,13 +218,15 @@ and live = {
           do not, or the array's address as its work addresses it, through
           one mapping. Set once under the lock, and read without it. *)
   mutable word_maps : region list; [@atomic]
-      (** Its mapping of rig's array, written under the lock. It goes back to
-          its driver once the device is Stopped. *)
+      (** Its mappings of rig's array, written under the lock: the one its
+          [words] decided, and one an exception left, which rig records here
+          before the driver's call that makes it. They go back to its
+          driver once the device is Stopped. *)
   mapped : (entry * mapping) Tbl.Make(Int).t;
-      (** The entries it maps, by [id], with its mapping of each, under the
-          lock: the mapping goes back with the entry, or once it is Stopped,
-          whichever comes first. Emptied, it goes back to its smallest
-          size. *)
+      (** Its mappings of entries, by their [id], each with the entry it
+          maps, under the lock: a mapping goes back with the entry, or once
+          it is Stopped, whichever comes first. Emptied, it goes back to its
+          smallest size. *)
   mutable halves : half array;
       (** Its staging memory ({!Copy}): every half made, held or not, under
           the lock. The host's serves every device that maps host memory. *)
@@ -278,8 +290,20 @@ and pages =
   | No_pages
 
 (** The type for a device's mapping of an allocation: the device, its
-    region, and the address and handle its work uses. *)
-and mapping = { on : device; map : region; at : int; by : nativeint }
+    region, its key among the entries the device maps, and the address and
+    handle its work uses. rig records it, its region not yet made, in the
+    allocation's [maps] and the device's [mapped] before the driver's call
+    that makes it, and sets [at] and [by] once the call has returned, then
+    [located], under the allocation's owner's lock. Only a located mapping
+    serves a borrow. *)
+and mapping = {
+  on : device;
+  map : region;
+  id : int;
+  mutable at : int;
+  mutable by : nativeint;
+  mutable located : bool;
+}
 
 (** The type for releases that wait for a value of their device, which
     covers the work that may use them without naming them. *)
@@ -290,7 +314,7 @@ and pending =
   | Unmap of region * entry option
       (** A mapping, and the memory it maps, given back after its last
           unmap. *)
-  | Unload of loaded * entry option
+  | Unload of loaded
   | Unmap_word of (region * device)
       (** A mapping of the word of a slot's earlier device, which a pair of a
           later device replaced, given back after every submit that may wait
@@ -301,11 +325,25 @@ and pending =
 (** The type for the value a submission keeps ({!Rig.Submission.make}). *)
 and held = Held : 'a -> held
 
-(** The type for an image: one a driver loaded, with its module and handle,
-    or code the host linked ({!Host_code}). *)
-and loaded =
-  | Loaded : { m : ('a, 'r, 'i) dm; h : 'a; i : 'i } -> loaded
-  | Linked of linked
+(** The type for an image: one a driver loaded, or code the host linked
+    ({!Host_code}). *)
+and loaded = Loaded : ('a, 'r, 'i) loading -> loaded | Linked of linked
+
+(** The type for rig's record of an image a driver loads: its module and
+    handle, the answer of {!Rig_edge.Driver.image} as the driver gave it,
+    [Error ""] before, the image a [Place]'s function laid, and the memory
+    its code lies in, {!Memory.no_entry} for none. rig makes the record
+    before the driver's calls, as a {!cell}, and the image's unload gives
+    back what it holds. The call of a [Place]'s function wraps the image in
+    its option inside its count: an exception at that allocation is one
+    inside the driver's call, which loses the device. *)
+and ('a, 'r, 'i) loading = {
+  m : ('a, 'r, 'i) dm;
+  h : 'a;
+  mutable answer : (('r, 'i) Rig_edge.code, string) result;
+  mutable laid : 'i option;
+  code : entry ref;
+}
 
 (** The type for code the host linked: the executable memory that holds it,
     which the collector unmaps, and the address of each function in it. *)
@@ -437,8 +475,10 @@ type event =
 
 (** The type for what a release list holds. *)
 type released =
-  | Memory of entry
-  | Image of loaded * entry option  (** The image and its code's memory. *)
+  | Memory of entry ref
+      (** The entry of an allocation's lifetime, which the try that made the
+          token takes into it, {!Memory.no_entry} before. *)
+  | Image of loaded
   | Release of held
   | Stamps of int
       (** The stamps a freed allocation keeps a reference on

@@ -35,6 +35,7 @@
 #include <sched.h>
 #endif
 
+#include "rig.h"
 #include "rig_stubs.h"
 
 /* How long a waiter for a turn or a lock blocks before it returns to OCaml,
@@ -376,6 +377,10 @@ static rig_mutex locks_mu = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic int first;
 static _Atomic(char *) failed;
 
+/* The counted calls the calling thread is inside: entered, its turn
+   included, and not yet ended ([rig_counted] in rig.h). */
+static _Thread_local int counted_here;
+
 /* The reasons no line owns: a fork's, and the one a loss keeps when its own
    could not be copied. Windows has no fork. */
 #ifndef _WIN32
@@ -419,6 +424,7 @@ static void forked_child(void) {
     mutex_init(&l->mu);
     cond_init(&l->cv);
   }
+  counted_here = 0;
   int n = atomic_load(&top);
   for (int i = 0; i <= n; i++) {
     struct rig_line *l = line_of(i);
@@ -970,6 +976,7 @@ static int lose_ending(struct rig_device *d, char *why, int own, int counts,
   int won = lose_locked(d, why, own, counts);
   if (won) d->faulted = fault;
   d->inside -= ending;
+  counted_here -= ending;
   if (ending && d->inside == 0 && state(d) == RIG_OWED) cv_broadcast(d);
   mu_unlock(d);
   if (won) {
@@ -987,6 +994,7 @@ static int lose_ending(struct rig_device *d, char *why, int own, int counts,
    owed device wakes a close waiting to claim its stop. */
 static void leave_count(struct rig_device *d) {
   int released = take(d);
+  counted_here--;
   if (--d->inside == 0 && state(d) == RIG_OWED) cv_broadcast(d);
   give(d, released);
 }
@@ -1171,9 +1179,19 @@ value caml_rig_enter(value v_d) {
   int released = take(d);
   int r = 0;
   if (is_lost(d)) r = 1;
-  else d->inside++;
+  else {
+    d->inside++;
+    counted_here++;
+  }
   give(d, released);
   CAMLreturn(Val_int(r));
+}
+
+int rig_counted(void) { return counted_here; }
+
+value caml_rig_counted(value unit) {
+  (void)unit;
+  return Val_int(counted_here);
 }
 
 /* Ends a counted call on [d]. */
@@ -1274,6 +1292,7 @@ static void begin_turn(struct rig_device *d) {
   if (!d->may_block) return;
   d->turn = 1;
   d->inside++;
+  counted_here++;
   mu_unlock(d);
 }
 
@@ -1282,6 +1301,7 @@ static void end_turn(struct rig_device *d) {
   mu_lock(d);
   d->turn = 0;
   d->inside--;
+  counted_here--;
   cv_broadcast(d);
 }
 

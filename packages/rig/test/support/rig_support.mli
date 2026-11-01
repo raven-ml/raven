@@ -257,6 +257,14 @@ module Polled : sig
   val allocated : t -> Rig_edge.memory -> int
   (** [allocated d kind] is the bytes of [kind] [d] holds allocated. *)
 
+  val mapped : t -> int
+  (** [mapped d] is the number of mappings [d] holds: of host memory, of
+      another device's memory and of another device's word. *)
+
+  val images : t -> int
+  (** [images d] is the number of images [d] holds loaded: each that [image]
+      loaded itself or that a [Place]'s function laid, until its unload. *)
+
   val last_times : t -> int
   (** [last_times d] is the host address where the run of [d]'s last submit
       writes its times, [0] for nowhere. *)
@@ -611,6 +619,12 @@ val interrupted :
 val holds : unit -> int
 (** [holds ()] is the number of locks the calling thread holds, rig's and the
     drivers' ([rig_holds] in [rig_edge.h]). *)
+
+val counted : unit -> int
+(** [counted ()] is the number of counted calls the calling thread is inside
+    ([rig_counted] in [rig.h]): calls of a driver that a device's stop never
+    overlaps, inside a driver's call, where an exception may lose the
+    device. *)
 
 val inside_lock : (unit -> 'a) -> 'a
 (** [inside_lock f] is [f ()] run while the calling thread counts one more

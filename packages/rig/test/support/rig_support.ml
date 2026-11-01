@@ -131,6 +131,10 @@ external holds : unit -> int = "caml_rig_edge_holds_byte"
 external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
 external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 
+(* The counted calls the calling thread is inside ([rig_counted] in
+   [rig.h]). *)
+external counted : unit -> int = "caml_rig_counted"
+
 module Driver = struct
   type kind = Rig_edge.memory
 
@@ -209,6 +213,7 @@ module Driver = struct
     mutable maps : int list;
     mutable held : (kind * int) list;
     mutable mapped : int list;
+    mutable images : int;  (** The images it holds loaded. *)
     failure : string Atomic.t;
     mutable fault : string option;
     word_fault : string option Atomic.t;
@@ -464,8 +469,13 @@ module Driver = struct
                ( n,
                  fun r ->
                    run_before d "place";
-                   ({ code = Some r; owner = d }, String.make n 'c') ))
-      | [ "functions" ] -> Ok (Rig_edge.Loaded { code = None; owner = d })
+                   let code = String.make n 'c' in
+                   protect d.lock (fun () -> d.images <- d.images + 1);
+                   ({ code = Some r; owner = d }, code) ))
+      | [ "functions" ] ->
+          let i = { code = None; owner = d } in
+          protect d.lock (fun () -> d.images <- d.images + 1);
+          Ok (Rig_edge.Loaded i)
       | _ -> Error "not a polled binary"
 
   (* Its functions are Polled's host functions of that name. *)
@@ -480,7 +490,9 @@ module Driver = struct
       in
       Entry { code; launch; params; threads = Some 1024 }
 
-  let unload d _ = ignore (counted d "unload" : bool)
+  let unload d _ =
+    protect d.lock (fun () -> d.images <- d.images - 1);
+    ignore (counted d "unload" : bool)
 
   let grow d =
     let refused = counted d "grow" in
@@ -626,6 +638,7 @@ module Polled = struct
         maps = [];
         held = [];
         mapped = [];
+        images = 0;
         failure = Atomic.make "";
         fault = None;
         word_fault = Atomic.make None;
@@ -782,6 +795,8 @@ module Polled = struct
   let allocs d = protect d.lock (fun () -> List.rev d.allocs)
   let host_maps d = protect d.lock (fun () -> List.rev d.maps)
   let allocated d kind = protect d.lock (fun () -> holding d kind)
+  let mapped d = protect d.lock (fun () -> List.length d.mapped)
+  let images d = protect d.lock (fun () -> d.images)
   let interrupt d = protect d.lock (fun () -> d.interrupt_next <- true)
   let broken_sleeps d = Atomic.get d.broken_sleeps
   let stall d n = protect d.lock (fun () -> d.stalls <- n)
