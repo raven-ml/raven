@@ -362,6 +362,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` multiplies MXFP4 weights by `bfloat16` activations on tensor
+  cores: `Nx_quant.apply` and `Nx_quant.apply_experts` enter each scaled value
+  as the `bfloat16` it is.
 - `Rune.jit` converts `float16` and `bfloat16` by tolk's casts, so a product of
   these dtypes, or of operands cast from them as kaun's attention scores are,
   takes the tensor cores of CUDA, NV and AMD GPUs.

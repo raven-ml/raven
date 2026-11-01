@@ -6,8 +6,9 @@
 (* gpt-oss-20b at its own shapes on a CUDA or AMD GPU, the example's model
    compiled one layer kind at a time ([Layer_loop]): a decode step and a prefill
    of 512 tokens, over random weights at bfloat16 with the experts packed as
-   MXFP4, and a decode step with the attention projections and the head
-   packed as Q8_0 too, quantised in its case's setup.
+   MXFP4, a decode step with the attention projections and the head packed as
+   Q8_0 too, quantised in its case's setup, and one layer's experts at the
+   prefill.
 
    The 13.8 GB of weights are built once, on the host, before the cases fork:
    every case's worker shares them and places them on the GPU itself, since a
@@ -194,7 +195,37 @@ let step weights kind =
   call ();
   call
 
-let kinds = [ `Decode; `Decode_q8_0; `Prefill ]
+(* One layer's experts, [Moe.apply] of the first block's, compiled at a
+   prefill of [prompt] tokens: random bfloat16 activations, routed by the
+   router of random logits from a fixed key, as the tensor cores multiply
+   the MXFP4 weights. *)
+let experts (weights : _ Gpt_oss.params) =
+  let module G = (val Nx.devices [ gpu () ]) in
+  let moe = Nx.Ptree.place (module Moe) G.on (List.hd weights.blocks).moe in
+  let logits =
+    Nx.Rng.normal ~key:(Nx.Rng.key 7) Nx.float32 [| prompt; config.experts |]
+  in
+  let ids, w = Moe.route ~k:config.experts_per_token logits in
+  let x =
+    Nx.cast Nx.bfloat16
+      (Nx.Rng.normal ~key:(Nx.Rng.key 8) Nx.float32 [| prompt; config.dim |])
+  in
+  let ids = Nx.place G.on ids and w = Nx.place G.on (Nx.cast Nx.bfloat16 w) in
+  let x = Nx.place G.on x in
+  let f =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun ids w x -> Moe.apply ~limit:config.swiglu_limit moe (ids, w) x)
+  in
+  let call () = ignore (Nx.item [ 0; 0 ] (f ids w x)) in
+  call ();
+  call
+
+let kinds = [ `Decode; `Decode_q8_0; `Prefill; `Experts ]
+
+let setup weights = function
+  | (`Decode | `Decode_q8_0 | `Prefill) as kind -> step weights kind
+  | `Experts -> experts weights
 
 let case weights kind =
   let name =
@@ -202,9 +233,10 @@ let case weights kind =
     | `Decode -> Printf.sprintf "decode step, cache %d" context
     | `Decode_q8_0 -> Printf.sprintf "decode step, Q8_0, cache %d" context
     | `Prefill -> Printf.sprintf "prefill %d" prompt
+    | `Experts -> Printf.sprintf "experts at prefill %d" prompt
   in
   Thumper.bench_with_setup
-    ~setup:(fun () -> step (Lazy.force weights) kind)
+    ~setup:(fun () -> setup (Lazy.force weights) kind)
     name
     (fun call -> call ())
 
@@ -226,7 +258,7 @@ let () =
   | [ _; "--warm" ] ->
       if opens () then
         let weights = weights () in
-        List.iter (fun kind -> (step weights kind) ()) kinds
+        List.iter (fun kind -> (setup weights kind) ()) kinds
   | argv ->
       if not (opens_in_child ()) then begin
         prerr_endline "gpt_oss: no CUDA or AMD GPU, nothing to measure";

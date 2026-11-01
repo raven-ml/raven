@@ -558,20 +558,38 @@ let power (t : Dtype.t) code =
   let x = Ops.bitcast bits t in
   Ops.where (Ops.eq e (k 255)) (Bits.nan x) x
 
-(* [entered acc x] is [x]'s parts stored into [acc], each element times its
-   block's scale read into [acc], the product rounded once. *)
-let entered acc { dtype; node; scale } =
+(* Whether every element of [dt] times a scale of [scale] in [acc] is a
+   bfloat16: an e2m1 value, of two significant bits, times a power of two of
+   float32's range is one, an overflow's infinity and a NaN included. *)
+let bfloat16_values dt scale acc =
+  match (dt, scale, acc) with
+  | D.Any D.Float4_e2m1fn, Exponent _, D.Any D.Float32 -> true
+  | _ -> false
+
+(* [entered acc ~other x] is [x]'s parts stored into [acc], each element times
+   its block's scale read into [acc], the product rounded once. Where [other],
+   the other operand's dtype, is bfloat16 and [x]'s products are all
+   bfloat16s, a product enters as a float32 cast of its bfloat16, the same
+   value: tolk's tensor cores multiply a product of two float32 casts of their
+   input type, so the two operands then share the bf16 core. Against another
+   dtype no core takes both, and the round trip would cost a cast per element
+   for nothing. *)
+let entered acc ~other { dtype; node; scale } =
   let x = Arith.cast ~src:dtype acc node in
   match (scale, acc) with
   | None, _ -> Arith.parts acc x
-  | Some scale, D.Any (D.Float32 | D.Float64) ->
+  | Some sc, D.Any (D.Float32 | D.Float64) ->
       let t = Arith.dtype acc and s = extents x in
-      let scale =
-        match scale with
-        | Exponent c -> power t (blocks c s)
-        | Value (d, v) -> blocks (Arith.cast ~src:d acc v) s
+      let v =
+        match sc with
+        | Exponent c -> Ops.mul x (power t (blocks c s))
+        | Value (d, v) -> Ops.mul x (blocks (Arith.cast ~src:d acc v) s)
       in
-      [ Ops.mul x scale ]
+      let bf16 = D.Any D.Bfloat16 in
+      let paired = match other with D.Any D.Bfloat16 -> true | _ -> false in
+      if paired && bfloat16_values dtype sc acc then
+        [ Arith.cast ~src:bf16 acc (Arith.cast ~src:acc bf16 v) ]
+      else [ v ]
   | Some _, D.Any d ->
       invalid_arg
         (Printf.sprintf
@@ -834,7 +852,8 @@ let block_size ~n ~g =
 let contract ~batch ~contracting ~segments ~acc ~out a b init =
   let batch = Iarray.to_list batch in
   let contracting = Iarray.to_list contracting in
-  let a = entered acc a and b = entered acc b in
+  let a = entered acc ~other:b.dtype a
+  and b = entered acc ~other:a.dtype b in
   match (segments : Ops.t Nx_kernel.segments option) with
   | None -> sum ~batch ~contracting ~acc ~out a b init
   | Some (Rows { offsets; a_axis; b_axis }) ->

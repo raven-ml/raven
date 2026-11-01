@@ -5,12 +5,12 @@
 
 (* Rune.jit on this machine's first GPU: a scatter past its work bound gives
    the host's eager values, a cast between float32 and a 16-bit float gives
-   eager's bits at every code and tie, a product of narrow floats holds its
-   bound, a call's check raises at the next wait, so the call returns while
-   its work runs, a key split there has the host's words, and a program over
-   the GPU and a memory device, devices of two targets, compiles to eager's
-   values with replicas equal bit for bit. It skips without a GPU, or without
-   the compiler the GPU's kernels need. *)
+   eager's bits at every code and tie, a product of narrow floats or of MXFP4
+   weights holds its bound, a call's check raises at the next wait, so the
+   call returns while its work runs, a key split there has the host's words,
+   and a program over the GPU and a memory device, devices of two targets,
+   compiles to eager's values with replicas equal bit for bit. It skips
+   without a GPU, or without the compiler the GPU's kernels need. *)
 
 open Windtrap
 open Rune_support
@@ -474,10 +474,10 @@ let unit_cases =
 
 (* A product of narrow floats: a [m; k] by [k; n] Nx.matmul compiled on the
    GPU, against the product of the same values computed on the host in
-   float64, whose own error is 2^-29 of the bound's. rune.mli's bound for a
-   contraction of [k] products summed at float32 is [γ(k + 1) Σ|a b|]; the
-   result then rounds once into its dtype, by a relative [u] of that dtype or,
-   below its least normal, half its least subnormal. A GPU's tensor cores take
+   float64, whose own error is 2^-29 of the bound's. {!Nx.contract}'s bound
+   for [k] products summed at float32 is [γ(k + 1, 2u) Σ|a b|]; the result
+   then rounds once into its dtype, by a relative [u] of that dtype or, below
+   its least normal, half its least subnormal. A GPU's tensor cores take
    extents that 16 divides and refuse the others. *)
 
 type narrow = Narrow : (float, 's) Nx.dtype * float * float -> narrow
@@ -526,13 +526,43 @@ let product_law (Narrow (dt, u, tiny), (m, k, n), seed) =
   let mass = Nx.to_array (Nx.matmul (Nx.abs a) (Nx.abs b)) in
   Array.iteri
     (fun i z ->
-      let e = gamma (k + 1) *. mass.(i) in
+      let e = product (k + 1) *. mass.(i) in
       let bound = e +. (u *. (Float.abs z +. e)) +. tiny in
       less
         ~msg:(Printf.sprintf "[%d; %d], exactly %h" (i / n) (i mod n) z)
         float_exact ~than:bound
         (Float.abs (y.(i) -. z)))
     exact
+
+(* Sixteen products of [1] by [1; t; ...; t], [t = 255 2^-31] just under
+   float32's [u], every value a bfloat16: rows of ones by columns of these
+   terms, [32; 16] by [16; 32], extents a core takes. A sum that keeps
+   float32's width rounds each addition of [t] to [1] at most to its unit in
+   the last place, within [Nx.contract]'s bound. *)
+let test_sixteen_terms () =
+  let _, (module S) = on_gpu () in
+  let k = 16 and n = 32 and t = 255. *. ldexp 1. (-31) in
+  let a = Nx.ones Nx.bfloat16 [| n; k |] in
+  let b =
+    Nx.cast Nx.bfloat16
+      (Nx.init Nx.float32 [| k; n |] (fun i -> if i.(0) = 0 then 1. else t))
+  in
+  equal ~msg:"the terms are bfloat16s" float_exact t
+    (Nx.item [ 1; 0 ] (Nx.cast Nx.float32 b));
+  let y =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (Nx.contract Nx.float32 (Nx.Pattern.v "i j, j k -> i k | j"))
+      (Nx.place S.on a) (Nx.place S.on b)
+  in
+  let exact = 1. +. (float_of_int (k - 1) *. t) in
+  Array.iteri
+    (fun i y ->
+      less
+        ~msg:(Printf.sprintf "[%d; %d]" (i / n) (i mod n))
+        float_exact ~than:(product (k + 1) *. exact)
+        (Float.abs (y -. exact)))
+    (Nx.to_array (host y))
 
 let () =
   exit
@@ -556,6 +586,13 @@ let () =
                "a float16 or bfloat16 matmul is within its bound of the exact \
                 product"
                products_gen product_law;
+             test "sixteen terms under float32's unit hold the bound"
+               test_sixteen_terms;
+             Windtrap.cases
+               "an MXFP4 product is within its bound of the exact one"
+               ~id:(Format.asprintf "%a" Mxfp4_products.pp)
+               Mxfp4_products.cases
+               (fun c -> Mxfp4_products.law (snd (on_gpu ())) c);
            ];
          group "checks"
            [

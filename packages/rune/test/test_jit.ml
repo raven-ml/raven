@@ -4544,6 +4544,11 @@ let () =
                 column, flipped, gives eager's codes"
                strided_sorts law_strided_sort;
              test "nx.quant's decodes compile" test_quant_decodes;
+             Windtrap.cases
+               "an MXFP4 product is within its bound of the exact one"
+               ~id:(Format.asprintf "%a" Mxfp4_products.pp)
+               Mxfp4_products.cases
+               (Mxfp4_products.law (module Nx.Host));
              test "special values are exact" test_specials;
              test "a selection of a minimum against its constant is exact"
                test_nested_minimum;
