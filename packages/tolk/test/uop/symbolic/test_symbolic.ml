@@ -691,6 +691,26 @@ let symbolic_selections =
           let c = Ops.O.(load < float 1.) in
           let sel = Ops.where c (Ops.where c f g) (Shape.param 3 Dtype.Float32) in
           equal uop sel (symbolic sel));
+      test
+        "a condition over a load of several elements is not folded in the \
+         branches"
+        (fun () ->
+          (* The access memory coalescing makes of four loads: its address
+             is a shrink of the buffer, where one load's is an index. *)
+          let load = Ops.load (Ops.v Op.Shrink ~src:[ buf; a; Ops.int 4 ]) [] in
+          let lanes u = Ops.broadcast u 4 in
+          let c = Ops.O.(load < lanes (float 1.)) in
+          let sel = Ops.where c (Ops.where c (lanes f) (lanes g)) load in
+          equal uop sel (symbolic sel));
+      test
+        "a condition is not folded in branches over a load of several \
+         elements"
+        (fun () ->
+          let load = Ops.load (Ops.v Op.Shrink ~src:[ buf; a; Ops.int 4 ]) [] in
+          let c = Ops.broadcast cond 4 in
+          let inner = Ops.where c load (Ops.broadcast f 4) in
+          let sel = Ops.where c Ops.O.(inner + load) inner in
+          equal uop sel (symbolic sel));
       test "a guard of a conversion to an integer is kept in the branches"
         (fun () ->
           let near = Ops.O.(f < float 4096.) in
@@ -1811,6 +1831,23 @@ let far_conditions name n =
   in
   link x x 0
 
+(* [loaded_conditions name n] is [far_conditions] over a load of four elements,
+   whose address is a shrink of the buffer: the condition reads memory without
+   an INDEX. *)
+let loaded_conditions name n =
+  let x =
+    Ops.load (Ops.v Op.Shrink ~src:[ buf; var name 0 12; Ops.int 4 ]) []
+  in
+  let lanes u = Ops.broadcast u 4 in
+  let c = Ops.O.(x < lanes (Ops.float ~dtype:Float32 3.)) in
+  let rec link x acc k =
+    if k = n then acc
+    else
+      let x = Ops.O.(x + lanes (Ops.float ~dtype:Float32 1.)) in
+      link x (Ops.where c x acc) (k + 1)
+  in
+  link x x 0
+
 (* [words f] is the words [f ()] allocates. *)
 let words f =
   let before = Gc.minor_words () in
@@ -1838,6 +1875,16 @@ let cost =
           (* Linear work is [a * n + b] with [b >= 0]: at most twice the work,
              with a tenth of slack for tables that double their capacity at
              different lengths. *)
+          let short = work 250 and long = work 500 in
+          less float_exact ~than:(2.2 *. short) long);
+      test
+        "sym's work on a chain under one condition over a load of several \
+         elements is linear in its length"
+        (fun () ->
+          let work n =
+            let e = loaded_conditions ("loaded" ^ string_of_int n) n in
+            words (fun () -> sym e)
+          in
           let short = work 250 and long = work 500 in
           less float_exact ~than:(2.2 *. short) long);
     ]

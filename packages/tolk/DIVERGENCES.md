@@ -2542,51 +2542,79 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
   tinygrad, and `the hand-coded optimisations keep a kernel's writes › large
   kernels › routed_blocks_*` (slow).
 
-## D93. The where-closure rule's slice queries walk no more than they need
+## D93. The where-closure rule leaves loads alone, and its slice queries walk no more than they need
 
 - **tinygrad:** `uop/symbolic.py:228-232` (`fold_where_closure`, which asks
   whether the condition is in `t.bool_slice` or `f.bool_slice`, and whether
-  the condition and both branches reach an `INDEX`); `uop/ops.py:289-293`
+  the condition or a branch reaches an `INDEX`); `uop/ops.py:289-293`
   (`_bool_slice`, a `recursive_property`: each node keeps the set of the
   boolean nodes it reaches) and `:277-287` (`backward_slice`, a
   `cached_property` holding the whole slice of each node asked, and
-  `op_in_backward_slice_with_self`, which walks it).
+  `op_in_backward_slice_with_self`, which walks it);
+  `codegen/late/coalesce.py:156` (`memory_coalescing`, which addresses a
+  load of several elements by a `SHRINK` of the buffer where one element's
+  address is an `INDEX`).
 - **tolk:** `Shape.fold_where_closure`, `Ops.reaches`, `Ops.ops_reached` and
-  `Ops.op_in_backward_slice_with_self`.
+  `Ops.op_in_backward_slice_with_self`; `test/gen/tinygrad.patch`, which
+  gives tinygrad the load gate.
 - **Differs:**
+  - the load gate: a selection whose condition or branch reaches a `LOAD` is
+    left alone, as one that reaches an `INDEX` is. A load's address is an
+    INDEX until memory coalescing makes a run of loads one load through a
+    SHRINK, valid included; the INDEX gate then misses it, and the rule
+    assumes a condition read from memory in every branch below it. The gate
+    also leaves alone a selection over a register's read, the load of a
+    reduction's accumulator, whose address is the register alone. The
+    goldens do not change;
   - the condition: the rule asks whether `t` or `f` reaches the condition, a
     scalar boolean, with `Ops.reaches`: a walk from the branch that enters no
     node built before the condition, since a node is built after its
     sources. `Ops.bool_slice` is gone. The search runs last, after the INDEX
-    gate, where tinygrad's lookup runs first: a branch that reaches an INDEX
-    is rejected without a walk;
-  - the INDEX gate: each node keeps, as a property filled from its sources,
+    and load gate, where tinygrad's lookup runs first: a branch that reaches
+    an INDEX or a LOAD is rejected without a walk;
+  - the gate's sets: each node keeps, as a property filled from its sources,
     the set of the operations of itself and of the nodes it reaches outside
     call bodies; a node whose set is a source's shares it.
     `op_in_backward_slice_with_self` reads that set and no longer builds the
     node's `backward_slice`.
 
-  The rule folds the same selections, and the answers are the same.
-- **Reason:** (d): compile time. rune lowers `Nx.sin` to a reduction full of
-  comparisons and selections (`Lower_real.reduce`), and in a jitted chain of
-  `Nx.sin` every link's selections are asked about. Each node's boolean set
-  holds every comparison of the links before it, and each slice the whole
-  chain below, so work and memory grow with the square of the chain.
+  But for loads, the rule folds the same selections, and the answers are
+  the same.
+- **Reason:** (d): compile time. A host kernel of 4 values upcasts them
+  whole, so its inputs load as vectors. `Nx.betainc` selects by conditions on
+  its shapes, and in a jitted chain of `Nx.betainc` over the same shapes those
+  conditions are one node in every link: the rule assumed each in a later
+  link's branches down through all the earlier links, copying them. Chains of
+  1, 2 and 3 float32 links rendered 3918, 9464 and 17811 lines of C and
+  compiled cold on fudge (load 30) in 1.7 s, 12.9 s and 77 s; with the load
+  gate, 1713, 3411 and 5102 lines, as a chain over 1 value, whose loads are
+  INDEXes. 4 links compiled cold in 172 s, and compile in 2.9 s with the
+  gate (load 2, rune's compile bench row `special/betainc-chain-f32`). rune
+  lowers `Nx.sin` to a reduction full of comparisons and selections
+  (`Lower_real.reduce`), and in a jitted chain of `Nx.sin` every link's
+  selections are asked about. Each node's boolean set holds every
+  comparison of the links before it, and each slice the whole chain below,
+  so work and memory grow with the square of the chain.
   Compiling a chain of 80 `Nx.sin` cold on an M1 Max took 63.0 s and a heap
   of 618M words with the boolean sets, and 16.6 s and 76M words with the
   search, whose walks stay inside the link that built the condition; with
   the slices it took 28.0 s and 218M words, and 16.4 s and 73M words with
   the operation sets. A condition built before a long chain of selections
-  still makes each search walk the chain below it, which the INDEX gate
+  still makes each search walk the chain below it, which the gate
   spares when the branches read memory: the jitted training step of a model
   of 2031 kernels spent 3 s of its 10 s schedule in the search. To
   re-measure on fudge. rune's `Jit/jit-run-chain` times warm runs and cannot
   catch it; rune's compile bench row `shaped-4k`, a cold compile of 4k
   operations in regions of selections, is the nearest fudge row (unverified
   that it catches the square).
-- **Pinned by:** the Symbolic suite (`test/uop/symbolic`): `cost › sym's work
-  on a chain of selections is linear in its length`, `› sym's work on a chain
-  under one far condition is linear in its length` and tinygrad's
+- **Pinned by:** rune's compile bench row `special/betainc-chain-f32`; the
+  Symbolic suite (`test/uop/symbolic`): `symbolic › selections › a condition
+  over a load of several elements is not folded in the branches`, `› a
+  condition is not folded in branches over a load of several elements`,
+  `cost › sym's work on a chain under one condition over a load of several
+  elements is linear in its length`, `› sym's work on a chain of selections
+  is linear in its length`, `› sym's work on a chain under one far
+  condition is linear in its length` and tinygrad's
   `test_where_closure_folding*` goldens; the Ops suite (`test/uop/ops`):
   `graphs › reaches is membership in the node's toposort`, `› reaches
   ~calls:Enter enters call bodies`, `› op_in_backward_slice_with_self is an

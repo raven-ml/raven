@@ -237,6 +237,26 @@ let shaped_padded () =
     (fun x -> shaped 4096 (Nx.scalar f64 0.5) (Nx.pad [| (0, 1) |] 0.5 x))
     (input ~n:2 0. 1.)
 
+(* A chain of 4 float32 incomplete betas of 4 values, each link's point the
+   last link's value, under shapes read from memory. The host upcasts the 4
+   values whole, so each operation is a vector of 4 lanes over loads of the
+   whole buffers. Its selections share their conditions on the shapes with
+   every link. *)
+let betainc_chain () =
+  let f32 n lo hi =
+    Nx.place Nx.Host.on
+      (Nx.add_s (Nx.mul_s (Nx.Rng.uniform Nx.float32 [| n |]) (hi -. lo)) lo)
+  in
+  let a = f32 4 0.5 3.5 and b = f32 4 0.5 3.5 in
+  let chain x =
+    let y = ref x in
+    for _ = 1 to 4 do
+      y := Nx.betainc a b !y
+    done;
+    !y
+  in
+  compile chain (f32 4 0. 1.)
+
 (* A normal draw of 1024 values of [dt] from a key argument: a Box-Muller
    transform, whose cosine and sine read an angle its bits bound below 2 pi. *)
 let normal dt () =
@@ -273,6 +293,7 @@ let cases =
     ( "shaped-4k",
       fun () -> compile (shaped 4096 (Nx.scalar f64 0.5)) (input 0. 1.) );
     ("shaped-4k-3-lanes", shaped_padded);
+    ("special/betainc-chain-f32", betainc_chain);
     ("wide/sum-1e6", wide_sum);
   ]
 

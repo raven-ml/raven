@@ -3401,7 +3401,7 @@ index 2eb2e96..ef73f97 100644
  ])+mop_cleanup
  
  # ******** phase 2 builds on phase 1, it includes the old "symbolic", rules that match deeper ********
-@@ -225,27 +261,40 @@ commutative = PatternMatcher([
+@@ -225,27 +261,42 @@ commutative = PatternMatcher([
    (UPat(GroupOp.Commutative, dtype=dtypes.weakint, name='x'), lambda x: x.replace(src=x.src[::-1]) if x.src[1].tuplize < x.src[0].tuplize else None),
  ])
  
@@ -3420,7 +3420,10 @@ index 2eb2e96..ef73f97 100644
 +  # a constant condition, broadcast or not, assumes nothing: the same node is every other use of that constant
 +  if cond.base.op is Ops.CONST: return None
    # INDEX gates are owned by the valid/store-coalescing machinery, leave them alone
-   if any(u.op_in_backward_slice_with_self(Ops.INDEX) for u in (cond, t, f)): return None
+-  if any(u.op_in_backward_slice_with_self(Ops.INDEX) for u in (cond, t, f)): return None
++  # and so are loads: memory coalescing addresses a load of several elements by a SHRINK in place of an INDEX, and a
++  # register's read by the register alone
++  if any(u.op_in_backward_slice_with_self(Ops.INDEX, Ops.LOAD) for u in (cond, t, f)): return None
 +  # a conversion or a division that the selection keeps from an operand it is undefined for stays guarded: C computes it in
 +  # every lane of a vector, and a selection of vectors keeps an undefined lane it discards
 +  if _guards_partial(cond, t) or _guards_partial(cond, f): return None
@@ -3451,7 +3454,7 @@ index 2eb2e96..ef73f97 100644
    (UPat.cvar("y") * (UPat.var("x", dtype=dtypes.weakint) + UPat.cvar("c")), lambda x,y,c: (y*x)+(y*c)),  # y*(x+c) -> y*x + y*c
    # ** where folding **
    (UPat.var("cond", dtype=dtypes.bool).logical_not().where(UPat.var("t"), UPat.var("f")),
-@@ -261,28 +310,32 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -261,28 +312,32 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    (UPat(GroupOp.Binary, name="alu", src=(UPat.var("c").where(UPat.var("t"), UPat.var("f")), UPat.var("c").where(UPat.var("tt"), UPat.var("ff")))), \
     lambda alu,c,t,tt,f,ff: c.where(t.alu(alu.op, tt), f.alu(alu.op, ff)) if t.op == tt.op == Ops.CONST or f.op == ff.op == Ops.CONST else None),
    # if its a plus we add the associative variation too
@@ -3494,7 +3497,7 @@ index 2eb2e96..ef73f97 100644
    # c0*x<c1 -> sign(c0)*x < ceil(c1/abs(c0))
    ((UPat.cvar("c0")*UPat.var("x", dtype=dtypes.weakint))<UPat.cvar("c1"),
     lambda x,c0,c1: (x if c0.val > 0 else -x)<-(-c1.val//abs(c0.val)) if abs(c0.val) > 1 else None),
-@@ -290,8 +343,8 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -290,8 +345,8 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    ((UPat.var("x", dtype=dtypes.weakint)//UPat.cvar("d"))<UPat.cvar("c"),
     lambda x,d,c: (x<c.val*d.val) if d.val > 0 else (x>c.val*d.val) if d.val < 0 else None),
    # ** move add/mul consts to end (NOTE: this is still happening before constant folding) **
@@ -3505,7 +3508,7 @@ index 2eb2e96..ef73f97 100644
    # *** rules from symbolic ***
    # generic lt folding
    (UPat.var("x", dtypes.weakint)<UPat.cvar("c"), lambda x,c: lt_folding(x, c.val) if 0 < c.val else None),
-@@ -306,6 +359,11 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -306,6 +361,11 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    (UPat.var('x').cast(name="a").cast(name="b"), lambda x,a,b: x.cast(b.dtype) if can_lossless_cast(x.dtype, a.dtype) else None),
    (UPat.var('x', dtypes.ints+(dtypes.weakint,)).cast(dtypes.ints+(dtypes.weakint,), name="a").cast(name="b"),
      lambda x,a,b: x.ccast(b.dtype) if not x.overflows(a.dtype) else None),
@@ -3517,7 +3520,7 @@ index 2eb2e96..ef73f97 100644
    # try to do math in int instead of long, keep weak const weak
    (UPat(GroupOp.Binary, src=(UPat.var("x", (dtypes.long, dtypes.weakint)), UPat.var("y", (dtypes.long, dtypes.weakint))), name="u"), lambda u,x,y:
      (UOp.const(x.val) if x.op is Ops.CONST else x.cast(dtypes.int)).alu(u.op,
-@@ -387,15 +445,23 @@ def simplify_valid(valid:UOp) -> UOp|None:
+@@ -387,15 +447,23 @@ def simplify_valid(valid:UOp) -> UOp|None:
  
  # ******** phase 3 is the complete symbolic ********
  
@@ -3543,7 +3546,7 @@ index 2eb2e96..ef73f97 100644
  
  def drop_and_clauses(cond:UOp, x:UOp, i:UOp) -> UOp|None:
    keep, drop = partition(cond.split_uop(Ops.AND), lambda c: any(r in x.ranges for r in c.ranges))
-@@ -418,10 +484,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
+@@ -418,10 +486,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
    return UOp.const(True).uprod(*keep).where(ret_idx, ret_idx.const_like(0))
  
  # where after gated load becomes alt value, TODO: this is sort of duplicated with rules in devectorizer
@@ -3559,7 +3562,7 @@ index 2eb2e96..ef73f97 100644
  ])
  
  def gated_given_valid(cond:UOp, x:UOp, i:UOp) -> UOp|None:
-@@ -460,16 +528,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -460,16 +530,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),

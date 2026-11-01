@@ -792,6 +792,11 @@ thread.
 
 ### Tolk (new)
 
+- A jitted chain of 4 float32 `Nx.betainc` over 4 values compiles in 2.9 s
+  instead of 172 s: `Shape.symbolic` leaves a selection whose condition or
+  branch reads a load as it leaves one that reads an index, so kernels that
+  load their inputs as vectors no longer copy a chain's earlier links into
+  each later one.
 - An exception raised inside `Ops.v`, as a test runner's timeout or Ctrl-C's
   `Sys.Break` is at an allocation, no longer leaves a lock of its node table
   held, after which every later node failed with "Resource deadlock avoided".

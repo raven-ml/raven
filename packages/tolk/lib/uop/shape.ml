@@ -2394,9 +2394,13 @@ let fold_where_closure cond t f =
   then None
   else if
     (* INDEX gates are owned by the valid/store-coalescing machinery, leave them
-       alone. Asked before the search below, which walks the branches. *)
+       alone, and so are loads: a load of several elements is addressed by a
+       shrink of its buffer, valid included, where one element's address is an
+       INDEX, and a register's read by the register alone. Asked before the
+       search below, which walks the branches. *)
     List.exists
-      (fun u -> op_in_backward_slice_with_self ~calls:Skip u [ Op.Index ])
+      (fun u ->
+        op_in_backward_slice_with_self ~calls:Skip u [ Op.Index; Op.Load ])
       [ cond; t; f ]
   then None
   else if not (reaches ~calls:Enter t cond || reaches ~calls:Enter f cond)
