@@ -324,6 +324,32 @@ let is_in vs =
         let x, w = words Identity a vs in
         found (fst (Nx.sort w)) x a
 
+(* [cut edges] is the bin of each row of a column among [edges], which binding
+   checked ascend strictly: from the number [r] of edges at or below the row's
+   word, the bin is [r - 1], and the row is null where [r] is [0] or every edge.
+   NaN's word is above every other, so a NaN row is null too. Words of
+   fixed-width edges are in order already, and codes of compound edges are
+   computed with the column's rows. *)
+let cut edges =
+  let m = Int64.of_int (Column.length edges) in
+  let bin s x a =
+    let r = Nx.searchsorted ~side:`Right s x in
+    let inside = Nx.logical_and (Nx.greater_equal_s r 1L) (Nx.less_s r m) in
+    let inside = Nx.cast Nx.bit inside in
+    let valid =
+      Option.fold ~none:inside ~some:(Nx.logical_and inside) (Column.validity a)
+    in
+    fixed (Any Type.int64) ~valid (Nx.sub_s r 1L)
+  in
+  match Column.data edges with
+  | Fixed (P x) when Nx.ndim x = 1 ->
+      let s = Key.value Order edges in
+      fun a -> bin s (Key.value Order a) a
+  | _ ->
+      fun a ->
+        let x, s = words Order a edges in
+        bin s x a
+
 (* [lifted ty cs x] is the column of [ty] stored as [x], which an nx operation
    computes over the columns [cs]: null where one of them is. A [bool] [x] is
    packed into bits. *)
@@ -584,6 +610,9 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
         column (Expr.typing a) (Array.of_list (List.map Option.some vs))
       in
       unary a (is_in vs)
+  | Cut (edges, a), _ ->
+      let edges = column (Expr.typing a) (Array.map Option.some edges) in
+      unary a (cut edges)
   | Store (ty, a), _ -> unary a (widen (type_of (Expr.typing a)) (Any ty))
   | (App _ | Of_option _), _ ->
       let vs = ocaml st e in

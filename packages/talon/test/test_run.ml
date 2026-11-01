@@ -2266,7 +2266,12 @@ let constructors =
         Row ("is_null", is_null i);
         Row ("coalesce", coalesce [ store Type.int64 null; i ]);
         Row ("is_in", is_in [ 3 ] i);
+        Row ("cut", cut [| 1; 5 |] i);
         Row ("cast", cast Type.int8 i);
+        Row ("cast between dates and datetimes", cast (Type.datetime S) d);
+        Row
+          ( "cast between clocks and durations",
+            cast (Type.clock S) (span (Time.Span.s 1)) );
         Row ("nx", nx { f = Nx.exp } f);
         Row ("nx2", nx2 { f2 = Nx.atan2 } f f);
         Agg ("rows", rows);

@@ -55,6 +55,7 @@ val if_ : (bool, 's) t -> ('a, 's) t -> ('a, 's) t -> ('a, 's) t
 val is_null : ('a, 's) t -> (bool, 's) t
 val coalesce : ('a, 's) t list -> ('a, 's) t
 val is_in : 'a list -> ('a, 's) t -> (bool, 's) t
+val cut : 'a array -> ('a, 's) t -> (int, 's) t
 val cast : 'b Type.t -> ('a, 's) t -> ('b, 's) t
 
 type fn = { f : 'a 'b. ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t }
@@ -222,6 +223,8 @@ type 'a node =
   | Is_null : ('a, 's) t -> bool node
   | Coalesce : ('a, 's) t list -> 'a node
   | Is_in : 'a list * ('a, 's) t -> bool node
+  | Cut : 'a array * ('a, 's) t -> int node
+      (** Edges as given, copied when built and never mutated. *)
   | Cast : 'a Type.t * ('b, 's) t -> 'a node
   | Lift : fn * ('a, 's) t -> 'a node
   | Lift2 : fn2 * ('a, 's0) t * ('a, 's1) t -> 'a node
@@ -301,8 +304,10 @@ val bind_predicate :
     - a missing column, and a handle whose kind does not bind its column;
     - operands whose types do not meet, and an operation that a type does not
       support, such as [sum] of a string;
-    - a literal, a {!const} value, an {!is_in} value, or the value of an integer
-      operation of literals, that its type does not hold;
+    - a literal, a {!const} value, an {!is_in} value, a {!cut} edge, or the
+      value of an integer operation of literals, that its type does not hold;
+    - {!cut} edges that, as their type stores them, do not ascend strictly or
+      hold NaN;
     - a [null] that nothing types; an {!option} result, and a [const] or [$]
       result that nothing types, anywhere but as an argument of {!( $ )}; and an
       operand of {!cast}, {!option}, a reduction or a frame that has no column

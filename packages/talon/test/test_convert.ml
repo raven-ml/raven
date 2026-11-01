@@ -698,6 +698,645 @@ let formats_round_trip =
       let back = result (Expr.Temporal.parse fmt ty text) (one "t" c) in
       equal (array int64) xs (Nx.to_array (Column.to_tensor Nx.int64 back)))
 
+(* Cuts *)
+
+(* Types that talon's comparisons order: numbers, temporal values, text and
+   compound values. Floats are listed twice, so that NaN and the infinities are
+   drawn in every run. *)
+let orderable =
+  Type.
+    [
+      Any int8;
+      Any int16;
+      Any int32;
+      Any int64;
+      Any uint8;
+      Any uint16;
+      Any uint32;
+      Any uint64;
+      Any float16;
+      Any float32;
+      Any float64;
+      Any float32;
+      Any float64;
+      Any bool;
+      Any date;
+      Any (clock Ns);
+      Any (duration Ms);
+      Any (datetime Us);
+      Any (datetime ~zone:"UTC" S);
+      Any string;
+      Any binary;
+      Any (categorical [| "b"; "a"; "é"; "" |]);
+      Any (list int8);
+      Any (record [ ("a", Any int8); ("b", Any string) ]);
+    ]
+
+let is_nan : type a. a Type.t -> a -> bool =
+ fun ty v ->
+  match Kind.provably_equal (Type.kind ty) Kind.float with
+  | Some Equal -> Float.is_nan v
+  | None -> false
+
+(* [specials ty] is NaN, the infinities and [-0.] for a float type. *)
+let specials : type a. a Type.t -> a list =
+ fun ty ->
+  match Kind.provably_equal (Type.kind ty) Kind.float with
+  | Some Equal -> [ Float.nan; Float.nan; infinity; neg_infinity; -0. ]
+  | None -> []
+
+(* [ascending ty vs] is [vs] as a column of [ty] stores them, without NaN, in
+   talon's order and without repeats. *)
+let ascending ty vs =
+  let stored = Column.values (Type.kind ty) (Column.v ty vs) in
+  let kept = List.filter (fun v -> not (is_nan ty v)) (Array.to_list stored) in
+  Array.of_list (List.sort_uniq (Type.compare_value ty) kept)
+
+type cut_case = Cut_case : 'a Type.t * 'a array * 'a option array -> cut_case
+
+let pp_cut_case ppf (Cut_case (ty, es, xs)) =
+  Format.fprintf ppf "@[<v>edges %a@,rows %a@]" G.pp_sample
+    (G.Sample (ty, Array.map Option.some es))
+    G.pp_sample
+    (G.Sample (ty, xs))
+
+(* Edges drawn at a type's bounds as well as anywhere, and rows on the edges,
+   anywhere and null. *)
+let cut_cases =
+  let open Gen in
+  let* (Type.Any ty) = of_list orderable in
+  let value = Option.get (G.value ty) in
+  let* es = array ~size:(int_range 2 6) value in
+  let es = ascending ty es in
+  let n = Array.length es in
+  let on_edge = map (fun i -> Some es.(i mod n)) nat in
+  let rows =
+    [ (3, map Option.some value); (1, constant None) ]
+    @ (if n = 0 then [] else [ (3, on_edge) ])
+    @
+    match specials ty with
+    | [] -> []
+    | vs -> [ (3, map Option.some (of_list vs)) ]
+  in
+  let+ xs = array ~size:(int_range 0 12) (frequency rows) in
+  Cut_case (ty, es, xs)
+
+let cut_law =
+  prop "cut is the bin that a linear scan of the edges finds"
+    (Gen.with_pp pp_cut_case cut_cases) (fun (Cut_case (ty, es, xs)) ->
+      assume (Array.length es >= 2);
+      let c = Column.of_options ty xs in
+      let xs = Column.options (Type.kind ty) c in
+      let cmp = Type.compare_value ty and last = Array.length es - 1 in
+      let rec scan x i =
+        if i >= last then None
+        else if cmp es.(i) x <= 0 && cmp x es.(i + 1) < 0 then Some i
+        else scan x (i + 1)
+      in
+      let bin x = scan x 0 in
+      let on_edge x = Array.exists (fun e -> cmp e x = 0) es in
+      let has p = Array.exists (function Some x -> p x | None -> false) xs in
+      cover "a value on an edge" (has on_edge);
+      cover "a value between two edges"
+        (has (fun x -> Option.is_some (bin x) && not (on_edge x)));
+      cover "a value below the first edge" (has (fun x -> cmp x es.(0) < 0));
+      cover "a value on or above the last edge"
+        (has (fun x -> cmp x es.(last) >= 0));
+      cover "a null" (Array.exists Option.is_none xs);
+      cover "NaN" (has (is_nan ty));
+      let x = Col.v (Type.kind ty) "x" in
+      equal
+        (array (option int))
+        (Array.map (fun x -> Option.bind x bin) xs)
+        (Column.options Kind.int (result (Expr.cut es x) (one "x" c))))
+
+let epoch ~ordered =
+  Ext.v ~name:"epoch" ~ordered Type.float64 ~dec:Fun.id ~enc:Fun.id
+
+let epochs xs =
+  let ty = Type.Any (Type.ext ~name:"epoch" Type.float64) in
+  let stored = Column.layout (Column.v Type.float64 xs) in
+  Result.get_ok (Column.of_layout ty stored)
+
+let cuts =
+  let bins ty es xs =
+    let x = Col.v (Type.kind ty) "x" in
+    Column.options Kind.int
+      (result (Expr.cut es x) (one "x" (Column.of_options ty xs)))
+  in
+  let problem e t =
+    match compute e t with
+    | _ -> "no problem"
+    | exception Invalid_argument m -> m
+  in
+  group "Cuts"
+    [
+      cut_law;
+      test
+        "bins hold their lower edge; NaN, values on the last edge and nulls \
+         are in none" (fun () ->
+          equal
+            (array (option int))
+            [|
+              Some 0;
+              Some 1;
+              Some 1;
+              Some 2;
+              Some 2;
+              None;
+              None;
+              None;
+              None;
+              None;
+            |]
+            (bins Type.float64
+               [| -1.; 0.; 1.; infinity |]
+               [|
+                 Some (-1.);
+                 Some (-0.);
+                 Some 0.5;
+                 Some 1.;
+                 Some Float.max_float;
+                 Some infinity;
+                 Some neg_infinity;
+                 Some Float.nan;
+                 Some (-2.);
+                 None;
+               |]));
+      test "the edge -0. is the edge 0." (fun () ->
+          equal
+            (array (option int))
+            [| Some 0; Some 0; None |]
+            (bins Type.float64 [| -0.; 1. |] (some [| 0.; -0.; -1e-300 |])));
+      test "edges take the operand's type, as literals do" (fun () ->
+          (* float32 stores 0.7 as 0.699999988, which [x >= float 0.7] holds
+             for. *)
+          equal
+            (array (option int))
+            [| Some 0; Some 0; None |]
+            (bins Type.float32 [| 0.7; 1. |] (some [| 0.7; 0.9; 1. |])));
+      test "integer edges at the ends of their types" (fun () ->
+          equal
+            (array (option int))
+            [| Some 0; Some 0; Some 1; Some 1; None |]
+            (bins Type.int64 [| min_int; 0; max_int |]
+               (some [| min_int; -1; 0; max_int - 1; max_int |]));
+          equal
+            (array (option int))
+            [| Some 0; Some 0; None |]
+            (bins Type.uint8 [| 0; 255 |] (some [| 0; 254; 255 |])));
+      test "the edges are copied" (fun () ->
+          let es = [| 0; 10 |] in
+          let e = Expr.cut es (Col.int "x") in
+          es.(1) <- 1;
+          equal
+            (array (option int))
+            [| Some 0 |]
+            (Column.options Kind.int
+               (result e (one "x" (Column.v Type.int64 [| 5 |])))));
+      test "an extension declared ordered cuts its values" (fun () ->
+          let e = Expr.cut [| 0.; 10. |] (Ext.col (epoch ~ordered:true) "e") in
+          equal
+            (array (option int))
+            [| None; Some 0; Some 0; None |]
+            (Column.options Kind.int
+               (result e (one "e" (epochs [| -1.; 0.; 5.; 10. |])))));
+      test "edges that do not ascend strictly, or a type that has no order"
+        (fun () ->
+          let t =
+            v
+              [
+                ("x", Column.v Type.float64 [| 1. |]);
+                ("f", Column.v Type.float32 [| 1. |]);
+                ("i", Column.v Type.int8 [| 1 |]);
+                ("n", Column.v Type.int64 [| 1 |]);
+                ("c", Column.v (Type.clock S) [| Time.Span.s 1 |]);
+                ("e", epochs [| 1. |]);
+              ]
+          in
+          let x = Col.float "x" and n = Col.int "n" in
+          expect
+            (String.concat "\n"
+               [
+                 problem (Expr.cut [| 1.; 1. |] x) t;
+                 problem (Expr.cut [| 2; 1 |] n) t;
+                 problem (Expr.cut [| -0.; 0. |] x) t;
+                 problem (Expr.cut [| 0.; Float.nan |] x) t;
+                 problem (Expr.cut [| 0.7; 0.70000001 |] (Col.float "f")) t;
+                 problem (Expr.cut [| 0; 1000 |] (Col.int "i")) t;
+                 problem
+                   (Expr.cut
+                      [| Time.Span.s 0; Time.Span.days 1 |]
+                      (Col.span "c"))
+                   t;
+                 problem
+                   (Expr.cut [| 0.; 1. |] (Ext.col (epoch ~ordered:false) "e"))
+                   t;
+               ])
+          @@ __POS_OF__
+               {|
+            select: 1 problem
+              "out" := cut […] x
+                cut takes edges that ascend strictly, and 1. then 1. do not, as float64 stores them.
+              input (6 columns): x float64, f float32, i int8, n int64, c clock[s], e ext[epoch, float64]
+            select: 1 problem
+              "out" := cut […] n
+                cut takes edges that ascend strictly, and 2 then 1 do not, as int64 stores them.
+              input (6 columns): x float64, f float32, i int8, n int64, c clock[s], e ext[epoch, float64]
+            select: 1 problem
+              "out" := cut […] x
+                cut takes edges that ascend strictly, and -0. then 0. do not, as float64 stores them.
+              input (6 columns): x float64, f float32, i int8, n int64, c clock[s], e ext[epoch, float64]
+            select: 1 problem
+              "out" := cut […] x
+                cut takes no NaN edge.
+              input (6 columns): x float64, f float32, i int8, n int64, c clock[s], e ext[epoch, float64]
+            select: 1 problem
+              "out" := cut […] f
+                cut takes edges that ascend strictly, and 0.699999988079071 then 0.699999988079071 do not, as float32 stores them.
+              input (6 columns): x float64, f float32, i int8, n int64, c clock[s], e ext[epoch, float64]
+            select: 1 problem
+              "out" := cut […] i
+                int8 does not hold the edge 1000.
+              input (6 columns): x float64, f float32, i int8, n int64, c clock[s], e ext[epoch, float64]
+            select: 1 problem
+              "out" := cut […] c
+                clock[s] does not hold the edge 24h.
+              input (6 columns): x float64, f float32, i int8, n int64, c clock[s], e ext[epoch, float64]
+            select: 1 problem
+              "out" := cut […] e
+                cut orders values, and the declaration of ext[epoch, float64] is not ~ordered:true.
+              input (6 columns): x float64, f float32, i int8, n int64, c clock[s], e ext[epoch, float64]
+            |});
+    ]
+
+(* Temporal casts *)
+
+let ticks_per_day u = Int64.mul 86_400L (per_s u)
+
+(* [floor_div x k] is [x / k] rounded toward negative infinity, for [k > 0]. *)
+let floor_div x k =
+  let q = Int64.div x k in
+  if Int64.rem x k < 0L then Int64.pred q else q
+
+(* [int64_options c] is the storage of each row of the temporal column [c] as
+   int64, [None] under a null. *)
+let int64_options c =
+  match Column.layout c with
+  | Fixed { validity; values = Nx.P x } -> (
+      let x = Nx.to_array (Nx.cast Nx.int64 x) in
+      match validity with
+      | None -> Array.map Option.some x
+      | Some valid ->
+          let valid = Nx.to_array (Nx.cast Nx.bool valid) in
+          Array.mapi (fun i t -> if valid.(i) then Some t else None) x)
+  | _ -> fail "a temporal column has a fixed-width layout"
+
+(* [ticks_column ty xs] is the column of the temporal type [ty] that stores
+   [xs], int32 days for [date]. *)
+let ticks_column (Type.Any ty as t) xs =
+  let n = Array.length xs in
+  let validity =
+    Nx.cast Nx.bit (Nx.create Nx.bool [| n |] (Array.map Option.is_some xs))
+  in
+  let ticks = Array.map (Option.value ~default:0L) xs in
+  let values =
+    match ty with
+    | Date -> Nx.P (Nx.create Nx.int32 [| n |] (Array.map Int64.to_int32 ticks))
+    | _ -> Nx.P (Nx.create Nx.int64 [| n |] ticks)
+  in
+  match Column.of_layout t (Fixed { validity = Some validity; values }) with
+  | Ok c -> c
+  | Error (row, why) -> failf "row %d: %s" row why
+
+(* [cast_ticks ty into xs] is [cast into] of the column of [ty] that stores
+   [xs]. *)
+let cast_ticks (Type.Any ty as t) (Type.Any into) xs =
+  let x = Col.v (Type.kind ty) "x" in
+  compute (Expr.cast into x) (one "x" (ticks_column t xs))
+
+(* [agrees ~expected xs r] checks the run [r] of a cast of the rows [xs] whose
+   model gives [expected], [None] where a row fails: the run fails at the first
+   row that fails and is not null, and otherwise gives each row's storage, null
+   where [xs] is. *)
+let agrees ~expected xs r =
+  let fails i = Option.is_some xs.(i) && Option.is_none expected.(i) in
+  match List.find_opt fails (List.init (Array.length xs) Fun.id) with
+  | None ->
+      let expected =
+        Array.map2 (fun x e -> Option.bind x (fun _ -> e)) xs expected
+      in
+      equal
+        (array (option int64))
+        expected
+        (int64_options (require_ok ~pp:Error.pp r))
+  | Some row ->
+      contains
+        ~sub:(Printf.sprintf ": row %d: cannot cast " row)
+        (Format.asprintf "%a" Error.pp (require_error r))
+
+let units = Type.[ S; Ms; Us; Ns ]
+let int32_lo, int32_hi = int32_days
+
+(* The days that a datetime[ns] reaches either side of 1970, about 292 years. *)
+let ns_days = Int64.div Int64.max_int (ticks_per_day Ns)
+
+let fails xs expected =
+  Array.exists2 (fun x e -> x <> None && e = None) xs expected
+
+let before_1970 xs =
+  Array.exists (function Some x -> x < 0L | None -> false) xs
+
+let dates_to_datetimes =
+  let open Gen in
+  let days =
+    frequency
+      [
+        (1, of_list [ int32_lo; Int64.succ int32_lo; Int64.pred int32_hi ]);
+        (1, of_list [ int32_hi; Int64.neg (Int64.succ ns_days) ]);
+        (1, of_list [ Int64.neg ns_days; -1L; 0L; 1L; ns_days ]);
+        (1, of_list [ Int64.succ ns_days ]);
+        (2, int64_range (-1_000_000L) 1_000_000L);
+        (1, int64_range int32_lo int32_hi);
+      ]
+  in
+  let gen = pair (of_list units) (array ~size:(int_range 0 12) (option days)) in
+  prop
+    "a date becomes the datetime of its midnight, failing out of the unit's \
+     range"
+    gen (fun (u, ds) ->
+      let expected =
+        Array.map
+          (fun d -> Option.bind d (fun d -> mul_exact d (ticks_per_day u)))
+          ds
+      in
+      cover "every row in range"
+        ((not (fails ds expected)) && Array.exists Option.is_some ds);
+      cover "a row out of range" (fails ds expected);
+      cover "a date before 1970" (before_1970 ds);
+      cover "a null" (Array.exists Option.is_none ds);
+      agrees ~expected ds
+        (cast_ticks (Any Type.date) (Any (Type.datetime u)) ds))
+
+(* [reach u] is the days either side of 1970 within which a datetime of the unit
+   [u] holds every tick of the day, up to a million. *)
+let reach u =
+  Int64.min 1_000_000L (Int64.pred (Int64.div Int64.max_int (ticks_per_day u)))
+
+let datetimes_to_dates =
+  let gen =
+    let open Gen in
+    let* u = of_list units in
+    let day = ticks_per_day u in
+    let edges =
+      [ Int64.min_int; Int64.succ Int64.min_int; -1L; 0L; 1L ]
+      @ [ Int64.pred Int64.max_int; Int64.max_int; Int64.neg day ]
+      @ [ Int64.pred (Int64.neg day); Int64.pred day; day ]
+    in
+    (* The first and last ticks of the date's first and last days, where a unit
+       reaches them. *)
+    let date_edges =
+      List.concat_map
+        (fun d ->
+          match mul_exact d day with
+          | Some t when Int64.compare t (Int64.sub Int64.max_int day) < 0 ->
+              [ Int64.pred t; t; Int64.add t (Int64.pred day) ]
+          | _ -> [])
+        [ int32_lo; int32_hi; Int64.succ int32_hi ]
+    in
+    let near_midnight =
+      let+ d = int64_range (Int64.neg (reach u)) (reach u)
+      and+ k = int64_range (-1L) 1L in
+      Int64.add (Int64.mul d day) k
+    in
+    let tick =
+      frequency
+        [ (2, of_list (edges @ date_edges)); (2, near_midnight); (2, int64) ]
+    in
+    let+ ts = array ~size:(int_range 0 12) (option tick) in
+    (u, ts)
+  in
+  prop "a datetime becomes the day it falls on, failing out of the date's range"
+    gen (fun (u, ts) ->
+      let day_of t =
+        let d = floor_div t (ticks_per_day u) in
+        if d < int32_lo || d > int32_hi then None else Some d
+      in
+      let expected = Array.map (fun t -> Option.bind t day_of) ts in
+      let inside_day t = Int64.rem t (ticks_per_day u) <> 0L in
+      cover "a time of day before 1970"
+        (Array.exists
+           (function Some t -> t < 0L && inside_day t | None -> false)
+           ts);
+      cover "a day out of the date's range" (fails ts expected);
+      cover "a null" (Array.exists Option.is_none ts);
+      agrees ~expected ts
+        (cast_ticks (Any (Type.datetime u)) (Any Type.date) ts))
+
+let dates_round_trip =
+  let gen =
+    let open Gen in
+    let* u = of_list units in
+    let+ ds =
+      array ~size:(int_range 0 12)
+        (option
+           (frequency
+              [
+                (1, of_list [ Int64.neg (reach u); -1L; 0L; reach u ]);
+                (3, int64_range (Int64.neg (reach u)) (reach u));
+              ]))
+    in
+    (u, ds)
+  in
+  prop "a date cast to a datetime and back is the date" gen (fun (u, ds) ->
+      cover "a date before 1970" (before_1970 ds);
+      let w = array (option int64) in
+      let datetime = Type.Any (Type.datetime u) in
+      Law.round_trip w w
+        (fun ds ->
+          int64_options
+            (require_ok ~pp:Error.pp (cast_ticks (Any Type.date) datetime ds)))
+        (fun ts ->
+          int64_options
+            (require_ok ~pp:Error.pp (cast_ticks datetime (Any Type.date) ts)))
+        ds)
+
+let days_floor =
+  let gen =
+    let open Gen in
+    let* u = of_list units in
+    let day = ticks_per_day u in
+    let+ ts =
+      array ~size:(int_range 0 12)
+        (option
+           (let+ d = int64_range (Int64.neg (reach u)) (reach u)
+            and+ k = int64_range 0L (Int64.pred day) in
+            Int64.add (Int64.mul d day) k))
+    in
+    (u, ts)
+  in
+  prop "a datetime cast to a date and back is Temporal.floor (Days 1) of it" gen
+    (fun (u, ts) ->
+      cover "a time of day before 1970" (before_1970 ts);
+      let ty = Type.datetime u in
+      let x = Col.instant "x" and t = one "x" (ticks_column (Any ty) ts) in
+      let floor = Expr.Temporal.floor (Days 1) x in
+      let back = Expr.(cast ty (cast Type.date x)) in
+      equal
+        (array (option int64))
+        (int64_options (result floor t))
+        (int64_options (result back t)))
+
+let clocks_and_durations =
+  let gen =
+    let open Gen in
+    let* u0 = of_list units in
+    let* u1 = frequency [ (1, constant u0); (1, of_list units) ] in
+    let* to_clock = bool in
+    let* in_day = frequency [ (1, constant true); (2, constant false) ] in
+    let day = ticks_per_day u0 and second = per_s u0 in
+    (* Whole seconds of the day, which every unit holds. *)
+    let seconds = map (Int64.mul second) (int64_range 0L 86_399L) in
+    let value =
+      if in_day then seconds
+      else if to_clock then
+        frequency
+          [
+            (2, of_list [ Int64.min_int; -1L; 0L; 1L; Int64.pred day; day ]);
+            (1, of_list [ Int64.max_int ]);
+            (2, map (Int64.mul second) (int64_range (-86_400L) 172_800L));
+            (2, int64_range (Int64.neg day) (Int64.mul 2L day));
+            (1, int64);
+          ]
+      else
+        frequency
+          [
+            (1, of_list [ 0L; 1L; Int64.pred day ]);
+            (2, map (Int64.mul second) (int64_range 0L 86_399L));
+            (2, int64_range 0L (Int64.pred day));
+          ]
+    in
+    let+ xs = array ~size:(int_range 0 10) (option value) in
+    (to_clock, u0, u1, xs)
+  in
+  let rescale u0 u1 x =
+    let n0 = per_s u0 and n1 = per_s u1 in
+    if n1 >= n0 then mul_exact x (Int64.div n1 n0)
+    else
+      let k = Int64.div n0 n1 in
+      if Int64.rem x k = 0L then Some (Int64.div x k) else None
+  in
+  (* Four covers share the cases, the rarest drawn in about one case of sixteen,
+     so 300 cases reach each in every run. *)
+  prop ~count:300
+    "clocks and durations cast both ways, keeping the span and failing outside \
+     the day"
+    gen (fun (to_clock, u0, u1, xs) ->
+      let in_day r = r >= 0L && r < ticks_per_day u1 in
+      let model x =
+        match rescale u0 u1 x with
+        | Some r when (not to_clock) || in_day r -> Some r
+        | _ -> None
+      in
+      let expected = Array.map (fun x -> Option.bind x model) xs in
+      let outside x = not (in_day x) in
+      cover "a duration outside the day, at the clock's unit"
+        (to_clock && u0 = u1
+        && Array.exists (function Some x -> outside x | None -> false) xs);
+      cover "a clock to a duration of a coarser unit, failing"
+        ((not to_clock) && per_s u1 < per_s u0 && fails xs expected);
+      cover "a duration to a clock, every row kept"
+        (to_clock && (not (fails xs expected)) && Array.exists Option.is_some xs);
+      cover "a clock to a duration, every row kept"
+        ((not to_clock)
+        && (not (fails xs expected))
+        && Array.exists Option.is_some xs);
+      let from, into =
+        if to_clock then (Type.duration u0, Type.clock u1)
+        else (Type.clock u0, Type.duration u1)
+      in
+      agrees ~expected xs (cast_ticks (Any from) (Any into) xs))
+
+let temporal_casts =
+  let date y m d = Time.Date.to_days (date y m d) in
+  let days_of u ts =
+    int64_options
+      (require_ok ~pp:Error.pp
+         (cast_ticks (Any (Type.datetime u)) (Any Type.date) (some ts)))
+  in
+  let problem e t =
+    match compute e t with
+    | _ -> "no problem"
+    | exception Invalid_argument m -> m
+  in
+  let days ds = some (Array.map Int64.of_int ds) in
+  group "Temporal casts"
+    [
+      dates_to_datetimes;
+      datetimes_to_dates;
+      dates_round_trip;
+      days_floor;
+      clocks_and_durations;
+      test "a datetime's day, before 1970 and at the ends of its ticks"
+        (fun () ->
+          equal
+            (array (option int64))
+            (days [| date 1969 12 31; date 1970 1 1; date 1970 1 1 |])
+            (days_of S [| -1L; 0L; 86_399L |]);
+          equal
+            (array (option int64))
+            (days [| date 1677 9 21; date 2262 4 11 |])
+            (days_of Ns [| Int64.min_int; Int64.max_int |]));
+      test "dates at the ends of datetime[ns]" (fun () ->
+          equal
+            (array (option int64))
+            [|
+              Some
+                (Int64.mul (Int64.of_int (date 2262 4 11)) 86_400_000_000_000L);
+            |]
+            (int64_options
+               (require_ok ~pp:Error.pp
+                  (cast_ticks (Any Type.date)
+                     (Any (Type.datetime Ns))
+                     (days [| date 2262 4 11 |]))));
+          expect
+            (Format.asprintf "%a" Error.pp
+               (require_error
+                  (cast_ticks (Any Type.date)
+                     (Any (Type.datetime Ns))
+                     (days [| date 1677 9 22; date 1677 9 21 |]))))
+          @@ __POS_OF__
+               {| select ["out" := cast datetime[ns] x]: row 1: cannot cast 1677-09-21 to datetime[ns]. |});
+      test "a datetime with a zone holds instants, which do not cast to dates"
+        (fun () ->
+          let t =
+            v
+              [
+                ("z", Column.v (Type.datetime ~zone:"UTC" S) [| Time.of_ns 0L |]);
+                ("d", Column.v Type.date [| Option.get (Time.Date.of_days 0) |]);
+              ]
+          in
+          expect
+            (String.concat "\n"
+               [
+                 problem (Expr.cast Type.date (Col.instant "z")) t;
+                 problem
+                   (Expr.cast (Type.datetime ~zone:"UTC" S) (Col.date "d"))
+                   t;
+               ])
+          @@ __POS_OF__
+               {|
+            select: 1 problem
+              "out" := cast date z
+                cast does not convert datetime[s, UTC] to date.
+              input (2 columns): z datetime[s, UTC], d date
+            select: 1 problem
+              "out" := cast datetime[s, UTC] d
+                cast does not convert date to datetime[s, UTC].
+              input (2 columns): z datetime[s, UTC], d date
+            |});
+    ]
+
 let () =
   exit
     (run "Convert"
@@ -711,4 +1350,6 @@ let () =
          fields_agree;
          adds_ticks;
          formats_round_trip;
+         cuts;
+         temporal_casts;
        ])

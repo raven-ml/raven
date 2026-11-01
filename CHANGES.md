@@ -4603,6 +4603,10 @@ thread.
 
 ### Talon
 
+- `Expr.cast` converts between dates and datetimes without a zone, a datetime
+  becoming the day it falls on, and between clocks and durations.
+- `Expr.cut` gives the bin of a value among ascending edges, as an index,
+  null outside them.
 - Queries run under `Rune.grad`, and under `Rune.jit` and `Rune.vmap` where
   every size a step computes follows from its inputs' sizes; `Query.run` and
   `Talon.column` raised there. Steps such as `filter` raise at a trace.

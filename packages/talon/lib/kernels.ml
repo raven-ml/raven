@@ -132,12 +132,79 @@ let numeric from into c : Nx.host Nx.packed * Nx.host Nx.bool_t =
       let y = Nx.cast dt x in
       (P y, Nx.logical_or (Nx.logical_not (Nx.isfinite x)) (Nx.isfinite y))
 
+(* Ticks *)
+
+let floor_mod x k =
+  let r = Nx.mod_s x k in
+  Nx.where (Nx.less_s r 0L) (Nx.add_s r k) r
+
+(* [floor_div x k] is [x / k] rounded toward negative infinity, for [k > 0]: the
+   truncated quotient, less one where the remainder is negative. It never
+   overflows, as [x - floor_mod x k] does near [Int64.min_int]. *)
+let floor_div x k =
+  let q = Nx.div_s x k in
+  Nx.where (Nx.less_s (Nx.mod_s x k) 0L) (Nx.sub_s q 1L) q
+
+let ns_per_day = 86_400_000_000_000L
+let ticks_per_day u = Int64.div ns_per_day (Type.ns_per_unit u)
+
+let in_int32 x =
+  Nx.logical_and
+    (Nx.greater_equal_s x (-0x8000_0000L))
+    (Nx.less_s x 0x8000_0000L)
+
+let in_day u x =
+  Nx.logical_and (Nx.greater_equal_s x 0L) (Nx.less_s x (ticks_per_day u))
+
 (* Casts *)
 
 let unit_of : type a. a Type.t -> Type.unit_ option = function
   | Datetime { unit_; _ } -> Some unit_
   | Duration u | Clock u -> Some u
   | _ -> None
+
+(* [ns_per_tick ty] is the nanoseconds of a tick of the temporal type [ty]: a
+   date's tick is a day. *)
+let ns_per_tick : type a. a Type.t -> int64 option = function
+  | Date -> Some ns_per_day
+  | Datetime { unit_; _ } | Duration unit_ | Clock unit_ ->
+      Some (Type.ns_per_unit unit_)
+  | _ -> None
+
+(* [temporal from into n0 n1] casts the values of [from], ticks of [n0]
+   nanoseconds, to [into], ticks of [n1]. A finer tick multiplies and fails on
+   overflow; a coarser one divides and fails on a remainder, except that a
+   datetime becomes the day it falls on, rounding toward the past. The result
+   fails outside [into]'s range: int32 days for a date, one day for a clock. *)
+let temporal (Type.Any from) (Type.Any into as t) n0 n1 :
+    live:Nx.host Nx.bool_t -> Column.t -> checked =
+  let cannot c row = error "cannot cast %t to %a" (cell c row) Type.pp into in
+  let range r =
+    match into with
+    | Date -> Some (in_int32 r)
+    | Clock u -> Some (in_day u r)
+    | _ -> None
+  in
+  fun ~live c ->
+    let x = int64s c in
+    let r, exact =
+      if Int64.equal n0 n1 then (x, None)
+      else if n0 > n1 then
+        let k = Int64.div n0 n1 in
+        (Nx.mul_s x k, Some (within (Int64.succ (Int64.div Int64.max_int k)) x))
+      else
+        let k = Int64.div n1 n0 in
+        match (from, into) with
+        | Datetime _, Date -> (floor_div x k, None)
+        | _ -> (Nx.div_s x k, Some (Nx.equal_s (Nx.mod_s x k) 0L))
+    in
+    match List.filter_map Fun.id [ exact; range r ] with
+    | [] -> (Column.with_data t (Column.data c) c, None)
+    | ok :: oks -> (
+        let ok = List.fold_left Nx.logical_and ok oks in
+        match into with
+        | Date -> checked t [ c ] ~live ~ok (Nx.cast Nx.int32 r) (cannot c)
+        | _ -> checked t [ c ] ~live ~ok r (cannot c))
 
 let is_prefix d0 d1 =
   let n = Iarray.length d0 in
@@ -179,7 +246,6 @@ let earliest f g =
 let rec convert (Type.Any from) (Type.Any into as t) :
     live:Nx.host Nx.bool_t -> Column.t -> checked =
   let cannot c row = error "cannot cast %t to %a" (cell c row) Type.pp into in
-  let units = (unit_of from, unit_of into) in
   match (from, into, number from, number into) with
   | _ when Type.equal from into -> fun ~live:_ c -> (c, None)
   | _, _, Some f, Some i ->
@@ -222,21 +288,8 @@ let rec convert (Type.Any from) (Type.Any into as t) :
         let f = List.fold_left (fun f (_, g) -> earliest f g) None cs in
         (Column.with_data t (Fields (List.map fst cs)) c, f)
   | _ -> (
-      match units with
-      | Some u0, Some u1 ->
-          let n0 = Type.ns_per_unit u0 and n1 = Type.ns_per_unit u1 in
-          fun ~live c ->
-            let x = int64s c in
-            if Int64.equal n0 n1 then
-              (Column.with_data t (Column.data c) c, None)
-            else if n0 > n1 then
-              let k = Int64.div n0 n1 in
-              let ok = within (Int64.succ (Int64.div Int64.max_int k)) x in
-              checked t [ c ] ~live ~ok (Nx.mul_s x k) (cannot c)
-            else
-              let k = Int64.div n1 n0 in
-              let ok = Nx.equal_s (Nx.mod_s x k) 0L in
-              checked t [ c ] ~live ~ok (Nx.div_s x k) (cannot c)
+      match (ns_per_tick from, ns_per_tick into) with
+      | Some n0, Some n1 -> temporal (Any from) t n0 n1
       | _ ->
           invalid_arg
             (Format.asprintf "Kernels.cast: binding does not cast %a to %a"
@@ -290,18 +343,6 @@ let parse_with fmt ty c = read_text c (Form.parse_with fmt ty)
 
    Dates are days and other temporal values ticks, as [int64]. The civil
    calendar is Howard Hinnant's algorithms, as nx arithmetic. *)
-
-let floor_mod x k =
-  let r = Nx.mod_s x k in
-  Nx.where (Nx.less_s r 0L) (Nx.add_s r k) r
-
-let floor_div x k = Nx.div_s (Nx.sub x (floor_mod x k)) k
-let ticks_per_day u = Int64.div 86_400_000_000_000L (Type.ns_per_unit u)
-
-let in_int32 x =
-  Nx.logical_and
-    (Nx.greater_equal_s x (-0x8000_0000L))
-    (Nx.less_s x 0x8000_0000L)
 
 (* [civil days] is the year, month and day of [days] since 1970-01-01, and the
    day of the year counted from March 1. *)

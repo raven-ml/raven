@@ -109,6 +109,7 @@ let names =
           ("rows", {|"rows"|});
           ("sum", {|"sum"|});
           ("over", {|"over"|});
+          ("cut", {|"cut"|});
           ("délai", {|"délai"|});
           ({|a"b\c|}, {|"a\"b\\c"|});
           ("a\nb", {|"a\x0ab"|});
@@ -133,6 +134,7 @@ let print_operations () =
         $ n $ option m);
       str pp (of_option (const (fun a -> Some a) $ n));
       str pp (is_in [ 1; 2 ] n);
+      str pp (cut [| 1; 2 |] n);
       str pp (coalesce [ x; y; float 0. ]);
       str pp (nx { f = Nx.exp } x);
       str pp (nx2 { f2 = Nx.atan2 } y x);
@@ -171,6 +173,7 @@ let print_operations () =
             <const> $ n $ option m
             of_option (<const> $ n)
             is_in […] n
+            cut […] n
             coalesce [x; y; 0.]
             nx <fn> x
             nx2 <fn> y x
@@ -234,6 +237,8 @@ let construction =
                  (fun () -> ignore (Str.split "\xff" s));
                  (fun () -> ignore (Str.replace "" ~by:"a" s));
                  (fun () -> ignore (Str.replace "a" ~by:"\xc3" s));
+                 (fun () -> ignore (cut [| 1 |] n));
+                 (fun () -> ignore (cut [||] n));
                  (fun () -> ignore (Temporal.parse "%Y-%q" Type.date s));
                  (fun () -> ignore (Temporal.format "%H%" ts));
                  (fun () -> ignore (Temporal.floor (Time.Days 0) ts));
@@ -261,6 +266,8 @@ let construction =
             Expr.Str.split: "\255" is not valid UTF-8
             Expr.Str.replace: empty text to replace
             Expr.Str.replace: "\195" is not valid UTF-8
+            Expr.cut: a cut takes two edges or more, not 1
+            Expr.cut: a cut takes two edges or more, not 0
             Expr.Temporal.parse: "%Y-%q" holds the unknown directive %q
             Expr.Temporal.format: "%H%" ends with %
             Expr.Temporal.floor: 0d is not positive

@@ -1216,6 +1216,22 @@ module Expr : sig
       null. [a]'s type must hold each of [vs]; an extension's values are encoded
       with its declaration. *)
 
+  val cut : 'a array -> ('a, 's) t -> (int, 's) t
+  (** [cut edges a] is the bin of [a] among [edges], as [int64]. The bin is [i]
+      where [edges.(i) <= a < edges.(i + 1)] in talon's total order, so [k + 1]
+      edges bound [k] bins, each holding its lower edge, and adjacent bins share
+      an edge. It is null where [a] is null, below the first edge, or at or
+      above the last, which NaN is: [cut [| 0.; 0.5; 1. |] x] is [0] for [0.2],
+      [1] for [0.5] and null for [1.].
+
+      Each edge is a literal of [a]'s type, which must hold it and may round it,
+      so [cut edges a = int i] exactly where
+      [a >= edges.(i) && a < edges.(i + 1)]. As that type stores them, the edges
+      must ascend strictly and hold no NaN; [-0.] and [0.] are one edge. [a]'s
+      type is one that {!( < )} orders. [edges] is copied.
+
+      Raises [Invalid_argument] if [edges] has fewer than two elements. *)
+
   val cast : 'b Type.t -> ('a, 's) t -> ('b, 's) t
   (** [cast ty a] converts [a]'s values to [ty]:
       - between [bool], integer and float types: integers take exact values
@@ -1227,14 +1243,22 @@ module Expr : sig
       - between datetimes that both have a zone, or both have none, between
         durations, and between clocks: values are kept, and a value that is not
         a whole number of the new unit is a data error;
+      - between clocks and durations: a time of day is its span from midnight,
+        converted as between durations, and a duration outside \[[0], 1 day) is
+        a data error for a clock;
+      - between dates and datetimes without a zone: a date becomes the datetime
+        of its midnight, and a datetime becomes the day it falls on, so
+        [1969-12-31T23:59:59] becomes [1969-12-31]. A value out of the new
+        type's range is a data error;
       - lists element by element, records with the same field names field by
         field, and tensors of the same shape element by element, as [Nx.cast]
         does.
 
       Any other pair is a problem that names the function that converts it, if
       one does: {!Str.parse} and {!Temporal.parse} for text to values, and
-      {!Temporal.format} for dates, clocks and datetimes to text. [a] needs a
-      column type. *)
+      {!Temporal.format} for dates, clocks and datetimes to text. A datetime
+      with a zone holds instants, which fall on a day only in a zone, so it
+      casts neither to nor from a date. [a] needs a column type. *)
 
   type fn = { f : 'a 'b. ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t }
   (** The type for elementwise nx functions of one argument that preserve its
@@ -1555,8 +1579,8 @@ module Expr : sig
         [2024-03-15], [2024-03-15T09:30:00], [15m];
       - an OCaml value of {!const} formats as [<const>], and the functions of
         {!nx} and {!nx2} as [<fn>];
-      - an {!is_in} list formats with its operand's type once bound, and as
-        [[…]] before. *)
+      - an {!is_in} list and {!cut} edges format with their operand's type once
+        bound, and as [[…]] before. *)
 end
 
 module Col : sig
@@ -1632,13 +1656,14 @@ module Ext : sig
       [Type.ext ~name ~metadata storage] with:
       - [dec], which reads a stored value as ['e]: [Query.values] and
         [Column.values] decode with it;
-      - [enc], which stores an ['e]: literals, {!Expr.const} values and
-        {!Expr.is_in} values encode with it. It must be injective;
+      - [enc], which stores an ['e]: literals, {!Expr.const} values,
+        {!Expr.is_in} values and {!Expr.cut} edges encode with it. It must be
+        injective;
       - [ordered], a promise that the order of stored values is the order of the
         values, as for an epoch stored normalized. With [~ordered:false],
-        {!Expr.min}, {!Expr.max}, {!Expr.arg_min}, {!Expr.arg_max}, {!Expr.rank}
-        and [<] are problems on its values. Sort and join keys are names, which
-        no declaration binds.
+        {!Expr.min}, {!Expr.max}, {!Expr.arg_min}, {!Expr.arg_max},
+        {!Expr.rank}, {!Expr.cut} and [<] are problems on its values. Sort and
+        join keys are names, which no declaration binds.
 
       [metadata] defaults to [""].
 

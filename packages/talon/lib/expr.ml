@@ -97,6 +97,7 @@ and 'a node =
   | Is_null : ('a, 's) t -> bool node
   | Coalesce : ('a, 's) t list -> 'a node
   | Is_in : 'a list * ('a, 's) t -> bool node
+  | Cut : 'a array * ('a, 's) t -> int node
   | Cast : 'a Type.t * ('b, 's) t -> 'a node
   | Lift : fn * ('a, 's) t -> 'a node
   | Lift2 : fn2 * ('a, 's0) t * ('a, 's1) t -> 'a node
@@ -150,6 +151,7 @@ let operands : type a. a node -> packed list = function
   | Option a -> [ Packed a ]
   | Of_option a -> [ Packed a ]
   | Is_in (_, a) -> [ Packed a ]
+  | Cut (_, a) -> [ Packed a ]
   | Lift (_, a) -> [ Packed a ]
   | Shift (_, a) -> [ Packed a ]
   | Cast (_, a) -> [ Packed a ]
@@ -305,8 +307,8 @@ let calendar_equal : type a b. a calendar_op -> b calendar_op -> bool =
 
 (* [node_equal n0 n1] is [true] iff [n0] and [n1] are one operation with equal
    attributes on the same operands. The operands are compared first: they type
-   the values of [is_in]. Unbound nodes, which binding rewrites, are never
-   hash-consed. *)
+   the values of [is_in] and the edges of [cut]. Unbound nodes, which binding
+   rewrites, are never hash-consed. *)
 let node_equal : type a b. a node -> b node -> bool =
  fun n0 n1 ->
   List.equal (fun (Packed a) (Packed b) -> same a b) (operands n0) (operands n1)
@@ -329,6 +331,9 @@ let node_equal : type a b. a node -> b node -> bool =
   | Nx_map (p0, _), Nx_map (p1, _) -> p0 = p1
   | Is_in (vs0, a0), Is_in (vs1, a1) ->
       same_value vs0 vs1 || values_equal a0 vs0 a1 vs1
+  | Cut (es0, a0), Cut (es1, a1) ->
+      same_value es0 es1
+      || values_equal a0 (Array.to_list es0) a1 (Array.to_list es1)
   | Cast (ty0, _), Cast (ty1, _) | Store (ty0, _), Store (ty1, _) ->
       Type.equal ty0 ty1
   | Lift (f0, _), Lift (f1, _) -> same_value f0.f f1.f
@@ -353,9 +358,9 @@ let node_equal : type a b. a node -> b node -> bool =
       true
   | ( ( Handle _ | Ext_handle _ | Read _ | Lit _ | Null | Rows | Int _ | Float _
       | Compare _ | Logic _ | Not _ | If _ | Is_null _ | Coalesce _ | Is_in _
-      | Cast _ | Lift _ | Lift2 _ | Nx_map _ | Reduce _ | Over _ | Shift _
-      | Rank _ | Const _ | App _ | Option _ | Of_option _ | Store _ | Text _
-      | Calendar _ ),
+      | Cut _ | Cast _ | Lift _ | Lift2 _ | Nx_map _ | Reduce _ | Over _
+      | Shift _ | Rank _ | Const _ | App _ | Option _ | Of_option _ | Store _
+      | Text _ | Calendar _ ),
       _ ) ->
       false
 
@@ -439,8 +444,8 @@ let keywords =
 (* The values of this module, which a bare column name would shadow. *)
 let values =
   String.split_on_char ' '
-    "across agg arg_max arg_min bool cast coalesce const count date each first \
-     float if_ instant int is_in is_null keep last max mean median min \
+    "across agg arg_max arg_min bool cast coalesce const count cut date each \
+     first float if_ instant int is_in is_null keep last max mean median min \
      n_unique not null nx nx2 of_option only option over pp pp_out quantile \
      rank rows shift span std store string sum var"
 
@@ -633,6 +638,7 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
   | Is_null a -> app "is_null" [ arg a ]
   | Coalesce es -> app "coalesce" [ (fun ppf -> Type.pp_list (pp_at 0) ppf es) ]
   | Is_in (vs, a) -> app "is_in" [ pp_values a vs; arg a ]
+  | Cut (edges, a) -> app "cut" [ pp_values a (Array.to_list edges); arg a ]
   | Cast (ty, a) -> app "cast" [ (fun ppf -> Type.pp ppf ty); arg a ]
   | Lift (_, a) -> app "nx" [ str "<fn>"; arg a ]
   | Lift2 (_, a, b) -> app "nx2" [ str "<fn>"; arg a; arg b ]
@@ -951,6 +957,44 @@ let holds : type a. env -> string -> a typing -> a -> bool =
 let all_hold env what t vs =
   List.fold_left (fun ok v -> holds env what t v && ok) true vs
 
+(* [ascending env t edges] is [true] iff the edges of a cut, as the typing [t]
+   stores them, ascend strictly and hold no NaN, and reports otherwise. It reads
+   the stored values, since a float type may round two edges to one. A typing
+   that [ordered] refuses, and edges [t] does not hold, were reported. *)
+let ascending : type a. env -> a typing -> a array -> bool =
+ fun env t edges ->
+  let stored : type s. s Type.t -> s array -> bool =
+   fun ty vs ->
+    match Column.encode ty (Array.length vs) (fun i -> Some vs.(i)) with
+    | Error _ -> false
+    | Ok c ->
+        let vs = Column.values (Type.kind ty) c in
+        let ok = ref true in
+        (match Type.kind ty with
+        | Float when Array.exists Float.is_nan vs ->
+            report env "cut takes no NaN edge.";
+            ok := false
+        | _ -> ());
+        let cmp = Type.compare_value ty in
+        for i = 0 to Array.length vs - 2 do
+          if cmp vs.(i) vs.(i + 1) >= 0 then begin
+            report env
+              "cut takes edges that ascend strictly, and %a then %a do not, as \
+               %a stores them."
+              (Type.pp_value ty) vs.(i) (Type.pp_value ty)
+              vs.(i + 1)
+              Type.pp ty;
+            ok := false
+          end
+        done;
+        !ok
+  in
+  match t with
+  | Column ty when Type.has_ext ty -> false
+  | Column ty -> stored ty edges
+  | Extension d when d.ordered -> stored d.storage (Array.map d.enc edges)
+  | Extension _ | Value -> false
+
 (* [constant e] is the value of [e] when it is integer arithmetic of literals
    that is not null. *)
 let rec constant : type s. (int, s) t -> int option =
@@ -1046,7 +1090,10 @@ let rec castable : type a b.
   | Datetime d0, Datetime d1 ->
       if Bool.equal (Option.is_some d0.zone) (Option.is_some d1.zone) then Ok ()
       else Error None
-  | Duration _, Duration _ | Clock _, Clock _ | Date, Date | Binary, Binary ->
+  | Date, Datetime { zone = None; _ } | Datetime { zone = None; _ }, Date ->
+      Ok ()
+  | (Duration _ | Clock _), (Duration _ | Clock _) | Date, Date | Binary, Binary
+    ->
       Ok ()
   | List t0, List t1 -> castable t0 t1
   | Record fs0, Record fs1
@@ -1503,6 +1550,13 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
       on_operand env a (fun t a ->
           if all_hold env "value" t vs then known bool_typing (Is_in (vs, a))
           else Broken)
+  | Cut (edges, a) ->
+      on_operand env a (fun t a ->
+          ordered env "cut" t;
+          if
+            all_hold env "edge" t (Array.to_list edges) && ascending env t edges
+          then known int64 (Cut (edges, a))
+          else Broken)
   | Cast (ty, a) ->
       on_operand env a (fun t a ->
           match t with
@@ -1942,6 +1996,7 @@ let map_node : type a. mapper -> a node -> a node =
   | Is_null a -> Is_null (map a)
   | Coalesce es -> Coalesce (List.map map es)
   | Is_in (vs, a) -> Is_in (vs, map a)
+  | Cut (edges, a) -> Cut (edges, map a)
   | Cast (ty, a) -> Cast (ty, map a)
   | Lift (fn, a) -> Lift (fn, map a)
   | Lift2 (fn, a, b) -> Lift2 (fn, map a, map b)
@@ -2272,6 +2327,12 @@ let if_ c a b = make (If (c, a, b))
 let is_null a = make (Is_null a)
 let coalesce es = make (Coalesce es)
 let is_in vs a = make (Is_in (vs, a))
+
+let cut edges a =
+  let n = Array.length edges in
+  if Stdlib.(n < 2) then err "Expr.cut: a cut takes two edges or more, not %d" n;
+  make (Cut (Array.copy edges, a))
+
 let cast ty a = make (Cast (ty, a))
 let nx fn a = make (Lift (fn, a))
 let nx2 fn a b = make (Lift2 (fn, a, b))
