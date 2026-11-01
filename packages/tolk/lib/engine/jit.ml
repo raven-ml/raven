@@ -45,13 +45,14 @@ let jit_lower ?beam ?search ~targets ~held_bufs ~inputs ~input_vars linear =
   in
   let linear = Ops.substitute ~calls:Skip ~pass:Once linear unbound in
   let linear = Memory.memory_plan_rewrite ~held_bufs linear in
-  (* The buffers left unheld hold only what one run computes: tagged, a caller
-     can tell them from those it keeps and free them between runs. *)
+  (* The buffers left unheld hold only what one run computes: they become
+     storage of the program, allocated where it is linked. *)
   let scratch =
     List.filter_map
       (fun u ->
         if Ops.op u = Op.Buffer && not (List.memq u held_bufs) then
-          Some (u, Ops.rtag ~tag:(String "scratch") u)
+          let n = Shape.max_numel u in
+          Some (u, Shape.alloc ?device:(Ops.device u) [ Int n ] (Ops.dtype u))
         else None)
       (Ops.toposort ~calls:Skip linear)
   in

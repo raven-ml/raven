@@ -40,8 +40,9 @@ val jit_lower :
     + its buffers are placed in arenas ({!Memory.memory_plan_rewrite}), except
       [held_bufs], whose contents outlive a run, such as the buffers a caller
       keeps or that hold constants;
-    + each buffer not in [held_bufs] is tagged [String "scratch"]: it holds
-      only what one run computes. tolk frees none of them between runs;
+    + each buffer not in [held_bufs], which holds only what one run computes,
+      becomes storage of the program ({!Shape.alloc}) of its size, type and
+      device, which the program's link allocates;
     + it is compiled ({!Realize.compile_linear}, with [search] and [targets]),
       with the beam width [beam], or else {!Setting.jitbeam}'s, or else
       {!Setting.beam}'s, as [BEAM], and [JITBEAM] unset.

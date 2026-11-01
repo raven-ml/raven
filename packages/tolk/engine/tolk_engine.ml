@@ -397,6 +397,18 @@ let first_byte b base d =
       (Format.asprintf "%a" Ops.pp base)
   else p
 
+(* Storage made at link for [base]. *)
+let memory_place b base offset =
+  let d = b.named (name base) in
+  let first = first_byte b base d in
+  let memory = memory b base d ~first in
+  {
+    place = Memory { memory; first; bytes = max 1 (bytes base) };
+    offset;
+    device = d;
+    start = start base;
+  }
+
 (* Where the view [u] lies: in a parameter's buffer, which a run gives; in
    bound storage; or in storage made at link. *)
 let locate b u =
@@ -412,6 +424,7 @@ let locate b u =
         device = d;
         start = start base;
       }
+  | Op.Alloc, _ -> memory_place b base offset
   | Op.Buffer, _ -> (
       match Ops.Tbl.find_opt b.bound base with
       | Some buf ->
@@ -421,16 +434,7 @@ let locate b u =
             device = Rig.Buffer.device buf;
             start = start base;
           }
-      | None ->
-          let d = b.named (name base) in
-          let first = first_byte b base d in
-          let memory = memory b base d ~first in
-          {
-            place = Memory { memory; first; bytes = max 1 (bytes base) };
-            offset;
-            device = d;
-            start = start base;
-          })
+      | None -> memory_place b base offset)
   | _ -> fail b.fn "%s is not storage" (Format.asprintf "%a" Ops.pp base)
 
 (* Steps *)
