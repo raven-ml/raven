@@ -4583,3 +4583,29 @@ fold wraps integers and holds its float bound`, hold.
 - **Pinned by:** `Tolk.Indexing › run_rangeify › recorded graphs`
   (`assign`, `assign_permuted`, `assign_double_diamond`), whose stores read
   their destinations.
+
+## D172. An index of an Invalid value folds after construction
+
+- **tinygrad:** `uop/ops.py:550-554` (`UOp.index`, which returns
+  `UOp.invalid().expand(ret.shape)` when the indexed value's base is
+  `Invalid`).
+- **tolk:** `Ops.index`, which builds the `Index`; `Prepare.mop_index`, which
+  moves it through the expansion to an `Index` of `Invalid`, and
+  `Codegen.devectorizer2`'s rule for an `Index` without indices, which drops
+  it; `Codegen.do_devectorize`, which reads an `Invalid` source's base in each
+  lane.
+- **Differs:** an index of a value whose base is `Invalid` is an `Index` node
+  until the movement and devectorize rules fold it, where tinygrad folds it to
+  an `Invalid` of the index's shape when it builds it. The kernels are the
+  same: the rangeified graphs, schedules and values of a selection no lane
+  takes match tinygrad's.
+- **Reason:** (a): `Ops` builds nodes without shapes, which `Shape` computes
+  over `Ops`, so `Ops.index` cannot know the shape of the `Invalid` it would
+  return.
+- **Pinned by:** `Tolk.Indexing › run_rangeify › recorded graphs ›
+  select_no_lane_rangeified.golden` and `select_no_lane_rows_rangeified.golden`;
+  `Tolk.Schedule › create_schedule › recorded › select_no_lane_kernels.golden`,
+  `select_one_lane_kernels.golden`, `select_no_lane_rows_kernels.golden`; and
+  `Tolk_engine › link and run › recorded › select_no_lane writes what its
+  tensors compute` and its `select_one_lane` and `select_no_lane_rows`
+  versions, which run the kernels on the host.

@@ -228,6 +228,11 @@ PROGRAMS = {
     "assign_flipped_from_self": lambda: (lambda a: a.flip(0).assign(a))(empty(3, dtype=dtypes.int32).contiguous()),
     "add_row_from_self": lambda: (lambda a: a.assign(a + a[0]))(empty(3, 2, dtype=dtypes.int32).contiguous()),
     "roll_from_self": lambda: (lambda a: a.assign(a.roll(1, 0)))(empty(2, 2, dtype=dtypes.int32).contiguous()),
+    # selections that no lane, or one lane, takes, as runtime/test_arange.py's test_index_collapse_no_valid_lane
+    "select_no_lane": lambda: (lambda x: ((x * x) == 2.).where(empty(4), 0.).sum())(Tensor.arange(4).cast(dtypes.float32)),
+    "select_one_lane": lambda: (lambda x: ((x * x) == 1.).where(empty(4), 0.).sum())(Tensor.arange(4).cast(dtypes.float32)),
+    "select_no_lane_rows": lambda: (lambda x: ((x * x) == 2.).reshape(2, 2).where(empty(4).reshape(2, 2), 0.).sum(axis=1))(
+        Tensor.arange(4).cast(dtypes.float32)),
     "assign_double_diamond": assign_double_diamond,
     "read_then_overwrite": read_then_overwrite,
     "read_overwritten_through": read_overwritten_through,

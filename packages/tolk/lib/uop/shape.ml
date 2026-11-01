@@ -1948,8 +1948,6 @@ let lift_reduce_gate red cond x i =
 
 let unary_or_cast = Op.Set.union Op.Set.unary (ops [ Op.Cast; Op.Bitcast ])
 
-(* A stack of Invalid lanes stays a stack: one Invalid in its place would drop
-   the width that the lanes' movements and devectorize read. *)
 let pm_data_invalid =
   pm
     (fun () -> [

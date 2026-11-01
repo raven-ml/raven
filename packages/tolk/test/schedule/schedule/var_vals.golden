@@ -24,6 +24,9 @@ assign_permuted_self	-
 assign_flipped_from_self	-
 add_row_from_self	-
 roll_from_self	-
+select_no_lane	-
+select_one_lane	-
+select_no_lane_rows	-
 assign_double_diamond	-
 read_then_overwrite	-
 read_overwritten_through	-

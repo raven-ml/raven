@@ -625,6 +625,9 @@ let recorded =
     "read_then_overwrite";
     "reduce_multiple_paths";
     "roll_from_self";
+    "select_no_lane";
+    "select_no_lane_rows";
+    "select_one_lane";
     "setitem";
     "softmax";
     "sort";

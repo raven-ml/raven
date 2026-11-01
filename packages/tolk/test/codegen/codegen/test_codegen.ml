@@ -2322,9 +2322,9 @@ let shared_ranges =
 
 (* Lanes of an unrolled reduce
 
-   When every lane of an unrolled reduce reads an Invalid index, the lanes stay
-   a stack, so each lane's gated load folds to its own zero and the reduce sums
-   lanes of zeros. *)
+   When every lane of an unrolled reduce reads an Invalid index, the lanes are
+   an Invalid expanded to their width, so each lane's gated load folds to zero
+   and the reduce sums lanes of zeros. *)
 
 let sums_zeros name x zero () =
   let row = row_named (name ^ "_clang") in
@@ -3026,8 +3026,9 @@ let takes_bfloat16 () =
 
 (* rune's fold of a float32 [4; 1] to [3; 1], kernel [2; 2], dilation [2; 2] and
    padding [(0, 0); (1, 1)], every window of the second axis in the padding.
-   Upcast, every lane of its gated index is Invalid; the lanes stay a stack, so
-   the reshape and the permute that arranged them keep their width. *)
+   Upcast, every lane of its gated index is Invalid; the lanes are an Invalid
+   expanded to their width, so the reshape and the permute that arranged them
+   keep it. *)
 let invalid_lanes_kernel () =
   let open Ops.O in
   let out = Shape.param ~shape:[ Int 3 ] 0 Float32 in

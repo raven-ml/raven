@@ -63,6 +63,9 @@ let programs =
     "read_then_overwrite";
     "reduce_multiple_paths";
     "roll_from_self";
+    "select_no_lane";
+    "select_no_lane_rows";
+    "select_one_lane";
     "setitem";
     "softmax";
     "sort";
@@ -116,6 +119,9 @@ let kernel_graphs =
     "read_then_overwrite_kernels";
     "reduce_multiple_paths_kernels";
     "roll_from_self_kernels";
+    "select_no_lane_kernels";
+    "select_no_lane_rows_kernels";
+    "select_one_lane_kernels";
     "setitem_kernels";
     "softmax_kernels";
     "sort_kernels";

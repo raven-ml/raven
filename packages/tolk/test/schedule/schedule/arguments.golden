@@ -24,6 +24,9 @@ assign_permuted_self_kernels	-
 assign_flipped_from_self_kernels	-
 add_row_from_self_kernels	-
 roll_from_self_kernels	-
+select_no_lane_kernels	-
+select_one_lane_kernels	-
+select_no_lane_rows_kernels	-
 assign_double_diamond_kernels	-
 read_then_overwrite_kernels	-
 read_overwritten_through_kernels	-

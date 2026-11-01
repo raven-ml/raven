@@ -185,8 +185,6 @@ let pm_tensor_mops =
 
 (* Cleanups *)
 
-(* A walk for store hazards stops where values are materialised: copies, stages,
-   and the afters of the stores they are lowered to. *)
 let pp_shape ppf s =
   Format.fprintf ppf "(%a%s)"
     (Format.pp_print_list
