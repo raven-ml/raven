@@ -900,6 +900,8 @@ thread.
 
 ### Tolk (new)
 
+- A store into a contiguous run of a buffer stores into a view of the run:
+  stores of one shape at other offsets of one buffer are one program.
 - A schedule runs its ready kernels in the order the program reaches them,
   and first one that frees storage without making more, where it ran them as
   they became ready: a value is read soon after it is made, so a schedule

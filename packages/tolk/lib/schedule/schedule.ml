@@ -774,7 +774,12 @@ let view_of ctx c src =
       if op b = Op.Bitcast then storage (base (nth b 0)) else b
     in
     let buf = storage (base src) in
-    if op buf <> Op.Buffer then None
+    (* A store's value that reads its buffer keeps the buffer's identity, by
+       which the kernel split stages it before the store. *)
+    let reads_target () =
+      op c = Op.Store && Nodes.mem buf (backward_slice ~calls:Skip (nth c 1))
+    in
+    if op buf <> Op.Buffer || reads_target () then None
     else
       match Prepare.contiguous_view src with
       | Some (buf, offset) when op buf = Op.Buffer ->
@@ -816,9 +821,17 @@ let pm_callify_ctx_collect =
              ]
            ())
         (fun ctx m -> view_of (Some ctx) (m "c") (m "src"));
+      (* So do those a store stores into: stores of one shape into runs of
+         one buffer at other offsets are then one program. *)
       rule_ctx
         (Upat.op Op.Store ~name:"c" ~allow_any_len:true
-           ~src:[ Upat.op Op.Bitcast ~name:"src"; Upat.wild ])
+           ~src:
+             [
+               Upat.v
+                 ~op:(Op.Set.union Op.Set.movement (ops [ Op.Bitcast ]))
+                 ~name:"src" ();
+               Upat.wild;
+             ])
         (fun ctx m -> view_of (Some ctx) (m "c") (m "src"));
       (* Effects are collected after their sources are rewritten, without
          entering call bodies. *)

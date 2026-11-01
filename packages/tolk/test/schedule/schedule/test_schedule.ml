@@ -1183,6 +1183,74 @@ let views =
           equal values
             (Tensors.eval ~buffers bytes)
             (Tensors.eval ~buffers view));
+      test "a store into contiguous rows of a buffer stores into a view of them"
+        (fun () ->
+          let value = Ops.new_buffer ~slot:2 cpu 32 Float32 in
+          let c = Ops.store rows (Shape.reshape value [ Int 4; Int 8 ]) in
+          let viewed =
+            require_some (Schedule.contiguous_mops_to_view c rows)
+          in
+          equal bool ~msg:"the store stays" true (Ops.op viewed = Store);
+          let view = Ops.nth viewed 0 in
+          through_buffer view;
+          let buffers = filled c in
+          equal values
+            (Tensors.eval ~buffers rows)
+            (Tensors.eval ~buffers view));
+      test "stores of one shape into two runs of a buffer share a kernel"
+        (fun () ->
+          let buffer = Ops.new_buffer ~slot:6 cpu 16 Float32 in
+          let run lo = Shape.shrink buffer [ Some (Int lo, Int (lo + 8)) ] in
+          let doubled slot =
+            let v = Ops.new_buffer ~slot cpu 8 Float32 in
+            Ops.add v v
+          in
+          let sink =
+            Ops.sink
+              [
+                Ops.after buffer
+                  [
+                    Ops.store (run 0) (doubled 7);
+                    Ops.store (run 8) (doubled 8);
+                  ];
+              ]
+          in
+          let linear, _ =
+            Schedule.create_linear_with_vars ~capturing:true sink
+          in
+          let kernels =
+            List.filter_map
+              (fun n ->
+                if Ops.op n = Call && Ops.op (Ops.nth n 0) = Sink then
+                  Some (Ops.nth n 0)
+                else None)
+              (Ops.toposort ~calls:Skip linear)
+          in
+          match kernels with
+          | [ a; b ] -> equal uop ~msg:"the kernels" a b
+          | ks -> failf "%d kernels, not 2" (List.length ks));
+      test "a store into rows of a buffer after a store has no view" (fun () ->
+          let buffer = Ops.new_buffer ~slot:3 cpu 64 Float32 in
+          let first = Ops.new_buffer ~slot:4 cpu 64 Float32 in
+          let state = Ops.after buffer [ Ops.store buffer first ] in
+          let rows =
+            Shape.shrink
+              (Shape.reshape state [ Int 8; Int 8 ])
+              [ Some (Int 2, Int 6); None ]
+          in
+          let value = Ops.new_buffer ~slot:5 cpu 32 Float32 in
+          let c = Ops.store rows (Shape.reshape value [ Int 4; Int 8 ]) in
+          equal (option uop) None (Schedule.contiguous_mops_to_view c rows));
+      test "a store into rows of a buffer of a value that reads it has no view"
+        (fun () ->
+          let buffer = Ops.new_buffer ~slot:9 cpu 16 Float32 in
+          let run lo = Shape.shrink buffer [ Some (Int lo, Int (lo + 8)) ] in
+          let c = Ops.store (run 1) (run 0) in
+          equal (option uop) None (Schedule.contiguous_mops_to_view c (run 1)));
+      test "a store into columns of storage has no view" (fun () ->
+          let value = Ops.new_buffer ~slot:2 cpu 32 Float32 in
+          let c = Ops.store columns (Shape.reshape value [ Int 8; Int 4 ]) in
+          equal (option uop) None (Schedule.contiguous_mops_to_view c columns));
       test "a symbolic shape has no view" (fun () ->
           let v =
             Ops.variable "n" (`Int (Bigint.of_int 1)) (`Int (Bigint.of_int 8))

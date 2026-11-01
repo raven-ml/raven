@@ -4998,3 +4998,33 @@ fold wraps integers and holds its float bound`, hold.
   before one that only makes it` and `› pieces of one value are each read
   before the next is made`; every recorded schedule, from the equally patched
   tinygrad.
+
+## D184. A store into a run of a buffer stores into a view of it
+
+- **tinygrad:** `schedule/__init__.py:222-223` (`pm_callify_ctx_collect`):
+  `contiguous_mops_to_view` makes a view of a buffer for a copy or a stage
+  of movements of it, and for a store only into a bitcast of it. A store into
+  a shrink of a buffer indexes the buffer at the shrink's offset in its
+  kernel, so each offset is a program of its own.
+- **tolk:** `Schedule.view_of`, through `Schedule.pm_callify_ctx_collect`.
+- **Differs:** a store into movements or a bitcast of a buffer that select a
+  contiguous run of its elements stores into a view of that run: the kernel
+  takes the run as its buffer, and a copy stored there is a copy into it
+  (`Prepare`'s rule for a copy stored into storage on its device). Stores of
+  one shape into runs of one buffer at other offsets are one program. A store
+  into a buffer's state after earlier stores keeps indexing it, since a view
+  of the buffer would not be ordered after them, and so does a store whose
+  value reads the buffer, which the kernel split stages by the buffer's
+  identity.
+- **Reason:** (b): rune's compiled programs over several devices
+  (`Compile.assembled`) hold an assembly as a buffer filled by a store per
+  piece, each device's own piece at its device's offset. Indexed at the
+  offset, a data-parallel step over 2, 4, 8 and 16 memory devices made 19,
+  31, 55 and 103 programs; through views, 11 each, against rune's promise of
+  as many whatever the devices (D170).
+- **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores of one
+  shape into two runs of a buffer share a kernel`, `› a store into contiguous
+  rows of a buffer stores into a view of them`, `› a store into rows of a
+  buffer after a store has no view`, `› a store into rows of a buffer of a
+  value that reads it has no view` and `› a store into columns of storage
+  has no view`; rune's `Rune.jit over several devices › programs`.

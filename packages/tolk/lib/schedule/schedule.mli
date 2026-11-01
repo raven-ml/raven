@@ -69,9 +69,10 @@ val create_linear_with_vars :
 
     + the stores of [big_sink] become the body of a call compiled on its own,
       whose arguments are the buffers, the contiguous views of buffers that
-      copies and stores read ({!contiguous_mops_to_view}), and the bound
-      variables, each replaced in the body by a parameter; call-local storage is
-      numbered by its order in each body, so equal graphs schedule alike;
+      copies read and stores store into ({!contiguous_mops_to_view}), and the
+      bound variables, each replaced in the body by a parameter; call-local
+      storage is numbered by its order in each body, so equal graphs schedule
+      alike;
     + each such call's body is scheduled ({!create_schedule}), once per body
       when the setting {!Setting.scache} is [1] or more: a call that asks for a
       body another domain is scheduling waits for it. From [2], the default,
