@@ -14,11 +14,13 @@ module Ready = Set.Make (Int)
    time would place its body before the nodes around the loop, an
    accumulator's first store among them, which would then be skipped when the
    loop runs no time. *)
-let runs r = max 1 (Dtype.Value.to_int (vmax r) + 1)
+let runs r = Bigint.max Bigint.one (Bigint.succ (Dtype.Value.to_z (vmax r)))
 
 let priority u =
   let rs = ranges u in
-  let run_count = Nodes.fold (fun r n -> n * runs r) rs 1 in
+  (* exact: a range bounded by a value loaded from memory runs up to its type's
+     count, and their product outgrows an [int] *)
+  let run_count = Nodes.fold (fun r n -> Bigint.mul n (runs r)) rs Bigint.one in
   (* Smaller numbers are placed closer to the top. *)
   let priority, extra =
     match (op u, arg u) with
@@ -39,7 +41,8 @@ let pp_priority ppf (run_count, depth, priority, extra) =
     | None -> Format.pp_print_string ppf "None"
     | Some slot -> Format.pp_print_int ppf slot
   in
-  Format.fprintf ppf "(%d, %d, %d, %a)" run_count depth priority pp_extra extra
+  Format.fprintf ppf "(%s, %d, %d, %a)" (Bigint.to_string run_count) depth
+    priority pp_extra extra
 
 let linearize sink =
   let lst = toposort ~calls:Skip sink in
@@ -55,7 +58,12 @@ let linearize sink =
   (* Number the nodes in the ideal order. *)
   let tuple_order = Setting.value Setting.tuple_order in
   let ideal u0 u1 =
-    match Stdlib.compare (Tbl.find priorities u0) (Tbl.find priorities u1) with
+    let (r0, d0, p0, e0), (r1, d1, p1, e1) =
+      (Tbl.find priorities u0, Tbl.find priorities u1)
+    in
+    let c = Bigint.compare r0 r1 in
+    let c = if c <> 0 then c else Stdlib.compare (d0, p0, e0) (d1, p1, e1) in
+    match c with
     | 0 when tuple_order -> compare_structure u0 u1
     | c -> c
   in
