@@ -38,7 +38,9 @@ golden/types.bsp
 
 golden/types-big.bsp
     types.bsp in BIG-IEEE: each double and integer of its file, summary
-    and data records with its bytes reversed.
+    and data records with its bytes reversed. CSPICE reads it as a
+    non-native file, and its states from it at the types instants must
+    be its states from types.bsp, bit for bit.
 
 golden/many.bsp
     Written with spkw02 from the excerpt's coefficients: 30 type 2
@@ -314,11 +316,13 @@ def instants(name, path):
     return list(dict.fromkeys(instant(et) for et in ets))
 
 
-def references(name, path):
+def references(name, path, at=None):
+    """CSPICE's states of [name]'s pairs from [path], at [at] or the
+    instants of [path]."""
     sp.furnsh(str(path))
     rows = []
     try:
-        for mjd, second in instants(name, path):
+        for mjd, second in at or instants(name, path):
             et = et_of(mjd, second)
             states = []
             for target, center in PAIRS[name]:
@@ -377,6 +381,11 @@ def main():
         write_types(EXCERPT, paths["types"])
         write_many(EXCERPT, paths["many"])
         big = big_endian(paths["types"].read_bytes())
+        big_path = d / "types-big.bsp"
+        big_path.write_bytes(big)
+        at = instants("types", paths["types"])
+        if references("types", big_path, at) != references("types", paths["types"], at):
+            sys.exit("CSPICE reads types-big.bsp otherwise than types.bsp")
         files = [
             (GOLDEN / "types.bsp", paths["types"].read_bytes()),
             (GOLDEN / "types-big.bsp", big),
