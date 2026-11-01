@@ -25,20 +25,21 @@ let dot u v =
 let every b =
   if width b = 1 then Nx.reshape (lanes b) b else Nx.all ~axes:[ -1 ] b
 
-(* The squares are summed on the vector divided by its largest magnitude,
-   clamped to the normal floats so that a vector of zeros or with an infinite
-   component divides by a finite, positive number: the squares of components of
-   10⁻¹⁷⁰ are below the floats' range. *)
+(* The largest magnitude is clamped to the normal floats so that a vector of
+   zeros or with an infinite component divides by a finite, positive number. *)
+let largest v =
+  let dtype = Nx.dtype v in
+  Nx.clamp ~min:(Num.tiny dtype) ~max:(Num.huge dtype)
+    (Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs v))
+
+(* The squares are summed on the vector divided by its largest magnitude: the
+   squares of components of 10⁻¹⁷⁰ are below the floats' range. *)
 let norm v =
   match width v with
   | 0 -> Nx.zeros_at (Nx.beside v) (Nx.dtype v) (lanes v)
   | 1 -> Nx.reshape (lanes v) (Nx.abs v)
   | _ ->
-      let dtype = Nx.dtype v in
-      let m =
-        Nx.clamp ~min:(Num.tiny dtype) ~max:(Num.huge dtype)
-          (Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs v))
-      in
+      let m = largest v in
       let u = Nx.div v m in
       Nx.mul (Nx.reshape (lanes v) m) (Nx.sqrt (dot u u))
 

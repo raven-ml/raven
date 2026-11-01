@@ -287,15 +287,6 @@ raven / llama.cpp (Vulkan; ROCm):
   within 2 ulps, and `anderson ~memory:2` in test_system "compiled equals
   eager" stalls before the exact zero it reaches. A test in the
   tolerance's own scaling might hold both
-- jera: three sums of squares still underflow for unknowns or residuals
-  below about 1e-154: Newton's merit `half_square` (system.ml), where φ0,
-  φ and the slope all read 0 and Armijo accepts every full step
-  (f x = s atan(x / s), two unknowns from (3s, 0), s = 2^-540, ends not
-  ok); Broyden's `ss = dot dx dx` (system.ml), which never updates B; and
-  Levenberg–Marquardt's cost and predicted decrease (minimize.ml,
-  `lm_problem`'s `cost` and `lm_trial`), where ρ = 0/0. A merit scaled by a
-  per-step constant 1 / max |f x_k| leaves Armijo and the rounding test
-  invariant
 - jera: the contraction is measured on the whole vector's norm and
   multiplies each component's |δᵢ|, which understates a small component
   coupled to a large one. `Minimize.lbfgs ~memory:3` on

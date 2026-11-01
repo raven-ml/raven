@@ -1148,14 +1148,22 @@ let lm_problem fn x r linear f start =
    projected on a box can leave the linear model no decrease to predict, and
    then [ρ] is no measure: it is rejected. *)
 let lm_trial residual ~jacobian ~project ~running j x r g delta =
-  let half_square v = Nx.mul_s (Search.dot v v) 0.5 in
   let xt = project (Nx.add x delta) in
   let step = Nx.sub xt x in
   let rt = residual xt in
   let jt = jacobian xt in
   let gt = Nx.matmul (Nx.transpose jt) rt in
+  (* The cost and the decreases are measured on [r / m], [m] the largest [|r|]
+     at the step's start: a constant factor, which [ρ] and the rounding band do
+     not see, and under which the squares of residuals below 10⁻¹⁵⁴ do not
+     underflow to [ρ = 0 / 0]. *)
+  let m = Search.largest r in
+  let over v = Nx.div v m in
+  let half_square v = Nx.mul_s (Search.dot (over v) (over v)) 0.5 in
   let jd = Nx.matmul j step in
-  let predicted = Nx.sub (Nx.neg (Search.dot g step)) (half_square jd) in
+  let predicted =
+    Nx.sub (Nx.neg (Search.dot (over g) (over step))) (half_square jd)
+  in
   let cost = half_square r and cost' = half_square rt in
   (* Within [√ε |r|² / 2] of the cost its measured decrease is rounding. There
      the decrease is the gradients' trapezoid along the step, [−(∇ + ∇') · s /
@@ -1165,7 +1173,9 @@ let lm_trial residual ~jacobian ~project ~running j x r g delta =
      materialises one Jacobian per iteration as before. *)
   let band = Nx.mul_s cost (sqrt (Num.eps (Nx.dtype cost))) in
   let blurred = Nx.less_equal (Nx.abs (Nx.sub cost' cost)) band in
-  let trapezoid = Nx.mul_s (Search.dot (Nx.add g gt) step) (-0.5) in
+  let trapezoid =
+    Nx.mul_s (Search.dot (over (Nx.add g gt)) (over step)) (-0.5)
+  in
   let decrease = Nx.where blurred trapezoid (Nx.sub cost cost') in
   let rho = Nx.div decrease predicted in
   let ok =

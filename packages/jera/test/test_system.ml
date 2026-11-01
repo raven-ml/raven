@@ -96,6 +96,54 @@ let newton_tests =
             ~budget:20 f seed
         in
         equal near z (Solution.get s));
+    test "the zero of s atan (x / s) at s = 2⁻⁵⁴⁰ is found" (fun () ->
+        (* The full step from [3 s] overshoots to [−12.5 s], which the line
+           search must shorten; the squares of these residuals are below the
+           floats' range. *)
+        let s = Float.ldexp 1. (-540) in
+        let f x = Nx.mul_s (Nx.atan (Nx.div_s x s)) s in
+        let st =
+          System.solve one
+            (System.newton ~derivative:(derivative f))
+            ~linear:Linear.dense
+            ~tol:(Tol.v ~rel:1e-12 ~abs:(1e-12 *. s))
+            ~budget:50 f
+            (vec [| 3. *. s; 0. |])
+        in
+        equal bool true (is Converged st);
+        equal
+          (Oracle.tensor ~abs:(1e-12 *. s) ())
+          (Nx.zeros f64 [| 2 |]) (Solution.get st));
+    prop "a system scaled by a power of two solves to its zero scaled, bit for bit"
+      system (fun (a, z) ->
+        (* [atan (x − z) + a (x − z) / 10] from [z + 3]: Newton's full steps on
+           the arctangent overshoot, and the line search shortens them.
+           [s f (x / s)] from [s (z + 3)] evaluates [s] times what [f] does,
+           exactly, at [s = 2⁻⁵⁴⁰], whose squares are below the floats' range:
+           every decision of the search is the unscaled one's. A zero below
+           10⁻¹⁰⁰ is 0, so that the scaled one is not subnormal. *)
+        let s = Float.ldexp 1. (-540) in
+        let z = Nx.where (Nx.less_s (Nx.abs z) 1e-100) (Nx.zeros_like z) z in
+        let f x =
+          let d = Nx.sub x z in
+          Nx.add (Nx.atan d) (Nx.mul_s (Nx.matmul a d) 0.1)
+        in
+        let scaled x = Nx.mul_s (f (Nx.div_s x s)) s in
+        let solve f tol x0 =
+          System.solve one
+            (System.newton ~derivative:(derivative f))
+            ~linear:Linear.dense ~tol ~budget:50 f x0
+        in
+        let x0 = Nx.add_s z 3. in
+        let plain = solve f tight x0
+        and small =
+          solve scaled (Tol.v ~rel:1e-12 ~abs:(1e-12 *. s)) (Nx.mul_s x0 s)
+        in
+        cover "a lane converges" (is Converged plain);
+        equal (Oracle.tensor ())
+          (Nx.mul_s (Solution.best plain) s)
+          (Solution.best small);
+        equal bool (is Converged plain) (is Converged small));
     test "a linear system takes one step, then the zero step" (fun () ->
         (* f at the guess, at x + δ in the line search, then δ = 0. *)
         let a = Nx.create f64 [| 2; 2 |] [| 3.; 1.; 1.; 2. |] in
@@ -156,6 +204,24 @@ let broyden_tests =
     prop "its zero is the one the system is built around" system (fun (a, z) ->
         let f = field a (rhs a z) in
         equal near z (Solution.get (broyden f (Nx.zeros_like z))));
+    test "the estimate of a tiny system's Jacobian learns from its steps"
+      (fun () ->
+        (* [x / 2 − 3 s atan (x / s) / 2 = s b] at [s = 2⁻⁵⁴⁰]: the
+           differences' probes, √ε away, saturate the arctangent, so [B]
+           starts as [1/2] while the slope at the zero is negative. Only the
+           rank-one updates, from steps whose squares are below the floats'
+           range, turn it. *)
+        let s = Float.ldexp 1. (-540) and z = vec [| 1.; -0.5 |] in
+        let g u = Nx.sub (Nx.mul_s u 0.5) (Nx.mul_s (Nx.atan u) 1.5) in
+        let b = g z in
+        let f x = Nx.sub (Nx.mul_s (g (Nx.div_s x s)) s) (Nx.mul_s b s) in
+        let st =
+          System.solve one System.broyden ~linear:Linear.dense
+            ~tol:(Tol.v ~rel:1e-12 ~abs:(1e-12 *. s))
+            ~budget:100 f
+            (Nx.mul_s (vec [| 0.9; -0.4 |]) s)
+        in
+        equal near z (Nx.div_s (Solution.get st) s));
     test "its derivative is rune's, whatever the differences" (fun () ->
         let a = jacobian (Nx.eye f64 3) (Nx.zeros f64 [| 3 |]) in
         let solve b =

@@ -14,6 +14,12 @@
 val dot : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [dot u v] is each lane's inner product, of the lanes' shape. *)
 
+val largest : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
+(** [largest v] is each lane's largest magnitude, of the lanes' shape and an
+    axis of one, clamped to the dtype's normal floats: the vector divided by it
+    has a largest magnitude of one, so its squares neither underflow nor
+    overflow. *)
+
 val norm : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [norm v] is each lane's Euclidean norm, of the lanes' shape. Its sum of
     squares is taken on the vector scaled to a largest magnitude of one, so the

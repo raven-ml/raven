@@ -319,6 +319,24 @@ let lm_tests =
           (Oracle.tensor ~abs:1e-5 ())
           (vec [| 0.; 0. |])
           (Rune.grad' cost fit));
+    prop "a fit scaled by a power of two reaches its fit scaled, bit for bit"
+      exponentials (fun p ->
+        (* [s r (x / s)] from [s x₀] evaluates [s] times what [r] does, exactly,
+           with the same Jacobian, at [s = 2⁻⁵⁴⁰], whose squares are below the
+           floats' range: every decision is the unscaled fit's. *)
+        let s = Float.ldexp 1. (-540) in
+        let y = model p in
+        let r q = Nx.sub (model q) y in
+        let scaled x = Nx.mul_s (r (Nx.div_s x s)) s in
+        let fit r tol x0 = Minimize.solve one lm ~tol ~budget:100 r x0 in
+        let plain = fit r tight (vec [| 1.; 0. |])
+        and small =
+          fit scaled (Tol.v ~rel:1e-10 ~abs:(1e-12 *. s)) (vec [| s; 0. |])
+        in
+        equal (Oracle.tensor ())
+          (Nx.mul_s (Solution.best plain) s)
+          (Solution.best small);
+        equal bool (is Converged plain) (is Converged small));
     test "with residuals left, Jᵀ r vanishes at the fit" (fun () ->
         let y =
           Nx.add

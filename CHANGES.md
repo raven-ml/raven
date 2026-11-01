@@ -493,6 +493,11 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `System.newton`, `System.broyden` and `Minimize.levenberg_marquardt` measure
+  their merit, Jacobian update and cost on the residual or step divided by its
+  largest magnitude. Below about `1e-154` the squares underflowed: Newton
+  accepted every full step, Broyden never updated its Jacobian and the
+  Levenberg–Marquardt ratio read `0 / 0`.
 - `Sde.march` queries the Brownian path once per step instead of twice,
   carrying its value and integral from each step's end to the next step.
 - `Sde.milstein` gives no NaN on a step whose span rounds to zero, as 4 steps

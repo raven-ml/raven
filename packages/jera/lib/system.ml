@@ -30,7 +30,11 @@ let half_square v = Nx.mul_s (Search.dot v v) 0.5
 
    The step solves [J δ = −f x] with [linear], then backtracks from [x + δ] to
    the sufficient decrease of [|f|² / 2]. The linear run's residual is [J δ + f
-   x], so the merit's slope at [x] is [f x · (J δ)]. *)
+   x], so the merit's slope at [x] is [f x · (J δ)]. Each step measures the
+   merit on [f / m], [m] the largest [|f x|] at the step's start: a constant
+   factor, which the sufficient decrease and its rounding test do not see,
+   and under which the squares of residuals below 10⁻¹⁵⁴ neither underflow to
+   0 nor accept every trial. *)
 
 let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
     =
@@ -40,13 +44,16 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
     let s = { s with st = settle s.st failed Stalled } in
     let s, at_limit = Search.test_at tol s delta in
     let run = searching s.st in
+    let m = Search.largest s.fx in
+    let merit v = half_square (Nx.div v m) in
     let accept, shrink =
-      Search.armijo ~phi0:(half_square s.fx) ~slope0:(Search.dot s.fx jd)
+      Search.armijo ~phi0:(merit s.fx)
+        ~slope0:(Search.dot (Nx.div s.fx m) (Nx.div jd m))
     in
     let trial alpha =
       let x = Nx.add s.x (Search.along alpha delta) in
       let fx = residual x in
-      let phi = half_square fx in
+      let phi = merit fx in
       ((x, fx), phi, accept alpha phi)
     in
     let (x, fx), found, tries, full =
@@ -60,7 +67,7 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
        floats' limit, the undamped map moving over it by no more than the
        rounding of its two values. At [f]'s evaluation level a step moves an
        unknown at 0 by more than its ulps, and the merit it reaches can rise. *)
-    let phi0 = half_square s.fx in
+    let phi0 = merit s.fx in
     let unmoved = Nx.all ~axes:[ -1 ] (Nx.equal x s.x) in
     let rounded =
       Nx.logical_and (Nx.logical_not found)
@@ -141,15 +148,19 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
         dtype ~trials ~running:run ~shrink trial (s.x, s.fx)
     in
     let st = settle s.Search.st (Nx.logical_not found) Stalled in
+    (* The update divides by [sᵀ s] taken on [s / m], [m] its largest
+       magnitude, whose square is below the floats' range for steps of
+       10⁻¹⁵⁴. *)
     let dx = Nx.sub x s.x and df = Nx.sub fx s.fx in
-    let ss = Search.dot dx dx in
-    let moved = Nx.greater_s ss 0. in
+    let m = Search.largest dx in
+    let moved = Nx.any (Nx.not_equal_s dx 0.) in
+    let u = Nx.div dx m in
     let update =
       Nx.div
         (Nx.mul
-           (Nx.reshape [| -1; 1 |] (Nx.sub df (Nx.matmul b dx)))
-           (Nx.reshape [| 1; -1 |] dx))
-        (Nx.where moved ss (Nx.ones_like ss))
+           (Nx.reshape [| -1; 1 |] (Nx.div (Nx.sub df (Nx.matmul b dx)) m))
+           (Nx.reshape [| 1; -1 |] u))
+        (Nx.where moved (Search.dot u u) (Nx.ones_like m))
     in
     let b = Nx.where moved (Nx.add b update) b in
     ({ s with x; fx; st; n = Nx.add s.n tries }, (b, Nx.add_s k 1l))
