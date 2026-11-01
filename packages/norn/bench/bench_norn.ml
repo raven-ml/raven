@@ -104,6 +104,24 @@ let ensemble_step =
   in
   Thumper.bench_with_setup ~setup "schools/64" (fun (step, k, s) -> step k s)
 
+(* Pathfinder, eager, from 4 chains: 50 L-BFGS iterates per path, their
+   Gaussians and the bounds' draws. *)
+let pathfinder =
+  let setup () =
+    (M.log_density model y, M.init model y ~chains:4 (Nx.Rng.key 1))
+  in
+  Thumper.bench_with_setup ~setup "schools/4" (fun (lp, start) ->
+      Norn.Gaussian.pathfinder u ~steps:50 lp (Nx.Rng.key 2) start)
+
+(* A mean-field fit, eager, of 4 chains in 200 steps, after its search of 50
+   steps per step size. *)
+let vi_fit =
+  let setup () =
+    (M.log_density model y, M.init model y ~chains:4 (Nx.Rng.key 1))
+  in
+  Thumper.bench_with_setup ~setup "schools/4" (fun (lp, start) ->
+      Norn.Gaussian.vi u ~steps:200 lp (Nx.Rng.key 2) start)
+
 (* A Gaussian likelihood of scale 0.5 under a uniform prior on [-5, 5]^5, over
    400 points. *)
 let cube_prior x =
@@ -250,6 +268,8 @@ let () =
       Thumper.group "nuts" [ nuts_step 4; nuts_step 64 ];
       Thumper.group "hmc" [ hmc_step 4; hmc_step 64; hmc_step 1024 ];
       Thumper.group "ensemble" [ ensemble_step ];
+      Thumper.group "pathfinder" [ pathfinder ];
+      Thumper.group "vi" [ vi_fit ];
       Thumper.group "nested" [ nested_step ];
       Thumper.group "smc"
         [ smc_step Norn.Smc.Hmc "hmc"; smc_step Norn.Smc.Slice "slice" ];

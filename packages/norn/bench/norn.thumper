@@ -1,6 +1,14 @@
 # thumper baseline v1
 # suite: norn
 
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+# forced: blessed pathfinder/schools/4 vi/schools/4 under load 29.7 on 14 cores
+
+pathfinder/schools/4	alloc_words	exact	9807778
+vi/schools/4	alloc_words	exact	11265956
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
