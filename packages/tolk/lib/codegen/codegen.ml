@@ -518,15 +518,18 @@ let devectorizer2 =
          rule (Upat.op Op.Index ~src:[ Upat.var "x" ]) (fun m -> Some (m "x"));
          (* unpack WMMA *)
          rule (Upat.op Op.Wmma ~name:"u") (fun m -> do_stack_wmma (m "u"));
-         (* RESHAPE a void is removed (hack for AFTER) *)
-         rule (Upat.op Op.Reshape ~dtype:[ Dtype.Void ] ~name:"x") (fun m ->
-             Some (nth (m "x") 0));
          (* reshape of a single element shaped value to scalar is an index *)
          rule (Upat.op Op.Reshape ~name:"x") (fun m ->
              let x = m "x" in
              match (marg x, shape (nth x 0)) with
              | Reshape [], [ Int 1 ] -> Some (index_ints (nth x 0) [ 0 ])
              | _ -> None);
+         (* a scalar index into a one-lane STACK is its lane, 0 is the only
+            in-bounds index *)
+         rule
+           (Upat.op Op.Index
+              ~src:[ Upat.op Op.Stack ~src:[ Upat.var "x" ]; Upat.var "i" ])
+           (fun m -> if shape (m "i") = [] then Some (m "x") else None);
        ])
 
 (* Reductions *)

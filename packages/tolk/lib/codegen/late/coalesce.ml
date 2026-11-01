@@ -178,7 +178,6 @@ let memory_coalescing sink (r : Renderer.t) =
               match grp with
               | [] -> ()
               | first :: _ ->
-                  let offset = at first in
                   let length =
                     List.find
                       (fun l ->
@@ -189,41 +188,40 @@ let memory_coalescing sink (r : Renderer.t) =
                   in
                   let now = List.filteri (fun i _ -> i < length) grp
                   and rest = List.filteri (fun i _ -> i >= length) grp in
-                  (* The gate applies again once the length is known. *)
-                  let offset = valid offset key.valid in
-                  let idx =
-                    if length > 1 then
-                      v Op.Shrink ~src:[ key.buf; offset; int length ]
-                    else index key.buf [ offset ]
-                  in
-                  (if key.op = Op.Store then begin
-                     let stores = List.map accesses now in
-                     if List.exists (fun us -> List.length us <> 1) stores then
-                       invalid_arg "attempting multiple stores";
-                     let datas =
-                       List.map (fun us -> nth (List.hd us) 1) stores
+                  if
+                    key.op = Op.Store
+                    && List.exists
+                         (fun o -> List.compare_length_with (accesses o) 1 <> 0)
+                         now
+                  then invalid_arg "attempting multiple stores";
+                  (* A run of one is left as it is. A run starts at its first
+                     access's index, its gate included. *)
+                  (if length > 1 then
+                     let offset = nth (nth (List.hd (accesses first)) 0) 1 in
+                     let idx =
+                       v Op.Shrink ~src:[ key.buf; offset; int length ]
                      in
-                     let st =
-                       store idx
-                         (if length > 1 then stack datas else List.hd datas)
-                     in
-                     List.iter
-                       (fun us ->
-                         replacements := (List.hd us, st) :: !replacements)
-                       stores
-                   end
-                   else
-                     let ld = v Op.Load ~src:[ idx ] ~arg:key.arg in
-                     List.iteri
-                       (fun i g ->
-                         let value =
-                           if length > 1 then index ld [ int i ] else ld
-                         in
-                         List.iter
-                           (fun oo ->
-                             replacements := (oo, value) :: !replacements)
-                           (accesses g))
-                       now);
+                     if key.op = Op.Store then begin
+                       let stores = List.map accesses now in
+                       let datas =
+                         List.map (fun us -> nth (List.hd us) 1) stores
+                       in
+                       let st = store idx (stack datas) in
+                       List.iter
+                         (fun us ->
+                           replacements := (List.hd us, st) :: !replacements)
+                         stores
+                     end
+                     else
+                       let ld = v Op.Load ~src:[ idx ] ~arg:key.arg in
+                       List.iteri
+                         (fun i g ->
+                           List.iter
+                             (fun oo ->
+                               let value = index ld [ int i ] in
+                               replacements := (oo, value) :: !replacements)
+                             (accesses g))
+                         now);
                   take rest
             in
             take run)

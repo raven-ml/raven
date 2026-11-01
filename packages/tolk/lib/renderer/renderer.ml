@@ -25,9 +25,6 @@ module Estimates = struct
 
   let zero = { ops = Int 0; lds = Int 0; mem = Int 0 }
 
-  let add e o =
-    Sint.{ ops = e.ops + o.ops; lds = e.lds + o.lds; mem = e.mem + o.mem }
-
   let ssimplify_sint = function Int n -> Int n | Sym u -> ssimplify u
 
   let simplify e =
@@ -46,6 +43,28 @@ module Estimates = struct
              (List.map zero
                 (List.filter (is Op.Special) (toposort ~calls:Skip m))))
 
+  (* Counts are exact: a range bounded by a value loaded from memory runs up to
+     its type's greatest count, whose products outgrow an [int]. An integer
+     result is an [Int] where it fits one, else a constant node. *)
+  module X = struct
+    let of_z z =
+      if Bigint.fits_int z then Int (Bigint.to_int z) else Sym (const (`Int z))
+
+    let exact fz fs (a : sint) (b : sint) =
+      match (a, b) with
+      | Int x, Int y -> of_z (fz (Bigint.of_int x) (Bigint.of_int y))
+      | _ -> fs a b
+
+    let ( * ) = exact Bigint.mul Sint.( * )
+    let ( + ) = exact Bigint.add Sint.( + )
+
+    let of_value = function
+      | `Int z -> of_z z
+      | v -> Sym (const (v :> Dtype.const))
+  end
+
+  let add e o = X.{ ops = e.ops + o.ops; lds = e.lds + o.lds; mem = e.mem + o.mem }
+
   let of_uops ?(ignore_indexing = false) uops =
     let flops = ref (Int 0) and lds = ref (Int 0) and mults = ref (Int 1) in
     let mem = ref [] and mult_stack = ref [] and excluded = Tbl.create 16 in
@@ -59,7 +78,7 @@ module Estimates = struct
         uops;
     let counted u = not (Tbl.mem excluded u) in
     let bytes u dt = Int (max_numel u * Dtype.itemsize dt) in
-    let times n = Sint.(n * !mults) in
+    let times n = X.(n * !mults) in
     let access buf o =
       let same ((b, o'), _) = b == buf && Op.equal o o' in
       match List.find_opt same !mem with
@@ -82,38 +101,43 @@ module Estimates = struct
            if is Op.Param buf then
              (* capped at the buffer's size, for re-reads such as a matmul's *)
              let total = access buf o and idx = nth u 0 in
-             let accessed = Sint.(!total + times (bytes idx (dtype idx))) in
+             let accessed = X.(!total + times (bytes idx (dtype idx))) in
              total := smin [ accessed; bytes buf (dtype buf) ]);
         match o with
         | Op.Range ->
             mult_stack := !mults :: !mult_stack;
             if not (Dtype.equal (dtype u) Dtype.Void) then
-              let n = ssimplify (without_after (nth u 0)) in
-              mults := without_specials Sint.(!mults * n)
+              (* a bound that reads other ranges counts its greatest value *)
+              let bound = Shape.simplify (without_after (nth u 0)) in
+              let n =
+                if Nodes.cardinal (ranges bound) = 0 then ssimplify bound
+                else X.of_value (vmax bound)
+              in
+              mults := without_specials X.(!mults * n)
         | Op.End | Op.Backedge -> (
             match !mult_stack with
             | m :: rest ->
                 mults := m;
                 mult_stack := rest
             | [] -> invalid_arg "an END or BACKEDGE closes no RANGE")
-        | Op.Special -> mults := Sint.(!mults * ssimplify (nth u 0))
+        | Op.Special -> mults := X.(!mults * ssimplify (nth u 0))
         | Op.Load when addrspace (nth u 0) <> Some Dtype.Reg ->
-            lds := Sint.(!lds + times (bytes u (dtype u)))
+            lds := X.(!lds + times (bytes u (dtype u)))
         | Op.Store when addrspace (nth u 0) <> Some Dtype.Reg ->
-            lds := Sint.(!lds + times (bytes u (dtype (nth u 1))))
+            lds := X.(!lds + times (bytes u (dtype (nth u 1))))
         | Op.Wmma when counted u -> (
             match arg u with
             | Wmma { dims = n, m, k; threads; _ } ->
                 let per_thread = 2 * n * m * k / threads in
-                flops := Sint.(!flops + times (Int per_thread))
+                flops := X.(!flops + times (Int per_thread))
             | _ -> invalid_arg "a WMMA without its tensor core argument")
         | o when Op.Set.mem o Op.Set.alu && counted u ->
             let per = Int (if Op.equal o Op.Mulacc then 2 else 1) in
             let n = Int (max_numel u) in
-            flops := Sint.(!flops + (!mults * per * n))
+            flops := X.(!flops + (!mults * per * n))
         | _ -> ())
       uops;
-    let mem = List.fold_left (fun s (_, t) -> Sint.(s + !t)) (Int 0) !mem in
+    let mem = List.fold_left (fun s (_, t) -> X.(s + !t)) (Int 0) !mem in
     { ops = ssimplify_sint !flops; lds = !lds; mem }
 end
 

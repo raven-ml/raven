@@ -98,6 +98,50 @@ let nested_ranges () =
     (Renderer.Estimates.of_uops [ outer; inner; a; body; ended; after; closed ])
       .ops
 
+(* [j < i + 1] inside [i < 3] runs 3 times its greatest count of trips, 3. *)
+let a_triangular_loop_counts_its_greatest_trips () =
+  let buf = buffer ~dtype:Dtype.Int32 0 6 and i = range 3 in
+  let j = Ops.range (Sym Ops.O.(i + Ops.int 1)) [ 1 ] in
+  let idx = Ops.O.((i * (i + Ops.int 1) // Ops.int 2) + j) in
+  let st = Ops.store (at buf idx) (Ops.cast j Dtype.Int32) in
+  let kernel = Ops.end_ st [ j; i ] in
+  equal sint (Int (3 * 3 * 4))
+    (Renderer.Estimates.of_uops (Ops.toposort ~calls:Skip kernel)).lds
+
+(* [j < x[i]] inside [i < 3], [x] of int64: [j] runs up to 2^63 - 1 times,
+   which no [int] count holds. *)
+let a_loaded_bound_counts_exactly () =
+  let x = buffer ~dtype:Dtype.Int64 1 3 and i = range 3 in
+  let j = Ops.range (Sym (Ops.cast (load x i) Dtype.Weak_int)) [ 1 ] in
+  let body = Ops.O.(f32 1. + Ops.cast j Dtype.Float32) in
+  let kernel = Ops.end_ body [ j; i ] in
+  let e = Renderer.Estimates.of_uops (Ops.toposort ~calls:Skip kernel) in
+  match e.ops with
+  | Int n -> failf "%d operations, where 3 * (2^63 - 1) are" n
+  | Sym u ->
+      equal string
+        (Bigint.to_string Bigint.(mul (of_int 3) (pred (shift_left one 63))))
+        (Bigint.to_string (Shape.to_z u))
+
+(* [j < x[i]] inside [i < 2^31], [x] of int32: its trips, 2^31 times [x]'s
+   greatest value, fit an [int], and the bytes its store writes, four times as
+   many, beside the 4 bytes its bound loads on each of [i]'s, do not. *)
+let a_count_past_an_int_after_its_ranges () =
+  let x = buffer ~dtype:Dtype.Int32 1 4 and out = buffer ~dtype:Dtype.Int32 0 4 in
+  let i = range (1 lsl 31) in
+  let j = Ops.range (Sym (Ops.cast (load x i) Dtype.Weak_int)) [ 1 ] in
+  let st = Ops.store (at out (Ops.int 0)) (Ops.cast j Dtype.Int32) in
+  let kernel = Ops.end_ st [ j; i ] in
+  let e = Renderer.Estimates.of_uops (Ops.toposort ~calls:Skip kernel) in
+  let greatest = Dtype.Value.to_z (Ops.vmax (Shape.simplify (Ops.nth j 0))) in
+  let trips = Bigint.(mul (shift_left one 31) greatest) in
+  match e.lds with
+  | Int n -> failf "%d bytes, past an int" n
+  | Sym u ->
+      equal string
+        (Bigint.to_string Bigint.(mul (of_int 4) (trips + shift_left one 31)))
+        (Bigint.to_string (Shape.to_z u))
+
 let a_loop_counts_once () =
   let loop = Ops.loop 0 and a = f32 1. in
   let body = Ops.O.(a + a) in
@@ -241,6 +285,12 @@ let estimates_of_uops =
       test "counts the operations of a range once per iteration"
         a_range_multiplies;
       test "multiplies the trip counts of nested ranges" nested_ranges;
+      test "counts a range bounded by another range at its greatest trips"
+        a_triangular_loop_counts_its_greatest_trips;
+      test "counts a range bounded by a loaded value exactly, past an int"
+        a_loaded_bound_counts_exactly;
+      test "counts bytes past an int where the trips fit one"
+        a_count_past_an_int_after_its_ranges;
       test "counts a loop without trip count as one iteration"
         a_loop_counts_once;
       test "multiplies everything after a hardware index by its size"
@@ -407,8 +457,13 @@ let arithmetic_estimates =
       prop "zero is the neutral element of add" integer_estimates
         (Law.neutral estimates add Renderer.Estimates.zero);
       test "add sums symbolic counts" symbolic_sum;
-      test "add past max_int raises rather than wrapping" (fun () ->
-          rejects (fun () -> add (counts max_int 0 0) (counts 1 0 0)));
+      test "add past max_int is exact rather than wrapping" (fun () ->
+          match (add (counts max_int 0 0) (counts 1 0 0)).ops with
+          | Int n -> failf "%d operations, where max_int + 1 are" n
+          | Sym u ->
+              equal string
+                (Bigint.to_string (Bigint.succ (Bigint.of_int max_int)))
+                (Bigint.to_string (Shape.to_z u)));
     ]
 
 let symbolic_estimates =

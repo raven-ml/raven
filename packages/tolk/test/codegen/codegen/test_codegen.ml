@@ -4182,6 +4182,21 @@ let runs_on_host k inputs expected () =
   equal (array Dtypes.value) (int_values expected)
     (List.assoc 0 (Run.on_host prg inputs))
 
+(* [a[0] = [42][a[1]]]: a one-lane stack read at a runtime index, 0, the only
+   index in bounds. *)
+let one_lane_stack () =
+  let a = int_param ~name:"a" 0 2 in
+  let lane = Ops.load (at a (Ops.int 1)) [] in
+  kernel "stack"
+    [ Ops.store (first a) (Ops.index (Ops.v Op.Stack ~src:[ i32 42 ]) [ lane ]) ]
+
+let stacks =
+  group "stacks"
+    [
+      test "a one-lane stack read at a runtime index is its lane"
+        (runs_on_host one_lane_stack [ (0, int_values [ 0; 0 ]) ] [ 42; 0 ]);
+    ]
+
 let calls =
   group "calls in a kernel"
     [
@@ -4399,5 +4414,6 @@ let () =
          line_rewrites;
          cleanups;
          calls;
+         stacks;
          int_powers;
        ])

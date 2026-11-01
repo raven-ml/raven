@@ -13,15 +13,12 @@ let rule_ctx = Pattern_matcher.rule_ctx
 
 let flatten_range r =
   let off = Option.get (range_start (op r)) in
-  match List.drop off (src r) with
-  | [] -> None
-  | rngs ->
-      let flat =
-        List.concat_map
-          (fun s -> if op s = Op.Range then [ s ] else Nodes.to_list (ranges s))
-          rngs
-      in
-      Some (replace r ~src:(List.take off (src r) @ dedup_nodes flat))
+  let flat =
+    List.concat_map
+      (fun s -> if op s = Op.Range then [ s ] else Nodes.to_list (ranges s))
+      (List.drop off (src r))
+  in
+  Some (replace r ~src:(List.take off (src r) @ dedup_nodes flat))
 
 let pm_flatten_range =
   Pattern_matcher.v

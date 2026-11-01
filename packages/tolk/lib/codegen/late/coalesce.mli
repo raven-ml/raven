@@ -31,10 +31,12 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
     phase and alignment, {!Ops.type-param_arg}), the group's length divides, and
     is no wider than that alignment, so that every vector access is aligned to
     its width. On the ["CPU"] device, whose vectors are aligned to their
-    element, every buffer is taken to start on a 16-byte boundary. A merged load is a {!Op.Shrink} of the buffer, whose
-    elements each former load reads by index; a merged store stores the stack of
-    the former values. Register memory, volatile parameters and the bodies of
-    calls are left as they are, and so is everything under {!Setting.dmc}.
+    element, every buffer is taken to start on a 16-byte boundary. A merged load
+    is a {!Op.Shrink} of the buffer from its first access's index, gate
+    included, whose elements each former load reads by index; a merged store
+    stores the stack of the former values. An access merged with no other is
+    left as it is, and so are register memory, volatile parameters, the bodies
+    of calls, and everything under {!Setting.dmc}.
 
     Raises [Invalid_argument] if a load or store is gated, is not through an
     {!Op.Index} of one index, or two stores write one element. *)

@@ -38,9 +38,8 @@ module Estimates : sig
 
   val add : t -> t -> t
   (** [add e0 e1] is the estimate of both [e0]'s and [e1]'s work: each count is
-      the sum of theirs.
-
-      Raises [Invalid_argument] if a count does not fit an [int]. *)
+      the sum of theirs, exactly: an [Int] where it fits one, else a constant
+      node. *)
 
   val simplify : t -> t
   (** [simplify e] is [e] with each count simplified ({!Shape.ssimplify}). *)
@@ -57,15 +56,20 @@ module Estimates : sig
 
       Each operation counts once per iteration of the ranges and hardware
       indices around it. A range with no trip count, a loop, counts as one
-      iteration, and a trip count that depends on a hardware index is taken at
-      index [0]. [ops] and each parameter's part of [mem] are simplified; [lds]
-      is not. With [ignore_indexing] (default [false]), the operations that
-      compute the indices of {!Op.Index} and {!Op.Shrink} nodes, up to the
-      {!Op.End} or {!Op.Backedge} of any loop they read, are not counted.
+      iteration, a trip count that depends on a hardware index is taken at
+      index [0], and one that depends on another range, as a triangular loop's
+      does, at its greatest value. [ops] and each parameter's part of [mem] are
+      simplified; [lds] is not. With [ignore_indexing] (default [false]), the
+      operations that compute the indices of {!Op.Index} and {!Op.Shrink}
+      nodes, up to the {!Op.End} or {!Op.Backedge} of any loop they read, are
+      not counted.
+
+      The counts are exact: an integer count that does not fit an [int], as of
+      a loop bounded by a value loaded from memory, is a node of constants,
+      which [ops] and [mem] simplify to one.
 
       Raises [Invalid_argument] if an {!Op.End} or {!Op.Backedge} closes no
-      {!Op.Range}, if an {!Op.Wmma} node has no tensor core argument, or if a
-      count does not fit an [int]. *)
+      {!Op.Range}, or if an {!Op.Wmma} node has no tensor core argument. *)
 end
 
 (** {1:compilers Compilers} *)
