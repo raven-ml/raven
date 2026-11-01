@@ -400,6 +400,96 @@ let test_queue_raised () =
   in
   at_least ~msg:"the landings" int ~than:1 (walk 1)
 
+(* Borrows *)
+
+(* [rig_open ()] is GPU 0 opened in rig through the path the suites select. *)
+let rig_open () =
+  match Rig.open_ (S.gpu ()) with Ok d -> d | Error why -> fail why
+
+(* [n] bytes of a new file mapped privately, from a page: host memory rig
+   borrows, mapped while the array is reachable. *)
+let mapped n =
+  let file = Filename.temp_file "rig_amd" ".bin" in
+  Fun.protect ~finally:(fun () -> Sys.remove file) @@ fun () ->
+  let fd = Unix.openfile file [ O_RDWR ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  Unix.ftruncate fd n;
+  Bigarray.array1_of_genarray
+    (Unix.map_file fd Bigarray.char Bigarray.c_layout false [| n |])
+
+(* Whether a new device of GPU 0 maps the pages from [p], a page apart, which
+   KFD refuses while a mapping of pages that partly overlap them stays. *)
+let overlap_maps p =
+  let page = H.page in
+  match open_gpu () with
+  | Error why -> fail ("no GPU opens: " ^ why)
+  | Ok g ->
+      let r = A.map_host g (p + page) (2 * page) in
+      Option.iter (A.free g) r;
+      A.stop g ~fault:None;
+      Option.is_some r
+
+(* A borrow of host pages on a device opened in rig, with an exception at
+   each allocation of the path's map: one at it alone, and a signal at it, as
+   a Ctrl-C lands. The exception, inside the driver's call, may lose the
+   device, which then raises [Lost] at the next borrow. The signal, which
+   rig blocks across the call, lands once it returned and loses nothing: the
+   borrow's mapping was recorded and the device serves the next borrow, and
+   both go once the memory returns. Once the device is closed, or its memory
+   returned, no mapping of the pages is left: a new device maps pages that
+   partly overlap them. *)
+let test_borrow_host () =
+  needs_amdgpu ();
+  let page = H.page in
+  let walk ~may_lose landing =
+    let rec from n =
+      let pages = mapped (3 * page) in
+      let p = H.data pages in
+      let d = rig_open () in
+      let borrowed () =
+        let b =
+          Rig.Buffer.of_bigarray (Bigarray.Array1.sub pages 0 (2 * page))
+        in
+        let reached =
+          Rig_support.interrupted ~from:(amdgpu [ "map_host" ]) ~landing n
+            (fun () -> ignore (Rig.Buffer.borrow d b : Rig.Buffer.t option))
+        in
+        match Rig.lost d with
+        | Some why when not may_lose ->
+            failf "from allocation %d, the signal lost the device: %s" n why
+        | Some _ -> (
+            match Rig.Buffer.borrow d b with
+            | exception Rig.Lost _ -> reached
+            | _ -> failf "from allocation %d, a lost device borrowed" n)
+        | None ->
+            if Rig.Buffer.borrow d b = None then
+              failf "from allocation %d, the device refused a borrow" n;
+            reached
+      in
+      let reached = borrowed () in
+      (* The buffer's memory returns once collected, at the host's next
+         drain, which a host buffer's creation makes. *)
+      Gc.full_major ();
+      ignore (Rig.Buffer.create Rig.host 1 : Rig.Buffer.t);
+      if Rig.lost d = None && not (overlap_maps p) then
+        failf
+          "from allocation %d, a map over the borrowed pages is refused once \
+           their memory returned"
+          n;
+      Rig.close d;
+      if not (overlap_maps p) then
+        failf
+          "from allocation %d, a map over the borrowed pages is refused once \
+           the device closed"
+          n;
+      ignore (Sys.opaque_identity pages);
+      if reached then from (n + 1) else n - 1
+    in
+    at_least ~msg:"the landings" int ~than:1 (from 1)
+  in
+  walk ~may_lose:true raise_once;
+  walk ~may_lose:false Rig_support.Signal
+
 (* Over PCI *)
 
 (* Skips but on a GPU taken over PCI. *)
@@ -588,6 +678,10 @@ let () =
                test_pci_around;
              test "of a stop over PCI leaves the next open to boot the GPU"
                test_pci_stop;
+             test
+               "of a borrow of host pages loses the device or leaves it \
+                serving, and no mapping of the pages after its close"
+               test_borrow_host;
              test
                "of an image's entry leaves its unload to free every launch"
                test_entries;
