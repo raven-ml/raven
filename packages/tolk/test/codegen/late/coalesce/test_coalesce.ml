@@ -5,6 +5,10 @@ let cpu = Result.get_ok (Helpers.Target.of_string "CPU:CLANG:x86_64,x86-64")
 let vector = Renderer.v cpu
 let scalar = Renderer.v ~supports_float4:false cpu
 
+(* A GPU's vectors are aligned to their size, so its merges read where storage
+   starts; the CPU device's are aligned to their element. *)
+let gpu = Renderer.v (Result.get_ok (Helpers.Target.of_string "CUDA:CUDA:sm_89"))
+
 let coalesce ?(renderer = vector) sink =
   Coalesce.memory_coalescing sink renderer
 
@@ -215,6 +219,7 @@ let phased ?(dtype = Dtype.Float32) ?align phase =
   Shape.param ~shape:[ Int 64 ] ~phase ?align 0 dtype
 
 let phases =
+  let coalesce = coalesce ~renderer:gpu in
   group "phase"
     [
       test
@@ -268,6 +273,14 @@ let phases =
                   (loads
                      (phased ~dtype:Float16 ~align:8 6)
                      (List.init 8 Fun.id)))));
+      test "on the CPU device, floats past a boundary merge as from one"
+        (fun () ->
+          equal runs
+            [ (0, 4); (4, 4) ]
+            (accesses Op.Load
+               (Coalesce.memory_coalescing
+                  (loads (phased 4) (List.init 8 Fun.id))
+                  vector)));
     ]
 
 let left_alone =
@@ -474,7 +487,7 @@ let from_boundary u =
                 [ (r, Ops.int k) ])))
 
 let aligned (phases, k) =
-  let coalesced = coalesce (generated ~phases k) in
+  let coalesced = coalesce ~renderer:gpu (generated ~phases k) in
   List.iter
     (fun u ->
       if
@@ -506,7 +519,7 @@ let laws =
       prop
         "coalescing preserves the kernel's writes, for every phase and \
          alignment"
-        phased_kernels (fun (phases, k) -> preserves_writes ~phases vector k);
+        phased_kernels (fun (phases, k) -> preserves_writes ~phases gpu k);
       prop "coalescing preserves the kernel's writes" kernels_of_runs
         (preserves_writes vector);
       prop "without vector accesses, coalescing preserves the kernel's writes"

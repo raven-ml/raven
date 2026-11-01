@@ -1253,9 +1253,10 @@ driver sizes local memory as it loads a function (D146).
   first element lies `phase` bytes past a multiple of `align`, a power of two
   up to 16, the width of the widest vector access, and `phase` is a multiple
   of its element's size or of `align`, whichever is less. They default to `0`
-  and `16`, tinygrad's assumption, so no graph of tinygrad's changes. A run of
-  `l` elements merges where `l` divides the element's count from that
-  boundary and the run is no wider than `align`, so every vector access is
+  and `16`, tinygrad's assumption, so no graph of tinygrad's changes. Off the
+  CPU device, a run of `l` elements merges where `l` divides the element's
+  count from that boundary and the run is no wider than `align`, so every
+  vector access is
   aligned to its width; an access through a bitcast to elements of a size the
   phase is not a multiple of merges nothing. A parameter made from storage
   keeps the storage's congruence, moved by the bytes a shrink of the storage
@@ -1296,16 +1297,15 @@ driver sizes local memory as it loads a function (D146).
   and passed the data 8 bytes past one. Those two failures were on the host,
   in Clang's vector types aligned to their size; on the CPU device they are
   now aligned to their element (`renderer/cstyle.py:308`), so an access there
-  is defined from any element's address, and the congruence only changes
-  which elements a load takes together. That facet, the host's, has
-  Reason: none, until the merge reads the congruence only for the targets
-  whose vectors need it.
+  is defined from any element's address: the merge there takes every buffer
+  to start on a boundary, as tinygrad's does (`Coalesce.memory_coalescing`).
 - **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase › one float past a boundary, eight loads are of one, two, four and
   one`, `› three floats past a boundary, a load of four starts at element 1`,
   `› stores start where loads would`, `› two halves past a boundary, a load of
   four starts at element 2`, `› floats known to start on 4 bytes alone are
   not merged`, `› floats known to start on 8 bytes merge in twos` and `›
-  halves three past 8 bytes merge no wider than 8 bytes, from element 1`, and
+  halves three past 8 bytes merge no wider than 8 bytes, from element 1` and
+  `› on the CPU device, floats past a boundary merge as from one`, and
   the laws `every vector access is aligned to its width and within the
   alignment, for every phase and alignment` and `coalescing preserves
   the kernel's writes, for every phase and alignment`; the `Ops` suite: `param_arg takes a

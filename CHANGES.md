@@ -816,6 +816,10 @@ thread.
   narrow after: C computes them in `int`, where `65535 * 65535` overflows,
   which is undefined.
 - HIP writes bfloat16 as `__bf16` on every AMD target.
+- `Coalesce.memory_coalescing` merges the CPU device's loads and stores as if
+  every buffer started on a 16-byte boundary, since its vector types are
+  aligned to their element; the start a buffer is known at decides the merges
+  of the GPU targets only.
 - Repeated stores into a shrink of their own destination, such as
   `x[0] += 1`, each store in place, without a copy.
 - `Ops.storage_base` remembers what it finds: the storage of n stores into one

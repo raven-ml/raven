@@ -150,9 +150,12 @@ let memory_coalescing sink (r : Renderer.t) =
            where the element count from that boundary is a multiple of [l], and
            is no wider than the alignment. *)
         let size = Dtype.itemsize (dtype key.buf) in
+        (* A vector on the CPU device is aligned to its element, so it loads
+           from any element: storage there is taken to start on a boundary,
+           as storage of no known start is. *)
         let phase, align =
           match arg (buf_uop key.buf) with
-          | Param p -> (p.phase, p.align)
+          | Param p when r.target.device <> "CPU" -> (p.phase, p.align)
           | _ -> (0, 16)
         in
         let lead = Bigint.of_int (phase / size) in
