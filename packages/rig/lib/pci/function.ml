@@ -299,9 +299,14 @@ let finish_releases () =
 
 let reaching f = released f && not (Atomic.get f.quiet)
 
+(* [kept] is set once [f] is given out, so that a keep an exception ended
+   gives it out again. A function given out twice is listed twice. *)
 let keep f =
   live f "keep";
-  if not (Atomic.exchange f.kept true) then give_out f
+  if not (Atomic.get f.kept) then begin
+    give_out f;
+    Atomic.set f.kept true
+  end
 
 (* Configuration space *)
 

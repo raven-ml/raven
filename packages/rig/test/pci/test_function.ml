@@ -2412,6 +2412,26 @@ let releases root f =
   equal ~msg:"taken after the release" bool false
     (Tree.flocked (config_file root (Function.bus f)))
 
+(* An exception at any allocation of a keep leaves the function kept once a
+   keep again returns: a take of its bus after its release is refused. *)
+let test_interrupted_keep () =
+  let rec from n =
+    let f = snd (fixture ()) in
+    let reached = Rig_support.interrupted n (fun () -> Function.keep f) in
+    Function.keep f;
+    Function.release f;
+    (match Function.take (Function.machine f) (Function.bus f) with
+    | Ok g ->
+        Function.release g;
+        failf "at allocation %d, a take of the kept function's bus succeeded" n
+    | Error why ->
+        contains ~msg:(strf "at allocation %d, the refusal" n)
+          ~sub:"given to another PCI function" why);
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then from (n + 1)
+  in
+  from 1
+
 (* An exception at any allocation of a wait that reads the configuration space
    at its bound ends the wait's use of the function: the release gives it
    back. *)
@@ -2792,6 +2812,8 @@ let interrupts =
         test_interrupted_release;
       test "an exception at any allocation of a wait ends its use"
         test_interrupted_wait;
+      test "an exception at any allocation of a keep leaves the function kept"
+        test_interrupted_keep;
       test
         "an exception at any allocation of a DMA allocation leaves the lock \
          free and ends its use"
