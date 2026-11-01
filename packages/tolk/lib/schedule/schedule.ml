@@ -323,28 +323,23 @@ let param_of u =
   | Param p -> p
   | _ -> invalid_arg "storage needs its argument"
 
-let create_new_buffer (buffers, args) b =
-  match Tbl.find_opt buffers b with
-  | Some buf -> buf
-  | None ->
-      let device =
-        match device b with
+let create_new_buffer args b =
+  let device =
+    match device b with
+    | Some d -> d
+    | None -> (
+        match List.find_map device args with
         | Some d -> d
-        | None -> (
-            match List.find_map device args with
-            | Some d -> d
-            | None -> invalid_arg "call-local storage needs a device")
-      in
-      let buf = new_buffer device (max_numel b) (dtype b) in
-      Tbl.replace buffers b buf;
-      buf
+        | None -> invalid_arg "call-local storage needs a device")
+  in
+  new_buffer device (max_numel b) (dtype b)
 
 let pm_post_sched_cache =
   Pattern_matcher.v
     (fun () -> [
       (* Positional arguments are resolved outside kernel bodies; free variables
          have slot -1. *)
-      rule_ctx (Upat.op Op.Param ~name:"x") (fun (_, args) m ->
+      rule_ctx (Upat.op Op.Param ~name:"x") (fun args m ->
           let slot = (param_of (m "x")).slot in
           if slot >= 0 then Some (List.nth args slot) else None);
       (* Call-local storage is bound to new buffers for this invocation. *)
@@ -380,9 +375,8 @@ let pass_values values call =
 let rec resolve_linear_call ?(outer_binds = []) linear_call =
   let args = List.tl (src linear_call) in
   let linear =
-    graph_rewrite ~calls:Skip ~pass:Once
-      ~ctx:(Tbl.create 8, args)
-      (body linear_call) (After_sources pm_post_sched_cache)
+    graph_rewrite ~calls:Skip ~pass:Once ~ctx:args (body linear_call)
+      (After_sources pm_post_sched_cache)
   in
   let binds =
     let local =

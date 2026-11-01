@@ -281,17 +281,16 @@ let renderer =
       rule_ctx (x Op.Neg) (fun ctx m -> Some (strf "(-%s)" (src ctx m 0)));
       rule_ctx (x Op.Reciprocal) (fun ctx m ->
           Some (strf "(1/%s)" (src ctx m 0)));
-      rule_ctx (x Op.Max) (fun ctx m ->
-          Some (strf "max(%s, %s)" (src ctx m 0) (src ctx m 1)));
+      rule_ctx
+        (xs (Op.Set.of_list [ Op.Max; Op.Cdiv; Op.Cmod ]))
+        (fun ctx m ->
+          let name = String.lowercase_ascii (Op.name (op (m "x"))) in
+          Some (strf "%s(%s, %s)" name (src ctx m 0) (src ctx m 1)));
       rule_ctx (x Op.Mulacc) (fun ctx m ->
           Some (strf "(%s*%s+%s)" (src ctx m 0) (src ctx m 1) (src ctx m 2)));
       rule_ctx (x Op.Where) (fun ctx m ->
           Some
             (strf "(%s if %s else %s)" (src ctx m 1) (src ctx m 0) (src ctx m 2)));
-      rule_ctx (x Op.Cdiv) (fun ctx m ->
-          Some (strf "cdiv(%s, %s)" (src ctx m 0) (src ctx m 1)));
-      rule_ctx (x Op.Cmod) (fun ctx m ->
-          Some (strf "cmod(%s, %s)" (src ctx m 0) (src ctx m 1)));
       rule_ctx (xs Op.Set.movement) (fun ctx m ->
           let name = String.lowercase_ascii (Op.name (op (m "x"))) in
           Some (strf "%s.%s(%s)" (src ctx m 0) name (render_marg ctx (m "x"))));

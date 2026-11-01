@@ -275,32 +275,25 @@ let convert_reduce_to_reduce_with_ranges ctx x =
                ~arg:(Reduce { op = rop; num_axes = 0 })))
   | _ -> None
 
-(* A tree of comparisons bounds the depth of a select among many sources, such
-   as a large table of constants. *)
-let rec stack_select r0 srcs lo hi =
-  if hi - lo <= 8 then begin
-    let ret = ref srcs.(hi - 1) in
-    for k = hi - 2 downto lo do
-      ret := where (eq r0 (int k)) srcs.(k) !ret
-    done;
-    !ret
-  end
-  else
-    let mid = (lo + hi) / 2 in
-    where
-      (lt r0 (int mid))
-      (stack_select r0 srcs lo mid)
-      (stack_select r0 srcs mid hi)
+(* A tree of selections on the bits of [r0], the most significant first. *)
+let rec stack_select r0 srcs =
+  match srcs with
+  | [ x ] -> x
+  | _ ->
+      let n = List.length srcs in
+      let half = 1 lsl (Bigint.numbits (Bigint.of_int (n - 1)) - 1) in
+      let lo = List.filteri (fun i _ -> i < half) srcs
+      and hi = List.filteri (fun i _ -> i >= half) srcs in
+      where
+        (lt (mod_ r0 (int (2 * half))) (int half))
+        (stack_select r0 lo) (stack_select r0 hi)
 
 (* A stack of shapes has no ranges. The sources are taken from the list, since a
    stack of them may not fit its shape. *)
 let convert_stack_to_where ctx x =
   match Tbl.find_opt ctx.range_map x with
   | Some (_, r0 :: _) ->
-      let srcs = Array.of_list (create_bufferize_and_index_srcs ctx x) in
-      let n = Array.length srcs in
-      let ret = stack_select r0 srcs 0 n in
-      Some (if n > 8 then where (lt r0 (int 0)) srcs.(n - 1) ret else ret)
+      Some (stack_select r0 (create_bufferize_and_index_srcs ctx x))
   | _ -> None
 
 let remove_movement_op_after_rangeify ctx x =
