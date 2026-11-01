@@ -199,9 +199,6 @@ raven / llama.cpp (Vulkan; ROCm):
   moves a chunk between every pair of devices: time it against tinygrad's
   ring and hierarchical allreduce on a machine with several GPUs, and if
   it is slower, write those in nx's partition
-- vega: `complex leaves › complex128 › every optimizer steps such a leaf
-  as its coordinates` fails on fudge at 814416922 (lbfgs gives `-0.`
-  where `0.` is expected)
 
 ## nx
 
