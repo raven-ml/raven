@@ -116,16 +116,20 @@ value caml_rig_edge_unhold(value unit) {
 static _Thread_local int masks, shields, window;
 static _Thread_local sigset_t outer;
 
-/* Blocks every signal but those a fault raises, which a thread that blocks
-   them cannot take. */
-static void block_all(sigset_t *old) {
+/* Every signal but those a fault raises, which a thread that blocks them
+   cannot take, built as the library loads, before any thread masks. */
+static sigset_t all;
+
+__attribute__((constructor)) static void build_all(void) {
   static const int faults[] = {SIGSEGV, SIGBUS,  SIGFPE, SIGILL,
                                SIGTRAP, SIGABRT, SIGSYS};
-  sigset_t s;
-  sigfillset(&s);
+  sigfillset(&all);
   for (size_t i = 0; i < sizeof faults / sizeof *faults; i++)
-    sigdelset(&s, faults[i]);
-  pthread_sigmask(SIG_BLOCK, &s, old);
+    sigdelset(&all, faults[i]);
+}
+
+static void block_all(sigset_t *old) {
+  pthread_sigmask(SIG_BLOCK, &all, old);
 }
 
 /* Gives the thread back [outer]. A signal still pending in the kernel is

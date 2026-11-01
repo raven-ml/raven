@@ -437,6 +437,94 @@ let test_cached () =
   let rec from n = if interrupt_cached n then from (n + 1) in
   from 1
 
+(* The regions a release gives back to a driver under one mask of the
+   calling thread's (rig.mli's Errors section). *)
+let regions_per_mask = 64
+
+(* The buffers a release walk frees: enough for two masks. *)
+let released_buffers = 100
+
+let blocked () = Thread.sigmask SIG_BLOCK []
+
+(* A SIGINT raised at the [n]-th allocation of [release], which gives back
+   the memory of collected buffers to the driver one region at a time. Its
+   handler, which returns, runs within 64 regions of the signal, or at the
+   walk's end if that comes first, and if the signal came while the thread
+   blocked it, once that mask's regions have all gone back: after a multiple
+   of 64 regions, or at the walk's end. The thread's mask is as before,
+   the device is live and leaks nothing: once the cache is freed the device
+   holds no memory, and each region went back once. [~budget], set once the
+   buffers are collected, makes the drain free what it would cache. Is
+   whether the allocation was reached, whether the signal came while the
+   thread blocked it after a first mask's regions, and the regions the walk
+   gave back. *)
+let release_signaled ?budget ~cache release n =
+  let d, p = P.open_ (fresh "released") in
+  let regions () = List.length (P.frees p) in
+  let[@inline never] drop () =
+    for _ = 1 to released_buffers do
+      ignore (Sys.opaque_identity (B.create d 64))
+    done
+  in
+  drop ();
+  Gc.full_major ();
+  Option.iter (Rig.set_budget d) budget;
+  if cache then ignore (Sys.opaque_identity (B.create d 0));
+  let before = blocked () in
+  let landed = ref None and handled = ref None in
+  let arrive () =
+    landed := Some (regions (), List.mem Sys.sigint (blocked ()));
+    S.interrupt ()
+  in
+  let previous =
+    Sys.signal Sys.sigint
+      (Sys.Signal_handle (fun _ -> handled := Some (regions ())))
+  in
+  let reached =
+    Fun.protect ~finally:(fun () -> Sys.set_signal Sys.sigint previous)
+    @@ fun () -> S.interrupted ~landing:(Call arrive) n (fun () -> release d)
+  in
+  let walked = regions () in
+  equal ~msg:"the thread's mask" (list int) before (blocked ());
+  let late =
+    match !landed with
+    | None -> false
+    | Some (at, masked) ->
+        let ran = Option.value !handled ~default:(-1) in
+        at_least ~msg:"regions when the handler ran" int ~than:at ran;
+        at_most ~msg:"regions when the handler ran" int
+          ~than:(Int.min walked (at + regions_per_mask))
+          ran;
+        if masked && ran <> walked then
+          equal ~msg:"regions past a mask's end when the handler ran" int 0
+            (ran mod regions_per_mask);
+        masked && at >= regions_per_mask
+  in
+  equal ~msg:"the loss" (option string) None (Rig.lost d);
+  Rig.free_cache d;
+  equal ~msg:"bytes held" int 0 (Rig.allocated d);
+  let freed = List.map fst (P.frees p) in
+  equal ~msg:"regions freed once" int (List.length freed)
+    (List.length (List.sort_uniq Int.compare freed));
+  Rig.close d;
+  equal ~msg:"stops" int 1 (P.stops p);
+  (reached, late, walked)
+
+(* The run past the last allocation is the release whole, which gives back
+   regions for more than one mask, and some signal comes while the thread
+   blocks it after the first mask's. *)
+let test_release_signaled ?budget ~cache release () =
+  if Sys.win32 then skip ~reason:"Windows has no signal masks" ();
+  let rec from n lates =
+    match release_signaled ?budget ~cache release n with
+    | true, late, _ -> from (n + 1) (if late then lates + 1 else lates)
+    | false, _, walked ->
+        greater ~msg:"regions the whole release gave back" int
+          ~than:regions_per_mask walked;
+        greater ~msg:"signals blocked after a first mask" int ~than:0 lates
+  in
+  from 1 0
+
 (* Re-entry: a call that may take a lock, made from a [Gc.Memprof] callback
    inside a lock of its thread's, raises [Invalid_argument] naming it, having
    done nothing; outside every lock it runs as any call does. A call that
@@ -815,6 +903,11 @@ let () =
                test "close of a machine's host" test_close;
                test "a drain that lets go of kept values" test_kept;
                test "a drain that routes memory into the cache" test_cached;
+               test "a Ctrl-C at any allocation of a free_cache"
+                 (test_release_signaled ~cache:true Rig.free_cache);
+               test "a Ctrl-C at any allocation of a drain that frees"
+                 (test_release_signaled ~budget:256 ~cache:false (fun d ->
+                      ignore (Sys.opaque_identity (B.create d 0))));
                test "a callback's calls inside an open"
                  (test_reentry open_named);
                test "a callback's calls inside a drain"

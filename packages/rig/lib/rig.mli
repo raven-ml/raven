@@ -659,7 +659,13 @@ val signaled : t -> int
     next wait or once the call has returned, so its handler, a Ctrl-C's
     [Sys.Break] included, never ends the call there. One that comes during a
     driver's wait runs its handler before the wait returns, and its exception
-    ends the call as an asynchronous one. A function of a driver's library that
+    ends the call as an asynchronous one. Reclamation ({!section-reclaim})
+    that gives memory back to a driver one region at a time blocks signals
+    from its first region on, rig's own code between the regions included,
+    and gives the thread its mask back after every 64 regions and at its
+    end: a signal waits for at most 64 regions, and a finaliser or
+    [Gc.Memprof] callback that runs at a poll point among them runs with
+    signals blocked. A function of a driver's library that
     a program calls directly, such as an opener or a function of a
     {!capability}, blocks signals in the same way, but for one whose doc says
     it runs the program's code. A driver's finalisers and exit handlers take no

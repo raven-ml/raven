@@ -323,6 +323,30 @@ let masked f =
       r
   | exception e -> unmask_raise e
 
+(* Outside every pair, [caml_rig_edge_block] blocks nothing: it runs what a
+   poll point runs, the handlers of the signals pending included. *)
+external poll : unit -> unit = "caml_rig_edge_block"
+
+(* The steps of a batch that one mask covers. *)
+let batch_steps = 64
+
+(* Runs [step x] from [v] until it is [stop] or [n] steps ran: the value
+   reached. *)
+let rec steps step x v ~stop n =
+  if v == stop || n = 0 then v else steps step x (step x v) ~stop (n - 1)
+
+let rec batch step x v ~stop =
+  if v != stop then begin
+    mask ();
+    match steps step x v ~stop batch_steps with
+    | v when v == stop -> unmask ()
+    | v ->
+        unmask ();
+        poll ();
+        batch step x v ~stop
+    | exception e -> unmask_raise e
+  end
+
 let refuse_held fn =
   invalid_arg
     ("Rig." ^ fn

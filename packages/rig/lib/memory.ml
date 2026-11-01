@@ -1024,13 +1024,15 @@ let start_freeing l =
 
 (* Frees [d]'s retiring memory that is due, one entry at a time: an entry
    leaves as its free starts, so an exception leaks that one at most. A
-   pass's state is [d]'s, so the pass allocates nothing. *)
-let rec judge d =
-  let e = Dev.protect d take_freed d in
-  if e != no_entry then begin
-    ignore (free_entry e : Dev.given);
-    judge d
-  end
+   pass's state is [d]'s, so the pass allocates nothing. Its frees run
+   under one mask of the thread's signals per 64 ([Dev.batch]), and a pass
+   that frees nothing blocks none. *)
+let free_judged d e =
+  ignore (free_entry e : Dev.given);
+  Dev.protect d take_freed d
+
+let judge d =
+  Dev.batch free_judged d (Dev.protect d take_freed d) ~stop:no_entry
 
 (* Releasing the cache *)
 
@@ -1056,22 +1058,45 @@ let wait_for d v = try Dev.wait d v with Dev.Lost (d', _) when d' == d -> ()
 let reached_or_lost d v =
   Dev.is_lost d || match Dev.word d >= v with r -> r | exception Dev.Lost _ -> true
 
+(* A release of the cached memory of [from] that [pick] holds of, once
+   [from]'s work up to [upto] is done: the keys of [from]'s cache it has yet
+   to walk, from the one it takes entries under. *)
+type picking = {
+  from : Def.device;
+  pick : entry -> bool;
+  upto : int;
+  mutable keys : int list;
+}
+
+(* The next entry of the release [x] to free, or [no_entry]. Each entry
+   [pick] holds of before the work is done is deferred on the way. *)
+let rec next_picked x =
+  match x.keys with
+  | [] -> no_entry
+  | k :: rest -> (
+      let d = x.from in
+      match Dev.protect d take_picked (d.live, k, x.pick) with
+      | None ->
+          x.keys <- rest;
+          next_picked x
+      | Some e when not (reached_or_lost d x.upto) ->
+          defer d (Free e);
+          next_picked x
+      | Some e -> e)
+
+let free_picked x e =
+  ignore (free_entry e : Dev.given);
+  next_picked x
+
 (* Frees the cached memory of [d] that [pick] holds of, one entry at a time,
    once [d]'s work up to [v] is done, and defers each free otherwise: an
-   exception leaks the entry in hand at most. *)
+   exception leaks the entry in hand at most. Its frees run under one mask
+   of the thread's signals per 64 ([Dev.batch]), and a release that frees
+   nothing blocks none. *)
 let release_picked d pick v =
-  let l = d.live in
-  let rec take k =
-    match Dev.protect d take_picked (l, k, pick) with
-    | None -> ()
-    | Some e when not (reached_or_lost d v) ->
-        defer d (Free e);
-        take k
-    | Some e ->
-        ignore (free_entry e : Dev.given);
-        take k
-  in
-  List.iter take (Dev.protect d cache_keys l)
+  let keys = Dev.protect d cache_keys d.live in
+  let x = { from = d; pick; upto = v; keys } in
+  Dev.batch free_picked x (next_picked x) ~stop:no_entry
 
 let rec picked pick (c : cached) i =
   i < c.n && (pick c.entries.(i) || picked pick c (i + 1))

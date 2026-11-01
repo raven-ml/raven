@@ -243,6 +243,16 @@ val masked : (unit -> 'a) -> 'a
 (** [masked f] is [f ()] with the calling thread's signals blocked, as
     [rig_mask] and [rig_unmask] of [rig_edge.h] block them. *)
 
+val batch : ('a -> 'b -> 'b) -> 'a -> 'b -> stop:'b -> unit
+(** [batch step x v ~stop] runs [step x] from [v], each result the next
+    step's argument, until a result is [stop] (physically), with the calling
+    thread's signals blocked as {!masked} blocks them, 64 steps at most under
+    one mask. The calls below the core that the steps make nest inside it and
+    block no signal again. After every 64 steps it gives the thread its mask
+    back and runs what a poll point runs, so a signal that came meanwhile
+    runs its handler there, and the handler's exception ends the batch. If
+    [v] is [stop] it blocks nothing. It allocates nothing. *)
+
 (** The outcome of a {!give}: the object went back, or must go back after
     [d]'s stop. *)
 type given = Given | Later
