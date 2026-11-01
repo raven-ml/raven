@@ -379,6 +379,17 @@ let time =
           equal (array (option int)) (some [| 23 |]) (f `Hour);
           equal (array (option int)) (some [| 59 |]) (f `Second);
           equal (array (option int)) (some [| 999_999_999 |]) (f `Nanosecond));
+      test "fields of datetimes at the ends of their ticks" (fun () ->
+          let t =
+            one "t"
+              (Column.v (Type.datetime Ns)
+                 [| Time.of_ns Int64.min_int; Time.of_ns Int64.max_int |])
+          in
+          let f field = ints (Expr.Temporal.field field (Col.instant "t")) t in
+          equal (array (option int)) (some [| 1677; 2262 |]) (f `Year);
+          equal (array (option int)) (some [| 9; 4 |]) (f `Month);
+          equal (array (option int)) (some [| 21; 11 |]) (f `Day);
+          equal (array (option int)) (some [| 0; 23 |]) (f `Hour));
       test "add and diff" (fun () ->
           let t = dates [| Some (date 2024 2 28) |] in
           equal

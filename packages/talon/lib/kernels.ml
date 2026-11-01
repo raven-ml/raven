@@ -404,8 +404,7 @@ let split (Type.Any ty) x =
   | Clock u -> (Nx.zeros_like x, x, ticks_per_day u)
   | Datetime { unit_; _ } ->
       let day = ticks_per_day unit_ in
-      let tod = floor_mod x day in
-      (Nx.div_s (Nx.sub x tod) day, tod, day)
+      (floor_div x day, floor_mod x day, day)
   | _ -> assert false (* Binding checked the type. *)
 
 let field f t c =

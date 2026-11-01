@@ -4603,6 +4603,8 @@ thread.
 
 ### Talon
 
+- `Temporal.field` of a datetime within a day of its least tick read a day
+  near its greatest: the first instant of a datetime[ns] read as 2262.
 - `Expr.cast` converts between dates and datetimes without a zone, a datetime
   becoming the day it falls on, and between clocks and durations.
 - `Expr.cut` gives the bin of a value among ascending edges, as an index,
