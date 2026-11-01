@@ -83,9 +83,10 @@ val make :
     that {!Lower.op} does not lower, a check whose flags lie on another set than
     the program's first argument or else its first result, a program with no
     value, and a value with an element on a device other than the program's
-    device. It declines what {!Pieces.split} declines, and a split program whose
-    values lie on devices of several targets. It also declines a program with a
-    value on a device that computes nothing. *)
+    device. It declines what {!Pieces.split} declines. It also declines a
+    program with a value on a device that computes nothing. A split program's
+    values may lie on devices of several targets: each device's kernels compile
+    for its own. *)
 
 val run : t -> Program.value array -> Program.value array
 (** [run t args] is the outputs of [t]'s program applied to [args], which must

@@ -833,15 +833,15 @@ let may_take env base into =
         && Array.exists output env.p.outputs)
 
 (* The device [op] computes on: its result's. *)
-let op_device st (type r) (op : r Nx.Prim.t) =
+let op_rig st (type r) (op : r Nx.Prim.t) =
   match op with
-  | _ when not st.split -> st.device
-  | Place (q, _) -> device_at st q
-  | Map { at = Some q; _ } -> device_at st q
+  | _ when not st.split -> st.rig
+  | Place (q, _) -> Pieces.rig_of q
+  | Map { at = Some q; _ } -> Pieces.rig_of q
   | _ -> (
       match Nx.Prim.operands op with
-      | Nx.Prim.Operands (Nx.Prim.Any x :: _) -> device_at st (Nx.placement x)
-      | Nx.Prim.Operands [] -> st.device)
+      | Nx.Prim.Operands (Nx.Prim.Any x :: _) -> Pieces.rig_of (Nx.placement x)
+      | Nx.Prim.Operands [] -> st.rig)
 
 (* [u], of [x]'s dtype, at the window [rs] of [x] that a move reads, each
    start of an axis it does not keep whole a variable bound to that start: a
@@ -885,7 +885,8 @@ let placed st env base q x ys =
 
 let issue st cs env (type r) base (op : r Nx.Prim.t) =
   (match op with Place (q, _) -> on_rig st q "a placement" | _ -> ());
-  let device = op_device st op in
+  let rig = op_rig st op in
+  let device = Rig.name rig in
   match op with
   | Check { ok; data; fail } -> check st cs env ok data fail
   | _ ->
@@ -912,7 +913,7 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
         | _ -> None
       in
       let host =
-        match Engine.target st.rig with
+        match Engine.target rig with
         | t -> String.equal t.device "CPU"
         | exception Invalid_argument _ -> false
       in
@@ -2407,8 +2408,8 @@ let device (p : Program.t) forms =
   | None -> decline "no value"
 
 (* The devices of a split program's values, in the order the program meets
-   them, each of which computes, all of one target: the device kind and
-   architecture tolk compiles for. *)
+   them, each of which computes. Each device's kernels compile for its own
+   target. *)
 let rigs (p : Program.t) forms =
   let seen = ref [] in
   let note placement =
@@ -2433,23 +2434,7 @@ let rigs (p : Program.t) forms =
       | Do { c; _ } -> List.iter (fun (V x) -> value x) (Program.operands c))
     p.eqns;
   Array.iter (fun (V y) -> value y) p.outputs;
-  let rigs = List.rev !seen in
-  let kind r =
-    let t = Engine.target r in
-    (t.device, t.arch)
-  in
-  (match rigs with
-  | [] -> decline "no value"
-  | r :: rest -> (
-      match List.find_opt (fun r' -> kind r' <> kind r) rest with
-      | None -> ()
-      | Some r' ->
-          let pp r =
-            Format.asprintf "%a" Tolk.Helpers.Target.pp (Engine.target r)
-          in
-          decline "values on devices of several targets: %s for %s, %s for %s"
-            (Rig.name r) (pp r) (Rig.name r') (pp r')));
-  rigs
+  match List.rev !seen with [] -> decline "no value" | rigs -> rigs
 
 (* What a program the compiler takes must not raise to compile: an operation it
    does not lower, or tolk refusing the graph, as a target whose compiler is

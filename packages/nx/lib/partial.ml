@@ -124,6 +124,29 @@ let at : type r d.
 (* [op] at [x]'s placement. *)
 let on eng ~by x op = at eng ~by (Prim.placement x) op
 
+(* For each device [j] of [p] that [holds] a window of a result of [shape],
+   in order, [compute j], or, on a device that copies a replica
+   ({!Partition.sources}), [copy here] of its source's, [here] its
+   one-device placement. *)
+let replicated (type a d) ~by (p : d Devices.placement) shape ~holds
+    ~(compute : int -> a) ~(copy : d Devices.placement -> a -> a) :
+    a option array =
+  let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
+  let src = Partition.sources ~by p shape in
+  let rs = Array.make (Array.length ks) None in
+  for j = 0 to Array.length ks - 1 do
+    if holds j then
+      rs.(j) <-
+        Some
+          (if src.(j) = j then compute j
+           else copy (Devices.one set ks.(j)) (Option.get rs.(src.(j))))
+  done;
+  rs
+
+(* {!replicated} of values. *)
+let values eng ~by p shape ~holds compute =
+  replicated ~by p shape ~holds ~compute ~copy:(Partition.copy eng)
+
 (* Values *)
 
 (* [x] of [shape], its cut axes keeping their numbers. *)
@@ -415,14 +438,14 @@ let slots c =
    one whose tile is empty, holds an empty piece. *)
 let stack (type v s d) eng ~by c (dt : (v, s) D.t) shape
     (partial : int -> (v, s, d) Value.t) : (v, s, d) Value.t =
-  let ks = Grid.devices (Devices.grid c.stacked) in
   let shape = Array.append (Array.of_list c.held) shape in
-  let slot j =
-    let w = Devices.window ~by c.stacked shape j in
-    if Route.empty w then None
-    else Some (eng.Partition.view (M.Reshape (Route.extents w)) (partial j))
+  let w j = Devices.window ~by c.stacked shape j in
+  let slots =
+    values eng ~by c.stacked shape
+      ~holds:(fun j -> not (Route.empty (w j)))
+      (fun j -> eng.Partition.view (M.Reshape (Route.extents (w j))) (partial j))
   in
-  eng.assemble c.stacked shape dt (Array.init (Array.length ks) slot)
+  eng.assemble c.stacked shape dt slots
 
 (* The most bytes of slots a piece gathers: a buffer of fixed size, so that
    a closing holds no more however large its result. A piece costs about
@@ -525,7 +548,22 @@ let closed (type d) (eng : Partition.engine) ~by c shape dts
     in
     (k, List.map piece ps)
   in
-  let parts = Array.mapi device (Grid.devices (Devices.grid c.parts)) in
+  (* A device that copies a replica of a part ({!Partition.sources}) copies
+     its source's pieces. *)
+  let ks = Grid.devices (Devices.grid c.parts) in
+  let src = Partition.sources ~by c.parts shape in
+  let parts = Array.make (Array.length ks) (0, []) in
+  Array.iteri
+    (fun j k ->
+      let i = src.(j) in
+      let empty = Route.empty (Devices.window ~by c.parts shape j) in
+      parts.(j) <-
+        (if i = j || empty then device j k
+         else
+           let here = Devices.one set k in
+           let one (Value.Any y) = Value.Any (Partition.copy eng here y) in
+           (k, List.map (fun (p, ys) -> (p, List.map one ys)) (snd parts.(i)))))
+    ks;
   let r = c.result in
   let rs = Grid.devices (Devices.grid r) in
   List.mapi
@@ -867,8 +905,8 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
         Nx_kernel.carrier (P.dtype prog (Iarray.get prog.outs o))
       in
       let ys =
-        Array.init n (fun j ->
-            if held j then Some (scanned j (Monoid (m, o, c))) else None)
+        values eng ~by p shape ~holds:held (fun j ->
+            scanned j (Monoid (m, o, c)))
       in
       let prefix =
         let x = totals c (fun j -> Option.map (last j) ys.(j)) in
@@ -887,39 +925,36 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
         at eng ~by placed op
       in
       let combined j =
-        match ys.(j) with
-        | None -> None
-        | Some y ->
-            let t = index j in
-            let into =
-              match D.equal_witness c dt with
-              | Some Type.Equal -> Some (Value.Any y)
-              | None -> None
-            in
-            if t = 0 then
-              Some (Prim.expect dt (cast eng ~by (D.Any dt) (Value.Any y)))
-            else
-              let carry = earlier j (t - 1) prefix in
-              let carry = spread eng ~by (counts (win j)) carry in
-              let e = E.binary (binary m) (E.input 0 c) (E.input 1 c) in
-              let v =
-                map eng ~by ?into (here j) [ Value.Any carry; Value.Any y ]
-                  [ E.any (E.cast dt e) ]
-              in
-              Some (Prim.expect dt (List.hd v))
+        let y = Option.get ys.(j) and t = index j in
+        let into =
+          match D.equal_witness c dt with
+          | Some Type.Equal -> Some (Value.Any y)
+          | None -> None
+        in
+        if t = 0 then Prim.expect dt (cast eng ~by (D.Any dt) (Value.Any y))
+        else
+          let carry = earlier j (t - 1) prefix in
+          let carry = spread eng ~by (counts (win j)) carry in
+          let e = E.binary (binary m) (E.input 0 c) (E.input 1 c) in
+          let v =
+            map eng ~by ?into (here j) [ Value.Any carry; Value.Any y ]
+              [ E.any (E.cast dt e) ]
+          in
+          Prim.expect dt (List.hd v)
       in
-      eng.assemble p shape dt (Array.init n combined)
+      eng.assemble p shape dt (values eng ~by p shape ~holds:held combined)
   | Arg (e, o, dt) ->
       (* Each tile scans alone, its positions from the axis's start; the
          first extreme of the tiles before its own, in tile order, combines
          with each of its results. *)
+      let pair here (v, q) =
+        (Partition.copy eng here v, Partition.copy eng here q)
+      in
       let pairs =
-        Array.init n (fun j ->
-            if held j then
-              let v, q = scanned j (Arg (e, o, dt)) in
-              let q = shift eng ~by (win j).(axis).start (Value.Any q) in
-              Some (v, Prim.expect D.Int64 q)
-            else None)
+        replicated ~by p shape ~holds:held ~copy:pair ~compute:(fun j ->
+            let v, q = scanned j (Arg (e, o, dt)) in
+            let q = shift eng ~by (win j).(axis).start (Value.Any q) in
+            (v, Prim.expect D.Int64 q))
       in
       let xs =
         totals dt (fun j -> Option.map (fun (v, _) -> last j v) pairs.(j))
@@ -928,28 +963,25 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
       in
       let xs = Partition.place eng ~by placed xs
       and qs = Partition.place eng ~by placed qs in
+      let result j =
+        let v, q = Option.get pairs.(j) and t = index j in
+        if t = 0 then (v, q)
+        else
+          let ranked i =
+            [ Value.Any (earlier j i xs); Value.Any (earlier j i qs) ]
+          in
+          let carry = ref (ranked 0) in
+          for i = 1 to t - 1 do
+            carry := first_of eng ~by e !carry (ranked i)
+          done;
+          let carry = List.map (wide j) !carry in
+          let last = [ Value.Any v; Value.Any q ] in
+          match first_of eng ~by e carry last with
+          | [ x; y ] -> (Prim.expect dt x, Prim.expect D.Int64 y)
+          | _ -> invalid_arg "Partial.scan: an extreme and its position"
+      in
       let results =
-        Array.init n (fun j ->
-            match pairs.(j) with
-            | None -> None
-            | Some (v, q) -> (
-                let t = index j in
-                if t = 0 then Some (v, q)
-                else
-                  let ranked i =
-                    [ Value.Any (earlier j i xs); Value.Any (earlier j i qs) ]
-                  in
-                  let carry = ref (ranked 0) in
-                  for i = 1 to t - 1 do
-                    carry := first_of eng ~by e !carry (ranked i)
-                  done;
-                  let carry = List.map (wide j) !carry in
-                  let last = [ Value.Any v; Value.Any q ] in
-                  match first_of eng ~by e carry last with
-                  | [ x; y ] ->
-                      Some (Prim.expect dt x, Prim.expect D.Int64 y)
-                  | _ ->
-                      invalid_arg "Partial.scan: an extreme and its position"))
+        replicated ~by p shape ~holds:held ~compute:result ~copy:pair
       in
       ( eng.assemble p shape dt (Array.map (Option.map fst) results),
         eng.assemble p shape D.Int64 (Array.map (Option.map snd) results) )
@@ -1201,22 +1233,19 @@ let scatter (type v s d) eng ~by (route : unit Route.t) rule combine unique axis
   let shape = Prim.shape into in
   (* Device [j] writes into its window the updates at the positions moved
      to the window's start: one outside it writes nothing. *)
+  let w j = Devices.window ~by p shape j in
   let own j =
-    let w = Devices.window ~by p shape j in
-    let here = Devices.one set ks.(j) in
-    if Route.empty w then None
-    else
-      let read i x =
-        view eng ~by ks.(j) (Route.window rule ~operand:i (Prim.shape x) w) x
-      in
-      let i = shift eng ~by (-w.(axis).start) (Value.Any (read 0 idx)) in
-      let idx = Prim.expect D.Int64 i in
-      let updates = read 1 updates and into = read 2 into in
-      Some
-        (at eng ~by here
-           (Value.Scatter { combine; unique; axis; idx; updates; into }))
+    let w = w j and here = Devices.one set ks.(j) in
+    let read i x =
+      view eng ~by ks.(j) (Route.window rule ~operand:i (Prim.shape x) w) x
+    in
+    let i = shift eng ~by (-w.(axis).start) (Value.Any (read 0 idx)) in
+    let idx = Prim.expect D.Int64 i in
+    let updates = read 1 updates and into = read 2 into in
+    at eng ~by here (Value.Scatter { combine; unique; axis; idx; updates; into })
   in
-  eng.assemble p shape (Prim.dtype into) (Array.init (Array.length ks) own)
+  let holds j = not (Route.empty (w j)) in
+  eng.assemble p shape (Prim.dtype into) (values eng ~by p shape ~holds own)
 
 (* An [Add] of updates cut along its axis: device [j] adds its tile of
    them, at the positions moved to its window's start, into its window,

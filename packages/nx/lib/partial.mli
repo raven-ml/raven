@@ -18,7 +18,9 @@
     the route's result. Every step is an operation on one device, one
     computed by windows ({!Partition.windows}) or one move
     ({!Partition.place}), each on the engine the caller gives, so a fold is
-    a partition. A partial computes on its device alone, over a route this
+    a partition. A partial, a part or a window of the results that devices
+    of several architectures hold is computed by those of one and copied to
+    the others ({!Partition.section-replicas}). A partial computes on its device alone, over a route this
     module builds that reads every operand on that device and puts every
     result there. This module lies above {!Partition}; {!Check} and {!Eval}
     route operations and give it those whose route computes by partials. A

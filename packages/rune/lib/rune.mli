@@ -1385,10 +1385,14 @@ val jit :
     between calls but the copies of its constants: each call makes on each
     device what it computes there and returns it once that work is done. With
     [RUNE_JIT_DEBUG] set, the first call prints each move between devices, the
-    function that makes it and its bytes. The values of a
-    program over several devices must lie on devices of one target, its device
-    kind and architecture, such as the memory devices of one host
-    ({!Rig.memory_device}). *)
+    function that makes it and its bytes. A set may hold devices of several
+    targets, such as a GPU beside a memory device ({!Rig.memory_device}): each
+    device runs kernels compiled for its own target. Where devices of several
+    architectures ({!Rig.arch}) hold one window of a value, as of one whole on
+    each device, the devices of the architecture of the first device holding
+    it compute it at each step and the others receive a copy, as eager
+    computation does ({!Nx.section-routing}), so the replicas are equal bit
+    for bit. *)
 
 (** {2:search Search}
 
@@ -1723,8 +1727,7 @@ val jit :
     another set, a placement of an argument that gives a device more of it, as
     a gather of a cut argument whole on each device does, since a compiled call
     holds all it gathers and every piece of the closings it computes at once,
-    where an evaluated one lets each go after its last read, or values on
-    devices of several targets. It also declines a
+    where an evaluated one lets each go after its last read. It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a
     compiled call's are, and a call with donated arguments consumes them. It

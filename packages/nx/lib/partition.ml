@@ -86,6 +86,43 @@ let rec same_from (a : M.range array) (b : M.range array) i =
 
 let same a b = Array.length a = Array.length b && same_from a b 0
 
+(* Replicas
+
+   On a set whose devices are of several architectures, two devices that
+   hold one window could compute it to different bits. The first device
+   holding a window decides: the devices of its architecture compute it,
+   and the others receive a copy of its result. *)
+
+(* Whether the devices [ks] of [set] are of several architectures. *)
+let mixed set (ks : int array) =
+  Array.length ks > 1
+  &&
+  let a = Rig.arch (Devices.rig set ks.(0)) in
+  Array.exists (fun k -> not (String.equal (Rig.arch (Devices.rig set k)) a)) ks
+
+(* Each position's source: itself where it computes, else the first position
+   [i] with [one i j], whose result it copies. *)
+let sources_by set ks one =
+  let n = Array.length ks in
+  let src = Array.init n Fun.id in
+  if mixed set ks then
+    for j = 1 to n - 1 do
+      let i = ref 0 in
+      while not (one !i j) do
+        incr i
+      done;
+      let arch k = Rig.arch (Devices.rig set ks.(k)) in
+      if not (String.equal (arch !i) (arch j)) then src.(j) <- !i
+    done;
+  src
+
+let sources ~by p shape =
+  let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
+  let w j = Devices.window ~by p shape j in
+  sources_by set ks (fun i j -> same (w i) (w j))
+
+let copy e here x = e.bring here [ (x, Array.map Route.full (Prim.shape x)) ]
+
 (* Reading *)
 
 (* [read] of [x] of [shape]. *)
@@ -189,12 +226,24 @@ let windows : type r d.
           in
           e.run ~by ?into here layouts (at_device here op)
         in
+        let src =
+          sources_by set devices (fun i j ->
+              Array.for_all (fun w -> same w.(i) w.(j)) ws)
+        in
         let rs =
           Array.mapi
-            (fun j _ -> if computes j then Some (local j) else None)
+            (fun j _ ->
+              if computes j && src.(j) = j then Some (local j) else None)
             devices
         in
         Prim.zip op rs (fun i vs ->
+            let copied j v =
+              if computes j && src.(j) <> j then
+                let here = Devices.one set devices.(j) in
+                Some (copy e here (Option.get vs.(src.(j))))
+              else v
+            in
+            let vs = Array.mapi copied vs in
             let dt = Prim.dtype (Option.get (Array.find_map Fun.id vs)) in
             e.assemble p (shape_at layouts i) dt vs)
 

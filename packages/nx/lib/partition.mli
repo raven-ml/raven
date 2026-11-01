@@ -22,9 +22,11 @@
     as which of the pieces that hold a window a move reads, and whether it
     borrows their memory or copies it. An engine reads the windows it is
     given and never writes them: one window may stand for several. A device
-    computes where one of its windows of the results holds elements. Where
-    none does on any device, the first device computes, so that the kernels
-    answer for the operation as on one device.
+    computes where one of its windows of the results holds elements, but
+    for a copy of a replica on a set of several architectures
+    ({!section-replicas}). Where none does on any device, the first device
+    computes, so that the kernels answer for the operation as on one
+    device.
 
     This module lies above {!Prim} and {!Route}. {!Partial} partitions the
     folds over a cut axis by it; [Exec] gives the engine of eager
@@ -92,6 +94,29 @@ type engine = {
           elements where [ps.(j)] is [None]. *)
 }
 
+(** {1:replicas Replicas}
+
+    On a set whose devices are of several architectures ({!Rig.arch}), the
+    first device, in its grid's order, that holds a window of a result
+    decides who computes it: the devices of its architecture compute it,
+    and every other device that holds the window receives a copy of the
+    first's, by {!engine}'s [bring]. Every device holding a window then
+    holds its bits from devices of one architecture, so replicas are
+    equal bit for bit. On a set of one architecture every device computes
+    its windows. *)
+
+val sources :
+  by:string -> 'd Devices.placement -> int array -> int array
+(** [sources ~by p shape] is, for the device at each position of [p]'s
+    grid, the position whose result of [shape] it holds: its own where it
+    computes its window, else the first device holding that window, whose
+    result it copies, as {!section-replicas} says. *)
+
+val copy :
+  engine -> 'e Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'e) Value.t
+(** [copy e here x] is {!engine}'s [bring] of all of [x], a value on one
+    device, at the one-device placement [here]. *)
+
 val read :
   engine ->
   by:string ->
@@ -123,7 +148,8 @@ val windows :
     {!Prim.local}[ op w] over the windows of the operands it reads
     ({!Route.window}), at its own placement where [op] creates its
     values, its first result into its piece of [into], a value at the
-    route's result, where it is given.
+    route's result, where it is given, or copies it as
+    {!section-replicas} says.
 
     Raises what [e]'s steps raise, and [Invalid_argument] as an internal
     fault for a route that computes by partials. *)

@@ -313,6 +313,17 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     window. An operand whole on every device
     is read by a view of each device's window.
 
+    On a set whose devices are of several architectures ({!Rig.arch}), such
+    as a GPU beside a memory device under a compiler, each step that computes
+    windows held by several devices, an operation's results, a fold's
+    partials or a part of its closing, computes each such window on the
+    devices of the architecture of the first device in the placement's order
+    that holds it, and copies it to the others. Each element of a value whole
+    on each device, or of a window repeated along a mesh's axis, so holds
+    equal bits on every device that holds it. A closing cuts its result into
+    parts across the devices, so a whole value's elements may come from
+    devices of several architectures.
+
     An operation raises [Invalid_argument] where two operands cut one
     result axis over different devices or tiles, where a device needs a
     window of an operand it does not hold, and where operands lie alone on
@@ -5668,7 +5679,10 @@ module Prim : sig
       their programs' coordinates offset by their windows' starts, and a
       fold over a cut axis closes by moves and folds on one device each. A
       [Place] moves pieces. A device whose windows of the results are all
-      empty computes nothing, but the first, where every device's are.
+      empty computes nothing, but the first, where every device's are, and
+      on a set of several architectures a device receives the windows that
+      a device of another architecture computes for it
+      ({!section-routing}).
 
       Raises [Invalid_argument] naming [by] where [op]'s operands break its
       rule or its route, as eager execution raises, what [e]'s steps raise,

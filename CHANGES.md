@@ -353,6 +353,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles programs over devices of several targets, such as a GPU
+  beside a memory device: each device runs kernels compiled for its own
+  target. Such programs were evaluated, and on a set without kernels raised.
 - A compiled call over several devices given a donated argument lends each
   device's piece of it to the result's piece there, so an update of state cut
   across devices writes in place; such calls were evaluated. A program over
@@ -367,8 +370,8 @@ All notable changes to this project will be documented in this file.
   windows in kernels of its own, compiled once per target, with eager's
   placements. Such programs were evaluated. Loops, `switch`, `remat`, custom
   rules, checks and totals over several devices are still evaluated, as are
-  programs over devices of several targets and programs that gather a cut
-  argument, as fully sharded training gathers its weights.
+  programs that gather a cut argument, as fully sharded training gathers its
+  weights.
 - A loop's step that runs a construct over none of the step's values, such as
   a scan over a capture, executes its `Rune.callback`s and offers its
   `Rune.Probe` emissions every trip: the construct ran once, so a callback ran
@@ -3408,6 +3411,10 @@ thread.
 
 ### Nx
 
+- On a set of devices of several architectures, each window that several
+  devices hold, of a result, a fold's partials or a part of its closing, is
+  computed by the devices of its first holder's architecture and copied to the
+  others, so replicas hold equal bits.
 - `Nx_quant.apply` reads a Q8_0 weight where it lies at float32,
   bfloat16 and float16 inputs, as it reads MXFP4: it decoded the whole
   weight at float32 on every call. `Nx_quant.quantize_q8_0` stores a float

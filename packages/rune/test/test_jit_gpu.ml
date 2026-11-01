@@ -6,12 +6,13 @@
 (* Rune.jit on this machine's first GPU: a scatter past its work bound gives
    the host's eager values, a call's check raises at the next wait, so the
    call returns while its work runs, a key split there has the host's words,
-   and a program over the GPU and a memory device, devices of two targets, is
-   evaluated. It skips without a GPU, or without the compiler the GPU's
+   and a program over the GPU and a memory device, devices of two targets,
+   compiles to eager's values with replicas equal bit for bit. It skips without a GPU, or without the compiler the GPU's
    kernels need. *)
 
 open Windtrap
 open Rune_support
+open Witness
 
 let gpu =
   lazy
@@ -107,25 +108,278 @@ let test_deferred () =
     (Big ([| 0; 0 |], float_of_int n))
     (fun () -> Nx.sync y)
 
-(* A program over the GPU and a memory device lies on devices of two targets,
-   so it is evaluated, as nx evaluates it: the set has no kernels, so the copy
-   of its result raises, as rune.mli's evaluated programs on such a set do. *)
-let mixed () =
-  match Rig_gpus.first () with
-  | Error _ -> skip ~reason:"no GPU" ()
-  | Ok gpu ->
-      let memory = Result.get_ok (Rig.memory_device "rune-jit-gpu-mixed") in
-      let module S = (val Nx.devices [ gpu; memory ]) in
-      let x =
-        Nx.place S.on
-          (Nx.create Nx.float32 [| 4; 2 |] (Array.init 8 Float.of_int))
-      in
-      let f x = Nx.place (S.split ~axis:0) x in
-      let before = Rune.evaluations () in
-      raises_match
-        (Exn.invalid_arg ~sub:"has no kernels")
-        (fun () -> ignore (Rune.jit' f x));
-      equal ~msg:"evaluated" int 1 (Rune.evaluations () - before)
+(* Several targets
+
+   A program over the GPU beside a memory device compiles, each device running
+   kernels of its own target, and gives the placements the same function gives
+   eagerly over two memory devices, an exact function's bits and another's
+   values within rune.mli's classes. The devices of the first device's
+   architecture compute a value whole on several devices and the others
+   receive copies, so its replicas are equal bit for bit, whichever device
+   comes first. *)
+
+let f32 = Nx.float32
+
+(* A placement: whole on each device, cut along an axis, or, over a 2 x 2
+   mesh, cut along axis [0] over its first axis and whole along its second. *)
+type cut = On | Split of int | Rows
+
+(* A set, and the mesh over it where it has four devices. *)
+type 'd set = { s : 'd Nx.devices; mesh : 'd Nx.Mesh.t option }
+
+let set_of (type d) (s : d Nx.devices) =
+  let mesh =
+    if List.length (Nx.rigs s) = 4 then
+      Some (Nx.Mesh.v s [ ("x", 2); ("y", 2) ])
+    else None
+  in
+  { s; mesh }
+
+let at set = function
+  | On -> Nx.Placement.on set.s
+  | Split axis -> Nx.Placement.split ~axis set.s
+  | Rows -> Nx.Placement.mesh (Option.get set.mesh) [ (0, [ "x" ]) ]
+
+(* A value of [shape] on the host, of elements in [-1, 1] that depend on [seed]
+   and their index. *)
+let value ?(seed = 0) shape =
+  let n = Array.fold_left ( * ) 1 shape in
+  Nx.create f32 shape
+    (Array.init n (fun i -> sin (float_of_int ((seed * 7919) + i + 1))))
+
+let host x = Nx.place Nx.Host.on x
+let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+
+(* [γ(k)] at [float32]. *)
+let gamma k =
+  let u = ldexp 1. (-24) in
+  let k = float_of_int k in
+  k *. u /. (1. -. (k *. u))
+
+(* [jit] within [bound] of [eager] elementwise, NaN where it is NaN. *)
+let within ~bound eager jit =
+  let e = Nx.to_array (Nx.cast Nx.float64 (host eager)) in
+  let j = Nx.to_array (Nx.cast Nx.float64 (host jit)) in
+  let b = Nx.to_array (Nx.cast Nx.float64 (host bound)) in
+  Array.iteri
+    (fun i ei ->
+      if Float.is_nan ei then equal ~msg:"NaN" bool true (Float.is_nan j.(i))
+      else
+        less
+          ~msg:(Printf.sprintf "distance at %d" i)
+          float_exact
+          ~than:(b.(i) +. Float.min_float)
+          (Float.abs (j.(i) -. ei)))
+    e
+
+(* A function of two values, its arguments on the host with their placements,
+   its result's placement, and how its compiled result compares with eager's:
+   [close x y eager jit]. *)
+type case = {
+  name : string;
+  f : 'd. (float, Nx.float32_elt, 'd) Nx.t -> (float, Nx.float32_elt, 'd) Nx.t ->
+      (float, Nx.float32_elt, 'd) Nx.t;
+  x : (float, Nx.float32_elt, Nx.host) Nx.t * cut;
+  y : (float, Nx.float32_elt, Nx.host) Nx.t * cut;
+  result : cut;
+  close :
+    (float, Nx.float32_elt, Nx.host) Nx.t ->
+    (float, Nx.float32_elt, Nx.host) Nx.t ->
+    (float, Nx.float32_elt, Nx.host) Nx.t ->
+    (float, Nx.float32_elt, Nx.host) Nx.t ->
+    unit;
+}
+
+let exact _ _ e j = equal bits_t (bits e) (bits j)
+
+(* A value whose magnitudes span twenty binades, so that two orders of
+   addition round apart. *)
+let spread shape =
+  let n = Array.fold_left ( * ) 1 shape in
+  Nx.create f32 shape
+    (Array.init n (fun i -> ldexp (sin (float_of_int (i + 1))) (i * 7 mod 20)))
+
+let mass x = Nx.abs (Nx.cast Nx.float64 x)
+
+(* [tanh (3 x)]: on the GPU and eagerly each within 18 ulps of the correctly
+   rounded result, an ulp at most [2 u] of it, so within [72 u] of each other,
+   relatively, and [73 u] of eager's result. *)
+let tanh x = Nx.tanh (Nx.mul_s x 3.)
+let tanh_err = 73. *. ldexp 1. (-24)
+
+let cases =
+  [
+    {
+      name = "elementwise over a cut and a whole value";
+      f = (fun x y -> Nx.maximum (Nx.mul x y) (Nx.sub x (Nx.neg y)));
+      x = (value [| 8; 3 |], Split 0);
+      y = (value ~seed:1 [| 8; 3 |], On);
+      result = Split 0;
+      close = exact;
+    };
+    {
+      name = "elementwise over whole values";
+      f = (fun x y -> Nx.maximum (Nx.mul x y) (Nx.sub x (Nx.neg y)));
+      x = (value [| 8; 3 |], On);
+      y = (value ~seed:1 [| 8; 3 |], On);
+      result = On;
+      close = exact;
+    };
+    {
+      name = "a tanh of a whole value";
+      f = (fun x _ -> tanh x);
+      x = (value [| 1024 |], On);
+      y = (value ~seed:1 [| 1 |], On);
+      result = On;
+      close = (fun _ _ e j -> within ~bound:(Nx.mul_s (mass e) tanh_err) e j);
+    };
+    {
+      name = "a sum over the cut axis";
+      f = (fun x _ -> Nx.sum ~axes:[ 0 ] x);
+      x = (spread [| 9; 7 |], Split 0);
+      y = (value ~seed:1 [| 1 |], On);
+      result = On;
+      close =
+        (fun x _ e j ->
+          within ~bound:(Nx.mul_s (Nx.sum ~axes:[ 0 ] (mass x)) (2. *. gamma 9))
+            e j);
+    };
+    {
+      name = "a matrix product cut along its contracted axis";
+      f = Nx.matmul;
+      x = (value [| 5; 6 |], Split 1);
+      y = (value ~seed:1 [| 6; 3 |], Split 0);
+      result = On;
+      close =
+        (fun x y e j ->
+          within ~bound:(Nx.mul_s (Nx.matmul (mass x) (mass y)) (2. *. gamma 7))
+            e j);
+    };
+    {
+      (* As test_jit_devices.ml's gradient: [g = xᵀ (1 - t²)] for
+         [t = tanh (x w)]. *)
+      name = "the gradient of a loss over a cut batch";
+      f = (fun x w -> Rune.grad' (fun w -> Nx.sum (Nx.tanh (Nx.matmul x w))) w);
+      x = (value [| 6; 4 |], Split 0);
+      y = (value ~seed:1 [| 4; 3 |], On);
+      result = On;
+      close =
+        (fun x w e j ->
+          let ax = mass x and u = ldexp 1. (-24) in
+          let term =
+            Nx.add_s
+              (Nx.mul_s (Nx.matmul ax (mass w)) (2. *. gamma 5))
+              ((38. *. u) +. gamma 7)
+          in
+          let bound = Nx.mul_s (Nx.matmul (Nx.transpose ax) term) 2. in
+          within ~bound e j);
+    };
+  ]
+
+(* Each device's piece of [y], on the host, and its window. *)
+let pieces y =
+  let s = Nx.Placement.devices (Nx.placement y) in
+  let windows = Nx.Prim.pieces (Nx.placement y) (Nx.shape y) in
+  Array.mapi
+    (fun j a -> (bits (host (Nx.Repr.of_array s a)), snd windows.(j)))
+    (Iarray.to_array (Nx.Repr.shards y))
+
+(* Over a 2 x 2 mesh: a value cut along its first axis over the mesh's first
+   axis, which its second repeats, so that each window lies on two devices and
+   each fold over that axis closes in two groups. *)
+let mesh_cases =
+  (* The terms [t] of a sum or a cumulative sum of [n] of [tanh (3 x)]: within
+     [(73 u + 2 γ(n)) Σ|t|] of eager's. *)
+  let folded fold n x _ e j =
+    let terms = Nx.abs (Nx.cast Nx.float64 (tanh x)) in
+    within ~bound:(Nx.mul_s (fold terms) (tanh_err +. (2. *. gamma n))) e j
+  in
+  [
+    {
+      name = "a tanh of rows";
+      f = (fun x _ -> tanh x);
+      x = (value [| 256; 4 |], Rows);
+      y = (value ~seed:1 [| 1 |], On);
+      result = Rows;
+      close = (fun _ _ e j -> within ~bound:(Nx.mul_s (mass e) tanh_err) e j);
+    };
+    {
+      name = "a sum over the rows";
+      f = (fun x _ -> Nx.sum ~axes:[ 0 ] (tanh x));
+      x = (value [| 64; 7 |], Rows);
+      y = (value ~seed:1 [| 1 |], On);
+      result = On;
+      close = folded (Nx.sum ~axes:[ 0 ]) 64;
+    };
+    {
+      (* The positions of the column extremes, distinct values, as floats. *)
+      name = "the positions of the extremes over the rows";
+      f = (fun x _ -> Nx.cast f32 (Nx.argmax ~axis:0 (Nx.mul_s x 3.)));
+      x = (value [| 64; 5 |], Rows);
+      y = (value ~seed:1 [| 1 |], On);
+      result = On;
+      close = exact;
+    };
+    {
+      name = "a cumulative sum along the rows";
+      f = (fun x _ -> Nx.cumsum ~axis:0 (tanh x));
+      x = (value [| 64; 3 |], Rows);
+      y = (value ~seed:1 [| 1 |], On);
+      result = Rows;
+      close = folded (Nx.cumsum ~axis:0) 64;
+    };
+  ]
+
+(* [c] compiled over [mixed] against [c] applied eagerly over [memory]. Devices
+   that hold one window of the result hold one piece, bit for bit. *)
+let check (type d e) (mixed : d set) (memory : e set) c =
+  let (x, cx), (y, cy) = (c.x, c.y) in
+  let eager = c.f (Nx.place (at memory cx) x) (Nx.place (at memory cy) y) in
+  equal ~msg:"eager's placement" (placement ()) (at memory c.result)
+    (Nx.placement eager);
+  let f = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) c.f in
+  let before = Rune.evaluations () in
+  let jit = f (Nx.place (at mixed cx) x) (Nx.place (at mixed cy) y) in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  equal ~msg:"placement" (placement ()) (at mixed c.result) (Nx.placement jit);
+  c.close x y (host eager) (host jit);
+  let ps = pieces jit and rigs = Array.of_list (Nx.rigs mixed.s) in
+  Array.iteri
+    (fun j (b, w) ->
+      match Array.find_index (fun (_, w') -> w' = w) ps with
+      | Some i when i < j ->
+          equal
+            ~msg:("the replica on " ^ Rig.name rigs.(j))
+            bits_t (fst ps.(i)) b
+      | _ -> ())
+    ps
+
+let memory k = Result.get_ok (Rig.memory_device ("rune-jit-gpu-" ^ k))
+
+(* The sets the laws run over: the GPU and memory devices, in an order that
+   puts the GPU at [first], and as many memory devices. *)
+let sets =
+  Hashtbl.create 4
+
+let over ~devices ~first c () =
+  let gpu, _ = on_gpu () in
+  let (mixed, eager) =
+    match Hashtbl.find_opt sets (devices, first) with
+    | Some s -> s
+    | None ->
+        let ms = List.init devices (fun k -> memory (string_of_int k)) in
+        let others = List.tl ms in
+        let mixed =
+          List.filteri (fun k _ -> k < first) others
+          @ [ gpu ]
+          @ List.filteri (fun k _ -> k >= first) others
+        in
+        let s = (Nx.devices mixed, Nx.devices ms) in
+        Hashtbl.replace sets (devices, first) s;
+        s
+  in
+  let (module S : Nx.Devices) = mixed and (module M : Nx.Devices) = eager in
+  check (set_of S.v) (set_of M.v) c
 
 (* [split k]'s second key under jit at the GPU's set. A GPU set has no
    kernels, so a key there derives only in a program. *)
@@ -167,11 +421,22 @@ let () =
              test "a call's check raises at the next wait, not at the call"
                test_deferred;
            ];
-         group "several targets"
-           [
-             test "a program over a GPU and a memory device is evaluated"
-               mixed;
-           ];
+         group "a GPU beside a memory device"
+           (List.map
+              (fun c -> test c.name (over ~devices:2 ~first:0 c))
+              cases);
+         group "a memory device beside a GPU"
+           (List.map
+              (fun c -> test c.name (over ~devices:2 ~first:1 c))
+              cases);
+         group "a mesh of a GPU first and three memory devices"
+           (List.map
+              (fun c -> test c.name (over ~devices:4 ~first:0 c))
+              mesh_cases);
+         group "a mesh of a memory device, a GPU and two memory devices"
+           (List.map
+              (fun c -> test c.name (over ~devices:4 ~first:1 c))
+              mesh_cases);
          group "keys"
            [
              prop ~count:20
