@@ -3,8 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* [log_run root] starts a run in the store at [root], logs [samples] of a
-   metric "loss" at steps 0 to 4, finishes it and prints its id. *)
+(* [log_run root] starts a run in the store at [root] with params "lr" and
+   "seed", logs [samples] of a metric "loss" at steps 0 to 4, finishes it and
+   prints its id. *)
 
 open Munin
 
@@ -32,7 +33,11 @@ let samples =
 
 let () =
   let store = Store.open_ ~root:Sys.argv.(1) () in
-  let session = Session.start ~store ~provenance ~experiment:"exp" () in
+  let session =
+    Session.start ~store ~provenance ~experiment:"exp"
+      ~params:[ ("lr", `Float 0.5); ("seed", `Int 7) ]
+      ()
+  in
   let loss = Session.metric session "loss" in
   List.iteri
     (fun step (x, timestamp) ->

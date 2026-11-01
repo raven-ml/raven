@@ -30,3 +30,27 @@ JSON has no number for NaN or the infinities: they are the strings "NaN",
 
   $ munin metrics --root store $id --key loss --format json
   [{"step":0,"timestamp":1709385958.677423,"value":1000000},{"step":1,"timestamp":2.000000,"value":4.58e-72},{"step":2,"timestamp":3.000000,"value":0.1},{"step":3,"timestamp":4.000000,"value":"Infinity"},{"step":4,"timestamp":5.000000,"value":"NaN"}]
+
+A run whose manifest holds a param that is no value, as the null munin wrote
+for a NaN param before, lists, shows and exports without it, beside a good
+run.
+
+  $ good=$(./log_run.exe store)
+  $ sed -i 's/"lr": *[^,}]*/"lr": null/' $(find store -path "*$id*" -name run.json)
+
+  $ munin runs --root store | sed -e "s/$id/BAD/" -e "s/$good/GOOD/" | sort
+  BAD	exp	finished	-	-	-
+  GOOD	exp	finished	-	-	-
+
+  $ munin show --root store $id | sed -n '/^params:/,/^summary:/p'
+  params:
+    seed: 7
+  summary:
+
+  $ munin metrics --root store $id --key loss --format csv
+  step,timestamp,value
+  0,1709385958.677423,1000000
+  1,2.000000,4.58e-72
+  2,3.000000,0.1
+  3,4.000000,inf
+  4,5.000000,nan

@@ -174,17 +174,9 @@ let provenance_of_json json : Provenance.t =
           Json_utils.json_string value |> Option.map (fun text -> (key, text)));
   }
 
-(* A manifest whose params are not values is malformed: [load] skips the run,
-   and a run listed before its manifest went bad raises, as for a manifest that
-   is not JSON. *)
 let manifest_of_json json =
-  let params =
-    match Value.assoc_of_json (Json_utils.json_mem "params" json) with
-    | Some params -> params
-    | None -> failwith "the run's params are not values"
-  in
   {
-    params;
+    params = Json_utils.json_mem "params" json |> Value.assoc_of_json;
     provenance = Json_utils.json_mem "provenance" json |> provenance_of_json;
     notes = Json_utils.json_mem "provenance" json |> notes_of_json;
     tags = Json_utils.json_mem "tags" json |> Json_utils.json_string_list;

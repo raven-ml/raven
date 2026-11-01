@@ -1548,6 +1548,45 @@ let test_value_not_finite () =
   equal (option value) (Some (`String "-Infinity"))
     (Run.find_summary run "best")
 
+(* [nullify key text] is the JSON [text] with the value of its member [key],
+   a number, replaced by [null], as munin wrote a NaN param before. *)
+let nullify key text =
+  let mark = Printf.sprintf "%S" key in
+  let n = String.length mark in
+  let rec find i = if String.sub text i n = mark then i else find (i + 1) in
+  let colon = String.index_from text (find 0 + n) ':' + 1 in
+  let rec stop i =
+    match text.[i] with ',' | '}' | '\n' -> i | _ -> stop (i + 1)
+  in
+  let e = stop colon in
+  String.sub text 0 colon ^ " null" ^ String.sub text e (String.length text - e)
+
+(* A run whose param is not a value lists and loads without it, its metrics
+   intact. *)
+let test_unreadable_param () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session =
+    Session.start ~store ~experiment:"exp"
+      ~params:[ ("lr", `Float 0.5); ("seed", `Int 7) ]
+      ()
+  in
+  Metric.log (Session.metric session "loss") ~step:1 2.5;
+  Session.finish session;
+  let manifest = Filename.concat (Session.dir session) "run.json" in
+  let text = In_channel.with_open_bin manifest In_channel.input_all in
+  Out_channel.with_open_bin manifest (fun oc ->
+      Out_channel.output_string oc (nullify "lr" text));
+  let store = Store.open_ ~root () in
+  equal (list string) [ Session.id session ]
+    (List.map Run.id (Store.list_runs store ()));
+  let run = Option.get (Store.find_run store (Session.id session)) in
+  equal (list string) [ "seed" ] (List.map fst (Run.params run));
+  equal (list float_exact) [ 2.5 ]
+    (List.map
+       (fun (m : Metric.sample) -> m.value)
+       (Run.metric_history run "loss"))
+
 (* JSON that no value writes is not a value. *)
 let value_malformed =
   cases "JSON no value writes is not a value" ~id:Fun.id
@@ -1636,6 +1675,8 @@ let reloading =
     test "params and summaries read back NaN and infinities"
       test_value_not_finite;
     value_malformed;
+    test "a run whose param is not a value loads without it"
+      test_unreadable_param;
     test "best minimize" test_best_minimize;
     test "best maximize" test_best_maximize;
     test "best without goal" test_best_without_goal;

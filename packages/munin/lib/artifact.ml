@@ -88,8 +88,7 @@ let load_manifest root path =
           Json_utils.json_mem "payload" json |> Json_utils.json_string,
           Json_utils.json_mem "digest" json |> Json_utils.json_string,
           Json_utils.json_mem "path" json |> Json_utils.json_string,
-          Json_utils.json_mem "size_bytes" json |> Json_utils.json_number,
-          Json_utils.json_mem "metadata" json |> Value.assoc_of_json )
+          Json_utils.json_mem "size_bytes" json |> Json_utils.json_number )
       with
       | ( Some name,
           Some version,
@@ -97,8 +96,7 @@ let load_manifest root path =
           Some payload,
           Some digest,
           Some materialized_rel_path,
-          Some size_bytes,
-          Some metadata ) ->
+          Some size_bytes ) ->
           Some
             {
               root;
@@ -109,7 +107,8 @@ let load_manifest root path =
               digest;
               materialized_rel_path;
               size_bytes = int_of_float size_bytes;
-              metadata;
+              metadata =
+                Json_utils.json_mem "metadata" json |> Value.assoc_of_json;
               aliases =
                 Json_utils.json_mem "aliases" json
                 |> Json_utils.json_string_list;

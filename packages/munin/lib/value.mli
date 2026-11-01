@@ -35,9 +35,10 @@ val of_json : Jsont.json -> t option
 (** [of_json json] is the value {!to_json} writes as [json], or [None] for
     any other JSON. A number with an integer value is an [`Int]. *)
 
-val assoc_of_json : Jsont.json -> (string * t) list option
-(** [assoc_of_json json] is the members of the object [json] read by
-    {!of_json}, or [None] if [json] is not an object or a member is not a
-    value. *)
+val assoc_of_json : Jsont.json -> (string * t) list
+(** [assoc_of_json json] is the members of the object [json] that {!of_json}
+    reads, in order. A decoder skips what it does not recognise: a member
+    that is not a value is left out, as the [null] munin wrote for a NaN
+    before, and a [json] that is not an object is [[]]. *)
 
 (**/**)

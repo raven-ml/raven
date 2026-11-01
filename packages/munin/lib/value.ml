@@ -49,11 +49,6 @@ let of_json : Jsont.json -> t option = function
   | _ -> None
 
 let assoc_of_json json =
-  let rec go acc = function
-    | [] -> Some (List.rev acc)
-    | (k, v) :: rest -> (
-        match of_json v with Some v -> go ((k, v) :: acc) rest | None -> None)
-  in
-  match json with
-  | Jsont.Object _ -> go [] (Json_utils.json_assoc json)
-  | _ -> None
+  List.filter_map
+    (fun (k, v) -> Option.map (fun v -> (k, v)) (of_json v))
+    (Json_utils.json_assoc json)

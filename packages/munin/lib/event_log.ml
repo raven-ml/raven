@@ -122,9 +122,7 @@ let of_json json =
             (Media { step = int_of_float step; timestamp = ts; key; kind; path })
       | _ -> None)
   | Some "summary" ->
-      Json_utils.json_mem "values" json
-      |> Value.assoc_of_json
-      |> Option.map (fun values -> Summary values)
+      Some (Summary (Json_utils.json_mem "values" json |> Value.assoc_of_json))
   | Some "notes" ->
       Json_utils.json_mem "value" json
       |> optional_string_of_json
