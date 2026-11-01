@@ -22,7 +22,8 @@ user's choice; raven takes the BSD licence, whose notice each defs.ml carries.
 pins.json by URL and SHA-256 and checked against its pin; downloads are kept
 in --cache, and --pin records the digests of headers not yet pinned.
 Generating reads the excerpts alone, offline. --check generates into memory
-and fails if a committed file differs.
+and fails if a committed file differs, or if the C compiler ($CC, or cc)
+lays out a structure otherwise than this script does.
 
 A structure is laid out as the C compilers of Linux's 64-bit hosts lay it out:
 each member at the next multiple of its alignment, its size's for integers, 8
@@ -32,9 +33,14 @@ for __aligned_u64, 1 in a packed structure.
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import re
+import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -540,6 +546,75 @@ def check_layouts(h):
         sys.exit("a work entry segment is not of the size the encoder writes")
 
 
+# Checking the layouts with a C compiler
+
+# The types the excerpts take from headers they do not copy, as Linux's
+# <linux/types.h> defines them: fixed-width words, byte order aside, and
+# __aligned_u64's alignment of 8.
+C_PRELUDE = """\
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+typedef uint8_t __u8, u8;
+typedef int8_t __s8;
+typedef uint16_t __u16, __be16;
+typedef int16_t __s16;
+typedef uint32_t __u32, __be32;
+typedef int32_t __s32;
+typedef uint64_t __u64, __be64;
+typedef int64_t __s64;
+typedef __u64 __aligned_u64 __attribute__((aligned(8)));
+"""
+
+
+def c_values(source, exprs):
+    """The values of the C expressions [exprs] in the program [source], as the
+    C compiler ($CC, or cc) lays it out for this machine."""
+    cc = shlex.split(os.environ.get("CC") or "cc")
+    if not cc or not shutil.which(cc[0]):
+        sys.exit("no C compiler to check the layouts with: set CC or install cc")
+    prints = "".join(f'  printf("%lld\\n", (long long)({e}));\n' for e in exprs)
+    with tempfile.TemporaryDirectory() as d:
+        c, exe = pathlib.Path(d) / "layouts.c", pathlib.Path(d) / "layouts"
+        c.write_text(f"{source}\nint main(void) {{\n{prints}  return 0;\n}}\n", encoding="latin-1")
+        r = subprocess.run([*cc, "-o", str(exe), str(c)], capture_output=True, text=True)
+        if r.returncode:
+            sys.exit(f"{cc[0]} cannot compile the layouts:\n{r.stderr}")
+        out = subprocess.run([str(exe)], capture_output=True, text=True, check=True).stdout
+    return [int(v) for v in out.split()]
+
+
+def check_with_cc(h):
+    """Fails unless the C compiler lays out each structure of the defs.ml
+    files as [layouts] does: its size, and each field's offset and bytes. A
+    nested field a__b is the member a.b; a flexible array's bytes, none,
+    are not C's to give, so only its offset is checked."""
+    structs = [(n, s) for _, ss in OUTPUTS.values() for n, s, _ in ss]
+    headers = [n for n in SOURCES if n in {n for n, _ in structs}]
+    text = "".join(f'#line 1 "{n}"\n{h[n]}' for n in headers)
+    # A union's member of a type the excerpts leave out, which [layouts]
+    # skips (mlx5_cqe64's tag matching entries): a one-byte stand-in, so C
+    # checks the rest of the layout. Whether that member fits the union is
+    # left unchecked.
+    missing = sorted(set(re.findall(r"\bstruct\s+(\w+)\s+\w+\s*;", strip_comments(text)))
+                     - set(STRUCT.findall(text)))
+    source = C_PRELUDE + "".join(f"struct {m} {{ char opaque; }};\n" for m in missing) + text
+    known = layouts(h, structs)
+    checks = []
+    for _, s in structs:
+        t = f"struct {s}"
+        checks.append((f"sizeof({t})", known[s].size))
+        for f, (o, b) in known[s].fields.items():
+            path = f.replace("__", ".")
+            checks.append((f"offsetof({t}, {path})", o))
+            if b:
+                checks.append((f"sizeof((({t} *)0)->{path})", b))
+    got = c_values(source, [e for e, _ in checks])
+    wrong = [f"  {e}: gen.py {v}, cc {g}" for (e, v), g in zip(checks, got) if v != g]
+    if wrong:
+        sys.exit("the C compiler lays out the structures otherwise:\n" + "\n".join(wrong))
+
+
 # Command line
 
 
@@ -560,6 +635,8 @@ def main():
     else:
         h = {n: (HEADERS / n).read_text(encoding="latin-1") for n in SOURCES}
         check_layouts(h)
+        if a.check:
+            check_with_cc(h)
         files = {out: generate(h, out, cs, ss) for out, (cs, ss) in OUTPUTS.items()}
     for path, text in files.items():
         if a.check:

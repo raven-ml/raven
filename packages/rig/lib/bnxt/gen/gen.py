@@ -24,7 +24,8 @@ so the firmware's requests come from DPDK's copy of the same interface.
 pins.json by URL and SHA-256 and checked against its pin; downloads are kept
 in --cache, and --pin records the digests of headers not yet pinned.
 Generating reads the excerpts alone, offline. --check generates into memory
-and fails if a committed file differs.
+and fails if a committed file differs, or if the C compiler ($CC, or cc)
+lays out a structure otherwise than this script does.
 
 A structure is laid out as the C compilers of Linux's 64-bit hosts lay it out:
 each member at the next multiple of its alignment, its size's for integers, 1
@@ -34,9 +35,14 @@ in a packed structure.
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import re
+import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -427,6 +433,57 @@ def check_layouts(h):
             sys.exit(f"{r} is not of the size the library reads")
 
 
+# Checking the layouts with a C compiler
+
+# The types the excerpts take from headers they do not copy, as Linux's
+# <linux/types.h> and DPDK's <rte_common.h> define them: fixed-width words,
+# byte order aside, and DPDK's packing.
+C_PRELUDE = """\
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+typedef uint8_t u8;
+typedef uint16_t u16, __le16, __be16;
+typedef uint32_t u32, __le32, __be32;
+typedef uint64_t u64, __le64;
+#define __rte_packed __attribute__((__packed__))
+"""
+
+
+def c_values(source, exprs):
+    """The values of the C expressions [exprs] in the program [source], as the
+    C compiler ($CC, or cc) lays it out for this machine."""
+    cc = shlex.split(os.environ.get("CC") or "cc")
+    if not cc or not shutil.which(cc[0]):
+        sys.exit("no C compiler to check the layouts with: set CC or install cc")
+    prints = "".join(f'  printf("%lld\\n", (long long)({e}));\n' for e in exprs)
+    with tempfile.TemporaryDirectory() as d:
+        c, exe = pathlib.Path(d) / "layouts.c", pathlib.Path(d) / "layouts"
+        c.write_text(f"{source}\nint main(void) {{\n{prints}  return 0;\n}}\n", encoding="latin-1")
+        r = subprocess.run([*cc, "-o", str(exe), str(c)], capture_output=True, text=True)
+        if r.returncode:
+            sys.exit(f"{cc[0]} cannot compile the layouts:\n{r.stderr}")
+        out = subprocess.run([str(exe)], capture_output=True, text=True, check=True).stdout
+    return [int(v) for v in out.split()]
+
+
+def check_with_cc(h):
+    """Fails unless the C compiler lays out each structure of defs.ml as
+    [layout] does: its size, and each field's offset and bytes."""
+    source = C_PRELUDE + "".join(f'#line 1 "{n}"\n{h[n]}' for n in SOURCES)
+    checks = []
+    for n, s, _ in STRUCTS:
+        size, fields = layout(h[n], s)
+        t = f"struct {s}"
+        checks.append((f"sizeof({t})", size))
+        for f, (o, b) in fields.items():
+            checks += [(f"offsetof({t}, {f})", o), (f"sizeof((({t} *)0)->{f})", b)]
+    got = c_values(source, [e for e, _ in checks])
+    wrong = [f"  {e}: gen.py {v}, cc {g}" for (e, v), g in zip(checks, got) if v != g]
+    if wrong:
+        sys.exit("the C compiler lays out the structures otherwise:\n" + "\n".join(wrong))
+
+
 # Command line
 
 
@@ -447,6 +504,8 @@ def main():
     else:
         h = {n: (HEADERS / n).read_text(encoding="latin-1") for n in SOURCES}
         check_layouts(h)
+        if a.check:
+            check_with_cc(h)
         files = {LIB / "defs.ml": generate(h)}
     for path, text in files.items():
         if a.check:

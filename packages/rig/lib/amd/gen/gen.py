@@ -45,8 +45,9 @@ pinned in pins.json by URL and SHA-256 and checked against its pin; it
 fails on a header whose notice is not MIT's, NCSA's or LLVM's. Downloads
 are kept in --cache, and --pin records the digests of files not yet
 pinned. Generating reads the excerpts and firmware.tsv alone, offline.
---check generates into memory and fails if a committed file differs. Each
-defs.ml carries the notices of the excerpts it reads.
+--check generates into memory and fails if a committed file differs, or if
+the C compiler ($CC, or cc) lays out a structure otherwise than this script
+does. Each defs.ml carries the notices of the excerpts it reads.
 
 Text is read and written as latin-1, one character per byte, so every byte
 of a header round-trips into its excerpt as upstream wrote it. The headers
@@ -61,12 +62,17 @@ when a program starts.
 """
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import os
 import pathlib
 import re
+import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -763,10 +769,11 @@ SCALARS = {"uint8_t": 1, "uint16_t": 2, "uint32_t": 4, "uint64_t": 8, "int8_t": 
            "int64_t": 8, "unsigned int": 4, "signed int": 4, "int": 4, "float": 4, "void*": 8}
 
 
-def layout(text, name):
+def layout(text, name, paths=None):
     """(sizeof, {path: (byte offset, bytes) or ("bits", bit offset, bits)}) of
     the struct or union [name] defined in [text], nested fields joined with
-    "__", for x86_64 Linux. An array's bytes are its element's."""
+    "__", for x86_64 Linux. An array's bytes are its element's, and [paths]
+    gets its C member path, of its first element."""
     src = preprocess(text)
     tokens = re.findall(r"[A-Za-z_]\w*\s*\*|[A-Za-z_]\w*|\d+|[{};:\[\],]", src)
     defs = {}  # every struct and union: name -> token range
@@ -848,8 +855,8 @@ def layout(text, name):
                     pos += width
                 align = max(align, 4)
                 continue
-            count = 1
-            if "[" in decl:
+            count, array = 1, "[" in decl
+            if array:
                 b = decl.index("[")
                 count = int(decl[b + 1])
                 decl = decl[:b]
@@ -871,6 +878,8 @@ def layout(text, name):
             start = 0 if kind == "union" else -(-pos // (falign * 8)) * falign * 8
             p = (prefix + "__" if prefix else "") + fname
             fields[p] = ((base + start) // 8, fbytes)
+            if array and paths is not None:
+                paths[p] = p.replace("__", ".") + "[0]"
             if kind == "union":
                 size = max(size, fbytes * count * 8)
             else:
@@ -886,12 +895,13 @@ def layout(text, name):
     sys.exit(f"no struct {name}")
 
 
-def packed_layout(text, name, upto=None):
+def packed_layout(text, name, upto=None, paths=None):
     """(sizeof, {field: (byte offset, bytes) or ("bits", bit offset, bits)}) of
     the struct [name] of [text], laid out under #pragma pack(1): every member
     at the bit where the one before ends, a bit field's run ending on a byte,
     a union's members at its start. Nested members are named by their own
-    names; an array's bytes are its element's; a flexible array takes none.
+    names, and [paths] gets the C member path of each, an array's of its first
+    element; an array's bytes are its element's; a flexible array takes none.
     The layout stops at the member [upto]."""
     src = preprocess(text)
     src = re.sub(r"DECLARE_FLEX_ARRAY\((\w+),\s*(\w+)\)", r"\1 \2[]", src)
@@ -928,15 +938,17 @@ def packed_layout(text, name, upto=None):
                 if i > 0 and tokens[i - 1] == "typedef":
                     defs.setdefault(tokens[end], (kind, body))
 
-    def walk(kind, body, base, fields):
-        """Lays out [body] from bit [base]; its size in bits."""
+    def walk(kind, body, base, fields, prefix=""):
+        """Lays out [body], whose members' C paths start with [prefix], from bit
+        [base]; its size in bits."""
         i, end = body
         pos, size = 0, 0
         while i < end:
             if tokens[i] in ("struct", "union") and tokens[i + 1] == "{":
                 k, _, inner, after = definition(i)
                 start = 0 if kind == "union" else -(-pos // 8) * 8
-                isize = walk(k, inner, base + start, fields)
+                named = prefix + tokens[after] + "." if tokens[after] != ";" else prefix
+                isize = walk(k, inner, base + start, fields, named)
                 size = max(size, isize) if kind == "union" else size
                 pos = pos if kind == "union" else start + isize
                 # Past the member's name, if it has one, and its semicolon.
@@ -956,11 +968,13 @@ def packed_layout(text, name, upto=None):
                 width = int(decl[c + 1])
                 start = 0 if kind == "union" else pos
                 fields[decl[c - 1]] = ("bits", base + start, width)
+                if paths is not None:
+                    paths[decl[c - 1]] = prefix + decl[c - 1]
                 size = max(size, width) if kind == "union" else size
                 pos = pos if kind == "union" else pos + width
                 continue
-            count = 1
-            if "[" in decl:
+            count, array = 1, "[" in decl
+            if array:
                 b = decl.index("[")
                 count = 0 if decl[b + 1] == "]" else int(sizes.get(decl[b + 1], decl[b + 1]))
                 decl = decl[:b]
@@ -978,6 +992,8 @@ def packed_layout(text, name, upto=None):
                 sys.exit(f"{name}: unknown type {ftype}")
             start = 0 if kind == "union" else -(-pos // 8) * 8
             fields[fname] = ((base + start) // 8, fbytes)
+            if paths is not None:
+                paths[fname] = prefix + fname + ("[0]" if array else "")
             bits = fbytes * count * 8
             size = max(size, bits) if kind == "union" else size
             pos = pos if kind == "union" else start + bits
@@ -1708,8 +1724,9 @@ def pci_header(h):
     )
 
 
-def generate_abi(h):
-    """rig_amd_abi's defs.ml, from the excerpts [h], by name."""
+def generate_abi(h, laid):
+    """rig_amd_abi's defs.ml, from the excerpts [h], by name; [laid] gets the
+    layouts it emits, as [check_with_cc] takes them."""
     out = [abi_header({n: h[n] for n in ABI})]
 
     # Registers: each a literal record, each version's list of them and its
@@ -1856,6 +1873,7 @@ def generate_abi(h):
         size, fields = layout(h[name], WAIT_REG_MEM64)
         if size != 36 or any(fields.get(f) != at for f, at in WAIT_REG_MEM64_LAYOUT):
             sys.exit(f"{name}: {WAIT_REG_MEM64} is not laid out as the encoder writes it")
+        laid.append(Laid(name, WAIT_REG_MEM64, size, dict(WAIT_REG_MEM64_LAYOUT)))
     if ss["WAIT_REG_MEM_FUNCTION"] != 0 or ss["WAIT_REG_MEM_MEM_SPACE"] != 4:
         sys.exit(f"{WAIT_REG_MEM64}'s control word differs from WAIT_REG_MEM's")
 
@@ -1938,7 +1956,9 @@ def generate_abi(h):
     hv = constants(h[HSA], HSA_CONSTANTS)
     out += [f"let {ml_name(n)} = {ml_int(hv[n])}" for n in HSA_CONSTANTS]
     out.append("")
-    size, fields = layout(h[HSA], DISPATCH)
+    paths = {}
+    size, fields = layout(h[HSA], DISPATCH, paths)
+    laid.append(Laid(HSA, DISPATCH, size, {f: fields[f] for f in DISPATCH_FIELDS}, paths))
     out += ["module Dispatch = struct", f"  let sizeof = {size}"]
     out += [f"  let {f} = {ml_field(fields[f])}" for f in DISPATCH_FIELDS]
     out += ["end", ""]
@@ -1951,10 +1971,12 @@ def generate_abi(h):
     out += [f"  {ml_name(f)} : (int * int) option;" for f in SQ_WORD3_OPTIONAL]
     out += ["}", "", "let sq_buf_rsrc = ["]
     for major, (w1, w3) in SQ_BUF_RSRC.items():
-        def bits(union):
-            _, fields = layout(h[REGISTERS_H], union)
-            return {k.split("__")[-1]: v for k, v in fields.items() if v[0] == "bits"}
-        b1, b3 = bits(w1), bits(w3)
+        def bits(union, wanted):
+            size, fields = layout(h[REGISTERS_H], union)
+            path = {k.split("__")[-1]: k for k, v in fields.items() if v[0] == "bits"}
+            laid.append(Laid(REGISTERS_H, union, size, {path[f]: fields[path[f]] for f in wanted if f in path}))
+            return {f: fields[k] for f, k in path.items()}
+        b1, b3 = bits(w1, SQ_WORD1), bits(w3, SQ_WORD3 + SQ_WORD3_OPTIONAL)
         fs = [f"{ml_name(f)} = ({b1[f][1]}, {b1[f][2]})" for f in SQ_WORD1]
         fs += [f"{ml_name(f) if f != 'TYPE' else 'type_'} = ({b3[f][1]}, {b3[f][2]})" for f in SQ_WORD3]
         fs += [f"{ml_name(f)} = " + (f"Some ({b3[f][1]}, {b3[f][2]})" if f in b3 else "None")
@@ -1966,7 +1988,9 @@ def generate_abi(h):
 
     # Code objects
     kd = h[KD_H]
-    size, fields = layout(kd, KD)
+    paths = {}
+    size, fields = layout(kd, KD, paths)
+    laid.append(Laid(KD_H, KD, size, {f: fields[f] for f in KD_FIELDS}, paths))
     offsets = constants(kd, [f.upper() + "_OFFSET" for f in KD_FIELDS])
     out += ["(* The kernel descriptor: each field is (byte offset, bytes). *)", "module Kernel_descriptor = struct",
             f"  let sizeof = {size}"]
@@ -1988,12 +2012,15 @@ def generate_abi(h):
     return "\n".join(out) + "\n"
 
 
-def generate_pci(h):
-    """rig_amd_pci's defs.ml, from the excerpts [h], by name."""
+def generate_pci(h, laid):
+    """rig_amd_pci's defs.ml, from the excerpts [h], by name; [laid] gets the
+    layouts it emits, as [check_with_cc] takes them."""
     ml = [pci_header(h)]
 
-    def struct(text, s, wanted, upto=None):
-        size, fields = packed_layout(text, s, upto)
+    def struct(header, s, wanted, upto=None):
+        paths = {}
+        size, fields = packed_layout(h[header], s, upto, paths)
+        laid.append(Laid(header, s, size, {f: fields[f] for f in wanted if f in fields}, paths, upto))
         ml.append(f"module {ml_module(s)} = struct")
         ml.append(f"  let sizeof = {size}")
         for f in wanted:
@@ -2017,7 +2044,7 @@ def generate_pci(h):
     ml.append("(* Layouts: each field as (byte offset, bytes), or (bit offset, bits) for a")
     ml.append("   bit field; an array's bytes are its element's. *)")
     for s, wanted in DISCOVERY_STRUCTS.items():
-        struct(d, s, wanted)
+        struct(DISCOVERY, s, wanted)
 
     # Hardware IDs
     ids = hw_ids(h["kernel/soc15_hw_ip.h"])
@@ -2076,7 +2103,12 @@ def generate_pci(h):
     ml += [f"  {f} : (int * int) option;" for f in MQD_OPTIONAL]
     ml += ["  compute_static_thread_mgmt : (int * int) list;", "  sizeof : int;", "}", ""]
     for hdr, (st, major) in MQDS.items():
-        size, fields = packed_layout(h[hdr], st)
+        paths = {}
+        size, fields = packed_layout(h[hdr], st, paths=paths)
+        mgmt = sorted((f for f in fields if f.startswith("compute_static_thread_mgmt_se")),
+                      key=lambda f: int(f[len("compute_static_thread_mgmt_se"):]))
+        kept = [f for f in MQD_FIELDS + MQD_OPTIONAL + mgmt if f in fields]
+        laid.append(Laid(hdr, st, size, {f: fields[f] for f in kept}, paths))
         ml.append(f"(* GFX{major}'s, {st} *)")
         ml.append(f"let mqd_v{major} = {{")
         for f in MQD_FIELDS:
@@ -2085,8 +2117,6 @@ def generate_pci(h):
             ml.append(f"  {f} = {ml_field(fields[f])};")
         for f in MQD_OPTIONAL:
             ml.append(f"  {f} = " + (f"Some {ml_field(fields[f])};" if f in fields else "None;"))
-        mgmt = sorted((f for f in fields if f.startswith("compute_static_thread_mgmt_se")),
-                      key=lambda f: int(f[len("compute_static_thread_mgmt_se"):]))
         ml.append("  compute_static_thread_mgmt = [ " + "; ".join(ml_field(fields[f]) for f in mgmt) + " ];")
         ml.append(f"  sizeof = {size};")
         ml += ["}", ""]
@@ -2105,11 +2135,13 @@ def generate_pci(h):
         sys.exit("psp_gfx_cmd_resp: no command and response offsets")
     ml += [f"let psp_command_bytes = {n.group(1)}", f"let psp_command_at = {m.group(2)}",
            f"let psp_response_at = {m.group(1)}"]
-    size, fields = packed_layout(g, "psp_gfx_cmd_resp", upto="cmd")
+    paths = {}
+    size, fields = packed_layout(g, "psp_gfx_cmd_resp", upto="cmd", paths=paths)
+    laid.append(Laid(PSP_GFX, "psp_gfx_cmd_resp", size, {"cmd_id": fields["cmd_id"]}, paths, upto="cmd"))
     ml.append(f"let psp_command_id = {ml_field(fields['cmd_id'])}")
     ml.append("")
     for st, (wanted, upto) in PSP_STRUCTS.items():
-        struct(g, st, wanted, upto)
+        struct(PSP_GFX, st, wanted, upto)
 
     # Power manager
     ml += ["(* The power manager's messages, clocks and the feature bits of their DPM, by MP1",
@@ -2178,7 +2210,7 @@ def generate_pci(h):
     u = h[UCODE]
     ml += ["(* Firmware images *)", "", "(* The headers of images, laid out as the discovery table's. *)"]
     for s, wanted in UCODE_STRUCTS.items():
-        struct(u, s, wanted)
+        struct(UCODE, s, wanted)
     types = {**enum_values(u, PSP_FW_TYPES), **enum_values(h[PSP_GFX], GFX_FW_TYPES)}
     ml.append("(* The components of the PSP's own image, by type. *)")
     for n in PSP_FW_TYPES:
@@ -2206,6 +2238,143 @@ def generate_pci(h):
         sys.exit(f"{FIRMWARE}: extra {sorted(paths - want)}, missing {sorted(want - paths)}")
     return "\n".join(ml) + "\n"
 
+
+# Checking the layouts with a C compiler
+
+
+@dataclasses.dataclass
+class Laid:
+    """A layout a defs.ml emits: the excerpt and struct or union it is of, its
+    size (the offset of [upto], where the layout stops there), the fields
+    emitted, and their C member paths where the field's name is not one:
+    "a__b" is "a.b" otherwise."""
+
+    header: str
+    name: str
+    size: int
+    fields: dict
+    paths: dict = dataclasses.field(default_factory=dict)
+    upto: str = None
+
+
+# What the excerpts take from headers they do not copy. DECLARE_FLEX_ARRAY and
+# __packed are Linux's <linux/stddef.h> and <linux/compiler_attributes.h>.
+# BIT_FIELD(T, m, count) is the lowest bit, or the count of bits, that setting
+# the bit field [m] of a zeroed [T] to all ones sets, bits numbered from the
+# least significant of the first byte, as on x86_64.
+C_PRELUDE = """\
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#define DECLARE_FLEX_ARRAY(TYPE, NAME) struct { struct { } __empty_##NAME; TYPE NAME[]; }
+#define __packed __attribute__((__packed__))
+static long long bit_span(const unsigned char *p, size_t n, int count) {
+  long long low = -1, set = 0;
+  for (size_t i = 0; i < 8 * n; i++)
+    if (p[i / 8] >> (i % 8) & 1) {
+      if (low < 0) low = i;
+      set++;
+    }
+  return count ? set : low;
+}
+#define BIT_FIELD(T, m, count) \\
+  ({ T s_; memset(&s_, 0, sizeof s_); s_.m = -1; bit_span((const unsigned char *)&s_, sizeof s_, count); })
+"""
+C_KEEP = re.compile(r"\s*(?:#|typedef\b|struct\b|union\b|enum\b)")
+
+
+def c_source(text):
+    """The C of the excerpt [text]: its preprocessor lines and its whole
+    definitions, without the lines an excerpt keeps of a definition it cuts,
+    such as an enumerator. Comments are blanked first."""
+    lines = re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group()), text, flags=re.S)
+    lines = re.sub(r"//[^\n]*", "", lines).split("\n")
+    out, depth, inside, directive = [], 0, False, False
+    for line in lines:
+        if directive or (not inside and line.lstrip().startswith("#")):
+            out.append(line)
+            directive = line.endswith("\\")
+            continue
+        if not inside and not C_KEEP.match(line):
+            out.append("")
+            continue
+        out.append(line)
+        if line.lstrip().startswith("#"):
+            continue
+        depth += line.count("{") - line.count("}")
+        inside = depth > 0 or ";" not in line
+    return "\n".join(out) + "\n"
+
+
+def stand_ins(text):
+    """Definitions of the types [text] names and does not define. An enum type
+    of PAL's is an unsigned int, which is what [layout] takes an enum to be.
+    A struct or union is read only from a layout's [upto] on: one byte, so
+    that [upto]'s offset is where the members before it end, as [packed_layout]
+    counts it."""
+    out = []
+    for n in sorted(set(re.findall(r"\b(\w+_enum)\b", text))):
+        if not re.search(rf"\benum\s+{n}\b|}}\s*{n}\s*;", text):
+            out.append(f"typedef unsigned int {n};")
+    for kind, n in sorted(set(re.findall(r"\b(struct|union)\s+(\w+)\b", text))):
+        if not re.search(rf"\b{kind}\s+{n}\s*{{", text):
+            out.append(f"{kind} {n} {{ unsigned char opaque; }};")
+    return "\n".join(out) + "\n"
+
+
+def c_values(source, exprs):
+    """The values of the C expressions [exprs] in the program [source], as the
+    C compiler ($CC, or cc) lays it out for this machine."""
+    cc = shlex.split(os.environ.get("CC") or "cc")
+    if not cc or not shutil.which(cc[0]):
+        sys.exit("no C compiler to check the layouts with: set CC or install cc")
+    prints = "".join(f'  printf("%lld\\n", (long long)({e}));\n' for e in exprs)
+    with tempfile.TemporaryDirectory() as d:
+        c, exe = pathlib.Path(d) / "layouts.c", pathlib.Path(d) / "layouts"
+        c.write_text(f"{source}\nint main(void) {{\n{prints}  return 0;\n}}\n", encoding="latin-1")
+        r = subprocess.run([*cc, "-o", str(exe), str(c)], capture_output=True, text=True)
+        if r.returncode:
+            sys.exit(f"{cc[0]} cannot compile the layouts:\n{r.stderr}")
+        out = subprocess.run([str(exe)], capture_output=True, text=True, check=True).stdout
+    return [int(v) for v in out.split()]
+
+
+def c_checks(text, lay):
+    """(C expression, the value [lay] gives it) of each fact of [lay]: its size
+    and each field's offset and bytes, or a bit field's lowest bit and bits.
+    An array's bytes are its first element's; a flexible array's, none, are
+    not C's to check."""
+    m = re.search(rf"\b(struct|union)\s+{lay.name}\s*\{{", text)
+    t = f"{m.group(1)} {lay.name}" if m else lay.name
+    out = [(f"offsetof({t}, {lay.upto})" if lay.upto else f"sizeof({t})", lay.size)]
+    for f, v in lay.fields.items():
+        path = lay.paths.get(f, f.replace("__", "."))
+        if v[0] == "bits":
+            out += [(f"BIT_FIELD({t}, {path}, 0)", v[1]), (f"BIT_FIELD({t}, {path}, 1)", v[2])]
+            continue
+        out.append((f"offsetof({t}, {path})", v[0]))
+        if v[1]:
+            out.append((f"sizeof((({t} *)0)->{path})", v[1]))
+    return out
+
+
+def check_with_cc(h, laid):
+    """Fails unless the C compiler lays out each of the layouts [laid] as this
+    script does, the C of their excerpts [h] compiled under [DEFINED], one
+    program per excerpt."""
+    wrong = []
+    for header in dict.fromkeys(lay.header for lay in laid):
+        text = c_source(h[header])
+        source = (C_PRELUDE + "".join(f"#define {n} 1\n" for n in sorted(DEFINED)) + stand_ins(text)
+                  + f'#line 1 "{header}"\n' + text)
+        checks = [c for lay in laid if lay.header == header for c in c_checks(text, lay)]
+        got = c_values(source, [e for e, _ in checks])
+        wrong += [f"  {header}: {e}: gen.py {v}, cc {g}" for (e, v), g in zip(checks, got) if v != g]
+    if wrong:
+        sys.exit("the C compiler lays out the structures otherwise:\n" + "\n".join(wrong))
+
+
 # Command line
 
 
@@ -2229,7 +2398,10 @@ def main():
             files[PINS] = json.dumps({u: d for u, d in pins.items() if u in urls}, indent=1, sort_keys=True) + "\n"
     else:
         h = {n: (HEADERS / n).read_text(encoding="latin-1") for n in [*ABI, *PCI, FIRMWARE]}
-        files = {ABI_OUT: generate_abi(h), PCI_OUT: generate_pci(h)}
+        laid = []
+        files = {ABI_OUT: generate_abi(h, laid), PCI_OUT: generate_pci(h, laid)}
+        if a.check:
+            check_with_cc(h, laid)
     stale = [f for f, text in files.items() if not f.exists() or f.read_text(encoding="latin-1") != text]
     # An excerpt no source names any more.
     if a.excerpt:

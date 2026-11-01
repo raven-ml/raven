@@ -54,7 +54,8 @@ the excerpts generate what the upstream files do. Downloads are kept in
 --cache, and --pin records the digests of files not yet pinned.
 Generating reads the excerpts and firmware.tsv alone, offline, and
 requires firmware.tsv to list exactly the images of FIRMWARE. --check
-generates into memory and fails if a committed file differs.
+generates into memory and fails if a committed file differs, or if the C
+compiler ($CC, or cc) lays out a struct otherwise than this script does.
 
 Text is read and written as latin-1, one character per byte, so every byte
 of a header round-trips into its excerpt as upstream wrote it.
@@ -79,7 +80,11 @@ import json
 import os
 import pathlib
 import re
+import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -2234,6 +2239,191 @@ def download(url, cache, pins, pin):
     return data
 
 
+# Checking the layouts with a C compiler
+#
+# Each model's structs that a defs.ml lays out are compiled from the spans of
+# their excerpts, and the compiler's offsets and sizes compared with
+# Model.layout's. The VBIOS's structures are not compared: their layout is
+# their format strings', and their C members are NVIDIA's unpacked bios_U0xx
+# types, which no excerpt defines. Neither are rig_nv_abi's layouts, which
+# are "hi:lo" defines of bit fields, not C structs.
+
+# The types and macros the excerpts take from nvtypes.h, which none copies, as
+# it defines them for 64-bit Linux. rpc_generic_union, the union of every RPC's
+# parameters, is left out of the excerpts (FLEXIBLE): a byte stands in for it,
+# which puts the flexible array of it where the members before it end, as
+# Model.aggregate does; of that array, C compares the offset alone.
+C_PRELUDE = """\
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+typedef unsigned char NvU8;
+typedef signed char NvS8;
+typedef NvU8 NvV8;
+typedef NvU8 NvBool;
+typedef char NvChar;
+typedef unsigned short NvU16;
+typedef signed short NvS16;
+typedef NvU16 NvV16;
+typedef unsigned int NvU32;
+typedef signed int NvS32;
+typedef NvU32 NvV32;
+typedef NvU32 NvHandle;
+typedef NvU32 NV_STATUS;
+typedef float NvF32;
+typedef unsigned long long NvU64;
+typedef signed long long NvS64;
+typedef NvU64 NvLength;
+typedef NvU64 NvUPtr;
+typedef double NvF64;
+typedef void *NvP64;
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+#define NV_DECLARE_ALIGNED(TYPE_VAR, ALIGN) TYPE_VAR __attribute__((aligned(ALIGN)))
+#define NV_ALIGN_BYTES(size) __attribute__((aligned(size)))
+typedef unsigned char rpc_generic_union;
+"""
+
+
+def c_values(source, exprs):
+    """The values of the C expressions [exprs] in the program [source], as the
+    C compiler ($CC, or cc) lays it out for this machine."""
+    cc = shlex.split(os.environ.get("CC") or "cc")
+    if not cc or not shutil.which(cc[0]):
+        sys.exit("no C compiler to check the layouts with: set CC or install cc")
+    prints = "".join(f'  printf("%lld\\n", (long long)({e}));\n' for e in exprs)
+    with tempfile.TemporaryDirectory() as d:
+        c, exe = pathlib.Path(d) / "layouts.c", pathlib.Path(d) / "layouts"
+        c.write_text(f"{source}\nint main(void) {{\n{prints}  return 0;\n}}\n", encoding="latin-1")
+        r = subprocess.run([*cc, "-o", str(exe), str(c)], capture_output=True, text=True)
+        if r.returncode:
+            sys.exit(f"{cc[0]} cannot compile the layouts:\n{r.stderr}")
+        out = subprocess.run([str(exe)], capture_output=True, text=True, check=True).stdout
+    return [int(v) for v in out.split()]
+
+
+def c_source(model, names):
+    """The definitions the structs [names] need, as C: each header's spans in
+    its order, a header after those whose definitions it uses."""
+    keep = model.closure(names)
+    uses = {h: set() for h in keep}
+    for h, its in keep.items():
+        for it in its.values():
+            for d in set().union(*(model.deps(n) for n in it.names if n in model.where)):
+                if d in model.where and model.where[d].header != h:
+                    uses[h].add(model.where[d].header)
+    order = []
+
+    def visit(h, path):
+        if h in order:
+            return
+        if h in path:
+            sys.exit(f"the headers {path} use each other's definitions")
+        for d in sorted(uses[h]):
+            visit(d, path + (h,))
+        order.append(h)
+    for h in keep:
+        visit(h, ())
+    spans = model.spans(names)
+    text = model.texts
+    # A header's pack pragmas end with it, as an #include's would not.
+    return "".join(f'#line 1 "{h}"\n' + "\n".join(text[h][a:b] for a, b in sorted(spans[h])) + "\n#pragma pack()\n"
+                   for h in order)
+
+
+def c_type(model, cname):
+    """[cname] as C names the type: by its tag, or its typedef."""
+    it = model.item(cname)
+    span = model.texts[it.header][it.start:it.end]
+    if it.kind in ("struct", "union") and re.search(rf"\b{it.kind}\s+{cname}\s*\{{", span):
+        return f"{it.kind} {cname}"
+    return cname
+
+
+def c_counts(model, ty, name, where):
+    """The array dimensions of the member [name] of the type [ty], a name or
+    an inline (kind, body), looked up through its anonymous members."""
+    if isinstance(ty, tuple):
+        body = ty[1]
+    else:
+        it = model.item(ty)
+        while it.kind == "alias":
+            it = model.item(it.target)
+        body = it.body
+    for n, t, counts, _ in model.members(body, where):
+        if n == name:
+            return t, counts
+        if not n and isinstance(t, tuple):
+            found = c_counts(model, t, name, where)
+            if found:
+                return found
+    return None
+
+
+def c_field(model, cname, field, value):
+    """[(C expression, gen.py's value)] of [field] of [cname], laid out as
+    [value]: (offset, bytes), or (offset, bytes of an element, elements) for
+    an array, whose own fields are at offsets within its element, as
+    Model.aggregate lays them out."""
+    t = c_type(model, cname)
+    ty, path, parent, terms = cname, "", "", []
+    parts = field.split("__")
+    for i, name in enumerate(parts):
+        found = c_counts(model, ty, name, cname)
+        if found is None:
+            sys.exit(f"{cname}: no member {field}")
+        ty, counts = found
+        member = f"{path}.{name}" if path else name
+        array = bool(counts)
+        # A member's offset in its parent, counted unless an array encloses
+        # the field.
+        if i == len(parts) - 1 or not array:
+            terms.append(f"offsetof({t}, {member})" + (f" - offsetof({t}, {parent})" if parent else ""))
+        path = member + "[0]" * len(counts)
+        parent = path
+    out = [(" + ".join(f"({e})" for e in terms), value[0])]
+    if value[1]:  # no bytes: a stand-in for a FLEXIBLE type
+        out.append((f"sizeof((({t} *)0)->{path})", value[1]))
+    if len(value) == 3 and value[2]:  # no elements: a flexible array
+        out.append((f"sizeof((({t} *)0)->{member}) / sizeof((({t} *)0)->{path})", value[2]))
+    return out
+
+
+def check_model(model, structs, where):
+    """Fails unless the C compiler lays out [structs] of [model], [(C name,
+    (bytes, [(field, its layout, or None if the struct lacks it)]))], as
+    Model.layout does."""
+    checks = []
+    for c, (size, fields) in structs:
+        checks.append((f"sizeof({c_type(model, c)})", size))
+        for f, v in fields:
+            if v is not None:
+                checks += c_field(model, c, f.rstrip("?"), v)
+    got = c_values(C_PRELUDE + c_source(model, [c for c, _ in structs]), [e for e, _ in checks])
+    wrong = [f"  {e}: gen.py {v}, cc {g}" for (e, v), g in zip(checks, got) if v != g]
+    if wrong:
+        sys.exit(f"the C compiler lays out {where}'s structs otherwise:\n" + "\n".join(wrong))
+
+
+def check_with_cc(texts):
+    """Fails unless the C compiler lays out each struct the defs.ml files take
+    from C as gen.py does: the newest release's, each release's of those that
+    differ between releases, and rig_nv_pci's."""
+    for d in LIBRARIES:
+        for r in RELEASES:
+            model = Model(release_texts(d, r, texts, every=r == NEWEST))
+            cs = d.structs if r == NEWEST else d.per_release
+            check_model(model, [(c, struct(d, model, c, r)) for c in cs], f"{d.out.relative_to(LIB)} at {r}")
+    model = pci_model(pci_texts(texts))
+    structs = []
+    for c, (_, names) in [*GSP_STRUCTS.items(), *PCI_STRUCTS.items()]:
+        size, _, layout = model.layout(c)
+        structs.append((c, (size, [(f, layout[f]) for f in names])))
+    check_model(model, structs, "pci")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--check", action="store_true", help="fail if a committed file differs")
@@ -2262,6 +2452,8 @@ def main():
         texts = {k: (HEADERS / k).read_text(encoding="latin-1") for k in [*SOURCES, FIRMWARE_LIST]
                  if (HEADERS / k).exists()}
         files = generate_all(texts)
+        if a.check:
+            check_with_cc(texts)
     stale = [f for f, text in files.items() if not f.exists() or f.read_text(encoding="latin-1") != text]
     # An excerpt no source names any more.
     if a.excerpt:
