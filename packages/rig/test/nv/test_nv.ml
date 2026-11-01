@@ -2484,6 +2484,46 @@ let make_failed () =
     why;
   equal int ~msg:"the frees of what it took, faulted" 0 frees
 
+(* The RM answers each control under a lock that any process's call may hold,
+   as one whose channels' teardown waits for this device's running work. Here
+   every report of the multiprocessors' and the MMU's faults answers 1.5 s
+   late, past the 1 s the work runs: a wait still loses the device once the
+   word has stood still for the path's bound of 300 ms. *)
+let late_rm_hang () =
+  on_kernel ();
+  let hang_ms = 300 and late_s = 1.5 in
+  let wrap (p : _ N.path) =
+    let late f debugger params =
+      Unix.sleepf late_s;
+      f debugger params
+    in
+    let rm =
+      {
+        p.rm with
+        sm_errors = late p.rm.sm_errors;
+        mmu_faults = late p.rm.mmu_faults;
+      }
+    in
+    { p with rm; hang_ms = Some hang_ms }
+  in
+  let o = Rig_nv_nvidia.gpu_with 0 ~wrap and raw = ref None in
+  let make ~word =
+    Result.map
+      (fun g ->
+        raw := Some g;
+        g)
+      (o.make ~word)
+  in
+  let d = require_ok (Rig.open_ { o with make }) in
+  Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
+  let t = { S.d; g = Option.get !raw } in
+  let p = S.submit_work t [ S.spin t ~ns:second ] in
+  let why = Printf.sprintf "no progress for %d ms" hang_ms in
+  raises_match ~msg:"the wait"
+    (function Rig.Lost (_, w) -> w = why | _ -> false)
+    (fun () -> Rig.Point.wait p);
+  equal (option string) ~msg:"the loss" (Some why) (Rig.lost d)
+
 let faults =
   group ~timeout:60. "a path's faults"
     [
@@ -2500,6 +2540,8 @@ let faults =
         replaced_kept;
       test "a failed open names the memory an object the RM kept names"
         make_failed;
+      test "a hang loses the device at its bound while the RM answers late"
+        late_rm_hang;
     ]
 
 (* Usage *)

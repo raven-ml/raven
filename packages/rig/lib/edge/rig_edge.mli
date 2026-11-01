@@ -594,9 +594,9 @@ module type Driver = sig
 
   val sleep : t -> seen:int -> still_ms:int -> unit
   (** [sleep d ~seen ~still_ms] blocks on the device's events until the word
-      differs from [seen], and must return at the latest after [still_ms]
-      milliseconds. It must return immediately if the word already differs.
-      It may return earlier, on an event of other work or a timer of the
+      differs from [seen], and must return, or raise {!Fault}, at the latest
+      after [still_ms] milliseconds. It must return immediately if the word
+      already differs. It may return earlier, on an event of other work or a timer of the
       driver's own, since rig reads the word again after every return and
       sleeps again while it is unmoved. rig may call it while the driver's
       [submit] or [commit] runs. Counted.

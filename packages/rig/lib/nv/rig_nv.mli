@@ -350,14 +350,26 @@ val capability : t -> Rig_nv_abi.Gpu.t
     faults to the RM, and a path may learn of others ({!field-check}).
 
     {!sleep} reads the word and the notifiers every millisecond, and lets
-    other domains run while it waits. As it starts to wait, and once a
-    notifier holds an error, it asks the path and the RM for their reports,
-    and raises {!Fault} if either has one. If the path has a report,
-    {!Fault} carries it. Otherwise {!Fault} has a line for each distinct
-    notifier error, by number and name, then one for each fault the multiprocessors or the MMU
-    reported; an MMU line names the faulting address and access. A wait for
-    work that runs long lasts until the work ends, unless the path bounds
-    progress ({!field-hang_ms}): rig then loses the device past that bound.
+    other domains run while it waits. As it starts to wait it asks the path
+    for its report, and raises {!Fault} if the path has one. Once a notifier
+    holds an error it asks the path and the RM for their reports, and raises
+    {!Fault}. If the path has a report, {!Fault} carries it. Otherwise
+    {!Fault} has a line for each distinct notifier error, by number and name,
+    then one for each fault the multiprocessors or the MMU reported, or the
+    RM's refusal to read them; an MMU line names the faulting address and
+    access.
+
+    While no notifier holds an error, a sleep asks only the path. A fault
+    the RM records without writing a notifier, or a refusal of the RM to
+    read the faults, is then not raised by a sleep. A channel the RM stopped
+    so keeps the word still: where the path bounds progress
+    ({!field-hang_ms}), rig loses the device with ["no progress for n ms"],
+    without the RM's lines, and where the RM's watchdog runs ([hang_ms] is
+    [None]), the wait does not end. Work that completes after such a fault
+    raises nothing.
+
+    A wait for work that runs long lasts until the work ends, unless the
+    path bounds progress: rig then loses the device past that bound.
 
     {!val-stop} ignores its [fault]. It ends the path's registration of the
     channels ({!field-unregister}) and frees them, which makes the RM
@@ -575,7 +587,11 @@ type 'm path = {
   check : unit -> unit;
       (** [check ()] raises {!Fault} with the path's report of a fault of the
           GPU's work that the RM sent the path, or of the GPU's failure, such as
-          a lost function. *)
+          a lost function. It must not wait for another process: {!sleep}
+          calls it as each wait starts, so a sleep lasts past its [still_ms]
+          by as long as [check] takes. A PCI path's [check] reads
+          the GPU's configuration space, a round trip where the GPU is on
+          another machine. *)
   hang_ms : int option;
       (** [Some n] if work whose timeline word has not moved for [n]
           milliseconds hung, where nothing else bounds the GPU's work; [None]

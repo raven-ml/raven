@@ -1790,9 +1790,12 @@ let nap () =
       block ();
       reraise e
 
+(* The RM is asked only once a notifier holds an error: it answers under a
+   lock that any process's call may hold, which would keep the sleep past
+   [still_ms], and so past the hang bound rig checks between sleeps. *)
 let sleep (T d) ~seen ~still_ms =
   if read_word d.self = seen then begin
-    check_faults d;
+    (live d).path.check ();
     let until = now () + (still_ms * 1_000_000) in
     let more = ref true in
     while !more && read_word d.self = seen && not (notified d) do
