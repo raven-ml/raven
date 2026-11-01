@@ -1286,8 +1286,8 @@ let programs =
                  "#undef E_16_16";
                  "void E_16_16(const void *p, long long first, long long end) \
                   { struct E_16_16_args a; __builtin_memcpy_inline(&a, p, \
-                  sizeof a); if (end > a.block_hi_) end = a.block_hi_; if \
-                  (first < end) { a.block_lo_ = first; a.block_hi_ = end; \
+                  sizeof a); if (end > a.arg4) end = a.arg4; if \
+                  (first < end) { a.arg3 = first; a.arg4 = end; \
                   E_16_16_(&a); } }";
                ])
             (binary_of p));

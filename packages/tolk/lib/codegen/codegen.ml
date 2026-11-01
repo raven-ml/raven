@@ -1441,16 +1441,10 @@ let do_render (ren : Renderer.t) prg lin =
    assignment of a large structure as a call of [memcpy], which on x86_64
    Windows the process defines with a convention other than the object's
    (rig's host code). The source the program keeps is the renderer's. *)
-let host_entry prg lin source =
+let host_entry prg source =
   let k = kernel_info (nth prg 0) in
   let name = function_name k in
-  let params = List.filter (fun u -> op u = Op.Param) (src lin) in
-  let field slot =
-    Cstyle.param_name
-      (List.find
-         (fun u -> match arg u with Param p -> p.slot = slot | _ -> false)
-         params)
-  in
+  let field slot = Printf.sprintf "arg%d" slot in
   let body =
     match k.split with
     | None -> Printf.sprintf "%s_(p);" name
@@ -1476,7 +1470,7 @@ let do_compile ((ren : Renderer.t), compile) prg source =
   let source = match arg source with String s -> s | _ -> assert false in
   if setting Setting.debug >= 4 then print_endline source;
   let source =
-    if ren.target.device = "CPU" then host_entry prg (nth prg 1) source
+    if ren.target.device = "CPU" then host_entry prg source
     else source
   in
   let lib = compile ren.compiler source in

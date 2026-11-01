@@ -773,20 +773,28 @@ let render_kernel ?prefix l ~name kernel bufs uops =
   in
   let launch_bounds = Helpers.prod (List.concat_map local_bound uops) in
   let buftypes = List.map (fun (n, u) -> (n, buftype u)) bufs in
-  (* One structure of the parameters, which the kernel reads first. *)
+  (* One structure of the parameters, a field [arg<slot>] for each, which the
+     kernel reads first. *)
   let prefix, kernel, buftypes =
     match l.args_struct_prefix with
     | None -> (prefix, kernel, buftypes)
     | Some qualifier ->
-        let field (n, u) = strf "%s %s; " (param_type l u) n in
-        let read (n, t) = strf "  %s %s = args->%s;" t n n in
+        let slot u =
+          match arg u with
+          | Param p -> p.slot
+          | _ -> invalid_arg "a parameter needs its ParamArg"
+        in
+        let field (_, u) = strf "%s arg%d; " (param_type l u) (slot u) in
+        let read (n, u) =
+          strf "  %s %s = args->arg%d;" (param_type l u) n (slot u)
+        in
         ( Some
             (Option.value prefix ~default:[]
             @ [
                 strf "struct %s_args { %s};" name
                   (String.concat "" (List.map field bufs));
               ]),
-          List.map read buftypes @ kernel,
+          List.map read bufs @ kernel,
           [ ("args", strf "%s struct %s_args*" qualifier name) ] )
   in
   let params = List.map (fun (n, t) -> t ^ " " ^ n) buftypes @ l.extra_args in

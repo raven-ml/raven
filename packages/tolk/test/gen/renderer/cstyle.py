@@ -283,10 +283,15 @@ def reinterpreted(retype):
     return idx.store(retype(idx).load() & UOp.const(0xffffff00).cast(dtypes.uint32)).sink(arg=KernelInfo(name="packed"))
 
 
+def slotted(v, slot):
+    """The variable `v` as the parameter of `slot`, as a kernel numbers it."""
+    return v.replace(arg=replace(v.arg, slot=slot))
+
+
 def dynamic_lane():
     """A lane of a vector chosen by a variable."""
     a = UOp.param(0, dtypes.float, 1)
-    lane = UOp.variable("lane", 0, 3, dtype=dtypes.int)
+    lane = slotted(UOp.variable("lane", 0, 3, dtype=dtypes.int), 1)
     lanes = UOp(Ops.STACK, src=tuple(UOp.const(float(i)).cast(dtypes.float) for i in (1, 2, 3, 4)))
     return a.index(int32(0)).store(lanes.index(lane)).sink(arg=KernelInfo(name="lane"))
 
@@ -339,7 +344,7 @@ def host_vectors():
         ("vector_where_mixed_widths", lanes_of("where", lambda a, b, c, e: (a < b).where(c, e), (d, d, f, f), f)),
         ("vector_where_constants", lanes_of("where", lambda a, b: (a < b).where(cconst(1.5, f), cconst(-2.0, f)), (f, f), f)),
         ("vector_where_scalar_condition", lanes_of(
-            "where", lambda a, b: (UOp.variable("p", 0, 1, dtype=dtypes.int) < int32(1)).where(a, b), (f, f), f)),
+            "where", lambda a, b: (slotted(UOp.variable("p", 0, 1, dtype=dtypes.int), 3) < int32(1)).where(a, b), (f, f), f)),
         ("vector_where_masks", lanes_of(
             "where", lambda a, b, c, e: (a < b).where(c < e, e < c).where(c, e), (d, d, f, f), f)),
         ("vector_byte_mask", lanes_of(
