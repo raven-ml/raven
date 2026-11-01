@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -121,6 +121,6 @@
 119 Ops.SINK dtypes.void [115] KernelInfo(name="r_64_16_160", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),)) tag=1
 120 Ops.LINEAR dtypes.void [0, 1, 26, 27, 36, 5, 80, 76, 14, 95, 2, 3, 37, 38, 15, 17, 81, 8, 9, 82, 11, 12, 21, 22, 30, 31, 32, 28, 83, 23, 29, 33, 34, 35, 84, 85, 86, 39, 87, 88, 89, 97, 98, 99, 90, 77, 96, 100, 101, 102, 78, 79, 91, 92, 93, 94, 103, 104, 105, 106, 107, 108, 109, 110, 4, 65, 66, 68, 69, 111, 112, 113, 114, 73, 117, 115, 118, 119]
 121 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(16) r_64_16_160(float* data0_64, float* data1_163840, float* data2_64) {\n  float buf0[1];\n  float buf1[1];\n  __shared__ __align__(16) float buf2[16];\n  int gidx0 = blockIdx.x; /* 64 */\n  float val0 = (*(data2_64+gidx0));\n  int lidx0 = threadIdx.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0_0_0 = 0; Lidx0_0_0 < 160; Lidx0_0_0++) {\n    float val1 = (*(data1_163840+((lidx0*160)+Lidx0_0_0+(gidx0*2560))));\n    float alu1 = (val1-val0);\n    *(buf0+0) = __fmaf_rn(alu1,alu1,(*(buf0+0)));\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  __syncthreads();\n  *(buf1+0) = 0.0f;\n  for (int Lidx102 = 0; Lidx102 < 16; Lidx102++) {\n    float val2 = (*(buf2+Lidx102));\n    *(buf1+0) = ((*(buf1+0))+val2);\n  }\n  if ((lidx0==0)) {\n    *(data0_64+gidx0) = (1/sqrt((((*(buf1+0))*0.0003906250058207661f)+9.999999747378752e-06f)));\n  }\n}"
-122 Ops.PROGRAM dtypes.void [116, 120, 121] ProgramInfo(global_size=(64, 1, 1), local_size=(16, 1, 1), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+122 Ops.PROGRAM dtypes.void [116, 120, 121] ProgramInfo(global_size=(64, 1, 1), local_size=(16, 1, 1), params=(%1, %27, %36), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
 123 Ops.SINK dtypes.void [75, 122]
 

@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 case	shared	tensor	program	full	kernel_graph
 a sink of a load	True	True	True	True	True
 a sink with kernel info	True	True	True	True	True
@@ -88,7 +88,7 @@ a sqrt of int32	False	True	False	True	None
 a reciprocal of float32	True	True	True	True	None
 a reciprocal of int32	False	True	False	True	None
 a sin of the invalid constant	True	True	False	True	None
-a sin of a weak integer	True	True	False	True	None
+a sin of a weak integer	False	True	False	True	None
 a cast of int32 to float32	True	True	True	True	None
 a bitcast of float32 to int32	True	True	True	True	True
 a cast of two sources	None	None	None	None	None

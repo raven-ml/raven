@@ -202,6 +202,8 @@ def binary_bounds():
     for dt in (dtypes.int8, dtypes.uint8, dtypes.uint32):
         for op in (Ops.ADD, Ops.SUB, Ops.MUL):
             for a, b in [((100, 127), (1, 100)), ((0, 255), (1, 1)), ((2, 7), (3, 3))]: row(op, dt, a, b)
+    # null/test_uop_vmin_vmax.py::test_vmin_vmax_xor_nonneg: non-negative operands of a fixed width
+    row(Ops.XOR, dtypes.uint8, (0, 200), (0, 3))
     for op in (Ops.OR, Ops.AND, Ops.CMPNE, Ops.CMPLT, Ops.XOR):
         for a in [(False, False), (False, True), (True, True)]:
             for b in [(False, False), (False, True), (True, True)]: row(op, dtypes.bool, a, b)
@@ -367,7 +369,7 @@ def reprs_of():
         "call": UOp.sink().call(name="f"),
         "call returning": UOp.custom_function("f", dtype=dtypes.int).call(precompile=True),
         "program": UOp(Ops.PROGRAM, src=(UOp.sink(arg=KernelInfo()),), arg=ProgramInfo(
-            global_size=(4, 1, 1), local_size=(8, 1, 1), vars=(), globals=(0, 1), outs=(0,), ins=(1,), target=Target("CPU", "CLANG"))),
+            global_size=(4, 1, 1), local_size=(8, 1, 1), params=(), globals=(0, 1), outs=(0,), ins=(1,), target=Target("CPU", "CLANG"))),
         "wmma": UOp.wmma(UOp.param(0, dtypes.half, (8,)), UOp.param(1, dtypes.half, (8,)), UOp.param(2, dtypes.float, (4,)),
                          (8, 16, 16), 32, ((((AxisType.UPCAST, 0), 2), ((AxisType.UPCAST, 1), 2)), (((AxisType.UPCAST, 2), 2),), (((AxisType.UPCAST, 3), 2),))),
         "tagged": UOp.const(1).rtag(("x", 1, True, dtypes.int, ())),

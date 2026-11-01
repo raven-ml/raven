@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 kernel	target	max_up	actions
 add_small	clang		0 1 11 31
 add_small	metal		0 1 11 31 61 69 85 93 133

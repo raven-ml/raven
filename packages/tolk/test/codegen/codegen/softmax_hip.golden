@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 256
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -61,6 +61,6 @@
 59 Ops.SINK dtypes.void [57] KernelInfo(name="E_8_8_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL))), estimates=Estimates(ops=1088, lds=2112, mem=2112)) tag=1
 60 Ops.LINEAR dtypes.void [1, 2, 17, 3, 23, 31, 4, 5, 24, 25, 32, 33, 9, 10, 11, 14, 15, 6, 7, 8, 12, 13, 18, 19, 0, 20, 21, 22, 36, 37, 38, 43, 48, 49, 50, 27, 28, 26, 29, 30, 39, 40, 41, 44, 45, 46, 51, 52, 53, 34, 35, 42, 47, 54, 55, 16, 56, 57, 58]
 61 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((device, pure)) float __ocml_exp2_f32(float);\ntypedef float float4 __attribute__((ext_vector_type(4)));\nstatic inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 64))) E_8_8_4(float* data0_256, float* data1_256, float* data2_8, float* data3_8) {\n  int lidx0 = __ockl_get_local_id(0); /* 8 */\n  float val0 = (*(data2_8+lidx0));\n  float val1 = (*(data3_8+lidx0));\n  int lidx1 = __ockl_get_local_id(1); /* 8 */\n  int alu0 = ((lidx0<<5)+(lidx1<<2));\n  float4 val2 = (*((float4*)((data1_256+alu0))));\n  float alu1 = (1/val1);\n  *((float4*)((data0_256+alu0))) = make_float4((__ocml_exp2_f32(((val2.x-val0)*1.4426950216293335f))*alu1),(__ocml_exp2_f32(((val2.y-val0)*1.4426950216293335f))*alu1),(__ocml_exp2_f32(((val2.z-val0)*1.4426950216293335f))*alu1),(__ocml_exp2_f32(((val2.w-val0)*1.4426950216293335f))*alu1));\n}"
-62 Ops.PROGRAM dtypes.void [59, 60, 61] ProgramInfo(local_size=(8, 8, 1), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+62 Ops.PROGRAM dtypes.void [59, 60, 61] ProgramInfo(local_size=(8, 8, 1), params=(%2, %17, %23, %31), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
 63 Ops.SINK dtypes.void [58, 62]
 

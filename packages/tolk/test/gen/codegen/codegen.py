@@ -177,6 +177,9 @@ PROGRAMS = {
     "load_dedup": lambda: last((lambda a: a[:-1] + a[1:])(empty(4))),
     "reduce_upcast": lambda: last(Tensor.conv2d(empty(1, 1, 3), empty(1, 1, 2), padding=1).relu()),
     "zero_fold": lambda: last(Tensor.stack(empty(1), empty(1))),
+    # test_stack_select_folds_into_index: a stack read through a shrink
+    "stack_select": lambda: last((lambda x: Tensor.stack(x.const_like(0), x, x.const_like(0)).reshape(21, 4)
+                                  .shrink(((4, 19), None)).contiguous())(empty(7, 4))),
     "sum_acc_bool": lambda: unoptimised(last(empty(3, dtype=dtypes.bool).sum())),
     "sum_acc_short": lambda: unoptimised(last(empty(3, dtype=dtypes.int16).sum())),
     "sum_acc_half": lambda: unoptimised(last(empty(3, dtype=dtypes.half).sum())),
@@ -708,6 +711,7 @@ OPTS = {
     "load_dedup_upcast": ("load_dedup", [upcast(0, 0)]),
     "reduce_upcast_unroll": ("reduce_upcast", [upcast(0, 0), unroll(1, 0)]),
     "zero_fold_upcast": ("zero_fold", [upcast(0, 0)]),
+    "stack_select_noopt": ("stack_select", []),
     "upcast_with_locals_opts": ("upcast_with_locals", [local(1, 8), local(0, 4), upcast(0, 4)]),
     "rewrite_reduction_opts": ("rewrite_reduction", [upcast(0, 4), unroll(2, 4)]),
     "arange_upcast": ("arange", [upcast(0, 4)]),

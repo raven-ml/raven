@@ -40,8 +40,8 @@ def capture(case):
     fn, args = CASES[case]()
     seen, lower = [], jit.jit_lower
 
-    def record(linear, held_bufs, input_uops):
-        seen.append((linear, held_bufs, input_uops, lower(linear, held_bufs, input_uops)))
+    def record(linear, held_bufs, input_uops, input_vars):
+        seen.append((linear, held_bufs, input_uops, lower(linear, held_bufs, input_uops, input_vars)))
         raise Captured
 
     jf = TinyJit(fn)

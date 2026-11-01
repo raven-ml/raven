@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 codegen/codegen/add_big_clang.golden
 codegen/codegen/add_big_cuda.golden
 codegen/codegen/add_big_hip.golden
@@ -470,6 +470,14 @@ codegen/codegen/sqrt_of_int_clang.golden
 codegen/codegen/sqrt_of_int_cuda.golden
 codegen/codegen/sqrt_of_int_hip.golden
 codegen/codegen/sqrt_of_int_metal.golden
+codegen/codegen/stack_select_clang.golden
+codegen/codegen/stack_select_cuda.golden
+codegen/codegen/stack_select_hip.golden
+codegen/codegen/stack_select_metal.golden
+codegen/codegen/stack_select_noopt_clang.golden
+codegen/codegen/stack_select_noopt_cuda.golden
+codegen/codegen/stack_select_noopt_hip.golden
+codegen/codegen/stack_select_noopt_metal.golden
 codegen/codegen/stage_in_thread_range_cuda.golden
 codegen/codegen/stage_in_thread_range_hip.golden
 codegen/codegen/stage_in_thread_range_metal.golden
@@ -1862,6 +1870,8 @@ device/elementwise_metal_program.golden
 device/elementwise_program.golden
 device/elfs.golden
 device/fill_program.golden
+device/interleaved_metal_program.golden
+device/interleaved_program.golden
 device/layouts.golden
 device/renderers.golden
 device/reprs.golden
@@ -2172,6 +2182,8 @@ engine/realize/copy_view.golden
 engine/realize/copy_view_compiled.golden
 engine/realize/custom_kernel.golden
 engine/realize/custom_kernel_compiled.golden
+engine/realize/custom_kernel_scalar.golden
+engine/realize/custom_kernel_scalar_compiled.golden
 engine/realize/precompiled_scalar.golden
 engine/realize/precompiled_scalar_compiled.golden
 engine/realize/sum.golden
@@ -3371,6 +3383,10 @@ schedule/schedule/copy_view_schedule.golden
 schedule/schedule/custom_kernel.golden
 schedule/schedule/custom_kernel_kernels.golden
 schedule/schedule/custom_kernel_linear.golden
+schedule/schedule/custom_kernel_scalar.golden
+schedule/schedule/custom_kernel_scalar_kernels.golden
+schedule/schedule/custom_kernel_scalar_linear.golden
+schedule/schedule/custom_kernel_scalar_schedule.golden
 schedule/schedule/custom_kernel_schedule.golden
 schedule/schedule/disk_store.golden
 schedule/schedule/disk_store_kernels.golden

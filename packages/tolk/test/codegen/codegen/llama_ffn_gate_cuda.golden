@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 2
@@ -94,6 +94,6 @@
 92 Ops.SINK dtypes.void [90] KernelInfo(name="r_2_8_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL))), estimates=Estimates(ops=512, lds=712, mem=424)) tag=1
 93 Ops.LINEAR dtypes.void [0, 1, 13, 2, 20, 8, 25, 30, 31, 3, 4, 21, 22, 5, 6, 14, 15, 7, 16, 17, 18, 56, 57, 49, 50, 60, 61, 26, 27, 9, 10, 32, 33, 34, 35, 64, 65, 11, 12, 51, 42, 43, 44, 37, 19, 77, 72, 67, 58, 79, 74, 69, 62, 53, 46, 39, 28, 55, 48, 41, 36, 81, 76, 71, 66, 23, 52, 45, 38, 24, 78, 73, 68, 59, 54, 47, 40, 29, 80, 75, 70, 63, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91]
 94 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(16) r_2_8_8(float* data0_16, float* data1_16, float* data2_2, float* data3_8, float* data4_64) {\n  int lidx0 = threadIdx.x; /* 2 */\n  float val0 = (*(data2_2+lidx0));\n  int alu0 = (lidx0<<3);\n  float4 val1 = (*((float4*)((data1_16+(alu0+4)))));\n  float4 val2 = (*((float4*)((data1_16+alu0))));\n  float4 val3 = (*((float4*)((data3_8+0))));\n  float4 val4 = (*((float4*)((data3_8+4))));\n  int lidx1 = threadIdx.y; /* 8 */\n  int alu1 = (lidx1<<3);\n  float4 val5 = (*((float4*)((data4_64+(alu1+4)))));\n  float4 val6 = (*((float4*)((data4_64+alu1))));\n  float alu2 = (1/val0);\n  *(data0_16+(alu0+lidx1)) = __fmaf_rn((val1.w*alu2*val4.w),val5.w,__fmaf_rn((val1.z*alu2*val4.z),val5.z,__fmaf_rn((val1.y*alu2*val4.y),val5.y,__fmaf_rn((val1.x*alu2*val4.x),val5.x,__fmaf_rn((val2.w*alu2*val3.w),val6.w,__fmaf_rn((val2.z*alu2*val3.z),val6.z,__fmaf_rn((val2.y*alu2*val3.y),val6.y,(val2.x*alu2*val3.x*val6.x))))))));\n}"
-95 Ops.PROGRAM dtypes.void [92, 93, 94] ProgramInfo(local_size=(2, 8, 1), globals=(0, 1, 2, 3, 4), outs=(0,), ins=(1, 2, 3, 4), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+95 Ops.PROGRAM dtypes.void [92, 93, 94] ProgramInfo(local_size=(2, 8, 1), params=(%1, %13, %20, %25, %31), globals=(0, 1, 2, 3, 4), outs=(0,), ins=(1, 2, 3, 4), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
 96 Ops.SINK dtypes.void [91, 95]
 

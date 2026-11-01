@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -96,6 +96,6 @@
 94 Ops.SINK dtypes.void [90] KernelInfo(name="sum_reduce", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)) tag=1
 95 Ops.LINEAR dtypes.void [21, 22, 0, 1, 59, 56, 10, 74, 11, 13, 60, 2, 3, 61, 7, 8, 23, 24, 25, 62, 17, 26, 27, 28, 63, 64, 65, 66, 67, 68, 76, 77, 78, 69, 75, 79, 80, 81, 57, 58, 70, 71, 72, 73, 82, 83, 84, 85, 86, 87, 88, 89, 4, 53, 92, 90, 93, 94]
 96 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_256; device float* data1_1; };\nkernel void sum_reduce(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_256 = args.data0_256; device float* data1_1 = args.data1_1;\n  float buf0[1];\n  float buf1[1];\n  threadgroup __attribute__((aligned(16))) float buf2[16];\n  int lidx0 = lid.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    float val0 = (*(data0_256+((lidx0<<4)+Lidx0)));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf1+0) = 0.0f;\n  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {\n    float val1 = (*(buf2+Lidx101));\n    *(buf1+0) = ((*(buf1+0))+val1);\n  }\n  if ((lidx0==0)) {\n    *(data1_1+0) = (*(buf1+0));\n  }\n}"
-97 Ops.PROGRAM dtypes.void [91, 95, 96] ProgramInfo(local_size=(16, 1, 1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+97 Ops.PROGRAM dtypes.void [91, 95, 96] ProgramInfo(local_size=(16, 1, 1), params=(%22, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 98 Ops.SINK dtypes.void [55, 97]
 

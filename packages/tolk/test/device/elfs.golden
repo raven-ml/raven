@@ -1,7 +1,9 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 program	name	target	params	lib_bytes
 elementwise	E_16	CPU:CLANG:x86_64,x86-64	3	1458
 elementwise_metal	E_4_4	METAL:METAL:Apple9	3	728
 sparse	sparse	CPU:CLANG:x86_64,x86-64	3	189
 scalars	r3Ascalars202	CPU:CLANG:x86_64,x86-64	5	835
+interleaved	interleaved	CPU:CLANG:x86_64,x86-64	3	266
+interleaved_metal	interleaved	METAL:METAL:Apple9	3	500
 fill	fill	METAL:METAL:Apple9	1	455

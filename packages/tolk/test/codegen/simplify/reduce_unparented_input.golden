@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
 2 Ops.CAST dtypes.f32 [1] dtypes.f32
@@ -26,5 +26,13 @@
 24 Ops.RANGE dtypes.weakint [0] (AxisType.UPCAST, 0)
 25 Ops.REDUCE dtypes.f32 [12, 24] (Ops.ADD, 0)
 26 Ops.REDUCE dtypes.f32 [2] (Ops.ADD, 0)
-27 Ops.SINK dtypes.void [5, 6, 7, 10, 13, 14, 15, 18, 22, 23, 25, 26]
+27 Ops.CONST dtypes.bool [] True
+28 Ops.REDUCE dtypes.bool [27, 1] (Ops.ADD, 0)
+29 Ops.REDUCE dtypes.bool [27, 1] (Ops.MUL, 0)
+30 Ops.CONST dtypes.weakfloat [] 1.0
+31 Ops.CAST dtypes.f32 [30] dtypes.f32
+32 Ops.PARAM dtypes.weakint [19] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 4), multiple_of=1, name="m", addrspace=AddrSpace.ALU)
+33 Ops.RANGE dtypes.weakint [32] (AxisType.WEAK, 3)
+34 Ops.REDUCE dtypes.f32 [31, 33] (Ops.MAX, 0)
+35 Ops.SINK dtypes.void [5, 6, 7, 10, 13, 14, 15, 18, 22, 23, 25, 26, 28, 29, 34]
 

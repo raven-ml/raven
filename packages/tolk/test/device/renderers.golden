@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 dev	device	arch	target	renderer	outcome	error
 	CPU		CPU	CLANG	renderer fails	
 	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	

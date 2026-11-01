@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 graph	arguments
 add_kernels	-
 sum_kernels	-
@@ -29,6 +29,7 @@ assign_bitcast_kernels	-
 clone_kernels	-
 full_invalid_kernels	-
 custom_kernel_kernels	-
+custom_kernel_scalar_kernels	1=5
 inline_function_kernels	-
 precompiled_function_kernels	-
 precompiled_function_kernels_1	-

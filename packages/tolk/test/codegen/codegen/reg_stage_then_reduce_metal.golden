@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -74,6 +74,6 @@
 72 Ops.SINK dtypes.void [70] KernelInfo(name="r_4_8_8") tag=1
 73 Ops.LINEAR dtypes.void [0, 1, 19, 20, 5, 48, 14, 52, 2, 3, 27, 28, 21, 22, 15, 23, 17, 24, 25, 26, 53, 29, 54, 55, 56, 49, 61, 8, 9, 50, 11, 12, 51, 57, 58, 59, 60, 62, 63, 64, 65, 66, 67, 68, 69, 4, 70, 72]
 74 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_4; device float* data1_32; };\nkernel void r_4_8_8(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_4 = args.data0_4; device float* data1_32 = args.data1_32;\n  float buf0[1];\n  float buf1[8];\n  int gidx0 = gid.x; /* 4 */\n  for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {\n    float val0 = (*(data1_32+((gidx0<<3)+Lidx1)));\n    *(buf1+Lidx1) = (val0*2.0f);\n  }\n  *(buf0+0) = 0.0f;\n  for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {\n    *(buf0+0) = ((*(buf0+0))+(*(buf1+Lidx2)));\n  }\n  *(data0_4+gidx0) = (*(buf0+0));\n}"
-75 Ops.PROGRAM dtypes.void [71, 73, 74] ProgramInfo(global_size=(4, 1, 1), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+75 Ops.PROGRAM dtypes.void [71, 73, 74] ProgramInfo(global_size=(4, 1, 1), params=(%1, %20), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 76 Ops.SINK dtypes.void [47, 75]
 

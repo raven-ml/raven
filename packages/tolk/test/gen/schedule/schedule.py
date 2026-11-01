@@ -82,6 +82,21 @@ def add_one(C, A):
     return C[i].store(A[i] + 1).end(i).sink(arg=KernelInfo(name=f"add_one_{A.numel()}"))
 
 
+def add_n(C, n, A):
+    C, A = C.flatten(), A.flatten()
+    i = UOp.range(A.numel(), 0)
+    return C[i].store(A[i] + n).end(i).sink(arg=KernelInfo(name=f"add_n_{A.numel()}"))
+
+
+def custom_kernel_scalar():
+    """A variable passed between two buffers (runtime/test_custom_kernel.py,
+    test_scalar_arg_any_position), on CPU:1, which the engine's tests place on
+    each GPU."""
+    n = Tensor(Variable("n", 0, 100, dtype=dtypes.int32).bind(5), device="CPU:1")
+    a = empty(4, dtype=dtypes.int32, device="CPU:1") * 2
+    return Tensor.custom_kernel(empty(4, dtype=dtypes.int32, device="CPU:1"), n, a, fxn=add_n)[0] + 1
+
+
 def assign_double_diamond():
     # each assign reads, through a sum, the buffer the other overwrites
     b0, b1 = empty(16).contiguous(), empty(16).contiguous()
@@ -180,6 +195,7 @@ PROGRAMS = {
     "full_invalid": lambda: Tensor.full((4,), Invalid, dtype=dtypes.float),
     # calls
     "custom_kernel": lambda: Tensor.custom_kernel(empty(4, 4), empty(4, 4) * 2, fxn=add_one)[0] + 1,
+    "custom_kernel_scalar": custom_kernel_scalar,
     "inline_function": inline_function,
     "precompiled_function": precompiled_function,
     "chained_functions": chained_functions,

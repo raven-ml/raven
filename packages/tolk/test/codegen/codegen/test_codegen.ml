@@ -1313,6 +1313,14 @@ let claims =
           is_true ~msg:"a load" (loads >= 1));
       claim "zero_fold_upcast" "stacks two values without arithmetic"
         (fun row -> equal (list Uops.uop) [] (alu (instructions row)));
+      claim "stack_select_noopt"
+        "selects a stack's element through no division or remainder"
+        (fun row ->
+          equal (list Uops.uop) []
+            (List.filter
+               (fun u ->
+                 List.mem (Ops.op u) Op.[ Floordiv; Floormod; Cdiv; Cmod ])
+               (instructions row)));
       claim "reduce_upcast_unroll" "keeps no accumulator and stores once"
         (fun row ->
           let uops = instructions row in

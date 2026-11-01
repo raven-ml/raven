@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 8
 1 Ops.PARAM dtypes.u16 [0] ParamArg(slot=0, dtype=dtypes.u16, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -62,6 +62,6 @@
 60 Ops.SINK dtypes.void [31, 34, 37, 40, 43, 48, 53, 58] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), estimates=Estimates(ops=4, lds=32, mem=32))
 61 Ops.LINEAR dtypes.void [0, 1, 5, 6, 2, 3, 7, 8, 9, 10, 11, 16, 17, 18, 20, 21, 22, 24, 25, 26, 12, 13, 14, 15, 19, 23, 27, 28, 4, 32, 35, 38, 41, 44, 45, 46, 49, 50, 51, 54, 55, 56, 29, 30, 33, 36, 39, 42, 47, 52, 57, 31, 34, 37, 40, 43, 48, 53, 58, 59]
 62 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\ntypedef unsigned int unsigned_int4 __attribute__((aligned(16),ext_vector_type(4)));\ntypedef unsigned int unsigned_int8 __attribute__((aligned(32),ext_vector_type(8)));\ntypedef unsigned short unsigned_short8 __attribute__((aligned(16),ext_vector_type(8)));\n__attribute__((min_vector_width(512))) void E_2_4(unsigned short* restrict data0_8, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  unsigned_int4 cast0 = __builtin_bit_cast(unsigned_int4, (float4)(val0));\n  unsigned_int4 alu0 = (cast0>>16u);\n  unsigned_short8 cast1 = __builtin_convertvector((unsigned_int8){cast0[0],alu0[0],cast0[1],alu0[1],cast0[2],alu0[2],cast0[3],alu0[3]}, unsigned_short8);\n  *(data0_8+0) = cast1[0];\n  *(data0_8+1) = cast1[1];\n  *(data0_8+2) = cast1[2];\n  *(data0_8+3) = cast1[3];\n  *(data0_8+4) = cast1[4];\n  *(data0_8+5) = cast1[5];\n  *(data0_8+6) = cast1[6];\n  *(data0_8+7) = cast1[7];\n}\n"
-63 Ops.PROGRAM dtypes.void [60, 61, 62] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+63 Ops.PROGRAM dtypes.void [60, 61, 62] ProgramInfo(params=(%1, %6), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 64 Ops.SINK dtypes.void [59, 63]
 

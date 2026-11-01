@@ -61,7 +61,7 @@ def emulate(kernel, renderer, floats):
     f2f, f2f_clamp = decomp.f2f, decomp.f2f_clamp
     if floats: decomp.f2f, decomp.f2f_clamp = opaque_f2f, opaque_f2f_clamp
     try:
-        return graph_rewrite(kernel, decomp.pm_dtype_decomps + pm_commit_weak, ctx=(set(), renderer))
+        return graph_rewrite(kernel, decomp.pm_dtype_decomps + pm_commit_weak, ctx=decomp.DTypeDecompCtx(renderer))
     finally:
         decomp.f2f, decomp.f2f_clamp = f2f, f2f_clamp
 

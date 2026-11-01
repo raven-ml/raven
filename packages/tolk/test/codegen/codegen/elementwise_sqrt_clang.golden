@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 256
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -14,6 +14,6 @@
 12 Ops.SINK dtypes.void [10] KernelInfo(name="elementwise_sqrt", estimates=Estimates(ops=256, lds=2048, mem=2048)) tag=1
 13 Ops.LINEAR dtypes.void [0, 5, 1, 2, 3, 6, 7, 4, 8, 9, 10, 11]
 14 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void elementwise_sqrt(float* restrict data0_256, float* restrict data1_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    *(data1_256+Lidx0) = __builtin_sqrtf(val0);\n  }\n}\n"
-15 Ops.PROGRAM dtypes.void [12, 13, 14] ProgramInfo(globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+15 Ops.PROGRAM dtypes.void [12, 13, 14] ProgramInfo(params=(%5, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 16 Ops.SINK dtypes.void [11, 15]
 

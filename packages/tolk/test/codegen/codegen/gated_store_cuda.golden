@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 256
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -25,6 +25,6 @@
 23 Ops.SINK dtypes.void [19] KernelInfo(name="gated_store") tag=1
 24 Ops.LINEAR dtypes.void [0, 5, 8, 1, 12, 13, 2, 3, 6, 7, 9, 10, 4, 11, 14, 21, 18, 22, 19, 23]
 25 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) gated_store(float* data0_256, float* data1_256, float* data2_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    float val1 = (*(data1_256+Lidx0));\n    if ((Lidx0<200)) {\n      *(data2_256+Lidx0) = (val0+val1);\n    }\n  }\n}"
-26 Ops.PROGRAM dtypes.void [20, 24, 25] ProgramInfo(globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+26 Ops.PROGRAM dtypes.void [20, 24, 25] ProgramInfo(params=(%5, %8, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
 27 Ops.SINK dtypes.void [17, 26]
 

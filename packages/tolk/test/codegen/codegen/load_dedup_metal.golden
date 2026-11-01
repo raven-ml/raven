@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 3
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -19,6 +19,6 @@
 17 Ops.SINK dtypes.void [15] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),), estimates=Estimates(ops=3, lds=36, mem=28)) tag=1
 18 Ops.LINEAR dtypes.void [0, 1, 5, 6, 2, 3, 7, 8, 9, 10, 11, 12, 13, 4, 14, 15, 16]
 19 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_3; device float* data1_4; };\nkernel void E_3(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_3 = args.data0_3; device float* data1_4 = args.data1_4;\n  int lidx0 = lid.x; /* 3 */\n  float val0 = (*(data1_4+lidx0));\n  float val1 = (*(data1_4+(lidx0+1)));\n  *(data0_3+lidx0) = (val0+val1);\n}"
-20 Ops.PROGRAM dtypes.void [17, 18, 19] ProgramInfo(local_size=(3, 1, 1), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+20 Ops.PROGRAM dtypes.void [17, 18, 19] ProgramInfo(local_size=(3, 1, 1), params=(%1, %6), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 21 Ops.SINK dtypes.void [16, 20]
 

@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -18,6 +18,6 @@
 16 Ops.SINK dtypes.void [12] KernelInfo() tag=1
 17 Ops.LINEAR dtypes.void [0, 1, 2, 5, 6, 3, 4, 7, 14, 11, 15, 12, 16]
 18 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device int* data0_16; };\nkernel void test(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_16 = args.data0_16;\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    if ((Lidx0<8)) {\n      *(data0_16+Lidx0) = Lidx0;\n    }\n  }\n}"
-19 Ops.PROGRAM dtypes.void [13, 17, 18] ProgramInfo(globals=(0,), outs=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+19 Ops.PROGRAM dtypes.void [13, 17, 18] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 20 Ops.SINK dtypes.void [10, 19]
 

@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 5
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -57,7 +57,7 @@
 55 Ops.LINEAR dtypes.void [0, 1, 9, 10, 18, 2, 3, 4, 13, 14, 19, 20, 26, 27, 28, 29, 45, 37, 38, 42, 31, 32, 36, 21, 22, 30, 11, 5, 6, 7, 12, 39, 40, 41, 33, 34, 35, 23, 24, 25, 15, 16, 17, 43, 44, 8, 46, 47, 48, 49, 50, 51, 52, 54]
 56 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_5_5(float* restrict data0_5, float* restrict data1_25, float* restrict data2_5, const int block_lo_, const int block_hi_) {\n  float val0 = (*(data2_5+4));\n  float4 val1 = (*((float4*)((data2_5+0))));\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0*5);\n    float val2 = (*(data1_25+(alu1+1)));\n    float val3 = (*(data1_25+(alu1+2)));\n    float val4 = (*(data1_25+(alu1+3)));\n    float val5 = (*(data1_25+(alu1+4)));\n    float val6 = (*(data1_25+alu1));\n    *(data0_5+alu0) = __builtin_fmaf(val5,val0,__builtin_fmaf(val4,val1[3],__builtin_fmaf(val3,val1[2],__builtin_fmaf(val2,val1[1],(val6*val1[0])))));\n  }\n}\n"
 57 Ops.BINARY dtypes.u8 [] b"typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_5_5(float* restrict data0_5, float* restrict data1_25, float* restrict data2_5, const int block_lo_, const int block_hi_) {\n  float val0 = (*(data2_5+4));\n  float4 val1 = (*((float4*)((data2_5+0))));\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0*5);\n    float val2 = (*(data1_25+(alu1+1)));\n    float val3 = (*(data1_25+(alu1+2)));\n    float val4 = (*(data1_25+(alu1+3)));\n    float val5 = (*(data1_25+(alu1+4)));\n    float val6 = (*(data1_25+alu1));\n    *(data0_5+alu0) = __builtin_fmaf(val5,val0,__builtin_fmaf(val4,val1[3],__builtin_fmaf(val3,val1[2],__builtin_fmaf(val2,val1[1],(val6*val1[0])))));\n  }\n}\n"
-58 Ops.PROGRAM dtypes.void [53, 55, 56, 57] ProgramInfo(global_size=(5, 1, 1), vars=(%3, %4), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
+58 Ops.PROGRAM dtypes.void [53, 55, 56, 57] ProgramInfo(global_size=(5, 1, 1), params=(%1, %10, %18, %3, %4), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
 59 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
 60 Ops.BUFFER dtypes.f32 [9] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
 61 Ops.CALL dtypes.void [58, 59, 60, 1] CallInfo()

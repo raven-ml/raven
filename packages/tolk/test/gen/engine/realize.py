@@ -8,9 +8,10 @@ kernel compiled for Clang on x86_64. No case compiles: a program's binary is
 its source's bytes.
 
 `calls.golden` reads each call of each compiled schedule, by its position in
-it, with the schedule's variables: its buffer arguments (`get_call_arg_uops`) and the values of its
-program's variables (`get_call_var_uops`), both as the positions of the
-call's sources or as values; the buffers it writes and reads
+it, with the schedule's variables: its buffer arguments (`get_call_arg_uops`)
+and what it passes each of its program's parameters
+(`get_call_kernel_args`), both as the positions of the call's sources, as
+variables or as values; the buffers it writes and reads
 (`get_call_outs_ins`); its name (`get_call_name`, in colour, with the schedule's
 variables); and its cost (`estimate_uop`), with the schedule's variables.
 """
@@ -57,6 +58,19 @@ def add_one(C, A):
     return C[i].store(A[i] + 1).end(i).sink(arg=KernelInfo(name=f"add_one_{A.numel()}"))
 
 
+def add_n(C, n, B):
+    C, B = C.flatten(), B.flatten()
+    i = UOp.range(C.numel(), 0)
+    return C[i].store(B[i] + n).end(i).sink(arg=KernelInfo(name="add_n"))
+
+
+def custom_kernel_scalar():
+    """A variable passed between two buffers (runtime/test_custom_kernel.py,
+    test_scalar_arg_any_position)."""
+    n = Tensor(Variable("n", 0, 100, dtype=dtypes.int32).bind(5))
+    return Tensor.custom_kernel(empty(4, dtype=dtypes.int32), n, empty(4, dtype=dtypes.int32), fxn=add_n)[0] + 1
+
+
 def precompiled_scalar():
     x = empty(3, dtype=dtypes.int32)
     scalar = UOp.param(1, x.dtype, addrspace=AddrSpace.ALU)
@@ -71,6 +85,7 @@ PROGRAMS = {
     "two_outputs": lambda: (lambda x: (x + 1, x * 2))(empty(4, 4)),
     "assign": lambda: (lambda a: a.assign(a + 1))(empty(4, 4).contiguous()),
     "custom_kernel": lambda: Tensor.custom_kernel(empty(4, 4), empty(4, 4) * 2, fxn=add_one)[0] + 1,
+    "custom_kernel_scalar": custom_kernel_scalar,
     "precompiled_scalar": precompiled_scalar,
     "copy": lambda: empty(4, 4).to("CPU:1") * 2,
     "copy_view": lambda: empty(8, 8)[2:6].to("CPU:1") + 1,
@@ -93,15 +108,23 @@ def position(call, u):
 def sym(x, var_vals): return str(sym_infer(x, var_vals))
 
 
+def kernel_arg(call, a):
+    """A kernel argument: a buffer's address as its position in `call`, a
+    variable by its name, a bound value by its value."""
+    while a.op is Ops.CAST: a = a.src[0]
+    if a.op is Ops.GETADDR: return position(call, a.src[0])
+    return a.arg.name if a.op is Ops.PARAM else str(a.arg)
+
+
 def call_row(program, i, call, var_vals):
     bufs = realize.get_call_arg_uops(call)
     ast = call.body
-    variables = realize.get_call_var_uops(call, ast) if ast.op is Ops.PROGRAM else []
+    args = realize.get_call_kernel_args(call, ast, None) if ast.op is Ops.PROGRAM else []
     outs, ins = realize.get_call_outs_ins(call)
     with Context(NO_COLOR=0): name = realize.get_call_name(call, bufs, var_vals)
     e = realize.estimate_uop(call)
     return (program, str(i), " ".join(f"{k}={v}" for k, v in sorted(var_vals.items())) or "-", " ".join(position(call, b) for b in bufs) or "-",
-            " ".join(v.arg.name if v.op is Ops.PARAM else str(v.arg) for v in variables) or "-",
+            " ".join(kernel_arg(call, a) for a in args) or "-",
             " ".join(map(str, outs)) or "-", " ".join(map(str, ins)) or "-",
             name, sym(e.ops, var_vals), sym(e.lds, var_vals), sym(e.mem, var_vals))
 
@@ -124,4 +147,4 @@ def calls():
         linear, var_vals = scheduled(PROGRAMS[program])
         for i, call in enumerate(realize.lower_and_compile(linear).src):
             rows.append(call_row(program, i, call, var_vals))
-    return ["program", "call", "var_vals", "bufs", "vars", "outs", "ins", "name", "ops", "lds", "mem"], rows
+    return ["program", "call", "var_vals", "bufs", "args", "outs", "ins", "name", "ops", "lds", "mem"], rows

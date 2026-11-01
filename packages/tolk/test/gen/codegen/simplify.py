@@ -258,6 +258,11 @@ def unparented_cases():
         ("sum_over_an_unroll_range", UOp.const(3.0).cast(dtypes.float).reduce(UOp.range(4, 0, AxisType.UPCAST),
                                                                               arg=(Ops.ADD, 0))),
         ("sum_of_nothing", UOp(Ops.REDUCE, src=(x,), arg=(Ops.ADD, 0))),
+        # test_uop_graph.py::TestUOpGraph::test_bool_reduce_unparented_keeps_dtype, test_max_reduce_unparented_empty_range
+        ("bool_sum_over_an_unused_range", UOp.const(True).reduce(r0, arg=Ops.ADD)),
+        ("bool_product_over_an_unused_range", UOp.const(True).reduce(r0, arg=Ops.MUL)),
+        ("maximum_over_a_range_that_may_be_empty",
+         f32(1.0).reduce(UOp.range(UOp.variable("m", 0, 4), 3, AxisType.WEAK), arg=Ops.MAX)),
     ]
 
 

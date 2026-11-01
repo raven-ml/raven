@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 op	value	Unary	Binary	Ternary	ALU	Broadcastable	Elementwise	Defines	Irreducible	Movement	Commutative	Associative	Idempotent	Reduce	Comparison	All
 Ops.SPECIAL	1	False	False	False	False	False	False	False	True	False	False	False	False	False	False	True
 Ops.BUFFER	2	False	False	False	False	False	False	True	False	False	False	False	False	False	False	True

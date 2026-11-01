@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -15,7 +15,7 @@
 13 Ops.LINEAR dtypes.void [0, 1, 6, 2, 3, 4, 5, 7, 8, 9, 10, 12]
 14 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(int* restrict data0_1, int* restrict data1_1) {\n  int val0 = (*(data0_1+0));\n  int val1 = (*(data1_1+0));\n  *(data0_1+0) = (val0+val1);\n}\n"
 15 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E(int* restrict data0_1, int* restrict data1_1) {\n  int val0 = (*(data0_1+0));\n  int val1 = (*(data1_1+0));\n  *(data0_1+0) = (val0+val1);\n}\n"
-16 Ops.PROGRAM dtypes.void [11, 13, 14, 15] ProgramInfo(globals=(0, 1), outs=(0,), ins=(0, 1), target=Target(device="CPU", arch="x86_64,x86-64"))
+16 Ops.PROGRAM dtypes.void [11, 13, 14, 15] ProgramInfo(params=(%1, %6), globals=(0, 1), outs=(0,), ins=(0, 1), target=Target(device="CPU", arch="x86_64,x86-64"))
 17 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
 18 Ops.CALL dtypes.void [16, 17, 1] CallInfo()
 19 Ops.LINEAR dtypes.void [18]

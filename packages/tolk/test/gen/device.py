@@ -24,9 +24,12 @@ import tinygrad.runtime.support.compiler_amd as compiler_amd
 # comgr is absent where the goldens are generated, and no case compiles.
 compiler_amd.c.DLL._loaded_[compiler_amd.comgr.dll.nm] = compiler_amd.comgr.dll
 
+from dataclasses import replace
+
 from golden import graph, table
 from graph import kernels
 from tinygrad import Tensor, dtypes
+from tinygrad.dtype import AddrSpace
 from tinygrad.codegen import to_program
 from tinygrad.device import Compiled, Compiler, TinyELF
 from tinygrad.helpers import DEV, Context, Target
@@ -118,6 +121,15 @@ def scalars():
     return a.index(r).store(value).end(r).sink(arg=KernelInfo(name="r:scalars 2"))
 
 
+def interleaved():
+    """A variable in slot 1, between the buffers of slots 0 and 2."""
+    out, inp = UOp.param(0, dtypes.int, 4), UOp.param(2, dtypes.int, 4)
+    n = UOp.variable("n", 0, 100, dtype=dtypes.int)
+    n = n.replace(arg=replace(n.arg, slot=1))
+    r = UOp.range(4, 0)
+    return out.index(r).store(inp.index(r).load() + n).end(r).sink(arg=KernelInfo(name="interleaved"))
+
+
 def no_buffer_read():
     """A program of one buffer, written only."""
     a = UOp.param(3, dtypes.float, 8)
@@ -130,6 +142,8 @@ PROGRAMS = {
     "elementwise_metal": (elementwise, METAL),
     "sparse": (sparse, CLANG),
     "scalars": (scalars, CLANG),
+    "interleaved": (interleaved, CLANG),
+    "interleaved_metal": (interleaved, METAL),
     "fill": (no_buffer_read, METAL),
 }
 
@@ -153,9 +167,9 @@ def signatures():
     """Each parameter of each program's signature."""
     rows = []
     for case in PROGRAMS:
-        for position, (name, slot, dt, shape) in enumerate(program(case).to_elf().signature):
-            rows.append((case, position, repr(name), slot, dt, repr(shape)))
-    return ["program", "position", "name", "slot", "dtype", "shape"], rows
+        for position, (name, addrspace, dt, shape) in enumerate(program(case).to_elf().signature):
+            rows.append((case, position, repr(name), addrspace, dt, repr(shape)))
+    return ["program", "position", "name", "addrspace", "dtype", "shape"], rows
 
 
 @table
@@ -173,7 +187,7 @@ def layouts():
 @table
 def reprs():
     """The repr of compiled programs of chosen fields."""
-    sig = ((None, 0, dtypes.float, (16,)), ("n", 1, dtypes.int, ()))
+    sig = ((None, AddrSpace.GLOBAL, dtypes.float, (16,)), ("n", AddrSpace.ALU, dtypes.int, ()))
     elfs = {
         "some": TinyELF(b"\x7fELF\x00'\"", "k", CLANG, sig, b"key\n"),
         "none": TinyELF(b"", "E_4", Target("AMD", "HIP", "gfx1100", "PCI", "1"), sig[:1], None),

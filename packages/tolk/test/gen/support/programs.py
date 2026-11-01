@@ -47,7 +47,7 @@ def gpt_oss_block(tokens, start_pos):
         num_blocks=1, dim=64, hidden_dim=32, n_heads=4, n_kv_heads=2, norm_eps=1e-5, vocab_size=1, head_dim=16,
         rope_theta=150000.0, rope_dim=16, v_head_dim=16, max_context=16, num_experts=4, num_experts_per_tok=2,
         expert_gating_func=ExpertGating.SOFTMAX_WEIGHT, qkv_bias=True, expert_proj_bias=True, attn_output_bias=True,
-        attn_sinks=True, swiglu_alpha=1.702, swiglu_clamp_exp=7.0, swiglu_up_bias=1.0, sliding_window=8)
+        attn_sinks=True, swiglu_alpha=1.702, swiglu_limit=7.0, swiglu_up_bias=1.0, sliding_window=8)
     block = TransformerBlock(config)
     for t in nn.state.get_state_dict(block).values(): t.replace(empty(*t.shape, dtype=t.dtype))
     block.cache_kv = empty(2, 1, config.n_kv_heads, config.max_context, config.head_dim, dtype=dtypes.half)

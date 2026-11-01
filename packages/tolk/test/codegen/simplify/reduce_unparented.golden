@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 case	src
 sum_over_an_unused_range	0
 product_over_an_unused_range	1
@@ -12,3 +12,6 @@ sum_over_a_symbolic_range	8
 product_over_a_symbolic_range	9
 sum_over_an_unroll_range	10
 sum_of_nothing	11
+bool_sum_over_an_unused_range	12
+bool_product_over_an_unused_range	13
+maximum_over_a_range_that_may_be_empty	14

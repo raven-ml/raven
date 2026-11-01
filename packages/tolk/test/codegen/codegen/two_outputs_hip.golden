@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 256
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
@@ -24,6 +24,6 @@
 22 Ops.SINK dtypes.void [20] KernelInfo(name="two_outputs", estimates=Estimates(ops=512, lds=3072, mem=3072)) tag=1
 23 Ops.LINEAR dtypes.void [1, 6, 2, 13, 0, 9, 10, 15, 16, 3, 4, 7, 8, 5, 14, 11, 17, 12, 18, 19, 20, 21]
 24 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) two_outputs(float* data0_256, float* data1_256, float* data2_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    *(data1_256+Lidx0) = (val0+1.0f);\n    *(data2_256+Lidx0) = (val0*2.0f);\n  }\n}"
-25 Ops.PROGRAM dtypes.void [22, 23, 24] ProgramInfo(globals=(0, 1, 2), outs=(1, 2), ins=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+25 Ops.PROGRAM dtypes.void [22, 23, 24] ProgramInfo(params=(%6, %2, %13), globals=(0, 1, 2), outs=(1, 2), ins=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
 26 Ops.SINK dtypes.void [21, 25]
 

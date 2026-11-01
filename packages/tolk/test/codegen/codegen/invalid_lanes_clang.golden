@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -50,6 +50,6 @@
 48 Ops.SINK dtypes.void [46] KernelInfo(name="r_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),)) tag=1
 49 Ops.LINEAR dtypes.void [0, 1, 33, 2, 3, 34, 7, 8, 19, 20, 16, 10, 11, 35, 12, 36, 37, 38, 17, 18, 21, 22, 23, 39, 40, 41, 42, 43, 44, 4, 45, 46, 48]
 50 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void r_2_4(float* restrict data0_1) {\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {\n    float alu1 = ((Lidx0<1)?0.0f:0.0f);\n    *(buf0+0) = ((*(buf0+0))+((alu1*2.0f)+alu1+alu1));\n  }\n  *(data0_1+0) = ((*(buf0+0))+0.0f);\n}\n"
-51 Ops.PROGRAM dtypes.void [47, 49, 50] ProgramInfo(globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+51 Ops.PROGRAM dtypes.void [47, 49, 50] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 52 Ops.SINK dtypes.void [32, 51]
 

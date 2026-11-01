@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 1024
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -58,6 +58,6 @@
 56 Ops.SINK dtypes.void [54] KernelInfo(name="E_2_8_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), estimates=Estimates(ops=2304, lds=8256, mem=8256)) tag=1
 57 Ops.LINEAR dtypes.void [1, 2, 24, 14, 30, 34, 15, 16, 31, 32, 35, 36, 3, 4, 5, 9, 10, 11, 21, 22, 6, 7, 17, 18, 8, 12, 13, 19, 20, 25, 26, 0, 27, 28, 29, 39, 40, 41, 44, 47, 48, 49, 37, 33, 38, 42, 43, 45, 46, 50, 51, 52, 23, 53, 54, 55]
 58 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_1024; device float* data1_1024; device float* data2_8; device float* data3_8; };\nkernel void E_2_8_16_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_1024 = args.data0_1024; device float* data1_1024 = args.data1_1024; device float* data2_8 = args.data2_8; device float* data3_8 = args.data3_8;\n  int lidx0 = lid.x; /* 8 */\n  float val0 = (*(data2_8+lidx0));\n  float val1 = (*(data3_8+lidx0));\n  int gidx0 = gid.x; /* 2 */\n  int lidx1 = lid.y; /* 16 */\n  int alu0 = ((gidx0<<6)+(lidx1<<2)+(lidx0<<7));\n  float4 val2 = (*((device float4*)((data1_1024+alu0))));\n  float alu1 = (1/val1);\n  *((device float4*)((data0_1024+alu0))) = float4(((val2.x-val0)*alu1),((val2.y-val0)*alu1),((val2.z-val0)*alu1),((val2.w-val0)*alu1));\n}"
-59 Ops.PROGRAM dtypes.void [56, 57, 58] ProgramInfo(global_size=(2, 1, 1), local_size=(8, 16, 1), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+59 Ops.PROGRAM dtypes.void [56, 57, 58] ProgramInfo(global_size=(2, 1, 1), local_size=(8, 16, 1), params=(%2, %24, %30, %34), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 60 Ops.SINK dtypes.void [55, 59]
 

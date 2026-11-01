@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 kernel	target	amt	failing	allow_test_size	opts	measurements
 add_small	clang	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),)	12
 add_small	clang	2	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	16

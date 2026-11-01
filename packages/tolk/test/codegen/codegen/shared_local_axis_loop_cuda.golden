@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -36,6 +36,6 @@
 34 Ops.SINK dtypes.void [30] KernelInfo() tag=1
 35 Ops.LINEAR dtypes.void [0, 11, 1, 22, 2, 3, 12, 13, 6, 7, 8, 23, 24, 25, 26, 27, 28, 29, 4, 19, 32, 30, 33, 34]
 36 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(2) test(int* data0_1, int* data1_1) {\n  __shared__ __align__(16) int buf0[1];\n  int val0 = (*(data0_1+0));\n  int lidx0 = threadIdx.x; /* 2 */\n  *(buf0+0) = val0;\n  __syncthreads();\n  int val1 = (*(buf0+0));\n  if ((lidx0==0)) {\n    *(data1_1+0) = val1;\n  }\n}"
-37 Ops.PROGRAM dtypes.void [31, 35, 36] ProgramInfo(local_size=(2, 1, 1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+37 Ops.PROGRAM dtypes.void [31, 35, 36] ProgramInfo(local_size=(2, 1, 1), params=(%11, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
 38 Ops.SINK dtypes.void [21, 37]
 

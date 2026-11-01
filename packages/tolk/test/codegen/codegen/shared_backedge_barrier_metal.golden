@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -38,6 +38,6 @@
 36 Ops.SINK dtypes.void [34] KernelInfo() tag=1
 37 Ops.LINEAR dtypes.void [0, 10, 1, 20, 21, 24, 2, 3, 11, 12, 6, 4, 7, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 36]
 38 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device int* data0_1; device int* data1_1; device bool* data2_; };\nkernel void test(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_1 = args.data0_1; device int* data1_1 = args.data1_1; device bool* data2_ = args.data2_;\n  threadgroup __attribute__((aligned(16))) int buf0[1];\n  int val0 = (*(data0_1+0));\n  for (;;) {\n    *(buf0+0) = val0;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n    int val1 = (*(buf0+0));\n    *(data1_1+0) = val1;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n    if (!(data2_)) { break; }\n  }\n}"
-39 Ops.PROGRAM dtypes.void [35, 37, 38] ProgramInfo(globals=(0, 1, 2), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+39 Ops.PROGRAM dtypes.void [35, 37, 38] ProgramInfo(params=(%10, %1, %21), globals=(0, 1, 2), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 40 Ops.SINK dtypes.void [23, 39]
 

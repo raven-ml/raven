@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 from	to	lossless
 dtypes.bool	dtypes.bool	True
 dtypes.bool	dtypes.weakint	True
@@ -54,7 +54,7 @@ dtypes.i8	dtypes.fp8e4m3fnuz	False
 dtypes.i8	dtypes.fp8e5m2	False
 dtypes.i8	dtypes.fp8e5m2fnuz	False
 dtypes.i8	dtypes.f16	True
-dtypes.i8	dtypes.bf16	False
+dtypes.i8	dtypes.bf16	True
 dtypes.i8	dtypes.f32	True
 dtypes.i8	dtypes.f64	True
 dtypes.u8	dtypes.bool	False
@@ -73,7 +73,7 @@ dtypes.u8	dtypes.fp8e4m3fnuz	False
 dtypes.u8	dtypes.fp8e5m2	False
 dtypes.u8	dtypes.fp8e5m2fnuz	False
 dtypes.u8	dtypes.f16	True
-dtypes.u8	dtypes.bf16	False
+dtypes.u8	dtypes.bf16	True
 dtypes.u8	dtypes.f32	True
 dtypes.u8	dtypes.f64	True
 dtypes.i16	dtypes.bool	False
@@ -225,7 +225,7 @@ dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	False
 dtypes.fp8e4m3	dtypes.fp8e5m2	False
 dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	False
 dtypes.fp8e4m3	dtypes.f16	True
-dtypes.fp8e4m3	dtypes.bf16	False
+dtypes.fp8e4m3	dtypes.bf16	True
 dtypes.fp8e4m3	dtypes.f32	True
 dtypes.fp8e4m3	dtypes.f64	True
 dtypes.fp8e4m3fnuz	dtypes.bool	False
@@ -244,7 +244,7 @@ dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	True
 dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	False
 dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	False
 dtypes.fp8e4m3fnuz	dtypes.f16	True
-dtypes.fp8e4m3fnuz	dtypes.bf16	False
+dtypes.fp8e4m3fnuz	dtypes.bf16	True
 dtypes.fp8e4m3fnuz	dtypes.f32	True
 dtypes.fp8e4m3fnuz	dtypes.f64	True
 dtypes.fp8e5m2	dtypes.bool	False
@@ -263,7 +263,7 @@ dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	False
 dtypes.fp8e5m2	dtypes.fp8e5m2	True
 dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	False
 dtypes.fp8e5m2	dtypes.f16	True
-dtypes.fp8e5m2	dtypes.bf16	False
+dtypes.fp8e5m2	dtypes.bf16	True
 dtypes.fp8e5m2	dtypes.f32	True
 dtypes.fp8e5m2	dtypes.f64	True
 dtypes.fp8e5m2fnuz	dtypes.bool	False
@@ -282,7 +282,7 @@ dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	False
 dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	False
 dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	True
 dtypes.fp8e5m2fnuz	dtypes.f16	True
-dtypes.fp8e5m2fnuz	dtypes.bf16	False
+dtypes.fp8e5m2fnuz	dtypes.bf16	True
 dtypes.fp8e5m2fnuz	dtypes.f32	True
 dtypes.fp8e5m2fnuz	dtypes.f64	True
 dtypes.f16	dtypes.bool	False

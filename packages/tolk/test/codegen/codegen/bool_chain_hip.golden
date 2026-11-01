@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.bool [1] ParamArg(slot=0, dtype=dtypes.bool, device="CPU")
@@ -77,6 +77,6 @@
 75 Ops.SINK dtypes.void [73] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=80, lds=208, mem=208)) tag=1
 76 Ops.LINEAR dtypes.void [1, 2, 12, 19, 27, 3, 4, 5, 6, 7, 8, 13, 14, 20, 21, 28, 29, 0, 36, 37, 38, 39, 49, 50, 60, 61, 62, 63, 9, 15, 16, 17, 40, 51, 64, 22, 42, 53, 66, 30, 45, 56, 69, 10, 11, 31, 32, 23, 24, 25, 43, 54, 67, 18, 41, 52, 65, 33, 46, 57, 70, 26, 34, 44, 47, 55, 58, 68, 71, 48, 59, 72, 35, 73, 74]
 77 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\ntypedef float float4 __attribute__((ext_vector_type(4)));\nstatic inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_4(bool* data0_16, float* data1_16, float* data2_16, float* data3_16) {\n  int lidx0 = __ockl_get_local_id(0); /* 4 */\n  int alu0 = (lidx0<<2);\n  float4 val0 = (*((float4*)((data1_16+alu0))));\n  float4 val1 = (*((float4*)((data2_16+alu0))));\n  float4 val2 = (*((float4*)((data3_16+alu0))));\n  *(data0_16+(alu0+1)) = (((0.0f<val0.y)&(val1.y<1.0f))|(val2.y==0.5f));\n  *(data0_16+(alu0+2)) = (((0.0f<val0.z)&(val1.z<1.0f))|(val2.z==0.5f));\n  *(data0_16+(alu0+3)) = (((0.0f<val0.w)&(val1.w<1.0f))|(val2.w==0.5f));\n  *(data0_16+alu0) = (((0.0f<val0.x)&(val1.x<1.0f))|(val2.x==0.5f));\n}"
-78 Ops.PROGRAM dtypes.void [75, 76, 77] ProgramInfo(local_size=(4, 1, 1), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+78 Ops.PROGRAM dtypes.void [75, 76, 77] ProgramInfo(local_size=(4, 1, 1), params=(%2, %12, %19, %27), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
 79 Ops.SINK dtypes.void [74, 78]
 

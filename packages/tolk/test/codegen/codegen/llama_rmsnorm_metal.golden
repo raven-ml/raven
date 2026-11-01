@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 2
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -48,6 +48,6 @@
 46 Ops.SINK dtypes.void [44] KernelInfo(name="r_2_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL))), estimates=Estimates(ops=36, lds=72, mem=72)) tag=1
 47 Ops.LINEAR dtypes.void [0, 1, 5, 6, 2, 3, 7, 8, 10, 11, 9, 12, 13, 14, 23, 24, 4, 20, 21, 22, 17, 18, 19, 16, 15, 28, 27, 26, 25, 37, 38, 40, 41, 29, 30, 31, 32, 33, 34, 35, 36, 39, 42, 43, 44, 45]
 48 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_2; device float* data1_16; };\nkernel void r_2_8(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_2 = args.data0_2; device float* data1_16 = args.data1_16;\n  int lidx0 = lid.x; /* 2 */\n  int alu0 = (lidx0<<3);\n  float4 val0 = (*((device float4*)((data1_16+(alu0+4)))));\n  float4 val1 = (*((device float4*)((data1_16+alu0))));\n  *(data0_2+lidx0) = sqrt(((fma(val0.w,val0.w,fma(val0.z,val0.z,fma(val0.y,val0.y,fma(val0.x,val0.x,fma(val1.w,val1.w,fma(val1.z,val1.z,fma(val1.y,val1.y,(val1.x*val1.x))))))))*0.125f)+9.999999747378752e-06f));\n}"
-49 Ops.PROGRAM dtypes.void [46, 47, 48] ProgramInfo(local_size=(2, 1, 1), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+49 Ops.PROGRAM dtypes.void [46, 47, 48] ProgramInfo(local_size=(2, 1, 1), params=(%1, %6), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 50 Ops.SINK dtypes.void [45, 49]
 

@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 2
 1 Ops.SINK dtypes.void [0, 0] tag=("simplify", 2, 2)
 2 Ops.STACK dtypes.void []
@@ -10,5 +10,8 @@
 8 Ops.PARAM dtypes.weakint [2] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(4, 40), multiple_of=4, name="m", addrspace=AddrSpace.ALU)
 9 Ops.FLOORMOD dtypes.weakint [8, 0]
 10 Ops.SINK dtypes.void [9, 6] tag=("simplify", 0, 0)
-11 Ops.SINK dtypes.void [1, 7, 10]
+11 Ops.CONST dtypes.weakint [] 12
+12 Ops.CMPLT dtypes.bool [3, 11]
+13 Ops.SINK dtypes.void [12, 12] tag=("simplify", False, True)
+14 Ops.SINK dtypes.void [1, 7, 10, 13]
 

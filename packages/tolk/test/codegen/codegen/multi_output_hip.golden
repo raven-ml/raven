@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 1024
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -44,6 +44,6 @@
 42 Ops.SINK dtypes.void [40] KernelInfo(name="E_8_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL))), estimates=Estimates(ops=1024, lds=8192, mem=8192)) tag=1
 43 Ops.LINEAR dtypes.void [1, 2, 19, 3, 4, 5, 9, 10, 11, 12, 13, 16, 17, 6, 7, 8, 14, 15, 20, 21, 0, 22, 23, 24, 28, 29, 30, 32, 34, 35, 36, 25, 26, 27, 31, 33, 37, 38, 18, 39, 40, 41]
 44 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\ntypedef float float4 __attribute__((ext_vector_type(4)));\nstatic inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 32))) E_8_32_4(float* data0_1024, float* data1_1024) {\n  int gidx0 = __ockl_get_group_id(0); /* 8 */\n  int lidx0 = __ockl_get_local_id(0); /* 32 */\n  int alu0 = ((gidx0<<7)+(lidx0<<2));\n  float4 val0 = (*((float4*)((data1_1024+alu0))));\n  *((float4*)((data0_1024+alu0))) = make_float4((val0.x*2.0f),(val0.y*2.0f),(val0.z*2.0f),(val0.w*2.0f));\n}"
-45 Ops.PROGRAM dtypes.void [42, 43, 44] ProgramInfo(global_size=(8, 1, 1), local_size=(32, 1, 1), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+45 Ops.PROGRAM dtypes.void [42, 43, 44] ProgramInfo(global_size=(8, 1, 1), local_size=(32, 1, 1), params=(%2, %19), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
 46 Ops.SINK dtypes.void [41, 45]
 

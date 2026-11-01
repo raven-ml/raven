@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 
 __attribute__((min_vector_width(512))) void named(float* restrict input_tile_4, float* restrict output_tile_4, const int for_) {
   for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {

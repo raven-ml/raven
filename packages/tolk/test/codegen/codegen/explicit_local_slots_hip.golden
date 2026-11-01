@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -73,6 +73,6 @@
 71 Ops.SINK dtypes.void [69] KernelInfo() tag=1
 72 Ops.LINEAR dtypes.void [10, 16, 0, 1, 44, 61, 42, 2, 3, 45, 11, 46, 12, 17, 18, 47, 48, 49, 50, 51, 52, 62, 32, 33, 63, 64, 65, 66, 67, 53, 54, 55, 43, 56, 57, 58, 59, 60, 4, 68, 69, 71]
 73 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) test(int* data0_4, int* data1_1) {\n  int buf0[1];\n  __attribute__((shared, aligned(16)))int buf1[1];\n  __attribute__((shared, aligned(16)))int buf2[1];\n  *(buf0+0) = 0;\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int val0 = (*(data0_4+Lidx0));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(buf1+0) = 3;\n  __builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");__builtin_amdgcn_s_barrier();__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");\n  int val1 = (*(buf1+0));\n  *(buf2+0) = (*(buf0+0));\n  __builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");__builtin_amdgcn_s_barrier();__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");\n  int val2 = (*(buf2+0));\n  *(data1_1+0) = (val2+val1);\n}"
-74 Ops.PROGRAM dtypes.void [70, 72, 73] ProgramInfo(globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+74 Ops.PROGRAM dtypes.void [70, 72, 73] ProgramInfo(params=(%16, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
 75 Ops.SINK dtypes.void [41, 74]
 

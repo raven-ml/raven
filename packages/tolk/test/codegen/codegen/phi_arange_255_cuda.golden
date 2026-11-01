@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 255
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 85
@@ -15,6 +15,6 @@
 13 Ops.SINK dtypes.void [11] KernelInfo(name="E_85_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),), estimates=Estimates(lds=1020, mem=1020)) tag=1
 14 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 8, 7, 9, 10, 11, 12]
 15 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(3) E_85_3(int* data0_255) {\n  int gidx0 = blockIdx.x; /* 85 */\n  int lidx0 = threadIdx.x; /* 3 */\n  int alu0 = ((gidx0*3)+lidx0);\n  *(data0_255+alu0) = alu0;\n}"
-16 Ops.PROGRAM dtypes.void [13, 14, 15] ProgramInfo(global_size=(85, 1, 1), local_size=(3, 1, 1), globals=(0,), outs=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+16 Ops.PROGRAM dtypes.void [13, 14, 15] ProgramInfo(global_size=(85, 1, 1), local_size=(3, 1, 1), params=(%1,), globals=(0,), outs=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
 17 Ops.SINK dtypes.void [12, 16]
 

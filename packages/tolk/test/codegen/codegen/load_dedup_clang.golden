@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 3
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -24,6 +24,6 @@
 22 Ops.SINK dtypes.void [20] KernelInfo(name="E_3", estimates=Estimates(ops=3, lds=36, mem=28), split=(3, 2, 3)) tag=1
 23 Ops.LINEAR dtypes.void [0, 1, 9, 10, 2, 3, 4, 13, 14, 5, 6, 7, 11, 12, 15, 16, 17, 8, 18, 19, 20, 21]
 24 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_3(float* restrict data0_3, float* restrict data1_4, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_4+alu0));\n    float val1 = (*(data1_4+(alu0+1)));\n    *(data0_3+alu0) = (val0+val1);\n  }\n}\n"
-25 Ops.PROGRAM dtypes.void [22, 23, 24] ProgramInfo(global_size=(3, 1, 1), vars=(%3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+25 Ops.PROGRAM dtypes.void [22, 23, 24] ProgramInfo(global_size=(3, 1, 1), params=(%1, %10, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 26 Ops.SINK dtypes.void [21, 25]
 

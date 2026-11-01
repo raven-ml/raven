@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 3072
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 1
@@ -16,18 +16,19 @@
 14 Ops.ADD dtypes.weakint [12, 13]
 15 Ops.ADD dtypes.weakint [9, 14]
 16 Ops.INDEX dtypes.f32 [1, 15]
-17 Ops.CONST dtypes.weakint [] 0
-18 Ops.CMPNE dtypes.bool [7, 17]
-19 Ops.CMPNE dtypes.bool [7, 2]
-20 Ops.PARAM dtypes.f32 [8] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
-21 Ops.INDEX dtypes.f32 [20, 14]
-22 Ops.PARAM dtypes.f32 [8] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
-23 Ops.INDEX dtypes.f32 [22, 14]
-24 Ops.WHERE dtypes.f32 [19, 21, 23]
-25 Ops.PARAM dtypes.f32 [8] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
-26 Ops.INDEX dtypes.f32 [25, 14]
-27 Ops.WHERE dtypes.f32 [18, 24, 26]
-28 Ops.STORE dtypes.void [16, 27]
-29 Ops.END dtypes.void [28, 3, 6, 11, 13]
-30 Ops.SINK dtypes.void [29] KernelInfo(name="E_32_32_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))) tag=1
+17 Ops.CONST dtypes.weakint [] 2
+18 Ops.CMPLT dtypes.bool [7, 17]
+19 Ops.FLOORMOD dtypes.weakint [7, 17]
+20 Ops.CMPLT dtypes.bool [19, 2]
+21 Ops.PARAM dtypes.f32 [8] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+22 Ops.INDEX dtypes.f32 [21, 14]
+23 Ops.PARAM dtypes.f32 [8] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+24 Ops.INDEX dtypes.f32 [23, 14]
+25 Ops.WHERE dtypes.f32 [20, 22, 24]
+26 Ops.PARAM dtypes.f32 [8] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+27 Ops.INDEX dtypes.f32 [26, 14]
+28 Ops.WHERE dtypes.f32 [18, 25, 27]
+29 Ops.STORE dtypes.void [16, 28]
+30 Ops.END dtypes.void [29, 3, 6, 11, 13]
+31 Ops.SINK dtypes.void [30] KernelInfo(name="E_32_32_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))) tag=1
 

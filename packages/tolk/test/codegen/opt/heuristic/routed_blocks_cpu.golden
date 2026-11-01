@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 0 Ops.CONST dtypes.weakint [] 1024
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 8
@@ -27,17 +27,17 @@
 25 Ops.ADD dtypes.weakint [19, 24]
 26 Ops.ADD dtypes.weakint [25, 9]
 27 Ops.INDEX dtypes.f32 [13, 26]
-28 Ops.CONST dtypes.weakint [] 0
-29 Ops.CMPNE dtypes.bool [24, 28]
-30 Ops.CONST dtypes.weakint [] 8192
-31 Ops.PARAM dtypes.u8 [30] ParamArg(slot=2, dtype=dtypes.u8, device="CPU")
-32 Ops.CONST dtypes.weakint [] 32
-33 Ops.MUL dtypes.weakint [10, 32]
-34 Ops.ADD dtypes.weakint [33, 18]
-35 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, device="CPU")
-36 Ops.FLOORDIV dtypes.weakint [7, 4]
-37 Ops.INDEX dtypes.i32 [35, 36]
-38 Ops.MAX dtypes.i32 [37, 28]
+28 Ops.CMPLT dtypes.bool [24, 20]
+29 Ops.CONST dtypes.weakint [] 8192
+30 Ops.PARAM dtypes.u8 [29] ParamArg(slot=2, dtype=dtypes.u8, device="CPU")
+31 Ops.CONST dtypes.weakint [] 32
+32 Ops.MUL dtypes.weakint [10, 31]
+33 Ops.ADD dtypes.weakint [32, 18]
+34 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, device="CPU")
+35 Ops.FLOORDIV dtypes.weakint [7, 4]
+36 Ops.INDEX dtypes.i32 [34, 35]
+37 Ops.CONST dtypes.weakint [] 0
+38 Ops.MAX dtypes.i32 [36, 37]
 39 Ops.CONST dtypes.weakint [] -1
 40 Ops.XOR dtypes.i32 [38, 39]
 41 Ops.CONST dtypes.weakint [] -4
@@ -46,12 +46,12 @@
 44 Ops.CAST dtypes.weakint [43] dtypes.weakint
 45 Ops.CONST dtypes.weakint [] 2048
 46 Ops.MUL dtypes.weakint [44, 45]
-47 Ops.ADD dtypes.weakint [34, 46]
-48 Ops.INDEX dtypes.u8 [31, 47]
-49 Ops.SHR dtypes.u8 [48, 14]
-50 Ops.CONST dtypes.weakint [] 15
-51 Ops.AND dtypes.u8 [48, 50]
-52 Ops.WHERE dtypes.u8 [29, 49, 51]
+47 Ops.ADD dtypes.weakint [33, 46]
+48 Ops.INDEX dtypes.u8 [30, 47]
+49 Ops.CONST dtypes.weakint [] 15
+50 Ops.AND dtypes.u8 [48, 49]
+51 Ops.SHR dtypes.u8 [48, 14]
+52 Ops.WHERE dtypes.u8 [28, 50, 51]
 53 Ops.CAST dtypes.f32 [52] dtypes.f32
 54 Ops.CONST dtypes.weakint [] 512
 55 Ops.PARAM dtypes.f32 [54] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")

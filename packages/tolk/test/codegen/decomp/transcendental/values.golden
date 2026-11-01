@@ -1,4 +1,4 @@
-# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
 function	dtype	x	result
 xsin	float	0x0.0p+0	0x0.0p+0
 xsin	float	0x1.0000000000000p+0	0x1.aed5480000000p-1
