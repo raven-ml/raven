@@ -439,6 +439,22 @@ end)
 
 type limit_bufs_ctx = { buf_cache : Bufs.t Tbl.t; mutable range_idx : int }
 
+(* [s] stored first, over fresh weak ranges, and read back at its own. *)
+let stage ctx s =
+  let orig = Nodes.to_list (ranges s) in
+  let fresh r =
+    let n = ctx.range_idx in
+    ctx.range_idx <- n + 1;
+    replace r ~arg:(Range { axis_type = Axis_type.Weak; axis_id = [ n ] })
+  in
+  let ends = List.map fresh orig in
+  let opts = { device = device s; addrspace = Dtype.Global; keep = Removable } in
+  index
+    (bufferize ~opts
+       (substitute ~calls:Skip ~pass:Fixed_point s (List.combine orig ends))
+       ends)
+    orig
+
 let limit_bufs ctx root =
   let max_bufs = Setting.value Setting.max_kernel_buffers in
   (* Without a device, the node computes indices. *)
@@ -459,28 +475,9 @@ let limit_bufs ctx root =
       None
     else
       let each s =
-        if
-          not (Op.Set.mem (op s) Op.Set.elementwise && Option.is_some (device s))
-        then s
-        else
-          (* The value is stored first: its reductions are weak ranges of the
-             stage. *)
-          let orig = Nodes.to_list (ranges s) in
-          let fresh r =
-            let n = ctx.range_idx in
-            ctx.range_idx <- n + 1;
-            replace r ~arg:(Range { axis_type = Axis_type.Weak; axis_id = [ n ] })
-          in
-          let ends = List.map fresh orig in
-          let opts =
-            { device = device s; addrspace = Dtype.Global; keep = Removable }
-          in
-          index
-            (bufferize ~opts
-               (substitute ~calls:Skip ~pass:Fixed_point s
-                  (List.combine orig ends))
-               ends)
-            orig
+        if Op.Set.mem (op s) Op.Set.elementwise && Option.is_some (device s)
+        then stage ctx s
+        else s
       in
       Some (replace root ~src:(List.map each (src root)))
 
