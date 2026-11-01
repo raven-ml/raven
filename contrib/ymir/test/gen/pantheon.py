@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["numpy", "scipy"]
+# dependencies = ["astropy==8.0.2", "numpy==2.5.4", "scipy==1.16.3"]
 # ///
 """Generate the Pantheon+ fit references.
 
@@ -13,8 +13,9 @@ default, downloaded there when absent and checked against their SHA-256.
 It writes test/support/pantheon_reference.ml: the files' names, URLs and
 BLAKE2b-256 digests, and for each of the four fits of test/pantheon its
 maximum-likelihood parameters, their Fisher errors and the chi^2, found by
-scipy's Levenberg-Marquardt with D_M integrated by 400-node Gauss-Legendre in
-z, which is exact to rounding for a universe without radiation.
+scipy's Levenberg-Marquardt with D_M from astropy's LambdaCDM at T_CMB = 0,
+a universe without radiation, whose distances astropy evaluates in closed
+form (hypergeometric and elliptic integrals).
 
 The fits:
 
@@ -36,6 +37,7 @@ from pathlib import Path
 import sys
 import urllib.request
 
+from astropy.cosmology import LambdaCDM
 import numpy as np
 from scipy import linalg, optimize
 
@@ -58,7 +60,6 @@ SHA256 = {
 
 C_KM_S = 299792.458
 H0 = 67.66  # Planck 2018's, which the offset absorbs
-NODES, WEIGHTS = np.polynomial.legendre.leggauss(400)
 
 
 def url(name):
@@ -80,20 +81,9 @@ def fetch(directory, name):
     return path, hashlib.blake2b(data, digest_size=32).hexdigest()
 
 
-def transverse(omega_m, omega_l, z):
-    """D_M in units of c/H0."""
-    omega_k = 1.0 - omega_m - omega_l
-    t = (NODES[:, None] + 1.0) / 2.0 * z[None, :]
-    e = np.sqrt(omega_m * (1 + t) ** 3 + omega_k * (1 + t) ** 2 + omega_l)
-    chi = (WEIGHTS[:, None] / e).sum(0) * z / 2.0
-    if omega_k == 0.0:
-        return chi
-    s = np.sqrt(abs(omega_k))
-    return np.sinh(s * chi) / s if omega_k > 0 else np.sin(s * chi) / s
-
-
 def modulus(omega_m, omega_l, h0, z_hd, z_hel):
-    d_l = (1 + z_hel) * transverse(omega_m, omega_l, z_hd) * C_KM_S / h0
+    c = LambdaCDM(H0=h0, Om0=omega_m, Ode0=omega_l, Tcmb0=0.0)
+    d_l = (1 + z_hel) * c.comoving_transverse_distance(z_hd).to_value("Mpc")
     return 5.0 * np.log10(d_l) + 25.0
 
 

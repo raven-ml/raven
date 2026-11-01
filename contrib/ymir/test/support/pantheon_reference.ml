@@ -20,21 +20,21 @@ let n_sn = 1590
 let n_shoes = 1657
 
 let sn =
-  { theta = [| 0x1.2e7bec1f4d0b6p-2; 0x1.39da7c530c7bep-1; -0x1.36bff25c6eff8p+4 |];
-    sigma = [| 0x1.bc499b64600cdp-5; 0x1.4bb2128453c43p-4; 0x1.140bbf0afd418p-7 |];
-    chi2 = 0x1.5e9a709d508a4p+10 }
+  { theta = [| 0x1.2e7bec68079ebp-2; 0x1.39da7c3b099c0p-1; -0x1.36bff25c220f8p+4 |];
+    sigma = [| 0x1.bc499b8ef072cp-5; 0x1.4bb212a8d5d9bp-4; 0x1.140bbf316b726p-7 |];
+    chi2 = 0x1.5e9a709d50891p+10 }
 
 let sn_flat =
-  { theta = [| 0x1.538899b168fa3p-2; -0x1.36cdaaca7c2f6p+4 |];
-    sigma = [| 0x1.28fc3dead1371p-6; 0x1.c5cb7492192e5p-8 |];
-    chi2 = 0x1.5ebad2ff5867cp+10 }
+  { theta = [| 0x1.538899b97c5cap-2; -0x1.36cdaaca70b2ap+4 |];
+    sigma = [| 0x1.28fc3df54e07cp-6; 0x1.c5cb74a26ba2fp-8 |];
+    chi2 = 0x1.5ebad2ff585dfp+10 }
 
 let shoes =
-  { theta = [| 0x1.36e5a4e0f88adp-2; 0x1.4007c9f9a3acbp-1; 0x1.25d75e3e423d0p+6; -0x1.33e5bec6d0303p+4 |];
-    sigma = [| 0x1.b8fdc93f6640fp-5; 0x1.47aa6e4515c8ap-4; 0x1.063ef97825bc0p+0; 0x1.e448b780c2e6ap-6 |];
-    chi2 = 0x1.6aed12f5c86e6p+10 }
+  { theta = [| 0x1.36e5a4f0f036ap-2; 0x1.4007c9f4b8723p-1; 0x1.25d75e3dbb762p+6; -0x1.33e5bec6cf0fdp+4 |];
+    sigma = [| 0x1.b8fdc91cc706bp-5; 0x1.47aa6e0949726p-4; 0x1.063ef974c88a8p+0; 0x1.e448b780b0b9cp-6 |];
+    chi2 = 0x1.6aed12f5c867cp+10 }
 
 let shoes_flat =
-  { theta = [| 0x1.53c68e851e469p-2; 0x1.262192604d934p+6; -0x1.33e7a8c7cc20ap+4 |];
-    sigma = [| 0x1.26b070db57c46p-6; 0x1.04569cd2ff56dp+0; 0x1.e417192595f21p-6 |];
-    chi2 = 0x1.6b01055d7eea5p+10 }
+  { theta = [| 0x1.53c68e85c7751p-2; 0x1.262192603453cp+6; -0x1.33e7a8c7ce391p+4 |];
+    sigma = [| 0x1.26b070cf8d5c6p-6; 0x1.04569cd244f6bp+0; 0x1.e4171925a17bdp-6 |];
+    chi2 = 0x1.6b01055d7ed36p+10 }
