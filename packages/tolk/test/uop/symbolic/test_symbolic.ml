@@ -544,9 +544,11 @@ let powers =
           let packed = Ops.O.((wide hi lsl int 32) lor wide lo) in
           folds_to (Ops.cast packed Uint32) lo;
           folds_to Ops.O.(packed lsr int 32) (wide hi);
-          let hi64 = var ~dtype:Uint64 "hi" 0 0xFFFF in
-          let wide_hi = Ops.O.(((hi64 lsl int 32) lor wide lo) lsr int 32) in
-          folds_to wide_hi wide_hi);
+          (* A 64-bit high half keeps its low 32 bits only. *)
+          let hi64 = var ~dtype:Uint64 "hi" 0 0x1_0000_0000 in
+          folds_to
+            Ops.O.(((hi64 lsl int 32) lor wide lo) lsr int 32)
+            (wide (Ops.cast hi64 Uint32)));
     ]
 
 let selections =

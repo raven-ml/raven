@@ -2363,10 +2363,10 @@ let symbolic_simple =
             (fun m -> Some (m "y"));
           rule
             Upat.(
-              ((cast (var ~dtype:[ Dtype.Uint32 ] "x") Dtype.Uint64 lsl int 32)
+              ((var ~dtype:[ Dtype.Uint64 ] "x" lsl int 32)
               lor cast (v ~dtype:[ Dtype.Uint32 ] ()) Dtype.Uint64)
               lsr int 32)
-            (fun m -> Some (cast (m "x") Dtype.Uint64));
+            (fun m -> Some (cast (cast (m "x") Dtype.Uint32) Dtype.Uint64));
           (* Simple where folding *)
           (* a conditional with the same results either way is a noop, also fold
              const conditionals, broadcast ones included *)
