@@ -453,24 +453,28 @@ let forward_mode =
         (item dp) (along (zero, (zero, one))))
 
 (* Compiled, the quantile keeps its eager bound, [5 + κ B(m)] ulps of the
-   exact one, so the two are within twice it. *)
+   exact one, so the two are within twice it. Each family is a test of its
+   own: its quantile's program, nx's inverse incomplete gamma, is one kernel
+   of 250 KB of C whatever the input, and macOS runners took 34 to 52 s to
+   compile the two from a cold cache. *)
 let compiled_quantile =
   let ps = [| 1e-200; 1e-10; 0.3; 0.5; 0.9; 1. -. 1e-10 |] in
-  Windtrap.cases "a compiled quantile is the eager one"
-    ~id:(fun (n, _) -> n)
+  let compiled name c =
+    Windtrap.test name (fun () ->
+        let compiled = Nx.to_array (Rune.jit' (D.quantile c.dist) (vec ps)) in
+        Array.iteri
+          (fun i p ->
+            let x = quantile_at c p in
+            let m = Float.min p (1. -. p) in
+            let tol = 2. *. (5. +. (m /. x_density c x *. tail_ulps m)) in
+            equal (ulps tol) x compiled.(i))
+          ps)
+  in
+  Windtrap.group "a compiled quantile is the eager one"
     [
-      ("gamma", gamma_case false 2.5 1.5);
-      ("inverse_gamma", gamma_case true 3. 2.);
+      compiled "gamma" (gamma_case false 2.5 1.5);
+      compiled "inverse_gamma" (gamma_case true 3. 2.);
     ]
-    (fun (_, c) ->
-      let compiled = Nx.to_array (Rune.jit' (D.quantile c.dist) (vec ps)) in
-      Array.iteri
-        (fun i p ->
-          let x = quantile_at c p in
-          let m = Float.min p (1. -. p) in
-          let tol = 2. *. (5. +. (m /. x_density c x *. tail_ulps m)) in
-          equal (ulps tol) x compiled.(i))
-        ps)
 
 (* Quantiles of the beta *)
 
