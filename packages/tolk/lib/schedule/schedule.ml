@@ -646,11 +646,6 @@ let assert_all_same_devices ast =
 let is_copy dst src =
   (not (Option.equal String.equal (device dst) (device src))) || on_disk dst
 
-let copy_kernel_to_store call dst src =
-  if is_copy dst src then
-    Some (replace call ~src:(store dst src :: List.tl (Ops.src call)))
-  else None
-
 (* The element a copy kernel's index [i] of its range [r] starts at: [0] for
    [r], [c] for [r + c]. *)
 let run_start r i =
@@ -702,7 +697,7 @@ let simplify_copy_kernel call ast dst src =
     Some (replace call ~src:(sink :: List.tl (Ops.src call)))
 
 let pm_copy_from_store =
-  let zero = Upat.op Op.Const ~arg:(Const (`Int Bigint.zero)) in
+  let const name = Upat.op Op.Const ~name in
   let param name = Upat.op Op.Param ~name in
   let copy_call body =
     Upat.op Op.Call ~name:"call" ~allow_any_len:true ~src:[ Upat.sink [ body ] ]
@@ -713,13 +708,19 @@ let pm_copy_from_store =
         (Upat.op Op.Call ~name:"call"
            ~src:[ Upat.op Op.Sink ~name:"ast"; var "dst"; var "src" ])
         (fun m -> simplify_copy_kernel (m "call") (m "ast") (m "dst") (m "src"));
-      (* Copy kernels become bulk stores. *)
+      (* Copy kernels become bulk stores. A copy of one element indexes each
+         side at its element. *)
       rule
         (copy_call
            (Upat.store
-              (Upat.index (param "dst") [ zero ])
-              [ Upat.index (param "src") [ zero ] ]))
-        (fun m -> copy_kernel_to_store (m "call") (m "dst") (m "src"));
+              (Upat.index (param "dst") [ const "di" ])
+              [ Upat.index (param "src") [ const "si" ] ]))
+        (fun m ->
+          match (arg (m "di"), arg (m "si")) with
+          | Const (`Int d), Const (`Int s) ->
+              copy_runs (m "call") (m "dst") (m "src") ~n:1
+                ~d:(Bigint.to_int d) ~s:(Bigint.to_int s)
+          | _ -> None);
       rule
         (copy_call
            (Upat.end_

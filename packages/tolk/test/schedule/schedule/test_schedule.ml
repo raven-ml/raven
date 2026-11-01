@@ -1865,6 +1865,33 @@ let copied_into ?(dt = Dtype.Float32) into =
       (name (Ops.nth c 0), name d, run))
     (Ops.src linear)
 
+(* {!copied_into}'s calls for a buffer of 4 floats on CPU:1 filled by a copy
+   from the host, then element 2 of it stored with a copy of one element. *)
+let one_copied () =
+  let dst = Ops.new_buffer "CPU:1" 4 Float32 in
+  let whole = Ops.new_buffer "CPU" 4 Float32 in
+  let one = Ops.new_buffer "CPU" 1 Float32 in
+  let filled = Ops.after dst [ Ops.store dst (Ops.copy_to_device whole "CPU:1") ] in
+  let into = Shape.shrink filled [ Some (Int 2, Int 3) ] in
+  let value = Ops.copy_to_device one "CPU:1" in
+  let linear, _ =
+    Schedule.create_linear_with_vars ~capturing:true
+      (Ops.sink [ Ops.after filled [ Ops.store into value ] ])
+  in
+  let name u = Format.asprintf "%a" Op.pp (Ops.op u) in
+  List.map
+    (fun c ->
+      let d = Ops.nth c 1 in
+      let run =
+        if Ops.op d <> Shrink then []
+        else
+          match Shape.marg d with
+          | Shrink [ (Ops.Int lo, Ops.Int k) ] -> [ (lo, k) ]
+          | _ -> []
+      in
+      (name (Ops.nth c 0), name d, run))
+    (Ops.src linear)
+
 let calls = list (triple string string (list (pair int int)))
 let store = Format.asprintf "%a" Op.pp Store
 let sink = Format.asprintf "%a" Op.pp Sink
@@ -1883,6 +1910,11 @@ let runs =
           equal calls
             [ (store, shrink, [ (0, 16) ]) ]
             (copied_into (fun g -> Shape.shrink g [ Some (Int 0, Int 2); None ])));
+      test "a copy of one element stored into filled storage copies into it"
+        (fun () ->
+          equal calls
+            [ (store, buffer, []); (store, shrink, [ (2, 1) ]) ]
+            (one_copied ()));
       test "a copy stored into columns lands in storage of its own" (fun () ->
           match
             copied_into (fun g -> Shape.shrink g [ None; Some (Int 2, Int 4) ])
