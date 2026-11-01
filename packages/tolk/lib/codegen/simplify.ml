@@ -226,9 +226,10 @@ let no_range u = not (op_in_backward_slice_with_self ~calls:Skip u [ Op.Range ])
 
 (* A reduction over a range its value ignores folds the value once per run of
    the range: a sum multiplies it by the range's size, a product raises it to
-   it, and a maximum is the value. A range whose size may be 0, as a variable's,
-   runs no time when it is, and the reduction is then its identity, where the
-   sum of an infinity would be NaN and the maximum the value. *)
+   it, and a maximum, or a bool sum or product, is the value. A range whose
+   size may be 0, as a variable's, runs no time when it is, and the reduction
+   is then its identity, where the sum of an infinity would be NaN and the
+   maximum the value. *)
 let reduce_unparented red =
   match arg red with
   | Reduce { op = (Op.Add | Op.Max | Op.Mul) as rop; _ } -> (
@@ -245,8 +246,11 @@ let reduce_unparented red =
           in
           let fold ret r =
             let size = nth r 0 in
+            (* A maximum, and a bool sum or product (an or, an and), is
+               idempotent: applied any number of times, it is the value. *)
             let folded =
               match rop with
+              | _ when Dtype.equal (dtype red) Dtype.Bool -> ret
               | Op.Add -> O.(ret * size)
               | Op.Mul -> pow ret size
               | _ -> ret

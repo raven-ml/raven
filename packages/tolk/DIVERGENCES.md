@@ -4037,8 +4037,9 @@ merged into D137, which holds the loops that consumers of one domain share.
 - **tinygrad:** `codegen/late/linearizer.py:20` (`run_count`, the product of
   `vmax + 1` over a node's ranges) and `:33` (the key, by run count, then
   depth), `codegen/simplify.py:81-91`
-  (`reduce_unparented`, a sum times the size, a product to its power, a
-  maximum the value) and `uop/symbolic.py:393-401` (`reduce_mul_chain`, an
+  (`reduce_unparented`, a sum times the size, a product to its power, and a
+  maximum or a bool sum or product the value where the size is positive and
+  its identity elsewhere) and `uop/symbolic.py:387-395` (`reduce_mul_chain`, an
   integer maximum of a product times the factor that ignores its ranges).
 - **tolk:** `Linearizer.runs`, `Simplify.reduce_unparented` and
   `Symbolic.reduce_mul_chain`; `gen/tinygrad.patch` makes
@@ -4052,7 +4053,7 @@ merged into D137, which holds the loops that consumers of one domain share.
   time, the sum reads its accumulator unwritten. A
   reduction over a range its value ignores, whose size may be 0, is its
   identity where the size is 0: tinygrad's sum of an infinity over it is NaN
-  there, and its maximum the value. Where the size's bounds make each use of
+  there. Where the size's bounds make each use of
   the range fold, as `r // 2` for a size of at most 1, the value ignores the
   range and the reduction took that form. An integer maximum of a product by
   a factor that ignores its ranges, over a range whose size may be 0, is its
