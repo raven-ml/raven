@@ -260,13 +260,6 @@ raven / llama.cpp (Vulkan; ROCm):
   normalizer 15%); bert unfused. Re-measure on fudge at a stated gigatoken
   commit
 
-## ymir, sowilo
-
-- ymir bench: the Mac's section was recorded 2026-10-07 under OCaml
-  5.5.1 before rig. fits-image-4096/raw-int16-rice reads 4435930 words
-  there and 995245 on fudge; its +4.9% on the Mac did not show on fudge
-  from fe69dde74 to main. Re-record or drop the Mac's
-
 ## repo
 
 - thumper: suites whose only x86 section is kimchi's (retired):
