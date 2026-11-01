@@ -782,8 +782,8 @@ scope, see README.
   - integer bounds: `Tolk.Ops › bounds › a committed integer that can
     leave its type has its bounds`, `› an integer cast to a signed type
     it leaves wraps`, `› a constant table holding a NaN has its type's
-    bounds` and the law `› bounds hold the value a committed integer
-    wraps to`;
+    bounds` and the laws `› bounds hold the value a committed integer
+    wraps to` and `› bounds hold every value a cast takes`;
   - wrapping rules: `Tolk.Symbolic › integers wrap` (every test);
     `Tolk.Simplify › keeping values`, its comparison tests;
   - float folds, signed zeros, reassociation, maxima, reciprocal and sigmoid
@@ -1818,9 +1818,8 @@ does the same.
   overflow, has its type's bounds`, `› a float selection by a
   comparison narrows what it selects`, `› a float truncation and
   negation map their operand's bounds`, `› a value of a float type
-  without infinities, which may be NaN, has no finite bounds` and the float
-  rows of `binary_bounds.golden`, from the
-  equally patched tinygrad; the Transcendental suite: `graphs › a sine of an
+  without infinities, which may be NaN, has no finite bounds` and `› bounds
+  hold every value a cast takes`; the Transcendental suite: `graphs › a sine of an
   angle bounded below the switch-over is its fast form`; and rune's
   `Lower_real` suite: `bounded arguments › cos of an argument bounded below
   the switch-over` and `› tan of an argument bounded below the switch-over`.
@@ -3084,7 +3083,8 @@ AMD's packet layouts were nx.amd.packet's. tolk encodes no packet (D146).
   decode bench row `Quant/cuda/routed-product-512-tokens` has no baseline.
 - **Pinned by:** the Rangeify suite's `index_stored_zero_fill` gather, whose
   `_kernels` golden reads the stored indices with bounds `(0, 7)` and keeps
-  no check; the Ops suite's `bitcast_bounds.golden` and `› bounds › storage
+  no check; the Ops suite's `› bounds › bounds hold every value a bitcast
+  between integers takes` and `› storage
   keeps the bounds of its values where they are narrower than its type's
   and hold more than one value`; the memory goldens `convs` and
   `matmul_chain`, whose stored activations after a ReLU carry

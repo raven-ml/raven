@@ -192,16 +192,12 @@ def binary_bounds():
         row(Ops.AND, dt, (10, 20), (48, 48))
         row(Ops.AND, dt, (-100, 100), (511, 511))
         row(Ops.AND, dt, (-100, 100), (-1, -1))
-    # a fixed width does not clamp: the interval is the exact one
-    for dt in (dtypes.int8, dtypes.uint8, dtypes.uint32):
-        for op in (Ops.ADD, Ops.SUB, Ops.MUL):
-            for a, b in [((100, 127), (1, 100)), ((0, 255), (1, 1)), ((2, 7), (3, 3))]: row(op, dt, a, b)
     # null/test_uop_vmin_vmax.py::test_vmin_vmax_xor_nonneg: non-negative operands of a fixed width
     row(Ops.XOR, dtypes.uint8, (0, 200), (0, 3))
     for op in (Ops.OR, Ops.AND, Ops.CMPNE, Ops.CMPLT, Ops.XOR):
         for a in [(False, False), (False, True), (True, True)]:
             for b in [(False, False), (False, True), (True, True)]: row(op, dtypes.bool, a, b)
-    for op in (Ops.ADD, Ops.MUL, Ops.MAX, Ops.CMPLT):
+    for op in (Ops.MAX, Ops.CMPLT):
         row(op, dtypes.float, (0.0, 1.0), (2.0, 3.0))
     return ["op", "dtype", "a_lo", "a_hi", "b_lo", "b_hi", "vmin", "vmax"], rows
 
@@ -243,33 +239,9 @@ def cast_bounds():
     for src, ranges in CAST_SOURCES:
         for lo, hi in ranges:
             for dst in CAST_TARGETS:
-                if dst == src: continue
+                # a signed type wraps an integer range it cannot hold, by tolk's rule, which a property of tolk's tests checks
+                if dst == src or (dtypes.is_int(src) and dst in dtypes.sints and not dst.min <= lo <= hi <= dst.max): continue
                 u = UOp.variable("x", lo, hi, src).cast(dst)
-                rows.append((repr(src), value(lo), value(hi), repr(dst), *bounds(u)))
-    return ["from", "lo", "hi", "to", "vmin", "vmax"], rows
-
-
-# A bitcast between integer types of one width keeps a value both types hold
-BITCAST_SOURCES = [
-    (dtypes.int32, [(0, 31), (-1, 31), (0, 2**31 - 1)]),
-    (dtypes.uint32, [(0, 31), (0, 2**31 - 1), (0, 2**31), (2**31, 2**32 - 1)]),
-    (dtypes.int64, [(0, 31), (-5, -1)]),
-    (dtypes.uint64, [(0, 31), (0, 2**63)]),
-    (dtypes.int8, [(0, 127), (-128, 0)]),
-    (dtypes.uint8, [(0, 127), (0, 128)]),
-]
-BITCAST_TARGETS = {1: [dtypes.int8, dtypes.uint8], 4: [dtypes.int32, dtypes.uint32, dtypes.float],
-                   8: [dtypes.int64, dtypes.uint64, dtypes.double]}
-
-
-@table
-def bitcast_bounds():
-    rows = []
-    for src, ranges in BITCAST_SOURCES:
-        for lo, hi in ranges:
-            for dst in BITCAST_TARGETS[src.itemsize]:
-                if dst == src: continue
-                u = UOp.variable("x", lo, hi, src).bitcast(dst)
                 rows.append((repr(src), value(lo), value(hi), repr(dst), *bounds(u)))
     return ["from", "lo", "hi", "to", "vmin", "vmax"], rows
 

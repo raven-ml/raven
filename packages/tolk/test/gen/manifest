@@ -3743,7 +3743,6 @@ uop/ops/aranges.golden
 uop/ops/axes.golden
 uop/ops/axis_types.golden
 uop/ops/binary_bounds.golden
-uop/ops/bitcast_bounds.golden
 uop/ops/bitcasts.golden
 uop/ops/bitwise.golden
 uop/ops/calls.golden

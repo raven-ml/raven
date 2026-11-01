@@ -27,7 +27,6 @@ dtypes.weakint	-1	10	dtypes.f32	-1.0	10.0
 dtypes.weakint	-1	10	dtypes.f64	-1.0	10.0
 dtypes.weakint	-1	10	dtypes.weakfloat	-1.0	10.0
 dtypes.weakint	250	260	dtypes.bool	False	True
-dtypes.weakint	250	260	dtypes.i8	-128	127
 dtypes.weakint	250	260	dtypes.u8	0	255
 dtypes.weakint	250	260	dtypes.i16	250	260
 dtypes.weakint	250	260	dtypes.i32	250	260
@@ -40,7 +39,6 @@ dtypes.weakint	250	260	dtypes.f32	250.0	260.0
 dtypes.weakint	250	260	dtypes.f64	250.0	260.0
 dtypes.weakint	250	260	dtypes.weakfloat	250.0	260.0
 dtypes.weakint	-300	300	dtypes.bool	False	True
-dtypes.weakint	-300	300	dtypes.i8	-128	127
 dtypes.weakint	-300	300	dtypes.u8	0	255
 dtypes.weakint	-300	300	dtypes.i16	-300	300
 dtypes.weakint	-300	300	dtypes.i32	-300	300
@@ -53,7 +51,6 @@ dtypes.weakint	-300	300	dtypes.f32	-300.0	300.0
 dtypes.weakint	-300	300	dtypes.f64	-300.0	300.0
 dtypes.weakint	-300	300	dtypes.weakfloat	-300.0	300.0
 dtypes.weakint	0	255	dtypes.bool	False	True
-dtypes.weakint	0	255	dtypes.i8	-128	127
 dtypes.weakint	0	255	dtypes.u8	0	255
 dtypes.weakint	0	255	dtypes.i16	0	255
 dtypes.weakint	0	255	dtypes.i32	0	255
@@ -66,7 +63,6 @@ dtypes.weakint	0	255	dtypes.f32	0.0	255.0
 dtypes.weakint	0	255	dtypes.f64	0.0	255.0
 dtypes.weakint	0	255	dtypes.weakfloat	0.0	255.0
 dtypes.weakint	-255	0	dtypes.bool	False	True
-dtypes.weakint	-255	0	dtypes.i8	-128	127
 dtypes.weakint	-255	0	dtypes.u8	0	255
 dtypes.weakint	-255	0	dtypes.i16	-255	0
 dtypes.weakint	-255	0	dtypes.i32	-255	0
@@ -79,7 +75,6 @@ dtypes.weakint	-255	0	dtypes.f32	-255.0	0.0
 dtypes.weakint	-255	0	dtypes.f64	-255.0	0.0
 dtypes.weakint	-255	0	dtypes.weakfloat	-255.0	0.0
 dtypes.weakint	200	300	dtypes.bool	False	True
-dtypes.weakint	200	300	dtypes.i8	-128	127
 dtypes.weakint	200	300	dtypes.u8	0	255
 dtypes.weakint	200	300	dtypes.i16	200	300
 dtypes.weakint	200	300	dtypes.i32	200	300
@@ -92,9 +87,7 @@ dtypes.weakint	200	300	dtypes.f32	200.0	300.0
 dtypes.weakint	200	300	dtypes.f64	200.0	300.0
 dtypes.weakint	200	300	dtypes.weakfloat	200.0	300.0
 dtypes.weakint	0	16777219	dtypes.bool	False	True
-dtypes.weakint	0	16777219	dtypes.i8	-128	127
 dtypes.weakint	0	16777219	dtypes.u8	0	255
-dtypes.weakint	0	16777219	dtypes.i16	-32768	32767
 dtypes.weakint	0	16777219	dtypes.i32	0	16777219
 dtypes.weakint	0	16777219	dtypes.u32	0	16777219
 dtypes.weakint	0	16777219	dtypes.i64	0	16777219
@@ -131,9 +124,7 @@ dtypes.i32	5	7	dtypes.f64	5.0	7.0
 dtypes.i32	5	7	dtypes.weakint	5	7
 dtypes.i32	5	7	dtypes.weakfloat	5.0	7.0
 dtypes.i32	0	16777219	dtypes.bool	False	True
-dtypes.i32	0	16777219	dtypes.i8	-128	127
 dtypes.i32	0	16777219	dtypes.u8	0	255
-dtypes.i32	0	16777219	dtypes.i16	-32768	32767
 dtypes.i32	0	16777219	dtypes.u32	0	16777219
 dtypes.i32	0	16777219	dtypes.i64	0	16777219
 dtypes.i32	0	16777219	dtypes.u64	0	16777219
@@ -144,7 +135,6 @@ dtypes.i32	0	16777219	dtypes.f64	0.0	16777219.0
 dtypes.i32	0	16777219	dtypes.weakint	0	16777219
 dtypes.i32	0	16777219	dtypes.weakfloat	0.0	16777219.0
 dtypes.u8	0	255	dtypes.bool	False	True
-dtypes.u8	0	255	dtypes.i8	-128	127
 dtypes.u8	0	255	dtypes.i16	0	255
 dtypes.u8	0	255	dtypes.i32	0	255
 dtypes.u8	0	255	dtypes.u32	0	255

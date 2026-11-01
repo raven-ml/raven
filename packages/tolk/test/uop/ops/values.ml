@@ -247,18 +247,6 @@ let cast_bounds cell =
     (Ops.cast x (dtype_of_cell (cell "to")))
     (value_of_cell (cell "vmin"), value_of_cell (cell "vmax"))
 
-let bitcast_bounds cell =
-  let x =
-    variable
-      (dtype_of_cell (cell "from"))
-      (value_of_cell (cell "lo"))
-      (value_of_cell (cell "hi"))
-      "x"
-  in
-  check_bounds
-    (Ops.bitcast x (dtype_of_cell (cell "to")))
-    (value_of_cell (cell "vmin"), value_of_cell (cell "vmax"))
-
 (* The reference interpreter: the value of an integer expression over variables,
    each operation computed exactly. It discards a case where an operation leaves
    its type, where the result is undefined. *)
@@ -376,6 +364,96 @@ let float_bounds_case (dt, o, (a0, a1, b0, b1), (s, t)) =
       at_least ordered_value ~than:v (Ops.vmax u)
   | `Invalid -> fail "Invalid in an expression without one"
 
+(* A cast or a bit reinterpretation of a variable over an interval of its type,
+   at a point of it, an end as often as not. Integer ends are drawn at every
+   magnitude, wrapping into the type, and as often near 0, where a narrower type
+   holds them; float ends span the type's exponents and the infinities. *)
+let cast_types =
+  (Dtype.Bool :: int_dtypes) @ Dtype.[ Float16; Bfloat16; Float32; Float64 ]
+
+let gen_in dt =
+  let open Gen in
+  if Dtype.is_bool dt then map (fun b -> `Bool b) bool
+  else if Dtype.is_float dt then
+    let e, _ = Dtype.finfo dt in
+    let emax = 1 lsl (e - 1) in
+    let finite =
+      let+ x = float_range (-2.) 2. and+ k = int_range (-emax) emax in
+      match Dtype.truncate dt (`Float (Float.ldexp x k)) with
+      | `Float y when Float.is_finite y -> `Float y
+      | _ -> `Float 0.
+    in
+    frequency
+      [
+        (6, finite);
+        (1, of_list [ `Float Float.infinity; `Float Float.neg_infinity ]);
+      ]
+  else
+    map
+      (fun n -> (Dtype.truncate dt (`Int n) :> Dtype.value))
+      (frequency
+         [ (1, Dtypes.integer); (1, map Bigint.of_int (int_range (-200) 200)) ])
+
+let pp_interval ppf (lo, v, hi) =
+  Format.fprintf ppf "%a in [%a, %a]" Dtype.pp_const v Dtype.pp_const lo
+    Dtype.pp_const hi
+
+let gen_interval dt =
+  let open Gen in
+  with_pp pp_interval
+    (let+ a = gen_in dt
+     and+ b = gen_in dt
+     and+ c = gen_in dt
+     and+ at = int_range 0 3 in
+     match List.sort compare_value [ a; b; c ] with
+     | [ lo; v; hi ] -> (lo, (match at with 0 -> lo | 1 -> hi | _ -> v), hi)
+     | _ -> invalid_arg "three values")
+
+let gen_cast =
+  let open Gen in
+  let* src = of_list ~pp:(Testable.pp dtype) cast_types in
+  let+ dst = of_list ~pp:(Testable.pp dtype) (Dtype.Weak_float :: cast_types)
+  and+ ends = gen_interval src in
+  (src, dst, ends)
+
+(* An integer type of one width, signed or unsigned, to the other. *)
+let gen_bitcast =
+  let open Gen in
+  let widths =
+    Dtype.[ (Int8, Uint8); (Int16, Uint16); (Int32, Uint32); (Int64, Uint64) ]
+  in
+  let pp ppf (a, b) = Format.fprintf ppf "%a, %a" Dtype.pp a Dtype.pp b in
+  let* signed, unsigned = of_list ~pp widths in
+  let* to_unsigned = bool in
+  let src, dst =
+    if to_unsigned then (signed, unsigned) else (unsigned, signed)
+  in
+  let+ ends = gen_interval src in
+  (src, dst, ends)
+
+(* A float that leaves an integer type, a weak one's 800 bits included, has no
+   value there. *)
+let defined_cast dst (v : Dtype.value) =
+  match v with
+  | `Float x when Dtype.is_int dst ->
+      Float.is_finite x
+      &&
+      let t = `Int (Bigint.of_float (Float.trunc x)) in
+      compare_value (Dtype.min dst) t <= 0
+      && compare_value t (Dtype.max dst) <= 0
+  | _ -> true
+
+(* Bounds may be of another kind than the value: a cast of a boolean to a float
+   keeps its operand's [`Bool] bounds. They compare by magnitude. *)
+let by_magnitude = Testable.with_compare Dtype.Value.compare value
+
+let bounds_hold u v =
+  match Interpreter.eval ~vars:[ ("x", v) ] u with
+  | #Dtype.value as w ->
+      at_most by_magnitude ~than:w (Ops.vmin u);
+      at_least by_magnitude ~than:w (Ops.vmax u)
+  | `Invalid -> fail "Invalid in an expression without one"
+
 let bounds_group =
   group "bounds"
     [
@@ -404,9 +482,47 @@ let bounds_group =
       Golden.cases "cast_bounds.golden"
         ~key:[ "from"; "lo"; "hi"; "to" ]
         cast_bounds;
-      Golden.cases "bitcast_bounds.golden"
-        ~key:[ "from"; "lo"; "hi"; "to" ]
-        bitcast_bounds;
+      prop "bounds hold every value a cast takes" gen_cast
+        (fun (src, dst, (lo, v, hi)) ->
+          let u = Ops.cast (variable src lo hi "x") dst in
+          assume (defined_cast dst v);
+          let integers = Dtype.is_int src && Dtype.is_int dst in
+          cover "an integer interval another integer type holds"
+            (integers
+            && (not (Dtype.equal src dst))
+            && (not (Dtype.equal dst Weak_int))
+            && compare_value (Dtype.min dst) lo <= 0
+            && compare_value hi (Dtype.max dst) <= 0);
+          cover "an integer interval another integer type wraps"
+            (integers
+            && (not (Dtype.equal dst Weak_int))
+            && compare_value (Dtype.max dst) hi < 0);
+          cover "a float cast to an integer type"
+            (Dtype.is_float src && Dtype.is_int dst);
+          bounds_hold u v);
+      prop "bounds hold every value a bitcast between integers takes"
+        gen_bitcast (fun (src, dst, (lo, v, hi)) ->
+          cover "an interval both types hold"
+            (compare_value (i 0) lo <= 0
+            && compare_value hi (Dtype.max src) <= 0
+            && compare_value hi (Dtype.max dst) <= 0);
+          bounds_hold (Ops.bitcast (variable src lo hi "x") dst) v);
+      test
+        "a bitcast between integers of one width keeps the bounds of a value \
+         both types hold, from 0 to the lesser greatest value" (fun () ->
+          let bitcast dt lo hi to_ = Ops.bitcast (variable dt lo hi "x") to_ in
+          let full dt = (Dtype.min dt, Dtype.max dt) in
+          let p31 = `Int (Bigint.shift_left Bigint.one 31) in
+          let below_p31 = `Int (Bigint.pred (Bigint.shift_left Bigint.one 31)) in
+          check_bounds (bitcast Int32 (i 0) (i 31) Uint32) (int_bounds 0 31);
+          check_bounds (bitcast Uint32 (i 0) below_p31 Int32) (i 0, below_p31);
+          check_bounds (bitcast Uint32 (i 0) p31 Int32) (full Int32);
+          check_bounds (bitcast Int32 (i (-1)) (i 31) Uint32) (full Uint32);
+          check_bounds (bitcast Int8 (i 0) (i 127) Uint8) (int_bounds 0 127);
+          check_bounds (bitcast Uint8 (i 0) (i 128) Int8) (full Int8);
+          let floats = (f Float.neg_infinity, f Float.infinity) in
+          check_bounds (bitcast Int32 (i 0) (i 31) Float32) floats;
+          check_bounds (bitcast Int64 (i 0) (i 31) Float64) floats);
       test
         "storage keeps the bounds of its values where they are narrower than \
          its type's and hold more than one value" (fun () ->
