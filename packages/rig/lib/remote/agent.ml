@@ -65,6 +65,20 @@ let unblocked f x =
 
 let spawn f x = masked (fun () -> Thread.create f x)
 
+(* [settled f x y] is [f x y], a step whole when made again after a Ctrl-C
+   cut it, made again until it returns. On Windows, where OCaml has no
+   signal masks, a signal's handler runs at a poll point of any thread, rig's
+   own included, and as a lock's take, a join, a write or a close starts to
+   wait, before it waits; elsewhere, in a wait that unblocks signals. Its
+   [Sys.Break] would leave what the step restores half made. Any other
+   exception passes. It allocates nothing. The retry is no tail call, so that
+   the compiler puts no poll at [settled]'s entry, before its handler: every
+   poll is [f]'s, inside it. *)
+let rec settled f x y =
+  match f x y with
+  | r -> r
+  | exception Sys.Break -> Sys.opaque_identity (settled f x y)
+
 (* Reports to a launcher *)
 
 external report_open : int -> Unix.file_descr option
@@ -409,6 +423,24 @@ let shake a st fd =
   let r = Wire.accept fd ~key:a.key ~admit:(admit a st) in
   Mutex.protect a.lock (resolve r)
 
+(* Takes back the admission [st] made if [a] still admits it: whether it
+   did. *)
+let unadmit a st =
+  Mutex.lock a.lock;
+  let admitted =
+    match (st.mine, a.phase) with
+    | Some j, Admitting j' when j == j' ->
+        a.phase <- Claimed;
+        change a.changes;
+        true
+    | _ -> false
+  in
+  Mutex.unlock a.lock;
+  admitted
+
+let close_job j () = Link.close j
+let close_fd fd () = close_quietly fd
+
 (* The handshake's thread. [fd] is the handshake's until [st.handed] is set:
    the step that gives it to a link, to [accepted] or to a close sets
    [st.handed] first, so an exception that lands between leaves it open,
@@ -420,18 +452,11 @@ let handshake a st fd =
   match shake a st fd with
   | () -> ()
   | exception e ->
-      Mutex.lock a.lock;
-      let admitted =
-        match (st.mine, a.phase) with
-        | Some j, Admitting j' when j == j' ->
-            a.phase <- Claimed;
-            change a.changes;
-            true
-        | _ -> false
-      in
-      Mutex.unlock a.lock;
-      (match st.mine with Some j when admitted -> Link.close j | _ -> ());
-      if not st.handed then close_quietly fd;
+      let admitted = settled unadmit a st in
+      (match st.mine with
+      | Some j when admitted -> settled close_job j ()
+      | _ -> ());
+      if not st.handed then settled close_fd fd ();
       reraise e
 
 (* Accepting *)
@@ -472,14 +497,19 @@ let passes (e : Unix.error) =
    The failure, which may wait for an abort to leave, runs outside [a]'s
    lock. It allocates nothing, so that the acceptor's handler can end
    accepting with a reason made before. *)
-let break a broken =
+let mark_broken a broken =
   Mutex.lock a.lock;
   a.broken <- broken;
   change a.changes;
   let phase = a.phase in
   Mutex.unlock a.lock;
-  match (phase, broken) with
-  | Serving { job; _ }, Some why -> Link.fail job why
+  phase
+
+let fail_job j why = Link.fail j why
+
+let break a broken =
+  match (settled mark_broken a broken, broken) with
+  | Serving { job; _ }, Some why -> settled fail_job job why
   | _ -> ()
 
 (* Why [a] breaks when an exception ends its acceptor, such as Out_of_memory
@@ -589,25 +619,34 @@ let held () =
    raised again. The connections no join named close after the shield, in
    a loop whose polls may cut it, which leaves only those not yet closed
    open. *)
+let stop a () =
+  Mutex.lock a.lock;
+  a.stopped <- true;
+  let accepted = a.accepted in
+  a.accepted <- Ids.empty;
+  Mutex.unlock a.lock;
+  accepted
+
+let wake_acceptor h () =
+  try ignore (Unix.write_substring h.waker "x" 0 1)
+  with Unix.Unix_error _ -> ()
+
+let join_acceptor h () = Thread.join h.acceptor
+
 let release a h =
   if not h.released then begin
     h.released <- true;
     shield ();
     match
-      Mutex.lock a.lock;
-      a.stopped <- true;
-      let accepted = a.accepted in
-      a.accepted <- Ids.empty;
-      Mutex.unlock a.lock;
+      let accepted = settled stop a () in
       if h.accepting then begin
-        (try ignore (Unix.write_substring h.waker "x" 0 1)
-         with Unix.Unix_error _ -> ());
-        Thread.join h.acceptor
+        settled wake_acceptor h ();
+        settled join_acceptor h ()
       end;
-      close_quietly a.socket;
+      settled close_fd a.socket ();
       if h.paired then begin
-        close_quietly h.wake;
-        close_quietly h.waker
+        settled close_fd h.wake ();
+        settled close_fd h.waker ()
       end;
       accepted
     with
@@ -1167,21 +1206,30 @@ let serve_job a h kinds job self link =
    closes it, and reports its end, failing the process if the job failed. A
    controller still in its handshake finds [a] stopped and gives its job
    back. It allocates nothing before the close. *)
-let abandon a report e =
-  let why = match e with Sys.Break -> interrupted | _ -> serve_raised in
+let phase a () =
   Mutex.lock a.lock;
   let phase = a.phase in
   Mutex.unlock a.lock;
-  match phase with
+  phase
+
+let end_job job why =
+  Link.fail job why;
+  Link.close job
+
+let job_failed job () = Link.failed job
+let rig_fail why () = Rig.fail why
+
+let abandon a report e =
+  let why = match e with Sys.Break -> interrupted | _ -> serve_raised in
+  match settled phase a () with
   | Serving { job; _ } -> (
-      Link.fail job why;
-      Link.close job;
-      match Link.failed job with
-      | None -> ended report `Closed
+      settled end_job job why;
+      match settled job_failed job () with
+      | None -> settled ended report `Closed
       | Some why ->
-          ended report (`Failed why);
-          Rig.fail why)
-  | Claimed | Admitting _ -> ended report (`Failed why)
+          settled ended report (`Failed why);
+          settled rig_fail why ())
+  | Claimed | Admitting _ -> settled ended report (`Failed why)
 
 (* Serves one job. The pair and the acceptor are recorded in [h] as they are
    taken. *)
