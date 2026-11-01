@@ -37,34 +37,30 @@ let live = 200
 let budget = 60
 let ez = Norn.Evidence.ptree t
 
-(* [batch_of ?live m n] is [n] runs on [m] from [live] prior draws, the [i]-th
-   from row [i] of [Nx.Rng.split_batch ~n (Nx.Rng.key 70)], compiled as one
-   function mapped over the keys: eager, a run of the ten-dimensional Gaussian
-   takes twenty times as long. [runs_of] is them one by one. *)
+(* [runs_of ?live m n] is [n] runs on [m] from [live] prior draws, the [i]-th
+   from row [i] of [Nx.Rng.split_batch ~n (Nx.Rng.key 70)], each a call of one
+   compiled run: eager, a run of the ten-dimensional Gaussian takes twenty
+   times as long, and mapped over all the keys at once, 200 runs of the banana
+   take twice the processor time, since every lane waits for the slowest. *)
 let runs = Hashtbl.create 8
 
-let batch_of ?(live = live) m n =
+let runs_of ?(live = live) m n =
   match Hashtbl.find_opt runs (m.name, live, n) with
-  | Some all -> all
+  | Some zs -> zs
   | None ->
-      let one k =
-        Norn.Nested.run t ~budget ~prior:m.prior ~likelihood:m.likelihood
-          (Nx.Rng.fold_in k 0)
-          (m.draw (Nx.Rng.fold_in k 1) live)
-      in
-      let all =
+      let one =
         Rune.jit
           Nx.Ptree.(Nx.Rng.ptree @-> returns ez)
-          (Rune.vmap Nx.Ptree.(Nx.Rng.ptree @-> returns ez) one)
-          (Nx.Rng.split_batch ~n (Nx.Rng.key 70))
+          (fun k ->
+            Norn.Nested.run t ~budget ~prior:m.prior ~likelihood:m.likelihood
+              (Nx.Rng.fold_in k 0)
+              (m.draw (Nx.Rng.fold_in k 1) live))
       in
-      Hashtbl.replace runs (m.name, live, n) all;
-      all
-
-let lanes n all =
-  List.init n (fun i -> Nx.Ptree.map ez (fun _ x -> Nx.slice [ Nx.I i ] x) all)
-
-let runs_of ?live m n = lanes n (batch_of ?live m n)
+      let keys = Nx.Rng.split_batch ~n (Nx.Rng.key 70) in
+      let row i = Nx.Ptree.map Nx.Rng.ptree (fun _ k -> Nx.slice [ I i ] k) in
+      let zs = List.init n (fun i -> one (row i keys)) in
+      Hashtbl.replace runs (m.name, live, n) zs;
+      zs
 
 let nest m = List.hd (runs_of m 1)
 
@@ -181,16 +177,12 @@ let law_14 ~centre m truth =
         (fun z ->
           equal string "converged" (stop_name (Norn.Evidence.stop z)))
         zs;
-      (* The runs' expectations, compiled over them as their runs are. *)
-      let m', e' =
-        let pt = Nx.Ptree.(pair tensor tensor) in
+      let expectation =
         Rune.jit
-          Nx.Ptree.(ez @-> returns pt)
-          (Rune.vmap
-             Nx.Ptree.(ez @-> returns pt)
-             (Norn.Evidence.expectation t first_moments))
-          (batch_of ~live:50 m calibration)
+          Nx.Ptree.(ez @-> returns (pair tensor tensor))
+          (Norn.Evidence.expectation t first_moments)
       in
+      let estimates = Array.of_list (List.map expectation zs) in
       let df =
         Array.of_list
           (List.map
@@ -202,7 +194,8 @@ let law_14 ~centre m truth =
         (fun j truth ->
           let multiples =
             Array.init calibration (fun i ->
-                (Nx.item [ i; j ] m' -. truth) /. Nx.item [ i; j ] e')
+                let e, err = estimates.(i) in
+                (Nx.item [ j ] e -. truth) /. Nx.item [ j ] err)
           in
           let count within =
             Array.fold_left ( + ) 0
@@ -310,7 +303,7 @@ let runs_and_refusals =
           equal string "converged"
             (stop_name
                (Norn.Evidence.stop
-                  (List.hd (small_runs conjugate)))));
+                  (nest conjugate))));
       test "a step past the budget leaves the state" (fun () ->
           let s =
             Norn.Nested.init t ~budget:1 ~prior:conjugate.prior
