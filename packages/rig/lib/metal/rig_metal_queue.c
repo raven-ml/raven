@@ -92,14 +92,34 @@ static void close_encoder(struct rig_metal_queue *q) {
 
 static void unlock_open(struct rig_metal_run *r);
 
+/* A hold of a device's run state that a command buffer's completion
+   handler captures. Metal releases the handler, and with it the hold, once
+   it no longer calls it: after the buffer completed, or as Metal frees the
+   buffer uncommitted. So each command buffer gives back the hold it took
+   exactly once, on every path. The file manages memory by hand: the
+   handler's copy retains the hold. */
+@interface RigMetalHold : NSObject {
+ @public
+  struct rig_metal_run *r;
+}
+@end
+
+@implementation RigMetalHold
+- (void)dealloc {
+  rig_metal_release(r);
+  [super dealloc];
+}
+@end
+
 /* Starts a command buffer, after taking its slot. Its completion handler
    runs on a thread of Metal's: it completes the slot, then commits the
    open command buffer if it holds work and no submit holds it, so the GPU
-   finds work queued behind the one it ended, and last gives back the hold
-   its commit took. A handler that finds no work takes no mutex: a submit
-   waiting for a handler's mutex took 4 µs more on the M1 Max. A submit
-   that adds work after the handler looked finds the slot completed, and
-   commits unless buffers whose handlers come later are in flight. */
+   finds work queued behind the one it ended. A handler that finds no work
+   takes no mutex: a submit waiting for a handler's mutex took 4 µs more on
+   the M1 Max. A submit that adds work after the handler looked finds the
+   slot completed, and commits unless buffers whose handlers come later are
+   in flight. The pool of the submit autoreleases the hold, which the
+   handler then keeps alone. */
 static const char *begin(struct rig_metal_queue *q) {
   struct rig_metal_run *r = q->r;
   int slot = rig_metal_ring_take(&r->ring);
@@ -109,19 +129,27 @@ static const char *begin(struct rig_metal_queue *q) {
   q->buffer = [r->queue commandBuffer];
   if (q->buffer == nil) return fail(q, "Metal made no command buffer");
   [q->buffer retain];
+  RigMetalHold *hold = [[[RigMetalHold alloc] init] autorelease];
+  hold->r = r;
+  rig_metal_hold(r);
   [q->buffer addCompletedHandler:^(id<MTLCommandBuffer> b) {
+    struct rig_metal_run *run = hold->r;
+    /* Metal also calls the handler of a buffer it frees uncommitted, such
+       as one a failure dropped, whose slot the drop completed. Apple
+       documents the call at completion only; this one is observed (macOS
+       26.3, M1 Max), and without this return the slot completes twice. */
+    if (b.status < MTLCommandBufferStatusCommitted) return;
     int failed = b.status == MTLCommandBufferStatusError;
     char why[512];
     if (failed)
       snprintf(why, sizeof why, "the GPU's work failed: %s",
                b.error.localizedDescription.UTF8String ?: "no reason given");
-    rig_metal_ring_complete(&r->ring, slot, failed ? why : NULL,
+    rig_metal_ring_complete(&run->ring, slot, failed ? why : NULL,
                                host_ns(b.GPUStartTime), host_ns(b.GPUEndTime));
-    if (atomic_load_explicit(&r->open_values, memory_order_relaxed) > 0) {
-      atomic_store(&r->wanted, 1);
-      if (pthread_mutex_trylock(&r->open_mutex) == 0) unlock_open(r);
+    if (atomic_load_explicit(&run->open_values, memory_order_relaxed) > 0) {
+      atomic_store(&run->wanted, 1);
+      if (pthread_mutex_trylock(&run->open_mutex) == 0) unlock_open(run);
     }
-    rig_metal_release(r);
   }];
   return NULL;
 }
@@ -137,15 +165,7 @@ static void commit(struct rig_metal_queue *q, uint64_t v, uint64_t *start,
   s->start = start;
   s->end = end;
   if (q->encoder) close_encoder(q);
-  /* The hold comes first, since the handler may run before [commit]
-     returns; a commit that raises gives it back, as no handler will. */
-  rig_metal_hold(q->r);
-  @try {
-    [q->buffer commit];
-  } @catch (NSException *e) {
-    rig_metal_release(q->r);
-    @throw;
-  }
+  [q->buffer commit];
   [q->buffer release];
   *q = (struct rig_metal_queue){nil, nil, -1, q->r};
 }

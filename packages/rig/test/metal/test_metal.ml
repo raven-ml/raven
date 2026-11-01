@@ -448,6 +448,27 @@ let failing_fill () =
   raises (Invalid_argument "Rig_metal.sleep: the device stopped") sleep;
   await_word t.d (reached + 1)
 
+(* Waits until [n] devices' run states live: a device stopped with work in
+   flight gives its own back as that work ends. *)
+let await_runs n =
+  await
+    (fun () -> strf "%d run states live, not %d," (Rig_metal.runs ()) n)
+    (fun () -> Rig_metal.runs () = n)
+
+(* A failed fill drops its command buffer uncommitted, which Metal frees:
+   the device's run state lives until its close stops it. [S.with_] closed
+   the other devices. *)
+let dropped_buffer () =
+  S.with_ @@ fun s ->
+  let t = dev_of s in
+  await_runs 1;
+  raises_match
+    (function Rig.Lost _ -> true | _ -> false)
+    (fun () -> submit t [| S.failing 7 |]);
+  equal int ~msg:"run states after the failed fill" 1 (Rig_metal.runs ());
+  S.close s;
+  equal int ~msg:"run states after the close" 0 (Rig_metal.runs ())
+
 let work =
   group ~timeout:60. "work"
     [
@@ -473,6 +494,10 @@ let work =
         "a failed fill loses the device with its reason, and stop brings the \
          word to its value"
         failing_fill;
+      test
+        "a failed fill's dropped command buffer leaves the device's run state \
+         to its stop"
+        dropped_buffer;
     ]
 
 (* Commits *)
@@ -585,12 +610,14 @@ let beside () =
 
 (* A command buffer in flight when a loss stops the device completes and
    writes its memory, and the word reaches the last value: the buffer keeps
-   the command queue the stop releases. The buffer runs [gate], which a kernel
-   of a device beside opens once the close returned, so it is in flight at the
-   stop. *)
+   the device's run state, with the command queue the stop releases, until
+   it ends. The buffer runs [gate], which a kernel of a device beside opens
+   once the close returned, so it is in flight at the stop. [S.with_] closed
+   the other devices. *)
 let stop_in_flight () =
   S.with_ @@ fun s ->
   let t = dev_of s and o = beside () in
+  await_runs 2;
   let page = H.pages H.page in
   H.set32 page 0;
   H.set32 (page + 4) 0;
@@ -625,8 +652,10 @@ let stop_in_flight () =
   S.close s;
   equal ~msg:"the gated work, at the stop" bool false
     (Rig.signaled t.d >= gated);
+  equal ~msg:"run states, the gated work in flight" int 2 (Rig_metal.runs ());
   open_gate ();
   await_word t.d (Rig.submitted t.d);
+  await_runs 1;
   equal ~msg:"the gate's write: it saw the gate open" int 1 (H.get32 page);
   List.iter (Rig_metal.free t.g) [ flag; args ]
 
@@ -669,8 +698,8 @@ let commits =
          the last value"
         lost_open;
       test
-        "a command buffer in flight at a loss's stop completes and writes its \
-         memory"
+        "a command buffer in flight at a loss's stop completes, writes its \
+         memory and keeps the device's run state until it ends"
         stop_in_flight;
     ]
 

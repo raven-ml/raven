@@ -660,6 +660,7 @@ let gpu i : t Rig_edge.opener =
 
 external pipelines : unit -> int = "caml_rig_metal_pipelines"
 external buffers : unit -> int = "caml_rig_metal_buffers"
+external runs : unit -> int = "caml_rig_metal_runs"
 
 module Ring = struct
   type t

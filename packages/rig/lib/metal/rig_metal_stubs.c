@@ -50,7 +50,7 @@ enum {
 
 static value object(id o) { return caml_copy_nativeint((intnat)o); }
 
-_Atomic intptr_t rig_metal_pipelines, rig_metal_buffers;
+_Atomic intptr_t rig_metal_pipelines, rig_metal_buffers, rig_metal_runs;
 
 static value triple(value a, value b, value c) {
   CAMLparam3(a, b, c);
@@ -120,6 +120,7 @@ static intnat open_device(_Atomic uint64_t *word) API_AVAILABLE(macos(15.0)) {
   r->last = atomic_load_explicit(word, memory_order_acquire);
   rig_metal_ring_init(&r->ring, r->slots, ring_slots, d->at);
   r->holds = 1;
+  atomic_fetch_add(&rig_metal_runs, 1);
   d->run = r;
   return (intnat)d;
 }
@@ -141,6 +142,7 @@ void rig_metal_release(struct rig_metal_run *r) {
   pthread_mutex_destroy(&r->open_mutex);
   rig_metal_ring_end(&r->ring);
   free(r);
+  atomic_fetch_sub(&rig_metal_runs, 1);
 }
 
 /* Makes the arena the submission whose room answered RIG_GROW on this
@@ -533,8 +535,9 @@ value caml_rig_metal_failure(value v_d) {
 }
 
 /* Stops the device: the word shows its last value once its ring is
-   empty. The run state goes with the device's hold: each committed command
-   buffer holds it, and the command queue, until it completes. */
+   empty. The run state goes with the device's hold: each command buffer
+   holds it, and the command queue, until Metal releases the buffer's
+   completion handler. */
 value caml_rig_metal_stop(value v_d) {
   struct rig_metal *d = Device_val(v_d);
   struct rig_metal_run *r = d->run;
@@ -547,8 +550,8 @@ value caml_rig_metal_stop(value v_d) {
 
 static int (*const split)(void *, uint64_t *, uint64_t *) = rig_metal_split;
 
-/* The pipelines and the buffers the process's devices hold, for rig's
-   tests. */
+/* The pipelines and the buffers the process's devices hold, and their run
+   states, for rig's tests. */
 value caml_rig_metal_pipelines(value unit) {
   (void)unit;
   return Val_long((intnat)atomic_load(&rig_metal_pipelines));
@@ -557,6 +560,11 @@ value caml_rig_metal_pipelines(value unit) {
 value caml_rig_metal_buffers(value unit) {
   (void)unit;
   return Val_long((intnat)atomic_load(&rig_metal_buffers));
+}
+
+value caml_rig_metal_runs(value unit) {
+  (void)unit;
+  return Val_long((intnat)atomic_load(&rig_metal_runs));
 }
 
 #else
@@ -607,13 +615,18 @@ intnat caml_rig_metal_signaled(intnat a) { (void)a, no_metal(); }
 
 static int (*const split)(void *, uint64_t *, uint64_t *) = NULL;
 
-/* No device opens, so none holds a pipeline or a buffer. */
+/* No device opens, so none holds a pipeline, a buffer or a run state. */
 value caml_rig_metal_pipelines(value unit) {
   (void)unit;
   return Val_long(0);
 }
 
 value caml_rig_metal_buffers(value unit) {
+  (void)unit;
+  return Val_long(0);
+}
+
+value caml_rig_metal_runs(value unit) {
   (void)unit;
   return Val_long(0);
 }

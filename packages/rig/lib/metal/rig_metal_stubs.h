@@ -44,13 +44,14 @@ struct rig_metal_entry {
   int64_t params;
 };
 
-/* The pipelines that entries hold and the buffers that regions hold,
-   across devices, which a test counts. */
-extern _Atomic intptr_t rig_metal_pipelines, rig_metal_buffers;
+/* The pipelines that entries hold, the buffers that regions hold and the
+   run states alive, across devices, which a test counts. */
+extern _Atomic intptr_t rig_metal_pipelines, rig_metal_buffers,
+    rig_metal_runs;
 
 /* What a device runs work with, from its open to its stop and the end of
-   the work committed before it: each committed command buffer holds it
-   until its completion handler returns, and the device until its stop
+   the work committed before it: each command buffer holds it until Metal
+   releases the buffer's completion handler, and the device until its stop
    ([holds]). Its residency set has a mutex of its own, which no completion
    handler takes; [changed] says whether the set holds additions it has not
    committed. */
@@ -101,7 +102,7 @@ struct rig_metal {
    take (rig_metal_room). */
 extern _Thread_local uint64_t rig_metal_asked;
 
-/* Takes a hold of [r]'s, as a committed command buffer does. */
+/* Takes a hold of [r]'s, as a command buffer does. */
 void rig_metal_hold(struct rig_metal_run *r);
 
 /* Gives back a hold of [r]'s: the last frees it. */

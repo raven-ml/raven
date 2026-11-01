@@ -360,7 +360,8 @@ val capability : t -> Rig_metal_abi.t
     command buffer has completed, its handler writes the last value into the
     word, whatever that work did. The stop gives back what the device runs
     work with: its Metal command queue, fence, residency set and command
-    buffer ring, which each committed command buffer keeps until its handler
+    buffer ring, which each command buffer, committed or dropped, keeps
+    until Metal releases its completion handler, some time after the handler
     returns. Once the word shows the last value and [stop] has returned, no
     handler writes it: the handlers write in order, and the one that
     completes the last command buffer writes the last value. The few bytes
@@ -410,6 +411,11 @@ val pipelines : unit -> int
 (* [buffers ()] is the number of buffers that the regions of the process's
    devices hold, their allocations and mappings. *)
 val buffers : unit -> int
+
+(* [runs ()] is the number of devices whose run state lives: what a device
+   runs work with, from its open until its {!stop} and the end of every
+   command buffer it made. *)
+val runs : unit -> int
 
 (* A device's ring of command buffers, driven by hand without Metal: a test
    plays the submitter, which commits command buffers, and Metal's handler,
