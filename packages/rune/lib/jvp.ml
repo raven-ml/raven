@@ -1645,7 +1645,10 @@ let rec answer ~name ~tape i (c : Program.construct) k =
   | Solve _ ->
       Effect.Deep.continue k
         (Program.silenced (fun () -> solve ~name ~tape i c))
-  | Lane_index _ -> Effect.Deep.discontinue k Program.Evaluate
+  (* An index reads its operand's placement alone. *)
+  | Lane_index (a, p, x) ->
+      let x = Option.map (primal i) x in
+      Effect.Deep.continue k (Program.perform (Lane_index (a, p, x)))
   (* A callback has no derivative: it raises where a tracked argument may reach
      a result that has one, and otherwise runs on the primals. *)
   | Callback cb ->

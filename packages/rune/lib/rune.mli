@@ -817,7 +817,11 @@ val lanes : axis -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
 val lane_index : axis -> ('v, 's, 'd) Nx.t -> 'd Nx.int32_t
 (** [lane_index a x], inside the map named [a], is the calling lane's index in
     it, a 0-d [int32] from [0] to the map's number of lanes minus one, whole on
-    each of [x]'s devices.
+    each of [x]'s devices. Where [x] is a lane of the map, the lanes' indices,
+    stacked, are cut as [x]'s rows are along axis 0, so that each lane's index
+    lies where its row does. Where [x] is a value that a function traced by a
+    construct other than {!jit} computes, such as a loop's carry inside its
+    step, or a tangent under reverse mode, they are whole on each device.
 
     Raises [Invalid_argument] with no map named [a] around the call. *)
 
@@ -1376,15 +1380,15 @@ val jit :
     it. Each value's placement is eager's, uneven windows included, and a device
     whose windows of an operation's results are all empty computes nothing for
     it. A program for one device serves every device of its target, so the
-    devices of a set compile each kernel once, and a window moves between
-    devices from a start the program binds when it runs: where every window
-    of a cut has one shape, a program makes as many kernels whatever the
-    number of devices. A {!scan} or an {!iterate} over such values is one loop,
-    each trip running every device's kernels and moves of its step; each device
-    reads its piece of a row from its piece of the rows. Each argument's piece
-    on a device is an argument of its own for the variant, which a donated
-    argument's piece lends to the result's piece on that device
-    ({!section-donation}). Such a program holds no memory
+    devices of a set compile each kernel once: a window moves between devices,
+    and a kernel reads the coordinates of its window, from a start each
+    device's launch of it passes. Where every window of a cut has one shape, a
+    program makes as many kernels whatever the number of devices. A {!scan} or
+    an {!iterate} over such values is one loop, each trip running every
+    device's kernels and moves of its step; each device reads its piece of a
+    row from its piece of the rows. Each argument's piece on a device is an argument of its own for
+    the variant, which a donated argument's piece lends to the result's piece
+    on that device ({!section-donation}). Such a program holds no memory
     between calls but the copies of its constants: each call makes on each
     device what it computes there and returns it once that work is done. With
     [RUNE_JIT_DEBUG] set, the first call prints each move between devices, the
@@ -1395,7 +1399,20 @@ val jit :
     each device, the devices of the architecture of the first device holding
     it compute it at each step and the others receive a copy, as eager
     computation does ({!Nx.section-routing}), so the replicas are equal bit
-    for bit. *)
+    for bit.
+
+    A map over an axis cut one row per device is per-device code: each device
+    computes its lane, {!lanes} gathers every device's row onto each device, a
+    sum over the lane axis closes as any fold over a cut axis does, and each
+    device computes its lane's {!lane_index}. The lanes' gradients, stacked
+    along the lane axis without that sum, stay on the devices that compute
+    them and move nothing; one sum over that axis closes them. Wherever a
+    loop over a cut value reads its window's coordinates, as {!Nx.tril}, a
+    creation at the cut placement or {!Nx.argmax} along an axis no device
+    cuts does, its launch on each device passes the window's start, so that
+    its program is every device's. A fold, scan, gather or scatter over a cut
+    axis that reads positions, as {!Nx.argmax} along it does, makes a kernel
+    per device. *)
 
 (** {2:search Search}
 
@@ -1711,7 +1728,9 @@ val jit :
     eager's values. A program whose values lie on one device has that {e
     device}: the one its first argument, or else its first result, lies whole
     on. The compiler declines, and so evaluates, a program that holds:
-    - a map's {!lanes} or {!lane_index};
+    - a map's {!lanes} or {!lane_index}, which a call inside the map never
+      runs: it runs the program derived for the map ({!section-derived}),
+      which answers them;
     - an emission {!section-emissions} names as evaluated;
     - the tangents of a {!custom_vjp}'s results, which a {!jvp} of it makes and
       which then raise as eagerly;

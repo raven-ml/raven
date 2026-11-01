@@ -11,6 +11,7 @@ type engine = {
     'r 'd.
     by:string ->
     ?into:'d Value.any ->
+    origin:int array ->
     unit Devices.placement ->
     Nx_array.Layout.t array ->
     'r Value.prim ->
@@ -169,16 +170,17 @@ let windows : type r d.
     engine ->
     by:string ->
     ?into:d Value.any ->
+    ?origin:int array ->
     unit Route.t ->
     L.t array ->
     r Value.prim ->
     r =
- fun e ~by ?into route layouts op ->
+ fun e ~by ?into ?(origin = [||]) route layouts op ->
   (match route.compute with
   | Windows -> ()
   | Partials ->
       invalid_arg "Partition.windows: a route that computes by partials");
-  if is_local route op then e.run ~by ?into route.result layouts op
+  if is_local route op then e.run ~by ?into ~origin route.result layouts op
   else
     let p = route.result in
     let set = Devices.set p in
@@ -192,14 +194,17 @@ let windows : type r d.
             let s = Prim.shape x in
             read_of e ~by x s k (Array.map Route.full s)
         in
-        e.run ~by ?into p layouts (Prim.mapi read op)
+        e.run ~by ?into ~origin p layouts (Prim.mapi read op)
     | None ->
         (* Each device's window [w] of the first result, computed there over
            each operand's window ({!Route.window}). A device computes where
            a result's window there holds elements. Balanced windows put the
            empty ones last, so the first device's windows are empty only
            where every device's are; it then computes, so that the kernels
-           answer for the operation as on one device. *)
+           answer for the operation as on one device. A loop given at an
+           origin already computes a window: its coordinates are offset
+           before it is cut again. *)
+        let op = Prim.offset op origin in
         let rule = Prim.rule op in
         let devices = Grid.devices (Devices.grid p) in
         (* Each device's window of each layout's results, the first's
@@ -218,13 +223,13 @@ let windows : type r d.
             read_of e ~by x s k (Route.window rule ~operand:i s w)
           in
           let here = Devices.one set k in
-          let op = Prim.local (Prim.mapi view op) w in
+          let op, origin = Prim.local (Prim.mapi view op) w in
           let contiguous w = L.contiguous (Route.extents w.(j)) in
           let layouts = Array.map contiguous ws in
           let into =
             Option.map (fun (Value.Any v) -> Value.Any (e.piece v j here)) into
           in
-          e.run ~by ?into here layouts (at_device here op)
+          e.run ~by ?into ~origin here layouts (at_device here op)
         in
         let src =
           sources_by set devices (fun i j ->

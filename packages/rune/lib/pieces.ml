@@ -121,7 +121,117 @@ let pieces_of (type v s d) ri (x : (v, s, d) Nx.t) : (v, s, d) Nx.t iarray =
           let s = Nx.Placement.devices (Nx.placement x) in
           Iarray.map (Nx.Repr.of_array s) (Nx.Repr.shards x))
 
-let engine ri ~by moves : Nx.Prim.engine =
+(* Loops over windows
+
+   A device's loop over a window of its loop's shape reads its coordinates from
+   the window's start ({!Nx.Prim.offset}). A start baked into its program would
+   make each device's program its own: along an axis where windows start
+   apart, the loop reads its coordinates there as an operand instead, the
+   window of the whole loop's coordinates, which a compiled program reads as a
+   start each device's call binds ({!Compile}), so that every device's loop is
+   one program. *)
+
+module P = Nx_kernel.Prog
+
+let loop_shape (type r) (op : r Nx.Prim.t) =
+  match op with
+  | Map { layout; _ } | Reduce { layout; _ } | Scan { layout; _ } ->
+      Iarray.to_array (L.shape layout)
+  | _ -> [||]
+
+(* [prog] with each [Coord c] for which [at.(c)] is [Some k] read as its
+   operand [k], an [int64] after [prog]'s own. *)
+let from_operands (prog : P.t) (at : int option array) =
+  let more = Array.to_list (Array.map (fun _ -> D.Any D.Int64) at) in
+  let more = List.filteri (fun a _ -> Option.is_some at.(a)) more in
+  let ins = Iarray.append prog.ins (Iarray.of_list more) in
+  let coord : P.node -> P.E.any option = function
+    | Coord c when c < Array.length at && Option.is_some at.(c) ->
+        Some (P.E.any (P.E.input (Option.get at.(c)) D.Int64))
+    | _ -> None
+  in
+  P.subst ~ins coord prog
+
+(* The set of a loop's operands, or of the placement of a creation. *)
+let set_of (type d) (loads : d Nx.Prim.load iarray)
+    (at : d Nx.Placement.t option) : d Nx.devices option =
+  match at with
+  | Some q -> Some (Nx.Placement.devices q)
+  | None when Iarray.length loads = 0 -> None
+  | None -> (
+      match Iarray.get loads 0 with
+      | Plain x -> Some (Nx.Placement.devices (Nx.placement x))
+      | Padded { x; _ } -> Some (Nx.Placement.devices (Nx.placement x)))
+
+(* [op], a loop over the window of [whole]'s loop that starts at [origin] on
+   [here], reading its coordinates along each axis where windows start apart,
+   where it reads them, as the window there of [arange] of the whole axis on
+   [here], broadcast to its shape. Every other window starts at [0]. *)
+let windowed (type r w) (whole : w Nx.Prim.t) here (op : r Nx.Prim.t) origin :
+    r Nx.Prim.t =
+  let extents = loop_shape whole and shape = loop_shape op in
+  let n = Array.length origin in
+  let same_rank = Array.length extents = n && Array.length shape = n in
+  let apart a = origin.(a) > 0 || (same_rank && shape.(a) < extents.(a)) in
+  let read (type d) (prog : P.t) (loads : d Nx.Prim.load iarray) set =
+    let coords a =
+      Iarray.exists (function P.Coord c -> c = a | _ -> false) prog.nodes
+    in
+    let next = ref (Iarray.length prog.ins) in
+    let at =
+      Array.init n (fun a ->
+          if apart a && coords a then begin
+            incr next;
+            Some (!next - 1)
+          end
+          else None)
+    in
+    let operand a =
+      let on = Nx.Placement.device set (rig_of here) in
+      let all = Nx.arange_at on Nx.int64 0 extents.(a) 1 in
+      let w = Nx.slice [ R (origin.(a), origin.(a) + shape.(a)) ] all in
+      let dims = Array.mapi (fun i k -> if i = a then k else 1) shape in
+      Nx.Prim.Plain (Nx.broadcast_to shape (Nx.reshape dims w))
+    in
+    if Array.for_all Option.is_none at then (prog, loads)
+    else
+      let more =
+        List.filter_map
+          (fun a -> Option.map (fun _ -> operand a) at.(a))
+          (List.init n Fun.id)
+      in
+      (from_operands prog at, Iarray.append loads (Iarray.of_list more))
+  in
+  (* A loop has loads or names its placement: one with neither would lose its
+     offset. *)
+  let no_set () = invalid_arg "Rune.jit: a loop over a window lies nowhere" in
+  match op with
+  | _ when n = 0 -> op
+  | Map m -> (
+      match set_of m.loads m.at with
+      | None -> no_set ()
+      | Some set ->
+          let prog, loads = read m.prog m.loads set in
+          let at = if Iarray.length loads = 0 then m.at else None in
+          Map { m with prog; loads; at })
+  | Reduce m -> (
+      match set_of m.loads None with
+      | None -> no_set ()
+      | Some set ->
+          let prog, loads = read m.prog m.loads set in
+          Reduce { m with prog; loads })
+  | Scan m -> (
+      match set_of m.loads None with
+      | None -> no_set ()
+      | Some set ->
+          let prog, loads = read m.prog m.loads set in
+          Scan { m with prog; loads })
+  | _ -> op
+
+let engine ri ~by ~whole moves : Nx.Prim.engine =
+  let run ~by ?into:_ ~origin here _ op =
+    Nx.Prim.eval ~by (windowed whole here op origin)
+  in
   let view mv x = Nx.Prim.eval ~by (Move (mv, x)) in
   let window x w =
     if full x w then x else view (M.Slice (Iarray.of_array w)) x
@@ -179,7 +289,7 @@ let engine ri ~by moves : Nx.Prim.engine =
       Nx.Prim.traced ri form (Cut (Iarray.init (Array.length windows) piece))
   in
   {
-    run = (fun ~by ?into:_ _ _ op -> Nx.Prim.eval ~by op);
+    run;
     piece = (fun x j _ -> Iarray.get (pieces_of ri x) j);
     view;
     bring;
@@ -340,7 +450,9 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
                   decline
                     "Nx.place gathers an argument cut across devices: a \
                      compiled call holds all it gathers and closes at once"
-              | _ -> Nx.Prim.partition (engine ri ~by moves) ~by op
+              | _ ->
+                  let e = engine ri ~by ~whole:op moves in
+                  Nx.Prim.partition e ~by op
             in
             bind := base;
             Nx.Prim.iter_results store op r

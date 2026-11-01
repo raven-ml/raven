@@ -464,7 +464,7 @@ let lanes a x = like x (first (perform (Lanes (a, x))))
 (* A lane's index lies whole on each of [x]'s devices. *)
 let lane_index a x =
   let placement = Nx.beside x in
-  let index = first (perform (Lane_index (a, placement))) in
+  let index = first (perform (Lane_index (a, placement, Some x))) in
   cast Nx.int32 (Nx.Placement.devices placement) index
 
 let lane_count = Program.bound

@@ -832,7 +832,8 @@ let claims i axis : Program.construct -> bool = function
      interpretation around this map would evaluate those programs outside it,
      where its lanes are not. *)
   | c when List.exists (Program.mentions axis) (Program.carried c) -> true
-  | Lane_index (a, _) -> Program.same_axis a axis
+  | Lane_index (a, _, Some x) -> Program.same_axis a axis || owned i x
+  | Lane_index (a, _, None) -> Program.same_axis a axis
   | Add _ | Emit _ -> true
   | c -> List.exists (operand i) (Program.operands c)
 
@@ -1172,14 +1173,27 @@ let rec answer ~name ?held i axis n (c : Program.construct) k =
       let b = batch i n x in
       let r = Program.like b (Program.perform (Lanes (a, b))).(0) in
       one (lane i (Nx.swapaxes 0 1 r))
-  | Lane_index (_, p) -> (
+  | Lane_index (a, p, x) when Program.same_axis a axis -> (
       (* [p] cuts no axis, so the indices' batch at [p] gives lanes at [p]; a
-         held lane's is its donor's. *)
+         held lane's is its donor's. Where [x] is one of the map's lanes, the
+         others' lie where the rows of its batch lie, so that each device
+         computes the indices of its lanes. *)
       match held with
       | Some h ->
           let (Program.V d) = h.donors in
           one (lane i (Nx.place p (as_int32 d)))
-      | None -> one (lane i (Nx.arange_at p Nx.int32 0 n 1)))
+      | None ->
+          let rows =
+            match Option.bind x (Prim.payload i) with
+            | Some (Lane b) -> Nx.Placement.leading_axis (Nx.placement b)
+            | _ -> p
+          in
+          one (lane i (Nx.arange_at rows Nx.int32 0 n 1)))
+  (* Another map's index is the same in every lane of this one: [x]'s batch
+     carries its rows outward. *)
+  | Lane_index (a, p, x) ->
+      let x = Option.map (batch i n) x in
+      Effect.Deep.continue k (Program.perform (Lane_index (a, p, x)))
   | Add (t, x) ->
       (* No collect or tracer holds the total: an addition of no consequence,
          offered outward for the interpretations that refuse it. *)

@@ -38,15 +38,18 @@ type engine = {
     'r 'd.
     by:string ->
     ?into:'d Value.any ->
+    origin:int array ->
     unit Devices.placement ->
     Nx_array.Layout.t array ->
     'r Value.prim ->
     'r;
-      (** [run ~by ~into here layouts op] is [op] at the one-device
-          placement [here], where every operand lies, its results laid out
-          as [layouts] ({!Prim.val-layouts}). [into] is memory the first
-          result may take, a value there of its dtype and layout; an engine
-          may ignore it. *)
+      (** [run ~by ~into ~origin here layouts op] is
+          {!Prim.offset}[ op origin] at the one-device placement [here],
+          where every operand lies, its results laid out as [layouts]
+          ({!Prim.val-layouts}). [origin] is the start of the window of its
+          loop's shape that a loop computes ({!Prim.local}), [[||]] where
+          [op] needs no offset. [into] is memory the first result may take,
+          a value there of its dtype and layout; an engine may ignore it. *)
   piece :
     'v 's 'd.
     ('v, 's, 'd) Value.t -> int -> 'd Devices.placement -> ('v, 's, 'd) Value.t;
@@ -135,16 +138,17 @@ val windows :
   engine ->
   by:string ->
   ?into:'d Value.any ->
+  ?origin:int array ->
   unit Route.t ->
   Nx_array.Layout.t array ->
   'r Value.prim ->
   'r
-(** [windows e ~by ~into route layouts op] is [op] computed by windows at
-    [route]'s result, its results laid out as [layouts]
-    ({!Prim.val-layouts}). On one device it is {!engine}'s [run] of [op]
-    over each operand's piece there, its first result into [into] where it
-    is given. Over several, each device computes its window [w] of the
-    results by
+(** [windows e ~by ~into ~origin route layouts op] is {!Prim.offset}[ op
+    origin] ([origin] defaults to [[||]]) computed by windows at [route]'s
+    result, its results laid out as [layouts] ({!Prim.val-layouts}). On one
+    device it is {!engine}'s [run] of [op] at [origin] over each operand's
+    piece there, its first result into [into] where it is given. Over
+    several, each device computes its window [w] of the results by
     {!Prim.local}[ op w] over the windows of the operands it reads
     ({!Route.window}), at its own placement where [op] creates its
     values, its first result into its piece of [into], a value at the

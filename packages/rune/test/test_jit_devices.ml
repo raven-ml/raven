@@ -8,7 +8,8 @@
    eager's placements, exact functions' bits and the other functions' values
    within rune.mli's classes, for even, uneven and empty windows. It compiles
    (no call is evaluated), each device runs its own kernels, and its gradient is
-   eager's. *)
+   eager's. A map over an axis cut one row per device compiles as per-device
+   code. *)
 
 open Windtrap
 open Rune_support
@@ -323,6 +324,36 @@ let biased set c =
   let eager = outcome (fun () -> f x b) in
   equal (outcome_t bits_t) (omap bits eager) (omap bits (compiled f x b))
 
+(* Functions that read their coordinates over cut values, exact, so that a
+   compiled call gives eager's bits: each device's loop reads its window's
+   start, which its call passes. *)
+let coordinates set c =
+  cover_windows c;
+  let x = Nx.place (at set c.x) (value c.shape) in
+  let same name f =
+    let eager = outcome (fun () -> f x x) in
+    let jit = compiled f x x in
+    match (eager, jit) with
+    | Value e, Value j ->
+        equal ~msg:(name ^ " placement") (placement ()) (Nx.placement e)
+          (Nx.placement j);
+        equal ~msg:name bits_t (bits e) (bits j)
+    | _ -> equal ~msg:name (outcome_t bits_t) (omap bits eager) (omap bits jit)
+  in
+  let rank = Array.length c.shape in
+  List.iter
+    (fun a ->
+      same
+        (Printf.sprintf "argmax along %d" a)
+        (fun x _ -> Nx.cast f32 (Nx.argmax ~axis:a x)))
+    (List.init rank Fun.id);
+  if rank = 2 then begin
+    same "tril" (fun x _ -> Nx.tril x);
+    same "eye" (fun x _ ->
+        Nx.add x
+          (Nx.eye_at ~m:c.shape.(1) (Nx.placement x) f32 c.shape.(0)))
+  end
+
 (* Gradients
 
    The gradient of a loss over a batch cut across the devices, under jit, lies
@@ -447,6 +478,25 @@ let scanned set c =
   let compiles = kept && not (cut_unit c) in
   cover "compiled over a cut carry" (compiles && carry_cut c);
   same_pair eager (jit_pair ~compiles f x xs)
+
+(* A scan whose step reads the coordinates of its carry, cut along either
+   axis over three devices, one window uneven, gives eager's bits: each
+   device's step reads its window's start. *)
+let coordinate_scan set =
+  List.iter
+    (fun a ->
+      let x = Nx.place (at set (Split a)) (value [| 7; 4 |]) in
+      let xs =
+        Nx.place (at set (Split (a + 1))) (value ~seed:1 [| row_count; 7; 4 |])
+      in
+      let step carry row =
+        let peak = Nx.argmax ~axis:a ~keepdims:true carry in
+        let carry = Nx.add (Nx.tril (Nx.mul carry row)) (Nx.cast f32 peak) in
+        (carry, Nx.add carry row)
+      in
+      let f x xs = Rune.scan' step ~init:x xs in
+      same_pair (outcome (fun () -> f x xs)) (jit_pair ~compiles:true f x xs))
+    [ 0; 1 ]
 
 (* A scan whose carry and rows are cut alike copies nothing between devices,
    as eager computation copies nothing. *)
@@ -775,6 +825,192 @@ let programs n =
   equal ~msg:"calls evaluated" int evaluated (Rune.evaluations ());
   Tolk.Codegen.programs () - before
 
+(* Maps over a cut axis
+
+   A map over an axis cut one row per device is per-device code: [Rune.lanes]
+   gathers every device's row, a sum over the lane axis closes as a fold over a
+   cut axis does, and each device computes its lanes' [Rune.lane_index]. Its
+   elements are small integers, so that every sum is exact in any order and a
+   compiled call gives eager's bits. *)
+
+let integers ?(seed = 0) shape =
+  let n = Array.fold_left ( * ) 1 shape in
+  Nx.create f32 shape
+    (Array.init n (fun i -> float_of_int ((((seed * 7) + (i * 5)) mod 9) - 4)))
+
+let around = Rune.axis ()
+
+(* Each lane's row scaled by the sum of every lane's rows, plus its index
+   times [w]. *)
+let per_device x w =
+  Rune.vmap' ~axis:around
+    (fun r ->
+      let total = Nx.sum ~axes:[ 0 ] (Rune.lanes around r) in
+      let index = Nx.cast f32 (Rune.lane_index around r) in
+      Nx.add (Nx.mul r total) (Nx.mul index w))
+    x
+
+type mapped = { devices : int; rows : int; cols : int }
+
+let pp_mapped ppf c =
+  Format.fprintf ppf "%d devices, %d rows of %d" c.devices c.rows c.cols
+
+let mapped =
+  let open Gen in
+  (let* devices = int_range 2 4 in
+   let* rows =
+     frequency [ (1, constant devices); (1, int_range 0 ((2 * devices) + 1)) ]
+   and+ cols = int_range 1 5 in
+   constant { devices; rows; cols })
+  |> with_pp pp_mapped
+
+let shard_map set c =
+  cover "one row per device" (c.rows = c.devices);
+  cover "uneven rows" (c.rows mod c.devices <> 0);
+  cover "an empty window" (c.rows < c.devices);
+  cover "three devices" (c.devices = 3);
+  let x = Nx.place (at set (Split 0)) (integers [| c.rows; c.cols |]) in
+  let w = Nx.place (at set On) (integers ~seed:1 [| c.cols |]) in
+  let eager = outcome (fun () -> per_device x w) in
+  let jit = compiled per_device x w in
+  match (eager, jit) with
+  | Value e, Value j ->
+      equal ~msg:"placement" (placement ()) (Nx.placement e) (Nx.placement j);
+      equal bits_t (bits e) (bits j)
+  | _ -> equal (outcome_t bits_t) (omap bits eager) (omap bits jit)
+
+(* Under a map over a cut axis, the lanes' indices lie where their rows lie,
+   and so do those of a compiled call inside the map. *)
+let indices set =
+  let x = Nx.place (at set (Split 0)) (integers [| 4; 2 |]) in
+  let index r = Rune.lane_index around r in
+  let check name i =
+    equal ~msg:(name ^ " placement") (placement ()) (at set (Split 0))
+      (Nx.placement i);
+    equal ~msg:name (array int32) [| 0l; 1l; 2l; 3l |]
+      (Nx.to_array (Nx.place Nx.Host.on i))
+  in
+  check "map" (Rune.vmap' ~axis:around index x);
+  check "map of a call" (Rune.vmap' ~axis:around (Rune.jit' index) x);
+  (* Under forward mode the index reads its operand's primal. *)
+  let forward r =
+    let i, _ =
+      Rune.jvp' (fun y -> Nx.cast f32 (Rune.lane_index around y)) r r
+    in
+    Nx.cast Nx.int32 i
+  in
+  check "map of a derivative" (Rune.vmap' ~axis:around forward x);
+  (* An inner map's lane reads the outer map's index of its row. *)
+  let inner = Rune.axis () in
+  let nested =
+    Rune.vmap' ~axis:around
+      (fun r -> Rune.vmap' ~axis:inner (fun e -> index e) r)
+      x
+  in
+  equal ~msg:"nested placement" (placement ()) (at set (Split 0))
+    (Nx.placement nested);
+  equal ~msg:"nested" (array int32)
+    [| 0l; 0l; 1l; 1l; 2l; 2l; 3l; 3l |]
+    (Nx.to_array (Nx.place Nx.Host.on nested))
+
+(* Gradient accumulation by stacked partials: each device's gradient of its
+   rows' loss, stacked along the lane axis, stays where its rows lie and moves
+   nothing between devices; one sum over that axis closes them, to the
+   gradient of the whole loss. The loss [Σ x w²] has the gradient [2 x w],
+   exact on small integers. *)
+let partials set =
+  let x = Nx.place (at set (Split 0)) (integers [| 4; 3 |]) in
+  let w = Nx.place (at set On) (integers ~seed:1 [| 3 |]) in
+  let loss x w = Nx.sum (Nx.mul x (Nx.mul w w)) in
+  let stacked x w =
+    Rune.vmap' ~axis:around (fun x -> Rune.grad' (loss x) w) x
+  in
+  let step = Rune.jit T.(tensor @-> tensor @-> returns tensor) stacked in
+  let before = Rune.evaluations () in
+  let p = step x w in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  equal ~msg:"partials' placement" (placement ()) (at set (Split 0))
+    (Nx.placement p);
+  equal ~msg:"partials" bits_t (bits (stacked x w)) (bits p);
+  let _, events =
+    Rig.Profile.take (fun () -> ignore (Nx.to_array (step x w)))
+  in
+  let copied =
+    List.fold_left
+      (fun n -> function
+        | Rig.Profile.Copy { src; dst; bytes; _ } when not (Rig.equal src dst)
+          ->
+            n + bytes
+        | _ -> n)
+      0 events
+  in
+  equal ~msg:"bytes between devices" int 0 copied;
+  let accumulated x w = Nx.sum ~axes:[ 0 ] (stacked x w) in
+  let g = compiled accumulated x w in
+  let whole = Rune.grad' (loss x) w in
+  equal (outcome_t bits_t) (Value (bits whole)) (omap bits g);
+  match g with
+  | Value g ->
+      equal ~msg:"placement" (placement ()) (Nx.placement whole)
+        (Nx.placement g)
+  | Raised _ -> ()
+
+(* A data-parallel step written as per-device code, each device's loss offset
+   by its lane's index and gathered by a sum over the lanes, and one that
+   accumulates stacked partial gradients, each make as many programs over 2, 4,
+   8 and 16 memory devices, as the data-parallel step above does. Their widths
+   are that step's none, so that no program of one is the other's. *)
+let mapped_programs n =
+  let module S = (val Nx.devices (Array.to_list (Array.sub sixteen 0 n))) in
+  let hidden = 48 + n in
+  let x = Nx.place (Nx.Placement.split ~axis:0 S.v) (value [| n; 4; 32 |]) in
+  let on = Nx.Placement.on S.v in
+  let w1 = Nx.place on (value ~seed:1 [| 32; hidden |]) in
+  let w2 = Nx.place on (value ~seed:2 [| hidden; 4 |]) in
+  let loss x (w1, w2) =
+    let y = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
+    Nx.add y (Nx.cast f32 (Rune.lane_index around x))
+  in
+  let descend (w1, w2) (g1, g2) =
+    (Nx.sub w1 (Nx.mul_s g1 0.1), Nx.sub w2 (Nx.mul_s g2 0.1))
+  in
+  let per_device x w =
+    let total w =
+      let lane x =
+        let y = loss x w in
+        Nx.sum (Rune.lanes around (Nx.mean (Nx.mul y y)))
+      in
+      Nx.sum (Rune.vmap' ~axis:around lane x)
+    in
+    descend w (Rune.grad T.(pair tensor tensor) total w)
+  in
+  let accumulated x w =
+    let lane x =
+      Rune.grad T.(pair tensor tensor)
+        (fun w ->
+          let y = loss x w in
+          Nx.mean (Nx.mul y y))
+        w
+    in
+    let g1, g2 =
+      Rune.vmap T.(tensor @-> returns (pair tensor tensor)) ~axis:around lane x
+    in
+    descend w (Nx.sum ~axes:[ 0 ] g1, Nx.sum ~axes:[ 0 ] g2)
+  in
+  let count f =
+    let before = Tolk.Codegen.programs () and evaluated = Rune.evaluations () in
+    let step =
+      Rune.jit
+        T.(tensor @-> pair tensor tensor @-> returns (pair tensor tensor))
+        f
+    in
+    ignore (step x (w1, w2));
+    equal ~msg:"calls evaluated" int evaluated (Rune.evaluations ());
+    Tolk.Codegen.programs () - before
+  in
+  let per_device = count per_device in
+  (per_device, count accumulated)
+
 let examples =
   [
     { n = 2; shape = [| 4; 3 |]; x = Split 0; y = On };
@@ -799,6 +1035,8 @@ let () =
              prop ~count:10 ~examples:expert_examples
                "an expert product cut along its inputs" experts_cases (fun c ->
                  over c.devices { law = (fun set -> expert_product set c) });
+             prop ~count:30 ~examples "coordinates over cut values" cases
+               (fun c -> over c.n { law = (fun set -> coordinates set c) });
              prop ~count:20 ~examples "a vector broadcast to a cut batch" cases
                (fun c -> over c.n { law = (fun set -> biased set c) });
            ];
@@ -832,6 +1070,8 @@ let () =
                  over c.ln { law = (fun set -> iterated set c) });
              test "a scan cut alike copies nothing between devices" (fun () ->
                  over 3 { law = local_scan });
+             test "a step that reads its coordinates gives eager's bits"
+               (fun () -> over 3 { law = coordinate_scan });
              test "an iterate reads its stop on the program's device"
                (fun () -> over 2 { law = stop_home });
            ];
@@ -864,6 +1104,23 @@ let () =
                  let counts = List.map programs [ 2; 4; 8; 16 ] in
                  let first = List.hd counts in
                  equal (list int) (List.map (fun _ -> first) counts) counts);
+           ];
+         group "maps over a cut axis"
+           [
+             prop ~count:60 "lanes, lane_index and a sum over the lanes"
+               mapped (fun c ->
+                 over c.devices { law = (fun set -> shard_map set c) });
+             test "the lanes' indices lie where their rows lie" (fun () ->
+                 over 4 { law = indices });
+             test "stacked partials stay on their devices, then close"
+               (fun () -> over 4 { law = partials });
+             test "per-device code makes as many programs over 2 to 16"
+               (fun () ->
+                 let counts = List.map mapped_programs [ 2; 4; 8; 16 ] in
+                 let first = List.hd counts in
+                 equal (list (pair int int))
+                   (List.map (fun _ -> first) counts)
+                   counts);
            ];
          group "each device runs its own kernels"
            [

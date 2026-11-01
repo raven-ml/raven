@@ -1132,7 +1132,7 @@ let lanes_transpose a (x : ('v, 's, 'd) Nx.t) (V w) =
     Nx.sum ~axes:[ 0 ] (like w (Program.perform (Lanes (a, w))).(0))
   in
   let placement = Nx.beside w in
-  let index = (Program.perform (Lane_index (a, placement))).(0) in
+  let index = (Program.perform (Lane_index (a, placement, Some w))).(0) in
   let own = cast Nx.int32 (Nx.Placement.devices placement) index in
   let row = Nx.reshape [| 1 |] (Nx.cast Nx.int64 own) in
   V (Nx.reshape (Nx.shape x) (Nx.take ~axis:0 row total))

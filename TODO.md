@@ -205,8 +205,14 @@ raven / llama.cpp (Vulkan; ROCm):
 ## rune, kaun, vega
 
 - sharded jit after its first slice (one target, 1-D sets, no loops) and
-  lending per piece (898ec2b85): a place onto another set, compiled
-  `lanes` (_plans/rune-sharding/adjudication.md). A split
+  lending per piece (898ec2b85): a place onto another set
+  (_plans/rune-sharding/adjudication.md). `lanes` and `lane_index`
+  compile, and per-device code, as loops that read their window's
+  coordinates, makes as many programs over 2 to 16 devices, each launch
+  passing its window's start. nx's partials still write each tile's start
+  into its program as a constant (`Partial.renumber`, `shift`: `argmax`
+  along a cut axis, a scan's positions, a gather, scatter or sum over a
+  cut axis), so those make a kernel per device. A split
   program that gathers an argument so that a device's window grows still
   evaluates: a compiled backward call holds 3.1 layers per device at n=2
   and 4.2 at n=8 (d=512) against a bound of 2.2 and 1.5 (RFC 0005: two

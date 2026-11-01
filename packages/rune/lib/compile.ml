@@ -677,18 +677,27 @@ let shared (p : Program.t) =
     p.eqns;
   Array.map (fun k -> k > 1) reads
 
-(* Whether each variable of [p] is a window that a placement reads. *)
+(* Whether each variable of [p] is a window that a placement reads, or a
+   window of a creation, a map that reads no operand, as a loop's coordinates
+   over a window are ({!Pieces}). A program's own window of a creation is one
+   too: its start is then a variable its call passes, the same value. *)
 let windows (p : Program.t) =
-  let sliced = Array.make p.slots false and placed = Array.make p.slots false in
+  let sliced = Array.make p.slots false and read = Array.make p.slots false in
+  let created = Array.make p.slots false in
   Array.iter
     (function
-      | Program.Op { op = Move (Slice _, _); base; _ } -> sliced.(base) <- true
+      | Program.Op { op = Move (Slice _, x); base; _ } ->
+          let n = slot p x in
+          sliced.(base) <- true;
+          if n >= 0 && created.(n) then read.(base) <- true
+      | Op { op = Map { loads; _ }; base; _ } when Iarray.length loads = 0 ->
+          created.(base) <- true
       | Op { op = Place (_, x); _ } ->
           let n = slot p x in
-          if n >= 0 then placed.(n) <- true
+          if n >= 0 then read.(n) <- true
       | Op _ | Do _ -> ())
     p.eqns;
-  Array.map2 ( && ) sliced placed
+  Array.map2 ( && ) sliced read
 
 let env_of ~split ?(carried = 0) ?donated (p : Program.t) =
   {
@@ -843,12 +852,12 @@ let op_rig st (type r) (op : r Nx.Prim.t) =
       | Nx.Prim.Operands (Nx.Prim.Any x :: _) -> Pieces.rig_of (Nx.placement x)
       | Nx.Prim.Operands [] -> st.rig)
 
-(* [u], of [x]'s dtype, at the window [rs] of [x] that a move reads, each
-   start of an axis it does not keep whole a variable bound to that start: a
-   device's move of a window, and a kernel that reads it, is then the program
-   of every device's of its shape, wherever its window starts. A run binds a
-   variable by its name, which names its start and its bound: two windows of
-   one start along axes of other extents, as a mesh's, are two variables. *)
+(* [u], of [x]'s dtype, at the window [rs] of [x] that a move or a loop's
+   coordinates read ({!windows}), each start of an axis it does not keep whole
+   a variable, named by its bound, bound to that start: each device's call
+   passes its own start, so a device's move of a window, and a kernel that
+   reads it, is the program of every device's of its shape, wherever its
+   window starts. *)
 let moving x (rs : A.Move.range array) u =
   let s = Nx.shape x in
   let axis i (r : A.Move.range) =
@@ -857,7 +866,7 @@ let moving x (rs : A.Move.range array) u =
       let last = s.(i) - r.count in
       let v =
         Ops.variable
-          (Printf.sprintf "window%d_%d" r.start last)
+          (Printf.sprintf "window%d" last)
           (Tolk.Dtype.Value.of_int 0)
           (Tolk.Dtype.Value.of_int last)
       in

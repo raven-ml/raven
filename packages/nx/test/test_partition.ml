@@ -38,7 +38,9 @@ let empty (type v s e) (at : e Nx.Placement.t) (dt : (v, s) Nx.dtype) shape :
 
 let engine : Nx.Prim.engine =
   {
-    run = (fun ~by ?into:_ _ _ op -> Nx.Prim.eval ~by op);
+    run =
+      (fun ~by ?into:_ ~origin _ _ op ->
+        Nx.Prim.eval ~by (Nx.Prim.offset op origin));
     piece =
       (fun x j _ ->
         let s = Nx.Placement.devices (Nx.placement x) in
@@ -166,6 +168,12 @@ let law_on (type d) (s : d Nx.devices) c =
       ("cumsum", fun () -> Nx.cumsum ~axis:0 x);
       ("matmul", fun () -> Nx.matmul x w);
       ("take", fun () -> Nx.take ~axis:1 idx x);
+      (* Coordinates: each device reads its window's from its start. *)
+      ("argmax rows", fun () -> Nx.cast f32 (Nx.argmax ~axis:0 x));
+      ("argmax columns", fun () -> Nx.cast f32 (Nx.argmax ~axis:1 x));
+      ("tril", fun () -> Nx.tril x);
+      ( "eye",
+        fun () -> Nx.eye_at ~m:c.cols (Nx.placement x) f32 c.rows );
       ("place", fun () -> Nx.place (Nx.Placement.split ~axis:1 s) x);
     ]
   in

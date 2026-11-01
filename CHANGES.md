@@ -362,6 +362,15 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` over cut values compiles as many kernels whatever the number of
+  devices where a loop reads its window's coordinates (`Rune.lane_index`,
+  `Nx.tril`, `Nx.eye_at` at a cut placement, `Nx.argmax` along an axis no
+  device cuts): each device made kernels of its own. A fold, scan, gather or
+  scatter over a cut axis that reads positions, as `Nx.argmax` along it,
+  still does.
+- Under `Rune.vmap` over values cut along the mapped axis, `Rune.lane_index`'s
+  indices lie where the lanes' rows lie, cut as they are; they were whole on
+  every device.
 - `check_grads` and `check_transpose` write their values as the shortest
   decimal that reads back, the same text on every system: `-1000000` where
   they wrote `-1e+06`, or `-1e+006` under Windows.

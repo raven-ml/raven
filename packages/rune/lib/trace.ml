@@ -369,7 +369,7 @@ let claims st i = function
   | Add (_, x) -> st.kind = Tape && owns i x
   (* An abstract operator is recorded, to be filled in, whatever it reads. *)
   | Operator _ -> true
-  | (Lanes (a, _) | Lane_index (a, _)) when lanes_around st a = None -> false
+  | (Lanes (a, _) | Lane_index (a, _, _)) when lanes_around st a = None -> false
   | c ->
       st.kind = Jit || st.kind = Staged
       || List.exists (owned i) (operands c)
@@ -1254,6 +1254,14 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
            is inlined: the backward pass keeps all its values and runs no
            callback again. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
+    | Construct { c = Some (Lane_index (a, p, Some x)) }, Some i
+      when (st.kind = Body || st.kind = Tape) && owns i x ->
+        (* A body's or a tape's value is known to no handler outside: the
+           index passes outward by its placement alone, where the map answers
+           it as the trace runs. *)
+        Some
+          (fun k ->
+            Effect.Deep.continue k (Program.perform (Lane_index (a, p, None))))
     | Construct { c = Some c }, Some i when claims st i c ->
         Some (fun k -> Effect.Deep.continue k (answer st i c))
     | Construct { c = Some (Linear { apply = None; forms; _ }) }, Some _

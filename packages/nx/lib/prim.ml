@@ -1579,13 +1579,26 @@ let with_offsets (prog : P.t) (first : int array) =
 
 let starts w = Array.map (fun (r : Nx_array.Move.range) -> r.start) w
 
-let within : type r. r prim -> Nx_array.Move.range array -> r prim =
+let offset : type r. r prim -> int array -> r prim =
+ fun op origin ->
+  if Array.length origin = 0 then op
+  else
+    match op with
+    | Map m -> Map { m with prog = with_offsets m.prog origin }
+    | Reduce m -> Reduce { m with prog = with_offsets m.prog origin }
+    | Scan m -> Scan { m with prog = with_offsets m.prog origin }
+    | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
+    | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ ->
+        op
+
+let within : type r. r prim -> Nx_array.Move.range array -> r prim * int array
+    =
  fun op l ->
   let layout = L.contiguous (Route.extents l) in
   match op with
-  | Map m -> Map { m with layout; prog = with_offsets m.prog (starts l) }
-  | Reduce m -> Reduce { m with layout; prog = with_offsets m.prog (starts l) }
-  | Scan m -> Scan { m with layout; prog = with_offsets m.prog (starts l) }
+  | Map m -> (Map { m with layout }, starts l)
+  | Reduce m -> (Reduce { m with layout }, starts l)
+  | Scan m -> (Scan { m with layout }, starts l)
   | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
   | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ ->
       invalid_arg "Prim.within: not a loop"
@@ -1608,7 +1621,8 @@ let local_move (mv : Nx_array.Move.t) w : Nx_array.Move.t =
            rs)
   | Permute _ | Window _ -> mv
 
-let local : type r. r prim -> Nx_array.Move.range array -> r prim =
+let local : type r. r prim -> Nx_array.Move.range array -> r prim * int array
+    =
  fun op w ->
   (* A loop's window: the window of a load of its shape. *)
   let loop layout =
@@ -1618,12 +1632,13 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim =
         let r = loop_rule op [| L.rank layout |] in
         Route.window r ~operand:0 (Iarray.to_array (L.shape layout)) w
   in
+  let looped layout = within op (loop layout) in
   match op with
-  | Map m -> within op (loop m.layout)
-  | Reduce m -> within op (loop m.layout)
-  | Scan m -> within op (loop m.layout)
-  | Fold f -> Fold { f with shape = Route.extents w }
-  | Move (mv, x) -> Move (local_move mv w, x)
+  | Map m -> looped m.layout
+  | Reduce m -> looped m.layout
+  | Scan m -> looped m.layout
+  | Fold f -> (Fold { f with shape = Route.extents w }, [||])
+  | Move (mv, x) -> (Move (local_move mv w, x), [||])
   | Assemble a ->
       (* Each piece's region along an axis the window cuts, which every
          piece fills, fills the window's; the window holds any other
@@ -1638,11 +1653,12 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim =
             "Prim.local: an assembly cut along an axis a piece covers part of"
       in
       let piece (region, x) = (Iarray.mapi range region, x) in
-      Assemble
-        { a with shape = Route.extents w; pieces = List.map piece a.pieces }
+      ( Assemble
+          { a with shape = Route.extents w; pieces = List.map piece a.pieces },
+        [||] )
   | Gather _ | Scatter _ | Sort _ | Fft _ | Linalg _ | Contract _ | Copy _
   | Bitcast _ | Place _ | Check _ ->
-      op
+      (op, [||])
 
 (* A bitcast's layout and shape: one width keeps them; a narrower dtype appends
    an axis of the ratio, a wider one removes it where strides allow, and a

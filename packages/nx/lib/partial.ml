@@ -101,25 +101,27 @@ let tile_pieces runs (tile : M.range array) =
    over its operands' windows ({!Partition.windows}), which each operand
    holds there: by [eng]'s [run] where they lie on [p]'s one device, which
    builds no route. An operation that creates its values computes at [p]
-   too. The first result takes [into] where it is given. *)
+   too. The first result takes [into] where it is given. A loop computes
+   the window of its loop's shape that starts at [origin]. *)
 let at : type r d.
     Partition.engine ->
     by:string ->
     ?into:d Value.any ->
+    ?origin:int array ->
     unit Devices.placement ->
     r Value.prim ->
     r =
- fun eng ~by ?into p op ->
+ fun eng ~by ?into ?(origin = [||]) p op ->
   let layouts = Prim.layouts ~by op in
   if Grid.count (Devices.grid p) = 1 && Prim.lies_at p op then
-    eng.run ~by ?into p layouts op
+    eng.run ~by ?into ~origin p layouts op
   else
     let (Prim.Operands xs) = Prim.operands op in
     let operands =
       Array.of_list (List.map (fun (Value.Any x) -> Prim.placement x) xs)
     in
     let route = { Route.operands; result = p; compute = Windows } in
-    Partition.windows eng ~by ?into route layouts op
+    Partition.windows eng ~by ?into ~origin route layouts op
 
 (* [op] at [x]'s placement. *)
 let on eng ~by x op = at eng ~by (Prim.placement x) op
@@ -225,7 +227,8 @@ let terms (type d) eng ~by here layout (prog : P.t) o (D.Any term)
         Value.Map
           { layout; prog = one; outs = Value.[ term ]; loads; at = None }
       in
-      Value.Any (fst (at eng ~by here (Prim.within map w)))
+      let map, origin = Prim.within map w in
+      Value.Any (fst (at eng ~by ~origin here map))
 
 (* The mean of [n] terms from their sum [s], in the carrier, at [s]'s
    placement. *)
@@ -696,7 +699,8 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
     let op =
       Value.Reduce { layout; axes; prog; reductions = rs; loads = viewed j }
     in
-    at eng ~by (here j) (Prim.within op (loop j))
+    let op, origin = Prim.within op (loop j) in
+    at eng ~by ~origin (here j) op
   in
   let term o = P.dtype prog (Iarray.get prog.outs o) in
   let one (type a) (r : (d, a) Value.reduction) : a =
@@ -870,7 +874,8 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
       Value.Scan
         { layout; axis; prog; reduction; loads = viewed j; carry = None }
     in
-    at eng ~by (here j) (Prim.within op (win j))
+    let op, origin = Prim.within op (win j) in
+    at eng ~by ~origin (here j) op
   in
   (* [x]'s last element along the axis, as its slot of the stack. *)
   let last (type v s) j (x : (v, s, d) Value.t) : (v, s, d) Value.t =

@@ -121,6 +121,12 @@ module Placement = struct
   let without_leading_axis p =
     Devices.shift_axes ~by:"Nx.Placement.without_leading_axis"
       (Devices.uncut ~axis:0 p) (-1)
+
+  let leading_axis p =
+    Array.fold_left
+      (fun p (a, _) -> if a = 0 then p else Devices.uncut ~axis:a p)
+      p
+      (Grid.cuts (Devices.grid p))
 end
 
 module type Devices = sig
@@ -6775,6 +6781,7 @@ module Prim = struct
       'r 'd.
       by:string ->
       ?into:'d any ->
+      origin:int array ->
       unit Placement.t ->
       Nx_array.Layout.t array ->
       'r t ->
@@ -6809,6 +6816,7 @@ module Prim = struct
   }
 
   let partition = Eval.partition
+  let offset = Prim.offset
 
   let pieces p shape =
     let set = Devices.set p in

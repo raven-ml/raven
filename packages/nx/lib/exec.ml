@@ -618,9 +618,15 @@ let windows : type r.
    one result, if alone, is laid out C-contiguous from offset 0, as
    [windows] lays it. *)
 let run : type r d.
-    by:string -> ?into:d Value.any -> unit Devices.placement -> L.t array ->
-    r Value.prim -> r =
- fun ~by ?into p layouts op ->
+    by:string ->
+    ?into:d Value.any ->
+    origin:int array ->
+    unit Devices.placement ->
+    L.t array ->
+    r Value.prim ->
+    r =
+ fun ~by ?into ~origin p layouts op ->
+  let op = Prim.offset op origin in
   match (into, op) with
   | None, Value.Map { layout; outs; _ }
     when is_local op

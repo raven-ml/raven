@@ -173,7 +173,9 @@ and eqn =
 and construct =
   | Detach : ('v, 's, 'd) Nx.t -> construct
   | Lanes : axis * ('v, 's, 'd) Nx.t -> construct
-  | Lane_index : axis * 'd Nx.Placement.t -> construct
+  | Lane_index :
+      axis * 'd Nx.Placement.t * ('v, 's, 'd) Nx.t option
+      -> construct
   | Add : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> construct
   | Accumulate : {
       lanes : int;
@@ -362,7 +364,7 @@ let operands = function
   | Add (_, x) -> [ V x ]
   | Accumulate { running; x; _ } -> [ V running; V x ]
   | Emit (Emission e) -> Array.to_list e.values @ Option.to_list e.mask
-  | Lane_index _ -> []
+  | Lane_index (_, _, x) -> Option.to_list (Option.map (fun x -> V x) x)
   | Callback { args; _ } -> Array.to_list args
   | Scan { trips; init; xs; captures; seeds; _ } ->
       Option.to_list trips
@@ -514,7 +516,9 @@ let named p =
       (function
         | Op _ -> ()
         | Do { c; _ } ->
-            (match c with Lanes (a, _) | Lane_index (a, _) -> see a | _ -> ());
+            (match c with
+            | Lanes (a, _) | Lane_index (a, _, _) -> see a
+            | _ -> ());
             List.iter go (carried c))
       p.eqns
   in
@@ -607,7 +611,7 @@ let map_values m = Array.map (fun (V x) -> V (m.f x))
 let map_operands m = function
   | Detach x -> Detach (m.f x)
   | Lanes (a, x) -> Lanes (a, m.f x)
-  | Lane_index _ as c -> c
+  | Lane_index (a, p, x) -> Lane_index (a, p, Option.map m.f x)
   | Add (t, x) -> Add (t, m.f x)
   | Accumulate { lanes; running; x } ->
       Accumulate { lanes; running = m.f running; x = m.f x }
@@ -859,7 +863,7 @@ let rec forms = function
       match bound a with
       | Some n -> [| stacked n (form (V x)) |]
       | None -> no_map "Rune.lanes")
-  | Lane_index (_, placement) ->
+  | Lane_index (_, placement, _) ->
       [| F { dtype = Nx.int32; layout = contiguous [||]; placement } |]
   | Add _ -> [||]
   | Accumulate { running; _ } -> [| form (V running) |]
@@ -1954,7 +1958,7 @@ let rec mentions a (p : t) =
   Array.exists
     (function
       | Op _ -> false
-      | Do { c = Lanes (b, _) | Lane_index (b, _); _ } when same_axis a b ->
+      | Do { c = Lanes (b, _) | Lane_index (b, _, _); _ } when same_axis a b ->
           true
       | Do { c; _ } -> List.exists (mentions a) (carried c))
     p.eqns
@@ -2054,7 +2058,9 @@ let rec register names (p : t) =
           let (Operands xs) = Nx.Prim.operands op in
           List.iter (fun (Nx.Prim.Any x) -> see (V x)) xs
       | Do { c; _ } ->
-          (match c with Lanes (a, _) | Lane_index (a, _) -> axis a | _ -> ());
+          (match c with
+          | Lanes (a, _) | Lane_index (a, _, _) -> axis a
+          | _ -> ());
           List.iter see (operands c);
           List.iter (register names) (carried c))
     p.eqns;
@@ -2488,8 +2494,11 @@ and pp_construct names ~indent (p : t) ppf c =
         (probe_id e.probe) e.site e.lead values (Array.to_list e.values)
   | Lanes (a, x) ->
       Format.fprintf ppf "lanes of map %d %a" (map_number names a) value (V x)
-  | Lane_index (a, _) ->
+  | Lane_index (a, _, None) ->
       Format.fprintf ppf "lane_index of map %d" (map_number names a)
+  | Lane_index (a, _, Some x) ->
+      Format.fprintf ppf "lane_index of map %d beside %a" (map_number names a)
+        value (V x)
   | Add (_, x) -> Format.fprintf ppf "add %a" value (V x)
   | Accumulate { lanes = 0; running; x } ->
       Format.fprintf ppf "accumulate %a + %a" value (V running) value (V x)

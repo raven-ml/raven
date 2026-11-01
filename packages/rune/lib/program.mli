@@ -190,10 +190,16 @@ and construct =
       (** Every lane's operand stacked along a new axis 0, in the map named by
           the axis; one result. The map answers it where no tracer inside the
           map receives it. Its default raises [Invalid_argument]. *)
-  | Lane_index : axis * 'd Nx.Placement.t -> construct
+  | Lane_index :
+      axis * 'd Nx.Placement.t * ('v, 's, 'd) Nx.t option
+      -> construct
       (** The calling lane's index in the map named by the axis, one 0-d [int32]
-          result at the placement, which must cut no axis. It is answered as
-          [Lanes] is, and its default raises [Invalid_argument]. *)
+          result at the placement, which must cut no axis. Where the operand is
+          one of the map's lanes, the map places its lanes' indices where the
+          operand's rows lie. A body's or a tape's trace passes it outward
+          without an operand of its own, which no handler outside it knows. It
+          is answered as [Lanes] is, and its default raises
+          [Invalid_argument]. *)
   | Add : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> construct
       (** The operand added to a total no collect or tracer holds ({!add_to});
           no result. Its default does nothing. *)

@@ -65,15 +65,16 @@ val windows :
 val run :
   by:string ->
   ?into:'d Value.any ->
+  origin:int array ->
   unit Devices.placement ->
   Nx_array.Layout.t array ->
   'r Value.prim ->
   'r
-(** [run ~by ?into p layouts op] is {!windows}[ ~by p layouts op] over the
-    memory of [into]'s array. Without [into], a map whose loads lie beside
-    each other ({!is_local}), and whose one result, if alone, is laid out
-    C-contiguous from offset 0, computes by {!local}, which gives it the
-    same results. *)
+(** [run ~by ?into ~origin p layouts op] is {!windows}[ ~by p layouts
+    (Prim.offset op origin)] over the memory of [into]'s array. Without
+    [into], a map whose loads lie beside each other ({!is_local}), and whose
+    one result, if alone, is laid out C-contiguous from offset 0, computes by
+    {!local}, which gives it the same results. *)
 
 val eager : Partition.engine
 (** [eager] is the engine of eager execution. {!run} computes its

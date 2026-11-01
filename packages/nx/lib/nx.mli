@@ -253,6 +253,11 @@ module Placement : sig
       axes that cut the first axis hold copies. It is [p] itself where [p]
       cuts no axis. *)
 
+  val leading_axis : 'd t -> 'd t
+  (** [leading_axis p] is the placement of a 1-d value cut as [p] cuts its
+      first axis: the mesh axes that cut the others hold copies. It is [p]
+      itself where [p] cuts no axis but the first. *)
+
   (**/**)
 end
 
@@ -5630,14 +5635,19 @@ module Prim : sig
       'r 'd.
       by:string ->
       ?into:'d any ->
+      origin:int array ->
       unit Placement.t ->
       Nx_array.Layout.t array ->
       'r t ->
       'r;
-        (** [run ~by ~into here layouts op] is [op] at the one-device
-            placement [here], where every operand lies, its results laid
-            out as [layouts]. [into] is memory the first result may take;
-            an engine may ignore it. *)
+        (** [run ~by ~into ~origin here layouts op] is {!offset}[ op
+            origin] at the one-device placement [here], where every operand
+            lies, its results laid out as [layouts]. [origin] is the start
+            of the window of its loop's shape that a loop computes, [[||]]
+            where [op] needs no offset: a compiler may bind it when the
+            program runs, so that every device's loop is one program.
+            [into] is memory the first result may take; an engine may
+            ignore it. *)
     piece :
       'v 's 'd. ('v, 's, 'd) nx -> int -> 'd Placement.t -> ('v, 's, 'd) nx;
         (** [piece x j here] is [x]'s piece on the device at position [j] of
@@ -5701,6 +5711,13 @@ module Prim : sig
       Raises [Invalid_argument] naming [by] where [op]'s operands break its
       rule or its route, as eager execution raises, what [e]'s steps raise,
       and [Invalid_argument] for a [Check]. *)
+
+  val offset : 'r t -> int array -> 'r t
+  (** [offset op o] is the loop [op], a [Map], a [Reduce] or a [Scan], with
+      each [Coord c] of its programs read as [Coord c + o.(c)], for [o] of
+      the loop's rank: [op] over the window of its loop's shape that starts
+      at [o]. It is [op] where [o] is [[||]], and an operation other than a
+      loop is itself. *)
 
   val pieces :
     'd Placement.t ->
