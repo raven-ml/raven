@@ -23,11 +23,16 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
 - nx defines no derivative and no compiler. `Nx.Prim`'s interpretations
   give operations other meanings; rune answers nx through them from
   outside. nx's docs name rune's functions only as examples.
-- An operation computes where its operands lie and moves none of them.
-  `Nx.place` moves a value; a mismatch raises naming the `place` to write.
-  A fold over a cut axis moves only its partials; a product asked for its
-  sum (`~sum:true`) leaves one that `Nx.place` closes, and an operation not
-  linear in a sum raises.
+- An operation computes where its operands lie. `Nx.place` moves a value;
+  a mismatch raises naming the `place` to write. Between devices an
+  operation moves only bytes no placement could have put where they are
+  needed: a fold's partials and the parts of the result they close into,
+  which don't exist before the fold; positions, whose need depends on
+  their values; and on a set of mixed architectures, the result windows
+  one device computes and copies to the others. Anything a placement could
+  have arranged in advance is the user's `Nx.place`. A product asked for
+  its sum (`~sum:true`) leaves one that `Nx.place` closes, and an
+  operation not linear in a sum raises.
 - A set's kernels are fixed when `Nx.devices` mints it: nx.cpu for
   host-run devices, else none unless `~kernels` names a library. On a set
   without kernels a creation is made on the host and placed; every other

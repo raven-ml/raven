@@ -17,16 +17,19 @@
     on the host, at a placement with an [_at] form, or at another value's
     placement with a [_like] form ({!section-creation}).
 
-    An operation computes where its operands lie and moves none of them.
-    {!place} moves a value, and an operation whose operands do not lie
-    together raises, naming the {!place} to write ({!section-routing}). The
-    partial results of a reduction, a contraction, a scan, a gather or a
-    scatter's [Add] along a cut axis, the parts of the result they close
-    into, and a gather's or a scatter's positions are the only bytes an
-    operation moves between devices ({!section-reductions},
-    {!section-routing}). A contraction asked for its sum moves nothing: its
-    result is the devices' terms, which {!place} closes
-    ({!section-contraction}). *)
+    An operation computes where its operands lie. {!place} moves a value,
+    and an operation whose operands do not lie together raises, naming the
+    {!place} to write ({!section-routing}). Between devices an operation
+    moves only bytes that no placement of its operands could have put where
+    they are needed: the partial results of a reduction, a contraction, a
+    scan, a gather or a scatter's [Add] along a cut axis, and the parts of
+    the result they close into, which exist only once it computes; a
+    gather's or a scatter's positions, whose need depends on their values;
+    and, on a set of devices of several architectures, each window that
+    devices of several of them hold, which the devices of one compute and
+    copy to the others ({!section-reductions}, {!section-routing}). A
+    contraction asked for its sum moves nothing: its result is the devices'
+    terms, which {!place} closes ({!section-contraction}). *)
 
 (** {1:values Values}
 
