@@ -1577,7 +1577,9 @@ let kernel_of ast =
 
 let linearized ?beam ast (ren : Renderer.t) =
   let (_ : kernel_info) = kernel_of ast in
-  let optimize = Option.is_none (tag ast) in
+  let optimize =
+    match arg ast with Kernel { optimized; _ } -> not optimized | _ -> true
+  in
   let ast =
     graph_rewrite ~calls:Skip ~pass:Once ~ctx:ren ast
       (After_sources pm_lower_calls)

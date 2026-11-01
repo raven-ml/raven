@@ -325,14 +325,14 @@ let schedulers =
           let k = sum_rows_64 () in
           ignore (apply ~append_opt:false k upcast_4);
           equal (list Kernel_opts.opt) [] (K.applied_opts k));
-      test "get_optimized_ast names the kernel name_override" (fun () ->
+      test "get_optimized_ast names the kernel name_override, optimised"
+        (fun () ->
           let k = sum_rows_64 () in
           ignore (apply k upcast_4);
           let ast = K.get_optimized_ast ~name_override:"fused" k in
           equal string "fused" (info ast).name;
           equal (list Kernel_opts.opt) [ upcast_4 ] (info ast).applied_opts;
-          equal (option string) (Some "1")
-            (Option.map (Format.asprintf "%a" Ops.Tag.pp) (Ops.tag ast)));
+          equal bool true (info ast).optimized);
       test
         "convert_loop_to_global leaves a kernel for a renderer without locals"
         (fun () ->
@@ -432,7 +432,7 @@ let dispatch =
   let cpu = renderer "cpu" and metal = renderer "metal" in
   group "apply_opts"
     [
-      test "returns a kernel it has tagged as it is" (fun () ->
+      test "returns a kernel already optimised as it is" (fun () ->
           let optimized = Golden.sink "matmul_0.golden" in
           equal Uops.uop optimized
             (Postrange.apply_opts ~hand_coded:never_hand_coded optimized metal));

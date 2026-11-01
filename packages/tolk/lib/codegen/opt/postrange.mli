@@ -143,7 +143,8 @@ module Scheduler : sig
 
   val get_optimized_ast : ?name_override:string -> t -> Ops.t
   (** [get_optimized_ast ~name_override k] is [k]'s kernel with its argument
-      listing the applied optimisations, and tagged [1]. It is named
+      listing the applied optimisations and marking it optimised
+      ([optimized]). It is named
       [name_override], or else ["r"] for a kernel that reduces and ["E"]
       otherwise, followed by the sizes of its hardware indices and axes, each
       after an underscore. The name holds no colour. *)
@@ -169,7 +170,7 @@ val apply_opts :
     [ast]'s argument asks for, or else searches with [beam] if given, or else,
     unless the setting {!Setting.noopt} is set, [ast] already had optimisations
     applied, or it buffers values ({!Op.Stage}), applies [hand_coded]. A kernel
-    [ast] that is tagged is returned as it is.
+    [ast] already optimised ([optimized]) is returned as it is.
 
     Raises [Invalid_argument] if an optimisation asked for does not apply, with
     the reason {!Scheduler.apply_opt} gives. *)

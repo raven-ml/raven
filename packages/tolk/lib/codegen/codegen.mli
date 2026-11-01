@@ -83,8 +83,9 @@ val to_program :
 (** [to_program ~beam ast ren] is the program of [ast] for [ren]: an
     {!Op.Program} whose argument is its {!Ops.program_info} for [ren]'s target,
     and whose sources are:
-    + the lowered sink ({!full_rewrite_to_sink}, optimised unless [ast] is
-      tagged), whose kernel information holds the program's cost estimates
+    + the lowered sink ({!full_rewrite_to_sink}, optimised unless [ast]'s
+      kernel information is [optimized]), whose kernel information holds the
+      program's cost estimates
       ({!Renderer.Estimates.of_uops}, not counting index arithmetic);
     + an {!Op.Linear} of the instructions: the sink linearized
       ({!Linearizer.linearize}), gated stores made conditional

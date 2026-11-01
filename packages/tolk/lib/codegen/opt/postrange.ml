@@ -842,14 +842,15 @@ module Scheduler = struct
           k_type ^ String.concat "_" (("" :: special_ops) @ axes)
     in
     replace k.ast
-      ~arg:(Kernel (kernel_info ~name ~applied_opts:k.applied_opts ()))
-      ~tag:(Some (Tag.Int 1))
+      ~arg:
+        (Kernel
+           (kernel_info ~name ~applied_opts:k.applied_opts ~optimized:true ()))
 end
 
 let apply_opts ?beam ~hand_coded ast ren =
-  if Option.is_some (tag ast) then ast
+  let info = match arg ast with Kernel i -> Some i | _ -> None in
+  if Option.exists (fun (i : kernel_info) -> i.optimized) info then ast
   else
-    let info = match arg ast with Kernel i -> Some i | _ -> None in
     let k = Scheduler.v ast ren in
     Scheduler.convert_loop_to_global k;
     let k =

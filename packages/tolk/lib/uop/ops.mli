@@ -181,6 +181,9 @@ type kernel_info = {
       (** The optimisations to apply, or [None] to choose them. *)
   estimates : estimates option;  (** The kernel's cost. *)
   beam : int;  (** The beam width to search optimisations with, or [0]. *)
+  optimized : bool;
+      (** Whether the kernel went through the optimiser, which then leaves it
+          as it is. *)
   split : split option;  (** The loop its launch splits, if any. *)
 }
 (** The type for the arguments of a kernel's {!Op.Sink}. *)
@@ -191,12 +194,13 @@ val kernel_info :
   ?opts_to_apply:Opt.t list ->
   ?estimates:estimates ->
   ?beam:int ->
+  ?optimized:bool ->
   ?split:split ->
   unit ->
   kernel_info
 (** [kernel_info ()] is the argument with these fields. [name] defaults to
-    ["test"], the lists to [[]] and [None], [beam] to [0] and [split] to [None].
-*)
+    ["test"], the lists to [[]] and [None], [beam] to [0], [optimized] to
+    [false] and [split] to [None]. *)
 
 val function_name : kernel_info -> string
 (** [function_name k] is [k.name] as an identifier

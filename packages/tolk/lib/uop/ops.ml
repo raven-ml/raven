@@ -244,6 +244,7 @@ and kernel_info = {
   opts_to_apply : Opt.t list option;
   estimates : estimates option;
   beam : int;
+  optimized : bool;
   split : split option;
 }
 
@@ -324,6 +325,7 @@ let equal_kernel_info (k0 : kernel_info) (k1 : kernel_info) =
   && Option.equal (List.equal Opt.equal) k0.opts_to_apply k1.opts_to_apply
   && Option.equal equal_estimates k0.estimates k1.estimates
   && Int.equal k0.beam k1.beam
+  && Bool.equal k0.optimized k1.optimized
   && Option.equal equal_split k0.split k1.split
 
 let equal_program_info (p0 : program_info) (p1 : program_info) =
@@ -767,12 +769,12 @@ and repr_estimates (e : estimates) =
 and repr_kernel_info (k : kernel_info) =
   strf
     "KernelInfo(name=%s, applied_opts=%s, opts_to_apply=%s, estimates=%s, \
-     beam=%d, split=%s)"
+     beam=%d, optimized=%s, split=%s)"
     (repr_string k.name)
     (repr_tuple (List.map repr_opt k.applied_opts))
     (repr_option (fun l -> repr_tuple (List.map repr_opt l)) k.opts_to_apply)
     (repr_option repr_estimates k.estimates)
-    k.beam
+    k.beam (repr_bool k.optimized)
     (repr_option
        (fun s ->
          repr_tuple
@@ -3197,8 +3199,8 @@ let unbound_outputs c =
 (* Programs *)
 
 let kernel_info ?(name = "test") ?(applied_opts = []) ?opts_to_apply ?estimates
-    ?(beam = 0) ?split () =
-  { name; applied_opts; opts_to_apply; estimates; beam; split }
+    ?(beam = 0) ?(optimized = false) ?split () =
+  { name; applied_opts; opts_to_apply; estimates; beam; optimized; split }
 
 let function_name (k : kernel_info) = Helpers.to_function_name k.name
 

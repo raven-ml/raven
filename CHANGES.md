@@ -798,6 +798,9 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `Ops.kernel_info` has `optimized`, which
+  `Postrange.Scheduler.get_optimized_ast` sets and `Postrange.apply_opts` and
+  `Codegen.linearize` read, where the optimiser tagged the kernel's sink `1`.
 - **Breaking:** a program takes its parameters in slot order, buffers and
   scalars interleaved. `Ops.program_info.vars` is `params`, every parameter by
   slot; `Shape.kernel_params` is the order a kernel takes them;
