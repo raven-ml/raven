@@ -94,7 +94,11 @@ raven / llama.cpp (Vulkan; ROCm):
   float64 sines over 1024 values take 8 lanes, run 4.5x as fast, and compile
   in 2.2 s against 1.4 s without lanes. Done when an A/B on fudge of
   `trig/sin-nested-8` and the `compiled` suite's sine rows decides whether a
-  kernel's size bounds its lanes
+  kernel's size bounds its lanes. Masked axes upcast to up to 49 lanes give
+  Clang straight-line blocks whose instruction scheduling takes seconds:
+  rune's test_iterate case (float64 [4;2;2] over 3 lanes, a deep step)
+  becomes a fully unrolled 48-lane kernel, 4.8 s in Clang and 12.8 s with
+  `-march=x86-64`
 - a compile on 10 domains takes about twice the CPU of one domain. At load
   25-40 on the M1 Max, a jera tsit5 solve of y'' = -sin y took 18 s of CPU on
   10 domains, 8.9 s on 1 and 10 s on 10 with `OCAMLRUNPARAM=s=4M`; of
@@ -142,7 +146,9 @@ raven / llama.cpp (Vulkan; ROCm):
   a 5 KB r_32_32 kernel, max |x| over `where (i >= j) x xᵀ` at 32x32,
   renders as 32-lane float selects of transposed loads that clang -O2
   takes over 2 min on
-- compile time and launch counts: a NUTS program takes 9-14 s to build, a
+- compile time and launch counts: NUTS on eight_schools lowers to 464
+  kernels, 187 of them scalar, 27 CPU-s cold to compile against 2 CPU-s to
+  run; a NUTS program takes 9-14 s to build, a
   ymir aperture gradient 98 s cold; loop bodies store each carry and row in
   its own kernel (drawing-scan-256: 6 per trip against 2). Multi-output
   fusion of loop bodies
