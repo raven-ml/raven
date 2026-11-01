@@ -34,6 +34,7 @@ external open_path : string -> int -> int -> int * int * string
   = "caml_rig_disk_open"
 
 external close : int -> unit = "caml_rig_disk_close"
+external remove : string -> bool = "caml_rig_disk_remove"
 external sync : int -> unit = "caml_rig_disk_sync"
 
 external pread :
@@ -555,8 +556,9 @@ let open_file path mode n =
            descriptor. It may be asynchronous, such as a Gc.Memprof callback's
            that the open's own allocations deferred, or a drain's that [of_io]
            ran, which no buffer of the file survives. Nothing polls between
-           the open and the handler, or in the handler before the removal;
-           only [Sys.remove]'s copy of the path can fail there, with
+           the open and the handler, or in the handler before the removal,
+           whose wait runs no pending signal's handler, as Sys.remove's would
+           on Windows: only its copy of the path can fail there, with
            Out_of_memory. The removal comes first, which Windows admits: the
            disk opens files shared for deletion. *)
         let writable = mode <> read_mode in
@@ -573,8 +575,7 @@ let open_file path mode n =
         with
         | b -> b
         | exception e ->
-            (if mode = create_mode then
-               try Sys.remove path with Sys_error _ -> ());
+            if mode = create_mode then ignore (remove path : bool);
             let f = !taken in
             if f == ring then close fd else locked close_fd f;
             reraise e)

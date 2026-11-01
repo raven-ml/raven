@@ -516,6 +516,27 @@ value caml_rig_disk_close(value v_handle) {
   return Val_unit;
 }
 
+/* [remove path] removes the file at [path], and is whether it did. Releases
+   the runtime without running a pending signal's handler, as Sys.remove's
+   wait does on Windows, where no mask blocks a Ctrl-C: the handler of an
+   exception that created the file removes it first. */
+value caml_rig_disk_remove(value v_path) {
+  CAMLparam1(v_path);
+  int removed;
+#ifdef _WIN32
+  wchar_t *p = caml_stat_strdup_to_utf16(String_val(v_path));
+  caml_enter_blocking_section_no_pending();
+  removed = DeleteFileW(p) != 0;
+#else
+  char *p = caml_stat_strdup(String_val(v_path));
+  caml_enter_blocking_section_no_pending();
+  removed = unlink(p) == 0;
+#endif
+  caml_leave_blocking_section();
+  caml_stat_free(p);
+  CAMLreturn(Val_bool(removed));
+}
+
 /* [sync h] returns once the bytes written to the file [h] are ordered before
    every later change to the file system, across a crash. Releases the
    runtime. */
