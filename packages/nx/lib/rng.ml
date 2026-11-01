@@ -853,7 +853,10 @@ let gamma ?key a =
    scaled by [s = min a b] before they meet: [(s/b) q_b - (s/a) q_a] is finite,
    and its quotient by [s] is [d]'s shift, an infinity only where the draw is 0
    or 1. The quotient is a division, where [q · (1 / s)] would make NaN of a
-   zero [q]. *)
+   zero [q]. A draw that would round to 0 or 1 is the nearest value of [dt]
+   inside (0, 1), its least positive value or its predecessor of 1, both
+   values of the compute dtype too, so the one rounding keeps them: a
+   draw's complement [1 - x] is then never 0. *)
 let beta_programs = programs ()
 
 let beta ?key a b =
@@ -874,7 +877,11 @@ let beta ?key a b =
         let least = E.minimum a b in
         let shift = E.(((least / b * qb) - (least / a * qa)) / least) in
         let d = E.(lb - la + shift) in
-        rounded dt E.(lit 1. / (lit 1. + exp d)))
+        let f = D.float_format dt in
+        let least = lit (f.min_normal *. f.epsilon) in
+        let below_one = lit (1. -. (f.epsilon /. 2.)) in
+        rounded dt
+          E.(minimum (maximum (lit 1. / (lit 1. + exp d)) least) below_one))
   in
   let key = resolve ~by (Prim.placement a) key in
   draw ~by ~params:[| Value.Any a; Value.Any b |] key dt s prog

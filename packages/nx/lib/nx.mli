@@ -4602,12 +4602,15 @@ module Rng : sig
 
   val beta :
     ?key:'d key -> (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
-  (** [beta a b] is beta draws on [[0, 1]] of concentrations [a] and [b],
+  (** [beta a b] is beta draws on [(0, 1)] of concentrations [a] and [b],
       elementwise over their broadcast shape: [G(a) / (G(a) + G(b))] for two
       independent {!gamma} draws, formed from their logarithms so that two draws
       that underflow keep their ratio. Draw [j] in C order is formed from the
       draws [2j] and [2j + 1] that {!gamma} gives from its key over [a] and [b]
-      interleaved. It inherits {!gamma}'s rounds.
+      interleaved. A draw that would round to [0.] or [1.] is the nearest value
+      inside: the dtype's least positive value, or the largest below [1.], so
+      neither a draw nor [1 - x] is ever [0.]. It inherits {!gamma}'s
+      rounds.
 
       Raises [Invalid_argument] if the shapes do not broadcast or an element of
       [a] or [b] is outside [(0, inf)]. *)

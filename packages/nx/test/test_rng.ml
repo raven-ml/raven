@@ -1411,9 +1411,9 @@ let rejection =
           at_most float_exact ~than:1. !worst);
       (* Beta(a, b) has mean a / (a + b) and variance a b / ((a + b)² (a + b +
          1)). At the least positive concentrations both gammas underflow and a
-         draw is 0 or 1, each with probability 1/2, from the logarithms of
-         their shifts. *)
-      prop ~count:few "beta: in [0, 1], mean a / (a + b)"
+         draw is the least positive value or the largest below 1, each with
+         probability 1/2, from the logarithms of their shifts. *)
+      prop ~count:few "beta: in (0, 1), mean a / (a + b)"
         (Gen.triple keys wide
            (Gen.of_list
               ~pp:(fun ppf (a, b) ->
@@ -1430,11 +1430,26 @@ let rejection =
           let a = at dt a and b = at dt b in
           let xs = read (Rng.beta ~key:k (full dt a) (full dt b)) in
           Array.iter
-            (fun x -> if not (x >= 0. && x <= 1.) then failf "draw %g" x)
+            (fun x -> if not (x > 0. && x < 1.) then failf "draw %h" x)
             xs;
           let s = a +. b in
           let var = a /. s *. (b /. s) /. (s +. 1.) in
           near ~var (a /. s) (mean xs));
+      (* At float32 about one Beta(4.5, 0.5) draw in 1800 lay within half an
+         ulp of 1, and rounded to it: each draw lies inside (0, 1), as does
+         each of its mirror Beta(0.5, 4.5), at every narrow format too. *)
+      prop ~count:few "beta never draws 0 or 1"
+        (Gen.pair keys
+           (Gen.of_list ~pp:pp_dtype
+              [ F Nx.float32; F Nx.float16; F Nx.bfloat16 ]))
+        (fun (k, F dt) ->
+          let m = 200_000 in
+          let ones v = host_of dt [| m |] (Array.make m v) in
+          let xs = read (Rng.beta ~key:k (ones 4.5) (ones 0.5)) in
+          let ys = read (Rng.beta ~key:k (ones 0.5) (ones 4.5)) in
+          Array.iter
+            (fun x -> if not (x > 0. && x < 1.) then failf "draw %h" x)
+            (Array.append xs ys));
       test "beta over parameters that both broadcast is beta over their join"
         (fun () ->
           let a = host_of Nx.float64 [| 2; 1 |] [| 0.5; 4. |] in

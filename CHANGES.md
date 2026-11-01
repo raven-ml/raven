@@ -3283,6 +3283,8 @@ thread.
 
 ### Nx
 
+- `Rng.beta` draws inside `(0, 1)`: a draw that rounded to `0.` or `1.` is the
+  dtype's least positive value or the largest below `1.`.
 - `Nx_ragged.take` costs one int64 write, one scan and one gather per value
   it copies, where it built each value's position from `Nx.positions`, an
   `arange`, an add and a second gather. Talon's joins, which take their
