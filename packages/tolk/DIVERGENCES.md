@@ -4632,3 +4632,28 @@ fold wraps integers and holds its float bound`, hold.
 - **Pinned by:** `Tolk_engine › runs › a schedule linked per run holds no
   storage between runs` and `a run keeps none of the buffers it was given`;
   rune's `fully sharded` tests, whose shares are exact after a step.
+
+## D174. A kernel's call bodies are functions of its own source on every target
+
+- **tinygrad:** `codegen/__init__.py:402-416` (`LowerCallsCtx`, `lower_call`), which lowers a
+  call's body to a program of its own (`to_program`) unless the renderer has
+  an `inline_prefix`, and `renderer/cstyle.py:72-75,283-292` (`render`),
+  which declares such a program `extern` and calls it through its argument
+  structure; `engine/realize.py:106-112` (`get_runtime`), which links it at
+  load time by name (`runtime/support/elf.py`, `link_syms`). Only HIP has an
+  `inline_prefix` (`renderer/cstyle.py:514`).
+- **tolk:** `Codegen.lower_call`, which lowers every body to the lines of a
+  function of the calling kernel, and `Cstyle.render`, which writes it
+  `static inline` with the language's `inline_prefix` (`""` for Clang, Metal
+  and CUDA, HIP's for HIP).
+- **Differs:** a body called inside a kernel is inlined into the kernel's
+  source on every target, as tinygrad does on HIP alone. tinygrad compiles it
+  apart on Clang, Metal and CUDA and links the two binaries when it loads the
+  kernel.
+- **Reason:** (c): rig links a host object only against symbols of the process
+  (`Rig.section-host_linking`: each symbol the object refers to and does not
+  define is defined by the process), and loads each GPU image alone, so a
+  kernel that refers to another program's symbol does not load. Which layer
+  links programs to programs is a design pass for engine and rig.
+- **Pinned by:** `Tolk.Codegen › calls in a kernel`, whose kernels run on the
+  host with their bodies inlined.

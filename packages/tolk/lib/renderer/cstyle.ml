@@ -86,7 +86,7 @@ type lang = {
   type_map : (Dtype.t * string) list;
   infinity : string;
   nan : string;
-  fn_prefix : string; (* the qualifier of a call body's function *)
+  inline_prefix : string; (* the qualifier of a call body's function *)
   bitcast : string -> string -> string -> string;
       (* [bitcast t s x] reads [x], of type [s], as a [t] *)
   promoted : Dtype.t list; (* scalars whose operations compute wider *)
@@ -101,7 +101,6 @@ and ctx = {
   r : string Tbl.t;
   narrowed : unit Tbl.t; (* the inlined operations cast to their type *)
   masks : int Tbl.t; (* the lane width of each mask, in bytes *)
-  fn_names : string Tbl.t; (* the function of each call body *)
 }
 
 let ( .%{} ) ctx u =
@@ -239,6 +238,13 @@ let int_const ctx x (v : Dtype.value) =
       | Uint8 | Uint16 -> strf "(%s)" (render_cast ctx x (s ^ "u"))
       | Int8 | Int16 -> strf "(%s)" (render_cast ctx x s)
       | _ -> s)
+
+
+(* The function of a call body: the name its lowering gave it. *)
+let body_name body =
+  match arg body with
+  | String s -> s
+  | _ -> invalid_arg "a call body without its name"
 
 let base_rewrite =
   let r = rule_ctx in
@@ -439,7 +445,7 @@ let base_rewrite =
             strf "(%s)%s" (param_type ctx.lang p) ctx.%{nth x (slot + 1)}
           in
           Some
-            (strf "%s(%s);" (Tbl.find ctx.fn_names body)
+            (strf "%s(%s);" (body_name body)
                (String.concat ", "
                   (List.map arg (List.sort by_slot params)))));
       (* custom passes through with format *)
@@ -737,7 +743,7 @@ let cstyle =
         ];
     infinity = "INFINITY";
     nan = "NAN";
-    fn_prefix = "";
+    inline_prefix = "";
     bitcast = strf "__builtin_bit_cast(%s, (%s)(%s))";
     promoted = Dtype.[ Int8; Int16 ];
     vector_names = [];
@@ -838,11 +844,11 @@ let special_name u =
   | String s -> s
   | _ -> invalid_arg "a SPECIAL without its name"
 
-let render_uops ~fn_names l uops =
+let render_uops l uops =
   let r = Tbl.create 256 and child_count = Tbl.create 256 in
   let user = Tbl.create 256 in
   let masks = mask_widths uops in
-  let ctx = { lang = l; r; narrowed = Tbl.create 16; masks; fn_names } in
+  let ctx = { lang = l; r; narrowed = Tbl.create 16; masks } in
   let children u = Option.value (Tbl.find_opt child_count u) ~default:0 in
   List.iter
     (fun u ->
@@ -981,52 +987,43 @@ let render_uops ~fn_names l uops =
    sources, and hold every node but the bodies of calls, which the walk enters
    at their call. *)
 let callees uops =
-  let externs = ref [] and bodies = ref [] in
+  let found = ref [] in
   let rec scan us = List.iter (fun u -> if is Op.Call u then enter (nth u 0)) us
   and enter callee =
-    match (op callee, arg callee) with
-    | Op.Custom_function, Custom_function f -> externs := f.name :: !externs
-    | Op.Linear, _ when not (List.memq callee !bodies) ->
-        scan (src callee);
-        bodies := callee :: !bodies
-    | _ -> ()
+    if not (List.memq callee !found) then
+      match op callee with
+      | Op.Custom_function -> found := callee :: !found
+      | Op.Linear ->
+          scan (src callee);
+          found := callee :: !found
+      | _ -> ()
   in
   scan uops;
-  (dedup (List.rev !externs), List.rev !bodies)
+  List.rev !found
 
-(* The program declares the external functions it calls, which it links
+(* The program declares each external function it calls, which it links
    against, and defines a function for each call body, after the bodies it
-   calls; a body traced again with other arguments takes a numbered name. *)
+   calls. *)
 let render render_kernel l uops =
-  let externs, bodies = callees uops in
-  let fn_names = Tbl.create 8 in
-  let define (bodies, fns) body =
-    let base =
-      match arg body with
-      | String s -> s
-      | _ -> invalid_arg "a call body without its name"
-    in
-    let same b = equal_arg (arg b) (arg body) in
-    let n = List.length (List.filter same bodies) in
-    let name = if n = 0 then base else strf "%s_%d" base n in
-    Tbl.replace fn_names body name;
-    let _, lines, bufs = render_uops ~fn_names l (src body) in
-    let params =
-      List.map (fun (n, p) -> strf "%s %s" (param_type l p) n) bufs
-    in
-    let fn =
-      strf "static inline %s void %s(%s) {\n%s\n}" l.fn_prefix name
-        (String.concat ", " params)
-        (String.concat "\n" lines)
-    in
-    (body :: bodies, fn :: fns)
+  let callees = callees uops in
+  let declare callee =
+    match arg callee with
+    | Custom_function f -> strf "extern void %s();" f.name
+    | _ ->
+        let _, lines, bufs = render_uops l (src callee) in
+        let params =
+          List.map (fun (n, p) -> strf "%s %s" (param_type l p) n) bufs
+        in
+        strf "static inline %s void %s(%s) {\n%s\n}" l.inline_prefix
+          (body_name callee)
+          (String.concat ", " params)
+          (String.concat "\n" lines)
   in
-  let bodies, fns = List.fold_left define ([], []) bodies in
-  let name, kernel, bufs = render_uops ~fn_names l uops in
-  let externs = List.map (strf "extern void %s();") externs in
-  let prefix = match externs @ List.rev fns with [] -> None | p -> Some p in
+  let name, kernel, bufs = render_uops l uops in
+  let prefix = match List.map declare callees with [] -> None | p -> Some p in
+  let bodies = List.filter (is Op.Linear) callees in
   render_kernel ?prefix l ~name kernel bufs
-    (List.concat_map src (List.rev bodies) @ uops)
+    (List.concat_map src bodies @ uops)
 
 (* Metal and CUDA write a prefix of their own in place of the one [render]
    gives: the functions a kernel calls are Clang's and HIP's alone. *)
@@ -1898,7 +1895,7 @@ let hip_lang arch =
           ];
     smem_prefix = "__attribute__((shared, aligned(16)))";
     smem_prefix_for_cast = false;
-    fn_prefix = "__attribute__((device))";
+    inline_prefix = "__attribute__((device))";
     barrier =
       "__builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");"
       ^ "__builtin_amdgcn_s_barrier();"

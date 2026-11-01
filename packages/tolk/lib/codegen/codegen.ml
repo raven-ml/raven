@@ -1292,63 +1292,63 @@ let line_rewrite lst m ctx =
       lines)
     lst
 
-(* Each call's body is lowered once: a domain that asks for one being lowered
-   waits for it rather than lowering it again. *)
-let lowered_bodies = Helpers.Memo.create ()
+(* A call of a sink or of a program inside a kernel runs its body as code of
+   the kernel's program: the body, its own calls lowered first, becomes the
+   list of its lines, a sink's lowered alone and unoptimised, which the
+   renderer writes as a function of the kernel's program. The function is
+   named as its call, numbered where other bodies of the kernel take that
+   name: [names] holds each name's bodies in the order the kernel meets them.
+   A program already compiled to a binary is called as it is. *)
+type lower_ctx = { ren : Renderer.t; names : (string, t list) Hashtbl.t }
 
-(* The key of a call's body: the body, the renderer and its target, the table
-   of its compiler's binaries, which names the compiler and its options, every
-   setting and variable that shapes what compilation makes
-   ([Setting.shaping]), and the digest of this library's sources, of which a
-   body's lines are a function. *)
-let body_key ast (ren : Renderer.t) =
-  String.concat "\n"
-    ([
-       Source_digest.digest;
-       key ast;
-       ren.name;
-       Format.asprintf "%a" Helpers.Target.pp ren.target;
-       Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
-     ]
-    @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
-
-(* A call of a sink inside a kernel runs its body as code of the kernel's
-   program: the body, its own calls lowered first, is lowered alone and
-   unoptimised, and becomes the list of its lines, named as its call, which the
-   renderer writes as a function of the kernel's program. A body is lowered
-   once per renderer and settings, whatever its call's name. *)
 let lower_calls = ref (Pattern_matcher.v (fun () -> []))
 
-let lower_call ren call =
-  let name =
-    match arg call with
-    | Call { name = Some n; _ } -> Helpers.to_function_name n
-    | _ -> invalid_arg "a call inside a kernel needs a name"
-  in
-  let lower () =
-    let body =
-      graph_rewrite ~calls:Skip ~pass:Once ~ctx:ren (body call)
-        (After_sources !lower_calls)
+let rec index_of b i = function
+  | [] -> None
+  | x :: _ when x == b -> Some i
+  | _ :: rest -> index_of b (i + 1) rest
+
+let numbered ctx name b =
+  let bodies = Option.value (Hashtbl.find_opt ctx.names name) ~default:[] in
+  match index_of b 0 bodies with
+  | Some 0 -> name
+  | Some i -> Printf.sprintf "%s_%d" name i
+  | None ->
+      Hashtbl.replace ctx.names name (bodies @ [ b ]);
+      if bodies = [] then name
+      else Printf.sprintf "%s_%d" name (List.length bodies)
+
+let lower_call ctx call b =
+  let binary = List.exists (is Op.Binary) (src b) in
+  if op b = Op.Program && binary then None
+  else
+    let name =
+      match arg call with
+      | Call { name = Some n; _ } ->
+          numbered ctx (Helpers.to_function_name n) b
+      | _ -> invalid_arg "a call inside a kernel needs a name"
     in
-    let body = full_rewrite_to_sink ~optimize:false body ren in
-    v Op.Linear
-      ~src:
-        (line_rewrite
-           (Linearizer.linearize body)
-           (pm_linearize_cleanups ++ pm_alloc_to_buf)
-           ())
-  in
-  let key = body_key (body call) ren in
-  let body = Helpers.Memo.get lowered_bodies key lower in
-  replace call ~src:(replace body ~arg:(String name) :: src_without_body call)
+    let b =
+      graph_rewrite ~calls:Skip ~pass:Once ~ctx b (After_sources !lower_calls)
+    in
+    let lines =
+      if op b = Op.Program then src (nth b 1)
+      else
+        Linearizer.linearize (full_rewrite_to_sink ~optimize:false b ctx.ren)
+    in
+    let lines =
+      line_rewrite lines (pm_linearize_cleanups ++ pm_alloc_to_buf) ()
+    in
+    let body = v Op.Linear ~src:lines ~arg:(String name) in
+    Some (replace call ~src:(body :: src_without_body call))
 
 let pm_lower_calls =
   pm (fun () ->
       [
         rule_ctx
           (Upat.op Op.Call ~name:"call" ~allow_any_len:true
-             ~src:[ Upat.op Op.Sink ])
-          (fun ren m -> Some (lower_call ren (m "call")));
+             ~src:[ Upat.v ~op:(ops [ Op.Sink; Op.Program ]) ~name:"b" () ])
+          (fun ctx m -> lower_call ctx (m "call") (m "b"));
       ])
 
 (* A body's calls are lowered by the same rule; set once, when the module is
@@ -1514,8 +1514,9 @@ let kernel_of ast =
 let linearized ?beam ast (ren : Renderer.t) =
   let optimize = not (kernel_of ast).optimized in
   let ast =
-    graph_rewrite ~calls:Skip ~pass:Once ~ctx:ren ast
-      (After_sources pm_lower_calls)
+    graph_rewrite ~calls:Skip ~pass:Once
+      ~ctx:{ ren; names = Hashtbl.create 8 }
+      ast (After_sources pm_lower_calls)
   in
   let full_sink = full_rewrite_to_sink ~optimize ?beam ast ren in
   let info = program_info_of_sink ~target:ren.target full_sink in
