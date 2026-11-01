@@ -178,6 +178,9 @@ raven / llama.cpp (Vulkan; ROCm):
   weight of the same shape runs at 1.39 TFLOPS holding one row per thread.
   Decide with D89's matrix-vector layout, by tinygrad's heuristic at HEAD
   and a fudge bench row
+- D176 (selection and negation fold a NaN bitwise) has no rune pin: add
+  one to rune's `Lower_arith` suite, a signalling NaN through a compiled
+  select and negation keeping its bits
 - folds of `Log2`, `Exp2` and `Pow` use the host's C library, so a folded
   constant can differ between macOS and Linux; D150 made the sine fold
   correctly rounded for that reason. Do the same for these, or state why a
