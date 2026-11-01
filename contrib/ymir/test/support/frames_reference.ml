@@ -17,29 +17,29 @@ let orientations = [
 ]
 
 (* pyerfa's ecm06 at J2000 TT, row-major. *)
-let ecm06_j2000 = [| 0x1.fffffffffffcbp-1; -0x1.30037d6267514p-24; 0x1.5a03026ad0b89p-24; 0x1.1a9546e9bfe15p-25; 0x1.d5c037bd4c5ffp-1; 0x1.9752da8eda502p-2; -0x1.b663a4c38f2b4p-24; -0x1.9752da8eda4a9p-2; 0x1.d5c037bd4c5e5p-1 |]
+let ecm06_j2000 = [| 0x1.fffffffffffcbp-1; -0x1.30037d6267512p-24; 0x1.5a03026ad0b89p-24; 0x1.1a9546e9bfe13p-25; 0x1.d5c037bd4c5ffp-1; 0x1.9752da8eda501p-2; -0x1.b663a4c38f2b3p-24; -0x1.9752da8eda4a9p-2; 0x1.d5c037bd4c5e6p-1 |]
 
 (* ICRS (ra, dec) in degrees and astropy's Galactic unit vector. *)
 let astropy_galactic = [
   (0., 0., [| -0x1.c18a98671b359p-5; 0x1.f9f7d3058d094p-2; -0x1.bc3ebc6954ab9p-1 |]);
-  (0x1.4e883126e978dp+6, 0x1.603b645a1cac1p+4, [| -0x1.fbc849e7ede47p-1; -0x1.43cd95786030ap-4; -0x1.9cd1916ed3b78p-4 |]);
-  (0x1.0a67ae147ae14p+8, -0x1.cef9db22d0e56p+4, [| 0x1.fffffffff5619p-1; 0x1.6ff006356409ap-19; 0x1.88ef5d54ca385p-20 |]);
-  (0x1.81b80dc33721dp+7, 0x1.b20d4fdf3b646p+4, [| 0x1.b097e11b1a3e3p-25; -0x1.2e58c6fc0233fp-26; 0x1.ffffffffffff3p-1 |]);
-  (0x1.55e81450efdcap+3, 0x1.4a274299d883cp+5, [| -0x1.ecef5e7387f80p-2; 0x1.976123c86b5a0p-1; -0x1.7882499ffb511p-2 |]);
-  (0x1.2bde353f7ced9p+8, 0x1.45df3b645a1cbp+5, [| 0x1.e6672494c5695p-3; 0x1.eeb157709ba30p-1; 0x1.9ac37f9bc8ef7p-4 |]);
-  (0x1.2c00000000000p+7, -0x1.e000000000000p+5, [| 0x1.cb9aa58a9c1b3p-3; -0x1.f1b2fb169cce7p-1; -0x1.19677845298f7p-4 |]);
-  (0x1p+0, 0x1.6600000000000p+6, [| -0x1.f00e04b2034f6p-2; 0x1.809ceb653d9d0p-1; 0x1.cb20620203095p-2 |]);
+  (0x1.4e883126e978dp+6, 0x1.603b645a1cac1p+4, [| -0x1.fbc849e7ede47p-1; -0x1.43cd95786030ap-4; -0x1.9cd1916ed3b77p-4 |]);
+  (0x1.0a67ae147ae14p+8, -0x1.cef9db22d0e56p+4, [| 0x1.fffffffff5619p-1; 0x1.6ff0063560001p-19; 0x1.88ef5d54c0001p-20 |]);
+  (0x1.81b80dc33721dp+7, 0x1.b20d4fdf3b646p+4, [| 0x1.b097e13809805p-25; -0x1.2e58c71869b6fp-26; 0x1.ffffffffffff3p-1 |]);
+  (0x1.55e81450efdcap+3, 0x1.4a274299d883cp+5, [| -0x1.ecef5e7387f80p-2; 0x1.976123c86b5a0p-1; -0x1.7882499ffb50fp-2 |]);
+  (0x1.2bde353f7ced9p+8, 0x1.45df3b645a1cbp+5, [| 0x1.e6672494c5695p-3; 0x1.eeb157709ba30p-1; 0x1.9ac37f9bc8ef4p-4 |]);
+  (0x1.2c00000000000p+7, -0x1.e000000000000p+5, [| 0x1.cb9aa58a9c1b3p-3; -0x1.f1b2fb169cce7p-1; -0x1.19677845298f5p-4 |]);
+  (0x1p+0, 0x1.6600000000000p+6, [| -0x1.f00e04b2034f1p-2; 0x1.809ceb653d9d2p-1; 0x1.cb20620203095p-2 |]);
 ]
 
 (* ICRS (ra, dec) in degrees and astropy's barycentric mean ecliptic at J2000 unit vector. *)
 let astropy_ecliptic = [
-  (0., 0., [| 0x1.fffffffffffccp-1; 0x1.1a9546e9bfe15p-25; -0x1.b663a4c38f2b5p-24 |]);
-  (0x1.4e883126e978dp+6, 0x1.603b645a1cac1p+4, [| 0x1.a51d13f304becp-4; 0x1.fd27d0010953ap-1; -0x1.721d23120922dp-6 |]);
-  (0x1.0a67ae147ae14p+8, -0x1.cef9db22d0e56p+4, [| -0x1.c18a5ecdd2508p-5; -0x1.fcd63137270bap-1; -0x1.8b2813a239ba8p-4 |]);
-  (0x1.81b80dc33721dp+7, 0x1.b20d4fdf3b646p+4, [| -0x1.bc3ebb17c7458p-1; -0x1.70c99ed3a8a10p-12; 0x1.fd142d3758450p-2 |]);
-  (0x1.55e81450efdcap+3, 0x1.4a274299d883cp+5, [| 0x1.7a283ade3e1ebp-1; 0x1.8f9744044a607p-2; 0x1.1977399a678b2p-1 |]);
+  (0., 0., [| 0x1.fffffffffffccp-1; 0x1.1a9546e9bfe13p-25; -0x1.b663a4c38f2b4p-24 |]);
+  (0x1.4e883126e978dp+6, 0x1.603b645a1cac1p+4, [| 0x1.a51d13f304becp-4; 0x1.fd27d0010953ap-1; -0x1.721d231209220p-6 |]);
+  (0x1.0a67ae147ae14p+8, -0x1.cef9db22d0e56p+4, [| -0x1.c18a5ecdd2508p-5; -0x1.fcd63137270bap-1; -0x1.8b2813a239bacp-4 |]);
+  (0x1.81b80dc33721dp+7, 0x1.b20d4fdf3b646p+4, [| -0x1.bc3ebb17c7457p-1; -0x1.70c99ed3a8a0fp-12; 0x1.fd142d3758452p-2 |]);
+  (0x1.55e81450efdcap+3, 0x1.4a274299d883cp+5, [| 0x1.7a283ade3e1ebp-1; 0x1.8f9744044a606p-2; 0x1.1977399a678b2p-1 |]);
   (0x1.2bde353f7ced9p+8, 0x1.45df3b645a1cbp+5, [| 0x1.826ae3852814ap-2; -0x1.5f8c3a313a004p-2; 0x1.b85c72475c506p-1 |]);
-  (0x1.2c00000000000p+7, -0x1.e000000000000p+5, [| -0x1.bb67b46426f60p-2; -0x1.d78244cc17113p-4; -0x1.c9bb4a5a86a98p-1 |]);
+  (0x1.2c00000000000p+7, -0x1.e000000000000p+5, [| -0x1.bb67b46426f5ep-2; -0x1.d78244cc17110p-4; -0x1.c9bb4a5a86a99p-1 |]);
   (0x1p+0, 0x1.6600000000000p+6, [| 0x1.1de9030e468f8p-7; 0x1.9773835ec243bp-2; 0x1.d5b3b2b9c188cp-1 |]);
 ]
 

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mpmath", "pyerfa", "astropy"]
+# dependencies = ["mpmath==1.3.0", "pyerfa==2.0.1.5", "astropy==8.0.2"]
 # ///
 """Generate the fixed frames' orientations and the frames' test references.
 
@@ -22,6 +22,11 @@ test/support/frames_reference.ml
       vectors from astropy;
     - pairs of float64 vectors with their separation and position angle,
       evaluated at 60 digits from the vectors' exact values and rounded once.
+      Off the poles, where ERFA leaves the position angle 0, each pair's
+      measures must agree with ERFA's eraSepp and eraPap in float64: the
+      separation within 2^-48 radians and the position angle within
+      2^-46 / sin(separation), the conditioning of a bearing between
+      vectors that nearly coincide or nearly oppose.
 
 Without --check both files are written; with it, nothing is written and the
 run fails if a file would change.
@@ -29,6 +34,7 @@ run fails if a file would change.
 
 import argparse
 from fractions import Fraction
+import math
 from pathlib import Path
 import sys
 
@@ -221,8 +227,25 @@ def wrap(t):
     return t + 2 * mp.pi if t < 0 else t
 
 
+def agree_with_erfa(a, b, sep, pa):
+    """Fail unless ERFA's float64 separation and position angle of [b] from
+    [a] are within their rounding of [sep] and [pa]."""
+    import erfa
+    import numpy as np
+
+    theirs_sep = float(erfa.sepp(np.array(a), np.array(b)))
+    theirs_pa = float(erfa.pap(np.array(a), np.array(b)))
+    turn = (theirs_pa - pa + math.pi) % (2 * math.pi) - math.pi
+    if abs(theirs_sep - sep) > 2.0**-48:
+        sys.exit(f"eraSepp {theirs_sep!r} and the reference {sep!r} differ for {a}, {b}")
+    if abs(turn) > 2.0**-46 / math.sin(sep):
+        sys.exit(f"eraPap {theirs_pa!r} and the reference {pa!r} differ for {a}, {b}")
+
+
 def measures(a, b):
-    """Separation and position angle of the rays through the exact vectors."""
+    """Separation and position angle of the rays through the exact vectors,
+    checked against ERFA off the poles."""
+    floats_a, floats_b = list(a), list(b)
     a = [mpf(x) for x in a]
     b = [mpf(x) for x in b]
     sep = mpmath.atan2(mpmath.sqrt(dot(cross(a, b), cross(a, b))), dot(a, b))
@@ -233,7 +256,10 @@ def measures(a, b):
         norm = mpmath.sqrt(dot(a, a))
         n, e = [-x * z, -y * z, x * x + y * y], [-y * norm, x * norm, 0]
     pa = mpmath.atan2(dot(b, e), dot(b, n))
-    return round_once(sep), round_once(wrap(pa))
+    sep, pa = round_once(sep), round_once(wrap(pa))
+    if x != 0 or y != 0:
+        agree_with_erfa(floats_a, floats_b, sep, pa)
+    return sep, pa
 
 
 def pairs():

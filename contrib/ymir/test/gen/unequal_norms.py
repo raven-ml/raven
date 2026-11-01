@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mpmath==1.3.0"]
+# dependencies = ["mpmath==1.3.0", "pyerfa==2.0.1.5"]
 # ///
 """Generate separations and position angles between rows of unequal norms.
 
@@ -10,7 +10,8 @@ A direction is a float64 vector read as the ray it spans, of any norm. Each
 pair here is a unit row a and a row b of norm k at a stated separation from
 it, both rounded once; their separation and b's position angle from a are
 evaluated at 60 digits from the rows' exact values, with frames.py's
-measures, and rounded once. It writes:
+measures, and rounded once; frames.py's measures check each against ERFA's
+eraSepp and eraPap. It writes:
 
 test/support/unequal_norms_reference.ml
 
