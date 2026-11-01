@@ -241,20 +241,34 @@ let convert_gather ctx x =
   | Some _, _ when is_gather x -> invalid_arg "a gather takes one index"
   | _ -> None
 
+(* An index of a value by scalars, which select its leading axes. A gather
+   indexes by a value with axes, and an index of a stage is already the read of
+   its storage. *)
+let scalar_index x =
+  op x = Op.Index && (not (is_gather x)) && op (nth x 0) <> Op.Stage
+
 (* A group's stores are its own: each indexes its sources as any node does. *)
 let create_bufferize_and_index_based_on_ranges ctx x =
   if is_group x then None
   else Some (replace x ~src:(create_bufferize_and_index_srcs ctx x))
 
 (* The first source is taken from the list: rebuilding [x] on an indexed source
-   would give it a shape its argument does not fit. *)
+   would give it a shape its argument does not fit. An index by scalars reads
+   its source where they select, which is that source indexed, unless it is
+   already the index ([scalar_index]). *)
 let convert_pad_to_where_to_keep_behavior_local ctx x =
   match Tbl.find_opt ctx.range_map x with
   | None -> None
+  | Some (rngs, out)
+    when op x = Op.Index
+         && ((not (scalar_index x)) || List.compare_lengths rngs out = 0) ->
+      None
   | Some (rngs, _) ->
-      let valid = uprod (bool true) (List.map get_valid rngs) in
       let s = List.hd (create_bufferize_and_index_srcs ctx x) in
-      Some (where valid s (const (Dtype.const (dtype x) zero)))
+      if s == x then None
+      else
+        let valid = uprod (bool true) (List.map get_valid rngs) in
+        Some (where valid s (const (Dtype.const (dtype x) zero)))
 
 (* [constant u] is whether [u] is a constant through casts and movements. *)
 let rec constant u =
@@ -339,7 +353,9 @@ let pm_apply_rangeify =
   Pattern_matcher.v (fun () ->
       [
         on (ops [ Op.Reduce ]) convert_reduce_to_reduce_with_ranges;
-        on (ops [ Op.Pad ]) convert_pad_to_where_to_keep_behavior_local;
+        on
+          (ops [ Op.Pad; Op.Index ])
+          convert_pad_to_where_to_keep_behavior_local;
         on (ops [ Op.Stack ]) convert_stack_to_where;
         on (ops [ Op.Index ]) convert_gather;
         on
@@ -805,6 +821,12 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
         if Op.Set.mem (op x) Op.Set.movement then
           apply_movement_op (shape (nth x 0)) (marg x) out_rngs
         else if op x = Op.Stack then List.drop 1 out_rngs
+          (* an index whose scalars and output ranges address every axis of its
+             source: the scalars select the leading axes *)
+        else if
+          scalar_index x
+          && List.length (src x) - 1 + List.length out_rngs = ndim (nth x 0)
+        then List.tl (src x) @ out_rngs
         else out_rngs
       in
       (* An expand that injects a range does not end it. Ending the others is

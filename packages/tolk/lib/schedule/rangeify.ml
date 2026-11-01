@@ -761,10 +761,6 @@ let to_define_global =
           if addrspace (m "v") = Some Dtype.Alu then Some (m "v") else None);
       rule_ctx (Upat.op Op.After ~name:"after") (fun ctx m ->
           handle_after ctx (m "after"));
-      (* A local stage has no device. *)
-      rule_ctx (Upat.op Op.Stage ~name:"b") (fun _ m ->
-          let b = m "b" in
-          Some (replace b ~arg:(Bufferize { (opts b) with device = None })));
       rule_ctx (Upat.op Op.Range ~name:"r") (fun ctx m ->
           add_range ctx (m "r");
           None);

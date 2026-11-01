@@ -4828,3 +4828,22 @@ fold wraps integers and holds its float bound`, hold.
   its own processor, naming its system under Windows, whose functions
   follow a convention of their own`. On windows-2025 CI, `CG › calls in a
   kernel`.
+
+## D179. An index of a reshape's added leading axes is its source
+
+- **tinygrad:** `schedule/prepare.py:65-73` (`_mop_index`), whose shortcut for
+  a reshape whose added leading axes are indexed whole tinygrad 8b4d8c026
+  deleted as dead code: the index is then its source's index by nothing.
+- **tolk:** `Prepare.mop_index`.
+- **Differs:** an index of a reshape that adds leading axes, by indices of
+  those axes alone, is the reshape's source, where tinygrad makes it an index
+  of the source by nothing.
+- **Reason:** (b). rune's lowerings index such reshapes (`Compile`'s reads at
+  an offset, `Lower_index`, `Lower_linalg`), which tinygrad's tensor graphs
+  never build: rangeify leaves an index by nothing of a value it stores
+  unstored (`Indexing.pm_apply_rangeify` rewrites no index), and
+  `Rangeify.cleanup_dead_axes` then raises on rune's complex contractions
+  ("cannot reshape (2,) to (1,)").
+- **Pinned by:** `Tolk.Prepare › pm_mops › rules › an index of a reshape's
+  added leading axis is its source`; rune's `contractions › complex
+  contractions hold their bound`.

@@ -670,6 +670,28 @@ let depth u =
     (Ops.toposort ~calls:Enter u);
   Ops.Tbl.find depths u
 
+(* An index of a value by scalars selects its leading axes; a padded value
+   indexed in its padding reads 0. *)
+let scalar_indexes =
+  let value = Ops.O.(p 1 [ 3 ] + float 1.) in
+  let writes_as_tensors name u =
+    test name (fun () ->
+        let sink = stored u in
+        let buffers = filled sink in
+        equal (list write)
+          (zeros (Tensors.writes ~buffers sink))
+          (zeros (Interpreter.writes ~buffers (Indexing.run_rangeify sink))))
+  in
+  group "run_rangeify › scalar indexes"
+    (writes_as_tensors "an index of a value by a constant reads that element"
+       (Ops.index value [ Ops.int 1 ])
+    :: List.map
+         (fun k ->
+           writes_as_tensors
+             (Printf.sprintf "an index of a padded value at %d reads it" k)
+             (Ops.index (Shape.pad value [ Some (Int 1, Int 1) ]) [ Ops.int k ]))
+         [ 0; 2; 4 ])
+
 let stacks =
   group "run_rangeify › stacks"
     (List.map
@@ -816,6 +838,7 @@ let () =
          new_ranges;
          below_broadcasts;
          storage;
+         scalar_indexes;
          stacks;
          rewrites;
        ])

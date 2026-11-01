@@ -455,10 +455,6 @@ let earliest_rewrites =
          rule
            (Upat.v ~op:(ops Op.[ Detach; Contiguous_backward ]) ~name:"x" ())
            (fun m -> Some (nth (m "x") 0));
-         (* A sink only references bases. *)
-         rule (Upat.op Op.Sink ~name:"x") (fun m ->
-             let x = m "x" in
-             Some (replace x ~src:(List.map base (src x))));
          (* Copies *)
          (* A copy to the device of its source is a no-op: a stage
             materialises on the same device. *)
