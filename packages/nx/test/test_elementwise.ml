@@ -130,12 +130,18 @@ let reference3 k s c a b =
 let names name f = raises_match (Exn.invalid_arg ~sub:("Nx." ^ name ^ ": ")) f
 
 (* The law: where its kind takes the dtype, [f] computes, giving the reference's
-   bits; elsewhere it raises naming itself. *)
-let agrees name ~accepted reference f =
+   bits, a NaN for a NaN where the kind leaves its bits unspecified, whatever
+   they are: they follow the layouts and the operands' addresses; elsewhere it
+   raises naming itself. [dt] is the result's dtype. *)
+let agrees name ~accepted ~kind dt reference f =
+  let bits =
+    if Kernels_cases.any_nan kind then Kernels_cases.same_values (D.Any dt)
+    else array int
+  in
   if accepted then begin
     cover "computed" true;
     match reference () with
-    | Some want -> equal ~msg:name (array int) want (f ())
+    | Some want -> equal ~msg:name bits want (f ())
     | None -> fail (name ^ ": the host's kernel declined a dtype its kind takes")
   end
   else begin
@@ -185,6 +191,7 @@ let law_unary (s, Case a, _) =
     (fun u ->
       agrees u.name
         ~accepted:(P.accepts1 (Unary u.kind) dt dt)
+        ~kind:(Support.K1 (Unary u.kind)) dt
         (fun () -> reference1 (Unary u.kind) dt s a)
         (fun () -> result_bits (u.f (value a))))
     unaries
@@ -196,6 +203,7 @@ let law_erf (s, Case a, _) =
   | D.Float ->
       agrees "erf"
         ~accepted:(P.accepts1 (Unary Erf) dt dt)
+        ~kind:(Support.K1 (Unary Erf)) dt
         (fun () -> reference1 (Unary Erf) dt s a)
         (fun () -> result_bits (Nx.erf (value a)))
   | D.Signed | D.Unsigned | D.Boolean | D.Complex -> cover "computed" true
@@ -211,6 +219,7 @@ let law_inverse_hyperbolic (s, Case a, _) =
       | _ ->
           agrees name
             ~accepted:(P.accepts1 (Unary kind) dt dt)
+            ~kind:(Support.K1 (Unary kind)) dt
             (fun () -> reference1 (Unary kind) dt s a)
             (fun () -> result_bits (f (value a))))
     [
@@ -259,10 +268,104 @@ let law_binary (s, Case a, rest) =
   List.iter
     (fun (o : binary) ->
       let k = P.Binary (o.kind (D.Any dt)) in
-      agrees o.name ~accepted:(P.accepts2 k dt)
+      agrees o.name ~accepted:(P.accepts2 k dt) ~kind:(Support.K2 k) dt
         (fun () -> reference2 k dt s a b)
         (fun () -> result_bits (o.f (value a) (value b))))
     binaries
+
+(* Positions and layouts. On the host, a binary function's and fma's
+   results are a function of the operands' values: every element of a row,
+   which runs through a vector loop's body and its scalar tail, at every
+   layout, broadcast and strided operands included, is the one-element
+   result, a NaN for a NaN, whose sign and payload are unspecified. *)
+
+(* A float dtype and the codes of its parts drawn: 0, 1, inf and a NaN of
+   each sign. *)
+type float_dtype = Float_dtype : ('v, 's) D.t * int64 list -> float_dtype
+
+let float_dtypes =
+  let f32 = [ 0L; 0x3F80_0000L; 0x7F80_0000L; 0x7FC0_0001L; 0xFFC0_0002L ] in
+  let f64 =
+    [
+      0L;
+      0x3FF0_0000_0000_0000L;
+      0x7FF0_0000_0000_0000L;
+      0x7FF8_0000_0000_0001L;
+      0xFFF8_0000_0000_0002L;
+    ]
+  in
+  D.
+    [
+      Float_dtype (Float16, [ 0L; 0x3C00L; 0x7C00L; 0x7E01L; 0xFE02L ]);
+      Float_dtype (Bfloat16, [ 0L; 0x3F80L; 0x7F80L; 0x7FC1L; 0xFFC2L ]);
+      Float_dtype (Float32, f32);
+      Float_dtype (Float64, f64);
+      Float_dtype (Complex64, f32);
+      Float_dtype (Complex128, f64);
+    ]
+
+(* A part's code [c] as [w] bytes, little-endian. *)
+let part_bytes w c =
+  String.init w (fun i ->
+      let b = Int64.shift_right_logical c (8 * i) in
+      Char.chr (Int64.to_int (Int64.logand b 0xFFL)))
+
+(* [n] elements of [dt], each the bytes [elt]. *)
+let filled dt n elt =
+  value
+    (A.v dt
+       (L.contiguous (Iarray.of_array [| n |]))
+       (Rig.Buffer.of_string (String.concat "" (List.init n (fun _ -> elt)))))
+
+(* A row with a vector body and a scalar tail at every dtype. *)
+let row = 37
+
+(* [f] over operands of [row] elements of [elts], all contiguous, all
+   strided, and each broadcast in turn, by name. *)
+let layouts dt f elts =
+  let f xs = f (Array.of_list xs) in
+  let one e = Nx.broadcast_to [| row |] (filled dt 1 e) in
+  let every e = Nx.slice [ Nx.Rs (0, 2 * row, 2) ] (filled dt (2 * row) e) in
+  let broadcast i _ =
+    let xs = List.mapi (fun j e -> if i = j then one e else filled dt row e) in
+    (Printf.sprintf "operand %d broadcast" i, f (xs elts))
+  in
+  ("contiguous", f (List.map (filled dt row) elts))
+  :: ("strided", f (List.map every elts))
+  :: List.mapi broadcast elts
+
+let check_layouts (Float_dtype (dt, codes)) =
+  let w = D.bytes dt 1 / if D.is D.Complex dt then 2 else 1 in
+  let elts =
+    let part = List.map (part_bytes w) codes in
+    if not (D.is D.Complex dt) then part
+    else List.concat_map (fun re -> List.map (fun im -> re ^ im) part) part
+  in
+  let values = Kernels_cases.same_values (D.Any dt) in
+  let check name f operands =
+    let msg = Format.asprintf "%s %a" name D.pp dt in
+    let ones = Array.of_list (List.map (filled dt 1) operands) in
+    let one = result_bits (f ones) in
+    let want = Array.concat (List.init row (fun _ -> one)) in
+    List.iter
+      (fun (layout, got) ->
+        equal ~msg:(msg ^ ", " ^ layout) values want (result_bits got))
+      (layouts dt f operands)
+  in
+  let each f = List.iter f elts in
+  List.iter
+    (fun (o : binary) ->
+      if P.accepts2 (P.Binary (o.kind (D.Any dt))) dt then
+        each (fun x ->
+            each (fun y -> check o.name (fun a -> o.f a.(0) a.(1)) [ x; y ])))
+    binaries;
+  if P.accepts3 Fma dt dt then
+    each (fun x ->
+        each (fun y ->
+            each (fun z ->
+                check "fma" (fun a -> Nx.fma a.(0) a.(1) a.(2)) [ x; y; z ])))
+
+let test_layouts () = List.iter check_layouts float_dtypes
 
 (* Comparisons *)
 
@@ -303,7 +406,7 @@ let law_compare (s, Case a, rest) =
     (fun (o : comparison) ->
       let k = P.Compare o.kind in
       let x, y = if o.swapped then (b, a) else (a, b) in
-      agrees o.name ~accepted:(P.accepts2 k dt)
+      agrees o.name ~accepted:(P.accepts2 k dt) ~kind:(Support.K2 k) D.Bool
         (fun () -> reference2 k D.Bool s x y)
         (fun () -> result_bits (o.f (value a) (value b))))
     comparisons
@@ -317,7 +420,7 @@ let law_fma (s, Case a, rest) =
     | [ Case b; Case c ] -> (A.expect dt (A.Any b), A.expect dt (A.Any c))
     | _ -> (a, a)
   in
-  agrees "fma" ~accepted:(P.accepts3 Fma dt dt)
+  agrees "fma" ~accepted:(P.accepts3 Fma dt dt) ~kind:(Support.K3 Fma) dt
     (fun () -> reference3 Fma s a b c)
     (fun () -> result_bits (Nx.fma (value a) (value b) (value c)))
 
@@ -329,7 +432,7 @@ let law_where ((s, Case a, rest), flags) =
     A.of_array D.Bool (Iarray.of_array s)
       (Array.init n (fun i -> List.nth flags (i mod 8)))
   in
-  agrees "where" ~accepted:true
+  agrees "where" ~accepted:true ~kind:(Support.K3 Where) dt
     (fun () -> reference3 Where s c a b)
     (fun () -> result_bits (Nx.where (value c) (value a) (value b)))
 
@@ -453,6 +556,8 @@ let elementwise =
       prop "each unary function is its kind" unary_operands law_unary;
       prop "each binary function is its kind, broadcast" binary_operands
         law_binary;
+      test "binary functions and fma give the one-element result everywhere"
+        test_layouts;
       prop "each comparison is its kind, broadcast" binary_operands law_compare;
       prop "fma is its kind, broadcast" ternary_operands law_fma;
       prop "where is its kind, broadcast"

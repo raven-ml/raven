@@ -50,7 +50,9 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
   polynomial, fma where written, `-ffp-contract=off`, no `-ffast-math`,
   subnormals kept, so its bits, NaNs aside, match on every target. The
   coefficients come from `test/kernel/gen/kinds.py`.
-- On nx.cpu, layout and thread count never change a bit of a result.
+- On nx.cpu, layout and thread count never change a bit of a result, except
+  a NaN's sign and payload where `Nx_kernel.Prog` leaves them unspecified:
+  tests compare such NaNs as a class.
 - One Threefry generator, `Nx.Rng`. Its key is an `int32` array, so it can
   be a structure's leaf, a jit input or a vmap axis.
 - A value made from numbers is a host value; `_at` and `_like` forms make

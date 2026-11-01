@@ -29,19 +29,22 @@
     whose work takes several threads waits for any other such job to end.
 
     A kernel's result is a function of its operands' values alone, in the
-    sense that neither layouts nor threads change a bit of it. An element's
-    association, its algorithm and whether the kernel declines depend on
-    the extents the element reads whole (a reduction's, a scan's, a sort's
-    or a transform's axes, the contracted extent, a routine's matrices, a
-    gather's or a scatter's axis, the axes a padded load or a fold pads or
-    windows), the dtypes, the attributes and the host's architecture, never
-    on the result's other extents; a contraction's association follows its
-    rows, columns and depth, as stated below. Each kind computes through
-    the function of its name in [nx_kinds.h], with that function's bits,
-    NaNs aside, on every target. So [Exp2] is exact at integers whose power
-    is in the dtype, and [Log2] at powers of two. The kinds keep subnormal
-    operands and results. A transform's bits too are the same on every
-    target, NaNs aside. *)
+    sense that neither layouts nor threads change a bit of it, but for a
+    NaN's sign and payload where {!Nx_kernel.Prog} leaves them unspecified:
+    such a NaN result stays a NaN, and its bits may change with the
+    element's position, the layouts, the operands' addresses or the
+    threads. An element's association, its algorithm and whether the
+    kernel declines depend on the extents the element reads whole (a
+    reduction's, a scan's, a sort's or a transform's axes, the contracted
+    extent, a routine's matrices, a gather's or a scatter's axis, the axes
+    a padded load or a fold pads or windows), the dtypes, the attributes
+    and the host's architecture, never on the result's other extents; a
+    contraction's association follows its rows, columns and depth, as
+    stated below. Each kind computes through the function of its name in
+    [nx_kinds.h], with that function's bits, NaNs aside, on every target.
+    So [Exp2] is exact at integers whose power is in the dtype, and [Log2]
+    at powers of two. The kinds keep subnormal operands and results. A
+    transform's bits too are the same on every target, NaNs aside. *)
 
 (** {1:lane_order Lane order}
 

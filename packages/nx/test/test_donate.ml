@@ -989,10 +989,11 @@ let test_kept_by_rule () =
     (fun read -> equal ~msg:"a kept array" (array float_exact) original (read ()))
     !kept
 
-(* A donated call gives the bits of the same call undonated: a scatter of
-   every combine with repeated positions, positions outside the axis, NaN,
-   -0. and infinities, and a bfloat16 init summed in float32 over a drawn
-   number of terms. *)
+(* A donated call gives the bits of the same call undonated, a NaN for a
+   NaN, whose bits follow the operands' addresses: a scatter of every
+   combine with repeated positions, positions outside the axis, NaN, -0. and
+   infinities, and a bfloat16 init summed in float32 over a drawn number of
+   terms. *)
 type scatter_case = {
   combine : Nx.combine;
   target : float array;
@@ -1030,10 +1031,13 @@ let scatter_case =
      let+ updates = array ~size:(constant m) (of_list specials) in
      { combine; target; targets; updates })
 
-let bits32 x = elements (Nx.bitcast D.Int32 x)
+(* Float32 values, a NaN for a NaN, whose bits follow the operands'
+   addresses. *)
+let same_f32 = Nx_support.elements D.Float32
+let f32s x = Array.to_list (elements x)
 
 let law_scatter_bits =
-  prop "a donated scatter gives the undonated one's bits" scatter_case
+  prop "a donated scatter gives the undonated one's values" scatter_case
     (fun c ->
       let m = Array.length c.updates and n = Array.length c.target in
       let repeated =
@@ -1049,7 +1053,7 @@ let law_scatter_bits =
       let combine = c.combine in
       let kept = Nx.scatter ~combine ~axis:0 p u (fresh c.target) in
       let given = Nx.scatter ~combine ~axis:0 p u (Nx.donate (fresh c.target)) in
-      equal (array int32) (bits32 kept) (bits32 given))
+      equal same_f32 (f32s kept) (f32s given))
 
 (* Two handles of one donor in one operation, the same handle twice or two
    donations of one value, give what the operation gives two undonated copies,
@@ -1094,13 +1098,13 @@ let law_one_donor_twice =
           let h = Nx.donate x in
           equal
             ~msg:(by ^ ", one handle twice")
-            (array int32) (bits32 kept)
-            (bits32 (f h h));
+            same_f32 (f32s kept)
+            (f32s (f h h));
           List.iter dies [ x; h ];
           let x = fresh_at s xs in
           let h = Nx.donate x and h' = Nx.donate x in
-          equal ~msg:(by ^ ", two donations") (array int32) (bits32 kept)
-            (bits32 (f h h'));
+          equal ~msg:(by ^ ", two donations") same_f32 (f32s kept)
+            (f32s (f h h'));
           List.iter dies [ x; h; h' ])
         ops)
 
@@ -1160,7 +1164,7 @@ let law_moved_twice =
           let x = copy () in
           let h = Nx.donate x in
           let a = chain n h m1 and b = second x h in
-          equal ~msg:by (array int32) (bits32 kept) (bits32 (f a b));
+          equal ~msg:by same_f32 (f32s kept) (f32s (f a b));
           let dies y =
             invalid ~sub:(dead_in "Nx.copy" y by) (fun () -> Nx.copy y)
           in

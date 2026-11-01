@@ -765,7 +765,8 @@ let law_large_guards (b : Support.backend) ((Case a as c), d, side) =
     [ (P.Copy, D.Any (A.dtype a)); (Cast, d) ]
 
 (* A map's outputs with its loads, plain or padded, through their views,
-   and its destinations against the page. *)
+   and its destinations against the page, a NaN for a NaN: a kind's NaN bits
+   follow the operands' addresses. *)
 let law_map_guards (b : Support.backend) ((Pair (x, y), seed), side) =
   let module K = (val b.kernels) in
   let st = Random.State.make [| seed |] in
@@ -782,7 +783,7 @@ let law_map_guards (b : Support.backend) ((Pair (x, y), seed), side) =
   let dsts = Array.map (fun o -> (types.(o), s)) (Iarray.to_array p.outs) in
   let load (A.Any x) = if padded then unpadded x else Nx_kernel.Plain x in
   let call xs ds = K.map p ~dsts:ds (Array.map load xs) in
-  equal answer A.Done (Elements.same_guarded side ~call ops dsts)
+  equal answer A.Done (Elements.same_guarded ~any_nan:true side ~call ops dsts)
 
 (* The kernels guarded: one of a kind over drawn views, a large copy and
    cast, or a program's map. *)
