@@ -248,6 +248,159 @@ let grads set rows =
       within ~bound eager jit
   | r -> equal (outcome_t bits_t) (Value (bits eager)) (omap bits r)
 
+(* Loops
+
+   A scan over a carry cut across the devices, reading rows of values cut along
+   their rows' axes or along the rows themselves, and an iterate whose stop
+   reads a fold over a cut axis compile, and give eager's placements and bits:
+   their steps are exact. Rows cut along axis 0 raise as eagerly. A step that
+   gives the carry another placement, and rows cut along an axis of one
+   element, which eager computation reads by rows as [Nx.get] routes them,
+   evaluate. *)
+
+type loop_case = { ln : int; lshape : int array; carry : cut; rows : cut }
+
+let pp_loop_case ppf c =
+  Format.fprintf ppf "%d devices, shape %a, carry %a, rows %a" c.ln
+    Operand.pp_shape c.lshape pp_cut c.carry pp_cut c.rows
+
+let loop_cases =
+  let open Gen in
+  (let* ln = int_range 2 4 in
+   let* rank = int_range 1 2 in
+   let* lshape = array ~size:(constant rank) (int_range 0 ((2 * ln) + 1)) in
+   let* carry = cut_of ~n:ln ~rank and+ rows = cut_of ~n:ln ~rank:(rank + 1) in
+   constant { ln; lshape; carry; rows })
+  |> with_pp pp_loop_case
+
+(* [f] under jit over [x] and [y], compiled, computing no call evaluated,
+   where [compiles]. *)
+let jit_pair ~compiles f x y =
+  let before = Rune.evaluations () in
+  let s = T.(tensor @-> tensor @-> returns (pair tensor tensor)) in
+  let r = outcome (fun () -> Rune.jit s f x y) in
+  if compiles then
+    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  r
+
+let same_pair eager jit =
+  match (eager, jit) with
+  | Value (a, b), Value (a', b') ->
+      equal ~msg:"carry placement" (placement ()) (Nx.placement a)
+        (Nx.placement a');
+      equal ~msg:"rows placement" (placement ()) (Nx.placement b)
+        (Nx.placement b');
+      equal ~msg:"carry" bits_t (bits a) (bits a');
+      equal ~msg:"rows" bits_t (bits b) (bits b')
+  | Raised m, Raised m' -> equal string m m'
+  | Value _, Raised m -> fail ("compiled raised: " ^ m)
+  | Raised m, Value _ -> fail ("eager raised: " ^ m)
+
+let carry_cut c = match c.carry with Split _ | Mesh _ -> true | _ -> false
+
+let row_count = 3
+
+(* Whether [c]'s rows are cut along an axis of one element. *)
+let cut_unit c =
+  let rows = Array.append [| row_count |] c.lshape in
+  let unit a = a < Array.length rows && rows.(a) = 1 in
+  match c.rows with
+  | Split a -> unit a
+  | Mesh (a, b) -> unit a || unit b
+  | On | Device _ -> false
+
+let along_rows c =
+  match c.rows with
+  | Split 0 -> true
+  | Mesh (a, b) -> a = 0 || b = 0
+  | Split _ | On | Device _ -> false
+
+let scanned set c =
+  cover "carry cut" (carry_cut c);
+  cover "rows cut along the rows" (along_rows c);
+  cover "rows cut inside a row"
+    (match c.rows with Split a -> a > 0 | _ -> false);
+  let x = Nx.place (at set c.carry) (value c.lshape) in
+  let xs =
+    Nx.place (at set c.rows)
+      (value ~seed:1 (Array.append [| row_count |] c.lshape))
+  in
+  let step carry row =
+    let carry =
+      Nx.maximum (Nx.mul carry row) (Nx.sub carry (Nx.mul_s row 0.5))
+    in
+    (carry, Nx.add carry row)
+  in
+  let f x xs = Rune.scan' step ~init:x xs in
+  let eager = outcome (fun () -> f x xs) in
+  let kept =
+    match eager with
+    | Value (y, _) -> Nx.Placement.equal (Nx.placement y) (Nx.placement x)
+    | Raised _ -> false
+  in
+  cover "the step keeps the carry's placement" kept;
+  let compiles = kept && not (cut_unit c) in
+  cover "compiled over a cut carry" (compiles && carry_cut c);
+  same_pair eager (jit_pair ~compiles f x xs)
+
+(* A scan whose carry and rows are cut alike copies nothing between devices,
+   as eager computation copies nothing. *)
+let local_scan set =
+  let x = Nx.place (at set (Split 0)) (value [| 6; 2 |]) in
+  let xs = Nx.place (at set (Split 1)) (value ~seed:1 [| row_count; 6; 2 |]) in
+  let step carry row = (Nx.add (Nx.mul carry row) row, Nx.neg carry) in
+  let f x xs = Rune.scan' step ~init:x xs in
+  same_pair (Value (f x xs)) (jit_pair ~compiles:true f x xs);
+  let s = T.(tensor @-> tensor @-> returns (pair tensor tensor)) in
+  let run () = ignore (Nx.to_array (fst (Rune.jit s f x xs))) in
+  let _, events = Rig.Profile.take run in
+  let copied =
+    List.fold_left
+      (fun n -> function
+        | Rig.Profile.Copy { src; dst; bytes; _ } when not (Rig.equal src dst)
+          ->
+            n + bytes
+        | _ -> n)
+      0 events
+  in
+  equal ~msg:"bytes copied" int 0 copied
+
+(* An iterate whose stop every device holds reads it on the program's device,
+   that of its first argument: no trip copies the stop between devices. *)
+let stop_home set =
+  let s = Nx.place (at set (Device 1)) (value [| 1 |]) in
+  let x = Nx.place (at set On) (value ~seed:1 [| 4 |]) in
+  let f s x =
+    let halve x = Nx.mul_s x 0.5 in
+    let small x = Nx.less_s (Nx.max (Nx.abs x)) 0.01 in
+    (Nx.neg s, Rune.iterate' ~max:20 ~until:small halve x)
+  in
+  same_pair (outcome (fun () -> f s x)) (jit_pair ~compiles:true f s x);
+  let sig_ = T.(tensor @-> tensor @-> returns (pair tensor tensor)) in
+  let run () = ignore (Nx.to_array (snd (Rune.jit sig_ f s x))) in
+  let _, events = Rig.Profile.take run in
+  let copied =
+    List.fold_left
+      (fun n -> function
+        | Rig.Profile.Copy { src; dst; bytes; _ } when not (Rig.equal src dst)
+          ->
+            n + bytes
+        | _ -> n)
+      0 events
+  in
+  equal ~msg:"bytes copied" int 0 copied
+
+let iterated set c =
+  cover "carry cut" (carry_cut c);
+  let x = Nx.place (at set c.carry) (value c.lshape) in
+  let f x y =
+    let halve x = Nx.mul_s x 0.5 in
+    let small x = Nx.less_s (Nx.max (Nx.abs x)) 0.01 in
+    let x = Rune.iterate' ~max:20 ~until:small halve x in
+    (x, Nx.add x y)
+  in
+  same_pair (outcome (fun () -> f x x)) (jit_pair ~compiles:true f x x)
+
 (* Replicas
 
    A compiled sum over a cut axis into a result whole on each device holds one
@@ -449,6 +602,18 @@ let () =
              test "over two devices" (fun () -> over 2 { law = gather_kinds });
              test "over four and their mesh" (fun () ->
                  over 4 { law = gather_kinds });
+           ];
+         group "loops"
+           [
+             prop ~count:30 "a scan over a cut carry, bit for bit" loop_cases
+               (fun c -> over c.ln { law = (fun set -> scanned set c) });
+             prop ~count:20 "an iterate stopped by a fold over a cut axis"
+               loop_cases (fun c ->
+                 over c.ln { law = (fun set -> iterated set c) });
+             test "a scan cut alike copies nothing between devices" (fun () ->
+                 over 3 { law = local_scan });
+             test "an iterate reads its stop on the program's device"
+               (fun () -> over 2 { law = stop_home });
            ];
          group "replicas"
            [

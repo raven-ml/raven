@@ -186,7 +186,7 @@ raven / llama.cpp (Vulkan; ROCm):
 ## rune, kaun, vega
 
 - sharded jit after its first slice (one target, 1-D sets, no loops) and
-  lending per piece (898ec2b85): a place onto another set, loops, compiled
+  lending per piece (898ec2b85): a place onto another set, compiled
   `lanes` (_plans/rune-sharding/adjudication.md). A split
   program that gathers an argument so that a device's window grows still
   evaluates: a compiled backward call holds 3.1 layers per device at n=2

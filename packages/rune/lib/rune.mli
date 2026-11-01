@@ -1379,9 +1379,12 @@ val jit :
     devices of a set compile each kernel once, and a window moves between
     devices from a start the program binds when it runs: where every window
     of a cut has one shape, a program makes as many kernels whatever the
-    number of devices. Each argument's piece on a device is an argument of its
-    own for the variant, which a donated argument's piece lends to the result's
-    piece on that device ({!section-donation}). Such a program holds no memory
+    number of devices. A {!scan} or an {!iterate} over such values is one loop,
+    each trip running every device's kernels and moves of its step; each device
+    reads its piece of a row from its piece of the rows. Each argument's piece
+    on a device is an argument of its own for the variant, which a donated
+    argument's piece lends to the result's piece on that device
+    ({!section-donation}). Such a program holds no memory
     between calls but the copies of its constants: each call makes on each
     device what it computes there and returns it once that work is done. With
     [RUNE_JIT_DEBUG] set, the first call prints each move between devices, the
@@ -1722,12 +1725,15 @@ val jit :
       each call copies it into fresh memory of its own device.
 
     Over several devices it declines a program that holds a construct other
-    than {!detach}, such as a loop, a {!switch}, a {!remat} or a custom rule, a
-    check, an addition to a {!Total}, an emission, a traced value placed onto
-    another set, a placement of an argument that gives a device more of it, as
-    a gather of a cut argument whole on each device does, since a compiled call
-    holds all it gathers and every piece of the closings it computes at once,
-    where an evaluated one lets each go after its last read. It also declines a
+    than {!detach}, a {!scan} or an {!iterate}, such as a {!switch}, a {!remat}
+    or a custom rule; a scan over rows cut along axis 0 or along an axis of one
+    element, an iterate that stacks its steps, and a loop whose step gives a
+    carry another placement; a check, an addition to a {!Total}, an emission, a
+    traced value placed onto another set, a placement of an argument that gives
+    a device more of it, as a gather of a cut argument whole on each device
+    does, since a compiled call holds all it gathers and every piece of the
+    closings it computes at once, where an evaluated one lets each go after its
+    last read. It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a
     compiled call's are, and a call with donated arguments consumes them. It

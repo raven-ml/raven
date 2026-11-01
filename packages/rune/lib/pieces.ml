@@ -61,18 +61,24 @@ let needed (p : Program.t) forms =
   Array.iter
     (fun (V y) -> if is_var y then note (Nx.placement y) else operand y)
     p.outputs;
-  Array.iter
-    (function
-      | Op { op; _ } -> (
-          let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
-          List.iter any xs;
-          match op with
-          | Place (q, _) -> note q
-          | Map { at = Some q; _ } ->
-              if Option.is_none (device_of q) then several := true
-          | _ -> ())
-      | Do { c; _ } -> List.iter (fun (V x) -> operand x) (Program.operands c))
-    p.eqns;
+  (* A loop's step computes where its operations and placements say. *)
+  let rec eqns (p : Program.t) =
+    Array.iter
+      (function
+        | Op { op; _ } -> (
+            let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+            List.iter any xs;
+            match op with
+            | Place (q, _) -> note q
+            | Map { at = Some q; _ } ->
+                if Option.is_none (device_of q) then several := true
+            | _ -> ())
+        | Do { c; _ } ->
+            List.iter (fun (V x) -> operand x) (Program.operands c);
+            List.iter eqns (Program.carried c))
+      p.eqns
+  in
+  eqns p;
   !several || List.length !devices > 1
 
 (* The engine
@@ -120,15 +126,18 @@ let engine ri ~by moves : Nx.Prim.engine =
   let window x w =
     if full x w then x else view (M.Slice (Iarray.of_array w)) x
   in
-  (* [x] placed at [at], a copy where it lies on another device. *)
+  (* [x] placed at [at], a copy where it lies on another device, noted with
+     the value it makes. *)
   let put at x =
     let src = rig_of (Nx.placement x) and dst = rig_of at in
+    let y = Nx.Prim.eval ~by (Place (at, x)) in
     if not (Rig.equal src dst) then
       moves :=
-        Printf.sprintf "%s moves %d bytes from %s to %s" by (bytes x)
-          (Rig.name src) (Rig.name dst)
+        ( Some (V y),
+          Printf.sprintf "%s moves %d bytes from %s to %s" by (bytes x)
+            (Rig.name src) (Rig.name dst) )
         :: !moves;
-    Nx.Prim.eval ~by (Place (at, x))
+    y
   in
   let bring at ps =
     let d = rig_of at in
@@ -220,7 +229,63 @@ let gathers q p shape =
   let a = held p and b = held q in
   Array.length a = Array.length b && Array.exists2 ( < ) a b
 
-let split ~name (p : Program.t) forms =
+(* The placement of a value at [p] whose devices hold whole rows of their
+   windows of the rest: each device's piece of a row is a row of its piece. *)
+let by_rows p =
+  Nx.Placement.with_leading_axis (Nx.Placement.without_leading_axis p)
+
+let same_form (F f) (F g) =
+  D.equal f.dtype g.dtype
+  && shape_of f = shape_of g
+  && Nx.Placement.equal f.placement g.placement
+
+let pieces ri (V x) =
+  Array.map (fun v -> V v) (Iarray.to_array (pieces_of ri x))
+
+let all_pieces ri vs = Array.concat (Array.to_list (Array.map (pieces ri) vs))
+
+(* The value of form [f] whose pieces are [ps]. *)
+let joined ri (F f) ps =
+  match device_of f.placement with
+  | Some _ -> ps.(0)
+  | None ->
+      let set = Nx.Placement.devices f.placement in
+      let ps = Iarray.map (Program.cast f.dtype set) (Iarray.of_array ps) in
+      V (Nx.Prim.traced ri f (Cut ps))
+
+(* Whether [x] is cut along an axis of one element, where some device holds
+   none of it. *)
+let cuts_unit x =
+  let s = Nx.shape x in
+  Array.exists
+    (fun (_, w) ->
+      Array.exists2 (fun (r : M.range) n -> n = 1 && r.count = 0) w s)
+    (Nx.Prim.pieces (Nx.placement x) s)
+
+(* The moves of [noted], each with the value it makes, that [p] keeps: those
+   whose value an equation of [p] that reads to its outputs makes. *)
+let kept (p : Program.t) noted =
+  let live = Array.make p.slots false in
+  let all = Array.init (Array.length p.outputs) Fun.id in
+  let q = Program.prune p ~outputs:all in
+  Array.iter
+    (function Op { base; _ } | Do { base; _ } -> live.(base) <- true)
+    q.eqns;
+  List.filter_map
+    (fun (v, m) ->
+      match v with
+      | Some (V y) -> (
+          match Nx.Prim.payload p.owner y with
+          | Some (Var n) when not live.(n) -> None
+          | _ -> Some m)
+      | None -> Some m)
+    noted
+
+(* [cut ~kind ~home ~name p forms] is [p] split, as {!split}, by a tracer of
+   [kind], its captures, and its moves, each with the value it makes, in
+   order. [home] is the device the split program computes on, where its
+   checks and an iterate's stop lie. *)
+let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
   if Array.length p.adds > 0 then decline "a total over several devices";
   if p.emits then decline "an emission over several devices";
   let leaves = Array.map piece_forms forms in
@@ -236,20 +301,18 @@ let split ~name (p : Program.t) forms =
         let n = Array.length leaves.(k) in
         let ps = Array.sub vs !at n in
         at := !at + n;
-        env.(p.params.(k)) <-
-          Some
-            (if n = 1 && Option.is_some (device_of f.placement) then ps.(0)
-             else
-               let set = Nx.Placement.devices f.placement in
-               let cut =
-                 Iarray.map (Program.cast f.dtype set) (Iarray.of_array ps)
-               in
-               V (Nx.Prim.traced ri f (Cut cut))))
+        env.(p.params.(k)) <- Some (joined ri (F f) ps))
       forms;
     let lookup (type v s d) (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
       match Nx.Prim.payload p.owner x with
       | Some (Var n) -> like x (Option.get env.(n))
       | _ -> x
+    in
+    (* Whether [x] is an argument of the program. *)
+    let argument x =
+      match Nx.Prim.payload p.owner x with
+      | Some (Var n) -> Array.mem n p.params
+      | _ -> false
     in
     let bind = ref 0 in
     let store (type v s d) (y : (v, s, d) Nx.t) =
@@ -260,26 +323,17 @@ let split ~name (p : Program.t) forms =
       (function
         | Op { by; op = traced; base } ->
             let op = Nx.Prim.map lookup traced in
-            (* Whether the operation places an argument of the program. *)
-            let argument =
-              match traced with
-              | Place (_, x) -> (
-                  match Nx.Prim.payload p.owner x with
-                  | Some (Var n) -> Array.mem n p.params
-                  | _ -> false)
-              | _ -> false
-            in
             let r =
-              match op with
-              | Check _ -> decline "a check over several devices"
-              | Place (q, x)
+              match (op, traced) with
+              | Check _, _ -> decline "a check over several devices"
+              | Place (q, x), _
                 when Option.is_some (Nx.Prim.owner x)
                      && Option.is_none
                           (Nx.Prim.coerce (Nx.dtype x) (Nx.Placement.devices q)
                              x) ->
                   decline "Nx.place onto another set of devices"
-              | Place (q, x)
-                when argument && gathers q (Nx.placement x) (Nx.shape x) ->
+              | Place (q, x), Place (_, x0)
+                when argument x0 && gathers q (Nx.placement x) (Nx.shape x) ->
                   decline
                     "Nx.place gathers an argument cut across devices: a \
                      compiled call holds all it gathers and closes at once"
@@ -288,6 +342,11 @@ let split ~name (p : Program.t) forms =
             bind := base;
             Nx.Prim.iter_results store op r
         | Do { c = Detach x; base } -> env.(base) <- Some (V (lookup x))
+        | Do { c = (Scan _ | Iterate _) as c; base } ->
+            let c = Program.map_operands { f = lookup } c in
+            Array.iteri
+              (fun k v -> env.(base + k) <- Some v)
+              (looped ~home ~name ri moves c)
         | Do { c; _ } -> decline "%s over several devices" (construct_name c))
       p.eqns;
     let pieces =
@@ -311,11 +370,194 @@ let split ~name (p : Program.t) forms =
     Array.concat (Array.to_list pieces)
   in
   let forms = Array.concat (Array.to_list leaves) in
-  let program, _ = Trace.trace Jit ~name forms body in
-  {
-    program;
-    forms;
-    args = Array.map Array.length leaves;
-    outputs = !outputs;
-    moves = List.rev !moves;
-  }
+  let program, captures = Trace.trace kind ~name forms body in
+  let noted = List.rev !moves in
+  ( {
+      program;
+      forms;
+      args = Array.map Array.length leaves;
+      outputs = !outputs;
+      moves = kept program noted;
+    },
+    captures,
+    noted )
+
+(* A loop over values of several devices, [c] over the splitting [ri]'s values:
+   the loop of its programs split, over its operands' pieces. A scan reads each
+   device's piece of a row from its piece of the rows. It declines rows cut
+   along axis 0, which eager computation does not read where they lie, and
+   rows cut along an axis of one element, whose rows [Nx.get], which reads
+   them eagerly, may route elsewhere than the step's rows lie. *)
+and looped ~home ~name ri moves c =
+  (* The moves a loop's programs keep, each trip's, noted with the loop's first
+     result once it is made. *)
+  let inner = ref [] in
+  let split q forms =
+    let s, captures, _ = cut ~kind:Staged ~home ~name q forms in
+    inner := !inner @ s.moves;
+    (s, captures)
+  in
+  let note r =
+    let tag = if Array.length r > 0 then Some r.(0) else None in
+    List.iter (fun m -> moves := (tag, m ^ " each trip") :: !moves) !inner;
+    r
+  in
+  (* The indices of the outputs of [s] that are output [j]'s pieces. *)
+  let outs (s : t) j =
+    match s.outputs.(j) with One k -> [| k |] | Over (_, ks) -> ks
+  in
+  (* Each carry's next value is split as the carry is. *)
+  let carries (s : t) nc =
+    let first = ref 0 in
+    for j = 0 to nc - 1 do
+      let ks = outs s j in
+      let same i k =
+        same_form s.forms.(!first + i) (form s.program.outputs.(k))
+      in
+      if
+        Array.length ks <> s.args.(j)
+        || not (Array.for_all Fun.id (Array.mapi same ks))
+      then
+        decline "%s whose carry's next value lies elsewhere"
+          (construct_name c);
+      first := !first + s.args.(j)
+    done
+  in
+  let results (s : t) r =
+    Array.mapi
+      (fun j f -> joined ri f (Array.map (fun k -> r.(k)) (outs s j)))
+      (Program.forms c)
+  in
+  let forms vs = Array.map form vs in
+  match c with
+  | Scan { step; length; trips; reverse; init; xs; captures; seeds = [||] } ->
+      (* Rows with no element lie anywhere: each device then reads empty
+         pieces of whole rows. *)
+      let rows (V x) =
+        let at = Nx.placement x and shape = Nx.shape x in
+        let q = by_rows at in
+        if cuts_unit x then
+          decline "a scan over rows cut along an axis of one element"
+        else if Nx.Placement.equal q at then V x
+        else if Array.fold_left ( * ) 1 shape > 0 then
+          decline "a scan over rows cut across devices along them"
+        else
+          let f =
+            {
+              Nx.Prim.dtype = Nx.dtype x;
+              layout = L.contiguous (Iarray.of_array shape);
+              placement = q;
+            }
+          in
+          let piece (here, w) = V (empty here f.dtype (extents w)) in
+          joined ri (F f) (Array.map piece (Nx.Prim.pieces q shape))
+      in
+      let xs = Array.map rows xs in
+      let s, more =
+        split step
+          (Array.concat [ forms init; Array.map Loops.row xs; forms captures ])
+      in
+      carries s (Array.length init);
+      let first v = (pieces ri v).(0) in
+      results s
+        (note @@ Program.perform
+           (Scan
+              {
+                step = s.program;
+                length;
+                trips = Option.map first trips;
+                reverse;
+                init = all_pieces ri init;
+                xs = all_pieces ri xs;
+                captures = Array.append (all_pieces ri captures) more;
+                seeds = [||];
+              }))
+  | Iterate
+      {
+        name = entry;
+        step;
+        until;
+        max;
+        rows = None;
+        stopped;
+        init;
+        step_captures;
+        until_captures;
+        seeds = [||];
+      } ->
+      let carry = forms init in
+      let s, step_more =
+        split step (Array.append carry (forms step_captures))
+      in
+      let u, until_more, noted =
+        cut ~kind:Staged ~home ~name until
+          (Array.append carry (forms until_captures))
+      in
+      carries s (Array.length init);
+      (* The stop is one boolean, read on [home] before each trip: where
+         several devices hold it, replicas being equal, [home]'s, or else the
+         first device's. *)
+      let device k =
+        let (F f) = form u.program.outputs.(k) in
+        if L.numel f.layout = 0 then None else Some (rig_of f.placement)
+      in
+      let at_home k =
+        match device k with Some d -> Rig.equal d home | None -> false
+      in
+      let until, k =
+        match u.outputs.(0) with
+        | One k -> (u.program, k)
+        | Over (_, ks) ->
+            let ks =
+              List.filter (fun k -> device k <> None) (Array.to_list ks)
+            in
+            let k =
+              match List.find_opt at_home ks with
+              | Some k -> k
+              | None -> List.hd ks
+            in
+            (Program.prune u.program ~outputs:[| k |], k)
+      in
+      inner := !inner @ kept until noted;
+      (match device k with
+      | Some d when not (Rig.equal d home) ->
+          inner :=
+            !inner
+            @ [
+                Printf.sprintf "%s moves its stop, 1 byte, from %s to %s" entry
+                  (Rig.name d) (Rig.name home);
+              ]
+      | _ -> ());
+      let stopped =
+        Option.map
+          (fun i ->
+            if s.args.(i) <> 1 then
+              decline "an iterate whose lanes stop apart over several devices";
+            Array.fold_left ( + ) 0 (Array.sub s.args 0 i))
+          stopped
+      in
+      results s
+        (note @@ Program.perform
+           (Iterate
+              {
+                name = entry;
+                step = s.program;
+                until;
+                max;
+                rows = None;
+                stopped;
+                init = all_pieces ri init;
+                step_captures =
+                  Array.append (all_pieces ri step_captures) step_more;
+                until_captures =
+                  Array.append (all_pieces ri until_captures) until_more;
+                seeds = [||];
+              }))
+  | Iterate { rows = Some _; _ } ->
+      decline "an iterate that stacks its steps over several devices"
+  | Scan _ | Iterate _ -> decline "a total over several devices"
+  | c -> decline "%s over several devices" (construct_name c)
+
+let split ~name ~home p forms =
+  let s, _, _ = cut ~kind:Jit ~home ~name p forms in
+  s

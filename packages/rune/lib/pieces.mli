@@ -55,12 +55,20 @@ type t = {
           bytes, and the devices it moves from and to. *)
 }
 
-val split : name:string -> Program.t -> Program.form array -> t
-(** [split ~name p forms] is [p], over arguments of [forms], split. Its tracer
-    is named [name] in messages.
+val split : name:string -> home:Rig.t -> Program.t -> Program.form array -> t
+(** [split ~name ~home p forms] is [p], over arguments of [forms], split, to
+    compute on [home] its checks and an iterate's stop, which the split program
+    copies there each trip where it lies only on another device. Its tracer is
+    named [name] in messages.
+
+    A scan or an iterate is the loop of its programs split, over its operands'
+    pieces, each device reading its piece of a row from its piece of the rows.
 
     Raises [Declined] for a program that threads a total or emits, and one with
-    a check, a construct other than [Detach], a traced value placed onto another
-    set, or an argument placed so that a device holds more of it, which a
-    compiled call would hold at once with every piece of its closings; and
-    what nx raises for an operation its partition refuses. *)
+    a check, a construct other than [Detach], [Scan] and [Iterate], a scan over
+    rows cut along axis 0 or along an axis of one element, an iterate that
+    stacks its steps, a loop whose step gives a carry another placement, a
+    traced value placed onto another set, or an argument placed so that a device
+    holds more of it, which a compiled call would hold at once with every piece
+    of its closings; and what nx raises for an operation its partition
+    refuses. *)

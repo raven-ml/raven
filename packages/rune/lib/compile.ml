@@ -1201,8 +1201,10 @@ let names (p : Program.t) n =
 (* A value's node, reach, and whether a scatter computes it. *)
 let operand st env (V x) = (node st env x, reach env x, scattered_at env x)
 
+(* [u] on the program's device: a copy where it lies on none or another. *)
 let on_device st u =
-  if Option.is_none (Ops.device u) then Ops.copy_to_device u st.device else u
+  if Option.is_none (Ops.device u) then Ops.copy_to_device u st.device
+  else moved u st.device
 
 (* A differentiated remat's operands through a barrier, as JAX lowers one
    through an optimization barrier: each operand the program computes is stored
@@ -1522,7 +1524,8 @@ and loop st cs env c =
         in
         let base = Array.length out - Array.length until_feeds in
         Array.iteri (fun k j -> sums.(j) <- out.(base + k)) until_feeds;
-        let stop = Shape.reshape out.(0) (ints [ 1 ]) in
+        (* The flag lies on the program's device, where the checks do. *)
+        let stop = on_device st (Shape.reshape out.(0) (ints [ 1 ])) in
         let no = Ops.ne (int64 0) (int64 0) in
         Ops.where (Ops.ne cs.failed (int64 0)) no (Ops.eq stop (uint8 stop 0))
       in
@@ -1675,12 +1678,17 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
   let on_device u =
     if Option.is_none (Ops.device u) then Ops.copy_to_device u device else u
   in
+  (* The device of [u]'s storage: its own, or the program's for a value that
+     lies on none. In a split program each piece's storage stays on its
+     device. *)
+  let device_of u = Option.value (Ops.device u) ~default:device in
   (* Each carried value: its buffer, holding its first value, the argument that
      stores it there, and its parameter's view. *)
   let carry u =
     if empty u then None
     else
       let slot = next () and k = Shape.max_numel u in
+      let device = device_of u in
       let b = Ops.new_buffer device k (Ops.dtype u) in
       let p =
         hold slot
@@ -1849,6 +1857,7 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
             let v =
               if copied.(i) then begin
                 let slot = next () and m = Shape.max_numel u in
+                let device = device_of u in
                 let w =
                   hold slot
                     (Tolk.Shape.param ~shape:[ Ops.Int m ] ~device (unique ())
@@ -1875,7 +1884,7 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
         if m = 0 then fun _ -> blank (Shape.expand u dims)
         else
           let k = stride u m in
-          let b = Ops.new_buffer device (n * k) (Ops.dtype u) in
+          let b = Ops.new_buffer (device_of u) (n * k) (Ops.dtype u) in
           let w = window b Ops.O.(row_at * int k) m in
           let slot = next () in
           let p = hold slot (Tolk.Shape.param_like w (unique ())) in
@@ -2407,6 +2416,38 @@ let device (p : Program.t) forms =
   | Some r -> decline "a value on %s, which computes nothing" (Rig.name r)
   | None -> decline "no value"
 
+(* The device a program over several devices computes on, where its checks
+   and an iterate's stop lie: that of its first argument's first piece, or else
+   of the first value an equation reads or places, or else of its first
+   result's. *)
+let home (p : Program.t) forms =
+  let first (type d) (q : d Nx.Placement.t) shape =
+    Pieces.rig_of (fst (Nx.Prim.pieces q shape).(0))
+  in
+  let of_form (F f) = first f.placement (shape_of f) in
+  let of_value (type v s d) (x : (v, s, d) Nx.t) =
+    first (Nx.placement x) (Nx.shape x)
+  in
+  if Array.length forms > 0 then of_form forms.(0)
+  else
+    let read =
+      Array.find_map
+        (function
+          | Op { op = Place (q, x); _ } -> Some (first q (Nx.shape x))
+          | Op { op; _ } -> (
+              match Nx.Prim.operands op with
+              | Nx.Prim.Operands (Nx.Prim.Any x :: _) -> Some (of_value x)
+              | Nx.Prim.Operands [] -> None)
+          | Do { c; _ } -> (
+              match Program.operands c with
+              | V x :: _ -> Some (of_value x)
+              | [] -> None))
+        p.eqns
+    in
+    match read with
+    | Some r -> r
+    | None -> of_form (form p.outputs.(0))
+
 (* The devices of a split program's values, in the order the program meets
    them, each of which computes. Each device's kernels compile for its own
    target. *)
@@ -2422,17 +2463,23 @@ let rigs (p : Program.t) forms =
   in
   let value (type v s d) (x : (v, s, d) Nx.t) = note (Nx.placement x) in
   Array.iter (fun (F f) -> note f.placement) forms;
-  Array.iter
-    (function
-      | Op { op; _ } -> (
-          let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
-          List.iter (fun (Nx.Prim.Any x) -> value x) xs;
-          match op with
-          | Place (q, _) -> note q
-          | Map { at = Some q; _ } -> note q
-          | _ -> ())
-      | Do { c; _ } -> List.iter (fun (V x) -> value x) (Program.operands c))
-    p.eqns;
+  (* A loop's step computes on the devices of its operations. *)
+  let rec eqns (p : Program.t) =
+    Array.iter
+      (function
+        | Op { op; _ } -> (
+            let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+            List.iter (fun (Nx.Prim.Any x) -> value x) xs;
+            match op with
+            | Place (q, _) -> note q
+            | Map { at = Some q; _ } -> note q
+            | _ -> ())
+        | Do { c; _ } ->
+            List.iter (fun (V x) -> value x) (Program.operands c);
+            List.iter eqns (Program.carried c))
+      p.eqns
+  in
+  eqns p;
   Array.iter (fun (V y) -> value y) p.outputs;
   match List.rev !seen with [] -> decline "no value" | rigs -> rigs
 
@@ -2512,16 +2559,18 @@ let variant t layouts phases donated settings =
 
 let make ~name ?beam ?parallel p forms =
   match
+    let home = if Pieces.needed p forms then Some (home p forms) else None in
     let split =
-      if Pieces.needed p forms then Some (Pieces.split ~name p forms) else None
+      Option.map (fun home -> Pieces.split ~name ~home p forms) home
     in
     let source = p in
     let p, forms, rigs =
-      match split with
-      | None -> (p, forms, [ device p forms ])
-      | Some s ->
+      match (split, home) with
+      | Some s, Some home ->
           List.iter (report "%s") s.moves;
-          (s.program, s.forms, rigs s.program s.forms)
+          let others = List.filter (fun r -> not (Rig.equal r home)) in
+          (s.program, s.forms, home :: others (rigs s.program s.forms))
+      | _ -> (p, forms, [ device p forms ])
     in
     let rig = List.hd rigs in
     let layouts =

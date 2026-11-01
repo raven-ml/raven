@@ -353,6 +353,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles `Rune.scan` and `Rune.iterate` over values on several
+  devices of one set: one loop whose trips run each device's kernels and
+  moves of the step, with eager's placements and bits. Such programs were
+  evaluated, trip by trip.
 - `Rune.jit` compiles programs over devices of several targets, such as a GPU
   beside a memory device: each device runs kernels compiled for its own
   target. Such programs were evaluated, and on a set without kernels raised.
@@ -368,8 +372,8 @@ All notable changes to this project will be documented in this file.
 - `Rune.jit` compiles programs over several devices of one set, values cut
   across them, whole on each or whole on one: each device computes its
   windows in kernels of its own, compiled once per target, with eager's
-  placements. Such programs were evaluated. Loops, `switch`, `remat`, custom
-  rules, checks and totals over several devices are still evaluated, as are
+  placements. Such programs were evaluated. `switch`, `remat`, custom rules,
+  checks and totals over several devices are still evaluated, as are
   programs that gather a cut argument, as fully sharded training gathers its
   weights.
 - A loop's step that runs a construct over none of the step's values, such as
