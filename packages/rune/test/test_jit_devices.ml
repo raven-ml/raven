@@ -537,6 +537,121 @@ let coordinates set c =
           (Nx.eye_at ~m:c.shape.(1) (Nx.placement x) f32 c.shape.(0)))
   end
 
+(* Values computed from constants
+
+   A value the program computes from constants alone, stored before the kernels
+   that read it, is read on each device: the shifts that unpack a sub-byte
+   bitcast, and a table of [exp2] along an axis, as a rotary embedding reads its
+   angles. Over a weight whole on each device or cut along its rows, a compiled
+   call computes no call evaluated and gives eager's placement, bit for bit
+   where its function is exact. *)
+
+type packing = U4 | I4 | I8
+
+let pp_packing ppf p =
+  Format.pp_print_string ppf
+    (match p with U4 -> "uint4" | I4 -> "int4" | I8 -> "int8")
+
+(* The bytes [w] as elements of [p], each row's elements along one axis, at
+   float32. *)
+let decode p w =
+  let rows = Nx.dim 0 w and cols = Nx.dim 1 w in
+  let wide dt = Nx.reshape [| rows; 2 * cols |] (Nx.bitcast dt w) in
+  match p with
+  | U4 -> Nx.cast f32 (wide Nx.uint4)
+  | I4 -> Nx.cast f32 (wide Nx.int4)
+  | I8 -> Nx.cast f32 (Nx.bitcast Nx.int8 w)
+
+(* A sum of each row of the decoded bytes and their product with a vector of
+   small integers: exact, since every partial sum is an integer below
+   [2^24]. *)
+let decoded set ~packing ~whole =
+  let rows = 3 and cols = 256 in
+  let bytes =
+    Nx.create Nx.uint8 [| rows; cols |]
+      (Array.init (rows * cols) (fun i -> ((i * 37) + 11) mod 256))
+  in
+  let w = Nx.place (at set (if whole then On else Split 0)) bytes in
+  let k = Nx.dim 1 (decode packing bytes) in
+  let x =
+    Nx.place (at set On)
+      (Nx.create f32 [| k |] (Array.init k (fun i -> float_of_int ((i mod 7) - 3))))
+  in
+  let same name f =
+    let name =
+      Format.asprintf "%s of %a, %s" name pp_packing packing
+        (if whole then "whole" else "cut")
+    in
+    let eager = f w x in
+    match compiled f w x with
+    | Value jit ->
+        equal ~msg:(name ^ " placement") (placement ()) (Nx.placement eager)
+          (Nx.placement jit);
+        equal ~msg:name bits_t (bits eager) (bits jit)
+    | Raised m -> fail (name ^ ": " ^ m)
+  in
+  same "a sum" (fun w _ -> Nx.sum ~axes:[ 1 ] (decode packing w));
+  same "a product" (fun w x -> Nx.matmul (decode packing w) x)
+
+let decodes n =
+  List.iter
+    (fun packing ->
+      List.iter
+        (fun whole -> over n { law = (fun set -> decoded set ~packing ~whole) })
+        [ true; false ])
+    [ U4; I4; I8 ]
+
+(* A table of [f j] along each row of [x], summed against it, for [f] [exp2]
+   or [sin]: each side is within [f]'s 4 ulps of the exact table and [γ(4)]
+   of its sum, so the two lie within twice that bound of each other. *)
+let table set ~whole =
+  let x = Nx.place (at set (if whole then On else Split 0)) (value [| 5; 4 |]) in
+  let check name f f64 =
+    let g x _ =
+      Nx.sum ~axes:[ 1 ] (Nx.mul x (f (Nx.arange_at (Nx.beside x) f32 0 4 1)))
+    in
+    let eager = g x x in
+    match compiled g x x with
+    | Value jit ->
+        let host = Nx.abs (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
+        let entries = Nx.abs (f64 (Nx.arange Nx.float64 0 4 1)) in
+        let mass = Nx.sum ~axes:[ 1 ] (Nx.mul host entries) in
+        let ulps = 4. *. ldexp 1. (-23) in
+        within ~bound:(Nx.mul_s mass (2. *. (ulps +. gamma 4))) eager jit
+    | Raised m -> fail (name ^ ": " ^ m)
+  in
+  check "exp2" Nx.exp2 Nx.exp2;
+  check "sin" Nx.sin Nx.sin
+
+(* [Nx_quant.apply] of a Q4_K or Q6_K weight to a vector, the weight whole on
+   each device or cut along its rows: within twice the bound of each side, the
+   decoded weight's products with [x] summed at float32. *)
+let quant_vector set ~q6 ~whole =
+  let rows = 3 and size = if q6 then 210 else 144 in
+  let b = Array.init (rows * size) (fun i -> ((i * 37) + (i / 7)) mod 256) in
+  (* Each block's float16 fields of either sign in [2^-9, 2^-4). *)
+  List.iter
+    (fun o ->
+      for j = 0 to rows - 1 do
+        b.((j * size) + o + 1) <- (0x18 + j) lor (j mod 2 * 0x80)
+      done)
+    (if q6 then [ 208 ] else [ 0; 2 ]);
+  let bytes = Nx.create Nx.uint8 [| rows; size |] b in
+  let w = if q6 then Nx_quant.q6_k bytes else Nx_quant.q4_k bytes in
+  let wp = Nx_quant.place (at set (if whole then On else Split 0)) w in
+  let x = value ~seed:3 [| 256 |] in
+  let xp = Nx.place (at set On) x in
+  let f x _ = Nx_quant.apply wp x in
+  let eager = f xp xp in
+  match compiled f xp xp with
+  | Value jit ->
+      let v = Nx.abs (Nx_quant.dequant Nx.float64 w) in
+      let mass =
+        Nx.matmul (Nx.abs (Nx.cast Nx.float64 x)) (Nx.matrix_transpose v)
+      in
+      within ~bound:(Nx.mul_s mass (2. *. gamma 257)) eager jit
+  | Raised m -> fail m
+
 (* Gradients
 
    The gradient of a loss over a batch cut across the devices, under jit, lies
@@ -1382,6 +1497,28 @@ let () =
              test "its weight cut along n over two devices" (fun () ->
                  over 2 { law = expert_grad });
              test "over three, uneven" (fun () -> over 3 { law = expert_grad });
+           ];
+         group "values computed from constants"
+           [
+             test "decoded bytes over two devices" (fun () -> decodes 2);
+             test "decoded bytes over four" (fun () -> decodes 4);
+             test "a table of exp2 or sin over two and four devices" (fun () ->
+                 List.iter
+                   (fun n ->
+                     List.iter
+                       (fun whole -> over n { law = (fun s -> table s ~whole) })
+                       [ true; false ])
+                   [ 2; 4 ]);
+             test "Q4_K and Q6_K by a vector over two and four devices"
+               (fun () ->
+                 List.iter
+                   (fun n ->
+                     List.iter
+                       (fun (q6, whole) ->
+                         over n
+                           { law = (fun s -> quant_vector s ~q6 ~whole) })
+                       [ (false, true); (false, false); (true, true); (true, false) ])
+                   [ 2; 4 ]);
            ];
          group "replicas"
            [

@@ -362,6 +362,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` over several devices compiles a function that reads a table
+  computed from constants, which it evaluated: a sum or product over a
+  sub-byte `Nx.bitcast` (`Nx_quant.apply` of Q4_K and Q6_K weights by a
+  vector) and an `Nx.exp2` or `Nx.sin` of an arange, as rotary embeddings use.
 - A compiled real contraction (`Nx.matmul`, `Nx.dot`, `Nx.einsum`,
   `Nx.contract`) promises `Nx.contract`'s bound, `γ(K + 1, 2u)`, which a
   matrix unit that truncates its sums meets. rune stated `γ(n + 1 + s)` at
@@ -896,6 +900,9 @@ thread.
 
 ### Tolk (new)
 
+- A value of no device that a schedule stores, such as an arange, lives on the
+  device of each kernel that reads it, stored once per device; it lived on the
+  sink's first device, and kernels on the others refused to read it.
 - `Compiler_cpu.clang` compiles a source of more than 400 000 bytes without
   Clang's loop vectorizer: float64 `Nx.betainccinv`'s gradient takes Clang
   5.7 s, from 19.7 s, its loop unpacked. Cached objects compile again once.

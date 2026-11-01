@@ -4880,3 +4880,26 @@ fold wraps integers and holds its float bound`, hold.
 - **Pinned by:** `Tolk.Prepare › pm_mops › rules › an index of a reshape's
   added leading axis is its source`; rune's `contractions › complex
   contractions hold their bound`.
+
+## D180. A stored value of no device lives on each device that reads it
+
+- **tinygrad:** `schedule/indexing.py:142-145` (`pm_fix_deviceless`) and
+  `:312-313` (`run_rangeify`), which place every stage of no device on the
+  sink's device, the first device among its sources.
+- **tolk:** `Indexing.fix_deviceless`.
+- **Differs:** a stage of no device, an arange or a table computed from
+  constants that rangeify stores, takes the device of the nearest node above
+  it that has one, the device of the kernel that reads it. Read by kernels on
+  several devices, it is one stage per device, each computed there. A stage
+  that no node with a device reads, or that only a store to a disk reads,
+  lives on the sink's device. On a sink of one device the two rules agree.
+- **Reason:** (b): rune's compiled programs over several devices
+  (`Compile.lower` of `Pieces.split`) schedule one sink whose kernels each
+  compute on one device. A constant table their kernels share, as the shifts
+  that unpack a sub-byte bitcast (`Compile.unpack`, `Lower_arith`'s
+  bitcast) or an `exp2` of an arange, was stored on the first device and
+  read by the others' kernels, which `Schedule` refuses, so the call
+  evaluated.
+- **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › a stored
+  value of no device lives on each device whose kernels read it`; rune's
+  `Rune.jit over several devices › values computed from constants`.

@@ -97,7 +97,10 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
       each half, the whole guarded so that a negative index selects the last
       source. Its depth is logarithmic in the number of sources;
     - movements are removed;
-    - a stage without a device gets [sink]'s.
+    - a stage without a device gets the device of the nearest node above it
+      that has one, where the kernel that reads it computes: read on several
+      devices, it is a stage on each. One that no such node reads, or that
+      only a store to a disk reads, gets [sink]'s.
 
     Calls and {!Op.After}s get no ranges, and the walk does not enter kernels
     ({!Ops.gate_kernel_sink}). With [debug] (default [false]), each node's

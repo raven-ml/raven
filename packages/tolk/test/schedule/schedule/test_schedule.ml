@@ -1204,6 +1204,56 @@ let several_devices () =
   raises_match (Exn.invalid_arg ~sub:"same device") (fun () ->
       Schedule.create_linear_with_vars across)
 
+(* Rows of [values] on each of [devices], each summed against a table of no
+   device, [2^j] along the row, as a rotary embedding reads its angles: the
+   table computes a transcendental function and is broadcast over the rows, so
+   it is stored, and every device's sums read the one table. *)
+let table_sums devices =
+  let m = 8 and k = 4 in
+  let table =
+    Shape.expand
+      (Shape.reshape (Ops.exp2 (Shape.arange ~dtype:Float32 k)) [ Int 1; Int k ])
+      [ Int m; Int k ]
+  in
+  let n = List.length devices in
+  let sums slot d =
+    let values =
+      Shape.reshape (Ops.new_buffer ~slot d (m * k) Float32) [ Int m; Int k ]
+    in
+    let out = Ops.new_buffer ~slot:(slot + n) d m Float32 in
+    let total = Shape.rop (Ops.mul values table) Op.Add [ 1 ] in
+    Ops.after out [ Ops.store out (Shape.reshape total [ Int m ]) ]
+  in
+  Ops.sink (List.mapi sums devices)
+
+(* The devices of the storage each call of [linear] reads and writes. *)
+let call_devices linear =
+  List.map
+    (fun call ->
+      List.sort_uniq String.compare
+        (List.filter_map
+           (fun u ->
+             match Ops.arg u with
+             | Param { device = Some d; _ } -> Some d
+             | _ -> None)
+           (Ops.toposort ~calls:Skip (Ops.body call))))
+    (Ops.src linear)
+
+(* On one device, the table is stored once and read by the sums; on two, each
+   device stores its own and its sums read it there. Calls are compared in no
+   order. *)
+let deviceless_stage () =
+  let calls devices =
+    List.sort compare
+      (call_devices
+         (fst (Schedule.create_linear_with_vars (table_sums devices))))
+  in
+  equal (list (list string)) ~msg:"one device" [ [ "CPU" ]; [ "CPU" ] ]
+    (calls [ "CPU" ]);
+  equal (list (list string)) ~msg:"two devices"
+    [ [ "CPU" ]; [ "CPU" ]; [ "CPU:1" ]; [ "CPU:1" ] ]
+    (calls [ "CPU"; "CPU:1" ])
+
 let variables =
   group "create_linear_with_vars › rules"
     [
@@ -1237,6 +1287,10 @@ let variables =
             [ ("v", 4) ]
             (snd (Schedule.create_linear_with_vars (rebound 4))));
       test "a kernel on buffers of two devices is refused" several_devices;
+      test
+        "a stored value of no device lives on each device whose kernels read \
+         it"
+        deviceless_stage;
     ]
 
 (* Loops of calls *)

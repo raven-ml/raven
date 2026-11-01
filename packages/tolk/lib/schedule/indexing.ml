@@ -378,6 +378,86 @@ let pm_fix_deviceless =
             | _ -> None);
       ])
 
+let deviceless_stage u =
+  match (op u, arg u) with
+  | Op.Stage, Bufferize { device = None; _ } -> true
+  | _ -> false
+
+(* A stored value of no device, an arange or a table of constants, lives where
+   the kernel that reads it computes: on the device of the nearest node above it
+   that has one. A sink over several devices, each kernel on one, gives each
+   device that reads the value a stage of its own: [exp2 (arange 4)] read by
+   sums on CPU and CPU:1 is stored once on each. A value read by no node with a
+   device, or by a store to a disk alone, lives on the sink's. On a sink of
+   one device both rules place it there, and the walk that finds the readers
+   is all the rule adds. *)
+let fix_deviceless tsink =
+  (* The nodes of no device that reach a stage of no device, and the devices
+     of the nodes that read them. *)
+  let pending = Tbl.create 16 and readers = ref [] in
+  List.iter
+    (fun u ->
+      match device u with
+      | None ->
+          if deviceless_stage u || List.exists (Tbl.mem pending) (src u) then
+            Tbl.replace pending u ()
+      | Some d ->
+          if
+            List.exists (Tbl.mem pending) (src u)
+            && not (List.exists (String.equal d) !readers)
+          then readers := d :: !readers)
+    (toposort ~calls:Skip tsink);
+  let on_sink u =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(device tsink) u
+      (After_sources pm_fix_deviceless)
+  in
+  (* A reader on a disk computes nothing: what it stores is computed where
+     the sink computes. *)
+  let reader d = not (is_disk_device d) in
+  let elsewhere d = reader d && Some d <> device tsink in
+  if not (List.exists elsewhere !readers) then on_sink tsink
+  else
+    let placed = Hashtbl.create 4 in
+    let place d u =
+      let memo =
+        match Hashtbl.find_opt placed d with
+        | Some m -> m
+        | None ->
+            let m = Tbl.create 16 in
+            Hashtbl.replace placed d m;
+            m
+      in
+      match Tbl.find_opt memo u with
+      | Some p -> p
+      | None ->
+          let p =
+            graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Some d) u
+              (After_sources pm_fix_deviceless)
+          in
+          Tbl.replace memo u p;
+          p
+    in
+    let pm =
+      Pattern_matcher.v (fun () ->
+          [
+            rule_ctx (Upat.v ~op:Op.Set.all ~name:"x" ()) (fun () m ->
+                let x = m "x" in
+                match device x with
+                | Some d when reader d && List.exists (Tbl.mem pending) (src x)
+                  ->
+                    let src =
+                      List.map
+                        (fun s -> if Tbl.mem pending s then place d s else s)
+                        (src x)
+                    in
+                    Some (replace x ~src)
+                | _ -> None);
+          ])
+    in
+    on_sink
+      (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
+         (After_sources pm))
+
 (* Movements *)
 
 let apply_reshape in_shape out_shape urngs =
@@ -900,6 +980,4 @@ let run_rangeify ?(debug = false) tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:rctx tsink
       (Before_sources pm_apply_rangeify)
   in
-  (* A value without a device that must be stored lives on the sink's. *)
-  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(device tsink) tsink
-    (After_sources pm_fix_deviceless)
+  fix_deviceless tsink
