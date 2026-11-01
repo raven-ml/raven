@@ -29,13 +29,17 @@
    but what they generate is noise: it rarely opens a message, so a prompt
    usually prints nothing but the timings.
 
+   With [--q8_0] the attention projections and the head are packed as Q8_0,
+   as GGUF files store them ([Gpt_oss.Q8_0]): fewer bytes a step and other
+   numerics, and, run eagerly on the host, a step about twice as long.
+
    With [--profile FILE], the prompt's call is profiled and its events written
    to [FILE] in Chrome's trace format: on its first call the step is traced and
    compiled, so the profile shows what that costs.
 
-   Usage: main.exe [--repo REPO] [--devices LIST] [--dtype DT] [--count N]
-   [--profile FILE] [--prompt TEXT [--system TEXT] [--reasoning low|medium|high]
-   [--show-analysis]]. *)
+   Usage: main.exe [--repo REPO] [--devices LIST] [--dtype DT] [--q8_0]
+   [--count N] [--profile FILE] [--prompt TEXT [--system TEXT] [--reasoning
+   low|medium|high] [--show-analysis]]. *)
 
 open Kaun
 
@@ -150,7 +154,7 @@ let () =
   let devices = ref "" and count = ref 0 and dtype = ref "" in
   let profile = ref "" in
   let prompt = ref "" and system = ref "" and reasoning = ref "medium" in
-  let show_analysis = ref false in
+  let show_analysis = ref false and q8_0 = ref false in
   Arg.parse
     [
       ( "--repo",
@@ -163,6 +167,10 @@ let () =
       ( "--dtype",
         Arg.Set_string dtype,
         "float32 or bfloat16 (default: the weights' own)" );
+      ( "--q8_0",
+        Arg.Set q8_0,
+        "Pack the attention projections and the head as Q8_0: fewer bytes, \
+         other numerics; eagerly on the host a step is about 2x slower" );
       ( "--count",
         Arg.Set_int count,
         "Most tokens to generate (default: 16, or 256 for a prompt)" );
@@ -178,9 +186,9 @@ let () =
         "Print the model's reasoning on standard error" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "main.exe [--repo REPO] [--devices LIST] [--dtype DT] [--count N] \
-     [--profile FILE] [--prompt TEXT [--system TEXT] [--reasoning EFFORT] \
-     [--show-analysis]]";
+    "main.exe [--repo REPO] [--devices LIST] [--dtype DT] [--q8_0] \
+     [--count N] [--profile FILE] [--prompt TEXT [--system TEXT] [--reasoning \
+     EFFORT] [--show-analysis]]";
   let effort = effort_of_string !reasoning in
   let cfg = Gpt_oss.config_of_json (Kaun_hf.load_config !repo) in
   let weights = Kaun_hf.load_safetensors !repo in
@@ -195,7 +203,8 @@ let () =
   let run ~jit s =
     let t0 = Unix.gettimeofday () in
     let placement = Gpt_oss.expert_parallel s in
-    let params = Gpt_oss.of_hf ~placement cfg dt weights in
+    let pack = if !q8_0 then Gpt_oss.Q8_0 else Unpacked in
+    let params = Gpt_oss.of_hf ~pack ~placement cfg dt weights in
     let cfg = Gpt_oss.place_config (Nx.Placement.on s) cfg in
     Printf.fprintf log "weights imported in %.1f s\n%!"
       (Unix.gettimeofday () -. t0);

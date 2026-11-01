@@ -11,7 +11,9 @@
     attention, the first one sliding, over one {!Kaun.Cache_index}. {!attention}
     composes kaun's attention pieces with the sinks and YaRN's score scale.
     Expert weights stay packed as the checkpoint stores them ({!Nx_quant.t}),
-    and {!Nx_quant.apply} multiplies by them.
+    and {!Nx_quant.apply} multiplies by them. The attention projections and
+    an untied head are floats, or packed as Q8_0 where the caller asks
+    ({!packing}).
 
     The model is written on the decode contract: {!hidden}, {!cached} and
     {!logits} are its forward passes. *)
@@ -47,9 +49,32 @@ val place_config : 'e Nx.Placement.t -> 'd config -> 'e config
     ({!Kaun.Rope.place}). {!config_of_json} makes it on the host; a model on
     other devices places it once, where its parameters lie. *)
 
+(** The type for a projection's weights over payload ['a]. *)
+type ('a, 'd) projection =
+  | Float of ('a, 'd) Kaun.Linear.t
+  | Quant of { w : 'd Nx_quant.t; b : 'a option }
+      (** A packed weight of shape [[| outputs; inputs |]], as GGUF files
+          store it, and its bias. *)
+
+val project :
+  ((float, 'b, 'd) Nx.t, 'd) projection ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
+(** [project p x] is [p] applied to [x], whose last axis is [p]'s inputs:
+    {!Kaun.Linear.apply}, or {!Nx_quant.apply} and the bias. *)
+
+type ('a, 'd) attn = {
+  q : ('a, 'd) projection;
+  k : ('a, 'd) projection;
+  v : ('a, 'd) projection;
+  out : ('a, 'd) projection;
+}
+(** The type for the attention's projections over payload ['a]: the query,
+    key, value and output. Every projection has a bias. *)
+
 type ('a, 'd) block = {
   attn_norm : ('a, 'd) Kaun.Rms_norm.t;
-  attn : ('a, 'd) Kaun.Attention.t;  (** Every projection has a bias. *)
+  attn : ('a, 'd) attn;
   sinks : 'a;  (** [[| n_heads |]]. *)
   ffn_norm : ('a, 'd) Kaun.Rms_norm.t;
   router : ('a, 'd) Kaun.Linear.t;  (** Model width to experts, with a bias. *)
@@ -62,7 +87,7 @@ type ('a, 'd) params = {
   tok : ('a, 'd) Kaun.Embedding.t;
   blocks : ('a, 'd) block list;
   norm : ('a, 'd) Kaun.Rms_norm.t;
-  head : ('a, 'd) Kaun.Linear.t option;  (** [None]: tied to [tok]. *)
+  head : ('a, 'd) projection option;  (** [None]: tied to [tok]. *)
 }
 (** The type for gpt-oss parameters over payload ['a]. *)
 
@@ -70,8 +95,11 @@ type 'd t = ('d Nx.float32_t, 'd) params
 (** The type for single-precision gpt-oss parameters on the set ['d]. *)
 
 module Block : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) block
-(** A block's structure. It walks [attn_norm], [attn], [sinks], [ffn_norm],
-    [router] and [moe], whose weights report their case (see {!Moe.walk}):
+(** A block's structure. It walks [attn_norm], [attn]'s [q], [k], [v] and
+    [out], [sinks], [ffn_norm], [router] and [moe]. A projection reports its
+    case, ["float"], walked as {!Kaun.Linear.walk}, or ["quant"], its [w] by
+    {!Nx_quant.walk} and its [b]; the experts' weights report theirs (see
+    {!Moe.walk}):
     [Nx.Ptree.instantiate (module Block)] is what a compiled block program takes
     its weights as. *)
 
@@ -127,9 +155,10 @@ val attention :
 (** [attention cfg layer b cache index x] is causal self-attention of the
     normalised tokens [x], of shape [[| batch; seq; dim |]], through [cache],
     and the cache with their keys and values written: {!Kaun.Attention.cached}
-    composed from its pieces, with [b.sinks] and [cfg.attention_scale] given to
-    {!Kaun.Attention.attend}. A {!Sliding} layer sees the last [cfg.window]
-    positions, through {!Kaun.Cache_index.window}. *)
+    composed from its pieces over {!project}, with [b.sinks] and
+    [cfg.attention_scale] given to {!Kaun.Attention.attend}. A {!Sliding}
+    layer sees the last [cfg.window] positions, through
+    {!Kaun.Cache_index.window}. *)
 
 (** {1:forward Forward passes}
 
@@ -202,7 +231,20 @@ val config_of_json : Jsont.json -> Nx.host config
     Raises [Failure] on a missing field or a rotary scaling other than YaRN
     without truncation. *)
 
+(** The type for how {!of_hf} stores the attention projections and an untied
+    head. *)
+type packing =
+  | Unpacked  (** Floats at the model's dtype: the checkpoint's model. *)
+  | Q8_0
+      (** {!Nx_quant.quantize_q8_0} of those floats, as GGUF files of gpt-oss
+          store them: 53% of a bfloat16 weight's bytes, and other numerics.
+          Fewer bytes is not a faster step everywhere: eager on nx.cpu a
+          step takes about twice as long, its products staging the int8
+          quants (a 4096 × 4096 Q8_0 matrix-vector product 3.6 ms against
+          1.3 ms dense). *)
+
 val of_hf :
+  ?pack:packing ->
   placement:(role -> axis:int -> 'd Nx.Placement.t) ->
   'c config ->
   (float, 'b) Nx.dtype ->
@@ -214,24 +256,31 @@ val of_hf :
     [inputs × outputs], a view. Experts stored as [_blocks] and [_scales] are an
     {!Nx_quant.mxfp4} weight over the file's bytes, whatever [dt]. At the file's
     own dtype nothing is copied; at another one each float leaf is cast.
+    Under [pack], [Unpacked] by default, the attention projections and an
+    untied head are stored as {!packing} says, each packed weight quantised
+    where it is placed and compiled, so a set that computes under
+    [Rune.jit] alone quantises too.
 
     Each float leaf is placed with [Nx.place (placement role ~axis)] as it is
-    built (see {!role}), and each packed weight with
+    built (see {!role}), and each packed expert weight with
     [Nx_quant.place (placement Experts ~axis:0)], so a function compiled where
     the model is that captures it uploads nothing and the host holds one leaf at
-    a time.
+    a time. A packed projection is quantised from its float leaf placed in the
+    file's [[| outputs; inputs |]], its role's cut along the outputs at axis [0]
+    and along the inputs at axis [1].
 
     Raises [Failure], naming the entry, if one is missing, has another shape
     than [cfg] says, or has a dtype the leaf cannot take. *)
 
 val from_file :
+  ?pack:packing ->
   placement:(role -> axis:int -> 'd Nx.Placement.t) ->
   'c config ->
   (float, 'b) Nx.dtype ->
   string ->
   ((float, 'b, 'd) Nx.t, 'd) params
-(** [from_file ~placement cfg dt path] is {!of_hf} on the safetensors file
-    [path]. *)
+(** [from_file ~pack ~placement cfg dt path] is {!of_hf} on the safetensors
+    file [path]. *)
 
 type dtype =
   | Dtype : (float, 'b) Nx.dtype -> dtype
@@ -249,10 +298,11 @@ val stored_dtype : 'd Nx_io.Archive.t -> dtype
     entry. *)
 
 val from_pretrained :
+  ?pack:packing ->
   placement:(role -> axis:int -> 'd Nx.Placement.t) ->
   string ->
   (float, 'b) Nx.dtype ->
   Nx.host config * ((float, 'b, 'd) Nx.t, 'd) params
-(** [from_pretrained ~placement repo_id dt] downloads the repository's
+(** [from_pretrained ~pack ~placement repo_id dt] downloads the repository's
     configuration and weights, single-file or sharded (cached afterwards), and
     is the model at [dt]. *)

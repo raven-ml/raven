@@ -41,11 +41,21 @@ module Cpu1 = (val Nx.devices [ cpu1_device ])
 let cpu1 = Cpu1.on
 let placed_cfg = Gpt_oss.place_config cpu1 cfg
 
-let params () =
+(* With [q8_0], the attention projections and the head are packed as Q8_0,
+   quantised on the host. *)
+let params ?(q8_0 = false) () =
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
-  let f shape = Nx.place cpu1 (Nx.mul_s (Nx.Rng.normal Nx.float32 shape) 0.1) in
+  let host shape = Nx.mul_s (Nx.Rng.normal Nx.float32 shape) 0.1 in
+  let f shape = Nx.place cpu1 (host shape) in
   let linear ?(bias = true) i o =
     { Linear.w = f [| i; o |]; b = (if bias then Some (f [| o |]) else None) }
+  in
+  let projection ?(bias = true) i o =
+    if not q8_0 then Gpt_oss.Float (linear ~bias i o)
+    else
+      let w = Nx_quant.quantize_q8_0 (host [| o; i |]) in
+      let b = if bias then Some (f [| o |]) else None in
+      Gpt_oss.Quant { w = Nx_quant.place cpu1 w; b }
   in
   let norm () =
     { Rms_norm.gamma = Nx.place cpu1 (Nx.ones Nx.float32 [| 32 |]) }
@@ -57,10 +67,10 @@ let params () =
       Gpt_oss.attn_norm = norm ();
       attn =
         {
-          Attention.q = linear d q;
-          k = linear d kv;
-          v = linear d kv;
-          out = linear q d;
+          Gpt_oss.q = projection d q;
+          k = projection d kv;
+          v = projection d kv;
+          out = projection q d;
         };
       sinks = f [| cfg.n_heads |];
       ffn_norm = norm ();
@@ -78,7 +88,7 @@ let params () =
     Gpt_oss.tok = { Embedding.table = f [| cfg.vocab_size; d |] };
     blocks = List.map block cfg.layers;
     norm = norm ();
-    head = Some (linear ~bias:false d cfg.vocab_size);
+    head = Some (projection ~bias:false d cfg.vocab_size);
   }
 
 (* Each pool's storage, read without sharing it: a value over its memory
@@ -174,6 +184,43 @@ let test_blocks claim () =
     equal ~msg:"the output is on CPU:1" placement cpu1 (Nx.placement !x)
   end
 
+(* The compiled loop over Q8_0 projections gives the eager model's logits
+   for a prompt and a step after it, within float32 sums' error, with every
+   program compiled. *)
+let test_q8_0 () =
+  let p = params ~q8_0:true () in
+  let n0 = 5 in
+  let context = n0 + 1 in
+  let caches () =
+    Gpt_oss.cache
+      ~placement:(fun _ ~axis:_ -> cpu1)
+      cfg ~slots:context Nx.float32
+  in
+  let compiled = Layer_loop.cached ~placement:cpu1 placed_cfg p in
+  let eager c index ids =
+    Gpt_oss.cached placed_cfg p c
+      (Cache_index.place cpu1 index)
+      (Nx.place cpu1 ids)
+  in
+  let agree msg (want, _) (got, _) =
+    let logits h = Nx.to_array (Gpt_oss.logits placed_cfg p h) in
+    equal ~msg
+      (array (float_rel ~rel:1e-4 ~abs:1e-5))
+      (logits want) (logits got)
+  in
+  let evaluated = Rune.evaluations () in
+  let index = Cache_index.rows ~context [| n0 |] in
+  let ids = Nx.create Nx.int64 [| 1; n0 |] (Array.init n0 Int64.of_int) in
+  let want = eager (caches ()) index ids in
+  let got = compiled (caches ()) index ids in
+  agree "the prompt" want got;
+  let index = Cache_index.advance index in
+  let token = Nx.create Nx.int64 [| 1; 1 |] [| 3L |] in
+  agree "the step"
+    (eager (snd want) index token)
+    (compiled (snd got) index token);
+  equal ~msg:"no program is evaluated" int evaluated (Rune.evaluations ())
+
 let () =
   exit
     (run "gpt-oss layer loop"
@@ -186,5 +233,7 @@ let () =
                (test_blocks In_place);
              test "a call after the first copies nothing onto CPU:1"
                (test_blocks No_copy);
+             test "Q8_0 projections compile to the eager model's logits"
+               test_q8_0;
            ];
        ])

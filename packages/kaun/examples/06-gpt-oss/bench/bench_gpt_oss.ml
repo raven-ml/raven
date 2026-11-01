@@ -6,7 +6,8 @@
 (* gpt-oss-20b at its own shapes on a CUDA or AMD GPU, the example's model
    compiled one layer kind at a time ([Layer_loop]): a decode step and a prefill
    of 512 tokens, over random weights at bfloat16 with the experts packed as
-   MXFP4.
+   MXFP4, and a decode step with the attention projections and the head
+   packed as Q8_0 too, quantised in its case's setup.
 
    The 13.8 GB of weights are built once, on the host, before the cases fork:
    every case's worker shares them and places them on the GPU itself, since a
@@ -96,10 +97,10 @@ let weights () =
       Gpt_oss.attn_norm = gamma ();
       attn =
         {
-          Attention.q = linear c.dim q_dim;
-          k = linear c.dim kv;
-          v = linear c.dim kv;
-          out = linear q_dim c.dim;
+          Gpt_oss.q = Gpt_oss.Float (linear c.dim q_dim);
+          k = Gpt_oss.Float (linear c.dim kv);
+          v = Gpt_oss.Float (linear c.dim kv);
+          out = Gpt_oss.Float (linear q_dim c.dim);
         };
       sinks = floats ~scale:1.0 [| c.n_heads |];
       ffn_norm = gamma ();
@@ -118,8 +119,25 @@ let weights () =
       { Embedding.table = floats ~scale:0.02 [| c.vocab_size; c.dim |] };
     blocks = List.map block c.layers;
     norm = gamma ();
-    head = Some (linear ~bias:false c.dim c.vocab_size);
+    head = Some (Gpt_oss.Float (linear ~bias:false c.dim c.vocab_size));
   }
+
+(* [weights] with the attention projections and the head packed as Q8_0
+   ([Gpt_oss.Q8_0]), quantised on the host. *)
+let q8_0 (w : _ Gpt_oss.params) =
+  let pack = function
+    | Gpt_oss.Float { Linear.w; b } ->
+        Gpt_oss.Quant { w = Nx_quant.quantize_q8_0 (Nx.matrix_transpose w); b }
+    | p -> p
+  in
+  let block (b : _ Gpt_oss.block) =
+    let a = b.attn in
+    {
+      b with
+      attn = { q = pack a.q; k = pack a.k; v = pack a.v; out = pack a.out };
+    }
+  in
+  { w with blocks = List.map block w.blocks; head = Option.map pack w.head }
 
 let cuda () = Rig.open_ (Rig_cuda.gpu 0)
 let amd () = Rig.open_ (Rig_amd_amdgpu.gpu 0)
@@ -132,10 +150,14 @@ let gpu () =
   | Error _ -> ( match amd () with Ok d -> d | Error e -> failwith e)
 
 (* A step on the GPU warmed past its compilations: [`Decode] feeds back the
-   token it predicts at a fixed position in the middle of the cache, [`Prefill]
-   runs the [prompt] tokens at positions 0 onwards. Each call takes the caches
-   of the one before and reads its token back on the host. *)
+   token it predicts at a fixed position in the middle of the cache,
+   [`Decode_q8_0] likewise with the weights {!q8_0} packs, [`Prefill] runs
+   the [prompt] tokens at positions 0 onwards. Each call takes the caches of
+   the one before and reads its token back on the host. *)
 let step weights kind =
+  let weights =
+    match kind with `Decode_q8_0 -> q8_0 weights | `Decode | `Prefill -> weights
+  in
   let module G = (val Nx.devices [ gpu () ]) in
   let placement = G.on in
   let p = Nx.Ptree.place (module Gpt_oss.Params) placement weights in
@@ -152,7 +174,7 @@ let step weights kind =
   in
   let index, ids =
     match kind with
-    | `Decode ->
+    | `Decode | `Decode_q8_0 ->
         ( Cache_index.advance (Cache_index.rows ~context [| context / 2 |]),
           ref (Nx.zeros Nx.int64 [| 1; 1 |]) )
     | `Prefill ->
@@ -166,18 +188,19 @@ let step weights kind =
     caches := c;
     let token = Nx.item [ 0 ] token in
     match kind with
-    | `Decode -> ids := Nx.create Nx.int64 [| 1; 1 |] [| token |]
+    | `Decode | `Decode_q8_0 -> ids := Nx.create Nx.int64 [| 1; 1 |] [| token |]
     | `Prefill -> ()
   in
   call ();
   call
 
-let kinds = [ `Decode; `Prefill ]
+let kinds = [ `Decode; `Decode_q8_0; `Prefill ]
 
 let case weights kind =
   let name =
     match kind with
     | `Decode -> Printf.sprintf "decode step, cache %d" context
+    | `Decode_q8_0 -> Printf.sprintf "decode step, Q8_0, cache %d" context
     | `Prefill -> Printf.sprintf "prefill %d" prompt
   in
   Thumper.bench_with_setup

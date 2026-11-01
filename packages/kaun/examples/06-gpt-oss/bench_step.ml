@@ -10,10 +10,14 @@
    13.8 GB of the full 24 are built; [--small-vocab] leaves out the 201088-row
    tables.
 
+   With [--q8_0] the attention projections and the head are packed as Q8_0
+   ([Gpt_oss.Q8_0]), quantised on the host.
+
    Usage: bench_step.exe [--jit DEVICE] [--layers N] [--tokens N] [--steps N]
-   [--context N] [--dtype DT] [--small-vocab]. The first call takes [--tokens]
-   tokens, every later one a single token. One more single-token call, untimed,
-   counts its copies. Peak memory is [/usr/bin/time -l]'s to read. *)
+   [--context N] [--dtype DT] [--small-vocab] [--q8_0]. The first call takes
+   [--tokens] tokens, every later one a single token. One more single-token
+   call, untimed, counts its copies. Peak memory is [/usr/bin/time -l]'s to
+   read. *)
 
 open Kaun
 
@@ -71,7 +75,7 @@ let floats dt ~scale shape =
     let tiled = Nx.concatenate ~axis:0 (List.init reps (fun _ -> base)) in
     Nx.copy (Nx.slice [ R (0, rows) ] tiled)
 
-let params (type b) ~on c (dt : (float, b) Nx.dtype) ~skip_tables =
+let params (type b) ~on c (dt : (float, b) Nx.dtype) ~skip_tables ~q8_0 =
   let place x = Nx.place on x in
   let f ~scale shape = place (floats dt ~scale shape) in
   let linear ?(bias = true) i o =
@@ -79,6 +83,13 @@ let params (type b) ~on c (dt : (float, b) Nx.dtype) ~skip_tables =
       Linear.w = f ~scale:0.02 [| i; o |];
       b = (if bias then Some (f ~scale:0.02 [| o |]) else None);
     }
+  in
+  let projection ?(bias = true) i o =
+    if not q8_0 then Gpt_oss.Float (linear ~bias i o)
+    else
+      let w = Nx_quant.quantize_q8_0 (floats dt ~scale:0.02 [| o; i |]) in
+      let b = if bias then Some (f ~scale:0.02 [| o |]) else None in
+      Gpt_oss.Quant { w = Nx_quant.place on w; b }
   in
   let packed ~inputs ~outputs =
     let groups = inputs / 32 in
@@ -97,10 +108,10 @@ let params (type b) ~on c (dt : (float, b) Nx.dtype) ~skip_tables =
         Gpt_oss.attn_norm = gamma ();
         attn =
           {
-            Attention.q = linear c.dim q_dim;
-            k = linear c.dim kv;
-            v = linear c.dim kv;
-            out = linear q_dim c.dim;
+            Gpt_oss.q = projection c.dim q_dim;
+            k = projection c.dim kv;
+            v = projection c.dim kv;
+            out = projection q_dim c.dim;
           };
         sinks = f ~scale:1.0 [| c.n_heads |];
         ffn_norm = gamma ();
@@ -122,7 +133,7 @@ let params (type b) ~on c (dt : (float, b) Nx.dtype) ~skip_tables =
     Gpt_oss.tok = { Embedding.table = f ~scale:0.02 [| vocab; c.dim |] };
     blocks = List.map block c.layers;
     norm = gamma ();
-    head = Some (linear ~bias:false c.dim vocab);
+    head = Some (projection ~bias:false c.dim vocab);
   }
 
 let run ?device ~on c params dt ~tokens ~steps ~context =
@@ -180,7 +191,7 @@ let run ?device ~on c params dt ~tokens ~steps ~context =
 let () =
   let jit = ref "METAL" and layers = ref 1 and steps = ref 5 in
   let tokens = ref 1 and context = ref 64 and dtype = ref "bfloat16" in
-  let skip_tables = ref false in
+  let skip_tables = ref false and q8_0 = ref false in
   Arg.parse
     [
       ("--jit", Arg.Set_string jit, "Device (default METAL)");
@@ -190,16 +201,19 @@ let () =
       ("--context", Arg.Set_int context, "Cache slots (default 64)");
       ("--dtype", Arg.Set_string dtype, "bfloat16 (default) or float32");
       ("--small-vocab", Arg.Set skip_tables, "A vocabulary of 1024");
+      ( "--q8_0",
+        Arg.Set q8_0,
+        "Pack the attention projections and the head as Q8_0" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "bench_step.exe [--jit DEVICE] [--layers N] [--tokens N] [--steps N] \
-     [--context N] [--dtype DT] [--small-vocab]";
+     [--context N] [--dtype DT] [--small-vocab] [--q8_0]";
   let c = cfg !layers in
   let c = if !skip_tables then { c with Gpt_oss.vocab_size = 1024 } else c in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string !dtype in
   let bench ?device on =
     let t0 = Unix.gettimeofday () in
-    let p = params ~on c dt ~skip_tables:!skip_tables in
+    let p = params ~on c dt ~skip_tables:!skip_tables ~q8_0:!q8_0 in
     Printf.printf "weights built in %.1f s\n%!" (Unix.gettimeofday () -. t0);
     run ?device ~on c p dt ~tokens:!tokens ~steps:!steps ~context:!context
   in

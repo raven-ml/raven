@@ -3665,6 +3665,11 @@ thread.
 
 ### Kaun
 
+- The gpt-oss example packs its attention projections and untied head as
+  Q8_0 when asked (`Gpt_oss.of_hf ~pack:Q8_0`, `main.exe --q8_0`), as GGUF
+  files of the model do: 53% of bfloat16's bytes, about twice its logit
+  error. A projection is a `Gpt_oss.projection`, a block's attention a
+  `Gpt_oss.attn`.
 - The Llama example reads GGUF checkpoints (`Llama.of_gguf`,
   `Llama.config_of_gguf`, `main.exe --gguf`), decoding Q8_0, Q4_K and Q6_K
   weights with `Nx_quant.dequant`. `validate.exe` matches TinyLlama's Q8_0,

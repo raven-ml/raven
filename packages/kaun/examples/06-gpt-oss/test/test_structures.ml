@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* What gpt-oss's maps visit: their leaf paths and reports, with float and
-   packed expert weights. *)
+   packed expert weights and projections. *)
 
 open Windtrap
 open Kaun
@@ -16,11 +16,16 @@ let leaf p = p ^ ": a leaf"
 let linear p = [ leaf (p ^ ".w"); p ^ ".b: Some"; leaf (p ^ ".b") ]
 let f shape = Nx.zeros Nx.float32 shape
 let lin i o = { Linear.w = f [| i; o |]; b = Some (f [| o |]) }
+let float_proj i o = Gpt_oss.Float (lin i o)
 
-let block weight =
+let quant_proj _ o =
+  Gpt_oss.Quant
+    { w = Nx_quant.q8_0 (Nx.zeros Nx.uint8 [| o; 34 |]); b = Some (f [| o |]) }
+
+let block ?(proj = float_proj) weight =
   {
     Gpt_oss.attn_norm = { Rms_norm.gamma = f [| 4 |] };
-    attn = { Attention.q = lin 4 4; k = lin 4 4; v = lin 4 4; out = lin 4 4 };
+    attn = { q = proj 4 4; k = proj 4 4; v = proj 4 4; out = proj 4 4 };
     sinks = f [| 2 |];
     ffn_norm = { Rms_norm.gamma = f [| 4 |] };
     router = lin 4 2;
@@ -41,15 +46,26 @@ let quant ~outputs =
        ~scales:(Nx.zeros Nx.uint8 [| 2; outputs; 1 |])
        (Nx.zeros Nx.uint8 [| 2; outputs; 16 |]))
 
-let block_visits ~at weight =
+let float_proj_visits p = (p ^ ": case \"float\"") :: linear p
+
+let quant_proj_visits p =
+  [
+    p ^ ": case \"quant\"";
+    p ^ ".w: case \"q8_0\"";
+    leaf (p ^ ".w.blocks");
+    p ^ ".b: Some";
+    leaf (p ^ ".b");
+  ]
+
+let block_visits ?(proj = float_proj_visits) ~at weight =
   let at s = at ^ s in
   List.concat
     [
       [ leaf (at "attn_norm.gamma") ];
-      linear (at "attn.q");
-      linear (at "attn.k");
-      linear (at "attn.v");
-      linear (at "attn.out");
+      proj (at "attn.q");
+      proj (at "attn.k");
+      proj (at "attn.v");
+      proj (at "attn.out");
       [ leaf (at "sinks"); leaf (at "ffn_norm.gamma") ];
       linear (at "router");
       weight (at "moe.gate_up");
@@ -83,27 +99,49 @@ let test_block () =
     | Moe.Quant (Mxfp4 w), Moe.Quant (Mxfp4 w0) -> w.codes == w0.codes
     | _ -> false);
   is_true ~msg:"a cast casts the float leaves"
-    (Nx.dtype cast.sinks = Nx.bfloat16)
+    (Nx.dtype cast.sinks = Nx.bfloat16);
+  let packed = block ~proj:quant_proj quant in
+  equal ~msg:"packed projections" (list string)
+    (block_visits ~proj:quant_proj_visits ~at:"" quant_visits)
+    (visits b packed);
+  let cast = Nx.Ptree.cast (module Gpt_oss.Block) Nx.bfloat16 packed in
+  let kept (p : _ Gpt_oss.projection) =
+    match p with
+    | Quant { w = Q8_0 w; b } ->
+        Printf.sprintf "q8_0 blocks of %s, bias of %s"
+          (Nx.Dtype.name (Nx.dtype w.blocks))
+          (match b with Some b -> Nx.Dtype.name (Nx.dtype b) | None -> "none")
+    | Quant _ -> "another format"
+    | Float _ -> "float"
+  in
+  equal ~msg:"a cast keeps the packed projections and casts their biases"
+    string "q8_0 blocks of uint8, bias of bfloat16" (kept cast.attn.q)
 
 let test_params () =
   let params = Nx.Ptree.instantiate (module Gpt_oss.Params) in
   let p =
     {
       Gpt_oss.tok = { Embedding.table = f [| 11; 4 |] };
-      blocks = [ block float; block quant ];
+      blocks = [ block float; block ~proj:quant_proj quant ];
       norm = { Rms_norm.gamma = f [| 4 |] };
       head = None;
     }
   in
+  let expected head =
+    List.concat
+      [
+        [ leaf "tok.table"; "blocks: length 2" ];
+        block_visits ~at:"blocks.0." float_visits;
+        block_visits ~proj:quant_proj_visits ~at:"blocks.1." quant_visits;
+        leaf "norm.gamma" :: head;
+      ]
+  in
   equal ~msg:"visits" (list string)
-    (List.concat
-       [
-         [ leaf "tok.table"; "blocks: length 2" ];
-         block_visits ~at:"blocks.0." float_visits;
-         block_visits ~at:"blocks.1." quant_visits;
-         [ leaf "norm.gamma"; "head: None" ];
-       ])
-    (visits params p)
+    (expected [ "head: None" ])
+    (visits params p);
+  equal ~msg:"a packed head" (list string)
+    (expected ("head: Some" :: quant_proj_visits "head"))
+    (visits params { p with head = Some (quant_proj 4 11) })
 
 let () =
   exit

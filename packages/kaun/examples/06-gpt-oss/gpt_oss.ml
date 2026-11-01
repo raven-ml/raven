@@ -28,9 +28,20 @@ type 'd config = {
 
 let place_config at cfg = { cfg with rope = Rope.place at cfg.rope }
 
+type ('a, 'd) projection =
+  | Float of ('a, 'd) Linear.t
+  | Quant of { w : 'd Nx_quant.t; b : 'a option }
+
+type ('a, 'd) attn = {
+  q : ('a, 'd) projection;
+  k : ('a, 'd) projection;
+  v : ('a, 'd) projection;
+  out : ('a, 'd) projection;
+}
+
 type ('a, 'd) block = {
   attn_norm : ('a, 'd) Rms_norm.t;
-  attn : ('a, 'd) Attention.t;
+  attn : ('a, 'd) attn;
   sinks : 'a;
   ffn_norm : ('a, 'd) Rms_norm.t;
   router : ('a, 'd) Linear.t;
@@ -41,7 +52,7 @@ type ('a, 'd) params = {
   tok : ('a, 'd) Embedding.t;
   blocks : ('a, 'd) block list;
   norm : ('a, 'd) Rms_norm.t;
-  head : ('a, 'd) Linear.t option;
+  head : ('a, 'd) projection option;
 }
 
 type 'd t = ('d Nx.float32_t, 'd) params
@@ -52,6 +63,35 @@ let expert_parallel s role ~axis =
   | Experts -> Nx.Placement.split ~axis s
   | Whole | Column | Row | Kv_heads -> Nx.Placement.on s
 
+(* Projections *)
+
+let project p x =
+  match p with
+  | Float l -> Linear.apply l x
+  | Quant { w; b } -> (
+      let y = Nx_quant.apply w x in
+      match b with None -> y | Some b -> Nx.add y b)
+
+let walk_projection c =
+  let open Nx.Ptree.Walk in
+  function
+  | Float l ->
+      case c "float";
+      Float (Linear.walk c l)
+  | Quant { w; b } ->
+      case c "quant";
+      let w = field c "w" Nx_quant.walk w in
+      let b = field c "b" (option leaf) b in
+      Quant { w; b }
+
+let walk_attn c a =
+  let open Nx.Ptree.Walk in
+  let q = field c "q" walk_projection a.q in
+  let k = field c "k" walk_projection a.k in
+  let v = field c "v" walk_projection a.v in
+  let out = field c "out" walk_projection a.out in
+  { q; k; v; out }
+
 (* Structures *)
 
 module Block = struct
@@ -60,7 +100,7 @@ module Block = struct
   let walk c b =
     let open Nx.Ptree.Walk in
     let attn_norm = field c "attn_norm" Rms_norm.walk b.attn_norm in
-    let attn = field c "attn" Attention.walk b.attn in
+    let attn = field c "attn" walk_attn b.attn in
     let sinks = field c "sinks" leaf b.sinks in
     let ffn_norm = field c "ffn_norm" Rms_norm.walk b.ffn_norm in
     let router = field c "router" Linear.walk b.router in
@@ -76,11 +116,24 @@ module Params = struct
     let tok = field c "tok" Embedding.walk p.tok in
     let blocks = field c "blocks" (list Block.walk) p.blocks in
     let norm = field c "norm" Rms_norm.walk p.norm in
-    let head = field c "head" (option Linear.walk) p.head in
+    let head = field c "head" (option walk_projection) p.head in
     { tok; blocks; norm; head }
 end
 
-(* Attention: kaun's cached layer with sinks and YaRN's score scale. *)
+(* Attention: kaun's cached layer with sinks and YaRN's score scale, over
+   projections that may be packed. [split] and [merge] are kaun's
+   Attention.split and Attention.merge over {!project}. *)
+
+let split ~head_dim p x =
+  let y = project p x in
+  let batch = Nx.dim 0 y and seq = Nx.dim 1 y in
+  let heads = Nx.dim 2 y / head_dim in
+  Nx.swapaxes 1 2 (Nx.reshape [| batch; seq; heads; head_dim |] y)
+
+let merge p y =
+  let batch = Nx.dim 0 y and heads = Nx.dim 1 y in
+  let seq = Nx.dim 2 y and d = Nx.dim 3 y in
+  project p (Nx.reshape [| batch; seq; heads * d |] (Nx.swapaxes 1 2 y))
 
 let attention cfg layer b cache index x =
   let index =
@@ -89,15 +142,15 @@ let attention cfg layer b cache index x =
     | Full -> index
   in
   let head_dim = cfg.head_dim and pos = Cache_index.positions index in
-  let q = Rope.apply cfg.rope ~pos (Attention.split ~head_dim b.attn.q x) in
-  let k = Rope.apply cfg.rope ~pos (Attention.split ~head_dim b.attn.k x) in
-  let v = Attention.split ~head_dim b.attn.v x in
+  let q = Rope.apply cfg.rope ~pos (split ~head_dim b.attn.q x) in
+  let k = Rope.apply cfg.rope ~pos (split ~head_dim b.attn.k x) in
+  let v = split ~head_dim b.attn.v x in
   let k, v, cache = Attention.Cache.extend index cache k v in
   let y =
     Attention.attend ~mask:(Cache_index.mask index) ~scale:cfg.attention_scale
       ~sinks:b.sinks q k v
   in
-  (Attention.merge b.attn.out y, cache)
+  (merge b.attn.out y, cache)
 
 (* Forward passes *)
 
@@ -153,7 +206,7 @@ let hidden cfg p ids =
 let logits cfg p h =
   let h = Rms_norm.apply ~eps:cfg.norm_eps p.norm h in
   match p.head with
-  | Some l -> Linear.apply l h
+  | Some p -> project p h
   | None -> Nx.matmul h (Nx.transpose p.tok.Embedding.table)
 
 (* Configuration from HuggingFace's config.json *)
@@ -233,7 +286,9 @@ let config_of_json json =
    exponents under the [_blocks] and [_scales] suffixes, which stay uint8:
    [Nx_io.Archive.float] refuses them. A tied model has no lm_head entry. *)
 
-let of_hf ~placement cfg dt weights =
+type packing = Unpacked | Q8_0
+
+let of_hf ?(pack = Unpacked) ~placement cfg dt weights =
   let place role ~axis x = Nx.place (placement role ~axis) x in
   let whole x = place Whole ~axis:0 x in
   let float ~shape name = Nx_io.Archive.float ~shape dt name weights in
@@ -257,7 +312,29 @@ let of_hf ~placement cfg dt weights =
          else None);
     }
   in
-  let column = linear Column ~axis:1 and row = linear Row ~axis:0 in
+  (* A packed projection keeps the file's [outputs; inputs], so a cut along
+     the outputs is along its axis 0 and one along its inputs along its axis
+     1. It is quantised where it is placed, compiled, so a set that computes
+     under [Rune.jit] alone quantises too. *)
+  let quantize =
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns (v Nx_quant.walk))
+      Nx_quant.quantize_q8_0
+  in
+  let projection role ~axis ~inputs ~outputs name =
+    match pack with
+    | Unpacked -> Float (linear role ~axis ~inputs ~outputs name)
+    | Q8_0 ->
+        let b_role = match role with Row -> Whole | role -> role in
+        let w = float ~shape:[| outputs; inputs |] (name ^ ".weight") in
+        let b = float ~shape:[| outputs |] (name ^ ".bias") in
+        Quant
+          {
+            w = quantize (place role ~axis:(1 - axis) w);
+            b = Some (place b_role ~axis:0 b);
+          }
+  in
+  let column = projection Column ~axis:1 and row = projection Row ~axis:0 in
   let experts ~inputs ~outputs name =
     match Nx_io.Archive.find (name ^ "_blocks") weights with
     | None ->
@@ -290,8 +367,7 @@ let of_hf ~placement cfg dt weights =
       attn_norm = norm (at "input_layernorm.weight");
       attn =
         {
-          Attention.q =
-            column ~inputs:cfg.dim ~outputs:q_dim (at "self_attn.q_proj");
+          q = column ~inputs:cfg.dim ~outputs:q_dim (at "self_attn.q_proj");
           k = column ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.k_proj");
           v = column ~inputs:cfg.dim ~outputs:kv_dim (at "self_attn.v_proj");
           out = row ~inputs:q_dim ~outputs:cfg.dim (at "self_attn.o_proj");
@@ -337,23 +413,19 @@ let of_hf ~placement cfg dt weights =
     head =
       (if cfg.tied then None
        else
-         (* A copy: through the transpose, tolk's bfloat16 matrix-vector kernel
-            reads the head 3 to 4 times slower (its heuristic does not see
-            through casts). The head is copied where it is placed: a host copy
-            walks the file's pages in transposed order, 4 s cold against 0.4 s.
-            The copy is compiled, so a set that computes under [Rune.jit]
-            alone makes it too. *)
-         let at = placement Column ~axis:1 in
-         let w =
-           Nx.place at
-             (Nx.matrix_transpose
-                (float ~shape:[| cfg.vocab_size; cfg.dim |] "lm_head.weight"))
-         in
-         Some
-           {
-             Linear.w = Rune.jit' Nx.copy w;
-             b = None;
-           });
+         let w = float ~shape:[| cfg.vocab_size; cfg.dim |] "lm_head.weight" in
+         match pack with
+         | Q8_0 ->
+             Some (Quant { w = quantize (place Column ~axis:0 w); b = None })
+         | Unpacked ->
+             (* A copy: through the transpose, tolk's bfloat16 matrix-vector
+                kernel reads the head 3 to 4 times slower (its heuristic does
+                not see through casts). The head is copied where it is
+                placed: a host copy walks the file's pages in transposed
+                order, 4 s cold against 0.4 s. The copy is compiled, so a set
+                that computes under [Rune.jit] alone makes it too. *)
+             let w = place Column ~axis:1 (Nx.matrix_transpose w) in
+             Some (Float { Linear.w = Rune.jit' Nx.copy w; b = None }));
   }
 
 type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
@@ -373,9 +445,9 @@ let stored_dtype weights =
       | Nx.Dtype.Float32 -> Dtype Nx.float32
       | _ -> failwith (name ^ " is not a bfloat16 or float32 entry"))
 
-let from_file ~placement cfg dt path =
-  of_hf ~placement cfg dt (Nx_io.load_safetensors path)
+let from_file ?pack ~placement cfg dt path =
+  of_hf ?pack ~placement cfg dt (Nx_io.load_safetensors path)
 
-let from_pretrained ~placement repo_id dt =
+let from_pretrained ?pack ~placement repo_id dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf ~placement cfg dt (Hf.load_safetensors repo_id))
+  (cfg, of_hf ?pack ~placement cfg dt (Hf.load_safetensors repo_id))
