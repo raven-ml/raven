@@ -13,7 +13,19 @@ val watch : (unit -> unit) -> (releases:int * held:int * cpu:int)
     thread's CPU time: nanoseconds, or on Windows, whose thread times
     advance every 15.6 ms, the cycles the thread ran. [cpu] is [f]'s, in
     nanoseconds of the process's CPU time: the work of all its threads. A
-    loaded host's scheduler lengthens neither. *)
+    loaded host's scheduler lengthens neither; a hypervisor that preempts
+    the host's CPU can, which {!held} rules out. *)
+
+val held : runs:int -> (unit -> unit) -> int
+(** [held ~runs f] watches [runs] runs of [f ()] and is the longest
+    stretch for which [f] holds the domain lock, in ticks as [held]: each
+    stretch, counted in order from [f]'s start, is the least of the runs'.
+    A host's interrupts and a hypervisor's preemptions, which a thread's
+    CPU time counts, lengthen a stretch in some runs; a stretch that [f]'s
+    own work makes long is long in every run.
+
+    Raises [Failure] if two runs hold the lock other numbers of times, or
+    one holds it more than 65536 times. *)
 
 val copy : unit -> int
 (** [copy ()] is the least of five copies of 1 MiB by memcpy on the calling

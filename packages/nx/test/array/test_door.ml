@@ -213,23 +213,20 @@ let test_ocaml_door_runs () =
   equal (pair answer (option bool)) (A.Done, Some true) (ocaml_door [||] [||])
 
 (* However many arrays the door claims and releases, it holds the domain
-   lock for no stretch longer than the bound: the least of three runs'
-   longest stretch, in CPU time, as test_release takes it. *)
+   lock for no stretch longer than the bound, in CPU time, each stretch the
+   least of three runs': a call of thousands of stretches has some
+   lengthened by a preemption in every run, each time another. *)
 let test_ocaml_door_holds () =
   let holds ~msg written read =
     let e = ref A.Done in
     let call () = e := A.door ~written ~read ignore () in
     call ();
     Gc.full_major ();
-    let least = ref max_int in
-    for _ = 1 to 3 do
-      let ~releases:_, ~held, ~cpu:_ = Nx_release_support.watch call in
-      least := min !least held
-    done;
+    let held = Nx_release_support.held ~runs:3 call in
     equal ~msg answer A.Done !e;
     less int
       ~msg:(msg ^ ": the longest stretch held, in ticks of CPU time")
-      ~than:(Nx_release_support.bound ()) !least;
+      ~than:(Nx_release_support.bound ()) held;
     released (Array.append written read)
   in
   holds ~msg:"many arrays"

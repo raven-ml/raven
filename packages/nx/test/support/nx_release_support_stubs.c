@@ -18,7 +18,9 @@
 #include <windows.h>
 #endif
 
+#include <caml/alloc.h>
 #include <caml/fail.h>
+#include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
@@ -40,6 +42,12 @@ static void (*leave_before)(void);
    of the watch, in the process's. */
 static _Thread_local int watching, holding;
 static _Thread_local int64_t releases, longest, since, start;
+
+/* The watched thread's stretches holding the lock, in order, up to
+   STRETCHES of them, and whether it held the lock more times. */
+#define STRETCHES 65536
+static _Thread_local int64_t *stretch;
+static _Thread_local int stretches, overflowed;
 
 /* Every watched thread's releases, which occupy's job waits for. */
 static atomic_long watched_releases;
@@ -66,6 +74,8 @@ static int64_t thread_cpu(void) { return clock_ns(CLOCK_THREAD_CPUTIME_ID); }
 static void held_until_now(void) {
   int64_t d = thread_cpu() - since;
   if (d > longest) longest = d;
+  if (stretches < STRETCHES) stretch[stretches++] = d;
+  else overflowed = 1;
 }
 
 /* Called holding the lock, before the runtime releases it. */
@@ -115,7 +125,13 @@ value nx_release_support_install(value unit) {
 
 value nx_release_support_start(value unit) {
   (void)unit;
+  if (stretch == NULL) {
+    stretch = malloc(STRETCHES * sizeof *stretch);
+    if (stretch == NULL) caml_failwith("Nx_release_support.watch");
+  }
   install();
+  stretches = 0;
+  overflowed = 0;
   releases = 0;
   longest = 0;
   watching = 1;
@@ -141,6 +157,16 @@ value nx_release_support_releases(value unit) {
 value nx_release_support_longest(value unit) {
   (void)unit;
   return Val_long(longest);
+}
+
+/* The last watch's stretches, or Failure past STRETCHES of them. */
+value nx_release_support_stretches(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(a);
+  if (overflowed) caml_failwith("Nx_release_support.stretches");
+  a = caml_alloc(stretches, 0);
+  for (int i = 0; i < stretches; i++) Store_field(a, i, Val_long(stretch[i]));
+  CAMLreturn(a);
 }
 
 /* Occupying the pool */
