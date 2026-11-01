@@ -883,16 +883,48 @@ let program ?(length = 6) st (ins : D.any array) ~room ~rank =
       ~outs:(Iarray.of_array outs),
     Array.of_list !tys )
 
+(* For each node of [p], the last node that reads its value, the node
+   itself where none does, or the number of nodes for an output. *)
+let last_reads (p : P.t) =
+  let n = Iarray.length p.nodes in
+  let last = Array.init n Fun.id in
+  let read i j = if last.(j) < i then last.(j) <- i in
+  for i = 0 to n - 1 do
+    match Iarray.get p.nodes i with
+    | P.In _ | Coord _ | Const _ -> ()
+    | Op1 (_, _, j) -> read i j
+    | Op2 (_, j, k) ->
+        read i j;
+        read i k
+    | Op3 (_, j, k, l) ->
+        read i j;
+        read i k;
+        read i l
+  done;
+  Array.iter (fun o -> last.(o) <- n) (Iarray.to_array p.outs);
+  last
+
 (* Each node of [p] run on its own through [b]'s kinds of no to three
-   operands, over the operands [ops] of [shape]: the arrays of every node.
-   Raises [Skip] where a kind is declined. *)
+   operands, over the operands [ops] of [shape]: an array per node, its
+   result at each output. Every other node's array returns to a pool once
+   its last reader has run, and a later node of its dtype writes over it,
+   so the run creates about as many arrays as [p] holds values at once.
+   With an array for each of thousands of nodes, the sanitize profile's
+   collector, which runs a major cycle every few arrays created, marked
+   every live one each time. Raises [Skip] where a kind is declined. *)
 let split (b : Support.backend) (p : P.t) (types : D.any array) shape
     (ops : A.any array) =
   let module K = (val b.kernels) in
   let values = Array.make (Iarray.length p.nodes) ops.(0) in
+  let last = last_reads p in
+  let pool = Hashtbl.create 8 in
   let fresh i =
     let (D.Any d) = types.(i) in
-    A.Any (A.create b.device d shape)
+    match Hashtbl.find_opt pool (D.name d) with
+    | Some a ->
+        Hashtbl.remove pool (D.name d);
+        a
+    | None -> A.Any (A.create b.device d shape)
   in
   let run answer = if answer <> A.Done then raise Skip in
   for i = 0 to Iarray.length p.nodes - 1 do
@@ -922,7 +954,31 @@ let split (b : Support.backend) (p : P.t) (types : D.any array) shape
           let (A.Any x) = values.(j) in
           let dst = A.expect (A.dtype x) (fresh i) in
           run (Support.map3 (module K) k ~dst c x (A.expect (A.dtype x) values.(l)));
-          A.Any dst)
+          A.Any dst);
+    let drop j =
+      if last.(j) = i then begin
+        last.(j) <- -1;
+        let (A.Any a) = values.(j) in
+        (match Iarray.get p.nodes j with
+        | In _ -> ()
+        | _ -> Hashtbl.add pool (D.name (A.dtype a)) values.(j));
+        values.(j) <- ops.(0)
+      end
+    in
+    match Iarray.get p.nodes i with
+    | In _ | Coord _ | Const _ -> drop i
+    | Op1 (_, _, j) ->
+        drop i;
+        drop j
+    | Op2 (_, j, k) ->
+        drop i;
+        drop j;
+        drop k
+    | Op3 (_, c, j, k) ->
+        drop i;
+        drop c;
+        drop j;
+        drop k
   done;
   values
 
@@ -950,21 +1006,7 @@ let describe (p : P.t) =
    through the last node that reads it, or to the end for an output. *)
 let held (p : P.t) =
   let n = Iarray.length p.nodes in
-  let last = Array.init n Fun.id in
-  let read i j = if last.(j) < i then last.(j) <- i in
-  for i = 0 to n - 1 do
-    match Iarray.get p.nodes i with
-    | P.In _ | Coord _ | Const _ -> ()
-    | Op1 (_, _, j) -> read i j
-    | Op2 (_, j, k) ->
-        read i j;
-        read i k
-    | Op3 (_, j, k, l) ->
-        read i j;
-        read i k;
-        read i l
-  done;
-  Array.iter (fun o -> last.(o) <- n) (Iarray.to_array p.outs);
+  let last = last_reads p in
   let most = ref 0 in
   for i = 0 to n - 1 do
     let live = ref 0 in
