@@ -9,8 +9,8 @@
 
    The values are AMD's and LLVM's, copied from their headers and documents.
 
-   AMD's hsa.h and registers.h are under the University of Illinois/NCSA
-   Open Source License:
+   AMD's hsa.h, registers.h and sdma_registers.h are under the
+   University of Illinois/NCSA Open Source License:
 
    The University of Illinois/NCSA
    Open Source License (NCSA)
@@ -4544,6 +4544,7 @@ let sdma_op_poll_regmem = 8
 let sdma_op_timestamp = 0xd
 let sdma_op_const_fill = 0xb
 let sdma_subop_copy_linear = 0
+let sdma_subop_copy_linear_sub_wind = 4
 let sdma_subop_timestamp_get_global = 2
 
 (* The trap packet: SDMA_OP_TRAP, then its interrupt context, 0. *)
@@ -4558,6 +4559,24 @@ let sdma_pkt_fence_header_mtype = (7, 16)
 let sdma_pkt_timestamp_get_global_header_sub_op = (0xff, 8)
 let sdma_pkt_constant_fill_header_fillsize = (3, 30)
 let sdma_fence_mtype_from = (5, 0, 0)
+
+(* SDMA's linear sub-window copy, by the GC major from which a layout
+   holds: each field as (mask, shift) in its word. *)
+
+type sdma_window = {
+  elementsize : int * int;
+  src_x : int * int;
+  src_pitch : int * int;
+  dst_x : int * int;
+  dst_pitch : int * int;
+  rect_x : int * int;
+  rect_y : int * int;
+}
+
+let sdma_window = [
+  (9, { elementsize = (7, 29); src_x = (0x3fff, 0); src_pitch = (0x7ffff, 13); dst_x = (0x3fff, 0); dst_pitch = (0x7ffff, 13); rect_x = (0x3fff, 0); rect_y = (0x3fff, 16) });
+  (12, { elementsize = (7, 29); src_x = (0xffff, 0); src_pitch = (0xffff, 16); dst_x = (0xffff, 0); dst_pitch = (0xffff, 16); rect_x = (0xffff, 0); rect_y = (0xffff, 16) });
+]
 
 (* AQL: hsa.h's constants, and its kernel dispatch packet as (byte offset,
    bytes) *)

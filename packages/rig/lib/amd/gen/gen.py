@@ -139,6 +139,7 @@ ABI = {
                        "aqlprofile/linux/soc24_enum.h",  # GFX12
                        "rocr-runtime/runtime/hsa-runtime/inc/hsa.h",  # AQL
                        "rocr-runtime/runtime/hsa-runtime/core/inc/registers.h",  # buffer descriptors
+                       "rocr-runtime/runtime/hsa-runtime/core/inc/sdma_registers.h",  # SDMA sub-windows
                        # performance counters
                        "rocprofiler-compute/src/rocprof_compute_soc/profile_configs/counter_defs.yaml"]),
     **sources("llvm", ["include/llvm/Support/AMDHSAKernelDescriptor.h", "include/llvm/BinaryFormat/ELF.h",
@@ -293,12 +294,40 @@ GFX9_TOKEN_FIELDS = [("CMN", "TIME_DELTA"), ("MISC", "TIME_DELTA"), ("WAVE_START
 SDMA_PKT = {(4, 0, 0): "kernel/vega10_sdma_pkt_open.h", (5, 0, 0): "kernel/navi10_sdma_pkt_open.h",
             (6, 0, 0): "kernel/sdma_v6_0_0_pkt_open.h"}
 SDMA_OPS = ["SDMA_OP_COPY", "SDMA_OP_FENCE", "SDMA_OP_TRAP", "SDMA_OP_POLL_REGMEM", "SDMA_OP_TIMESTAMP",
-            "SDMA_OP_CONST_FILL", "SDMA_SUBOP_COPY_LINEAR", "SDMA_SUBOP_TIMESTAMP_GET_GLOBAL"]
+            "SDMA_OP_CONST_FILL", "SDMA_SUBOP_COPY_LINEAR", "SDMA_SUBOP_COPY_LINEAR_SUB_WIND",
+            "SDMA_SUBOP_TIMESTAMP_GET_GLOBAL"]
 SDMA_FIELDS = ["SDMA_PKT_COPY_LINEAR_HEADER_sub_op", "SDMA_PKT_POLL_REGMEM_HEADER_func",
                "SDMA_PKT_POLL_REGMEM_HEADER_mem_poll", "SDMA_PKT_POLL_REGMEM_DW5_interval",
                "SDMA_PKT_POLL_REGMEM_DW5_retry_count", "SDMA_PKT_FENCE_HEADER_mtype",
                "SDMA_PKT_TIMESTAMP_GET_GLOBAL_HEADER_sub_op", "SDMA_PKT_CONSTANT_FILL_HEADER_fillsize"]
 SDMA_OPTIONAL = ["SDMA_PKT_FENCE_HEADER_mtype"]  # GFX9 engines take no memory type
+
+# The linear sub-window copy: its fields in the kernel's headers, which lay it
+# out for SDMA 4 to 6, and in ROCr's two layouts of it, before GFX12 and from
+# it (sdma_registers.h; amd_blit_sdma.cpp's BuildCopyRectCommand picks the
+# second from GC major 12). sdma_v7_0.c reads sdma_v6_0_0_pkt_open.h but never
+# writes this packet. The script fails unless ROCr's first layout is the
+# kernel's. Each window field: (kernel's name, ROCr's member).
+SDMA_RECT = "rocm/sdma_registers.h"
+SDMA_RECTS = {9: "SDMA_PKT_COPY_LINEAR_RECT_TAG", 12: "SDMA_PKT_COPY_LINEAR_RECT_TAG_GFX12"}
+SDMA_WINDOW = [("HEADER_elementsize", "HEADER_UNION__element"), ("DW_3_src_x", "SRC_PARAMETER_1_UNION__src_offset_x"),
+               ("DW_4_src_pitch", "SRC_PARAMETER_2_UNION__src_pitch"),
+               ("DW_8_dst_x", "DST_PARAMETER_1_UNION__dst_offset_x"),
+               ("DW_9_dst_pitch", "DST_PARAMETER_2_UNION__dst_pitch"),
+               ("DW_11_rect_x", "RECT_PARAMETER_1_UNION__rect_x"), ("DW_11_rect_y", "RECT_PARAMETER_1_UNION__rect_y")]
+SDMA_WINDOW_FIELDS = [f"SDMA_PKT_COPY_LINEAR_SUBWIN_{k}" for k, _ in SDMA_WINDOW]
+
+
+def member_widths(text):
+    """[text] with the widths ROCr's structs name as their own constants, such
+    as [static const unsigned int pitch_bits = 19;], written in place, each
+    struct's own, and those declarations blanked: C reads it then."""
+    def struct(m):
+        body = m.group(0)
+        consts = dict(re.findall(r"static\s+const\s+unsigned\s+int\s+(\w+)\s*=\s*(\d+)\s*;", body))
+        body = re.sub(r"static\s+const\s+unsigned\s+int\s+\w+\s*=\s*\d+\s*;", "", body)
+        return re.sub(r":\s*(\w+)\s*;", lambda f: f": {consts.get(f.group(1), f.group(1))};", body)
+    return re.sub(r"typedef struct \w+ \{.*?\n\} \w+;", struct, text, flags=re.S)
 
 # AQL, from hsa.h.
 HSA = "rocm/hsa.h"
@@ -1320,7 +1349,7 @@ def abi_wanted():
     w[NVD]["defines"] |= {*PM4_CONSTANTS, *PM4_NV_CONSTANTS, *PM4_NV_SHIFTS, *(n for _, n in PM4_SHIFTS)}
     w[KFD_PM4]["enums"] |= set(PM4_ENUMS)
     for h in SDMA_PKT.values():
-        fields = {f"{n}_{k}" for n in SDMA_FIELDS for k in ("mask", "shift")}
+        fields = {f"{n}_{k}" for n in SDMA_FIELDS + SDMA_WINDOW_FIELDS for k in ("mask", "shift")}
         optional = {f"{n}_{k}" for n in SDMA_OPTIONAL for k in ("mask", "shift")}
         w[h]["defines"] |= {*SDMA_OPS, *(fields - optional)}
         w[h]["optional"] |= optional
@@ -1333,6 +1362,7 @@ def abi_wanted():
     w[HSA]["structs"] |= {DISPATCH, "hsa_signal_s"}
     w[REGISTERS_H]["enums"] |= set(SQ_CONSTANTS)
     w[REGISTERS_H]["structs"] |= {u for pair in SQ_BUF_RSRC.values() for u in pair}
+    w[SDMA_RECT]["structs"] |= set(SDMA_RECTS.values())
     w[KD_H]["enums"] |= {f.upper() + "_OFFSET" for f in KD_FIELDS}
     w[KD_H]["structs"] |= {KD}
     w[ELF_H]["enums"] |= set(ELF_CONSTANTS)
@@ -1700,8 +1730,8 @@ def abi_header(h):
     return (
         generated(ABI_OUT)
         + "   The values are AMD's and LLVM's, copied from their headers and documents.\n\n"
-        f"   AMD's {' and '.join(ncsa)} are under the University of Illinois/NCSA\n"
-        "   Open Source License:\n\n"
+        f"   AMD's {', '.join(ncsa[:-1])} and {ncsa[-1]} are under the\n"
+        "   University of Illinois/NCSA Open Source License:\n\n"
         + indent(ncsa_notices.pop()) + "\n\n"
         "   AMD's other sources are under the MIT licence:\n\n"
         + indent("\n".join(owners(t for n, t in h.items() if kind[n] == "mit"))) + "\n\n" + indent(MIT) + "\n\n"
@@ -1931,7 +1961,7 @@ def generate_abi(h, laid):
 
     # SDMA
     out += ["(* SDMA: (mask, shift) for a field *)", ""]
-    want = SDMA_OPS + [f"{n}_{k}" for n in SDMA_FIELDS for k in ("mask", "shift")]
+    want = SDMA_OPS + [f"{n}_{k}" for n in SDMA_FIELDS + SDMA_WINDOW_FIELDS for k in ("mask", "shift")]
     svals = {}
     for ver, name in SDMA_PKT.items():
         ds = defines(h[name])
@@ -1950,6 +1980,41 @@ def generate_abi(h, laid):
         out.append(f"let {ml_name(n)} = ({ml_int(mask)}, {sh})")
     first = min(ver for ver, v in svals.items() if "SDMA_PKT_FENCE_HEADER_mtype_mask" in v)
     out += [f"let sdma_fence_mtype_from = {ml_version(first)}", ""]
+
+    # SDMA's linear sub-window copy
+    kernel = {}
+    for v in svals.values():
+        for n in SDMA_WINDOW_FIELDS:
+            kernel.setdefault(n, []).append((v[n + "_mask"], v[n + "_shift"]))
+    kernel = {n: same(n, vs) for n, vs in kernel.items()}
+    windows = {}
+    for major, tag in SDMA_RECTS.items():
+        size, fields = layout(h[SDMA_RECT], tag)
+        laid.append(Laid(SDMA_RECT, tag, size, {m: fields[m] for _, m in SDMA_WINDOW}))
+        w = {}
+        for k, m in SDMA_WINDOW:
+            _, bit, bits = fields[m]
+            dw = 0 if k.startswith("HEADER") else int(k.split("_")[1])
+            if bit // 32 != dw:
+                sys.exit(f"{tag}.{m} is not in word {dw}")
+            w[k] = ((1 << bits) - 1, bit % 32)
+        windows[major] = w
+    for k, _ in SDMA_WINDOW:
+        n = f"SDMA_PKT_COPY_LINEAR_SUBWIN_{k}"
+        if windows[min(SDMA_RECTS)][k] != kernel[n]:
+            sys.exit(f"ROCr's {SDMA_RECTS[min(SDMA_RECTS)]} lays out {k} otherwise than the kernel's headers")
+    out += ["(* SDMA's linear sub-window copy, by the GC major from which a layout",
+            "   holds: each field as (mask, shift) in its word. *)", "",
+            "type sdma_window = {"]
+    out += [f"  {ml_name(k.split('_', 2)[-1] if k.startswith('DW') else k.split('_', 1)[1])} : int * int;"
+            for k, _ in SDMA_WINDOW]
+    out += ["}", "", "let sdma_window = ["]
+    for major, w in windows.items():
+        fs = [f"{ml_name(k.split('_', 2)[-1] if k.startswith('DW') else k.split('_', 1)[1])} = "
+              f"({ml_int(w[k][0])}, {w[k][1]})"
+              for k, _ in SDMA_WINDOW]
+        out.append(f"  ({major}, {{ " + "; ".join(fs) + " });")
+    out += ["]", ""]
 
     # AQL
     out += ["(* AQL: hsa.h's constants, and its kernel dispatch packet as (byte offset,", "   bytes) *)", ""]
@@ -2398,6 +2463,7 @@ def main():
             files[PINS] = json.dumps({u: d for u, d in pins.items() if u in urls}, indent=1, sort_keys=True) + "\n"
     else:
         h = {n: (HEADERS / n).read_text(encoding="latin-1") for n in [*ABI, *PCI, FIRMWARE]}
+        h[SDMA_RECT] = member_widths(h[SDMA_RECT])
         laid = []
         files = {ABI_OUT: generate_abi(h, laid), PCI_OUT: generate_pci(h, laid)}
         if a.check:

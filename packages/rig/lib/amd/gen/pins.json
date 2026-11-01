@@ -146,6 +146,7 @@
  "https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/aqlprofile/linux/vega10_enum.h": "44bab293b76c977d9ef1c80433dc461b4f3e5efc1dd5339a2d86eb26981a2180",
  "https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/rocprofiler-compute/src/rocprof_compute_soc/profile_configs/counter_defs.yaml": "cb2509f3b9bff405dc12d0681696907709ecc5948fd2740b284f8a0f4c4c30a1",
  "https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/rocr-runtime/runtime/hsa-runtime/core/inc/registers.h": "bf11347c0c2eb744a39040f087d79b84e701f9d875c4bff1b8685aa91cd093c4",
+ "https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/rocr-runtime/runtime/hsa-runtime/core/inc/sdma_registers.h": "727a5f6ed1be624690e5c5e9866359bee3e6d16448ea9ed7a16d2d33a0f52d3f",
  "https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa.h": "f0dc5099a15c812cb6cdf33cf67ec35f1386be222a6d0f05896cfff16916e514",
  "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-20.1.0/llvm/docs/AMDGPUUsage.rst": "890eb917afae5554b579da333df0823ddd4226fe6d1d5c321b9e63fb98a6412d",
  "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-20.1.0/llvm/include/llvm/BinaryFormat/ELF.h": "b9ade3a9aed6564183cad82a21d709a9c3c1be7495f4e1bbc3361daf45398864",
