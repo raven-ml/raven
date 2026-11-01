@@ -20,3 +20,7 @@ dune exec packages/norn/examples/09-calibration/main.exe
 | ------------------------------------- | ---------------------------- |
 | `Diag.rank u ~truth d`                | The rank of a truth          |
 | `Diag.rank_uniformity u ~draws ranks` | The p-value of uniform ranks |
+
+## Next Steps
+
+Continue to [10-hmm](../10-hmm/).

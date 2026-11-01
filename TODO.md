@@ -291,8 +291,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - Nested: slice moves correlate draws within a replacement, so its error
   under-covers 1.5-1.9x on gp_pois_regr (documented in
   `Evidence.expectation`, still a biased error)
-- distributions: `von_mises`, `lkj_cholesky`, `truncated`,
-  `hmm` with `hmm_marginals`, and an example that sums an HMM's states out
 
 ## talon, hugin, brot, munin, quill
 

@@ -619,7 +619,8 @@ module Dist : sig
       scalar, and {!iid} adds independent copies. Each family has one
       parameterisation, named by labels; parameters are tensors and broadcast.
       Event axes belong to the family: {!normal} has none, {!dirichlet}'s and
-      {!mvn}'s value is a vector along the last axis.
+      {!mvn}'s value is a vector along the last axis, {!lkj_cholesky}'s a
+      matrix along the last two.
 
       {[
       let prior = Norn.Dist.normal ~loc:(f64 0.) ~scale:(f64 5.)
@@ -769,6 +770,38 @@ module Dist : sig
       Raises [Invalid_argument] if [scale_tril]'s last two axes are not square
       or not of [loc]'s length. *)
 
+  val von_mises :
+    loc:(float, 'f, 'd) Nx.t ->
+    concentration:(float, 'f, 'd) Nx.t ->
+    ((float, 'f, 'd) Nx.t, 'f, 'd) t
+  (** [von_mises ~loc ~concentration] is the distribution of angles on
+      \[[-π], [π]\] with density [exp (κ cos (x - loc)) / (2π I₀(κ))], [κ]
+      the concentration, in [\[0, inf)]: uniform at [κ = 0], near a normal of
+      variance [1 / κ] about [loc] for a large [κ]. The log density is
+      [-2κ sin² ((x - loc) / 2) - log (2π i0e κ)] ({!Nx.i0e}), finite at
+      every finite [κ]. [loc] is finite and may lie off \[[-π], [π]\]: the
+      density is periodic in it. Draws are {!Nx.Rng.von_mises}'s, Best and
+      Fisher's rejection, moved by [loc] and wrapped onto \[[-π], [π]\]. *)
+
+  val lkj_cholesky :
+    int -> concentration:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
+  (** [lkj_cholesky n ~concentration] is the distribution of the Cholesky
+      factor [L] of an [n × n] correlation matrix [C = L Lᵀ] whose density is
+      proportional to [det C^(η - 1)], [η] the concentration in [(0, inf)]
+      (Lewandowski, Kurowicka and Joe, Generating random correlation matrices
+      based on vines and extended onion method, 2009): uniform over
+      correlation matrices at [η = 1], concentrated about the identity
+      above. Over [L]'s strict lower triangle the density is
+      [Π_(i = 2)^n L_ii^(n - i + 2η - 2)] over their normalising constant,
+      whose factors are formed from beta densities at their mode, which keep
+      their digits at a large [η]. A matrix of concentrations' leading axes
+      are batch axes, the value's last two axes the matrix. Draws follow the
+      onion method; each off-diagonal [C_ij] has [(C_ij + 1) / 2] beta of
+      shapes [η - 1 + n / 2] and [η - 1 + n / 2]. A matrix whose rows'
+      squared norms are within [4 n ε] of one counts as in the support.
+
+      Raises [Invalid_argument] if [n < 2]. *)
+
   (** {1:discrete Discrete families}
 
       The log masses of {!poisson}, {!binomial} and {!neg_binomial} follow
@@ -836,6 +869,36 @@ module Dist : sig
       the density of [d] at the preimage less [b]'s log-determinant there. A
       value outside [b]'s image has density [-inf]. *)
 
+  val truncated :
+    ?low:(float, 'f, 'd) Nx.t ->
+    ?high:(float, 'f, 'd) Nx.t ->
+    ((float, 'f, 'd) Nx.t, 'f, 'd) t ->
+    ((float, 'f, 'd) Nx.t, 'f, 'd) t
+  (** [truncated ?low ?high d] is [d] conditioned on lying between [low] and
+      [high], elementwise, a missing bound leaving its side as [d]'s: the
+      density of [d] over its mass [F(high) - F(low)] there, [-inf] outside.
+      The bounds are finite, broadcast against [d]'s shape, and clip to [d]'s
+      support. The mass is a difference of upper tails where [low] lies
+      above [d]'s median and of lower tails otherwise, each held as
+      logarithms, so the mass between bounds far in one tail keeps its
+      digits; where the two tails agree within a factor [e^(1/4)] it is the
+      density integrated over the window by eight-point Gauss-Legendre
+      quadrature. The mass must be positive, a check like a parameter's.
+      The log density is [d]'s less the log mass: where both are large,
+      their difference is within [ε] times their magnitude, as at bounds a
+      million standard deviations out at float32. Draws and the quantile
+      invert [d] at [(1 - p) F(low) + p F(high)], read from the smaller
+      tail, within that inverse's precision, about [ε min (F, 1 - F) / f]
+      in the value: a window narrower than that is not resolved. Its
+      coordinates map onto the interval, or the half-line, between the
+      bounds and [d]'s support.
+
+      Raises [Invalid_argument] if neither bound is given, or if [d] is not
+      {!normal}, {!half_normal}, {!lognormal}, {!cauchy}, {!half_cauchy},
+      {!laplace}, {!logistic}, {!exponential}, {!gamma}, {!inverse_gamma},
+      {!uniform} or {!iid} of one: the families whose distribution function
+      and its inverses nx computes. *)
+
   val mixture : logits:(float, 'f, 'd) Nx.t -> ('x, 'f, 'd) t -> ('x, 'f, 'd) t
   (** [mixture ~logits d] draws one component [k] with probability
       [softmax logits] for the whole value, then the value from [d_k], the slice
@@ -847,6 +910,32 @@ module Dist : sig
       Raises [Invalid_argument] if [logits] is not a vector or [d]'s leading
       axis is not its length. *)
 
+  val hmm :
+    initial:(float, 'f, 'd) Nx.t ->
+    transition:(float, 'f, 'd) Nx.t ->
+    int ->
+    ('x, 'f, 'd) t ->
+    ('x, 'f, 'd) t
+  (** [hmm ~initial ~transition n d] is [n] observations of a hidden Markov
+      chain over [k] states, its states summed out: state [z_1] is [j] with
+      probability [softmax initial], state [z_(t+1)] is [j] with probability
+      [softmax transition_i] after [z_t = i], and observation [t] is a draw
+      of [d_(z_t)], the slice of [d] at [z_t] on its leading axis. The value
+      has shape [[n]] followed by [d]'s components'. The log density is the
+      forward algorithm's in logs (Rabiner, A Tutorial on Hidden Markov
+      Models, 1989, §III-A), [logsumexp_j α_n(j)], its [n - 1] products of
+      [k × k] matrices multiplied pairwise in [⌈log₂ n⌉] rounds.
+      {!membership} gives each step's state's posterior from the forward and
+      backward variables, scanned in [2 log₂ n] rounds
+      ({!Nx.associative_scan}). A logit may be
+      [-inf], a state or a transition of probability zero. Its coordinates
+      are those of a {!mixture} of [d].
+
+      Raises [Invalid_argument] if [initial] is not a vector of [k],
+      [transition] not a [k × k] matrix, [d]'s leading axis not [k], or
+      [n < 1]; its eliminators raise on a value whose step axis is not of
+      [n]. *)
+
   (** {1:eliminators Eliminators} *)
 
   val log_density : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
@@ -855,7 +944,8 @@ module Dist : sig
   val factors : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
   (** [factors d x] is the log density of each independent unit of [x]: one per
       element for the elementwise families, per row for {!dirichlet} and {!mvn},
-      one for {!sorted} and {!mixture}, with {!iid}'s axes in front. [x]
+      per matrix for {!lkj_cholesky}, one for {!sorted}, {!mixture} and {!hmm},
+      with {!iid}'s axes in front. [x]
       broadcasts against the parameters. A unit outside the support has factor
       [-inf]. *)
 
@@ -866,8 +956,10 @@ module Dist : sig
 
   val quantile :
     ((float, 'f, 'd) Nx.t, 'f, 'd) t -> (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t
-  (** [quantile d p] is the value whose CDF is [p], elementwise. For {!gamma}
-      and {!inverse_gamma} it is [0.] at [p = 0.] and [inf] at [p = 1.].
+  (** [quantile d p] is the value whose CDF is [p], elementwise, read from
+      the smaller tail: above [1/2] it inverts the survival at [1 - p], which
+      is exact there. For {!gamma} and {!inverse_gamma} it is [0.] at
+      [p = 0.] and [inf] at [p = 1.].
 
       {!Rune} differentiates it in [p] and in [d]'s parameters. For {!gamma}
       and {!inverse_gamma} the first derivatives are finite wherever the exact
@@ -875,14 +967,16 @@ module Dist : sig
       quantile passes about [2^512].
 
       Raises [Invalid_argument] for a family whose quantile nx does not compute:
-      {!student_t}, {!beta}, the vector families and the combinators but
-      {!iid}. *)
+      {!student_t}, {!beta}, {!von_mises}, the vector and matrix families and
+      the combinators but {!iid} and {!truncated}. *)
 
   val coords : ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ('f, 'd) Bij.t
   (** [coords d] is the bijector onto [d]'s support, from coordinates in which
       samplers and optimisers move: {!Bij.identity} on the reals, {!Bij.exp} on
-      [(0, inf)], {!Bij.interval} for {!beta} and {!uniform}, {!Bij.simplex} for
-      {!dirichlet}, and for {!sorted} [d]'s bijector after {!Bij.ordered}. *)
+      [(0, inf)], {!Bij.interval} for {!beta}, {!uniform} and {!von_mises},
+      {!Bij.simplex} for {!dirichlet}, {!Bij.cholesky_corr} for
+      {!lkj_cholesky}, {!Bij.interval}, {!Bij.greater} or {!Bij.less} for
+      {!truncated}, and for {!sorted} [d]'s bijector after {!Bij.ordered}. *)
 
   val standardize : ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ('f, 'd) Bij.t
   (** [standardize d] is the bijector whose coordinates are [d]'s draws
@@ -892,10 +986,13 @@ module Dist : sig
 
       Raises [Invalid_argument] naming another family. *)
 
-  val mixture_membership : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
-  (** [mixture_membership d x] is each component's posterior probability given
-      [x], of shape [[k]] for a {!mixture} of [k] components and [s @ [k]] for
-      [iid s] of one.
+  val membership : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
+  (** [membership d x] is the posterior probability of each value of [d]'s
+      discrete latent variables given [x]: of shape [[k]], each component's,
+      for a {!mixture} of [k] components; of shape [[n; k]], each step's
+      state's, for an {!hmm} of [n] steps over [k] states, from the forward
+      and backward variables ([γ_t ∝ α_t β_t], Rabiner 1989, eq. 27); and
+      [s] followed by either for [iid s] of one.
 
       Raises [Invalid_argument] if [d] is not one of those. *)
 

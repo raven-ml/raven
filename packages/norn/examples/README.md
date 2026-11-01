@@ -14,6 +14,7 @@ Start with `01-distributions` and work through them in order.
 | [`07-evidence`](./07-evidence/) | Evidence |
 | [`08-laplace`](./08-laplace/) | Gaussian approximations |
 | [`09-calibration`](./09-calibration/) | Simulation-based calibration |
+| [`10-hmm`](./10-hmm/) | Summing a hidden Markov model's states out |
 
 Run one from the repository root:
 

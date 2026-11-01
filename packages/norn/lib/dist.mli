@@ -65,6 +65,14 @@ val mvn :
   scale_tril:(float, 'f, 'd) Nx.t ->
   ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
+val von_mises :
+  loc:(float, 'f, 'd) Nx.t ->
+  concentration:(float, 'f, 'd) Nx.t ->
+  ((float, 'f, 'd) Nx.t, 'f, 'd) t
+
+val lkj_cholesky :
+  int -> concentration:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
+
 (** {1:discrete Discrete families} *)
 
 val bernoulli : logits:(float, 'f, 'd) Nx.t -> ('d Nx.bool_t, 'f, 'd) t
@@ -88,7 +96,20 @@ val sorted : int -> ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ((float, 'f, 'd) Nx.t, '
 val transform :
   ('f, 'd) Bij.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
+val truncated :
+  ?low:(float, 'f, 'd) Nx.t ->
+  ?high:(float, 'f, 'd) Nx.t ->
+  ((float, 'f, 'd) Nx.t, 'f, 'd) t ->
+  ((float, 'f, 'd) Nx.t, 'f, 'd) t
+
 val mixture : logits:(float, 'f, 'd) Nx.t -> ('x, 'f, 'd) t -> ('x, 'f, 'd) t
+
+val hmm :
+  initial:(float, 'f, 'd) Nx.t ->
+  transition:(float, 'f, 'd) Nx.t ->
+  int ->
+  ('x, 'f, 'd) t ->
+  ('x, 'f, 'd) t
 
 (** {1:eliminators Eliminators} *)
 
@@ -105,7 +126,7 @@ val coords : ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ('f, 'd) Bij.t
 
 val standardize : ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ('f, 'd) Bij.t
 
-val mixture_membership : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
+val membership : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
 
 (** {1:observers Observers} *)
 

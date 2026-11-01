@@ -7,7 +7,7 @@
     uv run packages/norn/test/gen/dist.py [--check]
 
 Writes `packages/norn/test/golden/dist.golden`: for each family at fixed
-parameters, SciPy's log density at chosen points, its quantiles, and the
+parameters, SciPy's or mpmath's log density at chosen points, its quantiles, and the
 deciles or probabilities a goodness-of-fit test of `sample` bins draws by.
 The parameters are repeated in `packages/norn/test/test_dist.ml` under the
 same case names. With --check nothing is written, and the run fails if the
@@ -39,6 +39,13 @@ Lines are `KIND CASE ARGS... VALUE`, floats hexadecimal or `-inf`:
   and inverse_gamma at concentrations from 1e230 to 1e300 whose mean count
   lies past 2^32 times the concentration, past the floats' range, or far
   below it.
+- `lkj N ETA L... V`: the log density of the Cholesky factor L (row by row,
+  float32 values) of an N x N correlation matrix under LKJ(ETA), from mpmath
+  with the normaliser in its gamma form.
+
+Truncated cases (`truncated_*`) and von Mises cases share the `logpdf`,
+`ppf` and `bin` lines, from mpmath; `bin lkj_N` bins an off-diagonal
+correlation of an LKJ draw.
 """
 
 import argparse
@@ -385,6 +392,148 @@ POSITIVE = {"half_normal", "lognormal", "half_cauchy", "exponential", "gamma",
             "gamma_small", "inverse_gamma"}
 
 
+def logpdf_mp(name, x):
+    """A QUANTILE case's log density at x, from mpmath."""
+    x = mpf(x)
+    lsqrt2pi = mpmath.log(2 * mpmath.pi) / 2
+    if name == "normal":
+        z = (x - mpf(0.5)) / 2
+        return -z * z / 2 - lsqrt2pi - mpmath.log(2)
+    if name == "half_normal":
+        z = x / mpf(1.5)
+        return -z * z / 2 - lsqrt2pi + mpmath.log(2) - mpmath.log(mpf(1.5))
+    if name == "cauchy":
+        z = (x - 1) / mpf(0.5)
+        return -mpmath.log(mpmath.pi * mpf(0.5) * (1 + z * z))
+    if name == "laplace":
+        return -abs(x) / mpf(1.3) - mpmath.log(2 * mpf(1.3))
+    if name == "exponential":
+        return mpmath.log(mpf(1.7)) - mpf(1.7) * x
+    if name in ("gamma", "gamma_small"):
+        a, r = (2.5, 1.5) if name == "gamma" else (0.4, 0.8)
+        return gamma_density(a, r, x)
+    if name == "inverse_gamma":
+        return gamma_density(3.0, 2.0, 1 / x) - 2 * mpmath.log(x)
+    if name == "uniform":
+        return -mpmath.log(4)
+    raise ValueError(name)
+
+
+# Truncations of QUANTILE cases: base, low, high (None for none), and points.
+TRUNCATED = {
+    "truncated_normal": ("normal", -1.0, 3.0, [-1.0, 0.0, 2.5, 3.0, 3.5, -2.0]),
+    "truncated_normal_far": ("normal", 60.5, None, [60.5, 60.6, 61.0, 70.0, 0.0]),
+    "truncated_normal_below": ("normal", None, -79.5, [-79.5, -80.0, -85.0, 0.0]),
+    "truncated_normal_window": ("normal", 20.5, 21.5, [20.5, 21.0, 21.5, 22.0]),
+    "truncated_gamma": ("gamma", 50.0, None, [50.0, 50.5, 60.0, 49.0]),
+    "truncated_gamma_deep": ("gamma", None, 1e-130, [1e-131, 5e-131, 1e-130, 1.0]),
+    "truncated_laplace_far": ("laplace", 1000.0, None, [1000.0, 1001.0, 1010.0, 0.0]),
+    "truncated_gamma_both": ("gamma_small", 0.1, 2.0, [0.1, 0.5, 2.0, 3.0]),
+    "truncated_exponential": ("exponential", None, 0.01, [1e-9, 0.005, 0.01, 0.02]),
+    "truncated_cauchy": ("cauchy", 1e6, None, [1e6, 2e6, 1e9, 0.0]),
+    "truncated_laplace": ("laplace", -50.0, -40.0, [-50.0, -45.0, -40.0, 0.0]),
+    "truncated_inverse_gamma": ("inverse_gamma", None, 0.05, [0.01, 0.04, 0.05, 0.1]),
+    "truncated_uniform": ("uniform", 0.0, 1.0, [0.0, 0.5, 1.0, 2.0]),
+    "truncated_half_normal": ("half_normal", None, 1e-3, [1e-6, 5e-4, 1e-3, 1.0]),
+}
+
+
+def truncation(case):
+    """A truncation's tails and its bounds, from mpmath: differences of the
+    base's lower tails below its median and of its upper tails above, which
+    keep their digits."""
+    base, low, high, _ = TRUNCATED[case]
+    mp.prec = 200
+    lo = tails(base, low) if low is not None else (mpf(0), mpf(1))
+    hi = tails(base, high) if high is not None else (mpf(1), mpf(0))
+    upper = lo[0] > mpf(0.5)
+    mass = lo[1] - hi[1] if upper else hi[0] - lo[0]
+
+    def tail(x):
+        f = tails(base, x)
+        if upper:
+            return ((lo[1] - f[1]) / mass, (f[1] - hi[1]) / mass)
+        return ((f[0] - lo[0]) / mass, (hi[0] - f[0]) / mass)
+
+    return base, low, high, mass, tail
+
+
+def truncated_logpdf(case, x):
+    base, low, high, mass, _ = truncation(case)
+    if (low is not None and x < low) or (high is not None and x > high):
+        return -np.inf
+    return logpdf_mp(base, x) - mpmath.log(mass)
+
+
+def truncated_ppf(case, p):
+    base, low, high, _, tail = truncation(case)
+    if low is None and base in POSITIVE:
+        low = 0.0
+    x0 = low if low is not None else high
+    side = 0 if p <= 0.5 else 1
+    return solve(tail, side, min(mpf(p), 1 - mpf(p)), x0, low=low, high=high)
+
+
+VON_MISES = {"von_mises": (0.3, 2.0, [-3.0, 0.0, 0.3, 2.0, 3.1, -4.0]),
+             "von_mises_flat": (-1.0, 0.0, [-3.0, 0.0, 3.0]),
+             "von_mises_tight": (1.0, 1e4, [1.0, 1.001, 1.03, 0.9, -2.0])}
+
+
+def von_mises_logpdf(loc, k, x):
+    mp.prec = 200
+    if abs(x) > mpmath.pi:
+        return -np.inf
+    loc, k, x = mpf(loc), mpf(k), mpf(x)
+    return k * mpmath.cos(x - loc) - mpmath.log(2 * mpmath.pi * mpmath.besseli(0, k))
+
+
+def von_mises_deciles(loc, k):
+    """The deciles on [-π, π], by bisection on the integrated density."""
+    mp.prec = 60
+    f = lambda t: mpmath.exp(von_mises_logpdf(loc, k, t))
+    cdf = lambda x: mpmath.quad(f, [-mpmath.pi, loc, x] if x > loc else [-mpmath.pi, x])
+    out = []
+    for j in range(1, 10):
+        a, b = -mpmath.pi, mpmath.pi
+        for _ in range(60):
+            m = (a + b) / 2
+            if cdf(m) < mpf(j) / 10:
+                a = m
+            else:
+                b = m
+        out.append(float((a + b) / 2))
+    return out
+
+
+def lkj_logpdf(n, eta, l):
+    """Stan's density of a Cholesky factor, with the normaliser in the onion
+    method's form of gammas (TensorFlow Probability's), not the vine form
+    norn computes."""
+    mp.prec = 200
+    eta = mpf(eta)
+    log_c = n * (n - 1) * mpmath.log(mpmath.pi) / 4
+    for k in range(1, n):
+        log_c += mpmath.loggamma(eta + mpf(n - 1 - k) / 2) - mpmath.loggamma(eta + mpf(n - 1) / 2)
+    v = -log_c
+    for i in range(2, n + 1):
+        v += (n - i + 2 * eta - 2) * mpmath.log(mpf(l[i - 1][i - 1]))
+    return v
+
+
+def lkj_points(n, eta, rng, count):
+    """Cholesky factors of correlation matrices near the identity's scale
+    for eta, their rows normalised and rounded to float32."""
+    out = []
+    for _ in range(count):
+        a = np.tril(rng.normal(size=(n, n)) / (1 + np.sqrt(eta)), -1) + np.eye(n)
+        a = a / np.linalg.norm(a, axis=1, keepdims=True)
+        out.append(a.astype(np.float32).astype(np.float64))
+    return out
+
+
+LKJ = [(2, 0.5), (2, 1.0), (3, 1.0), (3, 3.0), (4, 0.7), (4, 1e7), (5, 2.0)]
+
+
 def merge(bins):
     """Merge each bin below MIN_BIN into its left neighbour."""
     out = []
@@ -422,6 +571,33 @@ def render():
         d, _ = SCALAR[name]
         for p in [1e-12, 0.001, 0.1, 0.5, 0.9, 0.999, 1 - 2.0**-40]:
             out.append(f"ppf {name} {fmt(p)} {fmt(exact_ppf(name, d, p))}\n")
+    for case, (_, _, _, xs) in TRUNCATED.items():
+        for x in xs:
+            out.append(f"logpdf {case} {fmt(x)} {fmt(truncated_logpdf(case, x))}\n")
+        for p in [1e-12, 0.001, 0.1, 0.5, 0.9, 0.999, 1 - 2.0**-40]:
+            out.append(f"ppf {case} {fmt(p)} {fmt(truncated_ppf(case, p))}\n")
+    for case in ["truncated_normal", "truncated_normal_far", "truncated_gamma_both"]:
+        _, low, high, _ = TRUNCATED[case]
+        edges = ([low if low is not None else -np.inf]
+                 + [float(truncated_ppf(case, j / 10)) for j in range(1, 10)]
+                 + [high if high is not None else np.inf])
+        bins[case] = [(lo, hi, 0.1) for lo, hi in zip(edges[:-1], edges[1:])]
+    for case, (loc, k, xs) in VON_MISES.items():
+        for x in xs:
+            out.append(f"logpdf {case} {fmt(x)} {fmt(von_mises_logpdf(loc, k, x))}\n")
+    edges = [-np.pi] + von_mises_deciles(0.3, 2.0) + [np.pi + 1e-9]
+    bins["von_mises"] = [(lo, hi, 0.1) for lo, hi in zip(edges[:-1], edges[1:])]
+    rng = np.random.default_rng(20002)
+    for n, eta in LKJ:
+        for l in lkj_points(n, eta, rng, 3):
+            out.append(f"lkj {n} {fmt(eta)} " + " ".join(fmt(v) for v in l.ravel())
+                       + f" {fmt(lkj_logpdf(n, eta, l))}\n")
+    # An off-diagonal correlation of an LKJ draw, (r + 1) / 2 beta of shapes
+    # eta - 1 + n / 2.
+    for n, eta in [(3, 2.0), (5, 0.8)]:
+        c = eta - 1 + n / 2
+        edges = [-1.0] + [2 * stats.beta(c, c).ppf(j / 10) - 1 for j in range(1, 10)] + [1.0 + 1e-9]
+        bins[f"lkj_{n}"] = [(lo, hi, 0.1) for lo, hi in zip(edges[:-1], edges[1:])]
     for name, (d, xs, top) in DISCRETE.items():
         for x in xs:
             out.append(f"logpdf {name} {fmt(x)} {fmt(d.logpmf(x))}\n")

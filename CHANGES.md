@@ -49,6 +49,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Add `Dist.von_mises`, `Dist.lkj_cholesky`, `Dist.truncated` and `Dist.hmm`,
+  a hidden Markov model's observations with its states summed out.
+- `Dist.membership` replaces `Dist.mixture_membership` and gives an HMM's
+  per-step state posteriors as well as a mixture's components'.
 - `Dist.quantile` of `Dist.cauchy`, `half_cauchy`, `half_normal` and `laplace`
   keeps its digits in the tails: cauchy's at `p = 1e-12` was off by 1.4e-5.
 - Add `Support.Less` and `Bij.less`, the reals below a bound. `Norn_model`

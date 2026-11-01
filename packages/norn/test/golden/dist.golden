@@ -153,6 +153,198 @@ ppf uniform 0x1.0000000000000p-1 0x1.0000000000000p+0
 ppf uniform 0x1.ccccccccccccdp-1 0x1.4cccccccccccdp+1
 ppf uniform 0x1.ff7ced916872bp-1 0x1.7f7ced916872bp+1
 ppf uniform 0x1.fffffffffe000p-1 0x1.7ffffffffe000p+1
+logpdf truncated_normal -0x1.0000000000000p+0 -0x1.7d4cd5d309d33p+0
+logpdf truncated_normal 0x0.0p+0 -0x1.3d4cd5d309d33p+0
+logpdf truncated_normal 0x1.4000000000000p+1 -0x1.b54cd5d309d33p+0
+logpdf truncated_normal 0x1.8000000000000p+1 -0x1.fd4cd5d309d33p+0
+logpdf truncated_normal 0x1.c000000000000p+1 -inf
+logpdf truncated_normal -0x1.0000000000000p+1 -inf
+ppf truncated_normal 0x1.19799812dea11p-40 -0x1.fffffffff63f8p-1
+ppf truncated_normal 0x1.0624dd2f1a9fcp-10 -0x1.fdbb3891efd8ep-1
+ppf truncated_normal 0x1.999999999999ap-4 -0x1.2c860d02dc47fp-1
+ppf truncated_normal 0x1.0000000000000p-1 0x1.9bdc91606eca9p-1
+ppf truncated_normal 0x1.ccccccccccccdp-1 0x1.31d3be8da799cp+1
+ppf truncated_normal 0x1.ff7ced916872bp-1 0x1.7f10f5f34f79dp+1
+ppf truncated_normal 0x1.fffffffffe000p-1 0x1.7ffffffffc582p+1
+logpdf truncated_normal_far 0x1.e400000000000p+5 0x1.5ac5b281c82bap+1
+logpdf truncated_normal_far 0x1.e4ccccccccccdp+5 0x1.3539797e7198fp+0
+logpdf truncated_normal_far 0x1.e800000000000p+5 -0x1.349d26bf1bea3p+2
+logpdf truncated_normal_far 0x1.1800000000000p+6 -0x1.2e24e935f8df5p+7
+logpdf truncated_normal_far 0x0.0p+0 -inf
+ppf truncated_normal_far 0x1.19799812dea11p-40 0x1.e400000000009p+5
+ppf truncated_normal_far 0x1.0624dd2f1a9fcp-10 0x1.e40022ee680c1p+5
+ppf truncated_normal_far 0x1.999999999999ap-4 0x1.e40e5e52f9c52p+5
+ppf truncated_normal_far 0x1.0000000000000p-1 0x1.e45e7f238d25cp+5
+ppf truncated_normal_far 0x1.ccccccccccccdp-1 0x1.e539a1d1568a6p+5
+ppf truncated_normal_far 0x1.ff7ced916872bp-1 0x1.e7aa84abb7463p+5
+ppf truncated_normal_far 0x1.fffffffffe000p-1 0x1.f28cfacf86fccp+5
+logpdf truncated_normal_below -0x1.3e00000000000p+6 0x1.7f889a6dcefb8p+1
+logpdf truncated_normal_below -0x1.4000000000000p+6 -0x1.c23bb2c918824p+2
+logpdf truncated_normal_below -0x1.5400000000000p+6 -0x1.bb23bb2c91882p+6
+logpdf truncated_normal_below 0x0.0p+0 -inf
+ppf truncated_normal_below 0x1.19799812dea11p-40 -0x1.4379d89cc5485p+6
+ppf truncated_normal_below 0x1.0624dd2f1a9fcp-10 -0x1.3f60b2b878cbap+6
+ppf truncated_normal_below 0x1.999999999999ap-4 -0x1.3e75bbfc018f2p+6
+ppf truncated_normal_below 0x1.0000000000000p-1 -0x1.3e237596c1b43p+6
+ppf truncated_normal_below 0x1.ccccccccccccdp-1 -0x1.3e056413124dap+6
+ppf truncated_normal_below 0x1.ff7ced916872bp-1 -0x1.3e000d1b06d6cp+6
+ppf truncated_normal_below 0x1.fffffffffe000p-1 -0x1.3e00000000003p+6
+logpdf truncated_normal_window 0x1.4800000000000p+4 0x1.9ff8601adce11p+0
+logpdf truncated_normal_window 0x1.5000000000000p+4 -0x1.d00f3fca463dep-1
+logpdf truncated_normal_window 0x1.5800000000000p+4 -0x1.c003cff2918f8p+1
+logpdf truncated_normal_window 0x1.6000000000000p+4 -inf
+ppf truncated_normal_window 0x1.19799812dea11p-40 0x1.4800000000037p+4
+ppf truncated_normal_window 0x1.0624dd2f1a9fcp-10 0x1.4800ce9a44fbdp+4
+ppf truncated_normal_window 0x1.999999999999ap-4 0x1.4854eb4223575p+4
+ppf truncated_normal_window 0x1.0000000000000p-1 0x1.4a2bdfff3152bp+4
+ppf truncated_normal_window 0x1.ccccccccccccdp-1 0x1.4f100477ac7c6p+4
+ppf truncated_normal_window 0x1.ff7ced916872bp-1 0x1.5782ec021c912p+4
+ppf truncated_normal_window 0x1.fffffffffe000p-1 0x1.57fffffffdee1p+4
+logpdf truncated_gamma 0x1.9000000000000p+5 0x1.8ac9107d856a4p-2
+logpdf truncated_gamma 0x1.9400000000000p+5 -0x1.65ee4e68e2ecfp-2
+logpdf truncated_gamma 0x1.e000000000000p+5 -0x1.cae959755e1c4p+3
+logpdf truncated_gamma 0x1.8800000000000p+5 -inf
+ppf truncated_gamma 0x1.19799812dea11p-40 0x1.9000000000060p+5
+ppf truncated_gamma 0x1.0624dd2f1a9fcp-10 0x1.900164bd90c91p+5
+ppf truncated_gamma 0x1.999999999999ap-4 0x1.9092bf095e665p+5
+ppf truncated_gamma 0x1.0000000000000p-1 0x1.93c5570b797a4p+5
+ppf truncated_gamma 0x1.ccccccccccccdp-1 0x1.9c861c91b98d2p+5
+ppf truncated_gamma 0x1.ff7ced916872bp-1 0x1.b58cd2094186fp+5
+ppf truncated_gamma 0x1.fffffffffe000p-1 0x1.1332a9d09390ep+6
+logpdf truncated_gamma_deep 0x1.c6463225ab7ecp-436 0x1.28cc68de97adbp+8
+logpdf truncated_gamma_deep 0x1.1bebdf578b2f4p-433 0x1.2b366f0dd5f2fp+8
+logpdf truncated_gamma_deep 0x1.1bebdf578b2f4p-432 0x1.2c409a31c9adap+8
+logpdf truncated_gamma_deep 0x1.0000000000000p+0 -inf
+ppf truncated_gamma_deep 0x1.19799812dea11p-40 0x1.26e6f709f89e6p-448
+ppf truncated_gamma_deep 0x1.0624dd2f1a9fcp-10 0x1.1ea0ad50e36b7p-436
+ppf truncated_gamma_deep 0x1.999999999999ap-4 0x1.c41fe218d1c8bp-434
+ppf truncated_gamma_deep 0x1.0000000000000p-1 0x1.ae58264989f0ep-433
+ppf truncated_gamma_deep 0x1.ccccccccccccdp-1 0x1.103451b4fba97p-432
+ppf truncated_gamma_deep 0x1.ff7ced916872bp-1 0x1.1bceca478623dp-432
+ppf truncated_gamma_deep 0x1.fffffffffe000p-1 0x1.1bebdf578abdbp-432
+logpdf truncated_laplace_far 0x1.f400000000000p+9 -0x1.0ca937be1b9dcp-2
+logpdf truncated_laplace_far 0x1.f480000000000p+9 -0x1.08169cb473363p+0
+logpdf truncated_laplace_far 0x1.f900000000000p+9 -0x1.fd195868307ecp+2
+logpdf truncated_laplace_far 0x0.0p+0 -inf
+ppf truncated_laplace_far 0x1.19799812dea11p-40 0x1.f40000000000bp+9
+ppf truncated_laplace_far 0x1.0624dd2f1a9fcp-10 0x1.f4002a9ea589cp+9
+ppf truncated_laplace_far 0x1.999999999999ap-4 0x1.f41188307be04p+9
+ppf truncated_laplace_far 0x1.0000000000000p-1 0x1.f47356f5faaecp+9
+ppf truncated_laplace_far 0x1.ccccccccccccdp-1 0x1.f57f2670d9eefp+9
+ppf truncated_laplace_far 0x1.ff7ced916872bp-1 0x1.f87d73528dcccp+9
+ppf truncated_laplace_far 0x1.fffffffffe000p-1 0x1.0302cb3795a79p+10
+logpdf truncated_gamma_both 0x1.999999999999ap-4 0x1.05eb115199087p+0
+logpdf truncated_gamma_both 0x1.0000000000000p-1 -0x1.0cd88131b8ba4p-2
+logpdf truncated_gamma_both 0x1.0000000000000p+1 -0x1.25ac51bae82d6p+1
+logpdf truncated_gamma_both 0x1.8000000000000p+1 -inf
+ppf truncated_gamma_both 0x1.19799812dea11p-40 0x1.999999999fec9p-4
+ppf truncated_gamma_both 0x1.0624dd2f1a9fcp-10 0x1.9b12feb88a601p-4
+ppf truncated_gamma_both 0x1.999999999999ap-4 0x1.1ff7f3de57e3cp-3
+ppf truncated_gamma_both 0x1.0000000000000p-1 0x1.c022fe711382dp-2
+ppf truncated_gamma_both 0x1.ccccccccccccdp-1 0x1.5643724c9e981p+0
+ppf truncated_gamma_both 0x1.ff7ced916872bp-1 0x1.fd798e0b1b9cbp+0
+ppf truncated_gamma_both 0x1.fffffffffe000p-1 0x1.fffffffff6151p+0
+logpdf truncated_exponential 0x1.12e0be826d695p-30 0x1.27462ccd66e43p+2
+logpdf truncated_exponential 0x1.47ae147ae147bp-8 0x1.26bae939b928fp+2
+logpdf truncated_exponential 0x1.47ae147ae147bp-7 0x1.262fa5a43822cp+2
+logpdf truncated_exponential 0x1.47ae147ae147bp-6 -inf
+ppf truncated_exponential 0x1.19799812dea11p-40 0x1.653e28532f097p-47
+ppf truncated_exponential 0x1.0624dd2f1a9fcp-10 0x1.4cb60a0fb8d22p-17
+ppf truncated_exponential 0x1.999999999999ap-4 0x1.0425cd86a52fbp-10
+ppf truncated_exponential 0x1.0000000000000p-1 0x1.464991862221fp-8
+ppf truncated_exponential 0x1.ccccccccccccdp-1 0x1.26a901ecea5dap-7
+ppf truncated_exponential 0x1.ff7ced916872bp-1 0x1.47597a4119854p-7
+ppf truncated_exponential 0x1.fffffffffe000p-1 0x1.47ae147adffd3p-7
+logpdf truncated_cauchy 0x1.e848000000000p+19 -0x1.ba18a78020fa3p+3
+logpdf truncated_cauchy 0x1.e848000000000p+20 -0x1.e6752f96f475fp+3
+logpdf truncated_cauchy 0x1.dcd6500000000p+29 -0x1.ba18aaa4e60b0p+4
+logpdf truncated_cauchy 0x0.0p+0 -inf
+ppf truncated_cauchy 0x1.19799812dea11p-40 0x1.e84800000218ep+19
+ppf truncated_cauchy 0x1.0624dd2f1a9fcp-10 0x1.e8c5200000001p+19
+ppf truncated_cauchy 0x1.999999999999ap-4 0x1.0f4470000004cp+20
+ppf truncated_cauchy 0x1.0000000000000p-1 0x1.e847f00000219p+20
+ppf truncated_cauchy 0x1.ccccccccccccdp-1 0x1.312cee00001bcp+23
+ppf truncated_cauchy 0x1.ff7ced916872bp-1 0x1.dcd630c8002b4p+29
+ppf truncated_cauchy 0x1.fffffffffe000p-1 0x1.e847e000002ccp+59
+logpdf truncated_laplace -0x1.9000000000000p+5 -0x1.fd11de024dfc6p+2
+logpdf truncated_laplace -0x1.6800000000000p+5 -0x1.06ea7b8c2699fp+2
+logpdf truncated_laplace -0x1.4000000000000p+5 -0x1.0c31915ff3777p-2
+logpdf truncated_laplace 0x0.0p+0 -inf
+ppf truncated_laplace 0x1.19799812dea11p-40 -0x1.8fffffff9e28ap+5
+ppf truncated_laplace 0x1.0624dd2f1a9fcp-10 -0x1.83ef347471a50p+5
+ppf truncated_laplace 0x1.999999999999ap-4 -0x1.57e77d9e06cfbp+5
+ppf truncated_laplace 0x1.0000000000000p-1 -0x1.4734386d0b54ap+5
+ppf truncated_laplace 0x1.ccccccccccccdp-1 -0x1.4118607936741p+5
+ppf truncated_laplace 0x1.ff7ced916872bp-1 -0x1.4002a99aa54a1p+5
+ppf truncated_laplace 0x1.fffffffffe000p-1 -0x1.40000000000a6p+5
+logpdf truncated_inverse_gamma 0x1.47ae147ae147bp-7 -0x1.25daf08e9d0dap+7
+logpdf truncated_inverse_gamma 0x1.47ae147ae147bp-5 -0x1.3c8483868aa7bp+1
+logpdf truncated_inverse_gamma 0x1.999999999999ap-5 0x1.a89dcead85780p+2
+logpdf truncated_inverse_gamma 0x1.999999999999ap-4 -inf
+ppf truncated_inverse_gamma 0x1.19799812dea11p-40 0x1.dd07c3a67106cp-6
+ppf truncated_inverse_gamma 0x1.0624dd2f1a9fcp-10 0x1.5ae1342a8fedap-5
+ppf truncated_inverse_gamma 0x1.999999999999ap-4 0x1.82426ce6533a8p-5
+ppf truncated_inverse_gamma 0x1.0000000000000p-1 0x1.92466f5340275p-5
+ppf truncated_inverse_gamma 0x1.ccccccccccccdp-1 0x1.987812033d0f4p-5
+ppf truncated_inverse_gamma 0x1.ff7ced916872bp-1 0x1.9996d7c8bba68p-5
+ppf truncated_inverse_gamma 0x1.fffffffffe000p-1 0x1.99999999998eep-5
+logpdf truncated_uniform 0x0.0p+0 0x0.0p+0
+logpdf truncated_uniform 0x1.0000000000000p-1 0x0.0p+0
+logpdf truncated_uniform 0x1.0000000000000p+0 0x0.0p+0
+logpdf truncated_uniform 0x1.0000000000000p+1 -inf
+ppf truncated_uniform 0x1.19799812dea11p-40 0x1.19799812dea11p-40
+ppf truncated_uniform 0x1.0624dd2f1a9fcp-10 0x1.0624dd2f1a9fcp-10
+ppf truncated_uniform 0x1.999999999999ap-4 0x1.999999999999ap-4
+ppf truncated_uniform 0x1.0000000000000p-1 0x1.0000000000000p-1
+ppf truncated_uniform 0x1.ccccccccccccdp-1 0x1.ccccccccccccdp-1
+ppf truncated_uniform 0x1.ff7ced916872bp-1 0x1.ff7ced916872bp-1
+ppf truncated_uniform 0x1.fffffffffe000p-1 0x1.fffffffffe000p-1
+logpdf truncated_half_normal 0x1.0c6f7a0b5ed8dp-20 0x1.ba18a9e8893ddp+2
+logpdf truncated_half_normal 0x1.0624dd2f1a9fcp-11 0x1.ba18a9ace24ecp+2
+logpdf truncated_half_normal 0x1.0624dd2f1a9fcp-10 0x1.ba18a8f9ed52cp+2
+logpdf truncated_half_normal 0x1.0000000000000p+0 -inf
+ppf truncated_half_normal 0x1.19799812dea11p-40 0x1.203af888421fdp-50
+ppf truncated_half_normal 0x1.0624dd2f1a9fcp-10 0x1.0c6f78bdc5586p-20
+ppf truncated_half_normal 0x1.999999999999ap-4 0x1.a36e2cadba9e4p-14
+ppf truncated_half_normal 0x1.0000000000000p-1 0x1.0624dc3ac4a18p-11
+ppf truncated_half_normal 0x1.ccccccccccccdp-1 0x1.d7dbf41891ec9p-11
+ppf truncated_half_normal 0x1.ff7ced916872bp-1 0x1.05e1c14ff13b4p-10
+ppf truncated_half_normal 0x1.fffffffffe000p-1 0x1.0624dd2f1999ap-10
+logpdf von_mises -0x1.8000000000000p+1 -0x1.28c1d33c615f3p+2
+logpdf von_mises 0x0.0p+0 -0x1.809cf9c8484b7p-1
+logpdf von_mises 0x1.3333333333333p-2 -0x1.52e0b44e2982cp-1
+logpdf von_mises 0x1.0000000000000p+1 -0x1.75b420fccf39cp+1
+logpdf von_mises 0x1.8cccccccccccdp+1 -0x1.22f6d46722f18p+2
+logpdf von_mises -0x1.0000000000000p+2 -inf
+logpdf von_mises_flat -0x1.8000000000000p+1 -0x1.d67f1c864beb5p+0
+logpdf von_mises_flat 0x0.0p+0 -0x1.d67f1c864beb5p+0
+logpdf von_mises_flat 0x1.8000000000000p+1 -0x1.d67f1c864beb5p+0
+logpdf von_mises_tight 0x1.0000000000000p+0 0x1.d7d6077834595p+1
+logpdf von_mises_tight 0x1.004189374bc6ap+0 0x1.d732306edbf97p+1
+logpdf von_mises_tight 0x1.07ae147ae147bp+0 -0x1.a07ba5d73aa03p-1
+logpdf von_mises_tight 0x1.ccccccccccccdp-1 -0x1.722d517af4c64p+5
+logpdf von_mises_tight -0x1.0000000000000p+1 -0x1.36e0f47a0e0a9p+14
+lkj 2 0x1.0000000000000p-1 0x1.0000000000000p+0 0x0.0p+0 0x1.31e6220000000p-2 0x1.e89ef80000000p-1 -0x1.191606aa88e07p+0
+lkj 2 0x1.0000000000000p-1 0x1.0000000000000p+0 0x0.0p+0 0x1.a8f9ac0000000p-2 0x1.d1d3380000000p-1 -0x1.0cdaeb5eb14c1p+0
+lkj 2 0x1.0000000000000p-1 0x1.0000000000000p+0 0x0.0p+0 0x1.139a560000000p-3 0x1.fb57c00000000p-1 -0x1.22b62a3f14a12p+0
+lkj 2 0x1.0000000000000p+0 0x1.0000000000000p+0 0x0.0p+0 0x1.18bdfa0000000p-4 0x1.fecbc40000000p-1 -0x1.62e42fefa39efp-1
+lkj 2 0x1.0000000000000p+0 0x1.0000000000000p+0 0x0.0p+0 -0x1.0c22180000000p-1 0x1.b42cca0000000p-1 -0x1.62e42fefa39efp-1
+lkj 2 0x1.0000000000000p+0 0x1.0000000000000p+0 0x0.0p+0 -0x1.4998d80000000p-2 0x1.e4c0c40000000p-1 -0x1.62e42fefa39efp-1
+lkj 3 0x1.0000000000000p+0 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x1.d682080000000p-2 0x1.c6c0900000000p-1 0x0.0p+0 0x1.a9d32c0000000p-4 0x1.8e609c0000000p-2 0x1.d4a6e40000000p-1 -0x1.b702accb9a09cp+0
+lkj 3 0x1.0000000000000p+0 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 -0x1.12e93e0000000p-1 0x1.afef600000000p-1 0x0.0p+0 0x1.6446260000000p-4 0x1.7bf7b40000000p-2 0x1.d95b660000000p-1 -0x1.c4304c3f4a33ep+0
+lkj 3 0x1.0000000000000p+0 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 -0x1.290cdc0000000p-1 0x1.a104f60000000p-1 0x0.0p+0 0x1.0716fa0000000p-1 0x1.6012f20000000p-2 0x1.926a8a0000000p-1 -0x1.cd2f668585757p+0
+lkj 3 0x1.8000000000000p+1 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 -0x1.e4c5a60000000p-2 0x1.c2fdbc0000000p-1 0x0.0p+0 0x1.8f742e0000000p-2 -0x1.56e9e40000000p-2 0x1.b727460000000p-1 -0x1.46a6eb3c2ed37p+0
+lkj 3 0x1.8000000000000p+1 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x1.c96eee0000000p-6 0x1.ffcce80000000p-1 0x0.0p+0 0x1.7452560000000p-3 0x1.8ce7a80000000p-3 0x1.ed97d80000000p-1 -0x1.68a63db76c737p-3
+lkj 3 0x1.8000000000000p+1 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x1.e41a9c0000000p-2 0x1.c32ba80000000p-1 0x0.0p+0 0x1.d547640000000p-5 0x1.cdf5b80000000p-4 0x1.fbe3160000000p-1 -0x1.627c5acc16d13p-1
+lkj 4 0x1.6666666666666p-1 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 0x1.6069e20000000p-1 0x1.736a160000000p-1 0x0.0p+0 0x0.0p+0 -0x1.00be4a0000000p-2 0x1.a846a20000000p-2 0x1.bff40e0000000p-1 0x0.0p+0 -0x1.4171000000000p-1 -0x1.62b50e0000000p-3 -0x1.3d95620000000p-3 0x1.7c54e40000000p-1 -0x1.c6155d12c99e2p+1
+lkj 4 0x1.6666666666666p-1 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 0x1.05a9fa0000000p-1 0x1.b816180000000p-1 0x0.0p+0 0x0.0p+0 -0x1.cfb20c0000000p-3 0x1.60d21e0000000p-2 0x1.d275ca0000000p-1 0x0.0p+0 0x1.733f200000000p-4 0x1.5df1620000000p-1 -0x1.44df060000000p-8 0x1.72d7a20000000p-1 -0x1.a3ab237a445bep+1
+lkj 4 0x1.6666666666666p-1 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 0x1.5ea1260000000p-2 0x1.e10cb40000000p-1 0x0.0p+0 0x0.0p+0 0x1.b96f520000000p-4 0x1.91e78a0000000p-5 0x1.fc65d40000000p-1 0x0.0p+0 0x1.6605300000000p-6 0x1.d35d400000000p-2 -0x1.97defe0000000p-2 0x1.9736540000000p-1 -0x1.967f42c5fbb52p+1
+lkj 4 0x1.312d000000000p+23 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 -0x1.dbfd080000000p-12 0x1.fffffc0000000p-1 0x0.0p+0 0x0.0p+0 0x1.ffc55c0000000p-14 0x1.edba840000000p-13 0x1.fffffe0000000p-1 0x0.0p+0 -0x1.deab0e0000000p-14 -0x1.915c2c0000000p-16 0x1.2d8eda0000000p-13 0x1.0000000000000p+0 0x1.4ac023f973fbap+5
+lkj 4 0x1.312d000000000p+23 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 0x1.a4fb060000000p-18 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x1.815f340000000p-14 -0x1.cc53dc0000000p-12 0x1.fffffc0000000p-1 0x0.0p+0 -0x1.5c8e4e0000000p-12 -0x1.3383960000000p-12 -0x1.ef0e640000000p-13 0x1.fffffc0000000p-1 0x1.4136bc1325dfcp+5
+lkj 4 0x1.312d000000000p+23 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 -0x1.4c2f340000000p-13 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x1.0ed3b40000000p-13 0x1.eb39c20000000p-13 0x1.fffffe0000000p-1 0x0.0p+0 0x1.aab6640000000p-13 -0x1.23aa060000000p-11 0x1.03d7480000000p-12 0x1.fffffa0000000p-1 0x1.4136bc119c77bp+5
+lkj 5 0x1.0000000000000p+1 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 -0x1.68a1080000000p-2 0x1.df32ac0000000p-1 0x0.0p+0 0x0.0p+0 0x0.0p+0 -0x1.2094500000000p-6 0x1.0036fa0000000p-3 0x1.fbe5be0000000p-1 0x0.0p+0 0x0.0p+0 -0x1.4eb10c0000000p-2 -0x1.cb08640000000p-2 -0x1.52e17e0000000p-3 0x1.a179360000000p-1 0x0.0p+0 -0x1.1597ba0000000p-2 0x1.38937c0000000p-4 0x1.854c140000000p-2 -0x1.cb71ea0000000p-2 0x1.8430f60000000p-1 -0x1.21deddac4d6fap+1
+lkj 5 0x1.0000000000000p+1 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 0x1.dbf8920000000p-4 0x1.fc880a0000000p-1 0x0.0p+0 0x0.0p+0 0x0.0p+0 -0x1.4917b20000000p-6 0x1.cb74600000000p-2 0x1.c974120000000p-1 0x0.0p+0 0x0.0p+0 0x1.2fc9f40000000p-2 -0x1.6c20160000000p-2 0x1.31dd540000000p-4 0x1.c42d280000000p-1 0x0.0p+0 -0x1.feddb20000000p-3 0x1.5034060000000p-2 -0x1.0b92680000000p-1 0x1.4cafd40000000p-3 0x1.74e90a0000000p-1 -0x1.1d058ed08b80ap+1
+lkj 5 0x1.0000000000000p+1 0x1.0000000000000p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 0x0.0p+0 -0x1.e95f7a0000000p-2 0x1.c1bf480000000p-1 0x0.0p+0 0x0.0p+0 0x0.0p+0 0x1.110d920000000p-5 -0x1.92fa120000000p-2 0x1.d660b00000000p-1 0x0.0p+0 0x0.0p+0 -0x1.d006260000000p-7 0x1.461d900000000p-4 -0x1.84af6c0000000p-3 0x1.f4fc880000000p-1 0x0.0p+0 -0x1.04b15a0000000p-2 -0x1.2bed860000000p-1 -0x1.0116be0000000p-2 0x1.3d18a80000000p-4 0x1.7245fa0000000p-1 -0x1.37d458a7f479fp+1
 logpdf poisson 0x0.0p+0 -0x1.999999999999ap+1
 logpdf poisson 0x1.0000000000000p+0 -0x1.04b7796962644p+1
 logpdf poisson 0x1.0000000000000p+1 -0x1.911cca6a282d6p+0
@@ -229,7 +421,7 @@ bin normal 0x1.01b6b625025acp+0 0x1.8c7e39582c5fap+0 0x1.999999999999ap-4
 bin normal 0x1.8c7e39582c5fap+0 0x1.17747d39d099ap+1 0x1.999999999999ap-4
 bin normal 0x1.17747d39d099ap+1 0x1.8813c36e26d32p+1 0x1.999999999999ap-4
 bin normal 0x1.8813c36e26d32p+1 inf 0x1.999999999999ap-4
-threshold normal 0x1.de8d69fa08209p+4
+threshold normal 0x1.e86230c905b01p+4
 bin half_normal -inf 0x1.82081ab55dc40p-3 0x1.999999999999ap-4
 bin half_normal 0x1.82081ab55dc40p-3 0x1.8524226f07106p-2 0x1.999999999999ap-4
 bin half_normal 0x1.8524226f07106p-2 0x1.27ed16151993bp-1 0x1.999999999999ap-4
@@ -240,7 +432,7 @@ bin half_normal 0x1.432ebbd6b8e67p+0 0x1.8dfd8c4489922p+0 0x1.999999999999ap-4
 bin half_normal 0x1.8dfd8c4489922p+0 0x1.ec1da5253a3cbp+0 0x1.999999999999ap-4
 bin half_normal 0x1.ec1da5253a3cbp+0 0x1.3bcfd870d900cp+1 0x1.999999999999ap-4
 bin half_normal 0x1.3bcfd870d900cp+1 inf 0x1.999999999999ap-4
-threshold half_normal 0x1.de8d69fa08209p+4
+threshold half_normal 0x1.e86230c905b01p+4
 bin lognormal -inf 0x1.efd4274675589p-2 0x1.999999999999ap-4
 bin lognormal 0x1.efd4274675589p-2 0x1.607ded0a7c700p-1 0x1.999999999999ap-4
 bin lognormal 0x1.607ded0a7c700p-1 0x1.c652338d9ed36p-1 0x1.999999999999ap-4
@@ -251,7 +443,7 @@ bin lognormal 0x1.a7344f6288771p+0 0x1.06d763ad0840ep+1 0x1.999999999999ap-4
 bin lognormal 0x1.06d763ad0840ep+1 0x1.52c5a05f3ebafp+1 0x1.999999999999ap-4
 bin lognormal 0x1.52c5a05f3ebafp+1 0x1.e1ad08e407366p+1 0x1.999999999999ap-4
 bin lognormal 0x1.e1ad08e407366p+1 inf 0x1.999999999999ap-4
-threshold lognormal 0x1.de8d69fa08209p+4
+threshold lognormal 0x1.e86230c905b01p+4
 bin student_t -inf -0x1.0d42e22f8b7b0p+1 0x1.999999999999ap-4
 bin student_t -0x1.0d42e22f8b7b0p+1 -0x1.ab7380bb54302p+0 0x1.999999999999ap-4
 bin student_t -0x1.ab7380bb54302p+0 -0x1.6719c72bc3ae8p+0 0x1.999999999999ap-4
@@ -262,7 +454,7 @@ bin student_t -0x1.9e0fc9086c1f5p-1 -0x1.31cc71a878a32p-1 0x1.999999999999ap-4
 bin student_t -0x1.31cc71a878a32p-1 -0x1.5231fd12af3f4p-2 0x1.999999999999ap-4
 bin student_t -0x1.5231fd12af3f4p-2 0x1.a85c45f16f630p-4 0x1.999999999999ap-4
 bin student_t 0x1.a85c45f16f630p-4 inf 0x1.999999999999ap-4
-threshold student_t 0x1.de8d69fa08209p+4
+threshold student_t 0x1.e86230c905b01p+4
 bin cauchy -inf -0x1.13e3117b9af60p-1 0x1.999999999999ap-4
 bin cauchy -0x1.13e3117b9af60p-1 0x1.3f4ade718a90ep-2 0x1.999999999999ap-4
 bin cauchy 0x1.3f4ade718a90ep-2 0x1.46014f131055ep-1 0x1.999999999999ap-4
@@ -273,7 +465,7 @@ bin cauchy 0x1.2996f7f692c36p+0 0x1.5cff587677d50p+0 0x1.999999999999ap-4
 bin cauchy 0x1.5cff587677d50p+0 0x1.b02d48639d5bep+0 0x1.999999999999ap-4
 bin cauchy 0x1.b02d48639d5bep+0 0x1.44f8c45ee6bd8p+1 0x1.999999999999ap-4
 bin cauchy 0x1.44f8c45ee6bd8p+1 inf 0x1.999999999999ap-4
-threshold cauchy 0x1.de8d69fa08209p+4
+threshold cauchy 0x1.e86230c905b01p+4
 bin half_cauchy -inf 0x1.445f0fbb1cf91p-2 0x1.999999999999ap-4
 bin half_cauchy 0x1.445f0fbb1cf91p-2 0x1.4cb7bfb4961aep-1 0x1.999999999999ap-4
 bin half_cauchy 0x1.4cb7bfb4961aep-1 0x1.04e0850c1dd5cp+0 0x1.999999999999ap-4
@@ -284,7 +476,7 @@ bin half_cauchy 0x1.605a90c73ab78p+1 0x1.f66da45fee3f0p+1 0x1.999999999999ap-4
 bin half_cauchy 0x1.f66da45fee3f0p+1 0x1.89f188bdcd7aep+2 0x1.999999999999ap-4
 bin half_cauchy 0x1.89f188bdcd7aep+2 0x1.9414813ba6629p+3 0x1.999999999999ap-4
 bin half_cauchy 0x1.9414813ba6629p+3 inf 0x1.999999999999ap-4
-threshold half_cauchy 0x1.de8d69fa08209p+4
+threshold half_cauchy 0x1.e86230c905b01p+4
 bin laplace -inf -0x1.0bcf7adf4022ep+1 0x1.999999999999ap-4
 bin laplace -0x1.0bcf7adf4022ep+1 -0x1.30f109c922b81p+0 0x1.999999999999ap-4
 bin laplace -0x1.30f109c922b81p+0 -0x1.54016ac0e3404p-1 0x1.999999999999ap-4
@@ -295,7 +487,7 @@ bin laplace 0x1.290c774f14a95p-2 0x1.54016ac0e3402p-1 0x1.999999999999ap-4
 bin laplace 0x1.54016ac0e3402p-1 0x1.30f109c922b83p+0 0x1.999999999999ap-4
 bin laplace 0x1.30f109c922b83p+0 0x1.0bcf7adf4022fp+1 0x1.999999999999ap-4
 bin laplace 0x1.0bcf7adf4022fp+1 inf 0x1.999999999999ap-4
-threshold laplace 0x1.de8d69fa08209p+4
+threshold laplace 0x1.e86230c905b01p+4
 bin logistic -inf 0x1.1f0113775972bp+0 0x1.999999999999ap-4
 bin logistic 0x1.1f0113775972bp+0 0x1.720b20068b5a0p+0 0x1.999999999999ap-4
 bin logistic 0x1.720b20068b5a0p+0 0x1.a93c984fddd14p+0 0x1.999999999999ap-4
@@ -306,7 +498,7 @@ bin logistic 0x1.14c28323cc79dp+1 0x1.2b61b3d811176p+1 0x1.999999999999ap-4
 bin logistic 0x1.2b61b3d811176p+1 0x1.46fa6ffcba530p+1 0x1.999999999999ap-4
 bin logistic 0x1.46fa6ffcba530p+1 0x1.707f76445346bp+1 0x1.999999999999ap-4
 bin logistic 0x1.707f76445346bp+1 inf 0x1.999999999999ap-4
-threshold logistic 0x1.de8d69fa08209p+4
+threshold logistic 0x1.e86230c905b01p+4
 bin exponential -inf 0x1.fbb6b722a2ec9p-5 0x1.999999999999ap-4
 bin exponential 0x1.fbb6b722a2ec9p-5 0x1.0cd28574be232p-3 0x1.999999999999ap-4
 bin exponential 0x1.0cd28574be232p-3 0x1.adb03b2eae113p-3 0x1.999999999999ap-4
@@ -317,7 +509,7 @@ bin exponential 0x1.13f717ea265ecp-1 0x1.6a9bb83b1f1ccp-1 0x1.999999999999ap-4
 bin exponential 0x1.6a9bb83b1f1ccp-1 0x1.e4b98e771d34dp-1 0x1.999999999999ap-4
 bin exponential 0x1.e4b98e771d34dp-1 0x1.5abe02820a056p+0 0x1.999999999999ap-4
 bin exponential 0x1.5abe02820a056p+0 inf 0x1.999999999999ap-4
-threshold exponential 0x1.de8d69fa08209p+4
+threshold exponential 0x1.e86230c905b01p+4
 bin gamma -inf 0x1.12d36df2fe6ccp-1 0x1.999999999999ap-4
 bin gamma 0x1.12d36df2fe6ccp-1 0x1.8fcae2b0e5a98p-1 0x1.999999999999ap-4
 bin gamma 0x1.8fcae2b0e5a98p-1 0x1.fffbfc7b78dedp-1 0x1.999999999999ap-4
@@ -328,7 +520,7 @@ bin gamma 0x1.b5eb58cbfdde2p+0 0x1.02bfbf4b234a1p+1 0x1.999999999999ap-4
 bin gamma 0x1.02bfbf4b234a1p+1 0x1.37025557e96c2p+1 0x1.999999999999ap-4
 bin gamma 0x1.37025557e96c2p+1 0x1.8a15a5cb1fbd1p+1 0x1.999999999999ap-4
 bin gamma 0x1.8a15a5cb1fbd1p+1 inf 0x1.999999999999ap-4
-threshold gamma 0x1.de8d69fa08209p+4
+threshold gamma 0x1.e86230c905b01p+4
 bin gamma_small -inf 0x1.80d70d54bdf69p-9 0x1.999999999999ap-4
 bin gamma_small 0x1.80d70d54bdf69p-9 0x1.1245e16172fdbp-6 0x1.999999999999ap-4
 bin gamma_small 0x1.1245e16172fdbp-6 0x1.806dcd8327b5cp-5 0x1.999999999999ap-4
@@ -339,7 +531,7 @@ bin gamma_small 0x1.394872b1d26dbp-2 0x1.fc7d3a0c0647fp-2 0x1.999999999999ap-4
 bin gamma_small 0x1.fc7d3a0c0647fp-2 0x1.9d2a5b0247386p-1 0x1.999999999999ap-4
 bin gamma_small 0x1.9d2a5b0247386p-1 0x1.698cb96948157p+0 0x1.999999999999ap-4
 bin gamma_small 0x1.698cb96948157p+0 inf 0x1.999999999999ap-4
-threshold gamma_small 0x1.de8d69fa08209p+4
+threshold gamma_small 0x1.e86230c905b01p+4
 bin inverse_gamma -inf 0x1.80cb695c53851p-2 0x1.999999999999ap-4
 bin inverse_gamma 0x1.80cb695c53851p-2 0x1.de9cf801a6c45p-2 0x1.999999999999ap-4
 bin inverse_gamma 0x1.de9cf801a6c45p-2 0x1.1b383e725a59ep-1 0x1.999999999999ap-4
@@ -350,7 +542,7 @@ bin inverse_gamma 0x1.c01ffd7cc9383p-1 0x1.0b88b1075f44cp+0 0x1.999999999999ap-4
 bin inverse_gamma 0x1.0b88b1075f44cp+0 0x1.4d8a775c19ee8p+0 0x1.999999999999ap-4
 bin inverse_gamma 0x1.4d8a775c19ee8p+0 0x1.d0950ef09beb7p+0 0x1.999999999999ap-4
 bin inverse_gamma 0x1.d0950ef09beb7p+0 inf 0x1.999999999999ap-4
-threshold inverse_gamma 0x1.de8d69fa08209p+4
+threshold inverse_gamma 0x1.e86230c905b01p+4
 bin beta -inf 0x1.7b452a8cbea12p-4 0x1.999999999999ap-4
 bin beta 0x1.7b452a8cbea12p-4 0x1.1e79c42bb1074p-3 0x1.999999999999ap-4
 bin beta 0x1.1e79c42bb1074p-3 0x1.745560dce9cd1p-3 0x1.999999999999ap-4
@@ -361,7 +553,7 @@ bin beta 0x1.3cdf0000f23eap-2 0x1.71019b3c2d57dp-2 0x1.999999999999ap-4
 bin beta 0x1.71019b3c2d57dp-2 0x1.b096157df6aadp-2 0x1.999999999999ap-4
 bin beta 0x1.b096157df6aadp-2 0x1.05482dce82224p-1 0x1.999999999999ap-4
 bin beta 0x1.05482dce82224p-1 inf 0x1.999999999999ap-4
-threshold beta 0x1.de8d69fa08209p+4
+threshold beta 0x1.e86230c905b01p+4
 bin beta_u -inf 0x1.90f1ecbbab00ap-6 0x1.999999999999ap-4
 bin beta_u 0x1.90f1ecbbab00ap-6 0x1.8722191a02d60p-4 0x1.999999999999ap-4
 bin beta_u 0x1.8722191a02d60p-4 0x1.a61b9f7154b43p-3 0x1.999999999999ap-4
@@ -372,7 +564,7 @@ bin beta_u 0x1.4f1bbcdcbfa54p-1 0x1.96791823aad2ep-1 0x1.999999999999ap-4
 bin beta_u 0x1.96791823aad2ep-1 0x1.cf1bbcdcbfa53p-1 0x1.999999999999ap-4
 bin beta_u 0x1.cf1bbcdcbfa53p-1 0x1.f378709a22a80p-1 0x1.999999999999ap-4
 bin beta_u 0x1.f378709a22a80p-1 inf 0x1.999999999999ap-4
-threshold beta_u 0x1.de8d69fa08209p+4
+threshold beta_u 0x1.e86230c905b01p+4
 bin uniform -inf -0x1.3333333333333p-1 0x1.999999999999ap-4
 bin uniform -0x1.3333333333333p-1 -0x1.9999999999998p-3 0x1.999999999999ap-4
 bin uniform -0x1.9999999999998p-3 0x1.9999999999998p-3 0x1.999999999999ap-4
@@ -383,7 +575,73 @@ bin uniform 0x1.6666666666666p+0 0x1.cccccccccccccp+0 0x1.999999999999ap-4
 bin uniform 0x1.cccccccccccccp+0 0x1.199999999999ap+1 0x1.999999999999ap-4
 bin uniform 0x1.199999999999ap+1 0x1.4cccccccccccdp+1 0x1.999999999999ap-4
 bin uniform 0x1.4cccccccccccdp+1 inf 0x1.999999999999ap-4
-threshold uniform 0x1.de8d69fa08209p+4
+threshold uniform 0x1.e86230c905b01p+4
+bin truncated_normal -0x1.0000000000000p+0 -0x1.2c860d02dc47fp-1 0x1.999999999999ap-4
+bin truncated_normal -0x1.2c860d02dc47fp-1 -0x1.ba5d734496093p-3 0x1.999999999999ap-4
+bin truncated_normal -0x1.ba5d734496093p-3 0x1.0daee671c1373p-3 0x1.999999999999ap-4
+bin truncated_normal 0x1.0daee671c1373p-3 0x1.dfbdea8298c7ep-2 0x1.999999999999ap-4
+bin truncated_normal 0x1.dfbdea8298c7ep-2 0x1.9bdc91606eca9p-1 0x1.999999999999ap-4
+bin truncated_normal 0x1.9bdc91606eca9p-1 0x1.263301bf94dc0p+0 0x1.999999999999ap-4
+bin truncated_normal 0x1.263301bf94dc0p+0 0x1.83bee4ad10e0dp+0 0x1.999999999999ap-4
+bin truncated_normal 0x1.83bee4ad10e0dp+0 0x1.eaf47bf641994p+0 0x1.999999999999ap-4
+bin truncated_normal 0x1.eaf47bf641994p+0 0x1.31d3be8da799cp+1 0x1.999999999999ap-4
+bin truncated_normal 0x1.31d3be8da799cp+1 0x1.8000000000000p+1 0x1.999999999999ap-4
+threshold truncated_normal 0x1.e86230c905b01p+4
+bin truncated_normal_far 0x1.e400000000000p+5 0x1.e40e5e52f9c52p+5 0x1.999999999999ap-4
+bin truncated_normal_far 0x1.e40e5e52f9c52p+5 0x1.e41e6dd52debbp+5 0x1.999999999999ap-4
+bin truncated_normal_far 0x1.e41e6dd52debbp+5 0x1.e430a26db0eebp+5 0x1.999999999999ap-4
+bin truncated_normal_far 0x1.e430a26db0eebp+5 0x1.e445a5d5cba6ap+5 0x1.999999999999ap-4
+bin truncated_normal_far 0x1.e445a5d5cba6ap+5 0x1.e45e7f238d25cp+5 0x1.999999999999ap-4
+bin truncated_normal_far 0x1.e45e7f238d25cp+5 0x1.e47ce70019968p+5 0x1.999999999999ap-4
+bin truncated_normal_far 0x1.e47ce70019968p+5 0x1.e4a4174fa2ea8p+5 0x1.999999999999ap-4
+bin truncated_normal_far 0x1.e4a4174fa2ea8p+5 0x1.e4db4da5dd1f9p+5 0x1.999999999999ap-4
+bin truncated_normal_far 0x1.e4db4da5dd1f9p+5 0x1.e539a1d1568a6p+5 0x1.999999999999ap-4
+bin truncated_normal_far 0x1.e539a1d1568a6p+5 inf 0x1.999999999999ap-4
+threshold truncated_normal_far 0x1.e86230c905b01p+4
+bin truncated_gamma_both 0x1.999999999999ap-4 0x1.1ff7f3de57e3cp-3 0x1.999999999999ap-4
+bin truncated_gamma_both 0x1.1ff7f3de57e3cp-3 0x1.88c7469ecbeeep-3 0x1.999999999999ap-4
+bin truncated_gamma_both 0x1.88c7469ecbeeep-3 0x1.06067e60133acp-2 0x1.999999999999ap-4
+bin truncated_gamma_both 0x1.06067e60133acp-2 0x1.58474650c00d2p-2 0x1.999999999999ap-4
+bin truncated_gamma_both 0x1.58474650c00d2p-2 0x1.c022fe711382dp-2 0x1.999999999999ap-4
+bin truncated_gamma_both 0x1.c022fe711382dp-2 0x1.22b33053fd76fp-1 0x1.999999999999ap-4
+bin truncated_gamma_both 0x1.22b33053fd76fp-1 0x1.7aa29159633f1p-1 0x1.999999999999ap-4
+bin truncated_gamma_both 0x1.7aa29159633f1p-1 0x1.f46601d697aeep-1 0x1.999999999999ap-4
+bin truncated_gamma_both 0x1.f46601d697aeep-1 0x1.5643724c9e981p+0 0x1.999999999999ap-4
+bin truncated_gamma_both 0x1.5643724c9e981p+0 0x1.0000000000000p+1 0x1.999999999999ap-4
+threshold truncated_gamma_both 0x1.e86230c905b01p+4
+bin von_mises -0x1.921fb54442d18p+1 -0x1.899910ec24043p-1 0x1.999999999999ap-4
+bin von_mises -0x1.899910ec24043p-1 -0x1.80a30d9fdc32cp-2 0x1.999999999999ap-4
+bin von_mises -0x1.80a30d9fdc32cp-2 -0x1.daf645f1c52acp-4 0x1.999999999999ap-4
+bin von_mises -0x1.daf645f1c52acp-4 0x1.907f44135c080p-4 0x1.999999999999ap-4
+bin von_mises 0x1.907f44135c080p-4 0x1.2d66961ef968cp-2 0x1.999999999999ap-4
+bin von_mises 0x1.2d66961ef968cp-2 0x1.f6390b9dc02acp-2 0x1.999999999999ap-4
+bin von_mises 0x1.f6390b9dc02acp-2 0x1.67bab985f49c2p-1 0x1.999999999999ap-4
+bin von_mises 0x1.67bab985f49c2p-1 0x1.ea9dd2ff6a6c3p-1 0x1.999999999999ap-4
+bin von_mises 0x1.ea9dd2ff6a6c3p-1 0x1.566f6d6f16c7ap+0 0x1.999999999999ap-4
+bin von_mises 0x1.566f6d6f16c7ap+0 0x1.921fb54668930p+1 0x1.999999999999ap-4
+threshold von_mises 0x1.e86230c905b01p+4
+bin lkj_3 -0x1.0000000000000p+0 -0x1.1a0ab033c1a15p-1 0x1.999999999999ap-4
+bin lkj_3 -0x1.1a0ab033c1a15p-1 -0x1.8574f0158d822p-2 0x1.999999999999ap-4
+bin lkj_3 -0x1.8574f0158d822p-2 -0x1.f10edaf45b7c4p-3 0x1.999999999999ap-4
+bin lkj_3 -0x1.f10edaf45b7c4p-3 -0x1.e5f62da1372e0p-4 0x1.999999999999ap-4
+bin lkj_3 -0x1.e5f62da1372e0p-4 0x0.0p+0 0x1.999999999999ap-4
+bin lkj_3 0x0.0p+0 0x1.e5f62da1372e0p-4 0x1.999999999999ap-4
+bin lkj_3 0x1.e5f62da1372e0p-4 0x1.f10edaf45b7c0p-3 0x1.999999999999ap-4
+bin lkj_3 0x1.f10edaf45b7c0p-3 0x1.8574f0158d824p-2 0x1.999999999999ap-4
+bin lkj_3 0x1.8574f0158d824p-2 0x1.1a0ab033c1a16p-1 0x1.999999999999ap-4
+bin lkj_3 0x1.1a0ab033c1a16p-1 0x1.000000044b830p+0 0x1.999999999999ap-4
+threshold lkj_3 0x1.e86230c905b01p+4
+bin lkj_5 -0x1.0000000000000p+0 -0x1.24d4aab9dccbcp-1 0x1.999999999999ap-4
+bin lkj_5 -0x1.24d4aab9dccbcp-1 -0x1.963aeb83bb566p-2 0x1.999999999999ap-4
+bin lkj_5 -0x1.963aeb83bb566p-2 -0x1.03d381781a1fep-2 0x1.999999999999ap-4
+bin lkj_5 -0x1.03d381781a1fep-2 -0x1.fca230e692660p-4 0x1.999999999999ap-4
+bin lkj_5 -0x1.fca230e692660p-4 0x0.0p+0 0x1.999999999999ap-4
+bin lkj_5 0x0.0p+0 0x1.fca230e692660p-4 0x1.999999999999ap-4
+bin lkj_5 0x1.fca230e692660p-4 0x1.03d381781a1fcp-2 0x1.999999999999ap-4
+bin lkj_5 0x1.03d381781a1fcp-2 0x1.963aeb83bb568p-2 0x1.999999999999ap-4
+bin lkj_5 0x1.963aeb83bb568p-2 0x1.24d4aab9dccbcp-1 0x1.999999999999ap-4
+bin lkj_5 0x1.24d4aab9dccbcp-1 0x1.000000044b830p+0 0x1.999999999999ap-4
+threshold lkj_5 0x1.e86230c905b01p+4
 bin poisson 0x0.0p+0 0x1.0000000000000p+0 0x1.4dec899fffb47p-5
 bin poisson 0x1.0000000000000p+0 0x1.0000000000000p+1 0x1.0b23a14ccc906p-3
 bin poisson 0x1.0000000000000p+1 0x1.8000000000000p+1 0x1.ab6c3547adb3bp-3
@@ -394,7 +652,7 @@ bin poisson 0x1.8000000000000p+2 0x1.c000000000000p+2 0x1.f1fbc84afde9bp-5
 bin poisson 0x1.c000000000000p+2 0x1.0000000000000p+3 0x1.c74c99de29facp-6
 bin poisson 0x1.0000000000000p+3 0x1.2000000000000p+3 0x1.6c3d47e4ee61dp-7
 bin poisson 0x1.2000000000000p+3 inf 0x1.767b541ebf150p-8
-threshold poisson 0x1.de8d69fa08209p+4
+threshold poisson 0x1.e86230c905b01p+4
 bin neg_binomial 0x0.0p+0 0x1.0000000000000p+0 0x1.77c61c600e35bp-4
 bin neg_binomial 0x1.0000000000000p+0 0x1.0000000000000p+1 0x1.210e8bfb1e9f8p-3
 bin neg_binomial 0x1.0000000000000p+1 0x1.8000000000000p+1 0x1.374abe2220fa8p-3
@@ -412,10 +670,10 @@ bin neg_binomial 0x1.a000000000000p+3 0x1.c000000000000p+3 0x1.b970ad565110ep-8
 bin neg_binomial 0x1.c000000000000p+3 0x1.e000000000000p+3 0x1.2cc2ec406f7dep-8
 bin neg_binomial 0x1.e000000000000p+3 0x1.0000000000000p+4 0x1.972f47b9b284ap-9
 bin neg_binomial 0x1.0000000000000p+4 inf 0x1.98bca219b7764p-8
-threshold neg_binomial 0x1.4cb2a3fb24f47p+5
+threshold neg_binomial 0x1.5252047ccad3ep+5
 bin bernoulli 0x0.0p+0 0x1.0000000000000p+0 0x1.9af19f3d3169cp-2
 bin bernoulli 0x1.0000000000000p+0 inf 0x1.32873061674b2p-1
-threshold bernoulli 0x1.89641e8575af6p+3
+threshold bernoulli 0x1.97cf48fdaaa71p+3
 bin binomial 0x0.0p+0 0x1.0000000000000p+1 0x1.59db2a5db6b39p-12
 bin binomial 0x1.0000000000000p+1 0x1.8000000000000p+1 0x1.4ff42f25f4e3bp-9
 bin binomial 0x1.8000000000000p+1 0x1.0000000000000p+2 0x1.a1a74e1731144p-7
@@ -428,7 +686,7 @@ bin binomial 0x1.2000000000000p+3 0x1.4000000000000p+3 0x1.1fbde5ba3b51bp-3
 bin binomial 0x1.4000000000000p+3 0x1.6000000000000p+3 0x1.018e61f65fd2fp-4
 bin binomial 0x1.6000000000000p+3 0x1.8000000000000p+3 0x1.177064a0db9e5p-6
 bin binomial 0x1.8000000000000p+3 inf 0x1.15ea815c7beafp-9
-threshold binomial 0x1.0b21aeb477f86p+5
+threshold binomial 0x1.1044d1b0bbd4dp+5
 bin binomial_rare 0x0.0p+0 0x1.0000000000000p+0 0x1.5d1685b5204c9p-5
 bin binomial_rare 0x1.0000000000000p+0 0x1.0000000000000p+1 0x1.1e8c82335a760p-3
 bin binomial_rare 0x1.0000000000000p+1 0x1.8000000000000p+1 0x1.caaaa4c8d9200p-3
@@ -438,7 +696,7 @@ bin binomial_rare 0x1.4000000000000p+2 0x1.8000000000000p+2 0x1.ac02d863844bep-4
 bin binomial_rare 0x1.8000000000000p+2 0x1.c000000000000p+2 0x1.99e36e69d9ce9p-5
 bin binomial_rare 0x1.c000000000000p+2 0x1.0000000000000p+3 0x1.46d805a9425dcp-6
 bin binomial_rare 0x1.0000000000000p+3 inf 0x1.32f08af540115p-7
-threshold binomial_rare 0x1.c1b15276b37cdp+4
+threshold binomial_rare 0x1.cb492382850f6p+4
 bin binomial_many 0x0.0p+0 0x1.3000000000000p+5 0x1.de38833a7c5b2p-9
 bin binomial_many 0x1.3000000000000p+5 0x1.3800000000000p+5 0x1.3767cafeefd61p-9
 bin binomial_many 0x1.3800000000000p+5 0x1.4000000000000p+5 0x1.dbdcfacb2704ep-9
@@ -473,11 +731,11 @@ bin binomial_many 0x1.0c00000000000p+6 0x1.1000000000000p+6 0x1.d59b75fcbafd2p-8
 bin binomial_many 0x1.1000000000000p+6 0x1.1400000000000p+6 0x1.51e56096396aep-8
 bin binomial_many 0x1.1400000000000p+6 0x1.1800000000000p+6 0x1.db9a09f2d599fp-9
 bin binomial_many 0x1.1800000000000p+6 inf 0x1.d3a10a17233cdp-8
-threshold binomial_many 0x1.0afaee157ff98p+6
+threshold binomial_many 0x1.0e6ca0aa2494ap+6
 bin categorical 0x0.0p+0 0x1.0000000000000p+0 0x1.fecd43df65fe9p-4
 bin categorical 0x1.0000000000000p+0 0x1.0000000000000p+1 0x1.540ff37672fefp-5
 bin categorical 0x1.0000000000000p+1 0x1.8000000000000p+1 0x1.aae5584cac105p-1
-threshold categorical 0x1.ec8ebf75437aep+3
+threshold categorical 0x1.fbfdf27007a71p+3
 mass poisson 0x1.16c2000000000p-133 0x0.0p+0 0x0.0p+0 -0x1.16c2000000000p-133
 mass poisson 0x1.16c2000000000p-133 0x0.0p+0 0x1.0000000000000p+0 -0x1.7069e413e07a0p+6
 mass poisson 0x1.16c2000000000p-133 0x0.0p+0 0x1.0000000000000p+1 -0x1.71ccc843d01dap+7

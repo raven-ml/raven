@@ -67,14 +67,15 @@ The [examples](../examples/01-distributions/README.md) cover each part on small 
   density's gradient when rune cannot compute it, such as an adjoint
   solver's.
 - **Distributions**: `Dist` has continuous, discrete and vector families
-  (normal to Student's t, gamma, beta, Dirichlet, multivariate normal,
-  Poisson, negative binomial, categorical), with `iid`, `sorted`,
-  `transform` and `mixture`. Parameters are tensors and broadcast; a
+  (normal to Student's t, gamma, beta, von Mises, Dirichlet, multivariate
+  normal, LKJ Cholesky factors, Poisson, negative binomial, categorical),
+  with `iid`, `sorted`, `transform`, `truncated`, `mixture` and `hmm`, whose
+  states are summed out. Parameters are tensors and broadcast; a
   parameter outside its domain raises naming its index and value.
 - **Supports and bijectors**: `Support` names each family's set of values,
   and `Bij` maps unconstrained coordinates onto it with its log-determinant:
-  `exp`, `interval`, `simplex`, `ordered`, `cholesky_corr`, `sum_to_zero`
-  and their compositions.
+  `exp`, `greater`, `less`, `interval`, `simplex`, `ordered`,
+  `cholesky_corr`, `sum_to_zero` and their compositions.
 - **Samplers**: `Nuts` runs the No-U-Turn sampler with a step size and
   geometry per chain, tuned in warmup; `Hmc` shares one step size, a tuned
   trajectory length and one geometry across chains; `Ensemble` uses the

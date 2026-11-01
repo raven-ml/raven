@@ -189,18 +189,18 @@ let log_density =
   in
   Thumper.bench_with_setup ~setup "schools/16" (fun (lp, c) -> lp c)
 
-(* A family's factors at 100000 of its draws, eager, and as a compiled value
-   and gradient in one parameter [p]. *)
-let rows name family p =
-  let x = D.sample (Nx.Rng.key 6) (D.iid [| 100_000 |] (family (f64 p))) in
-  let n = Printf.sprintf "%s/100000" name in
+(* A family's factors at [count] of its draws, 100000 by default, eager, and
+   as a compiled value and gradient in one parameter [p]. *)
+let rows ?(count = 100_000) name family p =
+  let x = D.sample (Nx.Rng.key 6) (D.iid [| count |] (family (f64 p))) in
+  let n = Printf.sprintf "%s/%d" name count in
   let eager =
-    let setup () = (D.iid [| 100_000 |] (family (f64 p)), x) in
+    let setup () = (D.iid [| count |] (family (f64 p)), x) in
     Thumper.bench_with_setup ~setup n (fun (d, x) -> D.factors d x)
   in
   let grad =
     let setup () =
-      let lp p = Nx.sum (D.factors (D.iid [| 100_000 |] (family p)) x) in
+      let lp p = Nx.sum (D.factors (D.iid [| count |] (family p)) x) in
       let grad =
         Rune.jit
           Nx.Ptree.(tensor @-> returns (pair tensor tensor))
@@ -236,6 +236,25 @@ let continuous_factors =
         let weights = Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |] in
         D.dirichlet ~concentration:(Nx.mul a weights))
       30.
+
+(* The new families: a truncation in a far tail, von Mises, LKJ of 5 x 5
+   factors, and 100 sequences of a 3-state HMM over 100 steps. *)
+let new_factors =
+  let normal = D.normal ~loc:(f64 0.) ~scale:(f64 1.) in
+  rows "truncated_normal" (fun low -> D.truncated ~low normal) 30.
+  @ rows "von_mises" (fun k -> D.von_mises ~loc:(f64 0.5) ~concentration:k) 3.
+  @ rows ~count:10_000 "lkj_cholesky"
+      (fun eta -> D.lkj_cholesky 5 ~concentration:eta)
+      2.
+  @ rows ~count:100 "hmm"
+      (fun p ->
+        let stay = Nx.mul_s (Nx.eye Nx.float64 3) 2. in
+        let loc = Nx.create Nx.float64 [| 3 |] [| -2.; 0.; 2. |] in
+        D.hmm
+          ~initial:(Nx.zeros Nx.float64 [| 3 |])
+          ~transition:(Nx.mul p stay) 100
+          (D.normal ~loc ~scale:(f64 1.)))
+      1.
 
 let rhat =
   let setup () =
@@ -278,7 +297,7 @@ let () =
       Thumper.group "smc"
         [ smc_step Norn.Smc.Hmc "hmc"; smc_step Norn.Smc.Slice "slice" ];
       Thumper.group "model" [ log_density ];
-      Thumper.group "dist" (count_factors @ continuous_factors);
+      Thumper.group "dist" (count_factors @ continuous_factors @ new_factors);
       Thumper.group "diag" [ rhat ];
       Thumper.group "posteriordb" posteriordb;
     ]
