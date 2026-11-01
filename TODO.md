@@ -212,11 +212,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx
 
-- eager GPU kernel libraries, nx.cuda, nx.metal and nx.amd, onto nx's
-  current kernel interface; until then a GPU set computes under
-  `Rune.jit` only. Their last code is 64478fedf
-  (`dev/nx2/lib/{cuda,metal,amd}`; branch `nx2-gpu` is gone, and only
-  `cr/*` and `fx/*` refs reach it: tag it before those are pruned)
 - the attention family: `Attention`, `Attention_tangent` and
   `Attention_cotangent` with nx.cpu's forward and cotangent kernels, in
   place of `Nx.attention`'s composition, which stores three float32
@@ -224,13 +219,11 @@ raven / llama.cpp (Vulkan; ROCm):
   contractions, maps and reduction. Kernels keep hidden values out of
   `o`: a partial tile with a non-finite value takes the selecting path.
   First add and record `attention/host-*` on the composition, and
-  `gpu/*/attention-4096-causal` under `Rune.jit` until eager GPU libraries
-  land; the family lands only if its kernels beat it by 2x on each,
+  `gpu/*/attention-4096-causal` under `Rune.jit`; the family lands only if its kernels beat it by 2x on each,
   forward and cotangent
 - donation's kill criterion, at least 2x over the copy on CUDA and AMD:
   `dispatch/kv-append-4096` and its `-copied` twin read 3.4 and 44.5 µs on
-  fudge's host; record them on CUDA and AMD under `Rune.jit`, or once
-  eager GPU libraries land
+  fudge's host; record them on CUDA and AMD under `Rune.jit`
 - nx.cpu's thread splits follow the call prices (179ea5cc5, 82e42b78d) and
   the kind tables of f6876a0ad, measured under load 1.3-4.7: time them
   quiet on fudge, with a row of a costly kind where its threads change
