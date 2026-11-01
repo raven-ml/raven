@@ -819,7 +819,8 @@ thread.
 - **Breaking:** `Ops.Upat.v` and `Ops.Upat.op` take no `?tag`, and
   `Ops.remove_all_tags` is gone: patterns ignore tags.
 - **Breaking:** the `ALIGNED` setting (`Setting.aligned`) is gone: Clang's
-  vector types are always aligned to their size, a bool vector's to one byte.
+  vector types are aligned to their size, a bool vector's to one byte, and on
+  the CPU device to their element, so that they load from any element.
 - **Breaking:** `Ops.kernel_info` has `optimized`, which
   `Postrange.Scheduler.get_optimized_ast` sets and `Postrange.apply_opts` and
   `Codegen.linearize` read, where the optimiser tagged the kernel's sink `1`.

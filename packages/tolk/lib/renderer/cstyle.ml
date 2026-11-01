@@ -1284,17 +1284,21 @@ let clang_extra_matcher =
       pm_manual_bf16_cast;
     ]
 
-let clang_vector_prefix l (dt, count) =
+(* A vector on the CPU device is aligned to its element, so that it may be
+   loaded from any element of a buffer; elsewhere to its size rounded down to a
+   power of two, as Clang aligns it by default. *)
+let clang_vector_prefix ~cpu l (dt, count) =
   let rec pow2_floor n p = if 2 * p > n then p else pow2_floor n (2 * p) in
-  (* round (down) to a power of two, as clang does by default *)
   let alignment =
-    if Dtype.is_bool dt then 1 else pow2_floor (Dtype.itemsize dt * count) 1
+    if cpu then Dtype.itemsize dt
+    else if Dtype.is_bool dt then 1
+    else pow2_floor (Dtype.itemsize dt * count) 1
   in
   let vec = render_dtype l dt ~sz:count ~addrspace:(Some Dtype.Reg) in
   strf "typedef %s %s __attribute__((aligned(%d),ext_vector_type(%d)));"
     (render_scalar l dt) vec alignment count
 
-let clang_kernel ?prefix l ~name kernel bufs uops =
+let clang_kernel ~cpu ?prefix l ~name kernel bufs uops =
   let masks = mask_widths uops in
   (* A selection on vectors reads its condition as a mask of its arms' width. *)
   let types u =
@@ -1312,7 +1316,9 @@ let clang_kernel ?prefix l ~name kernel bufs uops =
       (fun (_, count) -> count > 1)
       (dedup (List.concat_map types uops))
   in
-  let defines = String.concat "\n" (List.map (clang_vector_prefix l) vectors) in
+  let defines =
+    String.concat "\n" (List.map (clang_vector_prefix ~cpu l) vectors)
+  in
   defines ^ "\n" ^ render_kernel ?prefix l ~name kernel bufs uops ^ "\n"
 
 let clang (target : Helpers.Target.t) =
@@ -1380,7 +1386,7 @@ let clang (target : Helpers.Target.t) =
   Renderer.v ~name:"ClangRenderer" ~vector_alu:true ~has_local:false
     ~global_max:[ 1; 0; 0 ] ~extra_matcher:clang_extra_matcher
     ~code_for_op:clang_lang.code_for_op ~native
-    ~render:(render clang_kernel lang)
+    ~render:(render (clang_kernel ~cpu:(target.device = "CPU")) lang)
     ~compiler:(Compiler_cpu.clang arch) target
 
 (* Metal *)

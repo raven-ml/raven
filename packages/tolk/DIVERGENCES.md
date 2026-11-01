@@ -1281,8 +1281,7 @@ driver sizes local memory as it loads a function (D146).
 - **Reason:** (b). rune's jit runs a program over the storage it is given,
   each buffer at its phase (rune's `Compile.storage`), and mapped weights put
   a tensor at any byte offset of its file: a vector access from an address
-  that is not a multiple of its width is
-  undefined in Clang's `aligned(16)` vector types, faults on CUDA, and is
+  that is not a multiple of its width faults on CUDA, and is
   undefined in Metal, which requires device pointers aligned to their type:
   there it reads the wrong elements once Metal merges adjacent vector loads
   at constant offsets into one wider load, which drops the low bits of the
@@ -1294,7 +1293,13 @@ driver sizes local memory as it loads a function (D146).
   not change, and the schedule makes a stage of a contiguous view the view:
   norn's NUTS step on a posterior whose data the model reads from its sixth
   double failed verification, its body compiled for storage on a boundary
-  and passed the data 8 bytes past one.
+  and passed the data 8 bytes past one. Those two failures were on the host,
+  in Clang's vector types aligned to their size; on the CPU device they are
+  now aligned to their element (`renderer/cstyle.py:308`), so an access there
+  is defined from any element's address, and the congruence only changes
+  which elements a load takes together. That facet, the host's, has
+  Reason: none, until the merge reads the congruence only for the targets
+  whose vectors need it.
 - **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase › one float past a boundary, eight loads are of one, two, four and
   one`, `› three floats past a boundary, a load of four starts at element 1`,
   `› stores start where loads would`, `› two halves past a boundary, a load of
