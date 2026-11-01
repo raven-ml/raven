@@ -303,12 +303,9 @@ let log_artifact t ~name ~kind ~path ?(metadata = []) ?(aliases = []) () =
       let payload : Artifact.payload =
         if Fs.is_directory path then `Dir else `File
       in
-      let json_metadata =
-        List.map (fun (k, v) -> (k, Value.to_json v)) metadata
-      in
       let artifact =
         Artifact.create ~root:t.root ~name ~kind ~payload ~digest
-          ~path:blob_rel_path ~metadata:json_metadata ~aliases
+          ~path:blob_rel_path ~metadata ~aliases
           ~producer_run_id:(Some t.id)
       in
       append_event t

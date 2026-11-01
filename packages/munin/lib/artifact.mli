@@ -97,7 +97,7 @@ val create :
   payload:payload ->
   digest:string ->
   path:string ->
-  metadata:(string * Jsont.json) list ->
+  metadata:(string * Value.t) list ->
   aliases:string list ->
   producer_run_id:string option ->
   t

@@ -84,7 +84,7 @@ let of_json json =
         ( Json_utils.json_mem "step" json |> Json_utils.json_number,
           Json_utils.json_mem "timestamp" json |> Json_utils.json_number,
           Json_utils.json_mem "key" json |> Json_utils.json_string,
-          Json_utils.json_mem "value" json |> Json_utils.json_number )
+          Json_utils.json_mem "value" json |> Json_utils.json_float )
       with
       | Some step, Some timestamp, Some key, Some value ->
           Some (Metric { step = int_of_float step; timestamp; key; value })
@@ -122,11 +122,9 @@ let of_json json =
             (Media { step = int_of_float step; timestamp = ts; key; kind; path })
       | _ -> None)
   | Some "summary" ->
-      Some
-        (Summary
-           (Json_utils.json_mem "values" json
-           |> Json_utils.json_assoc
-           |> List.map (fun (k, v) -> (k, Value.of_json v))))
+      Json_utils.json_mem "values" json
+      |> Value.assoc_of_json
+      |> Option.map (fun values -> Summary values)
   | Some "notes" ->
       Json_utils.json_mem "value" json
       |> optional_string_of_json
@@ -172,7 +170,7 @@ let to_json = function
           ("step", Jsont.Json.int step);
           ("timestamp", Jsont.Json.number timestamp);
           ("key", Jsont.Json.string key);
-          ("value", Jsont.Json.number value);
+          ("value", Json_utils.float_json value);
         ]
   | Define_metric { key; summary; step_metric; goal } ->
       Json_utils.json_obj

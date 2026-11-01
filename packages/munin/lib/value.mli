@@ -26,6 +26,17 @@ val to_bool : t -> bool option
 (**/**)
 
 val to_json : t -> Jsont.json
-val of_json : Jsont.json -> t
+(** [to_json v] is [v] as JSON: a boolean, a number, a string, or for a float
+    JSON has no number for, [{"float": "NaN"}], ["Infinity"] or
+    ["-Infinity"]. *)
+
+val of_json : Jsont.json -> t option
+(** [of_json json] is the value {!to_json} writes as [json], or [None] for
+    any other JSON. A number with an integer value is an [`Int]. *)
+
+val assoc_of_json : Jsont.json -> (string * t) list option
+(** [assoc_of_json json] is the members of the object [json] read by
+    {!of_json}, or [None] if [json] is not an object or a member is not a
+    value. *)
 
 (**/**)

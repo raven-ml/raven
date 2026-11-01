@@ -798,6 +798,10 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- NaN and infinite floats read back: a metric's value is written as the
+  string `"NaN"`, `"Infinity"` or `"-Infinity"`, a param, summary or
+  metadata `` `Float `` as `{"float": "NaN"}`. They were written as `null`, and
+  a metric was dropped and a value read as `` `String "" ``.
 - `Munin_sys.Stat.Proc.Self.pid` is the current process's ID as
   `Proc.Table.sample` lists it, and `Provenance.detect` records that ID. On
   Windows `Unix.getpid` returns a handle to the process instead.

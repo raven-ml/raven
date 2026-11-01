@@ -15,7 +15,7 @@ type t = {
   digest : string;
   materialized_rel_path : string;
   size_bytes : int;
-  metadata : (string * Jsont.json) list;
+  metadata : (string * Value.t) list;
   aliases : string list;
   producer_run_id : string option;
   consumer_run_ids : string list;
@@ -29,7 +29,7 @@ let payload t = t.payload
 let version t = t.version
 let digest t = t.digest
 let size_bytes t = t.size_bytes
-let metadata t = List.map (fun (k, v) -> (k, Value.of_json v)) t.metadata
+let metadata t = t.metadata
 let aliases t = t.aliases
 let producer_run_id t = t.producer_run_id
 let consumer_run_ids t = t.consumer_run_ids
@@ -88,7 +88,8 @@ let load_manifest root path =
           Json_utils.json_mem "payload" json |> Json_utils.json_string,
           Json_utils.json_mem "digest" json |> Json_utils.json_string,
           Json_utils.json_mem "path" json |> Json_utils.json_string,
-          Json_utils.json_mem "size_bytes" json |> Json_utils.json_number )
+          Json_utils.json_mem "size_bytes" json |> Json_utils.json_number,
+          Json_utils.json_mem "metadata" json |> Value.assoc_of_json )
       with
       | ( Some name,
           Some version,
@@ -96,7 +97,8 @@ let load_manifest root path =
           Some payload,
           Some digest,
           Some materialized_rel_path,
-          Some size_bytes ) ->
+          Some size_bytes,
+          Some metadata ) ->
           Some
             {
               root;
@@ -107,8 +109,7 @@ let load_manifest root path =
               digest;
               materialized_rel_path;
               size_bytes = int_of_float size_bytes;
-              metadata =
-                Json_utils.json_mem "metadata" json |> Json_utils.json_assoc;
+              metadata;
               aliases =
                 Json_utils.json_mem "aliases" json
                 |> Json_utils.json_string_list;
@@ -139,7 +140,10 @@ let write_manifest root name version artifact =
          ("digest", Jsont.Json.string artifact.digest);
          ("path", Jsont.Json.string artifact.materialized_rel_path);
          ("size_bytes", Jsont.Json.int artifact.size_bytes);
-         ("metadata", Json_utils.json_obj artifact.metadata);
+         ( "metadata",
+           Json_utils.json_obj
+             (List.map (fun (k, v) -> (k, Value.to_json v)) artifact.metadata)
+         );
          ( "aliases",
            Jsont.Json.list (List.map Jsont.Json.string artifact.aliases) );
          ( "consumer_run_ids",

@@ -24,17 +24,36 @@ let to_int = function
 let to_string = function `String s -> Some s | _ -> None
 let to_bool = function `Bool b -> Some b | _ -> None
 
+(* A float JSON has no number for is the object [{"float": "NaN"}], or
+   ["Infinity"] or ["-Infinity"]: a shape no other value takes, so that a
+   [`String] is always a string. *)
 let to_json : t -> Jsont.json = function
   | `Bool b -> Jsont.Json.bool b
   | `Int n -> Jsont.Json.int n
-  | `Float f -> Jsont.Json.number f
+  | `Float f when Float.is_finite f -> Jsont.Json.number f
+  | `Float f -> Json_utils.json_obj [ ("float", Json_utils.float_json f) ]
   | `String s -> Jsont.Json.string s
 
-let of_json : Jsont.json -> t = function
-  | Jsont.Bool (b, _) -> `Bool b
+let of_json : Jsont.json -> t option = function
+  | Jsont.Bool (b, _) -> Some (`Bool b)
   | Jsont.Number (f, _) ->
       if Float.is_integer f && Float.abs f < 4503599627370496. then
-        `Int (Float.to_int f)
-      else `Float f
-  | Jsont.String (s, _) -> `String s
-  | _ -> `String ""
+        Some (`Int (Float.to_int f))
+      else Some (`Float f)
+  | Jsont.String (s, _) -> Some (`String s)
+  | Jsont.Object _ as json -> (
+      match Json_utils.json_assoc json with
+      | [ ("float", (Jsont.String _ as x)) ] ->
+          Json_utils.json_float x |> Option.map (fun f -> `Float f)
+      | _ -> None)
+  | _ -> None
+
+let assoc_of_json json =
+  let rec go acc = function
+    | [] -> Some (List.rev acc)
+    | (k, v) :: rest -> (
+        match of_json v with Some v -> go ((k, v) :: acc) rest | None -> None)
+  in
+  match json with
+  | Jsont.Object _ -> go [] (Json_utils.json_assoc json)
+  | _ -> None

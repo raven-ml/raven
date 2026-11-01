@@ -1512,6 +1512,58 @@ let test_last_event_at () =
     (Run.last_event_at run = Some last.timestamp);
   Session.finish session
 
+(* A NaN or an infinity, which JSON has no number for, is read back. *)
+let test_reload_not_finite () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  let x = Session.metric session "x" in
+  List.iteri
+    (fun step v -> Metric.log x ~step v)
+    [ Float.nan; Float.infinity; Float.neg_infinity; 1. ];
+  Session.finish session;
+  let run = Option.get (Store.find_run store (Session.id session)) in
+  equal (list float_exact)
+    [ Float.nan; Float.infinity; Float.neg_infinity; 1. ]
+    (List.map (fun (m : Metric.sample) -> m.value) (Run.metric_history run "x"))
+
+(* A value that is a float JSON has no number for reads back as that float,
+   and a string that spells one stays a string. *)
+let test_value_not_finite () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session =
+    Session.start ~store ~experiment:"exp"
+      ~params:[ ("lr", `Float Float.infinity); ("name", `String "NaN") ]
+      ()
+  in
+  Session.set_summary session
+    [ ("loss", `Float Float.nan); ("best", `String "-Infinity") ];
+  Session.finish session;
+  let run = Option.get (Store.find_run store (Session.id session)) in
+  let value = Testable.make ~pp:Value.pp ~equal:(fun a b -> compare a b = 0) in
+  equal (option value) (Some (`Float Float.infinity)) (Run.find_param run "lr");
+  equal (option value) (Some (`String "NaN")) (Run.find_param run "name");
+  equal (option value) (Some (`Float Float.nan)) (Run.find_summary run "loss");
+  equal (option value) (Some (`String "-Infinity"))
+    (Run.find_summary run "best")
+
+(* JSON that no value writes is not a value. *)
+let value_malformed =
+  cases "JSON no value writes is not a value" ~id:Fun.id
+    [
+      "null";
+      "[1]";
+      "{}";
+      {|{"x": "NaN"}|};
+      {|{"float": "nan"}|};
+      {|{"float": 1.5}|};
+      {|{"float": "NaN", "x": 1}|};
+    ]
+  @@ fun text ->
+  let json = Result.get_ok (Jsont_bytesrw.decode_string Jsont.json text) in
+  is_none (Value.of_json json)
+
 let test_reload_finished () =
   with_temp_dir @@ fun root ->
   let store = Store.open_ ~root () in
@@ -1580,6 +1632,10 @@ let reloading =
     test "reload after truncation" test_reload_after_truncation;
     test "last_event_at" test_last_event_at;
     test "reload picks up finish" test_reload_finished;
+    test "reload reads NaN and infinities" test_reload_not_finite;
+    test "params and summaries read back NaN and infinities"
+      test_value_not_finite;
+    value_malformed;
     test "best minimize" test_best_minimize;
     test "best maximize" test_best_maximize;
     test "best without goal" test_best_without_goal;
