@@ -80,6 +80,59 @@ let copy =
             (pieces (words (Sdma.copy_linear ~dst ~src ~bytes:n))));
     ]
 
+(* The sub-window's layout of each GC, against ROCr's two layouts of
+   COPY_LINEAR_SUB_WIND (sdma_registers.h): before GFX12, as Linux's SDMA 4
+   to 6 headers lay it out, pitches of 19 bits from bit 13 of their words and
+   offsets, widths and rows of 14 bits; from GFX12, pitches of 16 bits from
+   bit 16 and offsets, widths and rows of 16 bits. Both: the element's size
+   from bit 29 of the header, offsets and widths from bit 0, rows from bit
+   16, and the operation 1 with the sub-operation 4 in bits 15:8. *)
+let windows =
+  let window (major, minor, step) =
+    let sdma = if major >= 12 then (7, 0, 0) else (6, 0, 0) in
+    Sdma.window (S.gpu ~sdma (major, minor, step))
+  in
+  let layout ~pitch ~most_width ~most_rows ~most_pitch =
+    {
+      Sdma.header = 1 lor (4 lsl 8);
+      element = 29;
+      src_x = 0;
+      src_pitch = pitch;
+      dst_x = 0;
+      dst_pitch = pitch;
+      width = 0;
+      rows = 16;
+      most_width;
+      most_rows;
+      most_pitch;
+    }
+  in
+  let before =
+    layout ~pitch:13 ~most_width:(1 lsl 14) ~most_rows:(1 lsl 14)
+      ~most_pitch:(1 lsl 19)
+  and from_12 =
+    layout ~pitch:16 ~most_width:(1 lsl 16) ~most_rows:(1 lsl 16)
+      ~most_pitch:(1 lsl 16)
+  in
+  let pp ppf (w : Sdma.window) =
+    Format.fprintf ppf
+      "header 0x%x, element %d, offsets %d %d, pitches %d %d, width %d, \
+       rows %d, most %d %d %d"
+      w.header w.element w.src_x w.dst_x w.src_pitch w.dst_pitch w.width
+      w.rows w.most_width w.most_rows w.most_pitch
+  in
+  let window_t = Testable.make ~pp ~equal:( = ) in
+  group ~timeout "windows"
+    [
+      cases "a sub-window's layout follows the GC" ~id:version
+        [ (9, 4, 2); (9, 5, 0); (11, 0, 0); (11, 5, 0); (12, 0, 0); (12, 0, 1) ]
+        (fun v ->
+          let major, _, _ = v in
+          equal window_t
+            (if major >= 12 then from_12 else before)
+            (window v));
+    ]
+
 (* A fill, word for word against CONSTANT_FILL's fields in the headers:
    fillsize at 31:30, and the count less one. *)
 let fills =
@@ -135,4 +188,4 @@ let others =
             (words (Sdma.timestamp 0x18)));
     ]
 
-let () = exit (run "rig_amd_abi.sdma" [ copy; fills; others ])
+let () = exit (run "rig_amd_abi.sdma" [ copy; windows; fills; others ])

@@ -33,6 +33,50 @@ let copy_linear ~dst ~src ~bytes =
 
 let minus_one v = { (value v) with add = -1L }
 
+(* Sub-windows *)
+
+type window = {
+  header : int;
+  element : int;
+  src_x : int;
+  src_pitch : int;
+  dst_x : int;
+  dst_pitch : int;
+  width : int;
+  rows : int;
+  most_width : int;
+  most_rows : int;
+  most_pitch : int;
+}
+
+(* The layout of GC major [m]: the last one whose GC major is at most [m]. *)
+let layout m =
+  List.fold_left
+    (fun at (from, w) -> if from <= m then w else at)
+    (snd (List.hd Defs.sdma_window))
+    Defs.sdma_window
+
+let window (g : Gpu.t) =
+  let major, _, _ = g.target in
+  let w = layout major in
+  let most (mask, _) = mask + 1 in
+  {
+    header =
+      Defs.sdma_op_copy
+      lor field Defs.sdma_pkt_copy_linear_header_sub_op
+            Defs.sdma_subop_copy_linear_sub_wind;
+    element = snd w.elementsize;
+    src_x = snd w.src_x;
+    src_pitch = snd w.src_pitch;
+    dst_x = snd w.dst_x;
+    dst_pitch = snd w.dst_pitch;
+    width = snd w.rect_x;
+    rows = snd w.rect_y;
+    most_width = most w.rect_x;
+    most_rows = most w.rect_y;
+    most_pitch = Int.min (most w.src_pitch) (most w.dst_pitch);
+  }
+
 (* A fill's count is as wide as a linear copy's: Linux bounds both alike on
    every version (fill_max_bytes beside copy_max_bytes in sdma_v4_0.c,
    sdma_v4_4_2.c, sdma_v5_0.c, sdma_v5_2.c, sdma_v6_0.c and sdma_v7_0.c,
