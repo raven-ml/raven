@@ -9,6 +9,7 @@ module Constant = Ymir_units.Constant
 module Codata = Ymir_units.Codata
 module Vocabulary = Ymir_units.Vocabulary
 module Units = Units
+module Earth = Earth
 module Frame = Frame
 module Direction = Direction
 module Healpix = Healpix

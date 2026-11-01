@@ -1,6 +1,16 @@
 # thumper baseline v1
 # suite: ymir
 
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+# forced: blessed apparent-10k/eager apparent-10k/compiled orientation-1k/eager orientation-1k/compiled under load 25.5 on 14 cores
+
+apparent-10k/compiled	alloc_words	exact	1145
+apparent-10k/eager	alloc_words	exact	145393
+orientation-1k/compiled	alloc_words	exact	1414
+orientation-1k/eager	alloc_words	exact	68910
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release

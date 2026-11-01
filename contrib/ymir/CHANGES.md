@@ -4,6 +4,12 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Earth` holds the Earth's orientation, from `Earth.of_utc` (UT1 − UTC) or
+  `Earth.of_tt` (ΔT): `era`, `gmst`, `gst` (IAU 2006/2000A), and SOFA's
+  `iauEpv00` ephemeris, `Earth.heliocentric` and `Earth.barycentric`.
+- Geocentric frames `Frame.gcrs`, `cirs`, `true_of_date` and `tirs`, with
+  `Frame.matrix_at`; `Direction.convert` applies the Sun's light deflection
+  and aberration between barycentric and geocentric frames.
 - `Healpix` pixelises a frame's sphere in RING and NESTED to nside 2^29
   (`pixel`, `centre`, `corners`, `neighbours`, `renumber`; healpix_bare's
   conversions, `LICENSE-healpix_bare`) and transforms maps to harmonics.

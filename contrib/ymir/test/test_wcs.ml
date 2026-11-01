@@ -341,6 +341,22 @@ let errors =
                   (fun _ x ->
                     Nx.mul x (Nx.cast (Nx.dtype x) (scalar Float.nan)))
                   t)));
+      test "a celestial stage in a geocentric frame has no header" (fun () ->
+          let t =
+            Transform.(
+              axes [| 1; 0 |] ~origin:1
+              >> shift (Quantity.v Unit.one (tensor [| 2 |] [| 1.; 1. |]))
+              >> linear (deg (tensor [| 2; 2 |] [| -1e-3; 0.; 0.; 1e-3 |]))
+              >> celestial Tan Frame.cirs ~pv:(Nx.zeros Nx.float64 [| 0 |])
+                   ~native:(deg (tensor [| 2 |] [| 0.; 90. |]))
+                   ~crval:(deg (tensor [| 2 |] [| 10.; 20. |]))
+                   ~lonpole:(deg (scalar 180.))
+                   ~latpole:(deg (scalar 90.)))
+          in
+          equal string
+            "Wcs.write: ymir writes no header for a celestial stage in cirs, \
+             whose orientation depends on an instant"
+            (require_error (Wcs.write t (keywords Fits.Header.empty))));
     ]
 
 let () = exit (run "Wcs" [ wcslib; round_trips; errors ])

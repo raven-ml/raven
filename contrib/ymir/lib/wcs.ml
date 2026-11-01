@@ -406,6 +406,10 @@ let frame_text (Frame f) =
   | Frame.Galactic -> "Galactic"
   | Frame.Ecliptic_j2000 -> "the J2000 ecliptic"
   | Frame.Supergalactic -> "supergalactic"
+  | Frame.Gcrs -> "GCRS"
+  | Frame.Cirs -> "CIRS"
+  | Frame.True_of_date -> "the true equator and equinox of date"
+  | Frame.Tirs -> "TIRS"
 
 (* [same f g] is [g] at [f]'s type when they are one frame. *)
 let same : type f g. f Frame.t -> g Frame.t -> f Frame.t option =
@@ -416,6 +420,10 @@ let same : type f g. f Frame.t -> g Frame.t -> f Frame.t option =
   | Frame.Galactic, Frame.Galactic -> Some f
   | Frame.Ecliptic_j2000, Frame.Ecliptic_j2000 -> Some f
   | Frame.Supergalactic, Frame.Supergalactic -> Some f
+  | Frame.Gcrs, Frame.Gcrs -> Some f
+  | Frame.Cirs, Frame.Cirs -> Some f
+  | Frame.True_of_date, Frame.True_of_date -> Some f
+  | Frame.Tirs, Frame.Tirs -> Some f
   | _ -> None
 
 (* Reading *)
@@ -764,13 +772,23 @@ let unspellable s =
 let ends () =
   Error "Wcs.write: the transform ends before its celestial stage"
 
+(* A geocentric frame's orientation depends on an instant. FITS WCS
+   Paper II (Calabretta and Greisen 2002) spells the true equator and equinox of
+   date as RADESYS GAPPT with MJD-OBS, but ymir writes no instant into a
+   header, so it refuses every geocentric frame. *)
 let pair_of (Frame f) =
-  let prefix lon = List.find (fun p -> p.lon = lon) pairs in
+  let prefix lon = Ok (List.find (fun p -> p.lon = lon) pairs) in
   match f with
   | Frame.Icrs | Frame.Fk5_j2000 -> prefix "RA"
   | Frame.Galactic -> prefix "GLON"
   | Frame.Ecliptic_j2000 -> prefix "ELON"
   | Frame.Supergalactic -> prefix "SLON"
+  | Frame.Gcrs | Frame.Cirs | Frame.True_of_date | Frame.Tirs ->
+      Error
+        (strf
+           "Wcs.write: ymir writes no header for a celestial stage in %s, \
+            whose orientation depends on an instant"
+           (Frame.name f))
 
 let has_equinox kw sfx =
   has kw.float ("EQUINOX" ^ sfx) || (sfx = "" && has kw.float "EPOCH")
@@ -785,6 +803,7 @@ let frame_cards kw sfx (Frame f) =
   | Frame.Ecliptic_j2000 ->
       [ icrs; card ~optional:true ("EQUINOX" ^ sfx) (F 2000.) ]
   | Frame.Galactic | Frame.Supergalactic -> []
+  | Frame.Gcrs | Frame.Cirs | Frame.True_of_date | Frame.Tirs -> []
 
 let index_pairs = [ (1, 1); (1, 2); (2, 1); (2, 2) ]
 
@@ -916,7 +935,7 @@ let cards kw sfx window steps =
         Array.mapi (fun k r -> r -. float_of_int (fst w.(1 - k))) crpix
   in
   let lng, lat = if lat_first then (2, 1) else (1, 2) in
-  let pair = pair_of c.frame in
+  let* pair = pair_of c.frame in
   let tpv_present = Option.is_some tpv and sip_present = Option.is_some sip in
   let ctype prefix =
     S (ctype_text prefix c.code ~tpv:tpv_present ~sip:sip_present)

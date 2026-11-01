@@ -19,6 +19,9 @@
   cosmology_tables
   time
   time_tables
+  earth
+  earth_tables
+  ephemeris
   healpix
   wcs)
  (libraries nx nx.array nx.wide jera rune ymir.units))

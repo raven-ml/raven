@@ -16,9 +16,9 @@ let n = 1_000_000
 let radians x = Quantity.v Unit.radian x
 let in_radians q = Quantity.value Unit.radian q
 
-(* [n] directions spread over the sphere, as ICRS vectors [[n; 3]]. *)
-let directions seed () =
-  let u = Nx.linspace f64 0. 1. n in
+(* [count] directions spread over the sphere, as ICRS vectors [[count; 3]]. *)
+let directions ?(count = n) seed () =
+  let u = Nx.linspace f64 0. 1. count in
   let lon = Nx.mul_s (Nx.add_s (Nx.mul_s u 7919.) seed) (2. *. Float.pi) in
   let lat = Nx.asin (Nx.sub_s (Nx.mul_s u 2.) 1.) in
   Direction.xyz
@@ -568,6 +568,52 @@ let ages () =
         (fun (f, z) -> timed (fun () -> f z));
     ]
 
+(* Apparent places: 10^4 ICRS directions to TIRS at one instant, which
+   evaluates the ephemeris, the precession-nutation and the Earth rotation
+   once and applies them to every direction; and the GCRS to TIRS matrix at
+   10^3 instants, which evaluates the series per instant. *)
+let instant_2025 = Time.of_date Time.utc (2025, 3, 20) (21, 0, 0.)
+let in_seconds x = Quantity.v Unit.second x
+
+let apparent_rows () =
+  let stars = directions ~count:10_000 0. in
+  let earth =
+    Earth.of_utc instant_2025 ~dut1:(in_seconds (Nx.scalar f64 0.0428))
+  in
+  let to_tirs v =
+    Direction.xyz (Direction.convert earth Frame.tirs (icrs v))
+  in
+  let seconds () = Nx.linspace f64 0. 86399. 1_000 in
+  let matrices s =
+    let t =
+      Time.v Time.tt ~day:(Nx.scalar Nx.int64 60754L)
+        ~second:(Quantity.v Unit.second s)
+    in
+    Frame.matrix_at
+      (Earth.of_tt t ~delta_t:(in_seconds (Nx.full_like s 69.)))
+      Frame.gcrs Frame.tirs
+  in
+  [
+    Thumper.group "apparent-10k"
+      [
+        Thumper.bench_with_setup ~setup:stars "eager" (fun v ->
+            timed (fun () -> to_tirs v));
+        Thumper.bench_with_setup
+          ~setup:(fun () -> compile to_tirs (stars ()))
+          "compiled"
+          (fun (f, v) -> timed (fun () -> f v));
+      ];
+    Thumper.group "orientation-1k"
+      [
+        Thumper.bench_with_setup ~setup:seconds "eager" (fun s ->
+            timed (fun () -> matrices s));
+        Thumper.bench_with_setup
+          ~setup:(fun () -> compile matrices (seconds ()))
+          "compiled"
+          (fun (f, s) -> timed (fun () -> f s));
+      ];
+  ]
+
 let suite () =
   [
     galactic ();
@@ -588,6 +634,7 @@ let suite () =
     supernovae ();
     ages ();
   ]
+  @ apparent_rows ()
 
 let config = Thumper.Config.(default |> deadline 60.)
 

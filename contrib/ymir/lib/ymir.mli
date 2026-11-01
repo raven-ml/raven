@@ -12,12 +12,13 @@
 
     [open Ymir] brings the unit algebra of [ymir.units] ({!Unit}, {!Quantity},
     {!Constant}, {!Codata}, {!Vocabulary}) and astronomy's units ({!Units}) into
-    scope. {!Time} holds instants on astronomical time scales. {!Frame} names
-    the celestial frames and {!Direction} holds directions in them. {!Healpix}
-    divides a frame's sphere into equal-area pixels and transforms maps on
-    them to spherical harmonics. {!Transform} maps pixels to the sky, {!Grid}
-    is a shape of cells seen through a transform, {!Region} is a shape placed
-    on a grid's world, and {!Observation} holds data on a grid and integrates
+    scope. {!Time} holds instants on astronomical time scales, and {!Earth}
+    the Earth's orientation and motion at them. {!Frame} names the celestial
+    frames and {!Direction} holds directions in them. {!Healpix} divides a
+    frame's sphere into equal-area pixels and transforms maps on them to
+    spherical harmonics. {!Transform} maps pixels to the sky, {!Grid} is a
+    shape of cells seen through a transform, {!Region} is a shape placed on
+    a grid's world, and {!Observation} holds data on a grid and integrates
     them over a region. {!Cosmology} is the background of a homogeneous
     expanding universe: its expansion rate, distances, volumes and times.
     {!Wcs} reads and writes a FITS header's world coordinates.
@@ -291,18 +292,160 @@ module Time : sig
   (** [ptree ()] is [Nx.Ptree.v walk], the structure of times. *)
 end
 
+(** {1:earth The Earth} *)
+
+(** The Earth's orientation and motion.
+
+    The Earth's {e orientation} at an instant is how its axes stand among
+    the stars: the {e precession-nutation} of its axis, which moves the
+    celestial pole and the equator, and its rotation about that axis. Ymir
+    holds the IAU 2006/2000A model the IERS Conventions (2010) give in
+    chapter 5: the IAU 2006 precession (Capitaine et al. 2003; Hilton et al.
+    2006) in the four Fukushima-Williams angles, and the IAU 2000A nutation
+    (Mathews et al. 2002), 1365 terms, with its IAU 2006 adjustments. The
+    IERS states the model at the 0.2 mas level. It leaves out the free core
+    nutation and the celestial pole offsets the IERS observes, together a
+    few tenths of a mas, and polar motion: the pole is the {e CIP}, the
+    Celestial Intermediate Pole, as the model places it.
+
+    The rotation is the {e Earth rotation angle} (ERA), the angle about the
+    CIP from the {e CIO}, the Celestial Intermediate Origin, to the
+    terrestrial origin, a linear function of {e UT1}, the time of the
+    Earth's rotation. UT1 is measured: the IERS publishes UT1 − UTC, within
+    0.9 s, in its bulletins, and ΔT = TT − UT1 for past instants. An error
+    of 1 s in UT1 turns the Earth by 15″, so an orientation takes one of
+    the two from its caller ({!Earth.of_utc}, {!Earth.of_tt}).
+
+    A {!t} holds a batch of instants as TT and UT1. Its functions work on
+    each instant alone and carry their derivative in the seconds and the
+    offset. {!Frame.matrix_at} and {!Direction.convert} take an orientation
+    to place the geocentric frames.
+
+    The Earth's {e ephemeris}, its position and velocity about the Sun and
+    the barycentre of the solar system, is the IAU SOFA library's analytic
+    model iauEpv00, a simplified VSOP2000 (Moisson and Bretagnon 2001) of
+    1951 terms. SOFA states it against JPL's DE405 from 1900 to 2100: the
+    barycentric position within 4.6 km rms and 13.4 km at most, and the
+    velocity within 1.4 mm/s rms and 4.9 mm/s at most, which bounds the
+    aberration it gives at 5 µas. By 1800 and 2200 the position errors
+    double, by 1500 and 2500 they grow tenfold. Positions and velocities
+    are [[...; 3]] on ICRS's axes, in au and au/d of TDB.
+
+    A bound a function states against the IAU SOFA library is against its
+    functions as ERFA 2.0.1 gives them, at instants from 1600 to 2400.
+
+    The Greenwich hour angle of a star at a UTC timestamp, with UT1 − UTC
+    from IERS Bulletin A, is 2π less its longitude in TIRS:
+
+    {[
+    let e =
+      Earth.of_utc (Time.of_date Time.utc (2025, 3, 20) (21, 0, 0.))
+        ~dut1:(Quantity.v Unit.second (Nx.scalar Nx.float64 0.0428))
+
+    let gha =
+      Quantity.map (Nx.rsub_s (2. *. Float.pi))
+        (Direction.lon (Direction.convert e Frame.tirs star))
+    ]} *)
+module Earth : sig
+  type 'd t
+  (** The type for the Earth's orientation at a batch of instants. *)
+
+  val of_utc :
+    (Time.utc, 'd) Time.t ->
+    dut1:(float, Nx.float64_elt, 'd) Nx.t Quantity.t ->
+    'd t
+  (** [of_utc t ~dut1] is the Earth's orientation at the UTC instants [t],
+      with UT1 − UTC [dut1]: UT1 is [t]'s day and seconds since 0h moved by
+      [dut1] over days of 86400 s, so a leap second reads as SOFA's
+      iauUtcut1 reads it. Before 1972, when UTC's seconds were not SI
+      seconds, [dut1] is read against UTC's clock. iauUtcut1 adds it to the
+      SI seconds since UTC's 0h instead, up to 1.3 ms apart by the day's end.
+      The shapes of [t] and [dut1] broadcast.
+
+      Raises [Invalid_argument] if [dut1] is not a time or where it is
+      infinite, as in ["Earth.of_utc: dut1 at [2] is infinite"]. *)
+
+  val of_tt :
+    (Time.tt, 'd) Time.t ->
+    delta_t:(float, Nx.float64_elt, 'd) Nx.t Quantity.t ->
+    'd t
+  (** [of_tt t ~delta_t] is the Earth's orientation at the TT instants [t],
+      with ΔT = TT − UT1 [delta_t], as {!of_utc} reads its offset. It raises
+      as {!of_utc} does. *)
+
+  val tt : 'd t -> (Time.tt, 'd) Time.t
+  (** [tt e] is [e]'s instants on TT. *)
+
+  val era : 'd t -> (float, Nx.float64_elt, 'd) Nx.t Quantity.t
+  (** [era e] is the Earth rotation angle in \[0, 2π) radians,
+      [2π (0.7790572732640 + 1.00273781191135448 T_u)], [T_u] the UT1 Julian
+      date less 2451545.0 (IERS Conventions 2010, 5.14), within 4e-15
+      radians of the exact value. *)
+
+  val gmst : 'd t -> (float, Nx.float64_elt, 'd) Nx.t Quantity.t
+  (** [gmst e] is the IAU 2006 Greenwich mean sidereal time in \[0, 2π)
+      radians: {!era} plus a polynomial of TT (IERS Conventions 2010, 5.32),
+      within 4e-15 radians of the exact value. *)
+
+  val gst : 'd t -> (float, Nx.float64_elt, 'd) Nx.t Quantity.t
+  (** [gst e] is the Greenwich apparent sidereal time in \[0, 2π) radians,
+      the angle from the true equinox to the terrestrial origin: {!era} less
+      the equation of the origins, the CIO's right ascension of the equinox
+      (IERS Conventions 2010, 5.30). [era e − gst e] is iauEo06a's within
+      1e-15 radians. *)
+
+  val heliocentric :
+    (Time.tdb, 'd) Time.t ->
+    (float, Nx.float64_elt, 'd) Nx.t Quantity.t
+    * (float, Nx.float64_elt, 'd) Nx.t Quantity.t
+  (** [heliocentric t] is [(p, v)], the Earth's position and velocity from
+      the Sun's centre at TDB [t], each [[...; 3]] in au and au/d, within
+      5e-15 au and 1e-16 au/d of iauEpv00's. *)
+
+  val barycentric :
+    (Time.tdb, 'd) Time.t ->
+    (float, Nx.float64_elt, 'd) Nx.t Quantity.t
+    * (float, Nx.float64_elt, 'd) Nx.t Quantity.t
+  (** [barycentric t] is [(p, v)] as {!heliocentric} but from the
+      barycentre of the solar system. *)
+
+  val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd t -> 'e t
+  (** [walk c e] walks [e]: its TT instants at field ["tt"] as {!Time.walk}
+      walks them, then UT1's days at ["ut1_day"] and seconds at
+      ["ut1_second"], as tensors of a fixed type. *)
+
+  val ptree : unit -> ('d t, 'd) Nx.Ptree.t
+  (** [ptree ()] is [Nx.Ptree.v walk], the structure of orientations. *)
+end
+
 (** {1:frames Frames and directions} *)
 
 (** Celestial frames.
 
     A {e frame} is a celestial coordinate system: an orientation of three axes.
     Its {e orientation} [R_f] is the matrix taking ICRS components to frame
-    [f]'s, [v_f = R_f · v_icrs]. A {e fixed} frame is one whose orientation from
-    ICRS is constant.
+    [f]'s, [v_f = R_f · v_icrs]. Frames come in two families. A {e fixed}
+    frame is one whose orientation from ICRS is constant: the catalogue
+    frames, whose directions are as seen from the barycentre of the solar
+    system. A {e geocentric} frame's directions are as seen from the
+    Earth's centre: the GCRS, whose axes are ICRS's, and the frames of date,
+    whose axes follow the Earth's orientation ({!Earth}) and so depend on
+    the instant. Light that reaches the geocentre has been deflected by the
+    Sun and arrives from a direction aberrated by the Earth's motion, so a
+    direction to a source changes between the families by more than a
+    rotation: {!Direction.convert}.
+
+    The frames of date are the {e intermediate} frames of the IERS
+    Conventions (2010): each has the CIP as its pole. CIRS, the Celestial
+    Intermediate Reference System, takes the CIO as its origin; TIRS, the
+    Terrestrial Intermediate Reference System, takes the terrestrial origin,
+    so it turns with the Earth; the true equator and equinox of date takes
+    the equinox.
 
     Each frame type has exactly one value, so two values of one type are one
     frame and a frame mismatch is a type error. A fixed frame's type is an
-    instance of {!Frame.fixed}: {!Frame.matrix} and {!Direction.rotate} take any
+    instance of {!Frame.fixed} and a geocentric frame's of
+    {!Frame.geocentric}: {!Frame.matrix} and {!Direction.rotate} take any
     two fixed frames, and no other. The users of a frame write its type, as in
     [Frame.galactic Direction.t].
 
@@ -322,6 +465,15 @@ module Frame : sig
   type galactic = [ `Galactic ] fixed
   type ecliptic_j2000 = [ `Ecliptic_j2000 ] fixed
   type supergalactic = [ `Supergalactic ] fixed
+
+  type !'a geocentric
+  (** The type of a frame whose directions are as seen from the Earth's
+      centre. *)
+
+  type gcrs = [ `Gcrs ] geocentric
+  type cirs = [ `Cirs ] geocentric
+  type true_of_date = [ `True_of_date ] geocentric
+  type tirs = [ `Tirs ] geocentric
 
   val icrs : icrs t
   (** [icrs] is the International Celestial Reference System. *)
@@ -346,6 +498,29 @@ module Frame : sig
       the north supergalactic pole at Galactic (47.37°, +6.32°), the origin at l
       = 137.37°. *)
 
+  val gcrs : gcrs t
+  (** [gcrs] is the Geocentric Celestial Reference System: ICRS's axes at the
+      Earth's centre. *)
+
+  val cirs : cirs t
+  (** [cirs] is the Celestial Intermediate Reference System of date: from GCRS
+      by the IAU 2006/2000A precession-nutation, which takes the pole to the
+      CIP, and the CIO locator [s], which places the CIO (IERS Conventions
+      2010, 5.4.4). *)
+
+  val true_of_date : true_of_date t
+  (** [true_of_date] is the true equator and equinox of date: from GCRS by
+      the IAU 2006/2000A bias, precession and nutation, the classical,
+      equinox based form of {!val-cirs}'s pole (IERS Conventions 2010,
+      5.4.4). It is CIRS turned about the CIP by the equation of the
+      origins. *)
+
+  val tirs : tirs t
+  (** [tirs] is the Terrestrial Intermediate Reference System: CIRS turned
+      about the CIP by the Earth rotation angle (IERS Conventions 2010,
+      5.4.2), the Earth's frame less polar motion. A direction's longitude
+      in it is minus its Greenwich hour angle. *)
+
   val matrix : 'a fixed t -> 'b fixed t -> (float, Nx.float64_elt, Nx.host) Nx.t
   (** [matrix a b] is [M], [[3; 3]] on the host, with [v_b = M · v_a]: for
       quantities that are not directions, such as a velocity ([M v]) or a
@@ -356,9 +531,25 @@ module Frame : sig
       computed with one [Float.fma] chain, so [matrix b a] is the exact
       transpose of [matrix a b]. *)
 
+  val matrix_at : 'd Earth.t -> 'a t -> 'b t -> (float, Nx.float64_elt, 'd) Nx.t
+  (** [matrix_at e a b] is [M], [[...; 3; 3]] beside and across [e]'s
+      instants, with [v_b = M · v_a] at each instant, for any two frames, as
+      {!matrix} is for fixed ones: [R_b · R_aᵀ], with GCRS's axes ICRS's. A
+      direction to a source converts by it only within a family
+      ({!Direction.convert}).
+
+      For two fixed frames it is {!matrix}'s entries. Between the frames of
+      date it is the rotation about the CIP by the difference of their
+      origins' angles, which the series of the precession-nutation give
+      only for the equinox. Its entries from GCRS are within 4e-16 of
+      iauPnm06a's to the true equator and equinox, and within 5e-16 of
+      iauC2i06a's to CIRS. Each matrix is a rotation within 1e-15 per entry,
+      and [matrix_at e b a] is [matrix_at e a b] transposed within 2e-16. *)
+
   val name : 'f t -> string
   (** [name f] is [f]'s canonical name: ["icrs"], ["fk5_j2000"], ["galactic"],
-      ["ecliptic_j2000"], ["supergalactic"]. It is the frame's identity in keys,
+      ["ecliptic_j2000"], ["supergalactic"], ["gcrs"], ["cirs"],
+      ["true_of_date"], ["tirs"]. It is the frame's identity in keys,
       text and files. *)
 
   val pp : Format.formatter -> 'f t -> unit
@@ -460,6 +651,24 @@ module Direction : sig
   (** [rotate g d] is [d] in frame [g]: [Frame.matrix (frame d) g] times each
       vector. It is linear in [d], within [1.5 · 2⁻⁵² · |v|] of the exact
       product per component, and rounds the same eagerly and compiled. *)
+
+  val convert : 'd Earth.t -> 'g Frame.t -> ('f, 'd) t -> ('g, 'd) t
+  (** [convert e g d] is [d] in frame [g] at [e]'s instants, their batch
+      axes broadcast. Within a family it is {!Frame.matrix_at} times each
+      vector. From a fixed frame to a geocentric one it reads [d] as the
+      barycentric direction to a source at infinite distance and gives the
+      geocentric one as iauAtciq does without proper motion or parallax:
+      deflected by the Sun (iauLdsun), aberrated (iauAb), then turned onto
+      [g]'s axes. Within
+      about 5′ of the Sun's centre the deflection falls linearly to 0 at
+      the centre; the planets' is left out. The other way it inverts that
+      model: [convert e f (convert e g d)] is [d] within 1e-15.
+
+      Between the families it reads rows as rays and returns unit vectors,
+      within 2e-15 of SOFA's; a zero row gives NaN.
+
+      Raises [Invalid_argument] where a row has an infinite component, as in
+      ["Direction.convert: the vector at [3] is infinite"]. *)
 
   val separation : ('f, 'd) t -> ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Quantity.t
   (** [separation a b] is the angle between the rays, in \[0, π\] radians.

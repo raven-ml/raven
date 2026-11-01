@@ -72,5 +72,14 @@ val add :
   ('s, 'd) t
 
 val leap_seconds_known_until : (utc, Nx.host) t
+val carry :
+  (int64, Nx.int64_elt, 'd) Nx.t ->
+  (float, Nx.float64_elt, 'd) Nx.t ->
+  (float, Nx.float64_elt, 'd) Nx.t ->
+  (int64, Nx.int64_elt, 'd) Nx.t * (float, Nx.float64_elt, 'd) Nx.t
+(** [carry d a b] is the instant [a + b] seconds after 0h of day [d], as a
+    day and the seconds in \[0, 86400): the sum and the whole days taken
+    off it are exact, so the seconds round once. A NaN sum keeps day [d]. *)
+
 val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('s, 'd) t -> ('s, 'e) t
 val ptree : unit -> (('s, 'd) t, 'd) Nx.Ptree.t

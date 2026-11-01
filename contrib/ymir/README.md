@@ -51,10 +51,16 @@ The [examples](examples/) teach each part on small synthetic data.
   TDB, the scale in the type, and converts between them: leap seconds and
   UTC before 1972 from the IERS's tables, TDB at the geocentre from the
   Fairhead & Bretagnon series.
+- **The Earth**: `Earth` holds the Earth's orientation at instants, its
+  rotation angle and sidereal times under the IAU 2006/2000A
+  precession-nutation, and its position and velocity from SOFA's analytic
+  ephemeris.
 - **Frames and directions**: `Frame` names ICRS, FK5 J2000, Galactic, the
-  J2000 ecliptic and supergalactic, and a frame mismatch is a type error.
+  J2000 ecliptic and supergalactic, and the geocentric GCRS, CIRS, true
+  equator and equinox of date and TIRS; a frame mismatch is a type error.
   `Direction` holds batches of directions with their separations, position
-  angles and rotations between frames.
+  angles and rotations between frames, and converts them between the
+  barycentre and the geocentre through light deflection and aberration.
 - **HEALPix**: `Healpix` divides a frame's sphere into equal-area pixels
   at `nside` up to 2^29, numbered RING or NESTED: the pixel of each
   direction, pixel centres, corners and neighbours, and spherical harmonic

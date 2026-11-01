@@ -25,6 +25,7 @@ val xyz : ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t
 val lon : ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Ymir_units.Quantity.t
 val lat : ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Ymir_units.Quantity.t
 val rotate : ('b Frame.fixed as 'g) Frame.t -> ('a Frame.fixed, 'd) t -> ('g, 'd) t
+val convert : 'd Earth.t -> 'g Frame.t -> ('f, 'd) t -> ('g, 'd) t
 
 val separation :
   ('f, 'd) t -> ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Ymir_units.Quantity.t

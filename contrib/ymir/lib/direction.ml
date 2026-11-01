@@ -250,6 +250,133 @@ let rotate g c =
     in
     { frame = g; xyz = Nx.stack ~axis:(-1) [ row 0; row 1; row 2 ] }
 
+(* Conversions at instants *)
+
+(* The Sun's Schwarzschild radius 2GM/c² in au (SOFA's ERFA_SRS), and the
+   light time of one au in days. *)
+let sun_radius = 1.97412574336e-8
+let au_light_days = 149597870700. /. 299792458. /. 86400.
+
+let map3 f (x, y, z) = (f x, f y, f z)
+let add3 (ax, ay, az) (bx, by, bz) = Nx.(add ax bx, add ay by, add az bz)
+let scale3 k v = map3 (Nx.mul k) v
+let norm v = Nx.sqrt (norm2 v)
+let unit3 v = scale3 (Nx.recip (norm v)) v
+
+(* What the light from a source meets at the geocentre: the Earth's
+   heliocentric direction [eh] and distance [em] in au, its barycentric
+   velocity [v] in units of c and [bm1 = √(1 − v²)]. *)
+type 'd geocentre = {
+  eh : 'd vectors * 'd vectors * 'd vectors;
+  em : 'd vectors;
+  v : 'd vectors * 'd vectors * 'd vectors;
+  bm1 : 'd vectors;
+}
+
+let geocentre e =
+  let tdb = Time.convert Time.tdb (Earth.tt e) in
+  let ph, _, _, vb = Ephemeris.earth tdb in
+  let ph = components ph in
+  let v = components (Nx.mul_s vb au_light_days) in
+  let em = norm ph in
+  {
+    eh = scale3 (Nx.recip em) ph;
+    em;
+    v;
+    bm1 = Nx.sqrt (Nx.rsub_s 1. (norm2 v));
+  }
+
+(* [deflect g p] is the natural direction of light that arrives from the
+   direction [p] after the Sun has deflected it (eraLdsun, Klioner 2003
+   (70)). Within about 5′ of the Sun's centre, [p · (p + eh)] below
+   [1e-6 / max(em², 1)], the deflection falls linearly to 0.
+
+   For unit [p] and [eh], [p · (p + eh)] is [|p + eh|² / 2]. Near the Sun,
+   where [p ≈ −eh], the dot product cancels to [1 − cos θ] and an ulp of
+   either norm changes it by 1e-10 relative at the limiter; the sum is
+   exact there and its square keeps its digits. *)
+let deflect g p =
+  let limit = Nx.mul_s (Nx.recip (Nx.maximum_s (Nx.square g.em) 1.)) 1e-6 in
+  let qpe = Nx.mul_s (norm2 (add3 p g.eh)) 0.5 in
+  let w =
+    Nx.div
+      (Nx.full_like g.em sun_radius)
+      (Nx.mul g.em (Nx.maximum qpe limit))
+  in
+  add3 p (scale3 w (cross p (cross g.eh p)))
+
+(* [aberrate g p] is the proper direction, as the moving geocentre sees it,
+   of the natural direction [p], with the Sun's potential at the Earth
+   (eraAb: the Explanatory Supplement (2013) (7.40) and Klioner 2003 (7)). *)
+let aberrate g p =
+  let pdv = dot p g.v in
+  let w1 = Nx.add_s (Nx.div pdv (Nx.add_s g.bm1 1.)) 1. in
+  let w2 = Nx.div (Nx.full_like g.em sun_radius) g.em in
+  let px, py, pz = p and vx, vy, vz = g.v in
+  let term p v =
+    Nx.add
+      (Nx.add (Nx.mul p g.bm1) (Nx.mul w1 v))
+      (Nx.mul w2 (Nx.sub v (Nx.mul pdv p)))
+  in
+  unit3 (term px vx, term py vy, term pz vz)
+
+let apparent g p = aberrate g (deflect g p)
+
+(* [astrometric g q] is the [p] with [apparent g p = q], from [steps]
+   steps of [p ← unit (q − (apparent g p − p))] from [p = q], as eraAticq
+   steps aberration and deflection apart. Taken together, the two invert
+   the forward model exactly: [deflect]'s result is not a unit vector, and
+   [aberrate] reads its norm. Each step multiplies the error, at most the
+   20″ of aberration, by the rate of the displacement: [|v|], 1e-4, plus
+   the deflection's, which peaks at 0.02 at the edge of the limiter, so 8
+   steps leave it below 1e-17. *)
+let steps = 8
+
+let astrometric g q =
+  let rec go p k =
+    if k = 0 then p
+    else go (unit3 (sub3 q (sub3 (apparent g p) p))) (k - 1)
+  in
+  go q steps
+
+(* [apply m v] is [m v] for matrices [[...; 3; 3]] and vectors [[...; 3]],
+   their batch axes broadcast. *)
+let apply m (x, y, z) =
+  let row i =
+    let e j = Earth.entry m i j in
+    Nx.add (Nx.add (Nx.mul (e 0) x) (Nx.mul (e 1) y)) (Nx.mul (e 2) z)
+  in
+  (row 0, row 1, row 2)
+
+let stack3 (x, y, z) = Nx.stack ~axis:(-1) [ x; y; z ]
+
+(* [ray d] is [d]'s rows scaled as {!rows} scales them, read as rays. *)
+let ray d = components (scale d.xyz)
+
+let convert : type f g d. d Earth.t -> g Frame.t -> (f, d) t -> (g, d) t =
+ fun e g d ->
+  check_finite "Direction.convert: the vector" d.xyz;
+  let shape =
+    Nx.broadcast_shapes
+      [ Earth.shape e; Array.sub (Nx.shape d.xyz) 0 (Nx.ndim d.xyz - 1) ]
+  in
+  let out v =
+    { frame = g; xyz = Nx.broadcast_to (Array.append shape [| 3 |]) v }
+  in
+  match (Frame.kind d.frame, Frame.kind g) with
+  | Frame.Fixed, Frame.Fixed -> out (rotate g d).xyz
+  | Frame.Geocentric, Frame.Geocentric ->
+      out (stack3 (apply (Frame.matrix_at e d.frame g) (components d.xyz)))
+  | Frame.Fixed, Frame.Geocentric ->
+      let p = unit3 (ray (rotate Frame.icrs d)) in
+      let q = apparent (geocentre e) p in
+      out (stack3 (apply (Frame.matrix_at e Frame.gcrs g) q))
+  | Frame.Geocentric, Frame.Fixed ->
+      let m = Frame.matrix_at e d.frame Frame.gcrs in
+      let p = apply m (ray d) in
+      let q = astrometric (geocentre e) (unit3 p) in
+      out (rotate g { frame = Frame.icrs; xyz = stack3 q }).xyz
+
 (* Structure *)
 
 
