@@ -250,9 +250,9 @@ module Region : sig
       pinned. The NIC reads and writes [r] no more once [deregister] returns
       [Ok ()].
 
-      It is [Error msg] if the firmware refuses. The NIC may then still read and
-      write [r]'s memory, which stays allocated and pinned until
-      {!val-close}. *)
+      It is [Error msg] if the firmware refuses, and so is every call after
+      one that an exception ended. The NIC may then still read and write
+      [r]'s memory, which stays allocated and pinned until {!val-close}. *)
 end
 
 (** {1:qps Queue pairs} *)
@@ -318,7 +318,8 @@ module Qp : sig
       of this process's regions.
 
       [Error msg] if the firmware refuses a change of [qp]'s state. A [connect]
-      the firmware refused part-way, called again, resumes where it stopped.
+      the firmware refused part-way, or an exception ended, called again,
+      takes [qp] back to reset and connects it from there.
 
       Raises [Invalid_argument] if [qp] is connected, or [e]'s [gid] is not 16
       bytes or its [mac] not 6. *)
@@ -370,8 +371,9 @@ module Qp : sig
       entries and writes no memory for it once [destroy] returns [Ok ()]. The
       entries of its peer's queue pair fail once their retries end.
 
-      It is [Error msg] if the firmware refuses. [qp] then counts as destroyed,
-      and its rings stay allocated until {!val-close}. *)
+      It is [Error msg] if the firmware refuses, and so is every call after
+      one that an exception ended. [qp] then counts as destroyed, and its
+      rings stay allocated until {!val-close}. *)
 end
 
 (** {1:changes Changes to the machine}

@@ -130,6 +130,7 @@ let cmdq_create_qp_type_rc = 2
 let cmdq_modify_qp_qp_type_rc = 2
 let cmdq_modify_qp_network_type_rocev2_ipv4 = 0x80
 let cmdq_modify_qp_path_mtu_mtu_4096 = 0x40
+let cmdq_modify_qp_new_state_reset = 0
 let cmdq_modify_qp_new_state_init = 1
 let cmdq_modify_qp_new_state_rtr = 2
 let cmdq_modify_qp_new_state_rts = 3

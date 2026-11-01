@@ -197,6 +197,7 @@ type hw = {
   mutable relaxed_at : int option;
       (* the Device Control register, whose relaxed ordering open turned off
          and stop turns back on *)
+  mutable stopped : bool; (* once its stop began, which a boot then refuses *)
 }
 
 let alloc fn n =
@@ -348,10 +349,15 @@ let doorbell db xid typ index epoch =
   Window.barrier ();
   Window.set64 db 0 (db_value xid typ index epoch)
 
-(* Rings [xid]'s doorbell of type [typ] for the entries before [n] of a ring of
+(* The doorbell of [xid] of type [typ] for the entries before [n] of a ring of
    [ring_entries]. *)
-let ring db ~xid ~typ n =
-  doorbell db xid typ (n mod ring_entries) (n / ring_entries land 1)
+let bell ~xid ~typ n =
+  db_value xid typ (n mod ring_entries) (n / ring_entries land 1)
+
+(* Rings a doorbell [bell] made, allocating nothing. *)
+let ring_bell db v =
+  Window.barrier ();
+  Window.set64 db 0 v
 
 (* Queues *)
 
@@ -816,6 +822,7 @@ let channel fn =
     pins = [];
     registered = false;
     relaxed_at = None;
+    stopped = false;
   }
 
 (* PCI configuration space: the capability list, the PCI Express capability's
@@ -867,6 +874,7 @@ let restore_order fn at =
    does. *)
 let stop hw () =
   protect hw.lock @@ fun () ->
+  hw.stopped <- true;
   let clean =
     hw.registered
     && Function.failed hw.fn = None
@@ -886,8 +894,13 @@ let stop hw () =
 
 (* Resets the NIC, turns its relaxed ordering off, registers with its
    firmware, gives the RoCE engine its context memory and command queue, opens
-   the Ethernet receive path, and adds the NIC's address. *)
+   the Ethernet receive path, and adds the NIC's address. It holds the NIC's
+   lock, which its stop takes, so that a stop on another thread, as the
+   process's exit makes, comes before the boot, which it refuses, or after
+   it, and never between its writes. *)
 let boot ~name h hw =
+  protect hw.lock @@ fun () ->
+  if hw.stopped then fail "the NIC was stopped as it opened";
   let at = device_control_at hw.fn in
   let was = relaxed hw.fn at in
   (match Function.reset hw.fn with Ok () -> () | Error why -> fail "%s" why);
@@ -961,12 +974,12 @@ let open_ ?(machine = Machine.this) i =
       Driver.set_stop h (stop hw);
       boot ~name h hw)
 
+(* Every close stops the NIC, which a later stop does once: one an exception
+   ended before its stop began leaves the next close to make it. *)
 let close nic =
   guarded "close" @@ fun () ->
-  if not nic.closed then begin
-    nic.closed <- true;
-    ignore (Driver.stop nic.hold)
-  end
+  nic.closed <- true;
+  ignore (Driver.stop nic.hold)
 
 let detach i =
   guarded "detach" @@ fun () ->
@@ -1006,7 +1019,9 @@ module Region = struct
      bytes), [va] being the first run's address. [host] is memory it was made
      over, which it frees at its deregistration. A refused registration frees
      its memory, unless the firmware stopped answering and may still read the
-     page list.
+     page list. Another exception, such as one that ends the wait for the
+     firmware's answer or comes after it, leaves the memory to the NIC's
+     stop: the firmware may hold the region.
 
      Every region allows remote reads, which only a queue pair connected to
      one of its own NIC serves ([Qp.connect]): its key, which serves as its
@@ -1034,7 +1049,7 @@ module Region = struct
           set b M.mr_size bytes)
     with
     | r -> { nic; key = xid r; va; bytes; host; memory; pinned; gone = None }
-    | exception e ->
+    | exception (Refused _ as e) ->
         if not nic.rc.stopped then List.iter (free nic.hw) memory;
         raise e
 
@@ -1100,19 +1115,31 @@ module Region = struct
   let write r at s =
     Window.write (memory r "Region.write" at (String.length s)) at s
 
+  (* What a deregistration an exception ended answers from then on: it is
+     marked so before its command, and given its answer once its memory is
+     freed, so that no later call sends the command again for a key the
+     firmware may have given another region, or frees the memory twice. *)
+  let cut =
+    Some
+      (Error
+         "Rig_bnxt.Region.deregister: an exception ended the deregistration; \
+          its memory stays until the NIC closes")
+
   let deregister r =
     match r.gone with
     | Some result -> result
     | None ->
         let result =
           command r.nic "Region.deregister" @@ fun () ->
+          r.gone <- cut;
           ignore
             (rcfw r.nic.hw r.nic.rc "deregister_mr"
                ~opcode:D.cmdq_base_opcode_deregister_mr
                ~size:D.Cmdq_deregister_mr.sizeof (fun b ->
                  set b D.Cmdq_deregister_mr.lkey r.key));
           List.iter (free r.nic.hw) r.memory;
-          Option.iter (unpin r.nic.hw) r.pinned
+          Option.iter (unpin r.nic.hw) r.pinned;
+          r.gone <- Some (Ok ())
         in
         r.gone <- Some result;
         result
@@ -1148,10 +1175,6 @@ module Qp = struct
     mutable ok_until : int;
   }
 
-  (* The states {!connect} takes a queue pair through, so that a connect the
-     firmware refused part-way resumes where it stopped. *)
-  type state = Initialized | Ready_to_receive | Ready_to_send
-
   type nonrec t = {
     nic : t;
     qpn : int;
@@ -1159,8 +1182,9 @@ module Qp = struct
     receives : ring;
     first_psn : int;
     mutable psn : int; (* the first packet of the next send *)
-    mutable state : state;
-    mutable peer : endpoint option; (* once ready to receive *)
+    mutable moved : bool; (* once a connect may have changed its state *)
+    mutable connected : bool;
+    mutable peer : endpoint option; (* from before its modify to RTR *)
     failed : string option Atomic.t;
     terminal : int Atomic.t;
         (* the send index of a terminal completion, or [no_index] *)
@@ -1227,6 +1251,14 @@ module Qp = struct
            set b M.modify_mask mask;
            set b M.network_type_en_sqd_async_notify_new_state (state lor network);
            fill b))
+
+  (* The modify to initialised that a made queue pair, or one back to reset,
+     takes. *)
+  let init nic qpn =
+    modify nic qpn ~state:D.cmdq_modify_qp_new_state_init ~mask:init_mask
+      (fun b ->
+        set b D.Cmdq_modify_qp.access access;
+        set b D.Cmdq_modify_qp.pkey 0xffff)
 
   let send_statuses =
     D.
@@ -1333,10 +1365,7 @@ module Qp = struct
                set b Q.rq_pg_size_rq_lvl rq.level))
       in
       made := (fun () -> destroy_qp nic qpn) :: !made;
-      modify nic qpn ~state:D.cmdq_modify_qp_new_state_init ~mask:init_mask
-        (fun b ->
-          set b D.Cmdq_modify_qp.access access;
-          set b D.Cmdq_modify_qp.pkey 0xffff);
+      init nic qpn;
       let ring entries cq cq_id typ kind statuses what =
         {
           entries;
@@ -1367,7 +1396,8 @@ module Qp = struct
             receive_statuses "receive";
         first_psn;
         psn = first_psn;
-        state = Initialized;
+        moved = false;
+        connected = false;
         peer = None;
         failed = Atomic.make None;
         terminal = Atomic.make no_index;
@@ -1393,38 +1423,45 @@ module Qp = struct
     let module M = D.Cmdq_modify_qp in
     let nic = qp.nic in
     let network = D.cmdq_modify_qp_network_type_rocev2_ipv4 in
-    if qp.state = Ready_to_send then
+    if qp.connected then
       invalid_argf "Rig_bnxt.Qp.connect: queue pair %d is connected" qp.qpn;
-    if qp.state = Initialized then begin
-      modify nic qp.qpn ~state:D.cmdq_modify_qp_new_state_rtr ~mask:rtr_mask
-        ~network (fun b ->
-          set b M.qp_type D.cmdq_modify_qp_qp_type_rc;
-          set b M.access (access_to nic e);
-          set b M.pkey 0xffff;
-          Bytes.blit_string e.gid 0 b (fst M.dgid) 16;
-          set b M.sgid_index nic.gid_index;
-          set b M.hop_limit 64;
-          Bytes.blit_string e.mac 0 b (fst M.dest_mac) 6;
-          set b M.min_rnr_timer 1;
-          set b M.path_mtu_pingpong_push_enable
-            D.cmdq_modify_qp_path_mtu_mtu_4096;
-          set b M.rq_psn (e.psn land 0xffffff);
-          set b M.max_dest_rd_atomic 4;
-          set b M.dest_qp_id e.qp);
-      qp.state <- Ready_to_receive;
-      qp.peer <- Some e
+    (* A connect that a refusal or an exception ended may have left the pair
+       ready to receive, or a modify applied whose answer it never read: the
+       next starts again from reset, then initialised. [moved] is stored
+       before the first modify, and the peer before the modify to ready to
+       receive, so that a pair ready to receive has one. *)
+    let again = qp.moved in
+    qp.moved <- true;
+    if again then begin
+      modify nic qp.qpn ~state:D.cmdq_modify_qp_new_state_reset
+        ~mask:D.cmdq_modify_qp_modify_mask_state ignore;
+      init nic qp.qpn
     end;
-    let peer = Option.value ~default:e qp.peer in
+    qp.peer <- Some e;
+    modify nic qp.qpn ~state:D.cmdq_modify_qp_new_state_rtr ~mask:rtr_mask
+      ~network (fun b ->
+        set b M.qp_type D.cmdq_modify_qp_qp_type_rc;
+        set b M.access (access_to nic e);
+        set b M.pkey 0xffff;
+        Bytes.blit_string e.gid 0 b (fst M.dgid) 16;
+        set b M.sgid_index nic.gid_index;
+        set b M.hop_limit 64;
+        Bytes.blit_string e.mac 0 b (fst M.dest_mac) 6;
+        set b M.min_rnr_timer 1;
+        set b M.path_mtu_pingpong_push_enable D.cmdq_modify_qp_path_mtu_mtu_4096;
+        set b M.rq_psn (e.psn land 0xffffff);
+        set b M.max_dest_rd_atomic 4;
+        set b M.dest_qp_id e.qp);
     modify nic qp.qpn ~state:D.cmdq_modify_qp_new_state_rts ~mask:rts_mask
       ~network (fun b ->
         set b M.qp_type D.cmdq_modify_qp_qp_type_rc;
-        set b M.access (access_to nic peer);
+        set b M.access (access_to nic e);
         set b M.max_rd_atomic 1;
         set b M.rnr_retry 7;
         set b M.retry_cnt 7;
         set b M.timeout 14;
         set b M.sq_psn qp.first_psn);
-    qp.state <- Ready_to_send
+    qp.connected <- true
 
   (* A ring keeps one slot free, as the kernel's driver does, so that its
      completion queue, of as many entries, has room for the completion that
@@ -1453,7 +1490,7 @@ module Qp = struct
   let check_post qp what side (r : Region.t) at n =
     usable qp what;
     check_region qp what r at n;
-    if qp.state <> Ready_to_send then
+    if not qp.connected then
       invalid_argf "Rig_bnxt.%s: queue pair %d is not connected" what qp.qpn;
     if room qp side = 0 then invalid_argf "Rig_bnxt.%s: the ring is full" what
 
@@ -1506,10 +1543,16 @@ module Qp = struct
            ((slot lsl D.sq_msn_search_start_idx_sft)
            lor (next lsl D.sq_msn_search_next_psn_sft)
            lor psn));
+      (* The entry is counted, and its packets, before the doorbell rings it,
+         with nothing between that allocates: an exception before leaves the
+         slot to the next post, one after leaves the entry for the next post's
+         doorbell to ring. *)
+      let v = bell ~xid:qp.qpn ~typ:s.typ (i + 1) in
       qp.psn <- next;
-      ring qp.nic.rc.db ~xid:qp.qpn ~typ:s.typ (i + 1)
-    end;
-    s.posted <- i + 1
+      s.posted <- i + 1;
+      ring_bell qp.nic.rc.db v
+    end
+    else s.posted <- i + 1
 
   let send qp r ~at n =
     check_post qp "Qp.send" Send r at n;
@@ -1539,9 +1582,12 @@ module Qp = struct
         D.rq_wqe_wqe_type_rcv;
       Window.set8 q.ring (base + fst D.Rq_wqe_hdr.wqe_size) 3;
       sge q slot r at n;
-      ring qp.nic.rc.db ~xid:qp.qpn ~typ:s.typ (i + 1)
-    end;
-    s.posted <- i + 1
+      (* As [post_send]'s. *)
+      let v = bell ~xid:qp.qpn ~typ:s.typ (i + 1) in
+      s.posted <- i + 1;
+      ring_bell qp.nic.rc.db v
+    end
+    else s.posted <- i + 1
 
   (* Whether [q]'s completion [n] is written: its toggle bit differs from the
      parity of the pass over the queue that reads it. *)
@@ -1571,39 +1617,50 @@ module Qp = struct
     if index <> no_index && done_ <= r.posted - r.taken then
       r.ok_until <- r.taken + done_
 
+  (* [noticed] is stored last, so that a notice an exception ended is made
+     again whole. *)
   let notice qp r =
-    r.noticed <- true;
     let n = ref r.cq_read in
     while !n - r.cq_read < r.cq.entries && written r.cq !n do
       incr n
     done;
     r.cq_until <- !n;
-    if r == qp.sends then sends_done r (Atomic.get qp.terminal)
+    if r == qp.sends then sends_done r (Atomic.get qp.terminal);
+    r.noticed <- true
 
   (* Completes the oldest due entry of [r] of the failed queue pair: one before
-     [ok_until] moved its bytes. *)
+     [ok_until] moved its bytes. The entry is taken as the last step, its
+     answer made before. *)
   let flush r why =
     let n = r.taken in
+    let c =
+      if n < r.ok_until then Some (Ok r.lengths.(n mod ring_entries))
+      else Some (Error why)
+    in
     r.taken <- n + 1;
-    if n < r.ok_until then Ok r.lengths.(n mod ring_entries) else Error why
+    c
 
   (* A terminal completion, read from [r]'s queue, reports the queue pair's
      failure, and the sends before the one at its consumer index, which
      completed ([sends_done]). The index is kept before the failure is, so
      the send side reads it once it sees the failure; a send side that saw a
      failure raised elsewhere first applies the index as it reads it. *)
-  let terminal qp r at =
+  let terminal qp r at failed =
     let index = Window.get32 r.cq.ring (at + fst D.Cq_terminal.sq_cons_idx) in
     let index = index land 0xffff in
     if index <> no_index then
       ignore (Atomic.compare_and_set qp.terminal no_index index : bool);
     if r == qp.sends && r.noticed then sends_done r index;
-    fail_qp qp "the NIC reported its failure"
+    ignore (Atomic.compare_and_set qp.failed None failed : bool)
 
   (* Reads [r]'s written completion and acknowledges it: the completion of the
      oldest due entry, which fails the queue pair if the entry failed, or
      [None] for a terminal completion, which fails it, and for one of a kind
-     the ring does not take, which the library fails it for. *)
+     the ring does not take, which the library fails it for. The answer, the
+     failure and the doorbell are made first, then the completion is read,
+     its entry taken and the queue pair failed with nothing between that
+     allocates, so that an exception leaves the completion to read again or
+     read whole. *)
   let take qp r =
     let q = r.cq and n = r.cq_read in
     Window.barrier ();
@@ -1614,30 +1671,44 @@ module Qp = struct
     in
     let status = Window.get8 q.ring (at + fst D.Cq_base.status) in
     let length = Window.get32 q.ring (at + fst D.Cq_res_rc.length) in
-    r.cq_read <- n + 1;
-    ring qp.nic.rc.db ~xid:r.cq_id ~typ:D.bnxt_re_que_type_cq (n + 1);
+    let v = bell ~xid:r.cq_id ~typ:D.bnxt_re_que_type_cq (n + 1) in
     if kind = D.cq_base_cqe_type_terminal then begin
-      terminal qp r at;
+      let failed = Some (failure qp "the NIC reported its failure") in
+      r.cq_read <- n + 1;
+      terminal qp r at failed;
+      ring_bell qp.nic.rc.db v;
       None
     end
     else if kind <> r.kind then begin
-      fail_qp qp (strf "a completion of type %d" (kind lsr 1));
+      let failed =
+        Some (failure qp (strf "a completion of type %d" (kind lsr 1)))
+      in
+      r.cq_read <- n + 1;
+      ignore (Atomic.compare_and_set qp.failed None failed : bool);
+      ring_bell qp.nic.rc.db v;
       None
     end
     else begin
       let i = r.taken in
+      let c, failed =
+        if status = 0 then
+          if r == qp.receives then (Some (Ok length), None)
+          else (Some (Ok r.lengths.(i mod ring_entries)), None)
+        else
+          let why =
+            match List.assoc_opt status r.statuses with
+            | Some why -> why
+            | None -> strf "status %d" status
+          in
+          let why = failure qp why in
+          (Some (Error why), Some why)
+      in
+      r.cq_read <- n + 1;
       r.taken <- i + 1;
-      if status = 0 then
-        if r == qp.receives then Some (Ok length)
-        else Some (Ok r.lengths.(i mod ring_entries))
-      else
-        let why =
-          match List.assoc_opt status r.statuses with
-          | Some why -> why
-          | None -> strf "status %d" status
-        in
-        fail_qp qp why;
-        Some (Error (failure qp why))
+      if Option.is_some failed then
+        ignore (Atomic.compare_and_set qp.failed None failed : bool);
+      ring_bell qp.nic.rc.db v;
+      c
     end
 
   (* The completion of [r]'s oldest due entry, if it has one, which a failed
@@ -1647,7 +1718,7 @@ module Qp = struct
     match Atomic.get qp.failed with
     | Some why ->
         if not r.noticed then notice qp r;
-        if r.cq_read < r.cq_until then taken qp r else Some (flush r why)
+        if r.cq_read < r.cq_until then taken qp r else flush r why
     | None when written r.cq r.cq_read -> taken qp r
     | None -> (
         match Machine.failed (Function.machine qp.nic.hw.fn) with
@@ -1656,7 +1727,7 @@ module Qp = struct
             fail_qp qp why;
             next qp r)
 
-  and taken qp r = match take qp r with Some c -> Some c | None -> next qp r
+  and taken qp r = match take qp r with Some _ as c -> c | None -> next qp r
 
   let due r = r.posted > r.taken
 
@@ -1680,6 +1751,14 @@ module Qp = struct
     | Error _ -> Option.iter (fail_qp qp) (Function.failed qp.nic.hw.fn));
     next qp r
 
+  (* As [Region.deregister]'s: no later call destroys ids the firmware may
+     have given others, or frees the rings twice. *)
+  let cut =
+    Some
+      (Error
+         "Rig_bnxt.Qp.destroy: an exception ended the destruction; its rings \
+          stay until the NIC closes")
+
   let destroy qp =
     match qp.destroyed with
     | Some result -> result
@@ -1687,11 +1766,13 @@ module Qp = struct
         let result =
           command qp.nic "Qp.destroy" @@ fun () ->
           let nic = qp.nic in
+          qp.destroyed <- cut;
           destroy_qp nic qp.qpn;
           List.iter (fun r -> destroy_cq nic r.cq_id) [ qp.sends; qp.receives ];
           List.iter
             (fun r -> List.iter (free nic.hw) (r.entries.memory @ r.cq.memory))
-            [ qp.sends; qp.receives ]
+            [ qp.sends; qp.receives ];
+          qp.destroyed <- Some (Ok ())
         in
         qp.destroyed <- Some result;
         result
