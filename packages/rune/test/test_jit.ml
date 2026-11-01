@@ -1612,6 +1612,21 @@ let test_lending () =
   check ~msg:"a result that reads the argument at other indices" ~lent:false
     (fun x -> Nx.sub x (Nx.max x));
   check ~msg:"a reversed result" ~lent:false (fun x -> Nx.flip x);
+  (* A move that adds or drops axes of one element keeps C order, so an
+     elementwise result over it reads the argument at its own index. *)
+  let row xs = Nx.create f32 [| 1; Array.length xs |] xs in
+  let check_row ~msg f =
+    let expected = bits (f (row xs)) in
+    let x = row xs in
+    let took, y = in_place (Rune.jit' f) x in
+    equal ~msg bits_t expected (bits y);
+    equal ~msg:(msg ^ ": in place") bool true took;
+    dead x
+  in
+  check_row ~msg:"over a squeeze" (fun x -> Nx.neg (Nx.squeeze ~axes:[ 0 ] x));
+  check_row ~msg:"over a get" (fun x -> Nx.neg (Nx.get [ 0 ] x));
+  check_row ~msg:"over an unsqueeze" (fun x ->
+      Nx.neg (Nx.unsqueeze ~axes:[ 0 ] x));
   let pair = T.(tensor @-> returns (pair tensor tensor)) in
   let g = Rune.jit pair (fun x -> (Nx.neg x, Nx.add x x)) in
   let x = fresh xs in

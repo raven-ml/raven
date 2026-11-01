@@ -397,6 +397,16 @@ let contiguous_at shape (f : _ Nx.Prim.form) =
   L.is_contiguous f.layout
   && Iarray.to_array (L.shape f.layout) = Iarray.to_array shape
 
+(* Whether the axis map [p] lists its axes in increasing order. *)
+let in_order p =
+  let rec go i last =
+    i = Iarray.length p
+    ||
+    let a = Iarray.get p i in
+    if a < 0 then go (i + 1) last else a > last && go (i + 1) a
+  in
+  go 0 (-1)
+
 type reacher = { get : 'v 's 'd. ('v, 's, 'd) Nx.t -> reach }
 
 (* Each operand's reach and whether [op] reads it at its own index. *)
@@ -415,6 +425,10 @@ let operand_reaches (type r) rc (op : r Nx.Prim.t) =
         (Iarray.to_list loads)
   | Copy x -> [ at x true ]
   | Move (Reshape _, x) -> [ at x (L.is_contiguous (Nx.Prim.form x).layout) ]
+  | Move (Permute p, x) when in_order p ->
+      (* An axis map that keeps its axes in order adds or drops axes of one
+         element: C order, as a reshape. *)
+      [ at x (L.is_contiguous (Nx.Prim.form x).layout) ]
   | Bitcast (dt, x) -> [ at x (D.bits dt = D.bits (Nx.dtype x)) ]
   | Place (_, x) -> [ at x true ]
   | Scatter { idx; updates; into; _ } ->
