@@ -36,7 +36,13 @@
     lie, at either cut, each device decoding its own blocks as it sums
     them. Any other cut along [k] splits a block, which is read whole, so
     {!dequant} and {!apply} raise as the operation reading it does, naming
-    the {!Nx.place} that puts it whole on each device.
+    the {!Nx.place} that puts it whole on each device. {!apply} of an
+    [Mxfp4] weight read where it lies names its scales: with them whole on
+    each device, and the weight rebuilt by {!mxfp4}, it reads the codes
+    where they lie where [t] divides [k / 2], their bytes, each device
+    holding every scale, and raises on the codes otherwise. Padding [k] and
+    the input with zero blocks to a multiple of [t] blocks keeps each block
+    on one device instead. {!apply_experts} reads [k] whole.
 
     {!take} gathers before decoding, so a caller reads a large table's rows
     without decoding the table. Routing positions to a stack of weights, as a

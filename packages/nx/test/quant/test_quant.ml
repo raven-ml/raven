@@ -1694,6 +1694,70 @@ let placed_experts p format =
   routed_rows ~at:f32 w ids x got;
   equal ~msg:"a second run" (array int64) b (snd (run ()))
 
+(* An MXFP4 weight of [b] blocks, behind a leading axis or not, its codes
+   cut along [k] over [t] devices and its scales whole on each, applied to
+   a float32 [x] whole on each device or cut along [k]. Three tiles against
+   four and five blocks are the cases whose [k / 2] bytes the tiles do not
+   divide. *)
+
+module Mem_three = (val Nx.devices (List.init 3 Nx_support.memory))
+
+let whole_scales =
+  let open Gen in
+  with_pp
+    (fun ppf (t, b, lead, cut_x) ->
+      Format.fprintf ppf "%d blocks%s over %d devices, x %s" b
+        (if lead then " behind a leading axis" else "")
+        t
+        (if cut_x then "cut along k" else "whole"))
+    (let+ t = of_list [ 2; 3; 4 ]
+     and+ b = of_list [ 1; 2; 3; 4; 5; 90 ]
+     and+ lead = bool
+     and+ cut_x = bool in
+     (t, b, lead, cut_x))
+
+(* Read where it lies, the product reads the codes where they lie where [t]
+   divides [k / 2], their bytes: the result within its bound, the same on
+   every run, whole on each device. Otherwise a block's codes are read
+   whole, which raises. *)
+let whole_scales_law (t, b, lead, cut_x) =
+  let k = b * 32 in
+  let reads = k / 2 mod t = 0 in
+  cover "tiles that divide k / 2 but not the blocks" (reads && b mod t <> 0);
+  cover "tiles that divide the blocks" (b mod t = 0);
+  cover "tiles that do not divide k / 2" (not reads);
+  cover "one block" (b = 1);
+  cover "x cut along k" cut_x;
+  let w =
+    random_weight (Array.append (if lead then [| 2 |] else [||]) [| 3; k |])
+  in
+  let codes, scales =
+    match w with
+    | Nx_quant.Mxfp4 { codes; scales } -> (codes, scales)
+    | _ -> failf "not an MXFP4 weight"
+  in
+  let r = Nx.ndim codes in
+  let x = random_floats [| 3; k |] in
+  let run (module S : Nx.Devices) =
+    let wp =
+      Nx_quant.mxfp4 ~scales:(Nx.place S.on scales)
+        (Nx.place (S.split ~axis:(r - 1)) codes)
+    in
+    let xp = Nx.place (if cut_x then S.split ~axis:1 else S.on) x in
+    let apply () = Nx_quant.apply wp xp in
+    if not reads then read_whole apply
+    else
+      let y = apply () in
+      applied ~at:f32 w x y;
+      equal ~msg:"where it lies" (placement ()) S.on (Nx.placement y);
+      equal ~msg:"a second run" (array int64) (product_bits y)
+        (product_bits (apply ()))
+  in
+  match t with
+  | 2 -> run (module Mem_two)
+  | 3 -> run (module Mem_three)
+  | _ -> run (module Mem)
+
 let placements =
   group "placement"
     [
@@ -1714,6 +1778,10 @@ let placements =
                 m3] and is read at on [m0; m1; m2; m3]; Nx.place \
                 (Placement.on s) z")
             (fun () -> Nx_quant.apply w x));
+      prop
+        "an MXFP4 weight's codes cut along k, its scales whole, apply where \
+         they lie where the tiles divide k / 2, and raise otherwise"
+        whole_scales whole_scales_law;
       cases "a weight quantised where it lies has the host's bytes"
         ~id:(fun (n, _) -> n)
         [

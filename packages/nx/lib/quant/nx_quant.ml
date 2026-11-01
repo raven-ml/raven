@@ -110,10 +110,9 @@ let shape w =
   s
 
 (* Decoding. Every format decodes at float32, from bytes split into their blocks
-   first. A split keeps a cut of [k] whose tiles divide the blocks and gathers
-   any other cut there, so the bytes move, packed, before any value is decoded:
-   the merge of the decoded blocks into rows then finds each block where it was
-   decoded, and moves no value. *)
+   first. A split keeps a cut of [k] whose tiles divide the blocks, and any
+   other raises before a value is decoded: the merge of the decoded blocks into
+   rows then finds each block where it was decoded. *)
 
 (* [split ~bytes t] is the rows [t], [[| …; n; b * bytes |]], as their blocks,
    [[| …; n; b; bytes |]]. *)
@@ -181,12 +180,13 @@ let e8m0 s =
 
 (* [follow scales] is [scales], [[| …; n; b |]], read where a split of the codes
    into groups leaves them. The split keeps a cut of [k] whose tiles divide the
-   groups and gathers any other, but scales, one byte per group, have no bytes
-   to split. Read as two nibbles each, a merge of their groups into rows and
-   back decides alike and gathers their own bytes; it is a view where they are
-   contiguous. Read where they lie, scales cut across groups that the tiles do
-   not divide would cut the decoded values, which the merge into rows would then
-   gather at float32.
+   groups, and a single group's cut along its bytes, but scales, one byte per
+   group, have no bytes to split. Read as two nibbles each, a merge of their
+   groups into rows and back keeps their cut where the tiles divide the groups
+   and refuses any other, naming the scales' place; it is a view where they
+   are contiguous. Read where they lie, scales cut where the tiles do not
+   divide the groups would cut the decoded product, and the merge into rows
+   would raise naming it in place of the scales.
 
    It exists because a checkpoint keeps the scales apart from the codes. Kept
    with their codes, as GGUF's blocks keep them, the split would carry them;
