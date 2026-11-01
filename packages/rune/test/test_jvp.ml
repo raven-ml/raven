@@ -1181,14 +1181,17 @@ let chain_words pre n =
   let run () =
     ignore (Sys.opaque_identity (Rune.jvp' f x x))
   in
+  let words () =
+    let before = Gc.minor_words () in
+    run ();
+    Gc.minor_words () -. before
+  in
   run ();
   run ();
-  let rounds = 10 in
-  let before = Gc.minor_words () in
-  for _ = 1 to rounds do
-    run ()
-  done;
-  (Gc.minor_words () -. before) /. Float.of_int rounds
+  (* The fewest of ten runs' words, which are each run's same words: an
+     allocation that is not the run's, as another thread's, adds to some runs
+     only. *)
+  List.fold_left Float.min infinity (List.init 10 (fun _ -> words ()))
 
 let test_rebuilt_chain () =
   let link pre = chain_words pre 9 -. chain_words pre 8 in
