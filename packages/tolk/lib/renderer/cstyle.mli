@@ -9,7 +9,12 @@
 
     Each renderer writes a linearized kernel as one function of its language.
     The function takes the kernel's parameters in order, each named after its
-    name, or [data] and its slot, followed by its shape: [data0_16]. Each loop
+    name, or [data] and its slot, followed by its shape: [data0_16]
+    ({!param_name}). A {!clang} or {!metal} kernel [NAME] takes them as one
+    structure instead, [struct NAME_args], whose fields are the parameters in
+    that order and by those names, each of its parameter's type, through its
+    one parameter [args], a pointer, and reads each field into a local
+    variable first. Each loop
     is a [for] loop, and each value is a local variable, unless it is used once
     and cheap to repeat, in which case it is written into its user. That holds
     only while its expression nests at most 64 brackets, counting parentheses,
@@ -41,6 +46,11 @@
     division.
 
     {!Setting.expand_ssa} gives every value a local variable. *)
+
+val param_name : Ops.t -> string
+(** [param_name p] is the name a kernel gives its parameter [p].
+
+    Raises [Invalid_argument] if [p] has no {!Ops.type-param_arg}. *)
 
 val clang : Helpers.Target.t -> Renderer.t
 (** [clang target] renders C for Clang, for a CPU. [target]'s architecture is

@@ -384,8 +384,9 @@ let scattered n =
   floats (Array.init n (fun x -> Float.sin (Float.of_int x) *. 1e3))
 
 (* The bits of [sums m k] on scattered values, launched on the host in [blocks]
-   blocks: its parameters are the addresses of out, a and b, then its loop's
-   iterations, and a call runs the iterations its threads number. *)
+   blocks: its parameters are the addresses of out, a and b, then the bounds of
+   its whole loop, [0] and [m], two int32s, and a call runs the iterations its
+   threads number. *)
 let sums_in ~blocks m k =
   let prg = Codegen.to_program (sums m k) (Lazy.force clang) in
   let elf = Device.Tiny_elf.of_program prg in
@@ -404,7 +405,8 @@ let sums_in ~blocks m k =
   let block = Rig.Submission.block s 0 in
   Rig.Submission.Run.groups run block blocks 1 1;
   Rig.Submission.Run.threads run block ((m + blocks - 1) / blocks) 1 1;
-  Rig.Submission.Run.int64 run block 24 (Int64.of_int m);
+  Rig.Submission.Run.int32 run block 24 0;
+  Rig.Submission.Run.int32 run block 28 m;
   let out = Run.buffer host Float32 (floats (Array.make m 0.)) in
   ignore
     (Rig.submit run
@@ -421,6 +423,7 @@ let sums_in ~blocks m k =
 
 let same_bits_in_any_blocks () =
   let one = sums_in ~blocks:1 512 64 in
+  not_equal ~msg:"the sums are written" (array int64) (Array.make 512 0L) one;
   List.iter
     (fun blocks ->
       equal

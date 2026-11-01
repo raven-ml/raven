@@ -1484,74 +1484,43 @@ let do_render (ren : Renderer.t) prg lin =
   Some (replace prg ~src:(src prg @ [ v Op.Source ~arg:(String source) ]))
 
 (* The host calls a program as [void f(const void *p, long long first, long long
-   end)] (rig's host code). [p] points to its parameters, in the order the
-   kernel takes them, a pointer to each buffer and each scalar but a split's
-   bounds, each aligned to its size, then for a split program the iterations of
-   the loop it splits, a [long long]. The call runs the iterations [first] to
-   [end - 1], at most the loop's last: the launch's threads number the
+   end)] (rig's host code), where [p] points to the structure of the kernel's
+   parameters that the kernel itself takes. The call runs the iterations [first]
+   to [end - 1], at most the loop's last: the launch's threads number the
    iterations. The kernel is renamed [NAME_], and [NAME] becomes the entry that
-   passes each of its parameters on, which C converts to the parameter's type.
-   The source the program keeps is the renderer's. *)
+   passes [p] on, or for a split program a copy of the structure whose bounds
+   are [first] and [end], [end] at most the iterations of the whole loop, which
+   the launch passes as its bound [hi]. The source the program keeps is the
+   renderer's. *)
 let host_entry prg lin source =
   let k = kernel_info (nth prg 0) in
   let name = function_name k in
-  let slot u = match arg u with Param p -> p.slot | _ -> assert false in
-  let bound u =
-    match k.split with
-    | Some s -> slot u = s.lo || slot u = s.hi
-    | None -> false
-  in
-  let fields = List.filter (fun u -> not (bound u)) (Shape.kernel_params prg) in
-  let field u =
-    Printf.sprintf "p->a%d" (Option.get (List.find_index (equal u) fields))
-  in
-  let pass u =
-    match k.split with
-    | Some s when slot u = s.lo -> "first"
-    | Some s when slot u = s.hi -> "end"
-    | _ -> field (List.find (fun f -> slot f = slot u) fields)
-  in
-  let ctype u =
-    if addrspace u <> Some Dtype.Alu then "void *"
-    else
-      match Dtype.itemsize (dtype u) with
-      | 1 -> "signed char "
-      | 2 -> "short "
-      | 4 -> "int "
-      | _ -> "long long "
-  in
-  let members =
-    List.mapi (fun i u -> Printf.sprintf "%sa%d;" (ctype u) i) fields
-    @ if Option.is_some k.split then [ "long long n;" ] else []
-  in
   let params = List.filter (fun u -> op u = Op.Param) (src lin) in
-  let call =
-    Printf.sprintf "%s_(%s);" name (String.concat ", " (List.map pass params))
+  let field slot =
+    Cstyle.param_name
+      (List.find
+         (fun u -> match arg u with Param p -> p.slot = slot | _ -> false)
+         params)
   in
-  let args, body =
-    match members with
-    | [] -> ("const void *p", call)
-    | _ when Option.is_some k.split ->
-        ( Printf.sprintf "const struct %s_args *p" name,
-          "if (end > p->n) end = p->n; if (first < end) " ^ call )
-    | _ -> (Printf.sprintf "const struct %s_args *p" name, call)
+  let body =
+    match k.split with
+    | None -> Printf.sprintf "%s_(p);" name
+    | Some s ->
+        let lo = field s.lo and hi = field s.hi in
+        Printf.sprintf
+          "struct %s_args a = *(const struct %s_args *)p; if (end > a.%s) end \
+           = a.%s; if (first < end) { a.%s = first; a.%s = end; %s_(&a); }"
+          name name hi hi lo hi name
   in
   String.concat "\n"
-    (Printf.sprintf "#define %s %s_" name name
-     :: source
-     :: Printf.sprintf "#undef %s" name
-     ::
-     (match members with
-     | [] -> []
-     | _ ->
-         [
-           Printf.sprintf "struct %s_args { %s };" name
-             (String.concat " " members);
-         ])
-    @ [
-        Printf.sprintf "void %s(%s, long long first, long long end) { %s }" name
-          args body;
-      ])
+    [
+      Printf.sprintf "#define %s %s_" name name;
+      source;
+      Printf.sprintf "#undef %s" name;
+      Printf.sprintf
+        "void %s(const void *p, long long first, long long end) { %s }" name
+        body;
+    ]
 
 let do_compile ((ren : Renderer.t), compile) prg source =
   let source = match arg source with String s -> s | _ -> assert false in

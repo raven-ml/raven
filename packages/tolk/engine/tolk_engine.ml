@@ -548,15 +548,6 @@ let image b dev binary =
       Hashtbl.replace b.image_of (dev, binary) i;
       i
 
-let rec split_at n l =
-  if n = 0 then ([], l)
-  else
-    match l with
-    | x :: rest ->
-        let a, rest = split_at (n - 1) rest in
-        (x :: a, rest)
-    | [] -> ([], [])
-
 type grid = Rig_program.value * Rig_program.value * Rig_program.value
 
 let one : grid = (Fixed 1, Fixed 1, Fixed 1)
@@ -630,20 +621,23 @@ let launch b call prg d =
   let dev = device_index b on in
   let image = image b dev elf.lib in
   let slot_of p = match Ops.arg p with Ops.Param p -> p.slot | _ -> -1 in
-  let bound p =
-    match k.split with
-    | Some s -> slot_of p = s.lo || slot_of p = s.hi
-    | None -> false
+  (* Its parameters, in the order the program takes them, which is the order
+     of its linear: a pointer to each buffer and each scalar, each aligned to
+     its size, as the program reads them ({!Tolk.Codegen}). A split program's
+     bounds are those of its whole loop, which its entry narrows to each
+     block's. *)
+  let taken =
+    List.filter (fun u -> Ops.op u = Op.Param) (Ops.src (Ops.nth prg 1))
   in
-  let passed =
-    List.combine (Shape.kernel_params prg)
-      (Realize.get_call_kernel_args call prg)
+  let position (p, _) =
+    Option.value (List.find_index (Ops.equal p) taken) ~default:max_int
   in
-  (* Its parameters, in the order the program takes them: a pointer to each
-     buffer and each scalar but a split's bounds, then a split loop's
-     iterations, each aligned to its size, as the program reads them
-     ({!Tolk.Codegen}). *)
-  let fields = List.filter (fun (p, _) -> not (bound p)) passed in
+  let fields =
+    List.stable_sort
+      (fun a b -> Int.compare (position a) (position b))
+      (List.combine (Shape.kernel_params prg)
+         (Realize.get_call_kernel_args call prg))
+  in
   let signature =
     List.map
       (fun (p, _) ->
@@ -657,12 +651,6 @@ let launch b call prg d =
           shape = [];
         })
       fields
-    @
-    if Option.is_some k.split then
-      [
-        { name = None; addrspace = Dtype.Alu; dtype = Dtype.Int64; shape = [] };
-      ]
-    else []
   in
   let offsets = Device.Tiny_elf.iter_sig signature in
   (* A structure's size is a multiple of its widest field's. *)
@@ -675,7 +663,6 @@ let launch b call prg d =
   in
   let params = Bytes.make (Helpers.round_up size align) '\000' in
   let holes = ref [] in
-  let fields_at, extent_at = split_at (List.length fields) offsets in
   let p = pending b dev in
   let refs =
     List.concat
@@ -693,7 +680,7 @@ let launch b call prg d =
                if List.mem (slot_of prm) info.outs then Write else Read
              in
              [ { Rig_program.slot = slot_index p (whole l); at; use } ])
-         fields fields_at)
+         fields offsets)
   in
   let groups, threads =
     match k.split with
@@ -702,12 +689,9 @@ let launch b call prg d =
         let extent =
           List.find_map
             (fun (prm, x) -> if slot_of prm = s.hi then Some (sint x) else None)
-            passed
+            fields
           |> Option.value ~default:s.iterations
         in
-        List.iter
-          (fun (at, _) -> place b params holes at 8 (affine_sint b extent))
-          extent_at;
         split_grid b extent k
     | None when host -> (one, one)
     | None ->

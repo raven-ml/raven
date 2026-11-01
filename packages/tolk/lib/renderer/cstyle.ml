@@ -76,6 +76,9 @@ type lang = {
   var_suffix : string;
   barrier : string;
   code_for_workitem : (char * (char -> string)) list;
+  args_struct_prefix : string option;
+      (* a kernel takes its parameters in one structure, through a pointer to
+         a structure of this qualifier *)
   extra_args : string list;
   float4 : string -> string; (* the constructor of a vector type *)
   float4_style : string * string;
@@ -708,6 +711,7 @@ let cstyle =
     var_suffix = "";
     barrier = "";
     code_for_workitem = [];
+    args_struct_prefix = None;
     extra_args = [];
     float4 = (fun _ -> invalid_arg "the language has no vector constructor");
     float4_style = ("(", ")");
@@ -739,6 +743,17 @@ let cstyle =
     string_rewrite = base_rewrite;
   }
 
+let param_name u =
+  match arg u with
+  | Param p ->
+      let base =
+        match p.name with
+        | Some n -> String.map (function ':' -> '_' | c -> c) n
+        | None -> strf "data%d" p.slot
+      in
+      base ^ "_" ^ String.concat "_" (List.map string_of_int (max_shape u))
+  | _ -> invalid_arg "a parameter's name needs its ParamArg"
+
 let render_kernel ?prefix l ~name kernel bufs uops =
   let buftype u =
     let alu = addrspace u = Some Dtype.Alu in
@@ -755,9 +770,24 @@ let render_kernel ?prefix l ~name kernel bufs uops =
     | _ -> []
   in
   let launch_bounds = Helpers.prod (List.concat_map local_bound uops) in
-  let params =
-    List.map (fun (n, u) -> buftype u ^ " " ^ n) bufs @ l.extra_args
+  let buftypes = List.map (fun (n, u) -> (n, buftype u)) bufs in
+  (* One structure of the parameters, which the kernel reads first. *)
+  let prefix, kernel, buftypes =
+    match l.args_struct_prefix with
+    | None -> (prefix, kernel, buftypes)
+    | Some qualifier ->
+        let field (n, u) = strf "%s %s; " (param_type l u) n in
+        let read (n, t) = strf "  %s %s = args->%s;" t n n in
+        ( Some
+            (Option.value prefix ~default:[]
+            @ [
+                strf "struct %s_args { %s};" name
+                  (String.concat "" (List.map field bufs));
+              ]),
+          List.map read buftypes @ kernel,
+          [ ("args", strf "%s struct %s_args*" qualifier name) ] )
   in
+  let params = List.map (fun (n, t) -> t ^ " " ^ n) buftypes @ l.extra_args in
   let prg =
     strf "%s %s(%s) {\n%s\n}"
       (l.kernel_typedef launch_bounds)
@@ -863,20 +893,10 @@ let render_uops ~fn_names l uops =
     | Op.After -> Tbl.replace r u ctx.%{nth u 0}
     | Op.Sink -> (
         match arg u with Kernel k -> name := function_name k | _ -> ())
-    | Op.Param -> (
-        match arg u with
-        | Param p ->
-            let base =
-              match p.name with
-              | Some n -> String.map (function ':' -> '_' | c -> c) n
-              | None -> strf "data%d" p.slot
-            in
-            let shape =
-              String.concat "_" (List.map string_of_int (max_shape u))
-            in
-            Tbl.replace r u (base ^ "_" ^ shape);
-            bufs := (base ^ "_" ^ shape, u) :: !bufs
-        | _ -> failed u)
+    | Op.Param ->
+        let n = param_name u in
+        Tbl.replace r u n;
+        bufs := (n, u) :: !bufs
     | o ->
         (* naming *)
         let prefix =
@@ -1197,6 +1217,7 @@ let clang_lang =
     float4 = (fun t -> "(" ^ t ^ ")");
     float4_style = ("{", "}");
     gep_arr_threshold = 0;
+    args_struct_prefix = Some "const";
     infinity = "__builtin_inff()";
     nan = "__builtin_nanf(\"\")";
     barrier = "__atomic_thread_fence(__ATOMIC_SEQ_CST);";
@@ -1403,9 +1424,9 @@ let metal_lang =
     barrier = "threadgroup_barrier(mem_flags::mem_threadgroup);";
     float4 = Fun.id;
     code_for_workitem = [ ('g', axis "gid"); ('l', axis "lid") ];
+    args_struct_prefix = Some "constant";
     extra_args =
       [
-        "constant args_t& args [[buffer(0)]]";
         "uint3 gid [[threadgroup_position_in_grid]]";
         "uint3 lid [[thread_position_in_threadgroup]]";
       ];
@@ -1477,24 +1498,12 @@ let metal_wmma l (name, _, dtype_in, dtype_out, _) =
       "}";
     ]
 
-(* one argument buffer: a struct of the buffer pointers and the scalars, so a
-   binding is a GPU address *)
 let metal_kernel l ~name kernel bufs uops =
-  let args =
-    List.map
-      (fun (n, u) -> (n, render_dtype l (dtype u) ~addrspace:(addrspace u)))
-      bufs
-  in
-  let fields = List.map (fun (n, t) -> strf "%s %s;" t n) args in
-  let loads = List.map (fun (n, t) -> strf "%s %s = args.%s;" t n n) args in
   let prefix =
     [ "#include <metal_stdlib>"; "using namespace metal;" ]
     @ List.map (metal_wmma l) (wmma_args uops)
-    @ [ "struct args_t { " ^ String.concat " " fields ^ " };" ]
   in
-  render_kernel l ~prefix ~name
-    (("  " ^ String.concat " " loads) :: kernel)
-    [] uops
+  render_kernel l ~prefix ~name kernel bufs uops
 
 let metal (target : Helpers.Target.t) =
   let arch = target.arch in

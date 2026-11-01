@@ -1178,11 +1178,10 @@ let programs =
                  "#define E_16_16 E_16_16_";
                  source p;
                  "#undef E_16_16";
-                 "struct E_16_16_args { void *a0; void *a1; void *a2; long \
-                  long n; };";
-                 "void E_16_16(const struct E_16_16_args *p, long long first, \
-                  long long end) { if (end > p->n) end = p->n; if (first < \
-                  end) E_16_16_(p->a0, p->a1, p->a2, first, end); }";
+                 "void E_16_16(const void *p, long long first, long long end) \
+                  { struct E_16_16_args a = *(const struct E_16_16_args *)p; \
+                  if (end > a.block_hi_) end = a.block_hi_; if (first < end) \
+                  { a.block_lo_ = first; a.block_hi_ = end; E_16_16_(&a); } }";
                ])
             (binary_of p));
       test

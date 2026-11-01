@@ -962,27 +962,27 @@ scope, see README.
 
 ## D28. A host program has rig's entry
 
-- **tinygrad:** `codegen/__init__.py:459-461` (`do_compile`: the binary is the
-  source compiled), `runtime/ops_cpu.py:48-62` (`CPUProgram.__call__` calls
-  the kernel's own signature through ctypes, every argument a `c_uint64`, in
-  the kernel's order).
+- **tinygrad:** `codegen/__init__.py:461-465` (`do_compile`: the binary is the
+  source compiled), `runtime/ops_cpu.py:43-53` (`CPUProgram.__call__`, which
+  packs the arguments at the offsets of `TinyELF.iter_sig` and calls the
+  kernel once with their address).
 - **tolk:** `Codegen.host_entry`, `Codegen.do_compile`.
 - **Differs:** a program for a CPU target is compiled from its source with
   the kernel renamed `NAME_` and an entry `NAME` appended:
-  `void NAME(const struct NAME_args *p, long long first, long long end)`. The
-  structure holds, in the order the kernel takes its parameters
-  (`Shape.kernel_params`), a pointer to each buffer and each scalar but a
-  split's bounds, each aligned to its size, then for a split program (D80)
-  the iterations of its loop. The
-  entry passes them on to the kernel, as C converts them to its parameters'
-  types, and `first` and `end`, at most the iterations, as the split's
-  bounds. The program's source is the renderer's; only its binary differs.
+  `void NAME(const void *p, long long first, long long end)`. `p` points to
+  the structure of the kernel's parameters, `struct NAME_args`, the one the
+  kernel takes, and the entry passes it on. A split program (D80) reads its
+  bounds from the structure, where a launch passes those of the whole loop,
+  `0` and its iterations; its entry runs the iterations `first` to `end - 1`,
+  `end` at most the iterations, through a copy of the structure that holds
+  `first` and `end` as its bounds. The program's source is the renderer's;
+  only its binary differs.
 - **Reason:** (c). rig's host calls a function of linked code with one ABI,
   `void f(const void *params, int64_t first, int64_t end)`, places each
   buffer's address among the parameters, and names a submission's span after
-  the entry. The entry keeps the kernel's name in profiles, and passes each
-  scalar at its own type: an Apple arm64 stack argument of 32 bits takes 4
-  bytes, where ctypes' `c_uint64` would take 8.
+  the entry. It runs a launch's blocks of threads on several cores at once,
+  each call with its own `first` and `end`, which the parameters every call
+  shares cannot hold. The entry keeps the kernel's name in profiles.
 - **Pinned by:** the `Codegen` suite, `programs › a host program's binary
   holds rig's host entry after the kernel` and `› a host program runs as a
   launch of rig's host, with ten scalars past the argument registers`; the
