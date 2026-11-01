@@ -11,10 +11,12 @@ type ('u, 'f, 'd) state = private {
   likelihood : (float, 'f, 'd) Nx.t;
   rank : (float, 'f, 'd) Nx.t;
   lineage : 'd Nx.int32_t;
+  born : 'd Nx.int32_t;
   dead : 'u;
   dead_likelihood : (float, 'f, 'd) Nx.t;
   shrinkage : (float, 'f, 'd) Nx.t;
   dead_lineage : 'd Nx.int32_t;
+  dead_born : 'd Nx.int32_t;
   deaths : 'd Nx.int32_t;
   log_volume : (float, 'f, 'd) Nx.t;
   log_evidence : (float, 'f, 'd) Nx.t;

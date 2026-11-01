@@ -174,6 +174,50 @@ let runs_and_refusals =
       posterior;
     ]
 
+(* Expectations: the particles are [M] chains of equal mass, so
+   [effective_groups] is [M], and x's error is the variance between chains,
+   [M / (M - 1) Σ_g (m_g - m)² / M²] for chain means [m_g], its root widened
+   by [t / 1.96], [t] the 0.975 quantile of Student's t with [M - 1] degrees
+   of freedom: 12.706205 at one, 2.063899 at 24, to their seven digits. *)
+let between_chains =
+  cases "an expectation's error is the variance between chains, widened"
+    ~id:(fun (m, _) -> Printf.sprintf "%d chains" m)
+    [ (2, 12.706205); (25, 2.063899) ]
+    (fun (m, t975) ->
+      let k = Nx.Rng.key 81 in
+      let z =
+        Norn.Smc.run t ~resampled:m ~budget ~prior:conjugate.prior
+          ~likelihood:conjugate.likelihood (Nx.Rng.fold_in k 0)
+          (conjugate.draw (Nx.Rng.fold_in k 1) particles)
+      in
+      equal (float 1e-9) ~msg:"effective groups" (float_of_int m)
+        (Nx.item [] (Norn.Evidence.effective_groups z));
+      let x =
+        Nx.to_array (Nx.reshape [| -1 |] (Norn.Evidence.sample z).values)
+      in
+      let n = Array.length x in
+      let mean = Array.fold_left ( +. ) 0. x /. float_of_int n in
+      let between = ref 0. in
+      for g = 0 to m - 1 do
+        let s = ref 0. and c = ref 0 in
+        Array.iteri
+          (fun i v ->
+            if i mod m = g then begin
+              s := !s +. v;
+              incr c
+            end)
+          x;
+        let d = (!s /. float_of_int !c) -. mean in
+        between := !between +. (d *. d)
+      done;
+      let mf = float_of_int m in
+      let sd = Float.sqrt (mf /. (mf -. 1.) *. !between /. (mf *. mf)) in
+      let e, err = Norn.Evidence.expectation t Fun.id z in
+      equal (float 1e-9) ~msg:"the mean" mean (Nx.item [ 0 ] e);
+      equal
+        (float (2e-6 *. sd *. t975))
+        ~msg:"the error" (sd *. t975 /. 1.959963984540054) (Nx.item [ 0 ] err))
+
 let () =
   exit
     (run "Norn.Smc"
@@ -181,4 +225,5 @@ let () =
          runs_and_refusals;
          group "init" [ chains ];
          group "evidence" (List.map law_13 [ conjugate; gaussian; mixture ]);
+         group "expectations" [ between_chains ];
        ])

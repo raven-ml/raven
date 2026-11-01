@@ -49,6 +49,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Evidence.expectation`'s nested-sampling error, which counted the volumes'
+  noise twice, comes from runs resampled by lineage, and each error widens by
+  Student's t over the new `Evidence.effective_groups`.
 - Add `Dist.von_mises`, `Dist.lkj_cholesky`, `Dist.truncated` and `Dist.hmm`,
   a hidden Markov model's observations with its states summed out.
 - `Dist.membership` replaces `Dist.mixture_membership` and gives an HMM's

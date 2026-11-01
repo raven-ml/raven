@@ -71,6 +71,47 @@ let mixture =
     log_z = -.log_volume;
   }
 
+(* A banana: x1 ~ N(0, 1) and x2 ~ N(x1², 0.1²), under the uniform prior on
+   [-4, 4] × [-2, 18]. The box holds x2's mass at every x1 inside it, so [Z] is
+   [P(|x1| <= 4)] over the box's volume, 160, and x1's posterior is the standard
+   normal cut to [-4, 4]. A slice move follows its curved ridge slowly, so a
+   replacement stays correlated with the point it starts from. *)
+let banana =
+  let lo = Nx.create Nx.float64 [| 1; 2 |] [| -4.; -2. |]
+  and hi = Nx.create Nx.float64 [| 1; 2 |] [| 4.; 18. |] in
+  let log_volume = Float.log 160. in
+  let prior x =
+    let inside =
+      Nx.logical_and
+        (Nx.all ~axes:[ 1 ] (Nx.greater_equal x lo))
+        (Nx.all ~axes:[ 1 ] (Nx.less_equal x hi))
+    in
+    Nx.where inside
+      (Nx.full Nx.float64 [| rows x |] (-.log_volume))
+      (Nx.full Nx.float64 [| rows x |] Float.neg_infinity)
+  in
+  let width = 0.1 in
+  let likelihood x =
+    let x1 = Nx.slice [ Nx.A; Nx.I 0 ] x and x2 = Nx.slice [ Nx.A; Nx.I 1 ] x in
+    let r = Nx.div_s (Nx.sub x2 (Nx.square x1)) width in
+    Nx.sub_s
+      (Nx.mul_s (Nx.add (Nx.square x1) (Nx.square r)) (-0.5))
+      (Float.log (2. *. Float.pi *. width))
+  in
+  let draw k n =
+    Nx.add lo
+      (Nx.mul (Nx.sub hi lo) (Nx.Rng.uniform ~key:k Nx.float64 [| n; 2 |]))
+  in
+  (* P(|x1| <= 4) = 1 - erfc (4 / sqrt 2). *)
+  let inside = 1. -. Float.erfc (4. /. Float.sqrt 2.) in
+  {
+    name = "a banana";
+    prior;
+    likelihood;
+    draw;
+    log_z = Float.log inside -. log_volume;
+  }
+
 (* x ~ N(0, 1), y_i ~ N(x, 1) for the five points y: marginally y ~ N(0, I + 1
    1ᵀ), whose log density is the evidence. *)
 let conjugate =

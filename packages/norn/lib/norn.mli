@@ -1674,15 +1674,36 @@ module Evidence : sig
     (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t
   (** [expectation u f z] is the posterior expectation of [f], a map of one draw
       to a tensor, under [z]'s {!sample}, and its standard error, element by
-      element. The error counts the noise of the weights over the shrinkage
-      sequences {!error} simulates, and the sampling error of the draws in
-      independent groups: for nested sampling the draws that descend from one
-      starting point ({!Norn.Nested.type-state}'s [lineage]), for tempering each
-      chain. It under-covers when slice moves leave the draws within a
-      replacement correlated: by 1.5 to 1.9 times on a hierarchical posterior's
-      hyperparameters. For an error to trust on a hard posterior, run
-      independent replicates and take their spread. [f] runs under
-      {!Rune.val-vmap}, once for all draws. *)
+      element. [f] runs under {!Rune.val-vmap}, once for all draws.
+
+      The error starts from a standard deviation. For tempering it is the
+      variance between [M] chains, with its factor [M / (M - 1)]. For nested
+      sampling it is the spread of the expectation over 100 runs resampled by
+      lineage, the draws that descend from one starting point
+      ({!Norn.Nested.type-state}'s [lineage]) taken together, each resample's
+      volumes recomputed from the draws it holds: slice moves correlate a
+      replacement with the point it starts from, and the resampling keeps those
+      draws together. This construction is our own and its calibration is
+      measured, not proven; 100 resamples leave the standard deviation about 7%
+      Monte Carlo error.
+
+      A spread over resampled lineages is scaled by [K / (K - 1)], [K] the
+      {!effective_groups}, the small-sample factor the variance between groups
+      carries (Cameron and Miller 2015, §VI). The error is the standard
+      deviation times [t / 1.96], [t] the 0.975 quantile of Student's t with
+      [K - 1] degrees of freedom, so [± 1.96] errors is the 95% interval of
+      that t pivot; [K - 1] degrees of freedom is a heuristic for groups of
+      unequal mass. At [K <= 1] the error is [inf]. A small [K] means few
+      groups carry the posterior and the interval is wide: for nested
+      sampling, double the live points until [K] is large, as Lee and Whiteley
+      (2018, §6.2) double a particle filter's particles until its estimated
+      variance is small enough. *)
+
+  val effective_groups : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
+  (** [effective_groups z] is [K = (Σ_g W_g)² / Σ_g W_g²], a scalar, [W_g] the
+      posterior mass of the independent group [g]: nested sampling's lineages,
+      tempering's chains. It is [1] when one group carries the whole sample and
+      the number of groups when they carry equal mass. *)
 
   (** {1:stop Why a run stopped} *)
 
@@ -1741,7 +1762,8 @@ module Nested : sig
       run stops and adds them as dead points with their order statistics'
       volumes, the highest taking all the volume left. {!Evidence.error} is the
       spread of [ln Z] over 100 simulated shrinkage sequences; [sqrt (H / n)]
-      (Skilling 2006) is its limit at a constant count.
+      (Skilling 2006) is its limit at a constant count. {!Evidence.expectation}
+      says how an expectation's error is resampled by lineage.
 
       {b Densities.} [prior] and [likelihood] are densities over positions of
       the same structure, evaluated on the [batch] points being replaced. The
@@ -1760,6 +1782,8 @@ module Nested : sig
     lineage : 'd Nx.int32_t;
         (** The starting point each descends from, by the slice moves that
             replaced its ancestors: an index of the initial live points. *)
+    born : 'd Nx.int32_t;
+        (** The number of dead points when each was drawn. *)
     dead : 'u;
         (** The dead points, lowest first, on a leading axis of
             [budget * batch]; the rows past [deaths] are padding. *)
@@ -1768,6 +1792,8 @@ module Nested : sig
     shrinkage : (float, 'f, 'd) Nx.t;
         (** The expected fall in [ln X] at each, [0] in the padding. *)
     dead_lineage : 'd Nx.int32_t;  (** Their lineages. *)
+    dead_born : 'd Nx.int32_t;
+        (** The number of dead points when each was drawn. *)
     deaths : 'd Nx.int32_t;  (** The number of dead points. *)
     log_volume : (float, 'f, 'd) Nx.t;  (** The expected [ln X] left. *)
     log_evidence : (float, 'f, 'd) Nx.t;  (** [ln Z] of the dead points. *)
@@ -1818,7 +1844,8 @@ module Nested : sig
   val evidence :
     ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> ('u, 'f, 'd) state -> ('u, 'f, 'd) Evidence.t
   (** [evidence u k s] is the evidence of the dead points of [s] and of its live
-      points added as dead, [k] simulating the shrinkage sequences of its error.
+      points added as dead, [k] simulating the shrinkage sequences of its error
+      and resampling its lineages.
       Its {!Evidence.sample} is every dead point, padding included at weight
       zero, and its {!Evidence.val-stop} is [Converged], or [Remaining r] if the
       live points could still add [r] nats, the tolerance or more, to [ln Z]. *)
@@ -1898,7 +1925,9 @@ module Smc : sig
     | Slice  (** Hit-and-run slice steps; no derivative. *)
 
   type ('u, 'f, 'd) state = private {
-    particles : 'u;  (** The particles, on a leading axis of [N]. *)
+    particles : 'u;
+        (** The particles, on a leading axis of [N]: particle [i] is state
+            [i / M] of chain [i mod M]. *)
     prior : (float, 'f, 'd) Nx.t;  (** Their prior log densities, shape [[N]]. *)
     likelihood : (float, 'f, 'd) Nx.t;  (** Their log likelihoods. *)
     beta : (float, 'f, 'd) Nx.t;  (** The temperature, a scalar in [[0, 1]]. *)

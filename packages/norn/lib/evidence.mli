@@ -16,6 +16,8 @@ val information : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
 
 val sample : ('u, 'f, 'd) t -> ('u, 'f, 'd) Weighted.t
 
+val effective_groups : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
+
 val expectation :
   ('u, 'd) Nx.Ptree.t ->
   ('u -> (float, 'f, 'd) Nx.t) ->
@@ -64,8 +66,9 @@ val v :
     [stop] says, {!converged}, {!remaining} or {!temperature}, the latter two
     with the payload [reached], a scalar. [sample]'s log weights must
     be normalised. [replicates], of shape [[r; n]] for [n] draws, holds the
-    sample's normalised log weights under each of [r] simulated shrinkage
-    sequences, or [sample]'s own log weights as one row. [groups] gives each
-    draw its group, from [0] to [group_count - 1]: draws of one group may be
-    correlated, draws of two are independent. {!expectation} reads
-    [replicates] and [groups]. *)
+    sample's normalised log weights in each of [r] resampled runs, or
+    [sample]'s own log weights as one row. [groups] gives each draw its group,
+    from [0] to [group_count - 1]: draws of one group may be correlated, draws
+    of two are independent. {!expectation}'s variance is the spread over
+    [replicates] when they have more than one row, else the variance between
+    [groups]; [groups] also give {!effective_groups}. *)

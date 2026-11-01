@@ -288,9 +288,6 @@ raven / llama.cpp (Vulkan; ROCm):
   HMC's ~110 µs on the same density (machine unstated). Only compiled
   rows exist (nuts/schools/64 3.44 ms, M1 Max). Add an eager row, measure
   on fudge, profile the bookkeeping
-- Nested: slice moves correlate draws within a replacement, so its error
-  under-covers 1.5-1.9x on gp_pois_regr (documented in
-  `Evidence.expectation`, still a biased error)
 
 ## talon, hugin, brot, munin, quill
 
