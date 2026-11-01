@@ -337,7 +337,7 @@ let run o r =
       (Nodes.to_list (backward_slice_with_self ~calls:Skip o))
   in
   let divisor u =
-    if op u = Op.Floordiv && op (nth u 1) = Op.Const then
+    if op u = Op.Div && op (nth u 1) = Op.Const then
       known_size (Sym (nth u 1))
     else None
   in

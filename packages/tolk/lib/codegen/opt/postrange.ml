@@ -413,7 +413,7 @@ module Scheduler = struct
         (Nodes.to_list (backward_slice_with_self ~calls:Skip u))
     in
     let tile x =
-      op x = Op.Floordiv
+      op x = Op.Div
       && op (nth x 1) = Op.Const
       &&
       match value (nth x 1) with
@@ -536,7 +536,7 @@ module Scheduler = struct
              zero traps on x86 even in a lane no store keeps. *)
           let pad_division u =
             match (op u, src u) with
-            | (Op.Cdiv | Cmod | Floordiv | Floormod), [ a; d ]
+            | (Op.Truncdiv | Truncmod | Div | Mod), [ a; d ]
               when Dtype.is_int (dtype u) && mem_ranges rng d ->
                 let one = const (Dtype.const (dtype d) (`Int Bigint.one)) in
                 [ (u, replace u ~src:[ a; where valid_ d one ]) ]

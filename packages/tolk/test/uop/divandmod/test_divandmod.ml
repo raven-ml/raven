@@ -223,7 +223,7 @@ let rewritten_alone d = Option.value (rewrite d) ~default:d
    variable is bound as [env] says. *)
 let divides_by_zero env d =
   let by_zero u =
-    (Ops.op u = Op.Floordiv || Ops.op u = Op.Floormod)
+    (Ops.op u = Op.Div || Ops.op u = Op.Mod)
     && Dtype.equal_const (Interpreter.eval ~vars:env (Ops.nth u 1)) (i 0)
   in
   List.exists by_zero (Ops.toposort ~calls:Enter d)

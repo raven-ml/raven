@@ -35,7 +35,7 @@ let pm_flatten_range =
    rewrites. *)
 let count_divmod x =
   Nodes.fold
-    (fun u n -> if op u = Op.Floordiv || op u = Op.Floormod then n + 1 else n)
+    (fun u n -> if op u = Op.Div || op u = Op.Mod then n + 1 else n)
     (backward_slice ~calls:Skip x)
     0
 

@@ -38,14 +38,14 @@ val threefry2x32 : Ops.t -> Ops.t -> Ops.t
 
 val simplifying_patterns : Op.Set.t -> (unit, Ops.t) Ops.Pattern_matcher.t
 (** [simplifying_patterns ops] lowers, for a target with the operations [ops]:
-    - a floor division ({!Op.Floordiv}) of an integer by a power of two, read
+    - a floor division ({!Op.Div}) of an integer by a power of two, read
       in the integer's type, to a right shift if [ops] has {!Op.Shr}, and any
-      other to a truncating division ({!Op.Cdiv}), corrected where the
+      other to a truncating division ({!Op.Truncdiv}), corrected where the
       operands' signs can differ;
-    - a floor remainder ({!Op.Floormod}) of an integer by a power of two, read
+    - a floor remainder ({!Op.Mod}) of an integer by a power of two, read
       in the integer's type, to a mask if [ops] has {!Op.And}, and any other to
-      a truncating remainder ({!Op.Cmod}), corrected where the operands' signs
-      can differ;
+      a truncating remainder ({!Op.Truncmod}), corrected where the operands'
+      signs can differ;
     - {!Op.Threefry} to {!threefry2x32} if [ops] lacks it.
 
     A division or remainder of a committed integer reads a weak constant

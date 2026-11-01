@@ -118,7 +118,7 @@ let defined env u =
   List.for_all
     (fun n ->
       match Ops.op n with
-      | Floordiv | Floormod | Cdiv | Cmod -> (
+      | Div | Mod | Truncdiv | Truncmod -> (
           match Interpreter.eval ~vars:env (Ops.nth n 1) with
           | `Int d -> not (Bigint.equal d Bigint.zero)
           | _ -> true)

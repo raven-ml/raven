@@ -98,7 +98,7 @@ let pm_commit_weak =
         (Ops.cast Ops.O.(weak + int 1) Weak_float);
       commit "cast_commits_operands_at_their_own_bounds"
         (Ops.cast
-           (Ops.v Op.Cdiv ~src:[ var "n" 0 (pow2 40); int (pow2 40) ])
+           (Ops.v Op.Truncdiv ~src:[ var "n" 0 (pow2 40); int (pow2 40) ])
            Int32);
       commit ~default_float:"half" "cast_anchors_a_mixed_expression_at_the_cast"
         (Ops.cast Ops.O.(i32 1 + float 1.0) Float32);

@@ -21,12 +21,12 @@ let variables = List.map (fun name -> (name, var name 0 9)) [ "a"; "b"; "c" ]
 let symbols =
   Op.
     [
-      ("//", Floordiv);
+      ("//", Div);
       ("<<", Shl);
       (">>", Shr);
       ("!=", Cmpne);
       ("*", Mul);
-      ("%", Floormod);
+      ("%", Mod);
       ("+", Add);
       ("-", Sub);
       ("&", And);
@@ -45,7 +45,7 @@ let levels =
       [ And ];
       [ Shl; Shr ];
       [ Add; Sub ];
-      [ Mul; Floordiv; Floormod ];
+      [ Mul; Div; Mod ];
     ]
 
 (* [parse s] is the tree of binary operations over [variables] and integer
@@ -127,7 +127,7 @@ let rec integer depth =
         (1, leaf);
         ( 3,
           binary
-            Op.[ Add; Sub; Mul; Floordiv; Floormod; Shl; Shr; And; Or; Xor ]
+            Op.[ Add; Sub; Mul; Div; Mod; Shl; Shr; And; Or; Xor ]
             (integer (depth - 1)) );
       ]
 

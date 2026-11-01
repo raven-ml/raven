@@ -114,7 +114,7 @@ def cast_to_a_weak_type_commits_nothing():
 
 @graph
 def cast_commits_operands_at_their_own_bounds():
-    quotient = UOp(Ops.CDIV, src=(UOp.variable("n", 0, 2**40), UOp.const(2**40)))
+    quotient = UOp(Ops.TRUNCDIV, src=(UOp.variable("n", 0, 2**40), UOp.const(2**40)))
     return rewritten(quotient.cast(dtypes.int32), pm_commit_weak)
 
 

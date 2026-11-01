@@ -892,7 +892,7 @@ module type Elementwise = sig
       [bitwise_xor], [shl] and [shr] are {!Op.Add}, {!Op.Mul}, {!Op.Cmplt},
       {!Op.Cmpne}, {!Op.Max}, {!Op.And}, {!Op.Or}, {!Op.Xor}, {!Op.Shl} and
       {!Op.Shr} of their promoted operands. [reciprocal], [trunc], [sqrt],
-      [exp2] and [log2] are {!Op.Reciprocal}, {!Op.Trunc}, {!Op.Sqrt},
+      [exp2] and [log2] are {!Op.Recip}, {!Op.Trunc}, {!Op.Sqrt},
       {!Op.Exp2} and {!Op.Log2} of their operand. The others are built from
       these. *)
 
@@ -919,7 +919,7 @@ module type Elementwise = sig
   (** [neg x] is [logical_not x] for booleans and [x * -1] otherwise. *)
 
   val div : ?rounding:[ `Trunc | `Floor ] -> t -> t -> t
-  (** [div ~rounding x y] divides integers by {!Op.Cdiv} or {!Op.Floordiv} when
+  (** [div ~rounding x y] divides integers by {!Op.Truncdiv} or {!Op.Div} when
       rounding; otherwise it multiplies [x], as a float, by [y]'s reciprocal,
       then rounds as asked. *)
 
@@ -1143,8 +1143,8 @@ module Upat : sig
   include Elementwise with type t := t
   (** Commutative operations match their operands in either order, and the
       literals of {!O} match constants of any type ({!cvar}). [cast p dt] is [p]
-      if [p] requires exactly [dt]. [//] and [%] match {!Op.Floordiv} and
-      {!Op.Floormod}. *)
+      if [p] requires exactly [dt]. [//] and [%] match {!Op.Div} and
+      {!Op.Mod}. *)
 
   include module type of O
   (** The operators are also at the top, so that [Upat.(var "x" + cvar "c")]

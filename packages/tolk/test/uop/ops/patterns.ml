@@ -428,11 +428,11 @@ let elementwise_patterns =
         (fun () ->
           let a = var "a" 0 10 and b = var "b" 1 10 in
           is_true
-            (matches P.(P.var "x" // P.var "y") (Ops.alu a Op.Floordiv [ b ]));
+            (matches P.(P.var "x" // P.var "y") (Ops.alu a Op.Div [ b ]));
           is_true
-            (matches P.(P.var "x" % P.var "y") (Ops.alu a Op.Floormod [ b ]));
+            (matches P.(P.var "x" % P.var "y") (Ops.alu a Op.Mod [ b ]));
           is_false
-            (matches P.(P.var "x" // P.var "y") (Ops.alu a Op.Cdiv [ b ])));
+            (matches P.(P.var "x" // P.var "y") (Ops.alu a Op.Truncdiv [ b ])));
       test "the pattern operators are the named pattern operations" (fun () ->
           let a = var "a" 0 10 and b = var "b" 1 10 in
           let both p q u = equal bool (matches p u) (matches q u) in

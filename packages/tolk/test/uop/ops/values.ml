@@ -50,10 +50,10 @@ let binary_ops =
       Add;
       Sub;
       Mul;
-      Cdiv;
-      Cmod;
-      Floordiv;
-      Floormod;
+      Truncdiv;
+      Truncmod;
+      Div;
+      Mod;
       Max;
       Xor;
       Or;
@@ -159,7 +159,7 @@ let exec_alu =
       prop "truncating is Dtype.truncate of the exact result"
         (Gen.triple gen_int_dtype
            (Gen.of_list ~pp:Op.pp
-              Op.[ Add; Sub; Mul; Cdiv; Floordiv; Floormod; Xor; And; Or; Max ])
+              Op.[ Add; Sub; Mul; Truncdiv; Div; Mod; Xor; And; Or; Max ])
            (Gen.pair gen_int gen_int))
         (fun (dt, o, (a, b)) ->
           match exact dt o [ a; b ] with
@@ -185,8 +185,8 @@ let exec_alu =
       prop "truncated division and remainder recompose the dividend"
         (Gen.pair gen_int gen_int) (fun (a, b) ->
           assume (b <> `Int Bigint.zero);
-          let q = exact Weak_int Op.Cdiv [ a; b ]
-          and r = exact Weak_int Op.Cmod [ a; b ] in
+          let q = exact Weak_int Op.Truncdiv [ a; b ]
+          and r = exact Weak_int Op.Truncmod [ a; b ] in
           equal const a
             (exact Weak_int Op.Add [ exact Weak_int Op.Mul [ q; b ]; r ]));
       prop
@@ -194,8 +194,8 @@ let exec_alu =
          signed as the divisor"
         (Gen.pair gen_int gen_int) (fun (a, b) ->
           assume (b <> `Int Bigint.zero);
-          let q = exact Weak_int Op.Floordiv [ a; b ]
-          and r = exact Weak_int Op.Floormod [ a; b ] in
+          let q = exact Weak_int Op.Div [ a; b ]
+          and r = exact Weak_int Op.Mod [ a; b ] in
           equal const a
             (exact Weak_int Op.Add [ exact Weak_int Op.Mul [ q; b ]; r ]);
           match (r, b) with
@@ -209,7 +209,7 @@ let exec_alu =
                 (alu Weak_float o [ f 1.; f 0. ]);
               equal ~msg:(str Op.pp o) const (f 0.)
                 (alu Float32 o [ f 1.; f 0. ]))
-            Op.[ Cdiv; Floordiv ]);
+            Op.[ Truncdiv; Div ]);
       test "a void result is not truncated" (fun () ->
           equal const (i 3) (alu Void Op.Add [ i 1; i 2 ]));
       test "division by zero is zero" (fun () ->
@@ -217,7 +217,7 @@ let exec_alu =
             (fun o ->
               equal ~msg:(str Op.pp o) const (i 0)
                 (exact Weak_int o [ i 7; i 0 ]))
-            Op.[ Cdiv; Floordiv ]);
+            Op.[ Truncdiv; Div ]);
     ]
 
 (* Bounds *)
@@ -1119,11 +1119,11 @@ let inference =
           equal int 2 (Shape.sym_infer (Sym Ops.O.(n % int 3)) [ ("n", -7) ]);
           equal int (-2)
             (Shape.sym_infer
-               (Sym (Ops.alu n Op.Cdiv [ Ops.int 3 ]))
+               (Sym (Ops.alu n Op.Truncdiv [ Ops.int 3 ]))
                [ ("n", -7) ]);
           equal int (-1)
             (Shape.sym_infer
-               (Sym (Ops.alu n Op.Cmod [ Ops.int 3 ]))
+               (Sym (Ops.alu n Op.Truncmod [ Ops.int 3 ]))
                [ ("n", -7) ]));
       test "a cast converts without truncating to a width" (fun () ->
           let n = weak_var "n" (-1000) 1000 in
@@ -1163,8 +1163,8 @@ let rec expression ?(constants = small_constants) a b depth =
       | 2 -> Ops.O.(x * y)
       | 3 -> Ops.O.(x // y)
       | 4 -> Ops.O.(x % y)
-      | 5 -> Ops.alu x Op.Cdiv [ y ]
-      | 6 -> Ops.alu x Op.Cmod [ y ]
+      | 5 -> Ops.alu x Op.Truncdiv [ y ]
+      | 6 -> Ops.alu x Op.Truncmod [ y ]
       | 7 -> Ops.alu x Op.Max [ y ]
       | _ -> Ops.O.(-x)
     in
@@ -1260,7 +1260,7 @@ let exactly =
     ("min_int subtracted", b - a - int 1, min_int, 0, max_int);
     ("min_int divided, floored", a // b, min_int, 3, floor_third_of_min_int);
     ( "min_int divided toward zero",
-      Ops.alu a Op.Cdiv [ b ],
+      Ops.alu a Op.Truncdiv [ b ],
       min_int,
       3,
       Int.div min_int 3 );

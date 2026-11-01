@@ -322,8 +322,8 @@ let constants =
           folds_to Ops.O.(nan <> nan) (Ops.bool true);
           folds_to Ops.O.(nan < nan) (Ops.bool false));
       test "a truncating division of constants rounds toward zero" (fun () ->
-          let tdiv x y = Ops.alu (Ops.int x) Cdiv [ Ops.int y ] in
-          let tmod x y = Ops.alu (Ops.int x) Cmod [ Ops.int y ] in
+          let tdiv x y = Ops.alu (Ops.int x) Truncdiv [ Ops.int y ] in
+          let tmod x y = Ops.alu (Ops.int x) Truncmod [ Ops.int y ] in
           folds_to (tdiv 7 (-3)) (Ops.int (-2));
           folds_to (tdiv (-50) 6) (Ops.int (-8));
           folds_to (tmod 5 (-3)) (Ops.int 2));
@@ -345,8 +345,8 @@ let constants =
       test "a division of constants by zero is 0, a remainder the dividend"
         (fun () ->
           folds_to Ops.O.(int 7 // int 0) (Ops.int 0);
-          folds_to (Ops.alu (Ops.int 7) Cdiv [ Ops.int 0 ]) (Ops.int 0);
-          folds_to (Ops.alu (Ops.int 7) Cmod [ Ops.int 0 ]) (Ops.int 7);
+          folds_to (Ops.alu (Ops.int 7) Truncdiv [ Ops.int 0 ]) (Ops.int 0);
+          folds_to (Ops.alu (Ops.int 7) Truncmod [ Ops.int 0 ]) (Ops.int 7);
           folds_to Ops.O.(int 7 % int 0) (Ops.int 7));
       test "a where, a comparison and a negation of stacks fold lane by lane"
         (fun () ->

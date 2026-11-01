@@ -459,7 +459,7 @@ let dtype_of op src arg =
   | Op.Copy | Op.Stage | Op.Detach | Op.Special | Op.End ->
       (first op src).dtype
   | Op.Cmplt | Op.Cmpne | Op.Cmpeq -> Dtype.Bool
-  | Op.Sin | Op.Log2 | Op.Exp2 | Op.Sqrt | Op.Reciprocal ->
+  | Op.Sin | Op.Log2 | Op.Exp2 | Op.Sqrt | Op.Recip ->
       let x = first op src in
       if is_const_invalid (base x) then Dtype.Bool
       else Dtype.least_upper_float x.dtype
@@ -1128,7 +1128,7 @@ module type Elementwise_base = sig
   (* The operands of a binary operation, promoted. *)
 
   val direct_floor : bool
-  (* Whether [//] and [%] are FLOORDIV and FLOORMOD whatever the operands'
+  (* Whether [//] and [%] are DIV and MOD whatever the operands'
      types. *)
 end
 
@@ -1158,7 +1158,7 @@ module Make_elementwise (B : Elementwise_base) = struct
     let a, b = broadcasted x y in
     alu a Op.Add [ neg b ]
 
-  let reciprocal x = alu x Op.Reciprocal []
+  let reciprocal x = alu x Op.Recip []
   let trunc x = alu x Op.Trunc []
   let sqrt x = alu x Op.Sqrt []
   let exp2 x = alu x Op.Exp2 []
@@ -1181,8 +1181,8 @@ module Make_elementwise (B : Elementwise_base) = struct
     let a, b = broadcasted x y in
     let ints = Dtype.is_int (dtype a) && Dtype.is_int (dtype b) in
     match rounding with
-    | Some `Trunc when ints -> alu a Op.Cdiv [ b ]
-    | Some `Floor when ints -> alu a Op.Floordiv [ b ]
+    | Some `Trunc when ints -> alu a Op.Truncdiv [ b ]
+    | Some `Floor when ints -> alu a Op.Div [ b ]
     | _ -> (
         let a =
           if Dtype.is_int (dtype a) || Dtype.equal (dtype a) Dtype.Bool then
@@ -1201,10 +1201,10 @@ module Make_elementwise (B : Elementwise_base) = struct
     else sub a (mul (div ~rounding a b) b)
 
   let mod_ x y =
-    if direct_floor then binop Op.Floormod x y
-    else remainder Op.Floormod `Floor x y
+    if direct_floor then binop Op.Mod x y
+    else remainder Op.Mod `Floor x y
 
-  let fmod x y = remainder Op.Cmod `Trunc x y
+  let fmod x y = remainder Op.Truncmod `Trunc x y
 
   let pow x y =
     let base, exponent = broadcasted x y in
@@ -1258,7 +1258,7 @@ module Make_elementwise (B : Elementwise_base) = struct
     let ( / ) x y = div x y
 
     let ( // ) x y =
-      if direct_floor then binop Op.Floordiv x y else div ~rounding:`Floor x y
+      if direct_floor then binop Op.Div x y else div ~rounding:`Floor x y
 
     let ( % ) = mod_
     let ( ~- ) = neg
@@ -1648,7 +1648,7 @@ and binary_bounds u (s0_min, s0_max) (s1_min, s1_max) =
   | Op.Shr when c1 && ints [ s0_min; s0_max; s1_min ] && le zero s1_min ->
       let k = Bigint.to_int (z s1_min) in
       Some (`Int (Bigint.shift_right (z s0_min) k), `Int (Bigint.shift_right (z s0_max) k))
-  | Op.Cmod when c1 && lt zero s1_max ->
+  | Op.Truncmod when c1 && lt zero s1_max ->
       let c = s1_min in
       Some
         ( (if lt zero s0_min then zero
@@ -1657,33 +1657,33 @@ and binary_bounds u (s0_min, s0_max) (s1_min, s1_max) =
           if lt s0_max zero then zero
           else if lt s0_max c then s0_max
           else sub c (`Int Bigint.one) )
-  | Op.Cmod when lt zero s1_min ->
+  | Op.Truncmod when lt zero s1_min ->
       let m = sub s1_max (`Int Bigint.one) in
       Some
         (if le zero s0_min then (zero, m)
          else if le s0_max zero then (neg m, zero)
          else (neg m, m))
-  | Op.Cmod when lt s1_max zero ->
+  | Op.Truncmod when lt s1_max zero ->
       let m = sub (neg s1_min) (`Int Bigint.one) in
       Some
         (if le zero s0_min then (zero, m)
          else if le s0_max zero then (neg m, zero)
          else (neg m, m))
-  | Op.Cdiv when Bigint.gt (Bigint.mul (z s1_min) (z s1_max)) Bigint.zero ->
+  | Op.Truncdiv when Bigint.gt (Bigint.mul (z s1_min) (z s1_max)) Bigint.zero ->
       let d a b = divide `Quotient ~toward_zero:true a b in
       corners d
-  | (Op.Floordiv | Op.Floormod) when lt s0_max s0_min -> Some (zero, zero)
-  | Op.Floordiv when Bigint.gt (Bigint.mul (z s1_min) (z s1_max)) Bigint.zero ->
+  | (Op.Div | Op.Mod) when lt s0_max s0_min -> Some (zero, zero)
+  | Op.Div when Bigint.gt (Bigint.mul (z s1_min) (z s1_max)) Bigint.zero ->
       let d a b = Value.(a // b) in
       corners d
-  | Op.Floormod when c1 && not (Bigint.equal (z s1_min) Bigint.zero) ->
+  | Op.Mod when c1 && not (Bigint.equal (z s1_min) Bigint.zero) ->
       let c = s1_min in
       if Value.(s0_min // c = s0_max // c) then
         Some (Value.(s0_min % c), Value.(s0_max % c))
       else if lt zero c then Some (zero, sub c (`Int Bigint.one))
       else Some (add c (`Int Bigint.one), zero)
-  | Op.Floormod when lt zero s1_min -> Some (zero, sub s1_max (`Int Bigint.one))
-  | Op.Floormod when lt s1_max zero -> Some (add s1_min (`Int Bigint.one), zero)
+  | Op.Mod when lt zero s1_min -> Some (zero, sub s1_max (`Int Bigint.one))
+  | Op.Mod when lt s1_max zero -> Some (add s1_min (`Int Bigint.one), zero)
   | Op.Xor
     when equal s1_min (`Int Bigint.minus_one)
          && equal s1_max (`Int Bigint.minus_one)
@@ -2307,7 +2307,7 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
           if Value.( <= ) (`Int Bigint.zero) x then
             `Float (Float.sqrt (Value.to_float x))
           else `Float Dtype.nan)
-  | Op.Reciprocal ->
+  | Op.Recip ->
       unary (fun x ->
           let f = Value.to_float x in
           if Float.equal f 0. then `Float (Float.copy_sign Float.infinity f)
@@ -2342,10 +2342,10 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
           let a, k = shift_operands op x y in
           `Int (Bigint.shift_left a k))
   | Op.Max -> binary Value.max
-  | Op.Cmod -> binary (divide `Remainder ~toward_zero:true)
-  | Op.Cdiv -> binary (divide `Quotient ~toward_zero:true)
-  | Op.Floordiv -> binary (divide `Quotient ~toward_zero:false)
-  | Op.Floormod -> binary (divide `Remainder ~toward_zero:false)
+  | Op.Truncmod -> binary (divide `Remainder ~toward_zero:true)
+  | Op.Truncdiv -> binary (divide `Quotient ~toward_zero:true)
+  | Op.Div -> binary (divide `Quotient ~toward_zero:false)
+  | Op.Mod -> binary (divide `Remainder ~toward_zero:false)
   | Op.Mulacc -> (
       match args with
       | [ x; y; z ] -> Value.( + ) (Value.( * ) x y) z

@@ -799,7 +799,7 @@ let pm_cast_float_alu =
     (fun () -> [
       rule
         (Upat.v
-           ~op:(ops [ Op.Sin; Op.Log2; Op.Exp2; Op.Sqrt; Op.Reciprocal ])
+           ~op:(ops [ Op.Sin; Op.Log2; Op.Exp2; Op.Sqrt; Op.Recip ])
            ~src:[ Upat.var "x" ]
            ~name:"u" ())
         (fun m ->

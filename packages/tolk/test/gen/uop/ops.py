@@ -63,11 +63,11 @@ INT_UNARY = [0, 1, -1, 3, -7, 8, 127, -128, 255, 2**31 - 1, 2**63, -2**70]
 FLOAT_UNARY = [0.0, -0.0, 0.5, -0.5, 1.0, -1.0, 2.5, -2.5, 3.0, 4.0, 1e-45, 1e300, 65504.0, 65520.0, 3.4028235677973366e38,
                math.inf, -math.inf, math.nan]
 
-INT_BINARY = [Ops.ADD, Ops.SUB, Ops.MUL, Ops.CDIV, Ops.CMOD, Ops.FLOORDIV, Ops.FLOORMOD, Ops.MAX, Ops.AND, Ops.OR,
+INT_BINARY = [Ops.ADD, Ops.SUB, Ops.MUL, Ops.TRUNCDIV, Ops.TRUNCMOD, Ops.DIV, Ops.MOD, Ops.MAX, Ops.AND, Ops.OR,
               Ops.XOR, Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ]
 FLOAT_BINARY = [Ops.ADD, Ops.SUB, Ops.MUL, Ops.FDIV, Ops.MAX, Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ, Ops.POW]
 BOOL_BINARY = [Ops.ADD, Ops.MUL, Ops.AND, Ops.OR, Ops.XOR, Ops.MAX, Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ]
-FLOAT_UNARY_OPS = [Ops.EXP2, Ops.LOG2, Ops.SIN, Ops.SQRT, Ops.RECIPROCAL, Ops.TRUNC, Ops.NEG]
+FLOAT_UNARY_OPS = [Ops.EXP2, Ops.LOG2, Ops.SIN, Ops.SQRT, Ops.RECIP, Ops.TRUNC, Ops.NEG]
 COMPARISONS = {Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ}
 
 
@@ -103,12 +103,12 @@ def alu_rows():
                 row(op, dtypes.bool if op in COMPARISONS else dt, pair)
         for op in FLOAT_UNARY_OPS:
             for x in FLOAT_UNARY: row(op, dt, (x,))
-        for op in (Ops.CDIV, Ops.CMOD, Ops.FLOORDIV, Ops.FLOORMOD):
+        for op in (Ops.TRUNCDIV, Ops.TRUNCMOD, Ops.DIV, Ops.MOD):
             for pair in [(7.5, 2.0), (-7.5, 2.0), (7.5, -2.0), (1.0, 0.0), (-0.5, 3.0)]:
                 # CPython's cdiv and floordiv by zero give the int 0, which only a
                 # float dtype's truncation turns back into a float: the suite
                 # states the weak float's 0.0 itself
-                if dt == dtypes.weakfloat and op in (Ops.CDIV, Ops.FLOORDIV) and pair[1] == 0: continue
+                if dt == dtypes.weakfloat and op in (Ops.TRUNCDIV, Ops.DIV) and pair[1] == 0: continue
                 row(op, dt, pair)
         row(Ops.MULACC, dt, (1.5, 2.0, 0.25))
         row(Ops.WHERE, dt, (True, 2.2, 4.5))
@@ -130,7 +130,7 @@ def alu_rows():
     # integer powers stay integers: a negative exponent gives 0, but for 1 and -1
     for pair in [(2, 3), (3, 0), (2, -1), (-2, -2), (0, 5)]: row(Ops.POW, dtypes.weakint, pair)
     # a rounding division with a float operand divides as floats
-    for op in (Ops.CDIV, Ops.FLOORDIV, Ops.CMOD, Ops.FLOORMOD):
+    for op in (Ops.TRUNCDIV, Ops.DIV, Ops.TRUNCMOD, Ops.MOD):
         for pair in [(7, 2.0), (-7.0, 2), (7, -2.5)]: row(op, dtypes.weakfloat, pair)
     for op, pair in [(Ops.POW, (2, 3)), (Ops.POW, (0, 0)), (Ops.POW, (2.0, -1.0)), (Ops.POW, (0.0, -1.0)),
                      (Ops.POW, (-0.0, -1.0)), (Ops.POW, (-8.0, 1 / 3)), (Ops.POW, (-2.0, 3.0)), (Ops.POW, (-2.0, 0.5)),
@@ -165,7 +165,7 @@ def exec_alu_values():
 # Bounds
 
 RANGES = [(0, 0), (3, 3), (-3, -3), (0, 10), (10, 20), (-20, -10), (-7, 7), (1, 10), (3, 5), (-5, -3)]
-BOUND_OPS = [Ops.ADD, Ops.SUB, Ops.MUL, Ops.CDIV, Ops.CMOD, Ops.FLOORDIV, Ops.FLOORMOD, Ops.MAX, Ops.AND, Ops.XOR,
+BOUND_OPS = [Ops.ADD, Ops.SUB, Ops.MUL, Ops.TRUNCDIV, Ops.TRUNCMOD, Ops.DIV, Ops.MOD, Ops.MAX, Ops.AND, Ops.XOR,
              Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ]
 
 
@@ -262,7 +262,7 @@ def dtypes_of():
         for a in DTYPE_OF_DTYPES:
             for b in DTYPE_OF_DTYPES:
                 rows.append((str(op), repr(a), repr(b), value(attempt(lambda: repr(dtype_from_uop(op, (operand(a), operand(b)), None))))))
-    for op in (Ops.SQRT, Ops.EXP2, Ops.RECIPROCAL, Ops.NEG, Ops.TRUNC):
+    for op in (Ops.SQRT, Ops.EXP2, Ops.RECIP, Ops.NEG, Ops.TRUNC):
         for a in DTYPE_OF_DTYPES:
             rows.append((str(op), repr(a), "-", value(attempt(lambda: repr(dtype_from_uop(op, (operand(a),), None))))))
     # a selection promotes its branches, and needs a boolean condition

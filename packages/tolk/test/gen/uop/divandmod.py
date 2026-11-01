@@ -30,7 +30,7 @@ from tinygrad.uop.divandmod import div_and_mod_symbolic
 import test.null.test_uop_symbolic as symbolic_tests
 import test.null.test_symbolic_failures as failure_tests
 
-DIVMOD = (Ops.FLOORDIV, Ops.FLOORMOD)
+DIVMOD = (Ops.DIV, Ops.MOD)
 
 
 def captured_divmods():

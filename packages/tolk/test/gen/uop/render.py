@@ -108,21 +108,21 @@ EXPRESSIONS = [
     ("neg", UOp(Ops.NEG, src=(a,))),
     ("neg_of_negative", UOp(Ops.NEG, src=(UOp.const(-3),))),
     ("neg_of_sum", UOp(Ops.NEG, src=(a + b,))),
-    ("reciprocal", UOp(Ops.RECIPROCAL, src=(x,))),
+    ("reciprocal", UOp(Ops.RECIP, src=(x,))),
     ("max", binary(Ops.MAX, a, b)),
     ("max_of_sums", binary(Ops.MAX, a + b, b + c)),
     ("mulacc", UOp(Ops.MULACC, src=(a, b, c))),
     ("mulacc_of_sums", UOp(Ops.MULACC, src=(a + b, b, b + c))),
     ("where", flag.where(a, b)),
     ("where_of_comparison", binary(Ops.CMPLT, a, b).where(a + c, b)),
-    ("cdiv", binary(Ops.CDIV, a, b)),
-    ("cmod", binary(Ops.CMOD, a, b)),
+    ("cdiv", binary(Ops.TRUNCDIV, a, b)),
+    ("cmod", binary(Ops.TRUNCMOD, a, b)),
     # the binary operations are infix
     ("add", binary(Ops.ADD, a, b)),
     ("sub", binary(Ops.SUB, a, b)),
     ("mul", binary(Ops.MUL, a, b)),
-    ("floordiv", binary(Ops.FLOORDIV, a, b)),
-    ("floormod", binary(Ops.FLOORMOD, a, b)),
+    ("floordiv", binary(Ops.DIV, a, b)),
+    ("floormod", binary(Ops.MOD, a, b)),
     ("shl", binary(Ops.SHL, a, b)),
     ("shr", binary(Ops.SHR, a, b)),
     ("and", binary(Ops.AND, a, b)),
@@ -139,9 +139,9 @@ EXPRESSIONS = [
     ("sub_right", binary(Ops.SUB, a, binary(Ops.SUB, b, c))),
     ("sub_of_add", binary(Ops.SUB, a, binary(Ops.ADD, b, c))),
     ("add_of_sub", binary(Ops.ADD, binary(Ops.SUB, a, b), c)),
-    ("mul_of_floordiv", binary(Ops.MUL, binary(Ops.FLOORDIV, a, b), c)),
-    ("floordiv_of_mul", binary(Ops.FLOORDIV, a, binary(Ops.MUL, b, c))),
-    ("floormod_left", binary(Ops.FLOORMOD, binary(Ops.FLOORMOD, a, b), c)),
+    ("mul_of_floordiv", binary(Ops.MUL, binary(Ops.DIV, a, b), c)),
+    ("floordiv_of_mul", binary(Ops.DIV, a, binary(Ops.MUL, b, c))),
+    ("floormod_left", binary(Ops.MOD, binary(Ops.MOD, a, b), c)),
     ("shl_of_shr", binary(Ops.SHL, binary(Ops.SHR, a, b), c)),
     ("shr_right", binary(Ops.SHR, a, binary(Ops.SHL, b, c))),
     # tighter operands lose their parentheses, looser ones keep them
@@ -168,7 +168,7 @@ EXPRESSIONS = [
     ("mul_of_max", binary(Ops.MUL, binary(Ops.MAX, a, b), c)),
     ("mul_of_where", binary(Ops.MUL, flag.where(a, b), c)),
     ("add_of_cast", binary(Ops.ADD, a.cast(dtypes.int), b.cast(dtypes.int))),
-    ("float_arithmetic", binary(Ops.ADD, binary(Ops.MUL, x, UOp.const(2.5)), UOp(Ops.RECIPROCAL, src=(y,)))),
+    ("float_arithmetic", binary(Ops.ADD, binary(Ops.MUL, x, UOp.const(2.5)), UOp(Ops.RECIP, src=(y,)))),
     # movements write their source and their argument
     ("reshape", p),
     ("reshape_flat", p.reshape((32,))),
@@ -269,7 +269,7 @@ def symbolic_rendered(): return rendered(SYMBOLIC)
 # negative-shift row): `simplified` is tinygrad with that rule applied, and
 # `tinygrad` is tinygrad as it is.
 
-SYMBOLS = {ast.Add: Ops.ADD, ast.Sub: Ops.SUB, ast.Mult: Ops.MUL, ast.FloorDiv: Ops.FLOORDIV, ast.Mod: Ops.FLOORMOD,
+SYMBOLS = {ast.Add: Ops.ADD, ast.Sub: Ops.SUB, ast.Mult: Ops.MUL, ast.FloorDiv: Ops.DIV, ast.Mod: Ops.MOD,
            ast.LShift: Ops.SHL, ast.RShift: Ops.SHR, ast.BitAnd: Ops.AND, ast.BitOr: Ops.OR, ast.BitXor: Ops.XOR,
            ast.Lt: Ops.CMPLT, ast.NotEq: Ops.CMPNE}
 TREE_VARIABLES = {n: UOp.variable(n, 0, 9) for n in "abc"}

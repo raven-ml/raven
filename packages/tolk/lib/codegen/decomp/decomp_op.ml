@@ -128,15 +128,17 @@ let divisor a d =
 
 let floordiv_to_idiv a b =
   let b = divisor a b in
-  if same_sign a b then alu a Cdiv [ b ]
+  if same_sign a b then alu a Truncdiv [ b ]
   else
-    O.(alu a Cdiv [ b ] - ((alu a Cmod [ b ] <> int 0) land sign_differs a b))
+    O.(
+      alu a Truncdiv [ b ]
+      - ((alu a Truncmod [ b ] <> int 0) land sign_differs a b))
 
 let floormod_to_mod a b =
   let b = divisor a b in
-  if same_sign a b then alu a Cmod [ b ]
+  if same_sign a b then alu a Truncmod [ b ]
   else
-    let r = alu a Cmod [ b ] in
+    let r = alu a Truncmod [ b ] in
     (* A selection, not a multiplication, so that no multiply-add fuses it:
        64-bit integer emulation does not lower one. *)
     O.(
@@ -253,8 +255,8 @@ let late_patterns ~disable_fast_idiv ops =
   let var = Upat.var and cvar = Upat.cvar in
   let x_int = var ~dtype:Dtype.ints "x" in
   let c = cvar "c" in
-  let cdiv x d = Upat.op Cdiv ~src:[ x; d ]
-  and cmod x d = Upat.op Cmod ~src:[ x; d ] in
+  let cdiv x d = Upat.op Truncdiv ~src:[ x; d ]
+  and cmod x d = Upat.op Truncmod ~src:[ x; d ] in
   let int_value u = match value u with `Int z -> Some z | _ -> None in
   let fast ctx m =
     Option.bind (int_value (divisor (m "x") (m "d"))) (fast_idiv ctx (m "x"))

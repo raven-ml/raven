@@ -673,7 +673,7 @@ let code_for_op =
   Op.
     [
       (Sqrt, call "sqrt");
-      (Reciprocal, unary (fun x _ -> strf "(1/%s)" x));
+      (Recip, unary (fun x _ -> strf "(1/%s)" x));
       (Neg, unary (fun x _ -> joined "-" x));
       (Exp2, call "exp2");
       (Log2, call "log2");
@@ -685,8 +685,8 @@ let code_for_op =
       (Add, infix "+");
       (Sub, infix "-");
       (Mul, infix "*");
-      (Cmod, infix "%");
-      (Cdiv, infix "/");
+      (Truncmod, infix "%");
+      (Truncdiv, infix "/");
       (Cmpne, infix "!=");
       (Shr, infix ">>");
       (Shl, infix "<<");
@@ -1213,7 +1213,7 @@ let clang_lang =
     if Dtype.equal dt Dtype.Float64 then strf "__builtin_%s(%s)" name x
     else strf "__builtin_%sf(%s)" name x
   in
-  let dropped = Op.[ Exp2; Sin; Log2; Reciprocal ] in
+  let dropped = Op.[ Exp2; Sin; Log2; Recip ] in
   {
     cstyle with
     float4 = (fun t -> "(" ^ t ^ ")");
@@ -1578,7 +1578,7 @@ let cuda_lang =
             (Log2, h "log2");
             (Exp2, h "exp2");
             (Sqrt, h "sqrt");
-            ( Reciprocal,
+            ( Recip,
               unary (fun x dt ->
                   if half dt then strf "hrcp(%s)" x else strf "(1/%s)" x) );
             (Mulacc, fma (by_width ~double:"__fma_rn" ~single:"__fmaf_rn"));

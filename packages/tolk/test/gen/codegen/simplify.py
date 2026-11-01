@@ -163,7 +163,7 @@ def flatten_cases():
 
 
 def split_cases():
-    def mod_kernel(r, c, op=Ops.FLOORMOD):
+    def mod_kernel(r, c, op=Ops.MOD):
         return kernel(store_at(r, UOp(op, src=(r, UOp.const(c)))).end(r))
     r8, r12 = rng(8, 0), rng(12, 1)
     nested = rng(8, 0)
@@ -179,7 +179,7 @@ def split_cases():
         ("mod_8_of_8", mod_kernel(r8, 8)),
         ("mod_1_of_8", mod_kernel(r8, 1)),
         ("mod_16_of_8", mod_kernel(r8, 16)),
-        ("cmod_4_of_12", mod_kernel(r12, 4, Ops.CMOD)),
+        ("cmod_4_of_12", mod_kernel(r12, 4, Ops.TRUNCMOD)),
         ("mod_of_a_symbolic_range", mod_kernel(UOp.range(n, 0), 2)),
         ("mod_of_a_warp_range", mod_kernel(rng(8, 0, AxisType.WARP), 2)),
         ("mod_of_a_local_range", mod_kernel(rng(8, 0, AxisType.LOCAL), 2)),

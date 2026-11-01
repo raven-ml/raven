@@ -1165,10 +1165,10 @@ let int_binary = function
       Some (fun x y -> int_add x (if y = min_int then raise Inexact else -y))
   | Op.Mul -> Some int_mul
   | Op.Max -> Some Int.max
-  | Op.Cdiv -> Some (int_quotient ~toward_zero:true)
-  | Op.Cmod -> Some (int_remainder ~toward_zero:true)
-  | Op.Floordiv -> Some (int_quotient ~toward_zero:false)
-  | Op.Floormod -> Some (int_remainder ~toward_zero:false)
+  | Op.Truncdiv -> Some (int_quotient ~toward_zero:true)
+  | Op.Truncmod -> Some (int_remainder ~toward_zero:true)
+  | Op.Div -> Some (int_quotient ~toward_zero:false)
+  | Op.Mod -> Some (int_remainder ~toward_zero:false)
   | _ -> None
 
 let sym_compile (s : sint) var =
@@ -1404,7 +1404,7 @@ let rec fold_divmod_general d =
       ret
 
 and fold d =
-  let x = nth d 0 and y = nth d 1 and is_mod = op d = Op.Floormod in
+  let x = nth d 0 and y = nth d 1 and is_mod = op d = Op.Mod in
   if V.(vmin y = zero && vmax y = zero) then raise Division_by_zero;
   let xdiv = O.(x // y) in
   let q = vmin xdiv in
@@ -1422,7 +1422,7 @@ and fold d =
     (* nested_div: (x % (k * c)) // c is (x // c) % k for k > 0; the mod case is
        remove_nested_mod's *)
     let nested_div () =
-      if is_mod || op x <> Op.Floormod then None
+      if is_mod || op x <> Op.Mod then None
       else
         match divides (nth x 1) (V.to_z c) with
         | Some k when V.(vmin k > zero) -> Some O.(nth x 0 // y % k)
@@ -1431,7 +1431,7 @@ and fold d =
     (* remove_nested_mod in a sum: (a % 4 + b) % 2 is (a + b) % 2 *)
     let remove_nested_mod () =
       let unnest u =
-        if op u = Op.Floormod && Option.is_some (divides (nth u 1) (V.to_z c))
+        if op u = Op.Mod && Option.is_some (divides (nth u 1) (V.to_z c))
         then nth u 0
         else u
       in
@@ -1581,7 +1581,7 @@ and fold d =
     in
     first_rule (constant_rules @ [ divide_by_gcd; fallback ])
 
-let floor_ops = Op.Set.of_list [ Op.Floordiv; Op.Floormod ]
+let floor_ops = Op.Set.of_list [ Op.Div; Op.Mod ]
 
 let div_and_mod_symbolic =
   Pattern_matcher.v
@@ -1608,7 +1608,7 @@ let div_and_mod_symbolic =
           let x = m "x" and c = num (m "c") and d = m "d" in
           let dv = num d in
           if V.(dv = zero || c % dv = c) then None
-          else if op (m "n") = Op.Floordiv then
+          else if op (m "n") = Op.Div then
             Some O.(((x + lit V.(c % dv)) // d) + lit V.(c // dv))
           else Some O.((x + lit V.(c % dv)) % d));
       (* Slow rules *)
@@ -1853,11 +1853,11 @@ let wrap_folded f c1 c2 =
    shifted ((y + k*D)//D == y//D + k) *)
 let quotient_base q base div =
   let (q, s), (n, a) = (pop_num q, pop_num base) in
-  if op q <> Op.Floordiv || not (is_const (nth q 1)) then None
+  if op q <> Op.Div || not (is_const (nth q 1)) then None
   else
     let qd = num (nth q 1) in
     let merged =
-      if V.(div > zero) && op n = Op.Floordiv && is_const (nth n 1) then
+      if V.(div > zero) && op n = Op.Div && is_const (nth n 1) then
         let c = num (nth n 1) in
         if V.(qd = c * div) then Some (nth n 0, V.(a * c), V.(c * div))
         else None
@@ -1889,7 +1889,7 @@ let fold_add_divmod_recombine x =
   terms
   |> List.find_map (fun (i, u) ->
       let md, mul = pop_num ~op:Op.Mul u in
-      if op md <> Op.Floormod || not (is_const (nth md 1)) then None
+      if op md <> Op.Mod || not (is_const (nth md 1)) then None
       else
         let base = nth md 0 and div = num (nth md 1) in
         terms
@@ -1900,7 +1900,7 @@ let fold_add_divmod_recombine x =
               let recombine b = Some (usum O.(b * lit mul) (rest i j)) in
               match quotient_base q base div with
               | Some b -> recombine b
-              | None when op q = Op.Floormod && is_const (nth q 1) ->
+              | None when op q = Op.Mod && is_const (nth q 1) ->
                   let d = num (nth q 1) in
                   if V.(d <= zero) then None
                   else
@@ -2451,12 +2451,12 @@ let partial_operand u =
   match op u with
   | Op.Cast when Dtype.is_int (dtype u) && Dtype.is_float (dtype (nth u 0)) ->
       Some (nth u 0)
-  | (Op.Cdiv | Op.Cmod | Op.Floordiv | Op.Floormod)
+  | (Op.Truncdiv | Op.Truncmod | Op.Div | Op.Mod)
     when Dtype.is_int (dtype u) ->
       Some (nth u 1)
   | _ -> None
 
-let partial_ops = Op.[ Cast; Cdiv; Cmod; Floordiv; Floormod ]
+let partial_ops = Op.[ Cast; Truncdiv; Truncmod; Div; Mod ]
 
 (* Whether [u] holds an undefined-prone operation whose operand reads [cond]: a
    selection by [cond] may be its guard. *)
@@ -2622,8 +2622,8 @@ let symbolic =
                      [
                        Op.Cmplt;
                        Op.Cmpne;
-                       Op.Floordiv;
-                       Op.Floormod;
+                       Op.Div;
+                       Op.Mod;
                        Op.Param;
                        Op.Special;
                      ])

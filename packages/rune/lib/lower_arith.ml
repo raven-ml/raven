@@ -324,7 +324,9 @@ let int_pow d x e =
 let int_div d ~rem x y =
   let vx = value d x and vy = value d y in
   let back v = store d (if is_wide d then bits v else Ops.bitcast v Uint32) in
-  let divide v = Ops.alu vx (if rem then Op.Cmod else Op.Cdiv) [ v ] in
+  let divide v =
+    Ops.alu vx (if rem then Op.Truncmod else Op.Truncdiv) [ v ]
+  in
   let lo = Ops.vmin vy and hi = Ops.vmax vy in
   let below = Dtype.Value.( < ) in
   if Stdlib.(below (`Int Bigint.zero) lo || below hi (`Int Bigint.minus_one))

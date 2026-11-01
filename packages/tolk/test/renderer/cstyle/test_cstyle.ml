@@ -268,7 +268,7 @@ let chain n =
   let zero = Ops.int ~dtype:Int32 0 in
   let at slot = Ops.index (Shape.param ~shape:[ Int 1 ] slot Int32) [ zero ] in
   let shift = Ops.load (at 2) [] and modulus = Ops.load (at 3) [] in
-  let step r _ = Ops.alu (Ops.alu r Shl [ shift ]) Cmod [ modulus ] in
+  let step r _ = Ops.alu (Ops.alu r Shl [ shift ]) Truncmod [ modulus ] in
   let r = List.fold_left step (Ops.load (at 1) []) (List.init n Fun.id) in
   Linearizer.linearize
     (Ops.sink ~kernel:(Ops.kernel_info ~name:"chain" ()) [ Ops.store (at 0) r ])
@@ -419,8 +419,8 @@ let one_operation op dt =
   Ops.toposort ~calls:Enter
     (Ops.sink [ Ops.store (at 0 (Ops.dtype value)) value ])
 
-let floats_only = Op.[ Exp2; Log2; Sin; Sqrt; Reciprocal; Trunc; Fdiv ]
-let ints_only = Op.[ Shl; Shr; And; Or; Xor; Cmod; Cdiv ]
+let floats_only = Op.[ Exp2; Log2; Sin; Sqrt; Recip; Trunc; Fdiv ]
+let ints_only = Op.[ Shl; Shr; And; Or; Xor; Truncmod; Truncdiv ]
 
 let operations =
   let named =

@@ -3747,7 +3747,7 @@ merged into D137, which holds the loops that consumers of one domain share.
   `pad_division`, in `Padto`);
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded.
-- **Differs:** a `CDIV`, `CMOD`, `FLOORDIV` or `FLOORMOD` of integers divides by
+- **Differs:** a `TRUNCDIV`, `TRUNCMOD`, `DIV` or `MOD` of integers divides by
   `where(valid, d, 1)` in two places. Rangeify guards a division whose ranges
   are invalid somewhere, unless its divisor is a nonzero constant through casts
   and movements: a stored divisor's bounds say nothing of the zeros its padding

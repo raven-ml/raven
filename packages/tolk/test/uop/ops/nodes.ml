@@ -336,10 +336,10 @@ let gen_recipe =
                     Cmpne;
                     Xor;
                     And;
-                    Floordiv;
-                    Floormod;
-                    Cdiv;
-                    Cmod;
+                    Div;
+                    Mod;
+                    Truncdiv;
+                    Truncmod;
                   ]
             in
             let* a = go (depth - 1) in

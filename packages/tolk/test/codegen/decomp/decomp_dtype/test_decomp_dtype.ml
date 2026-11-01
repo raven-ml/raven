@@ -929,10 +929,10 @@ let long_laws dt =
     binary dt "max" Max Bigint.max;
     slow
     @@ binary ~count:2000 dt ~b:(nonzero dt)
-         "truncating division, over 2000 cases" Cdiv Bigint.div;
+         "truncating division, over 2000 cases" Truncdiv Bigint.div;
     slow
     @@ binary ~count:2000 dt ~b:(nonzero dt)
-         "truncating remainder, over 2000 cases" Cmod Bigint.rem;
+         "truncating remainder, over 2000 cases" Truncmod Bigint.rem;
     binary dt ~b:shift_count ~examples:(shl_examples dt) "shl" Shl (fun a n ->
         Bigint.shift_left a (Bigint.to_int n));
     binary dt ~b:shift_count ~examples:(shr_examples dt) "shr" Shr (fun a n ->

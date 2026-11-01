@@ -176,8 +176,8 @@ let syms =
     [
       (Add, "+");
       (Sub, "-");
-      (Floordiv, "//");
-      (Floormod, "%");
+      (Div, "//");
+      (Mod, "%");
       (Shl, "<<");
       (Shr, ">>");
       (Mul, "*");
@@ -194,8 +194,8 @@ let precedence =
   Op.
     [
       (Mul, 1);
-      (Floordiv, 1);
-      (Floormod, 1);
+      (Div, 1);
+      (Mod, 1);
       (Add, 2);
       (Sub, 2);
       (Shl, 3);
@@ -279,10 +279,10 @@ let renderer =
           let name = String.sub dt n (String.length dt - n) in
           Some (strf "(%s)(%s)" name (src ctx m 0)));
       rule_ctx (x Op.Neg) (fun ctx m -> Some (strf "(-%s)" (src ctx m 0)));
-      rule_ctx (x Op.Reciprocal) (fun ctx m ->
+      rule_ctx (x Op.Recip) (fun ctx m ->
           Some (strf "(1/%s)" (src ctx m 0)));
       rule_ctx
-        (xs (Op.Set.of_list [ Op.Max; Op.Cdiv; Op.Cmod ]))
+        (xs (Op.Set.of_list [ Op.Max; Op.Truncdiv; Op.Truncmod ]))
         (fun ctx m ->
           let name = String.lowercase_ascii (Op.name (op (m "x"))) in
           Some (strf "%s(%s, %s)" name (src ctx m 0) (src ctx m 1)));

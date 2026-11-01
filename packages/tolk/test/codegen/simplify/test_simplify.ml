@@ -204,7 +204,7 @@ let splitting =
               let r = r 8 in
               let u =
                 kernel
-                  [ Ops.end_ (store_at r (Ops.alu r Floormod [ c ])) [ r ] ]
+                  [ Ops.end_ (store_at r (Ops.alu r Mod [ c ])) [ r ] ]
               in
               equal uop u (split u))
             [ Ops.bool true; Ops.float 2. ]);
@@ -212,7 +212,7 @@ let splitting =
           let r = r 12 in
           let u =
             kernel
-              [ Ops.end_ (store_at r (Ops.alu r Cmod [ Ops.int 4 ])) [ r ] ]
+              [ Ops.end_ (store_at r (Ops.alu r Truncmod [ Ops.int 4 ])) [ r ] ]
           in
           equal uop u (split u));
       test "a range of symbolic size stays" (fun () ->

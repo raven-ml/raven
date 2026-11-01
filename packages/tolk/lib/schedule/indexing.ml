@@ -343,7 +343,7 @@ let pm_apply_rangeify =
         on (ops [ Op.Stack ]) convert_stack_to_where;
         on (ops [ Op.Index ]) convert_gather;
         on
-          (ops [ Op.Cdiv; Op.Cmod; Op.Floordiv; Op.Floormod ])
+          (ops [ Op.Truncdiv; Op.Truncmod; Op.Div; Op.Mod ])
           guard_division_on_padding;
         on
           (Op.Set.diff Op.Set.all (ops [ Op.Stage; Op.Index ]))

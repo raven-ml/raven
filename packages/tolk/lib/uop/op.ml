@@ -37,16 +37,16 @@ type t =
   | Log2
   | Sin
   | Sqrt
-  | Reciprocal
+  | Recip
   | Neg
   | Trunc
   | Add
   | Mul
   | Shl
   | Shr
-  | Cdiv
+  | Truncdiv
   | Max
-  | Cmod
+  | Truncmod
   | Cmplt
   | Cmpne
   | Cmpeq
@@ -57,8 +57,8 @@ type t =
   | Sub
   | Fdiv
   | Pow
-  | Floordiv
-  | Floormod
+  | Div
+  | Mod
   | Where
   | Mulacc
   (* Control flow, constants and target code *)
@@ -111,16 +111,16 @@ let ops =
     Log2;
     Sin;
     Sqrt;
-    Reciprocal;
+    Recip;
     Neg;
     Trunc;
     Add;
     Mul;
     Shl;
     Shr;
-    Cdiv;
+    Truncdiv;
     Max;
-    Cmod;
+    Truncmod;
     Cmplt;
     Cmpne;
     Cmpeq;
@@ -131,8 +131,8 @@ let ops =
     Sub;
     Fdiv;
     Pow;
-    Floordiv;
-    Floormod;
+    Div;
+    Mod;
     Where;
     Mulacc;
     Barrier;
@@ -184,16 +184,16 @@ let info = function
   | Log2 -> (22, "LOG2")
   | Sin -> (23, "SIN")
   | Sqrt -> (24, "SQRT")
-  | Reciprocal -> (25, "RECIPROCAL")
+  | Recip -> (25, "RECIP")
   | Neg -> (26, "NEG")
   | Trunc -> (27, "TRUNC")
   | Add -> (28, "ADD")
   | Mul -> (29, "MUL")
   | Shl -> (30, "SHL")
   | Shr -> (31, "SHR")
-  | Cdiv -> (32, "CDIV")
+  | Truncdiv -> (32, "TRUNCDIV")
   | Max -> (33, "MAX")
-  | Cmod -> (34, "CMOD")
+  | Truncmod -> (34, "TRUNCMOD")
   | Cmplt -> (35, "CMPLT")
   | Cmpne -> (36, "CMPNE")
   | Cmpeq -> (37, "CMPEQ")
@@ -204,8 +204,8 @@ let info = function
   | Sub -> (42, "SUB")
   | Fdiv -> (43, "FDIV")
   | Pow -> (44, "POW")
-  | Floordiv -> (45, "FLOORDIV")
-  | Floormod -> (46, "FLOORMOD")
+  | Div -> (45, "DIV")
+  | Mod -> (46, "MOD")
   | Where -> (47, "WHERE")
   | Mulacc -> (48, "MULACC")
   | Barrier -> (49, "BARRIER")
@@ -266,16 +266,16 @@ module Set = struct
       (Format.pp_print_list ~pp_sep pp_op)
       (to_list s)
 
-  let unary = of_list [ Exp2; Log2; Sin; Sqrt; Reciprocal; Neg; Trunc ]
+  let unary = of_list [ Exp2; Log2; Sin; Sqrt; Recip; Neg; Trunc ]
 
   let binary =
     of_list
       [
         Add;
         Mul;
-        Cdiv;
+        Truncdiv;
         Max;
-        Cmod;
+        Truncmod;
         Cmplt;
         Cmpne;
         Cmpeq;
@@ -288,8 +288,8 @@ module Set = struct
         Sub;
         Fdiv;
         Pow;
-        Floordiv;
-        Floormod;
+        Div;
+        Mod;
       ]
 
   let ternary = of_list [ Where; Mulacc ]

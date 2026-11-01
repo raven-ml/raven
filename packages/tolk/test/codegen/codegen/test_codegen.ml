@@ -1431,7 +1431,7 @@ let claims =
           equal (list Uops.uop) []
             (List.filter
                (fun u ->
-                 List.mem (Ops.op u) Op.[ Floordiv; Floormod; Cdiv; Cmod ])
+                 List.mem (Ops.op u) Op.[ Div; Mod; Truncdiv; Truncmod ])
                (instructions row)));
       claim "reduce_upcast_unroll" "keeps no accumulator and stores once"
         (fun row ->
@@ -1774,9 +1774,11 @@ let gated_stores =
 
 let divisions =
   let power_of_two dt =
-    let uops = instructions_of [ Ops.alu (loaded dt 2) Cdiv [ Ops.int 2 ] ] in
+    let uops =
+      instructions_of [ Ops.alu (loaded dt 2) Truncdiv [ Ops.int 2 ] ]
+    in
     has Shr uops;
-    lacks Cdiv uops
+    lacks Truncdiv uops
   in
   let dtype_cases name dts f =
     cases name ~id:(Format.asprintf "%a" Dtype.pp) dts f
@@ -1789,11 +1791,11 @@ let divisions =
         [ Int32; Uint32 ] (fun dt ->
           let uops =
             instructions_of
-              [ Ops.alu (loaded ~size:9 dt 8) Floormod [ Ops.int 8 ] ]
+              [ Ops.alu (loaded ~size:9 dt 8) Mod [ Ops.int 8 ] ]
           in
           has And uops;
-          lacks Cmod uops;
-          lacks Floormod uops);
+          lacks Truncmod uops;
+          lacks Mod uops);
       test "a maximum proves its dividend positive before it is decomposed"
         (fun () ->
           let uops =
@@ -1801,7 +1803,7 @@ let divisions =
               [ Ops.O.(Ops.maximum (loaded Int32 2) (int 0) // int 3) ]
           in
           lacks Max uops;
-          lacks Cmod uops);
+          lacks Truncmod uops);
       test "a dividend that can wrap keeps the correction of a floor division"
         (fun () ->
           (* tinygrad's test divides max x 0 + 1, which is negative at the
@@ -1809,18 +1811,19 @@ let divisions =
           let x =
             Ops.add (Ops.maximum (loaded Int32 2) (Ops.int 0)) (Ops.int 1)
           in
-          has Cmod (instructions_of ~ren:without_max [ Ops.O.(x // int 3) ]));
+          has Truncmod
+            (instructions_of ~ren:without_max [ Ops.O.(x // int 3) ]));
       dtype_cases "a floor division by a power of two is a shift"
         [ Int32; Uint32; Int64; Uint64 ] (fun dt ->
           let uops =
-            instructions_of [ Ops.alu (loaded dt 2) Floordiv [ Ops.int 2 ] ]
+            instructions_of [ Ops.alu (loaded dt 2) Div [ Ops.int 2 ] ]
           in
           has Shr uops;
-          lacks Cdiv uops;
-          lacks Cmod uops;
-          lacks Floordiv uops);
+          lacks Truncdiv uops;
+          lacks Truncmod uops;
+          lacks Div uops);
       cases "an unsigned floor division is a truncating one"
-        ~id:(Format.asprintf "%a" Op.pp) [ Op.Floordiv; Floormod ] (fun o ->
+        ~id:(Format.asprintf "%a" Op.pp) [ Op.Div; Mod ] (fun o ->
           let uops =
             instructions_of
               [
@@ -1828,26 +1831,26 @@ let divisions =
               ]
           in
           lacks Cmplt uops;
-          equal int 1 (count Cdiv uops + count Cmod uops));
+          equal int 1 (count Truncdiv uops + count Truncmod uops));
       test
         "with DISABLE_FAST_IDIV=0, a division and a remainder by 3 multiply \
          and shift" (fun () ->
           Setting.context fast_idiv (fun () ->
               let div =
                 instructions_of
-                  [ Ops.alu (loaded ~size:4 Uint32 3) Cdiv [ Ops.int 3 ] ]
+                  [ Ops.alu (loaded ~size:4 Uint32 3) Truncdiv [ Ops.int 3 ] ]
               in
               has Shr div;
-              lacks Cdiv div;
+              lacks Truncdiv div;
               let rem =
                 instructions_of
-                  [ Ops.alu (loaded ~size:4 Uint32 3) Cmod [ Ops.int 3 ] ]
+                  [ Ops.alu (loaded ~size:4 Uint32 3) Truncmod [ Ops.int 3 ] ]
               in
               has Shr rem;
-              lacks Cmod rem));
+              lacks Truncmod rem));
       cases "a division by a divisor that is not positive is no shift"
         ~id:(fun (o, d) -> Format.asprintf "%a by %d" Op.pp o d)
-        [ (Op.Cdiv, -3); (Cdiv, 0); (Cmod, -3); (Cmod, 0) ]
+        [ (Op.Truncdiv, -3); (Truncdiv, 0); (Truncmod, -3); (Truncmod, 0) ]
         (fun (o, d) ->
           Setting.context fast_idiv (fun () ->
               lacks Shr
@@ -1855,16 +1858,16 @@ let divisions =
                    [ Ops.alu (Ops.range (Int 20) [ 0 ]) o [ Ops.int d ] ])));
       test "a remainder the fast division declines stays a remainder" (fun () ->
           Setting.context fast_idiv (fun () ->
-              has Cmod
+              has Truncmod
                 (instructions_of
                    [
-                     Ops.alu (Ops.range (Int 30) [ 0 ]) Cmod
+                     Ops.alu (Ops.range (Int 30) [ 0 ]) Truncmod
                        [ loaded ~size:4 Int32 0 ];
                    ]);
-              has Cmod
+              has Truncmod
                 (instructions_of
                    [
-                     Ops.alu (loaded ~size:4 Uint64 0) Cmod
+                     Ops.alu (loaded ~size:4 Uint64 0) Truncmod
                        [ Ops.int ~dtype:Uint64 3 ];
                    ])));
       test "a division of 0 or 1 by 3 is 0" (fun () ->
@@ -1873,7 +1876,7 @@ let divisions =
           in
           let lowered =
             Setting.context fast_idiv (fun () ->
-                full_rewrite [ Ops.alu x Cdiv [ Ops.int 3 ] ])
+                full_rewrite [ Ops.alu x Truncdiv [ Ops.int 3 ] ])
           in
           List.iter
             (fun v ->
@@ -1891,17 +1894,17 @@ let divisions =
                   [ Ops.div ~rounding:`Floor r (Ops.int (7 * 64)) ]
               in
               equal (list Uops.uop) [] (List.filter wide uops);
-              lacks Cdiv uops));
+              lacks Truncdiv uops));
       test "DISABLE_FAST_IDIV=1 keeps a division by 3" (fun () ->
           Setting.context
             [ B (Setting.disable_fast_idiv, true) ]
             (fun () ->
               let uops =
                 instructions_of
-                  [ Ops.alu (loaded ~size:4 Uint32 3) Cdiv [ Ops.int 3 ] ]
+                  [ Ops.alu (loaded ~size:4 Uint32 3) Truncdiv [ Ops.int 3 ] ]
               in
               lacks Shr uops;
-              has Cdiv uops));
+              has Truncdiv uops));
     ]
 
 (* Range shrinking *)
@@ -3212,10 +3215,10 @@ let divisors_wrap () =
   in
   let ops =
     [
-      (Op.Floordiv, Bigint.fdiv);
-      (Op.Floormod, fun n d -> Bigint.(n - (d * fdiv n d)));
-      (Op.Cdiv, Bigint.div);
-      (Op.Cmod, Bigint.rem);
+      (Op.Div, Bigint.fdiv);
+      (Op.Mod, fun n d -> Bigint.(n - (d * fdiv n d)));
+      (Op.Truncdiv, Bigint.div);
+      (Op.Truncmod, Bigint.rem);
     ]
   in
   List.iter

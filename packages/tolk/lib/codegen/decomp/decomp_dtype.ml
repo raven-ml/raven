@@ -152,7 +152,7 @@ let rec l2i op dt uops =
             bitcast O.(a00 * b00) dt;
             O.(bitcast (a01 * b01) dt + (a0 * b1) + (a1 * b0));
           ])
-  | Op.Cdiv | Op.Cmod -> long_division op dt (bin ())
+  | Op.Truncdiv | Op.Truncmod -> long_division op dt (bin ())
   | Op.Cmplt ->
       let a0, a1, b0, b1 = bin () in
       [ O.((a1 < b1) lor (eq a1 b1 land (bitcast a0 uint < bitcast b0 uint))) ]
@@ -260,11 +260,11 @@ and long_division op dt (a0, a1, b0, b1) =
       let nq0, nq1 = as_dt (negate q0 q1) in
       let nr0, nr1 = as_dt (negate r0 r1) in
       let q0, q1 = as_dt (q0, q1) and r0, r1 = as_dt (r0, r1) in
-      if op = Op.Cmod then [ where a_neg nr0 r0; where a_neg nr1 r1 ]
+      if op = Op.Truncmod then [ where a_neg nr0 r0; where a_neg nr1 r1 ]
       else
         let s = O.(a_neg lxor b_neg) in
         [ where s nq0 q0; where s nq1 q1 ]
-  | _ -> if op = Op.Cmod then [ r0; r1 ] else [ q0; q1 ]
+  | _ -> if op = Op.Truncmod then [ r0; r1 ] else [ q0; q1 ]
 
 let l2i_define x =
   (* A variable cannot be decomposed. *)

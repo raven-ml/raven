@@ -151,13 +151,13 @@ def verdict_cases():
     case("a shl of int8 by a weak integer", UOp(Ops.SHL, src=(cvar("a", dtypes.int8), UOp.const(2))))
     case("a shl of uint64 by uint16", UOp(Ops.SHL, src=(cvar("a", dtypes.uint64), cvar("n", dtypes.uint16))))
     case("a shl of the invalid constant by int32", UOp(Ops.SHL, src=(UOp.invalid(), cvar("n", dtypes.int32))))
-    for op in (Ops.CDIV, Ops.CMOD, Ops.FLOORDIV, Ops.FLOORMOD):
+    for op in (Ops.TRUNCDIV, Ops.TRUNCMOD, Ops.DIV, Ops.MOD):
         name = str(op).removeprefix("Ops.").lower()
         case(f"a {name} of int32", UOp(op, src=(cvar("a", dtypes.int32), cvar("b", dtypes.int32))))
         case(f"a {name} of float32", UOp(op, src=(fvar("a"), fvar("b"))))
-    case("a cdiv of float32 by the invalid constant", UOp(Ops.CDIV, src=(fvar("a"), UOp.invalid())))
-    case("a cmod of the invalid constant by int32", UOp(Ops.CMOD, src=(UOp.invalid(), cvar("b", dtypes.int32))))
-    case("a cdiv of int32 by float32", UOp(Ops.CDIV, src=(cvar("a", dtypes.int32), fvar("b"))))
+    case("a cdiv of float32 by the invalid constant", UOp(Ops.TRUNCDIV, src=(fvar("a"), UOp.invalid())))
+    case("a cmod of the invalid constant by int32", UOp(Ops.TRUNCMOD, src=(UOp.invalid(), cvar("b", dtypes.int32))))
+    case("a cdiv of int32 by float32", UOp(Ops.TRUNCDIV, src=(cvar("a", dtypes.int32), fvar("b"))))
     case("a sum of int32", UOp(Ops.ADD, src=(cvar("a", dtypes.int32), cvar("b", dtypes.int32))))
     case("a sum of int32 and a weak float", UOp(Ops.ADD, src=(cvar("a", dtypes.int32), UOp.const(2.0))))
     case("a stack of float32 and a weak integer", UOp(Ops.STACK, src=(f32(1.0), UOp.const(2))))
@@ -179,7 +179,7 @@ def verdict_cases():
     case("a threefry of uint64", UOp(Ops.THREEFRY, src=(cvar("k", dtypes.uint64), cvar("c", dtypes.uint64))))
     case("a negation of int32", UOp(Ops.NEG, src=(cvar("a", dtypes.int32),)))
     case("a truncation of float32", UOp(Ops.TRUNC, src=(fvar("a"),)))
-    for op in (Ops.SIN, Ops.LOG2, Ops.EXP2, Ops.SQRT, Ops.RECIPROCAL):
+    for op in (Ops.SIN, Ops.LOG2, Ops.EXP2, Ops.SQRT, Ops.RECIP):
         name = str(op).removeprefix("Ops.").lower()
         case(f"a {name} of float32", UOp(op, src=(fvar("a"),)))
         case(f"a {name} of int32", UOp(op, src=(cvar("a", dtypes.int32),)))

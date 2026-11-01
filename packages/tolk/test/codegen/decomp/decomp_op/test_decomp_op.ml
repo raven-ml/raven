@@ -461,7 +461,8 @@ let muls () =
 let cdivs () =
   let u = v ~dtype:Uint32 "u" 0 1000 and p = v "p" 0 1000 in
   let m = v "m" (-1000) 1000 in
-  let cdiv x d = Ops.alu x Cdiv [ d ] and cmod x d = Ops.alu x Cmod [ d ] in
+  let cdiv x d = Ops.alu x Truncdiv [ d ]
+  and cmod x d = Ops.alu x Truncmod [ d ] in
   let big =
     var ~dtype:Uint32 "x" Bigint.zero Bigint.(pred (shift_left one 32))
   in
@@ -674,7 +675,9 @@ let truncations_keep_values =
     (fun (dt, (lo, hi), a, d, remainder, narrow) ->
       let x = var ~dtype:dt "a" lo hi in
       let e =
-        Ops.alu x (if remainder then Cmod else Cdiv) [ Ops.const (`Int d) ]
+        Ops.alu x
+          (if remainder then Truncmod else Truncdiv)
+          [ Ops.const (`Int d) ]
       in
       let renderer = if narrow then nothing else everything in
       let r = late_with ~disable_fast_idiv:false ~renderer (ops [ Shr ]) e in
@@ -884,8 +887,8 @@ let lowered_divisions =
                   (at [ ("x", `Int a) ] (lower e))
               in
               let q = Bigint.fdiv a b in
-              check "cdiv" (Ops.alu x Cdiv [ d ]) (Bigint.div a b);
-              check "cmod" (Ops.alu x Cmod [ d ]) (Bigint.rem a b);
+              check "cdiv" (Ops.alu x Truncdiv [ d ]) (Bigint.div a b);
+              check "cmod" (Ops.alu x Truncmod [ d ]) (Bigint.rem a b);
               check "//" (Ops.div ~rounding:`Floor x d) q;
               check "%" (Ops.mod_ x d) Bigint.(a - (b * q)))
             values)
@@ -969,9 +972,9 @@ let quotients_at_width =
                         equal ~msg const (at vars e) (at vars r))
                       points)
                 [
-                  Ops.alu x Floordiv [ c ];
-                  Ops.alu x Floormod [ c ];
-                  Ops.alu x Cdiv [ c ];
+                  Ops.alu x Div [ c ];
+                  Ops.alu x Mod [ c ];
+                  Ops.alu x Truncdiv [ c ];
                 ])
             [ 1; bits - 2; bits - 1 ])
         Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ])
@@ -1041,10 +1044,10 @@ let divisors_past_width =
                           equal ~msg const (at vars e) (at vars r))
                         (points x_lo))
                     [
-                      ("//", Ops.alu x Floordiv [ c ]);
-                      ("%", Ops.alu x Floormod [ c ]);
-                      ("cdiv", Ops.alu x Cdiv [ c ]);
-                      ("cmod", Ops.alu x Cmod [ c ]);
+                      ("//", Ops.alu x Div [ c ]);
+                      ("%", Ops.alu x Mod [ c ]);
+                      ("cdiv", Ops.alu x Truncdiv [ c ]);
+                      ("cmod", Ops.alu x Truncmod [ c ]);
                     ])
                 divisors)
             [ (lo, "whole"); (Bigint.zero, "non-negative") ])
@@ -1082,21 +1085,23 @@ let non_integers =
     [
       test "the mask rule declines a remainder by True" (fun () ->
           let r =
-            simplify_with shr_and (Ops.alu x Floormod [ Ops.bool true ])
+            simplify_with shr_and (Ops.alu x Mod [ Ops.bool true ])
           in
           is_false (has And r));
       test "the shift rules decline 2.0" (fun () ->
           is_false
             (has Shr
-               (simplify_with shr_and (Ops.alu x Floordiv [ Ops.float 2. ])));
+               (simplify_with shr_and (Ops.alu x Div [ Ops.float 2. ])));
           keeps (late_with (ops [ Shl ])) (Ops.alu x Mul [ Ops.float 2. ]);
-          keeps (late_with (ops [ Shr ])) (Ops.alu x Cdiv [ Ops.float 2. ]));
+          keeps
+            (late_with (ops [ Shr ]))
+            (Ops.alu x Truncdiv [ Ops.float 2. ]));
       test "fast_idiv declines True, a float and Invalid" (fun () ->
           List.iter
             (fun d ->
               keeps
                 (late_with ~disable_fast_idiv:false (ops [ Shr ]))
-                (Ops.alu x Cdiv [ d ]))
+                (Ops.alu x Truncdiv [ d ]))
             [ Ops.bool true; Ops.float 7.; Ops.invalid ]);
       test "the one-integer-between rule declines Invalid" (fun () ->
           keeps

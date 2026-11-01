@@ -83,8 +83,8 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
     - a reduction of leading axes becomes a reduction over its ranges;
     - a {!Op.Pad} becomes a selection of its source where its index is valid,
       and of [0] elsewhere;
-    - an integer division ({!Op.Cdiv}, {!Op.Cmod}, {!Op.Floordiv},
-      {!Op.Floormod}) whose divisor is not a nonzero constant, through casts
+    - an integer division ({!Op.Truncdiv}, {!Op.Truncmod}, {!Op.Div},
+      {!Op.Mod}) whose divisor is not a nonzero constant, through casts
       and movements, divides by [1] where its ranges are invalid, as on a pad's
       padding, whose loads read zeros whatever the divisor's bounds: a
       division by zero traps on x86 even in a lane whose result the pad drops.

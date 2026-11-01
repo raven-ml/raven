@@ -165,7 +165,7 @@ let shared : t =
             || List.mem (dtype c) Dtype.[ Uint32; Weak_int ]
             || is_invalid (base x)));
       decide
-        (pat [ Op.Cdiv; Op.Cmod; Op.Floordiv; Op.Floormod ] ~name:"x")
+        (pat [ Op.Truncdiv; Op.Truncmod; Op.Div; Op.Mod ] ~name:"x")
         "x"
         (fun x ->
           if
@@ -327,7 +327,7 @@ let tensor : t =
        (fun () -> [
          check
            (pat
-              [ Op.Sin; Op.Log2; Op.Exp2; Op.Sqrt; Op.Reciprocal ]
+              [ Op.Sin; Op.Log2; Op.Exp2; Op.Sqrt; Op.Recip ]
               ~src:[ Upat.wild ] ~name:"u")
            "u"
            (fun u -> Dtype.is_float (dtype u) || is_invalid (base (nth u 0)));

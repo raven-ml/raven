@@ -147,17 +147,17 @@ def muls():
 
 def cdivs():
     u, pos, mixed = v("u", 0, 1000, dtypes.uint32), v("p", 0, 1000), v("m", -1000, 1000)
-    return [u.alu(Ops.CDIV, UOp.const(8)), u.alu(Ops.CDIV, UOp.const(1)),
-            pos.alu(Ops.CDIV, UOp.const(8)), mixed.alu(Ops.CDIV, UOp.const(8)),
-            mixed.alu(Ops.CDIV, UOp.const(1)), pos.alu(Ops.CDIV, UOp.const(7)),
-            pos.alu(Ops.CMOD, UOp.const(7)), mixed.alu(Ops.CDIV, UOp.const(7)),
-            mixed.alu(Ops.CMOD, UOp.const(7)), pos.alu(Ops.CMOD, v("d", 1, 9)),
-            pos.alu(Ops.CDIV, UOp.const(-3)), pos.alu(Ops.CMOD, UOp.const(0)),
-            v("w", 0, 2**64 - 1, dtypes.uint64).alu(Ops.CMOD, UOp.const(3)),
-            v("x", 0, 2**32 - 1, dtypes.uint32).alu(Ops.CDIV, UOp.const(7)),
-            v("x", 0, 2**32 - 1, dtypes.uint32).alu(Ops.CMOD, UOp.const(7)),
-            v("k", 0, 100, dtypes.weakint).alu(Ops.CDIV, UOp.const(8)), mixed.alu(Ops.CMOD, UOp.const(4)),
-            v("l", 0, 100, dtypes.int64).alu(Ops.CDIV, UOp.const(2**63 - 1))]
+    return [u.alu(Ops.TRUNCDIV, UOp.const(8)), u.alu(Ops.TRUNCDIV, UOp.const(1)),
+            pos.alu(Ops.TRUNCDIV, UOp.const(8)), mixed.alu(Ops.TRUNCDIV, UOp.const(8)),
+            mixed.alu(Ops.TRUNCDIV, UOp.const(1)), pos.alu(Ops.TRUNCDIV, UOp.const(7)),
+            pos.alu(Ops.TRUNCMOD, UOp.const(7)), mixed.alu(Ops.TRUNCDIV, UOp.const(7)),
+            mixed.alu(Ops.TRUNCMOD, UOp.const(7)), pos.alu(Ops.TRUNCMOD, v("d", 1, 9)),
+            pos.alu(Ops.TRUNCDIV, UOp.const(-3)), pos.alu(Ops.TRUNCMOD, UOp.const(0)),
+            v("w", 0, 2**64 - 1, dtypes.uint64).alu(Ops.TRUNCMOD, UOp.const(3)),
+            v("x", 0, 2**32 - 1, dtypes.uint32).alu(Ops.TRUNCDIV, UOp.const(7)),
+            v("x", 0, 2**32 - 1, dtypes.uint32).alu(Ops.TRUNCMOD, UOp.const(7)),
+            v("k", 0, 100, dtypes.weakint).alu(Ops.TRUNCDIV, UOp.const(8)), mixed.alu(Ops.TRUNCMOD, UOp.const(4)),
+            v("l", 0, 100, dtypes.int64).alu(Ops.TRUNCDIV, UOp.const(2**63 - 1))]
 
 
 def negations():

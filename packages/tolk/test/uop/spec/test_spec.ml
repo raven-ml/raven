@@ -158,7 +158,7 @@ let leaves () =
     ]
 
 let unary = Op.[ Neg; Sin; Sqrt; Trunc ]
-let binary = Op.[ Add; Mul; Max; Cmplt; Cmpne; And; Xor; Shl; Cdiv; Floormod ]
+let binary = Op.[ Add; Mul; Max; Cmplt; Cmpne; And; Xor; Shl; Truncdiv; Mod ]
 let where_step = List.length unary + List.length binary
 let cast_step = where_step + 1
 let stack_step = where_step + 2
