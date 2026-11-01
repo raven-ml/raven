@@ -131,3 +131,14 @@
 (cram
  (applies_to search)
  (deps search.exe))
+
+; declines.t pins why programs over several devices evaluate.
+
+(executable
+ (name declines)
+ (modules declines)
+ (libraries nx rig rune))
+
+(cram
+ (applies_to declines)
+ (deps declines.exe))

@@ -2495,6 +2495,10 @@ let variant t layouts phases donated settings =
                    && Array.for_all (Int.equal 0) phases
                    && not (Array.exists Fun.id donated) ->
                 lowered
+            | _ when Option.is_some t.split && Array.exists Fun.id donated ->
+                decline
+                  "a donated argument over several devices: a program over \
+                   them lends no memory"
             | _ ->
                 lower ~rig:t.rig ~split:(Option.is_some t.split)
                   ~uploads:t.uploads t.program t.forms ~layouts ~phases ~donated
@@ -2763,11 +2767,17 @@ let one rig (type v s) (dt : (v, s) D.t) = Rig.Buffer.create rig (D.bytes dt 1)
 
 let rec run t args =
   (* A split program reads each piece of an argument as an argument of its
-     own and lends no memory. *)
+     own and lends no memory, so a variant with a donated argument declines:
+     the call evaluates, and nx's donation lends the argument's memory. *)
   let donated =
     match t.split with
     | None -> Array.map (fun (V x) -> Nx.Prim.donated x) args
-    | Some _ -> Array.map (fun _ -> false) t.forms
+    | Some s ->
+        Array.concat
+          (Array.to_list
+             (Array.mapi
+                (fun i (V x) -> Array.make s.args.(i) (Nx.Prim.donated x))
+                args))
   in
   consumed ~by:t.name args @@ fun arrays take value ->
   let leaves = Array.concat (List.init (Array.length args) arrays) in

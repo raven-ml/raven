@@ -362,7 +362,10 @@ All notable changes to this project will be documented in this file.
   windows in kernels of its own, compiled once per target, with eager's
   placements. Such programs were evaluated. Loops, `switch`, `remat`, custom
   rules, checks and totals over several devices are still evaluated, as are
-  programs over devices of several targets.
+  programs over devices of several targets, calls that donate an argument
+  and programs that gather a cut argument, as fully sharded training gathers
+  its weights: a compiled one lends no memory and holds what it gathers
+  between calls.
 - A loop's step that runs a construct over none of the step's values, such as
   a scan over a capture, executes its `Rune.callback`s and offers its
   `Rune.Probe` emissions every trip: the construct ran once, so a callback ran

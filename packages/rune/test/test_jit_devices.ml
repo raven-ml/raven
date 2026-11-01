@@ -276,6 +276,49 @@ let replicas set cols =
         bs
   | Raised m -> fail m
 
+(* Gathers
+
+   A program that places an argument so that a device holds more of it
+   evaluates, since a compiled one would hold what it gathers between calls:
+   a cut argument placed whole on each device, or, on the mesh, whole along
+   one of its axes. A program that gathers a value it computes, or whose
+   gradient places a cut cotangent at a whole weight, compiles. Each gives
+   eager's bits. *)
+
+let evaluated f x y =
+  let before = Rune.evaluations () in
+  let r =
+    outcome (fun () -> Rune.jit T.(tensor @-> tensor @-> returns tensor) f x y)
+  in
+  equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
+  r
+
+let gather_kinds set =
+  let x = Nx.place (at set (Split 0)) (value [| 8; 3 |]) in
+  let w = Nx.place (at set On) (value ~seed:1 [| 8; 3 |]) in
+  let whole x _ = Nx.place (at set On) x in
+  let same got f =
+    equal (outcome_t bits_t)
+      (omap bits (outcome (fun () -> f x w)))
+      (omap bits got)
+  in
+  same (evaluated whole x w) whole;
+  let computed x _ = Nx.place (at set On) (Nx.mul x x) in
+  same (compiled computed x w) computed;
+  let grad x w =
+    Rune.grad' (fun w -> Nx.sum (Nx.mul (Nx.place (at set (Split 0)) w) x)) w
+  in
+  same (compiled grad x w) grad;
+  match set.mesh with
+  | None -> ()
+  | Some mesh ->
+      let x = Nx.place (at set (Mesh (0, 1))) (value [| 8; 4 |]) in
+      let rows x _ = Nx.place (Nx.Placement.mesh mesh [ (0, [ "x" ]) ]) x in
+      let got = evaluated rows x x in
+      equal (outcome_t bits_t)
+        (omap bits (outcome (fun () -> rows x x)))
+        (omap bits got)
+
 (* Kernels
 
    Each device that holds elements of an operation's results runs a kernel of
@@ -400,6 +443,12 @@ let () =
                  over 3 { law = (fun s -> grads s 7) });
              test "over four, one window empty" (fun () ->
                  over 4 { law = (fun s -> grads s 3) });
+           ];
+         group "gathers"
+           [
+             test "over two devices" (fun () -> over 2 { law = gather_kinds });
+             test "over four and their mesh" (fun () ->
+                 over 4 { law = gather_kinds });
            ];
          group "replicas"
            [

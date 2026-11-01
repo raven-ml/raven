@@ -205,6 +205,19 @@ let piece_forms (F f) =
             })
         (Nx.Prim.pieces f.placement (shape_of f))
 
+(* Whether placing a value of [shape] at [p] onto [q] gathers it, some device's
+   window of it growing, as fully sharded training gathers a layer's weights
+   whole on each device: a compiled program would hold what it gathers in its
+   storage on every device between calls, past the share the caller keeps. *)
+let gathers q p shape =
+  let held pl =
+    Array.map
+      (fun (_, w) -> Array.fold_left ( * ) 1 (extents w))
+      (Nx.Prim.pieces pl shape)
+  in
+  let a = held p and b = held q in
+  Array.length a = Array.length b && Array.exists2 ( < ) a b
+
 let split ~name (p : Program.t) forms =
   if Array.length p.adds > 0 then decline "a total over several devices";
   if p.emits then decline "an emission over several devices";
@@ -243,8 +256,17 @@ let split ~name (p : Program.t) forms =
     in
     Array.iter
       (function
-        | Op { by; op; base } ->
-            let op = Nx.Prim.map lookup op in
+        | Op { by; op = traced; base } ->
+            let op = Nx.Prim.map lookup traced in
+            (* Whether the operation places an argument of the program. *)
+            let argument =
+              match traced with
+              | Place (_, x) -> (
+                  match Nx.Prim.payload p.owner x with
+                  | Some (Var n) -> Array.mem n p.params
+                  | _ -> false)
+              | _ -> false
+            in
             let r =
               match op with
               | Check _ -> decline "a check over several devices"
@@ -254,6 +276,11 @@ let split ~name (p : Program.t) forms =
                           (Nx.Prim.coerce (Nx.dtype x) (Nx.Placement.devices q)
                              x) ->
                   decline "Nx.place onto another set of devices"
+              | Place (q, x)
+                when argument && gathers q (Nx.placement x) (Nx.shape x) ->
+                  decline
+                    "Nx.place gathers an argument cut across devices: a \
+                     program over them holds what it gathers between calls"
               | _ -> Nx.Prim.partition (engine ri ~by moves) ~by op
             in
             bind := base;

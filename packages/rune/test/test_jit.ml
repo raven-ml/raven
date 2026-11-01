@@ -1207,11 +1207,12 @@ let test_evaluated_in_place () =
   equal ~msg:"the weights" bits_t (bits w0) (bits w1);
   equal ~msg:"the moment" bits_t (bits m0) (bits m1)
 
-(* Programs over values cut across two devices, evaluated: arguments drawn
-   from fewer sources, so that one value may be donated twice, and outputs
-   that may repeat one value. Donated or not, a call gives the same bits,
-   and its results lie apart from one another and from the arguments it
-   did not consume. *)
+(* Programs over values cut across two devices, evaluated where a call
+   donates an argument, since such a program lends no memory, and compiled
+   where it donates none: arguments drawn from fewer sources, so that one
+   value may be donated twice, and outputs that may repeat one value.
+   Donated or not, a call gives the same bits, and its results lie apart
+   from one another and from the arguments it did not consume. *)
 type expr =
   | Arg of int
   | Neg of expr
@@ -1322,7 +1323,8 @@ let law_donating c =
   cover "a repeated output" (c.repeats <> []);
   let before = Rune.evaluations () in
   let ys = g given in
-  equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
+  equal ~msg:"evaluated iff an argument is donated" bool donates
+    (Rune.evaluations () > before);
   equal ~msg:"donated or not, the bits" (list bits_t) reference
     (List.map bits ys);
   (* Each result's buffers, then those of each argument still alive. *)
@@ -1618,8 +1620,9 @@ let test_shared () =
     (bits view)
 
 (* An evaluated program, here with a check over values cut across two
-   devices, and a program over such values, which lends nothing, consume their
-   donated arguments and give eager's values. *)
+   devices, consumes its donated arguments and gives eager's values. A program
+   over such values lends no memory, so a call that donates an argument is
+   evaluated too, and one that donates none compiles. *)
 let test_evaluated_donation () =
   let at w () = Nx.place (on w) (v [| 1.; 2.; -0.; 4. |]) in
   let f x =
@@ -1637,11 +1640,17 @@ let test_evaluated_donation () =
   let d = at Cut () in
   let before = Rune.evaluations () in
   let y = Rune.jit' g (Nx.donate d) in
-  equal ~msg:"compiled over two devices" int 0 (Rune.evaluations () - before);
+  equal ~msg:"donated over two devices, evaluated" bool true
+    (Rune.evaluations () > before);
   equal bits_t expected (bits y);
   equal ~msg:"placement" bool true
     (Nx.Placement.equal (Nx.placement y) (on Cut));
-  dead d
+  dead d;
+  let before = Rune.evaluations () in
+  let y = Rune.jit' g (at Cut ()) in
+  equal ~msg:"undonated over two devices, compiled" int 0
+    (Rune.evaluations () - before);
+  equal bits_t expected (bits y)
 
 type donation_case =
   | Donation_case :

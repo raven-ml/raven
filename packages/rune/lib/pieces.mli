@@ -60,5 +60,7 @@ val split : name:string -> Program.t -> Program.form array -> t
     is named [name] in messages.
 
     Raises [Declined] for a program that threads a total or emits, and one with
-    a check, a construct other than [Detach], or a traced value placed onto
-    another set; and what nx raises for an operation its partition refuses. *)
+    a check, a construct other than [Detach], a traced value placed onto another
+    set, or an argument placed so that a device holds more of it, which the
+    compiled program would hold on every device between calls; and what nx
+    raises for an operation its partition refuses. *)

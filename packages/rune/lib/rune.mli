@@ -1377,10 +1377,11 @@ val jit :
     devices of a set compile each kernel once, and a window moves between
     devices from a start the program binds when it runs: where every window
     of a cut has one shape, a program makes as many kernels whatever the
-    number of devices. Each argument's piece on a
-    device is an argument of its own for the variant, and a donated argument
-    lends no memory. With [RUNE_JIT_DEBUG] set, the first call prints each move
-    between devices, the function that makes it and its bytes. The values of a
+    number of devices. Each argument's piece on a device is an argument of its
+    own for the variant, and such a program lends no memory: a call that
+    donates an argument evaluates ({!section-evaluated}). With
+    [RUNE_JIT_DEBUG] set, the first call prints each move between devices, the
+    function that makes it and its bytes. The values of a
     program over several devices must lie on devices of one target, its device
     kind and architecture, such as the memory devices of one host
     ({!Rig.memory_device}). *)
@@ -1713,7 +1714,11 @@ val jit :
     Over several devices it declines a program that holds a construct other
     than {!detach}, such as a loop, a {!switch}, a {!remat} or a custom rule, a
     check, an addition to a {!Total}, an emission, a traced value placed onto
-    another set, or values on devices of several targets. It also declines a
+    another set, a placement of an argument that gives a device more of it, as
+    a gather of a cut argument whole on each device does, since a compiled
+    program would hold what it gathers on every device between calls, or values
+    on devices of several targets, and evaluates a call that donates an
+    argument, since such a program lends no memory. It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a
     compiled call's are, and a call with donated arguments consumes them. It
@@ -1753,7 +1758,8 @@ val jit :
     Written with placement, the three cut along axis 0 and each layer's
     weights placed whole on every device inside its calls, one call
     forward, one backward by {!vjp} and one update per layer, its state
-    donated ({!Nx.donate}), such a step evaluates over the devices. Each
+    donated ({!Nx.donate}), such a step evaluates over the devices, its
+    calls gathering a cut argument or donating it. Each
     call lets a value go after its last read, nx reduces each gradient's
     partial sums in pieces of at most [C = 256] KiB
     ({!Nx.section-reductions}), and the update writes over the state it is
