@@ -84,7 +84,7 @@ let of_json json =
         ( Json_utils.json_mem "step" json |> Json_utils.json_number,
           Json_utils.json_mem "timestamp" json |> Json_utils.json_number,
           Json_utils.json_mem "key" json |> Json_utils.json_string,
-          Json_utils.json_mem "value" json |> Json_utils.json_float )
+          Json_utils.json_mem "value" json |> Value.float_of_json )
       with
       | Some step, Some timestamp, Some key, Some value ->
           Some (Metric { step = int_of_float step; timestamp; key; value })
@@ -168,7 +168,7 @@ let to_json = function
           ("step", Jsont.Json.int step);
           ("timestamp", Jsont.Json.number timestamp);
           ("key", Jsont.Json.string key);
-          ("value", Json_utils.float_json value);
+          ("value", Value.float_to_json value);
         ]
   | Define_metric { key; summary; step_metric; goal } ->
       Json_utils.json_obj

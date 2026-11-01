@@ -7,16 +7,14 @@ open Munin
 open Munin_float_text
 
 (* A metric value in an export: the fewest digits from 15 that read back to
-   it, the same on every system. JSON has no number for NaN or the
-   infinities: they are the strings "NaN", "Infinity" and "-Infinity", as
-   munin's event log holds them. *)
+   it, the same on every system. In JSON, NaN and the infinities are the
+   strings munin's event log holds them as. *)
 let number x = Float_text.exact x
 
 let json_number x =
-  if Float.is_finite x then number x
-  else if Float.is_nan x then {|"NaN"|}
-  else if x > 0. then {|"Infinity"|}
-  else {|"-Infinity"|}
+  match Value.float_name x with
+  | None -> number x
+  | Some name -> Printf.sprintf "%S" name
 
 (* A timestamp in seconds to the microsecond, as C's [%.6f] writes it where it
    rounds once. *)

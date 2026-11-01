@@ -24,7 +24,21 @@ val to_string : t -> string option
 val to_bool : t -> bool option
 (** [to_bool v] extracts a bool. *)
 
+val float_name : float -> string option
+(** [float_name x] is the string that stands for [x] in munin's JSON where
+    JSON has no number for it: ["NaN"], ["Infinity"] or ["-Infinity"], as
+    Protocol Buffers' JSON mapping writes them. It is [None] for a finite
+    [x]. *)
+
 (**/**)
+
+val float_to_json : float -> Jsont.json
+(** [float_to_json x] is [x] as a JSON number where it is finite, and the
+    string {!float_name}[ x] otherwise. *)
+
+val float_of_json : Jsont.json -> float option
+(** [float_of_json json] is the float {!float_to_json} writes as [json]: a
+    number, or exactly one of {!float_name}'s strings. *)
 
 val to_json : t -> Jsont.json
 (** [to_json v] is [v] as JSON: a boolean, a number, a string, or for a float

@@ -22,16 +22,6 @@ val json_string : Jsont.json -> string option
 val json_number : Jsont.json -> float option
 val json_bool : Jsont.json -> bool option
 
-val float_json : float -> Jsont.json
-(** [float_json x] is [x] as a JSON number where it is finite. JSON has no
-    number for the others: NaN is the string ["NaN"], the infinities
-    ["Infinity"] and ["-Infinity"], as Protocol Buffers' JSON mapping writes
-    them. *)
-
-val json_float : Jsont.json -> float option
-(** [json_float json] is the float {!float_json} writes as [json]: a number,
-    or exactly one of the strings ["NaN"], ["Infinity"] and ["-Infinity"]. *)
-
 val json_string_list : Jsont.json -> string list
 (** [json_string_list json] is the items of the array [json] that are
     strings. It is [[]] if [json] is not an array. *)

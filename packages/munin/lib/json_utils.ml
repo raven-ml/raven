@@ -20,18 +20,6 @@ let json_string = function Jsont.String (value, _) -> Some value | _ -> None
 let json_number = function Jsont.Number (value, _) -> Some value | _ -> None
 let json_bool = function Jsont.Bool (value, _) -> Some value | _ -> None
 
-let float_json x =
-  if Float.is_finite x then Jsont.Json.number x
-  else if Float.is_nan x then Jsont.Json.string "NaN"
-  else Jsont.Json.string (if x > 0. then "Infinity" else "-Infinity")
-
-let json_float = function
-  | Jsont.Number (x, _) -> Some x
-  | Jsont.String ("NaN", _) -> Some Float.nan
-  | Jsont.String ("Infinity", _) -> Some Float.infinity
-  | Jsont.String ("-Infinity", _) -> Some Float.neg_infinity
-  | _ -> None
-
 let json_string_list = function
   | Jsont.Array (items, _) ->
       List.filter_map

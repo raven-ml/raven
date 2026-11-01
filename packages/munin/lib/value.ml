@@ -24,6 +24,24 @@ let to_int = function
 let to_string = function `String s -> Some s | _ -> None
 let to_bool = function `Bool b -> Some b | _ -> None
 
+let float_name x =
+  if Float.is_finite x then None
+  else if Float.is_nan x then Some "NaN"
+  else Some (if x > 0. then "Infinity" else "-Infinity")
+
+let float_to_json x =
+  match float_name x with
+  | None -> Jsont.Json.number x
+  | Some name -> Jsont.Json.string name
+
+let float_of_json = function
+  | Jsont.Number (x, _) -> Some x
+  | Jsont.String (name, _) ->
+      List.find_opt
+        (fun x -> float_name x = Some name)
+        [ Float.nan; Float.infinity; Float.neg_infinity ]
+  | _ -> None
+
 (* A float JSON has no number for is the object [{"float": "NaN"}], or
    ["Infinity"] or ["-Infinity"]: a shape no other value takes, so that a
    [`String] is always a string. *)
@@ -31,7 +49,7 @@ let to_json : t -> Jsont.json = function
   | `Bool b -> Jsont.Json.bool b
   | `Int n -> Jsont.Json.int n
   | `Float f when Float.is_finite f -> Jsont.Json.number f
-  | `Float f -> Json_utils.json_obj [ ("float", Json_utils.float_json f) ]
+  | `Float f -> Json_utils.json_obj [ ("float", float_to_json f) ]
   | `String s -> Jsont.Json.string s
 
 let of_json : Jsont.json -> t option = function
@@ -44,7 +62,7 @@ let of_json : Jsont.json -> t option = function
   | Jsont.Object _ as json -> (
       match Json_utils.json_assoc json with
       | [ ("float", (Jsont.String _ as x)) ] ->
-          Json_utils.json_float x |> Option.map (fun f -> `Float f)
+          float_of_json x |> Option.map (fun f -> `Float f)
       | _ -> None)
   | _ -> None
 

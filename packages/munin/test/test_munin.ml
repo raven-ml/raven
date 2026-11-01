@@ -2105,6 +2105,19 @@ let value_floats =
   @@ fun (x, text) ->
   equal string text (Format.asprintf "%a" Value.pp (`Float x))
 
+(* NaN and the infinities have the names Protocol Buffers' JSON mapping
+   gives them; a finite float has none. *)
+let float_names =
+  cases "a float's name in JSON" ~id:(fun (x, _) -> Printf.sprintf "%h" x)
+    [
+      (Float.nan, Some "NaN");
+      (Float.infinity, Some "Infinity");
+      (Float.neg_infinity, Some "-Infinity");
+      (0., None);
+      (Float.max_float, None);
+    ]
+  @@ fun (x, name) -> equal (option string) name (Value.float_name x)
+
 (* Suite *)
 
 let suite =
@@ -2123,7 +2136,7 @@ let suite =
     group "Grouping" grouping;
     group "Media" media;
     group "GPU metrics' keys" gpu_keys;
-    group "Values" [ value_floats ];
+    group "Values" [ value_floats; float_names ];
   ]
 
 let () = exit (run "Munin" suite)
