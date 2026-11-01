@@ -8,6 +8,7 @@
 # forced: blessed dist/beta/100000 dist/beta/100000/grad dist/binomial/100000 dist/binomial/100000/grad dist/dirichlet/100000 dist/dirichlet/100000/grad dist/gamma/100000 dist/gamma/100000/grad dist/inverse_gamma/100000 dist/inverse_gamma/100000/grad dist/neg_binomial/100000 dist/neg_binomial/100000/grad dist/poisson/100000 dist/poisson/100000/grad dist/student_t/100000 dist/student_t/100000/grad under load 44.1 on 14 cores
 # forced: blessed dist/hmm/100 dist/hmm/100/grad dist/lkj_cholesky/10000 dist/lkj_cholesky/10000/grad dist/truncated_normal/100000 dist/truncated_normal/100000/grad dist/von_mises/100000 dist/von_mises/100000/grad under load 44.1 on 14 cores
 # forced: blessed nested/gaussian5/400 nested/run/gaussian5/100 under load 29.5 on 14 cores
+# forced: blessed nuts/schools/4 nuts/schools/64 nuts/eager/schools/4 nuts/eager/gp_pois_regr/4 hmc/eager/schools/4 hmc/eager/gp_pois_regr/4 under load 34.8 on 14 cores
 
 dist/beta/100000	alloc_words	exact	6588
 dist/beta/100000/grad	alloc_words	exact	1324
@@ -33,8 +34,14 @@ dist/truncated_normal/100000	alloc_words	exact	3781
 dist/truncated_normal/100000/grad	alloc_words	exact	1608
 dist/von_mises/100000	alloc_words	exact	2347
 dist/von_mises/100000/grad	alloc_words	exact	1324
+hmc/eager/gp_pois_regr/4	alloc_words	exact	775736
+hmc/eager/schools/4	alloc_words	exact	317393
 nested/gaussian5/400	alloc_words	exact	5158
 nested/run/gaussian5/100	alloc_words	exact	3372
+nuts/eager/gp_pois_regr/4	alloc_words	exact	22205730
+nuts/eager/schools/4	alloc_words	exact	1367464
+nuts/schools/4	alloc_words	exact	9050
+nuts/schools/64	alloc_words	exact	9050
 pathfinder/schools/4	alloc_words	exact	9445904
 vi/schools/4	alloc_words	exact	11106123
 

@@ -86,6 +86,42 @@ let hmc_step chains =
   Thumper.bench_with_setup ~setup (Printf.sprintf "schools/%d" chains)
     (fun (step, k, s) -> step k s)
 
+(* A NUTS and an HMC transition, eager, as a user calls [step] outside [jit],
+   from the state [warmed] warmup transitions reach, with one key. *)
+let eager_nuts ~warmed name u lp start =
+  let setup () =
+    let s = Norn.Nuts.init u lp (start ()) in
+    Norn.Nuts.warmup u lp (Nx.Rng.key 3) ~steps:warmed s
+  in
+  Thumper.bench_with_setup ~setup ("eager/" ^ name) (fun s ->
+      Norn.Nuts.step u lp (Nx.Rng.key 2) s)
+
+let eager_hmc ~warmed name u lp start =
+  let setup () =
+    let s = Norn.Hmc.init u lp (start ()) in
+    Norn.Hmc.warmup u lp (Nx.Rng.key 3) ~steps:warmed s
+  in
+  Thumper.bench_with_setup ~setup ("eager/" ^ name) (fun s ->
+      Norn.Hmc.step u lp (Nx.Rng.key 2) s)
+
+(* The schools after 50 warmup transitions and the Poisson Gaussian process of
+   posteriordb after 20, at 4 chains: NUTS takes 7 leapfrog steps on the
+   schools and 2 to 127 on the process, HMC 4 and 8. The process's warmup is
+   short to keep its setup within a trial's deadline. *)
+let eager_schools step =
+  step ~warmed:50 "schools/4" u (M.log_density model y) (fun () ->
+      M.init model y ~chains:4 (Nx.Rng.key 1))
+
+let eager_gp step =
+  match
+    List.find
+      (fun (Posteriordb.Posterior p) -> p.name = "gp_pois_regr-gp_pois_regr")
+      (Posteriordb.all "../test/model/support/posteriordb.golden")
+  with
+  | Posteriordb.Posterior p ->
+      step ~warmed:20 "gp_pois_regr/4" (M.coords p.model) (M.log_density p.model p.y)
+        (fun () -> M.init p.model p.y ~chains:4 (Nx.Rng.key 1))
+
 (* An ensemble transition, compiled, of 64 walkers in one ensemble. *)
 let ensemble_step =
   let setup () =
@@ -308,8 +344,21 @@ let posteriordb =
 let () =
   Thumper.run "norn"
     [
-      Thumper.group "nuts" [ nuts_step 4; nuts_step 64 ];
-      Thumper.group "hmc" [ hmc_step 4; hmc_step 64; hmc_step 1024 ];
+      Thumper.group "nuts"
+        [
+          nuts_step 4;
+          nuts_step 64;
+          eager_schools eager_nuts;
+          eager_gp eager_nuts;
+        ];
+      Thumper.group "hmc"
+        [
+          hmc_step 4;
+          hmc_step 64;
+          hmc_step 1024;
+          eager_schools eager_hmc;
+          eager_gp eager_hmc;
+        ];
       Thumper.group "ensemble" [ ensemble_step ];
       Thumper.group "pathfinder" [ pathfinder ];
       Thumper.group "vi" [ vi_fit ];
