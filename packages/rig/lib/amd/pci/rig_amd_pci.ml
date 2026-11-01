@@ -178,18 +178,22 @@ let protect g f = Amd.Lock.protect g.lock f
    them, each GPU's reach as its last open found it, by number, and what its
    boots keep, by bus. A GPU's reach is the same at every open
    ([Memory.reach]), so a device's [reaches] answers from its GPU's number
-   alone, also once it is lost, and keeps nothing of the device. Each list
-   holds at most the machine's AMD GPUs. *)
+   alone, also once it is lost, and keeps nothing of the device. [reaches]
+   takes no lock, as [Rig_amd.peer] must not block: the reaches change by
+   swaps of lists made from the one read. Each list holds at most the
+   machine's AMD GPUs. *)
 type known = {
   key : Memory.region Type.Id.t;
-  mutable reached : (int * Memory.reach) list;
+  reached : (int * Memory.reach) list Atomic.t;
   mutable kept : (string * Boot.kept) list;
 }
 
 (* By machine, through ephemerons, so that the table keeps no machine the
    process dropped: the GC frees an entry once its machine goes, and the table
    drops the entry's cell as it grows. Machines that no transport names hash
-   alike. *)
+   alike. A new machine joins a copy, which replaces the table by one store:
+   an exception in the copy's growth, which moves its entries, leaves the
+   table whole. *)
 module Machines = Ephemeron.K1.Make (struct
   type t = Machine.t
 
@@ -197,21 +201,27 @@ module Machines = Ephemeron.K1.Make (struct
   let hash m = Hashtbl.hash (Machine.name m)
 end)
 
-let machines = Machines.create 1
+let machines = ref (Machines.create 1)
 let machines_lock = Amd.Lock.create ()
 
 let known m =
   Amd.Lock.protect machines_lock @@ fun () ->
-  match Machines.find_opt machines m with
+  match Machines.find_opt !machines m with
   | Some on -> on
   | None ->
-      let on = { key = Type.Id.make (); reached = []; kept = [] } in
-      Machines.add machines m on;
+      let on =
+        { key = Type.Id.make (); reached = Atomic.make []; kept = [] }
+      in
+      let t = Machines.copy !machines in
+      Machines.clean t;
+      Machines.add t m on;
+      machines := t;
       on
 
-let learn on index reach =
-  Amd.Lock.protect machines_lock @@ fun () ->
-  on.reached <- (index, reach) :: List.remove_assoc index on.reached
+let rec learn on index reach =
+  let l = Atomic.get on.reached in
+  let l' = (index, reach) :: List.remove_assoc index l in
+  if not (Atomic.compare_and_set on.reached l l') then learn on index reach
 
 (* What the boots of the GPU at [bus] keep. Its opens run one at a time, under
    the driver's lock. *)
@@ -225,12 +235,12 @@ let kept on bus =
       k
 
 let reaches on ~index j =
-  let reach () =
-    match (List.assoc_opt index on.reached, List.assoc_opt j on.reached) with
-    | Some r, Some o -> Memory.reaches r o
-    | _ -> false
-  in
-  j = index || Amd.Lock.protect machines_lock reach
+  let l = Atomic.get on.reached in
+  j = index
+  ||
+  match (List.assoc_opt index l, List.assoc_opt j l) with
+  | Some r, Some o -> Memory.reaches r o
+  | _ -> false
 
 (* A path function raises Rig_amd.Fault for a register sequence that does not
    complete. A flush the hubs do not confirm is raised by the next sleep. *)

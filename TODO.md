@@ -26,12 +26,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### drivers
 
-- rig.amd over PCI, rig.pci: `peer` must take no lock (rig_edge.mli's
-  Drivers section). AMD over PCI's `reaches` takes `machines_lock`, and
-  rig.pci's `Memory.reaches` reads each GPU's route under `routes`
-  without an IOMMU, for NV over PCI too. A callback inside those sections
-  gets `Invalid_argument`. NV over PCI's atomic list is the shape for AMD;
-  the route needs a first read that takes no lock
 - rig's drivers keep state whole by rig.mli's rule: a synchronous raise
   leaves it whole; an asynchronous one may leak and lose the device but
   never makes a later call wrong. worklist-m.md (b8a35696e) has 89 rows
