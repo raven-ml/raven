@@ -455,6 +455,120 @@ let test_range_donated () =
       equal ~msg:"the donor lives" (array float_exact) xs (Nx.to_array x))
     [ Nx.Add; Max; Min; Set ]
 
+(* Ranges over devices. [x], of three or four columns, lies whole on each
+   of four devices, cut along its rows or its columns over two of them or
+   four, or over a 2×2 mesh along both. *)
+
+module S4 = (val Nx.devices [ m 0; m 1; m 2; m 3 ])
+
+let mesh = Nx.Mesh.v S4.v [ ("a", 2); ("b", 2) ]
+
+type cut = Whole | Cut of { axis : int; tiles : int } | Both
+
+let at = function
+  | Whole -> S4.on
+  | Cut { axis; tiles = 4 } -> S4.split ~axis
+  | Cut { axis; _ } -> Nx.Placement.mesh mesh [ (axis, [ "b" ]) ]
+  | Both -> Nx.Placement.mesh mesh [ (0, [ "a" ]); (1, [ "b" ]) ]
+
+let cuts_rows = function
+  | Cut { axis = 0; _ } | Both -> true
+  | Whole | Cut _ -> false
+
+let tiles = function Cut { tiles; _ } -> tiles | Both -> 2 | Whole -> 1
+
+let pp_cut ppf = function
+  | Whole -> Format.pp_print_string ppf "whole"
+  | Cut { axis; tiles } -> Format.fprintf ppf "axis %d in %d" axis tiles
+  | Both -> Format.pp_print_string ppf "both axes over a mesh"
+
+let cut_ranges =
+  Gen.with_pp
+    (fun ppf (c, x, _, _, cut) ->
+      Format.fprintf ppf "%a %a at %a" pp_combine c pp_ints (Nx.shape x)
+        pp_cut cut)
+    (let open Gen in
+     let* c = of_list [ Nx.Add; Max; Min; Set ] in
+     let* n = of_list [ 0; 1; 2; 3; 5; 8; 16 ] in
+     let* k = int_range 0 4 in
+     let* cols = of_list [ 3; 4 ] in
+     let* x = drawn D.Float32 [| n; cols |] in
+     let* lo = int64s k (-1) (n + 1) in
+     let* hi = int64s k (-1) (n + 1) in
+     let+ cut =
+       of_list
+         [
+           Whole;
+           Cut { axis = 0; tiles = 2 };
+           Cut { axis = 0; tiles = 4 };
+           Cut { axis = 1; tiles = 2 };
+           Cut { axis = 1; tiles = 4 };
+           Both;
+         ]
+     in
+     (c, x, lo, hi, cut))
+
+(* [Add], [Max] and [Min] read [x]'s rows whole: cut along them, the call
+   raises naming the placement with the rows whole and the other cuts kept,
+   and placed there it gives the host's bits, lying there. [Set] gives the
+   host's bits at any placement, lying as [x] does where its rows are
+   whole. *)
+let law_cut_ranges (c, x, lo, hi, cut) =
+  let n = Nx.dim 0 x and p = at cut in
+  let refused = cuts_rows cut && c <> Nx.Set in
+  cover "Add, Max or Min with its rows cut" refused;
+  cover "Add, Max or Min with fewer rows than tiles"
+    (refused && n < tiles cut);
+  cover "Add, Max or Min with its rows and columns cut" (refused && cut = Both);
+  cover "Set with its rows cut" (cuts_rows cut && c = Nx.Set);
+  cover "a cut of the columns alone"
+    (match cut with
+    | Cut { axis = 1; _ } -> true
+    | Whole | Cut _ | Both -> false);
+  cover "uneven windows of the columns"
+    (match cut with
+    | Cut { axis = 1; tiles } -> Nx.dim 1 x mod tiles <> 0
+    | Both -> Nx.dim 1 x mod 2 <> 0
+    | Whole | Cut _ -> false);
+  let host = Nx.to_array (Nx.reduce_ranges c ~lo ~hi x) in
+  let on v = Nx.place S4.on v in
+  let run p = Nx.reduce_ranges c ~lo:(on lo) ~hi:(on hi) (Nx.place p x) in
+  let computes p =
+    let y = run p in
+    equal_elements D.Float32 host (Nx.to_array y);
+    y
+  in
+  if refused then (
+    let whole =
+      Nx.Placement.with_leading_axis (Nx.Placement.without_leading_axis p)
+    in
+    let sub =
+      Format.asprintf
+        "Nx.reduce_ranges: x lies at %a and is read at %a; Nx.place ("
+        Nx.Placement.pp p Nx.Placement.pp whole
+    in
+    raises_match (Exn.invalid_arg ~sub) (fun () -> run p);
+    let y = computes whole in
+    equal ~msg:"where it lies" (placement ()) whole (Nx.placement y))
+  else
+    let y = computes p in
+    if not (cuts_rows cut) then
+      equal ~msg:"where it lies" (placement ()) p (Nx.placement y)
+
+(* Eight rows in two tiles, which every level's chunks divide, raise as any
+   other cut of the rows does. *)
+let test_range_rows_cut () =
+  let x = Nx.zeros_at (S2.split ~axis:0) Nx.float32 [| 8; 3 |] in
+  let b = Nx.place S2.on (Nx.create Nx.int64 [| 2 |] [| 0L; 3L |]) in
+  List.iter
+    (fun c ->
+      raises
+        (Invalid_argument
+           "Nx.reduce_ranges: x lies at split ~axis:0 [m0; m1] and is read \
+            at on [m0; m1]; Nx.place (Placement.on s) x")
+        (fun () -> Nx.reduce_ranges c ~lo:b ~hi:b x))
+    [ Nx.Add; Max; Min ]
+
 let ranges =
   group "reduce_ranges"
     [
@@ -467,6 +581,11 @@ let ranges =
       test "complex extremes in the dtype's order" test_range_complex;
       test "misuse raises" test_range_errors;
       test "a donated operand computes and lives" test_range_donated;
+      prop
+        "Add, Max and Min raise with their rows cut, naming the placement \
+         that keeps the other cuts, and Set gives the host's bits anywhere"
+        cut_ranges law_cut_ranges;
+      test "eight rows in two tiles raise" test_range_rows_cut;
     ]
 
 (* map_segments *)

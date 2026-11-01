@@ -3415,6 +3415,9 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx.reduce_ranges` with `Add`, `Max` or `Min` raises on rows
+  cut across devices, naming the `Nx.place` that keeps the other cuts; eight
+  rows in two tiles used to compute. `Set` computes where the rows lie.
 - On a set of devices of several architectures, each window that several
   devices hold, of a result, a fold's partials or a part of its closing, is
   computed by the devices of its first holder's architecture and copied to the

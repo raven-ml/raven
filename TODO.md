@@ -207,11 +207,6 @@ raven / llama.cpp (Vulkan; ROCm):
   90 MXFP4 blocks, over 4 or 8 devices. A halo exchange, as GSPMD's
   reshape realigns an uneven cut (arXiv 2105.04663 §4.1), would move only
   the rows across each window's boundary
-- `reduce_ranges`'s sparse table reshapes a row-cut `x` to
-  `[blocks; 2; h; ...]` and assembles it at each level (`ranges`, nx.ml):
-  where a level's chunk is wider than a device's tile, the reshape reads
-  the axis whole onto every device. Build the levels from slices of the
-  cut axis, or after the reshape item above
 - eager GPU kernel libraries, nx.cuda, nx.metal and nx.amd, onto nx's
   current kernel interface; until then a GPU set computes under
   `Rune.jit` only. Their last code is 64478fedf

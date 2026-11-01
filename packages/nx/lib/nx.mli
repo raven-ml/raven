@@ -3696,6 +3696,15 @@ val reduce_ranges :
     A growing window, a running fold, is the ranges from [0] to [i + 1]. Its
     work is [O((n + m) log n)] for [m] ranges, and its memory [O(n + m)].
 
+    So that a row's bits do not depend on where [x] lies, [Add], [Max] and
+    [Min] read [x]'s rows whole on each device, where a reduction of a cut
+    axis would compute by partials ({!section-routing}): [x] cut along its
+    first axis raises [Invalid_argument] naming the {!place} that puts its
+    rows whole on each device and keeps its other cuts. [Set] reads the
+    rows where they lie, as {!take} does. With its rows whole, [x] cut along
+    other axes is folded by each device over its own columns, and the result
+    lies as [x] does.
+
     {[
     let x = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
     let lo = Nx.create Nx.int64 [| 4 |] [| -2L; 0L; 3L; 4L |]
@@ -3706,7 +3715,8 @@ val reduce_ranges :
     ]}
 
     Raises [Invalid_argument] if [x] is 0-d, [lo] and [hi] are not 1-d of one
-    length, or [c] is [Add] and [x] is boolean. *)
+    length, [c] is [Add] and [x] is boolean, or [c] is not [Set] and [x] is
+    cut along its first axis. *)
 
 val map_segments :
   segments:int ->

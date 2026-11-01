@@ -4818,6 +4818,21 @@ let ranges (type v s d) ~by (c : P.binary) ~l ~r (x : (v, s, d) t)
     in
     go 0 xp xp res
 
+(* Raises unless [x]'s rows lie whole on each device. An [Add], [Max] or
+   [Min] range has the bits its rows give on one device: the sparse
+   table's levels regroup the rows into chunks of up to [n], which a cut
+   would split or close by partials. [Set] takes each range's last row, a
+   gather that computes where the rows lie. The remedy keeps the other
+   axes' cuts, along which each device computes its own columns. *)
+let rows_whole ~by x =
+  let p = placement x in
+  if Array.exists (fun (a, _) -> a = 0) (Grid.cuts (Devices.grid p)) then
+    let q = Devices.uncut ~axis:0 p in
+    invalid_argf "%s: x lies at %a and is read at %a; Nx.place (%a) x" by
+      Devices.pp_placement p Devices.pp_placement q
+      (Route.pp_call ~by (Devices.set q))
+      (Devices.grid q)
+
 let reduce_ranges c ~lo ~hi x =
   let by = "Nx.reduce_ranges" in
   let lo = Donate.read ~by lo in
@@ -4830,6 +4845,7 @@ let reduce_ranges c ~lo ~hi x =
   let dt = dtype x and n = Prim.dim x 0 and m = Prim.dim lo 0 in
   let rows = Array.sub (shape x) 1 (ndim x - 1) in
   let start = identity ~by c dt in
+  (match c with Set -> () | Add | Max | Min -> rows_whole ~by x);
   let clip b =
     elementwise ~by D.Int64 [ Any b ]
       E.(minimum (maximum (operand 0 b) (i64 0)) (i64 n))
