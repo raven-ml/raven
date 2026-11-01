@@ -7,8 +7,8 @@
 
    Values: every function against mpmath's integrals of the same model
    (golden/cosmology/mpmath.golden) to 2^-46 in float64 and 2^-20 in float32,
-   eagerly and compiled; H, distances and times against CLASS (class.golden)
-   to 1e-6 and astropy (astropy.golden) to 1e-7, astropy's Planck18 to 5e-5;
+   eagerly and compiled; every function against CLASS (class.golden) to
+   1e-6 and astropy (astropy.golden) to 1e-7, astropy's Planck18 to 5e-5;
    each realisation's Omega_m, Omega_Lambda and age against its paper's
    printed digits. The goldens are written by gen/references.py.
 
@@ -249,7 +249,7 @@ let mpmath =
 
 let class_ =
   let models, rows = read_golden "class.golden" in
-  test "CLASS: H, distances and times to 1e-6" (fun () ->
+  test "CLASS: every function to 1e-6" (fun () ->
       check_rows ~rel:1e-6 Nx.float64 models rows)
 
 let astropy =

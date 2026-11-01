@@ -18,10 +18,20 @@ of models and of values computed for them:
 - mpmath.golden: every function, from the integrals of the expansion rate
   the library sums, evaluated by mpmath's quadrature at 30 digits, with F
   from a 40-digit table checked against F's own quadrature;
-- class.golden: H, chi, D_M, D_A, t_L and the age from CLASS, the Boltzmann
-  code, for CCL's benchmark models and Planck 2018;
-- astropy.golden: the same from astropy, for models without massive
-  neutrinos, ages to z = 100, and for its Planck18 realisation.
+- class.golden: every function from CLASS, the Boltzmann code, for CCL's
+  benchmark models, Planck 2018 and the mpmath models CLASS holds: H, the
+  distances, the ages and the densities from CLASS's background, and the
+  distance modulus, the comoving volume and its element and the critical
+  density defined from them;
+- astropy.golden: every function from astropy, for models without massive
+  neutrinos, the mpmath ones among them, ages to z = 100, and for its
+  Planck18 realisation the comoving distance and the age.
+
+The mpmath values transcribe the library's model, so they are checked here
+against the independent codes: each CLASS value within 1e-6 and each
+astropy value within 1e-7 of the mpmath value of the same model, relative,
+and absolute for a density parameter. The mpmath model sparse, whose N_eff
+is below its massive species' share, is in neither code.
 
 A model line is `model <name> codata=<year> h0=<km s^-1 Mpc^-1>
 omega_cb=... omega_k=... w0=... wa=... t_cmb=<K> n_eff=... m_nu=<eV,...>`,
@@ -33,6 +43,7 @@ run fails if a golden would change.
 """
 
 import argparse
+import copy
 import difflib
 import importlib.util
 import math
@@ -318,7 +329,35 @@ def planck_class():
 Z_CLASS = [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 100.0, 1000.0]
 
 
+def class_models():
+    """The mpmath models CLASS holds, at the mpmath redshifts: all but
+    planck2018, already above; no_radiation, whose T_CMB = 0 CLASS refuses
+    (astropy holds it); and sparse, whose N_eff = 1 is below its two
+    massive species' share, which no reference here holds."""
+    skip = ("planck2018", "no_radiation", "sparse")
+    return [_at(copy.copy(s), Z_MPMATH) for s in MPMATH_MODELS if s.name not in skip]
+
+
+def class_params(s):
+    """CLASS's parameters for [s]: its cold matter split into baryons and
+    dark matter (the background sees only their sum), and the massless
+    species that, with the massive ones at T_ncdm = 0.71611 T_CMB, make
+    N_eff."""
+    if hasattr(s, "class_params"):
+        return s.class_params
+    t4 = mpf("0.71611") ** 4 / (mpf(4) / 11) ** (mpf(4) / 3)
+    n_ur = float(s.n_eff - len(s.m_nu) * t4)
+    if n_ur < 0:
+        sys.exit(f"{s.name}: N_eff below its massive species, which CLASS cannot hold")
+    return {"Omega_b": s.omega_cb / 6, "Omega_cdm": s.omega_cb * 5 / 6, "N_ur": n_ur}
+
+
 def class_values(s):
+    """Every function of [s] at its redshifts from CLASS's background:
+    H, distances, ages and densities as CLASS computes them, and the
+    quantities defined from them (Hogg 1999): the distance modulus, the
+    comoving volume and its element per steradian, and the critical density
+    3 H^2 / (8 pi G)."""
     import numpy as np
     from classy import Class
     from scipy.interpolate import CubicSpline
@@ -330,7 +369,7 @@ def class_values(s):
         "output": "",
         "tol_background_integration": 1e-12,
         "background_Nloga": 200000,
-        **s.class_params,
+        **class_params(s),
     }
     if s.m_nu:
         p["N_ncdm"] = len(s.m_nu)
@@ -340,25 +379,64 @@ def class_values(s):
         p.update({"Omega_Lambda": 0.0, "w0_fld": s.w0, "wa_fld": s.wa, "use_ppf": "yes"})
     c = Class()
     c.set(p)
-    c.compute()
+    c.compute(level=["background"])
     bg = c.get_background()
-    z_bg = bg["z"][::-1]
-    t_bg = bg["proper time [Gyr]"][::-1]
-    age_at = CubicSpline(np.log1p(z_bg), t_bg)
+    x_bg = np.log1p(bg["z"][::-1])
+    age_at = CubicSpline(x_bg, bg["proper time [Gyr]"][::-1])
+    crit = bg["(.)rho_crit"]
+    ncdm = sum(bg[f"(.)rho_ncdm[{i}]"] for i in range(len(s.m_nu)))
+    de = bg["(.)rho_fld"] if "(.)rho_fld" in bg else bg["(.)rho_lambda"]
+    fractions = {
+        "cold_matter": (bg["(.)rho_b"] + bg["(.)rho_cdm"]) / crit,
+        "photons": bg["(.)rho_g"] / crit,
+        "neutrinos": (bg.get("(.)rho_ur", 0) + ncdm) / crit,
+        "dark_energy": de / crit,
+    }
+    fractions["curvature"] = 1 - bg["(.)rho_tot"] / crit
+    fraction_at = {k: CubicSpline(x_bg, v[::-1]) for k, v in fractions.items()}
     age0 = float(c.age())
-    out = [f"{s.name} age 0.0 {age0!r}"]
-    for z in Z_CLASS:
-        h = float(c.Hubble(z)) * 299792.458
-        chi = float(c.comoving_distance(z))
-        da = float(c.angular_distance(z))
-        out += [
-            f"{s.name} hubble {z!r} {h!r}",
-            f"{s.name} comoving_distance {z!r} {chi!r}",
-            f"{s.name} transverse {z!r} {da * (1 + z)!r}",
-            f"{s.name} angular_diameter_distance {z!r} {da!r}",
-            f"{s.name} lookback_time {z!r} {age0 - float(age_at(math.log1p(z)))!r}",
-            f"{s.name} age {z!r} {float(age_at(math.log1p(z)))!r}",
-        ]
+    d_h = 1 / mpf(float(c.Hubble(0)))  # Mpc
+    ok = mpf(s.omega_k)
+    out = []
+
+    def put(fn, z, v):
+        out.append(f"{s.name} {fn} {z!r} {float(v)!r}")
+
+    def volume(chi):
+        # The integral of D_M^2 over D_C to chi, per steradian.
+        x, k = chi / d_h, abs(ok) ** 0.5
+        if ok > 0:
+            return d_h**3 * (mp.sinh(2 * k * x) / (2 * k) - x) / (2 * ok)
+        if ok < 0:
+            return d_h**3 * (x - mp.sin(2 * k * x) / (2 * k)) / (2 * -ok)
+        return chi**3 / 3
+
+    for z in s.zs:
+        x = math.log1p(z)
+        hubble = mpf(float(c.Hubble(z)))  # 1/Mpc, H/c
+        h_si = hubble * C / MPC
+        put("hubble", z, hubble * C / 1000)
+        put("critical_density", z, 3 * h_si**2 / (8 * mp.pi * G[s.codata]))
+        for name, f in fraction_at.items():
+            put(f"density_parameter:{name}", z, f(x))
+        put("age", z, age0 if z == 0 else age_at(x))
+        if z == 0:
+            continue
+        chi = mpf(float(c.comoving_distance(z)))
+        dm = mpf(float(c.angular_distance(z))) * (1 + mpf(z))
+        dl = mpf(float(c.luminosity_distance(z)))
+        obs = s.round(z * 1.001)
+        put("comoving_distance", z, chi)
+        put("transverse", z, dm)
+        put("angular_diameter_distance", z, c.angular_distance(z))
+        put("luminosity_distance", z, dl)
+        out.append(f"{s.name} luminosity_distance {z!r}/{obs!r} {float(dm * (1 + mpf(obs)))!r}")
+        put("distance_modulus", z, 5 * mp.log10(dl * 10**5))
+        put("comoving_volume", z, volume(chi))
+        put("comoving_volume_element", z, dm**2 / hubble)
+        put("lookback_time", z, age0 - float(age_at(x)))
+    for z in Z_AGE:
+        put("age", z, age_at(math.log1p(z)))
     c.struct_cleanup()
     return out
 
@@ -371,7 +449,10 @@ ASTROPY_AGE_BELOW = 100.0
 
 
 def astropy_models():
-    return [_at(s, [0.0] + Z_ASTROPY) for s in _astropy_specs()]
+    """astropy's models, and the mpmath models without massive neutrinos
+    (at T_CMB = 0 none count), which astropy holds exactly."""
+    own = [copy.copy(s) for s in MPMATH_MODELS if not s.m_nu or s.t_cmb == 0]
+    return [_at(s, [0.0] + Z_ASTROPY) for s in _astropy_specs() + own]
 
 
 def _at(s, zs):
@@ -403,24 +484,46 @@ def astropy_values(s):
         H0=s.h0, Om0=s.omega_cb, Ode0=1 - s.omega_cb - s.omega_k - c.Ogamma0 - c.Onu0,
         w0=s.w0, wa=s.wa, Tcmb0=s.t_cmb, Neff=s.n_eff, m_nu=0.0 * u.eV,
     )
-    return _astropy_rows(s.name, c)
+    return _astropy_rows(s.name, c, s.zs)
 
 
-def _astropy_rows(name, c):
+def _astropy_rows(name, c, zs):
     v = lambda q, unit: float(q.to_value(unit))
-    out = [f"{name} age 0.0 {v(c.age(0), 'Gyr')!r}"]
-    for z in Z_ASTROPY:
-        out += [
-            f"{name} hubble {z!r} {v(c.H(z), 'km s-1 Mpc-1')!r}",
-            f"{name} comoving_distance {z!r} {v(c.comoving_distance(z), 'Mpc')!r}",
-            f"{name} transverse {z!r} {v(c.comoving_transverse_distance(z), 'Mpc')!r}",
-            f"{name} angular_diameter_distance {z!r} {v(c.angular_diameter_distance(z), 'Mpc')!r}",
-            f"{name} lookback_time {z!r} {v(c.lookback_time(z), 'Gyr')!r}",
-        ]
+    out = []
+
+    def put(fn, z, x):
+        out.append(f"{name} {fn} {z!r} {x!r}")
+
+    for z in zs:
+        put("hubble", z, v(c.H(z), "km s-1 Mpc-1"))
+        put("critical_density", z, v(c.critical_density(z), "kg m-3"))
+        for fn, f in (("cold_matter", c.Om), ("curvature", c.Ok), ("dark_energy", c.Ode),
+                      ("photons", c.Ogamma), ("neutrinos", c.Onu)):
+            put(f"density_parameter:{fn}", z, float(f(z)))
+        if z == 0:
+            put("age", z, v(c.age(z), "Gyr"))
+            continue
+        dm = v(c.comoving_transverse_distance(z), "Mpc")
+        obs = z * 1.001
+        put("comoving_distance", z, v(c.comoving_distance(z), "Mpc"))
+        put("transverse", z, dm)
+        put("angular_diameter_distance", z, v(c.angular_diameter_distance(z), "Mpc"))
+        put("luminosity_distance", z, v(c.luminosity_distance(z), "Mpc"))
+        out.append(f"{name} luminosity_distance {z!r}/{obs!r} {dm * (1 + obs)!r}")
+        put("distance_modulus", z, v(c.distmod(z), "mag"))
+        # astropy's comoving volume of a curved space cancels catastrophically
+        # as Omega_k nears 0, which closing the budget with dark energy leaves
+        # at 1e-17 here: a flat volume is D_M^3 / 3 per steradian.
+        if abs(c.Ok0) < 1e-12:
+            put("comoving_volume", z, dm**3 / 3)
+        else:
+            put("comoving_volume", z, v(c.comoving_volume(z), "Mpc3") / (4 * math.pi))
+        put("comoving_volume_element", z, v(c.differential_comoving_volume(z), "Mpc3 sr-1"))
+        put("lookback_time", z, v(c.lookback_time(z), "Gyr"))
         # astropy integrates the age from z to infinity, adaptively: at z =
         # 1000 it misses by 5e-7.
         if z <= ASTROPY_AGE_BELOW:
-            out.append(f"{name} age {z!r} {v(c.age(z), 'Gyr')!r}")
+            put("age", z, v(c.age(z), "Gyr"))
     return out
 
 
@@ -428,7 +531,7 @@ def astropy_planck18():
     from astropy.cosmology import Planck18
 
     rows = []
-    for line in _astropy_rows("planck2018", Planck18):
+    for line in _astropy_rows("planck2018", Planck18, [0.0] + Z_ASTROPY):
         _, fn, _, _ = line.split()
         if fn in ("comoving_distance", "age"):
             rows.append(line)
@@ -454,22 +557,28 @@ def write(path, text, check):
 
 
 def compare(name, rows, reference, tol):
-    """The largest relative difference per function between [rows] and the
-    mpmath values of the same models, each of which must stay below [tol]."""
+    """The largest difference per function between [rows] and the mpmath
+    values of the same models, each of which must stay below [tol]:
+    relative, and for a density parameter, a fraction of the budget,
+    absolute."""
     ref = {}
     for line in reference:
         m, fn, z, v = line.split()
-        ref[(m, fn, float(z.split("/")[0]))] = float(v)
+        ref[(m, fn, z)] = float(v)
     worst = {}
     for line in rows:
         m, fn, z, v = line.split()
-        key = (m, fn, float(z))
+        key = (m, fn, z)
         if key not in ref:
             sys.exit(f"{name}: no mpmath value for {key}")
-        if ref[key] != 0:
+        if fn.startswith("density_parameter"):
+            err = abs(float(v) - ref[key])
+        elif ref[key] != 0:
             err = abs(float(v) / ref[key] - 1)
-            if err > worst.get(fn, (0.0, None))[0]:
-                worst[fn] = (err, key)
+        else:
+            continue
+        if err > worst.get(fn, (0.0, None))[0]:
+            worst[fn] = (err, key)
     for fn, (err, key) in sorted(worst.items()):
         print(f"{name} against mpmath: {fn} worst {err:.2e} at {key}", file=sys.stderr)
     bad = [fn for fn, (err, _) in worst.items() if err > tol]
@@ -484,7 +593,7 @@ def main():
     f_table()
     check_f_ref()
     mp_models = MPMATH_MODELS + [m.float32() for m in MPMATH_MODELS]
-    cls = ccl_models() + [_at(planck_class(), [0.0] + Z_CLASS)]
+    cls = ccl_models() + [_at(planck_class(), [0.0] + Z_CLASS)] + class_models()
     ast = astropy_models()
     # Each golden's models in mpmath, at that golden's redshifts.
     sets = [mp_models, cls, ast]
