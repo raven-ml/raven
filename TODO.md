@@ -233,6 +233,9 @@ raven / llama.cpp (Vulkan; ROCm):
   moves a chunk between every pair of devices: time it against tinygrad's
   ring and hierarchical allreduce on a machine with several GPUs, and if
   it is slower, write those in nx's partition
+- rune's `test_probe › scans › a step offers a row per row` failed once
+  under load and passed on replay of its counterexample: find whether it
+  is load-dependent or flaky
 
 ## nx
 
