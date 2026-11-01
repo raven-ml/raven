@@ -802,9 +802,16 @@ val sync : ('v, 's, 'd) t -> unit
 
     Over a value cut across devices, a movement keeps the cut of an axis it
     keeps in order, as a permutation, a broadcast that does not stretch the
-    axis and a slice of all of it do. A reshape keeps the cut of an axis it
+    axis and a slice of all of it do. {!get}, {!squeeze}, {!unsqueeze} and
+    {!slice}'s [I] and [N] state which axes go and come, so each axis they
+    keep keeps its cut on the axis it becomes, whatever its extent: a batch
+    of one cut across devices lies, folds and scans as a batch of two does.
+    An axis they drop is read whole. A reshape keeps the cut of an axis it
     factors or merges where the tiles divide both extents, each window then
-    holding whole rows. Any other axis it reads whole ({!section-routing}). *)
+    holding whole rows, and pairs axes of one element front to back, as it
+    cannot know which is which. Any other axis it reads whole
+    ({!section-routing}), so {!flatten} or a merging reshape of a batch of
+    one cut across devices raises, as one of three over two devices does. *)
 
 val ndim : ('v, 's, 'd) t -> int
 (** [ndim x] is [x]'s number of axes. *)

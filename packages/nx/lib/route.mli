@@ -141,11 +141,14 @@ type rule =
 
 val moved : Nx_array.Move.t -> int array -> int -> axis
 (** [moved m s a] is what [m] makes of axis [a] of a value of shape [s]:
-    - [Becomes a'] where [m] keeps the axis's elements in order along [a']: a
-      permutation's, a broadcast's that does not stretch it, a slice's that
-      keeps all of it, and a reshape's pair. A reshape pairs the axes of one
-      product of the extents before them in order, each with the result's
-      next axis of that product and of its extent.
+    - [Becomes a'] where [m] keeps the axis's elements in order along [a']: an
+      axis map's that lists it at [a'], a broadcast's that does not stretch
+      it, a slice's that keeps all of it, and a reshape's pair. A reshape
+      pairs the axes of one product of the extents before them in order,
+      each with the result's next axis of that product and of its extent, so
+      axes of one element pair front to back. A reshape cannot know which
+      axis of one element is which: an operation that adds or drops them by
+      position is a [Permute], which states it.
     - [Regroups] for an axis a reshape leaves unpaired, of more than one
       element after a positive product, onto the result's axis of more than one
       element after the same product, where there is one: unit axes are

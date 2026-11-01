@@ -893,8 +893,8 @@ let meshgrid ~indexing xs =
   Array.iteri (fun i d -> s.(along i) <- d) lens;
   List.mapi
     (fun i x ->
-      let col = Array.init n (fun a -> if a = along i then lens.(i) else 1) in
-      Eval.broadcast ~by s (Eval.move ~by (Reshape (Iarray.of_array col)) x))
+      let col = Array.init n (fun a -> if a = along i then 0 else -1) in
+      Eval.broadcast ~by s (Eval.mapped ~by (Iarray.of_array col) x))
     xs
 
 let squeeze ?axes:l x =
@@ -914,12 +914,13 @@ let squeeze ?axes:l x =
           (axes ~by x l);
         drop
   in
-  let kept = List.filteri (fun i _ -> not drop.(i)) (Array.to_list s) in
-  Eval.move ~by (Reshape (Iarray.of_list kept)) x
+  let kept =
+    List.filter (fun i -> not drop.(i)) (List.init (Array.length s) Fun.id)
+  in
+  Eval.mapped ~by (Iarray.of_list kept) x
 
 let unsqueeze_by ~by ~axes:l x =
-  let s = shape x in
-  let r = Array.length s + List.length l in
+  let r = ndim x + List.length l in
   let added = Array.make r false in
   List.iter
     (fun a ->
@@ -930,11 +931,11 @@ let unsqueeze_by ~by ~axes:l x =
       added.(a') <- true)
     l;
   (* [x]'s axes fill the positions not added, in order. *)
-  let s' = Array.make r 1 in
+  let p = Array.make r (-1) in
   List.iteri
-    (fun k i -> s'.(i) <- s.(k))
+    (fun k i -> p.(i) <- k)
     (List.filter (fun i -> not added.(i)) (List.init r Fun.id));
-  Eval.move ~by (Reshape (Iarray.of_array s')) x
+  Eval.mapped ~by (Iarray.of_array p) x
 
 let unsqueeze ~axes x = unsqueeze_by ~by:"Nx.unsqueeze" ~axes x
 
@@ -1497,6 +1498,17 @@ let window ~by start n d =
   in
   v
 
+(* The positions [p] at rank [r], [p]'s elements along [axis] and one along
+   every other axis: where [p] is 1-d, the map that adds those axes, so that
+   its cut stays on [axis]. *)
+let along_axis ~by r axis p =
+  if ndim p = 1 then
+    Eval.mapped ~by (Iarray.init r (fun i -> if i = axis then 0 else -1)) p
+  else
+    let col = Array.make r 1 in
+    col.(axis) <- numel p;
+    Eval.reshape ~by col p
+
 (* [y] read along [axis] at the positions [p], in C order: [y]'s axis of
    extent the number of [p]'s elements. [p] runs along the axis, broadcast
    across the others, which a kernel reads as row takes. One position is
@@ -1507,10 +1519,9 @@ let gather_axis ~by axis p y =
   let r = Array.length s in
   let idx =
     if n <> 1 then begin
-      let wide = Array.copy s and col = Array.make r 1 in
+      let wide = Array.copy s in
       wide.(axis) <- n;
-      col.(axis) <- n;
-      Eval.broadcast ~by wide (Eval.reshape ~by col p)
+      Eval.broadcast ~by wide (along_axis ~by r axis p)
     end
     else
       let other i = s.(if i < axis then i else i + 1) in
@@ -1597,6 +1608,36 @@ let rec gathered : type v s d.
       | From (start, n, d), Some a -> gather_axis ~by a (window ~by start n d) y
       | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> y)
 
+(* Whether a pick of [picks] drops or adds an axis, or holds positions of
+   another rank than one. *)
+let rec moves_axes : type d. (d pick * int option) list -> bool = function
+  | [] -> false
+  | ((At _ | New), _) :: _ -> true
+  | (Held h, _) :: _ when ndim h <> 1 -> true
+  | ((Held _ | Span _ | Rows _ | From _), _) :: rest -> moves_axes rest
+
+(* The axis map of the selection [picks] of a value of rank [r], each axis
+   at the extent its pick gives it: an [At] axis, of extent 1, goes, and so
+   does a held axis of 0-d positions; each [New] axis comes. With whether a
+   held axis of positions of two axes or more must then take their shape. *)
+let axis_map picks r =
+  let map = ref [] and spread = ref false in
+  List.iter
+    (fun (pick, a) ->
+      match (pick, a) with
+      | At _, _ | Held _, None -> ()
+      | Held h, Some a ->
+          if ndim h > 0 then map := a :: !map;
+          if ndim h > 1 then spread := true
+      | (Span _ | Rows _ | From _), Some a -> map := a :: !map
+      | (Span _ | Rows _ | From _), None -> ()
+      | New, _ -> map := -1 :: !map)
+    picks;
+  for a = used_axes picks to r - 1 do
+    map := a :: !map
+  done;
+  (Iarray.of_list (List.rev !map), !spread)
+
 (* [x] at the selection [picks]. *)
 let selected ~by picks x =
   let s = shape x in
@@ -1608,9 +1649,14 @@ let selected ~by picks x =
      result's rank. *)
   let y = gathered ~by picks y in
   (* Each [At] axis now has extent 1 and goes; each [New] axis comes; each
-     held axis takes its positions' shape. *)
+     held axis takes its positions' shape. An axis map, so that each kept
+     axis keeps its cut. *)
   let s' = selection x picks in
-  Eval.reshape ~by s' y
+  if not (moves_axes picks) then Eval.reshape ~by s' y
+  else
+    let map, spread = axis_map picks (ndim x) in
+    let y = Eval.mapped ~by map y in
+    if spread then Eval.reshape ~by s' y else y
 
 let slice_by ~by idx x =
   let picks = picks ~by idx x in
@@ -1669,9 +1715,9 @@ let targets ~by x picks =
     let ps = shape p in
     let k = Array.length ps in
     let placed =
-      Array.init rs (fun i -> if i >= j && i < j + k then ps.(i - j) else 1)
+      Array.init rs (fun i -> if i >= j && i < j + k then i - j else -1)
     in
-    Eval.broadcast ~by sel (Eval.reshape ~by placed p)
+    Eval.broadcast ~by sel (Eval.mapped ~by (Iarray.of_array placed) p)
   in
   let inputs =
     let j = ref 0 in
@@ -1820,8 +1866,7 @@ let replaced ~by sel picks v x =
       let p = Option.get (positions ~by x data) in
       let n = numel p in
       let wide = Array.mapi (fun i d -> if i = a then n else d) s in
-      let col = Array.mapi (fun i _ -> if i = a then n else 1) s in
-      let idx = Eval.broadcast ~by wide (Eval.reshape ~by col p) in
+      let idx = Eval.broadcast ~by wide (along_axis ~by (Array.length s) a p) in
       let unique = match fst pick with Held _ -> false | _ -> true in
       scattered ~by ~unique ~axis:a Set idx (Eval.reshape ~by wide v) x
   | _ ->
@@ -1918,8 +1963,16 @@ let reduce ~by m axes x = reduce_by_one ~by (Monoid (m, 0, dtype x)) axes x
 let kept ~by ~keepdims s axes y =
   if not keepdims then y
   else
-    let unit a n = if Iarray.mem a axes then 1 else n in
-    Eval.reshape ~by (Array.mapi unit s) y
+    (* A map, so that each kept axis keeps its cut. *)
+    let p = Array.make (Array.length s) (-1) and k = ref 0 in
+    Array.iteri
+      (fun a _ ->
+        if not (Iarray.mem a axes) then begin
+          p.(a) <- !k;
+          incr k
+        end)
+      s;
+    Eval.mapped ~by (Iarray.of_array p) y
 
 let reduction ~by m ?axes ?(keepdims = false) x =
   let axes = reduced_axes ~by x axes in
@@ -2431,7 +2484,9 @@ let arg ~by e ?axis ?(keepdims = false) x =
   let _, i = reduce_by_one ~by (Arg (e, 0, dtype x)) [| a |] x in
   match axis with
   | None ->
-      Eval.reshape ~by (if keepdims then Array.map (fun _ -> 1) s else [||]) i
+      if keepdims then
+        Eval.mapped ~by (Iarray.init (Array.length s) (fun _ -> -1)) i
+      else Eval.reshape ~by [||] i
   | Some _ -> kept ~by ~keepdims s [| a |] i
 
 let argmax ?axis ?keepdims x = arg ~by:"Nx.argmax" Max ?axis ?keepdims x
@@ -3589,8 +3644,10 @@ let vector_norm dt ?(ord = 2.) ?axes:l ?(keepdims = false) x =
   in
   if keepdims then y
   else
-    let along = Iarray.of_list (List.sort compare along) in
-    Eval.reshape ~by (Prim.reduced (shape x) along) y
+    let others =
+      List.filter (fun a -> not (List.mem a along)) (List.init (ndim x) Fun.id)
+    in
+    Eval.mapped ~by (Iarray.of_list others) y
 
 (* Refuses an order [ord] that takes the greatest or least singular value,
    column or row of a matrix of [x] that has none. *)
@@ -3605,6 +3662,10 @@ let extremes ~by ord x =
   | `One | `NegOne -> none "column" n
   | `Inf | `NegInf -> none "row" m
   | `Fro | `Nuc -> ()
+
+(* [y], whose last two axes hold one element each, without them: the map
+   that drops them, so that each batch axis keeps its cut. *)
+let unbatched ~by y = Eval.mapped ~by (Iarray.init (ndim y - 2) Fun.id) y
 
 (* The norm [ord] of each matrix of [x], of precision [w], its last two axes
    kept of one: computed at [w] and stored in [dt]. *)
@@ -3638,7 +3699,7 @@ let matrix_norm dt ?(ord = `Fro) ?(keepdims = false) x =
   matrix ~by x;
   extremes ~by ord x;
   let y = widened ~by dt x (fun w x -> matrix_norms ~by w dt ord x) in
-  if keepdims then y else Eval.reshape ~by (batch x) y
+  if keepdims then y else unbatched ~by y
 
 (* Rank and condition *)
 
@@ -3667,7 +3728,7 @@ let matrix_rank (type v s d) ?rtol (a : (v, s, d) t) : d int64_t =
           E.(cast D.Int64 (v > const f bound * t))
       in
       let count = reduction ~by Sum ~axes:[ r ] above in
-      let top = Eval.reshape ~by (batch a) top in
+      let top = Eval.mapped ~by (Iarray.init (ndim top - 1) Fun.id) top in
       let c = operand 0 count and t = operand 1 top in
       elementwise ~by D.Int64 [ Any count; Any top ]
         E.(where (t <> t) (i64 (-1)) c)
@@ -3715,9 +3776,7 @@ let cond (type v s r d) (dt : (float, r) D.t) ?(p = `Two) (a : (v, s, d) t) :
             (at dt E.(where (b = const w 0.) inf (t / b)))
       | (`One | `Inf) as ord ->
           let a = Donate.read ~by a in
-          let norm x =
-            Eval.reshape ~by (batch a) (matrix_norms ~by w w ord x)
-          in
+          let norm x = unbatched ~by (matrix_norms ~by w w ord x) in
           let finite = finite_matrices ~by a in
           let ni = norm (inv_by ~by a) in
           let na = norm a in

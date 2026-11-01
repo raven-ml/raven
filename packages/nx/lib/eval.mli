@@ -204,6 +204,16 @@ val reshape : by:string -> int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Raises [Invalid_argument] naming [by] if [x] is dead, and as {!move}
     does. *)
 
+val mapped : by:string -> int iarray -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [mapped ~by p x] is [x] itself where [p] is the identity of [x]'s axes,
+    and {!move} of [Permute p] otherwise: the axis map that states which
+    axes of one element go and come, so that each kept axis keeps its cut
+    on the axis it becomes. Returned as itself, [x] keeps its memory
+    unshared, as {!reshape}'s.
+
+    Raises [Invalid_argument] naming [by] if [x] is dead, and as {!move}
+    does. *)
+
 val broadcast : by:string -> int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [broadcast ~by s x] is [x] itself where [x] has shape [s], and {!move}
     of [Broadcast s] otherwise, as {!reshape} is. *)

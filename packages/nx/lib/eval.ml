@@ -680,6 +680,23 @@ let reshape ~by s x =
   end
   else move ~by (A.Move.Reshape (Iarray.of_array s)) x
 
+(* A loop: [Iarray.for_all] over an [init] would allocate. *)
+let identity p r =
+  Iarray.length p = r
+  &&
+  let i = ref 0 in
+  while !i < r && Iarray.get p !i = !i do
+    incr i
+  done;
+  !i = r
+
+let mapped ~by p x =
+  if identity p (Array.length (Prim.shape x)) then begin
+    Prim.alive ~by x;
+    x
+  end
+  else move ~by (A.Move.Permute p) x
+
 let broadcast ~by s x =
   if Prim.has_shape x s then begin
     Prim.alive ~by x;

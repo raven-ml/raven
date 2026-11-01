@@ -3484,6 +3484,12 @@ thread.
 
 ### Nx
 
+- `Nx.get`, `Nx.squeeze`, `Nx.unsqueeze` and `Nx.slice`'s `I` and `N` keep
+  each kept axis's cut on the axis it becomes, whatever its extent, so a
+  batch of one split across devices lies, sums and scans as a batch of two
+  does. They went through a reshape that paired axes of one element front to
+  back, and so raised, or moved a cut onto another axis. Squeezing or
+  indexing a cut axis of one element now raises, as indexing a cut axis does.
 - `Nx_array.Move.Permute` is an axis map: it may leave out axes of one
   element and add new ones, written as negative entries. It stays a view.
 - `Nx_quant.apply_experts` computes with its weight cut along `k`, where it

@@ -651,6 +651,346 @@ let reshapes =
             (fun () -> blocks 90));
     ]
 
+(* Axes of one element
+
+   A cut of an axis of one element puts the element on the devices of its
+   first tile alone. The operations that add or drop axes of one element
+   state which ones, so a kept axis keeps its cut on the axis it becomes,
+   whatever its extent: a batch of one lies, folds and raises where a batch
+   of two does. *)
+
+(* Two memory devices, computed by nx.cpu. *)
+module Mem2 = (val Nx.devices (List.init 2 Nx_support.memory))
+
+(* The host value of [s] counting from [0] in C order. *)
+let iota s =
+  Nx.reshape s (Nx.arange Nx.float32 0 (Array.fold_left ( * ) 1 s) 1)
+
+(* [y] is of [h]'s shape, and each of its arrays holds the window of [h], its
+   twin on the host, that [y]'s placement gives the array's device. *)
+let holds_own h y =
+  let s = Nx.shape h in
+  equal (array int) ~msg:"shape" s (Nx.shape y);
+  let xs = Nx.to_array h in
+  let pieces = Nx.Prim.pieces (Nx.placement y) s in
+  let arrays = Iarray.to_array (Nx.Repr.shards y) in
+  equal int ~msg:"one array per device" (Array.length pieces)
+    (Array.length arrays);
+  Array.iteri
+    (fun j (_, w) ->
+      let b = Array.map (fun (r : M.range) -> (r.start, r.count)) w in
+      equal (list float_exact) ~msg:"its window" (expected xs s b)
+        (Array.to_list (elements arrays.(j))))
+    pieces
+
+(* A cut of a batch axis: over two devices, four, or one mesh axis of
+   four. *)
+type batch_cut = Over_two | Over_four | Over_mesh_axis
+
+let pp_batch_cut ppf c =
+  Format.pp_print_string ppf
+    (match c with
+    | Over_two -> "split over two"
+    | Over_four -> "split over four"
+    | Over_mesh_axis -> "cut over a mesh axis of four")
+
+let cut_at c b =
+  match c with
+  | Over_two -> `Two (Mem2.split ~axis:b)
+  | Over_four -> `Four (Mem.split ~axis:b)
+  | Over_mesh_axis -> `Four (on_mem (Major b))
+
+(* A slice's entries: [A], [I i] and [N]. *)
+type entry = Whole_axis | Index of int | New_axis
+
+(* Operations that state the axes of one element they add or drop. *)
+type stated =
+  | Get of int
+  | Squeeze of int
+  | Unsqueeze of int
+  | Sliced of entry list
+
+let pp_index ppf = function
+  | Whole_axis -> Format.pp_print_string ppf "A"
+  | Index i -> Format.fprintf ppf "I %d" i
+  | New_axis -> Format.pp_print_string ppf "N"
+
+let pp_stated ppf = function
+  | Get i -> Format.fprintf ppf "get [%d]" i
+  | Squeeze a -> Format.fprintf ppf "squeeze [%d]" a
+  | Unsqueeze a -> Format.fprintf ppf "unsqueeze [%d]" a
+  | Sliced l ->
+      Format.fprintf ppf "slice [%a]"
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+           pp_index)
+        l
+
+let stated op x =
+  match op with
+  | Get i -> Nx.get [ i ] x
+  | Squeeze a -> Nx.squeeze ~axes:[ a ] x
+  | Unsqueeze a -> Nx.unsqueeze ~axes:[ a ] x
+  | Sliced l ->
+      let index = function
+        | Whole_axis -> Nx.A
+        | Index i -> Nx.I i
+        | New_axis -> Nx.N
+      in
+      Nx.slice (List.map index l) x
+
+(* The axis that [op], over a value of rank [r], makes of its axis [b], which
+   it keeps: by the axes it states. *)
+let image op r b =
+  match op with
+  | Get _ -> b - 1
+  | Squeeze a -> if a < b then b - 1 else b
+  | Unsqueeze a ->
+      let a = if a < 0 then a + r + 1 else a in
+      if a <= b then b + 1 else b
+  | Sliced l ->
+      (* Each entry before [b]'s takes an axis, [N] none; [I] drops it. *)
+      let rec go l axis b' =
+        match l with
+        | _ when axis = b -> b'
+        | Index _ :: l -> go l (axis + 1) b'
+        | New_axis :: l -> go l axis (b' + 1)
+        | Whole_axis :: l -> go l (axis + 1) (b' + 1)
+        | [] -> b' + (b - axis)
+      in
+      go l 0 0
+
+(* A shape of rank 1 to 3 beside a batch axis [b] of [n] elements, each
+   other of one to three, with an operation that keeps [b]. *)
+let stated_case =
+  let open Gen in
+  (let* rank = int_range 1 3 in
+   let* others =
+     array ~size:(constant rank)
+       (frequency [ (3, constant 1); (1, constant 2); (1, constant 3) ])
+   in
+   let* b = int_range 0 rank in
+   let shape n =
+     Array.init (rank + 1) (fun i ->
+         if i < b then others.(i) else if i = b then n else others.(i - 1))
+   in
+   let s1 = shape 1 in
+   let units =
+     List.filter
+       (fun a -> a <> b && s1.(a) = 1)
+       (List.init (rank + 1) Fun.id)
+   in
+   let get = map (fun i -> Get i) (int_range 0 (s1.(0) - 1)) in
+   let squeeze = map (fun a -> Squeeze a) (of_list units) in
+   let ops =
+     [ (2, map (fun a -> Unsqueeze a) (int_range (-1) (rank + 1))) ]
+     @ (if b > 0 then [ (2, get) ] else [])
+     @ (if units = [] then [] else [ (2, squeeze) ])
+     @
+     if b = 0 then []
+     else
+       (* For each axis before [b], whole or one position, a new axis before
+          it or not. *)
+       let entry a =
+         let+ e =
+           frequency
+             [
+               (1, constant Whole_axis);
+               (1, map (fun i -> Index i) (int_range 0 (s1.(a) - 1)));
+             ]
+         and+ added = frequency [ (2, constant false); (1, constant true) ] in
+         if added then [ New_axis; e ] else [ e ]
+       in
+       let rec entries a =
+         if a = b then constant []
+         else
+           let+ e = entry a and+ rest = entries (a + 1) in
+           e @ rest
+       in
+       [ (2, map (fun l -> Sliced l) (entries 0)) ]
+   in
+   let* op = frequency ops in
+   let+ c = of_list [ Over_two; Over_four; Over_mesh_axis ] in
+   (others, b, op, c))
+  |> with_pp (fun ppf (others, b, op, c) ->
+         Format.fprintf ppf "%a of %a with batch axis %d, %a" pp_stated op
+           pp_ints others b pp_batch_cut c)
+
+(* A kept axis's cut lands on the axis the operation's stated map makes of
+   it, over the same grid axes, at a batch of one, two or three. *)
+let law_stated (others, b, op, c) =
+  let rank = Array.length others in
+  let shape n =
+    Array.init (rank + 1) (fun i ->
+        if i < b then others.(i) else if i = b then n else others.(i - 1))
+  in
+  let b' = image op (rank + 1) b in
+  cover "a batch of one beside another axis of one element"
+    (Array.mem 1 others);
+  cover "a batch of one beside none" (not (Array.mem 1 others));
+  (match op with
+  | Get _ -> cover "get" true
+  | Squeeze _ -> cover "squeeze" true
+  | Unsqueeze _ -> cover "unsqueeze" true
+  | Sliced l ->
+      cover "a slice of I and N"
+        (List.exists (function Whole_axis -> false | _ -> true) l));
+  List.iter
+    (fun n ->
+      let s = shape n in
+      let h = stated op (iota s) in
+      let msg = Printf.sprintf "a batch of %d" n in
+      match cut_at c b with
+      | `Two p ->
+          let y = stated op (Nx.place p (iota s)) in
+          equal ~msg (placement ()) (Mem2.split ~axis:b') (Nx.placement y);
+          holds_own h y
+      | `Four p ->
+          let y = stated op (Nx.place p (iota s)) in
+          let want =
+            match c with
+            | Over_mesh_axis -> on_mem (Major b')
+            | Over_two | Over_four -> Mem.split ~axis:b'
+          in
+          equal ~msg (placement ()) want (Nx.placement y);
+          holds_own h y)
+    [ 1; 2; 3 ]
+
+(* Folds after a stated move. *)
+type fold = Sum of int | Mean of int | Added
+
+let pp_fold ppf = function
+  | Sum a -> Format.fprintf ppf "sum ~axes:[%d]" a
+  | Mean a -> Format.fprintf ppf "mean ~axes:[%d]" a
+  | Added -> Format.pp_print_string ppf "add a value on every device"
+
+type moved = Unsqueezed of int | Row of int
+
+let pp_moved ppf = function
+  | Unsqueezed a -> Format.fprintf ppf "unsqueeze [%d] of [n; f] split 0" a
+  | Row t -> Format.fprintf ppf "get [%d] of [3; n; f] split 1" t
+
+(* [mv] then [f] of a batch of [n], [at a] placing a host value cut along
+   axis [a], [on] placing one whole on every device. *)
+let folded mv f ~at ~on n w =
+  let y =
+    match mv with
+    | Unsqueezed a -> Nx.unsqueeze ~axes:[ a ] (at 0 (iota [| n; w |]))
+    | Row t -> Nx.get [ t ] (at 1 (iota [| 3; n; w |]))
+  in
+  match f with
+  | Sum a -> Nx.sum ~axes:[ a ] y
+  | Mean a -> Nx.mean ~axes:[ a ] y
+  | Added -> Nx.add y (on (iota (Nx.shape y)))
+
+let fold_case =
+  let open Gen in
+  (let* mv =
+     one_of
+       [
+         map (fun a -> Unsqueezed a) (int_range 0 2);
+         map (fun t -> Row t) (int_range 0 2);
+       ]
+   in
+   let rank = match mv with Unsqueezed _ -> 3 | Row _ -> 2 in
+   let axis = int_range 0 (rank - 1) in
+   let* f =
+     one_of
+       [ map (fun a -> Sum a) axis; map (fun a -> Mean a) axis; constant Added ]
+   in
+   let+ w = int_range 1 4 in
+   (mv, f, w))
+  |> with_pp (fun ppf (mv, f, w) ->
+         Format.fprintf ppf "%a, then %a, f = %d" pp_moved mv pp_fold f w)
+
+(* A fold after a stated move lies where it lies at a batch of two, and
+   gives the host's elements. *)
+let law_folded (mv, f, w) =
+  let batch =
+    match mv with Unsqueezed a -> if a = 0 then 1 else 0 | Row _ -> 0
+  in
+  (match f with
+  | Sum a | Mean a ->
+      cover "a fold along the batch's axis" (a = batch);
+      cover "a fold along another axis" (a <> batch)
+  | Added -> cover "a sum beside a value on every device" true);
+  let run n =
+    let h = folded mv f ~at:(fun _ x -> x) ~on:Fun.id n w in
+    let y =
+      folded mv f
+        ~at:(fun a x -> Nx.place (Mem.split ~axis:a) x)
+        ~on:(Nx.place Mem.on) n w
+    in
+    holds_own h y;
+    Nx.placement y
+  in
+  equal (placement ()) ~msg:"where a batch of one lies" (run 2) (run 1)
+
+let units =
+  group "axes of one element"
+    [
+      prop ~count:300 "a kept axis's cut lands where the stated map puts it"
+        stated_case law_stated;
+      (* The review's probe: sum ~axes:[1] (unsqueeze ~axes:[0] x) of [1; 4]
+         split 0 sums along the batch, so it lies on every device, as at
+         [2; 4]. *)
+      prop
+        ~examples:[ (Unsqueezed 0, Sum 1, 4); (Unsqueezed 0, Sum 0, 4) ]
+        "a fold after a stated move lies as at a batch of two" fold_case
+        law_folded;
+      (* Squeezing or indexing the cut axis reads it whole, as a get along a
+         cut axis of two elements does. *)
+      cases "dropping the cut axis raises, as a get along a cut axis does"
+        ~id:(fun (name, _, _, _) -> name)
+        [
+          ("squeeze [0] of [1; 1; 4]", "Nx.squeeze", [| 1; 1; 4 |], `Squeeze);
+          ("get [0] of [1; 1; 4]", "Nx.get", [| 1; 1; 4 |], `Get);
+          ("get [0] of [2; 1; 4]", "Nx.get", [| 2; 1; 4 |], `Get);
+        ]
+        (fun (_, by, s, op) ->
+          let x = Nx.place (Mem.split ~axis:0) (iota s) in
+          raises
+            (Invalid_argument
+               (by
+              ^ ": operand 0 lies at split ~axis:0 [m0; m1; m2; m3] and is \
+                 read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) x"))
+            (fun () ->
+              match op with
+              | `Squeeze -> Nx.squeeze ~axes:[ 0 ] x
+              | `Get -> Nx.get [ 0 ] x));
+      (* A plain reshape states no map: it pairs axes of one element front to
+         back, and regroups a cut axis only in tiles that divide both
+         extents, at a batch of one as at three over two devices. *)
+      test "a reshape pairs axes of one element front to back" (fun () ->
+          let x = Nx.place (Mem.split ~axis:0) (iota [| 1; 8 |]) in
+          let y = Nx.reshape [| 1; 1; 8 |] x in
+          equal (placement ()) (Mem.split ~axis:0) (Nx.placement y);
+          holds_own (iota [| 1; 1; 8 |]) y);
+      cases "a reshape that regroups a cut axis in tiles that do not divide it \
+             raises"
+        ~id:(fun (s, s', _) -> Format.asprintf "%a to %a" pp_ints s pp_ints s')
+        [
+          ([| 1; 4 |], [| 4 |], `Four);
+          ([| 1; 3 |], [| 3 |], `Two);
+          ([| 3; 2 |], [| 6 |], `Two);
+        ]
+        (fun (s, s', set) ->
+          let devices =
+            match set with `Four -> "m0; m1; m2; m3" | `Two -> "m0; m1"
+          in
+          let raised =
+            Printf.sprintf
+              "Nx.reshape: operand 0 lies at split ~axis:0 [%s] and is read at \
+               on [%s]; Nx.place (Placement.on s) x"
+              devices devices
+          in
+          let reshaped p = ignore (Nx.reshape s' (Nx.place p (iota s))) in
+          raises (Invalid_argument raised) (fun () ->
+              match set with
+              | `Four -> reshaped (Mem.split ~axis:0)
+              | `Two -> reshaped (Mem2.split ~axis:0)));
+    ]
+
 (* Leading axes: a placement's cuts move up by one with an axis in front, and
    down without the first, whose cuts become copies. *)
 
@@ -854,4 +1194,6 @@ let held =
     ]
 
 let () =
-  exit (run "nx place" [ laws; reshapes; sharing; refusals; leading; held ])
+  exit
+    (run "nx place"
+       [ laws; reshapes; units; sharing; refusals; leading; held ])
