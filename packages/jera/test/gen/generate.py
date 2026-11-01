@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mpmath==1.4.1", "scipy==1.18.1", "numpy"]
+# dependencies = ["mpmath==1.4.1", "scipy==1.18.1", "numpy==2.5.4"]
 # ///
 """Generate jera's goldens from mpmath and scipy.
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import mpmath as mp
 import numpy as np
-from scipy import interpolate
+from scipy import interpolate, special
 from scipy.integrate import _quad_vec
 
 HERE = Path(__file__).resolve().parent
@@ -68,23 +68,25 @@ class Module:
 
 
 def gauss_legendre(n):
-    """Golub–Welsch at 50 digits: the eigenvalues of the Jacobi matrix are the
-    nodes, and twice the squared first components of its eigenvectors the
-    weights."""
+    """The n-point rule at 50 digits: the nodes are mpmath's roots of the
+    Legendre polynomial P_n, from scipy's float64 nodes, and the weights
+    2 / ((1 - x^2) P_n'(x)^2) (DLMF 3.5.19). scipy's roots_legendre must agree:
+    its nodes within NODE_ULPS ulps of the largest, and its weights, which lose
+    up to 1e-11 of their value at n = 100, within WEIGHT_REL of each."""
     mp.mp.dps = 50
-    j = mp.zeros(n, n)
-    for k in range(1, n):
-        b = k / mp.sqrt(4 * k * k - 1)
-        j[k - 1, k] = b
-        j[k, k - 1] = b
-    e, q = mp.eigsy(j)
-    pairs = sorted((e[i], 2 * q[0, i] ** 2) for i in range(n))
-    x = [p[0] for p in pairs]
-    if n % 2 == 1:
-        x[n // 2] = mp.mpf(0)  # the center, which the eigensolver leaves near 0
-    return x, [p[1] for p in pairs]
+    sx, sw = special.roots_legendre(n)
+    p = lambda x: mp.legendre(n, x)
+    x = [mp.findroot(p, mp.mpf(float(s))) for s in sx]
+    w = [2 / ((1 - t * t) * mp.diff(p, t) ** 2) for t in x]
+    node_err = max(abs(float(a) - b) for a, b in zip(x, sx)) / np.spacing(np.max(np.abs(sx)))
+    weight_err = max(abs(float(a) - b) / float(a) for a, b in zip(w, sw))
+    if node_err > NODE_ULPS or weight_err > WEIGHT_REL:
+        sys.exit(f"gauss{n}: scipy's nodes differ by {node_err:g} ulps, weights by {weight_err:g}")
+    return x, w
 
 
+NODE_ULPS = 2
+WEIGHT_REL = 1e-10
 GAUSS = [1, 2, 3, 4, 5, 8, 10, 16, 20, 32, 64, 100]
 
 
