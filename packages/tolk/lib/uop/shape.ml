@@ -1847,6 +1847,21 @@ let wrap_folded f c1 c2 =
         | _ -> c)
     | _ -> c
 
+(* A fold makes a signed constant only where it fits [x]'s type: wrapping it
+   at the width would keep the value, but tinygrad, which takes signed
+   overflow to be undefined, refuses the fold. Unsigned operations wrap. *)
+let fits x (v : Dtype.value) =
+  let dt = dtype x in
+  (not (List.mem dt Dtype.sints))
+  ||
+  match v with
+  | `Int _ -> V.(Dtype.min dt <= v && v <= Dtype.max dt)
+  | _ -> true
+
+(* The factors like terms combine into: [c0 + c1], or [c + 1]. *)
+let like_sum m = V.(vmin (m "c0") + vmin (m "c1"))
+let like_succ m = V.(vmin (m "c") + of_int 1)
+
 (* the B with q == B//div and B%div == base%div, or None. only such congruence
    is needed to recombine, and canonicalization moves consts freely: the
    quotient may be merged ((x//c + a)//div -> (x + a*c)//(c*div) for div>0) and
@@ -2281,8 +2296,16 @@ let symbolic_simple =
                       ccast c (Ops.dtype f)
                     else c
                   in
+                  let const c = (vmin (m c) :> Dtype.const) in
+                  let folded = [ const "c1"; const "c2" ] in
+                  let fit =
+                    match exec_alu o Dtype.Weak_int folded with
+                    | #Dtype.value as v -> fits (m "x") v
+                    | _ -> true
+                  in
                   let c1 = at_width (m "c1") and c2 = at_width (m "c2") in
-                  Some (alu (m "x") o [ wrap_folded f c1 c2 ])))
+                  if fit then Some (alu (m "x") o [ wrap_folded f c1 c2 ])
+                  else None))
             (Op.Set.to_list Op.Set.associative)
         @ [
           (* bool MUL is AND, ADD/MAX is OR. prevents other rules to rewrite
@@ -2528,26 +2551,46 @@ let symbolic =
            rule
              Upat.(
                (var ~dtype:int_or_bool "x" * cvar "c0") + (var "x" * cvar "c1"))
-             (fun m -> Some O.(m "x" * (m "c0" + m "c1")));
+             (fun m ->
+               if fits (m "x") (like_sum m) then
+                 Some O.(m "x" * (m "c0" + m "c1"))
+               else None);
            rule
              Upat.(
                var "y"
                + (var ~dtype:int_or_bool "x" * cvar "c0")
                + (var "x" * cvar "c1"))
-             (fun m -> Some O.(m "y" + (m "x" * (m "c0" + m "c1"))));
+             (fun m ->
+               if fits (m "x") (like_sum m) then
+                 Some O.(m "y" + (m "x" * (m "c0" + m "c1")))
+               else None);
            rule
              Upat.(var ~dtype:int_or_bool "x" + (var "x" * cvar "c"))
-             (fun m -> Some O.(m "x" * (m "c" + int 1)));
+             (fun m ->
+               if fits (m "x") (like_succ m) then
+                 Some O.(m "x" * (m "c" + int 1))
+               else None);
            rule
              Upat.(var "y" + var ~dtype:int_or_bool "x" + (var "x" * cvar "c"))
-             (fun m -> Some O.(m "y" + (m "x" * (m "c" + int 1))));
+             (fun m ->
+               if fits (m "x") (like_succ m) then
+                 Some O.(m "y" + (m "x" * (m "c" + int 1)))
+               else None);
            rule
              Upat.(var "y" + (var ~dtype:int_or_bool "x" * cvar "c") + var "x")
-             (fun m -> Some O.(m "y" + (m "x" * (m "c" + int 1))));
+             (fun m ->
+               if fits (m "x") (like_succ m) then
+                 Some O.(m "y" + (m "x" * (m "c" + int 1)))
+               else None);
            rule Upat.(var "x" + var "x") (fun m -> Some O.(m "x" * int 2));
            rule
-             Upat.(var "y" + var ~dtype:int_or_bool "x" + var "x")
-             (fun m -> Some O.(m "y" + (m "x" * int 2)));
+             Upat.(named "a" (var "y" + var ~dtype:int_or_bool "x" + var "x"))
+             (fun m ->
+               let a = m "a" and x = m "x" in
+               let two v = V.(of_int 2 * v) in
+               if fits a (two (vmin x)) && fits a (two (vmax x)) then
+                 Some O.(m "y" + (x * int 2))
+               else None);
            rule
              Upat.(cvar "y" * (var ~dtype:[ Dtype.Weak_int ] "x" + cvar "c"))
              (fun m ->

@@ -338,14 +338,24 @@ let sym =
             (fun m -> reduce_mul_chain (m "r"));
           (* Combine terms (opinionated) *)
           rule
-            Upat.(int (-1) * (var ~dtype:int_or_bool "x" + var "y"))
-            (fun m -> Some O.(-m "x" + -m "y"));
+            Upat.(int (-1) * named "a" (var ~dtype:int_or_bool "x" + var "y"))
+            (fun m ->
+              let a = m "a" in
+              let fit u = Shape.fits a V.(~-(vmin u)) in
+              if fit (m "x") && fit (m "y") then Some O.(-m "x" + -m "y")
+              else None);
           (* (x+y)*c -> x*c+y*c. only for int, float has inf*0=nan issue *)
           rule
-            Upat.((var ~dtype:[ Dtype.Weak_int ] "x" + var "y") * cvar "c")
+            Upat.(
+              named "a" (var ~dtype:[ Dtype.Weak_int ] "x" + var "y")
+              * cvar "c")
             (fun m ->
-              let c = m "c" in
-              Some O.((m "x" * c) + (m "y" * c)));
+              let a = m "a" and c = m "c" in
+              let fit v = Shape.fits a V.(v * vmin c) in
+              let bounds u = [ vmin u; vmax u ] in
+              if List.for_all fit (bounds (m "x") @ bounds (m "y")) then
+                Some O.((m "x" * c) + (m "y" * c))
+              else None);
         ]);
       pm_clean_up_group_sink;
     ]

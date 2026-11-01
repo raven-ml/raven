@@ -679,10 +679,7 @@ scope, see README.
     `(r * 2e38) * 0.25` is `inf`, where `0.25 * 2e38` times the sum of `r` is
     finite; and a maximum keeps a NaN only as its first operand, so
     `max (NaN, max (x, 0.))` is NaN, where `max (x, max (0., NaN))` is `x`.
-    `x + x` is still `x * 2`, which is exact. For integers tolk folds where
-    tinygrad refuses a signed constant that does not fit (`fits`): two
-    constants, like terms, `-(x + y)` and `(x + y) * c` are identities modulo
-    `2^bits`, which committed integers compute in.
+    `x + x` is still `x * 2`, which is exact.
   - **Maxima.** tinygrad: `uop/symbolic.py:289-291`. tolk:
     `Shape.symbolic`. A maximum by bounds applies to integers
     only, since a float's bounds leave out NaN and the order of zeros:
@@ -4198,8 +4195,9 @@ does.
   `Decomp_op.shift_of`; `test/gen/tinygrad.patch`, which makes
   tinygrad's rules the same before the goldens are generated.
 - **Differs:** a weak result of folding two weak constants under an
-  operation on a committed integer, past its width, is wrapped to it, as the
-  operation reads it: `(x * 65536) * 65536` on int32 is `x * 0`. A product by
+  operation on an unsigned integer, past its width, is wrapped to it, as the
+  operation reads it: `(x * 65536) * 65536` on uint32 is `x * 0`; on a signed
+  integer the fold is refused, as tinygrad refuses it. A product by
   a power of two reads the constant modulo `2^bits`, and a quotient or
   remainder reads it in the operand's type, before it becomes a shift or a
   mask: no shift reaches the width, and on int32 a division by `2^31`, the
@@ -4208,12 +4206,12 @@ does.
   uint32, with `c` 65536 or the least int32, gave values that varied by run
   where eager gives 0: rune's `jit gives eager's bits for exact functions at
   every dtype` left such functions out.
-- **Pinned by:** the `Symbolic` suite: `integers wrap › a square of a
-  product folds its constants at their width`; the `Decomp_op` suite:
-  `late_patterns › a product by a power of two shifts by less than its
-  width` and `› a quotient by a power of two reads it in its operand's
-  type`; the `Codegen` suite: `constants past the width › a square of a
-  product whose constant squares to 0 is 0`.
+- **Pinned by:** the `Symbolic` suite: `integers wrap › a square of a product
+  keeps its value, its constants folded at an unsigned width`; the `Decomp_op`
+  suite: `late_patterns › a product by a power of two shifts by less than its
+  width` and `› a quotient by a power of two reads it in its operand's type`;
+  the `Codegen` suite: `constants past the width › a square of a product whose
+  constant squares to 0 is 0`.
 
 ## D162. A divisor past its operand's width is read in its operand's type
 

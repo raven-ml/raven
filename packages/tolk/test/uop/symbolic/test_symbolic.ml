@@ -995,7 +995,9 @@ let wrapping =
             [ [ ("p", i 2); ("q", i 3) ]; [ ("p", i 12); ("q", i 12) ] ]);
       (* c * c wraps to 0 at each width where c is 2^(bits / 2) or the
          greatest power of two, the least signed value: the square is 0. *)
-      test "a square of a product folds its constants at their width"
+      test
+        "a square of a product keeps its value, its constants folded at an \
+         unsigned width"
         (fun () ->
           List.iter
             (fun dtype ->
@@ -1013,7 +1015,8 @@ let wrapping =
                   let u = Ops.O.(w * c * (w * c)) in
                   keeps_machine_value u
                     (List.map (fun n -> [ ("w", i n) ]) [ 0; 1; 7 ]);
-                  equal uop (Ops.const ~dtype (`Int Bigint.zero)) (sym u))
+                  if Dtype.is_unsigned dtype then
+                    equal uop (Ops.const ~dtype (`Int Bigint.zero)) (sym u))
                 [ power (bits / 2); top ])
             Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]);
       (* Like terms whose weak factors sum past the width, as the greatest

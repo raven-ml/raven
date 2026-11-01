@@ -556,6 +556,11 @@ val pm_remove_invalid : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_remove_invalid] replaces each {!Ops.invalid} that a gate or a stack
     holds by [0] of the holder's type, once the gates have been read. *)
 
+val fits : Ops.t -> Dtype.value -> bool
+(** [fits x v] is [true] unless [x] is of a signed integer type that does not
+    hold [v]: the rules that make a constant from others make it only where it
+    fits ({!symbolic_simple}, {!val-symbolic}). *)
+
 val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [symbolic_simple] folds nodes whose value follows from their operation and
     their sources alone:
@@ -618,9 +623,10 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
     that match deeper:
 
     - {b terms}: [x lor not x] is [true]; [x + x] is [x * 2]; for integers, like
-      terms combine, [x * c0 + x * c1] into [x * (c0 + c1)] and [y + x + x] into
-      [y + x * 2], also as the last two terms of a longer sum, and [-(x + c)] is
-      [-x + -c]; [c * (x + c')] is [c * x + c * c'] for a weak integer [x];
+      terms combine where the factor they make {!fits}, [x * c0 + x * c1] into
+      [x * (c0 + c1)] and [y + x + x] into [y + x * 2], also as the last two
+      terms of a longer sum, and [-(x + c)] is [-x + -c]; [c * (x + c')] is
+      [c * x + c * c'] for a weak integer [x];
     - {b selections}: a selection by a negation swaps its branches; within
       [where c t f], [c] is [true] in [t] and [false] in [f], unless [c],
       [t] or [f] reaches an {!Op.Index} or an {!Op.Load}, or [c] reaches the
@@ -634,16 +640,18 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       pairs is constant, selects between the operations on the branches, also as
       the last two terms of an integer sum; for integers,
       [where c t 0 + where c 0 f] is [where c t f];
-    - {b bounds}: a comparison, division, remainder, variable, {!Op.After},
-      {!Op.Special} or range with a constant end whose bounds are equal is that
-      constant; an integer maximum of two operands whose bounds, as it reads
-      them ({!Ops.operand_bounds}), do not overlap is the greater, committed to
-      its type; an integer selection that computes a maximum,
-      [where (a < b) b a] with [a] or [b] a constant, is {!Ops.maximum};
+    - {b bounds}: a less-than or equality comparison, division, remainder,
+      variable, {!Op.After}, {!Op.Special} or range with a constant end whose
+      bounds are equal is that constant; an integer maximum of two operands
+      whose bounds, as it reads them ({!Ops.operand_bounds}), do not overlap is
+      the greater, committed to its type; an integer selection that computes a
+      maximum, [where (a < b) b a] with [a] or [b] a constant, is
+      {!Ops.maximum};
     - {b constants}: two applications of an associative operation to constants
       fold the constants together, sums, products and maxima for integers only,
-      a weak result on a committed integer wrapped to its width, as
-      [(x * 65536) * 65536] on int32 is [x * 0];
+      a signed result only where it {!fits}, and a weak result on an unsigned
+      integer wrapped to its width, as [(x * 65536) * 65536] on uint32 is
+      [x * 0];
       [(x // c1) // c2] is [x // (c1 * c2)] for positive [c2] where [c1 * c2]
       does not wrap ({!Ops.exact}); constants move to the end of integer sums
       and products;

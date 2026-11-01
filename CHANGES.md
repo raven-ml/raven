@@ -855,6 +855,8 @@ thread.
 
 ### Tolk (new)
 
+- A fold that would make a signed constant its type does not hold, of two
+  constants, like terms, `-(x + y)` or `(x + y) * c`, is no longer made.
 - A call body inside a kernel is named in its lowering, numbered apart from
   other bodies of its name, and a call of a program not yet compiled is
   inlined too.
