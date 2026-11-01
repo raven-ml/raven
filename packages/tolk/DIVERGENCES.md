@@ -639,9 +639,8 @@ scope, see README.
     `:289` (`c0 + x < c1`), `codegen/simplify.py:99-103` (`x + y < c`,
     `x * y < c`) and `:123` (`x + y <> c` under a cast),
     `uop/symbolic.py:388-398` (`reduce_mul_chain`, a factor out of a
-    maximum), `uop/symbolic.py:299-300` (`-x < -y`, `-x < c`), `:125`
-    (`x // -1`). tolk: `Shape.symbolic_simple`, `Shape.symbolic`,
-    `Simplify.solves_sum`,
+    maximum), `uop/symbolic.py:299-300` (`-x < -y`, `-x < c`). tolk:
+    `Shape.symbolic_simple`, `Shape.symbolic`, `Simplify.solves_sum`,
     `Simplify.pm_reduce_collapse`, `Simplify.pm_reduce_load_collapse`,
     `Symbolic.reduce_mul_chain`. tinygrad keeps `c0 + x < c1`, the
     comparisons of `Simplify` but the last, and a factor out of a maximum
@@ -649,17 +648,14 @@ scope, see README.
     whose overflow it takes to be undefined; tolk applies each to a signed
     integer only where every value it computes fits the type, and so
     `(x // c1) // c2` and `x + y <> c` to any committed integer, and
-    `-x < -y` and `-x < c` to a signed one only where no negation wraps.
-    `x // -1` is `-x` for a signed or weak `x` only: at an unsigned type a
-    weak `-1` is the greatest value, so the quotient is `0` or `1`. The
+    `-x < -y` and `-x < c` to a signed one only where no negation wraps. The
     comparisons of `Simplify` apply to integers only, since moving a float
     term rounds, and `x + y <> c` only under a cast that does not narrow.
     tinygrad folds int32 `(w // 65536) // 65536` to a division by `2^32`,
     which wraps to `0`, the int8 maximum of `r * p * q` over `r < 2` to
     `p * q`, `-112` at `12, 12` where the machine gives `0`, and int8
     `-x < 3` to `-3 < x`, `false` at `x = -128` where the machine gives
-    `true`, and uint8 `u // -1` to `-u`, `255` at `u = 1` where the machine
-    gives `0`.
+    `true`.
   - **Float folds.** tinygrad: `uop/symbolic.py:120` (`x + 0`), `:176-182`
     (`x / x`, `(x * y) / y`, `x * 0`), `:255` (`(x / y) / z`). tolk:
     `Shape.symbolic_simple`. A float `x + 0` is `x` only for `-0.`

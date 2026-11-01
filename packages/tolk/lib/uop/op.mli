@@ -243,8 +243,8 @@ module Set : sig
 
   val associative : t
   (** [associative] is the binary operations that rewrites may regroup, each
-      satisfying [f (f x y) z = f x (f y z)]: {!Add}, {!Mul}, {!And}, {!Or} and
-      {!Max}. *)
+      satisfying [f (f x y) z = f x (f y z)]: {!Add}, {!Mul}, {!And}, {!Or},
+      {!Max} and {!Xor}. *)
 
   val idempotent : t
   (** [idempotent] is the binary operations [f] with [f x x = x]: {!Or}, {!And}

@@ -171,8 +171,10 @@ let identities =
       test "x // -1 is -x" (fun () ->
           folds_to Ops.O.(a // int (-1)) Ops.O.(~-a));
       test "x // x is 1" (fun () -> folds_to Ops.O.(a // a) (Ops.int 1));
-      test "(x lxor y) lxor y is x" (fun () ->
-          folds_to Ops.O.(x lxor y lxor y) x);
+      test "(x lxor y) lxor y is x for a weak y" (fun () ->
+          folds_to Ops.O.(a lxor b lxor b) a;
+          let typed = Ops.O.(x lxor y lxor y) in
+          folds_to typed typed);
       test "(x % y) % y is x % y" (fun () ->
           folds_to Ops.O.(a % b % b) Ops.O.(a % b));
       test "a boolean and a constant fold by the constant" (fun () ->

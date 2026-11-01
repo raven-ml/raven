@@ -2113,14 +2113,13 @@ let symbolic_simple =
           rule Upat.(var "x" * int 1) (fun m -> Some (m "x"));
           rule Upat.(var "x" // var "x") (fun m -> Some (const_v (m "x") one));
           rule Upat.(var "x" // int 1) (fun m -> Some (m "x"));
-          (* x // -1 -> -x, unless x is unsigned: there a weak -1 is the
-             type's greatest value, and x // -1 is 0 or 1 *)
           rule
-            Upat.(var "x" // int (-1))
-            (fun m ->
-              let x = m "x" in
-              if Dtype.is_unsigned (dtype x) then None else Some (neg x));
-          rule Upat.(var "x" lxor var "y" lxor var "y") (fun m -> Some (m "x"));
+            Upat.(var ~dtype:(Dtype.Weak_int :: Dtype.sints) "x" // int (-1))
+            (fun m -> Some (neg (m "x")));
+          (* (x^y)^y -> x, for a weak y: a typed y would commit a weak x *)
+          rule
+            Upat.(var "x" lxor var ~dtype:[ Dtype.Weak_int ] "y" lxor var "y")
+            (fun m -> Some (m "x"));
           (* (x%y)%y = -> x%y (rewritten with base for speed) *)
           rule
             Upat.(named "base" (wild % var "y") % var "y")
