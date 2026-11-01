@@ -633,6 +633,12 @@ val answered : string -> landed -> bool option
     were. It is [Some held], whether the thread held a lock, or [None] if the
     call did not run. *)
 
+val returned : string -> landed -> bool option
+(** [returned what l] fails, naming [what], unless the call returned, inside
+    a lock or between locks, leaving its thread's locks as they were. It is
+    [Some held], whether the thread held a lock, or [None] if the call did
+    not run. *)
+
 val covered : seen -> unit
 (** [covered seen] fails unless [seen] counted landings both inside a lock and
     between locks. *)

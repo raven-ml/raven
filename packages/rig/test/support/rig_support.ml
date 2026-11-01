@@ -954,12 +954,14 @@ let landing seen prefix call =
   in
   (Call call, landed)
 
-let answered what (landed : landed) =
+(* Fails unless the call answered [expected held], with its thread's locks
+   as they were. *)
+let landed_as expected what (landed : landed) =
   match !landed with
   | None -> None
   | Some (held, got, drift) ->
       let where = if held then "inside a lock" else "between locks" in
-      let expected = if held then "refused" else "returned" in
+      let expected = expected held in
       Windtrap.equal
         ~msg:(Printf.sprintf "%s, a call %s" what where)
         Windtrap.string expected got;
@@ -967,6 +969,9 @@ let answered what (landed : landed) =
         ~msg:(Printf.sprintf "%s, the locks held across the call" what)
         Windtrap.int 0 drift;
       Some held
+
+let answered = landed_as (fun held -> if held then "refused" else "returned")
+let returned = landed_as (fun _ -> "returned")
 
 let covered seen =
   Windtrap.greater ~msg:"landings inside a lock" Windtrap.int ~than:0

@@ -298,8 +298,10 @@ val capability : t -> Rig_cuda_abi.t
     and maps them, at the address CUDA gives for the memory
     ([cuMemHostGetDevicePointer]). Page-locking belongs to the process, and
     the region's pages stay locked until every region {!map_host} gave over
-    them, on any device, is freed. The result depends on what is already
-    locked:
+    them, on any device, is freed. The last free unlocks them. One made
+    while a {!map_host} or an open of a CUDA device runs, on another thread
+    or in the call its callback interrupted, may instead leave them locked
+    until no such call runs. The result depends on what is already locked:
     {ul
     {- A range inside one that {!map_host} locked is mapped and counts
        against it.}

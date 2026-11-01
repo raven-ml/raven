@@ -6,12 +6,13 @@
 (* Interrupt walks of CUDA's device. A call is made once for each allocation
    it makes, with another call of the driver from a Gc.Memprof callback at
    that allocation, on the calling thread. Inside a lock of the driver, the
-   device's graph guard, an image's lock or the registry of page-locked
-   memory, the callback's call raises Invalid_argument, having changed
-   nothing: an entry point of the driver's checks the thread's locks as it
-   starts, and a function of the driver's signature that takes the held lock
-   again is refused at the take. Between locks the call runs as any call
-   does. Through rig, a call from such a callback raises Invalid_argument
+   device's graph guard or an image's lock, the callback's call raises
+   Invalid_argument, having changed nothing: an entry point of the driver's
+   checks the thread's locks as it starts, and a function of the driver's
+   signature that takes the held lock again is refused at the take. A free
+   of page-locked memory waits for no lock, and returns inside the lock of
+   the registry of page-locked memory too. Between locks the call runs as
+   any call does. Through rig, a call from such a callback raises Invalid_argument
    inside a lock and runs between locks, and the device is not lost. Other
    walks end the call with an exception at each allocation, as an
    asynchronous exception does, and check that the driver's state outlasts
@@ -136,8 +137,9 @@ let entry_in_entry () =
   Rig_support.covered seen
 
 (* A free of page-locked memory from a callback in a mapping of other host
-   memory: inside the registry's lock it is refused and leaves the memory
-   locked for a later free; between locks it unlocks the memory. *)
+   memory returns, inside the registry's lock and between locks, and the
+   memory is unlocked once the mapping returns: inside the lock, the free
+   leaves the unlocking to the mapping. *)
 let free_in_map_host () =
   let seen = Rig_support.seen () in
   walk (fun g n ->
@@ -153,7 +155,7 @@ let free_in_map_host () =
             mapped := C.map_host g q 64)
       in
       let what = strf "from allocation %d" n in
-      let freed = Rig_support.answered what landed = Some false in
+      let freed = Option.is_some (Rig_support.returned what landed) in
       equal ~msg:(what ^ ", the first memory locked") bool (not freed)
         (S.locked p);
       if not freed then C.free g r;
@@ -363,8 +365,7 @@ let () =
            [
              test "an entry in an entry of its image, refused inside its lock"
                entry_in_entry;
-             test "a free in a mapping of host memory, refused inside its lock"
-               free_in_map_host;
+             test "a free in a mapping of host memory returns" free_in_map_host;
              test "an open in a graph call claims nothing" make_in_graph;
            ];
          group ~timeout
