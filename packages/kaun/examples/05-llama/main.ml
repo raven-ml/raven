@@ -10,10 +10,8 @@
    key-value caches. Without [--devices] it decodes eagerly on the host.
    [--devices LIST] places the model on a device, tensor-parallel over several,
    and compiles the decode step for them with [Rune.jit], which is how a GPU
-   computes; [--temperature 0] decodes greedily. rune compiles a program for
-   one device, so over several devices the step is evaluated by nx: it runs on
-   memory devices ([cpu:k]) and raises on a set of GPUs, which compute only
-   compiled programs.
+   computes; [--temperature 0] decodes greedily. Over several devices, memory
+   devices ([cpu:k]) among them, the step compiles as over one.
 
    [--gguf FILE] reads the configuration and the weights from a GGUF checkpoint
    instead, quantised or not, decoded at float32 unless [--dtype] says

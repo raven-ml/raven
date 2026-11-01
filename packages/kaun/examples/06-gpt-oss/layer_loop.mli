@@ -40,8 +40,8 @@ val cached :
     once for all the layers and donates the caches it is given. The programs run
     on the devices [p] is placed on ({!Gpt_oss.of_hf}[ ~placement]), whose
     leaves they read where they are, split ones included; [placement] is a copy
-    on each of them. A program over several devices is evaluated by nx, so a
-    set of GPUs, which computes only compiled programs, raises. *)
+    on each of them. Over several devices each program compiles as over one
+    ({!Rune.section-compiled}). *)
 
 val greedy :
   jit:bool ->

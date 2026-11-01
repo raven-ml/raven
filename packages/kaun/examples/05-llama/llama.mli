@@ -74,9 +74,8 @@ val make : key:'d Nx.Rng.key -> 'e config -> 'd t
     [placement role ~axis]: [role] is the cut a tensor-parallel placement makes
     in the leaf and [axis] the axis of the leaf that cut runs along, [0] for
     [Whole]. One device ignores both: [fun _ ~axis:_ -> p], and the host is
-    [fun _ ~axis:_ -> Nx.Host.on]. A program over several devices is evaluated
-    by nx, so a step over a set of several GPUs, which computes only compiled
-    programs, raises. *)
+    [fun _ ~axis:_ -> Nx.Host.on]. A compiled step over several devices
+    compiles as over one ({!Rune.section-compiled}). *)
 
 (** The type for the cuts of a tensor-parallel placement. *)
 type role =

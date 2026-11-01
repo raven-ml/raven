@@ -11,9 +11,7 @@
    shape and the host calls it once per layer, so the whole prompt goes through
    in one call. Over several devices it runs expert-parallel: each device holds
    an equal share of the experts, and the mixture takes each block's expert
-   from the device that holds it. That run raises today: rune compiles a
-   program for one device only, so a set of GPUs, which computes only compiled
-   programs, raises.
+   from the device that holds it.
 
    With [--prompt TEXT] the text becomes the user's turn of a harmony
    conversation, [--system TEXT] its instructions and [--reasoning EFFORT] how

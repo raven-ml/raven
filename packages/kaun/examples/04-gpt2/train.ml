@@ -23,10 +23,9 @@
    [--devices] runs the same [Rune.jit] step data-parallel, with the batch split
    on axis 0 across the devices: the parameters lie whole on each device, and
    the gradients of the mean loss sum across the devices by construction, with
-   the same numbers as the single-device step up to fp32 reduction order. That
-   run raises today: the embedding gradient scatters a cut batch into a whole
-   table, which nx's scatter refuses, and rune compiles a program for one device
-   only, so a set of GPUs raises before it.
+   the same numbers as the single-device step up to fp32 reduction order. The
+   embedding gradient, a scatter of the cut batch into the whole table, sums
+   its devices' partials.
 
    [--dropout RATE] (default 0, the reference protocol's dropout-free graph)
    enables the GPT-2 dropout sites in [Gpt2.hidden]. The per-step mask key is an

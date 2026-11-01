@@ -129,9 +129,9 @@ let f'' x = Rune.grad' f' x
 `Rune.jit` compiles a function through tolk into kernels for the
 device its values lie on, and composes with the other transformations,
 so a compiled function differentiates and maps like any other. A
-program over values on several devices runs as its operations
-evaluated by nx, which needs devices nx computes on eagerly
-([rune.mli, jit](../packages/rune/lib/rune.mli)).
+program over values on several devices compiles too: each device runs
+its own kernels, and a value moves between devices only where eager
+computation moves it ([rune.mli, jit](../packages/rune/lib/rune.mli)).
 
 [Rune documentation →](../packages/rune/doc/index.md)
 

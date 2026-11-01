@@ -118,8 +118,8 @@ module Params : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) params
     expert-parallel placement makes in the leaf and [axis] the axis of the leaf
     that cut runs along, [0] for [Whole]. One device ignores both:
     [fun _ ~axis:_ -> p], and the host is [fun _ ~axis:_ -> Nx.Host.on]. A
-    program over several devices is evaluated by nx, so a step over a set of
-    several GPUs, which computes only compiled programs, raises. *)
+    compiled step over several devices compiles as over one
+    ({!Rune.section-compiled}). *)
 
 (** The type for the cuts of a tensor-parallel or expert-parallel placement. *)
 type role =
