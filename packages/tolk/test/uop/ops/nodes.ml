@@ -1271,7 +1271,7 @@ let ranges =
                 (Stage, Some 1);
                 (Reduce, Some 1);
                 (End, Some 1);
-                (Call, Some 1);
+                (Call, None);
                 (Linear, Some 0);
                 (Add, None);
                 (After, None);
@@ -1296,15 +1296,16 @@ let ranges =
       test "a range runs inside itself" (fun () ->
           let r = Ops.range (Int 10) [ 0 ] in
           equal uops [ r ] (list_ranges r));
-      test "a call to an external function keeps its arguments' ranges"
-        (fun () ->
+      test "a call keeps its arguments' ranges" (fun () ->
           let r = Ops.range ~dtype:Int32 (Int 4) [ 0 ] in
-          let c =
+          let foreign =
             Ops.call
               (Ops.custom_function ~dtype:Int32 "external" [])
               [ Ops.int ~dtype:Uint64 0; Ops.O.(r + int 1) ]
           in
-          equal uops [ r ] (list_ranges c));
+          equal uops ~msg:"an external function" [ r ] (list_ranges foreign);
+          let kernel = Ops.call (Ops.sink [ var "inside" 0 1 ]) [ r ] in
+          equal uops ~msg:"a kernel" [ r ] (list_ranges kernel));
       test "a backedge closes its loop and keeps the condition's other ranges"
         (fun () ->
           let outer = Ops.range (Int 4) [ 0 ] and inner = Ops.loop 1 in

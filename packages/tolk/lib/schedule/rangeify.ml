@@ -843,11 +843,11 @@ let get_kernel_graph tsink =
   in
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
-      (Before_sources split_kernels)
+      (After_sources pm_no_indexing_calls)
   in
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
-      (After_sources pm_no_indexing_calls)
+      (Before_sources split_kernels)
   in
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink

@@ -801,6 +801,8 @@ thread.
 - **Breaking:** `Ops.kernel_info` has `optimized`, which
   `Postrange.Scheduler.get_optimized_ast` sets and `Postrange.apply_opts` and
   `Codegen.linearize` read, where the optimiser tagged the kernel's sink `1`.
+- **Breaking:** a call ends none of its arguments' ranges (`Ops.range_start`):
+  it runs inside them.
 - A store that folds away, of a load of its own element or through an invalid
   index or value, keeps its sources as dependencies (`Shape.symbolic_simple`,
   `Symbolic.sym`), and a constant ordered after a store no longer folds to a

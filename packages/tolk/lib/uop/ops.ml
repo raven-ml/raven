@@ -1800,7 +1800,7 @@ let broadcast_shape shapes =
 (* Ranges *)
 
 let range_start = function
-  | Op.Stage | Op.Reduce | Op.End | Op.Call -> Some 1
+  | Op.Stage | Op.Reduce | Op.End -> Some 1
   | Op.Linear -> Some 0
   | _ -> None
 
@@ -1815,7 +1815,6 @@ let rec ended_ranges u =
   | None ->
       let l =
         match u.op with
-        | Op.Call when (body u).op = Op.Custom_function -> []
         | Op.End -> List.filter (fun r -> r.op = Op.Range) (drop 1 u.src)
         | Op.Backedge -> (
             match u.src with _ :: loop :: _ -> [ loop ] | _ -> [])

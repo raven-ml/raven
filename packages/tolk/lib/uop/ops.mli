@@ -535,8 +535,9 @@ val sint_to_uop : ?dtype:Dtype.t -> sint -> t
 
 val range_start : Op.t -> int option
 (** [range_start op] is the index of the first source of an [op] node that is a
-    range it ends: [1] for {!Op.Stage}, {!Op.Reduce}, {!Op.End} and {!Op.Call},
-    [0] for {!Op.Linear}, and [None] otherwise. *)
+    range it ends: [1] for {!Op.Stage}, {!Op.Reduce} and {!Op.End}, [0] for
+    {!Op.Linear}, and [None] otherwise: a call ends none of the ranges its
+    arguments run inside. *)
 
 val ended_ranges : t -> t list
 (** [ended_ranges u] is the ranges that [u] closes: those among its range
