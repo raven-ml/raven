@@ -1352,6 +1352,13 @@ let sum us = List.fold_left add (lit zero) us
 let size u = Nodes.cardinal (backward_slice ~calls:Skip u)
 let zero_like u = const_like u (zero :> Dtype.const)
 
+(* [all_ones x n] is whether [n] is -1 as a constant of [x]'s type, every bit
+   set: an unsigned type wraps it. *)
+let all_ones x n =
+  Dtype.equal_const
+    (Dtype.const (dtype x) (`Int n))
+    (Dtype.const (dtype x) (`Int Bigint.minus_one))
+
 (* [first_rule rules] is the result of the first rule that applies. *)
 let first_rule = List.find_map (fun rule -> rule ())
 
@@ -2159,7 +2166,8 @@ let symbolic_simple =
             Upat.(var "x" lxor var "x")
             (fun m -> Some (const_v (m "x") zero));
           rule Upat.(var "x" land int 0) (fun m -> Some (const_v (m "x") zero));
-          (* (x&mask)>>k -> x>>k when mask only clears bits below k *)
+          (* (x&mask)>>k -> x>>k when mask only clears bits below k: all ones
+             at x's type *)
           rule
             Upat.((var "x" land cvar "mask") lsr cvar "k")
             (fun m ->
@@ -2168,7 +2176,7 @@ let symbolic_simple =
               if
                 (k >= 0)
                 [@mutate off "a shift by 0 is the x >> 0 rule's, tried first"]
-                && Bigint.(equal (logor mask (pred (shift_left one k))) minus_one)
+                && all_ones (m "x") Bigint.(logor mask (pred (shift_left one k)))
               then Some (shr (m "x") (lit (`Int (Bigint.of_int k))))
               else None);
           rule
@@ -2176,10 +2184,8 @@ let symbolic_simple =
             (fun m ->
               let mask = V.to_z (num (m "mask")) and c = V.to_z (num (m "c")) in
               if
-                Bigint.(
-                  gt c zero
-                  && equal (logand c (pred c)) zero
-                  && equal (logor mask (pred c)) minus_one)
+                Bigint.(gt c zero && equal (logand c (pred c)) zero)
+                && all_ones (m "x") Bigint.(logor mask (pred c))
               then Some O.(m "x" // lit (`Int c))
               else None);
           (* x != x -> False (only ints) *)

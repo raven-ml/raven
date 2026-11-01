@@ -20,11 +20,14 @@ let held ~check dt (v : Dtype.value) : Dtype.const =
   | `Float x when Float.is_nan x && Dtype.is_float dt ->
       (Dtype.truncate dt v :> Dtype.const)
   | _ -> (
-      match Dtype.const dt v with
-      | #Dtype.value as v ->
-          check dt v;
+      (* An unsigned type wraps its constants: the exact value is the weak
+         one. *)
+      let exact = if Dtype.is_unsigned dt then Dtype.Weak_int else dt in
+      match (Dtype.const exact v, Dtype.const dt v) with
+      | (#Dtype.value as e), (#Dtype.value as v) ->
+          check dt e;
           (Dtype.truncate dt v :> Dtype.const)
-      | `Invalid -> `Invalid)
+      | _ -> `Invalid)
 
 (* A vector load reads a view of its storage. *)
 let vector_load u =

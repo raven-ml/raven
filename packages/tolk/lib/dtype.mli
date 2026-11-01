@@ -228,7 +228,8 @@ val const : t -> [< const ] -> const
     an integer is rounded once, from its exact value, as a finite value. For
     {!Bool} it is [`Bool], [true] iff [c] is nonzero. Otherwise it is an [`Int]:
     a float rounded towards zero, and an integer unchanged, even out of [dt]'s
-    bounds.
+    bounds, except that an unsigned [dt] wraps it modulo 2{^ bitsize}, as
+    unsigned arithmetic does: [const Uint8 (`Int (-1))] is [`Int 255].
 
     Raises [Invalid_argument] if [c] is a NaN or an infinity and [dt] is neither
     a float nor {!Bool}. *)

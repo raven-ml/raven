@@ -804,6 +804,9 @@ thread.
 
 ### Tolk (new)
 
+- `Dtype.const` wraps an integer to an unsigned type: -1 as a `Uint8` is
+  255. The negation and masked-shift rules read -1 at their operand's type,
+  so they apply to unsigned constants.
 - **Breaking:** the `ALIGNED` setting (`Setting.aligned`) is gone: Clang's
   vector types are always aligned to their size, a bool vector's to one byte.
 - **Breaking:** `Ops.kernel_info` has `optimized`, which

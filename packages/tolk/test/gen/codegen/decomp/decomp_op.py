@@ -161,9 +161,10 @@ def cdivs():
 
 
 def negations():
-    x, y = v("x", -5, 5), v("y", -5, 5)
+    x, y, u = v("x", -5, 5), v("y", -5, 5), v("u", 0, 10, dtypes.uint32)
     f, g = UOp.param(0, dtypes.float), UOp.param(1, dtypes.float)
-    return [x * -1, f * -1.0, x + y.alu(Ops.NEG), y.alu(Ops.NEG) + x, f + g.alu(Ops.NEG)]
+    return [x * -1, f * -1.0, x + y.alu(Ops.NEG), y.alu(Ops.NEG) + x, f + g.alu(Ops.NEG),
+            u * UOp.const(-1, dtypes.uint32), u * -1]
 
 
 def comparisons():

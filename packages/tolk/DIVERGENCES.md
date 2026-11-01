@@ -386,50 +386,54 @@ stamps nothing (D146).
 
 ## D13. Folding reads and writes committed constants at their width
 
-- **tinygrad:** `uop/symbolic.py:30` (`fold_const_alu`, whose result keeps
-  the unwrapped value, `truncate_output=False`), `:157-158` (the collapse
-  of committed const conversions) and `:284-285` (two stage ALU folding),
-  which read a constant with `UOp.val`
-  (`uop/ops.py:249-254`), unwrapped; `uop/ops.py:1091-1152` (`_min_max`),
-  which bounds a weak operand of a committed operation by its unwrapped value;
-  `uop/weak.py:82-87` (`uncast_const`), which leaves the literal bare.
-  tinygrad's own `TestModularWraparound` expects the wrapped results and is
-  marked `xfail_broken_const_wraparound`.
+- **tinygrad:** `dtype.py:79-81` (`DType.const`), which wraps an unsigned
+  integer to its type and keeps a signed one as written, so a committed
+  unsigned constant, and a folded unsigned result, hold their type's value;
+  `uop/symbolic.py:30` (`fold_const_alu`, `truncate_output=False`), whose
+  signed result keeps its mathematical value; `:156-158` (the collapse of
+  committed const conversions) and `:283-285` (two stage ALU folding), which
+  read a weak operand of an operation on a committed integer as written;
+  `uop/ops.py:1094-1155` (`_min_max`), which bounds such an operand by its
+  written value; `uop/weak.py:82-87` (`uncast_const`), which leaves the
+  literal bare. tinygrad's own `TestModularWraparound` expects the wrapped
+  results and is marked `xfail_broken_const_wraparound`: its unsigned cases
+  fold to them at this commit, its signed ones (`test_mul`, `test_div`,
+  `test_neg_min_int`) do not.
 - **tolk:** `Shape.fold_const_alu`; the two stage folds of a maximum in
   `Shape.symbolic_simple` and `Shape.symbolic`; `Ops.at_width` and
   `Ops.operand_bounds`; `Shape.uncast_const`.
-- **Differs:** a committed integer constant holds its type's value. A fold
-  reads a committed constant, a cast of a literal to a type of known width,
-  wrapped to that width, and so does a cast of it that collapses; it reads a
-  weak integer operand of an operation on a committed integer at that
-  operation's width, as compiled code commits it; and it writes a committed
-  integer result wrapped. The bounds read operands, and bound constants, the
-  same way. So `uncast_const` only ever drops a cast whose literal fits. This
-  reverses tinygrad's clause that a folded integer is kept mathematical, for
-  emission to wrap: the emission never saw the mathematical value, since every
-  later fold and bound read it first. tinygrad reads the unwrapped value, so a
-  fold gives what no machine computes: `(uint32 0xFFFFFFFF + 1) >> 1` folds to
-  `2147483648` where the machine gives `0`, `threefry2x32(5, 10)` folds to
-  another key than the unfolded graph computes, the int64 cast of the int32
-  constant `2^31` folds to `2^31` where the machine gives `-2^31`, and
-  `x < uint8 300` compares against `300` where the machine compares against
-  `44`. On uint8, `max(-3, a)` becomes `a` where the machine computes
-  `max(253, a)`; on uint32, `max(1, b) // -2` folds to `-1`, which is
-  `4294967295`, where the machine divides by `4294967294` and gives `0`; and
-  `max(-max(b % 2, -c), b)` at `c = 2` becomes `b` where the machine gives
-  `2`, since `-c` folded to `-254`. A sum, a product and a bitwise operation
-  fold the same before or after wrapping; a maximum orders the wrapped values,
-  so the two stage fold reads a maximum's weak constants at its width: on
-  uint8, `max(max(w, 1), -3)` would become `max(w, 1)` where the machine
-  computes `max(w, 253)`. A maximum by bounds that keeps a weak
-  operand commits it to the maximum's type, so the operations that read it do
-  not lose their width. Reading at the width also keeps
-  `c0 + x < c1 → x < c1 - c0` from a wrong answer where the offset wraps: on
-  uint8, `u + uint8 -1 < 255` would become `u < 0`; D24 keeps that rule to
-  offsets that do not wrap.
-- **Reason:** (b): rune's `Nx.Rng` (Threefry), jitted with constant keys,
-  must draw the numbers eager nx draws, and RFC 0012's Law 1: every integer
-  expression's compiled value is eager nx's modular one.
+- **Differs:** a committed integer constant holds its type's value, signed
+  or not. A fold reads a committed constant, a cast of a literal to a type of
+  known width, wrapped to that width, and so does a cast of it that
+  collapses; it reads a weak integer operand of an operation on a committed
+  integer at that operation's width, as compiled code commits it; and it
+  writes a committed integer result wrapped. The bounds read operands, and
+  bound constants, the same way. So `uncast_const` only ever drops a cast
+  whose literal fits. tinygrad keeps a signed integer mathematical, for
+  emission to wrap: the emission never saw the mathematical value, since
+  every later fold and bound read it first. So a fold gives what no machine
+  computes: the int64 cast of the int32 constant `2^31` folds to `2^31` where
+  the machine gives `-2^31`, the int32 `0xABCD17D6 * 10` to `28823449180`
+  where it gives `-1241321892`, and the negation of the int8 `-128` to `128`
+  where it gives `-128`. A weak operand of an unsigned operation is read as
+  written, which a sum, a product and a bitwise operation fold the same
+  before or after wrapping, but an order and a division do not: on uint8,
+  `max(-3, a)` becomes `a` where the machine computes `max(253, a)`, and on
+  uint32, `max(1, b) // -2` folds to `-1`, which is `4294967295`, where the
+  machine divides by `4294967294` and gives `0`. A maximum orders the
+  wrapped values, so the two stage fold reads a maximum's weak constants at
+  its width: on uint8, `max(max(w, 1), -3)` would become `max(w, 1)` where
+  the machine computes `max(w, 253)`. A maximum by bounds that keeps a weak
+  operand commits it to the maximum's type, so the operations that read it
+  do not lose their width. Reading at the width also keeps
+  `c0 + x < c1 → x < c1 - c0`, which both apply to signed `x` only, from a
+  wrong answer where the offset wraps; D24 keeps that rule to offsets that
+  do not wrap.
+- **Reason:** (b): RFC 0012's Law 1: every integer expression's compiled
+  value is eager nx's modular one, signed included. rune's `rune jit ›
+  classes › integer constants keep their bits and wrap` and `› a square of a
+  product whose constant squares to 0`, at every signed and unsigned width,
+  compile constants whose arithmetic wraps against eager nx.
 - **Pinned by:** `Tolk.Symbolic › symbolic_simple › constants › an
   operation reads committed constants at their width` (a fold, a cast of a
   committed constant, a uint8 remainder), `Tolk.Symbolic ›
@@ -438,8 +442,7 @@ stamps nothing (D146).
   type's value` (each case above, evaluated before and after), the law
   `Tolk.Symbolic › laws › sym keeps the value of an integer expression at
   a committed width, wrapping included`, and `Tolk.Symbolic › tinygrad ›
-  tests.golden › TestModularWraparound.<test>` and
-  `› TestThreefryConstFolding.test_threefry`, whose goldens, generated with
+  tests.golden › TestModularWraparound.<test>`, whose goldens, generated with
   the same change in `test/gen/tinygrad.patch`, hold the machine values;
   `Tolk.Ops › bounds › a typed integer constant outside its type is
   bounded by its wrapped value, a non-finite one by the type`; the

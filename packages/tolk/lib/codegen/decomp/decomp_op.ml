@@ -326,8 +326,15 @@ let late_patterns ~disable_fast_idiv ops =
               ]);
          when_ ops Neg
            (rule
-              Upat.O.(var "x" * int (-1))
-              (fun m -> Some (alu (m "x") Neg []))
+              Upat.O.(var "x" * Upat.cvar "c")
+              (fun m ->
+                match
+                  (value (m "c"), Dtype.const (dtype (m "x")) (`Int Bigint.minus_one))
+                with
+                | (#Dtype.value as c), (#Dtype.value as minus_one)
+                  when Dtype.Value.(c = minus_one) ->
+                    Some (alu (m "x") Neg [])
+                | _ -> None)
            :: when_ ops Sub
                 [
                   rule

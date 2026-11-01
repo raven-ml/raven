@@ -489,9 +489,19 @@ let cdivs () =
 
 let negations () =
   let x = v "x" (-5) 5 and y = v "y" (-5) 5 in
+  let u = v ~dtype:Uint32 "u" 0 10 in
   let f = fparam () and g = fparam ~slot:1 () in
   let neg u = Ops.alu u Neg [] in
-  Ops.O.[ x * int (-1); f * float (-1.); x + neg y; neg y + x; f + neg g ]
+  Ops.O.
+    [
+      x * int (-1);
+      f * float (-1.);
+      x + neg y;
+      neg y + x;
+      f + neg g;
+      u * Ops.int ~dtype:Uint32 (-1);
+      u * int (-1);
+    ]
 
 let comparisons () =
   let x = v "x" (-10) 10 and y = v "y" (-10) 10 in
