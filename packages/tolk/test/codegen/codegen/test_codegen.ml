@@ -1212,6 +1212,39 @@ let one_name_twice () =
     ~kernel:(Ops.kernel_info ~opts_to_apply:[] ())
     [ Ops.store (Ops.index out [ Ops.int 0 ]) (Ops.add (n 10) (n 20)) ]
 
+(* [out[i] = x1[i] + ... + xn[i]] over 1024 floats: a split program, whose
+   entry copies the structure of its n + 1 pointers and its bounds. *)
+let sum_of n =
+  let x k = Ops.index (Shape.param ~shape:[ Int 1024 ] k Float32) in
+  let i = Ops.range (Int 1024) [ 0 ] in
+  let xs = List.init n (fun k -> x (k + 1) [ i ]) in
+  let out = Shape.param ~shape:[ Int 1024 ] 0 Float32 in
+  let sum = List.fold_left Ops.add (List.hd xs) (List.tl xs) in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
+
+(* The functions that the object of host program [p] calls and does not
+   define, which rig takes from the process. On x86_64 Windows those follow a
+   convention other than the object's (rig's host Symbols), so the object must
+   call none. *)
+let undefined_calls p =
+  let lib = (Device.Tiny_elf.of_program p).lib in
+  match Rig_elf.of_string lib with
+  | Error why -> fail why
+  | Ok o ->
+      List.sort_uniq String.compare
+        (List.filter_map
+           (fun (r : Rig_elf.relocation) ->
+             match r.symbol.place with
+             | Undefined -> Some r.symbol.name
+             | _ -> None)
+           o.relocations)
+
+let calls_only_its_own n () =
+  let p = Codegen.to_program (sum_of n) (Lazy.force host) in
+  is_some ~msg:"the program is split" (kernel_info (Ops.nth p 0)).split;
+  equal (list string) [] (undefined_calls p)
+
 let scalars_of (p : Ops.program_info) =
   List.filter (fun u -> Ops.addrspace u = Some Alu) p.params
 
@@ -1252,15 +1285,21 @@ let programs =
                  source p;
                  "#undef E_16_16";
                  "void E_16_16(const void *p, long long first, long long end) \
-                  { struct E_16_16_args a = *(const struct E_16_16_args *)p; \
-                  if (end > a.block_hi_) end = a.block_hi_; if (first < end) \
-                  { a.block_lo_ = first; a.block_hi_ = end; E_16_16_(&a); } }";
+                  { struct E_16_16_args a; __builtin_memcpy_inline(&a, p, \
+                  sizeof a); if (end > a.block_hi_) end = a.block_hi_; if \
+                  (first < end) { a.block_lo_ = first; a.block_hi_ = end; \
+                  E_16_16_(&a); } }";
                ])
             (binary_of p));
       test
         "a host program runs as a launch of rig's host, with ten scalars past \
          the argument registers"
         ten_scalars;
+      group "a split host program calls no function it does not define"
+        (List.map
+           (fun n ->
+             test (Printf.sprintf "with %d inputs" n) (calls_only_its_own n))
+           [ 1; 8; 100 ]);
       test "the argument of a program is its program information for the target"
         (fun () ->
           let p = Codegen.to_program (Lazy.force add_kernel) clang in

@@ -4,7 +4,7 @@
 
 (executable
  (name test_codegen)
- (libraries windtrap tolk tolk_test tolk_run tolk.engine rig unix))
+ (libraries windtrap tolk tolk_test tolk_run tolk.engine rig rig.elf unix))
 
 (rule
  (alias runtest)

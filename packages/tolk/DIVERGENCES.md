@@ -958,17 +958,22 @@ scope, see README.
   bounds from the structure, where a launch passes those of the whole loop,
   `0` and its iterations; its entry runs the iterations `first` to `end - 1`,
   `end` at most the iterations, through a copy of the structure that holds
-  `first` and `end` as its bounds. The program's source is the renderer's;
-  only its binary differs.
+  `first` and `end` as its bounds, made with `__builtin_memcpy_inline`. The
+  program's source is the renderer's; only its binary differs.
 - **Reason:** (c). rig's host calls a function of linked code with one ABI,
   `void f(const void *params, int64_t first, int64_t end)`, places each
   buffer's address among the parameters, and names a submission's span after
   the entry. It runs a launch's blocks of threads on several cores at once,
   each call with its own `first` and `end`, which the parameters every call
-  shares cannot hold. The entry keeps the kernel's name in profiles.
+  shares cannot hold. The entry keeps the kernel's name in profiles. Clang
+  compiles an assignment of a large structure as a call of `memcpy`, which
+  rig takes from the process, and on x86_64 Windows the process's `memcpy`
+  follows the Microsoft convention where the object calls by System V: the
+  inline copy calls nothing.
 - **Pinned by:** the `Codegen` suite, `programs › a host program's binary
   holds rig's host entry after the kernel` and `› a host program runs as a
-  launch of rig's host, with ten scalars past the argument registers`; the
+  launch of rig's host, with ten scalars past the argument registers` and
+  `› a split host program calls no function it does not define`; the
   Tolk_engine suite, `host programs in blocks › a program writes the same
   bits in 1, 3 and 32 blocks` and `link and run › custom kernels with
   variables` (four tests).

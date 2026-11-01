@@ -1472,8 +1472,10 @@ let do_render (ren : Renderer.t) prg lin =
    iterations. The kernel is renamed [NAME_], and [NAME] becomes the entry that
    passes [p] on, or for a split program a copy of the structure whose bounds
    are [first] and [end], [end] at most the iterations of the whole loop, which
-   the launch passes as its bound [hi]. The source the program keeps is the
-   renderer's. *)
+   the launch passes as its bound [hi]. The copy is inline: Clang compiles the
+   assignment of a large structure as a call of [memcpy], which on x86_64
+   Windows the process defines with a convention other than the object's
+   (rig's host code). The source the program keeps is the renderer's. *)
 let host_entry prg lin source =
   let k = kernel_info (nth prg 0) in
   let name = function_name k in
@@ -1490,9 +1492,10 @@ let host_entry prg lin source =
     | Some s ->
         let lo = field s.lo and hi = field s.hi in
         Printf.sprintf
-          "struct %s_args a = *(const struct %s_args *)p; if (end > a.%s) end \
-           = a.%s; if (first < end) { a.%s = first; a.%s = end; %s_(&a); }"
-          name name hi hi lo hi name
+          "struct %s_args a; __builtin_memcpy_inline(&a, p, sizeof a); if \
+           (end > a.%s) end = a.%s; if (first < end) { a.%s = first; a.%s = \
+           end; %s_(&a); }"
+          name hi hi lo hi name
   in
   String.concat "\n"
     [

@@ -848,6 +848,9 @@ thread.
 
 ### Tolk (new)
 
+- A CPU program split into blocks over many buffers gives its values on
+  x86_64 Windows, where they were garbage: its entry copies its parameters
+  inline, where Clang called the process's `memcpy`, of another convention.
 - `Tolk_engine.link ~storage:Per_run` makes a schedule's storage at each run
   and returns it once the run's work is done, so the schedule holds none
   between runs. A run keeps none of the buffers it was given once it returns.
