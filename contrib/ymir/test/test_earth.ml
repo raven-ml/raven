@@ -362,7 +362,10 @@ let batch xs =
 let batches =
   group "Batches"
     [
-      prop "a batch of instants and directions converts as each within 4e-16"
+      (* Direction.convert between the families is within 2e-15 of SOFA's
+         per component, a batch's elements and each instant alone both, so
+         they agree within twice that. *)
+      prop "a batch of instants and directions converts as each within 4e-15"
         Gen.(list ~size:(int_range 1 6) (pair instants sky))
         (fun xs ->
           let each (i, w) =
@@ -370,7 +373,7 @@ let batches =
             xyz (Direction.convert e Frame.tirs (direction e w))
           in
           let e, d = batch xs in
-          equal (array (float 4e-16))
+          equal (array (float 4e-15))
             (Array.concat (List.map each xs))
             (xyz (Direction.convert e Frame.tirs d)));
       test "an instant broadcasts over directions" (fun () ->
