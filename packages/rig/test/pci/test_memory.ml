@@ -601,8 +601,10 @@ let test_free_released from =
   Function.free_dma x.t_fn lent
 
 (* System memory one GPU allocated and another maps outlives the first GPU's
-   release while the second still reaches it: the machine keeps the owner's
-   file, listing both, until the second is released too. *)
+   release while the second still reaches it: the owner keeps it past its
+   free, the second's free gives it back for the released owner, and the
+   machine keeps the owner's file, listing both, until the second is
+   released too. *)
 let test_peer_reach () =
   with_gpus 2 @@ fun root _ gpus ->
   let o = List.nth gpus 0 and x = List.nth gpus 1 in
@@ -620,6 +622,272 @@ let test_peer_reach () =
   Memory.free x.t_memory p;
   Function.release x.t_fn;
   equal ~msg:"gone once neither reaches it" (list string) [] (host_files root)
+
+(* An owner call that writes the tables and takes nothing for good: [o]'s
+   memory a peer let go of goes back at it. *)
+let owner_call_on o =
+  Memory.free o.t_memory (given (Memory.alloc o.t_memory Gpu page))
+
+(* Memory that another GPU maps stays while the peer's region is out: the
+   owner's free keeps it, and its first call after the peer's free gives it
+   back. *)
+let test_owner_free_first kind =
+  with_gpus 2 @@ fun root _ gpus ->
+  let o = List.nth gpus 0 and x = List.nth gpus 1 in
+  let before = tree_capacity o and bytes = held_bytes root in
+  let r = given (Memory.alloc o.t_memory kind (64 * kib)) in
+  let p = mapped (Memory.map_peer x.t_memory r) in
+  let held = tree_capacity o and held_host = held_bytes root in
+  Memory.free o.t_memory r;
+  owner_call_on o;
+  equal ~msg:"kept while the peer maps it" (pair int int) held
+    (tree_capacity o);
+  equal ~msg:"system memory kept" int held_host (held_bytes root);
+  Memory.free x.t_memory p;
+  owner_call_on o;
+  equal ~msg:"given back at the owner's call after the peer's free"
+    (pair int int) before (tree_capacity o);
+  equal ~msg:"system memory given back" int bytes (held_bytes root)
+
+(* A peer of a peer maps the owner's memory too: it goes back once both
+   regions are freed. *)
+let test_owner_free_peers () =
+  with_gpus 3 @@ fun _ _ gpus ->
+  let o = List.nth gpus 0 and x = List.nth gpus 1 and y = List.nth gpus 2 in
+  let before = tree_capacity o in
+  let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+  let p = mapped (Memory.map_peer x.t_memory r) in
+  let q = mapped (Memory.map_peer y.t_memory p) in
+  let held = tree_capacity o in
+  Memory.free o.t_memory r;
+  Memory.free x.t_memory p;
+  owner_call_on o;
+  equal ~msg:"kept while the peer of the peer maps it" (pair int int) held
+    (tree_capacity o);
+  Memory.free y.t_memory q;
+  owner_call_on o;
+  equal ~msg:"given back after both frees" (pair int int) before
+    (tree_capacity o)
+
+(* A peer that may still reach the memory after its free, since its GPU did
+   not confirm the unmap, leaves the memory reached for good. A peer
+   released before its free, with no use running, reaches nothing, and the
+   memory goes back. *)
+let test_owner_free_after_peer () =
+  with_gpus 3 @@ fun _ _ gpus ->
+  let o = List.nth gpus 0 and x = List.nth gpus 1 and y = List.nth gpus 2 in
+  let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+  let p = mapped (Memory.map_peer x.t_memory r) in
+  x.t_g.confirms <- false;
+  Memory.free x.t_memory p;
+  x.t_g.confirms <- true;
+  let held = tree_capacity o in
+  Memory.free o.t_memory r;
+  owner_call_on o;
+  equal ~msg:"an unconfirmed peer's memory kept" (pair int int) held
+    (tree_capacity o);
+  let before = tree_capacity o in
+  let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+  let q = mapped (Memory.map_peer y.t_memory r) in
+  Memory.free o.t_memory r;
+  Function.release y.t_fn;
+  Memory.free y.t_memory q;
+  owner_call_on o;
+  equal ~msg:"a released peer's memory given back" (pair int int) before
+    (tree_capacity o)
+
+(* A released owner's free keeps the addresses of memory a peer maps: the
+   peer's next allocation, and another GPU's region it maps, take other
+   addresses. *)
+let test_released_owner_addresses () =
+  with_gpus 3 @@ fun _ _ gpus ->
+  let o = List.nth gpus 0 and x = List.nth gpus 1 and y = List.nth gpus 2 in
+  let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+  let p = mapped (Memory.map_peer x.t_memory r) in
+  Memory.release o.t_memory;
+  Memory.free o.t_memory r;
+  let mine = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
+  not_equal ~msg:"the peer's allocation" hex (Memory.address r)
+    (Memory.address mine);
+  let theirs = given (Memory.alloc y.t_memory Gpu (64 * kib)) in
+  not_equal ~msg:"another GPU's region" hex (Memory.address r)
+    (Memory.address theirs);
+  let q = mapped (Memory.map_peer x.t_memory theirs) in
+  List.iter (Memory.free x.t_memory) [ q; mine; p ];
+  Memory.free y.t_memory theirs
+
+(* A released owner's memory that a peer mapped past the owner's free goes
+   back at the peer's free, with no call of the owner's after it: its
+   addresses return to the space. *)
+let test_released_owner_due () =
+  with_gpus 2 @@ fun _ _ gpus ->
+  let o = List.nth gpus 0 and x = List.nth gpus 1 in
+  let before = snd (tree_capacity o) in
+  let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+  let p = mapped (Memory.map_peer x.t_memory r) in
+  Memory.free o.t_memory r;
+  Memory.release o.t_memory;
+  let held = snd (tree_capacity o) in
+  Memory.free x.t_memory p;
+  not_equal ~msg:"the addresses held while the peer mapped them" int before
+    held;
+  equal ~msg:"the addresses back after the peer's free" int before
+    (snd (tree_capacity o))
+
+(* An exception at any allocation of a map_peer, then of the peer's free,
+   makes no later call wrong: the owner frees its region, and the GPUs map
+   and free another region as before. After the walk, a round with no cut
+   leaves the owner's room as it found it. A cut may leak: one inside the
+   table writes leaves the region reached, and the tables it made, so a pair
+   of GPUs serves [rounds] cuts. *)
+let rounds = 32
+
+let test_peer_cut () =
+  let round o x n =
+    let r = given (Memory.alloc o.t_memory Gpu page) in
+    let got = ref None in
+    let mapping =
+      Rig_support.interrupted n (fun () ->
+          got := Some (mapped (Memory.map_peer x.t_memory r)))
+    in
+    let freeing =
+      match !got with
+      | None -> false
+      | Some p ->
+          let freed = ref false in
+          let cut =
+            Rig_support.interrupted n (fun () ->
+                Memory.free x.t_memory p;
+                freed := true)
+          in
+          if not !freed then (
+            try Memory.free x.t_memory p with Invalid_argument _ -> ());
+          cut
+    in
+    Memory.free o.t_memory r;
+    let r' = given (Memory.alloc o.t_memory Gpu page) in
+    Memory.free x.t_memory (mapped (Memory.map_peer x.t_memory r'));
+    Memory.free o.t_memory r';
+    owner_call_on o;
+    mapping || freeing
+  in
+  let rec batch first =
+    let past =
+      with_gpus 2 @@ fun _ _ gpus ->
+      let o = List.nth gpus 0 and x = List.nth gpus 1 in
+      let rec from n =
+        if n = first + rounds then None
+        else if round o x n then from (n + 1)
+        else Some n
+      in
+      match from first with
+      | None -> None
+      | Some n ->
+          let before = tree_capacity o in
+          ignore (round o x n : bool);
+          equal ~msg:"the room after a round with no cut" (pair int int)
+            before (tree_capacity o);
+          Some n
+    in
+    if Option.is_none past then batch (first + rounds)
+  in
+  batch 1
+
+(* Two GPUs' owners on two domains: the owner's frees of its GPU memory and
+   the peer's frees of its mappings of it, each owner's calls one at a time
+   as a driver's lock makes them. An owner's free returns whether a mapping
+   of the region is out or not, and the memory goes back once none is. The
+   GPUs are taken once, for every run, with the owner's room before the
+   first. *)
+type freed = Freed | Gone
+
+let freed =
+  Testable.make
+    ~pp:(fun ppf f ->
+      Format.pp_print_string ppf
+        (match f with Freed -> "freed" | Gone -> "gone"))
+    ~equal:( = )
+
+type owned = { mutable out : bool; mutable peers : int; mutable mapped : bool }
+type mapping = { over : owned; mutable live : bool }
+
+let two_gpus =
+  lazy
+    (let _, m, buses = tree_machine 2 in
+     let space = Space.create ~base:space_base space_length in
+     match List.map (take_gpu ~space m) buses with
+     | [ o; x ] -> ((o, Mutex.create ()), (x, Mutex.create ()), tree_capacity o)
+     | _ -> invalid_arg "two GPUs")
+
+let owner (o, _, _) = o
+let peer (_, x, _) = x
+
+(* [f] of the GPU [g] picks of [two_gpus], under its owner's lock. *)
+let owner_call g f =
+  let x, lock = g (Lazy.force two_gpus) in
+  Mutex.protect lock (fun () -> f x)
+
+(* What a free of [r] on the GPU [g] picks did. *)
+let free_on g r =
+  owner_call g @@ fun x ->
+  match Memory.free x.t_memory r with
+  | () -> Freed
+  | exception Invalid_argument _ -> Gone
+
+let owned_t = abstract ~release:(fun r -> ignore (free_on owner r : freed)) "r"
+
+let mapping_t =
+  abstract ~release:(fun p -> ignore (free_on peer p : freed)) "p"
+
+let free_owned r = function
+  | Ok got ->
+      let expected = if r.out then Freed else Gone in
+      cover "an owner's free while a mapping is out" (r.out && r.peers > 0);
+      cover "an owner's free after its mappings'"
+        (r.out && r.peers = 0 && r.mapped);
+      equal freed expected got;
+      if got = Freed then r.out <- false
+  | Error e -> raise e
+
+let free_mapping p =
+  if not p.live then Gone
+  else begin
+    p.live <- false;
+    p.over.peers <- p.over.peers - 1;
+    Freed
+  end
+
+(* After every program, the owner's room is as before the first, once a call
+   of its gives back what the last program's peer let go of. *)
+let test_two_gpus_whole () =
+  let before = match Lazy.force two_gpus with _, _, c -> c in
+  owner_call owner owner_call_on;
+  equal ~msg:"the owner's room" (pair int int) before
+    (owner_call owner tree_capacity)
+
+let peer_commands =
+  [
+    command "alloc"
+      (Gen.unit @-> makes owned_t)
+      (fun () -> { out = true; peers = 0; mapped = false })
+      (fun () ->
+        owner_call owner (fun o ->
+            given (Memory.alloc o.t_memory Gpu (64 * kib))));
+    command "map" ~pre:(fun r -> r.out)
+      (owned_t ^-> makes mapping_t)
+      (fun r ->
+        r.peers <- r.peers + 1;
+        r.mapped <- true;
+        { over = r; live = true })
+      (fun r ->
+        owner_call peer (fun x -> mapped (Memory.map_peer x.t_memory r)));
+    command "free owned"
+      (owned_t ^-> judges freed)
+      free_owned (free_on owner);
+    command "free mapping"
+      (mapping_t ^-> returns freed)
+      free_mapping (free_on peer);
+  ]
 
 (* A peer whose reach cannot be recorded for after the process's death is
    refused before its page table points at the memory. *)
@@ -2065,6 +2333,27 @@ let on_files =
         test_unconfirmed;
       test "system memory a peer maps stays until neither GPU reaches it"
         test_peer_reach;
+      cases "memory a peer maps stays until the peer's free"
+        ~id:(Format.asprintf "%a" pp_kind)
+        [ Memory.Gpu; Bar; Host ] test_owner_free_first;
+      test "memory a peer of a peer maps stays until both frees"
+        test_owner_free_peers;
+      test
+        "memory a peer may still reach after its free stays, and a released \
+         peer's goes back"
+        test_owner_free_after_peer;
+      test "a released owner's free keeps the addresses a peer maps"
+        test_released_owner_addresses;
+      test "a released owner's memory a peer let go of goes back at its free"
+        test_released_owner_due;
+      test "an exception at any allocation of a map_peer or its free makes no \
+            later call wrong"
+        test_peer_cut;
+      stateful ~count:200 ~steps:3 ~domains:2
+        "two GPUs' owners free the memory one maps of the other at once"
+        peer_commands;
+      test "after those programs, the owner's memory is whole"
+        test_two_gpus_whole;
       test "a peer whose reach cannot be recorded is refused"
         test_peer_unrecorded;
       test_released_refused;

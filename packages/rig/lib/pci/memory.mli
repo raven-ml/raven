@@ -40,11 +40,22 @@
     gives back the region's system memory, pins and virtual addresses, as
     above.
 
-    {b Peers.} Freeing a region that another GPU maps ({!map_peer}) leaves that
-    mapping reaching memory the owner may give out again, so the peer's {!free}
-    must come first.
+    {b Peers.} Memory of a region that another GPU maps ({!map_peer}) stays
+    until no other GPU reaches it, whichever frees first. The owner's last
+    {!free} of its regions over that memory, while another GPU's region over
+    it is out, keeps the memory and its addresses. They go back at the
+    owner's first {!val-alloc}, {!map_host}, {!map_peer}, {!free} or
+    {!release} after the last such region's free, or at that free itself
+    once the owner's function is released. A peer's free that its GPU
+    does not confirm ({b Unconfirmed flushes}), or that follows its
+    function's release while the function may still master the bus
+    ({!Function.release}), leaves the memory reached: none of it goes back.
 
-    The GPU's owner makes one call at a time on one GPU's memory. *)
+    The GPU's owner makes one call at a time on one GPU's memory. Calls on two
+    GPUs' memory may run at once: a {!map_peer} or {!free} that involves
+    another GPU's regions reads and counts them under a lock of that GPU's
+    memory, which it holds alone, so two GPUs' calls never wait for each
+    other in a cycle. *)
 
 type t
 (** The type for the memory of one GPU. *)
@@ -74,7 +85,8 @@ val release : t -> unit
     drops the page tables {!create} was given, which only a live GPU uses. A
     driver that keeps [m] past the GPU's stop ({!Driver.stop}) releases it
     there, so that [m] holds no page table. Releasing [m] again does nothing
-    but drop the page tables if an earlier release did not.
+    but drop the page tables if an earlier release did not, and give back the
+    memory that no other GPU reaches any more ({b Peers}).
 
     An exception that ends the function's release passes
     ({!Function.release}), and leaves the page tables to the next release of
@@ -203,8 +215,7 @@ val map_peer : t -> region -> (region option, string) result
     with {!Function.pin}'s reason.
 
     Raises [Invalid_argument] if [r], or the region it maps, was freed, or if
-    [m]'s GPU maps other memory at [r]'s addresses, as a free out of the
-    order {b Peers} states leaves. *)
+    [m]'s GPU maps other memory at [r]'s addresses. *)
 
 val free : t -> region -> unit
 (** [free m r] gives back what {!val-alloc}, {!map_host} or {!map_peer} gave.
@@ -212,7 +223,8 @@ val free : t -> region -> unit
     frees its memory or unpins it, and returns its addresses. The memory of a
     region {!map_peer} gave stays its owner's. After the function's release it
     writes no table. A region whose memory {!bus} gave another
-    function gives back nothing.
+    function gives back nothing, nor does one whose memory another GPU may
+    still reach, and memory another GPU maps goes back later ({b Peers}).
 
     Raises [Invalid_argument] if [r] is not [m]'s or was freed. *)
 

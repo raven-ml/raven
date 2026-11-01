@@ -26,10 +26,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### drivers
 
-- rig.pci: a peer GPU's memory mapped through its BAR is given back by
-  its owner's free while a peer that may still master can write it
-  (`give_back`, pci/memory.ml); a fix needs the two GPUs' locks taken
-  together
 - rig.amd over PCI, rig.pci: `peer` must take no lock (rig_edge.mli's
   Drivers section). AMD over PCI's `reaches` takes `machines_lock`, and
   rig.pci's `Memory.reaches` reads each GPU's route under `routes`
