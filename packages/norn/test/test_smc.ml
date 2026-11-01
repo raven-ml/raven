@@ -25,10 +25,28 @@ let temper ?move m i =
     (Nx.Rng.fold_in k 0)
     (m.draw (Nx.Rng.fold_in k 1) particles)
 
+(* [runs_of m] is Law 13's runs on [m], compiled as one function mapped over
+   their keys: eager, the ten-dimensional Gaussian's take ten times as long. *)
+let runs_of m =
+  let ez = Norn.Evidence.ptree t in
+  let one k =
+    Norn.Smc.run t ~budget ~prior:m.prior ~likelihood:m.likelihood
+      (Nx.Rng.fold_in k 0)
+      (m.draw (Nx.Rng.fold_in k 1) particles)
+  in
+  let all =
+    Rune.jit
+      Nx.Ptree.(Nx.Rng.ptree @-> returns ez)
+      (Rune.vmap Nx.Ptree.(Nx.Rng.ptree @-> returns ez) one)
+      (Nx.Rng.split_batch ~n:runs (Nx.Rng.key 80))
+  in
+  List.init runs (fun i ->
+      Nx.Ptree.map ez (fun _ x -> Nx.slice [ Nx.I i ] x) all)
+
 let law_13 m =
   slow
   @@ test m.name (fun () ->
-      let zs = List.init runs (temper m) in
+      let zs = runs_of m in
       let ln z = Nx.item [] (Norn.Evidence.log_evidence z) in
       let err z = Nx.item [] (Norn.Evidence.error z) in
       let z0 = List.hd zs in
