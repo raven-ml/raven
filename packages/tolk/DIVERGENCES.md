@@ -990,9 +990,17 @@ scope, see README.
   applies on CUDA sm_89 and HIP gfx1100) and
   `› tc_{cuda,amd}_widened_{half,bfloat}_shaped.golden`, with `optimising
   keeps a kernel's writes › small kernels › tc_*_widened_*_shaped` (shaped for
-  the core, the kernel keeps its values). On rune: missing, the law of
-  `Nx.contract`'s bound on every GPU present (the old rune's `lower_linalg ›
-  tensor cores › cuda › *` went with its rewrite).
+  the core, the kernel keeps its values). On rune, which widens a `half` or
+  `bfloat16` operand by tolk's cast (`Lower_arith.decode`), so that its
+  contractions and products of operands a program casts first take this
+  form: `test_jit_gpu`'s `products › a float16 or bfloat16 matmul is within
+  its bound of the exact product`, on the machine's first GPU, at extents the
+  core takes and extents it refuses, with `› sixteen terms under float32's
+  unit hold the bound` and `a contraction on matrix units holds its bound ›
+  *`. Each checks `Nx.contract`'s bound, `γ(K + 1, 2u) Σ|a||b|` for
+  `float32`'s `u`, with the result's rounding to its dtype. They pin the
+  bound only: whether a core was taken is not observable through rune's
+  interface.
 
 ## D30. Withdrawn
 
@@ -1499,11 +1507,13 @@ Withdrawn: multi-device is out of scope, see README.
 - **Reason:** (b). Under the NaN rule a move keeps a NaN's bits, and nx's do:
   an eager copy, movement or `where` keeps a signalling NaN, so a compiled
   function computes what it computes eagerly only if the emulated moves keep
-  the bits too. rune now stores the 8-bit floats as `uint8` and computes
-  every narrow float itself (`Lower_arith.decode`, `Lower_arith.encode`), so
-  tolk no longer emulates an 8-bit float for it. What remains is a move of
-  `bfloat16` or `float16` storage on a target that emulates it: `bfloat16` on
-  a riscv64 host, on an Apple GPU before family 6 and on CUDA before sm_80.
+  the bits too. rune converts `float16` and `bfloat16` by tolk's casts, and
+  stores the 8-bit floats and `float4_e2m1fn` as `uint8`, which it decodes
+  and encodes by integer formulas on their bits (`Lower_arith.of_byte`,
+  `Lower_arith.to_byte`), so tolk no longer emulates an 8-bit float for
+  it. What remains is a move of `bfloat16` or `float16` storage on a target
+  that emulates it: `bfloat16` on a riscv64 host, on an Apple GPU before
+  family 6 and on CUDA before sm_80.
   rune stores both in their own types (`Lower_arith.dtype`), so a compiled
   copy of one is such a move.
 - **Pinned by:** the `Decomp_dtype` suite (`test/codegen/decomp/decomp_dtype`): `NaNs › an
@@ -4444,18 +4454,28 @@ fold wraps integers and holds its float bound`, hold.
 
 ## D166. A minimum of a minimum against one value is one selection
 
-- **tinygrad:** `codegen/decomp/op.py:98` (`get_late_rewrite_patterns`),
+- **tinygrad:** `codegen/decomp/op.py:81` (`get_late_rewrite_patterns`),
   which has no rule for a nest of selections.
-- **tolk:** `Decomp_op.extreme_of`, `Decomp_op.nested_extreme` and
-  `Decomp_op.late_patterns`; `test/gen/tinygrad.patch`,
-  which gives tinygrad's late patterns the same rule.
+- **tolk:** `Decomp_op.extreme_of`, `Decomp_op.nested_extreme`,
+  `Decomp_op.unwrapped`, `Decomp_op.holds`, `Decomp_op.keeps` and
+  `Decomp_op.late_patterns`; `test/gen/tinygrad.patch`, which gives
+  tinygrad's late patterns the same rule but for casts, which no golden's
+  nest holds.
 - **Differs:** a selection of a value and `c` by their less-than comparison,
   a minimum or a maximum against `c`, whose value is such a selection of the
   same kind against the same `c`, is rewritten to one selection: the inner
   one where it picks `c` where its comparison is false, at a tie or a NaN,
   or where the two pick alike, and otherwise `where (v < c) v c` or `where (c
-  < v) v c` of the inner one's other operand `v`. Both are what the nest
-  computes at every `v`, NaN and both zeros included.
+  < v) v c` of the inner one's other operand `v`, cast to the outer one's
+  type. Both are what the nest computes at every `v`, NaN and both zeros
+  included. Values are matched through the casts that keep them
+  (`Decomp_op.keeps`): a widening to a float type that holds the operand's,
+  and a narrowing of a value its type holds (`Decomp_op.holds`), a constant,
+  a selection of such values at any depth, or such a value widened. LLVM's
+  InstCombine narrows a `float32` selection of widened `float16` values to a
+  `float16` selection, which keeps every value, then folds the plain nest.
+  rune computes a `float16` minimum as a `float32` selection of widened
+  operands, narrowed back, so a nest of them reaches that fold.
 - **Reason:** (b): LLVM's InstCombine (`foldSPFofSPF`) folds a minimum of a
   minimum, or a maximum of a maximum, against one constant into the inner
   selection, though the two pick apart at a tie or a NaN: with `m = (0.0 <
@@ -4467,17 +4487,18 @@ fold wraps integers and holds its float bound`, hold.
   Under `Rune.jit`, `Nx.where (Nx.less m c) m c` of `m = Nx.minimum c x` gave
   `-0.` where eager gives `0.`, NaN where eager gives `c`, and a reciprocal
   of it `-inf` for `inf`: rune's `a step over donated leaves keeps the
-  values` failed. Made one selection before rendering, no such nest reaches
-  any compiler, and a single selection keeps its lowering to one instruction:
-  hiding the constant from LLVM in every comparison instead cost a maximum
-  before a 64 × 64 matmul 1.10 times its time and a 4096-point FFT 1.15
-  times on fudge (paired). LLVM can still form such a nest itself, as when it
-  vectorises scalar minima of a vector minimum's lanes; no tolk kernel is
-  known to.
+  values` failed. Made one selection before rendering, a single selection
+  keeps its lowering to one instruction: hiding the constant from LLVM in
+  every comparison instead cost a maximum before a 64 × 64 matmul 1.10 times
+  its time and a 4096-point FFT 1.15 times on fudge (paired). LLVM can still
+  form such a nest itself, as when it vectorises scalar minima of a vector
+  minimum's lanes; no tolk kernel is known to.
 - **Pinned by:** the `Decomp_op` suite (`test/codegen/decomp/decomp_op`):
-  `late_patterns › late_nests_cmplt.golden` and `› a nest of extremes against
-  one value keeps its values › *`; rune's `rune jit › classes › a selection
-  of a minimum against its constant is exact`.
+  `late_patterns › late_nests_cmplt.golden`, `› a nest of extremes against
+  one value keeps its values › *` and `› a nest of 16-bit extremes through
+  float32 keeps its values › *`, which also holds the rule back where a
+  narrowing rounds; rune's `rune jit › classes › a selection of a minimum
+  against its constant is exact`, at `float16` and `bfloat16` too.
 
 ## D167. Clang of LLVM 18 compiles without its straight-line vectorizer, and a long source without its loop vectorizer
 
