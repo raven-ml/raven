@@ -88,19 +88,34 @@ static void leave(void) {
   }
 }
 
-/* At the module's initialisation, before another thread runs OCaml: the
-   runtime reads the hooks unsynchronised. */
+/* Sets each hook that is not this file's, keeping the one it replaces to
+   call. Systhreads' initialisation (caml_thread_initialize, st_stubs.c)
+   sets both hooks without keeping the ones it finds, so where the Thread
+   module initialises after this one it drops them, and a watch would see
+   no release: each watch's start sets them again, over systhreads'. The
+   runtime reads the hooks unsynchronised. The module's initialisation sets
+   them before another thread runs OCaml, and a start sets them only where
+   systhreads replaced them, at a suite's first watch. */
+static void install(void) {
+  if (caml_enter_blocking_section_hook != enter) {
+    enter_before = caml_enter_blocking_section_hook;
+    caml_enter_blocking_section_hook = enter;
+  }
+  if (caml_leave_blocking_section_hook != leave) {
+    leave_before = caml_leave_blocking_section_hook;
+    caml_leave_blocking_section_hook = leave;
+  }
+}
+
 value nx_release_support_install(value unit) {
   (void)unit;
-  enter_before = caml_enter_blocking_section_hook;
-  leave_before = caml_leave_blocking_section_hook;
-  caml_enter_blocking_section_hook = enter;
-  caml_leave_blocking_section_hook = leave;
+  install();
   return Val_unit;
 }
 
 value nx_release_support_start(value unit) {
   (void)unit;
+  install();
   releases = 0;
   longest = 0;
   watching = 1;
