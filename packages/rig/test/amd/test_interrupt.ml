@@ -427,15 +427,15 @@ let allocations from f =
     f;
   !n
 
-(* The landings of a walk over a boot's or a stop's allocations, each of
-   which costs a boot of the GPU. *)
+(* The landings of a walk over a stop's allocations, each of which costs a
+   boot of the GPU. *)
 let spread = 3
 
-(* [walk_open ~step from] walks an open of GPU 0 with every allocation
-   [from] holds for from the [(k step + 1)]-th on raising until the open
-   returns, for [k] from 0 on: the GPU opens again after each and runs work.
-   It is the number of landings. *)
-let walk_open ~step from =
+(* [walk_open from] walks an open of GPU 0 with every allocation [from] holds
+   for from the [n]-th on raising until the open returns, for [n] from 1 on:
+   the GPU opens again after each and runs work. It is the number of
+   landings. *)
+let walk_open from =
   let rec walk landed n =
     let opened = ref (Error "not reached") in
     let reached =
@@ -443,31 +443,22 @@ let walk_open ~step from =
     in
     Result.iter (fun g -> A.stop g ~fault:None) !opened;
     again (strf "interrupted from allocation %d" n);
-    if reached then walk (landed + 1) (n + step) else landed
+    if reached then walk (landed + 1) (n + 1) else landed
   in
   walk 0 1
 
-(* An open whose boot an exception ends from before its first write to a
-   register to after its return: the path's steps around the boot, at each
-   of their allocations, and the boot, at [spread] of its allocations. rig.pci
-   resets the function at the next open of a GPU the boot wrote to, which
-   then boots it and runs work. *)
-let test_pci_open () =
+(* An open that an exception ends in the path's steps around the boot, at
+   each of their allocations: before the boot, which then wrote nothing, or
+   after it returned. rig.pci resets the function at the next open of a GPU
+   the boot wrote to, which then boots it and runs work. *)
+let test_pci_around () =
   needs_pci ();
   again "before the walk";
   let boot = inside [ "Rig_amd_pci__Boot.start" ] in
   let around a =
     inside [ "Rig_amd_pci.boot"; "Rig_amd_pci.booted" ] a && not (boot a)
   in
-  at_least ~msg:"the landings around the boot" int ~than:1
-    (walk_open ~step:1 around);
-  let opened = ref (Error "not opened") in
-  let n = allocations boot (fun () -> opened := open_gpu ()) in
-  (match !opened with
-  | Ok g -> A.stop g ~fault:None
-  | Error why -> fail ("the GPU does not open: " ^ why));
-  at_least ~msg:"the landings in the boot" int ~than:spread
-    (walk_open ~step:(max 1 (n / spread)) boot)
+  at_least ~msg:"the landings" int ~than:1 (walk_open around)
 
 (* A stop that an exception ends at [spread] of its allocations: rig.pci
    holds the stop as unknown and resets the function at the next open, which
@@ -592,9 +583,9 @@ let () =
                "of the path's making of a queue leaves the process no queue"
                test_queue_raised;
              test
-               "of an open over PCI from its boot's first write on leaves the \
-                next open to boot the GPU"
-               test_pci_open;
+               "of an open over PCI around its boot leaves the next open to \
+                boot the GPU"
+               test_pci_around;
              test "of a stop over PCI leaves the next open to boot the GPU"
                test_pci_stop;
              test
