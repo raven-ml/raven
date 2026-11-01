@@ -157,7 +157,11 @@ module Box = struct
       (fun i lo ->
         if lo > high.(i) then
           invalid_arg
-            (strf "Space.Box.create: low[%d]=%g > high[%d]=%g" i lo i high.(i)))
+            (Format.asprintf "Space.Box.create: low[%d]=%a > high[%d]=%a" i
+               (Nx.Dtype.pp_value Nx.float64)
+               lo i
+               (Nx.Dtype.pp_value Nx.float64)
+               high.(i)))
       low;
     let low = Array.copy low in
     let high = Array.copy high in

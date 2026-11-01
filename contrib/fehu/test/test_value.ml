@@ -55,9 +55,13 @@ let test_to_string_bool () =
 let test_to_string_int () =
   equal ~msg:"int 42" string "42" (Value.to_string (Int 42))
 
+(* A float prints as the shortest decimal that reads back, the same on every
+   system: the C library's [%g] wrote 1e+06, 1e+006 under mingw-w64. *)
 let test_to_string_float () =
-  let s = Value.to_string (Float 3.14) in
-  is_true ~msg:"float non-empty" (String.length s > 0)
+  equal string "3.14" (Value.to_string (Float 3.14));
+  equal string "1000000" (Value.to_string (Float 1e6));
+  equal string "4.58e-72" (Value.to_string (Float 4.58e-72));
+  equal string "[|1000000; 0.1|]" (Value.to_string (Float_array [| 1e6; 0.1 |]))
 
 let test_to_string_string () =
   let s = Value.to_string (String "hello") in

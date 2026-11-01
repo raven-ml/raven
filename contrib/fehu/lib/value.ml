@@ -61,10 +61,10 @@ let rec pp ppf = function
   | Null -> Format.fprintf ppf "null"
   | Bool b -> Format.fprintf ppf "%b" b
   | Int i -> Format.fprintf ppf "%d" i
-  | Float f -> Format.fprintf ppf "%g" f
+  | Float f -> Nx.Dtype.pp_value Nx.float64 ppf f
   | String s -> Format.fprintf ppf "%S" s
   | Int_array a -> pp_array (fun ppf v -> Format.fprintf ppf "%d" v) ppf a
-  | Float_array a -> pp_array (fun ppf v -> Format.fprintf ppf "%g" v) ppf a
+  | Float_array a -> pp_array (Nx.Dtype.pp_value Nx.float64) ppf a
   | Bool_array a -> pp_array (fun ppf v -> Format.fprintf ppf "%b" v) ppf a
   | List items ->
       Format.fprintf ppf "[";

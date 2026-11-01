@@ -5,6 +5,9 @@ All notable changes to Fehu are documented in this file. Releases up to
 
 ## Unreleased
 
+- `Value.pp` writes a float as the shortest decimal that reads back, the same
+  text on every system: `1000000` where it wrote `1e+06`, or `1e+006` under
+  Windows, and every digit where it kept six.
 - **Breaking:** spaces, observations and buffers hold host tensors, as
   `Nx.host Nx.float32_t`, and draw from `Nx.Rng`: samples for a seed differ
   from before.
