@@ -2809,7 +2809,7 @@ index 39eb83a90..bcfb225e2 100644
    next_range = max((x.axis_id[0] for x in tsink.toposort() if x.op is Ops.RANGE), default=-1) + 1
    tsink = graph_rewrite(tsink, pm_limit_bufs, ctx=LimitBufsContext(range_idx=itertools.count(next_range)), name="limit buffers")
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 41a7fc11f..9696da040 100644
+index 41a7fc11f..387fe66d4 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -2835,7 +2835,7 @@ index 41a7fc11f..9696da040 100644
  
  # With True as the default, this matches the old symbolic behavior
  def resolve(x:UOp|bool, default:bool=True):
-@@ -92,6 +93,21 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
+@@ -92,6 +93,25 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
    return tuple(range(nleft)) + tuple(nleft+i for i,s in enumerate(src_shape) if resolve(s == 1, default=False) and resolve(out_shape[nleft+i] != 1))
  
  def ssimplify(uop:sint): return uop.ssimplify() if isinstance(uop, UOp) else uop
@@ -2846,6 +2846,10 @@ index 41a7fc11f..9696da040 100644
 +  lo, hi = b
 +  if dt not in dtypes.ints or type(lo) is not int or type(hi) is not int or (dt.min <= lo and hi <= dt.max): return b
 +  return (v:=truncate[dt](lo), v) if lo == hi else (dt.min, dt.max)
++# a weak float's value is a double
++def as_double(v) -> float:
++  try: return float(v)
++  except OverflowError: return math.copysign(math.inf, v)
 +# the bounds of a value nothing proves more of: finite float bounds state that it is not nan, which every float type holds
 +def unbounded(dt:DType) -> tuple[PyConst, PyConst]: return (-math.inf, math.inf) if dtypes.is_float(dt) else (dt.min, dt.max)
 +# a weak float that a committed float operation reads is rounded to that type: its bounds round with it, a nan the type's
@@ -2857,7 +2861,7 @@ index 41a7fc11f..9696da040 100644
  def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
  
  def range_str(u:UOp, color=False) -> str:
-@@ -1081,8 +1097,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1081,8 +1101,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
    def vmax(self) -> PyConst: return self._min_max[1]
    @functools.cached_property
    def _min_max(self) -> tuple[PyConst, PyConst]:
@@ -2890,7 +2894,7 @@ index 41a7fc11f..9696da040 100644
        if self.op is Ops.ADD: return wrapped(self.dtype, s0_vmin+s1_vmin, s0_vmax+s1_vmax)
        if self.op is Ops.SUB: return wrapped(self.dtype, s0_vmin-s1_vmax, s0_vmax-s1_vmin)
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax >= 0:
-@@ -1120,28 +1159,55 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1120,28 +1163,55 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.CMPNE: return ((s0_vmax < s1_vmin) or (s1_vmax < s0_vmin), not (s0_vmin == s0_vmax == s1_vmin == s1_vmax))
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
@@ -2927,7 +2931,8 @@ index 41a7fc11f..9696da040 100644
      if self.op is Ops.CAST:
        # rounding is monotone (truncation toward zero into an int, to-nearest onto the value grid into a float)
        smin, smax = self.src[0]._min_max
-       trunc = truncate.get(self.dtype) if dtypes.is_float(self.dtype) else math.trunc if dtypes.is_int(self.dtype) else None
+-      trunc = truncate.get(self.dtype) if dtypes.is_float(self.dtype) else math.trunc if dtypes.is_int(self.dtype) else None
++      trunc = truncate.get(self.dtype, as_double) if dtypes.is_float(self.dtype) else math.trunc if dtypes.is_int(self.dtype) else None
        if trunc is not None: smin, smax = (trunc(v) if math.isfinite(v) else v for v in (smin, smax))
 +      # an integer keeps its value in an integer type, where _min_max wraps it
 +      if dtypes.is_int(self.dtype) and not dtypes.is_float(self.src[0].dtype): return smin, smax
@@ -2954,7 +2959,7 @@ index 41a7fc11f..9696da040 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1175,9 +1241,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1175,9 +1245,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
  
    @staticmethod
    def alloc(shape:tuple[sint, ...], dtype:DType, slot:int|None=None, addrspace=AddrSpace.GLOBAL, device=None, axis:int|None=None,
@@ -2966,7 +2971,7 @@ index 41a7fc11f..9696da040 100644
                             addrspace=addrspace, device=device, spec=spec, bind_on_realize=bind_on_realize, name=name))
      return ret.reshape(()) if not shape else ret.view_as(shape, axis)
    def alloc_like(self, slot:int|None=None, addrspace=AddrSpace.GLOBAL): return UOp.alloc(self.max_shard_shape, self.dtype, slot, addrspace)
-@@ -1324,6 +1390,8 @@ class KernelInfo:
+@@ -1324,6 +1394,8 @@ class KernelInfo:
    estimates: Estimates|None = None
    beam: int = 0
    optimized: bool = False       # the AST has been through the optimizer, skip re-optimization
@@ -2975,7 +2980,7 @@ index 41a7fc11f..9696da040 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1350,6 +1418,7 @@ class ProgramInfo:
+@@ -1350,6 +1422,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -2983,7 +2988,7 @@ index 41a7fc11f..9696da040 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM: _params.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1387,22 +1456,99 @@ class CallInfo:
+@@ -1387,22 +1460,99 @@ class CallInfo:
  
  # ******** ops in python ********
  
@@ -3089,7 +3094,7 @@ index 41a7fc11f..9696da040 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1413,6 +1559,8 @@ def exec_alu(op:Ops, dtype:DType, operands):
+@@ -1413,6 +1563,8 @@ def exec_alu(op:Ops, dtype:DType, operands):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)

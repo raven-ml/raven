@@ -1556,19 +1556,19 @@ and float_bounds op dt (s0_min, s0_max) (s1_min, s1_max) =
   | _ -> None
 
 (* Rounding is monotone, so a cast maps bounds to bounds: toward zero into an
-   integer, to nearest into a float. An integer keeps its value in an integer
-   type, where [min_max] wraps it. A float target holds the rounded bounds only
-   where they are its values: a value past them is NaN in a type without
-   infinities, and a NaN bound is no value. A signed target holds the part of
-   the source range that overlaps it; a float overflowing an integer is
-   undefined. *)
+   integer, to nearest into a float, which for a weak float is a double, as its
+   value is ({!Dtype.const}). An integer keeps its value in an integer type,
+   where [min_max] wraps it. A float target holds the rounded bounds only where
+   they are its values: a value past them is NaN in a type without infinities,
+   and a NaN bound is no value. A signed target holds the part of the source
+   range that overlaps it; a float overflowing an integer is undefined. *)
 and cast_bounds src dt (lo, hi) =
   let round (x : Dtype.value) : Dtype.value =
     match x with
     | `Float f when not (Float.is_finite f) -> x
     | _ ->
-        if Dtype.is_float dt && not (List.mem dt Dtype.weaks) then
-          Dtype.truncate dt x
+        if Dtype.equal dt Weak_float then `Float (Value.to_float x)
+        else if Dtype.is_float dt then Dtype.truncate dt x
         else if Dtype.is_int dt then `Int (Value.to_z x)
         else x
   in

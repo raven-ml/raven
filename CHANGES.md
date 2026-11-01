@@ -822,6 +822,8 @@ thread.
 
 ### Tolk (new)
 
+- `Ops.vmin` and `Ops.vmax` of a cast into a weak float round to doubles, as
+  the value does: a `uint64` cast held `2^64 - 1` where its value is `2^64`.
 - **Breaking:** nodes have no tag: `Ops.Tag`, `Ops.tag`, `Ops.rtag` and the
   `?tag` of `Ops.v`, `replace`, `sink`, `index`, `load`, `store`, `after` and
   `ins` are gone, and the graph format has no `tag=`.

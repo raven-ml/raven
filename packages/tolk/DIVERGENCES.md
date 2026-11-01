@@ -1778,7 +1778,10 @@ does the same.
   not NaN, which every float type holds: a float that nothing bounds has
   infinite bounds, in `float8_e4m3` and the `fnuz` formats too, and a cast
   into a float keeps its source's rounded bounds only where they are values
-  of its type, so a value cast from an unbounded float stays unbounded. With
+  of its type, so a value cast from an unbounded float stays unbounded. A
+  cast into a weak float rounds its bounds to doubles, as it rounds its
+  value: tinygrad's bounds of a `uint64` cast to one held `2^64 - 1`, past
+  the value `2^64`. With
   the type's finite greatest value instead, `a < inf` of an 8-bit NaN folded
   true and a compiled sine, cosine or tangent of it gave -1, 0 and -452.
   `xsin` of an angle whose
