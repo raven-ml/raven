@@ -1,7 +1,13 @@
-; The package installs quill with its stub libraries, which the bytecode
-; executable loads at startup.
+; quill run loads each raven package installed beside quill, so its output
+; depends on the install tree: a package missing from it is skipped, and one
+; built in another profile, such as a sanitizer's, may not load. The tests
+; depend on the workspace's whole install tree, which builds every package in
+; the current profile. A dependency on each preloaded package would name
+; packages that a build of quill alone (dune build -p quill) does not define,
+; and dune refuses it there. The tree also holds quill's stub libraries, which
+; the bytecode executable loads at startup.
 
 (cram
  (package quill)
  (deps
-  (package quill)))
+  (alias_rec %{workspace_root}/install)))

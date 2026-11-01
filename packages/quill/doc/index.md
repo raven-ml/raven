@@ -14,7 +14,7 @@ web frontend, or batch evaluator.
 - **Batch execution**: `quill run` executes all cells and prints or saves results
 - **Watch mode**: `quill run --watch` re-executes on file change for a live editing workflow
 - **Output format**: cell outputs stored as `<!-- quill:output -->` HTML comments, invisible in rendered markdown
-- **Raven integrated**: Nx, Rune, Kaun, Hugin, Sowilo, Talon, Brot, and Fehu are pre-loaded
+- **Raven integrated**: Nx, Rune, Vega, Norn, Kaun, Hugin, Sowilo, Talon, Brot, and Fehu are pre-loaded when installed
 
 ## Quick Start
 

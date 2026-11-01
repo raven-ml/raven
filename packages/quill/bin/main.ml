@@ -24,14 +24,19 @@ let raven_packages =
     ("fehu", []);
   ]
 
+(* [load_optional pkg] loads [pkg] if it is installed. A package that is not
+   installed is skipped without a word; one that is but does not load is
+   reported. *)
 let load_optional pkg =
+  let failed report =
+    Printf.eprintf "[quill] failed to load %s: %s\n%!" pkg report;
+    false
+  in
   match Quill_top.load_package pkg with
-  | () -> true
+  | Ok () -> true
+  | Error report -> failed report
   | exception Fl_package_base.No_such_package _ -> false
-  | exception exn ->
-      Printf.eprintf "[quill] failed to load %s: %s\n%!" pkg
-        (Printexc.to_string exn);
-      false
+  | exception exn -> failed (Printexc.to_string exn)
 
 let install_printer name =
   match Quill_top.install_printer name with

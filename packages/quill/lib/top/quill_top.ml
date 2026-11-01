@@ -43,73 +43,95 @@ let add_packages pkgs =
               roots)
           pkgs
 
-(* Try loading a single ancestor package. Returns [true] on success, [false] if
-   the archive references an undefined global (dependency not yet loaded). *)
-let try_load_ancestor p =
-  let loaded =
-    Findlib.is_recorded_package p
-    && Findlib.type_of_recorded_package p = Findlib.Record_load
+(* [report exn] is the toplevel's report of [exn]. *)
+let report exn =
+  let b = Buffer.create 256 in
+  let ppf = Format.formatter_of_buffer b in
+  (try Location.report_exception ppf exn
+   with exn -> Format.pp_print_string ppf (Printexc.to_string exn));
+  Format.pp_print_flush ppf ();
+  String.trim (Buffer.contents b)
+
+(* The outcome of loading a package's archives. [Deferred] is an archive that
+   refers to a module no archive loaded so far defines. *)
+type load = Loaded | Deferred of string | Failed of string
+
+(* [load_archive path] loads the bytecode archive [path], with the toplevel's
+   report when it does not load. *)
+let load_archive path =
+  let b = Buffer.create 256 in
+  let ppf = Format.formatter_of_buffer b in
+  match Topeval.load_file false ppf path with
+  | true -> Loaded
+  | false ->
+      Format.pp_print_flush ppf ();
+      Failed (String.trim (Buffer.contents b))
+  | exception (Symtable.Error (Undefined_global _) as exn) ->
+      Deferred (report exn)
+  | exception exn -> Failed (report exn)
+
+(* [load_ancestor p] loads the archives of the package [p] and records [p] as
+   loaded once all of them are. *)
+let load_ancestor p =
+  let recorded kind =
+    Findlib.is_recorded_package p && Findlib.type_of_recorded_package p = kind
   in
-  if loaded then true
+  if recorded Findlib.Record_load then Loaded
   else
-    let incore =
-      Findlib.is_recorded_package p
-      && Findlib.type_of_recorded_package p = Findlib.Record_core
-    in
     let d = Findlib.package_directory p in
     Topdirs.dir_directory d;
-    if incore then begin
-      Findlib.record_package Findlib.Record_load p;
-      true
-    end
-    else
-      let archive =
-        try Findlib.package_property !findlib_predicates p "archive"
-        with Not_found -> ""
-      in
-      let archives =
-        String.split_on_char ' ' archive |> List.filter (fun s -> s <> "")
-      in
-      try
-        List.iter
-          (fun arch ->
-            let path = Findlib.resolve_path ~base:d arch in
-            Topdirs.dir_load Format.err_formatter path)
-          archives;
-        Findlib.record_package Findlib.Record_load p;
-        true
-      with Symtable.Error (Undefined_global _) -> false
+    let archives =
+      if recorded Findlib.Record_core then []
+      else
+        match Findlib.package_property !findlib_predicates p "archive" with
+        | archive ->
+            String.split_on_char ' ' archive |> List.filter (fun s -> s <> "")
+        | exception Not_found -> []
+    in
+    let rec load = function
+      | [] ->
+          Findlib.record_package Findlib.Record_load p;
+          Loaded
+      | archive :: rest -> (
+          match load_archive (Findlib.resolve_path ~base:d archive) with
+          | Loaded -> load rest
+          | (Deferred _ | Failed _) as outcome -> outcome)
+    in
+    load archives
 
-(* Load a package: resolve its dependency chain and load archives.
-
-   Findlib's topological sort does not account for virtual library
+(* Findlib's topological sort does not account for virtual library
    implementations (a virtual package has no archive; its implementation archive
    may appear later in the ancestor list). This causes [Undefined_global] when a
    dependent is loaded before the implementation.
 
-   We handle this with a fixpoint loop: load what we can, collect failures, and
-   retry until either everything succeeds or no progress is made. *)
+   We handle this with a fixpoint loop: load what we can, defer what refers to a
+   module not loaded yet, and retry until everything loads or no progress is
+   made. An archive that fails to load otherwise stops the load. *)
 let load_package pkg =
-  if not (ensure_findlib ()) then
-    Printf.eprintf "[quill] #require: findlib unavailable\n%!"
+  if not (ensure_findlib ()) then Error "findlib is unavailable"
   else
-    let ancestors =
-      Findlib.package_deep_ancestors !findlib_predicates [ pkg ]
+    (* [pass deferred ps] loads each of [ps] in turn and is the packages
+       deferred, in order, with their reports; [deferred] holds those deferred
+       so far, the latest first. *)
+    let rec pass deferred = function
+      | [] -> Ok (List.rev deferred)
+      | p :: rest -> (
+          match load_ancestor p with
+          | Loaded -> pass deferred rest
+          | Deferred report -> pass ((p, report) :: deferred) rest
+          | Failed report -> Error report)
     in
     let rec loop remaining =
-      let deferred =
-        List.filter (fun p -> not (try_load_ancestor p)) remaining
-      in
-      match deferred with
-      | [] -> ()
-      | _ when List.length deferred < List.length remaining -> loop deferred
-      | _ ->
-          (* No progress — report the packages we cannot load *)
-          List.iter
-            (fun p -> Printf.eprintf "[quill] failed to load package %s\n%!" p)
-            deferred
+      match pass [] remaining with
+      | Error report -> Error report
+      | Ok [] -> Ok ()
+      | Ok deferred when List.length deferred < List.length remaining ->
+          loop (List.map fst deferred)
+      | Ok deferred ->
+          List.map (fun (p, report) -> p ^ ": " ^ report) deferred
+          |> String.concat "\n" |> Result.error
     in
-    loop ancestors
+    loop (Findlib.package_deep_ancestors !findlib_predicates [ pkg ])
 
 (* ───── Initialization ───── *)
 
@@ -146,7 +168,13 @@ let initialize_if_needed () =
         Toploop.print_out_phrase := print_out_phrase !Toploop.print_out_phrase;
         (* Register #require directive for loading packages at runtime. *)
         Toploop.add_directive "require"
-          (Directive_string (fun pkg -> load_package pkg))
+          (Directive_string
+             (fun pkg ->
+               match load_package pkg with
+               | Ok () -> ()
+               | Error report ->
+                   Printf.eprintf "[quill] failed to load %s: %s\n%!" pkg
+                     report))
           { section = "Loading code"; doc = "Load a findlib package" };
         Sys.interactive := true;
         initialized := true))

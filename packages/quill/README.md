@@ -26,8 +26,8 @@ ecosystem.
   editing workflow
 - Output format: cell outputs stored as HTML comments, invisible in
   rendered markdown
-- Raven integrated: Nx, Rune, Kaun, Hugin, Sowilo, Talon, Brot, and
-  Fehu are pre-loaded
+- Raven integrated: Nx, Rune, Vega, Norn, Kaun, Hugin, Sowilo, Talon,
+  Brot, and Fehu are pre-loaded when installed
 
 ## Quick Start
 

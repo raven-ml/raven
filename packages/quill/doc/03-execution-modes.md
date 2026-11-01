@@ -257,10 +257,12 @@ plotting, and Rune automatic differentiation.
 ## Raven Packages
 
 All execution modes (REPL, TUI, web, run, and watch) use the Raven kernel,
-which pre-loads these packages automatically:
+which loads each of these packages that is installed:
 
 - **Nx** — n-dimensional arrays
 - **Rune** — tensor computation with autodiff
+- **Vega** — optimizers
+- **Norn** — probabilistic inference
 - **Kaun** — neural networks and training
 - **Hugin** — visualization and plotting
 - **Sowilo** — image processing
@@ -268,6 +270,11 @@ which pre-loads these packages automatically:
 - **Brot** — tokenization
 - **Fehu** — reinforcement learning
 
-Pretty-printers for Nx and Rune tensors are installed automatically.
+A package that is not installed is skipped. One that is installed but does
+not load, such as one whose C stubs fail to load, is reported on standard
+error, and the session goes on without it.
+
+Pretty-printers for Nx arrays, Hugin figures and Talon dataframes and
+queries are installed with their packages.
 Your first code cell can use `open Nx` or any other Raven module without
 setup.

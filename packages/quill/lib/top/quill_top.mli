@@ -23,11 +23,19 @@ val add_packages : string list -> unit
     directory to the toplevel load path, marking each as already linked into the
     executable. Unknown packages are silently skipped. *)
 
-val load_package : string -> unit
+val load_package : string -> (unit, string) result
 (** [load_package pkg] resolves the findlib package [pkg] and all its transitive
     dependencies, adds their directories, and dynamically loads their bytecode
     archives. Packages already loaded or marked in-core via {!add_packages} are
-    skipped. Raises if the package is not found. *)
+    skipped.
+
+    [Error report] if an archive does not load, with the toplevel's report: it
+    is not bytecode, a shared library it needs does not load, or it refers to a
+    module that no package defines. A package is recorded as loaded only once
+    all its archives are, so a later [load_package] tries again.
+
+    Raises [Fl_package_base.No_such_package] if [pkg] or a package it requires
+    is not installed. *)
 
 val install_printer : string -> (unit, string) result
 (** [install_printer name] installs a toplevel pretty-printer by evaluating
