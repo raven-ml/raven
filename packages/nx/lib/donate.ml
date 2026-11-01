@@ -172,19 +172,35 @@ let has_bytes (type v s d) (x : (v, s, d) Value.t) =
   | Value.Array _ | Value.Shards _ | Value.Handle _ -> true
   | Value.Traced _ -> false
 
-let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
+(* Which array of a handle a reuse takes: its one array on one device, or its
+   array on the device at a position of its placement, its one array at [0]
+   and its shard there over several. *)
+type at = One | Piece of int
+
+let reuse_at (type w r d) (c : d claim) ~own ~at (dt : (w, r) D.t) layout :
     (Rig.Buffer.t * (w, r) A.t) option =
   unended c;
   let n = Array.length c.operands in
-  (* The buffer of operand [i], a handle on one device whose array holds the
-     result over memory no earlier reuse took, if every operand lies apart
-     from its memory but those at positions of [own], which may read it as
-     that array places it and no other way: a view of the array in another
-     layout reads other indices of it. *)
+  (* The buffer of operand [i], a handle whose array there holds the result
+     over memory no earlier reuse took, if every operand lies apart from its
+     memory but those at positions of [own], which may read it as that array
+     places it and no other way: a view of the array in another layout reads
+     other indices of it. *)
   let fits i =
     let (Value.Any x) = operand c i in
-    match x with
-    | Value.Handle { over = Value.Array { a; _ }; _ } ->
+    let array =
+      match (x, at) with
+      | Value.Handle { over = Value.Array { a; _ }; _ }, (One | Piece 0) ->
+          Some (A.Any a)
+      | Value.Handle { over = Value.Shards { arrays; _ }; _ }, Piece j
+        when j >= 0 && j < Iarray.length arrays ->
+          Some (A.Any (Iarray.get arrays j))
+      | (Value.Handle _ | Value.Array _ | Value.Shards _ | Value.Traced _), _
+        ->
+          None
+    in
+    match array with
+    | Some (A.Any a) ->
         let b = A.buffer a in
         let apart j a' =
           (not (share (A.buffer a') b)) || (List.mem j own && identical a a')
@@ -197,8 +213,7 @@ let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
           && alone (j + 1)
         in
         if holds dt layout a && unconsumed b && alone 0 then Some b else None
-    | Value.Handle _ | Value.Array _ | Value.Shards _ | Value.Traced _ ->
-        None
+    | None -> None
   in
   List.find_map
     (fun i ->
@@ -211,6 +226,8 @@ let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
               Some (b, A.v dt layout b')
           | None -> None))
     own
+
+let reuse c ~own dt layout = reuse_at c ~own ~at:One dt layout
 
 (* The memory of the first handle [c] claimed at a position of [own] over
    shards on several devices, each array of [dt] laid out as [layouts]
@@ -373,6 +390,6 @@ let value (type v s d) (c : d claim) i (dt : (v, s) D.t) : (v, s, d) Value.t =
 
 (* A result written over operand [i] reads it, at any index, through the
    array [take] gives, so no other position may share its memory. *)
-let take c i dt l =
+let take c i ~piece dt l =
   let (Value.Any _) = bytes_at c i in
-  Option.map snd (reuse c ~own:[ i ] dt l)
+  Option.map snd (reuse_at c ~own:[ i ] ~at:(Piece piece) dt l)

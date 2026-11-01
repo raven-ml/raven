@@ -25,7 +25,7 @@ let of_array ~by s a =
   Rig.Claim.share (A.buffer a);
   x
 
-let of_shards ~by p arrays =
+let unsafe_of_shards ~by p arrays =
   let set = Devices.set p and devices = Grid.devices (Devices.grid p) in
   let n = Array.length devices in
   if Iarray.length arrays <> n then
@@ -72,8 +72,13 @@ let of_shards ~by p arrays =
         invalid_argf "%s: array %d of shape %a is not its window of %a" by j
           pp_shape s pp_shape shape)
     shapes;
-  Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
   Prim.of_arrays p ~shape arrays
+
+let of_shards ~by p arrays =
+  let x = unsafe_of_shards ~by p arrays in
+  (* Its caller keeps the arrays: no donation writes this memory. *)
+  Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
+  x
 
 (* [x]'s arrays, handed to a caller: their memory leaves the claims for good, so
    that no donation writes what the caller reads. A traced value has no bytes to

@@ -1396,7 +1396,8 @@ let difference h1 h2 =
       let b = read 1 in
       let n = Array.length b in
       match
-        Nx.Prim.Consumer.take c 0 D.Float32 (A.Layout.contiguous [| n |])
+        Nx.Prim.Consumer.take c 0 ~piece:0 D.Float32
+          (A.Layout.contiguous [| n |])
       with
       | Some a ->
           for k = 0 to n - 1 do
@@ -2801,7 +2802,7 @@ let test_consumer_kills () =
     [| 4.; 5.; 6. |] (elements y);
   raises (Invalid_argument ended) (fun () -> C.arrays kept 0);
   raises (Invalid_argument ended) (fun () ->
-      C.take kept 0 D.Float32 (A.Layout.contiguous [| 3 |]))
+      C.take kept 0 ~piece:0 D.Float32 (A.Layout.contiguous [| 3 |]))
 
 let test_consumer_checks_first () =
   let x = fresh [| 1. |] and dead = fresh [| 2. |] in
@@ -2832,7 +2833,7 @@ let test_consumer_no_bytes =
   let readers =
     [
       ("arrays", fun c -> ignore (C.arrays c 0));
-      ("take", fun c -> ignore (C.take c 0 D.Float32 (layout_of 2)));
+      ("take", fun c -> ignore (C.take c 0 ~piece:0 D.Float32 (layout_of 2)));
     ]
   in
   let each =
@@ -2852,7 +2853,7 @@ let test_consumer_no_bytes =
 let test_consumer_takes () =
   let some = function Some _ -> true | None -> false in
   let take xs i dt l =
-    C.with_ ~by:"test.call" xs (fun c -> some (C.take c i dt l))
+    C.with_ ~by:"test.call" xs (fun c -> some (C.take c i ~piece:0 dt l))
   in
   let h () = Nx.donate (fresh [| 1.; 2. |]) in
   equal ~msg:"a handle alone" bool true
@@ -2877,10 +2878,81 @@ let test_consumer_takes () =
   equal ~msg:"shared by a crossing" bool false
     (take [ Any (Nx.donate x) ] 0 D.Float32 (layout_of 2));
   C.with_ ~by:"test.call" [ Any (h ()) ] (fun c ->
-      let first = some (C.take c 0 D.Float32 (layout_of 2)) in
-      let second = some (C.take c 0 D.Float32 (layout_of 2)) in
+      let first = some (C.take c 0 ~piece:0 D.Float32 (layout_of 2)) in
+      let second = some (C.take c 0 ~piece:0 D.Float32 (layout_of 2)) in
       equal ~msg:"taken once" (Testable.pair bool bool) (true, false)
         (first, second))
+
+(* A consumer of a handle cut across two devices takes its memory on each
+   device apart, once, where that piece is of the result's dtype and layout,
+   and reads the other piece as before: [y = x + 1] written over the piece
+   on the second device. The piece it takes is dead from then on. A value
+   made of arrays its caller gives up lends them so too; one made of arrays
+   its caller keeps lends none. *)
+let test_consumer_takes_pieces () =
+  let some = Option.is_some in
+  let cut () =
+    Nx.add_s (Nx.place (Two.split ~axis:0) (fresh [| 1.; 2.; 3. |])) 0.
+  in
+  let piece xs j dt l =
+    C.with_ ~by:"test.call" xs (fun c -> some (C.take c 0 ~piece:j dt l))
+  in
+  (* Balanced windows of three rows over two devices: two, then one. *)
+  equal ~msg:"the first piece" bool true
+    (piece [ Any (Nx.donate (cut ())) ] 0 D.Float32 (layout_of 2));
+  equal ~msg:"the second piece" bool true
+    (piece [ Any (Nx.donate (cut ())) ] 1 D.Float32 (layout_of 1));
+  equal ~msg:"another piece's layout" bool false
+    (piece [ Any (Nx.donate (cut ())) ] 1 D.Float32 (layout_of 2));
+  equal ~msg:"no third device" bool false
+    (piece [ Any (Nx.donate (cut ())) ] 2 D.Float32 (layout_of 1));
+  equal ~msg:"an undonated operand" bool false
+    (piece [ Any (cut ()) ] 0 D.Float32 (layout_of 2));
+  let x = cut () in
+  equal ~msg:"beside its donor" bool false
+    (piece [ Any (Nx.donate x); Any x ] 1 D.Float32 (layout_of 1));
+  let x = cut () in
+  let rest =
+    C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun c ->
+        let first = some (C.take c 0 ~piece:1 D.Float32 (layout_of 1)) in
+        let again = some (C.take c 0 ~piece:1 D.Float32 (layout_of 1)) in
+        let other = some (C.take c 0 ~piece:0 D.Float32 (layout_of 2)) in
+        (first, again, other))
+  in
+  equal ~msg:"each piece taken once"
+    (Testable.triple bool bool bool)
+    (true, false, true) rest;
+  let x = cut () in
+  let y =
+    C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun c ->
+        let a = Option.get (C.take c 0 ~piece:1 D.Float32 (layout_of 1)) in
+        let kept = host_floats (C.arrays c 0).(0) in
+        A.set a [| 0 |] (A.get a [| 0 |] +. 1.);
+        (kept, A.to_array a))
+  in
+  equal ~msg:"the other piece read as before, the taken one written"
+    (Testable.pair (array float_exact) (array float_exact))
+    ([| 1.; 2. |], [| 4. |])
+    y;
+  invalid ~sub:(dead_in "Nx.copy" x "test.call") (fun () -> Nx.copy x);
+  let arrays () =
+    Iarray.of_list
+      [
+        A.to_device (Nx_support.memory 1)
+          (A.of_array D.Float32 (Iarray.of_list [ 2 ]) [| 1.; 2. |]);
+        A.to_device (Nx_support.memory 2)
+          (A.of_array D.Float32 (Iarray.of_list [ 1 ]) [| 3. |]);
+      ]
+  in
+  let made ~own =
+    let p = Two.split ~axis:0 in
+    if own then Nx.Repr.unsafe_of_shards p (arrays ())
+    else Nx.Repr.of_shards p (arrays ())
+  in
+  equal ~msg:"arrays given up" bool true
+    (piece [ Any (Nx.donate (made ~own:true)) ] 1 D.Float32 (layout_of 1));
+  equal ~msg:"arrays kept" bool false
+    (piece [ Any (Nx.donate (made ~own:false)) ] 1 D.Float32 (layout_of 1))
 
 (* An update in place, [y = x + 1] over [x]'s taken memory: the taken array
    holds [x]'s elements until it is written, and needs no memory of the
@@ -2893,7 +2965,7 @@ let test_consumer_memory () =
   let make () = on_mem [| n |] (Array.init n Float.of_int) in
   let increment x =
     C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun c ->
-        match C.take c 0 D.Float32 (layout_of n) with
+        match C.take c 0 ~piece:0 D.Float32 (layout_of n) with
         | Some a ->
             let ys = Array.map (fun v -> v +. 1.) (A.to_array a) in
             A.transfer ~src:(A.of_array D.Float32 [| n |] ys) ~dst:a;
@@ -2924,7 +2996,7 @@ let test_consumer_memory () =
   at_least ~msg:"the memory it took, when the consumer raises" int ~than:bytes
     (freed (fun x ->
          C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun c ->
-             kept := C.take c 0 D.Float32 (layout_of n);
+             kept := C.take c 0 ~piece:0 D.Float32 (layout_of n);
              raise Exit)));
   equal ~msg:"it took the memory" bool true (Option.is_some !kept);
   ignore (Sys.opaque_identity !kept)
@@ -3003,6 +3075,8 @@ let () =
              test "a consumer updates taken memory in place and frees the rest"
                test_consumer_memory;
              test_consumer_frees_every_handle;
+             test "a consumer takes a cut handle's memory device by device"
+               test_consumer_takes_pieces;
              test "two values a call gives back over one donor stay apart"
                test_given_back_twice;
              test "a donation after a gather moved its positions"

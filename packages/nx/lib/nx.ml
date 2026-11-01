@@ -444,6 +444,9 @@ module Repr = struct
     Repr.unsafe_of_array ~by:"Nx.Repr.unsafe_of_array" s a
   let array = Repr.array
   let of_shards p arrays = Repr.of_shards ~by:"Nx.Repr.of_shards" p arrays
+
+  let unsafe_of_shards p arrays =
+    Repr.unsafe_of_shards ~by:"Nx.Repr.unsafe_of_shards" p arrays
   let shards = Repr.shards
 
   (* A read's array: [Check.on_host] shares no memory, so the value's next

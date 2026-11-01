@@ -176,12 +176,18 @@ val value :
 val take :
   'd claim ->
   int ->
+  piece:int ->
   ('v, 's) Nx_array.Dtype.t ->
   Nx_array.Layout.t ->
   ('v, 's) Nx_array.t option
-(** [take c i dt l] is the array {!reuse}[ c ~own:[i] dt l] gives: operand
-    [i]'s memory for a result of [dt] laid out as [l], through which alone
-    the consumer then reads the operand, each element before it writes over
-    it. [None] where {!reuse} is.
+(** [take c i ~piece dt l] is the memory of operand [i]'s array on the device
+    at position [piece] of its placement ([0] on one device) for a result of
+    [dt] laid out as [l], as {!reuse}[ c ~own:[i] dt l] gives an operand's on
+    one device: where [i] is a handle [c] claimed, that array of [dt] and [l]
+    over all of its memory, every operand's arrays but that one apart from it,
+    the memory no other value reads, and no earlier [take] or [reuse] having
+    taken it. The consumer then reads that array of the operand through the
+    answer alone, each element before it writes over it, and the operand's
+    other arrays as before. [None] otherwise.
 
     Raises [Invalid_argument] as {!arrays} does. *)

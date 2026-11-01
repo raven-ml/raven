@@ -4957,6 +4957,21 @@ module Repr : sig
       has every axis [p] cuts, and each array is its device's window of that
       shape. *)
 
+  val unsafe_of_shards :
+    'd Placement.t -> ('v, 's) Nx_array.t iarray -> ('v, 's, 'd) t
+  (** [unsafe_of_shards p arrays] is {!of_shards}[ p arrays] for [arrays]
+      their caller gives up: the value owns their memory, as it owns memory
+      nx allocated for it, so a donation of the value may write its result
+      there on each device ({!donate}).
+
+      {b Warning.} After the call, the caller must not read, write or keep an
+      array of [arrays], an array over its memory or a bigarray over it, and
+      no other value must read that memory: a donation of the value would
+      change what they read.
+
+      Raises [Invalid_argument] naming [Nx.Repr.unsafe_of_shards] as
+      {!of_shards} raises. *)
+
   val shards : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray
   (** [shards x] is [x]'s arrays, one per device of [x]'s placement, in
       order: [[| a |]] for a value on one device. The arrays are for reading,
@@ -5550,21 +5565,27 @@ module Prim : sig
     val take :
       'd t ->
       int ->
+      piece:int ->
       ('v, 's) dtype ->
       Nx_array.Layout.t ->
       ('v, 's) Nx_array.t option
-    (** [take c i dt l] is [Some a], [a] an array of [dt] laid out as [l] over
-        the memory of [c]'s operand [i], for a result to be written there:
-        where the operand is a handle [c] claimed, on one device, its array of
-        [dt] and [l] over all of its memory, no operand at another position
-        shares that memory, and no other value reads it. [None] otherwise,
-        and for an operand {!take} gave before.
+    (** [take c i ~piece dt l] is [Some a], [a] an array of [dt] laid out as
+        [l] over the memory of [c]'s operand [i] on the device at position
+        [piece] of its placement ([0] on one device), for a result to be
+        written there: where the operand is a handle [c] claimed, its array
+        there is of [dt] and [l] over all of its memory, no other array of an
+        operand, the operand's own on other devices included, shares that
+        memory, and no other value reads it. [None] otherwise, and for an
+        array {!take} gave before. A compiler that runs an operation over
+        several devices as one per device so lends each device's memory to
+        that device's result.
 
-        [a] holds the operand's elements until [c] writes it. The operand's
-        arrays and every array made over them are dead from then on, so [c]
-        reads the operand through [a] alone, and a [c] that writes a result
-        there while it reads the operand must read each element before it
-        writes over it, as an elementwise update does.
+        [a] holds the array's elements until [c] writes it. That array of the
+        operand and every array made over it are dead from then on, so [c]
+        reads the operand there through [a] alone, and a [c] that writes a
+        result there while it reads the operand must read each element before
+        it writes over it, as an elementwise update does. The operand's arrays
+        on other devices stay as they were.
 
         Raises as {!arrays} does. *)
   end
