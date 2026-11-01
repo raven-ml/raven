@@ -91,6 +91,41 @@ let law_switch k =
 
 
 (* Under jit: once per execution, never at the trace. *)
+(* A scan in a scan's step over a capture alone, its step calling one on its
+   carry: once per inner row of each outer row, eagerly and compiled, whether
+   or not a collect of a probe the step emits to is open. *)
+let test_inner_scan () =
+  let p = Rune.Probe.make T.tensor in
+  let w = Nx.reshape [| 2; 3 |] (Nx.arange_f f64 1. 7. 1.) in
+  let xs = Nx.zeros f64 [| 4; 1 |] in
+  List.iter
+    (fun (mode, collect) ->
+      let cb, log = logged Fun.id in
+      let inner d r =
+        Rune.Probe.emit p d;
+        let d = cb d in
+        (Nx.add d r, d)
+      in
+      let outer c _ =
+        let d, _ =
+          Rune.scan T.tensor T.tensor T.tensor inner
+            ~init:(Nx.zeros f64 [| 3 |]) w
+        in
+        (Nx.add c d, c)
+      in
+      let scan xs =
+        fst
+          (Rune.scan T.tensor T.tensor T.tensor outer
+             ~init:(Nx.zeros f64 [| 3 |]) xs)
+      in
+      let f = if mode = "jit" then Rune.jit' scan else scan in
+      if collect then ignore (Rune.Probe.collect p (fun () -> f xs))
+      else ignore (f xs);
+      let rows = [ [ 0.; 0.; 0. ]; [ 1.; 2.; 3. ] ] in
+      let msg = mode ^ if collect then ", collected" else "" in
+      equal ~msg fl (List.concat (List.init 4 (fun _ -> rows))) (log ()))
+    [ ("eager", false); ("eager", true); ("jit", false); ("jit", true) ]
+
 let test_jit () =
   let cb, log = logged (fun v -> Nx.exp v) in
   let g = Rune.jit tt (fun x -> Nx.add_s (cb (Nx.mul_s x 2.)) 1.) in
@@ -955,6 +990,8 @@ let () =
              prop "an iterate, once per trip and test" Gen.(int_range 0 4)
                law_iterate;
              prop "a switch, its taken branch" Gen.(int_range 0 2) law_switch;
+             test "a scan in a step over a capture, once per inner row"
+               test_inner_scan;
              test "a jit, once per execution" test_jit;
              test "a jit, its stretches compiled" test_outlined;
              test "a jit, a custom rule's stretches" test_outlined_rule;

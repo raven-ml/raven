@@ -353,6 +353,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A loop's step that runs a construct over none of the step's values, such as
+  a scan over a capture, executes its `Rune.callback`s and offers its
+  `Rune.Probe` emissions every trip: the construct ran once, so a callback ran
+  for one trip, and `Rune.jit` offered one trip's emissions.
 - A compiled call of nested loops no longer raises or evaluates its program
   depending on how much the process compiled before it.
 - A compiled loop whose step reads the result of a loop before it runs that

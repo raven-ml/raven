@@ -361,13 +361,22 @@ let lanes_around st a =
    the extent of a tracer that stages every operation. A map's operation with no
    such map around is left to its default, which raises. An addition no running
    value takes reaches only a tape, which refuses it: the others answer for the
-   totals' running values ({!thread}) and record the additions to them. *)
+   totals' running values ({!thread}) and record the additions to them. A body
+   answers a construct whose programs emit or hold a callback, as it records an
+   emission: each run of the body offers its emissions and executes its
+   callbacks. *)
 let claims st i = function
   | Add (_, x) -> st.kind = Tape && owns i x
   (* An abstract operator is recorded, to be filled in, whatever it reads. *)
   | Operator _ -> true
   | (Lanes (a, _) | Lane_index (a, _)) when lanes_around st a = None -> false
-  | c -> st.kind = Jit || st.kind = Staged || List.exists (owned i) (operands c)
+  | c ->
+      st.kind = Jit || st.kind = Staged
+      || List.exists (owned i) (operands c)
+      || st.kind = Body
+         && List.exists
+              (fun (p : Program.t) -> p.emits || Program.holds Program.calls p)
+              (Program.carried c)
 
 (* The running value of [t] at the shape of [f] where the trace is: its
    thread's, made where the trace has none, its running value in a parameter of

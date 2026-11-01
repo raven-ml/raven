@@ -330,6 +330,34 @@ let test_nested_scan () =
   equal ~msg:"jit" offers_t expected (offers p (fun () -> Rune.jit' scan xs));
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before)
 
+(* A scan in a scan's step that reads no value of the step, only a capture:
+   its emits are each outer row's, in turn, as when it reads the step's. *)
+let test_invariant_scan () =
+  let p = Probe.make (tagged ()) in
+  let w = Nx.reshape [| 2; 3 |] (Nx.arange_f f64 1. 7. 1.) in
+  let inner d r =
+    Probe.emit p (tag 0, d);
+    (Nx.add d r, d)
+  in
+  let outer c _ =
+    let d, _ =
+      Rune.scan T.tensor T.tensor T.tensor inner ~init:(Nx.zeros f64 [| 3 |]) w
+    in
+    (Nx.add c d, c)
+  in
+  let scan xs =
+    fst
+      (Rune.scan T.tensor T.tensor T.tensor outer ~init:(Nx.zeros f64 [| 3 |])
+         xs)
+  in
+  let xs = Nx.zeros f64 [| 4; 1 |] in
+  let steps = [ Nx.zeros f64 [| 3 |]; vec [| 1.; 2.; 3. |] ] in
+  let expected = [ offer 0 (List.concat (List.init 4 (fun _ -> steps))) ] in
+  equal ~msg:"eager" offers_t expected (offers p (fun () -> scan xs));
+  let before = Rune.evaluations () in
+  equal ~msg:"jit" offers_t expected (offers p (fun () -> Rune.jit' scan xs));
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - before)
+
 (* Maps *)
 
 (* Each lane's offers, run one by one, as a map offers them: a site's rows of
@@ -857,6 +885,8 @@ let () =
              test "a failing iterate keeps the offers before it on the host"
                test_iterate_raise;
              test "a scan in a step" test_nested_scan;
+             test "a scan in a step that reads only a capture"
+               test_invariant_scan;
            ];
          group "maps"
            [

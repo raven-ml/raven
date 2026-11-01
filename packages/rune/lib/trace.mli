@@ -30,11 +30,13 @@
 type kind =
   | Body
       (** The tracer of a construct's functions. It receives the operations and
-          constructs that read its variables. One that reads none runs at the
+          constructs that read its variables, and the constructs whose programs
+          emit or hold a callback, whose emissions each run of the body offers
+          and whose callbacks it executes. Another that reads none runs at the
           call, under the interpretations around the tracer, so a body holds
-          only what depends on its parameters. A call over its variables is
-          recorded as an equation, which runs its default ({!Program.Call})
-          where the program is evaluated. *)
+          only what depends on its parameters, emits or calls back. A call
+          over its variables is recorded as an equation, which runs its default
+          ({!Program.Call}) where the program is evaluated. *)
   | Jit
       (** The tracer of a compiled function. It receives every operation and
           construct of its extent, those over constants included, and inlines
