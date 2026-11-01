@@ -230,11 +230,12 @@ val const : t -> [< const ] -> const
     nonzero. Otherwise it is an [`Int]:
     a float rounded towards zero, then, for an integer [dt] of known width,
     wrapped to it modulo 2{^ bitsize}, as its arithmetic does: [const Uint8
-    (`Int (-1))] is [`Int 255] and [const Int8 (`Int 300)] is [`Int 44]. A weak
+    (`Int (-1))] is [`Int 255] and [const Int8 (`Int 300)] is [`Int 44]; NaN is
+    [0] of such a [dt], and an infinity its least or greatest value. A weak
     integer keeps the value.
 
-    Raises [Invalid_argument] if [c] is a NaN or an infinity and [dt] is neither
-    a float nor {!Bool}. *)
+    Raises [Invalid_argument] if [c] is a NaN or an infinity and [dt] is
+    {!Weak_int}. *)
 
 val equal : t -> t -> bool
 (** [equal d0 d1] is [true] iff [d0] and [d1] are the same data type. *)

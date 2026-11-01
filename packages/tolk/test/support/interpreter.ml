@@ -19,6 +19,10 @@ let held ~check dt (v : Dtype.value) : Dtype.const =
   match v with
   | `Float x when Float.is_nan x && Dtype.is_float dt ->
       (Dtype.truncate dt v :> Dtype.const)
+  (* a NaN or an infinity has no exact integer: an integer type takes the value
+     a constant of it does ({!Dtype.const}) *)
+  | `Float x when (not (Float.is_finite x)) && List.mem dt Dtype.ints ->
+      Dtype.const dt v
   | _ -> (
       (* An integer type wraps its constants: the exact value is the weak
          one. *)

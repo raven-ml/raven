@@ -716,7 +716,12 @@ let const dt (c : [< const ]) : const =
   | #value as v ->
       if is_float dt then `Float (truncate_float dt (float_value dt v))
       else if is_bool dt then `Bool (Value.to_bool v)
-      else if List.mem dt ints then (truncate dt (`Int (Value.to_z v)) :> const)
+      else if List.mem dt ints then (
+        match v with
+        | `Float x when Float.is_nan x -> `Int Bigint.zero
+        | `Float x when not (Float.is_finite x) ->
+            ((if x > 0. then max dt else min dt) :> const)
+        | v -> (truncate dt (`Int (Value.to_z v)) :> const))
       else `Int (Value.to_z v)
 
 (* Names and defaults *)
