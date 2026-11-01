@@ -27,62 +27,30 @@ let posix y m d h min =
   in
   Int64.of_int ((days * day) + (h * hour) + (min * 60))
 
-(* zdump's transitions of the zones copied from the system, from 1800 to 2200:
+(* The transitions gen/tz.py reads through zdump, glibc and CPython's zoneinfo:
    [(zone, instant, offset before, offset after)]. *)
-let zdump =
+let golden =
   In_channel.with_open_text "golden/tz/transitions.txt" In_channel.input_lines
   |> List.map (fun line ->
       Scanf.sscanf line "%s %Ld %d %d" (fun zone u before after ->
           (zone, u, before, after)))
 
-(* The transitions of each fixture zone, from zdump for those copied from the
-   system or built from their sources, and from the spec for hand-made ones. *)
+let rows name =
+  List.filter_map
+    (fun (z, u, b, a) -> if z = name then Some (u, b, a) else None)
+    golden
+
+(* The transitions of each fixture zone. Those whose footer disagrees with the
+   last transition, which both readers of gen/tz.py apply from that transition
+   on, are stated from [offset_s]'s contract: the last transition's offset holds
+   until the rule's next change. *)
 let transitions = function
-  | "slim/Europe/Paris" | "right/Europe/Paris" | "v5/Europe/Paris" ->
-      List.filter_map
-        (fun (z, u, b, a) ->
-          if z = "Europe/Paris" then Some (u, b, a) else None)
-        zdump
-  | "hand/Version1" -> [ (1000L, 3600, 7200) ]
-  | "hand/Truncated" -> [ (1_500_000_000L, 0, 3600) ]
-  | "hand/AllYearDst" -> []
-  | "hand/Rules" ->
-      let at y m d h min s = Int64.add (posix y m d h min) (Int64.of_int s) in
-      [
-        (at 2023 12 31 0 30 15, 3600, 7200);
-        (at 2024 2 29 19 45 0, 7200, 3600);
-        (at 2024 12 29 0 30 15, 3600, 7200);
-        (at 2025 2 28 19 45 0, 7200, 3600);
-      ]
-  | "hand/Days" ->
-      [
-        (posix 2024 2 23 20 0, 7200, 3600);
-        (posix 2024 2 29 2 0, 3600, 7200);
-        (posix 2025 2 21 20 0, 7200, 3600);
-        (posix 2025 3 1 2 0, 3600, 7200);
-      ]
-  | "hand/Julian" ->
-      [
-        (posix 2024 2 27 23 0, 3600, 7200);
-        (posix 2024 2 29 22 0, 7200, 3600);
-        (posix 2025 2 27 23 0, 3600, 7200);
-        (posix 2025 2 28 22 0, 7200, 3600);
-      ]
-  | "hand/LeapAtEpoch" -> [ (-1L, 0, 3600) ]
-  | "hand/Skips" -> [ (1000L, 0, 3600); (1500L, 3600, 0); (2000L, 0, 3600) ]
-  | "hand/Folds" -> [ (1000L, 7200, 3600); (1500L, 3600, 0) ]
-  | "hand/FoldGap" -> [ (1000L, 3600, 0); (1100L, 0, 7200) ]
-  | "hand/GapFoldGap" -> [ (0L, 0, 3600); (10L, 3600, -3600); (20L, -3600, 0) ]
+  | "right/Europe/Paris" -> rows "Europe/Paris"
   | "hand/StdDisagrees" -> [ (1000L, 3600, 7200) ]
   | "hand/Disagrees" ->
       [ (15_638_400L, 0, -21_600); (posix 1971 3 14 8 0, -21_600, -18_000) ]
   | "hand/PermDisagrees" -> [ (1000L, 0, -10_800) ]
-  | "hand/LeapPair" -> [ (78_796_799L, 0, 7200) ]
-  | "hand/Fixed" | "Etc/GMT+5" -> []
-  | name ->
-      List.filter_map
-        (fun (z, u, b, a) -> if z = name then Some (u, b, a) else None)
-        zdump
+  | name -> rows name
 
 let zones =
   [

@@ -1,31 +1,36 @@
 # /// script
-# dependencies = ["pyarrow==25.0.1", "numpy==2.3.3"]
+# dependencies = ["pyarrow==25.0.1", "numpy==2.3.3", "fastparquet==2026.9.0"]
 # ///
 """Writes the fixtures of the Parquet suite.
 
-Run from this directory with `uv run fixtures.py`. The fixtures are committed,
-so the suite itself needs neither Python nor the network.
+Run from this directory with `uv run fixtures.py [--check]`. The fixtures are
+committed, so the suite itself needs neither Python nor the network. With
+--check nothing is written, and the run fails if a fixture would change.
 
 - ../support/: files of apache/parquet-testing at COMMIT, checked against
   their SHA-256 (Apache-2.0, see ../support/LICENSE.txt), and files written by
   pyarrow.
 - ../golden/values.txt: one line per file, row group and column, as pyarrow reads it:
   `file group "column" "type" rows md5 first-values`, or `file group "column"
-  error` for a column that does not read. The type is talon's, computed here
-  from the Parquet schema, and float64 for a decimal, which has none; md5 is of
-  all values joined by spaces.
+  error` for a column that does not read. The type is talon's for the Arrow
+  type pyarrow reads the column as (talon_type), and float64 for a decimal,
+  which has none; md5 is of all values joined by spaces. The files pyarrow
+  refuses are read as by_hand says.
 - ../golden/overrides.txt: the same for columns read as another type than their own, and
   for decimals of at most 18 digits read as int64.
 """
 
+import argparse
+import filecmp
 import hashlib
-import json
 import struct
+import tempfile
 import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
+import fastparquet
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -390,38 +395,29 @@ def quote(b):
     return '"' + "".join(chr(c) if 0x20 <= c <= 0x7E and c not in b'"\\' else f"\\x{c:02x}" for c in b) + '"'
 
 
-UNITS = {"milliseconds": "ms", "microseconds": "us", "nanoseconds": "ns"}
-
-
-def talon_type(c):
-    """The talon type of the Parquet column [c], or None if talon refuses it."""
-    phys = c.physical_type
-    lt = json.loads(c.logical_type.to_json()) if c.logical_type.type != "NONE" else {"Type": None}
-    kind = lt["Type"]
-    if kind in ("String", "Enum", "JSON") and phys == "BYTE_ARRAY":
-        return "string"
-    if kind == "Decimal":
-        p, s = lt["precision"], lt["scale"]
-        ok = {"INT32": p <= 9, "INT64": p <= 18, "BYTE_ARRAY": True, "FIXED_LEN_BYTE_ARRAY": True}.get(phys, False)
-        if ok and 1 <= p and 0 <= s <= p:
-            return "float64"
-    if kind == "Date" and phys == "INT32":
-        return "date"
-    if kind == "Time":
-        u = UNITS[lt["timeUnit"]]
-        if (u == "ms") == (phys == "INT32") and phys in ("INT32", "INT64"):
-            return f"clock[{u}]"
-    if kind == "Timestamp" and phys == "INT64":
-        u = UNITS[lt["timeUnit"]]
-        return f"datetime[{u}, UTC]" if lt["isAdjustedToUTC"] else f"datetime[{u}]"
-    if kind == "Int":
-        w, signed = lt["bitWidth"], lt["isSigned"]
-        if (w == 64) == (phys == "INT64") and phys in ("INT32", "INT64"):
-            return f"{'' if signed else 'u'}int{w}"
-    if kind == "Float16" and phys == "FIXED_LEN_BYTE_ARRAY" and c.length == 2:
-        return "float16"
-    return {"BOOLEAN": "bool", "INT32": "int32", "INT64": "int64", "INT96": "datetime[ns]",
-            "FLOAT": "float32", "DOUBLE": "float64"}.get(phys, "binary")
+def talon_type(t):
+    """The talon type of a column that pyarrow reads as the Arrow type [t]:
+    an extension type's storage, and float64 for a decimal, which talon reads
+    as a float."""
+    if isinstance(t, pa.BaseExtensionType):
+        return talon_type(t.storage_type)
+    if pa.types.is_decimal(t):
+        return "float64"
+    if pa.types.is_timestamp(t):
+        assert t.tz in (None, "UTC"), t
+        return f"datetime[{t.unit}, UTC]" if t.tz else f"datetime[{t.unit}]"
+    if pa.types.is_time(t):
+        return f"clock[{t.unit}]"
+    named = {
+        pa.bool_(): "bool", pa.int8(): "int8", pa.int16(): "int16", pa.int32(): "int32",
+        pa.int64(): "int64", pa.uint8(): "uint8", pa.uint16(): "uint16", pa.uint32(): "uint32",
+        pa.uint64(): "uint64", pa.float16(): "float16", pa.float32(): "float32",
+        pa.float64(): "float64", pa.date32(): "date", pa.string(): "string", pa.binary(): "binary",
+    }
+    if t in named:
+        return named[t]
+    assert pa.types.is_fixed_size_binary(t), t
+    return "binary"
 
 
 def render(ty, a):
@@ -473,7 +469,7 @@ def expect(name):
     for g in range(md.num_row_groups):
         for i in range(md.num_columns):
             c = md.schema.column(i)
-            ty = talon_type(c)
+            ty = talon_type(pf.schema_arrow.field(c.name).type)
             try:
                 a = pf.read_row_group(g, columns=[c.name]).column(0).combine_chunks()
                 if ty == "datetime[ns]" and c.physical_type == "INT96" and outside_ns(path, g, c.name):
@@ -504,7 +500,17 @@ SKIP = {
 
 
 def by_hand():
-    lines = [line("int32_with_uuid_logical_type.parquet", 0, "int32_uuid", "int32", [str(i) for i in range(10)])]
+    """The lines of the files pyarrow refuses.
+
+    int32_with_uuid_logical_type's UUID annotation does not apply to INT32,
+    and parquet-testing's README says a reader ignores it: the values are
+    fastparquet's, which does. flba12_timestamp's TIMESTAMP annotation does
+    not apply to FIXED_LEN_BYTE_ARRAY(12), and no reader reads its bytes: the
+    values are the seconds flba12_timestamp.md lists, at each column's unit,
+    as 12-byte little-endian two's complement integers."""
+    a = fastparquet.ParquetFile(OUT / "int32_with_uuid_logical_type.parquet").to_pandas()["int32_uuid"]
+    assert a.dtype == np.int32
+    lines = [line("int32_with_uuid_logical_type.parquet", 0, "int32_uuid", "int32", [str(v) for v in a])]
     seconds = [0, 1, -1, 9_223_372_036, 253_402_300_799, -62_135_596_800]
     for column, scale in [("timestamp_millis", 10**3), ("timestamp_micros", 10**6), ("timestamp_nanos", 10**9)]:
         values = [quote((s * scale).to_bytes(12, "little", signed=True)) for s in seconds]
@@ -520,8 +526,8 @@ def unscaled(name):
     for g in range(md.num_row_groups):
         for i in range(md.num_columns):
             c = md.schema.column(i)
-            lt = json.loads(c.logical_type.to_json()) if c.logical_type.type != "NONE" else {"Type": None}
-            if talon_type(c) == "float64" and lt["Type"] == "Decimal" and lt["precision"] <= 18:
+            t = pf.schema_arrow.field(c.name).type
+            if pa.types.is_decimal(t) and t.precision <= 18:
                 a = pf.read_row_group(g, columns=[c.name]).column(0).combine_chunks()
                 lines.append(line(name, g, c.name, "int64", render("int64", a)))
     return lines
@@ -537,12 +543,49 @@ def overrides():
     ] + [l for name in READ if name not in SKIP for l in unscaled(name)]
 
 
-def main():
-    fetch()
-    generate()
+def same(a, b):
+    """Whether the fixtures [a] and [b] are equal, or hold the same values in
+    the same row groups: a codec's output can differ between builds of its
+    library."""
+    if filecmp.cmp(a, b, shallow=False):
+        return True
+    try:
+        fa, fb = pq.ParquetFile(a), pq.ParquetFile(b)
+        groups = lambda f: [f.metadata.row_group(g).num_rows for g in range(f.metadata.num_row_groups)]
+        return groups(fa) == groups(fb) and fa.read().equals(fb.read())
+    except (pa.ArrowException, OSError):
+        return False
+
+
+def goldens():
     lines = [l for name in READ if name not in SKIP for l in expect(name)] + by_hand()
-    (HERE.parent / "golden" / "values.txt").write_text("\n".join(lines) + "\n")
-    (HERE.parent / "golden" / "overrides.txt").write_text("\n".join(overrides()) + "\n")
+    return {"values.txt": "\n".join(lines) + "\n", "overrides.txt": "\n".join(overrides()) + "\n"}
+
+
+def main():
+    global OUT
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true")
+    if not parser.parse_args().check:
+        fetch()
+        generate()
+        for name, text in goldens().items():
+            (HERE.parent / "golden" / name).write_text(text)
+        return
+    committed = OUT
+    with tempfile.TemporaryDirectory() as tmp:
+        OUT = Path(tmp)
+        fetch()
+        generate()
+        stale = [
+            str(p.relative_to(tmp))
+            for p in sorted(OUT.rglob("*"))
+            if p.is_file() and not same(p, committed / p.relative_to(tmp))
+        ]
+    OUT = committed
+    stale += [name for name, text in goldens().items() if (HERE.parent / "golden" / name).read_text() != text]
+    if stale:
+        raise SystemExit(f"stale: {' '.join(stale)}; run gen/fixtures.py")
 
 
 if __name__ == "__main__":
