@@ -3794,7 +3794,8 @@ merged into D137, which holds the loops that consumers of one domain share.
   across queues and devices by the memory it uses, stage what no device
   copies directly, and time the submissions where the driver can. A host
   program's entry is rig's (D28). Storage the schedule makes is the
-  program's, and storage a caller binds is an input of each run.
+  program's, or an input each run makes where it is linked per run (D173),
+  and storage a caller binds is an input of each run.
 - **Reason:** (c). rig owns each GPU's queues: two runtimes cannot share a
   GPU, and memory belongs to the runtime that made it.
 - **Pinned by:** the Tolk_engine suite: `link and run › recorded`, `GPUs`
@@ -4609,3 +4610,25 @@ fold wraps integers and holds its float bound`, hold.
   `Tolk_engine › link and run › recorded › select_no_lane writes what its
   tensors compute` and its `select_one_lane` and `select_no_lane_rows`
   versions, which run the kernels on the host.
+
+## D173. A schedule linked per run makes its storage at each run
+
+- **tinygrad:** `engine/jit.py:50-80` (`CapturedJit`): the linked linear of a
+  captured schedule holds its intermediates' buffers from its first call
+  until `free_intermediates` drops it, so they outlive every run.
+- **tolk:** `Tolk_engine.link`'s `storage`, `Tolk_engine.run`.
+- **Differs:** a schedule linked `Per_run` makes each storage node no buffer
+  is bound to at each run, as an input of the run, and frees it once the run
+  returns, its memory coming back once the run's work on it is done. Linked
+  `Linked`, the default, it is the program's, as tinygrad's. A run of either
+  keeps none of the buffers it was given once it returns.
+- **Reason:** (b): rune's compiled programs over several devices
+  (`Compile.variant`, for a split program) promise that a device holds
+  between calls only the values its caller keeps. Linked `Linked`, the
+  programs of fully sharded training over two memory devices, its gathers
+  compiled, held 4.75 layers on each device beside its share after a step
+  (`rune jit › fully sharded`, d = 128): 3.75 of scratch, and one of the
+  buffers the frames kept from their last runs.
+- **Pinned by:** `Tolk_engine › runs › a schedule linked per run holds no
+  storage between runs` and `a run keeps none of the buffers it was given`;
+  rune's `fully sharded` tests, whose shares are exact after a step.

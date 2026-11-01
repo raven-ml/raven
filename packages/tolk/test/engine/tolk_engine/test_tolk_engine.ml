@@ -1990,6 +1990,58 @@ let holds_its_storage () =
   ignore (Sys.opaque_identity s);
   at_most int ~msg:"unreachable" ~than:before (allocated ())
 
+(* A schedule linked [Per_run] makes its storage, three buffers of a megabyte,
+   at each run and returns it once the run's work is done: reachable, it holds
+   less than one of them at link and after a run. *)
+let storage_per_run () =
+  let n = 1 lsl 18 in
+  let buffer () = Ops.new_buffer "CPU" n Float32 in
+  let compiled =
+    compile
+      (Ops.v Op.Linear
+         ~src:
+           [
+             Ops.call
+               (Codegen.to_program
+                  (kernel ~name:"axpy_per_run" ~size:n ())
+                  (Lazy.force clang))
+               [ buffer (); buffer (); buffer () ];
+           ])
+  in
+  (* Four rounds of collection, each returning what it collected. *)
+  let allocated () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (Rig.Buffer.create host 0);
+      Rig.free_cache host
+    done;
+    Rig.allocated host
+  in
+  let before = allocated () in
+  let s = Engine.link ~devices ~storage:Per_run compiled in
+  let one = 4 * n in
+  less int ~msg:"linked" ~than:(before + one) (allocated ());
+  Engine.run ~vars:[ ("n", 2) ] s [||];
+  less int ~msg:"after a run" ~than:(before + one) (allocated ());
+  ignore (Sys.opaque_identity s)
+
+(* A run keeps none of the buffers it was given: dropped after it, they return
+   to their device while the schedule lives. *)
+let slots_let_go () =
+  let s, vars, big = parameterized "contiguous" in
+  let allocated () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (Rig.Buffer.create host 0);
+      Rig.free_cache host
+    done;
+    Rig.allocated host
+  in
+  let before = allocated () in
+  (fun () -> Engine.run ~vars s (slots (storage_of big))) ();
+  at_most int ~msg:"after a run" ~than:before (allocated ());
+  ignore (Sys.opaque_identity s)
+
 (* The names of the kernels of [compiled], in order. *)
 let kernel_names compiled =
   List.concat_map
@@ -2131,6 +2183,9 @@ let runs =
         (allocates_nothing "copy_computed");
       test "a linked schedule holds its storage while it is reachable"
         holds_its_storage;
+      test "a schedule linked per run holds no storage between runs"
+        storage_per_run;
+      test "a run keeps none of the buffers it was given" slots_let_go;
       test "each kernel of a run is in a span of the host under a profile"
         spans_each_kernel;
       test "at DEBUG=1, a run of ten calls says how many it runs" (fun () ->

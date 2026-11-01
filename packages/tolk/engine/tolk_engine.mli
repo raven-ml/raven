@@ -49,19 +49,31 @@ val renderer : Rig.t -> Renderer.t
 type t
 (** The type for linked schedules. *)
 
+(** The type for where a schedule's storage that no buffer is bound to lives. *)
+type storage =
+  | Linked
+      (** Made at link, in its device's memory, which the runs share and the
+          schedule holds while it is reachable. *)
+  | Per_run
+      (** Made by each run in its device's memory, and returned once the
+          run's work on it is done ({!Rig.Buffer.free}), so that the schedule
+          holds none of it between runs. *)
+
 val link :
   devices:(string -> Rig.t) ->
   ?bound:(Ops.t * Rig.Buffer.t) list ->
+  ?storage:storage ->
   Ops.t ->
   t
-(** [link ~devices ~bound linear] is the compiled schedule [linear]
+(** [link ~devices ~bound ~storage linear] is the compiled schedule [linear]
     ({!Tolk.Realize.compile_linear}, compiled for the {!target} of each device)
     loaded on [devices], which maps each device name of [linear] to its device.
     - Each storage node ({!Tolk.Op.Buffer}) is bound to its buffer in [bound]
-      (default [[]]), of its device, and is made at link otherwise, in its
-      device's memory, which the runs share, starting at its phase ({!run}). The schedule holds the memory of every bound buffer a
-      kernel or copy accesses ({!Rig.Claim.hold}) while it is reachable, so
-      no call consumes it. A link that raises holds none of them.
+      (default [[]]), of its device, and is made otherwise as [storage]
+      (default {!Linked}) says, starting at its phase ({!run}). The schedule
+      holds the memory of every bound buffer a kernel or copy accesses
+      ({!Rig.Claim.hold}) while it is reachable, so no call consumes it. A link
+      that raises holds none of them.
     - A kernel is launched on the device of its first argument. A host program
       is launched on its device's host, which
       splits its loop over its cores where the program splits one
@@ -91,13 +103,13 @@ val link :
     a kernel or copy accesses that is dead or whose memory is held exclusive,
     or a buffer a kernel accesses that does not start at the node's phase ({!run}),
     if a computing device starts its memory on fewer bytes ({!Rig.alignment})
-    than the alignment of a storage node made there, if kernels access a
-    parameter at two alignments or phases, if a value under a range moves with
-    its trips in another way than above, if a back edge's flag moves with the
-    run's words, or if [linear] is not a compiled schedule; {!Rig.Out_of_memory}
-    if a device cannot allocate its storage; and [Failure] with the reason if
-    the program does not load, such as a device that refuses a program's
-    binary. *)
+    than the alignment of a storage node made there at link, if kernels
+    access a parameter at two alignments or phases, if a value under a range
+    moves with its trips in another way than above, if a back edge's flag
+    moves with the run's words, or if [linear] is not a compiled schedule;
+    {!Rig.Out_of_memory} if a device cannot allocate its storage at link; and
+    [Failure] with the reason if the program does not load, such as a device
+    that refuses a program's binary. *)
 
 val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
 (** [run ~vars s slots] runs [s] with the buffer of [slots.(i)] bound to its
@@ -116,8 +128,9 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     start anywhere.
 
     [run] returns once every call is submitted: a read of a result waits for the
-    work that wrote it ({!Rig.Buffer.read}). Runs of [s] are serialized: a run
-    starts once the previous one returned.
+    work that wrote it ({!Rig.Buffer.read}). [s] keeps none of the buffers of
+    [slots] once [run] returns. Runs of [s] are serialized: a run starts once
+    the previous one returned.
 
     When the setting {!Tolk.Setting.debug} is [1] or more and [s] runs ten calls
     or more, [run] first prints ["jit execs n calls"] on standard output, [n]
@@ -129,7 +142,9 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     Raises [Invalid_argument] if [slots] does not bind each parameter of [s] to
     a buffer of its device holding its parameter's bytes, if a
     buffer a kernel accesses does not start at its parameter's phase, if a
-    variable is unbound, and as {!Rig_program.run} does. *)
+    variable is unbound, and as {!Rig_program.run} does; {!Rig.Out_of_memory}
+    if a device cannot allocate the storage of a schedule linked {!Per_run},
+    allocating nothing then. *)
 
 val slots : t -> Rig.Buffer.t option array
 (** [slots s] is, for each slot that a parameter of [s] takes, a buffer of the
@@ -167,8 +182,9 @@ val time : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> float
     run ({!Rig.Profile.Work}). A submission of several kernels counts once,
     and one of copies alone counts nothing. The run's submissions are found
     by the points its steps report ({!Rig_program.type-frame}), so work of
-    other domains and of profiles taken around it adds nothing. A time
-    allocates no device memory and loads nothing.
+    other domains and of profiles taken around it adds nothing. A time loads
+    nothing, and allocates no device memory but the storage of a schedule
+    linked {!Per_run}.
 
     Raises as {!run} does, and {!Rig.Lost} if a device that runs a kernel of [s]
     is lost during the run, or if another domain's device whose work the
