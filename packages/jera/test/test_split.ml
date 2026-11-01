@@ -184,7 +184,12 @@ let march_tests =
           for _ = 1 to steps - 1 do
             q := !q +. h
           done;
-          let start = a +. (Float.of_int (steps - 1) *. h) in
+          (* The product rounds before the sum, as the march's tensors
+             compute it: ocamlopt for arm64 fuses [a +. (k *. h)] into one
+             multiply-add, which rounds once. *)
+          let start =
+            a +. Sys.opaque_identity (Float.of_int (steps - 1) *. h)
+          in
           let start =
             if (b > a && start > b) || (b < a && start < b) then b else start
           in
