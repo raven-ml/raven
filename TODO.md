@@ -298,7 +298,7 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## repo
 
-- thumper: suites whose only x86 section is kimchi's (retired): brot,
+- thumper: suites whose only x86 section is kimchi's (retired):
   hugin_vg, kaun, kaun_decode, gpt_oss, vega, fehu, sowilo; ymir has no
   x86 section. Record each on fudge, then delete every kimchi section,
   nx's and tolk's included. nx.thumper's fudge section was recorded under
