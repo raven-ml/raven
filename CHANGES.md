@@ -3495,8 +3495,11 @@ thread.
   each kept axis's cut on the axis it becomes, whatever its extent, so a
   batch of one split across devices lies, sums and scans as a batch of two
   does. They went through a reshape that paired axes of one element front to
-  back, and so raised, or moved a cut onto another axis. Squeezing or
-  indexing a cut axis of one element now raises, as indexing a cut axis does.
+  back, and so raised, or moved a cut onto another axis.
+- **Breaking:** `Nx.squeeze` and `Nx.get` of a cut axis of one element raise
+  naming `Nx.place (Placement.on s) x`, as `Nx.get` along a cut axis of two
+  elements does: `Nx.squeeze ~axes:[ 0 ]` and `Nx.get [ 0 ]` of `[1; 1; 4]`
+  split 0 computed, moving the cut onto the remaining axis of one element.
 - `Nx_array.Move.Permute` is an axis map: it may leave out axes of one
   element and add new ones, written as negative entries. It stays a view.
 - `Nx_quant.dequant`, `apply` and `apply_experts` raise at the call, naming
