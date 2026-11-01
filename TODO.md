@@ -133,13 +133,10 @@ raven / llama.cpp (Vulkan; ROCm):
   fusion of loop bodies
 - long programs: the incomplete beta (~11,400 ops) compiles in 3 s, 10-20 s
   per derivative, past 10 min for three; a 1,000-term slice-tree sum is one
-  kernel clang -O2 takes over 8 min on. rune's test_special builds 6.7 MB
-  of C in 54 kernels (incomplete-beta gradients 430-630 KB, ndtri's f32
-  derivative 951 KB), 5-14 s each in Clang; 90% of Clang's IR-pass time
-  is LoopVectorizePass, and `-fno-vectorize` takes the 631 KB kernel from
-  8.6 to 2.1 s, while changing ordinary kernels by ±10% and losing the
-  vectors of kernels such as E_3945 (width 4). Decide beside D167 by a
-  quiet bench: a size gate, a loop pragma or a flag
+  kernel clang -O2 takes over 8 min on. Past 400 KB of C Clang compiles
+  without its loop vectorizer (D167); float64 `betainccinv`'s gradient (1.3
+  MB) then spends, loaded, 5.7 s in Clang, 5.1 s in codegen (no pass over
+  0.6 s), 2.5 s linearizing and 1.7 s scheduling
 - host upcast width per target: D141's 64-byte lanes (heuristic.ml:446)
   slowed memory-bound select-zero ~15% on x86; time 32 against 64 bytes on
   fudge

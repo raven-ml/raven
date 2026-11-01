@@ -896,6 +896,9 @@ thread.
 
 ### Tolk (new)
 
+- `Compiler_cpu.clang` compiles a source of more than 400 000 bytes without
+  Clang's loop vectorizer: float64 `Nx.betainccinv`'s gradient takes Clang
+  5.7 s, from 19.7 s, its loop unpacked. Cached objects compile again once.
 - **Breaking:** a CPU or Metal kernel loads its arguments from one byte
   parameter, a buffer's address as an `Op.Refparam`, where it took a structure
   (`Renderer.t.packed_args`, `Codegen.pack_args`).

@@ -258,6 +258,25 @@ let betainc_chain () =
   in
   compile chain (f32 4 0. 1.)
 
+(* The gradient of a sum of 1021 float32 complemented beta quantiles in their
+   shapes and probabilities, as rune's special-function suite compiles it: one
+   scalar loop kernel of 0.9 MB of C, past the length from which Clang compiles
+   without its loop vectorizer, whose time grows faster than the loop. *)
+let betainccinv_grad () =
+  let f32 n lo hi =
+    Nx.place Nx.Host.on
+      (Nx.add_s (Nx.mul_s (Nx.Rng.uniform Nx.float32 [| n |]) (hi -. lo)) lo)
+  in
+  let n = 1021 in
+  let a = f32 n 0.5 3.5 and b = f32 n 0.5 3.5 and p = f32 n 0.01 0.99 in
+  let s = Nx.Ptree.(pair (pair tensor tensor) tensor) in
+  ignore
+    (Sys.opaque_identity
+       (Rune.jit
+          Nx.Ptree.(s @-> returns s)
+          (Rune.grad s (fun ((a, b), p) -> Nx.sum (Nx.betainccinv a b p)))
+          ((a, b), p)))
+
 (* A normal draw of 1024 values of [dt] from a key argument: a Box-Muller
    transform, whose cosine and sine read an angle its bits bound below 2 pi. *)
 let normal dt () =
@@ -329,6 +348,7 @@ let cases =
       fun () -> compile (shaped 4096 (Nx.scalar f64 0.5)) (input 0. 1.) );
     ("shaped-4k-3-lanes", shaped_padded);
     ("special/betainc-chain-f32", betainc_chain);
+    ("special/betainccinv-grad-f32", betainccinv_grad);
     ("wide/sum-1e6", wide_sum);
     ("devices/dp-step-16", data_parallel);
   ]

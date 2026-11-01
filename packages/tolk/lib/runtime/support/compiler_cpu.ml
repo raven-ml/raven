@@ -77,6 +77,16 @@ let llvm_major stated =
       in
       int_of_string_opt (String.sub stated first (last first - first))
 
+(* LLVM's loop vectorizer weighs each width it could pack a loop's iterations
+   into against the whole body, and its time grows faster than the body: the
+   scalar loop of float64 [betainccinv]'s gradient, 1.3 MB of C, took Clang
+   19.7 s with it and 5.7 s without, loaded. A source of more than
+   [long_source] bytes compiles without it. Of the kernels of tolk's bench and
+   rune's compile bench and test suites, those past it are rune's gradients of
+   special functions, of 432 KB to 1.3 MB, and a chain of incomplete betas
+   without a loop, whose object stays the same; every other is under 140 KB. *)
+let long_source = 400_000
+
 (* Clang *)
 
 external mac_fp16 : unit -> bool = "caml_tolk_cpu_mac_fp16"
@@ -170,19 +180,32 @@ let clang arch =
      can then extend a lane to a narrower type, which is invalid IR: for four
      clamped gather indices on a processor with AVX-512 it wrote [sext <4 x
      i32> to <4 x i16>], on which instruction selection crashed. LLVM 19 packs
-     them correctly. Under LLVM 18 only, the vectorizer is off, so that other
-     Clangs compile as before. The flag follows -O2, which would turn the
-     vectorizer back on. The statement is memoized: asking for the arguments
+     them correctly. Under LLVM 18 only, that vectorizer is off, so that other
+     Clangs compile as before. The flags follow -O2, which would turn the
+     vectorizers back on. The statement is memoized: asking for the arguments
      again costs a lookup. *)
-  let args () =
-    match llvm_major (statement cc (base @ io)) with
-    | Some 18 -> base @ ("-fno-slp-vectorize" :: io)
-    | _ -> base @ io
+  let args ~long =
+    let slp =
+      match llvm_major (statement cc (base @ io)) with
+      | Some 18 -> [ "-fno-slp-vectorize" ]
+      | _ -> []
+    in
+    base @ slp @ (if long then [ "-fno-vectorize" ] else []) @ io
   in
+  (* An object is a function of its source and of the arguments its length
+     selects, so the table names both statements and the length. *)
   let table () =
+    let stated =
+      String.concat "\n"
+        [
+          statement cc (args ~long:false);
+          statement cc (args ~long:true);
+          string_of_int long_source;
+        ]
+    in
     Printf.sprintf "compile_%s_obj_%s_%s" cc
       (String.map (function ',' -> '_' | c -> c) arch)
-      (Digest.to_hex (Digest.string (statement cc (args ()))))
+      (Digest.to_hex (Digest.string stated))
   in
   Renderer.Compiler.v ~cachekey:table ~disassemble:Helpers.cpu_objdump
-    (fun src -> compile cc (args ()) src)
+    (fun src -> compile cc (args ~long:(String.length src > long_source)) src)

@@ -37,17 +37,21 @@ val clang : string -> Renderer.Compiler.t
     scalar operations into vectors, is off, since it writes invalid code for
     some packed integer lanes. On x86_64 Windows the stack is not probed, since
     rig commits a thread's stack before it runs linked code, and nothing is
-    kept below the stack pointer, which Windows may write.
+    kept below the stack pointer, which Windows may write. A source of more
+    than 400 000 bytes compiles without the loop vectorizer, which packs a
+    loop's iterations into vectors, so that a long source compiles in a
+    fraction of the time.
 
     Objects do not depend on the working directory. With {!Setting.ccache}, they
     are cached in the table [compile_C_obj_A_D], where [C] is the Clang run, [A]
     is [arch] with its commas replaced by underscores, and [D] the digest of
-    what that Clang states it runs to compile ([clang -###]): its version and
-    installation, the processor and features it compiles for, and every option,
-    or why it rejects them or does not run. An object is read back only for its
-    source, compiled by the same Clang with the same options. Clang is asked
-    once per process for each set of options, when the table or a compile
-    first needs it.
+    what that Clang states it runs ([clang -###]) to compile a source of at
+    most and of more than 400 000 bytes, and of that length: its version and
+    installation, the processor and features it compiles for, and every
+    option, or why it rejects them or does not run. An object is read back
+    only for its source, compiled by the same Clang with the same options.
+    Clang is asked once per process for each set of options, when the table
+    or a compile first needs it.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
     Clang's diagnostics if Clang rejects the source or does not run, and
     {!Renderer.Compiler.disassemble} prints what [objdump -d] prints

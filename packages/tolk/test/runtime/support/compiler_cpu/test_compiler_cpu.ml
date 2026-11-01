@@ -16,6 +16,23 @@ let add =
 
 let square_root = "float root(float x) { return __builtin_sqrtf(x); }"
 
+(* A loop over a count the function takes, which Clang's loop vectorizer packs
+   into vectors of four floats. *)
+let add_n =
+  {|void add_n(float *restrict a, const float *restrict b, const float *restrict c, int n) {
+  for (int i = 0; i < n; i++) a[i] = b[i] + c[i];
+}
+|}
+
+(* The length past which a source compiles without the loop vectorizer, as
+   compiler_cpu.mli states it. *)
+let long_source = 400_000
+
+(* [add_n] padded with a comment to [n] bytes. *)
+let add_n_of n =
+  let pad = n - String.length add_n - String.length "/**/" in
+  add_n ^ "/*" ^ String.make pad ' ' ^ "*/"
+
 (* A function that needs more registers than a processor has, so that the
    register allocator reaches for every register it may use. *)
 let pressure =
@@ -299,6 +316,24 @@ let features =
         (fun arch ->
           is_relocatable_elf64 ~machine:(elf_machine "x86_64")
             (compile arch clamped_gathers));
+      (* SSE2 adds four floats with [addps] and one with [addss]: a packed
+         loop adds its last floats one at a time. *)
+      cases
+        "a loop over a count it takes is packed into vectors iff its source \
+         is at most 400000 bytes long:"
+        ~id:(fun (n, _) -> string_of_int n)
+        [
+          (String.length add_n, [ "addps"; "addss" ]);
+          (long_source, [ "addps"; "addss" ]);
+          (long_source + 1, [ "addss" ]);
+          (2 * long_source, [ "addss" ]);
+        ]
+        (fun (n, adds) ->
+          let src = if n = String.length add_n then add_n else add_n_of n in
+          equal int ~msg:"the source's length" n (String.length src);
+          let text = disassembly "x86_64,x86-64" src in
+          equal (list string) adds
+            (List.filter (fun w -> mentions w text) [ "addps"; "addss" ]));
       test "arm64 leaves x18 alone" (fun () ->
           let text = disassembly "arm64,generic" pressure in
           is_false ~msg:"x18" (mentions "x18" text);

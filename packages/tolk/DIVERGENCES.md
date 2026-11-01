@@ -2759,7 +2759,8 @@ encodes its barriers (D146).
 - **Differs:** a table also names everything besides the source that
   determines a binary: for Clang, the digest of what `clang -###` states it
   runs (its version and installation, the processor and features `native`
-  resolves to, every option), with `-ffile-compilation-dir=.` keeping the
+  resolves to, every option) for a short and a long source, and the length
+  between them (D167), with `-ffile-compilation-dir=.` keeping the
   working directory out; for MTLCompiler, NVRTC and comgr, the build of macOS
   or the library's file, size and modification time, and the options, PTX or
   cubin included. The table is the compiler's identity whatever `CCACHE`
@@ -3646,7 +3647,8 @@ driver signals its own (D146).
   changes nothing on vector kernels (Clang 0.24 s with and without it on
   float64 `erfinv`, replay 0.99-1.00 times on 9 kernels); `-fno-vectorize`
   on scalar kernels cuts the gradient of `log_betainc` from 7.68 s to 1.36 s
-  of Clang but slows its replay from 204 ms to 475 ms. One 16-byte register
+  of Clang but slows its replay from 204 ms to 475 ms (D167 takes it for a
+  source of more than 400 000 bytes). One 16-byte register
   of lanes at 5 operations or more saves at most 2.1 times of Clang (that
   gradient, 6.35 s to 3.05 s) and replays 1.17-1.79 times slower (the
   gradient 1.17, float64 `sin` 1.28, float32 `lgamma` 1.79).
@@ -4429,18 +4431,21 @@ fold wraps integers and holds its float bound`, hold.
   one value keeps its values › *`; rune's `rune jit › classes › a selection
   of a minimum against its constant is exact`.
 
-## D167. Clang of LLVM 18 compiles without its straight-line vectorizer
+## D167. Clang of LLVM 18 compiles without its straight-line vectorizer, and a long source without its loop vectorizer
 
 - **tinygrad:** `runtime/support/compiler_cpu.py:21` (`ClangCompiler.compile`,
-  Clang's arguments at `-O2`, which runs LLVM's SLP vectorizer).
+  Clang's arguments at `-O2`, which runs LLVM's SLP and loop vectorizers).
 - **tolk:** `Compiler_cpu.llvm_major` (the LLVM version a Clang's `-###`
-  statement names) and `Compiler_cpu.clang` (its `args`, which adds
-
-  `-fno-slp-vectorize` when it is 18).
+  statement names), `Compiler_cpu.long_source`, and `Compiler_cpu.clang` (its
+  `args`, which adds `-fno-slp-vectorize` when it is 18 and `-fno-vectorize`
+  for a source past `long_source`, and its `table`, which names both
+  statements and the length).
 - **Differs:** a Clang that states LLVM 18 compiles every kernel with
   `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer back on.
-  Every other Clang, Apple's included, compiles with the arguments tinygrad
-  passes.
+  Every Clang compiles a source of more than 400 000 bytes with
+  `-fno-vectorize`, after `-O2`. Otherwise every Clang, Apple's included,
+  compiles with the arguments tinygrad passes. The table of objects names
+  what Clang states it runs for either length, and the length (D113).
 - **Reason:** (b): rune's packed suite, `a compiled call computes eager's
   values › a uint4 sort along the last axis of every other row and column,
   flipped` (now `rune jit › classes › a uint4 sort along the last axis of
@@ -4465,12 +4470,40 @@ fold wraps integers and holds its float bound`, hold.
   Disabling the vectorizer for every Clang would change the objects of 44%
   of a sample of those kernels (265 of 604, Clang 18 for the host): it stays
   on wherever it is correct.
+
+  (d), the loop vectorizer, measured on fudge loaded, to re-measure quiet:
+  rune's test_special timed out at 60 s on Ubuntu CI compiling float64
+  `betainccinv`'s gradients. Each is one scalar loop
+  kernel, `E_1021`, of 1.3 MB of C; the loop vectorizer weighs every width
+  against the whole body, and its time grows faster than the body (about
+  n^2.4 on 4-lane kernels). On fudge at load 40-55, Clang 19.1.7 took 19.7 s
+  on it with the vectorizer and 5.7 s without (medians of 3, interleaved),
+  and the first call 38.9 s against 13.6 s; replay, timed only loaded, was
+  1.5-5.5 ms against 4.5-22 ms for 1021 values, as D141 found 204 ms against
+  475 ms for `log_betainc`'s gradient. Of the 13 096 kernels tolk's bench,
+  rune's compile bench and rune's suites but test_special compile, the
+  longest is 136 KB and the longest with a loop 125 KB; test_special's
+  gradients of special functions run from 51 KB to 1.3 MB, and those past
+  400 KB (432 KB to 1.3 MB, 12 of 58) took Clang 4.1-29.4 s, against 0.7-1.4
+  s for those of 158-279 KB. The one other kernel past it, the compile
+  bench's `special/betainc-chain-f32` (530 KB), has no loop, and its object
+  is the same byte for byte. A `#pragma clang loop vectorize(disable)` on the
+  loop saves a third (medians of 5: 11.5 s against 17.8 s), since the pass
+  still weighs interleaving; with `interleave(disable)` it saves what the
+  flag saves (5.5 s), but the renderer would write it before each loop of a
+  source tinygrad writes without it, and the goldens with it, while the flag
+  leaves every source as it is and the table keys the objects.
 - **Pinned by:** `Tolk.Compiler_cpu › features › four clamped gathers compile
   for AVX-512 on` (`x86_64,x86-64-v4`, `x86_64,skylake-avx512`,
   `x86_64,znver4`), which compiles the indices of `r_3_2` and fails under
   Clang 18 without the flag; rune's `rune jit › classes › a uint4 sort along
   the last axis of every other row and column, flipped, gives eager's
-  codes`, under Clang 18 on an x86 host with AVX-512.
+  codes`, under Clang 18 on an x86 host with AVX-512. The loop vectorizer:
+  `Tolk.Compiler_cpu › features › a loop over a count it takes is packed
+  into vectors iff its source is at most 400000 bytes long:` (rows 400000 and
+  400001 among them); rune's compile bench `special/betainccinv-grad-f32`, the float32
+  gradient of test_special (914 KB, Clang 11.0 s against 4.4 s loaded), its
+  baseline on fudge pending a quiet run.
 
 ## D168. The renderer finds a program's callees by a scan of its instructions
 
