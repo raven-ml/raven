@@ -1,56 +1,24 @@
 # thumper baseline v1
 # suite: kaun_decode
 
-# machine: 6e4c99d648da0929
-# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
-# ocaml: 5.5.1 · 64-bit · release
-# forced: blessed Quant/host/routed-product-1-tokens Quant/host/routed-product-64-tokens Quant/host/mxfp4-product-1-token Quant/host/mxfp4-blocks-product-1-token Quant/host/q8_0-product-1-token Quant/host/q4_k-product-1-token Quant/host/q6_k-product-1-token Quant/host/routed-product-1-tokens-eager under load 6.4 on 6 cores
-# forced: blessed Quant/cuda/routed-product-1-tokens Quant/cuda/routed-product-512-tokens Quant/cuda/mxfp4-product-1-token Quant/cuda/mxfp4-blocks-product-1-token Quant/cuda/q8_0-product-1-token Quant/cuda/q4_k-product-1-token Quant/cuda/q6_k-product-1-token under load 4.8 on 4 cores
-# forced: blessed Quant/host/routed-product-1-tokens Quant/host/routed-product-64-tokens Quant/host/mxfp4-product-1-token Quant/host/mxfp4-blocks-product-1-token Quant/host/q8_0-product-1-token Quant/host/q4_k-product-1-token Quant/host/q6_k-product-1-token Quant/host/routed-product-1-tokens-eager under load 4.6 on 6 cores
-
-Gpt2/decode-step-cache-1024	alloc_words	exact	337658
-Gpt2/decode-step-cache-1024	wall_time	batch=1	n=20	3.116e-02	3.090e-02 3.098e-02 3.106e-02 3.107e-02 3.110e-02 3.112e-02 3.114e-02 3.114e-02 3.114e-02 3.116e-02 3.116e-02 3.116e-02 3.119e-02 3.120e-02 3.121e-02 3.121e-02 3.127e-02 3.134e-02 3.145e-02 3.177e-02
-Gpt2/decode-step-cache-256	alloc_words	exact	337658
-Gpt2/decode-step-cache-256	wall_time	batch=1	n=20	2.876e-02	2.815e-02 2.823e-02 2.834e-02 2.837e-02 2.838e-02 2.850e-02 2.855e-02 2.860e-02 2.860e-02 2.876e-02 2.877e-02 2.883e-02 2.885e-02 2.886e-02 2.889e-02 2.896e-02 2.899e-02 2.934e-02 2.961e-02 2.976e-02
-Quant/cuda/mxfp4-blocks-product-1-token	wall_time	batch=16	n=20	3.362e-04	3.360e-04 3.360e-04 3.361e-04 3.361e-04 3.361e-04 3.361e-04 3.361e-04 3.361e-04 3.362e-04 3.362e-04 3.362e-04 3.362e-04 3.363e-04 3.363e-04 3.367e-04 3.382e-04 3.500e-04 3.539e-04 6.541e-04 1.404e-03
-Quant/cuda/mxfp4-product-1-token	wall_time	batch=256	n=20	2.212e-05	2.180e-05 2.180e-05 2.181e-05 2.189e-05 2.190e-05 2.194e-05 2.198e-05 2.208e-05 2.210e-05 2.210e-05 2.214e-05 2.217e-05 2.217e-05 2.234e-05 2.238e-05 2.241e-05 2.247e-05 2.251e-05 2.267e-05 2.311e-05
-Quant/cuda/q4_k-product-1-token	wall_time	batch=32	n=20	2.761e-04	2.759e-04 2.759e-04 2.759e-04 2.759e-04 2.760e-04 2.760e-04 2.760e-04 2.760e-04 2.760e-04 2.761e-04 2.761e-04 2.763e-04 2.763e-04 2.771e-04 2.775e-04 2.790e-04 2.795e-04 2.823e-04 2.843e-04 9.691e-04
-Quant/cuda/q6_k-product-1-token	wall_time	batch=16	n=20	5.069e-04	5.067e-04 5.067e-04 5.068e-04 5.068e-04 5.068e-04 5.068e-04 5.068e-04 5.068e-04 5.069e-04 5.069e-04 5.069e-04 5.069e-04 5.070e-04 5.072e-04 5.077e-04 5.079e-04 5.092e-04 5.093e-04 5.148e-04 5.160e-04
-Quant/cuda/q8_0-product-1-token	wall_time	batch=16	n=20	4.044e-04	4.042e-04 4.042e-04 4.043e-04 4.043e-04 4.043e-04 4.043e-04 4.043e-04 4.043e-04 4.044e-04 4.044e-04 4.044e-04 4.044e-04 4.045e-04 4.045e-04 4.053e-04 4.070e-04 4.123e-04 4.206e-04 9.873e-04 1.209e-03
-Quant/cuda/routed-product-1-tokens	wall_time	batch=128	n=20	6.186e-05	5.817e-05 5.895e-05 5.900e-05 5.925e-05 5.947e-05 5.962e-05 6.008e-05 6.033e-05 6.103e-05 6.134e-05 6.238e-05 6.321e-05 6.373e-05 6.446e-05 6.517e-05 6.528e-05 6.678e-05 6.722e-05 6.795e-05 2.542e-04
-Quant/cuda/routed-product-512-tokens	wall_time	batch=1	n=20	2.502e-02	2.357e-02 2.366e-02 2.382e-02 2.459e-02 2.487e-02 2.495e-02 2.497e-02 2.500e-02 2.501e-02 2.502e-02 2.502e-02 2.507e-02 2.511e-02 2.514e-02 2.517e-02 2.589e-02 3.723e-02 3.791e-02 3.944e-02 4.173e-02
-Quant/host/mxfp4-blocks-product-1-token	alloc_words	exact	857
-Quant/host/mxfp4-blocks-product-1-token	wall_time	batch=8	n=20	8.279e-04	8.269e-04 8.273e-04 8.276e-04 8.276e-04 8.276e-04 8.276e-04 8.277e-04 8.278e-04 8.279e-04 8.279e-04 8.279e-04 8.280e-04 8.280e-04 8.282e-04 8.284e-04 8.287e-04 8.293e-04 8.297e-04 8.337e-04 9.864e-04
-Quant/host/mxfp4-product-1-token	alloc_words	exact	857
-Quant/host/mxfp4-product-1-token	wall_time	batch=8	n=20	7.928e-04	7.896e-04 7.898e-04 7.903e-04 7.904e-04 7.907e-04 7.907e-04 7.908e-04 7.911e-04 7.924e-04 7.927e-04 7.928e-04 7.929e-04 7.931e-04 7.934e-04 7.935e-04 7.936e-04 7.955e-04 8.137e-04 8.183e-04 8.626e-04
-Quant/host/q4_k-product-1-token	alloc_words	exact	857
-Quant/host/q4_k-product-1-token	wall_time	batch=16	n=20	5.845e-04	5.809e-04 5.816e-04 5.826e-04 5.828e-04 5.828e-04 5.829e-04 5.829e-04 5.830e-04 5.835e-04 5.840e-04 5.850e-04 5.858e-04 5.859e-04 5.859e-04 5.862e-04 5.865e-04 5.867e-04 5.896e-04 6.278e-04 6.507e-04
-Quant/host/q6_k-product-1-token	alloc_words	exact	857
-Quant/host/q6_k-product-1-token	wall_time	batch=16	n=20	5.373e-04	5.265e-04 5.289e-04 5.307e-04 5.333e-04 5.346e-04 5.351e-04 5.355e-04 5.356e-04 5.368e-04 5.373e-04 5.373e-04 5.376e-04 5.391e-04 5.431e-04 5.436e-04 5.438e-04 5.438e-04 5.455e-04 5.474e-04 5.478e-04
-Quant/host/q8_0-product-1-token	alloc_words	exact	857
-Quant/host/q8_0-product-1-token	wall_time	batch=16	n=20	4.039e-04	3.998e-04 4.009e-04 4.010e-04 4.010e-04 4.012e-04 4.014e-04 4.026e-04 4.031e-04 4.034e-04 4.039e-04 4.039e-04 4.043e-04 4.043e-04 4.045e-04 4.046e-04 4.060e-04 4.062e-04 4.079e-04 4.086e-04 4.124e-04
-Quant/host/routed-product-1-tokens	alloc_words	exact	1155
-Quant/host/routed-product-1-tokens	wall_time	batch=2	n=20	3.606e-03	3.600e-03 3.603e-03 3.603e-03 3.603e-03 3.603e-03 3.604e-03 3.604e-03 3.605e-03 3.605e-03 3.605e-03 3.606e-03 3.606e-03 3.606e-03 3.606e-03 3.606e-03 3.607e-03 3.608e-03 3.611e-03 3.626e-03 3.730e-03
-Quant/host/routed-product-1-tokens-eager	alloc_words	exact	7700
-Quant/host/routed-product-1-tokens-eager	wall_time	batch=1	n=20	2.760e-01	2.686e-01 2.706e-01 2.709e-01 2.712e-01 2.712e-01 2.714e-01 2.721e-01 2.723e-01 2.759e-01 2.760e-01 2.760e-01 2.761e-01 2.763e-01 2.765e-01 2.766e-01 2.767e-01 2.771e-01 2.774e-01 2.774e-01 2.776e-01
-Quant/host/routed-product-64-tokens	alloc_words	exact	1155
-Quant/host/routed-product-64-tokens	wall_time	batch=1	n=20	1.887e-01	1.879e-01 1.880e-01 1.882e-01 1.882e-01 1.883e-01 1.884e-01 1.884e-01 1.885e-01 1.886e-01 1.887e-01 1.887e-01 1.888e-01 1.889e-01 1.889e-01 1.889e-01 1.891e-01 1.892e-01 1.892e-01 1.893e-01 1.897e-01
-
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
-# forced: blessed Gpt2/decode-step-cache-256 Gpt2/decode-step-cache-1024 Gpt2/decode-step-at-128-width-256 Gpt2/decode-step-at-128-width-1024 Gpt2/decode-step-at-128-width-4096 under load 9.0 on 14 cores
+# forced: blessed under load 39.9 on 14 cores
 
-Gpt2/decode-step-at-128-width-1024	alloc_words	exact	18374
-Gpt2/decode-step-at-128-width-1024	wall_time	batch=1	n=20	2.366e-02	2.222e-02 2.268e-02 2.286e-02 2.287e-02 2.291e-02 2.299e-02 2.333e-02 2.342e-02 2.342e-02 2.344e-02 2.389e-02 2.397e-02 2.400e-02 2.431e-02 2.450e-02 2.495e-02 2.547e-02 2.609e-02 2.731e-02 2.732e-02
-Gpt2/decode-step-at-128-width-256	alloc_words	exact	18374
-Gpt2/decode-step-at-128-width-256	wall_time	batch=1	n=20	2.303e-02	2.002e-02 2.038e-02 2.089e-02 2.093e-02 2.175e-02 2.201e-02 2.217e-02 2.232e-02 2.256e-02 2.300e-02 2.307e-02 2.316e-02 2.333e-02 2.347e-02 2.362e-02 2.367e-02 2.384e-02 2.403e-02 2.419e-02 2.456e-02
-Gpt2/decode-step-at-128-width-4096	alloc_words	exact	18374
-Gpt2/decode-step-at-128-width-4096	wall_time	batch=1	n=20	3.388e-02	2.992e-02 3.168e-02 3.270e-02 3.291e-02 3.302e-02 3.322e-02 3.329e-02 3.337e-02 3.338e-02 3.382e-02 3.394e-02 3.398e-02 3.433e-02 3.540e-02 3.543e-02 3.568e-02 3.583e-02 3.595e-02 3.722e-02 3.757e-02
-Gpt2/decode-step-cache-1024	alloc_words	exact	18374
-Gpt2/decode-step-cache-1024	wall_time	batch=1	n=20	2.457e-02	2.022e-02 2.158e-02 2.239e-02 2.253e-02 2.263e-02 2.352e-02 2.370e-02 2.373e-02 2.417e-02 2.442e-02 2.471e-02 2.488e-02 2.518e-02 2.541e-02 2.543e-02 2.561e-02 2.606e-02 2.609e-02 2.620e-02 2.691e-02
-Gpt2/decode-step-cache-256	alloc_words	exact	18374
-Gpt2/decode-step-cache-256	wall_time	batch=1	n=20	2.316e-02	2.007e-02 2.132e-02 2.183e-02 2.210e-02 2.224e-02 2.245e-02 2.256e-02 2.296e-02 2.310e-02 2.313e-02 2.318e-02 2.329e-02 2.368e-02 2.381e-02 2.400e-02 2.400e-02 2.432e-02 2.444e-02 2.476e-02 2.611e-02
+Gpt2/decode-step-at-128-width-1024	alloc_words	exact	18261
+Gpt2/decode-step-at-128-width-256	alloc_words	exact	18261
+Gpt2/decode-step-at-128-width-4096	alloc_words	exact	18261
+Gpt2/decode-step-cache-1024	alloc_words	exact	18261
+Gpt2/decode-step-cache-256	alloc_words	exact	18261
+Quant/host/mxfp4-blocks-product-1-token	alloc_words	exact	723
+Quant/host/mxfp4-product-1-token	alloc_words	exact	723
+Quant/host/q4_k-product-1-token	alloc_words	exact	723
+Quant/host/q6_k-product-1-token	alloc_words	exact	723
+Quant/host/q8_0-product-1-token	alloc_words	exact	723
+Quant/host/routed-product-1-tokens	alloc_words	exact	850
+Quant/host/routed-product-1-tokens-eager	alloc_words	exact	4037
+Quant/host/routed-product-64-tokens	alloc_words	exact	850
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
