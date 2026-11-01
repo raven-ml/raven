@@ -3464,6 +3464,12 @@ thread.
 
 ### Kaun
 
+- The Llama example reads GGUF checkpoints (`Llama.of_gguf`,
+  `Llama.config_of_gguf`, `main.exe --gguf`), decoding Q8_0, Q4_K and Q6_K
+  weights with `Nx_quant.dequant`. `validate.exe` matches TinyLlama's Q8_0,
+  Q6_K and Q4_K_M files to the reference's logits at float32's tolerance.
+- The Llama example's `main.exe` decodes the prompt with its continuation:
+  with a SentencePiece tokenizer the continuation lost its first space.
 - A compiled step whose key-value pools are donated, or carried by a loop,
   stores each call's tokens alone into a pool of 8 bits or more per element
   (`Cache_index.extend`): up to 16 tokens a call rewrote the whole pool.

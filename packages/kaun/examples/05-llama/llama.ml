@@ -210,6 +210,193 @@ let of_hf ~placement cfg dt weights =
        else Some (column ~inputs:cfg.dim ~outputs:cfg.vocab_size "lm_head"));
   }
 
+(* Importing GGUF weights.
+
+   llama.cpp's converter names the tensors token_embd, blk.{i}.attn_q, ... and
+   keeps HuggingFace's [outputs; inputs] layout as their logical shape, a block
+   format's blocks running along the inputs. Within each head it reorders the
+   rows of the q and k projections for the rotation that pairs feature 2j with
+   2j + 1: its row 2j + c is HuggingFace's row c * head_dim / 2 + j. [unpair]
+   restores HuggingFace's order, which is [Rope]'s. Moving whole rows moves
+   whole blocks, so it applies to a block format's bytes as to floats. *)
+
+let unpair ~heads w =
+  let rows = Nx.dim 0 w and cols = Nx.dim 1 w in
+  let half = rows / heads / 2 in
+  Nx.copy
+    (Nx.reshape [| rows; cols |]
+       (Nx.transpose ~axes:[ 0; 2; 1; 3 ]
+          (Nx.reshape [| heads; half; 2; cols |] w)))
+
+(* A block format's entry, its bytes at uint8. *)
+let gguf_bytes name entries : Nx.host Nx.uint8_t =
+  match Nx_io.Archive.find name entries with
+  | None -> failwith (name ^ ": no entry in the archive")
+  | Some (Nx.P t) -> (
+      match Nx.dtype t with
+      | Nx.Dtype.Uint8 -> t
+      | _ -> failwith (name ^ ": a block format's entry is not uint8"))
+
+let shape_string s =
+  String.concat "; " (Array.to_list (Array.map string_of_int s))
+
+(* The entry [name] at [dt], of logical shape [shape], its rows reordered by
+   [unpair ~heads] when [heads] is given. A block format is decoded by
+   [Nx_quant.dequant]. *)
+let gguf_float g ?heads ~shape dt name =
+  let entries = Nx_io.Gguf.tensors g in
+  let info = Nx_io.Gguf.info name g in
+  if info.shape <> shape then
+    failwith
+      (Printf.sprintf "%s: shape [%s] in the file, [%s] expected" name
+         (shape_string info.shape) (shape_string shape));
+  let rows w = match heads with None -> w | Some heads -> unpair ~heads w in
+  let blocks quant =
+    Nx_quant.dequant dt (quant (rows (gguf_bytes name entries)))
+  in
+  match info.dtype with
+  | F32 | F16 | BF16 | F64 -> rows (Nx_io.Archive.float ~shape dt name entries)
+  | Q8_0 -> blocks Nx_quant.q8_0
+  | Q4_K -> blocks Nx_quant.q4_k
+  | Q6_K -> blocks Nx_quant.q6_k
+  | _ ->
+      failwith
+        (name
+       ^ ": not a float16, bfloat16, float32, float64, Q8_0, Q4_K or Q6_K entry"
+        )
+
+let of_gguf ~placement cfg dt g =
+  let place role ~axis x = Nx.place (placement role ~axis) x in
+  let weight ?heads ~shape name =
+    gguf_float g ?heads ~shape dt (name ^ ".weight")
+  in
+  let norm name =
+    { Rms_norm.gamma = place Whole ~axis:0 (weight ~shape:[| cfg.dim |] name) }
+  in
+  let linear role ~axis ?heads ~inputs ~outputs name =
+    let w =
+      Nx.matrix_transpose (weight ?heads ~shape:[| outputs; inputs |] name)
+    in
+    { Linear.w = place role ~axis w; b = None }
+  in
+  let column = linear Column ~axis:1 and row = linear Row ~axis:0 in
+  let q_dim = cfg.n_heads * cfg.head_dim in
+  let kv_dim = cfg.n_kv_heads * cfg.head_dim in
+  let block i =
+    let at leaf = Printf.sprintf "blk.%d.%s" i leaf in
+    {
+      attn_norm = norm (at "attn_norm");
+      attn =
+        {
+          q =
+            column ~heads:cfg.n_heads ~inputs:cfg.dim ~outputs:q_dim
+              (at "attn_q");
+          k =
+            column ~heads:cfg.n_kv_heads ~inputs:cfg.dim ~outputs:kv_dim
+              (at "attn_k");
+          v = column ~inputs:cfg.dim ~outputs:kv_dim (at "attn_v");
+          out = row ~inputs:q_dim ~outputs:cfg.dim (at "attn_output");
+        };
+      ffn_norm = norm (at "ffn_norm");
+      gate = column ~inputs:cfg.dim ~outputs:cfg.hidden_dim (at "ffn_gate");
+      up = column ~inputs:cfg.dim ~outputs:cfg.hidden_dim (at "ffn_up");
+      down = row ~inputs:cfg.hidden_dim ~outputs:cfg.dim (at "ffn_down");
+    }
+  in
+  {
+    tok =
+      {
+        Embedding.table =
+          place Whole ~axis:0
+            (weight ~shape:[| cfg.vocab_size; cfg.dim |] "token_embd");
+      };
+    blocks = List.init cfg.n_layers block;
+    norm = norm "output_norm";
+    head =
+      (if cfg.tied then None
+       else Some (column ~inputs:cfg.dim ~outputs:cfg.vocab_size "output"));
+  }
+
+(* Configuration from a GGUF file's metadata, the architecture's keys under its
+   name. *)
+
+let config_of_gguf g =
+  let metadata = Nx_io.Gguf.metadata g in
+  let fail fmt = Printf.ksprintf (fun s -> failwith ("llama GGUF: " ^ s)) fmt in
+  let find key = List.assoc_opt key metadata in
+  (match find "general.architecture" with
+  | Some (Nx_io.Gguf.String "llama") -> ()
+  | Some (String a) -> fail "architecture %s, llama expected" a
+  | _ -> fail "missing general.architecture");
+  let int_opt key =
+    match find ("llama." ^ key) with
+    | None -> None
+    | Some (Uint8 n | Int8 n | Uint16 n | Int16 n | Uint32 n | Int32 n) ->
+        Some n
+    | Some (Uint64 n | Int64 n) -> Some (Int64.to_int n)
+    | Some _ -> fail "llama.%s is not an integer" key
+  in
+  let int key =
+    match int_opt key with Some n -> n | None -> fail "missing llama.%s" key
+  in
+  let float ?default key =
+    match (find ("llama." ^ key), default) with
+    | Some (Float32 x | Float64 x), _ -> x
+    | Some _, _ -> fail "llama.%s is not a float" key
+    | None, Some d -> d
+    | None, None -> fail "missing llama.%s" key
+  in
+  let dim = int "embedding_length" and n_heads = int "attention.head_count" in
+  let head_dim =
+    Option.value ~default:(dim / n_heads) (int_opt "attention.key_length")
+  in
+  (match int_opt "rope.dimension_count" with
+  | Some d when d <> head_dim ->
+      fail "llama.rope.dimension_count %d rotates part of a head of %d" d
+        head_dim
+  | _ -> ());
+  (match find "llama.rope.scaling.type" with
+  | None | Some (String "none") -> ()
+  | Some (String s) -> fail "unsupported llama.rope.scaling.type %s" s
+  | Some _ -> fail "llama.rope.scaling.type is not a string");
+  let entries = Nx_io.Gguf.tensors g in
+  let present name = Option.is_some (Nx_io.Archive.find name entries) in
+  let context = int "context_length" in
+  let theta = float ~default:10000.0 "rope.freq_base" in
+  let rope = Rope.make ~theta ~head_dim ~context () in
+  (* Llama 3's schedule is stored as each pair's divisor of the standard
+     frequency. *)
+  let rope =
+    if not (present "rope_freqs.weight") then rope
+    else
+      let divisors =
+        Nx.to_array
+          (gguf_float g
+             ~shape:[| head_dim / 2 |]
+             Nx.float64 "rope_freqs.weight")
+      in
+      Rope.of_frequencies ~context
+        (Array.map2 ( /. ) (Rope.frequencies rope) divisors)
+  in
+  let vocab_size =
+    match int_opt "vocab_size" with
+    | Some n -> n
+    | None -> (Nx_io.Gguf.info "token_embd.weight" g).shape.(0)
+  in
+  {
+    vocab_size;
+    dim;
+    n_layers = int "block_count";
+    n_heads;
+    n_kv_heads =
+      Option.value ~default:n_heads (int_opt "attention.head_count_kv");
+    head_dim;
+    hidden_dim = int "feed_forward_length";
+    norm_eps = float "attention.layer_norm_rms_epsilon";
+    rope;
+    tied = not (present "output.weight");
+  }
+
 type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
 
 let dtype_of_string = function
@@ -300,6 +487,11 @@ let config_of_json json =
 
 let from_file ~placement cfg dt path =
   of_hf ~placement cfg dt (Nx_io.load_safetensors path)
+
+let from_gguf ~placement dt path =
+  let g = Nx_io.load_gguf path in
+  let cfg = config_of_gguf g in
+  (cfg, of_gguf ~placement cfg dt g)
 
 (* An ungated mirror whose weight files are byte-identical to Meta's. *)
 let default_repo = "NousResearch/Llama-3.2-1B"

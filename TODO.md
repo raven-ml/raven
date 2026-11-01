@@ -202,8 +202,6 @@ raven / llama.cpp (Vulkan; ROCm):
   remain
 - fully sharded training: RFC 0005's bound (P+G+O)/n + 2 layers has no test
   since d478112cb removed the counting-device test
-- kaun: 05-llama loads a GGUF checkpoint (`Nx_io.load_gguf`, Q8_0/Q4_K/Q6_K
-  in `Nx_quant`) and matches the reference's logits
 - a fresh _build starts each test directory's tolk cache empty
   (66f223fcd): the old rune's test_special took 348 s cold (38 s warm).
   Re-time the new rune's suites cold on fudge, and fix the slow ones at

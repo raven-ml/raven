@@ -18,7 +18,12 @@
    batch of two prompts through the caches against each prompt's own reference.
 
    Two fixtures ship: Llama 3.2 1B (tied head, the Llama 3 rotary schedule) and
-   TinyLlama 1.1B (untied head, the standard schedule).
+   TinyLlama 1.1B (untied head, the standard schedule). Three more hold
+   TinyLlama's GGUF checkpoints in Q8_0, Q6_K and Q4_K_M (Q4_K and Q6_K blocks),
+   recorded by [reference_gguf.py] over the weights the gguf package decodes,
+   and are read through [Llama.from_gguf]. [Nx_quant.dequant] decodes a block as
+   ggml's float32 dequantisation does, so the model's weights are the
+   reference's and these meet the float32 tolerance too.
 
    [--dtype bfloat16] or [float16] runs the model at half precision against the
    same float32 reference, to the tolerance half precision allows. [--jit
@@ -26,10 +31,10 @@
    the per-block streams are then checked at the last block only, each block
    being its own compilation.
 
-   Usage: validate.exe [--fixture FILE] [--weights FILE --config FILE] [--dtype
-   DT] [--jit DEVICE] Without [--weights] the files come from the fixture's
-   repository (2 to 3 GB, cached). Not part of the test suite: it needs the
-   download. *)
+   Usage: validate.exe [--fixture FILE] [--weights FILE --config FILE | --gguf
+   FILE] [--dtype DT] [--jit DEVICE] Without [--weights] or [--gguf] the files
+   come from the fixture's repository (0.7 to 3 GB, cached). Not part of the
+   test suite: it needs the download. *)
 
 open Kaun
 
@@ -44,12 +49,14 @@ let json_of_file path =
   | Ok j -> j
   | Error e -> failwith (path ^ ": " ^ e)
 
-let mem name = function
-  | Jsont.Object (mems, _) -> (
-      match Jsont.Json.find_mem name mems with
-      | Some (_, v) -> v
-      | None -> failwith ("fixture: missing " ^ name))
+let mem_opt name = function
+  | Jsont.Object (mems, _) -> Option.map snd (Jsont.Json.find_mem name mems)
   | _ -> failwith "fixture: not an object"
+
+let mem name j =
+  match mem_opt name j with
+  | Some v -> v
+  | None -> failwith ("fixture: missing " ^ name)
 
 let floats = function
   | Jsont.Array (l, _) ->
@@ -231,7 +238,7 @@ let validate (type b d) ~jit ~tol ~exact fx cfg
     (row 1 "short_top_ids")
 
 let () =
-  let weights = ref "" and config = ref "" in
+  let weights = ref "" and config = ref "" and gguf = ref "" in
   let fixture = ref "fixtures/llama-3.2-1b.json" in
   let dtype = ref "float32" and jit = ref "" in
   Arg.parse
@@ -241,12 +248,15 @@ let () =
         "Reference values (default: Llama 3.2 1B)" );
       ("--weights", Arg.Set_string weights, "model.safetensors");
       ("--config", Arg.Set_string config, "config.json");
+      ( "--gguf",
+        Arg.Set_string gguf,
+        "A GGUF checkpoint (default: the fixture's file, if it names one)" );
       ("--dtype", Arg.Set_string dtype, "float32 (default), bfloat16 or float16");
       ("--jit", Arg.Set_string jit, "Compile the forward passes for this device");
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "validate.exe [--fixture FILE] [--weights FILE --config FILE] [--dtype DT] \
-     [--jit DEVICE]";
+    "validate.exe [--fixture FILE] [--weights FILE --config FILE | --gguf \
+     FILE] [--dtype DT] [--jit DEVICE]";
   let fx = json_of_file !fixture in
   let repo = string (mem "repo" fx) in
   Printf.printf "%s, reference recorded from sha256 %s\n%!" repo
@@ -258,10 +268,18 @@ let () =
   let run ~jit at =
     let placement _ ~axis:_ = at in
     let cfg, p =
-      if !weights = "" then Llama.from_pretrained ~placement ~repo_id:repo dt
-      else
-        let cfg = Llama.config_of_json (json_of_file !config) in
-        (cfg, Llama.from_file ~placement cfg dt !weights)
+      let download file = Kaun_hf.download_file ~file:(string file) repo in
+      let gguf =
+        if !gguf <> "" then Some !gguf
+        else Option.map download (mem_opt "file" fx)
+      in
+      match gguf with
+      | Some path -> Llama.from_gguf ~placement dt path
+      | None when !weights = "" ->
+          Llama.from_pretrained ~placement ~repo_id:repo dt
+      | None ->
+          let cfg = Llama.config_of_json (json_of_file !config) in
+          (cfg, Llama.from_file ~placement cfg dt !weights)
     in
     validate ~jit
       ~tol:(if exact then 1e-4 else 5e-2)

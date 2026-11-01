@@ -179,10 +179,11 @@ weights, and generates text through a key-value cache.
 - [`04-gpt2`](examples/04-gpt2) — text generation with pretrained GPT-2
   loaded from the HuggingFace Hub
 - [`05-llama`](examples/05-llama) — Llama 3.2 1B: grouped-query attention,
-  rotary positions, sampled generation through key-value caches, and
-  `validate.exe`, which checks imported weights (Llama 3.2 1B, TinyLlama
-  1.1B) against the reference implementation block by block, at float32 or
-  half precision, eagerly or compiled
+  rotary positions, sampled generation through key-value caches, from
+  safetensors or GGUF checkpoints, and `validate.exe`, which checks imported
+  weights (Llama 3.2 1B, TinyLlama 1.1B, and TinyLlama's Q8_0, Q6_K and
+  Q4_K_M GGUF files) against the reference implementation block by block, at
+  float32 or half precision, eagerly or compiled
 
 ## Scope and Limitations
 

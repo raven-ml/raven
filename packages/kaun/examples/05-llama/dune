@@ -4,7 +4,7 @@
 (library
  (name llama)
  (modules llama)
- (libraries kaun kaun.hf jsont nx nx.io))
+ (libraries kaun kaun.hf jsont nx nx.io nx.quant))
 
 (executables
  (names main validate)

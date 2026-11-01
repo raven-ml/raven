@@ -13,7 +13,13 @@
    computes; [--temperature 0] decodes greedily. rune compiles a program for
    one device, so over several devices the step is evaluated by nx: it runs on
    memory devices ([cpu:k]) and raises on a set of GPUs, which compute only
-   compiled programs. *)
+   compiled programs.
+
+   [--gguf FILE] reads the configuration and the weights from a GGUF checkpoint
+   instead, quantised or not, decoded at float32 unless [--dtype] says
+   otherwise; the tokenizer still comes from [--repo], which must be the
+   checkpoint's model: [--gguf tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf --repo
+   TinyLlama/TinyLlama-1.1B-Chat-v1.0]. *)
 
 open Kaun
 
@@ -134,8 +140,11 @@ let generate (type b d) ~jit
       (float_of_int (max_tokens - 2) /. (Unix.gettimeofday () -. !t0));
   out
 
-let load_tokenizer () =
-  let path = Kaun_hf.download_file ~file:"tokenizer.json" Llama.default_repo in
+(* Where the configuration and the weights come from. *)
+type checkpoint = Hf of Nx.host Nx_io.Archive.t | Gguf of Nx_io.Gguf.t
+
+let load_tokenizer repo =
+  let path = Kaun_hf.download_file ~file:"tokenizer.json" repo in
   match Brot.from_file path with
   | Ok t -> t
   | Error e -> failwith ("tokenizer: " ^ e)
@@ -145,6 +154,7 @@ let () =
   let count = ref 24 and devices = ref "" in
   let dtype = ref "" and temperature = ref 0.7 and seed = ref 0 in
   let top_k = ref 50 and top_p = ref 0.9 in
+  let repo = ref Llama.default_repo and gguf = ref "" in
   Arg.parse
     [
       ("--prompt", Arg.Set_string prompt, "Text to continue");
@@ -161,26 +171,45 @@ let () =
       ("--top-k", Arg.Set_int top_k, "Keep the k most likely tokens");
       ("--top-p", Arg.Set_float top_p, "Keep the smallest set reaching mass p");
       ("--seed", Arg.Set_int seed, "Sampling seed");
+      ( "--repo",
+        Arg.Set_string repo,
+        "HuggingFace repository of the model and its tokenizer (default: Llama \
+         3.2 1B)" );
+      ("--gguf", Arg.Set_string gguf, "Read the model from this GGUF file");
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "llama [--prompt P] [--count N] [--devices LIST] [--dtype DT]";
-  let cfg = Llama.config_of_json (Kaun_hf.load_config Llama.default_repo) in
-  let weights = Kaun_hf.load_safetensors Llama.default_repo in
-  let tokenizer = load_tokenizer () in
+    "llama [--prompt P] [--count N] [--devices LIST] [--dtype DT] [--repo R] \
+     [--gguf FILE]";
+  let checkpoint =
+    if !gguf = "" then Hf (Kaun_hf.load_safetensors !repo)
+    else Gguf (Nx_io.load_gguf !gguf)
+  in
+  let cfg =
+    match checkpoint with
+    | Hf _ -> Llama.config_of_json (Kaun_hf.load_config !repo)
+    | Gguf g -> Llama.config_of_gguf g
+  in
+  let tokenizer = load_tokenizer !repo in
   (* The tokenizer opens the ids with the begin-of-text token the model was
      trained to start from. *)
   let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in
-  (* At the weights' own dtype the import casts nothing. *)
+  (* At the weights' own dtype the import casts nothing, and float32 holds a
+     quantised file's decoded values exactly. *)
   let (Llama.Dtype dt) =
-    if !dtype = "" then Llama.stored_dtype weights
-    else Llama.dtype_of_string !dtype
+    match (!dtype, checkpoint) with
+    | "", Hf weights -> Llama.stored_dtype weights
+    | "", Gguf _ -> Llama.Dtype Nx.float32
+    | d, _ -> Llama.dtype_of_string d
   in
   let run ~jit placement =
     let cfg = Llama.place_config (placement Llama.Whole ~axis:0) cfg in
-    generate ~jit ~placement cfg
-      (Llama.of_hf ~placement cfg dt weights)
-      dt ~temperature:!temperature ~top_k:!top_k ~top_p:!top_p ~seed:!seed
-      ~max_tokens:!count ids
+    let params =
+      match checkpoint with
+      | Hf weights -> Llama.of_hf ~placement cfg dt weights
+      | Gguf g -> Llama.of_gguf ~placement cfg dt g
+    in
+    generate ~jit ~placement cfg params dt ~temperature:!temperature
+      ~top_k:!top_k ~top_p:!top_p ~seed:!seed ~max_tokens:!count ids
   in
   let toks =
     if !devices = "" then run ~jit:false (fun _ ~axis:_ -> Nx.Host.on)
@@ -188,5 +217,9 @@ let () =
       let module D = (val Nx.devices (Devices.all !devices)) in
       run ~jit:true (parallel D.v)
   in
-  print_string !prompt;
-  print_endline (Brot.decode tokenizer (Array.map Int64.to_int toks))
+  (* The prompt's tokens decode with the continuation: a SentencePiece tokenizer
+     drops the space that opens the text it decodes, so the continuation decoded
+     alone would lose its first space. *)
+  print_endline
+    (Brot.decode tokenizer ~skip_special_tokens:true
+       (Array.map Int64.to_int (Array.append ids toks)))

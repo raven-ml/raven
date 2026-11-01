@@ -10,7 +10,8 @@
     layers written on the decode contract: {!hidden}, {!cached} and {!logits}
     are its forward passes and {!Params} its structure. {!of_hf} adapts the
     HuggingFace weights — [torch.nn.Linear] orientation and naming — onto
-    {!Params}' names, and {!from_pretrained} runs the whole pipeline. *)
+    {!Params}' names, {!from_pretrained} runs the whole pipeline, and {!of_gguf}
+    reads a GGUF checkpoint, quantised or not. *)
 
 type 'd config = {
   vocab_size : int;
@@ -173,6 +174,55 @@ val from_file :
   ((float, 'b, 'd) Nx.t, 'd) params
 (** [from_file ~placement cfg dt path] is {!of_hf} on the safetensors file
     [path]. *)
+
+(** {1:gguf GGUF checkpoints}
+
+    A GGUF file ({!Nx_io.Gguf}) of the [llama] architecture, as llama.cpp's
+    converter writes it: the configuration in its metadata, under the
+    architecture's name, and the weights as [token_embd], [blk.{i}.attn_q], ...,
+    [output_norm] and, untied, [output], each in [[| outputs; inputs |]] order.
+    The converter reorders each head's query and key rows so that the rotation
+    pairs adjacent features; the import restores the order the rotary schedule
+    pairs ({!Kaun.Rope}).
+
+    A block-format weight is decoded once, as it is read, by
+    {!Nx_quant.dequant}: the model holds floats at the dtype it is read at, and
+    its forward passes are those of a float model with the file's decoded
+    values. *)
+
+val config_of_gguf : Nx_io.Gguf.t -> Nx.host config
+(** [config_of_gguf g] reads [g]'s [llama.*] metadata. The vocabulary is
+    [llama.vocab_size], or else [token_embd]'s rows; the head is tied when [g]
+    has no [output.weight]. The rotary schedule is the standard one at
+    [llama.rope.freq_base], each pair's frequency divided by its entry of
+    [rope_freqs.weight] where [g] has one, as Llama 3 files store their
+    schedule.
+
+    Raises [Failure] if [general.architecture] is not ["llama"], a required key
+    is missing or of another type, [llama.rope.dimension_count] is not the head
+    width, or [llama.rope.scaling.type] is present and not ["none"]. *)
+
+val of_gguf :
+  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
+  'c config ->
+  (float, 'b) Nx.dtype ->
+  Nx_io.Gguf.t ->
+  ((float, 'b, 'd) Nx.t, 'd) params
+(** [of_gguf ~placement cfg dt g] is the model of [g]'s weights at [dt]. An
+    entry of a float type is cast to [dt] as {!Nx_io.Archive.float} casts; a
+    Q8_0, Q4_K or Q6_K entry is [Nx_quant.dequant dt] of its blocks, each value
+    rounded once to [dt]. Each leaf is placed as {!of_hf} places it.
+
+    Raises [Failure], naming the entry, if one is missing, has another logical
+    shape than [cfg] says, or is stored as another type. *)
+
+val from_gguf :
+  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
+  (float, 'b) Nx.dtype ->
+  string ->
+  Nx.host config * ((float, 'b, 'd) Nx.t, 'd) params
+(** [from_gguf ~placement dt path] is the configuration and the parameters at
+    [dt] of the GGUF file [path] ({!Nx_io.load_gguf}). *)
 
 type dtype =
   | Dtype : (float, 'b) Nx.dtype -> dtype
