@@ -36,6 +36,7 @@
 #include <psapi.h>
 #else
 #include <pthread.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <time.h>
@@ -112,10 +113,11 @@ static size_t page(void) {
   GetSystemInfo(&info);
   return info.dwPageSize;
 }
-static void *aligned(size_t align, size_t n) {
-  return _aligned_malloc(n, align);
+static void *region_alloc(size_t n) { return _aligned_malloc(n, page()); }
+static void region_free(void *p, size_t n) {
+  (void)n;
+  _aligned_free(p);
 }
-static void aligned_free(void *p) { _aligned_free(p); }
 #else
 typedef pthread_mutex_t lock_t;
 #define LOCK_INITIALIZER PTHREAD_MUTEX_INITIALIZER
@@ -143,11 +145,24 @@ static int spawn(void *p) {
   return 1;
 }
 static size_t page(void) { return (size_t)sysconf(_SC_PAGESIZE); }
-static void *aligned(size_t align, size_t n) {
-  void *p = NULL;
-  return posix_memalign(&p, align, n) == 0 ? p : NULL;
+/* Regions from 1 MiB, such as a staging memory's 32 MiB halves, are mapped
+   pages, which the C library never writes. The suites set MALLOC_PERTURB_,
+   under which glibc writes each byte of an allocation: a half would cost
+   32 MiB of writes and page faults where a copy touches a few pages. */
+#define MAPPED_FROM ((size_t)1 << 20)
+static void *region_alloc(size_t n) {
+  if (n < MAPPED_FROM) {
+    void *p = NULL;
+    return posix_memalign(&p, page(), n) == 0 ? p : NULL;
+  }
+  void *p = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+                 -1, 0);
+  return p == MAP_FAILED ? NULL : p;
 }
-static void aligned_free(void *p) { free(p); }
+static void region_free(void *p, size_t n) {
+  if (n < MAPPED_FROM) free(p);
+  else munmap(p, n);
+}
 #endif
 
 /* Empty buffers may have address 0; memmove requires nonnull endpoints even
@@ -1297,12 +1312,13 @@ value rig_test_polled_set_word(value v_p, value v) {
 /* Host memory for regions: on a page, so any of it maps. */
 value rig_test_alloc(value v_n) {
   size_t n = (size_t)Long_val(v_n);
-  void *a = aligned(page(), n == 0 ? 1 : n);
+  void *a = region_alloc(n == 0 ? 1 : n);
   return Val_long((intnat)a);
 }
 
-value rig_test_free(value v_a) {
-  aligned_free((void *)Long_val(v_a));
+value rig_test_free(value v_a, value v_n) {
+  size_t n = (size_t)Long_val(v_n);
+  region_free((void *)Long_val(v_a), n == 0 ? 1 : n);
   return Val_unit;
 }
 

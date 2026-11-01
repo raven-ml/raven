@@ -70,7 +70,7 @@ external polled_broken : unit -> int array = "rig_test_polled_broken"
 external polled_bind : polled -> nativeint -> int -> bool -> unit
   = "rig_test_polled_bind"
 external host_alloc : int -> int = "rig_test_alloc"
-external host_free : int -> unit = "rig_test_free"
+external host_free : int -> int -> unit = "rig_test_free"
 external noop : unit -> nativeint = "rig_test_noop"
 external bump : unit -> nativeint = "rig_test_bump"
 external waiting : unit -> nativeint = "rig_test_waiting"
@@ -389,7 +389,7 @@ module Driver = struct
         match r.kind with
         | Some k -> d.held <- remove (k, r.bytes) d.held
         | None -> d.mapped <- remove r.bytes d.mapped);
-    if r.kind <> None then host_free r.at
+    if r.kind <> None then host_free r.at r.bytes
     else polled_unmapped d.c r.at r.bytes
 
   (* A faulted device's free gives the region back, then raises. *)
