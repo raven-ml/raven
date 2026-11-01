@@ -1,0 +1,6 @@
+(tests
+ (names test_spk)
+ (package ymir)
+ (libraries ymir ymir.spk ymir.units nx rune windtrap)
+ (deps
+  (glob_files golden/*.bsp)))

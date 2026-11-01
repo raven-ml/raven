@@ -37,6 +37,8 @@ The [examples](examples/) teach each part on small synthetic data.
 - `ymir.fits` reads and writes FITS files; `open Ymir_fits` brings `Fits`.
   Neither `ymir` nor `ymir.fits` depends on the other, and a program that
   reads files links both.
+- `ymir.spk` reads SPK ephemeris files, such as JPL's DE440; `open Ymir_spk`
+  brings `Spk`.
 
 ## What's inside
 

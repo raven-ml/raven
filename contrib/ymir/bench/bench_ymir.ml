@@ -10,6 +10,7 @@
 
 open Ymir
 open Ymir_fits
+open Ymir_spk
 
 let f64 = Nx.float64
 let n = 1_000_000
@@ -614,6 +615,42 @@ let apparent_rows () =
       ];
   ]
 
+(* The Moon from the Earth at 10^4 TDB instants of 2024 and 2025, chained
+   through their barycentre in a cut of DE440s. *)
+let spk_rows () =
+  (* Read before any case runs: a read inside a traced function would read
+     traced values. *)
+  let file =
+    match Spk.read ~at:Nx.Host.on "../test/spk/golden/de440s-2024.bsp" with
+    | Ok t -> t
+    | Error e -> failwith e
+  in
+  (* One instant every 6048 s, 700 days from MJD 60310, as days and
+     seconds. *)
+  let count = 10_000 and step = 6048 in
+  let days =
+    Nx.create Nx.int64 [| count |]
+      (Array.init count (fun k -> Int64.of_int (60310 + (k * step / 86400))))
+  in
+  let seconds () =
+    Nx.create f64 [| count |]
+      (Array.init count (fun k -> float_of_int (k * step mod 86400)))
+  in
+  let moon s =
+    let t = Time.v Time.tdb ~day:days ~second:(Quantity.v Unit.second s) in
+    Quantity.value Unit.(kilo metre)
+      (Spk.position file ~target:301 ~center:399 t)
+  in
+  Thumper.group "spk-moon-10k"
+    [
+      Thumper.bench_with_setup ~setup:seconds "eager" (fun s ->
+          timed (fun () -> moon s));
+      Thumper.bench_with_setup
+        ~setup:(fun () -> compile moon (seconds ()))
+        "compiled"
+        (fun (f, s) -> timed (fun () -> f s));
+    ]
+
 let suite () =
   [
     galactic ();
@@ -635,6 +672,7 @@ let suite () =
     ages ();
   ]
   @ apparent_rows ()
+  @ [ spk_rows () ]
 
 let config = Thumper.Config.(default |> deadline 60.)
 
