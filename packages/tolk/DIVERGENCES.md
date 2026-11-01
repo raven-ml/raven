@@ -4150,18 +4150,15 @@ does.
 
 ## D160. A kernel that waits for the overwrite of a state it reads reads a copy
 
-- **tinygrad:** `schedule/__init__.py:58-64` (`create_schedule`), which adds
-  no write-after-read edge from a kernel to an overwrite of a state it reads
-  when the overwrite is already among the kernel's dependencies. The kernel
-  then runs after the overwrite and reads the new bytes. Repro: `a =
-  Tensor([1., 2., 3.]).contiguous().realize(); b = a * 2; a.assign(a + 1);
-  (b + (a * 3).contiguous()).tolist()` gives `[10, 15, 20]` for `[8, 13,
-  18]`; `test/runtime/test_assign.py::TestAssignOrdering::
-  test_war_reader_already_depends_on_write` states the right value as an
-  expected failure. Its store hazard check (`schedule/rangeify.py:190-192`,
-  `fix_store_hazard`) stages a store's value that reads the store's own
-  destination at another index; the kernel here stores elsewhere, so the
-  check does not reach it.
+- **tinygrad:** `schedule/__init__.py:56-64` (`create_schedule`), which adds a
+  write-after-read edge from a kernel to every overwrite of a state it reads,
+  so a kernel that also waits for the overwrite, through a value computed
+  after it, makes a cycle, and the schedule raises "cycle detected in assign
+  graph" (`:78`). Repro: `a = Tensor([1., 2., 3.]).contiguous().realize();
+  b = a * 2; a.assign(a + 1); (b + (a * 3).contiguous()).tolist()` raises;
+  `test/runtime/test_assign.py::TestAssignOrdering::
+  test_war_reader_already_depends_on_write` states the raise, with the
+  values `[2, 4, 15]` "once that read is staged" as its TODO.
 - **tolk:** `Schedule.copy_state`, `Schedule.copy_before_overwrites` and
   `Schedule.schedule`; `test/gen/tinygrad.patch`, which
   makes tinygrad copy the same way before the goldens are generated.
@@ -4172,22 +4169,24 @@ does.
   any overwrite of the storage, whichever elements each kernel touches, so a
   partial overwrite of elements the kernel does not read copies too, at a
   kernel and the state's size in storage.
-- **Reason:** none. No raven call site is known to reach it, since rune
-  orders its own lent stores (`assign`) and gives up a lending where they
-  have no order. The skipped edge gives a wrong answer with no error, and a
-  refusal would make rune's `Rune.jit` (rune's `Compile.declined`) evaluate
-  the program, which raises on a set of GPUs, which has no eager kernels;
-  copying, as XLA does for an aliasing hazard, keeps the program compiled.
+- **Reason:** none. jera's compiled gradient of an adaptive solve reaches it,
+  the only kernel of rune's, jera's, norn's and kaun's suites to:
+  `Ode › solve derivatives › compiled grad equals eager grad` (jera's
+  `test_ode.ml`). With tinygrad's refusal, rune's `Compile.declined` takes
+  the `Invalid_argument` and evaluates the program, with the same values, so
+  no call site fails without the copy: what it keeps is the gradient's
+  compilation, a speed no bench row measures. Staging only the stale read in
+  rangeify, as tinygrad's TODO says, would cost the read's size where the
+  copy costs the state's.
 - **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › rules › a
   kernel that waits for the overwrite of a state it reads reads it`, on the
   kernel graph `read_overwritten_through_kernels.golden`, `› a kernel reading
   storage before and after a write reads both` and `› reads it before`, and
   the rules after them, for a copy two kernels share, a kernel with two
   copies, a copy of a state a rebuilt kernel writes and the copy's phase;
-  and
-  the program `read_overwritten_through`, whose recorded schedule and linear
-  and whose values (`create_linear_with_vars › values`) are tinygrad's,
-  patched.
+  and the program `read_overwritten_through`, whose recorded schedule and
+  linear and whose values (`create_linear_with_vars › values`) are
+  tinygrad's, patched.
 
 ## D161. A folded weak constant wraps, and a power of two is read at its width
 
