@@ -154,6 +154,10 @@ type t = private {
   tensor_cores : Tc.t list;  (** The tensor cores, in order of preference. *)
   extra_matcher : (unit, Ops.t) Ops.Pattern_matcher.t;
       (** The rewrites the target needs after every other. *)
+  packed_args : bool;
+      (** A kernel takes its arguments as bytes: one parameter, which holds
+          each argument at its offset ({!Device.Tiny_elf.iter_sig}), a buffer
+          by its address. *)
   code_for_op : (Op.t * (string list -> Dtype.t -> string)) list;
       (** The operations the target has natively, each with how it is written:
           [f operands dtype] is the expression of the operation on the
@@ -181,6 +185,7 @@ val v :
   ?shared_max:int ->
   ?tensor_cores:Tc.t list ->
   ?extra_matcher:(unit, Ops.t) Ops.Pattern_matcher.t ->
+  ?packed_args:bool ->
   ?code_for_op:(Op.t * (string list -> Dtype.t -> string)) list ->
   ?native:(Dtype.t -> bool) ->
   ?render:(Ops.t list -> string) ->
@@ -197,6 +202,7 @@ val v :
     - [shared_max] is [32768];
     - [tensor_cores] and [code_for_op] are empty, and so are the rules of
       [extra_matcher];
+    - [packed_args] is [false];
     - [native] holds for every data type;
     - [render] raises [Invalid_argument];
     - [compiler] returns its source unchanged, and caches nothing. *)

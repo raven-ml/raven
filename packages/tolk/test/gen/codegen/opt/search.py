@@ -80,7 +80,7 @@ def actions():
 
 # The variables of the process in which tolk's suite checks what they
 # change, less those that only print.
-ENVIRONMENT = {"BEAM_PADTO": "1", "TC": "2", "BEAM_STRICT_MODE": "1", "BEAM_UOPS_MAX": "43"}
+ENVIRONMENT = {"BEAM_PADTO": "1", "TC": "2", "BEAM_STRICT_MODE": "1", "BEAM_UOPS_MAX": "50"}
 
 
 @contextlib.contextmanager

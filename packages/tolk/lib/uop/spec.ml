@@ -236,6 +236,9 @@ let shared : t =
           && (addrspace (nth x 2) = Some Dtype.Alu
              || max_numel (buf_uop (nth x 2)) = 1));
       accept (pat [ Op.Param ] ~src:[ p_size ]);
+      accept
+        (pat [ Op.Refparam ]
+           ~src:[ p_size; Upat.v ~dtype:[ Dtype.Uint64 ] () ]);
       check (pat [ Op.Buffer ] ~src:[ p_size ] ~name:"x") "x" (fun x ->
           List.mem (addrspace x) [ Some Dtype.Reg; Some Dtype.Local ]);
       check (pat [ Op.Binary ] ~dtype:[ Dtype.Uint8 ] ~src:[] ~name:"x") "x"

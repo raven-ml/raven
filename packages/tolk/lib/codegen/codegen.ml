@@ -1322,6 +1322,12 @@ let numbered ctx name b =
 let lower_call ctx call b =
   if op b = Op.Program && List.exists (is Op.Binary) (src b) then
     invalid_arg "a call inside a kernel of a compiled program"
+  else if
+    op b = Op.Program && ctx.ren.packed_args && (kernel_info (nth b 0)).kernel
+  then
+    invalid_arg
+      "a call inside a kernel of a program linearized for a launch, whose \
+       arguments are packed (kernel_info.kernel)"
   else
     let name =
       match arg call with
@@ -1414,7 +1420,8 @@ let whole_loop (k : kernel_info) lin (e : estimates) =
       in
       { ops = fill e.ops; lds = fill e.lds; mem = fill e.mem }
 
-let do_estimates prg sink lin =
+(* [sink] with the estimates of its linear order [lin], unless it has some. *)
+let with_estimates sink lin =
   let k = kernel_info sink in
   if Option.is_some k.estimates then None
   else
@@ -1422,43 +1429,112 @@ let do_estimates prg sink lin =
       whole_loop k lin
         (Renderer.Estimates.of_uops ~ignore_indexing:true (src lin))
     in
-    let sink =
-      replace sink ~arg:(Kernel { k with estimates = Some estimates })
-    in
-    Some (replace prg ~src:(sink :: srcs prg))
+    Some (replace sink ~arg:(Kernel { k with estimates = Some estimates }))
+
+let do_estimates prg sink lin =
+  Option.map
+    (fun sink -> replace prg ~src:(sink :: srcs prg))
+    (with_estimates sink lin)
+
+(* A kernel that takes its arguments as bytes reads them from one parameter,
+   [args], where each lies at its offset ({!Device.Tiny_elf.iter_sig}): a scalar
+   is the value loaded there, and a buffer the address loaded there, read as the
+   buffer ({!Op.Refparam}). Its estimates are taken before, while its loads
+   read its buffers. *)
+let pack_args sink params =
+  let signature =
+    List.map
+      (fun p ->
+        {
+          Device.Tiny_elf.name = None;
+          addrspace = (param_arg_of p).addrspace;
+          dtype = dtype p;
+          shape = [];
+        })
+      params
+  in
+  let args =
+    Shape.param ~shape:[ Int (8 * List.length params) ] ~name:"args" 0 Uint8
+  in
+  let load (offset, dt) =
+    let at = offset / Dtype.itemsize dt in
+    let offset = cconst Int32 (`Int (Bigint.of_int at)) in
+    Ops.load (index (bitcast args dt) [ offset ]) []
+  in
+  let read p v =
+    if addrspace p = Some Dtype.Alu then (p, v)
+    else (p, Ops.v Op.Refparam ~src:[ nth p 0; v ] ~arg:(arg p))
+  in
+  let loads = List.map load (Device.Tiny_elf.iter_sig signature) in
+  substitute ~calls:Skip ~pass:Fixed_point sink (List.map2 read params loads)
 
 let do_render (ren : Renderer.t) prg lin =
   let source = ren.render (src lin) in
   Some (replace prg ~src:(src prg @ [ v Op.Source ~arg:(String source) ]))
 
 (* The host calls a program as [void f(const void *p, long long first, long long
-   end)] (rig's host code), where [p] points to the structure of the kernel's
-   parameters that the kernel itself takes. The call runs the iterations [first]
-   to [end - 1], at most the loop's last: the launch's threads number the
-   iterations. The kernel is renamed [NAME_], and [NAME] becomes the entry that
-   passes [p] on, or for a split program a copy of the structure whose bounds
-   are [first] and [end], [end] at most the iterations of the whole loop, which
-   the launch passes as its bound [hi]. The copy is inline, where Clang
-   compiles the assignment of a large structure as a call of [memcpy], which
-   a remote Windows host's object, compiled for no system, would call by the
-   wrong convention. On
-   x86_64 Windows, whose object calls by Windows' convention, the entry is
-   declared System V's, by which rig calls it (rig's host code). The source
-   the program keeps is the renderer's. *)
+   end)] (rig's host code), where [p] points to the bytes of the kernel's
+   arguments, each at its offset ({!Device.Tiny_elf.iter_sig}), which the
+   kernel itself takes. The call runs the iterations [first] to [end - 1], at
+   most the loop's last: the launch's threads number the iterations. The kernel
+   is renamed [NAME_], and [NAME] becomes the entry that passes [p] on, or for a
+   split program a copy of the bytes whose bounds are [first] and [end], [end]
+   at most the iterations of the whole loop, which the launch passes as its
+   bound [hi]. The copies are inline, where Clang compiles a copy of many bytes
+   as a call of [memcpy], which a remote Windows host's object, compiled for no
+   system, would call by the wrong convention. On x86_64 Windows, whose object
+   calls by Windows' convention, the entry is declared System V's, by which rig
+   calls it (rig's host code). The source the program keeps is the
+   renderer's. *)
 let host_entry ~arch prg source =
   let k = kernel_info (nth prg 0) in
   let name = function_name k in
-  let field slot = Printf.sprintf "arg%d" slot in
   let body =
     match k.split with
-    | None -> Printf.sprintf "%s_(p);" name
+    | None -> Printf.sprintf "%s_((unsigned char *)p);" name
     | Some s ->
-        let lo = field s.lo and hi = field s.hi in
+        let params = kernel_params prg in
+        let signature =
+          List.map
+            (fun p ->
+              let a = param_arg_of p in
+              {
+                Device.Tiny_elf.name = None;
+                addrspace = a.addrspace;
+                dtype = dtype p;
+                shape = [];
+              })
+            params
+        in
+        let offsets = Device.Tiny_elf.iter_sig signature in
+        let size =
+          List.fold_left
+            (fun m (o, dt) -> max m (o + Dtype.itemsize dt))
+            0 offsets
+        in
+        let field slot =
+          let i =
+            Option.get
+              (List.find_index (fun p -> (param_arg_of p).slot = slot) params)
+          in
+          let offset, dt = List.nth offsets i in
+          let ty =
+            match Dtype.itemsize dt with
+            | 4 -> "int"
+            | 8 -> "long long"
+            | n -> invalid_arg (Printf.sprintf "a split bound of %d bytes" n)
+          in
+          (offset, ty)
+        in
+        let (lo, lo_ty), (hi, hi_ty) = (field s.lo, field s.hi) in
         Printf.sprintf
-          "struct %s_args a; __builtin_memcpy_inline(&a, p, sizeof a); if \
-           (end > a.%s) end = a.%s; if (first < end) { a.%s = first; a.%s = \
-           end; %s_(&a); }"
-          name hi hi lo hi name
+          "unsigned char a[%d] __attribute__((aligned(8))); \
+           __builtin_memcpy_inline(a, p, sizeof a); %s hi; \
+           __builtin_memcpy_inline(&hi, a + %d, sizeof hi); if (end > hi) \
+           end = hi; if (first < end) { %s lo = first; hi = end; \
+           __builtin_memcpy_inline(a + %d, &lo, sizeof lo); \
+           __builtin_memcpy_inline(a + %d, &hi, sizeof hi); %s_(a); }"
+          size hi_ty hi lo_ty lo hi name
   in
   String.concat "\n"
     [
@@ -1526,6 +1602,16 @@ let linearized ?beam ast (ren : Renderer.t) =
   in
   let full_sink = full_rewrite_to_sink ~optimize ?beam ast ren in
   let info = program_info_of_sink ~target:ren.target full_sink in
+  let full_sink =
+    if not ren.packed_args then full_sink
+    else
+      let lin = v Op.Linear ~src:(Linearizer.linearize full_sink) in
+      let full_sink =
+        Option.value (with_estimates full_sink lin) ~default:full_sink
+      in
+      if (kernel_info full_sink).kernel then pack_args full_sink info.params
+      else full_sink
+  in
   graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
     (v Op.Program ~src:[ full_sink ] ~arg:(Program info))
     (After_sources pm_linearize)

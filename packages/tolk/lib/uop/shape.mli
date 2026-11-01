@@ -514,9 +514,9 @@ val program_info_of_sink : ?target:Helpers.Target.t -> Ops.t -> Ops.program_info
 
 val kernel_params : Ops.t -> Ops.t list
 (** [kernel_params prg] is the parameters of the linearized {!Op.Program}
-    [prg] in the order its kernel takes them, which is slot order: those of
-    its linear order, then each of {!Ops.program_info.params} whose slot none
-    of those takes.
+    [prg] in slot order, the order its kernel takes them, as parameters or
+    packed into one: those of {!Ops.program_info.params} its linear order
+    holds, then each other one whose slot none of those takes.
 
     Raises [Invalid_argument] if [prg] is not a linearized program. *)
 

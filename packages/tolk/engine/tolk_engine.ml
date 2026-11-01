@@ -677,11 +677,11 @@ let launch b call prg d =
   let dev = device_index b on in
   let image = image b dev elf.lib in
   let slot_of p = match Ops.arg p with Ops.Param p -> p.slot | _ -> -1 in
-  (* Its parameters, in the order the program takes them, which is the order
-     of its linear: a pointer to each buffer and each scalar, each aligned to
-     its size, as the program reads them ({!Tolk.Codegen}). A split program's
-     bounds are those of its whole loop, which its entry narrows to each
-     block's. *)
+  (* Its parameters, in slot order, the order the program takes them, as
+     parameters or packed into its bytes: a pointer to each buffer and each
+     scalar, each aligned to its size, as the program reads them
+     ({!Tolk.Codegen}). A split program's bounds are those of its whole loop,
+     which its entry narrows to each block's. *)
   let taken =
     List.filter (fun u -> Ops.op u = Op.Param) (Ops.src (Ops.nth prg 1))
   in

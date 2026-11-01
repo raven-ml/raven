@@ -8,6 +8,40 @@ let program r uops =
     | _ -> Ops.replace sink ~arg:(Ops.Kernel (Ops.kernel_info ()))
   in
   let info = Shape.program_info_of_sink ~target:r.Renderer.target sink in
+  (* A host kernel is launched with its arguments as bytes, as code generation
+     packs them for such a renderer: each parameter of the linear order is
+     replaced by its read from the bytes, which come first. *)
+  let sink, uops =
+    if not r.packed_args then (sink, uops)
+    else
+      let reads = Ops.src (Codegen.pack_args (Ops.sink info.params) info.params) in
+      let image = Ops.Tbl.create 64 in
+      List.iter2 (fun p v -> Ops.Tbl.replace image p v) info.params reads;
+      let rebuilt u =
+        match Ops.Tbl.find_opt image u with
+        | Some v -> v
+        | None ->
+            let v =
+              Ops.replace u
+                ~src:
+                  (List.map
+                     (fun s -> Option.value (Ops.Tbl.find_opt image s) ~default:s)
+                     (Ops.src u))
+            in
+            Ops.Tbl.replace image u v;
+            v
+      in
+      let body =
+        List.filter_map
+          (fun u ->
+            if List.exists (Ops.equal u) info.params then None
+            else Some (rebuilt u))
+          uops
+      in
+      let first = Ops.toposort ~calls:Skip (Ops.sink reads) in
+      let first = List.filter (fun u -> Ops.op u <> Op.Sink) first in
+      (rebuilt sink, first @ body)
+  in
   Codegen.compile
     (Ops.v Op.Program
        ~src:[ sink; Ops.v Op.Linear ~src:uops ]
@@ -108,17 +142,14 @@ let storage (p : Ops.param_arg) ~size:n values =
 
 let contents (p : Ops.param_arg) ~size b = Array.sub (values p.dtype b) 0 size
 
-(* The parameters of [prg] by slot: each buffer, in the order its linear order
-   declares them, and each positional variable. *)
+(* The buffer parameters of [prg], in slot order, each with its size. *)
 let buffer_params prg =
   List.filter_map
     (fun u ->
       match Ops.arg u with
-      | Ops.Param p
-        when Op.equal (Ops.op u) Param && p.addrspace <> Dtype.Alu ->
-          Some (p, Shape.max_numel u)
+      | Ops.Param p when p.addrspace <> Dtype.Alu -> Some (p, Shape.max_numel u)
       | _ -> None)
-    (Ops.src (Ops.nth prg 1))
+    (Shape.kernel_params prg)
 
 let on_host ?vars prg buffers =
   let info =

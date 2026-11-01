@@ -265,7 +265,7 @@ and compute_shape u : sint list option =
       match arg u with
       | Bytes b -> Some [ Int (String.length b) ]
       | _ -> invalid_arg "binary needs bytes")
-  | Op.Buffer | Op.Alloc | Op.Param -> (
+  | Op.Buffer | Op.Alloc | Op.Param | Op.Refparam -> (
       match as_shape (first (op u) (src u)) with
       | ([] | [ _ ]) as s -> Some s
       | _ -> invalid_arg "storage has one axis")
@@ -3413,7 +3413,11 @@ let kernel_params prg =
   match (op prg, arg prg, src prg) with
   | Op.Program, Program info, _ :: linear :: _ ->
       let slot u = (param_arg_of u).slot in
-      let params = List.filter (fun u -> op u = Op.Param) (src linear) in
+      let params =
+        List.filter
+          (fun u -> List.exists (Ops.equal u) info.params)
+          (src linear)
+      in
       let taken = List.map slot params in
       let rest =
         List.filter (fun p -> not (List.mem (slot p) taken)) info.params

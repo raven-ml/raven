@@ -410,12 +410,14 @@ let runs_as_interpreted name () =
   let prg =
     under row (fun () -> Codegen.to_program k (Lazy.force host_uncompiled))
   in
-  let uops = Ops.src (Ops.nth prg 1) in
   let kernel = buffer_dtypes (Ops.toposort ~calls:Enter k)
-  and program = buffer_dtypes uops in
+  and program = buffer_dtypes (Shape.kernel_params prg) in
+  let linearized =
+    Ops.v Op.Program ~src:[ Ops.nth prg 0; Ops.nth prg 1 ] ~arg:(Ops.arg prg)
+  in
   let outputs =
     Run.on_host ~vars:(Kernel_opts.variables k)
-      (Run.program (Lazy.force host) uops)
+      (Codegen.compile linearized (Lazy.force host))
       (stored ~kernel ~program (Kernel_opts.inputs k))
   in
   let expected = Kernel_opts.writes k in
@@ -1106,12 +1108,11 @@ let estimates row =
 
 (* A split program's instructions count one block; its estimates count the block
    of the whole loop. *)
-let whole_loop p (e : Ops.estimates) : Ops.estimates =
+let whole_loop p uops (e : Ops.estimates) : Ops.estimates =
   match (kernel_info (Ops.nth p 0)).split with
   | None -> e
   | Some s ->
-      let lo = variable_of (Ops.src (Ops.nth p 1)) s.lo
-      and hi = variable_of (Ops.src (Ops.nth p 1)) s.hi in
+      let lo = variable_of uops s.lo and hi = variable_of uops s.hi in
       let bounds =
         [
           (lo, Ops.int ~dtype:(Ops.dtype lo) 0);
@@ -1126,13 +1127,18 @@ let whole_loop p (e : Ops.estimates) : Ops.estimates =
       in
       { ops = fill e.ops; lds = fill e.lds; mem = fill e.mem }
 
+(* A kernel whose arguments are packed is counted before, while its loads read
+   its buffers. *)
 let counts_its_instructions row =
   let p = program row in
+  let uops =
+    if (renderer_of_row row).packed_args then Linearizer.linearize (lowered row)
+    else Ops.src (Ops.nth p 1)
+  in
   equal string
     (Format.asprintf "%a" Ops.pp_estimates
-       (whole_loop p
-          (Renderer.Estimates.of_uops ~ignore_indexing:true
-             (Ops.src (Ops.nth p 1)))))
+       (whole_loop p uops
+          (Renderer.Estimates.of_uops ~ignore_indexing:true uops)))
     (estimates row)
 
 let lowers_the_same_twice row = same_graph (lowered row) (lowered row)
@@ -1279,10 +1285,13 @@ let programs =
                  source p;
                  "#undef E_16_16";
                  "void E_16_16(const void *p, long long first, long long end) \
-                  { struct E_16_16_args a; __builtin_memcpy_inline(&a, p, \
-                  sizeof a); if (end > a.arg4) end = a.arg4; if \
-                  (first < end) { a.arg3 = first; a.arg4 = end; \
-                  E_16_16_(&a); } }";
+                  { unsigned char a[32] __attribute__((aligned(8))); \
+                  __builtin_memcpy_inline(a, p, sizeof a); int hi; \
+                  __builtin_memcpy_inline(&hi, a + 28, sizeof hi); if (end > \
+                  hi) end = hi; if (first < end) { int lo = first; hi = end; \
+                  __builtin_memcpy_inline(a + 24, &lo, sizeof lo); \
+                  __builtin_memcpy_inline(a + 28, &hi, sizeof hi); \
+                  E_16_16_(a); } }";
                ])
             (binary_of p));
       test
@@ -1296,12 +1305,14 @@ let programs =
            [ 1; 8; 100 ]);
       test "the argument of a program is its program information for the target"
         (fun () ->
-          let p = Codegen.to_program (Lazy.force add_kernel) clang in
+          let k = Lazy.force add_kernel in
+          let p = Codegen.to_program k clang in
+          (* its kernel before its arguments are packed *)
+          let lowered = Codegen.full_rewrite_to_sink ~optimize:true k clang in
           equal string
             (Format.asprintf "%a" Ops.pp_arg
                (Program
-                  (Shape.program_info_of_sink ~target:clang_target
-                     (Ops.nth p 0))))
+                  (Shape.program_info_of_sink ~target:clang_target lowered)))
             (program_info p));
     ]
 
@@ -2387,8 +2398,11 @@ let lanes =
 
 (* Vectors in programs *)
 
+(* A bitcast of storage, as of a kernel's packed arguments, is a view of it, no
+   operation on its elements. *)
 let on_a_vector u =
   Op.Set.mem (Ops.op u) Op.Set.elementwise
+  && (not (List.mem (Ops.addrspace u) Dtype.[ Some Global; Some Local ]))
   && match Shape.shape_opt u with Some (_ :: _) -> true | _ -> false
 
 let applies_no_elementwise_operation_to_a_vector row =
@@ -3822,8 +3836,9 @@ let keeps_narrow_indices () =
   let prg =
     in_blocks [ Ops.end_ (Ops.store (Ops.index (floats n 0) [ i ]) a) [ i ] ]
   in
+  (* the addresses of its buffers are 64-bit loads, no arithmetic *)
   equal (list Uops.uop) []
-    (List.filter wide (Ops.toposort ~calls:Enter (Ops.nth prg 0)))
+    (List.filter wide (alu (Ops.toposort ~calls:Enter (Ops.nth prg 0))))
 
 (* 2^16 sums of 2^16 products count at least a product and a sum each, 2^33
    operations: past the 32-bit index type a block's count is kept in. *)
@@ -4203,10 +4218,25 @@ let calls =
            [ 3; 6; 9; 12 ]);
       test "a call of a program not yet compiled runs its instructions"
         (fun () ->
-          let body = Codegen.linearize (mul_kernel ()) (Lazy.force host) in
+          (* a body another kernel calls takes its arguments as parameters,
+             and is not optimised again *)
+          let k = mul_kernel () in
+          let callee =
+            match Ops.arg k with
+            | Kernel info ->
+                Ops.replace k
+                  ~arg:(Kernel { info with kernel = false; optimized = true })
+            | _ -> assert false
+          in
+          let body = Codegen.linearize callee (Lazy.force host) in
           runs_on_host (fun () -> program_call body)
             [ (1, int_values [ 1; 2; 3; 4 ]) ]
             [ 3; 6; 9; 12 ] ());
+      test "a call of a program linearized for a launch is refused" (fun () ->
+          let body = Codegen.linearize (mul_kernel ()) (Lazy.force host) in
+          let host = Lazy.force host in
+          raises_match (Exn.invalid_arg ~sub:"packed") (fun () ->
+              ignore (Codegen.to_program (program_call body) host)));
       test "a call of a compiled program is refused" (fun () ->
           let body = Codegen.to_program (mul_kernel ()) (Lazy.force host) in
           let host = Lazy.force host in

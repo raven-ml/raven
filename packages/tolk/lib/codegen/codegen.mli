@@ -99,7 +99,10 @@ val to_program :
     without optimisation ({!full_rewrite_to_sink}[ ~optimize:false]) and becomes
     the {!Op.Linear} of its instructions, made as the program's are. A call of a
     program not yet compiled becomes the {!Op.Linear} of the program's
-    instructions; a call of a compiled program is refused. Each body is named
+    instructions; such a program must have been made as a body another kernel
+    calls ({!Ops.kernel_info.kernel} [false]) where [ren] packs arguments
+    ({!Renderer.t.packed_args}), and is refused otherwise, its arguments being
+    packed for a launch. A call of a compiled program is refused. Each body is named
     after its call ({!Helpers.to_function_name}), a second body of one name in
     [ast] followed by [_1], and so on. The renderer writes such a body as a
     function ({!Cstyle}). A body is a scope of its own: the program's loops, the
@@ -160,6 +163,17 @@ val made : Ops.t -> Renderer.t -> Ops.t option
     this process, kept in memory under the same key, if it has, its
     parameters naming [ast]'s devices as {!to_program}'s do. It makes
     nothing, reads nothing from disk and waits for no program being made. *)
+
+val pack_args : Ops.t -> Ops.t list -> Ops.t
+(** [pack_args sink params] is the lowered kernel [sink] reading its
+    parameters [params] as bytes: one parameter, [args], of eight bytes per
+    parameter, holds each at its offset ({!Device.Tiny_elf.iter_sig}). A scalar
+    is the value loaded there, and a buffer the address loaded there, read as
+    the buffer ({!Op.Refparam}). [params] must be in slot order, the order a
+    launch lays the arguments out in; another order reads the wrong bytes.
+    {!linearize} packs so, after taking its estimates, the parameters of a
+    kernel the runtime launches ({!Ops.kernel_info.kernel}) for a renderer with
+    {!Renderer.t.packed_args}. *)
 
 val linearize : Ops.t -> Renderer.t -> Ops.t
 (** [linearize ast ren] is the program of the kernel's sink [ast] for [ren] up

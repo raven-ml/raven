@@ -28,7 +28,7 @@
        1
        (setenv
         BEAM_UOPS_MAX
-        43
+        50
         (setenv
          BEAM_LOG_SURPASS_MAX
          1

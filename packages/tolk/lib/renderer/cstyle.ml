@@ -76,9 +76,6 @@ type lang = {
   var_suffix : string;
   barrier : string;
   code_for_workitem : (char * (char -> string)) list;
-  args_struct_prefix : string option;
-      (* a kernel takes its parameters in one structure, through a pointer to
-         a structure of this qualifier *)
   extra_args : string list;
   float4 : string -> string; (* the constructor of a vector type *)
   float4_style : string * string;
@@ -325,6 +322,10 @@ let base_rewrite =
           Some
             (ctx.lang.bitcast (render_type ctx.lang x) (render_type ctx.lang s)
                ctx.%{s}));
+      (* a buffer passed by its address *)
+      r (Upat.op ~name:"x" Op.Refparam) (fun ctx m ->
+          let x = m "x" in
+          Some (strf "((%s)(%s))" (param_type ctx.lang x) ctx.%{nth x 1}));
       (* GPU stuff *)
       r (Upat.op Op.Barrier) (fun ctx _ -> Some ctx.lang.barrier);
       r (Upat.op ~name:"x" Op.Special) (fun ctx m ->
@@ -721,7 +722,6 @@ let cstyle =
     var_suffix = "";
     barrier = "";
     code_for_workitem = [];
-    args_struct_prefix = None;
     extra_args = [];
     float4 = (fun _ -> invalid_arg "the language has no vector constructor");
     float4_style = ("(", ")");
@@ -783,30 +783,6 @@ let render_kernel ?prefix l ~name kernel bufs uops =
   in
   let launch_bounds = Helpers.prod (List.concat_map local_bound uops) in
   let buftypes = List.map (fun (n, u) -> (n, buftype u)) bufs in
-  (* One structure of the parameters, a field [arg<slot>] for each, which the
-     kernel reads first. *)
-  let prefix, kernel, buftypes =
-    match l.args_struct_prefix with
-    | None -> (prefix, kernel, buftypes)
-    | Some qualifier ->
-        let slot u =
-          match arg u with
-          | Param p -> p.slot
-          | _ -> invalid_arg "a parameter needs its ParamArg"
-        in
-        let field (_, u) = strf "%s arg%d; " (param_type l u) (slot u) in
-        let read (n, u) =
-          strf "  %s %s = args->arg%d;" (param_type l u) n (slot u)
-        in
-        ( Some
-            (Option.value prefix ~default:[]
-            @ [
-                strf "struct %s_args { %s};" name
-                  (String.concat "" (List.map field bufs));
-              ]),
-          List.map read bufs @ kernel,
-          [ ("args", strf "%s struct %s_args*" qualifier name) ] )
-  in
   let params = List.map (fun (n, t) -> t ^ " " ^ n) buftypes @ l.extra_args in
   let prg =
     strf "%s %s(%s) {\n%s\n}"
@@ -820,7 +796,8 @@ let render_kernel ?prefix l ~name kernel bufs uops =
 let closes = Op.Set.of_list [ Op.Endif; Op.End; Op.Backedge ]
 let opens = Op.Set.of_list [ Op.If; Op.Range ]
 let undeclared = Op.Set.of_list [ Op.Range; Op.Buffer; Op.Binary ]
-let always_inlined = Op.Set.of_list [ Op.Index; Op.Shrink; Op.Customi ]
+let always_inlined =
+  Op.Set.of_list [ Op.Index; Op.Shrink; Op.Customi; Op.Refparam ]
 let casts = Op.Set.of_list [ Op.Cast; Op.Bitcast ]
 
 (* Clang and Metal reject a statement nested more than 256 brackets deep. A
@@ -1225,7 +1202,6 @@ let clang_lang =
     float4 = (fun t -> "(" ^ t ^ ")");
     float4_style = ("{", "}");
     gep_arr_threshold = 0;
-    args_struct_prefix = Some "const";
     infinity = "__builtin_inff()";
     nan = "__builtin_nanf(\"\")";
     barrier = "__atomic_thread_fence(__ATOMIC_SEQ_CST);";
@@ -1430,7 +1406,7 @@ let clang (target : Helpers.Target.t) =
       }
   in
   Renderer.v ~name:"ClangRenderer" ~vector_alu:true ~has_local:false
-    ~global_max:[ 1; 0; 0 ] ~extra_matcher:clang_extra_matcher
+    ~global_max:[ 1; 0; 0 ] ~extra_matcher:clang_extra_matcher ~packed_args:true
     ~code_for_op:clang_lang.code_for_op ~native
     ~render:(render (clang_kernel ~cpu:(target.device = "CPU")) lang)
     ~compiler:(Compiler_cpu.clang arch) target
@@ -1449,7 +1425,6 @@ let metal_lang =
     barrier = "threadgroup_barrier(mem_flags::mem_threadgroup);";
     float4 = Fun.id;
     code_for_workitem = [ ('g', axis "gid"); ('l', axis "lid") ];
-    args_struct_prefix = Some "constant";
     extra_args =
       [
         "uint3 gid [[threadgroup_position_in_grid]]";
@@ -1547,7 +1522,8 @@ let metal (target : Helpers.Target.t) =
   in
   Renderer.v ~name:"MetalRenderer"
     ~tensor_cores:(if from 7 then Tc.metal else [])
-    ~extra_matcher:metal_extra_matcher ~code_for_op:metal_lang.code_for_op
+    ~extra_matcher:metal_extra_matcher ~packed_args:true
+    ~code_for_op:metal_lang.code_for_op
     ~native
     ~render:(render metal_kernel metal_lang)
     ~compiler:(Compiler_metal.compiler ()) target

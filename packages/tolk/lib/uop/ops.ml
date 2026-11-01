@@ -213,6 +213,7 @@ and kernel_info = {
   estimates : estimates option;
   beam : int;
   optimized : bool;
+  kernel : bool;
   split : split option;
 }
 
@@ -292,6 +293,7 @@ let equal_kernel_info (k0 : kernel_info) (k1 : kernel_info) =
   && Option.equal equal_estimates k0.estimates k1.estimates
   && Int.equal k0.beam k1.beam
   && Bool.equal k0.optimized k1.optimized
+  && Bool.equal k0.kernel k1.kernel
   && Option.equal equal_split k0.split k1.split
 
 let equal_program_info (p0 : program_info) (p1 : program_info) =
@@ -486,7 +488,7 @@ let dtype_of op src arg =
         invalid_argf "shift operands must be integers, not %s"
           (String.concat ", " (List.map (fun x -> repr_dtype x.dtype) src));
       (first op src).dtype
-  | Op.Buffer | Op.Alloc | Op.Param -> (
+  | Op.Buffer | Op.Alloc | Op.Param | Op.Refparam -> (
       match arg with Param p -> p.dtype | _ -> mismatch "a ParamArg")
   | Op.Binary -> Dtype.Uint8
   | Op.Cast | Op.Bitcast -> (
@@ -714,12 +716,12 @@ and repr_estimates (e : estimates) =
 and repr_kernel_info (k : kernel_info) =
   strf
     "KernelInfo(name=%s, applied_opts=%s, opts_to_apply=%s, estimates=%s, \
-     beam=%d, optimized=%s, split=%s)"
+     beam=%d, optimized=%s, kernel=%s, split=%s)"
     (repr_string k.name)
     (repr_tuple (List.map repr_opt k.applied_opts))
     (repr_option (fun l -> repr_tuple (List.map repr_opt l)) k.opts_to_apply)
     (repr_option repr_estimates k.estimates)
-    k.beam (repr_bool k.optimized)
+    k.beam (repr_bool k.optimized) (repr_bool k.kernel)
     (repr_option
        (fun s ->
          repr_tuple
@@ -1341,7 +1343,7 @@ let invalid = const `Invalid
 
 let rec buf_uop u =
   match u.op with
-  | Op.Buffer | Op.Alloc | Op.Param -> u
+  | op when Op.Set.mem op Op.Set.defines -> u
   | _ ->
       let b = base u in
       if b.op = Op.After then base (buf_uop (first b.op b.src))
@@ -1993,7 +1995,7 @@ let rec addrspace u =
 and compute_addrspace u =
   match (u.op, u.arg) with
   | _ when Dtype.equal u.dtype Dtype.Void -> Some Dtype.Alu
-  | (Op.Param | Op.Buffer | Op.Alloc), Param p -> Some p.addrspace
+  | (Op.Param | Op.Refparam | Op.Buffer | Op.Alloc), Param p -> Some p.addrspace
   | (Op.Special | Op.Range | Op.Const), _ | Op.Load, _ -> Some Dtype.Alu
   | Op.Binary, _ -> Some Dtype.Global
   | (Op.Index | Op.Cast | Op.After | Op.Reduce | Op.Store | Op.End), _ ->
@@ -3169,8 +3171,17 @@ let unbound_outputs c =
 (* Programs *)
 
 let kernel_info ?(name = "test") ?(applied_opts = []) ?opts_to_apply ?estimates
-    ?(beam = 0) ?(optimized = false) ?split () =
-  { name; applied_opts; opts_to_apply; estimates; beam; optimized; split }
+    ?(beam = 0) ?(optimized = false) ?(kernel = true) ?split () =
+  {
+    name;
+    applied_opts;
+    opts_to_apply;
+    estimates;
+    beam;
+    optimized;
+    kernel;
+    split;
+  }
 
 let function_name (k : kernel_info) = Helpers.to_function_name k.name
 

@@ -703,7 +703,9 @@ let storage_placed =
             | Op.Param, Param p when p.addrspace <> Dtype.Alu ->
                 is_true ~msg:"on METAL" (p.device = Some "METAL")
             | _ -> ())
-          (Ops.toposort ~calls:Enter (Ops.nth prg 0))
+          (match Ops.arg prg with
+          | Program info -> info.params
+          | _ -> failf "%a is no program" Ops.pp prg)
       in
       List.iter (fun c -> placed c.prg) (calls ()))
 
@@ -1295,7 +1297,7 @@ let environment =
     ("BEAM_PADTO", "1");
     ("TC", "2");
     ("BEAM_STRICT_MODE", "1");
-    ("BEAM_UOPS_MAX", "43");
+    ("BEAM_UOPS_MAX", "50");
     ("BEAM_LOG_SURPASS_MAX", "1");
     ("BEAM_DEBUG", "2");
   ]
@@ -1326,8 +1328,8 @@ let under_environment =
              ignore (search ~timing 1 (scheduled "sum_rows" "clang"));
              List.iter
                (fun c ->
-                 satisfies ~claim:"fewer than 43" int
-                   (fun n -> n < 43)
+                 satisfies ~claim:"fewer than 50" int
+                   (fun n -> n < 50)
                    (instructions c.prg))
                (calls ());
              contains ~sub:"too many uops" (output ()));

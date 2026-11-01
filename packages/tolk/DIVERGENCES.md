@@ -920,32 +920,33 @@ scope, see README.
 
 ## D28. A host program has rig's entry
 
-- **tinygrad:** `codegen/__init__.py:453-457` (`do_compile`: the binary is the
-  source compiled), `runtime/ops_cpu.py:47-57` (`CPUProgram.__call__`, which
-  packs the arguments at the offsets of `TinyELF.iter_sig` and calls the
-  kernel once with their address).
+- **tinygrad:** `codegen/__init__.py:422-427` (`pack_args`: a kernel of a
+  renderer with `packed_args` loads its arguments from one byte parameter at
+  the offsets of `TinyELF.iter_sig`), `:461-465` (`do_compile`: the binary is
+  the source compiled), `runtime/ops_cpu.py:47-57` (`CPUProgram.__call__`,
+  which packs the arguments at those offsets and calls the kernel once with
+  their address).
 - **tolk:** `Codegen.host_entry`, `Codegen.do_compile`.
 - **Differs:** a program for a CPU target is compiled from its source with
   the kernel renamed `NAME_` and an entry `NAME` appended:
   `void NAME(const void *p, long long first, long long end)`. `p` points to
-  the structure of the kernel's parameters, `struct NAME_args`, the one the
-  kernel takes, and the entry passes it on. A split program (D80) reads its
-  bounds from the structure, where a launch passes those of the whole loop,
-  `0` and its iterations; its entry runs the iterations `first` to `end - 1`,
-  `end` at most the iterations, through a copy of the structure that holds
-  `first` and `end` as its bounds, made with `__builtin_memcpy_inline`. The
-  program's source is the renderer's; only its binary differs.
+  the bytes of the kernel's arguments, the ones the kernel takes, and the
+  entry passes them on. A split program (D80) reads its bounds from the
+  bytes, where a launch passes those of the whole loop, `0` and its
+  iterations; its entry runs the iterations `first` to `end - 1`, `end` at
+  most the iterations, through a copy of the bytes that holds `first` and
+  `end` as its bounds, made with `__builtin_memcpy_inline`. The program's
+  source is the renderer's; only its binary differs.
 - **Reason:** (c). rig's host calls a function of linked code with one ABI,
   `void f(const void *params, int64_t first, int64_t end)`, places each
   buffer's address among the parameters, and names a submission's span after
   the entry. It runs a launch's blocks of threads on several cores at once,
   each call with its own `first` and `end`, which the parameters every call
   shares cannot hold. The entry keeps the kernel's name in profiles, and on
-  x86_64 Windows is declared System V's (D178). Clang compiles an assignment
-  of a large structure as a call of `memcpy`, which rig takes from the
-  process, and a remote Windows host's target names no system (D178), so its
-  object would call that `memcpy` by System V: the inline copy calls
-  nothing.
+  x86_64 Windows is declared System V's (D178). Clang compiles a copy of many
+  bytes as a call of `memcpy`, which rig takes from the process, and a remote
+  Windows host's target names no system (D178), so its object would call that
+  `memcpy` by System V: the inline copy calls nothing.
 - **Pinned by:** the `Codegen` suite, `programs › a host program's binary
   holds rig's host entry after the kernel` and `› a host program runs as a
   launch of rig's host, with ten scalars past the argument registers` and
@@ -4636,13 +4637,14 @@ fold wraps integers and holds its float bound`, hold.
 
 ## D174. A kernel's call bodies are functions of its own source on every target
 
-- **tinygrad:** `codegen/__init__.py:402-416` (`LowerCallsCtx`, `lower_call`), which lowers a
-  call's body to a program of its own (`to_program`) unless the renderer has
-  an `inline_prefix`, and `renderer/cstyle.py:72-75,283-292` (`render`),
-  which declares such a program `extern` and calls it through its argument
-  structure; `engine/realize.py:106-112` (`get_runtime`), which links it at
+- **tinygrad:** `codegen/__init__.py:403-416` (`LowerCallsCtx`, `lower_call`), which lowers a
+  call's body to a program of its own (`to_program`, marked
+  `KernelInfo.kernel=False`, so its arguments stay parameters) unless the
+  renderer has an `inline_prefix`, and `renderer/cstyle.py:73-75,278-285`
+  (`render`), which declares such a program `extern` and calls it with its
+  arguments; `engine/realize.py:106-112` (`get_runtime`), which links it at
   load time by name (`runtime/support/elf.py`, `link_syms`). Only HIP has an
-  `inline_prefix` (`renderer/cstyle.py:514`).
+  `inline_prefix` (`renderer/cstyle.py:507`).
 - **tolk:** `Codegen.lower_call`, which lowers every body to the lines of a
   function of the calling kernel and refuses a call of a compiled program, and
   `Cstyle.render`, which writes the function `static inline` with the
@@ -4651,7 +4653,9 @@ fold wraps integers and holds its float bound`, hold.
 - **Differs:** a body called inside a kernel is inlined into the kernel's
   source on every target, as tinygrad does on HIP alone. tinygrad compiles it
   apart on Clang, Metal and CUDA and links the two binaries when it loads the
-  kernel, and so calls a compiled program too.
+  kernel, and so calls a compiled program too. A body is never a program, so
+  no kernel information tolk makes is marked as called by another kernel
+  (`kernel_info.kernel` stays `true`).
 - **Reason:** (c): rig links a host object only against symbols of the process
   (`Rig.section-host_linking`: each symbol the object refers to and does not
   define is defined by the process), and loads each GPU image alone, so a

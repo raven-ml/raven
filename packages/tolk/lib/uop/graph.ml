@@ -535,14 +535,23 @@ let estimates : Ops.estimates codec =
   |> finish
 
 let kernel_info : Ops.kernel_info codec =
-  let make name applied_opts opts_to_apply estimates beam optimized split :
-      Ops.kernel_info =
+  let make name applied_opts opts_to_apply estimates beam optimized kernel split
+      : Ops.kernel_info =
     let split =
       Option.map
         (fun (iterations, lo, hi) : Ops.split -> { iterations; lo; hi })
         split
     in
-    { name; applied_opts; opts_to_apply; estimates; beam; optimized; split }
+    {
+      name;
+      applied_opts;
+      opts_to_apply;
+      estimates;
+      beam;
+      optimized;
+      kernel;
+      split;
+    }
   in
   let get (f : Ops.kernel_info -> _) = f in
   record "KernelInfo" make
@@ -555,6 +564,7 @@ let kernel_info : Ops.kernel_info codec =
        (get (fun k -> k.estimates))
   |> field "beam" ~default:0 int (get (fun k -> k.beam))
   |> field "optimized" ~default:false bool (get (fun k -> k.optimized))
+  |> field "kernel" ~default:true bool (get (fun k -> k.kernel))
   |> field "split" ~default:None
        (option (triple sint int int))
        (get (fun k ->
@@ -685,7 +695,7 @@ let arg_of (o : Op.t) v : Ops.arg =
   match o with
   | Const -> Const (const.read v)
   | Cast | Bitcast -> Dtype (dtype.read v)
-  | Param | Buffer | Alloc -> Param (param_arg.read v)
+  | Param | Refparam | Buffer | Alloc -> Param (param_arg.read v)
   | Range ->
       let axis_type, axis_id = range_arg.read v in
       Range { axis_type; axis_id }

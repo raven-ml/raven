@@ -114,7 +114,7 @@ let storage_arg u (p : param_arg) =
 let render_arg u =
   match (op u, arg u) with
   | Op.Const, _ -> const_arg u
-  | (Op.Param | Op.Buffer | Op.Alloc), Param p -> storage_arg u p
+  | (Op.Param | Op.Refparam | Op.Buffer | Op.Alloc), Param p -> storage_arg u p
   | Op.Range, _ ->
       String.concat " "
         (axis_name (axis_type u) :: List.map string_of_int (axis_id u))

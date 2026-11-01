@@ -97,7 +97,7 @@ let timed_call ~value prg =
                 (p.slot, const ~dtype:(dtype u) (`Int (Bigint.of_int (value u))))
             else Some (p.slot, u)
         | _ -> None)
-      (src (nth prg 1))
+      (kernel_params prg)
   in
   let n = List.fold_left (fun n (slot, _) -> max n (slot + 1)) 0 arguments in
   let argument slot =

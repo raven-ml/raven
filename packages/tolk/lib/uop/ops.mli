@@ -181,6 +181,9 @@ type kernel_info = {
   optimized : bool;
       (** Whether the kernel went through the optimiser, which then leaves it
           as it is. *)
+  kernel : bool;
+      (** Whether the runtime launches it; [false] for a body another kernel
+          calls, as a compiled program. *)
   split : split option;  (** The loop its launch splits, if any. *)
 }
 (** The type for the arguments of a kernel's {!Op.Sink}. *)
@@ -192,12 +195,13 @@ val kernel_info :
   ?estimates:estimates ->
   ?beam:int ->
   ?optimized:bool ->
+  ?kernel:bool ->
   ?split:split ->
   unit ->
   kernel_info
 (** [kernel_info ()] is the argument with these fields. [name] defaults to
     ["test"], the lists to [[]] and [None], [beam] to [0], [optimized] to
-    [false] and [split] to [None]. *)
+    [false], [kernel] to [true] and [split] to [None]. *)
 
 val function_name : kernel_info -> string
 (** [function_name k] is [k.name] as an identifier

@@ -10,6 +10,7 @@ let declared =
       Alloc;
       Noop;
       Param;
+      Refparam;
       Call;
       Program;
       Linear;

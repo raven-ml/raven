@@ -33,6 +33,9 @@ type t =
   (* Structure *)
   | Noop  (** Computes nothing. *)
   | Param  (** A parameter of a function: a buffer or a scalar variable. *)
+  | Refparam
+      (** A buffer parameter passed by its address: its first source is its
+          size, as a {!Param}'s, its second the address, a {!Dtype.Uint64}. *)
   | Call
       (** An invocation of the body in its first source on the remaining
           sources. A call that produces a value writes it into {!Alloc}
@@ -224,8 +227,9 @@ module Set : sig
       element by element. *)
 
   val defines : t
-  (** [defines] is the operations that declare storage or variables: {!Param},
-      {!Buffer} and {!Alloc}. *)
+  (** [defines] is the operations that declare storage or variables, and
+      constant bytes: {!Param}, {!Refparam}, {!Buffer}, {!Alloc} and
+      {!Binary}. *)
 
   val irreducible : t
   (** [irreducible] is the operations that index arithmetic treats as atoms:
