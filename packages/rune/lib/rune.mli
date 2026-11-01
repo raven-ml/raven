@@ -1362,7 +1362,9 @@ val jit :
     for its layout. Each result that takes no donated argument's memory is
     fresh, at the placement eager computation gives it. A value [f] captures on
     another device, which [f] places where the program computes, is copied there
-    once per program, which holds the copy.
+    once per program, which holds the copy. A program on one device holds the
+    storage of the values it computes from its first call on, so that a call
+    allocates only its results.
 
     {b Several devices.} A program whose values lie on several devices of one
     set, cut across them ({!Nx.Placement.split}, {!Nx.Placement.mesh}), whole on
@@ -1378,8 +1380,10 @@ val jit :
     devices from a start the program binds when it runs: where every window
     of a cut has one shape, a program makes as many kernels whatever the
     number of devices. Each argument's piece on a device is an argument of its
-    own for the variant, and such a program lends no memory: a call that
-    donates an argument evaluates ({!section-evaluated}). With
+    own for the variant, which a donated argument's piece lends to the result's
+    piece on that device ({!section-donation}). Such a program holds no memory
+    between calls but the copies of its constants: each call makes on each
+    device what it computes there and returns it once that work is done. With
     [RUNE_JIT_DEBUG] set, the first call prints each move between devices, the
     function that makes it and its bytes. The values of a
     program over several devices must lie on devices of one target, its device
@@ -1418,7 +1422,9 @@ val jit :
     the latest result of the cycle that takes memory gives up that argument, and
     the arguments are lent again without the pair. A donated argument whose
     memory another value shares, or that is a view off 16 bytes or out of C
-    order, lends nothing. Each donated argument lends to one result at most, the
+    order, lends nothing. Over several devices each piece of a donated argument
+    lends its device's memory apart, to a piece of a result on that device. Each
+    donated argument lends to one result at most, the
     results of a scatter first, and a scatter whose result takes its target's
     memory writes only its updates there. A result's values are the same
     either way.
@@ -1715,10 +1721,10 @@ val jit :
     than {!detach}, such as a loop, a {!switch}, a {!remat} or a custom rule, a
     check, an addition to a {!Total}, an emission, a traced value placed onto
     another set, a placement of an argument that gives a device more of it, as
-    a gather of a cut argument whole on each device does, since a compiled
-    program would hold what it gathers on every device between calls, or values
-    on devices of several targets, and evaluates a call that donates an
-    argument, since such a program lends no memory. It also declines a
+    a gather of a cut argument whole on each device does, since a compiled call
+    holds all it gathers and every piece of the closings it computes at once,
+    where an evaluated one lets each go after its last read, or values on
+    devices of several targets. It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a
     compiled call's are, and a call with donated arguments consumes them. It
@@ -1759,16 +1765,14 @@ val jit :
     weights placed whole on every device inside its calls, one call
     forward, one backward by {!vjp} and one update per layer, its state
     donated ({!Nx.donate}), such a step evaluates over the devices, its
-    calls gathering a cut argument or donating it. Each
-    call lets a value go after its last read, nx reduces each gradient's
-    partial sums in pieces of at most [C = 256] KiB
-    ({!Nx.section-reductions}), and the update writes over the state it is
-    donated, each operation's result over the value it reads last, as an
-    evaluated call allows ({!section-evaluated}), with the same bits. An
-    update of elementwise operations so holds beside the state only the
-    values alive at once that no operation could write over its operand:
-    Adam's, written elementwise, one temporary of a share at a time, as
-    the gradient, which the step keeps, cannot take its square.
+    forward and backward calls gathering a cut argument, and its update
+    compiles. Each evaluated call lets a value go after its last read
+    ({!section-evaluated}), nx reduces each gradient's partial sums in
+    pieces of at most [C = 256] KiB ({!Nx.section-reductions}), and the
+    update writes each piece of its results over the piece of the state it
+    is donated on that device ({!section-donation}), with the bits it gives
+    undonated. Adam's update, written elementwise, so holds beside the state
+    at most one temporary of a share.
     For layers [relu (h w)] of [L] bytes of weights, a step so holds on
     each device at most [(P + G + O) / n], its share of the activations it
     keeps and of the cotangent it carries back, and what closing a layer's

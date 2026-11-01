@@ -207,8 +207,10 @@ let piece_forms (F f) =
 
 (* Whether placing a value of [shape] at [p] onto [q] gathers it, some device's
    window of it growing, as fully sharded training gathers a layer's weights
-   whole on each device: a compiled program would hold what it gathers in its
-   storage on every device between calls, past the share the caller keeps. *)
+   whole on each device: a compiled call holds what it gathers and every piece
+   of the closings it computes at once, where an evaluated one lets each go
+   after its last read, and so holds more than the share the caller keeps
+   allows. *)
 let gathers q p shape =
   let held pl =
     Array.map
@@ -280,7 +282,7 @@ let split ~name (p : Program.t) forms =
                 when argument && gathers q (Nx.placement x) (Nx.shape x) ->
                   decline
                     "Nx.place gathers an argument cut across devices: a \
-                     program over them holds what it gathers between calls"
+                     compiled call holds all it gathers and closes at once"
               | _ -> Nx.Prim.partition (engine ri ~by moves) ~by op
             in
             bind := base;

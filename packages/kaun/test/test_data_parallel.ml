@@ -6,7 +6,8 @@
 (* Data-parallel training through [Rune.jit] over a batch split across two CPU
    devices, on kaun layers: a tiny causal attention + linear stack trained for a
    few SGD steps, the parameters entering from the host as a copy on each
-   device. Every step compiles: no call is evaluated. The loss trajectory and
+   device. Each step is given its state donated, and every step compiles: no
+   call is evaluated. The loss trajectory and
    final weights must match the single-device step up to fp32 reduction order
    (the cross-device gradient allreduce reorders the batch sum). Momentum runs
    thread a real SGD state through the step — the state is a structure over
@@ -134,7 +135,7 @@ let trajectory ~steps ~at ~batch_at momentum =
   let x = x_init batch_at and tgt = tgt_init batch_at in
   Array.init steps (fun _ ->
       let before = Rune.evaluations () in
-      let next, loss = step !s x tgt in
+      let next, loss = step (Nx.Ptree.donate (state model) !s) x tgt in
       equal ~msg:"the step compiled" int 0 (Rune.evaluations () - before);
       s := next;
       let floats =

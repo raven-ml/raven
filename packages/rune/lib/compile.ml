@@ -2279,7 +2279,7 @@ type variant = {
           then evaluates. *)
 }
 
-let link ~beam ~parallel rigs l =
+let link ~beam ~parallel ~storage rigs l =
   match l.sink with
   | None ->
       {
@@ -2332,7 +2332,7 @@ let link ~beam ~parallel rigs l =
           ~input_vars:vars linear
       in
       let schedule =
-        Engine.link ~devices:(named rigs) ~bound:l.bound linear
+        Engine.link ~devices:(named rigs) ~bound:l.bound ~storage linear
       in
       {
         schedule = Some (schedule, vars);
@@ -2495,10 +2495,6 @@ let variant t layouts phases donated settings =
                    && Array.for_all (Int.equal 0) phases
                    && not (Array.exists Fun.id donated) ->
                 lowered
-            | _ when Option.is_some t.split && Array.exists Fun.id donated ->
-                decline
-                  "a donated argument over several devices: a program over \
-                   them lends no memory"
             | _ ->
                 lower ~rig:t.rig ~split:(Option.is_some t.split)
                   ~uploads:t.uploads t.program t.forms ~layouts ~phases ~donated
@@ -2506,8 +2502,15 @@ let variant t layouts phases donated settings =
           (* A declined variant is kept; another failure, as an interrupted
              search, keeps nothing. *)
           let linked =
+            (* A split program holds no memory between calls: each call
+               makes what it computes on each device, so a device holds
+               between calls only the values its caller keeps. *)
+            let storage : Engine.storage =
+              if Option.is_some t.split then Per_run else Linked
+            in
             match
-              link ~beam:t.beam ~parallel:t.parallel t.rigs (lowered ())
+              link ~beam:t.beam ~parallel:t.parallel ~storage t.rigs
+                (lowered ())
             with
             | l -> Ok l
             | exception e -> (
@@ -2577,15 +2580,16 @@ let evaluations () = !(Domain.DLS.get evaluations_made)
 let evaluated_call () = incr (Domain.DLS.get evaluations_made)
 
 (* [consumed ~by args f] is [f arrays take value] under a consumer of
-   [args], [arrays k] the arrays of argument [k], [take k a] the memory of its
-   array [a] for a result, if it may take it ({!Nx.Prim.Consumer.take}), and
+   [args], [arrays k] the arrays of argument [k], [take k ~piece a] the memory
+   of its array [a] on the device at position [piece] of its placement for a
+   result, if it may take it ({!Nx.Prim.Consumer.take}), and
    [value k] the argument as a value of its own, owning its memory where a
    donation of it may write there ({!Nx.Prim.Consumer.value}). *)
 let consumed ~by args f =
   match List.init (Array.length args) Fun.id with
   | [] ->
       let none _ = invalid_arg (by ^ ": no argument") in
-      f none (fun k _ -> none k) none
+      f none (fun k ~piece:_ _ -> none k) none
   | k0 :: _ as all ->
       let (V x0) = args.(k0) in
       let set = Nx.Placement.devices (Nx.placement x0) in
@@ -2598,9 +2602,9 @@ let consumed ~by args f =
       Nx.Prim.Consumer.with_ ~by (List.map any all) (fun c ->
           f
             (fun k -> Nx.Prim.Consumer.arrays c k)
-            (fun k (A.Any a) ->
+            (fun k ~piece (A.Any a) ->
               Option.map A.buffer
-                (Nx.Prim.Consumer.take c k (A.dtype a) (A.layout a)))
+                (Nx.Prim.Consumer.take c k ~piece (A.dtype a) (A.layout a)))
             (fun k ->
               let (V x) = args.(k) in
               V (Nx.Prim.Consumer.value c k (Nx.dtype x))))
@@ -2632,7 +2636,7 @@ let results t arrays =
           | Over (F f, js) ->
               let array j = A.expect f.dtype arrays.(j) in
               let arrays = Iarray.map array (Iarray.of_array js) in
-              V (Nx.Repr.of_shards f.placement arrays))
+              V (Nx.Repr.unsafe_of_shards f.placement arrays))
         s.outputs
 
 (* Evaluation *)
@@ -2765,22 +2769,33 @@ let issue_checks t v slots s =
 (* A buffer for one element of [dt]. *)
 let one rig (type v s) (dt : (v, s) D.t) = Rig.Buffer.create rig (D.bytes dt 1)
 
+(* Each leaf of a call's arguments, an argument's piece in a split program: the
+   argument and the piece's position in its placement. *)
+let owners t args =
+  match t.split with
+  | None -> Array.mapi (fun k _ -> (k, 0)) args
+  | Some s ->
+      Array.concat
+        (Array.to_list
+           (Array.mapi (fun k n -> Array.init n (fun j -> (k, j))) s.args))
+
 let rec run t args =
   (* A split program reads each piece of an argument as an argument of its
-     own and lends no memory, so a variant with a donated argument declines:
-     the call evaluates, and nx's donation lends the argument's memory. *)
+     own, and a donated argument's pieces each lend their device's memory. *)
+  let owners = owners t args in
   let donated =
-    match t.split with
-    | None -> Array.map (fun (V x) -> Nx.Prim.donated x) args
-    | Some s ->
-        Array.concat
-          (Array.to_list
-             (Array.mapi
-                (fun i (V x) -> Array.make s.args.(i) (Nx.Prim.donated x))
-                args))
+    Array.map
+      (fun (k, _) ->
+        let (V x) = args.(k) in
+        Nx.Prim.donated x)
+      owners
   in
   consumed ~by:t.name args @@ fun arrays take value ->
   let leaves = Array.concat (List.init (Array.length args) arrays) in
+  let take j a =
+    let k, piece = owners.(j) in
+    take k ~piece a
+  in
   let layouts =
     Array.map (fun (A.Any a) -> within (A.dtype a) (A.layout a)) leaves
   in
@@ -2811,8 +2826,8 @@ and linked t v leaves take =
     if first = 0 && length = Rig.Buffer.length b then b
     else Rig.Buffer.view b ~first ~length
   in
-  (* A lending argument's memory, or a copy of it where nx's consumer does not
-     give its memory, as where another value reads it. *)
+  (* A lending argument's memory, or a copy of it on its device where nx's
+     consumer does not give its memory, as where another value reads it. *)
   let lending = Array.make (Array.length leaves) None in
   let lend k =
     match lending.(k) with
@@ -2823,7 +2838,10 @@ and linked t v leaves take =
           | Some b -> b
           | None ->
               let src = run_of k in
-              let dst = Rig.Buffer.create t.rig (Rig.Buffer.length src) in
+              let dst =
+                Rig.Buffer.create (Rig.Buffer.device src)
+                  (Rig.Buffer.length src)
+              in
               Rig.Buffer.copy ~src ~dst;
               report "an argument copied: its memory is shared";
               dst

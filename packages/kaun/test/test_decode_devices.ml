@@ -7,8 +7,8 @@
    nx.cpu computes: a Llama-shaped decoder whose projections are split by
    columns into the heads and by rows out of them, and whose caches are split on
    their kv-heads axis. It generates the tokens one device generates, and its
-   pools stay split. A compiled program over several devices is evaluated and
-   lends no donated memory (rune.mli), so the step writes new pools. *)
+   pools stay split. Each device's piece of a donated pool lends its memory to
+   the step's pool there (rune.mli), so the step writes its pools in place. *)
 
 open Windtrap
 open Kaun

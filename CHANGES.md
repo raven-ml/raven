@@ -353,6 +353,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled call over several devices given a donated argument lends each
+  device's piece of it to the result's piece there, so an update of state cut
+  across devices writes in place; such calls were evaluated. A program over
+  several devices holds no memory between calls: what it computes on each
+  device is made per call and returned once that work is done.
 - A compiled program over the memory devices of one set compiles as many
   kernels whatever the number of devices, where the cut is even: a move of a
   window between devices reads it from a start bound when the program runs.
@@ -362,10 +367,8 @@ All notable changes to this project will be documented in this file.
   windows in kernels of its own, compiled once per target, with eager's
   placements. Such programs were evaluated. Loops, `switch`, `remat`, custom
   rules, checks and totals over several devices are still evaluated, as are
-  programs over devices of several targets, calls that donate an argument
-  and programs that gather a cut argument, as fully sharded training gathers
-  its weights: a compiled one lends no memory and holds what it gathers
-  between calls.
+  programs over devices of several targets and programs that gather a cut
+  argument, as fully sharded training gathers its weights.
 - A loop's step that runs a construct over none of the step's values, such as
   a scan over a capture, executes its `Rune.callback`s and offers its
   `Rune.Probe` emissions every trip: the construct ran once, so a callback ran
@@ -845,6 +848,9 @@ thread.
 
 ### Tolk (new)
 
+- `Tolk_engine.link ~storage:Per_run` makes a schedule's storage at each run
+  and returns it once the run's work is done, so the schedule holds none
+  between runs. A run keeps none of the buffers it was given once it returns.
 - `Dtype.const` wraps an integer to a signed type too: 300 as an `Int8` is
   44, as it was through `Ops`' reads at the width.
 - A HIP kernel that calls a body compiles: its program defines the body's
@@ -3399,6 +3405,10 @@ thread.
 
 ### Nx
 
+- `Nx.Prim.Consumer.take` takes `~piece`, the device of the operand's
+  placement whose memory a result takes, so a compiler that runs an operation
+  per device lends each device's memory apart. `Nx.Repr.unsafe_of_shards`
+  makes a value cut across devices that owns its arrays' memory.
 - `Nx.Rng.split`, `split_batch`, `fold_in` and `fold_in_tensor` of a key on
   a set without kernels, such as a GPU's outside `Rune.jit`, raise naming
   the host, where such keys are derived, and `Nx.Rng.place Nx.Host.on key`.

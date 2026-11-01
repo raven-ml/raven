@@ -1155,12 +1155,15 @@ let test_evaluated_memory () =
   equal ~msg:"values nothing reads" refused None
     (fits (Rune.jit' (checked (unread 8))))
 
-(* An evaluated call over values cut across two devices writes its donated
-   state in place: each donated argument, and each value an operation of
-   the update makes, goes to the operation that reads it last, which
-   writes its result there. So the update holds at most one temporary of a
-   share beside the state, and gives the bits it gives without donation. *)
-let test_evaluated_in_place () =
+(* A call over values cut across two devices writes its donated state in
+   place, and gives the bits it gives without donation. Compiled, each
+   donated argument's piece lends its device's memory to the result's piece
+   there. Evaluated, here for a check of the gradient, each donated argument,
+   and each value an operation of the update makes, goes to the operation
+   that reads it last, which writes its result there. Either way the update
+   holds at most one temporary of a share beside the state. A compiled step
+   given the results of the step before writes over them too. *)
+let test_in_place ~checked () =
   let rigs =
     List.init 2 (fun k ->
         Result.get_ok
@@ -1181,6 +1184,10 @@ let test_evaluated_in_place () =
     Rune.jit
       T.(state @-> tensor @-> returns state)
       (fun (w, m) g ->
+        if checked then begin
+          let s = Nx.sum g in
+          Nx.check T.tensor (Nx.isfinite s) s (fun _ _ -> Exit)
+        end;
         let m = Nx.add (Nx.mul_s m 0.9) (Nx.mul_s g 0.1) in
         let s = Nx.add_s (Nx.sqrt (Nx.abs g)) 1e-3 in
         (Nx.sub w (Nx.mul_s (Nx.div m s) 1e-3), m))
@@ -1194,8 +1201,10 @@ let test_evaluated_in_place () =
   in
   let g = cut 2 in
   let w0, m0 = update (cut 0, cut 1) g in
+  let w0', m0' = if checked then (w0, m0) else update (w0, m0) g in
   let before = Rune.evaluations () in
   let w, m = (cut 0, cut 1) in
+  (* Two steps, the second given the first's results donated. *)
   let held = settled () in
   List.iter2 (fun r h -> Rig.set_budget r (h + share)) rigs held;
   let w1, m1 =
@@ -1203,16 +1212,28 @@ let test_evaluated_in_place () =
       ~finally:(fun () -> List.iter (fun r -> Rig.set_budget r max_int) rigs)
       (fun () -> update (Nx.donate w, Nx.donate m) g)
   in
-  equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
   equal ~msg:"the weights" bits_t (bits w0) (bits w1);
-  equal ~msg:"the moment" bits_t (bits m0) (bits m1)
+  equal ~msg:"the moment" bits_t (bits m0) (bits m1);
+  (* An evaluated call's result shares its argument's memory for good. *)
+  if not checked then begin
+  let held = settled () in
+  List.iter2 (fun r h -> Rig.set_budget r (h + share)) rigs held;
+  let w2, m2 =
+    Fun.protect
+      ~finally:(fun () -> List.iter (fun r -> Rig.set_budget r max_int) rigs)
+      (fun () -> update (Nx.donate w1, Nx.donate m1) g)
+  in
+  equal ~msg:"the weights after two steps" bits_t (bits w0') (bits w2);
+  equal ~msg:"the moment after two steps" bits_t (bits m0') (bits m2)
+  end;
+  equal ~msg:"evaluated" bool checked (Rune.evaluations () > before)
 
-(* Programs over values cut across two devices, evaluated where a call
-   donates an argument, since such a program lends no memory, and compiled
-   where it donates none: arguments drawn from fewer sources, so that one
-   value may be donated twice, and outputs that may repeat one value.
-   Donated or not, a call gives the same bits, and its results lie apart
-   from one another and from the arguments it did not consume. *)
+(* Programs over values cut across two devices, compiled, each donated
+   argument's pieces lending their devices' memory: arguments drawn from
+   fewer sources, so that one value may be donated twice, and outputs that
+   may repeat one value. Donated or not, a call gives the same bits, and its
+   results lie apart from one another and from the arguments it did not
+   consume. *)
 type expr =
   | Arg of int
   | Neg of expr
@@ -1323,8 +1344,7 @@ let law_donating c =
   cover "a repeated output" (c.repeats <> []);
   let before = Rune.evaluations () in
   let ys = g given in
-  equal ~msg:"evaluated iff an argument is donated" bool donates
-    (Rune.evaluations () > before);
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal ~msg:"donated or not, the bits" (list bits_t) reference
     (List.map bits ys);
   (* Each result's buffers, then those of each argument still alive. *)
@@ -1620,9 +1640,9 @@ let test_shared () =
     (bits view)
 
 (* An evaluated program, here with a check over values cut across two
-   devices, consumes its donated arguments and gives eager's values. A program
-   over such values lends no memory, so a call that donates an argument is
-   evaluated too, and one that donates none compiles. *)
+   devices, consumes its donated arguments and gives eager's values, and so
+   does a compiled program over such values, whose pieces lend their
+   devices' memory. *)
 let test_evaluated_donation () =
   let at w () = Nx.place (on w) (v [| 1.; 2.; -0.; 4. |]) in
   let f x =
@@ -1640,8 +1660,8 @@ let test_evaluated_donation () =
   let d = at Cut () in
   let before = Rune.evaluations () in
   let y = Rune.jit' g (Nx.donate d) in
-  equal ~msg:"donated over two devices, evaluated" bool true
-    (Rune.evaluations () > before);
+  equal ~msg:"donated over two devices, compiled" int 0
+    (Rune.evaluations () - before);
   equal bits_t expected (bits y);
   equal ~msg:"placement" bool true
     (Nx.Placement.equal (Nx.placement y) (on Cut));
@@ -4359,9 +4379,9 @@ let trainings = ref 0
    moments cut along axis 0, the batch cut along axis 0 too, each layer a
    call forward, one backward by [vjp] and one updating its weights and
    moments, its weights placed whole on every device where a call reads
-   them. [step] runs the forward over every layer, keeping each layer's
-   output, then the backward and the update layer by layer from the
-   last. *)
+   them. The update, given its state donated, compiles. [step] runs the
+   forward over every layer, keeping each layer's output, then the backward
+   and the update layer by layer from the last. *)
 let sharded ~n ~d ~layers ~batch =
   incr trainings;
   let ds =
@@ -4407,7 +4427,9 @@ let sharded ~n ~d ~layers ~batch =
       dh := dl;
       g.(l) <- gl;
       let m, v = mv.(l) in
+      let before = Rune.evaluations () in
       let w', mv' = update (Nx.donate w.(l), (Nx.donate m, Nx.donate v)) gl in
+      equal ~msg:"the update compiled" int 0 (Rune.evaluations () - before);
       w.(l) <- w';
       mv.(l) <- mv'
     done
@@ -4541,10 +4563,12 @@ let () =
              test "results are fresh" test_fresh;
              test "an evaluated program lets each value go"
                test_evaluated_memory;
+             test "a compiled call writes its donated state in place"
+               (test_in_place ~checked:false);
              test "an evaluated call writes its donated state in place"
-               test_evaluated_in_place;
+               (test_in_place ~checked:true);
              prop ~count:200 ~examples:donating_examples
-               "an evaluated call gives the bits it gives undonated, its \
+               "a call over cut values gives the bits it gives undonated, its \
                 results apart"
                donating_case law_donating;
              test "an argument off 16 bytes" test_phase;
