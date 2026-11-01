@@ -1111,9 +1111,7 @@ for byte. `EXPAND_SSA` is read once per process, so the cases rendered under
 it run in a process of their own. `rewrite_inputs.golden`,
 `rewrites.golden` and `rewritten.golden` hold each target's `extra_matcher`
 applied to 25 graphs; `declarations.golden` what each renderer declares for 24
-targets; `written.golden` how each writes its native operations. D16's CUDA
-sources are compared once D16's guard is written back as tinygrad writes it
-(`CS › sources`, `tinygrad_of_d16`). A kernel with an operation D17 narrows has a second kernel
+targets; `written.golden` how each writes its native operations. A kernel with an operation D17 narrows has a second kernel
 recorded, the same with a cast after each such operation, and its golden is
 tinygrad's source for that kernel (`CS › narrowing`). Execution runs on the host through the
 engine (`support/run.ml`), which compiles each kernel with rig's host entry
@@ -1152,7 +1150,7 @@ engine (`support/run.ml`), which compiles each kernel with rig's host entry
 | tinygrad: `renderer/cstyle.py` `ClangRenderer` (no test) | kernels run as their graph says | `CS › execution on the host` (18 tests on known values); slow law `every kernel the interpreter runs writes what it computes` (36 kernels, 10 random inputs each; the others excluded in the suite with their reasons) |
 | D17: `renderer/cstyle.py:265-270` C promotion of narrow operands | signed char, short and `__fp16` operations compute in int or float, and only the stored value narrows; tolk casts each inlined one back, where tinygrad computes the unsigned ones that wrap in unsigned int (`:85-87`) | `CS › narrowing › cases.golden` (every kernel's written kernel is `with_d17_casts` of it, and the sources it changes are tinygrad's for the kernel with those casts); `CS › execution on the host › rounds each operation on halves to a half`, `wraps each operation on unsigned chars`; slow law `a kernel over a narrow type wraps and rounds as the interpreter` (8 kernels, inputs over each type's whole range) |
 | tinygrad: `runtime/test_dtype.py::TestBFloat16DType::test_bf16_floor` | a bfloat16 floor, which lowers to a trunc, on a device | `CS › bfloat16 truncation on Metal › truncates a bfloat16 in float32`, `leaves it to CUDA, which truncates a bfloat16 with htrunc`; slow: `compiles a kernel that truncates a bfloat16` (skipped without MTLCompiler); `CS › sources › by default › metal_transcendental_bf16` (D18 is withdrawn) |
-| D16: `renderer/cstyle.py:33,40` a float8 conversion saturates infinities on CUDA | an infinity stays one in e5m2 and becomes a NaN of its sign in e4m3; finite values saturate | `CS › float8 infinities on CUDA` (6 tests: the guard exactly where a value converts to a float8, the byte of each infinity, infinite constants as their bits); `CS › sources › cuda_dtype_fp8*`, `cuda_inf_nan_fp8*` through `tinygrad_of_d16`; NVRTC: slow, `CS › every GPU kernel compiles with its target's toolchain › cuda_*` |
+| tinygrad: `renderer/cstyle.py:25-26,33,40` a float8 conversion on CUDA saturates | a value or constant converts with the saturating constructor, an infinity to its format's greatest finite value | `CS › sources › by default › cuda_dtype_fp8*`, `cuda_inf_nan_fp8*`; NVRTC: slow, `CS › every GPU kernel compiles with its target's toolchain › cuda_*` (D16 is withdrawn) |
 
 ## C
 

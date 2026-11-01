@@ -476,38 +476,16 @@ folds to `True` there as in `Shape.fold_const_alu`; tinygrad's
   `› without comgr on the machine` and `› without MTLCompiler on the machine`
   pin the error that names the library and its variable.
 
-## D16. CUDA keeps a float8 infinity special
+## D16. Withdrawn
 
-- **tinygrad:** `renderer/cstyle.py:33,40` (a cast to `__nv_fp8_e4m3` or
-  `__nv_fp8_e5m2` is the constructor, which converts with
-  `__NV_SATFINITE`), `:25-26` (an infinite constant is cast the same way).
-- **tolk:** `Cstyle.fp8_infinity`, `Cstyle.cuda_fp8_guard` and
-  `Cstyle.is_fp8_guarded`; the two fp8 rules of `Cstyle.cuda_lang`; and
-  `Cstyle.cuda_kernel`, whose prefix declares the helper.
-- **Differs:** the saturating conversion turns ±inf into ±max. tolk
-  keeps an infinity special, as `Dtype.encode_format` stores it: it stays an
-  infinity in e5m2 and becomes a NaN of its sign in e4m3, which has no
-  infinity. A
-  cast of a float value calls `tg_fp8`, a helper the kernel declares only
-  when it has such a cast, which converts with the constructor and then
-  writes the bits of the special value if the input was infinite. An
-  infinite constant is its bits, through `tg_bitcast`. Finite values,
-  including those that overflow the format, still saturate. HIP needs no
-  guard: on gfx950, `f32_to_fp8` clamps only finite values, and the
-  non-saturating `cvt_pk_{fp8,bf8}_f32` it then calls keeps an infinity in
-  bf8 and makes it NaN in fp8, which is unverified on hardware.
-- **Reason:** none. nx's float8 encoder keeps infinities special, but rune
-  hands tolk no 8-bit float: it stores each as `Uint8` and converts it itself
-  (rune's `Lower_arith.dtype`), so no kernel of rune's casts to one, and no
-  other raven code names one.
-- **Pinned by:** `Tolk.Cstyle › float8 infinities on CUDA`, which
-  checks where the guard is declared, the byte each infinity writes and the
-  bits of infinite e5m2 constants; `Tolk.Cstyle › sources › by default ›`
-  `cuda_dtype_fp8e4m3`, `cuda_dtype_fp8e5m2`, `cuda_inf_nan_fp8e4m3`
-  and `cuda_inf_nan_fp8e5m2`, which compare with tinygrad's source once the
-  guard is written back as tinygrad writes it; and `Tolk.Cstyle › every
-  GPU kernel compiles with its target's toolchain › cuda_*` (slow, skipped
-  without NVRTC).
+A CUDA conversion to an 8-bit float kept an infinity special: an infinity in
+e5m2 and a NaN of its sign in e4m3, where nx stores ±448. rune hands tolk no
+8-bit float, so `Cstyle.cuda` converts with the saturating constructor, as
+tinygrad's `renderer/cstyle.py:25-26,33,40` do: an infinity becomes the
+greatest finite value of its sign in both formats. This departs from nx in
+e5m2, which keeps an infinity, and from the folder, where `Dtype.encode_format`
+keeps one in e5m2 and makes it a NaN in e4m3, as tinygrad's `float_to_fp8`
+(`dtype.py:243-244`) does beside its own CUDA kernels.
 
 ## D17. Each operation on a narrow signed scalar is narrowed in the source
 

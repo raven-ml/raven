@@ -52,8 +52,8 @@ without one; Metal's run on macOS alone.
 What no machine of the default run could check, to verify on the hardware
 named:
 
-- **NVIDIA:** a CUDA kernel stores an infinity converted to e5m2 as an
-  infinity and to e4m3 as a NaN of its sign (D16), and `__half` and
+- **NVIDIA:** a CUDA kernel stores an infinity converted to e4m3 or e5m2 as
+  the format's greatest finite value of its sign, and `__half` and
   `nv_bfloat16` operations compute in their own type, as `cuda_fp16.hpp` and
   `cuda_bf16.hpp` declare (D17).
 - **Contraction (D25):** a CUDA kernel compiled with `--fmad=false` and a HIP
@@ -67,8 +67,6 @@ named:
   compiled by comgr, at their default flags, divide floats with `/` as IEEE
   does, rounding once: `3 / 7` is `0x3edb6db7`, where the product by the
   reciprocal is `0x3edb6db8` (`division`'s operands).
-- **AMD gfx950:** `f32_to_fp8`'s non-saturating `cvt_pk_{fp8,bf8}_f32` makes
-  an infinity a NaN in fp8 and keeps it in bf8 (D16).
 - **The engine on each GPU:** the Tolk_engine suite's `GPUs` group runs
   recorded programs, loops, a gather and the `DEBUG` reports on Metal, CUDA,
   NV and AMD through rig, each skipping where the machine has no such GPU.

@@ -1539,21 +1539,6 @@ let nms =
 
 let rec take n = function x :: l when n > 0 -> x :: take (n - 1) l | _ -> []
 
-(* an infinity keeps its meaning, which the saturating conversions to an 8-bit
-   float lose: e5m2 has infinities, and e4m3 gives NaN *)
-let fp8_infinity dt = if Dtype.equal dt Dtype.Fp8e5m2 then 0x7c else 0x7f
-
-let cuda_fp8_guard =
-  "template <class T, class F> __device__ __forceinline__ T tg_fp8(F v, \
-   unsigned char inf) { T r = T(v); if (isinf((double)v)) r.__x = \
-   (signbit((double)v) ? 0x80 : 0) | inf; return r; }"
-
-let is_fp8_guarded u =
-  is Op.Cast u
-  && List.mem (dtype u) Dtype.fp8_ocp
-  && List.mem (dtype (nth u 0)) Dtype.floats
-  && max_numel u = 1
-
 let cuda_lang =
   let half dt = Dtype.equal dt Dtype.Float16 || Dtype.equal dt Dtype.Bfloat16 in
   let h name =
@@ -1598,25 +1583,6 @@ let cuda_lang =
       Pattern_matcher.append
         (Pattern_matcher.fold
            (fun () -> [
-             rule_ctx (cast_of ~dtype:Dtype.fp8_ocp ~name:"x" c) (fun ctx m ->
-                 match cval (m "c") with
-                 | `Float v when Float.abs v = Float.infinity ->
-                     let x = m "x" in
-                     let sign = if Float.sign_bit v then 0x80 else 0 in
-                     Some
-                       (strf "(tg_bitcast<%s>((unsigned char)0x%x))"
-                          (render_type ctx.lang x)
-                          (sign lor fp8_infinity (dtype x)))
-                 | _ -> None);
-             rule_ctx (Upat.op ~dtype:Dtype.fp8_ocp ~name:"x" Op.Cast)
-               (fun ctx m ->
-                 let x = m "x" in
-                 if is_fp8_guarded x then
-                   Some
-                     (strf "tg_fp8<%s>(%s, 0x%x)" (render_type ctx.lang x)
-                        ctx.%{nth x 0}
-                        (fp8_infinity (dtype x)))
-                 else None);
              rule_ctx (Upat.op ~name:"x" Op.Bitcast) (fun ctx m ->
                  let x = m "x" and l = ctx.lang in
                  if is_ptr (addrspace x) then None
@@ -1726,7 +1692,6 @@ let cuda_kernel ?(prefix = []) l ~name kernel bufs uops =
        v) { union U { F f; T t; }; U u; u.f = v; return u.t; }";
     ]
     @ (if uses is_fp8 then [ "#include <cuda_fp8.h>" ] else [])
-    @ (if List.exists is_fp8_guarded uops then [ cuda_fp8_guard ] else [])
     @ (if uses (Dtype.equal Dtype.Float16) then [ "#include <cuda_fp16.h>" ]
        else [])
     @ (if uses (Dtype.equal Dtype.Bfloat16) then [ "#include <cuda_bf16.h>" ]

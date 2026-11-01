@@ -882,6 +882,8 @@ thread.
 
 - A folded `Op.Where` or `Op.Neg` keeps a NaN's payload, a signalling NaN's
   included, where it quieted one: a selection and a negation convert nothing.
+- A CUDA conversion to `Fp8e4m3` or `Fp8e5m2` saturates an infinity to the
+  format's greatest finite value, where it kept it an infinity or a NaN.
 - An 8-bit float's NaN folds as its format's NaN of its sign, the positive one
   in e4m3 and the fnuz formats, and an emulated cast to a narrow float gives
   its quiet NaN: a NaN result's sign and payload are unspecified.

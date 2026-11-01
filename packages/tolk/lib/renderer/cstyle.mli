@@ -92,10 +92,10 @@ val cuda : Helpers.Target.t -> Renderer.t
     memory. The tensor cores are those of the compute capability ({!Tc.cuda}).
     {!Dtype.Float16} needs capability 53, {!Dtype.Bfloat16} 80, and the 8-bit
     floats {!Dtype.fp8_ocp} 89. The [fnuz] floats are not supported. A
-    conversion to an 8-bit float keeps an infinity special: it stays an infinity
-    in {!Dtype.Fp8e5m2}, and becomes a NaN of its sign in {!Dtype.Fp8e4m3},
-    which has no infinity. A finite value too large for the format becomes its
-    greatest finite value of the same sign.
+    conversion to an 8-bit float saturates: a value too large for the format,
+    an infinity included, becomes its greatest finite value of the same sign,
+    where a folded constant keeps an infinity in {!Dtype.Fp8e5m2} and makes it
+    a NaN in {!Dtype.Fp8e4m3} ({!Dtype.truncate}).
 
     Raises [Invalid_argument] if the architecture has no compute capability
     after its first three characters. *)

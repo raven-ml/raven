@@ -1,7 +1,7 @@
 (library
  (name tolk_test)
  (modules golden dtypes interpreter kernel_graphs tensors uops kernel_opts
-  cuda_fp8 disk_cache)
+  disk_cache)
  (wrapped false)
  (libraries windtrap tolk unix))
 

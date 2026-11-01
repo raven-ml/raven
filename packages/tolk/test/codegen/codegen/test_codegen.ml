@@ -167,16 +167,10 @@ let launches_as_tinygrad row =
     (program_info (recorded_program row))
     (program_info (program row))
 
-(* CUDA keeps a float8 infinity special; the source compares with tinygrad's
-   once the guard is written back as tinygrad writes it. A narrowed program's
-   source is tinygrad's for its instructions with the casts that narrow, its
-   golden <name>_narrowed. *)
+(* A narrowed program's source is tinygrad's for its instructions with the
+   casts that narrow, its golden <name>_narrowed. *)
 let writes_as_tinygrad row =
-  let src = source (program row) in
-  let src =
-    if row "renderer" = "CUDA" then Cuda_fp8.tinygrad_of_d16 src else src
-  in
-  equal text (source (recorded_program row)) src
+  equal text (source (recorded_program row)) (source (program row))
 
 let sources =
   List.filter_map

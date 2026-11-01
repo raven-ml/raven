@@ -53,10 +53,7 @@ let sources_under setting =
     (fun row ->
       if row "setting" <> setting then None
       else
-        let source () =
-          let src = render (renderer_of_row row) (kernel row) in
-          if row "renderer" = "CUDA" then Cuda_fp8.tinygrad_of_d16 src else src
-        in
+        let source () = render (renderer_of_row row) (kernel row) in
         Some (Golden.text (row "case" ^ ".golden") source))
     case_rows
 
@@ -319,83 +316,6 @@ let parentheses =
         (fun (op, flat) ->
           let src = source_of_case ("clang_chain_" ^ op) in
           equal bool (not flat) (contains src "((((("));
-    ]
-
-(* Float8 infinities on CUDA *)
-
-(* A kernel converts a value to a float8 type when it casts to one anything but
-   a constant. *)
-let converts_to_fp8 uops =
-  List.exists
-    (fun u ->
-      Op.equal (Ops.op u) Cast
-      && List.mem (Ops.dtype u) Dtype.fp8s
-      && not (Op.equal (Ops.op (List.hd (Ops.src u))) Const))
-    uops
-
-let cuda_rows =
-  List.filter
-    (fun row -> row "renderer" = "CUDA" && row "setting" = "-")
-    case_rows
-
-let guard_only_where_converted () =
-  let guarded =
-    List.filter (fun row -> converts_to_fp8 (kernel row)) cuda_rows
-    |> List.map (fun row -> row "case")
-  in
-  equal (list string) ~msg:"the kernels that convert"
-    [
-      "cuda_dtype_fp8e4m3";
-      "cuda_dtype_fp8e5m2";
-      "cuda_inf_nan_fp8e4m3";
-      "cuda_inf_nan_fp8e5m2";
-    ]
-    guarded;
-  List.iter
-    (fun row ->
-      equal bool ~msg:(row "case")
-        (List.mem (row "case") guarded)
-        (contains (render cuda (kernel row)) Cuda_fp8.helper))
-    cuda_rows
-
-let converts_with_the_infinity_byte (case, t, dt) =
-  let call =
-    Printf.sprintf "tg_fp8<%s>(val1.x, %s)" t
-      (Cuda_fp8.infinity_byte dt infinity)
-  in
-  satisfies
-    ~claim:("a source that converts by " ^ call)
-    string
-    (fun src -> contains src call)
-    (source_of_case case)
-
-let fp8_infinities =
-  group "float8 infinities on CUDA"
-    [
-      test "declares the guard exactly when it converts a value to a float8"
-        guard_only_where_converted;
-      cases "converts with the byte of the infinity's image"
-        ~id:(fun (_, t, _) -> t)
-        [
-          ("cuda_dtype_fp8e4m3", "__nv_fp8_e4m3", Dtype.Fp8e4m3);
-          ("cuda_dtype_fp8e5m2", "__nv_fp8_e5m2", Fp8e5m2);
-        ]
-        converts_with_the_infinity_byte;
-      cases "writes an infinite e5m2 constant as its bits" ~id:Fun.id
-        [ "0x7c"; "0xfc" ] (fun byte ->
-          let bits = "tg_bitcast<__nv_fp8_e5m2>((unsigned char)" ^ byte ^ ")" in
-          satisfies
-            ~claim:("a source that writes " ^ bits)
-            string
-            (fun src -> contains src bits)
-            (source_of_case "cuda_inf_nan_fp8e5m2"));
-      test
-        "the image of an infinity is a NaN of its sign in e4m3 and itself in \
-         e5m2" (fun () ->
-          equal string "0x7f" (Cuda_fp8.infinity_byte Fp8e4m3 infinity);
-          equal string "0xff" (Cuda_fp8.infinity_byte Fp8e4m3 neg_infinity);
-          equal string "0x7c" (Cuda_fp8.infinity_byte Fp8e5m2 infinity);
-          equal string "0xfc" (Cuda_fp8.infinity_byte Fp8e5m2 neg_infinity));
     ]
 
 (* Rendering *)
@@ -1496,7 +1416,6 @@ let () =
          parentheses;
          negation;
          grouping;
-         fp8_infinities;
          rendering;
          compilation;
          cuda_binaries;
