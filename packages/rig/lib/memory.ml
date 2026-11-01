@@ -179,6 +179,10 @@ external release_pop : int -> unit = "caml_rig_release_pop" [@@noalloc]
 external node_record : int -> released = "caml_rig_node_record" [@@noalloc]
 external released_any : int -> bool = "caml_rig_released_any" [@@noalloc]
 
+(* Whether either list holds records, or [ended_linked] would answer [true]:
+   the conditions of a drain that C holds, read in one call. *)
+external lists_due : int -> int -> bool = "caml_rig_lists_due" [@@noalloc]
+
 (* Whether a token was collected onto the list of a device whose stop
    returned, or a stop returned, since the last call that answered [true]. *)
 external ended_linked : unit -> bool = "caml_rig_ended_linked" [@@noalloc]
@@ -319,16 +323,13 @@ let rec mark_outside (a : alloc) =
      || Atomic.Loc.compare_and_set [%atomic.loc a.count] w (w lor outside)
      || mark_outside a)
 
-(* An owner's record of a new lifetime of [entry], with no token. Every
-   argument is given, so a host buffer's records allocate nothing beside
-   them. *)
-let own ~keep ~host ~address ~handle dev entry =
-  let count = claim_word keep entry in
+let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n) dev
+    entry =
   let alloc =
     {
       owner = dev;
       host;
-      count;
+      count = claim_word keep entry;
       generation = first_generation entry;
       why = "";
       entry;
@@ -337,10 +338,6 @@ let own ~keep ~host ~address ~handle dev entry =
     }
   in
   { dev; host; address; handle; alloc }
-
-let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n) dev
-    entry =
-  own ~keep ~host ~address ~handle dev entry
 
 let memory_of alloc dev ~host ~address ~handle =
   { dev; host; address; handle; alloc }
@@ -1384,7 +1381,21 @@ let kept d = Dev.protect d kept_locked d.live
    collected and drains the devices whose stop returned and whose list took
    records: no call on them is due, as a program makes none on a device it
    closed. *)
-let rec drain d =
+let rec drain d = if has_work d then drain_steps d
+
+(* Whether [drain d] has anything to do: every condition its steps act on,
+   [d]'s state for those of a device that is not Live. Most allocations find
+   none: on fudge (Core Ultra 5 235) a drain with nothing to do took 147 of
+   a host buffer's 968 instructions. *)
+and has_work d =
+  let l = d.live in
+  lists_due hold_list l.release
+  || l.nretiring <> 0
+  || fst l.pending != []
+  || Atomic.get unmapped != []
+  || not (Dev.is_live d)
+
+and drain_steps d =
   if released_any hold_list then release_holds ();
   if ended_linked () then drain_every_ended ();
   if Dev.orphaned d then forget d
@@ -1694,16 +1705,39 @@ let host_bytes n =
 let empty = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 0
 let empty_keep = Heap empty
 
-let host_memory n =
+(* The claim word and first generation of host memory: its entry is
+   [no_entry] until a device borrows it. *)
+let host_count = claim_word empty_keep no_entry
+let host_generation = first_generation no_entry
+
+(* A buffer over all of the host memory at [addr] that keeps [keep]: its
+   records in one allocation once inlined, beside [keep]'s. *)
+let[@inline] host_records keep addr n =
+  let alloc =
+    {
+      owner = Dev.host;
+      host = addr;
+      count = host_count;
+      generation = host_generation;
+      why = "";
+      entry = no_entry;
+      token = no_token;
+      keep;
+    }
+  in
+  let mem =
+    { dev = Dev.host; host = addr; address = addr; handle = 0n; alloc }
+  in
+  { mem; offset = 0; length = n; generation = host_generation }
+
+let host_buffer n =
   drain Dev.host;
-  if n = 0 then
-    let addr = ba_address empty in
-    own ~keep:empty_keep ~host:addr ~address:addr ~handle:0n Dev.host no_entry
+  if n = 0 then host_records empty_keep (ba_address empty) 0
   else begin
     heap_reserved n;
     let ba = host_bytes n in
     let addr = ba_address ba in
-    own ~keep:(Heap ba) ~host:addr ~address:addr ~handle:0n Dev.host no_entry
+    host_records (Heap ba) addr n
   end
 
 (* Borrows *)

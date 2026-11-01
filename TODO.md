@@ -74,12 +74,6 @@ raven / llama.cpp (Vulkan; ROCm):
   nonnormal against rows; SDMA 4 to 6 wait for a host. On SDMA 4 over PCI
   it also lifts a box's limit of about 170,000 rows, past which it never
   fits the ring
-- a host buffer's creation: every fresh nx result mallocs through
-  `caml_rig_heap_bytes` and allocates a custom block (fudge:
-  `buffer/host-create-16` 36 ns, 31 words; nx's `dispatch/add-1` 207 ns,
-  51 words). Below `heap_kept_from` nothing is kept: profile malloc
-  against the custom block and `host_memory`, then A/B a per-domain free
-  list of small host buffers
 - kaun's GPU decode rows measure allocation again (bench_decode.ml's
   `gpu_metrics`) once a decode call's words are shown not to depend on
   the collector's phase: on fudge (CUDA) and nonnormal (AMD)

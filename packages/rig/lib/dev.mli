@@ -183,6 +183,10 @@ val is_lost : device -> bool
 (** [is_lost d] is [true] iff [d] is lost. It is [false] for the host
     without reading a record. *)
 
+val is_live : device -> bool
+(** [is_live d] is [true] iff [d] is Live. Unlike {!is_lost}, it reads the
+    host's record, which is Live. *)
+
 val orphaned : device -> bool
 (** [orphaned d] is [true] iff [d] is Orphaned: this process is a forked
     child and [d]'s work is the parent's ({!section-loss}). *)

@@ -264,12 +264,24 @@ value caml_rig_release_pop(value v_list) {
   return Val_unit;
 }
 
-value caml_rig_released_any(value v_list) {
+static int released_any(value v_list) {
   struct release_list *rl = (struct release_list *)Long_val(v_list);
-  return Val_bool(atomic_load_explicit(&rl->head, memory_order_relaxed) !=
-                      NULL ||
-                  atomic_load_explicit(&rl->hand, memory_order_relaxed) !=
-                      NULL);
+  return atomic_load_explicit(&rl->head, memory_order_relaxed) != NULL ||
+         atomic_load_explicit(&rl->hand, memory_order_relaxed) != NULL;
+}
+
+value caml_rig_released_any(value v_list) {
+  return Val_bool(released_any(v_list));
+}
+
+/* Whether the list [v_holds] or [v_list] holds records, or [ended_linked]
+   is set: by a token linked onto the list of a device whose stop returned,
+   at each stop and fork, and by a rearm. What a drain of [v_list]'s device
+   reads in C, in one call. It only reads, so the drain that follows takes
+   the records and clears [ended_linked]. */
+value caml_rig_lists_due(value v_holds, value v_list) {
+  return Val_bool(released_any(v_holds) || released_any(v_list) ||
+                  atomic_load_explicit(&ended_linked, memory_order_relaxed));
 }
 
 /* The host's heap

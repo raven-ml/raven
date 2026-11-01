@@ -1030,6 +1030,45 @@ let test_borrowed_host () =
   equal ~msg:"once it ran" int at (Support.at (B.create Rig.host n));
   ignore (Sys.opaque_identity other)
 
+(* Host memory borrowed on another domain returns through a host buffer's
+   creation on this one, which first moves the host's collected memory. *)
+let test_borrowed_host_elsewhere () =
+  let d, p = P.open_ "memory:borrowed-host-elsewhere" in
+  let n = 1 lsl 16 in
+  let written () =
+    let h = B.create Rig.host n in
+    let src = B.create d n in
+    let dst = require_some (B.borrow d h) in
+    let part = Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) in
+    ignore (submit (Sub.make d [| part |]));
+    Support.at h
+  in
+  let at = Domain.join (Domain.spawn written) in
+  ignore (P.run p);
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (B.create Rig.host 0);
+  Gc.full_major ();
+  Gc.full_major ();
+  equal ~msg:"its memory, reused" int at (Support.at (B.create Rig.host n))
+
+(* A hold collected after its domain ended lasts until a host buffer's
+   creation on this one, which releases it: a donation then finds its memory
+   exclusive. *)
+let test_hold_elsewhere () =
+  let a = B.create Rig.host 64 in
+  let exclusive () =
+    Rig.Claim.with_ ~read:[] ~donate:[ a ] (fun c -> Rig.Claim.exclusive c a)
+  in
+  let hold () = ignore (Sys.opaque_identity (Rig.Claim.hold [ a ])) in
+  Domain.join (Domain.spawn hold);
+  Gc.full_major ();
+  Gc.full_major ();
+  equal ~msg:"collected, before a call that moves memory" bool false
+    (exclusive ());
+  ignore (Sys.opaque_identity (B.create Rig.host 8));
+  equal ~msg:"after a host buffer's creation" bool true (exclusive ())
+
 (* A bigarray a device borrowed through of_bigarray stays reachable until that
    device's queued work on it ran. *)
 let test_borrowed_bigarray () =
@@ -1491,6 +1530,10 @@ let tests =
           ~count:60 export_sizes export_law;
         test "host memory a device borrowed returns once its work ran"
           test_borrowed_host;
+        test "host memory borrowed on another domain returns at a host creation"
+          test_borrowed_host_elsewhere;
+        test "a hold collected from another domain ends at a host creation"
+          test_hold_elsewhere;
         test "a bigarray a device borrowed lives until its work ran"
           test_borrowed_bigarray;
         test "host memory an idle device borrowed returns to an allocation"

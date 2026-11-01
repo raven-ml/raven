@@ -470,8 +470,8 @@ val alloc : device -> Rig_edge.memory -> int -> memory
     [alloc_entry d kind n], with its token. Raises {!Dev.Lost}, giving the
     entry back, if [d]'s slot was freed meanwhile. *)
 
-val host_memory : int -> memory
-(** [host_memory n] is a new memory record of [n] bytes of the host's heap,
+val host_buffer : int -> buffer
+(** [host_buffer n] is a new buffer over [n] bytes of the host's heap,
     counted in the host's budget, after draining the host. Raises
     {!Dev.Out_of_memory} once the host's reclaim rounds fail. *)
 

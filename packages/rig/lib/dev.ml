@@ -265,6 +265,7 @@ let is_io d = match d.kind with Io _ -> true | _ -> false
    record. *)
 let[@inline] state (d : device) = c_state d.index d.opened
 let[@inline] is_lost d = d.index <> 0 && state d <> live_state
+let[@inline] is_live d = state d = live_state
 let orphaned d = state d = orphaned_state
 
 let why d = c_why d.live.c

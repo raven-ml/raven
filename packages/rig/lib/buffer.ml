@@ -29,25 +29,28 @@ let[@inline] check_live fn b = if not (is_live b) then refuse_dead fn b
 let of_memory mem length =
   { mem; offset = 0; length; generation = generation mem.alloc }
 
+(* The host is never lost, so its buffers skip the check. *)
 let create ?(memory = Device) d n =
   Dev.check_held "Buffer.create";
   if n < 0 then invalid_argf "Rig.Buffer.create: %d bytes is negative" n;
-  if Dev.is_lost d then begin
-    (* A lost device's own calls return its collected memory. *)
-    Memory.drain d;
-    Dev.raise_lost d
-  end;
-  let mem =
-    if Dev.is_host d then Memory.host_memory n
-    else if n = 0 then begin
-      (* No memory: work of no bytes reads none, so 0 names it. *)
+  if Dev.is_host d then Memory.host_buffer n
+  else begin
+    if Dev.is_lost d then begin
+      (* A lost device's own calls return its collected memory. *)
       Memory.drain d;
-      Memory.make ~address:0 d Memory.no_entry
-    end
-    else if Dev.is_io d then Memory.alloc d Device n
-    else Memory.alloc d memory n
-  in
-  of_memory mem n
+      Dev.raise_lost d
+    end;
+    let mem =
+      if n = 0 then begin
+        (* No memory: work of no bytes reads none, so 0 names it. *)
+        Memory.drain d;
+        Memory.make ~address:0 d Memory.no_entry
+      end
+      else if Dev.is_io d then Memory.alloc d Device n
+      else Memory.alloc d memory n
+    in
+    of_memory mem n
+  end
 
 let of_io (type r) d (k : r Type.Id.t) (r : r) ~access n =
   Dev.check_held "Buffer.of_io";
