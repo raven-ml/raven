@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["numpy", "astropy", "photutils==3.0.0"]
+# dependencies = ["numpy==2.5.4", "astropy==8.0.2", "photutils==3.0.0"]
 # ///
 """Generate the NIRCam aperture-photometry references.
 
@@ -51,7 +51,7 @@ GOLDEN = HERE.parent / "golden" / "nircam.fits"
 
 NAME = "jw02736-o001_t001_nircam_clear-f200w_i2d.fits"
 URL = f"https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/{NAME}"
-SHA256 = "867e16826de13eedac74ce678d911e6506877e7e87732c681c83234a24e9c0a9"
+SHA256 = "057db5b0777ab239d12d87bbbeb106f7863561ad3ef1d016dc4345fa015af237"
 DEFAULT = Path.home() / ".cache" / "ymir" / NAME
 
 STAMP = 104
@@ -210,6 +210,16 @@ def render(sci, err, w, pixar):
     return "\n".join(out) + "\n"
 
 
+def same_hdu(a, b):
+    """[a] and [b] have one header and one data, NaN equal to NaN; the
+    primary HDU has no data."""
+    if a.header != b.header:
+        return False
+    if a.data is None or b.data is None:
+        return a.data is None and b.data is None
+    return np.array_equal(a.data, b.data, equal_nan=a.data.dtype.kind == "f")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
@@ -226,9 +236,8 @@ def main():
             if not REFERENCE.exists() or REFERENCE.read_text() != text:
                 sys.exit(f"{REFERENCE} would change; run without --check")
             with fits.open(GOLDEN) as g:
-                for a, b in zip(g, hdul):
-                    if a.header != b.header or not np.array_equal(a.data, b.data, equal_nan=True):
-                        sys.exit(f"{GOLDEN} would change; run without --check")
+                if len(g) != len(hdul) or not all(same_hdu(a, b) for a, b in zip(g, hdul)):
+                    sys.exit(f"{GOLDEN} would change; run without --check")
             return
         REFERENCE.write_text(text)
         hdul.writeto(GOLDEN, overwrite=True)
