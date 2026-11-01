@@ -33,12 +33,13 @@
     A call ({!Op.Call}) of an external function ({!Op.Custom_function}) casts
     the function's symbol, which the program declares and is linked against, to
     the type its arguments and result give it. A call of a body of the program
-    (an {!Op.Linear}, as code generation lowers a call of a sink) is a call of
-    a function the program defines before the kernel, named after the body, a
-    second body of one name followed by [_1], and so on. Its parameters are the
-    body's, by slot, and each argument is cast to its parameter's type. Only
-    {!clang} writes those declarations and functions: the other languages write
-    their own prefix, so their kernels call no body and no external function.
+    (an {!Op.Linear}, as code generation lowers a call of a sink or of a
+    program) is a call of a function the program defines before the kernel,
+    after the language's own definitions, under the name the body holds, which
+    code generation gives it. The function is qualified
+    as the language's device functions are ([__device__] in {!cuda}, a device
+    attribute in {!hip}). Its parameters are the body's, by slot, and each
+    argument is cast to its parameter's type.
 
     A floating-point division ({!Op.Fdiv}) is the language's [/] on every
     target, whether or not the target lists it among its native operations: that

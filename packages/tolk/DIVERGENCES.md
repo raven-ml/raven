@@ -4637,17 +4637,19 @@ fold wraps integers and holds its float bound`, hold.
   load time by name (`runtime/support/elf.py`, `link_syms`). Only HIP has an
   `inline_prefix` (`renderer/cstyle.py:514`).
 - **tolk:** `Codegen.lower_call`, which lowers every body to the lines of a
-  function of the calling kernel, and `Cstyle.render`, which writes it
-  `static inline` with the language's `inline_prefix` (`""` for Clang, Metal
-  and CUDA, HIP's for HIP).
+  function of the calling kernel and refuses a call of a compiled program, and
+  `Cstyle.render`, which writes the function `static inline` with the
+  language's `inline_prefix` (`""` for Clang and Metal, `__device__` for
+  CUDA, HIP's for HIP).
 - **Differs:** a body called inside a kernel is inlined into the kernel's
   source on every target, as tinygrad does on HIP alone. tinygrad compiles it
   apart on Clang, Metal and CUDA and links the two binaries when it loads the
-  kernel.
+  kernel, and so calls a compiled program too.
 - **Reason:** (c): rig links a host object only against symbols of the process
   (`Rig.section-host_linking`: each symbol the object refers to and does not
   define is defined by the process), and loads each GPU image alone, so a
-  kernel that refers to another program's symbol does not load. Which layer
-  links programs to programs is a design pass for engine and rig.
+  kernel that refers to another program's symbol does not load.
 - **Pinned by:** `Tolk.Codegen › calls in a kernel`, whose kernels run on the
-  host with their bodies inlined.
+  host with their bodies inlined, and `› a CUDA kernel defines the functions
+  it calls, as device functions`, `› a Metal kernel defines the functions it
+  calls` and `› a call of a compiled program is refused`.

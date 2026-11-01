@@ -1298,7 +1298,8 @@ let line_rewrite lst m ctx =
    renderer writes as a function of the kernel's program. The function is
    named as its call, numbered where other bodies of the kernel take that
    name: [names] holds each name's bodies in the order the kernel meets them.
-   A program already compiled to a binary is called as it is. *)
+   A program already compiled to a binary has no instructions to inline, and
+   is refused. *)
 type lower_ctx = { ren : Renderer.t; names : (string, t list) Hashtbl.t }
 
 let lower_calls = ref (Pattern_matcher.v (fun () -> []))
@@ -1319,8 +1320,8 @@ let numbered ctx name b =
       else Printf.sprintf "%s_%d" name (List.length bodies)
 
 let lower_call ctx call b =
-  let binary = List.exists (is Op.Binary) (src b) in
-  if op b = Op.Program && binary then None
+  if op b = Op.Program && List.exists (is Op.Binary) (src b) then
+    invalid_arg "a call inside a kernel of a compiled program"
   else
     let name =
       match arg call with

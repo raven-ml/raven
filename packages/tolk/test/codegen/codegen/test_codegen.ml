@@ -3949,6 +3949,17 @@ let call_scalar () =
   let call = Ops.call ~name:"add" add [ at c i; at a i; Ops.cast i Int32 ] in
   kernel "call_scalar_arg" [ Ops.end_ call [ i ] ]
 
+(* [call_loop] with the body a program, linearized for the host. *)
+let program_call body =
+  let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
+  let i = loop 4 0 in
+  kernel "call_program"
+    [ Ops.end_ (Ops.call ~name:"mul" body [ at c i; at a i ]) [ i ] ]
+
+let mul_kernel () =
+  let p = int_param ~name:"p" 0 1 and q = int_param ~name:"q" 1 1 in
+  kernel "mul" [ Ops.store (first p) Ops.O.(first q * i32 3) ]
+
 (* [out[idx[0]] = 7] where [idx[0]] is in bounds, called on a register that
    holds zeros; then [c[j] = tmp[j] + 1]. *)
 let gated_call () =
@@ -4196,6 +4207,17 @@ let calls =
         (runs_on_host call_loop
            [ (1, int_values [ 1; 2; 3; 4 ]) ]
            [ 3; 6; 9; 12 ]);
+      test "a call of a program not yet compiled runs its instructions"
+        (fun () ->
+          let body = Codegen.linearize (mul_kernel ()) (Lazy.force host) in
+          runs_on_host (fun () -> program_call body)
+            [ (1, int_values [ 1; 2; 3; 4 ]) ]
+            [ 3; 6; 9; 12 ] ());
+      test "a call of a compiled program is refused" (fun () ->
+          let body = Codegen.to_program (mul_kernel ()) (Lazy.force host) in
+          let host = Lazy.force host in
+          raises_match (Exn.invalid_arg ~sub:"compiled program") (fun () ->
+              ignore (Codegen.to_program (program_call body) host)));
       test "a call passes a scalar argument to its body"
         (runs_on_host call_scalar
            [ (1, int_values [ 1; 2; 3; 4 ]) ]
@@ -4250,6 +4272,16 @@ let calls =
           let hip = renderer_for (target "AMD" "HIP" "gfx1100") in
           let src = source (Codegen.to_program (two_bodies ()) hip) in
           let fn = "static inline __attribute__((device)) void " in
+          equal (list string) [ "axpy"; "axpy_1" ] (names_after fn src));
+      test "a CUDA kernel defines the functions it calls, as device functions"
+        (fun () ->
+          let cuda = renderer_for (target "CUDA" "CUDA" "sm_89") in
+          let src = source (Codegen.to_program (two_bodies ()) cuda) in
+          let fn = "static inline __device__ void " in
+          equal (list string) [ "axpy"; "axpy_1" ] (names_after fn src));
+      test "a Metal kernel defines the functions it calls" (fun () ->
+          let src = source (Codegen.to_program (two_bodies ()) metal) in
+          let fn = "static inline  void " in
           equal (list string) [ "axpy"; "axpy_1" ] (names_after fn src));
       test "one body called twice is one function" (fun () ->
           let prg = Codegen.to_program (nested_calls ()) (Lazy.force host) in

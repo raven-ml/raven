@@ -855,6 +855,9 @@ thread.
 
 ### Tolk (new)
 
+- A Metal or CUDA kernel that calls a body compiles: it defines the body's
+  function, where it dropped it. A call of a compiled program inside a kernel
+  raises `Invalid_argument`.
 - A fold that would make a signed constant its type does not hold, of two
   constants, like terms, `-(x + y)` or `(x + y) * c`, is no longer made.
 - A call body inside a kernel is named in its lowering, numbered apart from

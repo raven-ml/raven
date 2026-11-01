@@ -1025,9 +1025,6 @@ let render render_kernel l uops =
   render_kernel ?prefix l ~name kernel bufs
     (List.concat_map src bodies @ uops)
 
-(* Metal and CUDA write a prefix of their own in place of the one [render]
-   gives: the functions a kernel calls are Clang's and HIP's alone. *)
-let own_prefix render_kernel ?prefix:_ l = render_kernel l
 
 (* Clang *)
 
@@ -1505,12 +1502,13 @@ let metal_wmma l (name, _, dtype_in, dtype_out, _) =
       "}";
     ]
 
-let metal_kernel l ~name kernel bufs uops =
-  let prefix =
+let metal_kernel ?(prefix = []) l ~name kernel bufs uops =
+  let defines =
     [ "#include <metal_stdlib>"; "using namespace metal;" ]
     @ List.map (metal_wmma l) (wmma_args uops)
   in
-  render_kernel l ~prefix ~name kernel bufs uops
+  (* Its own definitions first, then the functions it calls. *)
+  render_kernel l ~prefix:(defines @ prefix) ~name kernel bufs uops
 
 let metal (target : Helpers.Target.t) =
   let arch = target.arch in
@@ -1530,7 +1528,7 @@ let metal (target : Helpers.Target.t) =
     ~tensor_cores:(if from 7 then Tc.metal else [])
     ~extra_matcher:metal_extra_matcher ~code_for_op:metal_lang.code_for_op
     ~native
-    ~render:(render (own_prefix metal_kernel) metal_lang)
+    ~render:(render metal_kernel metal_lang)
     ~compiler:(Compiler_metal.compiler ()) target
 
 (* CUDA *)
@@ -1569,6 +1567,7 @@ let cuda_lang =
     (* https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html *)
     kernel_typedef = strf "extern \"C\" __global__ void __launch_bounds__(%d)";
     smem_prefix = "__shared__ __align__(16) ";
+    inline_prefix = "__device__";
     smem_prefix_for_cast = false;
     barrier = "__syncthreads();";
     float4 = (fun t -> "make_" ^ t);
@@ -1710,7 +1709,7 @@ let cuda_wmma l (name, (n, m, k), dtype_in, dtype_out, upcast_sizes) =
       "}";
     ]
 
-let cuda_kernel l ~name kernel bufs uops =
+let cuda_kernel ?(prefix = []) l ~name kernel bufs uops =
   let used = uops_to_dtypes uops in
   let uses p = List.exists (fun (dt, _) -> p dt) used in
   let is_fp8 dt = List.mem dt Dtype.fp8s in
@@ -1718,7 +1717,7 @@ let cuda_kernel l ~name kernel bufs uops =
     (List.mem count [ 4; 8 ] && List.mem dt [ Dtype.Float16; Dtype.Bfloat16 ])
     || (List.mem count [ 2; 4; 8; 16 ] && is_fp8 dt)
   in
-  let prefix =
+  let defines =
     [
       "typedef unsigned int uint;";
       "#define INFINITY (__int_as_float(0x7f800000))";
@@ -1735,7 +1734,8 @@ let cuda_kernel l ~name kernel bufs uops =
     @ List.map (cuda_vector_prefix l) (List.filter vector used)
     @ List.map (cuda_wmma l) (wmma_args uops)
   in
-  render_kernel l ~prefix ~name kernel bufs uops
+  (* Its own definitions first, then the functions it calls. *)
+  render_kernel l ~prefix:(defines @ prefix) ~name kernel bufs uops
 
 let cuda (target : Helpers.Target.t) =
   let arch = target.arch in
@@ -1763,7 +1763,7 @@ let cuda (target : Helpers.Target.t) =
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~tensor_cores
     ~extra_matcher:cuda_extra_matcher ~code_for_op:cuda_lang.code_for_op ~native
-    ~render:(render (own_prefix cuda_kernel) cuda_lang)
+    ~render:(render cuda_kernel cuda_lang)
     ~compiler target
 
 (* HIP *)
