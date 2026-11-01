@@ -56,12 +56,17 @@
    (run %{test} --corrected)
    (diff? test_tz.ml test_tz.ml.corrected))))
 
+; shape.t compiles against the installed talon and nx. It depends on the
+; workspace's install alias: a dependency on the package nx would name a
+; package that dune build -p talon does not define, and dune refuses it there,
+; while the alias then holds talon alone and nx comes from the installed
+; packages.
+
 (cram
  (applies_to shape)
  (package talon)
  (deps
-  (package talon)
-  (package nx)))
+  (alias_rec %{workspace_root}/install)))
 
 (test
  (name test_column)
