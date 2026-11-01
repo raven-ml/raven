@@ -1,0 +1,8 @@
+; A probe of AMD copies, run by hand: probe_4k.ml's head says what it times.
+
+(executable
+ (name probe_4k)
+ (libraries rig_amd rig_amd_support rig rig_gpu_support unix)
+ (foreign_stubs
+  (language c)
+  (names probe_stubs)))

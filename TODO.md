@@ -58,10 +58,10 @@ raven / llama.cpp (Vulkan; ROCm):
 - kaun's GPU decode rows measure allocation again (bench_decode.ml's
   `gpu_metrics`) once a decode call's words are shown not to depend on
   the collector's phase: on fudge (CUDA) and nonnormal (AMD)
-- AMD 4 KiB copies: `copy/amd/within-device-4K` on nonnormal is bimodal,
-  7.9-9.2 µs in 9 samples and 14.6-15.4 µs in 11 (rig-gpu.thumper),
-  against fudge's 5.5 µs CUDA and 4.0 µs NV. The copy kernel starts at
-  2 MiB, so this is SDMA and the wait: find what splits the modes
+- AMD 4 KiB copies: `Buffer.copy` of 4 KiB on nonnormal lands 35-40% of
+  calls at 9-12 µs, the same submission submitted directly 2.5%
+  (probe_4k.exe split). With held_ns at 50 µs none did, but twice as many
+  took the GPU's 20 µs mode: find what Buffer.copy adds after a drain
 
 ## tolk
 
