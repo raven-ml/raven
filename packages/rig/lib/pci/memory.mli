@@ -165,8 +165,8 @@ val alloc : ?uncached:bool -> t -> kind -> int -> (region option, string) result
     {!Page_table.alloc} bounds each request. [Error why] if the machine refuses
     system memory or a window on the BAR.
 
-    Raises [Invalid_argument] if [n <= 0], or if system memory goes at addresses
-    {!Machine.val-reserve} did not reserve. *)
+    Raises [Invalid_argument], having taken nothing, if [n <= 0], or if system
+    memory goes at addresses {!Machine.val-reserve} did not reserve. *)
 
 val map_host : t -> int -> int -> (region option, string) result
 (** [map_host m a n] maps for the GPU the pages of its machine that hold the

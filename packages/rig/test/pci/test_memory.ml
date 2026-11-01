@@ -1094,8 +1094,11 @@ let test_map_host_past_end () =
 
 let test_host_unreserved () =
   with_far_gpu ~reserved:false @@ fun x ->
+  let space = Page_table.space x.t_tables in
+  let taken = Space.taken space in
   raises_match (Exn.invalid_arg ~sub:"Machine.reserve") (fun () ->
-      Memory.alloc x.t_memory Host page)
+      Memory.alloc x.t_memory Host page);
+  equal ~msg:"the space's addresses taken" int taken (Space.taken space)
 
 (* The process's own pages go back to the system when it dies: a GPU taken
    physically is refused them, with the pin's reason. *)
@@ -1227,7 +1230,9 @@ let placement =
         [ Memory.Gpu; Bar; Host ] test_too_large;
       test "map_host of bytes past the last address is an Error"
         test_map_host_past_end;
-      test "system memory at addresses no reservation holds raises"
+      test
+        "system memory at addresses no reservation holds raises, taking no \
+         address"
         test_host_unreserved;
       test "map_host refuses the process's own pages with the pin's reason"
         test_map_host_unpinnable;

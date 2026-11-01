@@ -237,6 +237,13 @@ let system m h tables n =
         | Ok None ->
             give_back None;
             Ok None
+        | exception (Invalid_argument _ as e) ->
+            (* Function.alloc_dma refuses its arguments, such as addresses no
+               reservation holds, before it takes anything. Another exception
+               may come once the memory is mapped at [va], which then stays
+               taken, since the function may still reach it there. *)
+            Space.free m.reach.space va;
+            reraise e
         | Ok (Some (view, runs)) -> (
             match
               Page_table.map ~snooped:true ~uncached:true tables ~va System
