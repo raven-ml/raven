@@ -222,6 +222,277 @@ let test_view_free () =
     (held ());
   reached
 
+(* Opens *)
+
+module E = S.Edge
+module H = Rig_gpu_support.Host
+
+(* A PM4 NOP one word long, as amdgpu pads compute rings with. *)
+let pm4_nop = 0xffff1000
+
+(* An allocation's landing that raises [Exit] at it alone, as one
+   asynchronous exception does: the handlers after it run. *)
+let raise_once = Rig_support.Call (fun () -> raise Exit)
+
+(* Whether the allocation [a] is made inside one of the functions [fs], named
+   with their module, such as ["Rig_amd_amdgpu.acquire"]. A walk lands only
+   there where landing at each of an open's thousands of allocations would
+   take minutes. *)
+let inside fs (a : Gc.Memprof.allocation) =
+  let named s =
+    match Printexc.Slot.name s with
+    | Some n ->
+        List.exists (fun f -> n = f || String.starts_with ~prefix:(f ^ ".") n) fs
+    | None -> false
+  in
+  match Printexc.backtrace_slots a.callstack with
+  | Some slots -> Array.exists named slots
+  | None -> false
+
+(* Skips but on a GPU amdgpu holds. *)
+let needs_amdgpu () =
+  if not (S.present ()) then skip ~reason:"the machine has no AMD GPU" ();
+  if S.driverless () then skip ~reason:"the walk is of amdgpu's path" ()
+
+(* GPU 0, opened through the path the suites select. *)
+let open_gpu () = Rig_gpu_support.opened (S.gpu ())
+
+let amdgpu fs = inside (List.map (fun f -> "Rig_amd_amdgpu." ^ f) fs)
+
+(* [ran g] is [Ok ()] once [g] ran a NOP on its compute queue and a copy of
+   64 bytes of [Pinned] memory on its copy queue within 10 s, or why not.
+   It stops [g] either way. *)
+let ran g =
+  let host r = Option.get (A.locate r).host in
+  let address r = Option.get (A.locate r).address in
+  let src = A.alloc g Pinned 64 and dst = A.alloc g Pinned 64 in
+  let outcome =
+    match (src, dst) with
+    | (None, _ | _, None) ->
+        Option.iter (A.free g) src;
+        Option.iter (A.free g) dst;
+        Error "no Pinned memory"
+    | Some src, Some dst -> (
+        H.write (host src) (String.make 64 'f');
+        H.write (host dst) (String.make 64 '\000');
+        let v = A.signaled g + 1 in
+        let parts =
+          [|
+            E.words ~queue:"COMPUTE:0" [| pm4_nop |];
+            E.copy ~dst:(address dst) ~src:(address src) 64;
+          |]
+        in
+        match E.submit g ~v parts with
+        | `Failed why -> Error ("the submit failed: " ^ why)
+        | `Ok ->
+            let rec wait n =
+              A.signaled g >= v
+              || n > 0
+                 && begin
+                   A.sleep g ~seen:(A.signaled g) ~still_ms:500;
+                   wait (n - 1)
+                 end
+            in
+            if not (wait 20) then Error "the work did not end within 10 s"
+            else begin
+              let copied = H.read (host dst) 64 in
+              A.free g src;
+              A.free g dst;
+              if copied = String.make 64 'f' then Ok ()
+              else Error "the copy did not land"
+            end)
+  in
+  A.stop g ~fault:None;
+  outcome
+
+(* [again what] checks that GPU 0 opens and runs work. *)
+let again what =
+  match open_gpu () with
+  | Error why -> failf "%s, the GPU does not open: %s" what why
+  | Ok g -> (
+      match ran g with Ok () -> () | Error why -> failf "%s, %s" what why)
+
+(* The exit codes of a walk's child: it landed, and the GPU opened again and
+   ran work; it did not land, and the GPU ran work. Any other is a failure,
+   whose reason the child printed. *)
+let landed_code = 0
+let ended_code = 1
+
+(* The child of a walk of the process's first open: the open of GPU 0 with
+   every allocation [from] holds for from the [n]-th on raising until it
+   returns, then another open that runs work. *)
+let first_open from n =
+  match
+    let opened = ref (Error "not reached") in
+    let reached =
+      Rig_support.interrupted ~from n (fun () -> opened := open_gpu ())
+    in
+    Result.iter (fun g -> A.stop g ~fault:None) !opened;
+    match open_gpu () with
+    | Error why -> Error ("the GPU does not open again: " ^ why)
+    | Ok g -> Result.map (fun () -> reached) (ran g)
+  with
+  | Ok true -> landed_code
+  | Ok false -> ended_code
+  | Error why ->
+      prerr_endline why;
+      2
+  | exception e ->
+      prerr_endline (Printexc.to_string e);
+      3
+
+(* The process's first open, interrupted at each allocation of the steps
+   that take KFD's state for the process: its file, the GPU's address space
+   (ACQUIRE_VM, which KFD refuses through a second render node) and the event
+   page (which KFD takes once). The topology's reads, which take no state
+   and make most of those allocations, are passed over. A child forks for
+   each, since KFD's state is the process's. The next open takes the GPU and
+   runs work. *)
+let test_first_open () =
+  needs_amdgpu ();
+  Rig_support.needs_fork ();
+  let topology = inside [ "Rig_amd_amdgpu__Topology" ] in
+  let walk fs =
+    let taking a = amdgpu fs a && not (topology a) in
+    let rec from n =
+      match Unix.fork () with
+      | 0 -> Unix._exit (first_open taking n)
+      | pid -> (
+          match Unix.waitpid [] pid with
+          | _, WEXITED c when c = landed_code -> from (n + 1)
+          | _, WEXITED c when c = ended_code -> n - 1
+          | _, WEXITED c ->
+              failf "interrupted from allocation %d of %s, the child exited %d"
+                n (String.concat ", " fs) c
+          | _, (WSIGNALED s | WSTOPPED s) ->
+              failf
+                "interrupted from allocation %d of %s, the child stopped on \
+                 signal %d"
+                n (String.concat ", " fs) s)
+    in
+    at_least ~msg:(String.concat ", " fs ^ ": the landings") int ~than:1
+      (from 1)
+  in
+  walk [ "kfd_fd"; "acquire" ];
+  walk [ "page_for" ]
+
+(* A later open, with one exception at each allocation of the path's making
+   of a queue: the path's stop, which the device calls on the exception,
+   destroys the queue, so the process holds none, and the GPU opens again. *)
+let test_queue_raised () =
+  needs_amdgpu ();
+  again "before the walk";
+  let none = Some 0 in
+  equal ~msg:"the KFD queues held before the walk" (option int) none
+    (S.queues ());
+  let rec walk n =
+    let opened = ref (Error "not reached") in
+    let reached =
+      Rig_support.interrupted ~from:(amdgpu [ "queue" ]) ~landing:raise_once n
+        (fun () -> opened := open_gpu ())
+    in
+    Result.iter (fun g -> A.stop g ~fault:None) !opened;
+    equal
+      ~msg:(strf "from allocation %d, the KFD queues held" n)
+      (option int) none (S.queues ());
+    again (strf "from allocation %d" n);
+    if reached then walk (n + 1) else n - 1
+  in
+  at_least ~msg:"the landings" int ~than:1 (walk 1)
+
+(* Over PCI *)
+
+(* Skips but on a GPU taken over PCI. *)
+let needs_pci () =
+  if not (S.present ()) then skip ~reason:"the machine has no AMD GPU" ();
+  if not (S.driverless ()) then skip ~reason:"the walk is of AMD over PCI" ()
+
+(* The allocations of [f ()] that [from] holds for, on every thread: a walk
+   counts those of the calling thread, the only one an open or a stop
+   allocates on. *)
+let allocations from f =
+  let n = ref 0 in
+  let count a =
+    if from a then incr n;
+    None
+  in
+  let tracker =
+    { Gc.Memprof.null_tracker with alloc_minor = count; alloc_major = count }
+  in
+  let profile = Gc.Memprof.start ~sampling_rate:1. tracker in
+  Fun.protect
+    ~finally:(fun () ->
+      Gc.Memprof.stop ();
+      Gc.Memprof.discard profile)
+    f;
+  !n
+
+(* The landings of a walk over a boot's or a stop's allocations, each of
+   which costs a boot of the GPU. *)
+let spread = 3
+
+(* [walk_open ~step from] walks an open of GPU 0 with every allocation
+   [from] holds for from the [(k step + 1)]-th on raising until the open
+   returns, for [k] from 0 on: the GPU opens again after each and runs work.
+   It is the number of landings. *)
+let walk_open ~step from =
+  let rec walk landed n =
+    let opened = ref (Error "not reached") in
+    let reached =
+      Rig_support.interrupted ~from n (fun () -> opened := open_gpu ())
+    in
+    Result.iter (fun g -> A.stop g ~fault:None) !opened;
+    again (strf "interrupted from allocation %d" n);
+    if reached then walk (landed + 1) (n + step) else landed
+  in
+  walk 0 1
+
+(* An open whose boot an exception ends from before its first write to a
+   register to after its return: the path's steps around the boot, at each
+   of their allocations, and the boot, at [spread] of its allocations. rig.pci
+   resets the function at the next open of a GPU the boot wrote to, which
+   then boots it and runs work. *)
+let test_pci_open () =
+  needs_pci ();
+  again "before the walk";
+  let boot = inside [ "Rig_amd_pci__Boot.start" ] in
+  let around a =
+    inside [ "Rig_amd_pci.boot"; "Rig_amd_pci.booted" ] a && not (boot a)
+  in
+  at_least ~msg:"the landings around the boot" int ~than:1
+    (walk_open ~step:1 around);
+  let opened = ref (Error "not opened") in
+  let n = allocations boot (fun () -> opened := open_gpu ()) in
+  (match !opened with
+  | Ok g -> A.stop g ~fault:None
+  | Error why -> fail ("the GPU does not open: " ^ why));
+  at_least ~msg:"the landings in the boot" int ~than:spread
+    (walk_open ~step:(max 1 (n / spread)) boot)
+
+(* A stop that an exception ends at [spread] of its allocations: rig.pci
+   holds the stop as unknown and resets the function at the next open, which
+   boots the GPU and runs work. *)
+let test_pci_stop () =
+  needs_pci ();
+  let from = inside [ "Rig_amd_pci__Boot.stop" ] in
+  let fresh what =
+    match open_gpu () with
+    | Ok g -> g
+    | Error why -> failf "%s, the GPU does not open: %s" what why
+  in
+  let g = fresh "for the count" in
+  let n = allocations from (fun () -> A.stop g ~fault:None) in
+  let step = max 1 (n / spread) in
+  let rec walk landed k =
+    let g = fresh (strf "for allocation %d" k) in
+    let reached =
+      Rig_support.interrupted ~from k (fun () -> A.stop g ~fault:None)
+    in
+    again (strf "interrupted from allocation %d" k);
+    if reached then walk (landed + 1) (k + step) else landed
+  in
+  at_least ~msg:"the landings" int ~than:spread (walk 0 1)
+
 (* Locks *)
 
 (* A callback at any allocation of a section under a path's lock takes the
@@ -313,6 +584,19 @@ let () =
            ];
          group ~timeout "an exception at any allocation"
            [
+             test
+               "of the process's first open leaves the next open to take the \
+                GPU"
+               test_first_open;
+             test
+               "of the path's making of a queue leaves the process no queue"
+               test_queue_raised;
+             test
+               "of an open over PCI from its boot's first write on leaves the \
+                next open to boot the GPU"
+               test_pci_open;
+             test "of a stop over PCI leaves the next open to boot the GPU"
+               test_pci_stop;
              test
                "of an image's entry leaves its unload to free every launch"
                test_entries;

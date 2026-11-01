@@ -35,5 +35,6 @@
   rig_edge
   rig_gpu_support
   rig_support
+  unix
   windtrap)
  (deps abi/fixtures/many_gfx1201.hsaco))

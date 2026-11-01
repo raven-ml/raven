@@ -96,6 +96,10 @@ let vram i =
           if counts = [] || List.mem None counts then None
           else Some (List.fold_left (fun s c -> s + Option.get c) 0 counts))
 
+let queues () =
+  let dir = kfd // "proc" // string_of_int (Unix.getpid ()) // "queues" in
+  Result.to_option (Result.map List.length (names dir))
+
 module D = Rig_amd
 
 include Rig_gpu_support.Make (struct

@@ -34,6 +34,13 @@ val vram : int -> int option
     are not the host's. KFD counts the GPU memory its allocations made and
     its frees gave back. *)
 
+val queues : unit -> int option
+(** [queues ()] is the number of hardware queues KFD holds for this process,
+    on every GPU (the entries of [queues] under
+    [/sys/class/kfd/kfd/proc/<pid>]), or [None] where KFD shows none, as
+    before the process opened KFD. KFD lists a queue from its creation to its
+    destruction. *)
+
 (** {1:gpu The GPU} *)
 
 include Rig_gpu_support.Conformance with module D = Rig_amd
