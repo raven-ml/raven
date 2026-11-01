@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 10
 2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
@@ -58,16 +58,16 @@
 56 Ops.STACK dtypes.i32 [49, 55]
 57 Ops.STORE dtypes.void [39, 56, 41]
 58 Ops.AFTER dtypes.void [0, 37, 57]
-59 Ops.SINK dtypes.void [58] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=16), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))) tag=1
+59 Ops.SINK dtypes.void [58] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=16), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), optimized=True)
 60 Ops.STORE dtypes.void [9, 36]
 61 Ops.STORE dtypes.void [39, 56]
 62 Ops.AFTER dtypes.void [0, 60, 61]
-63 Ops.SINK dtypes.void [62] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=16), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), estimates=Estimates(ops=24, lds=192, mem=144)) tag=1
+63 Ops.SINK dtypes.void [62] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=16), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), estimates=Estimates(ops=24, lds=192, mem=144), optimized=True)
 64 Ops.IF dtypes.void [41, 39]
 65 Ops.ENDIF dtypes.void [64]
 66 Ops.IF dtypes.void [17, 9]
 67 Ops.ENDIF dtypes.void [66]
-68 Ops.SINK dtypes.void [62] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=16), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))) tag=1
+68 Ops.SINK dtypes.void [62] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=16), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), optimized=True)
 69 Ops.LINEAR dtypes.void [1, 2, 10, 20, 21, 3, 4, 5, 25, 26, 22, 23, 24, 27, 28, 15, 16, 17, 29, 51, 52, 53, 6, 7, 41, 54, 32, 33, 34, 44, 45, 46, 47, 48, 12, 13, 14, 8, 38, 40, 42, 11, 18, 0, 43, 50, 49, 55, 56, 19, 31, 30, 35, 36, 39, 9, 64, 61, 65, 66, 60, 67, 62, 68]
 70 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\ntypedef int int2 __attribute__((ext_vector_type(2)));\nstatic inline __attribute__((device)) int2 make_int2(int x, int y) { return { x, y }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) E_4_4(int* data0_10, int* data1_10, int* data2_30) {\n  int gidx0 = __ockl_get_group_id(0); /* 4 */\n  int alu0 = (gidx0*12);\n  bool alu1 = (gidx0<3);\n  int val0 = (alu1?*(data2_30+(alu0+1)):1);\n  bool alu2 = (gidx0<2);\n  int val1 = (alu2?*(data2_30+(alu0+10)):1);\n  int val2 = (alu1?*(data2_30+(alu0+4)):1);\n  int val3 = (alu2?*(data2_30+(alu0+7)):1);\n  int2 cast0 = make_int2(0,0);\n  int alu3 = (gidx0<<2);\n  int alu4 = (alu3+2);\n  int2 val4 = (alu2?*((int2*)((data1_10+alu4))):cast0);\n  int2 val5 = (alu1?*((int2*)((data1_10+alu3))):cast0);\n  if (alu2) {\n    *((int2*)((data0_10+alu4))) = make_int2((val4.x/val3),(val4.y/val1));\n  }\n  if (alu1) {\n    *((int2*)((data0_10+alu3))) = make_int2((val5.x/val0),(val5.y/val2));\n  }\n}"
 71 Ops.PROGRAM dtypes.void [63, 69, 70] ProgramInfo(global_size=(4, 1, 1), params=(%2, %10, %21), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))

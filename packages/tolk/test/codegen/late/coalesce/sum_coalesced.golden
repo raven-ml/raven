@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.bool [] True
@@ -39,11 +39,11 @@
 37 Ops.ADD dtypes.f32 [34, 36]
 38 Ops.ADD dtypes.f32 [18, 37]
 39 Ops.STORE dtypes.void [17, 38]
-40 Ops.END dtypes.void [39, 15] tag="mergeable"
-41 Ops.AFTER dtypes.f32 [10, 40, 14]
+40 Ops.END dtypes.void [39, 15]
+41 Ops.AFTER dtypes.f32 [10, 40]
 42 Ops.INDEX dtypes.f32 [41, 4]
 43 Ops.LOAD dtypes.f32 [42]
 44 Ops.STORE dtypes.void [8, 43]
 45 Ops.END dtypes.void [44, 3]
-46 Ops.SINK dtypes.void [45] KernelInfo(name="r_4_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),)) tag=1
+46 Ops.SINK dtypes.void [45] KernelInfo(name="r_4_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), optimized=True)
 

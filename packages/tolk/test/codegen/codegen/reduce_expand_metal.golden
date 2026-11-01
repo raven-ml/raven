@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 256
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -37,8 +37,8 @@
 35 Ops.STACK dtypes.f32 [24, 28, 30, 34]
 36 Ops.STORE dtypes.void [14, 35]
 37 Ops.AFTER dtypes.void [0, 36]
-38 Ops.SINK dtypes.void [37] KernelInfo(name="E_16_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)))) tag=1
-39 Ops.SINK dtypes.void [37] KernelInfo(name="E_16_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=256, lds=2112, mem=2112)) tag=1
+38 Ops.SINK dtypes.void [37] KernelInfo(name="E_16_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), optimized=True)
+39 Ops.SINK dtypes.void [37] KernelInfo(name="E_16_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=256, lds=2112, mem=2112), optimized=True)
 40 Ops.LINEAR dtypes.void [1, 2, 3, 15, 18, 4, 5, 16, 17, 6, 7, 9, 10, 11, 8, 12, 13, 19, 20, 0, 21, 22, 23, 25, 26, 27, 29, 31, 32, 33, 24, 28, 30, 34, 35, 14, 36, 37, 38]
 41 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_256; device float* data1_16; device float* data2_256; };\nkernel void E_16_4_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_256 = args.data0_256; device float* data1_16 = args.data1_16; device float* data2_256 = args.data2_256;\n  int lidx0 = lid.x; /* 16 */\n  float val0 = (*(data1_16+lidx0));\n  int lidx1 = lid.y; /* 4 */\n  int alu0 = ((lidx0<<4)+(lidx1<<2));\n  float4 val1 = (*((device float4*)((data2_256+alu0))));\n  *((device float4*)((data0_256+alu0))) = float4((val0+val1.x),(val0+val1.y),(val0+val1.z),(val0+val1.w));\n}"
 42 Ops.PROGRAM dtypes.void [39, 40, 41] ProgramInfo(local_size=(16, 4, 1), params=(%2, %15, %18), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="METAL", renderer="METAL", arch="Apple9"))

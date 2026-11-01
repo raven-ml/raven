@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 256
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
@@ -20,8 +20,8 @@
 18 Ops.STORE dtypes.void [14, 17]
 19 Ops.AFTER dtypes.void [0, 12, 18]
 20 Ops.END dtypes.void [19, 4]
-21 Ops.SINK dtypes.void [20] KernelInfo(name="two_outputs") tag=1
-22 Ops.SINK dtypes.void [20] KernelInfo(name="two_outputs", estimates=Estimates(ops=512, lds=3072, mem=3072)) tag=1
+21 Ops.SINK dtypes.void [20] KernelInfo(name="two_outputs", optimized=True)
+22 Ops.SINK dtypes.void [20] KernelInfo(name="two_outputs", estimates=Estimates(ops=512, lds=3072, mem=3072), optimized=True)
 23 Ops.LINEAR dtypes.void [1, 6, 2, 13, 0, 9, 10, 15, 16, 3, 4, 7, 8, 5, 14, 11, 17, 12, 18, 19, 20, 21]
 24 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_256; device float* data1_256; device float* data2_256; };\nkernel void two_outputs(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_256 = args.data0_256; device float* data1_256 = args.data1_256; device float* data2_256 = args.data2_256;\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    *(data1_256+Lidx0) = (val0+1.0f);\n    *(data2_256+Lidx0) = (val0*2.0f);\n  }\n}"
 25 Ops.PROGRAM dtypes.void [22, 23, 24] ProgramInfo(params=(%6, %2, %13), globals=(0, 1, 2), outs=(1, 2), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))

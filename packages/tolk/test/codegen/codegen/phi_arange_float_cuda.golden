@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 299
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -15,8 +15,8 @@
 13 Ops.CAST dtypes.f32 [12] dtypes.f32
 14 Ops.ADD dtypes.f32 [11, 13]
 15 Ops.STORE dtypes.void [4, 14]
-16 Ops.SINK dtypes.void [15] KernelInfo(name="E_299") tag=1
-17 Ops.SINK dtypes.void [15] KernelInfo(name="E_299", estimates=Estimates(ops=897, lds=1196, mem=1196)) tag=1
+16 Ops.SINK dtypes.void [15] KernelInfo(name="E_299", optimized=True)
+17 Ops.SINK dtypes.void [15] KernelInfo(name="E_299", estimates=Estimates(ops=897, lds=1196, mem=1196), optimized=True)
 18 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 13, 9, 10, 11, 14, 15, 16]
 19 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) E_299(float* data0_299) {\n  int gidx0 = blockIdx.x; /* 299 */\n  *(data0_299+gidx0) = ((((float)((gidx0+1)))*3.5f)+2.0f);\n}"
 20 Ops.PROGRAM dtypes.void [17, 18, 19] ProgramInfo(global_size=(299, 1, 1), params=(%1,), globals=(0,), outs=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))

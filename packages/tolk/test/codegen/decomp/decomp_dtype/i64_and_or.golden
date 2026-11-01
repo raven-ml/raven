@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
 2 Ops.PARAM dtypes.i64 [1] ParamArg(slot=0, dtype=dtypes.i64, device="CPU")
@@ -56,7 +56,7 @@
 54 Ops.STORE dtypes.void [45, 53]
 55 Ops.AFTER dtypes.void [0, 19, 31, 42, 54]
 56 Ops.END dtypes.void [55, 5]
-57 Ops.SINK dtypes.void [56] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+57 Ops.SINK dtypes.void [56] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 58 Ops.CONST dtypes.weakint [] 16
 59 Ops.PARAM dtypes.i32 [58] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
 60 Ops.MUL dtypes.i32 [6, 3]
@@ -161,6 +161,6 @@
 159 Ops.AFTER dtypes.void [0, 147, 158]
 160 Ops.AFTER dtypes.void [0, 87, 111, 135, 159]
 161 Ops.END dtypes.void [160, 5]
-162 Ops.SINK dtypes.void [161] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+162 Ops.SINK dtypes.void [161] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 163 Ops.SINK dtypes.void [57, 162]
 

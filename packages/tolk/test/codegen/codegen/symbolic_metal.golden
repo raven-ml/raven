@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -15,7 +15,7 @@
 13 Ops.CAST dtypes.f32 [12] dtypes.f32
 14 Ops.ADD dtypes.f32 [11, 13]
 15 Ops.STORE dtypes.void [5, 14]
-16 Ops.SINK dtypes.void [15] KernelInfo(name="E_n") tag=1
+16 Ops.SINK dtypes.void [15] KernelInfo(name="E_n", optimized=True)
 17 Ops.CONST dtypes.weakint [] 2
 18 Ops.MUL dtypes.i32 [3, 17]
 19 Ops.CONST dtypes.weakint [] 0
@@ -28,7 +28,7 @@
 26 Ops.MUL dtypes.i32 [20, 3]
 27 Ops.ADD dtypes.i32 [19, 26]
 28 Ops.ADD dtypes.i32 [27, 26]
-29 Ops.SINK dtypes.void [15] KernelInfo(name="E_n", estimates=Estimates(ops=%18, lds=%25, mem=%28)) tag=1
+29 Ops.SINK dtypes.void [15] KernelInfo(name="E_n", estimates=Estimates(ops=%18, lds=%25, mem=%28), optimized=True)
 30 Ops.LINEAR dtypes.void [0, 1, 6, 2, 3, 4, 7, 8, 5, 12, 13, 9, 10, 11, 14, 15, 16]
 31 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_64; device float* data1_64; int n_; };\nkernel void E_n(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_64 = args.data0_64; device float* data1_64 = args.data1_64; int n_ = args.n_;\n  int gidx0 = gid.x; /* n */\n  float val0 = (*(data1_64+gidx0));\n  *(data0_64+gidx0) = ((val0*2.0f)+1.0f);\n}"
 32 Ops.PARAM dtypes.i32 [2] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 64), multiple_of=1, name="n", addrspace=AddrSpace.ALU)

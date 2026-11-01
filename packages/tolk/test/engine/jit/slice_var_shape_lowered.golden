@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 10
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -28,8 +28,8 @@
 26 Ops.SUB dtypes.i32 [24, 25]
 27 Ops.CONST dtypes.weakint [] 8
 28 Ops.MUL dtypes.i32 [26, 27]
-29 Ops.SINK dtypes.void [23] KernelInfo(name="E_i", estimates=Estimates(ops=%26, lds=%28, mem=%28), split=(%24, 2, 3)) tag=1
-30 Ops.SINK dtypes.void [23] KernelInfo(name="E_i", split=(%24, 2, 3)) tag=1
+29 Ops.SINK dtypes.void [23] KernelInfo(name="E_i", estimates=Estimates(ops=%26, lds=%28, mem=%28), optimized=True, split=(%24, 2, 3))
+30 Ops.SINK dtypes.void [23] KernelInfo(name="E_i", optimized=True, split=(%24, 2, 3))
 31 Ops.LINEAR dtypes.void [0, 1, 9, 10, 2, 3, 4, 19, 20, 14, 15, 11, 12, 5, 6, 7, 13, 16, 17, 18, 8, 21, 22, 23, 30]
 32 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_i(float* restrict data0_10, float* restrict data1_110, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_110+((alu0*11)+1)));\n    *(data0_10+alu0) = (val0+1.0f);\n  }\n}\n"
 33 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E_i(float* restrict data0_10, float* restrict data1_110, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_110+((alu0*11)+1)));\n    *(data0_10+alu0) = (val0+1.0f);\n  }\n}\n"

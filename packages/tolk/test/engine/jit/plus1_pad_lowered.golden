@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 30
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -48,8 +48,8 @@
 46 Ops.AFTER dtypes.void [0, 45]
 47 Ops.END dtypes.void [46, 13]
 48 Ops.END dtypes.void [47, 5]
-49 Ops.SINK dtypes.void [48] KernelInfo(name="E_3_5_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)),), estimates=Estimates(ops=105, lds=240, mem=240), split=(5, 2, 3)) tag=1
-50 Ops.SINK dtypes.void [48] KernelInfo(name="E_3_5_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)),), split=(5, 2, 3)) tag=1
+49 Ops.SINK dtypes.void [48] KernelInfo(name="E_3_5_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)),), estimates=Estimates(ops=105, lds=240, mem=240), optimized=True, split=(5, 2, 3))
+50 Ops.SINK dtypes.void [48] KernelInfo(name="E_3_5_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)),), optimized=True, split=(5, 2, 3))
 51 Ops.LINEAR dtypes.void [1, 2, 24, 0, 9, 10, 22, 26, 27, 35, 36, 38, 39, 15, 16, 6, 7, 19, 20, 3, 4, 11, 5, 12, 8, 13, 14, 17, 18, 29, 30, 31, 32, 33, 25, 23, 28, 34, 37, 40, 42, 43, 41, 44, 21, 45, 46, 47, 48, 50]
 52 Ops.SOURCE dtypes.void [] "typedef float float2 __attribute__((aligned(8),ext_vector_type(2)));\n__attribute__((min_vector_width(512))) void E_3_5_2(float* restrict data0_30, float* restrict data1_30, const int block_lo_, const int block_hi_, const int i_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = ((block_lo_+Lidx1)<<1);\n      int alu1 = ((Lidx0*10)+alu0);\n      _Bool alu2 = ((alu0+1)<i_);\n      float val0 = (alu2?*(data1_30+(alu1+1)):0.0f);\n      _Bool alu3 = (alu0<i_);\n      float val1 = (alu3?*(data1_30+alu1):0.0f);\n      float2 alu4 = ((float2){val1,val0}+1.0f);\n      float alu5 = (alu2?alu4[1]:0.0f);\n      float alu6 = (alu3?alu4[0]:0.0f);\n      *((float2*)((data0_30+alu1))) = (float2){alu6,alu5};\n    }\n  }\n}\n"
 53 Ops.BINARY dtypes.u8 [] b"typedef float float2 __attribute__((aligned(8),ext_vector_type(2)));\n__attribute__((min_vector_width(512))) void E_3_5_2(float* restrict data0_30, float* restrict data1_30, const int block_lo_, const int block_hi_, const int i_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = ((block_lo_+Lidx1)<<1);\n      int alu1 = ((Lidx0*10)+alu0);\n      _Bool alu2 = ((alu0+1)<i_);\n      float val0 = (alu2?*(data1_30+(alu1+1)):0.0f);\n      _Bool alu3 = (alu0<i_);\n      float val1 = (alu3?*(data1_30+alu1):0.0f);\n      float2 alu4 = ((float2){val1,val0}+1.0f);\n      float alu5 = (alu2?alu4[1]:0.0f);\n      float alu6 = (alu3?alu4[0]:0.0f);\n      *((float2*)((data0_30+alu1))) = (float2){alu6,alu5};\n    }\n  }\n}\n"

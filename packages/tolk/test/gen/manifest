@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 codegen/codegen/add_big_clang.golden
 codegen/codegen/add_big_cuda.golden
 codegen/codegen/add_big_hip.golden
@@ -2204,7 +2204,6 @@ renderer/cstyle/cases.golden
 renderer/cstyle/clang_add.golden
 renderer/cstyle/clang_add_expand_ssa.golden
 renderer/cstyle/clang_add_max_uchar.golden
-renderer/cstyle/clang_add_unaligned.golden
 renderer/cstyle/clang_bitcast.golden
 renderer/cstyle/clang_call_out.golden
 renderer/cstyle/clang_call_ret.golden
@@ -2219,7 +2218,6 @@ renderer/cstyle/clang_constants.golden
 renderer/cstyle/clang_custom.golden
 renderer/cstyle/clang_dtype_bf16.golden
 renderer/cstyle/clang_dtype_bool.golden
-renderer/cstyle/clang_dtype_bool_unaligned.golden
 renderer/cstyle/clang_dtype_f16.golden
 renderer/cstyle/clang_dtype_f32.golden
 renderer/cstyle/clang_dtype_f64.golden

@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 108
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 6
@@ -66,11 +66,11 @@
 64 Ops.LOAD dtypes.f32 [30]
 65 Ops.MULACC dtypes.f32 [51, 63, 64]
 66 Ops.STORE dtypes.void [30, 65]
-67 Ops.END dtypes.void [66, 26, 27, 28] tag="mergeable"
-68 Ops.AFTER dtypes.f32 [16, 67, 23]
+67 Ops.END dtypes.void [66, 26, 27, 28]
+68 Ops.AFTER dtypes.f32 [16, 67]
 69 Ops.INDEX dtypes.f32 [68, 19]
 70 Ops.LOAD dtypes.f32 [69]
 71 Ops.STORE dtypes.void [14, 70]
 72 Ops.END dtypes.void [71, 10, 4, 6]
-73 Ops.SINK dtypes.void [72] KernelInfo(name="r_3_6_6_2_3_3") tag=1
+73 Ops.SINK dtypes.void [72] KernelInfo(name="r_3_6_6_2_3_3", optimized=True)
 

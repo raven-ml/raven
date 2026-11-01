@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=0, dtype=dtypes.bf16, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -27,7 +27,7 @@
 25 Ops.ADD dtypes.f32 [15, 24]
 26 Ops.STORE dtypes.void [14, 25]
 27 Ops.END dtypes.void [26, 12]
-28 Ops.AFTER dtypes.f32 [5, 27, 9]
+28 Ops.AFTER dtypes.f32 [5, 27]
 29 Ops.INDEX dtypes.f32 [28, 3]
 30 Ops.LOAD dtypes.f32 [29]
 31 Ops.BITCAST dtypes.u32 [30] dtypes.u32
@@ -57,7 +57,7 @@
 55 Ops.CAST dtypes.u16 [54] dtypes.u16
 56 Ops.BITCAST dtypes.bf16 [55] dtypes.bf16
 57 Ops.STORE dtypes.void [4, 56]
-58 Ops.SINK dtypes.void [57] KernelInfo(name="r_3") tag=1
+58 Ops.SINK dtypes.void [57] KernelInfo(name="r_3", optimized=True)
 59 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
 60 Ops.INDEX dtypes.f32 [59, 3]
 61 Ops.STORE dtypes.void [60, 8]
@@ -67,7 +67,7 @@
 65 Ops.ADD dtypes.f32 [64, 24]
 66 Ops.STORE dtypes.void [63, 65]
 67 Ops.END dtypes.void [66, 12]
-68 Ops.AFTER dtypes.f32 [59, 67, 61]
+68 Ops.AFTER dtypes.f32 [59, 67]
 69 Ops.INDEX dtypes.f32 [68, 3]
 70 Ops.LOAD dtypes.f32 [69]
 71 Ops.BITCAST dtypes.u32 [70] dtypes.u32
@@ -87,8 +87,8 @@
 85 Ops.CAST dtypes.u16 [84] dtypes.u16
 86 Ops.BITCAST dtypes.bf16 [85] dtypes.bf16
 87 Ops.STORE dtypes.void [4, 86]
-88 Ops.SINK dtypes.void [87] KernelInfo(name="r_3", estimates=Estimates(ops=19, lds=8, mem=8)) tag=1
-89 Ops.SINK dtypes.void [87] KernelInfo(name="r_3") tag=1
+88 Ops.SINK dtypes.void [87] KernelInfo(name="r_3", estimates=Estimates(ops=19, lds=8, mem=8), optimized=True)
+89 Ops.SINK dtypes.void [87] KernelInfo(name="r_3", optimized=True)
 90 Ops.LINEAR dtypes.void [0, 1, 10, 16, 59, 2, 3, 60, 7, 8, 11, 21, 22, 61, 12, 17, 18, 62, 63, 64, 19, 20, 23, 24, 65, 66, 67, 68, 69, 70, 4, 36, 39, 33, 34, 42, 43, 45, 46, 49, 50, 71, 72, 75, 76, 77, 78, 79, 80, 73, 74, 81, 82, 83, 84, 85, 86, 87, 89]
 91 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void r_3(unsigned short* restrict data0_1, unsigned short* restrict data1_3) {\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    unsigned short val0 = (*(data1_3+Lidx0));\n    *(buf0+0) = ((*(buf0+0))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (unsigned short)(val0))))<<16u))));\n  }\n  unsigned int cast0 = __builtin_bit_cast(unsigned int, (float)((*(buf0+0))));\n  unsigned int alu3 = (((cast0&65535u)!=0u)?(cast0|65536u):cast0);\n  unsigned int alu4 = (((-cast0&2139095040u)!=0u)?(cast0+((cast0>>16u)&1u)+32767u):alu3);\n  *(data0_1+0) = __builtin_bit_cast(unsigned short, (unsigned short)(((unsigned short)((alu4>>16u)))));\n}\n"
 92 Ops.PROGRAM dtypes.void [88, 90, 91] ProgramInfo(params=(%1, %16), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

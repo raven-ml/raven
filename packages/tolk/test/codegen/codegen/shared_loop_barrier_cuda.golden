@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -21,7 +21,7 @@
 19 Ops.STORE dtypes.void [4, 18]
 20 Ops.BARRIER dtypes.void [19]
 21 Ops.END dtypes.void [20, 8]
-22 Ops.SINK dtypes.void [21] KernelInfo() tag=1
+22 Ops.SINK dtypes.void [21] KernelInfo(optimized=True)
 23 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=10, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
 24 Ops.AFTER dtypes.i32 [23, 8]
 25 Ops.INDEX dtypes.i32 [24, 3]
@@ -33,8 +33,8 @@
 31 Ops.STORE dtypes.void [4, 30]
 32 Ops.BARRIER dtypes.void [31]
 33 Ops.END dtypes.void [32, 8]
-34 Ops.SINK dtypes.void [33] KernelInfo(estimates=Estimates(lds=28, mem=8)) tag=1
-35 Ops.SINK dtypes.void [33] KernelInfo() tag=1
+34 Ops.SINK dtypes.void [33] KernelInfo(estimates=Estimates(lds=28, mem=8), optimized=True)
+35 Ops.SINK dtypes.void [33] KernelInfo(optimized=True)
 36 Ops.LINEAR dtypes.void [0, 11, 1, 23, 2, 3, 12, 13, 4, 6, 7, 8, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35]
 37 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) test(int* data0_1, int* data1_1) {\n  __shared__ __align__(16) int buf0[1];\n  int val0 = (*(data0_1+0));\n  for (int Lidx19 = 0; Lidx19 < 2; Lidx19++) {\n    *(buf0+0) = val0;\n    __syncthreads();\n    int val1 = (*(buf0+0));\n    *(data1_1+0) = val1;\n    __syncthreads();\n  }\n}"
 38 Ops.PROGRAM dtypes.void [34, 36, 37] ProgramInfo(params=(%11, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))

@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 4096
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 16
@@ -49,9 +49,9 @@
 47 Ops.MULACC dtypes.f32 [40, 45, 46]
 48 Ops.STORE dtypes.void [36, 47]
 49 Ops.END dtypes.void [48, 34]
-50 Ops.AFTER dtypes.f32 [24, 49, 31]
+50 Ops.AFTER dtypes.f32 [24, 49]
 51 Ops.INDEX dtypes.f32 [50, 27]
 52 Ops.LOAD dtypes.f32 [51]
 53 Ops.STORE dtypes.void [22, 52]
-54 Ops.SINK dtypes.void [53] KernelInfo(name="r_16_16_4_4_64", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.LOCAL)))) tag=1
+54 Ops.SINK dtypes.void [53] KernelInfo(name="r_16_16_4_4_64", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.LOCAL))), optimized=True)
 

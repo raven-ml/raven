@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 10
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -38,8 +38,8 @@
 36 Ops.MUL dtypes.i32 [35, 11]
 37 Ops.CONST dtypes.weakint [] 16
 38 Ops.MUL dtypes.i32 [35, 37]
-39 Ops.SINK dtypes.void [32] KernelInfo(name="r_i_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=%36, lds=%38, mem=%38), split=(%33, 2, 3)) tag=1
-40 Ops.SINK dtypes.void [32] KernelInfo(name="r_i_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), split=(%33, 2, 3)) tag=1
+39 Ops.SINK dtypes.void [32] KernelInfo(name="r_i_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=%36, lds=%38, mem=%38), optimized=True, split=(%33, 2, 3))
+40 Ops.SINK dtypes.void [32] KernelInfo(name="r_i_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), optimized=True, split=(%33, 2, 3))
 41 Ops.LINEAR dtypes.void [0, 1, 9, 10, 2, 3, 4, 28, 29, 16, 17, 22, 23, 11, 12, 5, 6, 7, 13, 18, 19, 20, 24, 25, 26, 14, 15, 8, 21, 27, 30, 31, 32, 40]
 42 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void r_i_3(float* restrict data0_10, float* restrict data1_30, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0*3);\n    float val0 = (*(data1_30+(alu1+1)));\n    float val1 = (*(data1_30+(alu1+2)));\n    float val2 = (*(data1_30+alu1));\n    *(data0_10+alu0) = ((val2+val0+val1)*0.3333333432674408f);\n  }\n}\n"
 43 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void r_i_3(float* restrict data0_10, float* restrict data1_30, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0*3);\n    float val0 = (*(data1_30+(alu1+1)));\n    float val1 = (*(data1_30+(alu1+2)));\n    float val2 = (*(data1_30+alu1));\n    *(data0_10+alu0) = ((val2+val0+val1)*0.3333333432674408f);\n  }\n}\n"
@@ -87,8 +87,8 @@
 85 Ops.MUL dtypes.i32 [35, 84]
 86 Ops.CONST dtypes.weakint [] 20
 87 Ops.MUL dtypes.i32 [35, 86]
-88 Ops.SINK dtypes.void [83] KernelInfo(name="r_i_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=%85, lds=%87, mem=%87), split=(%33, 3, 4)) tag=1
-89 Ops.SINK dtypes.void [83] KernelInfo(name="r_i_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), split=(%33, 3, 4)) tag=1
+88 Ops.SINK dtypes.void [83] KernelInfo(name="r_i_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=%85, lds=%87, mem=%87), optimized=True, split=(%33, 3, 4))
+89 Ops.SINK dtypes.void [83] KernelInfo(name="r_i_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), optimized=True, split=(%33, 3, 4))
 90 Ops.LINEAR dtypes.void [0, 1, 9, 10, 68, 2, 52, 53, 79, 80, 34, 74, 16, 17, 22, 23, 11, 12, 54, 55, 56, 58, 61, 62, 63, 64, 65, 66, 59, 60, 69, 70, 67, 57, 71, 75, 73, 72, 76, 77, 78, 81, 82, 83, 89]
 91 Ops.SOURCE dtypes.void [] "typedef float float3 __attribute__((aligned(8),ext_vector_type(3)));\n__attribute__((min_vector_width(512))) void r_i_3(float* restrict data0_10, float* restrict data1_30, float* restrict data2_10, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0*3);\n    float val0 = (*(data1_30+(alu1+1)));\n    float val1 = (*(data1_30+(alu1+2)));\n    float val2 = (*(data1_30+alu1));\n    float val3 = (*(data2_10+alu0));\n    float3 alu2 = ((float3){val2,val0,val1}-val3);\n    *(data0_10+alu0) = (__builtin_fmaf(alu2[2],alu2[2],__builtin_fmaf(alu2[1],alu2[1],(alu2[0]*alu2[0])))*0.5f);\n  }\n}\n"
 92 Ops.BINARY dtypes.u8 [] b"typedef float float3 __attribute__((aligned(8),ext_vector_type(3)));\n__attribute__((min_vector_width(512))) void r_i_3(float* restrict data0_10, float* restrict data1_30, float* restrict data2_10, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0*3);\n    float val0 = (*(data1_30+(alu1+1)));\n    float val1 = (*(data1_30+(alu1+2)));\n    float val2 = (*(data1_30+alu1));\n    float val3 = (*(data2_10+alu0));\n    float3 alu2 = ((float3){val2,val0,val1}-val3);\n    *(data0_10+alu0) = (__builtin_fmaf(alu2[2],alu2[2],__builtin_fmaf(alu2[1],alu2[1],(alu2[0]*alu2[0])))*0.5f);\n  }\n}\n"

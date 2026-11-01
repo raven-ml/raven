@@ -49,7 +49,7 @@ def given(kernel, renderer):
 
     coalesce, tinygrad.codegen.memory_coalescing = tinygrad.codegen.memory_coalescing, capture
     try:
-        tinygrad.codegen.full_rewrite_to_sink(kernel, renderer, optimize=kernel.tag is None)
+        tinygrad.codegen.full_rewrite_to_sink(kernel, renderer, optimize=kernel.arg is None or not kernel.arg.optimized)
     except Captured as e:
         return e.args[0]
     finally:

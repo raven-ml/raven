@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 12
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 32
@@ -43,7 +43,7 @@
 41 Ops.MULACC dtypes.f32 [33, 37, 40]
 42 Ops.STORE dtypes.void [39, 41]
 43 Ops.END dtypes.void [42, 30]
-44 Ops.AFTER dtypes.f32 [10, 43, 29]
+44 Ops.AFTER dtypes.f32 [10, 43]
 45 Ops.INDEX dtypes.f32 [44, 14]
 46 Ops.LOAD dtypes.f32 [45]
 47 Ops.ADD dtypes.i32 [23, 25]
@@ -51,6 +51,6 @@
 49 Ops.STORE dtypes.void [48, 46]
 50 Ops.END dtypes.void [49, 25]
 51 Ops.END dtypes.void [50, 20]
-52 Ops.SINK dtypes.void [51] KernelInfo(name="r_4_3_8", split=(4, 3, 4)) tag=1
+52 Ops.SINK dtypes.void [51] KernelInfo(name="r_4_3_8", optimized=True, split=(4, 3, 4))
 53 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52]
 

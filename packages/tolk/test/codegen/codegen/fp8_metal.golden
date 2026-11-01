@@ -1,16 +1,16 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
-2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, device="CPU") tag=dtypes.fp8e4m3
+2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, device="CPU")
 3 Ops.CONST dtypes.weakint [] 4
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.SPECIAL dtypes.i32 [4] "lidx0"
 6 Ops.CONST dtypes.weakint [] 2
 7 Ops.CAST dtypes.i32 [6] dtypes.i32
 8 Ops.SHL dtypes.i32 [5, 7]
-9 Ops.INDEX dtypes.u8 [2, 8] tag=dtypes.fp8e4m3
-10 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8, device="CPU") tag=dtypes.fp8e4m3
-11 Ops.INDEX dtypes.u8 [10, 8] tag=dtypes.fp8e4m3
+9 Ops.INDEX dtypes.u8 [2, 8]
+10 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8, device="CPU")
+11 Ops.INDEX dtypes.u8 [10, 8]
 12 Ops.LOAD dtypes.u8 [11]
 13 Ops.CONST dtypes.weakint [] 128
 14 Ops.CAST dtypes.u8 [13] dtypes.u8
@@ -47,7 +47,7 @@
 45 Ops.CONST dtypes.weakint [] 1
 46 Ops.CAST dtypes.i32 [45] dtypes.i32
 47 Ops.ADD dtypes.i32 [8, 46]
-48 Ops.INDEX dtypes.u8 [10, 47] tag=dtypes.fp8e4m3
+48 Ops.INDEX dtypes.u8 [10, 47]
 49 Ops.LOAD dtypes.u8 [48]
 50 Ops.AND dtypes.u8 [49, 14]
 51 Ops.CAST dtypes.u32 [50] dtypes.u32
@@ -65,7 +65,7 @@
 63 Ops.OR dtypes.u32 [52, 62]
 64 Ops.BITCAST dtypes.f32 [63] dtypes.f32
 65 Ops.ADD dtypes.i32 [8, 7]
-66 Ops.INDEX dtypes.u8 [10, 65] tag=dtypes.fp8e4m3
+66 Ops.INDEX dtypes.u8 [10, 65]
 67 Ops.LOAD dtypes.u8 [66]
 68 Ops.AND dtypes.u8 [67, 14]
 69 Ops.CAST dtypes.u32 [68] dtypes.u32
@@ -84,7 +84,7 @@
 82 Ops.BITCAST dtypes.f32 [81] dtypes.f32
 83 Ops.CAST dtypes.i32 [24] dtypes.i32
 84 Ops.ADD dtypes.i32 [8, 83]
-85 Ops.INDEX dtypes.u8 [10, 84] tag=dtypes.fp8e4m3
+85 Ops.INDEX dtypes.u8 [10, 84]
 86 Ops.LOAD dtypes.u8 [85]
 87 Ops.AND dtypes.u8 [86, 14]
 88 Ops.CAST dtypes.u32 [87] dtypes.u32
@@ -220,7 +220,7 @@
 218 Ops.OR dtypes.u8 [202, 217]
 219 Ops.WHERE dtypes.u8 [196, 201, 218]
 220 Ops.STORE dtypes.void [9, 219]
-221 Ops.INDEX dtypes.u8 [2, 47] tag=dtypes.fp8e4m3
+221 Ops.INDEX dtypes.u8 [2, 47]
 222 Ops.INDEX dtypes.f32 [102, 46]
 223 Ops.MUL dtypes.f32 [222, 106]
 224 Ops.CMPNE dtypes.bool [223, 223]
@@ -311,7 +311,7 @@
 309 Ops.OR dtypes.u8 [293, 308]
 310 Ops.WHERE dtypes.u8 [287, 292, 309]
 311 Ops.STORE dtypes.void [221, 310]
-312 Ops.INDEX dtypes.u8 [2, 65] tag=dtypes.fp8e4m3
+312 Ops.INDEX dtypes.u8 [2, 65]
 313 Ops.INDEX dtypes.f32 [102, 7]
 314 Ops.MUL dtypes.f32 [313, 106]
 315 Ops.CMPNE dtypes.bool [314, 314]
@@ -402,7 +402,7 @@
 400 Ops.OR dtypes.u8 [384, 399]
 401 Ops.WHERE dtypes.u8 [378, 383, 400]
 402 Ops.STORE dtypes.void [312, 401]
-403 Ops.INDEX dtypes.u8 [2, 84] tag=dtypes.fp8e4m3
+403 Ops.INDEX dtypes.u8 [2, 84]
 404 Ops.INDEX dtypes.f32 [102, 83]
 405 Ops.MUL dtypes.f32 [404, 106]
 406 Ops.CMPNE dtypes.bool [405, 405]
@@ -495,8 +495,8 @@
 493 Ops.STORE dtypes.void [403, 492]
 494 Ops.AFTER dtypes.void [0, 220, 311, 402, 493]
 495 Ops.AFTER dtypes.void [0, 494]
-496 Ops.SINK dtypes.void [495] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)))) tag=1
-497 Ops.SINK dtypes.void [495] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=1392, lds=32, mem=32)) tag=1
+496 Ops.SINK dtypes.void [495] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), optimized=True)
+497 Ops.SINK dtypes.void [495] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=1392, lds=32, mem=32), optimized=True)
 498 Ops.LINEAR dtypes.void [1, 2, 10, 3, 4, 5, 45, 46, 6, 7, 8, 47, 48, 49, 65, 66, 67, 24, 83, 84, 85, 86, 11, 12, 0, 20, 21, 53, 54, 13, 14, 50, 51, 71, 72, 68, 69, 90, 91, 87, 88, 22, 23, 15, 16, 27, 28, 38, 39, 30, 32, 33, 35, 36, 17, 18, 25, 58, 60, 52, 55, 57, 56, 59, 61, 62, 63, 64, 76, 78, 70, 73, 75, 74, 77, 79, 80, 81, 82, 95, 97, 89, 92, 94, 93, 96, 98, 99, 100, 101, 34, 40, 19, 26, 31, 29, 37, 41, 42, 43, 44, 102, 221, 312, 403, 9, 103, 104, 222, 313, 404, 109, 110, 105, 106, 112, 113, 147, 148, 156, 157, 107, 114, 111, 108, 115, 116, 117, 120, 119, 118, 121, 122, 123, 124, 149, 158, 159, 160, 165, 166, 154, 138, 139, 143, 144, 133, 151, 152, 125, 126, 128, 129, 135, 136, 153, 150, 161, 162, 155, 163, 164, 167, 168, 132, 134, 137, 140, 141, 142, 146, 127, 130, 145, 131, 169, 170, 171, 175, 176, 172, 173, 180, 182, 174, 177, 179, 178, 181, 183, 184, 185, 186, 189, 188, 187, 190, 191, 192, 193, 204, 208, 209, 210, 223, 226, 225, 224, 227, 228, 229, 232, 231, 230, 233, 234, 235, 236, 247, 251, 252, 253, 249, 248, 254, 255, 250, 256, 257, 258, 259, 240, 241, 242, 243, 244, 245, 237, 238, 246, 239, 260, 261, 262, 266, 267, 263, 264, 271, 273, 265, 268, 270, 269, 272, 274, 275, 276, 277, 280, 279, 278, 281, 282, 283, 284, 295, 299, 300, 301, 314, 317, 316, 315, 318, 319, 320, 323, 322, 321, 324, 325, 326, 327, 338, 342, 343, 344, 340, 339, 345, 346, 341, 347, 348, 349, 350, 331, 332, 333, 334, 335, 336, 328, 329, 337, 330, 351, 352, 353, 357, 358, 354, 355, 362, 364, 356, 359, 361, 360, 363, 365, 366, 367, 368, 371, 370, 369, 372, 373, 374, 375, 386, 390, 391, 392, 405, 408, 407, 406, 409, 410, 411, 414, 413, 412, 415, 416, 417, 418, 429, 433, 434, 435, 431, 430, 436, 437, 432, 438, 439, 440, 441, 422, 423, 424, 425, 426, 427, 419, 420, 428, 421, 442, 443, 444, 448, 449, 445, 446, 453, 455, 447, 450, 452, 451, 454, 456, 457, 458, 459, 462, 461, 460, 463, 464, 465, 466, 477, 481, 482, 483, 206, 205, 211, 212, 207, 213, 214, 215, 216, 297, 296, 302, 303, 298, 304, 305, 306, 307, 388, 387, 393, 394, 389, 395, 396, 397, 398, 479, 478, 484, 485, 480, 486, 487, 488, 489, 197, 198, 199, 200, 201, 288, 289, 290, 291, 292, 379, 380, 381, 382, 383, 470, 471, 472, 473, 474, 202, 293, 384, 475, 194, 285, 376, 467, 195, 203, 286, 294, 377, 385, 468, 476, 196, 287, 378, 469, 217, 218, 308, 309, 399, 400, 490, 491, 219, 310, 401, 492, 311, 402, 493, 220, 494, 495, 496]
 499 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device unsigned char* data0_16; device unsigned char* data1_16; };\nkernel void E_4_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device unsigned char* data0_16 = args.data0_16; device unsigned char* data1_16 = args.data1_16;\n  int lidx0 = lid.x; /* 4 */\n  int alu0 = (lidx0<<2);\n  int alu1 = (alu0+1);\n  unsigned char val0 = (*(data1_16+alu1));\n  int alu2 = (alu0+2);\n  unsigned char val1 = (*(data1_16+alu2));\n  int alu3 = (alu0+3);\n  unsigned char val2 = (*(data1_16+alu3));\n  unsigned char val3 = (*(data1_16+alu0));\n  uint cast0 = ((uint)((val0&((unsigned char)(127u)))));\n  uint cast1 = ((uint)((val1&((unsigned char)(127u)))));\n  uint cast2 = ((uint)((val2&((unsigned char)(127u)))));\n  uint cast3 = ((uint)((val3&((unsigned char)(127u)))));\n  uint alu4 = (cast0<<20u);\n  uint alu5 = ((cast0==127u)?(alu4|2139095040u):(alu4+1006632960u));\n  uint alu6 = (((cast0>>3u)==0u)?0u:alu5);\n  uint alu7 = (cast1<<20u);\n  uint alu8 = ((cast1==127u)?(alu7|2139095040u):(alu7+1006632960u));\n  uint alu9 = (((cast1>>3u)==0u)?0u:alu8);\n  uint alu10 = (cast2<<20u);\n  uint alu11 = ((cast2==127u)?(alu10|2139095040u):(alu10+1006632960u));\n  uint alu12 = (((cast2>>3u)==0u)?0u:alu11);\n  uint alu13 = (cast3<<20u);\n  uint alu14 = ((cast3==127u)?(alu13|2139095040u):(alu13+1006632960u));\n  uint alu15 = (((cast3>>3u)==0u)?0u:alu14);\n  float4 cast4 = float4(as_type<float>((uint)(((((uint)((val3&((unsigned char)(128u)))))<<24u)|alu15))),as_type<float>((uint)(((((uint)((val0&((unsigned char)(128u)))))<<24u)|alu6))),as_type<float>((uint)(((((uint)((val1&((unsigned char)(128u)))))<<24u)|alu9))),as_type<float>((uint)(((((uint)((val2&((unsigned char)(128u)))))<<24u)|alu12))));\n  float alu16 = (cast4.x*2.0f);\n  float alu17 = ((448.0f<alu16)?448.0f:alu16);\n  float alu18 = ((alu16<-448.0f)?-448.0f:alu17);\n  float alu19 = ((alu16!=alu16)?alu16:alu18);\n  float alu20 = ((448.0f<alu19)?448.0f:alu19);\n  float alu21 = ((alu19<-448.0f)?-448.0f:alu20);\n  float alu22 = ((alu19!=alu19)?alu19:alu21);\n  uint cast5 = as_type<uint>((float)(alu22));\n  uint alu23 = (cast5&2147483647u);\n  uint alu24 = (alu23>>20u);\n  uint alu25 = ((cast5>>24u)&128u);\n  uint alu26 = ((cast5>>23u)&255u);\n  unsigned char alu27 = ((alu26<121u)?((unsigned char)(0u)):((unsigned char)((alu24+((alu23>>19u)&1u&(((uint)(((alu23&524287u)!=0u)))|(alu24&1u)))+4294966336u))));\n  unsigned char alu28 = ((alu26==255u)?((unsigned char)((alu25|7u|120u))):(((unsigned char)(alu25))|alu27));\n  uint cast6 = ((uint)((alu28&((unsigned char)(127u)))));\n  uint alu29 = (cast6<<20u);\n  uint alu30 = ((cast6==127u)?(alu29|2139095040u):(alu29+1006632960u));\n  uint alu31 = (((cast6>>3u)==0u)?0u:alu30);\n  float cast7 = as_type<float>((uint)(((((uint)((alu28&((unsigned char)(128u)))))<<24u)|alu31)));\n  float alu32 = ((448.0f<cast7)?448.0f:cast7);\n  float alu33 = ((cast7<-448.0f)?-448.0f:alu32);\n  float alu34 = ((cast7!=cast7)?cast7:alu33);\n  uint cast8 = as_type<uint>((float)(alu34));\n  uint alu35 = (cast8&2147483647u);\n  float alu36 = (cast4.y*2.0f);\n  float alu37 = ((448.0f<alu36)?448.0f:alu36);\n  float alu38 = ((alu36<-448.0f)?-448.0f:alu37);\n  float alu39 = ((alu36!=alu36)?alu36:alu38);\n  float alu40 = ((448.0f<alu39)?448.0f:alu39);\n  float alu41 = ((alu39<-448.0f)?-448.0f:alu40);\n  float alu42 = ((alu39!=alu39)?alu39:alu41);\n  uint cast9 = as_type<uint>((float)(alu42));\n  uint alu43 = (cast9&2147483647u);\n  uint alu44 = (alu43>>20u);\n  uint alu45 = ((cast9>>24u)&128u);\n  uint alu46 = ((cast9>>23u)&255u);\n  unsigned char alu47 = ((alu46<121u)?((unsigned char)(0u)):((unsigned char)((alu44+((alu43>>19u)&1u&(((uint)(((alu43&524287u)!=0u)))|(alu44&1u)))+4294966336u))));\n  unsigned char alu48 = ((alu46==255u)?((unsigned char)((alu45|7u|120u))):(((unsigned char)(alu45))|alu47));\n  uint cast10 = ((uint)((alu48&((unsigned char)(127u)))));\n  uint alu49 = (cast10<<20u);\n  uint alu50 = ((cast10==127u)?(alu49|2139095040u):(alu49+1006632960u));\n  uint alu51 = (((cast10>>3u)==0u)?0u:alu50);\n  float cast11 = as_type<float>((uint)(((((uint)((alu48&((unsigned char)(128u)))))<<24u)|alu51)));\n  float alu52 = ((448.0f<cast11)?448.0f:cast11);\n  float alu53 = ((cast11<-448.0f)?-448.0f:alu52);\n  float alu54 = ((cast11!=cast11)?cast11:alu53);\n  uint cast12 = as_type<uint>((float)(alu54));\n  uint alu55 = (cast12&2147483647u);\n  float alu56 = (cast4.z*2.0f);\n  float alu57 = ((448.0f<alu56)?448.0f:alu56);\n  float alu58 = ((alu56<-448.0f)?-448.0f:alu57);\n  float alu59 = ((alu56!=alu56)?alu56:alu58);\n  float alu60 = ((448.0f<alu59)?448.0f:alu59);\n  float alu61 = ((alu59<-448.0f)?-448.0f:alu60);\n  float alu62 = ((alu59!=alu59)?alu59:alu61);\n  uint cast13 = as_type<uint>((float)(alu62));\n  uint alu63 = (cast13&2147483647u);\n  uint alu64 = (alu63>>20u);\n  uint alu65 = ((cast13>>24u)&128u);\n  uint alu66 = ((cast13>>23u)&255u);\n  unsigned char alu67 = ((alu66<121u)?((unsigned char)(0u)):((unsigned char)((alu64+((alu63>>19u)&1u&(((uint)(((alu63&524287u)!=0u)))|(alu64&1u)))+4294966336u))));\n  unsigned char alu68 = ((alu66==255u)?((unsigned char)((alu65|7u|120u))):(((unsigned char)(alu65))|alu67));\n  uint cast14 = ((uint)((alu68&((unsigned char)(127u)))));\n  uint alu69 = (cast14<<20u);\n  uint alu70 = ((cast14==127u)?(alu69|2139095040u):(alu69+1006632960u));\n  uint alu71 = (((cast14>>3u)==0u)?0u:alu70);\n  float cast15 = as_type<float>((uint)(((((uint)((alu68&((unsigned char)(128u)))))<<24u)|alu71)));\n  float alu72 = ((448.0f<cast15)?448.0f:cast15);\n  float alu73 = ((cast15<-448.0f)?-448.0f:alu72);\n  float alu74 = ((cast15!=cast15)?cast15:alu73);\n  uint cast16 = as_type<uint>((float)(alu74));\n  uint alu75 = (cast16&2147483647u);\n  float alu76 = (cast4.w*2.0f);\n  float alu77 = ((448.0f<alu76)?448.0f:alu76);\n  float alu78 = ((alu76<-448.0f)?-448.0f:alu77);\n  float alu79 = ((alu76!=alu76)?alu76:alu78);\n  float alu80 = ((448.0f<alu79)?448.0f:alu79);\n  float alu81 = ((alu79<-448.0f)?-448.0f:alu80);\n  float alu82 = ((alu79!=alu79)?alu79:alu81);\n  uint cast17 = as_type<uint>((float)(alu82));\n  uint alu83 = (cast17&2147483647u);\n  uint alu84 = (alu83>>20u);\n  uint alu85 = ((cast17>>24u)&128u);\n  uint alu86 = ((cast17>>23u)&255u);\n  unsigned char alu87 = ((alu86<121u)?((unsigned char)(0u)):((unsigned char)((alu84+((alu83>>19u)&1u&(((uint)(((alu83&524287u)!=0u)))|(alu84&1u)))+4294966336u))));\n  unsigned char alu88 = ((alu86==255u)?((unsigned char)((alu85|7u|120u))):(((unsigned char)(alu85))|alu87));\n  uint cast18 = ((uint)((alu88&((unsigned char)(127u)))));\n  uint alu89 = (cast18<<20u);\n  uint alu90 = ((cast18==127u)?(alu89|2139095040u):(alu89+1006632960u));\n  uint alu91 = (((cast18>>3u)==0u)?0u:alu90);\n  float cast19 = as_type<float>((uint)(((((uint)((alu88&((unsigned char)(128u)))))<<24u)|alu91)));\n  float alu92 = ((448.0f<cast19)?448.0f:cast19);\n  float alu93 = ((cast19<-448.0f)?-448.0f:alu92);\n  float alu94 = ((cast19!=cast19)?cast19:alu93);\n  uint cast20 = as_type<uint>((float)(alu94));\n  uint alu95 = (cast20&2147483647u);\n  uint alu96 = (alu35>>20u);\n  uint alu97 = (alu55>>20u);\n  uint alu98 = (alu75>>20u);\n  uint alu99 = (alu95>>20u);\n  uint alu100 = ((cast8>>24u)&128u);\n  uint alu101 = ((cast12>>24u)&128u);\n  uint alu102 = ((cast16>>24u)&128u);\n  uint alu103 = ((cast20>>24u)&128u);\n  uint alu104 = ((cast8>>23u)&255u);\n  uint alu105 = ((cast12>>23u)&255u);\n  uint alu106 = ((cast16>>23u)&255u);\n  uint alu107 = ((cast20>>23u)&255u);\n  unsigned char alu108 = ((alu104<121u)?((unsigned char)(0u)):((unsigned char)((alu96+((alu35>>19u)&1u&(((uint)(((alu35&524287u)!=0u)))|(alu96&1u)))+4294966336u))));\n  unsigned char alu109 = ((alu105<121u)?((unsigned char)(0u)):((unsigned char)((alu97+((alu55>>19u)&1u&(((uint)(((alu55&524287u)!=0u)))|(alu97&1u)))+4294966336u))));\n  unsigned char alu110 = ((alu106<121u)?((unsigned char)(0u)):((unsigned char)((alu98+((alu75>>19u)&1u&(((uint)(((alu75&524287u)!=0u)))|(alu98&1u)))+4294966336u))));\n  unsigned char alu111 = ((alu107<121u)?((unsigned char)(0u)):((unsigned char)((alu99+((alu95>>19u)&1u&(((uint)(((alu95&524287u)!=0u)))|(alu99&1u)))+4294966336u))));\n  unsigned char alu112 = ((alu104==255u)?((unsigned char)((alu100|7u|120u))):(((unsigned char)(alu100))|alu108));\n  unsigned char alu113 = ((alu105==255u)?((unsigned char)((alu101|7u|120u))):(((unsigned char)(alu101))|alu109));\n  unsigned char alu114 = ((alu106==255u)?((unsigned char)((alu102|7u|120u))):(((unsigned char)(alu102))|alu110));\n  unsigned char alu115 = ((alu107==255u)?((unsigned char)((alu103|7u|120u))):(((unsigned char)(alu103))|alu111));\n  *(data0_16+alu1) = alu113;\n  *(data0_16+alu2) = alu114;\n  *(data0_16+alu3) = alu115;\n  *(data0_16+alu0) = alu112;\n}"
 500 Ops.PROGRAM dtypes.void [497, 498, 499] ProgramInfo(local_size=(4, 1, 1), params=(%2, %10), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))

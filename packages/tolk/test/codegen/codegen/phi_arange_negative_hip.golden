@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 20
 2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
@@ -29,8 +29,8 @@
 27 Ops.STACK dtypes.i32 [17, 20, 23, 26]
 28 Ops.STORE dtypes.void [11, 27]
 29 Ops.AFTER dtypes.void [0, 28]
-30 Ops.SINK dtypes.void [29] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-31 Ops.SINK dtypes.void [29] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=25, lds=80, mem=80)) tag=1
+30 Ops.SINK dtypes.void [29] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+31 Ops.SINK dtypes.void [29] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=25, lds=80, mem=80), optimized=True)
 32 Ops.LINEAR dtypes.void [1, 2, 3, 4, 5, 0, 15, 16, 21, 22, 24, 25, 12, 13, 18, 19, 14, 17, 23, 26, 20, 27, 6, 7, 9, 10, 8, 11, 28, 29, 30]
 33 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\ntypedef int int4 __attribute__((ext_vector_type(4)));\nstatic inline __attribute__((device)) int4 make_int4(int x, int y, int z, int w) { return { x, y, z, w }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) E_5_4(int* data0_20) {\n  int gidx0 = __ockl_get_group_id(0); /* 5 */\n  int alu0 = (gidx0*-20);\n  *((int4*)((data0_20+(gidx0<<2)))) = make_int4((alu0+-1),(alu0+-6),(alu0+-11),(alu0+-16));\n}"
 34 Ops.PROGRAM dtypes.void [31, 32, 33] ProgramInfo(global_size=(5, 1, 1), params=(%2,), globals=(0,), outs=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))

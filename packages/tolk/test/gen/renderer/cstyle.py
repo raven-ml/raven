@@ -81,7 +81,7 @@ def tensors(build, opts=None, index=None):
         asts = [c.src[0] for c in lin.src if c.op is Ops.CALL and c.src[0].op is Ops.SINK]
         (ast,) = asts if index is None else [asts[index]]
         if opts is not None: ast = ast.replace(arg=replace(ast.arg, opts_to_apply=tuple(opts)))
-        return lowered(ast, ren, optimize=ast.tag is None)
+        return lowered(ast, ren, optimize=ast.arg is None or not ast.arg.optimized)
     return make
 
 

@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i8 [0] ParamArg(slot=0, dtype=dtypes.i8, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -8,8 +8,8 @@
 6 Ops.CAST dtypes.i8 [0] dtypes.i8
 7 Ops.ADD dtypes.i8 [5, 6]
 8 Ops.STORE dtypes.void [4, 7]
-9 Ops.SINK dtypes.void [8] KernelInfo(name="E", estimates=Estimates(ops=1, lds=2, mem=2)) tag=1
-10 Ops.SINK dtypes.void [8] KernelInfo(name="E") tag=1
+9 Ops.SINK dtypes.void [8] KernelInfo(name="E", estimates=Estimates(ops=1, lds=2, mem=2), optimized=True)
+10 Ops.SINK dtypes.void [8] KernelInfo(name="E", optimized=True)
 11 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 10]
 12 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(signed char* restrict data0_1) {\n  signed char val0 = (*(data0_1+0));\n  *(data0_1+0) = (val0+((signed char)(1)));\n}\n"
 13 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E(signed char* restrict data0_1) {\n  signed char val0 = (*(data0_1+0));\n  *(data0_1+0) = (val0+((signed char)(1)));\n}\n"

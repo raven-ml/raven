@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 30
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 3
@@ -29,17 +29,16 @@
 27 Ops.PARAM dtypes.i32 [8] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 10), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
 28 Ops.CONST dtypes.weakint [] 0
 29 Ops.SUB dtypes.i32 [27, 28]
-30 Ops.AFTER dtypes.i32 [29, 4]
-31 Ops.MUL dtypes.i32 [2, 30]
-32 Ops.CONST dtypes.weakint [] 36
-33 Ops.MUL dtypes.i32 [30, 32]
-34 Ops.SINK dtypes.void [26] KernelInfo(name="E_3_i", estimates=Estimates(ops=%31, lds=%33, mem=%33), split=(%27, 3, 4)) tag=1
-35 Ops.SINK dtypes.void [26] KernelInfo(name="E_3_i", split=(%27, 3, 4)) tag=1
-36 Ops.LINEAR dtypes.void [0, 1, 17, 20, 8, 9, 10, 5, 6, 2, 3, 11, 4, 12, 7, 13, 14, 15, 18, 19, 21, 22, 16, 23, 24, 25, 26, 35]
-37 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_3_i(float* restrict data0_30, float* restrict data1_30, float* restrict data2_30, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = ((Lidx0*10)+(block_lo_+Lidx1));\n      float val0 = (*(data1_30+alu0));\n      float val1 = (*(data2_30+alu0));\n      *(data0_30+alu0) = (val0+val1);\n    }\n  }\n}\n"
-38 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E_3_i(float* restrict data0_30, float* restrict data1_30, float* restrict data2_30, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = ((Lidx0*10)+(block_lo_+Lidx1));\n      float val0 = (*(data1_30+alu0));\n      float val1 = (*(data2_30+alu0));\n      *(data0_30+alu0) = (val0+val1);\n    }\n  }\n}\n"
-39 Ops.PROGRAM dtypes.void [34, 36, 37, 38] ProgramInfo(global_size=(%27, 1, 1), params=(%1, %17, %20, %9, %10), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
-40 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
-41 Ops.CALL dtypes.void [39, 40, 1, 17] CallInfo()
-42 Ops.LINEAR dtypes.void [41]
+30 Ops.MUL dtypes.i32 [2, 29]
+31 Ops.CONST dtypes.weakint [] 36
+32 Ops.MUL dtypes.i32 [29, 31]
+33 Ops.SINK dtypes.void [26] KernelInfo(name="E_3_i", estimates=Estimates(ops=%30, lds=%32, mem=%32), optimized=True, split=(%27, 3, 4))
+34 Ops.SINK dtypes.void [26] KernelInfo(name="E_3_i", optimized=True, split=(%27, 3, 4))
+35 Ops.LINEAR dtypes.void [0, 1, 17, 20, 8, 9, 10, 5, 6, 2, 3, 11, 4, 12, 7, 13, 14, 15, 18, 19, 21, 22, 16, 23, 24, 25, 26, 34]
+36 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_3_i(float* restrict data0_30, float* restrict data1_30, float* restrict data2_30, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = ((Lidx0*10)+(block_lo_+Lidx1));\n      float val0 = (*(data1_30+alu0));\n      float val1 = (*(data2_30+alu0));\n      *(data0_30+alu0) = (val0+val1);\n    }\n  }\n}\n"
+37 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E_3_i(float* restrict data0_30, float* restrict data1_30, float* restrict data2_30, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = ((Lidx0*10)+(block_lo_+Lidx1));\n      float val0 = (*(data1_30+alu0));\n      float val1 = (*(data2_30+alu0));\n      *(data0_30+alu0) = (val0+val1);\n    }\n  }\n}\n"
+38 Ops.PROGRAM dtypes.void [33, 35, 36, 37] ProgramInfo(global_size=(%27, 1, 1), params=(%1, %17, %20, %9, %10), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
+39 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+40 Ops.CALL dtypes.void [38, 39, 1, 17] CallInfo()
+41 Ops.LINEAR dtypes.void [40]
 

@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 36
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -70,8 +70,8 @@
 68 Ops.ADD dtypes.i32 [67, 62]
 69 Ops.CONST dtypes.weakint [] 24
 70 Ops.ADD dtypes.i32 [68, 69]
-71 Ops.SINK dtypes.void [52] KernelInfo(name="E_(i+2)_3", estimates=Estimates(ops=%59, lds=%60, mem=%70), split=(%55, 3, 4)) tag=1
-72 Ops.SINK dtypes.void [52] KernelInfo(name="E_(i+2)_3", split=(%55, 3, 4)) tag=1
+71 Ops.SINK dtypes.void [52] KernelInfo(name="E_(i+2)_3", estimates=Estimates(ops=%59, lds=%60, mem=%70), optimized=True, split=(%55, 3, 4))
+72 Ops.SINK dtypes.void [52] KernelInfo(name="E_(i+2)_3", optimized=True, split=(%55, 3, 4))
 73 Ops.LINEAR dtypes.void [0, 1, 15, 16, 23, 24, 2, 3, 4, 20, 40, 41, 18, 19, 25, 26, 32, 33, 43, 44, 8, 9, 30, 45, 27, 5, 6, 11, 7, 10, 28, 21, 46, 42, 47, 12, 13, 17, 22, 29, 31, 35, 34, 36, 37, 38, 39, 48, 14, 49, 50, 51, 52, 72]
 74 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_28i2B229_3(float* restrict data0_36, float* restrict data1_30, float* restrict data2_6, const int block_lo_, const int block_hi_, const int i_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int alu1 = (alu0*3);\n    _Bool alu2 = (alu0<i_);\n    for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {\n      int alu3 = (alu1+Lidx1);\n      float val0 = (alu2?*(data1_30+alu3):0.0f);\n      int alu4 = ((i_*-3)+alu1+Lidx1);\n      int alu5 = (alu4%6);\n      int alu6 = (((alu5!=0)&(alu4<0))?6:0);\n      float val1 = (((alu2!=1)&(alu0<(i_+2)))?*(data2_6+(alu5+alu6)):0.0f);\n      *(data0_36+alu3) = (val0+val1);\n    }\n  }\n}\n"
 75 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E_28i2B229_3(float* restrict data0_36, float* restrict data1_30, float* restrict data2_6, const int block_lo_, const int block_hi_, const int i_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int alu1 = (alu0*3);\n    _Bool alu2 = (alu0<i_);\n    for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {\n      int alu3 = (alu1+Lidx1);\n      float val0 = (alu2?*(data1_30+alu3):0.0f);\n      int alu4 = ((i_*-3)+alu1+Lidx1);\n      int alu5 = (alu4%6);\n      int alu6 = (((alu5!=0)&(alu4<0))?6:0);\n      float val1 = (((alu2!=1)&(alu0<(i_+2)))?*(data2_6+(alu5+alu6)):0.0f);\n      *(data0_36+alu3) = (val0+val1);\n    }\n  }\n}\n"

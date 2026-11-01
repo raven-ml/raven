@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -48,8 +48,8 @@
 46 Ops.STACK dtypes.f32 [23, 31, 37, 45]
 47 Ops.STORE dtypes.void [9, 46]
 48 Ops.AFTER dtypes.void [0, 47]
-49 Ops.SINK dtypes.void [48] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)))) tag=1
-50 Ops.SINK dtypes.void [48] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=48, lds=128, mem=128)) tag=1
+49 Ops.SINK dtypes.void [48] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), optimized=True)
+50 Ops.SINK dtypes.void [48] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=48, lds=128, mem=128), optimized=True)
 51 Ops.LINEAR dtypes.void [1, 2, 10, 17, 3, 4, 5, 6, 7, 8, 11, 12, 18, 19, 0, 13, 14, 15, 24, 25, 26, 32, 38, 39, 40, 20, 28, 34, 42, 16, 21, 22, 23, 27, 29, 30, 31, 33, 35, 36, 37, 41, 43, 44, 45, 46, 9, 47, 48, 49]
 52 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\n#define half _Float16\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((device, pure)) half __ocml_exp2_f16(half);\nextern \"C\" __attribute__((device, const)) half __ocml_sqrt_f16(half);\ntypedef half half4 __attribute__((ext_vector_type(4)));\nstatic inline __attribute__((device)) half4 make_half4(half x, half y, half z, half w) { return { x, y, z, w }; }\ntypedef float float4 __attribute__((ext_vector_type(4)));\nstatic inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_4(float* data0_16, half* data1_16, half* data2_16) {\n  int lidx0 = __ockl_get_local_id(0); /* 4 */\n  int alu0 = (lidx0<<2);\n  half4 val0 = (*((half4*)((data1_16+alu0))));\n  half4 val1 = (*((half4*)((data2_16+alu0))));\n  *((float4*)((data0_16+alu0))) = make_float4(((float)((__ocml_exp2_f16(val0.x)+__ocml_sqrt_f16(val1.x)))),((float)((__ocml_exp2_f16(val0.y)+__ocml_sqrt_f16(val1.y)))),((float)((__ocml_exp2_f16(val0.z)+__ocml_sqrt_f16(val1.z)))),((float)((__ocml_exp2_f16(val0.w)+__ocml_sqrt_f16(val1.w)))));\n}"
 53 Ops.PROGRAM dtypes.void [50, 51, 52] ProgramInfo(local_size=(4, 1, 1), params=(%2, %10, %17), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))

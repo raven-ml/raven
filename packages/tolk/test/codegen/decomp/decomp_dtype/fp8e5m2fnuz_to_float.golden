@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -35,22 +35,22 @@
 33 Ops.STORE dtypes.void [8, 32]
 34 Ops.AFTER dtypes.void [0, 33]
 35 Ops.END dtypes.void [34, 5]
-36 Ops.SINK dtypes.void [35] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-37 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8, device="CPU") tag=dtypes.fp8e5m2fnuz
+36 Ops.SINK dtypes.void [35] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+37 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8, device="CPU")
 38 Ops.ADD dtypes.i32 [7, 12]
-39 Ops.INDEX dtypes.u8 [37, 38] tag=dtypes.fp8e5m2fnuz
+39 Ops.INDEX dtypes.u8 [37, 38]
 40 Ops.LOAD dtypes.u8 [39]
 41 Ops.CUSTOM dtypes.f32 [40] ("f2f fp8e5m2fnuz f32 True", dtypes.f32)
 42 Ops.ADD dtypes.i32 [7, 18]
-43 Ops.INDEX dtypes.u8 [37, 42] tag=dtypes.fp8e5m2fnuz
+43 Ops.INDEX dtypes.u8 [37, 42]
 44 Ops.LOAD dtypes.u8 [43]
 45 Ops.CUSTOM dtypes.f32 [44] ("f2f fp8e5m2fnuz f32 True", dtypes.f32)
 46 Ops.ADD dtypes.i32 [7, 6]
-47 Ops.INDEX dtypes.u8 [37, 46] tag=dtypes.fp8e5m2fnuz
+47 Ops.INDEX dtypes.u8 [37, 46]
 48 Ops.LOAD dtypes.u8 [47]
 49 Ops.CUSTOM dtypes.f32 [48] ("f2f fp8e5m2fnuz f32 True", dtypes.f32)
 50 Ops.ADD dtypes.i32 [7, 27]
-51 Ops.INDEX dtypes.u8 [37, 50] tag=dtypes.fp8e5m2fnuz
+51 Ops.INDEX dtypes.u8 [37, 50]
 52 Ops.LOAD dtypes.u8 [51]
 53 Ops.CUSTOM dtypes.f32 [52] ("f2f fp8e5m2fnuz f32 True", dtypes.f32)
 54 Ops.STACK dtypes.f32 [41, 45, 49, 53]
@@ -71,6 +71,6 @@
 69 Ops.STORE dtypes.void [8, 68]
 70 Ops.AFTER dtypes.void [0, 69]
 71 Ops.END dtypes.void [70, 5]
-72 Ops.SINK dtypes.void [71] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+72 Ops.SINK dtypes.void [71] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 73 Ops.SINK dtypes.void [36, 72]
 

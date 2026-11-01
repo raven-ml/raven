@@ -294,7 +294,7 @@ def gated_store():
 def no_optimize():
     a, b, c = param(0, 256), param(1, 256), param(2, 256)
     r = UOp.range(256, 0, AxisType.LOOP)
-    return c.index(r).store(a.index(r).load() + b.index(r).load()).end(r).sink(arg=ki("no_optimize"), tag=1)
+    return c.index(r).store(a.index(r).load() + b.index(r).load()).end(r).sink(arg=ki("no_optimize", optimized=True))
 
 
 def relu():
@@ -338,12 +338,12 @@ def lorenz():
 
 def gated_loop():
     a, r = UOp.param(0, dtypes.int, 16), UOp.range(16, 0, AxisType.LOOP)
-    return a.index(r.valid(r < 8)).store(r.cast(dtypes.int)).end(r).sink(arg=KernelInfo(), tag=1)
+    return a.index(r.valid(r < 8)).store(r.cast(dtypes.int)).end(r).sink(arg=KernelInfo(optimized=True))
 
 
 def gated_threads():
     a, lidx0 = UOp.param(0, dtypes.int, 4), UOp.special(4, "lidx0")
-    return a.index(lidx0.valid(lidx0.ne(0))).store(UOp.const(1).cast(dtypes.int)).sink(arg=KernelInfo(), tag=1)
+    return a.index(lidx0.valid(lidx0.ne(0))).store(UOp.const(1).cast(dtypes.int)).sink(arg=KernelInfo(optimized=True))
 
 
 def inline_const_alu():
@@ -437,7 +437,7 @@ def dependent_loop_bound():
 
 # The old tolk's lowering tests, as kernels compiled without optimising
 
-def unoptimised_kernel(*stores): return UOp.sink(*stores, arg=KernelInfo(), tag=1)
+def unoptimised_kernel(*stores): return UOp.sink(*stores, arg=KernelInfo(optimized=True))
 
 
 def shared_loop(unbounded, same_buffer, barrier):
@@ -828,7 +828,7 @@ def program_golden(case, target):
     def body():
         _, kernel, setting = next(c for c in CASES if c[0] == case)
         ast = KERNELS[kernel]
-        with context(setting): lowered = full_rewrite_to_sink(ast, renderer(target), optimize=ast.tag is None)
+        with context(setting): lowered = full_rewrite_to_sink(ast, renderer(target), optimize=ast.arg is None or not ast.arg.optimized)
         prg = program(case, target)
         return UOp.sink(lowered, prg.replace(src=prg.src[:3]))
     body.__name__ = f"{case}_{target}"

@@ -37,7 +37,7 @@ def kernel(*tensors, renderer=CPU, opts=None):
     linear, _ = Tensor.linear_with_vars(*tensors)
     (ast,) = [c.src[0] for c in linear.src if c.op is Ops.CALL and c.src[0].op is Ops.SINK]
     if opts is not None: ast = ast.replace(arg=replace(ast.arg, opts_to_apply=tuple(opts)))
-    sink = full_rewrite_to_sink(ast, renderer, optimize=ast.tag is None)
+    sink = full_rewrite_to_sink(ast, renderer, optimize=ast.arg is None or not ast.arg.optimized)
     lin = UOp(Ops.LINEAR, src=tuple(line_rewrite(linearize(sink), pm_linearize_cleanups + pm_alloc_to_buf)))
     return lin, sink.arg.split[0] if sink.arg.split is not None else None
 

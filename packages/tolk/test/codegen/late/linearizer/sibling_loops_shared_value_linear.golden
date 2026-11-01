@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 4
@@ -34,6 +34,6 @@
 32 Ops.STORE dtypes.void [31, 19]
 33 Ops.END dtypes.void [32, 28]
 34 Ops.END dtypes.void [33, 11]
-35 Ops.SINK dtypes.void [34] KernelInfo(name="E_2", split=(2, 2, 3)) tag=1
+35 Ops.SINK dtypes.void [34] KernelInfo(name="E_2", optimized=True, split=(2, 2, 3))
 36 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
 

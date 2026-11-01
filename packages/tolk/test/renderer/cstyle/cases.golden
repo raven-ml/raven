@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 case	kernel	device	renderer	arch	setting	narrowed
 clang_add	0	CPU	CLANG	x86_64,x86-64	-	-
 clang_sum	1	CPU	CLANG	x86_64,x86-64	-	-
@@ -334,6 +334,4 @@ hip_cdna4_tc_f16_f32_16_16_16	344	AMD	HIP	gfx950	-	-
 hip_cdna4_tc_bf16_f32_16_16_16	345	AMD	HIP	gfx950	-	-
 clang_add_expand_ssa	346	CPU	CLANG	x86_64,x86-64	EXPAND_SSA=1	-
 clang_matmul_upcasted_expand_ssa	347	CPU	CLANG	x86_64,x86-64	EXPAND_SSA=1	-
-clang_add_unaligned	348	CPU	CLANG	x86_64,x86-64	ALIGNED=0	-
-clang_dtype_bool_unaligned	349	CPU	CLANG	x86_64,x86-64	ALIGNED=0	-
-cuda_matmul_locals_expand_ssa	350	CUDA	CUDA	sm_89	EXPAND_SSA=1	-
+cuda_matmul_locals_expand_ssa	348	CUDA	CUDA	sm_89	EXPAND_SSA=1	-

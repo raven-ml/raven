@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 2
@@ -101,8 +101,8 @@
 99 Ops.STORE dtypes.void [16, 98]
 100 Ops.END dtypes.void [99, 13]
 101 Ops.END dtypes.void [100, 4]
-102 Ops.SINK dtypes.void [101] KernelInfo(name="r_2_8_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)),), split=(8, 5, 6)) tag=1
-103 Ops.SINK dtypes.void [101] KernelInfo(name="r_2_8_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=274, lds=680, mem=424), split=(8, 5, 6)) tag=1
+102 Ops.SINK dtypes.void [101] KernelInfo(name="r_2_8_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)),), optimized=True, split=(8, 5, 6))
+103 Ops.SINK dtypes.void [101] KernelInfo(name="r_2_8_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=274, lds=680, mem=424), optimized=True, split=(8, 5, 6))
 104 Ops.LINEAR dtypes.void [0, 1, 17, 2, 40, 45, 46, 64, 65, 8, 9, 10, 22, 23, 18, 19, 47, 48, 53, 54, 49, 25, 26, 50, 3, 51, 5, 6, 52, 55, 56, 57, 58, 59, 38, 39, 75, 76, 71, 72, 61, 62, 11, 4, 41, 42, 7, 30, 31, 32, 20, 21, 12, 33, 34, 35, 36, 24, 27, 28, 29, 37, 43, 44, 60, 89, 87, 85, 81, 79, 77, 73, 63, 13, 14, 66, 67, 68, 69, 82, 83, 15, 16, 80, 78, 74, 70, 90, 88, 86, 84, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102]
 105 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\ntypedef float float8 __attribute__((aligned(32),ext_vector_type(8)));\n__attribute__((min_vector_width(512))) void r_2_8_8(float* restrict data0_16, float* restrict data1_16, float* restrict data2_2, float* restrict data3_8, float* restrict data4_64, const int block_lo_, const int block_hi_) {\n  float4 val0 = (*((float4*)((data3_8+0))));\n  float4 val1 = (*((float4*)((data3_8+4))));\n  for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {\n    float val2 = (*(data2_2+Lidx1));\n    int alu0 = (Lidx1<<3);\n    float4 val3 = (*((float4*)((data1_16+(alu0+4)))));\n    float4 val4 = (*((float4*)((data1_16+alu0))));\n    float8 alu1 = ((float8){val4[0],val4[1],val4[2],val4[3],val3[0],val3[1],val3[2],val3[3]}*(1.0f/val2)*(float8){val0[0],val0[1],val0[2],val0[3],val1[0],val1[1],val1[2],val1[3]});\n    for (int Lidx2 = 0; Lidx2 < (block_hi_-block_lo_); Lidx2++) {\n      int alu2 = (block_lo_+Lidx2);\n      int alu3 = (alu2<<3);\n      float4 val5 = (*((float4*)((data4_64+(alu3+4)))));\n      float4 val6 = (*((float4*)((data4_64+alu3))));\n      *(data0_16+(alu0+alu2)) = __builtin_fmaf(alu1[7],val5[3],__builtin_fmaf(alu1[6],val5[2],__builtin_fmaf(alu1[5],val5[1],__builtin_fmaf(alu1[4],val5[0],__builtin_fmaf(alu1[3],val6[3],__builtin_fmaf(alu1[2],val6[2],__builtin_fmaf(alu1[1],val6[1],(alu1[0]*val6[0]))))))));\n    }\n  }\n}\n"
 106 Ops.PROGRAM dtypes.void [103, 104, 105] ProgramInfo(global_size=(8, 1, 1), params=(%1, %17, %40, %46, %65, %9, %10), globals=(0, 1, 2, 3, 4), outs=(0,), ins=(1, 2, 3, 4), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))

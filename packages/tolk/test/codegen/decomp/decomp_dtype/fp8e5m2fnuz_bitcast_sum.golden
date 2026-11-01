@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, device="CPU")
@@ -43,19 +43,19 @@
 41 Ops.STORE dtypes.void [36, 40]
 42 Ops.AFTER dtypes.void [0, 18, 26, 33, 41]
 43 Ops.END dtypes.void [42, 5]
-44 Ops.SINK dtypes.void [43] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-45 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8, device="CPU") tag=dtypes.fp8e5m2fnuz
+44 Ops.SINK dtypes.void [43] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+45 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8, device="CPU")
 46 Ops.ADD dtypes.i32 [7, 12]
-47 Ops.INDEX dtypes.u8 [45, 46] tag=dtypes.fp8e5m2fnuz
+47 Ops.INDEX dtypes.u8 [45, 46]
 48 Ops.LOAD dtypes.u8 [47]
 49 Ops.CUSTOM dtypes.f32 [48] ("f2f fp8e5m2fnuz f32 True", dtypes.f32)
-50 Ops.INDEX dtypes.u8 [45, 20] tag=dtypes.fp8e5m2fnuz
+50 Ops.INDEX dtypes.u8 [45, 20]
 51 Ops.LOAD dtypes.u8 [50]
 52 Ops.CUSTOM dtypes.f32 [51] ("f2f fp8e5m2fnuz f32 True", dtypes.f32)
-53 Ops.INDEX dtypes.u8 [45, 27] tag=dtypes.fp8e5m2fnuz
+53 Ops.INDEX dtypes.u8 [45, 27]
 54 Ops.LOAD dtypes.u8 [53]
 55 Ops.CUSTOM dtypes.f32 [54] ("f2f fp8e5m2fnuz f32 True", dtypes.f32)
-56 Ops.INDEX dtypes.u8 [45, 35] tag=dtypes.fp8e5m2fnuz
+56 Ops.INDEX dtypes.u8 [45, 35]
 57 Ops.LOAD dtypes.u8 [56]
 58 Ops.CUSTOM dtypes.f32 [57] ("f2f fp8e5m2fnuz f32 True", dtypes.f32)
 59 Ops.STACK dtypes.f32 [49, 52, 55, 58]
@@ -102,6 +102,6 @@
 100 Ops.STORE dtypes.void [36, 99]
 101 Ops.AFTER dtypes.void [0, 70, 80, 90, 100]
 102 Ops.END dtypes.void [101, 5]
-103 Ops.SINK dtypes.void [102] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+103 Ops.SINK dtypes.void [102] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 104 Ops.SINK dtypes.void [44, 103]
 

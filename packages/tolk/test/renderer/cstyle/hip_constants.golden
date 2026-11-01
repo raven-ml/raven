@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 typedef unsigned short hip_bfloat16;
 #define half _Float16
 extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) constants(bool* data0_1, bool* data1_1, signed char* data2_1, unsigned char* data3_1, short* data4_1, unsigned short* data5_1, int* data6_1, unsigned int* data7_1, unsigned int* data8_1, long* data9_1, unsigned long* data10_1, unsigned long* data11_1, half* data12_1, hip_bfloat16* data13_1, float* data14_1, double* data15_1) {

@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 17
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 32
@@ -25,5 +25,5 @@
 23 Ops.CAST dtypes.i32 [22] dtypes.i32
 24 Ops.STORE dtypes.void [9, 23]
 25 Ops.END dtypes.void [24, 3]
-26 Ops.SINK dtypes.void [25] KernelInfo(name="r_32_17", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=32),)) tag=1
+26 Ops.SINK dtypes.void [25] KernelInfo(name="r_32_17", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=32),), optimized=True)
 

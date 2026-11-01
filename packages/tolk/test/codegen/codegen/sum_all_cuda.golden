@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -40,7 +40,7 @@
 38 Ops.LOAD dtypes.f32 [37]
 39 Ops.ALLOC dtypes.f32 [10] ParamArg(slot=2, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL)
 40 Ops.INDEX dtypes.f32 [39, 13]
-41 Ops.AFTER dtypes.f32 [12, 33, 16]
+41 Ops.AFTER dtypes.f32 [12, 33]
 42 Ops.INDEX dtypes.f32 [41, 3]
 43 Ops.LOAD dtypes.f32 [42]
 44 Ops.STORE dtypes.void [40, 43]
@@ -51,12 +51,12 @@
 49 Ops.ADD dtypes.f32 [38, 48]
 50 Ops.STORE dtypes.void [37, 49]
 51 Ops.END dtypes.void [50, 35]
-52 Ops.AFTER dtypes.f32 [5, 51, 9]
+52 Ops.AFTER dtypes.f32 [5, 51]
 53 Ops.INDEX dtypes.f32 [52, 3]
 54 Ops.LOAD dtypes.f32 [53]
 55 Ops.CMPEQ dtypes.bool [13, 3]
 56 Ops.STORE dtypes.void [4, 54, 55]
-57 Ops.SINK dtypes.void [56] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)) tag=1
+57 Ops.SINK dtypes.void [56] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), optimized=True)
 58 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, addrspace=AddrSpace.REG)
 59 Ops.INDEX dtypes.f32 [58, 3]
 60 Ops.STORE dtypes.void [59, 8]
@@ -77,7 +77,7 @@
 75 Ops.LOAD dtypes.f32 [74]
 76 Ops.BUFFER dtypes.f32 [10] ParamArg(slot=2, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL)
 77 Ops.INDEX dtypes.f32 [76, 13]
-78 Ops.AFTER dtypes.f32 [61, 70, 64]
+78 Ops.AFTER dtypes.f32 [61, 70]
 79 Ops.INDEX dtypes.f32 [78, 3]
 80 Ops.LOAD dtypes.f32 [79]
 81 Ops.STORE dtypes.void [77, 80]
@@ -88,14 +88,14 @@
 86 Ops.ADD dtypes.f32 [75, 85]
 87 Ops.STORE dtypes.void [74, 86]
 88 Ops.END dtypes.void [87, 72]
-89 Ops.AFTER dtypes.f32 [58, 88, 60]
+89 Ops.AFTER dtypes.f32 [58, 88]
 90 Ops.INDEX dtypes.f32 [89, 3]
 91 Ops.LOAD dtypes.f32 [90]
 92 Ops.STORE dtypes.void [4, 91]
-93 Ops.SINK dtypes.void [92] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), estimates=Estimates(ops=4368, lds=17536, mem=16388)) tag=1
+93 Ops.SINK dtypes.void [92] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), estimates=Estimates(ops=4368, lds=17536, mem=16388), optimized=True)
 94 Ops.IF dtypes.void [55, 4]
 95 Ops.ENDIF dtypes.void [94]
-96 Ops.SINK dtypes.void [92] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)) tag=1
+96 Ops.SINK dtypes.void [92] KernelInfo(name="r_16_256", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), optimized=True)
 97 Ops.LINEAR dtypes.void [0, 1, 23, 24, 61, 58, 10, 76, 11, 13, 62, 2, 3, 63, 7, 8, 17, 18, 25, 26, 27, 64, 19, 28, 29, 30, 65, 66, 67, 68, 69, 70, 78, 79, 80, 71, 77, 81, 82, 83, 59, 60, 72, 73, 74, 75, 84, 85, 86, 87, 88, 89, 90, 91, 4, 55, 94, 92, 95, 96]
 98 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(16) r_16_256(float* data0_1, float* data1_4096) {\n  float buf0[1];\n  float buf1[1];\n  __shared__ __align__(16) float buf2[16];\n  int lidx0 = threadIdx.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data1_4096+((lidx0<<8)+Lidx0)));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  __syncthreads();\n  *(buf1+0) = 0.0f;\n  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {\n    float val1 = (*(buf2+Lidx101));\n    *(buf1+0) = ((*(buf1+0))+val1);\n  }\n  if ((lidx0==0)) {\n    *(data0_1+0) = (*(buf1+0));\n  }\n}"
 99 Ops.PROGRAM dtypes.void [93, 97, 98] ProgramInfo(local_size=(16, 1, 1), params=(%1, %24), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))

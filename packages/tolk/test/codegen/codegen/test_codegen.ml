@@ -64,7 +64,8 @@ let under row f =
     (B (Setting.no_color, true) :: Kernel_opts.settings_of_cell (row "setting"))
     f
 
-let optimize k = Ops.tag k = None
+let optimize k =
+  match Ops.arg k with Kernel { optimized; _ } -> not optimized | _ -> true
 
 let lowered row =
   let k = kernel row in

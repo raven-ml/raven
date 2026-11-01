@@ -1,6 +1,6 @@
 # Divergences from tinygrad
 
-tolk follows tinygrad `1c5804aab3bc0164044e9e5b07fc65fbe5f511e2`. This
+tolk follows tinygrad `ef6ec5f15467b88c134d12a732a91018f97c3f1b`. This
 ledger lists every place where it does something else. An entry is admitted
 for one of four reasons only:
 

@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 4096
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -125,7 +125,7 @@
 123 Ops.STORE dtypes.void [109, 122]
 124 Ops.AFTER dtypes.void [0, 78, 93, 108, 123]
 125 Ops.END dtypes.void [124, 39]
-126 Ops.AFTER dtypes.f32 [20, 125, 25, 29, 33, 37]
+126 Ops.AFTER dtypes.f32 [20, 125]
 127 Ops.INDEX dtypes.f32 [126, 23]
 128 Ops.LOAD dtypes.f32 [127]
 129 Ops.CMPLT dtypes.bool [18, 128]
@@ -155,5 +155,5 @@
 153 Ops.AFTER dtypes.void [0, 131, 138, 145, 152]
 154 Ops.END dtypes.void [153, 13]
 155 Ops.END dtypes.void [154, 5]
-156 Ops.SINK dtypes.void [155] KernelInfo(name="r_16_64_4_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), split=(64, 3, 4)) tag=1
+156 Ops.SINK dtypes.void [155] KernelInfo(name="r_16_64_4_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), optimized=True, split=(64, 3, 4))
 

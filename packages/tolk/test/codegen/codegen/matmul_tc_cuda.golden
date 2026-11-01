@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 4096
 2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=0, dtype=dtypes.f16, device="CPU")
@@ -123,7 +123,7 @@
 121 Ops.STORE dtypes.void [117, 120]
 122 Ops.AFTER dtypes.void [0, 106, 111, 116, 121]
 123 Ops.END dtypes.void [122, 46]
-124 Ops.AFTER dtypes.f32 [32, 123, 39, 41, 43, 45]
+124 Ops.AFTER dtypes.f32 [32, 123]
 125 Ops.INDEX dtypes.f32 [124, 35]
 126 Ops.LOAD dtypes.f32 [125]
 127 Ops.CAST dtypes.f16 [126] dtypes.f16
@@ -143,7 +143,7 @@
 141 Ops.STACK dtypes.f16 [137, 140]
 142 Ops.STORE dtypes.void [134, 141]
 143 Ops.AFTER dtypes.void [0, 132, 142]
-144 Ops.SINK dtypes.void [143] KernelInfo(name="r_4_8_32_2_2_2_4", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)) tag=1
+144 Ops.SINK dtypes.void [143] KernelInfo(name="r_4_8_32_2_2_2_4", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), optimized=True)
 145 Ops.BUFFER dtypes.f32 [12] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
 146 Ops.AFTER dtypes.f32 [145, 5, 14, 27]
 147 Ops.INDEX dtypes.f32 [146, 35]
@@ -173,7 +173,7 @@
 171 Ops.STORE dtypes.void [168, 170]
 172 Ops.AFTER dtypes.void [0, 159, 163, 167, 171]
 173 Ops.END dtypes.void [172, 46]
-174 Ops.AFTER dtypes.f32 [145, 173, 148, 150, 152, 154]
+174 Ops.AFTER dtypes.f32 [145, 173]
 175 Ops.INDEX dtypes.f32 [174, 35]
 176 Ops.LOAD dtypes.f32 [175]
 177 Ops.CAST dtypes.f16 [176] dtypes.f16
@@ -191,8 +191,8 @@
 189 Ops.STACK dtypes.f16 [185, 188]
 190 Ops.STORE dtypes.void [134, 189]
 191 Ops.AFTER dtypes.void [0, 182, 190]
-192 Ops.SINK dtypes.void [191] KernelInfo(name="r_4_8_32_2_2_2_4", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), estimates=Estimates(ops=540672, lds=106496, mem=24576)) tag=1
-193 Ops.SINK dtypes.void [191] KernelInfo(name="r_4_8_32_2_2_2_4", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)) tag=1
+192 Ops.SINK dtypes.void [191] KernelInfo(name="r_4_8_32_2_2_2_4", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), estimates=Estimates(ops=540672, lds=106496, mem=24576), optimized=True)
+193 Ops.SINK dtypes.void [191] KernelInfo(name="r_4_8_32_2_2_2_4", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), optimized=True)
 194 Ops.LINEAR dtypes.void [1, 2, 50, 78, 12, 145, 25, 26, 27, 13, 14, 3, 4, 5, 146, 0, 37, 38, 102, 34, 35, 147, 22, 23, 149, 6, 7, 151, 19, 20, 153, 15, 16, 58, 59, 70, 71, 96, 97, 9, 10, 88, 89, 79, 80, 28, 8, 84, 17, 11, 18, 21, 24, 81, 148, 150, 152, 154, 46, 82, 83, 85, 93, 94, 95, 98, 99, 100, 90, 91, 92, 86, 87, 51, 52, 53, 60, 61, 62, 72, 73, 74, 65, 66, 67, 54, 55, 155, 156, 157, 160, 161, 164, 165, 168, 169, 63, 64, 75, 76, 68, 69, 56, 57, 77, 101, 103, 104, 109, 114, 119, 158, 162, 166, 170, 159, 163, 167, 171, 172, 173, 174, 175, 176, 178, 179, 183, 184, 186, 187, 177, 180, 181, 185, 188, 189, 29, 30, 133, 134, 31, 190, 182, 191, 193]
 195 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\n#include <cuda_fp16.h>\nstruct __align__(16) half8 { half x, y, z, w, a, b, c, d; }; __device__ half8 make_half8(half x, half y, half z, half w, half a, half b, half c, half d) { half8 r={x, y, z, w, a, b, c, d}; return r; }\nstruct __align__(8) half4 { half x, y, z, w; }; __device__ half4 make_half4(half x, half y, half z, half w) { half4 r={x, y, z, w}; return r; }\n__device__ float4 __WMMA_8_16_16_f16_f32(half8 a, half4 b, float4 c){\n  int *a_pk = (int *)(&a), *b_pk = (int *)(&b), *c_pk = (int *)(&c);\n  asm(\"mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32\"\n      \"{%0, %1, %2, %3}, {%4, %5, %6, %7},\"\n      \"{%8, %9}, {%0, %1, %2, %3};\"\n    : \"+r\"(c_pk[0]), \"+r\"(c_pk[1]), \"+r\"(c_pk[2]), \"+r\"(c_pk[3])\n    : \"r\"(a_pk[0]), \"r\"(a_pk[1]), \"r\"(a_pk[2]), \"r\"(a_pk[3]), \"r\"(b_pk[0]), \"r\"(b_pk[1]));\n  return c;\n}\nextern \"C\" __global__ void __launch_bounds__(32) r_4_8_32_2_2_2_4(half* data0_4096, half* data1_4096, half* data2_4096) {\n  float buf0[4];\n  int gidx0 = blockIdx.x; /* 8 */\n  int gidx1 = blockIdx.y; /* 4 */\n  int lidx0 = threadIdx.x; /* 32 */\n  int alu0 = (gidx0<<3);\n  int alu1 = (lidx0>>2);\n  int alu2 = ((alu1<<6)+(gidx1<<10));\n  int alu3 = (lidx0&3);\n  int alu4 = (alu3<<1);\n  *(buf0+0) = 0.0f;\n  *(buf0+1) = 0.0f;\n  *(buf0+2) = 0.0f;\n  *(buf0+3) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int alu9 = ((alu3<<7)+(Lidx0<<10)+(alu0+alu1));\n    half val0 = (*(data2_4096+(alu9+512)));\n    half val1 = (*(data2_4096+(alu9+576)));\n    half val2 = (*(data2_4096+(alu9+64)));\n    half val3 = (*(data2_4096+alu9));\n    int alu10 = (alu2+(alu4+(Lidx0<<4)));\n    half2 val4 = (*((half2*)((data1_4096+(alu10+512)))));\n    half2 val5 = (*((half2*)((data1_4096+(alu10+520)))));\n    half2 val6 = (*((half2*)((data1_4096+(alu10+8)))));\n    half2 val7 = (*((half2*)((data1_4096+alu10))));\n    float4 wmma0 = __WMMA_8_16_16_f16_f32(make_half8(val7.x,val7.y,val4.x,val4.y,val6.x,val6.y,val5.x,val5.y), make_half4(val3,val2,val0,val1), make_float4(0.0f,0.0f,0.0f,0.0f));\n    *(buf0+0) = ((*(buf0+0))+wmma0.x);\n    *(buf0+1) = ((*(buf0+1))+wmma0.y);\n    *(buf0+2) = ((*(buf0+2))+wmma0.z);\n    *(buf0+3) = ((*(buf0+3))+wmma0.w);\n  }\n  int alu16 = (alu2+(alu4+alu0));\n  *((half2*)((data0_4096+(alu16+512)))) = make_half2(((half)((*(buf0+2)))),((half)((*(buf0+3)))));\n  *((half2*)((data0_4096+alu16))) = make_half2(((half)((*(buf0+0)))),((half)((*(buf0+1)))));\n}"
 196 Ops.PROGRAM dtypes.void [192, 194, 195] ProgramInfo(global_size=(8, 4, 1), local_size=(32, 1, 1), params=(%2, %50, %78), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))

@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 32
 2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=0, dtype=dtypes.f16, device="CPU")
@@ -83,5 +83,5 @@
 81 Ops.STORE dtypes.void [79, 80]
 82 Ops.AFTER dtypes.void [0, 60, 63, 66, 69, 72, 75, 78, 81]
 83 Ops.END dtypes.void [82, 4]
-84 Ops.SINK dtypes.void [83] KernelInfo(name="E_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST)),)) tag=1
+84 Ops.SINK dtypes.void [83] KernelInfo(name="E_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST)),), optimized=True)
 

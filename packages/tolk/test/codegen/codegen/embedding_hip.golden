@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 128
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -88,8 +88,8 @@
 86 Ops.LOAD dtypes.f32 [82, 28, 85]
 87 Ops.STORE dtypes.void [73, 86]
 88 Ops.AFTER dtypes.void [0, 35, 51, 69, 87]
-89 Ops.SINK dtypes.void [88] KernelInfo(name="E_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))) tag=1
-90 Ops.SINK dtypes.void [88] KernelInfo(name="E_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL))), estimates=Estimates(ops=384, lds=1040, mem=1040)) tag=1
+89 Ops.SINK dtypes.void [88] KernelInfo(name="E_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL))), optimized=True)
+90 Ops.SINK dtypes.void [88] KernelInfo(name="E_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL))), estimates=Estimates(ops=384, lds=1040, mem=1040), optimized=True)
 91 Ops.LINEAR dtypes.void [1, 2, 9, 10, 7, 8, 11, 12, 13, 14, 15, 3, 4, 5, 16, 18, 19, 22, 23, 20, 17, 21, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 38, 39, 40, 42, 41, 43, 44, 45, 46, 47, 48, 49, 50, 56, 57, 58, 60, 59, 61, 62, 63, 64, 65, 66, 67, 68, 74, 75, 76, 78, 77, 79, 80, 81, 82, 83, 84, 85, 86, 0, 6, 36, 37, 52, 53, 54, 55, 70, 71, 72, 73, 35, 51, 69, 87, 88, 89]
 92 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\ntypedef int int4 __attribute__((ext_vector_type(4)));\nstatic inline __attribute__((device)) int4 make_int4(int x, int y, int z, int w) { return { x, y, z, w }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 32))) E_32_4(float* data0_128, int* data1_4, float* data2_3200) {\n  int4 val0 = (*((int4*)((data1_4+0))));\n  int lidx0 = __ockl_get_local_id(0); /* 32 */\n  int alu0 = ((val0.x<0)?(val0.x+100):val0.x);\n  float val1 = (((-1<alu0)&(alu0<100))?*(data2_3200+((alu0<<5)+lidx0)):0.0f);\n  int alu1 = ((val0.y<0)?(val0.y+100):val0.y);\n  float val2 = (((-1<alu1)&(alu1<100))?*(data2_3200+((alu1<<5)+lidx0)):0.0f);\n  int alu2 = ((val0.z<0)?(val0.z+100):val0.z);\n  float val3 = (((-1<alu2)&(alu2<100))?*(data2_3200+((alu2<<5)+lidx0)):0.0f);\n  int alu3 = ((val0.w<0)?(val0.w+100):val0.w);\n  float val4 = (((-1<alu3)&(alu3<100))?*(data2_3200+((alu3<<5)+lidx0)):0.0f);\n  *(data0_128+lidx0) = val1;\n  *(data0_128+(lidx0+32)) = val2;\n  *(data0_128+(lidx0+64)) = val3;\n  *(data0_128+(lidx0+96)) = val4;\n}"
 93 Ops.PROGRAM dtypes.void [90, 91, 92] ProgramInfo(local_size=(32, 1, 1), params=(%2, %10, %8), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))

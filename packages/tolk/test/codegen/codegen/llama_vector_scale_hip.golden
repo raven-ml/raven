@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -46,8 +46,8 @@
 44 Ops.LOAD dtypes.f32 [40, 23, 43]
 45 Ops.STORE dtypes.void [34, 44]
 46 Ops.AFTER dtypes.void [0, 32, 45]
-47 Ops.SINK dtypes.void [46] KernelInfo(name="E_8_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)))) tag=1
-48 Ops.SINK dtypes.void [46] KernelInfo(name="E_8_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL))), estimates=Estimates(ops=48, lds=136, mem=136)) tag=1
+47 Ops.SINK dtypes.void [46] KernelInfo(name="E_8_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL))), optimized=True)
+48 Ops.SINK dtypes.void [46] KernelInfo(name="E_8_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL))), estimates=Estimates(ops=48, lds=136, mem=136), optimized=True)
 49 Ops.LINEAR dtypes.void [1, 2, 9, 10, 7, 8, 11, 12, 13, 14, 15, 3, 4, 5, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 29, 26, 30, 31, 35, 36, 37, 38, 39, 40, 42, 41, 43, 44, 0, 6, 33, 34, 32, 45, 46, 47]
 50 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\ntypedef int int2 __attribute__((ext_vector_type(2)));\nstatic inline __attribute__((device)) int2 make_int2(int x, int y) { return { x, y }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 8))) E_8_2(float* data0_16, int* data1_2, float* data2_256) {\n  int2 val0 = (*((int2*)((data1_2+0))));\n  int lidx0 = __ockl_get_local_id(0); /* 8 */\n  float val1 = (((-1<val0.x)&(val0.x<32))?*(data2_256+((val0.x<<3)+lidx0)):0.0f);\n  float val2 = (((-1<val0.y)&(val0.y<32))?*(data2_256+((val0.y<<3)+lidx0)):0.0f);\n  *(data0_16+lidx0) = val1;\n  *(data0_16+(lidx0+8)) = val2;\n}"
 51 Ops.PROGRAM dtypes.void [48, 49, 50] ProgramInfo(local_size=(8, 1, 1), params=(%2, %10, %8), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))

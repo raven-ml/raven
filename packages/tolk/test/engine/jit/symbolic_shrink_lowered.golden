@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -34,8 +34,8 @@
 32 Ops.CAST dtypes.f32 [31] dtypes.f32
 33 Ops.ADD dtypes.f32 [30, 32]
 34 Ops.STORE dtypes.void [5, 33]
-35 Ops.SINK dtypes.void [34, 34, 34, 34] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))), estimates=Estimates(ops=4, lds=32, mem=32))
-36 Ops.SINK dtypes.void [34, 34, 34, 34] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))))
+35 Ops.SINK dtypes.void [34, 34, 34, 34] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))), estimates=Estimates(ops=4, lds=32, mem=32), optimized=True)
+36 Ops.SINK dtypes.void [34, 34, 34, 34] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))), optimized=True)
 37 Ops.LINEAR dtypes.void [0, 1, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 2, 3, 4, 5, 31, 32, 33, 34, 36]
 38 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void E_2_2(float* restrict data0_4, float* restrict data1_77, const int i_) {\n  float val0 = (*(data1_77+(i_+33)));\n  float val1 = (*(data1_77+(i_+34)));\n  float val2 = (*(data1_77+(i_+44)));\n  float val3 = (*(data1_77+(i_+45)));\n  *((float4*)((data0_4+0))) = ((float4){val0,val1,val2,val3}+1.0f);\n}\n"
 39 Ops.BINARY dtypes.u8 [] b"typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void E_2_2(float* restrict data0_4, float* restrict data1_77, const int i_) {\n  float val0 = (*(data1_77+(i_+33)));\n  float val1 = (*(data1_77+(i_+34)));\n  float val2 = (*(data1_77+(i_+44)));\n  float val3 = (*(data1_77+(i_+45)));\n  *((float4*)((data0_4+0))) = ((float4){val0,val1,val2,val3}+1.0f);\n}\n"

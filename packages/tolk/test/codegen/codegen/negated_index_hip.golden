@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -9,8 +9,8 @@
 7 Ops.LOAD dtypes.f32 [6]
 8 Ops.NEG dtypes.f32 [7]
 9 Ops.STORE dtypes.void [4, 8]
-10 Ops.SINK dtypes.void [9] KernelInfo() tag=1
-11 Ops.SINK dtypes.void [9] KernelInfo(estimates=Estimates(ops=1, lds=8, mem=8)) tag=1
+10 Ops.SINK dtypes.void [9] KernelInfo(optimized=True)
+11 Ops.SINK dtypes.void [9] KernelInfo(estimates=Estimates(ops=1, lds=8, mem=8), optimized=True)
 12 Ops.LINEAR dtypes.void [0, 5, 1, 2, 3, 6, 7, 4, 8, 9, 10]
 13 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) test(float* data0_1, float* data1_1) {\n  float val0 = (*(data0_1+0));\n  *(data1_1+0) = -val0;\n}"
 14 Ops.PROGRAM dtypes.void [11, 12, 13] ProgramInfo(params=(%5, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))

@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 256
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="NULL")
 2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="NULL")
@@ -19,7 +19,7 @@
 17 Ops.PARAM dtypes.i32 [3] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 64), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
 18 Ops.CONST dtypes.weakint [] 2
 19 Ops.SHL dtypes.i32 [17, 18]
-20 Ops.SINK dtypes.void [16] KernelInfo(name="E_(n*4)", split=(%19, 2, 3)) tag=1
+20 Ops.SINK dtypes.void [16] KernelInfo(name="E_(n*4)", optimized=True, split=(%19, 2, 3))
 21 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20]
 22 Ops.CONST dtypes.weakint [] 4
 23 Ops.PARAM dtypes.f32 [22] ParamArg(slot=0, dtype=dtypes.f32, device="NULL")
@@ -51,13 +51,13 @@
 49 Ops.ADD dtypes.f32 [48, 45]
 50 Ops.STORE dtypes.void [47, 49]
 51 Ops.END dtypes.void [50, 41]
-52 Ops.AFTER dtypes.f32 [28, 51, 40]
+52 Ops.AFTER dtypes.f32 [28, 51]
 53 Ops.INDEX dtypes.f32 [52, 32]
 54 Ops.LOAD dtypes.f32 [53]
 55 Ops.INDEX dtypes.f32 [23, 37]
 56 Ops.STORE dtypes.void [55, 54]
 57 Ops.END dtypes.void [56, 35]
-58 Ops.SINK dtypes.void [57] KernelInfo(name="r_4_n", split=(4, 2, 3)) tag=1
+58 Ops.SINK dtypes.void [57] KernelInfo(name="r_4_n", optimized=True, split=(4, 2, 3))
 59 Ops.LINEAR dtypes.void [22, 23, 0, 2, 3, 24, 25, 26, 27, 28, 29, 30, 31, 32, 18, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
 60 Ops.CONST dtypes.weakint [] 16384
 61 Ops.PARAM dtypes.f32 [60] ParamArg(slot=1, dtype=dtypes.f32, device="NULL")
@@ -115,7 +115,7 @@
 113 Ops.STORE dtypes.void [96, 109]
 114 Ops.AFTER dtypes.void [3, 110, 111, 112, 113]
 115 Ops.END dtypes.void [114, 88]
-116 Ops.AFTER dtypes.f32 [63, 115, 84, 85, 86, 87]
+116 Ops.AFTER dtypes.f32 [63, 115]
 117 Ops.INDEX dtypes.f32 [116, 32]
 118 Ops.LOAD dtypes.f32 [117]
 119 Ops.INDEX dtypes.f32 [116, 70]
@@ -128,7 +128,7 @@
 126 Ops.SHRINK dtypes.f32 [1, 83, 76]
 127 Ops.STORE dtypes.void [126, 125]
 128 Ops.AFTER dtypes.void [3, 127]
-129 Ops.SINK dtypes.void [128] KernelInfo(name="r_2_32_4_n", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))) tag=1
+129 Ops.SINK dtypes.void [128] KernelInfo(name="r_2_32_4_n", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL))), optimized=True)
 130 Ops.LINEAR dtypes.void [0, 1, 60, 61, 3, 62, 22, 63, 18, 33, 64, 65, 66, 67, 68, 31, 32, 69, 27, 70, 71, 72, 73, 74, 75, 29, 30, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129]
 131 Ops.SINK dtypes.void [21, 59, 130]
 

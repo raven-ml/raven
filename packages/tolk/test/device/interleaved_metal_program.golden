@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -26,8 +26,8 @@
 24 Ops.ADD dtypes.i32 [23, 11]
 25 Ops.STACK dtypes.i32 [12, 16, 20, 24]
 26 Ops.STORE dtypes.void [5, 25]
-27 Ops.SINK dtypes.void [26, 26, 26, 26] KernelInfo(name="interleaved", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=4, lds=32, mem=32))
-28 Ops.SINK dtypes.void [26, 26, 26, 26] KernelInfo(name="interleaved", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),))
+27 Ops.SINK dtypes.void [26, 26, 26, 26] KernelInfo(name="interleaved", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=4, lds=32, mem=32), optimized=True)
+28 Ops.SINK dtypes.void [26, 26, 26, 26] KernelInfo(name="interleaved", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 29 Ops.LINEAR dtypes.void [0, 1, 10, 11, 6, 2, 3, 4, 7, 8, 9, 13, 14, 15, 17, 18, 19, 21, 22, 23, 12, 16, 20, 24, 25, 5, 26, 28]
 30 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device int* data0_4; int n_; device int* data2_4; };\nkernel void interleaved(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_4 = args.data0_4; int n_ = args.n_; device int* data2_4 = args.data2_4;\n  int4 val0 = (*((device int4*)((data2_4+0))));\n  *((device int4*)((data0_4+0))) = int4((val0.x+n_),(val0.y+n_),(val0.z+n_),(val0.w+n_));\n}"
 31 Ops.BINARY dtypes.u8 [] b"#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device int* data0_4; int n_; device int* data2_4; };\nkernel void interleaved(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_4 = args.data0_4; int n_ = args.n_; device int* data2_4 = args.data2_4;\n  int4 val0 = (*((device int4*)((data2_4+0))));\n  *((device int4*)((data0_4+0))) = int4((val0.x+n_),(val0.y+n_),(val0.z+n_),(val0.w+n_));\n}"

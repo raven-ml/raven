@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -42,8 +42,8 @@
 40 Ops.ADD dtypes.f32 [38, 39]
 41 Ops.STORE dtypes.void [8, 40]
 42 Ops.END dtypes.void [41, 6]
-43 Ops.SINK dtypes.void [42] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=28, lds=144, mem=144), split=(4, 2, 3)) tag=1
-44 Ops.SINK dtypes.void [42] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), split=(4, 2, 3)) tag=1
+43 Ops.SINK dtypes.void [42] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=28, lds=144, mem=144), optimized=True, split=(4, 2, 3))
+44 Ops.SINK dtypes.void [42] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), optimized=True, split=(4, 2, 3))
 45 Ops.LINEAR dtypes.void [0, 1, 9, 10, 2, 3, 4, 17, 18, 20, 21, 24, 25, 11, 12, 14, 5, 6, 7, 13, 30, 31, 32, 15, 16, 8, 33, 35, 37, 39, 19, 22, 26, 28, 23, 27, 29, 34, 36, 38, 40, 41, 42, 44]
 46 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_4_8(float* restrict data0_4, float* restrict data1_32, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<3);\n    float4 val0 = (*((float4*)((data1_32+(alu1+4)))));\n    float4 val1 = (*((float4*)((data1_32+alu1))));\n    *(data0_4+alu0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0[0]+val0[1]+val0[2]+val0[3]);\n  }\n}\n"
 47 Ops.BINARY dtypes.u8 [] b"typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_4_8(float* restrict data0_4, float* restrict data1_32, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<3);\n    float4 val0 = (*((float4*)((data1_32+(alu1+4)))));\n    float4 val1 = (*((float4*)((data1_32+alu1))));\n    *(data0_4+alu0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0[0]+val0[1]+val0[2]+val0[3]);\n  }\n}\n"

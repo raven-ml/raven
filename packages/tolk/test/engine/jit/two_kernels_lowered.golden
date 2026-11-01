@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -11,8 +11,8 @@
 9 Ops.CAST dtypes.f32 [8] dtypes.f32
 10 Ops.ADD dtypes.f32 [7, 9]
 11 Ops.STORE dtypes.void [4, 10]
-12 Ops.SINK dtypes.void [11] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8)) tag=1
-13 Ops.SINK dtypes.void [11] KernelInfo(name="E") tag=1
+12 Ops.SINK dtypes.void [11] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8), optimized=True)
+13 Ops.SINK dtypes.void [11] KernelInfo(name="E", optimized=True)
 14 Ops.LINEAR dtypes.void [0, 1, 5, 2, 3, 6, 7, 4, 8, 9, 10, 11, 13]
 15 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0+1.0f);\n}\n"
 16 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0+1.0f);\n}\n"
@@ -27,8 +27,8 @@
 25 Ops.CAST dtypes.f32 [24] dtypes.f32
 26 Ops.MUL dtypes.f32 [7, 25]
 27 Ops.STORE dtypes.void [4, 26]
-28 Ops.SINK dtypes.void [27] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8)) tag=1
-29 Ops.SINK dtypes.void [27] KernelInfo(name="E") tag=1
+28 Ops.SINK dtypes.void [27] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8), optimized=True)
+29 Ops.SINK dtypes.void [27] KernelInfo(name="E", optimized=True)
 30 Ops.LINEAR dtypes.void [0, 1, 5, 2, 3, 6, 7, 4, 24, 25, 26, 27, 29]
 31 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
 32 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"

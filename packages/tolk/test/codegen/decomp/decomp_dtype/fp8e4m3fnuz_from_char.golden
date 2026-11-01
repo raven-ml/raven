@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
 2 Ops.PARAM dtypes.fp8e4m3fnuz [1] ParamArg(slot=0, dtype=dtypes.fp8e4m3fnuz, device="CPU")
@@ -31,11 +31,11 @@
 29 Ops.STORE dtypes.void [9, 28]
 30 Ops.AFTER dtypes.void [0, 29]
 31 Ops.END dtypes.void [30, 5]
-32 Ops.SINK dtypes.void [31] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-33 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, device="CPU") tag=dtypes.fp8e4m3fnuz
+32 Ops.SINK dtypes.void [31] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+33 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, device="CPU")
 34 Ops.CONST dtypes.weakint [] 0
 35 Ops.ADD dtypes.i32 [6, 34]
-36 Ops.INDEX dtypes.u8 [33, 35] tag=dtypes.fp8e4m3fnuz
+36 Ops.INDEX dtypes.u8 [33, 35]
 37 Ops.CAST dtypes.f32 [12] dtypes.f32
 38 Ops.CUSTOM dtypes.f32 [37] ("f2f_clamp fp8e4m3fnuz True", dtypes.f32)
 39 Ops.BITCAST dtypes.u32 [38] dtypes.u32
@@ -45,7 +45,7 @@
 43 Ops.BITCAST dtypes.u32 [42] dtypes.u32
 44 Ops.CUSTOM dtypes.u8 [43] ("f2f f32 fp8e4m3fnuz True", dtypes.u8)
 45 Ops.STORE dtypes.void [36, 44]
-46 Ops.INDEX dtypes.u8 [33, 15] tag=dtypes.fp8e4m3fnuz
+46 Ops.INDEX dtypes.u8 [33, 15]
 47 Ops.CAST dtypes.f32 [17] dtypes.f32
 48 Ops.CUSTOM dtypes.f32 [47] ("f2f_clamp fp8e4m3fnuz True", dtypes.f32)
 49 Ops.BITCAST dtypes.u32 [48] dtypes.u32
@@ -55,7 +55,7 @@
 53 Ops.BITCAST dtypes.u32 [52] dtypes.u32
 54 Ops.CUSTOM dtypes.u8 [53] ("f2f f32 fp8e4m3fnuz True", dtypes.u8)
 55 Ops.STORE dtypes.void [46, 54]
-56 Ops.INDEX dtypes.u8 [33, 19] tag=dtypes.fp8e4m3fnuz
+56 Ops.INDEX dtypes.u8 [33, 19]
 57 Ops.CAST dtypes.f32 [21] dtypes.f32
 58 Ops.CUSTOM dtypes.f32 [57] ("f2f_clamp fp8e4m3fnuz True", dtypes.f32)
 59 Ops.BITCAST dtypes.u32 [58] dtypes.u32
@@ -65,7 +65,7 @@
 63 Ops.BITCAST dtypes.u32 [62] dtypes.u32
 64 Ops.CUSTOM dtypes.u8 [63] ("f2f f32 fp8e4m3fnuz True", dtypes.u8)
 65 Ops.STORE dtypes.void [56, 64]
-66 Ops.INDEX dtypes.u8 [33, 24] tag=dtypes.fp8e4m3fnuz
+66 Ops.INDEX dtypes.u8 [33, 24]
 67 Ops.CAST dtypes.f32 [26] dtypes.f32
 68 Ops.CUSTOM dtypes.f32 [67] ("f2f_clamp fp8e4m3fnuz True", dtypes.f32)
 69 Ops.BITCAST dtypes.u32 [68] dtypes.u32
@@ -78,6 +78,6 @@
 76 Ops.AFTER dtypes.void [0, 45, 55, 65, 75]
 77 Ops.AFTER dtypes.void [0, 76]
 78 Ops.END dtypes.void [77, 5]
-79 Ops.SINK dtypes.void [78] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+79 Ops.SINK dtypes.void [78] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 80 Ops.SINK dtypes.void [32, 79]
 

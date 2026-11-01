@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 4014080
 1 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8)
 2 Ops.CONST dtypes.weakint [] 784
@@ -74,7 +74,7 @@
 72 Ops.LOAD dtypes.i32 [71]
 73 Ops.ALLOC dtypes.i32 [39] ParamArg(slot=3, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
 74 Ops.INDEX dtypes.i32 [73, 42]
-75 Ops.AFTER dtypes.i32 [41, 67, 45]
+75 Ops.AFTER dtypes.i32 [41, 67]
 76 Ops.INDEX dtypes.i32 [75, 22]
 77 Ops.LOAD dtypes.i32 [76]
 78 Ops.STORE dtypes.void [74, 77]
@@ -85,7 +85,7 @@
 83 Ops.ADD dtypes.i32 [72, 82]
 84 Ops.STORE dtypes.void [71, 83]
 85 Ops.END dtypes.void [84, 69]
-86 Ops.AFTER dtypes.i32 [35, 85, 38]
+86 Ops.AFTER dtypes.i32 [35, 85]
 87 Ops.INDEX dtypes.i32 [86, 22]
 88 Ops.LOAD dtypes.i32 [87]
 89 Ops.CONST dtypes.weakint [] -1
@@ -107,12 +107,12 @@
 105 Ops.STORE dtypes.void [30, 104]
 106 Ops.BARRIER dtypes.void [105]
 107 Ops.END dtypes.void [106, 28]
-108 Ops.AFTER dtypes.u8 [19, 107, 25]
+108 Ops.AFTER dtypes.u8 [19, 107]
 109 Ops.INDEX dtypes.u8 [108, 22]
 110 Ops.LOAD dtypes.u8 [109]
 111 Ops.CMPEQ dtypes.bool [42, 22]
 112 Ops.STORE dtypes.void [17, 110, 111]
-113 Ops.SINK dtypes.void [112] KernelInfo(name="r_512_784_10_16_6000_3750", applied_opts=(Opt(op=OptOps.SPLIT, axis=4, arg=(16, AxisType.LOCAL)),)) tag=1
+113 Ops.SINK dtypes.void [112] KernelInfo(name="r_512_784_10_16_6000_3750", applied_opts=(Opt(op=OptOps.SPLIT, axis=4, arg=(16, AxisType.LOCAL)),), optimized=True)
 114 Ops.BUFFER dtypes.u8 [18] ParamArg(slot=2, dtype=dtypes.u8, addrspace=AddrSpace.REG)
 115 Ops.AFTER dtypes.u8 [114, 10, 15, 4]
 116 Ops.INDEX dtypes.u8 [115, 22]
@@ -141,7 +141,7 @@
 139 Ops.LOAD dtypes.i32 [138]
 140 Ops.BUFFER dtypes.i32 [39] ParamArg(slot=3, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
 141 Ops.INDEX dtypes.i32 [140, 42]
-142 Ops.AFTER dtypes.i32 [125, 134, 128]
+142 Ops.AFTER dtypes.i32 [125, 134]
 143 Ops.INDEX dtypes.i32 [142, 22]
 144 Ops.LOAD dtypes.i32 [143]
 145 Ops.STORE dtypes.void [141, 144]
@@ -152,7 +152,7 @@
 150 Ops.ADD dtypes.i32 [139, 149]
 151 Ops.STORE dtypes.void [138, 150]
 152 Ops.END dtypes.void [151, 136]
-153 Ops.AFTER dtypes.i32 [121, 152, 124]
+153 Ops.AFTER dtypes.i32 [121, 152]
 154 Ops.INDEX dtypes.i32 [153, 22]
 155 Ops.LOAD dtypes.i32 [154]
 156 Ops.ADD dtypes.i32 [155, 90]
@@ -162,14 +162,14 @@
 160 Ops.STORE dtypes.void [119, 159]
 161 Ops.BARRIER dtypes.void [160]
 162 Ops.END dtypes.void [161, 28]
-163 Ops.AFTER dtypes.u8 [114, 162, 117]
+163 Ops.AFTER dtypes.u8 [114, 162]
 164 Ops.INDEX dtypes.u8 [163, 22]
 165 Ops.LOAD dtypes.u8 [164]
 166 Ops.STORE dtypes.void [17, 165]
-167 Ops.SINK dtypes.void [166] KernelInfo(name="r_512_784_10_16_6000_3750", applied_opts=(Opt(op=OptOps.SPLIT, axis=4, arg=(16, AxisType.LOCAL)),), estimates=Estimates(ops=8678505313730560, lds=26589330147328, mem=51056128)) tag=1
+167 Ops.SINK dtypes.void [166] KernelInfo(name="r_512_784_10_16_6000_3750", applied_opts=(Opt(op=OptOps.SPLIT, axis=4, arg=(16, AxisType.LOCAL)),), estimates=Estimates(ops=8678505313730560, lds=26589330147328, mem=51056128), optimized=True)
 168 Ops.IF dtypes.void [111, 17]
 169 Ops.ENDIF dtypes.void [168]
-170 Ops.SINK dtypes.void [166] KernelInfo(name="r_512_784_10_16_6000_3750", applied_opts=(Opt(op=OptOps.SPLIT, axis=4, arg=(16, AxisType.LOCAL)),)) tag=1
+170 Ops.SINK dtypes.void [166] KernelInfo(name="r_512_784_10_16_6000_3750", applied_opts=(Opt(op=OptOps.SPLIT, axis=4, arg=(16, AxisType.LOCAL)),), optimized=True)
 171 Ops.LINEAR dtypes.void [0, 1, 8, 32, 93, 94, 18, 125, 121, 114, 39, 140, 9, 10, 33, 34, 5, 6, 15, 2, 3, 4, 40, 42, 115, 21, 22, 116, 141, 89, 90, 63, 46, 47, 55, 56, 95, 96, 60, 61, 26, 27, 24, 97, 98, 53, 117, 28, 126, 48, 127, 54, 128, 49, 129, 130, 131, 57, 58, 59, 62, 64, 132, 133, 134, 142, 143, 144, 122, 145, 146, 147, 135, 123, 124, 136, 137, 138, 139, 148, 149, 150, 151, 152, 99, 100, 101, 102, 118, 119, 120, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 11, 12, 7, 13, 14, 16, 17, 111, 168, 166, 169, 170]
 172 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(16) r_512_784_10_16_6000_3750(unsigned char* data0_4014080, int* data1_512, unsigned char* data2_47040000) {\n  int buf0[1];\n  int buf1[1];\n  unsigned char buf2[1];\n  __shared__ __align__(16) int buf3[16];\n  int gidx2 = blockIdx.z; /* 512 */\n  int val0 = (*(data1_512+gidx2));\n  int gidx0 = blockIdx.x; /* 10 */\n  int gidx1 = blockIdx.y; /* 784 */\n  int lidx0 = threadIdx.x; /* 16 */\n  *(buf2+0) = ((unsigned char)(0u));\n  for (int Lidx1004 = 0; Lidx1004 < 6000; Lidx1004++) {\n    *(buf0+0) = 0;\n    for (int Lidx2006 = 0; Lidx2006 < 3750; Lidx2006++) {\n      int alu2 = ((((gidx0*6000)+Lidx1004+((Lidx2006<<4)+lidx0))<59999)?0:1);\n      *(buf0+0) = ((*(buf0+0))+alu2);\n    }\n    *(buf3+lidx0) = (*(buf0+0));\n    __syncthreads();\n    *(buf1+0) = 0;\n    for (int Lidx2107 = 0; Lidx2107 < 16; Lidx2107++) {\n      int val1 = (*(buf3+Lidx2107));\n      *(buf1+0) = ((*(buf1+0))+val1);\n    }\n    unsigned char val2 = (*(data2_47040000+((gidx0*4704000)+gidx1+(Lidx1004*784))));\n    unsigned char alu10 = ((val0!=((*(buf1+0))+-1))?((unsigned char)(0u)):val2);\n    *(buf2+0) = ((*(buf2+0))+alu10);\n    __syncthreads();\n  }\n  if ((lidx0==0)) {\n    *(data0_4014080+((gidx1*10)+(gidx2*7840)+gidx0)) = (*(buf2+0));\n  }\n}"
 173 Ops.PROGRAM dtypes.void [167, 171, 172] ProgramInfo(global_size=(10, 784, 512), local_size=(16, 1, 1), params=(%1, %32, %94), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))

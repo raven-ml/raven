@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 4096
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -282,8 +282,8 @@
 280 Ops.ADD dtypes.f32 [272, 279]
 281 Ops.STORE dtypes.void [271, 280]
 282 Ops.AFTER dtypes.void [0, 141, 156, 187, 198, 228, 239, 270, 281]
-283 Ops.END dtypes.void [282, 80] tag="mergeable"
-284 Ops.AFTER dtypes.f32 [62, 283, 65, 67, 69, 71, 73, 75, 77, 79]
+283 Ops.END dtypes.void [282, 80]
+284 Ops.AFTER dtypes.f32 [62, 283]
 285 Ops.INDEX dtypes.f32 [284, 5]
 286 Ops.LOAD dtypes.f32 [285]
 287 Ops.INDEX dtypes.f32 [284, 31]
@@ -359,8 +359,8 @@
 357 Ops.ADD dtypes.f32 [355, 356]
 358 Ops.STORE dtypes.void [354, 357]
 359 Ops.AFTER dtypes.void [0, 319, 324, 329, 334, 343, 348, 353, 358]
-360 Ops.END dtypes.void [359, 50] tag="mergeable"
-361 Ops.AFTER dtypes.f32 [26, 360, 30, 33, 35, 38, 40, 43, 46, 49]
+360 Ops.END dtypes.void [359, 50]
+361 Ops.AFTER dtypes.f32 [26, 360]
 362 Ops.INDEX dtypes.f32 [361, 5]
 363 Ops.LOAD dtypes.f32 [362]
 364 Ops.INDEX dtypes.f32 [361, 31]
@@ -396,5 +396,5 @@
 394 Ops.STORE dtypes.void [388, 393]
 395 Ops.AFTER dtypes.void [0, 367, 367, 376, 376, 385, 385, 394, 394]
 396 Ops.END dtypes.void [395, 10, 13, 18]
-397 Ops.SINK dtypes.void [396] KernelInfo(name="r_4_32_4_2_4_2_8_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=3, arg=(8, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=3, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)))) tag=1
+397 Ops.SINK dtypes.void [396] KernelInfo(name="r_4_32_4_2_4_2_8_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=3, arg=(8, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=3, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST))), optimized=True)
 

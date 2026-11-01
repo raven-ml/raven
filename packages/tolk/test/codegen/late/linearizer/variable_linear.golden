@@ -1,4 +1,4 @@
-# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
 0 Ops.CONST dtypes.weakint [] 10
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
@@ -17,6 +17,6 @@
 15 Ops.STORE dtypes.void [13, 14]
 16 Ops.END dtypes.void [15, 9]
 17 Ops.PARAM dtypes.i32 [3] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
-18 Ops.SINK dtypes.void [16] KernelInfo(name="E_n", split=(%17, 2, 3)) tag=1
+18 Ops.SINK dtypes.void [16] KernelInfo(name="E_n", optimized=True, split=(%17, 2, 3))
 19 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18]
 

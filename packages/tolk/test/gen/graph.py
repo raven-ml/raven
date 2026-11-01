@@ -154,7 +154,7 @@ def stage(name, kernel, renderer):
     from tinygrad.uop.ops import KernelInfo
 
     if kernel.arg is None: kernel = kernel.replace(arg=KernelInfo())
-    full = lambda: tinygrad.codegen.full_rewrite_to_sink(kernel, renderer, optimize=kernel.tag is None)
+    full = lambda: tinygrad.codegen.full_rewrite_to_sink(kernel, renderer, optimize=kernel.arg is None or not kernel.arg.optimized)
     if name == "linearize": return full()
 
     class Captured(Exception):
