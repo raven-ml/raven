@@ -267,6 +267,35 @@ let copy_rows =
       row "host-read-pinned" pinned (fun (_, p) -> read p host_n);
     ]
 
+(* Boxes within the GPU's memory, as a strided view's copy submits them
+   through Buffer.submit_copy: rows of half a matrix's columns, and one
+   column of 4-byte values of a matrix of sixteen. *)
+let box_rows =
+  let boxing ~width ~rows ~pitch () =
+    let t = dev () in
+    let n = rows * pitch in
+    let src = B.create t.d n and dst = B.create t.d n in
+    let box =
+      {
+        B.src_offset = 0;
+        dst_offset = 0;
+        width;
+        rows;
+        src_pitch = pitch;
+        dst_pitch = pitch;
+      }
+    in
+    (src, dst, [| box |])
+  in
+  let copy (src, dst, boxes) =
+    Rig.Point.wait (B.submit_copy ~src ~dst boxes)
+  in
+  Thumper.group "box"
+    [
+      row "4096x256" (boxing ~width:256 ~rows:4096 ~pitch:512) copy;
+      row "65536x4" (boxing ~width:4 ~rows:65536 ~pitch:64) copy;
+    ]
+
 let alloc_rows =
   let alloc name n =
     row name dev (fun t ->
@@ -357,6 +386,6 @@ let () =
     exit
     @@ Thumper.run ~config "rig_amd"
          ((if pci then [ open_rows ] else [])
-         @ [ release_rows; launch_rows; copy_rows; alloc_rows ]
+         @ [ release_rows; launch_rows; copy_rows; box_rows; alloc_rows ]
          @ (if pci then [] else [ map_host_rows ])
          @ [ image_rows; wake_rows ])
