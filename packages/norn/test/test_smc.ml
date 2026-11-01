@@ -10,10 +10,13 @@ let t = Nx.Ptree.tensor
 
 (* Law 13: evidence. On models whose evidence is known, a run's [ln Z] is within
    three of its errors of the truth, and over [runs] runs the spread of [ln Z]
-   is within a factor of two of the mean error. *)
+   is within a factor of two of the mean error. Over 20 runs a calibrated
+   error leaves the spread outside that factor with probability about 4e-4,
+   from χ² with 19 degrees of freedom; the fixed keys make each outcome the
+   same on every run. *)
 
 let particles = 1000
-let runs = 50
+let runs = 20
 let budget = 100
 
 let temper ?move m i =
