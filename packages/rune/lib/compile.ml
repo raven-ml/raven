@@ -846,17 +846,20 @@ let op_rig st (type r) (op : r Nx.Prim.t) =
 (* [u], of [x]'s dtype, at the window [rs] of [x] that a move reads, each
    start of an axis it does not keep whole a variable bound to that start: a
    device's move of a window, and a kernel that reads it, is then the program
-   of every device's of its shape, wherever its window starts. *)
+   of every device's of its shape, wherever its window starts. A run binds a
+   variable by its name, which names its start and its bound: two windows of
+   one start along axes of other extents, as a mesh's, are two variables. *)
 let moving x (rs : A.Move.range array) u =
   let s = Nx.shape x in
   let axis i (r : A.Move.range) =
     if r.count = s.(i) then None
     else
+      let last = s.(i) - r.count in
       let v =
         Ops.variable
-          (Printf.sprintf "window%d" r.start)
+          (Printf.sprintf "window%d_%d" r.start last)
           (Tolk.Dtype.Value.of_int 0)
-          (Tolk.Dtype.Value.of_int (s.(i) - r.count))
+          (Tolk.Dtype.Value.of_int last)
       in
       let start = Shape.bind v (Tolk.Dtype.Value.of_int r.start) in
       Some (Ops.Sym start, Ops.Sym Ops.O.(start + int r.count))

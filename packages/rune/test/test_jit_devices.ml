@@ -527,6 +527,19 @@ let moves set =
   in
   equal ~msg:"bytes copied" int (3 * 8) copied
 
+(* A value whole on each device placed onto a mesh moves a window along each
+   axis from one start, axes of other extents: each window's start is a
+   variable of its own. *)
+let onto_mesh set =
+  match set.mesh with
+  | None -> ()
+  | Some mesh ->
+      let x = Nx.place (at set On) (value [| 4; 2 |]) in
+      let at = Nx.Placement.mesh mesh [ (0, [ "x" ]); (1, [ "y" ]) ] in
+      let f x _ = Nx.place at (Nx.mul x x) in
+      let eager = outcome (fun () -> f x x) in
+      equal (outcome_t bits_t) (omap bits eager) (omap bits (compiled f x x))
+
 (* Programs
 
    A program for one device serves every device of its target, so a
@@ -628,6 +641,8 @@ let () =
            [
              test "positions repeated along an axis move one element along it"
                (fun () -> over 2 { law = moves });
+             test "a whole value placed onto a mesh" (fun () ->
+                 over 4 { law = onto_mesh });
            ];
          group "programs"
            [
