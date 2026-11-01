@@ -250,7 +250,8 @@ val give_back : t -> unit
 (** [give_back g] gives back the access a virtual function asked its host
     for, once the device's queues are made, since a host resets a virtual
     function that holds its access long. It does nothing on a physical
-    function. *)
+    function, or once a call posted its request to give the access back, the
+    one an exception then ended included. *)
 
 val stop : t -> [ `Clean | `Lost | `Unknown ]
 (** [stop g] stops the GPU's queues and leaves it for the next open, its
@@ -266,4 +267,10 @@ val stop : t -> [ `Clean | `Lost | `Unknown ]
        did not leave, since bus mastering does not stop its writes to its
        peers.}}
     [`Clean] and [`Lost] give [Rig_amd]'s [`Stopped]. A later stop does
-    nothing and returns the same. *)
+    nothing and returns the same, [`Unknown] after a stop that raised, and a
+    sleep that a stop overtook reads nothing more.
+
+    Raises what a step of the stop raises but {!Regs.Stuck}, which loses the
+    GPU: [Invalid_argument] for a register its layout lacks, the failure of
+    a change to bus mastering, or a signal's exception from one of its
+    waits. *)

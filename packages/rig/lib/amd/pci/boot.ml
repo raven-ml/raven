@@ -10,6 +10,8 @@ module Window = Rig_pci.Window
 module Page_table = Rig_pci.Page_table
 module Memory = Rig_pci.Memory
 
+external reraise : exn -> 'a = "%reraise"
+
 let strf = Printf.sprintf
 let ( let* ) = Result.bind
 
@@ -120,7 +122,8 @@ let ready = 0x8000_0000
    access back. *)
 let mailbox_ms = 1_000
 
-let vf_request mmio f ?(ready = true) req =
+(* [posted] runs once the request is posted, before its acknowledgement. *)
+let vf_request mmio f ?(ready = true) ?(posted = ignore) req =
   let mb = Window.sub mmio D.nv_maibox_control_trn_offset_byte 2 in
   Window.set8 mb 0 0;
   let* () =
@@ -131,6 +134,7 @@ let vf_request mmio f ?(ready = true) req =
     (fun i w -> Window.set32 mmio ((D.mmmailbox_msgbuf_trn_dw0 + i) * 4) w)
     [ req; 0; 0; 0 ];
   Window.set8 mb 0 1;
+  posted ();
   let* () =
     Function.wait f ~us:(D.nv_mailbox_poll_ack_timedout * 1000)
       (strf "the VF mailbox's request 0x%x" req) (fun () ->
@@ -330,11 +334,13 @@ let mark g ~dirty =
   if not g.vf then
     Regs.write ~value:(Bool.to_int dirty) g.r "regSCRATCH_REG6" []
 
+(* The lease goes as the request is posted: a request a signal cut in an
+   earlier wait is made again by the next call, and one posted is not, where a
+   second request would give access back twice. *)
 let give_back_access g =
-  if g.lease <> 0 then begin
-    ignore (vf_request g.mmio g.f ~ready:false g.lease);
-    g.lease <- 0
-  end
+  if g.lease <> 0 then
+    let posted () = g.lease <- 0 in
+    ignore (vf_request g.mmio g.f ~ready:false ~posted g.lease)
 
 (* Stops the engines a session runs: the thread trace, the copy queue and the
    compute queues. [false] if a compute queue stayed. *)
@@ -376,14 +382,26 @@ let stop_locked g =
     else `Lost
   end
 
+(* A stop that raised is recorded as [`Unknown], as rig.pci's hold records
+   it ([Driver]), which then releases the function: a sleep reads no window
+   after. The answer is stored with no allocation between it and the stop's
+   return. *)
 let stop g =
   Rig_amd.Lock.protect g.hw @@ fun () ->
   match g.stopped with
   | Some s -> s
-  | None ->
-      let s = stop_locked g in
-      g.stopped <- Some s;
-      s
+  | None -> (
+      match stop_locked g with
+      | s ->
+          (g.stopped <-
+             match s with
+             | `Clean -> Some `Clean
+             | `Lost -> Some `Lost
+             | `Unknown -> Some `Unknown);
+          s
+      | exception e ->
+          g.stopped <- Some `Unknown;
+          reraise e)
 
 (* Starting *)
 
