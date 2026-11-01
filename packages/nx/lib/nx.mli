@@ -20,9 +20,11 @@
     An operation computes where its operands lie and moves none of them.
     {!place} moves a value, and an operation whose operands do not lie
     together raises, naming the {!place} to write ({!section-routing}). The
-    partial results of a fold over a cut axis, and the parts of the result
-    they close into, are the only bytes an operation moves between devices
-    ({!section-reductions}). *)
+    partial results of a reduction, a contraction, a scan, a gather or a
+    scatter's [Add] along a cut axis, the parts of the result they close
+    into, and a gather's or a scatter's positions are the only bytes an
+    operation moves between devices ({!section-reductions},
+    {!section-routing}). *)
 
 (** {1:values Values}
 
