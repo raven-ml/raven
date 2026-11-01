@@ -634,6 +634,97 @@ let test_long () =
       check ~wide (C2r 30030) 30030 5)
     [ false; true ]
 
+(* An impulse at [at] of a complex64 line of 2^22 points, 32 MiB, where on
+   Linux a four-step line's grid lies in its result where the largest cache
+   is at most 32 MiB: forward and inverse, each within the bound of its
+   exact transform, the twiddles, and with the same bits on one thread. The
+   twiddles are computed in double, whose error is far below float32's
+   bound. *)
+let test_past_caches () =
+  let n = 1 lsl 22 and at = 12345 in
+  let x =
+    A.of_array D.Complex64 [| n |]
+      (Array.init n (fun j -> if j = at then Complex.one else Complex.zero))
+  in
+  let check direction =
+    let c2c () =
+      let y = A.create Rig.host D.Complex64 [| n |] in
+      equal answer A.Done (Nx_cpu.c2c direction ~axes:[| 0 |] ~dst:y x);
+      y
+    in
+    let y = c2c () and alone = Nx_cpu.one_thread c2c in
+    let sign = match direction with Nx_kernel.Forward -> -1. | Inverse -> 1. in
+    let err = ref 0. and differs = ref None in
+    for k = n - 1 downto 0 do
+      let (z : Complex.t) = A.get y [| k |] in
+      let phi =
+        sign *. 2. *. Float.pi *. float_of_int (at * k mod n) /. float_of_int n
+      in
+      let dre = z.re -. cos phi and dim = z.im -. sin phi in
+      err := !err +. (dre *. dre) +. (dim *. dim);
+      let (w : Complex.t) = A.get alone [| k |] in
+      if
+        Int64.bits_of_float z.re <> Int64.bits_of_float w.re
+        || Int64.bits_of_float z.im <> Int64.bits_of_float w.im
+      then differs := Some k
+    done;
+    equal (option int) None !differs;
+    let bound =
+      epsilon (C2c direction) [| 0 |] [| n |] *. 0x1p-24 *. sqrt (float_of_int n)
+    in
+    at_most float_exact ~than:bound (sqrt !err)
+  in
+  check Forward;
+  check Inverse
+
+(* The first of [n] complex64 points where [y] and [z] differ in their
+   bits, if any. *)
+let differs n y z =
+  A.read Bigarray.complex32 y @@ fun y ->
+  A.read Bigarray.complex32 z @@ fun z ->
+  let y = Bigarray.reshape_1 y n and z = Bigarray.reshape_1 z n in
+  let same (a : Complex.t) (b : Complex.t) =
+    Int64.bits_of_float a.re = Int64.bits_of_float b.re
+    && Int64.bits_of_float a.im = Int64.bits_of_float b.im
+  in
+  let rec from k =
+    if k = n then None else if same y.{k} z.{k} then from (k + 1) else Some k
+  in
+  from 0
+
+(* A random complex64 line of 3^14 points, 38 MiB, with the same bits as
+   its values shaped [1; n] and transformed along both axes, forward and
+   inverse, on the job's threads and on one. On Linux, where the largest
+   cache is under 38 MiB, the line's grid lies in its result, and the
+   second axis's, transformed in place, in scratch. Its n1 and n2 are odd,
+   so both steps fill their last lanes in part. *)
+let test_grid_homes () =
+  let n = 4782969 in
+  let v = Bigarray.Array1.create Bigarray.complex32 Bigarray.c_layout n in
+  let rs = Random.State.make [| 14 |] in
+  let part () = Random.State.float rs 2. -. 1. in
+  for k = 0 to n - 1 do
+    v.{k} <- { Complex.re = part (); im = part () }
+  done;
+  let v = Bigarray.genarray_of_array1 v in
+  let line = A.of_bigarray D.Complex64 v
+  and row = A.of_bigarray D.Complex64 (Bigarray.reshape v [| 1; n |]) in
+  let c2c direction axes x s () =
+    let y = A.create Rig.host D.Complex64 s in
+    equal answer A.Done (Nx_cpu.c2c direction ~axes ~dst:y x);
+    y
+  in
+  List.iter
+    (fun direction ->
+      let by_row = c2c direction [| 0; 1 |] row [| 1; n |]
+      and by_line = c2c direction [| 0 |] line [| n |] in
+      let want = by_row () in
+      let check y = equal (option int) None (differs n want y) in
+      check (Nx_cpu.one_thread by_row);
+      check (by_line ());
+      check (Nx_cpu.one_thread by_line))
+    [ Nx_kernel.Forward; Inverse ]
+
 (* A forward c2c of [lines] lines of [n] points, drawn from [seed]. *)
 let line ~wide n lines seed =
   let rs = Random.State.make [| seed |] in
@@ -919,6 +1010,7 @@ let suite (b : Support.backend) =
           prop ~examples:halved_cases "by the prime factors of the points"
             case_gen (run law_bound);
           test "long lines" test_long;
+          test "a line past the caches" test_past_caches;
           test "a transform of no point is the empty sum" test_empty;
         ];
       group "bits are a function of the values alone"
@@ -927,6 +1019,7 @@ let suite (b : Support.backend) =
             (run law_bits);
           test "whatever the threads, past the size the lock is released for"
             test_streamed;
+          test "whatever the home of a long line's grid" test_grid_homes;
           test "on every target" test_digests;
           test "on every target, infinities among the points"
             test_infinity_digests;

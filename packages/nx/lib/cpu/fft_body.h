@@ -643,19 +643,47 @@ static int F(direct)(const PLAN *p, const lines *x, const lines *y,
   return ok;
 }
 
+/* Points one at a time */
+
+static inline void F(load)(const lines *x, int64_t o, int64_t j, T *re,
+                           T *im) {
+  const T *p = (const T *)x->base + o + j * x->step;
+  *re = p[0];
+  *im = x->real ? 0 : x->conj ? -p[x->io] : p[x->io];
+}
+
+static inline void F(store)(const lines *y, int64_t o, int64_t j, T re,
+                            T im) {
+  T *p = (T *)y->base + o + j * y->step;
+  p[0] = re;
+  if (!y->real) p[y->io] = y->conj ? -im : im;
+}
+
 /* The four steps of a line, Bailey's: its points as n1 rows of n2,
    j = j1 n2 + j2; each column transformed and twiddled by ω^(k1 j2); each
    row transformed; point k1 + n1 k2 of the result is row k1's point k2.
    A unit is a line, its lanes L columns, then L rows, or L lines side by
    side, a line a lane. Each line's arithmetic is the same either way.
 
-   Between the two steps the columns lie in a grid in scratch, in the
-   rows' lanes, which their passes run on in place: L rows of a line a
-   vector, or a row of L lines. */
+   Between the two steps the columns lie in a grid, in one of two homes:
+   - scratch, in the rows' lanes, which their passes run on in place: L
+     rows of a line a vector, or a row of L lines.
+   - y itself, where y is complex, its points adjacent and not x's
+     memory, and the line of at least Y_GRID_BYTES (fft.c): point
+     (k1, j2) where the result's point k1 + n1 j2 lies, so that the rows
+     transform in place and both steps stream, as the result does there
+     (streams). A grid in scratch would go to memory too, and fault its
+     pages in on every call. Kept from call to call (job.c), scratch
+     would fault no more but hold the grid on every thread that ran such
+     a line, and move a quarter more bytes, its stores reading their
+     cache lines first where y's stream, for 14% fewer instructions.
+     Where scratch takes no faults, the grid in y loses: within the
+     caches, y's pieces, n1 points apart, fall in few of its sets and
+     leave before the rows write them back. */
 
 /* A unit of the four steps: lane v's line of x and of y at xo[v] and
    yo[v], one line's for every lane where the unit is one. Its grid is s,
-   rows of [width] vectors. */
+   rows of [width] vectors, or y where s is NULL. */
 typedef struct {
   const PLAN *p;
   const lines *x, *y;
@@ -666,14 +694,20 @@ typedef struct {
   int64_t xo[L], yo[L];
 } F(unit);
 
-/* The vectors of a unit's grid: blocks of L rows, each as
+/* Whether a line's grid is y (above). */
+static int F(in_y)(const PLAN *p, const lines *x, const lines *y) {
+  return !y->real && y->step == 2 && y->io == 1 && x->base != y->base &&
+         2 * (int64_t)sizeof(T) * p->n >= Y_GRID_BYTES;
+}
+
+/* The vectors of a unit's grid in scratch: blocks of L rows, each as
    wide as n2 rounded up to L, or n1 rows of L lines. */
 static int64_t F(grid)(const PLAN *p, int side) {
   return side ? p->n : (p->n1 + L - 1) / L * ((p->n2 + L - 1) / L * L);
 }
 
 /* The unit of line [l], or of lines [l, l + L) side by side where
-   [side], its grid at [s]. */
+   [side], its grid y where [s] is NULL, else s. */
 static void F(unit_at)(F(unit) * u, const PLAN *p, const lines *x,
                        const lines *y, int64_t l, int side, CV *s) {
   int64_t blocks = (p->n1 + L - 1) / L, groups = (p->n2 + L - 1) / L;
@@ -709,6 +743,39 @@ static inline void F(twist)(const CV *r, const CV *tw, int lanes, CV *t) {
   for (int v = 0; v < L; v++) t[v] = (CV){re[v], im[v]};
 }
 
+/* Columns [c L, c L + L) of [u]'s line, [lanes] of them, transformed
+   in [r] and twiddled by [tw], into its grid in y: L rows at a time,
+   transposed, each column's points side by side, past the caches where y
+   streams. A function of its own: inlined in the column step, it slowed
+   the steps of a line whose grid is in scratch. */
+static __attribute__((noinline)) void F(column_y)(const F(unit) * u,
+                                                  int64_t c, int lanes,
+                                                  const CV *r,
+                                                  const CV *tw) {
+  const lines *y = u->y;
+  int64_t n1 = u->p->n1, q[L];
+  T *d = (T *)y->base;
+  int nt = y->stream;
+  for (int v = 0; v < L; v++) {
+    q[v] = u->yo[v] + n1 * (c * L + v) * y->step;
+    nt = nt && (uintptr_t)(d + q[v]) % STREAM_PIECE == 0;
+  }
+  for (int64_t h = 0; h < n1; h += L) {
+    int rows = n1 - h < L ? (int)(n1 - h) : L;
+    CV t[L];
+    F(twist)(r + h, tw + h, rows, t);
+    for (int v = 0; v < lanes; v++) {
+      if (rows == L) {
+        F(zip)(d + q[v] + h * y->step, t[v], y->conj, nt);
+        continue;
+      }
+      for (int k = 0; k < rows; k++)
+        F(store)(y, q[v], h + k, t[v].re[k], t[v].im[k]);
+    }
+  }
+  if (nt) nx_stream_drain();
+}
+
 /* Column step [c] of [u]: column c of its lines, or its line's columns
    [c L, c L + L), from x into the grid, through [a] and [b]. */
 static void F(column)(const F(unit) * u, int64_t c, CV *a, CV *b) {
@@ -725,6 +792,10 @@ static void F(column)(const F(unit) * u, int64_t c, CV *a, CV *b) {
   if (u->side) {
     for (int64_t k1 = 0; k1 < n1; k1++)
       u->s[k1 * n2 + c] = F(mul)(r[k1], tw[k1].re[c % L], tw[k1].im[c % L]);
+    return;
+  }
+  if (u->s == NULL) {
+    F(column_y)(u, c, lanes, r, tw);
     return;
   }
   /* L rows of the L columns at a time, twiddled and transposed into the
@@ -824,18 +895,20 @@ static int F(within8)(const PLAN *p, const lines *x, const lines *y,
 }
 
 /* Row step [r] of [u]: row r of its lines, or its line's rows [r L,
-   r L + L), from the grid into y, through [b]. Rows of 8 of
+   r L + L), from the grid into y, through [a] and [b]. Rows of 8 of
    lines side by side go by F(eight) and to y from registers, their
    streams drained by the caller: through b and scatter, fft2 of 1024 ×
    1024 took 3% longer (Arrow Lake, M1). */
-static void F(row)(const F(unit) * u, int64_t r, CV *b) {
+static void F(row)(const F(unit) * u, int64_t r, CV *a, CV *b) {
   const PLAN *p = u->p;
   const lines *y = u->y;
   int64_t n1 = p->n1, n2 = p->n2, o[L];
   int lanes = u->side || n1 - r * L >= L ? L : (int)(n1 - r * L);
   for (int v = 0; v < L; v++)
     o[v] = u->yo[v] + (u->side ? r : r * L + (v < lanes ? v : 0)) * y->step;
-  CV *rows = u->s + r * u->width;
+  CV *rows = a;
+  if (u->s != NULL) rows = u->s + r * u->width;
+  else F(gather)(a, y, o, lanes, n2, n1 * y->step);
   if (n2 == 8 && u->side) {
     CV z[8];
     F(eight)(p->p2, rows, z);
@@ -857,35 +930,20 @@ static int64_t F(four_lanes)(const PLAN *p) {
    steps, on this thread. */
 static int F(steps)(const PLAN *p, const lines *x, const lines *y,
                     int64_t l, int side) {
+  int64_t grid = !side && F(in_y)(p, x, y) ? 0 : F(grid)(p, side);
   int64_t lanes = F(four_lanes)(p);
-  CV *s = nx_cpu_take(sizeof(CV) * F(grid)(p, side)),
+  CV *s = grid > 0 ? nx_cpu_take(sizeof(CV) * grid) : NULL,
      *a = nx_cpu_take(sizeof(CV) * lanes), *b = nx_cpu_take(sizeof(CV) * lanes);
-  int ok = s != NULL && a != NULL && b != NULL;
+  int ok = (grid == 0 || s != NULL) && a != NULL && b != NULL;
   F(unit) u;
   F(unit_at)(&u, p, x, y, l, side, s);
   for (int64_t c = 0; ok && c < u.columns; c++) F(column)(&u, c, a, b);
-  for (int64_t r = 0; ok && r < u.rows; r++) F(row)(&u, r, b);
+  for (int64_t r = 0; ok && r < u.rows; r++) F(row)(&u, r, a, b);
   nx_stream_drain();
   nx_cpu_give(s);
   nx_cpu_give(a);
   nx_cpu_give(b);
   return ok;
-}
-
-/* Points one at a time */
-
-static inline void F(load)(const lines *x, int64_t o, int64_t j, T *re,
-                           T *im) {
-  const T *p = (const T *)x->base + o + j * x->step;
-  *re = p[0];
-  *im = x->real ? 0 : x->conj ? -p[x->io] : p[x->io];
-}
-
-static inline void F(store)(const lines *y, int64_t o, int64_t j, T re,
-                            T im) {
-  T *p = (T *)y->base + o + j * y->step;
-  p[0] = re;
-  if (!y->real) p[y->io] = y->conj ? -im : im;
 }
 
 /* Bluestein's convolution (pocketfft's fftblue): the transform of x at
@@ -1169,7 +1227,7 @@ static void F(body)(int64_t lo, int64_t hi, int worker, void *ctx) {
       ok = a != NULL && b != NULL;
       for (int64_t u = lo; ok && u < hi; u++)
         if (j->step == COLUMNS) F(column)(j->u, u, a, b);
-        else F(row)(j->u, u, b);
+        else F(row)(j->u, u, a, b);
       nx_cpu_give(a);
       nx_cpu_give(b);
       break;
@@ -1258,7 +1316,8 @@ static int F(blue_steps)(F(job) * j, int64_t bytes) {
 
 /* [count] lines of x by [p] into y. Lines are the units where there are
    enough for the threads; else each line's steps are jobs of their own,
-   which share a grid, or Bluestein's row, in scratch the call holds. */
+   over the line's grid, in y or in scratch the call holds, or over
+   Bluestein's row, in that scratch. */
 static int F(transform)(const PLAN *p, const lines *x, const lines *y,
                         int64_t count) {
   int64_t n = p->n, bytes = 4 * (int64_t)sizeof(T) * n * count;
@@ -1282,10 +1341,11 @@ static int F(transform)(const PLAN *p, const lines *x, const lines *y,
   int64_t units = (count + j.per - 1) / j.per;
   if (p->kind == PASSES || units >= t) return F(run)(&j, units, bytes, cost);
   int four = p->kind == FOUR;
-  int64_t shared = four ? (int64_t)sizeof(CV) * F(grid)(p, 0)
-                        : (int64_t)sizeof(T) * 2 * p->m;
-  void *buffer = nx_cpu_take(shared);
-  if (buffer == NULL) return 0;
+  int64_t shared = !four              ? (int64_t)sizeof(T) * 2 * p->m
+                   : F(in_y)(p, x, y) ? 0
+                                      : (int64_t)sizeof(CV) * F(grid)(p, 0);
+  void *buffer = shared > 0 ? nx_cpu_take(shared) : NULL;
+  if (shared > 0 && buffer == NULL) return 0;
   F(unit) u;
   j.u = &u;
   j.r = buffer;

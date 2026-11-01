@@ -60,6 +60,28 @@
 #define STREAM_SEVERAL (nx_cpu_l2 / 2)
 #endif
 
+/* glibc's largest mmap threshold on 64-bit hosts
+   (DEFAULT_MMAP_THRESHOLD_MAX). A mapped block, freed, raises the
+   threshold to its size up to MMAP_MAX, so the next block of that size
+   comes from the heap with its pages in. A block of MMAP_MAX bytes or
+   more, its header past the threshold, is mapped afresh on every call
+   and its pages faulted in. */
+#define MMAP_MAX ((int64_t)32 * 1024 * 1024)
+
+/* The bytes from which a line's four-step grid lies in its result
+   (fft_body.h): on Linux, past the largest cache and from MMAP_MAX, where
+   a grid in scratch goes to memory and faults its pages in on every call.
+   Where scratch is reused without faults, a grid in the result loses:
+   below MMAP_MAX, and on macOS, which reuses a freed block of any size,
+   where the M1 Max took 1.03 the time at 2^22 complex64 points and 1.07
+   at 2^23. The grid stays in scratch there, as on the systems not
+   measured. */
+#if defined(__linux__)
+#define Y_GRID_BYTES (nx_cpu_llc > MMAP_MAX ? nx_cpu_llc : MMAP_MAX)
+#else
+#define Y_GRID_BYTES INT64_MAX
+#endif
+
 /* The most points a line computes by passes alone. Above, the four steps
    give a single line every lane: a line of 256 points took 0.7 us by them
    against 4.9 by passes, which fill one lane of eight. A batch fills the

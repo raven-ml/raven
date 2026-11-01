@@ -1285,8 +1285,10 @@ let order_rows =
    16384 complex64 lines of 64 points (a batch by passes) and a complex128
    line of 2^16 points. Then rows without a vDSP counterpart: a complex64
    line of 3^10 points (radix 3), 4096 float32 lines of 255 points (odd
-   real lines, which are not halved) and 32 complex64 lines of 2^16 points,
-   16 MiB, whose four-step grids stay in cache while the result streams. *)
+   real lines, which are not halved), 32 complex64 lines of 2^16 points,
+   16 MiB, whose four-step grids stay in cache while the result streams, and
+   a complex64 line of 7 × 2^19 points, 28 MiB, past fudge's largest cache,
+   whose grid stays in scratch, which glibc reuses below 32 MiB. *)
 let fft f = Nx.Prim.eval ~by:"bench" (Fft f)
 
 (* The first [n] points of [c1m], in memory of their own. *)
@@ -1328,6 +1330,9 @@ let fft_rows =
           on_host
             (Nx.reshape [| 32; 65536 |] (Nx.concatenate ~axis:0 [ c; c ])))
         (c2c [| 1 |]);
+      Thumper.bench_with_setup "c2c-3584K-c64"
+        ~setup:(fun () -> on_host (Nx.slice [ R (0, 7 lsl 19) ] (c4m ())))
+        (c2c [| 0 |]);
       Thumper.bench_with_setup "c2c-59049-c64" ~setup:(c64 59049) (c2c [| 0 |]);
       Thumper.bench_with_setup "c2c-64K-c128"
         ~setup:(fun () -> on_host (Nx.cast D.Complex128 (c64 (1 lsl 16) ())))

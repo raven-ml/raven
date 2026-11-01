@@ -3408,6 +3408,10 @@ thread.
 
 ### Nx
 
+- On Linux, `Nx.fft` and `Nx.ifft` of a complex line, and `Nx.rfft` and
+  `Nx.irfft` of an even one, of at least 32 MiB and past the largest cache
+  keep the four-step grid in their result. They took scratch that the C
+  library mapped and faulted in afresh on every call.
 - `Nx.Prim.Consumer.take` takes `~piece`, the device of the operand's
   placement whose memory a result takes, so a compiler that runs an operation
   per device lends each device's memory apart. `Nx.Repr.unsafe_of_shards`

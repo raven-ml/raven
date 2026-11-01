@@ -275,9 +275,11 @@
     results of other shapes. A transform's result
     is a function of its operand's values alone, whatever its layout, its
     batch or the threads, but for a NaN result's sign and payload, which are
-    unspecified. Where its result cannot hold the work, as for an axis after
-    the first, lines whose points lie apart and Bluestein's convolutions, a
-    transform works in host memory the call holds until it returns. Barring
+    unspecified. A transform works in host memory the call holds until it
+    returns. On Linux, a line by Bailey's four steps of at least 32 MiB and
+    past the largest cache, from an operand apart from its result and into
+    points that lie side by side there, keeps its points between the steps
+    in its result in place of that memory. Barring
     underflow and overflow, a transform [ŷ] of [N] points, the product of the
     points along each of [axes], is within [‖ŷ - y‖₂ <= ε u √N ‖x‖₂] of the
     exact [y], [u] the unit roundoff of [x]'s parts and [‖x‖₂] its norm, a

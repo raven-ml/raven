@@ -248,13 +248,6 @@ raven / llama.cpp (Vulkan; ROCm):
   their lanes became vectors; inlining the start step for every monoid
   costs the float extremes 15%. Add a row (prod of complex64 2x2 windows),
   time it on fudge's gcc, and act only if it loses there
-- a four-step FFT line past `KEPT_BYTES` (job.c) takes fresh scratch every
-  call, which faults its pages in on Linux: 528 faults a call at 2^22
-  complex64 points. The grid in the result (uncommitted in ~/wt/fft3b on
-  fudge, on pre-squash 70b99a9fa) took 0.685 the time on six fudge cores
-  and 1.03-1.07 on the M1. Weigh it against keeping large scratch in
-  job.c, then port the winner; A/B c2c-4M-c64, c2c-64K-c64 and
-  c2c-32x64K-c64 quiet on fudge, test_fft passing
 
 ## talon, hugin, brot, munin, quill
 
