@@ -112,10 +112,12 @@ and 'a node =
   | Of_option : ('a option, 's) t -> 'a node
   | Store : 'a Type.t * ('a, 's) t -> 'a node
   | Text : 'a text_op * (string, 's) t -> 'a node
+  | Concat : string * (string, 's) t list -> string node
   | Calendar : 'a calendar_op -> 'a node
 
 and 'a text_op =
   | Length : int text_op
+  | Trim : string text_op
   | Slice : { offset : int; length : int } -> string text_op
   | Matches : pattern -> bool text_op
   | Split : string -> string array text_op
@@ -145,6 +147,7 @@ let operands : type a. a node -> packed list = function
   | App (f, a) -> [ Packed f; Packed a ]
   | If (c, a, b) -> [ Packed c; Packed a; Packed b ]
   | Coalesce es -> List.map (fun e -> Packed e) es
+  | Concat (_, es) -> List.map (fun e -> Packed e) es
   | Not a -> [ Packed a ]
   | Is_null a -> [ Packed a ]
   | Rank a -> [ Packed a ]
@@ -190,6 +193,7 @@ let reduction_name : type a b. (a, b) reduction -> string = function
 
 let text_op_name : type a. a text_op -> string = function
   | Length -> "Str.length"
+  | Trim -> "Str.trim"
   | Slice _ -> "Str.slice"
   | Matches _ -> "Str.matches"
   | Split _ -> "Str.split"
@@ -278,7 +282,7 @@ let reduction_equal : type a b c d. (a, b) reduction -> (c, d) reduction -> bool
 let text_op_equal : type a b. a text_op -> b text_op -> bool =
  fun op0 op1 ->
   match (op0, op1) with
-  | Length, Length -> true
+  | Length, Length | Trim, Trim -> true
   | Slice s0, Slice s1 ->
       Int.equal s0.offset s1.offset && Int.equal s0.length s1.length
   | Matches p0, Matches p1 -> pattern_equal p0 p1
@@ -286,7 +290,8 @@ let text_op_equal : type a b. a text_op -> b text_op -> bool =
   | Replace r0, Replace r1 ->
       String.equal r0.sub r1.sub && String.equal r0.by r1.by
   | Parse ty0, Parse ty1 -> Type.equal ty0 ty1
-  | (Length | Slice _ | Matches _ | Split _ | Replace _ | Parse _), _ -> false
+  | (Length | Trim | Slice _ | Matches _ | Split _ | Replace _ | Parse _), _ ->
+      false
 
 (* [calendar_equal op0 op1] is [true] iff [op0] and [op1] are one operation with
    equal attributes, whatever their operands. *)
@@ -344,6 +349,7 @@ let node_equal : type a b. a node -> b node -> bool =
       && List.equal Order.equal o0.order o1.order
   | Const v0, Const v1 -> same_value v0 v1
   | Text (op0, _), Text (op1, _) -> text_op_equal op0 op1
+  | Concat (sep0, _), Concat (sep1, _) -> String.equal sep0 sep1
   | Calendar op0, Calendar op1 -> calendar_equal op0 op1
   | Null, Null
   | Rows, Rows
@@ -360,7 +366,7 @@ let node_equal : type a b. a node -> b node -> bool =
       | Compare _ | Logic _ | Not _ | If _ | Is_null _ | Coalesce _ | Is_in _
       | Cut _ | Cast _ | Lift _ | Lift2 _ | Nx_map _ | Reduce _ | Over _
       | Shift _ | Rank _ | Const _ | App _ | Option _ | Of_option _ | Store _
-      | Text _ | Calendar _ ),
+      | Text _ | Concat _ | Calendar _ ),
       _ ) ->
       false
 
@@ -685,9 +691,15 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
               (fun ppf -> Format.fprintf ppf "~by:%a" Type.pp_quoted by);
             ]
         | Parse ty -> [ (fun ppf -> Type.pp ppf ty) ]
-        | Length -> []
+        | Length | Trim -> []
       in
       app (text_op_name op) (attributes @ [ arg a ])
+  | Concat (sep, es) ->
+      app "Str.concat"
+        [
+          (fun ppf -> Type.pp_quoted ppf sep);
+          (fun ppf -> Type.pp_list (pp_at 0) ppf es);
+        ]
   | Calendar op ->
       let step s ppf =
         let printed = strf "%a" Time.pp_step s in
@@ -1664,6 +1676,20 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
       | Some a -> known (Column ty) (Store (ty, a))
       | None -> Broken)
   | Text (op, a) -> text env op a
+  | Concat (sep, es) ->
+      let operand e =
+        match elab env e with
+        | Flexible { at; _ } -> Some (at (Column Type.string))
+        | Known (Column (String | Categorical _), b) -> Some b
+        | Known (t, _) ->
+            report env "Str.concat takes text, not %a." pp_typing t;
+            None
+        | Broken -> None
+      in
+      let bs = List.map operand es in
+      if List.for_all Option.is_some bs then
+        known (Column Type.string) (Concat (sep, List.map Option.get bs))
+      else Broken
   | Calendar op -> calendar env op
 
 (* [on_operand env a k] is [k t b], [b] the operand [a] bound where it needs a
@@ -1715,6 +1741,7 @@ and text : type a s. env -> a text_op -> (string, s) t -> a elab =
           let known t = known t (Text (op, a)) in
           match op with
           | Length -> known int64
+          | Trim -> known (Column Type.string)
           | Slice _ -> known (Column Type.string)
           | Matches _ -> known bool_typing
           | Split _ -> known (Column (Type.list Type.string))
@@ -2010,6 +2037,7 @@ let map_node : type a. mapper -> a node -> a node =
   | Of_option a -> Of_option (map a)
   | Store (ty, a) -> Store (ty, map a)
   | Text (op, a) -> Text (op, map a)
+  | Concat (sep, es) -> Concat (sep, List.map map es)
   | Calendar op ->
       Calendar
         (match op with
@@ -2210,6 +2238,11 @@ module Str = struct
     text (Replace { sub; by }) a
 
   let parse ty a = text (Parse ty) a
+  let trim a = text Trim a
+
+  let concat sep es =
+    check_utf_8 "Expr.Str.concat" sep;
+    match es with [] -> string "" | es -> make (Concat (sep, es))
 end
 
 (* Time *)

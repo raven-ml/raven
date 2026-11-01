@@ -330,12 +330,30 @@ let text : type a. a Expr.text_op -> Column.t -> checked =
             (Bytes pieces)
         in
         kept (Any (Type.list Type.string)) c (List { offsets; child })
+  | Trim ->
+      fun c ->
+        let by = "Str.trim" and mask = Column.validity c in
+        kept (Any Type.string) c (Bytes (Strings.trim ~by ?mask (bytes c)))
   | Replace { sub; by = into } ->
       fun c ->
         let by = "Str.replace" and mask = Column.validity c in
         let r = Strings.replace ~by ?mask ~sub ~into (bytes c) in
         kept (Any Type.string) c (Bytes r)
   | Parse ty -> fun c -> read_text c (Form.parse (Any ty))
+
+let concat sep cs =
+  let length =
+    List.fold_left
+      (fun n c -> if Column.length c = 1 then n else Column.length c)
+      1 cs
+  in
+  let bytes c = match Column.data c with Bytes r -> r | _ -> assert false in
+  let validity = valid cs in
+  let r =
+    Strings.concat ~by:"Str.concat" ?mask:validity ~length sep
+      (List.map bytes cs)
+  in
+  Column.make (Any Type.string) ?validity ~length (Bytes r)
 
 let parse_with fmt ty c = read_text c (Form.parse_with fmt ty)
 

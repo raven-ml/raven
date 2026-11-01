@@ -1471,6 +1471,23 @@ module Expr : sig
         Raises [Invalid_argument] if [sub] is empty, or if [sub] or [by] is not
         valid UTF-8. *)
 
+    val trim : (string, 's) t -> (string, 's) t
+    (** [trim a] is [a] without the white space at its start and end. White
+        space is the scalar values that have the White_Space property in Unicode
+        18.0.0's PropList.txt: U+0009 to U+000D, U+0020, U+0085, U+00A0, U+1680,
+        U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F and U+3000. U+200B and
+        U+FEFF, which have no width, are kept, and text of white space alone
+        trims to the empty text. *)
+
+    val concat : string -> (string, 's) t list -> (string, 's) t
+    (** [concat sep es] is the texts of [es] joined by the literal [sep], as
+        [String.concat sep] joins strings: [concat "_" [ session; unit ]] of
+        ["s01"] and ["u3"] is ["s01_u3"]. It is null where one of [es] is null,
+        and [coalesce [ e; string "" ]] reads a null [e] as the empty text.
+        [concat sep []] is the empty text.
+
+        Raises [Invalid_argument] if [sep] is not valid UTF-8. *)
+
     val parse : 'a Type.t -> (string, 's) t -> ('a, 's) t
     (** [parse ty a] is the value of type [ty] that the text [a] writes, in the
         forms that [talon.csv] reads: [true] and [false]; decimal integers with

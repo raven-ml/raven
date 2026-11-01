@@ -1348,6 +1348,208 @@ let temporal_casts =
             |});
     ]
 
+(* Trimming *)
+
+(* Unicode's White_Space property, PropList.txt 18.0.0: its 25 scalar values. *)
+let white_space =
+  [ 0x0009; 0x000A; 0x000B; 0x000C; 0x000D; 0x0020; 0x0085; 0x00A0; 0x1680 ]
+  @ List.init 11 (fun i -> 0x2000 + i)
+  @ [ 0x2028; 0x2029; 0x202F; 0x205F; 0x3000 ]
+
+(* The scalar values beside each run of White_Space, and the separators and
+   zero-width characters outside it. *)
+let not_white_space =
+  [ 0x0008; 0x000E; 0x001C; 0x001D; 0x001E; 0x001F; 0x0021; 0x0084; 0x0086 ]
+  @ [ 0x009F; 0x00A1; 0x167F; 0x1681; 0x180E; 0x1FFF; 0x200B; 0x200C ]
+  @ [ 0x200D; 0x2027; 0x202A; 0x202E; 0x2030; 0x205E; 0x2060; 0x2FFF ]
+  @ [ 0x3001; 0xFEFF ]
+
+let utf_8 u =
+  let b = Buffer.create 4 in
+  Buffer.add_utf_8_uchar b (Uchar.of_int u);
+  Buffer.contents b
+
+let scalar s =
+  Uchar.to_int (Uchar.utf_decode_uchar (String.get_utf_8_uchar s 0))
+
+(* [trimmed s] is [s] without the White_Space scalars at its ends. *)
+let trimmed s =
+  let rec drop = function
+    | u :: us when List.mem (scalar u) white_space -> drop us
+    | us -> us
+  in
+  String.concat "" (List.rev (drop (List.rev (drop (scalars s)))))
+
+let trims vs = Column.options Kind.string (result (Expr.Str.trim s) (texts vs))
+
+let trim_law =
+  let tokens =
+    List.map utf_8 (white_space @ not_white_space) @ [ "a"; "é"; "日" ]
+  in
+  let token = Gen.of_list ~pp:(fun ppf -> Format.fprintf ppf "%S") tokens in
+  let text =
+    Gen.map (String.concat "") (Gen.list ~size:(Gen.int_range 0 8) token)
+  in
+  prop "trim drops the White_Space scalars at both ends of the text"
+    (Gen.array ~size:(Gen.int_range 0 6) (Gen.option text))
+    (fun vs ->
+      let has p = Array.exists (function Some s -> p s | None -> false) vs in
+      let ws s = String.length s > 0 && List.mem (scalar s) white_space in
+      let ends s =
+        let us = scalars s in
+        us <> [] && ws (List.hd us) && ws (List.hd (List.rev us))
+      in
+      cover "white space at both ends and a scalar outside it"
+        (has (fun s -> ends s && trimmed s <> ""));
+      cover "white space alone" (has (fun s -> s <> "" && trimmed s = ""));
+      equal
+        (array (option string))
+        (Array.map (Option.map trimmed) vs)
+        (trims vs))
+
+let trimming =
+  group "Str.trim"
+    [
+      trim_law;
+      cases "trims each White_Space scalar at both ends, and keeps it inside"
+        ~id:(Printf.sprintf "U+%04X") white_space (fun u ->
+          let w = utf_8 u in
+          equal
+            (array (option string))
+            [| Some ("a" ^ w ^ "b"); Some "" |]
+            (trims [| Some (w ^ w ^ "a" ^ w ^ "b" ^ w); Some w |]));
+      cases "keeps the scalars outside White_Space"
+        ~id:(Printf.sprintf "U+%04X") not_white_space (fun u ->
+          let n = utf_8 u in
+          let kept = n ^ " a " ^ n in
+          equal
+            (array (option string))
+            [| Some kept |]
+            (trims [| Some (" " ^ kept ^ "\t") |]));
+      test "nulls stay null, and the empty text is kept" (fun () ->
+          equal
+            (array (option string))
+            [| None; Some ""; Some "a" |]
+            (trims [| None; Some ""; Some " a\n" |]));
+      test "a categorical trims as its text" (fun () ->
+          let ty = Type.categorical [| " a"; "a "; "b" |] in
+          let t =
+            one "s" (Column.of_options ty [| Some " a"; Some "a "; None |])
+          in
+          equal
+            (array (option string))
+            [| Some "a"; Some "a"; None |]
+            (Column.options Kind.string (result (Expr.Str.trim s) t)));
+    ]
+
+(* Joining *)
+
+type part = Text_column of string option array | Literal of string
+
+let pp_part ppf = function
+  | Text_column vs -> G.pp_sample ppf (G.Sample (Type.string, vs))
+  | Literal s -> Format.fprintf ppf "string %S" s
+
+let concat_law =
+  let text = Option.get (G.value Type.string) in
+  let gen =
+    let open Gen in
+    let* n = int_range 0 5 in
+    let operand =
+      frequency
+        [
+          ( 3,
+            map
+              (fun vs -> Text_column vs)
+              (array ~size:(constant n) (option text)) );
+          (1, map (fun s -> Literal s) text);
+        ]
+    in
+    let+ sep = of_list [ ""; "_"; ", "; "é"; "日本" ]
+    and+ ops = list ~size:(int_range 0 4) operand in
+    (n, sep, ops)
+  in
+  let pp ppf (n, sep, ops) =
+    Format.fprintf ppf "@[<v>%d rows, separator %S@,%a@]" n sep
+      (Format.pp_print_list pp_part)
+      ops
+  in
+  prop "concat joins the texts with the separator, null where one is null"
+    (Gen.with_pp pp gen) (fun (n, sep, ops) ->
+      let columns =
+        List.filter_map
+          (function Text_column vs -> Some vs | Literal _ -> None)
+          ops
+      in
+      let name i = Printf.sprintf "c%d" i in
+      let t =
+        v
+          (("rows", Column.v Type.int8 (Array.make n 0))
+          :: List.mapi
+               (fun i vs -> (name i, Column.of_options Type.string vs))
+               columns)
+      in
+      let k = ref (-1) in
+      let es =
+        List.map
+          (function
+            | Text_column _ ->
+                incr k;
+                Col.string (name !k)
+            | Literal s -> Expr.string s)
+          ops
+      in
+      let row i =
+        List.map (function Text_column vs -> vs.(i) | Literal s -> Some s) ops
+      in
+      let expected =
+        Array.init n (fun i ->
+            let r = row i in
+            if List.exists Option.is_none r then None
+            else Some (String.concat sep (List.map Option.get r)))
+      in
+      cover "a row with a null operand" (Array.exists Option.is_none expected);
+      cover "a row of two operands or more"
+        (List.length ops >= 2 && Array.exists Option.is_some expected);
+      cover "a literal and a column"
+        (columns <> [] && List.length columns < List.length ops);
+      cover "no operand" (ops = [] && n > 0);
+      equal
+        (array (option string))
+        expected
+        (Column.options Kind.string (result (Expr.Str.concat sep es) t)))
+
+let joining =
+  group "Str.concat"
+    [
+      concat_law;
+      test "a categorical joins as its text" (fun () ->
+          let k = Type.categorical [| "x"; "y" |] in
+          let t =
+            v
+              [
+                ("k", Column.of_options k [| Some "y"; None; Some "x" |]);
+                ("s", Column.v Type.string [| "1"; "2"; "3" |]);
+              ]
+          in
+          equal
+            (array (option string))
+            [| Some "y-1"; None; Some "x-3" |]
+            (Column.options Kind.string
+               (result Expr.(Str.concat "-" [ Col.string "k"; s ]) t)));
+      test "null joins to null, and no text to the empty text" (fun () ->
+          let t = texts [| Some "a"; None |] in
+          equal
+            (array (option string))
+            [| None; None |]
+            (Column.options Kind.string
+               (result Expr.(Str.concat "_" [ s; null ]) t));
+          equal
+            (array (option string))
+            [| Some ""; Some "" |]
+            (Column.options Kind.string (result (Expr.Str.concat "_" []) t)));
+    ]
+
 let () =
   exit
     (run "Convert"
@@ -1363,4 +1565,6 @@ let () =
          formats_round_trip;
          cuts;
          temporal_casts;
+         trimming;
+         joining;
        ])

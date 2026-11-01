@@ -255,9 +255,9 @@ raven / llama.cpp (Vulkan; ROCm):
 - talon 1.0 plan (_plans/talon/product/plan.md, on the Mac): windows and
   ewm, as-of and interval joins, interval sets and folds, zoned time,
   hash/sample/shuffle, Pivot and nesting, dense round trips, partial
-  aggregation, `Str.trim`/`concat`/regex, compressed and fixed-width CSV,
-  Parquet nested columns, datasets and writer, talon.arrow, talon.jsont,
-  complex and validity columns, HTML display
+  aggregation, regex, compressed and fixed-width CSV, Parquet nested
+  columns, datasets and writer, talon.arrow, talon.jsont, complex and
+  validity columns, HTML display
 - brot vs gigatoken (machine unrecorded): gpt2 2.5x one thread, 3x
   multi-thread; SentencePiece pipelines 40-58 MB/s (added-token scan 28%,
   normalizer 15%); bert unfused. Re-measure on fudge at a stated gigatoken

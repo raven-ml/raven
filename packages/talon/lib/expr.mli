@@ -107,6 +107,8 @@ module Str : sig
   val split : string -> (string, 's) t -> (string array, 's) t
   val replace : string -> by:string -> (string, 's) t -> (string, 's) t
   val parse : 'a Type.t -> (string, 's) t -> ('a, 's) t
+  val trim : (string, 's) t -> (string, 's) t
+  val concat : string -> (string, 's) t list -> (string, 's) t
 end
 
 module Temporal : sig
@@ -243,11 +245,14 @@ type 'a node =
   | Of_option : ('a option, 's) t -> 'a node
   | Store : 'a Type.t * ('a, 's) t -> 'a node
   | Text : 'a text_op * (string, 's) t -> 'a node
+  | Concat : string * (string, 's) t list -> string node
+      (** [Concat (sep, es)] is {!Str.concat} of at least one operand. *)
   | Calendar : 'a calendar_op -> 'a node
 
 (** Text operations, each applied to the text operand of {!Text}. *)
 and 'a text_op =
   | Length : int text_op
+  | Trim : string text_op
   | Slice : { offset : int; length : int } -> string text_op
   | Matches : Str.pattern -> bool text_op
   | Split : string -> string array text_op

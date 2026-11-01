@@ -660,6 +660,12 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   | Cast (ty, a), _ ->
       unary_checked a (Kernels.cast (type_of (Expr.typing a)) (Any ty))
   | Text (op, a), _ -> textual a (Kernels.text op)
+  | Concat (sep, es), _ ->
+      let operand e =
+        (compile st e, widen (type_of (Expr.typing e)) (Any Type.string))
+      in
+      let es = List.map operand es in
+      fun env -> Kernels.concat sep (List.map (fun (e, w) -> w (get env e)) es)
   | Calendar op, _ -> (
       let t e = type_of (Expr.typing e) in
       match op with

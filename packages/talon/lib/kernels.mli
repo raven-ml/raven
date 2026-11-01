@@ -26,6 +26,10 @@ val text : 'a Expr.text_op -> Column.t -> checked
 (** [text op c] is [op] of the [string] column [c]. A text that [Str.parse] does
     not read fails with the text. *)
 
+val concat : string -> Column.t list -> Column.t
+(** [concat sep cs] is [Str.concat sep] of the [string] columns [cs], at least
+    one, each of the rows they broadcast to or of one row. *)
+
 val add : Type.any -> Type.any -> Column.t -> Column.t -> checked
 (** [add ta td a d] is [Temporal.add a d], [a] of [ta] and [d] of [td]. A span
     that is not whole days for a date, and a result out of range, fail. *)

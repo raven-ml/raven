@@ -64,6 +64,11 @@ val slice :
     [offset], or the row's length plus [offset] when [offset] is negative. A row
     outside [mask] is empty. *)
 
+val trim : by:string -> ?mask:Nx.host Nx.bit_t -> bytes -> bytes
+(** [trim ~by b] is each row of [b], valid UTF-8, without the scalar values of
+    Unicode's White_Space property at its start and end. A row outside [mask] is
+    empty. *)
+
 (** The type for patterns that text matches. Each string is valid UTF-8 and not
     empty. *)
 type pattern =
@@ -99,6 +104,18 @@ val replace :
 (** [replace ~by ~sub ~into b] is each row of [b], valid UTF-8, with each match
     of [sub], valid UTF-8 and not empty, replaced by [into], left to right
     without overlap. A row outside [mask] is empty. *)
+
+val concat :
+  by:string ->
+  ?mask:Nx.host Nx.bit_t ->
+  length:int ->
+  string ->
+  bytes list ->
+  bytes
+(** [concat ~by ~length sep parts] is the [length] rows whose row [i] is row [i]
+    of each of [parts] joined by [sep], a part of one row giving its row [0] to
+    every row. A row outside [mask] is empty. [parts] is not empty, and each
+    part has one row or [length]. *)
 
 val compare : by:string -> bytes -> bytes -> Nx.host Nx.int8_t
 (** [compare ~by b one] is [-1], [0] or [1] where the row of [b] orders before,

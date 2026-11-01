@@ -147,6 +147,8 @@ let print_operations () =
       str pp (Str.parse Type.int8 s);
       str pp (Str.split ", " s);
       str pp (Str.replace "\"" ~by:"'" s);
+      str pp (Str.trim s);
+      str pp (Str.concat "_" [ s; string "x"; Str.trim s ]);
       str pp (Temporal.field `Hour ts);
       str pp (Temporal.field `Year (Col.date "d"));
       str pp (Temporal.floor (Time.Days 1) ts);
@@ -186,6 +188,8 @@ let print_operations () =
             Str.parse int8 s
             Str.split ", " s
             Str.replace "\"" ~by:"'" s
+            Str.trim s
+            Str.concat "_" [s; "x"; Str.trim s]
             Temporal.field `Hour ts
             Temporal.field `Year d
             Temporal.floor 1d ts
@@ -237,6 +241,7 @@ let construction =
                  (fun () -> ignore (Str.split "\xff" s));
                  (fun () -> ignore (Str.replace "" ~by:"a" s));
                  (fun () -> ignore (Str.replace "a" ~by:"\xc3" s));
+                 (fun () -> ignore (Str.concat "\xff" [ s ]));
                  (fun () -> ignore (cut [| 1 |] n));
                  (fun () -> ignore (cut [||] n));
                  (fun () -> ignore (Temporal.parse "%Y-%q" Type.date s));
@@ -266,6 +271,7 @@ let construction =
             Expr.Str.split: "\255" is not valid UTF-8
             Expr.Str.replace: empty text to replace
             Expr.Str.replace: "\195" is not valid UTF-8
+            Expr.Str.concat: "\255" is not valid UTF-8
             Expr.cut: a cut takes two edges or more, not 1
             Expr.cut: a cut takes two edges or more, not 0
             Expr.Temporal.parse: "%Y-%q" holds the unknown directive %q

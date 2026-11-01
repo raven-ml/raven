@@ -2303,6 +2303,8 @@ let constructors =
         Row ("Str.split", Str.split "-" s);
         Row ("Str.replace", Str.replace "-" ~by:"/" s);
         Row ("Str.parse", Str.parse Type.date s);
+        Row ("Str.trim", Str.trim s);
+        Row ("Str.concat", Str.concat "/" [ s; s ]);
         Row ("Temporal.add", Temporal.add d (span day));
         Row ("Temporal.diff", Temporal.diff ts ts);
         Row ("Temporal.field", Temporal.field `Hour ts);
