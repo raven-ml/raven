@@ -607,8 +607,7 @@ let beta_in_domain row =
    + 4) ε] for [κ_h = m / (f(1/2) / 2)], reaches 1, the tail is flat between
    masses near 0 and 1, and a [p] within [64 (1 + |log m|) + 4] ulps of [m]
    of the tail at [1/2] may give any [x] between them. *)
-let beta_on_plateau ~f32 ~upper row =
-  let a = row.args.(0) and b = row.args.(1) and p = row.args.(2) in
+let beta_plateau ~f32 ~upper a b p =
   let eps = if f32 then 0x1p-23 else 0x1p-52 in
   let m = Float.min p (1. -. p) in
   let s v = Nx.scalar Nx.float64 v in
@@ -617,6 +616,9 @@ let beta_on_plateau ~f32 ~upper row =
   let kappa = m /. (0.5 *. Float.exp log_f) in
   let bound = log_ulps 32 m *. eps in
   kappa *. bound >= 1. && Float.abs (p -. half) <= bound *. m
+
+let beta_on_plateau ~f32 ~upper row =
+  beta_plateau ~f32 ~upper row.args.(0) row.args.(1) row.args.(2)
 
 (* Every float as [p] beside [a = 2.5, b = 10.], and as [a] beside [b = 0.5,
    p = 0.3]: an inverse's program is three times as long. *)
@@ -865,6 +867,17 @@ let close ~than i error =
     ~msg:(Printf.sprintf "the error at element %d" i)
     float_exact ~than error
 
+(* An inverse's answer [back] for [x]: within its bound [than] of [x], or,
+   at a [p] on the plateau, anywhere in [[0, 1]]. *)
+let beta_inverted ~upper a b i x p back ~than =
+  let error = Float.abs (back -. x) in
+  if error > than && beta_plateau ~f32:false ~upper a b p then
+    at_most
+      ~msg:(Printf.sprintf "element %d, on the plateau, from 1/2" i)
+      float_exact ~than:0.5
+      (Float.abs (back -. 0.5))
+  else close i ~than error
+
 (* [upper_tail ~tail ~inverse a x] holds [inverse]'s bound above [1/2],
    where it inverts the other tail. [t = tail a x], within [B(t)] ulps, is
    read as [p = 1 - t] rounded, whose smaller tail [m = 1 - p] is exact by
@@ -1066,15 +1079,15 @@ let beta_laws =
           let p = betainc a b x in
           let back = betaincinv a b p in
           let kappa = beta_kappa_at a b x (minimum p (rsub_s 1. p)) in
+          let av = values a and bv = values b in
           elementwise
             (fun i x p back ->
               if p >= 0x1p-1022 && p < 1. && x >= 0x1p-1022 then
                 let m = Float.min p (1. -. p) in
                 let moved = kappa.(i) *. p /. m *. log_ulps 32 p in
                 let own = 4. +. (kappa.(i) *. log_ulps 32 m) in
-                close i
-                  ~than:((own +. moved) *. eps *. x)
-                  (Float.abs (back -. x)))
+                beta_inverted ~upper:false av.(i) bv.(i) i x p back
+                  ~than:((own +. moved) *. eps *. x))
             x p back);
       prop "betainccinv inverts betaincc"
         (Gen.triple inverse_shapes inverse_shapes (batch 0. 1.))
@@ -1082,15 +1095,15 @@ let beta_laws =
           let q = betaincc a b x in
           let back = betainccinv a b q in
           let kappa = beta_kappa_at a b x (minimum q (rsub_s 1. q)) in
+          let av = values a and bv = values b in
           elementwise
             (fun i x q back ->
               if q >= 0x1p-1022 && q < 1. && x >= 0x1p-1022 then
                 let m = Float.min q (1. -. q) in
                 let moved = kappa.(i) *. q /. m *. log_ulps 32 q in
                 let own = 4. +. (kappa.(i) *. log_ulps 32 m) in
-                close i
-                  ~than:((own +. moved) *. eps *. x)
-                  (Float.abs (back -. x)))
+                beta_inverted ~upper:true av.(i) bv.(i) i x q back
+                  ~than:((own +. moved) *. eps *. x))
             x q back);
       prop "betainccinv a b q is 1 - betaincinv b a q"
         (Gen.triple inverse_shapes inverse_shapes (batch 0. 1.))
