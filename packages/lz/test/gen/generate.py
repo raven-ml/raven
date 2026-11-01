@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Write lz's goldens with the vendors, or check lz's encoders against them.
+# /// script
+# requires-python = "==3.13.*"
+# dependencies = ["deflate==0.9.0", "zstandard==0.25.0", "lz4==4.4.5",
+#                 "python-snappy==0.7.3", "cramjam==2.14.0"]
+# ///
+"""Write lz's goldens with the vendors, or check them and lz's encoders.
 
 Every golden is a compressed file a vendor wrote, listed in golden/manifest.txt
 as `file codec vendor members raw`: `codec` is the lz decoder that reads
@@ -9,19 +14,21 @@ test/support/lz_support.ml, which test/gen/raw.exe writes. The raw inputs
 are not checked in. Build the executables first:
 
     dune build packages/lz/test/gen/raw.exe packages/lz/test/gen/encode.exe
-    uv run --python 3.13 --no-project --with deflate --with zstandard \
-        --with lz4 --with python-snappy python -I \
-        packages/lz/test/gen/generate.py
+    uv run packages/lz/test/gen/generate.py [--check]
 
 Python 3.13 wrote the goldens: gzip.compress's header byte for the
-operating system differs between Python versions.
+operating system differs between Python versions. Its zlib is the system's;
+zlib 1.3.1 reproduces them.
 
-With --check, it encodes every raw input at every level with lz's encoders,
-through test/gen/encode.exe, and decodes each result with the vendor:
+Each golden must decode to its input with a vendor's decoder: gzip through
+zlib, which checks the header CRC that gzip.decompress skips, and LZ4 frames
+through liblz4, which skips skippable frames itself.
 
-    uv run ... python -I packages/lz/test/gen/generate.py --check
-
-The check is run before each push; it is not part of runtest.
+With --check nothing is written. The run fails if a golden or the manifest
+would change, if a golden does not decode, or if one of lz's encoders, run
+through test/gen/encode.exe on every raw input at every level, writes bytes
+the vendor does not decode to the input. The check is run before each push;
+it is not part of runtest.
 """
 
 import gzip
@@ -209,39 +216,66 @@ def golden_name(spec, ext):
 OTHERS = {"snappy-1.2"}
 
 
-def write():
-    os.makedirs(GOLDEN, exist_ok=True)
-    manifest = os.path.join(GOLDEN, "manifest.txt")
-    kept = []
-    if os.path.exists(manifest):
-        with open(manifest) as fh:
-            kept = [l for l in fh.read().splitlines()
-                    if l and l.split(" ")[2] in OTHERS]
-    keep = {l.split(" ")[0] for l in kept}
-    for f in os.listdir(GOLDEN):
-        if f not in keep:
-            os.remove(os.path.join(GOLDEN, f))
-    rows = []
-
-    def emit(name, codec, vendor, spec, data, members=1):
-        with open(os.path.join(GOLDEN, name), "wb") as fh:
-            fh.write(data)
-        rows.append("%s %s %s %d %s" % (name, codec, vendor, members, spec))
-
+def goldens():
+    """[(name, codec, vendor, members, spec, data)] of every golden this
+    script writes."""
+    out = []
     # Incompressible input costs its size in every file: the variants take
     # it only up to 100 bytes.
     for table, sizes, noise in ((CORE, SIZES, 200000), (EXTRA, SMALL, 100)):
         for ext, (codec, vendor, f) in table.items():
             for spec in inputs(sizes, noise):
-                emit(golden_name(spec, ext), codec, vendor, spec, f(raw(spec)))
-    for name, codec, vendor, members, spec, data in specials():
-        emit(name, codec, vendor, spec, data, members)
-    with open(manifest, "w") as fh:
+                out.append((golden_name(spec, ext), codec, vendor, 1, spec,
+                            f(raw(spec))))
+    return out + specials()
+
+
+def row(name, codec, vendor, members, spec):
+    return "%s %s %s %d %s" % (name, codec, vendor, members, spec)
+
+
+def others():
+    """The manifest's lines of the goldens another script writes."""
+    manifest = os.path.join(GOLDEN, "manifest.txt")
+    if not os.path.exists(manifest):
+        return []
+    with open(manifest) as fh:
+        return [l for l in fh.read().splitlines()
+                if l and l.split(" ")[2] in OTHERS]
+
+
+def write():
+    os.makedirs(GOLDEN, exist_ok=True)
+    kept = others()
+    keep = {l.split(" ")[0] for l in kept}
+    for f in os.listdir(GOLDEN):
+        if f not in keep:
+            os.remove(os.path.join(GOLDEN, f))
+    rows = []
+    for name, codec, vendor, members, spec, data in goldens():
+        with open(os.path.join(GOLDEN, name), "wb") as fh:
+            fh.write(data)
+        rows.append(row(name, codec, vendor, members, spec))
+    with open(os.path.join(GOLDEN, "manifest.txt"), "w") as fh:
         fh.write("\n".join(rows + kept) + "\n")
     verify(rows + kept)
     total = sum(os.path.getsize(os.path.join(GOLDEN, f))
                 for f in os.listdir(GOLDEN))
     print("%d goldens, %.1f MiB" % (len(rows), total / MIB))
+
+
+def stale():
+    """The goldens, and the manifest, that this script would change."""
+    out, rows = [], []
+    for name, codec, vendor, members, spec, data in goldens():
+        rows.append(row(name, codec, vendor, members, spec))
+        path = os.path.join(GOLDEN, name)
+        if not os.path.exists(path) or open(path, "rb").read() != data:
+            out.append(name)
+    with open(os.path.join(GOLDEN, "manifest.txt")) as fh:
+        if fh.read() != "\n".join(rows + others()) + "\n":
+            out.append("manifest.txt")
+    return out
 
 
 # Each golden must decode to its raw input with the vendor that reads it.
@@ -262,16 +296,29 @@ def zstd_decode(data):
 
 
 def lz4f_decode(data):
+    """liblz4's reading of each frame in turn, skippable ones included."""
     out, rest = b"", data
     while rest:
-        magic = struct.unpack("<I", rest[:4])[0]
-        if magic & 0xFFFFFFF0 == 0x184D2A50:
-            n = struct.unpack("<I", rest[4:8])[0]
-            rest = rest[8 + n:]
-            continue
         d = lz4.frame.LZ4FrameDecompressor()
         out += d.decompress(rest)
+        if not d.eof:
+            raise ValueError("a truncated frame")
         rest = d.unused_data
+    return out
+
+
+def gzip_decode(data):
+    """zlib's reading of each member in turn, which checks the header CRC,
+    and the same bytes from gzip.decompress."""
+    out, rest = b"", data
+    while rest:
+        d = zlib.decompressobj(31)
+        out += d.decompress(rest)
+        if not d.eof:
+            raise ValueError("a truncated member")
+        rest = d.unused_data
+    if gzip.decompress(data) != out:
+        raise ValueError("zlib and gzip.decompress read other bytes")
     return out
 
 
@@ -281,7 +328,7 @@ def vendor_decode(codec, data, n):
     if codec == "zlib":
         return zlib.decompress(data)
     if codec == "gzip":
-        return gzip.decompress(data)
+        return gzip_decode(data)
     if codec == "zstd":
         return zstd_decode(data)
     if codec == "lz4b":
@@ -294,8 +341,8 @@ def vendor_decode(codec, data, n):
 
 
 def verify(rows):
-    for row in rows:
-        name, codec, _, _, spec = row.split(" ")
+    for line in rows:
+        name, codec, _, _, spec = line.split(" ")
         with open(os.path.join(GOLDEN, name), "rb") as fh:
             data = fh.read()
         expected = raw(spec)
@@ -314,7 +361,12 @@ LEVELS = {
 def check():
     if not os.path.exists(ENCODE):
         sys.exit("missing %s: dune build packages/lz/test/gen/encode.exe" % ENCODE)
-    failed = 0
+    moved = stale()
+    for name in moved:
+        print("STALE %s (zlib %s)" % (name, zlib.ZLIB_RUNTIME_VERSION))
+    with open(os.path.join(GOLDEN, "manifest.txt")) as fh:
+        verify([l for l in fh.read().splitlines() if l])
+    failed = len(moved)
     for codec, levels in LEVELS.items():
         for level in levels:
             for spec in inputs(CHECKED):

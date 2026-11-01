@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = "==3.13.*"
+# dependencies = ["deflate==0.9.0", "zstandard==0.25.0", "lz4==4.4.5",
+#                 "python-snappy==0.7.3", "cramjam==2.14.0"]
+# ///
 """Write the Snappy goldens of Google's snappy 1.2 encoder.
 
 python-snappy, through which generate.py writes its .snappy goldens, wraps
 cramjam's Rust codec, whose bytes differ from Google's on compressible
 inputs of 64 KiB and more. lz's encoder writes Google's bytes, and the test
 that states it reads files Google's snappy wrote: built from source, with
-snappy_ref.cc beside this file, never linked into lz:
+snappy_ref.cc beside this file, never linked into lz. The source is
+https://github.com/google/snappy/archive/refs/tags/1.2.2.tar.gz, whose
+SHA-256 is 90f74bc1fbf78a6c56b3c4a082a05103b3a56bb17bca1a27e052ea11723292dc:
 
     cmake -S snappy-1.2.2 -B build -DCMAKE_BUILD_TYPE=Release \\
         -DSNAPPY_BUILD_TESTS=OFF -DSNAPPY_BUILD_BENCHMARKS=OFF
@@ -16,9 +23,7 @@ snappy_ref.cc beside this file, never linked into lz:
 Build it without SSE4.2 (no -msse4.2, -mavx or SNAPPY_REQUIRE_AVX): with
 it, snappy hashes with the CRC32C instruction and writes other bytes. Then
 
-    uv run --no-project --with deflate --with zstandard --with lz4 \\
-        --with python-snappy python -I packages/lz/test/gen/google_snappy.py \\
-        path/to/snappy_ref
+    uv run packages/lz/test/gen/google_snappy.py path/to/snappy_ref
 
 writes golden/<kind>_<n>.g12.snappy, checks that python-snappy decodes each
 to its input, and replaces the manifest's lines of vendor snappy-1.2.
