@@ -1,23 +1,23 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 
-struct constants_args { _Bool* data0_1; _Bool* data1_1; signed char* data2_1; unsigned char* data3_1; short* data4_1; unsigned short* data5_1; int* data6_1; unsigned int* data7_1; unsigned int* data8_1; long* data9_1; unsigned long* data10_1; unsigned long* data11_1; __fp16* data12_1; unsigned short* data13_1; float* data14_1; double* data15_1; };
+struct constants_args { _Bool* arg0; _Bool* arg1; signed char* arg2; unsigned char* arg3; short* arg4; unsigned short* arg5; int* arg6; unsigned int* arg7; unsigned int* arg8; long* arg9; unsigned long* arg10; unsigned long* arg11; __fp16* arg12; unsigned short* arg13; float* arg14; double* arg15; };
 __attribute__((min_vector_width(512))) void constants(const struct constants_args* args) {
-  _Bool* restrict data0_1 = args->data0_1;
-  _Bool* restrict data1_1 = args->data1_1;
-  signed char* restrict data2_1 = args->data2_1;
-  unsigned char* restrict data3_1 = args->data3_1;
-  short* restrict data4_1 = args->data4_1;
-  unsigned short* restrict data5_1 = args->data5_1;
-  int* restrict data6_1 = args->data6_1;
-  unsigned int* restrict data7_1 = args->data7_1;
-  unsigned int* restrict data8_1 = args->data8_1;
-  long* restrict data9_1 = args->data9_1;
-  unsigned long* restrict data10_1 = args->data10_1;
-  unsigned long* restrict data11_1 = args->data11_1;
-  __fp16* restrict data12_1 = args->data12_1;
-  unsigned short* restrict data13_1 = args->data13_1;
-  float* restrict data14_1 = args->data14_1;
-  double* restrict data15_1 = args->data15_1;
+  _Bool* data0_1 = args->arg0;
+  _Bool* data1_1 = args->arg1;
+  signed char* data2_1 = args->arg2;
+  unsigned char* data3_1 = args->arg3;
+  short* data4_1 = args->arg4;
+  unsigned short* data5_1 = args->arg5;
+  int* data6_1 = args->arg6;
+  unsigned int* data7_1 = args->arg7;
+  unsigned int* data8_1 = args->arg8;
+  long* data9_1 = args->arg9;
+  unsigned long* data10_1 = args->arg10;
+  unsigned long* data11_1 = args->arg11;
+  __fp16* data12_1 = args->arg12;
+  unsigned short* data13_1 = args->arg13;
+  float* data14_1 = args->arg14;
+  double* data15_1 = args->arg15;
   *(data0_1+0) = 1;
   *(data1_1+0) = 0;
   *(data2_1+0) = ((signed char)(-3));

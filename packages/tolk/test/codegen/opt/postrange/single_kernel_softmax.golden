@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1024
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 32
@@ -28,7 +28,7 @@
 26 Ops.MUL dtypes.f32 [25, 17]
 27 Ops.EXP2 dtypes.f32 [26]
 28 Ops.REDUCE dtypes.f32 [27, 10] (Ops.ADD, 0)
-29 Ops.RECIPROCAL dtypes.f32 [28]
+29 Ops.RECIP dtypes.f32 [28]
 30 Ops.MUL dtypes.f32 [19, 29]
 31 Ops.STORE dtypes.void [7, 30]
 32 Ops.END dtypes.void [31, 3, 5]

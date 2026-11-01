@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.STACK dtypes.void []
@@ -80,7 +80,7 @@
 78 Ops.SINK dtypes.void [77] KernelInfo(name="r_4_8_8", estimates=Estimates(ops=64, lds=144, mem=144), optimized=True, split=(4, 2, 3))
 79 Ops.SINK dtypes.void [77] KernelInfo(name="r_4_8_8", optimized=True, split=(4, 2, 3))
 80 Ops.LINEAR dtypes.void [0, 1, 24, 25, 2, 3, 4, 9, 54, 18, 58, 15, 16, 32, 33, 12, 13, 26, 27, 19, 5, 6, 21, 7, 28, 22, 29, 30, 31, 59, 34, 60, 61, 62, 55, 67, 56, 57, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 8, 76, 77, 79]
-81 Ops.SOURCE dtypes.void [] "\nstruct r_4_8_8_args { float* data0_4; float* data1_32; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void r_4_8_8(const struct r_4_8_8_args* args) {\n  float* restrict data0_4 = args->data0_4;\n  float* restrict data1_32 = args->data1_32;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  float buf0[1];\n  float buf1[8];\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {\n      float val0 = (*(data1_32+((alu0<<3)+Lidx1)));\n      *(buf1+Lidx1) = (val0*2.0f);\n    }\n    *(buf0+0) = 0.0f;\n    for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {\n      *(buf0+0) = ((*(buf0+0))+(*(buf1+Lidx2)));\n    }\n    *(data0_4+alu0) = (*(buf0+0));\n  }\n}\n"
+81 Ops.SOURCE dtypes.void [] "\nstruct r_4_8_8_args { float* arg0; float* arg1; int arg2; int arg3; };\n__attribute__((min_vector_width(512))) void r_4_8_8(const struct r_4_8_8_args* args) {\n  float* data0_4 = args->arg0;\n  float* data1_32 = args->arg1;\n  int block_lo_ = args->arg2;\n  int block_hi_ = args->arg3;\n  float buf0[1];\n  float buf1[8];\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {\n      float val0 = (*(data1_32+((alu0<<3)+Lidx1)));\n      *(buf1+Lidx1) = (val0*2.0f);\n    }\n    *(buf0+0) = 0.0f;\n    for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {\n      *(buf0+0) = ((*(buf0+0))+(*(buf1+Lidx2)));\n    }\n    *(data0_4+alu0) = (*(buf0+0));\n  }\n}\n"
 82 Ops.PROGRAM dtypes.void [78, 80, 81] ProgramInfo(global_size=(4, 1, 1), params=(%1, %25, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 83 Ops.SINK dtypes.void [53, 82]
 

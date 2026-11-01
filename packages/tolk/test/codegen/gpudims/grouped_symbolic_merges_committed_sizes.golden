@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.i16 [0] ParamArg(slot=-1, dtype=dtypes.i16, vmin_vmax=(2, 4), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
 2 Ops.CAST dtypes.i32 [1] dtypes.i32
@@ -7,7 +7,7 @@
 5 Ops.CAST dtypes.weakint [4] dtypes.weakint
 6 Ops.RANGE dtypes.weakint [5] (AxisType.GLOBAL, 0)
 7 Ops.CAST dtypes.i32 [6] dtypes.i32
-8 Ops.FLOORDIV dtypes.i32 [7, 3]
-9 Ops.FLOORMOD dtypes.i32 [7, 3]
+8 Ops.DIV dtypes.i32 [7, 3]
+9 Ops.MOD dtypes.i32 [7, 3]
 10 Ops.SINK dtypes.void [8, 9]
 

@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CONST dtypes.weakint [] 20
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
@@ -8,8 +8,8 @@
 6 Ops.MUL dtypes.weakint [4, 5]
 7 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
 8 Ops.ADD dtypes.weakint [6, 7]
-9 Ops.FLOORDIV dtypes.weakint [8, 4]
-10 Ops.FLOORDIV dtypes.weakint [7, 4]
+9 Ops.DIV dtypes.weakint [8, 4]
+10 Ops.DIV dtypes.weakint [7, 4]
 11 Ops.ADD dtypes.weakint [5, 10]
 12 Ops.SINK dtypes.void [2, 9, 11]
 13 Ops.CONST dtypes.weakint [] 10
@@ -29,11 +29,11 @@
 27 Ops.ADD dtypes.weakint [26, 7]
 28 Ops.CONST dtypes.weakint [] 5
 29 Ops.MUL dtypes.weakint [28, 4]
-30 Ops.FLOORDIV dtypes.weakint [27, 29]
+30 Ops.DIV dtypes.weakint [27, 29]
 31 Ops.CONST dtypes.weakint [] 4
 32 Ops.MUL dtypes.weakint [5, 31]
 33 Ops.MUL dtypes.weakint [4, 28]
-34 Ops.FLOORDIV dtypes.weakint [7, 33]
+34 Ops.DIV dtypes.weakint [7, 33]
 35 Ops.ADD dtypes.weakint [32, 34]
 36 Ops.SINK dtypes.void [25, 30, 35]
 37 Ops.CUSTOM dtypes.void [0, 24] ("commutative", dtypes.void)
@@ -46,10 +46,10 @@
 44 Ops.MUL dtypes.weakint [43, 28]
 45 Ops.ADD dtypes.weakint [26, 44]
 46 Ops.ADD dtypes.weakint [45, 13]
-47 Ops.FLOORDIV dtypes.weakint [46, 29]
+47 Ops.DIV dtypes.weakint [46, 29]
 48 Ops.ADD dtypes.weakint [7, 32]
 49 Ops.CONST dtypes.weakint [] 2
-50 Ops.FLOORDIV dtypes.weakint [49, 4]
+50 Ops.DIV dtypes.weakint [49, 4]
 51 Ops.ADD dtypes.weakint [48, 50]
 52 Ops.SINK dtypes.void [42, 47, 51]
 53 Ops.CUSTOM dtypes.void [0, 41] ("commutative", dtypes.void)

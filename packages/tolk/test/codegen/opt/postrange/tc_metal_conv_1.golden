@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 131072
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 16
@@ -9,29 +9,29 @@
 7 Ops.MUL dtypes.weakint [6, 5]
 8 Ops.CONST dtypes.weakint [] 32
 9 Ops.RANGE dtypes.weakint [8] (AxisType.WARP, -1)
-10 Ops.FLOORDIV dtypes.weakint [9, 2]
-11 Ops.FLOORMOD dtypes.weakint [10, 5]
+10 Ops.DIV dtypes.weakint [9, 2]
+11 Ops.MOD dtypes.weakint [10, 5]
 12 Ops.ADD dtypes.weakint [7, 11]
 13 Ops.MUL dtypes.weakint [12, 5]
 14 Ops.CONST dtypes.weakint [] 4
-15 Ops.FLOORDIV dtypes.weakint [9, 14]
-16 Ops.FLOORMOD dtypes.weakint [15, 5]
+15 Ops.DIV dtypes.weakint [9, 14]
+16 Ops.MOD dtypes.weakint [15, 5]
 17 Ops.ADD dtypes.weakint [13, 16]
 18 Ops.MUL dtypes.weakint [17, 5]
-19 Ops.FLOORDIV dtypes.weakint [9, 5]
-20 Ops.FLOORMOD dtypes.weakint [19, 5]
+19 Ops.DIV dtypes.weakint [9, 5]
+20 Ops.MOD dtypes.weakint [19, 5]
 21 Ops.ADD dtypes.weakint [18, 20]
 22 Ops.ADD dtypes.weakint [4, 21]
 23 Ops.RANGE dtypes.weakint [14] (AxisType.GLOBAL, 4)
 24 Ops.MUL dtypes.weakint [23, 5]
 25 Ops.CONST dtypes.weakint [] 8
-26 Ops.FLOORDIV dtypes.weakint [9, 25]
-27 Ops.FLOORMOD dtypes.weakint [26, 5]
+26 Ops.DIV dtypes.weakint [9, 25]
+27 Ops.MOD dtypes.weakint [26, 5]
 28 Ops.ADD dtypes.weakint [24, 27]
 29 Ops.MUL dtypes.weakint [28, 5]
 30 Ops.CONST dtypes.weakint [] 1
-31 Ops.FLOORDIV dtypes.weakint [9, 30]
-32 Ops.FLOORMOD dtypes.weakint [31, 5]
+31 Ops.DIV dtypes.weakint [9, 30]
+32 Ops.MOD dtypes.weakint [31, 5]
 33 Ops.ADD dtypes.weakint [29, 32]
 34 Ops.MUL dtypes.weakint [33, 5]
 35 Ops.RANGE dtypes.weakint [5] (AxisType.UPCAST, 7)
@@ -53,15 +53,15 @@
 51 Ops.ADD dtypes.weakint [50, 35]
 52 Ops.ADD dtypes.weakint [51, 3]
 53 Ops.CMPLT dtypes.bool [52, 30]
-54 Ops.CONST dtypes.bool [] True
-55 Ops.CMPNE dtypes.bool [53, 54]
+54 Ops.CONST dtypes.bool [] False
+55 Ops.CMPEQ dtypes.bool [53, 54]
 56 Ops.CONST dtypes.weakint [] 30
 57 Ops.CMPLT dtypes.bool [52, 56]
 58 Ops.AND dtypes.bool [55, 57]
 59 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
 60 Ops.ADD dtypes.weakint [59, 21]
 61 Ops.CMPLT dtypes.bool [60, 30]
-62 Ops.CMPNE dtypes.bool [61, 54]
+62 Ops.CMPEQ dtypes.bool [61, 54]
 63 Ops.CMPLT dtypes.bool [60, 56]
 64 Ops.AND dtypes.bool [62, 63]
 65 Ops.AND dtypes.bool [58, 64]

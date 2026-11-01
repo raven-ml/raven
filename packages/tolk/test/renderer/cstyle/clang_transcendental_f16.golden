@@ -1,9 +1,9 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 
-struct E_args { __fp16* data0_1; __fp16* data1_1; };
+struct E_args { __fp16* arg0; __fp16* arg1; };
 __attribute__((min_vector_width(512))) void E(const struct E_args* args) {
-  __fp16* restrict data0_1 = args->data0_1;
-  __fp16* restrict data1_1 = args->data1_1;
+  __fp16* data0_1 = args->arg0;
+  __fp16* data1_1 = args->arg1;
   __fp16 val0 = (*(data1_1+0));
   float cast0 = ((float)(val0));
   _Bool alu0 = (cast0<1.1754943508222875e-38f);
@@ -34,7 +34,7 @@ __attribute__((min_vector_width(512))) void E(const struct E_args* args) {
   int cast3 = ((int)((alu20+alu22)));
   int alu23 = (cast3>>1);
   float alu24 = (alu20-((float)(cast3)));
-  float alu25 = (((cast0<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu24)+0.0013392627006396651f)*alu24)+0.009618384763598442f)*alu24)+0.055503472685813904f)*alu24)+0.24022644758224487f)*alu24)+0.6931471824645996f)*alu24)+1.0f)*__builtin_bit_cast(float, (int)(((alu23+127)<<23)))*__builtin_bit_cast(float, (int)((((cast3-alu23)+127)<<23)))));
+  float alu25 = (((cast0<128.0f)==0)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu24)+0.0013392627006396651f)*alu24)+0.009618384763598442f)*alu24)+0.055503472685813904f)*alu24)+0.24022644758224487f)*alu24)+0.6931471824645996f)*alu24)+1.0f)*__builtin_bit_cast(float, (int)(((alu23+127)<<23)))*__builtin_bit_cast(float, (int)((((cast3-alu23)+127)<<23)))));
   float alu26 = ((cast0<-150.0f)?0.0f:alu25);
   float alu27 = (alu10?__builtin_bit_cast(float, (unsigned int)(0x7fc00000u)):alu26);
   float alu28 = (alu21?-1.0f:1.0f);

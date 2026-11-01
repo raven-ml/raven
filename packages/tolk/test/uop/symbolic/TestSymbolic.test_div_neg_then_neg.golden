@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 3
 1 Ops.CONST dtypes.weakint [] 4
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
@@ -12,11 +12,11 @@
 10 Ops.CONST dtypes.weakint [] 14
 11 Ops.ADD dtypes.weakint [9, 10]
 12 Ops.CONST dtypes.weakint [] -32
-13 Ops.FLOORDIV dtypes.weakint [11, 12]
+13 Ops.DIV dtypes.weakint [11, 12]
 14 Ops.ADD dtypes.weakint [13, 1]
 15 Ops.CONST dtypes.weakint [] -18
 16 Ops.ADD dtypes.weakint [9, 15]
-17 Ops.FLOORDIV dtypes.weakint [16, 12]
+17 Ops.DIV dtypes.weakint [16, 12]
 18 Ops.ADD dtypes.weakint [17, 0]
 19 Ops.SINK dtypes.void [2, 14, 18]
 20 Ops.CONST dtypes.weakint [] 0
@@ -42,11 +42,11 @@
 40 Ops.CUSTOM dtypes.void [5, 20] ("sym", dtypes.void)
 41 Ops.CONST dtypes.weakint [] 134
 42 Ops.ADD dtypes.weakint [9, 41]
-43 Ops.FLOORDIV dtypes.weakint [42, 12]
+43 Ops.DIV dtypes.weakint [42, 12]
 44 Ops.ADD dtypes.weakint [43, 1]
 45 Ops.CONST dtypes.weakint [] -26
 46 Ops.ADD dtypes.weakint [9, 45]
-47 Ops.FLOORDIV dtypes.weakint [46, 12]
+47 Ops.DIV dtypes.weakint [46, 12]
 48 Ops.ADD dtypes.weakint [47, 5]
 49 Ops.SINK dtypes.void [40, 44, 48]
 50 Ops.CUSTOM dtypes.void [5, 20] ("commutative", dtypes.void)
@@ -55,7 +55,7 @@
 53 Ops.SINK dtypes.void [52, 48, 48]
 54 Ops.CONST dtypes.weakint [] 142
 55 Ops.ADD dtypes.weakint [9, 54]
-56 Ops.FLOORDIV dtypes.weakint [55, 12]
+56 Ops.DIV dtypes.weakint [55, 12]
 57 Ops.ADD dtypes.weakint [56, 1]
 58 Ops.ADD dtypes.weakint [17, 5]
 59 Ops.SINK dtypes.void [40, 57, 58]
@@ -64,7 +64,7 @@
 62 Ops.CUSTOM dtypes.void [5, 5] ("sym", dtypes.void)
 63 Ops.CONST dtypes.weakint [] 150
 64 Ops.ADD dtypes.weakint [9, 63]
-65 Ops.FLOORDIV dtypes.weakint [64, 12]
+65 Ops.DIV dtypes.weakint [64, 12]
 66 Ops.ADD dtypes.weakint [65, 1]
 67 Ops.SINK dtypes.void [62, 66, 5]
 68 Ops.CUSTOM dtypes.void [5, 5] ("commutative", dtypes.void)
@@ -73,7 +73,7 @@
 71 Ops.SINK dtypes.void [70, 5, 5]
 72 Ops.CONST dtypes.weakint [] 158
 73 Ops.ADD dtypes.weakint [9, 72]
-74 Ops.FLOORDIV dtypes.weakint [73, 12]
+74 Ops.DIV dtypes.weakint [73, 12]
 75 Ops.ADD dtypes.weakint [74, 1]
 76 Ops.SINK dtypes.void [62, 75, 5]
 77 Ops.SINK dtypes.void [19, 23, 24, 26, 28, 35, 37, 39, 49, 51, 53, 59, 60, 61, 67, 69, 71, 76]

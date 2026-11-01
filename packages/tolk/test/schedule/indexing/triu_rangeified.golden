@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 36
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 6
@@ -13,31 +13,32 @@
 11 Ops.ADD dtypes.weakint [9, 10]
 12 Ops.CONST dtypes.weakint [] 5
 13 Ops.CMPLT dtypes.bool [11, 12]
-14 Ops.CMPNE dtypes.bool [13, 8]
-15 Ops.AND dtypes.bool [8, 14]
-16 Ops.CONST dtypes.weakint [] 1
-17 Ops.CAST dtypes.i32 [16] dtypes.i32
-18 Ops.CONST dtypes.weakint [] 0
-19 Ops.WHERE dtypes.i32 [15, 17, 18]
-20 Ops.REDUCE dtypes.i32 [19, 10] (Ops.ADD, 0)
-21 Ops.STAGE dtypes.i32 [20, 9] BufferizeOpts(device="CPU", broadcast=True)
-22 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 3)
-23 Ops.INDEX dtypes.i32 [21, 22]
-24 Ops.CONST dtypes.weakint [] -1
-25 Ops.ADD dtypes.i32 [23, 24]
-26 Ops.STAGE dtypes.i32 [25, 22] BufferizeOpts(device="CPU", broadcast=True)
-27 Ops.INDEX dtypes.i32 [26, 5]
-28 Ops.INDEX dtypes.i32 [26, 3]
-29 Ops.ADD dtypes.i32 [28, 16]
-30 Ops.CMPLT dtypes.bool [27, 29]
-31 Ops.CMPNE dtypes.bool [30, 8]
-32 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
-33 Ops.INDEX dtypes.f32 [32, 6]
-34 Ops.CONST dtypes.weakfloat [] 0.0
-35 Ops.CAST dtypes.f32 [34] dtypes.f32
-36 Ops.WHERE dtypes.f32 [31, 33, 35]
-37 Ops.STORE dtypes.void [7, 36]
-38 Ops.END dtypes.void [37, 3, 5]
-39 Ops.AFTER dtypes.f32 [1, 38]
-40 Ops.SINK dtypes.void [39]
+14 Ops.CONST dtypes.bool [] False
+15 Ops.CMPEQ dtypes.bool [13, 14]
+16 Ops.AND dtypes.bool [8, 15]
+17 Ops.CONST dtypes.weakint [] 1
+18 Ops.CAST dtypes.i32 [17] dtypes.i32
+19 Ops.CONST dtypes.weakint [] 0
+20 Ops.WHERE dtypes.i32 [16, 18, 19]
+21 Ops.REDUCE dtypes.i32 [20, 10] (Ops.ADD, 0)
+22 Ops.STAGE dtypes.i32 [21, 9] BufferizeOpts(device="CPU", broadcast=True)
+23 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 3)
+24 Ops.INDEX dtypes.i32 [22, 23]
+25 Ops.CONST dtypes.weakint [] -1
+26 Ops.ADD dtypes.i32 [24, 25]
+27 Ops.STAGE dtypes.i32 [26, 23] BufferizeOpts(device="CPU", broadcast=True)
+28 Ops.INDEX dtypes.i32 [27, 5]
+29 Ops.INDEX dtypes.i32 [27, 3]
+30 Ops.ADD dtypes.i32 [29, 17]
+31 Ops.CMPLT dtypes.bool [28, 30]
+32 Ops.CMPEQ dtypes.bool [31, 14]
+33 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+34 Ops.INDEX dtypes.f32 [33, 6]
+35 Ops.CONST dtypes.weakfloat [] 0.0
+36 Ops.CAST dtypes.f32 [35] dtypes.f32
+37 Ops.WHERE dtypes.f32 [32, 34, 36]
+38 Ops.STORE dtypes.void [7, 37]
+39 Ops.END dtypes.void [38, 3, 5]
+40 Ops.AFTER dtypes.f32 [1, 39]
+41 Ops.SINK dtypes.void [40]
 

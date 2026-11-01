@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -47,8 +47,8 @@
 45 Ops.LOAD dtypes.i32 [44]
 46 Ops.PARAM dtypes.weakint [19] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-5, 80), multiple_of=1, name="v", addrspace=AddrSpace.ALU)
 47 Ops.CMPLT dtypes.bool [46, 2]
-48 Ops.CONST dtypes.bool [] True
-49 Ops.CMPNE dtypes.bool [47, 48]
+48 Ops.CONST dtypes.bool [] False
+49 Ops.CMPEQ dtypes.bool [47, 48]
 50 Ops.CMPLT dtypes.bool [46, 0]
 51 Ops.AND dtypes.bool [49, 50]
 52 Ops.WHERE dtypes.weakint [51, 46, 38]
@@ -62,13 +62,13 @@
 60 Ops.CONST dtypes.weakint [] 32
 61 Ops.RANGE dtypes.weakint [60] (AxisType.GLOBAL, 0)
 62 Ops.CONST dtypes.weakint [] 2
-63 Ops.FLOORDIV dtypes.weakint [61, 62]
+63 Ops.DIV dtypes.weakint [61, 62]
 64 Ops.INDEX dtypes.i32 [1, 63]
 65 Ops.LOAD dtypes.i32 [64]
-66 Ops.FLOORMOD dtypes.weakint [36, 0]
+66 Ops.MOD dtypes.weakint [36, 0]
 67 Ops.INDEX dtypes.i32 [1, 66]
 68 Ops.LOAD dtypes.i32 [67]
-69 Ops.FLOORMOD dtypes.weakint [36, 55]
+69 Ops.MOD dtypes.weakint [36, 55]
 70 Ops.INDEX dtypes.i32 [1, 69]
 71 Ops.LOAD dtypes.i32 [70]
 72 Ops.AND dtypes.weakint [36, 5]

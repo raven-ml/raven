@@ -1,9 +1,9 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 #include <metal_stdlib>
 using namespace metal;
-struct lane_args { device float* data0_1; int lane_; };
+struct lane_args { device float* arg0; int arg1; };
 kernel void lane(constant struct lane_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device float* data0_1 = args->data0_1;
-  const int lane_ = args->lane_;
+  device float* data0_1 = args->arg0;
+  int lane_ = args->arg1;
   *(data0_1+0) = (float4(1.0f,2.0f,3.0f,4.0f))[lane_];
 }

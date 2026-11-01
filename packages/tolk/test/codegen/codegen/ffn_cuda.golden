@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 128
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -116,7 +116,7 @@
 114 Ops.MUL dtypes.f32 [109, 113]
 115 Ops.EXP2 dtypes.f32 [114]
 116 Ops.ADD dtypes.f32 [111, 115]
-117 Ops.RECIPROCAL dtypes.f32 [116]
+117 Ops.RECIP dtypes.f32 [116]
 118 Ops.MUL dtypes.f32 [109, 117]
 119 Ops.AFTER dtypes.f32 [72, 106]
 120 Ops.INDEX dtypes.f32 [119, 16]
@@ -131,7 +131,7 @@
 129 Ops.MUL dtypes.f32 [128, 113]
 130 Ops.EXP2 dtypes.f32 [129]
 131 Ops.ADD dtypes.f32 [111, 130]
-132 Ops.RECIPROCAL dtypes.f32 [131]
+132 Ops.RECIP dtypes.f32 [131]
 133 Ops.MUL dtypes.f32 [128, 132]
 134 Ops.INDEX dtypes.f32 [119, 22]
 135 Ops.LOAD dtypes.f32 [134]
@@ -197,7 +197,7 @@
 195 Ops.MUL dtypes.f32 [194, 113]
 196 Ops.EXP2 dtypes.f32 [195]
 197 Ops.ADD dtypes.f32 [111, 196]
-198 Ops.RECIPROCAL dtypes.f32 [197]
+198 Ops.RECIP dtypes.f32 [197]
 199 Ops.MUL dtypes.f32 [194, 198]
 200 Ops.AFTER dtypes.f32 [165, 191]
 201 Ops.INDEX dtypes.f32 [200, 16]
@@ -209,7 +209,7 @@
 207 Ops.MUL dtypes.f32 [206, 113]
 208 Ops.EXP2 dtypes.f32 [207]
 209 Ops.ADD dtypes.f32 [111, 208]
-210 Ops.RECIPROCAL dtypes.f32 [209]
+210 Ops.RECIP dtypes.f32 [209]
 211 Ops.MUL dtypes.f32 [206, 210]
 212 Ops.INDEX dtypes.f32 [200, 22]
 213 Ops.LOAD dtypes.f32 [212]

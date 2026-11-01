@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -12,7 +12,7 @@
 10 Ops.SINK dtypes.void [9] KernelInfo(optimized=True)
 11 Ops.SINK dtypes.void [9] KernelInfo(estimates=Estimates(ops=1, lds=8, mem=8), optimized=True)
 12 Ops.LINEAR dtypes.void [0, 5, 1, 2, 3, 6, 7, 4, 8, 9, 10]
-13 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct test_args { device float* data0_1; device float* data1_1; };\nkernel void test(constant struct test_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_1 = args->data0_1;\n  device float* data1_1 = args->data1_1;\n  float val0 = (*(data0_1+0));\n  *(data1_1+0) = -val0;\n}"
+13 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct test_args { device float* arg0; device float* arg1; };\nkernel void test(constant struct test_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_1 = args->arg0;\n  device float* data1_1 = args->arg1;\n  float val0 = (*(data0_1+0));\n  *(data1_1+0) = -val0;\n}"
 14 Ops.PROGRAM dtypes.void [11, 12, 13] ProgramInfo(params=(%5, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 15 Ops.SINK dtypes.void [10, 14]
 

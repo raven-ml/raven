@@ -1,12 +1,12 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 typedef double double4 __attribute__((aligned(8),ext_vector_type(4)));
 typedef long long4 __attribute__((aligned(8),ext_vector_type(4)));
-struct E_4_4_args { double* data0_16; double* data1_16; int block_lo_; int block_hi_; };
+struct E_4_4_args { double* arg0; double* arg1; int arg2; int arg3; };
 __attribute__((min_vector_width(512))) void E_4_4(const struct E_4_4_args* args) {
-  double* restrict data0_16 = args->data0_16;
-  double* restrict data1_16 = args->data1_16;
-  const int block_lo_ = args->block_lo_;
-  const int block_hi_ = args->block_hi_;
+  double* data0_16 = args->arg0;
+  double* data1_16 = args->arg1;
+  int block_lo_ = args->arg2;
+  int block_hi_ = args->arg3;
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = ((block_lo_+Lidx0)<<2);
     int alu1 = (alu0+1);

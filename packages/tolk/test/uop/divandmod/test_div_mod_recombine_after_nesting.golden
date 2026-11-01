@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 15), multiple_of=1, name="gidx0", addrspace=AddrSpace.ALU)
 2 Ops.CONST dtypes.weakint [] 4
@@ -6,7 +6,7 @@
 4 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="lidx0", addrspace=AddrSpace.ALU)
 5 Ops.ADD dtypes.weakint [3, 4]
 6 Ops.CONST dtypes.weakint [] 8
-7 Ops.FLOORDIV dtypes.weakint [5, 6]
+7 Ops.DIV dtypes.weakint [5, 6]
 8 Ops.CONST dtypes.weakint [] 0
 9 Ops.CONST dtypes.weakint [] 1
 10 Ops.MUL dtypes.weakint [1, 9]
@@ -17,9 +17,9 @@
 15 Ops.ADD dtypes.weakint [14, 8]
 16 Ops.ADD dtypes.weakint [15, 8]
 17 Ops.CONST dtypes.weakint [] 2
-18 Ops.FLOORDIV dtypes.weakint [16, 17]
-19 Ops.FLOORMOD dtypes.weakint [5, 6]
-20 Ops.FLOORMOD dtypes.weakint [16, 17]
+18 Ops.DIV dtypes.weakint [16, 17]
+19 Ops.MOD dtypes.weakint [5, 6]
+20 Ops.MOD dtypes.weakint [16, 17]
 21 Ops.MUL dtypes.weakint [20, 2]
 22 Ops.MUL dtypes.weakint [9, 4]
 23 Ops.ADD dtypes.weakint [21, 22]
@@ -29,7 +29,7 @@
 27 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 1), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
 28 Ops.ADD dtypes.weakint [26, 27]
 29 Ops.CONST dtypes.weakint [] 12
-30 Ops.FLOORDIV dtypes.weakint [28, 29]
+30 Ops.DIV dtypes.weakint [28, 29]
 31 Ops.MUL dtypes.weakint [24, 9]
 32 Ops.MUL dtypes.weakint [9, 31]
 33 Ops.ADD dtypes.weakint [8, 32]
@@ -37,9 +37,9 @@
 35 Ops.ADD dtypes.weakint [33, 34]
 36 Ops.ADD dtypes.weakint [35, 8]
 37 Ops.ADD dtypes.weakint [36, 8]
-38 Ops.FLOORDIV dtypes.weakint [37, 17]
-39 Ops.FLOORMOD dtypes.weakint [28, 29]
-40 Ops.FLOORMOD dtypes.weakint [37, 17]
+38 Ops.DIV dtypes.weakint [37, 17]
+39 Ops.MOD dtypes.weakint [28, 29]
+40 Ops.MOD dtypes.weakint [37, 17]
 41 Ops.MUL dtypes.weakint [40, 25]
 42 Ops.MUL dtypes.weakint [9, 27]
 43 Ops.ADD dtypes.weakint [41, 42]

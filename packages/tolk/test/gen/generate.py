@@ -35,7 +35,7 @@ import subprocess
 import sys
 import tempfile
 
-TINYGRAD = "f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2"
+TINYGRAD = "b98af4a4bbfab0afec39b37c122f792d4120812e"
 
 HERE = Path(__file__).resolve().parent
 TEST = HERE.parent

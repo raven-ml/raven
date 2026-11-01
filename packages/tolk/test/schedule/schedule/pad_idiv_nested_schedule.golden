@@ -1,18 +1,18 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 56
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
 3 Ops.INDEX dtypes.i32 [1, 2]
 4 Ops.CONST dtypes.weakint [] 8
 5 Ops.CMPLT dtypes.bool [2, 4]
-6 Ops.CONST dtypes.bool [] True
-7 Ops.CMPNE dtypes.bool [5, 6]
+6 Ops.CONST dtypes.bool [] False
+7 Ops.CMPEQ dtypes.bool [5, 6]
 8 Ops.CONST dtypes.weakint [] 48
 9 Ops.CMPLT dtypes.bool [2, 8]
 10 Ops.AND dtypes.bool [7, 9]
 11 Ops.CONST dtypes.weakint [] 9
 12 Ops.CMPLT dtypes.bool [2, 11]
-13 Ops.CMPNE dtypes.bool [12, 6]
+13 Ops.CMPEQ dtypes.bool [12, 6]
 14 Ops.CONST dtypes.weakint [] 47
 15 Ops.CMPLT dtypes.bool [2, 14]
 16 Ops.AND dtypes.bool [13, 15]
@@ -28,7 +28,7 @@
 26 Ops.INDEX dtypes.i32 [25, 23]
 27 Ops.CONST dtypes.weakint [] 1
 28 Ops.WHERE dtypes.i32 [19, 26, 27]
-29 Ops.CDIV dtypes.i32 [24, 28]
+29 Ops.TRUNCDIV dtypes.i32 [24, 28]
 30 Ops.CONST dtypes.weakint [] 0
 31 Ops.WHERE dtypes.i32 [16, 29, 30]
 32 Ops.ADD dtypes.i32 [31, 27]

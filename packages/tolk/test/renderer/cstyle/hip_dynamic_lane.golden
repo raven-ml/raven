@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 typedef float float4 __attribute__((ext_vector_type(4)));
 static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
 extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) lane(float* data0_1, const int lane_) {

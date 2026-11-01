@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 256
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
@@ -23,7 +23,7 @@
 21 Ops.SINK dtypes.void [20] KernelInfo(name="two_outputs", optimized=True)
 22 Ops.SINK dtypes.void [20] KernelInfo(name="two_outputs", estimates=Estimates(ops=512, lds=3072, mem=3072), optimized=True)
 23 Ops.LINEAR dtypes.void [1, 6, 2, 13, 0, 9, 10, 15, 16, 3, 4, 7, 8, 5, 14, 11, 17, 12, 18, 19, 20, 21]
-24 Ops.SOURCE dtypes.void [] "\nstruct two_outputs_args { float* data0_256; float* data1_256; float* data2_256; };\n__attribute__((min_vector_width(512))) void two_outputs(const struct two_outputs_args* args) {\n  float* restrict data0_256 = args->data0_256;\n  float* restrict data1_256 = args->data1_256;\n  float* restrict data2_256 = args->data2_256;\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    *(data1_256+Lidx0) = (val0+1.0f);\n    *(data2_256+Lidx0) = (val0*2.0f);\n  }\n}\n"
+24 Ops.SOURCE dtypes.void [] "\nstruct two_outputs_args { float* arg0; float* arg1; float* arg2; };\n__attribute__((min_vector_width(512))) void two_outputs(const struct two_outputs_args* args) {\n  float* data0_256 = args->arg0;\n  float* data1_256 = args->arg1;\n  float* data2_256 = args->arg2;\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    *(data1_256+Lidx0) = (val0+1.0f);\n    *(data2_256+Lidx0) = (val0*2.0f);\n  }\n}\n"
 25 Ops.PROGRAM dtypes.void [22, 23, 24] ProgramInfo(params=(%6, %2, %13), globals=(0, 1, 2), outs=(1, 2), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 26 Ops.SINK dtypes.void [21, 25]
 

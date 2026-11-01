@@ -1,12 +1,12 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 
-struct r_8_8_8_args { __fp16* data0_64; __fp16* data1_64; __fp16* data2_64; int block_lo_; int block_hi_; };
+struct r_8_8_8_args { __fp16* arg0; __fp16* arg1; __fp16* arg2; int arg3; int arg4; };
 __attribute__((min_vector_width(512))) void r_8_8_8(const struct r_8_8_8_args* args) {
-  __fp16* restrict data0_64 = args->data0_64;
-  __fp16* restrict data1_64 = args->data1_64;
-  __fp16* restrict data2_64 = args->data2_64;
-  const int block_lo_ = args->block_lo_;
-  const int block_hi_ = args->block_hi_;
+  __fp16* data0_64 = args->arg0;
+  __fp16* data1_64 = args->arg1;
+  __fp16* data2_64 = args->arg2;
+  int block_lo_ = args->arg3;
+  int block_hi_ = args->arg4;
   __fp16 buf0[1];
   for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
     int alu0 = (block_lo_+Lidx1);

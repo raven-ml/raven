@@ -1,9 +1,9 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 
-struct E_args { double* data0_1; double* data1_1; };
+struct E_args { double* arg0; double* arg1; };
 __attribute__((min_vector_width(512))) void E(const struct E_args* args) {
-  double* restrict data0_1 = args->data0_1;
-  double* restrict data1_1 = args->data1_1;
+  double* data0_1 = args->arg0;
+  double* data1_1 = args->arg1;
   double val0 = (*(data1_1+0));
   _Bool alu0 = (val0!=val0);
   _Bool alu1 = (val0!=((double)(-__builtin_inff())));
@@ -216,7 +216,7 @@ __attribute__((min_vector_width(512))) void E(const struct E_args* args) {
   double alu199 = ((val0!=0.0)?alu198:((double)(-__builtin_inff())));
   double alu200 = ((alu197!=((double)(-__builtin_inff())))?alu199:((double)(-__builtin_inff())));
   double alu201 = ((val0<-0.0)?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):alu200);
-  double alu202 = (((val0<1024.0)!=1)?((double)(__builtin_inff())):(((((((((((((((((((((((4.4343590829265295e-10*alu196)+7.0731645980857074e-09)*alu196)+1.0178192609217605e-07)*alu196)+1.3215438725113276e-06)*alu196)+1.5252733535175847e-05)*alu196)+0.00015403530451011478)*alu196)+0.001333355814670499)*alu196)+0.0096181291075976)*alu196)+0.055504108664820466)*alu196)+0.24022650695910122)*alu196)+0.6931471805599453)*alu196)+1.0)*__builtin_bit_cast(double, (long)(((alu162+1023l)<<52l)))*__builtin_bit_cast(double, (long)((((cast2-alu162)+1023l)<<52l)))));
+  double alu202 = (((val0<1024.0)==0)?((double)(__builtin_inff())):(((((((((((((((((((((((4.4343590829265295e-10*alu196)+7.0731645980857074e-09)*alu196)+1.0178192609217605e-07)*alu196)+1.3215438725113276e-06)*alu196)+1.5252733535175847e-05)*alu196)+0.00015403530451011478)*alu196)+0.001333355814670499)*alu196)+0.0096181291075976)*alu196)+0.055504108664820466)*alu196)+0.24022650695910122)*alu196)+0.6931471805599453)*alu196)+1.0)*__builtin_bit_cast(double, (long)(((alu162+1023l)<<52l)))*__builtin_bit_cast(double, (long)((((cast2-alu162)+1023l)<<52l)))));
   double alu203 = ((val0<-2000.0)?0.0:alu202);
   double alu204 = (alu0?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):alu201);
   double alu205 = (alu0?__builtin_bit_cast(double, (unsigned long)(0x7ff8000000000000ul)):alu203);

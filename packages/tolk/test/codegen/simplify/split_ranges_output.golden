@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1024
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -30,14 +30,14 @@
 28 Ops.CONST dtypes.weakint [] 7
 29 Ops.RANGE dtypes.weakint [28] (AxisType.WEAK, 0)
 30 Ops.INDEX dtypes.f32 [1, 29]
-31 Ops.FLOORMOD dtypes.weakint [29, 19]
+31 Ops.MOD dtypes.weakint [29, 19]
 32 Ops.STORE dtypes.void [30, 31]
 33 Ops.END dtypes.void [32, 29]
 34 Ops.SINK dtypes.void [33] KernelInfo()
 35 Ops.CONST dtypes.weakint [] 8
 36 Ops.RANGE dtypes.weakint [35] (AxisType.WEAK, 0)
 37 Ops.INDEX dtypes.f32 [1, 36]
-38 Ops.FLOORMOD dtypes.weakint [36, 19]
+38 Ops.MOD dtypes.weakint [36, 19]
 39 Ops.STORE dtypes.void [37, 38]
 40 Ops.END dtypes.void [39, 36]
 41 Ops.SINK dtypes.void [40] KernelInfo()
@@ -52,14 +52,14 @@
 50 Ops.END dtypes.void [49, 47]
 51 Ops.SINK dtypes.void [50] KernelInfo()
 52 Ops.CONST dtypes.weakint [] 16
-53 Ops.FLOORMOD dtypes.weakint [36, 52]
+53 Ops.MOD dtypes.weakint [36, 52]
 54 Ops.STORE dtypes.void [37, 53]
 55 Ops.END dtypes.void [54, 36]
 56 Ops.SINK dtypes.void [55] KernelInfo()
 57 Ops.CONST dtypes.weakint [] 12
 58 Ops.RANGE dtypes.weakint [57] (AxisType.WEAK, 1)
 59 Ops.INDEX dtypes.f32 [1, 58]
-60 Ops.CMOD dtypes.weakint [58, 9]
+60 Ops.TRUNCMOD dtypes.weakint [58, 9]
 61 Ops.STORE dtypes.void [59, 60]
 62 Ops.END dtypes.void [61, 58]
 63 Ops.SINK dtypes.void [62] KernelInfo()
@@ -67,13 +67,13 @@
 65 Ops.PARAM dtypes.weakint [64] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 16), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
 66 Ops.RANGE dtypes.weakint [65] (AxisType.WEAK, 0)
 67 Ops.INDEX dtypes.f32 [1, 66]
-68 Ops.FLOORMOD dtypes.weakint [66, 4]
+68 Ops.MOD dtypes.weakint [66, 4]
 69 Ops.STORE dtypes.void [67, 68]
 70 Ops.END dtypes.void [69, 66]
 71 Ops.SINK dtypes.void [70] KernelInfo()
 72 Ops.RANGE dtypes.weakint [35] (AxisType.WARP, 0)
 73 Ops.INDEX dtypes.f32 [1, 72]
-74 Ops.FLOORMOD dtypes.weakint [72, 4]
+74 Ops.MOD dtypes.weakint [72, 4]
 75 Ops.STORE dtypes.void [73, 74]
 76 Ops.END dtypes.void [75, 72]
 77 Ops.SINK dtypes.void [76] KernelInfo()
@@ -86,7 +86,7 @@
 84 Ops.END dtypes.void [83, 78, 80]
 85 Ops.SINK dtypes.void [84] KernelInfo()
 86 Ops.PARAM dtypes.weakint [64] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 4), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
-87 Ops.FLOORMOD dtypes.weakint [36, 86]
+87 Ops.MOD dtypes.weakint [36, 86]
 88 Ops.STORE dtypes.void [37, 87]
 89 Ops.END dtypes.void [88, 36]
 90 Ops.SINK dtypes.void [89] KernelInfo()
@@ -123,7 +123,7 @@
 121 Ops.STORE dtypes.void [119, 120]
 122 Ops.END dtypes.void [121, 10, 5, 110, 115]
 123 Ops.SINK dtypes.void [122] KernelInfo()
-124 Ops.FLOORMOD dtypes.weakint [36, 4]
+124 Ops.MOD dtypes.weakint [36, 4]
 125 Ops.STORE dtypes.void [37, 124]
 126 Ops.END dtypes.void [125, 36]
 127 Ops.SINK dtypes.void [126]

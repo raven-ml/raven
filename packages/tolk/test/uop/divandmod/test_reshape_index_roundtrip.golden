@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 7), multiple_of=1, name="r0", addrspace=AddrSpace.ALU)
 2 Ops.CONST dtypes.weakint [] 8
@@ -6,16 +6,16 @@
 4 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 7), multiple_of=1, name="r1", addrspace=AddrSpace.ALU)
 5 Ops.ADD dtypes.weakint [3, 4]
 6 Ops.CONST dtypes.weakint [] 4
-7 Ops.FLOORDIV dtypes.weakint [5, 6]
+7 Ops.DIV dtypes.weakint [5, 6]
 8 Ops.CONST dtypes.weakint [] 0
 9 Ops.ADD dtypes.weakint [8, 4]
 10 Ops.ADD dtypes.weakint [9, 8]
-11 Ops.FLOORDIV dtypes.weakint [10, 6]
+11 Ops.DIV dtypes.weakint [10, 6]
 12 Ops.CONST dtypes.weakint [] 2
 13 Ops.MUL dtypes.weakint [1, 12]
 14 Ops.ADD dtypes.weakint [8, 13]
 15 Ops.ADD dtypes.weakint [11, 14]
-16 Ops.FLOORMOD dtypes.weakint [5, 6]
-17 Ops.FLOORMOD dtypes.weakint [10, 6]
+16 Ops.MOD dtypes.weakint [5, 6]
+17 Ops.MOD dtypes.weakint [10, 6]
 18 Ops.SINK dtypes.void [7, 15, 16, 17]
 

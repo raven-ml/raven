@@ -1,10 +1,10 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 #include <metal_stdlib>
 using namespace metal;
-struct vector_copy_args { device bfloat* data0_3; device bfloat* data1_3; };
+struct vector_copy_args { device bfloat* arg0; device bfloat* arg1; };
 kernel void vector_copy(constant struct vector_copy_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device bfloat* data0_3 = args->data0_3;
-  device bfloat* data1_3 = args->data1_3;
+  device bfloat* data0_3 = args->arg0;
+  device bfloat* data1_3 = args->arg1;
   bfloat3 val0 = (*((device bfloat3*)((data1_3+0))));
   *((device bfloat3*)((data0_3+0))) = val0;
 }

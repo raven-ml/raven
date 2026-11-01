@@ -1,10 +1,10 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 3
 1 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
 2 Ops.CONST dtypes.weakint [] 1
 3 Ops.CMPLT dtypes.bool [1, 2]
-4 Ops.CONST dtypes.bool [] True
-5 Ops.CMPNE dtypes.bool [3, 4]
+4 Ops.CONST dtypes.bool [] False
+5 Ops.CMPEQ dtypes.bool [3, 4]
 6 Ops.CONST dtypes.weakint [] 4
 7 Ops.MUL dtypes.weakint [1, 6]
 8 Ops.RANGE dtypes.weakint [6] (AxisType.WEAK, 1)

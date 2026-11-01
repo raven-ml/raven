@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 1)
@@ -54,7 +54,7 @@
 52 Ops.ADD dtypes.f32 [49, 51]
 53 Ops.PARAM dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
 54 Ops.INDEX dtypes.f32 [53, 44]
-55 Ops.RECIPROCAL dtypes.f32 [54]
+55 Ops.RECIP dtypes.f32 [54]
 56 Ops.MUL dtypes.f32 [52, 55]
 57 Ops.STORE dtypes.void [48, 56]
 58 Ops.END dtypes.void [57, 44, 46]

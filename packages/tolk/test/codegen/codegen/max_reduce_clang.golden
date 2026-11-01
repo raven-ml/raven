@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -63,7 +63,7 @@
 61 Ops.SINK dtypes.void [60] KernelInfo(name="max_reduce", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=128, lds=260, mem=260), optimized=True)
 62 Ops.SINK dtypes.void [60] KernelInfo(name="max_reduce", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 63 Ops.LINEAR dtypes.void [16, 17, 0, 1, 47, 2, 3, 48, 7, 8, 26, 10, 11, 18, 19, 33, 34, 21, 22, 49, 12, 50, 51, 52, 20, 23, 24, 25, 27, 30, 35, 28, 29, 31, 32, 36, 37, 53, 54, 55, 56, 57, 58, 59, 4, 60, 62]
-64 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct max_reduce_args { float* data0_64; float* data1_1; };\n__attribute__((min_vector_width(512))) void max_reduce(const struct max_reduce_args* args) {\n  float* restrict data0_64 = args->data0_64;\n  float* restrict data1_1 = args->data1_1;\n  float buf0[1];\n  *(buf0+0) = ((float)(-__builtin_inff()));\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    float val0 = (*(buf0+0));\n    float4 val1 = (*((float4*)((data0_64+(Lidx0<<2)))));\n    float alu1 = ((val1[0]<val1[1])?val1[1]:val1[0]);\n    float alu2 = ((alu1<val1[2])?val1[2]:alu1);\n    float alu3 = ((alu2<val1[3])?val1[3]:alu2);\n    float alu4 = ((val0<alu3)?alu3:val0);\n    *(buf0+0) = alu4;\n  }\n  *(data1_1+0) = (*(buf0+0));\n}\n"
+64 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct max_reduce_args { float* arg0; float* arg1; };\n__attribute__((min_vector_width(512))) void max_reduce(const struct max_reduce_args* args) {\n  float* data0_64 = args->arg0;\n  float* data1_1 = args->arg1;\n  float buf0[1];\n  *(buf0+0) = ((float)(-__builtin_inff()));\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    float val0 = (*(buf0+0));\n    float4 val1 = (*((float4*)((data0_64+(Lidx0<<2)))));\n    float alu1 = ((val1[0]<val1[1])?val1[1]:val1[0]);\n    float alu2 = ((alu1<val1[2])?val1[2]:alu1);\n    float alu3 = ((alu2<val1[3])?val1[3]:alu2);\n    float alu4 = ((val0<alu3)?alu3:val0);\n    *(buf0+0) = alu4;\n  }\n  *(data1_1+0) = (*(buf0+0));\n}\n"
 65 Ops.PROGRAM dtypes.void [61, 63, 64] ProgramInfo(params=(%17, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 66 Ops.SINK dtypes.void [46, 65]
 

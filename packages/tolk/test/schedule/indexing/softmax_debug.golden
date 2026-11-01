@@ -1,8 +1,8 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 **************************
 ***  0 Ops.STORE            (4, 8)                               0 [r0][r1]
      1 Ops.MUL              (4, 8)                               0 [r0][r1]
-     1 Ops.RECIPROCAL       (4, 1)                               1 [r0][0]
+     1 Ops.RECIP            (4, 1)                               1 [r0][0]
      1 Ops.RESHAPE          (4, 1)                               1 [r0] -> [r0][0]
 ***  1 Ops.REDUCE           (4,)                                 0 [r3][r2] -> [r2]
      1 Ops.PERMUTE          (8, 4)                               0 [r2 -> r3][r3 -> r2]

@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 file	class	test
 null/test_uop_symbolic.py	TestSymbolic	test_add_1
 null/test_uop_symbolic.py	TestSymbolic	test_add_div
@@ -14,7 +14,6 @@ null/test_uop_symbolic.py	TestSymbolic	test_bool_or_not_tautology
 null/test_uop_symbolic.py	TestSymbolic	test_cast_bool
 null/test_uop_symbolic.py	TestSymbolic	test_cast_bool_to_int_ne_const
 null/test_uop_symbolic.py	TestSymbolic	test_cmp_simple
-null/test_uop_symbolic.py	TestSymbolic	test_const_reciprocal
 null/test_uop_symbolic.py	TestSymbolic	test_const_var
 null/test_uop_symbolic.py	TestSymbolic	test_distribute_mul
 null/test_uop_symbolic.py	TestSymbolic	test_div_1

@@ -1,11 +1,11 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 
-struct E_16_args { unsigned char* data0_16; unsigned char* data1_16; int block_lo_; int block_hi_; };
+struct E_16_args { unsigned char* arg0; unsigned char* arg1; int arg2; int arg3; };
 __attribute__((min_vector_width(512))) void E_16(const struct E_16_args* args) {
-  unsigned char* restrict data0_16 = args->data0_16;
-  unsigned char* restrict data1_16 = args->data1_16;
-  const int block_lo_ = args->block_lo_;
-  const int block_hi_ = args->block_hi_;
+  unsigned char* data0_16 = args->arg0;
+  unsigned char* data1_16 = args->arg1;
+  int block_lo_ = args->arg2;
+  int block_hi_ = args->arg3;
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = (block_lo_+Lidx0);
     unsigned char val0 = (*(data1_16+alu0));

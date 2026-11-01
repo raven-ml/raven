@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 8
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 2
@@ -11,7 +11,7 @@
 9 Ops.MUL dtypes.weakint [7, 8]
 10 Ops.ADD dtypes.weakint [6, 9]
 11 Ops.INDEX dtypes.f32 [1, 10]
-12 Ops.FLOORMOD dtypes.weakint [5, 2]
+12 Ops.MOD dtypes.weakint [5, 2]
 13 Ops.CONST dtypes.weakint [] 1
 14 Ops.CMPLT dtypes.bool [12, 13]
 15 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
@@ -23,7 +23,7 @@
 21 Ops.MUL dtypes.weakint [20, 8]
 22 Ops.ADD dtypes.weakint [19, 21]
 23 Ops.INDEX dtypes.f32 [15, 22]
-24 Ops.FLOORMOD dtypes.weakint [16, 2]
+24 Ops.MOD dtypes.weakint [16, 2]
 25 Ops.CMPLT dtypes.bool [24, 13]
 26 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
 27 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 13)
@@ -34,10 +34,10 @@
 32 Ops.MUL dtypes.weakint [31, 8]
 33 Ops.ADD dtypes.weakint [30, 32]
 34 Ops.INDEX dtypes.f32 [26, 33]
-35 Ops.FLOORMOD dtypes.weakint [31, 2]
+35 Ops.MOD dtypes.weakint [31, 2]
 36 Ops.CMPLT dtypes.bool [35, 13]
 37 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 15)
-38 Ops.FLOORMOD dtypes.weakint [37, 2]
+38 Ops.MOD dtypes.weakint [37, 2]
 39 Ops.CMPLT dtypes.bool [38, 13]
 40 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
 41 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 22)
@@ -48,7 +48,7 @@
 46 Ops.MUL dtypes.weakint [45, 8]
 47 Ops.ADD dtypes.weakint [44, 46]
 48 Ops.INDEX dtypes.f32 [40, 47]
-49 Ops.FLOORMOD dtypes.weakint [43, 2]
+49 Ops.MOD dtypes.weakint [43, 2]
 50 Ops.CMPLT dtypes.bool [49, 13]
 51 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=6, dtype=dtypes.f32, device="CPU")
 52 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 28)
@@ -59,7 +59,7 @@
 57 Ops.MUL dtypes.weakint [56, 8]
 58 Ops.ADD dtypes.weakint [55, 57]
 59 Ops.INDEX dtypes.f32 [51, 58]
-60 Ops.FLOORMOD dtypes.weakint [52, 2]
+60 Ops.MOD dtypes.weakint [52, 2]
 61 Ops.CMPLT dtypes.bool [60, 13]
 62 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=7, dtype=dtypes.f32, device="CPU")
 63 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 34)
@@ -70,10 +70,10 @@
 68 Ops.MUL dtypes.weakint [67, 8]
 69 Ops.ADD dtypes.weakint [66, 68]
 70 Ops.INDEX dtypes.f32 [62, 69]
-71 Ops.FLOORMOD dtypes.weakint [67, 2]
+71 Ops.MOD dtypes.weakint [67, 2]
 72 Ops.CMPLT dtypes.bool [71, 13]
 73 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 37)
-74 Ops.FLOORMOD dtypes.weakint [73, 2]
+74 Ops.MOD dtypes.weakint [73, 2]
 75 Ops.CMPLT dtypes.bool [74, 13]
 76 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=8, dtype=dtypes.f32, device="CPU")
 77 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 43)
@@ -84,7 +84,7 @@
 82 Ops.MUL dtypes.weakint [81, 8]
 83 Ops.ADD dtypes.weakint [80, 82]
 84 Ops.INDEX dtypes.f32 [76, 83]
-85 Ops.FLOORMOD dtypes.weakint [79, 2]
+85 Ops.MOD dtypes.weakint [79, 2]
 86 Ops.CMPLT dtypes.bool [85, 13]
 87 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=9, dtype=dtypes.f32, device="CPU")
 88 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 49)
@@ -95,7 +95,7 @@
 93 Ops.MUL dtypes.weakint [92, 8]
 94 Ops.ADD dtypes.weakint [91, 93]
 95 Ops.INDEX dtypes.f32 [87, 94]
-96 Ops.FLOORMOD dtypes.weakint [88, 2]
+96 Ops.MOD dtypes.weakint [88, 2]
 97 Ops.CMPLT dtypes.bool [96, 13]
 98 Ops.CONST dtypes.bool [] True
 99 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")

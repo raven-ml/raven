@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 8
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 2)
@@ -12,30 +12,30 @@
 10 Ops.WHERE dtypes.i32 [7, 9, 5]
 11 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 0)
 12 Ops.CAST dtypes.i32 [11] dtypes.i32
-13 Ops.CMPNE dtypes.bool [10, 12]
-14 Ops.CONST dtypes.weakfloat [] 0.0
-15 Ops.CONST dtypes.weakint [] 2048
-16 Ops.PARAM dtypes.f32 [15] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
-17 Ops.CONST dtypes.weakint [] 32
-18 Ops.MUL dtypes.weakint [11, 17]
-19 Ops.RANGE dtypes.weakint [17] (AxisType.WEAK, 1)
-20 Ops.ADD dtypes.weakint [18, 19]
-21 Ops.INDEX dtypes.f32 [16, 20]
-22 Ops.WHERE dtypes.f32 [13, 14, 21]
+13 Ops.CMPEQ dtypes.bool [10, 12]
+14 Ops.CONST dtypes.weakint [] 2048
+15 Ops.PARAM dtypes.f32 [14] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+16 Ops.CONST dtypes.weakint [] 32
+17 Ops.MUL dtypes.weakint [11, 16]
+18 Ops.RANGE dtypes.weakint [16] (AxisType.WEAK, 1)
+19 Ops.ADD dtypes.weakint [17, 18]
+20 Ops.INDEX dtypes.f32 [15, 19]
+21 Ops.CONST dtypes.weakfloat [] 0.0
+22 Ops.WHERE dtypes.f32 [13, 20, 21]
 23 Ops.REDUCE dtypes.f32 [22, 11] (Ops.ADD, 0)
-24 Ops.PARAM dtypes.f32 [17] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
-25 Ops.INDEX dtypes.f32 [24, 19]
+24 Ops.PARAM dtypes.f32 [16] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+25 Ops.INDEX dtypes.f32 [24, 18]
 26 Ops.MUL dtypes.f32 [23, 25]
-27 Ops.REDUCE dtypes.f32 [26, 19] (Ops.ADD, 0)
-28 Ops.PARAM dtypes.f32 [17] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
-29 Ops.INDEX dtypes.f32 [28, 19]
+27 Ops.REDUCE dtypes.f32 [26, 18] (Ops.ADD, 0)
+28 Ops.PARAM dtypes.f32 [16] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+29 Ops.INDEX dtypes.f32 [28, 18]
 30 Ops.MUL dtypes.f32 [23, 29]
-31 Ops.REDUCE dtypes.f32 [30, 19] (Ops.ADD, 0)
+31 Ops.REDUCE dtypes.f32 [30, 18] (Ops.ADD, 0)
 32 Ops.ADD dtypes.f32 [27, 31]
 33 Ops.STORE dtypes.void [3, 32]
 34 Ops.END dtypes.void [33, 2]
 35 Ops.SINK dtypes.void [34] KernelInfo()
-36 Ops.CALL dtypes.void [35, 1, 4, 16, 24, 28] CallInfo()
+36 Ops.CALL dtypes.void [35, 1, 4, 15, 24, 28] CallInfo()
 37 Ops.AFTER dtypes.f32 [1, 36]
 38 Ops.SINK dtypes.void [37]
 

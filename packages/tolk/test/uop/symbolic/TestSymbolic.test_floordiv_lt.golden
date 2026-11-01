@@ -1,11 +1,11 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.bool [] False
 1 Ops.CONST dtypes.bool [] True
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
 3 Ops.STACK dtypes.void []
 4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 24), multiple_of=1, name="idx", addrspace=AddrSpace.ALU)
 5 Ops.CONST dtypes.weakint [] 4
-6 Ops.FLOORDIV dtypes.weakint [4, 5]
+6 Ops.DIV dtypes.weakint [4, 5]
 7 Ops.CONST dtypes.weakint [] 3
 8 Ops.CMPLT dtypes.bool [6, 7]
 9 Ops.CONST dtypes.weakint [] 12
@@ -23,7 +23,7 @@
 21 Ops.CONST dtypes.weakint [] -1
 22 Ops.MUL dtypes.weakint [20, 21]
 23 Ops.ADD dtypes.weakint [4, 22]
-24 Ops.FLOORDIV dtypes.weakint [23, 5]
+24 Ops.DIV dtypes.weakint [23, 5]
 25 Ops.CONST dtypes.weakint [] -3
 26 Ops.CMPLT dtypes.bool [24, 25]
 27 Ops.CONST dtypes.weakint [] 8
@@ -34,14 +34,14 @@
 32 Ops.CONST dtypes.weakint [] 10
 33 Ops.MUL dtypes.weakint [32, 21]
 34 Ops.ADD dtypes.weakint [4, 33]
-35 Ops.FLOORDIV dtypes.weakint [34, 5]
+35 Ops.DIV dtypes.weakint [34, 5]
 36 Ops.CMPLT dtypes.bool [35, 12]
 37 Ops.CMPLT dtypes.bool [4, 32]
 38 Ops.SINK dtypes.void [2, 36, 37]
 39 Ops.SINK dtypes.void [16, 37, 37]
 40 Ops.SINK dtypes.void [18, 37, 37]
 41 Ops.CONST dtypes.weakint [] -4
-42 Ops.FLOORDIV dtypes.weakint [4, 41]
+42 Ops.DIV dtypes.weakint [4, 41]
 43 Ops.CMPLT dtypes.bool [42, 25]
 44 Ops.CMPLT dtypes.bool [9, 4]
 45 Ops.SINK dtypes.void [2, 43, 44]
@@ -61,7 +61,7 @@
 59 Ops.SINK dtypes.void [58, 0, 0]
 60 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
 61 Ops.SINK dtypes.void [60, 0, 0]
-62 Ops.FLOORDIV dtypes.weakint [34, 41]
+62 Ops.DIV dtypes.weakint [34, 41]
 63 Ops.CMPLT dtypes.bool [62, 12]
 64 Ops.CONST dtypes.weakint [] -2
 65 Ops.ADD dtypes.weakint [4, 64]
@@ -69,7 +69,7 @@
 67 Ops.SINK dtypes.void [2, 63, 66]
 68 Ops.SINK dtypes.void [16, 66, 66]
 69 Ops.SINK dtypes.void [18, 66, 66]
-70 Ops.FLOORDIV dtypes.weakint [23, 41]
+70 Ops.DIV dtypes.weakint [23, 41]
 71 Ops.CONST dtypes.weakint [] 2
 72 Ops.CMPLT dtypes.bool [70, 71]
 73 Ops.SINK dtypes.void [2, 72, 44]

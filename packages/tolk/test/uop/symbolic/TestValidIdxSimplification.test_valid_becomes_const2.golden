@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CUSTOM dtypes.void [] ("sym+pm_move_where_on_load", dtypes.void)
 1 Ops.CONST dtypes.weakint [] 1024
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
@@ -9,43 +9,48 @@
 7 Ops.CONST dtypes.weakint [] 1
 8 Ops.CMPLT dtypes.bool [6, 7]
 9 Ops.CONST dtypes.bool [] True
-10 Ops.CMPNE dtypes.bool [8, 9]
-11 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 2)
-12 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 3)
-13 Ops.ADD dtypes.weakint [11, 12]
-14 Ops.CMPLT dtypes.bool [13, 7]
-15 Ops.CMPNE dtypes.bool [14, 9]
-16 Ops.AND dtypes.bool [10, 15]
-17 Ops.ADD dtypes.weakint [6, 13]
-18 Ops.CONST dtypes.weakint [] 28
-19 Ops.ADD dtypes.weakint [17, 18]
-20 Ops.CONST dtypes.weakint [] 30
-21 Ops.FLOORDIV dtypes.weakint [19, 20]
-22 Ops.CONST dtypes.bool [] Invalid
-23 Ops.WHERE dtypes.weakint [16, 21, 22]
-24 Ops.INDEX dtypes.f32 [2, 23]
-25 Ops.LOAD dtypes.f32 [24]
-26 Ops.SINK dtypes.void [25]
-27 Ops.WHERE dtypes.weakint [16, 7, 22]
-28 Ops.INDEX dtypes.f32 [2, 27]
-29 Ops.LOAD dtypes.f32 [28]
-30 Ops.SINK dtypes.void [29]
-31 Ops.SINK dtypes.void [0, 26, 30]
-32 Ops.CUSTOM dtypes.void [7, 7] ("commutative", dtypes.void)
-33 Ops.SINK dtypes.void [32, 7, 7]
-34 Ops.CUSTOM dtypes.void [7, 7] ("simplify", dtypes.void)
-35 Ops.SINK dtypes.void [34, 7, 7]
-36 Ops.CONST dtypes.weakint [] 0
-37 Ops.CONST dtypes.weakint [] 3
-38 Ops.CUSTOM dtypes.void [36, 37] ("simplify", dtypes.void)
-39 Ops.SINK dtypes.void [38, 4, 4]
-40 Ops.SINK dtypes.void [38, 5, 5]
-41 Ops.SINK dtypes.void [38, 11, 11]
-42 Ops.SINK dtypes.void [38, 12, 12]
-43 Ops.CONST dtypes.bool [] False
-44 Ops.CUSTOM dtypes.void [43, 9] ("commutative", dtypes.void)
-45 Ops.SINK dtypes.void [44, 16, 16]
-46 Ops.CUSTOM dtypes.void [43, 9] ("simplify", dtypes.void)
-47 Ops.SINK dtypes.void [46, 16, 16]
-48 Ops.SINK dtypes.void [31, 33, 35, 39, 40, 41, 42, 45, 47]
+10 Ops.CMPEQ dtypes.bool [8, 9]
+11 Ops.CONST dtypes.bool [] False
+12 Ops.CMPEQ dtypes.bool [10, 11]
+13 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 2)
+14 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 3)
+15 Ops.ADD dtypes.weakint [13, 14]
+16 Ops.CMPLT dtypes.bool [15, 7]
+17 Ops.CMPEQ dtypes.bool [16, 9]
+18 Ops.CMPEQ dtypes.bool [17, 11]
+19 Ops.AND dtypes.bool [12, 18]
+20 Ops.ADD dtypes.weakint [6, 15]
+21 Ops.CONST dtypes.weakint [] 28
+22 Ops.ADD dtypes.weakint [20, 21]
+23 Ops.CONST dtypes.weakint [] 30
+24 Ops.DIV dtypes.weakint [22, 23]
+25 Ops.CONST dtypes.bool [] Invalid
+26 Ops.WHERE dtypes.weakint [19, 24, 25]
+27 Ops.INDEX dtypes.f32 [2, 26]
+28 Ops.LOAD dtypes.f32 [27]
+29 Ops.SINK dtypes.void [28]
+30 Ops.CMPEQ dtypes.bool [8, 11]
+31 Ops.CMPEQ dtypes.bool [16, 11]
+32 Ops.AND dtypes.bool [30, 31]
+33 Ops.WHERE dtypes.weakint [32, 7, 25]
+34 Ops.INDEX dtypes.f32 [2, 33]
+35 Ops.LOAD dtypes.f32 [34]
+36 Ops.SINK dtypes.void [35]
+37 Ops.SINK dtypes.void [0, 29, 36]
+38 Ops.CUSTOM dtypes.void [7, 7] ("commutative", dtypes.void)
+39 Ops.SINK dtypes.void [38, 7, 7]
+40 Ops.CUSTOM dtypes.void [7, 7] ("simplify", dtypes.void)
+41 Ops.SINK dtypes.void [40, 7, 7]
+42 Ops.CONST dtypes.weakint [] 0
+43 Ops.CONST dtypes.weakint [] 3
+44 Ops.CUSTOM dtypes.void [42, 43] ("simplify", dtypes.void)
+45 Ops.SINK dtypes.void [44, 4, 4]
+46 Ops.SINK dtypes.void [44, 5, 5]
+47 Ops.SINK dtypes.void [44, 13, 13]
+48 Ops.SINK dtypes.void [44, 14, 14]
+49 Ops.CUSTOM dtypes.void [11, 9] ("commutative", dtypes.void)
+50 Ops.SINK dtypes.void [49, 32, 32]
+51 Ops.CUSTOM dtypes.void [11, 9] ("simplify", dtypes.void)
+52 Ops.SINK dtypes.void [51, 32, 32]
+53 Ops.SINK dtypes.void [37, 39, 41, 45, 46, 47, 48, 50, 52]
 

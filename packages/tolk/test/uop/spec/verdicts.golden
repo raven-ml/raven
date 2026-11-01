@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 case	shared	tensor	program	full	kernel_graph
 a sink of a load	True	True	True	True	True
 a sink with kernel info	True	True	True	True	True
@@ -49,14 +49,14 @@ a shr of int8 by int32	False	False	False	False	None
 a shl of int8 by a weak integer	True	True	False	True	None
 a shl of uint64 by uint16	False	False	False	False	None
 a shl of the invalid constant by int32	True	True	False	True	None
-a cdiv of int32	True	True	True	True	None
-a cdiv of float32	False	False	False	False	None
-a cmod of int32	True	True	True	True	None
-a cmod of float32	False	False	False	False	None
-a floordiv of int32	True	True	True	True	None
-a floordiv of float32	False	False	False	False	None
-a floormod of int32	True	True	True	True	None
-a floormod of float32	False	False	False	False	None
+a truncdiv of int32	True	True	True	True	None
+a truncdiv of float32	False	False	False	False	None
+a truncmod of int32	True	True	True	True	None
+a truncmod of float32	False	False	False	False	None
+a div of int32	True	True	True	True	None
+a div of float32	False	False	False	False	None
+a mod of int32	True	True	True	True	None
+a mod of float32	False	False	False	False	None
 a cdiv of float32 by the invalid constant	True	True	False	True	None
 a cmod of the invalid constant by int32	True	True	False	True	None
 a cdiv of int32 by float32	False	False	False	False	None
@@ -89,8 +89,8 @@ a exp2 of float32	True	True	True	True	None
 a exp2 of int32	False	True	False	True	None
 a sqrt of float32	True	True	True	True	None
 a sqrt of int32	False	True	False	True	None
-a reciprocal of float32	True	True	True	True	None
-a reciprocal of int32	False	True	False	True	None
+a recip of float32	True	True	True	True	None
+a recip of int32	False	True	False	True	None
 a sin of the invalid constant	True	True	False	True	None
 a sin of a weak integer	False	True	False	True	None
 a cast of int32 to float32	True	True	True	True	None

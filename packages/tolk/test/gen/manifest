@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 codegen/codegen/add_big_clang.golden
 codegen/codegen/add_big_cuda.golden
 codegen/codegen/add_big_hip.golden
@@ -3898,7 +3898,6 @@ uop/symbolic/TestSymbolic.test_bool_or_not_tautology.golden
 uop/symbolic/TestSymbolic.test_cast_bool.golden
 uop/symbolic/TestSymbolic.test_cast_bool_to_int_ne_const.golden
 uop/symbolic/TestSymbolic.test_cmp_simple.golden
-uop/symbolic/TestSymbolic.test_const_reciprocal.golden
 uop/symbolic/TestSymbolic.test_const_var.golden
 uop/symbolic/TestSymbolic.test_distribute_mul.golden
 uop/symbolic/TestSymbolic.test_div_1.golden

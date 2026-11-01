@@ -1,8 +1,8 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 **************************
 ***  0 Ops.STORE            (6,)                                 0 [r0]
      1 Ops.REDUCE           (6,)                                 0 [r1][r0] -> [r0]
-     1 Ops.PAD              (6, 6)                               0 [((r1+-1) if (((r1<1)!=True)&(r1<5)) else Invalid) -> r1][((r0+-1) if (((r0<1)!=True)&(r0<5)) else Invalid) -> r0]
-     1 Ops.RESHAPE          (4, 4)                               0 [((r1*4+r0+-5) if (((r0<1)!=True)&(r0<5)&(((r1<1)!=True)&(r1<5))) else Invalid)] -> [((r1+-1) if (((r1<1)!=True)&(r1<5)) else Invalid)][((r0+-1) if (((r0<1)!=True)&(r0<5)) else Invalid)]
-     1 Ops.PARAM            (16,)                                0 [((r1*4+r0+-5) if (((r0<1)!=True)&(r0<5)&(((r1<1)!=True)&(r1<5))) else Invalid)]
+     1 Ops.PAD              (6, 6)                               0 [((r1+-1) if (((r1<1)==False)&(r1<5)) else Invalid) -> r1][((r0+-1) if (((r0<1)==False)&(r0<5)) else Invalid) -> r0]
+     1 Ops.RESHAPE          (4, 4)                               0 [((r1*4+r0+-5) if (((r0<1)==False)&(r0<5)&(((r1<1)==False)&(r1<5))) else Invalid)] -> [((r1+-1) if (((r1<1)==False)&(r1<5)) else Invalid)][((r0+-1) if (((r0<1)==False)&(r0<5)) else Invalid)]
+     1 Ops.PARAM            (16,)                                0 [((r1*4+r0+-5) if (((r0<1)==False)&(r0<5)&(((r1<1)==False)&(r1<5))) else Invalid)]
      2 Ops.PARAM            (6,)                                 0 [r0]

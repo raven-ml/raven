@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -71,7 +71,7 @@
 69 Ops.CAST dtypes.f32 [68] dtypes.f32
 70 Ops.ADD dtypes.f32 [67, 69]
 71 Ops.SQRT dtypes.f32 [70]
-72 Ops.RECIPROCAL dtypes.f32 [71]
+72 Ops.RECIP dtypes.f32 [71]
 73 Ops.CMPEQ dtypes.bool [17, 9]
 74 Ops.STORE dtypes.void [4, 72, 73]
 75 Ops.SINK dtypes.void [74] KernelInfo(name="r_64_16_160", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),), optimized=True)
@@ -113,7 +113,7 @@
 111 Ops.MUL dtypes.f32 [110, 66]
 112 Ops.ADD dtypes.f32 [111, 69]
 113 Ops.SQRT dtypes.f32 [112]
-114 Ops.RECIPROCAL dtypes.f32 [113]
+114 Ops.RECIP dtypes.f32 [113]
 115 Ops.STORE dtypes.void [4, 114]
 116 Ops.SINK dtypes.void [115] KernelInfo(name="r_64_16_160", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),), estimates=Estimates(ops=513024, lds=729344, mem=655872), optimized=True)
 117 Ops.IF dtypes.void [73, 4]

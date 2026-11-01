@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.bool [] False
 1 Ops.CONST dtypes.bool [] True
 2 Ops.CUSTOM dtypes.void [0, 1] ("simplify_valid", dtypes.void)
@@ -7,11 +7,12 @@
 5 Ops.CONST dtypes.weakint [] 0
 6 Ops.CMPLT dtypes.bool [4, 5]
 7 Ops.CONST dtypes.weakint [] 100
-8 Ops.FLOORMOD dtypes.weakint [7, 4]
+8 Ops.MOD dtypes.weakint [7, 4]
 9 Ops.CAST dtypes.bool [8] dtypes.bool
 10 Ops.AND dtypes.bool [6, 9]
-11 Ops.CMPNE dtypes.bool [8, 5]
-12 Ops.AND dtypes.bool [6, 11]
-13 Ops.SINK dtypes.void [2, 10, 12]
-14 Ops.SINK dtypes.void [13]
+11 Ops.CMPEQ dtypes.bool [8, 5]
+12 Ops.CMPEQ dtypes.bool [11, 0]
+13 Ops.AND dtypes.bool [6, 12]
+14 Ops.SINK dtypes.void [2, 10, 13]
+15 Ops.SINK dtypes.void [14]
 

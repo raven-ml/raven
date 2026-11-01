@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CUSTOM dtypes.void [] ("simplify_valid", dtypes.void)
 1 Ops.CONST dtypes.weakint [] 56
 2 Ops.SPECIAL dtypes.weakint [1] "gidx0"
@@ -9,8 +9,8 @@
 7 Ops.CMPLT dtypes.bool [5, 6]
 8 Ops.CONST dtypes.weakint [] 1
 9 Ops.CMPLT dtypes.bool [5, 8]
-10 Ops.CONST dtypes.bool [] True
-11 Ops.CMPNE dtypes.bool [9, 10]
+10 Ops.CONST dtypes.bool [] False
+11 Ops.CMPEQ dtypes.bool [9, 10]
 12 Ops.AND dtypes.bool [7, 11]
 13 Ops.SINK dtypes.void [0, 12]
 14 Ops.SINK dtypes.void [13]

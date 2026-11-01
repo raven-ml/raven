@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 64
 2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
@@ -54,8 +54,8 @@
 52 Ops.STACK dtypes.i32 [17, 20, 23, 26, 30, 31, 32, 33, 39, 40, 41, 42, 48, 49, 50, 51]
 53 Ops.CONST dtypes.weakint [] 7
 54 Ops.CAST dtypes.i32 [53] dtypes.i32
-55 Ops.CDIV dtypes.i32 [52, 54]
-56 Ops.CMOD dtypes.i32 [52, 54]
+55 Ops.TRUNCDIV dtypes.i32 [52, 54]
+56 Ops.TRUNCMOD dtypes.i32 [52, 54]
 57 Ops.CMPNE dtypes.bool [56, 16]
 58 Ops.CMPLT dtypes.bool [52, 16]
 59 Ops.AND dtypes.bool [57, 58]
@@ -89,7 +89,7 @@
 87 Ops.STACK dtypes.i32 [65, 66, 67, 68, 71, 72, 73, 74, 77, 78, 79, 80, 83, 84, 85, 86]
 88 Ops.CONST dtypes.weakint [] 5
 89 Ops.CAST dtypes.i32 [88] dtypes.i32
-90 Ops.CMOD dtypes.i32 [87, 89]
+90 Ops.TRUNCMOD dtypes.i32 [87, 89]
 91 Ops.CMPNE dtypes.bool [90, 16]
 92 Ops.CMPLT dtypes.bool [87, 16]
 93 Ops.AND dtypes.bool [91, 92]
@@ -142,7 +142,7 @@
 140 Ops.SINK dtypes.void [139] KernelInfo(name="E_4_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), optimized=True, split=(4, 3, 4))
 141 Ops.SINK dtypes.void [139] KernelInfo(name="E_4_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), estimates=Estimates(ops=832, lds=768, mem=768), optimized=True, split=(4, 3, 4))
 142 Ops.LINEAR dtypes.void [1, 2, 12, 62, 0, 3, 4, 15, 16, 18, 19, 117, 118, 120, 121, 43, 44, 127, 128, 130, 131, 133, 134, 21, 22, 24, 25, 8, 9, 88, 89, 106, 107, 53, 54, 34, 35, 114, 115, 5, 6, 7, 10, 45, 46, 47, 27, 28, 29, 36, 37, 38, 13, 14, 81, 82, 69, 70, 75, 76, 63, 64, 48, 49, 50, 51, 30, 31, 32, 33, 39, 40, 41, 42, 17, 20, 23, 26, 52, 83, 84, 85, 86, 71, 72, 73, 74, 77, 78, 79, 80, 65, 66, 67, 68, 87, 56, 58, 57, 59, 60, 90, 92, 91, 93, 94, 95, 55, 61, 96, 97, 98, 99, 100, 101, 126, 129, 132, 135, 136, 104, 105, 108, 109, 110, 119, 122, 113, 116, 123, 125, 103, 112, 11, 137, 111, 124, 102, 138, 139, 140]
-143 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\ntypedef int int16 __attribute__((aligned(4),ext_vector_type(16)));\nstruct E_4_16_args { int* data0_64; int* data1_64; int* data2_64; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void E_4_16(const struct E_4_16_args* args) {\n  int* restrict data0_64 = args->data0_64;\n  int* restrict data1_64 = args->data1_64;\n  int* restrict data2_64 = args->data2_64;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<4);\n    int alu1 = (alu0+12);\n    int4 val0 = (*((int4*)((data1_64+alu1))));\n    int alu2 = (alu0+4);\n    int4 val1 = (*((int4*)((data1_64+alu2))));\n    int alu3 = (alu0+8);\n    int4 val2 = (*((int4*)((data1_64+alu3))));\n    int4 val3 = (*((int4*)((data1_64+alu0))));\n    int4 val4 = (*((int4*)((data2_64+alu1))));\n    int4 val5 = (*((int4*)((data2_64+alu2))));\n    int4 val6 = (*((int4*)((data2_64+alu3))));\n    int4 val7 = (*((int4*)((data2_64+alu0))));\n    int16 cast0 = (int16){val3[0],val3[1],val3[2],val3[3],val1[0],val1[1],val1[2],val1[3],val2[0],val2[1],val2[2],val2[3],val0[0],val0[1],val0[2],val0[3]};\n    int16 cast1 = (int16){val7[0],val7[1],val7[2],val7[3],val5[0],val5[1],val5[2],val5[3],val6[0],val6[1],val6[2],val6[3],val4[0],val4[1],val4[2],val4[3]};\n    int16 cast2 = __builtin_convertvector(((((cast0%7)!=0)&(cast0<0))&1), int16);\n    int16 alu4 = (cast1%5);\n    int16 alu5 = (((alu4!=0)&(cast1<0))?((int16)(5)):0);\n    int16 alu6 = (((cast0/7)-cast2)+(alu4+alu5));\n    *((int4*)((data0_64+alu1))) = (int4){alu6[12],alu6[13],alu6[14],alu6[15]};\n    *((int4*)((data0_64+alu2))) = (int4){alu6[4],alu6[5],alu6[6],alu6[7]};\n    *((int4*)((data0_64+alu3))) = (int4){alu6[8],alu6[9],alu6[10],alu6[11]};\n    *((int4*)((data0_64+alu0))) = (int4){alu6[0],alu6[1],alu6[2],alu6[3]};\n  }\n}\n"
+143 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\ntypedef int int16 __attribute__((aligned(4),ext_vector_type(16)));\nstruct E_4_16_args { int* arg0; int* arg1; int* arg2; int arg3; int arg4; };\n__attribute__((min_vector_width(512))) void E_4_16(const struct E_4_16_args* args) {\n  int* data0_64 = args->arg0;\n  int* data1_64 = args->arg1;\n  int* data2_64 = args->arg2;\n  int block_lo_ = args->arg3;\n  int block_hi_ = args->arg4;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<4);\n    int alu1 = (alu0+12);\n    int4 val0 = (*((int4*)((data1_64+alu1))));\n    int alu2 = (alu0+4);\n    int4 val1 = (*((int4*)((data1_64+alu2))));\n    int alu3 = (alu0+8);\n    int4 val2 = (*((int4*)((data1_64+alu3))));\n    int4 val3 = (*((int4*)((data1_64+alu0))));\n    int4 val4 = (*((int4*)((data2_64+alu1))));\n    int4 val5 = (*((int4*)((data2_64+alu2))));\n    int4 val6 = (*((int4*)((data2_64+alu3))));\n    int4 val7 = (*((int4*)((data2_64+alu0))));\n    int16 cast0 = (int16){val3[0],val3[1],val3[2],val3[3],val1[0],val1[1],val1[2],val1[3],val2[0],val2[1],val2[2],val2[3],val0[0],val0[1],val0[2],val0[3]};\n    int16 cast1 = (int16){val7[0],val7[1],val7[2],val7[3],val5[0],val5[1],val5[2],val5[3],val6[0],val6[1],val6[2],val6[3],val4[0],val4[1],val4[2],val4[3]};\n    int16 cast2 = __builtin_convertvector(((((cast0%7)!=0)&(cast0<0))&1), int16);\n    int16 alu4 = (cast1%5);\n    int16 alu5 = (((alu4!=0)&(cast1<0))?((int16)(5)):0);\n    int16 alu6 = (((cast0/7)-cast2)+(alu4+alu5));\n    *((int4*)((data0_64+alu1))) = (int4){alu6[12],alu6[13],alu6[14],alu6[15]};\n    *((int4*)((data0_64+alu2))) = (int4){alu6[4],alu6[5],alu6[6],alu6[7]};\n    *((int4*)((data0_64+alu3))) = (int4){alu6[8],alu6[9],alu6[10],alu6[11]};\n    *((int4*)((data0_64+alu0))) = (int4){alu6[0],alu6[1],alu6[2],alu6[3]};\n  }\n}\n"
 144 Ops.PROGRAM dtypes.void [141, 142, 143] ProgramInfo(global_size=(4, 1, 1), params=(%2, %12, %62, %3, %4), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 145 Ops.SINK dtypes.void [140, 144]
 

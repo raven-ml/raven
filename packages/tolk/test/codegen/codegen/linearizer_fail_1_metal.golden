@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -71,7 +71,7 @@
 69 Ops.CAST dtypes.f32 [68] dtypes.f32
 70 Ops.ADD dtypes.f32 [67, 69]
 71 Ops.SQRT dtypes.f32 [70]
-72 Ops.RECIPROCAL dtypes.f32 [71]
+72 Ops.RECIP dtypes.f32 [71]
 73 Ops.CMPEQ dtypes.bool [17, 9]
 74 Ops.STORE dtypes.void [4, 72, 73]
 75 Ops.SINK dtypes.void [74] KernelInfo(name="r_64_16_160", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),), optimized=True)
@@ -113,14 +113,14 @@
 111 Ops.MUL dtypes.f32 [110, 66]
 112 Ops.ADD dtypes.f32 [111, 69]
 113 Ops.SQRT dtypes.f32 [112]
-114 Ops.RECIPROCAL dtypes.f32 [113]
+114 Ops.RECIP dtypes.f32 [113]
 115 Ops.STORE dtypes.void [4, 114]
 116 Ops.SINK dtypes.void [115] KernelInfo(name="r_64_16_160", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),), estimates=Estimates(ops=513024, lds=729344, mem=655872), optimized=True)
 117 Ops.IF dtypes.void [73, 4]
 118 Ops.ENDIF dtypes.void [117]
 119 Ops.SINK dtypes.void [115] KernelInfo(name="r_64_16_160", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),), optimized=True)
 120 Ops.LINEAR dtypes.void [0, 1, 26, 27, 36, 5, 80, 76, 14, 95, 2, 3, 37, 38, 15, 17, 81, 8, 9, 82, 11, 12, 21, 22, 30, 31, 32, 28, 83, 23, 29, 33, 34, 35, 84, 85, 86, 39, 87, 88, 89, 97, 98, 99, 90, 77, 96, 100, 101, 102, 78, 79, 91, 92, 93, 94, 103, 104, 105, 106, 107, 108, 109, 110, 4, 65, 66, 68, 69, 111, 112, 113, 114, 73, 117, 115, 118, 119]
-121 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct r_64_16_160_args { device float* data0_64; device float* data1_163840; device float* data2_64; };\nkernel void r_64_16_160(constant struct r_64_16_160_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_64 = args->data0_64;\n  device float* data1_163840 = args->data1_163840;\n  device float* data2_64 = args->data2_64;\n  float buf0[1];\n  float buf1[1];\n  threadgroup __attribute__((aligned(16))) float buf2[16];\n  int gidx0 = gid.x; /* 64 */\n  float val0 = (*(data2_64+gidx0));\n  int lidx0 = lid.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0_0_0 = 0; Lidx0_0_0 < 160; Lidx0_0_0++) {\n    float val1 = (*(data1_163840+((lidx0*160)+Lidx0_0_0+(gidx0*2560))));\n    float alu1 = (val1-val0);\n    *(buf0+0) = fma(alu1,alu1,(*(buf0+0)));\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf1+0) = 0.0f;\n  for (int Lidx102 = 0; Lidx102 < 16; Lidx102++) {\n    float val2 = (*(buf2+Lidx102));\n    *(buf1+0) = ((*(buf1+0))+val2);\n  }\n  if ((lidx0==0)) {\n    *(data0_64+gidx0) = (1/sqrt((((*(buf1+0))*0.0003906250058207661f)+9.999999747378752e-06f)));\n  }\n}"
+121 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct r_64_16_160_args { device float* arg0; device float* arg1; device float* arg2; };\nkernel void r_64_16_160(constant struct r_64_16_160_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_64 = args->arg0;\n  device float* data1_163840 = args->arg1;\n  device float* data2_64 = args->arg2;\n  float buf0[1];\n  float buf1[1];\n  threadgroup __attribute__((aligned(16))) float buf2[16];\n  int gidx0 = gid.x; /* 64 */\n  float val0 = (*(data2_64+gidx0));\n  int lidx0 = lid.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Lidx0_0_0 = 0; Lidx0_0_0 < 160; Lidx0_0_0++) {\n    float val1 = (*(data1_163840+((lidx0*160)+Lidx0_0_0+(gidx0*2560))));\n    float alu1 = (val1-val0);\n    *(buf0+0) = fma(alu1,alu1,(*(buf0+0)));\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf1+0) = 0.0f;\n  for (int Lidx102 = 0; Lidx102 < 16; Lidx102++) {\n    float val2 = (*(buf2+Lidx102));\n    *(buf1+0) = ((*(buf1+0))+val2);\n  }\n  if ((lidx0==0)) {\n    *(data0_64+gidx0) = (1/sqrt((((*(buf1+0))*0.0003906250058207661f)+9.999999747378752e-06f)));\n  }\n}"
 122 Ops.PROGRAM dtypes.void [116, 120, 121] ProgramInfo(global_size=(64, 1, 1), local_size=(16, 1, 1), params=(%1, %27, %36), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 123 Ops.SINK dtypes.void [75, 122]
 

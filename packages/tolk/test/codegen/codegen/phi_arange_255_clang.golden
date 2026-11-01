@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 255
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -13,7 +13,7 @@
 11 Ops.SINK dtypes.void [10] KernelInfo(name="E_255", optimized=True, split=(255, 1, 2))
 12 Ops.SINK dtypes.void [10] KernelInfo(name="E_255", estimates=Estimates(lds=1020, mem=1020), optimized=True, split=(255, 1, 2))
 13 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-14 Ops.SOURCE dtypes.void [] "\nstruct E_255_args { int* data0_255; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void E_255(const struct E_255_args* args) {\n  int* restrict data0_255 = args->data0_255;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    *(data0_255+alu0) = alu0;\n  }\n}\n"
+14 Ops.SOURCE dtypes.void [] "\nstruct E_255_args { int* arg0; int arg1; int arg2; };\n__attribute__((min_vector_width(512))) void E_255(const struct E_255_args* args) {\n  int* data0_255 = args->arg0;\n  int block_lo_ = args->arg1;\n  int block_hi_ = args->arg2;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    *(data0_255+alu0) = alu0;\n  }\n}\n"
 15 Ops.PROGRAM dtypes.void [12, 13, 14] ProgramInfo(global_size=(255, 1, 1), params=(%1, %3, %4), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 16 Ops.SINK dtypes.void [11, 15]
 

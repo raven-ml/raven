@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 256
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -16,7 +16,7 @@
 14 Ops.SINK dtypes.void [13] KernelInfo(name="elementwise_int32", optimized=True)
 15 Ops.SINK dtypes.void [13] KernelInfo(name="elementwise_int32", estimates=Estimates(ops=256, lds=3072, mem=3072), optimized=True)
 16 Ops.LINEAR dtypes.void [0, 5, 8, 1, 2, 3, 6, 7, 9, 10, 4, 11, 12, 13, 14]
-17 Ops.SOURCE dtypes.void [] "\nstruct elementwise_int32_args { int* data0_256; int* data1_256; int* data2_256; };\n__attribute__((min_vector_width(512))) void elementwise_int32(const struct elementwise_int32_args* args) {\n  int* restrict data0_256 = args->data0_256;\n  int* restrict data1_256 = args->data1_256;\n  int* restrict data2_256 = args->data2_256;\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    int val0 = (*(data0_256+Lidx0));\n    int val1 = (*(data1_256+Lidx0));\n    *(data2_256+Lidx0) = (val0+val1);\n  }\n}\n"
+17 Ops.SOURCE dtypes.void [] "\nstruct elementwise_int32_args { int* arg0; int* arg1; int* arg2; };\n__attribute__((min_vector_width(512))) void elementwise_int32(const struct elementwise_int32_args* args) {\n  int* data0_256 = args->arg0;\n  int* data1_256 = args->arg1;\n  int* data2_256 = args->arg2;\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    int val0 = (*(data0_256+Lidx0));\n    int val1 = (*(data1_256+Lidx0));\n    *(data2_256+Lidx0) = (val0+val1);\n  }\n}\n"
 18 Ops.PROGRAM dtypes.void [15, 16, 17] ProgramInfo(params=(%5, %8, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 19 Ops.SINK dtypes.void [14, 18]
 

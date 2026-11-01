@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CONST dtypes.weakint [] 5
 2 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
@@ -10,10 +10,10 @@
 8 Ops.CONST dtypes.bool [] Invalid
 9 Ops.WHERE dtypes.weakint [7, 6, 8]
 10 Ops.CONST dtypes.weakint [] 2
-11 Ops.FLOORDIV dtypes.weakint [9, 10]
+11 Ops.DIV dtypes.weakint [9, 10]
 12 Ops.WHERE dtypes.weakint [5, 11, 8]
 13 Ops.AND dtypes.bool [5, 7]
-14 Ops.FLOORDIV dtypes.weakint [6, 10]
+14 Ops.DIV dtypes.weakint [6, 10]
 15 Ops.WHERE dtypes.weakint [13, 14, 8]
 16 Ops.SINK dtypes.void [2, 12, 15]
 17 Ops.SINK dtypes.void [16]

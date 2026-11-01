@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 12
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 3
@@ -42,19 +42,17 @@
 40 Ops.ADD dtypes.i32 [38, 39]
 41 Ops.STACK dtypes.weakint [12, 18]
 42 Ops.RESHAPE dtypes.i32 [40, 41]
-43 Ops.CMPNE dtypes.bool [20, 42]
-44 Ops.CONST dtypes.bool [] True
-45 Ops.CMPNE dtypes.bool [43, 44]
-46 Ops.CONST dtypes.weakint [] 40
-47 Ops.PARAM dtypes.f32 [46] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
-48 Ops.STACK dtypes.weakint [18, 12, 3]
-49 Ops.RESHAPE dtypes.f32 [47, 48]
-50 Ops.CONST dtypes.weakfloat [] 0.0
-51 Ops.WHERE dtypes.f32 [45, 49, 50]
-52 Ops.STACK dtypes.weakint [18, 10, 17]
-53 Ops.PERMUTE dtypes.f32 [51, 52]
-54 Ops.REDUCE dtypes.f32 [53] (Ops.ADD, 1)
-55 Ops.STORE dtypes.void [5, 54]
-56 Ops.AFTER dtypes.f32 [1, 55]
-57 Ops.SINK dtypes.void [56]
+43 Ops.CMPEQ dtypes.bool [20, 42]
+44 Ops.CONST dtypes.weakint [] 40
+45 Ops.PARAM dtypes.f32 [44] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+46 Ops.STACK dtypes.weakint [18, 12, 3]
+47 Ops.RESHAPE dtypes.f32 [45, 46]
+48 Ops.CONST dtypes.weakfloat [] 0.0
+49 Ops.WHERE dtypes.f32 [43, 47, 48]
+50 Ops.STACK dtypes.weakint [18, 10, 17]
+51 Ops.PERMUTE dtypes.f32 [49, 50]
+52 Ops.REDUCE dtypes.f32 [51] (Ops.ADD, 1)
+53 Ops.STORE dtypes.void [5, 52]
+54 Ops.AFTER dtypes.f32 [1, 53]
+55 Ops.SINK dtypes.void [54]
 

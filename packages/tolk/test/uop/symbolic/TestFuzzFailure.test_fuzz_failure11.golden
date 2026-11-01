@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CONST dtypes.weakint [] 4
 2 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
@@ -13,41 +13,41 @@
 11 Ops.MUL dtypes.weakint [9, 10]
 12 Ops.ADD dtypes.weakint [7, 11]
 13 Ops.CONST dtypes.weakint [] 5
-14 Ops.FLOORMOD dtypes.weakint [12, 13]
+14 Ops.MOD dtypes.weakint [12, 13]
 15 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 16), multiple_of=1, name="v1", addrspace=AddrSpace.ALU)
 16 Ops.CONST dtypes.weakint [] 6
-17 Ops.FLOORDIV dtypes.weakint [15, 16]
+17 Ops.DIV dtypes.weakint [15, 16]
 18 Ops.ADD dtypes.weakint [14, 17]
 19 Ops.ADD dtypes.weakint [18, 15]
 20 Ops.ADD dtypes.weakint [19, 13]
-21 Ops.FLOORMOD dtypes.weakint [20, 13]
+21 Ops.MOD dtypes.weakint [20, 13]
 22 Ops.ADD dtypes.weakint [15, 17]
 23 Ops.CONST dtypes.weakint [] -2
 24 Ops.MUL dtypes.weakint [4, 23]
 25 Ops.ADD dtypes.weakint [22, 24]
 26 Ops.CONST dtypes.weakint [] 3
 27 Ops.ADD dtypes.weakint [25, 26]
-28 Ops.FLOORMOD dtypes.weakint [27, 13]
+28 Ops.MOD dtypes.weakint [27, 13]
 29 Ops.SINK dtypes.void [2, 21, 28]
 30 Ops.CUSTOM dtypes.void [1, 1] ("simplify", dtypes.void)
-31 Ops.FLOORDIV dtypes.weakint [0, 16]
+31 Ops.DIV dtypes.weakint [0, 16]
 32 Ops.ADD dtypes.weakint [0, 31]
 33 Ops.CONST dtypes.weakint [] 7
 34 Ops.MUL dtypes.weakint [33, 23]
 35 Ops.ADD dtypes.weakint [32, 34]
 36 Ops.ADD dtypes.weakint [35, 26]
-37 Ops.FLOORMOD dtypes.weakint [36, 13]
+37 Ops.MOD dtypes.weakint [36, 13]
 38 Ops.SINK dtypes.void [30, 37, 1]
 39 Ops.MUL dtypes.weakint [33, 0]
 40 Ops.MAX dtypes.weakint [39, 6]
 41 Ops.MUL dtypes.weakint [33, 8]
 42 Ops.MUL dtypes.weakint [41, 10]
 43 Ops.ADD dtypes.weakint [40, 42]
-44 Ops.FLOORMOD dtypes.weakint [43, 13]
+44 Ops.MOD dtypes.weakint [43, 13]
 45 Ops.ADD dtypes.weakint [44, 31]
 46 Ops.ADD dtypes.weakint [45, 0]
 47 Ops.ADD dtypes.weakint [46, 13]
-48 Ops.FLOORMOD dtypes.weakint [47, 13]
+48 Ops.MOD dtypes.weakint [47, 13]
 49 Ops.SINK dtypes.void [30, 48, 1]
 50 Ops.SINK dtypes.void [29, 38, 49]
 

@@ -1,8 +1,8 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 
-struct table_args { unsigned char* data0_4; };
+struct table_args { unsigned char* arg0; };
 __attribute__((min_vector_width(512))) void table(const struct table_args* args) {
-  unsigned char* restrict data0_4 = args->data0_4;
+  unsigned char* data0_4 = args->arg0;
   const unsigned char alu0[] = "\x00\x7f\x80\xff";
   for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
     unsigned char val0 = (*(alu0+Lidx0));

@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 36
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 6
@@ -29,8 +29,8 @@
 27 Ops.RESHAPE dtypes.i32 [25, 26]
 28 Ops.ADD dtypes.i32 [27, 5]
 29 Ops.CMPLT dtypes.bool [25, 28]
-30 Ops.CONST dtypes.bool [] True
-31 Ops.CMPNE dtypes.bool [29, 30]
+30 Ops.CONST dtypes.bool [] False
+31 Ops.CMPEQ dtypes.bool [29, 30]
 32 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
 33 Ops.RESHAPE dtypes.f32 [32, 3]
 34 Ops.CONST dtypes.weakfloat [] 0.0

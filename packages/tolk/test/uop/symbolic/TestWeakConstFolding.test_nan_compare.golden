@@ -1,8 +1,10 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.bool [] True
 1 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
 2 Ops.CONST dtypes.weakfloat [] nan
-3 Ops.CMPNE dtypes.bool [2, 2]
-4 Ops.SINK dtypes.void [1, 3, 0]
-5 Ops.SINK dtypes.void [4]
+3 Ops.CMPEQ dtypes.bool [2, 2]
+4 Ops.CONST dtypes.bool [] False
+5 Ops.CMPEQ dtypes.bool [3, 4]
+6 Ops.SINK dtypes.void [1, 5, 0]
+7 Ops.SINK dtypes.void [6]
 

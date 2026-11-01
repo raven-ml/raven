@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -23,7 +23,7 @@
 21 Ops.SINK dtypes.void [1, 7, 20] KernelInfo(name="custom_sum_64", optimized=True)
 22 Ops.SINK dtypes.void [1, 7, 20] KernelInfo(name="custom_sum_64", estimates=Estimates(ops=64, lds=1024, mem=264), optimized=True)
 23 Ops.LINEAR dtypes.void [0, 1, 10, 16, 11, 12, 17, 18, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 9, 19, 20, 21]
-24 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct custom_sum_64_args { device float* data0_1; device float* data1_64; };\nkernel void custom_sum_64(constant struct custom_sum_64_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_1 = args->data0_1;\n  device float* data1_64 = args->data1_64;\n  int gidx0 = gid.x; /* 64 */\n  float val0 = (*(data1_64+gidx0));\n  *(data0_1+0) = 0.0f;\n  float val1 = (*(data0_1+0));\n  *(data0_1+0) = (val1+val0);\n}"
+24 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct custom_sum_64_args { device float* arg0; device float* arg1; };\nkernel void custom_sum_64(constant struct custom_sum_64_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_1 = args->arg0;\n  device float* data1_64 = args->arg1;\n  int gidx0 = gid.x; /* 64 */\n  float val0 = (*(data1_64+gidx0));\n  *(data0_1+0) = 0.0f;\n  float val1 = (*(data0_1+0));\n  *(data0_1+0) = (val1+val0);\n}"
 25 Ops.PROGRAM dtypes.void [22, 23, 24] ProgramInfo(global_size=(64, 1, 1), params=(%1, %16), globals=(0, 1), outs=(0,), ins=(0, 1), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 26 Ops.SINK dtypes.void [21, 25]
 

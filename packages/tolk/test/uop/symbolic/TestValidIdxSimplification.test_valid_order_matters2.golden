@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.bool [] False
 1 Ops.CUSTOM dtypes.void [0, 0] ("simplify_valid", dtypes.void)
 2 Ops.CONST dtypes.weakint [] 13
@@ -6,7 +6,7 @@
 4 Ops.CONST dtypes.weakint [] 11
 5 Ops.ADD dtypes.weakint [3, 4]
 6 Ops.CONST dtypes.weakint [] 14
-7 Ops.FLOORMOD dtypes.weakint [5, 6]
+7 Ops.MOD dtypes.weakint [5, 6]
 8 Ops.CMPLT dtypes.bool [7, 4]
 9 Ops.SPECIAL dtypes.weakint [2] "gidx1"
 10 Ops.CONST dtypes.weakint [] 4
@@ -16,9 +16,9 @@
 14 Ops.CONST dtypes.weakint [] 39
 15 Ops.ADD dtypes.weakint [3, 14]
 16 Ops.CONST dtypes.weakint [] 42
-17 Ops.FLOORDIV dtypes.weakint [15, 16]
+17 Ops.DIV dtypes.weakint [15, 16]
 18 Ops.ADD dtypes.weakint [13, 17]
-19 Ops.FLOORMOD dtypes.weakint [18, 6]
+19 Ops.MOD dtypes.weakint [18, 6]
 20 Ops.CMPLT dtypes.bool [19, 4]
 21 Ops.AND dtypes.bool [8, 20]
 22 Ops.CONST dtypes.weakint [] 3
@@ -28,7 +28,7 @@
 26 Ops.AND dtypes.bool [24, 25]
 27 Ops.AND dtypes.bool [23, 25]
 28 Ops.AND dtypes.bool [27, 0]
-29 Ops.FLOORMOD dtypes.weakint [13, 6]
+29 Ops.MOD dtypes.weakint [13, 6]
 30 Ops.CMPLT dtypes.bool [29, 4]
 31 Ops.AND dtypes.bool [28, 30]
 32 Ops.SINK dtypes.void [1, 26, 31]

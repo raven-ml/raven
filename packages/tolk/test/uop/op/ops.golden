@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 op	value	Unary	Binary	Ternary	ALU	Broadcastable	Elementwise	Defines	Irreducible	Movement	Commutative	Associative	Idempotent	Reduce	Comparison	All
 Ops.SPECIAL	1	False	False	False	False	False	False	False	True	False	False	False	False	False	False	True
 Ops.BUFFER	2	False	False	False	False	False	False	True	False	False	False	False	False	False	False	True
@@ -26,28 +26,28 @@ Ops.EXP2	23	True	False	False	True	False	True	False	False	False	False	False	False
 Ops.LOG2	24	True	False	False	True	False	True	False	False	False	False	False	False	False	False	True
 Ops.SIN	25	True	False	False	True	False	True	False	False	False	False	False	False	False	False	True
 Ops.SQRT	26	True	False	False	True	False	True	False	False	False	False	False	False	False	False	True
-Ops.RECIPROCAL	27	True	False	False	True	False	True	False	False	False	False	False	False	False	False	True
+Ops.RECIP	27	True	False	False	True	False	True	False	False	False	False	False	False	False	False	True
 Ops.NEG	28	True	False	False	True	False	True	False	False	False	False	False	False	False	False	True
 Ops.TRUNC	29	True	False	False	True	False	True	False	False	False	False	False	False	False	False	True
 Ops.ADD	30	False	True	False	True	True	True	False	False	False	True	True	False	True	False	True
 Ops.MUL	31	False	True	False	True	True	True	False	False	False	True	True	False	True	False	True
 Ops.SHL	32	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
 Ops.SHR	33	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
-Ops.CDIV	34	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
+Ops.TRUNCDIV	34	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
 Ops.MAX	35	False	True	False	True	True	True	False	False	False	True	True	True	True	False	True
-Ops.CMOD	36	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
+Ops.TRUNCMOD	36	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
 Ops.CMPLT	37	False	True	False	True	True	True	False	False	False	False	False	False	False	True	True
 Ops.CMPNE	38	False	True	False	True	True	True	False	False	False	True	False	False	False	True	True
 Ops.CMPEQ	39	False	True	False	True	True	True	False	False	False	True	False	False	False	True	True
-Ops.XOR	40	False	True	False	True	True	True	False	False	False	True	False	False	False	False	True
+Ops.XOR	40	False	True	False	True	True	True	False	False	False	True	True	False	False	False	True
 Ops.OR	41	False	True	False	True	True	True	False	False	False	True	True	True	False	False	True
 Ops.AND	42	False	True	False	True	True	True	False	False	False	True	True	True	False	False	True
 Ops.THREEFRY	43	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
 Ops.SUB	44	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
 Ops.FDIV	45	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
 Ops.POW	46	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
-Ops.FLOORDIV	47	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
-Ops.FLOORMOD	48	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
+Ops.DIV	47	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
+Ops.MOD	48	False	True	False	True	True	True	False	False	False	False	False	False	False	False	True
 Ops.WHERE	49	False	False	True	True	True	True	False	False	False	False	False	False	False	False	True
 Ops.MULACC	50	False	False	True	True	True	True	False	False	False	False	False	False	False	False	True
 Ops.BARRIER	51	False	False	False	False	False	False	False	False	False	False	False	False	False	False	True

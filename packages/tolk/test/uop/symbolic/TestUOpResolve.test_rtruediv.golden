@@ -1,9 +1,9 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CUSTOM dtypes.void [] ("simplify", dtypes.void)
 1 Ops.CONST dtypes.weakfloat [] 9.0
 2 Ops.CONST dtypes.weakfloat [] 4.0
 3 Ops.CAST dtypes.f32 [2] dtypes.f32
-4 Ops.RECIPROCAL dtypes.f32 [3]
+4 Ops.RECIP dtypes.f32 [3]
 5 Ops.MUL dtypes.f32 [1, 4]
 6 Ops.CONST dtypes.weakfloat [] 2.25
 7 Ops.CAST dtypes.f32 [6] dtypes.f32

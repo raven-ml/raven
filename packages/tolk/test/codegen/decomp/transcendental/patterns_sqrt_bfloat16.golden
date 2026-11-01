@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=0, dtype=dtypes.bf16)
 2 Ops.EXP2 dtypes.bf16 [1]
@@ -7,37 +7,38 @@
 5 Ops.CONST dtypes.weakfloat [] 0.5
 6 Ops.CAST dtypes.bf16 [5] dtypes.bf16
 7 Ops.CONST dtypes.weakfloat [] 0.0
-8 Ops.CMPNE dtypes.bool [6, 7]
-9 Ops.CONST dtypes.bool [] True
-10 Ops.CMPNE dtypes.bool [8, 9]
-11 Ops.CONST dtypes.weakfloat [] 1.0
-12 Ops.CAST dtypes.bf16 [11] dtypes.bf16
-13 Ops.CMPLT dtypes.bool [1, 7]
-14 Ops.CAST dtypes.i32 [6] dtypes.i32
-15 Ops.CAST dtypes.bf16 [14] dtypes.bf16
-16 Ops.CMPNE dtypes.bool [6, 15]
+8 Ops.CMPEQ dtypes.bool [6, 7]
+9 Ops.CONST dtypes.weakfloat [] 1.0
+10 Ops.CAST dtypes.bf16 [9] dtypes.bf16
+11 Ops.CMPLT dtypes.bool [1, 7]
+12 Ops.CAST dtypes.i32 [6] dtypes.i32
+13 Ops.CAST dtypes.bf16 [12] dtypes.bf16
+14 Ops.CMPEQ dtypes.bool [6, 13]
+15 Ops.CONST dtypes.bool [] False
+16 Ops.CMPEQ dtypes.bool [14, 15]
 17 Ops.CONST dtypes.weakfloat [] -inf
-18 Ops.CMPNE dtypes.bool [1, 17]
-19 Ops.CONST dtypes.weakfloat [] nan
-20 Ops.CAST dtypes.bf16 [19] dtypes.bf16
-21 Ops.CONST dtypes.weakfloat [] -1.0
-22 Ops.MUL dtypes.bf16 [1, 21]
-23 Ops.WHERE dtypes.bf16 [13, 22, 1]
-24 Ops.LOG2 dtypes.bf16 [23]
-25 Ops.MUL dtypes.bf16 [24, 6]
-26 Ops.EXP2 dtypes.bf16 [25]
-27 Ops.WHERE dtypes.bf16 [18, 20, 26]
-28 Ops.CMPLT dtypes.bool [6, 7]
-29 Ops.MUL dtypes.bf16 [6, 21]
-30 Ops.WHERE dtypes.bf16 [28, 29, 6]
-31 Ops.CAST dtypes.i32 [30] dtypes.i32
-32 Ops.CONST dtypes.weakint [] 2
-33 Ops.FLOORMOD dtypes.i32 [31, 32]
-34 Ops.CAST dtypes.bool [33] dtypes.bool
-35 Ops.MUL dtypes.bf16 [26, 21]
-36 Ops.WHERE dtypes.bf16 [34, 35, 26]
-37 Ops.WHERE dtypes.bf16 [16, 27, 36]
-38 Ops.WHERE dtypes.bf16 [13, 37, 26]
-39 Ops.WHERE dtypes.bf16 [10, 12, 38]
-40 Ops.SINK dtypes.void [2, 3, 4, 39]
+18 Ops.CMPEQ dtypes.bool [1, 17]
+19 Ops.CMPEQ dtypes.bool [18, 15]
+20 Ops.CONST dtypes.weakfloat [] nan
+21 Ops.CAST dtypes.bf16 [20] dtypes.bf16
+22 Ops.CONST dtypes.weakfloat [] -1.0
+23 Ops.MUL dtypes.bf16 [1, 22]
+24 Ops.WHERE dtypes.bf16 [11, 23, 1]
+25 Ops.LOG2 dtypes.bf16 [24]
+26 Ops.MUL dtypes.bf16 [25, 6]
+27 Ops.EXP2 dtypes.bf16 [26]
+28 Ops.WHERE dtypes.bf16 [19, 21, 27]
+29 Ops.CMPLT dtypes.bool [6, 7]
+30 Ops.MUL dtypes.bf16 [6, 22]
+31 Ops.WHERE dtypes.bf16 [29, 30, 6]
+32 Ops.CAST dtypes.i32 [31] dtypes.i32
+33 Ops.CONST dtypes.weakint [] 2
+34 Ops.MOD dtypes.i32 [32, 33]
+35 Ops.CAST dtypes.bool [34] dtypes.bool
+36 Ops.MUL dtypes.bf16 [27, 22]
+37 Ops.WHERE dtypes.bf16 [35, 36, 27]
+38 Ops.WHERE dtypes.bf16 [16, 28, 37]
+39 Ops.WHERE dtypes.bf16 [11, 38, 27]
+40 Ops.WHERE dtypes.bf16 [8, 10, 39]
+41 Ops.SINK dtypes.void [2, 3, 4, 40]
 

@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 60
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -29,7 +29,7 @@
 27 Ops.SINK dtypes.void [26] KernelInfo(name="E_60", optimized=True, split=(60, 2, 3))
 28 Ops.SINK dtypes.void [26] KernelInfo(name="E_60", estimates=Estimates(ops=180, lds=480, mem=352), optimized=True, split=(60, 2, 3))
 29 Ops.LINEAR dtypes.void [0, 1, 9, 10, 2, 3, 4, 15, 16, 11, 12, 20, 21, 17, 18, 5, 6, 7, 13, 14, 22, 19, 23, 24, 8, 25, 26, 27]
-30 Ops.SOURCE dtypes.void [] "\nstruct E_60_args { float* data0_60; float* data1_28; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void E_60(const struct E_60_args* args) {\n  float* restrict data0_60 = args->data0_60;\n  float* restrict data1_28 = args->data1_28;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (((alu0<40)&(11<alu0))?*(data1_28+(alu0+-12)):0.0f);\n    *(data0_60+alu0) = val0;\n  }\n}\n"
+30 Ops.SOURCE dtypes.void [] "\nstruct E_60_args { float* arg0; float* arg1; int arg2; int arg3; };\n__attribute__((min_vector_width(512))) void E_60(const struct E_60_args* args) {\n  float* data0_60 = args->arg0;\n  float* data1_28 = args->arg1;\n  int block_lo_ = args->arg2;\n  int block_hi_ = args->arg3;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (((alu0<40)&(11<alu0))?*(data1_28+(alu0+-12)):0.0f);\n    *(data0_60+alu0) = val0;\n  }\n}\n"
 31 Ops.PROGRAM dtypes.void [28, 29, 30] ProgramInfo(global_size=(60, 1, 1), params=(%1, %10, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 32 Ops.SINK dtypes.void [27, 31]
 

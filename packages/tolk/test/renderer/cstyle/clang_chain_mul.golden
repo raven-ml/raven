@@ -1,14 +1,14 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 
-struct E_args { float* data0_1; float* data1_1; float* data2_1; float* data3_1; float* data4_1; float* data5_1; float* data6_1; };
+struct E_args { float* arg0; float* arg1; float* arg2; float* arg3; float* arg4; float* arg5; float* arg6; };
 __attribute__((min_vector_width(512))) void E(const struct E_args* args) {
-  float* restrict data0_1 = args->data0_1;
-  float* restrict data1_1 = args->data1_1;
-  float* restrict data2_1 = args->data2_1;
-  float* restrict data3_1 = args->data3_1;
-  float* restrict data4_1 = args->data4_1;
-  float* restrict data5_1 = args->data5_1;
-  float* restrict data6_1 = args->data6_1;
+  float* data0_1 = args->arg0;
+  float* data1_1 = args->arg1;
+  float* data2_1 = args->arg2;
+  float* data3_1 = args->arg3;
+  float* data4_1 = args->arg4;
+  float* data5_1 = args->arg5;
+  float* data6_1 = args->arg6;
   float val0 = (*(data1_1+0));
   float val1 = (*(data2_1+0));
   float val2 = (*(data3_1+0));

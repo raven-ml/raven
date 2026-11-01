@@ -1,9 +1,9 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 
 extern void frexp();
-struct call_out_args { int* data0_2; };
+struct call_out_args { int* arg0; };
 __attribute__((min_vector_width(512))) void call_out(const struct call_out_args* args) {
-  int* restrict data0_2 = args->data0_2;
+  int* data0_2 = args->arg0;
   double alu0 = ((double(*)(double, int*))(frexp))((double)(8.0), (int*)((data0_2+0)));
   int val0 = (*(data0_2+0));
   *(data0_2+1) = (val0+1);

@@ -1,9 +1,9 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 typedef double double4 __attribute__((aligned(8),ext_vector_type(4)));
-struct trunc_args { double* data0_4; double* data1_4; };
+struct trunc_args { double* arg0; double* arg1; };
 __attribute__((min_vector_width(512))) void trunc(const struct trunc_args* args) {
-  double* restrict data0_4 = args->data0_4;
-  double* restrict data1_4 = args->data1_4;
+  double* data0_4 = args->arg0;
+  double* data1_4 = args->arg1;
   double4 val0 = (*((double4*)((data1_4+0))));
   *((double4*)((data0_4+0))) = __builtin_elementwise_trunc(val0);
 }

@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
 2 Ops.PARAM dtypes.u16 [1] ParamArg(slot=0, dtype=dtypes.u16, device="CPU")
@@ -26,7 +26,7 @@
 24 Ops.SINK dtypes.void [23] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), optimized=True)
 25 Ops.SINK dtypes.void [23] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=4, lds=32, mem=32), optimized=True)
 26 Ops.LINEAR dtypes.void [1, 2, 3, 10, 4, 5, 11, 12, 0, 6, 7, 8, 16, 17, 9, 13, 14, 18, 19, 20, 21, 22, 15, 23, 24]
-27 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct E_4_2_args { device unsigned short* data0_8; device float* data1_4; };\nkernel void E_4_2(constant struct E_4_2_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device unsigned short* data0_8 = args->data0_8;\n  device float* data1_4 = args->data1_4;\n  int lidx0 = lid.x; /* 4 */\n  float val0 = (*(data1_4+lidx0));\n  int alu0 = (lidx0<<1);\n  uint cast0 = as_type<uint>((float)(val0));\n  *(data0_8+(alu0+1)) = ((unsigned short)((cast0>>16u)));\n  *(data0_8+alu0) = ((unsigned short)(cast0));\n}"
+27 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct E_4_2_args { device unsigned short* arg0; device float* arg1; };\nkernel void E_4_2(constant struct E_4_2_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device unsigned short* data0_8 = args->arg0;\n  device float* data1_4 = args->arg1;\n  int lidx0 = lid.x; /* 4 */\n  float val0 = (*(data1_4+lidx0));\n  int alu0 = (lidx0<<1);\n  uint cast0 = as_type<uint>((float)(val0));\n  *(data0_8+(alu0+1)) = ((unsigned short)((cast0>>16u)));\n  *(data0_8+alu0) = ((unsigned short)(cast0));\n}"
 28 Ops.PROGRAM dtypes.void [25, 26, 27] ProgramInfo(local_size=(4, 1, 1), params=(%2, %10), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 29 Ops.SINK dtypes.void [24, 28]
 

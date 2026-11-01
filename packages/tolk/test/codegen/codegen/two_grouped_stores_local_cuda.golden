@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1024
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 32
@@ -157,7 +157,7 @@
 155 Ops.AFTER dtypes.f32 [128, 148]
 156 Ops.INDEX dtypes.f32 [155, 19]
 157 Ops.LOAD dtypes.f32 [156]
-158 Ops.RECIPROCAL dtypes.f32 [157]
+158 Ops.RECIP dtypes.f32 [157]
 159 Ops.MUL dtypes.f32 [154, 158]
 160 Ops.CMPEQ dtypes.bool [27, 19]
 161 Ops.CMPEQ dtypes.bool [38, 19]
@@ -284,7 +284,7 @@
 282 Ops.AFTER dtypes.f32 [255, 275]
 283 Ops.INDEX dtypes.f32 [282, 19]
 284 Ops.LOAD dtypes.f32 [283]
-285 Ops.RECIPROCAL dtypes.f32 [284]
+285 Ops.RECIP dtypes.f32 [284]
 286 Ops.MUL dtypes.f32 [281, 285]
 287 Ops.STORE dtypes.void [10, 286]
 288 Ops.SINK dtypes.void [287] KernelInfo(name="r_32_32_4_4_8_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=4, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=164864, lds=174592, mem=8192), optimized=True)

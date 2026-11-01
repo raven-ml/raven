@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 493
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 1
@@ -14,18 +14,18 @@
 12 Ops.CONST dtypes.weakint [] 32
 13 Ops.RANGE dtypes.weakint [12] (AxisType.WARP, -1)
 14 Ops.CONST dtypes.weakint [] 16
-15 Ops.FLOORDIV dtypes.weakint [13, 14]
-16 Ops.FLOORMOD dtypes.weakint [15, 4]
+15 Ops.DIV dtypes.weakint [13, 14]
+16 Ops.MOD dtypes.weakint [15, 4]
 17 Ops.ADD dtypes.weakint [11, 16]
 18 Ops.MUL dtypes.weakint [17, 4]
 19 Ops.CONST dtypes.weakint [] 8
-20 Ops.FLOORDIV dtypes.weakint [13, 19]
-21 Ops.FLOORMOD dtypes.weakint [20, 4]
+20 Ops.DIV dtypes.weakint [13, 19]
+21 Ops.MOD dtypes.weakint [20, 4]
 22 Ops.ADD dtypes.weakint [18, 21]
 23 Ops.MUL dtypes.weakint [22, 4]
 24 Ops.CONST dtypes.weakint [] 4
-25 Ops.FLOORDIV dtypes.weakint [13, 24]
-26 Ops.FLOORMOD dtypes.weakint [25, 4]
+25 Ops.DIV dtypes.weakint [13, 24]
+26 Ops.MOD dtypes.weakint [25, 4]
 27 Ops.ADD dtypes.weakint [23, 26]
 28 Ops.CONST dtypes.weakint [] 17
 29 Ops.CMPLT dtypes.bool [27, 28]
@@ -34,12 +34,12 @@
 32 Ops.RANGE dtypes.weakint [24] (AxisType.UPCAST, 10)
 33 Ops.ADD dtypes.weakint [31, 32]
 34 Ops.MUL dtypes.weakint [33, 4]
-35 Ops.FLOORDIV dtypes.weakint [13, 4]
-36 Ops.FLOORMOD dtypes.weakint [35, 4]
+35 Ops.DIV dtypes.weakint [13, 4]
+36 Ops.MOD dtypes.weakint [35, 4]
 37 Ops.ADD dtypes.weakint [34, 36]
 38 Ops.MUL dtypes.weakint [37, 4]
-39 Ops.FLOORDIV dtypes.weakint [13, 2]
-40 Ops.FLOORMOD dtypes.weakint [39, 4]
+39 Ops.DIV dtypes.weakint [13, 2]
+40 Ops.MOD dtypes.weakint [39, 4]
 41 Ops.ADD dtypes.weakint [38, 40]
 42 Ops.MUL dtypes.weakint [41, 4]
 43 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 3)

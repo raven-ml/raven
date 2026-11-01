@@ -1,11 +1,11 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
-struct not_args { float* data0_4; float* data1_4; float* data2_4; };
+struct not_args { float* arg0; float* arg1; float* arg2; };
 __attribute__((min_vector_width(512))) void not(const struct not_args* args) {
-  float* restrict data0_4 = args->data0_4;
-  float* restrict data1_4 = args->data1_4;
-  float* restrict data2_4 = args->data2_4;
+  float* data0_4 = args->arg0;
+  float* data1_4 = args->arg1;
+  float* data2_4 = args->arg2;
   float4 val0 = (*((float4*)((data1_4+0))));
   float4 val1 = (*((float4*)((data2_4+0))));
   float4 alu0 = (((val0<val1)^-1)?val0:val1);

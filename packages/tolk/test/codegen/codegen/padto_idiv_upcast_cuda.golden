@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 10
 2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
@@ -29,12 +29,12 @@
 27 Ops.ADD dtypes.i32 [24, 26]
 28 Ops.INDEX dtypes.i32 [21, 27]
 29 Ops.LOAD dtypes.i32 [28, 26, 17]
-30 Ops.CDIV dtypes.i32 [19, 29]
+30 Ops.TRUNCDIV dtypes.i32 [19, 29]
 31 Ops.INDEX dtypes.i32 [18, 26]
 32 Ops.ADD dtypes.i32 [24, 4]
 33 Ops.INDEX dtypes.i32 [21, 32]
 34 Ops.LOAD dtypes.i32 [33, 26, 17]
-35 Ops.CDIV dtypes.i32 [31, 34]
+35 Ops.TRUNCDIV dtypes.i32 [31, 34]
 36 Ops.STACK dtypes.i32 [30, 35]
 37 Ops.STORE dtypes.void [9, 36, 17]
 38 Ops.ADD dtypes.i32 [8, 7]
@@ -48,13 +48,13 @@
 46 Ops.ADD dtypes.i32 [24, 45]
 47 Ops.INDEX dtypes.i32 [21, 46]
 48 Ops.LOAD dtypes.i32 [47, 26, 41]
-49 Ops.CDIV dtypes.i32 [43, 48]
+49 Ops.TRUNCDIV dtypes.i32 [43, 48]
 50 Ops.INDEX dtypes.i32 [42, 26]
 51 Ops.CAST dtypes.i32 [1] dtypes.i32
 52 Ops.ADD dtypes.i32 [24, 51]
 53 Ops.INDEX dtypes.i32 [21, 52]
 54 Ops.LOAD dtypes.i32 [53, 26, 41]
-55 Ops.CDIV dtypes.i32 [50, 54]
+55 Ops.TRUNCDIV dtypes.i32 [50, 54]
 56 Ops.STACK dtypes.i32 [49, 55]
 57 Ops.STORE dtypes.void [39, 56, 41]
 58 Ops.AFTER dtypes.void [0, 37, 57]

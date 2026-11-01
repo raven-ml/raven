@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -56,7 +56,7 @@
 54 Ops.SINK dtypes.void [16, 16, 16, 16, 27, 27, 27, 27, 40, 40, 40, 40, 53, 53, 53, 53] KernelInfo(name="custom_arange_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), optimized=True)
 55 Ops.SINK dtypes.void [16, 16, 16, 16, 27, 27, 27, 27, 40, 40, 40, 40, 53, 53, 53, 53] KernelInfo(name="custom_arange_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), estimates=Estimates(lds=64, mem=64), optimized=True)
 56 Ops.LINEAR dtypes.void [0, 1, 7, 8, 9, 10, 11, 12, 13, 14, 15, 44, 45, 46, 47, 48, 49, 50, 51, 52, 18, 19, 20, 21, 22, 23, 24, 25, 26, 35, 36, 37, 38, 31, 32, 33, 34, 39, 2, 3, 4, 5, 6, 41, 42, 43, 17, 28, 29, 30, 16, 53, 27, 40, 54]
-57 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct custom_arange_16_args { float* data0_16; };\n__attribute__((min_vector_width(512))) void custom_arange_16(const struct custom_arange_16_args* args) {\n  float* restrict data0_16 = args->data0_16;\n  *((float4*)((data0_16+0))) = (float4){0.0f,1.0f,2.0f,3.0f};\n  *((float4*)((data0_16+12))) = (float4){12.0f,13.0f,14.0f,15.0f};\n  *((float4*)((data0_16+4))) = (float4){4.0f,5.0f,6.0f,7.0f};\n  *((float4*)((data0_16+8))) = (float4){8.0f,9.0f,10.0f,11.0f};\n}\n"
+57 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct custom_arange_16_args { float* arg0; };\n__attribute__((min_vector_width(512))) void custom_arange_16(const struct custom_arange_16_args* args) {\n  float* data0_16 = args->arg0;\n  *((float4*)((data0_16+0))) = (float4){0.0f,1.0f,2.0f,3.0f};\n  *((float4*)((data0_16+12))) = (float4){12.0f,13.0f,14.0f,15.0f};\n  *((float4*)((data0_16+4))) = (float4){4.0f,5.0f,6.0f,7.0f};\n  *((float4*)((data0_16+8))) = (float4){8.0f,9.0f,10.0f,11.0f};\n}\n"
 58 Ops.PROGRAM dtypes.void [55, 56, 57] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 59 Ops.SINK dtypes.void [54, 58]
 

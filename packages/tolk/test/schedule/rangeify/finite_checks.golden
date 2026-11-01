@@ -1,41 +1,37 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
-3 Ops.CMPNE dtypes.bool [2, 2]
-4 Ops.CONST dtypes.bool [] True
-5 Ops.CMPNE dtypes.bool [3, 4]
-6 Ops.REDUCE dtypes.bool [5] (Ops.MUL, 1)
-7 Ops.CONST dtypes.weakint [] 1024
-8 Ops.PARAM dtypes.f32 [7] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
-9 Ops.CONST dtypes.weakint [] 32
-10 Ops.STACK dtypes.weakint [9, 9]
-11 Ops.RESHAPE dtypes.f32 [8, 10]
-12 Ops.CMPNE dtypes.bool [11, 11]
-13 Ops.CMPNE dtypes.bool [12, 4]
-14 Ops.REDUCE dtypes.bool [13] (Ops.MUL, 2)
-15 Ops.AND dtypes.bool [6, 14]
-16 Ops.CONST dtypes.weakint [] 48
-17 Ops.PARAM dtypes.f32 [16] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
-18 Ops.CMPNE dtypes.bool [17, 17]
-19 Ops.CMPNE dtypes.bool [18, 4]
-20 Ops.REDUCE dtypes.bool [19] (Ops.MUL, 1)
-21 Ops.AND dtypes.bool [15, 20]
-22 Ops.CONST dtypes.weakfloat [] 2.0
-23 Ops.MUL dtypes.f32 [2, 22]
-24 Ops.WHERE dtypes.f32 [21, 23, 2]
-25 Ops.STORE dtypes.void [1, 24]
-26 Ops.AFTER dtypes.f32 [1, 25]
-27 Ops.PARAM dtypes.f32 [7] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
-28 Ops.RESHAPE dtypes.f32 [27, 10]
-29 Ops.MUL dtypes.f32 [11, 22]
-30 Ops.WHERE dtypes.f32 [21, 29, 11]
-31 Ops.STORE dtypes.void [28, 30]
-32 Ops.AFTER dtypes.f32 [27, 31]
-33 Ops.PARAM dtypes.f32 [16] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
-34 Ops.MUL dtypes.f32 [17, 22]
-35 Ops.WHERE dtypes.f32 [21, 34, 17]
-36 Ops.STORE dtypes.void [33, 35]
-37 Ops.AFTER dtypes.f32 [33, 36]
-38 Ops.SINK dtypes.void [26, 32, 37]
+3 Ops.CMPEQ dtypes.bool [2, 2]
+4 Ops.REDUCE dtypes.bool [3] (Ops.MUL, 1)
+5 Ops.CONST dtypes.weakint [] 1024
+6 Ops.PARAM dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+7 Ops.CONST dtypes.weakint [] 32
+8 Ops.STACK dtypes.weakint [7, 7]
+9 Ops.RESHAPE dtypes.f32 [6, 8]
+10 Ops.CMPEQ dtypes.bool [9, 9]
+11 Ops.REDUCE dtypes.bool [10] (Ops.MUL, 2)
+12 Ops.AND dtypes.bool [4, 11]
+13 Ops.CONST dtypes.weakint [] 48
+14 Ops.PARAM dtypes.f32 [13] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+15 Ops.CMPEQ dtypes.bool [14, 14]
+16 Ops.REDUCE dtypes.bool [15] (Ops.MUL, 1)
+17 Ops.AND dtypes.bool [12, 16]
+18 Ops.CONST dtypes.weakfloat [] 2.0
+19 Ops.MUL dtypes.f32 [2, 18]
+20 Ops.WHERE dtypes.f32 [17, 19, 2]
+21 Ops.STORE dtypes.void [1, 20]
+22 Ops.AFTER dtypes.f32 [1, 21]
+23 Ops.PARAM dtypes.f32 [5] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+24 Ops.RESHAPE dtypes.f32 [23, 8]
+25 Ops.MUL dtypes.f32 [9, 18]
+26 Ops.WHERE dtypes.f32 [17, 25, 9]
+27 Ops.STORE dtypes.void [24, 26]
+28 Ops.AFTER dtypes.f32 [23, 27]
+29 Ops.PARAM dtypes.f32 [13] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
+30 Ops.MUL dtypes.f32 [14, 18]
+31 Ops.WHERE dtypes.f32 [17, 30, 14]
+32 Ops.STORE dtypes.void [29, 31]
+33 Ops.AFTER dtypes.f32 [29, 32]
+34 Ops.SINK dtypes.void [22, 28, 33]
 

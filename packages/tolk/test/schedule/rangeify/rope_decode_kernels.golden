@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 36
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 4
@@ -57,17 +57,17 @@
 55 Ops.ADD dtypes.i32 [53, 38]
 56 Ops.WHERE dtypes.i32 [54, 55, 53]
 57 Ops.CAST dtypes.i32 [39] dtypes.i32
-58 Ops.CMPNE dtypes.bool [56, 57]
-59 Ops.CONST dtypes.weakfloat [] 0.0
-60 Ops.CONST dtypes.weakfloat [] 1.5707963267948966
-61 Ops.CAST dtypes.f32 [39] dtypes.f32
-62 Ops.INDEX dtypes.f32 [16, 34]
-63 Ops.MUL dtypes.f32 [61, 62]
-64 Ops.CONST dtypes.weakfloat [] -1.0
-65 Ops.MUL dtypes.f32 [63, 64]
-66 Ops.ADD dtypes.f32 [60, 65]
-67 Ops.SIN dtypes.f32 [66]
-68 Ops.WHERE dtypes.f32 [58, 59, 67]
+58 Ops.CMPEQ dtypes.bool [56, 57]
+59 Ops.CONST dtypes.weakfloat [] 1.5707963267948966
+60 Ops.CAST dtypes.f32 [39] dtypes.f32
+61 Ops.INDEX dtypes.f32 [16, 34]
+62 Ops.MUL dtypes.f32 [60, 61]
+63 Ops.CONST dtypes.weakfloat [] -1.0
+64 Ops.MUL dtypes.f32 [62, 63]
+65 Ops.ADD dtypes.f32 [59, 64]
+66 Ops.SIN dtypes.f32 [65]
+67 Ops.CONST dtypes.weakfloat [] 0.0
+68 Ops.WHERE dtypes.f32 [58, 66, 67]
 69 Ops.STORE dtypes.void [49, 68]
 70 Ops.END dtypes.void [69, 39, 34]
 71 Ops.SINK dtypes.void [70] KernelInfo()

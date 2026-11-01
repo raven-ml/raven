@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 256
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 1
@@ -20,8 +20,8 @@
 18 Ops.RANGE dtypes.weakint [17] (AxisType.WEAK, 1)
 19 Ops.ADD dtypes.weakint [18, 7]
 20 Ops.CMPLT dtypes.bool [19, 2]
-21 Ops.CONST dtypes.bool [] True
-22 Ops.CMPNE dtypes.bool [20, 21]
+21 Ops.CONST dtypes.bool [] False
+22 Ops.CMPEQ dtypes.bool [20, 21]
 23 Ops.CONST dtypes.weakint [] 2
 24 Ops.MUL dtypes.weakint [7, 23]
 25 Ops.ADD dtypes.weakint [24, 18]
@@ -34,7 +34,7 @@
 32 Ops.ADD dtypes.weakint [30, 31]
 33 Ops.ADD dtypes.weakint [32, 9]
 34 Ops.CMPLT dtypes.bool [33, 2]
-35 Ops.CMPNE dtypes.bool [34, 21]
+35 Ops.CMPEQ dtypes.bool [34, 21]
 36 Ops.MUL dtypes.weakint [9, 23]
 37 Ops.ADD dtypes.weakint [36, 32]
 38 Ops.CMPLT dtypes.bool [37, 26]
@@ -55,7 +55,7 @@
 53 Ops.ADD dtypes.weakint [49, 52]
 54 Ops.CONST dtypes.weakint [] 659
 55 Ops.ADD dtypes.weakint [53, 54]
-56 Ops.FLOORMOD dtypes.weakint [55, 41]
+56 Ops.MOD dtypes.weakint [55, 41]
 57 Ops.CONST dtypes.bool [] Invalid
 58 Ops.WHERE dtypes.weakint [43, 56, 57]
 59 Ops.INDEX dtypes.f32 [42, 58]

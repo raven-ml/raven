@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.STACK dtypes.void []
@@ -68,14 +68,14 @@
 66 Ops.LOAD dtypes.f16 [64, 65, 3]
 67 Ops.CAST dtypes.f32 [66] dtypes.f32
 68 Ops.WHERE dtypes.f32 [3, 67, 24]
-69 Ops.CONST dtypes.bool [] True
-70 Ops.CMPNE dtypes.bool [3, 69]
+69 Ops.CONST dtypes.bool [] False
+70 Ops.CMPEQ dtypes.bool [3, 69]
 71 Ops.LOAD dtypes.f32 [41, 39, 70]
 72 Ops.WHERE dtypes.f32 [3, 24, 71]
 73 Ops.WHERE dtypes.f32 [3, 5, 71]
 74 Ops.WHERE dtypes.f32 [14, 45, 24]
 75 Ops.WHERE dtypes.f32 [3, 42, 24]
-76 Ops.CMPNE dtypes.bool [14, 69]
+76 Ops.CMPEQ dtypes.bool [14, 69]
 77 Ops.LOAD dtypes.f32 [41, 39, 76]
 78 Ops.WHERE dtypes.f32 [3, 24, 77]
 79 Ops.WHERE dtypes.f32 [3, 23, 24]

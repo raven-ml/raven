@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 2880
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 960
@@ -48,7 +48,7 @@
 46 Ops.MUL dtypes.weakint [7, 45]
 47 Ops.ADD dtypes.weakint [44, 46]
 48 Ops.CONST dtypes.weakint [] 16
-49 Ops.FLOORDIV dtypes.weakint [13, 48]
+49 Ops.DIV dtypes.weakint [13, 48]
 50 Ops.ADD dtypes.weakint [47, 49]
 51 Ops.INDEX dtypes.f32 [42, 50]
 52 Ops.MUL dtypes.f32 [40, 51]

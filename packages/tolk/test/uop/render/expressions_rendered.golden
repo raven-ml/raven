@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 case	src	render	simplified
 variable	0	a	a
 bound_variable	1	a	a
@@ -58,8 +58,8 @@ mulacc	54	(a*b+c)	(a*b+c)
 mulacc_of_sums	55	((a+b)*b+(b+c))	((b+a)*b+(b+c))
 where	56	(a if g else b)	(a if g else b)
 where_of_comparison	57	((a+c) if (a<b) else b)	((c+a) if (a<b) else b)
-cdiv	58	cdiv(a, b)	cdiv(a, b)
-cmod	59	cmod(a, b)	cmod(a, b)
+cdiv	58	truncdiv(a, b)	truncdiv(a, b)
+cmod	59	truncmod(a, b)	truncmod(a, b)
 add	60	(a+b)	(b+a)
 sub	61	(a-b)	(a-b)
 mul	62	(a*b)	(b*a)

@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 20
 2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
@@ -35,7 +35,7 @@
 33 Ops.SINK dtypes.void [32] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True, split=(5, 1, 2))
 34 Ops.SINK dtypes.void [32] KernelInfo(name="E_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=25, lds=80, mem=80), optimized=True, split=(5, 1, 2))
 35 Ops.LINEAR dtypes.void [1, 2, 0, 3, 4, 17, 18, 23, 24, 26, 27, 14, 15, 20, 21, 8, 9, 11, 12, 5, 6, 7, 16, 19, 25, 28, 22, 29, 10, 13, 30, 31, 32, 33]
-36 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct E_5_4_args { int* data0_20; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void E_5_4(const struct E_5_4_args* args) {\n  int* restrict data0_20 = args->data0_20;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int alu1 = (alu0*-20);\n    *((int4*)((data0_20+(alu0<<2)))) = (int4){(alu1+-1),(alu1+-6),(alu1+-11),(alu1+-16)};\n  }\n}\n"
+36 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct E_5_4_args { int* arg0; int arg1; int arg2; };\n__attribute__((min_vector_width(512))) void E_5_4(const struct E_5_4_args* args) {\n  int* data0_20 = args->arg0;\n  int block_lo_ = args->arg1;\n  int block_hi_ = args->arg2;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int alu1 = (alu0*-20);\n    *((int4*)((data0_20+(alu0<<2)))) = (int4){(alu1+-1),(alu1+-6),(alu1+-11),(alu1+-16)};\n  }\n}\n"
 37 Ops.PROGRAM dtypes.void [34, 35, 36] ProgramInfo(global_size=(5, 1, 1), params=(%2, %3, %4), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 38 Ops.SINK dtypes.void [33, 37]
 

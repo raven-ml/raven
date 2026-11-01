@@ -1,11 +1,11 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 #include <metal_stdlib>
 using namespace metal;
-struct r_64_64_4_16_args { device float* data0_4096; device float* data1_4096; device float* data2_4096; };
+struct r_64_64_4_16_args { device float* arg0; device float* arg1; device float* arg2; };
 kernel void r_64_64_4_16(constant struct r_64_64_4_16_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device float* data0_4096 = args->data0_4096;
-  device float* data1_4096 = args->data1_4096;
-  device float* data2_4096 = args->data2_4096;
+  device float* data0_4096 = args->arg0;
+  device float* data1_4096 = args->arg1;
+  device float* data2_4096 = args->arg2;
   float buf0[1];
   float buf1[1];
   threadgroup __attribute__((aligned(16))) float buf2[4];

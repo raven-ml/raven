@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=0, dtype=dtypes.bf16, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -90,7 +90,7 @@
 88 Ops.SINK dtypes.void [87] KernelInfo(name="r_3", estimates=Estimates(ops=19, lds=8, mem=8), optimized=True)
 89 Ops.SINK dtypes.void [87] KernelInfo(name="r_3", optimized=True)
 90 Ops.LINEAR dtypes.void [0, 1, 10, 16, 59, 2, 3, 60, 7, 8, 11, 21, 22, 61, 12, 17, 18, 62, 63, 64, 19, 20, 23, 24, 65, 66, 67, 68, 69, 70, 4, 36, 39, 33, 34, 42, 43, 45, 46, 49, 50, 71, 72, 75, 76, 77, 78, 79, 80, 73, 74, 81, 82, 83, 84, 85, 86, 87, 89]
-91 Ops.SOURCE dtypes.void [] "\nstruct r_3_args { unsigned short* data0_1; unsigned short* data1_3; };\n__attribute__((min_vector_width(512))) void r_3(const struct r_3_args* args) {\n  unsigned short* restrict data0_1 = args->data0_1;\n  unsigned short* restrict data1_3 = args->data1_3;\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    unsigned short val0 = (*(data1_3+Lidx0));\n    *(buf0+0) = ((*(buf0+0))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (unsigned short)(val0))))<<16u))));\n  }\n  unsigned int cast0 = __builtin_bit_cast(unsigned int, (float)((*(buf0+0))));\n  unsigned int alu3 = (((cast0&65535u)!=0u)?(cast0|65536u):cast0);\n  unsigned int alu4 = (((-cast0&2139095040u)!=0u)?(cast0+((cast0>>16u)&1u)+32767u):alu3);\n  *(data0_1+0) = __builtin_bit_cast(unsigned short, (unsigned short)(((unsigned short)((alu4>>16u)))));\n}\n"
+91 Ops.SOURCE dtypes.void [] "\nstruct r_3_args { unsigned short* arg0; unsigned short* arg1; };\n__attribute__((min_vector_width(512))) void r_3(const struct r_3_args* args) {\n  unsigned short* data0_1 = args->arg0;\n  unsigned short* data1_3 = args->arg1;\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    unsigned short val0 = (*(data1_3+Lidx0));\n    *(buf0+0) = ((*(buf0+0))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (unsigned short)(val0))))<<16u))));\n  }\n  unsigned int cast0 = __builtin_bit_cast(unsigned int, (float)((*(buf0+0))));\n  unsigned int alu3 = (((cast0&65535u)!=0u)?(cast0|65536u):cast0);\n  unsigned int alu4 = (((-cast0&2139095040u)!=0u)?(cast0+((cast0>>16u)&1u)+32767u):alu3);\n  *(data0_1+0) = __builtin_bit_cast(unsigned short, (unsigned short)(((unsigned short)((alu4>>16u)))));\n}\n"
 92 Ops.PROGRAM dtypes.void [88, 90, 91] ProgramInfo(params=(%1, %16), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 93 Ops.SINK dtypes.void [58, 92]
 

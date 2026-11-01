@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 120
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 2
@@ -27,10 +27,10 @@
 25 Ops.MUL dtypes.weakint [24, 8]
 26 Ops.CONST dtypes.weakint [] 20
 27 Ops.RANGE dtypes.weakint [26] (AxisType.GLOBAL, 0)
-28 Ops.FLOORMOD dtypes.weakint [27, 8]
+28 Ops.MOD dtypes.weakint [27, 8]
 29 Ops.ADD dtypes.weakint [25, 28]
 30 Ops.MUL dtypes.weakint [29, 12]
-31 Ops.FLOORDIV dtypes.weakint [27, 8]
+31 Ops.DIV dtypes.weakint [27, 8]
 32 Ops.ADD dtypes.weakint [30, 31]
 33 Ops.INDEX dtypes.f32 [1, 32]
 34 Ops.STORE dtypes.void [33, 18]

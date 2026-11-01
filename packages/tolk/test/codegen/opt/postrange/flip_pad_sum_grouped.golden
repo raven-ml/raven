@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 19
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 1
@@ -23,23 +23,24 @@
 21 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
 22 Ops.ADD dtypes.weakint [20, 21]
 23 Ops.CMPLT dtypes.bool [22, 4]
-24 Ops.CMPNE dtypes.bool [23, 13]
-25 Ops.CMPLT dtypes.bool [22, 0]
-26 Ops.AND dtypes.bool [24, 25]
-27 Ops.CONST dtypes.weakint [] 323
-28 Ops.PARAM dtypes.f32 [27] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
-29 Ops.AND dtypes.bool [12, 26]
-30 Ops.CONST dtypes.weakint [] -19
-31 Ops.MUL dtypes.weakint [22, 30]
-32 Ops.ADD dtypes.weakint [31, 11]
-33 Ops.CONST dtypes.weakint [] 342
-34 Ops.ADD dtypes.weakint [32, 33]
-35 Ops.WHERE dtypes.weakint [29, 34, 15]
-36 Ops.INDEX dtypes.f32 [28, 35]
-37 Ops.CONST dtypes.weakfloat [] 0.0
-38 Ops.WHERE dtypes.f32 [26, 36, 37]
-39 Ops.REDUCE dtypes.f32 [38, 19, 21] (Ops.ADD, 0)
-40 Ops.STORE dtypes.void [17, 39]
-41 Ops.END dtypes.void [40, 3, 6, 10]
-42 Ops.SINK dtypes.void [41] KernelInfo(name="r_22_2_12", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.LOCAL, True)), Opt(op=OptOps.PADTO, axis=0, arg=8), Opt(op=OptOps.SPLIT, axis=0, arg=(12, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.LOCAL))), optimized=True)
+24 Ops.CONST dtypes.bool [] False
+25 Ops.CMPEQ dtypes.bool [23, 24]
+26 Ops.CMPLT dtypes.bool [22, 0]
+27 Ops.AND dtypes.bool [25, 26]
+28 Ops.CONST dtypes.weakint [] 323
+29 Ops.PARAM dtypes.f32 [28] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+30 Ops.AND dtypes.bool [12, 27]
+31 Ops.CONST dtypes.weakint [] -19
+32 Ops.MUL dtypes.weakint [22, 31]
+33 Ops.ADD dtypes.weakint [32, 11]
+34 Ops.CONST dtypes.weakint [] 342
+35 Ops.ADD dtypes.weakint [33, 34]
+36 Ops.WHERE dtypes.weakint [30, 35, 15]
+37 Ops.INDEX dtypes.f32 [29, 36]
+38 Ops.CONST dtypes.weakfloat [] 0.0
+39 Ops.WHERE dtypes.f32 [27, 37, 38]
+40 Ops.REDUCE dtypes.f32 [39, 19, 21] (Ops.ADD, 0)
+41 Ops.STORE dtypes.void [17, 40]
+42 Ops.END dtypes.void [41, 3, 6, 10]
+43 Ops.SINK dtypes.void [42] KernelInfo(name="r_22_2_12", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.LOCAL, True)), Opt(op=OptOps.PADTO, axis=0, arg=8), Opt(op=OptOps.SPLIT, axis=0, arg=(12, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.LOCAL))), optimized=True)
 

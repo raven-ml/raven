@@ -1,18 +1,18 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CONST dtypes.weakint [] 150527
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
 3 Ops.STACK dtypes.void []
 4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 150527), multiple_of=1, name="gidx", addrspace=AddrSpace.ALU)
 5 Ops.CONST dtypes.weakint [] 3
-6 Ops.FLOORDIV dtypes.weakint [4, 5]
+6 Ops.DIV dtypes.weakint [4, 5]
 7 Ops.CONST dtypes.weakint [] 224
-8 Ops.FLOORMOD dtypes.weakint [6, 7]
+8 Ops.MOD dtypes.weakint [6, 7]
 9 Ops.MUL dtypes.weakint [8, 5]
-10 Ops.FLOORMOD dtypes.weakint [4, 5]
+10 Ops.MOD dtypes.weakint [4, 5]
 11 Ops.ADD dtypes.weakint [9, 10]
 12 Ops.CONST dtypes.weakint [] 672
-13 Ops.FLOORDIV dtypes.weakint [4, 12]
+13 Ops.DIV dtypes.weakint [4, 12]
 14 Ops.MUL dtypes.weakint [13, 12]
 15 Ops.ADD dtypes.weakint [11, 14]
 16 Ops.SINK dtypes.void [2, 15, 4]
@@ -24,14 +24,14 @@
 22 Ops.CUSTOM dtypes.void [0, 21] ("sym", dtypes.void)
 23 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 384), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
 24 Ops.CONST dtypes.weakint [] 11
-25 Ops.FLOORDIV dtypes.weakint [23, 24]
+25 Ops.DIV dtypes.weakint [23, 24]
 26 Ops.CONST dtypes.weakint [] 7
-27 Ops.FLOORMOD dtypes.weakint [25, 26]
+27 Ops.MOD dtypes.weakint [25, 26]
 28 Ops.MUL dtypes.weakint [27, 24]
-29 Ops.FLOORMOD dtypes.weakint [23, 24]
+29 Ops.MOD dtypes.weakint [23, 24]
 30 Ops.ADD dtypes.weakint [28, 29]
 31 Ops.CONST dtypes.weakint [] 77
-32 Ops.FLOORDIV dtypes.weakint [23, 31]
+32 Ops.DIV dtypes.weakint [23, 31]
 33 Ops.MUL dtypes.weakint [32, 31]
 34 Ops.ADD dtypes.weakint [30, 33]
 35 Ops.SINK dtypes.void [22, 34, 23]
@@ -42,13 +42,13 @@
 40 Ops.CONST dtypes.weakint [] 406
 41 Ops.CUSTOM dtypes.void [0, 40] ("sym", dtypes.void)
 42 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 209), multiple_of=1, name="x2", addrspace=AddrSpace.ALU)
-43 Ops.FLOORDIV dtypes.weakint [42, 26]
+43 Ops.DIV dtypes.weakint [42, 26]
 44 Ops.CONST dtypes.weakint [] 6
-45 Ops.FLOORMOD dtypes.weakint [43, 44]
+45 Ops.MOD dtypes.weakint [43, 44]
 46 Ops.CONST dtypes.weakint [] 14
 47 Ops.MUL dtypes.weakint [45, 46]
 48 Ops.CONST dtypes.weakint [] 42
-49 Ops.FLOORDIV dtypes.weakint [42, 48]
+49 Ops.DIV dtypes.weakint [42, 48]
 50 Ops.CONST dtypes.weakint [] 84
 51 Ops.MUL dtypes.weakint [49, 50]
 52 Ops.ADD dtypes.weakint [47, 51]
@@ -65,12 +65,12 @@
 63 Ops.CONST dtypes.weakint [] 1000
 64 Ops.CUSTOM dtypes.void [62, 63] ("sym", dtypes.void)
 65 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-1000, 1000), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
-66 Ops.FLOORDIV dtypes.weakint [65, 5]
-67 Ops.FLOORMOD dtypes.weakint [66, 7]
+66 Ops.DIV dtypes.weakint [65, 5]
+67 Ops.MOD dtypes.weakint [66, 7]
 68 Ops.MUL dtypes.weakint [67, 5]
-69 Ops.FLOORMOD dtypes.weakint [65, 5]
+69 Ops.MOD dtypes.weakint [65, 5]
 70 Ops.ADD dtypes.weakint [68, 69]
-71 Ops.FLOORDIV dtypes.weakint [65, 12]
+71 Ops.DIV dtypes.weakint [65, 12]
 72 Ops.MUL dtypes.weakint [71, 12]
 73 Ops.ADD dtypes.weakint [70, 72]
 74 Ops.SINK dtypes.void [64, 73, 65]
@@ -81,10 +81,10 @@
 79 Ops.CONST dtypes.weakint [] -1002
 80 Ops.CONST dtypes.weakint [] 999
 81 Ops.CUSTOM dtypes.void [79, 80] ("sym", dtypes.void)
-82 Ops.FLOORMOD dtypes.weakint [66, 26]
+82 Ops.MOD dtypes.weakint [66, 26]
 83 Ops.MUL dtypes.weakint [82, 5]
 84 Ops.CONST dtypes.weakint [] 21
-85 Ops.FLOORDIV dtypes.weakint [65, 84]
+85 Ops.DIV dtypes.weakint [65, 84]
 86 Ops.MUL dtypes.weakint [85, 84]
 87 Ops.ADD dtypes.weakint [83, 86]
 88 Ops.MUL dtypes.weakint [66, 5]
@@ -96,7 +96,7 @@
 94 Ops.CONST dtypes.weakint [] 150669
 95 Ops.CUSTOM dtypes.void [0, 94] ("sym", dtypes.void)
 96 Ops.CONST dtypes.weakint [] 600
-97 Ops.FLOORDIV dtypes.weakint [4, 96]
+97 Ops.DIV dtypes.weakint [4, 96]
 98 Ops.MUL dtypes.weakint [97, 96]
 99 Ops.ADD dtypes.weakint [9, 98]
 100 Ops.ADD dtypes.weakint [98, 9]

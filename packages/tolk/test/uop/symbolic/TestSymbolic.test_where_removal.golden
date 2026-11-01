@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.bool [] False
 1 Ops.CONST dtypes.bool [] True
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
@@ -20,7 +20,7 @@
 18 Ops.WHERE dtypes.bool [16, 1, 0]
 19 Ops.SINK dtypes.void [2, 18, 6]
 20 Ops.WHERE dtypes.bool [6, 0, 1]
-21 Ops.CMPNE dtypes.bool [6, 1]
+21 Ops.CMPEQ dtypes.bool [6, 0]
 22 Ops.SINK dtypes.void [2, 20, 21]
 23 Ops.SINK dtypes.void [12, 21, 21]
 24 Ops.SINK dtypes.void [14, 21, 21]

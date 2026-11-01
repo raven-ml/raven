@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CUSTOM dtypes.void [0, 0] ("sym", dtypes.void)
 2 Ops.CONST dtypes.weakint [] 2
@@ -6,62 +6,62 @@
 4 Ops.CONST dtypes.weakint [] 3
 5 Ops.ADD dtypes.weakint [3, 4]
 6 Ops.CONST dtypes.weakint [] 4
-7 Ops.FLOORDIV dtypes.weakint [5, 6]
-8 Ops.FLOORMOD dtypes.weakint [7, 6]
+7 Ops.DIV dtypes.weakint [5, 6]
+8 Ops.MOD dtypes.weakint [7, 6]
 9 Ops.SINK dtypes.void [1, 8, 0]
 10 Ops.CONST dtypes.weakint [] 1
 11 Ops.CUSTOM dtypes.void [10, 10] ("sym", dtypes.void)
 12 Ops.MUL dtypes.weakint [10, 2]
 13 Ops.ADD dtypes.weakint [12, 4]
-14 Ops.FLOORDIV dtypes.weakint [13, 6]
-15 Ops.FLOORMOD dtypes.weakint [14, 6]
+14 Ops.DIV dtypes.weakint [13, 6]
+15 Ops.MOD dtypes.weakint [14, 6]
 16 Ops.SINK dtypes.void [11, 15, 10]
 17 Ops.MUL dtypes.weakint [2, 2]
 18 Ops.ADD dtypes.weakint [17, 4]
-19 Ops.FLOORDIV dtypes.weakint [18, 6]
-20 Ops.FLOORMOD dtypes.weakint [19, 6]
+19 Ops.DIV dtypes.weakint [18, 6]
+20 Ops.MOD dtypes.weakint [19, 6]
 21 Ops.SINK dtypes.void [11, 20, 10]
 22 Ops.CUSTOM dtypes.void [2, 2] ("sym", dtypes.void)
 23 Ops.MUL dtypes.weakint [4, 2]
 24 Ops.ADD dtypes.weakint [23, 4]
-25 Ops.FLOORDIV dtypes.weakint [24, 6]
-26 Ops.FLOORMOD dtypes.weakint [25, 6]
+25 Ops.DIV dtypes.weakint [24, 6]
+26 Ops.MOD dtypes.weakint [25, 6]
 27 Ops.SINK dtypes.void [22, 26, 2]
 28 Ops.MUL dtypes.weakint [6, 2]
 29 Ops.ADD dtypes.weakint [28, 4]
-30 Ops.FLOORDIV dtypes.weakint [29, 6]
-31 Ops.FLOORMOD dtypes.weakint [30, 6]
+30 Ops.DIV dtypes.weakint [29, 6]
+31 Ops.MOD dtypes.weakint [30, 6]
 32 Ops.SINK dtypes.void [22, 31, 2]
 33 Ops.CUSTOM dtypes.void [4, 4] ("sym", dtypes.void)
 34 Ops.CONST dtypes.weakint [] 5
 35 Ops.MUL dtypes.weakint [34, 2]
 36 Ops.ADD dtypes.weakint [35, 4]
-37 Ops.FLOORDIV dtypes.weakint [36, 6]
-38 Ops.FLOORMOD dtypes.weakint [37, 6]
+37 Ops.DIV dtypes.weakint [36, 6]
+38 Ops.MOD dtypes.weakint [37, 6]
 39 Ops.SINK dtypes.void [33, 38, 4]
 40 Ops.CONST dtypes.weakint [] 6
 41 Ops.MUL dtypes.weakint [40, 2]
 42 Ops.ADD dtypes.weakint [41, 4]
-43 Ops.FLOORDIV dtypes.weakint [42, 6]
-44 Ops.FLOORMOD dtypes.weakint [43, 6]
+43 Ops.DIV dtypes.weakint [42, 6]
+44 Ops.MOD dtypes.weakint [43, 6]
 45 Ops.SINK dtypes.void [33, 44, 4]
 46 Ops.CONST dtypes.weakint [] 7
 47 Ops.MUL dtypes.weakint [46, 2]
 48 Ops.ADD dtypes.weakint [47, 4]
-49 Ops.FLOORDIV dtypes.weakint [48, 6]
-50 Ops.FLOORMOD dtypes.weakint [49, 6]
+49 Ops.DIV dtypes.weakint [48, 6]
+50 Ops.MOD dtypes.weakint [49, 6]
 51 Ops.SINK dtypes.void [1, 50, 0]
 52 Ops.CONST dtypes.weakint [] 8
 53 Ops.MUL dtypes.weakint [52, 2]
 54 Ops.ADD dtypes.weakint [53, 4]
-55 Ops.FLOORDIV dtypes.weakint [54, 6]
-56 Ops.FLOORMOD dtypes.weakint [55, 6]
+55 Ops.DIV dtypes.weakint [54, 6]
+56 Ops.MOD dtypes.weakint [55, 6]
 57 Ops.SINK dtypes.void [1, 56, 0]
 58 Ops.CONST dtypes.weakint [] 9
 59 Ops.MUL dtypes.weakint [58, 2]
 60 Ops.ADD dtypes.weakint [59, 4]
-61 Ops.FLOORDIV dtypes.weakint [60, 6]
-62 Ops.FLOORMOD dtypes.weakint [61, 6]
+61 Ops.DIV dtypes.weakint [60, 6]
+62 Ops.MOD dtypes.weakint [61, 6]
 63 Ops.SINK dtypes.void [11, 62, 10]
 64 Ops.SINK dtypes.void [9, 16, 21, 27, 32, 39, 45, 51, 57, 63]
 

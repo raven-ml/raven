@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 65536
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 256
@@ -15,15 +15,15 @@
 13 Ops.CONST dtypes.weakfloat [] 0.0
 14 Ops.CAST dtypes.f32 [13] dtypes.f32
 15 Ops.CMPLT dtypes.bool [8, 4]
-16 Ops.CONST dtypes.bool [] True
+16 Ops.CONST dtypes.bool [] False
 17 Ops.CAST dtypes.bool [16] dtypes.bool
-18 Ops.CMPNE dtypes.bool [15, 17]
+18 Ops.CMPEQ dtypes.bool [15, 17]
 19 Ops.LOAD dtypes.f32 [12, 14, 18]
 20 Ops.STORE dtypes.void [10, 19]
 21 Ops.SINK dtypes.void [20] KernelInfo(name="E_256_256", optimized=True)
 22 Ops.SINK dtypes.void [20] KernelInfo(name="E_256_256", estimates=Estimates(ops=131072, lds=524288, mem=524288), optimized=True)
 23 Ops.LINEAR dtypes.void [0, 1, 11, 2, 3, 8, 4, 5, 6, 7, 9, 12, 16, 17, 13, 14, 15, 18, 19, 10, 20, 21]
-24 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) E_256_256(float* data0_65536, float* data1_65536) {\n  int gidx0 = __ockl_get_group_id(0); /* 256 */\n  int gidx1 = __ockl_get_group_id(1); /* 256 */\n  int alu0 = ((gidx1<<8)+gidx0);\n  float val0 = (((gidx0<gidx1)!=1)?*(data1_65536+alu0):0.0f);\n  *(data0_65536+alu0) = val0;\n}"
+24 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) E_256_256(float* data0_65536, float* data1_65536) {\n  int gidx0 = __ockl_get_group_id(0); /* 256 */\n  int gidx1 = __ockl_get_group_id(1); /* 256 */\n  int alu0 = ((gidx1<<8)+gidx0);\n  float val0 = (((gidx0<gidx1)==0)?*(data1_65536+alu0):0.0f);\n  *(data0_65536+alu0) = val0;\n}"
 25 Ops.PROGRAM dtypes.void [22, 23, 24] ProgramInfo(global_size=(256, 256, 1), params=(%1, %11), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
 26 Ops.SINK dtypes.void [21, 25]
 

@@ -1,10 +1,10 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 #include <metal_stdlib>
 using namespace metal;
-struct volatile_add_args { volatile device int* data0_4; volatile device int* data1_4; };
+struct volatile_add_args { volatile device int* arg0; volatile device int* arg1; };
 kernel void volatile_add(constant struct volatile_add_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  volatile device int* data0_4 = args->data0_4;
-  volatile device int* data1_4 = args->data1_4;
+  volatile device int* data0_4 = args->arg0;
+  volatile device int* data1_4 = args->arg1;
   for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
     int val0 = (*(data1_4+Lidx0));
     *(data0_4+Lidx0) = (val0+1);

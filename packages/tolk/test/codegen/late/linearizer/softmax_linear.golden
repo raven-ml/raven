@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1024
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
@@ -8,7 +8,7 @@
 6 Ops.STACK dtypes.void []
 7 Ops.PARAM dtypes.i32 [6] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 256), name="block_lo", addrspace=AddrSpace.ALU)
 8 Ops.PARAM dtypes.i32 [6] ParamArg(slot=5, dtype=dtypes.i32, vmin_vmax=(0, 256), name="block_hi", addrspace=AddrSpace.ALU)
-9 Ops.CONST dtypes.bool [] True
+9 Ops.CONST dtypes.bool [] False
 10 Ops.CAST dtypes.bool [9] dtypes.bool
 11 Ops.CONST dtypes.weakfloat [] -0.5
 12 Ops.CAST dtypes.f32 [11] dtypes.f32
@@ -104,7 +104,7 @@
 102 Ops.MUL dtypes.f32 [101, 87]
 103 Ops.CMPLT dtypes.bool [68, 14]
 104 Ops.CMPLT dtypes.bool [68, 38]
-105 Ops.CMPNE dtypes.bool [104, 10]
+105 Ops.CMPEQ dtypes.bool [104, 10]
 106 Ops.WHERE dtypes.f32 [105, 40, 102]
 107 Ops.WHERE dtypes.f32 [103, 18, 106]
 108 Ops.WHERE dtypes.f32 [71, 42, 107]

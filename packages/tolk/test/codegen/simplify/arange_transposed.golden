@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -10,19 +10,20 @@
 8 Ops.ADD dtypes.weakint [6, 7]
 9 Ops.CONST dtypes.weakint [] 3
 10 Ops.CMPLT dtypes.bool [8, 9]
-11 Ops.CMPNE dtypes.bool [10, 4]
-12 Ops.AND dtypes.bool [4, 11]
-13 Ops.CAST dtypes.i32 [0] dtypes.i32
-14 Ops.WHERE dtypes.i32 [12, 13, 2]
-15 Ops.REDUCE dtypes.i32 [14, 7] (Ops.ADD, 0)
-16 Ops.CONST dtypes.weakint [] -1
-17 Ops.ADD dtypes.i32 [15, 16]
-18 Ops.CAST dtypes.f32 [17] dtypes.f32
-19 Ops.PARAM dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
-20 Ops.INDEX dtypes.f32 [19, 6]
-21 Ops.MUL dtypes.f32 [18, 20]
-22 Ops.REDUCE dtypes.f32 [21, 6] (Ops.ADD, 0)
-23 Ops.STORE dtypes.void [3, 22]
-24 Ops.AFTER dtypes.f32 [1, 23]
-25 Ops.SINK dtypes.void [24]
+11 Ops.CONST dtypes.bool [] False
+12 Ops.CMPEQ dtypes.bool [10, 11]
+13 Ops.AND dtypes.bool [4, 12]
+14 Ops.CAST dtypes.i32 [0] dtypes.i32
+15 Ops.WHERE dtypes.i32 [13, 14, 2]
+16 Ops.REDUCE dtypes.i32 [15, 7] (Ops.ADD, 0)
+17 Ops.CONST dtypes.weakint [] -1
+18 Ops.ADD dtypes.i32 [16, 17]
+19 Ops.CAST dtypes.f32 [18] dtypes.f32
+20 Ops.PARAM dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+21 Ops.INDEX dtypes.f32 [20, 6]
+22 Ops.MUL dtypes.f32 [19, 21]
+23 Ops.REDUCE dtypes.f32 [22, 6] (Ops.ADD, 0)
+24 Ops.STORE dtypes.void [3, 23]
+25 Ops.AFTER dtypes.f32 [1, 24]
+26 Ops.SINK dtypes.void [25]
 

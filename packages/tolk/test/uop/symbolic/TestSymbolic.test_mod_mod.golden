@@ -1,14 +1,14 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 0
 1 Ops.CONST dtypes.weakint [] 3
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
 3 Ops.STACK dtypes.void []
 4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 31), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
 5 Ops.CONST dtypes.weakint [] 12
-6 Ops.FLOORMOD dtypes.weakint [4, 5]
+6 Ops.MOD dtypes.weakint [4, 5]
 7 Ops.CONST dtypes.weakint [] 4
-8 Ops.FLOORMOD dtypes.weakint [6, 7]
-9 Ops.FLOORMOD dtypes.weakint [4, 7]
+8 Ops.MOD dtypes.weakint [6, 7]
+9 Ops.MOD dtypes.weakint [4, 7]
 10 Ops.SINK dtypes.void [2, 8, 9]
 11 Ops.CONST dtypes.weakint [] 31
 12 Ops.CUSTOM dtypes.void [0, 11] ("simplify", dtypes.void)
@@ -19,8 +19,8 @@
 17 Ops.SINK dtypes.void [16, 9, 9]
 18 Ops.CUSTOM dtypes.void [0, 0] ("sym", dtypes.void)
 19 Ops.MUL dtypes.weakint [7, 4]
-20 Ops.FLOORMOD dtypes.weakint [19, 5]
-21 Ops.FLOORMOD dtypes.weakint [20, 7]
+20 Ops.MOD dtypes.weakint [19, 5]
+21 Ops.MOD dtypes.weakint [20, 7]
 22 Ops.SINK dtypes.void [18, 21, 0]
 23 Ops.CUSTOM dtypes.void [0, 0] ("commutative", dtypes.void)
 24 Ops.SINK dtypes.void [23, 0, 0]
@@ -29,17 +29,17 @@
 27 Ops.CUSTOM dtypes.void [0, 7] ("sym", dtypes.void)
 28 Ops.CONST dtypes.weakint [] 5
 29 Ops.MUL dtypes.weakint [28, 4]
-30 Ops.FLOORMOD dtypes.weakint [29, 5]
-31 Ops.FLOORMOD dtypes.weakint [30, 28]
+30 Ops.MOD dtypes.weakint [29, 5]
+31 Ops.MOD dtypes.weakint [30, 28]
 32 Ops.MUL dtypes.weakint [4, 28]
-33 Ops.FLOORMOD dtypes.weakint [32, 5]
-34 Ops.FLOORMOD dtypes.weakint [33, 28]
+33 Ops.MOD dtypes.weakint [32, 5]
+34 Ops.MOD dtypes.weakint [33, 28]
 35 Ops.SINK dtypes.void [27, 31, 34]
 36 Ops.CUSTOM dtypes.void [0, 7] ("commutative", dtypes.void)
 37 Ops.SINK dtypes.void [36, 34, 34]
 38 Ops.CUSTOM dtypes.void [0, 7] ("simplify", dtypes.void)
 39 Ops.SINK dtypes.void [38, 34, 34]
-40 Ops.FLOORMOD dtypes.weakint [9, 5]
+40 Ops.MOD dtypes.weakint [9, 5]
 41 Ops.SINK dtypes.void [2, 40, 9]
 42 Ops.SINK dtypes.void [10, 13, 15, 17, 22, 24, 26, 35, 37, 39, 41]
 

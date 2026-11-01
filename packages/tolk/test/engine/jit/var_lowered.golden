@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 30
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -29,8 +29,8 @@
 27 Ops.SINK dtypes.void [18] KernelInfo(name="E_(i*3)", estimates=Estimates(ops=%24, lds=%26, mem=%26), optimized=True, split=(%21, 2, 3))
 28 Ops.SINK dtypes.void [18] KernelInfo(name="E_(i*3)", optimized=True, split=(%21, 2, 3))
 29 Ops.LINEAR dtypes.void [0, 1, 9, 2, 3, 4, 14, 15, 5, 6, 7, 10, 11, 8, 12, 13, 16, 17, 18, 28]
-30 Ops.SOURCE dtypes.void [] "\nstruct E_28i2A329_args { float* data0_30; float* data1_30; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void E_28i2A329(const struct E_28i2A329_args* args) {\n  float* restrict data0_30 = args->data0_30;\n  float* restrict data1_30 = args->data1_30;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_30+alu0));\n    float alu1 = (val0-val0);\n    *(data0_30+alu0) = (alu1*alu1*((float)(__builtin_inff())));\n  }\n}\n"
-31 Ops.BINARY dtypes.u8 [] b"\nstruct E_28i2A329_args { float* data0_30; float* data1_30; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void E_28i2A329(const struct E_28i2A329_args* args) {\n  float* restrict data0_30 = args->data0_30;\n  float* restrict data1_30 = args->data1_30;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_30+alu0));\n    float alu1 = (val0-val0);\n    *(data0_30+alu0) = (alu1*alu1*((float)(__builtin_inff())));\n  }\n}\n"
+30 Ops.SOURCE dtypes.void [] "\nstruct E_28i2A329_args { float* arg0; float* arg1; int arg2; int arg3; };\n__attribute__((min_vector_width(512))) void E_28i2A329(const struct E_28i2A329_args* args) {\n  float* data0_30 = args->arg0;\n  float* data1_30 = args->arg1;\n  int block_lo_ = args->arg2;\n  int block_hi_ = args->arg3;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_30+alu0));\n    float alu1 = (val0-val0);\n    *(data0_30+alu0) = (alu1*alu1*((float)(__builtin_inff())));\n  }\n}\n"
+31 Ops.BINARY dtypes.u8 [] b"\nstruct E_28i2A329_args { float* arg0; float* arg1; int arg2; int arg3; };\n__attribute__((min_vector_width(512))) void E_28i2A329(const struct E_28i2A329_args* args) {\n  float* data0_30 = args->arg0;\n  float* data1_30 = args->arg1;\n  int block_lo_ = args->arg2;\n  int block_hi_ = args->arg3;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_30+alu0));\n    float alu1 = (val0-val0);\n    *(data0_30+alu0) = (alu1*alu1*((float)(__builtin_inff())));\n  }\n}\n"
 32 Ops.PROGRAM dtypes.void [27, 29, 30, 31] ProgramInfo(global_size=(%21, 1, 1), params=(%1, %9, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
 33 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
 34 Ops.CALL dtypes.void [32, 33, 1] CallInfo()

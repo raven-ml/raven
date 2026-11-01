@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -79,17 +79,17 @@
 77 Ops.PARAM dtypes.u16 [18] ParamArg(slot=-1, dtype=dtypes.u16, vmin_vmax=(0, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
 78 Ops.SHL dtypes.u64 [76, 77]
 79 Ops.SHL dtypes.bool [15, 66]
-80 Ops.CDIV dtypes.i32 [37, 41]
-81 Ops.CDIV dtypes.f32 [32, 33]
-82 Ops.CMOD dtypes.i32 [37, 41]
-83 Ops.CMOD dtypes.f32 [32, 33]
-84 Ops.FLOORDIV dtypes.i32 [37, 41]
-85 Ops.FLOORDIV dtypes.f32 [32, 33]
-86 Ops.FLOORMOD dtypes.i32 [37, 41]
-87 Ops.FLOORMOD dtypes.f32 [32, 33]
-88 Ops.CDIV dtypes.f32 [32, 15]
-89 Ops.CMOD dtypes.i32 [15, 41]
-90 Ops.CDIV dtypes.f32 [37, 33]
+80 Ops.TRUNCDIV dtypes.i32 [37, 41]
+81 Ops.TRUNCDIV dtypes.f32 [32, 33]
+82 Ops.TRUNCMOD dtypes.i32 [37, 41]
+83 Ops.TRUNCMOD dtypes.f32 [32, 33]
+84 Ops.DIV dtypes.i32 [37, 41]
+85 Ops.DIV dtypes.f32 [32, 33]
+86 Ops.MOD dtypes.i32 [37, 41]
+87 Ops.MOD dtypes.f32 [32, 33]
+88 Ops.TRUNCDIV dtypes.f32 [32, 15]
+89 Ops.TRUNCMOD dtypes.i32 [15, 41]
+90 Ops.TRUNCDIV dtypes.f32 [37, 33]
 91 Ops.ADD dtypes.i32 [37, 41]
 92 Ops.ADD dtypes.weakfloat [37, 24]
 93 Ops.STACK dtypes.f32 [28, 20]
@@ -130,8 +130,8 @@
 128 Ops.EXP2 dtypes.f32 [37]
 129 Ops.SQRT dtypes.f32 [32]
 130 Ops.SQRT dtypes.f32 [37]
-131 Ops.RECIPROCAL dtypes.f32 [32]
-132 Ops.RECIPROCAL dtypes.f32 [37]
+131 Ops.RECIP dtypes.f32 [32]
+132 Ops.RECIP dtypes.f32 [37]
 133 Ops.SIN dtypes.bool [15]
 134 Ops.SIN dtypes.weakfloat [20]
 135 Ops.CAST dtypes.f32 [37] dtypes.f32

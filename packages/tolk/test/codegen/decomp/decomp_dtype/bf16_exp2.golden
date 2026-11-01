@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.bf16 [1] ParamArg(slot=0, dtype=dtypes.bf16, device="CPU")
@@ -21,8 +21,8 @@
 19 Ops.CAST dtypes.f32 [18] dtypes.f32
 20 Ops.CONST dtypes.weakfloat [] 128.0
 21 Ops.CMPLT dtypes.bool [12, 20]
-22 Ops.CONST dtypes.bool [] True
-23 Ops.CMPNE dtypes.bool [21, 22]
+22 Ops.CONST dtypes.bool [] False
+23 Ops.CMPEQ dtypes.bool [21, 22]
 24 Ops.CONST dtypes.weakfloat [] inf
 25 Ops.CAST dtypes.f32 [24] dtypes.f32
 26 Ops.CONST dtypes.weakfloat [] 0.0001535920892
@@ -86,7 +86,7 @@
 84 Ops.CMPNE dtypes.bool [83, 83]
 85 Ops.CMPLT dtypes.bool [83, 16]
 86 Ops.CMPLT dtypes.bool [83, 20]
-87 Ops.CMPNE dtypes.bool [86, 22]
+87 Ops.CMPEQ dtypes.bool [86, 22]
 88 Ops.CMPNE dtypes.bool [83, 24]
 89 Ops.CMPNE dtypes.bool [83, 28]
 90 Ops.WHERE dtypes.f32 [89, 83, 19]
@@ -133,7 +133,7 @@
 131 Ops.CMPNE dtypes.bool [130, 130]
 132 Ops.CMPLT dtypes.bool [130, 16]
 133 Ops.CMPLT dtypes.bool [130, 20]
-134 Ops.CMPNE dtypes.bool [133, 22]
+134 Ops.CMPEQ dtypes.bool [133, 22]
 135 Ops.CMPNE dtypes.bool [130, 24]
 136 Ops.CMPNE dtypes.bool [130, 28]
 137 Ops.WHERE dtypes.f32 [136, 130, 19]
@@ -181,7 +181,7 @@
 179 Ops.CMPNE dtypes.bool [178, 178]
 180 Ops.CMPLT dtypes.bool [178, 16]
 181 Ops.CMPLT dtypes.bool [178, 20]
-182 Ops.CMPNE dtypes.bool [181, 22]
+182 Ops.CMPEQ dtypes.bool [181, 22]
 183 Ops.CMPNE dtypes.bool [178, 24]
 184 Ops.CMPNE dtypes.bool [178, 28]
 185 Ops.WHERE dtypes.f32 [184, 178, 19]
@@ -233,7 +233,7 @@
 231 Ops.CMPNE dtypes.bool [230, 230]
 232 Ops.CMPLT dtypes.bool [230, 16]
 233 Ops.CMPLT dtypes.bool [230, 20]
-234 Ops.CMPNE dtypes.bool [233, 22]
+234 Ops.CMPEQ dtypes.bool [233, 22]
 235 Ops.CONST dtypes.weakfloat [] 0.00015359208919107914
 236 Ops.CMPNE dtypes.bool [230, 24]
 237 Ops.CMPNE dtypes.bool [230, 28]
@@ -290,7 +290,7 @@
 288 Ops.CMPNE dtypes.bool [287, 287]
 289 Ops.CMPLT dtypes.bool [287, 16]
 290 Ops.CMPLT dtypes.bool [287, 20]
-291 Ops.CMPNE dtypes.bool [290, 22]
+291 Ops.CMPEQ dtypes.bool [290, 22]
 292 Ops.CMPNE dtypes.bool [287, 24]
 293 Ops.CMPNE dtypes.bool [287, 28]
 294 Ops.WHERE dtypes.f32 [293, 287, 19]
@@ -341,7 +341,7 @@
 339 Ops.CMPNE dtypes.bool [338, 338]
 340 Ops.CMPLT dtypes.bool [338, 16]
 341 Ops.CMPLT dtypes.bool [338, 20]
-342 Ops.CMPNE dtypes.bool [341, 22]
+342 Ops.CMPEQ dtypes.bool [341, 22]
 343 Ops.CMPNE dtypes.bool [338, 24]
 344 Ops.CMPNE dtypes.bool [338, 28]
 345 Ops.WHERE dtypes.f32 [344, 338, 19]
@@ -392,7 +392,7 @@
 390 Ops.CMPNE dtypes.bool [389, 389]
 391 Ops.CMPLT dtypes.bool [389, 16]
 392 Ops.CMPLT dtypes.bool [389, 20]
-393 Ops.CMPNE dtypes.bool [392, 22]
+393 Ops.CMPEQ dtypes.bool [392, 22]
 394 Ops.CMPNE dtypes.bool [389, 24]
 395 Ops.CMPNE dtypes.bool [389, 28]
 396 Ops.WHERE dtypes.f32 [395, 389, 19]

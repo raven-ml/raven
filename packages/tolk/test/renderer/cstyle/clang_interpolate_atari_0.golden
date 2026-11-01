@@ -1,15 +1,15 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 typedef unsigned char unsigned_char4 __attribute__((aligned(1),ext_vector_type(4)));
 typedef unsigned int unsigned_int4 __attribute__((aligned(4),ext_vector_type(4)));
 typedef signed char signed_char4 __attribute__((aligned(1),ext_vector_type(4)));
 typedef short short4 __attribute__((aligned(2),ext_vector_type(4)));
 typedef unsigned short unsigned_short4 __attribute__((aligned(2),ext_vector_type(4)));
-struct E_210_16_4_args { unsigned char* data0_13440; unsigned char* data1_33600; int block_lo_; int block_hi_; };
+struct E_210_16_4_args { unsigned char* arg0; unsigned char* arg1; int arg2; int arg3; };
 __attribute__((min_vector_width(512))) void E_210_16_4(const struct E_210_16_4_args* args) {
-  unsigned char* restrict data0_13440 = args->data0_13440;
-  unsigned char* restrict data1_33600 = args->data1_33600;
-  const int block_lo_ = args->block_lo_;
-  const int block_hi_ = args->block_hi_;
+  unsigned char* data0_13440 = args->arg0;
+  unsigned char* data1_33600 = args->arg1;
+  int block_lo_ = args->arg2;
+  int block_hi_ = args->arg3;
   for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
     int alu0 = (block_lo_+Lidx1);
     int alu1 = (alu0*160);

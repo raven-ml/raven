@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -14,8 +14,8 @@
 12 Ops.SINK dtypes.void [11] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8), optimized=True)
 13 Ops.SINK dtypes.void [11] KernelInfo(name="E", optimized=True)
 14 Ops.LINEAR dtypes.void [0, 1, 5, 2, 3, 6, 7, 4, 8, 9, 10, 11, 13]
-15 Ops.SOURCE dtypes.void [] "\nstruct E_args { float* data0_1; float* data1_1; };\n__attribute__((min_vector_width(512))) void E(const struct E_args* args) {\n  float* restrict data0_1 = args->data0_1;\n  float* restrict data1_1 = args->data1_1;\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
-16 Ops.BINARY dtypes.u8 [] b"\nstruct E_args { float* data0_1; float* data1_1; };\n__attribute__((min_vector_width(512))) void E(const struct E_args* args) {\n  float* restrict data0_1 = args->data0_1;\n  float* restrict data1_1 = args->data1_1;\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
+15 Ops.SOURCE dtypes.void [] "\nstruct E_args { float* arg0; float* arg1; };\n__attribute__((min_vector_width(512))) void E(const struct E_args* args) {\n  float* data0_1 = args->arg0;\n  float* data1_1 = args->arg1;\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
+16 Ops.BINARY dtypes.u8 [] b"\nstruct E_args { float* arg0; float* arg1; };\n__attribute__((min_vector_width(512))) void E(const struct E_args* args) {\n  float* data0_1 = args->arg0;\n  float* data1_1 = args->arg1;\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
 17 Ops.PROGRAM dtypes.void [12, 14, 15, 16] ProgramInfo(params=(%1, %5), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
 18 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
 19 Ops.CALL dtypes.void [17, 18, 1] CallInfo()

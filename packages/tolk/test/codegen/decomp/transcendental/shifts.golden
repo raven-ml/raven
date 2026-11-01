@@ -1,16 +1,16 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 8
 3 Ops.MUL dtypes.i32 [1, 2]
-4 Ops.FLOORDIV dtypes.i32 [1, 2]
+4 Ops.DIV dtypes.i32 [1, 2]
 5 Ops.CONST dtypes.weakint [] 1
 6 Ops.MUL dtypes.i32 [1, 5]
-7 Ops.FLOORDIV dtypes.i32 [1, 5]
+7 Ops.DIV dtypes.i32 [1, 5]
 8 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 9 Ops.CONST dtypes.weakfloat [] 4.0
 10 Ops.MUL dtypes.f32 [8, 9]
-11 Ops.RECIPROCAL dtypes.weakfloat [9]
+11 Ops.RECIP dtypes.weakfloat [9]
 12 Ops.MUL dtypes.f32 [8, 11]
 13 Ops.TRUNC dtypes.f32 [12]
 14 Ops.CMPLT dtypes.bool [12, 13]

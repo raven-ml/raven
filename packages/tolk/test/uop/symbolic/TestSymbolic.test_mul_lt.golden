@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.bool [] False
 1 Ops.CONST dtypes.bool [] True
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
@@ -73,15 +73,15 @@
 71 Ops.SINK dtypes.void [17, 68, 68]
 72 Ops.CONST dtypes.weakint [] 12
 73 Ops.CMPLT dtypes.bool [6, 72]
-74 Ops.CMPNE dtypes.bool [73, 1]
+74 Ops.CMPEQ dtypes.bool [73, 0]
 75 Ops.CONST dtypes.weakint [] 3
 76 Ops.CMPLT dtypes.bool [4, 75]
-77 Ops.CMPNE dtypes.bool [76, 1]
+77 Ops.CMPEQ dtypes.bool [76, 0]
 78 Ops.SINK dtypes.void [2, 74, 77]
 79 Ops.SINK dtypes.void [15, 77, 77]
 80 Ops.SINK dtypes.void [17, 77, 77]
-81 Ops.CMPNE dtypes.bool [8, 1]
-82 Ops.CMPNE dtypes.bool [9, 1]
+81 Ops.CMPEQ dtypes.bool [8, 0]
+82 Ops.CMPEQ dtypes.bool [9, 0]
 83 Ops.SINK dtypes.void [2, 81, 82]
 84 Ops.SINK dtypes.void [15, 82, 82]
 85 Ops.SINK dtypes.void [17, 82, 82]

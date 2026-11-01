@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 op	a	b	dtype
 Ops.ADD	dtypes.bool	dtypes.bool	dtypes.bool
 Ops.ADD	dtypes.bool	dtypes.weakint	dtypes.weakint
@@ -888,18 +888,18 @@ Ops.EXP2	dtypes.f16	-	dtypes.f16
 Ops.EXP2	dtypes.bf16	-	dtypes.bf16
 Ops.EXP2	dtypes.f32	-	dtypes.f32
 Ops.EXP2	dtypes.f64	-	dtypes.f64
-Ops.RECIPROCAL	dtypes.bool	-	dtypes.f32
-Ops.RECIPROCAL	dtypes.weakint	-	dtypes.weakfloat
-Ops.RECIPROCAL	dtypes.i8	-	dtypes.f32
-Ops.RECIPROCAL	dtypes.u8	-	dtypes.f32
-Ops.RECIPROCAL	dtypes.i32	-	dtypes.f32
-Ops.RECIPROCAL	dtypes.u32	-	dtypes.f32
-Ops.RECIPROCAL	dtypes.i64	-	dtypes.f32
-Ops.RECIPROCAL	dtypes.weakfloat	-	dtypes.weakfloat
-Ops.RECIPROCAL	dtypes.f16	-	dtypes.f16
-Ops.RECIPROCAL	dtypes.bf16	-	dtypes.bf16
-Ops.RECIPROCAL	dtypes.f32	-	dtypes.f32
-Ops.RECIPROCAL	dtypes.f64	-	dtypes.f64
+Ops.RECIP	dtypes.bool	-	dtypes.f32
+Ops.RECIP	dtypes.weakint	-	dtypes.weakfloat
+Ops.RECIP	dtypes.i8	-	dtypes.f32
+Ops.RECIP	dtypes.u8	-	dtypes.f32
+Ops.RECIP	dtypes.i32	-	dtypes.f32
+Ops.RECIP	dtypes.u32	-	dtypes.f32
+Ops.RECIP	dtypes.i64	-	dtypes.f32
+Ops.RECIP	dtypes.weakfloat	-	dtypes.weakfloat
+Ops.RECIP	dtypes.f16	-	dtypes.f16
+Ops.RECIP	dtypes.bf16	-	dtypes.bf16
+Ops.RECIP	dtypes.f32	-	dtypes.f32
+Ops.RECIP	dtypes.f64	-	dtypes.f64
 Ops.NEG	dtypes.bool	-	dtypes.bool
 Ops.NEG	dtypes.weakint	-	dtypes.weakint
 Ops.NEG	dtypes.i8	-	dtypes.i8

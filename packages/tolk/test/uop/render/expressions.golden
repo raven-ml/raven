@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
 2 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU, val=3)
@@ -67,7 +67,7 @@
 65 Ops.NEG dtypes.weakint [1]
 66 Ops.NEG dtypes.weakint [29]
 67 Ops.NEG dtypes.weakint [63]
-68 Ops.RECIPROCAL dtypes.f32 [57]
+68 Ops.RECIP dtypes.f32 [57]
 69 Ops.MAX dtypes.weakint [1, 62]
 70 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 9), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
 71 Ops.ADD dtypes.weakint [62, 70]
@@ -79,12 +79,12 @@
 77 Ops.CMPLT dtypes.bool [1, 62]
 78 Ops.ADD dtypes.weakint [1, 70]
 79 Ops.WHERE dtypes.weakint [77, 78, 62]
-80 Ops.CDIV dtypes.weakint [1, 62]
-81 Ops.CMOD dtypes.weakint [1, 62]
+80 Ops.TRUNCDIV dtypes.weakint [1, 62]
+81 Ops.TRUNCMOD dtypes.weakint [1, 62]
 82 Ops.SUB dtypes.weakint [1, 62]
 83 Ops.MUL dtypes.weakint [1, 62]
-84 Ops.FLOORDIV dtypes.weakint [1, 62]
-85 Ops.FLOORMOD dtypes.weakint [1, 62]
+84 Ops.DIV dtypes.weakint [1, 62]
+85 Ops.MOD dtypes.weakint [1, 62]
 86 Ops.SHL dtypes.weakint [1, 62]
 87 Ops.SHR dtypes.weakint [1, 62]
 88 Ops.AND dtypes.weakint [1, 62]
@@ -102,8 +102,8 @@
 100 Ops.ADD dtypes.weakint [82, 70]
 101 Ops.MUL dtypes.weakint [84, 70]
 102 Ops.MUL dtypes.weakint [62, 70]
-103 Ops.FLOORDIV dtypes.weakint [1, 102]
-104 Ops.FLOORMOD dtypes.weakint [85, 70]
+103 Ops.DIV dtypes.weakint [1, 102]
+104 Ops.MOD dtypes.weakint [85, 70]
 105 Ops.SHL dtypes.weakint [87, 70]
 106 Ops.SHL dtypes.weakint [62, 70]
 107 Ops.SHR dtypes.weakint [1, 106]
@@ -139,7 +139,7 @@
 137 Ops.CONST dtypes.weakfloat [] 2.5
 138 Ops.MUL dtypes.f32 [57, 137]
 139 Ops.PARAM dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-1.0, 1.0), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
-140 Ops.RECIPROCAL dtypes.f32 [139]
+140 Ops.RECIP dtypes.f32 [139]
 141 Ops.ADD dtypes.f32 [138, 140]
 142 Ops.PARAM dtypes.f32 [12] ParamArg(slot=0, dtype=dtypes.f32)
 143 Ops.CONST dtypes.weakint [] 8

@@ -1,8 +1,8 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 
-struct unbounded_args { int* data0_1; };
+struct unbounded_args { int* arg0; };
 __attribute__((min_vector_width(512))) void unbounded(const struct unbounded_args* args) {
-  int* restrict data0_1 = args->data0_1;
+  int* data0_1 = args->arg0;
   for (;;) {
     int val0 = (*(data0_1+0));
     *(data0_1+0) = (val0+1);

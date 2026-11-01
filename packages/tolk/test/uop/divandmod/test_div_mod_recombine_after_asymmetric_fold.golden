@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 7), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
 2 Ops.CONST dtypes.weakint [] 15
@@ -6,7 +6,7 @@
 4 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 14), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
 5 Ops.ADD dtypes.weakint [3, 4]
 6 Ops.CONST dtypes.weakint [] 10
-7 Ops.FLOORDIV dtypes.weakint [5, 6]
+7 Ops.DIV dtypes.weakint [5, 6]
 8 Ops.CONST dtypes.weakint [] 0
 9 Ops.CONST dtypes.weakint [] 1
 10 Ops.MUL dtypes.weakint [1, 9]
@@ -15,27 +15,27 @@
 13 Ops.ADD dtypes.weakint [8, 12]
 14 Ops.ADD dtypes.weakint [13, 4]
 15 Ops.ADD dtypes.weakint [14, 8]
-16 Ops.FLOORDIV dtypes.weakint [15, 6]
+16 Ops.DIV dtypes.weakint [15, 6]
 17 Ops.MUL dtypes.weakint [10, 9]
 18 Ops.ADD dtypes.weakint [8, 17]
 19 Ops.ADD dtypes.weakint [16, 18]
-20 Ops.FLOORMOD dtypes.weakint [5, 6]
-21 Ops.FLOORMOD dtypes.weakint [15, 6]
-22 Ops.FLOORDIV dtypes.weakint [4, 11]
+20 Ops.MOD dtypes.weakint [5, 6]
+21 Ops.MOD dtypes.weakint [15, 6]
+22 Ops.DIV dtypes.weakint [4, 11]
 23 Ops.ADD dtypes.weakint [1, 22]
 24 Ops.CONST dtypes.weakint [] 2
-25 Ops.FLOORDIV dtypes.weakint [23, 24]
+25 Ops.DIV dtypes.weakint [23, 24]
 26 Ops.MUL dtypes.weakint [1, 11]
 27 Ops.ADD dtypes.weakint [4, 26]
-28 Ops.FLOORMOD dtypes.weakint [27, 6]
-29 Ops.FLOORDIV dtypes.weakint [5, 11]
+28 Ops.MOD dtypes.weakint [27, 6]
+29 Ops.DIV dtypes.weakint [5, 11]
 30 Ops.ADD dtypes.weakint [8, 4]
 31 Ops.ADD dtypes.weakint [30, 8]
-32 Ops.FLOORDIV dtypes.weakint [31, 11]
+32 Ops.DIV dtypes.weakint [31, 11]
 33 Ops.CONST dtypes.weakint [] 3
 34 Ops.MUL dtypes.weakint [1, 33]
 35 Ops.ADD dtypes.weakint [8, 34]
 36 Ops.ADD dtypes.weakint [32, 35]
-37 Ops.FLOORMOD dtypes.weakint [29, 24]
+37 Ops.MOD dtypes.weakint [29, 24]
 38 Ops.SINK dtypes.void [7, 19, 20, 21, 22, 22, 25, 25, 28, 28, 29, 36, 37, 37]
 

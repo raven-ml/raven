@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -15,7 +15,7 @@
 13 Ops.CONST dtypes.bool [] Invalid
 14 Ops.WHERE dtypes.weakint [7, 12, 13]
 15 Ops.INDEX dtypes.f32 [9, 14]
-16 Ops.RECIPROCAL dtypes.f32 [15]
+16 Ops.RECIP dtypes.f32 [15]
 17 Ops.PARAM dtypes.f32 [8] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
 18 Ops.INDEX dtypes.f32 [17, 14]
 19 Ops.MUL dtypes.f32 [16, 18]

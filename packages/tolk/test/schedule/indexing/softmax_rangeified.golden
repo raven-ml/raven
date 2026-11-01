@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 32
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 4
@@ -38,7 +38,7 @@
 36 Ops.REDUCE dtypes.f32 [35, 34] (Ops.ADD, 0)
 37 Ops.STAGE dtypes.f32 [36, 33] BufferizeOpts(device="CPU", broadcast=True)
 38 Ops.INDEX dtypes.f32 [37, 3]
-39 Ops.RECIPROCAL dtypes.f32 [38]
+39 Ops.RECIP dtypes.f32 [38]
 40 Ops.MUL dtypes.f32 [32, 39]
 41 Ops.STORE dtypes.void [8, 40]
 42 Ops.END dtypes.void [41, 3, 6]

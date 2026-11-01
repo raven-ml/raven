@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 32
@@ -18,22 +18,19 @@
 16 Ops.SINK dtypes.void [15] KernelInfo()
 17 Ops.RANGE dtypes.weakint [6] (AxisType.LOCAL, 0)
 18 Ops.CONST dtypes.weakint [] 0
-19 Ops.CMPNE dtypes.bool [17, 18]
-20 Ops.CONST dtypes.bool [] True
-21 Ops.CMPNE dtypes.bool [19, 20]
-22 Ops.RANGE dtypes.weakint [8] (AxisType.LOCAL, 1)
-23 Ops.CMPNE dtypes.bool [22, 18]
-24 Ops.CMPNE dtypes.bool [23, 20]
-25 Ops.AND dtypes.bool [21, 24]
-26 Ops.CONST dtypes.bool [] Invalid
-27 Ops.WHERE dtypes.weakint [25, 3, 26]
-28 Ops.INDEX dtypes.f32 [1, 27]
-29 Ops.ADD dtypes.weakint [17, 22]
-30 Ops.ADD dtypes.weakint [3, 29]
-31 Ops.INDEX dtypes.f32 [5, 30]
-32 Ops.LOAD dtypes.f32 [31]
-33 Ops.STORE dtypes.void [28, 32]
-34 Ops.END dtypes.void [33, 3, 17, 22]
-35 Ops.SINK dtypes.void [34] KernelInfo()
-36 Ops.SINK dtypes.void [16, 35]
+19 Ops.CMPEQ dtypes.bool [17, 18]
+20 Ops.RANGE dtypes.weakint [8] (AxisType.LOCAL, 1)
+21 Ops.CMPEQ dtypes.bool [20, 18]
+22 Ops.AND dtypes.bool [19, 21]
+23 Ops.CONST dtypes.bool [] Invalid
+24 Ops.WHERE dtypes.weakint [22, 3, 23]
+25 Ops.INDEX dtypes.f32 [1, 24]
+26 Ops.ADD dtypes.weakint [17, 20]
+27 Ops.ADD dtypes.weakint [3, 26]
+28 Ops.INDEX dtypes.f32 [5, 27]
+29 Ops.LOAD dtypes.f32 [28]
+30 Ops.STORE dtypes.void [25, 29]
+31 Ops.END dtypes.void [30, 3, 17, 20]
+32 Ops.SINK dtypes.void [31] KernelInfo()
+33 Ops.SINK dtypes.void [16, 32]
 

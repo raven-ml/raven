@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -36,7 +36,7 @@
 34 Ops.SINK dtypes.void [33] KernelInfo(estimates=Estimates(lds=28, mem=8), optimized=True)
 35 Ops.SINK dtypes.void [33] KernelInfo(optimized=True)
 36 Ops.LINEAR dtypes.void [0, 11, 1, 23, 2, 3, 12, 13, 4, 6, 7, 8, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35]
-37 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct test_args { device int* data0_1; device int* data1_1; };\nkernel void test(constant struct test_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_1 = args->data0_1;\n  device int* data1_1 = args->data1_1;\n  threadgroup __attribute__((aligned(16))) int buf0[1];\n  int val0 = (*(data0_1+0));\n  for (int Lidx19 = 0; Lidx19 < 2; Lidx19++) {\n    *(buf0+0) = val0;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n    int val1 = (*(buf0+0));\n    *(data1_1+0) = val1;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n  }\n}"
+37 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct test_args { device int* arg0; device int* arg1; };\nkernel void test(constant struct test_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_1 = args->arg0;\n  device int* data1_1 = args->arg1;\n  threadgroup __attribute__((aligned(16))) int buf0[1];\n  int val0 = (*(data0_1+0));\n  for (int Lidx19 = 0; Lidx19 < 2; Lidx19++) {\n    *(buf0+0) = val0;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n    int val1 = (*(buf0+0));\n    *(data1_1+0) = val1;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n  }\n}"
 38 Ops.PROGRAM dtypes.void [34, 36, 37] ProgramInfo(params=(%11, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 39 Ops.SINK dtypes.void [22, 38]
 

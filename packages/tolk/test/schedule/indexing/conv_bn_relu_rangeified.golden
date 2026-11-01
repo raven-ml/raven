@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 144
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 6
@@ -51,7 +51,7 @@
 49 Ops.RANGE dtypes.weakint [7] (AxisType.WEAK, 3)
 50 Ops.INDEX dtypes.f32 [48, 49]
 51 Ops.SQRT dtypes.f32 [50]
-52 Ops.RECIPROCAL dtypes.f32 [51]
+52 Ops.RECIP dtypes.f32 [51]
 53 Ops.STAGE dtypes.f32 [52, 49] BufferizeOpts(device="CPU", broadcast=True)
 54 Ops.INDEX dtypes.f32 [53, 8]
 55 Ops.MUL dtypes.f32 [47, 54]

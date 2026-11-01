@@ -1,13 +1,13 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.i64 [0] ParamArg(slot=0, dtype=dtypes.i64)
 2 Ops.CONST dtypes.weakint [] -9223372036854775808
 3 Ops.CMPLT dtypes.bool [1, 2]
-4 Ops.CONST dtypes.bool [] True
-5 Ops.CMPNE dtypes.bool [3, 4]
+4 Ops.CONST dtypes.bool [] False
+5 Ops.CMPEQ dtypes.bool [3, 4]
 6 Ops.CONST dtypes.weakint [] 9223372036854775807
 7 Ops.CMPLT dtypes.bool [6, 1]
-8 Ops.CMPNE dtypes.bool [7, 4]
+8 Ops.CMPEQ dtypes.bool [7, 4]
 9 Ops.CONST dtypes.weakint [] -1
 10 Ops.MUL dtypes.i64 [1, 9]
 11 Ops.CMPLT dtypes.bool [10, 2]
@@ -34,16 +34,13 @@
 32 Ops.CONST dtypes.weakint [] 1
 33 Ops.ADD dtypes.weakint [2, 32]
 34 Ops.CAST dtypes.i64 [33] dtypes.i64
-35 Ops.CMPNE dtypes.bool [1, 34]
-36 Ops.CMPNE dtypes.bool [35, 4]
-37 Ops.ADD dtypes.weakint [22, 32]
-38 Ops.CAST dtypes.i64 [37] dtypes.i64
-39 Ops.CMPNE dtypes.bool [1, 38]
-40 Ops.CMPNE dtypes.bool [39, 4]
-41 Ops.ADD dtypes.weakint [26, 32]
-42 Ops.CAST dtypes.i64 [41] dtypes.i64
-43 Ops.CMPNE dtypes.bool [1, 42]
-44 Ops.CMPNE dtypes.bool [43, 4]
-45 Ops.SINK dtypes.void [5, 8, 11, 14, 17, 36, 40, 44]
-46 Ops.SINK dtypes.void [31, 45]
+35 Ops.CMPEQ dtypes.bool [1, 34]
+36 Ops.ADD dtypes.weakint [22, 32]
+37 Ops.CAST dtypes.i64 [36] dtypes.i64
+38 Ops.CMPEQ dtypes.bool [1, 37]
+39 Ops.ADD dtypes.weakint [26, 32]
+40 Ops.CAST dtypes.i64 [39] dtypes.i64
+41 Ops.CMPEQ dtypes.bool [1, 40]
+42 Ops.SINK dtypes.void [5, 8, 11, 14, 17, 35, 38, 41]
+43 Ops.SINK dtypes.void [31, 42]
 

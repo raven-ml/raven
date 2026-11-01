@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 256
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -68,7 +68,7 @@
 66 Ops.SINK dtypes.void [65] KernelInfo(name="r_16_16_16", estimates=Estimates(ops=8192, lds=33792, mem=3072), optimized=True, split=(16, 3, 4))
 67 Ops.SINK dtypes.void [65] KernelInfo(name="r_16_16_16", optimized=True, split=(16, 3, 4))
 68 Ops.LINEAR dtypes.void [0, 1, 30, 34, 2, 3, 4, 17, 50, 23, 24, 20, 21, 11, 12, 8, 9, 5, 6, 13, 7, 10, 14, 26, 51, 52, 53, 27, 31, 32, 33, 35, 36, 37, 38, 54, 55, 56, 57, 58, 59, 60, 61, 62, 15, 16, 63, 64, 65, 67]
-69 Ops.SOURCE dtypes.void [] "\nstruct r_16_16_16_args { float* data0_256; float* data1_256; float* data2_256; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void r_16_16_16(const struct r_16_16_16_args* args) {\n  float* restrict data0_256 = args->data0_256;\n  float* restrict data1_256 = args->data1_256;\n  float* restrict data2_256 = args->data2_256;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<4);\n    for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {\n      *(buf0+0) = 0.0f;\n      for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n        float val0 = (*(data1_256+(alu1+Lidx0)));\n        float val1 = (*(data2_256+((Lidx0<<4)+Lidx2)));\n        *(buf0+0) = __builtin_fmaf(val0,val1,(*(buf0+0)));\n      }\n      *(data0_256+(alu1+Lidx2)) = (*(buf0+0));\n    }\n  }\n}\n"
+69 Ops.SOURCE dtypes.void [] "\nstruct r_16_16_16_args { float* arg0; float* arg1; float* arg2; int arg3; int arg4; };\n__attribute__((min_vector_width(512))) void r_16_16_16(const struct r_16_16_16_args* args) {\n  float* data0_256 = args->arg0;\n  float* data1_256 = args->arg1;\n  float* data2_256 = args->arg2;\n  int block_lo_ = args->arg3;\n  int block_hi_ = args->arg4;\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<4);\n    for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {\n      *(buf0+0) = 0.0f;\n      for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n        float val0 = (*(data1_256+(alu1+Lidx0)));\n        float val1 = (*(data2_256+((Lidx0<<4)+Lidx2)));\n        *(buf0+0) = __builtin_fmaf(val0,val1,(*(buf0+0)));\n      }\n      *(data0_256+(alu1+Lidx2)) = (*(buf0+0));\n    }\n  }\n}\n"
 70 Ops.PROGRAM dtypes.void [66, 68, 69] ProgramInfo(global_size=(16, 1, 1), params=(%1, %30, %34, %3, %4), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 71 Ops.SINK dtypes.void [49, 70]
 

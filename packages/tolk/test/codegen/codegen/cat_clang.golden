@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 2049
 1 Ops.PARAM dtypes.i64 [0] ParamArg(slot=0, dtype=dtypes.i64, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -39,7 +39,7 @@
 37 Ops.SINK dtypes.void [36] KernelInfo(name="E_2049", optimized=True, split=(2049, 3, 4))
 38 Ops.SINK dtypes.void [36] KernelInfo(name="E_2049", estimates=Estimates(ops=12294, lds=24592, mem=16400), optimized=True, split=(2049, 3, 4))
 39 Ops.LINEAR dtypes.void [0, 1, 16, 17, 26, 2, 3, 4, 18, 19, 20, 21, 27, 12, 13, 29, 30, 9, 10, 22, 24, 28, 5, 6, 7, 31, 32, 8, 33, 14, 15, 23, 11, 25, 34, 35, 36, 37]
-40 Ops.SOURCE dtypes.void [] "\nstruct E_2049_args { long* data0_2049; unsigned int* data1_1; unsigned int* data2_1; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void E_2049(const struct E_2049_args* args) {\n  long* restrict data0_2049 = args->data0_2049;\n  unsigned int* restrict data1_1 = args->data1_1;\n  unsigned int* restrict data2_1 = args->data2_1;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  unsigned int val0 = (*(data1_1+0));\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    unsigned int val1 = ((2047<alu0)?*(data2_1+0):0u);\n    long alu1 = ((alu0<2048)?(((long)((alu0&1023)))+((long)(val0))):0l);\n    *(data0_2049+alu0) = (alu1+((long)(val1)));\n  }\n}\n"
+40 Ops.SOURCE dtypes.void [] "\nstruct E_2049_args { long* arg0; unsigned int* arg1; unsigned int* arg2; int arg3; int arg4; };\n__attribute__((min_vector_width(512))) void E_2049(const struct E_2049_args* args) {\n  long* data0_2049 = args->arg0;\n  unsigned int* data1_1 = args->arg1;\n  unsigned int* data2_1 = args->arg2;\n  int block_lo_ = args->arg3;\n  int block_hi_ = args->arg4;\n  unsigned int val0 = (*(data1_1+0));\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    unsigned int val1 = ((2047<alu0)?*(data2_1+0):0u);\n    long alu1 = ((alu0<2048)?(((long)((alu0&1023)))+((long)(val0))):0l);\n    *(data0_2049+alu0) = (alu1+((long)(val1)));\n  }\n}\n"
 41 Ops.PROGRAM dtypes.void [38, 39, 40] ProgramInfo(global_size=(2049, 1, 1), params=(%1, %17, %26, %3, %4), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 42 Ops.SINK dtypes.void [37, 41]
 

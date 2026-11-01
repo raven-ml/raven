@@ -1,11 +1,11 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 #include <metal_stdlib>
 using namespace metal;
-struct E_8_2_args { device float* data0_16; device unsigned long* data1_1; device uint* data2_2; };
+struct E_8_2_args { device float* arg0; device unsigned long* arg1; device uint* arg2; };
 kernel void E_8_2(constant struct E_8_2_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device float* data0_16 = args->data0_16;
-  device unsigned long* data1_1 = args->data1_1;
-  device uint* data2_2 = args->data2_2;
+  device float* data0_16 = args->arg0;
+  device unsigned long* data1_1 = args->arg1;
+  device uint* data2_2 = args->arg2;
   uint2 val0 = (*((device uint2*)((data2_2+0))));
   unsigned long val1 = (*(data1_1+0));
   int lidx0 = lid.x; /* 8 */

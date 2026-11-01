@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 5
 1 Ops.CUSTOM dtypes.void [0, 0] ("sym", dtypes.void)
 2 Ops.STACK dtypes.void []
@@ -6,7 +6,7 @@
 4 Ops.CONST dtypes.weakint [] -3
 5 Ops.MUL dtypes.weakint [3, 4]
 6 Ops.CONST dtypes.weakint [] 8
-7 Ops.FLOORMOD dtypes.weakint [5, 6]
+7 Ops.MOD dtypes.weakint [5, 6]
 8 Ops.SINK dtypes.void [1, 7, 0]
 9 Ops.CUSTOM dtypes.void [0, 0] ("commutative", dtypes.void)
 10 Ops.SINK dtypes.void [9, 0, 0]
@@ -18,7 +18,7 @@
 16 Ops.CONST dtypes.weakint [] -1
 17 Ops.MUL dtypes.weakint [15, 16]
 18 Ops.CONST dtypes.weakint [] 7
-19 Ops.FLOORMOD dtypes.weakint [17, 18]
+19 Ops.MOD dtypes.weakint [17, 18]
 20 Ops.SINK dtypes.void [14, 19, 13]
 21 Ops.CUSTOM dtypes.void [13, 13] ("commutative", dtypes.void)
 22 Ops.SINK dtypes.void [21, 13, 13]

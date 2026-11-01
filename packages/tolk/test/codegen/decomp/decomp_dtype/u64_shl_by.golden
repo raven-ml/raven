@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
 2 Ops.PARAM dtypes.u64 [1] ParamArg(slot=0, dtype=dtypes.u64, device="CPU")
@@ -55,8 +55,8 @@
 53 Ops.LOAD dtypes.u32 [52]
 54 Ops.CONST dtypes.weakint [] 32
 55 Ops.CMPLT dtypes.bool [53, 54]
-56 Ops.CONST dtypes.bool [] True
-57 Ops.CMPNE dtypes.bool [55, 56]
+56 Ops.CONST dtypes.bool [] False
+57 Ops.CMPEQ dtypes.bool [55, 56]
 58 Ops.CAST dtypes.u32 [48] dtypes.u32
 59 Ops.PARAM dtypes.u32 [45] ParamArg(slot=1, dtype=dtypes.u32, device="CPU")
 60 Ops.INDEX dtypes.u32 [59, 49]
@@ -86,7 +86,7 @@
 84 Ops.INDEX dtypes.u32 [51, 82]
 85 Ops.LOAD dtypes.u32 [84]
 86 Ops.CMPLT dtypes.bool [85, 54]
-87 Ops.CMPNE dtypes.bool [86, 56]
+87 Ops.CMPEQ dtypes.bool [86, 56]
 88 Ops.INDEX dtypes.u32 [59, 82]
 89 Ops.LOAD dtypes.u32 [88]
 90 Ops.AND dtypes.u32 [85, 62]
@@ -112,7 +112,7 @@
 110 Ops.INDEX dtypes.u32 [51, 108]
 111 Ops.LOAD dtypes.u32 [110]
 112 Ops.CMPLT dtypes.bool [111, 54]
-113 Ops.CMPNE dtypes.bool [112, 56]
+113 Ops.CMPEQ dtypes.bool [112, 56]
 114 Ops.INDEX dtypes.u32 [59, 108]
 115 Ops.LOAD dtypes.u32 [114]
 116 Ops.AND dtypes.u32 [111, 62]
@@ -138,7 +138,7 @@
 136 Ops.INDEX dtypes.u32 [51, 134]
 137 Ops.LOAD dtypes.u32 [136]
 138 Ops.CMPLT dtypes.bool [137, 54]
-139 Ops.CMPNE dtypes.bool [138, 56]
+139 Ops.CMPEQ dtypes.bool [138, 56]
 140 Ops.INDEX dtypes.u32 [59, 134]
 141 Ops.LOAD dtypes.u32 [140]
 142 Ops.AND dtypes.u32 [137, 62]

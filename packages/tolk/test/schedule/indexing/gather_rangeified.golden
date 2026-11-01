@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 2
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
@@ -19,20 +19,20 @@
 17 Ops.ADD dtypes.weakint [15, 16]
 18 Ops.CONST dtypes.weakint [] 7
 19 Ops.CMPLT dtypes.bool [17, 18]
-20 Ops.CMPNE dtypes.bool [19, 13]
-21 Ops.AND dtypes.bool [13, 20]
-22 Ops.CONST dtypes.weakint [] 1
-23 Ops.CAST dtypes.i32 [22] dtypes.i32
-24 Ops.CONST dtypes.weakint [] 0
-25 Ops.WHERE dtypes.i32 [21, 23, 24]
-26 Ops.REDUCE dtypes.i32 [25, 16] (Ops.ADD, 0)
-27 Ops.STAGE dtypes.i32 [26, 15] BufferizeOpts(device="CPU", broadcast=True)
-28 Ops.RANGE dtypes.weakint [14] (AxisType.WEAK, 1)
-29 Ops.INDEX dtypes.i32 [27, 28]
-30 Ops.CONST dtypes.weakint [] -1
-31 Ops.ADD dtypes.i32 [29, 30]
-32 Ops.CMPNE dtypes.bool [12, 31]
-33 Ops.CMPNE dtypes.bool [32, 13]
+20 Ops.CONST dtypes.bool [] False
+21 Ops.CMPEQ dtypes.bool [19, 20]
+22 Ops.AND dtypes.bool [13, 21]
+23 Ops.CONST dtypes.weakint [] 1
+24 Ops.CAST dtypes.i32 [23] dtypes.i32
+25 Ops.CONST dtypes.weakint [] 0
+26 Ops.WHERE dtypes.i32 [22, 24, 25]
+27 Ops.REDUCE dtypes.i32 [26, 16] (Ops.ADD, 0)
+28 Ops.STAGE dtypes.i32 [27, 15] BufferizeOpts(device="CPU", broadcast=True)
+29 Ops.RANGE dtypes.weakint [14] (AxisType.WEAK, 1)
+30 Ops.INDEX dtypes.i32 [28, 29]
+31 Ops.CONST dtypes.weakint [] -1
+32 Ops.ADD dtypes.i32 [30, 31]
+33 Ops.CMPEQ dtypes.bool [12, 32]
 34 Ops.ALLOC dtypes.i32 [14] ParamArg(slot=4, dtype=dtypes.i32, device="CPU")
 35 Ops.RANGE dtypes.weakint [14] (AxisType.WEAK, 2)
 36 Ops.INDEX dtypes.i32 [34, 35]
@@ -41,9 +41,9 @@
 39 Ops.STORE dtypes.void [36, 38]
 40 Ops.END dtypes.void [39, 35]
 41 Ops.AFTER dtypes.i32 [34, 40]
-42 Ops.INDEX dtypes.i32 [41, 28]
-43 Ops.WHERE dtypes.i32 [33, 42, 24]
-44 Ops.REDUCE dtypes.i32 [43, 28] (Ops.ADD, 0)
+42 Ops.INDEX dtypes.i32 [41, 29]
+43 Ops.WHERE dtypes.i32 [33, 42, 25]
+44 Ops.REDUCE dtypes.i32 [43, 29] (Ops.ADD, 0)
 45 Ops.STORE dtypes.void [3, 44]
 46 Ops.END dtypes.void [45, 2]
 47 Ops.AFTER dtypes.i32 [1, 46]

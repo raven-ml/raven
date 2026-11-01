@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.bool [] False
 1 Ops.CONST dtypes.bool [] True
 2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
@@ -16,7 +16,7 @@
 14 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
 15 Ops.SINK dtypes.void [14, 6, 6]
 16 Ops.CMPLT dtypes.bool [4, 9]
-17 Ops.CMPNE dtypes.bool [16, 1]
+17 Ops.CMPEQ dtypes.bool [16, 0]
 18 Ops.SINK dtypes.void [2, 17, 17]
 19 Ops.SINK dtypes.void [12, 17, 17]
 20 Ops.SINK dtypes.void [14, 17, 17]

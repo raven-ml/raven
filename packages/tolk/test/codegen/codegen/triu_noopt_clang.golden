@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 65536
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -21,9 +21,9 @@
 19 Ops.CONST dtypes.weakfloat [] 0.0
 20 Ops.CAST dtypes.f32 [19] dtypes.f32
 21 Ops.CMPLT dtypes.bool [14, 7]
-22 Ops.CONST dtypes.bool [] True
+22 Ops.CONST dtypes.bool [] False
 23 Ops.CAST dtypes.bool [22] dtypes.bool
-24 Ops.CMPNE dtypes.bool [21, 23]
+24 Ops.CMPEQ dtypes.bool [21, 23]
 25 Ops.LOAD dtypes.f32 [18, 20, 24]
 26 Ops.STORE dtypes.void [16, 25]
 27 Ops.END dtypes.void [26, 14]
@@ -31,7 +31,7 @@
 29 Ops.SINK dtypes.void [28] KernelInfo(name="E_256_256", optimized=True, split=(256, 2, 3))
 30 Ops.SINK dtypes.void [28] KernelInfo(name="E_256_256", estimates=Estimates(ops=131072, lds=524288, mem=524288), optimized=True, split=(256, 2, 3))
 31 Ops.LINEAR dtypes.void [0, 1, 17, 2, 3, 4, 22, 23, 19, 20, 11, 12, 8, 9, 5, 6, 13, 7, 10, 14, 15, 18, 21, 24, 25, 16, 26, 27, 28, 29]
-32 Ops.SOURCE dtypes.void [] "\nstruct E_256_256_args { float* data0_65536; float* data1_65536; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void E_256_256(const struct E_256_256_args* args) {\n  float* restrict data0_65536 = args->data0_65536;\n  float* restrict data1_65536 = args->data1_65536;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    for (int Lidx1 = 0; Lidx1 < 256; Lidx1++) {\n      int alu1 = ((alu0<<8)+Lidx1);\n      float val0 = (((Lidx1<alu0)!=1)?*(data1_65536+alu1):0.0f);\n      *(data0_65536+alu1) = val0;\n    }\n  }\n}\n"
+32 Ops.SOURCE dtypes.void [] "\nstruct E_256_256_args { float* arg0; float* arg1; int arg2; int arg3; };\n__attribute__((min_vector_width(512))) void E_256_256(const struct E_256_256_args* args) {\n  float* data0_65536 = args->arg0;\n  float* data1_65536 = args->arg1;\n  int block_lo_ = args->arg2;\n  int block_hi_ = args->arg3;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    for (int Lidx1 = 0; Lidx1 < 256; Lidx1++) {\n      int alu1 = ((alu0<<8)+Lidx1);\n      float val0 = (((Lidx1<alu0)==0)?*(data1_65536+alu1):0.0f);\n      *(data0_65536+alu1) = val0;\n    }\n  }\n}\n"
 33 Ops.PROGRAM dtypes.void [30, 31, 32] ProgramInfo(global_size=(256, 1, 1), params=(%1, %17, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 34 Ops.SINK dtypes.void [29, 33]
 

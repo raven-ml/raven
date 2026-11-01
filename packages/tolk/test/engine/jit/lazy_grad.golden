@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 96
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 4
@@ -38,20 +38,20 @@
 36 Ops.CONST dtypes.weakfloat [] 0.0
 37 Ops.CONST dtypes.weakint [] 64
 38 Ops.RANGE dtypes.weakint [37] (AxisType.WEAK, 3)
-39 Ops.FLOORDIV dtypes.weakint [38, 2]
-40 Ops.FLOORMOD dtypes.weakint [39, 2]
+39 Ops.DIV dtypes.weakint [38, 2]
+40 Ops.MOD dtypes.weakint [39, 2]
 41 Ops.ADD dtypes.weakint [40, 8]
 42 Ops.CMPLT dtypes.bool [41, 32]
-43 Ops.CONST dtypes.bool [] True
-44 Ops.CMPNE dtypes.bool [42, 43]
+43 Ops.CONST dtypes.bool [] False
+44 Ops.CMPEQ dtypes.bool [42, 43]
 45 Ops.CONST dtypes.weakint [] 5
 46 Ops.CMPLT dtypes.bool [41, 45]
 47 Ops.AND dtypes.bool [44, 46]
-48 Ops.FLOORMOD dtypes.weakint [38, 2]
+48 Ops.MOD dtypes.weakint [38, 2]
 49 Ops.RANGE dtypes.weakint [7] (AxisType.WEAK, 2)
 50 Ops.ADD dtypes.weakint [48, 49]
 51 Ops.CMPLT dtypes.bool [50, 32]
-52 Ops.CMPNE dtypes.bool [51, 43]
+52 Ops.CMPEQ dtypes.bool [51, 43]
 53 Ops.CMPLT dtypes.bool [50, 45]
 54 Ops.AND dtypes.bool [52, 53]
 55 Ops.AND dtypes.bool [47, 54]
@@ -77,7 +77,7 @@
 75 Ops.CONST dtypes.weakint [] 9
 76 Ops.MUL dtypes.weakint [59, 75]
 77 Ops.ADD dtypes.weakint [74, 76]
-78 Ops.FLOORDIV dtypes.weakint [38, 9]
+78 Ops.DIV dtypes.weakint [38, 9]
 79 Ops.CONST dtypes.weakint [] 27
 80 Ops.MUL dtypes.weakint [78, 79]
 81 Ops.ADD dtypes.weakint [77, 80]

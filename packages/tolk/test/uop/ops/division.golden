@@ -1,15 +1,15 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
 2 Ops.CAST dtypes.f32 [1] dtypes.f32
 3 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
-4 Ops.RECIPROCAL dtypes.f32 [3]
+4 Ops.RECIP dtypes.f32 [3]
 5 Ops.MUL dtypes.f32 [2, 4]
-6 Ops.FLOORDIV dtypes.i32 [1, 3]
-7 Ops.FLOORMOD dtypes.i32 [1, 3]
+6 Ops.DIV dtypes.i32 [1, 3]
+7 Ops.MOD dtypes.i32 [1, 3]
 8 Ops.PARAM dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
 9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
-10 Ops.RECIPROCAL dtypes.f32 [9]
+10 Ops.RECIP dtypes.f32 [9]
 11 Ops.MUL dtypes.f32 [8, 10]
 12 Ops.TRUNC dtypes.f32 [11]
 13 Ops.CMPLT dtypes.bool [11, 12]
@@ -21,20 +21,20 @@
 19 Ops.MUL dtypes.f32 [18, 9]
 20 Ops.MUL dtypes.f32 [19, 15]
 21 Ops.ADD dtypes.f32 [8, 20]
-22 Ops.CDIV dtypes.i32 [1, 3]
-23 Ops.CMOD dtypes.i32 [1, 3]
+22 Ops.TRUNCDIV dtypes.i32 [1, 3]
+23 Ops.TRUNCMOD dtypes.i32 [1, 3]
 24 Ops.MUL dtypes.f32 [12, 9]
 25 Ops.MUL dtypes.f32 [24, 15]
 26 Ops.ADD dtypes.f32 [8, 25]
 27 Ops.PARAM dtypes.bool [0] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="p", addrspace=AddrSpace.ALU)
 28 Ops.CAST dtypes.i32 [27] dtypes.i32
 29 Ops.CAST dtypes.f32 [28] dtypes.f32
-30 Ops.RECIPROCAL dtypes.f32 [1]
+30 Ops.RECIP dtypes.f32 [1]
 31 Ops.MUL dtypes.f32 [29, 30]
 32 Ops.CONST dtypes.weakint [] 8
-33 Ops.FLOORDIV dtypes.i32 [32, 1]
+33 Ops.DIV dtypes.i32 [32, 1]
 34 Ops.CONST dtypes.weakfloat [] 9.0
-35 Ops.RECIPROCAL dtypes.f32 [8]
+35 Ops.RECIP dtypes.f32 [8]
 36 Ops.MUL dtypes.f32 [34, 35]
 37 Ops.SINK dtypes.void [5, 6, 7, 11, 18, 21, 22, 12, 23, 26, 31, 33, 36]
 

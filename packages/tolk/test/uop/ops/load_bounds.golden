@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 dtype	bytes	vmin	vmax
 dtypes.bool	000100	False	True
 dtypes.i8	807f05	-128	127

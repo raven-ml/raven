@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
 2 Ops.PARAM dtypes.u64 [1] ParamArg(slot=0, dtype=dtypes.u64, device="CPU")
@@ -45,8 +45,8 @@
 43 Ops.CAST dtypes.u32 [11] dtypes.u32
 44 Ops.CONST dtypes.weakint [] 32
 45 Ops.CMPLT dtypes.bool [43, 44]
-46 Ops.CONST dtypes.bool [] True
-47 Ops.CMPNE dtypes.bool [45, 46]
+46 Ops.CONST dtypes.bool [] False
+47 Ops.CMPEQ dtypes.bool [45, 46]
 48 Ops.PARAM dtypes.u32 [37] ParamArg(slot=1, dtype=dtypes.u32, device="CPU")
 49 Ops.ADD dtypes.i32 [39, 14]
 50 Ops.INDEX dtypes.u32 [48, 49]

@@ -1,14 +1,14 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
 2 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
-3 Ops.FLOORMOD dtypes.weakint [1, 2]
+3 Ops.MOD dtypes.weakint [1, 2]
 4 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-10, 0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
-5 Ops.FLOORMOD dtypes.weakint [4, 2]
+5 Ops.MOD dtypes.weakint [4, 2]
 6 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-10, -1), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
-7 Ops.FLOORMOD dtypes.weakint [1, 6]
-8 Ops.FLOORMOD dtypes.weakint [4, 6]
+7 Ops.MOD dtypes.weakint [1, 6]
+8 Ops.MOD dtypes.weakint [4, 6]
 9 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-10, 10), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
-10 Ops.FLOORMOD dtypes.weakint [9, 6]
+10 Ops.MOD dtypes.weakint [9, 6]
 11 Ops.SINK dtypes.void [3, 3, 5, 5, 7, 7, 8, 8, 10, 10]
 

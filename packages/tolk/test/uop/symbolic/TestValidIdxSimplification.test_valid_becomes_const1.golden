@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CUSTOM dtypes.void [] ("sym+pm_move_where_on_load", dtypes.void)
 1 Ops.CONST dtypes.weakint [] 1024
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
@@ -13,17 +13,17 @@
 11 Ops.AND dtypes.bool [6, 10]
 12 Ops.ADD dtypes.weakint [8, 4]
 13 Ops.ADD dtypes.weakint [12, 5]
-14 Ops.FLOORDIV dtypes.weakint [13, 7]
+14 Ops.DIV dtypes.weakint [13, 7]
 15 Ops.CONST dtypes.weakint [] -31
 16 Ops.MUL dtypes.weakint [14, 15]
 17 Ops.CONST dtypes.weakint [] 218
 18 Ops.ADD dtypes.weakint [12, 17]
 19 Ops.CONST dtypes.weakint [] 224
-20 Ops.FLOORDIV dtypes.weakint [18, 19]
+20 Ops.DIV dtypes.weakint [18, 19]
 21 Ops.CONST dtypes.weakint [] 30
 22 Ops.RANGE dtypes.weakint [21] (AxisType.WEAK, 0)
 23 Ops.ADD dtypes.weakint [20, 22]
-24 Ops.FLOORMOD dtypes.weakint [23, 21]
+24 Ops.MOD dtypes.weakint [23, 21]
 25 Ops.CONST dtypes.weakint [] 1568
 26 Ops.MUL dtypes.weakint [24, 25]
 27 Ops.ADD dtypes.weakint [16, 26]

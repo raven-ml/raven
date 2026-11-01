@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -39,7 +39,7 @@
 37 Ops.ENDIF dtypes.void [36]
 38 Ops.SINK dtypes.void [34] KernelInfo(name="E_4_4", optimized=True, split=(4, 1, 2))
 39 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 23, 24, 14, 15, 16, 17, 19, 20, 6, 7, 5, 8, 9, 18, 21, 22, 10, 11, 12, 13, 25, 26, 27, 36, 32, 37, 33, 34, 38]
-40 Ops.SOURCE dtypes.void [] "\nstruct E_4_4_args { float* data0_16; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void E_4_4(const struct E_4_4_args* args) {\n  float* restrict data0_16 = args->data0_16;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    _Bool alu0 = ((0<Lidx0)&(Lidx0<2));\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      float val0 = (alu0?*(data0_16+(block_lo_+Lidx1+4)):0.0f);\n      if ((alu0&(val0!=0.0f))) {\n        *(data0_16+(block_lo_+Lidx1+4)) = 2.0f;\n      }\n    }\n  }\n}\n"
+40 Ops.SOURCE dtypes.void [] "\nstruct E_4_4_args { float* arg0; int arg1; int arg2; };\n__attribute__((min_vector_width(512))) void E_4_4(const struct E_4_4_args* args) {\n  float* data0_16 = args->arg0;\n  int block_lo_ = args->arg1;\n  int block_hi_ = args->arg2;\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    _Bool alu0 = ((0<Lidx0)&(Lidx0<2));\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      float val0 = (alu0?*(data0_16+(block_lo_+Lidx1+4)):0.0f);\n      if ((alu0&(val0!=0.0f))) {\n        *(data0_16+(block_lo_+Lidx1+4)) = 2.0f;\n      }\n    }\n  }\n}\n"
 41 Ops.PROGRAM dtypes.void [35, 39, 40] ProgramInfo(global_size=(4, 1, 1), params=(%1, %3, %4), globals=(0,), outs=(0,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 42 Ops.SINK dtypes.void [31, 41]
 

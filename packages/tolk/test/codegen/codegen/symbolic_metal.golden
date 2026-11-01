@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
@@ -30,7 +30,7 @@
 28 Ops.ADD dtypes.i32 [27, 26]
 29 Ops.SINK dtypes.void [15] KernelInfo(name="E_n", estimates=Estimates(ops=%18, lds=%25, mem=%28), optimized=True)
 30 Ops.LINEAR dtypes.void [0, 1, 6, 2, 3, 4, 7, 8, 5, 12, 13, 9, 10, 11, 14, 15, 16]
-31 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct E_n_args { device float* data0_64; device float* data1_64; int n_; };\nkernel void E_n(constant struct E_n_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_64 = args->data0_64;\n  device float* data1_64 = args->data1_64;\n  const int n_ = args->n_;\n  int gidx0 = gid.x; /* n */\n  float val0 = (*(data1_64+gidx0));\n  *(data0_64+gidx0) = ((val0*2.0f)+1.0f);\n}"
+31 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct E_n_args { device float* arg0; device float* arg1; int arg2; };\nkernel void E_n(constant struct E_n_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_64 = args->arg0;\n  device float* data1_64 = args->arg1;\n  int n_ = args->arg2;\n  int gidx0 = gid.x; /* n */\n  float val0 = (*(data1_64+gidx0));\n  *(data0_64+gidx0) = ((val0*2.0f)+1.0f);\n}"
 32 Ops.PARAM dtypes.i32 [2] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 64), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
 33 Ops.PROGRAM dtypes.void [29, 30, 31] ProgramInfo(global_size=(%32, 1, 1), params=(%1, %6, %3), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 34 Ops.SINK dtypes.void [16, 33]

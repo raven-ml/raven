@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 1024
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 3
@@ -184,8 +184,8 @@
 182 Ops.STORE dtypes.void [174, 181]
 183 Ops.END dtypes.void [182, 92]
 184 Ops.SINK dtypes.void [183] KernelInfo()
-185 Ops.CONST dtypes.bool [] True
-186 Ops.CMPNE dtypes.bool [93, 185]
+185 Ops.CONST dtypes.bool [] False
+186 Ops.CMPEQ dtypes.bool [93, 185]
 187 Ops.WHERE dtypes.f32 [186, 94, 180]
 188 Ops.STORE dtypes.void [174, 187]
 189 Ops.END dtypes.void [188, 92]

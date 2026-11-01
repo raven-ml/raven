@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 128), multiple_of=1, name="v2", addrspace=AddrSpace.ALU)
 2 Ops.CONST dtypes.weakint [] 0
@@ -11,17 +11,17 @@
 9 Ops.MUL dtypes.weakint [7, 8]
 10 Ops.ADD dtypes.weakint [5, 9]
 11 Ops.CONST dtypes.weakint [] 5
-12 Ops.FLOORMOD dtypes.weakint [10, 11]
+12 Ops.MOD dtypes.weakint [10, 11]
 13 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 16), multiple_of=1, name="v1", addrspace=AddrSpace.ALU)
 14 Ops.CONST dtypes.weakint [] 6
-15 Ops.FLOORDIV dtypes.weakint [13, 14]
+15 Ops.DIV dtypes.weakint [13, 14]
 16 Ops.ADD dtypes.weakint [12, 15]
 17 Ops.ADD dtypes.weakint [16, 13]
 18 Ops.ADD dtypes.weakint [17, 11]
-19 Ops.FLOORMOD dtypes.weakint [18, 11]
+19 Ops.MOD dtypes.weakint [18, 11]
 20 Ops.ADD dtypes.weakint [17, 2]
-21 Ops.FLOORMOD dtypes.weakint [20, 11]
-22 Ops.FLOORDIV dtypes.weakint [2, 14]
+21 Ops.MOD dtypes.weakint [20, 11]
+22 Ops.DIV dtypes.weakint [2, 14]
 23 Ops.ADD dtypes.weakint [2, 22]
 24 Ops.CONST dtypes.weakint [] 7
 25 Ops.CONST dtypes.weakint [] -2
@@ -29,7 +29,7 @@
 27 Ops.ADD dtypes.weakint [23, 26]
 28 Ops.CONST dtypes.weakint [] 3
 29 Ops.ADD dtypes.weakint [27, 28]
-30 Ops.FLOORMOD dtypes.weakint [29, 11]
+30 Ops.MOD dtypes.weakint [29, 11]
 31 Ops.CONST dtypes.weakint [] -3
 32 Ops.MUL dtypes.weakint [31, 11]
 33 Ops.MUL dtypes.weakint [32, 8]
@@ -39,15 +39,15 @@
 37 Ops.MUL dtypes.weakint [24, 6]
 38 Ops.MUL dtypes.weakint [37, 8]
 39 Ops.ADD dtypes.weakint [36, 38]
-40 Ops.FLOORMOD dtypes.weakint [39, 11]
+40 Ops.MOD dtypes.weakint [39, 11]
 41 Ops.MUL dtypes.weakint [25, 11]
 42 Ops.MUL dtypes.weakint [41, 8]
 43 Ops.ADD dtypes.weakint [39, 42]
 44 Ops.ADD dtypes.weakint [40, 22]
 45 Ops.ADD dtypes.weakint [44, 2]
 46 Ops.ADD dtypes.weakint [45, 11]
-47 Ops.FLOORMOD dtypes.weakint [46, 11]
+47 Ops.MOD dtypes.weakint [46, 11]
 48 Ops.ADD dtypes.weakint [45, 2]
-49 Ops.FLOORMOD dtypes.weakint [48, 11]
+49 Ops.MOD dtypes.weakint [48, 11]
 50 Ops.SINK dtypes.void [12, 12, 15, 15, 19, 21, 22, 2, 30, 34, 40, 43, 47, 49]
 

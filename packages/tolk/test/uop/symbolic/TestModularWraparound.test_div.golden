@@ -1,4 +1,4 @@
-# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
+# tinygrad b98af4a4bbfab0afec39b37c122f792d4120812e
 0 Ops.CONST dtypes.weakint [] 104274379
 1 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
 2 Ops.CONST dtypes.weakint [] 2882344918
@@ -6,7 +6,7 @@
 4 Ops.CONST dtypes.weakint [] 2864434397
 5 Ops.MUL dtypes.u32 [3, 4]
 6 Ops.CONST dtypes.weakint [] 11
-7 Ops.FLOORDIV dtypes.u32 [5, 6]
+7 Ops.DIV dtypes.u32 [5, 6]
 8 Ops.CAST dtypes.u32 [0] dtypes.u32
 9 Ops.SINK dtypes.void [1, 7, 8]
 10 Ops.SINK dtypes.void [9]
