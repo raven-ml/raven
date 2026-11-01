@@ -493,6 +493,13 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.solve` and `System.solve`'s methods and `System.lanes` add the
+  matrix products that steer them, `Jᵀ J`, `Jᵀ r`, `H ∇f`, `B s` and their
+  like, in a fixed pairwise order, so a compiled solve rounds them as an eager
+  one: a compiled Levenberg–Marquardt fit differed from eager from its first
+  step. The factorisations they call, `Nx.solve`, `Nx.qr` and `Nx.inv`, still
+  round as the compiled program allows; `Tol`'s doc names the solves whose
+  compiled decisions match eager.
 - `System.lanes` allows for the subnormals' absolute rounding when it checks
   a lane's linear solve. A lane whose zero has an unknown below the normal
   floats failed the check and ended `Stalled`.

@@ -61,6 +61,18 @@ val sum_rows : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
     pairwise in a fixed order so that eager and compiled calls round alike: of
     shape [[k]]. A row of no element is [0]. *)
 
+val matvec :
+  (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
+(** [matvec a v] is [a]'s product with [v] over [a]'s last axis, [a] of shape
+    [lead @ [k; n]] and [v] of shape [lead @ [n]] or [[n]]: of shape
+    [lead @ [k]], each sum added as {!sum_rows} adds, so that eager and compiled
+    calls round alike. *)
+
+val gram : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
+(** [gram a b] is the matrix of the inner products of [a]'s rows, of shape
+    [[p; n]], with [b]'s, of shape [[q; n]], [a bᵀ], each added as {!sum_rows}
+    adds: of shape [[p; q]]. *)
+
 val rms_rows : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [rms_rows r] is the root mean square of each row of [r], of shape [[k; n]],
     summed pairwise in a fixed order so that eager and compiled calls round

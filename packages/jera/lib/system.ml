@@ -122,7 +122,7 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
   let b = differences residual s.x s.fx in
   let s = { s with n = Nx.add_s s.n (Int32.of_int (Nx.dim 0 s.x)) } in
   let step (s : _ Search.state) (b, k) =
-    let delta, _, failed = solve (Nx.matmul b) s.fx in
+    let delta, _, failed = solve (Num.matvec b) s.fx in
     let s = { s with st = settle s.st failed Stalled } in
     let s = Search.test tol s delta in
     let run = searching s.st in
@@ -158,7 +158,7 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
     let update =
       Nx.div
         (Nx.mul
-           (Nx.reshape [| -1; 1 |] (Nx.div (Nx.sub df (Nx.matmul b dx)) m))
+           (Nx.reshape [| -1; 1 |] (Nx.div (Nx.sub df (Num.matvec b dx)) m))
            (Nx.reshape [| 1; -1 |] u))
         (Nx.where moved (Search.dot u u) (Nx.ones_like m))
     in
@@ -203,10 +203,10 @@ let anderson_search ~tol ~budget ~memory ~residual (s : _ Search.state) =
         Nx.logical_and (Nx.reshape [| m; 1 |] kept) (Nx.reshape [| 1; m |] kept)
       in
       let r = Nx.where both r (Nx.eye_at (Nx.beside r) dtype m) in
-      let rhs = Nx.matmul (Nx.transpose q) fx in
+      let rhs = Num.matvec (Nx.transpose q) fx in
       let rhs = Nx.where kept rhs (Nx.zeros_like rhs) in
       let gamma = Nx.solve_triangular ~triangle:Upper r rhs in
-      Nx.sub g (Nx.matmul dg gamma)
+      Nx.sub g (Num.matvec dg gamma)
   in
   let step (s : _ Search.state) (df, (dg, count)) =
     let x0 = s.x and fx0 = s.fx in
@@ -355,7 +355,7 @@ let batched a b =
   Nx.reshape (Nx.shape b) (Nx.solve a' b')
 
 let product a u =
-  Nx.squeeze ~axes:[ -1 ] (Nx.matmul a (Nx.unsqueeze ~axes:[ -1 ] u))
+  Num.matvec a u
 
 (* The backward error of an LU solve of [a u = b], per lane. Below the normal
    floats a product rounds by up to half the subnormals' spacing [η = tiny ε]
@@ -363,7 +363,12 @@ let product a u =
 let backward_bound a u b =
   let k = Nx.dim (-1) b in
   let dtype = Nx.dtype b in
-  let frobenius = Nx.sqrt (Nx.sum ~axes:[ -2; -1 ] (Nx.square a)) in
+  let lanes = Array.sub (Nx.shape a) 0 (Nx.ndim a - 2) in
+  let frobenius =
+    Nx.sqrt
+      (Nx.reshape lanes
+         (Num.sum_rows (Nx.reshape [| -1; k * k |] (Nx.square a))))
+  in
   let eps = Num.eps dtype in
   Nx.mul_s
     (Nx.add

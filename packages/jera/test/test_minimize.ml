@@ -361,9 +361,35 @@ let lm_tests =
           (Oracle.tensor ~rel:1e-6 ())
           (Oracle.central ~eps:1e-6 f y v)
           (Nx.sum (Nx.mul (Rune.grad' f y) v)));
-    test "compiled equals eager (law 3)" (fun () ->
-        let f y = Solution.get (fit y) in
-        let y = model (vec [| 2.; -1.3 |]) in
+    test "a compiled first step equals eager (law 3)" (fun () ->
+        (* One unknown, [2 e^(b t)] from [b = 0], where the model's values and
+           Jacobian are exact: the step sums [JᵀJ] and [Jᵀ r] over the 20
+           samples, which a contraction would associate as the compiled
+           program's shapes allow, and divides. Past it the compiled
+           exponential may differ by its ulps. *)
+        let decay b = Nx.mul_s (Nx.exp (Nx.mul b times)) 2. in
+        let f y =
+          Nx.get [ 1 ]
+            (Minimize.iterates one lm ~steps:2
+               (fun b -> Nx.sub (decay b) y)
+               (vec [| 0. |]))
+        in
+        let y = decay (vec [| -1.3 |]) in
+        equal (Oracle.tensor ()) (f y) (Rune.jit' f y));
+    test "compiled equals eager on a rational model (law 3)" (fun () ->
+        (* A model of sums, products and a quotient, which compiled and eager
+           evaluate to the same bits: every decision depends on the values of
+           the residual only. *)
+        let rational p =
+          Nx.div (Nx.get [ 0 ] p) (Nx.add_s (Nx.mul (Nx.get [ 1 ] p) times) 1.)
+        in
+        let f y =
+          Solution.get
+            (Minimize.solve one lm ~tol:tight ~budget:100
+               (fun p -> Nx.sub (rational p) y)
+               (vec [| 1.; 0. |]))
+        in
+        let y = rational (vec [| 2.; 0.3 |]) in
         equal (Oracle.tensor ()) (f y) (Rune.jit' f y));
     test "its iterates start at the start and reach the fit" (fun () ->
         let y = model (vec [| 2.; -1.3 |]) in

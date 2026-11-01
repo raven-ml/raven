@@ -119,6 +119,19 @@ let sum_rows r =
     in
     halve r m
 
+let matvec a v =
+  let n = Nx.dim (-1) a in
+  let lead = Array.sub (Nx.shape a) 0 (Nx.ndim a - 1) in
+  let products = Nx.mul a (Nx.unsqueeze ~axes:[ -2 ] v) in
+  Nx.reshape lead (sum_rows (Nx.reshape [| -1; n |] products))
+
+let gram a b =
+  let p = Nx.dim 0 a and q = Nx.dim 0 b and n = Nx.dim 1 a in
+  let products =
+    Nx.mul (Nx.reshape [| p; 1; n |] a) (Nx.reshape [| 1; q; n |] b)
+  in
+  Nx.reshape [| p; q |] (sum_rows (Nx.reshape [| p * q; n |] products))
+
 let rms_rows r =
   let n = Nx.dim 1 r in
   if n = 0 then Nx.sum ~axes:[ 1 ] r

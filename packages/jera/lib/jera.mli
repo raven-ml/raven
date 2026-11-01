@@ -139,9 +139,19 @@ module Tol : sig
       its [e] and [y] are.
 
       The components add in a fixed order, pairwise over the flattened
-      components, so a decision depends only on the values of the user's
-      function, eagerly and compiled. Tolerances are OCaml floats: constants of
-      a compiled program. *)
+      components, as do the sums and products that steer the searches. Where a
+      solve's work is those and elementwise operations, its decisions depend
+      only on the values of the user's function, bit for bit eagerly and
+      compiled: {!Root}, {!Minimize.bracket}, and {!Minimize.solve}'s
+      [bfgs], [lbfgs] and [nelder_mead] without a box, {!System.anderson}
+      without memory. A solve that calls a {!Linear} solver, factors a matrix
+      ([Nx.solve], [Nx.qr], [Nx.solve_triangular], [Nx.inv]) or takes a prefix
+      sum ([Nx.cumsum]) rounds those within {!Rune}'s numerics, and compiled
+      may decide differently: {!System.solve}'s [newton] and [broyden],
+      Anderson with memory, {!System.lanes}, {!Minimize.solve}'s [newton] and
+      [levenberg_marquardt] and its steps in a box, and the methods for stiff
+      and implicit equations. Tolerances are OCaml floats: constants of a
+      compiled program. *)
 
   type t
   (** The type for tolerances. *)

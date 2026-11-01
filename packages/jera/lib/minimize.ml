@@ -349,11 +349,14 @@ let outer u v = Nx.mul (Nx.reshape [| -1; 1 |] u) (Nx.reshape [| 1; -1 |] v)
 (* BFGS keeps the inverse Hessian's estimate [H], scaled to [yᵀs / yᵀy] before
    its first update (Nocedal and Wright, (6.20)), and updates it by [H ← (I − ρ
    s yᵀ) H (I − ρ y sᵀ) + ρ s sᵀ], [ρ = 1 / yᵀs], on a pair of positive
-   curvature. *)
+   curvature, expanded to
+   [H − ρ (s (H y)ᵀ + H y sᵀ) + (ρ² yᵀ H y + ρ) s sᵀ]: one product [H y], added
+   in {!Num.sum_rows}'s fixed order, so that a compiled search rounds as an
+   eager one. *)
 let bfgs_method at dtype n ~trials evaluate =
   let eye = Nx.eye_at at dtype n in
   let direction (s : _ Search.state) (h, _) =
-    (Nx.neg (Nx.matmul h s.fx), Nx.scalar_at at Nx.bool false)
+    (Nx.neg (Num.matvec h s.fx), Nx.scalar_at at Nx.bool false)
   in
   (* [B = H⁻¹], factored once per step; its segments are computed from every
      segment's direction and start as rows, [n²] numbers each, as [B]. *)
@@ -370,12 +373,12 @@ let bfgs_method at dtype n ~trials evaluate =
           (Nx.mul (Nx.minimum row column) d0)
           (Nx.zeros_at at dtype [| n + 1; n |])
       in
-      let rowdot a c = Nx.sum ~axes:[ 1 ] (Nx.mul a c) in
-      ( Nx.add (Nx.matmul dirs p.g) (rowdot dirs (Nx.matmul reached b)),
+      let rowdot a c = Num.sum_rows (Nx.mul a c) in
+      ( Nx.add (Num.matvec dirs p.g) (rowdot dirs (Nx.matmul reached b)),
         rowdot dirs (Nx.matmul dirs b) )
     in
     {
-      apply = (fun v -> Nx.matmul b v);
+      apply = (fun v -> Num.matvec b v);
       segments;
       reduced =
         (fun ~free r ->
@@ -392,11 +395,13 @@ let bfgs_method at dtype n ~trials evaluate =
     let h =
       Nx.where first (Nx.mul eye (Nx.mul ys (Nx.recip (Search.dot y y)))) h
     in
-    let left = Nx.sub eye (Nx.mul rho (outer step y)) in
+    let hy = Num.matvec h y in
     let h' =
       Nx.add
-        (Nx.matmul left (Nx.matmul h (Nx.transpose left)))
-        (Nx.mul rho (outer step step))
+        (Nx.sub h (Nx.mul rho (Nx.add (outer step hy) (outer hy step))))
+        (Nx.mul
+           (Nx.add (Nx.mul (Nx.square rho) (Search.dot y hy)) rho)
+           (outer step step))
     in
     (Nx.where curved h' h, Nx.logical_and first (Nx.logical_not curved))
   in
@@ -454,7 +459,7 @@ let lbfgs_method at dtype n m ~trials evaluate =
     (Nx.neg !r, Nx.scalar_at at Nx.bool false)
   in
   let model (ss, ys) =
-    let sy = Nx.matmul ss (Nx.transpose ys) in
+    let sy = Num.gram ss ys in
     let curvature = Nx.diagonal sy in
     let valid = Nx.greater_s curvature 0. in
     let c0 = Nx.get [ 0 ] curvature in
@@ -482,7 +487,7 @@ let lbfgs_method at dtype n m ~trials evaluate =
         [
           Nx.concatenate ~axis:1 [ Nx.neg (Nx.diag curvature); Nx.transpose l ];
           Nx.concatenate ~axis:1
-            [ l; Nx.mul theta (Nx.matmul ss (Nx.transpose ss)) ];
+            [ l; Nx.mul theta (Num.gram ss ss) ];
         ]
     in
     let kept =
@@ -510,11 +515,13 @@ let lbfgs_method at dtype n m ~trials evaluate =
           [ Nx.zeros_at at dtype [| 2 * m; 1 |]; Nx.cumsum ~axis:1 v ]
       in
       let finite_t = Nx.where (Nx.isfinite t) t (Nx.zeros_like t) in
-      let total v = Nx.sum v in
+      let total v = Nx.reshape [||] (Num.sum_rows (Nx.reshape [| 1; n |] v)) in
       let dd = Nx.sub (total (Nx.square d)) (before (Nx.square d)) in
       let gd = Nx.sub (total (Nx.mul g d)) (before (Nx.mul g d)) in
       let pw = Nx.mul rows (Nx.reshape [| 1; n |] d) in
-      let ps = Nx.sub (Nx.sum ~axes:[ 1 ] ~keepdims:true pw) (before_rows pw) in
+      let ps =
+        Nx.sub (Nx.reshape [| 2 * m; 1 |] (Num.sum_rows pw)) (before_rows pw)
+      in
       let starts =
         Nx.where (Nx.isfinite p.starts) p.starts (Nx.zeros_like p.starts)
       in
@@ -523,7 +530,10 @@ let lbfgs_method at dtype n m ~trials evaluate =
           (before_rows (Nx.mul pw (Nx.reshape [| 1; n |] finite_t)))
           (Nx.mul ps (Nx.reshape [| 1; n + 1 |] starts))
       in
-      let quad a c = Nx.sum ~axes:[ 0 ] (Nx.mul a (Nx.matmul mm c)) in
+      let quad a c =
+        Num.sum_rows
+          (Nx.transpose (Nx.mul a (Num.gram mm (Nx.transpose c))))
+      in
       ( Nx.sub (Nx.add gd (Nx.mul (Nx.mul theta starts) dd)) (quad ps cs),
         Nx.sub (Nx.mul theta dd) (quad ps ps) )
     in
@@ -531,7 +541,7 @@ let lbfgs_method at dtype n m ~trials evaluate =
       apply =
         (fun v ->
           Nx.sub (Nx.mul theta v)
-            (Nx.matmul (Nx.transpose w) (Nx.matmul mm (Nx.matmul w v))));
+            (Num.matvec (Nx.transpose w) (Num.matvec mm (Num.matvec w v))));
       segments;
       reduced =
         (fun ~free r ->
@@ -539,12 +549,12 @@ let lbfgs_method at dtype n m ~trials evaluate =
           let inner =
             Nx.sub
               (Nx.eye_at at dtype (2 * m))
-              (Nx.div (Nx.matmul mm (Nx.matmul u (Nx.transpose u))) theta)
+              (Nx.div (Num.gram mm (Num.gram u u)) theta)
           in
-          let v = Nx.solve inner (Nx.matmul mm (Nx.matmul u r)) in
+          let v = Nx.solve inner (Num.matvec mm (Num.matvec u r)) in
           Nx.neg
             (Nx.add (Nx.div r theta)
-               (Nx.div (Nx.matmul (Nx.transpose u) v) (Nx.square theta))));
+               (Nx.div (Num.matvec (Nx.transpose u) v) (Nx.square theta))));
     }
   in
   let push v memory =
@@ -1070,6 +1080,12 @@ let rows x like xs =
    the projection removes, and [x₁] alone moves uphill (Bertsekas, 1982, §2, his
    Fig. 1). *)
 
+(* [Jᵀ v] and the sums of squares of [J]'s columns, added in {!Num.sum_rows}'s
+   fixed order, so that a compiled fit rounds as an eager one: a contraction
+   lets its association depend on the shapes it reads. *)
+let jtv j v = Num.matvec (Nx.transpose j) v
+let columns j = Num.sum_rows (Nx.transpose (Nx.square j))
+
 let accept_ratio = 1e-4
 let lambda0 = 1e-3
 
@@ -1114,13 +1130,13 @@ let lm_problem fn x r linear f start =
      held coordinates. *)
   let solve j ~free damping rhs =
     let damped v =
-      Nx.add (Nx.matmul (Nx.transpose j) (Nx.matmul j v)) (Nx.mul damping v)
+      Nx.add (jtv j (Num.matvec j v)) (Nx.mul damping v)
     in
     let apply =
       match free with
       | None -> damped
       | Some free ->
-          let held = Nx.add (Nx.sum ~axes:[ 0 ] (Nx.square j)) damping in
+          let held = Nx.add (columns j) damping in
           restricted ~free ~held damped
     in
     let run = Linear.run linear dtype size apply precondition rhs in
@@ -1152,7 +1168,7 @@ let lm_trial residual ~jacobian ~project ~running j x r g delta =
   let step = Nx.sub xt x in
   let rt = residual xt in
   let jt = jacobian xt in
-  let gt = Nx.matmul (Nx.transpose jt) rt in
+  let gt = jtv jt rt in
   (* The cost and the decreases are measured on [r / m], [m] the largest [|r|]
      at the step's start: a constant factor, which [ρ] and the rounding band do
      not see, and under which the squares of residuals below 10⁻¹⁵⁴ do not
@@ -1160,7 +1176,7 @@ let lm_trial residual ~jacobian ~project ~running j x r g delta =
   let m = Search.largest r in
   let over v = Nx.div v m in
   let half_square v = Nx.mul_s (Search.dot (over v) (over v)) 0.5 in
-  let jd = Nx.matmul j step in
+  let jd = Num.matvec j step in
   let predicted =
     Nx.sub (Nx.neg (Search.dot (over g) (over step))) (half_square jd)
   in
@@ -1209,7 +1225,7 @@ let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
   let s = { s with st = emptied box s.st } in
   let lanes = [||] in
   let step (s : _ Search.state) (d, (lambda, (nu, (j, g)))) =
-    let d = Nx.maximum d (Nx.sum ~axes:[ 0 ] (Nx.square j)) in
+    let d = Nx.maximum d (columns j) in
     let toward v = Nx.sub (project (Nx.add s.x v)) s.x in
     let free = Option.map (fun b -> free b s.x g) box in
     let delta, failed = p.solve j ~free (Nx.mul lambda d) (Nx.neg g) in
@@ -1265,7 +1281,7 @@ let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
              ( Nx.zeros_at (Nx.beside x0) p.dtype [| p.size |],
                ( Nx.full_at (Nx.beside x0) p.dtype lanes lambda0,
                  ( Nx.full_at (Nx.beside x0) p.dtype lanes 2.,
-                   (j0, Nx.matmul (Nx.transpose j0) s.fx) ) ) ) ))
+                   (j0, jtv j0 s.fx) ) ) ) ))
   in
   let value =
     answer fn x linear ~dtype:p.dtype ~st:s.st ~ravel:p.ravel ~unravel:p.unravel
@@ -1292,8 +1308,8 @@ let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
 let lm_path fn x r linear ~steps f start =
   let (Lm p) = lm_problem fn x r linear f start in
   let trip ((x, (r, j)), (d, (lambda, (nu, stopped)))) _ =
-    let g = Nx.matmul (Nx.transpose j) r in
-    let d = Nx.maximum d (Nx.sum ~axes:[ 0 ] (Nx.square j)) in
+    let g = jtv j r in
+    let d = Nx.maximum d (columns j) in
     let delta, failed = p.solve j ~free:None (Nx.mul lambda d) (Nx.neg g) in
     let still =
       Nx.logical_or
@@ -1395,7 +1411,11 @@ let reflect ?(project = Fun.id) values n (v, fv) =
   let fbest = Nx.get [ 0 ] fv
   and fsecond = Nx.get [ n - 1 ] fv
   and fworst = Nx.get [ n ] fv in
-  let c = Nx.mean ~axes:[ 0 ] (Nx.slice [ Nx.R (0, n) ] v) in
+  let c =
+    Nx.div_s
+      (Num.sum_rows (Nx.transpose (Nx.slice [ Nx.R (0, n) ] v)))
+      (Float.of_int n)
+  in
   let one p = Nx.get [ 0 ] (values (Nx.reshape [| 1; -1 |] p)) in
   let xr = project (Nx.add c (Nx.sub c worst)) in
   let fr = one xr in
@@ -1516,11 +1536,12 @@ let simplex_solve fn x ?lo ?hi ~tol ~budget f start =
     let fbest = Nx.min fv in
     let others = Nx.slice [ Nx.R (1, n + 1) ] ffresh in
     let slope =
+      let d =
+        Nx.div (Nx.sub others fbest)
+          (Nx.where (Nx.equal_s sigma 0.) (Nx.ones_like sigma) sigma)
+      in
       Nx.sqrt
-        (Nx.sum
-           (Nx.square
-              (Nx.div (Nx.sub others fbest)
-                 (Nx.where (Nx.equal_s sigma 0.) (Nx.ones_like sigma) sigma))))
+        (Nx.reshape [||] (Num.sum_rows (Nx.reshape [| 1; -1 |] (Nx.square d))))
     in
     let lower =
       Nx.less (Nx.min others)
