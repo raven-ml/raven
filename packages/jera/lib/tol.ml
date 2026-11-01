@@ -12,7 +12,8 @@ let fail fn fmt = Printf.ksprintf (fun m -> invalid_arg (fn ^ ": " ^ m)) fmt
 let v ~rel ~abs =
   let check name x =
     if not (Float.is_finite x && x >= 0.) then
-      fail "Jera.Tol.v" "%s = %g is not finite and non-negative" name x
+      fail "Jera.Tol.v" "%s = %s is not finite and non-negative" name
+        (Num.text x)
   in
   check "rel" rel;
   check "abs" abs;
@@ -24,12 +25,13 @@ let abs a = v ~rel:0. ~abs:a
 
 let ulps k =
   if not (Float.is_finite k && k > 0.) then
-    fail "Jera.Tol.ulps" "k = %g is not finite and positive" k;
+    fail "Jera.Tol.ulps" "k = %s is not finite and positive" (Num.text k);
   Ulps k
 
 let pp ppf = function
-  | Scaled { rel; abs } -> Format.fprintf ppf "rel %g abs %g" rel abs
-  | Ulps k -> Format.fprintf ppf "ulps %g" k
+  | Scaled { rel; abs } ->
+      Format.fprintf ppf "rel %s abs %s" (Num.text rel) (Num.text abs)
+  | Ulps k -> Format.fprintf ppf "ulps %s" (Num.text k)
 
 let scale t y =
   match t with

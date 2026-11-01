@@ -32,15 +32,14 @@ let locate fn e breaks x =
     inside
     (x, (first, last))
     (fun i (x, (first, last)) ->
-      let x = Nx.item [] x in
       Invalid_argument
-        (if Float.is_finite x then
+        (if Float.is_finite (Nx.item [] x) then
            Printf.sprintf
-             "%s: the point at [%d] is %g, outside the domain [%g, %g]" fn i.(0)
-             x (Nx.item [] first) (Nx.item [] last)
+             "%s: the point at [%d] is %s, outside the domain [%s, %s]" fn i.(0)
+             (Num.item x) (Num.item first) (Num.item last)
          else
-           Printf.sprintf "%s: the point at [%d] is %g, which no piece holds" fn
-             i.(0) x));
+           Printf.sprintf "%s: the point at [%d] is %s, which no piece holds" fn
+             i.(0) (Num.item x)));
   (* The piece is the one at the point clamped to the domain: the last of
      positive width ending at it, or at the first break the first of positive
      width starting there. Empty pieces, of zero width, hold no point. The

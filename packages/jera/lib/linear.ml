@@ -29,7 +29,8 @@ let banded ~width =
 let cg ~rel ~budget ~precondition =
   let fn = "Jera.Linear.cg" in
   if not (rel > 0. && rel < 1.) then
-    invalid_arg (Printf.sprintf "%s: rel = %g is not in (0, 1)" fn rel);
+    invalid_arg
+      (Printf.sprintf "%s: rel = %s is not in (0, 1)" fn (Num.text rel));
   if budget < 1 then
     invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
   Cg { rel; budget; precondition }
@@ -42,7 +43,8 @@ let gmres ~restart ~rel ~budget ~precondition =
     invalid_arg
       (Printf.sprintf "%s: budget = %d is below restart = %d" fn budget restart);
   if not (rel > 0. && rel < 1.) then
-    invalid_arg (Printf.sprintf "%s: rel = %g is not in (0, 1)" fn rel);
+    invalid_arg
+      (Printf.sprintf "%s: rel = %s is not in (0, 1)" fn (Num.text rel));
   Gmres { restart; rel; budget; precondition }
 
 let name = function

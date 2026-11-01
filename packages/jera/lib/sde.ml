@@ -22,14 +22,17 @@ module Brownian = struct
     in
     if not (Float.is_finite t0 && Float.is_finite t1) then
       fail "t0 and t1 must be finite";
-    if t1 <= t0 then fail "t1 = %g is not above t0 = %g" t1 t0;
+    if t1 <= t0 then
+      fail "t1 = %s is not above t0 = %s" (Num.text t1) (Num.text t0);
     (* The path computes in its dtype, where the ends round and their span
        may round together or overflow. *)
     let name = Nx.Dtype.name dtype in
     let t0 = Nx.Dtype.of_float dtype t0 and t1 = Nx.Dtype.of_float dtype t1 in
     if not (Float.is_finite t0 && Float.is_finite t1) then
       fail "t0 and t1 must be finite in %s" name;
-    if t1 <= t0 then fail "t1 = %g is not above t0 = %g in %s" t1 t0 name;
+    if t1 <= t0 then
+      fail "t1 = %s is not above t0 = %s in %s" (Num.text t1) (Num.text t0)
+        name;
     if not (Float.is_finite (Nx.Dtype.of_float dtype (t1 -. t0))) then
       fail "t1 - t0 is not finite in %s" name;
     if depth < 0 || depth > max_depth then
@@ -130,8 +133,8 @@ module Brownian = struct
       (t, (w.t0, w.t1))
       (fun _ (t, (t0, t1)) ->
         Invalid_argument
-          (Printf.sprintf "%s: %s = %g is outside [%g, %g]" fn what
-             (Nx.item [] t) (Nx.item [] t0) (Nx.item [] t1)))
+          (Printf.sprintf "%s: %s = %s is outside [%s, %s]" fn what
+             (Num.item t) (Num.item t0) (Num.item t1)))
 
   (* The increment and area over [[s, t]] from W and I at its ends. *)
   let between (ws, is) (wt, it) h =

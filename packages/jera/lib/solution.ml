@@ -78,7 +78,7 @@ let message t i ~status ~evaluations ~used ~converged ~facts =
   in
   let status = of_code status in
   let values =
-    List.map (fun (name, x) -> Printf.sprintf "%s %g" name x) facts
+    List.map (fun (name, x) -> name ^ " " ^ Num.text x) facts
   in
   let spent =
     match t.spent with

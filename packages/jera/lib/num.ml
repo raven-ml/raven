@@ -22,6 +22,11 @@ let on_float (type a c) fn (f : (float, c, 'd) Nx.t -> (float, c, 'd) Nx.t)
 let shape s =
   "[" ^ String.concat "," (Array.to_list (Array.map string_of_int s)) ^ "]"
 
+let text x = Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) x
+
+let item x =
+  Format.asprintf "%a" (Nx.Dtype.pp_value (Nx.dtype x)) (Nx.item [] x)
+
 let check_increasing fn what x =
   let n = Nx.dim 0 x in
   if n > 1 then
@@ -33,9 +38,9 @@ let check_increasing fn what x =
       (fun i (lo, hi) ->
         Invalid_argument
           (Printf.sprintf
-             "%s: %s are not strictly increasing at [%d]: %g after %g" fn what
+             "%s: %s are not strictly increasing at [%d]: %s after %s" fn what
              (i.(0) + 1)
-             (Nx.item [] hi) (Nx.item [] lo)))
+             (item hi) (item lo)))
 
 (* A float's ordered-integer image: its bits read as a signed integer of its
    width, with negative floats' magnitudes negated, so that the images of [a <

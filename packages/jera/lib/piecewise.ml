@@ -32,9 +32,9 @@ let check_series_breaks fn breaks =
     (Nx.less_equal lo hi) (lo, hi)
     (fun i (lo, hi) ->
       Invalid_argument
-        (Printf.sprintf "%s: the breaks decrease at [%d]: %g after %g" fn
+        (Printf.sprintf "%s: the breaks decrease at [%d]: %s after %s" fn
            (i.(0) + 1)
-           (Nx.item [] hi) (Nx.item [] lo)));
+           (Num.item hi) (Num.item lo)));
   let first = Nx.get [ 0 ] breaks and last = Nx.get [ n - 1 ] breaks in
   Nx.check Nx.Ptree.unit (Nx.less first last) () (fun _ () ->
       Invalid_argument (fn ^ ": the first break equals the last"))

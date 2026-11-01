@@ -586,6 +586,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Tol.pp` and Jera's messages write each float as the shortest decimal that
+  reads back, the same text on every system: `abs 1000000` where they wrote
+  `abs 1e+06`, or `1e+006` under Windows.
 - `Root.newton`, `System` and `Minimize.solve` converge where `|δ| / (1 − q)`
   meets `tol` at the answer `x + δ`, `q` in `tol`'s scaled norm: Broyden ended
   38× past `tol`; a map whose rate rises near its zero 245×, now at most 99×.

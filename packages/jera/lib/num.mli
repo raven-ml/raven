@@ -42,6 +42,16 @@ val on_float :
 val shape : int array -> string
 (** [shape s] formats [s] as ["[2,3]"]. *)
 
+val text : float -> string
+(** [text x] is the shortest decimal that reads as [x], as
+    {!Nx.Dtype.pp_value} writes a [float64]: [1000000], [4.58e-72]. It is the
+    same on every system, where [Printf]'s [%g] writes the C library's
+    exponent, of three digits under mingw-w64. *)
+
+val item : (float, 'b, 'd) Nx.t -> string
+(** [item x] is the element of the 0-d [x] as {!text} writes it, the shortest
+    decimal that reads as it in [x]'s dtype. *)
+
 val check_increasing : string -> string -> (float, 'b, 'd) Nx.t -> unit
 (** [check_increasing fn what x] checks that the 1-D [x] is strictly increasing,
     raising [Invalid_argument] through {!Nx.check} naming [fn], [what], the

@@ -50,6 +50,10 @@ let tol_tests =
     test "a tolerance formats its parts" (fun () ->
         equal string "rel 1e-06 abs 1e-10"
           (Format.asprintf "%a" Tol.pp (Tol.v ~rel:1e-6 ~abs:1e-10)));
+    (* The C library's [%g] writes 1e+06, and 1e+006 under mingw-w64. *)
+    test "a tolerance formats the same on every system" (fun () ->
+        equal string "rel 4.58e-72 abs 1000000"
+          (Format.asprintf "%a" Tol.pp (Tol.v ~rel:4.58e-72 ~abs:1e6)));
   ]
 
 (* Bracket *)

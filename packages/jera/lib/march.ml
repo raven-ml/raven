@@ -24,10 +24,10 @@ let check fn ~steps at =
       same_sign (prev, next)
       (fun i (prev, next) ->
         Invalid_argument
-          (Printf.sprintf "%s: at is not strictly monotone at [%d]: %g after %g"
+          (Printf.sprintf "%s: at is not strictly monotone at [%d]: %s after %s"
              fn
              (i.(0) + 1)
-             (Nx.item [] next) (Nx.item [] prev)))
+             (Num.item next) (Num.item prev)))
   end
 
 let stack1 y v = Nx.Ptree.map y (fun _ x -> Nx.unsqueeze ~axes:[ 0 ] x) v

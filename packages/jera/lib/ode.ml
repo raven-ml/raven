@@ -760,9 +760,10 @@ let fix tol (st : Solution.status) facts =
         (fact "component")
   | Stalled when some "beyond pieces" > 0. ->
       Printf.sprintf
-        "The largest lag, %g, reaches back past the last pieces = %.0f steps \
+        "The largest lag, %s, reaches back past the last pieces = %.0f steps \
          near t: raise pieces to about %.0f."
-        (fact "largest lag") (fact "pieces") (fact "pieces needed")
+        (Num.text (fact "largest lag"))
+        (fact "pieces") (fact "pieces needed")
   | Stalled ->
       "The step fell below the time's resolution near t: the solution may blow \
        up there." ^ Tol.zero_hint tol

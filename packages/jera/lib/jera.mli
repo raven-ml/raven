@@ -178,7 +178,8 @@ module Tol : sig
       Raises [Invalid_argument] if [k] is not finite and positive. *)
 
   val pp : Format.formatter -> t -> unit
-  (** [pp ppf t] formats [t] as ["rel 1e-06 abs 1e-10"] or ["ulps 4"]. *)
+  (** [pp ppf t] formats [t] as ["rel 1e-06 abs 1e-10"] or ["ulps 4"], each
+      number as the shortest decimal that reads as it: ["abs 1000000"]. *)
 end
 
 module Solution : sig
