@@ -955,6 +955,31 @@ let scans_with_a_carry () =
   equal values ~msg:"the carry" (floats carry) (Run.values Float32 c_buffer);
   equal values ~msg:"the rows" (floats y) (Run.values Float32 ys_buffer)
 
+(* A copy of 16 floats of the host stored into rows 2 and 3 of an 8 by 8 grid
+   on a memory device writes those rows, and leaves the others as they were. *)
+let copies_into_rows () =
+  let dst = Ops.new_buffer "CPU:1" 64 Float32 in
+  let src = Ops.new_buffer "CPU" 16 Float32 in
+  let rows =
+    Shape.shrink (Shape.reshape dst [ Int 8; Int 8 ]) [ Some (Int 2, Int 4); None ]
+  in
+  let value = Ops.copy_to_device (Shape.reshape src [ Int 2; Int 8 ]) "CPU:1" in
+  let linear, _ =
+    Schedule.create_linear_with_vars
+      (Ops.sink [ Ops.after dst [ Ops.store rows value ] ])
+  in
+  let before = Array.init 64 (fun i -> -.Float.of_int i) in
+  let x = Array.init 16 (fun i -> Float.of_int (i + 1)) in
+  let into = Run.buffer (device "CPU:1") Float32 (floats before) in
+  let s =
+    Engine.link ~devices
+      ~bound:[ (dst, into); (src, Run.buffer host Float32 (floats x)) ]
+      (compile linear)
+  in
+  Engine.run s [||];
+  let expected = Array.mapi (fun i v -> if i >= 16 && i < 32 then x.(i - 16) else v) before in
+  equal values (floats expected) (Run.values Float32 into)
+
 (* A scan of three trips whose carry [c] has no element: each trip adds one to
    [c], which it cannot reach, and stores its row of [xs] times two into its row
    of [ys]. A call reads and writes no element of an empty argument, which names
@@ -1830,6 +1855,8 @@ let schedules =
         scans_with_a_carry;
       test "a scan whose carry has no element runs on its rows"
         scans_with_an_empty_carry;
+      test "a copy stored into rows of a buffer writes them alone"
+        copies_into_rows;
       replays_a_scan;
       loops_on_the_host;
       loops_around_calls_on_the_host;

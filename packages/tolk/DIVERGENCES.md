@@ -4930,3 +4930,37 @@ fold wraps integers and holds its float bound`, hold.
   on CUDA`: a product of one tile, one of 256 by 16 by 256, which the splits
   after the core reshape, and the law over 1 to 4 tiles a side, of float16 and
   bfloat16, equal to the exact product on fudge's RTX 5000 Ada.
+
+## D182. A copy stored into a run of storage lands in place
+
+- **tinygrad:** `schedule/prepare.py:206-208` (a copy stored into storage on
+  its device is the store, only where the destination has buffer identity)
+  and `:211` (`copy_to_anon_store`, any other copy lands in storage of its
+  own); `schedule/__init__.py:170-180` (`pm_copy_from_store`, which lowers a
+  copy kernel that reads and writes both buffers at its range alone).
+- **tolk:** `Prepare.storage_run` and its use in `Prepare.earliest_rewrites`;
+  `Schedule.run_start` and `Schedule.copy_runs` in
+  `Schedule.pm_copy_from_store`.
+- **Differs:** a copy stored into a run of consecutive elements of storage on
+  its device that shrinks and reshapes view (`Prepare.contiguous_view`, the
+  predicate that already turns a copy of a run into a copy of a view) is the
+  store, so the copy lands in the
+  run. Its kernel then reads its source at its range and writes the
+  destination at its range plus the run's first element, and lowers to a copy
+  between views of the call's arguments, each the run it copies. tinygrad
+  copies into storage of its own and stores that into the run with a kernel,
+  so both are live at once. No recorded program stores a copy into a part of
+  storage, so the patch leaves tinygrad's rules as they are.
+- **Reason:** (b): rune's split assembly of a gathered value (RFC 0005),
+  which stores each device's piece into its run of the whole. With that
+  assembly and kernels ordered as D183 says, fully sharded training's
+  backward call of one layer at d = 512 held 2.062, 1.594 and
+  1.422 layers beside its arguments over 2, 4 and 8 memory devices with each
+  piece copied apart, and 1.812, 1.531 and 1.391 landing in place, against
+  RFC 0005's bound of 1.875, 1.562 and 1.406 (`rune jit › fully sharded`).
+- **Pinned by:** the Schedule suite (`test/schedule/schedule`): `copies into
+  runs › a copy stored into rows of storage on its device copies into them`,
+  `› a copy stored into a first row copies into it`, `› a copy stored
+  into columns lands in storage of its own` and `› a copy stored into a run
+  of a bitcast lands in storage of its own`; the Engine suite's `link and run
+  › a copy stored into rows of a buffer writes them alone`.

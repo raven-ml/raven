@@ -86,7 +86,8 @@ val create_linear_with_vars :
       variable, so that kernels which differ in that value alone are one
       program;
     + a kernel that only copies a buffer between devices, or to or from a disk,
-      becomes a call of a store;
+      becomes a call of a store, between views of its arguments where it
+      copies a run of one into a run of the other;
     + unless [capturing] (default [false]), the schedule's buffers are placed in
       arenas ({!Memory.memory_plan_rewrite}), except those the call's arguments
       name, whose contents outlive the schedule. A jit capturing the schedule

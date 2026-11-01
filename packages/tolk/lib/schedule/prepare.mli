@@ -63,8 +63,9 @@ val prepare_rangeify : Ops.t -> Ops.t
         - {!Op.Detach} and {!Op.Contiguous_backward} are their source;
         - the sink's sources lose their movements;
         - a copy to the device the value is on is the value; a store of a copy
-          into storage on the copy's device stores the value, the store being
-          the copy; any other copy stores the value, padded to its greatest
+          into storage on the copy's device, or into a run of its elements
+          that shrinks and reshapes view ({!contiguous_view}), stores the
+          value, the store being the copy; any other copy stores the value, padded to its greatest
           shape, into new storage on the copy's device;
         - a materialisation ({!Op.Stage}) of storage or of a copy is its source;
           any other stores its source into new storage on its device;

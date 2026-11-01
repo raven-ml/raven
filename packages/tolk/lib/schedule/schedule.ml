@@ -590,6 +590,39 @@ let copy_kernel_to_store call dst src =
     Some (replace call ~src:(store dst src :: List.tl (Ops.src call)))
   else None
 
+(* The element a copy kernel's index [i] of its range [r] starts at: [0] for
+   [r], [c] for [r + c]. *)
+let run_start r i =
+  if i == r then Some 0
+  else
+    match (op i, Ops.src i) with
+    | Op.Add, [ a; c ] when a == r -> (
+        match arg c with Const (`Int z) -> Some (Bigint.to_int z) | _ -> None)
+    | _ -> None
+
+(* The copy kernel [call] of the [n] elements of [src] from [s] into those of
+   [dst] from [d], a copy between the call's arguments where each run is its
+   argument whole, and between views of them otherwise, as a copy into a run of
+   storage is ({!Prepare}). *)
+let copy_runs call dst src ~n ~d ~s =
+  let args = Array.of_list (List.tl (Ops.src call)) in
+  let flat p = ndim args.((param_of p).slot) = 1 in
+  let whole p start = start = 0 && max_numel p = n in
+  if not (is_copy dst src) then None
+  else if not ((whole dst d || flat dst) && (whole src s || flat src)) then
+    None
+  else
+    let run p start =
+      if whole p start then p
+      else begin
+        let k = (param_of p).slot in
+        args.(k) <- shrink args.(k) [ Some (Int start, Int (start + n)) ];
+        replace p ~src:[ Ops.const ~dtype:(dtype (nth p 0)) (`Int (Bigint.of_int n)) ]
+      end
+    in
+    let dst = run dst d and src = run src s in
+    Some (replace call ~src:(store dst src :: Array.to_list args))
+
 (* The copy kernels are code for copy engines. *)
 let simplify_copy_kernel call ast dst src =
   if not (is_copy dst src) then None
@@ -630,10 +663,18 @@ let pm_copy_from_store =
         (copy_call
            (Upat.end_
               (Upat.store
-                 (Upat.index (param "dst") [ Upat.op Op.Range ~name:"r" ])
-                 [ Upat.index (param "src") [ Upat.op Op.Range ~name:"r" ] ])
+                 (Upat.index (param "dst") [ var "di" ])
+                 [ Upat.index (param "src") [ var "si" ] ])
               [ Upat.op Op.Range ~name:"r" ]))
-        (fun m -> copy_kernel_to_store (m "call") (m "dst") (m "src"));
+        (fun m ->
+          let r = m "r" in
+          match
+            (run_start r (m "di"), run_start r (m "si"), arg (nth r 0))
+          with
+          | Some d, Some s, Const (`Int n) ->
+              copy_runs (m "call") (m "dst") (m "src") ~n:(Bigint.to_int n) ~d
+                ~s
+          | _ -> None);
       (* Any other kernel stays on one device. *)
       rule
         (Upat.op Op.Call ~allow_any_len:true

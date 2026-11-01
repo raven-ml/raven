@@ -1704,6 +1704,80 @@ let on_disk =
       test "with SCACHE at 1, nothing is kept on disk" memory_only;
     ]
 
+(* Copies into runs
+
+   A copy stored into a run of consecutive elements of storage on its device
+   lands there: the schedule is one copy into a view of the storage, from the
+   run's first element. A copy stored into elements that are no run lands in
+   storage of its own, which a kernel stores. *)
+
+(* The calls of the schedule that stores into [into], a view of a buffer of 64
+   floats on CPU:1, a copy of a buffer of the host: each call's body and its
+   destination, as their operations, and the first element and size of a
+   destination that shrinks the buffer. *)
+let copied_into ?(dt = Dtype.Float32) into =
+  let dst = Ops.new_buffer "CPU:1" 64 Float32 in
+  let view = into (Shape.reshape dst [ Int 8; Int 8 ]) in
+  let n = List.fold_left ( * ) 1 (List.map (function Ops.Int k -> k | Sym _ -> 0) (Shape.shape view)) in
+  let src = Ops.new_buffer "CPU" n dt in
+  let value =
+    Ops.copy_to_device (Shape.reshape src (Shape.shape view)) "CPU:1"
+  in
+  let linear, _ =
+    Schedule.create_linear_with_vars ~capturing:true
+      (Ops.sink [ Ops.after dst [ Ops.store view value ] ])
+  in
+  let name u = Format.asprintf "%a" Op.pp (Ops.op u) in
+  List.map
+    (fun c ->
+      let d = Ops.nth c 1 in
+      let run =
+        if Ops.op d <> Shrink then []
+        else
+          match Shape.marg d with
+          | Shrink [ (Ops.Int lo, Ops.Int k) ] -> [ (lo, k) ]
+          | _ -> []
+      in
+      (name (Ops.nth c 0), name d, run))
+    (Ops.src linear)
+
+let calls = list (triple string string (list (pair int int)))
+let store = Format.asprintf "%a" Op.pp Store
+let sink = Format.asprintf "%a" Op.pp Sink
+let shrink = Format.asprintf "%a" Op.pp Shrink
+let buffer = Format.asprintf "%a" Op.pp Buffer
+
+let runs =
+  group "copies into runs"
+    [
+      test "a copy stored into rows of storage on its device copies into them"
+        (fun () ->
+          equal calls
+            [ (store, shrink, [ (16, 16) ]) ]
+            (copied_into (fun g -> Shape.shrink g [ Some (Int 2, Int 4); None ])));
+      test "a copy stored into a first row copies into it" (fun () ->
+          equal calls
+            [ (store, shrink, [ (0, 16) ]) ]
+            (copied_into (fun g -> Shape.shrink g [ Some (Int 0, Int 2); None ])));
+      test "a copy stored into columns lands in storage of its own" (fun () ->
+          match
+            copied_into (fun g -> Shape.shrink g [ None; Some (Int 2, Int 4) ])
+          with
+          | [ (copy, _, _); (kernel, into, _) ] ->
+              equal (triple string string string) (store, sink, buffer)
+                (copy, kernel, into)
+          | calls -> failf "%d calls, not a copy and a kernel" (List.length calls));
+      test "a copy stored into a run of a bitcast lands in storage of its own"
+        (fun () ->
+          match
+            copied_into ~dt:Dtype.Int32 (fun g ->
+                Shape.shrink (Ops.bitcast g Int32) [ Some (Int 2, Int 4); None ])
+          with
+          | [ (copy, _, _); (kernel, _, _) ] ->
+              equal (pair string string) (store, sink) (copy, kernel)
+          | calls -> failf "%d calls, not a copy and a kernel" (List.length calls));
+    ]
+
 let () =
   exit
     (run "Tolk.Schedule"
@@ -1720,6 +1794,7 @@ let () =
          flatten;
          store_after;
          views;
+         runs;
          variables;
          loops;
          on_disk;

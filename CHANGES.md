@@ -900,6 +900,9 @@ thread.
 
 ### Tolk (new)
 
+- A copy stored into a run of consecutive elements of storage on its device
+  copies into the run, where it copied into storage of its own and a kernel
+  stored that: the two are no longer live at once.
 - `Memory.memory_plan_rewrite` frees a copy's buffer from the call after its
   last, as a kernel's: rig runs a later write of its bytes after the copy, so
   a schedule of copies needs less memory.

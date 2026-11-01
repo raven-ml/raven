@@ -377,6 +377,78 @@ let expand_bitcast bc =
            (cast (flatten ~start:(-2) (stack ~axis:(-1) parts)) new_uint)
            (dtype bc))
 
+(* Contiguous views *)
+
+let strides_for_shape shape =
+  fst
+    (List.fold_right
+       (fun s (strides, p) ->
+         ((if Sint.equal s (Int 1) then Int 0 else p) :: strides, Sint.(p * s)))
+       shape ([], Int 1))
+
+(* The effects storage is ordered after decide nothing of where its elements
+   lie: the rewrite of a view's index stops at them, a void node, and leaves the
+   graphs they compute, which hold gathers and arithmetic on tensors that the
+   index rules do not apply to, as they are. *)
+let pm_stop_at_effects =
+  Pattern_matcher.v
+    (fun () -> [
+      rule (Upat.v ~op:Op.Set.all ~dtype:[ Dtype.Void ] ()) (fun _ ->
+          raise Bottom_up_gate);
+    ])
+
+(* The index of [u]'s elements rewritten through its movements ends at the node
+   they are read from; the elements are a run of that node when its flat index
+   is the range plus a constant. A bitcast's run is also a run of its source
+   when it starts and ends on whole elements of the source. *)
+let rec contiguous_view u =
+  let numel = numel u in
+  let rng = range numel [ 0 ] in
+  let out =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() (index (flatten u) [ rng ])
+      (Around_sources
+         {
+           before = pm_stop_at_effects;
+           after = Pattern_matcher.concat [ pm_mops; Shape.symbolic ];
+         })
+  in
+  if op out <> Op.Index then None
+  else
+    let b = nth out 0 and idxs = List.tl (src out) in
+    if List.length idxs <> ndim b then None
+    else
+      let flat =
+        List.fold_left2
+          (fun acc i s -> add acc (mul i (sint_to_uop s)))
+          (int 0) idxs
+          (strides_for_shape (shape b))
+      in
+      match ssimplify (sub flat rng) with
+      | Sym _ -> None
+      | Int offset when op b <> Op.Bitcast -> Some (b, offset)
+      | Int offset ->
+          let osz = element_size b and isz = element_size (nth b 0) in
+          if
+            offset * osz mod isz <> 0
+            || Sint.truth Sint.(numel * Int osz % Int isz <> Int 0)
+          then Some (b, offset)
+          else
+            let first = Int (offset * osz / isz) in
+            let last = Sint.((Int offset + numel) * Int osz // Int isz) in
+            contiguous_view
+              (shrink (flatten (nth b 0)) [ Some (first, last) ])
+
+(* Whether [u] is storage, or a run of its elements ({!contiguous_view}) that
+   shrinks and reshapes view: a copy kernel then indexes the storage at its
+   range plus the run's first element, which {!Schedule} lowers to a copy. *)
+let rec storage_run u =
+  has_buffer_identity ~after_ok:true u
+  ||
+  match op u with
+  | Op.Shrink | Op.Reshape ->
+      storage_run (nth u 0) && Option.is_some (contiguous_view u)
+  | _ -> false
+
 (* Copies always cross devices, and read a whole buffer: SDMA engines cannot
    copy from an offset. *)
 let copy_to_anon_store x copy =
@@ -464,7 +536,9 @@ let earliest_rewrites =
              let x = m "x" in
              if equal_device_of x (m "copy") then Some x else None);
          (* A store to storage on another device is a copy, so a copy stored
-            into storage on its device is the store. *)
+            into storage on its device, or into a run of its elements, is the
+            store: the copy lands in place, where a copy into storage of its
+            own and a store of that would hold both. *)
          rule
            (Upat.op Op.Store
               ~src:
@@ -475,10 +549,8 @@ let earliest_rewrites =
                 ])
            (fun m ->
              let dst = m "dst" in
-             if
-               equal_device_of dst (m "cpy")
-               && has_buffer_identity ~after_ok:true dst
-             then Some (store dst (m "x"))
+             if equal_device_of dst (m "cpy") && storage_run dst then
+               Some (store dst (m "x"))
              else None);
          (* Any other copy stores into new call-local storage on its device. *)
          rule
@@ -579,64 +651,3 @@ let prepare_rangeify sink =
   in
   graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
     (Before_sources (Pattern_matcher.append pm_tensor_mops earliest_rewrites))
-
-(* Contiguous views *)
-
-let strides_for_shape shape =
-  fst
-    (List.fold_right
-       (fun s (strides, p) ->
-         ((if Sint.equal s (Int 1) then Int 0 else p) :: strides, Sint.(p * s)))
-       shape ([], Int 1))
-
-(* The effects storage is ordered after decide nothing of where its elements
-   lie: the rewrite of a view's index stops at them, a void node, and leaves the
-   graphs they compute, which hold gathers and arithmetic on tensors that the
-   index rules do not apply to, as they are. *)
-let pm_stop_at_effects =
-  Pattern_matcher.v
-    (fun () -> [
-      rule (Upat.v ~op:Op.Set.all ~dtype:[ Dtype.Void ] ()) (fun _ ->
-          raise Bottom_up_gate);
-    ])
-
-(* The index of [u]'s elements rewritten through its movements ends at the node
-   they are read from; the elements are a run of that node when its flat index
-   is the range plus a constant. A bitcast's run is also a run of its source
-   when it starts and ends on whole elements of the source. *)
-let rec contiguous_view u =
-  let numel = numel u in
-  let rng = range numel [ 0 ] in
-  let out =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() (index (flatten u) [ rng ])
-      (Around_sources
-         {
-           before = pm_stop_at_effects;
-           after = Pattern_matcher.concat [ pm_mops; Shape.symbolic ];
-         })
-  in
-  if op out <> Op.Index then None
-  else
-    let b = nth out 0 and idxs = List.tl (src out) in
-    if List.length idxs <> ndim b then None
-    else
-      let flat =
-        List.fold_left2
-          (fun acc i s -> add acc (mul i (sint_to_uop s)))
-          (int 0) idxs
-          (strides_for_shape (shape b))
-      in
-      match ssimplify (sub flat rng) with
-      | Sym _ -> None
-      | Int offset when op b <> Op.Bitcast -> Some (b, offset)
-      | Int offset ->
-          let osz = element_size b and isz = element_size (nth b 0) in
-          if
-            offset * osz mod isz <> 0
-            || Sint.truth Sint.(numel * Int osz % Int isz <> Int 0)
-          then Some (b, offset)
-          else
-            let first = Int (offset * osz / isz) in
-            let last = Sint.((Int offset + numel) * Int osz // Int isz) in
-            contiguous_view
-              (shrink (flatten (nth b 0)) [ Some (first, last) ])
