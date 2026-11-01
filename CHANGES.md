@@ -3702,6 +3702,9 @@ thread.
 
 ### Kaun
 
+- Kaun's argument errors write each float as the shortest decimal that reads
+  back, the same text on every system: `got -1000000` where they wrote
+  `got -1e+06`, or `-1e+006` under Windows.
 - The gpt-oss example packs its attention projections and untied head as
   Q8_0 when asked (`Gpt_oss.of_hf ~pack:Q8_0`, `main.exe --q8_0`), as GGUF
   files of the model do: 53% of bfloat16's bytes, about twice its logit

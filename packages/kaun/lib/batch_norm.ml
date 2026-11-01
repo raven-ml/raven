@@ -42,9 +42,15 @@ let low_precision : type b. (float, b) Nx.dtype -> bool = function
 let apply ?(axis = -1) ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
     ~training x =
   if momentum < 0.0 || momentum > 1.0 then
-    invalid_argf "Batch_norm.apply: momentum must be in [0, 1], got %g" momentum;
+    Format.kasprintf invalid_arg
+      "Batch_norm.apply: momentum must be in [0, 1], got %a"
+      (Nx.Dtype.pp_value Nx.float64)
+      momentum;
   if eps <= 0.0 then
-    invalid_argf "Batch_norm.apply: eps must be positive, got %g" eps;
+    Format.kasprintf invalid_arg
+      "Batch_norm.apply: eps must be positive, got %a"
+      (Nx.Dtype.pp_value Nx.float64)
+      eps;
   let ndim = Nx.ndim x in
   if ndim < 2 then
     invalid_argf "Batch_norm.apply: input must have at least 2 axes, got %d"

@@ -28,7 +28,9 @@ let normalize ~eps x =
 
 let apply ?(eps = 1e-6) { gamma } x =
   if eps < 0.0 then
-    Printf.ksprintf invalid_arg "Rms_norm.apply: eps must be >= 0, got %g" eps;
+    Format.kasprintf invalid_arg "Rms_norm.apply: eps must be >= 0, got %a"
+      (Nx.Dtype.pp_value Nx.float64)
+      eps;
   let shape = Nx.shape x in
   let rank = Array.length shape in
   if rank = 0 then invalid_arg "Rms_norm.apply: input must not be a scalar";

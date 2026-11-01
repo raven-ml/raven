@@ -6,7 +6,9 @@
 let apply ~rate ~training ?key x =
   if rate < 0.0 || rate >= 1.0 then
     invalid_arg
-      (Printf.sprintf "Dropout.apply: rate must be in [0, 1), got %g" rate);
+      (Format.asprintf "Dropout.apply: rate must be in [0, 1), got %a"
+         (Nx.Dtype.pp_value Nx.float64)
+         rate);
   if (not training) || rate = 0.0 then x
   else
     let keep = 1.0 -. rate in

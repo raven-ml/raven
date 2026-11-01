@@ -41,7 +41,8 @@ let base ~fn ~theta ~head_dim =
     Printf.ksprintf invalid_arg
       "Rope.%s: head_dim must be positive and even, got %d" fn head_dim;
   if theta <= 0.0 then
-    Printf.ksprintf invalid_arg "Rope.%s: theta must be positive, got %g" fn
+    Format.kasprintf invalid_arg "Rope.%s: theta must be positive, got %a" fn
+      (Nx.Dtype.pp_value Nx.float64)
       theta;
   Array.init (head_dim / 2) (fun i ->
       theta ** (-2.0 *. float_of_int i /. float_of_int head_dim))

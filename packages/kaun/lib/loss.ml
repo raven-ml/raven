@@ -25,7 +25,8 @@ let mae ?(reduction = `Mean) predictions targets =
 
 let huber ?(delta = 1.0) ?(reduction = `Mean) predictions targets =
   if not (delta > 0.0) then
-    invalid_argf "huber" "delta must be positive (got %g)" delta;
+    invalid_argf "huber" "delta must be positive (got %s)"
+      (Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) delta);
   let d = Nx.sub predictions targets in
   let abs_d = Nx.abs d in
   let quadratic = Nx.mul_s (Nx.mul d d) 0.5 in
