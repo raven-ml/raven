@@ -544,10 +544,47 @@ let spectral dt ~k ~(u : Complex.t array) l =
   in
   of_values dt [| n; n |] a
 
+(* What the large orders check of the bits: agree_bits's of one matrix,
+   or of a batch of two. *)
+type bits_check = One_matrix | Batch
+
+(* [r]'s results of [x] laid out Transposed, on one thread
+   ({!Nx_cpu.one_thread}), have the bits of [y], [r]'s of [x] alone on the
+   call's threads. A matrix on one thread runs as a unit of a batch with
+   at least the call's threads does. Under [Batch] the operand is a batch
+   of two copies of [x], the second at an offset, on the arena the first
+   used. *)
+let agree_bits (b : Support.backend) check r x y =
+  let (A.Any a) = x in
+  let s = Iarray.append [| 2 |] (L.shape (A.layout a)) in
+  let ops, copies =
+    match check with
+    | One_matrix -> (x, 1)
+    | Batch -> (A.Any (A.copy (Option.get (A.move (M.Broadcast s) a))), 2)
+  in
+  match Nx_cpu.one_thread (fun () -> run b r [| laid_out Transposed ops |]) with
+  | None -> ()
+  | Some w ->
+      Array.iteri
+        (fun j y ->
+          let want = bits y in
+          let n = Array.length want in
+          let got = bits w.(j) in
+          for i = 0 to copies - 1 do
+            equal
+              ~msg:
+                (Printf.sprintf "result %d, matrix %d, transposed on one thread"
+                   j i)
+              same_bits want (Array.sub got (i * n) n)
+          done)
+        y
+
 (* Of spectral's a, the eigenvalues are [l]'s within γ(16n) max |λ|,
-   ascending, alone and, unless [Unchecked], with the vectors, which meet
-   their relations. *)
-let check_spectrum (b : Support.backend) ?(vectors = Checked) dt ~k ~u l =
+   ascending, alone unless [alone] is false and, unless [Unchecked], with
+   the vectors, which meet their relations. Under [bits] the last call's
+   results agree with agree_bits's. *)
+let check_spectrum (b : Support.backend) ?(vectors = Checked) ?(alone = true)
+    ?bits dt ~k ~u l =
   let n = Array.length l in
   let x = spectral dt ~k ~u l in
   let l = Array.copy l in
@@ -563,8 +600,13 @@ let check_spectrum (b : Support.backend) ?(vectors = Checked) dt ~k ~u l =
       l;
     check_worst worst
   in
-  Option.iter (fun y -> spectrum ~msg:"alone" (values y.(0)))
-    (run b (Eigh false) [| x |]);
+  let agree r y = Option.iter (fun c -> agree_bits b c r x y) bits in
+  if alone then
+    Option.iter
+      (fun y ->
+        spectrum ~msg:"alone" (values y.(0));
+        if vectors = Unchecked then agree (Eigh false) y)
+      (run b (Eigh false) [| x |]);
   let relations y =
     match vectors with
     | Unchecked -> ()
@@ -579,7 +621,8 @@ let check_spectrum (b : Support.backend) ?(vectors = Checked) dt ~k ~u l =
     Option.iter
       (fun y ->
         spectrum ~msg:"with vectors" (values y.(0));
-        relations y)
+        relations y;
+        agree (Eigh true) y)
       (run b (Eigh true) [| x |])
 
 (* λ draws repeats, which a merge of divide and conquer deflates. *)
@@ -588,34 +631,6 @@ let law_eigh_spectrum (b : Support.backend) c =
   let l = Array.init n (fun _ -> Float.round (8. *. uniform r) /. 8.) in
   let u = reflector_draws r c.dt n in
   check_spectrum b c.dt ~k:(c.seed mod (n + 1)) ~u l
-
-(* [r] of [x] alone, of [x] laid out Transposed, and of a batch of two
-   copies of [x] on one thread ({!Nx_cpu.one_thread}): each matrix then runs
-   as a unit of a batch with at least the call's threads does, the second at
-   an offset, on the arena the first used. Every result has the bits of the
-   call's alone. *)
-let agree_bits (b : Support.backend) r x =
-  let (A.Any a) = x in
-  let s = Iarray.append [| 2 |] (L.shape (A.layout a)) in
-  let pair = A.Any (A.copy (Option.get (A.move (M.Broadcast s) a))) in
-  let z = run b r [| laid_out Transposed x |] in
-  let w = Nx_cpu.one_thread (fun () -> run b r [| pair |]) in
-  match (run b r [| x |], z, w) with
-  | Some y, Some z, Some w ->
-      Array.iteri
-        (fun j y ->
-          let want = bits y in
-          let n = Array.length want in
-          equal ~msg:(Printf.sprintf "result %d, transposed" j) same_bits want
-            (bits z.(j));
-          let got = bits w.(j) in
-          for i = 0 to 1 do
-            equal
-              ~msg:(Printf.sprintf "result %d, matrix %d of the batch" j i)
-              same_bits want (Array.sub got (i * n) n)
-          done)
-        y
-  | _ -> ()
 
 (* Spectra a large order meets: values that repeat, that cluster 2^-30
    apart, which divide and conquer barely separates in float64, or that
@@ -631,31 +646,32 @@ let graded r j = Float.copy_sign (Float.ldexp 1. (-(j mod 61))) (uniform r)
    the bounds hold as below it: on x86-64 from 128, for values alone of
    either kind and real vectors; on arm64 from 512 for values alone, 1024
    for complex vectors and 2048 for real ones, which x86-64 is past at
-   129, so they run on arm64 alone. Complex values alone at 513 are past
-   both. The relations are checked whole at 129 and on sampled elements
-   past it, and the bits agree whatever the threads and layout up to
-   1025. *)
+   129, so they run on arm64 alone. Values alone are checked at 513 and
+   below, the larger orders' vectors alone. The relations are checked
+   whole at 129 and on sampled elements past it. The bits agree whatever
+   the threads and layout up to 1025: in a batch below it, and of one
+   matrix at 1025, where a call on one thread takes most of the test's
+   time. *)
 let test_eigh_large (b : Support.backend) () =
   let r = Random.State.make [| 7 |] in
   let orders =
     D.
       [
-        (129, Any Float64, graded r, Checked, true);
-        (513, Any Complex128, repeating r, Unchecked, true);
+        (129, Any Float64, graded r, Checked, true, Some Batch);
+        (513, Any Complex128, repeating r, Unchecked, true, Some Batch);
       ]
   and arm64 =
     D.
       [
-        (1025, Any Complex64, clustered r, Sampled 256, true);
-        (2049, Any Float64, repeating r, Sampled 256, false);
+        (513, Any Float64, repeating r, Unchecked, true, Some Batch);
+        (1025, Any Complex64, clustered r, Sampled 256, false, Some One_matrix);
+        (2049, Any Float64, repeating r, Sampled 256, false, None);
       ]
   in
   List.iter
-    (fun (n, dt, lambda, vectors, threads) ->
+    (fun (n, dt, lambda, vectors, alone, bits) ->
       let l = Array.init n lambda and u = reflector_draws r dt n in
-      check_spectrum b ~vectors dt ~k:(n / 3) ~u l;
-      if threads then
-        agree_bits b (Eigh (vectors <> Unchecked)) (spectral dt ~k:(n / 3) ~u l))
+      check_spectrum b ~vectors ~alone ?bits dt ~k:(n / 3) ~u l)
     (if Support.x86_64 then orders else orders @ arm64)
 
 (* svd's bound: γ(16 max (m, n) + 100), the 100 for the bidiagonal
@@ -1018,9 +1034,10 @@ let singular dt ~m ~n r sigma =
 
 (* Of singular's a, the singular values are |σ|'s within svd_bound
    max |σ|, descending, alone and, unless [Unchecked], with the reduced
-   vectors, which meet their relations. *)
-let check_singular (b : Support.backend) ?(vectors = Checked) dt ~m ~n xa
-    sigma =
+   vectors, which meet their relations. Under [bits] the last call's
+   results agree with agree_bits's. *)
+let check_singular (b : Support.backend) ?(vectors = Checked) ?bits dt ~m ~n
+    xa sigma =
   let k = min m n and a = values xa in
   let exact = Array.map Float.abs sigma in
   Array.sort (fun x y -> Float.compare y x) exact;
@@ -1034,19 +1051,24 @@ let check_singular (b : Support.backend) ?(vectors = Checked) dt ~m ~n xa
       exact;
     check_worst worst
   in
-  Option.iter (fun y -> spectrum ~msg:"alone" (values y.(0)))
+  let agree r y = Option.iter (fun c -> agree_bits b c r xa y) bits in
+  Option.iter
+    (fun y ->
+      spectrum ~msg:"alone" (values y.(0));
+      if vectors = Unchecked then agree (Svd None) y)
     (run b (Svd None) [| xa |]);
   if vectors <> Unchecked then
     Option.iter
       (fun y ->
         let s = values y.(0) and u = values y.(1) and vh = values y.(2) in
         spectrum ~msg:"with vectors" s;
-        match vectors with
+        (match vectors with
         | Unchecked -> ()
         | Checked -> check_svd dt ~e:0 ~count:1 ~m ~n ~uc:k ~vr:k a s u vh
         | Sampled q ->
             check_svd_sampled dt ~m ~n ~k:q (Random.State.make [| m; n |]) a
-              s u vh)
+              s u vh);
+        agree (Svd (Some Reduced)) y)
       (run b (Svd (Some Reduced)) [| xa |])
 
 (* One shape past each crossover to nx.cpu's two-stage reduction, by the
@@ -1062,22 +1084,21 @@ let test_svd_large (b : Support.backend) () =
   let shapes =
     D.
       [
-        (129, 140, Any Complex128, graded r, Checked, true);
-        (257, 260, Any Float64, clustered r, Sampled 256, true);
+        (129, 140, Any Complex128, graded r, Checked, Some Batch);
+        (257, 260, Any Float64, clustered r, Sampled 256, Some Batch);
       ]
   and arm64 =
     D.
       [
-        (513, 520, Any Complex128, repeating r, Sampled 256, false);
-        (1025, 1030, Any Float64, graded r, Sampled 256, false);
+        (513, 520, Any Complex128, repeating r, Sampled 256, None);
+        (1025, 1030, Any Float64, graded r, Sampled 256, None);
       ]
   in
   List.iter
-    (fun (m, n, dt, sigma, vectors, threads) ->
+    (fun (m, n, dt, sigma, vectors, bits) ->
       let sigma = Array.init (min m n) sigma in
       let x = singular dt ~m ~n r sigma in
-      check_singular b ~vectors dt ~m ~n x sigma;
-      if threads then agree_bits b (Svd (Some Reduced)) x)
+      check_singular b ~vectors ?bits dt ~m ~n x sigma)
     (if Support.x86_64 then shapes else shapes @ arm64)
 
 (* eigh, qr and svd of float64 matrices scaled as a whole by 1e-310, below
