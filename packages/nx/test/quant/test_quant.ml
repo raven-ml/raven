@@ -209,7 +209,15 @@ type fdt = F : { dtype : (float, 'b) Nx.dtype; round : float -> float } -> fdt
 
 let fdts =
   let at dtype = F { dtype; round = D.of_float dtype } in
-  [ at Nx.float32; at Nx.bfloat16; at Nx.float16; at Nx.float64 ]
+  [
+    at Nx.float32;
+    at Nx.bfloat16;
+    at Nx.float16;
+    at Nx.float64;
+    at Nx.float8_e4m3fn;
+    at Nx.float8_e5m2;
+    at Nx.float4_e2m1fn;
+  ]
 
 let f32 = List.hd fdts
 let fdt = Gen.of_list ~pp:(fun ppf (F d) -> D.pp ppf d.dtype) fdts
@@ -222,7 +230,10 @@ let bits (type b d) (t : (float, b, d) Nx.t) =
   | D.Float32 -> Array.map Int64.of_int32 (Nx.to_array (Nx.bitcast Nx.int32 t))
   | D.Float16 | D.Bfloat16 ->
       Array.map Int64.of_int (Nx.to_array (Nx.bitcast Nx.uint16 t))
-  | dt -> failf "no bits for %a" D.pp dt
+  | D.Float8_e4m3fn | D.Float8_e5m2 ->
+      Array.map Int64.of_int (Nx.to_array (Nx.bitcast Nx.uint8 t))
+  | D.Float4_e2m1fn ->
+      Array.map Int64.of_int (Nx.to_array (Nx.bitcast Nx.uint4 t))
 
 (* [bits t], every NaN alike: a product leaves a NaN's sign and payload
    unspecified ({!Nx_kernel.S.contract}). *)
@@ -413,44 +424,40 @@ let gamma n v =
   let n = float_of_int n in
   n *. v /. (1. -. (n *. v))
 
-(* [agrees ~at ~k expected bound actual] holds when [actual] is [expected]
-   rounded to [at] within {!Nx.contract}'s bound on a sum of [k] products whose
-   magnitudes sum to [bound]: [γ(k + 1, 2u) bound], [u] the unit roundoff of
-   the accumulator, float64 for float64 [at] and float32 otherwise, and one
-   subnormal step of it per rounding where terms underflow; the same errors of
-   [expected]'s float64 sum; and the rounding to [at]. Non-finite values must
-   be exact. *)
+(* [agrees ~at ~k expected bound actual] holds when [actual] is a sum
+   rounded to [at], the sum within {!Nx.contract}'s bound of [expected] on [k]
+   products whose magnitudes sum to [bound]: [γ(k + 1, 2u) bound], [u] the
+   unit roundoff of the accumulator, float64 for float64 [at] and float32
+   otherwise, and one subnormal step of it per rounding where terms
+   underflow; plus the same errors of [expected]'s float64 sum. A store into
+   [at] is monotonic, so [actual] lies between the stores of the interval's
+   ends, which holds a store that saturates or flushes too. Non-finite values,
+   and their stores in a format without them, must be exact. *)
 let agrees ~at ~k expected bound actual =
   let (F d) = at in
   equal ~msg:"shape" (array int) (Nx.shape expected) (Nx.shape actual);
   let b = Nx.to_array bound and a = Nx.to_array (Nx.cast Nx.float64 actual) in
-  let format = D.float_format d.dtype in
-  let rel = format.epsilon /. 2.
-  and tiny = format.min_normal *. format.epsilon in
   let u, step =
     match d.dtype with
     | D.Float64 -> (Float.ldexp 1. (-53), Float.ldexp 1. (-1074))
     | _ -> (Float.ldexp 1. (-24), Float.ldexp 1. (-149))
   in
   let g = gamma (k + 1) (2. *. u) +. gamma (k + 1) (Float.ldexp 1. (-52)) in
-  let worst = ref 0. in
+  let under = float_of_int (k + 1) *. (step +. Float.ldexp 1. (-1074)) in
+  let misses = ref [] in
   Array.iteri
     (fun i e ->
-      if not (Float.is_finite (d.round e)) then
+      if not (Float.is_finite e && Float.is_finite (d.round e)) then
         equal float_exact (d.round e) a.(i)
       else
-        let tol =
-          (g *. b.(i))
-          +. (float_of_int (k + 1) *. (step +. Float.ldexp 1. (-1074)))
-          +. Float.max (rel *. Float.abs e) tiny
-        in
-        let err = Float.abs (a.(i) -. e) in
-        let ratio = if err = 0. then 0. else err /. tol in
-        worst :=
-          Float.max !worst
-            (if Float.is_nan ratio then Float.infinity else ratio))
+        let tol = (g *. b.(i)) +. under in
+        let lo = d.round (e -. tol) and hi = d.round (e +. tol) in
+        if not (lo <= a.(i) && a.(i) <= hi) then
+          misses :=
+            Printf.sprintf "%d: %h not in [%h, %h] about %h" i a.(i) lo hi e
+            :: !misses)
     (Nx.to_array expected);
-  at_most ~msg:"worst error over its bound" float_exact ~than:1. !worst
+  equal ~msg:"outputs outside their bound" (list string) [] (List.rev !misses)
 
 (* [agrees] over the outputs, flattened, that [skip] leaves. *)
 let agrees_but ~at ~k skip expected bound actual =
@@ -567,21 +574,16 @@ let product_law (_, w, X { at; x }) =
   cover "no input" (k = 0);
   applied ~at w x y
 
-(* [apply]'s stated equation, at [x]'s dtype where the format's values are exact
-   there, else at float32. *)
-let equation (type b) w (x : (float, b, Nx.host) Nx.t) =
-  let dt = Nx.dtype x in
-  let exact =
-    match (dt, format_of w) with
-    | (D.Float32 | D.Float64), _ -> true
-    | D.Bfloat16, (Mxfp4 | Mxfp4_blocks) -> true
-    | _ -> false
-  in
-  if exact then Nx.matmul x (Nx.matrix_transpose (Nx_quant.dequant dt w))
-  else
-    Nx.cast dt
-      (Nx.matmul (Nx.cast Nx.float32 x)
-         (Nx.matrix_transpose (Nx_quant.dequant Nx.float32 w)))
+(* [apply]'s stated equation: summed at float64 for a float64 [x], else at
+   float32, and rounded once to [x]'s dtype. *)
+let equation (type b) w (x : (float, b, Nx.host) Nx.t) :
+    (float, b, Nx.host) Nx.t =
+  let t = Nx.matrix_transpose in
+  match Nx.dtype x with
+  | D.Float64 -> Nx.matmul x (t (Nx_quant.dequant Nx.float64 w))
+  | dt ->
+      Nx.cast dt
+        (Nx.matmul (Nx.cast Nx.float32 x) (t (Nx_quant.dequant Nx.float32 w)))
 
 (* Known blocks. A block's bytes are written from the format's layout and its
    values from the format's formula. *)
@@ -885,22 +887,20 @@ let values_and_products =
             (product_bits (Nx_quant.apply w x)));
       (* The drawn products have at most 3 rows and 4 columns, which nx.cpu
          sums in lane order; these take chain order, more than 4 of each
-         and 64 outputs or more. *)
+         and 64 outputs or more, over two blocks of each format. *)
       cases "apply is its equation, bit for bit, over many rows and columns"
         ~id:(fun (f, F d, lead) ->
           Printf.sprintf "%s, %s, %d leading axes" (format_name f)
             (D.name d.dtype) (List.length lead))
         (List.concat_map
            (fun f ->
-             List.concat_map
-               (fun d -> [ (f, d, []); (f, d, [ 2 ]) ])
-               [ f32; List.nth fdts 1 ])
+             List.concat_map (fun d -> [ (f, d, []); (f, d, [ 2 ]) ]) fdts)
            formats)
         (fun (format, F d, lead) ->
           let lead = Array.of_list lead in
-          let w = random_weight ~format (Array.append lead [| 12; 256 |]) in
+          let w = random_weight ~format (Array.append lead [| 12; 512 |]) in
           let x =
-            Nx.cast d.dtype (random_floats (Array.append lead [| 8; 256 |]))
+            Nx.cast d.dtype (random_floats (Array.append lead [| 8; 512 |]))
           in
           equal (array int64)
             (product_bits (equation w x))
@@ -920,6 +920,21 @@ let values_and_products =
           in
           equal (array float_exact)
             [| 1. +. (31. *. tiny) |]
+            (Nx.to_array (Nx_quant.apply w x)));
+      test "an MXFP4 value past float32's range is infinite at float64"
+        (fun () ->
+          (* Code 7, of magnitude 6, at scale byte 254 is 6 * 2^127, past
+             float32's range: dequant makes it infinite at every dtype. *)
+          let w =
+            Nx_quant.mxfp4
+              ~scales:(u8 [| 1; 1 |] [| 254 |])
+              (u8 [| 1; 16 |] (Array.init 16 (fun i -> if i = 0 then 7 else 0)))
+          in
+          let x =
+            Nx.create Nx.float64 [| 32 |]
+              (Array.init 32 (fun i -> if i = 0 then 1. else 0.))
+          in
+          equal (array float_exact) [| Float.infinity |]
             (Nx.to_array (Nx_quant.apply w x)));
       prop "take is the gather of the dequantised weight at positions in range"
         takes take_law;
@@ -1285,8 +1300,10 @@ let applies =
     (triple format (int_range 1 3) (int_range 1 4))
 
 (* A float32 product reads an MXFP4 or Q8_0 weight where it lies and decodes
-   none of its values; any other weight it decodes as [dequant] does. The
-   positions of [2 n] rows less those of [n] are the decoding's alone. *)
+   none of its values; it unpacks a Q6_K weight's quants and computes none of
+   its values, fewer positions than [dequant]'s; any other weight it decodes
+   as [dequant] does. The positions of [2 n] rows less those of [n] are the
+   decoding's alone. *)
 let applies_law (f, n, b) =
   List.iter
     (fun f' -> cover ("a " ^ format_name f' ^ " weight") (f = f'))
@@ -1303,8 +1320,12 @@ let applies_law (f, n, b) =
   let decoded =
     decoding Counted_one.on (rows (2 * n)) - decoding Counted_one.on (rows n)
   in
-  let want = match f with Mxfp4 | Q8_0 -> 0 | _ -> decoded in
-  equal ~msg:"the positions of n rows" int want (applying (2 * n) - applying n)
+  let got = applying (2 * n) - applying n in
+  match f with
+  | Mxfp4 | Q8_0 -> equal ~msg:"the positions of n rows" int 0 got
+  | Q6_K -> less ~msg:"the positions of n rows" int ~than:decoded got
+  | Mxfp4_blocks | Q4_K ->
+      equal ~msg:"the positions of n rows" int decoded got
 
 (* An expert product's format, input dtype, experts, rows and ids, in range,
    repeated or not, and out of range. *)
@@ -1325,8 +1346,9 @@ let decodes =
      in
      (f, f64, e, n, ids))
 
-(* A product decodes [min p e] matrices for [p] positions and [e] experts,
-   whatever the ids; an MXFP4 weight summed at float32 decodes none. The
+(* A product decodes [min p e] matrices at float32 for [p] positions and [e]
+   experts, whatever the ids; an MXFP4 weight summed at float32 decodes
+   none. The
    positions of [2 n] rows less those of [n] are the decoding's alone. *)
 let decodes_law (f, f64, e, n, ids) =
   let p = Array.length ids in
@@ -1355,8 +1377,7 @@ let decodes_law (f, f64, e, n, ids) =
     let w = random_weight ~format:f [| 1; n'; k |] in
     let w = Nx_quant.place Counted_one.on w in
     C.reset ();
-    (if f64 then ignore (Nx.to_array (Nx_quant.dequant Nx.float64 w))
-     else ignore (Nx.to_array (Nx_quant.dequant Nx.float32 w)));
+    ignore (Nx.to_array (Nx_quant.dequant Nx.float32 w));
     C.positions ()
   in
   let per = one (2 * n) - one n and got = counted (2 * n) - counted n in
@@ -1980,8 +2001,8 @@ let placements =
          blocks, and raises otherwise"
         work work_law;
       prop
-        "a float32 product decodes no value of an MXFP4 or Q8_0 weight, and \
-         any other weight as dequant does"
+        "a float32 product decodes no value of an MXFP4, Q8_0 or Q6_K weight, \
+         and any other weight as dequant does"
         applies applies_law;
       prop ~count:300
         "an expert product decodes a matrix per slot, min (positions, \

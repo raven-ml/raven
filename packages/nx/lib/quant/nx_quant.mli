@@ -186,44 +186,42 @@ val dequant : (float, 'b) Nx.dtype -> 'd t -> (float, 'b, 'd) Nx.t
     infinite at every dtype. Float32, bfloat16 and float64 hold every other
     value exactly. A GGUF value is computed as ggml's float32 dequantisation
     computes it, its products left to right, and equals it bit for bit: a Q8_0
-    value and a Q4_K product are exact, a Q4_K value rounds once at its
-    subtraction and a Q6_K value once at its last product. A block whose float16
-    scale is infinite or NaN gives infinite or NaN values. *)
+    value, a Q6_K value and a Q4_K product are exact, and a Q4_K value rounds
+    once at its subtraction. A block whose float16 scale is infinite or NaN
+    gives infinite or NaN values. *)
 
 val apply : 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [apply w x] is [w] applied to [x] as a linear map from [k] inputs to [n]
-    outputs:
-
-    {[
-    Nx.matmul x (Nx.matrix_transpose (dequant (Nx.dtype x) w))
-    ]}
-
-    where every value of [w]'s format is exact at [x]'s dtype: at float32 and
-    float64, and MXFP4's at bfloat16. At another dtype the values are not
-    rounded to it, and the product is at float32:
+    outputs, summed at [acc], [float64] for a float64 [x] and [float32]
+    otherwise, which holds each value of [w] exactly, and rounded once to
+    [x]'s dtype:
 
     {[
     Nx.cast (Nx.dtype x)
-      (Nx.matmul (Nx.cast Nx.float32 x)
-         (Nx.matrix_transpose (dequant Nx.float32 w)))
+      (Nx.matmul (Nx.cast acc x) (Nx.matrix_transpose (dequant acc w)))
     ]}
 
     [w] is [[| …; n; k |]], [x] is [[| …; m; k |]] or [[| k |]], batch axes
     broadcast as {!Nx.matmul}'s, and the result is [[| …; m; n |]], or
     [[| …; n |]] for a vector.
 
-    An [Mxfp4] or [Q8_0] weight applied to a float32, bfloat16 or float16
-    [x] is read where it lies: the product decodes each block as it sums it
-    and stores no decoded weight. Any other product first decodes [w] as
-    {!dequant} does, at [x]'s dtype or at float32. Read where it lies, the
-    product needs kernels that compute a block-scaled contraction, as
-    nx.cpu's do. Each element times its block's scale is then the value
-    {!dequant} gives, exact in the accumulator, so the scales add no
-    rounding: the product holds {!Nx.contract}'s bound over [w]'s values.
+    A [Q8_0] weight, and an [Mxfp4] one summed at float32, are read where
+    they lie: the product decodes each block as it sums it and stores no
+    decoded weight. A [Q6_K] weight's product first unpacks its quants as
+    int8 and its sub-blocks' scales [d * sc] at float32, and sums them
+    scaled, storing none of its values. Any other product first decodes [w]
+    at float32 as {!dequant} does: an [Mxfp4] value past float32's range is
+    infinite there, and its code times its scale would be finite at float64.
+    Read where it lies or unpacked, the product needs kernels that compute a
+    block-scaled contraction, as nx.cpu's do. Each element times its block's
+    scale is then the value {!dequant} gives, exact in [acc], so in kernels
+    that scale each element, as nx.cpu's and rune's lowering do, the scales
+    add no rounding: the product holds {!Nx.contract}'s bound over [w]'s
+    values.
 
-    Raises [Invalid_argument] if [w] is read where it lies on a set whose
-    kernels decline that contraction, if [x] is 0-d, if [x]'s last axis is
-    not [k], or if the batch axes do not broadcast. *)
+    Raises [Invalid_argument] if [w] is read where it lies or unpacked on a
+    set whose kernels decline that contraction, if [x] is 0-d, if [x]'s last
+    axis is not [k], or if the batch axes do not broadcast. *)
 
 val apply_experts :
   ids:'d Nx.int64_t -> 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
@@ -237,9 +235,9 @@ val apply_experts :
     The positions in range are summed in one contraction, each row with
     the matrix its id names, at the dtype {!apply} sums in, within
     {!Nx.contract}'s bound; a position out of range has no products. An
-    [Mxfp4] weight with a float32, bfloat16 or float16 [x] is read where it
-    lies, each block decoded as it is summed. Any other is decoded as
-    {!dequant} does, [min p e] matrices for [p] positions: the experts the
+    [Mxfp4] weight summed at float32 is read where it lies, each block
+    decoded as it is summed. Any other is decoded at float32
+    as {!dequant} does, [min p e] matrices for [p] positions: the experts the
     ids in range name, each once, and zeros for the matrices left over. Cut
     along its experts, every expert is decoded, each device its own. A row's
     bits are a function of the shapes, the placements, its row and its

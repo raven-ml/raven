@@ -280,9 +280,16 @@ let q4_k_values blocks =
    Each half of a block, 128 values, takes 64 bytes of low nibbles and 32 bytes
    of high bit pairs. Its quarters 0 and 1 take the low nibbles of the first and
    last 32 of the 64 bytes, quarters 2 and 3 their high nibbles, and quarter [j]
-   the bit pair [j] of each of the 32 bytes. *)
-let q6_k_values blocks =
-  let b = split ~bytes:q6_k_bytes blocks in
+   the bit pair [j] of each of the 32 bytes. [d * sc] has at most 11 + 7
+   significant bits and [q - 32] 5, so a value is exact at float32. *)
+
+(* The values of a sub-block, which share a scale. *)
+let q6_k_sub = 16
+
+(* [q6_k_parts b] is the blocks [b]'s quants less 32 as int8,
+   [[| …; n; b; 16; 16 |]], a row per sub-block, and their sub-blocks'
+   [d * sc] at float32, [[| …; n; b; 16 |]]. *)
+let q6_k_parts b =
   let g = groups b in
   let ql_end = qk_k / 2 in
   let qh_end = ql_end + (qk_k / 4) in
@@ -297,11 +304,17 @@ let q6_k_values blocks =
   let k = Nx.scalar_like qh in
   let high = pick 4 (fun j -> Nx.bitwise_and (Nx.rshift qh (2 * j)) (k 3)) in
   let q =
-    Nx.sub_s (Nx.cast Nx.float32 (Nx.bitwise_or low (Nx.lshift high 4))) 32.
+    Nx.sub_s (Nx.cast Nx.int8 (Nx.bitwise_or low (Nx.lshift high 4))) 32
   in
   let d = Nx.mul (half b sc_end) (int8 (bytes b qh_end sc_end)) in
+  (Nx.reshape (Array.append g [| qk_k / q6_k_sub; q6_k_sub |]) q, d)
+
+let q6_k_values blocks =
+  let b = split ~bytes:q6_k_bytes blocks in
+  let g = groups b in
+  let q, d = q6_k_parts b in
   rows g ~values:qk_k
-    (Nx.mul (per g 16 d) (Nx.reshape (Array.append g [| 16; 16 |]) q))
+    (Nx.mul (per g (qk_k / q6_k_sub) d) (Nx.cast Nx.float32 q))
 
 (* [values w] is the weight [w] at float32. *)
 let values = function
@@ -385,12 +398,9 @@ let check_k fn w =
 
 (* Products *)
 
-(* [w] at [dt], decoded, its cut along [k] checked by the caller. *)
-let decoded dt w = Nx.cast dt (values w)
-
 let dequant dt w =
   check_k "Nx_quant.dequant" w;
-  decoded dt w
+  Nx.cast dt (values w)
 
 (* Batch axes, aligned on the right and broadcast as Nx.matmul's. *)
 let broadcast fn a b =
@@ -421,74 +431,82 @@ let check_input ws xs =
     (if xr = 1 then [||] else Array.sub xs 0 (xr - 2))
     (Array.sub ws 0 (wr - 2))
 
-(* Whether every value of [w]'s format is exact at [dt]. *)
-let exact (type b) (dt : (float, b) Nx.dtype) w =
-  match (dt, w) with
-  | (Nx.Dtype.Float32 | Nx.Dtype.Float64), _ -> true
-  | Nx.Dtype.Bfloat16, (Mxfp4 _ | Mxfp4_blocks _) -> true
-  | _ -> false
+(* Whether a product with [x] sums at float64, as a float64 [x]'s does. Any
+   other sums at float32, which holds every value of a format exactly. *)
+let wide (type b d) (x : (float, b, d) Nx.t) =
+  match Nx.dtype x with Nx.Dtype.Float64 -> true | _ -> false
 
-(* Whether [x]'s dtype sums at float32 with float32 operands. *)
-let at_float32 (type b d) (x : (float, b, d) Nx.t) =
-  match Nx.dtype x with
-  | Nx.Dtype.Float32 | Nx.Dtype.Bfloat16 | Nx.Dtype.Float16 -> true
-  | _ -> false
-
-(* A weight read where it lies: its elements, of [[| …; n |]] then [inner]
-   once reshaped, [k] as one axis or as its blocks and their values where a
-   block's scale lies between its values, and their blocks' scales, of
-   [[| …; n |]] then [blocks]. *)
+(* A weight as a contraction's operand: its elements, of [[| …; n |]] then
+   [inner] once reshaped, [k] as one axis or as its blocks and their values
+   where a block's scale lies between its values, and, where they enter
+   scaled, their blocks' scales, of [[| …; n |]] then [blocks]. *)
 type 'd stored =
   | Stored : {
       elements : ('v, 's, 'd) Nx.t;
       inner : int list;
-      scales : 'd Nx.Prim.scale;
+      scales : 'd Nx.Prim.scale option;
       blocks : int list;
     }
       -> 'd stored
 
-(* [stored ws w] is [w], of shape [ws], read where it lies, if its format
-   is: MXFP4's codes as float4 values and its scales as their groups'
-   exponents, Q8_0's quants as int8 and its float16 scales as values. Each
-   element times its scale is the value [dequant] gives, exact at
-   float32. *)
-let stored ws w =
+(* [stored ~wide ws w] is [w], of shape [ws], as the operand of a product
+   summed at float64 where [wide], else at float32. MXFP4 summed at float32
+   is its codes as float4 values and its scales as their groups' exponents,
+   and Q8_0 its quants as int8 and its float16 scales as values, both read
+   where they lie; Q6_K is its quants, unpacked and less 32, as int8 and its
+   sub-blocks' [d * sc] as values. Each element times its scale is the value
+   [dequant] gives, exact in the sum. Any other weight is its values at
+   float32: Q4_K's value as two products would cancel in the sum where it
+   rounds once in [dequant], and an MXFP4 value past float32's range, which
+   [dequant] makes infinite, would be finite at float64. *)
+let stored ~wide ws w =
   let k = ws.(Array.length ws - 1) in
   match w with
-  | Mxfp4 { codes; scales } ->
+  | Mxfp4 { codes; scales } when not wide ->
       let elements = Nx.bitcast Nx.float4_e2m1fn codes in
-      Some
-        (Stored
-           {
-             elements;
-             inner = [ k ];
-             scales = Exponent scales;
-             blocks = [ k / mxfp4_group ];
-           })
+      Stored
+        {
+          elements;
+          inner = [ k ];
+          scales = Some (Exponent scales);
+          blocks = [ k / mxfp4_group ];
+        }
   | Q8_0 { blocks } ->
       let b = split ~bytes:q8_0_bytes blocks and nb = k / qk8_0 in
       let elements = Nx.bitcast Nx.int8 (bytes b half_bytes q8_0_bytes) in
       let d = Nx.bitcast Nx.float16 (bytes b 0 half_bytes) in
-      Some
-        (Stored
-           {
-             elements;
-             inner = [ nb; qk8_0 ];
-             scales = Value d;
-             blocks = [ nb; 1 ];
-           })
-  | Mxfp4_blocks _ | Q4_K _ | Q6_K _ -> None
+      Stored
+        {
+          elements;
+          inner = [ nb; qk8_0 ];
+          scales = Some (Value d);
+          blocks = [ nb; 1 ];
+        }
+  | Q6_K { blocks } ->
+      let b = split ~bytes:q6_k_bytes blocks in
+      let g = groups b in
+      let q, d = q6_k_parts b in
+      Stored
+        {
+          elements = rows g ~values:qk_k q;
+          inner = [ k ];
+          scales = Some (Value (rows g ~values:(qk_k / q6_k_sub) d));
+          blocks = [ k / q6_k_sub ];
+        }
+  | Mxfp4 _ | Mxfp4_blocks _ | Q4_K _ ->
+      Stored { elements = values w; inner = [ k ]; scales = None; blocks = [] }
 
-(* [scaled ~by x ws s] is the product of [x], [[| …; m; k |]] or [[| k |]],
-   with a weight of shape [ws], [[| …; n; k |]], stored as [s], in one
-   contraction of [x]'s [k] with the elements' [inner] axes, each element
-   of the weight entering the sum as its value. Its axes are planned as
-   [Nx.matmul] plans them: a leading axis is a batch axis where both
-   operands hold the result's extent, else a free axis of the operand that
-   holds it, from which a unit axis of the other drops. It sums in the
+(* [scaled ~by ~wide x ws s] is the product of [x], [[| …; m; k |]] or
+   [[| k |]], with a weight of shape [ws], [[| …; n; k |]], stored as [s], in
+   one contraction of [x]'s [k] with the elements' [inner] axes, each element
+   of the weight entering the sum as its value, summed at float64 where
+   [wide], else at float32, and rounded once to [x]'s dtype. Its axes are
+   planned as [Nx.matmul] plans them: a leading axis is a batch axis where
+   both operands hold the result's extent, else a free axis of the operand
+   that holds it, from which a unit axis of the other drops. It sums in the
    order, and gives the bits, of [x] by the decoded weight transposed:
    nx.cpu numbers the products of several contracted axes as of one. *)
-let scaled ~by x ws (Stored { elements; inner; scales; blocks }) =
+let scaled ~by ~wide x ws (Stored { elements; inner; scales; blocks }) =
   let xs = Nx.shape x in
   let wr = Array.length ws and xr = Array.length xs in
   let p = List.length inner in
@@ -512,10 +530,11 @@ let scaled ~by x ws (Stored { elements; inner; scales; blocks }) =
   let a = Nx.reshape (extents x_lead (m @ inner)) x in
   let b = Nx.reshape (extents w_lead (n :: inner)) elements in
   let s = extents w_lead (n :: blocks) in
-  let b_scale : _ Nx.Prim.scale =
+  let b_scale : _ Nx.Prim.scale option =
     match scales with
-    | Exponent e -> Exponent (Nx.reshape s e)
-    | Value v -> Value (Nx.reshape s v)
+    | Some (Exponent e) -> Some (Exponent (Nx.reshape s e))
+    | Some (Value v) -> Some (Value (Nx.reshape s v))
+    | None -> None
   in
   let batch =
     Iarray.of_list (List.map (fun i -> (index x_lead i, index w_lead i)) both)
@@ -530,13 +549,13 @@ let scaled ~by x ws (Stored { elements; inner; scales; blocks }) =
          {
            batch;
            contracting;
-           acc = Nx.Dtype.Any Nx.float32;
+           acc = (if wide then Nx.Dtype.Any Nx.float64 else Any Nx.float32);
            out = Nx.dtype x;
            a;
            b;
            init = None;
            a_scale = None;
-           b_scale = Some b_scale;
+           b_scale;
            segments = None;
          })
   in
@@ -553,22 +572,12 @@ let scaled ~by x ws (Stored { elements; inner; scales; blocks }) =
 let apply w x =
   let ws = shape w in
   check_input ws (Nx.shape x);
-  let dt = Nx.dtype x in
+  let wide = wide x in
   let by = "Nx_quant.apply" in
   (* An MXFP4 weight read where it lies names its scales as the contraction
-     reads them. *)
-  (match w with
-  | Mxfp4 _ when at_float32 x -> ()
-  | _ -> check_k by w);
-  match if at_float32 x then stored ws w else None with
-  | Some s ->
-      if exact dt w then scaled ~by x ws s
-      else Nx.cast dt (scaled ~by (Nx.cast Nx.float32 x) ws s)
-  | None ->
-      if exact dt w then Nx.matmul x (Nx.matrix_transpose (decoded dt w))
-      else
-        Nx.cast dt
-          (Nx.matmul (Nx.cast Nx.float32 x) (Nx.matrix_transpose (values w)))
+     reads them; any other has its cut along [k] checked before it is read. *)
+  (match w with Mxfp4 _ when not wide -> () | _ -> check_k by w);
+  scaled ~by ~wide x ws (stored ~wide ws w)
 
 (* Quantising. Q8_0 as ggml's quantize_row_q8_0_ref stores a block of 32
    float32 values [v]: [d = amax / 127] for the block's greatest magnitude
@@ -721,7 +730,8 @@ let slots r e =
 
 (* [segmented r x b scale offsets] is the product of [x]'s rows with the
    matrices [b], [[| g; n; k |]], scaled by [scale], cut by [offsets], summed
-   at [x]'s dtype or at float32 where that dtype does not accumulate. *)
+   at float64 for a float64 [x], else at float32, and rounded once to [x]'s
+   dtype. *)
 let segmented (type b) r (x : (float, b, _) Nx.t) b scale offsets =
   let ws = Nx.shape b in
   let n = ws.(1) and k = ws.(2) in
@@ -735,9 +745,7 @@ let segmented (type b) r (x : (float, b, _) Nx.t) b scale offsets =
     Nx.take ~axis:0 (Nx.take r.order source) (Nx.reshape [| m; k |] x)
   in
   let acc : Nx.Dtype.any =
-    match Nx.dtype x with
-    | Nx.Dtype.Float64 -> Any Nx.float64
-    | _ -> Any Nx.float32
+    if wide x then Any Nx.float64 else Any Nx.float32
   in
   let batch = Iarray.of_list [] and contracting = Iarray.of_list [ (1, 2) ] in
   let y =
@@ -777,7 +785,7 @@ let experts_cut w =
    and its scales as their blocks' exponents, each element exact at float32,
    read where it lies, a group per expert. Any other weight, and one summed at
    float64, where a value past float32's range would be finite, enters as its
-   values at [x]'s dtype: cut along its experts, all of them, each device
+   values at float32: cut along its experts, all of them, each device
    decoding its own, a group per expert; else the experts the ids name alone,
    a group per slot. A segmented contraction's association does not depend
    on its offsets (Nx_kernel.S.contract), so a row's bits depend on the
@@ -785,31 +793,22 @@ let experts_cut w =
 let experts ~ids w x =
   let r = route ids and e = (shape w).(0) in
   match w with
-  | Mxfp4 { codes; scales } when at_float32 x ->
+  | Mxfp4 { codes; scales } when not (wide x) ->
       let b = Nx.reshape (shape w) (Nx.bitcast Nx.float4_e2m1fn codes) in
       segmented r x b (Some (Nx.Prim.Exponent scales)) (by_expert r e)
-  | _ when experts_cut w ->
-      segmented r x (decoded (Nx.dtype x) w) None (by_expert r e)
+  | _ when experts_cut w -> segmented r x (values w) None (by_expert r e)
   | _ ->
       let named, offsets = slots r e in
-      segmented r x
-        (decoded (Nx.dtype x) (take ~axis:0 named w))
-        None offsets
+      segmented r x (values (take ~axis:0 named w)) None offsets
 
 let apply_experts ~ids w x =
   check_experts (shape w) (Nx.shape ids) (Nx.shape x);
-  let dt = Nx.dtype x in
   (* An MXFP4 weight summed at float32 is read where it lies and names its
      scales as the contraction reads them; any other decodes the blocks the
      positions name, none for no position. *)
-  let in_place =
-    match w with
-    | Mxfp4 _ -> not (Nx.Dtype.equal dt Nx.float64)
-    | Mxfp4_blocks _ | Q8_0 _ | Q4_K _ | Q6_K _ -> false
-  in
+  let in_place = match w with Mxfp4 _ -> not (wide x) | _ -> false in
   if (not in_place) && some ids then check_k "Nx_quant.apply_experts" w;
-  if exact dt w then experts ~ids w x
-  else Nx.cast dt (experts ~ids w (Nx.cast Nx.float32 x))
+  experts ~ids w x
 
 (* Structure *)
 
