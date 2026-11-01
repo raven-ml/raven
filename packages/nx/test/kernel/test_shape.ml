@@ -447,7 +447,10 @@ let pp_reduce_case ppf c =
     (Format.pp_print_list pp_reduction)
     (Array.to_list c.rs) pp_ints c.axes pp_ints c.y
 
-(* Reductions along a subset of a shape's axes. *)
+(* Reductions along a subset of a shape's axes. One case in three empties
+   the first reduced axis, so that an extreme of no term, which a drawn
+   shape alone gives in one case in eighteen, comes in one in seven and
+   every run of 100 cases reaches it. *)
 let reduce_case =
   Gen.with_pp pp_reduce_case
     (let open Gen in
@@ -456,6 +459,12 @@ let reduce_case =
      let* keep = array ~size:(constant rank) bool in
      let axes =
        Array.of_list (List.filter (fun i -> keep.(i)) (List.init rank Fun.id))
+     in
+     let* empty = frequency [ (2, constant false); (1, constant true) ] in
+     let y =
+       if empty && axes <> [||] then
+         Array.mapi (fun i n -> if i = axes.(0) then 0 else n) y
+       else y
      in
      let+ rs = array ~size:(int_range 1 2) (of_list ~pp:pp_reduction reductions_all) in
      { y; axes; rs })
