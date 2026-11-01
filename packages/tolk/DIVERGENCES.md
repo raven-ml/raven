@@ -388,16 +388,17 @@ stamps nothing (D146).
 - **tinygrad:** `dtype.py:79-81` (`DType.const`), which wraps an unsigned
   integer to its type and keeps a signed one as written, so a committed
   unsigned constant, and a folded unsigned result, hold their type's value;
-  `uop/symbolic.py:30` (`fold_const_alu`, `truncate_output=False`), whose
-  signed result keeps its mathematical value; `:156-158` (the collapse of
-  committed const conversions) and `:283-285` (two stage ALU folding), which
-  read a weak operand of an operation on a committed integer as written;
+  `uop/symbolic.py:30` (`fold_const_alu`), which writes a folded integer
+  result at its type's width; `:156-158` (the collapse of committed const
+  conversions), and `fold_const_alu` and `:283-285` (two stage ALU folding),
+  which read a weak operand of an operation on a committed integer as
+  written;
   `uop/ops.py:1094-1155` (`_min_max`), which bounds such an operand by its
   written value; `uop/weak.py:82-87` (`uncast_const`), which leaves the
   literal bare. tinygrad's own `TestModularWraparound` expects the wrapped
-  results and is marked `xfail_broken_const_wraparound`: its unsigned cases
-  fold to them at this commit, its signed ones (`test_mul`, `test_div`,
-  `test_neg_min_int`) do not.
+  results and is marked `xfail_broken_const_wraparound`: its cases fold to
+  them at this commit, but for the signed one of `test_div`, whose `//`
+  floors where the test truncates.
 - **tolk:** `Shape.fold_const_alu`; the two stage folds of a maximum in
   `Shape.symbolic_simple` and `Shape.symbolic`; `Ops.at_width` and
   `Ops.operand_bounds`; `Shape.uncast_const`.
@@ -408,13 +409,11 @@ stamps nothing (D146).
   integer at that operation's width, as compiled code commits it; and it
   writes a committed integer result wrapped. The bounds read operands, and
   bound constants, the same way. So `uncast_const` only ever drops a cast
-  whose literal fits. tinygrad keeps a signed integer mathematical, for
-  emission to wrap: the emission never saw the mathematical value, since
-  every later fold and bound read it first. So a fold gives what no machine
-  computes: the int64 cast of the int32 constant `2^31` folds to `2^31` where
-  the machine gives `-2^31`, the int32 `0xABCD17D6 * 10` to `28823449180`
-  where it gives `-1241321892`, and the negation of the int8 `-128` to `128`
-  where it gives `-128`. A weak operand of an unsigned operation is read as
+  whose literal fits. tinygrad keeps a signed constant as written, for
+  emission to wrap: the emission never saw the written value, since every
+  later fold and bound read it first. So a fold gives what no machine
+  computes: the int64 cast of the int32 constant `2^31` folds to `2^31`
+  where the machine gives `-2^31`. A weak operand of an unsigned operation is read as
   written, which a sum, a product and a bitwise operation fold the same
   before or after wrapping, but an order and a division do not: on uint8,
   `max(-3, a)` becomes `a` where the machine computes `max(253, a)`, and on
