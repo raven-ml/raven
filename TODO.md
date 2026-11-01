@@ -278,17 +278,15 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## ymir, sowilo
 
-- ymir bench: only the Mac has a section, recorded 2026-10-07 under OCaml
+- ymir bench: the Mac's section was recorded 2026-10-07 under OCaml
   5.5.1 before rig. fits-image-4096/raw-int16-rice reads 4435930 words
   there and 995245 on fudge; its +4.9% on the Mac did not show on fudge
-  from fe69dde74 to main. Record a fudge section; re-record or drop the
-  Mac's
+  from fe69dde74 to main. Re-record or drop the Mac's
 
 ## repo
 
 - thumper: suites whose only x86 section is kimchi's (retired):
-  kaun, gpt_oss; ymir has no
-  x86 section. Record each on fudge, then delete every kimchi section,
+  kaun, gpt_oss. Record each on fudge, then delete every kimchi section,
   nx's and tolk's included. nx.thumper's fudge section was recorded under
   OCaml 5.5.1, so it compares nothing under 5.5.2: re-record it on a quiet
   fudge. talon.thumper's Mac rows predate the Nx.Rng

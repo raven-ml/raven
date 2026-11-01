@@ -4,15 +4,46 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
-# forced: blessed apparent-10k/eager apparent-10k/compiled orientation-1k/eager orientation-1k/compiled under load 25.5 on 14 cores
-# forced: blessed spk-moon-10k/eager spk-moon-10k/compiled under load 20.7 on 14 cores
+# forced: blessed under load 44.9 on 14 cores
 
-apparent-10k/compiled	alloc_words	exact	1145
+age-1k/compiled	alloc_words	exact	700
+age-1k/eager	alloc_words	exact	54256
+aperture-104/compiled-grad	alloc_words	exact	4293
+aperture-104/eager	alloc_words	exact	450681
+aperture-104/eager-grad	alloc_words	exact	2159441
+apparent-10k/compiled	alloc_words	exact	1106
 apparent-10k/eager	alloc_words	exact	145393
-orientation-1k/compiled	alloc_words	exact	1414
+distance-modulus-4x1590/compiled	alloc_words	exact	701
+distance-modulus-4x1590/eager	alloc_words	exact	57834
+distance-modulus-4x1590/grad	alloc_words	exact	701
+fits-image-4096/raw-int16-rice	alloc_words	exact	978885
+fits-image-4096/values-float32	alloc_words	exact	1429
+fits-lists-100k/ragged-int16	alloc_words	exact	7751692
+fits-observation-4096/sci-err-float32	alloc_words	exact	18583
+fits-quantized-1024/write	alloc_words	exact	16280008
+fits-table-50x100k/raw-one-column	alloc_words	exact	1400946
+fits-table-50x100k/read	alloc_words	exact	70029202
+fits-table-hst-293/units	alloc_words	exact	789965
+galactic-lat-1m/compiled	alloc_words	exact	1106
+galactic-lat-1m/eager	alloc_words	exact	11675
+healpix-harmonics-64/analysis	alloc_words	exact	1632674
+healpix-harmonics-64/synthesis	alloc_words	exact	1777070
+healpix-pixel-1m/compiled	alloc_words	exact	1176
+healpix-pixel-1m/eager	alloc_words	exact	21475
+observation-4096/sub-eager	alloc_words	exact	10799
+orientation-1k/compiled	alloc_words	exact	1343
 orientation-1k/eager	alloc_words	exact	68910
-spk-moon-10k/compiled	alloc_words	exact	1478
+separation-1m/compiled	alloc_words	exact	1443
+separation-1m/eager	alloc_words	exact	18712
+shapes-104/ellipse-eager	alloc_words	exact	162260
+shapes-104/polygon-eager	alloc_words	exact	550296
+solved-100k/sip-forward-eager	alloc_words	exact	76399
+solved-100k/sip-inverse-eager	alloc_words	exact	480761
+solved-100k/zpn-deproject-eager	alloc_words	exact	948432
+spk-moon-10k/compiled	alloc_words	exact	1399
 spk-moon-10k/eager	alloc_words	exact	31531
+wcs-1m/compiled	alloc_words	exact	1386
+wcs-1m/eager	alloc_words	exact	34929
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
