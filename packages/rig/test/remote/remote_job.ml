@@ -96,8 +96,8 @@ let child_text fd =
   ic
 
 (* Starts an agent of the key in [file], with the variables [vars] added to its
-   environment. *)
-let start ?(mode = "") ?(vars = []) ?(input = Unix.stdin) file =
+   environment, as its process and the pipe of its output. *)
+let spawn ?(mode = "") ?(vars = []) ?(input = Unix.stdin) file =
   let r, w = Unix.pipe ~cloexec:true () in
   let args = [| agent_exe; file; mode |] in
   let pid =
@@ -105,12 +105,17 @@ let start ?(mode = "") ?(vars = []) ?(input = Unix.stdin) file =
       Unix.stderr
   in
   Unix.close w;
-  let out = child_text r in
+  (pid, child_text r)
+
+(* The agent [spawn] started, once it listens. *)
+let listening (pid, out) =
   match int_of_string (input_line out) with
   | port -> { pid; port; out; status = None }
   | exception (End_of_file | Failure _) ->
       ignore (Unix.waitpid [] pid);
       fail "the agent did not start"
+
+let start ?mode ?vars ?input file = listening (spawn ?mode ?vars ?input file)
 
 let controller_exe =
   Filename.concat
@@ -162,7 +167,10 @@ let kill a =
 (* Runs [f] with [n] agents of [key]; kills those still running after. *)
 let with_agents ?(n = 1) ?mode ?input f =
   with_key_file @@ fun file ->
-  let agents = List.init n (fun _ -> start ?mode ?input file) in
+  (* All start before any is waited for, so that their starts overlap: two
+     agents' starts are a third of each landing of a connect's walk. *)
+  let spawned = List.init n (fun _ -> spawn ?mode ?input file) in
+  let agents = List.map listening spawned in
   Fun.protect ~finally:(fun () -> List.iter kill agents) (fun () -> f agents)
 
 let connect agents =
