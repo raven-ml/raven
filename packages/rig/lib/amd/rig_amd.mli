@@ -541,7 +541,8 @@ type 'm path = {
           the kind all hold queues answers [Error (Full _)], and needs no
           memory for a queue in a slot a [retire] freed; a path that never
           answers [Full] holds three queues of a kind while a growth
-          replaces a queue no work ran on. *)
+          replaces a queue no work ran on. A [queue] that raises may have
+          made the queue, which [stop] must then destroy. *)
   retire : int -> unit;
       (** [retire bell] destroys the queue [queue] made whose doorbell is at
           [bell], which has read every packet up to its write position. The
@@ -584,12 +585,13 @@ type 'm path = {
       (** [stable_power ()] holds the GPU's clocks and shader engines steady,
           as tracing needs, for the life of the process. *)
   stop : fault:string option -> [ `Stopped | `Unknown ];
-      (** [stop ~fault] destroys the queues [queue] made. It returns
-          [`Stopped] once none of them runs or none can write memory outside
-          the GPU, and [`Unknown] if one may. [fault] is the reason rig lost
-          the device for, if it lost it for a fault or a hang
-          ({!Rig_edge.Driver.stop}). A path that keeps the GPU's state for
-          later opens records it; a path that keeps none ignores it. *)
+      (** [stop ~fault] destroys the queues [queue] made, one whose [queue]
+          call raised included. It returns [`Stopped] once none of them runs
+          or none can write memory outside the GPU, and [`Unknown] if one
+          may. [fault] is the reason rig lost the device for, if it lost it
+          for a fault or a hang ({!Rig_edge.Driver.stop}). A path that keeps
+          the GPU's state for later opens records it; a path that keeps none
+          ignores it. *)
 }
 (** The type for what a path gives a device. A path fills it with functions
     over its own state, which this library never names.
@@ -612,7 +614,8 @@ val make : word:nativeint -> 'm path -> (t, string) result
     makes, through [p], the device's queues and argument segment, maps its
     word, and loads the kernel the device copies with. A failed [make] gives back what it took once
     [p]'s [stop] returns [`Stopped], and keeps it otherwise. It calls [stop]
-    only if it made a queue.
+    only if it made a queue, or if [p]'s [queue] raised, which may have made
+    one.
 
     The result is [Error msg]:
     {ul

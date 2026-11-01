@@ -327,8 +327,10 @@ type scratch = {
 (* What a growth made, or the device's first of its kind: a segment, or a
    queue, by its doorbell, with its ring and positions. It is named by the
    GPU address of the segment or the ring, as the C state's growth names it
-   (rig_amd_stubs.h). *)
-type part = { id : int; mems : mem list; mutable doorbell : int option }
+   (rig_amd_stubs.h). A queue's [doorbell] is its host address, stored with
+   nothing between it and the path's answer that allocates or polls; [0]
+   for a segment, or a queue not yet made. *)
+type part = { id : int; mems : mem list; mutable doorbell : int }
 
 (* What only a running device uses, under the device's guard but for
    [parts], under its growth lock. The handle outlives the device in its
@@ -671,7 +673,15 @@ let make_trace g =
         | Some m -> Some m
         | None -> ops.alloc Pinned n
       in
-      match (buffers, ops.alloc Pinned (4 * trace_slots * engines)) with
+      let quietly m = try free_mem m with Fault _ -> () in
+      let ends =
+        match ops.alloc Pinned (4 * trace_slots * engines) with
+        | e -> e
+        | exception e ->
+            Option.iter quietly buffers;
+            reraise e
+      in
+      match (buffers, ends) with
       | Some b, Some e when mem_host b <> None && mem_host e <> None ->
           let t =
             {
@@ -687,8 +697,8 @@ let make_trace g =
           l.traces <- Some (t, [ b; e ]);
           Ok t
       | b, e ->
-          Option.iter free_mem b;
-          Option.iter free_mem e;
+          Option.iter quietly b;
+          Option.iter quietly e;
           Error (strf "no memory for %d bytes of trace buffers" n))
 
 (* The capability's [scratch]: [g]'s scratch grown for [n] bytes per lane.
@@ -825,9 +835,14 @@ let dma g r ~fn =
       if not (count_hdp g g.self 1) then
         Error "the device stopped, or flushes no more host data paths"
       else
-        let answer = (live g).ops.dma r.mem ~fn in
-        if Result.is_error answer then ignore (count_hdp g g.self (-1));
-        answer
+        match (live g).ops.dma r.mem ~fn with
+        | Ok _ as answer -> answer
+        | Error _ as answer ->
+            ignore (count_hdp g g.self (-1));
+            answer
+        | exception e ->
+            ignore (count_hdp g g.self (-1));
+            reraise e
 
 let map_host g a n =
   if n < 1 then invalid_argf "Rig_amd.map_host: %d bytes, expected at least 1" n;
@@ -1205,14 +1220,19 @@ let make (type m) ~word (p : m path) =
     in
     let queue q kind ring =
       let at = mem_address pointers in
-      let* doorbell =
-        Result.map_error why
-          (p.queue kind ~ring:(mem_address ring) ~bytes:(first_ring kind)
-             ~read:(at + read_at ~aql q)
-             ~write:(at + write_at ~aql q))
-      in
-      queues := true;
-      Ok doorbell
+      (* A [queue] that raised may have made the queue. *)
+      match
+        p.queue kind ~ring:(mem_address ring) ~bytes:(first_ring kind)
+          ~read:(at + read_at ~aql q)
+          ~write:(at + write_at ~aql q)
+      with
+      | Ok doorbell ->
+          queues := true;
+          Ok doorbell
+      | Error r -> Error (why r)
+      | exception e ->
+          queues := true;
+          reraise e
     in
     let* compute_bell = queue 0 compute_kind compute in
     let* copy_bell = queue 1 `Sdma copy in
@@ -1288,17 +1308,17 @@ let make (type m) ~word (p : m path) =
                   {
                     id = mem_address segment;
                     mems = [ segment ];
-                    doorbell = None;
+                    doorbell = 0;
                   };
                   {
                     id = mem_address compute;
                     mems = [ compute ];
-                    doorbell = Some compute_bell;
+                    doorbell = compute_bell;
                   };
                   {
                     id = mem_address copy;
                     mems = [ copy ];
-                    doorbell = Some copy_bell;
+                    doorbell = copy_bell;
                   };
                 ];
               copy_launch = !copy_launch;
@@ -1385,14 +1405,15 @@ let rec retire ?(keep = []) g l =
   | None -> ()
   | Some p ->
       l.parts <- List.filter (fun p' -> p' != p) l.parts;
-      Option.iter l.ops.retire p.doorbell;
+      if p.doorbell <> 0 then l.ops.retire p.doorbell;
       List.iter give_back p.mems;
       retire ~keep g l
 
 (* New [Pinned] memory for a growth, of each of [sizes] bytes, listed in
    [l.parts] as one part named by the first before anything else may raise,
    with its host addresses, or [Error n] for [n] bytes the path lacked, having
-   given back what it took. *)
+   given back what it took. An alloc that raises gives back what the earlier
+   ones took too. *)
 let spare l sizes =
   let rec take acc = function
     | [] -> Ok (List.rev acc)
@@ -1401,10 +1422,13 @@ let spare l sizes =
         | Some m -> take (m :: acc) rest
         | None ->
             List.iter give_back acc;
-            Error n)
+            Error n
+        | exception e ->
+            List.iter give_back acc;
+            reraise e)
   in
   let* ms = take [] sizes in
-  let p = { id = mem_address (List.hd ms); mems = ms; doorbell = None } in
+  let p = { id = mem_address (List.hd ms); mems = ms; doorbell = 0 } in
   l.parts <- p :: l.parts;
   let host m =
     match mem_host m with
@@ -1445,7 +1469,7 @@ let make_queue l m =
       ~write:(m.gpu + write_at ~aql at)
   with
   | Ok bell ->
-      m.part.doorbell <- Some bell;
+      m.part.doorbell <- bell;
       Ok ()
   | Error (Lacking _ | Full _) as e -> e
   | Error (Refused why) -> raise (Fault why)
@@ -1532,7 +1556,7 @@ let grow g =
                     m.words;
                     m.bytes;
                     m.host + write_at ~aql:(m.kind = `Aql) at;
-                    Option.get m.part.doorbell;
+                    m.part.doorbell;
                     m.part.id;
                   |]
               | None -> [| 0; 0; 0; 0; 0 |]
@@ -1570,8 +1594,8 @@ let halt g l ~fault =
         @ traces @ l.own
         @ List.concat_map (fun p -> p.mems) l.parts)
 
-(* The C state's run part goes whatever the path's stop answered: the queues
-   read none of it. *)
+(* The C state's run part goes whatever the path's stop answered, or if it
+   raised: the queues read none of it. *)
 let stop g ~fault =
   let l =
     Lock.protect g.guard @@ fun () ->
@@ -1579,8 +1603,11 @@ let stop g ~fault =
     g.live <- None;
     l
   in
-  Option.iter (fun l -> halt g l ~fault) l;
-  end_state g.self
+  match Option.iter (fun l -> halt g l ~fault) l with
+  | () -> end_state g.self
+  | exception e ->
+      end_state g.self;
+      reraise e
 
 (* Tests *)
 
