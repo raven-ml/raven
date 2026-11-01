@@ -509,7 +509,7 @@ let confirm f fault invalidate () =
       if !fault = None then fault := Some why;
       false
 
-let start ~gpus ~kept f first =
+let start ~gpus ~kept ~started f first =
   let* vram, doorbells, mmio, vf, lease, memory, d =
     Result.map_error
       (fun why -> `Refused why)
@@ -612,6 +612,7 @@ let start ~gpus ~kept f first =
     }
   in
   (* From here the GPU's registers are written: a failure stops it as lost. *)
+  started g;
   match boot g ~partial:(p = `Partial) ~pool ~kiq with
   | () when !fault = None -> Ok g
   | () ->

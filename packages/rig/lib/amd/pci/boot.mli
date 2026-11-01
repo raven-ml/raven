@@ -71,19 +71,23 @@ val kept : unit -> kept
 val start :
   gpus:(int, string) result Lazy.t ->
   kept:kept ->
+  started:(t -> unit) ->
   Rig_pci.Function.t ->
   (Discovery.t ->
   (Regs.layout * Firmware.t, string) result) ->
   (t, [ `Refused of string | `Running | `Lost of string ]) result
-(** [start ~gpus ~kept f first] boots the GPU of [f], partially or fully as
-    {!plan} says. The caller took [f], reserved {!space} on its machine, and
+(** [start ~gpus ~kept ~started f first] boots the GPU of [f], partially or
+    fully as {!plan} says. The caller took [f], reserved {!space} on its machine, and
     counts [gpus] AMD GPUs there, or [Error why] if it cannot list them.
     [first d] returns the registers' layout and the firmware from the GPU's
     discovery table [d], which the boot reads before it writes anything:
     whole, or in its first 12 bytes alone when they are those of the table
     [kept] holds from an earlier boot, which then serves. The caller gives
     [kept] to the boots of [f]'s GPU alone, one at a time. The GPU's memory
-    joins its fabric as {!Gmc.link} says.
+    joins its fabric as {!Gmc.link} says. [started g] is called once, with
+    the result to be, before the first write to a block's register, so that
+    the caller can stop [g] from there on whatever ends the boot; an
+    exception from it passes through, with nothing written.
 
     The GPU masters the bus only once it is booted, every flush has been
     confirmed ({!confirm}), and both hubs read back as translating

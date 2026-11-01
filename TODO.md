@@ -26,15 +26,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### drivers
 
-- rig's drivers keep state whole by rig.mli's rule: a synchronous raise
-  leaves it whole; an asynchronous one may leak and lose the device but
-  never makes a later call wrong. worklist-m.md (b8a35696e) has 89 rows
-  to fix of 199. nv, nv-pci, pci, cuda, disk and remote have had their
-  fix series since; rig.amd (21 rows, nonnormal), mlx5 (8), bnxt (11) and
-  metal (1) have not. Recount on main, fix the rest. On Windows OCaml has
-  no signal masks, so a Ctrl-C lands at any poll point below rig's core,
-  rows worklist-m.md counts as unreached included (rig.cuda's page-lock
-  registry under a contended lock): those rows need the same fix there
 - rig.amd over PCI on SDMA 4: program the page queue (regSDMA_PAGE_*,
   doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
   second slot (`Sdma.slots`) and drop its 16 MiB ring (`most_ring`).

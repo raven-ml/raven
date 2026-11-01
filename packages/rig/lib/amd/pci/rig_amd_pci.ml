@@ -361,10 +361,21 @@ let path g h fn ~index : Memory.region Amd.path =
     stop;
   }
 
-(* A boot that wrote to the GPU and failed stopped it, as lost, before it
-   answered: the hold's stop then answers so. *)
+(* The hold's stop is the GPU's from before the boot's first write to a
+   register, so that no exception between that write and the open's return
+   leaves the function to be released as clean: rig.pci then loses it, and
+   the stop answers what the boot's own stop recorded. A boot that raised
+   before [started], having written no register, sets a stop that answers
+   [`Lost], as before. One that raised inside [started], after [set] and
+   before the stop, also wrote nothing, and its function is released as it
+   was found. *)
 let boot h fn ~firmware =
-  let lost () = Driver.set_stop h (fun () -> `Lost) in
+  let set = ref false in
+  let started g =
+    set := true;
+    Driver.set_stop h (fun () -> Boot.stop g)
+  in
+  let lost () = if not !set then Driver.set_stop h (fun () -> `Lost) in
   let gpus =
     lazy
       (Result.map List.length (Driver.buses gpus (Rig_pci.Function.machine fn)))
@@ -375,7 +386,7 @@ let boot h fn ~firmware =
   in
   let on = known (Rig_pci.Function.machine fn) in
   let kept = kept on (Rig_pci.Function.bus fn) in
-  match Boot.start ~gpus ~kept fn first with
+  match Boot.start ~gpus ~kept ~started fn first with
   | Ok g -> Ok g
   | Error (`Refused why) -> Error (`Refused why)
   | Error `Running -> Error `Running
@@ -411,7 +422,6 @@ let start ~word ~firmware ~index h fn =
       (Rig_pci.Space.length Boot.space)
   in
   let* g = booted h fn ~firmware in
-  Driver.set_stop h (fun () -> Boot.stop g);
   match Amd.make ~word (path g h fn ~index) with
   | Ok d ->
       (* A host resets a VF that holds its access long: every queue is made, so
