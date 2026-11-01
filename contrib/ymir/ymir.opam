@@ -16,7 +16,7 @@ depends: [
   "dune" {>= "3.21"}
   "nx" {>= "1.0.0~alpha3"}
   "lz" {>= "1.0.0~alpha3"}
-  "rune" {with-test & >= "1.0.0~alpha3"}
+  "rune" {>= "1.0.0~alpha3"}
   "jera" {>= "1.0.0~alpha3"}
   "windtrap" {with-test & >= "0.2.0"}
   "thumper" {with-test}

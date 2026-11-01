@@ -4,6 +4,9 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Healpix` pixelises a frame's sphere in RING and NESTED to nside 2^29
+  (`pixel`, `centre`, `corners`, `neighbours`, `renumber`; healpix_bare's
+  conversions, `LICENSE-healpix_bare`) and transforms maps to harmonics.
 - `Time` holds batches of instants on UTC, TAI, TT and TDB, the scale in the
   type: UTC 23:59:60 and its 1961-1972 rates from the IERS's tables, and TDB at
   the geocentre from SOFA's `iauDtdb` series. `Time.convert` converts them.

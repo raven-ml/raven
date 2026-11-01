@@ -7,28 +7,29 @@
 
     Ymir gives astronomical meaning to tensors: the units astronomy measures in,
     and the models built on them. Every function is a formula of nx operations,
-    so it runs batched, compiled and differentiated under rune's transformations
-    with no rule of its own.
+    {!Healpix}'s Legendre sums one [Rune.scan], so it runs batched, compiled
+    and differentiated under rune's transformations with no rule of its own.
 
     [open Ymir] brings the unit algebra of [ymir.units] ({!Unit}, {!Quantity},
     {!Constant}, {!Codata}, {!Vocabulary}) and astronomy's units ({!Units}) into
     scope. {!Time} holds instants on astronomical time scales. {!Frame} names
-    the celestial frames and {!Direction} holds directions in them.
-    {!Transform} maps pixels to the sky, {!Grid} is a shape of cells seen
-    through a transform, {!Region} is a shape placed on a grid's world, and
-    {!Observation} holds data on a grid and integrates them over a region.
-    {!Cosmology} is the background of a homogeneous expanding universe: its
-    expansion rate, distances, volumes and times. {!Wcs} reads and writes a
-    FITS header's world coordinates.
+    the celestial frames and {!Direction} holds directions in them. {!Healpix}
+    divides a frame's sphere into equal-area pixels and transforms maps on
+    them to spherical harmonics. {!Transform} maps pixels to the sky, {!Grid}
+    is a shape of cells seen through a transform, {!Region} is a shape placed
+    on a grid's world, and {!Observation} holds data on a grid and integrates
+    them over a region. {!Cosmology} is the background of a homogeneous
+    expanding universe: its expansion rate, distances, volumes and times.
+    {!Wcs} reads and writes a FITS header's world coordinates.
 
     {b Device sets.} A type that holds tensors names their device set, ['d]. A
     function's results, and the constants it makes, lie where its operands
     lie, as {!Nx.beside} places them, and a cut operand gives a result cut
     alike. What a function makes from nothing lies on the host: FITS reads,
-    the cosmology presets, {!Time.of_date}, {!Constant.quantity} and
-    {!Frame.matrix}; their walks move them ({!Nx.Ptree.place}). {!Wcs.read}
-    and {!Grid.pixels} take the placement of what they make, since a
-    {!Transform} cannot move between sets. *)
+    the cosmology presets, {!Time.of_date}, {!Constant.quantity},
+    {!Frame.matrix} and {!Healpix.area}; their walks move them
+    ({!Nx.Ptree.place}). {!Wcs.read} and {!Grid.pixels} take the placement of
+    what they make, since a {!Transform} cannot move between sets. *)
 
 (** {1:units Units} *)
 
@@ -484,6 +485,183 @@ module Direction : sig
 
   val ptree : unit -> (('f, 'd) t, 'd) Nx.Ptree.t
   (** [ptree ()] is [Nx.Ptree.v walk], the structure of directions. *)
+end
+
+(** {1:healpix HEALPix} *)
+
+(** HEALPix pixels and spherical harmonics.
+
+    HEALPix, the Hierarchical Equal Area isoLatitude Pixelization (Górski et
+    al. 2005, ApJ 622, 759), divides a frame's sphere into 12 base pixels and
+    each of those into [nside × nside] pixels, [nside] a power of two from 1
+    to 2²⁹. Its [N = 12 nside²] pixels have one area, π / (3 nside²), and
+    centres on [4 nside - 1] rings of constant latitude, equally spaced along
+    each. With [z = cos θ = sin(lat)], the rings of the polar caps, |z| >
+    2/3, hold 4, 8, … pixels from the pole, and the others [4 nside].
+
+    Two {e schemes} number the pixels from 0 to [N - 1]. {!Healpix.Ring}
+    counts eastward along each ring, north to south. {!Healpix.Nested} gives
+    base pixel [f] the indices from [f nside²], each quarter of it a quarter
+    of those, and so on, so an index divided by 4 is that of the pixel
+    holding it at [nside / 2]. An index is an [int64]; -1 names no pixel,
+    and each function gives -1 or a NaN direction where it reads -1. A map's
+    last axis holds one value per pixel in one scheme's order.
+
+    {b Locating directions.} A direction farther than 2e-14 radians from
+    every edge gets the pixel holding it, at any [nside]; a nearer one gets
+    one of the pixels within 2e-14 radians of it. Both schemes name the same
+    pixel, bit for bit, as {!Healpix.renumber} maps them.
+
+    {b Spherical harmonics.} A map [f] band-limited at [lmax] is
+    [f(θ, φ) = Σ_(l ≤ lmax) Σ_(|m| ≤ l) a_lm Y_lm(θ, φ)] with the
+    orthonormal [Y_lm(θ, φ) = λ_lm(cos θ) e^(imφ)], [λ_lm] with the
+    Condon–Shortley phase (-1)^m. A real map has
+    [a_l(-m) = (-1)^m conj a_lm], so its coefficients are those of [m ≥ 0],
+    a complex128 tensor [[...; lmax + 1; lmax + 1]] with [a_lm] at [[l; m]]
+    and 0 at [m > l]. The λ_lm come from the recurrence in [l] that is stable
+    upward, with an exponent of its own that keeps λ_mm from underflowing.
+
+    {!Healpix.synthesis} sums at pixel centres. {!Healpix.analysis} takes
+    the quadrature [a_lm ≈ (4π / N) Σ_p f(p) conj Y_lm(p)], then [iterations]
+    Jacobi steps [a ← a + analysis (f - synthesis a)], each a synthesis and an
+    analysis more.
+
+    {b Accuracy.} The recurrence rounds to about float64's precision times
+    [lmax] (Reinecke & Seljebotn 2013, "Libsharp", §5.1.2). The quadrature
+    is inexact. In the map's L2 norm, [Σ_l (|a_l0|² + 2 Σ_(m > 0)
+    |a_lm|²)], an analysis of a map band-limited at [lmax] errs by at most
+    ρ^(k+1) of it after [k] iterations, above that rounding, with ρ
+
+    {v
+    nside       4       8       16      32      64
+    lmax=nside  0.0526  0.0398  0.0339  0.0310  0.0296
+    2 nside     0.174   0.147   0.134   0.127   0.124
+    v}
+
+    {b Cost.} A transform takes one FFT per ring and one loop of [lmax + 2]
+    steps for the Legendre sums, [O(nside lmax²)] terms, holding [O(nside
+    lmax)] values per map. A compiled program holds an FFT per ring length,
+    [nside] of them, and the loop once, whatever [lmax]. At large sizes a
+    transform takes about 100 times as long as the HEALPix C++ library's,
+    and compiled it runs no faster than eagerly.
+
+    {b Derivatives.} Indices carry none, and centres and corners are
+    constants of them. Both transforms are linear; rune differentiates them
+    exactly.
+
+    {[
+    let sky = Healpix.v Frame.galactic ~nside:256 Healpix.Ring
+    let pixels = Healpix.pixel sky (Direction.rotate Frame.galactic stars)
+    let alm = Healpix.analysis sky ~lmax:511 ~iterations:3 map
+    ]} *)
+module Healpix : sig
+  (** The type for pixel numberings. *)
+  type scheme =
+    | Ring  (** Along the rings, north to south. *)
+    | Nested  (** By base pixel, then quarter by quarter. *)
+
+  type 'f t
+  (** The type for HEALPix pixelisations of frame ['f]'s sphere, an [nside] and
+      a scheme. *)
+
+  val v : 'f Frame.t -> nside:int -> scheme -> 'f t
+  (** [v f ~nside s] is the pixelisation of [f]'s sphere at [nside], numbered
+      by [s].
+
+      Raises [Invalid_argument] unless [nside] is a power of two from 1 to
+      2²⁹, the largest whose indices [int64] holds. *)
+
+  val frame : 'f t -> 'f Frame.t
+  (** [frame h] is [h]'s frame. *)
+
+  val nside : 'f t -> int
+  (** [nside h] is [h]'s number of divisions of a base pixel's side. *)
+
+  val scheme : 'f t -> scheme
+  (** [scheme h] is [h]'s numbering. *)
+
+  val pixels : 'f t -> int
+  (** [pixels h] is [12 nside²], [h]'s number of pixels. *)
+
+  val area : 'f t -> (float, Nx.float64_elt, Nx.host) Nx.t Quantity.t
+  (** [area h] is each pixel's solid angle, π / (3 nside²) steradians, rounded
+      once, on the host. *)
+
+  (** {1:pixels Pixels} *)
+
+  val pixel : 'f t -> ('f, 'd) Direction.t -> 'd Nx.int64_t
+  (** [pixel h d] is the index of the pixel holding each direction of [d], of
+      [d]'s batch shape, within the bound above, and -1 for a NaN or zero
+      vector. It reads each row as the ray it spans.
+
+      Raises [Invalid_argument] where a vector is infinite. *)
+
+  val centre : 'f t -> 'd Nx.int64_t -> ('f, 'd) Direction.t
+  (** [centre h p] is the centre of each pixel of [p], unit vectors within
+      2e-15 radians of the exact centres, and a NaN row for -1.
+
+      Raises [Invalid_argument] where an index is outside \[-1,
+      [pixels h]). *)
+
+  val corners : 'f t -> 'd Nx.int64_t -> ('f, 'd) Direction.t
+  (** [corners h p] is each pixel's four corners, [p]'s shape @ [[4; 3]],
+      north, west, south and east, counter-clockwise seen from outside the
+      sphere and within 2e-15 radians as {!centre}; NaN rows for -1. The
+      edges between them are the curves [z = a + b φ] between the caps and [z
+      = a + b / φ²] in them.
+
+      Raises [Invalid_argument] as {!centre} does. *)
+
+  val neighbours : 'f t -> 'd Nx.int64_t -> 'd Nx.int64_t
+  (** [neighbours h p] is each pixel's eight neighbours, [p]'s shape @ [[8]]:
+      south-west, west, north-west, north, north-east, east, south-east and
+      south, as the HEALPix library orders them. Where three base pixels
+      meet, at the eight points at |z| = 2/3, a pixel with a corner there has
+      no neighbour across it, and its entry is -1, where {!Nx.take} reads
+      zero. Every entry of -1 is -1.
+
+      Raises [Invalid_argument] as {!centre} does. *)
+
+  val renumber : 'f t -> scheme -> 'd Nx.int64_t -> 'd Nx.int64_t
+  (** [renumber h s p] is the index in scheme [s] of each pixel whose index in
+      [h]'s scheme is in [p], -1 for -1. It is exact, and [p] itself when [s]
+      is [h]'s. A map reads in the other scheme through it:
+
+      {[
+      let nested = Healpix.v Frame.galactic ~nside:64 Healpix.Nested
+      let p = Nx.arange Nx.int64 0 (Healpix.pixels nested) 1
+      let nested_map = Nx.take (Healpix.renumber nested Healpix.Ring p) ring_map
+      ]}
+
+      Raises [Invalid_argument] as {!centre} does. *)
+
+  (** {1:harmonics Spherical harmonics} *)
+
+  val analysis :
+    'f t ->
+    lmax:int ->
+    iterations:int ->
+    (float, Nx.float64_elt, 'd) Nx.t ->
+    (Complex.t, Nx.complex64_elt, 'd) Nx.t
+  (** [analysis h ~lmax ~iterations f] is the coefficients
+      [[...; lmax + 1; lmax + 1]] of each map of [f], [[...; pixels h]] in
+      [h]'s scheme, by the quadrature over pixel centres refined [iterations]
+      times. Its imaginary parts at [m = 0] are 0.
+
+      Raises [Invalid_argument] if [f]'s last axis is not [pixels h], or
+      [lmax] or [iterations] is negative. *)
+
+  val synthesis :
+    'f t ->
+    (Complex.t, Nx.complex64_elt, 'd) Nx.t ->
+    (float, Nx.float64_elt, 'd) Nx.t
+  (** [synthesis h a] is the map [[...; pixels h]], in [h]'s scheme, of the
+      coefficients [a], [[...; lmax + 1; lmax + 1]], summed at each pixel's
+      centre. It ignores the entries at [m > l] and the imaginary parts at
+      [m = 0], which no real map has.
+
+      Raises [Invalid_argument] unless [a]'s last two axes are of one
+      non-zero size. *)
 end
 
 (** {1:grids Transforms, grids and observations} *)

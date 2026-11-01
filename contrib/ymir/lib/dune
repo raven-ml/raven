@@ -19,5 +19,6 @@
   cosmology_tables
   time
   time_tables
+  healpix
   wcs)
- (libraries nx nx.array nx.wide jera ymir.units))
+ (libraries nx nx.array nx.wide jera rune ymir.units))

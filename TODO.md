@@ -337,7 +337,6 @@ raven / llama.cpp (Vulkan; ROCm):
   there and 995245 on fudge; its +4.9% on the Mac did not show on fudge
   from fe69dde74 to main. Record a fudge section; re-record or drop the
   Mac's
-- ymir: HEALPix and spherical harmonics (RFC 0027 slice 3)
 - ymir: time-dependent frames
   (precession, nutation, aberration) and ephemerides
 

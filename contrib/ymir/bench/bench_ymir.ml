@@ -69,6 +69,44 @@ let separations () =
         (fun (f, a, b) -> timed (fun () -> f a b));
     ]
 
+(* HEALPix: the pixel of each of a million directions, and the harmonics of a
+   map at nside 64 to lmax 128, the quadrature alone. *)
+
+let sky = Healpix.v Frame.icrs ~nside:1024 Healpix.Ring
+let healpix_pixel v = Healpix.pixel sky (icrs v)
+
+let pixels_1m () =
+  Thumper.group "healpix-pixel-1m"
+    [
+      Thumper.bench_with_setup ~setup:(directions 0.) "eager" (fun v ->
+          timed (fun () -> healpix_pixel v));
+      Thumper.bench_with_setup
+        ~setup:(fun () ->
+          let f = Rune.jit' healpix_pixel and v = directions 0. () in
+          ignore (Sys.opaque_identity (f v));
+          (f, v))
+        "compiled"
+        (fun (f, v) -> timed (fun () -> f v));
+    ]
+
+let coarse = Healpix.v Frame.icrs ~nside:64 Healpix.Ring
+let lmax = 128
+
+let harmonics () =
+  let map () =
+    let n = float_of_int (Healpix.pixels coarse) in
+    Nx.sin (Nx.mul_s (Nx.arange_f f64 0. n 1.) 0.37)
+  in
+  Thumper.group "healpix-harmonics-64"
+    [
+      Thumper.bench_with_setup ~setup:map "analysis" (fun f ->
+          timed (fun () -> Healpix.analysis coarse ~lmax ~iterations:0 f));
+      Thumper.bench_with_setup
+        ~setup:(fun () -> Healpix.analysis coarse ~lmax ~iterations:0 (map ()))
+        "synthesis"
+        (fun a -> timed (fun () -> Healpix.synthesis coarse a));
+    ]
+
 (* FITS: what a photometry program and a catalogue reader call. Each file
    is written once in the setup, so the timed region reads it. *)
 
@@ -534,6 +572,8 @@ let suite () =
   [
     galactic ();
     separations ();
+    pixels_1m ();
+    harmonics ();
     wcs_rows ();
     solved_rows ();
     aperture_rows ();

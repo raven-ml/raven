@@ -3,9 +3,10 @@
 Astronomy for OCaml, built on [Nx](../../packages/nx/). Ymir gives tensors
 astronomical meaning: exact units and quantities, celestial frames and
 directions, FITS files, maps from pixels to the sky, aperture photometry on
-images, and the background cosmology. Every function is a formula of nx
-operations, so rune batches, compiles and differentiates it with no rule of its
-own.
+images, the background cosmology, and HEALPix maps with their spherical
+harmonics. Every function is a formula of nx operations, or for HEALPix's
+Legendre sums one `Rune.scan`, so rune batches, compiles and differentiates
+it with no rule of its own.
 
 ## Quick start
 
@@ -54,6 +55,10 @@ The [examples](examples/) teach each part on small synthetic data.
   J2000 ecliptic and supergalactic, and a frame mismatch is a type error.
   `Direction` holds batches of directions with their separations, position
   angles and rotations between frames.
+- **HEALPix**: `Healpix` divides a frame's sphere into equal-area pixels
+  at `nside` up to 2^29, numbered RING or NESTED: the pixel of each
+  direction, pixel centres, corners and neighbours, and spherical harmonic
+  analysis and synthesis of maps, with Jacobi iterations.
 - **Transforms**: `Transform` maps pixels to the sky as a list of stages
   that compose with `>>`, invert, and print back what they read: axis order,
   shift, linear maps, SIP and TPV distortions, thirteen zenithal and

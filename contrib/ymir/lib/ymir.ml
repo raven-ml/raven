@@ -11,6 +11,7 @@ module Vocabulary = Ymir_units.Vocabulary
 module Units = Units
 module Frame = Frame
 module Direction = Direction
+module Healpix = Healpix
 module Time = Time
 module Transform = Transform
 module Grid = Grid
