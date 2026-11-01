@@ -1,0 +1,64 @@
+; What the Metal suite and bench share: the GPU through rig with the
+; harness's metallib, operands, and runs of the harness's launches and of
+; nx.metal's contractions. The harness's metallib is built with nx.metal's
+; by lib/metal/kernels/build.sh and embedded here. Built on macOS alone, as
+; nx.metal is.
+
+(library
+ (name nx_metal_support)
+ (enabled_if
+  (= %{system} macosx))
+ (libraries
+  nx_array
+  nx_kernel
+  nx_metal
+  rig
+  rig.metal)
+ (foreign_stubs
+  (language c)
+  (names nx_metal_support_stubs)
+  (include_dirs ../../../lib/array)
+  (extra_deps embedded.metallib)
+  (flags
+   (:standard
+    -DNX_HARNESS_METALLIB=embedded.metallib
+    -x
+    objective-c
+    -fblocks)))
+ (c_library_flags
+  (-framework Metal -framework Foundation)))
+
+; nx.metal's kernels.ml, for the names of its library's kernels.
+
+(rule
+ (copy ../../../lib/metal/kernels.ml kernels.ml))
+
+(rule
+ (targets harness.metallib)
+ (mode fallback)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (progn
+   (echo "packages/nx/test/metal/support/harness.metallib is missing: build it with `packages/nx/lib/metal/kernels/build.sh`, or copy it in\n")
+   (system "exit 1"))))
+
+; The harness's metallib the library embeds: the one build.sh makes from the
+; tree's sources, listed here in build.sh's order.
+
+(rule
+ (targets embedded.metallib)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (progn
+   (chdir
+    %{workspace_root}
+    (run
+     %{exe:../../../lib/metal/kernels/fresh.exe}
+     %{dep:harness.metallib}
+     %{dep:../../../lib/metal/kernels/build.sh}
+     %{dep:harness.h}
+     %{dep:../../../lib/array/nx_dtype.h}
+     %{dep:harness.metal}))
+   (copy harness.metallib embedded.metallib))))
