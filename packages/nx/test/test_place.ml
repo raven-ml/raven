@@ -939,6 +939,8 @@ let rearranged =
     ("b (h d) -> b h d", [ ("h", 1) ], fun n f -> [| n; f |]);
     ("b h d -> b (h d)", [], fun n f -> [| n; 1; f |]);
     ("b ... -> ... b", [], fun n f -> [| n; f; 1 |]);
+    ("(b c) f -> b c f", [ ("c", 1) ], fun n f -> [| n; f |]);
+    ("b c f -> (b c) f", [], fun n f -> [| n; 1; f |]);
   ]
 
 let rearranged_case =

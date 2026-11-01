@@ -379,9 +379,8 @@ let check_k fn w =
   if splits then
     invalid_arg
       (strf
-         "%s: the weight lies cut along k so that a device does not hold \
-          whole blocks with their scales, which it would read whole; \
-          Nx.place (Placement.on s) w"
+         "%s: the weight lies cut along k so that a device lacks part of a \
+          block or its scale; Nx.place (Placement.on s) w"
          fn)
 
 (* Products *)

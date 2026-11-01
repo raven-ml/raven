@@ -1847,11 +1847,11 @@ let whole_scales_law (t, b, lead, cut_x) =
   | 3 -> run (module Mem_three)
   | _ -> run (module Mem)
 
-(* The message of a call over a weight cut along [k] so that a device does
-   not hold whole blocks with their scales. *)
+(* The message of a call over a weight cut along [k] so that a device lacks
+   part of a block or its scale. *)
 let split_blocks =
-  ": the weight lies cut along k so that a device does not hold whole blocks \
-   with their scales, which it would read whole; Nx.place (Placement.on s) w"
+  ": the weight lies cut along k so that a device lacks part of a block or \
+   its scale; Nx.place (Placement.on s) w"
 
 let placements =
   group "placement"

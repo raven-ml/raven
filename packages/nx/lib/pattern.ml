@@ -643,7 +643,8 @@ let push_names ext slots k is one =
       is
 
 (* The split's slots of the layout [l], and in [lone] each name the layout
-   holds as an axis alone: its axis. *)
+   holds as an axis alone, or first in a group of names of one element: its
+   axis. *)
 let split_slots ~names ~covered ext lone l =
   let slots = Array.make (Array.length ext + List.length l) 0 in
   let k = ref 0 and a = ref 0 in
@@ -656,6 +657,12 @@ let split_slots ~names ~covered ext lone l =
     (function
       | Name i -> alone i
       | Group is ->
+          (* A group of names of one element is an axis of one element,
+             which its first name carries. *)
+          (match is with
+          | i :: _ when List.for_all (fun i -> ext.(i) = 1) is ->
+              lone.(i) <- !a
+          | _ -> ());
           push_names ext slots k is (-2 - !a);
           incr a
       | Unit ->

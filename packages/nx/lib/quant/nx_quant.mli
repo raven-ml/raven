@@ -35,12 +35,13 @@
     product of an [Mxfp4] or [Q8_0] weight read where it lies reads the
     bytes where they lie, at either cut, each device decoding its own blocks
     as it sums them. Any other cut along [k] splits a block, which each
-    device would read whole, so {!dequant}, {!apply} and {!apply_experts}
-    raise at the call, before any block is decoded, naming
-    [Nx.place (Placement.on s) w], the placement that puts it whole on each
-    device; {!apply_experts} where a position names a block. {!apply} and
-    {!apply_experts} of an [Mxfp4] weight read
-    where it lies name its scales: with them whole on each device, and the
+    device would read whole, and a cut that leaves [Mxfp4] codes on a device
+    without their blocks' scales is read whole too. Either way {!dequant},
+    {!apply} and {!apply_experts} raise at the call, before any block is
+    decoded, naming [Nx.place (Placement.on s) w], the placement that puts
+    it whole on each device; {!apply_experts} where a position names a
+    block. {!apply} and {!apply_experts} of an [Mxfp4] weight read where it
+    lies name its scales: with them whole on each device, and the
     weight rebuilt by {!mxfp4}, they read the codes where they lie where [t]
     divides [k / 2], their bytes, each device holding every scale, and raise
     on the codes otherwise. Of one block, such a weight decodes so too, at
