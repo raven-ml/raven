@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 codegen/codegen/add_big_clang.golden
 codegen/codegen/add_big_cuda.golden
 codegen/codegen/add_big_hip.golden
@@ -2839,6 +2839,8 @@ schedule/memory/very_small.golden
 schedule/memory/very_small_held.golden
 schedule/memory/very_small_planned.golden
 schedule/prepare/add.golden
+schedule/prepare/add_at_first_twice.golden
+schedule/prepare/add_at_first_twice_prepared.golden
 schedule/prepare/add_nothing.golden
 schedule/prepare/add_nothing_prepared.golden
 schedule/prepare/add_prepared.golden
@@ -2863,6 +2865,8 @@ schedule/prepare/assign_double_bitcast.golden
 schedule/prepare/assign_double_bitcast_prepared.golden
 schedule/prepare/assign_flipped_self.golden
 schedule/prepare/assign_flipped_self_prepared.golden
+schedule/prepare/assign_overlapping_shrink_pending.golden
+schedule/prepare/assign_overlapping_shrink_pending_prepared.golden
 schedule/prepare/assign_own_contents.golden
 schedule/prepare/assign_own_contents_prepared.golden
 schedule/prepare/assign_permuted_self.golden
@@ -3563,10 +3567,10 @@ uop/divandmod/keep_a_plain_division.golden
 uop/divandmod/keep_a_plain_remainder.golden
 uop/divandmod/keep_a_remainder_by_a_variable_that_can_be_negative.golden
 uop/divandmod/keep_a_remainder_whose_nested_part_reaches_the_factor.golden
+uop/divandmod/keep_nested_divisions_of_committed_integers.golden
 uop/divandmod/keep_the_division_of_a_declared_multiple.golden
 uop/divandmod/merge_nested_divisions.golden
 uop/divandmod/merge_nested_divisions_by_a_negative_inner_divisor.golden
-uop/divandmod/merge_nested_divisions_of_committed_integers.golden
 uop/divandmod/nest_a_division_by_a_factor_of_a_term.golden
 uop/divandmod/nest_a_remainder_by_a_factor_of_a_term.golden
 uop/divandmod/nest_the_division_of_a_remainder.golden
@@ -3646,6 +3650,7 @@ uop/divandmod/test_gcd_with_remainder.golden
 uop/divandmod/test_invalid_gate_simplifies_index.golden
 uop/divandmod/test_invalid_gate_simplifies_vectorize.golden
 uop/divandmod/test_masked_idiv_fold.golden
+uop/divandmod/test_masked_idiv_fold_committed_mask.golden
 uop/divandmod/test_merge_invalid_conditions.golden
 uop/divandmod/test_mod_1.golden
 uop/divandmod/test_mod_4.golden
@@ -3936,7 +3941,9 @@ uop/symbolic/TestSymbolic.test_lt_sum_factor_rhs_all.golden
 uop/symbolic/TestSymbolic.test_lt_sum_factor_rhs_partial.golden
 uop/symbolic/TestSymbolic.test_lt_sum_remove.golden
 uop/symbolic/TestSymbolic.test_masked_idiv_fold.golden
+uop/symbolic/TestSymbolic.test_masked_idiv_fold_committed_mask.golden
 uop/symbolic/TestSymbolic.test_masked_shr_fold.golden
+uop/symbolic/TestSymbolic.test_masked_shr_fold_committed_mask.golden
 uop/symbolic/TestSymbolic.test_max_folds.golden
 uop/symbolic/TestSymbolic.test_mod_1.golden
 uop/symbolic/TestSymbolic.test_mod_binary_expression.golden

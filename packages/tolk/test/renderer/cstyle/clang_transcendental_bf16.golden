@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 
 __attribute__((min_vector_width(512))) void E(unsigned short* restrict data0_1, unsigned short* restrict data1_1) {
   unsigned short val0 = (*(data1_1+0));

@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 typedef long unsigned int size_t;
 extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
 extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
@@ -13,5 +13,5 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
   unsigned short val2 = (*(data2_16+(alu0+3)));
   unsigned short val3 = (*(data2_16+alu0));
   float4 val4 = (*((float4*)((data1_16+alu0))));
-  *((float4*)((data0_16+alu0))) = make_float4(((float)(((unsigned short)((((unsigned short)((((unsigned short)(val4.x))+val3)))*((unsigned short)(3u))))))),((float)(((unsigned short)((((unsigned short)((((unsigned short)(val4.y))+val0)))*((unsigned short)(3u))))))),((float)(((unsigned short)((((unsigned short)((((unsigned short)(val4.z))+val1)))*((unsigned short)(3u))))))),((float)(((unsigned short)((((unsigned short)((((unsigned short)(val4.w))+val2)))*((unsigned short)(3u))))))));
+  *((float4*)((data0_16+alu0))) = make_float4(((float)(((unsigned short)((((unsigned int)(((unsigned short)((((unsigned int)(((unsigned short)(val4.x))))+((unsigned int)(val3)))))))*3u))))),((float)(((unsigned short)((((unsigned int)(((unsigned short)((((unsigned int)(((unsigned short)(val4.y))))+((unsigned int)(val0)))))))*3u))))),((float)(((unsigned short)((((unsigned int)(((unsigned short)((((unsigned int)(((unsigned short)(val4.z))))+((unsigned int)(val1)))))))*3u))))),((float)(((unsigned short)((((unsigned int)(((unsigned short)((((unsigned int)(((unsigned short)(val4.w))))+((unsigned int)(val2)))))))*3u))))));
 }

@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 case	kernel	renderer	context	opts
 add_cpu	add	cpu		(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),)
 add_metal	add	metal		(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))

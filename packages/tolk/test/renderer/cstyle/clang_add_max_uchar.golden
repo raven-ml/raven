@@ -1,5 +1,6 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
-typedef unsigned char unsigned_char4 __attribute__((aligned(4),ext_vector_type(4)));
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+typedef unsigned char unsigned_char4 __attribute__((aligned(1),ext_vector_type(4)));
+typedef unsigned int unsigned_int4 __attribute__((aligned(4),ext_vector_type(4)));
 __attribute__((min_vector_width(512))) void r_256_4(unsigned char* restrict data0_1, unsigned char* restrict data1_1024, unsigned char* restrict data2_1024) {
   unsigned char buf0[1];
   *(buf0+0) = ((unsigned char)(0u));
@@ -17,12 +18,14 @@ __attribute__((min_vector_width(512))) void r_256_4(unsigned char* restrict data
     unsigned char val6 = (*(data2_1024+alu4));
     unsigned char val7 = (*(data2_1024+alu1));
     unsigned char val8 = (*(buf0+0));
-    unsigned_char4 alu5 = ((unsigned_char4){val3,val0,val1,val2}+(unsigned_char4){val7,val4,val5,val6});
-    unsigned char alu6 = ((alu5[0]<alu5[1])?alu5[1]:alu5[0]);
-    unsigned char alu7 = ((alu6<alu5[2])?alu5[2]:alu6);
-    unsigned char alu8 = ((alu7<alu5[3])?alu5[3]:alu7);
-    unsigned char alu9 = ((val8<alu8)?alu8:val8);
-    *(buf0+0) = alu9;
+    unsigned_int4 cast0 = __builtin_convertvector((unsigned_char4){val3,val0,val1,val2}, unsigned_int4);
+    unsigned_int4 cast1 = __builtin_convertvector((unsigned_char4){val7,val4,val5,val6}, unsigned_int4);
+    unsigned_char4 cast2 = __builtin_convertvector((cast0+cast1), unsigned_char4);
+    unsigned char alu5 = ((cast2[0]<cast2[1])?cast2[1]:cast2[0]);
+    unsigned char alu6 = ((alu5<cast2[2])?cast2[2]:alu5);
+    unsigned char alu7 = ((alu6<cast2[3])?cast2[3]:alu6);
+    unsigned char alu8 = ((val8<alu7)?alu7:val8);
+    *(buf0+0) = alu8;
   }
   *(data0_1+0) = (*(buf0+0));
 }

@@ -1,0 +1,10 @@
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+0 Ops.STACK dtypes.void []
+1 Ops.PARAM dtypes.u32 [0] ParamArg(slot=-1, dtype=dtypes.u32, vmin_vmax=(0, 255), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+2 Ops.CONST dtypes.weakint [] 4294967292
+3 Ops.CAST dtypes.u32 [2] dtypes.u32
+4 Ops.AND dtypes.u32 [1, 3]
+5 Ops.CONST dtypes.weakint [] 4
+6 Ops.FLOORDIV dtypes.u32 [4, 5]
+7 Ops.SINK dtypes.void [6, 6]
+

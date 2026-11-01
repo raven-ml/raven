@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 32
 2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
@@ -70,7 +70,7 @@
 68 Ops.SINK dtypes.void [67] KernelInfo(name="E_2_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), optimized=True, split=(2, 1, 2))
 69 Ops.SINK dtypes.void [67] KernelInfo(name="E_2_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), estimates=Estimates(ops=24, lds=128, mem=128), optimized=True, split=(2, 1, 2))
 70 Ops.LINEAR dtypes.void [1, 2, 0, 3, 4, 12, 13, 43, 44, 46, 47, 51, 52, 55, 56, 58, 59, 61, 62, 15, 16, 18, 19, 8, 9, 25, 26, 28, 29, 31, 32, 36, 37, 40, 41, 5, 6, 7, 10, 53, 57, 60, 63, 64, 23, 27, 30, 33, 34, 45, 48, 38, 42, 49, 14, 17, 20, 21, 54, 24, 39, 11, 65, 35, 50, 22, 66, 67, 68]
-71 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void E_2_16(int* restrict data0_32, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<4);\n    int alu1 = (alu0+12);\n    int alu2 = (alu0+4);\n    int alu3 = (alu0+8);\n    *((int4*)((data0_32+alu1))) = (int4){alu1,(alu0+13),(alu0+14),(alu0+15)};\n    *((int4*)((data0_32+alu2))) = (int4){alu2,(alu0+5),(alu0+6),(alu0+7)};\n    *((int4*)((data0_32+alu3))) = (int4){alu3,(alu0+9),(alu0+10),(alu0+11)};\n    *((int4*)((data0_32+alu0))) = (int4){alu0,(alu0+1),(alu0+2),(alu0+3)};\n  }\n}\n"
+71 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void E_2_16(int* restrict data0_32, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<4);\n    int alu1 = (alu0+12);\n    int alu2 = (alu0+4);\n    int alu3 = (alu0+8);\n    *((int4*)((data0_32+alu1))) = (int4){alu1,(alu0+13),(alu0+14),(alu0+15)};\n    *((int4*)((data0_32+alu2))) = (int4){alu2,(alu0+5),(alu0+6),(alu0+7)};\n    *((int4*)((data0_32+alu3))) = (int4){alu3,(alu0+9),(alu0+10),(alu0+11)};\n    *((int4*)((data0_32+alu0))) = (int4){alu0,(alu0+1),(alu0+2),(alu0+3)};\n  }\n}\n"
 72 Ops.PROGRAM dtypes.void [69, 70, 71] ProgramInfo(global_size=(2, 1, 1), params=(%2, %3, %4), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 73 Ops.SINK dtypes.void [68, 72]
 

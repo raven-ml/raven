@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 %0 = param () : "a" dtype=f32 slot=-1 bounds=[-10.0,10.0] multiple_of=1 addrspace=ALU
 %1 = param () : "b" dtype=f32 slot=-1 bounds=[-10.0,10.0] multiple_of=1 addrspace=ALU
 %2 = and %0, %1

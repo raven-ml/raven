@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
 2 Ops.PARAM dtypes.u64 [1] ParamArg(slot=0, dtype=dtypes.u64, device="CPU")
@@ -61,7 +61,7 @@
 59 Ops.LOAD dtypes.u32 [58]
 60 Ops.SHL dtypes.u32 [59, 52]
 61 Ops.SHR dtypes.u32 [50, 14]
-62 Ops.CONST dtypes.weakint [] -1
+62 Ops.CONST dtypes.weakint [] 4294967295
 63 Ops.MUL dtypes.u32 [52, 62]
 64 Ops.ADD dtypes.u32 [51, 63]
 65 Ops.SHR dtypes.u32 [61, 64]

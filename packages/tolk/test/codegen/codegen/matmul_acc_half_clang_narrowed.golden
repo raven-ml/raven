@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 
 __attribute__((min_vector_width(512))) void r_8_8_8(__fp16* restrict data0_64, __fp16* restrict data1_64, __fp16* restrict data2_64, const int block_lo_, const int block_hi_) {
   __fp16 buf0[1];

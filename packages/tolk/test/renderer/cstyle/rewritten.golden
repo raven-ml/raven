@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=0, dtype=dtypes.bf16)
 2 Ops.RANGE dtypes.weakint [0] (AxisType.LOOP, 0)
@@ -434,44 +434,44 @@
 432 Ops.CAST dtypes.fp8e5m2fnuz [431] dtypes.fp8e5m2fnuz
 433 Ops.STACK dtypes.fp8e5m2fnuz [418, 420, 422, 424, 426, 428, 430, 432]
 434 Ops.WMMA dtypes.f32 [415, 433, 247] ((16, 16, 32), dtypes.fp8e5m2fnuz, 64, None)
-435 Ops.CAST dtypes.fp8e4m3 [329] dtypes.fp8e4m3
-436 Ops.STORE dtypes.void [177, 435]
-437 Ops.CAST dtypes.fp8e5m2 [140] dtypes.fp8e5m2
-438 Ops.STORE dtypes.void [189, 437]
-439 Ops.CAST dtypes.f32 [204] dtypes.f32
-440 Ops.CAST dtypes.i32 [439] dtypes.i32
-441 Ops.STORE dtypes.void [159, 440]
-442 Ops.BITCAST dtypes.u32 [371] dtypes.u32
-443 Ops.BITCAST dtypes.u32 [388] dtypes.u32
-444 Ops.WMMA dtypes.f32 [442, 443, 247] ((16, 16, 32), dtypes.fp8e4m3, 64, None)
-445 Ops.BITCAST dtypes.u32 [415] dtypes.u32
-446 Ops.BITCAST dtypes.u32 [433] dtypes.u32
-447 Ops.WMMA dtypes.f32 [445, 446, 247] ((16, 16, 32), dtypes.fp8e5m2fnuz, 64, None)
-448 Ops.BITCAST dtypes.u64 [371] dtypes.u64
-449 Ops.BITCAST dtypes.u64 [388] dtypes.u64
-450 Ops.WMMA dtypes.f32 [448, 449, 247] ((16, 16, 32), dtypes.fp8e4m3, 64, None)
-451 Ops.BITCAST dtypes.u64 [415] dtypes.u64
-452 Ops.BITCAST dtypes.u64 [433] dtypes.u64
-453 Ops.WMMA dtypes.f32 [451, 452, 247] ((16, 16, 32), dtypes.fp8e5m2fnuz, 64, None)
-454 Ops.CAST dtypes.f32 [12] dtypes.f32
-455 Ops.ADD dtypes.f32 [325, 454]
-456 Ops.CAST dtypes.bf16 [455] dtypes.bf16
-457 Ops.STORE dtypes.void [3, 456]
-458 Ops.CAST dtypes.f32 [44] dtypes.f32
-459 Ops.MUL dtypes.f32 [325, 458]
-460 Ops.CAST dtypes.bf16 [459] dtypes.bf16
-461 Ops.STORE dtypes.void [3, 460]
-462 Ops.CMPLT dtypes.bool [325, 458]
-463 Ops.STORE dtypes.void [68, 462]
-464 Ops.SQRT dtypes.f32 [325]
-465 Ops.CAST dtypes.bf16 [464] dtypes.bf16
-466 Ops.STORE dtypes.void [3, 465]
-467 Ops.EXP2 dtypes.f32 [325]
-468 Ops.CAST dtypes.bf16 [467] dtypes.bf16
-469 Ops.STORE dtypes.void [3, 468]
-470 Ops.CAST dtypes.bf16 [140] dtypes.bf16
-471 Ops.STORE dtypes.void [3, 470]
-472 Ops.CAST dtypes.i32 [325] dtypes.i32
-473 Ops.STORE dtypes.void [159, 472]
-474 Ops.SINK dtypes.void [41, 66, 70, 77, 95, 113, 116, 136, 157, 161, 169, 170, 175, 182, 187, 191, 193, 197, 199, 201, 206, 214, 248, 281, 308, 310, 312, 314, 77, 95, 113, 116, 136, 316, 318, 320, 170, 175, 182, 187, 191, 193, 197, 199, 201, 206, 214, 248, 281, 308, 310, 312, 314, 77, 322, 324, 326, 328, 316, 318, 320, 170, 175, 334, 337, 339, 193, 341, 199, 201, 206, 346, 389, 434, 308, 41, 66, 70, 77, 95, 113, 116, 136, 157, 161, 320, 170, 175, 334, 337, 339, 436, 341, 199, 438, 441, 346, 389, 434, 308, 41, 66, 70, 77, 95, 113, 116, 136, 157, 161, 320, 170, 175, 334, 337, 339, 436, 341, 199, 438, 441, 346, 444, 447, 308, 41, 66, 70, 77, 95, 113, 116, 136, 157, 161, 320, 170, 175, 334, 337, 339, 436, 341, 199, 438, 441, 346, 450, 453, 308, 457, 461, 463, 77, 466, 469, 326, 328, 471, 473, 320, 170, 175, 334, 337, 339, 436, 341, 199, 438, 441, 346, 450, 453, 308]
+435 Ops.CAST dtypes.f32 [12] dtypes.f32
+436 Ops.ADD dtypes.f32 [325, 435]
+437 Ops.CAST dtypes.bf16 [436] dtypes.bf16
+438 Ops.STORE dtypes.void [3, 437]
+439 Ops.CAST dtypes.f32 [44] dtypes.f32
+440 Ops.MUL dtypes.f32 [325, 439]
+441 Ops.CAST dtypes.bf16 [440] dtypes.bf16
+442 Ops.STORE dtypes.void [3, 441]
+443 Ops.CMPLT dtypes.bool [325, 439]
+444 Ops.STORE dtypes.void [68, 443]
+445 Ops.SQRT dtypes.f32 [325]
+446 Ops.CAST dtypes.bf16 [445] dtypes.bf16
+447 Ops.STORE dtypes.void [3, 446]
+448 Ops.EXP2 dtypes.f32 [325]
+449 Ops.CAST dtypes.bf16 [448] dtypes.bf16
+450 Ops.STORE dtypes.void [3, 449]
+451 Ops.CAST dtypes.bf16 [140] dtypes.bf16
+452 Ops.STORE dtypes.void [3, 451]
+453 Ops.CAST dtypes.i32 [325] dtypes.i32
+454 Ops.STORE dtypes.void [159, 453]
+455 Ops.CAST dtypes.fp8e4m3 [329] dtypes.fp8e4m3
+456 Ops.STORE dtypes.void [177, 455]
+457 Ops.CAST dtypes.fp8e5m2 [140] dtypes.fp8e5m2
+458 Ops.STORE dtypes.void [189, 457]
+459 Ops.CAST dtypes.f32 [204] dtypes.f32
+460 Ops.CAST dtypes.i32 [459] dtypes.i32
+461 Ops.STORE dtypes.void [159, 460]
+462 Ops.BITCAST dtypes.u32 [371] dtypes.u32
+463 Ops.BITCAST dtypes.u32 [388] dtypes.u32
+464 Ops.WMMA dtypes.f32 [462, 463, 247] ((16, 16, 32), dtypes.fp8e4m3, 64, None)
+465 Ops.BITCAST dtypes.u32 [415] dtypes.u32
+466 Ops.BITCAST dtypes.u32 [433] dtypes.u32
+467 Ops.WMMA dtypes.f32 [465, 466, 247] ((16, 16, 32), dtypes.fp8e5m2fnuz, 64, None)
+468 Ops.BITCAST dtypes.u64 [371] dtypes.u64
+469 Ops.BITCAST dtypes.u64 [388] dtypes.u64
+470 Ops.WMMA dtypes.f32 [468, 469, 247] ((16, 16, 32), dtypes.fp8e4m3, 64, None)
+471 Ops.BITCAST dtypes.u64 [415] dtypes.u64
+472 Ops.BITCAST dtypes.u64 [433] dtypes.u64
+473 Ops.WMMA dtypes.f32 [471, 472, 247] ((16, 16, 32), dtypes.fp8e5m2fnuz, 64, None)
+474 Ops.SINK dtypes.void [41, 66, 70, 77, 95, 113, 116, 136, 157, 161, 169, 170, 175, 182, 187, 191, 193, 197, 199, 201, 206, 214, 248, 281, 308, 310, 312, 314, 77, 95, 113, 116, 136, 316, 318, 320, 170, 175, 182, 187, 191, 193, 197, 199, 201, 206, 214, 248, 281, 308, 310, 312, 314, 77, 322, 324, 326, 328, 316, 318, 320, 170, 175, 334, 337, 339, 193, 341, 199, 201, 206, 346, 389, 434, 308, 438, 442, 444, 77, 447, 450, 326, 328, 452, 454, 320, 170, 175, 334, 337, 339, 456, 341, 199, 458, 461, 346, 389, 434, 308, 438, 442, 444, 77, 447, 450, 326, 328, 452, 454, 320, 170, 175, 334, 337, 339, 456, 341, 199, 458, 461, 346, 464, 467, 308, 438, 442, 444, 77, 447, 450, 326, 328, 452, 454, 320, 170, 175, 334, 337, 339, 456, 341, 199, 458, 461, 346, 470, 473, 308, 438, 442, 444, 77, 447, 450, 326, 328, 452, 454, 320, 170, 175, 334, 337, 339, 456, 341, 199, 458, 461, 346, 470, 473, 308]
 

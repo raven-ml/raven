@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 case	src	split	ops	ops_ignoring_indexing	lds	mem
 add_uint8	0	16384	2113537	1048576	3145728	3145728
 add_const_uint8	1	16384	2113537	1048576	2097152	2097152

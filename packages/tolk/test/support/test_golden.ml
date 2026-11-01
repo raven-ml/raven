@@ -5,7 +5,7 @@ let golden contents =
   Out_channel.with_open_bin file (fun oc -> output_string oc contents);
   file
 
-let header = "# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b\n"
+let header = "# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd\n"
 let cells column file = List.map (fun cell -> cell column) (Golden.rows file)
 
 let rejects substring contents =

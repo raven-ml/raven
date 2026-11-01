@@ -1,6 +1,6 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
-typedef double double4 __attribute__((aligned(32),ext_vector_type(4)));
-typedef long long4 __attribute__((aligned(32),ext_vector_type(4)));
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+typedef double double4 __attribute__((aligned(8),ext_vector_type(4)));
+typedef long long4 __attribute__((aligned(8),ext_vector_type(4)));
 __attribute__((min_vector_width(512))) void E_4_4(double* restrict data0_16, double* restrict data1_16, const int block_lo_, const int block_hi_) {
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = ((block_lo_+Lidx0)<<2);

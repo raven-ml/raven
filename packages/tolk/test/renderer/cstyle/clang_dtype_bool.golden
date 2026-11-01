@@ -1,7 +1,7 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
-typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-typedef signed char signed_char4 __attribute__((aligned(4),ext_vector_type(4)));
-typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef signed char signed_char4 __attribute__((aligned(1),ext_vector_type(4)));
+typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
 __attribute__((min_vector_width(512))) void E_4_4(float* restrict data0_16, float* restrict data1_16, _Bool* restrict data2_16, const int block_lo_, const int block_hi_) {
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = ((block_lo_+Lidx0)<<2);

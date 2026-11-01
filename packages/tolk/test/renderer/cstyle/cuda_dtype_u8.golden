@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
@@ -11,5 +11,5 @@ extern "C" __global__ void __launch_bounds__(4) E_4_4(float* data0_16, float* da
   unsigned char val2 = (*(data2_16+(alu0+3)));
   unsigned char val3 = (*(data2_16+alu0));
   float4 val4 = (*((float4*)((data1_16+alu0))));
-  *((float4*)((data0_16+alu0))) = make_float4(((float)(((unsigned char)((((unsigned char)((((unsigned char)(val4.x))+val3)))*((unsigned char)(3u))))))),((float)(((unsigned char)((((unsigned char)((((unsigned char)(val4.y))+val0)))*((unsigned char)(3u))))))),((float)(((unsigned char)((((unsigned char)((((unsigned char)(val4.z))+val1)))*((unsigned char)(3u))))))),((float)(((unsigned char)((((unsigned char)((((unsigned char)(val4.w))+val2)))*((unsigned char)(3u))))))));
+  *((float4*)((data0_16+alu0))) = make_float4(((float)(((unsigned char)((((uint)(((unsigned char)((((uint)(((unsigned char)(val4.x))))+((uint)(val3)))))))*3u))))),((float)(((unsigned char)((((uint)(((unsigned char)((((uint)(((unsigned char)(val4.y))))+((uint)(val0)))))))*3u))))),((float)(((unsigned char)((((uint)(((unsigned char)((((uint)(((unsigned char)(val4.z))))+((uint)(val1)))))))*3u))))),((float)(((unsigned char)((((uint)(((unsigned char)((((uint)(((unsigned char)(val4.w))))+((uint)(val2)))))))*3u))))));
 }

@@ -1,0 +1,56 @@
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+0 Ops.CONST dtypes.weakint [] 6
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakfloat [] 1.0
+3 Ops.ADD dtypes.f32 [1, 2]
+4 Ops.STORE dtypes.void [1, 3]
+5 Ops.AFTER dtypes.f32 [1, 4]
+6 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+7 Ops.CONST dtypes.weakint [] 1
+8 Ops.CAST dtypes.i32 [7] dtypes.i32
+9 Ops.EXPAND dtypes.i32 [8, 0]
+10 Ops.CONST dtypes.weakint [] 5
+11 Ops.CONST dtypes.weakint [] 11
+12 Ops.PAD dtypes.i32 [9, 10, 11]
+13 Ops.STACK dtypes.weakint [7, 11]
+14 Ops.RESHAPE dtypes.i32 [12, 13]
+15 Ops.RESHAPE dtypes.i32 [14, 11]
+16 Ops.CONST dtypes.weakint [] 7
+17 Ops.EXPAND dtypes.i32 [15, 16]
+18 Ops.CONST dtypes.weakint [] 77
+19 Ops.RESHAPE dtypes.i32 [17, 18]
+20 Ops.CONST dtypes.weakint [] 0
+21 Ops.CONST dtypes.weakint [] 72
+22 Ops.SHRINK dtypes.i32 [19, 20, 21]
+23 Ops.CONST dtypes.weakint [] 12
+24 Ops.STACK dtypes.weakint [0, 23]
+25 Ops.RESHAPE dtypes.i32 [22, 24]
+26 Ops.STACK dtypes.weakint [20, 20]
+27 Ops.STACK dtypes.weakint [0, 0]
+28 Ops.SHRINK dtypes.i32 [25, 26, 27]
+29 Ops.STACK dtypes.weakint [0, 0, 7]
+30 Ops.RESHAPE dtypes.i32 [28, 29]
+31 Ops.RESHAPE dtypes.i32 [30, 27]
+32 Ops.PERMUTE dtypes.i32 [31] (1, 0)
+33 Ops.PERMUTE dtypes.i32 [32] (1, 0)
+34 Ops.REDUCE dtypes.i32 [33] (Ops.ADD, 1)
+35 Ops.CONST dtypes.weakint [] -1
+36 Ops.ADD dtypes.i32 [34, 35]
+37 Ops.CMPLT dtypes.bool [36, 7]
+38 Ops.CONST dtypes.bool [] True
+39 Ops.CMPNE dtypes.bool [37, 38]
+40 Ops.CMPLT dtypes.bool [36, 0]
+41 Ops.AND dtypes.bool [39, 40]
+42 Ops.MUL dtypes.weakint [7, 35]
+43 Ops.ADD dtypes.i32 [36, 42]
+44 Ops.FLOORMOD dtypes.i32 [43, 7]
+45 Ops.CMPNE dtypes.bool [44, 20]
+46 Ops.CMPNE dtypes.bool [45, 38]
+47 Ops.AND dtypes.bool [41, 46]
+48 Ops.SHRINK dtypes.f32 [5, 20, 10]
+49 Ops.PAD dtypes.f32 [48, 7, 0]
+50 Ops.WHERE dtypes.f32 [47, 49, 5]
+51 Ops.STORE dtypes.void [6, 50]
+52 Ops.AFTER dtypes.f32 [6, 51]
+53 Ops.SINK dtypes.void [5, 52]
+

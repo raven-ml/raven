@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 file	class	test
 null/test_uop_symbolic.py	TestSymbolic	test_add_1
 null/test_uop_symbolic.py	TestSymbolic	test_add_div
@@ -83,7 +83,9 @@ null/test_uop_symbolic.py	TestSymbolic	test_lt_sum_factor_rhs_all
 null/test_uop_symbolic.py	TestSymbolic	test_lt_sum_factor_rhs_partial
 null/test_uop_symbolic.py	TestSymbolic	test_lt_sum_remove
 null/test_uop_symbolic.py	TestSymbolic	test_masked_idiv_fold
+null/test_uop_symbolic.py	TestSymbolic	test_masked_idiv_fold_committed_mask
 null/test_uop_symbolic.py	TestSymbolic	test_masked_shr_fold
+null/test_uop_symbolic.py	TestSymbolic	test_masked_shr_fold_committed_mask
 null/test_uop_symbolic.py	TestSymbolic	test_max_folds
 null/test_uop_symbolic.py	TestSymbolic	test_mod_1
 null/test_uop_symbolic.py	TestSymbolic	test_mod_binary_expression

@@ -1,6 +1,6 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
-typedef long long4 __attribute__((aligned(32),ext_vector_type(4)));
-typedef double double4 __attribute__((aligned(32),ext_vector_type(4)));
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+typedef long long4 __attribute__((aligned(8),ext_vector_type(4)));
+typedef double double4 __attribute__((aligned(8),ext_vector_type(4)));
 __attribute__((min_vector_width(512))) void cast(double* restrict data0_4, long* restrict data1_4) {
   long4 val0 = (*((long4*)((data1_4+0))));
   double4 cast0 = __builtin_convertvector(val0, double4);

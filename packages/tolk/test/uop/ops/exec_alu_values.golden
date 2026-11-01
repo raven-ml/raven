@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 op	dtype	operands	truncate	result
 Ops.ADD	dtypes.i8	[0, 0]	True	0
 Ops.ADD	dtypes.i8	[7, 3]	True	10

@@ -1,4 +1,4 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 device	renderer	arch	op	dtype	written
 CPU	CLANG	x86_64,x86-64	Ops.SQRT	dtypes.f16	__builtin_sqrtf(a)
 CPU	CLANG	x86_64,x86-64	Ops.SQRT	dtypes.bf16	__builtin_sqrtf(a)

@@ -1,10 +1,10 @@
-# tinygrad ef6ec5f15467b88c134d12a732a91018f97c3f1b
+# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
 0 Ops.CONST dtypes.weakint [] 3
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
 2 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="PYTHON")
 3 Ops.STORE dtypes.void [1, 2]
 4 Ops.CONST dtypes.weakint [] 256
-5 Ops.BUFFER dtypes.i8 [4] ParamArg(slot=6, dtype=dtypes.i8, device="CPU") tag="scratch"
+5 Ops.ALLOC dtypes.i8 [4] ParamArg(slot=7, dtype=dtypes.i8, device="CPU")
 6 Ops.CONST dtypes.weakint [] 0
 7 Ops.CONST dtypes.weakint [] 12
 8 Ops.SHRINK dtypes.i8 [5, 6, 7]
