@@ -29,8 +29,7 @@
    [--devices LIST] places the model on those devices and compiles every
    function under test for them; the per-block streams are then checked at the
    last block only. Over several devices the experts are split among them and
-   the rest is a copy on each; that run raises today, as nx's take refuses
-   experts cut along the axis it takes from. [--dtype bfloat16] runs the whole model at half
+   the rest is a copy on each. [--dtype bfloat16] runs the whole model at half
    precision against the same float32 reference and skips the building blocks.
 
    Usage: validate.exe [--fixtures DIR] [--float-weights FILE] [--mxfp4-weights

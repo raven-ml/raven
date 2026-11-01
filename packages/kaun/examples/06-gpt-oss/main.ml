@@ -10,10 +10,10 @@
    {!Layer_loop.greedy} compiled: each layer kind is compiled once per call
    shape and the host calls it once per layer, so the whole prompt goes through
    in one call. Over several devices it runs expert-parallel: each device holds
-   an equal share of the experts, and the mixture sums their products across the
-   devices. That run raises today: nx's take refuses experts cut along the axis
-   it takes from, and rune compiles a program for one device only, so a set of
-   GPUs, which computes only compiled programs, raises too.
+   an equal share of the experts, and the mixture takes each block's expert
+   from the device that holds it. That run raises today: rune compiles a
+   program for one device only, so a set of GPUs, which computes only compiled
+   programs, raises.
 
    With [--prompt TEXT] the text becomes the user's turn of a harmony
    conversation, [--system TEXT] its instructions and [--reasoning EFFORT] how

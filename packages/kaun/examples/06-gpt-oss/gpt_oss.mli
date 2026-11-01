@@ -139,8 +139,9 @@ val expert_parallel : 'd Nx.devices -> role -> axis:int -> 'd Nx.Placement.t
 (** [expert_parallel s] splits the experts over [s] along their expert axis and
     keeps every other leaf, and the caches, a copy on each device: the
     [placement] of {!of_hf} and {!cache} for expert parallelism. Over one device
-    every leaf is whole there. Over several, the mixture's take from the cut
-    experts raises today: nx's take reads the axis it takes from whole. *)
+    every leaf is whole there. Over several, the mixture takes each block's
+    expert from the device that holds it, with the bits a take has on one
+    device, and every device receives its weights ({!Nx.take}). *)
 
 (** {1:attention Attention} *)
 
