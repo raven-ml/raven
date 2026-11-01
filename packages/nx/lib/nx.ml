@@ -6772,6 +6772,7 @@ module Prim = struct
 
     let with_ = Donate.with_consumer
     let arrays = Donate.arrays
+    let value = Donate.value
     let take = Donate.take
   end
 

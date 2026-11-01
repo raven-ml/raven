@@ -122,7 +122,8 @@ val windows :
     results by
     {!Prim.local}[ op w] over the windows of the operands it reads
     ({!Route.window}), at its own placement where [op] creates its
-    values.
+    values, its first result into its piece of [into], a value at the
+    route's result, where it is given.
 
     Raises what [e]'s steps raise, and [Invalid_argument] as an internal
     fault for a route that computes by partials. *)

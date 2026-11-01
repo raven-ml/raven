@@ -184,7 +184,10 @@ let windows : type r d.
           let op = Prim.local (Prim.mapi view op) w in
           let contiguous w = L.contiguous (Route.extents w.(j)) in
           let layouts = Array.map contiguous ws in
-          e.run ~by here layouts (at_device here op)
+          let into =
+            Option.map (fun (Value.Any v) -> Value.Any (e.piece v j here)) into
+          in
+          e.run ~by ?into here layouts (at_device here op)
         in
         let rs =
           Array.mapi

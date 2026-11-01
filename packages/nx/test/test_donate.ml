@@ -656,6 +656,39 @@ let test_beside_in_place () =
   beside ~msg:"whole on each device" (fun () -> Pair.on);
   beside ~msg:"on its device" alone
 
+(* A donated value cut across devices is written in place on each of them,
+   each device's result over its window's memory, beside an operand cut
+   alike and one whole on each device. A donor whole on each device, beside
+   an operand cut across them, holds no device's window of the result alone,
+   which so is fresh. *)
+let test_cut_in_place () =
+  let n = 1 lsl 16 in
+  let host v = Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] v) in
+  let donor at () =
+    let a = Nx.place at (host (Array.make n 1.)) in
+    Nx.add a (Nx.zeros_like a)
+  in
+  let cut = Pair.split ~axis:0 in
+  let case ~msg ?(at = cut) ~fresh b =
+    List.iter
+      (fun d ->
+        let y, grew =
+          grown_on d (fun () -> (donor at (), b ())) (fun (x, b) ->
+              Nx.add (Nx.donate x) b)
+        in
+        let msg = msg ^ " on " ^ Rig.name d in
+        if fresh then copied ~msg ~bytes:(2 * n) grew
+        else in_place ~msg ~bytes:(2 * n) grew;
+        equal ~msg (array float_exact) (Array.make n 3.) (elements y))
+      [ device; Nx_support.memory 0 ]
+  in
+  case ~msg:"cut alike" ~fresh:false (fun () ->
+      Nx.place (Pair.split ~axis:0) (host (Array.make n 2.)));
+  case ~msg:"whole on each device" ~fresh:false (fun () ->
+      Nx.place Pair.on (host (Array.make n 2.)));
+  case ~msg:"a whole donor beside a cut operand" ~at:Pair.on ~fresh:true
+    (fun () -> Nx.place cut (host (Array.make n 2.)))
+
 (* A read for the extent of a call leaves the memory to the next donation,
    where a crossing ({!Nx.Repr.array}) shares it for good. *)
 let test_read_in_place () =
@@ -2958,6 +2991,8 @@ let () =
              test "contract writes into a donated init" test_init_in_place;
              test "a value read by Repr.read is still written in place"
                test_read_in_place;
+             test "a value cut across devices is written in place on each"
+               test_cut_in_place;
              test "a value on one device is written in place beside others"
                test_beside_in_place;
              test "a donation during Repr.read computes into fresh memory"

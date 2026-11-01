@@ -145,6 +145,34 @@ val reuse :
     Raises [Invalid_argument] naming [c]'s consumer for a position of [own] no
     operand has. *)
 
+val reuse_cut :
+  'd claim ->
+  own:int list ->
+  ('v, 's) Nx_array.Dtype.t ->
+  Nx_array.Layout.t array ->
+  (Rig.Buffer.t * ('v, 's) Nx_array.t) array option
+(** [reuse_cut c ~own dt layouts] is {!reuse} for a result over several
+    devices, [layouts] its window's layout on each device of its placement:
+    the memory of the first handle [c] claimed at a position of [own] whose
+    shards each hold that device's window of [dt] laid out so, over all of
+    their memory, no two sharing memory, every other operand apart from it
+    as {!reuse} asks and rig holding every shard's memory exclusive. All of
+    its shards' memory is then consumed for [c]'s consumer, and the answer
+    is each shard's buffer, dead from then on, with the array over its
+    memory the result takes there. [None] otherwise, consuming nothing. *)
+
+val value :
+  'd claim -> int -> ('v, 's) Nx_array.Dtype.t -> ('v, 's, 'd) Value.t
+(** [value c i dt] is operand [i] as a value of its own over its arrays:
+    owning their memory, so that a donation of it may write there, where
+    the operand is a handle [c] claimed and no other operand's arrays share
+    that memory, as two handles of one donor do; shared otherwise, so that
+    no donation writes what another operand reads.
+
+    Raises [Invalid_argument] naming [c]'s consumer for a traced operand, a
+    position no operand has, once [c] has ended, and if [dt] is not the
+    operand's dtype. *)
+
 val take :
   'd claim ->
   int ->

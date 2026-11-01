@@ -3321,6 +3321,11 @@ thread.
 
 ### Nx
 
+- `Nx.donate` of a value cut across devices lets the operation that
+  consumes it write its result over each device's window where the result
+  lies as the donor does, as it did for a value on one device.
+  `Nx.Prim.Consumer.value` gives a consumer's operand as a value that
+  owns its memory where a donation of it may write there.
 - A reduction, `Nx.matmul`, `Nx.contract`, `Nx.take` or `Nx.scatter`'s
   `Add` over an axis cut across devices reduces each device's share of the
   result in pieces of at most 256 KiB of every device's partials, its own

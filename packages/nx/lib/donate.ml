@@ -212,6 +212,75 @@ let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
           | None -> None))
     own
 
+(* The memory of the first handle [c] claimed at a position of [own] over
+   shards on several devices, each array of [dt] laid out as [layouts]
+   gives its device's window, over all of its memory, every other operand
+   apart from each of them as {!reuse} asks: all of it consumed at once, or
+   none. *)
+let reuse_cut (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layouts :
+    (Rig.Buffer.t * (w, r) A.t) array option =
+  unended c;
+  let n = Array.length c.operands in
+  let fits i =
+    let (Value.Any x) = operand c i in
+    match x with
+    | Value.Handle { over = Value.Shards { arrays; _ }; _ }
+      when Iarray.length arrays = Array.length layouts ->
+        let arrays = Iarray.to_array arrays in
+        let mine a =
+          Array.exists (fun h -> share (A.buffer a) (A.buffer h)) arrays
+        in
+        let apart j a' =
+          (not (mine a'))
+          || (List.mem j own && Array.exists (fun h -> identical h a') arrays)
+        in
+        let rec alone j =
+          j = n
+          ||
+          let (Value.Any y) = c.operands.(j) in
+          ((not (has_bytes y)) || Iarray.for_all (apart j) (Prim.arrays y))
+          && alone (j + 1)
+        in
+        let fit j a = holds dt layouts.(j) a && unconsumed (A.buffer a) in
+        let bufs = Array.map A.buffer arrays in
+        let distinct =
+          let rec go i =
+            i = Array.length bufs
+            || (not
+                  (Array.exists
+                     (fun b -> b != bufs.(i) && Rig.Buffer.overlaps b bufs.(i))
+                     bufs))
+               && go (i + 1)
+          in
+          go 0
+        in
+        if distinct && Array.for_all Fun.id (Array.mapi fit arrays) && alone 0
+        then Some bufs
+        else None
+    | Value.Handle _ | Value.Array _ | Value.Shards _ | Value.Traced _ -> None
+  in
+  List.find_map
+    (fun i ->
+      match fits i with
+      | None -> None
+      | Some bufs -> (
+          let why = "donated to " ^ c.by in
+          let all = Array.to_list bufs in
+          let taken =
+            Rig.Claim.with_ ~read:[] ~donate:all (fun cl ->
+                if List.for_all (Rig.Claim.exclusive cl) all then
+                  Some (List.map (Rig.Claim.consume cl ~why) all)
+                else None)
+          in
+          match taken with
+          | None -> None
+          | Some bs ->
+              c.taken <- bs @ c.taken;
+              let bs = Array.of_list bs in
+              let over j b = (b, A.v dt layouts.(j) bs.(j)) in
+              Some (Array.mapi over bufs)))
+    own
+
 (* Ending *)
 
 (* The buffers of a handle, one per device, that no consumption killed. *)
@@ -276,6 +345,31 @@ let bytes_at c i =
 let arrays c i =
   let (Value.Any x) = bytes_at c i in
   Prim.any (Prim.arrays x)
+
+(* Operand [i] as a value over its arrays, which owns their memory where it
+   is a handle and no other operand's arrays share that memory, as two
+   handles of one donor do: a donation of it may then write there. Any
+   other is shared, so that no donation writes what another operand
+   reads. *)
+let value (type v s d) (c : d claim) i (dt : (v, s) D.t) : (v, s, d) Value.t =
+  let (Value.Any x) = bytes_at c i in
+  let arrays = Prim.arrays x in
+  let mine a =
+    Iarray.exists (fun h -> share (A.buffer a) (A.buffer h)) arrays
+  in
+  let rec apart j =
+    j = Array.length c.operands
+    ||
+    let (Value.Any y) = c.operands.(j) in
+    (j = i || (not (has_bytes y)) || not (Iarray.exists mine (Prim.arrays y)))
+    && apart (j + 1)
+  in
+  let y =
+    Prim.of_arrays (Prim.placement x) ~shape:(Prim.shape x) arrays
+  in
+  if not (is_handle x && apart 0) then
+    Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
+  Prim.expect dt (Value.Any y)
 
 (* A result written over operand [i] reads it, at any index, through the
    array [take] gives, so no other position may share its memory. *)

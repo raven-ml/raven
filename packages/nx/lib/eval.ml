@@ -38,22 +38,45 @@ let placed ~by p x =
   end
   else Exec.place ~by p x
 
+(* Memory a donation gives a result: one handle's buffer and the array the
+   result takes over it, or over several devices each shard's. *)
+type taken = One of Rig.Buffer.t * A.any | Cut of (Rig.Buffer.t * A.any) array
+
 (* The memory of a handle [c] claimed that [op]'s first result may take
-   ({!Donate.reuse}): the handle's buffer, dead from then on, and the array
-   the result takes. A result written there lies where the handle does, so
-   only an operand that lies where [r] puts the results may hold it. *)
-let taken c (r : Prim.routed) op =
+   ({!Donate.reuse}, {!Donate.reuse_cut} over several devices): the
+   handle's buffers, dead from then on, and the arrays the result takes
+   over their memory. A result written there lies where the handle does,
+   so only an operand that lies where [r] puts the results may hold it. A
+   route that computes by partials writes its result from the closing, so
+   none takes the memory. *)
+let taken ~by c (r : Prim.routed) op =
   match (Prim.own_index op, r.route) with
-  | Some (own, layout, Nx_array.Dtype.Any dt), Some route ->
+  | ( Some (own, layout, Nx_array.Dtype.Any dt),
+      Some ({ compute = Windows; _ } as route) ) -> (
       let (Prim.Operands xs) = Prim.operands op in
       let xs = Array.of_list xs in
+      let p = route.result in
       let at_result i =
         let (Value.Any x) = xs.(i) in
-        Devices.equal (Prim.placement x) route.result
+        Devices.equal (Prim.placement x) p
       in
       let own = List.filter at_result own in
-      Option.map (fun (b, a) -> (b, A.Any a)) (Donate.reuse c ~own dt layout)
-  | Some _, None | None, _ -> None
+      if Grid.count (Devices.grid p) = 1 then
+        Option.map
+          (fun (b, a) -> One (b, A.Any a))
+          (Donate.reuse c ~own dt layout)
+      else
+        let shape = Iarray.to_array (Nx_array.Layout.shape layout) in
+        let window j _ =
+          Nx_array.Layout.contiguous
+            (Route.extents (Devices.window ~by p shape j))
+        in
+        let layouts = Array.mapi window (Grid.devices (Devices.grid p)) in
+        let any (b, a) = (b, A.Any a) in
+        Option.map
+          (fun ts -> Cut (Array.map any ts))
+          (Donate.reuse_cut c ~own dt layouts))
+  | Some _, Some { compute = Partials; _ } | Some _, None | None, _ -> None
 
 (* Whether [checked] raises for [x]. *)
 let unusable (type v s d) (x : (v, s, d) t) =
@@ -107,8 +130,8 @@ and donated : type r. by:string -> r prim -> r =
       let (Prim.Operands xs) = Prim.operands op in
       Donate.with_consumer ~by xs (fun c ->
           let op = Donate.called c op in
-          match taken c r op with
-          | Some (b, (A.Any a as into)) ->
+          match taken ~by c r op with
+          | Some (One (b, (A.Any a as into))) ->
               (* The handle's memory is the result's, now over [b']: the
                  kernel reads each index of it before it writes the result
                  there. *)
@@ -120,6 +143,24 @@ and donated : type r. by:string -> r prim -> r =
                 | Array _ | Shards _ | Handle _ | Traced _ -> y
               in
               routed ~by ~into r (Prim.map as_taken op)
+          | Some (Cut ts) ->
+              (* Each device's memory of the handle is the result's, now
+                 over its [b'], read and written as on one device. *)
+              let over (type v s) (a : (v, s) A.t) : (v, s) A.t =
+                match Array.find_opt (fun (b, _) -> A.buffer a == b) ts with
+                | Some (_, A.Any a') ->
+                    A.v (A.dtype a) (A.layout a) (A.buffer a')
+                | None -> a
+              in
+              let as_taken (type v s d) (y : (v, s, d) t) : (v, s, d) t =
+                match y with
+                | Array r -> Array { r with a = over r.a }
+                | Shards r ->
+                    Shards { r with arrays = Iarray.map over r.arrays }
+                | Handle _ | Traced _ -> y
+              in
+              let cut = Array.map snd ts in
+              routed ~by ~cut r (Prim.map as_taken op)
           | None -> routed ~by r op))
 
 and plain : type r. by:string -> r prim -> r =
@@ -185,9 +226,16 @@ and moved : type v s d. by:string -> unit Route.t -> (v, s, d) t -> (v, s, d) t
 
 (* [op], a placement, a check, or another operation, computed as its rule
    decided [r] ({!Prim.route}): by partials or by windows as the route
-   computes, its first result into [into] where it is given. *)
-and routed : type r. by:string -> ?into:A.any -> Prim.routed -> r prim -> r =
- fun ~by ?into r op ->
+   computes, its first result into [into] where it is given, or over
+   several devices into [cut], each device's array of its window. *)
+and routed : type r.
+    by:string ->
+    ?into:A.any ->
+    ?cut:A.any array ->
+    Prim.routed ->
+    r prim ->
+    r =
+ fun ~by ?into ?cut r op ->
   match op with
   | Place (p, x) -> placed ~by p x
   | Check { ok; data; fail } -> Check.issue ~by ok data fail
@@ -198,13 +246,25 @@ and routed : type r. by:string -> ?into:A.any -> Prim.routed -> r prim -> r =
       match route.compute with
       | Partials -> Partial.run Exec.eager ~by route op
       | Windows -> (
-          match into with
-          | None -> Partition.windows Exec.eager ~by route r.layouts op
-          | Some (A.Any a) ->
+          match (into, cut) with
+          | None, None -> Partition.windows Exec.eager ~by route r.layouts op
+          | Some (A.Any a), _ ->
               (* A value on the route's one device, over the donated
                  memory. *)
               let at = route.result in
               let into = Value.Any (Array { at; a; dead = Live }) in
+              Partition.windows Exec.eager ~by ~into route r.layouts op
+          | None, Some arrays ->
+              (* A value at the route's result, each device's window over
+                 its donated memory. *)
+              let (A.Any a0) = arrays.(0) in
+              let dt = A.dtype a0 in
+              let arrays = Iarray.map (A.expect dt) (Iarray.of_array arrays) in
+              let l = r.layouts.(0) in
+              let shape = Iarray.to_array (Nx_array.Layout.shape l) in
+              let into =
+                Value.Any (Prim.of_arrays route.result ~shape arrays)
+              in
               Partition.windows Exec.eager ~by ~into route r.layouts op))
 
 let is_traced (type v s d) (x : (v, s, d) t) =

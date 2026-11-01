@@ -627,7 +627,9 @@ val scalar_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
     that memory only at the result's own index, through the handle or
     through the donor itself (an elementwise operand, the target of {!set}
     or {!scatter}, {!contract}'s [init]), the memory is C-contiguous with
-    the result's shape and dtype, and the memory is not shared. Memory is
+    the result's shape and dtype, each device's memory with its window's for
+    a value cut across devices where the donor lies as the result does, and
+    the memory is not shared. Memory is
     {e shared} once a value outside the donor's handles has been made over
     it (a view, a borrow by {!place}, a {!Repr} crossing, an
     interpretation's read, a read by a function of several operations), and
@@ -5506,6 +5508,22 @@ module Prim : sig
 
         Raises [Invalid_argument] naming [c]'s [by] for a traced operand, a
         position no operand has, or once {!with_} has returned or raised. *)
+
+    val value : 'd t -> int -> ('v, 's) dtype -> ('v, 's, 'd) nx
+    (** [value c i dt] is [c]'s operand [i] as a value of its own over its
+        arrays, which [c] may compute on: owning their memory, so that a
+        donation of the value may write its result there ({!Nx.donate}),
+        where the operand is a handle [c] claimed and no other operand's
+        arrays share that memory, as two handles of one donor do; and
+        otherwise sharing it, so that no donation writes what another
+        operand reads. Like the arrays {!arrays} gives, the value must not
+        outlive [c] unless a result took its memory. Take at most one
+        [value] of an operand, and not beside {!arrays} or {!take} of it:
+        a donation of one holder ends the memory the other reads.
+
+        Raises [Invalid_argument] naming [c]'s [by] for a traced operand, a
+        position no operand has, once {!with_} has returned or raised, and
+        if [dt] is not the operand's dtype. *)
 
     val take :
       'd t ->
