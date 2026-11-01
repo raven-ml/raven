@@ -16,9 +16,9 @@
 15 Ops.INDEX dtypes.f32 [14, 7]
 16 Ops.CONST dtypes.weakfloat [] 0.0
 17 Ops.CMPLT dtypes.bool [15, 16]
-18 Ops.CMPNE dtypes.bool [15, 16]
+18 Ops.CMPEQ dtypes.bool [15, 16]
 19 Ops.CONST dtypes.bool [] True
-20 Ops.CMPNE dtypes.bool [18, 19]
+20 Ops.CMPEQ dtypes.bool [18, 19]
 21 Ops.OR dtypes.bool [17, 20]
 22 Ops.CONST dtypes.weakint [] 4
 23 Ops.RANGE dtypes.weakint [22] (AxisType.WEAK, 0)

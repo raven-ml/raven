@@ -28,9 +28,9 @@
 27 Ops.ADD dtypes.weakint [25, 26]
 28 Ops.INDEX dtypes.f32 [23, 27]
 29 Ops.CMPLT dtypes.bool [28, 20]
-30 Ops.CMPNE dtypes.bool [28, 20]
+30 Ops.CMPEQ dtypes.bool [28, 20]
 31 Ops.CONST dtypes.bool [] True
-32 Ops.CMPNE dtypes.bool [30, 31]
+32 Ops.CMPEQ dtypes.bool [30, 31]
 33 Ops.OR dtypes.bool [29, 32]
 34 Ops.WHERE dtypes.f32 [33, 20, 28]
 35 Ops.CONST dtypes.weakint [] 1200
