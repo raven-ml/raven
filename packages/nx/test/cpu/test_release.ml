@@ -275,11 +275,13 @@ let estimates =
 
 (* Domains *)
 
-(* The bits of a float32 or float64 result. *)
+(* The bits of a float32 result, as unboxed integers: as an int64 array,
+   half a million elements were as many words allocated, and the minor
+   collections they forced each stopped both domains. *)
 let bits (A.Any y) =
   match A.dtype y with
-  | D.Float32 -> Array.map Int64.bits_of_float (A.to_array y)
-  | D.Float64 -> Array.map Int64.bits_of_float (A.to_array y)
+  | D.Float32 ->
+      Array.map (fun x -> Int32.to_int (Int32.bits_of_float x)) (A.to_array y)
   | _ -> invalid_arg "bits"
 
 (* A reduction, a map and a contraction of arrays drawn from [seed]: the
@@ -312,7 +314,7 @@ let law_concurrent (s1, s2) =
   in
   let ds = List.map run [ s1; s2 ] in
   List.iter2
-    (fun want d -> equal (list (array int64)) want (Domain.join d))
+    (fun want d -> equal (list (array int)) want (Domain.join d))
     want ds
 
 let domains =
