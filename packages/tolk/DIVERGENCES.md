@@ -3849,16 +3849,16 @@ merged into D137, which holds the loops that consumers of one domain share.
 
 ## D147. The x86 host holds bfloat16 as its bits
 
-- **tinygrad:** `renderer/cstyle.py:292` (`ClangRenderer.type_map`,
+- **tinygrad:** `renderer/cstyle.py:296` (`ClangRenderer.type_map`,
   which keeps `CStyleLanguage.type_map`'s bfloat16, Clang's `__bf16`
-  (`:136-140`), on every machine).
+  (`:140-144`), on every machine).
 - **tolk:** `Cstyle.clang` (the Clang renderer's language,
   which on x86 maps bfloat16 to `unsigned short` and renders its constants as
   their bits with `pm_bf16_ushort_const`).
 - **Differs:** on x86, a bfloat16 value, pointer or vector is written as
-  `unsigned short`, and a bfloat16 constant as its bits, as HIP writes them
-  on targets other than gfx950 (`renderer/cstyle.py:531,570`:
-  `pm_bf16_ushort_const` and `typedef unsigned short hip_bfloat16`). The
+  `unsigned short`, and a bfloat16 constant as its bits, as OpenCL writes
+  them (`renderer/cstyle.py:338,341`: its type map's `ushort` and
+  `pm_bf16_ushort_const`). The
   kernel's graph is tinygrad's; only its C
   types change. Every bfloat16 operation already computes in float32 through
   `create_non_native_float_pats` and `pm_manual_bf16_cast`, so a bfloat16

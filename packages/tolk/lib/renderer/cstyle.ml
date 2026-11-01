@@ -1766,7 +1766,6 @@ let ocml op =
 
 let gpu arch = List.hd (String.split_on_char ':' arch)
 let is_cdna arch = List.mem (gpu arch) [ "gfx942"; "gfx950" ]
-let is_cdna4 arch = gpu arch = "gfx950"
 
 let cdna_rewrite =
   Pattern_matcher.fold
@@ -1880,14 +1879,11 @@ let hip_lang arch =
       ^ "__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");";
     float4 = (fun t -> "make_" ^ t);
     type_map =
-      ((Dtype.Bfloat16, "hip_bfloat16")
-      :: List.map
-           (fun d -> (d, if fp8_index d = 0 then "hip_fp8" else "hip_bf8"))
-           Dtype.fp8s)
+      List.map
+        (fun d -> (d, if fp8_index d = 0 then "hip_fp8" else "hip_bf8"))
+        Dtype.fp8s
       @ cstyle.type_map;
-    string_rewrite =
-      (if is_cdna4 arch then rewrite
-       else Pattern_matcher.append pm_bf16_ushort_const rewrite);
+    string_rewrite = rewrite;
   }
 
 let hip_extra_matcher arch =
@@ -1896,7 +1892,6 @@ let hip_extra_matcher arch =
        pm_narrow_uint;
        create_non_native_float_pats (Dtype.Bfloat16 :: Dtype.fp8s);
      ]
-    @ (if is_cdna4 arch then [] else [ pm_manual_bf16_cast ])
     @
     if amd_fp8s arch = [] then []
     else [ Tc.pm_wmma_fp8 (if is_cdna arch then Dtype.Uint64 else Dtype.Uint32) ])
@@ -2065,12 +2060,6 @@ let hip_kernel arch tensor_cores l ~name kernel bufs uops =
        ]
      else [])
     @ (if specials then [ "typedef long unsigned int size_t;" ] else [])
-    @ (if uses (Dtype.equal Dtype.Bfloat16) then
-         [
-           strf "typedef %s hip_bfloat16;"
-             (if is_cdna4 arch then "__bf16" else "unsigned short");
-         ]
-       else [])
     @ (if uses (Dtype.equal Dtype.Float16) then [ "#define half _Float16" ]
        else [])
     @ (if uses is_fp8 then

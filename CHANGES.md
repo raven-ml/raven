@@ -815,6 +815,7 @@ thread.
   shift or multiply-add on an unsigned char or short in an unsigned int and
   narrow after: C computes them in `int`, where `65535 * 65535` overflows,
   which is undefined.
+- HIP writes bfloat16 as `__bf16` on every AMD target.
 - **Breaking:** `Ops.Upat.v` and `Ops.Upat.op` take no `?tag`, and
   `Ops.remove_all_tags` is gone: patterns ignore tags.
 - **Breaking:** the `ALIGNED` setting (`Setting.aligned`) is gone: Clang's
