@@ -309,8 +309,9 @@ val capability : t -> Rig_amd_abi.Capability.t
     path programs keeps the ring the device opens with), or that the device
     does not run, and [RIG_GROW] for parts that exceed its rings or its
     segment. On SDMA 4 over [Rig_amd_pci], a submission of copies past half
-    that ring, about 170,000 copies of one packet, never fits: a strided
-    copy of that many runs raises [Invalid_argument] there.
+    that ring, about 170,000 copies of one packet, never fits, and
+    [Rig.Buffer.submit_copy] then submits a strided copy of that many runs
+    in several submissions.
 
     {!val-grow} then makes, of [Pinned] memory of the first power of two
     from 4096 bytes that holds twice what the parts need and at most

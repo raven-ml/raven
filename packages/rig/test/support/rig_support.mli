@@ -145,6 +145,11 @@ module Polled : sig
   val queued : t -> int
   val submits : t -> int
 
+  val limit_rows : t -> int -> unit
+  (** [limit_rows d n] makes [d]'s [room] answer [RIG_NEVER] for a
+      submission whose copy parts hold more than [n] rows in all, as a
+      driver does whose ring a copy's packets would overrun. *)
+
   val fail : t -> unit
   (** [fail d] makes [d]'s next submit fail. *)
 

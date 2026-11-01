@@ -200,12 +200,20 @@ val run_copy : device -> waits:int array -> src:buffer -> dst:buffer -> int
     or, for a device of another machine, one of them may be this process's
     memory. It raises as {!Rig.Submission.make} and {!Rig.submit} do. *)
 
+exception Never of string
+(** [Never why] is what {!run_boxes} raises where [d]'s driver takes no
+    submission of its parts ([RIG_NEVER] from its [room]), [why] the text
+    of the [Invalid_argument] that {!submit}, {!run_copy} and {!run_set}
+    raise then. *)
+
 val run_boxes :
   device -> waits:int array -> src:buffer -> dst:buffer -> box array -> int
 (** [run_boxes d ~waits ~src ~dst boxes] is {!run_copy} of the rows of each
     box of [boxes], in order, from [src] into [dst]. It makes [d]'s
     submission of one part per box for the call. Each box must fit [src]
-    and [dst] ({!Rig.Buffer.type-box}), which nothing checks. *)
+    and [dst] ({!Rig.Buffer.type-box}), which nothing checks. It raises
+    {!Never} where {!run_copy} raises [Invalid_argument] for parts that
+    never fit, and otherwise as {!run_copy} does. *)
 
 val run_set : device -> waits:int array -> dst:buffer -> char -> int
 (** [run_set d ~waits ~dst c] submits a fill of [dst] with [c] on [d]'s copy

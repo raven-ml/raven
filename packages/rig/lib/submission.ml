@@ -1326,6 +1326,8 @@ let rec wait_points s c n i =
           wait_points s c n (i + 1)
         end
 
+exception Never of string
+
 let rec hand_over s c run round lacked seen =
   let d = s.dev in
   let r = c_submit s.c c run in
@@ -1342,10 +1344,12 @@ let rec hand_over s c run round lacked seen =
     let round, lacked, seen = Memory.grow_queues d ~round ~lacked ~seen in
     hand_over s c run round lacked seen
   else if r = Dev.Answer.never then
-    invalid_argf
-      "Rig.%s: the parts never fit %s's queues, name work its driver does not \
-       run, or hold a launch whose block it refuses"
-      fn d.name
+    raise
+      (Never
+         (Printf.sprintf
+            "Rig.%s: the parts never fit %s's queues, name work its driver \
+             does not run, or hold a launch whose block it refuses"
+            fn d.name))
   else if r = Dev.Answer.producer_lost then
     Dev.raise_point_lost (call_producer c)
   else Dev.raise_lost d
@@ -1571,6 +1575,9 @@ let submit ?(waits = [||]) (run : Run.t) ~buffers =
     submit_run s run buffers waits
   with
   | p -> p
+  | exception Never why ->
+      Run.release run;
+      invalid_arg why
   | exception e ->
       Run.release run;
       raise e
@@ -1584,7 +1591,8 @@ let copiers =
 
 let run_copy d ~waits ~src ~dst =
   let run = Dev.local copiers d in
-  submit_run run.sub run [| src; dst |] waits
+  try submit_run run.sub run [| src; dst |] waits
+  with Never why -> invalid_arg why
 
 (* A box's geometry is part of its submission, so each call makes its own:
    one part per box, from slot 0 into slot 1, and a run that holds no
@@ -1611,7 +1619,8 @@ let setter d c =
 
 let run_set d ~waits ~dst c =
   let run = setter d c in
-  submit_run run.sub run [| dst |] waits
+  try submit_run run.sub run [| dst |] waits
+  with Never why -> invalid_arg why
 
 (* The host's submission of no part, whose run holds no bytes. *)
 let marks = Dev.new_key (fun d -> Run.make (make d [||]))

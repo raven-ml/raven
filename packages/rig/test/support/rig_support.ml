@@ -8,6 +8,9 @@ type polled
 external polled_new : int -> bool -> int -> polled = "rig_test_polled_new"
 external polled_edge : polled -> nativeint = "rig_test_polled_edge"
 external polled_grows : polled -> int -> unit = "rig_test_polled_grows"
+
+external polled_limit_rows : polled -> int -> unit
+  = "rig_test_polled_limit_rows"
 external polled_grow : polled -> bool -> bool = "rig_test_polled_grow"
 external polled_fail : polled -> unit = "rig_test_polled_fail"
 external polled_fail_commit : polled -> unit = "rig_test_polled_fail_commit"
@@ -669,6 +672,7 @@ module Polled = struct
     | Error e -> failwith e
 
   let run d = polled_run d.c
+  let limit_rows d n = polled_limit_rows d.c n
   let queued d = polled_queued d.c
   let submits d = polled_submits d.c
   let fail d = polled_fail d.c

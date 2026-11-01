@@ -1267,8 +1267,9 @@ module Buffer : sig
       ({!Rig.section-order}), and [submit_copy] reads [boxes] once.
       {ul
       {- Where a device copies directly, the copy is one submission on that
-         device. [submit_copy] returns once it is queued, and the point is
-         its point.}
+         device, or several in order where the driver takes none that
+         large. [submit_copy] returns once they are queued, and the point
+         is the last one's.}
       {- Where the copy passes through staging memory, [submit_copy] returns
          once the transfers the host makes are done and the others are
          queued. The point is that of its last transfer, which follows the
@@ -1292,13 +1293,18 @@ module Buffer : sig
       Raises [Invalid_argument] if [src] or [dst] is dead, they overlap
       ({!overlaps}), a box does not fit them, [dst] admits only [Read], one
       side is an io device's memory and the other a borrow of it, a side's
-      memory is held exclusive, or the copy has bytes and no device can copy
-      between the two sides. Raises {!Lost} if a device that runs a transfer
+      memory is held exclusive, the copy has bytes and no device can copy
+      between the two sides, or one row of a box fits in no submission of
+      the device's driver. Raises {!Lost} if a device that runs a transfer
       is lost before its submission, or its submission loses it, or while
       the host waits for a transfer it moves bytes after, or if a point of
       [waits] is a lost device's and that device never reached it;
-      {!Out_of_memory} if staging memory cannot be allocated or mapped; and
-      what an io device's read or write raises. *)
+      {!Out_of_memory} if staging memory cannot be allocated or mapped, or
+      the device's queues must grow for a submission and it has no memory
+      for the growth ({!Rig.submit}); and what an io device's read or write
+      raises. Where it raises after it queued some of the copy's
+      submissions, those still run, so [dst] may hold some of the copy's
+      bytes. *)
 
   val copy : src:t -> dst:t -> unit
   (** [copy ~src ~dst] copies [src]'s bytes into [dst] and returns once they

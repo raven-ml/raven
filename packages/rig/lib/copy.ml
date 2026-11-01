@@ -220,8 +220,40 @@ let on_queue_run ~waits d src s dst t n =
            ~dst:(sub dst tm t n))
   | _ -> None
 
+(* [boxes] on [d]'s copy engine as one submission, or, where [d]'s driver
+   takes no submission that large, as several in order, each after the
+   points of [waits]: the boxes halved, then a box's rows halved. Device
+   order runs them one after the other, so a byte two boxes write holds the
+   later box's. Is the last one's point. A box of one row that never fits
+   raises as a submit does. *)
+let rec run_boxes ~waits d src dst boxes =
+  match Submission.run_boxes d ~waits ~src ~dst boxes with
+  | p -> p
+  | exception Submission.Never why ->
+      let n = Array.length boxes in
+      if n > 1 then begin
+        let h = n / 2 in
+        ignore (run_boxes ~waits d src dst (Array.sub boxes 0 h) : int);
+        run_boxes ~waits d src dst (Array.sub boxes h (n - h))
+      end
+      else
+        let x = boxes.(0) in
+        if x.rows < 2 then invalid_arg why
+        else
+          let h = x.rows / 2 in
+          let rest =
+            {
+              x with
+              rows = x.rows - h;
+              src_offset = x.src_offset + (h * x.src_pitch);
+              dst_offset = x.dst_offset + (h * x.dst_pitch);
+            }
+          in
+          ignore (run_boxes ~waits d src dst [| { x with rows = h } |] : int);
+          run_boxes ~waits d src dst [| rest |]
+
 (* A copy of [boxes] on [d]'s copy engine between buffers [d] maps, after the
-   points of [waits], as one submission, or [on_queue_run] for a box of one
+   points of [waits], as [run_boxes], or [on_queue_run] for a box of one
    run. *)
 let on_queue ~waits d src dst boxes =
   match boxes with
@@ -231,7 +263,7 @@ let on_queue ~waits d src dst boxes =
       match (d.live.copy_engine, mine d src.mem, mine d dst.mem) with
       | Some _, Some s, Some t ->
           let src = { src with mem = s } and dst = { dst with mem = t } in
-          Some (Submission.run_boxes d ~waits ~src ~dst boxes)
+          Some (run_boxes ~waits d src dst boxes)
       | _ -> None)
 
 (* The device whose copy engine runs a transfer to or from [b]: [b]'s

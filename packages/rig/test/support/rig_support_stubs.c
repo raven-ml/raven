@@ -260,6 +260,7 @@ struct polled_run {
   uint64_t lag;               /* the uncommitted values that commit */
   int capacity;      /* parts the queue holds */
   intnat grows; /* the most parts the queue grows to hold; 0 for none */
+  uint64_t most_rows; /* the most copy rows a submission holds; 0 for any */
   int may_block;     /* a full queue's submit waits instead of [room] */
   int fail;          /* the next submit fails */
   int fail_commit;   /* the next commit of uncommitted values fails */
@@ -475,6 +476,16 @@ value rig_test_polled_grows(value v_p, value v_most) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
   p->run->grows = Long_val(v_most);
+  unlock(&p->mu);
+  return Val_unit;
+}
+
+/* Makes the device's [room] answer RIG_NEVER for a submission whose copy
+   parts hold more than [v_most] rows in all. */
+value rig_test_polled_limit_rows(value v_p, value v_most) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  p->run->most_rows = (uint64_t)Long_val(v_most);
   unlock(&p->mu);
   return Val_unit;
 }
@@ -957,6 +968,12 @@ static int polled_room(void *self, int nwaits, const struct rig_part *parts,
                            : kind != RIG_FILL && kind != RIG_COPY &&
                                  kind != RIG_WORDS)
       return RIG_NEVER;
+  }
+  if (r->most_rows > 0) {
+    uint64_t rows = 0;
+    for (int i = 0; i < n; i++)
+      if (parts[i].kind == RIG_COPY) rows += parts[i].copy.rows;
+    if (rows > r->most_rows) return RIG_NEVER;
   }
   if (n > r->capacity) {
     if (r->grows == 0) return RIG_NEVER;

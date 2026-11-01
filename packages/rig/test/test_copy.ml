@@ -373,6 +373,45 @@ let test_many_runs () =
   Rig.Point.wait pt;
   equal string (reference s (String.make 4096 '.') runs) (contents dst)
 
+(* A copy of more boxes than the driver takes in one submission, or of more
+   rows, lands as one would, in several submissions queued in order, and its
+   point is the last one's: reached once every byte is there. *)
+let test_split () =
+  let d, p = P.open_ ~host_visible:false ~capacity:4 "copy:split" in
+  let s = String.init 4096 (fun i -> Char.chr (i land 255)) in
+  let blank = String.make 4096 '.' in
+  let lands what boxes ~submissions =
+    let src = holding d s and dst = holding d blank in
+    let before = P.submits p in
+    let pt = B.submit_copy ~src ~dst (Array.of_list boxes) in
+    equal ~msg:(what ^ ": submissions") int (before + submissions)
+      (P.submits p);
+    equal ~msg:(what ^ ": reached on return") bool false (Rig.Point.reached pt);
+    Rig.Point.wait pt;
+    equal ~msg:(what ^ ": queued") int 0 (P.queued p);
+    equal ~msg:what string (reference s blank boxes) (contents dst)
+  in
+  (* Ten runs whose destinations overlap, so that a later box's byte wins,
+     at most four per submission: halved to 5 and 5, then to 2, 3, 2 and 3. *)
+  let runs =
+    List.init 10 (fun i -> B.row ~src_offset:(i * 37) ~dst_offset:(i * 11) 64)
+  in
+  lands "boxes" runs ~submissions:4;
+  P.limit_rows p 30;
+  let box =
+    {
+      B.src_offset = 1;
+      dst_offset = 3;
+      width = 7;
+      rows = 100;
+      src_pitch = 40;
+      dst_pitch = 33;
+    }
+  in
+  (* 100 rows halve to 50, then 25 each: four submissions. *)
+  lands "rows" [ box ] ~submissions:4;
+  P.limit_rows p 0
+
 (* A box larger than a half goes through staging memory in pieces of whole
    rows, three rows of 9 MiB and then the fourth, and a row larger than a half
    in ranges of its bytes. *)
@@ -519,6 +558,9 @@ let () =
                case box_law;
              test "many runs in one call land in order, in one submission"
                test_many_runs;
+             test "a copy larger than a submission the driver takes lands in \
+                   several"
+               test_split;
              test "a box larger than a half lands through staging memory"
                test_large_box;
              test "a box that does not fit is refused, queueing nothing"
