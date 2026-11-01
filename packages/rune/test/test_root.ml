@@ -1183,6 +1183,158 @@ let loop_tests =
         equal (close ())
           (Nx.recip (Nx.mul_s (two a) 2.))
           (Rune.vmap' (Rune.grad' r) (vec [| 2. |]) |> Nx.reshape [||]));
+    test "a held lane's residual reads its donor's lane index" (fun () ->
+        (* Lane 0 takes the root of [y (i - 1) + θ], [i] the lane's index,
+           solved at [θ]: its derivative along [θ] is [1 / (1 - i)], 1. Lane 1
+           takes [2 θ] and is held on lane 0 in the root, where its own index
+           would make the derivative infinite and the gradient NaN. *)
+        let a = Rune.axis () in
+        let f th x =
+          Rune.switch one (Nx.cast Nx.int32 x)
+            [
+              (fun () ->
+                Rune.root one
+                  ~residual:(fun y ->
+                    let i = Nx.cast f64 (Rune.lane_index a y) in
+                    Nx.add (Nx.mul y (Nx.sub_s i 1.)) th)
+                  (fun () -> th));
+              (fun () -> Nx.mul_s th 2.);
+            ]
+        in
+        equal (close ()) (scalar 3.)
+          (Rune.grad'
+             (fun th -> Nx.sum (Rune.vmap' ~axis:a (f th) (vec [| 0.; 1. |])))
+             (scalar 0.5)));
+    test "a held lane's linear solve reads its donor's lane index" (fun () ->
+        (* Lane 0 takes the root of [y - θ], solved as [b / (J 1 (1 - i))], [i]
+           the lane's index: its derivative along [θ] is 1. Lane 1 takes [2 θ]
+           and is held on lane 0 in the root, where its own index would divide
+           its zero cotangent by zero and make the gradient NaN. *)
+        let a = Rune.axis () in
+        let scaled op b =
+          let i = Nx.cast f64 (Rune.lane_index a b) in
+          Nx.div b (Nx.mul (op (Nx.ones_like b)) (Nx.sub (scalar 1.) i))
+        in
+        let f th x =
+          Rune.switch one (Nx.cast Nx.int32 x)
+            [
+              (fun () ->
+                Rune.root ~linear_solve:scaled one
+                  ~residual:(fun y -> Nx.sub y th)
+                  (fun () -> th));
+              (fun () -> Nx.mul_s th 2.);
+            ]
+        in
+        let g =
+          Rune.grad' (fun th ->
+              Nx.sum (Rune.vmap' ~axis:a (f th) (vec [| 0.; 1. |])))
+        in
+        equal ~msg:"eager" (close ()) (scalar 3.) (g (scalar 0.5));
+        equal ~msg:"compiled" (close ()) (scalar 3.) (Rune.jit' g (scalar 0.5)));
+    test "a held lane's linear solve may not read the map's lanes" (fun () ->
+        let a = Rune.axis () in
+        let gathering op b =
+          Nx.div (Nx.sum (Rune.lanes a b)) (op (Nx.ones_like b))
+        in
+        let f x =
+          Rune.switch one (Nx.cast Nx.int32 x)
+            [
+              (fun () ->
+                Rune.root ~linear_solve:gathering one
+                  ~residual:(fun y -> Nx.sub y x)
+                  (fun () -> x));
+              (fun () -> x);
+            ]
+        in
+        raises_match
+          (Exn.invalid_arg
+             ~sub:"Rune.lanes: the lanes of the map are held apart") (fun () ->
+            Rune.vmap' ~axis:a f (vec [| 0.; 1. |])));
+    test "a held lane's linear solve runs no callback" (fun () ->
+        (* A callback runs once per lane that runs: lane 1, held in the root,
+           adds none to lane 0's. *)
+        let calls = ref 0 in
+        let counted op b =
+          let b =
+            Rune.callback
+              Nx.Ptree.(tensor @-> returns tensor)
+              ~like:b
+              (fun b ->
+                incr calls;
+                b)
+              b
+          in
+          Nx.div b (op (Nx.ones_like b))
+        in
+        let f th x =
+          Rune.switch one (Nx.cast Nx.int32 x)
+            [
+              (fun () ->
+                Rune.root ~linear_solve:counted one
+                  ~residual:(fun y -> Nx.sub y th)
+                  (fun () -> th));
+              (fun () -> Nx.mul_s th 2.);
+            ]
+        in
+        let count xs =
+          calls := 0;
+          ignore
+            (Rune.grad' (fun th -> Nx.sum (Rune.vmap' (f th) xs)) (scalar 0.5));
+          !calls
+        in
+        let alone = count (vec [| 0. |]) in
+        at_least int ~than:1 alone;
+        equal int alone (count (vec [| 0.; 1. |])));
+    test "a held lane's linear solve passes its checks" (fun () ->
+        (* The solve checks its right-hand side is not zero. Lane 0's is its
+           cotangent 1; held lane 1's is zero. [θ] read through the lane's [x]
+           makes the root a lane's. *)
+        let nonzero op b =
+          Nx.check one (Nx.not_equal_s b 0.) b (fun _ _ -> Exit);
+          Nx.div b (op (Nx.ones_like b))
+        in
+        let f th x =
+          let t = Nx.add th (Nx.mul_s x 0.) in
+          Rune.switch one (Nx.cast Nx.int32 x)
+            [
+              (fun () ->
+                Rune.root ~linear_solve:nonzero one
+                  ~residual:(fun y -> Nx.sub y t)
+                  (fun () -> t));
+              (fun () -> Nx.mul_s t 2.);
+            ]
+        in
+        let g =
+          Rune.grad' (fun th -> Nx.sum (Rune.vmap' (f th) (vec [| 0.; 1. |])))
+        in
+        equal ~msg:"eager" (close ()) (scalar 3.) (g (scalar 0.5));
+        equal ~msg:"compiled" (close ()) (scalar 3.) (Rune.jit' g (scalar 0.5)));
+    test "a stopped lane's linear solve passes its checks" (fun () ->
+        (* Each step adds [θ + 1] to the carry, [θ] through a root whose solve
+           checks its right-hand side is not zero. Lanes stopping at 1 and 2
+           take one and two steps, so the gradient along [θ] is 3; lane 0,
+           stopped on the second step, is held there with a zero cotangent. *)
+        let nonzero op b =
+          Nx.check one (Nx.not_equal_s b 0.) b (fun _ _ -> Exit);
+          Nx.div b (op (Nx.ones_like b))
+        in
+        let f th k =
+          Rune.iterate one ~max:10
+            ~until:(fun c -> Nx.greater_equal c k)
+            (fun c ->
+              let t = Nx.add th (Nx.mul_s c 0.) in
+              let r =
+                Rune.root ~linear_solve:nonzero one
+                  ~residual:(fun y -> Nx.sub y t)
+                  (fun () -> t)
+              in
+              Nx.add_s (Nx.add c r) 1.)
+            (scalar 0.)
+        in
+        equal (close ()) (scalar 3.)
+          (Rune.grad'
+             (fun th -> Nx.sum (Rune.vmap' (f th) (vec [| 1.; 2. |])))
+             (scalar 0.5)));
   ]
 
 (* Compilation *)

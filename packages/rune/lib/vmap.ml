@@ -1248,7 +1248,7 @@ let rec answer ~name ?held i axis n (c : Program.construct) k =
              })
       in
       Effect.Deep.continue k (Array.map (lane_v i) r)
-  | Root _ | Solve _ -> Effect.Deep.continue k (root ~name i axis n c)
+  | Root _ | Solve _ -> Effect.Deep.continue k (root ~name ?held i axis n c)
 
 (* A scan's map is the scan of its step's map, whose carry has lanes for each
    carry that has them at the call or gains them from the step: a fixpoint, as
@@ -1819,37 +1819,58 @@ and masked_scan ~name ?held i axis n (c : Program.construct) =
 (* A root or a linear solve over lane values is performed outward over every
    lane's values, its system's programs mapped: a lane's operator stays, which
    the linear solve's map applies over the lanes. *)
-and root ~name i axis n (c : Program.construct) =
+and root ~name ?held i axis n (c : Program.construct) =
   let batched = Array.map (batch_v i n) in
   let forms = Array.map Program.form in
+  (* Where lanes are held, two more values the system reads from outside, after
+     [theta], every lane's: which lanes run and each lane's donor, so that its
+     programs hold the lanes apart as the map around them does. *)
+  let extra =
+    match held with Some h -> [| h.running; h.donors |] | None -> [||]
+  in
+  let ne = Array.length extra in
   (* Each program of the system is a function of its operands alone, traced
      staged: a body would run what reads none of them at the call, where under
-     a jit it is a capture the system does not carry. *)
-  let mapped (p : Program.t) vs =
+     a jit it is a capture the system does not carry. [p] reads [vs] but the
+     [extra] at [at]. *)
+  let mapped (p : Program.t) ~at vs =
+    let rest = Array.length vs - at - ne in
     let q, own =
       Trace.trace Staged ~name (forms vs) (fun bs ->
-          interpret ~name ~axis n (fun w ->
-              let out = Program.eval p (Array.map (lane_v w) bs) in
+          let held =
+            Option.map
+              (fun _ -> { running = bs.(at); donors = bs.(at + 1) })
+              held
+          in
+          let args =
+            Array.append (Array.sub bs 0 at) (Array.sub bs (at + ne) rest)
+          in
+          interpret ~name ~axis ?held n (fun w ->
+              let out = Program.eval p (Array.map (lane_v w) args) in
               Array.map (batch_v w n) out))
     in
     if own <> [||] then invalid_arg (name ^ ": a root's program captures");
     q
   in
+  (* [th] ends with the [extra]. *)
   let system (s : Program.system) x th caps =
+    let nx = Array.length x and nt = Array.length th - ne in
+    let operands = Array.concat [ x; x; th ] in
     {
       s with
-      residual = mapped s.residual (Array.append x th);
-      jacobian = mapped s.jacobian (Array.concat [ x; x; th ]);
+      residual = mapped s.residual ~at:(nx + nt) (Array.append x th);
+      jacobian = mapped s.jacobian ~at:((2 * nx) + nt) operands;
       transpose =
         Program.once (fun ~name ->
-            mapped (s.transpose ~name) (Array.concat [ x; x; th ]));
-      solve = mapped s.solve (Array.concat [ x; x; th; caps ]);
+            mapped (s.transpose ~name) ~at:((2 * nx) + nt) operands);
+      solve = mapped s.solve ~at:((2 * nx) + nt) (Array.append operands caps);
     }
   in
   let r =
     match c with
     | Root rt ->
-        let x = batched rt.solution and th = batched rt.theta in
+        let x = batched rt.solution in
+        let th = Array.append (batched rt.theta) extra in
         let caps = batched rt.captures in
         Program.perform
           (Root
@@ -1861,7 +1882,8 @@ and root ~name i axis n (c : Program.construct) =
                captures = caps;
              })
     | Solve sv ->
-        let b = batched sv.b and data = batched sv.data in
+        let b = batched sv.b in
+        let data = Array.append (batched sv.data) extra in
         let nx = Array.length b in
         let x = Array.sub data 0 nx
         and th = Array.sub data nx (Array.length data - nx) in

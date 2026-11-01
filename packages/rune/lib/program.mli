@@ -375,7 +375,9 @@ and construct =
       solution : value array;  (** The solution's arrays. *)
       theta : value array;
           (** The values from outside the residual reads, which the solution
-              depends on. *)
+              depends on. A map whose lanes are held adds two last, every
+              lane's: which lanes run and each lane's donor, which its mapped
+              programs read and the solution does not depend on. *)
       captures : value array;  (** The linear solve's captures. *)
     }
       -> construct

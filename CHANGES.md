@@ -323,6 +323,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `root`'s `linear_solve` run by a held lane, in an `iterate` whose lanes
+  stop apart or a `switch` whose lanes take different branches, treats it as
+  held: `lanes` of the map raises, its checks pass and a callback skips it.
+  It read every lane's value, raised on a check of the held lane's zero
+  cotangent and ran the callback for the held lane.
 - An evaluated program, such as `Rune.jit` over values on several devices,
   drops each value after its last use, as eager code does: it held every value
   until the call returned, 3.5 times the memory of a sharded optimiser update.
