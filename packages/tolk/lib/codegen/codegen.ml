@@ -1343,10 +1343,32 @@ let line_rewrite lst m ctx =
       lines)
     lst
 
+(* Each kernel's program is made once: a domain that asks for one being made
+   waits for it rather than making it again. [made] reads a made program
+   without waiting. *)
+let to_program_cache = Helpers.Memo.create ()
+
+(* The key of a program, in memory and on disk: the kernel, the renderer and its
+   target, the table of its compiler's binaries, which names the compiler and
+   its options, every setting and variable that shapes what compilation makes
+   ([Setting.shaping]), and the digest of this library's sources, of which a
+   program is a function. *)
+let program_key ast (ren : Renderer.t) =
+  String.concat "\n"
+    ([
+       Source_digest.digest;
+       key ast;
+       ren.name;
+       Format.asprintf "%a" Helpers.Target.pp ren.target;
+       Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
+     ]
+    @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
+
 (* A call of a sink inside a kernel runs its body as code of the kernel's
    program: the body, its own calls lowered first, is lowered alone and
    unoptimised, and becomes the list of its lines, named as its call, which the
-   renderer writes as a function of the kernel's program. *)
+   renderer writes as a function of the kernel's program. A body is lowered
+   once per renderer and settings, whatever its call's name. *)
 let lower_calls = ref (Pattern_matcher.v (fun () -> []))
 
 let lower_call ren call =
@@ -1355,19 +1377,22 @@ let lower_call ren call =
     | Call { name = Some n; _ } -> Helpers.to_function_name n
     | _ -> invalid_arg "a call inside a kernel needs a name"
   in
-  let body =
-    graph_rewrite ~calls:Skip ~pass:Once ~ctx:ren (body call)
-      (After_sources !lower_calls)
+  let lower () =
+    let body =
+      graph_rewrite ~calls:Skip ~pass:Once ~ctx:ren (body call)
+        (After_sources !lower_calls)
+    in
+    let body = full_rewrite_to_sink ~optimize:false body ren in
+    v Op.Linear
+      ~src:
+        (line_rewrite
+           (Linearizer.linearize body)
+           (pm_linearize_cleanups ++ pm_alloc_to_buf)
+           ())
   in
-  let body = full_rewrite_to_sink ~optimize:false body ren in
-  let lines =
-    line_rewrite
-      (Linearizer.linearize body)
-      (pm_linearize_cleanups ++ pm_alloc_to_buf)
-      ()
-  in
-  let body = v Op.Linear ~src:lines ~arg:(String name) in
-  replace call ~src:(body :: src_without_body call)
+  let key = "call\n" ^ program_key (body call) ren in
+  let body = Helpers.Memo.get to_program_cache key lower in
+  replace call ~src:(replace body ~arg:(String name) :: src_without_body call)
 
 let pm_lower_calls =
   pm (fun () ->
@@ -1598,27 +1623,6 @@ let compiled compile_source prg (ren : Renderer.t) =
   | _ -> invalid_arg "compile needs a program linearize made"
 
 let compile prg ren = compiled Renderer.Compiler.compile prg ren
-
-(* Each kernel's program is made once: a domain that asks for one being made
-   waits for it rather than making it again. [made] reads a made program
-   without waiting. *)
-let to_program_cache = Helpers.Memo.create ()
-
-(* The key of a program, in memory and on disk: the kernel, the renderer and its
-   target, the table of its compiler's binaries, which names the compiler and
-   its options, every setting and variable that shapes what compilation makes
-   ([Setting.shaping]), and the digest of this library's sources, of which a
-   program is a function. *)
-let program_key ast (ren : Renderer.t) =
-  String.concat "\n"
-    ([
-       Source_digest.digest;
-       key ast;
-       ren.name;
-       Format.asprintf "%a" Helpers.Target.pp ren.target;
-       Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
-     ]
-    @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
 
 (* A program is kept on disk up to its source, only while its compiler's
    binaries are, under a table that names the compiler: its binary is the
