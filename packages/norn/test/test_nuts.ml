@@ -36,11 +36,11 @@ let smoke =
 
    Stan's builder (base_nuts.hpp), written recursively over one chain in
    whitened coordinates, draws its directions and uniforms from the keys the
-   iterative builder uses: for a transition key [k] of one chain, row 0 of
-   [split_batch ~n:1 k]; its momentum from [fold_in key 0]; in doubling [j],
-   from [fold_in (fold_in (fold_in key 1) j) id], with [id] [0] for the
-   direction, [l 2^D + n] for the merge into node [n] of level [l], counted from
-   1 in the doubling, and [(D + 1) 2^D] for the top-level merge. *)
+   iterative builder uses: for a transition key [k] of [c] chains, chain [i]'s
+   row [i] of [split_batch ~n:c k]; its momentum from [fold_in key 0]; in
+   doubling [j], from [fold_in (fold_in (fold_in key 1) j) id], with [id] [0]
+   for the direction, [l 2^D + n] for the merge into node [n] of level [l],
+   counted from 1 in the doubling, and [(D + 1) 2^D] for the top-level merge. *)
 
 let dim = 2
 
@@ -100,9 +100,18 @@ let log_sum_exp a b =
     let m = Float.max a b in
     m +. Float.log (Float.exp (a -. m) +. Float.exp (b -. m))
 
+(* What Stan's transition gives a chain, and whether a subtree of it turned. *)
+type stan = {
+  sample : pt;
+  n : int;
+  accept : float;
+  divergent : bool;
+  saturated : bool;
+  turned : bool;
+}
+
 let stan geometry ~max_depth ~eps key (z0 : float array) =
   let eval = eval geometry in
-  let key = (Nx.Rng.split ~n:1 key).(0) in
   let uniform j id =
     let k = Nx.Rng.fold_in (Nx.Rng.fold_in (Nx.Rng.fold_in key 1) j) id in
     Nx.item [] (Nx.Rng.uniform ~key:k Nx.float64 [||])
@@ -116,6 +125,7 @@ let stan geometry ~max_depth ~eps key (z0 : float array) =
   let lp0, g0 = eval z0 in
   let h0 = (0.5 *. dot p0 p0) -. lp0 in
   let n_leapfrog = ref 0 and sum_metro = ref 0. and divergent = ref false in
+  let turned = ref false in
   let leapfrog s sign =
     let h = sign *. eps in
     let p = axpy (h /. 2.) s.g s.p in
@@ -162,6 +172,7 @@ let stan geometry ~max_depth ~eps key (z0 : float array) =
             && crit beg_i beg_f (vadd rho_i beg_f)
             && crit end_i end_f (vadd rho_f end_i)
           in
+          if not ok then turned := true;
           (ok, prop, w, rho, beg_i, end_f)
   in
   let start = { z = z0; p = p0; g = g0; lp = lp0 } in
@@ -209,37 +220,58 @@ let stan geometry ~max_depth ~eps key (z0 : float array) =
       if not persist then continue := false
     end
   done;
-  (!sample, !n_leapfrog, !sum_metro /. float_of_int !n_leapfrog, !divergent)
+  {
+    sample = !sample;
+    n = !n_leapfrog;
+    accept = !sum_metro /. float_of_int !n_leapfrog;
+    divergent = !divergent;
+    saturated = !continue && !depth = max_depth;
+    turned = !turned;
+  }
+
+(* Four chains move in lock step, each building its own tree and stopping on
+   its own, the others' bookkeeping beside it. *)
+let batch = 4
 
 let law_12 =
-  let case seed =
-    test (Printf.sprintf "transition %d" seed) (fun () ->
-        let key = Nx.Rng.key (1000 + seed) in
-        let start =
-          Nx.Rng.normal ~key:(Nx.Rng.fold_in key 7) Nx.float64 [| 1; dim |]
-        in
-        let max_depth = 1 + (seed mod 8) in
-        let geometry = if seed mod 2 = 0 then narrow else wide in
-        let s = N.init t ~max_depth ~geometry:geometry.g banana start in
-        let s' = N.step t banana key s in
-        let z0 = floats (whiten geometry (Nx.reshape [| dim |] start)) in
-        let sample, n, accept, divergent =
-          stan geometry ~max_depth ~eps:1. key z0
-        in
-        let x =
-          floats (color geometry (Nx.create Nx.float64 [| dim |] sample.z))
-        in
-        let st = s'.stats in
-        equal int n (Int32.to_int (Nx.item [ 0 ] st.n_steps));
-        equal bool divergent (Nx.item [ 0 ] st.diverging);
-        equal (float 1e-12) accept (Nx.item [ 0 ] st.acceptance);
-        equal
-          (array (float 1e-10))
-          x
-          (floats (Nx.reshape [| dim |] s'.position));
-        equal (float 1e-10) sample.lp (Nx.item [ 0 ] s'.lp))
+  (* The 80 seeds are checked whole, each case its own transition. *)
+  prop ~count:80 "Stan's recursive builder" (Gen.int_range 0 79) @@ fun seed ->
+  let key = Nx.Rng.key (1000 + seed) in
+  let start =
+    Nx.Rng.normal ~key:(Nx.Rng.fold_in key 7) Nx.float64 [| batch; dim |]
   in
-  group "Stan's recursive builder" (List.init 80 case)
+  let max_depth = 1 + (seed mod 8) in
+  let geometry = if seed mod 2 = 0 then narrow else wide in
+  let s = N.init t ~max_depth ~geometry:geometry.g banana start in
+  let s' = N.step t banana key s in
+  let st = s'.stats in
+  let keys = Nx.Rng.split ~n:batch key in
+  let refs =
+    Array.init batch (fun i ->
+        let z0 = floats (whiten geometry (Nx.slice [ Nx.I i ] start)) in
+        stan geometry ~max_depth ~eps:1. keys.(i) z0)
+  in
+  let some f = Array.exists f refs in
+  cover "chains stop at different steps" (some (fun r -> r.n <> refs.(0).n));
+  cover "a subtree turns" (some (fun r -> r.turned));
+  cover "a chain diverges" (some (fun r -> r.divergent));
+  cover "a chain saturates" (some (fun r -> r.saturated));
+  Array.iteri
+    (fun i r ->
+      let x =
+        floats (color geometry (Nx.create Nx.float64 [| dim |] r.sample.z))
+      in
+      let msg = Printf.sprintf "chain %d" i in
+      equal ~msg int r.n (Int32.to_int (Nx.item [ i ] st.n_steps));
+      equal ~msg bool r.divergent (Nx.item [ i ] st.diverging);
+      equal ~msg bool r.saturated (Nx.item [ i ] st.saturated);
+      equal ~msg (float 1e-12) r.accept (Nx.item [ i ] st.acceptance);
+      equal ~msg
+        (array (float 1e-10))
+        x
+        (floats (Nx.slice [ Nx.I i ] s'.position));
+      equal ~msg (float 1e-10) r.sample.lp (Nx.item [ i ] s'.lp))
+    refs
 
 (* Warmup: an independent normal of standard deviations 10 and 0.1. *)
 

@@ -49,6 +49,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Eager `Nuts.step` allocates half the words and runs half the operations per
+  leapfrog step: a leaf merges only where it completes a subtree. Compiled
+  steps and builds measured faster, times pending. Draws are unchanged.
 - `Dist.quantile` computes the beta's quantile, by `Nx.betaincinv`, where it
   raised, and `Dist.truncated` takes the beta.
 - `Evidence.expectation`'s nested-sampling error, which counted the volumes'

@@ -251,10 +251,6 @@ raven / llama.cpp (Vulkan; ROCm):
   in 1000 held to an ulp. A limit step's bound on q cannot be told from
   f's evaluation error growing, so lowering q on it converged a lane 120
   ulps off
-- norn NUTS: ~3.3 ms per eager transition, ~475 µs per leapfrog against
-  HMC's ~110 µs on the same density (machine unstated). Only compiled
-  rows exist (nuts/schools/64 3.44 ms, M1 Max). Add an eager row, measure
-  on fudge, profile the bookkeeping
 
 ## talon, hugin, brot, munin, quill
 

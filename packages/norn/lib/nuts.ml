@@ -96,7 +96,10 @@ let uniforms (type f) dt keys j ids : (float, f, 'd) Nx.t =
    whenever [2^l] divides [i + 1]. A completed node that is the first half of
    its parent waits in its level's slot; one that is the second half merges with
    the slot into its parent. Every chain takes the same leaf schedule, so the
-   leaf counters are shared and only each chain's stop differs.
+   leaf counters are shared and only each chain's stop differs. A leaf computes
+   only the merges its index completes, one on average, in a loop over them,
+   and the subtree joins the trajectory only at its doubling's last leaf, in a
+   branch: both read the shared counters.
 
    The tree moves in whitened coordinates held as rows ([H.enter]): a position
    or a momentum is a [[c; d]] matrix, and the slots of every level are one node
@@ -198,27 +201,66 @@ let tree_ptree (type f) () : ((f, 'd) tree, 'd) P.t =
   in
   P.v walk
 
-(* [pick m a b] is [a] where the mask [m] holds and [b] elsewhere, [m]'s axes
-   leading [a]'s. *)
-let pick m a b =
-  let ones = Array.make (Nx.ndim a - Nx.ndim m) 1 in
-  Nx.where (Nx.reshape (Array.append (Nx.shape m) ones) m) a b
+(* What a doubling's last leaf changes: the trajectory with the subtree merged
+   in, and whether each chain stops or saturates. *)
+type ('f, 'd) ends = {
+  back_end : (('f, 'd) rows, 'f, 'd) point;
+  front_end : (('f, 'd) rows, 'f, 'd) point;
+  chosen : (('f, 'd) rows, 'f, 'd) point;
+  summed : ('f, 'd) rows;
+  weighed : ('f, 'd) rows;
+  deeper : 'd Nx.int32_t;
+  stop : 'd Nx.bool_t;
+  saturates : 'd Nx.bool_t;
+}
 
-let pick_point m a b =
+let ends_ptree (type f) () : ((f, 'd) ends, 'd) P.t =
+  let point = H.point_ptree P.tensor in
+  let walk c (e : (f, 'd) ends) : (f, 'd) ends =
+    let open P.Walk in
+    let back_end = field c "back_end" (structure point) e.back_end in
+    let front_end = field c "front_end" (structure point) e.front_end in
+    let chosen = field c "chosen" (structure point) e.chosen in
+    let summed = field c "summed" tensor e.summed in
+    let weighed = field c "weighed" tensor e.weighed in
+    let deeper = field c "deeper" tensor e.deeper in
+    let stop = field c "stop" tensor e.stop in
+    let saturates = field c "saturates" tensor e.saturates in
+    { back_end; front_end; chosen; summed; weighed; deeper; stop; saturates }
+  in
+  P.v walk
+
+(* [mask m x] is the mask [m] over [x]'s shape, [m]'s axes leading [x]'s: a
+   [where] of operands of one shape moves none of them. *)
+let mask m x =
+  let ones = Array.make (Nx.ndim x - Nx.ndim m) 1 in
+  Nx.broadcast_to (Nx.shape x)
+    (Nx.reshape (Array.append (Nx.shape m) ones) m)
+
+(* [pick m a b] is [a] where the mask [m] holds and [b] elsewhere, [m]'s axes
+   leading [b]'s. *)
+let pick m a b = Nx.where (mask m b) a b
+
+(* [choose_point m w a b] is [pick_point m a b] with [w] the mask [m] over the
+   rows. *)
+let choose_point m w a b =
   {
-    z = pick m a.z b.z;
-    p = pick m a.p b.p;
-    g = pick m a.g b.g;
+    z = Nx.where w a.z b.z;
+    p = Nx.where w a.p b.p;
+    g = Nx.where w a.g b.g;
     lp = pick m a.lp b.lp;
   }
 
+let pick_point m a b = choose_point m (mask m b.z) a b
+
 let pick_node m a b =
+  let w = mask m b.first in
   {
-    first = pick m a.first b.first;
-    last = pick m a.last b.last;
-    rho = pick m a.rho b.rho;
+    first = Nx.where w a.first b.first;
+    last = Nx.where w a.last b.last;
+    rho = Nx.where w a.rho b.rho;
     weight = pick m a.weight b.weight;
-    prop = pick_point m a.prop b.prop;
+    prop = choose_point m w a.prop b.prop;
   }
 
 let map_node f n =
@@ -228,23 +270,6 @@ let map_node f n =
     rho = f n.rho;
     weight = f n.weight;
     prop = { z = f n.prop.z; p = f n.prop.p; g = f n.prop.g; lp = f n.prop.lp };
-  }
-
-(* [stack_nodes ns] is the nodes [ns], one per level, stacked. *)
-let stack_nodes ns =
-  let stack get = Nx.stack ~axis:0 (List.map get ns) in
-  {
-    first = stack (fun n -> n.first);
-    last = stack (fun n -> n.last);
-    rho = stack (fun n -> n.rho);
-    weight = stack (fun n -> n.weight);
-    prop =
-      {
-        z = stack (fun n -> n.prop.z);
-        p = stack (fun n -> n.prop.p);
-        g = stack (fun n -> n.prop.g);
-        lp = stack (fun n -> n.prop.lp);
-      };
   }
 
 (* [forward_all pairs] is, per chain, whether every pair [(a, b)] of momenta has
@@ -308,12 +333,15 @@ let transition (type f) u lp max_depth (eps : (float, f, 'd) Nx.t) keys geometry
   let f = Gaussian.flat u position geometry in
   let lp_z = H.rows_density u lp f position in
   let { H.z = z0; g = g0; _ } = H.enter u f position lp0 grad in
-  let p0 = H.momentum P.tensor keys z0 in
+  (* The tree's per-chain values lie where the chains do, so that what a step
+     computes from them lies where they did. *)
+  let chains = Nx.placement lp0 in
+  let p0 = Nx.place (Nx.placement z0) (H.momentum P.tensor keys z0) in
   let kinetic p = H.kinetic P.tensor eps p in
   let h0 = Nx.sub (kinetic p0) lp0 in
   let start = { z = z0; p = p0; g = g0; lp = lp0 } in
   let empty = { first = p0; last = p0; rho = p0; weight = lp0; prop = start } in
-  let no = Nx.zeros_at on Nx.bool [| c |] in
+  let no = Nx.zeros_at chains Nx.bool [| c |] in
   let init =
     {
       back = start;
@@ -321,19 +349,19 @@ let transition (type f) u lp max_depth (eps : (float, f, 'd) Nx.t) keys geometry
       cursor = start;
       sample = start;
       sum = p0;
-      total = Nx.zeros_at on dt [| c |];
+      total = Nx.zeros_at chains dt [| c |];
       slots =
         map_node
           (fun x ->
             Nx.broadcast_to (Array.append [| max_depth |] (Nx.shape x)) x)
           empty;
       forward = no;
-      running = Nx.ones_at on Nx.bool [| c |];
+      running = Nx.ones_at chains Nx.bool [| c |];
       diverging = no;
       saturated = no;
-      depth = Nx.zeros_at on Nx.int32 [| c |];
-      steps = Nx.zeros_at on Nx.int32 [| c |];
-      accepted = Nx.zeros_at on dt [| c |];
+      depth = Nx.zeros_at chains Nx.int32 [| c |];
+      steps = Nx.zeros_at chains Nx.int32 [| c |];
+      accepted = Nx.zeros_at chains dt [| c |];
       doubling = i32 0;
       leaf = i32 0;
       size = i32 1;
@@ -346,6 +374,8 @@ let transition (type f) u lp max_depth (eps : (float, f, 'd) Nx.t) keys geometry
   let parents = ints (fun l -> (l + 1) lsl max_depth) in
   let above = ints (fun l -> l + 1) in
   let top_code = (max_depth + 1) lsl max_depth in
+  let cascading = P.(pair (pair (node_ptree ()) tensor) tensor) in
+  let ended = ends_ptree () in
   let trip t =
     let running = t.running in
     let next = Nx.add t.leaf (i32 1) in
@@ -363,8 +393,9 @@ let transition (type f) u lp max_depth (eps : (float, f, 'd) Nx.t) keys geometry
     let forward =
       Nx.where fresh (Nx.greater_s (uniform 0) 0.5) t.forward
     in
-    let from = pick_point forward t.front t.back in
-    let cursor = pick_point (Nx.broadcast_to [| c |] fresh) from t.cursor in
+    let ahead = mask forward t.front.z in
+    let from = choose_point forward ahead t.front t.back in
+    let cursor = pick_point fresh from t.cursor in
     let h = Nx.where forward eps (Nx.neg eps) in
     let leaf, finite = leapfrog lp_z running h cursor in
     let delta = Nx.sub (Nx.sub (kinetic leaf.p) leaf.lp) h0 in
@@ -383,9 +414,11 @@ let transition (type f) u lp max_depth (eps : (float, f, 'd) Nx.t) keys geometry
         prop = leaf;
       }
     in
-    (* The cascade: the node of each level that this leaf completes. Level [l]
-       keeps the node arriving at it when that node is a first half, and joins
-       it with its slot when it is a second half within the doubling. *)
+    (* The cascade: the merges this leaf completes. Level [l] joins the node
+       arriving at it with its slot when that node is a second half within the
+       doubling: where [2^(l + 1)] divides [i + 1] and [l < j]. The levels that
+       join are a prefix [0, k), so the loop stops at level [k], where the node
+       is a first half, which that level's slot keeps. *)
     let at = Nx.mod_ next spans in
     let firsts = Nx.equal at halves in
     let joins =
@@ -393,81 +426,119 @@ let transition (type f) u lp max_depth (eps : (float, f, 'd) Nx.t) keys geometry
         (Nx.equal at (Nx.zeros_like at))
         (Nx.less_equal above t.doubling)
     in
-    let turned = ref no in
-    let rec cascade l node arriving =
-      if l = max_depth then (node, List.rev arriving)
-      else
-        let slot = map_node (fun x -> Nx.slice [ Nx.I l ] x) t.slots in
-        let parent, ok = merge (uniform (l + 1)) slot node in
-        let joins = Nx.broadcast_to [| c |] (Nx.slice [ Nx.I l ] joins) in
-        turned :=
-          Nx.logical_or !turned (Nx.logical_and joins (Nx.logical_not ok));
-        cascade (l + 1) (pick_node joins parent node) (node :: arriving)
+    let (sub, turned), _ =
+      Rune.iterate cascading ~max:max_depth
+        ~until:(fun (_, l) -> Nx.logical_not (Nx.take ~axis:0 l joins))
+        (fun ((node, turned), l) ->
+          let slot = map_node (Nx.take ~axis:0 l) t.slots in
+          let up = Nx.add_s l 1L in
+          let parent, ok = merge (Nx.take ~axis:1 up us) slot node in
+          let turned = Nx.logical_or turned (Nx.logical_not ok) in
+          ((parent, turned), up))
+        ((node, no), Nx.scalar_at on Nx.int64 0L)
     in
-    let sub, arriving = cascade 0 node [] in
-    let slots = pick_node firsts (stack_nodes arriving) t.slots in
-    let complete = Nx.broadcast_to [| c |] (Nx.equal next t.size) in
+    let kept =
+      Nx.logical_and
+        (Nx.reshape [| max_depth; 1 |] firsts)
+        (Nx.reshape [| 1; c |] running)
+    in
     let valid =
-      Nx.logical_and (Nx.logical_not diverged) (Nx.logical_not !turned)
+      Nx.logical_and (Nx.logical_not diverged) (Nx.logical_not turned)
     in
-    let merges = Nx.logical_and complete valid in
-    (* Biased progressive sampling: the subtree's proposal replaces the
-       trajectory's with probability [min (1, w_sub / w_traj)]. *)
-    let take =
-      Nx.logical_or
-        (Nx.greater sub.weight t.total)
-        (Nx.less (uniform (max_depth + 1)) (Nx.exp (Nx.sub sub.weight t.total)))
+    let held = mask running leaf.z in
+    let keep a b = Nx.where running a b
+    and keep_point a b = choose_point running held a b in
+    (* The leaf that completes the doubling's subtree merges it into the
+       trajectory, where the subtree is valid; any other leaf leaves the
+       trajectory as it is and stops a chain whose subtree is not. *)
+    let merged () =
+      (* Biased progressive sampling: the subtree's proposal replaces the
+         trajectory's with probability [min (1, w_sub / w_traj)]. *)
+      let take =
+        Nx.logical_or
+          (Nx.greater sub.weight t.total)
+          (Nx.less
+             (uniform (max_depth + 1))
+             (Nx.exp (Nx.sub sub.weight t.total)))
+      in
+      let sample = pick_point (Nx.logical_and valid take) sub.prop t.sample in
+      let total = Nx.where valid (logaddexp t.total sub.weight) t.total in
+      let sum = pick valid (Nx.add t.sum sub.rho) t.sum in
+      (* The criterion around the merged trajectory and between its halves,
+         the backward half first. *)
+      let bb = Nx.where ahead t.back.p sub.last
+      and bf = Nx.where ahead t.front.p sub.first in
+      let fb = Nx.where ahead sub.first t.back.p
+      and ff = Nx.where ahead sub.last t.front.p in
+      let rb = Nx.where ahead t.sum sub.rho
+      and rf = Nx.where ahead sub.rho t.sum in
+      let back_half = Nx.add rb fb and front_half = Nx.add rf bf in
+      let persists =
+        forward_all
+          [
+            (ff, sum);
+            (bb, sum);
+            (fb, back_half);
+            (bb, back_half);
+            (ff, front_half);
+            (bf, front_half);
+          ]
+      in
+      let depth = Nx.where valid (Nx.add t.depth (i32 1)) t.depth in
+      let full =
+        Nx.logical_and valid (Nx.greater_equal depth (i32 max_depth))
+      in
+      let stop =
+        Nx.logical_or (Nx.logical_not valid)
+          (Nx.logical_or
+             (Nx.logical_and valid (Nx.logical_not persists))
+             full)
+      in
+      let front = pick_point (Nx.logical_and valid forward) leaf t.front in
+      let back =
+        pick_point (Nx.logical_and valid (Nx.logical_not forward)) leaf t.back
+      in
+      {
+        back_end = keep_point back t.back;
+        front_end = keep_point front t.front;
+        chosen = keep_point sample t.sample;
+        summed = Nx.where held sum t.sum;
+        weighed = keep total t.total;
+        deeper = keep depth t.depth;
+        stop;
+        saturates = Nx.logical_and full persists;
+      }
     in
-    let sample = pick_point (Nx.logical_and merges take) sub.prop t.sample in
-    let total = Nx.where merges (logaddexp t.total sub.weight) t.total in
-    let sum = pick merges (Nx.add t.sum sub.rho) t.sum in
-    (* The criterion around the merged trajectory and between its halves, the
-       backward half first. *)
-    let bb = pick forward t.back.p sub.last
-    and bf = pick forward t.front.p sub.first in
-    let fb = pick forward sub.first t.back.p
-    and ff = pick forward sub.last t.front.p in
-    let rb = pick forward t.sum sub.rho and rf = pick forward sub.rho t.sum in
-    let back_half = Nx.add rb fb and front_half = Nx.add rf bf in
-    let persists =
-      forward_all
-        [
-          (ff, sum);
-          (bb, sum);
-          (fb, back_half);
-          (bb, back_half);
-          (ff, front_half);
-          (bf, front_half);
-        ]
+    let unmerged =
+      {
+        back_end = t.back;
+        front_end = t.front;
+        chosen = t.sample;
+        summed = t.sum;
+        weighed = t.total;
+        deeper = t.depth;
+        stop = Nx.logical_not valid;
+        saturates = no;
+      }
     in
-    let depth = Nx.where merges (Nx.add t.depth (i32 1)) t.depth in
-    let full = Nx.logical_and merges (Nx.greater_equal depth (i32 max_depth)) in
-    let stop =
-      Nx.logical_or (Nx.logical_not valid)
-        (Nx.logical_or (Nx.logical_and merges (Nx.logical_not persists)) full)
+    let e =
+      Rune.cond ended (Nx.equal next t.size) merged (fun () -> unmerged)
     in
-    let front = pick_point (Nx.logical_and merges forward) leaf t.front in
-    let back =
-      pick_point (Nx.logical_and merges (Nx.logical_not forward)) leaf t.back
-    in
-    let keep a b = pick running a b
-    and keep_point a b = pick_point running a b in
     let size = Nx.where (Nx.equal next t.size) (Nx.mul t.size (i32 2)) t.size in
     {
-      back = keep_point back t.back;
-      front = keep_point front t.front;
+      back = e.back_end;
+      front = e.front_end;
       cursor = keep_point leaf t.cursor;
-      sample = keep_point sample t.sample;
-      sum = keep sum t.sum;
-      total = keep total t.total;
-      slots = pick_node (Nx.reshape [| 1; c |] running) slots t.slots;
+      sample = e.chosen;
+      sum = e.summed;
+      total = e.weighed;
+      slots = pick_node kept sub t.slots;
       forward = keep forward t.forward;
-      running = Nx.logical_and running (Nx.logical_not stop);
+      running = Nx.logical_and running (Nx.logical_not e.stop);
       diverging = Nx.logical_or t.diverging (Nx.logical_and running diverged);
       saturated =
-        Nx.logical_or t.saturated
-          (Nx.logical_and running (Nx.logical_and full persists));
-      depth = keep depth t.depth;
+        Nx.logical_or t.saturated (Nx.logical_and running e.saturates);
+      depth = e.deeper;
       steps = Nx.add t.steps (Nx.cast Nx.int32 running);
       accepted =
         Nx.add t.accepted (Nx.where running accept (Nx.zeros_like accept));
