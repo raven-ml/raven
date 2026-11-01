@@ -1282,8 +1282,11 @@ module Buffer : sig
       work the copy follows, where a transfer into staging memory waits for
       the work that last read that memory, and where the host moves bytes
       out of staging memory after a device's transfer into it, which it
-      waits for. So a copy from a device's memory into host memory that no
-      device borrows returns once its bytes are there. It allocates.
+      waits for. So a copy by a device of this machine into host memory it
+      does not map waits for its bytes: all host memory for a device without
+      [maps_host] ({!Rig_edge.type-facts}), and otherwise a host buffer that
+      does not start on a page, such as one under 64 KiB. A device of
+      another machine queues such a copy and does not wait. It allocates.
 
       Memory outside the claims, such as a bigarray's ({!of_bigarray}) or
       an exported array's ({!export}), is read and written by the copy until
