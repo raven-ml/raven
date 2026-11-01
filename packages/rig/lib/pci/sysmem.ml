@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 let strf = Printf.sprintf
+external reraise : exn -> 'a = "%reraise"
 
 external page_size : unit -> int = "caml_rig_pci_page_size"
 external reserve_at : int -> int -> unit = "caml_rig_pci_reserve"
@@ -43,19 +44,29 @@ let lock = Lock.create ()
 let reserved : unit Tables.Range.t = Tables.Range.create 4
 let range a n = strf "[0x%x, 0x%x)" a (a + n)
 
+(* A range is recorded before it is reserved, and dropped if the reservation
+   raises, so that an exception after the reservation leaves it recorded: a
+   later reservation of it returns, and [unmap_range] releases memory there
+   to it. The stub raises only once the system refused, [Unix_error] or the
+   [Out_of_memory] of making it, so every exception drops the range. *)
 let reserve ~base n =
   Lock.protect lock @@ fun () ->
-  if not (Tables.Range.mem reserved (base, n)) then begin
-    (match reserve_at base n with
+  let r = (base, n) in
+  if not (Tables.Range.mem reserved r) then begin
+    Tables.Range.add reserved r ();
+    match reserve_at base n with
     | () -> ()
-    | exception Unix.Unix_error (EEXIST, _, _) ->
-        Fail.fail "addresses %s are in use" (range base n)
-    | exception Unix.Unix_error (ENOSYS, _, _) ->
-        Fail.fail "reserving addresses %s needs Linux" (range base n)
-    | exception Unix.Unix_error (e, _, _) ->
-        Fail.fail "reserving addresses %s: %s" (range base n)
-          (Unix.error_message e));
-    Tables.Range.add reserved (base, n) ()
+    | exception e -> (
+        Tables.Range.remove reserved r;
+        match e with
+        | Unix.Unix_error (EEXIST, _, _) ->
+            Fail.fail "addresses %s are in use" (range base n)
+        | Unix.Unix_error (ENOSYS, _, _) ->
+            Fail.fail "reserving addresses %s needs Linux" (range base n)
+        | Unix.Unix_error (e, _, _) ->
+            Fail.fail "reserving addresses %s: %s" (range base n)
+              (Unix.error_message e)
+        | e -> reraise e)
   end
 
 (* Whether the [n] bytes at [a] lie in a range [reserve] reserved. [lock] is

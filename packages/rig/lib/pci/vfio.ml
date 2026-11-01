@@ -482,17 +482,20 @@ let map_dma fn bus t ~below a n =
                 (Unix.error_message e)))
 
 (* Drops a count of the [n] bytes at [a], unmapping them with the last. A
-   closed container has unmapped them already. *)
+   closed container has unmapped them already. The last count leaves the
+   table before the unmap, so that an exception between leaves no entry that
+   a later map would count for device addresses the IOMMU no longer maps: it
+   leaves the mapping and its addresses, a leak. *)
 let unmap_dma bus t a n =
   let c = t.c in
   Lock.protect c.mutex @@ fun () ->
   match Tables.Range.find c.maps (a, n) with
   | iova, k when k > 1 -> Tables.Range.replace c.maps (a, n) (iova, k - 1)
   | iova, _ ->
+      Tables.Range.remove c.maps (a, n);
       if not c.closed then
         Fail.bug (strf "unmapping %d bytes for %s" n bus) (fun () ->
             unmap c.fd iova n);
-      Tables.Range.remove c.maps (a, n);
       give_back c iova
 
 let device t = t.device

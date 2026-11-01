@@ -223,6 +223,26 @@ let test_reserve_this () =
       (require_error (Machine.reserve Machine.this ~base page))
   end
 
+(* A reservation with an exception at any allocation and every one after
+   leaves its range to reserve again: once reserved, a reservation of it
+   returns [Ok]. Each landing reserves a range of its own, past
+   [test_reserve_this]'s. *)
+let test_reserve_cut () =
+  if not on_linux then skip ~reason:"reserving addresses needs Linux" ();
+  let n = 2 lsl 20 in
+  let rec walk k =
+    let base = free_base + ((k + 4) * n) in
+    let reserve () = Machine.reserve Machine.this ~base n in
+    let reached =
+      Rig_support.interrupted k (fun () -> ignore (reserve ()))
+    in
+    require_ok ~msg:(strf "from allocation %d, the reservation after" k)
+      (reserve ());
+    if k = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk (k + 1)
+  in
+  walk 1
+
 let reservations =
   group ~timeout:patience "reservations"
     [
@@ -230,6 +250,10 @@ let reservations =
         "this machine reserves a range once and refuses one in use, on Linux \
          alone"
         test_reserve_this;
+      test
+        "an exception at any allocation of a reservation leaves its range to \
+         reserve again"
+        test_reserve_cut;
     ]
 
 (* Transports *)
