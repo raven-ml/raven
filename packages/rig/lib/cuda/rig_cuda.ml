@@ -261,7 +261,13 @@ let find_gpus () =
 (* Memory. Page-locking is the process's: a registration serves every device,
    and ends at the last free of a region over it, from any device. *)
 
-type registration = { start : int; bytes : int; mutable maps : int }
+type registration = {
+  start : int;
+  bytes : int;
+  maps : int Atomic.t; (* the regions over it *)
+  context : int; (* the one it was made in, which ends it *)
+  mutable registered : bool; (* until its end, under [registry_lock] *)
+}
 
 type kind =
   | Device
@@ -545,10 +551,65 @@ let enable_peers (g : gpus) i c =
 let compute = { Rig_edge.name = "COMPUTE:0"; runs = [ Fill; Copy; Launch ] }
 let copy = { Rig_edge.name = "COPY:0"; runs = [ Fill; Copy ] }
 
+external lock : int -> bool -> int -> int -> int = "caml_rig_cuda_lock"
+
 (* The registrations [map_host] made, with the regions over each. One whose
-   last region was freed stays at 0 until the next registration drops it. *)
+   last region was freed stays at 0 until the next registration drops it.
+   [registry_lock] guards the list and the ends of registrations; a free drops
+   its count without it. *)
 let registry : registration list ref = ref []
 let registry_lock = Mutex.create ()
+
+(* Ends [e]'s registration, whose regions were all freed, under
+   [registry_lock]. *)
+let unregister e =
+  if e.registered then begin
+    ignore (lock e.context false e.start 0 : int);
+    e.registered <- false
+  end
+
+(* Ends each registration of [l] whose regions were all freed, under
+   [registry_lock]. *)
+let rec end_freed = function
+  | [] -> ()
+  | e :: rest ->
+      if Atomic.get e.maps = 0 then unregister e;
+      end_freed rest
+
+(* Whether a free left a registration to end because it found
+   [registry_lock] held: set before the free tries the lock, cleared by the
+   one that then ends the registrations, under it. *)
+let owed = Atomic.make false
+
+(* Ends what frees left, while they leave some and the lock is free. Every
+   holder of [registry_lock] drains as it gives the lock back, and a free
+   whose try finds the lock held sets [owed] before the try, so that one of
+   the two ends the registration: no registration outlives its last free
+   past the release of the lock. *)
+let rec end_owed () =
+  if Atomic.get owed then begin
+    hold ();
+    if Mutex.try_lock registry_lock then begin
+      Atomic.set owed false;
+      (match end_freed !registry with
+      | () -> give registry_lock
+      | exception e ->
+          give registry_lock;
+          reraise e);
+      end_owed ()
+    end
+    else unhold ()
+  end
+
+(* [protect registry_lock f], then [end_owed ()]. *)
+let registered f =
+  match protect registry_lock f with
+  | r ->
+      end_owed ();
+      r
+  | exception e ->
+      end_owed ();
+      reraise e
 
 (* rig's array of timeline words: its address and its bytes. *)
 external words : unit -> int * int = "caml_rig_edge_words"
@@ -558,9 +619,11 @@ external words : unit -> int * int = "caml_rig_edge_words"
    counts against it, and it is never given back. *)
 let note_words () =
   let start, bytes = words () in
-  protect registry_lock @@ fun () ->
+  registered @@ fun () ->
   if not (List.exists (fun e -> e.start = start) !registry) then
-    registry := { start; bytes; maps = 1 } :: !registry
+    registry :=
+      { start; bytes; maps = Atomic.make 1; context = 0; registered = true }
+      :: !registry
 
 let open_ ~word i =
   guarded "Rig_cuda.gpu" @@ fun () ->
@@ -695,7 +758,6 @@ external alloc_memory : int -> bool -> int -> int = "caml_rig_cuda_alloc"
 external free_memory : int -> bool -> int -> int = "caml_rig_cuda_free"
 external mapped : int -> int -> int = "caml_rig_cuda_mapped"
 external allocation : int -> int -> int = "caml_rig_cuda_allocation"
-external lock : int -> bool -> int -> int -> int = "caml_rig_cuda_lock"
 
 let allocated g kind n =
   match alloc_memory g.context (kind = Host) n with
@@ -736,52 +798,99 @@ let locked g e a =
   | address when address < 0 -> Error (-address)
   | address -> Ok (region g.gpu (Locked e) ~address ~handle:a)
 
+(* Ends every registration whose regions were all freed and that a free left
+   registered, then drops those ended, under [registry_lock]: whether it ended
+   one. *)
+let settle () =
+  let ended = ref false in
+  List.iter
+    (fun e ->
+      if Atomic.get e.maps = 0 && e.registered then begin
+        unregister e;
+        ended := true
+      end)
+    !registry;
+  registry :=
+    List.filter (fun e -> Atomic.get e.maps > 0 || e.registered) !registry;
+  !ended
+
+(* Counts a region over [e] unless its last was freed. *)
+let rec counted e =
+  let k = Atomic.get e.maps in
+  k > 0 && (Atomic.compare_and_set e.maps k (k + 1) || counted e)
+
 (* A range inside a registration [map_host] made counts against it. Any other
    is registered; if CUDA refuses, it is mapped as it is when both its ends lie
    in one allocation of CUDA's, which another owner locked: two allocations
-   may have unlocked pages between them. *)
+   may have unlocked pages between them. A registration a free left to end,
+   which may hold the range, ends first. *)
 let map_host g a n =
   if n < 1 then
     invalid_argf "Rig_cuda.map_host: %d bytes, expected at least 1" n;
   if not g.facts.maps_host then None
   else
-    protect registry_lock @@ fun () ->
-    let inside e = e.maps > 0 && e.start <= a && a + n <= e.start + e.bytes in
+    registered @@ fun () ->
+    let inside e =
+      Atomic.get e.maps > 0 && e.start <= a && a + n <= e.start + e.bytes
+    in
     (* A count or a registration is recorded with nothing allocated after it,
        and a registration not recorded is ended on any exception: either
        would keep the range locked for good, and a range locked but not
-       recorded is mapped uncounted, as another owner's. *)
-    match List.find_opt inside !registry with
-    | Some e -> (
-        match locked g (Some e) a with
-        | Ok r ->
-            let some = Some r in
-            e.maps <- e.maps + 1;
-            some
-        | Error s -> fault (page_locking n a) s)
-    | None when lock g.context true a n = 0 -> (
-        match
-          let e = { start = a; bytes = n; maps = 1 } in
+       recorded is mapped uncounted, as another owner's. A count fails once
+       a free, which takes no lock, dropped the registration's last. *)
+    let rec map () =
+      match List.find_opt inside !registry with
+      | Some e -> (
           match locked g (Some e) a with
           | Ok r ->
-              let some = Some r
-              and entries = e :: List.filter (fun e -> e.maps > 0) !registry in
-              registry := entries;
-              some
-          | Error s -> fault (page_locking n a) s
-        with
-        | some -> some
-        | exception x ->
-            ignore (lock g.context false a 0 : int);
-            reraise x)
-    | None -> (
-        let start = allocation g.context a in
-        if start < 0 || start <> allocation g.context (a + n - 1) then
-          refused (page_locking n a) g.self None
-        else
-          match locked g None a with
-          | Ok r -> Some r
+              let some = Some r in
+              if counted e then some
+              else begin
+                ignore (settle () : bool);
+                map ()
+              end
           | Error s -> fault (page_locking n a) s)
+      | None when lock g.context true a n = 0 -> (
+          match
+            let e =
+              {
+                start = a;
+                bytes = n;
+                maps = Atomic.make 1;
+                context = g.context;
+                registered = true;
+              }
+            in
+            match locked g (Some e) a with
+            | Ok r ->
+                let some = Some r
+                and entries =
+                  e
+                  :: List.filter
+                       (fun e -> Atomic.get e.maps > 0 || e.registered)
+                       !registry
+                in
+                registry := entries;
+                some
+            | Error s -> fault (page_locking n a) s
+          with
+          | some -> some
+          | exception x ->
+              ignore (lock g.context false a 0 : int);
+              reraise x)
+      | None when settle () -> map ()
+      | None -> other ()
+    and other () =
+      let start = allocation g.context a in
+      if start < 0 || start <> allocation g.context (a + n - 1) then
+        refused (page_locking n a) g.self None
+      else
+        match locked g None a with
+        | Ok r -> Some r
+        | Error s -> fault (page_locking n a) s
+    in
+    ignore (settle () : bool);
+    map ()
 
 (* Another function's DMA
 
@@ -892,14 +1001,19 @@ let free g (r : region) =
          context, which the process keeps. *)
       ignore (free_memory g.context (r.kind = Host) r.address)
   | Locked (Some e) ->
-      (* Nothing between the take and the give allocates or polls, nor
-         anything before the take, so no exception lands in the free: rig
-         never frees a region again after its free raised. The entry stays
-         in the registry at 0, for [map_host] to drop. *)
-      take registry_lock;
-      e.maps <- e.maps - 1;
-      if e.maps = 0 then ignore (lock g.context false e.start 0 : int);
-      give registry_lock
+      (* The count drops as the free's first step and nothing after it
+         allocates or polls, so no exception lands in the free: rig never
+         frees a region again after its free raised. The last region's free
+         ends the registration if it takes [registry_lock] without waiting:
+         a wait for it would run a pending signal's handler on Windows, where
+         no mask blocks a Ctrl-C. Otherwise the lock's holder ends it as it
+         gives the lock back ([end_owed]). Only an exception in that drain,
+         after the region is freed, lands in the free. The entry stays in the
+         registry at 0, for [map_host] to drop. *)
+      if Atomic.fetch_and_add e.maps (-1) = 1 then begin
+        Atomic.set owed true;
+        end_owed ()
+      end
   | Own_word ->
       (* The edge keeps the word's value for later claims of the GPU, which
          read it under [held_lock]; the free runs outside it, as CUDA may
