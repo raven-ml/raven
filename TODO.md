@@ -161,6 +161,13 @@ raven / llama.cpp (Vulkan; ROCm):
   NVRTC's cache disabled. Move comgr to
   serving workers once nonnormal times search/amd and a first call both
   ways
+- CUDA contractions with a gathered operand run at 2-8% of the RTX 5000's
+  SIMT float32 peak with DRAM under 46 GB/s: gpt-oss's MXFP4 expert
+  products hold 4 rows x 1 column per thread, split K across 32 lanes and
+  issue 20 predicated, half-coalesced x loads per 20 FMAs; a dense float32
+  weight of the same shape runs at 1.39 TFLOPS holding one row per thread.
+  Decide with D89's matrix-vector layout, by tinygrad's heuristic at HEAD
+  and a fudge bench row
 - folds of `Log2`, `Exp2` and `Pow` use the host's C library, so a folded
   constant can differ between macOS and Linux; D150 made the sine fold
   correctly rounded for that reason. Do the same for these, or state why a
