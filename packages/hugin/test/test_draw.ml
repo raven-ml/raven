@@ -2874,28 +2874,21 @@ let legend_swatches =
 
 (* Goldens *)
 
-let golden name = Filename.concat "golden" name
-
-(* [same_text name expected actual] states that two documents are equal, naming
-   the first byte where they differ. *)
-let same_text name expected actual =
-  if not (String.equal expected actual) then
-    let n = Int.min (String.length expected) (String.length actual) in
-    let rec first i =
-      if i < n && expected.[i] = actual.[i] then first (i + 1) else i
-    in
-    failf "%s differs from its golden at byte %d" name (first 0)
-
+(* Each benchmark figure's SVG is an [expect_file] baseline. Its PNG, written by
+   gen/gen.exe, is a baseline within one colour level: the rasterizer's arcs go
+   through libm, whose last bits differ between platforms. *)
 let goldens =
   let open Hugin_test_figures in
-  cases "the benchmark figures draw their goldens"
+  cases "the benchmark figures draw their baselines"
     ~id:(fun (n, _, _, _) -> n)
     Figures.goldens
     (fun ((name, _, _, _) as g) ->
       let r = Drawing.renderable (Figures.drawing g) in
-      same_text name (read_file (golden (name ^ ".svg"))) (Svg.render r);
+      expect_file
+        ~file:(Printf.sprintf "packages/hugin/test/golden/%s.svg" name)
+        (Svg.render r);
       within_one ~msg:name
-        (Nx_io.load_image (golden (name ^ ".png")))
+        (Nx_io.load_image (Filename.concat "golden" (name ^ ".png")))
         (Raster.render ~density:Figures.density r))
 
 let () =

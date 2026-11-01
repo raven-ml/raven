@@ -1,4 +1,4 @@
-; Writes the golden drawings of the benchmark figures:
+; Writes the PNG baselines of the benchmark figures:
 ; dune exec packages/hugin/test/gen/gen.exe -- packages/hugin/test/golden
 
 (executable
@@ -6,5 +6,4 @@
  (libraries
   hugin
   hugin.vg.raster
-  hugin.vg.svg
   hugin_test_figures))

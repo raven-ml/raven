@@ -3,8 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Writes the SVG and PNG goldens of the benchmark figures to the directory
-   given on the command line. *)
+(* Writes the PNG baselines of the benchmark figures to the directory given on
+   the command line. test_draw compares them within one colour level, which an
+   [expect_file] baseline cannot state; their SVGs are [expect_file]
+   baselines. *)
 
 open Hugin_test_figures
 
@@ -16,7 +18,6 @@ let () =
   List.iter
     (fun ((name, _, _, _) as g) ->
       let r = Hugin.Drawing.renderable (Figures.drawing g) in
-      write (Filename.concat dir (name ^ ".svg")) (Hugin_vg_svg.render r);
       write
         (Filename.concat dir (name ^ ".png"))
         (Hugin_vg_raster.png ~density:Figures.density r))
