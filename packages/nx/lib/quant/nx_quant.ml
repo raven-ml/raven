@@ -311,9 +311,65 @@ let values = function
   | Q4_K { blocks } -> q4_k_values blocks
   | Q6_K { blocks } -> q6_k_values blocks
 
+(* A cut along [k] *)
+
+(* The window of each device of [t]'s placement along [t]'s last axis. *)
+let last_windows t =
+  let s = Nx.shape t in
+  let r = Array.length s in
+  Array.map
+    (fun (_, (w : Nx_array.Move.range array)) -> w.(r - 1))
+    (Nx.Prim.pieces (Nx.placement t) s)
+
+(* Whether each device's window of [t], whose last axis holds blocks of
+   [bytes] elements, starts and ends at blocks' boundaries. *)
+let at_blocks bytes t =
+  Array.for_all
+    (fun (x : Nx_array.Move.range) ->
+      x.count = 0
+      || (x.start mod bytes = 0 && (x.start + x.count) mod bytes = 0))
+    (last_windows t)
+
+(* Whether each device holds all of [t]'s last axis. *)
+let whole_along t =
+  let k = (Nx.shape t).(Nx.ndim t - 1) in
+  Array.for_all (fun (x : Nx_array.Move.range) -> x.count = k) (last_windows t)
+
+let some t = Array.fold_left ( * ) 1 (Nx.shape t) > 0
+
+(* Raises naming [fn] where a cut of [w] along [k] splits a block, which
+   each device would read whole: before any block is decoded, at the call
+   that reads them. An MXFP4 weight of one block whose scales lie whole
+   decodes its codes where they lie. *)
+let check_k fn w =
+  let splits =
+    match w with
+    | Mxfp4 { codes; scales } ->
+        let one_block = (Nx.shape scales).(Nx.ndim scales - 1) = 1 in
+        some codes
+        && (not (at_blocks mxfp4_bytes codes))
+        && not (one_block && whole_along scales)
+    | Mxfp4_blocks { blocks } ->
+        some blocks && not (at_blocks mxfp4_block_bytes blocks)
+    | Q8_0 { blocks } -> some blocks && not (at_blocks q8_0_bytes blocks)
+    | Q4_K { blocks } -> some blocks && not (at_blocks q4_k_bytes blocks)
+    | Q6_K { blocks } -> some blocks && not (at_blocks q6_k_bytes blocks)
+  in
+  if splits then
+    invalid_arg
+      (strf
+         "%s: the weight lies cut along k inside its blocks, which each device \
+          would read whole; Nx.place (Placement.on s) w"
+         fn)
+
 (* Products *)
 
-let dequant dt w = Nx.cast dt (values w)
+(* [w] at [dt], decoded, its cut along [k] checked by the caller. *)
+let decoded dt w = Nx.cast dt (values w)
+
+let dequant dt w =
+  check_k "Nx_quant.dequant" w;
+  decoded dt w
 
 (* Batch axes, aligned on the right and broadcast as Nx.matmul's. *)
 let broadcast fn a b =
@@ -478,12 +534,17 @@ let apply w x =
   check_input ws (Nx.shape x);
   let dt = Nx.dtype x in
   let by = "Nx_quant.apply" in
+  (* An MXFP4 weight read where it lies names its scales as the contraction
+     reads them. *)
+  (match w with
+  | Mxfp4 _ when at_float32 x -> ()
+  | _ -> check_k by w);
   match if at_float32 x then stored ws w else None with
   | Some s ->
       if exact dt w then scaled ~by x ws s
       else Nx.cast dt (scaled ~by (Nx.cast Nx.float32 x) ws s)
   | None ->
-      if exact dt w then Nx.matmul x (Nx.matrix_transpose (dequant dt w))
+      if exact dt w then Nx.matmul x (Nx.matrix_transpose (decoded dt w))
       else
         Nx.cast dt
           (Nx.matmul (Nx.cast Nx.float32 x) (Nx.matrix_transpose (values w)))
@@ -707,14 +768,25 @@ let experts ~ids w x =
       let b = Nx.reshape (shape w) (Nx.bitcast Nx.float4_e2m1fn codes) in
       segmented r x b (Some (Nx.Prim.Exponent scales)) (by_expert r e)
   | _ when experts_cut w ->
-      segmented r x (dequant (Nx.dtype x) w) None (by_expert r e)
+      segmented r x (decoded (Nx.dtype x) w) None (by_expert r e)
   | _ ->
       let named, offsets = slots r e in
-      segmented r x (dequant (Nx.dtype x) (take ~axis:0 named w)) None offsets
+      segmented r x
+        (decoded (Nx.dtype x) (take ~axis:0 named w))
+        None offsets
 
 let apply_experts ~ids w x =
   check_experts (shape w) (Nx.shape ids) (Nx.shape x);
   let dt = Nx.dtype x in
+  (* An MXFP4 weight summed at float32 is read where it lies and names its
+     scales as the contraction reads them; any other decodes the blocks the
+     positions name, none for no position. *)
+  let in_place =
+    match w with
+    | Mxfp4 _ -> not (Nx.Dtype.equal dt Nx.float64)
+    | Mxfp4_blocks _ | Q8_0 _ | Q4_K _ | Q6_K _ -> false
+  in
+  if (not in_place) && some ids then check_k "Nx_quant.apply_experts" w;
   if exact dt w then experts ~ids w x
   else Nx.cast dt (experts ~ids w (Nx.cast Nx.float32 x))
 

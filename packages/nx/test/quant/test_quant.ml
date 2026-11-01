@@ -1855,6 +1855,50 @@ let placements =
          within its bound, the same on every run, lying where the interface \
          says, or raises where a cut along k splits blocks"
         placed placement_law;
+      (* A cut along k inside the blocks raises at the call, before any
+         block is decoded, naming the placement that puts the weight whole:
+         one block of each format over two devices, three over two, and two
+         over four. *)
+      cases "a cut along k inside the blocks raises at the call"
+        ~id:(fun (f, blocks, c, _) ->
+          Format.asprintf "%s of %d blocks at %a" (format_name f) blocks pp_cut
+            c)
+        (List.concat_map
+           (fun f ->
+             List.map
+               (fun (blocks, tiles, call) ->
+                 (f, blocks, Cut { axis = 1; tiles }, call))
+               [ (1, 2, `Dequant); (3, 2, `Apply); (2, 4, `Experts) ])
+           formats)
+        (fun (f, blocks, c, call) ->
+          let k = blocks * block_values f in
+          let w = random_weight ~format:f [| 2; k |] in
+          let wp = Nx_quant.place (at c) w in
+          let named fn =
+            Invalid_argument
+              (fn
+             ^ ": the weight lies cut along k inside its blocks, which each \
+                device would read whole; Nx.place (Placement.on s) w")
+          in
+          match call with
+          | `Dequant ->
+              raises (named "Nx_quant.dequant") (fun () ->
+                  Nx_quant.dequant Nx.float32 wp)
+          | `Apply ->
+              let x = Nx.place Mem.on (random_floats [| 3; k |]) in
+              let x = Nx.cast Nx.float64 x in
+              raises (named "Nx_quant.apply") (fun () -> Nx_quant.apply wp x)
+          | `Experts ->
+              let e = random_weight ~format:f [| 2; 2; k |] in
+              let ep = Nx_quant.place (at (Cut { axis = 2; tiles = 4 })) e in
+              let ids =
+                Nx.place Mem.on (Nx.create Nx.int64 [| 3 |] [| 0L; 1L; 0L |])
+              in
+              let x =
+                Nx.cast Nx.float64 (Nx.place Mem.on (random_floats [| 3; k |]))
+              in
+              raises (named "Nx_quant.apply_experts") (fun () ->
+                  Nx_quant.apply_experts ~ids ep x));
       (* Two blocks of 32 values over four devices: each holds half a
          block's codes, and the scales, one per block, are read whole. *)
       test "an MXFP4 weight cut inside its blocks raises from its product"

@@ -3492,6 +3492,9 @@ thread.
   indexing a cut axis of one element now raises, as indexing a cut axis does.
 - `Nx_array.Move.Permute` is an axis map: it may leave out axes of one
   element and add new ones, written as negative entries. It stays a view.
+- `Nx_quant.dequant`, `apply` and `apply_experts` raise at the call, naming
+  `Nx.place (Placement.on s) w`, where the weight lies cut along `k` inside its
+  blocks; the raise came from an operation of the decoding.
 - `Nx_quant.apply_experts` computes with its weight cut along `k`, where it
   raised: each device sums its window of every row and the sums close by
   partials, as `Nx.contract`'s do. The cut keeps whole blocks where the devices
