@@ -66,9 +66,8 @@ val split : name:string -> home:Rig.t -> Program.t -> Program.form array -> t
 
     Raises [Declined] for a program that threads a total or emits, and one with
     a check, a construct other than [Detach], [Scan] and [Iterate], a scan over
-    rows cut along axis 0 or along an axis of one element, an iterate that
-    stacks its steps, a loop whose step gives a carry another placement, a
-    traced value placed onto another set, or an argument placed so that a device
-    holds more of it, which a compiled call would hold at once with every piece
-    of its closings; and what nx raises for an operation its partition
-    refuses. *)
+    rows cut along axis 0, an iterate that stacks its steps, a loop whose step
+    gives a carry another placement, a traced value placed onto another set, or
+    an argument placed so that a device holds more of it, which a compiled call
+    would hold at once with every piece of its closings; and what nx raises for
+    an operation its partition refuses. *)

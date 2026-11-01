@@ -1146,6 +1146,68 @@ let test_place () =
     (Nx.Placement.equal (placement y) (Two.split ~axis:1));
   equal ~msg:"its values" codes_t (codes host) (codes (Nx.place Nx.Host.on y))
 
+(* A batch of one cut across the devices maps as a batch of two: each lane
+   computes on the devices that hold its row what its function computes on
+   that row, the devices that hold none compute nothing, and the batch lies
+   where a batch of two does. *)
+type lane = Row of int | Squeezed | Unsqueezed | Added | Product
+
+let pp_lane ppf = function
+  | Row t -> Format.fprintf ppf "get [%d] of a lane [3; f]" t
+  | Squeezed -> Format.pp_print_string ppf "squeeze [0] of a lane [1; f]"
+  | Unsqueezed -> Format.pp_print_string ppf "unsqueeze [0] of a lane [f]"
+  | Added -> Format.pp_print_string ppf "a lane [f] + [f] on every device"
+  | Product -> Format.pp_print_string ppf "a lane [f] @ [f; 3] on every device"
+
+let lane_f l w x =
+  match l with
+  | Row t -> Nx.get [ t ] x
+  | Squeezed -> Nx.squeeze ~axes:[ 0 ] x
+  | Unsqueezed -> Nx.unsqueeze ~axes:[ 0 ] x
+  | Added -> Nx.add x w
+  | Product -> Nx.matmul x w
+
+let law_batch_of_one (l, f) =
+  let iota s =
+    Nx.create f64 s (Array.init (Array.fold_left ( * ) 1 s) Float.of_int)
+  in
+  let lies = ref None in
+  List.iter
+    (fun n ->
+      let row =
+        match l with
+        | Row _ -> [| 3; f |]
+        | Squeezed -> [| 1; f |]
+        | Unsqueezed | Added | Product -> [| f |]
+      in
+      let xh = iota (Array.append [| n |] row) in
+      let wh = match l with Product -> iota [| f; 3 |] | _ -> iota [| f |] in
+      let x = Nx.place (Two.split ~axis:0) xh and w = Nx.place Two.on wh in
+      let y = Rune.vmap' (lane_f l w) x in
+      (match !lies with
+      | None -> lies := Some (Nx.placement y)
+      | Some two ->
+          equal ~msg:"where a batch of one lies" (Nx_support.placement ()) two
+            (Nx.placement y));
+      equal
+        ~msg:(Printf.sprintf "a batch of %d" n)
+        codes_t
+        (codes (one_by_one (lane_f l wh) xh))
+        (codes (Nx.place Nx.Host.on y)))
+    [ 2; 1 ]
+
+let batch_of_one =
+  let open Gen in
+  let l =
+    one_of
+      [
+        map (fun t -> Row t) (int_range 0 2);
+        of_list [ Squeezed; Unsqueezed; Added; Product ];
+      ]
+  in
+  pair l (int_range 1 4)
+  |> with_pp (fun ppf (l, f) -> Format.fprintf ppf "%a, f = %d" pp_lane l f)
+
 (* A set no kernel library computes on, as a GPU set is outside a compiler:
    a memory device and an io device, which does not run on the host. *)
 module Bare =
@@ -1310,6 +1372,8 @@ let () =
              test "detach" test_detach;
              test "loops" test_scan;
              test "placements" test_place;
+             prop "a batch of one cut across devices" batch_of_one
+               law_batch_of_one;
              test "creations on a set without kernels" test_bare;
              test "checks" test_check;
              test "draws" test_draws;

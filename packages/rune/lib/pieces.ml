@@ -363,15 +363,6 @@ let joined ri (F f) ps =
       let ps = Iarray.map (Program.cast f.dtype set) (Iarray.of_array ps) in
       V (Nx.Prim.traced ri f (Cut ps))
 
-(* Whether [x] is cut along an axis of one element, where some device holds
-   none of it. *)
-let cuts_unit x =
-  let s = Nx.shape x in
-  Array.exists
-    (fun (_, w) ->
-      Array.exists2 (fun (r : M.range) n -> n = 1 && r.count = 0) w s)
-    (Nx.Prim.pieces (Nx.placement x) s)
-
 (* The moves of [noted], each with the value it makes, that [p] keeps: those
    whose value an equation of [p] that reads to its outputs makes. *)
 let kept (p : Program.t) noted =
@@ -551,9 +542,7 @@ and looped ~home ~name ri moves c =
       let rows (V x) =
         let at = Nx.placement x and shape = Nx.shape x in
         let q = by_rows at in
-        if cuts_unit x then
-          decline "a scan over rows cut along an axis of one element"
-        else if Nx.Placement.equal q at then V x
+        if Nx.Placement.equal q at then V x
         else if Array.fold_left ( * ) 1 shape > 0 then
           decline "a scan over rows cut across devices along them"
         else

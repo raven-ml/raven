@@ -362,6 +362,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.scan` over rows `[t; 1; f]` split along their batch axis runs
+  eagerly, and `Rune.jit` compiles it: eager computation raised at `Nx.get`
+  of a row, and a compiled call evaluated.
 - `Rune.jit` over cut values compiles as many kernels whatever the number of
   devices where a loop reads its window's coordinates (`Rune.lane_index`,
   `Nx.tril`, `Nx.eye_at` at a cut placement, `Nx.argmax` along an axis no

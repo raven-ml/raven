@@ -390,9 +390,7 @@ let grads set rows =
    their rows' axes or along the rows themselves, and an iterate whose stop
    reads a fold over a cut axis compile, and give eager's placements and bits:
    their steps are exact. Rows cut along axis 0 raise as eagerly. A step that
-   gives the carry another placement, and rows cut along an axis of one
-   element, which eager computation reads by rows as [Nx.get] routes them,
-   evaluate. *)
+   gives the carry another placement evaluates. *)
 
 type loop_case = { ln : int; lshape : int array; carry : cut; rows : cut }
 
@@ -436,15 +434,6 @@ let carry_cut c = match c.carry with Split _ | Mesh _ -> true | _ -> false
 
 let row_count = 3
 
-(* Whether [c]'s rows are cut along an axis of one element. *)
-let cut_unit c =
-  let rows = Array.append [| row_count |] c.lshape in
-  let unit a = a < Array.length rows && rows.(a) = 1 in
-  match c.rows with
-  | Split a -> unit a
-  | Mesh (a, b) -> unit a || unit b
-  | On | Device _ -> false
-
 let along_rows c =
   match c.rows with
   | Split 0 -> true
@@ -475,7 +464,7 @@ let scanned set c =
     | Raised _ -> false
   in
   cover "the step keeps the carry's placement" kept;
-  let compiles = kept && not (cut_unit c) in
+  let compiles = kept in
   cover "compiled over a cut carry" (compiles && carry_cut c);
   same_pair eager (jit_pair ~compiles f x xs)
 
@@ -497,6 +486,121 @@ let coordinate_scan set =
       let f x xs = Rune.scan' step ~init:x xs in
       same_pair (outcome (fun () -> f x xs)) (jit_pair ~compiles:true f x xs))
     [ 0; 1 ]
+
+(* A batch of one
+
+   A batch of one cut across the devices, read by the operations a
+   data-parallel step makes, computes where a batch of two does, the host's
+   values, compiled as eagerly, and lies where a batch of two does: a mean
+   over it on every device. A scan over rows cut along their batch axis,
+   which eager computation reads by [Nx.get], runs at a batch of one and
+   compiles. *)
+
+type batched = Rows_at of int | Squeezed | Unsqueezed | Added | Product | Mean
+
+let pp_batched ppf = function
+  | Rows_at t -> Format.fprintf ppf "get [%d] of [3; n; f] split 1" t
+  | Squeezed -> Format.pp_print_string ppf "squeeze [1] of [n; 1; f] split 0"
+  | Unsqueezed -> Format.pp_print_string ppf "unsqueeze [1] of [n; f] split 0"
+  | Added -> Format.pp_print_string ppf "[n; f] split 0 + [f] on every device"
+  | Product ->
+      Format.pp_print_string ppf "[n; f] split 0 @ [f; 3] on every device"
+  | Mean -> Format.pp_print_string ppf "mean over [n; f] split 0's batch"
+
+let batched op x w =
+  match op with
+  | Rows_at t -> Nx.get [ t ] x
+  | Squeezed -> Nx.squeeze ~axes:[ 1 ] x
+  | Unsqueezed -> Nx.unsqueeze ~axes:[ 1 ] x
+  | Added -> Nx.add x w
+  | Product -> Nx.matmul x w
+  | Mean -> Nx.mean ~axes:[ 0 ] x
+
+(* The host value of [s] counting from [0] in C order: sums and products of
+   its elements are exact. *)
+let iota s =
+  Nx.create f32 s (Array.init (Array.fold_left ( * ) 1 s) float_of_int)
+
+let batch_of_one (type d) (set : d set) (op, f) =
+  let lies = ref None in
+  List.iter
+    (fun n ->
+      let xh, axis =
+        match op with
+        | Rows_at _ -> (iota [| 3; n; f |], 1)
+        | Squeezed -> (iota [| n; 1; f |], 0)
+        | Unsqueezed | Added | Product | Mean -> (iota [| n; f |], 0)
+      in
+      let wh = match op with Product -> iota [| f; 3 |] | _ -> iota [| f |] in
+      let x = Nx.place (at set (Split axis)) xh
+      and w = Nx.place (at set On) wh in
+      let msg = Printf.sprintf "a batch of %d" n in
+      let eager = batched op x w in
+      equal ~msg bits_t (bits (batched op xh wh)) (bits eager);
+      (match !lies with
+      | None -> lies := Some (Nx.placement eager)
+      | Some two ->
+          equal ~msg:"where a batch of one lies" (placement ()) two
+            (Nx.placement eager));
+      (match op with
+      | Mean ->
+          equal ~msg:"the mean lies on every device" (placement ()) (at set On)
+            (Nx.placement eager)
+      | Rows_at _ | Squeezed | Unsqueezed | Added | Product -> ());
+      match compiled (batched op) x w with
+      | Value jit ->
+          equal ~msg:"compiled placement" (placement ()) (Nx.placement eager)
+            (Nx.placement jit);
+          equal ~msg:"compiled" bits_t (bits eager) (bits jit)
+      | Raised m -> fail ("compiled raised: " ^ m))
+    [ 2; 1 ]
+
+let batched_cases =
+  let open Gen in
+  let op =
+    one_of
+      [
+        map (fun t -> Rows_at t) (int_range 0 2);
+        of_list [ Squeezed; Unsqueezed; Added; Product; Mean ];
+      ]
+  in
+  pair op (int_range 1 4)
+  |> with_pp (fun ppf (op, f) ->
+         Format.fprintf ppf "%a, f = %d" pp_batched op f)
+
+(* A scan over rows [3; n; f], or [3; n; f; 1], cut along the batch, beside
+   a carry [n; f] or [n; f; 1] cut along it: each row lies where the carry
+   does, at a batch of one, beside features of one element too, as at two. *)
+let scan_batch_of_one set =
+  List.iter
+    (fun (n, f, trailing) ->
+      let tail = if trailing then [| 1 |] else [||] in
+      let carry = Array.append [| n; f |] tail in
+      let x = Nx.place (at set (Split 0)) (value carry) in
+      let xs =
+        Nx.place (at set (Split 1))
+          (value ~seed:1 (Array.append [| row_count |] carry))
+      in
+      let step carry row = (Nx.add (Nx.mul carry row) row, Nx.neg carry) in
+      let f x xs = Rune.scan' step ~init:x xs in
+      let eager = outcome (fun () -> f x xs) in
+      (match eager with
+      | Value (y, _) ->
+          equal ~msg:"the carry stays" (placement ()) (Nx.placement x)
+            (Nx.placement y)
+      | Raised m ->
+          fail
+            (Format.asprintf "rows %a raised: %s" Operand.pp_shape
+               (Nx.shape xs) m));
+      same_pair eager (jit_pair ~compiles:true f x xs))
+    [
+      (2, 4, false);
+      (1, 4, false);
+      (1, 1, false);
+      (2, 1, false);
+      (1, 4, true);
+      (1, 1, true);
+    ]
 
 (* A scan whose carry and rows are cut alike copies nothing between devices,
    as eager computation copies nothing. *)
@@ -1074,6 +1178,16 @@ let () =
                (fun () -> over 3 { law = coordinate_scan });
              test "an iterate reads its stop on the program's device"
                (fun () -> over 2 { law = stop_home });
+             test "a scan over a batch of one cut across devices" (fun () ->
+                 over 2 { law = scan_batch_of_one };
+                 over 4 { law = scan_batch_of_one });
+           ];
+         group "a batch of one"
+           [
+             prop "computes where a batch of two does, compiled as eagerly"
+               batched_cases (fun c ->
+                 over 2 { law = (fun set -> batch_of_one set c) };
+                 over 4 { law = (fun set -> batch_of_one set c) });
            ];
          group "an expert product's gradient in its input"
            [
