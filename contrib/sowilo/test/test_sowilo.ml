@@ -346,6 +346,15 @@ let gaussian_huge_sigma sigma =
   raises_match (Exn.invalid_arg ~sub:"sigma") (fun () ->
       gaussian_blur ~sigma img)
 
+(* The sigma prints as the shortest decimal that reads back, the same on every
+   system: the C library's [%g] wrote 1e+06, 1e+006 under mingw-w64. *)
+let gaussian_sigma_text (sigma, text) =
+  let img = create_gray_f 5 5 0.5 in
+  raises
+    (Invalid_argument
+       ("gaussian_blur: sigma must be positive without a ksize, got " ^ text))
+    (fun () -> gaussian_blur ~sigma img)
+
 let test_median_blur () =
   let img = create_gray_f 5 5 0.5 in
   let filtered = median_blur ~ksize:3 img in
@@ -1030,6 +1039,9 @@ let () =
           cases "gaussian_blur_huge_sigma" ~id:string_of_float
             [ infinity; 1e300; Float.of_int max_int ]
             gaussian_huge_sigma;
+          cases "gaussian_blur_sigma_text" ~id:snd
+            [ (-1e6, "-1000000"); (-4.58e-72, "-4.58e-72"); (-0.0, "-0") ]
+            gaussian_sigma_text;
           test "median_blur" test_median_blur;
           test "median_blur_median" test_median_blur_preserves_median;
         ];

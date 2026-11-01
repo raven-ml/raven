@@ -5,6 +5,9 @@ All notable changes to Sowilo are documented in this file. Releases up to
 
 ## Unreleased
 
+- `gaussian_blur`'s errors write sigma as the shortest decimal that reads
+  back, the same text on every system: `-1000000` where they wrote `-1e+06`,
+  or `-1e+006` under Windows.
 - **Breaking:** `threshold` and `canny` return `'d Nx.bool_t` masks, and
   `structuring_element` and the morphological operations' `~kernel` are
   host booleans whose `true` entries select the neighbourhood. They returned

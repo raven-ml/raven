@@ -22,7 +22,9 @@ let default_ksize sigma =
   let half = Float.ceil (3.0 *. sigma) in
   if not (half < Float.of_int (max_int / 2)) then
     invalid_arg
-      (Printf.sprintf "gaussian_blur: sigma %g is too large for a default ksize"
+      (Format.asprintf
+         "gaussian_blur: sigma %a is too large for a default ksize"
+         (Nx.Dtype.pp_value Nx.float64)
          sigma);
   (2 * int_of_float half) + 1
 
@@ -57,8 +59,9 @@ let gaussian_blur ~sigma ?ksize img =
     | None when positive -> default_ksize sigma
     | None ->
         invalid_arg
-          (Printf.sprintf
-             "gaussian_blur: sigma must be positive without a ksize, got %g"
+          (Format.asprintf
+             "gaussian_blur: sigma must be positive without a ksize, got %a"
+             (Nx.Dtype.pp_value Nx.float64)
              sigma)
   in
   if ksize <= 0 || ksize mod 2 = 0 then
