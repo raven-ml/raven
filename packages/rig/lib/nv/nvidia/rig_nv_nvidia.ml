@@ -1172,8 +1172,11 @@ let powered ~root bus =
 let usage ~window i =
   Rig_nv.Lock.guarded "Rig_nv_nvidia.usage" @@ fun () ->
   if i < 0 then invalid_argf "Rig_nv_nvidia.usage: GPU %d < 0" i;
+  (* The message names no value: rig has no float printer of its own, and
+     Printf's [%g] writes the C library's exponent, of three digits under
+     mingw-w64. *)
   if not (window > 0.) then
-    invalid_argf "Rig_nv_nvidia.usage: window %g is not positive" window;
+    invalid_arg "Rig_nv_nvidia.usage: the window is not positive";
   let root = "/" in
   let* bus = nth_bus ~root i in
   if not (powered ~root bus) then

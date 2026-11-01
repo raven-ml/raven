@@ -380,7 +380,12 @@ let () =
              test "a negative GPU or window raises" (fun () ->
                  raises_match Exn.invalid_arg (fun () ->
                      N.usage ~window:1. (-1));
-                 raises_match Exn.invalid_arg (fun () ->
-                     N.usage ~window:0. 0));
+                 List.iter
+                   (fun window ->
+                     raises
+                       (Invalid_argument
+                          "Rig_nv_nvidia.usage: the window is not positive")
+                       (fun () -> N.usage ~window 0))
+                   [ 0.; -1e6; -4.58e-72; Float.nan ]);
            ];
        ]
