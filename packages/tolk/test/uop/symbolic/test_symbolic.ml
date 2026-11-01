@@ -903,6 +903,9 @@ let wrapping =
   let at_u n = [ ("u", i n) ] and at_y n = [ ("y", i n) ] in
   group "integers wrap"
     [
+      test "an unsigned quotient by a weak -1 is a quotient by the greatest"
+        (fun () ->
+          keeps_machine_value Ops.O.(u // int (-1)) (List.map at_u [ 0; 1; 5; 255 ]));
       test "a negation crosses a comparison only where it does not wrap"
         (fun () ->
           let x = var ~dtype:Int8 "x" (-128) 127
