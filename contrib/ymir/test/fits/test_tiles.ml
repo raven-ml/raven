@@ -204,9 +204,8 @@ let windows =
   ]
 
 let quantizer () =
-  (* ymir quantizes as cfitsio's C source states: each tile's ZSCALE is the
-     reference noise (gen/fixtures.py, exact arithmetic), and where
-     astropy's build computes the same noise, ymir's tiles decode to
+  (* ymir quantizes as cfitsio does: each tile's ZSCALE is the one
+     cfitsio's quantizer wrote through astropy, and ymir's tiles decode to
      astropy's floats, so the zero point, dither and rounding agree. *)
   let src = require_ok (I.raw Nx.float32 (hdu "QSRC")) in
   let ours = I.quantized 16. H.empty src in
@@ -228,14 +227,7 @@ let quantizer () =
     (Array.init 10 zscale);
   let back = Nx.to_array (require_ok (I.values Nx.float32 ours)) in
   let theirs = Array.map float_of_string (expected "QREF") in
-  let same = expected "QREF/same" in
-  Array.iteri
-    (fun r s ->
-      if s = "1" then
-        equal (array float_exact)
-          (Array.sub theirs (r * 13) 13)
-          (Array.sub back (r * 13) 13))
-    same
+  equal (array float_exact) theirs back
 
 let quantized_nan () =
   let t =

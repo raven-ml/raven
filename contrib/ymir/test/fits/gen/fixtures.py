@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.13"
-# dependencies = ["astropy==7.1.0", "numpy==2.3.2"]
+# dependencies = ["astropy==7.1.0", "fitsio==1.4.2", "numpy==2.3.2"]
 # ///
 """Write the reference FITS files the ymir.fits tests read.
 
@@ -9,8 +9,11 @@
 Each image holds a pattern the tests recompute: pixel k of an image (C
 order) is pattern(k) below, in the image's stored type. astropy writes the
 files with checksums, so they are also the reference for DATASUM and
-CHECKSUM. With --check, the files are written to a temporary directory and
-compared with the committed ones. It runs on x86-64 only.
+CHECKSUM; every HDU's that carries them must pass astropy's verify_checksum
+and verify_datasum. Tile-compressed images are read back twice, by astropy and
+by cfitsio itself (fitsio 1.4.2 builds cfitsio 4.6.0), and the two must
+agree pixel for pixel. With --check, the files are written to a temporary
+directory and compared with the committed ones. It runs on x86-64 only.
 """
 
 import contextlib
@@ -23,6 +26,7 @@ import platform
 import sys
 import tempfile
 
+import fitsio
 import numpy as np
 from astropy.io import fits
 from astropy.io.fits.hdu.compressed import _codecs, _compression, _tiled_compression, compressed
@@ -234,7 +238,9 @@ def tiles(path):
                                   compression_type="RICE_1", tile_shape=(1, 2, 3)))
     # Pixels and astropy's quantization of them, by rows, with the dither
     # seed ymir derives from them: 1 plus their ones' complement sum
-    # modulo 10000.
+    # modulo 10000. astropy quantizes with cfitsio's fits_quantize_float,
+    # so its ZSCALE per row is the expected one; noise() must agree with
+    # it, which pins down the C source's roundings.
     src = (100 + 5 * rng.standard_normal(n)).astype(np.float32)
     src[[7, 90]] = 0.0
     hdus.append(fits.ImageHDU(src.reshape(shape), name="QSRC"))
@@ -245,12 +251,12 @@ def tiles(path):
     with fits.open(path) as hdul:
         values(path.with_suffix(".values"), hdul, scaled=False)
     with fits.open(path, disable_image_compression=True) as hdul:
-        zscale = [noise(row) / 16.0 for row in src.reshape(shape)]
-        theirs = hdul["QREF"].data["ZSCALE"]
-        same = [float(a) == b for a, b in zip(theirs, zscale)]
-        with open(path.with_suffix(".values"), "a") as f:
-            f.write(" ".join(["QREF/zscale"] + [text(x) for x in zscale]) + "\n")
-            f.write(" ".join(["QREF/same"] + ["1" if x else "0" for x in same]) + "\n")
+        theirs = [float(x) for x in hdul["QREF"].data["ZSCALE"]]
+    ours = [noise(row) / 16.0 for row in src.reshape(shape)]
+    if theirs != ours:
+        sys.exit(f"cfitsio's ZSCALE {theirs} is not the noise estimate's {ours}")
+    with open(path.with_suffix(".values"), "a") as f:
+        f.write(" ".join(["QREF/zscale"] + [text(x) for x in theirs]) + "\n")
 
 
 @contextlib.contextmanager
@@ -351,11 +357,15 @@ def hcompress(path):
     write(path, hdus)
     with fits.open(path) as hdul:
         values(path.with_suffix(".values"), hdul, scaled=False)
-    # Lossy tiles that decode past their type. cfitsio's int16 reader
-    # clamps there; astropy casts the 32-bit pixels its decoder packs,
-    # wrapping those past the type, and its decoder packs each 64-bit
-    # pixel into 32 bits. The int32 tile's pixels lie within 2^30 of
-    # int32's top, so a negative one wrapped once.
+    # Lossy tiles that decode past their type, whose values are the
+    # decoded ones clamped to the type. astropy casts the 32-bit pixels its
+    # decoder packs, wrapping those past the type, so cfitsio reads them:
+    # its int16 and uint8 readers clamp (the uint8 one reporting
+    # NUM_OVERFLOW). Its int32 reader decodes in 32-bit arithmetic, which
+    # wraps, so that tile's values are its exact 64-bit decode clamped,
+    # and must be cfitsio's where cfitsio does not wrap. astropy's decoder
+    # packs each 64-bit pixel into 32 bits; the int32 tile's pixels lie
+    # within 2^30 of int32's top, so a negative one wrapped once.
     lines = path.with_suffix(".values").read_text().splitlines()
     with fits.open(path, disable_image_compression=True) as hdul:
         for name, scale, lo, hi in [("H_CLIP", 256, -32768, 32767),
@@ -368,9 +378,70 @@ def hcompress(path):
                 decoded = np.where(decoded < 0, decoded + 2**32, decoded)
                 assert (decoded > 2**30).all()
             assert (decoded > hi).any() or (decoded < lo).any()
+            clamped = np.clip(decoded, lo, hi).reshape(8, 9)
+            cfitsio = cfitsio_read(path, name)
+            if name == "H_CLIP_I32":
+                inside = decoded.reshape(8, 9) <= hi
+                if not np.array_equal(cfitsio[inside], clamped[inside]):
+                    sys.exit(f"cfitsio decodes {name} otherwise within int32")
+                expected = clamped
+            else:
+                expected = cfitsio
             lines = [l for l in lines if not l.startswith(name + " ")]
-            lines.append(" ".join([name] + [text(v) for v in np.clip(decoded, lo, hi)]))
+            lines.append(" ".join([name] + [text(v) for v in expected.ravel()]))
     path.with_suffix(".values").write_text("\n".join(lines) + "\n")
+
+
+NUM_OVERFLOW = -11
+
+
+def cfitsio_read(path, name):
+    """cfitsio's reading of image [name] in its stored type, clamped where a
+    pixel overflows the type, as cfitsio fills it when it reports
+    NUM_OVERFLOW. fitsio raises on that status after the fill, so this
+    calls its reader directly."""
+    with fitsio.FITS(str(path)) as f:
+        hdu = f[name]
+        out = np.zeros(hdu.get_dims(), dtype=hdu._get_image_numpy_dtype())
+        try:
+            f._FITS.read_image(hdu._ext + 1, out)
+        except OSError as e:
+            if f"status = {NUM_OVERFLOW}:" not in str(e):
+                raise
+    return out
+
+
+# Tiles cfitsio 4.6.0 does not decompress: 64-bit integers ("unsupported
+# datatype for uncompressing image") and NOCOMPRESS ("unknown compression
+# algorithm").
+CFITSIO_CANNOT = {"GZIP2_I64", "NOCOMP_I16"}
+
+
+def agree_with_cfitsio(path):
+    """Fail unless cfitsio reads every tile-compressed image of [path] as
+    astropy does, NaN for NaN, except the tiles that overflow their type
+    and those cfitsio cannot read."""
+    with fits.open(path) as hdul:
+        for hdu in hdul:
+            if not isinstance(hdu, fits.CompImageHDU) or hdu.name.startswith("H_CLIP"):
+                continue
+            if hdu.name in CFITSIO_CANNOT:
+                continue
+            theirs = fitsio.read(str(path), ext=hdu.name)
+            ours = np.asarray(hdu.data)
+            if theirs.dtype != ours.dtype or not np.array_equal(theirs, ours, equal_nan=ours.dtype.kind == "f"):
+                sys.exit(f"{path.name}: cfitsio reads {hdu.name} otherwise than astropy")
+
+
+def verify_checksums(path):
+    """Fail unless each HDU's CHECKSUM and DATASUM, where present, pass
+    astropy's check of the bytes as stored."""
+    with fits.open(path, disable_image_compression=True) as hdul:
+        for i, hdu in enumerate(hdul):
+            bad = ("CHECKSUM" in hdu.header and hdu.verify_checksum() != 1
+                   or "DATASUM" in hdu.header and hdu.verify_datasum() != 1)
+            if bad:
+                sys.exit(f"{path.name}: HDU {i} fails astropy's checksum")
 
 
 def tables(path):
@@ -571,6 +642,11 @@ def write_all(directory):
     plio(directory / "plio.fits")
     with thin_hcompress_tiles():
         hcompress(directory / "hcompress.fits")
+        agree_with_cfitsio(directory / "hcompress.fits")
+    for name in ("images", "tiles", "tables", "plio", "hcompress"):
+        verify_checksums(directory / f"{name}.fits")
+    for name in ("tiles", "plio"):
+        agree_with_cfitsio(directory / f"{name}.fits")
 
 
 def main():
