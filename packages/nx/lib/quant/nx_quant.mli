@@ -32,11 +32,11 @@
     at its blocks' boundaries where [t] divides [b]: each device decodes its
     own blocks, {!dequant}'s result is cut along [k] as the parts are, and
     {!apply} sums the devices' partial products. {!apply}'s product of an
-    [Mxfp4] weight read where it lies reads the codes where they lie, at
-    either cut, each device decoding its own blocks as it sums them. Any
-    other cut along [k] splits a block, which is read whole, so {!dequant}
-    and {!apply} raise as the operation reading it does, naming the
-    {!Nx.place} that puts it whole on each device.
+    [Mxfp4] or [Q8_0] weight read where it lies reads the bytes where they
+    lie, at either cut, each device decoding its own blocks as it sums
+    them. Any other cut along [k] splits a block, which is read whole, so
+    {!dequant} and {!apply} raise as the operation reading it does, naming
+    the {!Nx.place} that puts it whole on each device.
 
     {!take} gathers before decoding, so a caller reads a large table's rows
     without decoding the table. Routing positions to a stack of weights, as a
@@ -176,11 +176,12 @@ val apply : 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
     broadcast as {!Nx.matmul}'s, and the result is [[| …; m; n |]], or
     [[| …; n |]] for a vector.
 
-    An [Mxfp4] weight applied to a float32, bfloat16 or float16 [x] is read
-    where it lies: the product decodes each block as it sums it and stores
-    no decoded weight. Any other product first decodes [w] as {!dequant}
-    does, at [x]'s dtype or at float32. Read where it lies, the product
-    needs kernels that compute a block-scaled contraction, as nx.cpu's do.
+    An [Mxfp4] or [Q8_0] weight applied to a float32, bfloat16 or float16
+    [x] is read where it lies: the product decodes each block as it sums it
+    and stores no decoded weight. Any other product first decodes [w] as
+    {!dequant} does, at [x]'s dtype or at float32. Read where it lies, the
+    product needs kernels that compute a block-scaled contraction, as
+    nx.cpu's do.
 
     Raises [Invalid_argument] if [w] is read where it lies on a set whose
     kernels decline that contraction, if [x] is 0-d, if [x]'s last axis is

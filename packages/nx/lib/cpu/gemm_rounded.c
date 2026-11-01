@@ -120,7 +120,7 @@ int nx_gemm_rounded_on(int acc, int sum, int order, nx_contract_runs *r,
     if (acc == sum ||
         (!split && kind != NX_KIND_FLOAT && kind != NX_KIND_COMPLEX))
       continue;
-    done = nx_gemm_stage_runs(r, o, gs[o], acc, op[o], NULL, &z[o]);
+    done = nx_gemm_stage_runs(r, o, gs[o], acc, op[o], &z[o]);
     if (done) ops[o] = &z[o];
   }
   if (done)

@@ -357,19 +357,65 @@ let at_float32 (type b d) (x : (float, b, d) Nx.t) =
   | Nx.Dtype.Float32 | Nx.Dtype.Bfloat16 | Nx.Dtype.Float16 -> true
   | _ -> false
 
-(* [scaled ~by x codes scales] is the product of [x], [[| …; m; k |]] or
-   [[| k |]], with the MXFP4 weight of [codes] and [scales], [[| …; n; k |]],
-   in one contraction that reads the codes as float4 values and the scales as
-   their blocks' exponents: each element of the weight enters the sum as its
-   value, exact at float32. Its axes are planned as [Nx.matmul] plans them,
-   so that it sums in the order, and gives the bits, of [x] by the decoded
-   weight transposed: a leading axis is a batch axis where both operands hold
-   the result's extent, else a free axis of the operand that holds it, from
-   which a unit axis of the other drops. *)
-let scaled ~by x codes scales =
-  let ws = shape (Mxfp4 { codes; scales }) and xs = Nx.shape x in
+(* A weight read where it lies: its elements, of [[| …; n |]] then [inner]
+   once reshaped, [k] as one axis or as its blocks and their values where a
+   block's scale lies between its values, and their blocks' scales, of
+   [[| …; n |]] then [blocks]. *)
+type 'd stored =
+  | Stored : {
+      elements : ('v, 's, 'd) Nx.t;
+      inner : int list;
+      scales : 'd Nx.Prim.scale;
+      blocks : int list;
+    }
+      -> 'd stored
+
+(* [stored ws w] is [w], of shape [ws], read where it lies, if its format
+   is: MXFP4's codes as float4 values and its scales as their groups'
+   exponents, Q8_0's quants as int8 and its float16 scales as values. Each
+   element times its scale is the value [dequant] gives, exact at
+   float32. *)
+let stored ws w =
+  let k = ws.(Array.length ws - 1) in
+  match w with
+  | Mxfp4 { codes; scales } ->
+      let elements = Nx.bitcast Nx.float4_e2m1fn codes in
+      Some
+        (Stored
+           {
+             elements;
+             inner = [ k ];
+             scales = Exponent scales;
+             blocks = [ k / mxfp4_group ];
+           })
+  | Q8_0 { blocks } ->
+      let b = split ~bytes:q8_0_bytes blocks and nb = k / qk8_0 in
+      let elements = Nx.bitcast Nx.int8 (bytes b half_bytes q8_0_bytes) in
+      let d = Nx.bitcast Nx.float16 (bytes b 0 half_bytes) in
+      Some
+        (Stored
+           {
+             elements;
+             inner = [ nb; qk8_0 ];
+             scales = Value d;
+             blocks = [ nb; 1 ];
+           })
+  | Mxfp4_blocks _ | Q4_K _ | Q6_K _ -> None
+
+(* [scaled ~by x ws s] is the product of [x], [[| …; m; k |]] or [[| k |]],
+   with a weight of shape [ws], [[| …; n; k |]], stored as [s], in one
+   contraction of [x]'s [k] with the elements' [inner] axes, each element
+   of the weight entering the sum as its value. Its axes are planned as
+   [Nx.matmul] plans them: a leading axis is a batch axis where both
+   operands hold the result's extent, else a free axis of the operand that
+   holds it, from which a unit axis of the other drops. It sums in the
+   order, and gives the bits, of [x] by the decoded weight transposed:
+   nx.cpu numbers the products of several contracted axes as of one. *)
+let scaled ~by x ws (Stored { elements; inner; scales; blocks }) =
+  let xs = Nx.shape x in
   let wr = Array.length ws and xr = Array.length xs in
-  let k = ws.(wr - 1) and n = ws.(wr - 2) in
+  let p = List.length inner in
+  let n = ws.(wr - 2) in
   let lead_w = Array.sub ws 0 (wr - 2) in
   let lead_x = if xr <= 2 then [||] else Array.sub xs 0 (xr - 2) in
   let lead = Nx.broadcast_shapes [ lead_x; lead_w ] in
@@ -386,15 +432,21 @@ let scaled ~by x codes scales =
   let index ax i = Option.get (List.find_index (Int.equal i) ax) in
   let extents ax last = Array.of_list (List.map (Array.get lead) ax @ last) in
   let m = if xr = 1 then [] else [ xs.(xr - 2) ] in
-  let a = Nx.reshape (extents x_lead (m @ [ k ])) x in
-  let b =
-    Nx.reshape (extents w_lead [ n; k ]) (Nx.bitcast Nx.float4_e2m1fn codes)
+  let a = Nx.reshape (extents x_lead (m @ inner)) x in
+  let b = Nx.reshape (extents w_lead (n :: inner)) elements in
+  let s = extents w_lead (n :: blocks) in
+  let b_scale : _ Nx.Prim.scale =
+    match scales with
+    | Exponent e -> Exponent (Nx.reshape s e)
+    | Value v -> Value (Nx.reshape s v)
   in
-  let s = Nx.reshape (extents w_lead [ n; k / mxfp4_group ]) scales in
   let batch =
     Iarray.of_list (List.map (fun i -> (index x_lead i, index w_lead i)) both)
   in
-  let contracting = Iarray.of_list [ (Nx.ndim a - 1, Nx.ndim b - 1) ] in
+  let ra = Nx.ndim a and rb = Nx.ndim b in
+  let contracting =
+    Iarray.of_list (List.init p (fun i -> (ra - p + i, rb - p + i)))
+  in
   let y =
     Nx.Prim.eval ~by
       (Contract
@@ -407,7 +459,7 @@ let scaled ~by x codes scales =
            b;
            init = None;
            a_scale = None;
-           b_scale = Some (Exponent s);
+           b_scale = Some b_scale;
            segments = None;
          })
   in
@@ -422,15 +474,15 @@ let scaled ~by x codes scales =
   else Nx.transpose ~axes:(List.map (index kernel) result) y
 
 let apply w x =
-  check_input (shape w) (Nx.shape x);
+  let ws = shape w in
+  check_input ws (Nx.shape x);
   let dt = Nx.dtype x in
-  match w with
-  | Mxfp4 { codes; scales } when at_float32 x ->
-      if exact dt w then scaled ~by:"Nx_quant.apply" x codes scales
-      else
-        Nx.cast dt
-          (scaled ~by:"Nx_quant.apply" (Nx.cast Nx.float32 x) codes scales)
-  | _ ->
+  let by = "Nx_quant.apply" in
+  match if at_float32 x then stored ws w else None with
+  | Some s ->
+      if exact dt w then scaled ~by x ws s
+      else Nx.cast dt (scaled ~by (Nx.cast Nx.float32 x) ws s)
+  | None ->
       if exact dt w then Nx.matmul x (Nx.matrix_transpose (dequant dt w))
       else
         Nx.cast dt

@@ -65,46 +65,22 @@ static void outer_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
-/* Multiplies the copy at [y] of a scaled operand, of acc [dt], laid out as
-   nx_gemm_stage_runs lays it, its groups [gs] whole, by its scales [s]. */
-static void scale_runs(const nx_contract_runs *r, const int *gs, int dt,
-                       const scale *s, uint8_t *y) {
-  int64_t n[3] = {1, 1, 1};
-  for (int t = 0; t < 3; t++)
-    for (int k = 0; k < r->runs[gs[t]]; k++) n[t] *= r->extent[gs[t]][k];
-  const int64_t *t0 = s->t[gs[0]], *t1 = s->t[gs[1]], *t2 = s->t[gs[2]];
-  for (int64_t e = 0; e < n[0]; e++)
-    for (int64_t i = 0; i < n[1]; i++) {
-      int64_t at = t0[e] + t1[i], row = (e * n[1] + i) * n[2];
-      if (dt == NX_FLOAT32) {
-        float *d = (float *)y + row;
-        const float *v = (const float *)s->v + at;
-        for (int64_t k = 0; k < n[2]; k++) d[k] *= v[t2[k]];
-      } else {
-        double *d = (double *)y + row;
-        const double *v = (const double *)s->v + at;
-        for (int64_t k = 0; k < n[2]; k++) d[k] *= v[t2[k]];
-      }
-    }
-}
-
 /* Copies operand [o] of [r] into scratch (nx_cpu_take) of the dtype [dt],
    cast where it is not [src]'s, where its runs lie in C order, groups [gs]
    in turn, skipping runs it steps 0 along but the contracted ones, and
    lays [r] out over it in [x]: 0 if the scratch could not be allocated.
    The copies hold the operand's elements, O(a + b) for a and b. A scaled
-   operand, [s] not NULL, is copied into acc, [dt], with each element times
-   its scale (stage_at), skipping no run: its scales may differ where its
-   elements do not. */
+   operand is never copied: its contraction reads it along spans
+   (nx_gemm_spanned). */
 int nx_gemm_stage_runs(nx_contract_runs *r, int o, const int *gs, int dt,
-                       const nx_array *src, const scale *s, nx_array *x) {
+                       const nx_array *src, nx_array *x) {
   nx_loop l = {.first = {0, r->offset[o]}};
   int64_t *at[NX_MAX_RANK], n = 1;
   int rank = 0;
   for (int t = 0; t < 3; t++) {
     int g = gs[t];
     for (int k = 0; k < r->runs[g]; k++) {
-      if (r->stride[o][g][k] == 0 && g != CON && s == NULL) continue;
+      if (r->stride[o][g][k] == 0 && g != CON) continue;
       l.extent[rank] = r->extent[g][k];
       l.step[1][rank] = r->stride[o][g][k];
       at[rank++] = &r->stride[o][g][k];
@@ -131,7 +107,6 @@ int nx_gemm_stage_runs(nx_contract_runs *r, int o, const int *gs, int dt,
                      nx_cpu_kind_cost(1, NX_OP1_COPY, dt, dt));
   else nx_cpu_cast_loop(x, src, &l, nx_cpu_cast_cost(src->dtype, dt));
   r->offset[o] = 0;
-  if (s) scale_runs(r, gs, dt, s, base);
   return 1;
 }
 
@@ -181,9 +156,7 @@ static void spread(nx_contract_runs *r, int x, int read, reads *sp) {
 }
 
 /* The contraction of [r]'s groups over [op], as nx_gemm_contract_view's,
-   a and b scaled by [s] where it is not NULL: 0 if an allocation failed.
-   A scaled operand copied (nx_gemm_stage_runs) is copied scaled, and read
-   unscaled. */
+   a and b scaled by [s] where it is not NULL: 0 if an allocation failed. */
 int nx_gemm_runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
                     const nx_array *const *op, const scale *s) {
   for (int g = BATCH; g <= COL; g++)
@@ -191,8 +164,6 @@ int nx_gemm_runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
       if (r->extent[g][k] == 0) return 1;
   nx_array x[2];
   const nx_array *ops[4] = {op[A], op[B], op[INIT], op[DST]};
-  scale kept[2] = {{0}};
-  if (s) memcpy(kept, s, sizeof kept);
   reads sp = {0};
   int packs = nx_gemm_spanned(acc, da, db, s);
   int staged = r->runs[CON] > 1 && !merges(r), done = 0;
@@ -205,22 +176,18 @@ int nx_gemm_runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
   if (staged) {
     static const int gs[2][3] = {{BATCH, ROW, CON}, {BATCH, COL, CON}};
     for (int o = A; o <= B; o++) {
-      const scale *so = kept[o].v ? &kept[o] : NULL;
-      int dt = so ? acc : op[o]->dtype;
-      if (!nx_gemm_stage_runs(r, o, gs[o], dt, op[o], so, &x[o])) {
+      if (!nx_gemm_stage_runs(r, o, gs[o], op[o]->dtype, op[o], &x[o])) {
         if (o == B) nx_cpu_give(x[A].base);
         return 0;
       }
       ops[o] = &x[o];
-      kept[o] = (scale){0};
     }
     da = ops[A]->dtype;
     db = ops[B]->dtype;
     merges(r);
   }
-  int scaled = kept[A].v || kept[B].v;
   outer q = {.acc = acc, .order = order, .da = da, .db = db, .op = ops,
-             .s = scaled ? kept : NULL, .sp = packs ? &sp : NULL};
+             .s = s, .sp = packs ? &sp : NULL};
   atomic_init(&q.failed, 0);
   int64_t units = 1;
   for (int g = BATCH; g <= CON; g++) {

@@ -3408,6 +3408,12 @@ thread.
 
 ### Nx
 
+- `Nx_quant.apply` reads a Q8_0 weight where it lies at float32,
+  bfloat16 and float16 inputs, as it reads MXFP4: it decoded the whole
+  weight at float32 on every call.
+- nx.cpu reads a scaled contraction operand whose axes make several runs
+  where it lies, scaling each run of a block once: it copied the operand
+  whole, scaled, on every call.
 - On Linux, `Nx.fft` and `Nx.ifft` of a complex line, and `Nx.rfft` and
   `Nx.irfft` of an even one, of at least 32 MiB and past the largest cache
   keep the four-step grid in their result. They took scratch that the C

@@ -280,7 +280,7 @@ int nx_gemm_quads_on(const nx_cpu_gemm *g, int acc, const nx_contract_view *v,
 /* gemm_runs.c */
 
 int nx_gemm_stage_runs(nx_contract_runs *r, int o, const int *gs, int dt,
-                       const nx_array *src, const scale *s, nx_array *x);
+                       const nx_array *src, nx_array *x);
 int nx_gemm_runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
                     const nx_array *const *op, const scale *s);
 

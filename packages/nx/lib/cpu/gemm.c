@@ -228,40 +228,58 @@ static int stage_f4(const problem *p, int o, const int64_t *c, int x0,
   return 1;
 }
 
+/* Row [r] of a staged block in acc's type [T], [n0] elements at dst,
+   each times its scale: the scales at s->v from [at], element u's at
+   t0[u], or a run's, along k from c[CON], where [runs]. */
+#define SCALE_ROW(T)                                                      \
+  do {                                                                    \
+    T *d = (T *)dst + r * pitch;                                          \
+    const T *v = (const T *)s->v + at;                                    \
+    if (!runs) {                                                          \
+      for (int64_t u = 0; u < n0; u++) d[u] *= v[t0[u]];                  \
+      break;                                                              \
+    }                                                                     \
+    for (int64_t u = 0, m; u < n0; u += m) {                              \
+      m = min64(n0 - u, s->run - (c[CON] + u) % s->run);                  \
+      T sv = v[t0[u]];                                                    \
+      for (int64_t l = 0; l < m; l++) d[u + l] *= sv;                     \
+    }                                                                     \
+  } while (0)
+
 /* Stages operand [o]'s block as stage_acc does, from its element
    (e, i, j, k), [n0] along axis [x0] in a row and [n1] rows along [x1]:
    along an axis of several runs, piece by piece as nx_gemm_pack_at reads it, so
-   that the operand is read where it lies; otherwise in one stage, each
-   element of a scaled operand, whose axes are one run each, times its
-   block's scale, rounded once in acc, a float32 or float64. */
+   that the operand is read where it lies; otherwise in one stage. Each
+   element of a scaled operand is then times its block's scale, rounded
+   once in acc, a float32 or float64: the scales' tables index the
+   operand's elements whatever runs its axes make, so a Q8_0 weight, its
+   blocks' quants between their scales, is read where it lies. */
 static void stage_at(const problem *p, int o, int64_t e, int64_t i,
                      int64_t j, int64_t k, int x0, int x1, int64_t n0,
                      int64_t n1, uint8_t *dst, int64_t pitch) {
   const operand *q = &p->op[o];
   const int64_t c[4] = {e, i, j, k};
-  if (q->sp[x0] || q->sp[x1]) {
+  if (q->sp[x0] || q->sp[x1])
     nx_gemm_pack_at(p, NULL, o, c, x0, x1, n0, n1, dst, pitch);
+  else if (q->s && stage_f4(p, o, c, x0, x1, n0, n1, dst, pitch))
     return;
-  }
-  if (q->s && stage_f4(p, o, c, x0, x1, n0, n1, dst, pitch)) return;
-  stage_acc(p, o, pos(p, o, e, i, j, k), q->st[x0], q->st[x1], n0, n1, dst,
-            pitch);
+  else
+    stage_acc(p, o, pos(p, o, e, i, j, k), q->st[x0], q->st[x1], n0, n1,
+              dst, pitch);
   if (q->s == NULL) return;
   const scale *s = q->s;
   const int64_t *t0 = s->t[x0] + c[x0];
+  /* Along k, a run of s->run elements takes one scale: each run's is
+     read once, and its elements multiplied by it in a loop the compiler
+     vectorises, where a table lookup an element costs more than the
+     stage. */
+  int runs = x0 == CON && s->run > 1;
   for (int64_t r = 0; r < n1; r++) {
     int64_t at = 0;
     for (int x = BATCH; x <= CON; x++)
       if (x != x0 && s->t[x]) at += s->t[x][c[x] + (x == x1 ? r : 0)];
-    if (p->acc == NX_FLOAT32) {
-      float *d = (float *)dst + r * pitch;
-      const float *v = (const float *)s->v + at;
-      for (int64_t u = 0; u < n0; u++) d[u] *= v[t0[u]];
-    } else {
-      double *d = (double *)dst + r * pitch;
-      const double *v = (const double *)s->v + at;
-      for (int64_t u = 0; u < n0; u++) d[u] *= v[t0[u]];
-    }
+    if (p->acc == NX_FLOAT32) SCALE_ROW(float);
+    else SCALE_ROW(double);
   }
 }
 
@@ -1640,7 +1658,7 @@ int nx_gemm_contract_view(int acc, int order, int da, int db,
                           const nx_contract_view *v, const nx_array *const *op,
                           const scale *s, const reads *sp) {
   const nx_cpu_gemm *g = &nx_cpu_table->gemm[acc];
-  if (s) return nx_gemm_contract_with(g, acc, order, v, op, s, NULL);
+  if (s) return nx_gemm_contract_with(g, acc, order, v, op, s, sp);
   const nx_cpu_gemm *quads = nx_gemm_quads_for(acc, da, db);
   if (quads) return nx_gemm_quads_on(quads, acc, v, op);
   if (part_of(acc) != acc) return nx_gemm_complex_on(acc, order, v, op, sp);
@@ -1648,10 +1666,11 @@ int nx_gemm_contract_view(int acc, int order, int da, int db,
 }
 
 /* Whether nx_gemm_contract_view reads a and b along spans: chain order's packs
-   and lane order's stages do, and a complex contraction's parts of a and
-   blocks of b, where it is unscaled and no quads take it. */
+   and lane order's stages do, scaled or not, and a complex contraction's
+   parts of a and blocks of b, where no quads take it. A scaled contraction
+   takes no quads. */
 int nx_gemm_spanned(int acc, int da, int db, const scale *s) {
-  return s == NULL && nx_gemm_quads_for(acc, da, db) == NULL;
+  return s != NULL || nx_gemm_quads_for(acc, da, db) == NULL;
 }
 
 /* The cost of [e] products of the extents [m], [n] and [k] in chain order

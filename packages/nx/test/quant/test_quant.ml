@@ -757,6 +757,28 @@ let values_and_products =
           equal (array int64)
             (product_bits (equation w x))
             (product_bits (Nx_quant.apply w x)));
+      (* The drawn products have at most 3 rows and 4 columns, which nx.cpu
+         sums in lane order; these take chain order, more than 4 of each
+         and 64 outputs or more. *)
+      cases "apply is its equation, bit for bit, over many rows and columns"
+        ~id:(fun (f, F d, lead) ->
+          Printf.sprintf "%s, %s, %d leading axes" (format_name f)
+            (D.name d.dtype) (List.length lead))
+        (List.concat_map
+           (fun f ->
+             List.concat_map
+               (fun d -> [ (f, d, []); (f, d, [ 2 ]) ])
+               [ f32; List.nth fdts 1 ])
+           formats)
+        (fun (format, F d, lead) ->
+          let lead = Array.of_list lead in
+          let w = random_weight ~format (Array.append lead [| 12; 256 |]) in
+          let x =
+            Nx.cast d.dtype (random_floats (Array.append lead [| 8; 256 |]))
+          in
+          equal (array int64)
+            (product_bits (equation w x))
+            (product_bits (Nx_quant.apply w x)));
       test "a float64 input accumulates at float64" (fun () ->
           (* Every value of this weight is 1: each output sums the input. *)
           let w =
@@ -1117,6 +1139,36 @@ let work_law (f, n, b, t) =
     let one = per_row f n b Counted_one.on and cut = cut () in
     equal ~msg:"the positions per row over one device's" (pair int int) (1, 0)
       (cut / one, cut mod one)
+
+(* A product's format, rows and blocks. *)
+let applies =
+  let open Gen in
+  with_pp
+    (fun ppf (f, n, b) ->
+      Format.fprintf ppf "%a, %d rows of %d blocks" pp_format f n b)
+    (triple format (int_range 1 3) (int_range 1 4))
+
+(* A float32 product reads an MXFP4 or Q8_0 weight where it lies and decodes
+   none of its values; any other weight it decodes as [dequant] does. The
+   positions of [2 n] rows less those of [n] are the decoding's alone. *)
+let applies_law (f, n, b) =
+  List.iter
+    (fun f' -> cover ("a " ^ format_name f' ^ " weight") (f = f'))
+    formats;
+  let k = b * block_values f in
+  let x = Nx.place Counted_one.on (random_floats [| 2; k |]) in
+  let rows n = random_weight ~format:f [| n; k |] in
+  let applying n =
+    let w = Nx_quant.place Counted_one.on (rows n) in
+    C.reset ();
+    ignore (Nx.to_array (Nx_quant.apply w x));
+    C.positions ()
+  in
+  let decoded =
+    decoding Counted_one.on (rows (2 * n)) - decoding Counted_one.on (rows n)
+  in
+  let want = match f with Mxfp4 | Q8_0 -> 0 | _ -> decoded in
+  equal ~msg:"the positions of n rows" int want (applying (2 * n) - applying n)
 
 (* An expert product's format, input dtype, experts, rows and ids, in range,
    repeated or not, and out of range. *)
@@ -1549,6 +1601,10 @@ let placements =
         "a cut along k decodes each block once where its tiles divide the \
          blocks, and raises otherwise"
         work work_law;
+      prop
+        "a float32 product decodes no value of an MXFP4 or Q8_0 weight, and \
+         any other weight as dequant does"
+        applies applies_law;
       prop "an expert product decodes a matrix per slot, min (positions, \
          experts), or none read where it lies"
         decodes decodes_law;
