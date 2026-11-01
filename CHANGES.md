@@ -811,6 +811,10 @@ thread.
   solves (`x + y < c`, `x * y < c`) apply to signed and index integers only,
   `(x // c + a) // d` to index integers only, and `Symbolic.reduce_mul_chain`
   moves no factor out of an unsigned maximum: unsigned arithmetic wraps.
+- C-style sources compute an addition, subtraction, product, negation, left
+  shift or multiply-add on an unsigned char or short in an unsigned int and
+  narrow after: C computes them in `int`, where `65535 * 65535` overflows,
+  which is undefined.
 - **Breaking:** `Ops.Upat.v` and `Ops.Upat.op` take no `?tag`, and
   `Ops.remove_all_tags` is gone: patterns ignore tags.
 - **Breaking:** the `ALIGNED` setting (`Setting.aligned`) is gone: Clang's

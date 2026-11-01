@@ -518,21 +518,26 @@ folds to `True` there as in `Shape.fold_const_alu`; tinygrad's
   GPU kernel compiles with its target's toolchain › cuda_*` (slow, skipped
   without NVRTC).
 
-## D17. Each operation on a narrow scalar is narrowed in the source
+## D17. Each operation on a narrow signed scalar is narrowed in the source
 
-- **tinygrad:** `renderer/cstyle.py:250-255` (an ALU used once is inlined into
-  its user, whatever its type) with `:64-65` (the operator text).
+- **tinygrad:** `renderer/cstyle.py:254-259` (an ALU used once is inlined into
+  its user, whatever its type) with `:64-65` (the operator text);
+  `:79-81` (`pm_narrow_uint`), which computes the operations on an unsigned
+  char or short that wrap in an unsigned int and casts them back, for these
+  two types only.
 - **tolk:** `Cstyle.lang`'s field `promoted`, set in `Cstyle.cstyle` and
   `Cstyle.clang_lang`; `Cstyle.render_uops` (`narrowed`, and the cast in
   `visit`); `Cstyle.base_rewrite` (an operand's parentheses).
-- **Differs:** C, C++ and Metal compute an operation on a `char`,
-  `unsigned char`, `short` or `unsigned short` in `int`, and Clang computes
-  one on an `__fp16`, a storage format, in `float`. Only an assignment
-  narrows the result back, so an inlined operation neither wraps nor rounds
-  until the kernel stores: `(uchar)16 + 86` times `3`, cast to float, gives
-  `306` where each operation wrapping gives `50`. The source is tinygrad's
-  for the kernel with a cast to its own type after each inlined scalar
-  operation of one of these types that its user does not store. Vectors are not promoted, and CUDA's `__half` and
+- **Differs:** C, C++ and Metal compute an operation on a `char` or `short`
+  in `int`, and Clang computes one on an `__fp16`, a storage format, in
+  `float`. Only an assignment narrows the result back, so an inlined
+  operation neither wraps nor rounds until the kernel stores: `(char)100 +
+  100`, halved, gives `100` where each operation wrapping gives `-28`. The
+  source is tinygrad's for the kernel with a cast to its own type after each
+  inlined scalar operation of one of these types that its user does not
+  store. The unsigned types take tinygrad's rule, whose unsigned int computes
+  each wrapping operation without the signed overflow of `int` that
+  `65535 * 65535` would be. Vectors are not promoted, and CUDA's `__half` and
   `nv_bfloat16`, HIP's `_Float16` and Metal's `half` and `bfloat` compute
   natively, so they keep tinygrad's source; so does every kernel without such
   an inlined operation. Clang's, HIP's and Metal's rules were checked with
@@ -544,12 +549,12 @@ folds to `True` there as in `Shape.fold_const_alu`; tinygrad's
   interpreter do.
 - **Pinned by:** `Tolk.Cstyle › narrowing`, which checks for every
   kernel that the kernel whose tinygrad source is its source is the kernel
-  with those casts, and `Tolk.Cstyle › sources`, which compares the 21
+  with those casts, and `Tolk.Cstyle › sources`, which compares the
   sources it changes with tinygrad's for that kernel; `Tolk.Cstyle ›
-  execution on the host › wraps each operation on unsigned chars` and
-  `› rounds each operation on halves to a half`; and the slow
-  `Tolk.Cstyle › execution on the host › a kernel over a narrow type wraps
-  and rounds as the interpreter`, over each type's whole range.
+  execution on the host › rounds each operation on halves to a half`; and
+  the slow `Tolk.Cstyle › execution on the host › a kernel over a narrow
+  type wraps and rounds as the interpreter`, over each type's whole range.
+  The unsigned types' rule: `› wraps each operation on unsigned chars`.
 
 ## D18. Withdrawn
 

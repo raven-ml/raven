@@ -71,15 +71,15 @@ let sources =
       @@ group "with EXPAND_SSA=1" (sources_under "EXPAND_SSA=1");
     ]
 
-(* C computes an operation on a char, a short or Clang's __fp16 in a wider type,
-   so the source casts each such operation back to its type: an operation on a
+(* C computes an operation on a signed char, a short or Clang's __fp16 in a
+   wider type, so the source casts each such operation back to its type: an operation on a
    scalar of one of these types, inlined into its one user, which does not store
    it. The source of a kernel is then tinygrad's for the kernel with those
    casts, which [with_d17_casts row uops] builds and cases.golden's column
    narrowed names. *)
 
 let narrow_scalars row =
-  Dtype.[ Int8; Uint8; Int16; Uint16 ]
+  Dtype.[ Int8; Int16 ]
   @ if row "renderer" = "CLANG" then [ Dtype.Float16 ] else []
 
 let with_d17_casts row uops =

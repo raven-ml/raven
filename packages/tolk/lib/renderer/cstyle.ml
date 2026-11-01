@@ -459,6 +459,22 @@ let on_floats x =
     ~src:(List.map (fun v -> cast v Dtype.Float32) (src x))
     ~arg:(arg x) (op x)
 
+(* C promotes an unsigned char or short to int, whose overflow is undefined:
+   65535 * 65535 overflows it. The operations that wrap compute in an unsigned
+   int and narrow after. *)
+let pm_narrow_uint =
+  Pattern_matcher.v
+    (fun () -> [
+      rule
+        (Upat.v
+           ~op:(Op.Set.of_list Op.[ Add; Sub; Mul; Neg; Shl; Mulacc ])
+           ~dtype:Dtype.[ Uint8; Uint16 ] ~name:"x" ())
+        (fun m ->
+          let x = m "x" in
+          let wide = List.map (fun s -> cast s Dtype.Uint32) (src x) in
+          Some (cast (replace x ~src:wide) (dtype x)));
+    ])
+
 let create_non_native_float_pats ?(casting = true) dts =
   let in_dts u = List.exists (Dtype.equal (dtype u)) dts in
   let x = Upat.var ~dtype:dts "x" and y = Upat.var ~dtype:dts "y" in
@@ -717,7 +733,7 @@ let cstyle =
     infinity = "INFINITY";
     nan = "NAN";
     bitcast = strf "__builtin_bit_cast(%s, (%s)(%s))";
-    promoted = Dtype.[ Int8; Uint8; Int16; Uint16 ];
+    promoted = Dtype.[ Int8; Int16 ];
     vector_names = [];
     code_for_op;
     string_rewrite = base_rewrite;
@@ -1257,6 +1273,7 @@ let opaque_zeros ~reg zeros =
 let clang_extra_matcher =
   Pattern_matcher.concat
     [
+      pm_narrow_uint;
       Pattern_matcher.v
         (fun () -> [
           rule
@@ -1417,16 +1434,18 @@ let metal_lang =
 (* upcast to float32 the operations that have no bfloat16: Metal computes them
    in float, and a float does not convert to a bfloat implicitly *)
 let metal_extra_matcher =
-  Pattern_matcher.append
-    (Pattern_matcher.v
-       (fun () -> [
-         rule
-           (Upat.v
-              ~op:(Op.Set.of_list Op.[ Sqrt; Exp2; Log2; Sin; Trunc ])
-              ~dtype:[ Dtype.Bfloat16 ] ~name:"x" ())
-           (fun m -> Some (cast (on_floats (m "x")) Dtype.Bfloat16));
-       ]))
-    pm_manual_bf16_cast
+  Pattern_matcher.concat
+    [
+      pm_narrow_uint;
+      Pattern_matcher.v (fun () -> [
+          rule
+            (Upat.v
+               ~op:(Op.Set.of_list Op.[ Sqrt; Exp2; Log2; Sin; Trunc ])
+               ~dtype:[ Dtype.Bfloat16 ] ~name:"x" ())
+            (fun m -> Some (cast (on_floats (m "x")) Dtype.Bfloat16));
+        ]);
+      pm_manual_bf16_cast;
+    ]
 
 let metal_wmma l (name, _, dtype_in, dtype_out, _) =
   let vec dt = render_dtype l dt ~sz:2 ~addrspace:(Some Dtype.Reg) in
@@ -1592,19 +1611,21 @@ let cuda_lang =
   }
 
 let cuda_extra_matcher =
-  Pattern_matcher.append
-    (create_non_native_float_pats ~casting:false Dtype.fp8s)
-    (Pattern_matcher.v
-       (fun () -> [
-         rule
-           (Upat.op ~dtype:Dtype.fp8s
-              ~src:[ Upat.var ~dtype:Dtype.fp8s "x" ]
-              ~name:"y" Op.Cast)
-           (fun m ->
-             let x = m "x" and y = m "y" in
-             if Dtype.equal (dtype x) (dtype y) then None
-             else Some (cast (cast x Dtype.Float32) (dtype y)));
-       ]))
+  Pattern_matcher.concat
+    [
+      pm_narrow_uint;
+      create_non_native_float_pats ~casting:false Dtype.fp8s;
+      Pattern_matcher.v (fun () -> [
+          rule
+            (Upat.op ~dtype:Dtype.fp8s
+               ~src:[ Upat.var ~dtype:Dtype.fp8s "x" ]
+               ~name:"y" Op.Cast)
+            (fun m ->
+              let x = m "x" and y = m "y" in
+              if Dtype.equal (dtype x) (dtype y) then None
+              else Some (cast (cast x Dtype.Float32) (dtype y)));
+        ]);
+    ]
 
 let cuda_vector_prefix l (dt, count) =
   let vec = render_dtype l dt ~sz:count ~addrspace:(Some Dtype.Reg)
@@ -1872,6 +1893,7 @@ let hip_lang arch =
 let hip_extra_matcher arch =
   Pattern_matcher.concat
     ([
+       pm_narrow_uint;
        create_non_native_float_pats (Dtype.Bfloat16 :: Dtype.fp8s);
      ]
     @ (if is_cdna4 arch then [] else [ pm_manual_bf16_cast ])

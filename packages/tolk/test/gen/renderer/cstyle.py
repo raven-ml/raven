@@ -8,8 +8,8 @@ whose sources are its nodes in order. The table `cases` gives each case's
 position among them, the target and the renderer, and the settings it is
 rendered under; the source of case `c` is the text golden `c`.
 
-tolk writes each operation on a narrow scalar as a cast of itself to its
-type, so the source of a kernel with such an operation is tinygrad's
+tolk writes each operation on a narrow signed scalar as a cast of itself to
+its type, so the source of a kernel with such an operation is tinygrad's
 source for the kernel with those casts: the table's column `narrowed` gives
 the position of that kernel in `kernels`, and its text golden is its source.
 
@@ -533,13 +533,14 @@ CASES = all_cases()
 
 
 # An operation is narrowed when it is inlined into its one user, which does
-# not store it, and computes on a scalar that C promotes: a char or a short, or
-# Clang's __fp16.
+# not store it, and computes on a scalar that C promotes: a signed char or a
+# short, or Clang's __fp16. tinygrad computes the operations on an unsigned
+# char or short that wrap in an unsigned int (`pm_narrow_uint`).
 
 def narrowing(ren, uops):
     """`uops` with each narrowed operation followed by a cast to its type, or
     None if it narrows none."""
-    promoted = (dtypes.char, dtypes.uchar, dtypes.short, dtypes.ushort) + \
+    promoted = (dtypes.char, dtypes.short) + \
         ((dtypes.half,) if isinstance(ren, ClangRenderer) else ())
     children = Counter(v for u in uops for v in u.src)
     user = {v: u for u in uops for v in u.src}
