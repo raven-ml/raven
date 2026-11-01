@@ -203,9 +203,6 @@ raven / llama.cpp (Vulkan; ROCm):
   as its coordinates` fails on fudge at 814416922 (lbfgs gives `-0.`
   where `0.` is expected)
 
-- fully sharded training: RFC 0005's bound (P+G+O)/n + 2 layers has no test
-  since d478112cb removed the counting-device test
-
 ## nx
 
 - a reshape that factors or merges a cut axis gathers it whole onto every

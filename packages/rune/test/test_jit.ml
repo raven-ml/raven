@@ -4098,6 +4098,135 @@ let law_experts c =
       same "jit" (f ids x) (jitted (fun () -> Rune.jit fn f ids x))
   | _ -> assert false
 
+(* Fully sharded training *)
+
+(* What each of [ds] holds once four rounds of collection returned what
+   nothing reaches: a chain of finalisers frees its memory a round late. *)
+let settled_all ds =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    List.iter Rig.free_cache ds
+  done;
+  List.map Rig.allocated ds
+
+(* Each training opens devices of names of its own. *)
+let trainings = ref 0
+
+(* Fully sharded training of [layers] layers [relu (h w)] of [d] by [d]
+   float32 weights over [n] devices: parameters, gradients and Adam's two
+   moments cut along axis 0, the batch cut along axis 0 too, each layer a
+   call forward, one backward by [vjp] and one updating its weights and
+   moments, its weights placed whole on every device where a call reads
+   them. [step] runs the forward over every layer, keeping each layer's
+   output, then the backward and the update layer by layer from the
+   last. *)
+let sharded ~n ~d ~layers ~batch =
+  incr trainings;
+  let ds =
+    List.init n (fun k ->
+        let name = Printf.sprintf "rune-sharded-%d-%d" !trainings k in
+        Result.get_ok (Rig.memory_device name))
+  in
+  let module S = (val Nx.devices ds) in
+  let fill i k =
+    Array.init k (fun j -> 0.1 *. sin (Float.of_int ((i * 7919) + j)))
+  in
+  let split k xs = Nx.place (S.split ~axis:0) (Nx.create f32 [| k; d |] xs) in
+  let layer (w, h) =
+    let y = Nx.matmul h (Nx.place S.on w) in
+    Nx.maximum y (Nx.zeros_like y)
+  in
+  let two = T.(pair tensor tensor) in
+  let forward = Rune.jit T.(two @-> returns tensor) layer in
+  let backward =
+    Rune.jit
+      T.(two @-> tensor @-> returns two)
+      (fun wh dy -> snd (Rune.vjp two T.tensor layer wh) dy)
+  in
+  let adam (w, (m, v)) g =
+    let m = Nx.add (Nx.mul_s m 0.9) (Nx.mul_s g 0.1) in
+    let v = Nx.add (Nx.mul_s v 0.999) (Nx.mul_s (Nx.mul g g) 0.001) in
+    (Nx.sub w (Nx.mul_s (Nx.div m (Nx.add_s (Nx.sqrt v) 1e-3)) 1e-3), (m, v))
+  in
+  let state = T.(pair tensor (pair tensor tensor)) in
+  let update = Rune.jit T.(state @-> tensor @-> returns state) adam in
+  let w = Array.init layers (fun l -> split d (fill l (d * d))) in
+  let mv = Array.map (fun w -> (Nx.zeros_like w, Nx.zeros_like w)) w in
+  let g = Array.map Nx.zeros_like w in
+  let x = split batch (fill layers (batch * d)) in
+  let step () =
+    let h = Array.make (layers + 1) x in
+    for l = 0 to layers - 1 do
+      h.(l + 1) <- forward (w.(l), h.(l))
+    done;
+    let dh = ref h.(layers) in
+    for l = layers - 1 downto 0 do
+      let gl, dl = backward (w.(l), h.(l)) !dh in
+      dh := dl;
+      g.(l) <- gl;
+      let m, v = mv.(l) in
+      let w', mv' = update (Nx.donate w.(l), (Nx.donate m, Nx.donate v)) gl in
+      w.(l) <- w';
+      mv.(l) <- mv'
+    done
+  in
+  step ();
+  (ds, step, fun () -> ignore (Sys.opaque_identity (w, mv, g, x)))
+
+(* Whether a step of a fresh training fits each device's budget [over]
+   bytes above what it holds after a first step: a step refused part way
+   leaves its donated state consumed, so each trial trains anew. An
+   allocation past a budget first collects what nothing reaches, so a step
+   fits exactly where what it reaches at once does. *)
+let fits ~n ~d ~layers ~batch over =
+  let ds, step, keep = sharded ~n ~d ~layers ~batch in
+  let held = settled_all ds in
+  List.iter2 (fun r h -> Rig.set_budget r (h + over)) ds held;
+  Fun.protect
+    ~finally:(fun () ->
+      List.iter (fun r -> Rig.set_budget r max_int) ds;
+      keep ())
+    (fun () ->
+      match step () with
+      | () -> true
+      | exception Rig.Out_of_memory _ -> false)
+
+(* Each device holds its share of the parameters, gradients and moments, the
+   batch lying in the host memory it was placed from. A step holds beside
+   them its share of the activations it keeps and of the cotangent it
+   carries back, and the larger of two terms, for a layer of [L] bytes.
+   Closing a layer's gradient, the layer's partial sum, its share, and at
+   most a piece's 256 KiB of every device's partials and the piece's sum,
+   or, where those fit in a piece, all of them: [(1 + 1/n) (L + min (L,
+   C))]. Updating a layer, its new weights and moments and a copy of each,
+   six shares, [6 L / n]: an evaluated call computes into fresh memory and
+   copies each result. A layer's weights, placed whole, take a layer, so a
+   step refuses a layer beside the activations. *)
+let test_sharded_bound ~n ~d ~layers () =
+  let batch = 64 in
+  let ds, _, keep = sharded ~n ~d ~layers ~batch in
+  let layer = d * d * 4 and c = 262144 in
+  let share = 4 * layers * layer / n in
+  List.iteri
+    (fun k h -> equal ~msg:(Printf.sprintf "device %d's share" k) int share h)
+    (settled_all ds);
+  keep ();
+  let activations = (layers + 1) * batch * d * 4 / n in
+  let closing = (n + 1) * (layer + Int.min layer c) / n in
+  let bound = activations + Int.max closing (6 * layer / n) in
+  let fits = fits ~n ~d ~layers ~batch in
+  let step = layer / 64 in
+  let rec search lo hi =
+    if hi - lo <= step then hi
+    else
+      let mid = (lo + hi) / 2 in
+      if fits mid then search lo mid else search mid hi
+  in
+  let peak = search 0 (2 * bound) in
+  at_most int ~msg:"the most a step holds" ~than:bound peak;
+  equal ~msg:"a layer beside the activations" bool false
+    (fits (layer + activations))
+
 let () =
   exit
     (run "rune jit"
@@ -4261,6 +4390,23 @@ let () =
                test_loop_stops;
              prop "drawn loops' checks raise as the steps written out"
                checked_loops law_checked_loop;
+           ];
+         group "fully sharded"
+           [
+             test "fully sharded training of four layers over two devices"
+               (test_sharded_bound ~n:2 ~d:512 ~layers:4);
+             test "fully sharded training of four layers over four devices"
+               (test_sharded_bound ~n:4 ~d:512 ~layers:4);
+             test "fully sharded training of four layers over eight devices"
+               (test_sharded_bound ~n:8 ~d:512 ~layers:4);
+             test
+               "fully sharded training of layers that fit a piece over two \
+                devices"
+               (test_sharded_bound ~n:2 ~d:128 ~layers:4);
+             test
+               "fully sharded training of layers that fit a piece over four \
+                devices"
+               (test_sharded_bound ~n:4 ~d:256 ~layers:4);
            ];
          group "derived"
            [

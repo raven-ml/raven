@@ -1710,7 +1710,28 @@ val jit :
     compiler declines is evaluated, so on a set without kernels ({!Nx.devices})
     a stretch that holds values on several devices raises, and so do a call with
     donated arguments and a loop holding a callback whose outputs it stacks,
-    since nx stacks the rows. *)
+    since nx stacks the rows.
+
+    {b Fully sharded training.} Rajbhandari et al., "ZeRO: Memory
+    Optimizations Toward Training Trillion Parameter Models" (SC 2020, §5),
+    partition the parameters [P], gradients [G] and optimiser state [O]
+    over [n] devices, gather each layer's parameters where it runs and
+    reduce each gradient onto the device that updates it. Written with
+    placement, the three cut along axis 0 and each layer's weights placed
+    whole on every device inside its calls, one call forward, one backward
+    by {!vjp} and one update per layer, such a step evaluates over the
+    devices: each call lets a layer's gathered weights go after their last
+    read, and nx reduces each gradient's partial sums in pieces of at most
+    [C = 256] KiB ({!Nx.section-reductions}). For layers [relu (h w)] of
+    [L] bytes of weights, a step so holds on each device at most
+    [(P + G + O) / n], its share of the activations it keeps and of the
+    cotangent it carries back, and the larger of two terms: closing a
+    layer's gradient, its partial sum, its share and a piece,
+    [(1 + 1 / n) (L + min (L, C))]; and what a layer's update holds at once
+    beside the state. An evaluated call computes each operation into fresh
+    memory and copies each result, so an update holds its new state and a
+    copy of each part of it: for Adam, new weights and two moments and
+    their copies, six shares of the layer. *)
 
 (** {2:inspect Inspecting a trace} *)
 
