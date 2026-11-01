@@ -36,7 +36,9 @@ for a NaN param before, lists, shows and exports without it, beside a good
 run.
 
   $ good=$(./log_run.exe store)
-  $ sed -i 's/"lr": *[^,}]*/"lr": null/' $(find store -path "*$id*" -name run.json)
+  $ manifest=$(find store -path "*$id*" -name run.json)
+  $ sed 's/"lr": *[^,}]*/"lr": null/' $manifest > manifest.json
+  $ mv manifest.json $manifest
 
   $ munin runs --root store | sed -e "s/$id/BAD/" -e "s/$good/GOOD/" | sort
   BAD	exp	finished	-	-	-
