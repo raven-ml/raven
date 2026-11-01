@@ -68,5 +68,5 @@ and the shape of a cell.
   > ```
   > NB
   $ quill run bad.md
-  Error: $TESTCASE_ROOT/bad.md: line 3: the info string "{.ocaml .run}" marks a block to run; write a language then {.run}, as in "ocaml {.run}"
+  Error: bad.md: line 3: the info string "{.ocaml .run}" marks a block to run; write a language then {.run}, as in "ocaml {.run}"
   [1]

@@ -4412,6 +4412,9 @@ thread.
 
 ### Quill
 
+- `quill run` names the notebook as given on the command line in its errors
+  and its `Updated` line, as `quill clean` does, where it named the absolute
+  path.
 - **Breaking:** A notebook's cells are its top-level code blocks marked to run,
   as in ```` ```ocaml {.run} ````. Every other block, plain ```` ```ocaml ````
   included, is text and never runs. A notebook from older Quill fails to load

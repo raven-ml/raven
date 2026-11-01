@@ -10,7 +10,7 @@ line and prints the command that migrates the notebook.
   > ```
   > NB
   $ quill run old.md
-  Error: $TESTCASE_ROOT/old.md: line 4: a quill:cell comment stands above a block without {.run}, so this notebook predates the run mark. Migrate it with sed -E -i.bak 's/^( {0,3})(`{3,}|~{3,})[[:blank:]]*ocaml[[:blank:]]*$/\1\2ocaml {.run}/' notebook.md, and delete the comment above a block that should stay text.
+  Error: old.md: line 4: a quill:cell comment stands above a block without {.run}, so this notebook predates the run mark. Migrate it with sed -E -i.bak 's/^( {0,3})(`{3,}|~{3,})[[:blank:]]*ocaml[[:blank:]]*$/\1\2ocaml {.run}/' notebook.md, and delete the comment above a block that should stay text.
   [1]
 
 The command marks the block, which keeps its id.

@@ -258,12 +258,13 @@ let serve_cmd port path =
 (* ───── Run: batch execution ───── *)
 
 (* With [figures], images are stored as files; without, the notebook keeps the
-   storage it has. *)
+   storage it has. The notebook is read and written, and messages name it, by
+   [path] as given; the cells run in its directory, so the prelude, read there,
+   is resolved first. *)
 let run_file ?prelude ~figures inplace path =
-  let abs_path = resolve_path path in
   let abs_prelude = Option.map resolve_path prelude in
-  let nb_dir = Filename.dirname abs_path in
-  let doc, stored = or_exit (Quill_markdown.load ~outputs:false abs_path) in
+  let nb_dir = Filename.dirname path in
+  let doc, stored = or_exit (Quill_markdown.load ~outputs:false path) in
   let create_kernel ~on_event =
     let k = create_kernel ~on_event in
     (match abs_prelude with
@@ -285,9 +286,9 @@ let run_file ?prelude ~figures inplace path =
   if inplace then
     let stored = if figures then Quill_markdown.Files else stored in
     let (_ : Quill_markdown.stamp) =
-      or_exit (Quill_markdown.save stored abs_path doc)
+      or_exit (Quill_markdown.save stored path doc)
     in
-    Printf.printf "Updated %s\n%!" abs_path
+    Printf.printf "Updated %s\n%!" path
   else print_string (Quill_markdown.to_string_with_outputs doc)
 
 let get_mtime path =
