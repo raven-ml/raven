@@ -4,6 +4,7 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
+# forced: blessed root-newton-kepler-1k/eager root-newton-kepler-1k/compiled minimize-bracket-1k/eager minimize-bracket-1k/compiled system-newton-bratu-64/eager system-newton-bratu-64/compiled system-newton-bratu-64/grad system-broyden-16/eager system-broyden-16/compiled system-broyden-16/grad system-anderson-tanh-64/eager system-anderson-tanh-64/compiled system-anderson-tanh-64/grad system-lanes-inverse-10k/eager system-lanes-inverse-10k/compiled system-lanes-inverse-10k/grad minimize-lbfgs-rosenbrock-64/eager minimize-lbfgs-rosenbrock-64/compiled minimize-lbfgs-rosenbrock-64/grad minimize-lbfgs-nnls-200/eager minimize-lbfgs-nnls-200/compiled minimize-bfgs-convex-16/eager minimize-bfgs-convex-16/compiled minimize-bfgs-convex-16/grad minimize-newton-convex-16/eager minimize-newton-convex-16/compiled minimize-newton-convex-16/grad minimize-lm-exponential-200/eager minimize-lm-exponential-200/compiled minimize-lm-exponential-200/grad minimize-nelder-mead-rosenbrock-4/eager minimize-nelder-mead-rosenbrock-4/compiled under load 7.8 on 14 cores
 
 grid-cubic-16x16-eval-1k/compiled	alloc_words	exact	1858
 grid-cubic-16x16-eval-1k/eager	alloc_words	exact	139400
@@ -19,24 +20,24 @@ linear-dense-128/grad	alloc_words	exact	1367
 linear-gmres-convection-256/compiled	alloc_words	exact	1445
 linear-gmres-convection-256/eager	alloc_words	exact	3723169
 linear-gmres-convection-256/grad	alloc_words	exact	1523
-minimize-bfgs-convex-16/compiled	alloc_words	exact	1523
-minimize-bfgs-convex-16/eager	alloc_words	exact	581333
-minimize-bfgs-convex-16/grad	alloc_words	exact	1523
-minimize-bracket-1k/compiled	alloc_words	exact	1509
+minimize-bfgs-convex-16/compiled	alloc_words	exact	1427
+minimize-bfgs-convex-16/eager	alloc_words	exact	776195
+minimize-bfgs-convex-16/grad	alloc_words	exact	1427
+minimize-bracket-1k/compiled	alloc_words	exact	1413
 minimize-bracket-1k/eager	alloc_words	exact	218694
-minimize-lbfgs-nnls-200/compiled	alloc_words	exact	1587
-minimize-lbfgs-nnls-200/eager	alloc_words	exact	7179278
-minimize-lbfgs-rosenbrock-64/compiled	alloc_words	exact	1523
-minimize-lbfgs-rosenbrock-64/eager	alloc_words	exact	30680789
-minimize-lbfgs-rosenbrock-64/grad	alloc_words	exact	1523
-minimize-lm-exponential-200/compiled	alloc_words	exact	1523
-minimize-lm-exponential-200/eager	alloc_words	exact	781507
-minimize-lm-exponential-200/grad	alloc_words	exact	1523
-minimize-nelder-mead-rosenbrock-4/compiled	alloc_words	exact	1679
+minimize-lbfgs-nnls-200/compiled	alloc_words	exact	1483
+minimize-lbfgs-nnls-200/eager	alloc_words	exact	10930376
+minimize-lbfgs-rosenbrock-64/compiled	alloc_words	exact	1427
+minimize-lbfgs-rosenbrock-64/eager	alloc_words	exact	38243460
+minimize-lbfgs-rosenbrock-64/grad	alloc_words	exact	1427
+minimize-lm-exponential-200/compiled	alloc_words	exact	1427
+minimize-lm-exponential-200/eager	alloc_words	exact	805661
+minimize-lm-exponential-200/grad	alloc_words	exact	1427
+minimize-nelder-mead-rosenbrock-4/compiled	alloc_words	exact	1567
 minimize-nelder-mead-rosenbrock-4/eager	alloc_words	exact	9297414
-minimize-newton-convex-16/compiled	alloc_words	exact	1523
-minimize-newton-convex-16/eager	alloc_words	exact	314178
-minimize-newton-convex-16/grad	alloc_words	exact	1523
+minimize-newton-convex-16/compiled	alloc_words	exact	1427
+minimize-newton-convex-16/eager	alloc_words	exact	379734
+minimize-newton-convex-16/grad	alloc_words	exact	1427
 ode-delay-tsit5-100-logistic/compiled	alloc_words	exact	2099
 ode-delay-tsit5-100-logistic/eager	alloc_words	exact	2786494
 ode-delay-tsit5-100-logistic/grad	alloc_words	exact	2177
@@ -74,8 +75,8 @@ quad-tanh-sinh-100/grad	alloc_words	exact	1573
 root-bracket-kepler-1k/compiled	alloc_words	exact	1637
 root-bracket-kepler-1k/eager	alloc_words	exact	353637
 root-bracket-kepler-1k/grad	alloc_words	exact	1715
-root-newton-kepler-1k/compiled	alloc_words	exact	1509
-root-newton-kepler-1k/eager	alloc_words	exact	112128
+root-newton-kepler-1k/compiled	alloc_words	exact	1413
+root-newton-kepler-1k/eager	alloc_words	exact	129361
 sde-euler-maruyama-100/compiled	alloc_words	exact	2198
 sde-euler-maruyama-100/eager	alloc_words	exact	655709
 spline-100-eval-1k/compiled	alloc_words	exact	1381
@@ -83,18 +84,18 @@ spline-100-eval-1k/eager	alloc_words	exact	103555
 spline-100-eval-1k/grad	alloc_words	exact	1361
 split-yoshida4-100-pendulums/compiled	alloc_words	exact	1111
 split-yoshida4-100-pendulums/eager	alloc_words	exact	118970
-system-anderson-tanh-64/compiled	alloc_words	exact	1523
-system-anderson-tanh-64/eager	alloc_words	exact	342801
-system-anderson-tanh-64/grad	alloc_words	exact	1523
-system-broyden-16/compiled	alloc_words	exact	1523
-system-broyden-16/eager	alloc_words	exact	273029
-system-broyden-16/grad	alloc_words	exact	1523
-system-lanes-inverse-10k/compiled	alloc_words	exact	1524
-system-lanes-inverse-10k/eager	alloc_words	exact	293749
-system-lanes-inverse-10k/grad	alloc_words	exact	1602
-system-newton-bratu-64/compiled	alloc_words	exact	1523
-system-newton-bratu-64/eager	alloc_words	exact	2297962
-system-newton-bratu-64/grad	alloc_words	exact	1523
+system-anderson-tanh-64/compiled	alloc_words	exact	1427
+system-anderson-tanh-64/eager	alloc_words	exact	332152
+system-anderson-tanh-64/grad	alloc_words	exact	1427
+system-broyden-16/compiled	alloc_words	exact	1427
+system-broyden-16/eager	alloc_words	exact	288615
+system-broyden-16/grad	alloc_words	exact	1427
+system-lanes-inverse-10k/compiled	alloc_words	exact	1428
+system-lanes-inverse-10k/eager	alloc_words	exact	306775
+system-lanes-inverse-10k/grad	alloc_words	exact	1498
+system-newton-bratu-64/compiled	alloc_words	exact	1427
+system-newton-bratu-64/eager	alloc_words	exact	2266914
+system-newton-bratu-64/grad	alloc_words	exact	1427
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
