@@ -31,24 +31,21 @@ let int_or_bool = Dtype.Bool :: Dtype.Weak_int :: Dtype.ints
 
 (* if it's X <= c, returns X, true, c; if it's X >= c, returns X, false, c *)
 let parse_valid v =
-  let int_lt u = op u = Op.Cmplt && Dtype.is_int (dtype (nth u 0)) in
-  if
-    op v = Op.Cmpne
-    && is_const (nth v 1)
-    && equals (nth v 1) one
-    && int_lt (nth v 0)
-  then
-    (* (X < c).ne(True) -> X >= c *)
-    let s0 = nth v 0 in
-    Some (nth s0 0, false, V.to_z (vmin (nth s0 1)))
-    (* c < X -> X >= c+1 (a const on the left is a lower bound on the right),
-       and X < c -> X <= c-1 *)
-  else if int_lt v && is_const (nth v 0) then
-    match value (nth v 0) with
-    | #Dtype.value as c -> Some (nth v 1, false, Bigint.succ (V.to_z c))
-    | `Invalid -> None
-  else if int_lt v then Some (nth v 0, true, Bigint.pred (V.to_z (vmax (nth v 1))))
-  else None
+  (* a<b gives a<=b.vmax-1 (b>=a+1 for a const a), its negation a>=b.vmin
+     (b<=a for a const a) *)
+  let neg = op v = Op.Cmpne && is_const (nth v 1) && equals (nth v 1) one in
+  let lt = if neg then nth v 0 else v in
+  if op lt <> Op.Cmplt || not (Dtype.is_int (dtype (nth lt 0))) then None
+  else
+    let a = nth lt 0 in
+    if is_const a then
+      match value a with
+      | #Dtype.value as c ->
+          let c = V.to_z c in
+          Some (nth lt 1, neg, if neg then c else Bigint.succ c)
+      | `Invalid -> None
+    else if neg then Some (a, false, V.to_z (vmin (nth lt 1)))
+    else Some (a, true, Bigint.pred (V.to_z (vmax (nth lt 1))))
 
 let uop_given_valid ?(try_simplex = true) valid u =
   (* first, parse valid into [expr, (lower bound, upper bound)] *)
@@ -77,7 +74,9 @@ let uop_given_valid ?(try_simplex = true) valid u =
   (* simplify uop given that valid is True *)
   let simplex u (i, e, lo, _) =
     let terms = split_uop e Op.Add in
-    let irreducible t = Op.Set.mem (op t) Op.Set.irreducible in
+    let irreducible t =
+      Op.Set.mem (op t) Op.Set.irreducible && op t <> Op.Const
+    in
     if
       not
         (try_simplex

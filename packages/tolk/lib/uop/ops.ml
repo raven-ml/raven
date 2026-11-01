@@ -1709,6 +1709,11 @@ and binary_bounds u (s0_min, s0_max) (s1_min, s1_max) =
          && equal s1_max (`Int Bigint.minus_one)
          && ints [ s0_min; s0_max ] ->
       Some (`Int (Bigint.lognot (z s0_max)), `Int (Bigint.lognot (z s0_min)))
+  | Op.Xor
+    when Dtype.is_int u.dtype && ints [ s0_max; s1_max ] && le zero s0_min
+         && le zero s1_min ->
+      let n = Bigint.numbits (z (Value.max s0_max s1_max)) in
+      Some (zero, `Int (Bigint.pred (Bigint.shift_left Bigint.one n)))
   | Op.Max -> Some (Value.max s0_min s1_min, Value.max s0_max s1_max)
   | Op.Cmplt -> Some (`Bool (lt s0_max s1_min), `Bool (lt s0_min s1_max))
   | Op.Cmpne ->

@@ -853,10 +853,11 @@ let comparisons =
       test "a common divisor of c and the coefficients divides out" (fun () ->
           let small = var "s" 0 3 in
           by_symbolic Ops.O.((a * int 4) + small < int 16) Ops.O.(a < int 4));
-      test "a divisor stays when the bound is at most 0" (fun () ->
+      test "a common divisor divides out of a bound of at most 0" (fun () ->
           let signed = var "s" (-3) 3 and small = var "t" 0 3 in
-          let lt = Ops.O.((signed * int 4) + small < int 0) in
-          by_symbolic lt lt);
+          by_symbolic
+            Ops.O.((signed * int 4) + small < int 0)
+            Ops.O.(signed < int 0));
       test "a divisor stays when the other terms can reach it" (fun () ->
           let wide = var "w" 0 4 in
           let lt = Ops.O.((a * int 4) + wide < int 16) in
@@ -1338,6 +1339,38 @@ let given_valid =
             (Symbolic.uop_given_valid
                Ops.O.((a < int 5) land (b < int 5))
                Ops.O.((a + b) // int 9)));
+      test "a negated clause with a constant on the left bounds from above"
+        (fun () ->
+          equal uop (Ops.bool true)
+            (Symbolic.uop_given_valid
+               Ops.O.(int 2 < a <> bool true)
+               Ops.O.(a < int 3));
+          equal uop (Ops.int 0)
+            (Symbolic.uop_given_valid
+               Ops.O.(int 1 < a <> bool true)
+               Ops.O.(a // int 2)));
+      test "a clause on a sum with a constant term tries no term of it"
+        (fun () ->
+          (* The 1 is no term to try at least 1: each lane [base + k]
+             simplifies [base] alike. *)
+          let a = var "a" 0 7 and b = var "b" 0 7 and d = var "d" 0 1 in
+          let valid =
+            Ops.O.(
+              (a + b + int 1 < int 1 <> bool true)
+              land (c + d < int 1 <> bool true))
+          in
+          let base =
+            Ops.O.(
+              (((a * int 8) + b + (c * int 128) + (d * int 64) + int 1000)
+              % int 1024)
+              * int 4)
+          in
+          let lane k =
+            Ops.nth (Symbolic.uop_given_valid valid Ops.O.(base + int k)) 0
+          in
+          List.iter
+            (fun k -> equal ~msg:(string_of_int k) uop (lane 1) (lane k))
+            [ 2; 3 ]);
       test "a clause on a sum tries each term at least 1" (fun () ->
           let valid = Ops.O.(a + b < int 1 <> bool true) in
           let both_zero = Ops.O.((a < int 1) land (b < int 1)) in

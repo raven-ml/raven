@@ -2346,14 +2346,27 @@ let symbolic_simple =
 let lt_folding x c =
   let p, np =
     List.partition
-      (fun u -> Bigint.equal (const_factor u) Bigint.one)
-      (split_uop x Op.Add)
+      (fun (_, f) -> Bigint.equal f Bigint.one)
+      (List.map
+         (fun u ->
+           let u, f = pop_const ~op:Op.Mul u in
+           (u, V.to_z (as_value f)))
+         (split_uop x Op.Add))
   in
-  let d = List.fold_left (fun d u -> Bigint.gcd d (const_factor u)) c np in
-  let sum f = List.fold_left (fun s u -> V.(s + f u)) zero p in
+  let d = List.fold_left (fun d (_, f) -> Bigint.gcd d f) Bigint.zero np in
+  (* d*y+p < c <=> y < ceildiv(c-p, d), so it folds when that bound is the same
+     for p's least and greatest *)
+  let bound f =
+    let s = List.fold_left (fun s (u, _) -> V.(s + f u)) zero p in
+    Bigint.cdiv (Bigint.sub c (V.to_z s)) d
+  in
   match np with
-  | n :: ns when Bigint.gt d Bigint.one && V.(zero <= sum vmin && sum vmax < `Int d) ->
-      Some O.(Option.get (divides (usum n ns) d) < lit (`Int (Bigint.fdiv c d)))
+  | (n, f) :: ns when Bigint.gt d Bigint.one ->
+      let t = bound vmin in
+      if Bigint.equal t (bound vmax) then
+        let term (u, f) = O.(u * lit (`Int (Bigint.fdiv f d))) in
+        Some O.(usum (term (n, f)) (List.map term ns) < lit (`Int t))
+      else None
   | _ -> None
 
 (* (X := a0*x0 + a1*x1 + ...) > 0 is equivalent to x0 + x1 + ... > 0 if xi >= 0
@@ -2673,16 +2686,6 @@ let symbolic =
                     V.[ c0; c1; vmin x + c0; vmax x + c0; c1 - c0 ]
                 then Some O.(x < m "c1" - m "c0")
                 else None);
-            (* c0*x<c1 -> sign(c0)*x < ceil(c1/abs(c0)) *)
-            rule
-              Upat.(cvar "c0" * var ~dtype:[ Dtype.Weak_int ] "x" < cvar "c1")
-              (fun m ->
-                let c0 = num (m "c0") and c1 = num (m "c1") and x = m "x" in
-                let a = if V.(c0 < zero) then V.(-c0) else c0 in
-                if V.(a > one) then
-                  Some
-                    O.((if V.(c0 > zero) then x else -x) < lit V.(-(-c1 // a)))
-                else None);
             (* x//d<c -> x<c*d for d>0, and -> c*d<x for d<0 *)
             rule
               Upat.(var ~dtype:[ Dtype.Weak_int ] "x" // cvar "d" < cvar "c")
@@ -2711,7 +2714,7 @@ let symbolic =
               Upat.(var ~dtype:[ Dtype.Weak_int ] "x" < cvar "c")
               (fun m ->
                 match num (m "c") with
-                | `Int c when Bigint.sign c > 0 -> lt_folding (m "x") c
+                | `Int c -> lt_folding (m "x") c
                 | _ -> None);
             rule
               Upat.(
