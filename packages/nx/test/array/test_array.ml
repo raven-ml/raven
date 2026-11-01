@@ -356,14 +356,19 @@ let law_bitcast (D.Any src, (D.Any dst as d), l, first) =
   let bs = D.bits src and bd = D.bits dst in
   cover "equal widths" (bs = bd);
   cover "narrowing" (bs > bd);
-  match (bitcast_reference (D.Any src) d l b, A.bitcast dst a) with
-  | Some l', Some c ->
-      cover "widening" (bs < bd);
-      equal layout l' (A.layout c);
-      equal bool true (A.buffer c == b)
-  | None, None -> cover "widening refused" true
-  | Some l', None -> failf "None where %a was expected" L.pp l'
-  | None, Some c -> failf "%a where None was expected" L.pp (A.layout c)
+  (* A narrowing would append an axis past max_rank, which raises; its
+     fixed case is test_bitcast_refuses's. *)
+  if bs > bd && L.rank l = L.max_rank then
+    raises_match Exn.invalid_arg (fun () -> A.bitcast dst a)
+  else
+    match (bitcast_reference (D.Any src) d l b, A.bitcast dst a) with
+    | Some l', Some c ->
+        cover "widening" (bs < bd);
+        equal layout l' (A.layout c);
+        equal bool true (A.buffer c == b)
+    | None, None -> cover "widening refused" true
+    | Some l', None -> failf "None where %a was expected" L.pp l'
+    | None, Some c -> failf "%a where None was expected" L.pp (A.layout c)
 
 let test_expect () =
   let a = floats32 [| 1 |] [| 3. |] in
