@@ -18,9 +18,8 @@
       float: a load converts it up, a store converts it down ({!f2f}), and a
       cast to it or an operation on it computes in {!Dtype.Float32} and rounds
       its result to it, once, so that the store's conversion is exact. A cast
-      clamps its operand to the narrow float's range first ({!f2f_clamp}), and
-      a source more precise than a {!Dtype.Float32} reaches one rounded to
-      odd. A copy or a selection keeps the stored bits.
+      from a source more precise than a {!Dtype.Float32} reaches one rounded
+      to odd. A copy or a selection keeps the stored bits.
 
     The conversions are IEEE's: one rounding, to nearest with ties to even,
     gradual underflow, and infinities and NaNs kept where the format has them.
@@ -38,9 +37,12 @@ val f2f : ?sat:bool -> Ops.t -> Dtype.t -> Dtype.t -> Ops.t
     - widening to {!Dtype.Float32}, it is the value [v] encodes, subnormals
       included;
     - narrowing from {!Dtype.Float32}, it is the bits, as the unsigned integer
-      of [to_]'s width, of the value [v] encodes clamped ({!f2f_clamp} [~sat])
-      and rounded to [to_]'s precision, to nearest with ties to even, into a
-      subnormal below [to_]'s least normal.
+      of [to_]'s width, of the value [v] encodes rounded to [to_]'s precision,
+      to nearest with ties to even, into a subnormal below [to_]'s least
+      normal. A value that rounds past [to_]'s greatest finite value, and an
+      infinity, is an infinity, which a format without one holds as its NaN;
+      but a finite value of an 8-bit float, if [sat], is at most its greatest
+      finite value.
 
     A NaN stays a NaN of its sign, quiet, with its payload's top bits where the
     formats have room for them; an [fnuz] format has one NaN, and no negative
@@ -48,14 +50,6 @@ val f2f : ?sat:bool -> Ops.t -> Dtype.t -> Dtype.t -> Ops.t
 
     Raises [Invalid_argument] unless one of [fr] and [to_] is {!Dtype.Float32}
     and the other a narrower float. *)
-
-val f2f_clamp : ?sat:bool -> Ops.t -> Dtype.t -> Ops.t
-(** [f2f_clamp ~sat x dt] is the float [x] limited to what the narrow float [dt]
-    holds. If [dt] is an 8-bit float and [sat] (default [true]), a finite
-    magnitude above [dt]'s greatest finite value is that value. Otherwise a
-    magnitude from [dt]'s greatest finite value plus half an ulp up is an
-    infinity: rounding it to nearest even would give one. An infinity stays an
-    infinity, which a format without one stores as its NaN, and a NaN a NaN. *)
 
 val narrow : Ops.t -> Dtype.t -> Ops.t
 (** [narrow x dt] is [x] cast to [dt], but for a {!Dtype.Float32} from a

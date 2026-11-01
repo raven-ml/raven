@@ -11,14 +11,13 @@ told to emulate `<type>`, and one that lacks `<type>`. The generator checks that
 both make the same graph, which the golden holds.
 
 The conversions of a narrow float are IEEE conversions in tolk, so for the
-narrow floats the pass runs with `f2f` and `f2f_clamp` held opaque: each call
-is a CUSTOM node of the type the call returns, over the call's operand, whose
-code names the call and its arguments, `f2f <from> <to> <sat>` or `f2f_clamp
-<type> <sat>`. Everything else in the graph is tinygrad's. A cast to a narrow
-float from a type more precise than a float32 narrows its operand otherwise in
-tolk, so does a cast of an emulated 64-bit integer to a float32 or
-narrower, and a cast of a float to an emulated 64-bit integer splits it
-otherwise, so no golden holds one. """
+narrow floats the pass runs with `f2f` held opaque: each call is a CUSTOM node
+of the type the call returns, over the call's operand, whose code names the
+call and its arguments, `f2f <from> <to> <sat>`. Everything else in the graph
+is tinygrad's. A cast to a narrow float from a type more precise than a float32
+narrows its operand otherwise in tolk, so does a cast of an emulated 64-bit
+integer to a float32 or narrower, and a cast of a float to an emulated 64-bit
+integer splits it otherwise, so no golden holds one. """
 
 from dataclasses import replace
 
@@ -53,17 +52,13 @@ def opaque_f2f(v, fr, to, sat=True):
     return UOp(Ops.CUSTOM, src=(v,), arg=(f"f2f {name(fr)} {name(to)} {sat}", dt))
 
 
-def opaque_f2f_clamp(val, dt, sat=True):
-    return UOp(Ops.CUSTOM, src=(val,), arg=(f"f2f_clamp {name(dt)} {sat}", val.dtype))
-
-
 def emulate(kernel, renderer, floats):
-    f2f, f2f_clamp = decomp.f2f, decomp.f2f_clamp
-    if floats: decomp.f2f, decomp.f2f_clamp = opaque_f2f, opaque_f2f_clamp
+    f2f = decomp.f2f
+    if floats: decomp.f2f = opaque_f2f
     try:
         return graph_rewrite(kernel, decomp.pm_dtype_decomps + pm_commit_weak, ctx=decomp.DTypeDecompCtx(renderer))
     finally:
-        decomp.f2f, decomp.f2f_clamp = f2f, f2f_clamp
+        decomp.f2f = f2f
 
 
 # The host upcasts no kernel without a reduce but its masked ones, so the

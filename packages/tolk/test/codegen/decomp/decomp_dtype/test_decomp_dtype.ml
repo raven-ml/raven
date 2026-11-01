@@ -154,12 +154,6 @@ let no_misses what = function
 let hex =
   Testable.make ~pp:(fun ppf c -> Format.fprintf ppf "0x%x" c) ~equal:Int.equal
 
-(* [float32] compares floats as float32 codes. *)
-let float32 =
-  Testable.make
-    ~pp:(fun ppf x -> Format.fprintf ppf "%h" x)
-    ~equal:(fun a b -> bits a = bits b)
-
 (* [same_nan dt want got] is [true] iff the codes [want] and [got] of [dt] are
    equal, or are NaNs of the same sign and [dt] is {!Dtype.Fp8e5m2}: Dtype keeps
    the payload of the 16-bit NaNs only, and the other 8-bit floats have one NaN
@@ -251,68 +245,59 @@ let f2f =
                 Decomp_dtype.f2f (Shape.param 0 Uint64) Float64 Float32));
       ])
 
-(* f2f_clamp *)
+(* Overflow *)
 
-let clamped ?sat dt x =
-  as_float
-    (Interpreter.eval
-       ~params:[ (0, `Float x) ]
-       (Decomp_dtype.f2f_clamp ?sat (Shape.param 0 Dtype.Float32) dt))
+(* [narrowed ?sat dt x] is the [dt] code that f2f narrows the float32 [x] to. *)
+let narrowed ?sat dt x = as_int (at_code (narrowing ?sat dt) (bits x))
 
 let infinity_of s = Float.copy_sign Float.infinity s
 
-(* [overflows_at_the_edge ?sat dt] checks that the clamp keeps [dt]'s greatest
-   value and the float32 below the edge, and is an infinity from the edge. *)
+(* [overflows_at_the_edge ?sat dt] checks that narrowing keeps [dt]'s greatest
+   value and the float32 below the edge, and gives the code of an infinity, a
+   NaN in a format without one, from the edge on. *)
 let overflows_at_the_edge ?sat dt =
   List.iter
     (fun s ->
-      let x = clamped ?sat dt in
-      equal ~msg:"the greatest value" float32 (s *. top dt) (x (s *. top dt));
-      equal ~msg:"below the edge" float32
-        (s *. below (edge dt))
-        (x (s *. below (edge dt)));
-      equal ~msg:"the edge" float32 (infinity_of s) (x (s *. edge dt));
-      equal ~msg:"an infinity" float32 (infinity_of s) (x (infinity_of s)))
+      let x = narrowed ?sat dt and greatest = encode dt (`Float (s *. top dt)) in
+      let infinity = encode dt (`Float (infinity_of s)) in
+      equal ~msg:"the greatest value" hex greatest (x (s *. top dt));
+      equal ~msg:"below the edge" hex greatest (x (s *. below (edge dt)));
+      equal ~msg:"the edge" hex infinity (x (s *. edge dt));
+      equal ~msg:"an infinity" hex infinity (x (infinity_of s)))
     [ 1.; -1. ]
 
-let f2f_clamp =
-  group "f2f_clamp"
+let overflow =
+  group "overflow"
     [
       cases
-        "a 16-bit float's clamp is an infinity from its greatest value plus \
-         half an ulp"
+        "a 16-bit float is an infinity from its greatest value plus half an ulp"
         ~id:alias
         Dtype.[ Float16; Bfloat16 ]
         (fun dt ->
           overflows_at_the_edge dt;
-          overflows_at_the_edge ~sat:true dt);
+          overflows_at_the_edge ~sat:false dt);
       cases
-        "without saturation, an 8-bit float's clamp is an infinity from its \
+        "without saturation, an 8-bit float is an infinity or its NaN from its \
          greatest value plus half an ulp"
         ~id:alias Dtype.fp8s
         (overflows_at_the_edge ~sat:false);
       cases
-        "with saturation, an 8-bit float's clamp is its greatest value and \
-         keeps infinities"
+        "with saturation, an 8-bit float's overflow is its greatest value, and \
+         an infinity is its infinity or its NaN"
         ~id:alias Dtype.fp8s (fun dt ->
           List.iter
             (fun s ->
-              let m = s *. top dt in
-              equal ~msg:"far above" float32 m (clamped dt (s *. 1e10));
-              equal ~msg:"the edge" float32 m (clamped dt (s *. edge dt));
-              equal ~msg:"just above" float32 m
-                (clamped dt (s *. f32 (bits (top dt) + 1)));
-              equal ~msg:"just below" float32
-                (s *. below (top dt))
-                (clamped dt (s *. below (top dt)));
-              equal ~msg:"an infinity" float32 (infinity_of s)
-                (clamped dt (infinity_of s)))
+              let greatest = encode dt (`Float (s *. top dt)) in
+              let x = narrowed dt in
+              equal ~msg:"far above" hex greatest (x (s *. 1e10));
+              equal ~msg:"the edge" hex greatest (x (s *. edge dt));
+              equal ~msg:"just above" hex greatest
+                (x (s *. f32 (bits (top dt) + 1)));
+              equal ~msg:"just below" hex greatest (x (s *. below (top dt)));
+              equal ~msg:"an infinity" hex
+                (encode dt (`Float (infinity_of s)))
+                (x (infinity_of s)))
             [ 1.; -1. ]);
-      test "a clamped NaN is a NaN" (fun () ->
-          List.iter
-            (fun dt ->
-              is_true ~msg:(alias dt) (Float.is_nan (clamped dt Float.nan)))
-            narrows);
     ]
 
 (* Kernels *)
@@ -1155,7 +1140,7 @@ let ieee_narrow_floats =
 (* Goldens *)
 
 (* A golden holds a kernel and what tinygrad's pass makes of it, with each call
-   of f2f and f2f_clamp held as a placeholder: a custom node over its operand,
+   of f2f held as a placeholder: a custom node over its operand,
    whose code names the call and its arguments
    (gen/codegen/decomp/decomp_dtype.py). The conversions are IEEE's. *)
 
@@ -1174,8 +1159,6 @@ let conversion u =
           Some
             (Decomp_dtype.f2f ~sat:(sat_named sat) v (dtype_named fr)
                (dtype_named to_))
-      | [ "f2f_clamp"; dt; sat ] ->
-          Some (Decomp_dtype.f2f_clamp ~sat:(sat_named sat) v (dtype_named dt))
       | _ -> None)
   | _ -> None
 
@@ -1540,7 +1523,7 @@ let () =
     (run "Tolk.Decomp_dtype"
        [
          f2f;
-         f2f_clamp;
+         overflow;
          emulated_floats;
          nans;
          rounding;

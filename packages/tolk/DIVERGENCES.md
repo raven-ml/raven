@@ -293,14 +293,14 @@ stamps nothing (D146).
   - `dtype.py:224-228` (`float_to_bf16` rounds to float32 with
     `truncate[dtypes.float]`, then to bfloat16), and `dtype.py:85` (`const`
     converts an integer to a float through a double, `float(val)`);
-  - `codegen/decomp/dtype.py:35-37,98-131,189-190`: `l2i` converts a long
+  - `codegen/decomp/dtype.py:35-37,98-124,183-184`: `l2i` converts a long
     to a float32 word by word; an emulated cast narrows its source to float32
-    first; `f2f` flushes subnormals to zero both ways; `f2f_clamp` sends a
-    finite value above the greatest one to infinity in the 16-bit floats, and
-    saturates infinities in the 8-bit floats.
+    first; `f2f` flushes subnormals to zero both ways, but for those within
+    half a subnormal ulp of the least normal, which round up to it, and
+    narrows every NaN to its format's one quiet NaN of its sign.
 - **tolk:** `Dtype.encode_format` (one rounding for every narrow float) and
   `Dtype.float_of_integer`; `Decomp_dtype.long_to_float`,
-  `Decomp_dtype.f2f_clamp`, `Decomp_dtype.narrow` and `Decomp_dtype.f2f`.
+  `Decomp_dtype.narrow` and `Decomp_dtype.f2f`.
 - **Differs:** converting to a narrow float rounds once, to nearest with ties
   to even, from any source, and treats every value as IEEE does, folded or
   emulated:
@@ -309,18 +309,14 @@ stamps nothing (D146).
     `9042383626829825` is bfloat16 `0x5a01` here and `0x5a00` in tinygrad,
     whose double rounds it onto a tie. An emulated cast narrows a double, or
     an integer more precise than a float32, to float32 by rounding to odd, so
-    that the cast's rounding to the narrow float (D65) is the one rounding; an
+    that the cast's rounding to the narrow float is the one rounding; an
     emulated 64-bit integer
     converts to a float32 once, where tinygrad's word arithmetic rounds each
     word and their sum;
   - emulation keeps subnormals, both ways;
-  - a finite value becomes an infinity in a 16-bit float from the greatest
-    finite value plus half an ulp, the tie rounding to even; an 8-bit float
-    saturates to its greatest finite value;
-  - an infinity stays one in e5m2 and becomes the NaN of e4m3 and the `fnuz`
-    formats, of its sign where the format has one (D10);
-  - a conversion quiets a signalling NaN; a copy or a selection, which
-    converts nothing, keeps it (D62).
+  - a NaN narrows to a quiet NaN that keeps the top of its payload where the
+    format has room for it; a copy or a selection, which converts nothing,
+    keeps a signalling one (D62).
 - **Reason:** (b). rune folds constants with `Dtype`, and nx converts eagerly
   with one rounding. An emulated kernel exists only because its target lacks
   the type, so it must give the bits a native one gives. The 8-bit facets have
@@ -331,15 +327,14 @@ stamps nothing (D146).
   near-tie rows, stated in code), `Tolk.Dtype › truncate › bfloat16 rounds
   once, to the nearest, ties to even` and `Tolk.Dtype › truncate › an
   integer rounds to a narrower float once, from its value`; for emulation, one
-  test per facet in `Tolk.Decomp_dtype › D9`: `an emulated narrow float
-  keeps its subnormals, both ways`, `a 16-bit float overflows from its greatest
-  value plus half an ulp, the tie to infinity`, `an infinity stays one in e5m2
-  and is the NaN of e4m3 and the fnuz formats, and a finite overflow
-  saturates`, `a double, or an integer more precise than a float32, rounds
-  once`, `an emulated 64-bit integer converts to a float32 once`, `an fnuz
-  format stores an underflow to negative zero as positive zero`;
-  `Tolk.Decomp_dtype › goldens`, which are tinygrad's graphs with
-  `f2f` and `f2f_clamp` replaced by these conversions.
+  test per facet in `Tolk.Decomp_dtype › narrow float conversions are IEEE
+  conversions`: `an emulated narrow float keeps its subnormals, both ways`, `a
+  double, or an integer more precise than a float32, rounds once`, `an
+  emulated 64-bit integer converts to a float32 once`, `an fnuz format stores
+  an underflow to negative zero as positive zero`; `Tolk.Decomp_dtype › NaNs ›
+  f2f narrows a quiet NaN to the NaN code Dtype folds`, whose 16-bit NaNs keep
+  their payload's top; `Tolk.Decomp_dtype › goldens`, which are tinygrad's
+  graphs with `f2f` replaced by these conversions.
 
 ## D10. A float8 NaN keeps its sign when decoded
 
@@ -1616,21 +1611,19 @@ Withdrawn: multi-device is out of scope, see README.
 
 ## D65. An emulated value is a value of its float
 
-- **tinygrad:** `codegen/decomp/dtype.py:189-192` (`pm_float_decomp`: a cast
-  to the emulated float only clamps its operand, `f2f_clamp`, and an
-  operation on it computes in the emulating float; only a store rounds).
-- **tolk:** `Decomp_dtype.rounded`, and the cast rule and the operation
-  rule of `Decomp_dtype.pm_float_decomp`, and
-  `test/gen/tinygrad.patch`, which gives tinygrad the same rules.
-- **Differs:** a cast to an emulated narrow float, and an operation on it,
-  round their result to it in the kernel: its bits encoded as the narrow
-  float's and decoded back. Every emulated node then holds a value of its
-  float, and the store's conversion is exact. tinygrad rounds only at the
-  store, so a value that a kernel casts to the narrow float and uses before
-  storing keeps the emulating float's precision: the e5m2 of 4113 cast back
-  to a float32 is 4113 there, and 4096 here, and an operation's result
-  feeds the next unrounded. A lane, a stack and a selection move values
-  already rounded, and stay as they are.
+- **tinygrad:** `codegen/decomp/dtype.py:185-186` (`pm_float_decomp`: an
+  operation on the emulated float computes in the emulating float; only a
+  store rounds its result).
+- **tolk:** `Decomp_dtype.rounded` and the operation rule of
+  `Decomp_dtype.pm_float_decomp`, and `test/gen/tinygrad.patch`, which gives
+  tinygrad the same rule.
+- **Differs:** an operation on an emulated narrow float rounds its result to
+  it in the kernel, as a cast to it does in both: its bits encoded as the
+  narrow float's and decoded back. Every emulated node then holds a value of
+  its float, and the store's conversion is exact. tinygrad rounds an
+  operation's result only at the store, so it feeds the next operation
+  unrounded. A lane, a stack and a selection move values already rounded,
+  and stay as they are.
 - **Reason:** none. It was (b): nx rounds each operation's result to its
   dtype, and rune compiled chains of operations on the 8-bit floats into one
   kernel on the host and on Metal, which emulate them. rune now computes each
@@ -1638,11 +1631,10 @@ Withdrawn: multi-device is out of scope, see README.
   (`Lower_arith.narrowed`), so no operation on an emulated float reaches
   tolk from rune.
 - **Pinned by:** the `Decomp_dtype` suite
-  (`test/codegen/decomp/decomp_dtype`): `rounding in the kernel › a
-  cast to an emulated float and back is the value rounded once` and `› an
+  (`test/codegen/decomp/decomp_dtype`): `rounding in the kernel › an
   operation on an emulated float rounds its result to it`, on every emulated
-  float, and the goldens of every kernel that casts to or computes in an
-  emulated float, from the patched tinygrad. On rune: missing (the old rune's
+  float, and the goldens of every kernel that computes in an emulated float,
+  from the patched tinygrad. On rune: missing (the old rune's
   `Jit › one device › a chain of 8-bit float operations rounds after each, as
   eager does` went with its rewrite).
 

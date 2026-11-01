@@ -402,38 +402,6 @@ let rne v s =
   and half = shr v (s - 1) in
   O.(q + (half land int 1 land ((v land low <> int 0) lor (q land int 1))))
 
-let f2f_clamp ?(sat = true) value dt =
-  let e, m = Dtype.finfo dt in
-  let max_exp, max_man =
-    if List.mem dt Dtype.fp8_fnuz then ((1 lsl e) - 1, (1 lsl m) - 1)
-    else if Dtype.equal dt Fp8e4m3 then ((1 lsl e) - 1, (1 lsl m) - 2)
-    else ((1 lsl e) - 2, (1 lsl m) - 1)
-  in
-  (* The greatest finite value, and the least magnitude that rounds past it:
-     half an ulp above. *)
-  let limit extra =
-    const_like value
-      (`Float
-         (Float.pow 2.
-            (float_of_int (max_exp - Transcendental.exponent_bias dt))
-         *. (1. +. ((float_of_int max_man +. extra) /. float_of_int (1 lsl m)))
-         ))
-  in
-  let clamped =
-    if List.mem dt Dtype.fp8s && sat then
-      (* A finite value saturates; an infinity stays one, and becomes the
-         format's NaN if it has no infinity. *)
-      let mx = limit 0. and inf = const_like value (`Float Float.infinity) in
-      where
-        O.(eq value inf lor eq value (neg inf))
-        value
-        (where O.(value < neg mx) (neg mx) (where O.(mx < value) mx value))
-    else
-      let lim = limit 0.5 and inf = const_like value (`Float Float.infinity) in
-      where O.(neg lim < value) (where O.(value < lim) value inf) (neg inf)
-  in
-  where O.(value <> value) value clamped
-
 (* [x] as a float32 rounded to odd: towards zero, with the last bit set if bits
    were dropped. A narrow float rounded to nearest from it is [x] rounded to
    nearest once. Only a source more precise than a float32 needs it; an integer
@@ -512,22 +480,28 @@ let rec f2f ?(sat = true) v fr to_ =
       bitcast O.(sign lor where is_nan nan finite) to_
   end
   else begin
-    let v = bitcast (f2f_clamp ~sat (bitcast v fr) to_) (f2f_dt fr) in
-    let to_sign = bit (ts - 1) and dropped = fm - tm and shift = fs - ts in
-    let sign = cast O.(shr v shift land to_sign) tdt in
+    let dropped = fm - tm and shift = fs - ts and to_sign = bit (ts - 1) in
+    let sign = O.(shr v shift land to_sign) in
     let nosign = O.(v land magnitude) in
-    let norm = cast O.(rne nosign dropped - unbias) tdt in
     let exp = O.(shr v fm land ones fe) in
-    (* A NaN keeps the top of its payload and becomes quiet, as converting it
-       does; an infinity keeps its zero mantissa. *)
-    let nan_mantissa =
-      if Dtype.equal to_ Fp8e4m3 then ones tm
-      else
-        let quiet = where O.(v land ones fm <> int 0) (bit (tm - 1)) (int 0) in
-        O.(shr nosign dropped land ones tm lor quiet)
+    (* One past the greatest finite code: the infinity, or the NaN of a format
+       without one. An 8-bit float saturates below it. *)
+    let top =
+      if Dtype.equal to_ Fp8e4m3 then int 0x7f
+      else if List.mem to_ Dtype.fp8_fnuz then int 0x80
+      else exp_ones
     in
-    let nan = cast O.(sign lor nan_mantissa lor exp_ones) tdt in
-    let is_nan = eq exp (ones fe) in
+    let inf = int (((1 lsl fe) - 1) lsl fm) in
+    let limit = if sat && List.mem to_ Dtype.fp8s then O.(top - int 1) else top in
+    let norm = minimum O.(rne nosign dropped - unbias) limit in
+    (* A NaN keeps the top of its payload and becomes quiet, as converting it
+       does. *)
+    let nan =
+      if Dtype.equal to_ Fp8e4m3 then top
+      else
+        let quiet = bit (tm - 1) in
+        O.(top lor (shr nosign dropped land ones tm) lor quiet)
+    in
     (* Below [to_]'s least exponent, the significand shifted right by [k] and
        rounded to nearest even is the subnormal's mantissa; one that rounds up
        to the least normal is its code too. A format with float32's exponent
@@ -545,14 +519,19 @@ let rec f2f ?(sat = true) v fr to_ =
         let q = O.(sig_ lsr k)
         and half = O.((sig_ lsr (k - int 1)) land int 1) in
         let sticky = O.(sig_ land ((int 1 lsl (k - int 1)) - int 1) <> int 0) in
-        let sub = cast O.(q + (half land (sticky lor (q land int 1)))) tdt in
+        let sub = O.(q + (half land (sticky lor (q land int 1)))) in
         where underflow sub norm
     in
-    if List.mem to_ Dtype.fp8_fnuz then
-      (* An fnuz format has no negative zero: its code is the NaN. *)
-      where is_nan to_sign
-        (where (eq finite (int 0)) (int 0) O.(sign lor finite))
-    else where is_nan nan O.(sign lor finite)
+    let code =
+      if List.mem to_ Dtype.fp8_fnuz then
+        (* An fnuz format has one NaN, the code of negative zero, and no
+           negative zero. *)
+        where O.(inf <= nosign) top
+          (where (eq finite (int 0)) (int 0) O.(sign lor finite))
+      else
+        O.(sign lor where (inf < nosign) nan (where (eq nosign inf) top finite))
+    in
+    cast code tdt
   end
 
 (* Emulating [fr] as [to_]. *)
@@ -691,9 +670,9 @@ and pm_float_decomp =
              else None);
          rule_ctx
            (Upat.op Op.Cast ~dtype:floats ~src:[ Upat.var "val" ] ~name:"x")
-           (fun ((fr, to_) as ctx) m ->
+           (fun ((_, to_) as ctx) m ->
              if emulated ctx (m "x") then
-               Some (rounded ctx (f2f_clamp (narrow (m "val") to_) fr))
+               Some (rounded ctx (narrow (m "val") to_))
              else None);
          rule_ctx
            (Upat.v
