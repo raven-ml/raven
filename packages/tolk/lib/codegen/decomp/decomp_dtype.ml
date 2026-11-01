@@ -494,13 +494,10 @@ let rec f2f ?(sat = true) v fr to_ =
     let inf = int (((1 lsl fe) - 1) lsl fm) in
     let limit = if sat && List.mem to_ Dtype.fp8s then O.(top - int 1) else top in
     let norm = minimum O.(rne nosign dropped - unbias) limit in
-    (* A NaN keeps the top of its payload and becomes quiet, as converting it
-       does. *)
+    (* A NaN is the format's quiet NaN, of its sign. *)
     let nan =
-      if Dtype.equal to_ Fp8e4m3 then top
-      else
-        let quiet = bit (tm - 1) in
-        O.(top lor (shr nosign dropped land ones tm) lor quiet)
+      let low = if List.mem to_ Dtype.fp8s then ones tm else bit (tm - 1) in
+      O.(top lor low)
     in
     (* Below [to_]'s least exponent, the significand shifted right by [k] and
        rounded to nearest even is the subnormal's mantissa; one that rounds up

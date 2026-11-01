@@ -1599,18 +1599,18 @@ index e404abc69..07e7f5385 100644
    **{getattr(dtypes, n): (lambda x, c=getattr(ctypes, f'c_{n}'): c(x).value)
       for n in ('float', 'double', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64')}}
  
-+# A NaN constant keeps its sign and the payload its type holds, a signalling NaN staying one. A double holds its own bits, C's
-+# conversion between float and double places a float's payload (x86 and Arm keep a quiet NaN's), and a bfloat16 is a float's
-+# upper half. A conversion quiets a signalling NaN, so it converts the NaN made quiet, and the quiet bit is cleared again where
-+# a payload is left. The host has no conversion of a half that keeps the
-+# payload (struct's drops it) and no fp8e5m2: their payloads move by hand, the leading bits of a double's, as a float's do. These
-+# are the formats whose NaNs have payloads, with their mantissa widths.
-+_nan_mant = {dtypes.float16: 10, dtypes.bfloat16: 7, dtypes.float32: 23, dtypes.float64: 52, dtypes.fp8e5m2: 2}
++# A NaN constant of 16 bits or more keeps its sign and the payload its type holds, a signalling NaN staying one. A double holds
++# its own bits, C's conversion between float and double places a float's payload (x86 and Arm keep a quiet NaN's), and a
++# bfloat16 is a float's upper half. A conversion quiets a signalling NaN, so it converts the NaN made quiet, and the quiet bit
++# is cleared again where a payload is left. The host has no conversion of a half that keeps the payload (struct's drops it):
++# its payload moves by hand, the leading bits of a double's, as a float's do. These are the formats whose NaNs have payloads,
++# with their mantissa widths.
++_nan_mant = {dtypes.float16: 10, dtypes.bfloat16: 7, dtypes.float32: 23, dtypes.float64: 52}
 +_QUIET = 1 << 51
 +def _double_bits(x:float) -> int: return struct.unpack('<Q', struct.pack('<d', x))[0]
 +def _double_of_bits(b:int) -> float: return struct.unpack('<d', struct.pack('<Q', b))[0]
 +
-+_by_hand = (dtypes.float16, dtypes.fp8e5m2)
++_by_hand = (dtypes.float16,)
 +
 +def _host_word(x:float, dtype:DType) -> int:
 +  """The bits of the host's conversion of the double `x` to `dtype`."""
@@ -1641,9 +1641,9 @@ index e404abc69..07e7f5385 100644
 +  return _double_of_bits(d if word & quiet else d & ~_QUIET)
 +
 +def held_nan(x:float, dtype:DType) -> float:
-+  """The NaN `dtype` stores for the NaN `x`: its sign and the leading payload bits `dtype` has room for, quiet if there are none."""
-+  if dtype == dtypes.fp8e4m3: return math.copysign(math.nan, x)
-+  if dtype in dtypes.fp8_fnuz: return math.nan
++  """The NaN `dtype` stores for the NaN `x`: its sign and the leading payload bits `dtype` has room for, quiet if there are none,
++  and an 8-bit float's NaN as its storage holds it."""
++  if dtype in dtypes.fp8s: return from_storage_scalar(to_storage_scalar(x, dtype), dtype)
 +  if dtype not in _nan_mant: return x
 +  return _nan_double(_nan_word(x, dtype), dtype)
 +

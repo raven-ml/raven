@@ -18,6 +18,12 @@ entry whose reason has lapsed says "Reason: none" until it is withdrawn or
 redesigned. A difference in numerics also needs a failing rune test, since
 nx semantics belong in rune's lowering.
 
+NaNs follow nx's rule. A NaN result is some NaN, its sign and payload
+unspecified, and it is signalling only where an operand is a signalling NaN.
+A move (a load, a store, a copy, a selection, a bitcast) and a negation keep a
+NaN's bits. A NaN's bits are a reason for an entry only where a move or a
+negation fixes them.
+
 Each entry gives the tinygrad file and line at the pinned commit, the tolk
 module and symbol (`Rangeify.remove_bufferize`), what differs, its reason,
 and the test that pins it. tolk, and any other raven code, is cited by module
@@ -313,16 +319,24 @@ stamps nothing (D146).
     emulated 64-bit integer
     converts to a float32 once, where tinygrad's word arithmetic rounds each
     word and their sum;
-  - emulation keeps subnormals, both ways;
-  - a NaN narrows to a quiet NaN that keeps the top of its payload where the
-    format has room for it; a copy or a selection, which converts nothing,
-    keeps a signalling one (D62).
+  - emulation keeps subnormals, both ways.
+
+  A NaN converts as the NaN rule allows, which no golden distinguishes:
+  `Dtype.truncate`, the folder, quiets it and, in a 16-bit or wider float,
+  keeps its sign and the top of its payload (an 8-bit float's is its format's
+  NaN, D10 and D20); the bfloat16 cast of Clang and HIP
+  (`Cstyle.pm_manual_bf16_cast`) shifts a float32's bits, so a signalling NaN
+  may stay signalling; `f2f` narrows every NaN to its format's quiet NaN of
+  its sign, as tinygrad's does. Each gives a NaN, signalling only from a
+  signalling one, so a folded NaN and the same NaN computed in a kernel may
+  differ in bits. A copy or a selection, which converts nothing, keeps a
+  signalling one (D62).
 - **Reason:** (b). rune folds constants with `Dtype`, and nx converts eagerly
   with one rounding. An emulated kernel exists only because its target lacks
-  the type, so it must give the bits a native one gives. The 8-bit facets have
-  no consumer: rune hands tolk no 8-bit float, since it stores each as `Uint8`
-  and converts it itself (rune's `Lower_arith.dtype`), and no other raven code
-  names one.
+  the type, so it must give the values a native one gives. The 8-bit facets
+  have no consumer: rune hands tolk no 8-bit float, since it stores each as
+  `Uint8` and converts it itself (rune's `Lower_arith.dtype`), and no other
+  raven code names one.
 - **Pinned by:** `Tolk.Dtype › truncate › truncation.golden` (the
   near-tie rows, stated in code), `Tolk.Dtype › truncate › bfloat16 rounds
   once, to the nearest, ties to even` and `Tolk.Dtype › truncate › an
@@ -332,23 +346,17 @@ stamps nothing (D146).
   double, or an integer more precise than a float32, rounds once`, `an
   emulated 64-bit integer converts to a float32 once`, `an fnuz format stores
   an underflow to negative zero as positive zero`; `Tolk.Decomp_dtype › NaNs ›
-  f2f narrows a quiet NaN to the NaN code Dtype folds`, whose 16-bit NaNs keep
-  their payload's top; `Tolk.Decomp_dtype › goldens`, which are tinygrad's
+  f2f narrows a quiet NaN to a quiet NaN` and `› an emulated cast of a quiet
+  float32 or double NaN is a quiet NaN`, which state the rule;
+  `Tolk.Decomp_dtype › goldens`, which are tinygrad's
   graphs with `f2f` replaced by these conversions.
 
-## D10. A float8 NaN keeps its sign when decoded
+## D10. Withdrawn
 
-- **tinygrad:** `dtype.py:273` (`fp8_to_float` returns `math.nan` for
-  e4m3's NaN codes, whatever their sign bit).
-- **tolk:** `Dtype.decode_format`.
-- **Differs:** e4m3's `0xff` decodes to a negative NaN, so it encodes back to
-  `0xff`, where tinygrad gives `0x7f`. e5m2 already kept the sign.
-- **Reason:** none. nx's decoder keeps the sign, so a value read eagerly and a
-  folded constant would agree, but rune hands tolk no 8-bit float: it stores
-  each as `Uint8` and converts it itself (rune's `Lower_arith.dtype`), and no
-  other raven code names one.
-- **Pinned by:** `Tolk.Dtype › storage › a NaN decodes with the sign of
-  its bits`.
+e4m3's `0xff` decoded to a negative NaN. Under the NaN rule a decoded NaN's
+sign is unspecified, and rune hands tolk no 8-bit float, so
+`Dtype.decode_format` decodes every e4m3 NaN as tinygrad's positive
+`math.nan` (`dtype.py:273`).
 
 ## D11. Kernel optimisations are typed
 
@@ -477,8 +485,9 @@ folds to `True` there as in `Shape.fold_const_alu`; tinygrad's
   `Cstyle.is_fp8_guarded`; the two fp8 rules of `Cstyle.cuda_lang`; and
   `Cstyle.cuda_kernel`, whose prefix declares the helper.
 - **Differs:** the saturating conversion turns ±inf into ±max. tolk
-  keeps an infinity special, as `Dtype.truncate` does: it stays an infinity
-  in e5m2 and becomes a NaN of its sign in e4m3, which has no infinity. A
+  keeps an infinity special, as `Dtype.encode_format` stores it: it stays an
+  infinity in e5m2 and becomes a NaN of its sign in e4m3, which has no
+  infinity. A
   cast of a float value calls `tg_fp8`, a helper the kernel declares only
   when it has such a cast, which converts with the constructor and then
   writes the bits of the special value if the input was infinite. An
@@ -551,26 +560,13 @@ A hierarchical allreduce to one device landed there, where tinygrad's stayed on
 every device of its source. Withdrawn: multi-device is out of scope, see
 README.
 
-## D20. Storage keeps an e5m2 NaN's payload
+## D20. Withdrawn
 
-- **tinygrad:** `dtype.py:245,272` (`float_to_fp8` stores every e5m2 NaN as
-  `0x7f` of its sign, and `fp8_to_float` decodes every NaN code as `math.nan`
-  of its sign).
-- **tolk:** `Dtype.nan_of_payload`, `Dtype.nan_payload`,
-  `Dtype.decode_format` and `Dtype.encode_format`.
-- **Differs:** storage moves an e5m2 NaN's two payload bits through the double,
-  as it moves the payload of the 16-bit formats, so `bitcast` keeps every e5m2
-  code: `0x7d` and `0x7e` come back as themselves, where tinygrad gives `0x7f`,
-  and the canonical NaN stores as `0x7e`, its quiet code. A conversion still
-  gives `0x7f` of its sign, as nx's encoder does.
-- **Reason:** none. A kernel's bitcast and nx's are byte reinterpretations,
-  so a bitcast that rune folds must keep the bits as they do, but rune hands
-  tolk no 8-bit float: it stores each as `Uint8` and converts it itself
-  (rune's `Lower_arith.dtype`), and no other raven code names one.
-- **Pinned by:** `Tolk.Dtype › storage › a bitcast through a float
-  gives back every 8- and 16-bit word`, on every e5m2 code, and the NaN rows
-  of `Tolk.Dtype › storage › reencode.golden` and `Tolk.Dtype ›
-  truncate › truncation.golden`, stated in code.
+Storage kept an e5m2 NaN's two payload bits, so a folded bitcast kept every
+e5m2 code. rune hands tolk no 8-bit float, so no consumer folds such a
+bitcast: `Dtype.encode_format` stores every e5m2 NaN as `0x7f` of its sign and
+`Dtype.decode_format` reads it as the NaN of its sign, as tinygrad's
+`dtype.py:245,272` do.
 
 ## D21. Withdrawn
 
@@ -904,9 +900,11 @@ scope, see README.
   `test/gen/tinygrad.patch`, which applies the same rules to tinygrad before
   the goldens are generated.
 - **Differs:** a float constant is its bits. `Dtype.const` keeps a NaN's sign
-  and the payload its type holds, a signalling NaN staying one, and constants
-  compare and hash by their bits, so NaNs of different bits are different
-  nodes, with different keys: a schedule cached under one NaN's key is never
+  and the payload its type holds, a signalling NaN staying one, in a float of
+  16 bits or more (an 8-bit float's NaN is the one its storage holds, as the
+  patched tinygrad's is, D10 and D20), and
+  constants compare and hash by their bits, so NaNs of different bits are
+  different nodes, with different keys: a schedule cached under one NaN's key is never
   the schedule of another's. No golden reads a key, so the patch leaves
   tinygrad's, which writes every NaN `nan`. `fold_bitcast` reads a float
   constant as its type stores it, where tinygrad's conversion quiets a
@@ -917,10 +915,11 @@ scope, see README.
   host's FPU gives, so that folding does not depend on the host: `exec_alu`
   makes the NaN of an invalid operation (`inf - inf`, `0 * inf`, `0 / 0`, a
   square root or logarithm of a negative) canonical, where x86 gives a
-  negative NaN, and so does the patched tinygrad's.
-- **Reason:** (b): a kernel's bitcast and nx's are byte
-  reinterpretations, so a bitcast that rune folds must keep the bits as they
-  do, and a rewrite must keep a graph's value.
+  negative NaN, and so does the patched tinygrad's. The NaN rule leaves that
+  NaN's bits free, so this part follows tinygrad.
+- **Reason:** (b): under the NaN rule a bitcast keeps a NaN's bits, as a
+  kernel's and nx's do, so a bitcast that rune folds must keep them, which a
+  constant can only if it holds them; a rewrite must keep a graph's value.
 - **Pinned by:** `Tolk.Ops › identity › NaN constants of different bits
   are different nodes`; `Tolk.Ops › key › tells apart NaN constants of
   different bits`; `Tolk.Ops › exec_alu › an invalid operation's
@@ -929,7 +928,7 @@ scope, see README.
   bitcast round trip of every 8- and 16-bit word folds to its value`, which evaluates each graph
   with the reference interpreter before and after `simplify`;
   `Tolk.Dtype › const › const keeps the bits of every 8- and 16-bit float
-  word`.
+  word but an 8-bit float's NaN codes`.
 
 ## D28. A host program has rig's entry
 
@@ -976,28 +975,34 @@ scope, see README.
   same rule before the goldens are generated.
 - **Differs:** a core whose input is a narrow float (`half`, `bfloat16`, an
   8-bit float) and whose output is `float32` also takes a `float32` operand
-  that is a cast of its input dtype, and multiplies the narrow value. The
-  product of two narrow floats is exact in `float32`, and the core computes
-  it exactly, so the widened product and the core agree bit for bit; a core
-  with a narrow output still takes no widened operand, since its products
-  round. Cores are tried in the renderer's order, so Metal, whose `float32`
-  core comes first, keeps it. tinygrad never builds the widened form, which
-  its `dot` does not make, so no golden it made before changes: `generate.py
-  --check` matches every one with the patch applied.
+  that is a cast of its input dtype, and multiplies the narrow value. The core
+  and the widened products need not agree bit for bit: a product of two
+  bfloat16s below `2^-126` may round in `float32`, and Ada's `m16n8k16` cores
+  sum their products in pairs and truncate. Both are within `Nx.contract`'s
+  bound, `γ(K + 1, 2u) (|init| + Σ|a||b|)` for `float32`'s `u`: measured on
+  Ada at `K = 2880`, the core errs by `2868u`, inside even `γ(K + 1, u)`,
+  about `2881.5u`. A core shown to exceed the bound is disabled. A core with
+  a narrow output still takes no widened operand, since its sum rounds to the
+  narrow type. rune never gives tolk an 8-bit float (rune's
+  `Lower_arith.dtype` stores each as `Uint8`), so no contraction of rune's
+  reaches an 8-bit core. Cores are tried in the renderer's order, so Metal,
+  whose `float32` core comes first, keeps it. tinygrad never builds the
+  widened form, which its `dot` does not make, so no golden it made before
+  changes: `generate.py --check` matches every one with the patch applied.
 - **Reason:** (b). rune's contraction lowering (`Lower_reduce.entered`), which
-  casts each operand to the accumulator's type, computes nx's products of narrow
-  floats, which are exact, as `MUL(CAST f32 a, CAST f32 b)` summed at
-  `float32` (RFC 0012, the `Matmul` row); without this rule it takes no
-  tensor core on CUDA or HIP, where the `float32` core is TF32 or absent, and
+  casts each operand to the accumulator's type, computes nx's contraction of
+  narrow floats as `MUL(CAST f32 a, CAST f32 b)` summed at `float32` (RFC
+  0012, the `Matmul` row); without this rule it takes no tensor core on CUDA
+  or HIP, where the `float32` core is TF32 or absent, and
   gpt-oss's `float16` and `bfloat16` products on CUDA lose theirs.
 - **Pinned by:** the Postrange suite, `apply_opts optimises a kernel as
   tinygrad does › tc_{cuda,amd}_widened_{half,bfloat}.golden` (the core
   applies on CUDA sm_89 and HIP gfx1100) and
   `› tc_{cuda,amd}_widened_{half,bfloat}_shaped.golden`, with `optimising
   keeps a kernel's writes › small kernels › tc_*_widened_*_shaped` (shaped for
-  the core, the kernel keeps its values). On rune: missing (the old rune's
-  `lower_linalg › tensor cores › cuda › *` went with its rewrite). The core's
-  exact product is README's hardware check.
+  the core, the kernel keeps its values). On rune: missing, the law of
+  `Nx.contract`'s bound on every GPU present (the old rune's `lower_linalg ›
+  tensor cores › cuda › *` went with its rewrite).
 
 ## D30. Withdrawn
 
@@ -1465,18 +1470,20 @@ Withdrawn: multi-device is out of scope, see README.
   (a load, a constant the float holds exactly, a selection between such
   values, and stacks and lanes of them) stores those bits, as the storage's
   unsigned integers. tinygrad widens and narrows each such value, which keeps
-  its value but quiets a signalling NaN: a copy of e5m2's `0x7d`, half's
-  `0x7c01` or bfloat16's `0x7f81` stores `0x7f`, `0x7e01` or `0x7fc1`.
-  Arithmetic still converts, and quiets a signalling NaN (D9).
-- **Reason:** (b). nx's moves preserve bits: an eager copy, movement or
-  `where` keeps a signalling NaN, so a compiled function computes what it
-  computes eagerly only if the emulated moves keep the bits too. rune now
-  stores the 8-bit floats as `uint8` and computes every narrow float itself
-  (`Lower_arith.decode`, `Lower_arith.encode`), so tolk no longer emulates an
-  8-bit float for it. What remains is a move of `bfloat16` or `float16`
-  storage on a target that emulates it: `bfloat16` on a riscv64 host, on an
-  Apple GPU before family 6 and on CUDA before sm_80. Unverified that rune
-  emits such a move.
+  its value but makes every NaN its format's quiet one: a copy of e5m2's
+  `0x7d`, half's `0x7c01` or bfloat16's `0x7f81` stores `0x7f`, `0x7e00` or
+  `0x7fc0`. Arithmetic still converts, and gives a NaN as the NaN rule allows
+  (D9).
+- **Reason:** (b). Under the NaN rule a move keeps a NaN's bits, and nx's do:
+  an eager copy, movement or `where` keeps a signalling NaN, so a compiled
+  function computes what it computes eagerly only if the emulated moves keep
+  the bits too. rune now stores the 8-bit floats as `uint8` and computes
+  every narrow float itself (`Lower_arith.decode`, `Lower_arith.encode`), so
+  tolk no longer emulates an 8-bit float for it. What remains is a move of
+  `bfloat16` or `float16` storage on a target that emulates it: `bfloat16` on
+  a riscv64 host, on an Apple GPU before family 6 and on CUDA before sm_80.
+  rune stores both in their own types (`Lower_arith.dtype`), so a compiled
+  copy of one is such a move.
 - **Pinned by:** the `Decomp_dtype` suite (`test/codegen/decomp/decomp_dtype`): `NaNs › an
   emulated copy keeps every NaN code, a signalling one's included`
   and `› an emulated selection keeps every NaN code, a signalling one's
@@ -2841,7 +2848,10 @@ encodes its barriers (D146).
   tolk declares its own variables the same way, so rune's jit keys on its
   `Output` settings too, and beyond them only on what is not a setting of tolk. A function compiled with an explicit width keys on
   that width in `BEAM`'s entry, without `JITBEAM`'s, since the width
-  overrides both.
+  overrides both. `ALLOW_TF32`, default `false` as in tinygrad, is an
+  explicit choice of precision: a TF32 core rounds each `float32` operand to
+  10 mantissa bits, so a contraction compiled under it may err past
+  `Nx.contract`'s bound.
 - **Reason:** (b): rune's jit memo and tolk's program, schedule and search
   caches key on `Setting.shaping`. A variable read outside a declaration on
   a compile path is missing from every key, and a cache returns what was
@@ -4049,10 +4059,12 @@ does.
   with bits `0x7ff0000020000000` is stored as `0x7ff8000000000000` by Clang,
   and every float32 NaN as `0x7fffffff` by CUDA. An infinity is written as
   before.
-- **Reason:** (b). nx's values are their bits, and rune lowers every float
-  constant from those bits (rune's `Lower.padded` fills a
-  padded load with its fill's bits through `Shape.pad`), so a compiled kernel
-  must store the bits eager nx stores.
+- **Reason:** (b). Under the NaN rule a move keeps a NaN's bits. rune lowers
+  every float constant from the bits nx stores for it (rune's `Lower.padded`
+  fills a padded load with its fill's bits through `Shape.pad`), and padding
+  moves those bits into the result, so a compiled kernel must store the bits
+  eager nx stores, as it must store the bits of a constant folded from a
+  bitcast (D27).
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a NaN constant
   is stored with its sign and payload › *`, which runs a store of NaNs of both
   signs, quiet and signalling, of half, float and double on the host; and the

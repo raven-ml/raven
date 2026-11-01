@@ -489,9 +489,10 @@ let decode_format f code =
   if f.specials = Fnuz && code = f.nan then nan
   else if f.specials = Ieee && q = f.top + 1 then
     Float.copy_sign Float.infinity sign
-  else if f.specials = Ieee && q > f.top then
+  else if f.bits = 16 && q > f.top then
     nan_of_payload ~mant:f.mant ~negative (q land ((1 lsl f.mant) - 1))
-  else if q > f.top then Float.copy_sign nan sign
+  else if f.specials = Ieee && q > f.top then Float.copy_sign nan sign
+  else if q > f.top then nan
   else
     let exp = q lsr f.mant and m = q land ((1 lsl f.mant) - 1) in
     let v =
@@ -519,11 +520,12 @@ let nearest ~mant ~emin x =
 
 (* Past the greatest finite value, 16-bit formats give their infinity and 8-bit
    ones saturate to it. An infinity stays one where the format has infinities,
-   and is its NaN where it has none. A NaN keeps the leading bits of its payload
-   where the format has room for them. *)
+   and is its NaN where it has none. A 16-bit NaN keeps the leading bits of its
+   payload, so that a bitcast through the format keeps every word; an 8-bit NaN
+   is its format's NaN of its sign. *)
 let encode_format f x =
   let sign = if Float.sign_bit x then 1 lsl (f.bits - 1) else 0 in
-  if Float.is_nan x && f.specials = Ieee then
+  if Float.is_nan x && f.bits = 16 then
     sign lor (f.top + 1) lor nan_payload ~mant:f.mant x
   else if Float.is_nan x || (f.specials <> Ieee && not (Float.is_finite x)) then
     if f.specials = Fnuz then f.nan else sign lor f.nan
@@ -601,9 +603,8 @@ let from_storage_scalar dt (s : value) : value =
   | _ -> s
 
 (* A conversion to [dt]'s precision. It quiets a signalling NaN and keeps its
-   payload, as IEEE conversions do, and an 8-bit float gives its canonical NaN
-   of the same sign, as nx's encoders do. The weak float and the doubles keep
-   every other value. *)
+   payload, as IEEE conversions do. The weak float and the doubles keep every
+   other value. *)
 let truncate_float dt x =
   let x =
     if Float.is_nan x then
@@ -611,10 +612,6 @@ let truncate_float dt x =
     else x
   in
   match dt with
-  | (Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz) when Float.is_nan x ->
-      let f = float_format dt in
-      let sign = if Float.sign_bit x && f.specials <> Fnuz then 0x80 else 0 in
-      decode_format f (sign lor f.nan)
   | Float16 | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
       round dt x
   | Float32 -> Int32.float_of_bits (Int32.bits_of_float x)

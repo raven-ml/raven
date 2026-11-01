@@ -247,7 +247,11 @@ val ccache : bool t
 
 val allow_tf32 : bool t
 (** [allow_tf32] lets float32 matrix multiplications use TF32 tensor cores on
-    NVIDIA devices, from [ALLOW_TF32]. Defaults to [false]. *)
+    NVIDIA devices, from [ALLOW_TF32]. Defaults to [false].
+
+    A TF32 core rounds each operand to 10 mantissa bits, so a contraction it
+    computes may err past the bound [Nx.contract] states: setting it chooses
+    that precision explicitly. *)
 
 val scache : int t
 (** [scache] is where schedules are cached, from [SCACHE]: [0] nowhere, [1] in

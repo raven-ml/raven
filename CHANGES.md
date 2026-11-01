@@ -880,6 +880,9 @@ thread.
 
 ### Tolk (new)
 
+- An 8-bit float's NaN folds as its format's NaN of its sign, the positive one
+  in e4m3 and the fnuz formats, and an emulated cast to a narrow float gives
+  its quiet NaN: a NaN result's sign and payload are unspecified.
 - `Heuristic.hand_coded_optimizations` upcasts a tensor-core kernel only
   while it keeps 100 workgroups: a product of a few hundred rows, such as a
   128 by 128 half-precision matmul, ran in a few workgroups and left most of

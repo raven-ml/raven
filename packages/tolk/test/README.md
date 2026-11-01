@@ -61,8 +61,8 @@ named:
   roundings: `(1 + 2^-12)^2 - (1 + 2^-11)` is 0, not `2^-24`.
 - **Widened tensor-core operands (D29):** on CUDA and HIP, a `float32`
   matrix product of `half` and `bfloat16` values widened first, run on the
-  narrow-in, `float32`-out core, equals the same product computed in
-  `float32`.
+  narrow-in, `float32`-out core, is within `Nx.contract`'s bound of the same
+  product computed exactly.
 - **Division (D50):** a CUDA kernel compiled by NVRTC and a HIP kernel
   compiled by comgr, at their default flags, divide floats with `/` as IEEE
   does, rounding once: `3 / 7` is `0x3edb6db7`, where the product by the
@@ -313,8 +313,8 @@ tolk makes. Its sine, logarithm, exponential and power are mpmath's,
 correctly rounded (D150), so a fold is the same on every host. A float NaN
 held in a double, and a bfloat16 one as a float's upper half, takes its
 payload from C's conversions, which keep a quiet NaN's sign and payload on
-x86 and Arm, the generator's hosts; a half's and an fp8e5m2's move by hand,
-since the generator has no conversion of theirs that keeps one. No golden needs a GPU
+x86 and Arm, the generator's hosts; a half's moves by hand, since the
+generator has no conversion of a half that keeps one. No golden needs a GPU
 or its toolchain: the compilers of Metal and CUDA renderers are stand-ins
 with the real ones' cache keys that compile nothing, so the goldens are the
 same on every machine. No Python runs at test time. To regenerate:

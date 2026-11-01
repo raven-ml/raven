@@ -44,9 +44,8 @@ val f2f : ?sat:bool -> Ops.t -> Dtype.t -> Dtype.t -> Ops.t
       but a finite value of an 8-bit float, if [sat], is at most its greatest
       finite value.
 
-    A NaN stays a NaN of its sign, quiet, with its payload's top bits where the
-    formats have room for them; an [fnuz] format has one NaN, and no negative
-    zero. [sat] defaults to [true].
+    A NaN stays a NaN, and a quiet one stays quiet; an [fnuz] format has one
+    NaN, and no negative zero. [sat] defaults to [true].
 
     Raises [Invalid_argument] unless one of [fr] and [to_] is {!Dtype.Float32}
     and the other a narrower float. *)

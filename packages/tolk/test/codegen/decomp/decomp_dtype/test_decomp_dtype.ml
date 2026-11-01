@@ -33,7 +33,6 @@ let narrows =
 let longs = Dtype.[ Int64; Uint64 ]
 let storage dt = if Dtype.bitsize dt = 8 then Dtype.Uint8 else Dtype.Uint16
 let size dt = 1 lsl Dtype.bitsize dt
-let is_16_bit dt = Dtype.bitsize dt = 16
 
 (* Codes and values *)
 
@@ -155,13 +154,9 @@ let hex =
   Testable.make ~pp:(fun ppf c -> Format.fprintf ppf "0x%x" c) ~equal:Int.equal
 
 (* [same_nan dt want got] is [true] iff the codes [want] and [got] of [dt] are
-   equal, or are NaNs of the same sign and [dt] is {!Dtype.Fp8e5m2}: Dtype keeps
-   the payload of the 16-bit NaNs only, and the other 8-bit floats have one NaN
-   code of each sign. *)
+   equal, or are both NaNs: a NaN's sign and payload are unspecified. *)
 let same_nan dt want got =
-  want = got
-  || dt = Dtype.Fp8e5m2 && is_nan_code dt want && is_nan_code dt got
-     && want lsr 7 = got lsr 7
+  want = got || (is_nan_code dt want && is_nan_code dt got)
 
 (* [code_of dt] compares codes of [dt] with {!same_nan}. *)
 let code_of dt =
@@ -198,7 +193,7 @@ let narrows_as_dtype_folds dt () =
   List.filter_map
     (fun b ->
       let want = encode dt (`Float (f32 b)) and got = as_int (at_code u b) in
-      if want = got then None
+      if same_nan dt want got then None
       else
         Some
           (Printf.sprintf "%h (0x%08x): want 0x%x (%h), got 0x%x (%h)" (f32 b) b
@@ -264,10 +259,10 @@ let overflows_at_the_edge ?sat dt =
       let tie = if greatest land 1 = 0 then greatest else infinity in
       equal ~msg:"the greatest value" hex greatest (x (s *. top dt));
       equal ~msg:"below the edge" hex greatest (x (s *. below (edge dt)));
-      equal ~msg:"the edge" hex tie (x (s *. edge dt));
-      equal ~msg:"above the edge" hex infinity
+      equal ~msg:"the edge" (code_of dt) tie (x (s *. edge dt));
+      equal ~msg:"above the edge" (code_of dt) infinity
         (x (s *. f32 (bits (edge dt) + 1)));
-      equal ~msg:"an infinity" hex infinity (x (infinity_of s)))
+      equal ~msg:"an infinity" (code_of dt) infinity (x (infinity_of s)))
     [ 1.; -1. ]
 
 let overflow =
@@ -298,7 +293,7 @@ let overflow =
               equal ~msg:"just above" hex greatest
                 (x (s *. f32 (bits (top dt) + 1)));
               equal ~msg:"just below" hex greatest (x (s *. below (top dt)));
-              equal ~msg:"an infinity" hex
+              equal ~msg:"an infinity" (code_of dt)
                 (encode dt (`Float (infinity_of s)))
                 (x (infinity_of s)))
             [ 1.; -1. ]);
@@ -651,21 +646,26 @@ let quiet_nans = [ 0x7fc00000; 0x7fc12345; 0x7fe00001; 0x7fffffff ]
 let signalling_nans = [ 0x7f800001; 0x7fa00000; 0x7fbfffff ]
 let both_signs = List.concat_map (fun b -> [ b; b lor 0x80000000 ])
 
-(* [is_nan_of dt ~negative c] is [true] iff [c] is a NaN code of [dt] with the
-   sign [negative], or the one NaN of an fnuz format. *)
-let is_nan_of dt ~negative c =
-  is_nan_code dt c
-  && (List.mem dt Dtype.fp8_fnuz || c lsr (Dtype.bitsize dt - 1) = 1 = negative)
+(* [is_quiet dt c] is [true] iff [c] is a quiet NaN code of [dt]: its
+   mantissa's top bit is set, or it is the one NaN of an fnuz format.
+   [is_quiet_f32 x] is the same for a float32. *)
+let is_quiet dt c =
+  let quiet = 1 lsl (snd (Dtype.finfo dt) - 1) in
+  is_nan_code dt c && (List.mem dt Dtype.fp8_fnuz || c land quiet <> 0)
+
+let is_quiet_f32 x = Float.is_nan x && bits x land 0x400000 <> 0
 
 let copies cs dt =
   let k = kernel [ dt ] dt (List.length cs) List.hd in
   equal (list hex) cs
     (List.map as_int (written ~on:on_narrows k [ List.map code cs ]))
 
+(* A NaN result is some NaN, of any sign and payload, and a quiet NaN gives a
+   quiet one. *)
 let nans =
   group "NaNs"
     [
-      test "f2f widens a NaN code to a float32 NaN of its sign and payload"
+      test "f2f widens a NaN code to a NaN, a quiet one to a quiet one"
         (fun () ->
           List.iter
             (fun dt ->
@@ -673,28 +673,12 @@ let nans =
               List.iter
                 (fun c ->
                   let got = f32 (as_int (at_code u c)) in
-                  is_true
-                    ~msg:(Printf.sprintf "%s 0x%x is %h" (alias dt) c got)
-                    (Float.is_nan got
-                    && Float.sign_bit got = Float.sign_bit (decode dt c));
-                  if is_16_bit dt then
-                    equal ~msg:(alias dt) hex (bits (decode dt c)) (bits got))
+                  let msg = Printf.sprintf "%s 0x%x is %h" (alias dt) c got in
+                  is_true ~msg (Float.is_nan got);
+                  if is_quiet dt c then is_true ~msg (is_quiet_f32 got))
                 (nan_codes dt))
             narrows);
-      test "f2f narrows a quiet NaN to the NaN code Dtype folds" (fun () ->
-          List.iter
-            (fun dt ->
-              let u = narrowing dt in
-              List.iter
-                (fun b ->
-                  equal
-                    ~msg:(Printf.sprintf "%s of 0x%08x" (alias dt) b)
-                    (code_of dt)
-                    (encode dt (`Float (f32 b)))
-                    (as_int (at_code u b)))
-                (both_signs quiet_nans))
-            narrows);
-      test "f2f narrows a signalling NaN to a NaN of its sign" (fun () ->
+      test "f2f narrows a quiet NaN to a quiet NaN" (fun () ->
           List.iter
             (fun dt ->
               let u = narrowing dt in
@@ -703,7 +687,19 @@ let nans =
                   let c = as_int (at_code u b) in
                   is_true
                     ~msg:(Printf.sprintf "%s of 0x%08x is 0x%x" (alias dt) b c)
-                    (is_nan_of dt ~negative:(b lsr 31 = 1) c))
+                    (is_quiet dt c))
+                (both_signs quiet_nans))
+            narrows);
+      test "f2f narrows a signalling NaN to a NaN" (fun () ->
+          List.iter
+            (fun dt ->
+              let u = narrowing dt in
+              List.iter
+                (fun b ->
+                  let c = as_int (at_code u b) in
+                  is_true
+                    ~msg:(Printf.sprintf "%s of 0x%08x is 0x%x" (alias dt) b c)
+                    (is_nan_code dt c))
                 (both_signs signalling_nans))
             narrows);
       cases "an emulated copy keeps every NaN code, a signalling one's included"
@@ -712,17 +708,27 @@ let nans =
         "an emulated selection keeps every NaN code, a signalling one's \
          included"
         ~id:alias narrows (fun dt -> selects_codes (nan_codes dt) dt ());
-      cases
-        "an emulated cast of a float32 or a double NaN is the NaN code Dtype \
-         folds"
+      cases "an emulated cast of a quiet float32 or double NaN is a quiet NaN"
         ~id:alias narrows (fun dt ->
           let values =
             List.map (fun b -> `Float (f32 b)) (both_signs quiet_nans)
           in
-          converts ~from:Float32 ~to_:dt values (encode dt);
-          converts ~from:Float64 ~to_:dt values (encode dt));
-      cases "an emulated cast of a NaN code to a float32 is a NaN of its sign"
-        ~id:alias narrows (fun dt ->
+          List.iter
+            (fun from ->
+              let k = kernel [ from ] dt (List.length values) (cast_to dt) in
+              List.iter2
+                (fun x got ->
+                  let c = as_int got in
+                  is_true
+                    ~msg:
+                      (Format.asprintf "%a of %a is 0x%x" Dtype.pp from
+                         (Testable.pp value) x c)
+                    (is_quiet dt c))
+                values
+                (written ~on:on_narrows k [ values ]))
+            [ Dtype.Float32; Float64 ]);
+      cases "an emulated cast of a NaN code to a float32 is a NaN" ~id:alias
+        narrows (fun dt ->
           let cs = nan_codes dt in
           let k = kernel [ dt ] Float32 (List.length cs) (cast_to Float32) in
           List.iter2
@@ -730,8 +736,7 @@ let nans =
               let got = as_float got in
               is_true
                 ~msg:(Printf.sprintf "0x%x is %h" c got)
-                (Float.is_nan got
-                && Float.sign_bit got = Float.sign_bit (decode dt c)))
+                (Float.is_nan got))
             cs
             (written ~on:on_narrows k [ List.map code cs ]));
     ]
