@@ -4,6 +4,9 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- Error messages write each float as the shortest decimal that reads back, the
+  same text on every system: `1000000` where they wrote `1e+06`, or `1e+006`
+  under Windows, and every digit where `Transform` rounded to six or ten.
 - `ymir.spk` reads SPK files' type 2 and 3 segments, as JPL's DE440 and DE441
   hold them: `Ymir_spk.state` and `Ymir_spk.position` give a body's geometric
   state from another, chained through their centres, batched and differentiable.

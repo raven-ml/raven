@@ -136,10 +136,10 @@ let require_areas fn a b =
         (fun i (x, y) ->
           Invalid_argument
             (Format.asprintf
-               "%s: the areas differ%s: %g in the first and %g in the second"
+               "%s: the areas differ%s: %s in the first and %s in the second"
                fn
                (if Array.length i = 0 then "" else " at " ^ Grid.index_text i)
-               (Nx.item [] x) (Nx.item [] y)))
+               (Transform.item x) (Transform.item y)))
 
 let combine fn op a b =
   Grid.require fn a.grid b.grid;

@@ -91,6 +91,16 @@ type (_, _, 'd) t =
 val length : ('a, 'b, 'd) t -> int
 (** [length t] is the number of [t]'s stages. *)
 
+val num : float -> string
+(** [num x] is the shortest decimal that reads as [x], as {!Nx.Dtype.pp_value}
+    writes a [float64]: [1000000], [4.58e-72]. It is the same on every
+    system, where [Printf]'s [%g] writes the C library's exponent, of three
+    digits under mingw-w64. *)
+
+val item : ('a, 'b, 'd) Nx.t -> string
+(** [item x] is the element of the 0-d [x] as the shortest decimal that reads
+    as it in [x]'s dtype, as {!num} writes a float. *)
+
 val code_name : code -> string
 (** [code_name c] is {!Projection.name}[ c]. *)
 

@@ -60,14 +60,9 @@ let at i =
     strf " at [%s]"
       (String.concat "; " (Array.to_list (Array.map string_of_int i)))
 
-(* [float_s x] is the shortest of [%.15g], [%.16g] and [%.17g] that reads back
-   as [x]. *)
-let float_s x =
-  let rec go p =
-    let s = strf "%.*g" p x in
-    if p >= 17 || float_of_string s = x then s else go (p + 1)
-  in
-  go 15
+(* [num x] is {!Transform.num}, which lies above Time: the shortest decimal
+   that reads as [x], the same text on every system. *)
+let num x = Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) x
 
 (* Calendar *)
 
@@ -392,8 +387,8 @@ let check_within (type s) fn (scale : s scale) day second =
     (fun i (d, (s, l)) ->
       Invalid_argument
         (strf "Time.%s: second %s%s is outside [0, %s) of %s day %Ld" fn
-           (float_s (Nx.item [] s)) (at i)
-           (float_s (Nx.item [] l)) (name scale) (Nx.item [] d)));
+           (num (Nx.item [] s)) (at i)
+           (num (Nx.item [] l)) (name scale) (Nx.item [] d)));
   (day, second)
 
 let v scale ~day ~second =
@@ -429,7 +424,7 @@ let clock_limit fn (h, mi, s) =
   if h < 0 || h > 23 || mi < 0 || mi > 59 || not (Float.is_finite s) || s < 0.
   then
     invalid_arg
-      (strf "Time.%s: %02d:%02d:%s is not a time of day" fn h mi (float_s s))
+      (strf "Time.%s: %02d:%02d:%s is not a time of day" fn h mi (num s))
 
 let of_date (type s) (scale : s scale) (y, m, d) (h, mi, s) =
   if m < 1 || m > 12 || d < 1 || d > days_in_month y m then
@@ -438,7 +433,7 @@ let of_date (type s) (scale : s scale) (y, m, d) (h, mi, s) =
   (* Only a UTC day's last minute may pass 60 s: its length decides. *)
   if s >= 60. && not (h = 23 && mi = 59) then
     invalid_arg
-      (strf "Time.of_date: %02d:%02d:%s is not a time of day" h mi (float_s s));
+      (strf "Time.of_date: %02d:%02d:%s is not a time of day" h mi (num s));
   (* A year past 2^53 is past the day bound, and the day count of a smaller
      one does not overflow. *)
   let past =
@@ -466,7 +461,7 @@ let of_date (type s) (scale : s scale) (y, m, d) (h, mi, s) =
       (strf
          "Time.of_date: %d-%02d-%02d %02d:%02d:%s is past the end of the %s \
           day, %s s long"
-         y m d h mi (float_s s) (name scale) (float_s length));
+         y m d h mi (num s) (name scale) (num length));
   if second >= length then
     {
       scale;

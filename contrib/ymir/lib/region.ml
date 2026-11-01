@@ -67,8 +67,8 @@ let batch i = Direction.at (Array.sub i 0 (max 0 (Array.length i - 2)))
 let check_size what r =
   Nx.check Nx.Ptree.tensor (Nx.greater_equal_s r 0.) r (fun i r ->
       Invalid_argument
-        (strf "Region.weights: %s%s is %g, not a size" what (batch i)
-           (Nx.item [] r)))
+        (strf "Region.weights: %s%s is %s, not a size" what (batch i)
+           (Transform.item r)))
 
 (* [check_cells area xs ys] raises where a cell is not a convex quadrilateral
    oriented as its window's first cell: the transform folds the window. *)

@@ -293,6 +293,22 @@ let window_errors () =
   raises_match Exn.invalid_arg (fun () ->
       I.raw ~window:[| (-1, 2); (0, 7) |] Nx.uint16 h)
 
+(* The step prints as the shortest decimal that reads back, the same on every
+   system: the C library's [%g] wrote 1e+06, and 1e+006 under mingw-w64. *)
+let bad_step () =
+  let t = Nx.zeros Nx.float64 [| 2; 2 |] in
+  let refuses q text =
+    raises
+      (Invalid_argument
+         ("Fits.Image.quantized: " ^ text ^ " is not a positive step"))
+      (fun () -> I.quantized q H.empty t)
+  in
+  refuses (-1e6) "-1000000";
+  refuses (-4.58e-72) "-4.58e-72";
+  refuses 0. "0";
+  refuses Float.nan "nan";
+  refuses Float.infinity "inf"
+
 let not_images () =
   is_error
     (I.of_hdu
@@ -513,5 +529,6 @@ let () =
                test "astropy's checksums verify" verify_reference;
                test "a corrupt data unit" corrupt;
                test "empty primary" empty_primary;
+               test "a step that is not positive" bad_step;
              ]);
        ]

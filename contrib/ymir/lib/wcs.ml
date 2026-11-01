@@ -382,7 +382,7 @@ let read_frame kw sfx axes =
     | None, None -> ("ICRS", "")
     | None, Some e ->
         let s = if e < 1984. then "FK4" else "FK5" in
-        (s, strf "%s (EQUINOX %g without RADESYS)" s e)
+        (s, strf "%s (EQUINOX %s without RADESYS)" s (Transform.num e))
   in
   match (axes.pair.lon, sys) with
   | "GLON", _ -> Ok (Frame Frame.galactic)
@@ -391,11 +391,12 @@ let read_frame kw sfx axes =
   | "RA", "FK5" -> (
       match eq with
       | None | Some 2000. -> Ok (Frame Frame.fk5_j2000)
-      | Some e -> time_stage kw (strf "FK5 at equinox %g" e))
+      | Some e -> time_stage kw (strf "FK5 at equinox %s" (Transform.num e)))
   | "ELON", "ICRS" -> (
       match eq with
       | None | Some 2000. -> Ok (Frame Frame.ecliptic_j2000)
-      | Some e -> time_stage kw (strf "the ecliptic at equinox %g" e))
+      | Some e ->
+          time_stage kw (strf "the ecliptic at equinox %s" (Transform.num e)))
   | "ELON", "FK5" -> time_stage kw "the IAU 1976 ecliptic (ELON under FK5)"
   | _ -> time_stage kw stated
 
@@ -518,7 +519,8 @@ let pole kw key alt default =
   in
   match (a, b, alt) with
   | Some x, Some y, Some alt when not (Float.equal x y) ->
-      fail kw "%s = %g and %s = %g spell one value and disagree" key x alt y
+      fail kw "%s = %s and %s = %s spell one value and disagree" key
+        (Transform.num x) alt (Transform.num y)
   | Some x, _, _ | None, Some x, _ -> Ok x
   | None, None, _ -> (
       match default with
@@ -1091,7 +1093,9 @@ let write ?alt ?window t kw =
         cards
     in
     match unspelled with
-    | Some (key, x) -> Error (strf "Wcs.write: FITS cannot spell %s = %g" key x)
+    | Some (key, x) ->
+        Error
+          (strf "Wcs.write: FITS cannot spell %s = %s" key (Transform.num x))
     | None ->
         let set =
           List.filter_map

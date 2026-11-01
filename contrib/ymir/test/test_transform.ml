@@ -444,10 +444,12 @@ let domains =
           in
           equal (array bool) [| true; false |]
             (Nx.to_array (covers t p));
-          raises_match
-            (Exn.invalid_arg
-               ~sub:"point 1 is 212.132 deg from the ARC plane's origin")
-            (fun () -> Transform.apply t p));
+          raises
+            (Invalid_argument
+               "Transform.apply: point 1 is 212.1320343559643 deg from the ARC \
+                plane's origin, outside the projection's domain; \
+                Transform.covers gives the mask") (fun () ->
+              Transform.apply t p));
       test "a transform with no stage covers everything" (fun () ->
           equal bool true
             (Option.is_none

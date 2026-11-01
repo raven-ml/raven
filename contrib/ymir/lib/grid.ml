@@ -295,8 +295,8 @@ let require fn a b =
             (fun i (x, y) ->
               Invalid_argument
                 (Format.asprintf
-                   "%s: the grids do not agree at %a: element %s is %g in the \
-                    first and %g in the second"
-                   fn Nx.Ptree.Path.pp path (index_text i) (Nx.item [] x)
-                   (Nx.item [] y))))
+                   "%s: the grids do not agree at %a: element %s is %s in the \
+                    first and %s in the second"
+                   fn Nx.Ptree.Path.pp path (index_text i) (Transform.item x)
+                   (Transform.item y))))
         leaves

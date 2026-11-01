@@ -697,7 +697,9 @@ let hdu ?tiles header (t : ('a, 'b, Nx.host) Nx.t) =
 
 let quantized (type b) ?tiles q header (t : (float, b, Nx.host) Nx.t) =
   if not (Float.is_finite q && q > 0.) then
-    invalid_arg (strf "Fits.Image.quantized: %g is not a positive step" q);
+    invalid_arg
+      (strf "Fits.Image.quantized: %s is not a positive step"
+         (Format.asprintf "%a" (D.pp_value Nx.float64) q));
   check_shape "quantized" t;
   let bitpix =
     match Nx.dtype t with

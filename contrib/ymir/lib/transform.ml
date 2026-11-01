@@ -8,6 +8,11 @@ module Unit = Ymir_units.Unit
 
 let strf = Printf.sprintf
 
+let num x = Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) x
+
+let item x =
+  Format.asprintf "%a" (Nx.Dtype.pp_value (Nx.dtype x)) (Nx.item [] x)
+
 type 'd plane = (float, Nx.float64_elt, 'd) Nx.t Quantity.t
 type 'd vectors = (float, Nx.float64_elt, 'd) Nx.t
 
@@ -151,11 +156,6 @@ let domain mode ~numbers s ok data fail =
       Nx.check s (Nx.logical_or ok (Nx.logical_not numbers)) (data ()) fail;
       None
 
-(* [floats t] is [t]'s values as ["a, b, c"]. *)
-let floats t =
-  String.concat ", "
-    (Array.to_list (Array.map (strf "%g") (Nx.to_array (Nx.reshape [| -1 |] t))))
-
 (* Planar families *)
 
 (* [axes] maps [x] to [x.(perm.(k)) + origin] in component [k]; its inverse maps
@@ -232,17 +232,17 @@ let distortion mode fn name unit ~forward ~jacobian ~inverse sense (x : 'd plane
           | Forward ->
               strf
                 "%s: %s is where the %s distortion folds (its Jacobian's \
-                 determinant is %g), outside its domain; Transform.covers \
+                 determinant is %s), outside its domain; Transform.covers \
                  gives the mask"
-                fn (point i) name (Nx.item [] det)
+                fn (point i) name (item det)
           | Inverse ->
               strf
                 "%s: %s does not invert through the %s distortion (Newton's \
-                 residual is %g %s, the Jacobian's determinant %g), outside \
+                 residual is %s %s, the Jacobian's determinant %s), outside \
                  its domain; Transform.covers gives the mask"
-                fn (point i) name (Nx.item [] r)
+                fn (point i) name (item r)
                 (if Unit.equal unit Unit.one then "pixel" else Unit.to_string unit)
-                (Nx.item [] det)))
+                (item det)))
   in
   (Quantity.v unit (nan_where (Nx.logical_not finite) y), mask)
 
@@ -511,7 +511,7 @@ let setup mode fn c =
                   projection: it needs %s"
                  fn name
                  (if Array.length i = 0 then "" else " " ^ index i)
-                 (String.concat ", " (List.map floats pv))
+                 (String.concat ", " (List.map item pv))
                  condition));
         let lon, lat = reference c in
         let native = degrees_of c.native in
@@ -522,12 +522,12 @@ let setup mode fn c =
           (fun i ((phip, lon), (lat, theta0)) ->
             Invalid_argument
               (strf
-                 "%s: the %s stage's LONPOLE %g deg%s and CRVAL (%g, %g) deg \
+                 "%s: the %s stage's LONPOLE %s deg%s and CRVAL (%s, %s) deg \
                   place no celestial pole for the native reference latitude \
-                  %g deg"
-                 fn name (Nx.item [] phip)
+                  %s deg"
+                 fn name (item phip)
                  (if Array.length i = 0 then "" else " at " ^ index i)
-                 (Nx.item [] lon) (Nx.item [] lat) (Nx.item [] theta0)));
+                 (item lon) (item lat) (item theta0)));
         None
   in
   (rotation p, ok)
@@ -552,9 +552,9 @@ let deproject mode fn c (x : 'd plane) =
     domain mode ~numbers:finite Nx.Ptree.tensor inside distance (fun i r ->
         Invalid_argument
           (strf
-             "%s: %s is %.6g deg from the %s plane's origin, outside the \
+             "%s: %s is %s deg from the %s plane's origin, outside the \
               projection's domain; Transform.covers gives the mask"
-             fn (point i) (Nx.item [] r) (code_name c.code)))
+             fn (point i) (item r) (code_name c.code)))
   in
   let x, y, z = rotate m u in
   let xyz = stack [ x; y; z ] in
@@ -593,10 +593,9 @@ let project mode fn c (d : _ Direction.t) =
       (fun i (r, (lon, lat)) ->
         Invalid_argument
           (strf
-             "%s: %s is %.6g deg from the %s reference (%.10g, %.10g) deg, \
-              outside the projection's domain; Transform.covers gives the mask"
-             fn (point i) (Nx.item [] r) (code_name c.code) (Nx.item [] lon)
-             (Nx.item [] lat)))
+             "%s: %s is %s deg from the %s reference (%s, %s) deg, outside \
+              the projection's domain; Transform.covers gives the mask"
+             fn (point i) (item r) (code_name c.code) (item lon) (item lat)))
   in
   ( Quantity.v Unit.radian (stack [ x; y ]),
     and_mask setup_ok ok )
