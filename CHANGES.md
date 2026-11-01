@@ -807,6 +807,10 @@ thread.
 - `Dtype.const` wraps an integer to an unsigned type: -1 as a `Uint8` is
   255. The negation and masked-shift rules read -1 at their operand's type,
   so they apply to unsigned constants.
+- `c0 + x < c1` (`Shape.symbolic`) and the comparisons `pm_reduce_collapse`
+  solves (`x + y < c`, `x * y < c`) apply to signed and index integers only,
+  `(x // c + a) // d` to index integers only, and `Symbolic.reduce_mul_chain`
+  moves no factor out of an unsigned maximum: unsigned arithmetic wraps.
 - **Breaking:** the `ALIGNED` setting (`Setting.aligned`) is gone: Clang's
   vector types are always aligned to their size, a bool vector's to one byte.
 - **Breaking:** `Ops.kernel_info` has `optimized`, which

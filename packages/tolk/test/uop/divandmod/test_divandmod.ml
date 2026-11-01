@@ -37,7 +37,7 @@ let nested_divisions =
       rewrites "merge_nested_divisions" Ops.O.(((x // int 2) + int 3) // int 4);
       rewrites "merge_nested_divisions_by_a_negative_inner_divisor"
         Ops.O.(((var "x" (-100) 100 // int (-2)) + int 3) // int 4);
-      rewrites "merge_nested_divisions_of_committed_integers"
+      rewrites "keep_nested_divisions_of_committed_integers"
         Ops.O.(((var ~dtype:Int32 "x" 0 100 // int 2) + int 3) // int 4);
       rewrites "split_nested_divisions_by_a_negative_divisor"
         Ops.O.(((x // int 2) + int 3) // int (-4));

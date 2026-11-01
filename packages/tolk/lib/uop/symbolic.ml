@@ -148,13 +148,16 @@ let simplify_valid valid =
 (* Phase 3: the complete symbolic *)
 
 (* A float factor moved out of a sum changes its rounding, and out of a maximum
-   its NaN and signed zeros. A factor leaves an integer maximum only where no
-   product wraps, its own included: over r < 4, the uint8 maximum of r * 255 is
-   255, where 3 * 255 wraps to 253. A maximum over a range whose size may be 0
+   its NaN and signed zeros. The maximum of x * m is the maximum of x times m
+   only where x * m grows with x, which an unsigned product that wraps does not:
+   over r < 4, the uint8 maximum of r * 255 is 255, where 3 * 255 wraps to 253.
+   So a factor leaves no unsigned maximum, and a signed one only where no
+   product wraps, its own included. A maximum over a range whose size may be 0
    is its identity when it is, which the factor would scale: it keeps the
    identity there. *)
 let reduce_mul_chain r =
   match arg r with
+  | Reduce { op = Op.Max; _ } when Dtype.is_unsigned (dtype r) -> None
   | Reduce { op = (Op.Add | Op.Max) as rop; _ }
     when not (Dtype.is_float (dtype r)) -> (
       let ranges = List.tl (src r) in

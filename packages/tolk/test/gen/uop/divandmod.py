@@ -97,7 +97,7 @@ def merge_nested_divisions_by_a_negative_inner_divisor():
 
 
 @graph
-def merge_nested_divisions_of_committed_integers():
+def keep_nested_divisions_of_committed_integers():
     return once((v("x", 0, 100, dtype=dtypes.int32) // 2 + 3) // 4)
 
 

@@ -346,6 +346,18 @@ let collapsing =
             Ops.O.(r * var ~dtype:Int32 "y" 0 20 < var ~dtype:Int32 "x" 0 20)
           in
           equal uop u (collapse u));
+      test "a comparison of an unsigned sum or product is left, as it wraps"
+        (fun () ->
+          List.iter
+            (fun dtype ->
+              let x = var ~dtype "x" 1 100 and y = var ~dtype "y" 1 100 in
+              let c = var ~dtype "c" 1 100 in
+              List.iter
+                (fun lt ->
+                  equal ~msg:(Dtype.name dtype) bool (Dtype.is_unsigned dtype)
+                    (collapse lt == lt))
+                Ops.O.[ x + y < c; x * y < c ])
+            Dtype.[ Int32; Uint32 ]);
       test "a sum of a value below a bound is the bound times the value"
         (fun () ->
           sums_to (`Float 6.)

@@ -1581,19 +1581,13 @@ let div_and_mod_symbolic =
   Pattern_matcher.v
     (fun () -> [
       (* Fast inline rules *)
-      (* (x // c + a) // d is (x + a * c) // (c * d) for d > 0, where
-           nothing wraps *)
+      (* (x // c + a) // d is (x + a * c) // (c * d) for d > 0, on index
+         arithmetic, which never wraps *)
       rule
-        Upat.(((var "x" // cvar "c") + cvar "a") // cvar "d")
+        Upat.(((var ~dtype:[ Dtype.Weak_int ] "x" // cvar "c") + cvar "a") // cvar "d")
         (fun m ->
           let x = m "x" and c = m "c" and a = m "a" and d = m "d" in
-          let ac = V.(vmin a * vmin c) and cd = V.(vmin c * vmin d) in
-          let values =
-            V.[ vmin a; vmin c; vmin d; ac; cd; vmin x + ac; vmax x + ac ]
-          in
-          if V.(vmin d > zero) && exact (dtype x) values then
-            Some O.((x + (a * c)) // (c * d))
-          else None);
+          if V.(vmin d > zero) then Some O.((x + (a * c)) // (c * d)) else None);
       (* (x + c) // d is (x + c % d) // d + c // d, and (x + c) % d is (x + c %
          d) % d: the multiple of d leaves the constant, for any d <> 0 *)
       rule
@@ -2681,9 +2675,10 @@ let symbolic =
                 then Some O.(m "x" // (m "c1" * m "c2"))
                 else None);
             (* Lt *)
-            (* c0+x<c1 -> x < c1-c0, where neither side wraps *)
+            (* c0+x<c1 -> x < c1-c0 for signed x, where neither side wraps:
+               an unsigned sum that wraps moves past c1 *)
             rule
-              Upat.(cvar "c0" + var ~dtype:int_like "x" < cvar "c1")
+              Upat.(cvar "c0" + var ~dtype:(Dtype.Weak_int :: Dtype.sints) "x" < cvar "c1")
               (fun m ->
                 let x = m "x" and c0 = vmin (m "c0") and c1 = vmin (m "c1") in
                 if

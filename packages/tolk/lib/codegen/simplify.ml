@@ -309,17 +309,26 @@ let pm_reduce_collapse =
       pm_reduce_unparented;
       Pattern_matcher.v
         (fun () -> [
-          (* Lift x + y out of a reduction on a comparison. *)
+          (* Lift x + y out of a reduction on a comparison, where x + y does not
+             wrap: an unsigned sum wraps, so the rule is for signed ones. *)
           rule
-            Upat.O.(var "x" + var "y" < var "c")
+            Upat.O.(
+              Upat.op Op.Add
+                ~dtype:(Dtype.sints @ Dtype.floats @ Dtype.weaks)
+                ~perm:[ var "x"; var "y" ]
+              < var "c")
             (fun m ->
               let x = m "x" and y = m "y" and c = m "c" in
               if no_range y && no_range c && solves_sum x y c then
                 Some O.(x < c - y)
               else None);
-          (* Lift x * y out of a reduction, where nothing wraps. *)
+          (* Lift x * y out of a reduction, where nothing wraps, as for x + y. *)
           rule
-            Upat.O.(var "x" * var "y" < var "c")
+            Upat.O.(
+              Upat.op Op.Mul
+                ~dtype:(Dtype.Weak_int :: Dtype.sints)
+                ~perm:[ var "x"; var "y" ]
+              < var "c")
             (fun m ->
               let x = m "x" and y = m "y" and c = m "c" in
               let products =
@@ -331,7 +340,6 @@ let pm_reduce_collapse =
               in
               if
                 no_range y && no_range c
-                && Dtype.is_int (dtype y)
                 && V.(vmin y > of_int 0)
                 && exact (dtype y) (products @ ceilings)
               then Some O.(x < (c + y - int 1) // y)

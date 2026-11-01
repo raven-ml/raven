@@ -633,36 +633,38 @@ scope, see README.
   restrictions touch float and committed-integer values only. The one rounding
   that stays is that of float powers, a constant one computed by products and
   square roots and any other as `exp2 (y * log2 x)` (`Transcendental.xpow`).
-  - **Integer bounds wrap.** tinygrad: `uop/ops.py:1091-1152` (`_min_max`),
-    `:1143-1152` (a cast), `:1136-1138` (a constant table). tolk:
-    `Ops.min_max`, `Ops.cast_bounds`, and the constant table's case of
-    `Ops.compute_min_max`. The
-    bounds of a committed integer that leave its type are the type's; an
-    integer cast to an integer keeps its interval, which then wraps, where
-    tinygrad clamps a signed target to the overlap; a constant table holding a
-    NaN has its type's bounds, as a NaN constant has. tinygrad folds uint8
-    `(u + 1) < 1` to `false`, which is `true` at 255, int8 `(y + 100) < 0`
-    for `y` in `[0, 50]` to `false`, which is `true` at 40, and
-    `cast (cast (y + 100) uint8) int32` to one cast, `-116` where the machine
-    gives `140`.
+  - **Integer bounds wrap.** tinygrad: `uop/ops.py:59-61` (`wrapped`),
+    which `_min_max` (`:1094-1155`) applies to an unsigned sum, difference,
+    product, left shift and complement, `:1146-1155` (a cast), `:1139-1141`
+    (a constant table). tolk: `Ops.at_width`, `Ops.min_max`,
+    `Ops.cast_bounds`, and the constant table's case of
+    `Ops.compute_min_max`. The bounds of a committed integer that leave its
+    type are one value wrapped, or the type's, signed or not, whatever the
+    operation: tinygrad wraps those of the unsigned operations alone, and to
+    the type's, one value included; an integer cast to an integer keeps its
+    interval, which then wraps, where tinygrad clamps a signed target to the
+    overlap; a constant table holding a NaN has its type's bounds, as a NaN
+    constant has. tinygrad folds int8 `(y + 100) < 0` for `y` in `[0, 50]` to
+    `false`, which is `true` at 40, and so `y * 4 < 0` and `y << 2 < 0`,
+    `true` at 40 too, and `cast (cast (y + 100) uint8) int32` to one cast,
+    `-116` where the machine gives `140`.
   - **Wrapping rules.** tinygrad: `uop/symbolic.py:287` (`(x // c1) // c2`),
-    `:290` (`c0 + x < c1`), `uop/divandmod.py:101` (`(x // c + a) // d`),
-    `codegen/simplify.py:100-103` (`x + y < c`, `x * y < c`) and `:123`
-    (`x + y <> c` under a cast), `uop/symbolic.py:388-396`
-    (`reduce_mul_chain`, a factor out of a maximum). tolk: `Shape.symbolic`,
-    `Shape.div_and_mod_symbolic`, `Simplify.solves_sum`,
+    `:290` (`c0 + x < c1`), `codegen/simplify.py:101-104` (`x + y < c`,
+    `x * y < c`) and `:124` (`x + y <> c` under a cast),
+    `uop/symbolic.py:388-398` (`reduce_mul_chain`, a factor out of a
+    maximum). tolk: `Shape.symbolic`, `Simplify.solves_sum`,
     `Simplify.pm_reduce_collapse`, `Simplify.pm_reduce_load_collapse`,
-    `Symbolic.reduce_mul_chain`.
-    Each applies to a committed integer only where every value it computes
-    fits the type; the comparisons of `Simplify` apply to integers only, since
-    moving a float term rounds, and `x + y <> c` only under a cast that does
-    not narrow. tinygrad folds uint8 `u - 1 < 255` for every `u`, int32
-    `(w // 2 + 2^30) // 2` at `2^30` to `-268435456` where the machine gives
-    `805306368`, `(w // 65536) // 65536` to a division by `2^32`, which
-    wraps to `0`, the uint8 maximum of `r * u` over `r < 4` to `3 * u`,
-    `253` at `255` where the machine gives `255`, and the int8 maximum of
-    `r * p * q` over `r < 2` to `p * q`, `-112` at `12, 12` where the
-    machine gives `0`.
+    `Symbolic.reduce_mul_chain`. tinygrad keeps `c0 + x < c1`, the
+    comparisons of `Simplify` but the last, and a factor out of a maximum
+    from unsigned integers, which wrap, and applies them to signed ones,
+    whose overflow it takes to be undefined; tolk applies each to a signed
+    integer only where every value it computes fits the type, and so
+    `(x // c1) // c2` and `x + y <> c` to any committed integer. The
+    comparisons of `Simplify` apply to integers only, since moving a float
+    term rounds, and `x + y <> c` only under a cast that does not narrow.
+    tinygrad folds int32 `(w // 65536) // 65536` to a division by `2^32`,
+    which wraps to `0`, and the int8 maximum of `r * p * q` over `r < 2` to
+    `p * q`, `-112` at `12, 12` where the machine gives `0`.
   - **Float folds.** tinygrad: `uop/symbolic.py:120` (`x + 0`), `:173-179`
     (`x / x`, `(x * y) / y`, `x * 0`), `:252` (`(x / y) / z`). tolk:
     `Shape.symbolic_simple`. A float `x + 0` is `x` only for `-0.`
@@ -673,14 +675,14 @@ scope, see README.
     1e30` is `inf`, and `(1e20 / 1e20) / 1e20` is `1e-20` where
     `1e20 / 1e40` is `0.`.
   - **Signed zeros.** tinygrad: `uop/symbolic.py:253` (`-(x + c)`), `:272`
-    (complementary selections), `:469` (`-(x + y)`). tolk: `Shape.symbolic`,
+    (complementary selections), `:471` (`-(x + y)`). tolk: `Shape.symbolic`,
     `Symbolic.sym` (its rule for `-(x + y)`). For integers and
     booleans only: `-(x + 3)` at `x = -3` is `-0.`, where `-x + -3` is `+0.`, and
     `where c t 0 + where c 0 f` at `t = -0.` is `+0.`, where `where c t f` is
     `-0.`.
   - **Reassociation.** tinygrad: `uop/symbolic.py:245-251` (like terms),
     `:269-270` (a sum of two selections), `:284-285` (two constants of an
-    associative operation), `:295-296` (constants to the end), `:388-396,467`
+    associative operation), `:295-296` (constants to the end), `:388-398,469`
     (`reduce_mul_chain`). tolk: `Shape.fold_where_closure`,
     `Shape.symbolic`, `Symbolic.reduce_mul_chain`.
     Sums, products and maxima regroup for integers and booleans only, and a
@@ -701,7 +703,7 @@ scope, see README.
     into a maximum that renders as the target's own, and it took `-0.` and
     `+0.` for one constant: `where (x < -0.) 0. x` at `-1e-45` is `+0.`,
     where `max (x, -0.)` is `-0.`. A float ReLU stays a selection.
-  - **Reciprocal and sigmoid forms.** tinygrad: `uop/symbolic.py:460-465`.
+  - **Reciprocal and sigmoid forms.** tinygrad: `uop/symbolic.py:462-467`.
     tolk: the rules are left out of `sym`. `1 / (x * x)` at `1e20` is
     `0.`, where `(1 / x) * (1 / x)` is `1e-40`; `x * (1 / (1 + x))` at `1e-8`
     is `1e-8`, where `1 - 1 / (1 + x)` is `0.`, and at `inf` is NaN, where it
@@ -715,8 +717,8 @@ scope, see README.
     at `-0.` and `+inf` at `-inf`, where `sqrt` gives `-0.` and NaN. `c ** x`
     goes to `xpow` for `c = inf`: `inf ** 0` is `1.`, where
     `exp2 (0 * log2 inf)` is NaN.
-  - **Simplify's reductions.** tinygrad: `codegen/simplify.py:104-111`
-    (`sum_between`), `:115-116` (a parameter lifted out of a sum) and `:118`
+  - **Simplify's reductions.** tinygrad: `codegen/simplify.py:105-112`
+    (`sum_between`), `:116-117` (a parameter lifted out of a sum) and `:119`
     (a product by a boolean cast). tolk: `Simplify.sum_between`,
     `Simplify.pm_reduce_collapse`.
     A float sum counted in closed form is `+0.` over an empty part of its
@@ -771,9 +773,7 @@ scope, see README.
     bounds` and the law `› bounds hold the value a committed integer
     wraps to`;
   - wrapping rules: `Tolk.Symbolic › integers wrap` (every test);
-    `Tolk.Divandmod › nested divisions › a committed division stays
-    where x + a * c wraps`; `Tolk.Simplify › keeping values`,
-    its comparison tests;
+    `Tolk.Simplify › keeping values`, its comparison tests;
   - float folds, signed zeros, reassociation, maxima, reciprocal and sigmoid
     forms, pow: `Tolk.Symbolic › floats keep IEEE values`, one test
     per facet, with `› a Dekker split and product keep their low parts` and
