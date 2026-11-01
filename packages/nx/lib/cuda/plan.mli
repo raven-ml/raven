@@ -1,0 +1,77 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(** A contraction's launches on sm_89.
+
+    A call's launches are chosen from the contraction's dtypes, view's
+    extents and strides, and its operands' alignment, never from the GPU's
+    size or clocks. Every choice that changes a bit of a float sum reads k,
+    the dtypes and the order alone, the order chosen from the rows and
+    columns, so that a window of a result, computed alone in that order, has
+    the whole's bits. *)
+
+type launch
+(** The type for launches: a call's operands, kernels, geometry and
+    workspace pieces, as {!choose} decided them. *)
+
+(** The type for what a plan does with a call that does work or none. *)
+type verdict =
+  | Nothing  (** The result has no element: no work. *)
+  | Launches of launch array
+      (** Windows of the result that together cover it, each once, launched
+          in order by {!parts} and {!write}; one for a call within one
+          launch's bounds. *)
+
+val choose :
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
+  acc:Nx_array.Dtype.any ->
+  dst:('v, 's) Nx_array.t ->
+  init:('v, 's) Nx_array.t option ->
+  ('a, 'b) Nx_array.t ->
+  ('c, 'e) Nx_array.t ->
+  (verdict, Nx_array.answer) result
+(** [choose ~batch ~contracting ~acc ~dst ~init a b] plans the contraction
+    of [a] with [b], computed in [acc], into [dst], as
+    {!Nx_kernel.S.contract} takes it, unscaled and unsegmented: in lane order
+    where its rows or columns are 4 or fewer, in chain order past them. The
+    mma kernels take a sum by its dtypes, in either order; another float sum
+    runs on the skinny kernels in lane order and on the SIMT kernels in
+    chain order, and an integer sum on the skinny kernels at 16 rows or
+    fewer. It is [Error] of what {!View.v} answers where the axes do not
+    group, and
+    [Error Declined] for dtypes its kernels do not sum and a contracted
+    extent above [2{^30}]. The operands' buffers are live. *)
+
+val workspace : launch -> int
+(** [workspace l] is the bytes of workspace [l] addresses. *)
+
+val tickets : launch -> int
+(** [tickets l] is the bytes of tickets [l]'s split sum takes, from the start
+    of a buffer whose words are zero, which [l] leaves zero; [0] for no
+    split. *)
+
+val sequences : int
+(** [sequences] bounds {!sequence}. *)
+
+val sequence : launch -> int
+(** [sequence l] is [l]'s kernels and slots as a key below {!sequences}. *)
+
+val parts : int -> Rig.Image.t -> Rig.Submission.part array
+(** [parts key i] is the launches of the sequence [key] of [i]'s kernels,
+    their refs into the slots {!buffers} fills.
+
+    Raises [Invalid_argument] if [key] is not below {!sequences}. *)
+
+val write : launch -> Rig.Submission.Run.t -> Rig.Submission.t -> unit
+(** [write l r s] stores the geometry and parameters of [l] into [r]'s blocks
+    of [s], a submission of [parts (sequence l)]. *)
+
+val buffers :
+  launch -> workspace:Rig.Buffer.t -> tickets:Rig.Buffer.t -> Rig.Buffer.t array
+(** [buffers l ~workspace ~tickets] is the buffers of a submit of [l], in
+    slot order, [workspace] among them where [workspace l > 0] and [tickets]
+    where [tickets l > 0]. [workspace] and [tickets] must hold the bytes
+    {!workspace} and {!tickets} give. *)

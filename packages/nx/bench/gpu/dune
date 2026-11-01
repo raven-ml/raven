@@ -10,3 +10,15 @@
   (glob_files *.thumper))
  (action
   (run %{exe:bench_nx_gpu.exe})))
+
+; The host reference the GPU kernel libraries' suites and benches check
+; results against.
+
+(library
+ (name nx_gpu_ref)
+ (modules nx_gpu_ref)
+ (libraries nx_array)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../lib/array)
+  (names ref nx_gpu_ref_stubs)))
