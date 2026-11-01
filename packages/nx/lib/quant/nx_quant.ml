@@ -337,18 +337,39 @@ let whole_along t =
 
 let some t = Array.fold_left ( * ) 1 (Nx.shape t) > 0
 
-(* Raises naming [fn] where a cut of [w] along [k] splits a block, which
-   each device would read whole: before any block is decoded, at the call
-   that reads them. An MXFP4 weight of one block whose scales lie whole
-   decodes its codes where they lie. *)
+(* Whether each device that holds MXFP4 codes holds the scales of the
+   blocks its codes' window reaches. *)
+let scales_cover codes scales =
+  let r = Nx.ndim codes in
+  let held = Nx.Prim.pieces (Nx.placement scales) (Nx.shape scales) in
+  Array.for_all
+    (fun (here, (w : Nx_array.Move.range array)) ->
+      let c = w.(r - 1) in
+      c.count = 0
+      || Array.exists
+           (fun (there, (v : Nx_array.Move.range array)) ->
+             let g = v.(r - 1) in
+             Nx.Placement.equal here there
+             && g.start <= c.start / mxfp4_bytes
+             && (c.start + c.count + mxfp4_bytes - 1) / mxfp4_bytes
+                <= g.start + g.count)
+           held)
+    (Nx.Prim.pieces (Nx.placement codes) (Nx.shape codes))
+
+(* Raises naming [fn] where a cut of [w] along [k] splits a block, or puts
+   MXFP4 codes on a device without their blocks' scales, which each device
+   would read whole: before any block is decoded, at the call that reads
+   them. An MXFP4 weight of one block whose scales lie whole decodes its
+   codes where they lie. *)
 let check_k fn w =
   let splits =
     match w with
     | Mxfp4 { codes; scales } ->
         let one_block = (Nx.shape scales).(Nx.ndim scales - 1) = 1 in
         some codes
-        && (not (at_blocks mxfp4_bytes codes))
-        && not (one_block && whole_along scales)
+        && ((not (scales_cover codes scales))
+           || (not (at_blocks mxfp4_bytes codes))
+              && not (one_block && whole_along scales))
     | Mxfp4_blocks { blocks } ->
         some blocks && not (at_blocks mxfp4_block_bytes blocks)
     | Q8_0 { blocks } -> some blocks && not (at_blocks q8_0_bytes blocks)
@@ -358,8 +379,9 @@ let check_k fn w =
   if splits then
     invalid_arg
       (strf
-         "%s: the weight lies cut along k inside its blocks, which each device \
-          would read whole; Nx.place (Placement.on s) w"
+         "%s: the weight lies cut along k so that a device does not hold \
+          whole blocks with their scales, which it would read whole; \
+          Nx.place (Placement.on s) w"
          fn)
 
 (* Products *)

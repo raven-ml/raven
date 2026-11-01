@@ -1847,6 +1847,12 @@ let whole_scales_law (t, b, lead, cut_x) =
   | 3 -> run (module Mem_three)
   | _ -> run (module Mem)
 
+(* The message of a call over a weight cut along [k] so that a device does
+   not hold whole blocks with their scales. *)
+let split_blocks =
+  ": the weight lies cut along k so that a device does not hold whole blocks \
+   with their scales, which it would read whole; Nx.place (Placement.on s) w"
+
 let placements =
   group "placement"
     [
@@ -1855,6 +1861,38 @@ let placements =
          within its bound, the same on every run, lying where the interface \
          says, or raises where a cut along k splits blocks"
         placed placement_law;
+      (* MXFP4 codes whole on each device beside scales cut along k: a
+         device past the first tile holds codes without their scales, so the
+         call raises naming the placement that puts the weight whole. *)
+      cases "MXFP4 scales cut apart from their codes raise at the call"
+        ~id:(fun (blocks, call) ->
+          Printf.sprintf "%d blocks, %s" blocks
+            (match call with `Dequant -> "dequant" | `Apply -> "apply"))
+        [ (1, `Dequant); (2, `Dequant); (1, `Apply) ]
+        (fun (blocks, call) ->
+          let k = blocks * 32 in
+          let codes, scales =
+            match parts (random_weight [| 2; k |]) with
+            | [ c; s ] -> (c, s)
+            | _ -> fail "an MXFP4 weight has codes and scales"
+          in
+          let w =
+            Nx_quant.mxfp4
+              ~scales:(Nx.place (Mem.split ~axis:1) scales)
+              (Nx.place Mem.on codes)
+          in
+          match call with
+          | `Dequant ->
+              raises
+                (Invalid_argument ("Nx_quant.dequant" ^ split_blocks))
+                (fun () -> Nx_quant.dequant Nx.float32 w)
+          | `Apply ->
+              let x =
+                Nx.cast Nx.float64 (Nx.place Mem.on (random_floats [| 3; k |]))
+              in
+              raises
+                (Invalid_argument ("Nx_quant.apply" ^ split_blocks))
+                (fun () -> Nx_quant.apply w x));
       (* A cut along k inside the blocks raises at the call, before any
          block is decoded, naming the placement that puts the weight whole:
          one block of each format over two devices, three over two, and two
@@ -1874,12 +1912,7 @@ let placements =
           let k = blocks * block_values f in
           let w = random_weight ~format:f [| 2; k |] in
           let wp = Nx_quant.place (at c) w in
-          let named fn =
-            Invalid_argument
-              (fn
-             ^ ": the weight lies cut along k inside its blocks, which each \
-                device would read whole; Nx.place (Placement.on s) w")
-          in
+          let named fn = Invalid_argument (fn ^ split_blocks) in
           match call with
           | `Dequant ->
               raises (named "Nx_quant.dequant") (fun () ->
