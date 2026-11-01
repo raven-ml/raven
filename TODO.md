@@ -286,7 +286,7 @@ raven / llama.cpp (Vulkan; ROCm):
 ## repo
 
 - thumper: suites whose only x86 section is kimchi's (retired):
-  kaun, gpt_oss. Record each on fudge, then delete every kimchi section,
+  gpt_oss. Record each on fudge, then delete every kimchi section,
   nx's and tolk's included. nx.thumper's fudge section was recorded under
   OCaml 5.5.1, so it compares nothing under 5.5.2: re-record it on a quiet
   fudge. talon.thumper's Mac rows predate the Nx.Rng
