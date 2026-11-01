@@ -275,7 +275,7 @@ type registration = {
   gpu_id : int;
   start : int;
   bytes : int;
-  handle : int;
+  mutable handle : int; (* set as it joins the registry *)
   mutable maps : int;
 }
 
@@ -304,7 +304,7 @@ let kfd_fd ~dev =
 type kind = Own | Borrowed of registration | Peer | View
 
 type mem = {
-  handle : int;
+  mutable handle : int; (* set before the path gives it, once *)
   bytes : int;
   at : int; (* the process's addresses, unmapped at the free *)
   kind : kind;
@@ -313,10 +313,12 @@ type mem = {
 }
 
 (* Maps or unmaps [handle] for GPU [gpu]. Raises [Unix.Unix_error], [EIO] if
-   KFD did not reach the GPU. *)
+   KFD did not reach the GPU: an exception made once, so that the raise
+   allocates nothing where [free] and [map_host] keep their records whole. *)
+let unreached = Unix.Unix_error (EIO, "ioctl", "")
+
 let map_gpu fd handle gpu map =
-  if kfd_map_gpu fd handle gpu map <> 1 then
-    raise (Unix.Unix_error (EIO, "ioctl", ""))
+  if kfd_map_gpu fd handle gpu map <> 1 then raise unreached
 
 (* Counts a view of [handle] for GPU [gpu], mapping it at the first: whether the
    GPU maps it. The counted table is made before the MAP, so that nothing
@@ -408,15 +410,28 @@ let free fd g (m : mem Amd.memory) =
       unmap_mem p.at p.bytes
   | Borrowed e ->
       Amd.Lock.protect registry_lock @@ fun () ->
-      e.maps <- e.maps - 1;
-      if e.maps = 0 then begin
-        registry := List.filter (fun e' -> e' != e) !registry;
-        quietly (fun () -> map_gpu fd e.handle e.gpu_id false);
-        check "freeing GPU memory" (fun () -> kfd_free fd e.handle)
+      if e.maps > 1 then e.maps <- e.maps - 1
+      else begin
+        (* The last region's free unlists the registration with nothing
+           between its store and KFD's free that allocates or polls: KFD
+           refuses every later map of a range that overlaps a mapping left
+           unlisted. *)
+        let rest = List.filter (fun e' -> e' != e) !registry in
+        e.maps <- 0;
+        registry := rest;
+        (match map_gpu fd e.handle e.gpu_id false with
+        | () -> ()
+        | exception Unix.Unix_error _ -> ());
+        match kfd_free fd e.handle with
+        | () -> ()
+        | exception Unix.Unix_error (err, _, _) ->
+            fault "freeing GPU memory" err
       end
 
 (* Pages within a mapping of the GPU share it; pages that only partly overlap
-   one KFD refuses. *)
+   one KFD refuses. A mapping's region, and a new mapping's registration, are
+   made before its count or KFD's mapping, so that nothing allocates or polls
+   between those and their record. *)
 let map_host fd g a n : mem Amd.memory option =
   let start = a land lnot (page - 1) in
   let bytes = round_up (a + n - start) page in
@@ -424,36 +439,41 @@ let map_host fd g a n : mem Amd.memory option =
   let inside e =
     e.gpu_id = gpu_id && e.start <= start && start + bytes <= e.start + e.bytes
   in
-  let region (e : registration) =
-    let data =
-      {
-        handle = e.handle;
-        bytes;
-        at = start;
-        kind = Borrowed e;
-        owner = g;
-        vram = false;
-      }
-    in
-    Some { Amd.address = a; host = Some a; data }
+  let data (e : registration) =
+    {
+      handle = e.handle;
+      bytes;
+      at = start;
+      kind = Borrowed e;
+      owner = g;
+      vram = false;
+    }
   in
+  let region data = Some { Amd.address = a; host = Some a; data } in
   Amd.Lock.protect registry_lock @@ fun () ->
   match List.find_opt inside !registry with
   | Some e ->
+      let r = region (data e) in
       e.maps <- e.maps + 1;
-      region e
+      r
   | None -> (
+      let e = { gpu_id; start; bytes; handle = 0; maps = 1 } in
+      let m = data e in
+      let listed = e :: !registry and r = region m in
       match kfd_alloc fd gpu_id start bytes Userptr with
       | exception Unix.Unix_error _ -> None
       | handle, _ -> (
           match map_gpu fd handle gpu_id true with
           | exception Unix.Unix_error _ ->
-              quietly (fun () -> kfd_free fd handle);
+              (match kfd_free fd handle with
+              | () -> ()
+              | exception Unix.Unix_error _ -> ());
               None
           | () ->
-              let e = { gpu_id; start; bytes; handle; maps = 1 } in
-              registry := e :: !registry;
-              region e))
+              e.handle <- handle;
+              m.handle <- handle;
+              registry := listed;
+              r))
 
 (* Memory of another device: of the same GPU, in this address space already; of
    a GPU the topology links this one to, mapped for it. *)
@@ -732,6 +752,16 @@ let make_events fd g =
 
 (* A device *)
 
+(* A queue KFD made: its id, and its doorbell's host address once mapped, [0]
+   before. Each is made, with the list that holds it, before KFD's request,
+   and takes the id and the doorbell by plain stores, so that no allocation
+   or poll comes between a request and its record. *)
+type made = {
+  mutable id : int;
+  mutable bell : int;
+  mems : mem Amd.memory list;
+}
+
 type device = {
   fd : int;
   gpu : gpu;
@@ -739,8 +769,7 @@ type device = {
   age : int Atomic.t;
       (* the newest age of the signal event a wait gave back: [interrupts] *)
   mutable events_held : bool; (* until destroyed, once *)
-  mutable queues : (int * int * mem Amd.memory list) list;
-      (* id, doorbell, its memory *)
+  mutable queues : made list;
 }
 
 (* Event ids are the process's: one destroyed twice may already name another
@@ -817,6 +846,8 @@ let queue d kind ~ring ~bytes ~read ~write =
   let kind : queue =
     match kind with `Pm4 -> Pm4 | `Aql -> Aql | `Sdma -> Sdma
   in
+  let q = { id = -1; bell = 0; mems = taken } in
+  let listed = q :: d.queues in
   match
     kfd_queue d.fd kind node.gpu_id ring bytes (address eop)
       (if compute then eop_bytes else 0)
@@ -831,25 +862,29 @@ let queue d kind ~ring ~bytes ~read ~write =
       Error (if e = ENOMEM then Amd.Lacking why else Amd.Refused why)
   | id, doorbell_offset ->
       (* Listed before its doorbell is mapped, so that stop destroys it. *)
-      d.queues <- (id, 0, taken) :: d.queues;
+      q.id <- id;
+      d.queues <- listed;
       let bell =
         Amd.Lock.protect opening (fun () -> doorbell d doorbell_offset)
       in
-      d.queues <-
-        List.map
-          (fun ((i, _, t) as q) -> if i = id then (i, bell, t) else q)
-          d.queues;
+      q.bell <- bell;
       Ok bell
 
-(* Destroys the queue whose doorbell is at [bell] and gives back its memory. *)
+(* Destroys the queue whose doorbell is at [bell] and gives back its memory.
+   The queue leaves the list with nothing between KFD's destroy and the store
+   that allocates or polls: a destroyed id left listed would be destroyed
+   again at stop, where KFD may have given it to another device's queue. *)
 let retire d bell =
-  match List.find_opt (fun (_, b, _) -> b = bell) d.queues with
+  match List.find_opt (fun q -> q.bell = bell) d.queues with
   | None -> invalid_arg "Rig_amd_amdgpu: no queue has that doorbell"
-  | Some ((id, _, mems) as q) ->
-      (try kfd_destroy_queue d.fd id
-       with Unix.Unix_error (e, _, _) -> fault "destroying a KFD queue" e);
-      d.queues <- List.filter (fun q' -> q' != q) d.queues;
-      List.iter (free d.fd d.gpu) mems
+  | Some q ->
+      let rest = List.filter (fun q' -> q' != q) d.queues in
+      (match kfd_destroy_queue d.fd q.id with
+      | () -> ()
+      | exception Unix.Unix_error (e, _, _) ->
+          fault "destroying a KFD queue" e);
+      d.queues <- rest;
+      List.iter (free d.fd d.gpu) q.mems
 
 (* KFD takes a ring's size, a power of two, as 32 bits (kfd_ioctl.h, ring_size
    of kfd_ioctl_create_queue_args). *)
@@ -955,14 +990,14 @@ let stable_power g () =
 let stop d ~fault:_ =
   let gone, kept =
     List.partition
-      (fun (id, _, _) ->
-        match kfd_destroy_queue d.fd id with
+      (fun q ->
+        match kfd_destroy_queue d.fd q.id with
         | () -> true
         | exception Unix.Unix_error _ -> false)
       d.queues
   in
   let give_back m = try free d.fd d.gpu m with Amd.Fault _ -> () in
-  List.iter (fun (_, _, mems) -> List.iter give_back mems) gone;
+  List.iter (fun q -> List.iter give_back q.mems) gone;
   d.queues <- kept;
   if kept <> [] then `Unknown
   else begin
