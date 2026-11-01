@@ -144,7 +144,17 @@ raven / llama.cpp (Vulkan; ROCm):
   slowed memory-bound select-zero ~15% on x86; time 32 against 64 bytes on
   fudge
 - an expensive elementwise producer (sin/cos) recomputed in each consumer's
-  kernel: jera root-newton-kepler-1k compiled 2.2 ms against eager 0.57
+  kernel: jera root-newton-kepler-1k compiled 2.2 ms against eager 0.57.
+  The opposite also costs: `Indexing.assign_ranges` stores any elementwise
+  node under an expand that feeds a reduce, so gpt-oss's
+  `Nx_quant.apply_experts` (CUDA, prefill-512) decodes every expert's
+  weight into float32 on each call: E_8294400_32_2 writes 2.1 GB in 4.74
+  ms for gate_up, E_4147200_32_2 2.39 ms, where the decode could stay
+  fused into the gated per-group loads. One store-or-recompute rule
+  covers both and D77, D100, D106, D163
+- apply_experts' contractions run 56 ms against the block path's 36 ms:
+  one route row per thread group, so decoded weights are not shared across
+  rows (D92's case); decide with D89's layout
 - running sums cost ~257 ops per element (shape.ml:955): `Nx.cumsum` over
   float64 [100; 50500] takes ~1.0 s on CPU. A scan with constant work per
   element, and a compiled cumsum row
