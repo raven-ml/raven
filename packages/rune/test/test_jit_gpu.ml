@@ -431,10 +431,15 @@ let law_split seed =
 
 let units_k = 2880
 
-(* The terms of each row, as multiples of [u c]. *)
+(* The terms of each row, as multiples of [u c]: fifteen, and the first again,
+   so that the rows fill a tensor core's tile of sixteen, which takes no
+   product of fifteen rows. *)
 let unit_terms =
-  (255. /. 256.) :: (255. /. 128.)
-  :: List.init 13 (fun j -> 255. /. 256. *. ldexp 1. (j + 2))
+  let terms =
+    (255. /. 256.) :: (255. /. 128.)
+    :: List.init 13 (fun j -> 255. /. 256. *. ldexp 1. (j + 2))
+  in
+  terms @ [ List.hd terms ]
 
 let unit_case (type b) (dt : (float, b) Nx.dtype) c () =
   let _, (module S) = on_gpu () in
