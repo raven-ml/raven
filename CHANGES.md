@@ -353,6 +353,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled loop whose step reads the result of a loop before it runs that
+  loop once: it ran again in every trip, so a chain of loops took time
+  exponential in its length, and the gradient of an `Ode.kvaerno5` solve in
+  jera never finished.
 - An evaluated `Rune.jit` call, as one over values on several devices,
   gives each donated argument, and in a program of operations alone each
   value it makes, to the operation that reads it last as a donation, so an

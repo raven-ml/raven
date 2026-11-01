@@ -1432,6 +1432,22 @@ let test_nested_compiled () =
         (Nx.stack [ xs; Nx.neg xs ]))
     [ (1, 1); (1, 3); (3, 1); (3, 4) ]
 
+(* Eight scans in a chain of twenty rows each, each step reading the result
+   of the scan before it: compiled, each runs once, where running every scan
+   before it again in each of its trips takes time exponential in the chain's
+   length. Integers keep every value exact. *)
+let chained x =
+  let rows = Nx.broadcast_to [| 20; 4 |] x in
+  let link y _ =
+    fst (Rune.scan' ~init:y (fun c q -> (Nx.add (Nx.add c q) y, c)) rows)
+  in
+  List.fold_left link x (List.init 8 Fun.id)
+
+let test_chained () =
+  let x = on0 (Nx.create Nx.float64 [| 4 |] [| 1.; -2.; 0.; 3. |]) in
+  compiles ~msg:"chain" chained x;
+  compiles ~msg:"chain, grad" (Rune.grad' (fun x -> Nx.sum (chained x))) x
+
 (* Three carries that rotate, each step adding its row to the one that wraps. *)
 let test_cycle () =
   let ts = T.(pair tensor (pair tensor tensor)) in
@@ -1943,6 +1959,7 @@ let () =
            [
              prop "a scan of exact functions is its fold" cases law_compiled;
              test "nested scans of one row or more" test_nested_compiled;
+             test ~timeout:60. "scans in a chain each run once" test_chained;
              test "carries in a cycle" test_cycle;
              test "rows computed from constants" test_constant_rows;
              test "constant and empty outputs" test_constant_outputs;

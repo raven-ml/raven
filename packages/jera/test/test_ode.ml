@@ -1109,8 +1109,37 @@ let prothero lambda t y =
 let stiff_tol = Tol.v ~rel:1e-8 ~abs:1e-10
 let kvaerno ?mass f = Ode.kvaerno5 ?mass ~linear:Linear.dense (jvp f)
 
+(* Robertson's chemical kinetics to t = 40, the rates [k] as the argument. *)
+let robertson k =
+  let field _ y =
+    let y1 = Nx.get [ 0 ] y and y2 = Nx.get [ 1 ] y and y3 = Nx.get [ 2 ] y in
+    let k1 = Nx.get [ 0 ] k and k2 = Nx.get [ 1 ] k and k3 = Nx.get [ 2 ] k in
+    let r1 = Nx.mul k1 y1
+    and r2 = Nx.mul k2 (Nx.square y2)
+    and r3 = Nx.mul k3 (Nx.mul y2 y3) in
+    Nx.stack [ Nx.add (Nx.neg r1) r3; Nx.sub (Nx.sub r1 r2) r3; r2 ]
+  in
+  Solution.get
+    (Ode.solve one (kvaerno field)
+       ~tol:(Tol.v ~rel:1e-6 ~abs:1e-10)
+       ~budget:400 field ~t0:(scalar 0.) ~t1:(scalar 40.)
+       (vec [| 1.; 0.; 0. |]))
+
 let stiff_tests =
   [
+    (* The march, its stages' Newton iterations and their solves are loops in
+       loops: a schedule that runs each stage's loops again in the next one's
+       runs for hours, and the limit fails it. *)
+    test ~timeout:60. "the gradient of a stiff solve compiles" (fun () ->
+        (* y₃, as the sum is conserved and its gradient is zero. The field is
+           polynomial, so compiled and eager take the same steps and the
+           gradients differ by rounding alone. *)
+        let g = Rune.grad' (fun k -> Nx.get [ 2 ] (robertson k)) in
+        let k = vec [| 0.04; 3e7; 1e4 |] in
+        let calls = Rune.evaluations () in
+        let compiled = Rune.jit' g k in
+        equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls);
+        equal (Oracle.tensor ~rel:1e-12 ()) (g k) compiled);
     test "kvaerno5 follows a stiff field's slow solution" (fun () ->
         let f = prothero (scalar (-1e6)) in
         let s =

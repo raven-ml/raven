@@ -66,14 +66,15 @@ let cut ?(hoist = true) ~own next args body =
   let open_ranges u = Ops.Nodes.cardinal (Ops.ranges u) > 0 in
   (* The storage a call of the body that runs each trip writes, such as a loop's
      carry it updates in place: what reads it, its first value included, runs
-     each trip too. A call runs each trip when it varies, or reads storage such
-     a call writes. *)
+     each trip too. A call runs each trip when it reads an own parameter, or
+     storage such a call writes. The ranges a call runs inside, its own loop's
+     among them, repeat it within a trip, the same in every trip. *)
   let written = Ops.Tbl.create 8 in
   let rec settle () =
     let reads_written =
       memo (Ops.Tbl.create 64) (fun u -> Ops.Tbl.mem written u)
     in
-    let runs c = reads_param c || open_ranges c || reads_written c in
+    let runs c = reads_param c || reads_written c in
     match
       List.concat_map
         (fun (c, bs) ->
