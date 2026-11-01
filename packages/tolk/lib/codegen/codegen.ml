@@ -1518,10 +1518,7 @@ let kernel_of ast =
   | _ -> invalid_arg "a program is made of a sink with kernel information"
 
 let linearized ?beam ast (ren : Renderer.t) =
-  let (_ : kernel_info) = kernel_of ast in
-  let optimize =
-    match arg ast with Kernel { optimized; _ } -> not optimized | _ -> true
-  in
+  let optimize = not (kernel_of ast).optimized in
   let ast =
     graph_rewrite ~calls:Skip ~pass:Once ~ctx:ren ast
       (After_sources pm_lower_calls)

@@ -50,6 +50,7 @@ let uops_colors =
       (Binary, "404040");
       (Linear, "7DF4FF");
       (Alloc, "C07788");
+      (Program, "a0a0a0");
       (Stage, "FFC14D");
       (After, "8A7866");
       (End, "524C46");
