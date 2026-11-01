@@ -5,7 +5,8 @@
   test_machine
   test_space
   test_page_table
-  test_firmware)
+  test_firmware
+  test_tables)
  (modules :standard \ test_function test_driver)
  (libraries rig_pci rig_pci_support rig_support unix windtrap))
 

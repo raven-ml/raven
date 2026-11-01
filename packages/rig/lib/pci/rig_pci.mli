@@ -191,3 +191,10 @@ module Firmware = Firmware
 
 module Driver = Driver
 (** User-space drivers of a machine's PCI functions. *)
+
+(**/**)
+
+module Tables = Tables
+(* The library's tables, for its suites. *)
+
+(**/**)

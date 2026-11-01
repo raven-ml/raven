@@ -148,7 +148,7 @@ let give_back f =
     if not f.listed then begin
       let ws =
         Lock.protect f.lock (fun () ->
-            List.of_seq (Tables.Window.to_seq_keys f.maps))
+            Tables.Window.fold (fun w _ ws -> w :: ws) f.maps [])
       in
       f.unmapping <- ws;
       f.listed <- true

@@ -3,13 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Hash tables keyed by addresses.
+(** Hash tables keyed by addresses, ranges and windows.
 
-    An address lies on a large alignment, so a key's hash mixes every bit into
-    the low ones a table indexes by, and integer keys compare as integers. *)
+    An address lies on a large alignment, so a key's hash mixes every bit of
+    its address into the low ones a table indexes by. Integer keys compare as
+    integers, a range by its address and bytes, a window by every field. *)
 
-(** Tables keyed by an address, which an exception inside a change leaves
-    whole.
+(** Tables, which an exception inside a change leaves whole.
 
     A change allocates what it needs first and then publishes it with one
     store, and growing builds the new buckets whole before one store
@@ -18,11 +18,11 @@
     was before the change or as the change made it. The stdlib's [Hashtbl]
     stores its new bucket array before it fills it, so an exception while it
     grows loses the table. A table takes no lock: its users hold one. *)
-module Address : sig
-  type key = int
+module type S = sig
+  type key
 
   type 'a t
-  (** The type for tables from addresses to ['a]. *)
+  (** The type for tables from keys to ['a]. *)
 
   val create : int -> 'a t
   (** [create n] is an empty table sized for [n] bindings. *)
@@ -45,6 +45,11 @@ module Address : sig
       last step is the store that binds [k], and it allocates nothing when
       [t] binds [k] already. *)
 
+  val add : 'a t -> key -> 'a -> unit
+  (** [add t k v] binds [k] to [v] in [t] over any binding of [k], which
+      {!remove} of [k] then uncovers. Its last step is the store that binds
+      [k]. *)
+
   val remove : 'a t -> key -> unit
   (** [remove t k] removes [k]'s binding from [t], if any. It allocates
       nothing, and unbinds [k] with one store. *)
@@ -54,8 +59,11 @@ module Address : sig
       order. [f] must not change [t]. *)
 end
 
-module Range : Hashtbl.S with type key = int * int
+module Address : S with type key = int
+(** Tables keyed by an address. *)
+
+module Range : S with type key = int * int
 (** Tables keyed by a range: its address and its bytes. *)
 
-module Window : Hashtbl.S with type key = Window.t
+module Window : S with type key = Window.t
 (** Tables keyed by a window, hashed by its address. *)

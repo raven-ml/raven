@@ -11,3 +11,4 @@ module Page_table = Page_table
 module Memory = Memory
 module Firmware = Firmware
 module Driver = Driver
+module Tables = Tables

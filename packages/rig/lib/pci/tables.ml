@@ -9,8 +9,30 @@ let mix k =
   let h = k * 0x2545F4914F6CDD1D in
   h lxor (h lsr 29)
 
-module Address = struct
-  type key = int
+module type S = sig
+  type key
+  type 'a t
+
+  val create : int -> 'a t
+  val length : 'a t -> int
+  val find : 'a t -> key -> 'a
+  val find_opt : 'a t -> key -> 'a option
+  val mem : 'a t -> key -> bool
+  val replace : 'a t -> key -> 'a -> unit
+  val add : 'a t -> key -> 'a -> unit
+  val remove : 'a t -> key -> unit
+  val fold : (key -> 'a -> 'b -> 'b) -> 'a t -> 'b -> 'b
+end
+
+module type KEY = sig
+  type t
+
+  val equal : t -> t -> bool
+  val hash : t -> int
+end
+
+module Make (K : KEY) = struct
+  type key = K.t
 
   (* A bucket's cells. A cell's [next] changes only to unlink its successor,
      in one store. *)
@@ -24,11 +46,11 @@ module Address = struct
   let rec power n p = if p >= n then p else power n (2 * p)
   let create n = { buckets = Array.make (power n 8) Nil; size = 0 }
   let length t = t.size
-  let index buckets k = mix k land (Array.length buckets - 1)
+  let index buckets k = K.hash k land (Array.length buckets - 1)
 
   let rec cell k = function
     | Nil -> Nil
-    | Cell c as found -> if Int.equal c.key k then found else cell k c.next
+    | Cell c as found -> if K.equal c.key k then found else cell k c.next
 
   let find t k =
     match cell k t.buckets.(index t.buckets k) with
@@ -42,12 +64,14 @@ module Address = struct
 
   let mem t k = cell k t.buckets.(index t.buckets k) != Nil
 
+  (* Copies a bucket's cells from its last, so that the bindings of one key
+     keep their order, the newest first. *)
   let rec copy_into buckets = function
     | Nil -> ()
     | Cell c ->
+        copy_into buckets c.next;
         let i = index buckets c.key in
-        buckets.(i) <- Cell { key = c.key; v = c.v; next = buckets.(i) };
-        copy_into buckets c.next
+        buckets.(i) <- Cell { key = c.key; v = c.v; next = buckets.(i) }
 
   (* Builds the doubled buckets from fresh cells, then publishes them. *)
   let grow t =
@@ -67,10 +91,19 @@ module Address = struct
         t.size <- t.size + 1;
         t.buckets.(i) <- cell
 
+  (* As [replace]'s new binding, over any binding of [k], which [remove]
+     then uncovers. *)
+  let add t k v =
+    if t.size >= 2 * Array.length t.buckets then grow t;
+    let i = index t.buckets k in
+    let cell = Cell { key = k; v; next = t.buckets.(i) } in
+    t.size <- t.size + 1;
+    t.buckets.(i) <- cell
+
   (* Unlinks [k]'s cell from the bucket whose cell [prev] precedes [cell]. *)
   let rec unlink t i k prev = function
     | Nil -> ()
-    | Cell c when Int.equal c.key k ->
+    | Cell c when K.equal c.key k ->
         (match prev with
         | Nil -> t.buckets.(i) <- c.next
         | Cell p -> p.next <- c.next);
@@ -89,14 +122,21 @@ module Address = struct
     Array.fold_left (fun acc cell -> fold_cells f acc cell) acc t.buckets
 end
 
-module Range = Hashtbl.Make (struct
+module Address = Make (struct
+  type t = int
+
+  let equal = Int.equal
+  let hash = mix
+end)
+
+module Range = Make (struct
   type t = int * int
 
   let equal (a, n) (b, m) = Int.equal a b && Int.equal n m
   let hash (a, n) = mix (a lxor (n lsl 1))
 end)
 
-module Window = Hashtbl.Make (struct
+module Window = Make (struct
   type t = Window.t
 
   (* Windows of two machines may lie at one address: all of a window's fields
