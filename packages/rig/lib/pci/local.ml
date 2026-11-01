@@ -111,9 +111,31 @@ let close_memory t s =
   if stopped then Sysmem.close s;
   stopped
 
+(* What a physical take restores of the command register if it fails after
+   it turned INTx off: [was], the register as the take found it, written
+   through [fd], whose configuration space starts at [at]; nothing while
+   [was] is empty. Made before the take opens
+   anything, and filled before the write, so that the take's handler restores
+   it with nothing allocated. *)
+type undo = {
+  mutable fd : Unix.file_descr;
+  mutable at : int;
+  mutable was : string;
+}
+
+let undo () = { fd = Unix.stdin; at = 0; was = "" }
+
+let restore u =
+  if u.was <> "" then
+    try ignore (pwrite u.fd u.was 2 (u.at + command) : int)
+    with Unix.Unix_error _ -> ()
+
 (* Turns INTx off: the bit as it was. *)
-let intx_off t =
+let intx_off t u =
   let c = config t command 2 in
+  u.was <- String.init 2 (fun i -> Char.chr ((c lsr (8 * i)) land 0xff));
+  u.fd <- fst t.config;
+  u.at <- snd t.config;
   set_config t command 2 (c lor intx_disable);
   c land intx_disable
 
@@ -386,7 +408,7 @@ let take_iommu files fds bus bars prefetchable =
    VFIO's no-IOMMU mode. Otherwise nothing handles them: the take turns its INTx
    off, which bus mastering does not gate, so that a GPU left running signals no
    line another device's handler shares. *)
-let take_physical l fds bars prefetchable =
+let take_physical l fds u bars prefetchable =
   let files = Sysfs.files l and bus = Sysfs.bus l in
   let file = Sysfs.path files bus "config" in
   (match Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0 with
@@ -429,17 +451,19 @@ let take_physical l fds bars prefetchable =
       stopped = false;
     }
   in
-  if Option.is_some interrupts then t else { t with intx = Some (intx_off t) }
+  if Option.is_some interrupts then t
+  else { t with intx = Some (intx_off t u) }
 
 (* A failure gives back every descriptor taken, as does a bug's [Failure]:
    each is recorded as it opens, and the handlers close them first, with
-   nothing before that allocates. Behind VFIO the group's file admits one
+   nothing before that allocates, after giving the command register back as
+   the take found it. Behind VFIO the group's file admits one
    process at a time; taken physically, the function keeps its lock until its
    release. A physical take is listed for the exit as its last step, with
    nothing after that allocates or polls, so that no handler closes the
    descriptors of a take the exit gives back. *)
 let take l =
-  let fds = Vfio.fds () in
+  let fds = Vfio.fds () and u = undo () in
   match
     let* addressing = Sysfs.access l in
     let bars = Sysfs.bars l and prefetchable = Sysfs.prefetchable l in
@@ -449,19 +473,22 @@ let take l =
           (fn
              (take_iommu (Sysfs.files l) fds (Sysfs.bus l) bars prefetchable))
     | Physical ->
-        let t = take_physical l fds bars prefetchable in
+        let t = take_physical l fds u bars prefetchable in
         let r = Ok (fn t) in
         hold t;
         r
   with
   | Ok _ as fn -> fn
   | Error _ as e ->
+      restore u;
       Vfio.close_fds fds;
       e
   | exception Fail.Failed why ->
+      restore u;
       Vfio.close_fds fds;
       Error why
   | exception e ->
+      restore u;
       Vfio.close_fds fds;
       reraise e
 
