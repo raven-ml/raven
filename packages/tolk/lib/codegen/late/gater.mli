@@ -17,15 +17,10 @@ val pm_move_gates_from_index : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_move_gates_from_index] moves gates onto loads and stores, with [g] a
     boolean node:
 
-    - a load or a store through the {!Op.Index} of a storage by two indices
-      [where g y invalid] and [where g x invalid] becomes the same access
-      through the index by [y] and [x], gated by [g];
-    - otherwise, a load or a store through an {!Op.Index} or {!Op.Shrink} whose
-      first index is [where g i invalid] becomes the same access with [i] in its
-      place, gated by [g];
+    - a load or a store through an {!Op.Index} or {!Op.Shrink} whose first
+      index is [where g i invalid] becomes the same access with each of its
+      sources [where g j invalid] replaced by [j], gated by [g];
     - a load gated this way reads [0] where its gate fails;
-    - [where g l a], with [l] a load gated by [g] or a cast of one, is [l]
-      reading [a] where [g] fails, cast to the type of the [where]: [0] if [a]
-      is {!Ops.invalid}, [a]'s value if [a] is a constant, the source of [a] if
-      [a] is a cast of a node of [l]'s type, and [a] cast to [l]'s type
-      otherwise. [where g a l], with [l] gated by [not g], is the same. *)
+    - [where g l a], with [l] a load gated by [g], is [l] reading [a], cast to
+      [l]'s type, where [g] fails. [where g a l], with [l] gated by [not g], is
+      the same. *)

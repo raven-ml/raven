@@ -3198,36 +3198,14 @@ launch descriptors (D146).
   float64`, `› exp2 within 4 ulps …`, `› log2 within 4 ulps …`, `› sin within
   2 ulps …` and `› cos within 2 ulps …`, on the host.
 
-## D127. A converted load reads only an alternative its conversion keeps
+## D127. Withdrawn
 
-- **tinygrad:** `codegen/late/gater.py:5-7` (`move_where_load`), which makes
-  the other value of `where gate (cast (load ...)) a` the load's alternative,
-  converted to the load's type: `a.cast(l.dtype)`, or the constant's value at
-  that type.
-- **tolk:** `Gater.holds` and `Gater.move_where_load`;
-  `test/gen/tinygrad.patch`, which gives tinygrad the same
-  rule before the goldens are generated.
-- **Differs:** the selection moves into the load only when the load's type
-  holds its other value: when the load is not converted, when the value is a
-  conversion of a value of the load's type, or when it is a constant that
-  converts to the load's type and back to its bits, sign included. A NaN or
-  an infinity converts to no integer type, so it never moves into an integer
-  load, and neither does an integer that a float load rounds to an infinity.
-  Otherwise the selection stays. tinygrad converted the value to the load's
-  type and back, so `where gate (float32 (load float16)) 0x1p-149` read 0
-  where the gate failed, a non-integer or a `-0.` read through an integer
-  load lost its fraction or its sign, and a float32 above 65504 read through
-  a float16 load read infinity.
-- **Reason:** (b). rune's pad of a widened float16 with a float32 pad value
-  (`Nx.pad` of `Nx.cast Nx.float32 x`), read through a slice, compiled to such
-  a selection: a pad of `0x1p-149` read 0, where eager reads `0x1p-149`.
-- **Pinned by:** the Gater suite (`test/codegen/late/gater`):
-  `pm_move_gates_from_index › a selection of a converted gated load keeps its
-  value` and `laws › a moved selection of a converted gated load keeps its
-  value`, and the cases `where_of_cast` and `where_of_half` of
-  `moves_output.golden`, from the patched tinygrad. On rune: missing (the old
-  rune's `a compiled program › computes eager's bits`, whose examples held
-  the pad, went with its rewrite).
+A selection moved into a converted gated load only when the load's type held
+its other value, since tinygrad converted that value to the load's type and
+back. tinygrad no longer moves a selection through a conversion
+(`codegen/late/gater.py:5,15-16`): `Gater.move_where_load` moves it only into
+a load of the selection's own type, where converting the other value changes
+nothing, so `Gater.holds` went.
 
 ## D128. A committed float operation reads a weak float operand rounded
 
