@@ -147,14 +147,21 @@ val own_index :
     contraction's [init], an assembly's first piece where it covers the whole
     result. [None] for an operation with none. *)
 
+val fold :
+  ('v 's 'd. 'e -> 'a -> ('v, 's, 'd) t -> 'a) -> 'e -> 'a -> 'r prim -> 'a
+(** [fold f e acc op] folds [f e] over [op]'s operands in {!val-operands}'
+    order. [e] carries what [f] needs, so that [f] can be closed: it then
+    allocates nothing for an operation other than a factorisation or a
+    check. *)
+
 val iteri : ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> 'r prim -> unit
 (** [iteri f op] is [f i x] for each operand [x] of [op], at its position [i] in
     {!val-operands}. *)
 
 val exists : ('v 's 'd. ('v, 's, 'd) t -> bool) -> 'r prim -> bool
 (** [exists f op] is whether [f x] for some operand [x] of [op]. Neither it
-    nor {!iteri} allocates for an operation other than a factorisation, a
-    contraction or a check. *)
+    nor {!iteri} allocates for an operation other than a factorisation or a
+    check. *)
 
 val lies_at : 'd Devices.placement -> 'r prim -> bool
 (** [lies_at p op] is whether every operand of [op] lies at [p], physically.

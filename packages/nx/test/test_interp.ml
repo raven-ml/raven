@@ -2024,6 +2024,55 @@ let test_queries_words () =
       equal ~msg:"a traced value's" float_exact 0. (words_per (ask t));
       equal ~msg:"an array's" float_exact 0. (words_per (ask x)))
 
+(* An operation [log] received, whatever its result. *)
+type received = Received : 'r Nx.Prim.t -> received
+
+(* Walking a contraction's operands allocates nothing, as an interpretation
+   walks every operation's. *)
+let test_contract_walk_words () =
+  let a =
+    Nx.Repr.of_array Nx.Host.v (A.of_array f32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |])
+  in
+  let seen = ref None in
+  Nx.Prim.interpret ~name:"test.c" Values
+    (fun i ~by op ->
+      seen := Some (Received op);
+      tagged i ~by op)
+    (fun i -> ignore (Nx.matmul (tag i a) a));
+  match !seen with
+  | None -> fail "no operation was received"
+  | Some (Received op) ->
+      equal ~msg:"received" string "Contract" (Nx.Prim.name op);
+      let walk () = Nx.Prim.iteri (fun _ _ -> ()) op in
+      equal ~msg:"words per walk" float_exact 0. (words_per walk)
+
+(* Walking a transform's operand allocates nothing, whichever its kind. *)
+let test_fft_walk_words () =
+  let z =
+    Nx.Repr.of_array Nx.Host.v
+      (A.of_array Nx.complex64 [| 4 |] (Array.make 4 Complex.one))
+  in
+  let r = vec f32 [| 1.; 2.; 3.; 4. |] and axes = Iarray.of_array [| 0 |] in
+  List.iter
+    (fun (name, Received op) ->
+      let walk () = Nx.Prim.iteri (fun _ _ -> ()) op in
+      equal ~msg:name float_exact 0. (words_per walk))
+    [
+      ("c2c", Received (Fft (C2c { direction = Forward; axes; x = z })));
+      ("r2c", Received (Fft (R2c { dtype = Nx.complex64; axes; x = r })));
+      ("c2r", Received (Fft (C2r { dtype = f32; n = 6; axes; x = z })));
+    ]
+
+(* The words an interpretation's dispatch costs one operation on its value,
+   beyond what its rule allocates. *)
+let test_dispatch_words () =
+  let x = x3 () in
+  logged ~name:"test.p" Values (ref []) (fun p ->
+      let t = tag p x in
+      let copy () = ignore (Sys.opaque_identity (Nx.copy t)) in
+      Windtrap.expect (Printf.sprintf "%.0f words" (words_per copy))
+      @@ __POS_OF__ {| 56 words |})
+
 let nesting =
   group "nesting"
     [
@@ -2042,6 +2091,12 @@ let nesting =
         test_adopting_migrated_whole;
       test "a parent's value costs what an own value does" test_adopting_words;
       test "owner and payload allocate nothing" test_queries_words;
+      test "walking a contraction's operands allocates nothing"
+        test_contract_walk_words;
+      test "walking a transform's operand allocates nothing"
+        test_fft_walk_words;
+      test "an operation on a traced value allocates its baseline"
+        test_dispatch_words;
     ]
 
 (* Memory

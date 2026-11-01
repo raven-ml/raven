@@ -506,10 +506,18 @@ let rec fold_pieces : type e a r w q b.
   | [] -> acc
   | (_, x) :: rest -> fold_pieces f e (f e acc x) rest
 
+(* [f e] over a scale's array, where there is a scale. *)
+let fold_scale : type e a b.
+    ('v 's 'd. e -> a -> ('v, 's, 'd) t -> a) -> e -> a -> b scale option -> a
+    =
+ fun f e acc -> function
+  | None -> acc
+  | Some (Exponent x) -> f e acc x
+  | Some (Value x) -> f e acc x
+
 (* [f e] folded over [op]'s operands in {!operands}' order. [e] carries what
    [f] needs, so that [f] can be closed: where it is, the fold allocates
-   nothing for an operation other than a factorisation, a contraction or a
-   check. *)
+   nothing for an operation other than a factorisation or a check. *)
 let fold : type e a r.
     ('v 's 'd. e -> a -> ('v, 's, 'd) t -> a) -> e -> a -> r prim -> a =
  fun f e acc op ->
@@ -523,21 +531,17 @@ let fold : type e a r.
   | Scatter { idx; updates; into; _ } -> f e (f e (f e acc idx) updates) into
   | Sort { x; _ } -> f e acc x
   | Fold { x; _ } -> f e acc x
-  | Fft fft ->
-      let (Any x) = fft_operand fft in
-      f e acc x
+  (* Each kind's operand read in place: [fft_operand] would box it. *)
+  | Fft (C2c { x; _ }) -> f e acc x
+  | Fft (R2c { x; _ }) -> f e acc x
+  | Fft (C2r { x; _ }) -> f e acc x
   | Linalg l ->
       List.fold_left (fun acc (Any x) -> f e acc x) acc (linalg_operands l)
   | Assemble { pieces; _ } -> fold_pieces f e acc pieces
   | Contract { a; b; init; a_scale; b_scale; segments; _ } -> (
       let acc = f e (f e acc a) b in
       let acc = match init with Some i -> f e acc i | None -> acc in
-      let scaled acc = function
-        | None -> acc
-        | Some (Exponent x) -> f e acc x
-        | Some (Value x) -> f e acc x
-      in
-      let acc = scaled (scaled acc a_scale) b_scale in
+      let acc = fold_scale f e (fold_scale f e acc a_scale) b_scale in
       match segments with Some g -> f e acc (offsets g) | None -> acc)
   | Copy x -> f e acc x
   | Move (_, x) -> f e acc x
@@ -566,6 +570,45 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
  fun f op -> fold (fun e found x -> found || e.test x) { test = f } false op
 
 let lies_at p op = fold (fun p at x -> at && placement x == p) p true op
+
+(* A contraction's optional operands, mapped by [m i] where present: the
+   option itself where [m] returns its operand. *)
+let present = function Some _ -> 1 | None -> 0
+
+let map_some (type v s d)
+    (m : 'v 's 'e. int -> ('v, 's, 'e) t -> ('v, 's, 'e) t) i
+    (o : (v, s, d) t option) =
+  match o with
+  | None -> o
+  | Some x ->
+      let y = m i x in
+      if y == x then o else Some y
+
+let map_scale (type d)
+    (m : 'v 's 'e. int -> ('v, 's, 'e) t -> ('v, 's, 'e) t) i
+    (o : d scale option) =
+  match o with
+  | None -> o
+  | Some (Exponent x) ->
+      let y = m i x in
+      if y == x then o else Some (Exponent y)
+  | Some (Value x) ->
+      let y = m i x in
+      if y == x then o else Some (Value y)
+
+let map_segments (type v s d)
+    (m : 'v 's 'e. int -> ('v, 's, 'e) t -> ('v, 's, 'e) t) i
+    (o : (v, s, d) t Nx_kernel.segments option) =
+  match o with
+  | None -> o
+  | Some g -> (
+      let x = offsets g in
+      let y = m i x in
+      if y == x then o
+      else
+        match g with
+        | Rows r -> Some (Rows { r with offsets = y })
+        | Contracting r -> Some (Contracting { r with offsets = y }))
 
 let mapi : type r.
     ('v 's 'd. int -> ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
@@ -619,39 +662,17 @@ let mapi : type r.
       if List.for_all2 ( == ) pieces a.pieces then op
       else Assemble { a with pieces }
   | Contract c ->
+      (* The optional operands follow [a] and [b] in order, each at the next
+         position where it is present. *)
       let a = m 0 c.a in
       let b = m 1 c.b in
-      let k = ref 2 in
-      let next f = function
-        | None -> None
-        | Some x as o ->
-            let y = f !k x in
-            incr k;
-            if y == x then o else Some y
-      in
-      let init = next m c.init in
-      let scale i = function
-        | Exponent x as e ->
-            let y = m i x in
-            if y == x then e else Exponent y
-        | Value x as v ->
-            let y = m i x in
-            if y == x then v else Value y
-      in
-      let a_scale = next scale c.a_scale in
-      let b_scale = next scale c.b_scale in
-      let segments =
-        next
-          (fun i (g : _ Nx_kernel.segments) ->
-            let o = offsets g in
-            let o' = m i o in
-            if o' == o then g
-            else
-              match g with
-              | Rows r -> Rows { r with offsets = o' }
-              | Contracting r -> Contracting { r with offsets = o' })
-          c.segments
-      in
+      let init = map_some m 2 c.init in
+      let i = 2 + present c.init in
+      let a_scale = map_scale m i c.a_scale in
+      let i = i + present c.a_scale in
+      let b_scale = map_scale m i c.b_scale in
+      let i = i + present c.b_scale in
+      let segments = map_segments m i c.segments in
       if
         a == c.a && b == c.b && init == c.init && a_scale == c.a_scale
         && b_scale == c.b_scale && segments == c.segments
@@ -1441,8 +1462,11 @@ let join acc q =
    there whatever the rule, so neither [op]'s rule nor its operands' shapes
    are computed. An operation of no operands lies where its map names, else on
    the host, and each device of that placement computes its window. *)
+(* Where [op]'s operands lie together. *)
+let together op = fold (fun () acc x -> join acc (placement x)) () Unseen op
+
 let route_of (type r) ~by (op : r prim) : unit Route.t =
-  match fold (fun () acc x -> join acc (placement x)) () Unseen op with
+  match together op with
   | Unseen ->
       let result = match op with Map { at = Some p; _ } -> p | _ -> host in
       { Route.operands = [||]; result; compute = Windows }
@@ -1914,16 +1938,31 @@ let results_at : type r.
   | Place (p, x) -> m 0 (of_layout (dtype x) layouts.(0) p)
   | Check _ -> ()
 
+(* Where [op]'s results lie, by its route: the operands' placement where they
+   lie at one that cuts no axis, as {!route_of} decides there, without
+   building the route a tracer does not run. *)
+let result_placement ~by op =
+  match together op with
+  | One p when uncut p -> p
+  | Unseen | One _ | Apart -> (route_of ~by op).result
+
 let results : type r.
     by:string ->
     ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
     r prim ->
     r =
  fun ~by m op ->
-  let { route; layouts } = route ~by op in
+  let layouts = layouts ~by op in
   (* A placement and a check have no route: the one lies at its own
      placement and the other has no result. *)
-  let p = match route with Some r -> r.result | None -> host in
+  let p =
+    match op with
+    | Place _ | Check _ -> host
+    | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _
+    | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _
+    | Bitcast _ ->
+        result_placement ~by op
+  in
   results_at p layouts m op
 
 (* One-node maps *)

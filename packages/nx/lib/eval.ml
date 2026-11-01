@@ -259,17 +259,25 @@ let around o = ask o Around
    interpretation; one [i] adopts is around by construction ({!interpret}). The
    rule reads each handle as its arrays, lent, and kills nothing. *)
 let deliver i ~by op =
-  let checked = ref ([] : interpretation list) in
-  Prim.iteri
-    (fun _ x ->
-      match x with
-      | Traced { owner; _ }
-        when (not (adopts i owner)) && not (List.memq owner !checked) ->
-          if not (around owner) then refuse ~by owner;
-          checked := List.cons owner !checked
-      | Traced _ | Array _ | Shards _ | Handle _ -> ())
-    op;
-  Prim.iteri (fun _ x -> Prim.alive ~by x) op;
+  (* The owners [i] does not adopt, once each, newest first: none in the
+     common case, which then allocates nothing. *)
+  let others =
+    Prim.fold
+      (fun i acc x ->
+        match x with
+        | Traced { owner; _ }
+          when (not (adopts i owner)) && not (List.memq owner acc) ->
+            List.cons owner acc
+        | Traced _ | Array _ | Shards _ | Handle _ -> acc)
+      i [] op
+  in
+  (match others with
+  | [] -> ()
+  | _ :: _ ->
+      List.iter
+        (fun o -> if not (around o) then refuse ~by o)
+        (List.rev others));
+  Prim.fold (fun by () x -> Prim.alive ~by x) by () op;
   let op =
     if Prim.exists Donate.is_handle op then Prim.map Donate.lent op else op
   in
@@ -278,7 +286,8 @@ let deliver i ~by op =
 let reaches i op =
   match i.reach with
   | Extent -> true
-  | Values | Adopting _ -> Prim.exists (fun x -> owns i x) op
+  | Values | Adopting _ ->
+      Prim.fold (fun i found x -> found || owns i x) i false op
 
 (* Whether [i], whose handler was installed on the domain [here], answers on
    the calling domain, asked by its handler once it has taken an effect. An

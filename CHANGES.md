@@ -3303,6 +3303,9 @@ thread.
 
 ### Nx
 
+- An operation on a traced value allocates fewer words: `Nx.Prim.results`
+  builds no route where its operands lie at one placement that cuts no axis,
+  and `Nx.Prim.iteri` of a contraction or a transform allocates nothing.
 - `Rng.beta` draws inside `(0, 1)`: a draw that rounded to `0.` or `1.` is the
   dtype's least positive value or the largest below `1.`.
 - `Nx_ragged.take` costs one int64 write, one scan and one gather per value
