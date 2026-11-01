@@ -69,7 +69,6 @@ let sources =
       group "by default" (sources_under "-");
       tag "expand-ssa"
       @@ group "with EXPAND_SSA=1" (sources_under "EXPAND_SSA=1");
-      tag "unaligned" @@ group "with ALIGNED=0" (sources_under "ALIGNED=0");
     ]
 
 (* C computes an operation on a char, a short or Clang's __fp16 in a wider type,

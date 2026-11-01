@@ -1090,8 +1090,8 @@ each target (Clang `x86_64,x86-64`, Metal `Apple9`, CUDA `sm_89`, HIP
 `gfx1100`, and `gfx1201`, `gfx942` and `gfx950` for their float8, bfloat16 and
 tensor cores), and hand-built kernels rendered as they are. `cases.golden`
 gives each case's target and setting, and `<case>.golden` is its source, byte
-for byte. `EXPAND_SSA` and `ALIGNED` are read once per process, so the cases
-rendered under them run in processes of their own. `rewrite_inputs.golden`,
+for byte. `EXPAND_SSA` is read once per process, so the cases rendered under
+it run in a process of their own. `rewrite_inputs.golden`,
 `rewrites.golden` and `rewritten.golden` hold each target's `extra_matcher`
 applied to 25 graphs; `declarations.golden` what each renderer declares for 24
 targets; `written.golden` how each writes its native operations. D16's CUDA
@@ -1105,7 +1105,7 @@ engine (`support/run.ml`), which compiles each kernel with rig's host entry
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: `renderer/cstyle.py` `CStyleLanguage`, `ClangRenderer`, `MetalRenderer`, `CUDARenderer`, `HIPRenderer` (no test of the source) | the source of each kind of kernel: every data type each language has, vectors, tensor cores, gated loads and stores, hardware indices, barriers and shared memory, the transcendental decompositions, infinities and NaNs, constants, casts and bitcasts, variables, custom code, calls, constant tables, loops without a trip count, nontemporal loads, volatile parameters | `CS › sources › by default` (250 goldens) |
-| tinygrad: `renderer/cstyle.py` `getenv("EXPAND_SSA")`, `getenv("ALIGNED", 1)` | every value a local variable; Clang's vectors aligned to one byte | `CS › sources › with EXPAND_SSA=1` (`clang_add`, `clang_matmul_upcasted`, `cuda_matmul_locals`), `with ALIGNED=0` (`clang_add`, `clang_dtype_bool`) |
+| tinygrad: `renderer/cstyle.py` `getenv("EXPAND_SSA")` | every value a local variable | `CS › sources › with EXPAND_SSA=1` (`clang_add`, `clang_matmul_upcasted`, `cuda_matmul_locals`) |
 | tinygrad: `renderer/cstyle.py` each `extra_matcher` | bfloat16 and float8 arithmetic through float, manual bfloat16 conversions (not on gfx950), double to half through float on Clang, Metal's bfloat16 transcendentals, CUDA's float8 to float8 conversions, HIP's float8 tensor-core operands as ulongs | `CS › extra_matcher › rewrites.golden` (25 inputs, each for the 7 targets) |
 | tinygrad: `renderer/cstyle.py` class attributes and `supported_dtypes` | launch limits, shared memory, tensor cores, native operations, data types, compiler cache key, per architecture | `CS › declarations › <field> › declarations.golden` (24 targets, 11 fields) |
 | tinygrad: `renderer/cstyle.py` each `code_for_op` | how each native operation is written, per data type | `CS › code_for_op › written.golden` (405 rows); law `CS › rendering › writes each native operation as code_for_op does` |

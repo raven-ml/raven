@@ -508,14 +508,12 @@ def cases_of(name):
 SETTINGS = [
     ("clang", "add", "EXPAND_SSA=1"),
     ("clang", "matmul_upcasted", "EXPAND_SSA=1"),
-    ("clang", "add", "ALIGNED=0"),
-    ("clang", "dtype_bool", "ALIGNED=0"),
     ("cuda", "matmul_locals", "EXPAND_SSA=1"),
 ]
 
 
 def setting_suffix(setting):
-    return {"EXPAND_SSA=1": "expand_ssa", "ALIGNED=0": "unaligned"}[setting]
+    return {"EXPAND_SSA=1": "expand_ssa"}[setting]
 
 
 def all_cases():

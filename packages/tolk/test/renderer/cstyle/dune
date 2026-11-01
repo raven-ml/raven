@@ -1,5 +1,5 @@
-; Settings are read once per process, so the cases rendered under EXPAND_SSA or
-; ALIGNED run in processes of their own, each with its variable set.
+; Settings are read once per process, so the cases rendered under EXPAND_SSA
+; run in a process of their own, with its variable set.
 
 (test
  (name test_cstyle)
@@ -16,17 +16,8 @@
   (glob_files *.golden))
  (action
   (progn
-   (run
-    %{test}
-    --exclude-tag
-    expand-ssa
-    --exclude-tag
-    unaligned)
+   (run %{test} --exclude-tag expand-ssa)
    (setenv
     EXPAND_SSA
     1
-    (run %{test} --tag expand-ssa))
-   (setenv
-    ALIGNED
-    0
-    (run %{test} --tag unaligned)))))
+    (run %{test} --tag expand-ssa)))))

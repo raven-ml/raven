@@ -798,6 +798,8 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** the `ALIGNED` setting (`Setting.aligned`) is gone: Clang's
+  vector types are always aligned to their size, a bool vector's to one byte.
 - **Breaking:** `Ops.kernel_info` has `optimized`, which
   `Postrange.Scheduler.get_optimized_ast` sets and `Postrange.apply_opts` and
   `Codegen.linearize` read, where the optimiser tagged the kernel's sink `1`.
@@ -2039,7 +2041,7 @@ thread.
 
 - A compiled program is no longer reused, in the process or from rune's disk
   cache, under other values of `TC_SELECT`, `TC_OPT`, `FLOAT16`, `MV*`,
-  `OCCUPANCY_FLOOR`, `DMC`, `ALLOW_HALF8`, `EXPAND_SSA`, `ALIGNED` or the CPU
+  `OCCUPANCY_FLOOR`, `DMC`, `ALLOW_HALF8`, `EXPAND_SSA` or the CPU
   compiler `CC`, which change the kernels emitted.
 
 - Changing a setting that scheduling reads (`SPLIT_REDUCEOP` and its

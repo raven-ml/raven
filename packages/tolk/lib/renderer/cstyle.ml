@@ -1271,9 +1271,7 @@ let clang_vector_prefix l (dt, count) =
   let rec pow2_floor n p = if 2 * p > n then p else pow2_floor n (2 * p) in
   (* round (down) to a power of two, as clang does by default *)
   let alignment =
-    if Setting.value Setting.aligned && not (Dtype.is_bool dt) then
-      pow2_floor (Dtype.itemsize dt * count) 1
-    else 1
+    if Dtype.is_bool dt then 1 else pow2_floor (Dtype.itemsize dt * count) 1
   in
   let vec = render_dtype l dt ~sz:count ~addrspace:(Some Dtype.Reg) in
   strf "typedef %s %s __attribute__((aligned(%d),ext_vector_type(%d)));"

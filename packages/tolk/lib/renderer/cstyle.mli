@@ -40,8 +40,7 @@
     list only decides whether code generation turns a reciprocal into a
     division.
 
-    {!Setting.expand_ssa} gives every value a local variable, and
-    {!Setting.aligned} decides how {!clang}'s vector types are aligned. *)
+    {!Setting.expand_ssa} gives every value a local variable. *)
 
 val clang : Helpers.Target.t -> Renderer.t
 (** [clang target] renders C for Clang, for a CPU. [target]'s architecture is

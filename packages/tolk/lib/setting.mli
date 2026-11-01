@@ -286,11 +286,6 @@ val expand_ssa : bool t
     local variable, from [EXPAND_SSA]. Otherwise a value read once is written
     into the expression that reads it. Defaults to [false]. *)
 
-val aligned : bool t
-(** [aligned] aligns the vector types of {!Cstyle.clang} to their size, from
-    [ALIGNED]. Otherwise they are aligned to one byte, so that buffers at any
-    address can be passed. Defaults to [true]. *)
-
 val beam_padto : bool t
 (** [beam_padto] adds pads of axes to the candidates of the beam search
     ({!Search.val-actions}), from [BEAM_PADTO]. Defaults to [false]. *)

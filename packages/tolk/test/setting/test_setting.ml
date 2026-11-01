@@ -437,7 +437,6 @@ let settings =
     switch Setting.dmc;
     switch Setting.allow_half8;
     switch Setting.expand_ssa;
-    switch Setting.aligned;
     switch Setting.beam_padto;
     number Setting.beam_uops_max;
     number Setting.beam_upcast_max;
@@ -500,7 +499,6 @@ let getenv_defaults =
     ("DMC", "0");
     ("ALLOW_HALF8", "0");
     ("EXPAND_SSA", "0");
-    ("ALIGNED", "1");
     ("BEAM_PADTO", "0");
     ("BEAM_UOPS_MAX", "3000");
     ("BEAM_UPCAST_MAX", "256");
@@ -548,7 +546,6 @@ let holds_tinygrad_default s =
    compiler is made, whose cache key names its tools. *)
 let output_settings =
   [
-    "ALIGNED";
     "ALLOW_HALF8";
     "ALLOW_TF32";
     "BEAM";

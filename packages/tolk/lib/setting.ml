@@ -331,7 +331,6 @@ let mv = bool ~reach:Output "MV" true
 let dmc = bool ~reach:Output "DMC" false
 let allow_half8 = bool ~reach:Output "ALLOW_HALF8" false
 let expand_ssa = bool ~reach:Output "EXPAND_SSA" false
-let aligned = bool ~reach:Output "ALIGNED" true
 let beam_padto = bool ~reach:Output "BEAM_PADTO" false
 let beam_uops_max = int ~reach:Output "BEAM_UOPS_MAX" 3000
 let beam_upcast_max = int ~reach:Output "BEAM_UPCAST_MAX" 256

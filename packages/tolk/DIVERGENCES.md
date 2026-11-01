@@ -1519,7 +1519,7 @@ Withdrawn: multi-device is out of scope, see README.
   library's sources, which dune computes when it builds the library: an
   entry is a function of the code that made it. Every variable is a setting
   declared with its reach (D114), among them those tinygrad reads with
-  `getenv` where it compiles (`ALIGNED`, `ALLOW_HALF8`, `BEAM_ESTIMATE`,
+  `getenv` where it compiles (`ALLOW_HALF8`, `BEAM_ESTIMATE`,
   `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS`, `BEAM_PADTO`, `BEAM_UOPS_MAX`,
   `BEAM_UPCAST_MAX`, `DMC`, `EXPAND_SSA`, `HCQ_NUM_SDMA`, `JITBEAM`, and the
   `MV` and `REDUCEOP_SPLIT` variables), and the keys take every one that reaches
