@@ -80,9 +80,15 @@ jobs:
       # needs a processor for each domain and the test's, and beside another
       # suite on a 3-core runner every stop-the-world collection of the
       # stressed collector waits for a domain the scheduler took off.
+      #
+      # The steps under the sanitizers build in their own directory. A
+      # library built there links AddressSanitizer's runtime, which a plain
+      # process cannot load, and a later step that installs the package
+      # without rebuilding it, such as quill's preload, would load it.
       - name: Test lz under the sanitizers
         if: runner.os != 'Windows'
         env:
+          DUNE_BUILD_DIR: _build_sanitize
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
@@ -111,6 +117,7 @@ jobs:
       - name: Test nx under the sanitizers
         if: runner.os != 'Windows'
         env:
+          DUNE_BUILD_DIR: _build_sanitize
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
@@ -137,6 +144,7 @@ jobs:
       - name: Test talon's decoders under the sanitizers
         if: runner.os != 'Windows'
         env:
+          DUNE_BUILD_DIR: _build_sanitize
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
@@ -193,6 +201,11 @@ jobs:
           opam exec -- dune build --release packages/munin
           bash .github/memcap.sh opam exec -- dune build --release @packages/munin/runtest
 
+      - name: Build and test jera
+        run: |
+          opam exec -- dune build --release packages/jera
+          bash .github/memcap.sh opam exec -- dune build --release @packages/jera/runtest
+
       - name: Build and test norn
         run: |
           opam exec -- dune build --release packages/norn
@@ -220,9 +233,9 @@ jobs:
 
       # windtrap captures a test's output, so a sanitizer's report, written to
       # standard error as the process aborts, lands in the test's capture
-      # under _build/_tests and in no failure block.
+      # under _tests in the build directory and in no failure block.
       - name: Print the sanitizers' reports
         if: failure() && runner.os != 'Windows'
         run: |
-          { grep -rlE 'Sanitizer|runtime error:' _build/_tests || true; } |
+          { grep -rlsE 'Sanitizer|runtime error:' _build/_tests _build_sanitize/_tests || true; } |
             while read -r f; do echo "::group::$f"; cat "$f"; echo "::endgroup::"; done
