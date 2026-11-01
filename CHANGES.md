@@ -3321,6 +3321,13 @@ thread.
 
 ### Nx
 
+- A reduction, `Nx.matmul`, `Nx.contract`, `Nx.take` or `Nx.scatter`'s
+  `Add` over an axis cut across devices reduces each device's share of the
+  result in pieces of at most 256 KiB of every device's partials, its own
+  included, with the same bits. An `Nx.sum` whose result of `r` bytes is
+  whole on `n` devices holds `r + r/n` and at most `256 (1 + 1/n)` KiB
+  beside its operand on each device, where it held `2r`; `Nx.argmax`,
+  `Nx.var` and `Nx.scatter`'s `Add` hold their partials once, not twice.
 - `Nx.place` onto devices and the moves of operations across devices return
   as `Rig.Buffer.submit_copy` returns, where they waited for each device's
   earlier work, and a window gathered into a device moves in one copy.

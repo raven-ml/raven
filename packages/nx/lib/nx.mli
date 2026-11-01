@@ -2002,22 +2002,27 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     partial results move instead of [x]'s elements: one per output and
     window holding terms, stacked in C order of the windows' first indices
     and reduced over the stack by the kernels; for {!argmax} and {!argmin},
-    each device's extreme and its position. Integer and boolean reductions,
-    extremes and their positions keep the bits they have on one device. A
-    float or complex {!sum}, {!prod}, {!mean}, {!var}, {!std}, {!logsumexp}
-    or {!logmeanexp} over cut axes has the kernels' association over each
-    window's terms and over the stacked partials. It may differ from the
-    result on one device within the bounds below, and is the same on every
-    run for a given placement and set of devices. Barring overflow and
-    underflow, a float sum of [n] terms stays within [γ(n - 1) Σ|x|] of the
-    exact sum and a product within a relative [γ(n - 1)], as on one device
-    ({!Nx_kernel.section-bounds}); a complex product within a normwise
-    relative [γ(2n - 2)]. A {!mean} is such a sum divided by [n]. {!var} and
-    {!std} are within the bound {!var} states. A {!logsumexp} is within
-    [ε + ε{_t}] of the exact one, [ε] the largest bound the kernels' library
-    states for the logsumexp of a window's terms and [ε{_t}] its bound for
-    one of [t] terms, [t] the windows holding terms, and {!logmeanexp} is
-    that less [log n].
+    each device's extreme and its position. Each device reduces its share
+    of the result over the stack piece by piece, each piece of at most 256
+    KiB of the partials of every device, its own included. So a {!sum},
+    {!prod}, {!max} or {!min} whose result of [r] bytes is whole on [N]
+    devices, each holding partials of [r] bytes, holds on each device at
+    most [r + r / N] bytes and [256 (1 + 1 / N)] KiB more beside its
+    operand. Integer and boolean reductions, extremes and their positions
+    keep the bits they have on one device. A float or complex {!sum},
+    {!prod}, {!mean}, {!var}, {!std}, {!logsumexp} or {!logmeanexp} over cut
+    axes has the kernels' association over each window's terms and over the
+    stacked partials. It may differ from the result on one device within the
+    bounds below, and is the same on every run for a given placement and set
+    of devices. Barring overflow and underflow, a float sum of [n] terms
+    stays within [γ(n - 1) Σ|x|] of the exact sum and a product within a
+    relative [γ(n - 1)], as on one device ({!Nx_kernel.section-bounds}); a
+    complex product within a normwise relative [γ(2n - 2)]. A {!mean} is
+    such a sum divided by [n]. {!var} and {!std} are within the bound {!var}
+    states. A {!logsumexp} is within [ε + ε{_t}] of the exact one, [ε] the
+    largest bound the kernels' library states for the logsumexp of a
+    window's terms and [ε{_t}] its bound for one of [t] terms, [t] the
+    windows holding terms, and {!logmeanexp} is that less [log n].
 
     A scan along an axis cut across devices scans each device's window
     alone. The windows' totals, one row each, move to every device that
@@ -2309,16 +2314,17 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     result compute it together: each contracts the products its windows
     hold, and only these partial sums move, in the accumulator, stacked in
     C order of the windows' first indices and summed over the stack by the
-    kernels, then [init] added and the sum rounded once. An operand whole on
-    every device is read at the other's cut; summed axes cut otherwise raise
-    ({!section-routing}). [Nx_quant.apply_experts], which multiplies each
-    row by its expert's matrix, computes so too with the experts cut
-    across devices: each device sums its own experts' rows. Integer
-    contractions keep the bits they have on one device. A float or complex
-    one may differ from it within the bound {!contract} states, and is the
-    same on every run for a given placement and set of devices: float32
-    [[1e7; -1e7; 0.1; 0]] by ones gives [0.] on one nx.cpu device and
-    [0.1] cut two ways along its summed axis. *)
+    kernels piece by piece, as a reduction's partials are
+    ({!section-reductions}), then [init] added and the sum rounded once. An
+    operand whole on every device is read at the other's cut; summed axes
+    cut otherwise raise ({!section-routing}). [Nx_quant.apply_experts],
+    which multiplies each row by its expert's matrix, computes so too with
+    the experts cut across devices: each device sums its own experts' rows.
+    Integer contractions keep the bits they have on one device. A float or
+    complex one may differ from it within the bound {!contract} states, and
+    is the same on every run for a given placement and set of devices:
+    float32 [[1e7; -1e7; 0.1; 0]] by ones gives [0.] on one nx.cpu device
+    and [0.1] cut two ways along its summed axis. *)
 
 val contract :
   ?sizes:(string * int) list ->

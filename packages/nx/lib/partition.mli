@@ -127,6 +127,26 @@ val windows :
     Raises what [e]'s steps raise, and [Invalid_argument] as an internal
     fault for a route that computes by partials. *)
 
+type ('v, 's, 'd) held
+(** The type for a value's pieces with the windows they hold, from which
+    {!take} takes windows. Each piece is made once, when a window first
+    reads it. *)
+
+val held : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) held
+(** [held ~by x] is [x]'s pieces and their windows. *)
+
+val take :
+  engine ->
+  ('v, 's, 'd) held ->
+  'e Devices.placement ->
+  Nx_array.Move.range array ->
+  ('v, 's, 'e) Value.t
+(** [take e h here w] is the window [w] of the whole of [h]'s value at the
+    one-device placement [here], as {!place} takes a device's window: from
+    the pieces that hold all of it by {!engine}'s [bring], else gathered
+    from the box each distinct window shares with [w], from a piece on that
+    device where one holds the box's window. [w] holds elements. *)
+
 val place :
   engine ->
   by:string ->

@@ -246,6 +246,24 @@ let window_of eng x pieces src at ks set devices j w =
       done;
       eng.gather here (Prim.dtype x) (Route.extents w) !boxes
 
+type ('v, 's, 'd) held = {
+  x : ('v, 's, 'd) Value.t;
+  src : M.range array array;
+  pieces : ('v, 's, 'd) Value.t array;
+}
+
+let held (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) held =
+  let at = Prim.placement x and shape = Prim.shape x in
+  let n = Grid.count (Devices.grid at) in
+  let src = Array.init n (fun i -> Devices.window ~by at shape i) in
+  { x; src; pieces = Array.make n x }
+
+let take eng h here w =
+  let at = Prim.placement h.x in
+  let ks = Grid.devices (Devices.grid at) in
+  let set = Devices.set here and devices = Grid.devices (Devices.grid here) in
+  window_of eng h.x h.pieces h.src at ks set devices 0 w
+
 let place (type v s d e) eng ~by (p : e Devices.placement)
     (x : (v, s, d) Value.t) : (v, s, e) Value.t =
   let at = Prim.placement x and shape = Prim.shape x and dt = Prim.dtype x in

@@ -1702,6 +1702,97 @@ let test_closing_words () =
     ~than:(three +. Float.of_int ((60 - 6) * 4))
     (sum (Set3.split ~axis:0) [| 60; 4 |])
 
+(* The fewest bytes over what each of [ds] holds at the call that [f ()]
+   fits in, at most [most], or [None]. An allocation past a budget first
+   collects what nothing reaches, so [f] fits exactly where what it reaches
+   at once does. *)
+let peak ds ~most f =
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      List.iter Rig.free_cache ds
+    done;
+    List.map Rig.allocated ds
+  in
+  let fits over =
+    let held = settled () in
+    List.iter2 (fun d h -> Rig.set_budget d (h + over)) ds held;
+    Fun.protect
+      ~finally:(fun () -> List.iter (fun d -> Rig.set_budget d max_int) ds)
+      (fun () ->
+        match ignore (Sys.opaque_identity (f ())) with
+        | () -> true
+        | exception Rig.Out_of_memory _ -> false)
+  in
+  ignore (f ());
+  let rec search lo hi =
+    if hi - lo <= 1 then hi
+    else
+      let mid = (lo + hi) / 2 in
+      if fits mid then search lo mid else search mid hi
+  in
+  if fits most then Some (search 0 most) else None
+
+(* Closings over four devices, each holding a slot, of results of
+   512 × 512 elements whole on each device, or four times that, so that a
+   share's slots exceed a piece's 256 KiB: beside its operands, a device
+   holds at most the larger of its partials [p] and the results, its share
+   [s] of the results, and a piece's 256 KiB of slots with [m] of its
+   results of at most a quarter of that each. Each fold's bound is
+   partial.mli's. *)
+let test_closing_peaks () =
+  let ds =
+    List.init 4 (fun k ->
+        let name = Printf.sprintf "nx-partial-peak-%d" k in
+        Result.get_ok (Rig.memory_device name))
+  in
+  let module S = (val Nx.devices ds) in
+  let rows = 512 and cols = 512 in
+  let el = rows * cols and c = 262144 in
+  let split axis x = Nx.place (S.split ~axis) x in
+  let value dt s =
+    Nx.init dt s (fun i ->
+        Float.of_int (((i.(0) * 7) + (i.(1) * 3) - i.(2)) mod 17))
+  in
+  let x = split 0 (value Nx.float32 [| 8; rows; cols |]) in
+  let a = split 1 (Nx.ones Nx.float32 [| rows; 8 |])
+  and b = split 0 (Nx.ones Nx.float32 [| 8; cols |]) in
+  let into = Nx.place S.on (Nx.zeros Nx.bfloat16 [| rows; cols |]) in
+  let idx =
+    split 0
+      (Nx.init Nx.int64 [| 8; cols |] (fun i -> Int64.of_int (i.(0) * 64)))
+  and updates = split 0 (Nx.ones Nx.bfloat16 [| 8; cols |]) in
+  let case name ~p ~results ~share ~m f =
+    let bound = Int.max p results + share + c + (m * c / 4) in
+    let got = peak ds ~most:(2 * bound) f in
+    match got with
+    | None -> fail (Printf.sprintf "%s: no fit within twice its bound" name)
+    | Some got ->
+        at_most int ~msg:name ~than:bound got;
+        less int ~msg:(name ^ ": the share beside the results")
+          ~than:got (results + share)
+  in
+  case "sum" ~p:(4 * el) ~results:(4 * el) ~share:el ~m:1 (fun () ->
+      Nx.sum ~axes:[ 0 ] x);
+  (* A share of two rows, each of whose slots exceed a piece: pieces along
+     the rows' axis, one row each. *)
+  let short = split 0 (value Nx.float32 [| 4; 2; 4 * el / 2 |]) in
+  case "sum of a short first axis" ~p:(16 * el) ~results:(16 * el)
+    ~share:(4 * el) ~m:1 (fun () -> Nx.sum ~axes:[ 0 ] short);
+  case "matmul" ~p:(4 * el) ~results:(4 * el) ~share:el ~m:1 (fun () ->
+      Nx.matmul a b);
+  (* An extreme and its position, each closed and gathered. *)
+  case "argmax" ~p:(12 * el) ~results:(12 * el) ~share:(3 * el) ~m:2
+    (fun () -> Nx.argmax ~axis:0 x);
+  (* The mean, whole, and two slots of deviations' sums, then the mean and
+     the variance. *)
+  case "var" ~p:(12 * el) ~results:(8 * el) ~share:el ~m:2 (fun () ->
+      Nx.var ~axes:[ 0 ] x);
+  (* Slots in float32, a bfloat16 result. *)
+  case "scatter Add" ~p:(4 * el) ~results:(2 * el) ~share:(el / 2) ~m:2
+    (fun () -> Nx.scatter ~combine:Add ~axis:0 idx updates into);
+  ignore (Sys.opaque_identity (x, short, a, b, into, idx, updates))
+
 (* An extreme's position over two axes of a value cut along the second
    over three devices: the first tile, columns 0 and 1, holds an extreme at
    position 4, the second at position 2. The position is the smaller,
@@ -3344,6 +3435,10 @@ let reductions =
         "a sum over an axis cut across devices allocates with the devices, \
          not the elements"
         test_closing_words;
+      test
+        "a fold over an axis cut across devices holds its partials, its \
+         share of the results and one piece of the slots at a time"
+        test_closing_peaks;
       test "a float maximum or minimum over a cut axis is a NaN beside one"
         test_cut_extreme_nan;
       prop ~count:300

@@ -55,16 +55,30 @@
 
 (** {1:reductions Reductions and contractions}
 
-    A reduction or a contraction closes so. The stack moves to a placement
-    whole along its leading axes, the grid axes that cut them moved to the
+    A reduction or a contraction closes so. Each device of a group computes
+    its {e part} of the group's window of the results: its window along the
     result's first axis that the result keeps whole and that holds at least
-    [N] elements, or holding copies where it has none. One [Reduce] over
-    the leading axes then gives each device its {e part}, its window of the
-    results there: the fold's monoid over the slots in C order of their
-    indices, by the kernels in their own order. Where an axis took the
-    leading axes' cut, the parts move to the route's result
-    ({!Partition.place}). A [Reduce] of several reductions computes each one
-    alone.
+    [N] elements, that axis cut over the group as the grid axes cut the
+    leading axes, or the whole window where the result has no such axis. It
+    computes its part in {e pieces}, each of whose slots hold at most
+    [C = 256] KiB, a buffer of fixed size whatever the result's
+    (Rajbhandari et al., {e ZeRO}, SC 2020, §6.2): boxes in C order that
+    tile the part, for the first axis on which the slots of one index fit
+    in [C], single indices of every axis before it and runs along it of as
+    many indices as fit, every axis after it whole. A part is one piece
+    where its slots fit in [C], or where its dtype is narrower than a byte
+    and the host does not address the device's memory, since a piece may
+    start inside a byte. For each
+    piece in turn, the device takes every slot's elements there
+    ({!Partition.take}), and one [Reduce] over the leading axes gives the
+    piece's results, the fold's monoid over the slots in C order of their
+    indices by the kernels' association of each output's terms, finished
+    by the maps below. Where the kernels' association of an output's terms
+    depends on their count alone, as nx.cpu's does
+    ({!Nx_cpu.section-lane_order}), each result so has the bits of one
+    [Reduce] of every slot of the group's window. Each device of the route's
+    result then gathers its window from the pieces, its own where it holds
+    them. A [Reduce] of several reductions computes each one alone.
 
     A [Sum], [Prod], [Max] or [Min] partial reduces its tile into the
     carrier, and the closing reduces the slots by the same monoid. Over
@@ -92,12 +106,13 @@
     An [Arg] partial is its tile's first extreme in its term's dtype and its
     position, renumbered from C order of the tile's reduced indices into C
     order of the whole's. The extremes and the positions are stacked and
-    moved as above, and each device combines the slots, in order, one map
-    per slot: of two, the first extreme, a NaN before any number and the
-    smaller position of two NaNs, else the extreme in {!Nx_kernel.Prog}'s
-    order, [-0] below [+0] and complex numbers by their parts, and the
-    smaller position of two of one bits. So the result is the whole's first
-    extreme and its position, whatever the tiles' order.
+    taken piece by piece as above, and each device combines a piece's
+    slots, in order, one map per slot: of two, the first extreme, a NaN
+    before any number and the smaller position of two NaNs, else the
+    extreme in {!Nx_kernel.Prog}'s order, [-0] below [+0] and complex
+    numbers by their parts, and the smaller position of two of one bits. So
+    the result is the whole's first extreme and its position, whatever the
+    tiles' order.
 
     [Moments] close in two passes, each of whose sums closes as a [Sum]:
     the tiles' sums give [s] and the mean [c = s / n], which every device
@@ -228,10 +243,10 @@
     adds the updates of its tile, at its window of the positions moved by
     its window's start, into its window of the results in the carrier:
     into [into]'s window for the first tile, cast to the carrier, and into
-    [-0] for every other, which adds nothing. The stack moves as a
-    reduction's does, and the parts are the slots added in tile order by
-    one map, with no [+0] added, rounded once into the dtype. Each element
-    so is [into]'s plus its updates. Over integers this is exact, with the
+    [-0] for every other, which adds nothing. The stack closes as a
+    reduction's does, each piece the slots added in tile order by one map,
+    with no [+0] added, then rounded once into the dtype. Each element so
+    is [into]'s plus its updates. Over integers this is exact, with the
     bits of the scatter on one device. For finite operands, barring
     overflow, a float or complex element of [k] updates over [t] tiles
     holding updates is within [γ(k + t) (|x| + Σ|u|)] of the exact sum
@@ -241,6 +256,24 @@
     Where no update lands, an element keeps [into]'s value, a [-0]'s sign
     included; a NaN stays a NaN whose sign and payload this module does
     not state.
+
+    {1:memory Memory}
+
+    A device's {e partials} are its slots: one in the carrier, for an [Arg]
+    its extreme and its position, for [Moments] the mean, whole, and the
+    two sums of deviations. Where a group holds [s] slots, a device holds,
+    beside the operands, the larger of its partials and the results, its
+    part of the results and, at a time, at most [C] bytes of one piece's
+    slots and [m] of the piece's results, of at most [C / s] bytes each:
+    [m = 1] for a [Sum], [Prod], [Max], [Min] or [Logsumexp], a gather and
+    a contraction without [init], [m = 2] for an [Arg], [Moments], a
+    contraction with [init] and a scatter's [Add], which finish a piece by
+    a second map. A piece holds more than [C] only where the slots of one
+    element do, or where a part of a dtype narrower than a byte on a device
+    whose memory the host does not address is one piece. Its partials go
+    before the result's windows are gathered. So a float32 sum whose result
+    of [r] bytes is whole on [N] devices, each holding a slot of [r] bytes,
+    holds at most [r + r / N + C (1 + 1 / N)] beside the operands.
 
     {1:traffic Traffic}
 

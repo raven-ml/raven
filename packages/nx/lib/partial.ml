@@ -212,22 +212,21 @@ let mean eng ~by n s =
   let count = E.const c (D.of_float c (Float.of_int n)) in
   map eng ~by (Prim.placement x) [ s ] [ E.any (E.fdiv (E.input 0 c) count) ]
 
-(* [Moments] into [dt] of [n] terms from their mean [m], in the carrier,
-   and the sums [s1] of their deviations [d] from it and [s2] of [d²], at
-   [s1]'s placement: [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is
-   negative or [Σ d²] where that is [+∞]. A NaN mean makes every deviation,
-   so the variance, a NaN. *)
-let moments eng ~by (D.Any dt) n m s1 s2 =
+(* The variance into [dt] of [n] terms from the sums, in the carrier, [s1]
+   of their deviations [d] from their mean and [s2] of [d²], at [s1]'s
+   placement: [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is negative or
+   [Σ d²] where that is [+∞]. A NaN mean makes every deviation, so the
+   variance, a NaN. *)
+let variance eng ~by (D.Any dt) n s1 s2 =
   let (Value.Any x) = s1 in
   let c = Prim.dtype x in
-  let m' = E.input 2 c and v1 = E.input 0 c and v2 = E.input 1 c in
+  let v1 = E.input 0 c and v2 = E.input 1 c in
   let count = E.const c (D.of_float c (Float.of_int n)) in
   let zero = E.const c (D.zero c)
   and inf = E.const c (D.of_float c Float.infinity) in
   let q = E.(fdiv (v2 - (v1 * fdiv v1 count)) count) in
   let v = E.(where (v2 = inf) v2 (where (q < zero) zero q)) in
-  map eng ~by (Prim.placement x) [ s1; s2; m ]
-    [ E.any (E.cast dt m'); E.any (E.cast dt v) ]
+  map eng ~by (Prim.placement x) [ s1; s2 ] [ E.any (E.cast dt v) ]
 
 (* Positions *)
 
@@ -312,7 +311,8 @@ let shift eng ~by s pos =
       (map eng ~by (Prim.placement x) [ pos ] [ E.any E.(input 0 D.Int64 + s) ])
 
 (* [pos], positions in C order of the folded indices of a window [w] of
-   the folded extents [whole], as positions in C order of the whole's. *)
+   the folded extents [whole], as positions in C order of the whole's,
+   over [pos]'s memory: [pos] is fresh, on one device. *)
 let renumber eng ~by (w : M.range array) whole pos =
   if
     Array.for_all2 (fun (r : M.range) n -> r.start = 0 && r.count = n) w whole
@@ -328,7 +328,8 @@ let renumber eng ~by (w : M.range array) whole pos =
       inner := !inner * w.(i).count;
       outer := !outer * whole.(i)
     done;
-    List.hd (map eng ~by (Prim.placement x) [ pos ] [ E.any !global ])
+    let p = Prim.placement x in
+    List.hd (map eng ~by ~into:pos p [ pos ] [ E.any !global ])
 
 (* Closings *)
 
@@ -336,17 +337,15 @@ let renumber eng ~by (w : M.range array) whole pos =
    route's; [stacked], the placement of the partials stacked along a new
    leading axis per cut folded axis, of [held] elements, each cut over the
    grid axes that cut its folded axis, the others cut as [result] cuts
-   them; [placed], the stack's after its move, whole along the leading
-   axes, the grid axes that cut them moved to an axis the result keeps
-   whole, where it has one of at least a group's devices; and [parts], the
-   reduced stack's, [placed] without the leading axes. [held] is, for each
-   cut folded axis in order, the number of its tiles that hold terms, which
-   come first: the route computes by partials only where every folded axis
-   has elements ({!Route.computed}). *)
+   them; and [parts], where each device computes its part of the results:
+   [result] with the grid axes that cut the leading axes moved to an axis
+   the result keeps whole, where it has one of at least a group's devices.
+   [held] is, for each cut folded axis in order, the number of its tiles
+   that hold terms, which come first: the route computes by partials only
+   where every folded axis has elements ({!Route.computed}). *)
 type closing = {
   result : unit Devices.placement;
   stacked : unit Devices.placement;
-  placed : unit Devices.placement;
   parts : unit Devices.placement;
   held : int list;
 }
@@ -391,15 +390,14 @@ let closing ~by (route : unit Route.t) ~operand ~axes ~extent shape =
       (fun a -> whole a && shape.(a) >= group)
       (List.init (Array.length shape) Fun.id)
   in
-  let placed, parts =
+  let parts =
     match split with
     | Some k ->
         let placed = cut_at cut (k + lead) up in
-        let parts = Grid.map_axes (fun a -> a - lead) placed in
-        (Devices.v ~by set placed, Devices.v ~by set parts)
-    | None -> (Devices.v ~by set up, r)
+        Devices.v ~by set (Grid.map_axes (fun a -> a - lead) placed)
+    | None -> r
   in
-  { result = r; stacked = Devices.v ~by set stacked; placed; parts; held }
+  { result = r; stacked = Devices.v ~by set stacked; parts; held }
 
 (* The slots of [c], in order: their indices along the leading axes, in C
    order. *)
@@ -426,53 +424,193 @@ let stack (type v s d) eng ~by c (dt : (v, s) D.t) shape
   in
   eng.assemble c.stacked shape dt (Array.init (Array.length ks) slot)
 
-(* The reduction [r] at [c.parts] of [s], the stack at [c.stacked], over
-   its leading axes, after [s] moves to [c.placed]. *)
-let reduced (type v s d a) eng ~by c (r : (d, a) Value.reduction)
-    (s : (v, s, d) Value.t) : a =
-  let s = Partition.place eng ~by c.placed s in
+(* The most bytes of slots a piece gathers: a buffer of fixed size, so that
+   a closing holds no more however large its result. A piece costs about
+   1,100 words and 12 us of calls on four memory devices, and reducing 256
+   KiB of slots about 220 us, so its calls stay near a twentieth. *)
+let piece_bytes = 262144
+
+(* The pieces of a device's part [w], of [t] slots of [bits] bits an
+   element, boxes in C order that tile it: [w] itself where its slots fit
+   in {!piece_bytes} and where [w] is empty; else, for the first axis [a]
+   on which the slots of one index fit, single indices of each axis before
+   [a] and runs along [a] of as many indices as fit, every axis after [a]
+   whole. Where no axis's index fits, as for more slots of one element
+   than fit, [a] is the last axis, in runs of one. *)
+let part_pieces t ~bits (w : M.range array) =
+  let r = Array.length w in
+  (* The bits of the slots of one index of axis [a]. *)
+  let per a = t * bits * numel (counts (Array.sub w (a + 1) (r - a - 1))) in
+  let budget = 8 * piece_bytes in
+  if Route.empty w || r = 0 || numel (counts w) * t * bits <= budget then
+    [ w ]
+  else
+    let a =
+      match List.find_opt (fun a -> per a <= budget) (List.init r Fun.id) with
+      | Some a -> a
+      | None -> r - 1
+    in
+    let n = Int.max 1 (budget / per a) in
+    (* The boxes over axes [i] and after, within [p], C order. *)
+    let rec boxes i p =
+      if i > a then [ Array.copy p ]
+      else
+        let { M.start; count = e; _ } = w.(i) in
+        let step = if i = a then n else 1 in
+        List.concat
+          (List.init ((e + step - 1) / step) (fun k ->
+               let count = Int.min step (e - (k * step)) in
+               p.(i) <- { M.start = start + (k * step); count; step = 1 };
+               boxes (i + 1) p))
+    in
+    boxes 0 (Array.copy w)
+
+(* [inner], a window of the whole, as a window of [outer]'s. *)
+let relative (outer : M.range array) (inner : M.range array) =
+  Array.map2
+    (fun (o : M.range) (i : M.range) -> { i with start = i.start - o.start })
+    outer inner
+
+type 'd held =
+  | Held : ('v, 's, 'd) Value.t * ('v, 's, 'd) Partition.held -> 'd held
+
+(* [f]'s results, of [dts], at the route's result, from [stacks], each at
+   [c.stacked], of the results of [shape] after their leading axes. Each
+   device computes its part, its window at [c.parts], piece by piece: it
+   takes each stack's slots at a piece [w], and [f k here w] computes the
+   piece from them on the set's device [k] alone, at [here]. Each device of
+   the result then gathers its window from the pieces, its own where it
+   holds them. So a device holds, beside its slots, one piece's slots and
+   what [f] makes of them at a time, then its pieces and its window of the
+   results. A part of a dtype narrower than a byte on a device whose memory
+   the host does not address, where a piece may start inside a byte, is
+   one piece. *)
+let closed (type d) (eng : Partition.engine) ~by c shape dts
+    (stacks : d Value.any list)
+    (f :
+      int ->
+      d Devices.placement ->
+      M.range array ->
+      d Value.any list ->
+      d Value.any list) : d Value.any list =
+  let set = Devices.set c.parts in
+  let t = List.fold_left ( * ) 1 c.held in
+  let lead = Array.of_list (List.map Route.full c.held) in
+  let narrow = List.exists (fun (D.Any dt) -> D.bits dt < 8) dts in
+  let bits =
+    List.fold_left
+      (fun n (Value.Any s) -> n + D.bits (Prim.dtype s))
+      0 stacks
+  in
+  let held =
+    List.map (fun (Value.Any s) -> Held (s, Partition.held ~by s)) stacks
+  in
+  (* Each device's pieces: its set device, their windows and results. *)
+  let device j k =
+    let here = Devices.one set k and d = Devices.rig set k in
+    let w = Devices.window ~by c.parts shape j in
+    let ps =
+      if narrow && not (Rig.reaches Rig.host d) then [ w ]
+      else part_pieces t ~bits w
+    in
+    let piece p =
+      let sw = Array.append lead p in
+      let slots (Held (s, h)) =
+        if Route.empty sw then
+          Value.Any
+            (eng.Partition.assemble here (counts sw) (Prim.dtype s) [| None |])
+        else Value.Any (Partition.take eng h here sw)
+      in
+      (p, f k here p (List.map slots held))
+    in
+    (k, List.map piece ps)
+  in
+  let parts = Array.mapi device (Grid.devices (Devices.grid c.parts)) in
+  let r = c.result in
+  let rs = Grid.devices (Devices.grid r) in
+  List.mapi
+    (fun i (D.Any dt) ->
+      let nth ys = Prim.expect dt (List.nth ys i) in
+      let window j =
+        let k = rs.(j) in
+        let w = Devices.window ~by r shape j in
+        if Route.empty w then None
+        else
+          (* The pieces within [w], of distinct windows, [k]'s first. *)
+          let within = ref [] in
+          let add own =
+            Array.iter
+              (fun (k', ps) ->
+                if (k' = k) = own then
+                  List.iter
+                    (fun (p, ys) ->
+                      if
+                        Route.contains w p
+                        && not (List.exists (fun (q, _) -> q = p) !within)
+                      then within := (p, nth ys) :: !within)
+                    ps)
+              parts
+          in
+          add true;
+          add false;
+          match !within with
+          | [ (p, y) ] when p = w -> Some y
+          | boxes ->
+              let here = Devices.one (Devices.set r) k in
+              let whole =
+                Array.map (fun (q : M.range) -> { q with start = 0 })
+              in
+              let box (p, y) = (relative w p, y, whole p) in
+              let boxes = List.map box boxes in
+              Some (eng.Partition.gather here dt (Route.extents w) boxes)
+      in
+      let ws = Array.init (Array.length rs) window in
+      Value.Any (eng.Partition.assemble r shape dt ws))
+    dts
+
+(* The reduction [r] over the leading axes, [lead] of them, of [s], a stack
+   on one device, at [here]. *)
+let fold_slots (type v s w q d) eng ~by ~lead here
+    (r : (d, (w, q, d) Value.t) Value.reduction) (s : (v, s, d) Value.t) :
+    (w, q, d) Value.t =
   let op =
     Value.Reduce
       {
         layout = L.contiguous (Iarray.of_array (Prim.shape s));
-        axes = Iarray.init (List.length c.held) Fun.id;
+        axes = Iarray.init lead Fun.id;
         prog = Prim.identity (Prim.dtype s);
         reductions = Value.[ r ];
         loads = [| Plain s |];
       }
   in
-  fst (at eng ~by c.parts op)
+  fst (at eng ~by here op)
 
-(* [y], at [c.parts], at the route's result: gathered along the axis that
-   took the leading axes' cut. *)
-let gathered (type v s d) eng ~by c (y : (v, s, d) Value.t) :
-    (v, s, d) Value.t =
-  if c.parts == c.result then y else Partition.place eng ~by c.result y
+(* [then_] of the reduction [r], at the route's result, of [s], the stack
+   at [c.stacked], of the results of [shape], over its leading axes, into
+   [dt]: the reduction itself by default. [then_ k here w] finishes the
+   piece [w] on the set's device [k], at [here]. *)
+let reduced (type v s w q a b d) eng ~by c shape ?(then_ = fun _ _ _ y -> y)
+    (dt : (w, q) D.t) (r : (d, (a, b, d) Value.t) Value.reduction)
+    (s : (v, s, d) Value.t) : (w, q, d) Value.t =
+  let lead = List.length c.held in
+  let f k here w = function
+    | [ Value.Any s ] ->
+        [ then_ k here w (Value.Any (fold_slots eng ~by ~lead here r s)) ]
+    | _ -> invalid_arg "Partial.reduced: one stack"
+  in
+  let ys = closed eng ~by c shape [ D.Any dt ] [ Value.Any s ] f in
+  Prim.expect dt (List.hd ys)
 
-(* The slot at [index] of [x], a stack at [c.placed], at [c.parts]: a view
-   of each device's piece. *)
-let slot (type v s d) eng ~by c index (x : (v, s, d) Value.t) :
+(* The slot at [index] of [x], a stack on one device: a view. *)
+let slot (type v s d) (eng : Partition.engine) index (x : (v, s, d) Value.t) :
     (v, s, d) Value.t =
   let lead = List.length index in
   let shape = Prim.shape x in
   let out = Array.sub shape lead (Array.length shape - lead) in
-  let ks = Grid.devices (Devices.grid c.placed) in
-  let one j =
-    let w = Devices.window ~by c.placed shape j in
-    if Route.empty w then None
-    else
-      let w = counts w in
-      let r = Array.map Route.full w in
-      List.iteri
-        (fun i k -> r.(i) <- { M.start = k; count = 1; step = 1 })
-        index;
-      let part = Array.sub w lead (Array.length out) in
-      let here = Devices.one (Devices.set c.placed) ks.(j) in
-      let v = eng.Partition.piece x j here in
-      let v = eng.Partition.view (Slice (Iarray.of_array r)) v in
-      Some (eng.view (Reshape (Iarray.of_array part)) v)
-  in
-  eng.assemble c.parts out (Prim.dtype x) (Array.init (Array.length ks) one)
+  let r = Array.map Route.full shape in
+  List.iteri (fun i k -> r.(i) <- { M.start = k; count = 1; step = 1 }) index;
+  let v = eng.view (Slice (Iarray.of_array r)) x in
+  eng.view (Reshape (Iarray.of_array out)) v
 
 (* Reductions *)
 
@@ -527,11 +665,11 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
     | Monoid (m, o, dt) ->
         let own j = fst (local j prog Value.[ Monoid (m, o, c) ]) in
         let s = stack eng ~by cl c out own in
-        gathered eng ~by cl (reduced eng ~by cl (Monoid (m, 0, dt)) s)
+        reduced eng ~by cl out dt (Monoid (m, 0, dt)) s
     | Logsumexp (o, dt) ->
         let own j = fst (local j prog Value.[ Logsumexp (o, c) ]) in
         let s = stack eng ~by cl c out own in
-        gathered eng ~by cl (reduced eng ~by cl (Logsumexp (0, dt)) s)
+        reduced eng ~by cl out dt (Logsumexp (0, dt)) s
     | Arg (e, o, dt) ->
         (* Each tile's extreme and its position in the whole's order,
            stacked, then the first of them in tile order. *)
@@ -547,26 +685,32 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
         and positions =
           stack eng ~by cl D.Int64 out (fun j -> snd (Lazy.force pairs.(j)))
         in
-        let xs = Partition.place eng ~by cl.placed extremes
-        and qs = Partition.place eng ~by cl.placed positions in
-        let ranked i =
-          [ Value.Any (slot eng ~by cl i xs); Value.Any (slot eng ~by cl i qs) ]
-        in
-        let first =
-          match slots cl with
-          | i :: rest ->
-              List.fold_left
-                (fun a i -> first_of eng ~by e a (ranked i))
-                (ranked i) rest
-          | [] -> invalid_arg "Partial.reduce: no tile holds terms"
-        in
-        let x, q =
-          match first with
-          | [ x; q ] -> (cast eng ~by (D.Any dt) x, q)
+        (* A piece's first extremes and positions: the slots combined in
+           order, then the extremes cast. *)
+        let first _ _ _ = function
+          | [ Value.Any xs; Value.Any qs ] -> (
+              let ranked i =
+                [ Value.Any (slot eng i xs); Value.Any (slot eng i qs) ]
+              in
+              let fold =
+                match slots cl with
+                | i :: rest ->
+                    List.fold_left
+                      (fun a i -> first_of eng ~by e a (ranked i))
+                      (ranked i) rest
+                | [] -> invalid_arg "Partial.reduce: no tile holds terms"
+              in
+              match fold with
+              | [ x; q ] -> [ cast eng ~by (D.Any dt) x; q ]
+              | _ -> invalid_arg "Partial.reduce: an extreme and its position")
           | _ -> invalid_arg "Partial.reduce: an extreme and its position"
         in
-        ( gathered eng ~by cl (Prim.expect dt x),
-          gathered eng ~by cl (Prim.expect D.Int64 q) )
+        let stacks = [ Value.Any extremes; Value.Any positions ] in
+        let dts = [ D.Any dt; D.Any D.Int64 ] in
+        begin match closed eng ~by cl out dts stacks first with
+        | [ x; q ] -> (Prim.expect dt x, Prim.expect D.Int64 q)
+        | _ -> invalid_arg "Partial.reduce: an extreme and its position"
+        end
     | Moments (o, dt) ->
         (* Two passes, each closing its sums as a [Sum]: the mean from the
            tiles' sums, then the tiles' sums of the deviations from it and
@@ -585,7 +729,6 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
           at eng ~by (here j)
             (Value.Reduce { layout; axes; prog; reductions = rs; loads })
         in
-        let sum s = reduced eng ~by cl (Monoid (Sum, 0, c)) s in
         let total j =
           let s, () =
             over j (Prim.identity t) Value.[ Monoid (Sum, 0, c) ]
@@ -593,11 +736,12 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
           in
           s
         in
-        let s = sum (stack eng ~by cl c out total) in
+        let means _ _ _ y = List.hd (mean eng ~by n y) in
         let m =
-          let m = List.hd (mean eng ~by n (Value.Any s)) in
-          gathered eng ~by cl (Prim.expect c m)
+          reduced eng ~by cl out ~then_:means c (Monoid (Sum, 0, c))
+            (stack eng ~by cl c out total)
         in
+        let mean = Prim.expect dt (cast eng ~by (D.Any dt) (Value.Any m)) in
         let centred j =
           let shape = Prim.shape (x j) in
           let units =
@@ -615,17 +759,23 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
           in
           (s1, s2)
         in
+        (* The variance closes from the deviations' sums alone, so the mean
+           goes once each device has them. *)
         let ds = Array.init (Array.length ks) (fun j -> lazy (centred j)) in
-        let part f =
-          sum (stack eng ~by cl c out (fun j -> f (Lazy.force ds.(j))))
+        let part f = stack eng ~by cl c out (fun j -> f (Lazy.force ds.(j))) in
+        let stacks = [ Value.Any (part fst); Value.Any (part snd) ] in
+        let lead = List.length cl.held in
+        let var _ here _ = function
+          | [ Value.Any a; Value.Any b ] ->
+              let sum s =
+                let r = Value.Monoid (Sum, 0, c) in
+                Value.Any (fold_slots eng ~by ~lead here r s)
+              in
+              variance eng ~by (D.Any dt) n (sum a) (sum b)
+          | _ -> invalid_arg "Partial.reduce: two sums"
         in
-        let s1 = part fst and s2 = part snd in
-        let mv =
-          moments eng ~by (D.Any dt) n (Value.Any m) (Value.Any s1)
-            (Value.Any s2)
-        in
-        let nth i = gathered eng ~by cl (Prim.expect dt (List.nth mv i)) in
-        (nth 0, nth 1)
+        let v = closed eng ~by cl out [ D.Any dt ] stacks var in
+        (mean, Prim.expect dt (List.hd v))
   in
   let rec each : type q. (d, q) Value.reductions -> q = function
     | [] -> ()
@@ -975,12 +1125,11 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
   in
   let s = stack eng ~by cl ad shape partial in
   match init with
-  | None -> gathered eng ~by cl (reduced eng ~by cl (Monoid (Sum, 0, out)) s)
+  | None -> reduced eng ~by cl shape out (Monoid (Sum, 0, out)) s
   | Some i ->
       (* The sums in the accumulator, then [init] as it holds it, rounded
          once. A segmented contraction's output without products sums to
          [+0] in every slot and takes [init] alone, as on one device. *)
-      let y = reduced eng ~by cl (Monoid (Sum, 0, ad)) s in
       let total = E.input 0 ad and initial = E.cast ad (E.input 1 out) in
       let e =
         match segments with
@@ -988,12 +1137,11 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
         | Some _ ->
             E.(where (total = const ad (D.zero ad)) initial (total + initial))
       in
-      let z =
-        map eng ~by cl.parts
-          [ Value.Any y; Value.Any i ]
-          [ E.any (E.cast out e) ]
+      let with_init k here w y =
+        let i = Value.Any (view eng ~by k w i) in
+        List.hd (map eng ~by here [ y; i ] [ E.any (E.cast out e) ])
       in
-      gathered eng ~by cl (Prim.expect out (List.hd z))
+      reduced eng ~by cl shape ~then_:with_init out (Monoid (Sum, 0, ad)) s
 
 (* Gathers *)
 
@@ -1037,7 +1185,7 @@ let gather (type v s d) eng ~by (route : unit Route.t) rule axis
   in
   (* Only the tile holding a position reads bits other than zeros there. *)
   let s = stack eng ~by cl u bits own in
-  let y = gathered eng ~by cl (reduced eng ~by cl (Monoid (Max, 0, u)) s) in
+  let y = reduced eng ~by cl bits u (Monoid (Max, 0, u)) s in
   on eng ~by y (Value.Bitcast (dt, y))
 
 (* Scatters *)
@@ -1101,21 +1249,27 @@ let summed (type v s d) eng ~by (route : unit Route.t) rule unique axis
     let into = Prim.expect c (List.hd target) in
     let updates = cast eng ~by (D.Any c) (Value.Any (read 1 updates)) in
     let updates = Prim.expect c updates in
-    at eng ~by here
-         (Value.Scatter { combine = Add; unique; axis; idx; updates; into })
+    (* The target is fresh: the updates add into its memory. *)
+    at eng ~by ~into:(Value.Any into) here
+      (Value.Scatter { combine = Add; unique; axis; idx; updates; into })
   in
-  let s = Partition.place eng ~by cl.placed (stack eng ~by cl c shape own) in
-  let slots = List.map (fun i -> Value.Any (slot eng ~by cl i s)) (slots cl) in
+  let n = List.length (slots cl) in
   let sum =
     List.fold_left
       (fun acc k -> E.(acc + input k c))
       (E.input 0 c)
-      (List.init (List.length slots - 1) (fun k -> k + 1))
+      (List.init (n - 1) (fun k -> k + 1))
   in
-  let total = List.hd (map eng ~by cl.parts slots [ E.any sum ]) in
-  let total = Prim.expect c total in
-  let y = gathered eng ~by cl total in
-  Prim.expect dt (cast eng ~by (D.Any dt) (Value.Any y))
+  (* A piece's slots added, then rounded into the dtype. *)
+  let added _ here _ = function
+    | [ Value.Any s ] ->
+        let slots = List.map (fun i -> Value.Any (slot eng i s)) (slots cl) in
+        let total = List.hd (map eng ~by here slots [ E.any sum ]) in
+        [ cast eng ~by (D.Any dt) total ]
+    | _ -> invalid_arg "Partial.summed: one stack"
+  in
+  let s = Value.Any (stack eng ~by cl c shape own) in
+  Prim.expect dt (List.hd (closed eng ~by cl shape [ D.Any dt ] [ s ] added))
 
 let run (type r) eng ~by route (op : r Value.prim) : r =
   let rule = Prim.rule op in
