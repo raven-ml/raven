@@ -3464,6 +3464,11 @@ thread.
 
 ### Nx
 
+- `nx.cuda`, `nx.amd` and `nx.metal` are eager kernel libraries for NVIDIA
+  (sm_89), AMD (gfx1201) and Apple GPUs: a set made with
+  `Nx.devices ~kernels:(module Nx_cuda)` contracts on the GPU, and nx.cuda
+  also reduces and scans; nx raises for what they decline. `nx.metal` builds
+  on macOS.
 - `Nx_quant.apply_experts` computes with its weight cut along `k`, where it
   raised: each device sums its window of every row and the sums close by
   partials, as `Nx.contract`'s do. The cut keeps whole blocks where the devices

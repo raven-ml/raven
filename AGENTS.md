@@ -37,7 +37,7 @@ Breaking one causes real damage.
 
 | Package | Role |
 |---|---|
-| `packages/nx` | n-dimensional arrays on sets of rig's devices. Libraries: `nx.array` (dtypes, layouts, arrays over device buffers), `nx.kernel` (the kernel contract), `nx.cpu` (C kernels for host memory), `nx`, `nx.io`, `nx.quant`, `nx.ragged`, `nx.wide`. No eager GPU kernels: a GPU set computes under `Rune.jit` |
+| `packages/nx` | n-dimensional arrays on sets of rig's devices. Libraries: `nx.array` (dtypes, layouts, arrays over device buffers), `nx.kernel` (the kernel contract), `nx.cpu` (C kernels for host memory), `nx.cuda`, `nx.amd`, `nx.metal` (contractions on NVIDIA, AMD and Apple GPUs), `nx`, `nx.io`, `nx.quant`, `nx.ragged`, `nx.wide` |
 | `packages/rig` | devices: Metal, CUDA, NVIDIA and AMD GPUs through their kernel drivers or over PCI, files and remote machines; the order of work across them |
 | `packages/rune` | autodiff, vmap, loops and compilation over nx. Departures from the semantics it follows are recorded in `packages/rune/DIVERGENCES.md` |
 | `packages/tolk` | the compiler, a port of tinygrad. Departures from tinygrad are recorded in `packages/tolk/DIVERGENCES.md` |

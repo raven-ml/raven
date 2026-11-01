@@ -11,9 +11,12 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
   and arrays over rig buffers, with the door of `nx_array.h` through which
   C kernels claim arrays. `nx.kernel` holds `Nx_kernel.S`, the contract a
   kernel library implements, its programs (`Prog`) and `nx_kinds.h`.
-- `nx.cpu` is the only kernel library. It computes on memory the host
-  addresses. There is no eager GPU kernel library: a GPU set computes
-  under `Rune.jit`.
+- `nx.cpu` computes on memory the host addresses. `nx.cuda`, `nx.amd` and
+  `nx.metal` compute contractions on NVIDIA, AMD and Apple GPUs, nx.cuda
+  also plain reductions and scans, and decline the rest; a GPU set names
+  one with `~kernels`, and otherwise computes under `Rune.jit`. Their
+  device code is compiled ahead of time by `lib/<name>/kernels/build.*`
+  and is not committed; nx.metal builds on macOS alone.
 - `nx.quant`, `nx.ragged` and `nx.wide` build on `Nx` and `nx.array`
   alone, `Nx.Prim` included, with no C and no kernels. `nx.io` reads files
   into host values and writes values of any set.
