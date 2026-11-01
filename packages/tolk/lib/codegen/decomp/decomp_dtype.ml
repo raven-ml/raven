@@ -105,7 +105,7 @@ let rec l2i op dt uops =
       let a0, a1 = pair uops in
       words (bitcast a0 dt) (bitcast a1 dt)
   | Op.Shl ->
-      let a0, a1, b0 = shift_operands op uops in
+      let a0, a1, b0, _ = bin () in
       let a0u = bitcast a0 uint and a1u = bitcast a1 uint in
       let n = cast O.(b0 land int 31) uint in
       let lo = bitcast O.(a0u lsl n) dt in
@@ -115,7 +115,7 @@ let rec l2i op dt uops =
       let far = O.(b0 >= int 32) in
       words (where far zero lo) (where far lo hi)
   | Op.Shr ->
-      let a0, a1, b0 = shift_operands op uops in
+      let a0, a1, b0, _ = bin () in
       let a0u = bitcast a0 uint and a1u = bitcast a1 uint in
       let n = cast O.(b0 land int 31) uint in
       let lo =
@@ -217,13 +217,6 @@ and long_to_float dt a0 a1 =
   in
   match negative with Some n -> where n (neg f) f | None -> f
 
-(* A shift's count is a single word. *)
-and shift_operands op = function
-  | a0 :: a1 :: b0 :: _ -> (a0, a1, b0)
-  | _ ->
-      invalid_arg
-        (Printf.sprintf "long %s needs a long and a count" (Op.name op))
-
 (* TAOCP's Algorithm 4.3.1D could be faster, but it must be parameterised over
    the width of the divisor. *)
 and long_division op dt (a0, a1, b0, b1) =
@@ -289,190 +282,102 @@ let l2i_define x =
         ~src:(size :: List.tl (src x))
   | _ -> invalid_arg "a long definition needs a parameter argument"
 
-(* The word a node becomes, [0] for the low word and [1] for the high one, and
-   the type of that word. *)
-let word_tag w dt = Tag.Tuple [ Int w; Dtype dt ]
+(* The pair of a long is the long bitcast to two words; its words are the
+   pair's lanes. *)
+let l2i_pair x =
+  Upat.op Op.Bitcast ~name:"p" ~src:[ Upat.op Op.Stack ~src:[ x ] ]
 
-let word x =
-  match tag x with
-  | Some (Tuple [ Int w; Dtype _ ]) -> w
-  | _ -> invalid_arg "a long node needs the word it becomes"
+let l2i_words uops =
+  List.concat_map
+    (fun u ->
+      if not (is_long (dtype u)) then [ u ]
+      else
+        let p = bitcast (v Op.Stack ~src:[ u ]) (l2i_dt (dtype u)) in
+        [ index p [ int 0 ]; index p [ int 1 ] ])
+    uops
 
-let lo_hi dt a = [ rtag ~tag:(word_tag 0 dt) a; rtag ~tag:(word_tag 1 dt) a ]
+let pm_long_decomp =
+  let long = Upat.var ~dtype:longs in
+  let alu_or_cast = Op.Set.union Op.Set.alu (ops [ Op.Cast; Op.Bitcast ]) in
+  Pattern_matcher.v
+    (fun () -> [
+      (* The decomposition's own rewrite can mint bare constants: they commit
+         at the long sibling's type. *)
+      rule (Upat.v ~op:Op.Set.all ~name:"x" ()) (fun m ->
+          let x = m "x" in
+          Some
+            (Uop_weak.commit_weak_consts x
+               (List.find_map
+                  (fun s -> if is_long (dtype s) then Some (dtype s) else None)
+                  (src x))));
+      rule (Upat.v ~op:Op.Set.defines ~dtype:longs ~name:"x" ()) (fun m ->
+          Some (l2i_define (m "x")));
+      (* A store, a comparison and a cast out of a long consume the words of
+         their long sources; a stored word is no longer a long. *)
+      rule
+        (Upat.op Op.Store ~name:"st" ~src:[ long "idx"; long "val" ])
+        (fun m ->
+          let st = m "st" and idx = m "idx" in
+          Some
+            (group
+               (List.mapi
+                  (fun w x -> replace st ~src:[ reindex ~mul:2 idx w; x ])
+                  (l2i_words [ m "val" ]))));
+      rule
+        (Upat.v ~op:Op.Set.comparison
+           ~perm:[ long "a"; Upat.wild ]
+           ~name:"x" ())
+        (fun m ->
+          let x = m "x" and dt = l2i_dt (dtype (m "a")) in
+          Some (List.hd (l2i (op x) dt (l2i_words (src x)))));
+      rule
+        (Upat.op Op.Cast ~src:[ long "a" ] ~name:"x")
+        (fun m ->
+          let x = m "x" in
+          if is_long (dtype x) then None
+          else Some (List.hd (l2i Op.Cast (dtype x) (l2i_words [ m "a" ]))));
+      (* A pair becomes the stack of the long's two words. *)
+      rule
+        (l2i_pair (Upat.op Op.Load ~src:[ Upat.var "idx" ]))
+        (fun m ->
+          let idx = m "idx" in
+          Some
+            (v Op.Stack
+               ~src:(List.init 2 (fun w -> load (reindex ~mul:2 idx w) []))));
+      (* A constant splits by value; the general cast rule below would drop its
+         high word. *)
+      rule
+        (l2i_pair (Upat.op Op.Cast ~src:[ Upat.op Op.Const ~name:"c" ]))
+        (fun m ->
+          let dt = dtype (m "p") in
+          match value (m "c") with
+          | #Dtype.value as c ->
+              let word w =
+                let n = Bigint.shift_right (Dtype.Value.to_z c) (32 * w) in
+                const ~dtype:dt (Dtype.truncate dt (`Int n) :> Dtype.const)
+              in
+              Some (v Op.Stack ~src:[ word 0; word 1 ])
+          | _ -> None);
+      rule
+        (l2i_pair (Upat.op Op.Cast ~src:[ Upat.var "a" ] ~name:"x"))
+        (fun m ->
+          let a = m "a" in
+          if is_long (dtype a) then None
+          else Some (v Op.Stack ~src:(l2i Op.Cast (dtype (m "x")) [ a ])));
+      (* A cast between long types reinterprets the words; a bare constant
+         source commits at the long type. *)
+      rule
+        (l2i_pair (Upat.v ~op:alu_or_cast ~name:"x" ()))
+        (fun m ->
+          let x = m "x" in
+          let op = if op x = Op.Cast then Op.Bitcast else op x in
+          let srcs = src (Uop_weak.commit_weak_consts x (Some (dtype x))) in
+          Some (v Op.Stack ~src:(l2i op (dtype (m "p")) (l2i_words srcs))));
+      rule
+        (Upat.op Op.Index ~src:[ Upat.op Op.Stack ~name:"s"; Upat.cvar "w" ])
+        (fun m -> Some (index (m "s") [ m "w" ]));
+    ])
 
-(* Memo of the splits of one pass: both words of a node ask for the same one. *)
-module Splits = Hashtbl.Make (struct
-  type t = Op.t * Dtype.t * Ops.t list
-
-  let equal (o0, d0, l0) (o1, d1, l1) =
-    o0 = o1 && Dtype.equal d0 d1 && List.equal ( == ) l0 l1
-
-  let hash (o, d, l) =
-    Hashtbl.hash (Op.to_int o, Dtype.hash d, List.map Ops.hash l)
-end)
-
-(* l2i computes on its inputs: the rules split them into words first, and l2i
-   recurses on itself. *)
-let rec split_l2i ctx op dt uops =
-  let key = (op, dt, uops) in
-  match Splits.find_opt ctx key with
-  | Some words -> words
-  | None ->
-      let words =
-        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx (sink uops)
-          (Before_sources (Lazy.force pm_long_decomp))
-        |> src |> l2i op dt
-      in
-      Splits.replace ctx key words;
-      words
-
-and pm_long_decomp =
-  lazy
-    (let long = Upat.var ~dtype:longs in
-     let tagged x f =
-       match tag x with None -> None | Some _ -> Some (f (word x))
-     in
-     let w ws i = List.nth ws i in
-     Pattern_matcher.v
-       (fun () -> [
-         (* The decomposition's own rewrite can mint bare constants: they commit
-            at the long sibling's type. *)
-         rule (Upat.v ~op:Op.Set.all ~name:"x" ()) (fun m ->
-             let x = m "x" in
-             Some
-               (Uop_weak.commit_weak_consts x
-                  (List.find_map
-                     (fun s ->
-                       if is_long (dtype s) then Some (dtype s) else None)
-                     (src x))));
-         rule (Upat.v ~op:Op.Set.defines ~dtype:longs ~name:"x" ()) (fun m ->
-             Some (l2i_define (m "x")));
-         rule (Upat.op Op.Index ~dtype:longs ~name:"x") (fun m ->
-             let x = m "x" in
-             tagged x (fun w -> replace (reindex ~mul:2 x w) ~tag:None));
-         rule
-           (Upat.op Op.Store ~name:"st" ~src:[ long "idx"; Upat.var "val" ])
-           (fun m ->
-             let st = m "st" and idx = m "idx" and value = m "val" in
-             if Option.is_some (tag value) then None
-             else
-               let dt = l2i_dt (dtype idx) in
-               let half w =
-                 replace st
-                   ~src:
-                     [
-                       rtag ~tag:(word_tag w dt) idx;
-                       rtag ~tag:(word_tag w dt) value;
-                     ]
-               in
-               Some (group [ half 0; half 1 ]));
-         rule_ctx
-           (Upat.v ~op:Op.Set.comparison
-              ~perm:[ long "a"; Upat.wild ]
-              ~name:"x" ())
-           (fun ctx m ->
-             let x = m "x" in
-             let dt = l2i_dt (dtype (m "a")) in
-             Some
-               (List.hd
-                  (split_l2i ctx (op x) dt (List.concat_map (lo_hi dt) (src x)))));
-         rule_ctx
-           (Upat.op Op.Cast ~dtype:longs ~src:[ long "a" ] ~name:"x")
-           (fun ctx m ->
-             let x = m "x" and a = m "a" in
-             let words =
-               split_l2i ctx Op.Bitcast
-                 (l2i_dt (dtype x))
-                 (lo_hi (l2i_dt (dtype a)) a)
-             in
-             Some (w words (word x)));
-         (* A constant splits by value; the general cast rule would drop its
-            high word. *)
-         rule
-           (Upat.op Op.Cast ~name:"x"
-              ~src:[ Upat.op Op.Const ~name:"c" ]
-              ~tag:
-                (List.concat_map
-                   (fun w -> List.map (word_tag w) Dtype.[ Int32; Uint32 ])
-                   [ 0; 1 ]))
-           (fun m ->
-             let x = m "x" and c = m "c" in
-             match (tag x, value c) with
-             | Some (Tuple [ Int w; Dtype dt ]), (#Dtype.value as v) ->
-                 let n = Bigint.shift_right (Dtype.Value.to_z v) (32 * w) in
-                 Some
-                   (const ~dtype:dt (Dtype.truncate dt (`Int n) :> Dtype.const))
-             | _ -> None);
-         rule_ctx
-           (Upat.op Op.Cast ~dtype:longs ~src:[ Upat.var "a" ] ~name:"x")
-           (fun ctx m ->
-             let x = m "x" in
-             tagged x (w (split_l2i ctx Op.Cast (dtype x) [ m "a" ])));
-         rule_ctx
-           (Upat.op Op.Cast ~src:[ long "a" ] ~name:"x")
-           (fun ctx m ->
-             let x = m "x" and a = m "a" in
-             if is_long (dtype x) || Option.is_some (tag a) then None
-             else
-               Some
-                 (List.hd
-                    (split_l2i ctx Op.Cast (dtype x)
-                       (lo_hi (l2i_dt (dtype a)) a))));
-         rule_ctx
-           (Upat.v
-              ~op:(ops [ Op.Shl; Op.Shr ])
-              ~dtype:longs
-              ~src:[ Upat.var "a"; Upat.var "b" ]
-              ~name:"x" ())
-           (fun ctx m ->
-             let x = m "x" in
-             let dt = l2i_dt (dtype x) in
-             tagged x
-               (w
-                  (split_l2i ctx (op x) dt
-                     (lo_hi dt (m "a") @ [ rtag ~tag:(word_tag 0 dt) (m "b") ]))));
-         rule_ctx
-           (Upat.op Op.Where ~dtype:longs
-              ~src:[ Upat.var "c"; Upat.var "a"; Upat.var "b" ]
-              ~name:"x")
-           (fun ctx m ->
-             let x = m "x" in
-             let dt = l2i_dt (dtype x) in
-             tagged x
-               (w
-                  (split_l2i ctx Op.Where dt
-                     ((m "c" :: lo_hi dt (m "a")) @ lo_hi dt (m "b")))));
-         rule_ctx
-           (Upat.v
-              ~op:
-                (Op.Set.union
-                   (Op.Set.diff Op.Set.alu
-                      (Op.Set.union Op.Set.comparison
-                         (ops [ Op.Shl; Op.Shr; Op.Where ])))
-                   (ops [ Op.Bitcast ]))
-              ~dtype:longs ~name:"x" ())
-           (fun ctx m ->
-             let x = m "x" in
-             let dt = l2i_dt (dtype x) in
-             tagged x
-               (w
-                  (split_l2i ctx (op x) dt (List.concat_map (lo_hi dt) (src x)))));
-         rule_ctx
-           (Upat.op Op.Load ~dtype:longs ~src:[ Upat.var "idx" ] ~name:"x")
-           (fun ctx m ->
-             let x = m "x" in
-             tagged x (fun w ->
-                 let idx =
-                   graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx (m "idx")
-                     (Before_sources (Lazy.force pm_long_decomp))
-                 in
-                 load (replace (reindex ~mul:2 idx w) ~tag:None) []));
-       ]))
-
-(* Forced as the module initialises, on one domain: the compilers' domains
-   would race to force it first, and a lazy value that two domains force at
-   once raises. *)
-let pm_long_decomp = Lazy.force pm_long_decomp
 
 (* Floats *)
 
@@ -723,9 +628,7 @@ and f2f_rewrite ctx x =
 and pm_float_decomp =
   lazy
     (let emulated (fr, _) x = Dtype.equal (dtype x) fr in
-     let tagged (fr, _) x =
-       match tag x with Some (Dtype d) -> Dtype.equal d fr | _ -> false
-     in
+     let storage (fr, _) idx = Dtype.equal (dtype idx) (f2f_dt fr) in
      let floats = Dtype.floats in
      Pattern_matcher.v
        (fun () -> [
@@ -734,10 +637,7 @@ and pm_float_decomp =
              let x = m "x" in
              match arg x with
              | Param p when emulated ctx x ->
-                 Some
-                   (v (op x) ~src:(src x)
-                      ~arg:(Param { p with dtype = f2f_dt fr })
-                      ~tag:(Dtype fr))
+                 Some (replace x ~arg:(Param { p with dtype = f2f_dt fr }))
              | _ -> None);
          (* An index into a load or a stack selects a lane of a value already
             converted, which the load rules below own. *)
@@ -752,14 +652,12 @@ and pm_float_decomp =
                     ();
                 ]
               ~name:"x" ())
-           (fun ((fr, _) as ctx) m ->
+           (fun ctx m ->
              let x = m "x" in
              if not (emulated ctx x) then None
              else
-               Some
-                 (v (op x)
-                    ~src:(f2f_rewrite ctx (nth x 0) :: List.tl (src x))
-                    ~arg:(arg x) ~tag:(Dtype fr)));
+               let idx = f2f_rewrite ctx (nth x 0) in
+               Some (replace x ~src:(idx :: List.tl (src x))));
          rule_ctx (Upat.op Op.Load ~dtype:floats ~name:"x")
            (fun ((fr, to_) as ctx) m ->
              let x = m "x" in
@@ -807,13 +705,12 @@ and pm_float_decomp =
              if not (emulated ctx x) then None
              else
                let y =
-                 v (op x)
+                 replace x
                    ~src:
                      (List.map
                         (fun s ->
                           if Dtype.equal (dtype s) fr then cast s to_ else s)
                         (src x))
-                   ~arg:(arg x) ?tag:(tag x)
                in
                (* A lane, a stack or a selection moves values already of
                   [fr]; arithmetic rounds its result. *)
@@ -842,7 +739,7 @@ and pm_float_decomp =
                 [ Upat.var "idx"; Upat.op Op.Bitcast ~dtype:floats ~name:"val" ])
            (fun ((fr, _) as ctx) m ->
              let idx = m "idx" and value = m "val" in
-             if emulated ctx value && tagged ctx idx then
+             if emulated ctx value && storage ctx idx then
                Some
                  (replace (m "st")
                     ~src:[ idx; bitcast (nth value 0) (f2f_dt fr) ])
@@ -855,7 +752,7 @@ and pm_float_decomp =
                 ])
            (fun ((fr, to_) as ctx) m ->
              let idx = m "idx" and value = m "val" in
-             if Dtype.equal (dtype value) to_ && tagged ctx idx then
+             if Dtype.equal (dtype value) to_ && storage ctx idx then
                Some (f2f_store (m "st") idx value fr to_)
              else None);
        ]))
@@ -901,8 +798,8 @@ let do_dtype_decomps ctx sink =
           graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(fr, to_) sink
             (Before_sources pm_float_decomp)
         else
-          graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Splits.create 64)
-            sink (Before_sources pm_long_decomp))
+          graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() sink
+            (Before_sources pm_long_decomp))
       sink
       (List.sort Dtype.compare (List.filter (emulates ctx.renderer) ctx.found))
   in
