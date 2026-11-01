@@ -254,7 +254,8 @@ let param_like_tinygrad cell =
   let elf = elf_of (cell "program") in
   let p = List.nth elf.signature (int_of_cell (cell "position")) in
   equal (option string) (name_of_cell (cell "name")) p.name;
-  equal int (int_of_cell (cell "slot")) p.slot;
+  equal string (cell "addrspace")
+    (Format.asprintf "%a" Dtype.pp_addr_space p.addrspace);
   equal Dtypes.dtype (Dtypes.dtype_of_cell (cell "dtype")) p.dtype;
   equal (list int) (shape_of_cell (cell "shape")) p.shape
 
@@ -265,18 +266,35 @@ let packed_like_tinygrad cell =
     (int_of_cell (cell "at"), Dtypes.dtype_of_cell (cell "dtype"))
     (List.nth (Elf.iter_sig ~offset signature) (int_of_cell (cell "position")))
 
-let cases = [ "elementwise"; "elementwise_metal"; "sparse"; "scalars"; "fill" ]
+let cases =
+  [
+    "elementwise";
+    "elementwise_metal";
+    "sparse";
+    "scalars";
+    "interleaved";
+    "interleaved_metal";
+    "fill";
+  ]
 
 (* Hand-made programs *)
 
 let hip = target_of_string "PCI:1+AMD:HIP:gfx1100"
 
-let program ?(name = "k") ~globals ~vars linear =
+(* A compiled program whose parameters are [params], in slot order, and whose
+   linear order holds [linear]. *)
+let program ?(name = "k") ?(params = []) linear =
+  let slot u = match Ops.arg u with Param p -> p.slot | _ -> -1 in
+  let globals =
+    List.filter_map
+      (fun u -> if Ops.addrspace u = Some Alu then None else Some (slot u))
+      params
+  in
   let info : Ops.program_info =
     {
       global_size = [ Int 1; Int 1; Int 1 ];
       local_size = [ Int 1; Int 1; Int 1 ];
-      vars;
+      params;
       globals;
       outs = globals;
       ins = globals;
@@ -302,91 +320,101 @@ let buffer slot =
     slot
     buffer_dtypes.(slot mod Array.length buffer_dtypes)
 
-let scalar (name, dtype) =
-  Ops.variable ~dtype name (`Int Bigint.zero) (`Int (Bigint.of_int 9))
+let scalar_dtypes = [| Dtype.Int32; Dtype.Int64; Dtype.Int8; Dtype.Uint16 |]
 
-let scalars =
-  [
-    ("i", Dtype.Int32);
-    ("w", Dtype.Int64);
-    ("c", Dtype.Int8);
-    ("u", Dtype.Uint16);
-  ]
+(* Scalar [slot], named after its slot. *)
+let scalar slot =
+  let v =
+    Ops.variable
+      ~dtype:scalar_dtypes.(slot mod Array.length scalar_dtypes)
+      (Printf.sprintf "v%d" slot)
+      (`Int Bigint.zero)
+      (`Int (Bigint.of_int 9))
+  in
+  match Ops.arg v with
+  | Param p -> Ops.replace v ~arg:(Param { p with slot })
+  | _ -> v
 
-(* A program's buffers, by slot, in its linear order and in its globals, and its
-   variables. *)
-type layout = {
-  linear : int list;
-  globals : int list;
-  vars : (string * Dtype.t) list;
-}
+(* A program's parameters, each a buffer or a scalar of its slot, in its linear
+   order, and those its linear order leaves out, as a calling convention leaves
+   out what it passes on the stack. *)
+type layout = { linear : (int * bool) list; dropped : (int * bool) list }
 
-let pp_ints =
+let pp_slots ppf l =
   Format.(
-    pp_print_list ~pp_sep:(fun ppf () -> pp_print_string ppf ", ") pp_print_int)
+    pp_print_list
+      ~pp_sep:(fun ppf () -> pp_print_string ppf ", ")
+      (fun ppf (slot, b) -> fprintf ppf "%s%d" (if b then "b" else "v") slot)
+      ppf l)
 
 let pp_layout ppf l =
-  Format.fprintf ppf "linear [%a], globals [%a], vars [%s]" pp_ints l.linear
-    pp_ints l.globals
-    (String.concat ", " (List.map fst l.vars))
+  Format.fprintf ppf "linear [%a], dropped [%a]" pp_slots l.linear pp_slots
+    l.dropped
 
 let gen_layout =
   (let open Gen in
    let* slots = subsequence ~pp:Format.pp_print_int (List.init 12 Fun.id) in
-   let* linear = permutation ~pp:Format.pp_print_int slots in
-   let* globals = permutation ~pp:Format.pp_print_int slots in
-   let* chosen = subsequence scalars in
-   let+ vars = permutation chosen in
-   { linear; globals; vars })
+   let* kinds = list ~size:(constant (List.length slots)) bool in
+   let params = List.combine slots kinds in
+   let* kept = subsequence params in
+   let+ linear = permutation kept in
+   {
+     linear;
+     dropped = List.filter (fun p -> not (List.mem p kept)) params;
+   })
   |> Gen.with_pp pp_layout
 
-let rec position x = function
-  | [] -> invalid_arg "position"
-  | y :: ys -> if x = y then 0 else 1 + position x ys
+let node (slot, is_buffer) = if is_buffer then buffer slot else scalar slot
 
 let program_of_layout l =
-  let vars = List.map scalar l.vars in
-  (* The linear order holds the variables too, ahead of the buffers. *)
-  program ~globals:l.globals ~vars (vars @ List.map buffer l.linear)
+  let params =
+    List.sort (fun (a, _) (b, _) -> Int.compare a b) (l.linear @ l.dropped)
+  in
+  program ~params:(List.map node params) (List.map node l.linear)
 
 let pp_param ppf (p : Elf.param) =
-  Format.fprintf ppf "%s %d %a [%s]"
+  Format.fprintf ppf "%s %a %a [%s]"
     (Option.value p.name ~default:"-")
-    p.slot Dtype.pp p.dtype
+    Dtype.pp_addr_space p.addrspace Dtype.pp p.dtype
     (String.concat "; " (List.map string_of_int p.shape))
 
 let param_w =
   Testable.make ~pp:pp_param ~equal:(fun (p0 : Elf.param) p1 ->
-      p0.name = p1.name && p0.slot = p1.slot
+      p0.name = p1.name && p0.addrspace = p1.addrspace
       && Dtype.equal p0.dtype p1.dtype
       && p0.shape = p1.shape)
 
 let signature_of_layout l =
-  cover "a buffer is not in its slot's place" (l.linear <> l.globals);
-  cover "a variable follows the buffers" (l.vars <> [] && l.globals <> []);
-  let buffers =
-    List.map
-      (fun slot : Elf.param ->
-        {
-          name = Some (Printf.sprintf "b%d" slot);
-          slot = position slot l.globals;
-          dtype = buffer_dtypes.(slot mod Array.length buffer_dtypes);
-          shape = [ slot + 1 ];
-        })
-      l.linear
-  and vars =
-    List.mapi
-      (fun j (name, dtype) : Elf.param ->
-        {
-          name = Some name;
-          slot = List.length l.globals + j;
-          dtype;
-          shape = [];
-        })
-      l.vars
+  let all = List.sort compare (l.linear @ l.dropped) in
+  let rec interleaved = function
+    | (_, true) :: (_, false) :: (_, true) :: _ -> true
+    | _ :: rest -> interleaved rest
+    | [] -> false
   in
-  equal (list param_w) (buffers @ vars)
-    (Elf.of_program (program_of_layout l)).signature
+  cover "a scalar lies between buffers" (interleaved all);
+  cover "the linear order is not slot order"
+    (List.map fst l.linear <> List.sort compare (List.map fst l.linear));
+  cover "a parameter is left out of the linear order" (l.dropped <> []);
+  let expected =
+    List.map
+      (fun (slot, is_buffer) : Elf.param ->
+        if is_buffer then
+          {
+            name = Some (Printf.sprintf "b%d" slot);
+            addrspace = Global;
+            dtype = buffer_dtypes.(slot mod Array.length buffer_dtypes);
+            shape = [ slot + 1 ];
+          }
+        else
+          {
+            name = Some (Printf.sprintf "v%d" slot);
+            addrspace = Alu;
+            dtype = scalar_dtypes.(slot mod Array.length scalar_dtypes);
+            shape = [];
+          })
+      all
+  in
+  equal (list param_w) expected (Elf.of_program (program_of_layout l)).signature
 
 let refuses_incomplete () =
   let sink = Ops.sink ~kernel:(Ops.kernel_info ()) [] in
@@ -402,11 +430,11 @@ let with_source i u prg =
     prg
 
 let refuses_nameless () =
-  let prg = program ~globals:[] ~vars:[] [] in
+  let prg = program [] in
   refuses (fun () -> Elf.of_program (with_source 0 (Ops.sink []) prg))
 
 let refuses_textual_binary () =
-  let prg = program ~globals:[] ~vars:[] [] in
+  let prg = program [] in
   refuses (fun () ->
       Elf.of_program (with_source 3 (Ops.v Binary ~arg:(String "lib")) prg))
 
@@ -437,24 +465,20 @@ let of_program =
       test "names the program after its kernel, as an identifier" (fun () ->
           equal string "r3Ascalars202" (elf_of "scalars").name;
           equal string "a_b2E"
-            (Elf.of_program (program ~name:"a_b." ~globals:[] ~vars:[] [])).name);
+            (Elf.of_program (program ~name:"a_b." [])).name);
       test "takes the target of the program, whatever rendered it" (fun () ->
           equal string "PCI:1+AMD:HIP:gfx1100"
             (Format.asprintf "%a" Helpers.Target.pp
-               (Elf.of_program (program ~globals:[ 0 ] ~vars:[] [ buffer 0 ]))
+               (Elf.of_program (program ~params:[ buffer 0 ] [ buffer 0 ]))
                  .target));
       test "compiles a program of no parameter to an empty signature" (fun () ->
           equal (list param_w) []
-            (Elf.of_program (program ~globals:[] ~vars:[] [])).signature);
-      prop "numbers buffers by their place among the globals, then variables"
+            (Elf.of_program (program [])).signature);
+      prop "takes every parameter in slot order, buffers and scalars"
         ~examples:
           [
-            {
-              linear = [ 7; 2 ];
-              globals = [ 2; 7 ];
-              vars = [ ("i", Dtype.Int32) ];
-            };
-            { linear = [ 3; 11; 0 ]; globals = [ 11; 0; 3 ]; vars = [] };
+            { linear = [ (7, true); (2, true); (4, false) ]; dropped = [] };
+            { linear = [ (0, true); (3, true) ]; dropped = [ (1, false) ] };
           ]
         gen_layout signature_of_layout;
       test "refuses a node that is no program, and a program not compiled"
@@ -462,23 +486,18 @@ let of_program =
       test "refuses a program whose kernel has no name" refuses_nameless;
       test "refuses a program whose binary holds no bytes"
         refuses_textual_binary;
-      test "refuses a program whose variable is no parameter" (fun () ->
+      test "refuses a program whose parameter is no parameter" (fun () ->
           refuses (fun () ->
-              Elf.of_program (program ~globals:[] ~vars:[ Ops.int 3 ] [])));
-      test "refuses a buffer of the linear order that is not among the globals"
-        (fun () ->
-          refuses (fun () ->
-              Elf.of_program
-                (program ~globals:[ 2 ] ~vars:[] [ buffer 2; buffer 7 ])));
+              Elf.of_program (program ~params:[ Ops.int 3 ] [])));
     ]
 
 (* Printing *)
 
 let elfs_to_print =
   let sixteen_floats : Elf.param =
-    { name = None; slot = 0; dtype = Dtype.Float32; shape = [ 16 ] }
+    { name = None; addrspace = Global; dtype = Dtype.Float32; shape = [ 16 ] }
   and n : Elf.param =
-    { name = Some "n"; slot = 1; dtype = Dtype.Int32; shape = [] }
+    { name = Some "n"; addrspace = Alu; dtype = Dtype.Int32; shape = [] }
   in
   let no_target = target_of_string "" in
   [
@@ -532,7 +551,7 @@ let gen_offset =
     ]
 
 let param_of_dtype dtype : Elf.param =
-  { name = None; slot = 0; dtype; shape = [] }
+  { name = None; addrspace = Alu; dtype; shape = [] }
 
 let gen_signature =
   Gen.with_pp
@@ -573,6 +592,15 @@ let iter_sig =
             (list (pair int Dtypes.dtype))
             (Elf.iter_sig ~offset:0 signature)
             (Elf.iter_sig signature));
+      test "packs a buffer as its 64-bit address" (fun () ->
+          let buffer : Elf.param =
+            { name = None; addrspace = Global; dtype = Int8; shape = [ 4 ] }
+          in
+          equal
+            (list (pair int Dtypes.dtype))
+            [ (0, Int8); (8, Uint64); (16, Int16) ]
+            (Elf.iter_sig
+               [ param_of_dtype Int8; buffer; param_of_dtype Int16 ]));
       test "packs an empty signature to nothing" (fun () ->
           equal (list (pair int Dtypes.dtype)) [] (Elf.iter_sig ~offset:5 []));
     ]

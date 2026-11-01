@@ -274,7 +274,7 @@ let arguments =
           let a = var "a" 0 1 in
           let k u =
             Ops.Program
-              { (Shape.program_info_of_sink (Ops.sink [])) with vars = [ u ] }
+              { (Shape.program_info_of_sink (Ops.sink [])) with params = [ u ] }
           in
           is_true (Ops.equal_arg (k a) (k (var "a" 0 1)));
           is_false (Ops.equal_arg (k a) (k (var "b" 0 1))));

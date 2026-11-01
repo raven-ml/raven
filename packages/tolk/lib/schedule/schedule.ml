@@ -356,7 +356,9 @@ let pass_values values call =
   let args = src_without_body call in
   let held =
     List.filter
-      (fun v -> List.mem_assoc (param_of v).slot values)
+      (fun v ->
+        let p = param_of v in
+        p.name = None && List.mem_assoc p.slot values)
       (variables (body call))
   in
   let n = List.length args in
@@ -369,9 +371,11 @@ let pass_values values call =
       @ List.map (fun v -> List.assoc (param_of v).slot values) held)
 
 (* Nested linear calls are lexical scopes: their positional parameters shadow
-   the enclosing scope, while calls without scalar arguments inherit it. A scalar argument that is a variable is
-   bound into each kernel that reads it; any other is a value its kernels are
-   passed ({!pass_values}). *)
+   the enclosing scope, while calls without scalar arguments inherit it. A
+   scalar argument that is a variable is bound into each kernel that reads it in
+   its slot, nameless; any other is a value its kernels are passed
+   ({!pass_values}). A named variable keeps its slot: a custom kernel's takes
+   its own. *)
 let rec resolve_linear_call ?(outer_binds = []) linear_call =
   let args = List.tl (src linear_call) in
   let linear =
@@ -403,9 +407,10 @@ let rec resolve_linear_call ?(outer_binds = []) linear_call =
             (fun s ->
               List.filter_map
                 (fun v ->
-                  Option.map
-                    (fun x -> (v, x))
-                    (List.assoc_opt (param_of v).slot params))
+                  let p = param_of v in
+                  if p.name <> None then None
+                  else
+                    Option.map (fun x -> (v, x)) (List.assoc_opt p.slot params))
                 (variables s))
             (src si)
         in

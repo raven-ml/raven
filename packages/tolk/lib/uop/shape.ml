@@ -3256,7 +3256,15 @@ let call_with_output ?name ?precompile value args =
   List.hd (call_with_outputs ?name ?precompile [ value ] args)
 
 let custom_kernel args f =
-  let placeholders = List.mapi (fun i s -> placeholder_like s i) args in
+  (* A variable stays a variable of the kernel, unbound, in its own slot. *)
+  let placeholder i s =
+    if is_variable s then
+      replace s
+        ~arg:(Param { (param_arg_of s) with slot = i; bound = None })
+        ~tag:None
+    else placeholder_like s i
+  in
+  let placeholders = List.mapi placeholder args in
   let kernel = call (f placeholders) args in
   List.map (fun s -> after s [ kernel ]) args
 
@@ -3267,7 +3275,7 @@ let program_info_of_sink
       Helpers.Target.
         { device = ""; renderer = ""; arch = ""; interface = ""; indices = "" })
     sink =
-  let vars = ref [] and globals = ref [] and outs = ref [] and ins = ref [] in
+  let params = ref [] and globals = ref [] and outs = ref [] and ins = ref [] in
   let global_size = Array.make 3 (Int 1)
   and local_size = Array.make 3 (Int 1) in
   (match arg sink with
@@ -3275,9 +3283,11 @@ let program_info_of_sink
   | _ -> ());
   List.iter
     (fun u ->
-      if op u = Op.Param then
-        if addrspace u = Some Dtype.Alu then vars := u :: !vars
-        else globals := (param_arg_of u).slot :: !globals;
+      if op u = Op.Param then begin
+        params := u :: !params;
+        if addrspace u <> Some Dtype.Alu then
+          globals := (param_arg_of u).slot :: !globals
+      end;
       if op u = Op.Store || op u = Op.Load then begin
         let s0 = nth u 0 in
         let idx =
@@ -3302,7 +3312,21 @@ let program_info_of_sink
               Char.code name.[String.length name - 1] - Char.code '0'
             in
             let sizes = if name.[0] = 'l' then local_size else global_size in
-            sizes.(axis) <- ssimplify (nth u 0)
+            (* A size reads each named variable as the launch binds it, by
+               name; a nameless scalar is its call's argument in its slot. *)
+            let free =
+              List.filter_map
+                (fun v ->
+                  if is_variable v && (param_arg_of v).name <> None then
+                    Some
+                      ( v,
+                        replace v
+                          ~arg:(Param { (param_arg_of v) with slot = -1 }) )
+                  else None)
+                (toposort ~calls:Skip (nth u 0))
+            in
+            sizes.(axis) <-
+              ssimplify (substitute ~calls:Skip ~pass:Once (nth u 0) free)
         | _ -> invalid_arg "a hardware index needs a name")
     (toposort ~calls:Skip sink);
   let sorted l = List.sort_uniq Int.compare l in
@@ -3310,20 +3334,34 @@ let program_info_of_sink
     if List.is_empty !outs && List.is_empty !ins then (!globals, !globals)
     else (!outs, !ins)
   in
-  let vars =
+  let params =
     List.stable_sort
       (fun a b -> Int.compare (param_arg_of a).slot (param_arg_of b).slot)
-      (List.rev !vars)
+      (List.rev !params)
   in
   {
     global_size = Array.to_list global_size;
     local_size = Array.to_list local_size;
-    vars;
+    params;
     globals = sorted !globals;
     outs = sorted outs;
     ins = sorted ins;
     target;
   }
+
+let kernel_params prg =
+  match (op prg, arg prg, src prg) with
+  | Op.Program, Program info, _ :: linear :: _ ->
+      let slot u = (param_arg_of u).slot in
+      let params = List.filter (fun u -> op u = Op.Param) (src linear) in
+      let taken = List.map slot params in
+      let rest =
+        List.filter (fun p -> not (List.mem (slot p) taken)) info.params
+      in
+      List.stable_sort
+        (fun a b -> Int.compare (slot a) (slot b))
+        (params @ rest)
+  | _ -> invalid_arg "kernel_params takes a linearized program"
 
 let launch_dims (p : program_info) vars =
   ( List.map (fun s -> sym_infer s vars) p.global_size,

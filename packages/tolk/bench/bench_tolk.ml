@@ -124,19 +124,20 @@ let element dt i : Dtype.value =
 let compiled sink =
   let d = Rig.host in
   let prg = Codegen.to_program sink (Tolk_engine.renderer d) in
-  let elf = Device.Tiny_elf.of_program prg in
-  let info = match Ops.arg prg with Program i -> i | _ -> assert false in
   let params =
-    List.filteri (fun i _ -> i < List.length info.globals) elf.signature
+    List.filter
+      (fun u -> Ops.addrspace u <> Some Dtype.Alu)
+      (Shape.kernel_params prg)
   in
-  let scratch (p : Device.Tiny_elf.param) =
-    let n = List.fold_left ( * ) 1 p.shape in
-    Some (Run.buffer d p.dtype (Array.init n (element p.dtype)))
+  let scratch u =
+    let dt = Ops.dtype u in
+    Some (Run.buffer d dt (Array.init (Shape.max_numel u) (element dt)))
   in
-  let arg (p : Device.Tiny_elf.param) =
+  let arg u =
+    let slot = match Ops.arg u with Param p -> p.slot | _ -> assert false in
     Shape.param
-      ~shape:[ Int (List.fold_left ( * ) 1 p.shape) ]
-      ~device:"CPU" p.slot p.dtype
+      ~shape:[ Int (Shape.max_numel u) ]
+      ~device:"CPU" slot (Ops.dtype u)
   in
   let s =
     Tolk_engine.link_call

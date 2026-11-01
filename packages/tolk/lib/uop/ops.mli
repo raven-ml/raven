@@ -205,18 +205,14 @@ val function_name : kernel_info -> string
 type program_info = {
   global_size : sint list;  (** The number of workgroups on each axis. *)
   local_size : sint list;  (** The threads of a workgroup on each axis. *)
-  vars : t list;  (** The scalar variables, by slot. *)
+  params : t list;
+      (** The parameters, buffers and scalars, by slot. *)
   globals : int list;  (** The slots of the buffers. *)
   outs : int list;  (** The slots of the buffers written. *)
   ins : int list;  (** The slots of the buffers read. *)
   target : Helpers.Target.t;  (** The target compiled for. *)
 }
 (** The type for the arguments of {!Op.Program}. *)
-
-val vals : program_info -> (string * int) list -> int list
-(** [vals p vars] is the value in [vars] of each of [p.vars], in order.
-
-    Raises [Invalid_argument] naming a variable that [vars] lacks. *)
 
 (** What later passes may do to a buffer an {!Op.Stage} makes. *)
 type keep =
@@ -309,7 +305,7 @@ val pp_arg : Format.formatter -> arg -> unit
     - {!Kernel}: [KernelInfo(name='test', applied_opts=(), opts_to_apply=None,
       estimates=None, beam=0)];
     - {!Program}: [ProgramInfo(global_size=(1, 1, 1), local_size=(1, 1, 1),
-      vars=(), ...)];
+      params=(), ...)];
     - {!Bufferize}: [BufferizeOpts(device='CPU', addrspace=AddrSpace.GLOBAL,
       removable=True, broadcast=False)], [removable] [False] for {!Whole}
       only and [broadcast] [True] for {!Broadcast} only;

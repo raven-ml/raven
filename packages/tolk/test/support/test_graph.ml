@@ -112,7 +112,7 @@ let kinds =
              {
                global_size = [ Sym n; Int 1; Int 1 ];
                local_size = [ Int 1; Int 1; Int 1 ];
-               vars = [ n ];
+               params = [ n ];
                globals = [ 0 ];
                outs = [ 0 ];
                ins = [];
@@ -186,7 +186,7 @@ let text =
              dtype=dtypes.weakint, vmin_vmax=(0, 9), name=\"n\", \
              addrspace=AddrSpace.ALU)\n\
              1 Ops.PROGRAM dtypes.void [] ProgramInfo(global_size=(%0, 1, 1), \
-             vars=(%0,), globals=(0,), outs=(0,), \
+             params=(%0,), globals=(0,), outs=(0,), \
              target=Target(device=\"CPU\", renderer=\"CLANG\"))\n"
             (Graph.to_string program));
     ]

@@ -26,13 +26,17 @@ val jit_lower :
   targets:(string -> Helpers.Target.t) ->
   held_bufs:Ops.t list ->
   inputs:Ops.t list ->
+  input_vars:(string * int) list ->
   Ops.t ->
   Ops.t
-(** [jit_lower ~beam ~search ~targets ~held_bufs ~inputs linear] is the captured
-    schedule [linear], an {!Op.Linear} of calls, ready to link:
+(** [jit_lower ~beam ~search ~targets ~held_bufs ~inputs ~input_vars linear] is
+    the captured schedule [linear], an {!Op.Linear} of calls, ready to link:
     + the [i]th buffer of [inputs] is replaced wherever [linear] reaches it by
       the parameter of slot [i] ({!Shape.param}), of its type, device, size,
       alignment and phase ({!Shape.storage_phase});
+    + each variable named in [input_vars], the variables of the capture, is
+      unbound wherever [linear] binds it: a run binds it. A variable bound
+      under another name keeps its binding;
     + its buffers are placed in arenas ({!Memory.memory_plan_rewrite}), except
       [held_bufs], whose contents outlive a run, such as the buffers a caller
       keeps or that hold constants;

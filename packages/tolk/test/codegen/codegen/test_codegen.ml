@@ -1096,6 +1096,9 @@ let ten_scalars () =
     List.assoc (Ops.expr v) (List.mapi (fun i v -> (Ops.expr v, i + 1)) vars)
   in
   let info = match Ops.arg p with Program info -> info | _ -> assert false in
+  let scalars =
+    List.filter (fun u -> Ops.addrspace u = Some Alu) info.params
+  in
   let result = Bigarray.(Array1.create int32 c_layout 1) in
   (* The parameters are the pointer to [out], then each variable, a 32-bit
      integer. *)
@@ -1109,7 +1112,7 @@ let ten_scalars () =
               launch
                 ~refs:[| write 0 ~at:0 |]
                 fn
-                ~params:(8 + (4 * List.length info.vars));
+                ~params:(8 + (4 * List.length scalars));
             |])
       in
       let run = Rig.Submission.Run.make s in
@@ -1118,7 +1121,7 @@ let ten_scalars () =
       Rig.Submission.Run.threads run b 1 1 1;
       List.iteri
         (fun i v -> Rig.Submission.Run.int32 run b (8 + (4 * i)) (value v))
-        info.vars;
+        scalars;
       ignore
         (Rig.submit run ~buffers:[| Rig.Buffer.of_bigarray result |]
           : Rig.Point.t)
@@ -1135,6 +1138,9 @@ let one_name_twice () =
     ~kernel:(Ops.kernel_info ~opts_to_apply:[] ())
     [ Ops.store (Ops.index out [ Ops.int 0 ]) (Ops.add (n 10) (n 20)) ]
 
+let scalars_of (p : Ops.program_info) =
+  List.filter (fun u -> Ops.addrspace u = Some Alu) p.params
+
 let variable_slots prg =
   match Ops.arg prg with
   | Program p ->
@@ -1143,7 +1149,7 @@ let variable_slots prg =
           match Ops.arg v with
           | Param q -> q.slot
           | _ -> invalid_arg "a variable of a program is a parameter")
-        p.vars
+        (scalars_of p)
   | _ -> invalid_arg "a program holds its program information"
 
 let programs =
@@ -1171,11 +1177,11 @@ let programs =
                  "#define E_16_16 E_16_16_";
                  source p;
                  "#undef E_16_16";
-                 "struct E_16_16_args { void *b0; void *b1; void *b2; long \
+                 "struct E_16_16_args { void *a0; void *a1; void *a2; long \
                   long n; };";
                  "void E_16_16(const struct E_16_16_args *p, long long first, \
                   long long end) { if (end > p->n) end = p->n; if (first < \
-                  end) E_16_16_(p->b0, p->b1, p->b2, first, end); }";
+                  end) E_16_16_(p->a0, p->a1, p->a2, first, end); }";
                ])
             (binary_of p));
       test
@@ -3539,7 +3545,7 @@ let splits_the_output_loop () =
   is_true ~msg:"split" (Option.is_some (split_of prg));
   let names =
     match Ops.arg prg with
-    | Program p -> List.map Ops.expr p.vars
+    | Program p -> List.map Ops.expr (scalars_of p)
     | _ -> invalid_arg "a program holds its program information"
   in
   equal (list string) [ "block_lo"; "block_hi" ] names
@@ -3566,7 +3572,7 @@ let numbers_past_a_skipped_slot () =
             match Ops.arg v with
             | Ops.Param q -> (Ops.expr v, q.slot)
             | _ -> invalid_arg "a variable of a program is a parameter")
-          p.vars
+          (scalars_of p)
     | _ -> invalid_arg "a program holds its program information"
   in
   equal
@@ -4004,7 +4010,7 @@ let calls =
           let prg = Codegen.to_program (call_then_variable ()) (Lazy.force host) in
           let slot v = match Ops.arg v with Param p -> p.slot | _ -> -1 in
           (match Ops.arg prg with
-          | Program p -> equal (list int) [ 2 ] (List.map slot p.vars)
+          | Program p -> equal (list int) [ 2 ] (List.map slot (scalars_of p))
           | _ -> fail "to_program made no program");
           equal (array Dtypes.value) (int_values [ 6; 11 ])
             (List.assoc 0

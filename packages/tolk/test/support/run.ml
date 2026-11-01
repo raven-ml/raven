@@ -141,8 +141,11 @@ let on_host ?vars prg buffers =
      each positional variable as itself. *)
   let positional =
     List.filter
-      (fun v -> match Ops.arg v with Ops.Param p -> p.slot >= 0 | _ -> false)
-      info.vars
+      (fun v ->
+        match Ops.arg v with
+        | Ops.Param p -> p.addrspace = Dtype.Alu && p.slot >= 0
+        | _ -> false)
+      info.params
   in
   let slots = List.length info.globals + List.length positional in
   let arg slot =

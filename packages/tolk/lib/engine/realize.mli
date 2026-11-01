@@ -18,18 +18,21 @@ val get_call_arg_uops : Ops.t -> Ops.t list
 (** [get_call_arg_uops call] is the buffer arguments of [call]: its arguments
     without its scalar ones, the variables it binds and the values it passes. *)
 
-val get_call_var_uops : Ops.t -> Ops.t -> Ops.t list
-(** [get_call_var_uops call prg] is the value of each variable of the program
-    [prg] ({!Ops.program_info.vars}), in order: for a scalar parameter of the
-    program, which a slot names, [call]'s argument in that slot, an expression
+val get_call_kernel_args : Ops.t -> Ops.t -> Ops.t list
+(** [get_call_kernel_args call prg] is what [call] passes for each parameter
+    of the program [prg] ({!Shape.kernel_params}), in the order the program
+    takes them: for a buffer, [call]'s argument in its slot; for a scalar
+    parameter that a slot names, [call]'s argument in that slot, an expression
     of the loops around [call]; for a named variable, the constant [call] binds
-    it to, or the variable itself when [call] leaves it free. The bounds of a
-    split program's block ({!Ops.kernel_info.split}) are those of its whole
-    loop. *)
+    it to, or else the variable, at slot [-1], that a run binds by name. The
+    bounds of a split program's block ({!Ops.kernel_info.split}) are those of
+    its whole loop.
+
+    Raises [Invalid_argument] if [prg] is not a linearized program. *)
 
 val get_call_outs_ins : Ops.t -> int list * int list
-(** [get_call_outs_ins call] is the positions among {!get_call_arg_uops} of the
-    buffers [call] writes and of those it reads: a program's
+(** [get_call_outs_ins call] is the positions among [call]'s arguments of the
+    buffers it writes and of those it reads: a program's
     ({!Ops.program_info.outs} and {!Ops.program_info.ins}), [([0], [1])] for a
     copy, and [([], [])] for any other call. *)
 

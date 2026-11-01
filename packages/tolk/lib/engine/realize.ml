@@ -13,7 +13,8 @@ open Shape
 let get_call_arg_uops call =
   List.filter (fun s -> addrspace s <> Some Dtype.Alu) (src_without_body call)
 
-let get_call_var_uops call prg =
+let get_call_kernel_args call prg =
+  let args = src_without_body call in
   let bound =
     List.filter_map
       (fun s ->
@@ -21,45 +22,48 @@ let get_call_var_uops call prg =
         | Param { bound = Some v; _ } when is_bound_var s ->
             Some (expr s, const (v :> Dtype.const))
         | _ -> None)
-      (src_without_body call)
+      args
   in
-  match arg prg with
-  | Program p ->
-      let named v =
-        match arg v with
-        | Param { name = None; slot; _ } ->
-            Some (List.nth (src_without_body call) slot)
-        | _ -> List.assoc_opt (expr v) bound
-      in
-      let value =
-        match arg (nth prg 0) with
-        | Kernel { split = Some s; _ } -> (
-            (* A split program a queue launches runs one block, the whole
-               loop. *)
-            let iterations =
-              match s.iterations with
-              | Int n -> const (`Int (Bigint.of_int n))
-              | Sym n ->
-                  let values =
-                    List.filter_map
-                      (fun v ->
-                        if is_variable v then
-                          Option.map (fun c -> (v, c)) (named v)
-                        else None)
-                      (toposort ~calls:Skip n)
-                  in
-                  substitute ~calls:Skip ~pass:Fixed_point n values
-            in
-            fun v ->
-              match arg v with
-              | Param { slot; _ } when slot = s.lo ->
-                  Some (const (`Int Bigint.zero))
-              | Param { slot; _ } when slot = s.hi -> Some iterations
-              | _ -> named v)
-        | _ -> named
-      in
-      List.map (fun v -> Option.value (value v) ~default:v) p.vars
-  | _ -> invalid_arg "get_call_var_uops takes a program"
+  (* A nameless scalar is the call's argument in its slot; a variable, the
+     constant the call binds it to, or else the variable a run binds. *)
+  let named v =
+    match arg v with
+    | Param { name = None; slot; _ } -> List.nth args slot
+    | Param p -> (
+        match List.assoc_opt (expr v) bound with
+        | Some c -> c
+        | None -> replace v ~arg:(Param { p with slot = -1 }))
+    | _ -> v
+  in
+  let value =
+    match arg (nth prg 0) with
+    | Kernel { split = Some s; _ } -> (
+        (* A split program a queue launches runs one block, the whole loop. *)
+        let iterations =
+          match s.iterations with
+          | Int n -> const (`Int (Bigint.of_int n))
+          | Sym n ->
+              let values =
+                List.filter_map
+                  (fun v -> if is_variable v then Some (v, named v) else None)
+                  (toposort ~calls:Skip n)
+              in
+              substitute ~calls:Skip ~pass:Fixed_point n values
+        in
+        fun v ->
+          match arg v with
+          | Param { slot; _ } when slot = s.lo -> const (`Int Bigint.zero)
+          | Param { slot; _ } when slot = s.hi -> iterations
+          | _ -> named v)
+    | _ -> named
+  in
+  List.map
+    (fun p ->
+      match arg p with
+      | Param { addrspace = Dtype.Alu; _ } -> value p
+      | Param { slot; _ } -> List.nth args slot
+      | _ -> invalid_arg "get_call_kernel_args: a parameter is no Param")
+    (kernel_params prg)
 
 let get_call_outs_ins call =
   let ast = body call in

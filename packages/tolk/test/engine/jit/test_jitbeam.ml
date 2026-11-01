@@ -43,7 +43,7 @@ let searched ?beam width =
       ignore
         (Jit.jit_lower ?beam ~search
            ~targets:(fun n -> Tolk_engine.target (devices n))
-           ~held_bufs:[ out ] ~inputs:[ x ] linear));
+           ~held_bufs:[ out ] ~inputs:[ x ] ~input_vars:[] linear));
   !widths
 
 (* A test that assumes JITBEAM holds [value]. *)

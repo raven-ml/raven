@@ -89,6 +89,7 @@ let programs =
     "two_outputs";
     "assign";
     "custom_kernel";
+    "custom_kernel_scalar";
     "precompiled_scalar";
     "copy";
     "copy_view";
@@ -127,6 +128,12 @@ let variable u =
   | Const c -> Format.asprintf "%a" Dtype.pp_const c
   | _ -> Format.asprintf "%a" Ops.pp_arg (Ops.arg u)
 
+(* A kernel argument: a buffer as its position in [call], a scalar as
+   {!variable} says. *)
+let kernel_arg call u =
+  if Ops.addrspace u = Some Alu || Ops.op u = Const then variable u
+  else position call u
+
 let recorded_call cell =
   List.nth (Ops.src (compiled (cell "program"))) (int_of_string (cell "call"))
 
@@ -146,9 +153,9 @@ let reads_as_recorded cell =
     (words (cell "bufs"))
     (List.map (position call) bufs);
   if Op.equal (Ops.op body) Program then
-    equal (list string) ~msg:"vars"
-      (words (cell "vars"))
-      (List.map variable (Realize.get_call_var_uops call body));
+    equal (list string) ~msg:"args"
+      (words (cell "args"))
+      (List.map (kernel_arg call) (Realize.get_call_kernel_args call body));
   equal (list string) ~msg:"outs" (words (cell "outs")) (ints outs);
   equal (list string) ~msg:"ins" (words (cell "ins")) (ints ins);
   equal string ~msg:"name" (cell "name")
@@ -182,38 +189,46 @@ let arguments =
             (Realize.get_call_arg_uops (Ops.call (Ops.sink []) [])));
     ]
 
-let variables =
-  group "get_call_var_uops"
+let kernel_args =
+  group "get_call_kernel_args"
     [
       test
         "is the constant a call binds each variable to, in the program's order"
         (fun () ->
           let prg = program (scaled_kernel [ n; m ]) in
-          let vars = (program_info prg).vars in
-          let call = Ops.call prg [ storage 1; bound m 5; bound n 2 ] in
-          equal (list string) ~msg:"the program's variables" [ "n"; "m" ]
-            (List.map variable vars);
+          let a = storage 1 in
+          let call = Ops.call prg [ a; bound m 5; bound n 2 ] in
+          equal (list string) ~msg:"the program's parameters"
+            [ "b0"; "n"; "m" ]
+            (List.map
+               (fun p ->
+                 if Ops.addrspace p = Some Alu then variable p else "b0")
+               (Shape.kernel_params prg));
           equal uops
-            [ Ops.int 2; Ops.int 5 ]
-            (Realize.get_call_var_uops call prg));
-      test "is the variable itself where the call leaves it free" (fun () ->
+            [ a; Ops.int 2; Ops.int 5 ]
+            (Realize.get_call_kernel_args call prg));
+      test "is the variable itself, at no slot, where the call leaves it free"
+        (fun () ->
           let prg = program (scaled_kernel [ n; m ]) in
           let call = Ops.call prg [ storage 1; bound m 5 ] in
-          match Realize.get_call_var_uops call prg with
-          | [ free; five ] ->
+          match Realize.get_call_kernel_args call prg with
+          | [ _; free; five ] ->
               equal string "n" (variable free);
+              equal int (-1)
+                (match Ops.arg free with Param p -> p.slot | _ -> -2);
               equal uop (Ops.int 5) five
-          | us -> failf "two values, not %d" (List.length us));
+          | us -> failf "three values, not %d" (List.length us));
       test "is the call's argument in the slot of a scalar parameter" (fun () ->
           let index = Shape.param ~addrspace:Alu 1 Int32 in
           let prg = program (scaled_kernel [ n; index ]) in
-          let trip = Ops.O.((loop * int 2) + int 1) in
-          let call = Ops.call prg [ storage 1; trip; bound n 4 ] in
-          equal uops [ trip; Ops.int 4 ] (Realize.get_call_var_uops call prg));
-      test "is empty for a program of no variable" (fun () ->
-          let prg = program (scaled_kernel []) in
-          equal uops []
-            (Realize.get_call_var_uops (Ops.call prg [ storage 1 ]) prg));
+          let trip = Ops.O.((loop * int 2) + int 1) and a = storage 1 in
+          let call = Ops.call prg [ a; trip; bound n 4 ] in
+          equal uops [ a; trip; Ops.int 4 ]
+            (Realize.get_call_kernel_args call prg));
+      test "is each buffer's argument for a program of no variable" (fun () ->
+          let prg = program (scaled_kernel []) and a = storage 1 in
+          equal uops [ a ]
+            (Realize.get_call_kernel_args (Ops.call prg [ a ]) prg));
     ]
 
 let outs_ins =
@@ -464,7 +479,7 @@ let () =
        [
          recorded_calls;
          arguments;
-         variables;
+         kernel_args;
          outs_ins;
          names;
          costs;

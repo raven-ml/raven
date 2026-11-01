@@ -81,9 +81,9 @@ let test_size ~allow_test_size ~value prg =
       (replace prg ~arg:(Program { info with global_size; local_size }), factor)
   | _ -> (prg, 1.)
 
-(* A candidate is timed through its call: storage keeps its slots, and each
-   positional scalar is passed its sample. Free variables are bound by
-   [time]. *)
+(* A candidate is timed through its call: storage keeps its slots, each
+   positional scalar is passed its sample, and each variable is passed itself,
+   which [time] binds. *)
 let timed_call ~value prg =
   let info = match arg prg with Program p -> p | _ -> assert false in
   let arguments =
@@ -95,7 +95,7 @@ let timed_call ~value prg =
             else if p.name = None then
               Some
                 (p.slot, const ~dtype:(dtype u) (`Int (Bigint.of_int (value u))))
-            else None
+            else Some (p.slot, u)
         | _ -> None)
       (src (nth prg 1))
   in

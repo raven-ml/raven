@@ -22,7 +22,7 @@ let bindings ?beam () =
 
 let shaping ?beam () = Setting.shaping_under (bindings ?beam ())
 
-let jit_lower ?beam ?search ~targets ~held_bufs ~inputs linear =
+let jit_lower ?beam ?search ~targets ~held_bufs ~inputs ~input_vars linear =
   let param i u =
     let align, phase = Shape.storage_phase u in
     ( u,
@@ -33,6 +33,17 @@ let jit_lower ?beam ?search ~targets ~held_bufs ~inputs linear =
   let linear =
     Ops.substitute ~calls:Skip ~pass:Once linear (List.mapi param inputs)
   in
+  (* The input variables change every run, which binds them: they are
+     unbound. Any other binding was fixed at capture and stays. *)
+  let unbound =
+    List.filter_map
+      (fun v ->
+        if Shape.is_bound_var v && List.mem_assoc (Ops.expr v) input_vars then
+          Some (v, Shape.unbound v)
+        else None)
+      (Ops.toposort ~calls:Skip linear)
+  in
+  let linear = Ops.substitute ~calls:Skip ~pass:Once linear unbound in
   let linear = Memory.memory_plan_rewrite ~held_bufs linear in
   (* The buffers left unheld hold only what one run computes: tagged, a caller
      can tell them from those it keeps and free them between runs. *)

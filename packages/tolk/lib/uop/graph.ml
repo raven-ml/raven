@@ -579,9 +579,9 @@ let target : Helpers.Target.t codec =
   |> finish
 
 let program_info : Ops.program_info codec =
-  let make global_size local_size vars globals outs ins target :
+  let make global_size local_size params globals outs ins target :
       Ops.program_info =
-    { global_size; local_size; vars; globals; outs; ins; target }
+    { global_size; local_size; params; globals; outs; ins; target }
   in
   let get (f : Ops.program_info -> _) = f in
   let size = [ Ops.Int 1; Int 1; Int 1 ]
@@ -590,7 +590,7 @@ let program_info : Ops.program_info codec =
   |> field "global_size" ~default:size (list sint)
        (get (fun p -> p.global_size))
   |> field "local_size" ~default:size (list sint) (get (fun p -> p.local_size))
-  |> field "vars" ~default:[] (list node) (get (fun p -> p.vars))
+  |> field "params" ~default:[] (list node) (get (fun p -> p.params))
   |> field "globals" ~default:[] (list int) (get (fun p -> p.globals))
   |> field "outs" ~default:[] (list int) (get (fun p -> p.outs))
   |> field "ins" ~default:[] (list int) (get (fun p -> p.ins))

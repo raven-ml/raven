@@ -1235,8 +1235,8 @@ let programs =
           equal (list int) [ 2; 3 ] info.globals;
           equal (list int) [ 3 ] info.outs;
           equal (list int) [ 2 ] info.ins;
-          equal uops [ core_id; n ] info.vars;
-          equal (list int) [ 2; 6 ] (Ops.vals info [ ("n", 6); ("core_id", 2) ]);
+          equal (list int) [ 0; 1; 2; 3 ] (List.map slot info.params);
+          equal uops [ core_id; n ] (List.filter scalar info.params);
           equal
             (pair (list int) (list int))
             ([ 1; 1; 4 ], [ 1; 8; 1 ])
@@ -1295,12 +1295,6 @@ let programs =
           equal (list int) [ 0 ] info.globals;
           equal (list int) [ 0 ] info.outs;
           equal (list int) [] info.ins);
-      test "vals rejects a missing variable, naming it" (fun () ->
-          let info =
-            Shape.program_info_of_sink (Ops.sink [ alu_param "extent" 0 ])
-          in
-          raises_match (Exn.invalid_arg ~sub:"extent") (fun () ->
-              Ops.vals info []));
       test "program_info_of_sink reads symbolic launch sizes" (fun () ->
           let core_id = alu_param ~hi:3 "core_id" 0
           and n = alu_param ~lo:2 "n" 1 in
@@ -1324,12 +1318,20 @@ let programs =
           equal (list int) [ 2; 3 ] info.globals;
           equal (list int) [ 3 ] info.outs;
           equal (list int) [ 2 ] info.ins;
-          equal uops [ core_id; n ] info.vars;
-          equal (list int) [ 2; 6 ] (Ops.vals info [ ("n", 6); ("core_id", 2) ]);
+          equal (list int) [ 0; 1; 2; 3 ] (List.map slot info.params);
+          equal uops [ core_id; n ] (List.filter scalar info.params);
           equal
             (pair (list int) (list int))
             ([ 1; 1; 7 ], [ 1; 8; 1 ])
             (Shape.launch_dims info [ ("n", 6); ("core_id", 2) ]);
+          (* A size reads its variable as a run binds it, at no slot. *)
+          equal (list int) [ -1 ]
+            (match List.nth info.global_size 2 with
+            | Sym u ->
+                List.filter_map
+                  (fun x -> if Ops.op x = Param then Some (slot x) else None)
+                  (Ops.toposort ~calls:Skip u)
+            | Int _ -> []);
           is_true
             (info.target
             = Helpers.Target.
@@ -1372,8 +1374,6 @@ let programs =
             Shape.program_info_of_sink
               (Ops.sink [ Ops.special (Sym extent) "gidx0" ])
           in
-          raises_match (Exn.invalid_arg ~sub:"extent") (fun () ->
-              Ops.vals info []);
           rejects (fun () -> Shape.launch_dims info []));
       test "program_info_of_sink records its target" (fun () ->
           let target = Result.get_ok (Helpers.Target.of_string "CPU:CLANG") in

@@ -628,32 +628,42 @@ let launch b call prg d =
   let on = if host then Rig.host_of d else d in
   let dev = device_index b on in
   let image = image b dev elf.lib in
-  let args = Realize.get_call_arg_uops call in
-  let bound slot =
-    match k.split with Some s -> slot = s.lo || slot = s.hi | None -> false
+  let slot_of p = match Ops.arg p with Ops.Param p -> p.slot | _ -> -1 in
+  let bound p =
+    match k.split with
+    | Some s -> slot_of p = s.lo || slot_of p = s.hi
+    | None -> false
   in
-  let values = List.combine info.vars (Realize.get_call_var_uops call prg) in
-  let vars =
-    List.filter
-      (fun (v, _) ->
-        match Ops.arg v with Ops.Param p -> not (bound p.slot) | _ -> true)
-      values
+  let passed =
+    List.combine (Shape.kernel_params prg)
+      (Realize.get_call_kernel_args call prg)
   in
-  (* Its parameters: a pointer to each buffer, each variable but a split's
-     bounds, and a split loop's iterations, each aligned to its size, as the
-     program reads them ({!Tolk.Codegen}). *)
-  let fields =
-    List.map (fun _ -> Dtype.Uint64) info.globals
-    @ List.map (fun (v, _) -> Ops.dtype v) vars
-    @ if Option.is_some k.split then [ Dtype.Int64 ] else []
+  (* Its parameters, in the order the program takes them: a pointer to each
+     buffer and each scalar but a split's bounds, then a split loop's
+     iterations, each aligned to its size, as the program reads them
+     ({!Tolk.Codegen}). *)
+  let fields = List.filter (fun (p, _) -> not (bound p)) passed in
+  let signature =
+    List.map
+      (fun (p, _) ->
+        let addrspace =
+          match Ops.arg p with Ops.Param a -> a.addrspace | _ -> Dtype.Global
+        in
+        {
+          Device.Tiny_elf.name = None;
+          addrspace;
+          dtype = Ops.dtype p;
+          shape = [];
+        })
+      fields
+    @
+    if Option.is_some k.split then
+      [
+        { name = None; addrspace = Dtype.Alu; dtype = Dtype.Int64; shape = [] };
+      ]
+    else []
   in
-  let offsets =
-    Device.Tiny_elf.iter_sig
-      (List.mapi
-         (fun slot dtype ->
-           { Device.Tiny_elf.name = None; slot; dtype; shape = [] })
-         fields)
-  in
+  let offsets = Device.Tiny_elf.iter_sig signature in
   (* A structure's size is a multiple of its widest field's. *)
   let size, align =
     List.fold_left
@@ -664,36 +674,34 @@ let launch b call prg d =
   in
   let params = Bytes.make (Helpers.round_up size align) '\000' in
   let holes = ref [] in
-  let buffers_at, rest = split_at (List.length info.globals) offsets in
-  let vars_at, extent_at = split_at (List.length vars) rest in
+  let fields_at, extent_at = split_at (List.length fields) offsets in
   let p = pending b dev in
   let refs =
-    List.map2
-      (fun g (at, _) ->
-        let l = locate b (List.nth args g) in
-        note_start b l;
-        place b params holes at 8 l.offset;
-        let use : Rig_program.use =
-          if List.mem g info.outs then Write else Read
-        in
-        { Rig_program.slot = slot_index p (whole l); at; use })
-      info.globals buffers_at
+    List.concat
+      (List.map2
+         (fun (prm, a) (at, dt) ->
+           if Ops.addrspace prm = Some Dtype.Alu then begin
+             place b params holes at (Dtype.itemsize dt) (affine b a);
+             []
+           end
+           else
+             let l = locate b a in
+             note_start b l;
+             place b params holes at 8 l.offset;
+             let use : Rig_program.use =
+               if List.mem (slot_of prm) info.outs then Write else Read
+             in
+             [ { Rig_program.slot = slot_index p (whole l); at; use } ])
+         fields fields_at)
   in
-  List.iter2
-    (fun (_, v) (at, dt) ->
-      place b params holes at (Dtype.itemsize dt) (affine b v))
-    vars vars_at;
   let groups, threads =
     match k.split with
     | Some s ->
         (* The bound [hi] of the whole loop is its iterations. *)
         let extent =
           List.find_map
-            (fun (v, x) ->
-              match Ops.arg v with
-              | Ops.Param p when p.slot = s.hi -> Some (sint x)
-              | _ -> None)
-            values
+            (fun (prm, x) -> if slot_of prm = s.hi then Some (sint x) else None)
+            passed
           |> Option.value ~default:s.iterations
         in
         List.iter

@@ -760,7 +760,7 @@ let reprs () =
              {
                global_size = ints [ 4; 1; 1 ];
                local_size = ints [ 8; 1; 1 ];
-               vars = [];
+               params = [];
                globals = [ 0; 1 ];
                outs = [ 0 ];
                ins = [ 1 ];

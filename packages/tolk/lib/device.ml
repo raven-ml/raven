@@ -12,7 +12,7 @@ let strf = Printf.sprintf
 module Tiny_elf = struct
   type param = {
     name : string option;
-    slot : int;
+    addrspace : Dtype.addr_space;
     dtype : Dtype.t;
     shape : int list;
   }
@@ -32,22 +32,19 @@ module Tiny_elf = struct
            (Ops.op prg)
            (List.length (Ops.src prg)))
     in
-    let param_arg u =
+    let param u =
       match (Ops.op u, Ops.arg u) with
-      | Op.Param, Ops.Param p -> p
+      | Op.Param, Ops.Param p ->
+          {
+            name = p.name;
+            addrspace = p.addrspace;
+            dtype = Ops.dtype u;
+            shape = Shape.max_shape u;
+          }
       | _ -> invalid ()
     in
-    let param slot u =
-      let p = param_arg u in
-      {
-        name = p.name;
-        slot;
-        dtype = Ops.dtype u;
-        shape = Shape.max_shape u;
-      }
-    in
     match (Ops.op prg, Ops.arg prg, Ops.src prg) with
-    | Op.Program, Ops.Program info, [ kernel; linear; _; binary ] ->
+    | Op.Program, Ops.Program info, [ kernel; _; _; binary ] ->
         let lib =
           match Ops.arg binary with Ops.Bytes b -> b | _ -> invalid ()
         in
@@ -56,27 +53,11 @@ module Tiny_elf = struct
           | Ops.Kernel k -> Ops.function_name k
           | _ -> invalid ()
         in
-        (* Slots are compact, the buffers in the order of the program's globals,
-           in which runtimes launch them: a kernel may use a sparse subset of
-           its call's buffers. *)
-        let buffer u =
-          let slot = (param_arg u).slot in
-          match List.find_index (Int.equal slot) info.globals with
-          | Some j -> param j u
-          | None ->
-              invalid_arg (strf "buffer slot %d is not among the globals" slot)
-        in
-        let is_buffer u =
-          Ops.op u = Op.Param && Ops.addrspace u <> Some Dtype.Alu
-        in
-        let nglobals = List.length info.globals in
         {
           lib;
           name;
           target = info.target;
-          signature =
-            List.map buffer (List.filter is_buffer (Ops.src linear))
-            @ List.mapi (fun j v -> param (nglobals + j) v) info.vars;
+          signature = List.map param (Shape.kernel_params prg);
           profile_key = Some (Ops.key prg);
         }
     | _ -> invalid ()
@@ -96,8 +77,8 @@ module Tiny_elf = struct
   let bytes b = Ops.Bytes b
 
   let pp_param ppf (p : param) =
-    Format.fprintf ppf "(%a, %d, %a, %a)" (pp_literal string) p.name p.slot
-      Dtype.pp p.dtype
+    Format.fprintf ppf "(%a, %a, %a, %a)" (pp_literal string) p.name
+      Dtype.pp_addr_space p.addrspace Dtype.pp p.dtype
       (pp_tuple Format.pp_print_int)
       p.shape
 
@@ -109,9 +90,11 @@ module Tiny_elf = struct
 
   let iter_sig ?(offset = 0) signature =
     let place offset p =
-      let size = Dtype.itemsize p.dtype in
+      (* A buffer is passed by its address. *)
+      let dt = if p.addrspace = Dtype.Alu then p.dtype else Dtype.Uint64 in
+      let size = Dtype.itemsize dt in
       let offset = Helpers.round_up offset size in
-      (offset + size, (offset, p.dtype))
+      (offset + size, (offset, dt))
     in
     snd (List.fold_left_map place offset signature)
 end

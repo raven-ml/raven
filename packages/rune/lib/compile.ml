@@ -2237,7 +2237,8 @@ let link ~beam ~parallel rig l =
       let linear =
         Tolk.Jit.jit_lower ?beam ~search:(search rig ~parallel)
           ~targets:(fun _ -> Engine.target rig)
-          ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order) linear
+          ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order)
+          ~input_vars:vars linear
       in
       let schedule =
         Engine.link ~devices:(fun _ -> rig) ~bound:l.bound linear

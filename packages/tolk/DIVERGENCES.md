@@ -947,15 +947,17 @@ scope, see README.
 ## D28. A host program has rig's entry
 
 - **tinygrad:** `codegen/__init__.py:457-459` (`do_compile`: the binary is the
-  source compiled), `runtime/ops_cpu.py:58-70` (`CPUProgram.__call__` calls
-  the kernel's own signature through ctypes, every argument a `c_uint64`).
+  source compiled), `runtime/ops_cpu.py:58-72` (`CPUProgram.__call__` calls
+  the kernel's own signature through ctypes, every argument a `c_uint64`, in
+  the kernel's order).
 - **tolk:** `Codegen.host_entry`, `Codegen.do_compile`.
 - **Differs:** a program for a CPU target is compiled from its source with
   the kernel renamed `NAME_` and an entry `NAME` appended:
   `void NAME(const struct NAME_args *p, long long first, long long end)`. The
-  structure holds a pointer to each buffer, in the order of the program's
-  globals, then each variable but a split's bounds, in order, each aligned to
-  its size, and for a split program (D80) the iterations of its loop. The
+  structure holds, in the order the kernel takes its parameters
+  (`Shape.kernel_params`), a pointer to each buffer and each scalar but a
+  split's bounds, each aligned to its size, then for a split program (D80)
+  the iterations of its loop. The
   entry passes them on to the kernel, as C converts them to its parameters'
   types, and `first` and `end`, at most the iterations, as the split's
   bounds. The program's source is the renderer's; only its binary differs.
@@ -969,7 +971,8 @@ scope, see README.
   holds rig's host entry after the kernel` and `› a host program runs as a
   launch of rig's host, with ten scalars past the argument registers`; the
   Tolk_engine suite, `host programs in blocks › a program writes the same
-  bits in 1, 3 and 32 blocks`.
+  bits in 1, 3 and 32 blocks` and `link and run › a custom kernel takes a
+  variable between its buffers`.
 
 ## D29. A float32 tensor core takes operands widened from its narrow input
 
@@ -1968,17 +1971,17 @@ does the same.
 
 ## D80. A host program runs its output loop in blocks on the host's cores
 
-- **tinygrad:** `runtime/ops_cpu.py:58-73` (`CPUProgram.__call__`),
+- **tinygrad:** `runtime/ops_cpu.py:58-72` (`CPUProgram.__call__`),
   which calls a kernel once per launch on the calling thread;
   `codegen/__init__.py:367` (the pipeline after `pm_cast_const`),
-  `:33-34,378-380` (`do_number_param` and its pass) and `:443`
-  (`do_estimates`); `uop/ops.py:1323` (`KernelInfo`) and `:1352`
-  (`ProgramInfo.from_sink`); `engine/realize.py:16`
-  (`get_call_var_uops`) and `:151` (`exec_kernel`).
+  `:33-38,378-380` (`do_number_param` and its pass) and `:443`
+  (`do_estimates`); `uop/ops.py:1329` (`KernelInfo`) and `:1354`
+  (`ProgramInfo.from_sink`); `engine/realize.py:17`
+  (`get_call_kernel_args`) and `:155` (`exec_kernel`).
 - **tolk:** `Codegen.split_blocks`, its place in
   `Codegen.full_rewrite_to_sink`, `Codegen.pm_number_params` and
   `Codegen.whole_loop`; `Ops.kernel_info`'s
-  `split`; `Shape.program_info_of_sink`; `Realize.get_call_var_uops`;
+  `split`; `Shape.program_info_of_sink`; `Realize.get_call_kernel_args`;
   `Tolk_engine.block_ops`, `Tolk_engine.blocks` and `Tolk_engine.split_grid`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same split, estimates,
   launch dimensions and variable values, and runs a split program as one
@@ -1994,10 +1997,7 @@ does the same.
   among them (D140), and named afresh
   where the kernel has a variable of either name. The variables numbered
   after them take the slots past every slot a parameter takes, the bounds'
-  included, one slot per name. tinygrad numbers every variable past the
-  largest slot of a parameter that is no variable: the bounds are variables
-  that carry their slots, so it would number them again and give another
-  variable a bound's slot, and a launch would read the bound for it. The kernel's `KernelInfo`
+  included, one slot per name. The kernel's `KernelInfo`
   records `split = (n, lo, hi)`, the iterations and the two slots, by which
   each launch finds the bounds; `n` is its program's first global size, and
   its estimates count the whole loop, exactly when they read no other
@@ -3507,22 +3507,22 @@ driver signals its own (D146).
 
 ## D140. A call of a loop takes its trip as a scalar argument
 
-- **tinygrad:** `schedule/__init__.py:102-114` (`resolve_linear_call`, which
-  binds a scalar parameter only to a variable, and substitutes it into each
-  kernel that reads it), `engine/realize.py:15-17` (`get_call_arg_uops`, which
-  leaves out bound variables only, and `get_call_var_uops`, which reads each
-  variable by its name).
+- **tinygrad:** `schedule/__init__.py:100-112` (`resolve_linear_call`, which
+  binds a nameless scalar parameter only to a variable, and substitutes it into
+  each kernel that reads it), `engine/realize.py:16-22` (`get_call_arg_uops`,
+  which leaves out every variable, and `get_call_kernel_args`, which reads each
+  scalar parameter by its name).
 - **tolk:** `Schedule.scalar_argument`, `Schedule.pass_values` and
   `Schedule.resolve_linear_call`; `Realize.get_call_arg_uops` and
-  `Realize.get_call_var_uops`; `Tolk_engine.affine`.
+  `Realize.get_call_kernel_args`; `Tolk_engine.affine`.
 - **Differs:** a precompiled call inside a loop may pass a scalar parameter of
   its body a weak integer expression of the loop's ranges, such as `r`,
   `2r + 1` or `n - 1 - r`. The schedule keeps it as the call's argument, no
   state. Each kernel of the body that reads the parameter keeps it, unnamed,
-  in a slot past the kernel's buffers, bounded by its type, and its call passes
-  the expression in that slot: `get_call_var_uops` reads an unnamed variable of
-  a program from its call's slot, and `get_call_arg_uops` leaves out every
-  scalar argument, a free variable included. The value reaches the program
+  in a slot past its call's arguments, bounded by its type, and its call
+  passes the expression in that slot: `get_call_kernel_args` reads a nameless
+  scalar parameter of a program from its call's slot, and `get_call_arg_uops`
+  leaves out every scalar argument, an expression as well as a variable. The value reaches the program
   as any variable's does, converted to the parameter's type at the ABI (D28):
   a launch inside a loop of rig's program reads it from a hole of its
   parameters, the sum of the loops' trip words times constant factors
@@ -3542,8 +3542,8 @@ driver signals its own (D146).
   `Spec` suite: `kernel_graph › loops of calls › accepts a loop's call whose
   scalar argument is an expression of its range`; the `Realize` suite:
   `get_call_arg_uops › is a call's storage arguments in order, without its
-  scalar ones` and `get_call_var_uops › is the call's argument in the slot of a
-  scalar parameter`; the `Tolk_engine` suite: `link and run › a loop's call
+  scalar ones` and `get_call_kernel_args › is the call's argument in the slot
+  of a scalar parameter`; the `Tolk_engine` suite: `link and run › a loop's call
   reads its trip as a scalar argument on each trip`, `› a back edge's call
   reads its trip on each trip, at most its trips`, `› a loop of one trip passes
   its call the trip as a scalar argument`, `› loops of any range and trips

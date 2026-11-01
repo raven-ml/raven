@@ -503,17 +503,28 @@ val call_with_output :
 
 val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
 (** [custom_kernel args f] calls the kernel [f] builds on placeholders of
-    [args], and is [args], each ordered after it. *)
+    [args], and is [args], each ordered after it. The placeholder of the [i]th
+    argument takes slot [i]: a variable's is the variable, unbound, and any
+    other's is a buffer of its shape ({!placeholder_like}). *)
 
 (** {1:programs Programs} *)
 
 val program_info_of_sink : ?target:Helpers.Target.t -> Ops.t -> Ops.program_info
 (** [program_info_of_sink ~target sink] reads the program's launch dimensions
-    from its {!Op.Special} nodes, its variables and buffers from its {!Op.Param}
-    nodes, and which buffers it reads and writes from its loads and stores,
-    outside the bodies of the calls it makes. When none is found reading or
-    writing, every buffer is taken to do both. [target] defaults to the empty
-    target. *)
+    from its {!Op.Special} nodes, each named variable they read at slot [-1],
+    as a launch binds it by name; its parameters and buffers from its
+    {!Op.Param} nodes; and which buffers it reads and writes from its loads
+    and stores, outside the bodies of the calls it makes. When none is found
+    reading or writing, every buffer is taken to do both. [target] defaults to
+    the empty target. *)
+
+val kernel_params : Ops.t -> Ops.t list
+(** [kernel_params prg] is the parameters of the linearized {!Op.Program}
+    [prg] in the order its kernel takes them, which is slot order: those of
+    its linear order, then each of {!Ops.program_info.params} whose slot none
+    of those takes.
+
+    Raises [Invalid_argument] if [prg] is not a linearized program. *)
 
 val launch_dims : Ops.program_info -> (string * int) list -> int list * int list
 (** [launch_dims p vars] is [p]'s global and local sizes with each variable

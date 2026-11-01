@@ -186,10 +186,25 @@ let recorded_target =
     indices = "";
   }
 
+(* The variables a capture binds, with their values. *)
+let capture_binding case =
+  let row =
+    List.find (fun cell -> cell "case" = case) (Golden.rows "captures.golden")
+  in
+  if row "vars" = "-" then []
+  else
+    List.map
+      (fun w ->
+        match String.split_on_char '=' w with
+        | [ v; x ] -> (v, int_of_string x)
+        | _ -> invalid_arg ("no binding " ^ w))
+      (String.split_on_char ' ' (row "vars"))
+
 let lower ?search ?(targets = fun _ -> recorded_target) case =
   plain (fun () ->
       Jit.jit_lower ?search ~targets ~held_bufs:(held case)
-        ~inputs:(inputs case) (captured case))
+        ~inputs:(inputs case) ~input_vars:(capture_binding case)
+        (captured case))
 
 (* The cases of tinygrad's jit tests, by the file they come from. *)
 
@@ -346,19 +361,6 @@ let bindings case =
         (Gen.pair (Gen.int_range lo hi) acc))
     (variables (captured case))
     (Gen.constant [])
-
-let capture_binding case =
-  let row =
-    List.find (fun cell -> cell "case" = case) (Golden.rows "captures.golden")
-  in
-  if row "vars" = "-" then []
-  else
-    List.map
-      (fun w ->
-        match String.split_on_char '=' w with
-        | [ v; x ] -> (v, int_of_string x)
-        | _ -> invalid_arg ("no binding " ^ w))
-      (String.split_on_char ' ' (row "vars"))
 
 let pp_run ppf (seed, vars) =
   Format.fprintf ppf "seed %d%a" seed
@@ -595,7 +597,7 @@ let runs_a_phased_input () =
   let lowered =
     Jit.jit_lower
       ~targets:(fun n -> Engine.target (devices n))
-      ~held_bufs:[ out ] ~inputs:[ input ] linear
+      ~held_bufs:[ out ] ~inputs:[ input ] ~input_vars:[] linear
   in
   binds_inputs ~inputs:[ input ] linear lowered;
   let dst = Run.buffer Rig.host Float32 (Array.make 4 (`Float 0.)) in
@@ -613,10 +615,97 @@ let phased =
         runs_a_phased_input;
     ]
 
+(* Variables of a capture
+
+   tinygrad's runtime/test_custom_kernel.py::test_scalar_arg_jit and
+   test_scalar_arg_jit_fixed_bind: a kernel that takes a variable reads, at each
+   run, the value the run binds for a variable of the capture, and keeps the
+   binding of any other. *)
+
+let variable name =
+  Ops.variable ~dtype:Int32 name (`Int Bigint.zero) (`Int (Bigint.of_int 100))
+
+(* A kernel that adds its variable, in slot 1, to slot 2 into slot 0. *)
+let add_variable name = function
+  | [ out; v; src ] ->
+      let i = Ops.range (Int 4) [ 0 ] in
+      Ops.sink
+        ~kernel:(Ops.kernel_info ~name:("add_" ^ name) ())
+        [
+          Ops.end_
+            (Ops.store (Ops.index out [ i ]) (Ops.add (Ops.index src [ i ]) v))
+            [ i ];
+        ]
+  | _ -> invalid_arg "add_variable takes three arguments"
+
+(* [out = (src + m) + n], [m] bound to 10 and [n] to 5, captured. *)
+let capture_with_variables () =
+  let out = Ops.new_buffer "CPU" 4 Int32
+  and mid = Ops.new_buffer "CPU" 4 Int32
+  and src = Ops.new_buffer "CPU" 4 Int32 in
+  let bound name x = Shape.bind (variable name) (`Int (Bigint.of_int x)) in
+  let mid =
+    List.hd (Shape.custom_kernel [ mid; bound "m" 10; src ] (add_variable "m"))
+  in
+  let out =
+    List.hd (Shape.custom_kernel [ out; bound "n" 5; mid ] (add_variable "n"))
+  in
+  let linear, _ =
+    Schedule.create_linear_with_vars ~capturing:true (Ops.sink [ out ])
+  in
+  (linear, out, src)
+
+let bindings_of name linear =
+  List.filter_map
+    (fun u ->
+      match Ops.arg u with
+      | Param { name = Some n; bound; _ } when n = name && Shape.is_variable u
+        ->
+          Some (Option.map Dtype.Value.to_int bound)
+      | _ -> None)
+    (Ops.toposort ~calls:Skip linear)
+
+let unbinds_capture_variables () =
+  let linear, out, src = capture_with_variables () in
+  let lowered =
+    Jit.jit_lower
+      ~targets:(fun n -> Engine.target (devices n))
+      ~held_bufs:[ Ops.buf_uop out; src ] ~inputs:[] ~input_vars:[ ("n", 5) ]
+      linear
+  in
+  equal (list (option int)) ~msg:"n, the capture's" [ None ]
+    (List.sort_uniq compare (bindings_of "n" lowered));
+  equal (list (option int)) ~msg:"m, bound in the function" [ Some 10 ]
+    (List.sort_uniq compare (bindings_of "m" lowered));
+  let ints xs = Array.map (fun x -> `Int (Bigint.of_int x)) xs in
+  let dst = Run.buffer Rig.host Int32 (ints [| 0; 0; 0; 0 |])
+  and input = Run.buffer Rig.host Int32 (ints [| 1; 2; 3; 4 |]) in
+  let s =
+    Engine.link ~devices
+      ~bound:[ (Ops.buf_uop out, dst); (src, input) ]
+      lowered
+  in
+  List.iter
+    (fun n ->
+      Engine.run ~vars:[ ("n", n) ] s [||];
+      equal ~msg:(Printf.sprintf "n = %d" n) (array Dtypes.value)
+        (ints (Array.map (fun x -> x + 10 + n) [| 1; 2; 3; 4 |]))
+        (Run.values Int32 dst))
+    [ 1; 5; 7 ]
+
+let captured_variables =
+  group "jit_lower › variables"
+    [
+      test
+        "a run binds each variable of the capture, and any other keeps its \
+         binding"
+        unbinds_capture_variables;
+    ]
+
 let lower_drawn (linear, held, inputs) =
   Jit.jit_lower
     ~targets:(fun n -> Engine.target (devices n))
-    ~held_bufs:held ~inputs linear
+    ~held_bufs:held ~inputs ~input_vars:[] linear
 
 let replays_drawn d =
   let ((linear, held, inputs) as c) = capture_of d in
@@ -650,4 +739,7 @@ let drawn_laws =
           lowers_the_same (fun () -> lower_drawn c));
     ]
 
-let () = exit (run "Jit" [ captures; recorded; replays; phased; drawn_laws ])
+let () =
+  exit
+    (run "Jit"
+       [ captures; recorded; replays; phased; captured_variables; drawn_laws ])

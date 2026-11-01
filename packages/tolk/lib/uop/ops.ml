@@ -250,7 +250,7 @@ and kernel_info = {
 and program_info = {
   global_size : sint list;
   local_size : sint list;
-  vars : t list;
+  params : t list;
   globals : int list;
   outs : int list;
   ins : int list;
@@ -329,7 +329,7 @@ let equal_kernel_info (k0 : kernel_info) (k1 : kernel_info) =
 let equal_program_info (p0 : program_info) (p1 : program_info) =
   List.equal equal_sint p0.global_size p1.global_size
   && List.equal equal_sint p0.local_size p1.local_size
-  && List.equal ( == ) p0.vars p1.vars
+  && List.equal ( == ) p0.params p1.params
   && p0.globals = p1.globals && p0.outs = p1.outs && p0.ins = p1.ins
   && p0.target = p1.target
 
@@ -782,11 +782,11 @@ and repr_kernel_info (k : kernel_info) =
 and repr_program_info (p : program_info) =
   let ints l = repr_tuple (List.map string_of_int l) in
   strf
-    "ProgramInfo(global_size=%s, local_size=%s, vars=%s, globals=%s, outs=%s, \
-     ins=%s, target=%s)"
+    "ProgramInfo(global_size=%s, local_size=%s, params=%s, globals=%s, \
+     outs=%s, ins=%s, target=%s)"
     (repr_tuple (List.map repr_sint p.global_size))
     (repr_tuple (List.map repr_sint p.local_size))
-    (repr_tuple (List.map repr p.vars))
+    (repr_tuple (List.map repr p.params))
     (ints p.globals) (ints p.outs) (ints p.ins)
     (Format.asprintf "%a" Helpers.Target.pp p.target)
 
@@ -3201,15 +3201,6 @@ let kernel_info ?(name = "test") ?(applied_opts = []) ?opts_to_apply ?estimates
   { name; applied_opts; opts_to_apply; estimates; beam; split }
 
 let function_name (k : kernel_info) = Helpers.to_function_name k.name
-
-let vals (p : program_info) vars =
-  List.map
-    (fun x ->
-      let name = expr x in
-      match List.assoc_opt name vars with
-      | Some n -> n
-      | None -> invalid_argf "the variable %s has no value" name)
-    p.vars
 
 (* Memos *)
 

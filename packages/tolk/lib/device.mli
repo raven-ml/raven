@@ -19,10 +19,9 @@
 module Tiny_elf : sig
   type param = {
     name : string option;  (** The parameter's name, if it has one. *)
-    slot : int;
-        (** Its position among the program's arguments: the buffers first, in
-            the order of {!Ops.program_info.globals}, then the scalar variables,
-            in the order of {!Ops.program_info.vars}. *)
+    addrspace : Dtype.addr_space;
+        (** {!Dtype.Alu} for a scalar, passed as its value; any other for a
+            buffer, passed as its address. *)
     dtype : Dtype.t;  (** The type of its elements. *)
     shape : int list;
         (** [[n]] for a buffer of [n] elements, [[]] for a scalar. *)
@@ -46,25 +45,26 @@ module Tiny_elf : sig
       {!Op.Binary}. Its binary is the bytes of the {!Op.Binary}, its name the
       {!Ops.function_name} of the kernel, its target that of its
       {!Ops.program_info}, and its profile key {!Ops.key}[ prg]. Its signature
-      holds each {!Op.Param} of the linear order that is not a scalar variable,
-      then each of the program's variables.
+      holds each of {!Shape.kernel_params}[ prg], buffers and scalars, in slot
+      order.
 
-      Raises [Invalid_argument] if [prg] is not such a program, or if a buffer
-      of its linear order is not among its {!Ops.program_info.globals}. *)
+      Raises [Invalid_argument] if [prg] is not such a program. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a program as
       [TinyELF(lib=b'...', name='E_4_4', target=CPU::arm64,native,
-       signature=((None, 0, dtypes.f32, (16,)),), profile_key=b'...')], its
-      binary and profile key as byte literals, and each parameter as the tuple
-      of its fields: [('n', 3, dtypes.i32, ())], or
-      [(None, 0, dtypes.f32, (16,))] for a parameter without a name. *)
+       signature=((None, AddrSpace.GLOBAL, dtypes.f32, (16,)),),
+       profile_key=b'...')], its binary and profile key as byte literals, and
+      each parameter as the tuple of its fields:
+      [('n', AddrSpace.ALU, dtypes.i32, ())], or
+      [(None, AddrSpace.GLOBAL, dtypes.f32, (16,))] for a parameter without a
+      name. *)
 
   val iter_sig : ?offset:int -> param list -> (int * Dtype.t) list
   (** [iter_sig ~offset signature] is where the value of each parameter of
       [signature] lies when their values are packed in order from byte [offset],
-      each aligned to its size: its byte offset and its type. [offset] defaults
-      to [0]. *)
+      each aligned to its size: its byte offset and its type, a scalar's own
+      and a buffer's address's {!Dtype.Uint64}. [offset] defaults to [0]. *)
 end
 
 (** {1:renderers Renderers} *)

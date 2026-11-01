@@ -1461,48 +1461,44 @@ let do_render (ren : Renderer.t) prg lin =
   Some (replace prg ~src:(src prg @ [ v Op.Source ~arg:(String source) ]))
 
 (* The host calls a program as [void f(const void *p, long long first, long long
-   end)] (rig's host code). [p] points to its parameters: a pointer to each
-   buffer, in the order of its globals, then each variable but a split's bounds
-   in order, each aligned to its size, and for a split program the iterations of
+   end)] (rig's host code). [p] points to its parameters, in the order the
+   kernel takes them, a pointer to each buffer and each scalar but a split's
+   bounds, each aligned to its size, then for a split program the iterations of
    the loop it splits, a [long long]. The call runs the iterations [first] to
    [end - 1], at most the loop's last: the launch's threads number the
    iterations. The kernel is renamed [NAME_], and [NAME] becomes the entry that
    passes each of its parameters on, which C converts to the parameter's type.
    The source the program keeps is the renderer's. *)
 let host_entry prg lin source =
-  let info = match arg prg with Program info -> info | _ -> assert false in
   let k = kernel_info (nth prg 0) in
   let name = function_name k in
-  let bound slot =
-    match k.split with Some s -> slot = s.lo || slot = s.hi | None -> false
+  let slot u = match arg u with Param p -> p.slot | _ -> assert false in
+  let bound u =
+    match k.split with
+    | Some s -> slot u = s.lo || slot u = s.hi
+    | None -> false
   in
-  let index x xs = Option.get (List.find_index x xs) in
+  let fields = List.filter (fun u -> not (bound u)) (Shape.kernel_params prg) in
+  let field u =
+    Printf.sprintf "p->a%d" (Option.get (List.find_index (equal u) fields))
+  in
   let pass u =
-    match arg u with
-    | Param p when addrspace u = Some Dtype.Alu -> (
-        match k.split with
-        | Some s when p.slot = s.lo -> "first"
-        | Some s when p.slot = s.hi -> "end"
-        | _ -> Printf.sprintf "p->v%d" (index (equal u) info.vars))
-    | Param p -> Printf.sprintf "p->b%d" (index (Int.equal p.slot) info.globals)
-    | _ -> assert false
+    match k.split with
+    | Some s when slot u = s.lo -> "first"
+    | Some s when slot u = s.hi -> "end"
+    | _ -> field (List.find (fun f -> slot f = slot u) fields)
   in
-  let ctype dt =
-    match Dtype.itemsize dt with
-    | 1 -> "signed char"
-    | 2 -> "short"
-    | 4 -> "int"
-    | _ -> "long long"
+  let ctype u =
+    if addrspace u <> Some Dtype.Alu then "void *"
+    else
+      match Dtype.itemsize (dtype u) with
+      | 1 -> "signed char "
+      | 2 -> "short "
+      | 4 -> "int "
+      | _ -> "long long "
   in
-  let fields =
-    List.mapi (fun i _ -> Printf.sprintf "void *b%d;" i) info.globals
-    @ List.concat
-        (List.mapi
-           (fun i v ->
-             match arg v with
-             | Param p when bound p.slot -> []
-             | _ -> [ Printf.sprintf "%s v%d;" (ctype (dtype v)) i ])
-           info.vars)
+  let members =
+    List.mapi (fun i u -> Printf.sprintf "%sa%d;" (ctype u) i) fields
     @ if Option.is_some k.split then [ "long long n;" ] else []
   in
   let params = List.filter (fun u -> op u = Op.Param) (src lin) in
@@ -1510,7 +1506,7 @@ let host_entry prg lin source =
     Printf.sprintf "%s_(%s);" name (String.concat ", " (List.map pass params))
   in
   let args, body =
-    match fields with
+    match members with
     | [] -> ("const void *p", call)
     | _ when Option.is_some k.split ->
         ( Printf.sprintf "const struct %s_args *p" name,
@@ -1522,12 +1518,12 @@ let host_entry prg lin source =
      :: source
      :: Printf.sprintf "#undef %s" name
      ::
-     (match fields with
+     (match members with
      | [] -> []
      | _ ->
          [
            Printf.sprintf "struct %s_args { %s };" name
-             (String.concat " " fields);
+             (String.concat " " members);
          ])
     @ [
         Printf.sprintf "void %s(%s, long long first, long long end) { %s }" name
