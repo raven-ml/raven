@@ -60,10 +60,10 @@ let new_ranges ctx shape =
   List.rev (List.fold_left (fun acc s -> new_range ctx s :: acc) [] shape)
 
 let always_contiguous =
-  ops Op.[ After; Buffer; Alloc; Const; Param; Load; Call ]
+  Op.Set.union Op.Set.defines (ops Op.[ After; Const; Load; Call ])
 
 let realize ctx u = Tbl.replace ctx.realize_map u None
-let storage = ops Op.[ Param; Buffer; Alloc; After ]
+let storage = Op.Set.union Op.Set.defines (ops [ Op.After ])
 
 (* A gather is an index by an integer value with axes: its source is read at
    loaded positions, so it is stored whole unless it is storage. A view of
@@ -162,7 +162,8 @@ let broadcast_rngs x s rngs =
 let data_srcs u =
   let op = op u and src = src u in
   let first = match src with s :: _ -> [ s ] | [] -> [] in
-  if Op.Set.mem op (ops Op.[ Param; Buffer; Alloc; Range; Special ]) then []
+  if Op.Set.mem op (Op.Set.union Op.Set.defines (ops Op.[ Range; Special ]))
+  then []
   else if op = Op.Index && is_gather_src src then src
   else if is_group u then (* every store is data *) src
   else if

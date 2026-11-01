@@ -451,7 +451,7 @@ let reduce_collapse ?(pm = pm_reduce_collapse) red u =
                     not
                       (Tbl.mem inside s
                       || (Tbl.mem replaces s
-                         || List.mem (op s) Op.[ Const; Param; Buffer; Alloc ]
+                         || (op s = Op.Const || Op.Set.mem (op s) Op.Set.defines)
                          )
                          [@mutate
                            off

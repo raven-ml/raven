@@ -1277,7 +1277,7 @@ let opaque_zeros ~reg zeros =
   Pattern_matcher.fold (fun () ->
       [
         rule_ctx
-          (Upat.v ~op:(Op.Set.of_list Op.[ Cmplt; Cmpne; Cmpeq ]) ~name:"x" ())
+          (Upat.v ~op:Op.Set.comparison ~name:"x" ())
           (fun ctx m ->
             let x = m "x" in
             let hidden = float_zero zeros in

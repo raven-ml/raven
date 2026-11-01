@@ -310,7 +310,7 @@ let shared : t =
         "x"
         (fun x ->
           let b = storage_base x in
-          if List.mem (op b) Op.[ Buffer; Alloc; Param; Stage ] then Some true
+          if op b = Op.Stage || Op.Set.mem (op b) Op.Set.defines then Some true
           else if op b = Op.Index then None
           else Some false);
       check

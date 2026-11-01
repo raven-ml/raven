@@ -298,7 +298,6 @@ let l2i_words uops =
 
 let pm_long_decomp =
   let long = Upat.var ~dtype:longs in
-  let alu_or_cast = Op.Set.union Op.Set.alu (ops [ Op.Cast; Op.Bitcast ]) in
   Pattern_matcher.v
     (fun () -> [
       (* The decomposition's own rewrite can mint bare constants: they commit
@@ -367,7 +366,7 @@ let pm_long_decomp =
       (* A cast between long types reinterprets the words; a bare constant
          source commits at the long type. *)
       rule
-        (l2i_pair (Upat.v ~op:alu_or_cast ~name:"x" ()))
+        (l2i_pair (Upat.v ~op:Op.Set.elementwise ~name:"x" ()))
         (fun m ->
           let x = m "x" in
           let op = if op x = Op.Cast then Op.Bitcast else op x in

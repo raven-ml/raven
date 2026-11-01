@@ -1352,7 +1352,7 @@ let rec buf_uop u =
         let rec down s =
           match s.src with
           | first :: _
-            when not (List.mem s.op Op.[ Buffer; Alloc; Param; Stage ])
+            when not (s.op = Op.Stage || Op.Set.mem s.op Op.Set.defines)
             ->
               down first
           | _ -> s

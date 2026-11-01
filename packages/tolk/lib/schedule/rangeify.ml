@@ -414,7 +414,7 @@ let pm_no_views =
            ~src:
              [
                Upat.v
-                 ~op:(ops Op.[ After; Param; Buffer; Alloc ])
+                 ~op:(Op.Set.union Op.Set.defines (ops [ Op.After ]))
                  ();
              ]
            ())
