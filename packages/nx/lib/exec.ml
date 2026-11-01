@@ -44,27 +44,16 @@ let ran ~by answer dsts ops =
   | Declined -> false
   | refusal -> A.refused by refusal (Array.to_list (Array.append dsts ops))
 
-(* Values from arrays *)
-
-let make = Prim.of_arrays
+(* Views *)
 
 (* A view made over [a]'s memory, outside any handle chain: the memory is shared
    from then on, so that no donation of [a]'s value writes what the view
    reads. *)
 let view_of a = Rig.Claim.share (A.buffer a)
 
-(* Fresh C-contiguous arrays of a value of [shape] at [p]: each device's
-   window. *)
-let fresh ~by p dt shape =
-  let set = Devices.set p in
-  match Grid.one (Devices.grid p) with
-  | Some k -> ([| A.create (Devices.rig set k) dt shape |] : _ iarray)
-  | None ->
-      let devices = Grid.devices (Devices.grid p) in
-      let shape = Iarray.to_array shape in
-      Iarray.init (Array.length devices) (fun j ->
-          A.create (Devices.rig set devices.(j)) dt
-            (Route.extents (Devices.window ~by p shape j)))
+(* The device of a placement on one device. *)
+let rig_of p =
+  Devices.rig (Devices.set p) (Option.get (Grid.one (Devices.grid p)))
 
 (* A fresh array of [dt] on [d] laid out as [l], C-contiguous from offset 0.
    A dtype narrower than a byte is created, whose spare bits in its last byte
@@ -73,26 +62,20 @@ let fresh_over (type w r) (dt : (w, r) D.t) l d : (w, r) A.t =
   if D.bits dt >= 8 then A.v dt l (Rig.Buffer.create d (D.bytes dt (L.numel l)))
   else A.create d dt (L.shape l)
 
-(* A maker of fresh results at their form's placement: the first into [into]
-   where it is given. The layout of a result it makes is C-contiguous from
-   offset 0, as {!Prim.val-layouts} states for every operation but a
-   movement, a bitcast and a placement, which make no fresh result, so on
-   one device it lays out the result as it is. *)
-let alloc (type v s d) ~by ?into k (f : (v, s, d) Value.form) :
-    (v, s, d) Value.t =
+(* A maker of fresh results at their form's placement, on one device: the
+   first into [into] where it is given. The layout of a result it makes is
+   C-contiguous from offset 0, as {!Prim.val-layouts} states for every
+   operation but a movement, a bitcast and a placement, which make no fresh
+   result, and as a partition lays out each device's results, so it lays out
+   the result as it is. *)
+let alloc (type v s d) ?into k (f : (v, s, d) Value.form) : (v, s, d) Value.t =
   let p = f.placement in
   match into with
   | Some a when k = 0 ->
       Value.Array { at = p; a = A.expect f.dtype a; dead = Value.Live }
-  | Some _ | None -> (
-      match Grid.one (Devices.grid p) with
-      | Some k ->
-          let d = Devices.rig (Devices.set p) k in
-          Value.Array
-            { at = p; a = fresh_over f.dtype f.layout d; dead = Value.Live }
-      | None ->
-          let shape = L.shape f.layout in
-          make p ~shape:(Iarray.to_array shape) (fresh ~by p f.dtype shape))
+  | Some _ | None ->
+      let a = fresh_over f.dtype f.layout (rig_of p) in
+      Value.Array { at = p; a; dead = Value.Live }
 
 (* Programs on one device *)
 
@@ -144,49 +127,41 @@ let kernel_load (type d) (l : d Value.load) : Nx_kernel.load =
 let kernel_loads loads =
   Array.init (Iarray.length loads) (fun i -> kernel_load (Iarray.get loads i))
 
-(* The arrays at position [j] of [x] and of the results [r] of [op]. An
-   [Array] is read in place, and the results of a map of one output, a
-   reduction of one or a scan of one, which most calls are, without
-   gathering every result's arrays. *)
-let nth (type v s d) j (x : (v, s, d) Value.t) =
-  match x with
-  | Value.Array { a; _ } -> a
-  | Value.Shards _ | Value.Handle _ | Value.Traced _ ->
-      Iarray.get (Prim.arrays x) j
-
-let dsts_at : type r. r Value.prim -> r -> int -> A.any array =
- fun op r j ->
+(* The arrays of the results [r] of [op], each on one device. The results of
+   a map of one output, a reduction of one or a scan of one, which most calls
+   are, are read without gathering every result's arrays. *)
+let dsts : type r. r Value.prim -> r -> A.any array =
+ fun op r ->
   match (op, r) with
-  | Value.Map { outs = [ _ ]; _ }, (y, ()) -> [| A.Any (nth j y) |]
+  | Value.Map { outs = [ _ ]; _ }, (y, ()) -> [| A.Any (one y) |]
   | Value.Reduce { reductions = [ Monoid _ ]; _ }, (y, ()) ->
-      [| A.Any (nth j y) |]
+      [| A.Any (one y) |]
   | Value.Reduce { reductions = [ Logsumexp _ ]; _ }, (y, ()) ->
-      [| A.Any (nth j y) |]
-  | Value.Scan { reduction = Monoid _; _ }, y -> [| A.Any (nth j y) |]
-  | Value.Scan { reduction = Logsumexp _; _ }, y -> [| A.Any (nth j y) |]
-  | _ -> Array.map (fun per -> per.(j)) (Prim.result_arrays op r)
+      [| A.Any (one y) |]
+  | Value.Scan { reduction = Monoid _; _ }, y -> [| A.Any (one y) |]
+  | Value.Scan { reduction = Logsumexp _; _ }, y -> [| A.Any (one y) |]
+  | _ -> Array.map (fun per -> per.(0)) (Prim.result_arrays op r)
 
-(* [op]'s kernel over its operands' arrays, into the results [r]'s arrays at
-   position [j]: [false] where it declines. A refusal raises naming [by], the
-   results' arrays there, then the operands' in their order
-   ({!Prim.val-operands}). *)
+(* [op]'s kernel over its operands' arrays, into the results [r]'s arrays, all
+   on one device: [false] where it declines. A refusal raises naming [by], the
+   results' arrays, then the operands' in their order ({!Prim.val-operands}). *)
 let call : type r.
-    by:string -> (module Nx_kernel.S) -> r Value.prim -> r -> int -> bool =
- fun ~by kernels op r j ->
+    by:string -> (module Nx_kernel.S) -> r Value.prim -> r -> bool =
+ fun ~by kernels op r ->
   let (module K : Nx_kernel.S) = kernels in
   let answer : A.answer =
     match op with
     | Value.Map { prog; loads; _ } ->
-        K.map prog ~dsts:(dsts_at op r j) (kernel_loads loads)
+        K.map prog ~dsts:(dsts op r) (kernel_loads loads)
     | Value.Reduce { layout; axes; prog; reductions; loads } ->
         let rs = Prim.kernel_reductions reductions
         and shape = Iarray.to_array (L.shape layout) in
-        K.reduce prog ~shape ~axes rs ~dsts:(dsts_at op r j)
+        K.reduce prog ~shape ~axes rs ~dsts:(dsts op r)
           (kernel_loads loads)
     | Value.Scan { axis; prog; reduction; loads; carry; _ } ->
         let carry = Option.map (fun (Value.Any c) -> A.Any (one c)) carry in
         K.scan ?carry prog ~axis (Prim.kernel_reduction reduction)
-          ~dsts:(dsts_at op r j) (kernel_loads loads)
+          ~dsts:(dsts op r) (kernel_loads loads)
     | Value.Contract
         {
           batch;
@@ -212,50 +187,50 @@ let call : type r.
               | Contracting r -> Contracting { r with offsets = one r.offsets })
             segments
         in
-        K.contract ~batch ~contracting ~segments ~acc ~dst:(nth j r)
+        K.contract ~batch ~contracting ~segments ~acc ~dst:(one r)
           ~init:(Option.map one init)
           { array = A.Any (one a); scale = Option.map scale a_scale }
           { array = A.Any (one b); scale = Option.map scale b_scale }
     | Value.Gather { axis; idx; x } ->
-        K.gather ~axis ~dst:(nth j r) (one idx) (one x)
+        K.gather ~axis ~dst:(one r) (one idx) (one x)
     | Value.Scatter { combine; unique; axis; idx; updates; into } ->
-        K.scatter combine ~unique ~axis ~dst:(nth j r) ~into:(one into)
+        K.scatter combine ~unique ~axis ~dst:(one r) ~into:(one into)
           (one idx) (one updates)
     | Value.Sort { axis; descending; x; _ } ->
         let values, positions = r in
-        K.sort ~axis ~descending ~values:(nth j values)
-          ~positions:(nth j positions) (one x)
-    | Value.Fold { pad; x; _ } -> K.fold pad ~dst:(nth j r) (one x)
+        K.sort ~axis ~descending ~values:(one values)
+          ~positions:(one positions) (one x)
+    | Value.Fold { pad; x; _ } -> K.fold pad ~dst:(one r) (one x)
     | Value.Fft (Value.C2c { direction; axes; x }) ->
-        K.c2c direction ~axes ~dst:(nth j r) (one x)
-    | Value.Fft (Value.R2c { axes; x; _ }) -> K.r2c ~axes ~dst:(nth j r) (one x)
-    | Value.Fft (Value.C2r { axes; x; _ }) -> K.c2r ~axes ~dst:(nth j r) (one x)
+        K.c2c direction ~axes ~dst:(one r) (one x)
+    | Value.Fft (Value.R2c { axes; x; _ }) -> K.r2c ~axes ~dst:(one r) (one x)
+    | Value.Fft (Value.C2r { axes; x; _ }) -> K.c2r ~axes ~dst:(one r) (one x)
     | Value.Linalg l -> (
         match (l, r) with
         | Value.Cholesky { triangle; a }, y ->
-            K.cholesky triangle ~dst:(nth j y) (one a)
+            K.cholesky triangle ~dst:(one y) (one a)
         | Value.Lu a, (lu, pivots, perm) ->
-            K.lu ~lu:(nth j lu) ~pivots:(nth j pivots) ~perm:(nth j perm)
+            K.lu ~lu:(one lu) ~pivots:(one pivots) ~perm:(one perm)
               (one a)
-        | Value.Qr { a; _ }, (q, r) -> K.qr ~q:(nth j q) ~r:(nth j r) (one a)
-        | Value.Svd_values { a; _ }, s -> K.svd ~s:(nth j s) (one a)
+        | Value.Qr { a; _ }, (q, r) -> K.qr ~q:(one q) ~r:(one r) (one a)
+        | Value.Svd_values { a; _ }, s -> K.svd ~s:(one s) (one a)
         | Value.Svd { a; _ }, (s, u, vh) ->
-            K.svd ~s:(nth j s) ~vectors:(~u:(nth j u), ~vh:(nth j vh)) (one a)
-        | Value.Eigh_values { a; _ }, w -> K.eigh ~w:(nth j w) (one a)
+            K.svd ~s:(one s) ~vectors:(~u:(one u), ~vh:(one vh)) (one a)
+        | Value.Eigh_values { a; _ }, w -> K.eigh ~w:(one w) (one a)
         | Value.Eigh { a; _ }, (w, v) ->
-            K.eigh ~w:(nth j w) ~v:(nth j v) (one a)
-        | Value.Eig_values { a; _ }, w -> K.eig ~w:(nth j w) (one a)
-        | Value.Eig { a; _ }, (w, v) -> K.eig ~w:(nth j w) ~v:(nth j v) (one a)
+            K.eigh ~w:(one w) ~v:(one v) (one a)
+        | Value.Eig_values { a; _ }, w -> K.eig ~w:(one w) (one a)
+        | Value.Eig { a; _ }, (w, v) -> K.eig ~w:(one w) ~v:(one v) (one a)
         | Value.Solve_triangular { triangle; adjoint; unit_diagonal; a; b }, y
           ->
-            K.solve_triangular triangle ~adjoint ~unit_diagonal ~dst:(nth j y)
+            K.solve_triangular triangle ~adjoint ~unit_diagonal ~dst:(one y)
               (one a) (one b))
     | Value.Assemble { fill; pieces; _ } ->
         let pieces =
           Array.of_list (List.map (fun (rs, x) -> (rs, one x)) pieces)
         in
-        K.assemble ~fill ~dst:(nth j r) pieces
-    | Value.Copy x -> map1 (module K) Copy ~dst:(nth j r) (one x)
+        K.assemble ~fill ~dst:(one r) pieces
+    | Value.Copy x -> map1 (module K) Copy ~dst:(one r) (one x)
     | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
         invalid_arg "Exec.call: an operation no kernel computes"
   in
@@ -266,7 +241,7 @@ let call : type r.
       let (Prim.Operands xs) = Prim.operands op in
       let operand (Value.Any x) = A.Any (one x) in
       A.refused by refusal
-        (Array.to_list (dsts_at op r j) @ List.map operand xs)
+        (Array.to_list (dsts op r) @ List.map operand xs)
 
 (* Raises for [op], whose kernels on [d] declined it. A routine is named by
    its routine, a reduction and a scan by what they compute, as
@@ -364,9 +339,8 @@ let beside_first (type d) (loads : d Value.load iarray) =
    results fresh there, the set's kernels called once. A map of one result,
    as an interpreter's one-node map is, builds the kernels' loads directly
    and computes as {!map} does, by {!mapped}. *)
-let local : type r. by:string -> r Value.prim -> r =
- fun ~by op ->
-  let layouts = Prim.layouts ~by op in
+let local_in : type r. by:string -> L.t array -> r Value.prim -> r =
+ fun ~by layouts op ->
   match op with
   | Value.Map { layout; prog; outs = [ dt ]; loads; _ } -> (
       match Iarray.get loads 0 with
@@ -386,14 +360,16 @@ let local : type r. by:string -> r Value.prim -> r =
       match Iarray.get loads 0 with
       | Value.Plain (Value.Array { at; a; _ }) ->
           let p = at in
-          let r = Prim.results_at p layouts (fun k f -> alloc ~by k f) op in
+          let r = Prim.results_at p layouts (fun k f -> alloc k f) op in
           let kernels = kernels_of ~by ~op:"Map" (Devices.set at) in
-          if call ~by kernels op r 0 then r
+          if call ~by kernels op r then r
           else
             let (module K : Nx_kernel.S) = kernels in
             refused ~by ~kernels:K.name (A.device a) op
       | Value.Plain _ | Value.Padded _ -> invalid_arg "Exec.local")
   | _ -> invalid_arg "Exec.local: not a map"
+
+let local ~by op = local_in ~by (Prim.layouts ~by op) op
 
 let is_local : type r. r Value.prim -> bool = function
   | Value.Map { loads; _ } -> beside_first loads
@@ -401,157 +377,294 @@ let is_local : type r. r Value.prim -> bool = function
 
 (* Windows *)
 
-(* [local], an operation's part on device [k] of [set], into its results [r]
-   at position [j] by the kernels. A decline raises. *)
+(* [op] into its results [r] on device [k] of [set] by the kernels. A decline
+   raises. *)
 let on_device : type r.
     by:string ->
     (module Nx_kernel.S) ->
     unit Devices.t ->
     r ->
     int ->
-    int ->
     r Value.prim ->
     unit =
- fun ~by kernels set r j k local ->
-  if not (call ~by kernels local r j) then
+ fun ~by kernels set r k op ->
+  if not (call ~by kernels op r) then
     let (module K : Nx_kernel.S) = kernels in
-    refused ~by ~kernels:K.name (Devices.rig set k) local
-
-(* [x] read whole on [p]'s one device: a view of its array there. *)
-let whole (type v s d) ~by p (x : (v, s, d) Value.t) : (v, s, d) Value.t =
-  let k = Option.get (Devices.device p) in
-  let a = Place.view ~by x k (Array.map Route.full (Prim.shape x)) in
-  Value.Array { at = p; a; dead = Value.Live }
-
-(* The one result of [op], a movement or a bitcast of [x], at [route]'s
-   result: on each device, [f w a] of [a], the view of [x]'s window there
-   that the result's window [w] reads ({!Route.window}). *)
-let viewed : type v s w r d.
-    by:string ->
-    unit Route.t ->
-    L.t array ->
-    (w, r, d) Value.t Value.prim ->
-    (v, s, d) Value.t ->
-    (M.range array -> (v, s) A.t -> (w, r) A.t) ->
-    (w, r, d) Value.t =
- fun ~by route layouts op x f ->
-  let p = route.result and rule = Prim.rule op in
-  let devices = Grid.devices (Devices.grid p) in
-  Prim.results_at p layouts
-    (fun _ form ->
-      let shape = Iarray.to_array (L.shape form.layout) in
-      let on j k =
-        let w = Devices.window ~by p shape j in
-        let w' = Route.window rule ~operand:0 (Prim.shape x) w in
-        A.expect form.dtype (A.Any (f w (Place.view ~by x k w')))
-      in
-      make p ~shape (Iarray.of_array (Array.mapi on devices)))
-    op
+    refused ~by ~kernels:K.name (Devices.rig set k) op
 
 (* Placing *)
 
-let place ~by p x =
-  let y = Place.value ~by p x in
-  (* A value over [x]'s memory, kept or borrowed, shares it. *)
-  let xs = Prim.arrays x in
-  let overlaps b a = Rig.Buffer.overlaps (A.buffer a) (A.buffer b) in
-  Iarray.iter
-    (fun b ->
-      if Iarray.exists (overlaps b) xs then Rig.Claim.share (A.buffer b))
-    (Prim.arrays y);
-  y
+(* [a]'s elements in window [w]: [a] itself when [w] is all of it. *)
+let slice a (w : M.range iarray) =
+  let l = A.layout a in
+  let n = Iarray.length w in
+  let whole = ref (n = L.rank l) and i = ref 0 in
+  while !whole && !i < n do
+    let r = Iarray.get w !i in
+    whole := r.start = 0 && r.count = L.dim l !i;
+    incr i
+  done;
+  if !whole then a
+  else
+    match A.move (M.Slice w) a with
+    | Some v -> v
+    | None -> invalid_arg "Exec: a slice of an array is a view"
+
+let hosted a = Rig.reaches Rig.host (A.device a)
+
+(* [a] over its own memory on [d], where the host addresses both: a device that
+   only maps host memory takes a copy instead, so its work reads memory of its
+   own. *)
+let share d a =
+  if Rig.reaches Rig.host d && hosted a then A.borrow d a else None
+
+(* [a] on [d]: itself, its memory shared, or a copy of its elements. *)
+let bring d a =
+  if Rig.equal (A.device a) d then a
+  else match share d a with Some b -> b | None -> A.to_device d a
+
+(* The eager engine *)
+
+(* [x]'s piece on its [j]th device: its array there. *)
+let piece (type v s d) (x : (v, s, d) Value.t) j at : (v, s, d) Value.t =
+  match x with
+  | Value.Array _ -> x
+  | Value.Shards { arrays; _ } ->
+      Value.Array { at; a = Iarray.get arrays j; dead = Value.Live }
+  | Value.Traced _ -> invalid_arg "Exec: a traced value has no arrays"
+  | Value.Handle _ ->
+      invalid_arg "Exec: a donated value is read as its consumer"
+
+(* A view of [x]'s array: [x] itself where the view is all of it. Its memory
+   stays unshared: a step of a partition reads the view and keeps it in no
+   value it returns but a piece of its result. *)
+let view (type v s d) mv (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let at = Prim.placement x and a = one x in
+  let v =
+    match (mv : M.t) with
+    | Slice w -> slice a w
+    | _ -> (
+        match A.move mv a with
+        | Some v -> v
+        | None -> invalid_arg "Exec: a piece's layout expresses its view")
+  in
+  if v == a then x else Value.Array { at; a = v; dead = Value.Live }
+
+(* The window [w] of the piece [x]. *)
+let view_of_piece (x, w) = slice (one x) (Iarray.of_array w)
+
+let rec on_device_of d = function
+  | [] -> None
+  | ((x, _) as p) :: ps ->
+      if Rig.equal (A.device (one x)) d then Some (view_of_piece p)
+      else on_device_of d ps
+
+let rec borrowed d = function
+  | [] -> None
+  | p :: ps -> (
+      match share d (view_of_piece p) with
+      | Some a -> Some a
+      | None -> borrowed d ps)
+
+(* One of the windows [ps] on [at]'s device: a view of one there, else a
+   borrow of one whose memory the device addresses, else a copy of the
+   first. *)
+let bring_one (type v s d e) at (ps : ((v, s, d) Value.t * M.range array) list)
+    : (v, s, e) Value.t =
+  let d = rig_of at in
+  let a =
+    match on_device_of d ps with
+    | Some a -> a
+    | None -> (
+        match borrowed d ps with
+        | Some a -> a
+        | None -> A.to_device d (view_of_piece (List.hd ps)))
+  in
+  Value.Array { at; a; dead = Value.Live }
+
+(* The boxes gathered into a fresh C-contiguous array on [at]'s device. A dtype
+   narrower than a byte gathers on the host where the host does not address
+   the device's memory, since a run may start inside a byte, and is then
+   brought to the device. *)
+let gather (type v s d e) at (dt : (v, s) D.t) shape
+    (boxes : (M.range array * (v, s, d) Value.t * M.range array) list) :
+    (v, s, e) Value.t =
+  let d = rig_of at in
+  let on =
+    if D.bits dt mod 8 = 0 || Rig.reaches Rig.host d then d else Rig.host
+  in
+  let dst = A.create on dt shape in
+  List.iter
+    (fun (w, x, b) ->
+      let src = slice (one x) (Iarray.of_array b) in
+      A.transfer ~src ~dst:(slice dst (Iarray.of_array w)))
+    boxes;
+  Value.Array { at; a = bring d dst; dead = Value.Live }
+
+(* An array whose writer is done, as an [iarray], without a copy. *)
+external freeze : 'a array -> 'a iarray = "%opaque"
+
+(* The array of the device at position [j] of [p]'s grid, where its window
+   is empty: memory of no bytes of its own, where a view of a source would
+   hold, and share, all of that source's memory. *)
+let empty_window p shape dt j =
+  let w = Devices.window ~by:"Exec.assemble" p shape j in
+  let k = (Grid.devices (Devices.grid p)).(j) in
+  A.create (Devices.rig (Devices.set p) k) dt (Route.extents w)
+
+let piece_array p shape dt ps j =
+  match ps.(j) with Some v -> one v | None -> empty_window p shape dt j
+
+(* The value over [ps]' arrays, an empty window's fresh. *)
+let assemble (type v s d e) (p : e Devices.placement) shape (dt : (v, s) D.t)
+    (ps : (v, s, d) Value.t option array) : (v, s, e) Value.t =
+  let first = piece_array p shape dt ps 0 in
+  let n = Array.length ps in
+  if n = 1 then Value.Array { at = p; a = first; dead = Value.Live }
+  else begin
+    let arrays = Array.make n first in
+    for j = 1 to n - 1 do
+      arrays.(j) <- piece_array p shape dt ps j
+    done;
+    Value.Shards { at = p; shape; arrays = freeze arrays; dead = Value.Live }
+  end
+
+(* Placing one array *)
+
+(* The array [a] of a value at [at], placed at the one-device placement [p]:
+   itself where [at] is [p], else as {!eager} places a value whose one piece
+   holds the whole, without building the partition. A value of no elements
+   is memory of no bytes of its own, where a borrow would share [a]'s. *)
+let one_array at a p =
+  if Devices.equal at p then a
+  else
+    let d = rig_of p and l = A.layout a in
+    if L.numel l = 0 then A.create d (A.dtype a) (L.shape l) else bring d a
+
+let to_one (type v s d e) (at : d Devices.placement) (a : (v, s) A.t)
+    (p : e Devices.placement) : (v, s, e) Value.t =
+  Value.Array { at = p; a = one_array at a p; dead = Value.Live }
+
+let overlaps a b = Rig.Buffer.overlaps (A.buffer a) (A.buffer b)
+
+(* Whether an array of [xs] from position [i] overlaps [b]. *)
+let rec overlaps_any xs b i =
+  i < Iarray.length xs
+  && (overlaps (Iarray.get xs i) b || overlaps_any xs b (i + 1))
+
+(* [to_one], its array marked shared where it lies over [a]'s memory, as
+   {!place} marks it. *)
+let placed_one (type v s d e) (at : d Devices.placement) (a : (v, s) A.t)
+    (p : e Devices.placement) : (v, s, e) Value.t =
+  let b = one_array at a p in
+  if overlaps a b then Rig.Claim.share (A.buffer b);
+  Value.Array { at = p; a = b; dead = Value.Live }
 
 (* Creations *)
 
-(* The creation [op], a map of no loads at [p], whose set has no kernels:
-   its elements come from numbers alone. It is computed whole by the
-   host's kernels, then each result placed at [p], each device holding a
-   copy of its window, or a borrow, which shares the host's memory, where it
-   addresses it ({!place}). Its bits are the host form's. *)
+(* The creation [op], a map of no loads on device [p], whose set has no
+   kernels: its elements come from numbers alone. It is computed by the host's
+   kernels, then placed at [p], which holds a copy, or a borrow, which shares
+   the host's memory, where it addresses it ({!place}). Its bits are the host
+   form's. *)
 let created : type r.
     by:string -> unit Devices.placement -> L.t array -> r Value.prim -> r =
  fun ~by p layouts op ->
   let host = Devices.on Devices.host in
   let set = Devices.set host in
-  let r = Prim.results_at host layouts (fun k f -> alloc ~by k f) op in
-  on_device ~by (kernels_of ~by ~op:(Prim.name op) set) set r 0 0 op;
+  let r = Prim.results_at host layouts (fun k f -> alloc k f) op in
+  on_device ~by (kernels_of ~by ~op:(Prim.name op) set) set r 0 op;
   let arrays = Prim.result_arrays op r in
   Prim.results_at p layouts
     (fun k (f : _ Value.form) ->
-      let a = A.expect f.dtype arrays.(k).(0) in
-      place ~by p (Value.Array { at = host; a; dead = Value.Live }))
+      placed_one host (A.expect f.dtype arrays.(k).(0)) p)
     op
 
 let windows : type r.
-    by:string -> ?into:A.any -> unit Route.t -> L.t array -> r Value.prim -> r
-    =
- fun ~by ?into route layouts op ->
-  (match route.compute with
-  | Windows -> ()
-  | Partials -> invalid_arg "Exec.windows: a route that computes by partials");
+    by:string ->
+    ?into:A.any ->
+    unit Devices.placement ->
+    L.t array ->
+    r Value.prim ->
+    r =
+ fun ~by ?into p layouts op ->
   match op with
-  | Value.Move (mv, x) -> (
-      let set = Devices.set (Prim.placement x) in
-      match x with
-      | Value.Array { at; a; _ } when Devices.equal at route.result ->
-          (* One array, moved where it lies: its view is the result. *)
-          Value.Array { at; a = as_view ~by set A.move mv a; dead = Value.Live }
-      | _ ->
-          viewed ~by route layouts op x (fun w a ->
-              as_view ~by set A.move (Prim.local_move mv w) a))
-  | Value.Bitcast (dt, x) -> (
-      let set = Devices.set (Prim.placement x) in
-      match x with
-      | Value.Array { at; a; _ } when Devices.equal at route.result ->
-          Value.Array
-            { at; a = as_view ~by set A.bitcast dt a; dead = Value.Live }
-      | _ ->
-          viewed ~by route layouts op x (fun _ a ->
-              as_view ~by set A.bitcast dt a))
+  | Value.Move (mv, x) ->
+      let set = Devices.set p in
+      Value.Array
+        { at = p; a = as_view ~by set A.move mv (one x); dead = Value.Live }
+  | Value.Bitcast (dt, x) ->
+      let set = Devices.set p in
+      Value.Array
+        { at = p; a = as_view ~by set A.bitcast dt (one x); dead = Value.Live }
   | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.windows: a placement or a check"
   | Value.Map { at = Some _; loads; _ }
-    when Iarray.length loads = 0 && Devices.bare route.result ->
-      created ~by route.result layouts op
+    when Iarray.length loads = 0 && Devices.bare p ->
+      created ~by p layouts op
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fold _ | Value.Fft _ | Value.Linalg _
-  | Value.Assemble _ | Value.Contract _ | Value.Copy _ -> (
-      (* Fresh results where the route places them, each device's window [w]
-         of the first computed there by its kernels over each operand's
-         window ({!Route.window}). *)
-      let p = route.result in
-      let r =
-        Prim.results_at p layouts (fun k f -> alloc ~by ?into k f) op
-      in
+  | Value.Assemble _ | Value.Contract _ | Value.Copy _ ->
+      (* Fresh results on the route's one device, computed there by its
+         kernels over the operands, which lie there. *)
+      let r = Prim.results_at p layouts (fun k f -> alloc ?into k f) op in
       let set = Devices.set p in
       let kernels = kernels_of ~by ~op:(Prim.name op) set in
-      match Grid.one (Devices.grid p) with
-      | Some k ->
-          (* On one device each operand is read whole: itself where it lies
-             there alone, as it does where the route found every operand at
-             one placement, and otherwise a view of its array there. *)
-          if Prim.all_at p op then on_device ~by kernels set r 0 k op
-          else begin
-            let read _ x = if Prim.placement x == p then x else whole ~by p x in
-            on_device ~by kernels set r 0 k (Prim.mapi read op)
-          end;
-          r
-      | None ->
-          let rule = Prim.rule op
-          and first = Iarray.to_array (L.shape layouts.(0)) in
-          Array.iteri
-            (fun j k ->
-              let w = Devices.window ~by p first j in
-              let view i x =
-                let at = Devices.one (Devices.set (Prim.placement x)) k in
-                let w' = Route.window rule ~operand:i (Prim.shape x) w in
-                let a = Place.view ~by x k w' in
-                Value.Array { at; a; dead = Value.Live }
-              in
-              on_device ~by kernels set r j k
-                (Prim.local (Prim.mapi view op) w))
-            (Grid.devices (Devices.grid p));
-          r)
+      on_device ~by kernels set r (Option.get (Grid.one (Devices.grid p))) op;
+      r
+
+(* [windows], over the memory [into]'s array holds, or {!local} where the
+   two give one result: a map beside its loads into fresh results, whose
+   one result, if alone, is laid out C-contiguous from offset 0, as
+   [windows] lays it. *)
+let run : type r d.
+    by:string -> ?into:d Value.any -> unit Devices.placement -> L.t array ->
+    r Value.prim -> r =
+ fun ~by ?into p layouts op ->
+  match (into, op) with
+  | None, Value.Map { layout; outs; _ }
+    when is_local op
+         && (match outs with
+            | [ _ ] -> L.is_contiguous layout && L.offset layout = 0
+            | _ -> true) ->
+      local_in ~by layouts op
+  | None, _ -> windows ~by p layouts op
+  | Some (Value.Any v), _ -> windows ~by ~into:(A.Any (one v)) p layouts op
+
+let eager = { Partition.run; piece; view; bring = bring_one; gather; assemble }
+
+(* Placing values *)
+
+(* One array placed on one device needs no partition ({!to_one}). *)
+let value : type v s d e.
+    by:string -> e Devices.placement -> (v, s, d) Value.t -> (v, s, e) Value.t
+    =
+ fun ~by p x ->
+  match x with
+  | Value.Traced _ ->
+      invalid_arg "Exec.value: a traced value is placed by its owner"
+  | Value.Handle _ ->
+      invalid_arg "Exec.value: a donated value is placed as its consumer"
+  | Value.Array { at; a; _ } when Grid.count (Devices.grid p) = 1 ->
+      to_one at a p
+  | Value.Array _ | Value.Shards _ -> Partition.place eager ~by p x
+
+let place : type v s d e.
+    by:string -> e Devices.placement -> (v, s, d) Value.t -> (v, s, e) Value.t
+    =
+ fun ~by p x ->
+  match x with
+  | Value.Array { at; a; _ } when Grid.count (Devices.grid p) = 1 ->
+      placed_one at a p
+  | _ ->
+      let y = value ~by p x in
+      (* A value over [x]'s memory, kept or borrowed, shares it. *)
+      let xs = Prim.arrays x and ys = Prim.arrays y in
+      for j = 0 to Iarray.length ys - 1 do
+        let b = Iarray.get ys j in
+        if overlaps_any xs b 0 then Rig.Claim.share (A.buffer b)
+      done;
+      y
 
 (* The fast path *)
 

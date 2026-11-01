@@ -190,8 +190,16 @@ and routed : type r. by:string -> ?into:A.any -> Prim.routed -> r prim -> r =
       let route = Option.get r.Prim.route in
       let op = gather ~by route op in
       match route.compute with
-      | Partials -> Partial.run ~by route op
-      | Windows -> Exec.windows ~by ?into route r.layouts op)
+      | Partials -> Partial.run Exec.eager ~by route op
+      | Windows -> (
+          match into with
+          | None -> Partition.windows Exec.eager ~by route r.layouts op
+          | Some (A.Any a) ->
+              (* A value on the route's one device, over the donated
+                 memory. *)
+              let at = route.result in
+              let into = Value.Any (Array { at; a; dead = Live }) in
+              Partition.windows Exec.eager ~by ~into route r.layouts op))
 
 let is_traced (type v s d) (x : (v, s, d) t) =
   match x with

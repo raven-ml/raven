@@ -509,9 +509,7 @@ let item i x =
             w index
         in
         let j = List.find holds (List.init (Array.length ks) Fun.id) in
-        let a = Place.view ~by live ks.(j) (Array.of_list one) in
-        let at = Devices.one (Devices.set p) ks.(j) in
-        let v = Value.Array { at; a; dead = Value.Live } in
+        let v = Partition.read Exec.eager ~by live ks.(j) (Array.of_list one) in
         Nx_array.get (Check.on_host ~by v) (Iarray.init r (fun _ -> 0))
     | Value.Traced _ ->
         let v = Eval.run ~by (Value.Move (Slice (Iarray.of_list one), live)) in

@@ -96,6 +96,15 @@ let devices = function One k -> [| k |] | Grid g -> Array.of_list g.devices
 let count = function One _ -> 1 | Grid g -> List.length g.devices
 let one = function One k -> Some k | Grid _ -> None
 
+let rec index (k : int) i = function
+  | [] -> -1
+  | d :: ds -> if d = k then i else index k (i + 1) ds
+
+let position g k =
+  match g with
+  | One k' -> if k = k' then 0 else -1
+  | Grid { devices; _ } -> index k 0 devices
+
 let tiles extents c =
   List.fold_left (fun n g -> n * List.nth extents g) 1 c.over
 

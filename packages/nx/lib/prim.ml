@@ -565,7 +565,7 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
 let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
  fun f op -> fold (fun e found x -> found || e.test x) { test = f } false op
 
-let all_at p op = fold (fun p all x -> all && placement x == p) p true op
+let lies_at p op = fold (fun p at x -> at && placement x == p) p true op
 
 let mapi : type r.
     ('v 's 'd. int -> ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
@@ -2165,6 +2165,104 @@ let iter_results : type r.
   | Move _ -> f r
   | Bitcast _ -> f r
   | Place _ -> f r
+  | Check _ -> ()
+
+(* Zipping results *)
+
+(* [f] of the values at one position of each result, the result of none
+   [None] there. *)
+type zipper = {
+  f : 'v 's 'd. int -> ('v, 's, 'd) t option array -> ('v, 's, 'd) t;
+}
+
+let fsts rs = Array.map (Option.map fst) rs
+let snds rs = Array.map (Option.map snd) rs
+
+let rec zip_outs : type d q. zipper -> int -> (d, q) outs -> q option array -> q
+    =
+ fun z k outs rs ->
+  match outs with
+  | [] -> ()
+  | _ :: rest ->
+      let v = z.f k (fsts rs) in
+      (v, zip_outs z (k + 1) rest (snds rs))
+
+let zip_reduction : type d a.
+    zipper -> int -> (d, a) reduction -> a option array -> a =
+ fun z k r rs ->
+  match r with
+  | Monoid _ -> z.f k rs
+  | Logsumexp _ -> z.f k rs
+  | Moments _ ->
+      let mean = z.f k (fsts rs) in
+      (mean, z.f (k + 1) (snds rs))
+  | Arg _ ->
+      let extreme = z.f k (fsts rs) in
+      (extreme, z.f (k + 1) (snds rs))
+
+let rec zip_reductions : type d q.
+    zipper -> int -> (d, q) reductions -> q option array -> q =
+ fun z k rs vs ->
+  match rs with
+  | [] -> ()
+  | r :: rest ->
+      let a = zip_reduction z k r (fsts vs) in
+      (a, zip_reductions z (k + reduction_width r) rest (snds vs))
+
+let zip_linalg : type d r. zipper -> (d, r) linalg -> r option array -> r =
+ fun z l rs ->
+  let nth f = Array.map (Option.map f) rs in
+  match l with
+  | Cholesky _ -> z.f 0 rs
+  | Solve_triangular _ -> z.f 0 rs
+  | Svd_values _ -> z.f 0 rs
+  | Eigh_values _ -> z.f 0 rs
+  | Eig_values _ -> z.f 0 rs
+  | Lu _ ->
+      let a = z.f 0 (nth (fun (a, _, _) -> a)) in
+      let b = z.f 1 (nth (fun (_, b, _) -> b)) in
+      (a, b, z.f 2 (nth (fun (_, _, c) -> c)))
+  | Svd _ ->
+      let s = z.f 0 (nth (fun (s, _, _) -> s)) in
+      let u = z.f 1 (nth (fun (_, u, _) -> u)) in
+      (s, u, z.f 2 (nth (fun (_, _, vh) -> vh)))
+  | Qr _ ->
+      let q = z.f 0 (fsts rs) in
+      (q, z.f 1 (snds rs))
+  | Eigh _ ->
+      let w = z.f 0 (fsts rs) in
+      (w, z.f 1 (snds rs))
+  | Eig _ ->
+      let w = z.f 0 (fsts rs) in
+      (w, z.f 1 (snds rs))
+
+let zip : type r.
+    r prim ->
+    r option array ->
+    ('v 's 'd. int -> ('v, 's, 'd) t option array -> ('v, 's, 'd) t) ->
+    r =
+ fun op rs f ->
+  let z = { f } in
+  match op with
+  | Map { outs; _ } -> zip_outs z 0 outs rs
+  | Reduce { reductions; _ } -> zip_reductions z 0 reductions rs
+  | Scan { reduction; _ } -> zip_reduction z 0 reduction rs
+  | Sort _ ->
+      let values = f 0 (fsts rs) in
+      (values, f 1 (snds rs))
+  | Fft (C2c _) -> f 0 rs
+  | Fft (R2c _) -> f 0 rs
+  | Fft (C2r _) -> f 0 rs
+  | Linalg l -> zip_linalg z l rs
+  | Gather _ -> f 0 rs
+  | Scatter _ -> f 0 rs
+  | Fold _ -> f 0 rs
+  | Assemble _ -> f 0 rs
+  | Contract _ -> f 0 rs
+  | Copy _ -> f 0 rs
+  | Move _ -> f 0 rs
+  | Bitcast _ -> f 0 rs
+  | Place _ -> f 0 rs
   | Check _ -> ()
 
 let any xs =

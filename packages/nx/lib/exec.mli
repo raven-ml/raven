@@ -3,24 +3,24 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Computing operations by their set's kernels, each device its window.
+(** Computing operations by their set's kernels on one device, and the eager
+    engine of partitions.
 
-    This module computes an operation whose operands have bytes. Its callers
-    choose the route ({!Prim.val-route}) and give it the memory a donation
-    frees. It settles no check. This module lies above {!Prim}, {!Route} and
-    {!Place}; {!Partial}, {!Check} and {!Eval} call it.
+    This module computes an operation whose operands have bytes and lie on
+    one device, where its results lie too. Its callers choose the route
+    ({!Prim.val-route}) and give it the memory a donation frees. It settles
+    no check. An operation over several devices computes as its partition
+    ({!Partition}) on {!eager}, whose steps compute here, view arrays, and
+    move them through nx.array and rig. This module lies above {!Prim},
+    {!Route} and {!Partition}; {!Check} and {!Eval} call it.
 
-    An operation's results lie at its route's result. Each device of that
-    placement computes its {e window} of the results ({!Devices.window}) by
-    one call of the set's kernels, over each operand's window there
-    ({!Route.window}), which it reads by a view of the operand's array on
-    that device ({!Place.view}), or as the operand itself where the operand
-    and the results lie on that device alone. A program that reads
-    coordinates adds the window's first index to them. Where a layout
-    expresses a movement or a bitcast, its result is a view of the
-    operand's memory and no kernel runs. Otherwise the operand is copied and
-    the result is a view of the copy. A result shares an operand's memory
-    only as its view, or where a donation gives the operand's memory to it.
+    Where a layout expresses a movement or a bitcast, its result is a view
+    of the operand's memory and no kernel runs. Otherwise the operand is
+    copied and the result is a view of the copy. A result shares an
+    operand's memory only as its view, or where a donation gives the
+    operand's memory to it. A program that reads coordinates reads them
+    from its loop's start, which a partition's window offsets
+    ({!Prim.local}).
 
     A {e refusal} of the kernels raises through {!Nx_array.refused} naming
     the [by] the caller passes. A {e decline} raises [Invalid_argument]
@@ -31,8 +31,8 @@
     computes no case on the kernels' behalf and moves no data between
     devices on its own. A set without kernels raises [Invalid_argument]
     naming [by] before any kernel runs, but for a map of no loads, a
-    creation, which the host's kernels compute whole and {!place} puts at
-    the route's result.
+    creation, which the host's kernels compute and {!place} puts on the
+    device.
 
     Over devices of one architecture, a result's bits are those of the same
     operation on one device, by the window law ({!Route.window}), wherever
@@ -44,26 +44,50 @@
     Unless a value's doc says otherwise, it raises as stated above, and
     allocates the results' memory and the values over it. *)
 
-(** {1:computing Windows} *)
+(** {1:computing One device} *)
 
 val windows :
   by:string ->
   ?into:Nx_array.any ->
-  unit Route.t ->
+  unit Devices.placement ->
   Nx_array.Layout.t array ->
   'r Value.prim ->
   'r
-(** [windows ~by ?into route layouts op] is [op] computed by windows, each
-    operand's arrays holding the windows [route] reads it at, its results at
-    [route]'s result laid out as [layouts] ({!Prim.val-layouts}), fresh but
-    the first, which is [into] where it is given: memory of a donated
-    operand ({!Donate.reuse}) that holds the first result's window on the
-    one device of the route's result.
+(** [windows ~by ?into p layouts op] is [op] computed at the one-device
+    placement [p], where its operands must lie, its results of the shapes
+    of [layouts] ({!Prim.val-layouts}), fresh and C-contiguous but the
+    first, which is [into] where it is given: memory of a donated operand
+    ({!Donate.reuse}) that holds the first result.
 
-    Raises [Invalid_argument] as an internal fault for a route that
-    computes by partials ({!Route.Partials}), a [Place] or a [Check]. *)
+    Raises [Invalid_argument] as an internal fault for a [Place] or a
+    [Check]. *)
 
-(** {1:local One device} *)
+val run :
+  by:string ->
+  ?into:'d Value.any ->
+  unit Devices.placement ->
+  Nx_array.Layout.t array ->
+  'r Value.prim ->
+  'r
+(** [run ~by ?into p layouts op] is {!windows}[ ~by p layouts op] over the
+    memory of [into]'s array. Without [into], a map whose loads lie beside
+    each other ({!is_local}), and whose one result, if alone, is laid out
+    C-contiguous from offset 0, computes by {!local}, which gives it the
+    same results. *)
+
+val eager : Partition.engine
+(** [eager] is the engine of eager execution. {!run} computes its
+    operations. Its pieces are a value's arrays, and its views are views of
+    them that leave their memory unshared. A move takes an array on the
+    device itself, else one whose memory the host and the device both
+    address ({!Rig.reaches}), as a borrow, else a copy of the first
+    ({!Nx_array.to_device}). A gather fills a fresh C-contiguous array from
+    the boxes by {!Nx_array.transfer}, on the host for an element narrower
+    than a byte where the host does not address the device's memory, then
+    brought to the device. An empty window is an array of no bytes of its
+    own. *)
+
+(** {1:local Maps beside each other} *)
 
 val is_local : 'r Value.prim -> bool
 (** [is_local op] is whether [op] is a map whose loads are live arrays read
@@ -78,19 +102,35 @@ val local : by:string -> 'r Value.prim -> 'r
     Raises [Invalid_argument] naming [by] where [op]'s operands break its
     rule, and as an internal fault for an operation {!is_local} refuses. *)
 
-(** {1:placing Placing} *)
+(** {1:placing Placing}
+
+    Placing reads and writes memory through nx.array and rig alone and runs
+    no kernel, so a set without kernels places. Each device of the
+    destination holds its window of the value and allocates at most the
+    window's bytes. Nothing holds the whole value unless the destination
+    does. *)
+
+val value :
+  by:string ->
+  'e Devices.placement ->
+  ('v, 's, 'd) Value.t ->
+  ('v, 's, 'e) Value.t
+(** [value ~by p x] is {!Partition.place} of [x] at [p] on {!eager}: over
+    [x]'s own arrays when [x]'s placement equals [p].
+
+    Raises [Invalid_argument] naming [by] if [p] cuts an axis [x] lacks, and
+    if [x] is traced or a handle, {!Rig.Lost} for a lost device, and what
+    {!Rig.Buffer.copy} raises. *)
 
 val place :
   by:string ->
   'e Devices.placement ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'e) Value.t
-(** [place ~by p x] is [x]'s elements at [p] ({!Place.value}). It settles
-    no check on [x]'s set. An array of the result over memory of [x]'s,
-    kept or borrowed, marks that memory shared ({!Rig.Claim.share}), so
-    that no donation of either value writes what the other reads.
-
-    Raises what {!Place.value} raises. *)
+(** [place ~by p x] is {!value}[ ~by p x]. It settles no check on [x]'s
+    set. An array of the result over memory of [x]'s, kept or borrowed,
+    marks that memory shared ({!Rig.Claim.share}), so that no donation of
+    either value writes what the other reads. *)
 
 (** {1:fast Fast paths}
 

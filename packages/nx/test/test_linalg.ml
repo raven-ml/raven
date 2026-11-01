@@ -301,6 +301,18 @@ let test_split () =
   equal ~msg:"w" (array float_exact) (Array.make 6 1.) (read w);
   equal ~msg:"v" (array float_exact) (Array.make 18 2.) (read v)
 
+(* Matrices of no columns factor into an empty [l] and [u] and a permutation
+   with elements, which every device of a cut batch computes. *)
+let test_split_empty () =
+  let module Cpu2 = (val Nx.devices [ m 0; m 1 ]) in
+  let a = Nx.zeros D.Float32 [| 4; 3; 0 |] in
+  let perm, l, u = Nx.lu (Nx.place (Cpu2.split ~axis:0) a) in
+  equal ~msg:"l" (array int) [| 4; 3; 0 |] (Nx.shape l);
+  equal ~msg:"u" (array int) [| 4; 0; 0 |] (Nx.shape u);
+  equal ~msg:"perm" (array int64)
+    (Array.concat (List.init 4 (fun _ -> [| 0L; 1L; 2L |])))
+    (Nx.to_array (Nx.place Nx.Host.on perm))
+
 let test_declined () =
   let module Declines = (val Nx.devices ~kernels:(module Declining) [ m 0 ]) in
   let a =
@@ -1572,6 +1584,8 @@ let () =
              test "each routine reaches the kernels, its results in order"
                test_dispatch;
              test "a split batch factors on each device" test_split;
+             test "a cut batch of matrices of no columns gives each its \
+                   permutation" test_split_empty;
              test "a declined routine raises naming the move" test_declined;
            ];
          group "factorisations"

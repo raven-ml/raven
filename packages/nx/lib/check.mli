@@ -92,8 +92,8 @@ val wait : by:string -> ('v, 's, 'd) Value.t -> unit
 
 val on_host : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t
 (** [on_host ~by x] is an array on the host holding [x]'s elements, [x]
-    placed there ({!Place.value}), which is [x]'s own array where [x] lies
+    placed there ({!Exec.value}), which is [x]'s own array where [x] lies
     on the host. No interpretation receives it, and it settles no check.
 
     Raises [Invalid_argument] naming [by] for a traced [x], and what
-    {!Place.value} raises. *)
+    {!Exec.value} raises. *)

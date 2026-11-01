@@ -156,9 +156,9 @@ val exists : ('v 's 'd. ('v, 's, 'd) t -> bool) -> 'r prim -> bool
     nor {!iteri} allocates for an operation other than a factorisation, a
     contraction or a check. *)
 
-val all_at : unit Devices.placement -> 'r prim -> bool
-(** [all_at p op] is whether every operand of [op] lies at [p], physically.
-    It allocates as {!exists} does. *)
+val lies_at : 'd Devices.placement -> 'r prim -> bool
+(** [lies_at p op] is whether every operand of [op] lies at [p], physically.
+    It allocates nothing. *)
 
 val map : ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
 (** [map m op] is [op] with each operand [x] replaced by [m x]. *)
@@ -437,3 +437,13 @@ val result_arrays : 'r prim -> 'r -> Nx_array.any array array
 (** [result_arrays op r] is, per result of [op] in position order, the arrays
     of [r]'s value there: one per device of its placement. Raises
     [Invalid_argument] if a result is traced. *)
+
+val zip :
+  'r prim ->
+  'r option array ->
+  ('v 's 'd. int -> ('v, 's, 'd) t option array -> ('v, 's, 'd) t) ->
+  'r
+(** [zip op rs f] is a result of [op] whose value at position [k] is
+    [f k vs], [vs.(j)] the value at [k] of [rs.(j)], or [None] where
+    [rs.(j)] is. Each of [rs] is a result of [op] or of an operation of its
+    result type, as {!local}'s. *)

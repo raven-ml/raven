@@ -127,11 +127,19 @@ let empty (w : M.range array) =
   done;
   !i < Array.length w
 
-let contains (outer : M.range array) (inner : M.range array) =
-  Array.for_all2
-    (fun (o : M.range) (i : M.range) ->
-      i.start >= o.start && i.start + i.count <= o.start + o.count)
-    outer inner
+(* A loop: [Array.for_all2] allocates its own. *)
+let rec contains_from (outer : M.range array) (inner : M.range array) k =
+  k = Array.length outer
+  ||
+  let o = outer.(k) and i = inner.(k) in
+  i.start >= o.start
+  && i.start + i.count <= o.start + o.count
+  && contains_from outer inner (k + 1)
+
+let contains outer inner =
+  if Array.length outer <> Array.length inner then
+    invalid_arg "Route.contains: windows of different ranks";
+  contains_from outer inner 0
 
 let window rule ~operand:i shape (w : M.range array) =
   match rule with

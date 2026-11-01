@@ -15,13 +15,15 @@
     of its window of the results. Each device computes a {e partial}, the
     fold of the terms its operands' windows hold, and the partials
     {e close}: they move between devices and combine into the results at
-    the route's result. Every step is one operation computed by windows
-    ({!Exec.windows}) or one move ({!Place.value}). A partial computes on
-    its device alone, over a route this module builds that reads every
-    operand on that device and puts every result there. This module lies
-    above {!Exec}; {!Check} and {!Eval} route operations and give it those
-    whose route computes by partials. A scatter into a target cut along its
-    axis computes by partials too, and closes nothing ({!section-scatters}).
+    the route's result. Every step is an operation on one device, one
+    computed by windows ({!Partition.windows}) or one move
+    ({!Partition.place}), each on the engine the caller gives, so a fold is
+    a partition. A partial computes on its device alone, over a route this
+    module builds that reads every operand on that device and puts every
+    result there. This module lies above {!Partition}; {!Check} and {!Eval}
+    route operations and give it those whose route computes by partials. A
+    scatter into a target cut along its axis computes by partials too, and
+    closes nothing ({!section-scatters}).
 
     A device's windows of the operands along the folded axes are its
     {e tile}. The devices that hold one window of the results form a
@@ -61,7 +63,7 @@
     results there: the fold's monoid over the slots in C order of their
     indices, by the kernels in their own order. Where an axis took the
     leading axes' cut, the parts move to the route's result
-    ({!Place.value}). A [Reduce] of several reductions computes each one
+    ({!Partition.place}). A [Reduce] of several reductions computes each one
     alone.
 
     A [Sum], [Prod], [Max] or [Min] partial reduces its tile into the
@@ -272,11 +274,11 @@
     device one map shifting its positions where its tile starts past [0],
     one gather and one bitcast, and one bitcast over the results. *)
 
-val run : by:string -> unit Route.t -> 'r Value.prim -> 'r
-(** [run ~by route op] is [op], its operands lying where [route], its route,
-    reads them, computed as stated above.
+val run : Partition.engine -> by:string -> unit Route.t -> 'r Value.prim -> 'r
+(** [run e ~by route op] is [op], its operands lying where [route], its
+    route, reads them, computed as stated above on [e].
 
-    Raises as {!Exec} states for the kernels, naming [by], and
+    Raises what [e]'s steps raise, naming [by], and
     [Invalid_argument] as an internal fault for an operation other than a
     [Reduce], a [Scan] of no carry, a [Gather], a [Scatter] or a [Contract]
     of no segments or of [Rows], since no route computes another by partials,

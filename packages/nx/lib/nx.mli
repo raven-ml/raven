@@ -297,18 +297,20 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
 (** {2:routing Routing}
 
     Each device computes its window of an operation's result from the
-    windows of the operands it holds. The result lies at the union of the
-    operands' cuts, joined in operand order, or, where that order cannot
-    read an operand where it lies, with a gather's or a scatter's positions
-    last. A cut of an axis that becomes a result axis cuts that axis over
-    the same devices. A cut of an axis read whole cuts nothing. A cut of an
-    axis that a reduction or a contraction sums makes the devices compute by
-    partials where every operand holding the axis is cut alike, and cuts
-    nothing in the result; so does one of the axis a gather reads at
-    positions, and one of the axis along which a scatter's [Add] reads its
-    positions and updates. One along a scan's axis stays in it, and so does
-    one along the axis a scatter writes at positions, each device writing
-    the updates that land in its window. An operand whole on every device
+    windows of the operands it holds. Where some device's windows hold
+    elements, a device whose windows of the results hold none computes
+    nothing. The result lies at the union of the operands' cuts, joined in
+    operand order, or, where that order cannot read an operand where it
+    lies, with a gather's or a scatter's positions last. A cut of an axis
+    that becomes a result axis cuts that axis over the same devices. A cut
+    of an axis read whole cuts nothing. A cut of an axis that a reduction
+    or a contraction sums makes the devices compute by partials where every
+    operand holding the axis is cut alike, and cuts nothing in the result;
+    so does one of the axis a gather reads at positions, and one of the axis
+    along which a scatter's [Add] reads its positions and updates. One along
+    a scan's axis stays in it, and so does one along the axis a scatter
+    writes at positions, each device writing the updates that land in its
+    window. An operand whole on every device
     is read by a view of each device's window.
 
     An operation raises [Invalid_argument] where two operands cut one

@@ -3269,6 +3269,12 @@ thread.
 
 ### Nx
 
+- `Nx.place` of a value on one device onto one other device takes half the
+  time it did and a quarter of the words; `Nx.place` onto several devices and
+  `Nx.item` of a split value allocate a fifth less.
+- An operation over several devices runs nothing on a device whose windows
+  of its results are all empty, as an uneven split leaves where an axis has
+  fewer elements than devices; it called the kernels there on empty arrays.
 - `Nx.Prim.iteri` applies a function to an operation's operands without
   building their list, for interpreters that walk many operations.
 - `Nx.softplus`'s gradient at `0.` is `0.5`, where it was `0.`.

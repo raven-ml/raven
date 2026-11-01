@@ -26,7 +26,7 @@ let on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
   match x with
   | Value.Traced { owner; _ } -> traced ~by owner
   | Value.Array _ | Value.Shards _ | Value.Handle _ ->
-      Iarray.get (Prim.arrays (Place.value ~by host x)) 0
+      Iarray.get (Prim.arrays (Exec.value ~by host x)) 0
 
 (* Pending checks
 
@@ -364,8 +364,8 @@ let reduce ~by ok r =
   (* [ok] has bytes, so the reduction has a route. *)
   let route = Option.get route in
   match route.compute with
-  | Partials -> Partial.run ~by route op
-  | Windows -> Exec.windows ~by route layouts op
+  | Partials -> Partial.run Exec.eager ~by route op
+  | Windows -> Partition.windows Exec.eager ~by route layouts op
 
 (* The one element of [x], which has bytes: a 0-d view of the array that holds
    it. A cut placement's other devices hold empty windows. *)

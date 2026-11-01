@@ -43,6 +43,10 @@ val count : t -> int
 val one : t -> int option
 (** [one g] is [Some k] iff [g] is the device [k] alone. *)
 
+val position : t -> int -> int
+(** [position g k] is the position of the device [k] in {!devices}[ g], or
+    [-1] where [g] lacks it. It allocates nothing. *)
+
 val cuts : t -> (int * int) array
 (** [cuts g] is each cut axis with its number of tiles, by increasing axis. *)
 

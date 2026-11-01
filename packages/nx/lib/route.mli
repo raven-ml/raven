@@ -196,7 +196,7 @@ val empty : Nx_array.Move.range array -> bool
 val contains : Nx_array.Move.range array -> Nx_array.Move.range array -> bool
 (** [contains o w] is [true] iff each range of [w] lies within [o]'s along
     its axis, for windows of one rank whose ranges step by [1], as
-    {!Grid.window}'s do.
+    {!Grid.window}'s do. It allocates nothing.
 
     Raises [Invalid_argument] if [o] and [w] differ in rank. *)
 

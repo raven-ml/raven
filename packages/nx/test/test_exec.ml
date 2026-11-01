@@ -18,7 +18,14 @@ let m = Nx_support.memory
 
 module Count = (val Nx.devices ~kernels:(module C) [ m 0 ])
 module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
+
+module Count4 =
+  (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2; m 3 ])
+
 module Dec = (val Nx.devices ~kernels:(module Nx_support.Declining) [ m 1 ])
+
+module Dec2 =
+  (val Nx.devices ~kernels:(module Nx_support.Declining) [ m 0; m 1 ])
 
 (* Counting nx.cpu, declining the one-node maps of a copy, [Neg], [Add],
    [Less] and [Where], every [Logsumexp] and [Arg] reduction, sort and
@@ -1084,6 +1091,31 @@ let kernels =
           let y = Nx.add x x in
           equal int 2 (C.calls ());
           equal (array bits) [| 2.; 4.; 6.; 8. |] (elements y));
+      test "a device whose window is empty computes nothing" (fun () ->
+          let host = on_host Plain D.Float32 [| 2 |] [| 1.; 2. |] in
+          let x = Nx.place (Count4.split ~axis:0) host in
+          let mesh = Nx.Mesh.v Count4.v [ ("a", 2); ("b", 2) ] in
+          let y = Nx.place (Nx.Placement.mesh mesh [ (0, [ "a"; "b" ]) ]) host in
+          C.reset ();
+          let sum = Nx.add x x
+          and iota = Nx.arange_at (Count4.split ~axis:0) D.Int32 0 2 1 in
+          equal ~msg:"split over four" int 4 (C.calls ());
+          C.reset ();
+          let product = Nx.mul y y in
+          equal ~msg:"cut over a 2 x 2 mesh" int 2 (C.calls ());
+          equal (array bits) [| 2.; 4. |] (elements sum);
+          equal (array bits) [| 1.; 4. |] (elements product);
+          equal (array int32) [| 0l; 1l |] (elements iota));
+      test "an operation over a cut value of no elements raises a decline"
+        (fun () ->
+          let x =
+            Nx.place (Dec2.split ~axis:0) (on_host Plain D.Float32 [| 0 |] [||])
+          in
+          raises
+            (Invalid_argument
+               "Nx.add: nx.test does not compute Add on float32, float32, \
+                float32 (m0); place its operands with Nx.place on a set whose \
+                kernels compute it") (fun () -> Nx.add x x));
     ]
 
 let creations =
@@ -1472,7 +1504,7 @@ let allocation =
       test "a copy of a one-element host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          expect (allocated (fun () -> Nx.copy a)) @@ __POS_OF__ {| 87 words |});
+          expect (allocated (fun () -> Nx.copy a)) @@ __POS_OF__ {| 86 words |});
       test "a matmul of 4x4 float32 host values allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
@@ -1492,24 +1524,24 @@ let allocation =
         (fun () ->
           let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
           expect (allocated (fun () -> Nx.sum a))
-          @@ __POS_OF__ {| 131 words |});
+          @@ __POS_OF__ {| 130 words |});
       test "a cumsum of 16 float32 host elements allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
           expect (allocated (fun () -> Nx.cumsum a))
-          @@ __POS_OF__ {| 118 words |});
+          @@ __POS_OF__ {| 117 words |});
       test "a take of 3 rows of a 4x4 host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let ids = on_host Plain D.Int64 [| 3 |] [| 0L; 2L; 3L |] in
           expect (allocated (fun () -> Nx.take ~axis:0 ids a))
-          @@ __POS_OF__ {| 173 words |});
+          @@ __POS_OF__ {| 172 words |});
       test "a set of a row of a 4x4 host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let v = on_host Plain D.Float32 [| 4 |] (Array.make 4 2.) in
           expect (allocated (fun () -> Nx.set Nx.[ I 1 ] v a))
-          @@ __POS_OF__ {| 343 words |});
+          @@ __POS_OF__ {| 342 words |});
     ]
 
 (* A scatter's results lie at the union of its operands' cuts, as any
