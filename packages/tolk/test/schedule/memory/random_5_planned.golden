@@ -78,7 +78,7 @@
 76 Ops.PARAM dtypes.i8 [20] ParamArg(slot=0, dtype=dtypes.i8, device="CPU")
 77 Ops.PARAM dtypes.f32 [46] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
 78 Ops.STORE dtypes.void [76, 77]
-79 Ops.SHRINK dtypes.i8 [13, 57, 49]
+79 Ops.SHRINK dtypes.i8 [13, 9, 49]
 80 Ops.BITCAST dtypes.f32 [79] dtypes.f32
 81 Ops.CALL dtypes.void [78, 27, 80] CallInfo()
 82 Ops.LINEAR dtypes.void [17, 28, 31, 45, 52, 61, 68, 73, 75, 81]

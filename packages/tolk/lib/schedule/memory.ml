@@ -81,12 +81,10 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
     if List.is_empty bufs then linear
     else begin
       (* Copies and kernels plan in separate lanes, lest reuse add a dependency
-         from a copy to a kernel to a copy. *)
+         from a copy to a kernel to a copy. A buffer's bytes are free once its
+         last call is: an arena is one allocation, and work that writes an
+         allocation follows every earlier use of it. *)
       let key b = (Option.get (device b), Tbl.mem copy_bufs b) in
-      let buf_hold b =
-        if Tbl.mem copy_bufs b then Tbl.find last b - Tbl.find first b + 1
-        else 0
-      in
       let block_size = 256 in
       (* A buffer whose first byte lies [phase] bytes past a 16-byte boundary,
          which its kernels read it at, lies as far past its place. *)
@@ -99,7 +97,7 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
             match Int.compare t0 t1 with 0 -> Bool.compare o0 o1 | c -> c)
           (List.map (fun b -> (Tbl.find first b, true, b)) bufs
           @ List.map
-              (fun b -> (Tbl.find last b + 1 + buf_hold b, false, b))
+              (fun b -> (Tbl.find last b + 1, false, b))
               bufs)
       in
       let total_memory = 2 * List.fold_left (fun n b -> n + rounded b) 0 bufs in

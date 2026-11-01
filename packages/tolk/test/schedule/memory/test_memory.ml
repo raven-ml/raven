@@ -148,6 +148,15 @@ let rules =
             (List.for_all (fun s -> not (List.mem s first)) second));
       test "a schedule on a disk is itself" (fun () ->
           equal uop (schedule "disk") (plan "disk"));
+      test "a copy's buffer is free from the call after its last" (fun () ->
+          let held = buf 256 and c1 = buf 256 and c2 = buf 256 in
+          let linear =
+            Ops.v Linear
+              ~src:[ Shape.store_call c1 held; Shape.store_call c2 held ]
+          in
+          let planned = Memory.memory_plan_rewrite ~held_bufs:[ held ] linear in
+          equal (list int) [ 256 ]
+            (List.map Shape.max_numel (arenas linear planned)));
     ]
 
 (* Laws
@@ -157,8 +166,7 @@ let rules =
    viewed as its type and at its phase; two buffers whose lifetimes meet never
    share a byte;
    copies and the other calls use arenas of their own; held buffers stay. A
-   buffer lives from the first call that takes it to the last, and a copy's
-   buffers for as many calls again after. *)
+   buffer lives from the first call that takes it to the last. *)
 
 type drawn = {
   sizes : (int * Dtype.t * int) list;
@@ -246,9 +254,7 @@ let lifetimes d =
         bs)
     d.calls;
   fun b ->
-    let f = Hashtbl.find first b and l = Hashtbl.find last b in
-    let hold = if Hashtbl.mem copies b then l - f + 1 else 0 in
-    (f, l + 1 + hold, Hashtbl.mem copies b)
+    (Hashtbl.find first b, Hashtbl.find last b + 1, Hashtbl.mem copies b)
 
 let plans d =
   let buffers, linear, held_bufs = build d in

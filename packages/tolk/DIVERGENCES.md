@@ -1078,13 +1078,16 @@ own submissions (D146).
 NV's copy engine signalled the high word of a value too. rig's NV driver
 encodes its own releases (D146).
 
-## D41. The memory plan sees a range's calls, and leaves buffers reached through views
+## D41. The memory plan sees a range's calls, leaves buffers reached through views, and holds no copy past its last call
 
 - **tinygrad:** `schedule/memory.py:27-32` (`memory_plan_rewrite` takes each
   entry's buffers from its sources after the first, through `_collect_bufs`,
-  which passes buffers, `MSELECT` and `MSTACK` only).
+  which passes buffers, `MSELECT` and `MSTACK` only) and `:36-43`
+  (`buf_hold`: a copy's buffer lives `last - first + 1` calls past its last).
 - **tolk:** `Memory.viewed`, `Memory.uses` and
-  `Memory.memory_plan_rewrite`'s lifetimes (`through_views`).
+  `Memory.memory_plan_rewrite`'s lifetimes (`through_views`, the events);
+  `test/gen/tinygrad.patch`, which drops `buf_hold` before the goldens are
+  recorded.
 - **Differs:** an `END` of ranges around calls counts as one entry that takes
   the buffers of each call it runs, and a buffer that some call reaches
   through a view (`SHRINK`, `BITCAST`, `AFTER`) is not planned. tinygrad
@@ -1097,14 +1100,30 @@ encodes its own releases (D146).
   view: a scan's stacked rows, its double-buffered carries and any other
   viewed intermediate keep their own memory for the whole schedule, where
   planning them through their views could share it once they are dead.
-- **Reason:** (b). `Rune.scan`'s staged loop (RFC 0012) schedules calls
-  inside a range, whose arguments are views that move with it, of buffers
-  the calls after it read whole; tinygrad's scheduler hands the planner
-  neither.
+
+  A copy's buffer is free from the call after its last, as a kernel's is,
+  where tinygrad holds it as many calls again, lest a later copy overwrite it
+  while the first may still run. Copies keep a lane of their own on each
+  device, as tinygrad's do.
+- **Reason:** (b) for ranges and views: `Rune.scan`'s staged loop (RFC 0012)
+  schedules calls inside a range, whose arguments are views that move with
+  it, of buffers the calls after it read whole; tinygrad's scheduler hands
+  the planner neither. (c) for the hold: an arena is one rig allocation, and
+  rig orders work that writes an allocation after every use of it by any
+  device (`Rig.section-order`, rule 3, Memory), its device's work by device
+  order (rule 1) and the parts of a submission that share memory (rule 2);
+  `tolk.engine` passes no unordered ref. A later call that reuses a copy's
+  bytes therefore follows the copy, and the hold guards nothing: it only
+  costs memory, as the copy lane of tinygrad's `test_deferred_copy_frees_chain`
+  schedule, which needs 512 bytes with it and 256 without.
 - **Pinned by:** the Engine suite (`test/engine/tolk_engine`): `link and
   run › a planned buffer a range writes is not placed over one it leaves` and
   `› a buffer a range writes through a view is not placed over another`, each
-  of which fails without its half.
+  of which fails without its half; the Memory suite
+  (`test/schedule/memory`): `memory_plan_rewrite › rules › a copy's buffer is
+  free from the call after its last`, the recorded `copy_chain`, `random_5`
+  and `random_11` plans of the equally patched tinygrad, and the law over
+  drawn schedules, whose copies live no longer than their last call.
 
 ## D42. Withdrawn
 

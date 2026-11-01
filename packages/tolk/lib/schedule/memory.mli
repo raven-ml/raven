@@ -24,9 +24,10 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     calls ({!Op.End} or {!Op.Backedge}) counting as one call that takes the
     buffers of each of its calls and a back edge's flag. The buffers of copies,
     the calls whose body is an {!Op.Store}, are planned apart from the others
-    on each device, so that planning adds no dependency between copies and kernels, and
-    each lives for as many calls again after its last, so that a copy is not
-    overwritten while it may still run.
+    on each device, so that planning adds no dependency between copies and
+    kernels. A buffer's bytes are free from the call after its last: an arena
+    is one allocation, and the executor runs the work that writes an
+    allocation after every earlier use of it, a copy's included.
 
     Each device and kind of buffer has one arena, an {!Op.Buffer} of
     {!Dtype.Int8} as large as its buffers need at once. A buffer's size and

@@ -900,6 +900,9 @@ thread.
 
 ### Tolk (new)
 
+- `Memory.memory_plan_rewrite` frees a copy's buffer from the call after its
+  last, as a kernel's: rig runs a later write of its bytes after the copy, so
+  a schedule of copies needs less memory.
 - `Codegen.to_program` compiles a tensor-core product that one step of the
   core sums plus a scalar, such as a 16 by 16 float16 matmul plus its initial
   value on CUDA, where it raised `Invalid_argument` in lowering.
