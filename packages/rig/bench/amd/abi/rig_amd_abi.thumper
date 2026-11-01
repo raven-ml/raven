@@ -1,47 +1,6 @@
 # thumper baseline v1
 # suite: rig_amd_abi
 
-# machine: 6e4c99d648da0929
-# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
-# ocaml: 5.5.1 · 64-bit · release
-
-aql/dispatch	alloc_words	exact	135
-aql/dispatch	wall_time	batch=32768	n=20	2.391e-07	2.378e-07 2.378e-07 2.379e-07 2.379e-07 2.380e-07 2.383e-07 2.387e-07 2.387e-07 2.388e-07 2.389e-07 2.392e-07 2.392e-07 2.392e-07 2.418e-07 2.424e-07 2.428e-07 2.435e-07 2.436e-07 2.443e-07 2.496e-07
-aql/encode	alloc_words	exact	168
-aql/encode	wall_time	batch=16384	n=20	3.073e-07	2.990e-07 2.991e-07 3.009e-07 3.013e-07 3.015e-07 3.022e-07 3.023e-07 3.033e-07 3.044e-07 3.068e-07 3.077e-07 3.104e-07 3.109e-07 3.128e-07 3.136e-07 3.137e-07 3.149e-07 3.193e-07 3.233e-07 3.264e-07
-aql/fill-into-bytes	alloc_words	exact	0
-aql/fill-into-bytes	wall_time	batch=1048576	n=20	7.823e-09	7.801e-09 7.810e-09 7.811e-09 7.813e-09 7.814e-09 7.814e-09 7.814e-09 7.820e-09 7.821e-09 7.822e-09 7.824e-09 7.839e-09 7.843e-09 7.844e-09 7.845e-09 7.845e-09 7.850e-09 7.864e-09 7.911e-09 7.950e-09
-code-object/kernel/last-of-128	alloc_words	exact	0
-code-object/kernel/last-of-128	wall_time	batch=262144	n=20	2.653e-08	2.638e-08 2.644e-08 2.644e-08 2.645e-08 2.646e-08 2.649e-08 2.649e-08 2.650e-08 2.651e-08 2.652e-08 2.653e-08 2.653e-08 2.657e-08 2.659e-08 2.665e-08 2.679e-08 2.706e-08 2.707e-08 2.709e-08 2.711e-08
-code-object/of-string/amd-128-kernels	alloc_words	exact	24356
-code-object/of-string/amd-128-kernels	wall_time	batch=256	n=20	3.316e-05	3.280e-05 3.289e-05 3.290e-05 3.298e-05 3.302e-05 3.307e-05 3.310e-05 3.310e-05 3.313e-05 3.314e-05 3.318e-05 3.334e-05 3.335e-05 3.338e-05 3.338e-05 3.341e-05 3.364e-05 3.368e-05 3.392e-05 3.492e-05
-pm4/dispatch/gfx11	alloc_words	exact	535
-pm4/dispatch/gfx11	wall_time	batch=32768	n=20	2.683e-07	2.655e-07 2.658e-07 2.661e-07 2.665e-07 2.665e-07 2.671e-07 2.673e-07 2.675e-07 2.680e-07 2.681e-07 2.685e-07 2.689e-07 2.691e-07 2.692e-07 2.696e-07 2.699e-07 2.707e-07 2.717e-07 2.812e-07 2.825e-07
-pm4/dispatch/gfx12	alloc_words	exact	535
-pm4/dispatch/gfx12	wall_time	batch=32768	n=20	2.668e-07	2.638e-07 2.642e-07 2.654e-07 2.660e-07 2.661e-07 2.662e-07 2.665e-07 2.665e-07 2.667e-07 2.668e-07 2.669e-07 2.672e-07 2.672e-07 2.675e-07 2.677e-07 2.683e-07 2.692e-07 2.711e-07 2.735e-07 2.783e-07
-pm4/dispatch/gfx9	alloc_words	exact	566
-pm4/dispatch/gfx9	wall_time	batch=32768	n=20	2.819e-07	2.800e-07 2.801e-07 2.806e-07 2.807e-07 2.808e-07 2.809e-07 2.811e-07 2.813e-07 2.817e-07 2.818e-07 2.820e-07 2.824e-07 2.825e-07 2.830e-07 2.830e-07 2.834e-07 2.836e-07 2.836e-07 2.839e-07 2.840e-07
-pm4/encode/gfx12	alloc_words	exact	605
-pm4/encode/gfx12	wall_time	batch=16384	n=20	4.939e-07	4.718e-07 4.778e-07 4.802e-07 4.806e-07 4.815e-07 4.830e-07 4.855e-07 4.880e-07 4.902e-07 4.934e-07 4.945e-07 4.945e-07 4.957e-07 4.978e-07 4.980e-07 5.000e-07 5.003e-07 5.027e-07 5.036e-07 5.260e-07
-pm4/fill-into-bytes/gfx12	alloc_words	exact	0
-pm4/fill-into-bytes/gfx12	wall_time	batch=1048576	n=20	8.291e-09	8.282e-09 8.284e-09 8.284e-09 8.284e-09 8.284e-09 8.284e-09 8.286e-09 8.286e-09 8.289e-09 8.290e-09 8.291e-09 8.291e-09 8.294e-09 8.296e-09 8.298e-09 8.301e-09 8.313e-09 8.531e-09 8.628e-09 8.631e-09
-pm4/release-encode/gfx12	alloc_words	exact	54
-pm4/release-encode/gfx12	wall_time	batch=131072	n=20	3.722e-08	3.690e-08 3.703e-08 3.707e-08 3.709e-08 3.714e-08 3.715e-08 3.717e-08 3.718e-08 3.719e-08 3.720e-08 3.723e-08 3.733e-08 3.733e-08 3.736e-08 3.739e-08 3.747e-08 3.752e-08 3.754e-08 3.829e-08 3.872e-08
-pm4/release-fill-into-bytes/gfx12	alloc_words	exact	0
-pm4/release-fill-into-bytes/gfx12	wall_time	batch=1048576	n=20	4.750e-09	4.738e-09 4.739e-09 4.743e-09 4.743e-09 4.744e-09 4.745e-09 4.745e-09 4.746e-09 4.749e-09 4.749e-09 4.751e-09 4.751e-09 4.753e-09 4.754e-09 4.755e-09 4.756e-09 4.757e-09 4.757e-09 4.779e-09 4.786e-09
-pm4/template/gfx12	alloc_words	exact	800
-pm4/template/gfx12	wall_time	batch=8192	n=20	6.106e-07	5.956e-07 6.005e-07 6.035e-07 6.048e-07 6.053e-07 6.072e-07 6.080e-07 6.086e-07 6.089e-07 6.100e-07 6.112e-07 6.113e-07 6.139e-07 6.155e-07 6.167e-07 6.194e-07 6.215e-07 6.254e-07 6.280e-07 6.299e-07
-register/find/compute/gfx11	alloc_words	exact	4
-register/find/compute/gfx11	wall_time	batch=131072	n=20	5.320e-08	5.287e-08 5.293e-08 5.295e-08 5.300e-08 5.304e-08 5.306e-08 5.310e-08 5.315e-08 5.318e-08 5.320e-08 5.320e-08 5.320e-08 5.322e-08 5.325e-08 5.327e-08 5.327e-08 5.328e-08 5.329e-08 5.332e-08 5.348e-08
-register/find/compute/gfx12	alloc_words	exact	4
-register/find/compute/gfx12	wall_time	batch=131072	n=20	5.018e-08	5.007e-08 5.010e-08 5.010e-08 5.014e-08 5.014e-08 5.015e-08 5.017e-08 5.017e-08 5.018e-08 5.018e-08 5.018e-08 5.020e-08 5.021e-08 5.022e-08 5.022e-08 5.022e-08 5.023e-08 5.023e-08 5.023e-08 5.026e-08
-register/find/compute/gfx9	alloc_words	exact	4
-register/find/compute/gfx9	wall_time	batch=131072	n=20	4.943e-08	4.926e-08 4.928e-08 4.928e-08 4.928e-08 4.928e-08 4.930e-08 4.937e-08 4.939e-08 4.939e-08 4.943e-08 4.943e-08 4.945e-08 4.947e-08 4.948e-08 4.963e-08 4.984e-08 4.994e-08 5.010e-08 5.015e-08 5.095e-08
-scratch/descriptor/gfx12	alloc_words	exact	15
-scratch/descriptor/gfx12	wall_time	batch=262144	n=20	2.637e-08	2.565e-08 2.592e-08 2.597e-08 2.604e-08 2.608e-08 2.613e-08 2.621e-08 2.627e-08 2.632e-08 2.635e-08 2.639e-08 2.656e-08 2.659e-08 2.669e-08 2.681e-08 2.682e-08 2.686e-08 2.690e-08 2.693e-08 2.742e-08
-thread-trace/waves/gfx9-4096	alloc_words	exact	147570
-thread-trace/waves/gfx9-4096	wall_time	batch=32	n=20	2.525e-04	2.467e-04 2.480e-04 2.483e-04 2.490e-04 2.494e-04 2.496e-04 2.501e-04 2.504e-04 2.509e-04 2.521e-04 2.529e-04 2.552e-04 2.557e-04 2.557e-04 2.558e-04 2.576e-04 2.601e-04 2.611e-04 2.642e-04 2.716e-04
-
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release

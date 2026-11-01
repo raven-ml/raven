@@ -1,20 +1,6 @@
 # thumper baseline v1
 # suite: rig_profile
 
-# machine: 6e4c99d648da0929
-# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
-# ocaml: 5.5.1 · 64-bit · release
-# refreshed: 2026-10-10, final Profile, quiet release; CPUs 0-5
-
-export/100	alloc_words	exact	17087
-export/100	wall_time	batch=128	n=20	5.243e-05	5.225e-05 5.228e-05 5.230e-05 5.230e-05 5.235e-05 5.237e-05 5.240e-05 5.240e-05 5.241e-05 5.243e-05 5.244e-05 5.247e-05 5.248e-05 5.250e-05 5.250e-05 5.252e-05 5.257e-05 5.262e-05 5.266e-05 5.270e-05
-export/10000	alloc_words	exact	1894799
-export/10000	wall_time	batch=1	n=20	5.663e-03	5.562e-03 5.578e-03 5.579e-03 5.600e-03 5.613e-03 5.618e-03 5.644e-03 5.648e-03 5.654e-03 5.663e-03 5.663e-03 5.679e-03 5.709e-03 5.718e-03 5.721e-03 5.730e-03 5.743e-03 5.750e-03 5.759e-03 5.774e-03
-record/100	alloc_words	exact	9514
-record/100	wall_time	batch=1024	n=20	9.306e-06	9.179e-06 9.194e-06 9.212e-06 9.232e-06 9.262e-06 9.262e-06 9.267e-06 9.284e-06 9.292e-06 9.302e-06 9.309e-06 9.333e-06 9.341e-06 9.348e-06 9.352e-06 9.355e-06 9.373e-06 9.495e-06 9.524e-06 9.606e-06
-record/10000	alloc_words	exact	1154626
-record/10000	wall_time	batch=1	n=20	1.873e-03	1.706e-03 1.758e-03 1.770e-03 1.774e-03 1.786e-03 1.805e-03 1.815e-03 1.816e-03 1.831e-03 1.862e-03 1.883e-03 1.885e-03 1.914e-03 1.916e-03 1.919e-03 1.929e-03 1.930e-03 2.008e-03 2.049e-03 2.074e-03
-
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release

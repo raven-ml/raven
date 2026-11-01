@@ -1,25 +1,6 @@
 # thumper baseline v1
 # suite: rig_elf
 
-# machine: 6e4c99d648da0929
-# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
-# ocaml: 5.5.1 · 64-bit · release
-
-of-string/amd-128-kernels	alloc_words	exact	5277
-of-string/amd-128-kernels	wall_time	batch=256	n=20	2.205e-05	2.129e-05 2.147e-05 2.166e-05 2.169e-05 2.181e-05 2.187e-05 2.192e-05 2.196e-05 2.199e-05 2.201e-05 2.210e-05 2.222e-05 2.224e-05 2.225e-05 2.236e-05 2.240e-05 2.245e-05 2.246e-05 2.254e-05 2.298e-05
-of-string/amd-16-kernels	alloc_words	exact	1133
-of-string/amd-16-kernels	wall_time	batch=4096	n=20	1.715e-06	1.705e-06 1.708e-06 1.710e-06 1.711e-06 1.714e-06 1.714e-06 1.714e-06 1.715e-06 1.715e-06 1.715e-06 1.716e-06 1.718e-06 1.719e-06 1.731e-06 1.736e-06 1.737e-06 1.746e-06 1.746e-06 1.746e-06 1.786e-06
-of-string/cubin-sm89	alloc_words	exact	560
-of-string/cubin-sm89	wall_time	batch=8192	n=20	7.629e-07	7.503e-07 7.528e-07 7.567e-07 7.571e-07 7.574e-07 7.585e-07 7.597e-07 7.600e-07 7.619e-07 7.622e-07 7.636e-07 7.638e-07 7.638e-07 7.639e-07 7.641e-07 7.649e-07 7.651e-07 7.673e-07 7.687e-07 7.903e-07
-of-string/floor-bytes-amd-128-kernels	alloc_words	exact	5
-of-string/floor-bytes-amd-128-kernels	wall_time	batch=2048	n=20	3.615e-06	3.402e-06 3.417e-06 3.438e-06 3.471e-06 3.528e-06 3.545e-06 3.547e-06 3.592e-06 3.603e-06 3.609e-06 3.622e-06 3.635e-06 3.636e-06 3.639e-06 3.641e-06 3.644e-06 3.648e-06 3.650e-06 3.671e-06 3.685e-06
-of-string/floor-symbols-amd-128-kernels	alloc_words	exact	3983
-of-string/floor-symbols-amd-128-kernels	wall_time	batch=512	n=20	1.490e-05	1.446e-05 1.451e-05 1.457e-05 1.467e-05 1.472e-05 1.474e-05 1.475e-05 1.483e-05 1.487e-05 1.490e-05 1.490e-05 1.491e-05 1.493e-05 1.499e-05 1.504e-05 1.505e-05 1.509e-05 1.510e-05 1.518e-05 1.532e-05
-of-string/host-aarch64	alloc_words	exact	818
-of-string/host-aarch64	wall_time	batch=8192	n=20	9.618e-07	9.464e-07 9.485e-07 9.497e-07 9.497e-07 9.512e-07 9.544e-07 9.551e-07 9.562e-07 9.569e-07 9.610e-07 9.627e-07 9.629e-07 9.639e-07 9.644e-07 9.657e-07 9.661e-07 9.722e-07 9.742e-07 9.746e-07 9.900e-07
-symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
-symbol/amd-128-kernels-last-kernel	wall_time	batch=16384	n=20	5.630e-07	5.592e-07 5.596e-07 5.596e-07 5.596e-07 5.597e-07 5.598e-07 5.607e-07 5.609e-07 5.611e-07 5.611e-07 5.649e-07 5.653e-07 5.662e-07 5.666e-07 5.666e-07 5.668e-07 5.669e-07 5.678e-07 5.681e-07 5.684e-07
-
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release

@@ -1,57 +1,6 @@
 # thumper baseline v1
 # suite: rig_host
 
-# machine: 6e4c99d648da0929
-# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
-# ocaml: 5.5.1 · 64-bit · release
-# refreshed: 2026-10-10, Host ownership and final Program/Profile, quiet release; CPUs 0-5
-# rows: call/*, entry/*
-
-call/empty	alloc_words	exact	0
-call/empty	wall_time	batch=524288	n=20	1.826e-08	1.822e-08 1.822e-08 1.823e-08 1.823e-08 1.823e-08 1.823e-08 1.824e-08 1.824e-08 1.825e-08 1.825e-08 1.827e-08 1.828e-08 1.828e-08 1.828e-08 1.828e-08 1.828e-08 1.829e-08 1.830e-08 1.834e-08 1.849e-08
-call/floor-pool-job	alloc_words	exact	0
-call/floor-pool-job	wall_time	batch=16384	n=20	4.730e-07	4.533e-07 4.642e-07 4.666e-07 4.698e-07 4.700e-07 4.707e-07 4.708e-07 4.716e-07 4.721e-07 4.722e-07 4.738e-07 4.744e-07 4.745e-07 4.747e-07 4.750e-07 4.775e-07 4.779e-07 4.806e-07 4.806e-07 4.824e-07
-call/floor-release-acquire	alloc_words	exact	0
-call/floor-release-acquire	wall_time	batch=524288	n=20	1.091e-08	1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.091e-08 1.092e-08 1.092e-08 1.093e-08 1.093e-08 1.096e-08
-call/split-1	alloc_words	exact	0
-call/split-1	wall_time	batch=262144	n=20	2.281e-08	2.275e-08 2.277e-08 2.277e-08 2.278e-08 2.278e-08 2.278e-08 2.279e-08 2.280e-08 2.280e-08 2.281e-08 2.281e-08 2.281e-08 2.281e-08 2.283e-08 2.284e-08 2.287e-08 2.287e-08 2.288e-08 2.288e-08 2.292e-08
-call/split-empty	alloc_words	exact	0
-call/split-empty	wall_time	batch=16384	n=20	5.607e-07	5.393e-07 5.423e-07 5.450e-07 5.457e-07 5.575e-07 5.583e-07 5.591e-07 5.591e-07 5.598e-07 5.599e-07 5.615e-07 5.616e-07 5.620e-07 5.625e-07 5.631e-07 5.631e-07 5.658e-07 5.675e-07 5.707e-07 5.719e-07
-entry/call-1	alloc_words	exact	0
-entry/call-1	wall_time	batch=262144	n=20	2.109e-08	2.099e-08 2.101e-08 2.102e-08 2.104e-08 2.105e-08 2.105e-08 2.106e-08 2.108e-08 2.108e-08 2.109e-08 2.109e-08 2.110e-08 2.110e-08 2.111e-08 2.111e-08 2.111e-08 2.112e-08 2.115e-08 2.115e-08 2.118e-08
-entry/call-1000	alloc_words	exact	0
-entry/call-1000	wall_time	batch=8192	n=20	6.376e-07	6.353e-07 6.357e-07 6.358e-07 6.360e-07 6.362e-07 6.364e-07 6.365e-07 6.369e-07 6.369e-07 6.370e-07 6.382e-07 6.413e-07 6.417e-07 6.455e-07 6.464e-07 6.483e-07 6.492e-07 6.500e-07 6.553e-07 6.570e-07
-entry/choose-1	alloc_words	exact	0
-entry/choose-1	wall_time	batch=262144	n=20	2.115e-08	2.112e-08 2.113e-08 2.113e-08 2.114e-08 2.115e-08 2.115e-08 2.115e-08 2.115e-08 2.115e-08 2.115e-08 2.115e-08 2.115e-08 2.116e-08 2.116e-08 2.116e-08 2.117e-08 2.117e-08 2.118e-08 2.120e-08 2.121e-08
-entry/floor-direct-call-1000	alloc_words	exact	0
-entry/floor-direct-call-1000	wall_time	batch=8192	n=20	6.304e-07	6.294e-07 6.295e-07 6.296e-07 6.296e-07 6.296e-07 6.296e-07 6.300e-07 6.303e-07 6.303e-07 6.303e-07 6.304e-07 6.309e-07 6.325e-07 6.330e-07 6.338e-07 6.365e-07 6.485e-07 6.498e-07 9.742e-07 1.386e-06
-entry/floor-pool-job-100	alloc_words	exact	0
-entry/floor-pool-job-100	wall_time	batch=128	n=20	4.740e-05	4.669e-05 4.701e-05 4.706e-05 4.710e-05 4.712e-05 4.719e-05 4.730e-05 4.732e-05 4.734e-05 4.738e-05 4.742e-05 4.752e-05 4.755e-05 4.758e-05 4.759e-05 4.760e-05 4.761e-05 4.762e-05 4.763e-05 4.786e-05
-entry/split-100	alloc_words	exact	0
-entry/split-100	wall_time	batch=128	n=20	4.669e-05	4.609e-05 4.613e-05 4.626e-05 4.641e-05 4.641e-05 4.643e-05 4.648e-05 4.648e-05 4.657e-05 4.661e-05 4.678e-05 4.680e-05 4.682e-05 4.682e-05 4.692e-05 4.718e-05 4.718e-05 4.721e-05 4.725e-05 4.757e-05
-link/affine	alloc_words	exact	491
-link/affine	wall_time	batch=2048	n=20	3.609e-06	2.997e-06 3.161e-06 3.259e-06 3.262e-06 3.429e-06 3.437e-06 3.566e-06 3.568e-06 3.595e-06 3.604e-06 3.615e-06 3.624e-06 3.651e-06 3.658e-06 3.758e-06 3.769e-06 3.785e-06 3.857e-06 3.893e-06 3.934e-06
-link/floor-elf-affine	alloc_words	exact	399
-link/floor-elf-affine	wall_time	batch=16384	n=20	3.561e-07	3.530e-07 3.530e-07 3.533e-07 3.535e-07 3.537e-07 3.539e-07 3.547e-07 3.549e-07 3.550e-07 3.556e-07 3.566e-07 3.567e-07 3.568e-07 3.568e-07 3.585e-07 3.591e-07 3.607e-07 3.608e-07 3.628e-07 3.643e-07
-link/floor-elf-linked	alloc_words	exact	547
-link/floor-elf-linked	wall_time	batch=16384	n=20	5.221e-07	5.154e-07 5.160e-07 5.163e-07 5.169e-07 5.181e-07 5.184e-07 5.218e-07 5.219e-07 5.219e-07 5.220e-07 5.221e-07 5.236e-07 5.255e-07 5.261e-07 5.265e-07 5.270e-07 5.286e-07 5.292e-07 5.340e-07 5.360e-07
-link/floor-elf-many	alloc_words	exact	20459
-link/floor-elf-many	wall_time	batch=512	n=20	1.315e-05	1.266e-05 1.283e-05 1.284e-05 1.290e-05 1.296e-05 1.300e-05 1.302e-05 1.308e-05 1.309e-05 1.314e-05 1.316e-05 1.317e-05 1.324e-05 1.330e-05 1.334e-05 1.336e-05 1.339e-05 1.340e-05 1.343e-05 1.354e-05
-link/floor-lookup	alloc_words	exact	0
-link/floor-lookup	wall_time	batch=262144	n=20	2.913e-08	2.848e-08 2.873e-08 2.879e-08 2.882e-08 2.883e-08 2.904e-08 2.906e-08 2.909e-08 2.911e-08 2.912e-08 2.915e-08 2.943e-08 2.960e-08 2.962e-08 2.972e-08 2.986e-08 2.987e-08 3.005e-08 3.037e-08 3.059e-08
-link/floor-map-install-unmap-affine	alloc_words	exact	0
-link/floor-map-install-unmap-affine	wall_time	batch=4096	n=20	1.997e-06	1.881e-06 1.887e-06 1.887e-06 1.893e-06 1.893e-06 1.900e-06 1.901e-06 1.963e-06 1.976e-06 1.986e-06 2.009e-06 2.012e-06 2.015e-06 2.028e-06 2.031e-06 2.043e-06 2.057e-06 2.088e-06 2.096e-06 2.115e-06
-link/floor-map-install-unmap-many	alloc_words	exact	0
-link/floor-map-install-unmap-many	wall_time	batch=512	n=20	1.139e-05	1.126e-05 1.126e-05 1.126e-05 1.127e-05 1.127e-05 1.128e-05 1.128e-05 1.130e-05 1.131e-05 1.132e-05 1.146e-05 1.151e-05 1.153e-05 1.157e-05 1.163e-05 1.167e-05 1.175e-05 1.178e-05 1.183e-05 1.190e-05
-link/linked	alloc_words	exact	660
-link/linked	wall_time	batch=2048	n=20	3.908e-06	3.546e-06 3.602e-06 3.607e-06 3.669e-06 3.701e-06 3.719e-06 3.787e-06 3.851e-06 3.876e-06 3.893e-06 3.924e-06 3.934e-06 3.962e-06 3.985e-06 4.128e-06 4.128e-06 4.134e-06 4.235e-06 4.317e-06 4.478e-06
-link/many-relocations	alloc_words	exact	23799
-link/many-relocations	wall_time	batch=128	n=20	4.070e-05	3.957e-05 3.969e-05 3.969e-05 3.971e-05 3.975e-05 3.979e-05 3.990e-05 3.991e-05 4.039e-05 4.064e-05 4.076e-05 4.077e-05 4.088e-05 4.097e-05 4.099e-05 4.102e-05 4.106e-05 4.144e-05 4.194e-05 4.341e-05
-split/scale-4Mi	alloc_words	exact	0
-split/scale-4Mi	wall_time	batch=1	n=20	2.189e-02	2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.178e-02 2.179e-02 2.179e-02 2.180e-02 2.182e-02 2.187e-02 2.191e-02 2.191e-02 2.192e-02 2.193e-02 2.193e-02 2.194e-02 2.195e-02 2.203e-02 2.203e-02 2.206e-02
-split/serial-scale-4Mi	alloc_words	exact	0
-split/serial-scale-4Mi	wall_time	batch=1	n=20	1.254e-01	1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.254e-01 1.255e-01 1.255e-01 1.255e-01 1.256e-01 1.256e-01 1.256e-01 1.256e-01
-
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release

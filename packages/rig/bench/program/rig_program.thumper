@@ -1,35 +1,6 @@
 # thumper baseline v1
 # suite: rig_program
 
-# machine: 6e4c99d648da0929
-# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
-# ocaml: 5.5.1 · 64-bit · release
-# refreshed: 2026-10-10, DJ 5f2f91615, CPUs 0-5, quiet exclusive window
-# rows: polled/launch-1, polled/launches-64, remote-load/4K
-# refreshed: 2026-10-10, Host ownership and final Program/Profile, quiet release; CPUs 0-5
-# rows: host/*, polled/*
-
-agent/floor-spins-16	alloc_words	exact	140
-agent/floor-spins-16	wall_time	batch=8	n=20	6.494e-04	6.454e-04 6.470e-04 6.470e-04 6.477e-04 6.480e-04 6.483e-04 6.483e-04 6.489e-04 6.491e-04 6.493e-04 6.495e-04 6.498e-04 6.501e-04 6.528e-04 6.534e-04 6.536e-04 6.612e-04 6.810e-04 7.005e-04 7.384e-04
-agent/spins-16	alloc_words	exact	304
-agent/spins-16	wall_time	batch=8	n=20	8.936e-04	7.171e-04 7.223e-04 7.283e-04 7.302e-04 7.360e-04 7.635e-04 8.361e-04 8.429e-04 8.523e-04 8.685e-04 9.188e-04 1.019e-03 1.112e-03 1.162e-03 1.204e-03 1.342e-03 1.392e-03 1.558e-03 1.588e-03 1.672e-03
-host/call	alloc_words	exact	8
-host/call	wall_time	batch=65536	n=20	1.458e-07	1.450e-07 1.452e-07 1.452e-07 1.453e-07 1.454e-07 1.455e-07 1.456e-07 1.456e-07 1.456e-07 1.458e-07 1.459e-07 1.461e-07 1.463e-07 1.464e-07 1.467e-07 1.467e-07 1.467e-07 1.474e-07 1.477e-07 1.492e-07
-host/floor-call	alloc_words	exact	0
-host/floor-call	wall_time	batch=131072	n=20	5.261e-08	5.096e-08 5.098e-08 5.103e-08 5.106e-08 5.108e-08 5.108e-08 5.149e-08 5.150e-08 5.187e-08 5.224e-08 5.297e-08 5.374e-08 5.376e-08 5.378e-08 5.381e-08 5.384e-08 5.384e-08 5.384e-08 5.390e-08 5.408e-08
-polled/floor-launch-1	alloc_words	exact	0
-polled/floor-launch-1	wall_time	batch=65536	n=20	9.007e-08	8.964e-08 8.976e-08 8.976e-08 8.992e-08 8.992e-08 8.993e-08 8.996e-08 9.002e-08 9.003e-08 9.006e-08 9.009e-08 9.012e-08 9.018e-08 9.019e-08 9.026e-08 9.030e-08 9.048e-08 9.060e-08 9.063e-08 9.097e-08
-polled/floor-launches-64	alloc_words	batch=1024	n=20	4.150e-01	4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01
-polled/floor-launches-64	wall_time	batch=1024	n=20	6.779e-06	6.736e-06 6.748e-06 6.749e-06 6.751e-06 6.756e-06 6.756e-06 6.764e-06 6.765e-06 6.773e-06 6.776e-06 6.782e-06 6.792e-06 6.794e-06 6.794e-06 6.804e-06 6.806e-06 6.822e-06 6.824e-06 6.883e-06 6.889e-06
-polled/launch-1	alloc_words	exact	8
-polled/launch-1	wall_time	batch=32768	n=20	1.537e-07	1.527e-07 1.531e-07 1.533e-07 1.533e-07 1.533e-07 1.535e-07 1.535e-07 1.536e-07 1.536e-07 1.537e-07 1.537e-07 1.538e-07 1.538e-07 1.539e-07 1.541e-07 1.541e-07 1.542e-07 1.543e-07 1.555e-07 1.560e-07
-polled/launches-64	alloc_words	batch=1024	n=20	9.415e+00	9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00 9.415e+00
-polled/launches-64	wall_time	batch=1024	n=20	7.487e-06	7.443e-06 7.457e-06 7.460e-06 7.462e-06 7.467e-06 7.477e-06 7.480e-06 7.483e-06 7.487e-06 7.487e-06 7.488e-06 7.495e-06 7.500e-06 7.505e-06 7.515e-06 7.530e-06 7.533e-06 7.548e-06 7.572e-06 7.678e-06
-remote-load/4K	alloc_words	batch=128	n=20	4.283e+03	4.278e+03 4.278e+03 4.278e+03 4.278e+03 4.278e+03 4.278e+03 4.278e+03 4.283e+03 4.283e+03 4.283e+03 4.283e+03 4.283e+03 4.283e+03 4.283e+03 4.284e+03 4.284e+03 4.284e+03 4.288e+03 4.289e+03 4.289e+03
-remote-load/4K	wall_time	batch=128	n=20	4.863e-05	4.113e-05 4.305e-05 4.418e-05 4.573e-05 4.616e-05 4.624e-05 4.722e-05 4.770e-05 4.820e-05 4.857e-05 4.869e-05 4.908e-05 5.052e-05 5.163e-05 5.270e-05 5.300e-05 5.507e-05 5.646e-05 5.720e-05 1.858e-04
-step/remote-1900	alloc_words	exact	44
-step/remote-1900	wall_time	batch=32	n=20	2.435e-04	2.405e-04 2.406e-04 2.409e-04 2.418e-04 2.421e-04 2.422e-04 2.427e-04 2.429e-04 2.431e-04 2.434e-04 2.436e-04 2.438e-04 2.439e-04 2.447e-04 2.448e-04 2.449e-04 2.452e-04 2.458e-04 2.463e-04 2.472e-04
-
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
