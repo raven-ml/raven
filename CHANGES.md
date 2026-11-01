@@ -49,6 +49,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Summary.v`, `Summary.of_weighted`, `Diag.mcse_mean` and `Diag.loo`'s `se`
+  compute spreads over the draws' scale: draws 1e-200 apart no longer get an
+  `sd` of 0 and draws 1e200 apart an infinite one, the error scales with the
+  draws and `ess` no longer depends on their scale.
 - Add `Gaussian.pathfinder` (Pathfinder), `Gaussian.vi` (ADVI over a factor
   covariance of any rank) and `Gaussian.importance`, whose weighted draws'
   `Diag.psis` `k̂` says whether a fitted Gaussian holds.

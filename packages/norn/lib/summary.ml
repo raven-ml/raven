@@ -71,7 +71,6 @@ let values (type u) (u : (u, 'd) Nx.Ptree.t) (x : u) =
           (fun _ x acc -> Nx.to_array (Nx.cast Nx.float64 x) :: acc)
           x []))
 
-let sd xs = Float.sqrt (Chains.var1 xs)
 let constant e = Array.for_all (fun x -> Float.equal x e.draws.(0)) e.draws
 
 let not_finite e =
@@ -185,7 +184,7 @@ let v (type u) (u : (u, 'd) Nx.Ptree.t) ?stats ?superchains (d : u Draws.t) =
   let bulk = stat Chains.ess_bulk_of and tail = stat Chains.ess_tail_of in
   let column f = Array.of_list (List.map (fun e -> f e.draws) elements) in
   let columns =
-    [ ("mean", column Chains.mean); ("sd", column sd) ]
+    [ ("mean", column Chains.mean); ("sd", column Chains.sd) ]
     @ List.map
         (fun (name, q) -> (name, column (fun xs -> Chains.quantile xs q)))
         quantiles
@@ -300,26 +299,42 @@ let of_weighted (type u f) (u : (u, 'd) Nx.Ptree.t)
      needs for the same error, which for an [h] whose spread is unrelated to
      the weights is Kish's 1 / Σ w̃² (their equation 8). Their equation 7
      puts the spread of [h] over the unweighted draws in the numerator, the
-     proposal's and not the target's: on 4 draws it can give 14.5. *)
+     proposal's and not the target's: on 4 draws it can give 14.5. Both
+     sums are of the draws over their scale [c], which [spread] returns
+     beside them, so that squares neither underflow nor overflow: draws 1e-200
+     apart would square to 0. The scale is of the draws of positive weight. *)
+  let positive xs =
+    Array.of_list (List.filteri (fun i _ -> w.(i) > 0.) (Array.to_list xs))
+  in
   let spread xs =
-    let m = mean xs in
-    ( dot (fun w x -> w *. (x -. m) *. (x -. m)) xs,
-      dot (fun w x -> w *. w *. (x -. m) *. (x -. m)) xs )
+    let c = Chains.scale (positive xs) in
+    let ys = Array.map (fun x -> x /. c) xs in
+    let m = mean ys in
+    let d y = y -. m in
+    ( c,
+      dot (fun w y -> w *. d y *. d y) ys,
+      dot (fun w y -> w *. w *. d y *. d y) ys )
   in
   let column f = Array.of_list (List.map (fun e -> f e.draws) elements) in
   let columns =
     [
       ("mean", column mean);
-      ("sd", column (fun xs -> Float.sqrt (fst (spread xs))));
+      ( "sd",
+        column (fun xs ->
+            let c, v, _ = spread xs in
+            c *. Float.sqrt v) );
     ]
     @ List.map
         (fun (name, q) -> (name, column (fun xs -> weighted_quantile xs w q)))
         quantiles
     @ [
-        ("mcse", column (fun xs -> Float.sqrt (snd (spread xs))));
+        ( "mcse",
+          column (fun xs ->
+              let c, _, e = spread xs in
+              c *. Float.sqrt e) );
         ( "ess",
           column (fun xs ->
-              let v, e = spread xs in
+              let _, v, e = spread xs in
               v /. e) );
       ]
   in

@@ -15,6 +15,20 @@ let var1 xs =
 
 let pooled m = Array.concat (Array.to_list m)
 
+let scale xs =
+  let top = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. xs in
+  if top > 0. && Float.is_finite top then
+    Float.ldexp 1. (snd (Float.frexp top) - 1)
+  else 1.
+
+(* The spread of draws over their [scale], times it: draws 1e-200 apart have
+   a variance below the least float, and draws 1e200 apart one above the
+   largest. Dividing by a power of two is exact, so ordinary draws keep every
+   bit. *)
+let sd xs =
+  let c = scale xs in
+  c *. Float.sqrt (var1 (Array.map (fun x -> x /. c) xs))
+
 let reshape_like m xs =
   Array.mapi
     (fun i row -> Array.sub xs (i * Array.length row) (Array.length row))
@@ -195,7 +209,13 @@ let ess_tail_of m =
   in
   Float.min (at 0.05) (at 0.95)
 
-let mcse_mean_of m = Float.sqrt (var1 (pooled m)) /. Float.sqrt (ess (split m))
+(* Over the draws' [scale], for the variance as in [sd] and for [ess], which
+   takes draws less than 1e-15 apart for constant ones: over the scale, those
+   within about 1e-15 of their magnitude. *)
+let mcse_mean_of m =
+  let c = scale (pooled m) in
+  let m = Array.map (Array.map (fun x -> x /. c)) m in
+  c *. Float.sqrt (var1 (pooled m)) /. Float.sqrt (ess (split m))
 
 (* Elements *)
 

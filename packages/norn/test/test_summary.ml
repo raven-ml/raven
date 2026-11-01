@@ -52,6 +52,20 @@ let stats ~diverging ~saturated ~energy =
 
 let column s name = Nx.to_array (List.assoc name (S.columns s))
 
+(* Draws on a grid of 1/8, so that a scaled draw and the spread of differing
+   ones stay normal, and a power [j] of two whose square, beside such draws,
+   underflows or overflows for some. *)
+let scaled_gen =
+  Gen.(
+    pair
+      (array ~size:(constant 8)
+         (map (fun k -> float_of_int k /. 8.) (int_range (-64) 64)))
+      (int_range (-1000) 1000))
+
+let cover_scaled j =
+  cover "a scale whose square underflows" (j < -540);
+  cover "a scale whose square overflows" (j > 520)
+
 let rows =
   group "rows"
     [
@@ -88,6 +102,38 @@ let rows =
             [| Float.sqrt (14. /. 3.) |]
             (column s "sd");
           equal (array (float 1e-12)) [| 2.5 |] (column s "median"));
+      prop "the sd and error scale by a power of two exactly" scaled_gen
+        (fun (xs, j) ->
+          cover_scaled j;
+          let summary xs =
+            let x = Nx.create Nx.float64 [| 2; 4 |] xs in
+            S.v Nx.Ptree.tensor (Draws.v Nx.Ptree.tensor x)
+          in
+          let unit = summary xs in
+          let s = summary (Array.map (fun x -> Float.ldexp x j) xs) in
+          (* The sd of the draws as written, one degree of freedom less. *)
+          let sd =
+            let n = float_of_int (Array.length xs) in
+            let m = Array.fold_left ( +. ) 0. xs /. n in
+            let ss =
+              Array.fold_left (fun s x -> s +. ((x -. m) *. (x -. m))) 0. xs
+            in
+            Float.sqrt (ss /. (n -. 1.))
+          in
+          equal ~msg:"sd" float_exact (Float.ldexp sd j) (column s "sd").(0);
+          equal ~msg:"mcse" float_exact
+            (Float.ldexp (column unit "mcse").(0) j)
+            (column s "mcse").(0));
+      test "draws a float's range apart have a finite sd" (fun () ->
+          let x =
+            Nx.create Nx.float64 [| 2; 4 |]
+              [| -1e308; 1e308; -1e308; 1e308; 1e308; -1e308; 1e308; -1e308 |]
+          in
+          let s = S.v Nx.Ptree.tensor (Draws.v Nx.Ptree.tensor x) in
+          (* Eight draws of ±d have the variance 8d² / 7. *)
+          equal (float_rel ~rel:1e-15 ~abs:0.)
+            (1e308 *. Float.sqrt (8. /. 7.))
+            (column s "sd").(0));
       test "the diagnostics are Diag's" (fun () ->
           let s = S.v p draws in
           let r = Norn.Diag.rhat p draws in
@@ -267,6 +313,42 @@ let of_weighted =
           equal (float 1e-12) 3. (one "q95");
           equal (float 1e-12) (Float.sqrt 0.2421875) (one "mcse");
           equal (float 1e-12) (0.6875 /. 0.2421875) (one "ess"));
+      test "the spreads of draws far from 1 keep their scale" (fun () ->
+          (* Two draws [2d] apart, of weight 1/2 each, have the standard
+             deviation [d], the error [d / sqrt 2] and the effective size 2.
+             [d²] is below the least float for the first and above the
+             largest for the second. *)
+          let spread d xs =
+            let s =
+              S.of_weighted Nx.Ptree.tensor
+                (weighted (vec xs) (Nx.zeros Nx.float64 [| 2 |]))
+            in
+            let one name = (column s name).(0) in
+            let close = float_rel ~rel:1e-12 ~abs:0. in
+            equal ~msg:"sd" close d (one "sd");
+            equal ~msg:"mcse" close (d /. Float.sqrt 2.) (one "mcse");
+            equal ~msg:"ess" close 2. (one "ess")
+          in
+          spread 1e-200 [| 1e-200; 3e-200 |];
+          spread 1e200 [| -1e200; 1e200 |];
+          spread 1e308 [| -1e308; 1e308 |]);
+      prop "the weighted sd and error scale by a power of two exactly"
+        Gen.(pair scaled_gen (array ~size:(constant 8) (float_range (-4.) 4.)))
+        (fun ((xs, j), lw) ->
+          cover_scaled j;
+          let summary xs =
+            S.of_weighted Nx.Ptree.tensor (weighted (vec xs) (vec lw))
+          in
+          let unit = summary xs in
+          let s = summary (Array.map (fun x -> Float.ldexp x j) xs) in
+          List.iter
+            (fun name ->
+              equal ~msg:name float_exact
+                (Float.ldexp (column unit name).(0) j)
+                (column s name).(0))
+            [ "sd"; "mcse" ];
+          equal ~msg:"ess" float_exact (column unit "ess").(0)
+            (column s "ess").(0));
       prop "equal weights give the draws' mean and an effective size of n"
         weighted_gen (fun (xs, _) ->
           let n = Array.length xs in

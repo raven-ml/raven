@@ -19,6 +19,15 @@ val mean : float array -> float
 val var1 : float array -> float
 (** [var1 xs] is the variance of [xs] with one degree of freedom less. *)
 
+val scale : float array -> float
+(** [scale xs] is the power of two at or below the largest [|x|] of [xs], or
+    [1.] if that is [0.] or not finite. Division by it is exact short of a
+    subnormal quotient, and the quotients square without overflow. *)
+
+val sd : float array -> float
+(** [sd xs] is the square root of [var1 xs], computed over {!scale}: finite
+    for finite draws, and nonzero when they differ. *)
+
 val quantile : float array -> float -> float
 (** [quantile xs q] interpolates linearly between the order statistics. *)
 

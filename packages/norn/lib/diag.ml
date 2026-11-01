@@ -342,7 +342,13 @@ let loo (type f) (d : (float, f, 'd) Nx.t Draws.t) =
   let elpd_i = Array.map (fun (e, _, _) -> e) each in
   let n = Array.length each in
   let sum xs = Array.fold_left ( +. ) 0. xs in
-  let se = Float.sqrt (float_of_int n *. Chains.var1 elpd_i) in
+  (* Over the points' scale, as Chains.sd: exact for ordinary values, and
+     neither underflowing nor overflowing for extreme ones. *)
+  let se =
+    let c = Chains.scale elpd_i in
+    let scaled = Array.map (fun e -> e /. c) elpd_i in
+    c *. Float.sqrt (float_of_int n *. Chains.var1 scaled)
+  in
   let scalar v = like x [||] [| v |] in
   {
     elpd = scalar (sum elpd_i);
