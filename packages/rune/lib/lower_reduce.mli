@@ -116,9 +116,9 @@ val scan :
     read into [acc]. It sums the products and [init] in [acc] and rounds the sum
     once to [out]. An integer [acc] wraps and is exact.
 
-    A float [acc]'s result is within [γ(K + 1 + s) (|init| + Σ|a·b|)] of the
-    exact one for [K] products, where [s] is the number of scaled operands. A
-    complex [acc]'s real part is within
+    A float [acc]'s result of [K] products holds {!Nx.contract}'s bound with
+    [K + 1 + s] in place of [K + 1], where [s] is the number of scaled
+    operands. A complex [acc]'s real part is within
     [γ(K + 2) (|init| + Σ(|ar br| + |ai bi|))] of the exact one, and its
     imaginary part within [γ(K + 2) (|init| + Σ(|ar bi| + |ai br|))], [|init|]
     that part's. *)

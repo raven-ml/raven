@@ -1521,10 +1521,10 @@ let subnormal (D.Any dt) =
   | _ -> Float.ldexp 1. (-149)
 
 (* Integers give eager's bits. A float result of [K] contracted terms is within
-   [γ(K + 1 + s) (|init| + Σ|a·b|)] of the exact one on each side, [s] its
+   [γ(K + 1 + s, 2u) (|init| + Σ|a·b|)] of the exact one on each side, [s] its
    scaled operands, a complex result's part within [γ(K + 2)] of that part's
-   magnitudes, and each of its roundings errs by half a subnormal more where it
-   underflows. With an init, a zero result's sign follows the order of
+   magnitudes, and each of its roundings errs by a subnormal step more where
+   it underflows. With an init, a zero result's sign follows the order of
    summation, which the bound leaves open: [+0] added last, or a [-0] init
    first; so does that of a result with a nonzero product, by whether tolk fuses
    it ([nonzero_products]). A NaN result's bits are unspecified. *)
@@ -1535,9 +1535,11 @@ let contract_check c =
   | D.Float | D.Complex ->
       let k = numel c.ek in
       let s = Bool.to_int (c.sa <> None) + Bool.to_int (c.sb <> None) in
-      let depth = s + if D.is D.Complex dt then k + 2 else k + 1 in
-      let g = gamma (carrier_roundoff c.acc) depth in
-      let under = Float.of_int (depth + 1) *. subnormal c.acc in
+      let complex = D.is D.Complex dt in
+      let depth = s + if complex then k + 2 else k + 1 in
+      let u = carrier_roundoff c.acc in
+      let g = gamma (if complex then u else 2. *. u) depth in
+      let under = 2. *. Float.of_int (depth + 1) *. subnormal c.acc in
       let bits = part_bits dt and round = rounding_of dt in
       let products = nonzero_products c a b in
       let check (e, l) mags =

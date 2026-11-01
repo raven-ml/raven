@@ -102,6 +102,12 @@ let gamma k =
   let k = float_of_int k in
   k *. u /. (1. -. (k *. u))
 
+(* [γ(k, 2u)] at [float32], a contraction's bound ({!Nx.contract}). *)
+let product k =
+  let v = ldexp 1. (-23) in
+  let k = float_of_int k in
+  k *. v /. (1. -. (k *. v))
+
 (* Cases
 
    A set of [n] devices, a shape whose cut axis has [0] to [2n + 1] elements, so
@@ -205,7 +211,7 @@ let matmul set c =
       | Value e, Value j ->
           let host x = Nx.abs (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
           let mass = Nx.matmul (host a) (host b) in
-          within ~bound:(Nx.mul_s mass (2. *. gamma (inner + 1))) e j
+          within ~bound:(Nx.mul_s mass (2. *. product (inner + 1))) e j
       | e, j -> equal (outcome_t bits_t) (omap bits e) (omap bits j))
   | _ -> assume false
 
@@ -310,7 +316,7 @@ let expert_product set c =
       (Nx_quant.mxfp4 ~scales magnitudes)
       (Nx.abs (Nx.cast Nx.float64 x))
   in
-  within ~bound:(Nx.mul_s mass (2. *. gamma (k + 1))) eager jit;
+  within ~bound:(Nx.mul_s mass (2. *. product (k + 1))) eager jit;
   equal ~msg:"a second compiled call" bits_t (bits jit)
     (bits (step (fst args) (snd args)))
 
@@ -368,17 +374,18 @@ let grads set rows =
   let jit = compiled g x w in
   match jit with
   | Value jit ->
-      (* [g = xᵀ (1 - t²)] for [t = tanh (x w)]: [x w] is within [γ(5) |x| |w|],
-         which moves [1 - t²] by twice that at most; [t]'s 18 ulps move it by 36
-         [u], its square and difference by 2 [u] more; the product with [xᵀ]
-         adds [γ(rows + 1)]. Eager and compiled each hold the bound. *)
+      (* [g = xᵀ (1 - t²)] for [t = tanh (x w)]: [x w] is within
+         [γ(5, 2u) |x| |w|], which moves [1 - t²] by twice that at most; [t]'s
+         18 ulps move it by 36 [u], its square and difference by 2 [u] more;
+         the product with [xᵀ] adds [γ(rows + 1, 2u)]. Eager and compiled each
+         hold the bound. *)
       let host x = Nx.abs (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
       let ax = host x in
       let u = ldexp 1. (-24) in
       let term =
         Nx.add_s
-          (Nx.mul_s (Nx.matmul ax (host w)) (2. *. gamma 5))
-          ((38. *. u) +. gamma (rows + 1))
+          (Nx.mul_s (Nx.matmul ax (host w)) (2. *. product 5))
+          ((38. *. u) +. product (rows + 1))
       in
       let bound = Nx.mul_s (Nx.matmul (Nx.transpose ax) term) 2. in
       within ~bound eager jit
@@ -699,7 +706,7 @@ let expert_grad set =
   let ids' = Nx.place on ids and x' = Nx.place on x in
   let eager = g ids' x' in
   let exact = column decoded and mass = column (Nx.abs decoded) in
-  let bound = Nx.mul_s mass (2. *. gamma (n + 1)) in
+  let bound = Nx.mul_s mass (2. *. product (n + 1)) in
   within ~bound exact (Nx.cast Nx.float64 (Nx.place Nx.Host.on eager));
   equal ~msg:"placement" (placement ()) on (Nx.placement eager);
   match compiled g ids' x' with

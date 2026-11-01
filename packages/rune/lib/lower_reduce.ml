@@ -435,8 +435,9 @@ let scan r axis ~carry ~src dt x =
 
    For the bound in [lower_reduce.mli], tolk may fuse a product into the sum
    that takes it, and an element times its scale rounds once, so a float result
-   takes [γ(K + 1 + s)]. A complex part takes two products and a difference or a
-   sum per term, so [γ(K + 2)]. *)
+   takes [K + 1 + s] roundings, each within [2u] where a matrix unit truncates
+   its sums. A complex part takes two products and a difference or a sum per
+   term, so [γ(K + 2)]. *)
 
 type scale = Exponent of Ops.t | Value of D.any * Ops.t
 type operand = { dtype : D.any; node : Ops.t; scale : scale option }

@@ -2374,10 +2374,10 @@ val contract :
     [dt] for integers, which wrap. An integer operand with a float one has no
     default: [acc] is required. The sum starts from [init], or [+0] without it,
     and associates in an order each kernel library states, never a function
-    of the order a pattern lists its names. Before rounding it is within
-    [γ(K + 1, 2u) (|init| + Σ|a||b|)] of the exact sum of its [K] products,
-    wherever its operands lie, where [γ(n, v) = n v / (1 - n v)] and [u] is
-    [acc]'s unit roundoff.
+    of the order a pattern lists its names. Barring overflow and underflow,
+    before rounding it is within [γ(K + 1, 2u) (|init| + Σ|a||b|)] of the
+    exact sum of its [K] products, wherever its operands lie, where
+    [γ(n, v) = n v / (1 - n v)] and [u] is [acc]'s unit roundoff.
 
     A donated [init] receives the result in its memory where {!donate} lets
     the consumer write there and the result's names are the batch names, then

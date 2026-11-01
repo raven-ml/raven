@@ -217,7 +217,9 @@ val apply : 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
     and stores no decoded weight. Any other product first decodes [w] as
     {!dequant} does, at [x]'s dtype or at float32. Read where it lies, the
     product needs kernels that compute a block-scaled contraction, as
-    nx.cpu's do.
+    nx.cpu's do. Each element times its block's scale is then the value
+    {!dequant} gives, exact in the accumulator, so the scales add no
+    rounding: the product holds {!Nx.contract}'s bound over [w]'s values.
 
     Raises [Invalid_argument] if [w] is read where it lies on a set whose
     kernels decline that contraction, if [x] is 0-d, if [x]'s last axis is

@@ -408,10 +408,18 @@ let random_floats shape =
 
 (* Products *)
 
+(* [γ(n, v) = n v / (1 - n v)]. *)
+let gamma n v =
+  let n = float_of_int n in
+  n *. v /. (1. -. (n *. v))
+
 (* [agrees ~at ~k expected bound actual] holds when [actual] is [expected]
-   rounded to [at] within twice the error of a float32 sum of [k] terms whose
-   magnitudes sum to [bound], subnormal terms included, and the error of the
-   rounding; non-finite values must be exact. *)
+   rounded to [at] within {!Nx.contract}'s bound on a sum of [k] products whose
+   magnitudes sum to [bound]: [γ(k + 1, 2u) bound], [u] the unit roundoff of
+   the accumulator, float64 for float64 [at] and float32 otherwise, and one
+   subnormal step of it per rounding where terms underflow; the same errors of
+   [expected]'s float64 sum; and the rounding to [at]. Non-finite values must
+   be exact. *)
 let agrees ~at ~k expected bound actual =
   let (F d) = at in
   equal ~msg:"shape" (array int) (Nx.shape expected) (Nx.shape actual);
@@ -419,6 +427,12 @@ let agrees ~at ~k expected bound actual =
   let format = D.float_format d.dtype in
   let rel = format.epsilon /. 2.
   and tiny = format.min_normal *. format.epsilon in
+  let u, step =
+    match d.dtype with
+    | D.Float64 -> (Float.ldexp 1. (-53), Float.ldexp 1. (-1074))
+    | _ -> (Float.ldexp 1. (-24), Float.ldexp 1. (-149))
+  in
+  let g = gamma (k + 1) (2. *. u) +. gamma (k + 1) (Float.ldexp 1. (-52)) in
   let worst = ref 0. in
   Array.iteri
     (fun i e ->
@@ -426,8 +440,8 @@ let agrees ~at ~k expected bound actual =
         equal float_exact (d.round e) a.(i)
       else
         let tol =
-          2. *. float_of_int k
-          *. ((Float.ldexp 1. (-24) *. b.(i)) +. Float.ldexp 1. (-149))
+          (g *. b.(i))
+          +. (float_of_int (k + 1) *. (step +. Float.ldexp 1. (-1074)))
           +. Float.max (rel *. Float.abs e) tiny
         in
         let err = Float.abs (a.(i) -. e) in

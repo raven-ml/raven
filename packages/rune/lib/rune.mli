@@ -1579,7 +1579,7 @@ val jit :
       function             bound
       Nx.sum, Nx.cumsum    γ(n - 1) Σ|x|
       Nx.prod, Nx.cumprod  relative γ(n - 1)
-      Nx.matmul, ...       γ(n + 1 + s) (|init| + Σ|a b|)
+      Nx.matmul, ...       Nx.contract's
         complex real       γ(n + 2) (|init| + Σ(|ar br| + |ai bi|))
         complex imaginary  γ(n + 2) (|init| + Σ(|ar bi| + |ai br|))
       Nx.scatter by Add    γ(n) (|x| + Σ|ui|)
@@ -1590,9 +1590,10 @@ val jit :
     v}
 
     A cumulative output's [n] counts the terms up to it, a contraction's its
-    products ({!Nx.matmul}, {!Nx.dot}, {!Nx.einsum}, {!Nx.contract}), and [s]
-    its operands with a block scale. A scatter adds [n] updates [ui] to [x]. [E]
-    and [L] are the ulp bounds of {!Nx.exp} and {!Nx.log},
+    products. A real contraction ({!Nx.matmul}, {!Nx.dot}, {!Nx.einsum},
+    {!Nx.contract}) holds {!Nx.contract}'s bound, and each part of a complex
+    one the bound of its row. A scatter adds [n] updates [ui] to [x]. [E] and
+    [L] are the ulp bounds of {!Nx.exp} and {!Nx.log},
     [D = max 0 (2⌈log₂ n⌉ - 1)], [B = (n + 1) u M] for [M] the mean of the
     terms' magnitudes. {!Nx.logcumsumexp}'s bound needs [n] exact in the
     accumulator, and {!Nx.var}'s [V] precedes its [ddof] scale, which rounds

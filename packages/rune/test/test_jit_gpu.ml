@@ -156,6 +156,12 @@ let gamma k =
   let k = float_of_int k in
   k *. u /. (1. -. (k *. u))
 
+(* [γ(k, 2u)] at [float32], a contraction's bound ({!Nx.contract}). *)
+let product k =
+  let v = ldexp 1. (-23) in
+  let k = float_of_int k in
+  k *. v /. (1. -. (k *. v))
+
 (* [jit] within [bound] of [eager] elementwise, NaN where it is NaN. *)
 let within ~bound eager jit =
   let e = Nx.to_array (Nx.cast Nx.float64 (host eager)) in
@@ -252,7 +258,8 @@ let cases =
       result = On;
       close =
         (fun x y e j ->
-          within ~bound:(Nx.mul_s (Nx.matmul (mass x) (mass y)) (2. *. gamma 7))
+          within
+            ~bound:(Nx.mul_s (Nx.matmul (mass x) (mass y)) (2. *. product 7))
             e j);
     };
     {
@@ -268,8 +275,8 @@ let cases =
           let ax = mass x and u = ldexp 1. (-24) in
           let term =
             Nx.add_s
-              (Nx.mul_s (Nx.matmul ax (mass w)) (2. *. gamma 5))
-              ((38. *. u) +. gamma 7)
+              (Nx.mul_s (Nx.matmul ax (mass w)) (2. *. product 5))
+              ((38. *. u) +. product 7)
           in
           let bound = Nx.mul_s (Nx.matmul (Nx.transpose ax) term) 2. in
           within ~bound e j);
@@ -405,6 +412,63 @@ let law_split seed =
     (words (Nx.Rng.split k).(1))
     (words (f (Nx.Rng.place p k)))
 
+(* Matrix units
+
+   A compiled contraction of bfloat16 or float16 operands into float32 holds
+   {!Nx.contract}'s bound, [γ(K + 1, 2u) (|init| + Σ|a||b|)], on the matrix
+   units the compiler takes for it too. Each row is [c] then [K - 1] equal
+   terms [t] against ones, with [t] just under [2^j 2u c] for [j] from [1] to
+   [13], up to float16's unit in the last place at [c], and just under one and
+   two of float32's. A unit whose sum keeps float32's width errs by less than
+   one of its units per addition, so it meets the bound even where it
+   truncates, as the rows with [t] near [u c] press it to. A narrower sum, or
+   one that drops a term, loses about [t] per addition from [j = 1], twice the
+   bound or more: a float16 accumulator errs by 2 to 1700 times it on these
+   rows. *)
+
+let units_k = 2880
+
+(* The terms of each row, as multiples of [u c]. *)
+let unit_terms =
+  (255. /. 256.) :: (255. /. 128.)
+  :: List.init 13 (fun j -> 255. /. 256. *. ldexp 1. (j + 2))
+
+let unit_case (type b) (dt : (float, b) Nx.dtype) c () =
+  let _, (module S) = on_gpu () in
+  let u = ldexp 1. (-24) in
+  let ts = Array.of_list (List.map (fun m -> m *. u *. c) unit_terms) in
+  let rows = Array.length ts and cols = 64 in
+  let a =
+    Nx.init Nx.float32 [| rows; units_k |] (fun i ->
+        if i.(1) = 0 then c else ts.(i.(0)))
+  in
+  equal ~msg:"the terms are exact in the operands' dtype"
+    (Testable.array float_exact) (Nx.to_array a)
+    (Nx.to_array (Nx.cast Nx.float32 (Nx.cast dt a)));
+  let a = Nx.place S.on (Nx.cast dt a) in
+  let b = Nx.place S.on (Nx.ones dt [| units_k; cols |]) in
+  let p = Nx.Pattern.v "i j, j k -> i k | j" in
+  let f a b = Nx.contract Nx.float32 p a b in
+  let jit = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f a b in
+  let n = float_of_int (units_k + 1) and v = 2. *. u in
+  let g = n *. v /. (1. -. (n *. v)) in
+  Array.iteri
+    (fun i y ->
+      let t = ts.(i / cols) in
+      let exact = c +. (float_of_int (units_k - 1) *. t) in
+      less
+        ~msg:(Printf.sprintf "row %d, terms %h, column %d" (i / cols) t
+                (i mod cols))
+        float_exact ~than:(g *. exact)
+        (Float.abs (y -. exact)))
+    (Nx.to_array (host jit))
+
+let unit_cases =
+  [
+    test "bfloat16 into float32" (unit_case Nx.bfloat16 1.);
+    test "float16 into float32" (unit_case Nx.float16 2048.);
+  ]
+
 let () =
   exit
     (run "Rune.jit on a GPU"
@@ -437,6 +501,7 @@ let () =
            (List.map
               (fun c -> test c.name (over ~devices:4 ~first:1 c))
               mesh_cases);
+         group "a contraction on matrix units holds its bound" unit_cases;
          group "keys"
            [
              prop ~count:20

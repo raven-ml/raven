@@ -362,6 +362,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled real contraction (`Nx.matmul`, `Nx.dot`, `Nx.einsum`,
+  `Nx.contract`) promises `Nx.contract`'s bound, `γ(K + 1, 2u)`, which a
+  matrix unit that truncates its sums meets. rune stated `γ(n + 1 + s)` at
+  `u`.
 - `Rune.scan` over rows `[t; 1; f]` split along their batch axis runs
   eagerly, and `Rune.jit` compiles it: eager computation raised at `Nx.get`
   of a row, and a compiled call evaluated.
