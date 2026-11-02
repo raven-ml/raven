@@ -543,23 +543,36 @@ let limit s l ~at =
    [|x + δ − x*| ≤ L |δ| / (1 − L)], within [e] wherever [L ≤ q] and within
    [tol] wherever that step at least halves the error. The error with the newest
    reading, which the floats' limit takes, shares all but the gap. *)
-let judge tol s ~map ~mu ~f delta =
+let judge tol s ~map ~mu ~resolution ~f delta =
   let run = searching s.st in
   let answer = Nx.add s.x delta in
   let scale = Tol.scale tol answer in
   let size, exact = size ~x:s.x ~f delta in
   let bounded e =
-    match (mu, f) with
-    | None, _ -> e
-    | Some mu, (Paired g | Solved g) ->
-        let floor = Nx.clamp ~min:(Num.tiny (Nx.dtype g)) scale in
-        Nx.maximum e (gradient_bound ~scale:floor ~mu g)
+    let e =
+      match (mu, f) with
+      | None, _ -> e
+      | Some mu, (Paired g | Solved g) ->
+          let floor = Nx.clamp ~min:(Num.tiny (Nx.dtype g)) scale in
+          Nx.maximum e (gradient_bound ~scale:floor ~mu g)
+    in
+    match resolution with None -> e | Some r -> Nx.maximum e r
   in
   let error q =
     bounded (Nx.where exact (Nx.zeros_like delta) (Nx.div size (gap q)))
   in
   let newest = error s.q in
-  let stuck = still s.x map in
+  (* With a resolution, a step within an ulp of the estimate's largest
+     magnitude is at the floats' limit as well: no component is resolved
+     closer than that, whatever the condition. *)
+  let stuck =
+    match resolution with
+    | None -> still s.x map
+    | Some _ ->
+        let top = Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs s.x) in
+        let ulp = Nx.mul_s top (Num.eps (Nx.dtype s.x)) in
+        Nx.logical_or (still s.x map) (every (Nx.less_equal (Nx.abs map) ulp))
+  in
   let e = Nx.where (column stuck) newest (error (contraction s)) in
   let converged = Nx.logical_and run (within ~scale e) in
   let st = settle s.st converged Converged in
@@ -572,7 +585,30 @@ let judge tol s ~map ~mu ~f delta =
     { error = newest; answer; scale } )
 
 let test tol s ~f delta =
-  fst (judge tol (read tol s ~map:delta) ~map:delta ~mu:None ~f delta)
+  fst
+    (judge tol
+       (read tol s ~map:delta)
+       ~map:delta ~mu:None ~resolution:None ~f delta)
+
+(* The Rayleigh quotient [yᵀs / sᵀs] of a move [s] that changed the gradient
+   by [y], taken on [s / m], [m] its largest magnitude, so that its squares
+   neither underflow nor overflow; NaN is none yet. *)
+let curvature (c, c') ~step y =
+  let m = largest step in
+  let u = Nx.div step m in
+  let r = Nx.div (dot y u) (Nx.mul (dot u u) (Nx.reshape (lanes step) m)) in
+  let measured = Nx.logical_and (Nx.isfinite r) (Nx.greater_s r 0.) in
+  (Nx.where measured r c, Nx.where measured c c')
+
+(* The two newest curvatures, as the contraction takes its two newest
+   readings: a path's earlier curvatures, far from the answer, say nothing of
+   its condition there. *)
+let resolution (c, c') answer =
+  let dtype = Nx.dtype answer in
+  let kappa = Nx.div (Nx.maximum c c') (Nx.minimum c c') in
+  let kappa = Nx.where (Nx.isfinite kappa) kappa (Nx.ones_like kappa) in
+  let top = Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs answer) in
+  Nx.mul (Nx.mul_s (column kappa) (Num.eps dtype)) top
 
 let iterations ~budget extra step (s, aux) =
   let carry =

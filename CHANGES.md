@@ -662,6 +662,10 @@ All notable changes to this project will be documented in this file.
   `Stalled` near the minimum instead of `Budget_spent`: Newton and Newton–CG
   stepped between floats for up to 31 000 evaluations. Newton's search now
   asks the gradient's norm to fall within `f`'s rounding.
+- `Minimize.solve`'s gradient methods count an error of at least `ε κ |x|∞`
+  per component, `κ` the span of the curvatures their moves measured: BFGS
+  converged under `Tol.ulps` with a component 4e-17 from its zero at 0,
+  where the gradient rounded to 0.
 - `Tol.pp` and Jera's messages write each float as the shortest decimal that
   reads back, the same text on every system: `abs 1000000` where they wrote
   `abs 1e+06`, or `1e+006` under Windows.

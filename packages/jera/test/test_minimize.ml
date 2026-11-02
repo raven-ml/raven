@@ -1299,6 +1299,18 @@ let termination_tests =
                       ~budget:200 (objective a b) (Nx.zeros_like b))))
           methods);
     prop "below an ulp a search ends at the floats' limit, near the minimum"
+      ~examples:
+        [
+          (* Coupled, with zeros in its minimum: the gradient rounds to 0
+             at 4e-17 from them. *)
+          ( Nx.create f64 [| 5; 5 |]
+              [|
+                9.; 0.; 0.; -1.; 0.; 0.; 6.; 1.; -1.; -1.; 0.; 1.; 12.; -1.; 1.;
+                -1.; -1.; -1.; 12.; 0.; 0.; -1.; 1.; 0.; 11.;
+              |],
+            ( vec [| 2.46875; 0.; -2.921875; 0.; 0.53125 |],
+              (false, (0., 0x1.436881aeba15cp-1)) ) );
+        ]
       exact_minima (fun (a, (xstar, (boxed, (c, k)))) ->
         let n = Nx.dim 0 xstar in
         cover "a zero component" (Array.mem 0. (Oracle.floats xstar));
@@ -1322,10 +1334,17 @@ let termination_tests =
             not_equal ~msg:name status_t Budget_spent st;
             (* The answer is fixed to about ε |x*|∞ times the condition: the
                gradient's rounding is ε times its largest terms. *)
+            let x = Solution.best s in
             if st = Stalled then
               at_most float_exact ~msg:name
                 ~than:(2. *. kappa *. Float.epsilon *. top)
-                (Nx.item [] (Nx.max (Nx.abs (Nx.sub (Solution.best s) xstar)))))
+                (Nx.item [] (Nx.max (Nx.abs (Nx.sub x xstar))));
+            (* A converged answer is within its tolerance, up to the factor
+               the quadratics' law above allows. *)
+            if st = Converged then
+              at_most float_exact ~msg:name
+                ~than:(kappa +. 1. +. (1. /. k))
+                (Oracle.ulps ~k ~y:x (Nx.abs (Nx.sub x xstar))))
           methods);
     prop ~count:2 "a constant added to f leaves a solve's status (law)" rotated
       (fun (h, a) ->

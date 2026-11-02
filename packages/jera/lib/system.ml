@@ -44,7 +44,7 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
     let s = { s with st = settle s.st failed Stalled } in
     let s, at_limit =
       Search.judge tol (Search.read tol s ~map:delta) ~map:delta ~mu:None
-        ~f:(Search.Solved s.fx) delta
+        ~resolution:None ~f:(Search.Solved s.fx) delta
     in
     let run = searching s.st in
     let m = Search.largest s.fx in
@@ -114,7 +114,7 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
     let s = { s with st = settle s.st failed Stalled } in
     let s, at_limit =
       Search.judge tol (Search.read tol s ~map:delta) ~map:delta ~mu:None
-        ~f:(Search.Solved s.fx) delta
+        ~resolution:None ~f:(Search.Solved s.fx) delta
     in
     let run = searching s.st in
     let norm0 = Search.norm s.fx in

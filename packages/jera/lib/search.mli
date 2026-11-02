@@ -201,20 +201,22 @@ val judge :
   ('q, 'd) state ->
   map:(float, 'q, 'd) Nx.t ->
   mu:(float, 'q, 'd) Nx.t option ->
+  resolution:(float, 'q, 'd) Nx.t option ->
   f:('q, 'd) source ->
   (float, 'q, 'd) Nx.t ->
   ('q, 'd) state * ('q, 'd) limit
-(** [judge tol s ~map ~mu ~f delta] tests the undamped step [delta] at [s.x] in
-    each running lane, [f] the function the step is taken from: the lane
-    converges at [s.x + delta] where its error meets [tol] there. The error is
-    [error q ~x:s.x ~f delta] with [q] the {!contraction}, and with [mu], the
-    least curvature a quasi-Newton method's steps measured, at least
-    [|σ g| / (mu √n)] times each component's scale [σ] at [s.x + delta], [g]
-    the gradient [f] holds. A lane whose [map], the step the method takes,
+(** [judge tol s ~map ~mu ~resolution ~f delta] tests the undamped step
+    [delta] at [s.x] in each running lane, [f] the function the step is taken
+    from: the lane converges at [s.x + delta] where its error meets [tol]
+    there. The error is [error q ~x:s.x ~f delta] with [q] the {!contraction};
+    with [mu], the least curvature a quasi-Newton method's steps measured, at
+    least [|σ g| / (mu √n)] times each component's scale [σ] at
+    [s.x + delta], [g] the gradient [f] holds; and with [resolution], at least
+    it, per component. A lane whose [map], the step the method takes,
     cannot move its estimate, one within a unit in the last place of every
-    component, is at the floats' limit, and ends as {!limit} says. The result
-    holds what {!limit} needs for the lanes the method's search leaves
-    there. *)
+    component or, with [resolution], of the estimate's largest magnitude, is
+    at the floats' limit, and ends as {!limit} says. The result holds what
+    {!limit} needs for the lanes the method's search leaves there. *)
 
 val limit : ('q, 'd) state -> ('q, 'd) limit -> at:'d Nx.bool_t -> ('q, 'd) state
 (** [limit s l ~at] ends each running lane of [at] at the floats' limit, with
@@ -225,8 +227,29 @@ val limit : ('q, 'd) state -> ('q, 'd) limit -> at:'d Nx.bool_t -> ('q, 'd) stat
 val test :
   Tol.t -> ('q, 'd) state -> f:('q, 'd) source -> (float, 'q, 'd) Nx.t -> ('q, 'd) state
 (** [test tol s ~f delta] is
-    [fst (judge tol (read tol s ~map:delta) ~map:delta ~mu:None ~f delta)], for
-    a method whose map steps by its test step and that has no line search. *)
+    [fst (judge tol (read tol s ~map:delta) ~map:delta ~mu:None
+     ~resolution:None ~f delta)], for a method whose map steps by its test
+    step and that has no line search. *)
+
+val curvature :
+  (float, 'q, 'd) Nx.t * (float, 'q, 'd) Nx.t ->
+  step:(float, 'q, 'd) Nx.t ->
+  (float, 'q, 'd) Nx.t ->
+  (float, 'q, 'd) Nx.t * (float, 'q, 'd) Nx.t
+(** [curvature (c, c') ~step y] is, per lane, the two newest curvatures
+    measured, NaN before any: the Rayleigh quotient [yᵀs / sᵀs] of the move
+    [s = step] that changed the gradient by [y] and [c], where the quotient is
+    positive, and [(c, c')] elsewhere. *)
+
+val resolution :
+  (float, 'q, 'd) Nx.t * (float, 'q, 'd) Nx.t ->
+  (float, 'q, 'd) Nx.t ->
+  (float, 'q, 'd) Nx.t
+(** [resolution (c, c') answer] is [ε κ |answer|∞] per lane, of the lanes'
+    shape and an axis of one, with [κ] the ratio of the larger of the two
+    newest curvatures to the smaller, 1 before two: how far a coupled
+    problem's zero of the gradient is fixed, the gradient's rounding [ε]
+    times its largest terms over the least curvature. *)
 
 val iterations :
   budget:int ->

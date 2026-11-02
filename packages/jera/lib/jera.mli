@@ -643,7 +643,16 @@ module Minimize : sig
       |s / σ|²] their accepted steps [s] measured, and no bound before one did.
       It is the distance in [tol]'s scaled norm where [f]'s curvature near the
       minimum is at least [μ], an estimate since the steps sample the curvature
-      only along their path. A lane whose error does not meet [tol] ends
+      only along their path. A gradient method's error is also at least
+      [ε κ |x|∞] in each component, [κ] the ratio of the larger to the
+      smaller of the curvatures [yᵀs / sᵀs] its two newest moves measured, 1
+      before two: the gradient's rounding is [ε] times its largest terms,
+      about the largest curvature times [|x|∞], and a coupled problem's
+      gradient rounds to 0 within that over the least curvature of its zero,
+      so a gradient that is 0 there fixes a component no closer; a step
+      within [ε |x|∞] in every component is at the floats' limit. A
+      coordinate held at a bound its gradient pushes against is fixed by the
+      bound and keeps its error. A lane whose error does not meet [tol] ends
       [Stalled] as in {!System}, and at a step that is not downhill; a
       non-finite [f] or gradient at the start ends it [Not_finite]; [budget]
       iterations end it [Budget_spent]. At the floats' limit the gradient is
@@ -696,8 +705,8 @@ module Minimize : sig
       Hessian-vector products, truncated by its tolerance with {!Linear.cg},
       then backtracks by halving from [x + δ] to the sufficient decrease
       [f ≤ f x + 10⁻⁴ ∇fᵀ (α δ)], Bertsekas's (1982) search, so near a minimum
-      it takes the full step. Within [√ε |f x|] of [f x], where the decrease a
-      step predicts falls below [f]'s rounding, a trial decreases where the
+      it takes the full step. Where the sufficient decrease's bound rounds to
+      [f x], a decrease [f] cannot show, a trial decreases where the
       gradient's norm strictly falls, as {!System.newton}'s search does on
       [|f|] for [∇f = 0]. A Hessian that is not positive-definite gives a step
       that is not downhill, or ends {!Linear.cg}, and the lane stalls.
@@ -779,12 +788,13 @@ module Minimize : sig
       the norm of [x − P (x − ∇f x)], its Hessian solve acts on the others and
       [−∇f] on the held ones, and the search backtracks by halving along the
       projection arc [P (x + α d)] to the sufficient decrease
-      [f ≤ f x + 10⁻⁴ ∇fᵀ (P (x + α d) − x)], within [f x]'s rounding to a
-      strict fall of the norm of [x − P (x − ∇f x)]. {!levenberg_marquardt}
-      holds the same coordinates and solves its damped system on the others,
-      with the diagonal of [JᵀJ + λ D] on the held ones, so every step tends to
-      zero as [λ] grows; its trial point is [P (x + δ)], rejected where the
-      linear model predicts no decrease there. {!nelder_mead} clips its
+      [f ≤ f x + 10⁻⁴ ∇fᵀ (P (x + α d) − x)], or where its bound rounds to
+      [f x] to a strict fall of the norm of [x − P (x − ∇f x)].
+      {!levenberg_marquardt} holds the same coordinates and solves its damped
+      system on the others, with the diagonal of [JᵀJ + λ D] on the held
+      ones, so every step tends to zero as [λ] grows; its trial point is
+      [P (x + δ)], rejected where the linear model predicts no decrease there.
+      {!nelder_mead} clips its
       vertices. The undamped step is the projected one, [P (x + δ) − x], and
       the gradient of {!bfgs}'s and {!lbfgs}'s bound the projected one,
       [x − P (x − ∇f x)]. The answer is stated as the zero of

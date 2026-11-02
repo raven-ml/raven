@@ -588,27 +588,25 @@ let lbfgs_method at dtype n m ~trials evaluate =
    sufficient decrease [f ≤ f x + c gᵀ (P (x + α d) − x)]. The undamped step
    is [P (x + d) − x].
 
-   Near a minimum the decrease of [f] that a step predicts falls below [f]'s
-   rounding, and within [√ε |f x|] of [f x], the band of the line search's
-   approximate conditions (Hager and Zhang, 2005), the step is judged as
-   Newton's for the equation [r = 0], [r = x − P (x − g)] the projected
-   gradient: a trial there decreases where [|r|] strictly falls, as
-   {!System.newton}'s search on its merit. A strict fall cannot go on, so at
-   the floats' limit, where [g] is rounding and slopes pass a step that raises
-   [f] as readily as one that lowers it, the search finds none. *)
+   Near a minimum the decrease a step predicts falls below [f]'s rounding,
+   and the sufficient decrease's bound rounds to [f x] itself, which [f]
+   cannot show. There the step is judged as Newton's for the equation
+   [r = 0], [r = x − P (x − g)] the projected gradient: a trial decreases
+   where [|r|] strictly falls, as {!System.newton}'s search on its merit. A
+   strict fall cannot go on, so at the floats' limit, where [g] is rounding
+   and a step raises [f] as readily as it lowers it, the search finds none. *)
 let projected ~trials evaluate ~project ~residual ~running (p : _ point) d =
   let dtype = Nx.dtype p.x in
-  let rounding = Nx.mul_s (Nx.abs p.value) (sqrt (Num.eps dtype)) in
   let r0 = Search.norm (residual p) in
   let trial alpha =
     let x = project (Nx.add p.x (Search.along alpha d)) in
     let q = evaluate x in
     let slope = Search.dot p.g (Nx.sub x p.x) in
+    let bound = Nx.add p.value (Nx.mul_s slope Search.c) in
     let decrease =
-      Nx.where
-        (Nx.less_equal (Nx.abs (Nx.sub q.value p.value)) rounding)
+      Nx.where (Nx.equal bound p.value)
         (Nx.less (Search.norm (residual q)) r0)
-        (Nx.less_equal q.value (Nx.add p.value (Nx.mul_s slope Search.c)))
+        (Nx.less_equal q.value bound)
     in
     ( pack q,
       q.value,
@@ -751,6 +749,29 @@ let cauchy model box x g =
   let alpha = Nx.minimum (Nx.scalar_at (Nx.beside x) dtype 1.) (Nx.min room) in
   Nx.sub (Nx.add xcp (Nx.mul alpha dhat)) x
 
+(* The resolution of a gradient method's answer, per component: the
+   gradient's rounding is [ε] times its largest terms, about [λmax |x|∞] at
+   a curvature of [λmax], and moves the zero by that over the least
+   curvature [λmin], [ε κ |x|∞] in every component of a coupled problem,
+   [κ] estimated by the two newest Rayleigh quotients of the accepted moves.
+   A gradient that rounds to 0 within it is no proof of the answer. A
+   coordinate held at a bound its gradient pushes against is fixed by the
+   bound, and has none. *)
+let resolution box curvatures (s : _ Search.state) delta =
+  let answer = Nx.add s.x delta in
+  let r =
+    Nx.broadcast_to (Nx.shape answer) (Search.resolution curvatures answer)
+  in
+  match box with
+  | None -> r
+  | Some b ->
+      let held =
+        Nx.logical_or
+          (Nx.logical_and (Nx.equal answer b.lo) (Nx.greater_s s.fx 0.))
+          (Nx.logical_and (Nx.equal answer b.hi) (Nx.less_s s.fx 0.))
+      in
+      Nx.where held (Nx.zeros_like r) r
+
 (* The search from [s]: the loop of iterations, each the method's undamped step
    tested, then its search for the running lanes. In a box the step stays in it:
    a Cauchy step searches only the segment to its subspace point, which the box
@@ -758,7 +779,7 @@ let cauchy model box x g =
 let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
     value =
   let unbounded = Nx.full_like value Float.infinity in
-  let step (s : _ Search.state) ((value, mu), memory) =
+  let step (s : _ Search.state) ((value, (mu, curvatures)), memory) =
     let here = { x = s.x; value; g = s.fx } in
     let delta, failed, search =
       match (box, m.boxed) with
@@ -794,7 +815,9 @@ let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
     in
     let curvature = if m.curvature then Some mu else None in
     let s, at_limit =
-      Search.judge tol s ~map:delta ~mu:curvature ~f:(Search.Paired g) delta
+      Search.judge tol s ~map:delta ~mu:curvature
+        ~resolution:(Some (resolution box curvatures s delta))
+        ~f:(Search.Paired g) delta
     in
     let run = searching s.st in
     let downhill = Search.descends s.fx delta in
@@ -821,18 +844,25 @@ let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
         n = Nx.add s.n tries;
       },
       ( ( Search.hold moved q.value value,
-          if m.curvature then
-            Search.hold moved
-              (Search.least tol mu ~x:s.x ~x':q.x (Nx.sub q.g s.fx))
-              mu
-          else mu ),
+          ( (if m.curvature then
+               Search.hold moved
+                 (Search.least tol mu ~x:s.x ~x':q.x (Nx.sub q.g s.fx))
+                 mu
+             else mu),
+            Nx.Ptree.map2
+              Nx.Ptree.(pair tensor tensor)
+              (fun _ a b -> Search.hold moved a b)
+              (Search.curvature curvatures ~step:(Nx.sub q.x s.x)
+                 (Nx.sub q.g s.fx))
+              curvatures ) ),
         memory ) )
   in
+  let none = Nx.full_like value Float.nan in
   fst
     (Search.iterations ~budget
-       Nx.Ptree.(pair (pair tensor tensor) m.memory)
+       Nx.Ptree.(pair (pair tensor (pair tensor (pair tensor tensor))) m.memory)
        step
-       (s, ((value, Nx.full_like value Float.nan), m.init)))
+       (s, ((value, (none, (none, none))), m.init)))
 
 (* The first [steps] iterates from [p], the first [p.x]: a lane stops at a zero
    gradient or when its search finds no decrease, and repeats its estimate. *)
@@ -1291,7 +1321,10 @@ let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
             Nx.scalar_at (Nx.beside g) Nx.bool true ))
         (delta, Nx.logical_not gate)
     in
-    let s, _ = Search.judge tol s ~map:delta ~mu:None ~f:(Search.Paired gp) gauss in
+    let s, _ =
+      Search.judge tol s ~map:delta ~mu:None ~resolution:None
+        ~f:(Search.Paired gp) gauss
+    in
     let running = searching s.st in
     let xt, rt, jt, gt, ok, rho =
       lm_trial p.residual ~jacobian:p.jacobian ~project ~running j s.x s.fx g
