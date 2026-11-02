@@ -382,14 +382,17 @@ let give_view fd handle gpu =
   | n -> views := Pairs.add key n !views
 
 (* Gives back the KFD memory [handle] and the [n] addresses at [at] reserved for
-   it, then raises the failure of [step]. *)
+   it, allocating nothing before both have gone, then raises the failure of
+   [step]. *)
 let undo fd handle at n step e =
-  quietly (fun () -> kfd_free fd handle);
+  (try kfd_free fd handle with Unix.Unix_error _ -> ());
   unmap_mem at n;
   fault step e
 
 (* [n] bytes of [kind] at addresses reserved in the process, mapped for the GPU,
-   and for the host unless they are [Device]. *)
+   and for the host unless they are [Device]. The answer is made before KFD's
+   allocation, so that nothing allocates or polls between it and the return,
+   and an exception as it is made gives the addresses back. *)
 let alloc fd g (kind : Rig_edge.memory) n : mem Amd.memory option =
   if kind = Mapped && g.node.visible = 0 then None
   else
@@ -397,6 +400,18 @@ let alloc fd g (kind : Rig_edge.memory) n : mem Amd.memory option =
     let at = check "reserving GPU addresses" (fun () -> reserve n) in
     let request : memory =
       match kind with Device -> Gpu | Mapped -> Bar | Pinned -> System
+    in
+    let data, made =
+      match
+        let host = if kind = Device then None else Some at in
+        let vram = kind <> Pinned in
+        let data = { handle = 0; bytes = n; at; kind = Own; owner = g; vram } in
+        (data, Some { Amd.address = at; host; data })
+      with
+      | made -> made
+      | exception e ->
+          unmap_mem at n;
+          reraise e
     in
     match kfd_alloc fd g.node.gpu_id at n request with
     | exception Unix.Unix_error (e, _, _) ->
@@ -410,18 +425,8 @@ let alloc fd g (kind : Rig_edge.memory) n : mem Amd.memory option =
         (try map_gpu fd handle g.node.gpu_id true
          with Unix.Unix_error (e, _, _) ->
            undo fd handle at n "mapping memory for the GPU" e);
-        let host = if kind = Device then None else Some at in
-        let data =
-          {
-            handle;
-            bytes = n;
-            at;
-            kind = Own;
-            owner = g;
-            vram = kind <> Pinned;
-          }
-        in
-        Some { Amd.address = at; host; data }
+        data.handle <- handle;
+        made
 
 (* The kernel driver lets go of memory before the process unmaps it: unmapping
    host memory the driver still maps makes it evict every queue of the process

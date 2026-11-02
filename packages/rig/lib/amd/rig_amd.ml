@@ -163,18 +163,53 @@ type 'm path = {
    holds its owner, so that a free after stop needs nothing of the device. *)
 type 'm owner = { key : 'm Type.Id.t; free : 'm memory -> unit }
 
-(* A path's memory, with its owner. *)
-type mem = Mem : 'm owner * 'm memory -> mem
+(* A path's memory, with its owner: the path's answer to the call that made
+   it, [None] until that call returns or if it made nothing. The record is
+   made before the call ([ops]), and the driver hands out only memory the
+   path made. *)
+type 'm held = { owner : 'm owner; mutable memory : 'm memory option }
 
-let mem_address (Mem (_, m)) = m.address
-let mem_host (Mem (_, m)) = m.host
-let free_mem (Mem (o, m)) = o.free m
+type mem = Mem : 'm held -> mem
 
-(* The path's functions over memory whose type the owner hides. *)
+let unmade () = invalid_arg "Rig_amd: memory its path did not make"
+
+let mem_address (Mem c) =
+  match c.memory with Some m -> m.address | None -> unmade ()
+
+let mem_host (Mem c) = match c.memory with Some m -> m.host | None -> unmade ()
+(* Gives back [m]'s memory once: the record lets go of it before the path's
+   free, with nothing allocated between, so that a free an exception ends
+   leaks it at worst and never frees it twice, which, as KFD reuses handles,
+   could free other memory. A record may so sit on several lists, and any
+   walker of them frees it. *)
+let free_mem (Mem c) =
+  match c.memory with
+  | None -> ()
+  | Some m ->
+      c.memory <- None;
+      c.owner.free m
+
+(* Memory *)
+
+type region = {
+  bytes : int;
+  mem : mem;
+  flush : int option;
+      (* the device whose HDP register this region keeps flushed, by its
+         [self] *)
+}
+
+let region ?flush n m = { bytes = n; mem = m; flush }
+
+(* The path's functions over memory whose type the owner hides. Memory is made
+   into a record [held] made, empty, before the path's call: [alloc m k n],
+   [map_host m a n] and [map_peer m m'] store the path's answer in [m] as it
+   is, and are whether the path made memory. *)
 type ops = {
-  alloc : Rig_edge.memory -> int -> mem option;
-  map_host : (int -> int -> mem option) option;
-  map_peer : mem -> mem option;
+  held : unit -> mem;
+  alloc : mem -> Rig_edge.memory -> int -> bool;
+  map_host : (mem -> int -> int -> bool) option;
+  map_peer : mem -> mem -> bool;
   dma : mem -> fn:string -> (Rig_edge.dma, string) result;
   queue :
     [ `Pm4 | `Aql | `Sdma ] ->
@@ -193,17 +228,27 @@ type ops = {
 
 let ops (type m) (p : m path) =
   let owner = { key = p.key; free = p.free } in
-  let pack m = Mem (owner, m) in
-  let own (Mem (o, m)) : m memory option =
-    match Type.Id.provably_equal o.key p.key with
-    | Some Type.Equal -> Some m
+  let own (Mem c) : m memory option =
+    match Type.Id.provably_equal c.owner.key p.key with
+    | Some Type.Equal -> c.memory
     | None -> None
   in
+  let fill (Mem c) (make : unit -> m memory option) =
+    match Type.Id.provably_equal c.owner.key p.key with
+    | None -> invalid_arg "Rig_amd: a record of another path's memory"
+    | Some Type.Equal ->
+        c.memory <- make ();
+        Option.is_some c.memory
+  in
   {
-    alloc = (fun k n -> Option.map pack (p.alloc k n));
-    map_host = Option.map (fun f a n -> Option.map pack (f a n)) p.map_host;
+    held = (fun () -> Mem { owner; memory = None });
+    alloc = (fun m k n -> fill m (fun () -> p.alloc k n));
+    map_host = Option.map (fun f m a n -> fill m (fun () -> f a n)) p.map_host;
     map_peer =
-      (fun m -> Option.bind (own m) (fun m -> Option.map pack (p.map_peer m)));
+      (fun m m' ->
+        match own m' with
+        | None -> false
+        | Some m' -> fill m (fun () -> p.map_peer m'));
     dma =
       (fun m ~fn ->
         match own m with
@@ -218,17 +263,29 @@ let ops (type m) (p : m path) =
     stop = p.stop;
   }
 
-(* Memory *)
+(* What holds memory the path makes, such as a region, is made with the record
+   before the path's call, and the call stores into the record without
+   allocating, so that nothing allocates or polls from the path's change to the
+   point where the memory is held: rig's store of a region the driver returns,
+   in a record of rig's made before its call to the driver. An asynchronous
+   exception between the two, such as a Gc.Memprof callback deferred from an
+   allocation in the path's C, would leave the memory made and nothing holding
+   it: on amdgpu a host mapping that every device of the GPU shares and KFD
+   keeps for the process's life, refusing maps of pages that partly overlap
+   it. *)
 
-type region = {
-  bytes : int;
-  mem : mem;
-  flush : int option;
-      (* the device whose HDP register this region keeps flushed, by its
-         [self] *)
-}
+(* A region of [n] bytes over the memory [make m] makes in a new record [m], or
+   [None] if it makes none. *)
+let answer ?flush ops n make =
+  let m = ops.held () in
+  let r = Some (region ?flush n m) in
+  if make m then r else None
 
-let region ?flush n m = { bytes = n; mem = m; flush }
+(* [n] bytes of [k] for the driver's own use, or [None]. *)
+let alloc_mem ops k n =
+  let m = ops.held () in
+  let made = Some m in
+  if ops.alloc m k n then made else None
 
 (* C state *)
 
@@ -345,9 +402,11 @@ type live = {
          (rig_amd_ring.c's Growth) *)
   copy_launch : int; (* private launch until confirmed stop; 0 when absent *)
   scratch : scratch;
-  mutable traces : (Abi.Capability.trace * mem list) option;
-      (* the trace buffers, made at the first trace: the capability's record and
-         the memory under it *)
+  mutable trace : Abi.Capability.trace option;
+      (* the capability's record of the trace buffers, made at the first
+         trace *)
+  mutable trace_memory : mem list;
+      (* the memory under the trace buffers, listed before the path makes it *)
 }
 
 (* A device: its facts, what [peer] uses for the life of the process, and its
@@ -619,7 +678,7 @@ let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql st n =
   if have >= n then Served
   else
     let bytes = Abi.Scratch.size g n in
-    match ops.alloc Device bytes with
+    match alloc_mem ops Device bytes with
     | None -> Short bytes
     | Some m -> (
         (* [m] is this call's until it is published: it is freed if what the
@@ -636,8 +695,9 @@ let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql st n =
             retiring st )
         with
         | exception e ->
-            free_mem m;
-            reraise e
+            let bt = Printexc.get_raw_backtrace () in
+            (try free_mem m with _ -> ());
+            Printexc.raise_with_backtrace e bt
         | base, ats, values, pending, ahead -> (
             let current = st.pending in
             let took = publish_scratch self base ats values in
@@ -678,44 +738,46 @@ let make_trace g =
   Lock.protect g.guard @@ fun () ->
   match g.live with
   | None -> Error "the device is stopped"
-  | Some { traces = Some (t, _); _ } -> Ok t
-  | Some ({ ops; traces = None; _ } as l) -> (
+  | Some { trace = Some t; _ } -> Ok t
+  | Some ({ ops; trace = None; _ } as l) ->
+      (* What an earlier call left, ended by an exception, goes first: an
+         exception there leaves the rest listed for the next call or the
+         stop. *)
+      let give_back_all () =
+        List.iter (fun m -> try free_mem m with Fault _ -> ()) l.trace_memory
+      in
+      give_back_all ();
       let* () = ops.stable_power () in
       let engines = g.gpu.shader_engines * g.gpu.xccs in
       let window = trace_bytes / trace_slots in
       let n = window * trace_slots * engines in
-      let buffers =
-        match ops.alloc Mapped n with
-        | Some m -> Some m
-        | None -> ops.alloc Pinned n
+      (* The buffers' records are listed before the path makes them, so that
+         an exception leaves them to the next call or the stop. *)
+      let b = ops.held () and e = ops.held () in
+      l.trace_memory <- [ b; e ];
+      let made =
+        (ops.alloc b Mapped n || ops.alloc b Pinned n)
+        && ops.alloc e Pinned (4 * trace_slots * engines)
       in
-      let quietly m = try free_mem m with Fault _ -> () in
-      let ends =
-        match ops.alloc Pinned (4 * trace_slots * engines) with
-        | e -> e
-        | exception e ->
-            Option.iter quietly buffers;
-            reraise e
-      in
-      match (buffers, ends) with
-      | Some b, Some e when mem_host b <> None && mem_host e <> None ->
-          let t =
-            {
-              Abi.Capability.buffers = mem_address b;
-              buffers_host = Option.get (mem_host b);
-              window;
-              slots = trace_slots;
-              engines;
-              ends = mem_address e;
-              ends_host = Option.get (mem_host e);
-            }
-          in
-          l.traces <- Some (t, [ b; e ]);
-          Ok t
-      | b, e ->
-          Option.iter quietly b;
-          Option.iter quietly e;
-          Error (strf "no memory for %d bytes of trace buffers" n))
+      if made && mem_host b <> None && mem_host e <> None then begin
+        let t =
+          {
+            Abi.Capability.buffers = mem_address b;
+            buffers_host = Option.get (mem_host b);
+            window;
+            slots = trace_slots;
+            engines;
+            ends = mem_address e;
+            ends_host = Option.get (mem_host e);
+          }
+        in
+        l.trace <- Some t;
+        Ok t
+      end
+      else begin
+        give_back_all ();
+        Error (strf "no memory for %d bytes of trace buffers" n)
+      end
 
 (* The capability's [scratch]: [g]'s scratch grown for [n] bytes per lane.
    Compiled code calls it and [trace] outside rig's calls, so each runs
@@ -783,20 +845,34 @@ let alloc g (kind : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_amd.alloc: %d bytes, expected at least 1" n;
   let ops = (live g).ops in
   match kind with
-  | Device | Pinned -> Option.map (region n) (ops.alloc kind n)
+  | Device | Pinned -> answer ops n (fun m -> ops.alloc m kind n)
   | Mapped -> (
       match g.hdp with
       | None -> None
       | Some _ -> (
-          match ops.alloc Mapped n with
-          | None -> None
-          | Some m ->
-              ignore (count_hdp g g.self 1);
-              Some (region ~flush:g.self n m)))
+          (* Counted before the path's call, which leaves nothing to do once
+             the path made the memory. *)
+          let counted = count_hdp g g.self 1 in
+          match
+            answer ~flush:g.self ops n (fun m -> ops.alloc m Mapped n)
+          with
+          | Some _ as r -> r
+          | None ->
+              if counted then ignore (count_hdp g g.self (-1));
+              None
+          | exception e ->
+              if counted then ignore (count_hdp g g.self (-1));
+              reraise e))
 
 (* Gives back [m]: a free the path refuses loses the memory, which no caller can
    act on. *)
 let give_back m = try free_mem m with Fault _ -> ()
+
+(* Gives back each of [ms] after a failure, past an exception from a free, so
+   that the cleanup goes on: the handler allocates nothing, and a free an
+   exception ends leaks its memory at worst ([free_mem]). An exception at the
+   walk's own poll between two frees ends it, leaving the rest. *)
+let give_back_quietly ms = List.iter (fun m -> try free_mem m with _ -> ()) ms
 
 (* The region goes before its count: an exception from the free leaves the
    count high, which costs flushes, where a count lowered first would let a
@@ -816,17 +892,23 @@ let locate r =
 
 let peer g g' = g.path = g'.path && g.reaches g'.index
 
+(* A view of a region that keeps [src]'s HDP register flushed is counted
+   before the path's call, as in [alloc]. *)
 let map_peer g _ r =
-  match (live g).ops.map_peer r.mem with
-  | None -> None
-  | Some m -> (
-      let view flush = Some (region ?flush r.bytes m) in
-      match r.flush with
-      | Some src when count_hdp g src 1 -> view (Some src)
-      | Some _ ->
-          free_mem m;
+  let ops = (live g).ops in
+  let peer m = ops.map_peer m r.mem in
+  match r.flush with
+  | None -> answer ops r.bytes peer
+  | Some src when not (count_hdp g src 1) -> None
+  | Some src -> (
+      match answer ?flush:r.flush ops r.bytes peer with
+      | Some _ as view -> view
+      | None ->
+          ignore (count_hdp g src (-1));
           None
-      | None -> view None)
+      | exception e ->
+          ignore (count_hdp g src (-1));
+          reraise e)
 
 (* Another function's writes through the memory BAR pass the host data path
    (HDP) as the host's do, so every hand-over flushes it once a region is
@@ -862,9 +944,10 @@ let dma g r ~fn =
 
 let map_host g a n =
   if n < 1 then invalid_argf "Rig_amd.map_host: %d bytes, expected at least 1" n;
-  match (live g).ops.map_host with
+  let ops = (live g).ops in
+  match ops.map_host with
   | None -> None
-  | Some map -> Option.map (region n) (map a n)
+  | Some map -> answer ops n (fun m -> map m a n)
 
 (* Images *)
 
@@ -1116,8 +1199,12 @@ let unload _ m =
 external words : unit -> int * int = "caml_rig_edge_words"
 
 (* [m] from [at] bytes on, which lie at the host address [host]. *)
-let within (Mem (o, m)) at host =
-  Mem (o, { m with address = m.address + at; host = Some host })
+let within (Mem c) at host =
+  match c.memory with
+  | Some m ->
+      let m = { m with address = m.address + at; host = Some host } in
+      Mem { c with memory = Some m }
+  | None -> unmade ()
 
 (* Makes the device's memory and queues, giving back what it took if one of them
    is refused. *)
@@ -1154,15 +1241,16 @@ let make (type m) ~word (p : m path) =
     if !state <> 0 then destroy !state;
     if stopped then begin
       if !copy_launch <> 0 then free_launch !copy_launch;
-      List.iter give_back !taken
+      give_back_quietly !taken
     end
   in
+  (* Memory goes into [taken] before the path's call, so that an exception
+     leaves it to [undo]. *)
   let alloc what n =
-    match ops.alloc Pinned n with
-    | Some m ->
-        taken := m :: !taken;
-        Ok m
-    | None -> Error (strf "no memory for its %s" what)
+    let m = ops.held () in
+    taken := m :: !taken;
+    if ops.alloc m Pinned n then Ok m
+    else Error (strf "no memory for its %s" what)
   in
   let waits64 = waits64 p and aql = reads_aql p.gpu in
   let open_device () =
@@ -1179,12 +1267,10 @@ let make (type m) ~word (p : m path) =
       match ops.map_host with
       | None -> None
       | Some _ when not in_array -> None
-      | Some map -> (
-          match map start bytes with
-          | Some m ->
-              taken := m :: !taken;
-              Some m
-          | None -> None)
+      | Some map ->
+          let m = ops.held () in
+          taken := m :: !taken;
+          if map m start bytes then Some m else None
     in
     let* word =
       match mapped with
@@ -1339,7 +1425,8 @@ let make (type m) ~word (p : m path) =
                 ];
               copy_launch = !copy_launch;
               scratch = { installed = None; pending = None; retired = [] };
-              traces = None;
+              trace = None;
+              trace_memory = [];
             };
       }
     in
@@ -1351,8 +1438,9 @@ let make (type m) ~word (p : m path) =
       undo ();
       e
   | exception e ->
+      (* The open's exception passes, whatever its cleanup raises. *)
       let bt = Printexc.get_raw_backtrace () in
-      undo ();
+      (try undo () with _ -> ());
       Printexc.raise_with_backtrace e bt
 
 (* Work *)
@@ -1412,46 +1500,62 @@ let kinds l = [| (l.compute :> [ `Pm4 | `Aql | `Sdma ]); `Sdma |]
    opened with, that is neither installed nor handed: a replaced segment or
    queue, which no work reads as the device was idle when it was replaced and
    a queue read every packet up to its write position then, and what a growth
-   handed that a later one replaced. Each leaves [l.parts] before it goes, so
-   an exception leaves the rest for the next call. *)
+   handed that a later one replaced. Each stays in [l.parts] until its memory
+   has gone, so that an exception leaves the rest for the next call or the
+   stop, whose frees of memory gone already do nothing ([free_mem]). Its
+   doorbell is cleared before its queue's retire, which none repeats. *)
 let rec retire ?(keep = []) g l =
   let s, c, k, s', c', k' = growth_state g.self in
   let held = keep @ [ s; c; k; s'; c'; k' ] in
   match List.find_opt (fun p -> not (List.mem p.id held)) l.parts with
   | None -> ()
   | Some p ->
-      l.parts <- List.filter (fun p' -> p' != p) l.parts;
-      if p.doorbell <> 0 then l.ops.retire p.doorbell;
+      let bell = p.doorbell in
+      p.doorbell <- 0;
+      if bell <> 0 then l.ops.retire bell;
       List.iter give_back p.mems;
+      l.parts <- List.filter (fun p' -> p' != p) l.parts;
       retire ~keep g l
 
 (* New [Pinned] memory for a growth, of each of [sizes] bytes, listed in
    [l.parts] as one part named by the first before anything else may raise,
    with its host addresses, or [Error n] for [n] bytes the path lacked, having
-   given back what it took. An alloc that raises gives back what the earlier
-   ones took too. *)
+   given back what it took. Each memory goes into [taken] before the path's
+   call, so that an exception before the part is listed gives back what the
+   allocs took. *)
 let spare l sizes =
-  let rec take acc = function
-    | [] -> Ok (List.rev acc)
-    | n :: rest -> (
-        match l.ops.alloc Pinned n with
-        | Some m -> take (m :: acc) rest
+  let taken = ref [] and listed = ref false in
+  let rec take = function
+    | [] -> Ok ()
+    | n :: rest ->
+        let m = l.ops.held () in
+        taken := m :: !taken;
+        if l.ops.alloc m Pinned n then take rest else Error n
+  in
+  let list () =
+    let* () = take sizes in
+    let ms = List.rev !taken in
+    let p = { id = mem_address (List.hd ms); mems = ms; doorbell = 0 } in
+    l.parts <- p :: l.parts;
+    listed := true;
+    Ok (p, ms)
+  in
+  match list () with
+  | Error n ->
+      give_back_quietly !taken;
+      Error n
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      if not !listed then (try give_back_quietly !taken with _ -> ());
+      Printexc.raise_with_backtrace e bt
+  | Ok (p, ms) ->
+      let host m =
+        match mem_host m with
+        | Some h -> h
         | None ->
-            List.iter give_back acc;
-            Error n
-        | exception e ->
-            List.iter give_back acc;
-            reraise e)
-  in
-  let* ms = take [] sizes in
-  let p = { id = mem_address (List.hd ms); mems = ms; doorbell = 0 } in
-  l.parts <- p :: l.parts;
-  let host m =
-    match mem_host m with
-    | Some h -> h
-    | None -> raise (Fault "the host does not address the memory a growth made")
-  in
-  Ok (p, List.map host ms)
+            raise (Fault "the host does not address the memory a growth made")
+      in
+      Ok (p, List.map host ms)
 
 (* What a growth makes for queue [q] of kind [kind]: a ring of [bytes] bytes
    and positions of its own, at their host addresses, the positions' GPU
@@ -1603,11 +1707,10 @@ let halt g l ~fault =
       if l.copy_launch <> 0 then free_launch l.copy_launch;
       let st = l.scratch in
       let buffers = Option.to_list st.installed @ Option.to_list st.pending in
-      let traces = match l.traces with Some (_, ms) -> ms | None -> [] in
       List.iter give_back
         (List.map fst buffers
         @ List.map (fun r -> r.buffer) st.retired
-        @ traces @ l.own
+        @ l.trace_memory @ l.own
         @ List.concat_map (fun p -> p.mems) l.parts)
 
 (* The C state's run part goes whatever the path's stop answered, or if it
