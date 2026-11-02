@@ -2633,12 +2633,13 @@ index 9a24394a6..7f206714e 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 8238ec207..07f8589e3 100644
+index 8238ec207..e44297799 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
-@@ -1,8 +1,8 @@
+@@ -1,13 +1,13 @@
  from dataclasses import dataclass, field
- from typing import cast
+-from typing import cast
++from typing import cast, Callable
  import itertools
 -from tinygrad.dtype import dtypes, AddrSpace, Invalid
 -from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, KernelInfo
@@ -2647,11 +2648,45 @@ index 8238ec207..07f8589e3 100644
  from tinygrad.uop.ops import graph_rewrite, sint, AxisType, BottomUpGate, rewrite_group
  from tinygrad.uop.symbolic import symbolic
  from tinygrad.helpers import prod, dedup, DEBUG_RANGEIFY, VIZ, MAX_KERNEL_BUFFERS, SPEC
-@@ -45,7 +45,49 @@ def gate_substitute(ctx, b:UOp) -> None:
+ from tinygrad.helpers import get_single_element
+-from tinygrad.codegen.simplify import pm_flatten_range, pm_reduce_simplify
++from tinygrad.codegen.simplify import pm_flatten_range, pm_reduce_simplify, reduce_load_collapse
+ from tinygrad.schedule.indexing import run_rangeify, BufferizeOpts, apply_movement_op
+ from tinygrad.schedule.prepare import pm_mops
+ 
+@@ -45,7 +45,89 @@ def gate_substitute(ctx, b:UOp) -> None:
  pm_gate_substitute = PatternMatcher([(UPat(GroupOp.All, name="b"), gate_substitute)], compiled=False)
  # if a buffer is being stored just for permutes or something, remove it
  # we want to reexpress the indexes of idx2 in terms of the implied b1
 -def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
++# the value src of the stage buf at the index idx, which replaces the stage's ranges. a constant range is not replaced
++def inlined(src:UOp, buf:UOp, idx:UOp) -> UOp:
++  return src.substitute({k:v for k,v in zip(buf.src[1:], idx.src[1:]) if k.op is not Ops.CONST}, extra_pm=pm_gate_substitute)
++
++# whether the sum red over one range is computed at one trip (reduce_load_collapse) as its kernel holds it: with its reads
++# of stages a later pass may inline whose values read no storage, as a range's positions do, computed in place and
++# simplified as the cleanups simplify them, so that a selection by one of them compares with the range itself. only the
++# part of the sum that runs in its range is rebuilt: each value it reads from outside stands for a variable bounded as that
++# value is
++def collapses(red:UOp) -> bool:
++  if red.arg != (Ops.ADD, 0) or len(red.src) != 2 or red.src[1].op is not Ops.RANGE: return False
++  u, r = red.src
++  local = set(included := u.toposort(gate=lambda x: r in x.ranges))
++  subs: dict[UOp, UOp] = {}
++  for x in included:
++    if x.op is Ops.INDEX and x.src[0].op is Ops.STAGE and x.src[0].arg.removable and \
++       not x.src[0].src[0].op_in_backward_slice_with_self(Ops.PARAM, Ops.STAGE, Ops.AFTER):
++      subs[x] = inlined(x.src[0].src[0], x.src[0], x)
++      continue
++    for s in x.src:
++      if s in local or s in subs or s.op in GroupOp.Defines|{Ops.CONST, Ops.RANGE}: continue
++      subs[s] = UOp.variable(f"in{len(subs)}", s.vmin, s.vmax, s.dtype)
++  # over the variables, a reduction nested in the sum can rewrite without end, as an int64 fold of rune's over a padded window
++  # does, and the sum then counts its trips
++  try: body = graph_rewrite(u.substitute(subs), symbolic+pm_reduce_simplify, name="collapses")
++  except (RuntimeError, AssertionError): return False
++  return reduce_load_collapse(red, body) is not None
++
 +# the product of the largest sizes of the ranges among rngs
 +def extent(rngs) -> int: return prod(r.src[0].vmax for r in rngs if r.op is Ops.RANGE)
 +
@@ -2659,46 +2694,58 @@ index 8238ec207..07f8589e3 100644
 +# its index runs in, as a running sum's windows of w compute each element they read w times. a trip is counted only where
 +# it computes an element again, which storing would save, so the count is at most the trips of the index per element. a
 +# read whose index runs in no reduction, as a broadcast through an expand, a reshape or padding, copies the value once.
-+# trips in padding count, since only the inlined value's loads are gated there. the coordinates the value does not vary
-+# along are dropped before it is inlined, so they count neither elements nor trips, and a symbolic size counts at its
-+# largest
-+def read_copies(buf:UOp, idx:UOp, reduced:set[tuple]) -> float:
++# trips in padding count, since only the inlined value's loads are gated there. a sum that selects one trip, where an index
++# equals its range, is computed at that index alone (collapses), once for each point of the ranges the sum runs in: its range
++# counts as those ranges. the
++# coordinates the value does not vary along are dropped before it is inlined, so they count neither elements nor trips,
++# and a symbolic size counts at its largest
++def read_copies(buf:UOp, idx:UOp, reduced:dict[tuple, UOp], collapsed:Callable[[UOp], list[UOp]|None]) -> float:
 +  live = [(r, x) for r, x in zip(buf.src[1:], idx.src[1:]) if r.op is Ops.RANGE and r in buf.src[0].ranges]
-+  read = dedup(r for _, x in live for r in x.ranges)
++  read: list[UOp] = []
++  for r in dedup(r for _, x in live for r in x.ranges): read = dedup(read + (c if (c:=collapsed(r)) is not None else [r]))
 +  elements = extent([r for r, _ in live])
 +  if elements <= 0: return 1
 +  return max(1, min(extent([r for r in read if r.arg in reduced]), extent(read) / elements))
 +
 +# the copies the reads of each stage make of its value once inlined, reads at several distinct indices copying it at
 +# each. keyed by the axes of the stage's ranges, which are its own and name it while the cleanups rebuild it, as are the
-+# axes of the ranges a reduction closes.
++# axes of the ranges a reduction closes, with the reduction, and whether each reduction's sum is computed at one trip,
++# once asked.
 +# a read through a stack is not counted: by now every stage has a device, so the cleanups never turn it into a read of the
 +# stage
 +@dataclass
 +class StageReads:
 +  copies: dict[tuple, float]
-+  reduced: set[tuple]
++  reduced: dict[tuple, UOp]
++  collapsed: dict[tuple, list[UOp]|None] = field(default_factory=dict)
++  # the ranges the sum over r runs in, if it is computed at one trip
++  def collapses(self, r:UOp) -> list[UOp]|None:
++    if r.op is not Ops.RANGE or r.arg not in self.reduced: return None
++    if r.arg not in self.collapsed:
++      red = self.reduced[r.arg]
++      self.collapsed[r.arg] = list(red.ranges) if collapses(red) else None
++    return self.collapsed[r.arg]
 +
 +def stage_reads(sink:UOp) -> StageReads:
 +  nodes = sink.toposort(enter_calls=False)
-+  reduced = {r.arg for u in nodes if u.op is Ops.REDUCE for r in u.src[1:] if r.op is Ops.RANGE}
-+  reads: dict[tuple, float] = {}
++  ret = StageReads({}, {r.arg:u for u in nodes if u.op is Ops.REDUCE for r in u.src[1:] if r.op is Ops.RANGE})
++  reads = ret.copies
 +  for u in nodes:
 +    if u.op is Ops.INDEX and u.src[0].op is Ops.STAGE:
-+      c = read_copies(u.src[0], u, reduced)
++      c = read_copies(u.src[0], u, ret.reduced, ret.collapses)
 +      for r in u.src[0].src[1:]:
 +        if r.op is Ops.RANGE: reads[r.arg] = reads.get(r.arg, 0) + c
-+  return StageReads(reads, reduced)
++  return ret
 +
-+# the nodes that inlining a stage may add to its readers: the nodes of its value that its ranges reach, which the inlining
-+# copies, times the copies its reads make
-+INLINE_BUDGET = 1024
++# the nodes that inlining a stage may compute again: the nodes of its value that its ranges reach, which the inlining
++# copies, times the copies its reads make beyond the one storing computes
++INLINE_BUDGET = 360
 +
 +def remove_bufferize(ctx:StageReads, src:UOp, buf:UOp, idx:UOp):
    # see if we can't do it, should this ever hit?
    assert len(buf.src) == len(idx.src), f"index on wrong bufferize, {len(buf.src)} != {len(idx.src)}"
    assert all(x.op in {Ops.RANGE, Ops.CONST} for x in buf.src[1:])
-@@ -72,13 +114,34 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+@@ -72,13 +154,35 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
        accessed_buffers.append(x)
      if x.op is Ops.REDUCE: reduces.append(x)
      return True
@@ -2722,19 +2769,20 @@ index 8238ec207..07f8589e3 100644
 +
 +  # inlined, the value is copied to each position it is read at, and computed again at each trip of a reduction over a
 +  # window. its producers are inlined already, so the copies compound: k values each reading the one before at two
-+  # positions are 2^k copies of the first. a value whose copies exceed the budget stays stored, so that an inlining adds at
-+  # most the budget to the code and the work of its readers
++  # positions are 2^k copies of the first. a value whose copies beyond the first exceed the budget stays stored, so that an
++  # inlining adds at most the budget to the work of its readers, and to their code, which each copy at a distinct index adds
++  # to and a trip does not
 +  # each read counts at every axis of the stage's ranges, and other stages can share an axis, a device range or one a
 +  # symbolic size names, so the least count bounds the stage's copies from above
 +  rngs = [r for r in buf.src[1:] if r.op is Ops.RANGE]
 +  copies = max(min([ctx.copies.get(r.arg, 0) for r in rngs], default=1), 1)
 +  copied = len([x for x in computed if any(r in x.ranges for r in rngs)])
-+  if copies > 1 and copied * copies > INLINE_BUDGET: return None
++  if copied * (copies - 1) > INLINE_BUDGET: return None
 +
    # if any reduces access a buffer, don't remove this buffer
    buffer_in_reduce = False
    def buf_gate(x:UOp):
-@@ -92,8 +155,11 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+@@ -92,8 +196,11 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
  
    # if it makes it here, the bufferize is removed
    # this is the ranges replaced
@@ -2748,7 +2796,7 @@ index 8238ec207..07f8589e3 100644
    return src.substitute(replaced, extra_pm=pm_gate_substitute)
  
  def remove_noop_bufferize(idx,b2):
-@@ -224,10 +290,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
+@@ -224,10 +331,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
      return buf.after(*ended_stores)
  
    if x.arg.addrspace == AddrSpace.GLOBAL:
@@ -2770,7 +2818,7 @@ index 8238ec207..07f8589e3 100644
  # collapse any BUFFERIZE to single input BUFFERIZE
  def flatten_bufferize(x:UOp):
    if len(x.src) == 2: return None
-@@ -255,6 +330,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -255,6 +371,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
    # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
    (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
     lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
@@ -2780,7 +2828,7 @@ index 8238ec207..07f8589e3 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -281,14 +359,17 @@ def add_buf(ctx:LocalAddBufferContext, buf:UOp):
+@@ -281,14 +400,17 @@ def add_buf(ctx:LocalAddBufferContext, buf:UOp):
    raise BottomUpGate
  
  def debuf(slot:int, buf:UOp):
@@ -2800,7 +2848,7 @@ index 8238ec207..07f8589e3 100644
    buf = after.buf_uop
    # NOTE: this is bottom up, so we only add it once
    if buf not in ctx.map: ctx.map[buf] = after
-@@ -342,7 +423,7 @@ def get_kernel_graph(tsink:UOp) -> UOp:
+@@ -342,7 +464,7 @@ def get_kernel_graph(tsink:UOp) -> UOp:
  
    # cleanups for speed and runability
    tsink = graph_rewrite(tsink,

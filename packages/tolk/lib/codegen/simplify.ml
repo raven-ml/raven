@@ -498,14 +498,16 @@ let pm_reduce_simplify =
 let no_load u = not (op_in_backward_slice_with_self ~calls:Skip u [ Op.Index ])
 
 (* Remove a reduction on a load, from indexing a tensor with another. *)
+let load_collapse red =
+  match (arg red, src red) with
+  | Reduce { op = Op.Add; num_axes = 0 }, [ u; _ ] ->
+      reduce_collapse ~pm:pm_reduce_load_collapse red u
+  | _ -> None
+
 let pm_load_collapse =
   Pattern_matcher.v
     (fun () -> [
-      rule
-        (Upat.op Op.Reduce ~name:"red"
-           ~arg:(Reduce { op = Op.Add; num_axes = 0 })
-           ~src:[ Upat.var "u"; Upat.wild ])
-        (fun m -> reduce_collapse ~pm:pm_reduce_load_collapse (m "red") (m "u"));
+      rule (Upat.op Op.Reduce ~name:"red") (fun m -> load_collapse (m "red"));
       (* No arithmetic on a loaded index, since it can overflow: this undoes the
          lifting of pm_reduce_load_collapse. *)
       rule

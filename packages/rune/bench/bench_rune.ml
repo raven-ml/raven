@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* rune's costs, each row a call a user makes. Every input is a host value
-   and every row waits for what it computes: an operation over values of every
-   set builds a formula and computes nothing, so a row over them would time
-   the formula. The rows that share a workload with the former rune's suite
-   keep its code and id. *)
+(* rune's costs, each row a call a user makes. Every input is a host value,
+   but a GPU row's, and every row waits for what it computes: an operation over
+   values of every set builds a formula and computes nothing, so a row over them
+   would time the formula. The rows that share a workload with the former rune's
+   suite keep its code and id. *)
 
 let f32 = Nx.float32
 let ops = 100
@@ -983,11 +983,68 @@ let probe_rows () =
         done);
   ]
 
+(* CUDA: compiled calls on the first CUDA GPU, where one opens. *)
+
+(* Whether a CUDA GPU opens, asked of a fresh process: a GPU's driver must not
+   be initialized before the fork that isolates a case. *)
+let cuda_opens () =
+  let exe = Sys.executable_name in
+  let pid =
+    Unix.create_process exe [| exe; "--cuda" |] Unix.stdin Unix.stdout
+      Unix.stderr
+  in
+  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
+
+(* A call made at a placement of any set, which waits for what it computes. *)
+type call = { at : 'd. 'd Nx.Placement.t -> unit -> unit }
+
+(* [on_cuda name c] is a row of [c]'s call at the GPU's placement, opened and
+   compiled in the worker. *)
+let on_cuda name c =
+  warm name
+    (fun () ->
+      match Rig.open_ (Rig_cuda.gpu 0) with
+      | Error e -> failwith e
+      | Ok gpu ->
+          let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
+          c.at D.on)
+    (fun call -> call ())
+
+(* A GPU row times its calls only: a GPU buffer's release allocates when the
+   collector finalises it, so a call's count depends on the collection's
+   phase. *)
+let cuda_rows () =
+  if not (cuda_opens ()) then []
+  else
+    [
+      (* A float64 sine, hundreds of operations an element, read by a sum and by
+         an elementwise output: their two kernels read it stored, or each
+         computes it. *)
+      on_cuda "sin-read-by-two-float64-1000"
+        {
+          at =
+            (fun at ->
+              let x = Nx.place at (Nx.linspace f64 0.01 3.1 1_000) in
+              let f =
+                Rune.jit
+                  Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+                  (fun x ->
+                    let s = Nx.sin x in
+                    (Nx.sum s, Nx.add_s s 1.))
+              in
+              fun () -> ignore (synced2 (f x)));
+        };
+    ]
+
 (* A trial's setup compiles its programs: a cold tolk cache takes seconds for
    the largest, which the default 10 s deadline would kill. *)
 let config = Thumper.Config.(default |> deadline 60.)
 
 let () =
+  match Sys.argv with
+  | [| _; "--cuda" |] ->
+      exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
+  | _ ->
   exit
     (Thumper.run "rune" ~config
        [
@@ -1010,4 +1067,6 @@ let () =
          Thumper.group "Totals" (total_rows ());
          Thumper.group "Roots" (root_rows ());
          Thumper.group "Probes" (probe_rows ());
+         Thumper.group ~metrics:[ Thumper.Metric.wall_time ] "Cuda"
+           (cuda_rows ());
        ])

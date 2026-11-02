@@ -922,6 +922,12 @@ thread.
 
 ### Tolk (new)
 
+- `Rangeify.get_kernel_graph` stores a value whose copies past the first
+  would compute more than 360 nodes again, where it allowed 1024 nodes
+  of copies, and counts once the trips of a sum that selects one, as a routed
+  product's rows select their expert. A compiled `Nx.sin` read by two kernels
+  is computed once; rows of few per expert decode their expert's weights in
+  place.
 - `Memory.memory_plan_rewrite` plans a buffer that a call reaches through a
   view, that call one of its uses, where it left the buffer memory of its own
   for the whole schedule: a store into a run of a buffer stores through a view

@@ -4064,6 +4064,47 @@ let law_scan (Scan_case (s, axis, xs)) =
   in
   equal (outcome_t (Testable.list codes_t)) eager jitted
 
+(* Values computed again
+
+   A value of [k] steps of [y * y + y] from [x], int32 wrapping, read at two
+   indices or by a running sum's windows: the compiler stores it or computes it
+   again in each reader, as its work decides, and either gives eager's bits. *)
+
+let rec steps k x = if k = 0 then x else steps (k - 1) Nx.(add (mul x x) x)
+
+let recomputed_cases =
+  Gen.(
+    pair
+      (of_list [ `Twice; `Windows ])
+      (frequency
+         [
+           (1, int_range 0 19); (1, int_range 20 200); (1, int_range 201 300);
+         ]))
+  |> Gen.with_pp (fun ppf (how, k) ->
+      Format.fprintf ppf "%d steps %s" k
+        (match how with
+        | `Twice -> "read twice"
+        | `Windows -> "in a running sum"))
+
+let law_recomputed (how, k) =
+  cover "read twice" (how = `Twice);
+  cover "in a running sum" (how = `Windows);
+  cover "a few steps" (k < 20);
+  cover "hundreds of steps" (k > 200);
+  let x =
+    Nx.create Nx.int32 [| 4; 16 |]
+      (Array.init 64 (fun i -> Int32.of_int ((i * 7919) - 250)))
+  in
+  let f x =
+    let y = steps k x in
+    match how with
+    | `Twice -> Nx.add y (Nx.flip ~axes:[ 1 ] y)
+    | `Windows -> Nx.cumsum ~axis:1 y
+  in
+  let eager = outcome (fun () -> codes (f x)) in
+  let jitted = compiled (fun () -> codes (Rune.jit' f x)) in
+  equal (outcome_t codes_t) eager jitted
+
 (* Packed views
 
    A uint4 sort along the last axis of a [2; 3] view of a [3; 5] uint4 of
@@ -4559,6 +4600,10 @@ let () =
              prop ~count:20 ~examples:scan_examples
                "an associative scan over a tuple gives eager's bits" scan_cases
                law_scan;
+             prop ~count:40
+               "a value stored or computed again in its readers gives eager's \
+                bits"
+               recomputed_cases law_recomputed;
            ];
          group "jit"
            [

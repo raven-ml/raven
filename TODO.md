@@ -112,11 +112,10 @@ raven / llama.cpp (Vulkan; ROCm):
   assembly renderer and assembler, gfx12 first, the default once its gate
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML
 - divergences: tolk's entries were audited against tinygrad HEAD
-  (2026-10-31); left: one store-or-recompute rule for D77, D100, D106 and
-  D163; one host lane budget for D91, D108, D109, D141 and D143; the
-  matrix-vector layout (D89) with its fudge rows; entries marked "Reason:
-  none" decided once the port reaches HEAD. rune's DIVERGENCES.md is not
-  audited yet
+  (2026-10-31); left: one host lane budget for D91, D108, D109, D141 and
+  D143; the matrix-vector layout (D89) with its fudge rows; entries marked
+  "Reason: none" decided once the port reaches HEAD. rune's DIVERGENCES.md
+  is not audited yet
 - compile speed: one Clang process per kernel (~30 ms each; one per program
   saves ~20%). Hypothesis, to time first: on fudge, each Clang run's wall
   time against its source's bytes, on a model-size schedule; if the process
@@ -157,18 +156,12 @@ raven / llama.cpp (Vulkan; ROCm):
 - host upcast width per target: D141's 64-byte lanes (heuristic.ml:446)
   slowed memory-bound select-zero ~15% on x86; time 32 against 64 bytes on
   fudge
-- an expensive elementwise producer (sin/cos) recomputed in each consumer's
-  kernel: jera root-newton-kepler-1k compiled 2.2 ms against eager 0.57.
-  The opposite also costs: `Indexing.assign_ranges` stores any elementwise
-  node under an expand that feeds a reduce, so gpt-oss's
-  `Nx_quant.apply_experts` (CUDA, prefill-512) decodes every expert's
-  weight into float32 on each call: E_8294400_32_2 writes 2.1 GB in 4.74
-  ms for gate_up, E_4147200_32_2 2.39 ms, where the decode could stay
-  fused into the gated per-group loads. One store-or-recompute rule
-  covers both and D77, D100, D106, D163
 - apply_experts' contractions run 56 ms against the block path's 36 ms:
   one route row per thread group, so decoded weights are not shared across
-  rows (D92's case); decide with D89's layout
+  rows (D92's case); decide with D89's layout. At prefill-512 (CUDA) the
+  decoded weights are stored, 64 rows an expert (D163): E_8294400_32_2
+  writes 2.1 GB in 4.74 ms for gate_up, which a layout sharing them across
+  rows could keep in the gated per-group loads
 - running sums cost ~257 ops per element (shape.ml:955): `Nx.cumsum` over
   float64 [100; 50500] takes ~1.0 s on CPU. A scan with constant work per
   element, and a compiled cumsum row

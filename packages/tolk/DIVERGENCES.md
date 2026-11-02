@@ -4306,7 +4306,7 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   `constants past the width › a weak divisor past the width divides as its
   value there`.
 
-## D163. An inlined value's copies add at most 1024 nodes
+## D163. An inlined value computes at most 360 nodes again
 
 - **tinygrad:** `schedule/rangeify.py:48-97` (`remove_bufferize`, which
   inlines a stored value that reads at most three buffers and no reduction
@@ -4317,101 +4317,153 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   stores `remove_bufferize` weighs).
 - **tolk:** `Rangeify.extent`, `Rangeify.read_ranges` and
   `Rangeify.read_copies` (the copies a read makes of a stage's value);
-  `Rangeify.reads`, `Rangeify.stage_reads`, `Rangeify.reduced` and
-  `Rangeify.stage_copies` (the copies of each stage); `Rangeify.inline_budget` and `Rangeify.copied`;
-  `copies` in `Rangeify.remove_bufferize`; `Rangeify.pm_cleanups` and
-  `Rangeify.get_kernel_graph`, which counts the reads before the cleanups;
-  `test/gen/tinygrad.patch`, which
-  gives tinygrad the same rule.
-- **Differs:** a stage whose reads make `c > 1` copies of its value stays
-  stored when `n * c > 1024`, where `n` counts the nodes of its value, its
-  producers already inlined, that its ranges reach: those an index copies,
-  since the substitution leaves the others shared. `c` sums over the stage's
-  reads. A read makes one copy at each distinct index; in a reduction it
-  makes one per trip `w` of the reduction ranges its index runs in, those a
-  reduction of the graph closes, at most
-  its trips per element of the stage, `t / e`, since a trip that computes no
-  element again computes nothing that storing saves. A running sum's windows
-  of `w` count `w`; a sum that reads each element once counts 1; a read whose
-  index runs in no reduction range, as a broadcast through an expand, a
-  reshape or padding, counts 1, its outputs each computing the value once, as
-  an elementwise kernel does. Trips in padding count: inlined there, the
-  value's loads are gated and its arithmetic runs. `e` and `t` leave out the
-  axes the value does not vary along, whose index the inlining
-  substitutes into nothing, and take a symbolic size at its largest.
+  `Rangeify.collapses`, `Rangeify.outer` and `Rangeify.collapsed` (a sum
+  that selects one trip, asked only where the answer changes a stage's
+  decision), through `Simplify.load_collapse`, which
+  `Simplify.pm_load_collapse` applies; `Rangeify.reads`,
+  `Rangeify.stage_reads`, `Rangeify.reduced`, `Rangeify.stage_copies` and
+  `Rangeify.stage_bounds` (the copies of each stage);
+  `Rangeify.inline_budget` and `Rangeify.copied`;
+  `Rangeify.inlined`; `copies` in `Rangeify.remove_bufferize`;
+  `Rangeify.pm_cleanups` and `Rangeify.get_kernel_graph`, which counts the
+  reads before the cleanups; `test/gen/tinygrad.patch`, which gives tinygrad
+  the same rule.
+- **Differs:** a stage whose reads make `c` copies of its value stays stored
+  when `n * (c - 1) > 360`, the nodes inlining computes again past the copy
+  storing computes, where `n` counts the nodes of its value, its producers
+  already inlined, that its ranges reach: those an index copies, since the
+  substitution leaves the others shared. `c` sums over the stage's reads. A
+  read makes one copy at each distinct index; in a reduction it makes one
+  per trip `w` of the reduction ranges its index runs in, those a reduction
+  of the graph closes, at most its trips per element of the stage, `t / e`,
+  since a trip that computes no element again computes nothing that storing
+  saves. A running sum's windows of `w` count `w`; a sum that reads each
+  element once counts 1; a read whose index runs in no reduction range, as a
+  broadcast through an expand, a reshape or padding, counts 1, its outputs
+  each computing the value once, as an elementwise kernel does. Trips in
+  padding count: inlined there, the value's loads are gated and its
+  arithmetic runs. `e` and `t` leave out the axes the value does not vary
+  along, whose index the inlining substitutes into nothing, and take a
+  symbolic size at its largest.
 
-  The two counts are one cost: an index copies the value into the code of
-  each output, and a window's trips run it again in each output's loop.
-  Inlined, the copies compound: a value whose readers are inlined at several
-  positions in turn is copied again with them, so `k` values each read at two
-  positions are `2^k` copies of the first, in one kernel. tinygrad has the
-  same exponential behaviour, and computes a value read in a window again at
-  every trip: in a running sum of 100 × 1213 negated logs of its stored
-  uniform draws, each window computes the logs again. With the bound an
-  inlining copies at most 1024 nodes into its readers, and a program of `N`
-  nodes and `S` stages makes kernels of at most `N + 1024 S` nodes, the reads
-  the cleanups make aside. Several windowed reads of one stage add up, as
-  several indices do. A window's trips cost no compile time, but storing pays
-  even for cheap values: compiled running sums over 100 × 400 values on
-  fudge take 0.59 ms stored against 1.24 ms inlined for `2x`, and 0.57 ms
-  against 1.25 ms for `x * x + x`.
+  A sum over one range that selects one trip, where an index equals the
+  range, as a routed product's rows select their expert's matrix, counts
+  that range as the ranges the sum runs in: the kernel computes it at the
+  selected index alone (`Simplify.load_collapse`), once for each point of
+  those, so a row decodes only its own expert's weights, `p / e` times a
+  weight for `p` rows over `e` experts, where the trips count `p`. The test
+  is the collapse's own, run on the sum as its kernel holds it: reads of
+  stages whose values read no storage, as a range's positions do, are seen
+  as those values, simplified as the cleanups simplify them, since the
+  cleanups inline them before the kernel compares the range with its index.
+  Counting the work after the substitution follows Mullapudi et al. 2016,
+  §4.3: "a more accurate measure of cost because bounds analysis can
+  overestimate the actual number of values required by a consumer".
+
+  The bound weighs work: an index copies the value into the code of each
+  output, and a window's trips run it again in each output's loop, each copy
+  past the first computing what storing computes once. Inlined, the copies
+  compound: a value whose readers are inlined at several positions in turn
+  is copied again with them, so `k` values each read at two positions are
+  `2^k` copies of the first, in one kernel. tinygrad has the same
+  exponential behaviour, and computes a value read in a window again at
+  every trip. The bound also holds the code: a copy at a distinct index adds
+  the `n` nodes a trip computes, and every read counts at least once, so the
+  code inlining adds, `n` times the indices past the first, is at most the
+  work, at most 360 nodes, under the 1024 a kernel of a thousand nodes costs
+  to compile (about 50 ms on fudge, growing faster than its nodes; XLA
+  bounds the same duplication by the copies alone, at 15,
+  `FusionNodeIndexingEvaluation::kAllowedCodeDuplication`). A program of `N`
+  nodes and `S` stages makes kernels of at most `N + 360 S` nodes, the
+  reads the cleanups make aside. Several windowed reads of one stage add
+  up, as several indices do.
+
+  360 is placed by the cases whose stage it decides, each run with the stage
+  stored and inlined (the bound at either side of the stage's count),
+  alternating, 7 rounds of each under fudge's exclusive timing lock at a
+  1-minute load of 24 to 51 (median 29), taking the median ratio of the
+  rounds, stored over inlined; a case decides only where the two sides'
+  times do not overlap:
+  - gpt-oss-20b's decode step with Q8_0 projections, CUDA
+    (`GptOss/decode-step-Q8_0-cache-1024`): each MXFP4 block's scale, 341
+    nodes past the first copy, 24.05 ms stored against 23.80 ms inlined,
+    1.011 (1.010 to 1.014), apart: the bound is at least 341. The MXFP4-only
+    step gives 1.014 (1.001 to 1.046), overlapping.
+  - jera's `root-newton-kepler-1k/compiled`, a float64 sine read by two
+    kernels, 371 nodes: 0.47 ms stored against 0.75 ms inlined, 0.64 (0.58
+    to 1.30), overlapping in one round of high load, so it does not decide;
+    its median asks for a bound under 371.
+  - rune's `Jit/experts-mxfp4-16x4of32-256`, the decoded weights at 2 rows
+    an expert, 49 nodes: 0.91 (0.60 to 1.15); jera's
+    `root-bracket-kepler-1k/compiled`, stages of up to 60 nodes: 1.14 (0.61
+    to 2.42); `Cuda/sin-read-by-two-float64-1000`: 1.00; the compile of
+    `scan/tridiagonal-100` against 1024 nodes of copies: 1.10 (1.00 to
+    1.45): all overlapping.
+
+  360 keeps the decided case and kepler's median. Wall-clock baselines of
+  these rows on fudge are pending the scheduled re-record.
 
   D77 and D106 weigh the other recomputation inlining makes, where the value
   is broadcast across ranges its read's index does not run in: the ranges
-  around the read, which an index does not name, so they stay separate rules.
+  around the read, which an index does not name, so they stay separate
+  rules.
 
   The reads are counted once, in a walk of the graph the cleanups start
   from, at each axis of a stage's ranges; a stage's count is the least over
   its axes, since stages over one range share that axis, so stages with no
-  other range pool their reads and may stay stored when read once. A
-  read the cleanups make is not counted, and a read through a stack is not
-  one: every stage has a device by then, so no cleanup turns it into a read
-  of the stage. Elementwise and stencil fusion, whose values are tens of
-  nodes read at a few positions, keep their kernels, and so do reductions
-  that read each element once. The bound is where a copy costs as much as a
-  kernel: on fudge a kernel's compile costs about 30 ms, mostly Clang's, and
-  a kernel of a thousand nodes about 50 ms in all, growing faster than its
-  nodes. It is also past where storing the value is cheaper to run: a
-  thousand operations an element against one store and `c` loads. XLA's
-  fusion bounds the same duplication by the copies alone, at 15
-  (`FusionNodeIndexingEvaluation::kAllowedCodeDuplication`).
+  other range pool their reads and may stay stored when read once. A read
+  the cleanups make is not counted, and a read through a stack is not one:
+  every stage has a device by then, so no cleanup turns it into a read of
+  the stage.
 - **Reason:** (d). rune's compiled `Nx.associative_scan`, whose prefix
   circuit reads each level's pairs and results at two or three positions:
   jera's tridiagonal solve of 100 equations, three scans one of them over
   4-tuples, compiled cold in 62 s and compiles in 2.4 s (fudge, under load),
   as a scan of 1000 4-tuples does; a scan of 4 is 0.05 s either way.
-  tinygrad compiles the same graph as slowly, 3.4 s at 32 elements. The
-  kernels left are about 30 ms each to compile, so the solve stays slower
-  than storing every level by hand (1.3 s). norn's nested sampling, whose
-  error is a running sum over 100 × 1213 negated logs of uniform draws:
-  inlined, the draw and its log ran once per window element, and the kernel
-  took 0.87 s a call against 0.18 s with the draws stored.
+  tinygrad compiles the same graph as slowly, 3.4 s at 32 elements. norn's
+  nested sampling, whose error is a running sum over 100 × 1213 negated logs
+  of uniform draws: inlined, the draw and its log ran once per window
+  element, and the kernel took 0.87 s a call against 0.18 s with the draws
+  stored. Compiled running sums over 100 × 400 values on fudge take 0.59 ms
+  stored against 1.24 ms inlined for `2x`, and 0.57 ms against 1.25 ms for
+  `x * x + x`. gpt-oss-20b's decode step with Q8_0 projections on fudge's
+  RTX 5000 keeps each block's scale inlined, 1.1% faster, as above.
 - **Pinned by:** the Rangeify suite's rows of `kernel_counts.golden` and
   their kernel goldens, from the equally patched tinygrad: `read_at_offsets`
   (a value of some forty nodes read at 32 offsets, stored), `windowed_chain`
   (in a running sum of 300, stored), `windowed_pair` (in two running sums of
-  16, stored), `windowed_scaled` (a product in a running sum of 16, inlined),
-  `windowed_scaled_long` (in a running sum of 400, stored), `tiled_chain`
-  (tiled 256 times, inlined) and `padded_pair` (read through two paddings to
-  1024, inlined); `cost › levels each read twice make kernels that stop
-  growing with depth`; the `copies` group: `a value of 1200 nodes read at one
-  index is inlined`, `› a value read twice whose copies are 1024 nodes is
-  inlined`, `› a value read twice whose copies are 1028 nodes is stored`, `› a
-  value of 600 nodes outside its ranges read twice is inlined` and `› reads of
-  a stage sharing a range are not the other's`; the `recomputation` group: `a
-  value of 1200 nodes reduced once an element is inlined`, `› a cheap value
-  reduced in windows is inlined`, `› a value reduced in windows whose work is
-  1024 nodes is inlined`, `› a value reduced in windows whose work is 1040
-  nodes is stored`, `› two windowed reads of a stage add up`, `› a value of
-  symbolic size counts at its largest`, `› a value reduced in windows counts
-  no axis it does not vary along`, `› a read counts at most the trips of its
+  16, stored), `windowed_scaled` (a product in a running sum of 16, its
+  copies past the first 90 nodes, inlined), `windowed_scaled_long` (in a
+  running sum of 400, stored), `read_by_two` (some forty nodes read by two
+  kernels, inlined), `long_read_by_two` (some four hundred, stored),
+  `routed_product_2` (a decoded matrix gathered by 2 rows an expert over 64
+  experts, inlined) and `routed_product_64` (64 rows an expert, stored),
+  `tiled_chain` (tiled 256 times, inlined) and `padded_pair` (read through
+  two paddings to 1024, inlined); `cost › levels each read twice make
+  kernels that stop growing with depth`; the `copies` group: `a value of
+  1200 nodes read at one index is inlined`, `› a value read twice whose
+  second copy is the budget is inlined`, `› a value read twice whose second
+  copy passes the budget is stored`, `› a value of 600 nodes outside its
+  ranges read twice is inlined` and `› reads of a stage sharing a range are
+  not the other's`; the `recomputation` group: `a value of 1200 nodes
+  reduced once an element is inlined`, `› a cheap value reduced in windows
+  is inlined`, `› a value reduced in windows whose work is under the budget
+  is inlined`, `› a value reduced in windows whose work passes the budget is
+  stored`, `› two windowed reads of a stage add up`, `› a value of symbolic
+  size counts at its largest`, `› a value reduced in windows counts no axis
+  it does not vary along`, `› a read counts at most the trips of its
   reductions`, `› a value reduced through padding counts the padding's
-  trips`, `› a value inlined into a windowed stage counts in its copies`, `› a
-  value broadcast through a reshape is inlined` and `› a value read through
-  padding is inlined`; rune's `rune jit › classes › an associative scan over
-  a tuple gives eager's bits`; on fudge, the `scan/tridiagonal-100` row of
-  rune's compile bench and the `Jit/cumsum-neg-log-uniform-8x1024` row of its
-  bench.
+  trips`, `› a value inlined into a windowed stage counts in its copies`, `›
+  a value broadcast through a reshape is inlined` and `› a value read
+  through padding is inlined`; `work bound › a stage is stored when its
+  copies beyond the first pass the budget`, over values read once, twice, in
+  windows and by routed rows; rune's `rune jit › classes › an associative
+  scan over a tuple gives eager's bits` and `› a value stored or computed
+  again in its readers gives eager's bits`; on fudge, the
+  `scan/tridiagonal-100` row of rune's compile bench, the
+  `Jit/cumsum-neg-log-uniform-8x1024`, `Jit/experts-mxfp4-16x4of32-256` and
+  `Cuda/sin-read-by-two-float64-1000` rows of its bench, and jera's
+  `root-newton-kepler-1k/compiled` and `root-bracket-kepler-1k/compiled`.
 
 ## D164. Withdrawn
 

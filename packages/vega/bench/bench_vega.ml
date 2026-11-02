@@ -40,6 +40,39 @@ let lbfgs_bench (type b) (dt : (float, b) Nx.dtype) (label, shape) =
       state := st;
       st.params)
 
+(* A compiled Adam step under a dynamic loss scale over 1024 by 1024 values:
+   the scale divides the gradients, a check that they are finite selects the
+   step, and Adam's bias corrections, a scalar exponential each, are read by
+   every element. The call compiles in the worker, before the trial forks no
+   more. *)
+let loss_scaled_bench () =
+  let shape = [| 1024; 1024 |] in
+  let params = Nx.Rng.uniform Nx.float32 shape in
+  let grads = Nx.Rng.uniform Nx.float32 shape in
+  let both = Nx.Ptree.pair p (Vega.adam_ptree p) in
+  let all = Nx.Ptree.pair both (Nx.Ptree.v Vega.Loss_scale.walk) in
+  let step grads ((params, st), ls) =
+    Vega.Loss_scale.step p both ls ~grads
+      (fun grads -> Vega.adam_step p ~lr st ~params ~grads)
+      (params, st)
+  in
+  let call f state =
+    let ((params, _), _) as next = f grads (Nx.Ptree.donate all !state) in
+    Nx.sync params;
+    state := next
+  in
+  Thumper.bench_with_setup "step/1024"
+    ~setup:(fun () ->
+      let f = Rune.jit Nx.Ptree.(tensor @-> all @-> returns all) step in
+      let state =
+        ref
+          ( (Nx.copy params, Vega.adam_init p params),
+            Vega.Loss_scale.dynamic Nx.Host.on )
+      in
+      call f state;
+      (f, state))
+    (fun (f, state) -> call f state)
+
 let build_benchmarks () =
   [
     Thumper.group "SGD"
@@ -88,6 +121,7 @@ let build_benchmarks () =
     Thumper.group "L-BFGS"
       (List.map (lbfgs_bench Nx.float32) shapes
       @ [ lbfgs_bench Nx.bfloat16 ("bfloat16/256", [| 256; 256 |]) ]);
+    Thumper.group "Loss_scale" [ loss_scaled_bench () ];
   ]
 
 let () =

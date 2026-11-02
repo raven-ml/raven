@@ -2141,14 +2141,21 @@ let work ?(scaled = false) form ~n ~k ~j g =
    float4 one, whose slice is an eighth of [x]'s bytes, more. A load that
    missed the collapse would read every group's slice, so the bytes grow
    with [g] no more than a quarter from 8 groups to 32. The old lowering's
-   work grew with [g]. *)
+   work grew with [g]. A scaled slice's decode is stored where enough rows
+   read it and computed again in each row where few do, as the compiler's
+   store rule decides, so a scaled contraction's unit is [g] unsegmented
+   contractions of a group's [n / g] rows by one slice. *)
 let work_bounds =
   let n = 256 and k = 16 and j = 16 in
   let rows ~scaled () =
     let ops, lds = work ~scaled Plain ~n ~k ~j 1 in
     let at g =
       let o, l = work ~scaled Rows_of ~n ~k ~j g in
-      at_most int ~msg:"operations" ~than:(2 * ops) o;
+      let unit =
+        if scaled then g * fst (work ~scaled Plain ~n:(n / g) ~k ~j 1)
+        else ops
+      in
+      at_most int ~msg:"operations" ~than:(2 * unit) o;
       if not scaled then at_most int ~msg:"bytes" ~than:(4 * lds) l;
       l
     in

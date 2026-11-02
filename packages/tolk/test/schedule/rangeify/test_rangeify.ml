@@ -174,6 +174,10 @@ let programs =
     "where";
     "windowed_chain";
     "windowed_pair";
+    "read_by_two";
+    "long_read_by_two";
+    "routed_product_2";
+    "routed_product_64";
     "windowed_scaled";
     "windowed_scaled_long";
     "zero_size_children";
@@ -1134,8 +1138,10 @@ let cost =
 
    Hand-built kernel graphs of stages that a later pass may inline back. A
    stage's value inlined is copied to each distinct index it is read at, and
-   stays stored when it is read at several and the nodes its ranges reach times
-   their number exceed 1024. *)
+   stays stored when the nodes its ranges reach times the copies beyond the
+   first exceed [budget]. *)
+
+let budget = 360
 
 let removable : Ops.bufferize_opts =
   { device = Some cpu; addrspace = Global; keep = Removable }
@@ -1159,10 +1165,20 @@ let kernels_reading reads =
        (Ops.sink [ Ops.after o [ Ops.end_ store [ i ] ] ]))
 
 (* [staged v] is [v] of [source] at [s], staged over [s] of [size] (default
-   [32]). *)
+   [32]). [staged (chain k)] copies [2k + 2] nodes: the chain, [s] and the read
+   of [source] at [s]. *)
 let staged ?(size = Ops.Int 32) v =
   let s = Ops.range ~axis_type:Loop size [ 0 ] in
   Ops.bufferize ~opts:removable (v (Ops.index source [ s ])) [ s ]
+
+(* The chain of [n] copied nodes, [n] even. *)
+let chain_of n = chain ((n / 2) - 1)
+
+(* The most copied nodes, and the fewest past them, that [c] copies of a value
+   compute again within the budget: an even [n] with [n * (c - 1)] at most
+   [budget], and the next even one. *)
+let within c = budget / (c - 1) / 2 * 2
+let past c = within c + 2
 
 let at k i = [ Ops.O.(i + int k) ]
 let once v i = [ Ops.index v (at 0 i) ]
@@ -1173,12 +1189,13 @@ let copies =
     [
       test "a value of 1200 nodes read at one index is inlined" (fun () ->
           equal int 1 (kernels_reading (once (staged (chain 600)))));
-      (* [staged (chain k)] copies [2k + 2] nodes: the chain, [s] and the read
-         of [source] at [s]. Read twice, [k = 255] copies 1024. *)
-      test "a value read twice whose copies are 1024 nodes is inlined"
-        (fun () -> equal int 1 (kernels_reading (twice (staged (chain 255)))));
-      test "a value read twice whose copies are 1028 nodes is stored" (fun () ->
-          equal int 2 (kernels_reading (twice (staged (chain 256)))));
+      test "a value read twice whose second copy is the budget is inlined"
+        (fun () ->
+          equal int 1 (kernels_reading (twice (staged (chain_of (within 2))))));
+      test "a value read twice whose second copy passes the budget is stored"
+        (fun () ->
+          equal int 2
+            (kernels_reading (twice (staged (chain_of (past 2))))));
       (* The chain reads [source] at [0] alone: an index of the stage copies
          none of it. *)
       test "a value of 600 nodes outside its ranges read twice is inlined"
@@ -1187,12 +1204,12 @@ let copies =
           let v = staged (fun x -> Ops.O.(x + outside)) in
           equal int 1 (kernels_reading (twice v)));
       (* [b] and [a] share the range [s]: the reads of [b] count at [s], not as
-         reads of [a]. *)
+         reads of [a], which copies [a] once more and not 16 times. *)
       test "reads of a stage sharing a range are not the other's" (fun () ->
           let s = loop 48 0 and t = loop 2 1 in
           let a =
             Ops.bufferize ~opts:removable
-              (chain 100 (Ops.index source [ Ops.O.((s * int 2) + t) ]))
+              (chain 20 (Ops.index source [ Ops.O.((s * int 2) + t) ]))
               [ s; t ]
           in
           let b =
@@ -1202,7 +1219,7 @@ let copies =
           let reads i =
             Ops.index a [ i; Ops.O.int 0 ]
             :: Ops.index a [ i; Ops.O.int 1 ]
-            :: List.init 31 (fun k -> Ops.index b (at k i))
+            :: List.init 15 (fun k -> Ops.index b (at k i))
           in
           equal int 1 (kernels_reading reads));
     ]
@@ -1212,7 +1229,7 @@ let copies =
    A stage inlined into a reduction is computed at each trip of the reductions
    its read's indices run in, at most as often as each element is read, and
    stays stored when the nodes its ranges reach times the copies its reads make
-   for one output exceed 1024. *)
+   for one output beyond the first exceed [budget]. *)
 
 (* The kernels of a graph that stores, at each [i] of [16], the sum over [k] of
    [width] of [read i k]. *)
@@ -1239,25 +1256,25 @@ let recomputation =
           equal int 1 (kernels_reducing ~width:2 (read (staged (chain 600)))));
       test "a cheap value reduced in windows is inlined" (fun () ->
           equal int 1 (windows (staged (chain 2))));
-      (* [staged (chain 63)] copies 128 nodes, computed 8 times an element. *)
-      test "a value reduced in windows whose work is 1024 nodes is inlined"
-        (fun () -> equal int 1 (windows (staged (chain 63))));
-      test "a value reduced in windows whose work is 1040 nodes is stored"
-        (fun () -> equal int 2 (windows (staged (chain 64))));
-      (* Each window computes the 128 copied nodes 8 times an element, and the
-         two 16 times. *)
+      test "a value reduced in windows whose work is under the budget is inlined"
+        (fun () -> equal int 1 (windows (staged (chain_of (within 8)))));
+      test "a value reduced in windows whose work passes the budget is stored"
+        (fun () -> equal int 2 (windows (staged (chain_of (past 8)))));
+      (* Each window computes the copied nodes 8 times an element, and the two
+         16 times. *)
       test "two windowed reads of a stage add up" (fun () ->
-          let v = staged (chain 63) in
+          let v = staged (chain_of (within 8)) in
           let read i k =
             Ops.O.(Ops.index v [ i + k ] + Ops.index v [ i + k + int 1 ])
           in
           equal int 2 (kernels_reducing ~width:16 read));
-      (* At most 32 elements, the stage is read 8 times an element. *)
+      (* At 32 elements the stage is read 8 times an element; at 31 it would
+         be read more than 8 times, past the budget. *)
       test "a value of symbolic size counts at its largest" (fun () ->
           let n =
             Ops.variable "n" (`Int (Bigint.of_int 31)) (`Int (Bigint.of_int 32))
           in
-          equal int 2 (windows (staged ~size:(Sym n) (chain 64))));
+          equal int 1 (windows (staged ~size:(Sym n) (chain_of (within 8)))));
       (* [b] of [4] is an axis the value does not vary along, which the cleanups
          drop before inlining: 32 elements, read 8 times each. *)
       test "a value reduced in windows counts no axis it does not vary along"
@@ -1265,7 +1282,7 @@ let recomputation =
           let b = Ops.range ~axis_type:Loop (Int 4) [ 2 ] and s = loop 32 0 in
           let v =
             Ops.bufferize ~opts:removable
-              (chain 64 (Ops.index source [ s ]))
+              (chain_of (past 8) (Ops.index source [ s ]))
               [ b; s ]
           in
           equal int 2
@@ -1273,21 +1290,21 @@ let recomputation =
       (* A window of 2 over a stage of 4 read at 16 outputs reads each element
          8 times, of which the window computes it again twice. *)
       test "a read counts at most the trips of its reductions" (fun () ->
-          let v = staged ~size:(Int 4) (chain 200) in
+          let v = staged ~size:(Int 4) (chain_of (past 8)) in
           let read i k = Ops.index v [ Ops.O.((i + k) % int 4) ] in
           equal int 1 (kernels_reducing ~width:2 read));
       (* Inlined, the value's loads are gated in the padding and its arithmetic
          runs at each of the 16 trips, 4 an element. *)
       test "a value reduced through padding counts the padding's trips"
         (fun () ->
-          let v = staged ~size:(Int 4) (chain 200) in
+          let v = staged ~size:(Int 4) (chain_of (past 4)) in
           let read _ k = Ops.index v [ Shape.valid k Ops.O.(k < int 4) ] in
           equal int 2 (kernels_reducing ~width:16 read));
       (* [a] is read at its reader [b]'s own index, and [b] in windows: [a] is
          inlined into [b] first, whose copies then count [a]'s nodes. *)
       test "a value inlined into a windowed stage counts in its copies"
         (fun () ->
-          let a = staged (chain 63) and s = loop 32 1 in
+          let a = staged (chain_of (past 8)) and s = loop 32 1 in
           let b =
             Ops.bufferize ~opts:removable
               Ops.O.(Ops.index a [ s ] + Ops.index source [ s ])
@@ -1304,6 +1321,115 @@ let recomputation =
           let v = staged ~size:(Int 4) (chain 200) in
           let at i = Shape.valid i Ops.O.(i < int 4) in
           equal int 1 (kernels_reading (fun i -> [ Ops.index v [ at i ] ])));
+    ]
+
+(* The work bound
+
+   A stage read once, at two indices, in windows or under a sum that selects
+   one expert's matrix, stays stored exactly when the nodes its ranges reach
+   times its copies beyond the first exceed [budget]. *)
+
+(* The kernels of a graph that stores, at each output [r] of [experts * rows *
+   2], the sum over [k] of 4 of [x] at [(r / 2, k)] times the sum over the
+   experts [e] of [v] at [(e, r mod 2, k)] where [e] is the expert [ids] gives
+   the row [r / 2]: a routed product, whose rows gather their expert's matrix
+   by a sum that selects one trip. *)
+let kernels_routed ~experts ~rows v =
+  let n = experts * rows in
+  let o = Shape.param ~device:cpu ~shape:[ Int (2 * n) ] 0 Float32 in
+  let ids = Shape.param ~device:cpu ~shape:[ Int n ] 2 Int32 in
+  let x = Shape.param ~device:cpu ~shape:[ Int (4 * n) ] 3 Float32 in
+  let r = loop (2 * n) 9 and k = Ops.range (Int 4) [ 10 ] in
+  let e = Ops.range (Int experts) [ 11 ] in
+  let row = Ops.O.(r / int 2) in
+  let selected = Ops.eq (Ops.index ids [ row ]) (Ops.cast e Dtype.Int32) in
+  let read = Ops.index v [ e; Ops.O.(r % int 2); k ] in
+  let gathered =
+    Ops.reduce (Ops.where selected read (Ops.O.float 0.)) Add [ e ]
+  in
+  let product =
+    Ops.reduce Ops.O.(gathered * Ops.index x [ (row * int 4) + k ]) Add [ k ]
+  in
+  let store = Ops.store (Ops.index o [ r ]) product in
+  kernels
+    (Rangeify.get_kernel_graph
+       (Ops.sink [ Ops.after o [ Ops.end_ store [ r ] ] ]))
+
+(* [routed_staged ~experts v] is [v] of [source] at [8e + 4j + k], staged over
+   [e] of [experts], [j] of 2 and [k] of 4. [routed_staged ~experts (chain k)]
+   copies [2k + 8] nodes. *)
+let routed_staged ~experts v =
+  let e = loop experts 0 and j = loop 2 1 and k = loop 4 2 in
+  let at = Ops.O.((e * int 8) + (j * int 4) + k) in
+  Ops.bufferize ~opts:removable (v (Ops.index source [ at ])) [ e; j; k ]
+
+type reading =
+  | Once
+  | Twice
+  | Windows of int  (** of [w] trips over 16 outputs: [w / 2] an element *)
+  | Routed of int * int  (** experts and rows an expert *)
+
+let pp_reading ppf = function
+  | Once -> Format.fprintf ppf "once"
+  | Twice -> Format.fprintf ppf "twice"
+  | Windows w -> Format.fprintf ppf "windows of %d" w
+  | Routed (e, r) -> Format.fprintf ppf "%d rows for each of %d experts" r e
+
+(* The copies a reading makes of each element: a routed row computes its
+   expert's matrix once, at most once a trip of [k]. *)
+let repeats = function
+  | Once -> 1
+  | Twice -> 2
+  | Windows w -> max 1 (w / 2)
+  | Routed (_, rows) -> min 4 rows
+
+(* The nodes of a staged chain of [k] steps that its ranges reach. *)
+let copied reading k =
+  match reading with Routed _ -> (2 * k) + 8 | _ -> (2 * k) + 2
+
+let kernels_of_reading reading k =
+  match reading with
+  | Once -> kernels_reading (once (staged (chain k)))
+  | Twice -> kernels_reading (twice (staged (chain k)))
+  | Windows w ->
+      kernels_reducing ~width:w (fun i j -> Ops.index (staged (chain k)) [ Ops.O.(i + j) ])
+  | Routed (experts, rows) ->
+      kernels_routed ~experts ~rows (routed_staged ~experts (chain k))
+
+(* A reading, and chain lengths whose work falls on either side of the
+   budget. *)
+let reading_gen =
+  Gen.(
+    let* reading =
+      one_of
+        [
+          constant Once;
+          constant Twice;
+          map (fun w -> Windows (1 lsl w)) (int_range 1 4);
+          map
+            (fun (e, r) -> Routed (e, r))
+            (pair (of_list [ 2; 4; 8; 16 ]) (of_list [ 1; 2; 4 ]));
+        ]
+    in
+    let c = repeats reading in
+    let+ k = int_range 0 (if c = 1 then 64 else (budget / (c - 1)) + 8) in
+    (reading, k))
+  |> Gen.with_pp (fun ppf (r, k) -> Format.fprintf ppf "%a, chain %d" pp_reading r k)
+
+let work_bound =
+  group "get_kernel_graph › work bound"
+    [
+      prop "a stage is stored when its copies beyond the first pass the budget"
+        reading_gen (fun (reading, k) ->
+          let work = copied reading k * (repeats reading - 1) in
+          let stored = work > budget in
+          cover "read once" (reading = Once);
+          cover "read twice" (reading = Twice);
+          cover "read in windows" (match reading with Windows _ -> true | _ -> false);
+          cover "routed, stored" ((match reading with Routed _ -> true | _ -> false) && stored);
+          cover "routed, inlined" ((match reading with Routed (_, r) -> r > 1 | _ -> false) && not stored);
+          cover "stored" stored;
+          equal int (if stored then 2 else 1) (kernels_of_reading reading k));
     ]
 
 (* Dead reads
@@ -1358,5 +1484,6 @@ let () =
          cost;
          copies;
          recomputation;
+         work_bound;
          dead_reads;
        ])

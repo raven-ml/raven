@@ -104,6 +104,10 @@ windowed_chain	2
 windowed_scaled	1
 windowed_scaled_long	2
 windowed_pair	2
+read_by_two	2
+long_read_by_two	3
+routed_product_2	1
+routed_product_64	2
 tiled_chain	1
 padded_pair	1
 expand_staged	2

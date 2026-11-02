@@ -3184,6 +3184,8 @@ schedule/rangeify/layernorm.golden
 schedule/rangeify/layernorm_kernels.golden
 schedule/rangeify/long_cumsum.golden
 schedule/rangeify/long_cumsum_kernels.golden
+schedule/rangeify/long_read_by_two.golden
+schedule/rangeify/long_read_by_two_kernels.golden
 schedule/rangeify/many_cubes_limited.golden
 schedule/rangeify/many_cubes_limited_kernels.golden
 schedule/rangeify/many_inputs.golden
@@ -3252,6 +3254,8 @@ schedule/rangeify/read_around_assign.golden
 schedule/rangeify/read_around_assign_kernels.golden
 schedule/rangeify/read_at_offsets.golden
 schedule/rangeify/read_at_offsets_kernels.golden
+schedule/rangeify/read_by_two.golden
+schedule/rangeify/read_by_two_kernels.golden
 schedule/rangeify/reduce_broadcast_not_recomputed.golden
 schedule/rangeify/reduce_broadcast_not_recomputed_kernels.golden
 schedule/rangeify/reduce_expand_child.golden
@@ -3278,6 +3282,10 @@ schedule/rangeify/reshape_chain.golden
 schedule/rangeify/reshape_chain_kernels.golden
 schedule/rangeify/rope_decode.golden
 schedule/rangeify/rope_decode_kernels.golden
+schedule/rangeify/routed_product_2.golden
+schedule/rangeify/routed_product_2_kernels.golden
+schedule/rangeify/routed_product_64.golden
+schedule/rangeify/routed_product_64_kernels.golden
 schedule/rangeify/setitem.golden
 schedule/rangeify/setitem_column.golden
 schedule/rangeify/setitem_column_kernels.golden

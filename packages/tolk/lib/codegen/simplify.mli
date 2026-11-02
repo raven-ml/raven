@@ -87,10 +87,18 @@ val pm_reduce_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
 
     Raises [Invalid_argument] as {!pm_reduce_collapse} does. *)
 
+val load_collapse : Ops.t -> Ops.t option
+(** [load_collapse red] is the sum [red] over one range ({!Op.Reduce} of
+    {!Op.Add}) computed without the range, by {!pm_reduce_collapse}'s closed
+    forms and by taking a value selected where an integer index equals the
+    range, cast to a type that holds its values or not, at that index, as when
+    indexing a tensor with another one: the value there where the index is
+    within the range, and [0] elsewhere. It is [None] when no such form
+    removes the range, and when [red] is no sum or sums over several ranges.
+
+    Raises [Invalid_argument] as {!pm_reduce_collapse} does. *)
+
 val pm_load_collapse : (unit, Ops.t) Ops.Pattern_matcher.t
-(** [pm_load_collapse] replaces a sum over one range of a value selected where
-    an integer index equals the range, cast to a type that holds its values or
-    not, as when indexing a tensor with another one, by the value at that index
-    where it is within the range, and [0] elsewhere; and
-    solves [x + y < c] for [x] when [x] is a {!Dtype.Weak_int} that reads memory
-    and [y] and [c] do not. *)
+(** [pm_load_collapse] replaces a sum by {!load_collapse}'s, where it is one;
+    and solves [x + y < c] for [x] when [x] is a {!Dtype.Weak_int} that reads
+    memory and [y] and [c] do not. *)

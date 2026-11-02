@@ -153,12 +153,26 @@ def read_at_offsets():
     return sum((x[k:k + 32] for k in range(1, 32)), start=x[:32])
 
 
-def chain(*shape):
-    """Sixteen steps of `x * b + c` over three buffers of `shape`: a value of some forty nodes."""
+def chain(*shape, steps=16):
+    """`steps` steps of `x * b + c` over three buffers of `shape`: a value of some forty nodes at sixteen."""
     a, b, c = empty(*shape), empty(*shape), empty(*shape)
     x = a
-    for _ in range(16): x = x * b + c
+    for _ in range(steps): x = x * b + c
     return x
+
+
+def read_by_two(steps):
+    """A value of `steps` steps of `x * b + c` read by a sum and by an elementwise kernel: inlined, each computes it."""
+    return (lambda x: (x.sum(), x + 1))(chain(1000, steps=steps))
+
+
+def routed_product(experts, rows, k):
+    """`rows` rows for each of `experts` experts multiplied by their expert's decoded matrix of 2 by `k`: the rows gather the
+    decoded matrices by a sum over the experts that selects one, inside the product's sum, so inlined the decoding runs
+    once for each row of its expert."""
+    w, s = empty(experts, 2, k, dtype=dtypes.uchar), empty(experts, 2, 1)
+    decoded = (w.float() - 8) * s
+    return (decoded[empty(experts * rows, dtype=dtypes.int)] * empty(experts * rows, 1, k)).sum(2)
 
 
 def windowed_chain():
@@ -349,6 +363,12 @@ PROGRAMS = {
     "windowed_scaled": lambda: (empty(4, 16) * 2).cumsum(1),
     "windowed_scaled_long": lambda: (empty(4, 400) * 2).cumsum(1),
     "windowed_pair": windowed_pair,
+    # values read by two kernels, of some forty nodes and of some four hundred
+    "read_by_two": lambda: read_by_two(16),
+    "long_read_by_two": lambda: read_by_two(180),
+    # products of rows by their expert's decoded matrix: 2 rows for each of 64 experts, and 64 for each of 2
+    "routed_product_2": lambda: routed_product(64, 2, 4),
+    "routed_product_64": lambda: routed_product(2, 64, 64),
     # broadcasts, whose outputs each compute the value once
     "tiled_chain": tiled_chain,
     "padded_pair": padded_pair,

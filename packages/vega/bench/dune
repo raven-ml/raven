@@ -1,6 +1,6 @@
 (executable
  (name bench_vega)
- (libraries nx vega thumper))
+ (libraries nx vega rune thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
 ; (or run the built exe directly; `list` prints case ids).
