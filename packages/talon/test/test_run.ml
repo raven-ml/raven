@@ -884,8 +884,14 @@ let agrees p =
 (* Law 7: canonical layouts, byte for byte *)
 
 (* Elements narrower than a byte are read from their storage, the bits past
-   their last element included. *)
+   their last element included. A NaN's sign and payload are not a result's
+   (nx leaves them to the kernel), so every NaN is written as one. *)
 let hex (type a b) (x : (a, b, Nx.host) Nx.t) =
+  let x : (a, b, Nx.host) Nx.t =
+    match Nx.Dtype.kind (Nx.dtype x) with
+    | Float -> Nx.where (Nx.isnan x) (Nx.full_like x Float.nan) x
+    | _ -> x
+  in
   let bits = Nx.Dtype.bits (Nx.dtype x) in
   let bytes =
     match Nx.dtype x with
