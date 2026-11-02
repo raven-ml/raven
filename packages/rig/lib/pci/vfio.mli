@@ -84,17 +84,20 @@ val open_ : Sysfs.t -> fds -> string -> t * Unix.file_descr
 val device : t -> Unix.file_descr
 (** [device t] is the descriptor of [t]'s function. *)
 
-val map_dma : string -> string -> t -> below:int -> int -> int -> int option
+val map_dma : string -> string -> t -> below:int -> int -> int -> int
 (** [map_dma fn bus t ~below a n] is the device address at which [t]'s
     container maps the [n] bytes at [a], ending at or below [below]. Maps are
     counted, each by the function it is for, and each map of the same
     [(a, n)], for [t] or another function of the container, adds a count. [t]
     counts the map from the step that makes it, so an exception that ends the
-    call leaves it to {!close} of [t]. It is [None] if the process reached its
-    locked-memory limit, or the container holds as many mappings as
-    [dma_entry_limit] allows, has no device addresses left below [below], or
-    maps [(a, n)] already past [below]. [fn] is the public function that asks,
-    named in the [Invalid_argument] for a released function. *)
+    call leaves it to {!close} of [t]. Nothing allocates once it counted, so
+    an answer the caller gets tells it of the count. It is [-1], counting
+    nothing, if the process reached its locked-memory limit, or the container
+    holds as many mappings as [dma_entry_limit] allows, has no device
+    addresses left below [below], or maps [(a, n)] already past [below].
+    Raises {!Fail.Failed}, counting nothing, if the kernel refuses the map
+    otherwise. [fn] is the public function that asks, named in the
+    [Invalid_argument] for a released function. *)
 
 val unmap_dma : string -> t -> int -> int -> unit
 (** [unmap_dma bus t a n] drops one of [t]'s counts of [(a, n)], unmapping

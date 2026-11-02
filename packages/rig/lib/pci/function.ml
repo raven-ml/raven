@@ -35,13 +35,17 @@ type t = {
       (* once the machine's release or [keep]'s returned, read from any
          domain *)
   lent : int Atomic.t; (* [lend]s not [unlend]ed *)
-  writers : t list Atomic.t;
-      (* the functions an [unlend_after] named, which may still write its
+  writers : writers Atomic.t;
+      (* the functions an [unlend_held] named, which may still write its
          memory *)
   parked : bool Atomic.t;
       (* once its give-back stopped its DMA and kept its take for lent
          memory, until [unpark] gives the take back *)
 }
+
+(* A list each of whose cells is made before the section that links it,
+   which then allocates nothing. *)
+and writers = No_writer | Writer of { w : t; mutable rest : writers }
 
 (* A function reaches 64 bits of address until its driver says otherwise. *)
 let full_bits = 64
@@ -102,7 +106,7 @@ let vacant machine bus =
       space = Space.holder ();
       given = Atomic.make false;
       lent = Atomic.make 0;
-      writers = Atomic.make [];
+      writers = Atomic.make No_writer;
       parked = Atomic.make false;
     }
   in
@@ -135,12 +139,14 @@ let unlist f = update lenders (List.filter (fun (_, f') -> f' != f))
 (* Whether [f] lends memory that another function may still write: a
    mapping is out, or a function that unmapped it is not released and quiet
    yet. *)
-let lends f =
-  Atomic.get f.lent > 0
-  || List.exists
-       (fun w ->
-         Atomic.get w.state land 1 = 0 || not (Atomic.get w.quiet))
-       (Atomic.get f.writers)
+let rec writing = function
+  | No_writer -> false
+  | Writer { w; rest } ->
+      Atomic.get w.state land 1 = 0
+      || (not (Atomic.get w.quiet))
+      || writing rest
+
+let lends f = Atomic.get f.lent > 0 || writing (Atomic.get f.writers)
 
 (* The machine's release of [f]'s take, which gives back what the take
    holds, then, once the function masters the bus no more, the addresses its
@@ -448,13 +454,27 @@ let lend_refused f =
   settle_parked f;
   if Atomic.get f.given && not (Atomic.get f.parked) then unlist f
 
-let unlend f =
-  Atomic.decr f.lent;
-  settle_parked f
+type writer = writers
 
-let unlend_after f w =
-  update f.writers (List.cons w);
-  unlend f
+let writer w = Writer { w; rest = No_writer }
+
+(* The lend's count and the writer's link change with nothing that allocates
+   or polls: the caller's section, which ends the mapping, makes them one
+   step. The lone writer of [f] at a time is its caller's, under that
+   section's lock, and a reader of [writers] meets the cell whole. *)
+let unlend_held f w =
+  (match w with
+  | Some (Writer c as cell) ->
+      c.rest <- Atomic.get f.writers;
+      Atomic.set f.writers cell
+  | Some No_writer | None -> ());
+  ignore (Atomic.fetch_and_add f.lent (-1) : int)
+
+let settle = settle_parked
+
+let unlend f =
+  unlend_held f None;
+  settle f
 
 (* [kept] is set once [f] is given out, so that a keep an exception ended
    gives it out again. A function given out twice is listed twice. *)
@@ -731,7 +751,10 @@ let alloc_dma ?(contiguous = false) ?va f n =
 
 (* A free and an unpin are uses, so that no give-back runs while they give
    memory back. One refused, once a release has begun, leaves the memory to
-   the give-back, which gives back all the take holds. *)
+   the give-back, which gives back all the take holds, but for a kept
+   function, whose take stays until the exit: once its bus mastering reads
+   off, the free gives back its own memory, which the machine counts apart
+   from what another function was given. *)
 let free_dma f w =
   unlist f f.dmas "free_dma" w;
   if use f then
@@ -740,6 +763,7 @@ let free_dma f w =
     | exception e ->
         leave f;
         reraise e
+  else if Atomic.get f.kept && Atomic.get f.quiet then f.fn.free_dma w
 
 let pin_entered f a n =
   on_page f "pin" a;
@@ -780,3 +804,4 @@ let unpin f a n =
     | exception e ->
         leave f;
         reraise e
+  else if Atomic.get f.kept && Atomic.get f.quiet then f.fn.unpin a n

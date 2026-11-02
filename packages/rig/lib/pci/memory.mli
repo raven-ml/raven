@@ -30,7 +30,11 @@
     give-back gives back all the function holds, regions that are out
     included, once the function masters the bus no more ({!Function.release}).
     {!free} then writes none of the GPU's tables and gives back nothing more,
-    and windows on the GPU's memory ({!host}) are gone. Each request that
+    and windows on the GPU's memory ({!host}) are gone. A GPU whose memory
+    {!bus} gave another function keeps its function taken until the process
+    exits ({!bus}): its give-back gives back nothing, and each {!free} after
+    it gives back the region's memory, pins and addresses, once the function
+    masters the bus no more, but for memory that was given. Each request that
     writes the tables, {!val-alloc}, {!map_host}, {!map_peer} and {!free}, is
     a use of the function, so a release that begins meanwhile leaves the
     function's give-back to that request's end ({!Function}). A request that

@@ -283,6 +283,22 @@ let test_whole () =
   List.iter Space.free (List.rev all);
   is_some ~msg:"a quarter" (Space.alloc s holder (1 lsl 22))
 
+(* A range two holders hold goes back with the second's give-back, and a
+   share of a hold given back holds nothing, as a release on another thread
+   leaves it. *)
+let test_shared () =
+  let s = Space.create ~base:(1 lsl 40) (1 lsl 24) in
+  let h = Space.holder () and h' = Space.holder () in
+  let x = Option.get (Space.alloc s h 0x3000) in
+  let y = require_some ~msg:"a share" (Space.share h' x) in
+  equal ~msg:"the shared range" hex (Space.address x) (Space.address y);
+  Space.release h;
+  equal ~msg:"held by the second holder" int 1 (Space.taken s);
+  is_none ~msg:"a share of a hold given back" (Space.share h' x);
+  Space.free y;
+  equal ~msg:"back with the second" int 0 (Space.taken s);
+  is_none ~msg:"a share once both went" (Space.share h' y)
+
 (* Interrupts *)
 
 (* An exception at any allocation of an alloc or a free, the first making the
@@ -392,6 +408,10 @@ let () =
                (commands ~covered:false ~spaces:roomy);
              test "creating a space allocates nothing but its handle" test_lazy;
              test "freeing every range makes the space whole" test_whole;
+             test
+               "a range goes back with its last holder, and a share of a hold \
+                given back is None"
+               test_shared;
              test "an exception at any allocation of a call leaves the lock \
                    free"
                test_interrupted;

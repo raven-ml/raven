@@ -378,15 +378,23 @@ let take_due h =
 let lent r = r.mapping.target <> System
 
 (* Uncounts [w], a mapping of its origin that another GPU, of function
-   [writer], gave back, or never made, and ends its lend: [w]'s mark and the
-   origin's count change together, so it is uncounted once. Unless [gone],
-   that GPU may still write the memory, which then stays reached, and the
-   lend lasts until [writer] is released and quiet. The last one of a parked
-   mapping makes it due, for its owner's next call. Once the owner's function
-   is released, its give-back has taken back what the mapping held. *)
+   [writer], gave back, or never made, and ends its lend: [w]'s mark, the
+   origin's count and, for GPU memory, the lend change in one section with
+   nothing between that allocates or polls, so it is uncounted once and its
+   lend ends with it. Unless [gone], that GPU may still write the memory,
+   which then stays reached, and the lend lasts until [writer] is released
+   and quiet, through a record made before the section. Only the settling of
+   the owner's function, which may give back its take, runs after it. The
+   last one of a parked mapping makes it due, for its owner's next call. Once
+   the owner's function is released, its give-back has taken back what the
+   mapping held. *)
 let leave w ~gone ~writer =
   let r = w.over in
   let o = r.owner in
+  let lends = lent r in
+  let still =
+    if lends && not gone then Some (Function.writer writer) else None
+  in
   let section () =
     if not w.counted then false
     else
@@ -402,11 +410,10 @@ let leave w ~gone ~writer =
           if not gone then e.reached <- true;
           if e.peers = 0 && e.out = [] then Atomic.set h.due true
       | None -> ());
+      if lends then Function.unlend_held o.lender still;
       true
   in
-  if Lock.protect o.lock section && lent r then
-    if gone then Function.unlend o.lender
-    else Function.unlend_after o.lender writer
+  if Lock.protect o.lock section && lends then Function.settle o.lender
 
 (* Unmaps [e], a mapping no region is out over and no other GPU maps, and
    gives back its holder's, or leaves it to a free after the release if the
@@ -664,38 +671,43 @@ let write_counted h w f =
 let counted_map ?again h r f =
   let w =
     match again with
-    | Some w -> w
-    | None ->
-        let space =
-          Space.share (Function.holder h.fn) (Option.get r.space)
-        in
-        let w =
-          {
-            over = r;
-            space;
-            counted = false;
-            made = false;
-            made_mapping = no_mapping;
-          }
-        in
-        h.writing <- w :: h.writing;
-        w
+    | Some _ -> again
+    | None -> (
+        match Space.share (Function.holder h.fn) (Option.get r.space) with
+        | None -> None
+        | Some space ->
+            let w =
+              {
+                over = r;
+                space;
+                counted = false;
+                made = false;
+                made_mapping = no_mapping;
+              }
+            in
+            h.writing <- w :: h.writing;
+            Some w)
   in
-  w.made <- false;
-  if w.counted then write_counted h w f
-  else
-    (* An exception before the count, [mine]'s refusal included, leaves [w]
-       uncounted, and a next [map_peer] counts it. *)
-    match enter "map_peer" r w with
-    | exception e ->
-        unwrite h w;
-        Space.free w.space;
-        reraise e
-    | false ->
-        unwrite h w;
-        Space.free w.space;
-        released_error r.owner
-    | true -> write_counted h w f
+  match w with
+  | None ->
+      (* The origin's owner was given back since [map_peer] checked it. *)
+      released_error r.owner
+  | Some w -> (
+      w.made <- false;
+      if w.counted then write_counted h w f
+      else
+        (* An exception before the count, [mine]'s refusal included, leaves
+           [w] uncounted, and a next [map_peer] counts it. *)
+        match enter "map_peer" r w with
+        | exception e ->
+            unwrite h w;
+            Space.free w.space;
+            reraise e
+        | false ->
+            unwrite h w;
+            Space.free w.space;
+            released_error r.owner
+        | true -> write_counted h w f)
 
 (* The region of [m] over [w]'s mapping of the origin [r]. *)
 let peer_region m r w =

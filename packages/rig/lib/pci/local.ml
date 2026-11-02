@@ -383,12 +383,15 @@ let alloc_dma t ~contiguous ~va ~below n =
       let give_back () =
         match found t.maps a with Some _ -> Sysmem.unmap a n | None -> ()
       in
+      (* Only a refusal before the count gives the memory back: after it, the
+         mapping stays listed for the release, which gives back the count
+         first. *)
       match Vfio.map_dma "alloc_dma" t.bus c ~below a n with
-      | Some iova -> Some (Window.v a n, [ (iova, n) ])
-      | None ->
+      | -1 ->
           give_back ();
           None
-      | exception e ->
+      | iova -> Some (Window.v a n, [ (iova, n) ])
+      | exception (Fail.Failed _ as e) ->
           give_back ();
           raise e)
 
@@ -420,9 +423,8 @@ let pin t ~below a n =
             t.bus)
   | Iommu_take c ->
       let n = round_page n in
-      Option.map
-        (fun iova -> [ (iova, n) ])
-        (Vfio.map_dma "pin" t.bus c ~below a n)
+      let iova = Vfio.map_dma "pin" t.bus c ~below a n in
+      if iova < 0 then None else Some [ (iova, n) ]
 
 let unpin t a n =
   match t.way with

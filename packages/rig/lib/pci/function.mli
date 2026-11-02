@@ -346,11 +346,14 @@ val reset : t -> (unit, string) result
     From a release's start, {!free_dma} and {!unpin} give no memory back: the
     give-back gives back all the function's memory and pins once its bus
     mastering reads off, and the process's windows on the memory are gone
-    then. After a release that could not turn its bus mastering off because
-    the system refused the write, as a kernel locked down since the take
-    does, none goes back, since the function may still reach it: that memory
-    stays the process's until it exits, and taken physically, past its
-    exit.
+    then. A function whose memory was given to another function
+    ({!Memory.bus}) stays taken until the process exits: once its bus
+    mastering reads off, {!free_dma} and {!unpin} give back the memory and
+    pins they name, and none that was given. After a release that could not
+    turn its bus mastering off because the system refused the write, as a
+    kernel locked down since the take does, none goes back, since the
+    function may still reach it: that memory stays the process's until it
+    exits, and taken physically, past its exit.
 
     Either way, a function reaches only the addresses its engines hold,
     which its driver states with {!set_dma_bits}, as Linux's drivers do with
@@ -408,8 +411,8 @@ val alloc_dma :
 
 val free_dma : t -> Window.t -> unit
 (** [free_dma f w] frees [w], and [f] reaches it no more. Once a release of
-    [f] has begun, [w] goes back with the give-back instead
-    ({{!dma}system memory}).
+    [f] has begun, [w] goes back with the give-back instead, or at the free
+    for a function kept taken ({{!dma}system memory}).
 
     Raises [Invalid_argument] if [w] is not a live window {!alloc_dma} returned
     for [f]. *)
@@ -441,8 +444,8 @@ val pin : t -> int -> int -> ((int * int) list option, string) result
 
 val unpin : t -> int -> int -> unit
 (** [unpin f a n] releases one pin of the [n] bytes at [a]. Once a release of
-    [f] has begun, the pin goes with the give-back instead
-    ({{!dma}system memory}).
+    [f] has begun, the pin goes with the give-back instead, or at the unpin
+    for a function kept taken ({{!dma}system memory}).
 
     Raises [Invalid_argument] if [(a, n)] is not pinned for [f]. *)
 
@@ -525,7 +528,7 @@ val inherited : t -> bool
 
 (* [lend f] counts a mapping that another GPU makes of [f]'s memory, and is
    [true], or is [false], counting nothing, if a release of [f] has begun.
-   While a lend is counted, or a function named by {!unlend_after} is not
+   While a lend is counted, or a function named by {!unlend_held} is not
    released or may still master the bus, [f] {e lends} its memory: its
    give-back ({!release}) turns its bus mastering off and keeps its take,
    its windows and memory included, so that {!take} of its bus is [Error]
@@ -552,11 +555,27 @@ val takeable : Machine.t -> string -> (unit, string) result
    [f]'s take, which raises what ends that, leaving it to the next. *)
 val unlend : t -> unit
 
-(* [unlend_after f w] is {!unlend} for a mapping whose function [w] may
-   still write the memory: its unmap was not confirmed, or [w] was released
-   with its bus mastering possibly on. [f] lends until [w] is released and
-   its bus mastering reads off. *)
-val unlend_after : t -> t -> unit
+(* The type for the record that a function may still write memory another
+   lent it. *)
+type writer
+
+(* [writer w] is the record that [w] may still write lent memory, made
+   before the section that links it ({!unlend_held}). *)
+val writer : t -> writer
+
+(* [unlend_held f w] is {!unlend} but its settling, as one step that
+   allocates nothing or polls, for a caller's section that ends the mapping
+   with it, under the lock of [f]'s memory, which every such section holds.
+   With [Some w], the mapping's function may still write the memory: its
+   unmap was not confirmed, or it was released with its bus mastering
+   possibly on, and [f] lends until it is released and its bus mastering
+   reads off. The caller then calls {!settle} outside its locks. *)
+val unlend_held : t -> writer option -> unit
+
+(* [settle f] gives back [f]'s parked take if [f] lends nothing any more,
+   which raises what ends that, leaving it to the next take of [f]'s bus or
+   {!finish_releases}. *)
+val settle : t -> unit
 
 (* [keep f] keeps [f] taken until the process exits, since another function
    may write the memory its BAR reaches ({!Memory.bus}): from then on

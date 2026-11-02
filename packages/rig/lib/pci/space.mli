@@ -61,11 +61,10 @@ val alloc : ?align:int -> t -> holder -> int -> hold option
 val address : hold -> int
 (** [address x] is the first address of [x]'s range. *)
 
-val share : holder -> hold -> hold
+val share : holder -> hold -> hold option
 (** [share h x] is [h]'s hold on the range of [x], which then goes back once
-    neither holds it.
-
-    Raises [Invalid_argument] if [x] was given back. *)
+    neither holds it, or [None], holding nothing, if [x] was given back, as by
+    a release of its holder on another thread. *)
 
 val free : hold -> unit
 (** [free x] gives back [x]: its range goes back with the last hold on it.

@@ -526,9 +526,11 @@ let make_mapping bus c ~below a n (m : mapping) =
         Fail.fail "mapping %d bytes for %s: %s" n bus (Unix.error_message e)
 
 (* The device address at which [t]'s container maps the [n] bytes at [a],
-   ending at or below [below], mapping them for the first count. A mapping
-   another function made past [below] serves none. [t]'s tally and the
-   mapping's count change together. *)
+   ending at or below [below], mapping them for the first count, or [-1]. A
+   mapping another function made past [below] serves none. [t]'s tally and
+   the mapping's count change together, and the answer is unboxed: nothing
+   after the count allocates, so a caller learns of a count by its answer
+   alone. *)
 let map_dma fn bus t ~below a n =
   let c = t.c in
   Lock.protect c.mutex @@ fun () ->
@@ -537,15 +539,15 @@ let map_dma fn bus t ~below a n =
   let m =
     bound c.maps (a, n) (fun () -> { iova = -1; mapped = false; count = 0 })
   in
-  if m.count > 0 && m.iova > below - n then None
+  if m.count > 0 && m.iova > below - n then -1
   else if m.count = 0 && not (make_mapping bus c ~below a n m) then begin
     drop bus c a n m;
-    None
+    -1
   end
   else begin
     m.count <- m.count + 1;
     k.held <- k.held + 1;
-    Some m.iova
+    m.iova
   end
 
 (* Drops [k] of [t]'s maps of the pair, unmapping it with the last count.

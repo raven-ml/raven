@@ -29,9 +29,11 @@ and holder = { mutable first : hold }
    may hold ranges of several spaces. A hold's count and its link on its
    holder's list change together, with nothing between that allocates or
    polls: the hold is made first, and [Tlsf.alloc] allocates before it
-   changes its blocks and [Tlsf.free] not at all. So an exception, an
-   asynchronous one too, leaves each range counted by exactly the live holds
-   on it. *)
+   changes its blocks. So an exception, an asynchronous one too, leaves each
+   range counted by exactly the live holds on it. A range whose last hold
+   goes is freed after: [Tlsf.free] allocates nothing, but its search for
+   the block polls, so an exception there leaks the range's addresses, and
+   no hold counts them. *)
 let lock = Lock.create ()
 
 let rec nil =
@@ -90,7 +92,8 @@ let unlink x =
 
 (* Ends the live hold [x], and gives its range back with the last hold.
    [lock] is held. A range a hold counts was taken, so its space has an
-   allocator, and [Tlsf.free] finds its block. *)
+   allocator, and [Tlsf.free] finds its block, or an exception in its search
+   leaks the range. *)
 let give_back x =
   if x.live then begin
     let r = x.range in
@@ -125,18 +128,20 @@ let alloc ?(align = 0x1000) s h n =
       link x;
       got
 
+(* The hold and its answer are made before the lock, as [alloc]'s. *)
 let share h x =
   let y =
     { range = x.range; holder = h; live = false; prev = nil; next = nil }
   in
+  let got = Some y in
   Lock.protect lock (fun () ->
-      if not x.live then
-        invalid_argf "Space.share: the range at 0x%x was given back"
-          x.range.start;
-      x.range.users <- x.range.users + 1;
-      y.live <- true;
-      link y);
-  y
+      if not x.live then None
+      else begin
+        x.range.users <- x.range.users + 1;
+        y.live <- true;
+        link y;
+        got
+      end)
 
 let free x = Lock.protect lock (fun () -> give_back x)
 

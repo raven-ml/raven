@@ -131,8 +131,10 @@ val distance : t -> string -> string -> distance option
     before the give-back's own [config], [set_config] and [release]. The
     release, the last use, a use refused after the release or
     {!Function.finish_releases} makes them, never two at once. No [free_dma],
-    [unpin] or [unmap] follows the release's start but a use's: the take's
-    [release] gives back what the take holds. An exception, such as an
+    [unpin] or [unmap] follows the release's start but a use's, or a
+    [free_dma] or [unpin] of a function kept taken for another function
+    ({!Memory.bus}) once its bus mastering is off: the take's [release] gives
+    back what the take holds. An exception, such as an
     asynchronous one, may end [release] part-way, and {!Function} then calls
     it again. Every pin and unpin of a live function is passed on, so a
     transport counts them too.

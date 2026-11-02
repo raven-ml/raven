@@ -2805,8 +2805,8 @@ let test_bus_reserved () =
   | Error why -> contains ~sub:"given to another PCI function" why
 
 (* System memory given to another function stays through its GPU's stop, as
-   its driver makes it, beside a peer's memory in its 2 MiB block, which the peer
-   reads, frees and gives back as before. *)
+   its driver makes it, beside a peer's memory in its 2 MiB block, which the
+   peer reads, frees and gives back as before. *)
 let test_bus_stop () =
   incr given_spaces;
   let base = (1 lsl 42) + (!given_spaces * space_length) in
