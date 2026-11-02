@@ -428,6 +428,17 @@ let float_text_tests =
         (fun (text, expected) ->
           equal float_exact expected
             (require_some (Munin_float_text.Float_text.of_string text)));
+      cases ~timeout:10.
+        "a decimal beyond the greatest float reads as an infinity" ~id:fst
+        [
+          ("688706.565804865188962e303", Float.infinity);
+          ("-688706.565804865188962e303", Float.neg_infinity);
+        ]
+        (fun (text, expected) ->
+          equal ~msg:"read" (option float_exact) (Some expected)
+            (Munin_float_text.Float_text.read text);
+          equal ~msg:"of_string" (option float_exact) (Some expected)
+            (Munin_float_text.Float_text.of_string text));
       prop "a float's shortest text reads back as it" Gen.float (fun x ->
           equal float_exact x
             (require_some

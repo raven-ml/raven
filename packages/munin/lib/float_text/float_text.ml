@@ -300,11 +300,12 @@ let side c b =
 let max_bits = Int64.bits_of_float Float.max_float
 
 (* [nearest c x] is the nonnegative float [c] rounds to, ties to even, searched
-   from [x]: doubling steps bracket it, and halving the bracket finds it. *)
+   from [x]: doubling steps bracket it, and halving the bracket finds it. An [x]
+   that is not finite, as the C library reads a negative decimal beyond the
+   greatest float, starts from the greatest float. *)
 let nearest c x =
   let start =
-    if Float.is_nan x || x = Float.infinity then max_bits
-    else Int64.bits_of_float (Float.abs x)
+    if Float.is_finite x then Int64.bits_of_float (Float.abs x) else max_bits
   in
   match side c start with
   | 0 -> Int64.float_of_bits start
