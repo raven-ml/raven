@@ -526,7 +526,8 @@ module Column : sig
 
       An extension column is laid out as its storage. The values under a null
       are unspecified and deterministic: a reader that needs defined values
-      masks them with the validity, as Arrow requires. Columns are immutable,
+      masks them with the validity, as Arrow requires. Under a null record, its
+      fields' slots are unspecified, their values and validity alike. Columns are immutable,
       and share their buffers with the tensors and layouts that read them: a
       column holds values of its own over that memory, so donating a tensor it
       took or gave ends that tensor alone, and the donation computes into fresh
@@ -2155,7 +2156,7 @@ module Query : sig
       into a single batch. Its columns are canonical ({!Column}), so their
       {!Column.type-layout}s do not depend on batches, except that a column
       whose validity is traced ({!section-compiled}) keeps it, even with no
-      null. *)
+      null, and that a record's fields under its nulls are unspecified. *)
 
   val values : ('a, Expr.row) Expr.t -> t -> ('a array, Error.t) result
   (** [values e q] is [e] on each row of [q], decoded to OCaml:

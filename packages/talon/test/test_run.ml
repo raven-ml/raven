@@ -921,7 +921,18 @@ let rec buffers c =
       bits validity :: hex offsets :: buffers child
   | Children { validity; length; fields } ->
       bits validity :: string_of_int length
-      :: List.concat_map (fun (n, c) -> n :: buffers c) fields
+      :: List.concat_map (fun (n, c) -> n :: buffers (held validity n c)) fields
+
+(* [held validity n c] is the field [n]'s column [c] at the rows its record
+   holds, canonical: under a null record its slots are unspecified, values and
+   validity alike, as in Arrow. *)
+and held validity n c =
+  match validity with
+  | None -> c
+  | Some v ->
+      let rows = Nx.positions (Nx.cast Nx.bool v) in
+      let t = Talon.take rows (Talon.v [ (n, c) ]) in
+      Talon.column (run_ok (Query.of_table t)) n
 
 let two_splits =
   Gen.with_pp
