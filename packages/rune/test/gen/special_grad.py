@@ -10,7 +10,8 @@ Writes `packages/rune/test/golden/special_grad/<fn>.golden`: at the points of
 nx's goldens (packages/nx/test/gen/special.py) where the function and its
 derivative are finite, the derivative in each argument, correctly rounded at
 float32 and float64, in nx's golden format. `lgamma_2`, `lbeta_aa`,
-`lbeta_bb` and `lbeta_ab` hold second derivatives; an incomplete gamma's or
+`lbeta_bb`, `lbeta_ab`, `gammaincinv_pp` and `gammainccinv_qq` hold second
+derivatives; an incomplete gamma's or
 beta's `<fn>_a`, `<fn>_b`, `<fn>_x` and `<fn>_p` its derivative in each
 argument. A row whose
 bound is scaled holds the scale: a reflection's terms, 1 + |log f| or an
@@ -265,6 +266,38 @@ def igamma_quantile_d(upper, wrt):
     return d
 
 
+def igamma_quantile_d2(upper):
+    """The second derivative of the gamma's quantile x in p, or in q for the
+    upper tail: -f'(x) / f(x)^3 = -((a - 1) / x - 1) / f(x)^2, f the
+    density."""
+    def d(a, p):
+        x = nx.igamma_quantile(a, p, upper)
+        return -((a - 1) / x - 1) * mpmath.exp(-2 * igamma_log_density(a, x))
+    return d
+
+
+def igamma_quantile_d2_scale(upper):
+    """The second derivative's terms over its magnitude, (|a - 1| / x + 1 +
+    1 / x) / |(a - 1) / x - 1|, which a relative bound on the terms reads:
+    1 / x is the term the derivative in the tail's logarithm cancels, as at
+    a = 1, where the value is 1 / f(x)^2 and x the size of the tail."""
+    def extra(fmt, value, a, p):
+        with mp.workprec(fmt.p + 40):
+            x = nx.igamma_quantile(mpf(a), mpf(p), upper)
+            t = (mpf(a) - 1) / x
+            return nx.scale((abs(t) + 1 + 1 / x) / abs(t - 1))
+    return extra
+
+
+def quantile_points_2(fmt):
+    """Shapes from 1/2 to 2^20 at tails from the dtype's depths to near 1:
+    the second derivative's points."""
+    deep = "1e-300" if fmt is nx.F64 else "1e-30"
+    shapes = ["0.5", "1", "2.5", "30", "1000", str(2 ** 20)]
+    ps = [deep, "1e-10", "0.01", "0.3", "0.7", "0.99", "0.9999"]
+    return [(nx.round_to(fmt, mpf(a)), nx.round_to(fmt, mpf(p))) for a in shapes for p in ps]
+
+
 # A derivative through the exponential of a logarithm underflows with the
 # smaller tail: the linear functions' derivatives are held where it is
 # normal, and at the domain's end x = 0, an inverse's where its result is.
@@ -487,6 +520,11 @@ DERIVATIVES = [
                normal=result_normal(F[name]))
     for name, upper in [("gammaincinv", False), ("gammainccinv", True)]
     for arg, wrt in [("a", 0), ("p", 1)]
+] + [
+    Derivative(f"{name}_{arg}{arg}", F[name], igamma_quantile_d2(upper),
+               extra=igamma_quantile_d2_scale(upper), points=quantile_points_2,
+               normal=result_normal(F[name]))
+    for name, upper, arg in [("gammaincinv", False, "p"), ("gammainccinv", True, "q")]
 ] + [
     Derivative(f"{name}_{arg}", F[name], beta_quantile_d(upper, wrt),
                extra=nx.beta_kappa(upper) if wrt == 2 else beta_quantile_scale,

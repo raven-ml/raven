@@ -1257,43 +1257,111 @@ def gaminv_guess(a, l, q_tail):
     return mpmath.log(x5) + mpmath.log1p(-(step if abs(step) < mpf("0.5") else 0))
 
 
-def gaminv_steps(a, l, q_tail, y, count):
-    """y after `count` of nx's Halley steps in log x, then x after its
-    Newton step in x, in exact arithmetic."""
-    lga = mpmath.loggamma(a)
+def last_step(f, s, lam, l1, l2):
+    """nx's last step of a quantile and its first two derivatives in the
+    target l, whose residual F = f has the derivative -1 in l: the root h of
+    F(t + h) to fifth order in Newton's step d = -f / s, from F' = s and the
+    derivatives lam, l1 and l2 of g, the logarithm of the tail's derivative
+    in t, with s = +-e^(g - log T); Newton's step where Halley's correction
+    c2 d passes 1/2."""
+    d = -f / s
+    u = lam - s
+    u1 = l1 - s * u
+    u2 = l2 - s * (u * u + u1)
+    c2, c3, c4 = u / 2, (u * u + u1) / 6, (u ** 3 + 3 * u * u1 + u2) / 24
+    if abs(c2 * d) >= mpf(1) / 2:
+        return d, 1 / s, mpf(0)
+    k3, k4 = 2 * c2 ** 2 - c3, 5 * c2 * (c3 - c2 ** 2) - c4
+    h = d - c2 * d ** 2 + k3 * d ** 3 + k4 * d ** 4
+    hl = (1 - 2 * c2 * d + 3 * k3 * d ** 2 + 4 * k4 * d ** 3) / s
+    hll = (-2 * c2 + 6 * k3 * d + 12 * k4 * d ** 2) / s ** 2
+    return h, hl, hll
 
-    def residual(y):
-        x = mpmath.exp(y)
-        lp, lq = igamma_exact(a, x)
-        lt = lq if q_tail else lp
-        slope = mpmath.exp(a * y - x - lga - lt) * (-1 if q_tail else 1)
-        return x, lt - l, slope
+
+def quantile_held(fmt, got, exact, budget, normal):
+    """Whether nx's last step `got`, x and its first two derivatives in l,
+    meets the quantile `exact`, x, its derivatives and the scale of the
+    second's terms: x within u/8, relatively, or within an eighth of the
+    least subnormal where the quantile is subnormal and nx skips the step;
+    and where rune.mli's budgets hold, `normal`, the first derivative within
+    an eighth of the `budget` in ulps and the second within sqrt(eps) / 8 of
+    its terms' scale."""
+    x, dx, d2x = got
+    xs, dxs, d2xs, terms = exact
+    if xs < fmt.min_normal:
+        return abs(x - xs) <= mpf(fmt.tiny) / 8
+    if abs(x / xs - 1) > mpf(fmt.u) / 8:
+        return False
+    eps = mpf(fmt.eps)
+    return not normal or (abs(dx / dxs - 1) <= budget * eps / 8
+                          and abs(d2x - d2xs) <= mpmath.sqrt(eps) / 8 * terms)
+
+
+def igamma_slope(a, x, q_tail, l):
+    """x, log T - l and the slope of log T in log x at x."""
+    lp, lq = igamma_exact(a, x)
+    lt = lq if q_tail else lp
+    slope = mpmath.exp(a * mpmath.log(x) - x - mpmath.loggamma(a) - lt) * (-1 if q_tail else 1)
+    return lt - l, slope
+
+
+def gaminv_steps(a, l, q_tail, y, count):
+    """y = log x after `count` of nx's Halley steps in log x, in exact
+    arithmetic."""
     for _ in range(count):
-        x, g, slope = residual(y)
+        x = mpmath.exp(y)
+        g, slope = igamma_slope(a, x, q_tail, l)
         d = g / slope
         den = 1 - g * (a - x - slope) / (2 * slope)
         d = d / den if den > mpf("0.5") else d
         y -= max(min(d, 1), -1)
-    x, g, slope = residual(y)
-    return x * (1 - g / slope)
+    return y
+
+
+def gaminv_last(fmt, a, l, q_tail, y):
+    """x after nx's last step from y = log x, x e^h by its series through
+    h^4, and its first two derivatives in l; where x is not normal or |h| is
+    at least 1/2 nx skips the step, and x is e^y, constant."""
+    x = mpmath.exp(y)
+    if x < fmt.min_normal:
+        return x, mpf(0), mpf(0)
+    f, slope = igamma_slope(a, x, q_tail, l)
+    h, hl, hll = last_step(f, slope, a - x, -x, -x)
+    if abs(h) >= mpf(1) / 2:
+        return x, mpf(0), mpf(0)
+    e2 = 1 + h + h ** 2 / 2
+    e1 = e2 + h ** 3 / 6
+    return x * (e1 + h ** 4 / 24), x * e1 * hl, x * (e2 * hl ** 2 + e1 * hll)
 
 
 def igamma_halley_steps(fmt):
-    """The least Halley count after which nx's Newton step puts x within u/8
-    of the quantile, relatively, from the guess at every point of a grid of a
+    """The least Halley count after which nx's last step meets the quantile
+    as `quantile_held` states, the first derivative within rune.mli's budget
+    in p, 64 + 16 kappa (32 (1 + |log m|) + 4) ulps for kappa = m / (x f(x))
+    = 1 / |s|, f the density, from the guess at every point of a grid of a
     up to 2^20 and of the smaller tail down to the least subnormal, either
-    tail."""
+    tail. At the quantile the slope s of log T in y = log x
+    gives dx/dl = x / s and d2x/dl2 = x (1 - u) / s^2, u = a - x - s."""
     least_log = math.log(fmt.tiny)
     tails = [least_log * mpf(2) ** -k for k in (0, 1, 2, 4, 6, 8, 10)] + [mpf("-0.6931"), mpf(-1.5), mpf(-3), mpf(-7)]
     with mp.workprec(128):
         cases = [(mpf(10) ** (mpf(e) / 2), l, q) for e in range(-8, 13) for l in tails for q in (False, True)]
         cases += [(mpf(IGAMMA_A_MAX), l, q) for l in tails for q in (False, True)]
-        exact = {}
+        exact = []
         for a, l, q in cases:
-            exact[(a, l, q)] = igamma_quantile(a, mpmath.exp(l), q)
+            xs = igamma_quantile(a, mpmath.exp(l), q)
+            if not xs > 0:
+                continue
+            _, s = igamma_slope(a, xs, q, l)
+            u = a - xs - s
+            budget = 64 + 16 * (32 * (1 + abs(l)) + 4) / abs(s)
+            exact.append(((a, l, q), (xs, xs / s, xs * (1 - u) / s ** 2, xs * (1 + abs(u)) / s ** 2), budget))
         for count in range(1, 6):
-            if all(abs(gaminv_steps(a, l, q, gaminv_guess(a, l, q), count) / x - 1) <= mpf(fmt.u) / 8
-                   for (a, l, q), x in exact.items() if x > 0):
+            def ok(case):
+                (a, l, q), ex, budget = case
+                y = gaminv_steps(a, l, q, gaminv_guess(a, l, q), count)
+                return quantile_held(fmt, gaminv_last(fmt, a, l, q, y), ex, budget, True)
+            if all(ok(c) for c in exact):
                 return count
     sys.exit("no Halley count meets the inverse's bound")
 
@@ -2692,15 +2760,45 @@ def beta_switch_neighbours(tails):
     return out
 
 
+def beta_slope(a, b, z, l, q_tail):
+    """log T - l and the slope of log T in z at the logit z."""
+    lp, lq = beta_logit_tails(a, b, z, l)
+    lt = lq if q_tail else lp
+    lx, ly = -beta_softplus(-z), -beta_softplus(z)
+    lB = mpmath.loggamma(a) + mpmath.loggamma(b) - mpmath.loggamma(a + b)
+    return lt - l, mpmath.exp(a * lx + b * ly - lB - lt) * (-1 if q_tail else 1)
+
+
+def beta_last_step(fmt, a, b, l, q_tail, z):
+    """x after nx's last step of the beta's quantile from z, x(z + h) by its
+    Taylor series through h^4, and its first two derivatives in l; where x
+    or 1 - x is not normal or |(1 - x) h| is at least 1/2 nx skips the
+    step, and x is that of z, constant."""
+    x, y = beta_sigmoid(z), beta_sigmoid(-z)
+    if min(x, y) < fmt.min_normal:
+        return x, mpf(0), mpf(0)
+    f, slope = beta_slope(a, b, z, l, q_tail)
+    w = x * y
+    l1 = -(a + b) * w
+    h, hl, hll = last_step(f, slope, a - (a + b) * x, l1, l1 * (y - x))
+    if abs(y * h) >= mpf(1) / 2:
+        return x, mpf(0), mpf(0)
+    p1, p2, p3 = (y - x) / 2, (1 - 6 * w) / 6, (y - x) * (1 - 12 * w) / 24
+    x1 = w * (1 + 2 * p1 * h + 3 * p2 * h ** 2 + 4 * p3 * h ** 3)
+    x2 = w * (2 * p1 + 6 * p2 * h + 12 * p3 * h ** 2)
+    return (x + w * h * (1 + h * (p1 + h * (p2 + h * p3))), x1 * hl,
+            x2 * hl ** 2 + x1 * hll)
+
+
 def beta_halley_steps(fmt):
-    """The least Halley count after which nx's last Halley step, from the
-    iterate held constant, puts x within u/8 of the quantile, relatively,
-    and the iterate within sqrt(u) of its logit, so that the step's first
-    derivative, the quantile's to second order in that distance, is within
-    O(u) of it: from the guess at every
-    point of a grid of shapes from 1e-30 to 2^20 and of the smaller tail
-    down to the least subnormal, either tail, and on both sides of each of
-    the guess's switches, where neither x nor 1 - x underflows."""
+    """The least Halley count after which nx's last step meets the quantile
+    as `quantile_held` states, the first derivative within rune.mli's budget
+    in p, 64 (1 + |log (m / kappa)|) + 16 kappa (64 (1 + |log m|) + 4) ulps
+    for kappa = m / (x f(x)) = y / |s|, f the density: from the guess at every point of a grid of shapes from 1e-30 to 2^20 and
+    of the smaller tail down to the least subnormal, either tail, and on both
+    sides of each of the guess's switches, where neither x nor 1 - x
+    underflows. At the quantile the slope s of log T in z gives dx/dl = x y
+    / s and d2x/dl2 = x y (y - x - u) / s^2, u = a - (a + b) x - s."""
     least_log = math.log(fmt.tiny)
     tails = [least_log * mpf(2) ** -k for k in (0, 2, 4, 6, 8)] + [mpf("-0.6931"), mpf(-1.5), mpf(-4)]
     shapes = [mpf(v) for v in ("1e-30", "1e-12", "1e-3", "0.05", "0.5", "1", "2.5", "10", "60", "1e3", "1e5")]
@@ -2711,20 +2809,24 @@ def beta_halley_steps(fmt):
         cases = []
         for a, b, l, q in problems:
             z = beta_quantile_logit(a, b, mpmath.exp(l), q)
-            if min(1 / (1 + mpmath.exp(-z)), 1 / (1 + mpmath.exp(z))) >= fmt.tiny:
-                cases.append((a, b, l, q, z, beta_guess(fmt, a, b, l, q)))
+            xs, ys = beta_sigmoid(z), beta_sigmoid(-z)
+            if min(xs, ys) < fmt.tiny:
+                continue
+            _, s = beta_slope(a, b, z, l, q)
+            u, w = a - (a + b) * xs - s, xs * ys
+            # kappa = m / (x f(x)), and s = x y f(x) / m.
+            kappa = ys / abs(s)
+            budget = 64 * (1 + abs(l - mpmath.log(kappa))) + 16 * kappa * (64 * (1 + abs(l)) + 4)
+            exact = (xs, w / s, w * (ys - xs - u) / s ** 2, w * (1 + abs(u)) / s ** 2)
+            normal = min(xs, ys) >= fmt.min_normal
+            cases.append((a, b, l, q, exact, budget, normal, beta_guess(fmt, a, b, l, q)))
         for count in range(1, 6):
             def ok(case):
-                a, b, l, q, z_star, (z, z_lo, z_hi) = case
+                a, b, l, q, exact, budget, normal, (z, z_lo, z_hi) = case
                 for _ in range(count):
                     _, z = beta_halley(a, b, l, q, z, z_lo, z_hi)
-                if abs(z - z_star) > mpf(fmt.u) ** mpf("0.5"):
-                    return False
-                d, _ = beta_halley(a, b, l, q, z, -mpmath.inf, mpmath.inf)
-                x, y = beta_sigmoid(z), beta_sigmoid(-z)
-                xs = beta_sigmoid(z_star)
-                got = x - x * y * d * (1 - (y - x) * d / 2)
-                return abs(got - xs) <= mpf(fmt.u) / 8 * xs
+                got = beta_last_step(fmt, a, b, l, q, z)
+                return quantile_held(fmt, got, exact, budget, normal)
             if all(ok(c) for c in cases):
                 return count
     sys.exit("no Halley count meets the beta's inverse's bound")
@@ -3323,14 +3425,14 @@ FIELD_DOCS = {
                            "window, and K the least within u/8 of the tail with its "
                            "derivatives within the counts' bounds. [igamma_halley_steps] is "
                            "the inverses' Halley steps after the first guess, the least after "
-                           "which the Newton step that follows them puts x within u/8 of the "
-                           "quantile, relatively, for a up to 2^20 and either tail down to "
-                           "the least subnormal. [beta_halley_steps] is the beta's "
-                           "quantile's Halley steps after its first guess, the least after "
-                           "which a last Halley step puts x within u/8 of the quantile, "
-                           "relatively, from an iterate within sqrt(u) of its logit, for "
-                           "shapes from 1e-30 to 2^20 and either tail down to the least "
-                           "subnormal. "
+                           "which the last step, of fifth order, puts x within u/8 of the "
+                           "quantile, relatively, its first derivative in the tail's "
+                           "logarithm within an eighth of rune.mli's budget and its second "
+                           "within sqrt(eps)/8 of its terms, for a up to 2^20 and either "
+                           "tail down to the least subnormal. [beta_halley_steps] is the "
+                           "beta's quantile's Halley steps after its first guess, the least "
+                           "after which its last step does as much, for shapes from 1e-30 "
+                           "to 2^20 and either tail down to the least subnormal. "
                            "[erfcx_series] is erfc x e^(x^2) x sqrt pi "
                            "from [erfc_far_from], (-1)^k (2k - 1)!! in 1/(2x^2), its least "
                            "count within u/8 of the value and of the derivative.",

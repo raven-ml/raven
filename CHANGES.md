@@ -362,6 +362,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- The gradients of `Nx.gammaincinv` and `Nx.gammainccinv` run through their
+  last step alone, as the beta's inverses' do, where they ran through every
+  Halley step: the compiled gradient is half the program and compiles in
+  half the time. Their derivatives past the second are no longer the
+  quantile's, and are 0 where the quantile is subnormal.
 - `Rune.jit`'s first call lowers its program once where it donates arguments
   (`Nx.donate`) or passes strided views, such as transposed weights. It
   lowered it a second time, at that call's layouts and donation.
@@ -3530,6 +3535,11 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.betaincinv`, `Nx.betainccinv`, `Nx.gammaincinv` and `Nx.gammainccinv`
+  take one Halley step at float64 where they took two, and a last step of
+  fifth order: each is one incomplete beta or gamma shorter. At float64
+  `Rune.jit` compiles the beta's quantile in some 40% less time and its
+  gradient in 25% less. Results move by an ulp or so.
 - A NaN result's sign and payload are unspecified, and it is signalling only
   where an operand is a signalling NaN (`Nx.Dtype`, Stores). Casts and kernels
   no longer promise to quiet a signalling NaN; `Nx.Dtype.of_float` still does,

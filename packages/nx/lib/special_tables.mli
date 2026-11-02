@@ -352,16 +352,16 @@ type t = {
           of its derivative, is at most u/32 at a = 20 over Temme's window, and
           K the least within u/8 of the tail with its derivatives within the
           counts' bounds. [igamma_halley_steps] is the inverses' Halley steps
-          after the first guess, the least after which the Newton step that
-          follows them puts x within u/8 of the quantile, relatively, for a up
-          to 2^20 and either tail down to the least subnormal.
-          [beta_halley_steps] is the beta's quantile's Halley steps after its
-          first guess, the least after which a last Halley step puts x within
-          u/8 of the quantile, relatively, from an iterate within sqrt(u) of its
-          logit, for shapes from 1e-30 to 2^20 and either tail down to the least
-          subnormal. [erfcx_series] is erfc x e^(x^2) x sqrt pi from
-          [erfc_far_from], (-1)^k (2k - 1)!! in 1/(2x^2), its least count within
-          u/8 of the value and of the derivative. *)
+          after the first guess, the least after which the last step, of fifth
+          order, puts x within u/8 of the quantile, relatively, its first
+          derivative in the tail's logarithm within an eighth of rune.mli's
+          budget and its second within sqrt(eps)/8 of its terms, for a up to
+          2^20 and either tail down to the least subnormal. [beta_halley_steps]
+          is the beta's quantile's Halley steps after its first guess, the least
+          after which its last step does as much, for shapes from 1e-30 to 2^20
+          and either tail down to the least subnormal. [erfcx_series] is erfc x
+          e^(x^2) x sqrt pi from [erfc_far_from], (-1)^k (2k - 1)!! in 1/(2x^2),
+          its least count within u/8 of the value and of the derivative. *)
   igamma_series_terms : float;
   igamma_cf_depth : float;
   igamma_atanh : float array;

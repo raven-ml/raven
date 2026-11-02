@@ -826,9 +826,10 @@ let log1mexp l =
 
 (* The incomplete gamma ratio [P(a, x)], or [Q(a, x) = 1 - P(a, x)] where
    [upper], in logs, for finite [a > 0] and [x >= 0], [log_x] being [log x],
-   finite where [x] underflows; and [log (x^a e^-x / Γ(a + 1))], from which an
-   inverse forms the density. After DiDonato and Morris's GRATIO (ACM TOMS 654),
-   each region of which computes the tail it keeps precise:
+   finite where [x] underflows; and the logarithm of the slope [x pdf(x) / T]
+   of [log T] in [log x], [T] the tail computed. After DiDonato and Morris's
+   GRATIO (ACM TOMS 654), each region of which computes the tail it keeps
+   precise:
 
    - a < 1, x < 1.1: [P = x^a / Γ(1 + a) (1 - j)] and [Q = e^c j - expm1 c], [c
    = a log x - log Γ(1 + a)], [j] a series in [x], both precise; - x below max
@@ -924,7 +925,8 @@ let igamma_core a x log_x upper =
   let lp_series = add lr (log !sum) in
   (* Q's continued fraction. *)
   let a_c = clamp cf a 1. and x_c = clamp cf x 2. in
-  let lq_cf = sub (add lr (log a_c)) (log (igamma_cf t a_c x_c)) in
+  let cf_x = igamma_cf t a_c x_c in
+  let lq_cf = sub (add lr (log a_c)) (log cf_x) in
   (* The corner. *)
   let x_k = clamp corner x 0.5 in
   let log_xk = clamp corner log_x (-.ln2) in
@@ -961,8 +963,31 @@ let igamma_core a x log_x upper =
   (* Each region's tail, and the other. *)
   let native = where temme lt_temme (where series lp_series lq_cf) in
   let native_upper = where temme q_native (logical_not series) in
-  let r = where (logical_xor native_upper upper) (log1mexp native) native in
-  (where corner (where upper lq_corner lp_corner) r, lr)
+  let other = logical_xor native_upper upper in
+  let r = where other (log1mexp native) native in
+  (* The slope's logarithm [lr + log a - log T], which a region forms from its
+     own ratio where it computes [T] directly, as [log a - log sum], [log cf],
+     [log (sqrt (a / 2 pi) e^-s(a) / scaled)] and [log a - x - log1p (-j)]:
+     where [T] is tiny the difference of the two logarithms would keep only
+     their absolute error, some [|log T| ε], and the slope that much relative
+     error. *)
+  let lr_a = add lr (log a) in
+  let ls_temme =
+    sub
+      (sub (sub_s (mul_s (log a_t) 0.5) log_sqrt_2pi) (stirling_from_one t a_t))
+      (log scaled)
+  in
+  let ls_native =
+    where temme ls_temme
+      (where series (sub (log a_s) (log !sum)) (log cf_x))
+  in
+  let ls_corner =
+    where upper (sub lr_a lq_corner)
+      (sub (sub (log a_lo) x_k) (log1p (neg j)))
+  in
+  let ls = where other (sub lr_a r) ls_native in
+  ( where corner (where upper lq_corner lp_corner) r,
+    where corner ls_corner ls )
 
 (* Where [a = 0] each tail is its limit: [P(a, x) = 1 - a E1(x) + O(a^2)] for [x
    > 0], so [P = 1] and [Q = 0]. [Q] is written there as [a] times [Q/a] at [a =
@@ -1220,13 +1245,55 @@ let gaminv_guess t a l q_tail lp lq =
   let from_one = where beyond g_beyond (where low g_low (log xc)) in
   where small below_one from_one
 
+(* Quantiles' last step
+
+   The gamma's and the beta's quantiles take Halley steps in a variable [t],
+   [log x] or the logit of [x], on [F = log T - l], [T] the smaller tail and
+   [l] its target's logarithm, then one step more from the iterate held
+   constant, so that a derivative runs through that step alone, one
+   incomplete function. That step meets the root to fifth order in Newton's
+   step [d], with the coefficients [c_k = F^(k) / (k! F')] measured in [F]'s
+   curvature [c2 = F'' / 2F']: where [c_k] is [O(c2^(k-1))] its error is
+   [O(d (c2 d)^4)], and its derivatives are the quantile's to [O((c2 d)^4)]
+   relative for the first and [O((c2 d)^3)] for the second. The Halley
+   counts are the least after which, on the generator's grid, the step puts
+   [x] within [u/8] and its first two derivatives in [l] within the bounds
+   [Special_tables] states. *)
+
+(* [x] through its bits, which no derivative passes. *)
+let constant (type w) (x : (float, w) E.t) : (float, w) E.t =
+  let dt = E.dtype x in
+  if D.bits dt = 64 then E.bitcast dt (E.bitcast D.Int64 x)
+  else E.bitcast dt (E.bitcast D.Int32 x)
+
+(* The root [h] of [F (t + h)] to fifth order, from [F]'s Taylor series at [t]
+   inverted in Newton's step [d = -F / F']: [h = d - c2 d^2 + (2 c2^2 - c3)
+   d^3 + (5 c2 (c3 - c2^2) - c4) d^4], [c_k = F^(k) / (k! F')]. [F]'s slope
+   is [s = ± e^(g - log T)], [g] the logarithm of the tail's derivative in
+   [t], so [u = (log |s|)' = g' - s]; [lam], [l1] and [l2] are [g'], [g'']
+   and [g''']: [F'' = s u], [F''' = s (u^2 + u')] and [F'''' = s (u^3 + 3 u
+   u' + u'')], [u' = l1 - s u]. Where Halley's correction [c2 d] passes 1/2
+   the series is far from converging, and the step is Newton's. *)
+let fifth_order f s lam l1 l2 =
+  let d = neg (div f s) in
+  let u = sub lam s in
+  let uu = mul u u in
+  let u1 = sub l1 (mul s u) in
+  let u2 = sub l2 (mul s (add uu u1)) in
+  let c2 = mul_s u 0.5 in
+  let c3 = mul_s (add uu u1) (1. /. 6.) in
+  let c4 = mul_s (add (mul u (add uu (mul_s u1 3.))) u2) (1. /. 24.) in
+  let k3 = sub (mul_s (mul c2 c2) 2.) c3 in
+  let k4 = sub (mul_s (mul c2 (sub c3 (mul c2 c2))) 5.) c4 in
+  let series = add d (mul (mul d d) (sub (mul d (add k3 (mul d k4))) c2)) in
+  where (lt (abs (mul c2 d)) 0.5) series d
+
 (* The gamma's quantile at [p] from the lower tail, or from the upper where
    [upper], for finite [a > 0] and [p] in (0, 1): GAMINV's guess, then Halley
    steps in [y = log x] on the logarithm of the smaller tail, which stays finite
-   where [x] underflows and is concave in [y], and one Newton step more in [x],
-   skipped where [x] underflows, so that the result's derivative is the implicit
-   one. Each step's slope [d log T / dy = ± x pdf(x) / T] is formed from the
-   prefactor [igamma_core] computes. *)
+   where [x] underflows and is concave in [y], and the last step, skipped where
+   [x] is not normal. Each step's slope [d log T / dy = ± x pdf(x) / T] is
+   the one [igamma_core] computes. *)
 let igamma_inverse a p upper =
   let t = tables a in
   let flip = cmpgt p (lit p 0.5) in
@@ -1235,23 +1302,22 @@ let igamma_inverse a p upper =
   let l = log s and lc = log1p (neg s) in
   let lq = where q_tail l lc and lp = where q_tail lc l in
   let y = gaminv_guess t a l q_tail lp lq in
-  let log_a = log a in
   let sign = where q_tail (lit a (-1.)) (ones_like a) in
   let y_hi = log_max_float_of a in
   let y_lo =
     div (lit a (-.max_float_of a /. 4.)) (where (lt a 1.) (ones_like a) a)
   in
-  (* [log T - l] at [y] and its slope in [y]. *)
-  let residual y =
+  (* [log T - l] at [y] for the shape [a], and its slope in [y]. *)
+  let residual_of a y =
     let x = exp y in
-    let lt_, lr = igamma_core a x y q_tail in
-    (x, sub lt_ l, mul sign (exp (sub (add lr log_a) lt_)))
+    let lt_, ls = igamma_core a x y q_tail in
+    (x, sub lt_ l, mul sign (exp ls))
   in
   let halley y =
     let y =
       where (cmpgt y (lit y y_hi)) (lit y y_hi) (where (cmplt y y_lo) y_lo y)
     in
-    let x, g, slope = residual y in
+    let x, g, slope = residual_of a y in
     let d = div g slope in
     let den = rsub_s 1. (div (mul g (sub (sub a x) slope)) (mul_s slope 2.)) in
     let d = where (cmpgt den (lit den 0.5)) (div d den) d in
@@ -1267,10 +1333,20 @@ let igamma_inverse a p upper =
   for _ = 1 to int_of_float t.igamma_halley_steps do
     y := halley !y
   done;
-  let x, g, slope = residual !y in
-  let d = div g slope in
-  let polish = logical_and (ge x (min_normal x)) (lt (abs d) 0.5) in
-  where polish (mul x (rsub_s 1. d)) x
+  (* The last step: [g = a y - x - log Γ(a + 1)] has the derivatives [a - x],
+     [-x] and [-x] in [y], and [x] moves to [x e^h], its series through
+     [h^4]. Where [x] is not normal the step reads [a = 1] at [y = 0], so that
+     no derivative of a step it does not take meets an infinite one. *)
+  let y = constant !y in
+  let x = exp y in
+  let normal = logical_and (ge x (min_normal x)) (isfinite x) in
+  let a = clamp normal a 1. in
+  let at = where normal y (zeros_like y) in
+  let x_at, f, slope = residual_of a at in
+  let h = fifth_order f slope (sub a x_at) (neg x_at) (neg x_at) in
+  let polish = logical_and normal (lt (abs h) 0.5) in
+  let e_h = horner [| 1. /. 24.; 1. /. 6.; 0.5; 1.; 1. |] h in
+  where polish (mul x e_h) x
 
 (* The quantile with the domain's edges: 0 at the probability that is 0 at [x =
    0], [inf] at the other end and where [a = inf]; at [a = 0], where all the
@@ -1895,12 +1971,6 @@ let beta_tail upper a b x =
    the two lines' roots, [z_lo] for the lower tail at [log P] and [z_hi] for
    the upper at [log Q]. *)
 
-(* [x] through its bits, which no derivative passes. *)
-let constant (type w) (x : (float, w) E.t) : (float, w) E.t =
-  let dt = E.dtype x in
-  if D.bits dt = 64 then E.bitcast dt (E.bitcast D.Int64 x)
-  else E.bitcast dt (E.bitcast D.Int32 x)
-
 (* [log (1 + e^z)], no term of which overflows. *)
 let softplus z =
   add (where (gt z 0.) z (zeros_like z)) (log1p (exp (neg (abs z))))
@@ -2035,14 +2105,15 @@ let gamma_guess t a b l q_tail lp lq =
    [a] is below 1 and at most [b], [log Γ(1 + a) - (log Γ(a + b) - log Γ(b))],
    each part from its own form relative to [a], so that nothing cancels to
    leave rounding divided by [a]; elsewhere [log a + log B(a, b)], whose terms
-   cancel nowhere their difference is small beside [a]. *)
-let log_scaled_beta a b =
+   cancel nowhere their difference is small beside [a]. [lbeta] is [log
+   B(a, b)], which either order of the shapes computes to the same bits. *)
+let log_scaled_beta a b lbeta =
   let small = logical_and (lt a 1.) (cmple a b) in
   let a_s = clamp small a 0.5 and b_s = clamp small b 1. in
   let s = shift a_s b_s in
   let difference = add (mul a_s (sub_s s.log_q 1.)) s.tail in
   let near = sub (mul a_s (lgamma1p_ratio a_s)) difference in
-  where small near (add (log a) (lbeta_at a b))
+  where small near (add (log a) lbeta)
 
 (* A first [z] for finite [a, b > 0], from the logarithms [lp] and [lq] of
    [P] and [Q] at the root and [l], the smaller, within [z_lo, z_hi]: the
@@ -2053,7 +2124,8 @@ let log_scaled_beta a b =
    else, where the smaller is below 1 and the larger below
    [beta_guess_gamma_from], the power form that leaves less; else Temme's. *)
 let beta_guess t a b m l q_tail lp lq =
-  let la = log_scaled_beta a b and lb = log_scaled_beta b a in
+  let lbeta = lbeta_at a b in
+  let la = log_scaled_beta a b lbeta and lb = log_scaled_beta b a lbeta in
   (* The bounds stay within twice the logarithm of the least subnormal, past
      which [x] or [1 - x] rounds to 0, and where a shape so small would send
      them past the floats. *)
@@ -2089,17 +2161,16 @@ let beta_guess t a b m l q_tail lp lq =
   let gamma = logical_and (logical_not power) gamma in
   let temme = List.fold_left logical_or power [ gamma; small ] |> logical_not in
   (* Each form reads its arguments where it is taken, and a point of its
-     domain elsewhere, so that its intermediates stay finite. *)
-  let low_first = logical_and gamma (cmple a b) in
-  let high_first = logical_and gamma (cmpgt a b) in
+     domain elsewhere, so that its intermediates stay finite. The gamma's form
+     takes the smaller shape first: where it is [b], it solves the problem
+     mirrored, [(b, a)] at [-z] with the tails exchanged. *)
+  let swap = logical_and gamma (cmpgt a b) in
+  let g_a = clamp gamma lo 1. and g_b = clamp gamma hi 10. in
   let z_g =
-    where low_first
-      (gamma_guess t (clamp low_first a 1.) (clamp low_first b 10.) l q_tail lp
-         lq)
-      (neg
-         (gamma_guess t (clamp high_first b 1.) (clamp high_first a 10.) l
-            (logical_not q_tail) lq lp))
+    gamma_guess t g_a g_b l (logical_xor q_tail swap) (where swap lq lp)
+      (where swap lp lq)
   in
+  let z_g = where swap (neg z_g) z_g in
   let z_t = temme_guess (clamp temme a 2.) (clamp temme b 2.) m l q_tail in
   let z_s = where (cmple gap_p gap_q) z_p (neg z_q) in
   let z =
@@ -2112,9 +2183,8 @@ let beta_guess t a b m l q_tail lp lq =
 (* The beta's quantile at [p] from the lower tail, or from the upper where
    [upper], for finite [a, b > 0] and [p] in (0, 1): the guess, then Halley
    steps in [z] on the logarithm of the smaller tail, each kept within [z_lo,
-   z_hi], and one Halley step more in [x], so that the result's derivative is
-   the implicit one. Each step's slope [d log T / dz = ± x y pdf(x) / T] is
-   formed from [front]'s [log (x^a y^b / (a B(a, b)))], which keeps its
+   z_hi], and the last step. Each step's slope [d log T / dz = ± x y pdf(x) /
+   T] is formed from [front]'s [log (x^a y^b / (a B(a, b)))], which keeps its
    precision where [a] and [b] are large. *)
 let ibeta_inverse a b p upper =
   let t = tables a in
@@ -2153,17 +2223,13 @@ let ibeta_inverse a b p upper =
   for _ = 1 to int_of_float t.beta_halley_steps do
     z := halley !z
   done;
-  (* The last Halley step runs from the iterate held constant, through its
-     bits, so that a derivative runs through that step alone, one incomplete
-     beta. Halley's step [H] meets the root to third order in every
-     parameter, [H - z* = O(e^3)] for the iterate's error [e], so its
-     derivatives are the quantile's to [O(e^2)] for the first and [O(e)] for
-     the second; those past the second are not. The step moves [x] to [x(z
-     - d)] by its Taylor series to third order, [x - x y d + x y (y - x)
-     d^2 / 2], [d] the step in [z] and [x y] and [x y (y - x)] the logistic's
-     first two derivatives, at the point of [z], whose [1 - x] keeps the
-     digits that [x] near 1 rounds away: a series cut at first order would
-     leave the result's derivatives the quantile's only to [O(e)]. *)
+  (* The last step, from the iterate held constant. [g = a log x + b log (1 -
+     x) - log B(a, b)] has the derivatives [lam], [-(a + b) x y] and [-(a + b)
+     x y (y - x)] in [z]. The step moves [x] to [x(z + h)] by its Taylor
+     series through [h^4], [x + x y h (1 + h ((y - x) / 2 + h ((1 - 6 x y) /
+     6 + h (y - x) (1 - 12 x y) / 24)))], the logistic's derivatives at the
+     point of [z], whose [1 - x] keeps the digits that [x] near 1 rounds away:
+     [z + h] would round [h] to [z]'s precision. *)
   let z = constant !z in
   let pt = logit_point z in
   let x = where (cmplt pt.x (lit pt.x 0.5)) pt.x (rsub_s 1. pt.y) in
@@ -2172,12 +2238,23 @@ let ibeta_inverse a b p upper =
      one. *)
   let normal = logical_and (ge x (min_normal x)) (ge pt.y (min_normal x)) in
   let at = logit_point (where normal z (zeros_like z)) in
-  let g, slope, lam = residual_of (clamp normal a 2.) (clamp normal b 2.) at in
-  let d = halley_step (div g slope) slope lam in
-  let polish = logical_and normal (lt (abs (mul at.y d)) 0.5) in
-  let xy = mul x at.y in
-  let curve = mul_s (mul (sub at.y at.x) d) 0.5 in
-  where polish (sub x (mul (mul xy d) (rsub_s 1. curve))) x
+  let a = clamp normal a 2. and b = clamp normal b 2. in
+  let f, slope, lam = residual_of a b at in
+  let w = mul at.x at.y and y_x = sub at.y at.x in
+  let l1 = neg (mul (add a b) w) in
+  let h = fifth_order f slope lam l1 (mul l1 y_x) in
+  let polish = logical_and normal (lt (abs (mul at.y h)) 0.5) in
+  let taylor =
+    horner_t
+      [|
+        mul_s (mul y_x (rsub_s 1. (mul_s w 12.))) (1. /. 24.);
+        mul_s (rsub_s 1. (mul_s w 6.)) (1. /. 6.);
+        mul_s y_x 0.5;
+        ones_like h;
+      |]
+      h
+  in
+  where polish (add x (mul (mul (mul x at.y) h) taylor)) x
 
 (* The quantile with the domain's edges: [0] at the probability that is [0]
    at [x = 0], [1] at the other end; inside, [0] where the lower tail is 1,

@@ -278,7 +278,7 @@ val jvp :
     logarithms and their inverses) and the incomplete beta family
     ({!Nx.betainc}, {!Nx.betaincc}, their logarithms and their inverses)
     through the operations
-    nx computes them with, in every argument and at every order, but the beta
+    nx computes them with, in every argument and at every order, but the
     inverses' past the second (see below). Each derivative
     is within the budget below of the exact derivative, at [float32] and
     [float64], eagerly and compiled, where the function and its derivative are
@@ -324,13 +324,20 @@ val jvp :
 
     Where {!Nx.betaincinv}'s tail is flat between its two masses, at shapes
     far below 1, its result and so its derivatives may lie anywhere between
-    them, and no budget holds there. Where the quantile or one minus it is
-    subnormal, the beta inverses' derivatives are [0].
+    them, and no budget holds there. Where the quantile is subnormal, or for
+    the beta's one minus it, the inverses' derivatives are [0].
 
-    The beta's inverses differentiate their last Halley step alone, from an
-    iterate within [√ε] of the quantile's logit: their second derivatives
-    are the quantile's to within about [√ε] relative, and those past the
-    second are not the quantile's.
+    The gamma's and the beta's inverses differentiate their last step alone,
+    a step of fifth order from an iterate held constant, and those
+    derivatives past the second are not the quantile's. Their second
+    derivatives in [p] or [q] are within about [√ε] of their terms, [(|a -
+    1| / x + 1 + 1 / x) / f(x)^2] for the gamma's and [(|a - 1| / x + |b - 1|
+    / (1 - x) + 1 / x + 1 / (1 - x)) / f(x)^2] for the beta's, [f] the
+    density. [p] enters through the logarithm of the smaller tail [m], and
+    the derivative through [log m] cancels terms of size [1 / x], or [1 / (1
+    - x)] where [m] is the upper tail: where [a] is near 1, or [b] for the
+    upper tail, and [m] is small, the second derivative holds to that scale
+    and is not relatively precise.
 
     [f] is the smaller of [P] and [Q], or of [I_x(a, b)] and its complement: a
     tail and its complement share one derivative up to sign, computed from the

@@ -1419,8 +1419,8 @@ let float64 =
         0x1.cp+2;
         0x1.4p+2;
       |];
-    igamma_halley_steps = 0x1p+1;
-    beta_halley_steps = 0x1p+1;
+    igamma_halley_steps = 0x1p+0;
+    beta_halley_steps = 0x1p+0;
     erfcx_series = [|
         -0x1.07ef8p+17;
         0x1.44d8p+13;

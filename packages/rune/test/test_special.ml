@@ -504,9 +504,11 @@ let derivatives =
 
 (* The beta's quantile's second derivative in [p] is [-I''(x) / I'(x)^3 =
    -((a - 1) / x - (b - 1) / (1 - x)) / f(x)^2], [f] the density, and in [q]
-   the same. rune.mli holds it to within about [√ε] relative: here within
-   [2^-20] of its terms' magnitudes, [1/x] and [1/(1 - x)] among them, at
-   float64, eagerly. *)
+   the same. rune.mli holds it to within about [√ε] of its terms'
+   magnitudes, [|a - 1| / x] and [|b - 1| / (1 - x)] over [f(x)^2] and the
+   loss it states, [1 / x] and [1 / (1 - x)] over [f(x)^2], which [p]
+   entering through [log m] cancels: here within [√ε] of them at float64,
+   eagerly. *)
 let beta_inverse_second =
   Windtrap.cases "the beta's quantile's second derivative is -I''/I'^3"
     ~id:(fun (a, b, p) -> Printf.sprintf "(%g, %g, %g)" a b p)
@@ -535,13 +537,40 @@ let beta_inverse_second =
           let scale =
             (Float.abs t1 +. Float.abs t2 +. (1. /. x) +. (1. /. (1. -. x))) /. f2
           in
+          let tolerance = Float.sqrt epsilon_float in
           at_most float_exact
-            ~than:(0x1p-20 *. Float.max scale (Float.abs exact))
+            ~than:(tolerance *. Float.max scale (Float.abs exact))
             (Float.abs (Nx.item [] d2 -. exact)))
         [
           Nx.betaincinv;
           (fun a b p -> Nx.betainccinv a b (Nx.rsub_s 1. p));
         ])
+
+(* The gamma's quantile's second derivative in [p] is [-f'(x) / f(x)^3 =
+   -((a - 1) / x - 1) / f(x)^2], [f] the density, and in [q] the same.
+   rune.mli holds it to within about [√ε] of its terms' magnitudes, [|a -
+   1| / x] and [1] over [f(x)^2] and the loss it states, [1 / x] over
+   [f(x)^2], which [p] entering through [log m] cancels: here within [√ε] of
+   them at both dtypes, eagerly and compiled, at shapes up to [2^20] and
+   tails down to [1e-300]. *)
+let gamma_inverse_second =
+  let second { b = inverse } =
+    {
+      b =
+        (fun a p ->
+          Rune.grad'
+            (fun p -> Nx.sum (Rune.grad' (fun p -> Nx.sum (inverse a p)) p))
+            p);
+    }
+  in
+  let bound =
+    everywhere (Relative_scaled (Float.sqrt 0x1p-52, Float.sqrt 0x1p-23))
+  in
+  group "the gamma's quantile's second derivative is -f'/f^3"
+    [
+      derivative2 "gammaincinv_pp" ~bound (second { b = Nx.gammaincinv });
+      derivative2 "gammainccinv_qq" ~bound (second { b = Nx.gammainccinv });
+    ]
 
 let () =
   exit
@@ -551,4 +580,5 @@ let () =
          incomplete_gamma_derivatives;
          beta_inverse_derivatives;
          beta_inverse_second;
+         gamma_inverse_second;
        ])
