@@ -48,10 +48,19 @@ let rec value use c =
     | Fields [] -> Nx.zeros Nx.uint64 [| Column.length c |]
     | Fields cs -> rows use (Nx.stack ~axis:1 (List.concat_map (words use) cs))
   in
-  (* The values under a null are any: its word is 0. *)
+  (* The values under a null are any: its word is 0, or for [Identity] the
+     word of a fixed value's zero, which keeps the words of a column of small
+     values within a small span, so that {!Nx.unique} numbers them without a
+     sort. *)
+  let zero () =
+    match (use, Column.data c) with
+    | Identity, Fixed (P x) when Nx.ndim x = 1 ->
+        element (Nx.zeros_at (Nx.beside x) (Nx.dtype x) [| 1 |])
+    | _ -> Nx.zeros_like word
+  in
   match Column.validity c with
   | None -> word
-  | Some v -> Nx.where (Nx.cast Nx.bool v) word (Nx.zeros_like word)
+  | Some v -> Nx.where (Nx.cast Nx.bool v) word (zero ())
 
 (* [words use c] is [c]'s null flag, if it has a validity, and its value
    word. *)

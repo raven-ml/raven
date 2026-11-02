@@ -4,11 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 (* Rows [i] of segment [ids.{i}], in the order [order] lists them, row order
-   where it is [None]. [first] is each segment's first row. *)
+   where it is [None]. [first] is each segment's first row, and [sizes] each
+   segment's number of rows, [None] for one segment of every row. *)
 type segments = {
   ids : Nx.host Nx.int64_t;
   count : int;
   first : Nx.host Nx.int64_t;
+  sizes : Nx.host Nx.int64_t option;
   order : Nx.host Nx.int64_t option;
 }
 
@@ -22,11 +24,18 @@ let one n =
     ids = Nx.zeros Nx.int64 [| n |];
     count = 1;
     first = Nx.zeros Nx.int64 [| 1 |];
+    sizes = None;
     order = None;
   }
 
 let of_groups (g : Nx.host Nx.groups) order =
-  { ids = g.ids; count = Nx.dim 0 g.first; first = g.first; order }
+  {
+    ids = g.ids;
+    count = Nx.dim 0 g.first;
+    first = g.first;
+    sizes = Some g.counts;
+    order;
+  }
 
 let group cs = of_groups (Key.groups cs) None
 let count s = s.count
@@ -77,8 +86,12 @@ let tensor dt c =
 
 let segment_sum s ids x = Nx.reduce_segments Nx.Add ~segments:s.count ids x
 
-let rows s =
-  fixed int64 (segment_sum s s.ids (Nx.ones Nx.int64 [| Nx.dim 0 s.ids |]))
+let sizes s =
+  match s.sizes with
+  | Some c -> c
+  | None -> Nx.full Nx.int64 [| 1 |] (Int64.of_int (Nx.dim 0 s.ids))
+
+let rows s = fixed int64 (sizes s)
 
 (* [at s] is each row's place in the order of the rows, which keeps each
    segment's rows in its order. *)
@@ -149,13 +162,21 @@ let reduce : type a b.
     match held with Some v -> Nx.where v s.ids (none n) | None -> s.ids
   in
   let valid m = match held with Some v -> Nx.logical_and v m | None -> m in
-  let count = segment_sum s ids (Nx.ones Nx.int64 [| n |]) in
-  let at_least k = Nx.greater_equal_s count (Int64.of_int k) in
+  (* Each segment's number of values, counted where a reduction reads it. *)
+  let count =
+    lazy
+      (match held with
+      | None -> sizes s
+      | Some _ -> segment_sum s ids (Nx.ones Nx.int64 [| n |]))
+  in
+  let at_least k = Nx.greater_equal_s (Lazy.force count) (Int64.of_int k) in
   let sum dt = segment_sum s ids (tensor dt c) in
-  let mean () = Nx.div (sum Nx.float64) (Nx.cast Nx.float64 count) in
+  let mean () =
+    Nx.div (sum Nx.float64) (Nx.cast Nx.float64 (Lazy.force count))
+  in
   let var () =
     let d = Nx.sub (tensor Nx.float64 c) (Nx.take s.ids (mean ())) in
-    let k = Nx.cast Nx.float64 (Nx.sub_s count 1L) in
+    let k = Nx.cast Nx.float64 (Nx.sub_s (Lazy.force count) 1L) in
     Nx.div (segment_sum s ids (Nx.mul d d)) k
   in
   let quantile p =
@@ -178,7 +199,7 @@ let reduce : type a b.
   let value row = rows_at row c in
   let ok c = (c, None) in
   match r with
-  | Count -> ok (fixed int64 count)
+  | Count -> ok (fixed int64 (Lazy.force count))
   | Sum -> (
       match (rty, Column.data c) with
       | Duration _, _ -> exact_sum rty s ids (tensor Nx.int64 c)

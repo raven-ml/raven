@@ -148,6 +148,35 @@ static int zigzag(const uint8_t **p, const uint8_t *end, int64_t *v)
    bit, which a bit-packed run already holds as bits. */
 enum out { OUT_BYTES, OUT_INT64, OUT_BITS };
 
+/* [unpack(p, end, w, count, out, dst, bound)] writes the [count] values of [w]
+   bits, at most 32, packed from [p], to [dst] as [out] elements, and is
+   [ERR_BOUND] if one is not below [bound], else 0. A value starts in the
+   lowest 8 bits of its first byte, so one load of the eight bytes from there
+   reads it whole, while those bytes lie before [end]. */
+static int unpack(const uint8_t *p, const uint8_t *end, int w, int64_t count,
+                  enum out out, uint8_t *dst, uint64_t bound)
+{
+  uint64_t mask = (UINT64_C(1) << w) - 1, most = 0, bit = 0;
+  int64_t room = end - p - 8, k = 0;
+  int64_t fast = room < 0 ? 0 : w == 0 ? count : room * 8 / w + 1;
+  if (fast > count) fast = count;
+  for (; k < fast; k++, bit += (uint64_t)w) {
+    uint64_t lo;
+    memcpy(&lo, p + (bit >> 3), 8);
+    uint64_t v = (lo >> (bit & 7)) & mask;
+    most = v > most ? v : most;
+    if (out == OUT_INT64) ((int64_t *)dst)[k] = (int64_t)v;
+    else dst[k] = (uint8_t)v;
+  }
+  for (; k < count; k++, bit += (uint64_t)w) {
+    uint64_t v = bits_at(p, end, bit, w);
+    most = v > most ? v : most;
+    if (out == OUT_INT64) ((int64_t *)dst)[k] = (int64_t)v;
+    else dst[k] = (uint8_t)v;
+  }
+  return count > 0 && most >= bound ? ERR_BOUND : 0;
+}
+
 static int64_t hybrid(const uint8_t *p, int64_t len, int w, int64_t n,
                       enum out out, uint8_t *dst, int64_t at, int64_t bound)
 {
@@ -166,13 +195,13 @@ static int64_t hybrid(const uint8_t *p, int64_t len, int w, int64_t n,
         if (w == 0) fill(dst, (uint64_t)(at + i), 0, count);
         else blit(dst, (uint64_t)(at + i), p, end, count);
         i += count;
-      } else
-        for (int64_t k = 0; k < count; k++, i++) {
-          uint64_t v = bits_at(p, end, (uint64_t)k * w, w);
-          if (v >= (uint64_t)bound) return ERR_BOUND;
-          if (out == OUT_INT64) d64[at + i] = (int64_t)v;
-          else dst[at + i] = (uint8_t)v;
-        }
+      } else {
+        uint8_t *to =
+            out == OUT_INT64 ? (uint8_t *)(d64 + at + i) : dst + at + i;
+        if (unpack(p, end, w, count, out, to, (uint64_t)bound) < 0)
+          return ERR_BOUND;
+        i += count;
+      }
       p += bytes;
     } else {
       int64_t count = h >> 1, bytes = (w + 7) / 8;

@@ -988,6 +988,145 @@ let spread_tail =
         (spread (filled bytes valid) (filled bytes 0xff) 1 rows dst);
       equal int 0 (dst.{rows / 8} lsr (rows mod 8)))
 
+(* The RLE and bit-packing hybrid of [talon_parquet_stubs.c]: [hybrid src pos
+   len width n dst at bound] decodes [n] values of [width] bits from the [len]
+   bytes at [pos] into [dst] from index [at], each below [bound], and is the
+   number of bytes it consumed, or a negative error: [-2] for a value not below
+   [bound]. *)
+external hybrid_int64 :
+  bytes ->
+  int ->
+  int ->
+  int ->
+  int ->
+  (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  int ->
+  int ->
+  int = "talon_parquet_hybrid_byte" "talon_parquet_hybrid"
+[@@noalloc]
+
+external hybrid_bytes :
+  bytes -> int -> int -> int -> int -> bytes -> int -> int -> int
+  = "talon_parquet_hybrid_byte" "talon_parquet_hybrid"
+[@@noalloc]
+
+(* A run of the hybrid, as the Parquet format specifies it: [Repeated (k, v)]
+   is [v] [k] times, [Packed vs] the values [vs], bit-packed in groups of
+   eight. *)
+type run = Repeated of int * int | Packed of int list
+
+(* [encode w runs] is the bytes of [runs] of values of [w] bits: a run's header
+   is a ULEB128 varint, [k lsl 1] before a repeated value in its [⌈w / 8⌉]
+   little-endian bytes, [g lsl 1 lor 1] before [g] groups of eight values
+   packed from each byte's least significant bit, the last group padded with
+   zeros. *)
+let encode w runs =
+  let b = Buffer.create 64 in
+  let rec varint v =
+    if v < 0x80 then Buffer.add_char b (Char.chr v)
+    else (
+      Buffer.add_char b (Char.chr (v land 0x7f lor 0x80));
+      varint (v lsr 7))
+  in
+  let run = function
+    | Repeated (k, v) ->
+        varint (k lsl 1);
+        for i = 0 to ((w + 7) / 8) - 1 do
+          Buffer.add_char b (Char.chr ((v lsr (8 * i)) land 0xff))
+        done
+    | Packed vs ->
+        let groups = (List.length vs + 7) / 8 in
+        varint ((groups lsl 1) lor 1);
+        let bits = Bytes.make (groups * w) '\000' in
+        List.iteri
+          (fun i v ->
+            for j = 0 to w - 1 do
+              if (v lsr j) land 1 = 1 then begin
+                let at = (i * w) + j in
+                let c = Char.code (Bytes.get bits (at / 8)) in
+                Bytes.set bits (at / 8) (Char.chr (c lor (1 lsl (at mod 8))))
+              end
+            done)
+          vs;
+        Buffer.add_bytes b bits
+  in
+  List.iter run runs;
+  Buffer.contents b
+
+let values_of = function
+  | Repeated (k, v) -> List.init k (Fun.const v)
+  | Packed vs -> vs
+
+(* Runs of values of [w] bits; only the last packed run may end inside a
+   group. *)
+let hybrid_case =
+  let open Gen in
+  let* w = int_range 0 32 in
+  let value = int_range 0 ((1 lsl w) - 1) in
+  let run =
+    one_of
+      [
+        map (fun (k, v) -> Repeated (k, v)) (pair (int_range 0 20) value);
+        map
+          (fun vs -> Packed vs)
+          (list ~size:(map (( * ) 8) (int_range 0 5)) value);
+      ]
+  in
+  let* runs = list ~size:(int_range 0 4) run in
+  let* last = list ~size:(int_range 0 17) value in
+  let* pos = int_range 0 7 in
+  let+ slack = int_range 0 9 in
+  (w, runs @ [ Packed last ], pos, slack)
+
+(* The runs that decoding [n] values reads: it stops at the [n]th, before
+   runs of no values. *)
+let rec needed runs =
+  let empty r = values_of r = [] in
+  match runs with
+  | r :: rs when empty r && List.for_all empty rs -> []
+  | r :: rs -> r :: needed rs
+  | [] -> []
+
+let int64s n = Bigarray.Array1.create Bigarray.int64 Bigarray.c_layout n
+
+let hybrid_runs =
+  let pp ppf (w, runs, pos, slack) =
+    Format.fprintf ppf "width %d, %d runs, at %d, %d bytes after" w
+      (List.length runs) pos slack
+  in
+  prop "the hybrid decodes the runs the format specifies"
+    (Gen.with_pp pp hybrid_case)
+    (fun (w, runs, pos, slack) ->
+      let data = encode w runs in
+      let len = String.length data in
+      let used = String.length (encode w (needed runs)) in
+      let src = filled (pos + len + slack) 0xff in
+      String.iteri (fun i c -> src.{pos + i} <- Char.code c) data;
+      let vs = Array.of_list (List.concat_map values_of runs) in
+      let n = Array.length vs in
+      let bound = 1 + Array.fold_left max (-1) vs in
+      let bits = function Packed vs -> List.length vs * w | Repeated _ -> 0 in
+      cover "a packed run of more than eight bytes"
+        (List.exists (fun r -> bits r > 64) runs);
+      cover "a packed run of under eight bytes"
+        (List.exists (fun r -> bits r > 0 && bits r < 64) runs);
+      let dst = int64s (n + 2) in
+      Bigarray.Array1.fill dst (-1L);
+      equal ~msg:"bytes" int used (hybrid_int64 src pos len w n dst 1 bound);
+      equal ~msg:"values" (array int64) (Array.map Int64.of_int vs)
+        (Array.init n (fun i -> dst.{i + 1}));
+      equal ~msg:"around" (pair int64 int64) (-1L, -1L) (dst.{0}, dst.{n + 1});
+      if w <= 8 then begin
+        let b = filled (n + 1) 0xff in
+        equal ~msg:"bytes, into bytes" int used
+          (hybrid_bytes src pos len w n b 0 bound);
+        equal ~msg:"values, into bytes" (array int) vs
+          (Array.init n (fun i -> b.{i}))
+      end;
+      if bound > 0 then
+        equal ~msg:"a value at the bound" int (-2)
+          (hybrid_int64 src pos len w n dst 0 (bound - 1)))
+
 (* [first_batch name] is the first batch a query of the file [name]'s source
    folds over: its first row group, as decoded. *)
 let first_batch name =
@@ -1000,6 +1139,7 @@ let sources =
   group "Sources"
     [
       spread_tail;
+      hybrid_runs;
       test
         "a decoded bool column of nulls in 731 rows is canonical, the bits \
          past its rows clear" (fun () ->

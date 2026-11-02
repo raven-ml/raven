@@ -5,16 +5,18 @@
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed under load 44.5 on 14 cores
+# forced: blessed Talon/Filter/high_value Talon/Group/category_region Talon/Join/customer_lookup Talon/Nulls/group-sum Talon/Nulls/join-left Talon/Nulls/is_in-3-texts under load 49.3 on 14 cores
 
-Talon/Filter/high_value	alloc_words	exact	14857
-Talon/Group/category_region	alloc_words	exact	11000
-Talon/Join/customer_lookup	alloc_words	exact	29445
+Talon/Filter/high_value	alloc_words	exact	14565
+Talon/Group/category_region	alloc_words	exact	10233
+Talon/Join/customer_lookup	alloc_words	exact	29382
 Talon/Nulls/concat-3	alloc_words	exact	1071
 Talon/Nulls/filter-1pct	alloc_words	exact	10499
 Talon/Nulls/filter-50pct	alloc_words	exact	10499
 Talon/Nulls/filter-90pct	alloc_words	exact	10499
-Talon/Nulls/group-sum	alloc_words	exact	9248
-Talon/Nulls/join-left	alloc_words	exact	24745
+Talon/Nulls/group-sum	alloc_words	exact	9164
+Talon/Nulls/is_in-3-texts	alloc_words	exact	13004
+Talon/Nulls/join-left	alloc_words	exact	25060
 Talon/Nulls/kleene-and	alloc_words	exact	4473
 Talon/Nulls/kleene-or	alloc_words	exact	3943
 Talon/Nulls/sort	alloc_words	exact	7788

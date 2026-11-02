@@ -313,7 +313,12 @@ and predicate s d : bool R.expr Gen.t =
           Gen.bind (Gen.of_list (meeting ty s)) (fun t -> anchored t s d)
         in
         let op = Gen.of_list [ `Eq; `Ne; `Lt; `Le; `Gt; `Ge ] in
-        let values = Gen.list ~size:(Gen.int_range 0 3) (value ty) in
+        (* Up to eight texts compare with the rows' bytes, more are coded with
+           them. *)
+        let size =
+          Gen.frequency [ (3, Gen.int_range 0 3); (1, Gen.int_range 8 10) ]
+        in
+        let values = Gen.list ~size (value ty) in
         Gen.one_of
           [
             map2
@@ -849,6 +854,7 @@ let agrees p =
   cover "an expression reads other rows" framed;
   cover "a sort" (mentions "sort" p);
   cover "a source" (mentions "source" p);
+  cover "is_in" (mentions "is_in" p);
   match (attempt (fun () -> R.run p), attempt (fun () -> Query.run q)) with
   | Ok (Ok cs), Ok (Ok t) ->
       cover "rows in the result" (rows t > 0);

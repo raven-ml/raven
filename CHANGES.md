@@ -2937,6 +2937,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.is_in` over at most eight texts compares the rows' bytes with each
+  text instead of coding the column, which sorted it: decision-support
+  queries 12 and 19 take less than half the instructions. Parquet reads
+  unpack bit-packed dictionary indices with one load per value, aggregates
+  take counts and means from their groups' sizes, and nullable integer keys
+  are numbered without a sort.
 - A comparison of a text column with a text of one row gives its null rows
   the bits a comparison of two columns gives them, so that a result's layout
   no longer depends on how its input is batched.

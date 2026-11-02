@@ -282,6 +282,12 @@ let () =
                   of_table nulls
                   |> aggregate ~by:[ "key" ] Expr.[ "f" := sum (Col.float "f") ]));
           Thumper.bench "Nulls/join-left" (fun () -> run joined_nulls);
+          Thumper.bench "Nulls/is_in-3-texts" (fun () ->
+              let texts = [ "s1"; "s22"; "s333" ] in
+              run
+                Query.(
+                  of_table nulls
+                  |> filter Expr.(is_in texts (Col.string "s"))));
         ];
       Thumper.group "Talon_text"
         [ Thumper.bench "parse-float64-17-digits" parse_floats ];

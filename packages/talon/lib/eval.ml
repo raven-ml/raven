@@ -305,27 +305,48 @@ let rec coalesce = function
       if Column.known_zero c then c
       else match held c with Some v -> choose v c (coalesce cs) | None -> c)
 
+(* Up to this many texts, [is_in] compares a column's rows with each, a read
+   of its bytes apiece, rather than coding the rows with them, which sorts the
+   rows and passes over them tens of times. *)
+let compared_texts = 8
+
 (* [is_in vs] finds the words of a column's rows among the sorted words of the
    values [vs]: words of fixed-width values sorted once, and codes of compound
-   values computed with the column's rows. *)
+   values computed with the column's rows. A few texts are compared with the
+   rows' bytes instead. *)
 let is_in vs =
   let m = Column.length vs in
+  let held hit a =
+    boolean
+      (Option.fold ~none:hit ~some:(Nx.logical_and hit) (Column.validity a))
+  in
   let found s x a =
     let i = Nx.searchsorted ~side:`Left s x in
     let hit = Nx.equal (Nx.take (Nx.minimum_s i (Int64.of_int (m - 1))) s) x in
-    let hit = Nx.cast Nx.bit hit in
-    boolean
-      (Option.fold ~none:hit ~some:(Nx.logical_and hit) (Column.validity a))
+    held (Nx.cast Nx.bit hit) a
+  in
+  let coded a =
+    let x, w = words Identity a vs in
+    found (fst (Nx.sort w)) x a
   in
   match Column.data vs with
   | _ when m = 0 -> fun a -> boolean (Nx.zeros Nx.bit [| Column.length a |])
   | Fixed (P x) when Nx.ndim x = 1 ->
       let s, _ = Nx.sort (Key.value Order vs) in
       fun a -> found s (Key.value Order a) a
-  | _ ->
+  | Bytes texts when m <= compared_texts && Column.known_zero vs -> (
+      let one i = Nx_ragged.sub texts ~offset:i ~length:1 in
       fun a ->
-        let x, w = words Identity a vs in
-        found (fst (Nx.sort w)) x a
+        match Column.data a with
+        | Bytes r ->
+            let equal i =
+              Nx.equal_s (Strings.compare ~by:"Expr.is_in" r (one i)) 0
+            in
+            let rest = List.init (m - 1) (fun i -> equal (i + 1)) in
+            let hit = List.fold_left Nx.logical_or (equal 0) rest in
+            held (Nx.cast Nx.bit hit) a
+        | _ -> coded a)
+  | _ -> coded
 
 (* [cut edges] is the bin of each row of a column among [edges], which binding
    checked ascend strictly: from the number [r] of edges at or below the row's
