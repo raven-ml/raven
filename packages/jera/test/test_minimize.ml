@@ -1063,8 +1063,10 @@ let law_tests =
       (fun ((a, b), (k, ((p, noise), amp))) ->
         (* Under a tolerance below an ulp, a search whose last steps contract
            slowly, as L-BFGS's and a fit's with large residuals do, reaches the
-           floats' resolution short of it. *)
-        let tol = Tol.ulps k in
+           floats' resolution short of it. A fit's answer is fixed to [ε κ]
+           times its largest parameter, which a tolerance of [k] ulps of the
+           smaller never meets: it takes [fit] times as many. *)
+        let fit = 16. in
         let y =
           Nx.add (model p) (Nx.mul_s (Nx.sin (Nx.mul_s times noise)) amp)
         in
@@ -1072,18 +1074,22 @@ let law_tests =
           List.map
             (fun (name, m) ->
               ( name,
-                Minimize.solve one m ~tol ~budget:200 (objective a b)
-                  (Nx.zeros_like b) ))
+                ( k,
+                  Minimize.solve one m ~tol:(Tol.ulps k) ~budget:200
+                    (objective a b) (Nx.zeros_like b) ) ))
             methods
           @ [
               ( "levenberg_marquardt",
-                Minimize.solve one lm ~tol ~budget:200
-                  (fun p -> Nx.sub (model p) y)
-                  (vec [| 1.; 0. |]) );
+                ( fit *. k,
+                  Minimize.solve one lm
+                    ~tol:(Tol.ulps (fit *. k))
+                    ~budget:200
+                    (fun p -> Nx.sub (model p) y)
+                    (vec [| 1.; 0. |]) ) );
             ]
         in
         List.iter
-          (fun (name, s) ->
+          (fun (name, (k, s)) ->
             let ok = Nx.item [] (Solution.ok s) in
             cover (name ^ " converges") ok;
             if List.mem name [ "lbfgs"; "levenberg_marquardt" ] then
@@ -1320,12 +1326,8 @@ let termination_tests =
         let top = Nx.item [] (Nx.max (Nx.abs xstar)) in
         let lo = if boxed then Some (Nx.zeros_like xstar) else None in
         List.iter
-          (fun (name, m) ->
-            let s =
-              Minimize.solve one m ?lo ~tol:(Tol.ulps k) ~budget:200
-                (exact_objective a xstar ~boxed c)
-                (Nx.full_like xstar 0.5)
-            in
+          (fun (name, solve) ->
+            let s = solve () in
             let st = status s in
             (* Newton meets a quadratic in one step; the reproduction above
                stalls it. *)
@@ -1345,7 +1347,22 @@ let termination_tests =
               at_most float_exact ~msg:name
                 ~than:(kappa +. 1. +. (1. /. k))
                 (Oracle.ulps ~k ~y:x (Nx.abs (Nx.sub x xstar))))
-          methods);
+          (( "levenberg_marquardt",
+             fun () ->
+               (* The residual [a x − a xstar], whose fit is [xstar] in or
+                  out of the box. *)
+               let b = Nx.matmul a xstar in
+               Minimize.solve one lm ?lo ~tol:(Tol.ulps k) ~budget:200
+                 (fun x -> Nx.sub (Nx.matmul a x) b)
+                 (Nx.full_like xstar 0.5) )
+          :: List.map
+               (fun (name, m) ->
+                 ( name,
+                   fun () ->
+                     Minimize.solve one m ?lo ~tol:(Tol.ulps k) ~budget:200
+                       (exact_objective a xstar ~boxed c)
+                       (Nx.full_like xstar 0.5) ))
+               methods));
     prop ~count:2 "a constant added to f leaves a solve's status (law)" rotated
       (fun (h, a) ->
         let f c x =

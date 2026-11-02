@@ -241,15 +241,18 @@ val curvature :
     [s = step] that changed the gradient by [y] and [c], where the quotient is
     positive, and [(c, c')] elsewhere. *)
 
+val condition :
+  (float, 'q, 'd) Nx.t * (float, 'q, 'd) Nx.t -> (float, 'q, 'd) Nx.t
+(** [condition (c, c')] is, per lane, the larger of the two newest curvatures
+    over the smaller, 1 before two: an estimate of the condition near the
+    answer, where a path's earlier curvatures say nothing of it. *)
+
 val resolution :
-  (float, 'q, 'd) Nx.t * (float, 'q, 'd) Nx.t ->
-  (float, 'q, 'd) Nx.t ->
-  (float, 'q, 'd) Nx.t
-(** [resolution (c, c') answer] is [ε κ |answer|∞] per lane, of the lanes'
-    shape and an axis of one, with [κ] the ratio of the larger of the two
-    newest curvatures to the smaller, 1 before two: how far a coupled
-    problem's zero of the gradient is fixed, the gradient's rounding [ε]
-    times its largest terms over the least curvature. *)
+  kappa:(float, 'q, 'd) Nx.t -> (float, 'q, 'd) Nx.t -> (float, 'q, 'd) Nx.t
+(** [resolution ~kappa answer] is [ε κ |answer|∞] per lane, of the lanes'
+    shape and an axis of one: how far a coupled problem's zero is fixed, its
+    function's rounding [ε] times its largest terms, amplified by the
+    condition [κ = kappa]. *)
 
 val iterations :
   budget:int ->

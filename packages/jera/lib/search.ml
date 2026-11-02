@@ -603,10 +603,12 @@ let curvature (c, c') ~step y =
 (* The two newest curvatures, as the contraction takes its two newest
    readings: a path's earlier curvatures, far from the answer, say nothing of
    its condition there. *)
-let resolution (c, c') answer =
-  let dtype = Nx.dtype answer in
+let condition (c, c') =
   let kappa = Nx.div (Nx.maximum c c') (Nx.minimum c c') in
-  let kappa = Nx.where (Nx.isfinite kappa) kappa (Nx.ones_like kappa) in
+  Nx.where (Nx.isfinite kappa) kappa (Nx.ones_like kappa)
+
+let resolution ~kappa answer =
+  let dtype = Nx.dtype answer in
   let top = Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs answer) in
   Nx.mul (Nx.mul_s (column kappa) (Num.eps dtype)) top
 

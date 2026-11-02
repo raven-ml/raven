@@ -757,18 +757,16 @@ let cauchy model box x g =
    A gradient that rounds to 0 within it is no proof of the answer. A
    coordinate held at a bound its gradient pushes against is fixed by the
    bound, and has none. *)
-let resolution box curvatures (s : _ Search.state) delta =
-  let answer = Nx.add s.x delta in
-  let r =
-    Nx.broadcast_to (Nx.shape answer) (Search.resolution curvatures answer)
-  in
+let resolution box ~kappa ~x ~g delta =
+  let answer = Nx.add x delta in
+  let r = Nx.broadcast_to (Nx.shape answer) (Search.resolution ~kappa answer) in
   match box with
   | None -> r
   | Some b ->
       let held =
         Nx.logical_or
-          (Nx.logical_and (Nx.equal answer b.lo) (Nx.greater_s s.fx 0.))
-          (Nx.logical_and (Nx.equal answer b.hi) (Nx.less_s s.fx 0.))
+          (Nx.logical_and (Nx.equal answer b.lo) (Nx.greater_s g 0.))
+          (Nx.logical_and (Nx.equal answer b.hi) (Nx.less_s g 0.))
       in
       Nx.where held (Nx.zeros_like r) r
 
@@ -816,7 +814,11 @@ let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
     let curvature = if m.curvature then Some mu else None in
     let s, at_limit =
       Search.judge tol s ~map:delta ~mu:curvature
-        ~resolution:(Some (resolution box curvatures s delta))
+        ~resolution:
+          (Some
+             (resolution box
+                ~kappa:(Search.condition curvatures)
+                ~x:s.x ~g:s.fx delta))
         ~f:(Search.Paired g) delta
     in
     let run = searching s.st in
@@ -1289,7 +1291,7 @@ let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
   let j0 = p.jacobian x0 in
   let s = { s with st = emptied box s.st } in
   let lanes = [||] in
-  let step (s : _ Search.state) (d, (lambda, (nu, (j, g)))) =
+  let step (s : _ Search.state) ((d, (lambda, (nu, (j, g)))), curvatures) =
     let d = Nx.maximum d (columns j) in
     let toward v = Nx.sub (project (Nx.add s.x v)) s.x in
     let free = Option.map (fun b -> free b s.x g) box in
@@ -1321,8 +1323,16 @@ let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
             Nx.scalar_at (Nx.beside g) Nx.bool true ))
         (delta, Nx.logical_not gate)
     in
+    (* The curvatures measured are [JᵀJ]'s, whose condition is the square of
+       [J]'s, and the answer is fixed by [r]'s rounding over [J]'s least
+       singular value. *)
+    let resolution =
+      resolution box
+        ~kappa:(Nx.sqrt (Search.condition curvatures))
+        ~x:s.x ~g delta
+    in
     let s, _ =
-      Search.judge tol s ~map:delta ~mu:None ~resolution:None
+      Search.judge tol s ~map:delta ~mu:None ~resolution:(Some resolution)
         ~f:(Search.Paired gp) gauss
     in
     let running = searching s.st in
@@ -1337,7 +1347,12 @@ let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
         fx = Search.hold ok rt s.fx;
         n = Nx.add s.n (Nx.cast Nx.int32 running);
       },
-      (d, (lambda, (nu, (Search.hold ok jt j, Search.hold ok gt g)))) )
+      ( (d, (lambda, (nu, (Search.hold ok jt j, Search.hold ok gt g)))),
+        Nx.Ptree.map2
+          Nx.Ptree.(pair tensor tensor)
+          (fun _ a b -> Search.hold ok a b)
+          (Search.curvature curvatures ~step:(Nx.sub xt s.x) (Nx.sub gt g))
+          curvatures ) )
   in
   let s =
     if p.size = 0 then
@@ -1349,13 +1364,17 @@ let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
       fst
         (Search.iterations ~budget
            Nx.Ptree.(
-             pair tensor (pair tensor (pair tensor (pair tensor tensor))))
+             pair
+               (pair tensor (pair tensor (pair tensor (pair tensor tensor))))
+               (pair tensor tensor))
            step
            ( s,
-             ( Nx.zeros_at (Nx.beside x0) p.dtype [| p.size |],
-               ( Nx.full_at (Nx.beside x0) p.dtype lanes lambda0,
-                 ( Nx.full_at (Nx.beside x0) p.dtype lanes 2.,
-                   (j0, jtv j0 s.fx) ) ) ) ))
+             ( ( Nx.zeros_at (Nx.beside x0) p.dtype [| p.size |],
+                 ( Nx.full_at (Nx.beside x0) p.dtype lanes lambda0,
+                   ( Nx.full_at (Nx.beside x0) p.dtype lanes 2.,
+                     (j0, jtv j0 s.fx) ) ) ),
+               let none = Nx.full_at (Nx.beside x0) p.dtype lanes Float.nan in
+               (none, none) ) ))
   in
   let value =
     answer fn x linear ~dtype:p.dtype ~st:s.st ~ravel:p.ravel ~unravel:p.unravel
