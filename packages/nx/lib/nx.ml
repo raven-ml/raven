@@ -483,6 +483,22 @@ let to_bigarray k x =
   if r > 16 then invalid_argf "%s: rank %d, above Bigarray's 16" by r;
   Nx_array.bigarray k (Nx_array.copy (read ~by x))
 
+(* Fills [index] from axis [a] on with the positions [ps], each counted from
+   the end of its axis of [s] where negative. Raises as {!item} states. *)
+let rec item_index by s index a = function
+  | [] -> ()
+  | p :: ps ->
+      let d = s.(a) in
+      let q = if p < 0 then p + d else p in
+      if q < 0 || q >= d then
+        invalid_argf "%s: position %d is outside axis %d of extent %d" by p a d;
+      index.(a) <- q;
+      item_index by s index (a + 1) ps
+
+(* The window of the one element at [index]. *)
+let element_window index =
+  Array.map (fun q -> { Nx_array.Move.start = q; count = 1; step = 1 }) index
+
 let item i x =
   let by = "Nx.item" in
   let s = shape x in
@@ -490,41 +506,32 @@ let item i x =
   if List.length i <> r then
     invalid_argf "%s: index %a for %d axes (%s %a)" by pp_shape
       (Array.of_list i) r (D.name (dtype x)) pp_shape s;
-  let at a p =
-    let d = s.(a) in
-    let q = if p < 0 then p + d else p in
-    if q < 0 || q >= d then
-      invalid_argf "%s: position %d is outside axis %d of extent %d" by p a d;
-    { Nx_array.Move.start = q; count = 1; step = 1 }
-  in
-  let one = List.mapi at i in
-  let start (w : Nx_array.Move.range) = w.start in
-  let index = Array.of_list (List.map start one) in
-  let get live =
-    match live with
-    | Value.Array { a; _ } when Rig.reaches Rig.host (Nx_array.device a) ->
-        Nx_array.get a (Iarray.of_array index)
-    | Value.Array _ | Value.Shards _ | Value.Handle _ ->
-        (* The element from the first device whose window holds it: a read
-           moves what it reads, and a value cut over devices holds the
-           element on some of them alone. *)
-        let p = Prim.placement live in
-        let ks = Grid.devices (Devices.grid p) in
-        let holds j =
-          let w = Devices.window ~by p s j in
-          Array.for_all2
-            (fun (r : Nx_array.Move.range) i ->
-              i >= r.start && i < r.start + r.count)
-            w index
-        in
-        let j = List.find holds (List.init (Array.length ks) Fun.id) in
-        let v = Partition.read Exec.eager ~by live ks.(j) (Array.of_list one) in
-        Nx_array.get (Check.on_host ~by v) (Iarray.init r (fun _ -> 0))
-    | Value.Traced _ ->
-        let v = Eval.run ~by (Value.Move (Slice (Iarray.of_list one), live)) in
-        Nx_array.get (Check.on_host ~by v) (Iarray.init r (fun _ -> 0))
-  in
-  get (readable ~by (Eval.read_through x))
+  let index = Array.make r 0 in
+  item_index by s index 0 i;
+  match readable ~by (Eval.read_through x) with
+  | Value.Array { a; _ } when Rig.reaches Rig.host (Nx_array.device a) ->
+      Nx_array.get a (Iarray.of_array index)
+  | (Value.Array _ | Value.Shards _ | Value.Handle _) as live ->
+      (* The element from the first device whose window holds it: a read
+         moves what it reads, and a value cut over devices holds the element
+         on some of them alone. *)
+      let p = Prim.placement live in
+      let ks = Grid.devices (Devices.grid p) in
+      let holds j =
+        let w = Devices.window ~by p s j in
+        Array.for_all2
+          (fun (r : Nx_array.Move.range) i ->
+            i >= r.start && i < r.start + r.count)
+          w index
+      in
+      let j = List.find holds (List.init (Array.length ks) Fun.id) in
+      let w = element_window index in
+      let v = Partition.read Exec.eager ~by live ks.(j) w in
+      Nx_array.get (Check.on_host ~by v) (Iarray.init r (fun _ -> 0))
+  | Value.Traced _ as live ->
+      let w = Iarray.of_array (element_window index) in
+      let v = Eval.run ~by (Value.Move (Slice w, live)) in
+      Nx_array.get (Check.on_host ~by v) (Iarray.init r (fun _ -> 0))
 
 let same_shape = Prim.same_shape
 

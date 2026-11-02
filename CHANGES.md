@@ -3535,6 +3535,8 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.item` allocates 21 fewer words: it fills the index in place, where it
+  built lists of positions and windows and two closures on every call.
 - An operation that writes its result over a donated operand allocates 5
   fewer words: the option and the array choice it built on every call.
 - `Nx.betaincinv`, `Nx.betainccinv`, `Nx.gammaincinv` and `Nx.gammainccinv`
