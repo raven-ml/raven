@@ -991,6 +991,18 @@ let take_off m h e r ~live =
     else Last
   end
 
+(* Gives back the regions whose unmap the GPU did not confirm, each taken
+   off [unconfirmed] before its give-back, with nothing between that
+   allocates or polls, so that an exception leaves the rest to the next
+   free and gives none back twice. *)
+let rec give_unconfirmed h =
+  match h.unconfirmed with
+  | [] -> ()
+  | r :: rest ->
+      h.unconfirmed <- rest;
+      give_back h None r;
+      give_unconfirmed h
+
 (* The last region out over a mapping gives the mapping back, or parks it
    while another GPU maps its memory. [tables] are the GPU's while the free
    counts as a use of the function. *)
@@ -1000,10 +1012,7 @@ let free_with m h r tables =
   | Others | Parked | Kept -> ()
   | Last -> release_entry m h tables e);
   give_due m h tables;
-  if Option.is_none tables && h.unconfirmed <> [] then begin
-    List.iter (give_back h None) h.unconfirmed;
-    h.unconfirmed <- []
-  end;
+  if Option.is_none tables then give_unconfirmed h;
   settle m h
 
 (* A free that writes the GPU's tables, through its BAR windows, counts as a
