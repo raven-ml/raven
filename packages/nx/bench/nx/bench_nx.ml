@@ -192,9 +192,10 @@ let small_rows =
 
 (* Elementwise operations of one element to past the caches: an add at
    float32, float16 and bfloat16, a where, host creations (a fill and two
-   ranges), adds of a transposed and of a broadcast operand, and a float64
-   pow of 16K elements, a costly kind whose threads follow its call's
-   price. *)
+   ranges), adds of a transposed operand, of a row broadcast along a
+   matrix and of one element a row broadcast along each row of a batch of
+   8 x 512 x 512, and a float64 pow of 16K elements, a costly kind whose
+   threads follow its call's price. *)
 let elementwise_rows =
   let m = 1 lsl 20 in
   let sizes = [ (1, "1"); (4096, "4K"); (m, "1M") ] in
@@ -237,6 +238,11 @@ let elementwise_rows =
         Thumper.bench_with_setup "add-f32-1M-broadcast"
           ~setup:(fun () -> (square (), filled D.Float32 [| 1024 |] 1.))
           (fun (x, row) -> Nx.add x row);
+        Thumper.bench_with_setup "add-f32-8x512x512-lanes"
+          ~setup:(fun () ->
+            (filled D.Float32 [| 8; 512; 512 |] 1.,
+             filled D.Float32 [| 8; 512; 1 |] 1.))
+          (fun (x, lanes) -> Nx.add x lanes);
         Thumper.bench_with_setup "pow-f64-16K"
           ~setup:(fun () ->
             (filled D.Float64 [| 16384 |] 1.5, filled D.Float64 [| 16384 |] 2.5))

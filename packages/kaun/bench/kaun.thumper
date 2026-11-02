@@ -4,9 +4,11 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
+# forced: blessed LayerNorm/layer-norm-8x512x512 under load 64.7 on 14 cores
 
 Conv/conv-train-step	alloc_words	exact	39267
 Forward/apply	alloc_words	exact	1493
+LayerNorm/layer-norm-8x512x512	alloc_words	exact	1213
 Linear/linear-fwd	alloc_words	exact	261
 Linear/linear-fwd-bwd	alloc_words	exact	3389
 TrainStep/sgd-train-step	alloc_words	exact	19639

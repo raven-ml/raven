@@ -10,6 +10,7 @@
 # forced: blessed quant/q8_0-gemv-4096 quant/q8_0-gemv-4096-f64 quant/q6_k-gemv-4096 under load 32.9 on 14 cores
 # forced: blessed quant/q8_0-gemv-4096 quant/q8_0-gemv-4096-f64 quant/q4_k-gemv-4096 quant/q6_k-gemv-4096 under load 38.0 on 14 cores
 # forced: blessed frontend/rshift-i32-1M quant/q4_k-gemv-4096 quant/q6_k-gemv-4096 under load 28.9 on 14 cores
+# forced: blessed elementwise/add-f32-8x512x512-lanes under load 64.7 on 14 cores
 
 constant/chain-1000	alloc_words	exact	94146
 contract/contract-i32-m128x4096x4096	alloc_words	exact	342
@@ -109,6 +110,7 @@ elementwise/add-f32-1M	alloc_words	exact	50
 elementwise/add-f32-1M-broadcast	alloc_words	exact	100
 elementwise/add-f32-1M-transposed	alloc_words	exact	57
 elementwise/add-f32-4K	alloc_words	exact	50
+elementwise/add-f32-8x512x512-lanes	alloc_words	exact	106
 elementwise/arange-f32-1M	alloc_words	exact	253
 elementwise/arange-i64-1M	alloc_words	exact	253
 elementwise/full-f32-1M	alloc_words	exact	137

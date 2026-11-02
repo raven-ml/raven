@@ -10,7 +10,8 @@
    cross-entropy) trained one full step with Adam, and separately with SGD; -
    the same MLP's forward pass in isolation; - a small CNN (two conv + max-pool
    blocks then a dense head) trained one full step with Adam; - a single Linear
-   layer (512 -> 512, batch 128) forward, and forward+backward.
+   layer (512 -> 512, batch 128) forward, and forward+backward; - a layer norm
+   over 8 x 512 tokens of 512 features.
 
    Every case measures only the operation: inputs, parameters and optimizer
    state are built once in setup, outside the timed region. The train-step cases
@@ -153,6 +154,11 @@ let () =
   let lx = Nx.Rng.normal Nx.float32 [| lin_batch; lin_in |] in
   let lin_loss p = Nx.sum (Kaun.Linear.apply p lx) in
 
+  (* A layer norm over an attention block's activations: each lane's mean
+     and variance broadcast along its row. *)
+  let norm = Kaun.Layer_norm.init ~dim:512 Nx.Host.on in
+  let acts = Nx.Rng.normal Nx.float32 [| 8; 512; 512 |] in
+
   let budgets =
     [
       Thumper.Budget.no_slower_than 0.05; Thumper.Budget.no_more_alloc_than 0.01;
@@ -176,6 +182,11 @@ let () =
               Rune.value_and_grad
                 (Nx.Ptree.instantiate (module Kaun.Linear))
                 lin_loss lin);
+        ];
+      Thumper.group "LayerNorm"
+        [
+          Thumper.bench "layer norm 8x512x512" (fun () ->
+              Kaun.Layer_norm.apply norm acts);
         ];
     ]
   |> exit
