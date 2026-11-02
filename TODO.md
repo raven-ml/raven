@@ -164,6 +164,10 @@ raven / llama.cpp b12048 Vulkan:
   decoded weights are stored, 64 rows an expert (D163): E_8294400_32_2
   writes 2.1 GB in 4.74 ms for gate_up, which a layout sharing them across
   rows could keep in the gated per-group loads
+- Clang's and HIP's non-native cast from float64 to bfloat16 goes
+  through float32 and rounds twice, where the folder rounds once (found by
+  reading, not run): pin a value whose double rounding differs, and
+  revisit D65's withdrawal under (e) if it does
 - D163 counts repeats pooled over a shared range, which overestimates `c`,
   and a collapsed read counts every range of its sum, which can overcount:
   tighten both if a case shows a wrong store. D163 stores a decoded weight
