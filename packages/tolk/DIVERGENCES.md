@@ -2452,32 +2452,16 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
   goldens and its claim that a barrier follows each local store; all from
   the equally patched tinygrad.
 
-## D102. An empty argument of a precompiled call is its constant
+## D102. Withdrawn
 
-- **tinygrad:** `schedule/prepare.py:246` (the size-0 rule, which makes every
-  value with no element a constant expanded to its shape), `schedule/rangeify.py:138`
-  (`no_indexing_calls`), `uop/spec.py:254-281` (`spec_kernel_graph`, which
-  admits no expand) and `schedule/__init__.py:18-22,71-74` (`_states` and the
-  call's arguments in `create_schedule`, which take buffer states only).
-- **tolk:** `Rangeify.no_indexing_calls`, `Schedule.scalar_argument` and
-  `Schedule.create_schedule`.
-- **Differs:** an argument with no element of a precompiled call, which the
-  size-0 rule made an expanded constant, reaches the kernel graph as the
-  scalar constant, without its expand. `create_schedule` reads no state of it
-  and passes it as the call's argument. The body, scheduled on its own, makes
-  the empty parameter a constant too, so none of its kernels binds the
-  argument. A kernel's argument is still a buffer state. tinygrad fails the
-  kernel graph's verification on the expand.
-- **Reason:** none. It was (b): `Rune.vmap (Rune.grad (Rune.jit scan))` over
-  no lane, whose staged scan's backward step was a precompiled call in a loop
-  whose carry had no element and whose rows had some. rune now passes no
-  empty carry to the call: a carry with no element stands in the step as
-  zeros (`Loop`). Unverified whether another empty argument reaches a
-  precompiled call.
-- **Pinned by:** the `Tolk_engine` suite: `link and run › a scan whose carry
-  has no element runs on its rows`; rune's `rune scan` suite: `compiled › an
-  empty carry beside rows`, the case that reached it. The old rune's
-  `test_jit_transformations` went with its rewrite.
+An empty argument of a precompiled call, which the size-0 rule made an
+expanded constant, reached the kernel graph as its scalar, so that a call could
+take an argument with no element. Its consumer was rune's staged scan with an
+empty carry, which rune now replaces by zeros in the step (`Loop`), and no
+other raven call passes an empty argument to a precompiled call: rune's suite
+passes with the rule gone. `Rangeify.no_indexing_calls` is
+`schedule/rangeify.py:138`, and such a call fails the kernel graph's
+verification on the expand, as there.
 
 ## D103. An integer constant is written as the value its type holds
 

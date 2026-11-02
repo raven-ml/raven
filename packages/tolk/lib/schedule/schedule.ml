@@ -46,10 +46,9 @@ let states s =
       invalid_arg
         (Format.asprintf "a kernel's input is a buffer state, not %a" Op.pp o)
 
-(* A scalar argument of a precompiled call is no state: the constant of an
-   empty argument (Rangeify), which the body, scheduled on its own, reaches no
-   element of, or a weak integer expression of the loops around the call, which
-   its body's scalar parameter holds on each trip. *)
+(* A scalar argument of a precompiled call is no state: a weak integer
+   expression of the loops around the call, which its body's scalar parameter
+   holds on each trip. *)
 let scalar_argument k s =
   (match arg k with Call c -> c.precompile | _ -> false)
   && match addrspace s with Some Dtype.Alu -> true | _ -> false

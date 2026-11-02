@@ -980,50 +980,6 @@ let copies_into_rows () =
   let expected = Array.mapi (fun i v -> if i >= 16 && i < 32 then x.(i - 16) else v) before in
   equal values (floats expected) (Run.values Float32 into)
 
-(* A scan of three trips whose carry [c] has no element: each trip adds one to
-   [c], which it cannot reach, and stores its row of [xs] times two into its row
-   of [ys]. A call reads and writes no element of an empty argument, which names
-   no storage. *)
-let scans_with_an_empty_carry () =
-  let k = 4 and n = 3 in
-  let cpu = "CPU" in
-  let p ?(k = k) slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
-  let body =
-    Ops.sink
-      [
-        Ops.store (p ~k:0 0) Ops.O.(p ~k:0 0 + float 1.);
-        Ops.store (p 2) Ops.O.(p 1 * float 2.);
-      ]
-  in
-  let c = Ops.new_buffer cpu 0 Float32
-  and xs = Ops.new_buffer cpu (n * k) Float32
-  and ys = Ops.new_buffer cpu (n * k) Float32 in
-  let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
-  let row b =
-    Shape.shrink b
-      [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
-  in
-  let e =
-    Ops.end_ (Ops.call ~precompile:true body [ c; row xs; row ys ]) [ r ]
-  in
-  let linear, _ =
-    Schedule.create_linear_with_vars
-      (Ops.sink [ Ops.after c [ e ]; Ops.after ys [ e ] ])
-  in
-  let compiled = compile ~devices linear in
-  let x = Array.init (n * k) Float.of_int in
-  let ys_buffer = Run.buffer host Float32 (floats (Array.make (n * k) 0.)) in
-  let s =
-    Engine.link ~devices
-      ~bound:
-        [ (xs, Run.buffer host Float32 (floats x)); (ys, ys_buffer) ]
-      compiled
-  in
-  Engine.run s [||];
-  equal values
-    (floats (Array.map (fun x -> x *. 2.) x))
-    (Run.values Float32 ys_buffer)
-
 (* [linear] with the flag [f] of its loop first copied from a new buffer of [d],
    which holds the flag's first value, and that buffer. A loop's flag is storage
    the schedule makes, which no run binds. *)
@@ -1853,8 +1809,6 @@ let schedules =
       test "a range around a call runs it once per trip" runs_once_per_trip;
       test "a scan runs its body once per trip, carrying in place"
         scans_with_a_carry;
-      test "a scan whose carry has no element runs on its rows"
-        scans_with_an_empty_carry;
       test "a copy stored into rows of a buffer writes them alone"
         copies_into_rows;
       replays_a_scan;
