@@ -138,9 +138,23 @@ let memory_coalescing sink (r : Renderer.t) =
            values into registers as wide as the stores it reads them from, so a
            store of four floats leaves half of a 32-byte register empty, and
            loads as wide feed it whole. *)
+        (* Doubles computed lane by lane are stored as tinygrad stores them,
+           one by one: merged, Clang packs the computations behind them into
+           vectors, and rune's float64 normal sampler, whose lanes hash and
+           convert 32- and 64-bit integers, ran twice as slow. A load, as an
+           accumulator's read, is already a value in memory. *)
+        let stores_packed () =
+          List.for_all
+            (fun (_, us) -> List.for_all (fun u -> op (nth u 1) = Op.Load) us)
+            offsets
+        in
         let width =
           match r.registers () with
-          | Some { bytes; _ } when r.supports_float4 -> Some bytes
+          | Some { bytes; _ }
+            when r.supports_float4
+                 && (key.op <> Op.Store || dt <> Dtype.Float64
+                    || stores_packed ()) ->
+              Some bytes
           | _ -> None
         in
         let lengths =

@@ -241,10 +241,27 @@ let lengths =
           ("32 bytes", host 16 32, Dtype.Int32, [ (0, 8) ]);
         ]
         (fun (_, renderer, dtype, expected) ->
+          (* Each store's value is a load of another buffer: a packed lane. *)
+          let b = Shape.param ~shape:[ Int 64 ] 0 dtype
+          and src = Shape.param ~shape:[ Int 64 ] 1 dtype in
+          let copy i =
+            Ops.store (at b (Ops.int i)) (Ops.load (at src (Ops.int (2 * i))) [])
+          in
+          equal runs expected
+            (accesses Op.Store
+               (coalesce ~renderer (Ops.sink (List.init 8 copy)))));
+      cases "eight consecutive stores of lanes computed apart, on 32 bytes, are"
+        ~id:(fun (dtype, _) -> Format.asprintf "%a" Dtype.pp dtype)
+        [
+          (Dtype.Float64, List.init 8 (fun i -> (i, 1)));
+          (Dtype.Float32, [ (0, 8) ]);
+        ]
+        (fun (dtype, expected) ->
           let b = Shape.param ~shape:[ Int 64 ] 0 dtype in
           equal runs expected
             (accesses Op.Store
-               (coalesce ~renderer (stores b (List.init 8 Fun.id)))));
+               (coalesce ~renderer:(host 16 32)
+                  (stores b (List.init 8 Fun.id)))));
     ]
 
 (* A buffer whose first element lies [phase] bytes past a multiple of [align]

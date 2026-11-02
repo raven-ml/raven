@@ -5132,12 +5132,14 @@ fold wraps integers and holds its float bound`, hold.
 - **tolk:** `Coalesce.memory_coalescing`, through `Renderer.registers`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the
   goldens are recorded.
-- **Differs:** where the renderer knows its vector registers, loads and
-  stores of float64, float32, float16, int32, uint32 and the 8-bit floats
-  merge into accesses of a power of two of elements up to one register:
-  8 floats or 4 doubles of 32 bytes on AVX2, 4 floats or 2 doubles on SSE
-  and NEON. On the CPU device a buffer is taken to start on a boundary of
-  that width (D54). Other renderers merge as tinygrad does.
+- **Differs:** where the renderer knows its vector registers, loads and stores
+  of float64, float32, float16, int32, uint32 and the 8-bit floats merge into
+  accesses of a power of two of elements up to one register: 8 floats or 4
+  doubles of 32 bytes on AVX2, 4 floats or 2 doubles on SSE and NEON. A store of
+  doubles merges so only when each value is a load, as an accumulator's read is;
+  doubles computed lane by lane are stored one by one, as
+  tinygrad stores them. On the CPU device a buffer is taken to start on a
+  boundary of that width (D54). Other renderers merge as tinygrad does.
 - **Reason:** (d): the host's contractions and lorenz_simple's step. Clang's
   straight-line vectorizer packs values into registers as wide as the stores it
   reads them from: a float32 matmul's inner loop with its 16 stores as `float4`
@@ -5156,12 +5158,22 @@ fold wraps integers and holds its float bound`, hold.
   (`lorenz/r_128_16_3_4_4_3_3_400_400/searched`) 6.53-6.60 ms to 7.22-7.28,
   where the wider stores pack accumulators past the registers; kept because the
   gains above are larger, and the heuristic's own four-sum kernel runs in
-  6.16-6.25 ms. Timed as in D186.
-- **Pinned by:** the Coalesce suite's `lengths › eight consecutive stores
-  fill registers of` (every case) and `› without ALLOW_HALF8 or known
-  registers, eight halves are two loads of four`, and its kernels'
-  goldens, recorded from the equally patched tinygrad for SSE's 16 bytes;
-  the tolk bench's `host/*/heuristic` rows on fudge.
+  6.16-6.25 ms. Merged, doubles computed lane by lane made Clang pack the
+  computations behind them: rune's float64 normal sampler
+  (`host/normal_f64/heuristic`, rune's compile bench `rng/normal-f64`), one
+  kernel of 8 lanes that hash and convert 32- and 64-bit integers, replayed
+  in 26.8-28.2 µs against 13.4-13.9 on origin/main, its Clang compile took
+  203-220 ms against 182-196 and the row 574-593 against 472-519; stored one
+  by one, it runs in 13.8-14.1 µs, and eight nested float64 sines, whose
+  lanes are a vector, in 117.9-120.8 against 115.4-118.4. Floats computed
+  lane by lane keep the merge: lorenz_simple's two-sum kernel stores them,
+  and runs 2.99-3.15 ms with it against 3.50-3.62 without. Timed as in D186.
+- **Pinned by:** the Coalesce suite's `lengths › eight consecutive stores fill
+  registers of` (every case), `› eight consecutive stores of lanes computed
+  apart, on 32 bytes, are` (every case) and `› without ALLOW_HALF8 or known
+  registers, eight halves are two loads of four`, and its kernels' goldens,
+  recorded from the equally patched tinygrad for SSE's 16 bytes; the tolk
+  bench's `host/*/heuristic` rows on fudge.
 
 ## D188. A host vector spans 64 bytes
 
