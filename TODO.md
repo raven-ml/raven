@@ -239,6 +239,13 @@ raven / llama.cpp (Vulkan; ROCm):
   moves a chunk between every pair of devices: time it against tinygrad's
   ring and hierarchical allreduce on a machine with several GPUs, and if
   it is slower, write those in nx's partition
+- sharded jit: some operations still make programs per device, so their
+  compile cost grows with the device count. Program keys at 2/4/8 devices:
+  sum 4/7/9 (the running fold's per-device steps), take_along_axis 7/14/22
+  (programs gathering the slots' bits), cumsum 5/7/8 (around the totals'
+  scan), cummax's tangent 16/15/17 and gradient 14/13/15. argmax and
+  scatter are constant and sit in test_jit_devices' `uniform` list; move
+  each op there as its closing or assembly becomes one program per device
 - rune's `test_probe › scans › a step offers a row per row` failed once
   under load and passed on replay of its counterexample: find whether it
   is load-dependent or flaky
