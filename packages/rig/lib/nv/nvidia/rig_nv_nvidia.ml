@@ -393,8 +393,13 @@ let alloc_video g ~cpu size =
 let memory m =
   { Rig_nv.address = m.va; host = m.host; handle = m.handle; data = m }
 
+(* The ranges the process holds, for the suites ([ranges]). *)
+let held = Atomic.make 0
+let ranges () = Atomic.get held
+
 (* Memory [g] allocated, mapped for [g] alone. *)
 let allocated g ~video ~host ~space ~naming h va size =
+  Atomic.incr held;
   let range =
     {
       gpu_addr = va;
@@ -459,6 +464,7 @@ let give g r =
       r.users <- List.remove_assq g r.users;
       if r.users <> [] then fault (uvm_unmap g r.gpu_addr r.bytes)
       else begin
+        Atomic.decr held;
         fault (uvm_free g.c g.u r.gpu_addr r.bytes);
         free_object ~naming:r.naming r.parent r.memory;
         Option.iter (fun a -> Rm.unmap a r.bytes) r.mapped;
@@ -483,6 +489,7 @@ let map_host g a n =
       in
       match placed with
       | Ok (Some gpu_addr) ->
+          Atomic.incr held;
           let range =
             {
               gpu_addr;

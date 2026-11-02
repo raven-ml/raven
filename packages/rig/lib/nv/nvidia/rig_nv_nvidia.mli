@@ -172,3 +172,8 @@ val gpu_with :
 (* [gpu_with ~wrap i] is {!gpu}[ i], whose make hands {!Rig_nv.make} the path
    [wrap p] in place of the path [p] it made, for the suites that fail a call
    of a path on a GPU. *)
+
+val ranges : unit -> int
+(* [ranges ()] is the number of ranges of unified memory the process holds:
+   each made by an allocation or a [map_host], until the last region over it
+   is freed. *)

@@ -590,6 +590,119 @@ let test_local_inside () =
   equal (result unit string) ~msg:"the growth after" (Ok ())
     (local local_bytes)
 
+(* Memory through rig
+
+   Calls through rig that make or free memory on NVIDIA's kernel driver, each
+   walked with every allocation of the driver's calls, its path's included,
+   from the [n]-th raising until the call returns, as an asynchronous
+   exception does. An exception that escapes the driver may lose the device,
+   whose next call then raises [Lost]; a device kept answers it. Once the
+   devices are closed, the process holds the ranges of unified memory it held
+   after an uninterrupted call: a range whose region never reached rig, or
+   whose free an exception ended, would keep its RM object, its unified
+   mapping and its addresses for the life of the process. *)
+
+(* Whether the allocation [a] is made inside one of rig's calls to a driver. *)
+let in_driver (_ : Gc.Memprof.allocation) = Rig_support.counted () > 0
+
+let bytes_made = 4096
+
+(* A new device of GPU [i] through rig. *)
+let rig_device i =
+  match Rig.open_ (Rig_nv_support.opener i) with
+  | Ok d -> d
+  | Error why -> fail (strf "GPU %d opens no device: %s" i why)
+
+(* [call ()] interrupted from the driver's [n]-th allocation, then whether the
+   device [d] lost or serves [call] again: whether the allocation was
+   reached. *)
+let interrupted_on d n call =
+  let reached = Rig_support.interrupted ~from:in_driver n call in
+  (match Rig.lost d with
+  | Some _ -> (
+      match call () with
+      | exception Rig.Lost _ -> ()
+      | () -> failf "from allocation %d, a lost device answered" n)
+  | None -> call ());
+  reached
+
+(* Walks [attempt n], a call's whole cycle interrupted from the [n]-th
+   allocation, for [n] from 1 on: after each, the process holds the ranges it
+   held after an uninterrupted cycle, which makes what the process keeps. *)
+let ranges_kept attempt =
+  needs_gpu ();
+  if over_pci () then
+    skip ~reason:"the walk counts the kernel driver's ranges" ();
+  ignore (attempt max_int : bool);
+  let before = Rig_nv_nvidia.ranges () in
+  let rec from n =
+    let reached = attempt n in
+    equal
+      ~msg:(strf "ranges held, interrupted from allocation %d" n)
+      int before (Rig_nv_nvidia.ranges ());
+    if reached then from (n + 1) else n - 1
+  in
+  at_least ~msg:"the landings" int ~than:1 (from 1)
+
+(* A buffer of [kind] on a device of GPU 0, collected before the close. *)
+let test_create kind () =
+  ranges_kept @@ fun n ->
+  let d = rig_device 0 in
+  let[@inline never] create () =
+    ignore (Sys.opaque_identity (Rig.Buffer.create ~memory:kind d bytes_made))
+  in
+  let reached = interrupted_on d n create in
+  Gc.full_major ();
+  Rig.close d;
+  reached
+
+(* A borrow of host memory on a device of GPU 0. *)
+let test_borrow () =
+  let pages = Bigarray.(Array1.create char c_layout (2 * bytes_made)) in
+  ranges_kept (fun n ->
+      let d = rig_device 0 in
+      let b = Rig.Buffer.of_bigarray pages in
+      let borrow () = ignore (Rig.Buffer.borrow d b : Rig.Buffer.t option) in
+      let reached = interrupted_on d n borrow in
+      Rig.close d;
+      reached);
+  ignore (Sys.opaque_identity pages)
+
+(* A borrow on a device of GPU 0 of memory of a device of GPU 1, where the
+   machine has a second GPU that GPU 0 reaches. *)
+let test_borrow_peer () =
+  needs_gpu ();
+  (match Rig_nv_nvidia.count () with
+  | Ok n when n >= 2 -> ()
+  | Ok _ | Error _ -> skip ~reason:"the machine has one NVIDIA GPU" ());
+  ranges_kept @@ fun n ->
+  let d = rig_device 0 and d' = rig_device 1 in
+  if not (Rig.reaches d d') then begin
+    Rig.close d;
+    Rig.close d';
+    skip ~reason:"GPU 0 does not reach GPU 1's memory" ()
+  end;
+  let b = Rig.Buffer.create d' bytes_made in
+  let borrow () = ignore (Rig.Buffer.borrow d b : Rig.Buffer.t option) in
+  let reached = interrupted_on d n borrow in
+  Rig.close d;
+  Rig.close d';
+  reached
+
+(* A free of a buffer on a device of GPU 0 that gives its memory back to the
+   driver. *)
+let test_free () =
+  ranges_kept @@ fun n ->
+  let d = rig_device 0 in
+  let b = Rig.Buffer.create d bytes_made in
+  let free () =
+    ignore (Rig.Buffer.free b : bool);
+    Rig.free_cache d
+  in
+  let reached = Rig_support.interrupted ~from:in_driver n free in
+  Rig.close d;
+  reached
+
 let () =
   exit
     (run "rig_nv interrupt"
@@ -608,6 +721,19 @@ let () =
                (guarded "the walk of rig's open" test_rig_open);
              test "of a resolve through rig leaves the GPU to open again"
                (guarded "the resolve walk" test_resolve_lost_rig);
+             test "of rig's Device memory leaves no range after the close"
+               (guarded "the Device walk" (test_create Rig.Buffer.Device));
+             test "of rig's Pinned memory leaves no range after the close"
+               (guarded "the Pinned walk" (test_create Rig.Buffer.Pinned));
+             test "of rig's Mapped memory leaves no range after the close"
+               (guarded "the Mapped walk" (test_create Rig.Buffer.Mapped));
+             test "of a borrow of host memory leaves no range after the close"
+               (guarded "the borrow walk" test_borrow);
+             test
+               "of a borrow of a peer's memory leaves no range after the close"
+               (guarded "the peer walk" test_borrow_peer);
+             test "of a free leaves no range after the close"
+               (guarded "the free walk" test_free);
            ];
          group ~timeout
            "a call from a callback at any allocation raises inside the lock \
