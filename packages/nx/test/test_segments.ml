@@ -109,11 +109,9 @@ let wrap8 a b = ((a + b + 128) land 255) - 128
 
 (* Rows of every kind the folds take: extremes and the last row over drawn
    bytes, sums over small integers and over int8, which wraps. *)
-let rows n =
+let rows_of ?(kinds = [ 0; 1; 2; 3; 4; 5; 6 ]) s =
   let open Gen in
-  let* row = array ~size:(int_range 0 1) (int_range 0 2) in
-  let s = Array.append [| n |] row in
-  let* kind = int_range 0 6 in
+  let* kind = of_list kinds in
   match kind with
   | 0 -> let+ x = small s in Rows (D.Float64, Add, ( +. ), x)
   | 1 -> let+ x = drawn D.Int8 s in Rows (D.Int8, Add, wrap8, x)
@@ -122,6 +120,11 @@ let rows n =
   | 4 -> let+ x = drawn D.Uint8 s in Rows (D.Uint8, Max, ( + ), x)
   | 5 -> let+ x = drawn D.Bool s in Rows (D.Bool, Min, ( || ), x)
   | _ -> let+ x = drawn D.Float32 s in Rows (D.Float32, Set, ( +. ), x)
+
+let rows n =
+  Gen.(
+    let* row = array ~size:(int_range 0 1) (int_range 0 2) in
+    rows_of (Array.append [| n |] row))
 
 (* reduce_segments *)
 
@@ -185,10 +188,106 @@ let test_segment_errors () =
       Nx.reduce_segments Add ~segments:1 (Nx.zeros Nx.int64 [| 2; 1 |]) (Nx.zeros Nx.float32 [| 2 |]));
   invalid ~by (fun () -> Nx.reduce_segments Add ~segments:1 ids (Nx.zeros Nx.bool [| 2 |]))
 
+(* Segments over two devices: [ids] whole on each or split along its
+   positions, [x] whole on each or split along its rows or its columns.
+   Each case the law covers is drawn on its own a sixth of the time, so
+   every run reaches it: [Add] beside [ids] split with [x] whole, with [x]'s
+   columns cut, and with [x]'s rows cut in uneven windows, any other combine
+   with its rows cut, and any combine with the columns alone cut. *)
+type scenario = Ids_x_whole | Ids_x_cols | Add_x_rows | Other_rows | Cols | Any
+
+let add = [ 0; 1 ] and others = [ 2; 3; 4; 5; 6 ]
+
+let cut_segments =
+  Gen.with_pp
+    (fun ppf (r, k, _, ids_rows, x_cut) ->
+      Format.fprintf ppf "%a, %d segments, ids %s, x %s" pp_rows r k
+        (if ids_rows then "split" else "whole")
+        (match x_cut with
+        | None -> "whole"
+        | Some a -> Printf.sprintf "split along axis %d" a))
+    (let open Gen in
+     let* scenario =
+       of_list [ Ids_x_whole; Ids_x_cols; Add_x_rows; Other_rows; Cols; Any ]
+     in
+     let* kinds, n, ids_rows, x_cut =
+       let n = of_list [ 0; 1; 2; 3; 5; 8 ] in
+       let x_cut = of_list [ None; Some 0; Some 1 ] in
+       match scenario with
+       | Ids_x_whole -> map (fun n -> (add, n, true, None)) n
+       | Ids_x_cols -> map (fun n -> (add, n, true, Some 1)) n
+       | Add_x_rows ->
+           let+ n = of_list [ 1; 3; 5 ] and+ ids_rows = bool in
+           (add, n, ids_rows, Some 0)
+       | Other_rows ->
+           let+ n = n
+           and+ ids_rows, x_cut =
+             of_list [ (true, None); (true, Some 1); (false, Some 0); (true, Some 0) ]
+           in
+           (others, n, ids_rows, x_cut)
+       | Cols -> map (fun n -> (add @ others, n, false, Some 1)) n
+       | Any ->
+           let+ n = n and+ ids_rows = bool and+ x_cut = x_cut in
+           (add @ others, n, ids_rows, x_cut)
+     in
+     let* cols = int_range 1 3 in
+     let* k = int_range 0 4 in
+     let* r = rows_of ~kinds [| n; cols |] in
+     let+ ids = int64s n (-1) (k + 1) in
+     (r, k, ids, ids_rows, x_cut))
+
+(* [Add] is a scatter's [Add], which sums rows cut along the positions by
+   partials: it gives the host's bits, its rows whole on each device and
+   its columns cut as [x]'s. [Max], [Min] and [Set] read the rows whole and
+   raise on [ids] or [x] split along them, naming the [place] that puts
+   them whole; so does [Add] on [ids] split beside [x] split along its
+   columns over the same devices. Placed so, each gives the host's bits. *)
+let law_cut_segments (Rows (dt, c, _, x), k, ids, ids_rows, x_cut) =
+  let px = match x_cut with None -> S2.on | Some axis -> S2.split ~axis in
+  let pi = if ids_rows then S2.split ~axis:0 else S2.on in
+  let n = Nx.dim 0 x in
+  let rows_cut = ids_rows || x_cut = Some 0 in
+  cover "Add with its rows cut" (c = Nx.Add && rows_cut && n > 0);
+  cover "Add with x's rows cut in uneven windows"
+    (c = Nx.Add && x_cut = Some 0 && n mod 2 = 1);
+  cover "Add with ids split beside x whole" (c = Nx.Add && ids_rows && x_cut = None);
+  cover "Add with ids split beside x's columns cut"
+    (c = Nx.Add && ids_rows && x_cut = Some 1);
+  cover "Max, Min or Set with its rows cut" (c <> Nx.Add && rows_cut);
+  cover "a cut of the columns alone" ((not ids_rows) && x_cut = Some 1);
+  let host = Nx.to_array (Nx.reduce_segments c ~segments:k ids x) in
+  let whole = Nx.Placement.(with_leading_axis (without_leading_axis px)) in
+  let run pi px =
+    let y = Nx.reduce_segments c ~segments:k (Nx.place pi ids) (Nx.place px x) in
+    equal_elements dt host (Nx.to_array y);
+    equal ~msg:"where it lies" (placement ()) whole (Nx.placement y)
+  in
+  let refused name p =
+    raises
+      (Invalid_argument
+         (Format.asprintf
+            "Nx.reduce_segments: %s lies at %a and is read at %a; Nx.place \
+             (Placement.on s) %s"
+            name Nx.Placement.pp p Nx.Placement.pp S2.on name))
+  in
+  if ids_rows && (c <> Nx.Add || x_cut = Some 1) then (
+    refused "ids" pi (fun () ->
+        Nx.reduce_segments c ~segments:k (Nx.place pi ids) (Nx.place px x));
+    run S2.on (if c = Nx.Add then px else whole))
+  else if x_cut = Some 0 && c <> Nx.Add then (
+    refused "x" px (fun () ->
+        Nx.reduce_segments c ~segments:k (Nx.place pi ids) (Nx.place px x));
+    run pi whole)
+  else run pi px
+
 let segments =
   group "reduce_segments"
     [
       prop "each segment folds its rows in order" segmented law_segments;
+      prop
+        "over devices, Add sums rows split along the positions, and the \
+         others raise naming the place that puts them whole"
+        cut_segments law_cut_segments;
       test "the doc's sums and maxima" test_segment_doc;
       test "narrow floats sum at float32" test_segment_narrow;
       test "a segment of no row holds the identity" test_segment_identities;
@@ -569,6 +668,49 @@ let test_range_rows_cut () =
         (fun () -> Nx.reduce_ranges c ~lo:b ~hi:b x))
     [ Nx.Add; Max; Min ]
 
+(* The bounds cut the result's first axis, and [x]'s other cuts its other
+   axes: split over the devices that cut [x]'s columns, a bound raises
+   naming the [place] that puts it whole, and over other devices of a mesh
+   the call gives the host's bits, lying at both cuts. *)
+let test_range_bounds_cut () =
+  let x = Nx.create Nx.float64 [| 5; 4 |] (Array.init 20 Float.of_int) in
+  let lo = Nx.create Nx.int64 [| 4 |] [| 0L; 1L; -1L; 3L |] in
+  let hi = Nx.create Nx.int64 [| 4 |] [| 9L; 3L; 1L; 3L |] in
+  let refused name p =
+    raises
+      (Invalid_argument
+         (Format.asprintf
+            "Nx.reduce_ranges: %s lies at %a and is read at %a; Nx.place \
+             (Placement.on s) %s"
+            name Nx.Placement.pp p Nx.Placement.pp
+            (Nx.Placement.uncut p) name))
+  in
+  List.iter
+    (fun c ->
+      let host = Nx.to_array (Nx.reduce_ranges c ~lo ~hi x) in
+      let run plo phi px =
+        let y =
+          Nx.reduce_ranges c ~lo:(Nx.place plo lo) ~hi:(Nx.place phi hi)
+            (Nx.place px x)
+        in
+        equal_elements D.Float64 host (Nx.to_array y);
+        y
+      in
+      let rows = S2.split ~axis:0 and cols = S2.split ~axis:1 in
+      refused "lo" rows (fun () -> run rows rows cols);
+      refused "hi" rows (fun () -> run S2.on rows cols);
+      let y = run S2.on S2.on cols in
+      equal ~msg:"where it lies" (placement ()) cols (Nx.placement y);
+      let a = Nx.Placement.mesh mesh [ (0, [ "a" ]) ]
+      and b = Nx.Placement.mesh mesh [ (0, [ "b" ]) ] in
+      let x_cols = Nx.Placement.mesh mesh [ (1, [ "b" ]) ] in
+      refused "lo" b (fun () -> run b b x_cols);
+      let y = run a a x_cols in
+      equal ~msg:"where it lies" (placement ())
+        (Nx.Placement.mesh mesh [ (0, [ "a" ]); (1, [ "b" ]) ])
+        (Nx.placement y))
+    [ Nx.Add; Max; Min; Set ]
+
 let ranges =
   group "reduce_ranges"
     [
@@ -586,6 +728,10 @@ let ranges =
          that keeps the other cuts, and Set gives the host's bits anywhere"
         cut_ranges law_cut_ranges;
       test "eight rows in two tiles raise" test_range_rows_cut;
+      test
+        "bounds split over the devices that cut x's columns raise naming \
+         the place that puts them whole"
+        test_range_bounds_cut;
     ]
 
 (* map_segments *)
@@ -670,18 +816,55 @@ let law_map r =
   equal (array int) (Array.append s row) (Nx.shape y);
   equal (array float_exact) expected (Nx.to_array y)
 
-(* Ids and rows split over two devices give the whole result, each device's
-   positions a group of its own: blocks of one row, then blocks of four. *)
-let test_map_split (n, segments) =
+(* Ids and rows split along their first axis over two or four devices, both
+   or one of them, give the whole result: blocks of one row, then blocks of
+   four, in windows of equal or unequal extents. *)
+let test_map_split (_, (module S : Nx.Devices), s, segments) =
+  let p = numel s in
   let ids =
-    Nx.create Nx.int64 [| n |]
-      (Array.init n (fun i -> Int64.of_int ((i * 5 mod (segments + 2)) - 1)))
+    Nx.create Nx.int64 s
+      (Array.init p (fun i -> Int64.of_int ((i * 5 mod (segments + 2)) - 1)))
   in
-  let x = Nx.create Nx.float64 [| n; 2 |] (Array.init (2 * n) Float.of_int) in
+  let x =
+    Nx.create Nx.float64 (Array.append s [| 2 |])
+      (Array.init (2 * p) Float.of_int)
+  in
   let whole = Nx.to_array (Nx.map_segments ~segments ids by_owner x) in
+  List.iter
+    (fun (pi, px) ->
+      let y =
+        Nx.map_segments ~segments (Nx.place pi ids) by_owner (Nx.place px x)
+      in
+      equal ~msg:(Format.asprintf "ids at %a, x at %a" Nx.Placement.pp pi
+             Nx.Placement.pp px)
+        (array float_exact) whole (Nx.to_array y))
+    [ (S.split ~axis:0, S.split ~axis:0); (S.split ~axis:0, S.on);
+      (S.on, S.split ~axis:0) ]
+
+(* [f]'s blocks are cut as the positions' groups, which in unequal windows
+   are the indices of the first axis: with several positions at an index,
+   a block would hold positions of several devices. The call raises naming
+   the place that puts ids and x whole, where they compute. *)
+let test_map_unequal () =
+  let ids = Nx.zeros Nx.int64 [| 5; 8 |] in
+  let x = Nx.zeros Nx.float64 [| 5; 8; 2 |] in
   let split t = Nx.place (S2.split ~axis:0) t in
-  let y = Nx.map_segments ~segments (split ids) by_owner (split x) in
-  equal (array float_exact) whole (Nx.to_array y)
+  List.iter
+    (fun (ids, x) ->
+      raises
+        (Invalid_argument
+           "Nx.map_segments: ids [5; 8] are split in 2 windows of unequal \
+            extents, with several positions at each index of their first \
+            axis, and are read whole with x; Nx.place (Placement.on s) ids \
+            and Nx.place (Placement.on s) x")
+        (fun () -> Nx.map_segments ~segments:1 ids by_owner x))
+    [ (split ids, split x); (split ids, Nx.place S2.on x);
+      (Nx.place S2.on ids, split x) ];
+  let whole = Nx.to_array (Nx.map_segments ~segments:1 ids by_owner x) in
+  equal (array float_exact) whole
+    (Nx.to_array
+       (Nx.map_segments ~segments:1 (Nx.place S2.on ids) by_owner
+          (Nx.place S2.on x)))
 
 (* Segments far above the positions: each position in range is still its
    row mapped by its owner, the last segment included, and one out of range
@@ -745,9 +928,20 @@ let maps =
     [
       prop "the per-position map, f called once" routed law_map;
       cases "split ids and rows give the whole result"
-        ~id:(fun (n, k) -> Printf.sprintf "%d positions, %d segments" n k)
-        [ (8, 2); (16, 1) ]
+        ~id:(fun (t, _, s, k) ->
+          Format.asprintf "ids %a over %d devices, %d segments" pp_ints s t k)
+        [
+          (2, (module S2 : Nx.Devices), [| 8 |], 2);
+          (2, (module S2), [| 16 |], 1);
+          (2, (module S2), [| 5 |], 2);
+          (2, (module S2), [| 1 |], 1);
+          (2, (module S2), [| 5; 1 |], 1);
+          (4, (module S4), [| 5 |], 2);
+          (4, (module S4), [| 6 |], 1);
+        ]
         test_map_split;
+      test "ids of several axes in unequal windows raise"
+        test_map_unequal;
       test "the doc's scaled rows" test_map_doc;
       test "segments far above the positions" test_map_sparse;
       test "misuse raises" test_map_errors;

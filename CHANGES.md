@@ -1759,6 +1759,18 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.reduce_segments` computes `Add` over `ids` or `x` split along the
+  rows, summing each device's rows by partials; it raised for every
+  combine, naming an operand the caller never made. `Max`, `Min` and `Set`
+  over rows cut, and `Add` with `ids` split over the devices that cut `x`'s
+  columns, raise at the call, naming the `Nx.place` of `ids` or `x`.
+- `Nx.reduce_ranges` with `lo` or `hi` cut over the devices that cut `x`'s
+  columns raises at the call, naming the `Nx.place` that puts the bound
+  whole, where it named an internal operand.
+- `Nx.map_segments` computes over one-axis `ids` split in windows of unequal
+  extents, as five ids over two devices, each index its own group; it raised
+  from an internal reshape. Ids of several axes so split raise at the call,
+  naming the `Nx.place` that puts `ids` and `x` whole.
 - `Nx_ragged.of_strings` fills its offsets and bytes in place, where it
   copied them from bigarrays the OCaml heap alone paced the collector by.
 - `Nx_array.host` makes a host array of a dtype and shape, and

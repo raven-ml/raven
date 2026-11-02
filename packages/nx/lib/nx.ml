@@ -4921,6 +4921,38 @@ let identity (type v s) ~by (c : combine) (dt : (v, s) D.t) : v =
 let rows_of ~by x =
   if ndim x = 0 then invalid_argf "%s: %a has no rows" by pp_value x
 
+(* Raises naming the argument [name], which lies at [p], the placement [q]
+   it is read at, and the [place] that puts it there. *)
+let refuse ~by name p q =
+  invalid_argf "%s: %s lies at %a and is read at %a; Nx.place (%a) %s" by name
+    Devices.pp_placement p Devices.pp_placement q
+    (Route.pp_call ~by (Devices.set q))
+    (Devices.grid q) name
+
+(* Raises unless [t]'s first axis, its rows or its positions, lies whole on
+   each device, naming the [place] that keeps its other cuts. *)
+let rows_whole ~by name t =
+  let p = placement t in
+  if Array.exists (fun (a, _) -> a = 0) (Grid.cuts (Devices.grid p)) then
+    refuse ~by name p (Devices.uncut ~axis:0 p)
+
+(* The grid that cuts the first axis as [t] does, [t] holding positions or
+   bounds along it, and the others as [g] does. Raises where no grid does,
+   [t] cut over other devices or over those that cut another axis, naming
+   the [place] that puts [t] whole on [like]'s devices, where every device
+   reads a view of it. *)
+let beside_cuts ~by name t g ~like =
+  let p = placement t in
+  let gt = Devices.grid p in
+  if not (Grid.is_cut gt) then g
+  else
+    match Grid.union gt g with
+    | Some u -> u
+    | None -> refuse ~by name p (Devices.uncut like)
+
+(* [Add] is a scatter's [Add], which sums the rows of each device by partials
+   where [ids] and [x] are split along them. [Max], [Min] and [Set] are
+   scatters that read their updates whole along the positions. *)
 let reduce_segments c ~segments ids x =
   let by = "Nx.reduce_segments" in
   if segments < 0 then invalid_argf "%s: %d segments" by segments;
@@ -4929,10 +4961,17 @@ let reduce_segments c ~segments ids x =
     invalid_argf "%s: ids %a for the rows of %a" by pp_value ids pp_value x;
   let dt = dtype x and s = shape x in
   let start = identity ~by c dt in
+  let px = placement x in
+  (match c with
+  | Add -> ()
+  | Max | Min | Set ->
+      rows_whole ~by "ids" ids;
+      rows_whole ~by "x" x);
+  ignore (beside_cuts ~by "ids" ids (Devices.grid px) ~like:px : Grid.t);
   let into = Array.mapi (fun a d -> if a = 0 then segments else d) s in
   let along = Array.mapi (fun a d -> if a = 0 then d else 1) s in
   let idx = Eval.broadcast ~by s (Eval.reshape ~by along ids) in
-  scattered ~by c idx x (fill ~by (placement x) dt into start)
+  scattered ~by c idx x (fill ~by (Devices.uncut ~axis:0 px) dt into start)
 
 (* The disjoint sparse table: level [k] holds, at each row, its chunk of [2^k]
    rows combined from that row to the chunk's end, its suffix, and from the
@@ -5019,21 +5058,6 @@ let ranges (type v s d) ~by (c : P.binary) ~l ~r (x : (v, s, d) t)
     in
     go 0 xp xp res
 
-(* Raises unless [x]'s rows lie whole on each device. An [Add], [Max] or
-   [Min] range has the bits its rows give on one device: the sparse
-   table's levels regroup the rows into chunks of up to [n], which a cut
-   would split or close by partials. [Set] takes each range's last row, a
-   gather that computes where the rows lie. The remedy keeps the other
-   axes' cuts, along which each device computes its own columns. *)
-let rows_whole ~by x =
-  let p = placement x in
-  if Array.exists (fun (a, _) -> a = 0) (Grid.cuts (Devices.grid p)) then
-    let q = Devices.uncut ~axis:0 p in
-    invalid_argf "%s: x lies at %a and is read at %a; Nx.place (%a) x" by
-      Devices.pp_placement p Devices.pp_placement q
-      (Route.pp_call ~by (Devices.set q))
-      (Devices.grid q)
-
 let reduce_ranges c ~lo ~hi x =
   let by = "Nx.reduce_ranges" in
   let lo = Donate.read ~by lo in
@@ -5046,7 +5070,18 @@ let reduce_ranges c ~lo ~hi x =
   let dt = dtype x and n = Prim.dim x 0 and m = Prim.dim lo 0 in
   let rows = Array.sub (shape x) 1 (ndim x - 1) in
   let start = identity ~by c dt in
-  (match c with Set -> () | Add | Max | Min -> rows_whole ~by x);
+  (* An [Add], [Max] or [Min] range has the bits its rows give on one
+     device: the sparse table's levels regroup the rows into chunks of up
+     to [n], which a cut would split or close by partials. [Set] takes each
+     range's last row, a gather that computes where the rows lie. The
+     remedy keeps the other axes' cuts, along which each device computes
+     its own columns. The bounds cut the result's first axis, beside [x]'s
+     cuts of the others. *)
+  (match c with Set -> () | Add | Max | Min -> rows_whole ~by "x" x);
+  let px = placement x in
+  let cols = Grid.uncut (Devices.grid px) ~axis:0 in
+  let cuts = beside_cuts ~by "lo" lo cols ~like:px in
+  ignore (beside_cuts ~by "hi" hi cuts ~like:px : Grid.t);
   let clip b =
     elementwise ~by D.Int64 [ Any b ]
       E.(minimum (maximum (operand 0 b) (i64 0)) (i64 n))
@@ -5340,7 +5375,7 @@ let map_segments ~segments ids f x =
       pp_value ids;
   let row = Array.sub xs ns (Array.length xs - ns) in
   let positional = ns > 0 in
-  let r =
+  let windows =
     match
       ( device_windows ~by "ids" ~positional ids,
         device_windows ~by "x" ~positional x )
@@ -5348,6 +5383,28 @@ let map_segments ~segments ids f x =
     | 1, r | r, 1 -> r
     | a, b when a = b -> a
     | a, b -> invalid_argf "%s: ids are split in %d windows and x in %d" by a b
+  in
+  (* A group is a device's positions where the windows hold equal counts.
+     Where they don't, as five rows over two devices, windows differ by one
+     index, so the only equal groups that each lie on one device are the
+     indices. [f]'s blocks, cut as the groups are, then lie on their
+     positions' devices only where a block is an index: one position each. *)
+  let r =
+    if windows = 1 || s.(0) mod windows = 0 then windows
+    else if numel ids = s.(0) then s.(0)
+    else
+      (* Whole on each device, the positions are one group. *)
+      let pi = placement ids in
+      let split = if Grid.is_cut (Devices.grid pi) then pi else placement x in
+      let q = Devices.uncut ~axis:0 split in
+      let place ppf () =
+        Route.pp_call ~by (Devices.set q) ppf (Devices.grid q)
+      in
+      invalid_argf
+        "%s: ids %a are split in %d windows of unequal extents, with several \
+         positions at each index of their first axis, and are read whole \
+         with x; Nx.place (%a) ids and Nx.place (%a) x"
+        by pp_shape s windows place () place ()
   in
   let call ~g ~c owners rows =
     let y = f owners rows in

@@ -3795,7 +3795,14 @@ val reduce_segments :
     of [x] with [ids.{i} = s] folded by [c]. [ids] holds one id per row: give
     a row that belongs to no segment the id [-1]. It is
     [scatter ~combine:c ~axis:0] of [x]'s rows into [segments] rows of the
-    identity, so its sums have {!scatter}'s bits.
+    identity, lying as [x] does with its rows whole on each device, so its
+    sums have {!scatter}'s bits. [Add] over [ids] or [x] split along the
+    rows sums each device's rows by partials, as {!scatter}'s [Add] does.
+    [Max], [Min] and [Set] read the rows whole on each device: [ids] or [x]
+    cut along them raises [Invalid_argument] naming the {!place} that puts
+    its rows whole and keeps its other cuts. [ids] cut where [x] is not, over
+    the devices that cut [x]'s other axes, raises naming the {!place} that
+    puts [ids] whole on [x]'s devices.
 
     {[
     let ids = Nx.create Nx.int64 [| 5 |] [| 0L; 2L; 0L; -1L; 2L |]
@@ -3809,7 +3816,8 @@ val reduce_segments :
     segment's first row is [Min] of the row positions, then a {!take}.
 
     Raises [Invalid_argument] if [segments] is negative, [x] is 0-d, [ids] is
-    not 1-d with one id per row of [x], or [c] is [Add] and [x] is boolean. *)
+    not 1-d with one id per row of [x], [c] is [Add] and [x] is boolean, or
+    [ids] or [x] lies where it cannot be read, as above. *)
 
 val reduce_ranges :
   combine ->
@@ -3834,7 +3842,11 @@ val reduce_ranges :
     rows whole on each device and keeps its other cuts. [Set] reads the
     rows where they lie, as {!take} does. With its rows whole, [x] cut along
     other axes is folded by each device over its own columns, and the result
-    lies as [x] does.
+    lies as [x] does. [lo] and [hi] lie whole on [x]'s devices or cut along
+    their axis, which cuts the result's first axis, over devices other than
+    those that cut [x]'s other axes, such as another axis of a mesh. A
+    bound cut otherwise raises [Invalid_argument] naming the {!place} that
+    puts it whole on [x]'s devices.
 
     {[
     let x = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
@@ -3846,8 +3858,8 @@ val reduce_ranges :
     ]}
 
     Raises [Invalid_argument] if [x] is 0-d, [lo] and [hi] are not 1-d of one
-    length, [c] is [Add] and [x] is boolean, or [c] is not [Set] and [x] is
-    cut along its first axis. *)
+    length, [c] is [Add] and [x] is boolean, [c] is not [Set] and [x] is
+    cut along its first axis, or a bound is cut where it cannot be read. *)
 
 val map_segments :
   segments:int ->
@@ -3892,7 +3904,11 @@ val map_segments :
     no positions, [g] is [0] and the result is zeros. [ids] and [x] may be
     split over devices along their first axis only, identically or one of them
     whole on each device; [rows], [owners] and [f]'s result are split along
-    their first axis as the positions are.
+    their first axis as the positions are. Where the windows of that axis
+    differ in extent, as five ids over two devices, each index is a group of
+    its own, so [ids] then holds one position per index: one axis, or
+    further axes of extent [1]. Each block is then one row, and [f] reads
+    each owner's data once per position.
 
     {[
     let ids = Nx.create Nx.int64 [| 4 |] [| 1L; -1L; 0L; 1L |]
@@ -3907,7 +3923,9 @@ val map_segments :
 
     Raises [Invalid_argument] if [segments] is negative, [x] has fewer axes
     than [ids] or its leading axes do not broadcast to [ids]', [ids] or [x] is
-    split along another axis or in another number of windows, or [f]'s result
+    split along another axis or in another number of windows, [ids] holds
+    several positions per index in windows of unequal extents, naming the
+    {!place} that puts [ids] and [x] whole, or [f]'s result
     does not have shape [[| g; c; … |]]. What [f] raises reaches the caller
     as raised, and the operations [f] makes are named by the functions it
     calls. *)
