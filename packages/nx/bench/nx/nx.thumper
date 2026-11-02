@@ -9,6 +9,7 @@
 # forced: blessed quant/q8_0-gemv-4096-f64 quant/q4_k-gemv-4096 quant/q6_k-gemv-4096 under load 32.7 on 14 cores
 # forced: blessed quant/q8_0-gemv-4096 quant/q8_0-gemv-4096-f64 quant/q6_k-gemv-4096 under load 32.9 on 14 cores
 # forced: blessed quant/q8_0-gemv-4096 quant/q8_0-gemv-4096-f64 quant/q4_k-gemv-4096 quant/q6_k-gemv-4096 under load 38.0 on 14 cores
+# forced: blessed frontend/rshift-i32-1M quant/q4_k-gemv-4096 quant/q6_k-gemv-4096 under load 28.9 on 14 cores
 
 constant/chain-1000	alloc_words	exact	94146
 contract/contract-i32-m128x4096x4096	alloc_words	exact	342
@@ -156,7 +157,7 @@ frontend/lshift-i32-1M	alloc_words	exact	237
 frontend/magnitude-c128-1M	alloc_words	exact	2207
 frontend/magnitude-c64-1M	alloc_words	exact	891
 frontend/real-c64-1M	alloc_words	exact	118
-frontend/rshift-i32-1M	alloc_words	exact	260
+frontend/rshift-i32-1M	alloc_words	exact	290
 frontend/rsqrt-f32-1M	alloc_words	exact	238
 frontend/square-f32-1M	alloc_words	exact	50
 frontend/to_array-f32-1M	alloc_words	exact	1048610
@@ -215,8 +216,8 @@ quant/mxfp4-gemv-4096-n-split4	alloc_words	exact	17559
 quant/mxfp4-moe-64x8of32	alloc_words	exact	11531
 quant/mxfp4-moe-64x8of32-experts-split4	alloc_words	exact	133206
 quant/mxfp4-moe-64x8of32-k-split4	alloc_words	exact	143091
-quant/q4_k-gemv-4096	alloc_words	exact	7253
-quant/q6_k-gemv-4096	alloc_words	exact	6508
+quant/q4_k-gemv-4096	alloc_words	exact	7160
+quant/q6_k-gemv-4096	alloc_words	exact	6384
 quant/q8_0-gemv-4096	alloc_words	exact	888
 quant/q8_0-gemv-4096-f64	alloc_words	exact	888
 ragged/take-text-1K-of-512-to-1536B	alloc_words	exact	2661

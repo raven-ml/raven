@@ -173,7 +173,15 @@ let law_lshift (One (dt, x), n) =
 (* A signed integer shifts arithmetically, an unsigned one logically: its
    int64 is never negative but for uint64's, which shifts logically there. *)
 let law_rshift (One (dt, x), n) =
-  cover "past the width" (n >= D.bits dt);
+  let w = D.bits dt in
+  cover "no shift" (n = 0);
+  cover "a shift of one" (n = 1);
+  cover "a shift of the width less two" (n = w - 2);
+  cover "a shift of the width less one" (n = w - 1);
+  cover "a shift of the width" (n = w);
+  cover "past the width" (n > w);
+  cover "a negative element"
+    (Array.exists (fun v -> Int64.compare v 0L < 0) (int64s x));
   let unsigned = D.is D.Unsigned dt in
   let shift v =
     if n >= 64 then if unsigned || Int64.compare v 0L >= 0 then 0L else -1L
@@ -184,7 +192,45 @@ let law_rshift (One (dt, x), n) =
     (of_int64s dt (Nx.shape x) (Array.map shift (int64s x)))
     (Nx.to_array (Nx.rshift x n))
 
-let integer_shift = Gen.pair (one integers) (Gen.int_range 0 70)
+(* An integer value and a count, [0], [1], the width less two (the widest
+   divisor a signed shift divides by), less one and the width as often as any
+   other count up to 70. *)
+let integer_shift =
+  Gen.with_pp
+    (fun ppf (One (_, x), n) -> Format.fprintf ppf "%a by %d" pp_value x n)
+    (let open Gen in
+     let* (One (dt, _) as x) = one integers in
+     let w = D.bits dt in
+     let+ n =
+       frequency
+         [
+           (1, constant 0);
+           (1, constant 1);
+           (1, constant (w - 2));
+           (1, constant (w - 1));
+           (1, constant w);
+           (2, int_range 0 70);
+         ]
+     in
+     (x, n))
+
+(* Each integer dtype at each count the law names, and one past the width,
+   over [0], [±1] and the dtype's least and greatest. *)
+let shift_examples =
+  List.concat_map
+    (fun (D.Any dt) ->
+      let w = D.bits dt in
+      let least, greatest =
+        if D.is D.Unsigned dt then
+          (0L, if w = 64 then -1L else Int64.pred (Int64.shift_left 1L w))
+        else
+          let least = Int64.shift_left (-1L) (w - 1) in
+          (least, Int64.lognot least)
+      in
+      let vs = [| 0L; 1L; -1L; least; greatest |] in
+      let x = Nx.cast dt (Nx.create Nx.int64 [| Array.length vs |] vs) in
+      List.map (fun n -> (One (dt, x), n)) [ 0; 1; w - 2; w - 1; w; w + 1 ])
+    integers
 
 let bits =
   group "bits"
@@ -200,7 +246,8 @@ let bits =
             (Nx.to_array (Nx.bitwise_not (Nx.create Nx.bit [| 2 |] [| false; true |]))));
       prop "lshift is multiplication by 2^n modulo the width" integer_shift
         law_lshift;
-      prop "rshift divides by 2^n toward negative infinity" integer_shift
+      prop ~examples:shift_examples
+        "rshift divides by 2^n toward negative infinity" integer_shift
         law_rshift;
       cases "refusals"
         ~id:(fun (n, _, _) -> n)

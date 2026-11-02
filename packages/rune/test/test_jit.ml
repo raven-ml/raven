@@ -245,6 +245,93 @@ let law_bitcast (Bitcast_case (src, dt, view, offset, seed)) =
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal codes_t (raw (Nx.bitcast dt x)) (raw y)
 
+(* Right shifts: [Nx.rshift x n], eager and compiled, is [x]'s integer shifted
+   [n] bits, arithmetically where signed and logically where unsigned, at every
+   integer dtype, for [n] of [0], [1], the width less two (the widest divisor
+   a signed shift divides by), less one, the width and others. [x] holds [0],
+   [±1], the dtype's least and greatest and random bits. *)
+
+type shift_case = Shift_case : ('v, 's) Nx.dtype * int * int -> shift_case
+
+let integer_dtypes =
+  List.filter
+    (fun (Nx.Dtype.Any d) -> Nx.Dtype.is Signed d || Nx.Dtype.is Unsigned d)
+    Nx.Dtype.all
+
+let shift_cases =
+  let open Gen in
+  (let* (Nx.Dtype.Any dt) = of_list integer_dtypes in
+   let w = Nx.Dtype.bits dt in
+   let+ n =
+     frequency
+       [
+         (1, constant 0);
+         (1, constant 1);
+         (1, constant (w - 2));
+         (1, constant (w - 1));
+         (1, constant w);
+         (2, int_range 0 70);
+       ]
+   and+ seed = int_range 0 1_000_000 in
+   Shift_case (dt, n, seed))
+  |> with_pp (fun ppf (Shift_case (dt, n, seed)) ->
+      Format.fprintf ppf "%a by %d, seed %d" Nx.pp_dtype dt n seed)
+
+(* Each integer dtype at each count the law names, and one past the width. *)
+let shift_examples =
+  List.concat_map
+    (fun (Nx.Dtype.Any dt) ->
+      let w = Nx.Dtype.bits dt in
+      List.map
+        (fun n -> Shift_case (dt, n, 7))
+        [ 0; 1; w - 2; w - 1; w; w + 1 ])
+    integer_dtypes
+
+(* [dt]'s least and greatest as int64 bit patterns: uint64's greatest is
+   [-1]. *)
+let extremes_of (type v s) (dt : (v, s) Nx.dtype) =
+  let w = Nx.Dtype.bits dt in
+  if Nx.Dtype.is Unsigned dt then
+    (0L, if w = 64 then -1L else Int64.pred (Int64.shift_left 1L w))
+  else
+    let least = Int64.shift_left (-1L) (w - 1) in
+    (least, Int64.lognot least)
+
+let law_rshift (Shift_case (dt, n, seed)) =
+  let w = Nx.Dtype.bits dt in
+  cover "no shift" (n = 0);
+  cover "a shift of one" (n = 1);
+  cover "a shift of the width less two" (n = w - 2);
+  cover "a shift of the width less one" (n = w - 1);
+  cover "a shift of the width" (n = w);
+  cover "past the width" (n > w);
+  cover "a signed dtype" (Nx.Dtype.is Signed dt);
+  let st = Random.State.make [| seed |] in
+  let least, greatest = extremes_of dt in
+  let fixed = [| 0L; 1L; -1L; least; greatest |] in
+  let extremes =
+    Nx.cast dt (Nx.create Nx.int64 [| Array.length fixed |] fixed)
+  in
+  let x = Nx.concatenate ~axis:0 [ extremes; random_bits dt [| 11 |] st ] in
+  let ints t = Nx.to_array (Nx.cast Nx.int64 t) in
+  let unsigned = Nx.Dtype.is Unsigned dt in
+  let shift v =
+    if n >= 64 then if unsigned || Int64.compare v 0L >= 0 then 0L else -1L
+    else if unsigned then Int64.shift_right_logical v n
+    else Int64.shift_right v n
+  in
+  let expected =
+    ints
+      (Nx.cast dt
+         (Nx.create Nx.int64 (Nx.shape x) (Array.map shift (ints x))))
+  in
+  let int64s = Testable.array Testable.int64 in
+  equal ~msg:"eager" int64s expected (ints (Nx.rshift x n));
+  let before = Rune.evaluations () in
+  let y = Rune.jit' (fun x -> Nx.rshift x n) x in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+  equal ~msg:"jit" int64s expected (ints y)
+
 (* [square (c * y)] at each integer width where [c * c] wraps to 0, [c] being
    2^(bits / 2) or the greatest power of two, the least signed value: every
    square is 0, the value eager gives, on each call. *)
@@ -4687,6 +4774,9 @@ let () =
                "experts applied give eager's values" experts_cases law_experts;
              prop ~count:20 ~examples:bitcast_examples
                "a bitcast gives eager's bits" bitcast_cases law_bitcast;
+             prop ~count:60 ~examples:shift_examples
+               "rshift is the integer shift at every dtype, eager and compiled"
+               shift_cases law_rshift;
              prop ~count:12
                "a uint4 sort along the last axis of every other row and \
                 column, flipped, gives eager's codes"

@@ -1674,6 +1674,10 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.rshift` computes with integers at every width, where integers of 32
+  bits or fewer went through float64: a kernel that shifts needs no float64,
+  and a compiled one-token Q6_K product's kernel takes 0.53 ms where it took
+  3.3 ms on an RTX 5000 Ada. Results keep their bits.
 - Under `Rune.jit`, `Nx.map_segments` over ids the compiler knows are all in
   range, as `Nx.top_k`'s are, gives `f` rows with no reduction inside them, so
   a product in `f` streams its matrix. gpt-oss-20b's 12-token prefill takes

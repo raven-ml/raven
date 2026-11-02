@@ -2133,9 +2133,13 @@ let lshift x n =
   elementwise ~by dt [ Any x ] E.(operand 0 x * wrapped dt factor)
 
 (* [x / 2^n] rounded toward negative infinity, so a signed integer keeps its
-   sign. Up to 32 bits, at float64, which holds every such integer and its
-   quotient exactly: one multiply and a floor. Wider, from the truncated
-   quotient and the remainder's sign. Past the width only the sign is left. *)
+   sign: the truncated quotient [q], less one where [q 2^n] passes [x], which
+   then is negative and not a multiple; [|q 2^n| <= |x|] never overflows.
+   Integer operations alone, at every width, so a kernel needs no float64,
+   which many GPUs compute at a small fraction of their rate. The divisor is
+   a constant of [x]'s dtype, which nx.cpu reads with a step of 0 and so
+   shifts by; a cast of a constant would be a node computed into a row of
+   its own. Past the width only the sign is left. *)
 let rshift x n =
   let by = "Nx.rshift" in
   let dt = dtype x in
@@ -2149,14 +2153,11 @@ let rshift x n =
     (if unsigned && n >= bits then int 0L
      else if (not unsigned) && n >= bits - 1 then
        E.(where (y < int 0L) (int (-1L)) (int 0L))
-     else if bits <= 32 then
-       let scale = E.const D.Float64 (Float.ldexp 1. (-n)) in
-       E.(cast dt (floor (cast D.Float64 y * scale)))
      else
-       let d = int (Int64.shift_left 1L n) in
+       let d = E.const dt (D.of_float dt (Float.ldexp 1. n)) in
        let q = E.(y / d) in
        if unsigned then q
-       else E.(q - where (y mod d < int 0L) (int 1L) (int 0L)))
+       else E.(where (y < q * d) (q - const dt (D.one dt)) q))
 
 let clamp ?min:lo ?max:hi x =
   let by = "Nx.clamp" in
