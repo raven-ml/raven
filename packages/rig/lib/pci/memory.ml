@@ -29,7 +29,9 @@ type reach = {
    region is out. Another GPU's [map_peer] and [free] read [held]'s regions
    and write their [peers] and [reached] while this GPU's owner makes its
    calls: those reads and every write of them take [lock], which holds no
-   other lock, so no two GPUs' calls wait for each other in a cycle. *)
+   other lock, so no two GPUs' calls wait for each other in a cycle. [ties]
+   lists the GPU's mappings of other GPUs' memory that count there, so that
+   its release ends each, whatever became of [held]. *)
 type t = {
   reach : reach;
   bar : int;
@@ -38,6 +40,7 @@ type t = {
   lender : Function.t; (* the GPU's function, which lends ([enter]) *)
   lock : Lock.t;
   mutable held : held option;
+  mutable ties : ties;
 }
 
 (* The function, and every mapping it holds by GPU address, so that a free or a
@@ -83,10 +86,12 @@ and region = {
 and source = Allocated | Borrowed of int | Peer of region
 
 (* A mapping of another GPU's memory that a [map_peer] wrote or is writing:
-   [over] is the origin it maps. [counted] is set while it counts there, in
-   the section that changes the count. Once the tables hold it, [made] is set
-   and [made_mapping] is the mapping, with nothing allocated between, so that
-   an exception before its region is recorded leaves it for the next
+   [over] is the origin it maps. [counted] is set while it counts there, and
+   the mapping is on its GPU's [ties] as long, both in the section that
+   changes the count: [prev] and [next] link it, through [self], made with
+   it, so that linking allocates nothing. Once the tables hold it, [made] is
+   set and [made_mapping] is the mapping, with nothing allocated between, so
+   that an exception before its region is recorded leaves it for the next
    [map_peer] of [over] to adopt. The GPU holds [over]'s addresses from
    before the count. *)
 and writing = {
@@ -95,7 +100,13 @@ and writing = {
   mutable counted : bool;
   mutable made : bool;
   mutable made_mapping : Page_table.mapping;
+  self : ties;
+  mutable prev : ties;
+  mutable next : ties;
 }
+
+(* A list of mappings that count at their origins. *)
+and ties = No_tie | Tie of writing
 
 (* A mapping and the regions out over it: [holder] made it and holds what it
    took, and each [map_peer] of memory the GPU maps already adds a region to
@@ -150,6 +161,7 @@ let create ?link fn tables ~bar =
     bar_size;
     lender = fn;
     lock = Lock.create ();
+    ties = No_tie;
     held =
       Some
         {
@@ -377,23 +389,38 @@ let take_due h =
    which a reset of the owner would give out. *)
 let lent r = r.mapping.target <> System
 
-(* Uncounts [w], a mapping of its origin that another GPU, of function
-   [writer], gave back, or never made, and ends its lend: [w]'s mark, the
-   origin's count and, for GPU memory, the lend change in one section with
-   nothing between that allocates or polls, so it is uncounted once and its
-   lend ends with it. Unless [gone], that GPU may still write the memory,
-   which then stays reached, and the lend lasts until [writer] is released
-   and quiet, through a record made before the section. Only the settling of
-   the owner's function, which may give back its take, runs after it. The
-   last one of a parked mapping makes it due, for its owner's next call. Once
-   the owner's function is released, its give-back has taken back what the
+(* Links [w] first on [m]'s ties, and unlinks it, allocating nothing. Only
+   [m]'s calls change [m]'s ties, each inside the section that changes [w]'s
+   count, under the lock of [w]'s origin's owner. *)
+let link m w =
+  w.prev <- No_tie;
+  w.next <- m.ties;
+  (match m.ties with Tie f -> f.prev <- w.self | No_tie -> ());
+  m.ties <- w.self
+
+let unlink m w =
+  (match w.prev with Tie p -> p.next <- w.next | No_tie -> m.ties <- w.next);
+  (match w.next with Tie n -> n.prev <- w.prev | No_tie -> ());
+  w.prev <- No_tie;
+  w.next <- No_tie
+
+(* Uncounts [w], a mapping of its origin that [m]'s GPU gave back, or never
+   made, and ends its lend: [w]'s mark, its link on [m]'s ties, the origin's
+   count and, for GPU memory, the lend change in one section with nothing
+   between that allocates or polls, so it is uncounted once and its lend ends
+   with it. Unless [gone], [m]'s GPU may still write the memory, which then
+   stays reached, and the lend lasts until [m]'s function is released and
+   quiet, through a record made before the section. Only the settling of the
+   owner's function, which may give back its take, runs after it. The last
+   one of a parked mapping makes it due, for its owner's next call. Once the
+   owner's function is released, its give-back has taken back what the
    mapping held. *)
-let leave w ~gone ~writer =
+let leave m w ~gone =
   let r = w.over in
   let o = r.owner in
   let lends = lent r in
   let still =
-    if lends && not gone then Some (Function.writer writer) else None
+    if lends && not gone then Some (Function.writer m.lender) else None
   in
   let section () =
     if not w.counted then false
@@ -404,6 +431,7 @@ let leave w ~gone ~writer =
         | Some h -> Option.map (fun e -> (h, e)) (entry_of h r)
       in
       w.counted <- false;
+      unlink m w;
       (match found with
       | Some (h, e) ->
           e.peers <- e.peers - 1;
@@ -419,7 +447,7 @@ let leave w ~gone ~writer =
    gives back its holder's, or leaves it to a free after the release if the
    GPU does not confirm the unmap. A mapping of another GPU's memory is
    uncounted there once unmapped. *)
-let release_entry h tables e =
+let release_entry m h tables e =
   let r = e.holder in
   let confirmed =
     match tables with
@@ -427,8 +455,7 @@ let release_entry h tables e =
     | Some tables -> Page_table.unmap tables ~va:r.mapping.va r.mapping.size
   in
   Option.iter
-    (fun w ->
-      leave w ~gone:(confirmed && not (Function.reaching h.fn)) ~writer:h.fn)
+    (fun w -> leave m w ~gone:(confirmed && not (Function.reaching h.fn)))
     e.tie;
   (* Memory the GPU may still reach stays until the GPU is released. *)
   if confirmed then give_back h tables r
@@ -439,7 +466,7 @@ let release_entry h tables e =
    under [m]'s lock, so it goes back once. *)
 let give_due m h tables =
   if Atomic.get h.due then
-    List.iter (release_entry h tables)
+    List.iter (release_entry m h tables)
       (Lock.protect m.lock (fun () -> take_due h))
 
 (* The GPU's maps of other GPUs' memory end with it, as does what its parked
@@ -449,18 +476,17 @@ let release m =
   Option.iter
     (fun h ->
       Function.release h.fn;
-      h.tables <- None;
-      let ties =
-        Lock.protect m.lock (fun () ->
-            h.parked <- [];
-            Tables.Address.fold
-              (fun _ e ws ->
-                match e.tie with Some w when w.counted -> w :: ws | _ -> ws)
-              h.regions
-              (List.filter (fun w -> w.counted) h.writing))
-      in
-      let gone = not (Function.reaching h.fn) in
-      List.iter (fun w -> leave w ~gone ~writer:h.fn) ties;
+      h.tables <- None)
+    m.held;
+  let gone = not (Function.reaching m.lender) in
+  let rec listed acc = function
+    | No_tie -> acc
+    | Tie w -> listed (w :: acc) w.next
+  in
+  List.iter (fun w -> leave m w ~gone) (listed [] m.ties);
+  Option.iter
+    (fun h ->
+      Lock.protect m.lock (fun () -> h.parked <- []);
       h.unconfirmed <- [];
       settle m h)
     m.held
@@ -604,7 +630,7 @@ let released_error (o : t) =
    function, which keeps its release from giving its take back
    ({!Function.lend}). A release begun first refuses it. The counts are its
    last steps. *)
-let enter fn r w =
+let enter fn m r w =
   let o = r.owner in
   let counted =
     Lock.protect o.lock @@ fun () ->
@@ -614,6 +640,7 @@ let enter fn r w =
     else begin
       e.peers <- e.peers + 1;
       w.counted <- true;
+      link m w;
       true
     end
   in
@@ -648,18 +675,18 @@ let unwrite h w = h.writing <- List.filter (fun w' -> w' != w) h.writing
    or to the GPU's release: the next [map_peer] adopts the mapping if the
    tables hold it whole ([made]), and otherwise discards what they hold of it
    and writes it again. *)
-let refused h w =
-  leave w ~gone:true ~writer:h.fn;
+let refused m h w =
+  leave m w ~gone:true;
   unwrite h w;
   Space.free w.space
 
-let write_counted h w f =
+let write_counted m h w f =
   match f w with
   | exception (Invalid_argument _ as e) when not w.made ->
-      refused h w;
+      refused m h w;
       reraise e
   | (Ok None | Error _) as e ->
-      refused h w;
+      refused m h w;
       e
   | Ok (Some p) -> Ok (Some (p, w))
 
@@ -668,7 +695,7 @@ let write_counted h w f =
    mapping [again] an exception left, counted unless the exception came
    first. [w] and [f] are made before the count, and the count is the last
    step before the handler. *)
-let counted_map ?again h r f =
+let counted_map ?again m h r f =
   let w =
     match again with
     | Some _ -> again
@@ -676,13 +703,16 @@ let counted_map ?again h r f =
         match Space.share (Function.holder h.fn) (Option.get r.space) with
         | None -> None
         | Some space ->
-            let w =
+            let rec w =
               {
                 over = r;
                 space;
                 counted = false;
                 made = false;
                 made_mapping = no_mapping;
+                self = Tie w;
+                prev = No_tie;
+                next = No_tie;
               }
             in
             h.writing <- w :: h.writing;
@@ -694,11 +724,11 @@ let counted_map ?again h r f =
       released_error r.owner
   | Some w -> (
       w.made <- false;
-      if w.counted then write_counted h w f
+      if w.counted then write_counted m h w f
       else
         (* An exception before the count, [mine]'s refusal included, leaves
            [w] uncounted, and a next [map_peer] counts it. *)
-        match enter "map_peer" r w with
+        match enter "map_peer" m r w with
         | exception e ->
             unwrite h w;
             Space.free w.space;
@@ -707,7 +737,7 @@ let counted_map ?again h r f =
             unwrite h w;
             Space.free w.space;
             released_error r.owner
-        | true -> write_counted h w f)
+        | true -> write_counted m h w f)
 
 (* The region of [m] over [w]'s mapping of the origin [r]. *)
 let peer_region m r w =
@@ -755,7 +785,7 @@ let map_new ?again m h tables r =
            memory at its own address. *)
         let a, n = Option.value r.pinned ~default:(map.va, map.size) in
         mapped
-          (counted_map ?again h r (fun w ->
+          (counted_map ?again m h r (fun w ->
                map_pinned ~writing:w m h tables ~space:w.space ~source:(Peer r)
                  ~host:None a n))
     | (Gpu | Peer _) when not (reaches m.reach o.reach) ->
@@ -780,7 +810,7 @@ let map_new ?again m h tables r =
         | None -> (
             let uncached = Some map.uncached in
             mapped
-              (counted_map ?again h r (fun w ->
+              (counted_map ?again m h r (fun w ->
                    match
                      Page_table.map ~snooped:true ?uncached tables ~va:map.va
                        target pages
@@ -968,7 +998,7 @@ let free_with m h r tables =
   let e = Tables.Address.find h.regions r.mapping.va in
   (match take_off m h e r ~live:(Option.is_some tables) with
   | Others | Parked | Kept -> ()
-  | Last -> release_entry h tables e);
+  | Last -> release_entry m h tables e);
   give_due m h tables;
   if Option.is_none tables && h.unconfirmed <> [] then begin
     List.iter (give_back h None) h.unconfirmed;
