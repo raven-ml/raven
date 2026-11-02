@@ -1551,33 +1551,39 @@ let encode_batch_ids t ?(add_special_tokens = true)
     if len > 0 then
       Bigarray.Array1.fill (Bigarray.Array1.sub result at len) pad_id
   in
-  let copy (buffer : ids) ~pos ~len ~at =
-    for k = 0 to len - 1 do
-      Bigarray.Array1.unsafe_set result (at + k)
-        (Bigarray.Array1.unsafe_get buffer (pos + k))
-    done
+  (* A piece copies the part of itself that truncation keeps, as one blit
+     between views cut here, on the caller's domain, so that what a batch
+     allocates does not depend on which domain copies which piece. *)
+  let moves =
+    Array.init npieces (fun i ->
+        let row = owner.(i) in
+        let kept = min body.(row) budget in
+        let skip = if trim_left then body.(row) - kept else 0 in
+        let front = if pad_left then lengths.(row) - content.(row) else 0 in
+        let lo = max place.(i) skip
+        and hi = min (place.(i) + stop.(i) - start.(i)) (skip + kept) in
+        if lo >= hi then None
+        else
+          Some
+            ( Bigarray.Array1.sub
+                buffers.(chunk_of.(i))
+                (start.(i) + lo - place.(i))
+                (hi - lo),
+              Bigarray.Array1.sub result
+                (offset.(row) + front + np + lo - skip)
+                (hi - lo) ))
   in
-  (* A piece copies the part of itself that truncation keeps; the first piece of
-     a row lays out the row around the body. *)
+  (* The first piece of a row lays out the row around the body. *)
   run_chunks ~domains chunks (fun c ->
       let chunk = chunks.(c) in
       for i = chunk.first to chunk.stop - 1 do
+        Option.iter (fun (src, dst) -> Bigarray.Array1.blit src dst) moves.(i);
         let row = owner.(i) in
-        let padded = lengths.(row) - content.(row) in
-        let front = if pad_left then padded else 0 in
-        let kept = min body.(row) budget in
-        let skip = if trim_left then body.(row) - kept else 0 in
-        let base = offset.(row) + front + np in
-        let held = stop.(i) - start.(i) in
-        let lo = max place.(i) skip
-        and hi = min (place.(i) + held) (skip + kept) in
-        if lo < hi then
-          copy
-            buffers.(chunk_of.(i))
-            ~pos:(start.(i) + lo - place.(i))
-            ~len:(hi - lo)
-            ~at:(base + lo - skip);
         if i = 0 || owner.(i - 1) <> row then begin
+          let padded = lengths.(row) - content.(row) in
+          let front = if pad_left then padded else 0 in
+          let kept = min body.(row) budget in
+          let base = offset.(row) + front + np in
           fill ~at:offset.(row) ~len:front;
           fill ~at:(base + kept + ns) ~len:(padded - front);
           write prefix ~at:(offset.(row) + front);

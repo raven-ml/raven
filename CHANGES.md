@@ -2405,6 +2405,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `encode_batch_ids` moves each row's ids into its result with one block copy
+  rather than an id at a time.
 - Byte-level BPE (GPT-2 and the cl100k and o200k pipelines) and SentencePiece
   BPE encode with a fifth to a quarter fewer instructions: the fused kernels walk
   64 pretokens ahead of their cache probes, test text sixteen bytes at a time on
