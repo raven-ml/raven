@@ -65,7 +65,7 @@ val windows :
 val run :
   by:string ->
   ?into:'d Value.any ->
-  origin:int array ->
+  origin:Prim.origin ->
   unit Devices.placement ->
   Nx_array.Layout.t array ->
   'r Value.prim ->

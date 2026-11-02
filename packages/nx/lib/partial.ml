@@ -107,11 +107,11 @@ let at : type r d.
     Partition.engine ->
     by:string ->
     ?into:d Value.any ->
-    ?origin:int array ->
+    ?origin:Prim.origin ->
     unit Devices.placement ->
     r Value.prim ->
     r =
- fun eng ~by ?into ?(origin = [||]) p op ->
+ fun eng ~by ?into ?(origin = Prim.no_origin) p op ->
   let layouts = Prim.layouts ~by op in
   if Grid.count (Devices.grid p) = 1 && Prim.lies_at p op then
     eng.run ~by ?into ~origin p layouts op
@@ -196,8 +196,8 @@ let view_load (type d) eng ~by k w (l : d Value.load) : d Value.load =
   | Padded p -> Padded { p with x = view eng ~by k w p.x }
 
 (* The map over [vs], of one shape, its inputs in order, to [exprs], with
-   its results at [p]. *)
-let map (type d) eng ~by ?into p (vs : d Value.any list) exprs :
+   its results at [p], at [origin] where it is given. *)
+let map (type d) eng ~by ?into ?origin p (vs : d Value.any list) exprs :
     d Value.any list =
   let dtype (Value.Any x : d Value.any) = D.Any (Prim.dtype x) in
   let prog =
@@ -211,7 +211,9 @@ let map (type d) eng ~by ?into p (vs : d Value.any list) exprs :
   let layout = L.contiguous (Iarray.of_array (Prim.shape x)) in
   let plain (Value.Any x : d Value.any) = Value.Plain x in
   let loads = Iarray.of_list (List.map plain vs) in
-  read (at eng ~by ?into p (Value.Map { layout; prog; outs; loads; at = None }))
+  read
+    (at eng ~by ?into ?origin p
+       (Value.Map { layout; prog; outs; loads; at = None }))
 
 (* Output [o] of [prog], of [term], over [loads] in the window [w] of a
    loop of [layout], on [here]: the load itself where [prog] is its
@@ -327,35 +329,74 @@ let first_of eng ~by (e : Nx_kernel.extreme) a b =
         [ pick 0 dt; pick 1 D.Int64 ]
   | _ -> invalid_arg "Partial.first_of: an extreme and its position each"
 
-(* [pos] shifted by [s]. *)
-let shift eng ~by s pos =
+(* A tile's start reaches a device's program as a loop's coordinate at an
+   origin ({!Partition.engine}), so that an engine may bind it when the
+   program runs and each device's program is every device's. *)
+
+(* [pos], [int64] positions on one device, and the start [s] of a nonempty
+   window along an axis of [n] elements, combined by [f]: [pos] itself
+   where [s] is [0]. One map over [pos] with a leading axis of one element,
+   at [s] in a loop of [n] along it, reads the start as its coordinate
+   there. A [pos] of the greatest rank, which has no room for that axis,
+   reads it as a constant. *)
+let shift (type d) eng ~by f s n (pos : d Value.any) : d Value.any =
   if s = 0 then pos
   else
     let (Value.Any x) = pos in
-    let s = E.const D.Int64 (Int64.of_int s) in
-    List.hd
-      (map eng ~by (Prim.placement x) [ pos ] [ E.any E.(input 0 D.Int64 + s) ])
+    let here = Prim.placement x and shape = Prim.shape x in
+    let p = E.input 0 D.Int64 in
+    if Array.length shape >= L.max_rank then
+      let s = E.const D.Int64 (Int64.of_int s) in
+      List.hd (map eng ~by here [ pos ] [ E.any (f p s) ])
+    else
+      let lead = Array.append [| 1 |] shape in
+      let start = Array.mapi (fun a _ -> if a = 0 then s else 0) lead in
+      let origin = { Prim.start; extents = Array.append [| n |] shape } in
+      let lead = Value.Any (reshape eng ~by lead x) in
+      let e = E.any (f p (E.coord 0)) in
+      let (Value.Any y) = List.hd (map eng ~by ~origin here [ lead ] [ e ]) in
+      Value.Any (reshape eng ~by shape y)
 
-(* [pos], positions in C order of the folded indices of a window [w] of
-   the folded extents [whole], as positions in C order of the whole's,
-   over [pos]'s memory: [pos] is fresh, on one device. *)
-let renumber eng ~by (w : M.range array) whole pos =
+(* [pos], positions in C order of the folded indices of a device's tile
+   [w], along the folded [axes] of a reduction's loop at [origin], as
+   positions in C order of the folded extents [whole], over [pos]'s memory:
+   [pos] is fresh, on one device, of the loop's shape but [axes]. The
+   tile's starts are the loop's coordinates along [axes], over a loop of
+   one element along each. *)
+let renumber eng ~by ~(origin : Prim.origin) axes (w : M.range array) whole
+    pos =
   if
     Array.for_all2 (fun (r : M.range) n -> r.start = 0 && r.count = n) w whole
   then pos
   else
     let (Value.Any x) = pos in
+    let out = Prim.shape x in
+    let kept = ref 0 in
+    let units =
+      Array.mapi
+        (fun a _ ->
+          if Array.mem a axes then 1
+          else begin
+            incr kept;
+            out.(!kept - 1)
+          end)
+        origin.extents
+    in
+    let units = reshape eng ~by units x in
     let int64 n = E.const D.Int64 (Int64.of_int n) in
     let p = E.input 0 D.Int64 in
     let global = ref (int64 0) and inner = ref 1 and outer = ref 1 in
     for i = Array.length w - 1 downto 0 do
       let digit = E.((p / int64 !inner) mod int64 w.(i).count) in
-      global := E.(!global + ((digit + int64 w.(i).start) * int64 !outer));
+      global := E.(!global + ((digit + coord axes.(i)) * int64 !outer));
       inner := !inner * w.(i).count;
       outer := !outer * whole.(i)
     done;
-    let p = Prim.placement x in
-    List.hd (map eng ~by ~into:pos p [ pos ] [ E.any !global ])
+    let here = Prim.placement x and units = Value.Any units in
+    let (Value.Any q) =
+      List.hd (map eng ~by ~into:units ~origin here [ units ] [ E.any !global ])
+    in
+    Value.Any (reshape eng ~by out q)
 
 (* Closings *)
 
@@ -761,7 +802,8 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
         let (D.Any t) = term o in
         let pair j =
           let (x, q), () = local j prog Value.[ Arg (e, o, t) ] in
-          let q = renumber eng ~by tiles.(j) whole (Value.Any q) in
+          let origin = { Prim.start = Prim.starts (loop j); extents = shape } in
+          let q = renumber eng ~by ~origin ax tiles.(j) whole (Value.Any q) in
           (x, Prim.expect D.Int64 q)
         in
         let pairs = Array.init (Array.length ks) (fun j -> lazy (pair j)) in
@@ -912,12 +954,16 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
     eng.assemble stacked stack_shape dt (Array.init n slot)
   in
   (* Slot [i] of [x], a stack at [placed], on device [j]: its row of the
-     results' shape. *)
+     results' shape. The slot is brought from [j]'s own piece, which holds
+     every slot: a move of a window, whose start an engine may bind when
+     the program runs, so that each device's program is every device's. *)
   let earlier (type v s) j i (x : (v, s, d) Value.t) : (v, s, d) Value.t =
-    let w = Devices.window ~by placed stack_shape j in
+    let held = Devices.window ~by placed stack_shape j in
+    let w = Array.map (fun (r : M.range) -> { r with start = 0 }) held in
     w.(0) <- { M.start = i; count = 1; step = 1 };
     let row = Array.sub (counts w) 1 (Array.length shape) in
-    reshape eng ~by row (view eng ~by ks.(j) w x)
+    let here = here j in
+    reshape eng ~by row (eng.bring here [ (eng.piece x j here, w) ])
   in
   let wide j (Value.Any x : d Value.any) =
     Value.Any (spread eng ~by (counts (win j)) x)
@@ -973,14 +1019,19 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
   | Arg (e, o, dt) ->
       (* Each tile scans alone, its positions from the axis's start; the
          first extreme of the tiles before its own, in tile order, combines
-         with each of its results. *)
+         with each of its results. The totals' scan by [Arg] gives each
+         device that first extreme and the slot holding it, the first of
+         the slots with its bits since the positions grow with the slots:
+         every device computes the same scan and reads its slot, so that
+         each device's program is every device's. *)
       let pair here (v, q) =
         (Partition.copy eng here v, Partition.copy eng here q)
       in
       let pairs =
         replicated ~by p shape ~holds:held ~copy:pair ~compute:(fun j ->
             let v, q = scanned j (Arg (e, o, dt)) in
-            let q = shift eng ~by (win j).(axis).start (Value.Any q) in
+            let s = (win j).(axis).start in
+            let q = shift eng ~by E.( + ) s shape.(axis) (Value.Any q) in
             (v, Prim.expect D.Int64 q))
       in
       let xs =
@@ -990,18 +1041,32 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
       in
       let xs = Partition.place eng ~by placed xs
       and qs = Partition.place eng ~by placed qs in
+      let firsts, slots =
+        at eng ~by placed
+          (Value.Scan
+             {
+               layout = L.contiguous (Iarray.of_array stack_shape);
+               axis = 0;
+               prog = Prim.identity dt;
+               reduction = Arg (e, 0, dt);
+               loads = [| Plain xs |];
+               carry = None;
+             })
+      in
+      let positions =
+        at eng ~by placed (Value.Gather { axis = 0; idx = slots; x = qs })
+      in
       let result j =
         let v, q = Option.get pairs.(j) and t = index j in
         if t = 0 then (v, q)
         else
-          let ranked i =
-            [ Value.Any (earlier j i xs); Value.Any (earlier j i qs) ]
+          let carry =
+            [
+              Value.Any (earlier j (t - 1) firsts);
+              Value.Any (earlier j (t - 1) positions);
+            ]
           in
-          let carry = ref (ranked 0) in
-          for i = 1 to t - 1 do
-            carry := first_of eng ~by e !carry (ranked i)
-          done;
-          let carry = List.map (wide j) !carry in
+          let carry = List.map (wide j) carry in
           let last = [ Value.Any v; Value.Any q ] in
           match first_of eng ~by e carry last with
           | [ x; y ] -> (Prim.expect dt x, Prim.expect D.Int64 y)
@@ -1232,7 +1297,8 @@ let gather (type v s d) eng ~by (route : unit Route.t) rule axis
   let own j =
     let w = Devices.window ~by p out j and t = tiles.(j).(0) in
     let here = Devices.one set ks.(j) in
-    let i = shift eng ~by (-t.start) (Value.Any (view eng ~by ks.(j) w idx)) in
+    let i = Value.Any (view eng ~by ks.(j) w idx) in
+    let i = shift eng ~by E.( - ) t.start sx.(axis) i in
     let x = view eng ~by ks.(j) (reads rule 1 sx w (fun _ -> t)) x in
     let idx = Prim.expect D.Int64 i in
     let y = at eng ~by here (Value.Gather { axis; idx; x }) in
@@ -1259,7 +1325,8 @@ let scatter (type v s d) eng ~by (route : unit Route.t) rule combine unique axis
     let read i x =
       view eng ~by ks.(j) (Route.window rule ~operand:i (Prim.shape x) w) x
     in
-    let i = shift eng ~by (-w.(axis).start) (Value.Any (read 0 idx)) in
+    let i = Value.Any (read 0 idx) in
+    let i = shift eng ~by E.( - ) w.(axis).start shape.(axis) i in
     let idx = Prim.expect D.Int64 i in
     let updates = read 1 updates and into = read 2 into in
     at eng ~by here (Value.Scatter { combine; unique; axis; idx; updates; into })
@@ -1291,7 +1358,8 @@ let summed (type v s d) eng ~by (route : unit Route.t) rule unique axis
     let read i x =
       view eng ~by ks.(j) (reads rule i (Prim.shape x) w (fun _ -> t)) x
     in
-    let i = shift eng ~by (-w.(axis).start) (Value.Any (read 0 idx)) in
+    let i = Value.Any (read 0 idx) in
+    let i = shift eng ~by E.( - ) w.(axis).start shape.(axis) i in
     let idx = Prim.expect D.Int64 i in
     let start =
       if t.start = 0 then E.any (E.cast c (E.input 0 dt))

@@ -389,8 +389,12 @@ All notable changes to this project will be documented in this file.
   devices where a loop reads its window's coordinates (`Rune.lane_index`,
   `Nx.tril`, `Nx.eye_at` at a cut placement, `Nx.argmax` along an axis no
   device cuts): each device made kernels of its own. A fold, scan, gather or
-  scatter over a cut axis that reads positions, as `Nx.argmax` along it,
-  still does.
+  scatter over a cut axis passes each tile's start so too (`Nx.argmax` and
+  `Nx.take_along_axis` along it, the positions of `Nx.cummax`'s derivative),
+  so each device's own partial kernels are one program. `Nx.argmax` along a
+  cut axis and `Nx.scatter` over one, of `Add` or into a value cut along it,
+  compile programs that do not grow with the devices; a sum, a scan or a
+  gather over a cut axis still closes its partials by programs that do.
 - Under `Rune.vmap` over values cut along the mapped axis, `Rune.lane_index`'s
   indices lie where the lanes' rows lie, cut as they are; they were whole on
   every device.

@@ -193,16 +193,27 @@ val rule : 'r prim -> Route.rule
     assembly's axis becomes the result's where every piece's region covers
     all of it in order, and is read whole elsewhere. *)
 
-val local :
-  'r prim -> Nx_array.Move.range array -> 'r prim * int array
+type origin = {
+  start : int array;  (** The window's start along each axis. *)
+  extents : int array;  (** The shape of the loop it is a window of. *)
+}
+(** The type for a loop's {e origin}: where the window of a loop's shape that
+    it computes lies, in a loop of [extents]. A window's start along an axis
+    lies in [\[0, e - n\]], [e] the axis's extent and [n] the window's. *)
+
+val no_origin : origin
+(** [no_origin] is the origin of an operation that needs no offset: [[||]]
+    for both. *)
+
+val local : 'r prim -> Nx_array.Move.range array -> 'r prim * origin
 (** [local op w] is [op] computing the window [w] of its first result, over
     operands the caller gives at their windows ({!Route.window}), and its
-    {e origin}. It is a loop over its window [l] of its shape ({!within}),
-    whose origin is [l]'s start, a fold of [w]'s shape, a movement by
-    {!local_move}, and an assembly into [w]'s shape, each region covering
-    all of [w]'s range in order along an axis [w] cuts. An operation other
-    than a loop has the origin [[||]]. The window's elements are those of
-    {!offset} of the operation by its origin.
+    origin. It is a loop over its window [l] of its shape ({!within}),
+    whose origin is [l]'s start in its shape, a fold of [w]'s shape, a
+    movement by {!local_move}, and an assembly into [w]'s shape, each region
+    covering all of [w]'s range in order along an axis [w] cuts. An
+    operation other than a loop has the origin {!no_origin}. The window's
+    elements are those of {!offset} of the operation by its origin.
 
     Raises [Invalid_argument] for a window of an assembly that cuts an axis a
     piece's region does not cover all of in order: its rule reads that axis
@@ -221,25 +232,26 @@ val local_move :
     [Exec] moves each device's array by it, since {!local}'s type does not
     say that it gives a movement back for a movement. *)
 
-val within : 'r prim -> Nx_array.Move.range array -> 'r prim * int array
+val within : 'r prim -> Nx_array.Move.range array -> 'r prim * origin
 (** [within op l] is the loop [op], a map, a reduction or a scan, over the
     window [l] of its loop's shape, over loads the caller gives at their
-    windows, and its origin, [l]'s start ({!starts}): a loop of [l]'s
-    extents, whose programs read coordinates from [0], and which computes
-    [l]'s elements once {!offset} by its origin. A reduction folds the terms
-    [l] holds alone. {!local} of a loop is [within] the loop's window that
-    its result's window reads.
+    windows, and its origin, [l]'s start ({!starts}) in [op]'s loop's shape:
+    a loop of [l]'s extents, whose programs read coordinates from [0], and
+    which computes [l]'s elements once {!offset} by its origin. A reduction
+    folds the terms [l] holds alone. {!local} of a loop is [within] the
+    loop's window that its result's window reads.
 
     Raises [Invalid_argument] for an operation that is not a loop. *)
 
 val starts : Nx_array.Move.range array -> int array
 (** [starts l] is the start of each range of [l]. *)
 
-val offset : 'r prim -> int array -> 'r prim
+val offset : 'r prim -> origin -> 'r prim
 (** [offset op o] is the loop [op] with each [Coord c] of its programs read
-    as [Coord c + o.(c)], for [o] of the loop's rank: [op] over the window of
-    its loop's shape that starts at [o]. It is [op] where [o] is [[||]], and
-    an operation other than a loop is itself. *)
+    as [Coord c + o.start.(c)], for [o.start] of the loop's rank: [op] over
+    the window of its loop's shape that starts at [o.start]. It is [op]
+    where [o.start] is [[||]], and an operation other than a loop is
+    itself. *)
 
 val layouts : by:string -> 'r prim -> Nx_array.Layout.t array
 (** [layouts ~by op] is the layouts of [op]'s results that eager execution

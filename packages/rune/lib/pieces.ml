@@ -123,13 +123,14 @@ let pieces_of (type v s d) ri (x : (v, s, d) Nx.t) : (v, s, d) Nx.t iarray =
 
 (* Loops over windows
 
-   A device's loop over a window of its loop's shape reads its coordinates from
+   A device's loop over a window of a loop's shape reads its coordinates from
    the window's start ({!Nx.Prim.offset}). A start baked into its program would
    make each device's program its own: along an axis where windows start
    apart, the loop reads its coordinates there as an operand instead, the
    window of the whole loop's coordinates, which a compiled program reads as a
    start each device's call binds ({!Compile}), so that every device's loop is
-   one program. *)
+   one program. nx's partials pass a tile's start so too, as a loop's
+   coordinate. *)
 
 module P = Nx_kernel.Prog
 
@@ -163,16 +164,15 @@ let set_of (type d) (loads : d Nx.Prim.load iarray)
       | Plain x -> Some (Nx.Placement.devices (Nx.placement x))
       | Padded { x; _ } -> Some (Nx.Placement.devices (Nx.placement x)))
 
-(* [op], a loop over the window of [whole]'s loop that starts at [origin] on
-   [here], reading its coordinates along each axis where windows start apart,
-   where it reads them, as the window there of [arange] of the whole axis on
-   [here], broadcast to its shape. Every other window starts at [0]. *)
-let windowed (type r w) (whole : w Nx.Prim.t) here (op : r Nx.Prim.t) origin :
+(* [op], a loop over the window of its loop's shape at [origin] on [here],
+   reading its coordinates along each axis where windows start apart, where it
+   reads them, as the window there of [arange] of the whole axis on [here],
+   broadcast to its shape. Every other window starts at [0]. *)
+let windowed (type r) here (op : r Nx.Prim.t) (origin : Nx.Prim.origin) :
     r Nx.Prim.t =
-  let extents = loop_shape whole and shape = loop_shape op in
-  let n = Array.length origin in
-  let same_rank = Array.length extents = n && Array.length shape = n in
-  let apart a = origin.(a) > 0 || (same_rank && shape.(a) < extents.(a)) in
+  let { Nx.Prim.start; extents } = origin and shape = loop_shape op in
+  let n = Array.length start in
+  let apart a = start.(a) > 0 || shape.(a) < extents.(a) in
   let read (type d) (prog : P.t) (loads : d Nx.Prim.load iarray) set =
     let coords a =
       Iarray.exists (function P.Coord c -> c = a | _ -> false) prog.nodes
@@ -189,7 +189,7 @@ let windowed (type r w) (whole : w Nx.Prim.t) here (op : r Nx.Prim.t) origin :
     let operand a =
       let on = Nx.Placement.device set (rig_of here) in
       let all = Nx.arange_at on Nx.int64 0 extents.(a) 1 in
-      let w = Nx.slice [ R (origin.(a), origin.(a) + shape.(a)) ] all in
+      let w = Nx.slice [ R (start.(a), start.(a) + shape.(a)) ] all in
       let dims = Array.mapi (fun i k -> if i = a then k else 1) shape in
       Nx.Prim.Plain (Nx.broadcast_to shape (Nx.reshape dims w))
     in
@@ -272,9 +272,9 @@ let relative (outer : M.range array) (inner : M.range array) =
     (fun (o : M.range) (i : M.range) -> { i with start = i.start - o.start })
     outer inner
 
-let engine ri ~(gathered : gathered) ~by ~whole moves : Nx.Prim.engine =
+let engine ri ~(gathered : gathered) ~by moves : Nx.Prim.engine =
   let run ~by ?into:_ ~origin here _ op =
-    Nx.Prim.eval ~by (windowed whole here op origin)
+    Nx.Prim.eval ~by (windowed here op origin)
   in
   (* The value of [dt] and shape [s] that holds, at each window of [boxes],
      the box's piece, at the pieces' placement, kept as gathered. *)
@@ -497,7 +497,7 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
                      several devices keeps what it derives from an argument \
                      between calls"
               | _ ->
-                  let e = engine ri ~gathered ~by ~whole:op moves in
+                  let e = engine ri ~gathered ~by moves in
                   Nx.Prim.partition e ~by op
             in
             bind := base;

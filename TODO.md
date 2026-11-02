@@ -235,10 +235,7 @@ raven / llama.cpp (Vulkan; ROCm):
   (_plans/rune-sharding/adjudication.md). `lanes` and `lane_index`
   compile, and per-device code, as loops that read their window's
   coordinates, makes programs that do not grow over 2 to 16 devices, each launch
-  passing its window's start. nx's partials still write each tile's start
-  into its program as a constant (`Partial.renumber`, `shift`: `argmax`
-  along a cut axis, a scan's positions, a gather, scatter or sum over a
-  cut axis), so those make a kernel per device. nx's closing
+  passing its window's start. nx's closing
   moves a chunk between every pair of devices: time it against tinygrad's
   ring and hierarchical allreduce on a machine with several GPUs, and if
   it is slower, write those in nx's partition

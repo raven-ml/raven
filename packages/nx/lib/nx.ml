@@ -6850,12 +6850,14 @@ module Prim = struct
   let results = Prim.results
   let iter_results = Prim.iter_results
 
+  type origin = Prim.origin = { start : int array; extents : int array }
+
   type engine = Partition.engine = {
     run :
       'r 'd.
       by:string ->
       ?into:'d any ->
-      origin:int array ->
+      origin:origin ->
       unit Placement.t ->
       Nx_array.Layout.t array ->
       'r t ->

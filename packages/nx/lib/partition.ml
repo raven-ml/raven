@@ -11,7 +11,7 @@ type engine = {
     'r 'd.
     by:string ->
     ?into:'d Value.any ->
-    origin:int array ->
+    origin:Prim.origin ->
     unit Devices.placement ->
     Nx_array.Layout.t array ->
     'r Value.prim ->
@@ -170,12 +170,12 @@ let windows : type r d.
     engine ->
     by:string ->
     ?into:d Value.any ->
-    ?origin:int array ->
+    ?origin:Prim.origin ->
     unit Route.t ->
     L.t array ->
     r Value.prim ->
     r =
- fun e ~by ?into ?(origin = [||]) route layouts op ->
+ fun e ~by ?into ?(origin = Prim.no_origin) route layouts op ->
   (match route.compute with
   | Windows -> ()
   | Partials ->

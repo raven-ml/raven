@@ -620,7 +620,7 @@ let windows : type r.
 let run : type r d.
     by:string ->
     ?into:d Value.any ->
-    origin:int array ->
+    origin:Prim.origin ->
     unit Devices.placement ->
     L.t array ->
     r Value.prim ->
