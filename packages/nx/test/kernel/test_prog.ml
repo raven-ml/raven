@@ -695,6 +695,58 @@ let any_nan (p : P.t) loads =
   let out i es = Array.map (one (P.dtype p (Iarray.get p.outs i))) es in
   Result.map (Array.mapi out) (compute p loads)
 
+(* Whether each element of each output of [d]'s program over [loads] reads a
+   NaN's sign or payload: a Bitcast of a float reads its operand's bits, and
+   where that operand is a NaN an earlier kind left them unspecified
+   (prog.mli, Results), so two programs computing the same values may give
+   different bits from there on, as nx.cpu's vector and scalar code may. A
+   map computes each index from the operands' elements at it alone, so each
+   element is followed apart. *)
+let nan_bits d loads =
+  let p = program (pruned d) in
+  let nodes = Iarray.to_array p.nodes in
+  let value i =
+    let q =
+      P.v ~ins:p.ins (Iarray.of_array (Array.sub nodes 0 (i + 1))) ~outs:[| i |]
+    in
+    match compute q loads with Ok a -> Some a.(0) | Error _ -> None
+  in
+  let n = Array.fold_left ( * ) 1 small in
+  let read = Array.make (Array.length nodes) None in
+  let rec reads i =
+    match read.(i) with
+    | Some r -> r
+    | None ->
+        let any = Array.make n false in
+        let join j =
+          Array.iteri (fun e b -> if b then any.(e) <- true) (reads j)
+        in
+        (match nodes.(i) with
+        | P.In _ | Coord _ | Const _ -> ()
+        | Op1 (k, _, x) -> (
+            join x;
+            let (D.Any dt) = P.dtype p x in
+            match (k, value x) with
+            | Bitcast, Some es when D.is D.Float dt || D.is D.Complex dt ->
+                let d = D.Any dt in
+                Array.iteri
+                  (fun e el -> if Elements.nan_of d el then any.(e) <- true)
+                  es
+            | _ -> ())
+        | Op2 (_, x, y) -> join x; join y
+        | Op3 (_, x, y, z) -> join x; join y; join z);
+        read.(i) <- Some any;
+        any
+  in
+  Array.map reads (Iarray.to_array p.outs)
+
+(* [r], {!any_nan}'s outputs, with each element [nan_bits] marks unspecified. *)
+let blinded marks r =
+  Result.map
+    (Array.mapi (fun o es ->
+         Array.mapi (fun e v -> if marks.(o).(e) then "NaN bits" else v) es))
+    r
+
 (* Substitution *)
 
 let structural = Testable.structural ~pp:pp_prog
@@ -802,9 +854,10 @@ let check_bind d k x seed =
         Array.init (Array.length d.ins) (fun i ->
             if i = k then given else loads.(if i < k then i else i - 1))
       in
+      let marks = nan_bits d all in
       equal ~msg:"outputs' bits" outputs
-        (any_nan (program (pruned d)) all)
-        (any_nan s loads);
+        (blinded marks (any_nan (program (pruned d)) all))
+        (blinded marks (any_nan s loads));
       true
 
 let law_bind (d, k, choices, seed) =
@@ -945,8 +998,9 @@ let check_exprs d seed =
     (List.map name (Iarray.to_list q.ins));
   let rand = Random.State.make [| seed |] in
   let loads = Array.map (fun t -> random_elements rand t 12) d.ins in
-  let want = any_nan (program (pruned d)) loads in
-  equal ~msg:"outputs' bits" outputs want (any_nan q loads);
+  let marks = nan_bits d loads in
+  let want = blinded marks (any_nan (program (pruned d)) loads) in
+  equal ~msg:"outputs' bits" outputs want (blinded marks (any_nan q loads));
   q
 
 let law_of_exprs (d, seed) =
