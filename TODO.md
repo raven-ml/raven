@@ -189,6 +189,10 @@ raven / llama.cpp (Vulkan; ROCm):
 - D176 (selection and negation fold a NaN bitwise) has no rune pin: add
   one to rune's `Lower_arith` suite, a signalling NaN through a compiled
   select and negation keeping its bits
+- `Device.Tiny_elf.of_program` keys the whole program at every link (as
+  tinygrad does), 30 M words per special-function gradient; and
+  `share_loops` (D137) retries `joinable` at every shared node when two
+  stores cannot join, O(N²) in that case, which no program here reaches yet
 - folds of `Log2`, `Exp2` and `Pow` use the host's C library, so a folded
   constant can differ between macOS and Linux; D150 made the sine fold
   correctly rounded for that reason. Do the same for these, or state why a
