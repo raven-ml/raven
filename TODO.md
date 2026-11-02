@@ -10,19 +10,19 @@ llama.cpp a868c3e:
 - prefill-512 0.188 s / 58.6 ms: profile what's left after tensor cores
 - first call 0.220 s with filled caches (first step 0.115 s)
 
-gpt-oss-20b, AMD gfx1201 (nonnormal, 0dbf76af6a, before tolk ran on rig),
-raven / llama.cpp (Vulkan; ROCm):
-- decode 21.3 ms / 5.67; 7.41 ms
-- prefill-512 1.63 s / 0.180; 0.125 s
-- first call 0.39 s (12 tokens, kernels cached; 1.43 s compiling them)
-- llama.cpp b11344 Vulkan, b11342 ROCm; tinygrad needs Resizable BAR here
+gpt-oss-20b, AMD gfx1201 (nonnormal, f24925ed77, the new nx and rune),
+raven / llama.cpp b12048 Vulkan:
+- decode 20.3 ms / 9.40 ms
+- prefill-512 1.61 s / 0.308 s
+- first call 1.47 s (12 tokens, kernels cached; 2.39 s compiling them) /
+  0.136 s (2.19 s without Mesa's shader cache)
+- llama.cpp's ROCm build needs HIP libraries nonnormal lacks; tinygrad
+  needs Resizable BAR here
 
 - gpt-oss-20b on the new nx and rune: decode, prefill-512 and first call
-  on fudge (CUDA, NV) and nonnormal (AMD), recorded as the GptOss
+  on fudge (CUDA, NV), recorded as the GptOss
   baselines, against llama.cpp at a stated build; rune's test_jit on
-  CUDA and NV. nonnormal's decode and prefill rows don't fit its 31 GB:
-  KFD pins a forked worker's userptr pages for writing, which copies the
-  parent's 13.8 GB of weights
+  CUDA and NV
 
 ## rig
 
