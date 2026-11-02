@@ -22,9 +22,8 @@ let gpu =
     | Error _ -> None
     | Ok d -> Some (d, Nx.devices [ d ]))
 
-(* A compile error that names a header the machine lacks, or a compiler that
-   cannot be made without its library, is the machine's: the test skips. Half
-   floats' kernels read headers no other kernel does. *)
+(* A compile error that names a header the machine lacks is the machine's: the
+   test skips. Half floats' kernels read headers no other kernel does. *)
 let missing m =
   let has s =
     let n = String.length s in
@@ -35,7 +34,6 @@ let missing m =
   in
   if has "cannot open source file" then
     Some ("a header is missing, set CUDA_PATH: " ^ m)
-  else if has "NVRTC_PATH" || has "COMGR_PATH" then Some m
   else None
 
 let compiles (module S : Nx.Devices) =
@@ -47,19 +45,23 @@ let compiles (module S : Nx.Devices) =
     (fun d ->
       match neg d with
       | () -> ()
-      | exception ((Tolk.Renderer.Compiler.Compile_error m | Failure m) as e)
-        -> (
+      | exception (Tolk.Renderer.Compiler.Compile_error m as e) -> (
           match missing m with
           | Some why -> skip ~reason:why ()
           | None -> raise e))
     Nx.Dtype.[ Any Nx.float32; Any Nx.float16; Any Nx.bfloat16 ]
 
+(* The first GPU, skipping where its renderer cannot be made: without its
+   compiler's library, jit evaluates each call uncompiled. *)
 let on_gpu () =
   match Lazy.force gpu with
   | None -> skip ~reason:"no GPU" ()
-  | Some (d, s) ->
-      compiles s;
-      (d, s)
+  | Some (d, s) -> (
+      match Tolk_engine.renderer d with
+      | exception Failure why -> skip ~reason:why ()
+      | _ ->
+          compiles s;
+          (d, s))
 
 let law c = Scatters.law (snd (on_gpu ())) c
 let casts16 dt () = Casts16.law (snd (on_gpu ())) dt

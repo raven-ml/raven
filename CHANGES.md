@@ -363,6 +363,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` on a GPU whose compiler's library is missing (NVRTC, comgr or
+  MTLCompiler) evaluates each call uncompiled, as for any program tolk
+  declines, and says why under `RUNE_JIT_DEBUG`; its first compile raised
+  `Compile_error` naming `NVRTC_PATH` or `COMGR_PATH`.
 - A `Rune.jit` call allocates 63 fewer words on a hit and 66 fewer where
   its program checks: it builds no closures for checks it does not make or
   for reading its arguments, no table of argument pieces or list of leaves
