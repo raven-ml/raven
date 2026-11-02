@@ -640,9 +640,13 @@ module Probe = struct
               Effect.Deep.continue k [||])
       | _ -> None
     in
+    (* The runtime's asynchronous exceptions pass on: an [Error] a caller may
+       drop would hide them. *)
     let body () =
       match f () with
       | r -> Ok r
+      | exception ((Out_of_memory | Stack_overflow | Sys.Break) as x) ->
+          Printexc.raise_with_backtrace x (Printexc.get_raw_backtrace ())
       | exception x -> Error (x, Printexc.get_raw_backtrace ())
     in
     let r = Effect.Deep.try_with body () { effc } in

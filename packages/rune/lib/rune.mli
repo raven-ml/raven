@@ -981,6 +981,9 @@ module Probe : sig
       where lanes were held: [collect] then reads on the host which rows ran,
       once per offer, and gathers them.
 
+      [Out_of_memory], [Stack_overflow] and [Sys.Break] from [f] are raised
+      again, with their backtrace, and the offers dropped.
+
       Raises [Invalid_argument] inside a traced function, a map or a
       differentiation, where a construct could be answered outside it. *)
 end

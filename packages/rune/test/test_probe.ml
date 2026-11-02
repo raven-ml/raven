@@ -106,6 +106,27 @@ let test_raise () =
   equal ~msg:"outcome" (outcome_t pass) (Raised "Invalid_argument(\"stop\")") r;
   equal ~msg:"offers" offers_t [ offer 0 [ x ] ] got
 
+(* The runtime's asynchronous exceptions pass through a collect, raised
+   directly as the runtime would. The test catches them itself: windtrap ends
+   its worker on Out_of_memory and Sys.Break. *)
+let test_async () =
+  let p = Probe.make (tagged ()) in
+  let x = vec [| 1. |] in
+  let through e =
+    match
+      Probe.collect p (fun () ->
+          Probe.emit p (tag 0, x);
+          raise e)
+    with
+    | _ -> "an Error"
+    | exception e -> Printexc.to_string e
+  in
+  List.iter
+    (fun e ->
+      let s = Printexc.to_string e in
+      equal ~msg:s string s (through e))
+    [ Out_of_memory; Stack_overflow; Sys.Break ]
+
 (* Scans *)
 
 (* Rows of [s] at [dt], [n] of them, a scan over them emitting at two sites each
@@ -889,6 +910,7 @@ let () =
              test "each emit offers one row" test_eager;
              test "the innermost collect receives" test_nested;
              test "a raise keeps the offers" test_raise;
+             test "an asynchronous exception passes through" test_async;
            ];
          group "scans"
            [

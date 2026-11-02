@@ -363,6 +363,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.Probe.collect` raises `Out_of_memory`, `Stack_overflow` and
+  `Sys.Break` again where it returned them as an `Error`, which a caller could
+  drop.
 - `Rune.jit` on a GPU whose compiler's library is missing (NVRTC, comgr or
   MTLCompiler) evaluates each call uncompiled, as for any program tolk
   declines, and says why under `RUNE_JIT_DEBUG`; its first compile raised
