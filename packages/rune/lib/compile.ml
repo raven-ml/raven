@@ -1012,9 +1012,18 @@ let assembled ~device (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
 
 (* [ys], the nodes of a value placed at [q], each a copy where it lies on
    another device. *)
-let placed st q ys =
-  let d = device_at st q in
-  Array.map (fun u -> moved u d) ys
+let placed st env q x ys =
+  let d = device_at st q and n = var env x in
+  (* A window placed on the device it lies on, as a closing's own slot, is
+     read from storage of its own, as a copied one is: a kernel that sums
+     the slots of a piece in one order then reads each from a buffer of the
+     slot's shape on every device, so every device's sum is one program
+     whichever slot is its own. *)
+  let own u =
+    st.split && n >= 0 && env.windows.(n)
+    && match Ops.device u with Some d' -> String.equal d' d | None -> false
+  in
+  Array.map (fun u -> if own u then Ops.contiguous u else moved u d) ys
 
 let issue st cs env (type r) base (op : r Nx.Prim.t) =
   (match op with Place (q, _) -> on_rig st q "a placement" | _ -> ());
@@ -1074,7 +1083,9 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
               | ys -> ys
               | exception Invalid_argument why -> decline "%s" why
             in
-            match op with Place (q, _) -> placed st q ys | _ -> ys)
+            match op with
+            | Place (q, x) -> placed st env q x ys
+            | _ -> ys)
       in
       (* A value that computes Threefry blocks, a draw or a key split or a map
          or view of one, is stored where it is read more than once: each

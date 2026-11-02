@@ -4394,9 +4394,9 @@ let trainings = ref 0
    moments cut along axis 0, the batch cut along axis 0 too, each layer a
    call forward, one backward by [vjp] and one updating its weights and
    moments, its weights placed whole on every device where a call reads
-   them. The update, given its state donated, compiles. [step] runs the
-   forward over every layer, keeping each layer's output, then the backward
-   and the update layer by layer from the last. *)
+   them. Every call compiles, the update given its state donated. [step] runs
+   the forward over every layer, keeping each layer's output, then the
+   backward and the update layer by layer from the last. *)
 let sharded ~n ~d ~layers ~batch =
   incr trainings;
   let ds =
@@ -4431,20 +4431,29 @@ let sharded ~n ~d ~layers ~batch =
   let mv = Array.map (fun w -> (Nx.zeros_like w, Nx.zeros_like w)) w in
   let g = Array.map Nx.zeros_like w in
   let x = split batch (fill layers (batch * d)) in
+  let compiled name f =
+    let before = Rune.evaluations () in
+    let r = f () in
+    equal ~msg:(name ^ " compiled") int 0 (Rune.evaluations () - before);
+    r
+  in
   let step () =
     let h = Array.make (layers + 1) x in
     for l = 0 to layers - 1 do
-      h.(l + 1) <- forward (w.(l), h.(l))
+      h.(l + 1) <- compiled "the forward" (fun () -> forward (w.(l), h.(l)))
     done;
     let dh = ref h.(layers) in
     for l = layers - 1 downto 0 do
-      let gl, dl = backward (w.(l), h.(l)) !dh in
+      let gl, dl =
+        compiled "the backward" (fun () -> backward (w.(l), h.(l)) !dh)
+      in
       dh := dl;
       g.(l) <- gl;
       let m, v = mv.(l) in
-      let before = Rune.evaluations () in
-      let w', mv' = update (Nx.donate w.(l), (Nx.donate m, Nx.donate v)) gl in
-      equal ~msg:"the update compiled" int 0 (Rune.evaluations () - before);
+      let w', mv' =
+        compiled "the update" (fun () ->
+            update (Nx.donate w.(l), (Nx.donate m, Nx.donate v)) gl)
+      in
       w.(l) <- w';
       mv.(l) <- mv'
     done

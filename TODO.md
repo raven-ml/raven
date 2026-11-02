@@ -217,19 +217,11 @@ raven / llama.cpp (Vulkan; ROCm):
   lending per piece (898ec2b85): a place onto another set
   (_plans/rune-sharding/adjudication.md). `lanes` and `lane_index`
   compile, and per-device code, as loops that read their window's
-  coordinates, makes as many programs over 2 to 16 devices, each launch
+  coordinates, makes programs that do not grow over 2 to 16 devices, each launch
   passing its window's start. nx's partials still write each tile's start
   into its program as a constant (`Partial.renumber`, `shift`: `argmax`
   along a cut axis, a scan's positions, a gather, scatter or sum over a
-  cut axis), so those make a kernel per device. A split
-  program that gathers an argument so that a device's window grows still
-  evaluates: a compiled backward call holds 3.1 layers per device at n=2
-  and 4.2 at n=8 (d=512) against a bound of 2.2 and 1.5 (RFC 0005: two
-  layers), because tolk plans copies and kernels in separate arenas,
-  keeps copy buffers longer, and fuses a closing's piece slices into one
-  kernel so every piece is live at once; one lane and no copy hold reach
-  only 2.6 and 3.0. Per-run storage (D173) adds allocations to every split
-  call, unmeasured. nx's closing
+  cut axis), so those make a kernel per device. nx's closing
   moves a chunk between every pair of devices: time it against tinygrad's
   ring and hierarchical allreduce on a machine with several GPUs, and if
   it is slower, write those in nx's partition

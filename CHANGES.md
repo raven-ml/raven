@@ -362,6 +362,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles a program over several devices that places a cut
+  argument whole on each device, as fully sharded training's forward and
+  backward do, where it evaluated it: each call holds within RFC 0005's bound.
+  The kernels such a program makes no longer stay the same over 2 devices as
+  over more; they do not grow with the number of devices.
 - A compiled program over several devices assembles a value from its pieces
   in storage of its own, one store per piece, a copied piece copied into its
   region, so each piece may go once it is stored; it read every piece in one
@@ -404,10 +409,10 @@ All notable changes to this project will be documented in this file.
   across devices writes in place; such calls were evaluated. A program over
   several devices holds no memory between calls: what it computes on each
   device is made per call and returned once that work is done.
-- A compiled program over the memory devices of one set compiles as many
-  kernels whatever the number of devices, where the cut is even: each piece
-  is stored into a view of its run of storage, wherever the run lies. A
-  data-parallel step over 16 devices made 73 programs and makes 11.
+- A compiled program over the memory devices of one set compiles kernels
+  that do not grow with the number of devices, where the cut is even: each
+  piece is stored into a view of its run of storage, wherever the run lies. A
+  data-parallel step over 16 devices made 73 programs and makes 13.
 - `Rune.jit` compiles programs over several devices of one set, values cut
   across them, whole on each or whole on one: each device computes its
   windows in kernels of its own, compiled once per target, with eager's

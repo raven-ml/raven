@@ -1156,20 +1156,11 @@ let assembled set shape regions =
 
 (* Gathers
 
-   A program that places an argument so that a device holds more of it
-   evaluates, since a compiled one would hold what it gathers between calls:
-   a cut argument placed whole on each device, or, on the mesh, whole along
-   one of its axes. A program that gathers a value it computes, or whose
-   gradient places a cut cotangent at a whole weight, compiles. Each gives
-   eager's bits. *)
-
-let evaluated f x y =
-  let before = Rune.evaluations () in
-  let r =
-    outcome (fun () -> Rune.jit T.(tensor @-> tensor @-> returns tensor) f x y)
-  in
-  equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
-  r
+   A program that places an argument so that a device holds more of it, a cut
+   argument placed whole on each device or, on the mesh, whole along one of
+   its axes, compiles, as one that gathers a value it computes or whose
+   gradient places a cut cotangent at a whole weight does. Each gives eager's
+   bits. *)
 
 let gather_kinds set =
   let x = Nx.place (at set (Split 0)) (value [| 8; 3 |]) in
@@ -1180,7 +1171,7 @@ let gather_kinds set =
       (omap bits (outcome (fun () -> f x w)))
       (omap bits got)
   in
-  same (evaluated whole x w) whole;
+  same (compiled whole x w) whole;
   let computed x _ = Nx.place (at set On) (Nx.mul x x) in
   same (compiled computed x w) computed;
   let grad x w =
@@ -1192,7 +1183,7 @@ let gather_kinds set =
   | Some mesh ->
       let x = Nx.place (at set (Mesh (0, 1))) (value [| 8; 4 |]) in
       let rows x _ = Nx.place (Nx.Placement.mesh mesh [ (0, [ "x" ]) ]) x in
-      let got = evaluated rows x x in
+      let got = compiled rows x x in
       equal (outcome_t bits_t)
         (omap bits (outcome (fun () -> rows x x)))
         (omap bits got)
@@ -1203,6 +1194,15 @@ let gather_kinds set =
    value it computes, and gives eager's placements and bits: a split program
    keeps what it derives from an argument between calls, which would hold a
    copy on the other set's devices. *)
+
+(* [f] under jit over [x] and [y], evaluating a call. *)
+let evaluated f x y =
+  let before = Rune.evaluations () in
+  let r =
+    outcome (fun () -> Rune.jit T.(tensor @-> tensor @-> returns tensor) f x y)
+  in
+  equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
+  r
 
 let others =
   Array.init 2 (fun k ->
@@ -1313,11 +1313,15 @@ let onto_mesh set =
 
 (* Programs
 
-   A program for one device serves every device of its target, so a
-   data-parallel step over [n] memory devices takes as many programs whatever
-   [n]: each device's kernels, its stores of pieces into their runs of an
-   assembly included, are another's. A step's programs are counted by their
-   keys, made or kept, so that one this process made before counts. The hidden
+   A program for one device serves every device of its target, so the
+   programs a data-parallel step over [n] memory devices takes do not grow
+   with [n]: each device's kernels, its stores of pieces into their runs of an
+   assembly included, are another's. The count is the same over 4, 8 and 16
+   devices, and over 2 at most that: a closing whose sum another device
+   copies sums its slots in a kernel of its own from 4 devices on, where over
+   2 tolk inlines a sum of two slots into each reader (a value reading at
+   most 3 buffers is inlined). A step's programs are counted by their keys,
+   made or kept, so that one this process made before counts. The hidden
    width grows with [n] so that every cut, the gradients' closing sums'
    included, is even, and each device's windows have one shape. *)
 
@@ -1510,8 +1514,10 @@ let partials set =
 
 (* A data-parallel step written as per-device code, each device's loss offset
    by its lane's index and gathered by a sum over the lanes, and one that
-   accumulates stacked partial gradients, each take as many programs over 2,
-   4, 8 and 16 memory devices, as the data-parallel step above does. *)
+   accumulates stacked partial gradients, each take programs that do not grow
+   over 2, 4, 8 and 16 memory devices, as the data-parallel step above does.
+   Their widths are that step's none, so that no program of one is the
+   other's. *)
 let mapped_programs n =
   let module S = (val Nx.devices (Array.to_list (Array.sub sixteen 0 n))) in
   let hidden = 48 + n in
@@ -1697,7 +1703,7 @@ let () =
            ];
          group "programs"
            [
-             test "a data-parallel step takes as many over 2, 4, 8 and 16"
+             test "a data-parallel step's programs do not grow over 2 to 16"
                (fun () ->
                  flat "programs" (List.map programs [ 2; 4; 8; 16 ]));
            ];
@@ -1710,7 +1716,7 @@ let () =
                  over 4 { law = indices });
              test "stacked partials stay on their devices, then close"
                (fun () -> over 4 { law = partials });
-             test "per-device code takes as many programs over 2 to 16"
+             test "per-device code's programs do not grow over 2 to 16"
                (fun () ->
                  let counts = List.map mapped_programs [ 2; 4; 8; 16 ] in
                  flat "per-device" (List.map fst counts);

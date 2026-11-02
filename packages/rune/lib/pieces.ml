@@ -404,21 +404,6 @@ let piece_forms (F f) =
             })
         (Nx.Prim.pieces f.placement (shape_of f))
 
-(* Whether placing a value of [shape] at [p] onto [q] gathers it, some device's
-   window of it growing, as fully sharded training gathers a layer's weights
-   whole on each device: a compiled call holds what it gathers and every piece
-   of the closings it computes at once, where an evaluated one lets each go
-   after its last read, and so holds more than the share the caller keeps
-   allows. *)
-let gathers q p shape =
-  let held pl =
-    Array.map
-      (fun (_, w) -> Array.fold_left ( * ) 1 (extents w))
-      (Nx.Prim.pieces pl shape)
-  in
-  let a = held p and b = held q in
-  Array.length a = Array.length b && Array.exists2 ( < ) a b
-
 (* The placement of a value at [p] whose devices hold whole rows of their
    windows of the rest: each device's piece of a row is a row of its piece. *)
 let by_rows p =
@@ -490,12 +475,6 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
       | Some (Var n) -> like x (Option.get env.(n))
       | _ -> x
     in
-    (* Whether [x] is an argument of the program. *)
-    let argument x =
-      match Nx.Prim.payload p.owner x with
-      | Some (Var n) -> Array.mem n p.params
-      | _ -> false
-    in
     let bind = ref 0 in
     let store (type v s d) (y : (v, s, d) Nx.t) =
       env.(!bind) <- Some (V y);
@@ -506,9 +485,9 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
         | Op { by; op = traced; base } ->
             let op = Nx.Prim.map lookup traced in
             let r =
-              match (op, traced) with
-              | Check _, _ -> decline "a check over several devices"
-              | Place (q, x), _
+              match op with
+              | Check _ -> decline "a check over several devices"
+              | Place (q, x)
                 when Option.is_some (Nx.Prim.owner x)
                      && Option.is_none
                           (Nx.Prim.coerce (Nx.dtype x) (Nx.Placement.devices q)
@@ -517,11 +496,6 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
                     "Nx.place onto another set of devices: a program over \
                      several devices keeps what it derives from an argument \
                      between calls"
-              | Place (q, x), Place (_, x0)
-                when argument x0 && gathers q (Nx.placement x) (Nx.shape x) ->
-                  decline
-                    "Nx.place gathers an argument cut across devices: a \
-                     compiled call holds all it gathers and closes at once"
               | _ ->
                   let e = engine ri ~gathered ~by ~whole:op moves in
                   Nx.Prim.partition e ~by op

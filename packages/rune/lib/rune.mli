@@ -1384,8 +1384,9 @@ val jit :
     and a kernel reads the coordinates of its window, from a start each
     device's launch of it passes. A value a device assembles from pieces, as a
     closing or a gather does, is storage of its own, each piece stored or
-    copied into its region. Where every window of a cut has one shape, a
-    program makes as many kernels whatever the number of devices. A {!scan} or
+    copied into its region. Where every window of a cut has one shape, the
+    kernels a program makes do not grow with the number of devices: they
+    are the same from 4 devices on, and over 2 or 3 at most those. A {!scan} or
     an {!iterate} over such values is one loop, each trip running every
     device's kernels and moves of its step; each device reads its piece of a
     row from its piece of the rows. Each argument's piece on a device is an
@@ -1754,11 +1755,7 @@ val jit :
     an addition to a {!Total}, an emission, a traced value placed onto another
     set, as weights offloaded to other devices are, since a split program keeps
     the storage it derives from an argument between calls, and so would hold
-    the copies on that set's devices; or a placement of an argument that gives
-    a device more of it, as a gather of a cut argument whole on each device
-    does, since a compiled call holds all it gathers and every piece of the
-    closings it computes at once, where an evaluated one lets each go after its
-    last read. It also declines a
+    the copies on that set's devices. It also declines a
     program with a value on a device that computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a
     compiled call's are, and a call with donated arguments consumes them. It

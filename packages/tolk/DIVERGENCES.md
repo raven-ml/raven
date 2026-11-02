@@ -5020,8 +5020,9 @@ fold wraps integers and holds its float bound`, hold.
   (`Compile.assembled`) hold an assembly as a buffer filled by a store per
   piece, each device's own piece at its device's offset. Indexed at the
   offset, a data-parallel step over 2, 4, 8 and 16 memory devices made 19,
-  31, 55 and 103 programs; through views, 11 each, against rune's promise of
-  as many whatever the devices (D170).
+  31, 55 and 103 programs; through views, 11 each, and 11, 13, 13 and 13
+  once rune reads a closing's own slot from storage of its own, against
+  rune's promise that they do not grow with the devices (D170).
 - **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores of one
   shape into two runs of a buffer share a kernel`, `› a store into contiguous
   rows of a buffer stores into a view of them`, `› a store into rows of a
