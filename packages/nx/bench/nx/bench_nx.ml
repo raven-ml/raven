@@ -1252,7 +1252,8 @@ let scan_rows =
     ]
 
 (* Order and counted lengths, each against its NumPy counterpart at the same
-   size: 1M uniform draws, rows of 1024, a 64K-key table, 1000 groups. *)
+   size: 1M uniform draws, rows of 1024, a 64K-key table, 1000 groups, and
+   keys as wide as the bits of 1M float64 draws, which unique sorts. *)
 let u1m () = on_host (Nx.Rng.uniform ~key:(Nx.Rng.key 7) D.Float32 [| n1m |])
 let u1m64 () = on_host (Nx.cast D.Float64 (u1m ()))
 
@@ -1280,6 +1281,9 @@ let order_rows =
         ~setup:(fun () -> (sorted_64k (), u1m ()))
         (fun (table, x) -> Nx.searchsorted ~side:`Left table x);
       Thumper.bench_with_setup "unique-i32-1M-1000" ~setup:groups1m Nx.unique;
+      Thumper.bench_with_setup "unique-i64-1M-wide"
+        ~setup:(fun () -> on_host (Nx.bitcast D.Int64 (u1m64 ())))
+        Nx.unique;
       Thumper.bench_with_setup "positions-bool-1M" ~setup:b1m Nx.positions;
       Thumper.bench_with_setup "quantile-f64-1M-3" ~setup:u1m64
         (Nx.quantile quartiles);
@@ -1508,9 +1512,10 @@ let quant_rows =
     ]
 
 (* Ragged arrays: a take of every row of a text column in a scrambled order,
-   as a join or a sort gathers a column of strings. 64K short texts of 4 to 20
-   bytes, as names and codes are, and 1K long ones of 512 to 1536 bytes, drawn
-   once from a fixed seed. *)
+   as a join or a sort gathers a column of strings, and the ids that group the
+   short texts, as a group-by or a join on text keys numbers them. 64K short
+   texts of 4 to 20 bytes, as names and codes are, and 1K long ones of 512 to
+   1536 bytes, drawn once from a fixed seed. *)
 let texts n lo hi () =
   let rs = Random.State.make [| 13 |] in
   let ss =
@@ -1531,6 +1536,9 @@ let ragged_rows =
         ~setup:(texts 65536 4 20) take_texts;
       Thumper.bench_with_setup "take-text-1K-of-512-to-1536B"
         ~setup:(texts 1024 512 1536) take_texts;
+      Thumper.bench_with_setup "ids-text-64K-of-4-to-20B"
+        ~setup:(texts 65536 4 20)
+        (fun (_, r) -> Nx_ragged.ids r);
     ]
 
 let () =

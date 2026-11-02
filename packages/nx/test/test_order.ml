@@ -398,15 +398,71 @@ let test_search_cases () =
 
 type unique_case = Unique_case : rows_case * int option -> unique_case
 
+(* Integer rows that take about as many values as there are rows, where an
+   unsized {!Nx.unique} chooses between numbering them and sorting them:
+   [n] rows of one column, or of two whose second holds one value, the first
+   taking [r] values, [n - 1], [n] or [n + 1], from a drawn value up, values
+   that may wrap past the dtype's greatest. *)
+let near_case =
+  let open Gen in
+  let ints =
+    List.filter
+      (fun (D.Any dt) ->
+        (D.is D.Signed dt || D.is D.Unsigned dt) && D.bits dt >= 16)
+      keyed
+  in
+  let* (D.Any dt) = of_list ints in
+  let* n = int_range 3 300 in
+  let* r = map (fun d -> n + d) (int_range (-1) 1) in
+  let* two = bool in
+  let* base = value dt in
+  let+ steps = array ~size:(constant (n - 2)) (int_range 0 (r - 1)) in
+  (* The least and greatest steps hold, so that the column takes [r] values. *)
+  let steps = Array.append [| 0; r - 1 |] steps in
+  let column = Array.map Int64.of_int steps in
+  let column =
+    let pair i = if i mod 2 = 0 then column.(i / 2) else 0L in
+    if two then Array.init (2 * n) pair else column
+  in
+  let m = Array.length column in
+  let up = Nx.cast dt (Nx.create Nx.int64 [| m |] column) in
+  let x = Nx.add (Nx.full dt [| m |] base) up in
+  let s = if two then [| n; 2 |] else [| n |] in
+  Unique_case (Rows_case (dt, s, Nx.to_array x), None)
+
 let unique_case =
   let open Gen in
   with_pp
     (fun ppf (Unique_case (Rows_case (dt, s, _), size)) ->
       Format.fprintf ppf "%s %a size %s" (D.name dt) pp_ints s
         (match size with None -> "-" | Some l -> string_of_int l))
-    (let* (Rows_case (_, s, _) as r) = rows_case in
-     let+ size = option (int_range 0 (s.(0) + 2)) in
-     Unique_case (r, size))
+    (frequency
+       [
+         ( 1,
+           let* (Rows_case (_, s, _) as r) = rows_case in
+           let+ size = option (int_range 0 (s.(0) + 2)) in
+           Unique_case (r, size) );
+         (1, near_case);
+       ])
+
+(* The number of values the rows of [x] can take, the product of its columns'
+   spans of order keys, or [max_int] past it. *)
+let values_taken x =
+  let n = Nx.dim 0 x in
+  let k = Nx.order_key Nx.uint64 x in
+  let k = if Nx.ndim x = 1 then Nx.reshape [| n; 1 |] k else k in
+  if n = 0 then 0
+  else
+    let lo = Nx.to_array (Nx.min ~axes:[ 0 ] k)
+    and hi = Nx.to_array (Nx.max ~axes:[ 0 ] k) in
+    let times acc j =
+      let span = Int64.sub hi.(j) lo.(j) in
+      if Int64.unsigned_compare span (Int64.of_int max_int) >= 0 then max_int
+      else
+        let s = Int64.to_int span + 1 in
+        if acc > max_int / s then max_int else acc * s
+    in
+    List.fold_left times 1 (List.init (Array.length lo) Fun.id)
 
 let law_unique (Unique_case (Rows_case (dt, s, vs), size)) =
   let x, xs = made dt s vs in
@@ -437,6 +493,12 @@ let law_unique (Unique_case (Rows_case (dt, s, vs), size)) =
   in
   cover "padded" (l > k);
   cover "cut" (l < k);
+  let r = values_taken x and n = s.(0) in
+  if size = None && n >= 3 then begin
+    cover "rows taking n - 1 values" (r = n - 1);
+    cover "rows taking n values" (r = n);
+    cover "rows taking n + 1 values" (r = n + 1)
+  end;
   equal ~msg:"ids" (array int64) ids (Nx.to_array g.ids);
   equal ~msg:"count" int64 (Int64.of_int k) (Nx.item [] g.count);
   equal ~msg:"first" (array int64)

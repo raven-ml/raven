@@ -468,6 +468,17 @@ let rank r =
   in
   Nx.sub_s (Nx.take code (Nx.cumsum marks)) 1L
 
+(* The codes lie in [0, n), so they number their rows' slots directly: each
+   code's first row is the least that a scatter puts at it, a row is its
+   group's first where it is its code's, and the first rows' ranks, scattered
+   at their codes, give every row its group. *)
 let ids r =
   let code = codes "ids" r in
-  (Nx.unique ~size:(Nx.dim 0 code) code).ids
+  let n = Nx.dim 0 code in
+  let rows = Nx.arange_at (Nx.beside code) Nx.int64 0 n 1 in
+  let firsts = Nx.full_like code (Int64.of_int n) in
+  let first = Nx.take code (Nx.scatter ~combine:Min ~axis:0 code rows firsts) in
+  let opens = Nx.equal first rows in
+  let rank = Nx.sub_s (Nx.cumsum (Nx.cast Nx.int64 opens)) 1L in
+  let opened = Nx.where opens code (Nx.full_like code (-1L)) in
+  Nx.take code (Nx.scatter ~axis:0 opened rank (Nx.zeros_like code))

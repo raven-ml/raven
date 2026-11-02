@@ -3505,7 +3505,11 @@ val unique : ?size:int -> ('v, 's, 'd) t -> 'd groups
     holds [n] and [counts] [0]; below [k], the later groups are cut from them,
     and [ids] still numbers those groups from [size].
 
-    It is one stable sort of the keys and a few passes over them.
+    It is one stable sort of the keys and a few passes over them. Without
+    [size], it first reads each column's least and greatest order key
+    ({!order_key}) on the host: where the product of the columns' spans, from
+    least to greatest key, is at most the number of rows, it numbers the rows
+    in a few passes and no sort.
 
     Raises [Invalid_argument] if [keys] is neither 1-d nor 2-d, is complex, or
     if [size] is negative. *)

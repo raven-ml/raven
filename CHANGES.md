@@ -1711,6 +1711,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.unique` without `~size` numbers keys whose rows take at most as many
+  values as there are rows, read from each column's least and greatest order
+  keys, in a few passes and no sort: a million int64 keys of 100 values take
+  40% fewer instructions. `Nx_ragged.ids` numbers its codes directly, with no
+  sort.
 - `Nx.betaincinv` and `Nx.betainccinv` take each logistic point's two
   logarithms with one `exp` and one `log1p`, where they took two of each: at
   float64 their program is 6% smaller and their gradient's 4%, which

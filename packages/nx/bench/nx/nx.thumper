@@ -11,6 +11,7 @@
 # forced: blessed quant/q8_0-gemv-4096 quant/q8_0-gemv-4096-f64 quant/q4_k-gemv-4096 quant/q6_k-gemv-4096 under load 38.0 on 14 cores
 # forced: blessed frontend/rshift-i32-1M quant/q4_k-gemv-4096 quant/q6_k-gemv-4096 under load 28.9 on 14 cores
 # forced: blessed elementwise/add-f32-8x512x512-lanes under load 64.7 on 14 cores
+# forced: blessed order/unique-i32-1M-1000 order/unique-i64-1M-wide ragged/ids-text-64K-of-4-to-20B under load 54.0 on 14 cores
 
 constant/chain-1000	alloc_words	exact	94146
 contract/contract-i32-m128x4096x4096	alloc_words	exact	342
@@ -199,7 +200,8 @@ order/searchsorted-f32-1M-in-64K	alloc_words	exact	16556
 order/sort-f32-1024x1024-rows	alloc_words	exact	142
 order/sort-f32-1M	alloc_words	exact	139
 order/top_k-8-f32-64x16384	alloc_words	exact	147
-order/unique-i32-1M-1000	alloc_words	exact	3731
+order/unique-i32-1M-1000	alloc_words	exact	4304
+order/unique-i64-1M-wide	alloc_words	exact	4438
 place/borrow-memory-device-16	alloc_words	exact	35
 place/equal-1	alloc_words	exact	4
 place/host-to-split-axis1	alloc_words	exact	568
@@ -222,6 +224,7 @@ quant/q4_k-gemv-4096	alloc_words	exact	7160
 quant/q6_k-gemv-4096	alloc_words	exact	6384
 quant/q8_0-gemv-4096	alloc_words	exact	888
 quant/q8_0-gemv-4096-f64	alloc_words	exact	888
+ragged/ids-text-64K-of-4-to-20B	alloc_words	exact	9760
 ragged/take-text-1K-of-512-to-1536B	alloc_words	exact	2661
 ragged/take-text-64K-of-4-to-20B	alloc_words	exact	2661
 rng/bernoulli-f32-1Kx1K	alloc_words	exact	1220

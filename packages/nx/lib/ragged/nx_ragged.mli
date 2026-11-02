@@ -146,7 +146,8 @@ val ids : ('v, 's, 'd) t -> 'd Nx.int64_t
     relative to [r]: the ids of two ragged arrays compare only when computed
     over their {!concat}.
 
-    Cost: {!rank}'s, and one sort of an integer per row ({!Nx.unique}).
+    Cost: {!rank}'s, and a few passes over a code per row, with no sort and
+    no further read on the host.
 
     Raises [Invalid_argument] if [r]'s values are complex. *)
 
