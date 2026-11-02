@@ -94,6 +94,9 @@ let escape_rm fd nr p what =
 
 let escape fd nr p what = Result.map_error why (escape_rm fd nr p what)
 
+let escape_raw fd nr p =
+  ioctl fd (iowr ~type_:D.nv_ioctl_magic nr (Bigarray.Array1.dim p)) p
+
 let register fd ~ctl =
   let p = params D.Register_fd.sizeof in
   set p D.Register_fd.ctl_fd ctl;
@@ -229,6 +232,8 @@ let rm c =
   }
 
 (* Unified memory *)
+
+let uvm_raw u cmd p = ioctl u.uvm cmd p
 
 let uvm u cmd p status what =
   let* () = guard what (fun () -> ioctl u.uvm cmd p) in

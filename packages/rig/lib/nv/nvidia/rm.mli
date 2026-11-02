@@ -149,3 +149,31 @@ val uvm_call :
   string ->
   (unit, string) result
 (** [uvm_call c u] is {!uvm}[ u] that checks the status by [c]'s release. *)
+
+(** {1:raw Calls that record first}
+
+    These raise [Unix.Unix_error] where the system call fails, and allocate
+    nothing once it has succeeded, so that a caller stores what the call
+    made in a record made before it, with no allocation between. *)
+
+val open_raw : string -> int
+(** [open_raw path] is the descriptor of the device file [path]. *)
+
+val map_raw : int -> int -> int -> unit
+(** [map_raw fd at n] is {!map}[ fd at n]. *)
+
+val reserve_any_raw : int -> int -> int
+(** [reserve_any_raw n align] is {!reserve_any}[ ~align n], [0] if the process
+    has no room. *)
+
+val escape_raw : int -> int -> Rig_nv.params -> unit
+(** [escape_raw fd nr p] is {!escape}[ fd nr p], which [p]'s RM status
+    answers after. *)
+
+val uvm_raw : unified -> int -> Rig_nv.params -> unit
+(** [uvm_raw u cmd p] runs the unified memory ioctl [cmd] with [p], which holds
+    its RM status after. *)
+
+val address : Rig_nv.params -> int
+(** [address p] is the address of [p]'s bytes, for a field that points to
+    other parameters. *)

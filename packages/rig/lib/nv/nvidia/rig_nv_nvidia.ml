@@ -106,6 +106,9 @@ type mem = {
   host : int option; (* the process's address of it, if it maps it *)
   video : int option; (* the GPU whose memory it is, by number *)
   range : range; (* the range it lies in *)
+  mutable user : user;
+      (* its GPU's mapping of [range], which its free reads with no search:
+         set under [ranges_lock] for a view *)
 }
 
 (* A range of unified memory where an RM memory object is mapped for each GPU
@@ -113,16 +116,45 @@ type mem = {
    described. Every region lies in one, its own allocation's, a host range, or
    another GPU's range it views: unified memory maps a range once per GPU, so
    a GPU's last region unmaps it for that GPU, and the last region of all frees
-   the range and its object. *)
+   the range and its object.
+
+   A range is made, with the parameters its give-back needs, before the first
+   call that takes anything for it, and each call's product is stored in it
+   as the call returns, with nothing allocated between, so that what it holds
+   is always known ([give_back]). *)
 and range = {
-  gpu_addr : int; (* the GPUs' address of its first byte *)
   bytes : int;
-  memory : int; (* the memory object mapped there *)
-  naming : naming; (* who chose [memory] *)
+  naming : naming; (* who chooses [memory] *)
   parent : gpu; (* the GPU the object belongs to *)
-  space : space; (* where [gpu_addr] was taken *)
-  mapped : int option; (* where the process maps the object, if it does *)
-  mutable users : (gpu * int) list;
+  space : space; (* where [gpu_addr] is taken *)
+  mutable gpu_addr : int; (* the GPUs' address of its first byte, or -1 *)
+  mutable memory : int; (* the memory object's handle, or 0 *)
+  mutable made : bool; (* whether the RM holds the object *)
+  mutable cpu : bool; (* whether the process maps memory at [gpu_addr] *)
+  mutable unified : bool; (* whether unified memory holds the range *)
+  mutable spare : int; (* a file opened for one call, or -1 *)
+  mutable users : user list; (* the GPUs that may map it *)
+  mutable mapping : int; (* how many of [users] map it *)
+  free_uvm : Rig_nv.params; (* UVM_FREE's, by [uvm_free] *)
+  uvm_free : uvm_free;
+  free_rm : Rig_nv.params; (* NV_ESC_RM_FREE's, by [Defs.Nvos00] *)
+}
+
+(* A GPU's mapping of a range: its regions over the range, and what a free of
+   one needs, made with it: the parameters that unmap it, and the free
+   itself. *)
+and user = {
+  gpu : gpu;
+  mutable count : int;
+  unmap : Rig_nv.params;
+  mutable release : unit -> unit;
+}
+
+(* The fields of the release's UVM_FREE. *)
+and uvm_free = {
+  base : int * int;
+  length : (int * int) option;
+  status : int * int;
 }
 
 external reraise : exn -> 'a = "%reraise"
@@ -185,108 +217,10 @@ let map_to_cpu g h size va =
 let set_uuid p (at, _) uuid =
   String.iteri (fun i ch -> Bigarray.Array1.set p (at + i) ch) uuid
 
-(* Maps the memory object [h], at [va] of unified memory, for [g]. *)
-let map_external g va size h =
-  let module U = D.Uvm_map_external_allocation in
-  let module G = D.Uvm_gpu_mapping in
-  let u = params U.sizeof in
-  set u U.base va;
-  set u U.length size;
-  set u U.rm_ctrl_fd g.c.ctl;
-  set u U.h_client g.c.root;
-  set u U.h_memory h;
-  set u U.gpu_attributes_count 1;
-  let at, _, _ = U.per_gpu_attributes in
-  set_uuid u (at + fst G.gpu_uuid, 16) g.uuid;
-  set u
-    (at + fst G.gpu_mapping_type, snd G.gpu_mapping_type)
-    D.uvm_gpu_mapping_type_read_write_atomic;
-  let what = "mapping GPU memory" in
-  let* s = Rm.uvm g.u D.uvm_map_external_allocation u U.rm_status what in
-  fits g what s
-
-(* Frees the unified memory range at [va], unmapping it from every GPU. *)
-let uvm_free c u va size =
-  let (module R : D.RELEASE) = c.Rm.layouts in
-  let module U = R.Uvm_free in
-  let p = params U.sizeof in
-  set p U.base va;
-  Option.iter (fun l -> set p l size) U.length;
-  Rm.uvm_call c u D.uvm_free p U.rm_status "unmapping GPU memory"
-
-(* Makes the unified memory range of [size] bytes at [va] and maps the memory
-   object [h] there for [g]. [Ok false] if [g] has no memory for it; the range
-   is then freed, so that the addresses stay free. *)
-let uvm_map g va size h =
-  let module E = D.Uvm_create_external_range in
-  let e = params E.sizeof in
-  set e E.base va;
-  set e E.length size;
-  let* () =
-    Rm.uvm_call g.c g.u D.uvm_create_external_range e E.rm_status
-      "reserving GPU addresses"
-  in
-  let mapped = map_external g va size h in
-  match mapped with
-  | Ok true -> Ok true
-  | Ok false | Error _ ->
-      ignore (uvm_free g.c g.u va size : (unit, string) result);
-      mapped
-
-(* Unmaps for [g] the [size] bytes at [va] of a range that stays. *)
-let uvm_unmap g va size =
-  let module U = D.Uvm_unmap_external in
-  let u = params U.sizeof in
-  set u U.base va;
-  set u U.length size;
-  set_uuid u U.gpu_uuid g.uuid;
-  Rm.uvm_call g.c g.u D.uvm_unmap_external u U.rm_status "unmapping GPU memory"
-
 (* The RM's refusals of host memory to describe: an address no memory backs,
    such as an unmapped page, or memory it cannot pin. *)
 let refusals =
   [ D.nv_err_invalid_address; D.nv_err_invalid_argument; D.nv_err_no_memory ]
-
-(* Describes the process's memory at [va] to the RM as system memory of [g]: the
-   description's handle, or [None] if the RM refuses the memory. *)
-let describe g va size =
-  let h = Rm.handle () in
-  let module W = D.Nvos02_with_fd in
-  let module O = D.Nvos02 in
-  let w = params W.sizeof in
-  let at (f, n) = (fst W.params + f, n) in
-  set w W.fd (-1);
-  set w (at O.h_root) g.c.root;
-  set w (at O.h_object_parent) g.device;
-  set w (at O.h_object_new) h;
-  set w (at O.h_class) D.nv01_memory_system_os_descriptor;
-  set w (at O.p_memory) va;
-  set w (at O.limit) (size - 1);
-  set w (at O.flags)
-    (bits D.nvos02_flags_physicality D.nvos02_flags_physicality_noncontiguous
-    lor bits D.nvos02_flags_coherency D.nvos02_flags_coherency_cached
-    lor bits D.nvos02_flags_mapping D.nvos02_flags_mapping_no_map);
-  let what = "describing host memory to the GPU" in
-  let described =
-    let* described =
-      with_file g (fun fd -> Rm.escape fd D.nv_esc_rm_alloc_memory w what)
-    in
-    let s = get w (at O.status) in
-    if described = None || List.mem s refusals then Ok None
-    else
-      let* () = Rm.check g.c what s in
-      Ok (Some h)
-  in
-  (match described with
-  | Ok (Some _) -> ()
-  | Ok None | Error _ -> Rm.free_handle h);
-  described
-
-(* Frees [g]'s object [h], whose handle [naming] chose. *)
-let free_object ~naming g h =
-  match Rm.free g.c ~parent:g.device h with
-  | Ok () -> if naming = Self_named then Rm.free_handle h
-  | Error _ -> ()
 
 (* The parameters of video memory in pages of [page_size]. *)
 let video_params g ~contiguous ~page_size size =
@@ -320,47 +254,379 @@ let video_params g ~contiguous ~page_size size =
    lor D.nvos32_alloc_flags_persistent_vidmem);
   p
 
-(* Takes [size] addresses of [space] at a multiple of [align]: [None] if it
-   has no room. *)
-let addresses g space ~align size =
-  match space with
-  | Host_visible -> Ok (Va.alloc g.u.low ~align size)
-  | Process -> Rm.reserve_any ~align size
-
 let free_addresses g space va size =
   match space with
   | Host_visible -> Va.free g.u.low va size
   | Process -> Rm.unreserve va size
 
-(* Takes [size] addresses of [space] for [f], giving them back if [f] fails or
-   answers [None]. *)
-let with_addresses g space ~align size f =
-  let* taken = addresses g space ~align size in
-  match taken with
-  | None -> Ok None
-  | Some va -> (
-      match f va with
-      | Ok (Some _) as r -> r
-      | (Ok None | Error _) as r ->
-          free_addresses g space va size;
-          r)
+(* Ranges
+
+   A call that makes a range runs its steps under one handler. A step that
+   finds no memory raises [No_memory], and the handler, whatever ended the
+   steps, first gives back what the range holds, allocating nothing, then
+   its addresses in the process's low range and its handle number, which
+   allocate: an exception there leaks those numbers alone. A part whose free
+   unified memory or the RM refuses stays held, with every address it
+   needs. *)
+
+exception No_memory
+
+(* The fault of a free that unified memory or the RM refused, made once, so
+   that raising it allocates nothing. *)
+let refused_free =
+  Rig_nv.Fault "unified memory or the RM refused to give back GPU memory"
+
+(* The ranges the process holds: made and not given back, and those whose
+   give-back left a part held. For the suites ([ranges]). *)
+let held = Atomic.make 0
+let ranges () = Atomic.get held
+
+(* [g]'s mapping of a range, which no region counts yet. *)
+let user g =
+  let module U = D.Uvm_unmap_external in
+  let unmap = params U.sizeof in
+  set_uuid unmap U.gpu_uuid g.uuid;
+  { gpu = g; count = 0; unmap; release = ignore }
+
+(* Whether the RM freed [r]'s object [h]. *)
+let free_object_raw r h =
+  let module F = D.Nvos00 in
+  set r.free_rm F.h_object_old h;
+  match Rm.escape_raw r.parent.c.ctl D.nv_esc_rm_free r.free_rm with
+  | () -> get r.free_rm F.status = D.nv_ok
+  | exception Unix.Unix_error _ -> false
+
+(* Gives back what [r] holds but its numbers, allocating nothing: whether
+   nothing stays. Unified memory's range goes first, then the object it maps,
+   then the process's mapping the object describes. Each part leaves [r] once
+   its free returned, so a refused one keeps its addresses, but an object the
+   RM named, whose handle the RM may give out again once freed: it leaves
+   first, so no free reaches another object. *)
+let give_back r =
+  let g = r.parent in
+  if r.spare >= 0 then begin
+    Rm.close r.spare;
+    r.spare <- -1
+  end;
+  if r.unified then begin
+    let f = r.uvm_free in
+    set r.free_uvm f.base r.gpu_addr;
+    (match f.length with Some l -> set r.free_uvm l r.bytes | None -> ());
+    match Rm.uvm_raw g.u D.uvm_free r.free_uvm with
+    | () -> if get r.free_uvm f.status = D.nv_ok then r.unified <- false
+    | exception Unix.Unix_error _ -> ()
+  end;
+  if r.made && not r.unified then begin
+    let h = r.memory in
+    match r.naming with
+    | Rm_named ->
+        r.made <- false;
+        r.memory <- 0;
+        ignore (free_object_raw r h : bool)
+    | Self_named -> if free_object_raw r h then r.made <- false
+  end;
+  if r.cpu && not r.made then begin
+    Rm.unmap r.gpu_addr r.bytes;
+    r.cpu <- false
+  end;
+  not (r.unified || r.made || r.cpu)
+
+(* Gives back [r]'s handle number and addresses, once nothing holds them. *)
+let give_numbers r =
+  if (not r.made) && r.memory <> 0 then begin
+    let h = r.memory in
+    r.memory <- 0;
+    if r.naming = Self_named then Rm.free_handle h
+  end;
+  if r.gpu_addr >= 0 && not (r.unified || r.made || r.cpu) then begin
+    let va = r.gpu_addr in
+    r.gpu_addr <- -1;
+    free_addresses r.parent r.space va r.bytes
+  end
+
+(* Ends a region of [u]'s GPU over [r]: the GPU's last unmaps [r] for it,
+   and the last of all gives [r] back. rig takes the region as given whatever
+   a free raises, so a free allocates and polls nothing until it gave back
+   what the RM and unified memory hold, reading the counts it needs with no
+   search: then [r]'s numbers, whose free an exception may end, leaking them.
+   Under [ranges_lock]. *)
+let give u r =
+  let g = u.gpu in
+  if u.count > 1 || r.mapping > 1 then begin
+    u.count <- u.count - 1;
+    if u.count = 0 then begin
+      r.mapping <- r.mapping - 1;
+      let module U = D.Uvm_unmap_external in
+      set u.unmap U.base r.gpu_addr;
+      set u.unmap U.length r.bytes;
+      match Rm.uvm_raw g.u D.uvm_unmap_external u.unmap with
+      | () -> if get u.unmap U.rm_status <> D.nv_ok then raise refused_free
+      | exception Unix.Unix_error _ -> raise refused_free
+    end
+  end
+  else begin
+    u.count <- 0;
+    r.mapping <- 0;
+    if not (give_back r) then raise refused_free;
+    Atomic.decr held;
+    give_numbers r
+  end
+
+(* [u] made [r]'s, its free made once. *)
+let adopt r u = u.release <- (fun () -> give u r)
+
+let range g ~naming ~space bytes =
+  let (module R : D.RELEASE) = g.c.Rm.layouts in
+  let module U = R.Uvm_free in
+  let module F = D.Nvos00 in
+  let free_rm = params F.sizeof in
+  set free_rm F.h_root g.c.root;
+  set free_rm F.h_object_parent g.device;
+  let r =
+    {
+      bytes;
+      naming;
+      parent = g;
+      space;
+      gpu_addr = -1;
+      memory = 0;
+      made = false;
+      cpu = false;
+      unified = false;
+      spare = -1;
+      users = [];
+      mapping = 0;
+      free_uvm = params U.sizeof;
+      uvm_free = { base = U.base; length = U.length; status = U.rm_status };
+      free_rm;
+    }
+  in
+  let u = user g in
+  r.users <- [ u ];
+  adopt r u;
+  r
+
+(* A call that makes a range runs its steps as [match steps r with m -> made m
+   | exception e -> unmade r e], with no closure: [made] counts the range
+   held, its answer made by the steps, so nothing allocates once it is, and
+   [unmade], the handler, gives back what [r] holds before it allocates
+   anything. A step's exception passes; no memory answers [None], or, where
+   the give-back left a part, the fault of a refused free, as a free does. *)
+let made m =
+  Atomic.incr held;
+  m
+
+let unmade r e =
+  let gone = give_back r in
+      if not gone then Atomic.incr held;
+      give_numbers r;
+      if e != No_memory then reraise e
+      else if gone then None
+      else raise refused_free
+
+(* Steps
+
+   Each step raises [No_memory] where the original call answered no memory,
+   and [Rig_nv.Fault] for a failure. It stores what its call took in the
+   range as the call returns, with nothing allocated between. *)
+
+let ok = function Ok () -> () | Error why -> raise (Rig_nv.Fault why)
+let unix what e =
+  raise (Rig_nv.Fault (strf "%s: %s" what (Unix.error_message e)))
+
+(* Raises unless the RM answered [s] to [what] with its memory. *)
+let fitted g what s =
+  if s = D.nv_err_no_memory then raise No_memory;
+  ok (Rm.check g.c what s)
+
+(* Takes [r]'s addresses at a multiple of [align]. *)
+let take_addresses r ~align =
+  match r.space with
+  | Host_visible -> (
+      match Va.alloc r.parent.u.low ~align r.bytes with
+      | Some va -> r.gpu_addr <- va
+      | None -> raise No_memory)
+  | Process -> (
+      match Rm.reserve_any_raw r.bytes align with
+      | 0 -> raise No_memory
+      | va -> r.gpu_addr <- va
+      | exception Unix.Unix_error (e, _, _) ->
+          unix "reserving the GPU's addresses" e)
+
+(* Opens a file of [r]'s GPU for one call, tied to the control file. Each
+   mapping has its own, as the RM keeps one mapping context per file. *)
+let open_file r =
+  let g = r.parent in
+  match Rm.open_raw g.file with
+  | fd ->
+      r.spare <- fd;
+      ok (Rm.register fd ~ctl:g.c.ctl)
+  | exception Unix.Unix_error ((EMFILE | ENFILE), _, _) -> raise No_memory
+  | exception Unix.Unix_error (e, _, _) -> unix g.file e
+
+let close_file r =
+  Rm.close r.spare;
+  r.spare <- -1
+
+(* Maps anonymous memory of the process at [r]'s addresses. *)
+let map_anonymous r =
+  match Rm.map_raw (-1) r.gpu_addr r.bytes with
+  | () -> r.cpu <- true
+  | exception Unix.Unix_error (e, _, _) -> unix "mapping memory for the GPU" e
+
+(* Describes the process's memory at [va] to the RM as [r]'s object, of
+   [r]'s GPU. *)
+let describe r va =
+  let g = r.parent in
+  let module W = D.Nvos02_with_fd in
+  let module O = D.Nvos02 in
+  let w = params W.sizeof in
+  let at (f, n) = (fst W.params + f, n) in
+  let status = at O.status in
+  let what = "describing host memory to the GPU" in
+  r.memory <- Rm.handle ();
+  set w W.fd (-1);
+  set w (at O.h_root) g.c.root;
+  set w (at O.h_object_parent) g.device;
+  set w (at O.h_object_new) r.memory;
+  set w (at O.h_class) D.nv01_memory_system_os_descriptor;
+  set w (at O.p_memory) va;
+  set w (at O.limit) (r.bytes - 1);
+  set w (at O.flags)
+    (bits D.nvos02_flags_physicality D.nvos02_flags_physicality_noncontiguous
+    lor bits D.nvos02_flags_coherency D.nvos02_flags_coherency_cached
+    lor bits D.nvos02_flags_mapping D.nvos02_flags_mapping_no_map);
+  open_file r;
+  ok (Rm.escape r.spare D.nv_esc_rm_alloc_memory w what);
+  let s = get w status in
+  if s = D.nv_ok then r.made <- true;
+  close_file r;
+  if not r.made then begin
+    if List.mem s refusals then raise No_memory;
+    ok (Rm.check g.c what s)
+  end
+
+(* Allocates [r]'s object in its GPU's memory with the parameters [p]. *)
+let allocate r p =
+  let g = r.parent in
+  let module A = D.Nvos21 in
+  let a = params A.sizeof in
+  let what = "allocating GPU memory" in
+  set a A.h_root g.c.root;
+  set a A.h_object_parent g.device;
+  set a A.h_class D.nv1_memory_user;
+  set a A.p_alloc_parms (Rm.address p);
+  ok (Rm.escape g.c.ctl D.nv_esc_rm_alloc a what);
+  let s = get a A.status in
+  if s = D.nv_ok then begin
+    r.memory <- get a A.h_object_new;
+    r.made <- true
+  end;
+  ignore (Sys.opaque_identity p);
+  if not r.made then fitted g what s
+
+(* Maps [r]'s object into the process at [r]'s addresses, uncached. No room in
+   the GPU's window onto its memory (BAR1) is no memory. *)
+let map_bar r =
+  let g = r.parent in
+  let module W = D.Nvos33_with_fd in
+  let module M = D.Nvos33 in
+  let w = params W.sizeof in
+  let at (f, n) = (fst W.params + f, n) in
+  let status = at M.status in
+  let what = "mapping GPU memory into the process" in
+  set w (at M.h_client) g.c.root;
+  set w (at M.h_device) g.device;
+  set w (at M.h_memory) r.memory;
+  set w (at M.length) r.bytes;
+  set w (at M.flags)
+    (bits D.nvos33_flags_caching_type D.nvos33_flags_caching_type_uncached);
+  open_file r;
+  set w W.fd r.spare;
+  ok (Rm.escape g.c.ctl D.nv_esc_rm_map_memory w what);
+  fitted g what (get w status);
+  match Rm.map_raw r.spare r.gpu_addr r.bytes with
+  | () ->
+      r.cpu <- true;
+      close_file r
+  | exception Unix.Unix_error (e, _, _) -> unix "mapping memory for the GPU" e
+
+(* Maps [r] for [u]'s GPU, counting a region of it once mapped. *)
+let map_external r u =
+  let g = u.gpu in
+  let module U = D.Uvm_map_external_allocation in
+  let module G = D.Uvm_gpu_mapping in
+  let p = params U.sizeof in
+  let what = "mapping GPU memory" in
+  set p U.base r.gpu_addr;
+  set p U.length r.bytes;
+  set p U.rm_ctrl_fd g.c.ctl;
+  set p U.h_client g.c.root;
+  set p U.h_memory r.memory;
+  set p U.gpu_attributes_count 1;
+  let at, _, _ = U.per_gpu_attributes in
+  set_uuid p (at + fst G.gpu_uuid, 16) g.uuid;
+  set p
+    (at + fst G.gpu_mapping_type, snd G.gpu_mapping_type)
+    D.uvm_gpu_mapping_type_read_write_atomic;
+  match Rm.uvm_raw g.u D.uvm_map_external_allocation p with
+  | () ->
+      let s = get p U.rm_status in
+      if s = D.nv_ok then begin
+        u.count <- 1;
+        r.mapping <- r.mapping + 1
+      end
+      else fitted g what s
+  | exception Unix.Unix_error (e, _, _) -> unix what e
+
+(* Makes [r]'s range of unified memory at its addresses and maps its object
+   there for its GPU. *)
+let unify r =
+  let g = r.parent in
+  let module E = D.Uvm_create_external_range in
+  let e = params E.sizeof in
+  let what = "reserving GPU addresses" in
+  set e E.base r.gpu_addr;
+  set e E.length r.bytes;
+  (match Rm.uvm_raw g.u D.uvm_create_external_range e with
+  | () ->
+      let s = get e E.rm_status in
+      if s = D.nv_ok then r.unified <- true else ok (Rm.check g.c what s)
+  | exception Unix.Unix_error (e, _, _) -> unix what e);
+  map_external r (List.hd r.users)
+
+let memory m =
+  { Rig_nv.address = m.va; host = m.host; handle = m.handle; data = m }
+
+(* [r]'s memory from [va]. *)
+let answer r ~va ~host ~video =
+  let user = List.hd r.users in
+  memory { va; handle = r.memory; host; video; range = r; user }
+
+(* Memory *)
 
 (* Host memory the process allocates and describes to the RM, [size] a
    multiple of the host's page. *)
+let host_steps r =
+  take_addresses r ~align:(Rm.host_page ());
+  map_anonymous r;
+  describe r r.gpu_addr;
+  unify r;
+  Some (answer r ~va:r.gpu_addr ~host:(Some r.gpu_addr) ~video:None)
+
 let alloc_host g size =
-  with_addresses g Host_visible ~align:(Rm.host_page ()) size @@ fun va ->
-  let* () = Rm.map (-1) va size in
-  match describe g va size with
-  | (Error _ | Ok None) as r ->
-      Rm.unmap va size;
-      Result.map (fun _ -> None) r
-  | Ok (Some h) -> (
-      match uvm_map g va size h with
-      | Ok true -> Ok (Some (h, va))
-      | (Ok false | Error _) as r ->
-          free_object ~naming:Self_named g h;
-          Rm.unmap va size;
-          Result.map (fun _ -> None) r)
+  let r = range g ~naming:Self_named ~space:Host_visible size in
+  match host_steps r with m -> made m | exception e -> unmade r e
+
+let video_steps r p ~cpu ~page_size =
+  allocate r p;
+  take_addresses r ~align:page_size;
+  if cpu then map_bar r;
+  unify r;
+  Some
+    (answer r ~va:r.gpu_addr
+       ~host:(if cpu then Some r.gpu_addr else None)
+       ~video:(Some r.parent.index))
 
 (* Video memory, mapped for the host too through BAR1 if [cpu]. The RM allocates
    it first; the addresses follow. *)
@@ -368,108 +634,48 @@ let alloc_video g ~cpu size =
   let page_size = if size >= huge_from then huge_page else page in
   let size = round_up size page_size in
   let p = video_params g ~contiguous:cpu ~page_size size in
-  let* s, h = Rm.alloc g.c ~parent:g.device D.nv1_memory_user (Some p) in
-  let* ok = fits g "allocating GPU memory" s in
-  if not ok then Ok None
-  else
-    let space = if cpu then Host_visible else Process in
-    let placed =
-      with_addresses g space ~align:page_size size @@ fun va ->
-      let* bar = if not cpu then Ok true else map_to_cpu g h size va in
-      if not bar then Ok None
-      else
-        match uvm_map g va size h with
-        | Ok true -> Ok (Some va)
-        | (Ok false | Error _) as r ->
-            if cpu then Rm.unmap va size;
-            Result.map (fun _ -> None) r
-    in
-    match placed with
-    | Ok (Some va) -> Ok (Some (h, va, size, space))
-    | (Ok None | Error _) as r ->
-        free_object ~naming:Rm_named g h;
-        Result.map (fun _ -> None) r
-
-let memory m =
-  { Rig_nv.address = m.va; host = m.host; handle = m.handle; data = m }
-
-(* The ranges the process holds, for the suites ([ranges]). *)
-let held = Atomic.make 0
-let ranges () = Atomic.get held
-
-(* Memory [g] allocated, mapped for [g] alone. *)
-let allocated g ~video ~host ~space ~naming h va size =
-  Atomic.incr held;
-  let range =
-    {
-      gpu_addr = va;
-      bytes = size;
-      memory = h;
-      naming;
-      parent = g;
-      space;
-      mapped = host;
-      users = [ (g, 1) ];
-    }
-  in
-  memory { va; handle = h; host; video; range }
-
-(* A path function's failure that is no refusal is the driver's fault. *)
-let fault = function Ok x -> x | Error e -> raise (Rig_nv.Fault e)
+  let space = if cpu then Host_visible else Process in
+  let r = range g ~naming:Rm_named ~space size in
+  match video_steps r p ~cpu ~page_size with
+  | m -> made m
+  | exception e -> unmade r e
 
 let alloc g (kind : Rig_edge.memory) n =
-  fault
-  @@
   match kind with
-  | Pinned -> (
-      let size = round_up n (Rm.host_page ()) in
-      match alloc_host g size with
-      | Ok (Some (h, va)) ->
-          Ok
-            (Some
-               (allocated g ~video:None ~host:(Some va) ~space:Host_visible
-                  ~naming:Self_named h va size))
-      | (Ok None | Error _) as r -> r)
-  | (Device | Mapped) as k -> (
-      match alloc_video g ~cpu:(k = Mapped) n with
-      | Ok (Some (h, va, size, space)) ->
-          let host = if k = Mapped then Some va else None in
-          Ok
-            (Some
-               (allocated g ~video:(Some g.index) ~host ~space ~naming:Rm_named
-                  h va size))
-      | (Ok None | Error _) as r -> r)
+  | Pinned -> alloc_host g (round_up n (Rm.host_page ()))
+  | Device -> alloc_video g ~cpu:false n
+  | Mapped -> alloc_video g ~cpu:true n
 
 let ranges_lock = Rig_nv.Lock.create ()
 
-(* Counts a region of [g] over [r], mapping [r] for [g] first if [g] has none:
-   whether [g] maps it. Under [ranges_lock]. *)
-let take g r =
-  match List.assq_opt g r.users with
-  | Some k ->
-      r.users <- (g, k + 1) :: List.remove_assq g r.users;
-      true
-  | None ->
-      let mapped = fault (map_external g r.gpu_addr r.bytes r.memory) in
-      if mapped then r.users <- (g, 1) :: r.users;
-      mapped
+(* Counts the view [v] of [g] over [r], mapping [r] for [g] first if [g] has
+   none: whether [g] maps it. Under [ranges_lock]. A new GPU's mapping joins
+   [r.users] uncounted before the call, and [v] takes it before the count. *)
+let take g r v =
+  let u =
+    match List.find_opt (fun u -> u.gpu == g) r.users with
+    | Some u -> u
+    | None ->
+        let u = user g in
+        adopt r u;
+        r.users <- u :: r.users;
+        u
+  in
+  v.user <- u;
+  if u.count > 0 then begin
+    u.count <- u.count + 1;
+    true
+  end
+  else
+    match map_external r u with
+    | () -> true
+    | exception No_memory -> false
 
-(* Ends a region of [g] over [r]: [g]'s last unmaps [r] for [g], and the last
-   of all frees [r] and its object. *)
-let give g r =
-  Rig_nv.Lock.protect ranges_lock @@ fun () ->
-  match List.assq_opt g r.users with
-  | Some k when k > 1 -> r.users <- (g, k - 1) :: List.remove_assq g r.users
-  | Some _ | None ->
-      r.users <- List.remove_assq g r.users;
-      if r.users <> [] then fault (uvm_unmap g r.gpu_addr r.bytes)
-      else begin
-        Atomic.decr held;
-        fault (uvm_free g.c g.u r.gpu_addr r.bytes);
-        free_object ~naming:r.naming r.parent r.memory;
-        Option.iter (fun a -> Rm.unmap a r.bytes) r.mapped;
-        free_addresses r.parent r.space r.gpu_addr r.bytes
-      end
+let borrowed_steps r ~a ~a0 ~page =
+  describe r a0;
+  take_addresses r ~align:page;
+  unify r;
+  Some (answer r ~va:(r.gpu_addr + (a - a0)) ~host:(Some a) ~video:None)
 
 (* Each call maps a range of its own, over the whole pages that hold the
    memory, which unified memory requires of its bounds: two ranges may describe
@@ -479,40 +685,14 @@ let map_host g a n =
   let page = Rm.host_page () in
   let a0 = a land lnot (page - 1) in
   let size = round_up (a + n) page - a0 in
-  match fault (describe g a0 size) with
-  | None -> None
-  | Some h -> (
-      let placed =
-        with_addresses g Host_visible ~align:page size @@ fun va ->
-        let* ok = uvm_map g va size h in
-        Ok (if ok then Some va else None)
-      in
-      match placed with
-      | Ok (Some gpu_addr) ->
-          Atomic.incr held;
-          let range =
-            {
-              gpu_addr;
-              bytes = size;
-              memory = h;
-              naming = Self_named;
-              parent = g;
-              space = Host_visible;
-              mapped = None;
-              users = [ (g, 1) ];
-            }
-          in
-          let va = gpu_addr + (a - a0) in
-          Some (memory { va; handle = h; host = Some a; video = None; range })
-      | Ok None ->
-          free_object ~naming:Self_named g h;
-          None
-      | Error e ->
-          free_object ~naming:Self_named g h;
-          raise (Rig_nv.Fault e))
+  let r = range g ~naming:Self_named ~space:Host_visible size in
+  match borrowed_steps r ~a ~a0 ~page with
+  | m -> made m
+  | exception e -> unmade r e
 
 (* Another GPU's video memory needs peer access, which may be refused; host
-   memory needs none. A view counts in the range of the region it views. *)
+   memory needs none. A view counts in the range of the region it views, and
+   is made before the count. *)
 let map_peer g (m : mem Rig_nv.memory) =
   let viewed = m.data in
   let refused = function
@@ -521,10 +701,13 @@ let map_peer g (m : mem Rig_nv.memory) =
   in
   if refused viewed.video then None
   else
+    let v = { viewed with user = viewed.user } in
+    let view = Some (memory v) in
     Rig_nv.Lock.protect ranges_lock @@ fun () ->
-    if take g viewed.range then Some (memory viewed) else None
+    if take g viewed.range v then view else None
 
-let free g (m : mem Rig_nv.memory) = give g m.data.range
+let free _ (m : mem Rig_nv.memory) =
+  Rig_nv.Lock.protect ranges_lock m.data.user.release
 
 (* Another function's DMA
 
@@ -984,10 +1167,14 @@ let make_gpu c um ~dev ~index ~others bus =
     in
     (* The flush word's page, kept with the GPU's objects. A GPU whose BAR
        has no room for it has none, and its devices no Mapped memory. *)
-    let* bar = alloc_video g ~cpu:true page in
+    let* bar =
+      match alloc_video g ~cpu:true page with
+      | bar -> Ok bar
+      | exception Rig_nv.Fault why -> Error why
+    in
     let g =
       match bar with
-      | Some (_, va, _, _) -> { g with flush = Some va }
+      | Some m -> { g with flush = Some m.Rig_nv.address }
       | None -> g
     in
     let refused = refused_by g others in

@@ -574,10 +574,13 @@ type 'm dev = {
 }
 
 (* A region holds what frees it, the path's [free], so that a free after stop
-   needs nothing of the device. *)
+   needs nothing of the device. Its memory is the path's answer to the call
+   that made it, [None] until that call returns or if it made nothing: the
+   region is made before the call ([answer]), and the driver hands out only
+   regions whose path made memory. *)
 and 'm reg = {
   dev : 'm dev;
-  mem : 'm memory;
+  mutable mem : 'm memory option;
   free : 'm memory -> unit;
   bytes : int;
   flush : int option;
@@ -800,6 +803,17 @@ type undo =
   | Object of (unit -> bool)
   | Memory of (unit -> unit)
   | Host of (unit -> unit)
+
+(* A step that gives back the memory [cell] holds once: the cell lets go of it
+   before the path's free, as a region does ([free]). *)
+let held_memory (p : _ path) cell =
+  Memory
+    (fun () ->
+      match !cell with
+      | None -> ()
+      | Some m ->
+          cell := None;
+          p.free m)
 
 (* Runs each step of [undo] in turn, whatever one raises, and the first
    exception passes on once the last has run ([each]). Memory goes back only
@@ -1139,12 +1153,19 @@ let make_channels (type m) (p : m path) (module R : D.RELEASE) ~taken entries
 (* The device's objects and memory, each given back by [taken] if a later step
    fails. *)
 let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
+  (* What [make ()] answers, listed in [taken] before the path's call, so
+     that an exception once the path made the memory leaves it to the give
+     back. *)
+  let recorded make =
+    let cell = ref None in
+    taken (held_memory p cell);
+    cell := make ();
+    !cell
+  in
   let alloc kind bytes what =
-    match path_alloc p kind bytes with
+    match recorded (fun () -> path_alloc p kind bytes) with
     | None -> Error (strf "no memory for the %s" what)
-    | Some m ->
-        taken (Memory (fun () -> p.free m));
-        Ok m
+    | Some m -> Ok m
   in
   let* words = alloc Pinned page "join words" in
   let* words_host = host "join words" words in
@@ -1159,12 +1180,8 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
     match p.map_host with
     | None -> None
     | Some _ when word < start || word + 8 > start + bytes -> None
-    | Some map -> (
-        match placed Below_windows chunk (map at chunk) with
-        | None -> None
-        | Some m ->
-            taken (Memory (fun () -> p.free m));
-            Some m)
+    | Some map ->
+        recorded (fun () -> placed Below_windows chunk (map at chunk))
   in
   let word_host, word_mem =
     match mapped with
@@ -1188,13 +1205,11 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
   let in_bar =
     match p.flush with
     | None -> None
-    | Some _ -> path_alloc p Mapped launch_bytes
+    | Some _ -> recorded (fun () -> path_alloc p Mapped launch_bytes)
   in
   let* launches, launches_bar =
     match in_bar with
-    | Some m ->
-        taken (Memory (fun () -> p.free m));
-        Ok (m, true)
+    | Some m -> Ok (m, true)
     | None ->
         let* m = alloc Pinned launch_bytes "launch ring" in
         Ok (m, false)
@@ -1291,7 +1306,14 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
             local_window;
             local = (fun n -> local d n);
           };
-        word = { dev = d; mem = word_mem; free = p.free; bytes = 8; flush = None };
+        word =
+          {
+            dev = d;
+            mem = Some word_mem;
+            free = p.free;
+            bytes = 8;
+            flush = None;
+          };
         flush = p.flush;
         local_lock = ranked local_rank;
         live =
@@ -1354,14 +1376,29 @@ let make ~word p =
       | Error why -> failed why
       | exception exn ->
           let bt = Printexc.get_raw_backtrace () in
-          (try ignore (give_back !undo : bool) with Fault _ -> ());
+          (* The open's exception passes, whatever its cleanup raises. *)
+          (try ignore (give_back !undo : bool) with _ -> ());
           Printexc.raise_with_backtrace exn bt
       | Ok _ as d -> d)
 
 (* Memory *)
 
-let region d (p : _ path) flush bytes m =
-  R { dev = d; mem = m; free = p.free; bytes; flush }
+(* A region of [bytes] bytes, made with its [Some] before the path's call
+   that makes its memory, which stores the path's answer in it as it is
+   ([answered]): nothing allocates or polls from the path's change to the
+   driver's return, where rig stores the region in a record made before its
+   call, and no closure is made for the call. An asynchronous exception
+   between the two would leave the path's memory made and no region over it,
+   for the life of the process. *)
+let region d (p : _ path) flush bytes =
+  { dev = d; mem = None; free = p.free; bytes; flush }
+
+(* [r], the [Some] made with [c] before the path's call, if the path made
+   memory into [c], else [None]. *)
+let answered (c : _ reg) r = match c.mem with Some _ -> r | None -> None
+
+let unmade () = invalid_arg "Rig_nv: memory its path did not make"
+let made (r : _ reg) = match r.mem with Some m -> m | None -> unmade ()
 
 (* Counts [delta] regions written through the BAR of the device [src]'s flush
    word in [d]'s flushes: [false] if [d] has no free entry for it, or [src]
@@ -1384,36 +1421,53 @@ let alloc (T d) (memory : Rig_edge.memory) n =
            retire_channels d l)
         : bool);
   match memory with
-  | Device | Pinned -> (
-      match path_alloc p memory n with
-      | Some m -> Some (region d p None n m)
-      | None -> None)
+  | Device | Pinned ->
+      let c = region d p None n in
+      let r = Some (R c) in
+      c.mem <- path_alloc p memory n;
+      answered c r
   | Mapped -> (
       match d.flush with
       | None -> None
       | Some _ -> (
-          match path_alloc p Mapped n with
-          | None -> None
-          | Some m ->
-              (* The device's own word has its entry from [make]. *)
-              ignore (count d d.self 1 : bool);
-              Some (region d p (Some d.self) n m)))
+          (* Counted before the path's call, which leaves nothing to do once
+             the path made the memory. The device's own word has its entry
+             from [make]. *)
+          let counted = count d d.self 1 in
+          let c = region d p (Some d.self) n in
+          let r = Some (R c) in
+          match c.mem <- path_alloc p Mapped n with
+          | () -> (
+              match answered c r with
+              | Some _ as r -> r
+              | None ->
+                  if counted then ignore (count d d.self (-1) : bool);
+                  None)
+          | exception e ->
+              if counted then ignore (count d d.self (-1) : bool);
+              reraise e))
 
-(* A region holds its device: rig frees it on that device. Its flush entry
-   goes first, with nothing allocated before it, so that a free the path fails
-   leaves the count right. *)
+(* A region holds its device: rig frees it on that device. Its memory leaves
+   the record, then its flush entry goes, with nothing allocated before the
+   path's free, so that a free the path fails leaves the count right and a
+   free an exception ends leaks the memory at worst and never frees it
+   twice. *)
 let free (T _) (R r) =
-  (match r.flush with
-  | Some src -> ignore (count r.dev src (-1) : bool)
-  | None -> ());
-  r.free r.mem
+  match r.mem with
+  | None -> ()
+  | Some m ->
+      r.mem <- None;
+      (match r.flush with
+      | Some src -> ignore (count r.dev src (-1) : bool)
+      | None -> ());
+      r.free m
 
-let address (R r) = r.mem.address
+let address (R r) = (made r).address
 
 let locate (R r as region) =
   {
     Rig_edge.address = Some (address region);
-    host = r.mem.host;
+    host = (made r).host;
     handle = Nativeint.of_int (address region);
   }
 
@@ -1424,23 +1478,32 @@ let peer (T d) (T d') =
 
 (* [r] holds its device, the other one. A view of Mapped memory makes [d]'s
    submissions flush the host's writes through the BAR behind it, which [d]'s
-   own doorbell does not order. *)
+   own doorbell does not order: it is counted before the path's call, as in
+   [alloc]. *)
 let map_peer (T d) (T _) (R r) =
   match Type.Id.provably_equal d.key r.dev.key with
   | None -> None
   | Some Type.Equal -> (
-      let l = live d in
-      let m = l.path.map_peer r.mem in
-      match placed Outside_windows r.bytes m with
-      | None -> None
-      | Some m -> (
-          match r.flush with
-          | None -> Some (region d l.path None r.bytes m)
-          | Some src when count d src 1 ->
-              Some (region d l.path (Some src) r.bytes m)
-          | Some _ ->
-              l.path.free m;
-              None))
+      let p = (live d).path in
+      let m = made r in
+      let c = region d p r.flush r.bytes in
+      let v = Some (R c) in
+      match r.flush with
+      | None ->
+          c.mem <- placed Outside_windows r.bytes (p.map_peer m);
+          answered c v
+      | Some src when not (count d src 1) -> None
+      | Some src -> (
+          match c.mem <- placed Outside_windows r.bytes (p.map_peer m) with
+          | () -> (
+              match answered c v with
+              | Some _ as v -> v
+              | None ->
+                  ignore (count d src (-1) : bool);
+                  None)
+          | exception e ->
+              ignore (count d src (-1) : bool);
+              reraise e))
 
 let map_host (T d) a n =
   if n < 1 then invalid_argf "Rig_nv.map_host: %d bytes, expected at least 1" n;
@@ -1448,14 +1511,16 @@ let map_host (T d) a n =
   match p.map_host with
   | None -> None
   | Some map ->
-      let m = placed Below_windows n (map a n) in
-      Option.map (region d p None n) m
+      let c = region d p None n in
+      let r = Some (R c) in
+      c.mem <- placed Below_windows n (map a n);
+      answered c r
 
 (* rig asks only of the device's own regions. *)
 let dma (T d) (R r) ~fn =
   match Type.Id.provably_equal d.key r.dev.key with
   | None -> invalid_arg "Rig_nv.dma: another driver's region"
-  | Some Type.Equal -> (live d).path.dma r.mem ~fn
+  | Some Type.Equal -> (live d).path.dma (made r) ~fn
 
 (* Rings *)
 
@@ -1510,13 +1575,15 @@ let grow_channels d l want =
     (* Where the growth failed, which loses the device, its failure passes on
        before a free's. *)
     let give_back_failed () =
-      try ignore (give_back !undo : bool) with Fault _ -> ()
+      try ignore (give_back !undo : bool) with _ -> ()
     in
+    (* Listed in [taken] before the path's call, as [start]'s. *)
     let alloc n what =
-      match path_alloc p Pinned n with
-      | Some m ->
-          taken (Memory (fun () -> p.free m));
-          Ok m
+      let cell = ref None in
+      taken (held_memory p cell);
+      cell := path_alloc p Pinned n;
+      match !cell with
+      | Some m -> Ok m
       | None ->
           lacked := true;
           Error (strf "no memory for the %s" what)
