@@ -163,13 +163,15 @@ typedef enum {
   NX_CPU_B_HALVES
 } nx_cpu_b_read;
 
-/* A dot adds, for each of [r] contiguous rows of [a], row i at
-   a + i·lda·w, r at most NX_CPU_DOT_ROWS, the [n] products with the
-   contiguous [b] into row i's lanes at lanes + i·NX_CPU_LANES·w: term t
-   into lane t modulo NX_CPU_LANES, each fused. */
+/* A dot sets y[i·ldy], for each of [r] contiguous rows of [a], row i at
+   a + i·lda·w, to lane order's sum of one block of the [n] products of
+   the row and the contiguous [b], n at most NX_CPU_LANE_BLOCK: term t
+   into lane t modulo NX_CPU_LANES from +0, each fused, the lanes summed
+   by their tree. It takes several rows at a time, which share each load
+   of [b]. */
 #define NX_CPU_DOT_ROWS 4
 typedef void (*nx_cpu_dot)(const void *a, int64_t lda, int r, const void *b,
-                           int64_t n, void *lanes);
+                           int64_t n, void *y, int64_t ldy);
 
 /* An axpy adds, for each of [r] rows, the element of [a] at a + i·lda·w
    times each of the [n] contiguous elements of [b] into row i's [n]

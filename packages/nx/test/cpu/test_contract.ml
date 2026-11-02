@@ -1684,10 +1684,14 @@ let test_offsets_in_dst (b : Support.backend) () =
    batch of 2 × 2 products whose operands are stored [2; m; 2; k] and
    [2; k; 2; cols] and read [2; 2; m; k] and [2; 2; k; cols], as
    attention's heads are, into a C-contiguous [2; 2; m; n]: the batch
-   makes two runs, and the product loops over the outer one. *)
+   makes two runs, and the product loops over the outer one. Where
+   [by_rows], b is a window of rows [c0, c0 + n) of a [cols × k] array
+   read transposed, adjacent along k as a weight or attention's keys are,
+   with few rows of a drawn often. *)
 type guard_case = {
   f64 : bool;
   heads : int;
+  by_rows : bool;
   side : Support.side;
   m : int;
   n : int;
@@ -1698,21 +1702,32 @@ type guard_case = {
 }
 
 let pp_guard ppf g =
-  Format.fprintf ppf "%s %s heads %d m %d n %d k %d cols %d c0 %d seed %d"
+  Format.fprintf ppf "%s %s heads %d%s m %d n %d k %d cols %d c0 %d seed %d"
     (if g.f64 then "float64" else "float32")
     (match g.side with Support.Before -> "before" | After -> "after")
-    g.heads g.m g.n g.k g.cols g.c0 g.seed
+    g.heads
+    (if g.by_rows then " by rows" else "")
+    g.m g.n g.k g.cols g.c0 g.seed
 
 let guard_cases =
   let open Gen in
   Gen.with_pp pp_guard
     (let* f64 = bool in
      let* heads = frequency [ (2, constant 1); (1, constant 2) ] in
+     let* by_rows = frequency [ (2, constant false); (1, constant true) ] in
      let half = if f64 then 8 else 16 in
      let* after = bool in
      let side = if after then Support.After else Support.Before in
-     let* m = frequency [ (1, int_range 1 32); (2, int_range 33 72) ] in
-     let* k = int_range 1 140 in
+     let* m =
+       if by_rows then frequency [ (2, int_range 1 4); (1, int_range 5 72) ]
+       else frequency [ (1, int_range 1 32); (2, int_range 33 72) ]
+     in
+     let* k =
+       if by_rows then
+         frequency
+           [ (2, int_range 1 140); (1, map (fun s -> 16 * s) (int_range 1 8)) ]
+       else int_range 1 140
+     in
      let* tiles = int_range 0 2 in
      let* edge =
        frequency
@@ -1722,7 +1737,7 @@ let guard_cases =
      let* extra = int_range 0 8 in
      let* c0 = frequency [ (1, constant extra); (2, int_range 0 extra) ] in
      let+ seed = int in
-     { f64; heads; side; m; n; k; cols = n + extra; c0; seed })
+     { f64; heads; by_rows; side; m; n; k; cols = n + extra; c0; seed })
 
 let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
   let (module K : Nx_kernel.S) = b.kernels in
@@ -1747,9 +1762,19 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
     let cols = { M.start = g.c0; count = g.n; step = 1 } in
     let s = Iarray.to_array (L.shape (A.layout x)) in
     let r = Array.length s in
-    move
-      (M.Slice (Iarray.init r (fun i -> if i = r - 1 then cols else all s.(i))))
-      x
+    let along = if g.by_rows then r - 2 else r - 1 in
+    let y =
+      move
+        (M.Slice
+           (Iarray.init r (fun i -> if i = along then cols else all s.(i))))
+        x
+    in
+    if not g.by_rows then y
+    else
+      move
+        (M.Permute
+           (Iarray.init r (fun i -> if i >= r - 2 then (2 * r) - 3 - i else i)))
+        y
   in
   let product ~dst a x =
     match
@@ -1765,7 +1790,10 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
     A.transfer ~src:x ~dst:g';
     (g', free)
   in
-  let a = matrix values g.m g.k and x = matrix values g.k g.cols in
+  let a = matrix values g.m g.k in
+  let x =
+    if g.by_rows then matrix values g.cols g.k else matrix values g.k g.cols
+  in
   let want =
     if g.heads = 1 then A.create Rig.host dt [| g.m; g.n |]
     else A.create Rig.host dt [| 2; g.heads; g.m; g.n |]
@@ -1799,6 +1827,11 @@ let law_guards (b : Support.backend) g =
   cover "two heads stored apart" (g.heads = 2);
   cover "two heads stored apart, b's window ending at the page"
     (g.heads = 2 && g.side = Support.After && g.c0 + g.n = g.cols);
+  cover "b by rows, fewer rows than a dot takes" (g.by_rows && g.m < 4);
+  cover "b by rows, fewer rows than a dot takes, its window ending at the page"
+    (g.by_rows && g.m < 4 && g.side = Support.After && g.c0 + g.n = g.cols);
+  cover "b by rows, a depth of whole steps of lanes"
+    (g.by_rows && g.k mod 16 = 0);
   if g.f64 then guarded_product b D.Float64 g
   else guarded_product b D.Float32 g
 
@@ -1832,13 +1865,82 @@ let order_edges =
       (8, 8, 8); (8, 8, 8191); (8, 8, 8192);
     ]
 
+(* One row and few rows against b stored [n × k], adjacent along k, as a
+   weight or attention's keys are, in lane order: at each float dtype each
+   accumulator holds, through b in place, b's columns overlapping 2
+   elements apart, b stepped along k, and a stored transposed too. Depths
+   of whole steps of lanes, with terms past the last whole step, and of
+   two blocks; 37 columns, two groups of 16 and an edge of 5. *)
+let few_rows_examples =
+  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
+  let plain = Elements.plain 2 and rows = swap 2 in
+  let layouts =
+    [
+      (plain, rows); (plain, { rows with windowed = Some (2, 1) });
+      (plain, { rows with stepped = true }); (rows, rows);
+    ]
+  in
+  let dtypes =
+    [ (f32, f32); (f32, D.Any D.Bfloat16); (f32, D.Any D.Float16);
+      (f64, f64); (f64, f32) ]
+  in
+  List.concat_map
+    (fun (acc, dt) ->
+      List.concat_map
+        (fun (m, k) ->
+          List.map
+            (fun (va, vb) ->
+              let init = if k mod 2 = 1 then Some plain else None in
+              make ~acc ~out:acc ([||], [| m |], [| 37 |], [| k |]) (dt, va)
+                (dt, vb) init (m + k))
+            layouts)
+        [ (1, 64); (1, 71); (2, 48); (3, 1030); (4, 64); (5, 33) ])
+    dtypes
+
+(* Lane order's dots at the edges of their units and outputs, at float32,
+   bfloat16, float16 and float64, b stored [n × k], a too, or b stepped:
+   thousands of columns, which units of several groups take with a
+   partial last one; depths of 1, 16, 64 and 71 without init, one block
+   with init, two and three blocks with and without it, no product; no
+   row; and more rows than columns, whose transpose writes R's columns
+   apart. *)
+let edge_examples =
+  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
+  let plain = Elements.plain 2 and rows = swap 2 in
+  let layouts =
+    [ (plain, rows); (rows, rows); (plain, { rows with stepped = true }) ]
+  in
+  List.concat_map
+    (fun (acc, dt) ->
+      List.concat_map
+        (fun (m, n, k, init) ->
+          List.map
+            (fun (va, vb) ->
+              make ~acc ~out:acc ([||], [| m |], [| n |], [| k |]) (dt, va)
+                (dt, vb)
+                (if init then Some plain else None)
+                (m + n + k))
+            layouts)
+        [
+          (1, 4101, 64, false); (3, 3077, 71, false); (2, 4099, 1, false);
+          (4, 2053, 16, false); (1, 4101, 64, true); (3, 40, 1030, true);
+          (1, 37, 2049, true); (4, 1500, 1030, false); (2, 21, 3000, false);
+          (1, 1, 4097, false); (1, 3, 0, false); (0, 5, 64, false);
+          (4, 3001, 1024, false); (1, 3001, 1025, true); (8, 3, 64, false);
+          (9, 2, 64, false);
+        ])
+    [ (f32, f32); (f32, D.Any D.Bfloat16); (f32, D.Any D.Float16); (f64, f64) ]
+
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
       test "refuses an acc a contraction does not compute in" (fun () ->
           b.around (test_acc_refused b));
-      prop ~examples:(examples @ large_examples @ order_edges)
+      prop
+        ~examples:
+          (examples @ large_examples @ order_edges @ few_rows_examples
+         @ edge_examples)
         "each output adds its products in the order nx_cpu.mli states"
         computed (run (law_order b));
       prop ~count:16 ~examples:deep_examples

@@ -261,13 +261,18 @@ QAXPY(quads_axpy_u8, UDOT, uint8_t)
 
 /* Lane order's dots and axpys: 16 lanes are 4 vectors of float32, 8 of
    float64; 4 rows of float32 or 2 of float64 hold 16 accumulators and b's
-   vectors. */
+   vectors. A vector's lanes' tree: lane i takes lane i + 2 (float32's),
+   then lane 0 lane 1. */
+static inline float sum4_f32(float32x4_t v) {
+  return vpadds_f32(vadd_f32(vget_low_f32(v), vget_high_f32(v)));
+}
 #define VT float32x4_t
 #define LOAD vld1q_f32
 #define STORE vst1q_f32
 #define BCAST vdupq_n_f32
 #define ADD vaddq_f32
 #define FMA vfmaq_f32
+#define LANE_SUM sum4_f32
 #include "gemm_lanes.h"
 DOT(dot1_f32, float, 4, 4, 1, fmaf)
 DOT(dot2_f32, float, 4, 4, 2, fmaf)
@@ -282,12 +287,14 @@ GEMV(gemv_f32, float, 4, fmaf)
 #undef BCAST
 #undef ADD
 #undef FMA
+#undef LANE_SUM
 #define VT float64x2_t
 #define LOAD vld1q_f64
 #define STORE vst1q_f64
 #define BCAST vdupq_n_f64
 #define ADD vaddq_f64
 #define FMA vfmaq_f64
+#define LANE_SUM vpaddd_f64
 DOT(dot1_f64, double, 2, 8, 1, fma)
 DOT(dot2_f64, double, 2, 8, 2, fma)
 DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)

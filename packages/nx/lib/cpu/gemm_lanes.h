@@ -11,10 +11,23 @@
    NX_CPU_LANES terms loads b's L vectors once and adds them, times each
    row's, into that row's accumulators, fused: R·L chains in flight. The
    accumulators are named variables: gcc keeps an array of vectors in
-   memory and stores it at every step. It prefetches b DOT_AHEAD bytes
-   ahead, where its column goes on: a core alone reads 28 GB/s of b on
-   kimchi through its hardware prefetchers, 33 with these, and 4 rows of a
-   on L1 18 GB/s against 27.
+   memory and stores it at every step. Its rows stream and b stays in L1
+   (gemm.c's dots). A block of more than DOT_AHEAD bytes a row prefetches
+   each row DOT_AHEAD bytes ahead, a line a row each 64 bytes of it: a
+   core alone read a streamed column at 28 GB/s on kimchi through its
+   hardware prefetchers and 33 with these, and the rows of long blocks
+   lie in pages of their own, where the L2's streamer does not cross.
+   That costs R instructions a step of float32, 2R of float64, about a
+   fifth more for float32's 4 rows. Rows of a shorter block lie adjacent
+   in a weight, one stream from call to call, and take no prefetch.
+   The lanes' tree then runs in
+   registers: its levels across vectors by ADD, those within vector 0 by
+   the target's LANE_SUM, so that a dot of a short block, a decoded
+   token's scores against 64 elements of each key, finishes each row in a
+   few instructions, with no lanes stored and summed one at a time. A
+   block of whole steps runs two steps an iteration; one with terms past
+   the last whole step adds those one at a time into the lanes stored,
+   then the tree runs over those: the same sums.
 
    An axpy adds a row's element of a, broadcast, times a row of b into the
    row's accumulators in memory, four vectors a step, and prefetches as
@@ -47,10 +60,12 @@
    trsm-f64-256x16's.
 
    A target file defines VT (the vector type), LOAD, STORE, BCAST (one
-   element into every lane), ADD and FMA (c + a·b, rounded once) before
-   it includes this header, then instantiates DOT for its row counts, DOTS
-   over them, AXPY, TILE or TILE_PAIRS, and GEMV. gcc at -O2 vectorises
-   none of these loops written plainly. */
+   element into every lane), ADD, FMA (c + a·b, rounded once) and, where
+   it instantiates DOT, LANE_SUM (lane 0's value after the lanes' tree's
+   levels within one vector) before it includes this header, then
+   instantiates DOT for its row counts, DOTS over them, AXPY, TILE or
+   TILE_PAIRS, and GEMV. gcc at -O2 vectorises none of these loops
+   written plainly. */
 
 #ifndef NX_CPU_GEMM_LANES_H
 #define NX_CPU_GEMM_LANES_H
@@ -65,51 +80,122 @@
 #define DOT_R4(F, L, x) DOT_R2(F, L, x) DOT_V##L(F, 2, x) DOT_V##L(F, 3, x)
 #define DOT_EACH(R, L, F, x) DOT_R##R(F, L, x)
 
+/* F(r, x) for each row r < R. */
+#define DOT_ROW1(F, x) F(0, x)
+#define DOT_ROW2(F, x) F(0, x) F(1, x)
+#define DOT_ROW4(F, x) DOT_ROW2(F, x) F(2, x) F(3, x)
+
+#define DOT_ZERO(r, v, W) VT c##r##_##v = BCAST(0);
+#define DOT_B(r, v, W) VT b##v = LOAD(b + u + v * W);
+#define DOT_ADD(r, v, W) \
+  c##r##_##v = FMA(c##r##_##v, LOAD(a + r * lda + u + v * W), b##v);
+#define DOT_KEEP(r, v, W) STORE(l[r] + v * W, c##r##_##v);
+
 #define DOT_AHEAD 2048
 
-#define DOT_LOAD(r, v, W) VT c##r##_##v = LOAD(l + r * NX_CPU_LANES + v * W);
-#define DOT_B(r, v, W) VT b##v = LOAD(b + t + v * W);
-#define DOT_ADD(r, v, W) \
-  c##r##_##v = FMA(c##r##_##v, LOAD(a + r * lda + t + v * W), b##v);
-#define DOT_STORE(r, v, W) STORE(l + r * NX_CPU_LANES + v * W, c##r##_##v);
+/* Row r's line DOT_AHEAD bytes past the step at [u], each 64 bytes. */
+#define DOT_FETCH(r, T)                                                 \
+  for (int q = 0; q < NX_CPU_LANES * (int)sizeof(T); q += 64)           \
+    __builtin_prefetch((const char *)(a + r * lda + u) + DOT_AHEAD + q);
 
-/* [name] adds the [n] products of [R] rows of [a], [lda] apart, and [b]
-   into each row's lanes at [l]: term t into lane t modulo NX_CPU_LANES.
-   Terms past the last whole step add one at a time by [SFMA], the scalar
-   fused multiply-add. */
-#define DOT(name, T, W, L, R, SFMA)                                      \
-  static void name(const T *a, int64_t lda, const T *b, int64_t n,       \
-                   T *l) {                                               \
+/* The step of NX_CPU_LANES terms from [s], each row prefetched where
+   [P]. */
+#define DOT_STEP(s, T, R, W, L, P)            \
+  {                                           \
+    int64_t u = (s);                          \
+    if (P) {                                  \
+      DOT_ROW##R(DOT_FETCH, T)                \
+    }                                         \
+    DOT_V##L(DOT_B, 0, W)                     \
+    DOT_EACH(R, L, DOT_ADD, W)                \
+  }
+
+/* The lanes' tree's levels across row r's L vectors, lane i taking lane
+   i + h as vector v takes v + h / W, then within vector 0. */
+#define DOT_FOLD2(r) c##r##_0 = ADD(c##r##_0, c##r##_1);
+#define DOT_FOLD4(r)                  \
+  c##r##_0 = ADD(c##r##_0, c##r##_2); \
+  c##r##_1 = ADD(c##r##_1, c##r##_3); \
+  DOT_FOLD2(r)
+#define DOT_FOLD8(r)                  \
+  c##r##_0 = ADD(c##r##_0, c##r##_4); \
+  c##r##_1 = ADD(c##r##_1, c##r##_5); \
+  c##r##_2 = ADD(c##r##_2, c##r##_6); \
+  c##r##_3 = ADD(c##r##_3, c##r##_7); \
+  DOT_FOLD4(r)
+#define DOT_SUM(r, L) DOT_FOLD##L(r) y[r * ldy] = LANE_SUM(c##r##_0);
+
+/* [name] sets y[r·ldy], for each of [R] rows of [a], [lda] apart, to lane
+   order's sum of the block of [n] products of the row and [b], its
+   accumulators in registers, [n] a multiple of NX_CPU_LANES; the rows
+   prefetched where [P]. */
+#define DOT_WHOLE(name, T, W, L, R, P)                                   \
+  static void name(const T *a, int64_t lda, const T *b, int64_t n, T *y, \
+                   int64_t ldy) {                                        \
     int64_t t = 0;                                                       \
-    DOT_EACH(R, L, DOT_LOAD, W)                                          \
-    for (; t + NX_CPU_LANES <= n; t += NX_CPU_LANES) {                   \
-      for (int q = 0; q < NX_CPU_LANES * (int)sizeof(T); q += 64)        \
-        __builtin_prefetch((const char *)(b + t) + DOT_AHEAD + q);       \
-      DOT_V##L(DOT_B, 0, W)                                              \
-      DOT_EACH(R, L, DOT_ADD, W)                                         \
+    DOT_EACH(R, L, DOT_ZERO, W)                                          \
+    for (; t + 2 * NX_CPU_LANES <= n; t += 2 * NX_CPU_LANES) {           \
+      DOT_STEP(t, T, R, W, L, P)                                         \
+      DOT_STEP(t + NX_CPU_LANES, T, R, W, L, P)                          \
     }                                                                    \
-    DOT_EACH(R, L, DOT_STORE, W)                                         \
-    for (int r = 0; r < R; r++)                                          \
+    if (t < n) DOT_STEP(t, T, R, W, L, P)                                \
+    DOT_ROW##R(DOT_SUM, L)                                               \
+  }
+
+/* [name] sets y[r·ldy] as DOT_WHOLE does, for any [n]: [name]_whole, and
+   [name]_ahead which prefetches its rows, where [n] is a multiple of
+   NX_CPU_LANES. Otherwise terms past the last whole step add one at a
+   time by [SFMA], the scalar fused multiply-add, into the lanes
+   stored. */
+#define DOT(name, T, W, L, R, SFMA)                                      \
+  DOT_WHOLE(name##_whole, T, W, L, R, 0)                                 \
+  DOT_WHOLE(name##_ahead, T, W, L, R, 1)                                 \
+  static void name(const T *a, int64_t lda, const T *b, int64_t n, T *y, \
+                   int64_t ldy) {                                        \
+    int64_t t = 0;                                                       \
+    DOT_EACH(R, L, DOT_ZERO, W)                                          \
+    for (; t + NX_CPU_LANES <= n; t += NX_CPU_LANES)                     \
+      DOT_STEP(t, T, R, W, L, 1)                                         \
+    T l[R][NX_CPU_LANES];                                                \
+    DOT_EACH(R, L, DOT_KEEP, W)                                          \
+    for (int r = 0; r < R; r++) {                                        \
       for (int q = 0; t + q < n; q++)                                    \
-        l[r * NX_CPU_LANES + q] =                                        \
-            SFMA(a[r * lda + t + q], b[t + q], l[r * NX_CPU_LANES + q]); \
+        l[r][q] = SFMA(a[r * lda + t + q], b[t + q], l[r][q]);           \
+      NX_CPU_LANE_TREE(i, j, l[r][i] = l[r][i] + l[r][j]);               \
+      y[r * ldy] = l[r][0];                                              \
+    }                                                                    \
+  }
+
+/* [name], [r] rows over [dm] of [M] rows, [d2] of 2 and [d1] of 1, each
+   in its form [F], with the attributes [A]. */
+#define DOTS_FORM(name, T, M, dm, d2, d1, F, A)                          \
+  static A void name(const T *a, int64_t lda, int r, const T *b,         \
+                     int64_t n, T *y, int64_t ldy) {                     \
+    int i = 0;                                                           \
+    for (; i + M <= r; i += M)                                           \
+      dm##F(a + i * lda, lda, b, n, y + i * ldy, ldy);                   \
+    if (i + 2 <= r) {                                                    \
+      d2##F(a + i * lda, lda, b, n, y + i * ldy, ldy);                   \
+      i += 2;                                                            \
+    }                                                                    \
+    if (i < r) d1##F(a + i * lda, lda, b, n, y + i * ldy, ldy);          \
   }
 
 /* [name], cpu.h's dot, over [dm] of [M] rows, [d2] of 2 and [d1] of 1: M
-   rows at a time, then 2, then 1. */
+   rows at a time, then 2, then 1, each its _whole form where n is a
+   multiple of NX_CPU_LANES, its _ahead form where also a row of the
+   block passes DOT_AHEAD bytes. The other forms, which store their
+   lanes, run out of line. */
 #define DOTS(name, T, M, dm, d2, d1)                                     \
-  static void name(const void *va, int64_t lda, int r, const void *vb,   \
-                   int64_t n, void *vl) {                                \
-    const T *a = va, *b = vb;                                            \
-    T *l = vl;                                                           \
-    int i = 0;                                                           \
-    for (; i + M <= r; i += M)                                           \
-      dm(a + i * lda, lda, b, n, l + i * NX_CPU_LANES);                  \
-    if (i + 2 <= r) {                                                    \
-      d2(a + i * lda, lda, b, n, l + i * NX_CPU_LANES);                  \
-      i += 2;                                                            \
-    }                                                                    \
-    if (i < r) d1(a + i * lda, lda, b, n, l + i * NX_CPU_LANES);         \
+  DOTS_FORM(name##_whole, T, M, dm, d2, d1, _whole, )                    \
+  DOTS_FORM(name##_ahead, T, M, dm, d2, d1, _ahead, )                    \
+  DOTS_FORM(name##_any, T, M, dm, d2, d1, , __attribute__((noinline)))   \
+  static void name(const void *a, int64_t lda, int r, const void *b,     \
+                   int64_t n, void *y, int64_t ldy) {                    \
+    if (n % NX_CPU_LANES != 0) name##_any(a, lda, r, b, n, y, ldy);      \
+    else if (n * (int64_t)sizeof(T) > DOT_AHEAD)                         \
+      name##_ahead(a, lda, r, b, n, y, ldy);                             \
+    else name##_whole(a, lda, r, b, n, y, ldy);                          \
   }
 
 /* [name], cpu.h's axpy, adding the scalars by [SFMA]. */

@@ -183,25 +183,36 @@ static inline void nx_float_to_u8_run(const float *src, uint8_t *dst,
    6, is the quiet bit), then each code moved to the top half of a 32-bit
    lane by interleaving with zeros, the 64-bit groups first permuted so
    that the interleave keeps their order. On fudge it takes 0.033 ns an
-   element on one core against the loop's 0.049 to 0.061. */
+   element on one core against the loop's 0.049 to 0.061. A run takes 32
+   a step while it can: the loop's own instructions were a fifth of a
+   step of 16, which a contraction's stage of a bfloat16 weight runs on
+   every element. */
+#if defined(__AVX2__)
+static inline void nx_bf16x16_to_float(const uint16_t *src, float *dst) {
+  const __m256i inf = _mm256_set1_epi16(0x7F80);
+  const __m256i mag = _mm256_set1_epi16(0x7FFF);
+  const __m256i quiet = _mm256_set1_epi16(0x40);
+  __m256i c = _mm256_loadu_si256((const __m256i *)src);
+  __m256i past = _mm256_sub_epi16(inf, _mm256_and_si256(c, mag));
+  __m256i q =
+      _mm256_or_si256(c, _mm256_and_si256(_mm256_srli_epi16(past, 9), quiet));
+  q = _mm256_permute4x64_epi64(q, 0xD8);
+  _mm256_storeu_si256((__m256i *)dst,
+                      _mm256_unpacklo_epi16(_mm256_setzero_si256(), q));
+  _mm256_storeu_si256((__m256i *)(dst + 8),
+                      _mm256_unpackhi_epi16(_mm256_setzero_si256(), q));
+}
+#endif
+
 static inline void nx_bf16_to_float_run(const uint16_t *src, float *dst,
                                         size_t n) {
   size_t i = 0;
 #if defined(__AVX2__)
-  const __m256i zero = _mm256_setzero_si256();
-  const __m256i inf = _mm256_set1_epi16(0x7F80);
-  const __m256i mag = _mm256_set1_epi16(0x7FFF);
-  const __m256i quiet = _mm256_set1_epi16(0x40);
-  for (; i + 16 <= n; i += 16) {
-    __m256i c = _mm256_loadu_si256((const __m256i *)(src + i));
-    __m256i past = _mm256_sub_epi16(inf, _mm256_and_si256(c, mag));
-    __m256i q = _mm256_or_si256(
-        c, _mm256_and_si256(_mm256_srli_epi16(past, 9), quiet));
-    q = _mm256_permute4x64_epi64(q, 0xD8);
-    _mm256_storeu_si256((__m256i *)(dst + i), _mm256_unpacklo_epi16(zero, q));
-    _mm256_storeu_si256((__m256i *)(dst + i + 8),
-                        _mm256_unpackhi_epi16(zero, q));
+  for (; i + 32 <= n; i += 32) {
+    nx_bf16x16_to_float(src + i, dst + i);
+    nx_bf16x16_to_float(src + i + 16, dst + i + 16);
   }
+  for (; i + 16 <= n; i += 16) nx_bf16x16_to_float(src + i, dst + i);
 #endif
   for (; i < n; i++) dst[i] = nx_bf16_to_float(src[i]);
 }

@@ -1683,6 +1683,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On nx.cpu, a contraction in lane order against an operand whose
+  contracted axis is contiguous, as a decoded token against attention's keys
+  or a weight stored `[n × k]`, takes up to 16 of that operand's rows against
+  one row of the other and sums each block in registers. On one thread a
+  float32 token's scores against 4096 keys of 64 take 0.07 of the
+  instructions they took, its 2880-to-4096 projection 0.33, in bfloat16 0.27
+  and 0.81. Results keep their bits.
 - On nx.cpu, a fused map reads an operand broadcast along its rows, as
   `Nx.softmax`'s and `Nx.log_softmax`'s lane maxima and sums are, where it
   lies instead of copying it: `Nx.softmax` over 8 x 512 x 512 float32 runs

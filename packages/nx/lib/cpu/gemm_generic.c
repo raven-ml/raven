@@ -47,19 +47,22 @@
     }                                                                       \
   }
 
-/* Adds, for each of [r] rows of [a], [lda] apart, the [n] products with
-   [b] into the row's lanes at [l]: term t into lane t modulo
-   NX_CPU_LANES. */
+/* Sets y[i·ldy], for each of [r] rows of [a], [lda] apart, to lane
+   order's sum of the block of [n] products of the row and [b] (cpu.h's
+   dot). */
 #define DOT(name, T, FMA)                                                   \
   static void name(const void *va, int64_t lda, int r, const void *vb,      \
-                   int64_t n, void *vl) {                                   \
+                   int64_t n, void *vy, int64_t ldy) {                      \
     const T *a = va, *b = vb;                                               \
-    T *l = vl;                                                              \
-    for (int i = 0; i < r; i++)                                             \
-      for (int64_t t = 0; t < n; t++) {                                     \
-        T *x = l + i * NX_CPU_LANES + t % NX_CPU_LANES;                     \
-        *x = FMA(a[i * lda + t], b[t], *x);                                 \
-      }                                                                     \
+    T *y = vy;                                                              \
+    for (int i = 0; i < r; i++) {                                           \
+      T s[NX_CPU_LANES] = {0};                                              \
+      for (int64_t t = 0; t < n; t++)                                       \
+        s[t % NX_CPU_LANES] =                                               \
+            FMA(a[i * lda + t], b[t], s[t % NX_CPU_LANES]);                 \
+      NX_CPU_LANE_TREE(q, u, s[q] = s[q] + s[u]);                           \
+      y[i * ldy] = s[0];                                                    \
+    }                                                                       \
   }
 
 /* Adds each of [r] rows' element of [a], [lda] apart, times each of the

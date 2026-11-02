@@ -315,13 +315,25 @@ QAXPY(quads_axpy_u8, U, uint8_t)
 
 /* Lane order's dots and axpys: 16 lanes are 2 vectors of float32, 4 of
    float64; 4 rows of float32 or 2 of float64 hold 8 accumulators and b's
-   vectors. */
+   vectors. A vector's lanes' tree: lane i takes lane i + 4 (float32's),
+   then i + 2, then lane 0 lane 1. */
+static inline float sum8_f32(__m256 v) {
+  __m128 x = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
+  x = _mm_add_ps(x, _mm_movehl_ps(x, x));
+  return _mm_cvtss_f32(_mm_add_ss(x, _mm_movehdup_ps(x)));
+}
+static inline double sum4_f64(__m256d v) {
+  __m128d x =
+      _mm_add_pd(_mm256_castpd256_pd128(v), _mm256_extractf128_pd(v, 1));
+  return _mm_cvtsd_f64(_mm_add_sd(x, _mm_unpackhi_pd(x, x)));
+}
 #define VT __m256
 #define LOAD _mm256_loadu_ps
 #define STORE _mm256_storeu_ps
 #define BCAST _mm256_set1_ps
 #define ADD _mm256_add_ps
 #define FMA(c, a, b) _mm256_fmadd_ps(a, b, c)
+#define LANE_SUM sum8_f32
 #include "gemm_lanes.h"
 DOT(dot1_f32, float, 8, 2, 1, fmaf)
 DOT(dot2_f32, float, 8, 2, 2, fmaf)
@@ -336,12 +348,14 @@ GEMV(gemv_f32, float, 8, fmaf)
 #undef BCAST
 #undef ADD
 #undef FMA
+#undef LANE_SUM
 #define VT __m256d
 #define LOAD _mm256_loadu_pd
 #define STORE _mm256_storeu_pd
 #define BCAST _mm256_set1_pd
 #define ADD _mm256_add_pd
 #define FMA(c, a, b) _mm256_fmadd_pd(a, b, c)
+#define LANE_SUM sum4_f64
 DOT(dot1_f64, double, 4, 4, 1, fma)
 DOT(dot2_f64, double, 4, 4, 2, fma)
 DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
@@ -354,6 +368,7 @@ GEMV(gemv_f64, double, 4, fma)
 #undef BCAST
 #undef ADD
 #undef FMA
+#undef LANE_SUM
 
 /* Tiles of fewer columns than a 256-bit vector holds run on 128-bit
    vectors, whose lanes take them where the wider tile takes them one at a

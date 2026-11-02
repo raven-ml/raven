@@ -999,12 +999,17 @@ done:
    operand, is read once a pass, in the order it lies:
 
    - Dots, where b is adjacent along k or along each run of it, as a
-     weight stored [n × k] is, or a convolution's windows: a unit is
-     (element, DOT_COLUMNS columns, range of blocks), and each output's
-     block a dot along k, a column of b against every row of a. A product
-     of few outputs over a long k, a dot's, splits its blocks into ranges,
-     whose sums meet in a second job; otherwise a unit takes every block
-     and totals its outputs itself.
+     weight stored [n × k] is, attention's keys, or a convolution's
+     windows: a unit is (element, groups of DOT_COLUMNS columns, range of
+     blocks), and each output's block a dot along k, up to DOT_COLUMNS
+     columns of b at once against a row of a, summed in registers. A
+     product of few outputs over a long k, a dot's, splits its blocks into
+     ranges, whose sums meet in a second job; otherwise a unit takes every
+     block and totals its outputs itself, or, of one block and no init,
+     the dots write them. On fudge one thread took a float32 token's
+     scores against 4096 keys of 64 in 5.4 instructions a fused vector,
+     where a column of b against each row of a, its lanes stored and
+     summed one at a time, took 75.
    - Rows, otherwise, as for a weight stored [k × n]: a block of ROW_BYTES
      of columns adds the block's rows of b in turn, row k0 + t times its
      row's element of a into lane t modulo 16's accumulators, one per
@@ -1083,7 +1088,12 @@ static void empty(int64_t lo, int64_t hi, int worker, void *ctx) {
 typedef struct {
   problem *p;
   int64_t blocks, groups;    /* of k, and of DOT_COLUMNS columns */
+  int64_t span, units;       /* groups a unit takes, units an element */
   int64_t ranges, per_range; /* ranges of blocks a unit takes */
+  int64_t cols;              /* columns of b a dot takes */
+  nx_cpu_dot dot;            /* acc's */
+  int in_place;              /* b read where it lies */
+  int whole;                 /* an output's one block is its sum */
   uint8_t *a;                /* a, adjacent along k */
   int64_t lda, a_batch;      /* its rows' and elements' steps */
   uint8_t *sums; /* per (element, output, block), with ranges > 1 */
@@ -1110,49 +1120,65 @@ static void dots_a(int64_t lo, int64_t hi, int worker, void *ctx) {
              k);
 }
 
-/* Columns [j0, j0 + c) of element [e], each over blocks [x0, x1) in turn,
-   so that a column of b streams. In place, a column of b is the dot's
-   vector, against NX_CPU_DOT_ROWS rows of a at a time. Staged, the block
-   of NX_CPU_DOT_ROWS columns at once into [bp] is the dot's rows,
-   against each row of a, so that a product of one row keeps as many
-   chains in flight: a product's bits do not depend on which factor is
-   which. Each block's lanes are summed by the lanes' tree into its sum. */
+/* Columns [j0, j0 + c) of element [e], each block of [x0, x1) in turn,
+   each output's block sum by the dot, whose rows are f->cols columns of
+   b at a time, against each row of a: a product of one row keeps as many
+   chains in flight as one of many, and loads each step of a's row once
+   for the columns, which stay in L1 across a's rows. A product's bits do
+   not depend on which factor is which. In place, a dot's columns are
+   ones a step apart; staged, they are staged into [bp]. The sums go to
+   R itself, its columns [ldr] apart, where [direct], else to the unit's
+   own at [mine] or the job's. */
 static void dots_columns(const dots_job *f, uint8_t *bp, uint8_t *mine,
                          int64_t e, int64_t j0, int64_t c, int64_t x0,
-                         int64_t x1) {
+                         int64_t x1, int direct, int64_t ldr) {
   const problem *p = f->p;
+  const operand *ob = &p->op[B];
   int64_t m = p->ext[ROW], k = p->ext[CON], w = p->w;
   const uint8_t *a = f->a + e * f->a_batch * w;
-  int in_place = adjacent(p, B, CON);
-  int64_t cs = in_place ? 1 : NX_CPU_DOT_ROWS; /* columns at once */
-  int64_t rs = in_place ? NX_CPU_DOT_ROWS : 1; /* rows at once */
-  nx_cpu_dot dot = nx_cpu_table->dot[p->acc];
-  _Alignas(64) uint8_t l[NX_CPU_DOT_ROWS * NX_CPU_LANES * 8];
-  for (int64_t j = 0; j < c; j += cs)
+  int in_place = f->in_place;
+  nx_cpu_dot dot = f->dot;
+  int64_t nc;
+  for (int64_t j = 0; j < c; j += nc) {
+    int64_t ldb = 0;
+    if (in_place) nc = piece(ob, COL, j0 + j, min64(f->cols, c - j), &ldb);
+    else nc = min64(f->cols, c - j);
     for (int64_t x = x0; x < x1; x++) {
       int64_t k0 = x * NX_CPU_LANE_BLOCK;
-      int64_t len = min64(NX_CPU_LANE_BLOCK, k - k0), nc = min64(cs, c - j);
+      int64_t len = min64(NX_CPU_LANE_BLOCK, k - k0);
       const uint8_t *b = bp;
-      if (in_place) b = p->op[B].x->base + pos(p, B, e, 0, j0 + j, k0) * w;
-      else stage_at(p, B, e, 0, j0 + j, k0, CON, COL, len, nc, bp, len);
-      for (int64_t i0 = 0; i0 < m; i0 += rs) {
-        int64_t nr = min64(rs, m - i0);
-        const uint8_t *ai = a + (i0 * f->lda + k0) * w;
-        memset(l, 0, sizeof l);
-        if (in_place) dot(ai, f->lda, (int)nr, b, len, l);
-        else dot(b, len, (int)nc, ai, len, l);
-        /* The dot's row i + q: output (i0 + i, j + q), one of i and q 0. */
-        for (int64_t i = 0; i < nr; i++)
-          for (int64_t q = 0; q < nc; q++) {
-            uint8_t *lq = l + (i + q) * NX_CPU_LANES * w;
-            lane_sums(p->acc, lq, 1, 1);
-            memcpy(sums_of(f, mine, e, i0 + i, j0, c, j + q) + x * w, lq,
-                   (size_t)w);
-          }
+      if (in_place) b = ob->x->base + pos(p, B, e, 0, j0 + j, k0) * w;
+      else {
+        stage_at(p, B, e, 0, j0 + j, k0, CON, COL, len, nc, bp, len);
+        ldb = len;
+      }
+      for (int64_t i = 0; i < m; i++) {
+        const uint8_t *ai = a + (i * f->lda + k0) * w;
+        if (direct) dot(b, ldb, (int)nc, ai, len, at_r(p, e, i, j0 + j), ldr);
+        else
+          dot(b, ldb, (int)nc, ai, len,
+              sums_of(f, mine, e, i, j0, c, j) + x * w, f->blocks);
       }
     }
+  }
 }
 
+/* Each output of element [e]'s columns [j0, j0 + c): the total of its
+   block sums in the unit's own at [mine]. */
+static void dots_totals(const dots_job *f, uint8_t *mine, int64_t e,
+                        int64_t j0, int64_t c) {
+  const problem *p = f->p;
+  for (int64_t i = 0; i < p->ext[ROW]; i++)
+    for (int64_t j = 0; j < c; j++)
+      total(p, e, i, j0 + j, sums_of(f, mine, e, i, j0, c, j), f->blocks,
+            at_r(p, e, i, j0 + j));
+}
+
+/* A unit is f->span groups of an element's columns and a range of
+   blocks. An output of one block and no init is that block's sum: the
+   dots write it into R where the unit's columns are one step apart.
+   Otherwise each group's block sums go to the unit's own, or the job's,
+   then to their totals. */
 static void dots_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const dots_job *f = ctx;
@@ -1162,18 +1188,22 @@ static void dots_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   int64_t own = f->ranges == 1 ? m * DOT_COLUMNS * f->blocks * w : 0;
   uint8_t *bp = scratch(p, b_bytes + own);
   if (bp == NULL) return;
+  uint8_t *mine = bp + b_bytes;
   for (int64_t u = lo; u < hi; u++) {
-    int64_t r = u % f->ranges, g = u / f->ranges % f->groups;
-    int64_t e = u / f->ranges / f->groups, j0 = g * DOT_COLUMNS;
-    int64_t c = min64(DOT_COLUMNS, n - j0), x0 = r * f->per_range;
-    uint8_t *mine = bp + b_bytes;
-    dots_columns(f, bp, mine, e, j0, c, x0,
-                 min64(f->blocks, x0 + f->per_range));
-    if (f->ranges > 1) continue;
-    for (int64_t i = 0; i < m; i++)
-      for (int64_t j = 0; j < c; j++)
-        total(p, e, i, j0 + j, sums_of(f, mine, e, i, j0, c, j), f->blocks,
-              at_r(p, e, i, j0 + j));
+    int64_t r = u % f->ranges, v = u / f->ranges, e = v / f->units;
+    int64_t j0 = v % f->units * f->span * DOT_COLUMNS;
+    int64_t c = min64(f->span * DOT_COLUMNS, n - j0);
+    int64_t x0 = r * f->per_range, x1 = min64(f->blocks, x0 + f->per_range);
+    int64_t ldr, steps = piece(&p->op[DST], COL, j0, c, &ldr);
+    if (f->whole && steps == c) {
+      dots_columns(f, bp, NULL, e, j0, c, x0, x1, 1, ldr);
+      continue;
+    }
+    for (int64_t g = j0; g < j0 + c; g += DOT_COLUMNS) {
+      int64_t cg = min64(DOT_COLUMNS, j0 + c - g);
+      dots_columns(f, bp, mine, e, g, cg, x0, x1, 0, 0);
+      if (f->ranges == 1) dots_totals(f, mine, e, g, cg);
+    }
   }
   nx_cpu_give(bp);
 }
@@ -1196,9 +1226,19 @@ static void dots_finish(int64_t lo, int64_t hi, int worker, void *ctx) {
 static void dots(problem *p, int64_t bytes, double cost) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t k = p->ext[CON], w = p->w, outputs = batch * m * n;
+  /* A dot takes the columns of NX_CPU_DOT_ROWS whole blocks' bytes, up
+     to DOT_COLUMNS: a short block more, so that a call's and a stage's
+     set-up are shared, as a token's scores against 64 elements of each
+     key take 16 columns a call. */
+  int64_t len = min64(k, NX_CPU_LANE_BLOCK);
+  int64_t fit = NX_CPU_DOT_ROWS * (NX_CPU_LANE_BLOCK / len);
   dots_job f = {.p = p,
                 .blocks = ceil_div(k, NX_CPU_LANE_BLOCK),
-                .groups = ceil_div(n, DOT_COLUMNS)};
+                .groups = ceil_div(n, DOT_COLUMNS),
+                .cols = min64(DOT_COLUMNS, fit),
+                .dot = nx_cpu_table->dot[p->acc],
+                .in_place = adjacent(p, B, CON)};
+  f.whole = f.blocks == 1 && p->op[INIT].x == NULL;
   uint8_t *staged = NULL;
   if (adjacent(p, A, CON)) {
     f.a = p->op[A].x->base + p->op[A].first * w;
@@ -1215,8 +1255,14 @@ static void dots(problem *p, int64_t bytes, double cost) {
     nx_cpu_job(batch, batch * m * k * w, nx_gemm_part_cost(batch, m, k, w),
                dots_a, &f);
   }
+  /* Outputs of one block and no init take as many groups a unit as leave
+     each thread its units: on one thread a token's scores against 4096
+     keys of 64 took 0.88 of the instructions they took in units of a
+     group. */
   int64_t want = units(bytes, cost, NX_CPU_THREAD_BYTES);
-  int64_t outer = batch * f.groups;
+  f.span = f.whole && f.groups > want ? f.groups / want : 1;
+  f.units = ceil_div(f.groups, f.span);
+  int64_t outer = batch * f.units;
   f.per_range = outer < want ? ceil_div(f.blocks, ceil_div(want, outer))
                              : f.blocks;
   f.ranges = ceil_div(f.blocks, f.per_range);
