@@ -1693,6 +1693,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.betaincinv` and `Nx.betainccinv` take each logistic point's two
+  logarithms with one `exp` and one `log1p`, where they took two of each: at
+  float64 their program is 6% smaller and their gradient's 4%, which
+  `Rune.jit` compiles in proportion. Results keep their bits.
 - On nx.cpu, a contraction in lane order against an operand whose
   contracted axis is contiguous, as a decoded token against attention's keys
   or a weight stored `[n × k]`, takes up to 16 of that operand's rows against

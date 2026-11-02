@@ -1976,9 +1976,12 @@ let softplus z =
   add (where (gt z 0.) z (zeros_like z)) (log1p (exp (neg (abs z))))
 
 (* The point of logit [z]: [x] and [1 - x] each from its own logarithm, which
-   stays finite where the variable underflows. *)
+   stays finite where the variable underflows. The logarithms are [-softplus
+   (-z)] and [-softplus z], which share [log1p (e^-|z|)], computed once. *)
 let logit_point z =
-  let lx = neg (softplus (neg z)) and ly = neg (softplus z) in
+  let shared = log1p (exp (neg (abs z))) in
+  let lx = neg (add (where (lt z 0.) (neg z) (zeros_like z)) shared) in
+  let ly = neg (add (where (gt z 0.) z (zeros_like z)) shared) in
   let x = exp lx and y = exp ly in
   let upper_half = ge z 0. in
   { x; y; lx; ly; s = where upper_half y x; upper_half; half = is z 0. }
