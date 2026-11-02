@@ -1478,6 +1478,8 @@ module Image : sig
       loads [binary] again, so that each image's module variables are its
       own. Where [d]'s memory holds the code, it counts in [d]'s {!budget},
       and [load] places it there after the work submitted on [d] before it.
+      Where [d]'s copy engine copies it, [load] returns without waiting for
+      that work or the copy, and work that runs the image follows the copy.
       The image stays loaded while it is reachable. A call on [d] that finds
       it collected ({!Rig.section-reclaim}) unloads it once the work
       submitted on [d] before that call is done.

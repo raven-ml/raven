@@ -953,10 +953,15 @@ let makings =
         let d, p = P.open_ (fresh "making:functions") in
         ( [ (d, p) ],
           fun () -> ignore (Result.get_ok (Rig.Image.load d "functions")) ));
+    (* The load queues its code's copy and returns; work after it, waited
+       for, runs the copy, so that its memory can go back. *)
     making "a load of an image into the device's memory" (fun () ->
         let d, p = P.open_ (fresh "making:code") in
         ( [ (d, p) ],
-          fun () -> ignore (Result.get_ok (Rig.Image.load d "code:64")) ));
+          fun () ->
+            let after = Sub.Run.make (Sub.make d [||]) in
+            ignore (Result.get_ok (Rig.Image.load d "code:64"));
+            Rig.Point.wait (once after) ));
     making ~words:true "a submit that maps rig's array to wait on a producer"
       (fun () ->
         let d, p = P.open_ ~waits_on:[ `Host ] (fresh "making:array") in

@@ -10,8 +10,10 @@
     size and lays the binary out into it. In the second case {!load} allocates
     that memory as [Device] memory of the device ({!Memory.code_entry}), so
     it counts in the budget, and places the code after the device's queued
-    work: by a copy from [Pinned] memory on the copy engine ({!Copy.queued}),
-    or by the host where the device has no copy engine. The image's record
+    work: by a copy from [Pinned] memory on the copy engine
+    ({!Submission.run_copy}), which it does not wait for, or by the host,
+    once that work is done, where the device has no copy engine. The image's
+    record
     and token are made before each driver's call that may make the image,
     and hold the code memory: a failure puts the token's record on the
     device's release list at once, which unloads the image if the driver

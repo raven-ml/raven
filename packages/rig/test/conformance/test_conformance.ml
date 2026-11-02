@@ -1514,6 +1514,50 @@ let images (module G : Gpu) () =
   is_none ~msg:"a function the image lacks" (Rig.Image.resolve i "absent");
   is_error ~msg:"bytes that are no binary" (Rig.Image.load t.d "no binary")
 
+(* The processor time of the process, in seconds. *)
+let processor () =
+  let t = Unix.times () in
+  t.tms_utime +. t.tms_stime
+
+(* A load behind a second of queued work, a hundred values whose word moves
+   throughout, holds no processor while that work runs: it places the code
+   without waiting for the work (rig.mli), or its driver waits blocked
+   (rig_cuda.mli), where a spin takes the second. A kernel of the image then
+   runs as loaded. A first load, outside the count, compiles what the driver
+   compiles. *)
+let load_behind_work (module G : Gpu) () =
+  G.with_ @@ fun t ->
+  if running Rig_edge.Launch (G.D.facts t.g).queues = [] then
+    skip ~reason:"the device runs no launch" ();
+  let bin =
+    match G.launch_binary () with
+    | Some b -> b
+    | None -> failf "%s runs launches, and has no launch binary" G.class_
+  in
+  let load () =
+    require_ok ~pp:Format.pp_print_string (Rig.Image.load t.d bin)
+  in
+  ignore (load () : Rig.Image.t);
+  let queued =
+    List.init 100 (fun _ -> G.submit_work t [ G.spin t ~ns:10_000_000 ])
+  in
+  let before = processor () in
+  let l = load () in
+  let used = processor () -. before in
+  let n = 64 in
+  let out = filled t.d (String.make (4 * n) '\000') in
+  Rig.Point.wait
+    (submit t.d
+       [
+         ids l ~out ~groups:(1, 1, 1) ~threads:(n, 1, 1) ~offset:0 ~a:0 ~b:1
+           ~f:0.;
+       ]
+       ~uses:[ (out, Rig.Read_write) ]);
+  List.iter Rig.Point.wait queued;
+  less ~msg:"processor seconds during the load" float_exact ~than:0.25 used;
+  equal (array int) ~msg:"the kernel's words" (Array.init n Fun.id)
+    (words (get out) ~at:0 n)
+
 (* Timeline *)
 
 let idle_close (module G : Gpu) () =
@@ -2166,6 +2210,8 @@ let laws (module G : Gpu) =
         launches (workspace g);
       test "an image names its kernels, and bytes no binary are an error"
         (images g);
+      test "a load behind queued work holds no processor, and its kernel runs"
+        (load_behind_work g);
       test "a close of an idle device leaves the word at the last value"
         (idle_close g);
       test "opens and closes keep a fixed record per open" (open_close g);

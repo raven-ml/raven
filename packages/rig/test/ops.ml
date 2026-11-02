@@ -217,14 +217,18 @@ let submit_boxes =
         B.copy ~src:dst ~dst:back;
         equal string (pattern page) (bytes back))
 
+(* A load, then a wait for work after it: the load queues its code's copy and
+   returns, and the code's memory and the copy's staging go back once that
+   work is done. *)
 let load =
   op "load" (fun d failure ->
-      match Rig.Image.load d "code:64" with
+      (match Rig.Image.load d "code:64" with
       | Ok p -> (
           match Rig.Image.resolve p "main" with
           | Some _ -> ()
           | None -> fail "main is absent")
-      | Error _ -> equal ~msg:"load refused" bool true (refusing failure))
+      | Error _ -> equal ~msg:"load refused" bool true (refusing failure));
+      Rig.Point.wait (once (Sub.Run.make (Sub.make d [||]))))
 
 let wait_transport =
   op "wait behind a transport" ~opener:(P.open_ ~transport:true) (fun d ->

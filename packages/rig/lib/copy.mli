@@ -95,14 +95,6 @@ val submit_copy :
 val copy : src:Def.buffer -> dst:Def.buffer -> unit
 (** [copy ~src ~dst] is {!Rig.Buffer.copy}[ ~src ~dst]. *)
 
-val queued : Def.device -> src:Def.buffer -> dst:Def.buffer -> unit
-(** [queued d ~src ~dst] copies [src] into [dst] as one submission on [d]'s
-    copy engine, and waits for it. [src] and [dst] must be buffers
-    on [d], or, for a device of another machine, one may be this process's
-    memory ({!Submission.run_copy}). It raises as {!Rig.submit} and {!Dev.wait}
-    do, and raises [Invalid_argument] if a buffer's memory is held
-    exclusive. *)
-
 val blit_from_string : string -> int -> Def.buffer -> int -> int -> unit
 (** [blit_from_string s i b j n] is {!Rig.Buffer.blit_from_string}[ s i b j
     n]. *)

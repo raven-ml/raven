@@ -34,8 +34,19 @@ let test_load (copies, host_visible) =
   let previous = submit (Sub.make d [||]) in
   if copies || host_visible then begin
     let p = load d "code:64" in
-    at_least ~msg:"previous work completed" int ~than:(Rig.Point.value previous)
-      (Rig.signaled d);
+    (* A copy takes a value after the previous work's, and the load returns
+       without waiting for either; the host writes the code once the previous
+       work completed. Work after the load sees the code. *)
+    if copies then begin
+      less ~msg:"the copy's value follows the previous work's" int
+        ~than:(Rig.submitted d) (Rig.Point.value previous);
+      less ~msg:"the load returns before the copy ran" int
+        ~than:(Rig.submitted d) (Rig.signaled d)
+    end
+    else
+      at_least ~msg:"previous work completed" int
+        ~than:(Rig.Point.value previous) (Rig.signaled d);
+    Rig.Point.wait (submit (Sub.make d [||]));
     equal ~msg:"no work left queued" int 0 (P.queued pd);
     equal bool true (Rig.equal d (Image.device p));
     is_none (Image.resolve p "other");

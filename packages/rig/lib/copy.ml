@@ -972,9 +972,6 @@ let copy ~src ~dst =
   check fn src dst;
   Claim.reading2 fn src dst copied n
 
-let queued d ~src ~dst =
-  Dev.wait d (Point.value (Submission.run_copy d ~waits:[||] ~src ~dst))
-
 (* The host's values *)
 
 let writable fn b =
