@@ -100,6 +100,10 @@ val delete_run : t -> string -> unit
     locks as any other; on NFS the lock then needs write access, and the
     call raises [Sys_error].
 
+    Once the run is deleted, a failure to remove its files, as when
+    another program holds one open on Windows, does not raise: {!gc}
+    removes what is left.
+
     Raises [Failure] if another writer holds the run's lock, or the run is
     [`Silent] ({!Run.status}). *)
 
@@ -142,9 +146,10 @@ val delete_artifact : t -> Artifact.t -> unit
 (** {1:maintenance Maintenance} *)
 
 val gc : t -> int
-(** [gc s] removes the blobs of [s] that no version names, and the
-    [.]-named work that crashed writers left under [blobs/] and
-    [artifacts/], and is the number of entries it removed. It waits for the
+(** [gc s] removes the blobs of [s] that no version names, the [.]-named
+    work that crashed writers left under [blobs/] and [artifacts/], and
+    what a {!delete_run} cut short left under [runs/], and is the number
+    of entries it removed. It waits for the
     publications in progress, and those that start wait for it
     ({!Store_format.section-blobs}). *)
 
@@ -163,7 +168,9 @@ val check : t -> (string * string) list
     - an alias that names no version;
     - a version whose blob is missing, or whose blob's content does not
       match its digest;
-    - a [.]-named entry a writer left.
+    - a [.]-named entry a writer left;
+    - a run directory that a {!delete_run} cut short left, until {!gc}
+      removes it.
 
     It reads every log, every tag file and every blob. *)
 

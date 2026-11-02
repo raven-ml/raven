@@ -280,7 +280,12 @@ v}
     {!section-durability} states.
 
     Deleting a run takes its lock in the same way, and removes the run
-    only while it holds the lock.
+    only while it holds the lock: it renames the log to [.deleted] in the
+    run's directory, which ends the run for readers and writers at once.
+    It then lets the lock go, renames the directory to a [.]-named entry of
+    [runs/] and removes that. Where the system refuses the rename, as
+    Windows does while another program holds a file in the directory open,
+    it removes the directory in place, [.deleted] last.
 
     {1:annotations Tags and notes}
 
@@ -298,6 +303,10 @@ v}
     directory, syncs it, and renames it over [notes], so a reader sees the
     old notes or the new. When two writers replace the notes at once, the
     last rename wins.
+
+    A writer of tags or notes creates [tags/] when it lacks it and no
+    directory above it, so that it never makes again the directory of a
+    run that a deletion removed meanwhile ({!section-resume}).
 
     {1:files Files a run logged}
 
@@ -389,7 +398,10 @@ v}
     removes the blobs that no version names and the [.]-named entries
     under [blobs/] and [artifacts/]. While it holds the lock no such write
     is in progress, so it removes nothing a version will name and no file
-    a writer is about to rename.
+    a writer is about to rename. It also removes what a deletion cut short
+    left ({!section-resume}): the [.]-named entries of [runs/], and the run
+    directories that hold [.deleted] and no log. Neither is a run, and no
+    writer adds to either.
 
     {1:durability Durability}
 
@@ -443,7 +455,9 @@ v}
       and the next writer's resume cuts them off;
     - a file under [files/] that no [file] record names: ignored;
     - a [.]-named file or directory: ignored, and removed by a collector
-      under [blobs/] and [artifacts/];
+      under [blobs/] and [artifacts/] and in [runs/];
+    - a run directory that holds [.deleted] and no log: not a run, and
+      removed by a collector;
     - a blob that no version names: removed by a collector;
     - a log with no [end] whose lock no process holds: a crashed run;
     - a run directory with a [writer] and no whole first line: not a run;

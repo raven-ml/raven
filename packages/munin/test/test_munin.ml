@@ -25,13 +25,17 @@ let provenance =
     env = [];
   }
 
+(* Windows removes no read-only file, such as git's objects, until its
+   attribute is cleared. *)
 let rec rm_rf p =
   match Unix.lstat p with
   | exception Unix.Unix_error _ -> ()
   | { Unix.st_kind = Unix.S_DIR; _ } ->
       Array.iter (fun e -> rm_rf (Filename.concat p e)) (Sys.readdir p);
       Unix.rmdir p
-  | _ -> Sys.remove p
+  | _ ->
+      if Sys.win32 then Unix.chmod p 0o644;
+      Sys.remove p
 
 let with_store f =
   let root = Filename.temp_dir "munin" "" in
@@ -61,6 +65,9 @@ let replace_first text ~sub ~by =
   find 0
 
 let child_exe = Filename.concat (Sys.getcwd ()) "support/child.exe"
+
+(* The name a deletion renames a run's log to (Munin.Store_format, resume). *)
+let deletion_mark = ".deleted"
 
 (* Witnesses *)
 
@@ -1109,12 +1116,20 @@ let wait pid =
   | Unix.WEXITED 0 -> ()
   | _ -> fail "the child failed"
 
+(* How a run reads once its writer exited without an end: crashed where the
+   writer records the boot it ran under, which a writer on Windows does not
+   (Munin.Store_format, status). *)
+let dead_status = if Sys.win32 then `Silent else `Crashed
+
+let no_ulimit () =
+  if Sys.win32 then skip ~reason:"Windows has no ulimit" ()
+
 let process_tests =
   group "processes"
     [
       test
         "a live writer's run reads running and refuses a resume; a dead one \
-         reads crashed" (fun () ->
+         reads crashed under a known boot" (fun () ->
           with_store @@ fun store ->
           let pid, stdin, out = spawn [ "hold"; Store.root store ] in
           let id = input_line out in
@@ -1128,7 +1143,7 @@ let process_tests =
           wait pid;
           close_in out;
           let run = require_some (Store.run store id) in
-          equal ~msg:"after it exits" status `Crashed (Run.status run);
+          equal ~msg:"after it exits" status dead_status (Run.status run);
           let s = Session.resume ~provenance run ~step:0 in
           Session.finish s;
           equal ~msg:"resumed and finished" status `Finished
@@ -1184,6 +1199,7 @@ let process_tests =
             (List.map (fun (f : History.file) -> f.step) (History.files h));
           equal (list (pair string string)) [] (Store.check store));
       test "a file whose copy fails leaves no temporary" (fun () ->
+          no_ulimit ();
           with_store @@ fun store ->
           let src = Filename.temp_file "munin" ".bin" in
           write_file src (String.make 65536 'x');
@@ -1207,6 +1223,7 @@ let process_tests =
           equal (list string) []
             (Array.to_list (try Sys.readdir dir with Sys_error _ -> [||])));
       test "a write the system refuses raises Sys_error" (fun () ->
+          no_ulimit ();
           with_store @@ fun store ->
           let src = Filename.temp_file "munin" ".bin" in
           write_file src (String.make 65536 'x');
@@ -1422,6 +1439,96 @@ let store_tests =
           equal status `Silent (Run.status run);
           raises_match (Exn.failure ~sub:"silent") (fun () ->
               Store.delete_run store "spec"));
+      test "a run directory without a log is not a run" (fun () ->
+          with_store @@ fun store ->
+          (* A start claims its directory before it creates the log. *)
+          let runs = Filename.concat (Store.root store) "runs" in
+          mkdir_p runs;
+          let dir = Filename.concat runs "claimed" in
+          mkdir_p dir;
+          equal (option string) None
+            (Option.map Run.id (Store.run store "claimed"));
+          equal (list string) [] (List.map Run.id (Store.runs store));
+          equal
+            (list (pair string string))
+            [ (dir, "not a run: its log holds no whole first line") ]
+            (Store.check store);
+          equal ~msg:"gc leaves a claimed directory" int 0 (Store.gc store);
+          is_true (Sys.file_exists dir));
+      test "a run directory that cannot be searched is unreadable" (fun () ->
+          if Sys.win32 then
+            skip ~reason:"Windows keeps no search permission in a mode" ();
+          if Unix.geteuid () = 0 then
+            skip ~reason:"root searches any directory" ();
+          with_store @@ fun store ->
+          let s = start store in
+          Session.finish s;
+          let id = Session.id s in
+          let dir = Run.dir (reread store s) in
+          Unix.chmod dir 0o600;
+          Fun.protect ~finally:(fun () -> Unix.chmod dir 0o755) @@ fun () ->
+          let denied =
+            Filename.concat dir "events.jsonl" ^ ": "
+            ^ Unix.error_message Unix.EACCES
+          in
+          raises_match (Exn.failure ~sub:denied) (fun () -> Store.run store id);
+          equal
+            (list (pair string string))
+            [ (dir, denied) ]
+            (Store.check store));
+      test "what an interrupted deletion leaves is no run, and gc removes it"
+        (fun () ->
+          with_store @@ fun store ->
+          let runs = Filename.concat (Store.root store) "runs" in
+          let ended () =
+            let s = start ~tags:[ "t" ] store in
+            Session.finish s;
+            Store.set_notes store (Session.id s) (Some "n");
+            (Session.id s, Run.dir (reread store s))
+          in
+          let kept, _ = ended () in
+          (* Cut short under the lock or after it, before the directory moved:
+             the log renamed to the mark (Store_format, resume). *)
+          let renamed, renamed_dir = ended () in
+          Unix.rename
+            (Filename.concat renamed_dir "events.jsonl")
+            (Filename.concat renamed_dir deletion_mark);
+          (* Cut short while it removed the directory in place: the mark
+             alone. *)
+          let emptied, emptied_dir = ended () in
+          Unix.rename
+            (Filename.concat emptied_dir "events.jsonl")
+            (Filename.concat emptied_dir deletion_mark);
+          Array.iter
+            (fun n ->
+              if n <> deletion_mark then rm_rf (Filename.concat emptied_dir n))
+            (Sys.readdir emptied_dir);
+          (* Cut short while it removed the moved directory. *)
+          let moved, moved_dir = ended () in
+          let dot = Filename.concat runs ".moved" in
+          Unix.rename
+            (Filename.concat moved_dir "events.jsonl")
+            (Filename.concat moved_dir deletion_mark);
+          Unix.rename moved_dir dot;
+          List.iter
+            (fun id ->
+              equal ~msg:id (option string) None
+                (Option.map Run.id (Store.run store id)))
+            [ renamed; emptied; moved ];
+          equal (list string) [ kept ] (List.map Run.id (Store.runs store));
+          equal
+            (list (pair string string))
+            (List.sort compare
+               [
+                 (renamed_dir, "left by a deletion");
+                 (emptied_dir, "left by a deletion");
+                 (dot, "left by a writer");
+               ])
+            (Store.check store);
+          equal ~msg:"removed" int 3 (Store.gc store);
+          equal ~msg:"left" (list string) [ kept ]
+            (Array.to_list (Sys.readdir runs));
+          equal (list (pair string string)) [] (Store.check store));
       test "runs are listed newest first, and a deleted run goes" (fun () ->
           with_store @@ fun store ->
           let a = start ~experiment:"x" store in
@@ -1774,9 +1881,70 @@ let held h =
     (fun (x : Metric.sample) -> x.value)
     (samples_of (History.series h "a"))
 
+(* Runs that two domains delete and annotate at once. A run's reference is
+   whether it exists; its system side is its id. A call the store refuses
+   answers false. *)
+let race_store =
+  lazy
+    (let root = Filename.temp_dir "munin-race" "" in
+     at_exit (fun () -> rm_rf root);
+     Store.open_ ~root ())
+
+(* Once the calls end, a run's directory holds its log, or the mark of a
+   deletion that gc finishes, or is gone. A directory with neither is one that
+   nothing removes. *)
+let no_stray id =
+  let runs = Filename.concat (Store.root (Lazy.force race_store)) "runs" in
+  let dir = Filename.concat runs id in
+  if
+    Sys.file_exists dir
+    && not
+         (Sys.file_exists (Filename.concat dir "events.jsonl")
+         || Sys.file_exists (Filename.concat dir deletion_mark))
+  then
+    fail
+      (Printf.sprintf "%s holds neither a log nor a deletion's mark: %s" dir
+         (String.concat " " (Array.to_list (Sys.readdir dir))))
+
+let run_w : (bool ref, string) abstract = abstract ~release:no_stray "r"
+
+let accepted f =
+  match f () with () -> true | exception (Failure _ | Sys_error _) -> false
+
+(* [annotate tag store id] adds a tag to the run [id], or sets its notes. *)
+let annotate tag store id =
+  if tag then Store.add_tags store id [ "t" ]
+  else Store.set_notes store id (Some "n")
+
 let domain_tests =
   group "domains"
     [
+      stateful ~count:6 ~domains:2
+        "a deletion and annotations on two domains leave the run whole or gone"
+        [
+          command "start"
+            (Gen.unit @-> makes run_w)
+            (fun () -> ref true)
+            (fun () ->
+              let s = start (Lazy.force race_store) in
+              Session.finish s;
+              Session.id s);
+          command "delete" (run_w ^-> returns bool)
+            (fun r ->
+              let was = !r in
+              r := false;
+              was)
+            (fun id ->
+              accepted (fun () -> Store.delete_run (Lazy.force race_store) id));
+          command "annotate"
+            (Gen.bool @-> run_w ^-> returns bool)
+            (fun _ r -> !r)
+            (fun tag id ->
+              accepted (fun () -> annotate tag (Lazy.force race_store) id));
+          command "exists" (run_w ^-> returns bool)
+            (fun r -> !r)
+            (fun id -> Store.run (Lazy.force race_store) id <> None);
+        ];
       stateful ~count:30 ~domains:2
         "following one history on two domains leaves both right"
         [

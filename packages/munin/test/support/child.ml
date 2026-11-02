@@ -52,6 +52,9 @@ let provenance =
   }
 
 let () =
+  (* Windows ends a line with CR LF on a text channel, and the tests read the
+     lines from a pipe byte for byte. *)
+  set_binary_mode_out stdout true;
   let store = Store.open_ ~root:Sys.argv.(2) () in
   match Sys.argv.(1) with
   | "hold" ->

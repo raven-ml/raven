@@ -30,6 +30,14 @@ type t = {
 val log : string -> string
 (** [log dir] is the path of the log of the run in [dir]. *)
 
+val mark : string -> string
+(** [mark dir] is the path a deletion renames the log of the run in [dir] to
+    ({!Store_format.section-resume}). *)
+
+val deleted : string -> bool
+(** [deleted dir] is [true] iff [dir] holds a deletion's mark and no log: a
+    deletion that was cut short. *)
+
 val status :
   held:bool option ->
   writer:string option * string option ->

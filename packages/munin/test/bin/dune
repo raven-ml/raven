@@ -5,3 +5,11 @@
 (cram
  (package munin)
  (deps make_store.exe %{bin:munin}))
+
+; posix.t holds a run open through a fifo, which Windows lacks, and prints
+; paths, which Windows spells with \.
+
+(cram
+ (applies_to posix)
+ (enabled_if
+  (<> %{os_type} Win32)))

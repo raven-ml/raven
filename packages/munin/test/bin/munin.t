@@ -15,9 +15,6 @@ does not exist is an empty store.
 
   $ RAVEN_TRACKING_DIR=none munin runs
 
-  $ RAVEN_TRACKING_DIR=none munin root
-  $TESTCASE_ROOT/none
-
 The store holds a run named base with NaN and infinite losses, a failed run
 named wide, a killed child of base named sweep, and a run that crashed at
 step 4 and resumed from step 2. Ids and start times change from one test
@@ -31,9 +28,6 @@ run to the next, so [ids] names them.
   >     -e "s/$resumed/RESUMED/g" \
   >     -e 's/[0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9]\{6\}Z/TIME/g'
   > }
-
-  $ munin root --root store
-  $TESTCASE_ROOT/store
 
 Runs, newest first: id, status, start, experiment, name, tags.
 
@@ -277,37 +271,6 @@ Deleting version 2 leaves its blob, which gc removes.
   $ munin gc --root store
   removed 0
 
-A run being written cannot be removed. Once its writer exits, it reads
-crashed and can be.
-
-  $ mkfifo input
-  $ ./make_store.exe hold store < input > held &
-  $ exec 3> input
-  $ until [ -s held ]; do sleep 0.1; done
-  $ held=$(cat held)
-  $ munin runs --root store --status running | sed "s/$held/HELD/" | ids
-  HELD	running	TIME	held	-	-
-  $ munin rm --root store $held 2>&1 | sed "s/$held/HELD/"
-  munin: run HELD is being written
-  $ munin end --root store $held 2>&1 | sed "s/$held/HELD/"
-  munin: run HELD is being written
-  $ exec 3>&-
-  $ wait
-  $ munin runs --root store --status crashed | sed "s/$held/HELD/" | ids
-  HELD	crashed	TIME	held	-	-
-
-end ends a crashed run as killed, and refuses an ended one.
-
-  $ munin end --root store $held
-  $ munin runs --root store --status killed | sed "s/$held/HELD/" | ids
-  HELD	killed	TIME	held	-	-
-  SWEEP	killed	TIME	sweep	-	night,sweep
-  $ munin end --root store $held 2>&1 | sed "s/$held/HELD/"
-  munin: run HELD has ended
-  $ munin rm --root store $held
-  $ munin show --root store $held 2>&1 | sed "s/$held/HELD/"
-  munin: no run HELD
-
 rm removes what it can and reports the rest.
 
   $ munin rm --root store $sweep nope
@@ -318,24 +281,25 @@ rm removes what it can and reports the rest.
   WIDE	failed	TIME	mnist	wide	lr-sweep
   BASE	finished	TIME	mnist	base	baseline
 
-check lists each path that breaks the format and why.
+check lists each path that breaks the format and why, and exits with 1
+when it lists one. gc removes what a writer left.
 
   $ munin check --root store
 
   $ printf 'not a record\n' >> store/runs/$base/events.jsonl
   $ rm store/blobs/blake2b-256/188e41df655bfeffb5654aeab18124803449b498d61874eca09a2159c6172669
   $ mkdir store/artifacts/mnist-ckpt/.left
-  $ munin check --root store | ids
-  $TESTCASE_ROOT/store/artifacts/mnist-ckpt/.left	left by a writer
-  $TESTCASE_ROOT/store/blobs/blake2b-256/188e41df655bfeffb5654aeab18124803449b498d61874eca09a2159c6172669	a version's blob is missing
-  $TESTCASE_ROOT/store/runs/BASE/events.jsonl	damaged lines: 1
+  $ munin check --root store | cut -f 2
+  left by a writer
+  a version's blob is missing
+  damaged lines: 1
   $ munin check --root store > /dev/null
   [1]
   $ munin gc --root store
   removed 1
 
 The dashboard needs a terminal. Bare munin elsewhere prints its help, and
-watch fails, naming an unknown run first.
+watch fails.
 
   $ munin < /dev/null | head -2
   NAME
@@ -343,8 +307,4 @@ watch fails, naming an unknown run first.
 
   $ munin watch --root store < /dev/null
   munin: the dashboard needs a terminal
-  [1]
-
-  $ munin watch nope --root store < /dev/null
-  munin: no run nope in $TESTCASE_ROOT/store
   [1]

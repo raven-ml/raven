@@ -30,9 +30,11 @@ let () = at_exit (fun () -> remove home)
 let child = Filename.concat (Sys.getcwd ()) "../support/child.exe"
 
 (* [with_store ?name runs f] is [f store], [store] a store of [runs] at
-   [~/name], which it removes after with the writers that hold its runs. *)
+   [~/name], which it removes after with the writers that hold its runs. The
+   root is joined with [/], which Windows also takes, so that a screen names it
+   as [~/name] there too. *)
 let with_store ?(name = "store") runs f =
-  let root = Filename.concat home name in
+  let root = home ^ "/" ^ name in
   let store = Fixture.make ~child root runs in
   Fun.protect
     ~finally:(fun () ->

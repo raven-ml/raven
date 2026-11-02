@@ -42,9 +42,16 @@ external darwin_boot_time : unit -> float option = "caml_munin_boot_time"
 external platform_uuid : unit -> string option = "caml_munin_platform_uuid"
 
 (* Share-delete, so that a writer on Windows can replace a file a reader has
-   open, as notes, writer, stats.json and aliases are replaced. *)
+   open, as notes, writer, stats.json and aliases are replaced, and a deletion
+   can rename a log a reader has open. *)
 let open_flags = [ Unix.O_RDONLY; Unix.O_CLOEXEC; Unix.O_SHARE_DELETE ]
 let open_read path = wrap path (fun () -> Unix.openfile path open_flags 0)
+
+let open_read_opt path =
+  match Unix.openfile path open_flags 0 with
+  | fd -> Some fd
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> None
+  | exception Unix.Unix_error (e, _, _) -> error path e
 
 (* [fill fd b off] reads into [b] from [off] until [b] is full or the file ends,
    and is the offset reached. *)
@@ -326,6 +333,11 @@ let rec mkdirs dir =
     | Unix.Unix_error (e, _, _) -> error dir e
   end
 
+let mkdir dir =
+  try Unix.mkdir dir 0o777 with
+  | Unix.Unix_error (Unix.EEXIST, _, _) -> ()
+  | Unix.Unix_error (e, _, _) -> error dir e
+
 let entries dir =
   match Sys.readdir dir with
   | exception Sys_error _ -> []
@@ -341,9 +353,9 @@ let temp_name dir =
   let r = Mutex.protect rand_lock (fun () -> Random.State.bits rand) in
   Filename.concat dir (Printf.sprintf ".tmp-%d-%08x" (pid ()) r)
 
-let replace path data =
+let replace ?(parents = true) path data =
   let dir = Filename.dirname path in
-  mkdirs dir;
+  if parents then mkdirs dir;
   let tmp = temp_name dir in
   wrap path @@ fun () ->
   let fd =
@@ -362,6 +374,21 @@ let replace path data =
       raise e);
   Unix.rename tmp path
 
+(* Windows refuses to remove a read-only file, which a POSIX system removes
+   whatever its mode. Clearing the attribute first gives Windows that rule. *)
+let unlink path =
+  try Unix.unlink path
+  with Unix.Unix_error (Unix.EACCES, _, _) when Sys.win32 ->
+    Unix.chmod path 0o666;
+    Unix.unlink path
+
+(* An entry gone between the listing and its removal was removed by another
+   process, as gc and a deletion may both remove what a deletion left. *)
+let gone path f =
+  try f () with
+  | Unix.Unix_error (Unix.ENOENT, _, _) -> ()
+  | Unix.Unix_error (e, _, _) -> error path e
+
 let rec remove_tree path =
   match Unix.lstat path with
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
@@ -370,8 +397,8 @@ let rec remove_tree path =
       Array.iter
         (fun n -> remove_tree (Filename.concat path n))
         (try Sys.readdir path with Sys_error _ -> [||]);
-      wrap path (fun () -> Unix.rmdir path)
-  | _ -> wrap path (fun () -> Unix.unlink path)
+      gone path (fun () -> Unix.rmdir path)
+  | _ -> gone path (fun () -> unlink path)
 
 let stamp path =
   match Unix.stat path with

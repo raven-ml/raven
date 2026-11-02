@@ -81,13 +81,19 @@ let check_tag t =
     invalid_arg
       (Printf.sprintf "Store: %S is not a tag: a text without \",\"" t)
 
+(* Tags and notes take no lock, so a deletion may remove the run's directory
+   meanwhile. They create no directory above [tags/], so that they never make
+   the run's directory again: they raise instead. *)
 let add_tags s id tags =
   List.iter check_tag tags;
   let r = existing s id in
   List.iter
     (fun tag ->
       let path = Listing.tag_file r.dir tag in
-      if not (Sys.file_exists path) then File.replace path tag)
+      if not (Sys.file_exists path) then begin
+        File.mkdir (Filename.dirname path);
+        File.replace ~parents:false path tag
+      end)
     tags
 
 let remove_tags s id tags =
@@ -106,7 +112,28 @@ let set_notes s id notes =
   let path = Filename.concat r.dir "notes" in
   match notes with
   | None -> File.remove_tree path
-  | Some n -> File.replace path n
+  | Some n -> File.replace ~parents:false path n
+
+(* [remove_in_place dir] removes the directory [dir] of a deleted run, its mark
+   last, so that a removal cut short leaves the directory marked. *)
+let remove_in_place dir =
+  let mark = Listing.mark dir in
+  Array.iter
+    (fun n ->
+      let p = Filename.concat dir n in
+      if p <> mark then File.remove_tree p)
+    (try Sys.readdir dir with Sys_error _ -> [||]);
+  File.remove_tree dir
+
+(* [remove_deleted s dir] moves [dir] to a [.]-named entry of runs/ and removes
+   it there, so that no writer that still holds its path, such as {!add_tags},
+   adds to it. Windows refuses the move while another program holds a file in
+   [dir] open, and [dir] is then removed in place. *)
+let remove_deleted s dir =
+  let gone = File.temp_name (runs_dir s) in
+  match Unix.rename dir gone with
+  | () -> File.remove_tree gone
+  | exception Unix.Unix_error _ -> remove_in_place dir
 
 let delete_run s id =
   let r = existing s id in
@@ -122,7 +149,9 @@ let delete_run s id =
      opens it read-only: a local flock ignores the open mode, and NFS's
      emulation then refuses the lock, which raises. *)
   let fd =
-    let open_ flags = Unix.openfile log (Unix.O_CLOEXEC :: flags) 0 in
+    let open_ flags =
+      Unix.openfile log (Unix.O_CLOEXEC :: Unix.O_SHARE_DELETE :: flags) 0
+    in
     try open_ [ Unix.O_RDWR ] with
     | Unix.Unix_error (Unix.EACCES, _, _) -> (
         try open_ [ Unix.O_RDONLY ]
@@ -131,15 +160,18 @@ let delete_run s id =
     | Unix.Unix_error (e, _, _) ->
         raise (Sys_error (log ^ ": " ^ Unix.error_message e))
   in
-  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-  if not (File.take_writer fd) then
-    failwith (Printf.sprintf "run %s is being written" id);
-  (* Rename first, so that no reader meets half a run. *)
-  let gone = File.temp_name (runs_dir s) in
-  (try Unix.rename r.dir gone
+  (* Renaming the log to its mark under the lock ends the run at once for
+     readers and writers, so that none meets half a run. The directory goes
+     once the lock is let go: Windows renames no directory while a file in it
+     is open, and the lock is such a file. *)
+  (Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+   if not (File.take_writer fd) then
+     failwith (Printf.sprintf "run %s is being written" id);
+   try Unix.rename log (Listing.mark r.dir)
    with Unix.Unix_error (e, _, _) ->
-     raise (Sys_error (r.dir ^ ": " ^ Unix.error_message e)));
-  File.remove_tree gone
+     raise (Sys_error (log ^ ": " ^ Unix.error_message e)));
+  (* The run is deleted. Whatever its removal leaves, gc removes. *)
+  try remove_deleted s r.dir with Sys_error _ -> ()
 
 (* Artifacts *)
 
@@ -254,9 +286,16 @@ let gc s =
           dot_entries d @ dot_entries (Filename.concat d "aliases"))
         (Version.names ~root:s.root)
   in
-  let removed = unnamed @ leftovers in
+  let runs = runs_dir s in
+  let deleted =
+    File.entries runs
+    |> List.map (Filename.concat runs)
+    |> List.filter Listing.deleted
+  in
+  let removed = unnamed @ leftovers @ dot_entries runs in
   List.iter File.remove_tree removed;
-  List.length removed
+  List.iter remove_in_place deleted;
+  List.length removed + List.length deleted
 
 (* Check *)
 
@@ -267,8 +306,11 @@ let check s =
   List.iter
     (fun id ->
       let dir = Filename.concat runs id in
-      List.iter (fun p -> add p "left by a writer") (dot_entries dir);
+      let deleted = Listing.deleted dir in
+      if not deleted then
+        List.iter (fun p -> add p "left by a writer") (dot_entries dir);
       match Listing.read ~id dir with
+      | Error `Not_a_run when deleted -> add dir "left by a deletion"
       | Error `Not_a_run ->
           add dir "not a run: its log holds no whole first line"
       | Error (`Unreadable why) -> add dir why

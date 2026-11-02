@@ -93,6 +93,10 @@ val sync_dir : string -> unit
 *)
 
 val open_read : string -> Unix.file_descr
+
+val open_read_opt : string -> Unix.file_descr option
+(** [open_read_opt p] is [open_read p], or [None] if [p] does not exist. *)
+
 val read_all : string -> string
 
 val read_opt : string -> string option
@@ -113,6 +117,9 @@ val copy : ?dst:string -> string -> string * int
 val mkdirs : string -> unit
 (** [mkdirs d] creates [d] and its missing parents. *)
 
+val mkdir : string -> unit
+(** [mkdir d] creates [d], if it does not exist, and none of its parents. *)
+
 val entries : string -> string list
 (** [entries d] is the names in [d] that do not start with [.], sorted, or [[]]
     if [d] does not exist. *)
@@ -120,12 +127,14 @@ val entries : string -> string list
 val temp_name : string -> string
 (** [temp_name dir] is a fresh [.]-named path in [dir]. *)
 
-val replace : string -> string -> unit
+val replace : ?parents:bool -> string -> string -> unit
 (** [replace path data] writes [data] to a [.]-named file beside [path], syncs
-    it and renames it over [path]. *)
+    it and renames it over [path]. It creates [path]'s missing directories
+    unless [parents] is [false] (defaults to [true]). *)
 
 val remove_tree : string -> unit
-(** [remove_tree p] removes the file or directory [p], if it exists. *)
+(** [remove_tree p] removes the file or directory [p], if it exists. An entry
+    that another process removes meanwhile is not an error. *)
 
 val stamp : string -> (float * int * int) option
 (** [stamp p] is [p]'s modification time, size and inode, if it exists. *)

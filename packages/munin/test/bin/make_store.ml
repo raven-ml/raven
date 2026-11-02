@@ -130,6 +130,9 @@ let hold store =
   ignore (In_channel.input_all stdin)
 
 let () =
+  (* Windows ends a line with CR LF on a text channel, which the shell would
+     keep in the ids it reads. *)
+  set_binary_mode_out stdout true;
   let store = Store.open_ ~root:Sys.argv.(2) () in
   match Sys.argv.(1) with
   | "build" -> build store

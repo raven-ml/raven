@@ -25,6 +25,10 @@ type t = {
 }
 
 let log dir = Filename.concat dir "events.jsonl"
+let mark dir = Filename.concat dir ".deleted"
+
+let deleted dir =
+  Sys.file_exists (mark dir) && not (Sys.file_exists (log dir))
 
 (* Status *)
 
@@ -195,11 +199,13 @@ let read ?prev ~id dir =
       let tags, notes, tags_stamp, notes_stamp = annotations ~prev:p dir in
       Ok { p with tags; notes; tags_stamp; notes_stamp; read_at }
   | _ -> (
-      match File.open_read path with
-      | exception Sys_error e ->
-          if Sys.file_exists dir then Error (`Unreadable e)
-          else Error `Not_a_run
-      | fd ->
+      (* A start claims the directory before it creates the log, and a
+         deletion renames the log away before it removes the directory: a
+         directory without a log holds no run. *)
+      match File.open_read_opt path with
+      | exception Sys_error e -> Error (`Unreadable e)
+      | None -> Error `Not_a_run
+      | Some fd ->
           Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
           let* start, started_at =
             match prev with
