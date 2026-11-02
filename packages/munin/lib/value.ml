@@ -5,68 +5,36 @@
 
 type t = [ `Bool of bool | `Int of int | `Float of float | `String of string ]
 
+let pp_float ppf x =
+  if Float.is_nan x then Format.pp_print_string ppf "nan"
+  else if x = Float.infinity then Format.pp_print_string ppf "inf"
+  else if x = Float.neg_infinity then Format.pp_print_string ppf "-inf"
+  else Format.pp_print_string ppf (Munin_float_text.Float_text.exact_float x)
+
+(* As a JSON string escapes, without the quotes. *)
+let pp_string ppf s =
+  String.iter
+    (function
+      | '\\' -> Format.pp_print_string ppf "\\\\"
+      | '\n' -> Format.pp_print_string ppf "\\n"
+      | '\r' -> Format.pp_print_string ppf "\\r"
+      | '\t' -> Format.pp_print_string ppf "\\t"
+      | c when Char.code c < 0x20 || c = '\x7F' ->
+          Format.fprintf ppf "\\u%04x" (Char.code c)
+      | c -> Format.pp_print_char ppf c)
+    s
+
 let pp ppf = function
   | `Bool b -> Format.pp_print_bool ppf b
   | `Int n -> Format.pp_print_int ppf n
-  | `Float f -> Format.pp_print_string ppf (Munin_float_text.Float_text.g f)
-  | `String s -> Format.fprintf ppf "%S" s
+  | `Float x -> pp_float ppf x
+  | `String s -> pp_string ppf s
 
 let to_float = function
   | `Float f -> Some f
   | `Int n -> Some (Float.of_int n)
   | _ -> None
 
-let to_int = function
-  | `Int n -> Some n
-  | `Float f when Float.is_integer f -> Some (Float.to_int f)
-  | _ -> None
-
+let to_int = function `Int n -> Some n | _ -> None
 let to_string = function `String s -> Some s | _ -> None
 let to_bool = function `Bool b -> Some b | _ -> None
-
-let float_name x =
-  if Float.is_finite x then None
-  else if Float.is_nan x then Some "NaN"
-  else Some (if x > 0. then "Infinity" else "-Infinity")
-
-let float_to_json x =
-  match float_name x with
-  | None -> Jsont.Json.number x
-  | Some name -> Jsont.Json.string name
-
-let float_of_json = function
-  | Jsont.Number (x, _) -> Some x
-  | Jsont.String (name, _) ->
-      List.find_opt
-        (fun x -> float_name x = Some name)
-        [ Float.nan; Float.infinity; Float.neg_infinity ]
-  | _ -> None
-
-(* A float JSON has no number for is the object [{"float": "NaN"}], or
-   ["Infinity"] or ["-Infinity"]: a shape no other value takes, so that a
-   [`String] is always a string. *)
-let to_json : t -> Jsont.json = function
-  | `Bool b -> Jsont.Json.bool b
-  | `Int n -> Jsont.Json.int n
-  | `Float f when Float.is_finite f -> Jsont.Json.number f
-  | `Float f -> Json_utils.json_obj [ ("float", float_to_json f) ]
-  | `String s -> Jsont.Json.string s
-
-let of_json : Jsont.json -> t option = function
-  | Jsont.Bool (b, _) -> Some (`Bool b)
-  | Jsont.Number (f, _) ->
-      if Float.is_integer f && Float.abs f < 4503599627370496. then
-        Some (`Int (Float.to_int f))
-      else Some (`Float f)
-  | Jsont.String (s, _) -> Some (`String s)
-  | Jsont.Object _ as json -> (
-      match Json_utils.json_assoc json with
-      | [ ("float", (Jsont.String _ as x)) ] ->
-          float_of_json x |> Option.map (fun f -> `Float f)
-      | _ -> None)
-  | _ -> None
-
-let assoc_of_json json =
-  List.filter_map
-    (fun (k, v) -> Option.map (fun v -> (k, v)) (of_json v))
-    (Json_utils.json_assoc json)

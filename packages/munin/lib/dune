@@ -1,8 +1,50 @@
 (library
  (name munin)
  (public_name munin)
- (private_modules env fs json_utils event_log index)
- (libraries unix jsont jsont.bytesrw munin_float_text)
+ (private_modules
+  json
+  file
+  record
+  listing
+  series
+  version
+  acc
+  hint
+  fold
+  raven_version)
+ (libraries unix threads.posix munin_float_text)
  (foreign_stubs
   (language c)
-  (names munin_stubs)))
+  (names munin_stubs munin_blake2_stubs))
+ (c_library_flags
+  (:include c_library_flags.sexp)))
+
+; The version of raven that built a program, recorded in its runs'
+; provenance.
+
+(rule
+ (target raven_version.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "let v = \"%{version:munin}\"\n"))))
+
+; The stubs read the machine's identity from IOKit on macOS.
+
+(rule
+ (target c_library_flags.sexp)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "(-framework IOKit -framework CoreFoundation)"))))
+
+(rule
+ (target c_library_flags.sexp)
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "()"))))

@@ -3,106 +3,54 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Versioned local artifacts.
+(** Artifact versions.
 
-    Artifacts are immutable named payloads with versions, aliases, and lineage.
-*)
+    An {e artifact} is a name, such as ["mnist-ckpt"], with {e versions}
+    numbered from [1]. A run publishes a version with
+    {!Session.log_artifact}: a file or a directory, stored once as a blob
+    named by its digest, the run that produced it, the step it was
+    produced at, and metadata. A version never changes, and a deleted
+    version's number names nothing again. An {e alias}, such as ["best"],
+    names one version of an artifact and moves when set again
+    ({!Store.set_alias}). A run that used a version records it in its own
+    log ({!Session.use_artifact}). {!Store_format.section-artifacts} specifies
+    the files.
 
-(** {1:types Types} *)
+    A value of type {!t} is one version as read from its file. *)
 
-type kind =
-  [ `Dataset  (** Dataset. *)
-  | `Model  (** Model weights. *)
-  | `Checkpoint  (** Checkpoint. *)
-  | `File  (** Single file. *)
-  | `Dir  (** Directory tree. *)
-  | `Other  (** Unclassified artifact. *) ]
-(** The type for logical artifact kinds. *)
-
-type payload =
-  [ `File  (** Single file payload. *) | `Dir  (** Directory tree payload. *) ]
-(** The type for materialized payload kinds. *)
-
-type t
-(** The type for artifact handles. Obtain one from {!Store.find_artifact},
-    {!Store.list_artifacts}, or {!Session.log_artifact}. *)
-
-(** {1:identity Identity} *)
+type t = Version.t
+(** The type for artifact versions. *)
 
 val name : t -> string
-(** [name t] is the logical artifact name. *)
+(** [name a] is [a]'s artifact name. *)
 
-val kind : t -> kind
-(** [kind t] is the artifact's logical kind. *)
-
-val payload : t -> payload
-(** [payload t] is the materialized payload kind. *)
-
-val version : t -> string
-(** [version t] is the explicit version such as ["v1"]. *)
-
-(** {1:content Content} *)
+val version : t -> int
+(** [version a] is [a]'s number, from [1]. *)
 
 val digest : t -> string
-(** [digest t] is the content-addressed digest of the payload: BLAKE2b-256
-    as 64 hexadecimal characters. A directory digests its manifest, which
-    names each file by its own digest. *)
+(** [digest a] is the digest of [a]'s content, [blake2b-256:] followed by
+    64 hexadecimal digits ({!Store_format.section-blobs}). *)
 
 val path : t -> string
-(** [path t] is the absolute path to the materialized payload in the blob store.
-*)
+(** [path a] is the absolute path of [a]'s blob, a file or a directory.
+    Every version with the same content shares it, so the program must
+    not change it. *)
 
 val size_bytes : t -> int
-(** [size_bytes t] is the total byte size of the materialized payload. *)
+(** [size_bytes a] is the size of [a]'s content, in bytes; for a directory,
+    the sum of its files' sizes. *)
 
 val metadata : t -> (string * Value.t) list
-(** [metadata t] is the artifact metadata. *)
+(** [metadata a] is what the producing run attached to [a], in the order it
+    gave. *)
 
-val aliases : t -> string list
-(** [aliases t] is the alias list attached to the version. *)
+val run : t -> string
+(** [run a] is the id of the run that produced [a], which stays even after
+    that run is deleted. *)
 
-val has_alias : t -> string -> bool
-(** [has_alias t alias] is [true] iff [alias] points at [t]. *)
-
-(** {1:lineage Lineage} *)
-
-val producer_run_id : t -> string option
-(** [producer_run_id t] is the producing run identifier, if known. *)
-
-val consumer_run_ids : t -> string list
-(** [consumer_run_ids t] is the list of consuming run identifiers. *)
+val step : t -> int option
+(** [step a] is the step the producing run gave for [a], if it gave one. *)
 
 val created_at : t -> float
-(** [created_at t] is the artifact creation timestamp ([Unix.gettimeofday] at
-    creation time). *)
+(** [created_at a] is the time [a] was published. *)
 
-(**/**)
-
-val load : root:string -> name:string -> version:string -> t option
-
-val list :
-  root:string ->
-  ?name:string ->
-  ?kind:kind ->
-  ?alias:string ->
-  ?producer_run:string ->
-  ?consumer_run:string ->
-  unit ->
-  t list
-
-val create :
-  root:string ->
-  name:string ->
-  kind:kind ->
-  payload:payload ->
-  digest:string ->
-  path:string ->
-  metadata:(string * Value.t) list ->
-  aliases:string list ->
-  producer_run_id:string option ->
-  t
-
-val add_consumer :
-  root:string -> name:string -> version:string -> string -> unit
-
-(**/**)

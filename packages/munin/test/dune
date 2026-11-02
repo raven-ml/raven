@@ -1,5 +1,5 @@
 (test
  (name test_munin)
  (package munin)
- (deps support/start_run.exe)
- (libraries munin unix windtrap jsont jsont.bytesrw))
+ (deps support/child.exe)
+ (libraries munin munin_float_text unix threads.posix windtrap))
