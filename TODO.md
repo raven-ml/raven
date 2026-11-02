@@ -144,9 +144,13 @@ raven / llama.cpp (Vulkan; ROCm):
 - long programs: the incomplete beta (~11,400 ops) compiles in 3 s, 10-20 s
   per derivative, past 10 min for three; a 1,000-term slice-tree sum is one
   kernel clang -O2 takes over 8 min on. Past 400 KB of C Clang compiles
-  without its loop vectorizer (D167); float64 `betainccinv`'s gradient (1.3
-  MB) then spends, loaded, 5.7 s in Clang, 5.1 s in codegen (no pass over
-  0.6 s), 2.5 s linearizing and 1.7 s scheduling
+  without its loop vectorizer (D167); float64 `betainccinv`'s gradient (1.0
+  MB, 42k instructions) then spends, loaded, 3-4.5 s in Clang and 3.5-5.5 s
+  in tolk (424 M words): about 40 passes, each linear in the program's size
+  and under 0.4 s and 40 M words, rangeify's cleanups, `run_rangeify` and
+  the symbolic passes before decomposition the largest. What is left is the
+  rewrite engine's cost per node (its tables, rebuilds and keys) and Clang;
+  test_special runs 80-85 s on fudge loaded, 317-340 s on Ubuntu CI
 - host upcast width per target: D141's 64-byte lanes (heuristic.ml:446)
   slowed memory-bound select-zero ~15% on x86; time 32 against 64 bytes on
   fudge
