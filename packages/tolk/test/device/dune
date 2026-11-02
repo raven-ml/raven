@@ -3,4 +3,18 @@
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
-  (glob_files *.golden)))
+  comgr_stand_in
+  (glob_files *.golden))
+ (action
+  (setenv
+   COMGR_PATH
+   ./comgr_stand_in
+   (run %{test}))))
+
+; No machine here has comgr, which making a HIP renderer finds: COMGR_PATH
+; names a file that stands in for it, so that HIP's renders run everywhere.
+
+(rule
+ (target comgr_stand_in)
+ (action
+  (write-file %{target} "This file stands in for comgr.\n")))

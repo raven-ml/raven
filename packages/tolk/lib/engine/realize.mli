@@ -74,8 +74,9 @@ val lower_and_compile :
     ([search]), which a concurrent compilation would disturb, so the kernels
     are then compiled in order. [search] is {!Codegen.to_program}'s [beam].
 
-    Raises as {!Codegen.to_program} does, and [Invalid_argument] if
-    {!Device.renderer} finds no renderer for a target. *)
+    Raises as {!Codegen.to_program} does, [Invalid_argument] if
+    {!Device.renderer} finds no renderer for a target, and [Failure] if the
+    renderer's compiler's library is missing. *)
 
 val kernels : (unit -> 'a) -> 'a * (string * string) list
 (** [kernels f] is [f ()] and, for each kernel of each schedule that

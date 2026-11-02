@@ -88,5 +88,5 @@ val renderer : Helpers.Target.t -> (Renderer.t, string) result
     [Invalid_argument] for the target.
 
     Raises [Invalid_argument] if [t]'s device is not one of these devices, and
-    [Failure] as the renderer does if its compiler's library is missing; a
-    later call tries again. *)
+    [Failure] as the renderer does if its compiler's library is missing, keeping
+    no renderer for [t]. *)

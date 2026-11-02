@@ -14,11 +14,24 @@
   rig.elf
   rig.metal)
  (deps
+  comgr_stand_in
   (glob_files *.golden))
  (action
-  (progn
-   (run %{test} --exclude-tag expand-ssa)
-   (setenv
-    EXPAND_SSA
-    1
-    (run %{test} --tag expand-ssa)))))
+  (setenv
+   COMGR_PATH
+   ./comgr_stand_in
+   (progn
+    (run %{test} --exclude-tag expand-ssa)
+    (setenv
+     EXPAND_SSA
+     1
+     (run %{test} --tag expand-ssa))))))
+
+; No machine here has comgr, which making a HIP renderer finds: COMGR_PATH
+; names a file that stands in for it, so that HIP's renders run everywhere. A
+; compile with it fails, and its tests skip.
+
+(rule
+ (target comgr_stand_in)
+ (action
+  (write-file %{target} "This file stands in for comgr.\n")))

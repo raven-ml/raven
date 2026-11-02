@@ -469,14 +469,16 @@ so a renderer for CUDA, HIP or Metal was made on a machine without NVRTC, comgr
 or MTLCompiler. No raven call site made such a renderer without compiling with
 it, so the entry had no reason; tolk's suites and the bench's `search` rows
 rendered for those targets without the libraries. As tinygrad's
-`runtime/support/compiler_cuda.py:62` (`nvrtcVersion`),
-`runtime/support/compiler_amd.py:79` (`HIPCompiler` asserts comgr is loaded) and
+`runtime/support/compiler_cuda.py:52` (`nvrtcVersion`),
+`runtime/support/compiler_amd.py:81` (`HIPCompiler` asserts comgr is loaded) and
 `runtime/ops_metal.py:39` (`MetalCompiler`) do when the compiler is made,
 `Compiler_cuda.nvrtc` and `Compiler_amd.hip` find their library and
 `Compiler_metal.compiler` loads MTLCompiler, raising `Failure` without it, so
 `Cstyle.cuda`, `Cstyle.hip`, `Cstyle.metal` and `Device.renderer` raise it too.
 The tests that render for those targets skip without the library, as tolk's
-GPU tests do. NVRTC and comgr are loaded by the processes that compile (D5),
+GPU tests do, except HIP's: no machine here has comgr, so the suites that
+render for HIP name a file that stands in for it in `COMGR_PATH`, as
+tinygrad's goldens' generator marks comgr loaded. NVRTC and comgr are loaded by the processes that compile (D5),
 so a file found that is no library fails each compile.
 
 ## D16. Withdrawn
@@ -4203,10 +4205,14 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   `floormod_to_mod`) and `97-103` (the `fast_idiv` rules), which read a weak
   constant divisor's exact value where the division reads it in its operand's
   type: the sign test skips the correction and `fast_idiv` divides by the
-  wrong number. Repro on the CPU: `x = Tensor([0, 1, 7, 100, 127],
-  dtype=dtypes.int8).contiguous().realize(); (x // 128).tolist()` gives
-  `[0, 0, 0, 0, 0]` for `[0, -1, -1, -1, -1]`, and on uint8 `x // 259` gives
-  `[0, 0, 0, 0, 0]` where `x % 259` gives `[0, 1, 1, 1, 1]`.
+  wrong number. On int8 the rules lower `x // 200` to a truncating
+  division whose sign test reads 200 as positive: 0 at `x = 1`, where the folder
+  gives `1 // 200` as -1 (a power of two, as 128, is D161's). Repro: `x =
+  UOp.variable("x", -128, 127, dtypes.int8); graph_rewrite(x.alu(Ops.DIV,
+  UOp.const(200)), get_simplifying_rewrite_patterns((Ops.SHR, Ops.AND,
+  Ops.CMPLT, Ops.CMPNE)))`. On the CPU, `x = Tensor([0, 1, 7, 100, 127],
+  dtype=dtypes.uint8).contiguous().realize()` gives `x // 259` as `[0, 0, 0,
+  0, 0]` where `x % 259` gives `[0, 1, 1, 1, 1]`.
 - **tolk:** `Decomp_op.divisor` and its
   uses in `floordiv_to_idiv`, `floormod_to_mod` and the `fast_idiv` rules;
   `test/gen/tinygrad.patch`, which makes tinygrad's rules the same before the
@@ -4214,12 +4220,12 @@ does. A Windows host's code is compiled for Windows' convention by D178.
 - **Differs:** a weak integer divisor past a committed integer operand's
   width is wrapped to the operand's type before a division or remainder
   lowers: on int8, 128 is -128 and 200 is -56, and on uint8 259 is 3.
-- **Reason:** (e). Without the wrap, an int8 `x // 128` gives 0 where -1 is
+- **Reason:** (e). Without the wrap, an int8 `x // 200` gives 0 where -1 is
   due for a positive `x`, with no error. No raven call site is known to reach
   it.
 - **Pinned by:** the `Codegen` suite: `constants past the width › a weak
   divisor past the width divides as its value there`, which compiles and runs
-  int8 `x // 128` among the divisors past each width; the `Decomp_op` suite:
+  the divisors past each width; the `Decomp_op` suite:
   `late_patterns › a quotient by a weak divisor past its width reads it in its
   type`.
 
