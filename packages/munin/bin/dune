@@ -2,4 +2,4 @@
  (name main)
  (public_name munin)
  (package munin)
- (libraries munin munin_float_text munin.tui cmdliner jsont jsont.bytesrw))
+ (libraries munin munin_float_text cmdliner))
