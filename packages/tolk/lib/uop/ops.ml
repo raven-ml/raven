@@ -112,7 +112,8 @@ let repr_tuple = function
 let repr_option f = function None -> "None" | Some x -> f x
 let repr_bool b = if b then "True" else "False"
 let repr_const c = Format.asprintf "%a" Dtype.pp_const c
-let repr_dtype dt = Format.asprintf "%a" Dtype.pp dt
+(* As [Dtype.pp] prints it, without a formatter: keys write one per node. *)
+let repr_dtype dt = "dtypes." ^ Dtype.name dt
 let repr_addr_space a = Format.asprintf "%a" Dtype.pp_addr_space a
 
 (* Devices *)
@@ -981,8 +982,7 @@ let rec add_keys b src_key = function
 let digest n arg_key src_key =
   let b = Buffer.create 128 in
   Buffer.add_string b
-    (repr_tuple
-       [ Format.asprintf "%a" Op.pp n.op; repr_dtype n.dtype; arg_key ]);
+    (repr_tuple [ "Ops." ^ Op.name n.op; repr_dtype n.dtype; arg_key ]);
   add_keys b src_key n.src;
   Digest.BLAKE256.string (Buffer.contents b)
 

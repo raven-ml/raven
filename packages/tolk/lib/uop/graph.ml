@@ -292,17 +292,10 @@ let option c =
   let read = function None_ -> None | v -> Some (c.read v) in
   { write = (function None -> None_ | Some x -> c.write x); read }
 
-(* A name written after its prefix, such as [dtypes.f16], as [pp] prints it,
-   and read back with [of_string]. *)
-let named prefix pp of_string =
-  let write x =
-    let s = Format.asprintf "%a" pp x in
-    Name
-      ( prefix,
-        String.sub s
-          (String.length prefix + 1)
-          (String.length s - String.length prefix - 1) )
-  in
+(* A name written after its prefix, such as [dtypes.f16], [name] giving the
+   part after it, and read back with [of_string]. *)
+let named prefix name of_string =
+  let write x = Name (prefix, name x) in
   let read = function
     | Name (p, n) when String.equal p prefix -> (
         match of_string n with Ok x -> x | Error e -> failwith e)
@@ -310,9 +303,16 @@ let named prefix pp of_string =
   in
   { write; read }
 
-let dtype = named "dtypes" Dtype.pp Dtype.of_string
-let op = named "Ops" Op.pp Op.of_string
-let axis_type = named "AxisType" Ops.Axis_type.pp Ops.Axis_type.of_string
+(* The part of what [pp] prints after [prefix] and its dot. *)
+let after prefix pp x =
+  let s = Format.asprintf "%a" pp x and n = String.length prefix + 1 in
+  String.sub s n (String.length s - n)
+
+let dtype = named "dtypes" Dtype.name Dtype.of_string
+let op = named "Ops" Op.name Op.of_string
+
+let axis_type =
+  named "AxisType" (after "AxisType" Ops.Axis_type.pp) Ops.Axis_type.of_string
 
 (* A range's argument is written as its axis type followed by its identity. *)
 let range_arg : (Ops.Axis_type.t * int list) codec =
@@ -324,7 +324,9 @@ let range_arg : (Ops.Axis_type.t * int list) codec =
   { write; read }
 
 let addr_space =
-  named "AddrSpace" Dtype.pp_addr_space Dtype.addr_space_of_string
+  named "AddrSpace"
+    (after "AddrSpace" Dtype.pp_addr_space)
+    Dtype.addr_space_of_string
 
 let dvalue : Dtype.value codec =
   let read = function

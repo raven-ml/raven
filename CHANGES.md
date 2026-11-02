@@ -891,6 +891,11 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Compiling a long program allocates about 30% less: float64
+  `Nx.betainccinv`'s gradient, one kernel of 42k instructions, 424 M words
+  against 608 M. `Renderer.Estimates.of_uops`, `Linearizer.linearize`,
+  `Codegen.split_blocks`, `Ops.key` and `Graph.to_string` did more work per
+  node than their outputs need; the outputs are unchanged.
 - `Rangeify.get_kernel_graph` stores a value whose copies past the first
   would compute more than 360 nodes again, where it allowed 1024 nodes
   of copies, and counts once the trips of a sum that selects one, as a routed
