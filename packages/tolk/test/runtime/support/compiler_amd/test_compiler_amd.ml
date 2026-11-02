@@ -20,7 +20,8 @@ let has_infix ~affix s =
 let rejection f =
   match f () with _ -> None | exception Compiler.Compile_error msg -> Some msg
 
-(* comgr's absence is a Compile_error that names the variable to set. *)
+(* comgr's absence is a Failure, raised when a compiler is made, that names the
+   variable to set. *)
 let absent msg = has_infix ~affix:"COMGR_PATH" msg
 
 (* [with_comgr f] is [f ()], or skips the test if comgr is not on the
@@ -28,7 +29,7 @@ let absent msg = has_infix ~affix:"COMGR_PATH" msg
 let with_comgr f =
   match f () with
   | v -> v
-  | exception Compiler.Compile_error msg when absent msg -> skip ~reason:msg ()
+  | exception Failure msg when absent msg -> skip ~reason:msg ()
 
 (* The cache *)
 
@@ -40,8 +41,10 @@ let named ~prefix table =
   equal string ~msg:"the name" prefix (String.sub table 0 n);
   equal int ~msg:"the digest's length" 32 (String.length table - n)
 
+(* These tests run where COMGR_PATH names a file, which the compiler finds. *)
 let cache =
-  group "cache"
+  tag "no-library"
+  @@ group "cache"
     [
       test
         "code objects are cached in the table of hip, the architecture and a \
@@ -58,18 +61,17 @@ let cache =
 let without_comgr =
   group "without comgr on the machine"
     [
-      test "a compile raises Compile_error naming comgr and COMGR_PATH"
+      test "making a compiler raises Failure naming comgr and COMGR_PATH"
         (fun () ->
-          match
-            rejection (fun () ->
-                Compiler.compile (Compiler_amd.hip "gfx1100") kernel)
-          with
-          | None -> skip ~reason:"comgr is on the machine" ()
-          | Some msg -> in_order ~subs:[ "comgr"; "COMGR_PATH" ] msg);
+          match Compiler_amd.hip "gfx1100" with
+          | _ -> skip ~reason:"comgr is on the machine" ()
+          | exception Failure msg ->
+              in_order ~subs:[ "comgr"; "COMGR_PATH" ] msg);
     ]
 
 (* A library that does not load: these tests run in a process of their own,
-   where COMGR_PATH names a file that is no library. *)
+   where COMGR_PATH names a file that is no library, which the compiler finds
+   and each compile's process fails to load. *)
 
 let load_failure () =
   rejection (fun () -> Compiler.compile (Compiler_amd.hip "gfx1100") kernel)
@@ -78,8 +80,7 @@ let not_a_library =
   tag "no-library"
   @@ group "a library that does not load"
        [
-         test
-           "making a compiler loads nothing, and a compile raises Compile_error"
+         test "a compile raises Compile_error naming comgr and the file"
            (fun () ->
              let msg = require_some (load_failure ()) in
              in_order ~subs:[ "comgr"; "not_a_library" ] msg);
@@ -92,12 +93,6 @@ let not_a_library =
              let msgs = List.map Domain.join domains in
              is_some (List.hd msgs);
              List.iter (equal (option string) (List.hd msgs)) msgs);
-         test "a cached code object is served without loading comgr" (fun () ->
-             let hip = Compiler_amd.hip "gfx1100" in
-             let table = Option.get (Compiler.cachekey hip) in
-             Helpers.Diskcache.put ~table kernel "cached code object";
-             equal string "cached code object"
-               (Compiler.compile_cached hip kernel));
        ]
 
 (* comgr *)
@@ -130,8 +125,7 @@ let smoke =
                   undeclared_name = 1; }"
              with
              | _ -> fail "comgr accepted an undeclared name"
-             | exception Compiler.Compile_error msg when absent msg ->
-                 skip ~reason:msg ()
+             | exception Failure msg when absent msg -> skip ~reason:msg ()
              | exception Compiler.Compile_error msg ->
                  contains ~sub:"undeclared_name" msg);
       slow
@@ -149,8 +143,8 @@ let smoke =
             (List.map Domain.join domains));
       slow
       @@ test "disassembles a code object" (fun () ->
-          let hip = Compiler_amd.hip "gfx1100" in
-          let lib = with_comgr (fun () -> Compiler.compile hip kernel) in
+          let hip = with_comgr (fun () -> Compiler_amd.hip "gfx1100") in
+          let lib = Compiler.compile hip kernel in
           ignore (output ());
           Compiler.disassemble hip lib;
           flush stdout;

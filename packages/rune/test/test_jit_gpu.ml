@@ -22,9 +22,9 @@ let gpu =
     | Error _ -> None
     | Ok d -> Some (d, Nx.devices [ d ]))
 
-(* A compile error that names a compiler library or a header the machine
-   lacks is the machine's: the test skips. Half floats' kernels read headers
-   no other kernel does. *)
+(* A compile error that names a header the machine lacks, or a compiler that
+   cannot be made without its library, is the machine's: the test skips. Half
+   floats' kernels read headers no other kernel does. *)
 let missing m =
   let has s =
     let n = String.length s in
@@ -47,7 +47,8 @@ let compiles (module S : Nx.Devices) =
     (fun d ->
       match neg d with
       | () -> ()
-      | exception (Tolk.Renderer.Compiler.Compile_error m as e) -> (
+      | exception ((Tolk.Renderer.Compiler.Compile_error m | Failure m) as e)
+        -> (
           match missing m with
           | Some why -> skip ~reason:why ()
           | None -> raise e))

@@ -212,7 +212,10 @@ the Exclusions of `README.md`.
   of a process on a mutex of its own, and NVRTC 13.3 and 13.4's assembler
   crashes on some valid sources, so comgr and NVRTC compile in processes
   of their own, spawned by the compiling domains, where a tinygrad worker
-  process loads the library once and compiles in it: a small C program per
+  process loads the library once and compiles in it. Making the compiler
+  finds the library, and those processes load it, so a file found that is
+  no library raises `Compile_error` at each compile, where it fails making
+  tinygrad's compiler. Each process is a small C program per
   library that tolk carries, which runs from memory on Linux and from a file
   in `Helpers.cache_dir` elsewhere. A comgr process runs one compile,
   through files. An NVRTC process serves compiles in turn over a socket (two
@@ -235,9 +238,8 @@ the Exclusions of `README.md`.
   from several domains at once`; `Tolk.Compiler_amd › a compile in a process
   of its own` (every test) and `› a process that cannot start`;
   `Tolk.Compiler_cuda › compiles in processes of their own` (every test),
-  `› a library that does not load › a compile in turn is served by an idle
-  worker` and `› a compile after its idle workers are killed raises the same
-  error`, and `› a process that cannot start`; `Tolk.Compiler_cuda (fork) ›
+  `› a library that does not load` (every test), and `› a process that cannot
+  start`; `Tolk.Compiler_amd › a library that does not load` (every test); `Tolk.Compiler_cuda (fork) ›
   a forked process` (every test).
 
 ## D6. Devices are named, never parsed
@@ -452,37 +454,22 @@ them as `ConstFloat`s, which make NaN equal to NaN. At
 folds to `True` there as in `Shape.fold_const_alu`; tinygrad's
 `test_const_folding.py::TestWeakConstFolding::test_nan_compare` states it.
 
-## D15. Compilers load their library at the first compile
+## D15. Withdrawn
 
-- **tinygrad:** `runtime/support/compiler_cuda.py:62` (`NVRTCCompiler`
-  calls `nvrtcVersion`), `runtime/support/compiler_amd.py:79` (`HIPCompiler`
-  asserts comgr is loaded) and `runtime/ops_metal.py:39` (`MetalCompiler`
-  creates its code generation service), each when the compiler is made, so
-  making the renderer that holds it fails without the library.
-- **tolk:** `Compiler_cuda.nvrtc`, `Compiler_amd.hip`,
-  `Compiler_metal.compiler`.
-- **Differs:** making a compiler loads nothing. The library is loaded at the
-  first compile, once per process (comgr: by each compile's own process;
-  NVRTC: by each process that serves compiles, D5), and a compile without it
-  raises `Compile_error` with the reason.
-- **Reason:** none. The renderers made where the library does not load are
-  the tests': the `Cstyle`, `Codegen`, `Device` and `Search` suites render for
-  CUDA and HIP on machines without NVRTC or comgr (fudge has no comgr, and its NVRTC only
-  through `NVRTC_PATH`), and the tolk bench's `search/*` rows make a CUDA
-  renderer whose compiler they replace, which a bench can gate on the library
-  as its `gpt_oss` rows do. rune makes a renderer only to compile with it. A
-  binary the disk cache holds needs no library, but no raven path is shown to
-  run without one. Withdrawing the entry moves those suites' renders behind
-  the library, as tinygrad's generator works around for HIP
-  (`test/gen/renderer/cstyle.py` marks comgr loaded).
-- **Pinned by:** `Tolk.Compiler_cuda › a library that does not load`,
-  `Tolk.Compiler_amd › a library that does not load` and
-  `Tolk.Compiler_metal › a library that does not load`, run where the library's
-  variable names a file that is no library: making the compiler succeeds, each
-  compile raises `Compile_error`, and a cached binary is served without a load.
-  Where the library is absent, `› without NVRTC on the machine`,
-  `› without comgr on the machine` and `› without MTLCompiler on the machine`
-  pin the error that names the library and its variable.
+Making a compiler loaded nothing: its library was loaded at the first compile,
+so a renderer for CUDA, HIP or Metal was made on a machine without NVRTC, comgr
+or MTLCompiler. No raven call site made such a renderer without compiling with
+it, so the entry had no reason; tolk's suites and the bench's `search` rows
+rendered for those targets without the libraries. As tinygrad's
+`runtime/support/compiler_cuda.py:62` (`nvrtcVersion`),
+`runtime/support/compiler_amd.py:79` (`HIPCompiler` asserts comgr is loaded) and
+`runtime/ops_metal.py:39` (`MetalCompiler`) do when the compiler is made,
+`Compiler_cuda.nvrtc` and `Compiler_amd.hip` find their library and
+`Compiler_metal.compiler` loads MTLCompiler, raising `Failure` without it, so
+`Cstyle.cuda`, `Cstyle.hip`, `Cstyle.metal` and `Device.renderer` raise it too.
+The tests that render for those targets skip without the library, as tolk's
+GPU tests do. NVRTC and comgr are loaded by the processes that compile (D5),
+so a file found that is no library fails each compile.
 
 ## D16. Withdrawn
 

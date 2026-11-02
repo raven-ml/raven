@@ -19,10 +19,8 @@ let has_infix ~affix s =
   in
   at 0
 
-let rejection f =
-  match f () with _ -> None | exception Compiler.Compile_error msg -> Some msg
-
-(* MTLCompiler's absence is a Compile_error that names the variable to set. *)
+(* MTLCompiler's absence is a Failure, raised when a compiler is made, that
+   names the variable to set. *)
 let absent msg = has_infix ~affix:"MTLCOMPILER_PATH" msg
 
 (* [with_metal f] is [f ()], or skips the test if MTLCompiler is not on the
@@ -30,7 +28,7 @@ let absent msg = has_infix ~affix:"MTLCOMPILER_PATH" msg
 let with_metal f =
   match f () with
   | v -> v
-  | exception Compiler.Compile_error msg when absent msg -> skip ~reason:msg ()
+  | exception Failure msg when absent msg -> skip ~reason:msg ()
 
 let is_metal_library lib =
   starts_with ~prefix:"MTLB" lib;
@@ -59,7 +57,8 @@ let named ~prefix table =
   equal string ~msg:"the name" prefix (String.sub table 0 n);
   equal int ~msg:"the digest's length" 32 (String.length table - n)
 
-let table () = Option.get (Compiler.cachekey (Compiler_metal.compiler ()))
+let table () =
+  Option.get (Compiler.cachekey (with_metal Compiler_metal.compiler))
 
 let cache =
   group "cache"
@@ -84,52 +83,41 @@ let cache =
 let without_mtlcompiler =
   group "without MTLCompiler on the machine"
     [
-      test
-        "a compile raises Compile_error naming MTLCompiler and MTLCOMPILER_PATH"
-        (fun () ->
-          match
-            rejection (fun () ->
-                Compiler.compile (Compiler_metal.compiler ()) (kernel "add"))
-          with
-          | None -> skip ~reason:"MTLCompiler is on the machine" ()
-          | Some msg -> in_order ~subs:[ "MTLCompiler"; "MTLCOMPILER_PATH" ] msg);
+      test "making a compiler raises Failure naming MTLCompiler and \
+            MTLCOMPILER_PATH" (fun () ->
+          match Compiler_metal.compiler () with
+          | _ -> skip ~reason:"MTLCompiler is on the machine" ()
+          | exception Failure msg ->
+              in_order ~subs:[ "MTLCompiler"; "MTLCOMPILER_PATH" ] msg);
     ]
 
 (* A library that does not load: these tests run in a process of their own,
    where MTLCOMPILER_PATH names a file that is no library. *)
 
 let load_failure () =
-  rejection (fun () ->
-      Compiler.compile (Compiler_metal.compiler ()) (kernel "add"))
+  match Compiler_metal.compiler () with
+  | _ -> None
+  | exception Failure msg -> Some msg
 
 let not_a_library =
   tag "no-library"
   @@ group "a library that does not load"
        [
-         test
-           "making a compiler loads nothing, and a compile raises Compile_error"
-           (fun () ->
+         test "making a compiler raises Failure naming MTLCompiler" (fun () ->
              let msg = require_some (load_failure ()) in
              contains ~sub:"MTLCompiler" msg;
              (* Elsewhere than on macOS, no file is loaded. *)
              if Platform.system = "macosx" then
                contains ~sub:"not_a_library" msg);
-         test "every compile raises the same Compile_error" (fun () ->
+         test "every compiler made raises the same Failure" (fun () ->
              let first = load_failure () in
              equal (option string) first (load_failure ());
              is_some first);
-         test "compiles from several domains at once raise it" (fun () ->
+         test "compilers made from several domains at once raise it" (fun () ->
              let domains = List.init 4 (fun _ -> Domain.spawn load_failure) in
              let msgs = List.map Domain.join domains in
              is_some (List.hd msgs);
              List.iter (equal (option string) (List.hd msgs)) msgs);
-         test "a cached library is served without loading MTLCompiler"
-           (fun () ->
-             let metal = Compiler_metal.compiler () in
-             let table = Option.get (Compiler.cachekey metal) in
-             Helpers.Diskcache.put ~table (kernel "add") "cached library";
-             equal string "cached library"
-               (Compiler.compile_cached metal (kernel "add")));
        ]
 
 (* MTLCompiler *)
@@ -158,8 +146,7 @@ let metal =
               "this is not valid metal"
           with
           | _ -> fail "the compiler accepted a source that is not Metal"
-          | exception Compiler.Compile_error msg when absent msg ->
-              skip ~reason:msg ()
+          | exception Failure msg when absent msg -> skip ~reason:msg ()
           | exception Compiler.Compile_error msg -> contains ~sub:"error" msg);
       test "the language is the latest the running macOS compiles kernels of"
         (fun () ->
@@ -203,10 +190,8 @@ let metal =
             (List.iter is_metal_library)
             (with_metal (fun () -> List.map Domain.join domains)));
       test "disassembly prints nothing" (fun () ->
-          let metal = Compiler_metal.compiler () in
-          let lib =
-            with_metal (fun () -> Compiler.compile metal (kernel "add"))
-          in
+          let metal = with_metal Compiler_metal.compiler in
+          let lib = Compiler.compile metal (kernel "add") in
           ignore (output ());
           Compiler.disassemble metal lib;
           flush stdout;

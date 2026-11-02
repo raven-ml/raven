@@ -25,9 +25,10 @@ let compile () =
 
 (* [compile ()], or a skip where no NVRTC is found, which starts no worker. *)
 let first_compile () =
-  let outcome = compile () in
-  if has_infix ~affix:"NVRTC_PATH" outcome then skip ~reason:outcome ();
-  outcome
+  match compile () with
+  | outcome -> outcome
+  | exception Failure msg when has_infix ~affix:"NVRTC_PATH" msg ->
+      skip ~reason:msg ()
 
 (* The pids of this process's children, which pgrep lists, in order; the test
    skips where pgrep does not run. *)

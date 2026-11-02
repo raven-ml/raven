@@ -13,9 +13,10 @@
     from several domains run at once, and a compile that crashes ends its own
     process only. On Linux the program runs from memory; elsewhere it is written
     to {!Helpers.cache_dir}, under a name holding its digest. The library,
-    [libamd_comgr], is loaded by that process from where {!C.findlib} finds it:
+    [libamd_comgr], is the file {!C.findlib} finds when the compiler is made:
     the file [COMGR_PATH] names, then [lib/libamd_comgr.so] in the directory
-    {!Setting.rocm_path} names, then the system's library directories. Its major
+    {!Setting.rocm_path} names, then the system's library directories. Each
+    process loads it. Its major
     version picks its numbering of languages and actions, which version 3
     changed. *)
 
@@ -33,9 +34,10 @@ val hip : string -> Renderer.Compiler.t
     [compile_hip_A_D], where [A] is [arch] and [D] the digest of comgr's library
     ({!C.identity}) and the options it compiles and links with: a code object is
     read back only for its source, compiled by the same comgr with the same
-    options. {!Renderer.Compiler.compile} raises
-    {!Renderer.Compiler.Compile_error} with comgr's status and log if comgr
-    rejects the source, with the reason if comgr cannot be loaded, and with how
+    options. Raises [Failure] naming [COMGR_PATH] if no comgr is found.
+    {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
+    comgr's status and log if comgr rejects the source, with the reason if
+    comgr cannot be loaded, and with how
     the process ended and what it printed if it ends without answering, and
     [Failure] if the process cannot be started. {!Renderer.Compiler.disassemble}
     prints what [llvm-objdump -d] prints ({!Helpers.amdgpu_disassemble}). *)

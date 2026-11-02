@@ -8,9 +8,10 @@
 (** Metal: the compiler of Metal Shading Language for Apple GPUs.
 
     MTLCompiler, the private framework behind Metal's own compiler, compiles the
-    source in the process. The framework is loaded at the first compile, from
-    where {!C.findlib} finds [MTLCompiler]: the file [MTLCOMPILER_PATH] names,
-    then macOS's private frameworks. Only macOS has it. *)
+    source in the process. The framework is loaded once per process, by the
+    first compiler made, from where {!C.findlib} finds [MTLCompiler]: the file
+    [MTLCOMPILER_PATH] names, then macOS's private frameworks. Only macOS has
+    it. *)
 
 val compiler : unit -> Renderer.Compiler.t
 (** [compiler ()] is the compiler of Metal source to Metal libraries, the
@@ -25,7 +26,9 @@ val compiler : unit -> Renderer.Compiler.t
     which MTLCompiler is part of, MTLCompiler's file ({!C.identity}), the
     language and the options: a library is read back only for its source,
     compiled by the same MTLCompiler with the same options.
-    {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
-    the compiler's message if it rejects the source, and with the reason if
-    MTLCompiler cannot be loaded, and [Failure] if the compiler replies with no
-    Metal library. {!Renderer.Compiler.disassemble} prints nothing. *)
+
+    Raises [Failure] with the reason if MTLCompiler cannot be loaded: naming
+    [MTLCOMPILER_PATH] if it is not found. {!Renderer.Compiler.compile} raises
+    {!Renderer.Compiler.Compile_error} with the compiler's message if it rejects
+    the source, and [Failure] if the compiler replies with no Metal library.
+    {!Renderer.Compiler.disassemble} prints nothing. *)

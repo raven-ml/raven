@@ -17,9 +17,10 @@
     each holding about 18 MB of its own memory, until it exits. A process
     forked from this one starts its own and never uses its parent's. On Linux the program runs from memory;
     elsewhere it is written to {!Helpers.cache_dir}, under a name holding its
-    digest. The library, [libnvrtc], is loaded by each process from where
-    {!C.findlib} finds [nvrtc]: the file [NVRTC_PATH] names, then the system's
-    library directories and those of the CUDA toolkit. NVRTC's own cache of
+    digest. The library, [libnvrtc], is the file {!C.findlib} finds for [nvrtc]
+    when the compiler is made: the file [NVRTC_PATH] names, then the system's
+    library directories and those of the CUDA toolkit. Each process loads
+    it. NVRTC's own cache of
     binaries, which NVIDIA's libraries keep under [CUDA_CACHE_PATH], is
     disabled in those processes alone: its key misses some of the options,
     math and headers among them, so it could serve a binary compiled under
@@ -42,6 +43,7 @@ val nvrtc : ?ptx:bool -> ?cache_key:string -> string -> Renderer.Compiler.t
     digest of NVRTC's library ({!C.identity}), the program that runs it,
     whether it makes PTX, and its options: a binary is read back only for its
     source, compiled by the same NVRTC with the same options.
+    Raises [Failure] naming [NVRTC_PATH] if no NVRTC is found.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
     NVRTC's error and log if NVRTC rejects the source, with the reason if NVRTC
     cannot be loaded or reports no version, and with how the process ended, as

@@ -30,20 +30,24 @@ let target device renderer arch =
 (* The goldens record no binary: a program's binary is its source's bytes. *)
 let uncompiled = Renderer.Compiler.v Fun.id
 
-let renderer_for ?(compiler = uncompiled) (t : Helpers.Target.t) =
-  let r =
-    match t.renderer with
-    | "CLANG" -> Cstyle.clang t
-    | "METAL" -> Cstyle.metal t
-    | "CUDA" -> Cstyle.cuda t
-    | "HIP" -> Cstyle.hip t
-    | r -> invalid_arg ("no renderer " ^ r)
-  in
-  Renderer.with_compiler compiler r
+(* A GPU's renderer is made with its compiler, which finds its vendor's library
+   or raises Failure: [renderer_for] skips the test on a machine without it. *)
+let make (t : Helpers.Target.t) =
+  match t.renderer with
+  | "CLANG" -> Cstyle.clang t
+  | "METAL" -> Cstyle.metal t
+  | "CUDA" -> Cstyle.cuda t
+  | "HIP" -> Cstyle.hip t
+  | r -> invalid_arg ("no renderer " ^ r)
+
+let renderer_for ?(compiler = uncompiled) t =
+  match make t with
+  | r -> Renderer.with_compiler compiler r
+  | exception Failure why -> skip ~reason:why ()
 
 let clang_target = target "CPU" "CLANG" "x86_64,x86-64"
 let clang = renderer_for clang_target
-let metal = renderer_for (target "METAL" "METAL" "Apple9")
+let metal () = renderer_for (target "METAL" "METAL" "Apple9")
 
 (* Cases *)
 
@@ -744,7 +748,7 @@ let target_of p =
 let separates_targets () =
   let k = fresh_kernel () in
   equal string "CLANG" (target_of (Codegen.to_program k clang));
-  equal string "METAL" (target_of (Codegen.to_program k metal))
+  equal string "METAL" (target_of (Codegen.to_program k (metal ())))
 
 (* Two compilers that differ only in their options, which each names in its key,
    made and used with CCACHE=0: a program compiled by one is not returned for
@@ -1273,7 +1277,7 @@ let programs =
       test
         "a device program's binary is its source compiled by the renderer's \
          compiler" (fun () ->
-          let p = Codegen.to_program (Lazy.force add_kernel) metal in
+          let p = Codegen.to_program (Lazy.force add_kernel) (metal ()) in
           equal string (source p) (binary_of p));
       test "a host program's binary holds rig's host entry after the kernel"
         (fun () ->
@@ -1735,7 +1739,7 @@ let between_if uops =
   until_endif (after_if uops)
 
 let gated_store_inside_its_if stores =
-  match between_if (instructions_of ~ren:metal stores) with
+  match between_if (instructions_of ~ren:(metal ()) stores) with
   | [ st ] ->
       is_true ~msg:"a store" (is Store st);
       equal int ~msg:"sources of the store" 2 (List.length (Ops.src st))
@@ -2037,7 +2041,7 @@ let accumulated c =
 let lowered_on_metal k =
   Setting.context
     [ B (Setting.spec, 0) ]
-    (fun () -> Codegen.full_rewrite_to_sink ~optimize:false k metal)
+    (fun () -> Codegen.full_rewrite_to_sink ~optimize:false k (metal ()))
 
 (* A tensor core computes its accumulator plus a product that does not depend on
    it: each tensor core of [u] stands here for its accumulator plus the two
@@ -2542,7 +2546,12 @@ let on_a_vector_of_lanes u =
 let applies_operations_to_vectors_of_lanes row =
   equal (list Uops.uop) [] (List.filter on_a_vector_of_lanes (instructions row))
 
-let computes_on_vectors row = (renderer_of_row row).vector_alu
+(* A renderer the machine cannot make computes on no vector here: its row's
+   test skips. *)
+let computes_on_vectors row =
+  match make (target (row "device") (row "renderer") (row "arch")) with
+  | r -> r.vector_alu
+  | exception Failure _ -> false
 
 let lanes_of u =
   let lanes = function Ops.Int n -> n | Ops.Sym _ -> 0 in
@@ -4367,7 +4376,7 @@ let calls =
           let fn = "static inline __device__ void " in
           equal (list string) [ "axpy"; "axpy_1" ] (names_after fn src));
       test "a Metal kernel defines the functions it calls" (fun () ->
-          let src = source (Codegen.to_program (two_bodies ()) metal) in
+          let src = source (Codegen.to_program (two_bodies ()) (metal ())) in
           let fn = "static inline  void " in
           equal (list string) [ "axpy"; "axpy_1" ] (names_after fn src));
       test "one body called twice is one function" (fun () ->

@@ -12,7 +12,7 @@ external macos_build : unit -> string = "caml_tolk_metal_macos_build"
 external metal_compile : string -> (string, string) result
   = "caml_tolk_metal_compile"
 
-(* The framework is loaded once, by whichever domain first compiles. *)
+(* The framework is loaded once, by whichever domain first makes a compiler. *)
 let mtl_compiler =
   let lock = Mutex.create () and loaded = ref None in
   fun () ->
@@ -60,9 +60,6 @@ let options () =
 let prologue = "#pragma METAL fp contract(off)\n"
 
 let compile src =
-  (match mtl_compiler () with
-  | Ok () -> ()
-  | Error e -> raise (Renderer.Compiler.Compile_error e));
   (* llvm creates modules.timestamp in the cache path and caches the compilation
      of Metal's standard library there (250 ms to 8 ms). *)
   let params =
@@ -107,4 +104,7 @@ let table () =
   in
   "compile_metal_direct_" ^ Digest.to_hex (Digest.string identity)
 
-let compiler () = Renderer.Compiler.v ~cachekey:table compile
+let compiler () =
+  match mtl_compiler () with
+  | Ok () -> Renderer.Compiler.v ~cachekey:table compile
+  | Error e -> failwith e

@@ -61,21 +61,21 @@ let compile_hip comgr src ~arch ~asm =
 (* HIP *)
 
 let hip arch =
+  let comgr =
+    match library () with
+    | Some comgr -> comgr
+    | None -> failwith "comgr not available: try setting COMGR_PATH?"
+  in
   let compile src =
     let asm = String.trim (List.hd (String.split_on_char '\n' src)) = ".text" in
-    let result =
-      match library () with
-      | None -> Error "comgr not available: try setting COMGR_PATH?"
-      | Some comgr -> compile_hip comgr src ~arch ~asm
-    in
-    match result with
+    match compile_hip comgr src ~arch ~asm with
     | Ok lib -> lib
     | Error e -> raise (Renderer.Compiler.Compile_error e)
   in
   let table () =
     let identity =
       String.concat "\n"
-        [ C.identity (library ()); compile_options arch; link_options ]
+        [ C.identity (Some comgr); compile_options arch; link_options ]
     in
     Printf.sprintf "compile_hip_%s_%s" arch
       (Digest.to_hex (Digest.string identity))

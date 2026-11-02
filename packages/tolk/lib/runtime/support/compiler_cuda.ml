@@ -62,6 +62,11 @@ let cuda_disassemble ~ptx arch lib =
 (* NVRTC *)
 
 let nvrtc ?(ptx = true) ?(cache_key = "cuda") arch =
+  let nvrtc =
+    match library () with
+    | Some nvrtc -> nvrtc
+    | None -> failwith "failed to load library nvrtc: try setting NVRTC_PATH?"
+  in
   let includes =
     match Setting.value Setting.cuda_path with
     | "" ->
@@ -70,15 +75,9 @@ let nvrtc ?(ptx = true) ?(cache_key = "cuda") arch =
   in
   let options = ("--gpu-architecture=" ^ arch) :: "--fmad=false" :: includes in
   let compile src =
-    match library () with
-    | None ->
-        raise
-          (Renderer.Compiler.Compile_error
-             "failed to load library nvrtc: try setting NVRTC_PATH?")
-    | Some nvrtc -> (
-        match Compiler_worker.call worker nvrtc (request src ~ptx options) with
-        | Ok lib -> lib
-        | Error e -> raise (Renderer.Compiler.Compile_error e))
+    match Compiler_worker.call worker nvrtc (request src ~ptx options) with
+    | Ok lib -> lib
+    | Error e -> raise (Renderer.Compiler.Compile_error e)
   in
   (* NVRTC's library, whose version picks the options it is given beyond
      [options], the worker that runs it, and whether it makes PTX, name a binary
@@ -86,7 +85,7 @@ let nvrtc ?(ptx = true) ?(cache_key = "cuda") arch =
   let table () =
     let identity =
       String.concat "\n"
-        (C.identity (library ()) :: worker_digest :: string_of_bool ptx
+        (C.identity (Some nvrtc) :: worker_digest :: string_of_bool ptx
        :: options)
     in
     Printf.sprintf "compile_%s_%s_%s" cache_key arch

@@ -1212,7 +1212,8 @@ an object the installed objdump cannot read, skips.
 The suite is `Tolk.Compiler_cuda` (`runtime/support/compiler_cuda/`),
 written `CUDA` below. Settings are read when the program starts, so the tests
 tagged `no-library` run in a second process, where `NVRTC_PATH` names a file
-that is no library, and those tagged `no-spawn` in a third; the fork tests,
+that is no library, which the compiler finds, and those tagged `no-spawn` in a
+third; the fork tests,
 `Tolk.Compiler_cuda (fork)`, run in a program that spawns no domain. The tests of NVRTC
 itself are slow and skip without it; they pass against NVRTC 12.8 on Linux
 arm64 and 13.4 on Linux x86_64.
@@ -1221,26 +1222,27 @@ arm64 and 13.4 on Linux x86_64.
 |---|---|---|
 | tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.compile` (no test) | PTX and cubins | slow: `CUDA › NVRTC › compiles a kernel to PTX`, `compiles a kernel to a cubin`, `compiles from several domains at once` |
 | tinygrad: `runtime/support/compiler_cuda.py` `nvrtc_check` | `Nvrtc Error`, NVRTC's error string and log | slow: `CUDA › NVRTC › a rejected source raises Compile_error with NVRTC's log` |
-| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` cache key | `compile_<cache_key>_<arch>` | `CUDA › cache` (4 tests); `CUDA › a library that does not load › a cached binary is served without loading NVRTC` |
+| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` cache key | `compile_<cache_key>_<arch>` | `CUDA › cache` (4 tests) |
 | tinygrad: `runtime/support/compiler_cuda.py` `cuda_disassemble` | `ptxas` then `nvdisasm`, or why they failed | `CUDA › disassembly › a PTX that ptxas cannot assemble prints why`, `a cubin that nvdisasm cannot read prints why` |
-| D15 | making the compiler loads nothing; the first compile raises | `CUDA › without NVRTC on the machine › a compile raises Compile_error naming nvrtc and NVRTC_PATH`; `CUDA › a library that does not load` (4 tests) |
-| D5 | compiles in processes of their own, which serve in turn: a crash is a `Compile_error` naming the signal and fails that compile only, a killed idle process is replaced, NVRTC's cache of binaries stays empty, a process that cannot start is `Failure` | slow: `CUDA › compiles in processes of their own` (6 tests); `CUDA › a library that does not load › a compile in turn is served by an idle worker`, `a compile after its idle workers are killed raises the same error`; `CUDA › a process that cannot start`; `Tolk.Compiler_cuda (fork) › a forked process` (2 tests) |
+| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` (`nvrtcVersion`) | making the compiler without NVRTC fails | `CUDA › without NVRTC on the machine › making a compiler raises Failure naming nvrtc and NVRTC_PATH` |
+| D5 | compiles in processes of their own, which load the library and serve in turn: a library found that does not load is a `Compile_error` at each compile, a crash is a `Compile_error` naming the signal and fails that compile only, a killed idle process is replaced, NVRTC's cache of binaries stays empty, a process that cannot start is `Failure` | slow: `CUDA › compiles in processes of their own` (6 tests); `CUDA › a library that does not load` (5 tests); `CUDA › a process that cannot start`; `Tolk.Compiler_cuda (fork) › a forked process` (2 tests) |
 | tinygrad: `device/nv/test_renderer_failures.py`, `runtime/test_renderer_failures.py` | kernels that once failed to render | dropped here: rendering is `Cstyle`'s section; slow: `Tolk.Cstyle › every GPU kernel compiles with its target's toolchain` compiles every CUDA kernel |
 
 ## Compiler_amd
 
 The suite is `Tolk.Compiler_amd` (`runtime/support/compiler_amd/`),
 written `AMD` below. The tests tagged `no-library` run in a second process,
-where `COMGR_PATH` names a file that is no library. The tests of comgr itself
+where `COMGR_PATH` names a file that is no library, which the compiler finds. The tests of comgr itself
 are slow and skip without it; no machine here has ROCm, so they have not run.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: `runtime/support/compiler_amd.py` `compile_hip` (no test) | HIP to a code object; `.text` sources assembled | slow: `AMD › comgr › compiles a kernel to a code object`, `assembles a source whose first line is .text`, `compiles from several domains at once` |
 | tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.compile` | comgr's failure is a `CompileError` | slow: `AMD › comgr › a rejected source raises Compile_error with comgr's log` |
-| tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.__init__` cache key | `compile_hip_<arch>` | `AMD › cache` (2 tests); `AMD › a library that does not load › a cached code object is served without loading comgr` |
+| tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.__init__` cache key | `compile_hip_<arch>` | `AMD › cache` (2 tests) |
 | tinygrad: `runtime/support/compiler_amd.py` `disassemble` | `llvm-objdump` of the code object | slow: `AMD › comgr › disassembles a code object` |
-| D15 | making the compiler loads nothing; the first compile raises | `AMD › without comgr on the machine › a compile raises Compile_error naming comgr and COMGR_PATH`; `AMD › a library that does not load` (4 tests) |
+| tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.__init__` | making the compiler without comgr fails | `AMD › without comgr on the machine › making a compiler raises Failure naming comgr and COMGR_PATH` |
+| D5 | a compile runs in a process of its own, which loads the library: a library found that does not load is a `Compile_error` at each compile | `AMD › a library that does not load` (3 tests); slow: `AMD › a compile in a process of its own` |
 | tinygrad: `external/external_test_hip_compile.py`, `external/external_benchmark_hip_compile.py` | compile time against a reference | dropped: benchmarks |
 | tinygrad: `amd/hw/*` (`HIPCompiler` through `amd/hw/helpers.py`) | instructions on AMD hardware | dropped: they run on the device, the executor's |
 | tinygrad: `device/amd/test_llvm.py` | `AMDLLVMCompiler` | dropped: the LLVM compilers are excluded (README) |
@@ -1263,8 +1265,8 @@ of MTLCompiler itself skip elsewhere than on macOS.
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.compile` (no test) | the Metal version by macOS, `-fno-fast-math` | `M › MTLCompiler › the language is the latest the running macOS compiles kernels of`, `fast math is off` |
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.__reduce__` | one compiler per forked process | dropped: no pickling; `M › MTLCompiler › compiles from several domains at once` pins the concurrent use of one service |
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.disassemble` | the applegpu disassembler | `M › MTLCompiler › disassembly prints nothing` (README) |
-| tinygrad: `runtime/ops_metal.py` cache key | `compile_metal_direct` | `M › cache` (2 tests); `M › a library that does not load › a cached library is served without loading MTLCompiler` |
-| D15 | making the compiler loads nothing; the first compile raises | `M › without MTLCompiler on the machine › a compile raises Compile_error naming MTLCompiler and MTLCOMPILER_PATH`; `M › a library that does not load` (4 tests) |
+| tinygrad: `runtime/ops_metal.py` cache key | `compile_metal_direct` | `M › cache` (3 tests) |
+| tinygrad: `runtime/ops_metal.py` `MetalCompiler` (the framework loaded with the class, its service made by `__init__`) | making the compiler loads MTLCompiler, or fails | `M › without MTLCompiler on the machine › making a compiler raises Failure naming MTLCompiler and MTLCOMPILER_PATH`; `M › a library that does not load` (3 tests) |
 | tinygrad: `external/external_metal_compile_fail.py` | a kernel that crashed Metal's compiler | dropped: a crash reproducer of a driver bug, outside tinygrad's suite |
 
 ## Indexing

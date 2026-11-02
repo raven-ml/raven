@@ -888,6 +888,12 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Making a compiler finds its library, as making a renderer does with it:
+  `Compiler_cuda.nvrtc`, `Compiler_amd.hip` and `Compiler_metal.compiler`,
+  and so `Cstyle.cuda`, `Cstyle.hip`, `Cstyle.metal` and `Device.renderer`,
+  raise `Failure` naming `NVRTC_PATH`, `COMGR_PATH` or `MTLCOMPILER_PATH` on a
+  machine without NVRTC, comgr or MTLCompiler, where the first compile raised
+  `Compile_error`.
 - `Search.beam_search` times each candidate as its compilation ends, on every
   device, while other domains compile the rest (`Worker.iter`, which hands
   each result to its consumer in the order the applications end). A

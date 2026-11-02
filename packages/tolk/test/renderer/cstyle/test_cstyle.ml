@@ -18,7 +18,10 @@ let contains s sub =
 let target device renderer arch =
   { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
 
-let renderer_for (t : Helpers.Target.t) =
+(* A GPU's renderer is made with its compiler, which finds its vendor's library
+   or raises Failure: [renderer_for] skips the test on a machine without it, and
+   [available] holds the renderers the machine makes. *)
+let make (t : Helpers.Target.t) =
   match t.renderer with
   | "CLANG" -> Cstyle.clang t
   | "METAL" -> Cstyle.metal t
@@ -26,14 +29,29 @@ let renderer_for (t : Helpers.Target.t) =
   | "HIP" -> Cstyle.hip t
   | r -> invalid_arg ("no renderer " ^ r)
 
+let renderer_for t =
+  match make t with r -> r | exception Failure why -> skip ~reason:why ()
+
 (* The target of a golden row, written in its columns device, renderer and
    arch. *)
 let target_of_row row = target (row "device") (row "renderer") (row "arch")
 let renderer_of_row row = renderer_for (target_of_row row)
-let clang = Cstyle.clang (target "CPU" "CLANG" "x86_64,x86-64")
-let metal = Cstyle.metal (target "METAL" "METAL" "Apple9")
-let cuda = Cstyle.cuda (target "CUDA" "CUDA" "sm_89")
-let hip = Cstyle.hip (target "AMD" "HIP" "gfx1100")
+let clang_target = target "CPU" "CLANG" "x86_64,x86-64"
+let metal_target = target "METAL" "METAL" "Apple9"
+let cuda_target = target "CUDA" "CUDA" "sm_89"
+let hip_target = target "AMD" "HIP" "gfx1100"
+let clang = Cstyle.clang clang_target
+let metal () = renderer_for metal_target
+let cuda () = renderer_for cuda_target
+let hip () = renderer_for hip_target
+
+let renderers =
+  [ ("clang", fun () -> clang); ("metal", metal); ("cuda", cuda); ("hip", hip) ]
+
+let available =
+  List.filter_map
+    (fun t -> match make t with r -> Some r | exception Failure _ -> None)
+    [ clang_target; metal_target; cuda_target; hip_target ]
 let render (r : Renderer.t) uops = r.render uops
 
 (* Sources *)
@@ -247,7 +265,7 @@ let errors =
       test "Metal has no tensor cores on a family that is not Apple's"
         (fun () ->
           equal (list tensor_core) []
-            (Cstyle.metal (target "METAL" "METAL" "Mac2")).tensor_cores);
+            (renderer_for (target "METAL" "METAL" "Mac2")).tensor_cores);
       test "CUDA rejects an architecture without a compute capability"
         (fun () -> rejects (fun () -> Cstyle.cuda (target "CUDA" "CUDA" "sm_")));
     ]
@@ -291,7 +309,7 @@ let max_nesting = 64 + 4
 let renderers_and_lengths =
   let pp ppf (r : Renderer.t) = Format.pp_print_string ppf r.name in
   Gen.pair
-    (Gen.of_list ~pp [ clang; metal; cuda; hip ])
+    (Gen.of_list ~pp available)
     (Gen.int_range 1 300)
 
 let nests_a_bounded_depth ((r : Renderer.t), n) =
@@ -343,9 +361,7 @@ let floats_only = Op.[ Exp2; Log2; Sin; Sqrt; Recip; Trunc; Fdiv ]
 let ints_only = Op.[ Shl; Shr; And; Or; Xor; Truncmod; Truncdiv ]
 
 let operations =
-  let named =
-    [ ("clang", clang); ("metal", metal); ("cuda", cuda); ("hip", hip) ]
-  in
+  let named = List.map (fun (r : Renderer.t) -> (r.name, r)) available in
   List.concat_map
     (fun (name, (r : Renderer.t)) ->
       List.concat_map
@@ -401,7 +417,7 @@ let keeps_no_reference () =
   is_false ~msg:"the kernel is still reachable" (Stdlib.Weak.check weak 0)
 
 let cuda_on_nv () =
-  let nv = Cstyle.cuda (target "NV" "CUDA" "sm_89") in
+  let cuda = cuda () and nv = renderer_for (target "NV" "CUDA" "sm_89") in
   List.iter
     (fun row ->
       if row "renderer" = "CUDA" && row "setting" = "-" then
@@ -455,8 +471,10 @@ let rendering =
       test "writes the same CUDA source for the CUDA and NV devices" cuda_on_nv;
       cases "raises Invalid_argument on an operation the target lacks"
         ~id:(fun (name, _) -> name)
-        [ ("clang", clang); ("metal", metal); ("cuda", cuda); ("hip", hip) ]
-        (fun (_, r) -> rejects (fun () -> render r (one_operation Max Float32)));
+        renderers
+        (fun (_, r) ->
+          let r = r () in
+          rejects (fun () -> render r (one_operation Max Float32)));
       cases
         "raises Invalid_argument on a kernel of another target it cannot write"
         ~id:fst
@@ -467,6 +485,7 @@ let rendering =
             (cuda, "hip_tc_i8_i32_16_16_16") );
         ]
         (fun (_, (r, case)) ->
+          let r = r () in
           rejects (fun () -> render r (kernel (find_case case))));
     ]
 
@@ -513,6 +532,7 @@ let compilation =
 (* CUDA's binaries *)
 
 let compiles_to_a_cubin () =
+  let cuda = cuda () in
   match Renderer.Compiler.compile cuda.compiler (source_of_case "cuda_add") with
   | binary -> starts_with ~prefix:"\x7fELF" binary
   | exception Renderer.Compiler.Compile_error why when lacks_toolchain why ->
@@ -538,7 +558,7 @@ let truncated_bf16 =
 
 let through_metal_matcher sink =
   Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() sink
-    (After_sources metal.extra_matcher)
+    (After_sources (metal ()).extra_matcher)
 
 let truncs sink =
   List.filter
@@ -562,6 +582,7 @@ let compiles_its_truncation () =
         Uop_weak.pm_commit_weak; Uop_weak.pm_lower_weak; Uop_weak.pm_cast_const;
       ]
   in
+  let metal = metal () in
   match
     Renderer.Compiler.compile metal.compiler
       (render metal (Linearizer.linearize sink))
@@ -579,7 +600,7 @@ let bf16_truncation =
           let rewritten =
             truncs
               (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
-                 truncated_bf16 (After_sources cuda.extra_matcher))
+                 truncated_bf16 (After_sources (cuda ()).extra_matcher))
           in
           equal (list Dtypes.dtype) [ Dtype.Bfloat16 ]
             (List.map Ops.dtype rewritten));
@@ -1275,9 +1296,9 @@ let negation =
   group "negation"
     [
       cases "a minus before a minus is apart"
-        ~id:(fun (r : Renderer.t) -> r.name)
-        [ clang; metal; cuda; hip ]
-        (fun r ->
+        ~id:fst renderers
+        (fun (_, r) ->
+          let r = r () in
           let neg = List.assoc Op.Neg r.code_for_op
           and sub = List.assoc Op.Sub r.code_for_op in
           equal string "(a- -b)" (sub [ "a"; "-b" ] Float32);

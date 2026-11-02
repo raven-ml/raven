@@ -17,7 +17,8 @@ let has_infix ~affix s =
 let rejection f =
   match f () with _ -> None | exception Compiler.Compile_error msg -> Some msg
 
-(* NVRTC's absence is a Compile_error that names the variable to set. *)
+(* NVRTC's absence is a Failure, raised when a compiler is made, that names the
+   variable to set. *)
 let absent msg = has_infix ~affix:"NVRTC_PATH" msg
 
 (* [with_nvrtc f] is [f ()], or skips the test if NVRTC is not on the
@@ -25,7 +26,7 @@ let absent msg = has_infix ~affix:"NVRTC_PATH" msg
 let with_nvrtc f =
   match f () with
   | v -> v
-  | exception Compiler.Compile_error msg when absent msg -> skip ~reason:msg ()
+  | exception Failure msg when absent msg -> skip ~reason:msg ()
 
 (* The cache *)
 
@@ -39,8 +40,10 @@ let named ~prefix table =
 
 let table c = Option.get (Compiler.cachekey c)
 
+(* These tests run where NVRTC_PATH names a file, which the compiler finds. *)
 let cache =
-  group "cache"
+  tag "no-library"
+  @@ group "cache"
     [
       test
         "binaries are cached in the table of cuda, the architecture and a \
@@ -64,14 +67,12 @@ let cache =
 let without_nvrtc =
   group "without NVRTC on the machine"
     [
-      test "a compile raises Compile_error naming nvrtc and NVRTC_PATH"
+      test "making a compiler raises Failure naming nvrtc and NVRTC_PATH"
         (fun () ->
-          match
-            rejection (fun () ->
-                Compiler.compile (Compiler_cuda.nvrtc "sm_89") kernel)
-          with
-          | None -> skip ~reason:"NVRTC is on the machine" ()
-          | Some msg -> in_order ~subs:[ "nvrtc"; "NVRTC_PATH" ] msg);
+          match Compiler_cuda.nvrtc "sm_89" with
+          | _ -> skip ~reason:"NVRTC is on the machine" ()
+          | exception Failure msg ->
+              in_order ~subs:[ "nvrtc"; "NVRTC_PATH" ] msg);
     ]
 
 (* Workers *)
@@ -109,8 +110,8 @@ let kill_children () =
     (children ())
 
 (* A library that does not load: these tests run in a process of their own,
-   where NVRTC_PATH names a file that is no library, which each worker fails to
-   load. *)
+   where NVRTC_PATH names a file that is no library, which the compiler finds
+   and each worker fails to load. *)
 
 let load_failure () =
   rejection (fun () -> Compiler.compile (Compiler_cuda.nvrtc "sm_89") kernel)
@@ -119,8 +120,7 @@ let not_a_library =
   tag "no-library"
   @@ group "a library that does not load"
        [
-         test
-           "making a compiler loads nothing, and a compile raises Compile_error"
+         test "a compile raises Compile_error naming nvrtc and the file"
            (fun () ->
              let msg = require_some (load_failure ()) in
              in_order ~subs:[ "nvrtc"; "not_a_library" ] msg);
@@ -146,26 +146,21 @@ let not_a_library =
              kill_children ();
              equal (list int) [] (children ());
              equal (option string) first (sigpipe_kills load_failure));
-         test "a cached binary is served without loading NVRTC" (fun () ->
-             let nvrtc = Compiler_cuda.nvrtc "sm_89" in
-             let table = Option.get (Compiler.cachekey nvrtc) in
-             Helpers.Diskcache.put ~table kernel "cached binary";
-             equal string "cached binary" (Compiler.compile_cached nvrtc kernel));
        ]
 
 (* Disassembly *)
+
+let nvrtc ?ptx arch = with_nvrtc (fun () -> Compiler_cuda.nvrtc ?ptx arch)
 
 let disassembly =
   group "disassembly"
     [
       test "a PTX that ptxas cannot assemble prints why" (fun () ->
-          Compiler.disassemble (Compiler_cuda.nvrtc "sm_89") "not ptx";
+          Compiler.disassemble (nvrtc "sm_89") "not ptx";
           flush stdout;
           contains ~sub:"ptxas -arch=sm_89 " (output ()));
       test "a cubin that nvdisasm cannot read prints why" (fun () ->
-          Compiler.disassemble
-            (Compiler_cuda.nvrtc ~ptx:false "sm_89")
-            "not a cubin";
+          Compiler.disassemble (nvrtc ~ptx:false "sm_89") "not a cubin";
           flush stdout;
           let text = output () in
           contains ~sub:"nvdisasm " text;
@@ -200,8 +195,7 @@ let smoke =
                  "extern \"C\" __global__ void f() { undeclared_name = 1; }"
              with
              | _ -> fail "NVRTC accepted an undeclared name"
-             | exception Compiler.Compile_error msg when absent msg ->
-                 skip ~reason:msg ()
+             | exception Failure msg when absent msg -> skip ~reason:msg ()
              | exception Compiler.Compile_error msg ->
                  in_order
                    ~subs:[ "NVRTC_ERROR_COMPILATION"; "undeclared_name" ]
@@ -284,8 +278,7 @@ let process =
             Compile_error naming the signal" (fun () ->
              match cubin crashes_assembler with
              | lib -> starts_with ~prefix:"\x7fELF" lib
-             | exception Compiler.Compile_error msg when absent msg ->
-                 skip ~reason:msg ()
+             | exception Failure msg when absent msg -> skip ~reason:msg ()
              | exception Compiler.Compile_error msg ->
                  in_order
                    ~subs:[ "nvrtc worker was killed by SIG"; "without a reply" ]

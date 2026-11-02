@@ -82,7 +82,8 @@ val metal : Helpers.Target.t -> Renderer.t
     {!Dtype.Float64}.
 
     Raises [Invalid_argument] if the architecture starts with [Apple] and is not
-    followed by an integer. *)
+    followed by an integer, and [Failure] if MTLCompiler cannot be loaded
+    ({!Compiler_metal.compiler}). *)
 
 val cuda : Helpers.Target.t -> Renderer.t
 (** [cuda target] renders CUDA C++ for an NVIDIA GPU, compiled with NVRTC.
@@ -102,7 +103,8 @@ val cuda : Helpers.Target.t -> Renderer.t
     a NaN in {!Dtype.Fp8e4m3} ({!Dtype.truncate}).
 
     Raises [Invalid_argument] if the architecture has no compute capability
-    after its first three characters. *)
+    after its first three characters, and [Failure] if no NVRTC is found
+    ({!Compiler_cuda.nvrtc}). *)
 
 val hip : Helpers.Target.t -> Renderer.t
 (** [hip target] renders HIP C++ for an AMD GPU, compiled with comgr. [target]'s
@@ -113,4 +115,6 @@ val hip : Helpers.Target.t -> Renderer.t
     threads on each axis, and a workgroup shares 64 KiB of memory. The tensor
     cores are those of the GPU ({!Tc.amd}). The 8-bit floats are the [fnuz] ones
     on ["gfx942"] and {!Dtype.fp8_ocp} on ["gfx950"], and none elsewhere. A load
-    marked ["nontemporal"] bypasses the caches. *)
+    marked ["nontemporal"] bypasses the caches.
+
+    Raises [Failure] if no comgr is found ({!Compiler_amd.hip}). *)

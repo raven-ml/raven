@@ -7,9 +7,8 @@
 
 (** Shared libraries of the system.
 
-    The compilers that run in the process load a vendor's library at their first
-    compile. A program without the library still runs, and renders for its
-    targets: only compiling fails. *)
+    A compiler finds its vendor's library when it is made, and making it fails
+    without one. *)
 
 val multiarch : string
 (** [multiarch] is the name Linux distributions give the host's machine in

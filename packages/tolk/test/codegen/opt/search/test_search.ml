@@ -32,12 +32,24 @@ let renderer_of_row cell =
   in
   Renderer.with_compiler uncompiled r
 
+(* A GPU's renderer is made with its compiler, which finds its vendor's library
+   or raises Failure: [renderer] skips the test on a machine without it, and
+   [made] tells whether the machine makes a target's. *)
 let renderers =
   List.map
-    (fun cell -> (cell "target", renderer_of_row cell))
+    (fun cell ->
+      ( cell "target",
+        match renderer_of_row cell with
+        | r -> Ok r
+        | exception Failure why -> Error why ))
     (Golden.rows "targets.golden")
 
-let renderer target = List.assoc target renderers
+let renderer target =
+  match List.assoc target renderers with
+  | Ok r -> r
+  | Error why -> skip ~reason:why ()
+
+let made target = Result.is_ok (List.assoc target renderers)
 let kernels = Hashtbl.create 16
 
 let kernel name =
@@ -456,7 +468,7 @@ let small_searches =
         Format.fprintf ppf "%s on %s, width %d" kernel target amt)
       (triple
          (of_list [ "add_small"; "sum_rows"; "variable_rows"; "symbolic" ])
-         (of_list [ "clang"; "metal" ])
+         (of_list (List.filter made [ "clang"; "metal" ]))
          (int_range 1 3)))
 
 let links_once =
@@ -833,7 +845,11 @@ let counting ?(rendering = ignore)
       indices = "";
     }
   in
-  let m = Cstyle.metal t in
+  let m =
+    match Cstyle.metal t with
+    | m -> m
+    | exception Failure why -> skip ~reason:why ()
+  in
   let render uops =
     let src = m.render uops in
     rendering src;

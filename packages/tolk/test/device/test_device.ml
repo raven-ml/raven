@@ -36,6 +36,12 @@ let renderer_w =
 
 let renderer_or_error = result renderer_w string
 
+(* A GPU's renderer is made with its compiler, which finds its vendor's library
+   or raises Failure: [made f] is [f ()], or skips the test on a machine without
+   the library. *)
+let made f =
+  match f () with v -> v | exception Failure why -> skip ~reason:why ()
+
 (* Renderer selection *)
 
 (* A renderer that tinygrad's fails to make fails with its own message, which
@@ -65,7 +71,7 @@ let selected_like_tinygrad cell =
   let target = target_of_string (cell "target") in
   let expected =
     match cell "outcome" with
-    | "ok" -> Ok (renderer_named (cell "renderer") target)
+    | "ok" -> Ok (made (fun () -> renderer_named (cell "renderer") target))
     | "no renderer" -> Error (without_hint (cell "error"))
     | "renderer fails" -> Error (message_of_renderer (cell "renderer") target)
     | outcome -> failf "no outcome %s" outcome
@@ -73,7 +79,8 @@ let selected_like_tinygrad cell =
   equal renderer_or_error expected (Device.renderer target)
 
 let chosen s =
-  require_ok ~pp:Format.pp_print_string (Device.renderer (target_of_string s))
+  require_ok ~pp:Format.pp_print_string
+    (made (fun () -> Device.renderer (target_of_string s)))
 
 let every_device = [ "CPU"; "METAL"; "CUDA"; "NV"; "AMD" ]
 
@@ -154,8 +161,11 @@ let gen_targets =
     (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_target)
     (Gen.list ~size:(Gen.int_range 2 12) gen_target)
 
-(* Each target, and its renderer when it has one. *)
-let answer t = (t, Result.to_option (Device.renderer t))
+(* Each target, and its renderer when it has one and the machine makes it. *)
+let answer t =
+  match Device.renderer t with
+  | r -> (t, Result.to_option r)
+  | exception Failure _ -> (t, None)
 
 let one_renderer_per_target targets =
   let answers = List.map answer targets in
@@ -184,9 +194,9 @@ let memoisation =
           is_true (chosen "CPU::arm64,apple-m1" == chosen "CPU::arm64,apple-m1"));
       test "returns one renderer to two equal targets" (fun () ->
           is_true
-            (chosen "AMD::gfx1100"
+            (chosen "CPU::x86_64,x86-64"
             == require_ok ~pp:Format.pp_print_string
-                 (Device.renderer { (on "AMD") with arch = "gfx1100" })));
+                 (Device.renderer { (on "CPU") with arch = "x86_64,x86-64" })));
       test "makes a renderer for each architecture" (fun () ->
           let arm = chosen "CPU::arm64,apple-m1"
           and x86 = chosen "CPU::x86_64,x86-64" in
@@ -205,7 +215,7 @@ let memoisation =
       test "returns one renderer to two domains asking at once" (fun () ->
           (* No other test asks for this target, so the two domains race to make
              its renderer. *)
-          let ask () = List.init 50 (fun _ -> chosen "NV::sm_87") in
+          let ask () = List.init 50 (fun _ -> chosen "CPU::arm64,cortex-a72") in
           let other = Domain.spawn ask in
           let mine = ask () in
           match mine @ Domain.join other with

@@ -14,7 +14,8 @@
    [search/linearize] times a beam search's lowering of a candidate up to its
    instructions, which every candidate pays, for the kernels of [lorenz] on a
    CUDA renderer, and [search/actions] its making of the candidates one action
-   makes of a kernel, which a round pays for each kernel of its beam. What a
+   makes of a kernel, which a round pays for each kernel of its beam; without
+   NVRTC, which the renderer's compiler needs, the group is empty. What a
    search pays per candidate beyond them, and what it costs whole, rune's
    compile suite times through [Rune.jit ~beam].
 
@@ -235,14 +236,19 @@ let gpt_oss () =
    kernels one action makes of it, each optimised as a candidate is. *)
 let linearized = 8
 
+(* The renderer is made with NVRTC's compiler, which needs NVRTC: the search
+   rows run where it is found, as the gpt_oss rows run where a CUDA GPU
+   opens. *)
 let cuda_renderer =
-  Renderer.with_compiler
-    (Renderer.Compiler.v Fun.id)
-    (Cstyle.cuda
-       { target with device = "CUDA"; renderer = "CUDA"; arch = "sm_89" })
+  match
+    Cstyle.cuda
+      { target with device = "CUDA"; renderer = "CUDA"; arch = "sm_89" }
+  with
+  | r -> Some (Renderer.with_compiler (Renderer.Compiler.v Fun.id) r)
+  | exception Failure _ -> None
 
 (* The scheduler of a lorenz kernel that a search is handed. *)
-let handed text =
+let handed cuda_renderer text =
   let k = Graph.of_string text in
   let k =
     match Ops.arg k with
@@ -258,8 +264,8 @@ let handed text =
   ignore (Codegen.full_rewrite_to_sink ~beam:search k cuda_renderer);
   Option.get !handed
 
-let candidates text =
-  Search.get_kernel_actions (handed text)
+let candidates cuda_renderer text =
+  Search.get_kernel_actions (handed cuda_renderer text)
   |> List.filteri (fun i _ -> i < linearized)
   |> List.map (fun (_, c) ->
       Postrange.Scheduler.get_optimized_ast ~name_override:"test" c)
@@ -268,24 +274,24 @@ let candidates text =
    of earlier calls the collector has not yet reclaimed, since building a node
    that still exists allocates nothing: from one call to the next it moves by
    about 2%, and no count is constant for thumper to prove exact. *)
-let linearize_candidates =
+let linearize_candidates cuda_renderer =
   Thumper.group "linearize"
     ~metrics:[ Thumper.Metric.wall_time ]
     (List.map
        (fun (kernel, text) ->
          Thumper.bench_with_setup
-           ~setup:(fun () -> candidates text)
+           ~setup:(fun () -> candidates cuda_renderer text)
            kernel
            (List.map (fun ast -> Codegen.linearize ast cuda_renderer)))
        Lorenz.all)
 
-let kernel_actions =
+let kernel_actions cuda_renderer =
   Thumper.group "actions"
     ~metrics:[ Thumper.Metric.wall_time ]
     (List.map
        (fun (kernel, text) ->
          Thumper.bench_with_setup
-           ~setup:(fun () -> handed text)
+           ~setup:(fun () -> handed cuda_renderer text)
            kernel
            (fun s -> Search.get_kernel_actions s))
        Lorenz.all)
@@ -295,7 +301,10 @@ let suite () =
   @ [
       lorenz;
       gpt_oss ();
-      Thumper.group "search" [ linearize_candidates; kernel_actions ];
+      Thumper.group "search"
+        (match cuda_renderer with
+        | Some r -> [ linearize_candidates r; kernel_actions r ]
+        | None -> []);
     ]
 
 let () =
