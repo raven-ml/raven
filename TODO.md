@@ -2,13 +2,14 @@
 
 goalpost: jit-compiled gpt-oss at least as fast as {tinygrad,JAX,llama.cpp/vLLM} on {NVIDIA,NV,AMD}.
 
-gpt-oss-20b, CUDA (kimchi, ebfb61e268, before tolk ran on rig), raven /
-llama.cpp a868c3e:
-- decode 9.50 ms / 5.92 ms: attention and lm-head weights as Q8_0 as GGUF
-  does (~-2.2 ms, changes numerics, so a format the caller picks); small
-  kernels ~0.3 ms per step
-- prefill-512 0.188 s / 58.6 ms: profile what's left after tensor cores
-- first call 0.220 s with filled caches (first step 0.115 s)
+gpt-oss-20b, RTX 5000 Ada (fudge, 31aa4521b, the new nx and rune), raven
+CUDA / NV / llama.cpp b12032 CUDA, at a load of 33 to 65:
+- decode 11.0 / 10.7 ms of GPU time (bench medians 15.5 / 12.0 ms) /
+  6.83 ms at depth 512; with Q8_0 attention and head 23.4 / 22.8 ms
+- prefill-512 2.00 / 1.93 s / 56.0 ms: D163 stores each 16-row block's
+  decoded experts, 79 ms of a layer's 82 (0.19 s with 7b69036c7's rule)
+- first call 0.45 / 0.37 to 0.54 s (12 tokens, kernels cached; 1.36 /
+  1.47 s at the first run) / 75 ms (59 to 151 ms, no warmup)
 
 gpt-oss-20b, AMD gfx1201 (nonnormal, f24925ed77, the new nx and rune),
 raven / llama.cpp b12048 Vulkan:
@@ -18,11 +19,6 @@ raven / llama.cpp b12048 Vulkan:
   0.136 s (2.19 s without Mesa's shader cache)
 - llama.cpp's ROCm build needs HIP libraries nonnormal lacks; tinygrad
   needs Resizable BAR here
-
-- gpt-oss-20b on the new nx and rune: decode, prefill-512 and first call
-  on fudge (CUDA, NV), recorded as the GptOss
-  baselines, against llama.cpp at a stated build; rune's test_jit on
-  CUDA and NV
 
 ## rig
 
@@ -314,9 +310,7 @@ raven / llama.cpp b12048 Vulkan:
 
 ## repo
 
-- thumper: suites whose only x86 section is kimchi's (retired):
-  gpt_oss. Record each on fudge, then delete every kimchi section.
-  nx.thumper's fudge section was recorded under
+- thumper: nx.thumper's fudge section was recorded under
   OCaml 5.5.1, so it compares nothing under 5.5.2: re-record it on a quiet
   fudge. talon.thumper's Mac rows predate the Nx.Rng
   fixture (76105a215): the maintainer re-records them

@@ -1878,8 +1878,8 @@ unrolled reduce`).
   memory: attention keeps its exponentials, one more buffer the size of the
   scores (tokens by tokens by heads) while the call runs, at every length;
   at 2048 tokens 1.10 GB and 2.17 GB were allocated. To re-measure on fudge:
-  no fudge bench row holds it (kaun's `GptOss/prefill-512` is baselined on
-  kimchi and nonnormal only).
+  no fudge bench row times it (kaun's `GptOss/prefill-512` times it on
+  nonnormal; fudge's row holds its allocated words alone).
 - **Pinned by:** the Rangeify suite's `swiglu_down`, `attention`,
   `exp_dead_axis` (a kept exponential of a row expanded to a matrix is
   stored as the row), `exp_cheap_consumer` (a value that reads a kept
@@ -2175,9 +2175,9 @@ Withdrawn: multi-device is out of scope, see README.
     outputs, fell back to a group of 16 threads per output and took 6.7 us;
     it takes 3.7 us.
 
-  To re-measure on fudge: no fudge bench row holds it (kaun's
-  `GptOss/decode-step-cache-1024` is baselined on kimchi and nonnormal, its
-  `Quant/cuda/*` and `Quant/metal/*` rows on kimchi and the Mac).
+  To re-measure on fudge: no fudge bench row times it (kaun's
+  `GptOss/decode-step-cache-1024` times it on nonnormal, fudge's row holding
+  its allocated words alone, and its `Quant/metal/*` rows on the Mac).
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
   tinygrad's › applied_opts`, cases `matvec_*`, `vecmat_*`,
   `vecmat_of_cast_*`, `vecmat_decoded_*`, `experts_down_*`, `gpt_oss_*`
