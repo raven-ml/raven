@@ -88,7 +88,7 @@ def measure(workload, runs: int) -> tuple[dict[str, list[float]], list[str], lis
             spread = (max(times) - min(times)) / median
             if swapped_pages() > before:
                 swapped.append(id)
-                print(f"{id:<28} swapped, not recorded", flush=True)
+                print(f"{id:<28} {median:10.4f} s  swapped, not recorded", flush=True)
                 continue
             samples[id] = times
             flag = ""
