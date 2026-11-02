@@ -1005,14 +1005,23 @@ let probe_rows () =
         done);
   ]
 
-(* CUDA: compiled calls on the first CUDA GPU, where one opens. *)
+(* GPUs: compiled calls on the first CUDA GPU and on the first AMD GPU, where
+   one opens. *)
 
-(* Whether a CUDA GPU opens, asked of a fresh process: a GPU's driver must not
-   be initialized before the fork that isolates a case. *)
-let cuda_opens () =
+type gpu = Cuda | Amd
+
+let open_gpu = function
+  | Cuda -> Rig.open_ (Rig_cuda.gpu 0)
+  | Amd -> Rig.open_ (Rig_amd_amdgpu.gpu 0)
+
+let flag = function Cuda -> "--cuda" | Amd -> "--amd"
+
+(* Whether [g] opens, asked of a fresh process: a GPU's driver must not be
+   initialized before the fork that isolates a case. *)
+let opens g =
   let exe = Sys.executable_name in
   let pid =
-    Unix.create_process exe [| exe; "--cuda" |] Unix.stdin Unix.stdout
+    Unix.create_process exe [| exe; flag g |] Unix.stdin Unix.stdout
       Unix.stderr
   in
   match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
@@ -1020,29 +1029,51 @@ let cuda_opens () =
 (* A call made at a placement of any set, which waits for what it computes. *)
 type call = { at : 'd. 'd Nx.Placement.t -> unit -> unit }
 
-(* [on_cuda name c] is a row of [c]'s call at the GPU's placement, opened and
+(* [on_gpu g name c] is a row of [c]'s call at [g]'s placement, opened and
    compiled in the worker. *)
-let on_cuda name c =
+let on_gpu g name c =
   warm name
     (fun () ->
-      match Rig.open_ (Rig_cuda.gpu 0) with
+      match open_gpu g with
       | Error e -> failwith e
       | Ok gpu ->
           let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
           c.at D.on)
     (fun call -> call ())
 
+(* A decode step's cache update, nx's dispatch/kv-append-4096 compiled: one
+   row written at a position held in data into gpt-oss's keys of one layer, a
+   [1; 8; 4096; 64] bfloat16 cache, each call updating the last call's result.
+   Donated, the row is written in place; copied, the cache is copied first. *)
+let kv_append ~donated =
+  {
+    at =
+      (fun at ->
+        let place x = Nx.place at x in
+        let cache = ref (place (Nx.zeros Nx.bfloat16 [| 1; 8; 4096; 64 |])) in
+        let row = place (Nx.ones Nx.bfloat16 [| 1; 8; 1; 64 |]) in
+        let pos = place (Nx.scalar Nx.int64 2048L) in
+        let f =
+          Rune.jit
+            Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+            (fun cache row pos -> Nx.set Nx.[ A; A; D (pos, 1); A ] row cache)
+        in
+        fun () ->
+          let c = if donated then Nx.donate !cache else !cache in
+          cache := synced (f c row pos));
+  }
+
 (* A GPU row times its calls only: a GPU buffer's release allocates when the
    collector finalises it, so a call's count depends on the collection's
    phase. *)
-let cuda_rows () =
-  if not (cuda_opens ()) then []
+let gpu_rows g =
+  if not (opens g) then []
   else
     [
       (* A float64 sine, hundreds of operations an element, read by a sum and by
          an elementwise output: their two kernels read it stored, or each
          computes it. *)
-      on_cuda "sin-read-by-two-float64-1000"
+      on_gpu g "sin-read-by-two-float64-1000"
         {
           at =
             (fun at ->
@@ -1056,6 +1087,8 @@ let cuda_rows () =
               in
               fun () -> ignore (synced2 (f x)));
         };
+      on_gpu g "kv-append-4096" (kv_append ~donated:true);
+      on_gpu g "kv-append-4096-copied" (kv_append ~donated:false);
     ]
 
 (* A trial's setup compiles its programs: a cold tolk cache takes seconds for
@@ -1064,8 +1097,9 @@ let config = Thumper.Config.(default |> deadline 60.)
 
 let () =
   match Sys.argv with
-  | [| _; "--cuda" |] ->
-      exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
+  | [| _; ("--cuda" | "--amd" as f) |] ->
+      let g = if f = "--cuda" then Cuda else Amd in
+      exit (if Result.is_ok (open_gpu g) then 0 else 1)
   | _ ->
   exit
     (Thumper.run "rune" ~config
@@ -1090,5 +1124,7 @@ let () =
          Thumper.group "Roots" (root_rows ());
          Thumper.group "Probes" (probe_rows ());
          Thumper.group ~metrics:[ Thumper.Metric.wall_time ] "Cuda"
-           (cuda_rows ());
+           (gpu_rows Cuda);
+         Thumper.group ~metrics:[ Thumper.Metric.wall_time ] "Amd"
+           (gpu_rows Amd);
        ])
