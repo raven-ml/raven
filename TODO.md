@@ -282,11 +282,6 @@ raven / llama.cpp b12048 Vulkan:
   the kind tables of f6876a0ad, measured under load 1.3-4.7: time them
   quiet on fudge, with a row of a costly kind where its threads change
   (pow-f64-16K), and re-record the elementwise rows
-- complex products and extremes over few terms (`few_`, `IN_ARRAY` in
-  reduce_body.h) ran 1.2-1.7x slower under gcc 15 on the M1 than before
-  their lanes became vectors; inlining the start step for every monoid
-  costs the float extremes 15%. Add a row (prod of complex64 2x2 windows),
-  time it on fudge's gcc, and act only if it loses there
 
 ## talon, hugin, brot, munin, quill
 

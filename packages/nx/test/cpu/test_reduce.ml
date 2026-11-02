@@ -419,6 +419,12 @@ let law_complex (b : Support.backend) (c : case) =
   cover "a product of a lane of no term and a zero part"
     (c.monoid = Prod && per mod 1024 > 0 && per mod 1024 < 16
     && Array.exists zero ts);
+  (* Extremes of a lane or fewer terms an output take their lanes side by
+     side, a window's maximum among them. *)
+  cover "an extreme of 2 to 16 terms an output"
+    ((c.monoid = Max || c.monoid = Min)
+    && (not c.scan) && per >= 2 && per <= 16
+    && total (result_shape c) > 0);
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
@@ -461,6 +467,9 @@ let complex_examples =
     one ~scan:true D.Complex128 [| z (-0.) (-0.); z 1. 1. |];
     (* Outputs of no term, which the generator draws now and then. *)
     example Sum (D.Any D.Complex64) [| 3; 0 |] [| 1 |];
+    (* Extremes of 2x2 windows' terms, side by side. *)
+    example ~specials:3 Max (D.Any D.Complex64) [| 5; 2; 2 |] [| 1; 2 |];
+    example Min (D.Any D.Complex128) [| 7; 4 |] [| 1 |];
   ]
   @ List.map
       (fun (s, axis) ->

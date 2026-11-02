@@ -219,8 +219,9 @@ typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
 
 /* Lanes as vectors. A monoid's 16 lanes D_l, at the suffix D, come with
    splat_D, load_D and store_D, and its steps on_ (16 terms into the
-   lanes), pair_ and start_ (lanes in memory, as few holds them), run_ (a
-   run of terms into the lanes) and cols_ (columns into accumulators), from
+   lanes), pair_ and start_ (lanes in memory, as few holds them; arrays
+   start by ARRAY_START), run_ (a run of terms into the lanes) and cols_
+   (columns into accumulators), from
    which MONOID builds its kernels; VMONOID provides them over vectors,
    XMONOID over whole vectors, AMONOID over arrays, and SMONOID over an
    array of its own. A real dtype's lanes are a struct of vectors of the
@@ -466,8 +467,8 @@ typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
   }
 
 /* A lane step and a combine of [F] over elements of [T], whose lanes at
-   the suffix [D] on_NAME combines. */
-#define MONOID(NAME, D, T, F)                                                \
+   the suffix [D] on_NAME combines and few_ starts by [START]. */
+#define MONOID(NAME, D, T, F, START)                                         \
   static void lanes_##NAME(const uint8_t *x_, int64_t s, int64_t n,          \
                            const uint8_t *e_, uint8_t *l_, int first) {     \
     const T *x = (const T *)x_;                                              \
@@ -612,7 +613,7 @@ typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
               for (int64_t j = 0; j < m; j++) d[j] = a[j * s];               \
           }                                                                  \
           for (int64_t i = k; i < k16; i++) l[t][i] = e;                     \
-          for (int64_t i = 0; i < k16; i += 16) start_##NAME(l[t] + i, e);   \
+          START(NAME, F, l[t], k16, e);                                      \
         }                                                                    \
         for (int g = 8; g >= 1; g /= 2)                                      \
           for (int t = 0; t < g && t + g < n; t++)                           \
@@ -631,8 +632,8 @@ typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
 
 /* Sixteen lanes in memory, as few holds them: [pair] combines a's with
    b's, [start] takes x's terms into lanes from [e]. IN_LANES's go through
-   the lanes of the suffix [D], IN_ARRAY's by [F], lane by lane, in
-   place. */
+   the lanes of the suffix [D]; IN_ARRAY's pair goes by [F], lane by lane,
+   in place, and its start is ARRAY_START's. */
 #define IN_LANES(NAME, D, T)                                                 \
   static inline void pair_##NAME(T *restrict a, const T *restrict b) {       \
     D##_l v = load_##D(a);                                                   \
@@ -648,10 +649,20 @@ typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
 #define IN_ARRAY(NAME, T, F)                                                 \
   static inline void pair_##NAME(T *restrict a, const T *restrict b) {       \
     for (int k = 0; k < 16; k++) a[k] = F(a[k], b[k]);                       \
-  }                                                                          \
-  static inline void start_##NAME(T *x, T e) {                               \
-    for (int k = 0; k < 16; k++) x[k] = F(e, x[k]);                          \
   }
+
+/* few_'s start of the [n] terms at [x], a multiple of 16, into lanes from
+   [e]: LANES_START's through start_, ARRAY_START's by [F], term by term,
+   in place. gcc vectorises ARRAY_START's loop only where it is written out
+   in few_'s loop nest: as an inline function it left the loop scalar, and
+   a complex64 2x2 window's maximum took 1.7 times the instructions on
+   x86-64. Written out for every monoid, the loop took a float32 window's
+   maximum 1.4 times the instructions start_'s vectors take. */
+#define LANES_START(NAME, F, x, n, e)                                        \
+  for (int64_t i = 0; i < (n); i += 16) start_##NAME((x) + i, e)
+#define ARRAY_START(NAME, F, x, n, e)                                        \
+  for (int64_t i = 0; i < (n); i += 16)                                      \
+    for (int k = 0; k < 16; k++) (x)[i + k] = F(e, (x)[i + k])
 
 /* A monoid of a real dtype, its lanes combined by the vector op [OP]. */
 #define VMONOID(NAME, D, T, W, F, OP)                                        \
@@ -659,7 +670,7 @@ typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
   ON(on_##NAME, D, T, FIELDS(W), op_##NAME)                                  \
   IN_LANES(NAME, D, T)                                                       \
   RUNS(NAME, D, T)                                                           \
-  MONOID(NAME, D, T, F)
+  MONOID(NAME, D, T, F, LANES_START)
 
 /* An exact monoid of a real dtype: VMONOID's, its runs and columns over
    whole vectors too. */
@@ -672,14 +683,14 @@ typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
   ON(onx_##NAME, D##x, T, XFIELDS(W), opx_##NAME)                            \
   IN_LANES(NAME, D, T)                                                       \
   WHOLE_RUNS(NAME, D, T)                                                     \
-  MONOID(NAME, D, T, F)
+  MONOID(NAME, D, T, F, LANES_START)
 
 /* A monoid whose lanes are an array, combined lane by lane. */
 #define AMONOID(NAME, D, T, F)                                               \
   ON_EACH(on_##NAME, D, T, F)                                                \
   IN_ARRAY(NAME, T, F)                                                       \
   RUNS(NAME, D, T)                                                           \
-  MONOID(NAME, D, T, F)
+  MONOID(NAME, D, T, F, ARRAY_START)
 
 /* A monoid of a real dtype whose vector op the target lacks: VMONOID's
    arguments, its lanes an array of their own. 64-bit integers' products
@@ -770,7 +781,7 @@ XMONOID(min_b, b, uint8_t, 1, ALL, V_ALL)
   }                                                                          \
   IN_LANES(sum_##C, C##p, nx_##C)                                            \
   RUNS(sum_##C, C##p, nx_##C)                                                \
-  MONOID(sum_##C, C##p, nx_##C, cadd_##C)                                    \
+  MONOID(sum_##C, C##p, nx_##C, cadd_##C, LANES_START)                       \
   ARRAYS(C, nx_##C)                                                          \
   AMONOID(prod_##C, C, nx_##C, nx_mul_##C)                                   \
   AMONOID(max_##C, C, nx_##C, nx_maximum_##C)                                \
