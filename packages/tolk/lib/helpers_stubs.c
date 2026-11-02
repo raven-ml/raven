@@ -22,6 +22,16 @@
 #include <caml/signals.h>
 #include <caml/unixsupport.h>
 
+/* caml/unixsupport.h declares the unix library's functions without
+   CAMLextern: a stub DLL loaded at run time on Windows would call them
+   directly, which flexdll links within 2 GiB only. Declared again with
+   CAMLextern, each call goes through a pointer. */
+#ifdef _WIN32
+CAMLnoret CAMLextern void caml_uerror(const char *cmdname, value arg);
+CAMLextern void caml_unix_check_path(value path, const char *cmdname);
+CAMLextern void caml_win32_maperr(DWORD errcode);
+#endif
+
 #ifdef _WIN32
 #include <stddef.h>
 #include <stdlib.h>

@@ -38,6 +38,19 @@
 
 #include "nx_dtype.h"
 
+/* On Windows each library's stubs are a DLL, which flexdll links when a
+   bytecode program or a toplevel loads it. A direct call reaches 2 GiB, and
+   another DLL may lie farther. Outside nx.array these functions are dllimport,
+   so each call goes through a pointer, which reaches any address. nx.array's
+   dune defines NX_ARRAY_EXTERN as extern for its own C. */
+#ifndef NX_ARRAY_EXTERN
+#ifdef _WIN32
+#define NX_ARRAY_EXTERN __declspec(dllimport) extern
+#else
+#define NX_ARRAY_EXTERN extern
+#endif
+#endif
+
 #define NX_MAX_RANK 32
 /* The length of the door's runs, Nx_array.max_operands, which shape.ml
    sets to the same number. It is 18 because a run of that many operands
@@ -137,7 +150,7 @@ typedef struct {
 } nx_array;
 
 /* The dtype of the OCaml array [v], a code. */
-int nx_array_dtype(value v);
+NX_ARRAY_EXTERN int nx_array_dtype(value v);
 
 /* The layout of the array [v], an Nx_array.t, read without a claim: its
    rank, then at [dim] its [rank] extents and its [rank] strides, as
@@ -145,7 +158,7 @@ int nx_array_dtype(value v);
    elements. [dim] holds 2 · NX_MAX_RANK. It reads [v] alone and allocates
    nothing; what it writes is C memory, so it stays valid after [v]
    moves. */
-int nx_array_layout(value v, int64_t *dim, int64_t *offset);
+NX_ARRAY_EXTERN int nx_array_layout(value v, int64_t *dim, int64_t *offset);
 
 /* Reads the [n] operands [in], at most NX_MAX_OPERANDS, into [out] and
    answers NX_OK, or answers why it refuses one, claims nothing and leaves
@@ -168,7 +181,7 @@ int nx_array_layout(value v, int64_t *dim, int64_t *offset);
    OCaml code, and only while such work is unfinished. If the wait raises,
    as Rig.Lost does for a lost device, nx_read releases every claim and
    raises it. */
-int nx_read(int n, const nx_operand *in, nx_array *out);
+NX_ARRAY_EXTERN int nx_read(int n, const nx_operand *in, nx_array *out);
 
 /* nx_read over operands that a function gives, of any number, such as an
    assembly's pieces: operand k is what [operand(ctx, k, &in)] writes,
@@ -183,20 +196,21 @@ int nx_read(int n, const nx_operand *in, nx_array *out);
    order, [operand]'s refusal with the dtypes'. Past NX_MAX_OPERANDS it
    allocates, before any claim, and raises Out_of_memory if host memory
    runs out. */
-int nx_read_each(int n, int (*operand)(void *ctx, int k, nx_operand *in),
-                 void *ctx, nx_array *out);
+NX_ARRAY_EXTERN int
+nx_read_each(int n, int (*operand)(void *ctx, int k, nx_operand *in), void *ctx,
+             nx_array *out);
 
 /* Releases the domain lock and takes it back, so that other domains
    collect in between, as the door does between runs: a held loop over
    many items calls it every few. It runs no signal handler, whose raise
    would leave claims held. A release may move OCaml values: the loop reads
    them again from roots. */
-void nx_let_collect(void);
+NX_ARRAY_EXTERN void nx_let_collect(void);
 
 /* Frees [p], which may be NULL, with the domain lock released: a table
    sized by a count of operands or items, whose pages the system takes
    time in proportion to return. */
-void nx_free_released(void *p);
+NX_ARRAY_EXTERN void nx_free_released(void *p);
 
 /* Allocates [n] bytes, at least one, as malloc does, NULL if host memory
    runs out, and writes a byte of each of their pages with the domain lock
@@ -204,14 +218,14 @@ void nx_free_released(void *p);
    the system maps on their first write, zeroing each, and 2 MiB at once
    where it maps huge pages (Linux's transparent huge pages), longer than
    the copy a held stretch allows. */
-void *nx_alloc_released(size_t n);
+NX_ARRAY_EXTERN void *nx_alloc_released(size_t n);
 
 /* Releases the claims of the [n] operands a successful nx_read or
    nx_read_each filled and unlinks their roots. Past NX_MAX_OPERANDS, it
    releases the domain lock and takes it back between runs of them, as
    nx_read_each does: the kernel reads what it uses after nx_done through
    roots. */
-void nx_done(int n, nx_array *a);
+NX_ARRAY_EXTERN void nx_done(int n, nx_array *a);
 
 /* Coalescing */
 
@@ -230,15 +244,16 @@ typedef struct {
    NX_SHAPE if [n] is not in [1, NX_MAX_OPERANDS] or their shapes differ.
    The loop keeps the C order of indices: axes are dropped and merged,
    never reordered. */
-int nx_coalesce(int n, const nx_array *a, nx_loop *l);
+NX_ARRAY_EXTERN int nx_coalesce(int n, const nx_array *a, nx_loop *l);
 
 /* nx_coalesce of any number [n] of operands, at least 1, into tables of
    [n] rows that the caller sizes: the loop's rank into [rank], its
    extents into [extent], of NX_MAX_RANK, operand k's steps into step[k]
    and its first position into first[k]. Answers NX_OK, or NX_SHAPE if [n]
    is below 1 or the shapes differ. */
-int nx_coalesce_into(int n, const nx_array *a, int *rank, int64_t *extent,
-                     int64_t (*step)[NX_MAX_RANK], int64_t *first);
+NX_ARRAY_EXTERN int
+nx_coalesce_into(int n, const nx_array *a, int *rank, int64_t *extent,
+                 int64_t (*step)[NX_MAX_RANK], int64_t *first);
 
 /* Coalesces in place the loop of [n] operands over [rank] axes, [rank] 0
    or more: their [extent]s and operand k's steps step[k], by axis. Drops
@@ -248,8 +263,8 @@ int nx_coalesce_into(int n, const nx_array *a, int *rank, int64_t *extent,
    element has rank 1, extent[0] = 0 and every step 0; one of one element,
    a rank-0 loop included, rank 1, extent 1 and every step 0. nx_coalesce's
    loop is this over its operands' shapes and strides. */
-int nx_coalesce_dims(int n, int rank, int64_t *extent,
-                     int64_t (*step)[NX_MAX_RANK]);
+NX_ARRAY_EXTERN int nx_coalesce_dims(int n, int rank, int64_t *extent,
+                                     int64_t (*step)[NX_MAX_RANK]);
 
 /* Sub-byte elements
 
@@ -362,8 +377,9 @@ static inline __attribute__((always_inline)) void nx_sub_pack_run(
    bytes of [s] shifted when they start at different bits, and packed from
    loads otherwise. Out of line, so that the walks that call it stay
    small. */
-void nx_sub_copy_run(uint8_t *d, int64_t pd, const uint8_t *s, int64_t ps,
-                     int64_t ss, int64_t len, int bits);
+NX_ARRAY_EXTERN void nx_sub_copy_run(uint8_t *d, int64_t pd, const uint8_t *s,
+                                     int64_t ps, int64_t ss, int64_t len,
+                                     int bits);
 
 /* Writes the low [bits] of [v] to every element: the bytes the run holds
    whole all at once, a byte of [v] repeated. */

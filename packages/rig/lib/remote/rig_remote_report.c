@@ -29,7 +29,10 @@
 #include <caml/unixsupport.h>
 #include <io.h>
 #include <windows.h>
-extern value caml_win32_alloc_handle(HANDLE);
+/* Declared again with CAMLextern, which caml/unixsupport.h omits: a stub DLL
+   loaded at run time calls it through a pointer, which flexdll links at any
+   distance. */
+CAMLextern value caml_win32_alloc_handle(HANDLE h);
 #else
 #include <fcntl.h>
 #include <signal.h>

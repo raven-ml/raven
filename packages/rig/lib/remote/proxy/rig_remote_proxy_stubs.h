@@ -17,6 +17,29 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* caml/unixsupport.h declares the unix library's functions without
+   CAMLextern: a stub DLL loaded at run time on Windows would call them
+   directly, which flexdll links within 2 GiB only. Declared again with
+   CAMLextern, each call goes through a pointer. */
+#ifdef _WIN32
+CAMLnoret CAMLextern void caml_uerror(const char *cmdname, value arg);
+CAMLextern void caml_win32_maperr(DWORD errcode);
+#endif
+
+/* On Windows each library's stubs are a DLL, which flexdll links when a
+   bytecode program or a toplevel loads it. A direct call reaches 2 GiB, and
+   another DLL may lie farther. Outside rig.remote.proxy, as in rig.remote,
+   these functions and variables are dllimport, so each use goes through a
+   pointer, which reaches any address. rig.remote.proxy's dune defines
+   RIG_REMOTE_PROXY_EXTERN as extern for its own C. */
+#ifndef RIG_REMOTE_PROXY_EXTERN
+#ifdef _WIN32
+#define RIG_REMOTE_PROXY_EXTERN __declspec(dllimport) extern
+#else
+#define RIG_REMOTE_PROXY_EXTERN extern
+#endif
+#endif
+
 #ifdef _WIN32
 #include <winsock2.h>
 typedef SOCKET rig_remote_sock;
@@ -216,7 +239,7 @@ struct rig_remote_dev {
 
 /* [1] if the calling process did not make [j], whose job it then fails in
    its own copy, taking no lock. */
-int rig_remote_forked(struct rig_remote_job *j);
+RIG_REMOTE_PROXY_EXTERN int rig_remote_forked(struct rig_remote_job *j);
 
 /* The longest a wait of an agent's serving thread blocks before it returns
    to OCaml, where the handlers of pending signals run, as rig's waits do. */
@@ -224,11 +247,12 @@ int rig_remote_forked(struct rig_remote_job *j);
 
 /* Inits [cv] for [rig_remote_wait_ns], whose waits a step of the wall clock
    does not move. */
-void rig_remote_cond_init(pthread_cond_t *cv);
+RIG_REMOTE_PROXY_EXTERN void rig_remote_cond_init(pthread_cond_t *cv);
 
 /* Waits on [cv], which [rig_remote_cond_init] made, for at most [ns]
    nanoseconds; none if [ns] is negative. */
-void rig_remote_wait_ns(pthread_cond_t *cv, pthread_mutex_t *mu, int64_t ns);
+RIG_REMOTE_PROXY_EXTERN void
+rig_remote_wait_ns(pthread_cond_t *cv, pthread_mutex_t *mu, int64_t ns);
 
 /* Bytes of this process's memory a frame sends without copying them. */
 struct rig_remote_span {
@@ -249,7 +273,8 @@ struct rig_remote_frame {
 /* A frame of [kind] with [np] bytes of its own at [buf + HEADER], for the
    caller to write, and [nspans] spans to set, in one allocation; NULL if
    memory ran out. */
-struct rig_remote_frame *rig_remote_frame(int kind, size_t np, int nspans);
+RIG_REMOTE_PROXY_EXTERN struct rig_remote_frame *
+rig_remote_frame(int kind, size_t np, int nspans);
 
 /* Sends [f], which it takes, after writing its header, from the calling
    thread once it holds the link's send claim, and returns once it is sent
@@ -258,21 +283,22 @@ struct rig_remote_frame *rig_remote_frame(int kind, size_t np, int nspans);
    CLOCK_MONOTONIC, in nanoseconds, [f] then not sent. A negative [until]
    waits for the claim for good. Called without the runtime, and without the
    link's lock. */
-int rig_remote_send(struct rig_remote_link *l, struct rig_remote_frame *f,
-                    struct pending *q, int64_t until);
+RIG_REMOTE_PROXY_EXTERN int rig_remote_send(struct rig_remote_link *l,
+                                            struct rig_remote_frame *f,
+                                            struct pending *q, int64_t until);
 
 /* Writes [handed] into a stopped proxy's word once no copy into this
    process's memory may still land: none is pending, or the receiving thread
    ended. Holds the link's lock. */
-void rig_remote_settle(struct rig_remote_dev *d);
+RIG_REMOTE_PROXY_EXTERN void rig_remote_settle(struct rig_remote_dev *d);
 
 /* Adds [d] to its link's proxies: [0]; [-1] if the link has a proxy of
    [d]'s id; [-2] if memory ran out. */
-int rig_remote_add_dev(struct rig_remote_dev *d);
+RIG_REMOTE_PROXY_EXTERN int rig_remote_add_dev(struct rig_remote_dev *d);
 
 /* Removes [d], which handed nothing over, from its link's proxies, so that
    the link takes another proxy of its id. Holds the link's lock. */
-void rig_remote_remove_dev(struct rig_remote_dev *d);
+RIG_REMOTE_PROXY_EXTERN void rig_remote_remove_dev(struct rig_remote_dev *d);
 
 #define Link_c(v) ((struct rig_remote_link *)Nativeint_val(Field(v, 0)))
 
@@ -295,12 +321,12 @@ enum rig_remote_link_point {
 
 typedef void rig_remote_link_hook_fn(enum rig_remote_link_point at,
                                      int waiting);
-extern rig_remote_link_hook_fn *_Atomic rig_remote_link_hook;
+RIG_REMOTE_PROXY_EXTERN rig_remote_link_hook_fn *_Atomic rig_remote_link_hook;
 
 /* The seconds a link bears a silent peer, a send its peer takes no byte
    of, and a failed link's reading of its peer: link.mli's 10. A suite
    shortens it, for every link from then on, so that its faults come sooner.
    Production leaves it. */
-extern _Atomic int rig_remote_link_bound_s;
+RIG_REMOTE_PROXY_EXTERN _Atomic int rig_remote_link_bound_s;
 
 #endif

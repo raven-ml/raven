@@ -10,4 +10,6 @@
   (language c)
   (include_dirs
    (lib rig))
-  (names nx_dtype_stubs nx_array_stubs)))
+  (names nx_dtype_stubs nx_array_stubs)
+  (flags
+   (:standard -DNX_ARRAY_EXTERN=extern))))

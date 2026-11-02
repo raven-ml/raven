@@ -56,6 +56,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* On Windows each library's stubs are a DLL, which flexdll links when a
+   bytecode program or a toplevel loads it. A direct call reaches 2 GiB, and
+   another DLL may lie farther. Outside rig.pool these functions are dllimport,
+   so each call goes through a pointer, which reaches any address. rig.pool's
+   dune defines RIG_POOL_EXTERN as extern for its own C. */
+#ifndef RIG_POOL_EXTERN
+#ifdef _WIN32
+#define RIG_POOL_EXTERN __declspec(dllimport) extern
+#else
+#define RIG_POOL_EXTERN extern
+#endif
+#endif
+
 /* A cache line on Apple silicon, and the pair of lines x86 fetches
    together: memory that threads write apart is split on multiples of it. */
 #define RIG_LINE_BYTES 128
@@ -83,7 +96,7 @@
    without a quota the count is a. cgroup v1's quotas are not read. On
    macOS it is the physical cores, on Windows the active processors, and
    elsewhere the online CPUs. */
-int rig_pool_cores(void);
+RIG_POOL_EXTERN int rig_pool_cores(void);
 
 /* rig_pool_performance_cores () is the number of the cores the process may
    occupy that run compute-bound work at more than half the speed of the
@@ -96,7 +109,7 @@ int rig_pool_cores(void);
    the highest performance ACPI CPPC reports for each (acpi_cppc/
    highest_perf). Elsewhere, and on a host that reports neither, it is
    rig_pool_cores (). */
-int rig_pool_performance_cores(void);
+RIG_POOL_EXTERN int rig_pool_performance_cores(void);
 
 /* Jobs
 
@@ -168,8 +181,8 @@ typedef void (*rig_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
    A caller should release the OCaml runtime around a job of t > 1. Holding
    it keeps every domain of the program from collecting until the job ends,
    including the time the job waits for another thread's job. */
-void rig_pool_run(int threads, int64_t total, int64_t chunks, rig_pool_body body,
-                 void *ctx);
+RIG_POOL_EXTERN void rig_pool_run(int threads, int64_t total, int64_t chunks,
+                                  rig_pool_body body, void *ctx);
 
 /* Blocking jobs
 
@@ -193,8 +206,9 @@ void rig_pool_run(int threads, int64_t total, int64_t chunks, rig_pool_body body
 /* rig_pool_run_blocking (threads, total, chunks, body, ctx) is
    rig_pool_run (threads, total, chunks, body, ctx) for a blocking job (see
    Blocking jobs). */
-void rig_pool_run_blocking(int threads, int64_t total, int64_t chunks,
-                           rig_pool_body body, void *ctx);
+RIG_POOL_EXTERN void rig_pool_run_blocking(int threads, int64_t total,
+                                           int64_t chunks, rig_pool_body body,
+                                           void *ctx);
 
 /* For the pool's suite: the Linux counts behind rig_pool_cores () and
    rig_pool_performance_cores (), read from any tree of files. Each function
@@ -208,7 +222,7 @@ void rig_pool_run_blocking(int threads, int64_t total, int64_t chunks,
    root/proc/self/mountinfo that holds it, and the cpu.max files read are
    those of that cgroup and its ancestors up to the mount. It is -1 without
    a quota on those paths, or without cgroup v2. */
-long rig_pool_cgroup_cpus(const char *root);
+RIG_POOL_EXTERN long rig_pool_cgroup_cpus(const char *root);
 
 /* rig_pool_performance_cpus (root, cpus, n) is the number of the [n] CPUs
    [cpus] that are performance cores, read under root. Where each of them
@@ -217,7 +231,8 @@ long rig_pool_cgroup_cpus(const char *root);
    a root/sys/devices/system/cpu/cpuN/acpi_cppc/highest_perf, they are
    those of highest performance more than half the largest of theirs.
    Otherwise it is -1. */
-long rig_pool_performance_cpus(const char *root, const int *cpus, long n);
+RIG_POOL_EXTERN long rig_pool_performance_cpus(const char *root,
+                                               const int *cpus, long n);
 
 /* For the pool's suite: hook points and reads of the compute pool's state,
    with which the suite holds an interleaving of the protocol of rig_pool.c.
@@ -269,7 +284,7 @@ typedef void (*rig_pool_hook)(rig_pool_point at);
 
 /* rig_pool_set_hook (hook) makes every hook point call hook (at); NULL, the
    default, calls nothing. */
-void rig_pool_set_hook(rig_pool_hook hook);
+RIG_POOL_EXTERN void rig_pool_set_hook(rig_pool_hook hook);
 
 /* rig_pool_set_calloc (f) makes the pool take the memory of each pool it
    makes from f (n, size) in place of calloc (n, size), one call at a time,
@@ -277,21 +292,21 @@ void rig_pool_set_hook(rig_pool_hook hook);
    answer NULL, as calloc does on a host out of memory: that pool is then
    not made, and the job runs on the calling thread alone. NULL, the
    default, restores calloc. */
-void rig_pool_set_calloc(void *(*f)(size_t n, size_t size));
+RIG_POOL_EXTERN void rig_pool_set_calloc(void *(*f)(size_t n, size_t size));
 
 /* rig_pool_threads () is the number of threads of the compute pool, its
    workers and the caller, making the pool if it was not; 1 if it cannot be
    made. */
-int rig_pool_threads(void);
+RIG_POOL_EXTERN int rig_pool_threads(void);
 
 /* rig_pool_inside () is the number of the compute pool's workers inside its
    job, plus RIG_POOL_CLOSED while the job is closed; 0 without a pool. */
-uint64_t rig_pool_inside(void);
+RIG_POOL_EXTERN uint64_t rig_pool_inside(void);
 
 /* rig_pool_parked () has bit w set, 1 <= w < 64, while the compute pool's
    worker w has its parked bit, read under the parking mutex: a worker
    whose bit it reads waits for a job, or was woken and has not run since;
    0 without a pool. */
-uint64_t rig_pool_parked(void);
+RIG_POOL_EXTERN uint64_t rig_pool_parked(void);
 
 #endif

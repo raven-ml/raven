@@ -136,6 +136,16 @@ of it from references, and how to review it.
   one-off inline. A value from a spec is always named.
 - Hot paths: allocate outside loops, prefer loops to closures, use `unsafe_`
   accessors where bounds are already checked.
+- On Windows each stub library is a DLL that flexdll links when a bytecode
+  program or a toplevel loads it, and a direct reference reaches 2 GiB. A
+  function or variable that a C header gives other libraries is declared
+  with its library's `*_EXTERN` macro, which that library's dune defines as
+  `extern`. A runtime or `unix` symbol a stub declares itself takes
+  `CAMLextern`; a `unix` one is declared again after
+  `#include <caml/unixsupport.h>`, which omits it. A stub calls only the
+  winpthreads functions the runtime links (`rig_now_ns` stands in for
+  `clock_gettime`), and its library links on Windows each other system
+  library it calls, such as `ws2_32`.
 - User-facing docs explain behaviour from first principles, without comparing
   to tinygrad, JAX or NumPy.
 - Prose, in docs, comments, commits and replies: as few words as possible,

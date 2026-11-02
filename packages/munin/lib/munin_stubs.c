@@ -23,6 +23,8 @@
 #define _DEFAULT_SOURCE
 
 #if defined(_WIN32)
+/* caml/unixsupport.h includes winsock2.h, which must precede windows.h. */
+#include <winsock2.h>
 #include <windows.h>
 #else
 #include <errno.h>
@@ -47,6 +49,15 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 #include <caml/unixsupport.h>
+
+/* caml/unixsupport.h declares the unix library's functions without
+   CAMLextern: a stub DLL loaded at run time on Windows would call them
+   directly, which flexdll links within 2 GiB only. Declared again with
+   CAMLextern, each call goes through a pointer. */
+#ifdef _WIN32
+CAMLnoret CAMLextern void caml_uerror(const char *cmdname, value arg);
+CAMLextern void caml_win32_maperr(DWORD errcode);
+#endif
 
 CAMLprim value caml_munin_getpid(value unit) {
   (void)unit;

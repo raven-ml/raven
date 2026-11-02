@@ -158,8 +158,12 @@ static struct custom_operations token_ops = {
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
-/* The runtime's bound on the memory of a custom block allocated young. */
-extern _Atomic uintnat caml_custom_minor_max_bsz;
+/* The runtime's bound on the memory of a custom block allocated young.
+   This file declares the runtime's symbols that no header gives a library
+   with CAMLextern, as the headers declare theirs: on Windows a stub DLL
+   loaded at run time then reaches each through a pointer, which flexdll
+   links at any distance from the executable. */
+CAMLextern _Atomic uintnat caml_custom_minor_max_bsz;
 
 /* The memory a major cycle is due after, for a token of [mem] bytes of a
    device with [room] bytes left in its budget: the share of the room the
@@ -419,7 +423,7 @@ static void cycle_ended(void) {
    point. */
 /* The number of major cycles ended, which the runtime declares only to
    itself. */
-extern uintnat caml_major_cycles_completed;
+CAMLextern uintnat caml_major_cycles_completed;
 
 /* The hook each of rig's replaced, which it calls after its own work. A
    hook may run on another domain as soon as it is installed, so its
@@ -742,7 +746,7 @@ value caml_rig_heap_drop(value unit) {
    allocation. The buffer's own array returns its reservation once
    collected, and the last array over the allocation, whichever it is, keeps
    or frees the bytes. */
-extern const struct custom_operations caml_ba_ops;
+CAMLextern const struct custom_operations caml_ba_ops;
 
 #define HEAP_BLOCK_BYTES (SIZEOF_BA_ARRAY + 2 * sizeof(intnat))
 
@@ -986,7 +990,8 @@ value caml_rig_bigarray_address(value ba) {
   return Val_long((intnat)Caml_ba_data_val(ba));
 }
 
-extern value caml_ba_sub(value vb, value vofs, value vlen);
+/* Bigarray.sub's primitive, which no header declares. */
+CAMLextern value caml_ba_sub(value vb, value vofs, value vlen);
 
 /* Gives the managed array [v] the proxy its sub-arrays share, if it has
    none, at most once whatever the domains that view [v] at once. Its first

@@ -26,6 +26,28 @@
 #include <stdint.h>
 #include <string.h>
 
+/* On Windows each library's stubs are a DLL, which flexdll links when a
+   bytecode program or a toplevel loads it. A direct call reaches 2 GiB, and
+   another DLL may lie farther. Outside rig.edge these functions are dllimport,
+   so each call goes through a pointer, which reaches any address. rig.edge's
+   dune defines RIG_EDGE_EXTERN as extern for its own C. */
+#ifndef RIG_EDGE_EXTERN
+#ifdef _WIN32
+#define RIG_EDGE_EXTERN __declspec(dllimport) extern
+#else
+#define RIG_EDGE_EXTERN extern
+#endif
+#endif
+
+/* The same for rig_code_sync, which rig defines (rig.h). */
+#ifndef RIG_EXTERN
+#ifdef _WIN32
+#define RIG_EXTERN __declspec(dllimport) extern
+#else
+#define RIG_EXTERN extern
+#endif
+#endif
+
 /* What a room check answers (rig_edge.mli, The C functions). */
 enum { RIG_FITS, RIG_LATER, RIG_NEVER, RIG_GROW };
 
@@ -250,7 +272,7 @@ static inline uint8_t *rig_place(const struct rig_args *a, uint8_t *args) {
 #define RIG_LINE 64
 #define RIG_WORDS_BYTES ((size_t)RIG_SLOTS * RIG_LINE)
 
-_Atomic uint64_t *rig_words(void);
+RIG_EDGE_EXTERN _Atomic uint64_t *rig_words(void);
 
 /* The OCaml primitive [caml_rig_edge_words : unit -> int * int] answers the
    array's address and RIG_WORDS_BYTES, for OCaml code that maps it whole. */
@@ -263,7 +285,7 @@ _Atomic uint64_t *rig_words(void);
    measures its waits on it (Rig_edge's calls section). OCaml reads it
    through the noalloc external caml_rig_edge_now, which answers an
    untagged int, and caml_rig_edge_now_byte. */
-uint64_t rig_now_ns(void);
+RIG_EDGE_EXTERN uint64_t rig_now_ns(void);
 
 /* Locks
 
@@ -279,9 +301,9 @@ uint64_t rig_now_ns(void);
    noalloc externals caml_rig_edge_hold and caml_rig_edge_unhold, of type
    unit -> unit, which call rig_hold and rig_unhold. A library that links
    rig.edge declares each external it uses itself. */
-int rig_holds(void);
-int rig_hold(void);
-void rig_unhold(void);
+RIG_EDGE_EXTERN int rig_holds(void);
+RIG_EDGE_EXTERN int rig_hold(void);
+RIG_EDGE_EXTERN void rig_unhold(void);
 
 /* Signals
 
@@ -319,19 +341,19 @@ void rig_unhold(void);
    blocks. The C functions rig_unmask () and rig_unshield () release nothing:
    a C caller runs no poll point inside its pair. On Windows they block
    nothing. */
-void rig_mask(void);
-void rig_unmask(void);
-void rig_shield(void);
-void rig_unshield(void);
-void rig_unblock(void);
-void rig_block(void);
+RIG_EDGE_EXTERN void rig_mask(void);
+RIG_EDGE_EXTERN void rig_unmask(void);
+RIG_EDGE_EXTERN void rig_shield(void);
+RIG_EDGE_EXTERN void rig_unshield(void);
+RIG_EDGE_EXTERN void rig_unblock(void);
+RIG_EDGE_EXTERN void rig_block(void);
 
 /* rig_code_sync () makes the calling thread run the code that rig linked on
    the host before the call ([Rig.Image.load] on [Rig.host]): on arm64 it
    synchronizes the thread's instruction stream with that code, once per
    link. A driver calls it before it calls a fill's function by its own
    means: the function may be such code. */
-void rig_code_sync(void);
+RIG_EXTERN void rig_code_sync(void);
 
 /* Calls the fill [p] with the queue's context [queue] and the value [v], on
    its argument placed into its block's place (rig_place), after

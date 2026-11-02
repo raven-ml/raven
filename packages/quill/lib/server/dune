@@ -13,7 +13,27 @@
   threads.posix)
  (foreign_stubs
   (language c)
-  (names quill_socket_stubs)))
+  (names quill_socket_stubs))
+ (c_library_flags
+  (:include socket_flags.sexp)))
+
+; On Windows the stubs call Winsock, which their DLL links itself, as the unix
+; library's does: flexdll resolves at load only what the executable and the
+; DLLs loaded before export, and none exports Winsock.
+
+(rule
+ (target socket_flags.sexp)
+ (enabled_if
+  (= %{os_type} Win32))
+ (action
+  (write-file %{target} "(-lws2_32)")))
+
+(rule
+ (target socket_flags.sexp)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (action
+  (write-file %{target} "()")))
 
 ; Generate assets.ml from committed frontend/dist
 

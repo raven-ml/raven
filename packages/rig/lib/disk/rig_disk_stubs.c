@@ -34,6 +34,15 @@
 
 #ifdef _WIN32
 #include <windows.h>
+
+/* caml/unixsupport.h declares the unix library's functions without
+   CAMLextern: a stub DLL loaded at run time on Windows would call them
+   directly, which flexdll links within 2 GiB only. Declared again with
+   CAMLextern, each call goes through a pointer. */
+CAMLnoret CAMLextern void caml_unix_error(int errcode, const char *cmdname,
+                                         value arg);
+CAMLextern value caml_win32_alloc_handle(HANDLE h);
+CAMLextern void caml_win32_maperr(DWORD errcode);
 #else
 #include <fcntl.h>
 #include <pthread.h>
@@ -181,8 +190,6 @@ static intnat transfer(int write, intnat h, int64_t pos, char *buf,
 static void watch_forks(void) {}
 
 static int fork_count(void) { return 0; }
-
-extern value caml_win32_alloc_handle(HANDLE);
 
 static value handle_descr(intnat h) {
   return caml_win32_alloc_handle((HANDLE)h);

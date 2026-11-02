@@ -30,6 +30,15 @@
 #include <caml/threads.h>
 #include <caml/unixsupport.h>
 
+/* caml/unixsupport.h declares the unix library's functions without
+   CAMLextern: a stub DLL loaded at run time on Windows would call them
+   directly, which flexdll links within 2 GiB only. Declared again with
+   CAMLextern, each call goes through a pointer. */
+#ifdef _WIN32
+CAMLnoret CAMLextern void caml_unix_error(int errcode, const char *cmdname,
+                                         value arg);
+#endif
+
 #include "rig_amd.h"
 
 #define Ptr_val(v) ((void *)Long_val(v))

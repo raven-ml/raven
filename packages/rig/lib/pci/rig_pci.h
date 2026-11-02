@@ -31,6 +31,19 @@
 #endif
 #include <caml/mlvalues.h>
 
+/* On Windows each library's stubs are a DLL, which flexdll links when a
+   bytecode program or a toplevel loads it. A direct call reaches 2 GiB, and
+   another DLL may lie farther. Outside rig.pci these functions are dllimport,
+   so each call goes through a pointer, which reaches any address. rig.pci's
+   dune defines RIG_PCI_EXTERN as extern for its own C. */
+#ifndef RIG_PCI_EXTERN
+#ifdef _WIN32
+#define RIG_PCI_EXTERN __declspec(dllimport) extern
+#else
+#define RIG_PCI_EXTERN extern
+#endif
+#endif
+
 /* The accesses to another machine's addresses, which the library that
    reaches it implements. [read] and [write] move [n] bytes at [address] of
    the machine, as one access where [n] is 4 or 8 and [address] is aligned
@@ -60,7 +73,7 @@ struct rig_pci_window {
 /* Reads the window [w], a Window.t, into [out]. It reads the OCaml heap, so
    the caller holds the OCaml runtime; [out] holds no OCaml value and serves
    without it. Bounds are the caller's: no access below checks them. */
-void rig_pci_window_of(value w, struct rig_pci_window *out);
+RIG_PCI_EXTERN void rig_pci_window_of(value w, struct rig_pci_window *out);
 
 /* Window.barrier (window.mli) from C. On x86_64 it is mfence, Linux's mb(),
    its barrier for device memory. A C11 fence is not that: gcc compiles it to
@@ -129,7 +142,7 @@ static inline void rig_pci_flush(const struct rig_pci_window *w) {
 
 /* Copies the [n] bytes at [src] to byte [off] of [w], at widths it chooses:
    memory, never registers. */
-void rig_pci_write(const struct rig_pci_window *w, size_t off,
-                      const void *src, size_t n);
+RIG_PCI_EXTERN void rig_pci_write(const struct rig_pci_window *w, size_t off,
+                                  const void *src, size_t n);
 
 #endif

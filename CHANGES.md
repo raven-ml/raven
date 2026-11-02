@@ -44,9 +44,6 @@ All notable changes to this project will be documented in this file.
   per 2^14 rows (2^16 on GFX12) where it took one packet per row: on an
   R9700, `Rig.Buffer.submit_copy` of 65,536 rows of 4 bytes takes 153 µs
   instead of 7.5 ms.
-- On Windows, a bytecode program or a toplevel, such as `quill`'s, loads rig's
-  and nx's stub libraries: they call winpthreads through import pointers,
-  which flexdll links at any distance, and read no `clock_gettime`.
 - `Rig.Buffer.free` takes `?why`, the reason `Rig.Buffer.dead` then answers,
   so a library that frees memory it consumed for an operation keeps that
   operation's name in later refusals.
@@ -3561,6 +3558,10 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On Windows, a bytecode program or a toplevel, such as `quill`'s or mdx's,
+  loads nx's stub libraries and rig's: their calls into winpthreads, the OCaml
+  runtime, `unix` and each other go through import pointers, which flexdll
+  links at any distance.
 - `Nx.item` allocates 21 fewer words: it fills the index in place, where it
   built lists of positions and windows and two closures on every call.
 - An operation that writes its result over a donated operand allocates 5

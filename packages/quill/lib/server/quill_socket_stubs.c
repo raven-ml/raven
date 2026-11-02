@@ -17,6 +17,15 @@
 #include <caml/mlvalues.h>
 #include <caml/unixsupport.h>
 
+/* caml/unixsupport.h declares the unix library's functions without
+   CAMLextern: a stub DLL loaded at run time on Windows would call them
+   directly, which flexdll links within 2 GiB only. Declared again with
+   CAMLextern, each call goes through a pointer. */
+#ifdef _WIN32
+CAMLnoret CAMLextern void caml_uerror(const char *cmdname, value arg);
+CAMLextern void caml_win32_maperr(DWORD errcode);
+#endif
+
 /* Bounds each read ([opt] is SO_RCVTIMEO) or write (SO_SNDTIMEO) on a socket
    to [s] seconds. Winsock takes the bound as a DWORD of milliseconds where
    POSIX takes a timeval: OCaml's Unix.setsockopt_float passes a timeval to

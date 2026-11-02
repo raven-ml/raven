@@ -170,6 +170,13 @@ value caml_tolk_worker_spawn(value v_program, value v_cmdline, value v_in,
 #include <stdlib.h>
 #include <windows.h>
 
+/* caml/unixsupport.h declares the unix library's functions without
+   CAMLextern: a stub DLL loaded at run time would call them directly, which
+   flexdll links within 2 GiB only. Declared again with CAMLextern, each call
+   goes through a pointer. */
+CAMLnoret CAMLextern void caml_uerror(const char *cmdname, value arg);
+CAMLextern void caml_win32_maperr(DWORD errcode);
+
 /* Windows has no SIGPIPE, and handles are no descriptors of a C library:
    requests go to pipes, which these leave alone. */
 value caml_tolk_worker_above_stdio(value v_fd) { return v_fd; }

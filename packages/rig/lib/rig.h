@@ -20,12 +20,25 @@
 #include <stddef.h>
 #include <caml/mlvalues.h>
 
+/* On Windows each library's stubs are a DLL, which flexdll links when a
+   bytecode program or a toplevel loads it. A direct call reaches 2 GiB, and
+   another DLL may lie farther. Outside rig these functions are dllimport, so
+   each call goes through a pointer, which reaches any address. rig's dune
+   defines RIG_EXTERN as extern for its own C. */
+#ifndef RIG_EXTERN
+#ifdef _WIN32
+#define RIG_EXTERN __declspec(dllimport) extern
+#else
+#define RIG_EXTERN extern
+#endif
+#endif
+
 /* The host address of [b]'s first byte, or NULL if the host does not
    address [b]'s memory. */
-void *rig_buffer_host(value b);
+RIG_EXTERN void *rig_buffer_host(value b);
 
 /* The number of [b]'s bytes. */
-size_t rig_buffer_bytes(value b);
+RIG_EXTERN size_t rig_buffer_bytes(value b);
 
 /* The stable identity span of [b]: its first byte is at [*first] in the space
    [*space]. Space 0 is this process's host memory, at host addresses.
@@ -36,7 +49,7 @@ size_t rig_buffer_bytes(value b);
    may alias: an io memory and a bigarray over its mapped pages are one such
    pair. rig_buffers_overlap includes these aliases. A buffer of no bytes
    shares none. */
-void rig_buffer_span(value b, intnat *space, intnat *first);
+RIG_EXTERN void rig_buffer_span(value b, intnat *space, intnat *first);
 
 /* Answers 1 if the [a_bytes] bytes of [a] from its byte [a_first] and the
    [b_bytes] bytes of [b] from its byte [b_first] share a byte of memory, and
@@ -51,8 +64,8 @@ void rig_buffer_span(value b, intnat *space, intnat *first);
    maps no pages itself. It makes no view, takes no lock and never releases
    the domain lock, so a [@@noalloc] external may call it, also inside a lock
    (Rig's domains section). */
-int rig_buffers_overlap(value a, intnat a_first, intnat a_bytes, value b,
-                        intnat b_first, intnat b_bytes);
+RIG_EXTERN int rig_buffers_overlap(value a, intnat a_first, intnat a_bytes,
+                                   value b, intnat b_first, intnat b_bytes);
 
 /* The reason the consumption of [b] gave if [b] is dead, as a C string in
    the OCaml heap; NULL if [b] is live. Like String_val's, the pointer holds
@@ -60,7 +73,7 @@ int rig_buffers_overlap(value a, intnat a_first, intnat a_bytes, value b,
    domain lock, any of which may move the string. A caller that keeps the
    reason copies its bytes first, into memory of its own or into an OCaml
    string it allocated, reading the reason again after that allocation. */
-const char *rig_buffer_why(value b);
+RIG_EXTERN const char *rig_buffer_why(value b);
 
 /* Claims
 
@@ -99,7 +112,7 @@ enum rig_claim {
    will not wait may end its claims at once. A buffer just made answers
    RIG_CLAIMED, since memory reused from a device's cache carries no earlier
    use. */
-enum rig_claim rig_buffer_claim(value b, enum rig_access access);
+RIG_EXTERN enum rig_claim rig_buffer_claim(value b, enum rig_access access);
 
 /* Waits for the work that an access of [b] for [access] must follow, as
    Rig.Buffer.wait does, for a caller that holds a claim rig_buffer_claim
@@ -111,12 +124,12 @@ enum rig_claim rig_buffer_claim(value b, enum rig_access access);
    after it, [b] included, is a registered root. It answers unit, or the
    exception the wait raised, Rig.Lost, Sys.Break or that Invalid_argument
    among others; the claim stays held either way. */
-caml_result rig_buffer_wait(value b, enum rig_access access);
+RIG_EXTERN caml_result rig_buffer_wait(value b, enum rig_access access);
 
 /* Ends a claim that rig_buffer_claim made; [b] may be dead. Ending a
    claim the caller does not hold ends another reader's. If [b]'s memory
    holds no read claim, it aborts the process. */
-void rig_buffer_release(value b);
+RIG_EXTERN void rig_buffer_release(value b);
 
 /* Claims the memory of buffers[0..n) for access[k], every claim or none,
    as rig_buffer_claim claims each in turn. It is -1 if it claimed every
@@ -125,13 +138,13 @@ void rig_buffer_release(value b);
    why (RIG_DEAD, RIG_EXCLUSIVE, RIG_READ_ONLY), and nothing is held. It
    allocates nothing and never releases the runtime, so [buffers] may point
    into an OCaml block. A buffer may appear more than once: claims count. */
-int rig_buffers_claim(int n, const value *buffers,
-                      const enum rig_access *access,
-                      enum rig_claim *answer);
+RIG_EXTERN int rig_buffers_claim(int n, const value *buffers,
+                                 const enum rig_access *access,
+                                 enum rig_claim *answer);
 
 /* Ends the claims rig_buffers_claim made on buffers[0..n), as
    rig_buffer_release ends each. */
-void rig_buffers_release(int n, const value *buffers);
+RIG_EXTERN void rig_buffers_release(int n, const value *buffers);
 
 /* For rig's tests
 
@@ -140,6 +153,6 @@ void rig_buffers_release(int n, const value *buffers);
    call, to its end, the turn of a device that may block included
    ([Dev.counted] in rig's sources). OCaml reads it through the external
    caml_rig_counted, of type unit -> int. */
-int rig_counted(void);
+RIG_EXTERN int rig_counted(void);
 
 #endif

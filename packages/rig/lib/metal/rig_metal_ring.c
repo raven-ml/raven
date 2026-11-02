@@ -14,24 +14,34 @@
 #include <stdio.h>
 #include <time.h>
 
+#ifdef _WIN32
+#include "rig_edge.h"
+#endif
+
 enum { taken, done, failed };
 
 static const uint64_t ns_per_s = 1000000000;
 
+/* A stub DLL loaded at run time on Windows reaches no clock_gettime, which is
+   winpthreads' (packages/rig/dune): there it reads rig's clock. */
 static uint64_t monotonic_ns(void) {
+#ifdef _WIN32
+  return rig_now_ns();
+#else
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
   return (uint64_t)t.tv_sec * ns_per_s + (uint64_t)t.tv_nsec;
+#endif
 }
 
 /* Waits on [r]'s condition until [until], monotonic nanoseconds, so a step
-   of the wall clock neither lengthens nor cuts the wait. macOS has no clock
-   attribute for conditions and waits for the time left; elsewhere the
-   condition waits on CLOCK_MONOTONIC. */
+   of the wall clock neither lengthens nor cuts the wait. macOS and Windows
+   wait for the time left; elsewhere the condition waits on
+   CLOCK_MONOTONIC. */
 static int wait_until(struct rig_metal_ring *r, uint64_t until) {
   uint64_t now = monotonic_ns();
   if (now >= until) return ETIMEDOUT;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   uint64_t left = until - now;
   struct timespec t = {(time_t)(left / ns_per_s), (long)(left % ns_per_s)};
   return pthread_cond_timedwait_relative_np(&r->changed, &r->mutex, &t);
@@ -45,7 +55,7 @@ void rig_metal_ring_init(struct rig_metal_ring *r,
                             struct rig_metal_slot *slots, int n,
                             uint64_t *word) {
   pthread_mutex_init(&r->mutex, NULL);
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   pthread_cond_init(&r->changed, NULL);
 #else
   pthread_condattr_t monotonic;

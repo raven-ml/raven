@@ -8,4 +8,6 @@
  (install_c_headers rig_pool)
  (foreign_stubs
   (language c)
-  (names rig_pool)))
+  (names rig_pool)
+  (flags
+   (:standard -DRIG_POOL_EXTERN=extern))))

@@ -13,5 +13,7 @@
    rig_pci_window
    rig_pci_sysmem
    rig_pci_vfio
-   rig_pci_machine)))
+   rig_pci_machine)
+  (flags
+   (:standard -DRIG_PCI_EXTERN=extern))))
 
