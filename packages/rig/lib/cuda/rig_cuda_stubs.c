@@ -143,6 +143,9 @@ enum {
   CU_POINTER_ATTRIBUTE_RANGE_START_ADDR = 11,
   CU_POINTER_ATTRIBUTE_RANGE_SIZE = 12,
   CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD = 1,
+  CU_CTX_SCHED_AUTO = 0x00,
+  CU_CTX_SCHED_BLOCKING_SYNC = 0x04,
+  CU_CTX_SCHED_MASK = 0x07,
   CU_STREAM_NON_BLOCKING = 0x1,
   CU_EVENT_DISABLE_TIMING = 0x2,
   CU_MEMHOST_PORTABLE_DEVICEMAP = 0x3,
@@ -168,6 +171,8 @@ enum {
   X(cuDeviceGetPCIBusId, (char *, int, CUdevice))                              \
   X(cuDeviceTotalMem_v2, (size_t *, CUdevice))                                 \
   X(cuDeviceCanAccessPeer, (int *, CUdevice, CUdevice))                        \
+  X(cuDevicePrimaryCtxGetState, (CUdevice, unsigned int *, int *))             \
+  X(cuDevicePrimaryCtxSetFlags_v2, (CUdevice, unsigned int))                   \
   X(cuDevicePrimaryCtxRetain, (CUcontext *, CUdevice))                         \
   X(cuDevicePrimaryCtxRelease_v2, (CUdevice))                                  \
   X(cuCtxPushCurrent_v2, (CUcontext))                                          \
@@ -672,6 +677,26 @@ static CUresult limits(struct device *d) {
   return s;
 }
 
+/* Makes CUDA block the calling thread, rather than spin, while it waits for
+   the GPU in [device]'s primary context, unless the context's flags name a
+   scheduling other than CUDA's default. CUDA waits inside its calls for all
+   of the context's queued work before it loads or unloads a module or frees
+   memory, and its default, CU_CTX_SCHED_AUTO, spins where the process has
+   no more contexts than processors (cuda.h, cuDevicePrimaryCtxSetFlags):
+   a load behind a step's queued work would hold a core for the whole
+   step. The flags are the context's, so every wait in it blocks, other
+   libraries' included, and a flag of 0 set on purpose reads as the
+   default. */
+static CUresult blocking(CUdevice device) {
+  unsigned int flags = 0;
+  int active = 0;
+  CUresult s = p_cuDevicePrimaryCtxGetState(device, &flags, &active);
+  if (s != CUDA_SUCCESS || (flags & CU_CTX_SCHED_MASK) != CU_CTX_SCHED_AUTO)
+    return s;
+  return p_cuDevicePrimaryCtxSetFlags_v2(device,
+                                         flags | CU_CTX_SCHED_BLOCKING_SYNC);
+}
+
 /* Opens a device on the primary context of the CUdevice [v_device], with
    the word rig gave at [v_word], or a word of its own if [v_own]: its
    state's address, or CUDA's status negated. A device that does not open
@@ -694,6 +719,7 @@ value caml_rig_cuda_open(value v_device, value v_word, value v_own) {
   CUresult s = p_cuDeviceGetAttribute(
       &flush, CU_DEVICE_ATTRIBUTE_CAN_FLUSH_REMOTE_WRITES, d->device);
   if (s == CUDA_SUCCESS) s = limits(d);
+  if (s == CUDA_SUCCESS) s = blocking(d->device);
   if (s == CUDA_SUCCESS)
     s = p_cuDevicePrimaryCtxRetain(&d->context, d->device);
   if (s == CUDA_SUCCESS) {
@@ -895,8 +921,8 @@ static CUresult load_module(struct device *d, CUmodule *m,
 
 /* The module of [v_image], every function loaded, or CUDA's status
    negated. PTX is text, which CUDA reads up to a NUL: the image is copied
-   with one. Releases the runtime: CUDA may compile it, and waits for the
-   GPU's running work. */
+   with one. Releases the runtime: CUDA may compile it, and waits for all of
+   the context's queued work, blocked ([blocking]). */
 value caml_rig_cuda_load_module(value v_self, value v_image) {
   CAMLparam1(v_image);
   struct device *d = Device_val(v_self);
@@ -983,7 +1009,8 @@ value caml_rig_cuda_forget(value v_fn) {
 }
 
 /* Unloads [v_module]: CUDA's status. Releases the runtime: CUDA waits for
-   the GPU's running work, whichever module it runs. */
+   all of the context's queued work, whichever module it runs, blocked
+   ([blocking]). */
 value caml_rig_cuda_unload(value v_context, value v_module) {
   CUmodule m = (CUmodule)Long_val(v_module);
   CUresult s;

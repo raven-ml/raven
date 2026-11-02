@@ -345,7 +345,16 @@ val capability : t -> Rig_cuda_abi.t
 
     CUDA may wait for all of the GPU's work before {!free} frees an
     allocation, and before {!val-image} or {!unload} loads or unloads a
-    module.
+    module. Launches in the GPU's context, from any thread, wait for that
+    wait. The calling thread blocks while CUDA waits: an open sets its
+    primary context's scheduling to [CU_CTX_SCHED_BLOCKING_SYNC] where the
+    context's flags hold [CU_CTX_SCHED_AUTO], with which CUDA spins unless the
+    process has more contexts than processors. The setting holds for every
+    wait CUDA makes in that context, those of other libraries in the process
+    included, such as [cuStreamSynchronize]: each returns after its thread
+    wakes, later than a spin would. A scheduling another library set before
+    the open stays, but one that set [CU_CTX_SCHED_AUTO] cannot be told from
+    the default and is changed.
 
     {!val-image}[ g bin] is [Ok (Loaded m)] with [m] the CUDA module of [bin]:
     a cubin, a fatbin, or PTX text, which CUDA compiles for the GPU. It places

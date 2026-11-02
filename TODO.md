@@ -28,8 +28,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### drivers
 
-- a CUDA module load spins while queued GPU work runs (183 ms at gpt-oss's
-  first call, overlapped with compute): wait on an event instead
 - rig.amd over PCI on SDMA 4: program the page queue (regSDMA_PAGE_*,
   doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
   second slot (`Sdma.slots`) and drop its 16 MiB ring (`most_ring`).
