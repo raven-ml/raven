@@ -113,16 +113,19 @@ let made d (c : chart) =
   match Cmap.find_opt c d.charts with
   | Some m -> Some m
   | None ->
+      (* One prepared for the same focus and region under another view or marks,
+         as while a key changes them: never one of another region, whose plot is
+         not this one's. *)
       Cmap.fold
         (fun (c' : chart) m acc ->
-          if c'.focus = c.focus && c'.spec.key = c.spec.key then Some m
-          else acc)
+          if c'.focus = c.focus && c'.spec = c.spec then Some m else acc)
         d.charts None
 
 let chart d c = Option.map (fun m -> m.chart) (made d c)
 
 let whole d c =
   match Cmap.find_opt c d.charts with Some m -> m.whole | None -> false
+
 let trend d t = Option.map Chart.text (Tmap.find_opt t d.trends)
 let cursor d = d.cursor
 

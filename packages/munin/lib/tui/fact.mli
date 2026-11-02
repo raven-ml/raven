@@ -17,12 +17,6 @@ val latest_step : (string * Munin.History.key_stats) list -> int option
 (** [latest_step stats] is the largest step of the latest samples of the metrics
     of [stats]. *)
 
-val progress :
-  ?bar:bool -> wide:bool -> steps:int option -> int option -> string
-(** [progress ~wide ~steps latest] is [12,400 of 20,000] with a bar and its
-    percentage when [wide] and [bar], [12.4k/20k 62%] when not wide, and the
-    step alone without [steps] or once they are reached. *)
-
 val wall : Munin.Run.t -> float
 (** [wall r] is the time from [r]'s start to its end, or to its last write. *)
 

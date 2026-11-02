@@ -1,25 +1,25 @@
-01 |munin  6 of 8 runs: 1 live, 1 failed, 1 not finite · cifar-resnet · on gpu-01
+01 | 6 of 8 runs · ● 1 live · ✗ 1 failed · × 1 not finite · cifar-resnet
 02 |
-03 |  STATE     RUN                   STEP  val/loss↓  NONFINITE      lr  warmup
-04 |▸ live      tidy-otter  12.4k/20k  62%    0.4077              0.0003     500
-05 |  finished  amber-fox              20k    0.3841*              0.001     500
-06 |  finished  brisk-wren             20k    0.4071              0.0001    2000
-07 |  finished  calm-lynx              20k    0.3942               0.003    2000
-08 |  finished  dusty-mole             20k    0.7665   NaN 4.5k     0.01     500
-09 |  failed    eager-hawk   1.1k/20k   6%      1.67                0.03     500
-10 |
+03 |    state       run                step  val/loss ↓  not finite          lr
+04 |  cifar-resnet  6 runs · ● 1 live · ✗ 1 failed or crashed
+05 |    ● live      tidy-otter  12,400  62%     0.4077                   0.0003
+06 |    ✓ finished  amber-fox        20,000     0.3841*                   0.001
+07 |    ✓ finished  brisk-wren       20,000     0.4071                   0.0001
+08 |    ✓ finished  calm-lynx        20,000     0.3942                    0.003
+09 |    ✓ finished  dusty-mole       20,000     0.7665   × NaN at 4,250    0.01
+10 |    ✗ failed    eager-hawk        1,100      1.670                     0.03
 11 |
-12 |
+12 | tidy-otter  ● live · val/loss ↓  0.4077 at 12,000 · best 0.4077 at 12,000
 13 |
-14 |
-15 |
-16 |
-17 |
-18 |
-19 |
-20 |
-21 |
-22 |
-23 |tidy-otter  live · step 12,400 of 20,000 · 5eaf82b dirty
-24 |/cifar                                                     enter keep  esc clear
+14 |      2.002 ┤⠱⡀
+15 |            │ ⠑⢄
+16 |            │  ⠈⠢⡀
+17 |            │    ⠈⠢⡀
+18 |          1 ┤      ⠈⠑⠤⡀
+19 |            │         ⠈⠑⠢⠤⣀⡀
+20 |     0.4077 ┤              ⠈⠉⠒⠒⠒⠤⠤⠤⠤⢄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀•
+21 |            └┬──────────────┬──────────────┬──────────────┬──────────────┬
+22 |             0            5,000          10,000         15,000         20,000
+23 |
+24 | / cifar                                        6 of 8   enter keep · esc clear
 cursor hidden

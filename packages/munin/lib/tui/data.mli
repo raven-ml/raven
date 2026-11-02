@@ -18,8 +18,8 @@
    it as it was. A chart asked for as [kept] outlives the request while its run
    has ended and is in the store, one per run, if its focus's history had read
    the run's end: an ended run's log never changes, so the chart holds and its
-   history need not. Values are immutable: a read
-   never changes the data the loop holds. *)
+   history need not. Values are immutable: a read never changes the data the
+   loop holds. *)
 
 type keys =
   | All  (** Every key's samples. *)
@@ -107,8 +107,8 @@ val errors : result -> (string * string) list
 (* What the loop draws *)
 
 val chart : t -> chart -> Chart.prepared option
-(** [chart d c] is the chart [c] as last prepared, else one prepared of the same
-    runs and metric for another region or view. *)
+(** [chart d c] is the chart [c] as last prepared, else one prepared for the
+    same focus and region under another view or marks. *)
 
 val whole : t -> chart -> bool
 (** [whole d c] is [true] iff [c] was prepared for its region and view from a

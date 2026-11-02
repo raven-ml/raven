@@ -5,129 +5,219 @@
 
 open Munin
 
-let label l = Text.pad 11 l
+let label_w = 12
+let field l v = [ (Paint.dim, Text.pad label_w l) ] @ v
+let plain s = [ (Paint.plain, s) ]
 
-let lines ~word r ~stats h ~marked =
+(* Each section: its name and its rows. *)
+let sections r ~stats h ~marked ~wide =
   let p = Run.provenance r in
-  let name = Runs_screen.name r in
   let value = Runs_screen.value_text in
   let step = Fact.latest_step stats in
-  let ended =
-    match Run.ended_at r with
-    | Some e -> [ label "" ^ "ended " ^ Text.date e ]
-    | None -> []
-  in
-  let params =
-    List.mapi
-      (fun i (k, x) ->
-        let others =
-          List.filter_map
-            (fun (l, mr) ->
-              match List.assoc_opt k (Run.params mr) with
-              | Some x' when x' <> x ->
-                  Some (Printf.sprintf "%c %s" l (value x'))
-              | None -> Some (Printf.sprintf "%c —" l)
-              | _ -> None)
-            marked
-        in
-        (if i = 0 then Text.pad 9 "PARAMS" else String.make 9 ' ')
-        ^ (if others = [] then "  " else "≠ ")
-        ^ Printf.sprintf "%-9s %-12s %s" k (value x) (String.concat "  " others))
-      (List.sort compare (Run.params r))
-  in
-  let metrics =
-    List.mapi
-      (fun i (k, (st : History.key_stats)) ->
-        let best =
-          match Option.bind st.goal (fun g -> Metric.best g st.stats) with
-          | Some b ->
-              Printf.sprintf "best %s @%s" (Text.value b.value)
-                (Text.short b.step)
-          | None -> ""
-        in
-        (if i = 0 then label "METRICS" else label "")
-        ^ Printf.sprintf "%s %10s  %-22s %4d samples%s"
-            (Text.pad 16 (Text.elide 16 k))
-            (Text.value st.stats.last.value)
-            best st.stats.count
-            (match st.stats.non_finite with
-            | Some (n, f) ->
-                Printf.sprintf ", %d not finite from %s" n (Text.count f.step)
-            | None -> ""))
-      (List.filter (fun (_, (s : History.key_stats)) -> s.kind = `Metric) stats)
-  in
-  let resumes, damaged, uses, files =
-    match h with
-    | None -> ("—", 0, "—", [])
-    | Some h ->
-        ( (match History.resumes h with
-          | [] -> "no resume"
-          | l ->
-              String.concat ", "
-                (List.map
-                   (fun (x : History.resume) ->
-                     Printf.sprintf "resumed at %s, %s" (Text.count x.step)
-                       (Text.date x.time))
-                   l)),
-          History.damaged h,
-          (match History.uses h with
-          | [] -> "—"
-          | l ->
-              String.concat ", "
-                (List.map (fun (n, v) -> Printf.sprintf "%s v%d" n v) l)),
-          List.map
-            (fun (f : History.file) ->
-              Printf.sprintf "%s at %s: %s" f.key (Text.count f.step) f.path)
-            (History.files h) )
-  in
-  [
-    Printf.sprintf "%s  %s  %s  %s" name word (Run.experiment r) (Run.id r);
-    "";
-    label "RUN"
-    ^ Printf.sprintf "started %s%s"
-        (Text.date (Run.started_at r))
+  let run =
+    [
+      field "id" (plain (Run.id r));
+      field "experiment" (plain (Run.experiment r));
+      field "started" (plain (Text.date (Run.started_at r)));
+      (match Run.ended_at r with
+      | Some e -> field "ended" (plain (Text.date e))
+      | None -> field "last write" (plain (Text.date (Run.updated_at r))));
+      field "steps"
         (match (step, Run.steps r) with
         | Some s, Some t ->
-            Printf.sprintf ", step %s of %s" (Text.count s) (Text.count t)
-        | Some s, None -> ", step " ^ Text.count s
-        | None, _ -> "");
+            [ (Paint.plain, Text.count s); (Paint.dim, " of " ^ Text.count t) ]
+        | Some s, None -> plain (Text.count s)
+        | None, Some t -> [ (Paint.dim, "none of " ^ Text.count t) ]
+        | None, None -> [ (Paint.dim, "none") ]);
+    ]
+    @
+    match Run.parent r with
+    | Some x -> [ field "parent" (plain x) ]
+    | None -> []
+  in
+  let source =
+    [
+      field "command" (plain (String.concat " " p.command));
+      field "in" (plain p.cwd);
+      field "host"
+        [
+          (Paint.plain, Option.value p.hostname ~default:"—");
+          (Paint.dim, Printf.sprintf " · pid %d" p.pid);
+        ];
+      field "commit"
+        [
+          (Paint.plain, Option.value (Fact.commit p) ~default:"—");
+          ( Paint.dim,
+            match p.git with
+            | Some { dirty = true; _ } -> "  the work tree had changes"
+            | _ -> "" );
+        ];
+      field "built"
+        (plain
+           (Printf.sprintf "OCaml %s · raven %s · %s %s" p.ocaml p.raven p.os
+              p.arch));
+    ]
+  in
+  (* A param a marked run gives another value, or none, shows it beside. *)
+  let params =
+    List.map
+      (fun (k, x) ->
+        field k
+          ((Paint.plain, value x)
+          :: List.concat_map
+               (fun (l, mr) ->
+                 match List.assoc_opt k (Run.params mr) with
+                 | Some x' when x' = x -> []
+                 | Some x' ->
+                     [
+                       (Paint.mark l, Printf.sprintf "  %c " l);
+                       (Paint.plain, value x');
+                     ]
+                 | None ->
+                     [
+                       (Paint.mark l, Printf.sprintf "  %c " l); (Paint.dim, "—");
+                     ])
+               marked))
+      (List.sort compare (Run.params r))
+  in
+  let metric_stats =
+    List.filter (fun (_, (s : History.key_stats)) -> s.kind = `Metric) stats
+  in
+  let name_w =
+    2
+    + List.fold_left
+        (fun a (k, (s : History.key_stats)) ->
+          max a (Text.width k + Text.width (Fact.arrow s.goal) + 1))
+        0 metric_stats
+  in
+  (* Below 100 columns a metric's row leaves out its sample count, which Zoom
+     gives. *)
+  let metrics =
+    List.map
+      (fun (k, (s : History.key_stats)) ->
+        let arrow = match Fact.arrow s.goal with "" -> "" | a -> " " ^ a in
+        [
+          (Paint.dim, Text.pad name_w (k ^ arrow));
+          (Paint.plain, Text.pad_left 9 (Text.value s.stats.last.value));
+        ]
+        @ [ (Paint.dim, Text.pad 11 (" at " ^ Text.count s.stats.last.step)) ]
+        @ (match Option.bind s.goal (fun g -> Metric.best g s.stats) with
+          | Some b ->
+              [
+                (Paint.dim, "best ");
+                (Paint.plain, Text.value b.value);
+                (Paint.dim, Text.pad 11 (" at " ^ Text.count b.step));
+              ]
+          | None -> [ (Paint.plain, String.make 25 ' ') ])
+        @ (if wide then
+             [
+               ( Paint.dim,
+                 Printf.sprintf "%s samples" (Text.count s.stats.count) );
+             ]
+           else [])
+        @
+        match s.stats.non_finite with
+        | Some (n, f) ->
+            [
+              ( Paint.bad,
+                Printf.sprintf "%s not finite from %s" (Text.count n)
+                  (Text.count f.step) );
+            ]
+        | None -> [])
+      metric_stats
+  in
+  let listed f = function
+    | [] -> [ [ (Paint.dim, "—") ] ]
+    | l -> List.map f l
+  in
+  let log =
+    match h with
+    | None ->
+        [
+          ("uses", [ [ (Paint.dim, "…") ] ]);
+          ("files", [ [ (Paint.dim, "…") ] ]);
+          ("resumes", [ [ (Paint.dim, "…") ] ]);
+        ]
+    | Some h -> (
+        [
+          ( "uses",
+            listed
+              (fun (n, v) -> plain (Printf.sprintf "%s v%d" n v))
+              (History.uses h) );
+          ( "files",
+            listed
+              (fun (f : History.file) ->
+                [
+                  (Paint.plain, f.key);
+                  ( Paint.dim,
+                    Printf.sprintf " at %s: %s" (Text.count f.step) f.path );
+                ])
+              (History.files h) );
+          ( "resumes",
+            listed
+              (fun (x : History.resume) ->
+                [
+                  (Paint.plain, "at step " ^ Text.count x.step);
+                  (Paint.dim, ", " ^ Text.date x.time);
+                ])
+              (History.resumes h) );
+        ]
+        @
+        match History.damaged h with
+        | 0 -> []
+        | n ->
+            [
+              ( "damaged",
+                [ [ (Paint.bad, Printf.sprintf "%d lines of the log" n) ] ] );
+            ])
+  in
+  [
+    ("run", run);
+    ("source", source);
+    ("params", if params = [] then [ [ (Paint.dim, "—") ] ] else params);
+    ("metrics", if metrics = [] then [ [ (Paint.dim, "—") ] ] else metrics);
+    ("notes", [ plain (Option.value (Run.notes r) ~default:"—") ]);
+    ( "tags",
+      [ plain (match Run.tags r with [] -> "—" | t -> String.concat ", " t) ] );
   ]
-  @ ended
-  @ [
-      label ""
-      ^ Printf.sprintf "tags %s · parent %s · %s · %d damaged lines"
-          (match Run.tags r with [] -> "—" | t -> String.concat ", " t)
-          (Option.value (Run.parent r) ~default:"—")
-          resumes damaged;
-      label "SOURCE"
-      ^ Printf.sprintf "git %s · %s, pid %d"
-          (Option.value (Fact.commit ~dirty:" dirty" p) ~default:"—")
-          (Option.value p.hostname ~default:"—")
-          p.pid;
-      label "" ^ String.concat " " p.command;
-      label ""
-      ^ Printf.sprintf "in %s · OCaml %s · raven %s · %s %s" p.cwd p.ocaml
-          p.raven p.os p.arch;
-    ]
-  @ params @ metrics
-  @ [
-      label "NOTES" ^ Option.value (Run.notes r) ~default:"—";
-      label "USES" ^ uses;
-    ]
-  @
-  match files with
-  | [] -> [ label "FILES" ^ "—" ]
-  | f :: rest -> (label "FILES" ^ f) :: List.map (fun f -> label "" ^ f) rest
+  @ log
 
-let hint = "↑↓ scroll  [ ] run  y copy id  esc back  ? help  q quit"
+let section_w = 10
 
 let paint ~word ~scroll r ~stats h ~marked g ~width ~height =
-  let ls = lines ~word r ~stats h ~marked in
-  let room = height - 2 in
-  let scroll = max 0 (min scroll (List.length ls - room)) in
+  let cw = min (width - 4) 104 in
+  let x = (width - cw) / 2 in
+  Paint.spans g ~x ~y:0 ~w:cw
+    (Paint.word word
+    @ [
+        (Paint.plain, "  ");
+        (Paint.bold, Runs_screen.name r);
+        (Paint.dim, "  " ^ Run.experiment r);
+      ]);
+  Paint.right g ~x ~y:0 ~w:cw [ (Paint.plain, "esc"); (Paint.dim, " close") ];
+  let lines =
+    List.concat_map
+      (fun (title, rows) ->
+        List.mapi (fun i row -> ((if i = 0 then title else ""), row)) rows
+        @ [ ("", []) ])
+      (sections r ~stats h ~marked ~wide:(width >= 100))
+  in
+  let room = height - 4 in
+  let n = List.length lines in
+  let scroll = max 0 (min scroll (n - room)) in
   List.iteri
-    (fun i l ->
-      if i >= scroll && i - scroll < room then
-        Paint.text g ~x:0 ~y:(i - scroll) ~w:width l)
-    ls;
-  Paint.text g ~x:0 ~y:(height - 1) ~w:width hint
+    (fun i (title, row) ->
+      let y = 2 + i - scroll in
+      if y >= 2 && y < 2 + room then begin
+        Paint.text ~style:Paint.dim g ~x ~y ~w:section_w title;
+        Paint.spans g ~x:(x + section_w + 2) ~y ~w:(cw - section_w - 2) row
+      end)
+    lines;
+  if n > room then
+    Paint.right g ~x ~y:(height - 1) ~w:cw
+      [
+        ( Paint.dim,
+          Printf.sprintf "%d–%d of %d" (scroll + 1) (min n (scroll + room)) n );
+      ];
+  Paint.hints g ~x ~y:(height - 1) ~w:(cw - 16)
+    [ ("↑↓", "scroll"); ("[ ]", "run"); ("y", "copy id") ]

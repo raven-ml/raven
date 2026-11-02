@@ -3,11 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Help, over the screen it opens on: the keys, the keys that screen lacks, and
-   the words and glyphs of the screens. *)
+(* Help, over the screen it opens on, dimmed: the keys of every screen, the keys
+   of this one, and the words and glyphs of the screens, from [scroll] lines
+   down when it does not fit. *)
 
 val paint :
   screen:[ `Runs | `Run | `Zoom | `Details ] ->
+  light:bool ->
+  scroll:int ->
   Matrix_grid.t ->
   width:int ->
   height:int ->

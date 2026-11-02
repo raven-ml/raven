@@ -3,82 +3,147 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Help: the keys, with the screens they act on, and the words and glyphs of the
-   screens. *)
+module G = Matrix_grid
 
-type screen = [ `Runs | `Run | `Zoom | `Details ]
-
-(* Each key, what it does, and the screens it acts on. *)
-let keys : (string * string * screen list) list =
+let everywhere =
   [
-    ("↑↓ j k", "move: run, metric, line", [ `Runs; `Run; `Zoom; `Details ]);
-    ("←→ h l", "sideways: metric, step cursor", [ `Runs; `Run; `Zoom ]);
-    ("g G", "first, last", [ `Runs; `Run; `Zoom; `Details ]);
-    ("enter", "open: run, metric", [ `Runs; `Run ]);
-    ("esc", "back; clear the filter", [ `Runs; `Run; `Zoom; `Details ]);
-    ("space", "mark the run, at most 2", [ `Runs; `Run; `Zoom ]);
-    ("/", "filter the list on screen", [ `Runs; `Run ]);
-    ("o O", "order by next column, reverse", [ `Runs ]);
-    ("i", "details of the run", [ `Runs; `Run; `Zoom ]);
-    ("y", "copy the run's id", [ `Runs; `Run; `Zoom; `Details ]);
-    ("?", "this help", [ `Runs; `Run; `Zoom; `Details ]);
-    ("q ^C", "quit", [ `Runs; `Run; `Zoom; `Details ]);
-    ("[ ]", "previous, next run", [ `Run; `Zoom; `Details ]);
-    ("s", "smoothing: off, τ = span/100, span/30, span/10", [ `Run; `Zoom ]);
-    ("x", "x axis: step, step metric, time", [ `Run; `Zoom ]);
-    ("L", "log y, where every value shown is above 0", [ `Run; `Zoom ]);
-    ( "+ - 0",
-      "narrow, widen, reset the x window at the latest step",
-      [ `Run; `Zoom ] );
-    ("< >", "pan the x window", [ `Run; `Zoom ]);
+    ("q ^C", "quit");
+    ("?", "these keys");
+    ("esc", "back, close, clear");
+    ("i", "every fact about the run");
+    ("y", "copy the run's id");
+    ("space", "mark the run: a, then b");
   ]
 
-let name = function
-  | `Runs -> "Runs"
-  | `Run -> "Run"
-  | `Zoom -> "Zoom"
-  | `Details -> "Details"
+let keys = function
+  | `Runs ->
+      ( "Runs",
+        [
+          ("↑↓ j k", "run");
+          ("g G", "first, last run");
+          ("←→ h l", "the metric shown");
+          ("enter", "open the run");
+          ("/", "filter: name, word, key=value");
+          ("o O", "order, reverse");
+        ] )
+  | `Run ->
+      ( "Run",
+        [
+          ("↑↓ j k", "metric");
+          ("g G", "first, last metric");
+          ("enter", "zoom the chart");
+          ("[ ]", "previous, next run");
+          ("/", "filter the metrics");
+          ("s", "smoothing: off, three τ");
+          ("x", "x: step, step metric, time");
+          ("L", "log y");
+          ("+ - 0", "narrow, widen, reset x");
+          ("< >", "pan x");
+        ] )
+  | `Zoom ->
+      ( "Zoom",
+        [
+          ("←→ h l", "step cursor, a sample");
+          ("↑↓ j k", "metric");
+          ("[ ]", "previous, next run");
+          ("s x L", "smoothing, x, log y");
+          ("+ - 0 < >", "x window");
+        ] )
+  | `Details ->
+      ( "Details",
+        [
+          ("↑↓ j k", "scroll");
+          ("g G", "top, bottom");
+          ("[ ]", "previous, next run");
+        ] )
 
-let lines ~screen ~width =
-  let entry (k, d, _) = Text.pad 9 k ^ d in
-  let short, long = List.partition (fun (_, d, _) -> Text.width d <= 30) keys in
-  let half = width / 2 in
-  let rec pairs = function
-    | a :: b :: rest -> (Text.pad half (entry a) ^ entry b) :: pairs rest
-    | [ a ] -> [ entry a ]
-    | [] -> []
-  in
-  let not_here =
-    List.filter_map
-      (fun (k, _, on) -> if List.mem screen on then None else Some k)
-      keys
-  in
-  [ Text.pad (width - 39) "KEYS" ^ "each key means the same on every screen" ]
-  @ pairs short @ List.map entry long
-  @ [
-      "";
-      "STATES   starting  no sample yet            writing   not probed, \
-       arriving";
-      "         running   no arrival seen yet      silent    not probed, none \
-       seen";
-      "         live      lock held, arriving      crashed   its writer left \
-       no end";
-      "         stalled   held, none for 3 gaps    finished  failed  killed  \
-       its end";
-      "";
-      "MARKS    ━ focus   a b marked runs   × ↑ ↓ NaN, +inf, -inf   * best of \
-       its";
-      "         experiment   ▸ cursor   ! needs attention";
-    ]
-  @
-  match not_here with
-  | [] -> []
-  | l -> [ Printf.sprintf "Not on %s: %s" (name screen) (String.concat " " l) ]
+let words =
+  [
+    ("● live", "samples arrive");
+    ("○ running", "no sample seen yet");
+    ("○ starting", "no sample logged yet");
+    ("◌ stalled", "no sample for three gaps");
+    ("● writing", "lock not probed, arriving");
+    ("◌ silent", "lock not probed, quiet");
+    ("✓ finished", "ended well");
+    ("✗ failed", "ended with an error");
+    ("✗ crashed", "writer gone without an end");
+    ("■ killed", "ended by a signal");
+    ("× ↑ ↓", "NaN, +inf, -inf at a step");
+    ("*", "best of its experiment");
+    ("━ a b", "the focus, marked runs");
+    ("•", "the latest sample");
+    ("!", "what needs attention");
+  ]
 
-let paint ~screen g ~width ~height =
-  Matrix_grid.clear g;
-  let ls = lines ~screen ~width in
-  List.iteri
-    (fun i l -> if i < height - 2 then Paint.text g ~x:0 ~y:i ~w:width l)
-    ls;
-  Paint.text g ~x:0 ~y:(height - 1) ~w:width "esc close  q quit"
+let col_w = 46
+let key_w = 14
+
+let lines groups =
+  List.concat_map
+    (fun (title, l) ->
+      [ `Title title ] @ List.map (fun r -> `Row r) l @ [ `Blank ])
+    groups
+
+let paint ~screen ~light ~scroll g ~width ~height =
+  let veil =
+    if light then Ansi.Color.of_rgba 255 255 255 170
+    else Ansi.Color.of_rgba 0 0 0 150
+  in
+  G.fill_rect g ~x:0 ~y:0 ~width ~height ~color:veil;
+  let left_groups = [ ("Everywhere", everywhere); keys screen ] in
+  let right_groups = [ ("Words", words) ] in
+  let two = width >= (2 * col_w) + 8 in
+  let left, right =
+    if two then (lines left_groups, lines right_groups)
+    else (lines (left_groups @ right_groups), [])
+  in
+  let need = max (List.length left) (List.length right) + 2 in
+  let bw = if two then (2 * col_w) + 6 else min (width - 2) (col_w + 4) in
+  let bh = min (height - 2) (need + 1) in
+  let bx = (width - bw) / 2 and by = max 0 ((height - 1 - bh) / 2) in
+  G.clear_rect g ~x:bx ~y:by ~width:bw ~height:bh;
+  G.fill_rect g ~x:bx ~y:by ~width:bw ~height:bh
+    ~color:
+      (if light then Ansi.Color.of_rgb 0xf6 0xf6 0xf6
+       else Ansi.Color.of_rgb 0x26 0x26 0x26);
+  Paint.text ~style:Paint.bold g ~x:(bx + 2) ~y:by ~w:(bw - 4) "keys";
+  Paint.right g ~x:(bx + 2) ~y:by ~w:(bw - 4)
+    [ (Paint.plain, "esc"); (Paint.dim, " close") ];
+  let room = bh - 3 in
+  (* A column that does not fit scrolls. *)
+  let column x ls =
+    let at = max 0 (min scroll (List.length ls - room)) in
+    List.iteri
+      (fun i line ->
+        let y = by + 2 + i - at in
+        if y >= by + 2 && y < by + 2 + room then
+          match line with
+          | `Title t -> Paint.text ~style:Paint.bold g ~x ~y ~w:col_w t
+          | `Row (k, a) ->
+              (* A state word in its own style, a key in the accent. *)
+              let style =
+                match String.index_opt k ' ' with
+                | Some i
+                  when snd
+                         (Paint.state
+                            (String.sub k (i + 1) (String.length k - i - 1)))
+                       != Paint.plain ->
+                    snd
+                      (Paint.state
+                         (String.sub k (i + 1) (String.length k - i - 1)))
+                | _ -> Paint.accent
+              in
+              Paint.text ~style g ~x ~y ~w:key_w k;
+              Paint.text ~style:Paint.dim g ~x:(x + key_w) ~y ~w:(col_w - key_w)
+                a
+          | `Blank -> ())
+      ls;
+    if List.length ls > room then
+      Paint.text ~style:Paint.dim g ~x
+        ~y:(by + bh - 1)
+        ~w:col_w
+        (if at + room < List.length ls then "↓ more" else "↑ more")
+  in
+  column (bx + 2) left;
+  if two then column (bx + 4 + col_w) right

@@ -108,6 +108,8 @@ let times n k = List.init n (fun _ -> k)
    fifth. *)
 let to_val_loss = times 5 (char 'l')
 
+(* amber-fox, and dusty-mole, whose losses turn NaN: the attention line names a
+   marked run's NaN. *)
 let mark_two =
   [ char 'j'; Text " "; char 'j'; char 'j'; char 'j'; Text " "; char 'g' ]
 
@@ -122,6 +124,19 @@ let screens =
         (to_val_loss @ [ char '/'; Text "cifar" ]);
       screen_test "run-80x24" ~cols:80 ~rows:24 open_run;
       screen_test "run-160x48" ~cols:160 ~rows:48 open_run;
+      (* Two marked runs of the sweep that run under the focus: the difference
+         rows show what the overlay hides. *)
+      screen_test "run-120x40-difference" ~cols:120 ~rows:40
+        (to_val_loss
+        @ [
+            char 'j';
+            Text " ";
+            char 'j';
+            char 'j';
+            Text " ";
+            char 'g';
+            Key Enter;
+          ]);
       (* Zoom's step cursor starts on the latest val/loss sample, 12,000, and
          each move left goes back one sample, 500 steps. *)
       screen_test "zoom-80x24" ~cols:80 ~rows:24
@@ -271,7 +286,7 @@ let orphans =
         show ~cols:160 ~rows:48 store (Munin_tui.Run (Some id)) [ Key Enter ]
       in
       let orphans_column =
-        match T.Screen.find screen "ORPHANS" with
+        match T.Screen.find screen "orphans" with
         | [ (row, _) ] ->
             (* The focus's row, whose last column is the orphans'. *)
             let fields =
@@ -279,7 +294,7 @@ let orphans =
                 (String.split_on_char ' ' (T.Screen.row screen (row + 1)))
             in
             List.nth fields (List.length fields - 1)
-        | found -> failf "ORPHANS found %d times" (List.length found)
+        | found -> failf "orphans found %d times" (List.length found)
       in
       equal string "1" orphans_column)
 
@@ -776,7 +791,8 @@ let log_y =
 
 (* Runs: the filter and the best value of each experiment *)
 
-(* The names of Runs's rows, and the row that holds a star. *)
+(* The names of Runs's rows, and whether a row holds a star: the rows from the
+   header to the first blank row, those that name a run. *)
 let shown screen =
   let rec go y acc =
     if y >= T.Screen.rows screen then List.rev acc
@@ -785,19 +801,20 @@ let shown screen =
         List.filter (( <> ) "")
           (String.split_on_char ' ' (T.Screen.row screen y))
       with
-      | first :: _ :: _ as fields
-        when first <> "STATE" && String.length first > 0 -> (
-          let fields = if first = "▸" then List.tl fields else fields in
-          match fields with
-          | _ :: name :: _
-            when List.exists (fun r -> r.Fixture.name = name) Fixture.runs ->
+      | [] -> List.rev acc
+      | fields -> (
+          match
+            List.find_opt
+              (fun f -> List.exists (fun r -> r.Fixture.name = f) Fixture.runs)
+              fields
+          with
+          | Some name ->
               go (y + 1)
                 (( name,
                    List.exists (fun f -> String.ends_with ~suffix:"*" f) fields
                  )
                 :: acc)
-          | _ -> List.rev acc)
-      | _ -> List.rev acc
+          | None -> go (y + 1) acc)
   in
   go 3 []
 
@@ -881,11 +898,11 @@ let non_finite_count =
         show ~cols:160 ~rows:48 store (Munin_tui.Run (Some id)) [ Key Enter ]
       in
       let row =
-        match T.Screen.find screen "NONFINITE" with
+        match T.Screen.find screen "not finite" with
         | [ (row, _) ] ->
             List.filter (( <> ) "")
               (String.split_on_char ' ' (T.Screen.row screen (row + 1)))
-        | found -> failf "NONFINITE found %d times" (List.length found)
+        | found -> failf "not finite found %d times" (List.length found)
       in
       (* The focus's row ends with its samples, non-finite ones and orphans. *)
       let n = List.length row in
@@ -915,7 +932,7 @@ let all_orphans =
       let screen =
         show ~cols:80 ~rows:24 store (Munin_tui.Run (Some id)) [ char 'i' ]
       in
-      equal bool true (T.Screen.find screen "METRICS" <> []))
+      equal bool true (T.Screen.find screen "metrics" <> []))
 
 (* What the dashboard holds *)
 
@@ -968,7 +985,10 @@ let held =
               List.filter (( <> ) "")
                 (String.split_on_char ' ' (T.Screen.row screen row))
             with
-            | ("▸" | "a" | "b") :: w :: _ | w :: _ -> w
+            | ("›" | "a" | "b") :: ("●" | "○" | "◌" | "✓" | "✗" | "■") :: w :: _
+            | ("●" | "○" | "◌" | "✓" | "✗" | "■") :: w :: _
+            | w :: _ ->
+                w
             | [] -> "")
         | [] -> "absent"
       in
@@ -1009,12 +1029,13 @@ let kept_pane =
       in
       Sys.rename (log ^ ".away") log;
       equal (list (pair int int)) [] (T.Screen.find screen "cannot read");
-      equal bool true (T.Screen.find screen "over steps" <> []);
-      equal bool true (T.Screen.find screen "▸ finished  amber-fox" <> []))
+      (* The pane names amber-fox and draws its chart, a y axis labelled. *)
+      equal bool true (T.Screen.find screen "amber-fox  ✓ finished" <> []);
+      equal bool true (T.Screen.find screen "┤" <> []))
 
-(* A run logs its last samples and ends after its pane's chart was prepared,
-   and the cursor leaves it before a poll reads them: coming back draws them,
-   since a chart prepared before the end is not kept. *)
+(* A run logs its last samples and ends after its pane's chart was prepared, and
+   the cursor leaves it before a poll reads them: coming back draws them, since
+   a chart prepared before the end is not kept. *)
 let ended_away =
   test "a cursor back on a run that ended away draws its last samples"
     (fun () ->
@@ -1048,9 +1069,9 @@ let ended_away =
         T.Terminal.screen term
       in
       (* The first 50 samples, all 1, span a y axis from 0.95 to 1.05; the last
-         50, all 9, stretch it past a tick at 7.5. *)
-      equal bool true (T.Screen.find screen "7.5 ┤" <> []);
-      equal bool true (T.Screen.find screen "▸ finished  late-end" <> []))
+         50, all 9, stretch it to its top label, the greatest value drawn. *)
+      equal bool true (T.Screen.find screen "9.000 ┤" <> []);
+      equal bool true (T.Screen.find screen "late-end  ✓ finished" <> []))
 
 (* The state words, against a model of the arrivals a dashboard times. *)
 type arrivals = {
@@ -1176,21 +1197,25 @@ let model_key st k =
       match top with Runs_s | Run_s -> { st with typing = true } | _ -> st)
   | _ -> st
 
+(* The screen shown, from its text: Help's keys box, Zoom's and Details' ways
+   out, Runs's count of runs on its first line, else Run; typing when the key
+   line holds the filter. *)
 let observed screen =
   let rows = T.Screen.rows screen in
   let last = T.Screen.row screen (rows - 1) in
+  let has s = T.Screen.find screen s <> [] in
   let starts p s =
     String.length s >= String.length p && String.sub s 0 (String.length p) = p
   in
-  if starts "esc close" last then "help"
+  if has "Everywhere" then "help"
   else
     let top =
-      if starts "munin" (T.Screen.row screen 0) then "runs"
-      else if starts "RUN " (T.Screen.row screen 2) then "details"
-      else if starts "↑↓ metric  ←→ cursor" last then "zoom"
+      if has "back to the run" then "zoom"
+      else if has "esc close" then "details"
+      else if has " runs" && not (has "esc runs") then "runs"
       else "run"
     in
-    if starts "/" last then top ^ " typing" else top
+    if starts "/" (String.trim last) then top ^ " typing" else top
 
 let model_name st =
   if st.help then "help"

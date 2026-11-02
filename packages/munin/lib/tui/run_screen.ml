@@ -36,8 +36,16 @@ let metrics v =
   | Some h -> keep ~filter:v.filter (History.metrics h)
   | None -> []
 
-let stats v = Option.value (Data.stats v.data v.focus) ~default:[]
+let stats_of v r = Option.value (Data.stats v.data r) ~default:[]
+let stats v = stats_of v v.focus
+let key_stats v key = List.assoc_opt key (stats v)
 let latest_step v = Fact.latest_step (stats v)
+
+let cursor v =
+  let keys = metrics v in
+  match v.metric with
+  | Some k when List.mem k keys -> Some k
+  | _ -> ( match keys with k :: _ -> Some k | [] -> None)
 
 let active v =
   let r = v.focus in
@@ -50,28 +58,50 @@ let active v =
   let pauses = match v.entry with Some e -> e.pauses | None -> [] in
   Fact.active_at pauses (Run.started_at r) until
 
-(* The first line *)
+let margin ~width = if width >= 100 then 2 else 1
+
+(* The first line: the run in words. Its parts leave whole when the line is too
+   long, the rate and the time left first; the progress and the last sample or
+   write stay. *)
 
 let ago v t = Text.duration (v.now -. t) ^ " ago"
 
-let state_line v ~wide =
+let sentence v ~width =
   let r = v.focus in
   let w = word v r in
   let step = latest_step v in
   let steps = Run.steps r in
   let watch = watch v r in
   let arrival = Option.bind watch Watch.last_arrival in
-  let progress ?bar ~wide () =
-    match Fact.progress ?bar ~wide ~steps step with
-    | "" -> []
-    | p -> [ "step " ^ p ]
+  let wide = width >= 100 in
+  let plain s = (Paint.plain, s) and dim s = (Paint.dim, s) in
+  let progress () =
+    match (step, steps) with
+    | Some s, Some t when t > 0 && s < t ->
+        let pct =
+          Printf.sprintf "%.0f%%" (100. *. Float.of_int s /. Float.of_int t)
+        in
+        if wide then
+          [
+            [ plain ("step " ^ Text.count s); dim (" of " ^ Text.count t) ];
+            [ plain pct ];
+          ]
+        else
+          [
+            [ plain (Text.count s); dim ("/" ^ Text.count t ^ " "); plain pct ];
+          ]
+    | Some s, _ -> [ [ plain ("step " ^ Text.count s) ] ]
+    | None, _ -> []
   in
   let watching () =
     match watch with
     | Some w ->
         [
-          Printf.sprintf "watching %s, no sample yet"
-            (Text.duration (v.now -. Watch.since w));
+          [
+            dim "watching ";
+            plain (Text.duration (v.now -. Watch.since w));
+            dim ", no sample yet";
+          ];
         ]
     | None -> []
   in
@@ -79,94 +109,146 @@ let state_line v ~wide =
     match (Option.bind watch Watch.usual_gap, arrival) with
     | Some g, Some t ->
         [
-          Printf.sprintf "no sample for %s, usually every %s"
-            (Text.duration (v.now -. t))
-            (Text.duration g);
+          [
+            dim "no sample for ";
+            plain (Text.duration (v.now -. t));
+            dim ", usually every ";
+            plain (Text.duration g);
+          ];
         ]
     | _ -> []
   in
   let last_sample () =
-    match arrival with Some t -> [ "last sample " ^ ago v t ] | None -> []
+    match arrival with
+    | Some t -> [ [ dim "last sample "; plain (ago v t) ] ]
+    | None -> []
   in
-  let last_write () = [ "last write " ^ ago v (Run.updated_at r) ] in
-  let running () =
-    if wide then [ "running " ^ Text.duration (active v) ] else []
+  let last_write () =
+    [ [ dim "last write "; plain (ago v (Run.updated_at r)) ] ]
+  in
+  let ran () =
+    if width >= 140 then [ [ dim "ran "; plain (Text.duration (active v)) ] ]
+    else []
   in
   let pace () =
     match Option.bind v.entry (fun e -> e.rate) with
-    | Some x ->
-        (Text.value x ^ if wide then " step/s" else "/s")
-        ::
-        (match (step, steps) with
+    | Some x -> (
+        [
+          [
+            plain (Munin_float_text.Float_text.g ~precision:2 x);
+            dim (if wide then " steps/s" else "/s");
+          ];
+        ]
+        @
+        match (step, steps) with
         | Some s, Some t when s < t ->
-            [ "~" ^ Text.duration (Float.of_int (t - s) /. x) ^ " left" ]
+            [
+              [
+                plain ("~" ^ Text.duration (Float.of_int (t - s) /. x));
+                dim " left";
+              ];
+            ]
         | _ -> [])
     | None -> []
   in
   let ended () =
     match Run.ended_at r with
     | Some e ->
-        [ Printf.sprintf "ended %s, %s" (Text.clock ~now:v.now e) (ago v e) ]
+        [
+          [
+            dim "ended "; plain (Text.clock ~now:v.now e); dim (", " ^ ago v e);
+          ];
+        ]
     | None -> []
   in
-  let at_step () = match step with Some s -> Text.count s | None -> "0" in
+  let at_step = match step with Some s -> Text.count s | None -> "0" in
+  let unprobed = [ [ dim "lock not probed" ] ] in
+  let rate = pace () in
   let facts =
     match w with
     | "starting" ->
         [
-          Printf.sprintf "started %s, no sample yet" (ago v (Run.started_at r));
+          [
+            dim "started ";
+            plain (ago v (Run.started_at r));
+            dim ", no sample yet";
+          ];
         ]
-    | "running" -> progress ~wide () @ running () @ last_write () @ watching ()
-    | "live" -> progress ~wide () @ pace () @ running () @ last_sample ()
-    | "stalled" ->
-        progress ~bar:false ~wide:true ()
-        @ quiet () @ running () @ last_sample ()
-    | "writing" ->
-        progress ~bar:false ~wide:true ()
-        @ pace () @ last_sample () @ [ "lock not probed" ]
+    | "running" -> progress () @ ran () @ last_write () @ watching ()
+    | "live" -> progress () @ rate @ ran () @ last_sample ()
+    | "stalled" -> progress () @ quiet () @ ran () @ last_sample ()
+    | "writing" -> progress () @ rate @ last_sample () @ unprobed
     | "silent" ->
-        progress ~bar:false ~wide:true ()
+        progress ()
         @ (if arrival = None then last_write () @ watching () else quiet ())
-        @ [ "lock not probed" ]
+        @ unprobed
     | "crashed" ->
-        progress ~bar:false ~wide:true ()
+        progress ()
+        @ [ [ plain "writer exited without an end" ] ]
         @ [
-            "writer exited without an end";
-            Printf.sprintf "last write %s, %s"
-              (Text.clock ~now:v.now (Run.updated_at r))
-              (ago v (Run.updated_at r));
-            "ran " ^ Text.duration (active v);
+            [
+              dim "last write ";
+              plain (Text.clock ~now:v.now (Run.updated_at r));
+              dim (", " ^ ago v (Run.updated_at r));
+            ];
           ]
+        @ [ [ dim "ran "; plain (Text.duration (active v)) ] ]
     | "finished" ->
         [
-          Printf.sprintf "%s steps in %s" (at_step ())
-            (Text.duration (active v));
+          [
+            plain (at_step ^ " steps");
+            dim " in ";
+            plain (Text.duration (active v));
+          ];
         ]
         @ ended ()
     | "failed" ->
-        let why = match Run.status r with `Failed e -> ": " ^ e | _ -> "" in
+        let why =
+          match Run.status r with `Failed e -> [ [ plain e ] ] | _ -> []
+        in
         [
-          Printf.sprintf "failed at step %s after %s%s" (at_step ())
-            (Text.duration (active v))
-            why;
+          [
+            dim "failed at step ";
+            plain at_step;
+            dim " after ";
+            plain (Text.duration (active v));
+          ];
         ]
-        @ ended ()
+        @ why @ ended ()
     | "killed" ->
         [
-          Printf.sprintf "killed at step %s after %s" (at_step ())
-            (Text.duration (active v));
+          [
+            dim "killed at step ";
+            plain at_step;
+            dim " after ";
+            plain (Text.duration (active v));
+          ];
         ]
         @ ended ()
     | _ -> []
   in
-  if wide then
-    String.concat "  "
-      (Printf.sprintf "%-9s %-12s %-14s" w (name r) (Run.experiment r) :: facts)
-  else String.concat "  " ((w ^ "  " ^ name r) :: facts)
+  let head =
+    Paint.word w
+    @ [ plain "  "; (Paint.bold, name r) ]
+    @ (if wide then [ dim ("  " ^ Run.experiment r) ] else [])
+    @ [ plain "   " ]
+  in
+  let drop =
+    match (w, rate) with
+    | ("live" | "writing"), _ :: _ ->
+        let p = List.length (progress ()) in
+        List.init (List.length rate) (fun i -> p + i)
+    | _ -> []
+  in
+  Paint.fit ~drop ~w:(width - (2 * margin ~width)) head facts
 
-(* The attention line *)
+(* The attention line: what needs attention, in words. Nothing when nothing
+   does. *)
 
-let non_finite_note ~focus_key label r stats =
+(* Without a timed arrival for longer than three of the floor's gaps. *)
+let unseen = 30.
+
+let non_finite_note ~cursor label stats =
   let firsts =
     List.filter_map
       (fun (k, (s : History.key_stats)) ->
@@ -175,40 +257,35 @@ let non_finite_note ~focus_key label r stats =
         | _ -> None)
       stats
   in
-  match List.partition (fun (k, _) -> Some k = focus_key) firsts with
-  | [], [] -> None
-  | (k, (f : Metric.sample)) :: _, rest | [], ((k, f) :: _ as rest) ->
-      let rest = List.filter (fun (k', _) -> k' <> k) rest in
-      let others =
-        match
-          List.sort
-            (fun (_, (a : Metric.sample)) (_, b) -> compare a.step b.step)
-            rest
-        with
-        | [] -> ""
-        | (_, first) :: _ ->
-            Printf.sprintf ", %d other metric%s from %s" (List.length rest)
-              (if List.length rest = 1 then "" else "s")
-              (Text.count first.step)
-      in
+  match
+    List.sort
+      (fun (ka, (a : Metric.sample)) (kb, b) ->
+        compare (a.step, Some ka <> cursor) (b.step, Some kb <> cursor))
+      firsts
+  with
+  | [] -> None
+  | (k, f) :: rest ->
+      let others = List.length rest in
       Some
-        (Printf.sprintf "%s%s: %s %s from step %s%s" label (name r) k
-           (Text.non_finite f.value) (Text.count f.step) others)
-
-(* Without a timed arrival for longer than three of the floor's gaps. *)
-let unseen = 30.
+        (Printf.sprintf "%s%s %s from step %s%s" label k
+           (Text.non_finite f.value) (Text.count f.step)
+           (if others = 0 then ""
+            else
+              Printf.sprintf " (and %d other metric%s)" others
+                (if others = 1 then "" else "s")))
 
 let attention v =
   let notes = ref [] in
   let add s = notes := s :: !notes in
   let r = v.focus in
-  let stats r = Option.value (Data.stats v.data r) ~default:[] in
-  Option.iter add (non_finite_note ~focus_key:v.metric "" r (stats r));
+  let cursor = cursor v in
+  Option.iter add (non_finite_note ~cursor "" (stats v));
   List.iter
     (fun (l, mr) ->
       Option.iter add
-        (non_finite_note ~focus_key:v.metric (Printf.sprintf "%c " l) mr
-           (stats mr)))
+        (non_finite_note ~cursor
+           (Printf.sprintf "%c %s: " l (name mr))
+           (stats_of v mr)))
     v.marked;
   (match (word v r, watch v r) with
   | "stalled", _ -> add (name r ^ " stalled")
@@ -232,19 +309,15 @@ let attention v =
         (Printf.sprintf "%s: %d damaged lines in its log" (name r)
            (History.damaged h))
   | _ -> ());
-  match List.rev !notes with
-  | [] -> None
-  | l -> Some ("! " ^ String.concat " · " l)
+  List.rev !notes
 
 (* Layout
 
-   Run is a function of the terminal's size and the metrics: a grid of charts
-   when every metric fits one, three to a line at most, each 40 columns by 8
-   lines or more, with the system rows below; else one chart above one row per
-   metric. *)
-
-let chart_rows = 8
-let chart_cols ~width = max 1 (min 3 (width / 40))
+   Run, top to bottom: the sentence, the attention line, the metric's title and
+   the compared runs' legend, the chart, a pair of difference rows per marked
+   run, a strip per metric aligned under the chart's plot and grouped by prefix,
+   the machine, the keys. The chart keeps three fifths of the rows the rest
+   leaves, four fifths below 30 rows, where it carries the comparison. *)
 
 let devices v =
   match history v with
@@ -260,146 +333,236 @@ let devices v =
              else None)
            (History.readings h))
 
-(* The USE rows: a header, CPU, memory, two per device, disk. *)
-let use_count v = 4 + (2 * List.length (devices v))
+let roomy ~height = height >= 30
+let large ~width ~height = width >= 140 && height >= 44
 
-type layout =
-  | Grid of { cols : int; rows : int; cw : int }
-  | One of { chart_h : int; mrows : int; half : int; system : int }
+let sys_rows v ~height =
+  match history v with
+  | Some h when History.readings h <> [] ->
+      if roomy ~height then 1 + 2 + (2 * List.length (devices v)) + 1 else 1
+  | _ -> 0
+
+type layout = {
+  title_y : int;
+  legend : bool;
+  chart_y : int;
+  chart_h : int;
+  caption : bool;
+  versus_y : int;
+  name_w : int; (* the label column, which ends where the plot starts *)
+  value_w : int;
+  strips_y : int;
+  strip_rows : (int * string) list;
+      (* each strip shown: its row offset and key *)
+  strip_h : int;
+  hidden : (int * int) option;
+      (* the first and last strip shown, when not all *)
+  sys_y : int;
+  sys_rows : int;
+}
+
+let groups keys =
+  List.fold_left
+    (fun acc k ->
+      let p, _ = Paint.key k in
+      match List.rev acc with
+      | (p', ks) :: rest when p' = p -> List.rev ((p', ks @ [ k ]) :: rest)
+      | _ -> acc @ [ (p, [ k ]) ])
+    [] keys
+
+(* The strips' rows: two rows each with a blank row between groups when all fit
+   so, else one row with the blanks, else one row without, else a window of
+   one-row strips around the cursor. *)
+let strip_plan keys ~room ~roomy ~large ~cursor =
+  let gs = groups keys in
+  let lay ~h ~gaps =
+    let _, rows =
+      List.fold_left
+        (fun (y, acc) (i, (_, ks)) ->
+          let y = if gaps && i > 0 then y + 1 else y in
+          List.fold_left (fun (y, acc) k -> (y + h, (y, k) :: acc)) (y, acc) ks)
+        (0, [])
+        (List.mapi (fun i g -> (i, g)) gs)
+    in
+    let rows = List.rev rows in
+    (rows, match List.rev rows with (y, _) :: _ -> y + h | [] -> 0)
+  in
+  let options =
+    (if large then [ (2, true) ] else [])
+    @ (if roomy then [ (1, true) ] else [])
+    @ [ (1, false) ]
+  in
+  match
+    List.find_map
+      (fun (h, gaps) ->
+        let rows, total = lay ~h ~gaps in
+        if total <= room then Some (rows, h) else None)
+      options
+  with
+  | Some (rows, h) -> (rows, h, None)
+  | None ->
+      let n = List.length keys and shown = max 0 room in
+      let ci = Option.value (List.find_index (( = ) cursor) keys) ~default:0 in
+      let first = max 0 (min (n - shown) (ci - (shown / 2))) in
+      let ks = List.filteri (fun i _ -> i >= first && i < first + shown) keys in
+      ( List.mapi (fun i k -> (i, k)) ks,
+        1,
+        if ks = [] then None else Some (first, first + List.length ks - 1) )
 
 let layout v ~width ~height =
-  let n = List.length (metrics v) in
-  let cols = chart_cols ~width in
-  let rows = (n + cols - 1) / cols in
-  if
-    width >= 120 && n > 0
-    && 4 + (rows * chart_rows) + 2 + 1 + use_count v + 2 <= height
-  then Grid { cols; rows; cw = (width - (cols - 1)) / cols }
-  else
-    let system = 1 + List.length (devices v) in
-    let mrows = (n + 1) / 2 in
-    One
-      {
-        chart_h = height - 3 - mrows - system - 2;
-        mrows;
-        half = (width - 1) / 2;
-        system;
-      }
+  let keys = metrics v in
+  let roomy = roomy ~height in
+  let marks = List.length v.marked in
+  let title_y = if roomy then 3 else 2 in
+  let chart_y = title_y + 1 + if marks > 0 then 1 else 0 in
+  let caption = roomy && marks > 0 in
+  let versus = (if caption then 1 else 0) + (2 * marks) in
+  let sys = sys_rows v ~height in
+  let footer = height - 1 in
+  let sys_y = footer - (if roomy then 1 else 0) - sys in
+  let below = if sys > 0 then sys_y - 1 else footer - 1 in
+  let room = below - chart_y - versus in
+  let keep = if roomy then room * 3 / 5 else room * 4 / 5 in
+  let strip_room =
+    if List.length keys <= 1 then 0 else max 0 (room - max 6 keep - 1)
+  in
+  let strip_rows, strip_h, hidden =
+    strip_plan keys ~room:strip_room ~roomy ~large:(large ~width ~height)
+      ~cursor:(Option.value (cursor v) ~default:"")
+  in
+  let strip_rows = if List.length keys <= 1 then [] else strip_rows in
+  let strips_h =
+    List.fold_left (fun m (y, _) -> max m (y + strip_h)) 0 strip_rows
+  in
+  let chart_h = room - if strips_h > 0 then strips_h + 1 else 0 in
+  (* The label column holds the strips' names and the difference rows' marked
+     runs, and below 30 lines what a difference row is. *)
+  let longest =
+    List.fold_left
+      (fun a k ->
+        let p, rest = Paint.key k in
+        max a (Text.width p + 1 + Text.width rest))
+      0 keys
+  in
+  let longest =
+    List.fold_left
+      (fun a (_, r) -> max a (Text.width (name r) + 2))
+      longest v.marked
+  in
+  let longest = if marks > 0 && not caption then max longest 11 else longest in
+  {
+    title_y;
+    legend = marks > 0;
+    chart_y;
+    chart_h;
+    caption;
+    versus_y = (chart_y + chart_h + if caption then 1 else 0);
+    name_w = max Chart.left (min 22 (longest + 3));
+    value_w = (if width >= 120 then 12 else 10);
+    strips_y = chart_y + chart_h + versus + 1;
+    strip_rows;
+    strip_h;
+    hidden;
+    sys_y;
+    sys_rows = sys;
+  }
 
-let grid_fits v ~width ~height =
-  match layout v ~width ~height with Grid _ -> true | One _ -> false
+(* The chart's region starts so that its label margin ends where the labels of
+   the strips do, and leaves their value column at the right. *)
+let chart_x ~width l = margin ~width + l.name_w - Chart.left
 
-let marked_ids v = List.map (fun (l, r) -> (l, Run.id r)) v.marked
+let chart_w ~width l =
+  width - (2 * margin ~width) - (l.name_w - Chart.left) - l.value_w
 
-let chart_request v spec =
+let chart_request v ~marks spec =
   {
     Data.focus = Run.id v.focus;
-    marked = marked_ids v;
+    marked =
+      (if marks then List.map (fun (l, r) -> (l, Run.id r)) v.marked else []);
     view = v.chart;
     spec;
     kept = false;
   }
 
-let cursor v =
-  let keys = metrics v in
-  match v.metric with
-  | Some k when List.mem k keys -> Some k
-  | _ -> ( match keys with k :: _ -> Some k | [] -> None)
+let main_spec ~width l key =
+  { Chart.key; width = chart_w ~width l; height = l.chart_h; x_axis = true }
 
-let charts v ~width ~height =
-  let keys = metrics v in
-  match layout v ~width ~height with
-  | Grid { cols; rows; cw } ->
-      List.mapi
-        (fun i key ->
-          let bottom = i / cols = rows - 1 in
-          ( i,
-            {
-              Chart.key;
-              width = cw;
-              height = (chart_rows - 1 + if bottom then 2 else 0);
-              x_axis = bottom;
-            } ))
-        keys
-  | One { chart_h; _ } -> (
-      match cursor v with
-      | Some key when chart_h >= 4 ->
-          [ (0, { Chart.key; width; height = chart_h; x_axis = true }) ]
-      | _ -> [])
+(* A strip is a chart of [strip_h] plot rows, drawn inline: its marks go in its
+   top row's blank cells. *)
+let strip_spec ~width l key =
+  {
+    Chart.key;
+    width = chart_w ~width l;
+    height = l.strip_h + 1;
+    x_axis = false;
+  }
 
-let trend_width = 4
-let use_width = 44
+let trend_w ~width = if width >= 140 then 40 else 0
 
-let reading_keys v d =
-  let k f = "dev/" ^ d ^ "/" ^ f in
-  [ (k "busy_pct", Some (0., 100.)); (k "used_bytes", None) ]
-  |> List.filter (fun (key, _) ->
-      match history v with
-      | Some h -> List.mem key (History.readings h)
-      | None -> false)
+let use_keys v =
+  [ ("sys/cpu_busy_pct", Some (0., 100.)); ("sys/mem_used_bytes", None) ]
+  @ List.concat_map
+      (fun d ->
+        [
+          ("dev/" ^ d ^ "/busy_pct", Some (0., 100.));
+          ("dev/" ^ d ^ "/used_bytes", None);
+        ])
+      (devices v)
 
-let use_trends v =
-  [
-    ("sys/cpu_busy_pct", Some (0., 100.));
-    ("sys/mem_used_bytes", None);
-    ("sys/disk_busy_pct", Some (0., 100.));
-  ]
-  @ List.concat_map (reading_keys v) (devices v)
-
-let trends v ~width ~height =
-  let run = Run.id v.focus in
-  match layout v ~width ~height with
-  | Grid _ ->
-      List.map
-        (fun (key, domain) ->
-          { Data.run; key; axis = Time; width = use_width; domain })
-        (use_trends v)
-  | One _ ->
-      List.map
-        (fun key ->
-          {
-            Data.run;
-            key;
-            axis = v.chart.axis;
-            width = trend_width;
-            domain = None;
-          })
-        (metrics v)
+let zoom_spec v ~width ~height key =
+  {
+    Chart.key;
+    width = width - (2 * margin ~width);
+    height = height - 4 - (2 + List.length v.marked) - 2;
+    x_axis = true;
+  }
 
 let zoom_request v =
   Option.map
     (fun key ->
       {
         Data.focus = Run.id v.focus;
-        others = List.map snd (marked_ids v);
+        others = List.map (fun (_, r) -> Run.id r) v.marked;
         key;
         axis = v.chart.axis;
         index = v.zoom_at;
       })
     (cursor v)
 
-(* The keys of the charts drawn, which the marked runs keep. *)
-let shown v ~width ~height ~zoom =
-  if zoom then Option.to_list (cursor v)
-  else List.map (fun (_, (s : Chart.spec)) -> s.key) (charts v ~width ~height)
-
-let zoom_spec ~width ~height ~table =
-  { Chart.key = ""; width; height = height - 4 - table - 2; x_axis = true }
+(* The marked runs are drawn in the cursor's chart alone, on Run and on Zoom. *)
+let shown v = Option.to_list (cursor v)
 
 let requests v ~width ~height ~zoom =
-  if zoom then
-    let table = if width >= 120 then 1 + 1 + List.length v.marked else 2 in
-    let charts =
-      match cursor v with
-      | Some key ->
-          [ chart_request v { (zoom_spec ~width ~height ~table) with key } ]
-      | None -> []
-    in
-    (charts, [], zoom_request v)
-  else
-    ( List.map (fun (_, s) -> chart_request v s) (charts v ~width ~height),
-      trends v ~width ~height,
-      None )
+  match cursor v with
+  | None -> ([], [], None)
+  | Some key when zoom ->
+      ( [ chart_request v ~marks:true (zoom_spec v ~width ~height key) ],
+        [],
+        zoom_request v )
+  | Some key ->
+      let l = layout v ~width ~height in
+      let strips =
+        List.map
+          (fun (_, k) -> chart_request v ~marks:false (strip_spec ~width l k))
+          l.strip_rows
+      in
+      let trends =
+        if trend_w ~width = 0 || l.sys_rows <= 1 then []
+        else
+          List.map
+            (fun (k, domain) ->
+              {
+                Data.run = Run.id v.focus;
+                key = k;
+                axis = Time;
+                width = trend_w ~width;
+                domain;
+              })
+            (use_keys v)
+      in
+      ( chart_request v ~marks:true (main_spec ~width l key) :: strips,
+        trends,
+        None )
 
 (* Titles *)
 
@@ -412,407 +575,493 @@ let axis_name v key =
       | None -> "step")
   | Time -> "time"
 
-let legend_settings v ~key p =
-  let smooth =
-    match Option.bind p Chart.tau with
-    | None -> "smoothing off"
+let arrow (s : History.key_stats option) =
+  match Fact.arrow (Option.bind s (fun (s : History.key_stats) -> s.goal)) with
+  | "" -> ""
+  | a -> " " ^ a
+
+let title v key p =
+  let st = key_stats v key in
+  Paint.key_spans key
+  @ [ (Paint.dim, arrow st); (Paint.plain, "   ") ]
+  @ (match st with
+    | Some s -> (
+        let x = s.stats.last.value in
+        [
+          ((if Float.is_finite x then Paint.bold else Paint.alert), Text.value x);
+        ]
+        @
+        match Option.bind s.goal (fun g -> Metric.best g s.stats) with
+        | Some b ->
+            [
+              (Paint.dim, "   best ");
+              (Paint.plain, Text.value b.value);
+              (Paint.dim, " at " ^ Text.count b.step);
+            ]
+        | None -> [])
+    | None -> [ (Paint.dim, "—") ])
+  @ (match Option.bind p Chart.tau with
     | Some t ->
-        Printf.sprintf "τ %s %s" (Text.value t)
-          (if v.chart.axis = Time then "s" else axis_name v key ^ "s")
-  in
-  let window =
+        [
+          ( Paint.dim,
+            Printf.sprintf "   τ %s %s" (Text.value t)
+              (if v.chart.axis = Time then "s" else axis_name v key ^ "s") );
+        ]
+    | None -> [])
+  @
+  match Option.map Chart.unpaired p with
+  | Some n when n > 0 ->
+      [ (Paint.dim, Printf.sprintf "   %s unpaired" (Text.count n)) ]
+  | _ -> []
+
+(* The settings that differ from the defaults; defaults are not written. A log y
+   asked for over values not all above 0 says it stays linear. *)
+let settings v key p =
+  String.concat " · "
+    ((match v.chart.axis with
+       | Step -> []
+       | Step_metric -> [ "x " ^ axis_name v key ]
+       | Time -> [ "x active time" ])
+    @ (if v.filter <> "" then [ Printf.sprintf "metrics with \"%s\"" v.filter ]
+       else [])
+    @ (if v.chart.smooth > 0 then [ "smoothed" ] else [])
+    @ (if v.chart.log then
+         [
+           (match p with
+           | Some p when not (Chart.log_y p) -> "linear: values <= 0"
+           | _ -> "log y");
+         ]
+       else [])
+    @
     match v.chart.window with
-    | None -> "window all"
     | Some (lo, hi) ->
-        Printf.sprintf "window %s-%s" (Text.value lo) (Text.value hi)
-  in
-  Printf.sprintf "x %s · %s · %s" (axis_name v key) smooth window
+        [
+          Printf.sprintf "%ss %s–%s" (axis_name v key)
+            (Text.count (Float.to_int lo))
+            (Text.count (Float.to_int hi));
+        ]
+    | None -> [])
 
-let key_stats v key = List.assoc_opt key (stats v)
-
-let chart_title v key ~cursor =
-  let st = key_stats v key in
-  let goal = Option.bind st (fun (s : History.key_stats) -> s.goal) in
-  let latest =
-    match st with Some s -> Text.value s.stats.last.value | None -> "—"
-  in
-  let best =
-    match
-      Option.bind st (fun (s : History.key_stats) ->
-          Option.bind s.goal (fun g -> Metric.best g s.stats))
-    with
-    | Some b ->
-        Printf.sprintf "  best %s @%s" (Text.value b.value) (Text.short b.step)
-    | None -> ""
-  in
-  let notes =
+(* The compared runs: each letter, its name, and the params in which it differs
+   from the focus. Letters and words: braille draws no dash. *)
+let legend v =
+  let differing mr =
     List.filter_map
+      (fun (k, x) ->
+        if List.assoc_opt k (Run.params v.focus) = Some x then None
+        else Some (k ^ " " ^ Runs_screen.value_text x))
+      (Run.params mr)
+  in
+  [ (Paint.plain, "━ "); (Paint.dim, name v.focus) ]
+  @ List.concat_map
       (fun (l, mr) ->
-        match Option.bind (Data.stats v.data mr) (List.assoc_opt key) with
-        | Some { History.stats = { non_finite = Some (_, f); _ }; _ } ->
-            Some
-              (Printf.sprintf "  %c %s %s" l (Text.non_finite f.value)
-                 (Text.short f.step))
-        | _ -> None)
+        [
+          (Paint.plain, "   ");
+          (Paint.mark l, String.make 1 l ^ " ");
+          (Paint.dim, name mr);
+        ]
+        @
+        match List.filteri (fun i _ -> i < 2) (differing mr) with
+        | [] -> []
+        | ps -> [ (Paint.plain, "  " ^ String.concat "  " ps) ])
       v.marked
-  in
-  let arrow = match Fact.arrow goal with "" -> "" | a -> " " ^ a in
-  (if key = cursor then "▸" else " ")
-  ^ key ^ arrow ^ " " ^ latest ^ best ^ String.concat "" notes
 
-(* What a drawn chart adds to its title: the scale it fell back to, the samples
-   it could not place, and the range a short plot cannot tick. *)
-let drawn_notes v p (d : Chart.drawn) =
-  (if v.chart.log then if d.log then "  log y" else "  linear: values <= 0"
-   else "")
-  ^ (match Chart.unpaired p with
-    | 0 -> ""
-    | n -> Printf.sprintf "  %s unpaired" (Text.count n))
-  ^
-  match d.range with
-  | Some (lo, hi) ->
-      Printf.sprintf "  y %s to %s" (Text.value lo) (Text.value hi)
-  | None -> ""
-
-let draw_chart ?cursor v spec g ~x ~y =
-  Option.map
-    (fun p -> (p, Chart.draw ?cursor ~light:v.light p g ~x ~y))
-    (Data.chart v.data (chart_request v spec))
-
-(* One row per metric: name, latest, trend, best. *)
-let metric_row v key ~cursor ~width =
-  let st = key_stats v key in
-  let latest =
-    match st with Some s -> Text.value s.stats.last.value | None -> "—"
-  in
-  let tr =
-    Option.value
-      ~default:(String.make trend_width ' ')
-      (Data.trend v.data
-         {
-           run = Run.id v.focus;
-           key;
-           axis = v.chart.axis;
-           width = trend_width;
-           domain = None;
-         })
-  in
-  let best =
-    match st with
-    | Some { goal = Some g; stats; _ } -> (
-        match Metric.best g stats with
-        | Some b -> Fact.arrow (Some g) ^ Text.value b.value
-        | None -> "")
-    | _ -> ""
-  in
-  let name_w = width - 26 in
-  (if key = cursor then "▸" else " ")
-  ^ Text.pad name_w (Text.elide name_w key)
-  ^ " " ^ Text.pad_left 9 latest ^ " " ^ tr ^ " " ^ Text.pad 9 best
-
-(* System rows *)
+(* Machine *)
 
 let reading v k =
   match key_stats v k with
   | Some s when Float.is_finite s.stats.last.value -> Some s.stats.last.value
   | _ -> None
 
-let gibs v a b =
-  match (reading v a, reading v b) with
-  | Some a, Some b ->
-      Some (Printf.sprintf "%s of %s GiB" (Text.gib a) (Text.gib b))
-  | _ -> None
-
-let load l = Munin_float_text.Float_text.g ~precision:2 l
-
-let system_lines v ~wide ~width =
-  let pct k = Option.map Text.percent (reading v k) in
-  let join l = String.concat "  " (List.filter_map Fun.id l) in
+let use_parts v =
+  let opt f k = Option.map f (reading v k) in
+  let gibs a b =
+    match (reading v a, reading v b) with
+    | Some a, Some b -> Some (Text.gib a ^ " of " ^ Text.gib b ^ " GiB")
+    | _ -> None
+  in
+  let load l = Munin_float_text.Float_text.g ~precision:2 l in
+  let somes = List.filter_map Fun.id in
   let cpu =
-    join
+    somes
       [
-        Option.map (fun p -> "CPU " ^ p ^ " busy") (pct "sys/cpu_busy_pct");
-        Option.map
-          (fun l -> "load " ^ load l ^ "/core")
-          (reading v "sys/load_per_core");
-        Option.map
-          (fun m -> "MEM " ^ m)
-          (gibs v "sys/mem_used_bytes" "sys/mem_total_bytes");
-        Option.map
-          (fun s -> "swap " ^ Text.gib s ^ " GiB")
-          (reading v "sys/swap_used_bytes");
+        opt (fun p -> Text.percent p ^ " busy") "sys/cpu_busy_pct";
+        opt (fun l -> "load " ^ load l ^ " per core") "sys/load_per_core";
+        opt (fun c -> "process " ^ load c ^ " cores") "sys/proc_cpu_cores";
+      ]
+  in
+  let mem =
+    somes
+      [
+        gibs "sys/mem_used_bytes" "sys/mem_total_bytes";
+        opt (fun s -> "swap " ^ Text.gib s ^ " GiB") "sys/swap_used_bytes";
+        opt (fun s -> "process " ^ Text.gib s ^ " GiB") "sys/proc_rss_bytes";
+      ]
+  in
+  let disk =
+    somes
+      [
+        opt
+          (fun x -> "read " ^ Text.mbs x ^ " MB/s")
+          "sys/disk_read_bytes_per_s";
+        opt
+          (fun x -> "write " ^ Text.mbs x ^ " MB/s")
+          "sys/disk_write_bytes_per_s";
+        opt (fun p -> Text.percent p ^ " busy") "sys/disk_busy_pct";
       ]
   in
   let device d =
     let k f = "dev/" ^ d ^ "/" ^ f in
-    join
-      [
-        Option.map (fun p -> d ^ " " ^ p ^ " busy") (pct (k "busy_pct"));
-        Option.map
-          (fun m -> "used " ^ m)
-          (gibs v (k "used_bytes") (k "memory_bytes"));
-        Option.map
-          (fun a -> "alloc " ^ a ^ " budget")
-          (gibs v (k "allocated_bytes") (k "budget_bytes"));
-        (if wide then
-           Option.map
-             (fun t -> Printf.sprintf "%.0f °C" t)
-             (reading v (k "temperature_c"))
-         else None);
-        (if wide then
-           Option.map
-             (fun t -> Printf.sprintf "%.0f W" t)
-             (reading v (k "power_w"))
-         else None);
-      ]
-  in
-  List.map (Text.cut width)
-    (List.filter (( <> ) "") (cpu :: List.map device (devices v)))
-
-let use_rows v ~width =
-  let tw = use_width in
-  let trend ?domain k =
-    Option.value ~default:""
-      (Data.trend v.data
-         { run = Run.id v.focus; key = k; axis = Time; width = tw; domain })
-  in
-  let row label u s t =
-    let left = Text.pad 8 label ^ Text.pad 48 u ^ s in
-    Text.pad (width - tw - 2) (Text.cut (width - tw - 2) left) ^ "  " ^ t
-  in
-  let bar p = Text.bar 16 (p /. 100.) in
-  let opt f = function Some x -> f x | None -> "" in
-  let spaced l = String.concat "   " (List.filter (( <> ) "") l) in
-  let get = reading v in
-  let interval =
-    opt
-      (fun s -> Printf.sprintf "readings every %ss" (Text.value s))
-      (get "sys/interval_s")
-  in
-  let host =
-    Option.value (Run.provenance v.focus).hostname ~default:"this machine"
-  in
-  let mem =
-    match (get "sys/mem_used_bytes", get "sys/mem_total_bytes") with
-    | Some u, Some t -> Some (u, t)
-    | _ -> None
-  in
-  [
-    Text.pad
-      (width - tw - 2)
-      (Printf.sprintf "SYSTEM  %s · %s · errors not logged" host interval)
-    ^ "  over the run, "
-    ^ Text.duration (active v);
-    row "CPU"
-      (opt
-         (fun c -> Printf.sprintf "busy %s %4s" (bar c) (Text.percent c))
-         (get "sys/cpu_busy_pct"))
-      (spaced
-         [
-           opt
-             (fun l -> "load " ^ load l ^ " per core")
-             (get "sys/load_per_core");
-           opt
-             (fun c -> "process " ^ load c ^ " cores")
-             (get "sys/proc_cpu_cores");
-         ])
-      (trend ~domain:(0., 100.) "sys/cpu_busy_pct");
-    row "MEM"
-      (opt
-         (fun (u, t) ->
-           Printf.sprintf "used %s %4s  %s of %s GiB"
-             (bar (100. *. u /. t))
-             (Text.percent (100. *. u /. t))
-             (Text.gib u) (Text.gib t))
-         mem)
-      (spaced
-         [
-           opt
-             (fun s -> "swap " ^ Text.gib s ^ " GiB")
-             (get "sys/swap_used_bytes");
-           opt
-             (fun s -> "process " ^ Text.gib s ^ " GiB")
-             (get "sys/proc_rss_bytes");
-         ])
-      (trend "sys/mem_used_bytes");
-  ]
-  @ List.concat_map
-      (fun d ->
-        let k f = "dev/" ^ d ^ "/" ^ f in
-        let used =
-          match (get (k "used_bytes"), get (k "memory_bytes")) with
-          | Some u, Some m -> Some (u, m)
-          | _ -> None
-        in
+    ( somes
         [
-          row d
-            (opt
-               (fun b -> Printf.sprintf "busy %s %4s" (bar b) (Text.percent b))
-               (get (k "busy_pct")))
-            (spaced
-               [
-                 opt
-                   (fun (u, m) ->
-                     Printf.sprintf "used %s of %s GiB %s" (Text.gib u)
-                       (Text.gib m)
-                       (Text.percent (100. *. u /. m)))
-                   used;
-                 opt
-                   (fun t -> Printf.sprintf "%.0f °C" t)
-                   (get (k "temperature_c"));
-                 opt (fun w -> Printf.sprintf "%.0f W" w) (get (k "power_w"));
-               ])
-            (trend ~domain:(0., 100.) (k "busy_pct"));
-          row ""
-            (match (get (k "allocated_bytes"), get (k "budget_bytes")) with
-            | Some a, Some b ->
-                Printf.sprintf "     alloc %s of %s GiB budget" (Text.gib a)
-                  (Text.gib b)
-            | Some a, None -> Printf.sprintf "     alloc %s GiB" (Text.gib a)
-            | _ -> "")
-            ""
-            (trend (k "used_bytes"));
-        ])
-      (devices v)
-  @ [
-      row "DISK"
-        (opt
-           (fun b -> Printf.sprintf "busy %s %4s" (bar b) (Text.percent b))
-           (get "sys/disk_busy_pct"))
-        (spaced
-           [
-             opt
-               (fun r -> "read " ^ Text.mbs r ^ " MB/s")
-               (get "sys/disk_read_bytes_per_s");
-             opt
-               (fun w -> "write " ^ Text.mbs w ^ " MB/s")
-               (get "sys/disk_write_bytes_per_s");
-           ])
-        (trend ~domain:(0., 100.) "sys/disk_busy_pct");
-    ]
-
-let legend v ~key p =
-  let params r = Run.params r in
-  let differing mr =
-    List.filter_map
-      (fun (k, x) ->
-        if List.assoc_opt k (params v.focus) = Some x then None
-        else Some (k ^ " " ^ Runs_screen.value_text x))
-      (params mr)
+          opt (fun p -> Text.percent p ^ " busy") (k "busy_pct");
+          opt (fun t -> Printf.sprintf "%.0f °C" t) (k "temperature_c");
+          opt (fun t -> Printf.sprintf "%.0f W" t) (k "power_w");
+        ],
+      somes
+        [
+          Option.map
+            (fun s -> "used " ^ s)
+            (gibs (k "used_bytes") (k "memory_bytes"));
+          Option.map
+            (fun s -> "allocated " ^ s ^ " budget")
+            (gibs (k "allocated_bytes") (k "budget_bytes"));
+        ] )
   in
-  ( String.concat "    "
-      (Printf.sprintf "━ %s (focus)" (name v.focus)
-      :: List.map
-           (fun (l, mr) ->
-             String.concat " "
-               (Printf.sprintf "%c %s" l (name mr) :: differing mr))
-           v.marked),
-    legend_settings v ~key p )
+  (cpu, mem, disk, List.map (fun d -> (d, device d)) (devices v))
 
-let hint ~wide =
-  if wide then
-    "↑↓←→ metric  enter zoom  [ ] run  space mark  s smooth  x axis  L log  + \
-     - window  < > pan  i info  y copy id  esc runs  ? help  q quit"
-  else
-    "↑↓←→ metric  enter zoom  [ ] run  space mark  s smooth  esc runs  ? help"
+(* When the readings are not of now: the time of the last one, for a run that is
+   not live. *)
+let read_at v =
+  match word v v.focus with
+  | "live" | "running" | "writing" | "starting" -> None
+  | _ ->
+      Option.map
+        (fun (s : History.key_stats) -> s.stats.last.time)
+        (key_stats v "sys/cpu_busy_pct")
+
+let paint_use v g l ~width =
+  let mx = margin ~width in
+  let w = width - (2 * mx) in
+  let cpu, mem, disk, devs = use_parts v in
+  let text l = String.concat " · " l in
+  let past = read_at v in
+  if l.sys_rows = 1 then begin
+    let first l = List.filteri (fun i _ -> i = 0) l in
+    let head =
+      match past with
+      | Some t ->
+          [
+            (Paint.dim, "read ");
+            (Paint.plain, Text.duration (v.now -. t) ^ " ago");
+            (Paint.dim, ": ");
+          ]
+      | None -> []
+    in
+    let parts =
+      [
+        [ (Paint.dim, "CPU "); (Paint.plain, text (first cpu)) ];
+        [ (Paint.dim, "MEM "); (Paint.plain, text (first mem)) ];
+      ]
+      @ List.concat_map
+          (fun (d, (u, mm)) ->
+            [
+              [ (Paint.dim, d ^ " "); (Paint.plain, text (first u)) ];
+              [ (Paint.plain, text (first mm)) ];
+            ])
+          devs
+    in
+    Paint.spans g ~x:mx ~y:l.sys_y ~w (Paint.fit ~w head parts)
+  end
+  else begin
+    let host =
+      Option.value (Run.provenance v.focus).hostname ~default:"this machine"
+    in
+    let tw = trend_w ~width in
+    let head =
+      [ (Paint.dim, "machine "); (Paint.plain, host); Paint.sep ]
+      @ (match past with
+        | Some t ->
+            [
+              ( Paint.plain,
+                Printf.sprintf "last read %s, %s" (Text.clock ~now:v.now t)
+                  (ago v t) );
+            ]
+        | None -> (
+            match reading v "sys/interval_s" with
+            | Some s ->
+                [
+                  ( Paint.dim,
+                    Printf.sprintf "read every %ss"
+                      (Munin_float_text.Float_text.g ~precision:3 s) );
+                ]
+            | None -> []))
+      @ [ Paint.sep; (Paint.dim, "errors not logged") ]
+    in
+    Paint.spans g ~x:mx ~y:l.sys_y ~w head;
+    if tw > 0 then
+      Paint.right g ~x:mx ~y:l.sys_y ~w [ (Paint.dim, "over the run, by time") ];
+    let label = 10 in
+    let row y name parts trend =
+      Paint.text ~style:Paint.dim g ~x:mx ~y ~w:label name;
+      Paint.spans g ~x:(mx + label) ~y
+        ~w:(w - label - tw - 2)
+        (Paint.join (List.map (fun s -> [ (Paint.plain, s) ]) parts));
+      match trend with
+      | Some (k, domain) when tw > 0 -> (
+          match
+            Data.trend v.data
+              {
+                Data.run = Run.id v.focus;
+                key = k;
+                axis = Time;
+                width = tw;
+                domain;
+              }
+          with
+          | Some t -> Paint.text ~style:Paint.dim g ~x:(mx + w - tw) ~y ~w:tw t
+          | None -> ())
+      | _ -> ()
+    in
+    let y = l.sys_y + 1 in
+    row y "CPU" cpu (Some ("sys/cpu_busy_pct", Some (0., 100.)));
+    row (y + 1) "memory" mem (Some ("sys/mem_used_bytes", None));
+    List.iteri
+      (fun i (d, (u, mm)) ->
+        let y = y + 2 + (2 * i) in
+        row y d u (Some ("dev/" ^ d ^ "/busy_pct", Some (0., 100.)));
+        row (y + 1) "" mm (Some ("dev/" ^ d ^ "/used_bytes", None)))
+      devs;
+    row (y + 2 + (2 * List.length devs)) "disk" disk None
+  end
+
+(* Strips *)
+
+let paint_strip v g l key ~width ~y ~cursor ~first =
+  let mx = margin ~width in
+  let sel = cursor = key in
+  let spec = strip_spec ~width l key in
+  (* The cursor's strip in the foreground, the others dim. *)
+  (match Data.chart v.data (chart_request v ~marks:false spec) with
+  | Some c ->
+      ignore
+        (Chart.draw ~inline:true ~faint:(not sel) ~light:v.light c g
+           ~x:(chart_x ~width l) ~y)
+  | None -> ());
+  let p, rest = Paint.key key in
+  Paint.spans g ~x:mx ~y ~w:(l.name_w - 1)
+    [
+      (Paint.plain, if sel then "› " else "  ");
+      (Paint.dim, if first then p else String.make (Text.width p) ' ');
+      ( (if sel then Paint.bold else Paint.plain),
+        Text.cut (max 1 (l.name_w - 3 - Text.width p)) rest );
+    ];
+  let value =
+    match key_stats v key with
+    | Some s ->
+        let x = s.stats.last.value in
+        [
+          ( (if not (Float.is_finite x) then Paint.bad
+             else if sel then Paint.bold
+             else Paint.plain),
+            Text.value x );
+        ]
+    | None -> [ (Paint.dim, "—") ]
+  in
+  Paint.right g ~x:(mx + width - (2 * mx) - l.value_w) ~y ~w:l.value_w value
+
+(* Under the chart, each marked run against the focus: what the overlay hides
+   where the two lines share cells. *)
+let paint_versus v g l c (placed : Chart.placed) key ~width =
+  let mx = margin ~width in
+  let w = width - (2 * mx) in
+  let goal = Option.bind (key_stats v key) (fun s -> s.goal) in
+  if l.caption then begin
+    let y = l.versus_y - 1 in
+    Paint.spans g ~x:mx ~y ~w
+      [ (Paint.dim, "focus minus each marked run, at the same step") ];
+    match latest_step v with
+    | Some s ->
+        Paint.right g ~x:mx ~y ~w
+          [ (Paint.dim, "at step "); (Paint.plain, Text.count s) ]
+    | None -> ()
+  end;
+  List.iteri
+    (fun i (m, mr) ->
+      let y = l.versus_y + (2 * i) in
+      Paint.spans g ~x:mx ~y ~w:(l.name_w - 1)
+        [
+          (Paint.plain, "  ");
+          (Paint.mark m, String.make 1 m ^ " ");
+          (Paint.dim, name mr);
+        ];
+      match Chart.draw_versus ~light:v.light c m g ~under:placed ~y ~rows:2 with
+      | None -> ()
+      | Some d ->
+          let worse =
+            match goal with
+            | Some `Minimize -> d.last > 0.
+            | Some `Maximize -> d.last < 0.
+            | None -> false
+          in
+          let verdict =
+            match goal with
+            | None -> ""
+            | Some _ ->
+                if d.last = 0. then "level"
+                else if worse then "worse"
+                else "better"
+          in
+          (* The row's meaning where no caption states it, and its scale: the
+             difference its edges stand for. *)
+          let what = Printf.sprintf "focus − %c" m
+          and scale = "±" ^ Text.value d.scale in
+          let room = l.name_w - 5 in
+          let label =
+            if l.caption then scale
+            else if Text.width what + 2 + Text.width scale <= room then
+              what ^ "  " ^ scale
+            else what
+          in
+          Paint.text ~style:Paint.dim g ~x:(mx + 4) ~y:(y + 1) ~w:(l.name_w - 5)
+            label;
+          (* A marked run that stops before the focus's latest step says where,
+             after the end of its row, so its value reads as of that step. *)
+          let early =
+            match List.assoc_opt key (stats_of v mr) with
+            | Some { History.stats = { non_finite = Some (_, f); _ }; _ } ->
+                Some
+                  (Printf.sprintf "%c %s from step %s" m
+                     (Text.non_finite f.value) (Text.count f.step))
+            | Some s when Some s.stats.last.step < latest_step v ->
+                Some
+                  (Printf.sprintf "%c ends at step %s" m
+                     (Text.count s.stats.last.step))
+            | _ -> None
+          in
+          (match early with
+          | Some note ->
+              let ex =
+                placed.px + 2
+                + Float.to_int
+                    ((d.at -. Chart.lo c)
+                    /. (Chart.hi c -. Chart.lo c)
+                    *. Float.of_int placed.pw)
+              in
+              let room = placed.px + placed.pw - ex in
+              let ny = if d.zero_row = y then y + 1 else y in
+              if room >= Text.width note then
+                Paint.text ~style:Paint.dim g ~x:ex ~y:ny ~w:room note
+          | None -> ());
+          Paint.right g
+            ~x:(mx + w - l.value_w)
+            ~y ~w:l.value_w
+            [
+              ( (if early = None then Paint.plain else Paint.dim),
+                Text.signed d.last );
+            ];
+          Paint.right g
+            ~x:(mx + w - l.value_w)
+            ~y:(y + 1) ~w:l.value_w
+            [ ((if worse then Paint.bad else Paint.dim), verdict) ])
+    v.marked
+
+let hints =
+  [
+    ("↑↓", "metric");
+    ("enter", "zoom");
+    ("space", "mark");
+    ("[ ]", "run");
+    ("i", "details");
+    ("s", "smooth");
+    ("esc", "runs");
+  ]
 
 let paint v g ~width ~height =
-  let wide = width >= 120 in
-  Paint.text ~style:Paint.bold g ~x:0 ~y:0 ~w:width (state_line v ~wide);
-  Option.iter
-    (fun a -> Paint.text ~style:Paint.alert g ~x:0 ~y:1 ~w:width a)
-    (attention v);
-  Paint.text g ~x:0 ~y:(height - 1) ~w:width (hint ~wide);
-  let keys = metrics v in
+  let mx = margin ~width in
+  let w = width - (2 * mx) in
+  Paint.spans g ~x:mx ~y:0 ~w (sentence v ~width);
+  (match attention v with
+  | [] -> ()
+  | notes ->
+      Paint.spans g ~x:mx ~y:1 ~w
+        ((Paint.alert, "! ")
+        :: Paint.join (List.map (fun n -> [ (Paint.bad, n) ]) notes)));
+  Paint.hints g ~x:mx ~y:(height - 1) ~w hints;
+  let l = layout v ~width ~height in
   match (history v, cursor v) with
-  | None, _ -> Paint.text g ~x:0 ~y:3 ~w:width "reading the run"
-  | Some _, None -> Paint.text g ~x:0 ~y:3 ~w:width "no metric sample yet"
-  | Some _, Some cursor -> (
-      let charts = charts v ~width ~height in
-      match layout v ~width ~height with
-      | Grid { cols; cw; _ } ->
-          let first =
-            Option.bind (List.nth_opt charts 0) (fun (_, s) ->
-                Data.chart v.data (chart_request v s))
-          in
-          let names, settings_text = legend v ~key:cursor first in
-          Paint.text g ~x:0 ~y:2 ~w:width
-            (Text.pad (width - Text.width settings_text) names ^ settings_text);
-          List.iter
-            (fun (i, (spec : Chart.spec)) ->
-              let x = i mod cols * (cw + 1)
-              and y = 4 + (i / cols * chart_rows) in
-              let notes =
-                match draw_chart v spec g ~x ~y:(y + 1) with
-                | Some (p, d) -> drawn_notes v p d
-                | None -> "  reading"
-              in
-              Paint.text g ~x ~y ~w:cw (chart_title v spec.key ~cursor ^ notes))
-            charts;
-          let rows = (List.length keys + cols - 1) / cols in
-          let y = 4 + (rows * chart_rows) + 3 in
-          List.iteri
-            (fun i l -> Paint.text g ~x:0 ~y:(y + i) ~w:width l)
-            (use_rows v ~width)
-      | One { chart_h; mrows; half; _ } ->
-          let notes =
-            match charts with
-            | (_, spec) :: _ -> (
-                match draw_chart v spec g ~x:0 ~y:3 with
-                | Some (p, d) -> drawn_notes v p d
-                | None -> "  reading")
-            | [] -> ""
-          in
-          let title = chart_title v cursor ~cursor:"" ^ notes in
-          let title = String.sub title 1 (String.length title - 1) in
-          let labels =
-            String.concat "  "
-              (List.map
-                 (fun (l, mr) -> Printf.sprintf "%c %s" l (name mr))
-                 v.marked)
-          in
-          (* The axis is named when the title leaves room for it. *)
-          let axis = "  x " ^ axis_name v cursor in
-          let right =
-            if
-              Text.width title + Text.width labels + Text.width axis + 2
-              <= width
-            then labels ^ axis
-            else labels
-          in
-          let room = width - Text.width right - 2 in
-          Paint.text g ~x:0 ~y:2 ~w:width (Text.fit room title ^ "  " ^ right);
-          let y0 = 3 + max 0 chart_h in
-          for r = 0 to mrows - 1 do
-            let a = List.nth keys r in
-            Paint.text g ~x:0 ~y:(y0 + r) ~w:half
-              (metric_row v a ~cursor ~width:half);
-            Option.iter
-              (fun b ->
-                Paint.text g ~x:(half + 1) ~y:(y0 + r) ~w:half
-                  (metric_row v b ~cursor ~width:half))
-              (List.nth_opt keys (r + mrows))
-          done;
-          List.iteri
-            (fun i l -> Paint.text g ~x:0 ~y:(y0 + mrows + i) ~w:width l)
-            (system_lines v ~wide ~width))
+  | None, _ ->
+      Paint.text ~style:Paint.dim g ~x:mx ~y:l.title_y ~w "reading the run…"
+  | Some _, None ->
+      Paint.text ~style:Paint.dim g ~x:mx ~y:l.title_y ~w
+        "no metric sample yet: the chart appears with the first"
+  | Some _, Some key ->
+      let p =
+        Data.chart v.data (chart_request v ~marks:true (main_spec ~width l key))
+      in
+      let tx = if width >= 100 then chart_x ~width l + Chart.left else mx in
+      Paint.spans g ~x:tx ~y:l.title_y ~w:(mx + w - tx) (title v key p);
+      let s = settings v key p in
+      if s <> "" then Paint.right g ~x:mx ~y:l.title_y ~w [ (Paint.accent, s) ];
+      if l.legend then
+        Paint.spans g ~x:tx ~y:(l.title_y + 1) ~w:(mx + w - tx) (legend v);
+      (match p with
+      | Some p -> (
+          match
+            Chart.draw ~light:v.light p g ~x:(chart_x ~width l) ~y:l.chart_y
+          with
+          | Some placed -> paint_versus v g l p placed key ~width
+          | None -> ())
+      | None ->
+          Paint.text ~style:Paint.dim g ~x:(mx + l.name_w) ~y:(l.chart_y + 2) ~w
+            "reading…");
+      ignore
+        (List.fold_left
+           (fun prev (dy, k) ->
+             let p, _ = Paint.key k in
+             paint_strip v g l k ~width ~y:(l.strips_y + dy) ~cursor:key
+               ~first:(p <> prev);
+             p)
+           "" l.strip_rows);
+      (match l.hidden with
+      | Some (a, b) ->
+          Paint.right g
+            ~x:(mx + w - l.value_w)
+            ~y:(l.strips_y - 1) ~w:l.value_w
+            [
+              ( Paint.dim,
+                Printf.sprintf "%d–%d of %d" (a + 1) (b + 1)
+                  (List.length (metrics v)) );
+            ]
+      | None -> ());
+      if l.sys_rows > 0 then paint_use v g l ~width
 
 (* Zoom *)
 
 let paint_zoom v g ~width ~height =
-  let wide = width >= 120 in
-  Paint.text ~style:Paint.bold g ~x:0 ~y:0 ~w:width (state_line v ~wide);
-  Paint.text g ~x:0 ~y:(height - 1) ~w:width
-    (if wide then
-       "↑↓ metric  ←→ cursor  g G first last  s smooth  x axis  L log  + - \
-        window  < > pan  0 reset  [ ] run  space mark  i info  esc back  ? \
-        help  q quit"
-     else
-       "↑↓ metric  ←→ cursor  s smooth  x axis  L log  + - window  esc back  ? \
-        help");
+  let mx = margin ~width in
+  let w = width - (2 * mx) in
+  Paint.spans g ~x:mx ~y:0 ~w
+    (Paint.word (word v v.focus)
+    @ [ (Paint.plain, "  "); (Paint.bold, name v.focus) ]);
+  Paint.right g ~x:mx ~y:0 ~w
+    [ (Paint.plain, "esc"); (Paint.dim, " back to the run") ];
+  Paint.hints g ~x:mx ~y:(height - 1) ~w
+    [
+      ("esc", "run");
+      ("←→", "cursor");
+      ("↑↓", "metric");
+      ("+ -", "window");
+      ("< >", "pan");
+      ("0", "reset");
+      ("L", "log y");
+      ("x", "axis");
+    ];
   match cursor v with
-  | None -> Paint.text g ~x:0 ~y:2 ~w:width "no metric to zoom"
+  | None -> Paint.text ~style:Paint.dim g ~x:mx ~y:2 ~w "no metric to zoom"
   | Some key ->
+      let spec = zoom_spec v ~width ~height key in
+      let p = Data.chart v.data (chart_request v ~marks:true spec) in
       let cur =
         match Data.cursor v.data with
         | Some c when c.at.key = key && c.at.focus = Run.id v.focus -> Some c
@@ -824,106 +1073,106 @@ let paint_zoom v g ~width ~height =
             Option.join (List.assoc_opt id c.values))
       in
       let at_text =
-        match at with Some a -> Text.count (Float.to_int a) | None -> "—"
+        match at with
+        | Some x -> (
+            match v.chart.axis with
+            | Time -> "at " ^ Text.duration x
+            | Step -> "at step " ^ Text.count (Float.to_int x)
+            | Step_metric -> "at " ^ axis_name v key ^ " " ^ Text.value x)
+        | None -> "at the cursor"
       in
-      let goal = Option.bind (key_stats v key) (fun s -> s.goal) in
-      let all = ('-', v.focus) :: v.marked in
-      let mark l = if l = '-' then "━" else String.make 1 l in
-      let best r =
-        match Option.bind (Data.stats v.data r) (List.assoc_opt key) with
-        | Some { History.goal = Some g; stats; _ } -> Metric.best g stats
-        | _ -> None
+      let t = title v key p in
+      let s = settings v key p in
+      let note =
+        [ (Paint.dim, "cursor "); (Paint.plain, at_text) ]
+        @ if s = "" then [] else [ Paint.sep; (Paint.accent, s) ]
       in
-      let table =
-        if wide then
-          Printf.sprintf "  %s %-14s %10s  %10s  %8s  %16s  %8s  %10s  %7s"
-            (Text.pad 3 "") "RUN" "LATEST" "BEST" "AT"
-            ("AT " ^ String.uppercase_ascii (axis_name v key) ^ " " ^ at_text)
-            "SAMPLES" "NONFINITE" "ORPHANS"
-          :: List.map
-               (fun (l, r) ->
-                 let st =
-                   Option.bind (Data.stats v.data r) (List.assoc_opt key)
-                 in
-                 let count, nonfinite =
-                   match st with
-                   | Some s ->
-                       ( s.stats.count,
-                         match s.stats.non_finite with
-                         | Some (n, _) -> n
-                         | None -> 0 )
-                   | None -> (0, 0)
-                 in
-                 let orphans =
-                   match Data.entry v.data (Run.id r) with
-                   | Some e -> (
-                       match History.orphans e.history key with
-                       | o -> Metric.length o
-                       | exception Invalid_argument _ -> 0)
-                   | None -> 0
-                 in
-                 Printf.sprintf "  %s %s %10s  %10s  %8s  %16s  %8d  %10d  %7d"
-                   (Text.pad 3 (mark l))
-                   (Text.fit 14 (name r))
-                   (match st with
-                   | Some s -> Text.value s.stats.last.value
-                   | None -> "—")
-                   (match best r with
-                   | Some b -> Text.value b.value
-                   | None -> "—")
-                   (match best r with
-                   | Some b -> Text.short b.step
-                   | None -> "—")
-                   (Option.fold ~none:"—" ~some:Text.value (value (Run.id r)))
-                   count nonfinite orphans)
-               all
-        else
-          [
-            Printf.sprintf "at %s %s:  %s" (axis_name v key) at_text
-              (String.concat "  "
-                 (List.map
-                    (fun (l, r) ->
-                      mark l ^ " "
-                      ^ Option.fold ~none:"—" ~some:Text.value
-                          (value (Run.id r)))
-                    all));
-            "best:  "
-            ^ String.concat "  "
-                (List.map
-                   (fun (l, r) ->
-                     mark l ^ " "
-                     ^
-                     match best r with
-                     | Some b -> Text.value b.value ^ " @" ^ Text.short b.step
-                     | None -> "—")
-                   all);
-          ]
+      Paint.spans g ~x:(mx + Chart.left) ~y:2 ~w:(w - Chart.left) t;
+      if Chart.left + Paint.width t + 3 + Paint.width note <= w then
+        Paint.right g ~x:mx ~y:2 ~w note
+      else if s <> "" then Paint.right g ~x:mx ~y:1 ~w [ (Paint.accent, s) ];
+      (match p with
+      | Some p -> ignore (Chart.draw ?cursor:at ~light:v.light p g ~x:mx ~y:3)
+      | None -> ());
+      let ty = 3 + spec.height + 1 in
+      let cols =
+        [
+          ("run", 18);
+          (at_text, 20);
+          ("latest", 12);
+          ("best", 22);
+          ("samples", 10);
+          ("not finite", 12);
+          ("orphans", 9);
+        ]
       in
-      let charts, _, _ = requests v ~width ~height ~zoom:true in
-      let p = match charts with c :: _ -> Data.chart v.data c | [] -> None in
-      let notes =
-        match (charts, p) with
-        | c :: _, Some p when c.spec.height >= 4 ->
-            drawn_notes v p (Chart.draw ?cursor:at ~light:v.light p g ~x:0 ~y:3)
-        | _ -> ""
+      let cols =
+        if width >= 100 then cols
+        else List.filteri (fun i _ -> i <= 1 || i = 3) cols
       in
-      let head =
-        let goal =
-          match goal with
-          | Some `Minimize -> "↓ minimize"
-          | Some `Maximize -> "↑ maximize"
-          | None -> "no goal"
-        in
-        if wide then
-          Printf.sprintf "%s  %s · %s · cursor at %s %s" key goal
-            (legend_settings v ~key p) (axis_name v key) at_text
-        else
-          Printf.sprintf "%s %s  %s" key
-            (Fact.arrow (Option.bind (key_stats v key) (fun s -> s.goal)))
-            (legend_settings v ~key p)
-      in
-      Paint.text g ~x:0 ~y:1 ~w:width (head ^ notes);
-      let chart_h = match charts with c :: _ -> c.spec.height | [] -> 0 in
+      ignore
+        (List.fold_left
+           (fun x (h, cw) ->
+             Paint.text ~style:Paint.dim g ~x ~y:ty ~w:(cw - 1) h;
+             x + cw)
+           (mx + Chart.left) cols);
       List.iteri
-        (fun i l -> Paint.text g ~x:0 ~y:(3 + chart_h + 1 + i) ~w:width l)
-        table
+        (fun i (c, r) ->
+          let y = ty + 1 + i in
+          let st = List.assoc_opt key (stats_of v r) in
+          let cell = function
+            | "run" -> (
+                match c with
+                | None -> [ (Paint.plain, "━ "); (Paint.bold, name r) ]
+                | Some c ->
+                    [
+                      (Paint.mark c, String.make 1 c ^ " ");
+                      (Paint.plain, name r);
+                    ])
+            | "latest" -> (
+                match st with
+                | Some s -> [ (Paint.plain, Text.value s.stats.last.value) ]
+                | None -> [ (Paint.dim, "—") ])
+            | "best" -> (
+                match
+                  Option.bind st (fun s ->
+                      Option.bind s.History.goal (fun g ->
+                          Metric.best g s.stats))
+                with
+                | Some b ->
+                    [
+                      (Paint.plain, Text.value b.value);
+                      (Paint.dim, " at " ^ Text.count b.step);
+                    ]
+                | None -> [ (Paint.dim, "—") ])
+            | "samples" -> (
+                match st with
+                | Some s -> [ (Paint.plain, Text.count s.stats.count) ]
+                | None -> [ (Paint.dim, "—") ])
+            | "not finite" -> (
+                match Option.bind st (fun s -> s.History.stats.non_finite) with
+                | Some (n, _) -> [ (Paint.bad, Text.count n) ]
+                | None -> [ (Paint.dim, "0") ])
+            | "orphans" ->
+                let n =
+                  match Data.entry v.data (Run.id r) with
+                  | Some e -> (
+                      match History.orphans e.history key with
+                      | o -> Metric.length o
+                      | exception Invalid_argument _ -> 0)
+                  | None -> 0
+                in
+                [ ((if n > 0 then Paint.plain else Paint.dim), Text.count n) ]
+            | _ ->
+                [
+                  ( Paint.bold,
+                    Option.fold ~none:"—" ~some:Text.value (value (Run.id r)) );
+                ]
+          in
+          ignore
+            (List.fold_left
+               (fun x (h, cw) ->
+                 Paint.spans g ~x ~y ~w:(cw - 1) (cell h);
+                 x + cw)
+               (mx + Chart.left) cols))
+        ((None, v.focus) :: List.map (fun (c, r) -> (Some c, r)) v.marked)

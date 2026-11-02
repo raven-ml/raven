@@ -1,49 +1,49 @@
-01 |munin  ~/store · 8 runs: 1 live, 1 failed, 1 crashed, 1 not finite · on gpu-01
+01 |  8 runs · ● 1 live · ✗ 1 failed · ✗ 1 crashed · × 1 not finite · on gpu-01                                                                            ~/store
 02 |
-03 |  STATE     RUN         EXPERIMENT         STARTED    RAN  LAST                STEP  val/loss↓  NONFINITE      lr  warmup  batch  epochs    wd    opt  hidden
-04 |▸ live      tidy-otter  cifar-resnet         10:41  1h36m    6s  12,400/20,000  62%    0.4077              0.0003     500    256      10  0.05  adamw       —
-05 |  finished  amber-fox   cifar-resnet         07:02  2h32m    2h              20,000    0.3841*              0.001     500    256      10  0.05  adamw       —
-06 |  finished  brisk-wren  cifar-resnet         06:10  2h31m    3h              20,000    0.4071              0.0001    2000    256      10  0.05  adamw       —
-07 |  finished  calm-lynx   cifar-resnet         04:55  2h33m    4h              20,000    0.3942               0.003    2000    256      10  0.05  adamw       —
-08 |  finished  dusty-mole  cifar-resnet         03:40  2h32m    6h              20,000    0.7665   NaN 4,500    0.01     500    256      10  0.05  adamw       —
-09 |  failed    eager-hawk  cifar-resnet         03:03  9m51s    9h   1,100/20,000   6%      1.67                0.03     500    256      10  0.05  adamw       —
-10 |  finished  mlp-wide    mnist-mlp     Oct 31 16:20  8m17s   19h               4,690   0.05831*                0.1       —     64       —     —    sgd    1024
-11 |  crashed   mlp-base    mnist-mlp     Oct 31 14:05  5m08s   22h    2,900/4,690  62%   0.06576                 0.1       —     64       —     —    sgd     256
-12 |
-13 |────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-14 |tidy-otter  live  cifar-resnet  20261101T104102Z-7f3a0c21                        val/loss over steps
-15 |started Nov 1 10:41:02 · ran 1h36m · step 12,400 of 20,000
-16 |                                                                                    2.0 ┤⠱⡀
-17 |params      lr 0.0003  warmup 500  batch 256  epochs 10  wd 0.05  opt adamw             │ ⠑⢄
-18 |command     ./train.exe --lr 0.0003 --warmup 500                                    1.5 ┤  ⠈⠢⣀
-19 |source      5eaf82b dirty · gpu-01 · pid 48211                                          │     ⠑⢄
-20 |tags        sweep                                                                   1.0 ┤       ⠉⠒⠤⡀
-21 |notes       cosine schedule, no label smoothing                                         │          ⠈⠑⠢⠤⢄⣀
-22 |                                                                                    0.5 ┤                ⠉⠉⠒⠒⠒⠤⠤⠤⠤⠤⢄⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀
-23 |metric               latest        best        at   samples  non-finite                 └┬────────────────┬────────────────┬────────────────┬───────────────┬
-24 |epoch                   6.2         —                 249                                0              5,000            10,000           15,000          20,000
-25 |train/acc            0.9582      0.9595     12.3k       249
-26 |train/data_ms         4.758         —                 249
-27 |train/grad_norm        1.02         —                 249
-28 |train/loss           0.2642      0.2623     12.3k       249
-29 |train/lr          9.908e-05         —                 249
-30 |train/samples_s        2196         —                 249
-31 |val/acc              0.9418      0.9418       12k        25
-32 |val/ece             0.02243     0.02218       10k        25
-33 |val/loss             0.4077      0.4077       12k        25
-34 |val/top5             0.9968      0.9968       12k        25
-35 |
-36 |
-37 |
-38 |
-39 |
-40 |
-41 |
-42 |
-43 |
-44 |
-45 |
-46 |
+03 |     state       run            started ▾    ran         step  val/loss ↓  not finite          lr  hidden  warmup  batch  epochs    opt    wd  commit
+04 |   cifar-resnet  6 runs · ● 1 live · ✗ 1 failed or crashed
+05 |     ● live      tidy-otter         10:41  1h36m  12,400  62%     0.4077                   0.0003       —     500    256      10  adamw  0.05  5eaf82b+
+06 |     ✓ finished  amber-fox          07:02  2h32m       20,000     0.3841*                   0.001       —     500    256      10  adamw  0.05  3c1d9e0
+07 |     ✓ finished  brisk-wren         06:10  2h31m       20,000     0.4071                   0.0001       —    2000    256      10  adamw  0.05  3c1d9e0
+08 |     ✓ finished  calm-lynx          04:55  2h33m       20,000     0.3942                    0.003       —    2000    256      10  adamw  0.05  3c1d9e0
+09 |     ✓ finished  dusty-mole         03:40  2h32m       20,000     0.7665   × NaN at 4,250    0.01       —     500    256      10  adamw  0.05  3c1d9e0
+10 |     ✗ failed    eager-hawk         03:03  9m51s        1,100      1.670                     0.03       —     500    256      10  adamw  0.05  3c1d9e0
+11 |   mnist-mlp  2 runs · ✗ 1 failed or crashed
+12 |     ✓ finished  mlp-wide    Oct 31 16:20  8m17s        4,690    0.05831*                     0.1    1024       —     64       —    sgd     —  3c1d9e0
+13 |     ✗ crashed   mlp-base    Oct 31 14:05  5m08s   2,900  62%    0.06576                      0.1     256       —     64       —    sgd     —  3c1d9e0
+14 |
+15 |  tidy-otter  ● live · lr 0.0003 · warmup 500 · batch 256 · epochs 10 · wd 0.05 · opt adamw
+16 |  val/loss ↓  0.4077 at 12,000 · best 0.4077 at 12,000
+17 |                                                                                                                metrics                     latest        best
+18 |       2.002 ┤⢇                                                                                                 epoch                        6.200
+19 |             │⢸                                                                                                 train/acc                   0.9582      0.9595
+20 |             │ ⡇                                                                                                      data_ms                4.758
+21 |         1.8 ┤ ⢱                                                                                                      grad_norm              1.020
+22 |             │ ⠘⡄                                                                                                     loss                  0.2642      0.2623
+23 |             │  ⢣                                                                                                     lr                 9.908e-05
+24 |         1.6 ┤  ⠈⡆                                                                                                    samples_s               2196
+25 |             │   ⠸⡀                                                                                             val/acc                     0.9418      0.9418
+26 |             │    ⢣                                                                                                 ece                    0.02243     0.02218
+27 |             │    ⠈⡆                                                                                                loss                    0.4077      0.4077
+28 |         1.4 ┤     ⢱                                                                                                top5                    0.9968      0.9968
+29 |             │      ⡇
+30 |             │      ⠘⡄
+31 |         1.2 ┤       ⠘⡄
+32 |             │        ⠘⡄
+33 |             │         ⠱⡀
+34 |           1 ┤          ⢣
+35 |             │           ⠣⡀
+36 |             │            ⠘⢄
+37 |             │              ⢣
+38 |         0.8 ┤               ⠣⡀
+39 |             │                ⠈⠑⢄
+40 |             │                   ⠑⢄⡀
+41 |         0.6 ┤                     ⠈⠑⢄⡀
+42 |             │                        ⠈⠒⠤⣀
+43 |             │                            ⠉⠉⠒⠤⢄⣀⣀
+44 |      0.4077 ┤                                   ⠉⠉⠒⠒⠒⠒⠢⠤⠤⠤⠤⠤⠤⢄⣀⣀⣀⣀⣀⡀•
+45 |             └┬─────────────────────┬──────────────────────┬─────────────────────┬─────────────────────┬
+46 |              0                   5,000                  10,000                15,000                20,000
 47 |
-48 |↑↓ run  ←→ metric  enter open  space mark  / filter  o O order  i info  y copy id  ? help  q quit
+48 |  ↑↓ run   enter open   space mark   / filter   ←→ metric   o order   i details   q quit   ? keys
 cursor hidden

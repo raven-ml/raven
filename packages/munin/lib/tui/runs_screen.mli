@@ -3,10 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Runs, the store's runs as rows (the Runs section of [Munin_tui]).
+(* Runs, the store's runs as rows under a header per experiment (the Runs
+   section of [Munin_tui]).
 
-   A [table] holds the rows, their cells and the columns that fit, built once
-   per change of what it shows; [paint] draws it in time linear in the rows on
+   A [table] holds the rows, their lines and the columns that fit, built once
+   per change of what it shows; [paint] draws it in time linear in the lines on
    screen. *)
 
 type order = Started | Value | State | Name
@@ -19,6 +20,7 @@ type view = {
   metric : string option; (* the focus metric *)
   order : order;
   reverse : bool;
+  light : bool;
 }
 
 type table
@@ -38,10 +40,8 @@ val default_metric : Data.t -> Munin.Run.t list -> string option
     have, the first by name among equals. *)
 
 val rows : view -> Munin.Run.t list
-(** [rows v] is the runs the filter keeps, in [v]'s order. *)
-
-val pane_chart : table -> height:int -> Chart.spec option
-(** [pane_chart t ~height] is the chart of the cursor's pane, when it shows. *)
+(** [rows v] is the runs the filter keeps, in [v]'s order, grouped by
+    experiment. *)
 
 val pane_request : table -> height:int -> Munin.Run.t -> Data.chart option
 (** [pane_request t ~height r] is the chart of [r]'s pane, when it shows, asked
@@ -53,8 +53,6 @@ val paint :
   height:int ->
   cursor:string option ->
   marks:(char * string) list ->
-  typing:bool ->
-  light:bool ->
   unit
 
 (* Shared with the other screens *)
@@ -63,6 +61,7 @@ val name : Munin.Run.t -> string
 (** [name r] is [r]'s name, else its id. *)
 
 val value_text : Munin.Value.t -> string
+(** [value_text v] is a param's value as the program gave it. *)
 
 val contains : sub:string -> string -> bool
 (** [contains ~sub s] is [true] iff [sub], in lowercase, is part of [s],

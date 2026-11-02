@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Run and Zoom, one run's monitor (the Run, Charts and States sections of
-   [Munin_tui]). The layout is a function of the terminal's size and the
-   metrics; [requests] names what a poll prepares for it, and [paint] and
-   [paint_zoom] draw from what was prepared, reading no series. *)
+   [Munin_tui]). The layout is a function of the terminal's size, the metrics
+   and the marked runs; [requests] names what a poll prepares for it, and
+   [paint] and [paint_zoom] draw from what was prepared, reading no series. *)
 
 type view = {
   data : Data.t;
@@ -34,15 +34,9 @@ val cursor : view -> string option
 
 val latest_step : view -> int option
 
-val chart_cols : width:int -> int
-(** [chart_cols ~width] is the charts on a line when every metric has one. *)
-
-val grid_fits : view -> width:int -> height:int -> bool
-(** [grid_fits v ~width ~height] is [true] iff every metric has a chart. *)
-
-val shown : view -> width:int -> height:int -> zoom:bool -> string list
-(** [shown v ~width ~height ~zoom] is the keys the screen charts, which the
-    marked runs keep. *)
+val shown : view -> string list
+(** [shown v] is the keys of the chart that draws the marked runs, which they
+    keep. *)
 
 val requests :
   view ->
@@ -51,7 +45,8 @@ val requests :
   zoom:bool ->
   Data.chart list * Data.trend list * Data.zoom option
 (** [requests v ~width ~height ~zoom] is what a poll prepares for Run, or for
-    Zoom when [zoom]. *)
+    Zoom when [zoom]: the chart, a chart per strip shown, and the machine's
+    readings over time. *)
 
 val paint : view -> Matrix_grid.t -> width:int -> height:int -> unit
 val paint_zoom : view -> Matrix_grid.t -> width:int -> height:int -> unit

@@ -1,10 +1,10 @@
-01 |live tidy-otter 62% · needs 40×10
+01 |
 02 |
-03 |
-04 |
-05 |
+03 |          ● live  tidy-otter
+04 |        12,400 of 20,000 · 62%
+05 |           train/loss 0.2642
 06 |
-07 |
+07 |         needs 40×10, has 39×9
 08 |
 09 |
 cursor hidden

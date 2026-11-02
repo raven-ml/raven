@@ -1,25 +1,25 @@
-01 |KEYS                                     each key means the same on every screen
-02 |↑↓ j k   move: run, metric, line        ←→ h l   sideways: metric, step cursor
-03 |g G      first, last                    enter    open: run, metric
-04 |esc      back; clear the filter         space    mark the run, at most 2
-05 |/        filter the list on screen      o O      order by next column, reverse
-06 |i        details of the run             y        copy the run's id
-07 |?        this help                      q ^C     quit
-08 |[ ]      previous, next run             < >      pan the x window
-09 |s        smoothing: off, τ = span/100, span/30, span/10
-10 |x        x axis: step, step metric, time
-11 |L        log y, where every value shown is above 0
-12 |+ - 0    narrow, widen, reset the x window at the latest step
-13 |
-14 |STATES   starting  no sample yet            writing   not probed, arriving
-15 |         running   no arrival seen yet      silent    not probed, none seen
-16 |         live      lock held, arriving      crashed   its writer left no end
-17 |         stalled   held, none for 3 gaps    finished  failed  killed  its end
-18 |
-19 |MARKS    ━ focus   a b marked runs   × ↑ ↓ NaN, +inf, -inf   * best of its
-20 |         experiment   ▸ cursor   ! needs attention
-21 |Not on Runs: [ ] s x L + - 0 < >
-22 |
+01 | 8 runs · ● 1 l  keys                                 esc close  on gpu-01
+02 |
+03 |    state        Everywhere                                                lr
+04 |  cifar-resnet   q ^C          quit
+05 |    ● live       ?             these keys                              0.0003
+06 |    ✓ finished   esc           back, close, clear                       0.001
+07 |    ✓ finished   i             every fact about the run                0.0001
+08 |    ✓ finished   y             copy the run's id                        0.003
+09 |    ✓ finished   space         mark the run: a, then b           ,250    0.01
+10 |    ✗ failed                                                             0.03
+11 |  mnist-mlp  2   Runs
+12 |    ✓ finished   ↑↓ j k        run                                        0.1
+13 |    ✗ crashed    g G           first, last run                            0.1
+14 |                 ←→ h l        the metric shown
+15 | tidy-otter  ●   enter         open the run                      3 at 12,350
+16 |                 /             filter: name, word, key=value
+17 |      2.289 ┤⠑⢤  o O           order, reverse
+18 |            │
+19 |            │    Words
+20 |     0.2623 ┤    ● live        samples arrive
+21 |            └┬─  ○ running     no sample seen yet                ────────┬
+22 |             0   ↓ more                                                20,000
 23 |
-24 |esc close  q quit
+24 | ↑↓ run   enter open   space mark   / filter   ←→ metric   o order   ? keys
 cursor hidden

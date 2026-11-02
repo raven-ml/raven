@@ -33,28 +33,21 @@ let elide w s =
 let non_finite x =
   if Float.is_nan x then "NaN" else if x > 0. then "inf" else "-inf"
 
-let digits p x =
-  if Float.is_finite x then Float_text.g ~precision:p x else non_finite x
+(* Four significant digits with trailing zeros kept, so that values in a column
+   line up digit for digit; scientific below 1e-4 and from 1e6, so that no value
+   that is not zero prints as [0]. *)
+let value x =
+  if not (Float.is_finite x) then non_finite x
+  else if x = 0. then "0"
+  else
+    let a = Float.abs x in
+    if a < 1e-4 || a >= 1e6 then Printf.sprintf "%.3e" x
+    else
+      let e = Float.to_int (Float.floor (Float.log10 a)) in
+      Printf.sprintf "%.*f" (max 0 (3 - e)) x
 
-let value x = digits 4 x
-
-(* Rounding is monotonic, so two values that print alike enclose only values
-   that print as they do: checking each sorted value against the next tells
-   every pair apart. *)
-let values xs =
-  let finite = List.sort_uniq Float.compare (List.filter Float.is_finite xs) in
-  let a = Array.of_list finite in
-  let distinct p =
-    let ok = ref true and i = ref 0 in
-    while !ok && !i + 1 < Array.length a do
-      if String.equal (digits p a.(!i)) (digits p a.(!i + 1)) then ok := false;
-      incr i
-    done;
-    !ok
-  in
-  let rec go p = if p >= 17 || distinct p then p else go (p + 1) in
-  let p = go 4 in
-  List.map (digits p) xs
+let signed x = if x > 0. then "+" ^ value x else value x
+let given x = if Float.is_finite x then Float_text.exact x else non_finite x
 
 let count n =
   let s = string_of_int (abs n) in
@@ -67,12 +60,6 @@ let count n =
       Buffer.add_char b c)
     s;
   Buffer.contents b
-
-let short n =
-  if abs n < 1000 then string_of_int n
-  else if abs n < 1_000_000 then
-    Float_text.g ~precision:3 (Float.of_int n /. 1e3) ^ "k"
-  else Float_text.g ~precision:3 (Float.of_int n /. 1e6) ^ "M"
 
 let duration s =
   let s = Float.to_int (Float.max 0. s) in
@@ -88,13 +75,6 @@ let duration s =
     let h = s / 3600 mod 24 in
     if h = 0 then Printf.sprintf "%dd" (s / 86400)
     else Printf.sprintf "%dd%dh" (s / 86400) h
-
-let age s =
-  let s = Float.to_int (Float.max 0. s) in
-  if s < 60 then Printf.sprintf "%ds" s
-  else if s < 3600 then Printf.sprintf "%dm" (s / 60)
-  else if s < 86400 then Printf.sprintf "%dh" (s / 3600)
-  else Printf.sprintf "%dd" (s / 86400)
 
 let months =
   [|
@@ -131,18 +111,3 @@ let percent x =
   if x >= 10. then Float_text.f 0 x ^ "%" else Float_text.f 1 x ^ "%"
 
 let mbs b = Float_text.g ~precision:2 (b /. 1e6)
-let eighths = [| ""; "▏"; "▎"; "▍"; "▌"; "▋"; "▊"; "▉" |]
-
-let bar w p =
-  let p = if Float.is_nan p then 0. else Float.max 0. (Float.min 1. p) in
-  let n = Float.to_int (Float.round (p *. Float.of_int (8 * w))) in
-  let full = n / 8 and part = n mod 8 in
-  let b = Buffer.create (w * 3) in
-  for _ = 1 to full do
-    Buffer.add_string b "█"
-  done;
-  if full < w then begin
-    Buffer.add_string b (if part = 0 then " " else eighths.(part));
-    Buffer.add_string b (String.make (w - full - 1) ' ')
-  end;
-  "▕" ^ Buffer.contents b ^ "▏"

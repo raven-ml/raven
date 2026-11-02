@@ -1,25 +1,25 @@
-01 |tidy-otter  live  cifar-resnet  20261101T104102Z-7f3a0c21
+01 |  ● live  tidy-otter  cifar-resnet                                   esc close
 02 |
-03 |RUN        started Nov 1 10:41:02, step 12,400 of 20,000
-04 |           tags sweep · parent — · no resume · 0 damaged lines
-05 |SOURCE     git 5eaf82b dirty · gpu-01, pid 48211
-06 |           ./train.exe --lr 0.0003 --warmup 500
-07 |           in /home/ada/src/resnet · OCaml 5.4.0 · raven 1.0.0~dev · Linux 6.12…
-08 |PARAMS     batch     256
-09 |           epochs    10
-10 |         ≠ lr        0.0003       a 0.001  b 0.01
-11 |           opt       adamw
-12 |           warmup    500
-13 |           wd        0.05
-14 |METRICS    epoch                   6.2                          249 samples
-15 |           train/acc            0.9582  best 0.9595 @12.3k      249 samples
-16 |           train/data_ms         4.758                          249 samples
-17 |           train/grad_norm        1.02                          249 samples
-18 |           train/loss           0.2642  best 0.2623 @12.3k      249 samples
-19 |           train/lr          9.908e-05                          249 samples
-20 |           train/samples_s        2196                          249 samples
-21 |           val/acc              0.9418  best 0.9418 @12k         25 samples
-22 |           val/ece             0.02243  best 0.02218 @10k        25 samples
+03 |  run         id          20261101T104102Z-7f3a0c21
+04 |              experiment  cifar-resnet
+05 |              started     Nov 1 10:41:02
+06 |              last write  Nov 1 12:18:01
+07 |              steps       12,400 of 20,000
+08 |
+09 |  source      command     ./train.exe --lr 0.0003 --warmup 500
+10 |              in          /home/ada/src/resnet
+11 |              host        gpu-01 · pid 48211
+12 |              commit      5eaf82b+  the work tree had changes
+13 |              built       OCaml 5.4.0 · raven 1.0.0~dev · Linux 6.12.1 x86_64
+14 |
+15 |  params      batch       256
+16 |              epochs      10
+17 |              lr          0.0003  a 0.001  b 0.01
+18 |              opt         adamw
+19 |              warmup      500
+20 |              wd          0.05
+21 |
+22 |  metrics     epoch                 6.200 at 12,400
 23 |
-24 |↑↓ scroll  [ ] run  y copy id  esc back  ? help  q quit
+24 |  ↑↓ scroll   [ ] run   y copy id   ? keys                          1–20 of 41
 cursor hidden

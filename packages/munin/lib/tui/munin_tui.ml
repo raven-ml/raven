@@ -19,6 +19,7 @@ type model = {
   height : int;
   stack : kind list; (* never empty; its head is shown, its last is Runs *)
   help : bool;
+  help_at : int; (* Help's first line shown *)
   data : Data.t;
   table : Runs_screen.table; (* Runs, as of the last change it shows *)
   reading : bool;
@@ -62,6 +63,7 @@ let runs_view m =
     metric = m.metric;
     order = m.order;
     reverse = m.reverse;
+    light = m.light;
   }
 
 (* Runs's table is built when what it shows changes, and only while Runs is
@@ -127,10 +129,7 @@ let needs m kind =
   | Run_k | Zoom_k -> (
       match focus_view m with
       | Some v ->
-          let shown =
-            Run_screen.shown v ~width:m.width ~height:m.height
-              ~zoom:(kind = Zoom_k)
-          in
+          let shown = Run_screen.shown v in
           (Run.id v.focus, Data.All)
           :: List.map (fun (_, r) -> (Run.id r, Data.Keys shown)) v.marked
       | None -> Option.to_list (Option.map (fun id -> (id, Data.All)) m.focus))
@@ -244,15 +243,6 @@ let metric_move m d =
       let keys = metrics_of_focus m in
       let cur = Option.bind (focus_view m) Run_screen.cursor in
       { m with metric = move_in keys cur d; zoom_at = None }
-
-(* The layout of Run moves the cursor by lines of charts or of rows. *)
-let run_steps m =
-  match focus_view m with
-  | Some v when Run_screen.grid_fits v ~width:m.width ~height:m.height ->
-      (Run_screen.chart_cols ~width:m.width, 1)
-  | _ ->
-      let n = List.length (metrics_of_focus m) in
-      (1, (n + 1) / 2)
 
 let focus_move m d =
   let ids = row_ids m in
@@ -383,8 +373,12 @@ let key m (k : K.t) =
   if m.typing then (settle (typing_key m k), Mosaic.Cmd.none)
   else if m.help then
     if is '?' k || k.key = K.Escape then
-      ({ m with help = false }, Mosaic.Cmd.none)
+      ({ m with help = false; help_at = 0 }, Mosaic.Cmd.none)
     else if is 'q' k then (m, Mosaic.Cmd.quit)
+    else if k.key = K.Down || is 'j' k then
+      ({ m with help_at = m.help_at + 1 }, Mosaic.Cmd.none)
+    else if k.key = K.Up || is 'k' k then
+      ({ m with help_at = max 0 (m.help_at - 1) }, Mosaic.Cmd.none)
     else (m, Mosaic.Cmd.none)
   else
     let none m = (m, Mosaic.Cmd.none) in
@@ -403,15 +397,14 @@ let key m (k : K.t) =
       none
         (match kind with
         | Runs_k -> cursor_move m d
-        | Run_k -> metric_move m (d * fst (run_steps m))
-        | Zoom_k -> metric_move m d
+        | Run_k | Zoom_k -> metric_move m d
         | Details_k -> { m with scroll = max 0 (m.scroll + d) })
     else if left || right then
       let d = if left then -1 else 1 in
       none
         (match kind with
         | Runs_k -> metric_move m d
-        | Run_k -> metric_move m (d * snd (run_steps m))
+        | Run_k -> m
         | Zoom_k -> zoom_move m d
         | Details_k -> m)
     else if is 'g' k || is 'G' k then
@@ -512,6 +505,7 @@ let init ~clock store screen () =
       height = 24;
       stack;
       help = false;
+      help_at = 0;
       data = Data.empty;
       table =
         Runs_screen.table
@@ -523,6 +517,7 @@ let init ~clock store screen () =
             metric = None;
             order = Started;
             reverse = false;
+            light = false;
           }
           ~width:80 ~typing:false;
       reading = false;
@@ -577,7 +572,9 @@ let update msg m =
       read_soon (m', cmd)
   | Resize (width, height) ->
       read_soon (settle { m with width; height }, Mosaic.Cmd.none)
-  | Scheme s -> ({ m with light = s = `Light }, Mosaic.Cmd.none)
+  | Scheme s ->
+      let m = { m with light = s = `Light } in
+      ((if top m = Runs_k then tabulate m else m), Mosaic.Cmd.none)
 
 let subscriptions _ =
   Mosaic.Sub.batch
@@ -590,44 +587,103 @@ let subscriptions _ =
 
 (* Painting *)
 
+(* A terminal too small: the gist, centred, and the size needed. Lines leave
+   from the end when it is shorter still. *)
 let small m g =
-  let line =
+  let gist =
     match (top m, focus_view m) with
-    | (Run_k | Zoom_k | Details_k), Some v ->
+    | (Run_k | Zoom_k | Details_k), Some v -> (
         let r = v.focus in
         let step = Run_screen.latest_step v in
-        let pct =
-          match (step, Run.steps r) with
-          | Some s, Some t when t > 0 ->
-              Printf.sprintf " %.0f%%" (100. *. Float.of_int s /. Float.of_int t)
-          | _ -> ""
-        in
-        Printf.sprintf "%s %s%s · needs 40×10"
-          (Data.word m.data ~now:m.now r)
-          (Runs_screen.name r) pct
+        [
+          Paint.word (Data.word m.data ~now:m.now r)
+          @ [ (Paint.plain, "  "); (Paint.bold, Runs_screen.name r) ];
+        ]
+        @ (match (step, Run.steps r) with
+          | Some s, Some t when t > 0 && s < t ->
+              [
+                [
+                  (Paint.plain, Text.count s);
+                  (Paint.dim, " of " ^ Text.count t ^ " · ");
+                  ( Paint.plain,
+                    Printf.sprintf "%.0f%%"
+                      (100. *. Float.of_int s /. Float.of_int t) );
+                ];
+              ]
+          | Some s, _ ->
+              [ [ (Paint.dim, "step "); (Paint.plain, Text.count s) ] ]
+          | None, _ -> [])
+        @
+        match
+          Option.bind (Run_screen.cursor v) (fun k ->
+              Option.map
+                (fun s -> (k, s))
+                (List.assoc_opt k
+                   (Option.value (Data.stats m.data r) ~default:[])))
+        with
+        | Some (k, (s : History.key_stats)) ->
+            [
+              [
+                (Paint.dim, k ^ " "); (Paint.bold, Text.value s.stats.last.value);
+              ];
+            ]
+        | None -> [])
     | _ ->
-        Printf.sprintf "munin %d runs · needs 40×10"
-          (List.length (Data.listing m.data))
+        let all = Data.listing m.data in
+        let count w =
+          List.length
+            (List.filter
+               (fun r -> List.mem (Data.word m.data ~now:m.now r) w)
+               all)
+        in
+        let live = count [ "live"; "running"; "writing"; "starting" ]
+        and broken = count [ "failed"; "crashed" ] in
+        [ [ (Paint.bold, Printf.sprintf "%d runs" (List.length all)) ] ]
+        @ (if live > 0 then
+             [
+               [
+                 (Paint.ok, "● "); (Paint.plain, Printf.sprintf "%d live" live);
+               ];
+             ]
+           else [])
+        @
+        if broken > 0 then
+          [
+            [
+              (Paint.bad, "✗ ");
+              (Paint.plain, Printf.sprintf "%d failed or crashed" broken);
+            ];
+          ]
+        else []
   in
-  Paint.text g ~x:0 ~y:0 ~w:m.width line
+  let need =
+    [ (Paint.dim, Printf.sprintf "needs 40×10, has %d×%d" m.width m.height) ]
+  in
+  let gist = List.filteri (fun i _ -> i < m.height - 2) gist in
+  let lines =
+    gist @ if m.height > List.length gist + 1 then [ []; need ] else [ need ]
+  in
+  let top_y = max 0 ((m.height - List.length lines) / 2) in
+  List.iteri (fun i l -> Paint.centre g ~y:(top_y + i) ~w:m.width l) lines
 
 let paint m g =
   let width = m.width and height = m.height in
   if width < 40 || height < 10 then small m g
   else begin
+    let mx = if width >= 100 then 2 else 1 in
     (match top m with
     | Runs_k ->
         Runs_screen.paint m.table g ~height ~cursor:m.cursor ~marks:m.marks
-          ~typing:m.typing ~light:m.light
     | Run_k -> (
         match focus_view m with
         | Some v -> Run_screen.paint v g ~width ~height
         | None ->
-            Paint.text g ~x:0 ~y:0 ~w:width
+            Paint.text ~style:Paint.dim g ~x:mx ~y:0
+              ~w:(width - (2 * mx))
               (if m.waiting then
                  "waiting for a run to start in "
                  ^ Runs_screen.tilde (Store.root m.store)
-               else "reading the run"))
+               else "reading the run…"))
     | Zoom_k ->
         Option.iter
           (fun v -> Run_screen.paint_zoom v g ~width ~height)
@@ -653,16 +709,32 @@ let paint m g =
         | None -> ()));
     (match (m.typing, top m) with
     | true, Run_k ->
-        let field = "/" ^ m.metric_filter in
-        Paint.text g ~x:0 ~y:(height - 1) ~w:width (Text.pad width field);
-        Paint.text ~style:Paint.reverse g ~x:(Text.width field) ~y:(height - 1)
-          ~w:1 " "
+        let y = height - 1 in
+        Paint.fill g ~x:0 ~y ~w:width Paint.plain;
+        Paint.spans g ~x:mx ~y
+          ~w:(width - (2 * mx))
+          [
+            (Paint.accent, "/ ");
+            (Paint.plain, m.metric_filter);
+            (Paint.reverse, " ");
+          ]
     | _ -> ());
+    (* A key's refusal replaces the key line until the next key; a run that
+       could not be read is named above it until a poll reads every run. *)
+    (match m.notice with
+    | Some n ->
+        Paint.fill g ~x:0 ~y:(height - 1) ~w:width Paint.plain;
+        Paint.text ~style:Paint.alert g ~x:mx ~y:(height - 1)
+          ~w:(width - (2 * mx))
+          n
+    | None -> ());
     Option.iter
-      (fun n ->
-        Paint.text ~style:Paint.alert g ~x:0 ~y:(height - 2) ~w:width
-          (Text.pad width n))
-      (match m.notice with Some _ as n -> n | None -> m.error);
+      (fun e ->
+        Paint.fill g ~x:0 ~y:(height - 2) ~w:width Paint.plain;
+        Paint.text ~style:Paint.alert g ~x:mx ~y:(height - 2)
+          ~w:(width - (2 * mx))
+          e)
+      m.error;
     if m.help then
       Help.paint
         ~screen:
@@ -671,7 +743,7 @@ let paint m g =
           | Run_k -> `Run
           | Zoom_k -> `Zoom
           | Details_k -> `Details)
-        g ~width ~height
+        ~light:m.light ~scroll:m.help_at g ~width ~height
   end
 
 let view m =

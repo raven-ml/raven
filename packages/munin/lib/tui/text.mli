@@ -28,23 +28,23 @@ val non_finite : float -> string
 (** [non_finite x] is [NaN], [inf] or [-inf]. *)
 
 val value : float -> string
-(** [value x] is [x] in 4 significant digits, or [NaN], [inf], [-inf]. *)
+(** [value x] is [x] in four significant digits with trailing zeros, as
+    [0.2540], [2150] or [10.00]; in scientific notation below [1e-4] and from
+    [1e6], as [5.116e-05]; or [NaN], [inf], [-inf]. A value that is not zero
+    never prints as [0]. *)
 
-val values : float list -> string list
-(** [values xs] is [xs] in the fewest significant digits from 4 to 17 that print
-    every two values that differ differently. *)
+val signed : float -> string
+(** [signed x] is [value x], with [+] before a positive [x]. *)
+
+val given : float -> string
+(** [given x] is [x] in the fewest digits that read back as [x], for a value a
+    program gave, such as a param. *)
 
 val count : int -> string
 (** [count n] is [n] with separators, as [12,400]. *)
 
-val short : int -> string
-(** [short n] is [n] in three significant digits and a suffix, as [12.4k]. *)
-
 val duration : float -> string
 (** [duration s] is [s] seconds in at most two units, as [1h37m]. *)
-
-val age : float -> string
-(** [age s] is [s] seconds in one unit, as [2h]. *)
 
 val clock : now:float -> float -> string
 (** [clock ~now t] is [t]'s local time of day, with its date unless it is
@@ -56,7 +56,3 @@ val date : float -> string
 val gib : float -> string
 val percent : float -> string
 val mbs : float -> string
-
-val bar : int -> float -> string
-(** [bar w p] is a bar of [w] eighth-block cells filled to [p] in [[0;1]],
-    between two edges. *)

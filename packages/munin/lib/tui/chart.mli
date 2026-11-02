@@ -57,26 +57,59 @@ val hi : prepared -> float
 val tau : prepared -> float option
 val unpaired : prepared -> int
 
+val log_y : prepared -> bool
+(** [log_y p] is [true] iff [p] draws y on a log scale: asked for, and every
+    value drawn above 0. *)
+
 val latest : prepared -> float option
 (** [latest p] is the focus's greatest x. *)
 
-type drawn = {
-  log : bool; (* y was drawn on a log scale *)
-  range : (float * float) option;
-      (* the y domain, when the plot is too short for two ticks *)
-}
+val left : int
+(** [left] is the cells left of every plot, for its y labels: a region that
+    starts [left] cells before a column has its plot start there. *)
+
+type placed = { px : int; pw : int }
+(** The plot's first column in the grid and its width, for what aligns with it.
+*)
 
 val draw :
   ?cursor:float ->
+  ?inline:bool ->
+  ?faint:bool ->
   light:bool ->
   prepared ->
   Matrix_grid.t ->
   x:int ->
   y:int ->
-  drawn
+  placed option
 (** [draw p g ~x ~y] draws in the region of [g] at [(x, y)] the row of
-    non-finite marks and, below it, the chart; [cursor] is a dotted vertical
-    line. It costs the reduced points, whatever the series' lengths. *)
+    non-finite marks and, below it, the chart: the focus solid and last, each
+    marked run's level line with its letter, a dot after the latest sample, the
+    y axis labelled at both extremes of the values drawn, and axes only when the
+    spec asks for an x axis; [cursor] is a dotted vertical line. [inline] draws
+    the plot from the region's first row, the marks in its blank cells, and
+    [faint] the focus dim. It costs the reduced points, whatever the series'
+    lengths, and is [None] for a region too small to hold a plot. *)
+
+type versus = {
+  last : float; (* the latest difference *)
+  at : float; (* its x *)
+  scale : float; (* the largest difference, which the row's edges stand for *)
+  zero_row : int; (* the grid row of the zero rule *)
+}
+
+val draw_versus :
+  light:bool ->
+  prepared ->
+  char ->
+  Matrix_grid.t ->
+  under:placed ->
+  y:int ->
+  rows:int ->
+  versus option
+(** [draw_versus p c g ~under ~y ~rows] draws, in the plot columns of [under],
+    the focus's level minus the marked run [c]'s, per dot column that holds
+    both, about a dim zero rule; [None] when no column holds both. *)
 
 type trend
 
@@ -94,6 +127,3 @@ val trend :
     spans the run's active time. *)
 
 val text : trend -> string
-
-val palette : char -> Ansi.Color.t
-(** [palette c] is the colour of the marked run lettered [c]. *)

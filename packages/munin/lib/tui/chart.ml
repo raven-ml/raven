@@ -17,17 +17,13 @@ type view = {
 }
 
 type spec = { key : string; width : int; height : int; x_axis : bool }
-type drawn = { log : bool; range : (float * float) option }
 
-let palette = function
-  | 'a' -> Ansi.Color.cyan
-  | 'b' -> Ansi.Color.magenta
-  | _ -> Ansi.Color.yellow
-
-(* The width of the y labels' column: margins that the labels of matrix's ticks,
-   which take an offset or a factor note past seven digits, fit in, so that the
-   plot's width depends on the region alone. *)
-let left = 8
+(* Every plot has these margins, so that plots stacked in one column share their
+   columns whatever their labels: room on the left for a y label of at most
+   [label_cells] cells and its tick, on the right for half of an x label. *)
+let left = 12
+let right = 5
+let label_cells = 10
 
 (* The x of samples *)
 
@@ -190,6 +186,8 @@ type prepared = {
   resumes : float list; (* their steps, on the step axis *)
   y : float * float;
   log : bool;
+  differences : (char * (float * float) array) list;
+      (* the focus's level minus each marked run's, per dot column *)
 }
 
 let lo p = p.lo
@@ -198,8 +196,79 @@ let tau p = p.tau
 let unpaired p = p.unpaired
 let latest p = p.latest
 let spec p = p.spec
+let log_y p = p.log
 
-let figure ~x_axis ~lo ~hi ~y ~log ~resumes ~cursor ~marked ~raw ~focus =
+(* Labels. An x label is a step count, a duration on the time axis, or a value;
+   a y label at an extreme of the drawn values is a value, a round tick between
+   them is printed as it is. *)
+let x_label axis v =
+  match axis with
+  | Time -> Text.duration v
+  | Step | Step_metric ->
+      if Float.is_integer v && Float.abs v < 1e15 then
+        Text.count (Float.to_int v)
+      else Printf.sprintf "%.12g" v
+
+let y_label ~extreme v =
+  Text.cut label_cells
+    (if extreme then Text.value v
+     else if Float.is_integer v && Float.abs v < 1e15 then
+       Text.count (Float.to_int v)
+     else Printf.sprintf "%.12g" v)
+
+(* The y ticks of a plot of [rows] over [(lo, hi)]: both extremes, so that the
+   region the run is in is labelled, and between them multiples of a 1, 2 or 5
+   step about a third of the plot apart, none closer than two rows to another;
+   on a log scale the powers of ten between the extremes. *)
+let y_ticks ~log (lo, hi) rows =
+  if rows < 2 || not (hi > lo) then [ lo ]
+  else
+    let pos v =
+      let f =
+        if log then
+          (Float.log10 v -. Float.log10 lo) /. (Float.log10 hi -. Float.log10 lo)
+        else (v -. lo) /. (hi -. lo)
+      in
+      f *. Float.of_int (rows - 1)
+    in
+    (* A product such as [4. *. 0.2] is not [0.8]: each tick is snapped to its
+       shortest decimal, which matrix would otherwise print digit for digit. *)
+    let snap v = float_of_string (Printf.sprintf "%.12g" v) in
+    let candidates =
+      if log then
+        let a = Float.ceil (Float.log10 lo)
+        and b = Float.floor (Float.log10 hi) in
+        List.init
+          (max 0 (Float.to_int (b -. a) + 1))
+          (fun i -> snap (10. ** (a +. Float.of_int i)))
+      else
+        let raw = (hi -. lo) /. Float.of_int (max 2 (rows / 3)) in
+        let p = 10. ** Float.floor (Float.log10 raw) in
+        let step =
+          List.find (fun k -> k *. p >= raw) [ 1.; 2.; 5.; 10. ] *. p
+        in
+        let a = Float.ceil (lo /. step) and b = Float.floor (hi /. step) in
+        List.init
+          (max 0 (Float.to_int (b -. a) + 1))
+          (fun i -> snap ((a +. Float.of_int i) *. step))
+    in
+    let far a b = Float.abs (pos a -. pos b) >= 2. in
+    let inner =
+      List.fold_left
+        (fun kept v ->
+          if
+            v > lo && v < hi && far v lo && far v hi
+            && List.for_all (far v) kept
+          then v :: kept
+          else kept)
+        [] candidates
+    in
+    (lo :: List.rev inner) @ [ hi ]
+
+let dash = function 'a' -> `Dotted | _ -> `Dashed
+
+let figure ~faint ~axis ~x_axis ~labels ~rows ~lo ~hi ~y ~log ~resumes ~cursor
+    ~marked ~raw ~focus =
   let resume_lines =
     List.map
       (fun x -> C.vline ~dash:`Dotted ~color:Ansi.Color.bright_black x)
@@ -211,8 +280,8 @@ let figure ~x_axis ~lo ~hi ~y ~log ~resumes ~cursor ~marked ~raw ~focus =
   let marked =
     List.map
       (fun (l, level) ->
-        C.line ~dots:`Braille ~dash:`Dotted
-          ~color:(C.const (palette l))
+        C.line ~dots:`Braille ~dash:(dash l)
+          ~color:(C.const (Paint.mark_color l))
           ~x:fst ~y:snd level)
       marked
   in
@@ -230,44 +299,60 @@ let figure ~x_axis ~lo ~hi ~y ~log ~resumes ~cursor ~marked ~raw ~focus =
       ~color:(C.const Ansi.Color.default_fg)
       ~x:fst ~y:snd focus
   in
+  let focus = if faint then C.attrs Ansi.Attr.dim focus else focus in
+  let ylo, yhi = y in
+  let ticks = y_ticks ~log y rows in
   let ys =
-    if log then C.Scale.log ~domain:y () else C.Scale.linear ~domain:y ()
+    if log then C.Scale.log ~domain:y ~ticks ()
+    else C.Scale.linear ~domain:y ~ticks ()
   in
+  let y_format _ v = y_label ~extreme:(v = ylo || v = yhi) v in
   C.layer
     (resume_lines @ cursor @ marked @ raw
     @ [
         focus;
-        (if x_axis then C.axis "x" else C.axis ~show:false "x");
-        C.axis "y";
+        (if x_axis then
+           C.axis ~spacing:16 ~format:(fun _ v -> x_label axis v) "x"
+         else C.axis ~show:false "x");
+        (if labels then C.axis ~format:y_format "y" else C.axis ~show:false "y");
       ])
   |> C.scale "x" (C.Scale.linear ~domain:(lo, hi) ())
-  |> C.scale "y" ys |> C.margins ~left
+  |> C.scale "y" ys |> C.margins ~left ~right
 
-let layout ?cursor ~light p =
-  let focus_pts, raw =
-    match (p.smooth, p.focus) with
-    | Some s, f ->
-        (Curve.points s.curve, Option.map (fun t -> Curve.points t.curve) f)
-    | None, Some f -> (Curve.points f.curve, None)
-    | None, None -> ([||], None)
-  in
-  let marked = List.map (fun (l, _, t) -> (l, Curve.level t.curve)) p.marked in
-  let fig =
-    figure ~x_axis:p.spec.x_axis ~lo:p.lo ~hi:p.hi ~y:p.y ~log:p.log
-      ~resumes:p.resumes ~cursor ~marked ~raw ~focus:focus_pts
-  in
-  let theme = if light then C.Theme.light else C.Theme.dark in
-  (C.layout ~theme ~width:p.spec.width ~height:(p.spec.height - 1) fig, marked)
+let theme light =
+  let base = if light then C.Theme.light else C.Theme.dark in
+  {
+    base with
+    C.Theme.axis = Paint.dim;
+    label = Paint.dim;
+    title = Paint.plain;
+    grid = Paint.dim;
+  }
 
-(* The dot columns of a plot in a region, which the margins fix. *)
-let dots spec =
+(* The dot columns of a plot in a region, laid out as [draw] lays it out: the x
+   domain sets the x labels, and the y labels fit in the left margin whatever
+   they are, so the plot is the one the series are reduced for. *)
+let dots ~axis ~lo ~hi spec =
   let fig =
-    figure ~x_axis:spec.x_axis ~lo:0. ~hi:1. ~y:(0., 1.) ~log:false ~resumes:[]
+    figure ~faint:false ~axis ~x_axis:spec.x_axis ~labels:spec.x_axis
+      ~rows:(spec.height - 1) ~lo ~hi ~y:(0., 1.) ~log:false ~resumes:[]
       ~cursor:None ~marked:[] ~raw:None ~focus:[||]
   in
   2
   * (C.Layout.plot (C.layout ~width:spec.width ~height:(spec.height - 1) fig))
       .width
+
+(* The focus's level minus a marked run's, per dot column holding both. *)
+let differences focus other =
+  let at = Hashtbl.create (Array.length other) in
+  Array.iter (fun (x, y) -> Hashtbl.replace at x y) other;
+  Array.of_list
+    (List.filter_map
+       (fun (x, y) ->
+         match Hashtbl.find_opt at x with
+         | Some o when Float.is_finite y && Float.is_finite o -> Some (x, y -. o)
+         | _ -> None)
+       (Array.to_list focus))
 
 let prepare ?prev view spec focus marked =
   let key = spec.key in
@@ -300,7 +385,7 @@ let prepare ?prev view spec focus marked =
     if view.smooth = 0 then None
     else Some (round_125 ((hi -. lo) /. fractions.(view.smooth - 1)))
   in
-  let dots = max 2 (dots spec) in
+  let dots = max 2 (dots ~axis:view.axis ~lo ~hi spec) in
   let plot = { Curve.lo; hi; dots } in
   let same =
     Option.map
@@ -379,70 +464,229 @@ let prepare ?prev view spec focus marked =
     resumes;
     y = widen extent;
     log;
+    differences =
+      (let level =
+         match (smooth, focus_track) with
+         | Some t, _ | None, Some t -> Curve.level t.curve
+         | None, None -> [||]
+       in
+       List.map
+         (fun (l, _, t) -> (l, differences level (Curve.level t.curve)))
+         marked);
   }
 
-let draw ?cursor ~light p g ~x ~y =
+type placed = { px : int; pw : int }
+
+let inside g x y = x >= 0 && y >= 0 && x < G.width g && y < G.height g
+
+(* The marks of samples that are not finite, in [row]: a cell per marked column,
+   [×] (or [↑], [↓]) where a span starts and a dotted rule along it. A span runs
+   from one marked column to the next while no finite sample lies between them,
+   so a metric that stays NaN reads as one span whether it logs every step or
+   every thousand. *)
+let marks ?(blank_only = false) p l (plot : G.region) g ~x ~row =
+  let cells = Hashtbl.create 16 in
+  Array.iter
+    (fun (k, e) ->
+      let col = min (plot.width - 1) (k * plot.width / max 1 p.dots) in
+      let glyph =
+        match e with `Nan -> "×" | `Pos_inf -> "↑" | `Neg_inf -> "↓"
+      in
+      match Hashtbl.find_opt cells col with
+      | Some "×" -> ()
+      | _ -> Hashtbl.replace cells col glyph)
+    (match p.focus with Some t -> Curve.events t.curve | None -> [||]);
+  let finite = Hashtbl.create 64 in
+  let pts =
+    match p.focus with Some t -> Curve.points t.curve | None -> [||]
+  in
+  Array.iter
+    (fun (px, py) ->
+      if Float.is_finite py then
+        Hashtbl.replace finite
+          (C.Layout.position l "x" (C.Layout.Num px) - plot.x)
+          ())
+    pts;
+  let cols =
+    List.sort compare (Hashtbl.fold (fun c _ acc -> c :: acc) cells [])
+  in
+  let rule = Hashtbl.create 64 in
+  let rec spans = function
+    | a :: (b :: _ as rest) ->
+        let clear = ref true in
+        for c = a + 1 to b - 1 do
+          if Hashtbl.mem finite c then clear := false
+        done;
+        if !clear then
+          for c = a + 1 to b - 1 do
+            Hashtbl.replace rule c ()
+          done;
+        spans rest
+    | _ -> ()
+  in
+  spans cols;
+  let put col glyph =
+    let gx = x + plot.x + col in
+    if inside g gx row then begin
+      let i = G.idx g ~x:gx ~y:row in
+      if (not blank_only) || G.is_empty g i || G.get_text g i = " " then
+        G.draw_text ~style:Paint.bad g ~x:gx ~y:row ~text:glyph
+    end
+  in
+  Hashtbl.iter (fun col () -> put col "┄") rule;
+  List.iter
+    (fun col ->
+      put col
+        (if Hashtbl.mem cells (col - 1) || Hashtbl.mem rule (col - 1) then "┄"
+         else Hashtbl.find cells col))
+    cols
+
+let draw ?cursor ?(inline = false) ?(faint = false) ~light p g ~x ~y =
+  let labels = p.spec.x_axis in
   let width = p.spec.width and rows = p.spec.height - 1 in
-  if width < 2 || rows < 2 then { log = false; range = None }
+  (* Inline, the plot takes the region's top row and the marks go in its blank
+     cells. *)
+  let y = if inline then y - 1 else y in
+  if width < 2 || rows < 1 then None
   else begin
-    let l, levels = layout ?cursor ~light p in
-    C.draw l g ~x ~y:(y + 1);
+    let focus_pts, raw =
+      match (p.smooth, p.focus) with
+      | Some s, f ->
+          (Curve.points s.curve, Option.map (fun t -> Curve.points t.curve) f)
+      | None, Some f -> (Curve.points f.curve, None)
+      | None, None -> ([||], None)
+    in
+    let levels =
+      List.map (fun (l, _, t) -> (l, Curve.level t.curve)) p.marked
+    in
+    let fig =
+      figure ~faint ~axis:p.view.axis ~x_axis:p.spec.x_axis ~labels ~rows
+        ~lo:p.lo ~hi:p.hi ~y:p.y ~log:p.log ~resumes:p.resumes ~cursor
+        ~marked:levels ~raw ~focus:focus_pts
+    in
+    let l = C.layout ~theme:(theme light) ~width ~height:rows fig in
     let plot = C.Layout.plot l in
-    (* Letters, at the end of each level line and in cells along it that hold no
-       dot of another line. *)
+    C.draw l g ~x ~y:(y + 1);
     let cell (px, py) =
       ( C.Layout.position l "x" (C.Layout.Num px),
         C.Layout.position l "y" (C.Layout.Num py) )
     in
-    (* A letter along a line goes where no other line inks; a line's end letter
-       may also replace another marked run's ink, never the focus's. *)
-    let marked_ink i =
-      List.exists (fun (c, _) -> G.get_fg g i = palette c) levels
+    let in_region gx gy =
+      gx >= x && gx < x + width && gy > y && gy <= y + rows && inside g gx gy
     in
-    let letter ?(at_end = false) c (cx, cy) =
+    let is_mark i =
+      List.exists
+        (fun (c, _) -> Ansi.Color.equal (G.get_fg g i) (Paint.mark_color c))
+        levels
+    in
+    (* A letter goes where no line inks, on its own line's ink, or at a line's
+       end over another marked run's; never over the focus's. *)
+    let can ?(at_end = false) c (cx, cy) =
       let gx = x + cx and gy = y + 1 + cy in
-      if gx >= x && gx < x + width && gy > y && gy <= y + rows then begin
-        let i = G.idx g ~x:gx ~y:gy in
-        let blank = G.is_empty g i || G.get_text g i = " " in
-        if blank || G.get_fg g i = palette c || (at_end && marked_ink i) then
-          G.draw_text
-            ~style:(Ansi.Style.make ~fg:(palette c) ())
-            g ~x:gx ~y:gy ~text:(String.make 1 c)
-      end
+      in_region gx gy
+      &&
+      let i = G.idx g ~x:gx ~y:gy in
+      G.is_empty g i
+      || G.get_text g i = " "
+      || Ansi.Color.equal (G.get_fg g i) (Paint.mark_color c)
+      || (at_end && is_mark i)
+    in
+    let letter ?at_end c (cx, cy) =
+      if can ?at_end c (cx, cy) then
+        G.draw_text ~style:(Paint.mark c) g ~x:(x + cx)
+          ~y:(y + 1 + cy)
+          ~text:(String.make 1 c)
+    in
+    let is_letter (cx, cy) =
+      let gx = x + cx and gy = y + 1 + cy in
+      in_region gx gy
+      && List.exists
+           (fun (c, _) -> G.get_text g (G.idx g ~x:gx ~y:gy) = String.make 1 c)
+           levels
     in
     List.iter
       (fun (c, level) ->
         let n = Array.length level in
         if n > 0 then begin
-          List.iter
-            (fun k -> letter c (cell level.(k)))
-            [ n / 4; n / 2; 3 * n / 4 ];
+          List.iter (fun k -> letter c (cell level.(k))) [ n / 3; 2 * n / 3 ];
           let cx, cy = cell level.(n - 1) in
-          let cx = if x + cx + 1 < x + width then cx + 1 else cx in
-          letter ~at_end:true c (cx, cy)
+          let cx = if cx + 1 < width then cx + 1 else cx in
+          (* The end letter goes in the end cell, or beside it when another
+             letter or the focus holds it, so that a run that ends under the
+             focus is still named where it ends. *)
+          Option.iter (letter ~at_end:true c)
+            (List.find_opt
+               (fun q -> (not (is_letter q)) && can ~at_end:true c q)
+               [
+                 (cx, cy);
+                 (cx, cy - 1);
+                 (cx, cy + 1);
+                 (cx + 1, cy - 1);
+                 (cx + 1, cy + 1);
+                 (cx, cy - 2);
+                 (cx, cy + 2);
+               ])
         end)
       levels;
-    (* The focus's samples that are not finite, in the row above the plot. *)
-    Option.iter
-      (fun t ->
-        Array.iter
-          (fun (k, e) ->
-            let glyph =
-              match e with `Nan -> "×" | `Pos_inf -> "↑" | `Neg_inf -> "↓"
-            in
-            let gx = x + plot.x + (k / 2) in
-            let i = G.idx g ~x:gx ~y in
-            if not ((not (G.is_empty g i)) && G.get_text g i = "×") then
-              G.draw_text
-                ~style:(Ansi.Style.make ~fg:Ansi.Color.red ())
-                g ~x:gx ~y ~text:glyph)
-          (Curve.events t.curve))
-      p.focus;
-    (* A plot too short for two ticks states its range. *)
-    { log = p.log; range = (if plot.height < 4 then Some p.y else None) }
+    (* The focus's latest sample: a dot in the empty cell after it, where the
+       eye looks for "now"; none when it is not finite, which its mark says. *)
+    (let n = Array.length focus_pts in
+     if n > 0 && Float.is_finite (snd focus_pts.(n - 1)) then
+       let cx, cy = cell focus_pts.(n - 1) in
+       let gx = x + cx + 1 and gy = y + 1 + cy in
+       if gx >= x + plot.x && gx < x + plot.x + plot.width && in_region gx gy
+       then begin
+         let i = G.idx g ~x:gx ~y:gy in
+         if G.is_empty g i || G.get_text g i = " " then
+           G.draw_text ~style:Paint.bold g ~x:gx ~y:gy ~text:"•"
+       end);
+    marks ~blank_only:inline p l plot g ~x ~row:(if inline then y + 1 else y);
+    Some { px = x + plot.x; pw = plot.width }
   end
 
-(* Trends *)
+type versus = { last : float; at : float; scale : float; zero_row : int }
+
+let draw_versus ~light p c g ~(under : placed) ~y ~rows =
+  match List.assoc_opt c p.differences with
+  | None | Some [||] -> None
+  | Some d ->
+      let big =
+        Array.fold_left (fun a (_, v) -> Float.max a (Float.abs v)) 0. d
+      in
+      let big = if big > 0. then big else 1. in
+      let fig =
+        C.layer
+          [
+            C.line ~dots:`Braille
+              ~color:(C.const (Paint.mark_color c))
+              ~x:fst ~y:snd d;
+            C.axis ~show:false "x";
+            C.axis ~show:false "y";
+          ]
+        |> C.scale "x" (C.Scale.linear ~domain:(p.lo, p.hi) ())
+        |> C.scale "y" (C.Scale.linear ~domain:(-.big, big) ~nice:false ())
+        |> C.margins ~left ~right
+      in
+      let l =
+        C.layout ~theme:(theme light)
+          ~width:(under.pw + left + right)
+          ~height:rows fig
+      in
+      let plot = C.Layout.plot l in
+      C.draw l g ~x:(under.px - plot.x) ~y;
+      (* The zero rule, in the cells of zero's row that no dot inks. *)
+      let zy =
+        y + min (rows - 1) (max 0 (C.Layout.position l "y" (C.Layout.Num 0.)))
+      in
+      for cx = under.px to under.px + under.pw - 1 do
+        if inside g cx zy then begin
+          let i = G.idx g ~x:cx ~y:zy in
+          if G.is_empty g i || G.get_text g i = " " then
+            G.draw_text ~style:Paint.dim g ~x:cx ~y:zy ~text:"┄"
+        end
+      done;
+      let at, last = d.(Array.length d - 1) in
+      Some { last; at; scale = big; zero_row = zy }
 
 type trend = {
   t_axis : axis;

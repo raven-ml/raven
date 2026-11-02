@@ -1,10 +1,10 @@
-starting  warm-start   cifar-resnet    started 14s ago, no sample yet
-running   tidy-otter   cifar-resnet    step 12,350 of 20,000  ▕█████████▉      ▏ 62%  running 1h37m  last write 26s ago  watching 2s, no sample yet
-live      tidy-otter   cifar-resnet    step 12,400 of 20,000  ▕█████████▉      ▏ 62%  2.14 step/s  ~59m left  running 1h37m  last sample 0s ago
-stalled   tidy-otter   cifar-resnet    step 12,450 of 20,000  no sample for 4m10s, usually every 23s  running 1h41m  last sample 4m10s ago
-writing   far-node     cifar-resnet    step 3,200 of 20,000  2.2 step/s  ~2h07m left  last sample 0s ago  lock not probed
-silent    lost-node    cifar-resnet    step 3,150 of 20,000  last write 2h14m ago  watching 2s, no sample yet  lock not probed
-crashed   mlp-base     mnist-mlp       step 2,900 of 4,690  writer exited without an end  last write Oct 31 14:10, 22h07m ago  ran 5m08s
-finished  amber-fox    cifar-resnet    20,000 steps in 2h32m  ended 09:34, 2h43m ago
-failed    eager-hawk   cifar-resnet    failed at step 1,100 after 9m51s: Rig.Lost (CUDA:0, "out of memory")  ended 03:13, 9h04m ago
-killed    quiet-heron  cifar-resnet    killed at step 8,200 after 1h03m  ended 04:10, 8h08m ago
+  ○ starting  warm-start  cifar-resnet   started 14s ago, no sample yet
+  ○ running  tidy-otter  cifar-resnet   step 12,350 of 20,000 · 62% · ran 1h37m · last write 26s ago · watching 2s, no sample yet
+  ● live  tidy-otter  cifar-resnet   step 12,400 of 20,000 · 62% · 2.1 steps/s · ~59m left · ran 1h37m · last sample 0s ago
+  ◌ stalled  tidy-otter  cifar-resnet   step 12,450 of 20,000 · 62% · no sample for 4m10s, usually every 23s · ran 1h41m · last sample 4m10s ago
+  ● writing  far-node  cifar-resnet   step 3,200 of 20,000 · 16% · 2.2 steps/s · ~2h07m left · last sample 0s ago · lock not probed
+  ◌ silent  lost-node  cifar-resnet   step 3,150 of 20,000 · 16% · last write 2h14m ago · watching 2s, no sample yet · lock not probed
+  ✗ crashed  mlp-base  mnist-mlp   step 2,900 of 4,690 · 62% · writer exited without an end · last write Oct 31 14:10, 22h07m ago · ran 5m08s
+  ✓ finished  amber-fox  cifar-resnet   20,000 steps in 2h32m · ended 09:34, 2h43m ago
+  ✗ failed  eager-hawk  cifar-resnet   failed at step 1,100 after 9m51s · Rig.Lost (CUDA:0, "out of memory") · ended 03:13, 9h04m ago
+  ■ killed  quiet-heron  cifar-resnet   killed at step 8,200 after 1h03m · ended 04:10, 8h08m ago

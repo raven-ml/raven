@@ -900,10 +900,12 @@ compares, tags, annotates, deletes, collects and checks, printing
 tab-separated lines.
 
 `munin.tui` is a terminal dashboard of a store, opened by bare `munin` on a
-terminal and by `munin watch [RUN]`: the store's runs with the params that
-differ and each run's best value, and one run's metrics charted from every
-sample, beside up to two marked runs, with its machine's readings. A run's
-state word comes from its lock and from samples the dashboard saw arrive.
+terminal and by `munin watch [RUN]`: the store's runs under a header per
+experiment, with the params that differ and each run's best value, and one
+run on one dominant chart drawn from every sample, its other metrics as
+strips aligned under it, up to two marked runs as level lines with rows of
+their difference from the focus, and its machine's readings. A run's state
+word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 

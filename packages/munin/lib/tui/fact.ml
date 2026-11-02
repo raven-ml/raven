@@ -25,19 +25,6 @@ let latest_step stats =
       else acc)
     None stats
 
-let progress ?(bar = true) ~wide ~steps latest =
-  let n = if wide then Text.count else Text.short in
-  match (latest, steps) with
-  | None, _ -> ""
-  | Some s, Some t when s < t ->
-      let p = Float.of_int s /. Float.of_int t in
-      if wide && bar then
-        Printf.sprintf "%s of %s  %s %.0f%%" (n s) (n t) (Text.bar 16 p)
-          (100. *. p)
-      else if wide then Printf.sprintf "%s of %s" (n s) (n t)
-      else Printf.sprintf "%s/%s %.0f%%" (n s) (n t) (100. *. p)
-  | Some s, _ -> n s
-
 let wall r =
   Option.value (Run.ended_at r) ~default:(Run.updated_at r) -. Run.started_at r
 

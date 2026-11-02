@@ -1,19 +1,19 @@
-01 |munin  0 runs
+01 | 0 runs                                                                 ~/empty
 02 |
 03 |
-04 |No run in ~/empty yet. Runs appear here as they start.
+04 |
 05 |
 06 |
 07 |
 08 |
 09 |
 10 |
-11 |
+11 |                                  No runs yet
 12 |
-13 |
-14 |
+13 |                 A run appears here when a program starts one:
+14 |                     Munin.Session.start ~experiment:"…" ()
 15 |
-16 |
+16 |                                 store ~/empty
 17 |
 18 |
 19 |
@@ -21,5 +21,5 @@
 21 |
 22 |
 23 |
-24 |↑↓ run  ←→ metric  enter open  space mark  / filter  o order  ? help  q quit
+24 | q quit   ? keys
 cursor hidden
