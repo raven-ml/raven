@@ -2372,6 +2372,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- On a big-endian machine brot encodes through its OCaml code: the C
+  kernels' walkers read native words as little-endian and cut text wrong
+  there.
 - An added token matched against normalized text whose content normalizes to
   the empty text is refused with `Invalid_argument`, as Hugging Face refuses
   it; it used to be dropped silently.

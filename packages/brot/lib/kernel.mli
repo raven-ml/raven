@@ -10,7 +10,8 @@
     kernels are held to by the native-vs-bytecode dump differential. *)
 
 val available : bool
-(** [available] is [true] iff the C kernels can be used: native code. *)
+(** [available] is [true] iff the C kernels can be used: native code on a
+    little-endian machine. *)
 
 (** {1:byte_level The fused byte-level kernel} *)
 

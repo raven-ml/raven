@@ -3,7 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let available = Sys.backend_type = Sys.Native
+(* The walkers read native words as little-endian, so a big-endian machine
+   takes the OCaml path. *)
+let available = Sys.backend_type = Sys.Native && not Sys.big_endian
 
 (* ABI pins, mirrored in brot_kernels.c — change neither without the other: the
    [byte_level] field order is the C [BROT_BL_*] enum, the [reason] constructor
