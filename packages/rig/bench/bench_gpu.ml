@@ -292,11 +292,22 @@ let gpu_rows ?graph v ~opened ~kernel =
       name
       (fun d -> B.create d bytes)
   in
+  (* A create that takes the memory the call before freed from the cache, and
+     one that misses it: the call before returned its memory to the driver.
+     Both free their buffer at once, so every call hits, or every call misses,
+     whatever the collector's phase. *)
+  let hit d = ignore (B.free (B.create d (64 lsl 10)) : bool) in
+  let miss d =
+    hit d;
+    Rig.free_cache d
+  in
   [
     Thumper.group (strf "buffer/%s" v)
       [
         allocation "create-drop-64KiB" (64 lsl 10);
         allocation "create-drop-64MiB" (64 lsl 20);
+        row "create-free-hit-64KiB" allocating hit;
+        row "create-free-miss-64KiB" allocating miss;
       ];
     Thumper.group (strf "file/%s" v)
       [
