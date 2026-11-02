@@ -2079,51 +2079,72 @@ Withdrawn: multi-device is out of scope, see README.
   exact`, a selection on `minimum c x < c` at `c = 0.`, whose inputs hold
   `-0.`, in float16, float32 and float64.
 
-## D89. A matrix-vector product is laid out by its matrix
+## D89. A contraction of little reuse streams its operand of least reuse
 
-- **tinygrad:** `codegen/opt/heuristic.py:61-78` (`hand_coded_optimizations`'
-  matrix-vector case, which applies only when the reduced product's two
-  operands are loads, `mulop.src[0].op is Ops.INDEX and mulop.src[1].op is
-  Ops.INDEX`, and the vector's index has the first weak reduce range as a term
-  of its sum: that axis split into `MV_THREADS_PER_ROW` local threads, 8, the
-  first global axis that 16 divides, whichever operand reads it, into
-  `MV_BLOCKSIZE` local threads, 4, then `MV_ROWS_PER_THREAD` upcast lanes, 4,
-  whatever the matrix's layout and size), and
-  `codegen/opt/postrange.py:111-115` (`apply_opt`, which refuses a local split
-  of a reduce axis whose reduction runs inside a weak range that a reduction
-  closes, a serial reduce).
-- **tolk:** `Heuristic.term_of`, `Heuristic.operands`, `Heuristic.lanes`,
-  `Heuristic.rows`, `Heuristic.columns`, `Heuristic.sector_lanes`,
-  `Heuristic.busy`, `Heuristic.in_flight`, `Heuristic.units` and
-  `Heuristic.matvec` (its `rows_layout`, and its `columns_layout` with its
-  `across`); `Postrange.Scheduler.apply`'s check of a group inside a reduce;
-  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
-  are recorded.
+- **tinygrad:** `codegen/opt/heuristic.py:60-78` (`hand_coded_optimizations`'
+  matrix-vector case, which applies only when the first reduce's product
+  has two loads as operands, `mulop.src[0].op is Ops.INDEX and
+  mulop.src[1].op is Ops.INDEX`, the vector's index has the first weak
+  reduce range as a term of its sum and its ranges are among the matrix's:
+  that axis split into `MV_THREADS_PER_ROW` local threads, 8, the first
+  global axis that 16 divides, whichever operand reads it, into
+  `MV_BLOCKSIZE` local threads, 4, then `MV_ROWS_PER_THREAD` upcast lanes,
+  4, whatever the matrix's layout, size and reuse), `:9-44` (the tensor
+  cores, tried first), `:111-137` (the upcasts of output axes, which find
+  reuse only on an axis some access does not read and take 3 or 4 of it),
+  and `codegen/opt/postrange.py:111-115` (`apply_opt`, which refuses a local
+  split of a reduce axis whose reduction runs inside a weak range that a
+  reduction closes, a serial reduce).
+- **tolk:** `Heuristic.lanes`, `Heuristic.rows`, `Heuristic.columns`,
+  `Heuristic.sector_lanes`, `Heuristic.busy`, `Heuristic.in_flight`,
+  `Heuristic.in_flight_held`, `Heuristic.stream_first`,
+  `Heuristic.upcast_max`, `Heuristic.narrow_bytes`, `Heuristic.run`,
+  `Heuristic.reuse_ranges`, `Heuristic.reuse`, `Heuristic.stride`,
+  `Heuristic.accesses`, `Heuristic.contraction`, `Heuristic.contracted`,
+  `Heuristic.units`, `Heuristic.main_access`, `Heuristic.layout`,
+  `Heuristic.streamed`, `Heuristic.narrow`, `Heuristic.stream`,
+  `Heuristic.streams` and their order in
+  `Heuristic.hand_coded_optimizations`; `Postrange.Scheduler.apply`'s check
+  of a group inside a reduce; `test/gen/tinygrad.patch`, which gives tinygrad
+  the same before the goldens are recorded.
 - **Differs:**
-  - the operands: the vector is any computation of accesses with no reduce,
-    a load read through dtype conversions (`CAST`, `BITCAST`) among them,
-    either operand of the product, in fewer ranges than the matrix. The
-    matrix is any computation of loads with no reduce, such as decoded codes,
-    whose ranges then stand for its load's index. The first reduce range may
-    be a term of the vector's index alone or times a constant;
-  - the layout: the range of unit stride in an access of the matrix that
-    reads along the reduce chooses it. Along the reduce (`W[n, k]`): the
-    reduce splits into up to 32 local threads, adjacent threads reading
-    adjacent elements, 4 rows a workgroup, and what is left of the reduce is
-    unrolled by its largest divisor up to 8. Along an output (`W[k, n]`): that
-    axis splits into 32 local threads and 2 upcast lanes, and the reduce into
-    the threads, up to 32, that make 32768 threads; with more than 32768
-    outputs the kernel takes the other rules. `MV_BLOCKSIZE`,
-    `MV_THREADS_PER_ROW` and `MV_ROWS_PER_THREAD` are gone; `MV=0` stays;
-  - a workgroup's rows: the rows layout splits its 4 SIMD groups from the
-    first global axis that 4 divides among those the vector does not read,
-    and from one the vector reads only when none of the others divides;
-  - few outputs: when the outputs are too few for the columns layout to run
-    32768 threads, a workgroup of 1024 threads takes fewer threads across
-    them, down to 8, and more along the reduce, as many as the reduce's
-    power-of-two divisor allows, so that more workgroups share the outputs.
-    8 threads of 2 bfloat16 columns read a 32-byte sector. The columns
-    layout, which took at least 64 outputs, takes a product of 32 too;
+  - the contraction: the first reduction of the kernel that sums a product
+    of two computations of accesses, on a renderer with local indices and
+    shared memory; `MV=0` turns it off. An operand may read its loads
+    through conversions (`CAST`, `BITCAST`), decode codes, scale a vector
+    (D81's part), and read reductions that run inside none of the
+    contraction's ranges, as a route's expert found by a reduction is;
+  - the streamed operand: an operand's reuse `R` is the product of the sizes
+    of the global axes it does not read, times `d` for each it reads only as
+    its quotient by `d`. The operand of least `R` is streamed, `W`; of two of
+    equal reuse, the one laid out along a contracted range. A gathered
+    operand reads every row: `R = 1`;
+  - the order against the tensor cores: up to `R = 32`, the contraction
+    streams before the cores are tried; past it a core takes it where one
+    applies, and where none does it streams when `W`'s main access reads
+    elements under 4 bytes, and takes the other rules otherwise;
+  - the layout: `W`'s main access is the one with a range of unit stride
+    whose terms of contracted ranges span the most bytes. When that range `u`
+    is contracted (rows): `W`'s reuse axes are upcast, each by its share of
+    the largest divisor of `R` up to 16 (D92's runs, as a term of `R`); `u`
+    splits into up to 32 local threads, and when they take `u` whole and are
+    fewer, the contracted range of the next stride into as many more as make
+    32; 4 rows, of a global axis `W` reads and the other operand does not
+    (D96's part), else one both read, go to 4 SIMD groups at `R = 1` and to
+    each thread's registers at `R > 1`; what the threads leave of `u`, or
+    else the range of the next stride, is unrolled by its largest divisor up
+    to 8, or 4 with rows held. When that range is a global axis (columns),
+    after the reuse upcast it splits into 32 local threads and 2 upcast
+    lanes, and the first contracted range into the threads, up to 32, that
+    make 32768 threads; with more than 32768 outputs the kernel takes the
+    other rules. `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW` and `MV_ROWS_PER_THREAD`
+    are gone;
+  - few outputs (D110's part): when the outputs are too few for the columns
+    layout to run 32768 threads, a workgroup of 1024 threads takes fewer
+    threads across them, down to 8, and more along the reduce, so that more
+    workgroups share the outputs. 8 threads of 2 bfloat16 columns read a
+    32-byte sector. `busy` is a device's size the renderer does not know,
+    unpinned on fudge (TODO's device-count item);
   - a group inside a reduce: a reduce axis whose reduction runs inside a
     serial reduce, a weak range that a reduction closes, splits into local
     threads, each iteration of the outer reduce storing and reading the shared
@@ -2133,61 +2154,66 @@ Withdrawn: multi-device is out of scope, see README.
     for the weak quotient that the unroll's split leaves its reduction; the
     lanes of a tensor core's K, which the core contracts and no reduction
     closes, take a group in both.
-- **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`) on CUDA (RTX 5000
-  Ada, 576 GB/s, 100 multiprocessors), and nx.quant's products
-  (`Nx_quant.apply`) compiled by rune. tinygrad's layout puts 8 threads on a
-  row whatever the matrix: rows along the reduce read one byte a thread,
-  columns along an output read 8 rows apart, and few outputs leave the GPU
-  short of threads.
-  - The decode step went from 45.5 ms to 11.1 ms. The query projection
-    multiplies a normalised activation, which tinygrad declines, and ran
-    1024 threads; the experts' down product sums four experts, a reduce
-    around the matrix-vector one, which could not split, and ran 720 threads
-    reading 11520 bytes each. The down products went from 15.72 ms to 0.91 ms
-    (5% to 81% of the bandwidth), gate-up from 15.38 ms to 2.60 ms (10% to
-    57%), the attention projections from 8.56 ms to 2.17 ms, the output
-    projection from 1.57 ms to 1.12 ms (63% to 88%); the 201088 outputs of
-    the head keep their layout.
-  - The operands: an expert's matrix is MXFP4 codes decoded by bit
-    operations and scaled by their group, and its vector a bfloat16
-    activation widened to float32. A decoded byte splits the reduce into a
-    range over bytes and one over a byte's two values, so the vector reads
-    the byte range times 2. tinygrad declines the case, as it does a vector
-    read through a cast alone, and the kernel then ran each row's whole
-    reduce in one thread: the expert products launched 960 threads, the down
-    product taking 1.98 ms per layer and gate-up 2.01 ms. On Metal (M1 Max),
-    the down product of four experts at gpt-oss's widths takes 0.65 ms where
-    it took 2.2 ms with the codes decoded by bit operations, and 0.64 to
-    0.77 ms where it took 2.8 to 8.2 ms with the table.
-  - A workgroup's rows: under `Nx.map_segments` over `Nx_quant.apply` on a
-    prompt, whose blocks of rows each multiply their expert's matrix, the
-    vector, a block's rows, reads the block axis, so the 4 groups of a
-    workgroup took 4 blocks, each reading its own rows for every output. In
-    blocks of 4, D92's upcast, a workgroup reads 16 rows of 2880 floats,
-    184 KB, more than an SM's L1 holds; in blocks of 2, half that. On the
-    matrix's rows the 4 groups read one block's rows. The 512-token gate and
-    up product went, in blocks of 4, from 56.6 ms to 21.9 ms, and in blocks
-    of 2 from 26.0 ms to 25.3 ms, with the same registers (63 and 61, no
-    spills); on an M1 Max's Metal from 224 ms to 162 ms and from 225 ms to
-    167 ms.
-  - Few outputs: the key and value projections, 512 outputs, ran on 8
-    workgroups and took 9.05 us each; on 32 they take 7.8 us. The router, 32
-    outputs, fell back to a group of 16 threads per output and took 6.7 us;
-    it takes 3.7 us.
-
-  To re-measure on fudge: no fudge bench row times it (kaun's
-  `GptOss/decode-step-cache-1024` times it on nonnormal, fudge's row holding
-  its allocated words alone, and its `Quant/metal/*` rows on the Mac).
+- **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`) on CUDA, and
+  nx.quant's products (`Nx_quant.apply`, `Nx.map_segments` over it)
+  compiled by rune. A contraction of little reuse reads its streamed operand
+  from memory more than it multiplies: tinygrad's layout puts 8 threads on a
+  row whatever the matrix, finds no layout for a reuse past 1, and reads only
+  the first reduce range for lanes, which a quantised block's values are not.
+  Measured on fudge's RTX 5000 Ada (576 GB/s, 72 MB of L2), the rule against
+  the layouts before it (D89's matrix-vector layout and D92), interleaved,
+  ranges of three runs:
+  - lanes by stride: tolk's bench `stream/q8_0-1`, Q8_0 16384 by 8192 at one
+    token, 1230-1240 to 291 us; kaun's `Quant/cuda/q8_0-product-1-token`
+    408-410 to 27-28 us, `q6_k` 3.40-3.41 ms to 571 us, `q4_k` 255-257 to
+    53-55 us, `mxfp4-blocks` (GGUF's 17-byte blocks) 86 to 24-26 us; the
+    gpt-oss `--q8_0` decode step 22.8 to 8.0-8.1 ms;
+  - reuse in registers, rows held: `stream/dense-bf16-12` 837-838 to
+    275-276 us, `stream/q8_0-12` 1030 to 431-438 us, `stream/mxfp4-12` 5.35-5.39
+    to 3.09-3.10 ms (its decode stored as float32, D163), the routed blocks
+    of 16 rows of a 512-token prompt `stream/routed-512-bf16` 33.2 to 10.2 ms
+    (from a tensor core) and `stream/routed-512-f32` 57.8-58.0 to 20.6 ms,
+    kaun's `Quant/cuda/routed-product-512-tokens` 82.5 to 44.4-44.6 ms. Rows
+    held per thread against 4 SIMD groups: at `R = 16` 10.2 against 22.6 ms
+    and 20.6 against 28.6 ms; at `R = 2` (dense bfloat16, 16384 by 4096)
+    264.6-265.0 against 265.1-265.2 us;
+  - the order against the cores: `stream/dense-bf16-16` 805-807 us on a core
+    to 288-289 us streamed, `stream/dense-bf16-32` 839-844 to 548-550 us; at
+    `R = 64` the core keeps it (`stream/dense-bf16-64`, 1.55 ms both). The
+    decode step's attention values, `gpt_oss/gpt_oss_decode_values` (`R = 8`
+    over 8 query heads a key head), 25.2-26.6 us on a core to 14.7-15.3 us;
+    its keys, `stream/decode-keys`, 8.4 to 13.9-14.6 us, a reduce of 64 that
+    32 lanes leave 2 loads each and a reduction across them, where the core
+    takes 64 at once; streamed without the upcast of the 8 heads they take
+    16.6 us, so floats are upcast as decoded operands are;
+  - the bound past `R = 32`: a float32 operand streamed is read once a pass,
+    where the other rules' tiles share loads among a workgroup's threads: a
+    float32 product of 1024 by 1024 by 1024 took 1054 us streamed against 398
+    us, 4096 cubed 58.3 against 20.0 ms;
+  - unchanged: `stream/dense-bf16-1`, `stream/mxfp4-1`, `stream/decode-head`,
+    `stream/q8_0-64`, kaun's `mxfp4-product-1-token` and
+    `routed-product-1-tokens`;
+  - the parts merged from D81, D96 and D110, measured before fudge's rows:
+    the decode step from 45.5 to 11.1 ms on an RTX 5000 Ada, its expert
+    products reading MXFP4 codes and a widened bfloat16 activation, which
+    tinygrad declines; a workgroup's rows on the matrix's own axis took a
+    512-token gate and up product in blocks of 4 from 56.6 to 21.9 ms; few
+    outputs took the key and value projections from 9.05 to 7.8 us and the
+    router from 6.7 to 3.7 us.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, cases `matvec_*`, `vecmat_*`,
-  `vecmat_of_cast_*`, `vecmat_decoded_*`, `experts_down_*`, `gpt_oss_*`
-  (`gpt_oss_kv_*` and `gpt_oss_router_*` among them), `shared_keys_*` and
-  `routed_blocks_{metal,cuda,amd}` (the local split on the matrix's row
-  axis), recorded from the equally patched tinygrad, and `the hand-coded
-  optimisations keep a kernel's writes › small kernels › experts_down_metal`
-  (a group inside another reduce); the Postrange suite's cases
-  `double_sum_group` and `double_sum_group_twice`, and
-  `double_sum_unrolled_group` (refused: a group inside an unrolled reduce).
+  tinygrad's › applied_opts`, cases `matvec_*`, `vecmat_*`, `gpt_oss_*`,
+  `experts_down_*`, `routed_blocks_*`, `shared_keys_*`, `rows_m{4,12,32}_*`,
+  `q8_0_blocks_*`, `gguf_mxfp4_*`, `mxfp4_m12_*` and `routed_by_reduce_*`,
+  recorded from the equally patched tinygrad; `streaming › the streamed
+  operand's reuse outside a thread is its reuse over its tile`, `› a SIMD
+  group's load of the streamed operand reads whole sectors`, `› an unroll is
+  the largest divisor of its range up to 8, 4 with reuse` and `› a
+  contraction streams up to a reuse of 32, before a tensor core`; `the
+  hand-coded optimisations keep a kernel's writes › small kernels ›
+  experts_down_metal` (a group inside another reduce); the Postrange suite's
+  cases `double_sum_group`, `double_sum_group_twice` and
+  `double_sum_unrolled_group`; on fudge, tolk's bench `stream/*` and
+  `gpt_oss/*` rows and kaun's `Quant/cuda/*` rows.
 
 ## D90. A linked schedule resolves its launches at link
 
@@ -2251,43 +2277,37 @@ Withdrawn: multi-device is out of scope, see README.
   upcasts by 4 and D108's by 2, on `metal`, `cuda` and `amd` three by 4); the
   goldens, from tinygrad with D91 applied by its generator.
 
-## D92. A decoded operand shared by a run of an output axis is decoded once a run
+## D92. On the host, a decoded operand shared by a run of an output axis is decoded once a run
 
 - **tinygrad:** `codegen/opt/heuristic.py:111-137` (`hand_coded_optimizations`'
   upcasts of output axes, which find reuse only on an axis that some access
-  does not read, take 3 or 4 values of it, and come after the matrix-vector
-  layout of `:61-78` has returned).
+  does not read, and take 3 or 4 values of it).
 - **tolk:** `Heuristic.run_cap`, `Heuristic.run`, `Heuristic.decoded`,
-  `Heuristic.upcast_shared` and its place in
-  `Heuristic.hand_coded_optimizations`, before `matvec`;
-  `test/gen/tinygrad.patch`, which gives tinygrad the same before
-  the goldens are recorded.
-- **Differs:** before the matrix-vector layout, an output axis that an operand
-  of a summed product reads only as `r / d` is upcast by the largest amount up
+  `Heuristic.upcast_runs` and its place in `Heuristic.general`;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
+  are recorded.
+- **Differs:** on the host (`target.device = "CPU"`), before the other
+  rules, an output axis that an operand of the summed product of the
+  contraction (D89) reads only as `r / d` is upcast by the largest amount up
   to 4 that divides both `d` and the axis, when that operand is decoded: its
   value converts integers it reads into floats, by a cast or a bitcast,
   outside any access's address. The axis's lanes then share the operand's
-  value. With several such axes, each is upcast.
-- **Reason:** (d): `Nx.map_segments` over `Nx_quant.apply` on a prompt, which
-  sorts positions by expert into blocks of 2 rows that read their block's
-  matrix, `owner[row / 2]`. Every row decoded the matrix's MXFP4 codes and
-  scales again: the row axis reaches the matrix through the gather, so tinygrad
-  sees no reuse. Upcast by 2, a block's rows decode once. The 512-token gate and
-  up product's kernel on an RTX 5000 Ada, from 42.5 ms to 26.2 ms
-  (`r_520_5760_32_4_9_2_5` to `r_260_5760_32_4_2_9_2_5`), against 34.4 ms for
-  one matrix per position; on the Mac's Metal, from 275.9 ms to 225.5 ms,
-  against 258.5 ms. gpt-oss-20b's 512-token prefill on CUDA, from 1.49 s to
-  1.11 s. An operand of floats is left alone: upcasting the query heads that
-  share a key and value head (`h / 8`), whose cache a select joins to the new
-  position's, made gpt-oss-20b's decode on CUDA 3.4% slower, as the lanes'
-  shared load is one the cache serves and the upcast costs threads. To
-  re-measure on fudge: no fudge bench row holds it (kaun's
-  `Quant/cuda/routed-product-512-tokens` is baselined on kimchi only).
+  value. With several such axes, each is upcast. On a GPU a streamed
+  contraction takes the run as a term of the operand's reuse (D89),
+  whatever the operand's type; one that does not stream takes no run.
+- **Reason:** (d): `Nx.map_segments` over `Nx_quant.apply` on a prompt, on
+  the host, which sorts positions by expert into blocks of 16 rows that read
+  their block's matrix, `owner[row / 16]`: every row decoded the matrix's
+  MXFP4 codes and scales again, the row axis reaching the matrix through the
+  gather. On fudge, kaun's `Quant/host/routed-product-64-tokens` takes
+  195-226 ms a call upcast by 4 (`r_88_1920_4_3_180_2_8`); without it its
+  product kernel (`r_352_1920_3_180_2_8`) alone takes 6.0-6.9 s.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, cases `routed_blocks_*` and `shared_keys_*`
-  (keys of floats, left alone), recorded from the equally patched
-  tinygrad, and `the hand-coded optimisations keep a kernel's writes › large
-  kernels › routed_blocks_*` (slow).
+  tinygrad's › applied_opts`, cases `routed_blocks_cpu` and
+  `routed_tiles_cpu`, recorded from the equally patched tinygrad, and `the
+  hand-coded optimisations keep a kernel's writes › large kernels ›
+  routed_blocks_*` (slow); on fudge, kaun's `Quant/host/routed-product-*`
+  rows.
 
 ## D93. The where-closure rule leaves loads alone, and its slice queries walk no more than they need
 
@@ -2538,8 +2558,8 @@ verification on the expand, as there.
   core's M (or N): that operand reads one value over each tile of the core,
   and the core reads its bits of the range at 0. Either operand may be the
   core's A: the choices with `in0` as A come first, as tinygrad orders them,
-  then those with `in1`. A summed product with a decoded operand (D92's
-  `decoded`) tries the cores whatever its number of reduce axes.
+  then those with `in1`. A summed product with a decoded operand
+  (`Heuristic.decoded`) tries the cores whatever its number of reduce axes.
 - **Reason:** (d): `Nx.map_segments` over `Nx_quant.apply` on a prompt, which
   sorts positions by expert into blocks of up to 16 rows, each multiplying its
   expert's matrix, `W[owner[row / 16]]`. The rows read the row axis and the
@@ -2551,8 +2571,12 @@ verification on the expand, as there.
   the tensor cores, from 13.3 ms, and the down product 1.5 ms, from 6.9 ms; the
   prefill takes 0.22 s, from 0.71 s. To re-measure on fudge: no fudge bench
   row holds it.
+  Blocks of 16 rows now stream before the cores are tried (D89: 10.2 ms
+  against 33.2 ms on a core for the gate and up product on fudge), so the
+  rule takes blocks past 32 rows, which nx.quant does not make yet: to
+  re-measure on fudge once a workload does.
 - **Pinned by:** the Heuristic suite's cases `routed_tiles_{metal,cuda,amd}`
-  (the cores apply to a product in blocks of 16 rows), recorded from the
+  (the cores apply to a product in blocks of 64 rows), recorded from the
   equally patched tinygrad; the Postrange suite's `tc_operands_swapped`
   (the second choice of a matmul makes its `in1` the core's A). On rune, the
   values on a GPU: missing (the old rune's `Rune.quant › gpus › CUDA › on

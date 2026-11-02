@@ -63,19 +63,6 @@ let reads r b = Nodes.mem r (backward_slice_with_self ~calls:Skip (idx b))
 let ranges_of ?reduce k types =
   List.map (List.nth (K.rngs k)) (K.axes_of ?reduce k types)
 
-(* Whether [r] is a term of the index [i], alone or times a constant. *)
-let term_of r i =
-  List.exists
-    (fun t ->
-      t == r || (op t = Op.Mul && nth t 0 == r && op (nth t 1) = Op.Const))
-    (split_uop i Op.Add)
-
-(* The accesses [u] computes from, when it computes with no reduce. *)
-let accesses u =
-  let slice = Nodes.to_list (backward_slice_with_self ~calls:Skip u) in
-  if List.exists (fun x -> op x = Op.Reduce) slice then []
-  else List.filter (fun x -> op x = Op.Index) slice
-
 (* Whether [o] is decoded: its value converts integers it reads into floats,
    by a cast or a bitcast, outside any access's address. *)
 let decoded o =
@@ -167,27 +154,41 @@ let tensor_cores k =
       [ 0; 1; 2 ]
   else None
 
-(* Matrix-vector products
+(* Streamed contractions
 
-   A product of a matrix and a vector reads each matrix element once, so it
-   runs as fast as memory feeds it: adjacent threads read adjacent elements,
-   each thread keeps several loads in flight, and enough threads run to keep
-   the memory busy. Where the matrix is laid out decides the layout:
+   A contraction sums the products of two operands. Each element of an operand
+   feeds as many outputs as the outputs that read it, its reuse [R]: the
+   product of the sizes of the output ranges the operand does not read, times
+   [d] for each it reads only as [r / d]. One token's projection reuses its
+   matrix once, twelve tokens' twelve times, a matrix read through a gather by
+   each row once, and a matrix that blocks of 2 rows share twice:
+
+     row     0  1 | 2  3 | 4  5        W[owner[row / 2]]
+     owner   e0   | e3   | e1          R = 2
+
+   With little reuse a contraction runs as fast as memory feeds it its operand
+   of least reuse, [W]: each element of [W] is loaded once for its [R] outputs,
+   adjacent threads read adjacent elements, and each thread keeps several loads
+   in flight. Its unit-stride range decides the layout:
 
      rows along the reduce, W[n, k]       columns along an output, W[k, n]
 
      lanes   k ->                         lanes   n ->
      t0 t1 .. t31 t0 t1 .. t31 ...        t0 t1 .. t31   (2 columns each)
      a row's [lanes] threads read it      the reduce splits into threads
-     in turn, [rows] rows a workgroup,    until [busy] threads run; with
-     unrolled by up to [in_flight]        few outputs a workgroup takes as
-                                          few as [sector_lanes] across *)
+     in turn, [rows] rows a workgroup     until [busy] threads run; with
+     or a thread, unrolled by up to       few outputs a workgroup takes as
+     [in_flight]                          few as [sector_lanes] across
+
+   and its reuse ranges are upcast, so that a thread holds the outputs that
+   share each element it loads. *)
 
 (* The threads of a SIMD group: a CUDA warp, an AMD wave32, a Metal
    simdgroup. *)
 let lanes = 32
 
-(* The rows of a workgroup in the rows layout: 4 SIMD groups. *)
+(* The rows of a workgroup's SIMD groups without reuse, or of a thread's
+   registers with it, where each row reuses the other operand's loads. *)
 let rows = 4
 
 (* The outputs of a thread in the columns layout. *)
@@ -200,9 +201,22 @@ let sector_lanes = 8
 (* The threads that keep a GPU's memory busy. *)
 let busy = 32768
 
-(* The loads of its row a thread of the rows layout keeps in flight, at
-   most. *)
+(* The loads of its row a thread keeps in flight, at most, and with rows held,
+   each of which multiplies them. More is slower: an MXFP4 matrix of 16384 by
+   16384 unrolled by 16 took 364 to 376 us where 8 took 317 to 331. *)
 let in_flight = 8
+let in_flight_held = 4
+
+(* The reuse at most that streams before a tensor core is tried: up to it a
+   streamed product runs faster than a core's tiles, which leave each warp a
+   serial reduce. A bfloat16 matrix of 16384 by 4096 multiplies 16 rows in
+   288 us streamed and 805 us on a core, 32 rows in 550 and 840 us; at 64
+   rows the core wins, 1079 to 1149 us against 1149 to 1258 in a model of
+   the kernel. *)
+let stream_first = 32
+
+(* The most values an upcast of one axis takes (apply_opt's bound). *)
+let upcast_max = 16
 
 (* The largest power of two at most [cap] that divides [r]'s size. *)
 let rec pow2_dividing r cap =
@@ -221,36 +235,172 @@ let pow2_above n =
   let rec go p = if p >= n then p else go (2 * p) in
   go 1
 
-(* The vector and the matrix of a product [m] summed over [first], if it is one
-   of a matrix and a vector. Both are computations of accesses with no reduce,
-   such as values decoded from codes by a table or a vector normalised by a
-   scale. The vector runs in some of the matrix's ranges, the matrix in more,
-   and one of the vector's accesses reads along [first], alone or at a constant
-   stride. *)
-let operands first m =
-  let is_vector (v, w) =
-    let v_accesses = accesses v and w_ranges = ranges w in
-    v_accesses <> []
-    && accesses w <> []
-    && List.exists (fun a -> term_of first (idx a)) v_accesses
-    && Nodes.fold (fun r ok -> ok && Nodes.mem r w_ranges) (ranges v) true
-    && Nodes.cardinal w_ranges > Nodes.cardinal (ranges v)
+let rec gcd a b = if b = 0 then a else gcd b (a mod b)
+
+(* The run of [o] along the range [r]: [d] if [o] reads [r] only as [r / d], 1
+   otherwise. *)
+let run o r =
+  let readers =
+    List.filter
+      (fun u -> List.memq r (src u))
+      (Nodes.to_list (backward_slice_with_self ~calls:Skip o))
   in
+  let divisor u =
+    if op u = Op.Div && op (nth u 1) = Op.Const then
+      known_size (Sym (nth u 1))
+    else None
+  in
+  match List.map divisor readers with
+  | Some d :: rest when List.for_all (Option.equal Bigint.equal (Some d)) rest
+    ->
+      d
+  | _ -> Bigint.one
+
+(* The reuse of [o] along each output range of [k]: [(g, f)] for each range
+   [g] that [f > 1] outputs share an element of [o] along, or [None] if the
+   size of a range [o] does not read is not known. *)
+let reuse_ranges k o =
+  let along g =
+    if Nodes.mem g (ranges o) then Some (run o g)
+    else known_size (shape_at k (index_of g (K.rngs k)))
+  in
+  List.fold_left
+    (fun acc g ->
+      match (acc, along g) with
+      | Some acc, Some f when Bigint.(gt f one) -> Some ((g, f) :: acc)
+      | Some acc, Some _ -> Some acc
+      | _ -> None)
+    (Some []) (ranges_of k [ Global ])
+  |> Option.map List.rev
+
+let reuse k o =
+  Option.map
+    (List.fold_left (fun r (_, f) -> Bigint.mul r f) Bigint.one)
+    (reuse_ranges k o)
+
+(* The stride of the range [r] in the index [i]: 1 for a term [r], [c] for a
+   term [r * c]. *)
+let stride r i =
   List.find_map
-    (fun (v, w) -> if is_vector (v, w) then Some (v, w) else None)
-    [ (nth m 0, nth m 1); (nth m 1, nth m 0) ]
+    (fun t ->
+      if t == r then Some Bigint.one
+      else if op t = Op.Mul && nth t 0 == r && op (nth t 1) = Op.Const then
+        match value (nth t 1) with `Int c -> Some c | _ -> None
+      else None)
+    (split_uop i Op.Add)
 
-(* The ranges of unit stride of the accesses of [w] that read along [first]:
-   the matrix is laid out along them. *)
-let units first w =
-  List.concat_map
-    (fun a ->
-      if Nodes.mem first (ranges (idx a)) then
-        List.filter (fun t -> op t = Op.Range) (split_uop (idx a) Op.Add)
-      else [])
-    (accesses w)
+(* The accesses an operand [u] of a sum over the ranges [over] computes from,
+   outside the reductions it reads, none when one of those runs inside a range
+   of [over]: the sum would compute it again at each of its steps. A
+   reduction that runs inside none is a value of the outputs alone, as a
+   route's expert found by a reduction over its block is. *)
+let accesses over u =
+  let inside r = List.exists (fun c -> Nodes.mem c (ranges r)) over in
+  if
+    List.exists
+      (fun x -> op x = Op.Reduce && inside x)
+      (Nodes.to_list (backward_slice_with_self ~calls:Skip u))
+  then []
+  else
+    List.filter
+      (fun x -> op x = Op.Index)
+      (toposort ~calls:Skip ~gate:(fun x -> op x <> Op.Reduce) u)
 
-let matvec k =
+let is_sum r = match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false
+
+(* [k]'s contraction: its first reduction that sums a product of two
+   computations of accesses, and the ranges it closes in the order of [k]'s
+   axes. A reduction an operand reads, such as a route's, comes before it. *)
+let contraction k =
+  List.find_map
+    (fun r ->
+      let m = nth r 0 in
+      if not (is_sum r && op m = Op.Mul) then None
+      else
+        let over =
+          List.filter
+            (fun u -> List.memq u (List.tl (src r)))
+            (ranges_of ~reduce:true k [ Weak ])
+        in
+        if accesses over (nth m 0) = [] || accesses over (nth m 1) = [] then
+          None
+        else Some (m, over))
+    (K.reduceops k)
+
+let contracted k =
+  match contraction k with Some (_, over) -> over | None -> []
+
+(* The terms of [a]'s index that are ranges: those of unit stride. *)
+let units a = List.filter (fun t -> op t = Op.Range) (split_uop (idx a) Op.Add)
+
+(* The main access of [w]: the one with a range of unit stride whose terms
+   span the most bytes along the contracted ranges, the matrix's codes or
+   values beside the scales and tables a decoding reads, whose indices hold
+   the contracted ranges divided or through a code. *)
+let main_access k w =
+  let red = contracted k in
+  let terms a = split_uop (idx a) Op.Add in
+  let bytes a =
+    List.fold_left
+      (fun n t ->
+        match stride t (idx a) with
+        | _ when not (List.memq t red) -> n
+        | Some _ ->
+            Bigint.mul n
+              (Option.value ~default:Bigint.one
+                 (known_size (shape_at k (index_of t (K.rngs k)))))
+        | None -> n)
+      (Bigint.of_int (Dtype.itemsize (dtype a)))
+      (List.map (fun t -> if op t = Op.Mul then nth t 0 else t) (terms a))
+  in
+  List.fold_left
+    (fun best a ->
+      match best with
+      | Some b when Bigint.(geq (bytes b) (bytes a)) -> best
+      | _ -> Some a)
+    None
+    (List.filter (fun a -> units a <> []) (accesses red w))
+
+(* What [w] is laid out along: [`Rows (u, a)] when the range of unit stride of
+   its main access [a] is the contracted range [u], [`Columns g] when it is the
+   output range [g]. *)
+let layout k w =
+  match main_access k w with
+  | None -> None
+  | Some a -> (
+      let units = units a in
+      match List.find_opt (fun r -> List.memq r units) (contracted k) with
+      | Some u -> Some (`Rows (u, a))
+      | None ->
+          Option.map
+            (fun g -> `Columns g)
+            (List.find_opt (fun g -> List.memq g units) (ranges_of k [ Global ])))
+
+(* The streamed operand [w] of [k]'s summed product, the other operand and
+   [w]'s reuse. Of two operands of equal reuse, the one laid out along the
+   reduce. *)
+let streamed k =
+  match contraction k with
+  | Some (m, _) -> (
+      let a = nth m 0 and b = nth m 1 in
+      let rows_first o =
+        match layout k o with Some (`Rows _) -> true | _ -> false
+      in
+      match (reuse k a, reuse k b) with
+      | Some ra, Some rb ->
+          let c = Bigint.compare ra rb in
+          if c < 0 || (c = 0 && (rows_first a || not (rows_first b))) then
+            Some (a, b, ra)
+          else Some (b, a, rb)
+      | Some ra, None -> Some (a, b, ra)
+      | None, Some rb -> Some (b, a, rb)
+      | None, None -> None)
+  | None -> None
+
+(* [n]'s greatest common divisor with the positive [a]. *)
+let gcd_with a n = gcd a (Bigint.to_int (Bigint.rem n (Bigint.of_int a)))
+
+let stream k (w, x, reuse) =
   (* The axis of [r], or of what replaced it when a split made it shorter. *)
   let axis r =
     let id = axis_id r in
@@ -261,28 +411,93 @@ let matvec k =
     in
     go 0 (K.rngs k)
   in
+  let rest r = List.find_opt (fun u -> axis_id u = axis_id r) (K.rngs k) in
   let divisible_at r n = divisible (shape_at k (axis r)) n in
-  let rows_layout first v globals =
-    let threads = pow2_dividing first lanes in
-    (* A workgroup's rows are the matrix's own, which the vector does not read,
-       so its SIMD groups share the vector's loads. *)
-    let own, shared =
-      List.partition (fun g -> not (Nodes.mem g (ranges v))) globals
+  let shared = Option.value ~default:[] (reuse_ranges k w) in
+  let held = Bigint.(gt reuse one) in
+  (* The reuse ranges are upcast by the largest divisor of their product at
+     most [upcast_max], each by its share: a thread holds the outputs that
+     share each element of [w] it loads. The rest stay global, each a pass
+     over [w]. *)
+  let upcast_reuse () =
+    let rec most t =
+      if Bigint.(equal (rem reuse (of_int t)) zero) then t else most (t - 1)
     in
-    match List.find_opt (fun g -> divisible_at g rows) (own @ shared) with
-    | Some g when threads > 1 && try_split k (axis first) threads Opt.Local ->
-        ignore (split k (axis g) rows Opt.Local);
-        (* what the lanes leave of the row, if anything *)
-        let same u = axis_id u = axis_id first in
-        (match List.find_opt same (K.rngs k) with
-        | Some rest ->
-            let loads = divisor_at_most rest in_flight in
-            if loads > 1 then ignore (try_split k (axis rest) loads Opt.Upcast)
-        | None -> ());
-        Some k
+    ignore
+      (List.fold_left
+         (fun left (g, f) ->
+           let a =
+             match known_size (shape_at k (axis g)) with
+             | Some n -> gcd_with (gcd_with left f) n
+             | None -> 1
+           in
+           if a > 1 then ignore (split k (axis g) a Opt.Upcast);
+           left / a)
+         (most upcast_max) shared)
+  in
+  let rows_layout u a =
+    let i = idx a in
+    let threads = pow2_dividing u lanes in
+    let whole =
+      Option.equal Bigint.equal
+        (known_size (shape_at k (axis u)))
+        (Some (Bigint.of_int threads))
+    in
+    (* A workgroup's or a thread's rows are the matrix's own, which the other
+       operand does not read, so they share that operand's loads. *)
+    let own, others =
+      List.partition
+        (fun g -> not (Nodes.mem g (ranges x)))
+        (List.filter
+           (fun g -> Nodes.mem g (ranges w) && not (List.mem_assq g shared))
+           (ranges_of k [ Global ]))
+    in
+    (* [w]'s reduce range of the next stride: the lanes continue onto it when
+       they take [u] whole, and the loads in flight come from it. *)
+    let next =
+      List.filter_map
+        (fun r ->
+          match stride r i with
+          | Some s when Bigint.(gt s one) -> Some (s, r)
+          | _ -> None)
+        (contracted k)
+      |> List.stable_sort (fun (s, _) (t, _) -> Bigint.compare s t)
+      |> List.map snd
+      |> function
+      | n :: _ -> Some n
+      | [] -> None
+    in
+    match List.find_opt (fun g -> divisible_at g rows) (own @ others) with
+    | Some g when threads > 1 ->
+        if held then upcast_reuse ();
+        if not (try_split k (axis u) threads Opt.Local) then None
+        else begin
+          (match next with
+          | Some n when whole && threads < lanes ->
+              let more = pow2_dividing n (lanes / threads) in
+              if more > 1 then ignore (try_split k (axis n) more Opt.Local)
+          | _ -> ());
+          if
+            not (try_split k (axis g) rows (if held then Opt.Upcast else Opt.Local))
+          then None
+          else
+          (* what the lanes leave of the reduce, if anything, or the next
+             range *)
+          let left = if whole then Option.bind next rest else rest u in
+          (match left with
+          | Some r ->
+              let n =
+                divisor_at_most r (if held then in_flight_held else in_flight)
+              in
+              if n > 1 then ignore (try_split k (axis r) n Opt.Upcast)
+          | None -> ());
+          Some k
+        end
     | _ -> None
   in
-  let columns_layout first g =
+  let columns_layout g =
+    if held then upcast_reuse ();
+    let first = List.hd (contracted k) in
     let wanted =
       match prod_at k (K.upcastable_dims k) with
       | Int n -> pow2_above (busy * columns / max n 1)
@@ -304,99 +519,55 @@ let matvec k =
       Some k
     end
   in
-  let ren = K.ren k in
-  match (K.reduceop k, ranges_of ~reduce:true k [ Weak ]) with
-  | Some r, first :: _
-    when ren.has_local && ren.has_shared
-         && Setting.value Setting.mv
-         && (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
-         && op (nth r 0) = Op.Mul -> (
-      match operands first (nth r 0) with
-      | None -> None
-      | Some (v, w) ->
-          let units = units first w and globals = ranges_of k [ Global ] in
-          if List.memq first units then rows_layout first v globals
-          else
-            Option.bind
-              (List.find_opt (fun g -> List.memq g units) globals)
-              (columns_layout first))
-  | _ -> None
+  match layout k w with
+  | Some (`Rows (u, a)) -> rows_layout u a
+  | Some (`Columns g) -> columns_layout g
+  | None -> None
 
-(* Shared operands
+(* Runs on the host
 
-   An operand of a product that reads an output axis only through its quotient
-   by [d] takes one value over each run of [d] consecutive values of the axis.
-   When the operand is decoded from integer codes, upcasting the axis by [d]
-   decodes it once for the run's lanes. A matrix that a block of rows shares is
-   such an operand: each block's rows read their block's matrix, so the matrix
-   reads the row axis only through the row's block
+   On the host, which streams no contraction, an operand decoded from integer
+   codes that reads an output axis only as its quotient by [d], a run of [d]
+   rows, is still decoded once for the run's lanes: the axis is upcast by the
+   largest amount up to [run_cap] that divides both [d] and the axis. A
+   prompt's routed MXFP4 product in blocks of 16 rows decodes its block's
+   matrix once for 4 of its rows. *)
 
-     row     0  1 | 2  3 | 4  5        W[owner[row / 2]]
-     owner   e0   | e3   | e1          runs of 2 rows
-
-   and upcast by 2 along the rows, a matrix decoded from codes and scales is
-   decoded once for both rows of a block. An operand of floats is a load that
-   the cache serves each lane, and sharing it costs threads: the keys and
-   values that attention's query heads share ran slower upcast. *)
-
-(* The most values an upcast of one axis takes: the largest of upcast_more's
+(* The most values a run's upcast takes: the largest of upcast_more's
    amounts. *)
 let run_cap = 4
 
-(* The run of [o] along the range [r]: [d] if [o] reads [r] only as [r / d], 1
-   otherwise. *)
-let run o r =
-  let readers =
-    List.filter
-      (fun u -> List.memq r (src u))
-      (Nodes.to_list (backward_slice_with_self ~calls:Skip o))
-  in
-  let divisor u =
-    if op u = Op.Div && op (nth u 1) = Op.Const then
-      known_size (Sym (nth u 1))
-    else None
-  in
-  match List.map divisor readers with
-  | Some d :: rest when List.for_all (Option.equal Bigint.equal (Some d)) rest
-    ->
-      d
-  | _ -> Bigint.one
-
-(* The largest amount from [a] down that divides both [run] and [n]. *)
-let rec within run n a =
-  let divides x = Bigint.(equal (rem x (of_int a)) zero) in
-  if a <= 1 then 1
-  else if divides run && divides n then a
-  else within run n (a - 1)
-
-let upcast_shared k =
-  let amount operands axis =
-    let r = List.nth (K.rngs k) axis in
-    match known_size (shape_at k axis) with
-    | None -> 1
-    | Some n ->
-        List.fold_left
-          (fun a o -> max a (within (run o r) n run_cap))
-          1 operands
-  in
-  match K.reduceop k with
-  | Some r
-    when (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
-         && op (nth r 0) = Op.Mul ->
-      let operands = List.filter decoded (src (nth r 0)) in
-      let to_upcast =
-        List.filter_map
-          (fun axis ->
-            match amount operands axis with
-            | a when a > 1 -> Some (axis, a)
-            | _ -> None)
-          (K.upcastable_dims k)
+let upcast_runs k =
+  match contraction k with
+  | None -> ()
+  | Some (m, _) ->
+      let operands = List.filter decoded (src m) in
+      let amount axis =
+        let r = List.nth (K.rngs k) axis in
+        match known_size (shape_at k axis) with
+        | None -> 1
+        | Some n ->
+            List.fold_left
+              (fun a o ->
+                let d = run o r in
+                let rec within a =
+                  if a <= 1 then 1
+                  else if
+                    Bigint.(equal (rem d (of_int a)) zero)
+                    && Bigint.(equal (rem n (of_int a)) zero)
+                  then a
+                  else within (a - 1)
+                in
+                max a (within run_cap))
+              1 operands
       in
       (* later axes first, as an upcast of a whole axis removes it *)
       List.iter
-        (fun (axis, a) -> ignore (split k axis a Opt.Upcast))
-        (List.rev to_upcast)
-  | _ -> ()
+        (fun axis ->
+          match amount axis with
+          | a when a > 1 -> ignore (split k axis a Opt.Upcast)
+          | _ -> ())
+        (List.rev (K.upcastable_dims k))
 
 (* are we grouping? (requires local shape support) *)
 let group k =
@@ -734,26 +905,63 @@ let locals k =
        0
        (List.sort Stdlib.compare first_three))
 
+(* Past [stream_first], a streamed operand of 4-byte elements or wider is
+   read once a pass, at the speed of memory, where the general rules' tiles
+   share each load among the threads of a workgroup: a float32 matrix of
+   16384 by 4096 at a reuse of 64 took 2107 to 2171 us streamed and 1909 to
+   1987 us tiled, and a float32 product of 1024 by 1024 by 1024 1054 us
+   streamed and 398 us tiled. Narrower elements take more of a pass's time to
+   multiply than to read, and stream faster at every reuse measured: bfloat16,
+   Q8_0 and MXFP4 matrices 1.4 to 3.2 times at a reuse of 32 to 256. *)
+let narrow_bytes = 4
+
+let narrow k (w, _, _) =
+  match main_access k w with
+  | Some a -> Dtype.itemsize (dtype a) < narrow_bytes
+  | None -> false
+
+(* The streamed operand of [k]'s contraction, on a renderer with local
+   indices and shared memory. *)
+let streams k =
+  let ren = K.ren k in
+  if ren.has_local && ren.has_shared && Setting.value Setting.mv then streamed k
+  else None
+
+(* The rules for a kernel that is not streamed and takes no tensor core. *)
+let general k =
+  (* make a copy so it does not mutate the input *)
+  let k = K.copy k in
+  if on_host k then upcast_runs k;
+  group k;
+  (* no more opt if we are grouping *)
+  if K.group_for_reduces k = 0 then begin
+    upcast_masked k;
+    if host_elementwise k then upcast_vectors k
+    else begin
+      upcast_more k;
+      unroll k;
+      upcast_one k
+    end;
+    if (K.ren k).has_local then locals k
+  end;
+  k
+
 let hand_coded_optimizations k =
-  match tensor_cores k with
-  | Some tk -> tk
+  let s = streams k in
+  let stream s = stream (K.copy k) s in
+  let early =
+    match s with
+    | Some ((_, _, reuse) as s) when Bigint.(leq reuse (of_int stream_first))
+      ->
+        stream s
+    | _ -> None
+  in
+  let late () =
+    match s with Some s when narrow k s -> stream s | _ -> None
+  in
+  match early with
+  | Some k -> k
   | None -> (
-      (* make a copy so it does not mutate the input *)
-      let k = K.copy k in
-      upcast_shared k;
-      match matvec k with
-      | Some k -> k
-      | None ->
-          group k;
-          (* no more opt if we are grouping *)
-          if K.group_for_reduces k = 0 then begin
-            upcast_masked k;
-            if host_elementwise k then upcast_vectors k
-            else begin
-              upcast_more k;
-              unroll k;
-              upcast_one k
-            end;
-            if (K.ren k).has_local then locals k
-          end;
-          k)
+      match tensor_cores k with
+      | Some tk -> tk
+      | None -> ( match late () with Some k -> k | None -> general k))

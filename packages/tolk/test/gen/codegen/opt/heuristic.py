@@ -90,6 +90,36 @@ def routed_bfloat16(blocks, rows, n, k, experts):
     return empty(blocks * rows, 1, k, dtype=dtypes.bfloat16).float() @ w.float().transpose(1, 2)
 
 
+def q8_0(n, k):
+    """An [n, k] matrix of Q8_0 blocks: each block of 32 values is 34 bytes, a float16 scale, then 32 signed codes."""
+    blocks = empty(n, k // 32, 34, dtype=dtypes.uint8)
+    d = (blocks[:, :, 0].cast(dtypes.uint16) | (blocks[:, :, 1].cast(dtypes.uint16) * 256)).bitcast(dtypes.half)
+    q = blocks[:, :, 2:].bitcast(dtypes.int8).cast(dtypes.float)
+    return (q * d.cast(dtypes.float).reshape(n, k // 32, 1)).reshape(n, k)
+
+
+def gguf_mxfp4(n, k):
+    """An [n, k] matrix of GGUF's MXFP4 blocks: each block of 32 values is 17 bytes, a scale byte, then 16 bytes of codes, value
+    j in the low half of byte j and value j + 16 in its high half."""
+    blocks = empty(n, k // 32, 17, dtype=dtypes.uint8)
+    codes = blocks[:, :, 1:]
+    values = Tensor.cat(codes & 15, codes >> 4, dim=-1).cast(dtypes.float)
+    return (values * blocks[:, :, 0].cast(dtypes.float).reshape(n, k // 32, 1)).reshape(n, k)
+
+
+def rows(m):
+    """m rows of a bfloat16 activation by a [64, 128] bfloat16 matrix, each widened to float32."""
+    return empty(m, 128, dtype=dtypes.bfloat16).float() @ empty(64, 128, dtype=dtypes.bfloat16).float().T
+
+
+def routed_by_reduce(rows, n, k, experts):
+    """Each of `rows` rows multiplied by the [n, k] matrix of its expert, which the kernel finds by a reduction over the row's 4
+    candidates: a reduction an operand reads that runs in none of the contraction's ranges."""
+    owner = empty(rows, 4, dtype=dtypes.int).max(1).maximum(0).minimum(experts - 1).cast(dtypes.weakint)
+    w = Tensor(empty(experts, n * k).uop.index(owner.uop)).reshape(rows, n, k)
+    return empty(rows, 1, k) @ w.transpose(1, 2)
+
+
 def normed(k):
     """A [1, k] activation divided by its scale and multiplied by a gain, as a normalisation leaves it."""
     return empty(1, k) / empty(1, 1) * empty(k)
@@ -147,13 +177,24 @@ KERNELS = {
     "gpt_oss_gate_up": lambda: last(normed(2880) @ decoded(4 * 5760, 2880).T),
     "gpt_oss_down": lambda: last(((empty(4, 1, 2880) @ decoded(4 * 2880, 2880).reshape(4, 2880, 2880).transpose(1, 2)).relu()
                                   * empty(4, 1, 1)).sum(0)),
+    # a contraction's operand of least reuse is streamed: a prompt's rows share each element of the matrix, 4, 12 and 32 times
+    "rows_m4": lambda: last(rows(4)),
+    "rows_m12": lambda: last(rows(12)),
+    "rows_m32": lambda: last(rows(32)),
+    # quantised matrices whose codes run along a range other than the first of the reduce: Q8_0's 32 values of a block of 34
+    # bytes, and GGUF's MXFP4 blocks of 17 bytes, 16 bytes of codes each, at one token; MXFP4 decoded by a table at 12 tokens
+    "q8_0_blocks": lambda: last(empty(1, 256) @ q8_0(64, 256).T),
+    "gguf_mxfp4": lambda: last(empty(1, 256) @ gguf_mxfp4(64, 256).T),
+    "mxfp4_m12": lambda: last(empty(12, 256) @ decoded(64, 256).T),
+    # routed rows whose experts a reduction in the kernel finds
+    "routed_by_reduce": lambda: last(routed_by_reduce(16, 64, 64, 4)),
     # a prompt's routed product, its positions sorted by expert into blocks of 2 rows that share their expert's matrix
     "routed_blocks": lambda: last(routed(8, 2, 64, 64, 4)),
-    # the same at bfloat16 in blocks of 16 rows, a tensor core's tile: the rows are the core's M, each block's matrix its B
-    "routed_tiles": lambda: last(routed_bfloat16(4, 16, 64, 64, 4)),
+    # the same at bfloat16 in blocks of 64 rows, tiles of a tensor core: the rows are the core's M, each block's matrix its B
+    "routed_tiles": lambda: last(routed_bfloat16(4, 64, 64, 64, 4)),
     # a bfloat16 product of a value another kernel stores: attention's heads, merged, then projected
-    "projection_of_stored": lambda: last((empty(4, 32, 16, dtype=dtypes.bfloat16).float() @ empty(4, 16, 16, dtype=dtypes.bfloat16).float())
-                                         .cast(dtypes.bfloat16).permute(1, 0, 2).reshape(32, 64).float()
+    "projection_of_stored": lambda: last((empty(4, 64, 16, dtype=dtypes.bfloat16).float() @ empty(4, 16, 16, dtype=dtypes.bfloat16).float())
+                                         .cast(dtypes.bfloat16).permute(1, 0, 2).reshape(64, 64).float()
                                          @ empty(64, 64, dtype=dtypes.bfloat16).float()),
     # attention's scores, 8 query heads sharing 2 key heads: an operand read through h // 4 that one buffer holds
     "shared_keys": lambda: last(empty(8, 1, 64) @ empty(2, 1, 64, 16).expand(2, 4, 64, 16).reshape(8, 64, 16)),

@@ -131,10 +131,14 @@ let element dt (_ : int) i : Dtype.value =
   else if Dtype.is_bool dt then `Bool (i mod 2 = 0)
   else `Int (Bigint.of_int (i mod 7))
 
-(* [sink] compiled for [d], and a run of it on buffers of the values [element]
-   gives each, from its type, its length and the index, which returns once the
-   run's writes are done. *)
-let compiled ~element d sink =
+(* The buffer of [d] of [n] values of [dt] that [element] gives, from the
+   type, the length and the index. *)
+let values element d dt n = Run.buffer d dt (Array.init n (element dt n))
+
+(* [sink] compiled for [d], and a run of it on buffers [scratch d dt n] makes
+   for each parameter of [n] values of [dt], which returns once the run's
+   writes are done. *)
+let compiled ~scratch d sink =
   let device = (Tolk_engine.target d).device in
   let prg = Codegen.to_program sink (Tolk_engine.renderer d) in
   let params =
@@ -142,11 +146,7 @@ let compiled ~element d sink =
       (fun u -> Ops.addrspace u <> Some Dtype.Alu)
       (Shape.kernel_params prg)
   in
-  let scratch u =
-    let dt = Ops.dtype u in
-    let n = Shape.max_numel u in
-    Some (Run.buffer d dt (Array.init n (element dt n)))
-  in
+  let scratch u = Some (scratch d (Ops.dtype u) (Shape.max_numel u)) in
   let arg u =
     let slot = match Ops.arg u with Param p -> p.slot | _ -> assert false in
     Shape.param
@@ -177,7 +177,7 @@ let lorenz =
   let case text heuristic name =
     Thumper.bench_with_setup
       ~setup:(fun () ->
-        compiled ~element Rig.host (lorenz_kernel ~heuristic text))
+        compiled ~scratch:(values element) Rig.host (lorenz_kernel ~heuristic text))
       name
       (fun run -> run ())
   in
@@ -220,13 +220,53 @@ let gpt_oss () =
   let case (kernel, text) =
     Thumper.bench_with_setup
       ~setup:(fun () ->
-        compiled ~element:cache_element (cuda ()) (Graph.of_string text))
+        compiled ~scratch:(values cache_element) (cuda ()) (Graph.of_string text))
       kernel
       (fun run -> run ())
   in
   Thumper.group "gpt_oss"
     ~metrics:[ Thumper.Metric.wall_time ]
     (if cuda_opens () then List.map case Gpt_oss_kernels.all else [])
+
+(* Streamed contractions *)
+
+(* A large buffer is filled with one byte, a small normal number in every
+   float type and a code of every quantised format: filling hundreds of
+   megabytes element by element would take longer than the run. An integer
+   buffer, an index or a position, is small and takes [cache_element]'s
+   values. *)
+let large = 1 lsl 20
+
+let filled d dt n =
+  if n < large then Run.buffer d dt (Array.init n (cache_element dt n))
+  else
+    let b = Rig.Buffer.create d (n * Dtype.itemsize dt) in
+    Rig.Buffer.fill b '\x3e';
+    b
+
+(* The rows of [stream]: each a call's kernels, recorded as [row.i], run in
+   the order of [i]. *)
+let stream_rows =
+  let row (name, _) = String.sub name 0 (String.index name '.') in
+  let kernels = List.sort compare Stream_kernels.all in
+  List.map
+    (fun r -> (r, List.map snd (List.filter (fun k -> row k = r) kernels)))
+    (List.sort_uniq String.compare (List.map row kernels))
+
+let stream () =
+  let case (name, kernels) =
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        let d = cuda () in
+        List.map
+          (fun text -> compiled ~scratch:filled d (Graph.of_string text))
+          kernels)
+      name
+      (fun runs -> List.iter (fun run -> run ()) runs)
+  in
+  Thumper.group "stream"
+    ~metrics:[ Thumper.Metric.wall_time ]
+    (if cuda_opens () then List.map case stream_rows else [])
 
 (* Searches *)
 
@@ -301,6 +341,7 @@ let suite () =
   @ [
       lorenz;
       gpt_oss ();
+      stream ();
       Thumper.group "search"
         (match cuda_renderer with
         | Some r -> [ linearize_candidates r; kernel_actions r ]
@@ -318,7 +359,7 @@ let () =
       ignore
         (Thumper.measure
            ~config:Thumper.Config.(default |> samples 3 |> warmup 0.)
-           ~filter:(`Or [ `Id "lorenz/"; `Id "gpt_oss/" ])
+           ~filter:(`Or [ `Id "lorenz/"; `Id "gpt_oss/"; `Id "stream/" ])
            (suite ()))
   | _ ->
       Thumper.run "tolk"

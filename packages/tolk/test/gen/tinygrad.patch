@@ -1022,11 +1022,12 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..b11b406db 100644
+index ec97cac6f..ce8e3b44f 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -1,9 +1,42 @@
- import itertools
+@@ -1,9 +1,173 @@
+-import itertools
++import itertools, math
  from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
  from tinygrad.helpers import getenv, DEBUG, prod, TC_OPT, TC_SELECT, TC_MIN_GLOBALS, USE_TC, IMAGE
 -from tinygrad.uop.ops import Ops, resolve, AxisType
@@ -1066,13 +1067,147 @@ index ec97cac6f..b11b406db 100644
 +    if (choice:=next(((axis, n) for axis in k.upcastable_dims()[::-1] if (n:=fits(axis)) >= 2), None)) is None: return
 +    k.apply_opt(Opt(OptOps.SPLIT, choice[0], (choice[1], AxisType.UPCAST)))
 +    room //= choice[1]
++
++# a contraction's operand of least reuse R, the outputs each of its elements feeds (the sizes of the output ranges it does not read,
++# times d for each it reads only as r // d), is streamed: each element loaded once for its R outputs, adjacent threads reading
++# adjacent elements, each thread keeping several loads in flight. A unit-stride reduce range gives a row LANES threads that read it in
++# turn, ROWS rows to a workgroup (or to a thread with reuse), unrolled by up to IN_FLIGHT (IN_FLIGHT_HELD with rows held); a
++# unit-stride output range gives LANES threads adjacent outputs, COLUMNS of them each, and splits the reduce until BUSY threads run.
++# The reuse ranges are upcast by the largest divisor of R up to UPCAST_MAX. Reuse up to STREAM_FIRST streams before tensor cores
++LANES, ROWS, COLUMNS, BUSY, IN_FLIGHT, IN_FLIGHT_HELD, SECTOR_LANES, STREAM_FIRST, UPCAST_MAX = 32, 4, 2, 32768, 8, 4, 8, 32, 16
++# the accesses an operand of a sum over the ranges over computes from, outside the reductions it reads, none when one of those runs
++# inside a range of over: the sum would compute it again at each step. A reduction inside none is a value of the outputs alone
++def accesses(over:list[UOp], u:UOp) -> list[UOp]:
++  if any(x.op is Ops.REDUCE and any(c in x.ranges for c in over) for x in u.toposort()): return []
++  return [x for x in u.toposort(gate=lambda x: x.op is not Ops.REDUCE) if x.op is Ops.INDEX]
++def pow2_dividing(r:UOp, cap:int) -> int:
++  while cap > 1 and r.src[0].divides(cap) is None: cap //= 2
++  return max(cap, 1)
++def divisor_at_most(r:UOp, n:int) -> int: return next((d for d in range(n, 1, -1) if r.src[0].divides(d) is not None), 1)
++def run(o:UOp, r:UOp) -> int:
++  divs = [u.src[1].arg if u.op is Ops.DIV and u.src[1].op is Ops.CONST else None for u in o.toposort() if any(s is r for s in u.src)]
++  return divs[0] if divs and divs[0] is not None and all(d == divs[0] for d in divs) else 1
++def globals_of(k:Scheduler) -> list[UOp]: return [k.rngs[i] for i in k.axes_of(AxisType.GLOBAL)]
++def reduces_of(k:Scheduler) -> list[UOp]: return [k.rngs[i] for i in k.axes_of(AxisType.WEAK, reduce=True)]
++def reuse_ranges(k:Scheduler, o:UOp) -> list[tuple[UOp, int]]|None:
++  out = []
++  for g in globals_of(k):
++    if g in o.ranges: f = run(o, g)
++    elif isinstance(n:=k.full_shape[k.rngs.index(g)], int): f = n
++    else: return None
++    if f > 1: out.append((g, f))
++  return out
++def reuse(k:Scheduler, o:UOp) -> int|None: return None if (rr:=reuse_ranges(k, o)) is None else prod(f for _,f in rr)
++def stride(r:UOp, i:UOp) -> int|None:
++  for t in i.split_uop(Ops.ADD):
++    if t is r: return 1
++    if t.op is Ops.MUL and t.src[0] is r and t.src[1].op is Ops.CONST: return t.src[1].arg
++  return None
++# the contraction: the first reduction that sums a product of two computations of accesses, with the ranges it closes
++def contraction(k:Scheduler) -> tuple[UOp, list[UOp]]|None:
++  for r in k.reduceops:
++    if r.arg[0] is not Ops.ADD or r.src[0].op is not Ops.MUL: continue
++    over = [x for x in reduces_of(k) if any(x is s for s in r.src[1:])]
++    if accesses(over, r.src[0].src[0]) and accesses(over, r.src[0].src[1]): return r.src[0], over
++  return None
++def contracted(k:Scheduler) -> list[UOp]: return [] if (c:=contraction(k)) is None else c[1]
++# the main access of w is the one with a range of unit stride whose terms span the most bytes along the contracted ranges: its codes or
++# values, beside the scales and tables a decoding reads
++def units(a:UOp) -> list[UOp]: return [t for t in a.src[1].get_idx().split_uop(Ops.ADD) if t.op is Ops.RANGE]
++def main_access(k:Scheduler, w:UOp) -> UOp|None:
++  red = contracted(k)
++  def nbytes(a):
++    n = a.dtype.itemsize
++    for t in a.src[1].get_idx().split_uop(Ops.ADD):
++      r = t.src[0] if t.op is Ops.MUL else t
++      if any(r is x for x in red) and stride(r, a.src[1].get_idx()) is not None and isinstance(s:=k.full_shape[k.rngs.index(r)], int): n *= s
++    return n
++  main = None
++  for a in accesses(red, w):
++    if units(a) and (main is None or nbytes(a) > nbytes(main)): main = a
++  return main
++# w is laid out along the contracted range, or else the output range, of unit stride in its main access
++def layout(k:Scheduler, w:UOp):
++  if (main:=main_access(k, w)) is None: return None
++  us = units(main)
++  if (u:=next((r for r in contracted(k) if any(r is t for t in us)), None)) is not None: return ("rows", u, main)
++  if (g:=next((g for g in globals_of(k) if any(g is t for t in us)), None)) is not None: return ("columns", g)
++  return None
++# past STREAM_FIRST an operand of NARROW_BYTES or wider streams slower than the general rules' tiles, which share its loads
++NARROW_BYTES = 4
++def narrow(k:Scheduler, w:UOp) -> bool: return (a:=main_access(k, w)) is not None and a.dtype.itemsize < NARROW_BYTES
++def streamed(k:Scheduler):
++  if not (k.ren.has_local and k.ren.has_shared and getenv("MV",1) != 0) or (c:=contraction(k)) is None: return None
++  a, b = c[0].src
++  def rows_first(o): return (l:=layout(k, o)) is not None and l[0] == "rows"
++  ra, rb = reuse(k, a), reuse(k, b)
++  if ra is not None and rb is not None:
++    return (a, b, ra) if ra < rb or (ra == rb and (rows_first(a) or not rows_first(b))) else (b, a, rb)
++  if ra is not None: return (a, b, ra)
++  if rb is not None: return (b, a, rb)
++  return None
++def stream(k:Scheduler, w:UOp, x:UOp, r:int) -> Scheduler|None:
++  def axis(u): return next(i for i,x in enumerate(k.rngs) if x.axis_id == u.axis_id)
++  def rest(u): return next((x for x in k.rngs if x.axis_id == u.axis_id), None)
++  def divisible(u, n): return isinstance(s:=k.full_shape[axis(u)], int) and s % n == 0
++  shared, held = reuse_ranges(k, w) or [], r > 1
++  def upcast_reuse():
++    left = next(t for t in range(UPCAST_MAX, 0, -1) if r % t == 0)
++    for g, f in shared:
++      a = math.gcd(math.gcd(left, f), n) if isinstance(n:=k.full_shape[axis(g)], int) else 1
++      if a > 1: k.apply_opt(Opt(OptOps.SPLIT, axis(g), (a, AxisType.UPCAST)))
++      left //= a
++  if (lay:=layout(k, w)) is None: return None
++  if lay[0] == "rows":
++    _, u, a = lay
++    i, threads = a.src[1].get_idx(), pow2_dividing(u, LANES)
++    whole = k.full_shape[axis(u)] == threads
++    # a workgroup's or a thread's rows are the matrix's own, which the other operand does not read, so they share its loads
++    cands = [g for g in globals_of(k) if g in w.ranges and not any(g is h for h,_ in shared)]
++    rows = [g for g in cands if g not in x.ranges] + [g for g in cands if g in x.ranges]
++    # w's reduce range of the next stride: the lanes continue onto it when they take u whole, and the loads in flight come from it
++    nexts = sorted([(st, q) for q in contracted(k) if (st:=stride(q, i)) is not None and st > 1], key=lambda p: p[0])
++    nxt = nexts[0][1] if nexts else None
++    if threads <= 1 or (g:=next((g for g in rows if divisible(g, ROWS)), None)) is None: return None
++    if held: upcast_reuse()
++    try: k.apply_opt(Opt(OptOps.SPLIT, axis(u), (threads, AxisType.LOCAL)))
++    except KernelOptError: return None
++    if nxt is not None and whole and threads < LANES and (more:=pow2_dividing(nxt, LANES//threads)) > 1:
++      try: k.apply_opt(Opt(OptOps.SPLIT, axis(nxt), (more, AxisType.LOCAL)))
++      except KernelOptError: pass
++    try: k.apply_opt(Opt(OptOps.SPLIT, axis(g), (ROWS, AxisType.UPCAST if held else AxisType.LOCAL)))
++    except KernelOptError: return None
++    # what the lanes leave of the reduce, if anything, or the next range
++    left = (rest(nxt) if nxt is not None else None) if whole else rest(u)
++    if left is not None and (n:=divisor_at_most(left, IN_FLIGHT_HELD if held else IN_FLIGHT)) > 1:
++      try: k.apply_opt(Opt(OptOps.SPLIT, axis(left), (n, AxisType.UPCAST)))
++      except KernelOptError: pass
++    return k
++  g = lay[1]
++  if held: upcast_reuse()
++  first = contracted(k)[0]
++  wanted = 1
++  if isinstance(outputs:=prod(k.full_shape[i] for i in k.upcastable_dims()), int):
++    while wanted < BUSY*COLUMNS//max(outputs, 1): wanted *= 2
++  # few outputs take fewer of a workgroup's threads each, down to SECTOR_LANES, so that more workgroups split them
++  across = max(SECTOR_LANES, LANES*LANES//max(wanted, LANES))
++  if wanted <= 1 or not divisible(g, across*COLUMNS): return None
++  k.apply_opt(Opt(OptOps.SPLIT, axis(g), (across, AxisType.LOCAL)))
++  k.apply_opt(Opt(OptOps.SPLIT, axis(g), (COLUMNS, AxisType.UPCAST)))
++  if (threads:=pow2_dividing(first, min(wanted, LANES*LANES//across))) > 1:
++    try: k.apply_opt(Opt(OptOps.SPLIT, axis(first), (threads, AxisType.LOCAL)))
++    except KernelOptError: pass
++  return k
  
  def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # first try the tensor cores
-@@ -24,8 +57,18 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,8 +188,21 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
++  # a contraction of little reuse streams before the tensor cores are tried
++  st = streamed(k)
++  if st is not None and st[2] <= STREAM_FIRST and (sk:=stream(k.copy(), *st)) is not None: return sk
 +  # an operand is decoded when it converts integers it reads into floats
 +  def decoded(o):
 +    return any(u.op in (Ops.CAST, Ops.BITCAST) and dtypes.is_float(u.dtype) and dtypes.is_int(u.src[0].dtype)
@@ -1089,7 +1224,7 @@ index ec97cac6f..b11b406db 100644
      for axis in range(3):
        tk = k.copy()
        # check TC first and apply hand-coded opts if successful
-@@ -37,10 +80,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -37,10 +214,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if (size:=next(filter(lambda sz: rngs[0].src[0].divides(sz) is not None, [4,2]), None)) is not None: split(0, size, AxisType.LOCAL)
          if ((size:=next(filter(lambda sz: rngs[0].src[0].divides(sz) is not None, [5,4,3,2]), None)) is not None and
              resolve(prod(tk.full_shape[i] for i in tk.axes_of(AxisType.GLOBAL)) >= size*TC_MIN_GLOBALS.value, False)): split(0, size, AxisType.UPCAST)
@@ -1106,7 +1241,7 @@ index ec97cac6f..b11b406db 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +103,77 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,25 +237,20 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1129,81 +1264,24 @@ index ec97cac6f..b11b406db 100644
 -            if MV_BLOCKSIZE > 1: k.apply_opt(Opt(OptOps.SPLIT, global_idx, (MV_BLOCKSIZE, AxisType.LOCAL)))
 -            if MV_ROWS_PER_THREAD > 1: k.apply_opt(Opt(OptOps.SPLIT, global_idx, (MV_ROWS_PER_THREAD, AxisType.UPCAST)))
 -            return k
-+  # an operand of a product that reads an output axis only through its quotient by d takes one value over each run of d consecutive
-+  # values of the axis: when it is decoded, converting integers it reads into floats, upcast by d, up to RUN_CAP, the axis's lanes
-+  # decode it once, as a matrix a block of rows shares is decoded once
++  # past STREAM_FIRST a contraction of narrow elements streams when no tensor core takes it
++  if st is not None and narrow(k, st[0]) and (sk:=stream(k.copy(), *st)) is not None: return sk
++
++  # on the host, which streams no contraction, an operand decoded from integer codes that reads an output axis only as r // d is
++  # decoded once for a run's lanes: the axis is upcast by the largest amount up to RUN_CAP that divides d and the axis
 +  RUN_CAP = 4
-+  def run(o, r):
-+    divs = [u.src[1].arg if u.op is Ops.DIV and u.src[1].op is Ops.CONST else None for u in o.toposort() if any(s is r for s in u.src)]
-+    return divs[0] if divs and divs[0] is not None and all(d == divs[0] for d in divs) else 1
-+  if k.reduceop is not None and k.reduceop.arg[0] is Ops.ADD and k.reduceop.src[0].op is Ops.MUL:
++  if k.ren.target.device == "CPU" and (c:=contraction(k)) is not None:
 +    to_upcast = []
 +    for axis in k.upcastable_dims():
 +      if not isinstance(n:=k.full_shape[axis], int): continue
-+      a = max([next((a for a in range(RUN_CAP, 1, -1) if run(o, k.rngs[axis]) % a == 0 and n % a == 0), 1) for o in k.reduceop.src[0].src
-+               if decoded(o)], default=1)
++      a = max([next((a for a in range(RUN_CAP, 1, -1) if run(o, k.rngs[axis]) % a == 0 and n % a == 0), 1) for o in c[0].src if decoded(o)],
++              default=1)
 +      if a > 1: to_upcast.append((axis, a))
 +    for axis, a in to_upcast[::-1]: k.apply_opt(Opt(OptOps.SPLIT, axis, (a, AxisType.UPCAST)))
-+
-+  # matrix-vector products read each matrix element once, as fast as memory feeds them: adjacent threads read adjacent elements, each
-+  # thread keeps several loads in flight, and enough threads run to keep the memory busy. A matrix of rows along the reduce gives each
-+  # row LANES threads that read it in turn, ROWS rows to a workgroup, unrolled by up to IN_FLIGHT; one of columns along an output gives
-+  # LANES threads adjacent outputs, COLUMNS of them each, and splits the reduce until BUSY threads run
-+  LANES, ROWS, COLUMNS, BUSY, IN_FLIGHT, SECTOR_LANES = 32, 4, 2, 32768, 8, 8
-+  def accesses(u):
-+    s = u.toposort()
-+    return [] if any(x.op is Ops.REDUCE for x in s) else [x for x in s if x.op is Ops.INDEX]
-+  def pow2_dividing(r, cap):
-+    while cap > 1 and r.src[0].divides(cap) is None: cap //= 2
-+    return max(cap, 1)
-+  def divisor_at_most(r, n): return next((d for d in range(n, 1, -1) if r.src[0].divides(d) is not None), 1)
-+  def axis(r): return next(i for i,x in enumerate(k.rngs) if x.axis_id == r.axis_id)
-+  def divisible(r, n): return isinstance(s:=k.full_shape[axis(r)], int) and s % n == 0
-+  def matvec() -> Scheduler|None:
-+    if not (k.ren.has_local and k.ren.has_shared and getenv("MV",1) != 0 and k.reduceop is not None and k.reduceop.arg[0] is Ops.ADD and \
-+            (mulop:=k.reduceop.src[0]).op is Ops.MUL and (reduce_axes:=k.axes_of(AxisType.WEAK, reduce=True))): return None
-+    first = k.rngs[reduce_axes[0]]
-+    # the matrix and the vector are computations of accesses with no reduce; the vector runs in some of the matrix's ranges, the
-+    # matrix in more, and one of the vector's accesses reads along the first reduce range, alone or at a constant stride
-+    def is_vector(v, w):
-+      return len(accesses(v)) > 0 and len(accesses(w)) > 0 and all(r in w.ranges for r in v.ranges) and len(w.ranges) > len(v.ranges) and \
-+        any(any(t is first or (t.op is Ops.MUL and t.src[0] is first and t.src[1].op is Ops.CONST) for t in a.src[1].get_idx().split_uop(Ops.ADD))
-+            for a in accesses(v))
-+    if (vw:=next(((v, w) for v,w in [mulop.src, mulop.src[::-1]] if is_vector(v, w)), None)) is None: return None
-+    v, w = vw
-+    # the ranges of unit stride of the accesses that read along the reduce: the matrix is laid out along them
-+    units = [t for a in accesses(w) if first in a.src[1].get_idx().ranges for t in a.src[1].get_idx().split_uop(Ops.ADD) if t.op is Ops.RANGE]
-+    if any(t is first for t in units):
-+      threads = pow2_dividing(first, LANES)
-+      # a workgroup's rows are the matrix's own, which the vector does not read, so its SIMD groups share the vector's loads
-+      if threads <= 1 or (g:=next((g for g in sorted([k.rngs[i] for i in k.axes_of(AxisType.GLOBAL)], key=lambda g: g in v.ranges) if divisible(g, ROWS)), None)) is None:
-+        return None
-+      try: k.apply_opt(Opt(OptOps.SPLIT, axis(first), (threads, AxisType.LOCAL)))
-+      except KernelOptError: return None
-+      k.apply_opt(Opt(OptOps.SPLIT, axis(g), (ROWS, AxisType.LOCAL)))
-+      # what the lanes leave of the row, if anything
-+      if (rest:=next((x for x in k.rngs if x.axis_id == first.axis_id), None)) is not None and (loads:=divisor_at_most(rest, IN_FLIGHT)) > 1:
-+        try: k.apply_opt(Opt(OptOps.SPLIT, axis(rest), (loads, AxisType.UPCAST)))
-+        except KernelOptError: pass
-+      return k
-+    if (g:=next((g for g in [k.rngs[i] for i in k.axes_of(AxisType.GLOBAL)] if any(t is g for t in units)), None)) is None: return None
-+    wanted = 1
-+    if isinstance(outputs:=prod(k.full_shape[i] for i in k.upcastable_dims()), int):
-+      while wanted < BUSY*COLUMNS//max(outputs, 1): wanted *= 2
-+    # few outputs take fewer of a workgroup's threads each, down to SECTOR_LANES, so that more workgroups split them
-+    across = max(SECTOR_LANES, LANES*LANES//max(wanted, LANES))
-+    if wanted <= 1 or not divisible(g, across*COLUMNS): return None
-+    k.apply_opt(Opt(OptOps.SPLIT, axis(g), (across, AxisType.LOCAL)))
-+    k.apply_opt(Opt(OptOps.SPLIT, axis(g), (COLUMNS, AxisType.UPCAST)))
-+    if (threads:=pow2_dividing(first, min(wanted, LANES*LANES//across))) > 1:
-+      try: k.apply_opt(Opt(OptOps.SPLIT, axis(first), (threads, AxisType.LOCAL)))
-+      except KernelOptError: pass
-+    return k
-+  if (mk:=matvec()) is not None: return mk
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,25 +208,44 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,25 +285,44 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1258,7 +1336,7 @@ index ec97cac6f..b11b406db 100644
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -140,17 +257,28 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -140,17 +334,28 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:
      if (axes:=k.upcastable_dims(reduce=True)) and (k.upcast_size() <= 4 or not k.axes_of(AxisType.UPCAST, reduce=True)) and k.upcast_size() < 64:

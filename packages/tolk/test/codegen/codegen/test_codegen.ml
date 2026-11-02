@@ -2147,7 +2147,7 @@ let accumulators =
    contraction. On CUDA a tensor core of [dt] computes it in tiles of 16 by 16
    by 16; a product of one tile sums in one step of the core. *)
 
-let widened_product dt (m, k, n) =
+let widened_product ?opts_to_apply dt (m, k, n) =
   let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 dt
   and a = Shape.param ~shape:[ Ops.Int (m * k) ] 1 dt
   and b = Shape.param ~shape:[ Ops.Int (k * n) ] 2 dt in
@@ -2162,7 +2162,7 @@ let widened_product dt (m, k, n) =
   let store =
     Ops.store (Ops.index c [ (i * int n) + j ]) (Ops.cast (sum + float 0.) dt)
   in
-  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ store [ i; j ] ]
+  Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ()) [ Ops.end_ store [ i; j ] ]
 
 let cuda = lazy (Rig.open_ (Rig_cuda.gpu 0))
 
@@ -2196,7 +2196,11 @@ let small_integers seed size =
   let st = Random.State.make [| seed |] in
   Array.init size (fun _ -> Random.State.int st 5 - 2)
 
-let product_on_cuda (dt, (tm, tk, tn), seed) =
+(* A tensor core, asked for: the hand-coded optimisations stream a product of
+   up to 32 rows instead of taking a core. *)
+let core = [ Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 } ]
+
+let product_on_cuda ?opts_to_apply (dt, (tm, tk, tn), seed) =
   let d, r = on_cuda () in
   let m, k, n = (16 * tm, 16 * tk, 16 * tn) in
   let a = small_integers seed (m * k)
@@ -2211,7 +2215,7 @@ let product_on_cuda (dt, (tm, tk, tn), seed) =
         `Float (Float.of_int !s))
   in
   let values x = Array.map (fun v -> `Float (Float.of_int v)) x in
-  let prg = compiled_for r (widened_product dt (m, k, n)) in
+  let prg = compiled_for r (widened_product ?opts_to_apply dt (m, k, n)) in
   let wmmas = List.filter (is Wmma) (Ops.src (Ops.nth prg 1)) in
   less ~msg:"tensor cores" int ~than:(List.length wmmas) 0;
   equal (array Dtypes.value) exact
@@ -2220,7 +2224,7 @@ let product_on_cuda (dt, (tm, tk, tn), seed) =
 let covered ((_, (tm, tk, tn), _) as c) =
   cover "one tile" (tm = 1 && tk = 1 && tn = 1);
   cover "a sum of one tile" (tk = 1);
-  product_on_cuda c
+  product_on_cuda ~opts_to_apply:core c
 
 let tiles =
   let count = Gen.int_range 1 4 in
@@ -2242,7 +2246,7 @@ let tensor_cores_on_cuda =
       cases "a product of one tile is the exact product"
         ~id:(Format.asprintf "%a" Dtype.pp) [ Dtype.Float16; Dtype.Bfloat16 ]
         (fun dt ->
-          product_on_cuda (dt, (1, 1, 1), 0));
+          product_on_cuda ~opts_to_apply:core (dt, (1, 1, 1), 0));
       cases
         "a product summed in one step of the core, with the splits after it, \
          is the exact product"

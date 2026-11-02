@@ -5,7 +5,7 @@
 
 (executable
  (name bench_tolk)
- (modules bench_tolk programs lorenz gpt_oss_kernels)
+ (modules bench_tolk programs lorenz gpt_oss_kernels stream_kernels)
  (libraries tolk tolk.engine tolk_test tolk_run rig rig.cuda thumper unix))
 
 (executable
@@ -51,6 +51,21 @@
  (target gpt_oss_kernels.ml)
  (deps
   (:graphs gpt_oss_decode_values.graph gpt_oss_prefill_router.graph))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:embed.exe} %{graphs}))))
+
+; The stream kernels are kernel graphs of products as rune compiles them for
+; CUDA, without optimisations, each weight past the RTX 5000 Ada's 72 MB of L2
+; but the decode step's keys: a row's kernels are [row.i], run in the order of
+; [i].
+
+(rule
+ (target stream_kernels.ml)
+ (deps
+  (:graphs
+   (glob_files stream/*.graph)))
  (action
   (with-stdout-to
    %{target}

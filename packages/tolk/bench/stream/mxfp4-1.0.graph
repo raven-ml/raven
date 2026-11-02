@@ -1,0 +1,14 @@
+0 Ops.CONST dtypes.weakint [] 2
+1 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8, device="CUDA")
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+3 Ops.INDEX dtypes.u8 [1, 2]
+4 Ops.CONST dtypes.weakint [] 1
+5 Ops.ADD dtypes.weakint [2, 4]
+6 Ops.CAST dtypes.u8 [5] dtypes.u8
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.MUL dtypes.u8 [6, 7]
+9 Ops.CONST dtypes.weakint [] -4
+10 Ops.ADD dtypes.u8 [8, 9]
+11 Ops.STORE dtypes.void [3, 10]
+12 Ops.END dtypes.void [11, 2]
+13 Ops.SINK dtypes.void [12] KernelInfo()

@@ -909,6 +909,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On a GPU, `Heuristic.hand_coded_optimizations` streams a contraction's
+  operand of least reuse: lanes along its unit-stride range, its reuse held in
+  registers, before the tensor cores up to a reuse of 32. A Q8_0 token's
+  product on an RTX 5000 Ada takes 27 us from 408, Q6_K 0.57 ms from 3.4.
 - Making a compiler finds its library: `Compiler_cuda.nvrtc`,
   `Compiler_amd.hip` and `Compiler_metal.compiler`, and so `Cstyle.cuda`,
   `Cstyle.hip`, `Cstyle.metal` and `Device.renderer`, raise `Failure` naming

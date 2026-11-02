@@ -102,7 +102,7 @@ raven / llama.cpp b12048 Vulkan:
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML
 - divergences: tolk's entries were audited against tinygrad HEAD
   (2026-10-31); left: one host lane budget for D91, D108, D109, D141 and
-  D143; the matrix-vector layout (D89) with its fudge rows; entries marked
+  D143; entries marked
   "Reason: none" decided once the port reaches HEAD. rune's DIVERGENCES.md
   is not audited yet
 - compile speed: one Clang process per kernel (~30 ms each; one per program
@@ -154,7 +154,7 @@ raven / llama.cpp b12048 Vulkan:
   bound fixes it
 - apply_experts' contractions run 56 ms against the block path's 36 ms:
   one route row per thread group, so decoded weights are not shared across
-  rows (D92's case). No layout rule can share reuse the gather hides:
+  rows (D89's runs). No layout rule can share reuse the gather hides:
   nx.quant should present routes in blocks as `Nx.map_segments` does,
   blocks past 32 rows on a tensor core. At prefill-512 (CUDA) the
   decoded weights are stored, 64 rows an expert (D163): E_8294400_32_2

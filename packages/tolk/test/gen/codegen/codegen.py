@@ -143,10 +143,11 @@ PROGRAMS = {
     "matmul_big": lambda: matmul(256),
     "matmul_half": lambda: matmul(64, dtypes.half),
     "matmul_half_big": lambda: matmul(256, dtypes.half),
-    # one tile of a tensor core, summed in one step from 0, its operands
-    # widened by a cast, too few workgroups for any split after the core
-    "matmul_half_tile": lambda: widened_matmul(16, dtypes.half),
-    "matmul_bf16_tile": lambda: widened_matmul(16, dtypes.bfloat16),
+    # tiles of a tensor core, summed from 0, their operands widened by a
+    # cast, too few workgroups for any split after the core; each operand
+    # reused by 64 rows, past what streams before the cores
+    "matmul_half_tile": lambda: widened_matmul(64, dtypes.half),
+    "matmul_bf16_tile": lambda: widened_matmul(64, dtypes.bfloat16),
     "matvec": lambda: last(empty(1, 1024) @ empty(1024, 1024)),
     "softmax": lambda: last(empty(8, 32).softmax(-1)),
     "exp_log": lambda: last(empty(16).exp() + empty(16).log() + empty(16).sin()),

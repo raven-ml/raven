@@ -175,7 +175,301 @@ let keeps_kernel_writes =
            keeps;
     ]
 
+(* Streaming *)
+
+let bigint = Testable.make ~pp:Bigint.pp_print ~equal:Bigint.equal
+
+(* The cases of a GPU renderer in the default process, their kernel as the
+   heuristic receives it and as it leaves it. *)
+let gpu_cases =
+  List.filter_map
+    (fun c ->
+      if c.renderer = "cpu" || c.settings <> [] || c.environment <> "" then
+        None
+      else
+        let k = K.v (kernel c.kernel) (renderer c.renderer) in
+        K.convert_loop_to_global k;
+        Some (c, k, Heuristic.hand_coded_optimizations k))
+    recorded_cases
+
+let ranges_at k ~reduce types =
+  List.map (List.nth (K.rngs k)) (K.axes_of ~reduce k types)
+
+let accesses o =
+  List.filter
+    (fun u -> Ops.op u = Op.Index)
+    (Ops.Nodes.to_list (Ops.backward_slice_with_self ~calls:Skip o))
+
+let buffers o = List.map (fun a -> Ops.nth a 0) (accesses o)
+
+(* The operands of the product [k]'s first reduce sums, if it sums one. *)
+let operands k =
+  match K.reduceop k with
+  | Some r when Ops.op (Ops.nth r 0) = Op.Mul ->
+      let m = Ops.nth r 0 in
+      Some (Ops.nth m 0, Ops.nth m 1)
+  | _ -> None
+
+(* The outputs that share each element of [o] along the axes of [k] of a role
+   in [types]: an axis [o] does not read counts its size, one it reads only
+   as its quotient by [d] counts [d]. *)
+let reuse k types o =
+  let along r =
+    if not (Ops.Nodes.mem r (Ops.ranges o)) then size r
+    else
+      let readers =
+        List.filter
+          (fun u -> List.memq r (Ops.src u))
+          (Ops.Nodes.to_list (Ops.backward_slice_with_self ~calls:Skip o))
+      in
+      let divisor u =
+        if Ops.op u = Op.Div && Ops.op (Ops.nth u 1) = Op.Const then
+          match Ops.value (Ops.nth u 1) with `Int d -> Some d | _ -> None
+        else None
+      in
+      match List.map divisor readers with
+      | Some d :: rest when List.for_all (Option.equal Bigint.equal (Some d)) rest
+        ->
+          d
+      | _ -> Bigint.one
+  in
+  List.fold_left
+    (fun n r -> Bigint.mul n (along r))
+    Bigint.one
+    (ranges_at k ~reduce:false types)
+
+(* Whether [o] streams a contraction: its threads split a contracted axis
+   without grouping from the top or a tensor core. *)
+let streams o =
+  ranges_at o ~reduce:true [ Local ] <> []
+  && not
+       (List.exists
+          (function
+            | Opt.Tc _ | Opt.Split { top = true; _ } -> true | _ -> false)
+          (K.applied_opts o))
+
+(* The streamed operand of [k] and its reuse, and the same operand in the
+   kernel [o] the heuristic makes of [k]. *)
+let streamed k o =
+  match (operands k, operands o) with
+  | Some (a, b), Some (a', b') ->
+      let ra = reuse k [ Global ] a and rb = reuse k [ Global ] b in
+      let w, r = if Bigint.compare ra rb <= 0 then (a, ra) else (b, rb) in
+      let same x = buffers x = buffers w in
+      if same a' then Some (w, r, a') else if same b' then Some (w, r, b') else None
+  | _ -> None
+
+let rec largest_divisor n at_most =
+  if at_most <= 1 then 1
+  else if Bigint.(equal (rem n (of_int at_most)) zero) then at_most
+  else largest_divisor n (at_most - 1)
+
+let streamed_cases =
+  List.filter_map
+    (fun (c, k, o) ->
+      if streams o then Option.map (fun s -> (c, k, o, s)) (streamed k o)
+      else None)
+    gpu_cases
+
+let id (c, _, _, _) = c.name
+
+(* Each element of the streamed operand feeds [r] outputs, and a thread holds
+   the largest share of them up to 16 that divides [r]: what is left of its
+   reuse, outside the thread's lanes, is [r] divided by that share, each of
+   them a pass over it. *)
+let loads_once_a_tile =
+  cases "the streamed operand's reuse outside a thread is its reuse over its tile"
+    ~id streamed_cases (fun (_, _, o, (_, r, w')) ->
+      let tile = largest_divisor r 16 in
+      equal bigint
+        (Bigint.div r (Bigint.of_int tile))
+        (reuse o [ Global; Local ] w'))
+
+(* The main access of the streamed operand [w] of [o]: the one with a range of
+   unit stride whose ranges of unit or constant stride that a contraction
+   closes span the most bytes. *)
+let main_access o w =
+  let red = ranges_at o ~reduce:true [] in
+  let terms a = Ops.split_uop (Ops.get_idx (Ops.nth a 1)) Op.Add in
+  let range t =
+    if Ops.op t = Op.Range then Some t
+    else if Ops.op t = Op.Mul && Ops.op (Ops.nth t 1) = Op.Const
+            && Ops.op (Ops.nth t 0) = Op.Range
+    then Some (Ops.nth t 0)
+    else None
+  in
+  let bytes a =
+    List.fold_left
+      (fun n t ->
+        match range t with
+        | Some r when List.memq r red -> Bigint.mul n (size r)
+        | _ -> n)
+      (Bigint.of_int (Dtype.itemsize (Ops.dtype a)))
+      (terms a)
+  in
+  List.fold_left
+    (fun best a ->
+      match best with
+      | Some b when Bigint.compare (bytes b) (bytes a) >= 0 -> best
+      | _ -> Some a)
+    None
+    (List.filter
+       (fun a -> List.exists (fun t -> Ops.op t = Op.Range) (terms a))
+       (accesses w))
+
+(* The stride of the range [r] in the index [i], if a term of [i] is [r] or
+   [r] times a constant. *)
+let stride r i =
+  List.find_map
+    (fun t ->
+      if t == r then Some Bigint.one
+      else if Ops.op t = Op.Mul && Ops.nth t 0 == r
+              && Ops.op (Ops.nth t 1) = Op.Const
+      then match Ops.value (Ops.nth t 1) with `Int c -> Some c | _ -> None
+      else None)
+    (Ops.split_uop i Op.Add)
+
+(* The bytes one load of the main access of [w] reads across a SIMD group of
+   [o]: the local ranges of its index, least stride first, while they make at
+   most 32 threads, each reading the vector of the upcast ranges of lesser
+   stride, the other ranges at 0; none if its index reads a value. *)
+let simd_lanes = 32
+
+let group_bytes o w =
+  match main_access o w with
+  | None -> None
+  | Some a ->
+      let i = Ops.get_idx (Ops.nth a 1) in
+      let slice = Ops.Nodes.to_list (Ops.backward_slice ~calls:Skip i) in
+      let strided types =
+        List.filter_map
+          (fun r -> Option.map (fun s -> (s, r)) (stride r i))
+          (ranges_at o ~reduce:true types @ ranges_at o ~reduce:false types)
+        |> List.sort (fun (s, _) (t, _) -> Bigint.compare s t)
+      in
+      let rec take n = function
+        | (_, r) :: rest when n * Bigint.to_int (size r) <= simd_lanes ->
+            r :: take (n * Bigint.to_int (size r)) rest
+        | _ -> []
+      in
+      let lanes = take 1 (strided [ Local ]) in
+      if lanes = [] || List.exists (fun u -> Ops.op u = Op.Index) slice then None
+      else
+        let least = Option.get (stride (List.hd lanes) i) in
+        let vector =
+          List.filter_map
+            (fun (s, r) -> if Bigint.compare s least < 0 then Some r else None)
+            (strided [ Upcast ])
+        in
+        let at value r = (r, Ops.const (`Int (Bigint.of_int value))) in
+        let rec combos = function
+          | [] -> [ [] ]
+          | r :: rest ->
+              List.concat_map
+                (fun c -> List.init (Bigint.to_int (size r)) (fun v -> at v r :: c))
+                (combos rest)
+        in
+        let others =
+          List.filter_map
+            (fun u ->
+              if Ops.op u = Op.Range && not (List.memq u (lanes @ vector)) then
+                Some (at 0 u)
+              else None)
+            slice
+        in
+        let width = Dtype.itemsize (Ops.dtype a) in
+        Some
+          (List.concat_map
+             (fun lane ->
+               let e =
+                 Ops.substitute ~calls:Skip ~pass:Fixed_point i (lane @ others)
+               in
+               let first = width * Shape.sym_infer (Sym e) [] in
+               List.init width (fun b -> first + b))
+             (combos (lanes @ vector)))
+
+(* A SIMD group's load of the streamed operand touches the fewest 32-byte
+   sectors, memory's unit of transfer, that hold its bytes, one more where
+   they start inside a sector. *)
+let sector = 32
+
+let coalesces =
+  cases "a SIMD group's load of the streamed operand reads whole sectors" ~id
+    streamed_cases (fun (_, _, o, (_, _, w')) ->
+      match group_bytes o w' with
+      | None -> ()
+      | Some bytes ->
+          let bytes = List.sort_uniq Int.compare bytes in
+          let sectors =
+            List.sort_uniq Int.compare (List.map (fun b -> b / sector) bytes)
+          in
+          less Testable.int
+            ~than:(((List.length bytes + sector - 1) / sector) + 2)
+            (List.length sectors))
+
+(* A contracted axis the heuristic unrolls takes the largest divisor up to 8
+   of the loads of its range, the unrolled lanes times the loop they leave,
+   whose stride in the main access is theirs times their count; up to 4 when
+   the thread holds rows that reuse each element. *)
+let unrolls_in_flight =
+  cases "an unroll is the largest divisor of its range up to 8, 4 with reuse"
+    ~id streamed_cases (fun (_, k, o, (_, r, w')) ->
+      let cap = if Bigint.(equal r one) then 8 else 4 in
+      let ids = List.map Ops.axis_id (K.rngs k) in
+      let unrolled =
+        List.filter
+          (fun u -> not (List.mem (Ops.axis_id u) ids))
+          (ranges_at o ~reduce:true [ Upcast ])
+      in
+      match main_access o w' with
+      | None -> ()
+      | Some a ->
+          let i = Ops.get_idx (Ops.nth a 1) in
+          List.iter
+            (fun u ->
+              let n = size u in
+              let left =
+                match stride u i with
+                | None -> Bigint.one
+                | Some s ->
+                    List.fold_left
+                      (fun m l ->
+                        if Option.equal Bigint.equal (stride l i) (Some (Bigint.mul n s))
+                        then size l
+                        else m)
+                      Bigint.one
+                      (ranges_at o ~reduce:true [ Weak; Loop ])
+              in
+              equal Testable.int (largest_divisor (Bigint.mul n left) cap)
+                (Bigint.to_int n))
+            unrolled)
+
+(* A contraction of little reuse streams, the quantised matrices of a block
+   range of unit stride and the rows whose matrix a reduction finds among
+   them, and before a tensor core up to a reuse of 32; past it the core takes
+   it. *)
+let applies =
+  let expect = [
+    ("q8_0_blocks_cuda", true); ("gguf_mxfp4_cuda", true);
+    ("mxfp4_m12_cuda", true); ("vecmat_decoded_cuda", true);
+    ("gpt_oss_gate_up_cuda", true); ("rows_m4_cuda", true);
+    ("rows_m12_cuda", true); ("rows_m32_cuda", true);
+    ("rows_m32_amd", true); ("shared_keys_cuda", true);
+    ("routed_by_reduce_cuda", true);
+    ("routed_tiles_cuda", false); ("matmul_half_cuda", false);
+  ] in
+  cases "a contraction streams up to a reuse of 32, before a tensor core"
+    ~id:fst expect (fun (name, streamed) ->
+      let _, _, o = List.find (fun (c, _, _) -> c.name = name) gpu_cases in
+      equal Testable.bool streamed (streams o))
+
 let () =
   exit
     (Windtrap.run "Tolk.Heuristic"
-       [ chosen; leaves_its_argument; keeps_kernel_writes ])
+       [
+         chosen;
+         leaves_its_argument;
+         keeps_kernel_writes;
+         group "streaming"
+           [ loads_once_a_tile; coalesces; unrolls_in_flight; applies ];
+       ])

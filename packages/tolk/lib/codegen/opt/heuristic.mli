@@ -17,6 +17,8 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
 (** [hand_coded_optimizations k] is a copy of [k] with optimisations applied;
     [k] itself is left as it is. The first of these that applies decides:
 
+    - {b streaming}, below, when the reuse of the streamed operand is at most
+      32;
     - {b tensor cores}, when the setting {!Setting.use_tc} is positive and [k]
       reduces over one axis, or {!Setting.tc_opt} admits more: the first of the
       three candidate axes on which a tensor core applies ({!Opt.Tc}), then
@@ -30,26 +32,40 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       With {!Setting.tc_min_globals}, [M] is upcast and [N] split locally
       whatever the workgroups, and [N] is upcast only while that many
       workgroups remain;
-    - {b matrix-vector}, for a renderer with local indices and shared memory
-      and a sum over the first reduce axis of products of a matrix and a
-      vector: computations of accesses with no reduce, the vector's axes some of
-      the matrix's, the matrix's more, and the first reduce axis indexing one of
-      the vector's accesses alone or at a constant stride. The axis along which
-      an access of the matrix has unit stride decides the layout:
-      {ul
-       {- the first reduce axis (rows along the reduce): it splits into the
-          largest of 32, 16, 8, 4 and 2 local threads that divides it, the
-          first global axis that 4 divides into 4 local threads, and what is
-          left of the reduce axis is unrolled by its largest divisor up to 8;}
-       {- a global axis (columns along an output), when 64 divides it and the
-          upcastable axes hold at most 32768 elements: it splits into 32
-          local threads, then 2 upcast lanes, and the first reduce axis into
-          the least power of two of local threads that makes 32768 threads,
-          at most 32, or the largest that divides it.}}
-      {!Setting.mv} turns it on;
+    - {b streaming} at any reuse, when the streamed operand's main access reads
+      elements of fewer than 4 bytes;
     - {b grouping}: when the upcastable axes hold at most 2048 elements, the
       first of the first three reduce axes that splits by 16 into local threads
       from the top; nothing more is applied then.
+
+    {b Streaming} applies on a renderer with local indices and shared memory,
+    when {!Setting.mv} is on, to [k]'s first reduce that sums a product of two
+    computations of accesses, each of whose own reduces runs inside none of
+    the summed axes. Each element of an operand
+    feeds as many outputs as its reuse: the product of the sizes of the global
+    axes it does not read, times [d] for each it reads only as its quotient by
+    [d]. The operand of least reuse is streamed, or of two of equal reuse the
+    one laid out along a contracted axis. Its main access is the one with an
+    axis of unit stride, a term of its index, whose terms of an axis the
+    reduce contracts span the most bytes. When that axis [u] is contracted:
+    {ul
+     {- with reuse, the axes it comes from are upcast, each by its share of the
+        largest divisor of the reuse up to 16;}
+     {- [u] splits into the largest of 32, 16, 8, 4 and 2 local threads that
+        divides it, and when they take [u] whole and are fewer than 32, the
+        contracted axis of the next stride in the main access into as many
+        more as make 32 or divide it;}
+     {- the first global axis that the streamed operand reads, the other does
+        not, and 4 divides, or else one both read, splits by 4: into local
+        threads without reuse, into upcast lanes with it;}
+     {- what the threads leave of [u], or else the axis of the next stride, is
+        unrolled by its largest divisor up to 8, or 4 with reuse.}}
+    When that axis is a global axis, after the upcast of the reuse, it splits
+    into 32 local threads and 2 upcast lanes, and the first reduce axis into
+    the least power of two of local threads that makes 32768 threads, at most
+    32, or the largest that divides it; with few outputs fewer threads take
+    the global axis, down to 8, and more the reduce. It does not apply when
+    more than 32768 outputs are left after the upcast.
 
     Otherwise, in order:
 
