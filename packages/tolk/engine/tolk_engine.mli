@@ -60,10 +60,10 @@ type storage =
           schedule holds while it is reachable. *)
   | Per_run
       (** Made by each run in its device's memory before the first call that
-          reads it, and returned after the last ({!Rig.Buffer.free}), its
+          takes it, and returned after the last ({!Rig.Buffer.free}), its
           memory coming back once the work on it is done, so that the
           schedule holds none of it between runs, and a run holds at each
-          call only the storage that calls before and after it read. A range
+          call only the storage that calls before and after it take. A range
           around calls counts as one call. *)
 
 val link :
@@ -153,7 +153,7 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     buffer a kernel accesses does not start at its parameter's phase, if a
     variable is unbound, and as {!Rig_program.run} does; {!Rig.Out_of_memory}
     if a device cannot allocate the storage of a schedule linked {!Per_run}:
-    the calls before the first that reads it have run, and the storage the
+    the calls before the first that takes it have run, and the storage the
     run made is returned. *)
 
 val slots : t -> Rig.Buffer.t option array

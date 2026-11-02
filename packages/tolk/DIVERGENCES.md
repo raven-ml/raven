@@ -4655,7 +4655,7 @@ fold wraps integers and holds its float bound`, hold.
 - **tolk:** `Tolk_engine.link`'s `storage`, `Tolk_engine.run_parts`,
   `Tolk_engine.per_run_parts`; `Jit.jit_lower`'s `arenas`.
 - **Differs:** a schedule linked `Per_run` makes each storage node no buffer
-  is bound to at each run, before the first call that reads it, and frees it
+  is bound to at each run, before the first call that takes it, and frees it
   after the last, its memory coming back once the work on it is done. The
   calls between two points where storage is made or freed are one program of
   rig's, which binds its inputs before its first step, so a submission ends

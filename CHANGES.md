@@ -1001,7 +1001,7 @@ thread.
   x86_64 Windows, where they were garbage: its entry copies its parameters
   inline, where Clang called the process's `memcpy`, of another convention.
 - `Tolk_engine.link ~storage:Per_run` makes a schedule's storage at each run,
-  each buffer before the first call that reads it and returned after the last,
+  each buffer before the first call that takes it and returned after the last,
   so the schedule holds none between runs and a run holds only what its calls
   need at once. `Jit.jit_lower ~arenas:false` leaves the buffers out of arenas
   for it. A run keeps none of the buffers it was given once it returns.

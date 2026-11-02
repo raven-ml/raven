@@ -870,7 +870,7 @@ and call b e =
 
 (* Storage each run of a schedule linked per run makes: [bytes] of [device]
    starting at the alignment and phase [at], in the slot that the calls from
-   its first to its last read it from. *)
+   its first to its last take it from. *)
 type made = { slot : int; device : Rig.t; bytes : int; at : int * int }
 
 (* A loaded program of rig's that runs consecutive calls of a schedule. *)
@@ -987,14 +987,14 @@ let builder ~fn ~separate ~devices bound =
 
    Each storage node that no buffer is bound to becomes a parameter in a slot
    past the caller's, which each run binds to storage it makes before the first
-   call that reads the node and returns after the last. The calls are cut into
+   call that takes the node and returns after the last. The calls are cut into
    parts wherever storage starts or ends between two of them: a part is one
    program of rig's, whose inputs it binds once, before its first step. A range
    around calls is one call. Where calls 0 and 1 read [a] and call 2 reads [b],
    calls 0 and 1 are a part, which makes [a] and returns it, and call 2 another,
    which makes [b] and returns it. *)
 
-(* The storage nodes that [e] reads and no buffer is bound to. *)
+(* The storage nodes that [e] takes and no buffer is bound to. *)
 let made_storage bound e =
   List.filter
     (fun u ->
