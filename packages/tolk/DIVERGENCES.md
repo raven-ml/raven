@@ -4152,7 +4152,8 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   one a reduction or an elementwise operation reads past a broadcast, the
   stores `remove_bufferize` weighs).
 - **tolk:** `Rangeify.extent`, `Rangeify.read_ranges` and
-  `Rangeify.read_copies` (the copies a read makes of a stage's value);
+  `Rangeify.read_copies` (the copies a read makes of a stage's value), with
+  `Rangeify.digit_of` (a range read through floor divisions and remainders);
   `Rangeify.collapses`, `Rangeify.outer` and `Rangeify.collapsed` (a sum
   that selects one trip, asked only where the answer changes a stage's
   decision), through `Simplify.load_collapse`, which
@@ -4181,6 +4182,35 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   arithmetic runs. `e` and `t` leave out the axes the value does not vary
   along, whose index the inlining substitutes into nothing, and take a
   symbolic size at its largest.
+
+  A read's copies leave out the reuse of a dropped digit. An output range of
+  constant size that each component of the index reading it reads through
+  one chain of floor divisions and remainders by positive constants, each
+  dividing the size of what it is applied to, in components that read no
+  other range, repeats the value across the outputs
+  that differ only in the digits the chains drop: those outputs read it at
+  one index. gpt-oss's experts read their decoded weights at
+  `[(r // 16); (a * 2 + b); k]` for blocks of 16 rows, and the down
+  projection at `[(r // 1024); (r % 64); k]`; a dense product whose output
+  merges its rows with its `n` columns reads the decoded matrix at
+  `[(r % n); k]` and the rows' cast at `[(r // n); k]`. The codegen splits a
+  range at a remainder by a constant dividing it (`Simplify.pm_split_ranges`)
+  and shares a quotient's repeats on a tensor core's `M` or a streamed
+  operand's reuse, so a tile of those outputs shares the value as it shares a
+  broadcast through a range the index does not name, which D77 and D106
+  weigh. That reuse, the extent of such ranges over the extent of the stage
+  axes their components index, divides `t / e`. A range that another
+  component also reads, or that a sum selecting one trip runs in, stays
+  counted; so do a window (`r // 16 + k`), a gather (a component reading a
+  buffer), a framed read `(r // L) * h + r % L` and a digit sum
+  `(r % m) + (r // m)`, which read a range twice in one component, a
+  constant that does not divide its operand (`r // 16` of 50 rows, which no
+  tile of a divisor of 50 shares whole), and a range of symbolic size, which
+  is never split. Reduction ranges keep their count:
+  the MXFP4 scales' `k // 32` counts 32. Rangeify counts without the target:
+  what a tile shares is the codegen's, and a target that shares fewer lanes
+  computes the value again more often than counted, as the host does
+  (Reason).
 
   A sum over one range that selects one trip, where an index equals the
   range, as a routed product's rows select their expert's matrix, counts
@@ -4264,6 +4294,27 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   stored against 1.24 ms inlined for `2x`, and 0.57 ms against 1.25 ms for
   `x * x + x`. gpt-oss-20b's decode step with Q8_0 projections on fudge's
   RTX 5000 keeps each block's scale inlined, 1.1% faster, as above.
+  Counting a dropped digit's reuse as copies stored every decoded weight a
+  quantised product of many rows reads, which the product's tiles share
+  once inlined: on fudge's RTX 5000 Ada (load 33 to 76, interleaved, one
+  process under the timing lock per run, medians of 3 rounds, the ranges
+  apart), gpt-oss-20b's `GptOss/prefill-512` takes 0.44-0.45 s against
+  1.18-1.19 s, its `GptOss/experts-at-prefill-512` 18.5-21.8 ms against
+  47.1-47.5 ms, and MXFP4 products of 16384 by 16384 past L2, of bfloat16
+  rows (`Quant/cuda/mxfp4-product-of-16384-*`), 0.65 ms against 3.2 ms at
+  12 rows, 1.49-1.50 against 6.0 at 64 and 1.81 against 6.1-6.2 at 128. Of
+  float32 rows, which no tensor core multiplies, 64 rows take 12.5-12.6 ms
+  against 9.6-9.7, 1.3 times slower. One MoE layer at 512
+  tokens runs 18.6-18.8 ms against 47.4-47.9; its inlined products are
+  streamed (`Setting.mv`), and on the tensor cores, with streaming off, the
+  layer takes 4.5 ms against 79.5. The cost is the host's, whose tiles
+  share 3 or 4 lanes of a digit or none, so an inlined decode runs about 4
+  times a value per 16-row block and 10 to 15 times in a dense product: at
+  a load of 67 to 76, MXFP4 products of 1024 by 1024 take 1.5-2.5 ms
+  against 0.28-0.48 ms at 10 rows and 5.9-11.1 ms against 1.5-2.3 ms at 64
+  (ranges overlapping), and a MoE layer 256 wide at 512 tokens 60-67 ms
+  against 30-36 ms (apart in two rounds). Deciding for the host needs the
+  target's operations per byte, which the scheduler does not take.
 - **Pinned by:** the Rangeify suite's rows of `kernel_counts.golden` and
   their kernel goldens, from the equally patched tinygrad: `read_at_offsets`
   (a value of some forty nodes read at 32 offsets, stored), `windowed_chain`
@@ -4274,6 +4325,9 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   kernels, inlined), `long_read_by_two` (some four hundred, stored),
   `routed_product_2` (a decoded matrix gathered by 2 rows an expert over 64
   experts, inlined) and `routed_product_64` (64 rows an expert, stored),
+  `blocked_product_16` (rows in blocks of 16 reading their block's matrix
+  of some forty nodes at `r // 16`, inlined) and `dense_decoded_64` (64 rows
+  merged with a matrix's 4 columns, read at `r % 4`, inlined),
   `tiled_chain` (tiled 256 times, inlined) and `padded_pair` (read through
   two paddings to 1024, inlined); `cost › levels each read twice make
   kernels that stop growing with depth`; the `copies` group: `a value of
@@ -4293,13 +4347,23 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   a value broadcast through a reshape is inlined` and `› a value read
   through padding is inlined`; `work bound › a stage is stored when its
   copies beyond the first pass the budget`, over values read once, twice, in
-  windows and by routed rows; rune's `rune jit › classes › an associative
-  scan over a tuple gives eager's bits` and `› a value stored or computed
-  again in its readers gives eager's bits`; on fudge, the
+  windows and by routed rows; the `dropped digits` group: `a dropped digit's
+  reuse is no copy`, over quotients, remainders, a middle digit and a chain
+  inlined, and windows, a reduction range's digit, a gather, frames, digit
+  sums, a range read by two components, constants not dividing and a
+  symbolic size stored, `› a read of merged outputs decides as one of them
+  split` and `› a digit a selection runs in stays counted`; rune's `rune
+  jit › classes › an associative scan over a tuple gives eager's bits` and
+  `› a value stored or computed again in its readers gives eager's bits`,
+  which reads the value in blocks of rows and in a product of merged rows
+  too; on fudge, the
   `scan/tridiagonal-100` row of rune's compile bench, the
   `Jit/cumsum-neg-log-uniform-8x1024`, `Jit/experts-mxfp4-16x4of32-256` and
-  `Cuda/sin-read-by-two-float64-1000` rows of its bench, and jera's
-  `root-newton-kepler-1k/compiled` and `root-bracket-kepler-1k/compiled`.
+  `Cuda/sin-read-by-two-float64-1000` rows of its bench, jera's
+  `root-newton-kepler-1k/compiled` and `root-bracket-kepler-1k/compiled`,
+  gpt-oss's `GptOss/prefill-512` and `GptOss/experts-at-prefill-512`, and
+  kaun's `Quant/cuda/mxfp4-product-of-16384-*-tokens` and
+  `Quant/host/mxfp4-product-of-1024-*-tokens`.
 
 ## D164. Withdrawn
 

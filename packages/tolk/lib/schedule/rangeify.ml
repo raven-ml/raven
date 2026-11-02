@@ -150,6 +150,21 @@ let read_ranges xs =
   let add r rs = if List.memq r rs then rs else r :: rs in
   List.fold_left (fun rs x -> Nodes.fold add (ranges x) rs) [] xs
 
+(* Whether [x] reads [r] through floor divisions and remainders by positive
+   constants alone, each dividing the size of what it is applied to:
+   [(r / 16) mod 4] of a range of 1024. *)
+let rec digit_of r x =
+  x == r
+  ||
+  match op x with
+  | (Op.Div | Op.Mod) when op (nth x 1) = Op.Const -> (
+      let size = Bigint.succ (Dtype.Value.to_z (vmax (nth x 0))) in
+      match Ops.value (nth x 1) with
+      | `Int c when Bigint.sign c > 0 ->
+          Bigint.divisible size c && digit_of r (nth x 0)
+      | _ -> false)
+  | _ -> false
+
 (* The copies a read makes: [no] where its sum over the range [sum] is computed
    at every trip, [yes] where at one, [no] alone where it reads no such sum or
    the answer is known. *)
@@ -174,7 +189,18 @@ type axis_copies = { lo : float; hi : float; shares : share list }
    each point of the ranges the sum runs in: its range counts as those ranges.
    A coordinate the value does not vary along
    counts neither elements nor trips: substituting its index leaves the value as
-   it is. A symbolic size counts at its largest.
+   it is. An output range of constant size that each component reading it reads
+   through one chain of floor divisions and remainders by constants dividing
+   what they apply to ({!digit_of}), in components reading no other range,
+   repeats the value across the outputs that differ only in the digits the
+   chains drop, which read it at one index: [r / 16] of the rows of 16-row
+   blocks, or [r mod n] of rows merged with [n] columns. The codegen splits a
+   range at a remainder by a constant dividing it and shares a quotient's
+   repeats in its tiles, as it shares a broadcast, so that reuse, the extent of
+   such ranges over the extent of the axes their components index, is no copy,
+   unless another component, or a sum computed at one trip, also runs in the
+   range. Reduction ranges keep their count. A symbolic size counts at its
+   largest.
 
    [outer r] is the ranges the sum over [r] runs in, if a reduction closes [r],
    and [collapses r] whether that sum is computed at one trip. A read of one
@@ -189,6 +215,17 @@ let read_copies ~reduced ~outer ~collapses buf idx =
   in
   let rs = read_ranges (List.map snd live) in
   let elements = extent (List.map fst live) in
+  let chained (_, x) =
+    match Nodes.to_list (ranges x) with
+    | [ r ] ->
+        x != r && op (nth r 0) = Op.Const && (not (reduced r)) && digit_of r x
+    | _ -> false
+  in
+  let pure, others = List.partition chained live in
+  let digits = read_ranges (List.map snd pure) in
+  let counted = read_ranges (List.map snd others) in
+  let digit d = List.memq d digits in
+  let reuse = Float.max 1. (extent digits /. extent (List.map fst pure)) in
   (* The copies when the sums over the ranges of [collapsing] are computed at
      one trip, each range then counting as its sum's [outer]. *)
   let count collapsing =
@@ -202,8 +239,15 @@ let read_copies ~reduced ~outer ~collapses buf idx =
         [] rs
     in
     let reduce = List.filter reduced read in
+    let shared =
+      if List.exists digit counted then 1.
+      else if List.exists (fun (_, o) -> List.exists digit o) collapsing then 1.
+      else reuse
+    in
     if elements <= 0. then 1.
-    else Float.max 1. (Float.min (extent reduce) (extent read /. elements))
+    else
+      Float.max 1.
+        (Float.min (extent reduce) (extent read /. elements /. shared))
   in
   let sums =
     List.filter_map (fun r -> Option.map (fun o -> (r, o)) (outer r)) rs

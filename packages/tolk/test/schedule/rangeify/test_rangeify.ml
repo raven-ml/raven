@@ -178,6 +178,8 @@ let programs =
     "long_read_by_two";
     "routed_product_2";
     "routed_product_64";
+    "blocked_product_16";
+    "dense_decoded_64";
     "windowed_scaled";
     "windowed_scaled_long";
     "zero_size_children";
@@ -1341,7 +1343,7 @@ let kernels_routed ~experts ~rows v =
   let x = Shape.param ~device:cpu ~shape:[ Int (4 * n) ] 3 Float32 in
   let r = loop (2 * n) 9 and k = Ops.range (Int 4) [ 10 ] in
   let e = Ops.range (Int experts) [ 11 ] in
-  let row = Ops.O.(r / int 2) in
+  let row = Ops.O.(r // int 2) in
   let selected = Ops.eq (Ops.index ids [ row ]) (Ops.cast e Dtype.Int32) in
   let read = Ops.index v [ e; Ops.O.(r % int 2); k ] in
   let gathered =
@@ -1432,6 +1434,204 @@ let work_bound =
           equal int (if stored then 2 else 1) (kernels_of_reading reading k));
     ]
 
+(* Dropped digits
+
+   A read whose index reads an output range only through floor divisions and
+   remainders by constants drops the range's other digits: the outputs that
+   differ only there read the value at one index, and a tile of them shares
+   it, as a broadcast does. Its copies leave that reuse out. A window, a
+   reduction range, a gather, a selection, a digit read twice in one component
+   or also by another, and a constant that does not divide what it applies to
+   stay counted. *)
+
+let wide = Shape.param ~device:cpu ~shape:[ Int 4096 ] 1 Float32
+
+(* [stage sizes v] is [v] of [wide] at the flat index of ranges of [sizes],
+   staged over them. *)
+let stage sizes v =
+  let rs = List.mapi (fun i n -> loop n i) sizes in
+  let at =
+    List.fold_left2 (fun a r n -> Ops.O.((a * int n) + r)) (Ops.O.int 0) rs sizes
+  in
+  Ops.bufferize ~opts:removable (v (Ops.index wide [ at ])) rs
+
+(* The kernels of a graph that stores, at each [r] of [rows] of 256 outputs,
+   the sum over [k] of 16 of [read r k]. *)
+let kernels_rows ~rows read =
+  let o = Shape.param ~device:cpu ~shape:[ Int 256 ] 0 Float32 in
+  let r = Ops.range ~axis_type:Loop rows [ 9 ] in
+  let k = Ops.range (Int 16) [ 10 ] in
+  let store = Ops.store (Ops.index o [ r ]) (Ops.reduce (read r k) Add [ k ]) in
+  kernels
+    (Rangeify.get_kernel_graph
+       (Ops.sink [ Ops.after o [ Ops.end_ store [ r ] ] ]))
+
+(* A stage of [sizes] read at [index r k] by [kernels_rows]: [copied] nodes,
+   past the budget at the copies counted without the reuse a dropped digit
+   shares, and [shared] if that reuse is all of them. *)
+type digits = {
+  name : string;
+  rows : Ops.sint;
+  sizes : int list;
+  index : Ops.t -> Ops.t -> Ops.t list;
+  copied : int;
+  shared : bool;
+}
+
+let ids = Shape.param ~device:cpu ~shape:[ Int 4 ] 2 Int32
+let gather r = Ops.cast (Ops.index ids [ Ops.O.(r // int 16) ]) Weak_int
+
+(* The counts beside each row are the copies of each element without the
+   shared reuse: the outputs and trips that read it. *)
+let digit_cases =
+  let open Ops.O in
+  let n = Ops.variable "n" (`Int (Bigint.of_int 49)) (`Int (Bigint.of_int 64)) in
+  [
+    (* 16 *)
+    { name = "[r / 16; k]"; rows = Int 64; sizes = [ 4; 16 ];
+      index = (fun r k -> [ r // int 16; k ]); copied = past 16; shared = true };
+    (* 16 *)
+    { name = "[r mod 16; k]"; rows = Int 256; sizes = [ 16; 16 ];
+      index = (fun r k -> [ r % int 16; k ]); copied = past 16; shared = true };
+    (* 4 *)
+    { name = "[r / 64; r mod 16; k]"; rows = Int 256; sizes = [ 4; 16; 16 ];
+      index = (fun r k -> [ r // int 64; r % int 16; k ]); copied = past 4;
+      shared = true };
+    (* 16, the trips of [k] *)
+    { name = "[(r / 16) mod 4; k]"; rows = Int 256; sizes = [ 4; 16 ];
+      index = (fun r k -> [ (r // int 16) % int 4; k ]); copied = past 16;
+      shared = true };
+    (* 16 *)
+    { name = "[r / 16 + k]"; rows = Int 64; sizes = [ 19 ];
+      index = (fun r k -> [ (r // int 16) + k ]); copied = past 16;
+      shared = false };
+    (* 4 *)
+    { name = "[r; k / 4]"; rows = Int 16; sizes = [ 16; 4 ];
+      index = (fun r k -> [ r; k // int 4 ]); copied = past 4; shared = false };
+    (* 16 *)
+    { name = "[ids (r / 16); k]"; rows = Int 64; sizes = [ 4; 16 ];
+      index = (fun r k -> [ gather r; k ]); copied = past 16; shared = false };
+    (* 64 outputs over 28 rows: 2.3 *)
+    { name = "[(r / 16) * 4 + r mod 16; k]"; rows = Int 64; sizes = [ 28; 16 ];
+      index = (fun r k -> [ ((r // int 16) * int 4) + (r % int 16); k ]);
+      copied = 300; shared = false };
+    (* 64 outputs over 15 rows: 4.3 *)
+    { name = "[r mod 8 + r / 8; k]"; rows = Int 64; sizes = [ 15; 16 ];
+      index = (fun r k -> [ (r % int 8) + (r // int 8); k ]); copied = 120;
+      shared = false };
+    (* 16 outputs over 3 rows: 5.3 *)
+    { name = "[r mod 3; k] of 16 rows"; rows = Int 16; sizes = [ 3; 16 ];
+      index = (fun r k -> [ r % int 3; k ]); copied = 90; shared = false };
+    (* 64 outputs over 124 elements, each read at 16 trips: 8.3 *)
+    { name = "[r / 16; r mod 16 + k]"; rows = Int 64; sizes = [ 4; 31 ];
+      index = (fun r k -> [ r // int 16; (r % int 16) + k ]); copied = 60;
+      shared = false };
+    (* 50 outputs over 4 rows: 12.5 *)
+    { name = "[r / 16; k] of 50 rows"; rows = Int 50; sizes = [ 4; 16 ];
+      index = (fun r k -> [ r // int 16; k ]); copied = 40; shared = false };
+    (* 16, at the largest size *)
+    { name = "[r / 16; k] of a symbolic size"; rows = Sym n; sizes = [ 4; 16 ];
+      index = (fun r k -> [ r // int 16; k ]); copied = past 16; shared = false };
+  ]
+
+(* The kernels of a graph that stores, at each point of ranges of [rows], the
+   sum over [k] of 16 of [v] read at [read] of those ranges and [k]. *)
+let kernels_out ~rows read v =
+  let o = Shape.param ~device:cpu ~shape:[ Int 4096 ] 0 Float32 in
+  let rs = List.mapi (fun i n -> loop n (20 + i)) rows in
+  let k = Ops.range (Int 16) [ 10 ] in
+  let at =
+    List.fold_left2 (fun a r n -> Ops.O.((a * int n) + r)) (Ops.O.int 0) rs rows
+  in
+  let value = Ops.reduce (Ops.index v (read rs k)) Add [ k ] in
+  let store = Ops.store (Ops.index o [ at ]) value in
+  kernels
+    (Rangeify.get_kernel_graph
+       (Ops.sink [ Ops.after o [ Ops.end_ store rs ] ]))
+
+(* The digit of [d] a read drops from its outputs: of [4 * d] rows read at
+   [r / d] or at [r mod d], or of [4 * d * 4] read at [r / (4 d)] and
+   [r mod 4]. *)
+type form = Low | High | Middle
+
+let pp_form ppf f =
+  Format.pp_print_string ppf
+    (match f with Low -> "low" | High -> "high" | Middle -> "middle")
+
+(* The outputs split at the digit, and the read of them that names no digit. *)
+let split form d =
+  match form with Low | High -> [ 4; d ] | Middle -> [ 4; d; 4 ]
+
+let split_read form rs k =
+  match (form, rs) with
+  | Low, [ g; _ ] -> [ g; k ]
+  | High, [ _; j ] -> [ j; k ]
+  | Middle, [ g; _; l ] -> [ g; l; k ]
+  | _ -> invalid_arg "split_read"
+
+let merged_read form d r k =
+  let wd = 4 * d in
+  let open Ops.O in
+  match form with
+  | Low -> [ r // int d; k ]
+  | High -> [ r % int d; k ]
+  | Middle -> [ r // int wd; r % int 4; k ]
+
+let digit_stage form d n =
+  let sizes =
+    match form with
+    | Low -> [ 4; 16 ]
+    | High -> [ d; 16 ]
+    | Middle -> [ 4; 4; 16 ]
+  in
+  stage sizes (chain_of n)
+
+(* The copies of each element counted without the digit's reuse: the trips
+   of [k], 16, or the outputs that read it, fewer. *)
+let digit_copies form d = match form with High -> 4 | Low | Middle -> min d 16
+
+(* A form, its digit's size and a stage's copied nodes, an even number either
+   side of the budget at the copies counted without the digit's reuse. *)
+let digit_gen =
+  Gen.(
+    let* form = of_list [ Low; High; Middle ] in
+    let* d = of_list [ 2; 3; 16; 64 ] in
+    let+ n = int_range 1 (budget / (digit_copies form d - 1)) in
+    (form, d, 2 * n))
+  |> Gen.with_pp (fun ppf (f, d, n) ->
+         Format.fprintf ppf "%a digit of %d, %d nodes" pp_form f d n)
+
+let digits =
+  group "get_kernel_graph › dropped digits"
+    [
+      cases "a dropped digit's reuse is no copy" ~id:(fun c -> c.name)
+        digit_cases (fun c ->
+          let v = stage c.sizes (chain_of c.copied) in
+          equal int
+            (if c.shared then 1 else 2)
+            (kernels_rows ~rows:c.rows (fun r k -> Ops.index v (c.index r k))));
+      prop "a read of merged outputs decides as one of them split" digit_gen
+        (fun (form, d, n) ->
+          let past = n * (digit_copies form d - 1) > budget in
+          cover "a low digit dropped, past the budget" (form = Low && past);
+          cover "a high digit dropped, past the budget" (form = High && past);
+          cover "a middle digit dropped, past the budget" (form = Middle && past);
+          cover "under the budget" (not past);
+          let v = digit_stage form d n in
+          let rows = split form d in
+          equal int
+            (kernels_out ~rows (fun rs k -> split_read form rs k) v)
+            (kernels_out
+               ~rows:[ List.fold_left ( * ) 1 rows ]
+               (fun rs k -> merged_read form d (List.hd rs) k)
+               v));
+      (* [r mod 2] reads a digit of the rows, which the sum over the experts
+         also runs in, selecting one: 4 copies. *)
+      test "a digit a selection runs in stays counted" (fun () ->
+          let v = routed_staged ~experts:2 (chain 60) in
+          equal int 2 (kernels_routed ~experts:2 ~rows:4 v));
+    ]
+
 (* Dead reads
 
    A staged value read at an index in padding is read nowhere. Here [s]'s two
@@ -1485,5 +1685,6 @@ let () =
          copies;
          recomputation;
          work_bound;
+         digits;
          dead_reads;
        ])

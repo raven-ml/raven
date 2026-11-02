@@ -1,0 +1,65 @@
+# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+0 Ops.CONST dtypes.weakint [] 256
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 1)
+3 Ops.INDEX dtypes.f32 [1, 2]
+4 Ops.CONST dtypes.weakint [] 64
+5 Ops.PARAM dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+6 Ops.CONST dtypes.weakint [] 4
+7 Ops.MOD dtypes.weakint [2, 6]
+8 Ops.CONST dtypes.weakint [] 16
+9 Ops.MUL dtypes.weakint [7, 8]
+10 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 0)
+11 Ops.ADD dtypes.weakint [9, 10]
+12 Ops.INDEX dtypes.f32 [5, 11]
+13 Ops.PARAM dtypes.f32 [4] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+14 Ops.INDEX dtypes.f32 [13, 11]
+15 Ops.MUL dtypes.f32 [12, 14]
+16 Ops.PARAM dtypes.f32 [4] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+17 Ops.INDEX dtypes.f32 [16, 11]
+18 Ops.ADD dtypes.f32 [15, 17]
+19 Ops.MUL dtypes.f32 [18, 14]
+20 Ops.ADD dtypes.f32 [19, 17]
+21 Ops.MUL dtypes.f32 [20, 14]
+22 Ops.ADD dtypes.f32 [21, 17]
+23 Ops.MUL dtypes.f32 [22, 14]
+24 Ops.ADD dtypes.f32 [23, 17]
+25 Ops.MUL dtypes.f32 [24, 14]
+26 Ops.ADD dtypes.f32 [25, 17]
+27 Ops.MUL dtypes.f32 [26, 14]
+28 Ops.ADD dtypes.f32 [27, 17]
+29 Ops.MUL dtypes.f32 [28, 14]
+30 Ops.ADD dtypes.f32 [29, 17]
+31 Ops.MUL dtypes.f32 [30, 14]
+32 Ops.ADD dtypes.f32 [31, 17]
+33 Ops.MUL dtypes.f32 [32, 14]
+34 Ops.ADD dtypes.f32 [33, 17]
+35 Ops.MUL dtypes.f32 [34, 14]
+36 Ops.ADD dtypes.f32 [35, 17]
+37 Ops.MUL dtypes.f32 [36, 14]
+38 Ops.ADD dtypes.f32 [37, 17]
+39 Ops.MUL dtypes.f32 [38, 14]
+40 Ops.ADD dtypes.f32 [39, 17]
+41 Ops.MUL dtypes.f32 [40, 14]
+42 Ops.ADD dtypes.f32 [41, 17]
+43 Ops.MUL dtypes.f32 [42, 14]
+44 Ops.ADD dtypes.f32 [43, 17]
+45 Ops.MUL dtypes.f32 [44, 14]
+46 Ops.ADD dtypes.f32 [45, 17]
+47 Ops.MUL dtypes.f32 [46, 14]
+48 Ops.ADD dtypes.f32 [47, 17]
+49 Ops.CONST dtypes.weakint [] 1024
+50 Ops.PARAM dtypes.f32 [49] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+51 Ops.DIV dtypes.weakint [2, 6]
+52 Ops.MUL dtypes.weakint [51, 8]
+53 Ops.ADD dtypes.weakint [52, 10]
+54 Ops.INDEX dtypes.f32 [50, 53]
+55 Ops.MUL dtypes.f32 [48, 54]
+56 Ops.REDUCE dtypes.f32 [55, 10] (Ops.ADD, 0)
+57 Ops.STORE dtypes.void [3, 56]
+58 Ops.END dtypes.void [57, 2]
+59 Ops.SINK dtypes.void [58] KernelInfo()
+60 Ops.CALL dtypes.void [59, 1, 5, 13, 16, 50] CallInfo()
+61 Ops.AFTER dtypes.f32 [1, 60]
+62 Ops.SINK dtypes.void [61]
+

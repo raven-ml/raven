@@ -175,6 +175,20 @@ def routed_product(experts, rows, k):
     return (decoded[empty(experts * rows, dtype=dtypes.int)] * empty(experts * rows, 1, k)).sum(2)
 
 
+def blocked_product(rows):
+    """4 blocks of `rows` rows, each multiplied by its block's matrix of 4 by 16, a value of some forty nodes: the rows read
+    the matrix at their quotient by `rows`, which drops their remainder, so inlined a tile of a block's rows shares it."""
+    w = chain(4, 1, 4, 16).expand(4, rows, 4, 16).reshape(4 * rows, 4, 16)
+    return (w * empty(4 * rows, 1, 16)).sum(2)
+
+
+def dense_decoded(rows):
+    """`rows` rows multiplied by a matrix of 4 by 16, a value of some forty nodes, the rows merged with the matrix's: the
+    outputs read the matrix at their remainder by 4, which drops the rows, so inlined a tile of them shares it."""
+    w = chain(1, 4, 16).expand(rows, 4, 16).reshape(rows * 4, 16)
+    return (w * empty(rows, 1, 16).expand(rows, 4, 16).reshape(rows * 4, 16)).sum(1)
+
+
 def windowed_chain():
     """A value of some forty nodes over three buffers in a running sum of 300: inlined, each element would be computed
     once for each output after it."""
@@ -369,6 +383,9 @@ PROGRAMS = {
     # products of rows by their expert's decoded matrix: 2 rows for each of 64 experts, and 64 for each of 2
     "routed_product_2": lambda: routed_product(64, 2, 4),
     "routed_product_64": lambda: routed_product(2, 64, 64),
+    # products whose rows read a matrix at a digit of their index: blocks of 16 rows, and 64 rows merged with the columns
+    "blocked_product_16": lambda: blocked_product(16),
+    "dense_decoded_64": lambda: dense_decoded(64),
     # broadcasts, whose outputs each compute the value once
     "tiled_chain": tiled_chain,
     "padded_pair": padded_pair,

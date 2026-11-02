@@ -6,8 +6,7 @@ gpt-oss-20b, RTX 5000 Ada (fudge, 31aa4521b, the new nx and rune), raven
 CUDA / NV / llama.cpp b12032 CUDA, at a load of 33 to 65:
 - decode 11.0 / 10.7 ms of GPU time (bench medians 15.5 / 12.0 ms) /
   6.83 ms at depth 512; with Q8_0 attention and head 23.4 / 22.8 ms
-- prefill-512 2.00 / 1.93 s / 56.0 ms: D163 stores each 16-row block's
-  decoded experts, 79 ms of a layer's 82 (0.19 s with 7b69036c7's rule)
+- prefill-512 0.45 s on CUDA (NV not measured again) / 56.0 ms
 - first call 0.45 / 0.37 to 0.54 s (12 tokens, kernels cached; 1.36 /
   1.47 s at the first run) / 75 ms (59 to 151 ms, no warmup)
 
@@ -167,12 +166,7 @@ raven / llama.cpp b12048 Vulkan:
   revisit D65's withdrawal under (e) if it does
 - D163 counts repeats pooled over a shared range, which overestimates `c`,
   and a collapsed read counts every range of its sum, which can overcount:
-  tighten both if a case shows a wrong store. D163 stores a decoded weight
-  for `R` decodes, but a streamed matrix-vector layout decodes it
-  `ceil(R / 16)` times, and decoding inline is 2.1-2.3x faster at `R = 64`
-  (bf16 model on fudge): decide which layer counts a consumer's decodes. MXFP4 at
-  `R = 12` past L2 runs 3.10 ms on CUDA where a streamed inline decode
-  is modelled at ~640 us
+  tighten both if a case shows a wrong store
 - running sums cost ~257 ops per element (shape.ml:955): `Nx.cumsum` over
   float64 [100; 50500] takes ~1.0 s on CPU. A scan with constant work per
   element, and a compiled cumsum row

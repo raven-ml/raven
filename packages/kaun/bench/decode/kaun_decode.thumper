@@ -5,14 +5,23 @@
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed under load 39.9 on 14 cores
+# forced: blessed Quant/host/mxfp4-product-of-1024-10-bfloat16-tokens Quant/host/mxfp4-product-of-1024-64-bfloat16-tokens Quant/cuda/mxfp4-product-of-16384-12-bfloat16-tokens Quant/cuda/mxfp4-product-of-16384-64-bfloat16-tokens Quant/cuda/mxfp4-product-of-16384-128-bfloat16-tokens Quant/cuda/mxfp4-product-of-16384-64-float32-tokens under load 67.0 on 14 cores
 
 Gpt2/decode-step-at-128-width-1024	alloc_words	exact	18261
 Gpt2/decode-step-at-128-width-256	alloc_words	exact	18261
 Gpt2/decode-step-at-128-width-4096	alloc_words	exact	18261
 Gpt2/decode-step-cache-1024	alloc_words	exact	18261
 Gpt2/decode-step-cache-256	alloc_words	exact	18261
+Quant/cuda/mxfp4-product-of-16384-12-bfloat16-tokens	wall_time	batch=16	n=20	6.556e-04	6.278e-04 6.290e-04 6.409e-04 6.420e-04 6.446e-04 6.459e-04 6.506e-04 6.535e-04 6.550e-04 6.556e-04 6.556e-04 6.601e-04 6.639e-04 6.662e-04 6.751e-04 6.791e-04 6.914e-04 6.929e-04 7.641e-04 9.242e-04
+Quant/cuda/mxfp4-product-of-16384-128-bfloat16-tokens	wall_time	batch=2	n=20	1.806e-03	1.788e-03 1.797e-03 1.800e-03 1.800e-03 1.800e-03 1.801e-03 1.801e-03 1.802e-03 1.806e-03 1.806e-03 1.807e-03 1.808e-03 1.809e-03 1.815e-03 1.816e-03 1.819e-03 1.823e-03 1.825e-03 3.379e-03 4.542e-03
+Quant/cuda/mxfp4-product-of-16384-64-bfloat16-tokens	wall_time	batch=4	n=20	1.505e-03	1.498e-03 1.501e-03 1.501e-03 1.502e-03 1.502e-03 1.502e-03 1.504e-03 1.504e-03 1.504e-03 1.505e-03 1.505e-03 1.506e-03 1.508e-03 1.515e-03 1.521e-03 1.610e-03 1.620e-03 1.653e-03 2.822e-03 2.993e-03
+Quant/cuda/mxfp4-product-of-16384-64-float32-tokens	wall_time	batch=1	n=20	1.252e-02	1.227e-02 1.233e-02 1.236e-02 1.238e-02 1.244e-02 1.244e-02 1.246e-02 1.249e-02 1.250e-02 1.251e-02 1.253e-02 1.255e-02 1.255e-02 1.256e-02 1.259e-02 1.260e-02 1.266e-02 1.275e-02 1.276e-02 1.321e-02
 Quant/host/mxfp4-blocks-product-1-token	alloc_words	exact	723
 Quant/host/mxfp4-product-1-token	alloc_words	exact	723
+Quant/host/mxfp4-product-of-1024-10-bfloat16-tokens	alloc_words	exact	698
+Quant/host/mxfp4-product-of-1024-10-bfloat16-tokens	wall_time	batch=4	n=20	2.366e-03	8.532e-04 9.229e-04 9.890e-04 1.529e-03 1.749e-03 1.755e-03 1.924e-03 1.995e-03 2.041e-03 2.362e-03 2.370e-03 2.493e-03 2.771e-03 2.823e-03 2.898e-03 3.054e-03 4.011e-03 4.298e-03 4.364e-03 4.513e-03
+Quant/host/mxfp4-product-of-1024-64-bfloat16-tokens	alloc_words	exact	698
+Quant/host/mxfp4-product-of-1024-64-bfloat16-tokens	wall_time	batch=2	n=20	7.413e-03	4.675e-03 4.830e-03 5.511e-03 5.623e-03 6.175e-03 6.187e-03 6.495e-03 6.595e-03 7.105e-03 7.407e-03 7.420e-03 7.480e-03 7.634e-03 7.698e-03 7.849e-03 8.211e-03 8.212e-03 8.315e-03 8.627e-03 9.231e-03
 Quant/host/q4_k-product-1-token	alloc_words	exact	723
 Quant/host/q6_k-product-1-token	alloc_words	exact	723
 Quant/host/q8_0-product-1-token	alloc_words	exact	723

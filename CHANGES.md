@@ -916,6 +916,12 @@ word comes from its lock and from samples the dashboard saw arrive.
   arithmetic under a Clang of LLVM 18, which crashed on float16 casts for such
   processors, as Ubuntu 24.04's did with `native`. `Compiler_cpu.flags` states
   the arguments.
+- `Rangeify.get_kernel_graph` counts no copy for outputs that read a value at
+  one index through a quotient or remainder of their range, as rows in blocks
+  or merged with a product's columns do: a decoded weight stays in its product.
+  On an RTX 5000 Ada, gpt-oss-20b's 512-token prefill takes 0.45 s from 1.19,
+  an MXFP4 product of 64 bfloat16 rows past L2 1.5 ms from 6.0; of float32
+  rows 1.3 times slower, and on the host 2 to 5 times slower.
 - A kernel's stores, calls and code in the target's language
   (`Op.Set.effectful`) run as often, and in the order, they are written: two
   loops merge (`Simplify.pm_simplify_ranges`) only where each runs as often

@@ -3195,6 +3195,8 @@ schedule/rangeify/binop_permute.golden
 schedule/rangeify/binop_permute_kernels.golden
 schedule/rangeify/binop_reshape.golden
 schedule/rangeify/binop_reshape_kernels.golden
+schedule/rangeify/blocked_product_16.golden
+schedule/rangeify/blocked_product_16_kernels.golden
 schedule/rangeify/cast_half.golden
 schedule/rangeify/cast_half_kernels.golden
 schedule/rangeify/cat.golden
@@ -3223,6 +3225,8 @@ schedule/rangeify/custom_kernel_of_views.golden
 schedule/rangeify/custom_kernel_of_views_kernels.golden
 schedule/rangeify/custom_kernel_permuted.golden
 schedule/rangeify/custom_kernel_permuted_kernels.golden
+schedule/rangeify/dense_decoded_64.golden
+schedule/rangeify/dense_decoded_64_kernels.golden
 schedule/rangeify/disk_bitcast_to.golden
 schedule/rangeify/disk_bitcast_to_kernels.golden
 schedule/rangeify/disk_store.golden

@@ -4261,7 +4261,8 @@ let law_scan (Scan_case (s, axis, xs)) =
 (* Values computed again
 
    A value of [k] steps of [y * y + y] from [x], int32 wrapping, read at two
-   indices or by a running sum's windows: the compiler stores it or computes it
+   indices, by a running sum's windows, by sums over its rows in blocks of 4
+   rows, or by a product of 16 rows by it: the compiler stores it or computes it
    again in each reader, as its work decides, and either gives eager's bits. *)
 
 let rec steps k x = if k = 0 then x else steps (k - 1) Nx.(add (mul x x) x)
@@ -4269,7 +4270,7 @@ let rec steps k x = if k = 0 then x else steps (k - 1) Nx.(add (mul x x) x)
 let recomputed_cases =
   Gen.(
     pair
-      (of_list [ `Twice; `Windows ])
+      (of_list [ `Twice; `Windows; `Blocked; `Dense ])
       (frequency
          [
            (1, int_range 0 19); (1, int_range 20 200); (1, int_range 201 300);
@@ -4278,22 +4279,44 @@ let recomputed_cases =
       Format.fprintf ppf "%d steps %s" k
         (match how with
         | `Twice -> "read twice"
-        | `Windows -> "in a running sum"))
+        | `Windows -> "in a running sum"
+        | `Blocked -> "summed in blocks of rows"
+        | `Dense -> "in a product of rows"))
 
 let law_recomputed (how, k) =
   cover "read twice" (how = `Twice);
   cover "in a running sum" (how = `Windows);
+  cover "summed in blocks of rows" (how = `Blocked);
+  cover "in a product of rows" (how = `Dense);
   cover "a few steps" (k < 20);
   cover "hundreds of steps" (k > 200);
   let x =
     Nx.create Nx.int32 [| 4; 16 |]
       (Array.init 64 (fun i -> Int32.of_int ((i * 7919) - 250)))
   in
+  let rows =
+    Nx.create Nx.int32 [| 16; 16 |]
+      (Array.init 256 (fun i -> Int32.of_int ((i * 104729) - 9000)))
+  in
   let f x =
     let y = steps k x in
     match how with
     | `Twice -> Nx.add y (Nx.flip ~axes:[ 1 ] y)
     | `Windows -> Nx.cumsum ~axis:1 y
+    | `Blocked ->
+        let blocks =
+          Nx.reshape [| 16; 16 |]
+            (Nx.broadcast_to [| 4; 4; 16 |] (Nx.reshape [| 4; 1; 16 |] y))
+        in
+        Nx.sum ~axes:[ 1 ] (Nx.mul blocks rows)
+    | `Dense ->
+        let merged t =
+          Nx.reshape [| 64; 16 |] (Nx.broadcast_to [| 16; 4; 16 |] t)
+        in
+        Nx.sum ~axes:[ 1 ]
+          (Nx.mul
+             (merged (Nx.reshape [| 16; 1; 16 |] rows))
+             (merged (Nx.reshape [| 1; 4; 16 |] y)))
   in
   let eager = outcome (fun () -> codes (f x)) in
   let jitted = compiled (fun () -> codes (Rune.jit' f x)) in

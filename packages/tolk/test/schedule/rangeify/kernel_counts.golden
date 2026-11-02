@@ -108,6 +108,8 @@ read_by_two	2
 long_read_by_two	3
 routed_product_2	1
 routed_product_64	2
+blocked_product_16	1
+dense_decoded_64	1
 tiled_chain	1
 padded_pair	1
 expand_staged	2

@@ -306,6 +306,33 @@ let linear make at =
   ignore (lowered "linear" (fun () -> f x));
   fun () -> Nx.sync (f x)
 
+(* MXFP4 products of several tokens by one [[| n; n |]] matrix, compiled: on a
+   GPU at [n = 16384], 142 MB of codes and scales, past its L2, and on the host
+   at 1024. Every token reads every value of the matrix, so the speed turns on
+   where its decoding runs: stored once, or in the product's tiles, which share
+   it between the tokens they hold. The tokens are bfloat16, a model's
+   activations, which a GPU's tensor cores multiply, or float32. *)
+
+type activations = Bfloat16 | Float32
+
+let tokens_product ~n ~tokens ~activations at =
+  let w =
+    Nx_quant.place at
+      (Nx_quant.mxfp4
+         ~scales:(Nx.copy (Nx.full Nx.uint8 [| n; n / 32 |] 127))
+         (Nx.copy (random [| n; n / 2 |])))
+  in
+  let call (type b) (x : (float, b, _) Nx.t) =
+    let f = Rune.jit' (Nx_quant.apply w) in
+    let x = own at x in
+    ignore (lowered "tokens product" (fun () -> f x));
+    fun () -> Nx.sync (f x)
+  in
+  let x = Nx.full Nx.float32 [| tokens; n |] 0.5 in
+  match activations with
+  | Bfloat16 -> call (Nx.cast Nx.bfloat16 x)
+  | Float32 -> call x
+
 (* A product made at a placement of any set: its one call, waited for. *)
 type product = { at : 'd. 'd Nx.Placement.t -> unit -> unit }
 
@@ -325,8 +352,9 @@ let routed_on devices ~run ~tokens suffix =
     (Printf.sprintf "routed product, %d tokens%s" tokens suffix)
     { at = (fun at -> routed ~run ~tokens at) }
 
-(* The routed products of each count of [tokens], then the dense ones. *)
-let products ~tokens devices =
+(* The routed products of each count of [tokens], the dense ones, then MXFP4's
+   of [n] by [n] at each count of tokens and activations of [many]. *)
+let products ~tokens ~n ~many devices =
   List.map (fun tokens -> routed_on devices ~run:Compiled ~tokens "") tokens
   @ List.map
       (fun (format, make) ->
@@ -334,13 +362,27 @@ let products ~tokens devices =
           (Printf.sprintf "%s product, 1 token" format)
           { at = (fun at -> linear make at) })
       formats
+  @ List.map
+      (fun (tokens, activations) ->
+        on devices
+          (Printf.sprintf "mxfp4 product of %d, %d %s tokens" n tokens
+             (match activations with
+             | Bfloat16 -> "bfloat16"
+             | Float32 -> "float32"))
+          { at = (fun at -> tokens_product ~n ~tokens ~activations at) })
+      many
 
 let host =
   let devices () = (module Nx.Host : Nx.Devices) in
-  products ~tokens:[ 1; 64 ] devices
+  products ~tokens:[ 1; 64 ] ~n:1024
+    ~many:[ (10, Bfloat16); (64, Bfloat16) ]
+    devices
   @ [ routed_on devices ~run:Eager ~tokens:1 ", eager" ]
 
 let get_ok = function Ok d -> d | Error e -> failwith e
+
+let gpu_many =
+  [ (12, Bfloat16); (64, Bfloat16); (128, Bfloat16); (64, Float32) ]
 
 (* The GPU: CUDA's first, else AMD's first. *)
 let gpu =
@@ -365,7 +407,7 @@ let metal () =
   if opens "metal" then
     [
       ( "metal",
-        products ~tokens:[ 1; 512 ] (fun () ->
+        products ~tokens:[ 1; 512 ] ~n:16384 ~many:gpu_many (fun () ->
             Nx.devices [ get_ok (Rig.open_ (Rig_metal.gpu 0)) ]) );
     ]
   else []
@@ -377,7 +419,7 @@ let quant () =
     | Some vendor ->
         [
           ( vendor,
-            products ~tokens:[ 1; 512 ] (fun () ->
+            products ~tokens:[ 1; 512 ] ~n:16384 ~many:gpu_many (fun () ->
                 Nx.devices [ Lazy.force gpu ]) );
         ]
   in
