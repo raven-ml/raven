@@ -4,427 +4,423 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-open Munin
 
-(* [Session.start] defaults its provenance to [Provenance.detect ()], which runs
-   git twice: in this repository, most of the suite's time. Sessions here record
-   [provenance] unless a test passes its own. *)
-let provenance =
-  {
-    Provenance.command = [ "test_sys" ];
-    cwd = "/";
-    hostname = None;
-    pid = 0;
-    git_commit = None;
-    git_dirty = None;
-    env = [];
-  }
+let pairs = list (pair string float_exact)
+let keys pairs = List.map fst pairs
+let value key pairs = List.assoc key pairs
+let linux = Sys.file_exists "/proc/self/status"
+let macos = Sys.os_type = "Unix" && not linux
 
-module Session = struct
-  include Session
+let in_range ~low ~high key pairs =
+  let v = value key pairs in
+  at_least ~msg:key float_exact ~than:low v;
+  at_most ~msg:key float_exact ~than:high v
 
-  let start ?(provenance = provenance) = start ~provenance
-end
+let non_negative key pairs =
+  at_least ~msg:key float_exact ~than:0. (value key pairs)
 
-let rec rm_rf path =
-  if Sys.is_directory path then begin
-    Array.iter (fun e -> rm_rf (Filename.concat path e)) (Sys.readdir path);
-    Sys.rmdir path
-  end
-  else Sys.remove path
+(* The machine *)
 
-let with_temp_dir f =
-  let base = Filename.temp_file "munin" "test" in
-  Sys.remove base;
-  Unix.mkdir base 0o755;
-  Fun.protect ~finally:(fun () -> rm_rf base) (fun () -> f base)
+let host_keys =
+  [
+    "sys/cpu_busy_pct";
+    "sys/load_per_core";
+    "sys/mem_used_bytes";
+    "sys/mem_total_bytes";
+    "sys/swap_used_bytes";
+    "sys/disk_read_bytes_per_s";
+    "sys/disk_write_bytes_per_s";
+    "sys/disk_busy_pct";
+    "sys/interval_s";
+  ]
 
-let sys_keys =
-  List.sort compare
+(* What every supported system reads. Windows keeps no load average; a Linux
+   machine or a Windows VM may have no physical disk that gives counters. *)
+let host_required =
+  [
+    "sys/cpu_busy_pct";
+    "sys/mem_used_bytes";
+    "sys/mem_total_bytes";
+    "sys/swap_used_bytes";
+    "sys/interval_s";
+  ]
+  @ (if Sys.win32 then [] else [ "sys/load_per_core" ])
+  @
+  if macos then [ "sys/disk_read_bytes_per_s"; "sys/disk_write_bytes_per_s" ]
+  else []
+
+let window = 0.05
+
+let test_host_first () =
+  let read = Munin_sys.host () in
+  equal pairs [] (read ())
+
+let test_host_second () =
+  let read = Munin_sys.host () in
+  ignore (read ());
+  Unix.sleepf window;
+  let got = read () in
+  let ks = keys got in
+  equal (list string) (List.sort_uniq compare ks) (List.sort compare ks);
+  List.iter (fun k -> mem string k host_keys) ks;
+  List.iter (fun k -> mem string k ks) host_required;
+  in_range ~low:0. ~high:100. "sys/cpu_busy_pct" got;
+  if List.mem_assoc "sys/load_per_core" got then
+    non_negative "sys/load_per_core" got;
+  in_range ~low:0.
+    ~high:(value "sys/mem_total_bytes" got)
+    "sys/mem_used_bytes" got;
+  non_negative "sys/swap_used_bytes" got;
+  let disks = List.mem_assoc "sys/disk_read_bytes_per_s" got in
+  equal bool disks (List.mem_assoc "sys/disk_write_bytes_per_s" got);
+  equal bool (linux && disks) (List.mem_assoc "sys/disk_busy_pct" got);
+  if disks then begin
+    non_negative "sys/disk_read_bytes_per_s" got;
+    non_negative "sys/disk_write_bytes_per_s" got
+  end;
+  if List.mem_assoc "sys/disk_busy_pct" got then
+    in_range ~low:0. ~high:100. "sys/disk_busy_pct" got;
+  at_least float_exact ~than:window (value "sys/interval_s" got)
+
+(* This process *)
+
+let test_process_first () =
+  let read = Munin_sys.process () in
+  equal pairs [] (read ())
+
+let cpu_seconds () =
+  let t = Unix.times () in
+  t.Unix.tms_utime +. t.Unix.tms_stime
+
+(* Computes until the process spent [s] seconds of CPU. *)
+let burn s =
+  let start = cpu_seconds () in
+  while cpu_seconds () -. start < s do
+    ignore (Sys.opaque_identity (Array.make 64 0))
+  done
+
+let block_bytes = 32 * 1024 * 1024
+
+let test_process_second () =
+  let read = Munin_sys.process () in
+  ignore (read ());
+  (* Written, so resident. *)
+  let block = Bytes.make block_bytes 'x' in
+  burn 0.02;
+  let got = read () in
+  ignore (Sys.opaque_identity block);
+  equal (list string)
+    [ "sys/proc_cpu_cores"; "sys/proc_rss_bytes"; "sys/proc_interval_s" ]
+    (keys got);
+  greater float_exact ~than:0. (value "sys/proc_cpu_cores" got);
+  at_least float_exact ~than:(Float.of_int block_bytes)
+    (value "sys/proc_rss_bytes" got);
+  greater float_exact ~than:0. (value "sys/proc_interval_s" got)
+
+(* CPU busy on Linux *)
+
+(* A /proc/stat text whose aggregate line holds [fields]: user, nice, system,
+   idle, iowait, irq, softirq, steal, guest, guest_nice, or a prefix. *)
+let proc_stat fields =
+  String.concat "\n"
     [
-      "sys/cpu_user";
-      "sys/cpu_system";
-      "sys/mem_used_pct";
-      "sys/mem_used_gb";
-      "sys/proc_cpu_pct";
-      "sys/proc_mem_mb";
-      "sys/disk_read_mbs";
-      "sys/disk_write_mbs";
-      "sys/disk_util_pct";
+      "cpu  " ^ String.concat " " (List.map string_of_int fields);
+      "cpu0 1 2 3 4 5 6 7 8 9 10";
+      "intr 12345 0 0";
+      "";
     ]
 
-(* The GPU metrics depend on the machine's GPUs; the GPU tests check them. *)
-let sys_only keys =
-  List.sort compare
-    (List.filter
-       (fun k ->
-         String.starts_with ~prefix:"sys/" k
-         && not (String.starts_with ~prefix:"sys/gpu" k))
-       keys)
+let zero = proc_stat [ 0; 0; 0; 0; 0; 0; 0; 0; 0; 0 ]
+let busy = option (float 1e-9)
 
-let test_system_monitor_logs_metrics () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let monitor = Munin_sys.start ~interval:0.1 session in
-  let rec sampled () =
-    if not (List.mem "sys/cpu_user" (Run.metric_keys (Session.run session)))
-    then begin
-      Thread.delay 0.01;
-      sampled ()
-    end
-  in
-  sampled ();
-  Munin_sys.stop monitor;
-  Session.finish session;
-  let run = Session.run session in
-  equal (list string) sys_keys (sys_only (Run.metric_keys run))
-
-let test_system_monitor_defines_metrics () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let monitor = Munin_sys.start ~interval:100.0 session in
-  Munin_sys.stop monitor;
-  Session.finish session;
-  let run = Session.run session in
-  let last =
-    List.filter_map
-      (fun (key, (d : Metric.def)) ->
-        if d.summary = `Last then Some key else None)
-      (Run.metric_defs run)
-  in
-  equal (list string) sys_keys (sys_only last)
-
-let test_system_monitor_stop_idempotent () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let monitor = Munin_sys.start ~interval:100.0 session in
-  Munin_sys.stop monitor;
-  Munin_sys.stop monitor;
-  Session.finish session
-
-(* The monitor sleeps between samples; stop must not wait out the interval. The
-   delay lets the monitor thread reach its sleep: if it has not, stop returns at
-   once and the test passes without reaching its case, never failing falsely. *)
-let test_system_monitor_stop_prompt () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let monitor = Munin_sys.start ~interval:10.0 session in
-  Thread.delay 0.1;
-  let t0 = Unix.gettimeofday () in
-  Munin_sys.stop monitor;
-  less ~msg:"seconds stop blocked" float_exact ~than:1.0
-    (Unix.gettimeofday () -. t0);
-  Session.finish session
-
-(* A process's CPU percentage is its CPU time over the interval, whatever the
-   interval and however many cores the time came from. *)
-let test_proc_cpu_mean =
-  let gen = Gen.pair (Gen.float_range 0.02 3600.) (Gen.float_range 0. 64.) in
-  prop "process CPU is a mean over the interval" gen @@ fun (dt, cores) ->
-  let cpu = cores *. dt in
-  let prev =
-    {
-      Munin_sys.Stat.Proc.Self.utime = 0.;
-      stime = 0.;
-      rss_bytes = 0L;
-      vsize_bytes = 0L;
-    }
-  in
-  let next = { prev with utime = cpu /. 2.; stime = cpu /. 2. } in
-  cover "interval past 10 s" (dt > 10.);
-  cover "more than 8 cores busy" (cores > 8.);
-  let stats =
-    Munin_sys.Stat.Proc.Self.compute ~prev ~next ~dt ~num_cores:None
-  in
-  equal (float_rel ~rel:1e-9 ~abs:1e-9) (cores *. 100.) stats.cpu_percent
-
-(* Every sampler reads the system on Linux, macOS and Windows, except the load
-   average, which Windows keeps none of. *)
-let reads name read check = test name @@ fun () -> check (read ())
-
-let unread_on_windows name read check =
-  test name @@ fun () ->
-  if Sys.win32 then raises_match ~msg:name Exn.sys_error read
-  else check (read ())
-
-let test_per_core =
-  reads "Cpu.sample_per_core" Munin_sys.Stat.Cpu.sample_per_core
-  @@ fun cores -> at_least ~msg:"cores" int ~than:1 (Array.length cores)
-
-let test_net =
-  reads "Net.sample" Munin_sys.Stat.Net.sample @@ fun n ->
-  at_least ~msg:"bytes_rx" int64 ~than:0L n.bytes_rx;
-  at_least ~msg:"packets_rx" int64 ~than:0L n.packets_rx;
-  at_least ~msg:"bytes_tx" int64 ~than:0L n.bytes_tx;
-  at_least ~msg:"packets_tx" int64 ~than:0L n.packets_tx
-
-let test_disk_io =
-  reads "Disk_io.sample" Munin_sys.Stat.Disk_io.sample @@ fun d ->
-  at_least ~msg:"bytes_read" int64 ~than:0L d.bytes_read;
-  at_least ~msg:"bytes_written" int64 ~than:0L d.bytes_written;
-  at_least ~msg:"time_ms" int64 ~than:0L d.time_ms;
-  at_least ~msg:"num_disks" int64 ~than:0L d.num_disks
-
-let test_fs =
-  reads "Fs.sample" (fun () -> Munin_sys.Stat.Fs.sample ()) @@ fun fs ->
-  greater ~msg:"total_bytes" int64 ~than:0L fs.total_bytes;
-  at_most ~msg:"used_bytes" int64 ~than:fs.total_bytes fs.used_bytes
-
-(* Windows boots from a fixed drive, the partitions it lists. *)
-let test_partitions =
-  reads "Fs.partitions" Munin_sys.Stat.Fs.partitions @@ fun ps ->
-  if Sys.win32 then at_least ~msg:"fixed drives" int ~than:1 (List.length ps);
-  List.iter
-    (fun (p : Munin_sys.Stat.Fs.partition) ->
-      at_most ~msg:p.mount_point int64 ~than:p.total_bytes p.used_bytes)
-    ps
-
-(* A process is resident in memory, and its resident pages are mapped. *)
-let test_proc_self =
-  reads "Proc.Self.sample" Munin_sys.Stat.Proc.Self.sample @@ fun p ->
-  greater ~msg:"rss_bytes" int64 ~than:0L p.rss_bytes;
-  at_least ~msg:"vsize_bytes" int64 ~than:p.rss_bytes p.vsize_bytes
-
-(* This process is in the table by its ID, named and resident, whatever user
-   owns the others. *)
-let test_proc_table =
-  reads "Proc.Table.sample" Munin_sys.Stat.Proc.Table.sample @@ fun ps ->
-  let me = Munin_sys.Stat.Proc.Self.pid () in
-  let pid (p : Munin_sys.Stat.Proc.Table.t) = p.pid in
-  mem int me (List.map pid ps);
-  let p = List.find (fun p -> pid p = me) ps in
-  not_equal ~msg:"name" string "" p.name;
-  greater ~msg:"resident_size" int64 ~than:0L p.resident_size
-
-(* A run's provenance names this process as the process table does. *)
-let test_provenance_pid =
-  test "Provenance.detect gives the process ID the table lists" @@ fun () ->
-  let p = Provenance.detect ~cwd:(Filename.get_temp_dir_name ()) () in
-  equal int (Munin_sys.Stat.Proc.Self.pid ()) p.pid
-
-let test_loadavg =
-  unread_on_windows "loadavg" Munin_sys.Stat.loadavg @@ fun (l1, l5, l15) ->
-  at_least ~msg:"1 min" float_exact ~than:0. l1;
-  at_least ~msg:"5 min" float_exact ~than:0. l5;
-  at_least ~msg:"15 min" float_exact ~than:0. l15
-
-(* GPUs *)
-
-let gpus () = Munin_sys.Stat.Gpu.sample ()
-
-(* [id] as a PCI address reads it, [domain:bus:device.function] in
-   hexadecimal, or [""]: an id that is one reads back as itself. *)
-let as_pci id =
-  try
-    Scanf.sscanf id "%x:%x:%x.%x%!" (fun domain bus dev fn ->
-        Printf.sprintf "%04x:%02x:%02x.%x" domain bus dev fn)
-  with Scanf.Scan_failure _ | Failure _ | End_of_file -> ""
-
-(* The machine's amdgpu GPUs, by their DRM devices' uevent files, and its
-   NVIDIA GPUs, as rig lists them. *)
-let machine_gpus () =
-  let drm = "/sys/class/drm" in
-  let amd card =
-    let path = Filename.concat drm (card ^ "/device/uevent") in
-    match In_channel.with_open_bin path In_channel.input_all with
-    | exception Sys_error _ -> None
-    | text ->
-        let lines = String.split_on_char '\n' text in
-        if not (List.mem "DRIVER=amdgpu" lines) then None
-        else
-          List.find_map
-            (fun l ->
-              if String.starts_with ~prefix:"PCI_SLOT_NAME=" l then
-                Some (String.sub l 14 (String.length l - 14))
-              else None)
-            lines
-  in
-  let cards =
-    match Sys.readdir drm with
-    | exception Sys_error _ -> []
-    | names ->
-        List.filter
-          (fun n ->
-            String.starts_with ~prefix:"card" n && not (String.contains n '-'))
-          (Array.to_list names)
-  in
-  List.sort compare
-    (List.filter_map amd cards
-    @ Nvidia.buses ())
-
-(* Every value within its unit's bounds: a percentage, a die's temperature in
-   Celsius, a GPU's power in watts, memory within the GPU's. On Linux a GPU is
-   named by its PCI address, and the GPUs are the machine's amdgpu and NVIDIA
-   ones, in order of name. *)
-let test_gpu =
-  test "Gpu.sample" @@ fun () ->
-  if Sys.win32 then raises_match Exn.sys_error gpus
-  else begin
-    let gs = gpus () in
-    if Sys.file_exists "/proc" then
-      equal ~msg:"ids" (list string) (machine_gpus ())
-        (List.map (fun (g : Munin_sys.Stat.Gpu.t) -> g.id) gs);
-    if gs = [] then skip ~reason:"the machine has no GPU munin reads" ();
-    List.iter
-      (fun (g : Munin_sys.Stat.Gpu.t) ->
-        let within name lo hi =
-          Option.iter (fun v ->
-              greater ~msg:(g.id ^ " " ^ name) float_exact ~than:lo v;
-              less ~msg:(g.id ^ " " ^ name) float_exact ~than:hi v)
-        in
-        if Sys.file_exists "/proc" then
-          equal ~msg:"a PCI address" string g.id (as_pci g.id);
-        Option.iter
-          (fun b ->
-            at_least ~msg:(g.id ^ " busy") float_exact ~than:0. b;
-            at_most ~msg:(g.id ^ " busy") float_exact ~than:100. b)
-          g.busy_percent;
-        within "temperature" (-40.) 150. g.temperature;
-        within "power" 0. 2000. g.power;
-        match (g.memory_used, g.memory_total) with
-        | Some used, Some total ->
-            at_most ~msg:(g.id ^ " memory_used") int64 ~than:total used
-        | _ -> ())
-      gs
-  end
-
-(* Every NVIDIA GPU of the machine is read from its RM: its memory, used
-   within its total, and no temperature or power; a GPU the RM does not
-   answer for, every field [None]. *)
-let test_gpu_nvidia =
-  test "Gpu.sample reads NVIDIA's GPUs" @@ fun () ->
-  let buses = Nvidia.buses () in
-  if buses = [] then skip ~reason:"the machine has no NVIDIA GPU" ();
-  let gpus = gpus () in
-  let read bus =
-    let g = List.find (fun (g : Munin_sys.Stat.Gpu.t) -> g.id = bus) gpus in
-    let f = option float_exact in
-    equal ~msg:(bus ^ " temperature") f None g.temperature;
-    equal ~msg:(bus ^ " power") f None g.power;
-    match (g.memory_used, g.memory_total) with
-    | Some used, Some total ->
-        greater ~msg:"memory_total" int64 ~than:0L total;
-        at_most ~msg:"memory_used" int64 ~than:total used
-    | used, total ->
-        (* A GPU the RM does not answer for. *)
-        equal ~msg:(bus ^ " busy_percent") f None g.busy_percent;
-        equal ~msg:(bus ^ " memory_used") (option int64) None used;
-        equal ~msg:(bus ^ " memory_total") (option int64) None total
-  in
-  List.iter read buses
-
-(* The keys of the values a sample of the GPUs has, GPU [i] the [i]th. *)
-let gpu_keys gs =
-  List.concat
-    (List.mapi
-       (fun i (g : Munin_sys.Stat.Gpu.t) ->
-         List.filter_map
-           (fun (name, present) ->
-             if present then Some (Metric.gpu_key i name) else None)
-           [
-             ("util_pct", g.busy_percent <> None);
-             ("mem_used_gb", g.memory_used <> None);
-             ( "mem_used_pct",
-               g.memory_used <> None && g.memory_total <> None );
-             ("temp_c", g.temperature <> None);
-             ("power_w", g.power <> None);
-           ])
-       gs)
-  |> List.sort compare
-
-(* The monitor defines a GPU's metric for each value that its samples have:
-   every value a sample before and one after the monitor ran both have, and
-   none that neither has. Windows has no sample: [Gpu.sample] raises there. *)
-let test_gpu_monitor =
-  test "the monitor defines the GPU metrics its samples have" @@ fun () ->
-  let gpus () = if Sys.win32 then [] else gpus () in
-  let before = gpus () in
-  if before = [] then skip ~reason:"the machine has no GPU munin reads" ();
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let monitor = Munin_sys.start ~interval:0.1 session in
-  Thread.delay 0.5;
-  Munin_sys.stop monitor;
-  Session.finish session;
-  let after = gpus () in
-  let defined =
-    List.filter
-      (String.starts_with ~prefix:"sys/gpu")
-      (List.map fst (Run.metric_defs (Session.run session)))
-    |> List.sort_uniq compare
-  in
-  let b = gpu_keys before and a = gpu_keys after in
-  List.iter
-    (fun k -> if List.mem k a then mem ~msg:"defined" string k defined)
-    b;
-  List.iter (fun k -> mem ~msg:"in a sample" string k (b @ a)) defined
-
-let test_uptime =
-  reads "uptime" Munin_sys.Stat.uptime @@ fun s ->
-  greater ~msg:"seconds" int64 ~than:0L s
-
-(* An interval that is not positive raises before the monitor declares any
-   metric. *)
-let test_system_monitor_bad_interval () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  List.iter
-    (fun interval ->
-      raises_match Exn.invalid_arg (fun () ->
-          Munin_sys.start ~interval session))
-    [ 0.; -1.; Float.nan ];
-  (* The interval prints as the shortest decimal that reads back, the same on
-     every system: the C library's [%g] wrote 1e+06, 1e+006 under
-     mingw-w64. *)
-  raises
-    (Invalid_argument "Munin_sys.start: interval -1000000 is not positive")
-    (fun () -> Munin_sys.start ~interval:(-1e6) session);
-  raises
-    (Invalid_argument "Munin_sys.start: interval -4.58e-72 is not positive")
-    (fun () -> Munin_sys.start ~interval:(-4.58e-72) session);
-  Session.finish session;
-  let defs = Run.metric_defs (Session.run session) in
-  equal (list string) [] (sys_only (List.map fst defs))
-
-let system_monitor_tests =
+(* Linux counts guest time in user (guest_nice in nice) as well: a window half
+   running a virtual machine and half idle is 50% busy. *)
+let busy_cases =
   [
-    test "an interval that is not positive raises"
-      test_system_monitor_bad_interval;
-    test "logs metrics" test_system_monitor_logs_metrics;
-    test "defines metrics" test_system_monitor_defines_metrics;
-    test "stop idempotent" test_system_monitor_stop_idempotent;
-    test "stop does not wait out the interval" test_system_monitor_stop_prompt;
+    ("guest once in user", [ 50; 0; 0; 50; 0; 0; 0; 0; 50; 0 ], Some 50.);
+    ("guest_nice once in nice", [ 0; 50; 0; 50; 0; 0; 0; 0; 0; 50 ], Some 50.);
+    ("iowait is not busy", [ 25; 0; 0; 25; 50; 0; 0; 0; 0; 0 ], Some 25.);
+    ("irq, softirq, steal", [ 0; 0; 0; 25; 0; 25; 25; 25 ], Some 75.);
+    ("four fields", [ 10; 0; 10; 20 ], Some 50.);
+    ("no time", [ 0; 0; 0; 0; 0; 0; 0; 0; 0; 0 ], None);
   ]
+
+let test_busy_cases =
+  cases "/proc/stat windows"
+    ~id:(fun (n, _, _) -> n)
+    busy_cases
+    (fun (_, next, expected) ->
+      equal busy expected (Munin_sys.proc_stat_busy zero (proc_stat next)))
+
+(* Ten counters with guest <= user and guest_nice <= nice. *)
+let counters =
+  let open Gen in
+  let+ base = list ~size:(constant 8) (int_range 0 1_000_000)
+  and+ guest = int_range 0 100
+  and+ guest_nice = int_range 0 100 in
+  match base with
+  | user :: nice :: _ -> base @ [ user * guest / 100; nice * guest_nice / 100 ]
+  | _ -> base
+
+let add = List.map2 ( + )
+
+let test_guest_ignored =
+  prop "guest time leaves busy unchanged"
+    Gen.(pair counters counters)
+    (fun (prev, delta) ->
+      let f (prev, next) =
+        Munin_sys.proc_stat_busy (proc_stat prev) (proc_stat next)
+      in
+      (* All of the window's user and nice time ran virtual machines. *)
+      let all_guest (prev, next) =
+        let guest l =
+          List.mapi
+            (fun i v ->
+              match i with 8 -> List.nth l 0 | 9 -> List.nth l 1 | _ -> v)
+            l
+        in
+        (guest prev, guest next)
+      in
+      Law.ignores
+        (pair (list int) (list int))
+        busy f all_guest
+        (prev, add prev delta))
+
+(* Disk rates *)
+
+let disk name (read_bytes, written_bytes, busy_ms) =
+  { Munin_sys.name; read_bytes; written_bytes; busy_ms }
+
+let counter = Gen.int_range 0 (1 lsl 40)
+let change = Gen.int_range 0 (1 lsl 30)
+
+(* Disks d0, d1, ... and their counters at the start and end of a window. *)
+let window_gen =
+  let open Gen in
+  let+ dt = float_range 0.001 100.
+  and+ linux = bool
+  and+ ds =
+    list ~size:(int_range 1 4)
+      (pair (triple counter counter counter) (triple change change change))
+  in
+  let busy b = if linux then Some b else None in
+  let prev, next =
+    List.split
+      (List.mapi
+         (fun i ((r, w, b), (dr, dw, db)) ->
+           let name = "d" ^ string_of_int i in
+           (disk name (r, w, busy b), disk name (r + dr, w + dw, busy (b + db))))
+         ds)
+  in
+  (dt, prev, next)
+
+let rate = float_rel ~rel:1e-12 ~abs:0.
+let sum f l = List.fold_left (fun acc d -> acc + f d) 0 l
+
+let test_disk_sums =
+  prop "disk rates sum each disk's change" window_gen (fun (dt, prev, next) ->
+      cover "busy" (List.for_all (fun d -> d.Munin_sys.busy_ms <> None) next);
+      cover "several disks" (List.length next > 1);
+      (* The order of the disks does not matter. *)
+      let got = Munin_sys.disk_rates ~dt ~prev (List.rev next) in
+      let per_s f = Float.of_int (sum f next - sum f prev) /. dt in
+      equal rate
+        (per_s (fun d -> d.read_bytes))
+        (value "sys/disk_read_bytes_per_s" got);
+      equal rate
+        (per_s (fun d -> d.written_bytes))
+        (value "sys/disk_write_bytes_per_s" got);
+      match (List.hd next).busy_ms with
+      | None -> equal bool false (List.mem_assoc "sys/disk_busy_pct" got)
+      | Some _ -> in_range ~low:0. ~high:100. "sys/disk_busy_pct" got)
+
+let test_disk_set_changes =
+  prop "a disk that appears or leaves gives no disk rates"
+    Gen.(pair window_gen bool)
+    (fun ((dt, prev, next), appears) ->
+      cover "appears" appears;
+      cover "leaves" (not appears);
+      let extra = disk "new" (0, 0, None) in
+      let got =
+        if appears then Munin_sys.disk_rates ~dt ~prev (extra :: next)
+        else Munin_sys.disk_rates ~dt ~prev (List.tl next)
+      in
+      equal pairs [] got)
+
+let disk_cases =
+  let d name r w b = disk name (r, w, b) in
+  [
+    ( "a disk replaced under another name",
+      [ d "a" 0 0 None ],
+      [ d "b" 10 10 None ],
+      [] );
+    ("a counter that steps back", [ d "a" 100 0 None ], [ d "a" 50 0 None ], []);
+    ("no disk", [], [], []);
+    ( "one disk busy all window, one idle",
+      [ d "a" 0 0 (Some 0); d "b" 0 0 (Some 0) ],
+      [ d "a" 0 0 (Some 2000); d "b" 0 0 (Some 0) ],
+      [
+        ("sys/disk_read_bytes_per_s", 0.);
+        ("sys/disk_write_bytes_per_s", 0.);
+        ("sys/disk_busy_pct", 50.);
+      ] );
+    ( "busy past the window counts as all of it",
+      [ d "a" 0 0 (Some 0) ],
+      [ d "a" 0 0 (Some 2010) ],
+      [
+        ("sys/disk_read_bytes_per_s", 0.);
+        ("sys/disk_write_bytes_per_s", 0.);
+        ("sys/disk_busy_pct", 100.);
+      ] );
+    ( "bytes per second",
+      [ d "a" 1000 0 None ],
+      [ d "a" 5000 2000 None ],
+      [
+        ("sys/disk_read_bytes_per_s", 2000.);
+        ("sys/disk_write_bytes_per_s", 1000.);
+      ] );
+  ]
+
+let test_disk_cases =
+  cases "disk windows of 2 s"
+    ~id:(fun (n, _, _, _) -> n)
+    disk_cases
+    (fun (_, prev, next, expected) ->
+      equal pairs expected (Munin_sys.disk_rates ~dt:2. ~prev next))
+
+(* Devices *)
+
+let device_gen =
+  let open Gen in
+  let size = option nat and level = option float in
+  let+ allocated = size
+  and+ budget = size
+  and+ memory = size
+  and+ used = size
+  and+ busy = level
+  and+ activity = level
+  and+ temperature = level
+  and+ power = level in
+  {
+    Munin_sys.allocated;
+    budget;
+    memory;
+    used;
+    busy;
+    activity;
+    temperature;
+    power;
+  }
+
+let test_device_fields =
+  prop "device gives its Some fields" device_gen (fun d ->
+      let size k v =
+        Option.map (fun v -> ("dev/gpu0/" ^ k, Float.of_int v)) v
+      in
+      let level k v = Option.map (fun v -> ("dev/gpu0/" ^ k, v)) v in
+      let expected =
+        List.filter_map Fun.id
+          [
+            size "allocated_bytes" d.allocated;
+            size "budget_bytes" d.budget;
+            size "memory_bytes" d.memory;
+            size "used_bytes" d.used;
+            level "busy_pct" d.busy;
+            level "activity_pct" d.activity;
+            level "temperature_c" d.temperature;
+            level "power_w" d.power;
+          ]
+      in
+      equal pairs expected (Munin_sys.device "gpu0" (fun () -> d) ()))
+
+let name_char =
+  Gen.of_list
+    ~pp:(fun ppf c -> Format.fprintf ppf "%C" c)
+    [
+      'a';
+      'Z';
+      '0';
+      '-';
+      ':';
+      ' ';
+      '.';
+      '/';
+      '\x00';
+      '\x1f';
+      '\x7f';
+      '\xc3';
+      '\xa9';
+    ]
+
+let is_control c = Char.code c < 0x20 || Char.code c = 0x7f
+
+let full =
+  {
+    Munin_sys.allocated = Some 1;
+    budget = Some 2;
+    memory = Some 3;
+    used = Some 4;
+    busy = Some 5.;
+    activity = Some 6.;
+    temperature = Some 7.;
+    power = Some 8.;
+  }
+
+let test_device_names =
+  prop ~count:500 "device validates its name"
+    Gen.(string_of ~size:(int_range 0 5) name_char)
+    (fun name ->
+      let empty = name = "" in
+      let dot = (not empty) && name.[0] = '.' in
+      let slash = String.contains name '/' in
+      let control = String.exists is_control name in
+      let not_utf8 = not (String.is_valid_utf_8 name) in
+      cover "empty" empty;
+      cover "starts with ." dot;
+      cover "holds /" slash;
+      cover "holds a control character" control;
+      cover "not UTF-8" not_utf8;
+      let invalid = empty || dot || slash || control || not_utf8 in
+      cover "valid" (not invalid);
+      if invalid then
+        raises_match Exn.invalid_arg (fun () ->
+            Munin_sys.device name (fun () -> full))
+      else begin
+        let prefix = "dev/" ^ name ^ "/" in
+        let got = Munin_sys.device name (fun () -> full) () in
+        equal int 8 (List.length got);
+        List.iter (fun (k, _) -> starts_with ~prefix k) got
+      end)
+
+let test_device_unknown () =
+  equal pairs [] (Munin_sys.device "gpu0" (fun () -> Munin_sys.unknown) ())
+
+let test_device_raises () =
+  let read () = raise (Sys_error "lost") in
+  raises (Sys_error "lost") (Munin_sys.device "gpu0" read)
 
 let () =
   exit
     (run "Munin_sys"
        [
-         group "System monitor" system_monitor_tests;
-         group "Stat"
+         group "host"
            [
-             test_proc_cpu_mean;
-             test_per_core;
-             test_net;
-             test_disk_io;
-             test_fs;
-             test_partitions;
-             test_proc_self;
-             test_proc_table;
-             test_provenance_pid;
-             test_loadavg;
-             test_uptime;
+             test "first call gives nothing" test_host_first;
+             test "second call" test_host_second;
            ];
-         group "Gpu"
+         group "process"
            [
-             test_gpu;
-             test_gpu_nvidia;
-             test_gpu_monitor;
+             test "first call gives nothing" test_process_first;
+             test "second call" test_process_second;
+           ];
+         group "cpu busy" [ test_busy_cases; test_guest_ignored ];
+         group "disk rates"
+           [ test_disk_sums; test_disk_set_changes; test_disk_cases ];
+         group "device"
+           [
+             test_device_fields;
+             test_device_names;
+             test "unknown gives nothing" test_device_unknown;
+             test "raises what read raises" test_device_raises;
            ];
        ])

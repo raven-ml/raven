@@ -1,25 +1,15 @@
 (library
  (name munin_sys)
  (public_name munin.sys)
- (private_modules sysstat nvidia)
- (libraries
-  unix
-  str
-  munin
-  munin_float_text
-  threads.posix
-  (select
-   nvidia.ml
-   from
-   (munin_sys_nvidia -> nvidia.linux.ml)
-   (-> nvidia.none.ml)))
+ (private_modules sysstat)
+ (libraries unix)
  (foreign_stubs
   (language c)
   (names sysstat_stubs))
  (c_library_flags
   (:include c_library_flags.sexp)))
 
-; The stubs read CPU and memory statistics from IOKit on macOS.
+; The stubs read disk statistics from IOKit on macOS.
 
 (rule
  (target c_library_flags.sexp)

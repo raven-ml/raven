@@ -3,229 +3,201 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Munin
-module Stat = Sysstat
-
-type t = {
-  stop : bool Atomic.t;
-  wake : Unix.file_descr * Unix.file_descr;
-  thread : Thread.t;
+type disk = Sysstat.disk = {
+  name : string;
+  read_bytes : int;
+  written_bytes : int;
+  busy_ms : int option;
 }
 
-(* The monitor waits for its next sample by selecting on one end of a socket
-   pair, with the time left as timeout; [stop] writes a byte to the other end
-   to wake it. A socket, because Windows selects on sockets only. More than
-   [interval] left means the wall clock stepped back: the wait ends, rather
-   than last until the clock reaches the deadline again. A millisecond of
-   slack keeps the subtraction's rounding from reading as a step back. *)
-let rec wait fd ~interval deadline =
-  let left = deadline -. Unix.gettimeofday () in
-  if left > 0. && left <= interval +. 1e-3 then
-    match Unix.select [ fd ] [] [] left with
-    | [], _, _ -> wait fd ~interval deadline
-    | _ -> ()
-    | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait fd ~interval deadline
+let float = Float.of_int
+let attempt f = match f () with v -> Some v | exception Sys_error _ -> None
 
-(* Windows has no socketpair. OCaml's binds a socket at a name in the temporary
-   directory made of the process id and a count, and removes it once the pair
-   is connected: a process killed in between leaves it there, and a later
-   process of the same id fails to bind it with EADDRINUSE. A loopback
-   connection names no file. Its listener takes the connection from the other
-   end and closes any other, from another process of the machine. *)
-let tcp_pair () =
-  let socket () = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
-  let l = socket () in
-  Fun.protect ~finally:(fun () -> Unix.close l) @@ fun () ->
-  Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
-  Unix.listen l 1;
-  let a = socket () in
-  let rec from me =
-    let b, peer = Unix.accept ~cloexec:true l in
-    if peer = me then b
-    else begin
-      Unix.close b;
-      from me
-    end
-  in
-  match
-    Unix.connect a (Unix.getsockname l);
-    from (Unix.getsockname a)
-  with
-  | b -> (a, b)
-  | exception e ->
-      Unix.close a;
-      raise e
+(* Rates *)
 
-let socket_pair () =
-  if Sys.win32 then tcp_pair ()
-  else Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
+(* Linux's aggregate iowait can step back, as it sums per-CPU counters that do;
+   a negative change counts as none. *)
+let cpu_busy ~(prev : Sysstat.cpu) (next : Sysstat.cpu) =
+  let busy = max 0 (next.busy - prev.busy) in
+  let idle = max 0 (next.idle - prev.idle) in
+  if busy + idle = 0 then None
+  else Some (100. *. float busy /. float (busy + idle))
 
-(* [source session sample define] samples now and, if [sample ()] reads the
-   system, is the tick of that source, where [define first = (keys, values)]
-   for the first sample. It declares the metrics [keys] at once. Each tick
-   samples again and logs the [(key, value)] pairs that [values] gives from
-   the previous and the new sample, [dt] seconds apart, declaring a key the
-   first time it is logged. A system that cannot read the source when the
-   monitor starts gets none of its metrics. A tick whose sample fails logs
-   none of them and keeps the previous sample: the next tick's rates span
-   both intervals. A tick after the wall clock stepped back ([dt <= 0]) logs
-   none of them either, and its sample becomes the previous one. *)
-let source session sample define =
-  let timed () =
-    let s = sample () in
-    (s, Unix.gettimeofday ())
-  in
-  match timed () with
-  | exception Sys_error _ -> None
-  | (first, _) as sampled ->
-      let keys, values = define first in
-      let metrics = Hashtbl.create 16 in
-      let metric key =
-        match Hashtbl.find_opt metrics key with
-        | Some m -> m
-        | None ->
-            let m = Session.metric session key in
-            Hashtbl.replace metrics key m;
-            m
+let proc_stat_busy prev next =
+  cpu_busy ~prev:(Sysstat.cpu_of_proc_stat prev) (Sysstat.cpu_of_proc_stat next)
+
+let by_name = List.sort (fun a b -> String.compare a.name b.name)
+let same_name a b = String.equal a.name b.name
+
+(* A disk that attached or left during the window would bring or take with it
+   all it did before, so a window over which the set of disks changed gives no
+   disk rates. A disk whose counter stepped back was replaced under its name,
+   which changes the set too. Linux updates a disk's busy time when a request
+   starts or ends, so a window can see a little more than its length; each
+   disk's percent is capped at 100. *)
+let disk_rates ~dt ~prev next =
+  let prev = by_name prev and next = by_name next in
+  if next = [] || not (List.equal same_name prev next) then []
+  else
+    let delta f = List.map2 (fun p n -> f n - f p) prev next in
+    let read = delta (fun d -> d.read_bytes) in
+    let written = delta (fun d -> d.written_bytes) in
+    let busy_delta p n =
+      match (p.busy_ms, n.busy_ms) with
+      | Some p, Some n -> Some (n - p)
+      | _ -> None
+    in
+    let busy = List.filter_map Fun.id (List.map2 busy_delta prev next) in
+    if List.exists (fun d -> d < 0) (read @ written @ busy) then []
+    else
+      let rate ds = float (List.fold_left ( + ) 0 ds) /. dt in
+      let pct ms = Float.min 100. (100. *. float ms /. (dt *. 1000.)) in
+      let busy =
+        if List.compare_lengths busy next <> 0 then []
+        else
+          let sum = List.fold_left (fun acc ms -> acc +. pct ms) 0. busy in
+          [ ("sys/disk_busy_pct", sum /. float (List.length busy)) ]
       in
-      List.iter (fun key -> ignore (metric key)) keys;
-      let prev = ref sampled in
-      let tick () =
-        match timed () with
-        | exception Sys_error _ -> []
-        | (next, t) as sampled ->
-            let prev_sample, prev_t = !prev in
-            prev := sampled;
-            let dt = t -. prev_t in
-            if dt <= 0. then []
-            else
-              List.map
-                (fun (key, v) -> (metric key, v))
-                (values ~prev:prev_sample ~next ~dt)
-      in
-      Some tick
+      ("sys/disk_read_bytes_per_s", rate read)
+      :: ("sys/disk_write_bytes_per_s", rate written)
+      :: busy
 
-(* The [define] of a source whose metrics [keys] each sample gives. *)
-let fixed keys values _first =
-  (keys, fun ~prev ~next ~dt -> List.combine keys (values ~prev ~next ~dt))
+(* The machine *)
 
-(* A GPU's metrics, each logged when its sample has its value. *)
-let gpu_fields : (string * (Sysstat.Gpu.t -> float option)) list =
-  let gb bytes = Int64.to_float bytes /. 1_073_741_824. in
-  [
-    ("util_pct", fun g -> g.busy_percent);
-    ("mem_used_gb", fun g -> Option.map gb g.memory_used);
-    ( "mem_used_pct",
-      fun g ->
-        match (g.memory_used, g.memory_total) with
-        | Some used, Some total when Int64.compare total 0L > 0 ->
-            Some (Int64.to_float used *. 100. /. Int64.to_float total)
-        | _ -> None );
-    ("temp_c", fun g -> g.temperature);
-    ("power_w", fun g -> g.power);
-  ]
+type counters = { cpu : Sysstat.cpu option; disks : disk list option }
 
-(* GPU [i] is the [i]th id the monitor saw, in the order of the first sample
-   and then of the samples a new id appears in, so a GPU keeps its number. The
-   metrics of the first sample's values are declared at the start; each other
-   is declared the first time a sample has its value, as the load of a GPU
-   that was suspended at the start. *)
-let gpu_define (first : Sysstat.Gpu.t list) =
-  let numbers = Hashtbl.create 4 in
-  let number (g : Sysstat.Gpu.t) =
-    match Hashtbl.find_opt numbers g.id with
-    | Some i -> i
-    | None ->
-        let i = Hashtbl.length numbers in
-        Hashtbl.replace numbers g.id i;
-        i
+let memory_pairs (m : Sysstat.memory) =
+  let used =
+    match m.available with
+    | Some a -> [ ("sys/mem_used_bytes", float (m.total - a)) ]
+    | None -> []
   in
-  let values (gpus : Sysstat.Gpu.t list) =
-    List.concat_map
-      (fun g ->
-        let i = number g in
-        List.filter_map
-          (fun (name, field) ->
-            Option.map (fun v -> (Metric.gpu_key i name, v)) (field g))
-          gpu_fields)
-      gpus
+  let swap =
+    match m.swap_used with
+    | Some s -> [ ("sys/swap_used_bytes", float s) ]
+    | None -> []
   in
-  ( List.map fst (values first),
-    fun ~prev:_ ~next ~dt:_ -> values next )
+  used @ (("sys/mem_total_bytes", float m.total) :: swap)
 
-let mb bytes = bytes /. 1_048_576.
-
-let start ?(interval = 15.0) session =
-  if not (interval > 0.) then
-    invalid_arg
-      (Printf.sprintf "Munin_sys.start: interval %s is not positive"
-         (Munin_float_text.Float_text.exact interval));
+let host_pairs ~dt ~prev next memory load =
   let cpu =
-    source session Sysstat.Cpu.sample
-      (fixed [ "sys/cpu_user"; "sys/cpu_system" ] (fun ~prev ~next ~dt:_ ->
-           let stats = Sysstat.Cpu.compute ~prev ~next in
-           [ stats.user; stats.system ]))
+    match (prev.cpu, next.cpu) with
+    | Some prev, Some next -> (
+        match cpu_busy ~prev next with
+        | Some b -> [ ("sys/cpu_busy_pct", b) ]
+        | None -> [])
+    | _ -> []
   in
-  let mem =
-    source session Sysstat.Mem.sample
-      (fixed [ "sys/mem_used_pct"; "sys/mem_used_gb" ]
-         (fun ~prev:_ ~(next : Sysstat.Mem.t) ~dt:_ ->
-           let used = Int64.to_float next.used in
-           let total = Int64.to_float next.total in
-           [ used *. 100. /. total; used /. 1_073_741_824. ]))
+  let load =
+    match load with Some l -> [ ("sys/load_per_core", l) ] | None -> []
   in
-  let proc =
-    source session Sysstat.Proc.Self.sample
-      (fixed [ "sys/proc_cpu_pct"; "sys/proc_mem_mb" ] (fun ~prev ~next ~dt ->
-           let stats =
-             Sysstat.Proc.Self.compute ~prev ~next ~dt ~num_cores:None
-           in
-           [ stats.cpu_percent; mb (Int64.to_float stats.rss_bytes) ]))
+  let memory = match memory with Some m -> memory_pairs m | None -> [] in
+  let disks =
+    match (prev.disks, next.disks) with
+    | Some prev, Some next -> disk_rates ~dt ~prev next
+    | _ -> []
   in
-  let disk =
-    source session Sysstat.Disk_io.sample
-      (fixed
-         [ "sys/disk_read_mbs"; "sys/disk_write_mbs"; "sys/disk_util_pct" ]
-         (fun ~prev ~next ~dt ->
-           let stats = Sysstat.Disk_io.compute ~prev ~next ~dt in
-           [
-             mb stats.read_bytes_per_sec;
-             mb stats.write_bytes_per_sec;
-             stats.utilization_percent;
-           ]))
-  in
-  let gpu =
-    source session (Sysstat.Gpu.sample ~window:interval) gpu_define
-  in
-  let sources = List.filter_map Fun.id [ cpu; mem; proc; disk; gpu ] in
-  let stop_flag = Atomic.make false in
-  let wake = socket_pair () in
-  let prev_time = ref (Unix.gettimeofday ()) in
-  let step = ref 0 in
-  let thread =
-    Thread.create
-      (fun () ->
-        while not (Atomic.get stop_flag) do
-          wait (fst wake) ~interval (!prev_time +. interval);
-          if not (Atomic.get stop_flag) then begin
-            incr step;
-            prev_time := Unix.gettimeofday ();
-            match List.concat_map (fun tick -> tick ()) sources with
-            | [] -> ()
-            | metrics -> Session.log_metrics session ~step:!step metrics
-          end
-        done)
-      ()
-  in
-  { stop = stop_flag; wake; thread }
+  List.concat [ cpu; load; memory; disks; [ ("sys/interval_s", dt) ] ]
 
-(* Both ends close only after the join: had the monitor closed its end when an
-   exception ended it, the write would deliver SIGPIPE and end the process. *)
-let stop t =
-  if Atomic.compare_and_set t.stop false true then begin
-    ignore (Unix.write_substring (snd t.wake) "x" 0 1);
-    Thread.join t.thread;
-    Unix.close (fst t.wake);
-    Unix.close (snd t.wake)
-  end
-  else Thread.join t.thread
+(* A call whose clock has not moved gives nothing and reads nothing, so the next
+   window spans both calls. *)
+let host () =
+  let last = ref None in
+  fun () ->
+    let at = Sysstat.now () in
+    match !last with
+    | Some (t, _) when not (at -. t > 0.) -> []
+    | prev -> (
+        let next =
+          { cpu = attempt Sysstat.cpu; disks = attempt Sysstat.disks }
+        in
+        let memory = attempt Sysstat.memory in
+        let load = attempt Sysstat.load_per_core in
+        last := Some (at, next);
+        if next.cpu = None && next.disks = None && memory = None && load = None
+        then raise (Sys_error "Munin_sys.host: cannot read the machine");
+        match prev with
+        | None -> []
+        | Some (t, prev) -> host_pairs ~dt:(at -. t) ~prev next memory load)
+
+(* This process *)
+
+let process () =
+  let last = ref None in
+  fun () ->
+    let at = Sysstat.now () in
+    match !last with
+    | Some (t, _) when not (at -. t > 0.) -> []
+    | prev -> (
+        let times = Unix.times () in
+        let cpu = times.Unix.tms_utime +. times.Unix.tms_stime in
+        let rss = attempt Sysstat.rss in
+        last := Some (at, cpu);
+        match prev with
+        | None -> []
+        | Some (t, cpu0) ->
+            let dt = at -. t in
+            let rss =
+              match rss with
+              | Some r -> [ ("sys/proc_rss_bytes", float r) ]
+              | None -> []
+            in
+            (("sys/proc_cpu_cores", (cpu -. cpu0) /. dt) :: rss)
+            @ [ ("sys/proc_interval_s", dt) ])
+
+(* Devices *)
+
+type device = {
+  allocated : int option;
+  budget : int option;
+  memory : int option;
+  used : int option;
+  busy : float option;
+  activity : float option;
+  temperature : float option;
+  power : float option;
+}
+
+let unknown =
+  {
+    allocated = None;
+    budget = None;
+    memory = None;
+    used = None;
+    busy = None;
+    activity = None;
+    temperature = None;
+    power = None;
+  }
+
+(* A device name is one segment of a key. *)
+let is_control c = Char.code c < 0x20 || Char.code c = 0x7f
+
+let check_name name =
+  if
+    name = ""
+    || name.[0] = '.'
+    || (not (String.is_valid_utf_8 name))
+    || String.exists (fun c -> c = '/' || is_control c) name
+  then
+    invalid_arg
+      (Printf.sprintf "Munin_sys.device: %S is not a device name" name)
+
+let device name read =
+  check_name name;
+  let key k = "dev/" ^ name ^ "/" ^ k in
+  let bytes k v = Option.map (fun v -> (key k, float v)) v in
+  let level k v = Option.map (fun v -> (key k, v)) v in
+  fun () ->
+    let d = read () in
+    List.filter_map Fun.id
+      [
+        bytes "allocated_bytes" d.allocated;
+        bytes "budget_bytes" d.budget;
+        bytes "memory_bytes" d.memory;
+        bytes "used_bytes" d.used;
+        level "busy_pct" d.busy;
+        level "activity_pct" d.activity;
+        level "temperature_c" d.temperature;
+        level "power_w" d.power;
+      ]

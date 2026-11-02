@@ -1,18 +1,4 @@
-; rig.nv.nvidia reads the NVIDIA GPUs on Linux alone; the GPU lock keeps the
-; suite off the GPU while rig's suites count its memory.
-
 (test
  (name test_sys)
  (package munin)
- (locks %{workspace_root}/gpu)
- (libraries
-  munin
-  munin.sys
-  unix
-  threads.posix
-  windtrap
-  (select
-   nvidia.ml
-   from
-   (munin_sys_nvidia rig.nv.nvidia -> nvidia.linux.ml)
-   (-> nvidia.none.ml))))
+ (libraries munin.sys unix windtrap))
