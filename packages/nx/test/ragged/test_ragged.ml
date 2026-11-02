@@ -324,22 +324,41 @@ let range =
       let+ n = int_range 0 (rows - o) in
       (d, o, n))
 
+(* Indices of any row, outside them, and at the extremes; a quarter of the
+   draws put two empty rows together between non-empty ones, where both
+   rows start at one offset, which few draws of four or more indices reach
+   otherwise. *)
 let taken =
   Gen.with_pp
     (fun ppf (d, i) -> Format.fprintf ppf "%a at %a" pp_drawn d pp_int64s i)
     Gen.(
       let* d = drawn in
       let n = Array.length d.lengths in
+      let index =
+        frequency
+          [
+            (6, map Int64.of_int (int_range (-2) (n + 1)));
+            ( 1,
+              of_list
+                ~pp:(fun ppf -> Format.fprintf ppf "%Ld")
+                [ Int64.min_int; Int64.max_int ] );
+          ]
+      in
+      let rows p = List.filter (fun k -> p d.lengths.(k)) (List.init n Fun.id) in
+      let full = rows (( < ) 0) in
+      let empty = -1 :: n :: rows (( = ) 0) in
+      let pick l = map Int64.of_int (of_list l) in
+      let between =
+        let* a = pick full in
+        let* e = pick empty in
+        let* e' = pick empty in
+        let+ b = pick full in
+        [| a; e; e'; b |]
+      in
       let+ i =
-        array ~size:(int_range 0 8)
-          (frequency
-             [
-               (6, map Int64.of_int (int_range (-2) (n + 1)));
-               ( 1,
-                 of_list
-                   ~pp:(fun ppf -> Format.fprintf ppf "%Ld")
-                   [ Int64.min_int; Int64.max_int ] );
-             ])
+        frequency
+          ((3, array ~size:(int_range 0 8) index)
+          :: (if full = [] then [] else [ (1, between) ]))
       in
       (d, i))
 
