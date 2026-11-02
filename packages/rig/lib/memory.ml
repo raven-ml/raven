@@ -424,7 +424,7 @@ let budget_of d = function
    make in none, since its allocation gave its room back. *)
 let entry_budget (e : entry) =
   match e.backing with
-  | Driver_memory { memory; region } when made region ->
+  | Driver_memory { memory; region; _ } when made region ->
       budget_of e.owner memory
   | Io_memory { origin = Made; region } when io_made region -> Device_budget
   | Driver_memory _ | Io_memory _ | Kept _ -> No_budget
@@ -511,13 +511,14 @@ let unmap d r : Dev.given =
   | Given -> Given
   | Later -> waits d (Unmap (r, None)) Later
 
+(* The address [a] if it is off a multiple of [align]. *)
+let off align = function
+  | Some a when a land (align - 1) <> 0 -> Some a
+  | Some _ | None -> None
+
 (* The first address of [l] off a multiple of [align], if any. *)
 let misplaced align (l : Rig_edge.location) =
-  let off = function
-    | Some a when a land (align - 1) <> 0 -> Some a
-    | _ -> None
-  in
-  match off l.address with Some a -> Some a | None -> off l.host
+  match off align l.address with Some a -> Some a | None -> off align l.host
 
 (* Why the [n]-byte region at [l] breaks the facts [d]'s driver states, if it
    does. *)
@@ -537,12 +538,18 @@ let breaks d n (l : Rig_edge.location) =
     | None -> None
 
 (* A new entry of [n] bytes of [d]'s memory of [kind], whose memory is not
-   made yet ([make_memory]). An io device's memory has no kind. *)
+   made yet ([make_memory]), and so lies nowhere. An io device's memory has no
+   kind. *)
 let fresh_entry d (kind : memory_kind) n =
   let backing =
     match d.kind with
     | Driver { m; h; rid } ->
-        Driver_memory { memory = kind; region = Region { m; h; rid; r = None } }
+        Driver_memory
+          {
+            memory = kind;
+            region = Region { m; h; rid; r = None };
+            location = { address = None; host = None; handle = 0n };
+          }
     | Io { m; h } ->
         Io_memory { origin = Made; region = Io_region { m; h; r = None } }
     | Host -> invalid_arg "Rig: the host's memory has no driver"
@@ -557,35 +564,39 @@ let made_memory (e : entry) =
   | Io_memory { region; _ } -> io_made region
   | Kept _ -> true
 
-(* Makes the memory of [d]'s new entry [e], of [kind]. The driver's call
-   stores its answer in [e]'s record as it is, allocating nothing, before its
-   count ends, so an exception once the call returned leaves the memory
-   recorded where [e]'s free finds it. A region that breaks the facts its
-   driver states is taken out of the record and freed, and faults the device,
-   as a fault of its driver's [alloc] does, inside the count: an exception
-   there is one in the driver's call, which loses the device with the region
-   still recorded. *)
-let make_memory d (e : entry) kind =
-  let n = e.bytes in
+(* The driver's call that makes the memory of the new entry [e]. It stores
+   the driver's answer in [e]'s record as it is, allocating nothing, then
+   where the region lies. A region that breaks the facts its driver states is
+   taken out of the record and freed, and faults the device, as a fault of
+   its driver's [alloc] does. *)
+let make_region (e : entry) =
   match e.backing with
-  | Driver_memory { region = Region c; _ } ->
+  | Driver_memory ({ memory; region = Region c; _ } as b) -> (
       let module D = (val c.m) in
-      let alloc () =
-        c.r <- D.alloc c.h kind n;
-        match c.r with
-        | None -> ()
-        | Some r -> (
-            match breaks d n (D.locate r) with
-            | None -> ()
-            | Some why ->
-                c.r <- None;
-                D.free c.h r;
-                raise (D.Fault why))
-      in
-      Dev.counted d Dev.Any alloc
+      c.r <- D.alloc c.h memory e.bytes;
+      match c.r with
+      | None -> ()
+      | Some r -> (
+          let l = D.locate r in
+          match breaks e.owner e.bytes l with
+          | None -> b.location <- l
+          | Some why ->
+              c.r <- None;
+              D.free c.h r;
+              raise (D.Fault why)))
   | Io_memory { region = Io_region c; _ } ->
       let module I = (val c.m) in
-      Dev.counted d Dev.Faults (fun () -> c.r <- I.alloc c.h n)
+      c.r <- I.alloc c.h e.bytes
+  | Kept _ -> ()
+
+(* Makes the memory of [d]'s new entry [e] in a counted call, so an exception
+   once the driver's call returned leaves the memory recorded where [e]'s free
+   finds it, and one in [make_region] is one in the driver's call, which loses
+   the device with the region still recorded. *)
+let make_memory d (e : entry) =
+  match e.backing with
+  | Driver_memory _ -> Dev.counted d Dev.Any make_region e
+  | Io_memory _ -> Dev.counted d Dev.Faults make_region e
   | Kept _ -> ()
 
 let drop_stamps (e : entry) = if e.stamps <> 0 then stamps_unref e.stamps
@@ -1669,7 +1680,7 @@ let kernel_entry image f =
         | None -> invalid_arg "Rig: an image its driver did not make"
       in
       let d = image.idev in
-      let ask () = Dev.counted d entry_scope (fun () -> D.entry i f) in
+      let ask () = Dev.counted d entry_scope (fun () -> D.entry i f) () in
       let again () =
         match ask () with
         | Rig_edge.Entry e -> Some (Some e)
@@ -1697,7 +1708,7 @@ let grow_queues d ~round ~lacked ~seen =
   match d.kind with
   | Driver { m; h; _ } -> (
       let module D = (val m) in
-      match Dev.counted d Dev.Any (fun () -> D.grow h) with
+      match Dev.counted d Dev.Any D.grow h with
       | Rig_edge.Grown -> (round + 1, lacked, seen)
       | Short n ->
           if round >= rounds then raise (Dev.Out_of_memory (d, n));
@@ -1758,11 +1769,10 @@ let let_go_try (r, t) =
   end
 
 (* A memory record over the entry [e] of [d], with its token [t]. *)
-let of_entry d e t =
+let of_entry d (e : entry) t =
   let m =
     match e.backing with
-    | Driver_memory { region; _ } ->
-        let l = locate region in
+    | Driver_memory { location = l; _ } ->
         make ?host:l.host ?address:l.address ~handle:l.handle d e
     | Io_memory _ | Kept _ -> make d e
   in
@@ -1770,16 +1780,16 @@ let of_entry d e t =
   m
 
 (* A new entry within the budget memory of [kind] counts in, recorded in [r]
-   before its memory is made. Its room is taken before the driver is asked,
-   so two domains' allocations never both fit the last room, and given back
-   if the driver makes nothing. Once the driver's call returned the memory
-   into the entry's record, the room is the entry's, which gives it back with
-   the memory: an exception then leaves both to the entry's free. Nothing
-   polls between the host's count of made memory and the end of the section
-   it closes. *)
+   before its memory is made, or [no_entry] if the budget or the driver
+   refuses it. Its room is taken before the driver is asked, so two domains'
+   allocations never both fit the last room, and given back if the driver
+   makes nothing. Once the driver's call returned the memory into the entry's
+   record, the room is the entry's, which gives it back with the memory: an
+   exception then leaves both to the entry's free. Nothing polls between the
+   host's count of made memory and the end of the section it closes. *)
 let new_counted d kind n ((r, _) as s) =
   let budget = budget_of d kind in
-  if Dev.is_host d || not (take_room d budget n) then None
+  if Dev.is_host d || not (take_room d budget n) then no_entry
   else
     match
       let e = fresh_entry d kind n in
@@ -1791,14 +1801,14 @@ let new_counted d kind n ((r, _) as s) =
         raise x
     | e -> (
         match
-          make_memory d e kind;
+          make_memory d e;
           if budget = Host_budget && made_memory e then heap_made n
         with
         | () ->
-            if made_memory e then Some e
+            if made_memory e then e
             else begin
               refuse_room d budget n;
-              None
+              no_entry
             end
         | exception x ->
             let bt = Printexc.get_raw_backtrace () in
@@ -1815,13 +1825,15 @@ let try_entry d kind n home () =
   let e = take_cached d kind n r in
   if e != no_entry then Some (e, t)
   else
-    match new_counted d kind n s with
-    | Some e ->
-        note d;
-        Some (e, t)
-    | None ->
-        let_go_try s;
-        None
+    let e = new_counted d kind n s in
+    if e != no_entry then begin
+      note d;
+      Some (e, t)
+    end
+    else begin
+      let_go_try s;
+      None
+    end
 
 (* [n] bytes of [d]'s memory of [kind], through the ladder of the budget it
    counts in once refused. *)
@@ -1995,7 +2007,7 @@ let host_making d p n =
       let module D = (val m) in
       let c = { m; h; rid; r = None } in
       let map () = c.r <- D.map_host h p n in
-      Some { region = Region c; make = (fun () -> Dev.counted d Dev.Any map) }
+      Some { region = Region c; make = Dev.counted d Dev.Any map }
   | Driver _ | Host | Io _ -> None
 
 (* The region's module types the mapping; the keys' equality types [d]'s
@@ -2009,8 +2021,7 @@ let peer_making d (Region { m = om; h = oh; r; rid }) =
       | Some Type.Equal ->
           let c = { m = om; h; rid; r = None } in
           let map () = c.r <- O.map_peer h oh r in
-          Some
-            { region = Region c; make = (fun () -> Dev.counted d Dev.Any map) }
+          Some { region = Region c; make = Dev.counted d Dev.Any map }
       | None -> None)
   | (Driver _ | Host | Io _), _ -> None
 
@@ -2114,7 +2125,7 @@ let pages (a : alloc) =
       | Io_memory { region = Io_region { m = im; h; r = Some r }; _ } ->
           let module I = (val im) in
           let got =
-            match Dev.counted a.owner Dev.Faults (fun () -> I.pages h r) with
+            match Dev.counted a.owner Dev.Faults (fun () -> I.pages h r) () with
             | Some ba -> Pages ba
             | None -> No_pages
           in
@@ -2163,8 +2174,7 @@ let[@inline] host_of (a : alloc) =
 let owned (a : alloc) =
   let dev = a.owner and host = a.host in
   match a.entry.backing with
-  | Driver_memory { region; _ } ->
-      let l = locate region in
+  | Driver_memory { location = l; _ } ->
       let address = Option.value ~default:(-1) l.address in
       memory_of a dev ~host ~address ~handle:l.handle
   | Io_memory _ -> memory_of a dev ~host ~address:(-1) ~handle:0n

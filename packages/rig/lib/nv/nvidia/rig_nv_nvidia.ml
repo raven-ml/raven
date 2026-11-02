@@ -415,24 +415,24 @@ let alloc g (kind : Rig_edge.memory) n =
   fault
   @@
   match kind with
-  | Pinned ->
+  | Pinned -> (
       let size = round_up n (Rm.host_page ()) in
-      let* x = alloc_host g size in
-      Ok
-        (Option.map
-           (fun (h, va) ->
-             allocated g ~video:None ~host:(Some va) ~space:Host_visible
-               ~naming:Self_named h va size)
-           x)
-  | (Device | Mapped) as k ->
-      let* v = alloc_video g ~cpu:(k = Mapped) n in
-      Ok
-        (Option.map
-           (fun (h, va, size, space) ->
-             let host = if k = Mapped then Some va else None in
-             allocated g ~video:(Some g.index) ~host ~space ~naming:Rm_named
-               h va size)
-           v)
+      match alloc_host g size with
+      | Ok (Some (h, va)) ->
+          Ok
+            (Some
+               (allocated g ~video:None ~host:(Some va) ~space:Host_visible
+                  ~naming:Self_named h va size))
+      | (Ok None | Error _) as r -> r)
+  | (Device | Mapped) as k -> (
+      match alloc_video g ~cpu:(k = Mapped) n with
+      | Ok (Some (h, va, size, space)) ->
+          let host = if k = Mapped then Some va else None in
+          Ok
+            (Some
+               (allocated g ~video:(Some g.index) ~host ~space ~naming:Rm_named
+                  h va size))
+      | (Ok None | Error _) as r -> r)
 
 let ranges_lock = Rig_nv.Lock.create ()
 

@@ -77,7 +77,7 @@ let loaded d binary =
       let t = image_token d (Loaded l) 0 in
       let image () = l.answer <- D.image h binary in
       match
-        Dev.counted d Dev.Any image;
+        Dev.counted d Dev.Any image ();
         l.answer
       with
       | exception x -> unheld t x
@@ -105,7 +105,7 @@ let loaded d binary =
                       l.laid <- Some i;
                       code
                     in
-                    place d e region (Dev.counted d Dev.Any lay)
+                    place d e region (Dev.counted d Dev.Any lay ())
                 | None -> assert false)
             | Driver_memory _ | Io_memory _ | Kept _ -> assert false
           in

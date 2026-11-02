@@ -339,7 +339,7 @@ let dma b ~fn =
       if not (Memory.mark_outside a) then
         invalid_argf "Rig.%s: the memory is held exclusive" name;
       check_live name b;
-      let answer = Dev.counted a.owner Dev.Any (fun () -> D.dma h r ~fn) in
+      let answer = Dev.counted a.owner Dev.Any (fun () -> D.dma h r ~fn) () in
       if Result.is_ok answer then Memory.mark_reached e;
       answer
   | Kept _ when not (Dev.is_host a.owner) ->

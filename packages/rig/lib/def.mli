@@ -93,11 +93,16 @@ type keep =
 type origin = Made | Given
 
 (** The type for what an allocation's bytes are: a driver's region of
-    memory of some {!Rig.Buffer.kind}, an io region, or host memory that its
-    keeper frees, held until the uses a borrow made are reached ([Kept
-    Nothing] for none). *)
+    memory of some {!Rig.Buffer.kind}, with where the region lies as the
+    driver's call that made it located it, once, before the entry leaves that
+    call; an io region; or host memory that its keeper frees, held until the
+    uses a borrow made are reached ([Kept Nothing] for none). *)
 type backing =
-  | Driver_memory of { memory : Rig_edge.memory; region : region }
+  | Driver_memory of {
+      memory : Rig_edge.memory;
+      region : region;
+      mutable location : Rig_edge.location;
+    }
   | Io_memory of { origin : origin; region : io_region }
   | Kept of keep
 

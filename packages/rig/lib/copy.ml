@@ -117,8 +117,10 @@ let io_read fn src s dst t n =
   match src.mem.alloc.entry.backing with
   | Io_memory { region = Io_region { m; h; r = Some r }; _ } ->
       let module I = (val m) in
-      Dev.counted src.mem.alloc.owner Dev.Faults (fun () ->
+      Dev.counted src.mem.alloc.owner Dev.Faults
+        (fun () ->
           I.read h r ~at:(src.offset + s) ~dst:(host_address dst + t) ~len:n)
+        ()
   | Io_memory _ | Driver_memory _ | Kept _ ->
       invalid_argf "Rig.%s: the source is no io memory" fn
 
@@ -126,8 +128,10 @@ let io_write fn src s dst t n =
   match dst.mem.alloc.entry.backing with
   | Io_memory { region = Io_region { m; h; r = Some r }; _ } ->
       let module I = (val m) in
-      Dev.counted dst.mem.alloc.owner Dev.Faults (fun () ->
+      Dev.counted dst.mem.alloc.owner Dev.Faults
+        (fun () ->
           I.write h r ~at:(dst.offset + t) ~src:(host_address src + s) ~len:n)
+        ()
   | Io_memory _ | Driver_memory _ | Kept _ ->
       invalid_argf "Rig.%s: the destination is no io memory" fn
 

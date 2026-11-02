@@ -235,8 +235,8 @@ val lose : device -> string -> 'a
     caller's. *)
 type scope = Faults | Any | Any_but of Obj.Extension_constructor.t
 
-val counted : device -> scope -> (unit -> 'a) -> 'a
-(** [counted d scope f] is [f ()] as a counted call on [d], so [d]'s stop
+val counted : device -> scope -> ('a -> 'b) -> 'a -> 'b
+(** [counted d scope f x] is [f x] as a counted call on [d], so [d]'s stop
     runs only once no counted call is in flight. A fault that [f] raises
     loses [d] and raises {!Lost}. Another exception loses [d] with its text
     if [scope] names it, and passes through either way. The loss and the

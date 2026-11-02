@@ -1380,8 +1380,10 @@ let alloc (T d) (memory : Rig_edge.memory) n =
            retire_channels d l)
         : bool);
   match memory with
-  | Device | Pinned ->
-      Option.map (region d p None n) (path_alloc p memory n)
+  | Device | Pinned -> (
+      match path_alloc p memory n with
+      | Some m -> Some (region d p None n m)
+      | None -> None)
   | Mapped -> (
       match d.flush with
       | None -> None

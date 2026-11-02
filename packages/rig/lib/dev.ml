@@ -633,11 +633,11 @@ let slept d e =
   unmask ();
   if fault then raise_lost d else Printexc.raise_with_backtrace e bt
 
-let counted d scope f =
+let counted d scope f x =
   match c_enter d.live.c with
   | 0 -> (
       mask ();
-      match f () with
+      match f x with
       | r ->
           c_exit d.live.c;
           unmask ();
