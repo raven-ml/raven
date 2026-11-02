@@ -2830,8 +2830,7 @@ let vector_select_kernel () =
    before it lowered such an unfold to zeros: a weak 0. stored into each
    element. Upcast whole, the store is one store of four lanes, and the weak
    lowering casts the float32 stack of the constant's lanes to half: a
-   conversion of a vector, which a program refuses on a renderer that computes
-   lane by lane, and the host converts. *)
+   conversion of a vector, which the host converts. *)
 let half_zeros_kernel () =
   let open Ops.O in
   let out = Shape.param ~shape:[ Int 4 ] 0 Float16 in
@@ -2845,13 +2844,6 @@ let half_zeros_kernel () =
     ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole ] ())
     [ Ops.end_ store [ r0; r1 ] ]
 
-let refused_on_a_cast kernel renderer () =
-  Setting.context
-    [ B (Setting.spec, 1) ]
-    (fun () ->
-      raises_match (Exn.invalid_arg ~sub:"on Ops.CAST") (fun () ->
-          Codegen.to_program kernel renderer))
-
 let vectors =
   group "vectors in programs"
     [
@@ -2860,8 +2852,6 @@ let vectors =
             [ B (Setting.spec, 1) ]
             (fun () ->
               ignore (Codegen.to_program (vector_select_kernel ()) clang)));
-      test "a weak constant stored into four lanes of half is refused"
-        (refused_on_a_cast (half_zeros_kernel ()) metal);
       test
         "a weak constant stored into four lanes of half on the host converts \
          them" (fun () ->

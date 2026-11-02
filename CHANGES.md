@@ -891,6 +891,9 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Spec.program` accepts an elementwise operation on a vector and a lane of a
+  vector read at a variable, and `Spec.vector_program` is gone: a CUDA kernel
+  that holds one fails at NVRTC, where it failed at lowering.
 - Compiling a long program allocates about 30% less: float64
   `Nx.betainccinv`'s gradient, one kernel of 42k instructions, 424 M words
   against 608 M. `Renderer.Estimates.of_uops`, `Linearizer.linearize`,

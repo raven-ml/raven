@@ -249,78 +249,6 @@ let type_verify =
         ];
     ]
 
-(* Vectors in programs *)
-
-(* An elementwise operation of a program on two lanes, and the same operation on
-   one. *)
-let lanes op =
-  let pair a b = Shape.stack [ fvar a; fvar b ] in
-  match op with
-  | `Add ->
-      (Ops.add (pair "a" "b") (pair "c" "d"), Ops.add (fvar "a") (fvar "c"))
-  | `Cast -> (Ops.cast (pair "a" "b") Int32, Ops.cast (fvar "a") Int32)
-  | `Where ->
-      let cond = Shape.stack [ flag "p"; flag "q" ] in
-      ( Ops.where cond (pair "a" "b") (pair "c" "d"),
-        Ops.where (flag "p") (fvar "a") (fvar "c") )
-
-let vectors =
-  group "vectors in programs"
-    [
-      cases "a program has no elementwise operation on a vector"
-        ~id:(function `Add -> "add" | `Cast -> "cast" | `Where -> "where")
-        [ `Add; `Cast; `Where ]
-        (fun op ->
-          let vector, scalar = lanes op in
-          equal verdict (Some false) (judge Spec.program vector);
-          is_false (judge Spec.program scalar = Some false));
-      cases
-        "a program of a renderer that computes on vectors takes an operation \
-         on one axis of lanes"
-        ~id:(function `Add -> "add" | `Cast -> "cast" | `Where -> "where")
-        [ `Add; `Cast; `Where ]
-        (fun op ->
-          let vector, _ = lanes op in
-          is_false (judge Spec.vector_program vector = Some false));
-      test
-        "a program of a renderer that computes on vectors takes a scalar every \
-         lane reads" (fun () ->
-          let pair = Shape.stack [ fvar "a"; fvar "b" ] in
-          is_false
-            (judge Spec.vector_program (Ops.add pair (fvar "c")) = Some false));
-      test
-        "a program of a renderer that computes on vectors has no operation on \
-         two axes" (fun () ->
-          let quad =
-            Shape.stack
-              [
-                Shape.stack [ fvar "a"; fvar "b" ];
-                Shape.stack [ fvar "c"; fvar "d" ];
-              ]
-          in
-          equal verdict (Some false)
-            (judge Spec.vector_program (Ops.add quad quad)));
-      cases
-        "a program of a renderer that computes on vectors takes an operation \
-         on any number of lanes" ~id:(Printf.sprintf "%d lanes")
-        [ 2; 3; 5; 6; 12 ] (fun n ->
-          let lanes =
-            Shape.stack (List.init n (fun i -> fvar (string_of_int i)))
-          in
-          equal verdict (Some true)
-            (judge Spec.vector_program (Ops.add lanes lanes)));
-      test "a program reads a lane of a vector at a constant" (fun () ->
-          let lane i =
-            Ops.v ~src:[ Shape.stack [ fresh (); fvar "b" ]; i ] Op.Index
-          in
-          let i =
-            Ops.variable ~dtype:Int32 "i" (`Int Bigint.zero) (`Int Bigint.one)
-          in
-          equal verdict (Some false) (judge Spec.program (lane i));
-          is_false
-            (judge Spec.program (lane (Ops.int ~dtype:Int32 1)) = Some false));
-    ]
-
 (* Construction *)
 
 let construction =
@@ -436,5 +364,5 @@ let () =
   exit
     (run "Tolk.Spec"
        [
-         verdicts; bounds; type_verify; vectors; construction; loops; arguments;
+         verdicts; bounds; type_verify; construction; loops; arguments;
        ])

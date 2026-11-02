@@ -435,44 +435,11 @@ let tensor : t =
        ]))
     shared
 
-(* The rules of programs past their elementwise operations on values. *)
-let program_rules vectors : t =
+(* The rules of programs. *)
+let program : t =
   Pattern_matcher.append
     (Pattern_matcher.fold
        (fun () -> [
-         (* Every elementwise operation on values is on scalars: renderers whose
-            vectors are structs without arithmetic cannot write one on a
-            vector. A renderer that computes on vectors takes an operation on
-            one axis, each source of it a vector of its lanes or a scalar every
-            lane reads. A bitcast of memory views it, and a node without a
-            shape is judged by the other rules. *)
-         decide (Upat.v ~op:Op.Set.elementwise ~name:"x" ()) "x" (fun x ->
-             let lanes s =
-               match (shape_opt s, shape_opt x) with
-               | Some [], _ -> true
-               | Some s, Some xs -> shape_equal s xs
-               | _ -> false
-             in
-             match (addrspace x, shape_opt x) with
-             | Some Dtype.Alu, Some [ _ ]
-               when vectors
-                    && List.for_all
-                         (fun s -> is_invalid (base s) || lanes s)
-                         (src x) ->
-                 None
-             | Some Dtype.Alu, Some (_ :: _) -> Some false
-             | _ | (exception Invalid_argument _) -> None);
-         (* A lane of a vector value is read at a constant lane, for the same
-            renderers: their lanes are members, named in the source. *)
-         decide (pat [ Op.Index ] ~name:"x") "x" (fun x ->
-             let constant i =
-               op i = Op.Cast
-               && match src i with [ c ] -> op c = Op.Const | _ -> false
-             in
-             match src x with
-             | v :: lanes when addrspace v = Some Dtype.Alu ->
-                 if List.for_all constant lanes then None else Some false
-             | _ -> None);
          (* A bare constant appears only under the cast stating its width, or
             as a define's size. *)
          decide
@@ -518,9 +485,6 @@ let program_rules vectors : t =
            (fun s -> match arg s with String _ -> true | _ -> false);
        ]))
     shared
-
-let program = program_rules false
-let vector_program = program_rules true
 
 let full : t =
   Pattern_matcher.concat

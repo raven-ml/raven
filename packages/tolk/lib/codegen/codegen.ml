@@ -1252,8 +1252,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       sink (After_sources pm_number_params)
   in
   if setting Setting.spec <> 0 then (
-    let spec = if ren.vector_alu then Spec.vector_program else Spec.program in
-    try Spec.type_verify ~calls:Skip spec sink
+    try Spec.type_verify ~calls:Skip Spec.program sink
     with Invalid_argument _ as e when Setting.value Setting.dbgtv <> "" ->
       print_endline (Render.render_uir (toposort ~calls:Enter sink));
       raise e);

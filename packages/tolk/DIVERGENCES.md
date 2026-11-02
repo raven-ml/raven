@@ -1402,35 +1402,14 @@ driver sizes local memory as it loads a function (D146).
   log2 within 4 ulps at float32, 4 at float64`, whose golden holds negative
   float64 subnormals at NaN.
 
-## D58. A program applies no elementwise operation to a vector
+## D58. Withdrawn
 
-- **tinygrad:** `uop/spec.py:205` (`spec_program`, which accepts an
-  elementwise operation of any shape).
-- **tolk:** the first rule of `Spec.program_rules`.
-- **Differs:** `Spec.program` rejects an operation of `Op.Set.elementwise`
-  on values, casts and bitcasts included, whose shape has an axis; a bitcast
-  of memory, which views it, stays allowed. `SPEC` defaults to 1
-  and code generation checks every lowered kernel against `Spec.program`, so
-  a kernel that still holds vector arithmetic fails at lowering, naming the
-  operation, on every target whose renderer computes lane by lane.
-  Devectorize leaves none there while every source keeps its width, as an
-  `Invalid` expanded to its stack's width does when every lane of a gated
-  load's index is `Invalid`. A renderer that
-  computes on vectors (D141) is checked against `Spec.vector_program`, which
-  takes an operation on one axis.
-- **Reason:** none. CUDA's vectors are structs without arithmetic, casts or
-  selects, so a vector operation left after devectorize fails there without
-  the check too, at NVRTC instead of at lowering; Metal, whose vectors have
-  arithmetic, computes it correctly. No consumer gets a wrong value or a new
-  failure. The check finds a devectorize bug on Metal and the host before CUDA
-  meets it.
-- **Pinned by:** the `Spec` suite (`test/uop/spec`): `vectors in programs › a program has no elementwise operation on a vector` (add, cast and
-  where on two lanes, and the same on one); the `Codegen` suite's `vectors in
-  programs › a weak constant stored into four lanes of half is refused` and,
-  on every case but the host's, `› no program applies an elementwise
-  operation to a vector`; the `Cstyle` suite's `every GPU kernel compiles with its target's
-  toolchain › cuda_vector_cast`, tinygrad's source, which NVRTC rejects
-  (slow, an expected failure).
+`Spec.program` rejected an elementwise operation of a program on a vector
+(the host's renderer, which computes on vectors, was checked against a second
+specification), so that a vector left after devectorize failed at lowering.
+No consumer got a wrong value or a failure without it: CUDA rejects such a
+kernel at NVRTC, Metal and the host compute it. `Spec.program` is
+`spec_program` (`uop/spec.py:205`) on every renderer.
 
 ## D60. A loop of a call stays in the schedule
 
@@ -2068,25 +2047,12 @@ no thread trace yet (D146).
 A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
 (D146).
 
-## D86. A program reads a lane of a vector at a constant
+## D86. Withdrawn
 
-- **tinygrad:** `uop/spec.py:83` (`shared_spec`, which accepts an index of
-  any integer) and `:205` (`spec_program`); `renderer/cstyle.py:182`
-  (`render_index`, which writes a lane picked by a value as `(v)[i]`).
-- **tolk:** the second rule of `Spec.program`.
-- **Differs:** `Spec.program` rejects an index of a vector value
-  (`AddrSpace.ALU`) whose lane is not a constant. No pass of tinygrad or
-  tolk makes one; a hand-built kernel that does fails at lowering, naming
-  the index.
-- **Reason:** none, as D58's. CUDA's vectors are structs whose lanes are
-  members, so NVRTC rejects `(v)[i]` ("no operator [] matches these
-  operands"). No pass makes such an index, and without the check a
-  hand-built kernel fails at NVRTC instead of at lowering: no consumer gets a
-  wrong value or a new failure.
-- **Pinned by:** the Spec suite (`test/uop/spec`): `vectors in programs ›
-  a program reads a lane of a vector at a constant`; the Cstyle suite's
-  `every GPU kernel compiles with its target's toolchain › cuda_dynamic_lane`,
-  tinygrad's source, which NVRTC rejects (slow, an expected failure).
+`Spec.program` rejected an index of a vector value at a lane that is not a
+constant. No pass makes one, and NVRTC rejects a hand-built kernel that does,
+so no consumer depended on the check. `Spec.program` accepts it, as
+`shared_spec` (`uop/spec.py:83`) does.
 
 ## D87. Withdrawn
 
@@ -3592,7 +3558,7 @@ driver signals its own (D146).
   `Codegen.address_lanes`, `Codegen.pm_vector_constants`,
   `Codegen.product_operands` and `Codegen.first_lane`;
   `Cstyle.mask_widths`, `Cstyle.clang_vectors` and `Cstyle.clang_kernel`;
-  `Spec.vector_program`; `Decomp_dtype.emulates`;
+  `Decomp_dtype.emulates`;
   `Heuristic.host_vector_bytes`, `Heuristic.parallel_operations` and
   `Heuristic.upcast_vectors`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
@@ -3618,8 +3584,7 @@ driver signals its own (D146).
   operations it reads, so that accesses still merge. A sum fuses each lane of
   a vector product into its running sum, and computes its first lane, which
   it adds to nothing, as a product of scalars, so that no vector product is
-  left; a selection by constant conditions picks each lane. A program for
-  such a renderer is checked against `Spec.vector_program` (D58). Clang writes the vectors as `ext_vector_type`
+  left; a selection by constant conditions picks each lane. Clang writes the vectors as `ext_vector_type`
   values: a conversion is `__builtin_convertvector`, square roots,
   truncations and multiply-adds are `__builtin_elementwise_*`, a scalar
   operand of a builtin or a selection is splat, and a vector of booleans is a
@@ -3722,8 +3687,7 @@ driver signals its own (D146).
   comparison of integers takes each lane's arm` and `› a host selection of 3,
   6, 12, 24 or 48 lanes by a comparison of integers takes each lane's arm`
   (every case), `› a weak constant stored into four lanes of half on the host
-  converts them` and `multiply-adds` (every test); the Spec suite's `vectors
-  in programs › a program of a renderer that computes on vectors …`;
+  converts them` and `multiply-adds` (every test);
   rune's `rune jit › classes › a uint4 sort along the last axis of every
   other row and column, flipped, gives eager's codes` and `› nx.quant's
   decodes compile`; rune's compile bench: `shaped-4k-3-lanes`. On rune,

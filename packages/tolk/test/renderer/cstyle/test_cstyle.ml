@@ -479,12 +479,11 @@ let lacks_toolchain why =
   || String.starts_with ~prefix:"comgr not available" why
 
 (* The sources the toolchain rejects as tinygrad writes them. CUDA's vectors are
-   structs, so a kernel that casts one or picks its lane by a value is no
-   program (Spec.program) and never reaches the renderer. *)
+   structs, without casts and with their lanes as members. *)
 let rejected =
   [
-    ("cuda_dynamic_lane", "reads a lane by a variable, which no program does");
-    ("cuda_vector_cast", "casts a vector, which no program does");
+    ("cuda_dynamic_lane", "reads a lane by a variable, which NVRTC rejects");
+    ("cuda_vector_cast", "casts a vector, which NVRTC rejects");
   ]
 
 let compiles_with_its_toolchain row =

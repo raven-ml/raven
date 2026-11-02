@@ -64,16 +64,8 @@ val program : t
 (** [program] is {!shared} as programs restrict it: every width is stated, so a
     constant appears only under the cast that types it and nothing else is weak;
     there is no movement but a shrink of storage by a constant length, no global
-    buffer and no {!Ops.invalid}; no elementwise operation on values has a
-    vector shape, a bitcast of memory aside, and a lane of a vector value is
-    read at a constant lane. It adds conditionals ({!Op.If}, {!Op.Endif}) and
-    lowered, [int32] {!Op.Special}s. *)
-
-val vector_program : t
-(** [vector_program] is {!program} for a renderer that computes on vectors
-    ({!Renderer.t.vector_alu}): an elementwise operation on values may have one
-    axis, its lanes, when each of its sources is a vector of those lanes or a
-    scalar every lane reads. *)
+    buffer and no {!Ops.invalid}. It adds conditionals ({!Op.If}, {!Op.Endif})
+    and lowered, [int32] {!Op.Special}s. *)
 
 val full : t
 (** [full] is the rules of the forms between stages (ends of loops over any
