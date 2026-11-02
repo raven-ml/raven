@@ -588,6 +588,21 @@ let load_collapsing =
       test "a sum whose index is its range is left" (fun () ->
           let u = selected r in
           equal uop u (load_collapse u));
+      test "a sum whose index is read at its range adds each trip it selects"
+        (fun () ->
+          let id = Ops.index (buf ~slot:1 ~size:10 Int32) [ r ] in
+          let u =
+            sum
+              (Ops.where
+                 Ops.O.(id <> Ops.cast r Int32)
+                 zero (Ops.index table [ r ]))
+              [ r ]
+          in
+          (* The index equals the range at 0, 2 and 4, whose squares add to
+             20. *)
+          let ids = Array.map i [| 0; 5; 2; 1; 4; 0; 9; 3; 3; 8 |] in
+          equal Dtypes.const (`Float 20.)
+            (Interpreter.eval ~buffers:((1, ids) :: elements) (load_collapse u)));
       test "a comparison of a shifted index read from memory is solved for it"
         (fun () ->
           let loaded =

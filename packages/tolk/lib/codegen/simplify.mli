@@ -90,11 +90,12 @@ val pm_reduce_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
 val load_collapse : Ops.t -> Ops.t option
 (** [load_collapse red] is the sum [red] over one range ({!Op.Reduce} of
     {!Op.Add}) computed without the range, by {!pm_reduce_collapse}'s closed
-    forms and by taking a value selected where an integer index equals the
-    range, cast to a type that holds its values or not, at that index, as when
-    indexing a tensor with another one: the value there where the index is
-    within the range, and [0] elsewhere. It is [None] when no such form
-    removes the range, and when [red] is no sum or sums over several ranges.
+    forms and by taking a value selected where an integer index that does not
+    depend on the range equals the range, cast to a type that holds its values
+    or not, at that index, as when indexing a tensor with another one: the value
+    there where the index is within the range, and [0] elsewhere. It is [None]
+    when no such form removes the range, and when [red] is no sum or sums over
+    several ranges.
 
     Raises [Invalid_argument] as {!pm_reduce_collapse} does. *)
 

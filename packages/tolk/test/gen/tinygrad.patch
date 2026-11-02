@@ -1727,7 +1727,7 @@ index 11825ab3b..b78122318 100644
  def reduce_unparented(red:UOp) -> UOp|None:
    assert all(x.op is Ops.RANGE for x in red.src[1:]), "some reduce srcs aren't ranges"
    reduce_parented, reduce_unparented = partition(red.src[1:], lambda x: x in red.src[0].ranges)
-@@ -95,32 +119,34 @@ pm_reduce_unparented = PatternMatcher([
+@@ -95,36 +119,39 @@ pm_reduce_unparented = PatternMatcher([
  pm_reduce_collapse = pm_reduce_unparented + PatternMatcher([
    # lift x+y out of reduce on lt
    (UPat(Ops.ADD, dtypes.sints+(dtypes.weakint,), [UPat.var("x"), UPat.var("y")]) < UPat.var("c"),
@@ -1772,6 +1772,12 @@ index 11825ab3b..b78122318 100644
    # reduce on gated load becomes can substitute the range and remove the reduce
    (UPat.var("idx", dtypes.wints).eq(UPat(Ops.RANGE, name="r").or_casted("rc")).where(UPat.var("expr"), 0)
     .reduce(UPat.var("r"), arg=Ops.ADD),
+-   lambda r,rc,idx,expr: None if r.overflows(rc.dtype) else
++   # an index that depends on the range selects any number of trips, as b[r] == r does
++   lambda r,rc,idx,expr: None if r.overflows(rc.dtype) or r in idx.backward_slice_with_self else
+    (v:=(idx.cast(r.dtype) >= 0) & (idx.cast(r.dtype) < r.src[0])).where(expr.substitute({r:idx.cast(r.dtype).valid(v)}),0)),
+ ])
+ 
 diff --git a/tinygrad/dtype.py b/tinygrad/dtype.py
 index 7210ae355..585691d84 100644
 --- a/tinygrad/dtype.py

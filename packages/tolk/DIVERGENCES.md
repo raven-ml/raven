@@ -5238,3 +5238,25 @@ fold wraps integers and holds its float bound`, hold.
   `trig/sin-nested-8` on fudge. On rune: missing (the old rune's `lower_index ›
   quantised products › a product decodes a checkpoint's codes 16 at once on the
   host` went with its rewrite).
+## D189. A sum gated on an index read at its range is not collapsed
+
+- **tinygrad:** `codegen/simplify.py:124-128` (`pm_reduce_load_collapse`'s
+  rule for a sum of a value gated on an index equal to the range), which
+  substitutes the index for the range in the value whatever the index
+  depends on.
+- **tolk:** `Simplify.pm_reduce_load_collapse`, through
+  `Simplify.load_collapse` and `Rangeify.collapses`;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same.
+- **Differs:** the rule declines an index that depends on the range. Such an
+  index, as `b[r]` in `sum over r of (b[r] == r ? x[r] : 0)`, selects any
+  number of trips, so the sum is no value at one index, and substituting an
+  expression of the range for the range does not terminate. tinygrad raises
+  "graph_rewrite stalled" on that program (`(b == Tensor.arange(n)).where(x,
+  0).sum()`); tolk raised `Invalid_argument`.
+- **Reason:** (b): rune's lowering of a contraction cut into blocks
+  (`Lower_reduce`), whose sum `Rangeify.collapses` asks about selects by a
+  stage read at the summed range.
+- **Pinned by:** the Simplify suite: `pm_load_collapse › a sum whose index is
+  read at its range adds each trip it selects`; on rune, `Lower_reduce ›
+  contractions › contracting pairs in blocks give eager's integers and hold
+  their bound`.

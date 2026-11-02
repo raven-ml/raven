@@ -405,8 +405,9 @@ let pm_reduce_load_collapse =
               then Some (eq x O.(cast c dt - y))
               else None);
           (* A sum of a load gated on its integer index equal to the range is
-             the load at that index, where a cast of the range keeps its
-             values. *)
+             the load at that index, where the index does not depend on the
+             range and a cast of the range keeps its values. An index read at
+             the range, as [b.(r) = r], selects any number of trips. *)
           rule
             (Upat.reduce ~op:Op.Add
                (Upat.where
@@ -417,7 +418,10 @@ let pm_reduce_load_collapse =
                [ var "r" ])
             (fun m ->
               let r = m "r" and expr = m "expr" in
-              if overflows r (dtype (m "rc")) then None
+              if
+                overflows r (dtype (m "rc"))
+                || reaches ~calls:Skip (m "idx") r
+              then None
               else
                 let idx = cast (m "idx") (dtype r) in
                 let v = O.((idx >= int 0) land (idx < nth r 0)) in

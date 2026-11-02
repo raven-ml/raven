@@ -919,6 +919,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   `Coalesce.memory_coalescing` merges accesses up to one register, doubles
   included. A float32 matmul on fudge runs 2.3 times as fast, a conv 1.7.
   `Heuristic.held_registers` states the count.
+- A sum gated on an index read at its own range, as `b.(r) = r`, compiles and
+  adds each trip it selects; `Simplify.load_collapse` raised
+  `Invalid_argument`, failing rune's blocked contractions.
 - On a GPU, `Heuristic.hand_coded_optimizations` streams a contraction's
   operand of least reuse: lanes along its unit-stride range, its reuse held in
   registers, before the tensor cores up to a reuse of 32. A Q8_0 token's
