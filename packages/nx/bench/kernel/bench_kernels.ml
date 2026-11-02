@@ -633,6 +633,25 @@ let contract_rows =
           ~flops:(2 * m * 4096 * 4096)
           ~streams:(4 * 4096 * 4096))
       [ 1; 4; 8; 32; 128 ]
+  (* Decoding against [n × k] stored keys or weights: a token's attention
+     scores against 4096 keys of 64 and its projection from 2880 to 4096,
+     in float32 and in bfloat16 into bfloat16, and 4 bfloat16 rows through
+     a 4096 × 4096 weight. *)
+  @ List.map
+      (fun (name, D.Any d, m, n, k) ->
+        contract ~operands:(D.Any d) ~out:(D.Any d) ~acc:acc32
+          (Printf.sprintf "contract-%s-m%dx%dx%d" name m n k)
+          ~sa:[| m; k |] ~sb:[| n; k |] ~layout:plain
+          ~contracting:[| (1, 1) |]
+          ~flops:(2 * m * n * k)
+          ~streams:(D.bits d / 8 * n * k))
+      [
+        ("f32", acc32, 1, 4096, 64);
+        ("bf16", D.Any D.Bfloat16, 1, 4096, 64);
+        ("f32", acc32, 1, 4096, 2880);
+        ("bf16", D.Any D.Bfloat16, 1, 4096, 2880);
+        ("bf16", D.Any D.Bfloat16, 4, 4096, 4096);
+      ]
   (* One row against the weight stored as [k × n]. *)
   @ [
       contract ~acc:acc32 "contract-f32-m1x4096x4096-kn"
