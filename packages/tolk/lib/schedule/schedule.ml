@@ -210,7 +210,8 @@ module Iset = Set.Make (Int)
    kernels at worst. *)
 let linearize ~written ~children in_degree =
   let kernels = Array.of_list (List.map fst (Ordered.bindings in_degree)) in
-  let number = Tbl.create 64 in
+  let count = Array.length kernels in
+  let number = Tbl.create count in
   Array.iteri (fun i k -> Tbl.replace number k i) kernels;
   let entries = Array.map scheduled kernels in
   let made_here b = Tbl.mem written b && not (on_disk b) in
@@ -218,7 +219,7 @@ let linearize ~written ~children in_degree =
     Array.map (fun e -> List.filter made_here (Memory.taken e)) entries
   in
   (* The kernels left to take each storage, and the storage made so far. *)
-  let users = Tbl.create 64 and made = Tbl.create 64 in
+  let users = Tbl.create count and made = Tbl.create count in
   Array.iter
     (List.iter (fun b ->
          Tbl.replace users b (1 + Option.value (Tbl.find_opt users b) ~default:0)))
@@ -297,7 +298,7 @@ let rec schedule ~copies sched_sink =
   in
   (* Each superseded state, with the afters that write it and their new kernels,
      and each read of a state; both last first. *)
-  let writes = Tbl.create 64 and reads = ref [] and written = Tbl.create 64 in
+  let writes = Tbl.create 64 and reads = ref [] and written = Tbl.create 16 in
   List.iter
     (fun u ->
       if op u = Op.After then begin
