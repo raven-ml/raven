@@ -1091,6 +1091,34 @@ let wrapping =
           in
           let u = Ops.O.(w // int 65536 // int 65536) in
           by_symbolic u u);
+      (* An int32 shift by 32 or more, and the least int32's remainder by -1,
+         have no value in C, where their int64 forms do: [-1 >> 32] is [-1]
+         and [-2^31 % -1] is [0] at int64. *)
+      test "an int64 operation whose int32 form has no value stays int64"
+        (fun () ->
+          let ops_at_int32 u =
+            List.filter_map
+              (fun n ->
+                if
+                  Op.Set.mem (Ops.op n) Op.Set.binary
+                  && Dtype.equal (Ops.dtype n) Int32
+                then Some n
+                else None)
+              (Ops.toposort ~calls:Skip (sym u))
+          in
+          let long x = Ops.cast x Int64 in
+          let small = var ~dtype:Int8 "s" (-128) 127 in
+          let shifted = Ops.O.(long small lsr Ops.int ~dtype:Int64 32) in
+          equal (list Uops.uop) [] (ops_at_int32 shifted);
+          let least =
+            Ops.variable ~dtype:Int32 "a" (Dtype.min Int32) (Dtype.max Int32)
+          in
+          let divisor = var ~dtype:Int8 "d" (-2) (-1) in
+          List.iter
+            (fun rem ->
+              equal (list Uops.uop) []
+                (ops_at_int32 (rem (long least) (long divisor))))
+            [ Ops.O.( % ); (fun x y -> Ops.alu x Truncmod [ y ]) ]);
     ]
 
 (* A committed integer constant holds its type's value. A fold reads a weak

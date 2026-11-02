@@ -912,6 +912,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- An int64 shift right by 32 or more, and an int64 remainder of the least
+  int32 by -1, are no longer computed at int32, where C gives them no value.
 - On the host, `Heuristic.hand_coded_optimizations` counts a kernel's lanes in
   the target's vector registers (`Renderer.registers`, read from Clang by
   `Compiler_cpu.registers`): a reduce kernel's stored axis takes a 64-byte

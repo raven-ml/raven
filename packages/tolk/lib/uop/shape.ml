@@ -2856,14 +2856,25 @@ let symbolic =
                let narrow w =
                  if is_const w then lit (num w) else cast w Dtype.Int32
                in
+               (* An int32 shift by 32 or more, and the least int32's remainder
+                  by -1, have no value, where the int64 ones do. *)
+               let undefined =
+                 match op u with
+                 | Op.Shr -> Value.(vmax y >= of_int 32)
+                 | Op.Mod | Op.Truncmod ->
+                     Value.(vmin x <= Dtype.min Dtype.Int32)
+                     && Value.(vmin y <= of_int (-1) && of_int (-1) <= vmax y)
+                 | _ -> false
+               in
                if
                  List.exists
                    (fun w -> Dtype.equal (dtype w) Dtype.Int64)
                    [ x; y ]
-                 && not
-                      (List.exists
-                         (fun w -> overflows w Dtype.Int32)
-                         [ u; x; y ])
+                 && (not
+                       (List.exists
+                          (fun w -> overflows w Dtype.Int32)
+                          [ u; x; y ]))
+                 && not undefined
                then Some (cast (alu (narrow x) (op u) [ narrow y ]) (dtype u))
                else None);
            rule
