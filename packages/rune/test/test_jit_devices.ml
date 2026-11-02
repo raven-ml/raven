@@ -1361,6 +1361,7 @@ let sixteen =
    name and a digest of each key, for a failure to name them. *)
 let keys f =
   let (), ks = Tolk.Realize.kernels f in
+  let ks = List.map (fun (k : Tolk.Realize.kernel) -> (k.name, k.key)) ks in
   let keys = List.sort_uniq String.compare (List.map snd ks) in
   let named k =
     let name, _ = List.find (fun (_, k') -> String.equal k k') ks in

@@ -572,6 +572,124 @@ let test_sixteen_terms () =
         (Float.abs (y -. exact)))
     (Nx.to_array (host y))
 
+(* A routed expert at a prompt of 12 tokens: each token goes through the
+   experts its logits rank first, 4 of 32, as gpt-oss-20b's do, each expert
+   an MXFP4 projection up, a nonlinearity and an MXFP4 projection down. 48
+   positions over 32 segments are each a block of their own. [Nx.top_k] gives
+   every id in range, so every position reads its token's own row: each kernel
+   that sums a product reads accesses alone, a single reduction, and spreads
+   it across a workgroup's threads, as a matrix-vector product streams its
+   matrix. The optimisations read are those its program applied, replayed on
+   the kernel as the compiler schedules it. The result is the host's eager
+   one. *)
+let experts = 32
+and per_token = 4
+and tokens = 12
+and width = 512
+and hidden = 1024
+
+module K = Tolk.Postrange.Scheduler
+
+(* Whether [ast] sums a product. *)
+let sums_product ast ren =
+  List.exists
+    (fun r ->
+      match Tolk.Ops.arg r with
+      | Reduce { op = Add; _ } -> Tolk.Ops.op (Tolk.Ops.nth r 0) = Mul
+      | _ -> false)
+    (K.reduceops (K.v ast ren))
+
+(* The scheduler of [k]'s sink after the passes that precede optimisation,
+   with the optimisations [k]'s program applied, through the hook a search
+   takes. *)
+let optimised (k : Tolk.Realize.kernel) =
+  let chosen = ref None in
+  let replay _ s =
+    List.iter
+      (fun o ->
+        match K.apply_opt s o with
+        | Ok _ -> ()
+        | Error e -> failf "%s: %a: %s" k.name Tolk.Opt.pp o e)
+      k.opts;
+    chosen := Some s;
+    s
+  in
+  let ast = k.ast and ren = k.renderer in
+  let ast =
+    match Tolk.Ops.arg ast with
+    | Kernel i -> Tolk.Ops.replace ast ~arg:(Kernel { i with beam = 1 })
+    | _ -> failf "%a is not a kernel" Tolk.Ops.pp ast
+  in
+  ignore (Tolk.Codegen.full_rewrite_to_sink ~beam:replay ast ren);
+  Option.get !chosen
+
+(* Each expert's [outputs; inputs] matrix of random MXFP4 codes, at scales of
+   one, on the GPU. *)
+let experts_matrix (type d) (on : d Nx.Placement.t) ~key ~outputs ~inputs =
+  let codes =
+    Nx.reshape
+      [| experts; outputs; inputs / 2 |]
+      (Nx.bitcast Nx.uint8
+         (Nx.Rng.bits ~key:(Nx.Rng.key key) [| experts; outputs; inputs / 8 |]))
+  in
+  let scales =
+    Nx.copy (Nx.full Nx.uint8 [| experts; outputs; inputs / 32 |] 127)
+  in
+  Nx_quant.place on (Nx_quant.mxfp4 ~scales codes)
+
+(* The routed expert of [up] and [down]. *)
+let routed up down logits x =
+  let expert owners rows =
+    let apply w x = Nx_quant.apply (Nx_quant.take ~axis:0 owners w) x in
+    apply down (Nx.abs (apply up rows))
+  in
+  let _, ids = Nx.top_k ~k:per_token logits in
+  Nx.map_segments ~segments:experts ids expert (Nx.unsqueeze ~axes:[ -2 ] x)
+
+let test_routed_prompt () =
+  let _, (module S) = on_gpu () in
+  let up = experts_matrix Nx.Host.on ~key:1 ~outputs:hidden ~inputs:width in
+  let down = experts_matrix Nx.Host.on ~key:2 ~outputs:width ~inputs:hidden in
+  let f =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (routed (Nx_quant.place S.on up) (Nx_quant.place S.on down))
+  in
+  (* Distinct logits in each row: 13 is prime to 32. *)
+  let logits =
+    Nx.init Nx.float32 [| tokens; experts |] (fun i ->
+        float_of_int (((i.(0) * 7) + (i.(1) * 13)) mod experts))
+  in
+  let x = Nx.copy (Nx.full Nx.float32 [| tokens; width |] 0.5) in
+  let eager = Nx.to_array (routed up down logits x) in
+  let y, kernels =
+    Tolk.Realize.kernels (fun () ->
+        Nx.to_array (host (f (Nx.place S.on logits) (Nx.place S.on x))))
+  in
+  (* The sums run in another order: each element within 1e-4 of the largest
+     result, some 1.6 times float32's bound on a sum of 1024 terms. *)
+  let largest = Array.fold_left (fun m v -> Float.max m (Float.abs v)) 0. eager in
+  less ~msg:"the largest result" float_exact ~than:largest 0.;
+  Array.iteri
+    (fun i e ->
+      less ~msg:(Printf.sprintf "element %d" i) float_exact
+        ~than:(1e-4 *. largest)
+        (Float.abs (y.(i) -. e)))
+    eager;
+  let products =
+    List.filter
+      (fun (k : Tolk.Realize.kernel) -> sums_product k.ast k.renderer)
+      kernels
+  in
+  equal ~msg:"kernels that sum a product" int 2 (List.length products);
+  List.iter
+    (fun (k : Tolk.Realize.kernel) ->
+      let o = optimised k in
+      equal ~msg:(k.name ^ ": reductions") int 1 (List.length (K.reduceops o));
+      not_equal ~msg:(k.name ^ ": reduce axes across threads") (list int) []
+        (K.axes_of ~reduce:true o [ Local ]))
+    products
+
 let () =
   exit
     (run "Rune.jit on a GPU"
@@ -601,6 +719,10 @@ let () =
                ~id:(Format.asprintf "%a" Mxfp4_products.pp)
                Mxfp4_products.cases
                (fun c -> Mxfp4_products.law (snd (on_gpu ())) c);
+             test
+               "a routed MXFP4 expert of 12 tokens streams its matrices across \
+                threads"
+               test_routed_prompt;
            ];
          group "checks"
            [

@@ -636,14 +636,33 @@ let law_map r =
         if id < 0 || id >= r.k then 0.
         else (full.(j) *. Float.of_int (id + 1)) +. Float.of_int id)
   in
+  (* The pairs of an owner and a row that the per-position map meets. *)
+  let named = List.filter (fun q -> ids.(q) >= 0 && ids.(q) < r.k) (List.init p Fun.id) in
+  cover "no position in range" (p > 0 && r.k > 0 && named = []);
+  let met = List.map (fun q -> (ids.(q), Array.sub full (q * w) w)) named in
   let calls = ref 0 in
   let f owners rows =
     incr calls;
-    let g = Nx.dim 0 owners in
-    equal (array int) (Array.append [| g; Nx.dim 1 rows |] row) (Nx.shape rows);
-    Array.iter
-      (fun o -> if Int64.compare o 0L < 0 || Int64.to_int o >= r.k then failf "owner %Ld" o)
-      (Nx.to_array owners);
+    let g = Nx.dim 0 owners and c = Nx.dim 1 rows in
+    equal (array int) (Array.append [| g; c |] row) (Nx.shape rows);
+    let os = Array.map Int64.to_int (Nx.to_array owners) and rs = Nx.to_array rows in
+    Array.iter (fun o -> if o < 0 || o >= r.k then failf "owner %d" o) os;
+    (* Each row of a block is a row of an in-range position of the block's
+       owner, or zeros where no position is in range, and each in-range
+       position fills a row: a pair appears at least as often as positions
+       hold it. *)
+    let given = List.init (g * c) (fun i -> (os.(i / c), Array.sub rs (i * w) w)) in
+    List.iteri
+      (fun i ((o, v) as pair) ->
+        let ok = if met = [] then Array.for_all (fun e -> e = 0.) v else List.mem pair met in
+        if not ok then
+          failf "block %d, row %d: owner %d with a row no position of it holds" (i / c) (i mod c) o)
+      given;
+    let count pair l = List.length (List.filter (( = ) pair) l) in
+    List.iter2
+      (fun q pair ->
+        if count pair given < count pair met then failf "position %d fills no row of its own" q)
+      named met;
     by_owner owners rows
   in
   let y = Nx.map_segments ~segments:r.k r.ids f r.x in

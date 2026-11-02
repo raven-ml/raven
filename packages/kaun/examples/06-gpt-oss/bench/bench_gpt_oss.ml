@@ -4,11 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 (* gpt-oss-20b at its own shapes on a CUDA or AMD GPU, the example's model
-   compiled one layer kind at a time ([Layer_loop]): a decode step and a prefill
-   of 512 tokens, over random weights at bfloat16 with the experts packed as
-   MXFP4, a decode step with the attention projections and the head packed as
-   Q8_0 too, quantised in its case's setup, and one layer's experts at the
-   prefill.
+   compiled one layer kind at a time ([Layer_loop]): a decode step and
+   prefills of 512 and 12 tokens, over random weights at bfloat16 with the
+   experts packed as MXFP4, a decode step with the attention projections and
+   the head packed as Q8_0 too, quantised in its case's setup, and one layer's
+   experts at the 512-token prefill. 12 tokens route 48 positions over 32
+   experts, each a block of its own, whose experts' products stream their
+   matrices as a decode step's do.
 
    Each case's setup builds the 13.8 GB of weights on the host, in the worker
    thumper forks for it, and places them on the GPU; a GPU's driver must not be
@@ -45,6 +47,7 @@ let config =
 
 let context = 1024
 let prompt = 512
+let short_prompt = 12
 
 (* Bytes drawn per array before they repeat. With all 10 GB of expert bytes
    drawn, building the weights took 75 s on nonnormal's i9-9900K, in every
@@ -171,12 +174,14 @@ let gpu () =
 
 (* A step on the GPU warmed past its compilations: [`Decode] feeds back the
    token it predicts at a fixed position in the middle of the cache,
-   [`Decode_q8_0] likewise with the weights {!q8_0} packs, [`Prefill] runs
-   the [prompt] tokens at positions 0 onwards. Each call takes the caches of
+   [`Decode_q8_0] likewise with the weights {!q8_0} packs, [`Prefill n] runs
+   [n] tokens at positions 0 onwards. Each call takes the caches of
    the one before and reads its token back on the host. *)
 let step weights kind =
   let weights =
-    match kind with `Decode_q8_0 -> q8_0 weights | `Decode | `Prefill -> weights
+    match kind with
+    | `Decode_q8_0 -> q8_0 weights
+    | `Decode | `Prefill _ -> weights
   in
   let module G = (val Nx.devices [ gpu () ]) in
   let placement = G.on in
@@ -197,10 +202,10 @@ let step weights kind =
     | `Decode | `Decode_q8_0 ->
         ( Cache_index.advance (Cache_index.rows ~context [| context / 2 |]),
           ref (Nx.zeros Nx.int64 [| 1; 1 |]) )
-    | `Prefill ->
-        ( Cache_index.rows ~context [| prompt |],
+    | `Prefill n ->
+        ( Cache_index.rows ~context [| n |],
           ref
-            (Nx.init Nx.int64 [| 1; prompt |] (fun i ->
+            (Nx.init Nx.int64 [| 1; n |] (fun i ->
                  Int64.of_int (17 + i.(1)))) )
   in
   let call () =
@@ -209,7 +214,7 @@ let step weights kind =
     let token = Nx.item [ 0 ] token in
     match kind with
     | `Decode | `Decode_q8_0 -> ids := Nx.create Nx.int64 [| 1; 1 |] [| token |]
-    | `Prefill -> ()
+    | `Prefill _ -> ()
   in
   call ();
   call
@@ -240,10 +245,11 @@ let experts (weights : _ Gpt_oss.params) =
   call ();
   call
 
-let kinds = [ `Decode; `Decode_q8_0; `Prefill; `Experts ]
+let kinds =
+  [ `Decode; `Decode_q8_0; `Prefill prompt; `Prefill short_prompt; `Experts ]
 
 let setup weights = function
-  | (`Decode | `Decode_q8_0 | `Prefill) as kind -> step weights kind
+  | (`Decode | `Decode_q8_0 | `Prefill _) as kind -> step weights kind
   | `Experts -> experts weights
 
 let case kind =
@@ -251,7 +257,7 @@ let case kind =
     match kind with
     | `Decode -> Printf.sprintf "decode step, cache %d" context
     | `Decode_q8_0 -> Printf.sprintf "decode step, Q8_0, cache %d" context
-    | `Prefill -> Printf.sprintf "prefill %d" prompt
+    | `Prefill n -> Printf.sprintf "prefill %d" n
     | `Experts -> Printf.sprintf "experts at prefill %d" prompt
   in
   Thumper.bench_with_setup

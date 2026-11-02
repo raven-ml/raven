@@ -398,24 +398,44 @@ let compiling =
       test "collects each kernel's name and key, made or kept, on its domain"
         (fun () ->
           let fresh = float_of_int (Ops.unique_num ()) in
-          let call d =
+          let kernel d =
             let scale x = Ops.mul x (Ops.float ~dtype:Float32 fresh) in
-            let kernel = map_kernel ~device:d scale in
-            Ops.call kernel [ storage ~device:d 4; storage ~device:d 4 ]
+            map_kernel ~device:d scale
+          in
+          let sinks = [ kernel "CPU:1"; kernel "CPU:2" ] in
+          let call k d =
+            Ops.call k [ storage ~device:d 4; storage ~device:d 4 ]
           in
           let compile () =
             ignore
               (Realize.lower_and_compile ~targets
-                 (linear [ call "CPU:1"; call "CPU:2" ]))
+                 (linear (List.map2 call sinks [ "CPU:1"; "CPU:2" ])))
           in
           let kernels = list (pair string string) in
-          let (), made = Realize.kernels compile in
-          let ((), kept), outer =
-            Realize.kernels (fun () -> Realize.kernels compile)
+          let found f =
+            let v, ks = Realize.kernels f in
+            (v, List.map (fun (k : Realize.kernel) -> (k.name, k.key)) ks)
           in
+          let (), made = found compile in
+          let ((), kept), outer = found (fun () -> found compile) in
           let (), elsewhere =
-            Realize.kernels (fun () -> Domain.join (Domain.spawn compile))
+            found (fun () -> Domain.join (Domain.spawn compile))
           in
+          let (), all = Realize.kernels compile in
+          equal (list uop) ~msg:"each kernel's sink" sinks
+            (List.map (fun (k : Realize.kernel) -> k.ast) all);
+          (* Each kernel's optimisations are those its kept program applied. *)
+          List.iter
+            (fun (k : Realize.kernel) ->
+              match Codegen.made k.ast k.renderer with
+              | None -> failf "%s has no program" k.name
+              | Some prg -> (
+                  match Ops.arg (Ops.nth prg 0) with
+                  | Kernel i ->
+                      equal (list Kernel_opts.opt) ~msg:k.name i.applied_opts
+                        k.opts
+                  | _ -> failf "%s's program names no kernel" k.name))
+            all;
           equal int ~msg:"kernels" 2 (List.length made);
           equal int ~msg:"keys" 1
             (List.length (List.sort_uniq String.compare (List.map snd made)));

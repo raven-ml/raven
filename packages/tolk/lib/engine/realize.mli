@@ -78,12 +78,20 @@ val lower_and_compile :
     {!Device.renderer} finds no renderer for a target, and [Failure] if the
     renderer's compiler's library is missing. *)
 
-val kernels : (unit -> 'a) -> 'a * (string * string) list
-(** [kernels f] is [f ()] and, for each kernel of each schedule that
+type kernel = {
+  name : string;  (** Its name, as optimisation named it. *)
+  key : string;  (** Its program key ({!Codegen.program_key}). *)
+  ast : Ops.t;  (** The sink it was compiled from, before optimisation. *)
+  renderer : Renderer.t;  (** The renderer it was compiled for. *)
+  opts : Opt.t list;  (** The optimisations its program applied, in order. *)
+}
+(** The type for a kernel {!lower_and_compile} compiled. *)
+
+val kernels : (unit -> 'a) -> 'a * kernel list
+(** [kernels f] is [f ()] and each kernel of each schedule that
     {!lower_and_compile} compiles on the calling domain while [f] runs, in
-    order, its name and its program key ({!Codegen.program_key}), whether its
-    program was made or kept. A [kernels] inside [f] takes the kernels found
-    while it runs. For the suites. *)
+    order, whether its program was made or kept. A [kernels] inside [f] takes
+    the kernels found while it runs. For the suites. *)
 
 val compile_linear :
   ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->

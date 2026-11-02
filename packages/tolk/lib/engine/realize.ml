@@ -118,9 +118,17 @@ let get_call_to_compile targets c =
       Some (ast, Result.fold ~ok:Fun.id ~error:invalid_arg (Device.renderer t))
   | _ -> None
 
+type kernel = {
+  name : string;
+  key : string;
+  ast : Ops.t;
+  renderer : Renderer.t;
+  opts : Opt.t list;
+}
+
 (* The kernels [lower_and_compile] finds on a domain while a [kernels] runs
    there, latest first. *)
-let found : (string * string) list ref option Domain.DLS.key =
+let found : kernel list ref option Domain.DLS.key =
   Domain.DLS.new_key (fun () -> None)
 
 let kernels f =
@@ -130,9 +138,10 @@ let kernels f =
   (v, List.rev !inner)
 
 (* [prg]'s linearized sink names its kernel as optimisation named it. *)
-let note prg key =
+let note prg key ast renderer =
   match (Domain.DLS.get found, arg (nth prg 0)) with
-  | Some l, Kernel k -> l := (k.name, key) :: !l
+  | Some l, Kernel k ->
+      l := { name = k.name; key; ast; renderer; opts = k.applied_opts } :: !l
   | Some _, _ | None, _ -> ()
 
 let lower_and_compile ?search ~targets linear =
@@ -174,7 +183,7 @@ let lower_and_compile ?search ~targets linear =
     (List.map
        (fun (c, ((ast, ren) as a)) ->
          let prg = compile a in
-         note prg (Codegen.program_key ast ren);
+         note prg (Codegen.program_key ast ren) ast ren;
          (c, replace c ~src:(prg :: List.tl (src c))))
        calls)
 

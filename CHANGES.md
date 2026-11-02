@@ -1659,6 +1659,10 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Under `Rune.jit`, `Nx.map_segments` over ids the compiler knows are all in
+  range, as `Nx.top_k`'s are, gives `f` rows with no reduction inside them, so
+  a product in `f` streams its matrix. gpt-oss-20b's 12-token prefill takes
+  0.40-0.48 s on an RTX 5000 Ada, from 0.82-0.89 s.
 - On Windows, a bytecode program or a toplevel, such as `quill`'s or mdx's,
   loads nx's stub libraries and rig's: their calls into winpthreads, the OCaml
   runtime, `unix` and each other go through import pointers, which flexdll

@@ -5007,7 +5007,15 @@ let device_windows ~by what ~positional t =
    position of the group, and whether it has one. [named] has a group's shape,
    [[| r; ... |]] for [r] groups of [j] positions; with no in-range position
    the first is [j], which a gather reads as zero. One maximum finds it: the
-   first in-range position has the most positions after it. *)
+   first in-range position has the most positions after it.
+
+   Whether there is one is the maximum of [named] itself. Where every id is
+   known in range, as [top_k]'s indices are, a compiler folds that maximum to
+   [true], then each selection that reads it, and in blocks of one row nothing
+   reads the first.
+   Read from the first, it would not fold: a maximum of positions is no
+   constant, and it would stay in every operand the selections reach, such as
+   the rows of a product in [f], which then cannot stream its matrix. *)
 let first_named ~by ~axes named =
   let s = shape named in
   let r = s.(0) in
@@ -5026,7 +5034,7 @@ let first_named ~by ~axes named =
     kept ~by ~keepdims:true s axes (reduce ~by Max axes remaining)
   in
   ( elementwise ~by D.Int64 [ Any most ] E.(i64 last - operand 0 most),
-    elementwise ~by D.Bool [ Any most ] E.(i64 0 <= operand 0 most) )
+    kept ~by ~keepdims:true s axes (reduce ~by Max axes named) )
 
 (* [owners], in range already: the clamp writes that range into the program,
    where the gathers by them read it. *)
