@@ -41,14 +41,40 @@ external sysctl_string : string -> string option = "caml_munin_sysctl_string"
 external darwin_boot_time : unit -> float option = "caml_munin_boot_time"
 external platform_uuid : unit -> string option = "caml_munin_platform_uuid"
 
-(* Share-delete, so that a writer on Windows can replace a file a reader has
-   open, as notes, writer, stats.json and aliases are replaced, and a deletion
-   can rename a log a reader has open. *)
+(* [shared f] is [f ()], tried again while Windows refuses it with EACCES
+   because another handle holds the file. Windows renames no file over one that
+   another handle has open, a reader's included: MoveFileEx, which OCaml's
+   [Unix.rename] calls with MOVEFILE_REPLACE_EXISTING, fails until that handle
+   closes, and an open can fail while a rename replaces its file. A reader holds
+   a file for one read and a rename is one call, so [f] is tried again after 1,
+   2, 4 ... 512 ms: at most 11 tries over about one second, then the failure is
+   raised. Elsewhere [f] is tried once. *)
+let shared_tries = 11
+
+let shared f =
+  let rec go k delay =
+    match f () with
+    | v -> v
+    | exception Unix.Unix_error (Unix.EACCES, _, _)
+      when Sys.win32 && k < shared_tries ->
+        Unix.sleepf delay;
+        go (k + 1) (2. *. delay)
+  in
+  go 1 0.001
+
+(* Every file munin opens is opened share-delete, so that on Windows another
+   process can rename or remove it meanwhile, as a deletion renames a log a
+   reader has open. *)
 let open_flags = [ Unix.O_RDONLY; Unix.O_CLOEXEC; Unix.O_SHARE_DELETE ]
-let open_read path = wrap path (fun () -> Unix.openfile path open_flags 0)
+
+let create_flags =
+  Unix.[ O_WRONLY; O_CREAT; O_EXCL; O_CLOEXEC; O_SHARE_DELETE ]
+
+let open_read path =
+  wrap path (fun () -> shared (fun () -> Unix.openfile path open_flags 0))
 
 let open_read_opt path =
-  match Unix.openfile path open_flags 0 with
+  match shared (fun () -> Unix.openfile path open_flags 0) with
   | fd -> Some fd
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> None
   | exception Unix.Unix_error (e, _, _) -> error path e
@@ -304,9 +330,7 @@ let copy ?dst src =
     Option.map
       (fun dst ->
         try
-          Unix.openfile dst
-            [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_EXCL; Unix.O_CLOEXEC ]
-            0o666
+          Unix.openfile dst create_flags 0o666
         with Unix.Unix_error (e, _, _) -> error dst e)
       dst
   in
@@ -358,11 +382,7 @@ let replace ?(parents = true) path data =
   if parents then mkdirs dir;
   let tmp = temp_name dir in
   wrap path @@ fun () ->
-  let fd =
-    Unix.openfile tmp
-      [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_EXCL; Unix.O_CLOEXEC ]
-      0o666
-  in
+  let fd = Unix.openfile tmp create_flags 0o666 in
   (match
      write_all fd data;
      sync fd
@@ -372,7 +392,10 @@ let replace ?(parents = true) path data =
       Unix.close fd;
       (try Unix.unlink tmp with Unix.Unix_error _ -> ());
       raise e);
-  Unix.rename tmp path
+  try shared (fun () -> Unix.rename tmp path)
+  with e ->
+    (try Unix.unlink tmp with Unix.Unix_error _ -> ());
+    raise e
 
 (* Windows refuses to remove a read-only file, which a POSIX system removes
    whatever its mode. Clearing the attribute first gives Windows that rule. *)

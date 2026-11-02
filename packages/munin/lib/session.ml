@@ -118,7 +118,8 @@ let rec claim_dir runs =
 (* Read-write: on NFS a lock is a byte-range lock, and an exclusive one needs a
    descriptor open for writing, a shared one (the resumer's probe) one open for
    reading (flock(2), NFS details). *)
-let log_flags = [ Unix.O_RDWR; Unix.O_APPEND; Unix.O_CLOEXEC ]
+let log_flags =
+  [ Unix.O_RDWR; Unix.O_APPEND; Unix.O_CLOEXEC; Unix.O_SHARE_DELETE ]
 let identities () = (File.machine_id (), File.boot_id ())
 
 (* Who writes the run now, beside the log, replaced before the start or resume

@@ -26,7 +26,14 @@ let rec remove path =
   | _ -> Sys.remove path
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
 
-let () = at_exit (fun () -> remove home)
+(* The stores that tests share stay until the end, with the writers that hold
+   their runs: those let go first, since Windows removes no file a process holds
+   open. Fixture's own [at_exit] runs after this one. *)
+let () =
+  at_exit (fun () ->
+      Fixture.release ();
+      remove home)
+
 let child = Filename.concat (Sys.getcwd ()) "../support/child.exe"
 
 (* [with_store ?name runs f] is [f store], [store] a store of [runs] at
@@ -146,7 +153,7 @@ let screens =
       screen_test "zoom-160x48" ~cols:160 ~rows:48
         (open_run @ [ Key Enter ] @ times 8 (Key Left));
       screen_test "details-80x24" ~cols:80 ~rows:24 (open_run @ [ char 'i' ]);
-      screen_test "help-80x24" ~cols:80 ~rows:24 [ char '?' ];
+      screen_test "help-80x24" ~cols:80 ~rows:24 ~crashed:true [ char '?' ];
       screen_test "small-39x9" ~cols:39 ~rows:9
         ~start:(Munin_tui.Run (Some (id_of Fixture.tidy_otter)))
         [];

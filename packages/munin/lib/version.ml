@@ -206,7 +206,10 @@ let with_lock root kind f =
   File.mkdirs root;
   let path = lock_path root in
   let fd =
-    try Unix.openfile path [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_CLOEXEC ] 0o666
+    try
+      Unix.openfile path
+        [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_CLOEXEC; Unix.O_SHARE_DELETE ]
+        0o666
     with Unix.Unix_error (e, _, _) ->
       raise (Sys_error (path ^ ": " ^ Unix.error_message e))
   in
@@ -253,9 +256,7 @@ let publish ~root ~run ~step ~metadata ~name path =
   let tmp = File.temp_name dir in
   let fd =
     try
-      Unix.openfile tmp
-        [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_EXCL; Unix.O_CLOEXEC ]
-        0o666
+      Unix.openfile tmp File.create_flags 0o666
     with Unix.Unix_error (e, _, _) -> sys_error tmp e
   in
   (try

@@ -1930,7 +1930,11 @@ let annotate tag store id =
 let domain_tests =
   group "domains"
     [
-      stateful ~count:6 ~domains:2
+      (* Shrinking runs each candidate program 50 times, and a candidate that
+         misses the race runs all 50: on Windows, whose starts sync slowly, a
+         failure once shrank for 420 s. The timeout bounds it, and the report
+         then gives the counterexample found so far. *)
+      stateful ~timeout:120. ~count:6 ~domains:2
         "a deletion and annotations on two domains leave the run whole or gone"
         [
           command "start"

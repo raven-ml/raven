@@ -92,6 +92,10 @@ val sync_dir : string -> unit
 (** [sync_dir d] syncs the directory [d]'s entries. It does nothing on Windows.
 *)
 
+val create_flags : Unix.open_flag list
+(** [create_flags] opens a new file for writing, failing if it exists,
+    close-on-exec and share-delete, as every file munin writes is opened. *)
+
 val open_read : string -> Unix.file_descr
 
 val open_read_opt : string -> Unix.file_descr option
