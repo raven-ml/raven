@@ -162,6 +162,9 @@ raven / llama.cpp (Vulkan; ROCm):
   decoded weights are stored, 64 rows an expert (D163): E_8294400_32_2
   writes 2.1 GB in 4.74 ms for gate_up, which a layout sharing them across
   rows could keep in the gated per-group loads
+- D163 counts repeats pooled over a shared range, which overestimates `c`,
+  and a collapsed read counts every range of its sum, which can overcount:
+  tighten both if a case shows a wrong store
 - running sums cost ~257 ops per element (shape.ml:955): `Nx.cumsum` over
   float64 [100; 50500] takes ~1.0 s on CPU. A scan with constant work per
   element, and a compiled cumsum row
