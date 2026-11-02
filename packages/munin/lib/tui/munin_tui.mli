@@ -334,8 +334,8 @@ val run : Munin.Store.t -> screen -> (unit, string) result
    chart as Run draws it, with any number of marked runs, for the test that
    shows how many the medium carries, and [Chart.paired] and [Chart.domain] give
    the x of the charts' laws. [Watch] states the state words without a store.
-   [key], [resize] and [frame] let the bench drive the program by its
-   messages. *)
+   [set_depth] pins the colour depth. [key], [resize] and [frame] let the bench
+   drive the program by its messages. *)
 
 type model
 type msg
@@ -414,6 +414,12 @@ module Watch : sig
   val word : Munin.Run.status -> t option -> now:float -> string
   (** [word status w ~now] is the state word of a run of [status]. *)
 end
+
+val set_depth : [ `Mono | `Ansi16 | `Ansi256 | `Truecolor ] -> unit
+(** [set_depth d] makes [d] the colour depth the screens draw for, in place of
+    the one the environment gave at start ([NO_COLOR], [COLORTERM], [TERM]), so
+    that a test's screens do not depend on the terminal it runs from. Below 256
+    colours the cursor row is reverse video and marked [›]. *)
 
 val key : Matrix.Input.Keystroke.t -> msg
 val resize : width:int -> height:int -> msg

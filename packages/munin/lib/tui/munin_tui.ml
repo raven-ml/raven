@@ -789,6 +789,12 @@ end
 
 module Watch = Watch
 
+let set_depth = function
+  | `Mono -> Paint.set_depth Mono
+  | `Ansi16 -> Paint.set_depth Ansi16
+  | `Ansi256 -> Paint.set_depth Ansi256
+  | `Truecolor -> Paint.set_depth Truecolor
+
 let key k = Key k
 let resize ~width ~height = Resize (width, height)
 

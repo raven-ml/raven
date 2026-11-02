@@ -9,7 +9,7 @@ module C = Ansi.Color
 
 type depth = Mono | Ansi16 | Ansi256 | Truecolor
 
-let depth =
+let from_env () =
   let env v = Option.value (Sys.getenv_opt v) ~default:"" in
   if env "NO_COLOR" <> "" then Mono
   else
@@ -23,8 +23,12 @@ let depth =
         in
         if has 0 then Ansi256 else Ansi16
 
-let tinted =
-  match depth with Ansi256 | Truecolor -> true | Mono | Ansi16 -> false
+let current = ref (from_env ())
+let depth () = !current
+let set_depth d = current := d
+
+let tinted () =
+  match !current with Ansi256 | Truecolor -> true | Mono | Ansi16 -> false
 
 (* Styles *)
 
@@ -42,7 +46,7 @@ let mark c = S.make ~fg:(mark_color c) ~bold:true ()
 let with_ style overlay = S.merge ~base:style ~overlay
 
 let selected ~light =
-  if tinted then
+  if tinted () then
     S.make
       ~bg:(if light then C.of_rgb 0xe4 0xe8 0xee else C.of_rgb 0x2c 0x32 0x3c)
       ()

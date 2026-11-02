@@ -11,12 +11,17 @@ module T = Matrix_test
 (* Stores *)
 
 (* The stores live under a directory that the tests make the home, so that a
-   screen names one as [~/store], and times print in UTC. *)
+   screen names one as [~/store], and times print in UTC. The screens draw for
+   a terminal of 24-bit colour, whatever terminal runs the tests, as the
+   goldens state: below 256 colours the cursor row also shows a marker. *)
 let home = Filename.temp_dir "munin_tui" ""
+
+let depth = `Truecolor
 
 let () =
   Unix.putenv "HOME" home;
-  Unix.putenv "TZ" "UTC"
+  Unix.putenv "TZ" "UTC";
+  Munin_tui.set_depth depth
 
 let rec remove path =
   match (Unix.lstat path).st_kind with
@@ -100,9 +105,11 @@ let golden name text =
 (* The main store's screens, after tidy-otter logged its step 12,400 while the
    dashboard watched, so that an arrival makes it live. *)
 let screen_test name ~cols ~rows ?(start = Munin_tui.Runs) ?(crashed = false)
-    keys =
+    ?depth:(d = depth) keys =
   test name (fun () ->
       if crashed then needs_crashed ();
+      Munin_tui.set_depth d;
+      Fun.protect ~finally:(fun () -> Munin_tui.set_depth depth) @@ fun () ->
       with_store Fixture.runs @@ fun store ->
       let script _ = feed store Fixture.tidy_otter ~step:12400 in
       golden name (T.Screen.text (show ~script ~cols ~rows store start keys)))
@@ -131,6 +138,9 @@ let screens =
       screen_test "runs-160x48" ~cols:160 ~rows:48 ~crashed:true to_val_loss;
       screen_test "runs-80x24-filter" ~cols:80 ~rows:24 ~crashed:true
         (to_val_loss @ [ char '/'; Text "cifar" ]);
+      (* Below 256 colours the cursor row is reverse video, marked [›]. *)
+      screen_test "runs-80x24-16-colours" ~cols:80 ~rows:24 ~crashed:true
+        ~depth:`Ansi16 to_val_loss;
       screen_test "run-80x24" ~cols:80 ~rows:24 open_run;
       screen_test "run-160x48" ~cols:160 ~rows:48 open_run;
       (* Two marked runs of the sweep that run under the focus: the difference

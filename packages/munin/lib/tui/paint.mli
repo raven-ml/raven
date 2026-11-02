@@ -14,12 +14,16 @@
 
 type depth = Mono | Ansi16 | Ansi256 | Truecolor
 
-val depth : depth
-(** [depth] is the colour depth the environment gives at start ([NO_COLOR],
-    [COLORTERM], [TERM]). *)
+val depth : unit -> depth
+(** [depth ()] is the colour depth the environment gave at start ([NO_COLOR],
+    [COLORTERM], [TERM]), or the one {!set_depth} set last. *)
 
-val tinted : bool
-(** [tinted] is [true] iff the cursor row is a tint, at 256 colours or more. *)
+val set_depth : depth -> unit
+(** [set_depth d] makes [d] the colour depth, for the tests. *)
+
+val tinted : unit -> bool
+(** [tinted ()] is [true] iff the cursor row is a tint, at 256 colours or
+    more. *)
 
 val plain : Ansi.Style.t
 val dim : Ansi.Style.t

@@ -774,11 +774,11 @@ let paint t g ~height ~cursor ~marks =
           (* Under reverse video a coloured part would turn into a coloured
              block: the cursor row is drawn in one style, its name bold. *)
           let spans =
-            if sel && not Paint.tinted then
+            if sel && not (Paint.tinted ()) then
               List.map (fun (_, s) -> (Paint.plain, s)) spans
             else spans
           in
-          if sel && not Paint.tinted then
+          if sel && not (Paint.tinted ()) then
             Paint.text ~style:base g ~x:mx ~y ~w:1 "›";
           Paint.spans ~base g ~x:(mx + gutter) ~y ~w:(w - gutter) spans;
           if sel then
