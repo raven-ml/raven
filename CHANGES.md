@@ -830,85 +830,31 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
-- `munin metrics` writes each value as the fewest digits from 15 that read
-  back to it, where it kept six, and NaN and the infinities as `"NaN"`,
-  `"Infinity"` and `"-Infinity"` in JSON. Timestamps, `Value.pp` and the TUI
-  write C's `%.6f`, `%g` and `%.4f` text on every system, rounded once.
-- NaN and infinite floats read back: a metric's value is written as the
-  string `"NaN"`, `"Infinity"` or `"-Infinity"`, a param, summary or
-  metadata `` `Float `` as `{"float": "NaN"}`. They were written as `null`, and
-  a metric was dropped and a value read as `` `String "" ``; a value that is
-  no such JSON, as those `null`s, is left out of its run or artifact.
-  `Value.float_name` gives the three names.
-- `Munin_sys.Stat.Proc.Self.pid` is the current process's ID as
-  `Proc.Table.sample` lists it, and `Provenance.detect` records that ID. On
-  Windows `Unix.getpid` returns a handle to the process instead.
-- `Munin_sys.Stat.Gpu.sample` reads GPU load, memory, temperature and power:
-  amdgpu's sysfs files and NVIDIA's kernel driver (load and memory, through
-  `Rig_nv_nvidia.usage`) on Linux, IOKit's accelerators on macOS, with no
-  vendor library. `Munin_sys.start` logs them as `sys/gpuN_*`, and
-  `munin watch` shows them. A GPU the kernel suspended for being idle is not
-  read. The first read of an NVIDIA GPU keeps its device file open until the
-  process exits, as persistence mode does: unbinding the GPU (as for VFIO)
-  waits, and unloading the driver or resetting the GPU is refused, until
-  then.
-- `Munin_sys.Stat` reads network and disk I/O counters, per-core CPU times and
-  the process table on Windows, and `Munin_sys.start` logs disk I/O there.
-  `Stat.loadavg` still raises `Sys_error`: Windows keeps no load average.
-- `Munin_sys.Stat` samplers raise `Sys_error` where they cannot read the
-  system, as network, disk I/O, per-core CPU, process table and load average
-  do on Windows, instead of returning zeros or empty lists. `Munin_sys.start`
-  and `munin watch` leave out the metrics a system lacks.
-- `Store.list_runs` and `Store.find_run` take a run's status from its event
-  log where `index.json` is behind it, as a process killed between the two
-  writes of `Session.finish` or `Session.resume` leaves it: such a run read as
-  running for good, or as finished and not resumable. A run directory without
-  a manifest is no longer listed.
-- Runs that several processes or domains start and finish in one store at
-  the same time keep their status in `Store.list_runs`. A change to
-  `index.json` holds a file lock and replaces the file whole. Where the file
-  system refuses locks, a change removes `index.json`, and runs are read
-  from their manifests.
-- A change to a damaged or missing `index.json` rebuilds it from the runs on
-  disk. It replaced the index with one holding only the changed run.
-- `Store.list_runs` and `Store.find_run` take a store's runs from its run
-  directories, and `index.json` only caches their headers. A run the index
-  lacked, as a killed process or an index of another shape leaves, was
-  hidden, and a run whose directory was removed was still listed.
-- `Session.start` never gives two runs one directory. Runs started within
-  one second drew ids that collided about once in 65,536 pairs, and the
-  second wrote into the first's run.
-- `Munin_sys.stop` wakes the monitor instead of waiting out the rest of the
-  sampling interval, up to 15 s by default, at the end of every run.
-- `Store.latest_run` and `Store.list_runs` order runs by `Run.started_at`.
-  A run id stamps only the second, so runs started within one second came
-  back in random order.
-- `Munin_sys.start` samples every 15 s by default, down from 2 s, which
-  logged about 16,000 events an hour. `Stat.Proc.Self.compute` gives the
-  mean CPU percentage over any interval past 10 ms: it read 0 past 10 s, and
-  800 at most without `~num_cores`.
-- Artifact digests are BLAKE2b-256 from the standard library instead of
-  SHA-256, so `munin` no longer depends on the `sha` package. Blobs live
-  under `blobs/blake2b` in the store.
-- The system statistics stubs build on Windows. CPU times come from
-  `GetSystemTimes`, memory from `GlobalMemoryStatusEx`, process memory from
-  `GetProcessMemoryInfo`, uptime from `GetTickCount64`, partitions and disk
-  space from the fixed drives, page size from the Win32 calls.
+Local experiment tracking for Raven: runs, their metrics, readings of the
+machine and devices, files and versioned artifacts, kept as plain JSON and
+text files that `Munin.Store_format` specifies, so `jq`, `tail -f` and
+shell scripts read a store as the library does. No server.
 
-Local experiment tracking for Raven. Evolves `kaun-board` into a full
-experiment tracker — the Raven equivalent of W&B or MLFlow, without a server.
-Declare a metric once with `Session.metric` and log samples through the handle
-it returns, so a key is never spelled twice and a typo cannot silently create a
-second channel. Save artifacts from your training script, monitor runs live in
-the terminal with `munin watch`, then compare results with `munin compare`.
-Data is plain JSON on disk, so `jq` and shell scripts work out of the box. Git
-commit, command line, and system info are captured automatically. The
-`munin.sys` sub-library adds opt-in CPU and memory monitoring in a background
-thread.
+A run is one append-only log written by its one `Session`, under a lock
+the kernel releases when the writer dies, so a run reads running, crashed
+or, from another machine, silent. `Session.metric` declares a metric and
+`Session.log` logs it; `Session.sample` samples readings on a thread that
+`Session.finish` stops; `Session.resume` names the step it restarts from,
+and the samples after it become orphans that readers leave out.
+`Store.runs` lists runs from their first and last records, and `History`
+folds a log and follows it at the cost of its new bytes, with statistics
+over finite samples, so a NaN or an infinity is counted and never chosen
+as best. An ended run keeps its statistics in a checked hint, so a listing
+shows best values without folding long logs. Tags and notes change during
+and after a run. Artifacts are numbered versions of content-addressed
+blobs with aliases, never renumbered. Provenance records the command, the
+code with its uncommitted diff, the toolchain, the machine and the seeds.
 
-- Add `x-kaun-mnist-jit`, an example tracking a `Rune.jit`-compiled CNN
-  training run (forward, backward, and SGD update in one compiled program,
-  Metal by default) with live `munin watch` monitoring.
+`munin.sys` gives readings of the machine and of this process, and a
+device-reading constructor that fixes a device's keys; munin reads no
+device itself and depends on no rig. The `munin` command lists, shows,
+compares, tags, annotates, deletes, collects and checks, printing
+tab-separated lines.
 
 ### Tolk (new)
 

@@ -3,69 +3,63 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Artifact versioning and lineage across runs.
-
-    Run 1 produces a dataset artifact. Run 2 consumes it and produces a result.
-    Demonstrates versioning, aliases, and cross-run lineage. *)
+(* Artifact versions across runs. One run publishes a dataset, a second uses its
+   latest version and publishes a result under an alias, and the store tells
+   which run produced and which used each version. *)
 
 open Munin
 
-let write_file path text =
-  let oc = open_out path in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc text)
+let write path text =
+  Out_channel.with_open_bin path (fun oc -> output_string oc text)
+
+let prepare store =
+  Session.within
+    (Session.start ~store ~experiment:"pipeline" ~name:"prepare-data" ())
+  @@ fun s ->
+  let path = Filename.temp_file "measurements" ".csv" in
+  write path "wavelength,flux\n450.0,1.23\n550.0,2.45\n650.0,1.87\n";
+  Session.log_artifact s ~name:"measurements"
+    ~metadata:[ ("rows", `Int 3) ]
+    path
+
+let analyse store =
+  Session.within
+    (Session.start ~store ~experiment:"pipeline" ~name:"analyse" ())
+  @@ fun s ->
+  let data = Option.get (Store.artifact store "measurements" `Latest) in
+  Session.use_artifact s data;
+  let rows =
+    In_channel.with_open_bin (Artifact.path data) In_channel.input_all
+  in
+  let path = Filename.temp_file "result" ".txt" in
+  write path
+    (Printf.sprintf "rows read: %d\npeak: 550.0\n"
+       (List.length (String.split_on_char '\n' (String.trim rows)) - 1));
+  let result = Session.log_artifact s ~name:"analysis" path in
+  Store.set_alias store result "reviewed";
+  Session.id s
 
 let () =
-  let store = Store.open_ ~root:"_munin" () in
-
-  (* Run 1: produce a dataset. *)
-  let session1 =
-    Session.start ~store ~experiment:"pipeline" ~name:"prepare-data"
-      ~tags:[ "data" ] ()
+  let store = Store.open_ () in
+  let data = prepare store in
+  Printf.printf "published %s %d (%s)\n" (Artifact.name data)
+    (Artifact.version data) (Artifact.digest data);
+  let analysis_run = analyse store in
+  let reviewed =
+    Option.get (Store.artifact store "analysis" (`Alias "reviewed"))
   in
-  let data_path = Filename.concat (Store.root store) "measurements.csv" in
-  write_file data_path "wavelength,flux\n450.0,1.23\n550.0,2.45\n650.0,1.87\n";
-  let dataset =
-    Session.log_artifact session1 ~name:"measurements" ~kind:`Dataset
-      ~path:data_path
-      ~metadata:[ ("rows", `Int 3) ]
-      ~aliases:[ "latest" ] ()
+  Printf.printf "analysis %d, alias reviewed, produced by %s\n"
+    (Artifact.version reviewed)
+    (Artifact.run reviewed);
+  let uses =
+    History.uses (History.read (Option.get (Store.run store analysis_run)))
   in
-  Session.finish session1;
-  Printf.printf "produced: %s v%s (aliases: %s)\n" (Artifact.name dataset)
-    (Artifact.version dataset)
-    (String.concat ", " (Artifact.aliases dataset));
-
-  (* Run 2: consume the dataset, produce a result. *)
-  let session2 =
-    Session.start ~store ~experiment:"pipeline" ~name:"analyse"
-      ~tags:[ "analysis" ] ()
-  in
-  Session.use_artifact session2 dataset;
-  let result_path = Filename.concat (Store.root store) "result.txt" in
-  write_file result_path "peak_wavelength=550.0\npeak_flux=2.45\n";
-  let result =
-    Session.log_artifact session2 ~name:"analysis-result" ~kind:`File
-      ~path:result_path ~aliases:[ "latest"; "best" ] ()
-  in
-  Session.finish session2;
-  Printf.printf "produced: %s v%s\n" (Artifact.name result)
-    (Artifact.version result);
-
-  (* Query artifacts from the store. *)
-  (match Store.find_artifact store ~name:"measurements" ~version:"latest" with
-  | Some a ->
-      Printf.printf "\nresolved 'measurements:latest' -> v%s (%d bytes)\n"
-        (Artifact.version a) (Artifact.size_bytes a);
-      Printf.printf "  producer: %s\n"
-        (Option.value ~default:"unknown" (Artifact.producer_run_id a));
-      Printf.printf "  consumers: %s\n"
-        (String.concat ", " (Artifact.consumer_run_ids a))
-  | None -> Printf.printf "artifact not found\n");
-
-  let all = Store.list_artifacts store () in
-  Printf.printf "\nall artifacts: %d\n" (List.length all);
   List.iter
-    (fun a -> Printf.printf "  %s v%s\n" (Artifact.name a) (Artifact.version a))
-    all
+    (fun (name, n) -> Printf.printf "%s used %s %d\n" analysis_run name n)
+    uses;
+  print_endline "versions:";
+  List.iter
+    (fun a ->
+      Printf.printf "  %s %d, %d bytes, from %s\n" (Artifact.name a)
+        (Artifact.version a) (Artifact.size_bytes a) (Artifact.run a))
+    (Store.artifacts store)

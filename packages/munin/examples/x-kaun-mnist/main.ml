@@ -49,26 +49,28 @@ let cnn = Nx.Ptree.instantiate (module Cnn)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
-  (* Start a tracked run. *)
-  let session =
-    Munin.Session.start ~experiment:"mnist" ~name:"cnn-adam"
-      ~tags:[ "baseline" ]
-      ~params:
-        [
-          ("lr", `Float lr);
-          ("batch_size", `Int batch_size);
-          ("epochs", `Int epochs);
-          ("optimizer", `String "adam");
-        ]
-      ()
-  in
+  (* Start a tracked run, which [within] ends as finished, or as failed if
+     training raises. *)
+  Munin.Session.within
+    (Munin.Session.start ~experiment:"mnist" ~name:"cnn-adam"
+       ~tags:[ "baseline" ]
+       ~params:
+         [
+           ("lr", `Float lr);
+           ("batch_size", `Int batch_size);
+           ("epochs", `Int epochs);
+           ("optimizer", `String "adam");
+         ]
+       ())
+  @@ fun session ->
   let train_loss = Munin.Session.metric session ~goal:`Minimize "train/loss" in
   let train_loss_avg = Munin.Session.metric session "train/loss_avg" in
   let val_accuracy =
     Munin.Session.metric session ~goal:`Maximize "val/accuracy"
   in
   let epoch_metric = Munin.Session.metric session "epoch" in
-  let sysmon = Munin_sys.start session in
+  Munin.Session.sample session ~every:15.
+    [ Munin_sys.host (); Munin_sys.process () ];
 
   Printf.printf "run: %s\n%!" (Munin.Session.id session);
 
@@ -154,18 +156,12 @@ let () =
   done;
 
   (* Save model checkpoint as a versioned artifact. *)
-  let checkpoint_path =
-    Filename.concat (Munin.Session.dir session) "model.safetensors"
-  in
+  let checkpoint_path = Filename.temp_file "mnist-cnn" ".safetensors" in
   Nx_io.save_safetensors checkpoint_path (Nx_io.Archive.of_value cnn !params);
   ignore
-    (Munin.Session.log_artifact session ~name:"mnist-cnn" ~kind:`Checkpoint
-       ~path:checkpoint_path
+    (Munin.Session.log_artifact session ~step:!global_step ~name:"mnist-cnn"
        ~metadata:[ ("format", `String "safetensors") ]
-       ~aliases:[ "latest" ] ());
+       checkpoint_path);
 
-  Munin_sys.stop sysmon;
-  Munin.Session.set_notes session
-    (Some (Printf.sprintf "Final val accuracy: %.2f%%" (!last_acc *. 100.)));
-  Munin.Session.finish session;
+  Munin.Session.set_summary session [ ("final/val_accuracy", `Float !last_acc) ];
   Printf.printf "\nDone. Run: %s\n" (Munin.Session.id session)
