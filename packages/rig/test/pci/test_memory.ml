@@ -1067,23 +1067,24 @@ let test_cut_request request =
   in
   walk 1
 
-(* An exception may land at any allocation of an open, from the take of the
-   GPU's function on: the take, the tables and memory, the system and GPU
-   memory it lays out and memory of the machine it keeps for itself. The
-   open's failure releases the function, with no stop of its memory, as
-   [Driver.open_] does before the driver has a stop. The machine then holds
-   none of the open's system memory, the space none of its addresses, and the
-   GPU takes again. *)
+(* An exception may land at any allocation of an open once the GPU's
+   function is taken: the tables and memory, the system and GPU memory it lays
+   out and memory of the machine it keeps for itself. A landing inside the take
+   is [Driver]'s walk of an open (test_driver.ml), and the take counts nothing
+   of the machine's memory or the space. The open's failure releases the
+   function, with no stop of its memory, as [Driver.open_] does before the
+   driver has a stop. The machine then holds none of the open's system memory,
+   the space none of its addresses, and the GPU takes again: the next round's
+   take, and one after the walk. *)
 let test_cut_open () =
   let root, m, buses = tree_machine 1 in
   let bus = List.hd buses in
   let rec walk n =
     let at what = strf "%s, landing at %d" what n in
     let space = Space.create ~base:space_base space_length in
-    let fn = Function.vacant m bus in
+    let fn = require_ok (Function.take m bus) in
     let cut =
       Rig_support.interrupted n (fun () ->
-          ignore (require_ok (Function.take_into fn) : Function.t);
           let x = on_function ~space fn in
           ignore (given (Memory.alloc x.t_memory Host page) : Memory.region);
           ignore (given (Memory.alloc x.t_memory Gpu page) : Memory.region);
@@ -1092,9 +1093,40 @@ let test_cut_open () =
     Function.release fn;
     equal ~msg:(at "system memory held") int 0 (held_bytes root);
     equal ~msg:(at "addresses taken") int 0 (Space.taken space);
-    Function.release (require_ok (Function.take m bus));
     if n = 1 then equal ~msg:"the walk lands" bool true cut;
     if cut then walk (n + 1)
+  in
+  walk 1;
+  Function.release (require_ok (Function.take m bus))
+
+(* A release of the owner on another thread may land at any allocation of a
+   [map_peer] of its memory, as a callback there makes it: the map is [Ok] or
+   [Error], never an exception, and frees as any. *)
+let test_peer_owner_released kind =
+  let rec walk n =
+    let reached =
+      with_gpus 2 @@ fun _ _ gpus ->
+      let o = List.nth gpus 0 and x = List.nth gpus 1 in
+      let r = given (Memory.alloc o.t_memory kind (64 * kib)) in
+      let release () =
+        if not (Function.released o.t_fn) then Function.release o.t_fn
+      in
+      let got = ref (Ok None) in
+      (* Inside a lock the callback's release would take a lock its thread
+         holds: the landings are where the map holds its use alone. *)
+      let reached =
+        Rig_support.interrupted
+          ~from:(fun _ -> Rig_support.holds () = 1)
+          ~landing:(Call release) n
+          (fun () -> got := Memory.map_peer x.t_memory r)
+      in
+      (match !got with
+      | Ok (Some p) -> Memory.free x.t_memory p
+      | Ok None | Error _ -> ());
+      reached
+    in
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk (n + 1)
   in
   walk 1
 
@@ -2172,6 +2204,36 @@ let test_lent_release_cut () =
   in
   from 1
 
+(* An exception at any allocation of a peer's free that its GPU does not
+   confirm, after the owner's release, never keeps the owner taken for good:
+   once the peer is released too and the releases are finished, a take of the
+   owner's bus succeeds. *)
+let test_lent_writer_cut () =
+  let rec from n =
+    let reached =
+      with_gpus 2 @@ fun _ m gpus ->
+      let o = List.nth gpus 0 and x = List.nth gpus 1 in
+      let bus = Function.bus o.t_fn in
+      let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+      let p = mapped (Memory.map_peer x.t_memory r) in
+      Memory.release o.t_memory;
+      x.t_g.confirms <- false;
+      let reached =
+        Rig_support.interrupted n (fun () -> Memory.free x.t_memory p)
+      in
+      x.t_g.confirms <- true;
+      Memory.release x.t_memory;
+      Function.finish_releases ();
+      (match Function.take m bus with
+      | Ok f -> Function.release f
+      | Error why -> failf "the take after a cut at %d: %s" n why);
+      reached
+    in
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then from (n + 1)
+  in
+  from 1
+
 (* A GPU mastering the bus whose free of a region is held in its first clear
    of an entry, on a domain of its own: [held f] is [f root x], with the free
    inside the clear, and lets the free go on as [f] returns or raises. It
@@ -2585,6 +2647,10 @@ let on_files =
         "an exception at any allocation of a lending owner's release lets no \
          take in before the peer's free"
         test_lent_release_cut;
+      test
+        "a peer's unconfirmed free cut at any allocation never keeps the \
+         owner taken"
+        test_lent_writer_cut;
       stateful ~count:200 ~steps:3 ~domains:2
         "two GPUs' owners free the memory one maps of the other at once"
         peer_commands;
@@ -2605,6 +2671,11 @@ let on_files =
         "an open cut at any allocation, then its function's release, leaves \
          nothing held"
         test_cut_open;
+      cases
+        "a release of the owner landing inside a map_peer of its memory makes \
+         it Ok or Error"
+        ~id:(Format.asprintf "%a" pp_kind)
+        [ Memory.Gpu; Host ] test_peer_owner_released;
       cases "after the release, a free writes no table"
         ~id:(Format.asprintf "%a" pp_from)
         froms test_free_released;
@@ -2757,6 +2828,19 @@ let test_bus_stop () =
   equal ~msg:"the given memory" string "given" (Window.read (window r) 0 5);
   equal ~msg:"its block held" int bytes (held_bytes root)
 
+(* A GPU kept for another function gives back, at a free after its stop, the
+   memory of a region it did not give: its function's bus mastering is off. *)
+let test_bus_free_after_stop () =
+  with_nic @@ fun root _ _ x ->
+  let r = given (Memory.alloc x.t_memory Host page) in
+  ignore (require_ok (Memory.bus x.t_memory r ~client:nic_bus));
+  let bytes = held_bytes root in
+  let own = given (Memory.alloc x.t_memory Host (4 * mib)) in
+  greater ~msg:"in blocks of its own" int ~than:bytes (held_bytes root);
+  stop x;
+  Memory.free x.t_memory own;
+  equal ~msg:"given back at its free" int bytes (held_bytes root)
+
 (* Each refusal names its cause and reserves nothing: the region frees as
    any. *)
 let refusals =
@@ -2896,6 +2980,9 @@ let others =
         "given system memory stays through its GPU's stop, and a peer's \
          memory in its block goes back with the peer's"
         test_bus_stop;
+      test
+        "a kept GPU's free after its stop gives back memory it did not give"
+        test_bus_free_after_stop;
       cases "a refusal names its cause and reserves nothing"
         ~id:(fun (n, _, _, _, _) -> n)
         refusals test_bus_refused;
