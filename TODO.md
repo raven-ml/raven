@@ -121,6 +121,14 @@ raven / llama.cpp b12048 Vulkan:
   a 5 KB r_32_32 kernel, max |x| over `where (i >= j) x xᵀ` at 32x32,
   renders as 32-lane float selects of transposed loads that clang -O2
   takes over 2 min on
+- gpt-oss bf16 prefill-12's first call is ~70 ms slower in wall time
+  since `Heuristic.stream` (0.28-0.34 s against 0.35-0.47 s, fudge CUDA)
+  though its kernels take 22 ms less GPU time; warm calls are unchanged.
+  Unmeasured guess: larger cached programs take longer to load
+- `Heuristic.stream` declines a product whose operand reads a reduce
+  (routing ids from outside the jit); no recorded kernel carries one yet,
+  so the general path's cost there is unmeasured. Its unroll law passes
+  vacuously where no contracted loop is left
 - first call of a cached program (gpt-oss on CUDA: 0.44 s against 0.22 s
   on the old stack): `Worker.map` spawns up to PARALLEL−1 domains when
   every program is a disk-cache hit, and their GC stop-the-world costs
