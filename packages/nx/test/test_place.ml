@@ -289,6 +289,86 @@ let laws =
             (Array.to_list (A.to_array (require_some (Nx.Repr.array back)))));
     ]
 
+(* Reading one element *)
+
+(* The io device alone: a set whose memory the host does not address. *)
+module Io = (val Nx.devices [ m 3 ])
+
+(* Where a value read by {!Nx.item} lies: a placement of [where], or the io
+   device alone. *)
+type reading = Placed of where | Off_host
+
+let item_case =
+  Gen.with_pp
+    (fun ppf (s, l, r, donated) ->
+      Format.fprintf ppf "%a [%s] %a%s" pp_layout l
+        (String.concat "; " (Array.to_list (Array.map string_of_int s)))
+        (fun ppf -> function
+          | Placed w -> Format.fprintf ppf "at %a" pp_where w
+          | Off_host -> Format.pp_print_string ppf "on the io device")
+        r
+        (if donated then ", donated" else ""))
+    (Gen.bind (Gen.int_range 1 3) (fun rank ->
+         Gen.map
+           (fun ((s, l), (r, d)) -> (s, l, r, d))
+           (Gen.pair
+              (Gen.pair (shape_of rank)
+                 (Gen.of_list [ Contiguous; Transposed; Broadcast ]))
+              (Gen.pair
+                 (Gen.one_of
+                    [
+                      Gen.map (fun w -> Placed w) (where_of rank);
+                      Gen.constant Off_host;
+                    ])
+                 Gen.bool))))
+
+(* The index of C-order position [i] of [s]. *)
+let unravel s i =
+  let r = Array.length s in
+  let index = Array.make r 0 and rest = ref i in
+  for a = r - 1 downto 0 do
+    index.(a) <- !rest mod s.(a);
+    rest := !rest / s.(a)
+  done;
+  index
+
+let law_item (s, l, r, donated) =
+  let x = V (Nx.Repr.of_array Nx.Host.v (source l s)) in
+  let (V y) =
+    match r with
+    | Placed w -> place w x
+    | Off_host ->
+        let (V x) = x in
+        V (Nx.place Io.on x)
+  in
+  (match r with
+  | Placed w ->
+      let counts a = List.map (fun (_, b) -> snd b.(a)) (windows w s) in
+      cover "split with tiles of two extents along an axis"
+        (split w
+        && List.exists
+             (fun a -> List.length (List.sort_uniq compare (counts a)) > 1)
+             (List.init (Array.length s) Fun.id))
+  | Off_host -> cover "off the host" true);
+  cover "donated" donated;
+  let y = if donated then Nx.donate y else y in
+  let xs = Nx.to_array y in
+  Array.iteri
+    (fun i e ->
+      let index = unravel s i in
+      let from_end = Array.mapi (fun a p -> p - s.(a)) index in
+      let msg = Format.asprintf "at %a" pp_ints index in
+      equal ~msg float_exact e (Nx.item (Array.to_list index) y);
+      equal ~msg float_exact e (Nx.item (Array.to_list from_end) y))
+    xs
+
+let items =
+  group "item"
+    [
+      prop "item is to_array's element at every index, wherever the value lies"
+        item_case law_item;
+    ]
+
 (* A narrow dtype across a change of arrangement, by runs where whole bytes copy
    and element by element where a window's column is half a byte. *)
 let narrow (type v s) name (dt : (v, s) A.Dtype.t) (of_int : int -> v) =
@@ -1327,4 +1407,4 @@ let held =
 let () =
   exit
     (run "nx place"
-       [ laws; reshapes; units; sharing; refusals; leading; held ])
+       [ laws; items; reshapes; units; sharing; refusals; leading; held ])
