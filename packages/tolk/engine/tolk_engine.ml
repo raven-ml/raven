@@ -994,7 +994,8 @@ let builder ~fn ~separate ~devices bound =
    calls 0 and 1 are a part, which makes [a] and returns it, and call 2 another,
    which makes [b] and returns it. *)
 
-(* The storage nodes that [e] takes and no buffer is bound to. *)
+(* The storage nodes that [e] takes ({!Memory.taken}) and no buffer is bound
+   to. *)
 let made_storage bound e =
   List.filter
     (fun u ->
@@ -1002,7 +1003,7 @@ let made_storage bound e =
       | Op.Alloc -> true
       | Op.Buffer -> not (Ops.Tbl.mem bound u)
       | _ -> false)
-    (Ops.toposort ~calls:Skip e)
+    (Memory.taken e)
 
 let first_free_slot linear =
   List.fold_left
