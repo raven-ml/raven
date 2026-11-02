@@ -128,6 +128,10 @@ let alloc ?(align = 0x1000) s h n =
       link x;
       got
 
+(* The shares answered [None], for the suites. *)
+let refused = Atomic.make 0
+let refused_shares () = Atomic.get refused
+
 (* The hold and its answer are made before the lock, as [alloc]'s. *)
 let share h x =
   let y =
@@ -135,7 +139,10 @@ let share h x =
   in
   let got = Some y in
   Lock.protect lock (fun () ->
-      if not x.live then None
+      if not x.live then begin
+        ignore (Atomic.fetch_and_add refused 1 : int);
+        None
+      end
       else begin
         x.range.users <- x.range.users + 1;
         y.live <- true;

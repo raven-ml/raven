@@ -1119,18 +1119,27 @@ let test_cut_open () =
 
 (* A release of the owner on another thread may land at any allocation of a
    [map_peer] of its memory, as a callback there makes it: the map is [Ok] or
-   [Error], never an exception, and frees as any. *)
+   [Error], never an exception, and frees as any, so that once the owner is
+   given back too the machine holds none of their system memory and the space
+   none of their addresses. A landing at the allocation of the peer's hold on
+   the owner's addresses ([Space.share]) meets the owner given back between
+   [map_peer]'s check of it and the hold: the hold is refused
+   ([Space.refused_shares]) and the map is [Error] there. *)
+
 let test_peer_owner_released kind =
   let base = own_space () in
+  let shared = ref false in
   let rec walk n =
+    let at what = strf "%s, landing at %d" what n in
     let reached =
-      with_gpus ~base 2 @@ fun _ _ gpus ->
+      with_gpus ~base 2 @@ fun root _ gpus ->
       let o = List.nth gpus 0 and x = List.nth gpus 1 in
       let r = given (Memory.alloc o.t_memory kind (64 * kib)) in
       let release () =
         if not (Function.released o.t_fn) then Function.release o.t_fn
       in
       let got = ref (Ok None) in
+      let refusals = Space.refused_shares () in
       (* Inside a lock the callback's release would take a lock its thread
          holds: the landings are where the map holds its use alone. *)
       let reached =
@@ -1140,14 +1149,22 @@ let test_peer_owner_released kind =
           (fun () -> got := Memory.map_peer x.t_memory r)
       in
       (match !got with
+      | Error _ when Space.refused_shares () > refusals -> shared := true
+      | Ok _ | Error _ -> ());
+      (match !got with
       | Ok (Some p) -> Memory.free x.t_memory p
       | Ok None | Error _ -> ());
+      release ();
+      equal ~msg:(at "system memory held") int 0 (held_bytes root);
+      equal ~msg:(at "addresses taken") int 0
+        (Space.taken (Page_table.space x.t_tables));
       reached
     in
     if n = 1 then equal ~msg:"the walk lands" bool true reached;
     if reached then walk (n + 1)
   in
-  walk 1
+  walk 1;
+  equal ~msg:"an Error at a landing in the peer's hold" bool true !shared
 
 (* Placement *)
 

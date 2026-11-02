@@ -81,3 +81,7 @@ val taken : t -> int
 (* [taken s] is the number of ranges of [s] allocated and not freed, for the
    suites that check that a driver gives back what it takes, in a time that
    grows with the ranges [s] holds. *)
+
+val refused_shares : unit -> int
+(* [refused_shares ()] is the number of {!share}s that answered [None], in
+   any space, for the suites that check that a race reaches that answer. *)
