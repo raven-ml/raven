@@ -20,7 +20,9 @@ raven / llama.cpp (Vulkan; ROCm):
 - gpt-oss-20b on the new nx and rune: decode, prefill-512 and first call
   on fudge (CUDA, NV) and nonnormal (AMD), recorded as the GptOss
   baselines, against llama.cpp at a stated build; rune's test_jit on
-  CUDA, NV and AMD
+  CUDA and NV. nonnormal's decode and prefill rows don't fit its 31 GB:
+  KFD pins a forked worker's userptr pages for writing, which copies the
+  parent's 13.8 GB of weights
 
 ## rig
 
@@ -267,7 +269,8 @@ raven / llama.cpp (Vulkan; ROCm):
   forward and cotangent
 - donation's kill criterion, at least 2x over the copy on CUDA and AMD:
   `dispatch/kv-append-4096` and its `-copied` twin read 3.4 and 44.5 µs on
-  fudge's host; record them on CUDA and AMD under `Rune.jit`
+  fudge's host, 25.9 and 43.4 µs under `Rune.jit` on AMD (1.7x); record
+  them on CUDA under `Rune.jit`
 - nx.cpu's thread splits follow the call prices (179ea5cc5, 82e42b78d) and
   the kind tables of f6876a0ad, measured under load 1.3-4.7: time them
   quiet on fudge, with a row of a costly kind where its threads change
