@@ -124,11 +124,47 @@ let many_runs () =
   age (Unix.gettimeofday () -. 60.) runs_dir;
   store
 
+(* The dashboard *)
+
+(* [settled app] is [app]'s model once its first reads are done: its commands
+   run here, their messages applied in order, at 160 by 48. *)
+let settled (app : (_, _) Mosaic.app) =
+  let pending = Queue.create () in
+  let rec start (c : _ Mosaic.Cmd.t) =
+    match c with
+    | Perform f -> f (fun msg -> Queue.push msg pending)
+    | Batch l -> List.iter start l
+    | _ -> ()
+  in
+  let m, c = app.init () in
+  start c;
+  let m = ref m in
+  Queue.push (Munin_tui.resize ~width:160 ~height:48) pending;
+  while not (Queue.is_empty pending) do
+    let m', c = app.update (Queue.pop pending) !m in
+    m := m';
+    start c
+  done;
+  !m
+
+(* A key press as the loop takes it: the update, then the frame drawn. The reads
+   the key asks for run off the loop and are not timed. *)
+let press (app : (_, _) Mosaic.app) m k =
+  let m, _ = app.update (Munin_tui.key (Matrix.Input.Keystroke.make k)) m in
+  Munin_tui.frame m
+
 let suite () =
   let run = long_run () in
   let limit = before_tail run in
   let store = many_runs () in
   let listing = Store.runs store in
+  let run_app =
+    Munin_tui.app ~clock:Unix.gettimeofday
+      (Store.open_ ~root:(Filename.dirname (Filename.dirname (Run.dir run))) ())
+      (Munin_tui.Run (Some (Run.id run)))
+  in
+  let runs_app = Munin_tui.app ~clock:Unix.gettimeofday store Munin_tui.Runs in
+  let on_run = settled run_app and on_runs = settled runs_app in
   [
     Thumper.bench (Printf.sprintf "fold %d steps of 12 keys" steps) (fun () ->
         History.read run);
@@ -143,6 +179,14 @@ let suite () =
         Store.runs store);
     Thumper.bench (Printf.sprintf "list %d runs again, unchanged" runs)
       (fun () -> Store.runs ~prev:listing store);
+    (* A key costs what is on screen, whatever the series' lengths and the
+       store's size: a regression that brings per-sample or per-run work back to
+       the loop shows at these sizes. *)
+    Thumper.bench
+      (Printf.sprintf "dashboard: a key on Run of %d steps of 12 keys" steps)
+      (fun () -> press run_app on_run Matrix.Input.Keystroke.Down);
+    Thumper.bench (Printf.sprintf "dashboard: a key on Runs of %d runs" runs)
+      (fun () -> press runs_app on_runs Matrix.Input.Keystroke.Down);
     Thumper.bench_with_setup
       ~setup:(fun () ->
         (* Made in the worker, which removes it in the teardown. *)

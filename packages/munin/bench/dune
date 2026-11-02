@@ -1,6 +1,6 @@
 (executable
  (name bench_munin)
- (libraries munin unix thumper))
+ (libraries munin munin.tui mosaic matrix unix thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`, or run the
 ; built exe directly. [--tiny] makes every input small, to see the rows work
