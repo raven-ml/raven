@@ -179,11 +179,6 @@ val link_call : devices:(string -> Rig.t) -> Ops.t -> t
     Raises [Invalid_argument] if [call] is not a call of a compiled program, and
     as {!link} does. *)
 
-val clock : t -> Tolk.Search.clock
-(** [clock s] is the clock {!time} times [s] on: {!Tolk.Search.Device} if every
-    kernel of [s] runs on a GPU, which times its submissions' work, and
-    {!Tolk.Search.Host} otherwise. *)
-
 val time : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> float
 (** [time ~vars s slots] is the time in seconds of one run of [s] on [slots]
     with [vars] ({!run}), reporting nothing on standard output whatever

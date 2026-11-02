@@ -484,21 +484,17 @@ let streamed p f l =
       Worker.iter f (fun x y -> seen := (x, y) :: !seen) l);
   List.rev !seen
 
-let is_list_iter (p, fn, l) =
+(* [g] takes each element once, with its image: in [l]'s order on one domain,
+   in the order the applications end on several. *)
+let hands_each_once (p, fn, l) =
   cover "several domains may apply f" (p > 1 && List.length l > 1);
-  equal
-    (list (pair int string))
-    (List.map (fun x -> (x, apply fn x)) l)
-    (streamed p (apply fn) l)
-
-(* Earlier elements take longer, so that later ones end first. *)
-let streams_late_finishers_in_order () =
-  let l = List.init 8 Fun.id in
-  let f i =
-    Unix.sleepf (0.002 *. Float.of_int (8 - i));
-    i * 10
-  in
-  equal (list (pair int int)) (List.map (fun i -> (i, f i)) l) (streamed 4 f l)
+  let expected = List.map (fun x -> (x, apply fn x)) l in
+  let got = streamed p (apply fn) l in
+  if p <= 1 then equal (list (pair int string)) expected got
+  else
+    equal
+      (list (pair int string))
+      (List.sort compare expected) (List.sort compare got)
 
 (* The last element's application waits for [g]'s first: [g] reaches an element
    once its own image is computed, whatever the later ones. *)
@@ -566,19 +562,45 @@ let raises_first (p, n, failing, g_failing) =
   let first l = List.fold_left min n l in
   let f_first = first failing and g_first = first g_failing in
   let stop = min f_first g_first in
-  (match with_parallel p (fun () -> Worker.iter f g (List.init n Fun.id)) with
-  | () -> equal ~msg:"no element raised" int n stop
-  | exception Failed i ->
-      equal ~msg:"f raised" int f_first i;
-      at_most int ~than:g_first i
-  | exception G_failed i ->
-      equal ~msg:"g raised" int g_first i;
-      less int ~than:f_first i);
-  equal ~msg:"consumed" (list int) (List.init stop Fun.id) (List.rev !consumed);
+  let raised =
+    match with_parallel p (fun () -> Worker.iter f g (List.init n Fun.id)) with
+    | () -> None
+    | exception Failed i -> Some (`F i)
+    | exception G_failed i -> Some (`G i)
+  in
+  let consumed = List.rev !consumed in
+  (* On one domain, [g]'s order is [List.iter]'s; on several, the order the
+     applications end, so the call raises one of the failures and [g] took
+     elements that fail neither. *)
+  (if p <= 1 then begin
+     (match raised with
+     | None -> equal ~msg:"no element raised" int n stop
+     | Some (`F i) ->
+         equal ~msg:"f raised" int f_first i;
+         at_most int ~than:g_first i
+     | Some (`G i) ->
+         equal ~msg:"g raised" int g_first i;
+         less int ~than:f_first i);
+     equal ~msg:"consumed" (list int) (List.init stop Fun.id) consumed
+   end
+   else begin
+     (match raised with
+     | None -> equal ~msg:"no element raised" int n stop
+     | Some (`F i) ->
+         equal ~msg:"f raised on a failing element" (list int) [ i ]
+           (List.filter (( = ) i) failing)
+     | Some (`G i) ->
+         equal ~msg:"g raised on a failing element" (list int) [ i ]
+           (List.filter (( = ) i) g_failing));
+     equal ~msg:"consumed elements that fail neither" (list int) []
+       (List.filter (fun i -> List.mem i failing || List.mem i g_failing) consumed);
+     equal ~msg:"consumed each once" (list int) (List.sort_uniq compare consumed)
+       (List.sort compare consumed)
+   end);
   cover "f raised first" (f_first < g_first);
   cover "f and g raised on one element" (f_first = g_first && f_first < n);
-  cover "g raised first" (g_first < f_first)
-
+  cover "g raised first" (g_first < f_first);
+  cover "several domains" (p > 1)
 let joins_before_raising_from_g () =
   let g_live = gauge () and started = Atomic.make 0 in
   let f i =
@@ -613,12 +635,12 @@ let iter_sees_caller_settings () =
 let streaming =
   group "streaming"
     [
-      prop "iter f g l is List.iter (fun x -> g x (f x)) l"
+      prop
+        "iter f g l applies g x (f x) to each element once, in l's order on \
+         one domain"
         ~examples:[ (4, { a = 1; b = 0; spins = 0 }, []) ]
         Gen.(triple parallels fn (list small_int))
-        is_list_iter;
-      test "applies g in the order of l when later elements finish first"
-        streams_late_finishers_in_order;
+        hands_each_once;
       cases "applies g to an element while f applies to later ones, under"
         ~id:(Printf.sprintf "PARALLEL=%d") [ 0; 1; 2; 4 ] (fun p ->
           consumes_while_computing p ());
@@ -629,8 +651,8 @@ let streaming =
         ~id:(Printf.sprintf "PARALLEL=%d") [ 1; 2; 4 ] (fun p ->
           computes_at_most p ());
       prop
-        "raises the first exception of f or g, and applies g to the elements \
-         before it"
+        "raises an exception of f or g, the first of l's on one domain, and \
+         applies g to elements that raise neither"
         streamed_failure_case raises_first;
       test
         "raises from g only after the applications of f it started have ended"

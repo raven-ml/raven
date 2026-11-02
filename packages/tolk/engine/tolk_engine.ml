@@ -1383,14 +1383,6 @@ let link_call ~devices call =
   link_with ~separate:true ~devices
     (Realize.compile_linear ~targets (Ops.v Op.Linear ~src:[ call ]))
 
-let clock t =
-  if
-    List.for_all
-      (fun (k : kernel) -> Option.is_some (vendor k.device))
-      t.kernels
-  then Search.Device
-  else Search.Host
-
 (* Whether the work [w] runs a kernel of [t]: its name lists the kernels of its
    submission, joined by [", "]. A submission of copies alone names none. *)
 let runs_kernel t (w : Rig.Profile.event) =

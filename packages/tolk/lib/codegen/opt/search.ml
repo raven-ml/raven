@@ -317,9 +317,7 @@ let scalar_key v =
   let p = match arg v with Param p -> p | _ -> assert false in
   match p.name with Some name -> `Name name | None -> `Slot p.slot
 
-type clock = Device | Host
-
-let beam_search ~link ~time ~clock ?allow_test_size amt s =
+let beam_search ~link ~time ?allow_test_size amt s =
   if amt < 1 then
     invalid_arg
       (Printf.sprintf "a beam search needs a positive width, not %d" amt);
@@ -380,36 +378,43 @@ let beam_search ~link ~time ~clock ?allow_test_size amt s =
         Renderer.with_compiler
           (Renderer.Compiler.v
              ~disassemble:(Renderer.Compiler.disassemble ren.compiler)
-             (memo (Renderer.Compiler.compile ren.compiler)))
+             (memo (Renderer.Compiler.compile_cached ren.compiler)))
           ren
       in
-      (* [f i k] applied, in order, to each kernel [k] of [ks] and its
-         compilation. On a device's clock, a kernel is timed while later ones
-         compile; on the host's, compiling would lengthen the runs, so all
-         compile first. Timing in order keeps the choices of [seen_libs] and the
-         compute filter those of a serial search. *)
-      let compile ~clock ks f =
-        let met = Ops.Tbl.create 64 in
-        let first k =
-          let ast = K.ast k in
-          let first = not (Ops.Tbl.mem compiled ast || Ops.Tbl.mem met ast) in
-          if first then Ops.Tbl.add met ast ();
-          first
+      (* [f i k] applied to each kernel [k] of [ks], the [i]th, and its
+         compilation, in the order the compilations end, while other domains
+         compile the rest. Kernels equal to one another are compiled once, and
+         a kernel met in an earlier round takes its compilation. *)
+      let compile ks f =
+        let groups = Ops.Tbl.create 64 and order = ref [] in
+        List.iteri
+          (fun i k ->
+            let ast = K.ast k in
+            match Ops.Tbl.find_opt groups ast with
+            | Some l -> Ops.Tbl.replace groups ast ((i, k) :: l)
+            | None ->
+                Ops.Tbl.add groups ast [ (i, k) ];
+                order := ast :: !order)
+          ks;
+        let tasks =
+          List.rev_map
+            (fun ast ->
+              (Ops.Tbl.find_opt compiled ast, List.rev (Ops.Tbl.find groups ast)))
+            !order
         in
-        let tasks = List.mapi (fun i k -> (i, k, first k)) ks in
-        let compile_first (_, k, first) =
-          if first then Some (try_compile ren k) else None
+        let compile_one = function
+          | Some r, _ -> r
+          | None, (_, k) :: _ -> try_compile ren k
+          | None, [] -> None
         in
-        (* A kernel met before takes its compilation, which an earlier task
-           kept. *)
-        let take (i, k, _) r =
-          let ast = K.ast k in
-          Option.iter (Ops.Tbl.replace compiled ast) r;
-          f i k (Ops.Tbl.find compiled ast)
+        let take (_, group) r =
+          List.iter
+            (fun (i, k) ->
+              Ops.Tbl.replace compiled (K.ast k) r;
+              f i k r)
+            group
         in
-        match clock with
-        | Device -> Worker.iter compile_first take tasks
-        | Host -> List.iter2 take tasks (Worker.map compile_first tasks)
+        Worker.iter compile_one take tasks
       in
       (* [k]'s program linked and timed with an early stop, or [None] if its
          linking or timing failed. *)
@@ -442,7 +447,7 @@ let beam_search ~link ~time ~clock ?allow_test_size amt s =
          beam's first by more than [min_progress]: the least of noisy times is
          biased low, and a search never answers a kernel slower than [s]. *)
       let progresses (_, c) (_, b) = most c +. min_progress < least b in
-      let rec search ~clock beam =
+      let rec search beam =
         let best = least (snd (List.hd beam)) in
         let candidates =
           List.concat_map
@@ -491,7 +496,7 @@ let beam_search ~link ~time ~clock ?allow_test_size amt s =
                         (elapsed ()) tm progress n (K.colored_shape cand))
           | _ -> ()
         in
-        compile ~clock candidates consider;
+        compile candidates consider;
         let opts =
           List.stable_sort
             (fun (_, t0) (_, t1) -> Float.compare (least t0) (least t1))
@@ -512,23 +517,21 @@ let beam_search ~link ~time ~clock ?allow_test_size amt s =
              (if exiting then Helpers.colored Green tm else tm)
              n (List.length opts)
              (K.colored_shape (fst (List.hd beam))));
-        if exiting then beam else search ~clock beam
+        if exiting then beam else search beam
       in
-      (* [s] itself, timed with no early stop, starts the beam, and its linked
-         program tells the clock that times the candidates: the host's if [s] is
-         not timed. *)
-      let clock, start =
+      (* [s] itself, timed with no early stop, starts the beam. *)
+      let start =
         let r = try_compile ren s in
         Ops.Tbl.replace compiled (K.ast s) r;
         match r with
-        | None -> (Host, [])
+        | None -> []
         | Some (prg, _) -> (
             Hashtbl.add seen_libs (binary prg) ();
             match sampled s prg ~early_stop:infinity with
-            | Some (linked, samples) -> (clock linked, samples)
-            | None -> (Host, []))
+            | Some (_, samples) -> samples
+            | None -> [])
       in
-      let k, samples = List.hd (search ~clock [ (s, start) ]) in
+      let k, samples = List.hd (search [ (s, start) ]) in
       Helpers.Diskcache.put ~table:"beam_search" key
         (encode_opts (K.applied_opts k));
       if beam_debug > 0 then

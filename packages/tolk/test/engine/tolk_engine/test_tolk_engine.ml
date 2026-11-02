@@ -2473,28 +2473,10 @@ let profiled f =
   in
   (r, taken, events)
 
-let clock =
-  Testable.make
-    ~pp:(fun ppf c ->
-      Format.pp_print_string ppf
-        (match c with Search.Device -> "Device" | Search.Host -> "Host"))
-    ~equal:( = )
-
-(* The host runs kernels and records their spans on its clock; a GPU stamps its
-   work. *)
-let clock_by_device name =
-  let s, _ = timed name in
-  equal clock
-    (if List.mem_assoc name gpu_kind then Search.Device else Search.Host)
-    (Engine.clock s)
-
-(* A time under a profile takes its own: its clock is the one without, and its
-   value is the sum of the spans of its kernels that the outer profile records
-   too. *)
+(* A time under a profile takes its own: its value is the sum of the spans of
+   its kernels that the outer profile records too. *)
 let time_under_profile name =
   let s, slots = timed name in
-  let c, _, _ = profiled (fun () -> Engine.clock s) in
-  equal ~msg:"the clock" clock (Engine.clock s) c;
   let t, _, events = profiled (fun () -> Engine.time ~vars:n_bound s slots) in
   let ns =
     List.fold_left
@@ -2655,10 +2637,7 @@ let timing =
           equal ~msg:"buffers by slot" (list bool) [ true; true; true; true ]
             (Array.to_list (Array.map Option.is_some slots));
           Engine.run ~vars:n_bound s slots);
-      group "the clock is a GPU's on a GPU, the host's otherwise"
-        [ on clock_by_device ];
-      group
-        "a profile taken around a time changes neither its clock nor its value"
+      group "a profile taken around a time leaves its value"
         [ on time_under_profile ];
       group "a time is positive, under a second" [ on positive ];
       test "a time counts a submission of several kernels"

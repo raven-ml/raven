@@ -77,52 +77,56 @@ let map f l =
 let iter f g l =
   let tasks = Array.of_list l in
   let count = Array.length tasks in
-  let results = Array.make count None and next = Atomic.make 0 in
+  let next = Atomic.make 0 and stopped = Atomic.make false in
   let ready = Mutex.create () and filled = Condition.create () in
-  (* No index from [limit] on starts. An application of [f] that raises at [i]
-     lowers it to [i + 1]: every index below has been claimed and runs to its
-     end, since indices are claimed in order. The consumer lowers it to [0] when
-     it raises. *)
-  let limit = Atomic.make count in
-  let rec lower n =
-    let l = Atomic.get limit in
-    if n < l && not (Atomic.compare_and_set limit l n) then lower n
+  let finished = Queue.create () in
+  (* The next index no domain has claimed, unless an application raised or the
+     consumer stopped: then none starts. *)
+  let claim () =
+    if Atomic.get stopped then None
+    else
+      let i = Atomic.fetch_and_add next 1 in
+      if i < count then Some i else None
   in
   let apply i =
     match f tasks.(i) with
     | y -> Ok y
     | exception e ->
         let bt = Printexc.get_raw_backtrace () in
-        lower (i + 1);
+        Atomic.set stopped true;
         Error (e, bt)
   in
   let rec work () =
-    let i = Atomic.fetch_and_add next 1 in
-    if i < Atomic.get limit then begin
-      let r = apply i in
-      Mutex.protect ready (fun () ->
-          results.(i) <- Some r;
-          Condition.broadcast filled);
-      work ()
-    end
+    match claim () with
+    | None -> ()
+    | Some i ->
+        let r = apply i in
+        Mutex.protect ready (fun () ->
+            Queue.push (i, r) finished;
+            Condition.broadcast filled);
+        work ()
   in
-  (* The image of [i]: the consumer applies [f] itself to an index no domain has
-     claimed, rather than wait for one to. *)
-  let image i =
-    if Atomic.compare_and_set next i (i + 1) then apply i
-    else
-      Mutex.protect ready (fun () ->
-          while Option.is_none results.(i) do
-            Condition.wait filled ready
-          done;
-          Option.get results.(i))
+  (* The next application to end: one another domain ended, or else one the
+     consumer runs itself, rather than wait, while an index is unclaimed. *)
+  let take () =
+    match Mutex.protect ready (fun () -> Queue.take_opt finished) with
+    | Some r -> r
+    | None -> (
+        match claim () with
+        | Some i -> (i, apply i)
+        | None ->
+            Mutex.protect ready (fun () ->
+                while Queue.is_empty finished do
+                  Condition.wait filled ready
+                done;
+                Queue.take finished))
   in
   let consume () =
-    for i = 0 to count - 1 do
-      match image i with
-      | Ok y -> g tasks.(i) y
-      | Error (e, bt) -> Printexc.raise_with_backtrace e bt
+    for _ = 1 to count do
+      match take () with
+      | i, Ok y -> g tasks.(i) y
+      | _, Error (e, bt) -> Printexc.raise_with_backtrace e bt
     done
   in
   alongside (count - 1) work (fun () ->
-      Fun.protect ~finally:(fun () -> lower 0) consume)
+      Fun.protect ~finally:(fun () -> Atomic.set stopped true) consume)

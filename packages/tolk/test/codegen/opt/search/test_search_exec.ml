@@ -59,8 +59,7 @@ let searched name =
       (fun () ->
         Codegen.to_program
           ~beam:
-            (Search.beam_search ~link ~time ~clock:(fun (s, _) ->
-                 Tolk_engine.clock s))
+            (Search.beam_search ~link ~time)
           (with_info (fun i -> { i with beam = 2 }) k)
           host)
   in
@@ -99,7 +98,7 @@ let scalar_arguments =
           [ B (Setting.ignore_beam_cache, true) ]
           (fun () ->
             Codegen.to_program
-              ~beam:(Search.beam_search ~link ~time ~clock:Tolk_engine.clock)
+              ~beam:(Search.beam_search ~link ~time)
               ast host)
       in
       greater int ~than:0 !measured;

@@ -891,6 +891,10 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Search.beam_search` times each candidate as its compilation ends, on every
+  device, and keeps each candidate's binary in its compiler's disk cache;
+  `Search.clock` and `Tolk_engine.clock` are gone. `Worker.iter` hands each
+  result to its consumer in the order the applications end.
 - An empty argument of a precompiled call is no longer passed as its scalar:
   such a call fails the kernel graph's verification.
 - An operation on an emulated narrow float rounds its result only at the

@@ -55,9 +55,14 @@ let scheduled name target =
   k
 
 (* tinygrad's goldens name kernels without colour, and keep no search. *)
+(* On one domain, a search times its candidates in their order, which the
+   goldens record. *)
 let quietly ?(settings = []) f =
   Setting.context
-    (B (Setting.no_color, true) :: B (Setting.cachelevel, 0) :: settings)
+    (B (Setting.no_color, true)
+    :: B (Setting.cachelevel, 0)
+    :: B (Setting.parallel, 0)
+    :: settings)
     f
 
 let opts = list Kernel_opts.opt
@@ -143,13 +148,9 @@ let golden_time ~failing ~vars prg =
   let tm = List.fold_left weigh tm positions in
   tm *. (1. +. (Float.of_int (workgroups ~vars prg mod 5) /. 10.))
 
-(* A search whose timing is on [clock] (default the host's). *)
-let search ?settings ?(clock = Search.Host) ?allow_test_size
-    ~timing:(link, time) amt k =
+let search ?settings ?allow_test_size ~timing:(link, time) amt k =
   quietly ?settings (fun () ->
-      Search.beam_search ~link ~time
-        ~clock:(fun _ -> clock)
-        ?allow_test_size amt k)
+      Search.beam_search ~link ~time ?allow_test_size amt k)
 
 (* The actions *)
 
@@ -406,24 +407,6 @@ let chooses_the_fastest =
              in
              equal float_exact fastest (drawn seed (K.applied_opts chosen)))
 
-let binaries calls = List.map (fun c -> binary c.prg) calls
-
-let is_deterministic =
-  test "a search measures and chooses alike on one domain and on several"
-    (fun () ->
-      let run parallel =
-        let timing, calls = recording (golden_time ~failing:false) in
-        let k =
-          search
-            ~settings:[ B (Setting.parallel, parallel) ]
-            ~timing 2
-            (scheduled "sum_rows" "clang")
-        in
-        (K.applied_opts k, binaries (calls ()))
-      in
-      let serial_opts, serial = run 0 and parallel_opts, parallel = run 4 in
-      equal opts serial_opts parallel_opts;
-      equal (list string) serial parallel)
 
 let midpoints =
   test "a search times with each variable at its bounds' middle" (fun () ->
@@ -887,11 +870,11 @@ let compiles_once =
     | [ o ] when Opt.equal o upcast || Opt.equal o swap -> 1e-4
     | _ -> 1e-3
   in
-  test "a search compiles each kernel once" (fun () ->
+  test "a search compiles each kernel once, on several domains" (fun () ->
       let ren, rendered, _ = counting "Apple7" in
       let k = scheduled_for ren "matmul_small" in
       let timing, record = sampling favoured in
-      ignore (search ~timing 2 k);
+      ignore (search ~settings:[ B (Setting.parallel, 4) ] ~timing 2 k);
       let applied =
         List.map (fun p -> (kernel_info p).applied_opts) (record ()).linked
       in
@@ -913,22 +896,21 @@ let compiles_once =
         (List.fold_left (fun n (_, c) -> n + c) 0 (to_list rendered)))
 
 (* The sources of [kernel] that a search of width 2 for the family [arch]
-   renders twice within the round that first renders them, in order: rendered
-   again before the search times anything more. *)
+   renders twice within its first round, in the order of their second render:
+   every candidate is slower than [kernel], so the search ends after that
+   round. The first round's candidates are the actions of [kernel], whatever
+   order they are timed in. *)
 let repeated arch kernel =
-  let samples = ref 0 and first = Hashtbl.create 64 and repeats = ref [] in
+  let seen = Hashtbl.create 64 and repeats = ref [] in
   let rendering src =
-    match Hashtbl.find_opt first src with
-    | Some round when round = !samples && not (List.mem src !repeats) ->
-        repeats := src :: !repeats
-    | Some _ -> ()
-    | None -> Hashtbl.replace first src !samples
+    match Hashtbl.find_opt seen src with
+    | Some () -> if not (List.mem src !repeats) then repeats := src :: !repeats
+    | None -> Hashtbl.replace seen src ()
   in
   let ren, _, _ = counting ~rendering arch in
   let timing, _ =
-    sampling (fun ~vars prg _ ->
-        incr samples;
-        golden_time ~failing:false ~vars prg)
+    sampling (fun ~vars:_ prg _ ->
+        if (kernel_info prg).applied_opts = [] then 1e-6 else 1.)
   in
   ignore
     (search
@@ -1029,72 +1011,6 @@ let uncompilable =
         (dropped (fun () -> failwith "rejected"));
     ]
 
-(* Compiling while timing *)
-
-(* A Clang renderer for the architecture [arch] of its own, whose compiler takes
-   a millisecond on each source and four on every fourth it starts, so that
-   later compilations end first, and the compilations running. *)
-let slow_compiling arch =
-  let started = Atomic.make 0 and running = Atomic.make 0 in
-  let compile src =
-    Atomic.incr running;
-    Unix.sleepf
-      (if Atomic.fetch_and_add started 1 mod 4 = 0 then 0.004 else 0.001);
-    Atomic.decr running;
-    src
-  in
-  let t =
-    {
-      Helpers.Target.device = "CPU";
-      renderer = "CLANG";
-      arch;
-      interface = "";
-      indices = "";
-    }
-  in
-  ( Renderer.with_compiler (Renderer.Compiler.v compile) (Cstyle.clang t),
-    running )
-
-(* What a search of [ren] under PARALLEL=4 on [clock] chose and timed, in order,
-   and the compilations [running] at each sample. *)
-let timed_on clock (ren, running) =
-  let running_at = ref [] in
-  let sample ~vars prg _ =
-    running_at := Atomic.get running :: !running_at;
-    golden_time ~failing:false ~vars prg
-  in
-  let timing, record = sampling sample in
-  let k =
-    search
-      ~settings:[ B (Setting.parallel, 4) ]
-      ~clock ~timing 2
-      (scheduled_for ren "sum_rows")
-  in
-  let r = record () in
-  ( K.applied_opts k,
-    List.map binary r.linked,
-    List.map (fun c -> (binary c.prg, c.time)) r.calls,
-    List.rev !running_at )
-
-let times_in_order =
-  test
-    "a search on a device's clock times its candidates as one on the host's, \
-     whatever order their compilations end in" (fun () ->
-      let compiling = slow_compiling "x86_64,znver6" in
-      let opts_d, linked_d, calls_d, _ = timed_on Search.Device compiling in
-      let opts_h, linked_h, calls_h, _ = timed_on Search.Host compiling in
-      equal opts opts_h opts_d;
-      equal ~msg:"linked" (list string) linked_h linked_d;
-      equal ~msg:"samples" (list (pair string float_exact)) calls_h calls_d)
-
-let host_compiles_first =
-  test "a search on the host's clock compiles nothing while it times" (fun () ->
-      let _, _, calls, running_at =
-        timed_on Search.Host (slow_compiling "x86_64,znver7")
-      in
-      greater int ~msg:"samples" ~than:0 (List.length calls);
-      equal (list int) (List.map (fun _ -> 0) running_at) running_at)
-
 (* The cache *)
 
 (* CACHEDB is a directory of the sandbox (see dune). *)
@@ -1194,28 +1110,6 @@ let cache_kinds =
         (List.exists (function Opt.Swap _ -> true | _ -> false) first);
       equal opts first (cached untimed))
 
-(* The entries of every table of the disk cache: the files of the directories
-   named like a table's, by a digest and a version. *)
-let entries () =
-  let is_table name =
-    let n = String.length name and among chars s = String.for_all chars s in
-    let digit = function '0' .. '9' -> true | _ -> false in
-    let hex = function '0' .. '9' | 'a' .. 'f' -> true | _ -> false in
-    n > 33
-    && among hex (String.sub name 0 32)
-    && name.[32] = '_'
-    && among digit (String.sub name 33 (n - 33))
-  in
-  let count n name =
-    let dir = Filename.concat Helpers.cachedb name in
-    if is_table name && Sys.is_directory dir then
-      n + Array.length (Sys.readdir dir)
-    else n
-  in
-  if Sys.file_exists Helpers.cachedb then
-    Array.fold_left count 0 (Sys.readdir Helpers.cachedb)
-  else 0
-
 let source prg =
   match Ops.arg (Ops.nth prg 2) with
   | String s -> s
@@ -1226,8 +1120,8 @@ let binaries = "search test binaries"
 
 let cache_candidates =
   test
-    "a kernel compiled with a search keeps the search's choice and its own \
-     binary alone" (fun () ->
+    "a search keeps each candidate's binary in its compiler's table, as a \
+     kernel compiled with it keeps its own" (fun () ->
       let ren =
         Renderer.with_compiler
           (Renderer.Compiler.v ~cachekey:(fun () -> binaries) Fun.id)
@@ -1242,16 +1136,16 @@ let cache_candidates =
       Helpers.Diskcache.clear ();
       let prg =
         Codegen.to_program
-          ~beam:(Search.beam_search ~link ~time ~clock:(fun _ -> Search.Host))
+          ~beam:(Search.beam_search ~link ~time)
           k ren
       in
       let kept p = Helpers.Diskcache.get ~table:binaries (source p) in
       let candidates = (record ()).linked in
       greater int ~than:1 (List.length candidates);
-      equal ~msg:"candidates' binaries kept" int 0
-        (List.length (List.filter_map kept candidates));
-      equal (option string) (Some (binary prg)) (kept prg);
-      equal ~msg:"entries" int 2 (entries ()))
+      equal ~msg:"candidates' binaries kept" (list (option string))
+        (List.map (fun p -> Some (binary p)) candidates)
+        (List.map kept candidates);
+      equal (option string) (Some (binary prg)) (kept prg))
 
 (* Printing *)
 
@@ -1479,7 +1373,6 @@ let () =
          keeps_writes;
          keeps_writes_exhaustively;
          chooses_the_fastest;
-         is_deterministic;
          midpoints;
          positional;
          links_once;
@@ -1496,8 +1389,6 @@ let () =
          uncompilable;
          compiles_once;
          compiles_sources_once;
-         times_in_order;
-         host_compiles_first;
          progress;
          quiet;
          failure_printed;

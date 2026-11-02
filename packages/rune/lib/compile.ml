@@ -2384,7 +2384,7 @@ let search rigs ~parallel width k =
     Engine.time ~vars s slots
   in
   let search () =
-    Tolk.Search.beam_search ~link ~time ~clock:Engine.clock width k
+    Tolk.Search.beam_search ~link ~time width k
   in
   match parallel with
   | None -> search ()
