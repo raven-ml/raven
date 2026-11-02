@@ -382,8 +382,6 @@
   cmdliner
   mosaic
   matrix
-  (rig
-   (= :version))
   (windtrap
    (and
     :with-test

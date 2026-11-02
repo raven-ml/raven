@@ -3,95 +3,158 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** System monitoring.
+(** Readings of the machine, of this process and of devices.
 
-    {!Stat} samples operating-system statistics on demand. {!start} runs those
-    samplers on a background thread and logs the results to a {!Munin.Session}.
+    A {e reading} is a function that reads some facts now and gives them as
+    pairs of a key and a number. [Munin.Session.sample] calls readings on a
+    schedule and logs what they give into a run. The values here make
+    readings, and depend on no part of munin, so any logger may call them.
 
-    This library owns the [sys/] metric-key prefix: every metric it logs is
-    named [sys/...]. Keep your own metric keys out of that prefix.
+    A {e level} is a fact's value at the call, such as memory in use. A
+    {e rate} is a counter's change per second over the {e window} since
+    the reading's previous call, timed by a monotonic clock, such as bytes
+    read from disk per second. A reading that gives rates gives its
+    window's length in seconds under a key of its own. Its first call
+    starts the window and gives nothing, so every pair a reading gives
+    comes with its rates, and a sampler logs the first pairs of such a
+    reading one period after it starts. A reading keeps its own counters,
+    so it must be called from one thread at a time, and given to one
+    sampler. The monotonic clock counts time asleep on macOS and not on
+    Linux, so a window across a suspend is longer on macOS.
 
-    {1:platform Platform support}
+    Keys start with [sys/] for the machine and this process, and with
+    [dev/<name>/] for a device. A program keeps its own keys out of these
+    prefixes. Sizes are in bytes. A key the system cannot read is left out
+    of the pairs, and a reading raises [Sys_error] only when it can read
+    nothing.
 
-    Every sampler reads the system on Linux and macOS. Platform-specific
-    behavior is documented per module. Some metrics have limited availability
-    on certain platforms (e.g., macOS CPU counters populate only
-    user/nice/system/idle fields). Windows keeps no load average, and munin
-    reads no GPU statistics there. *)
+    A program samples its machine, its process and the devices its arrays
+    live on. A device it closed or lost gives nothing that time, since its
+    reading raises [Sys_error], which a sampler skips; any other exception
+    would stop the sampler.
+    {[
+      let every = 15. in
+      let usage d () : Munin_sys.device =
+        match (Rig.usage d ~window:every, Rig.allocated d, Rig.budget d) with
+        | exception Rig.Lost (_, why) -> raise (Sys_error why)
+        | Error why, _, _ -> raise (Sys_error why)
+        | Ok u, allocated, budget ->
+            { allocated = Some allocated;
+              budget = (if budget = max_int then None else Some budget);
+              memory = u.memory; used = u.used; busy = u.busy;
+              activity = u.activity; temperature = u.temperature;
+              power = u.power }
+      in
+      let reading d = Munin_sys.device (Rig.name d) (usage d) in
+      Munin.Session.sample s ~every
+        (Munin_sys.host () :: Munin_sys.process ()
+         :: List.map reading (Nx.Devices.to_list devices))
+    ]} *)
 
-(** {1:sampling Sampling} *)
+(** {1:host The machine} *)
 
-module Stat : module type of Sysstat
-(** Stateless, poll-based sampling of operating-system statistics.
+val host : unit -> unit -> (string * float) list
+(** [host ()] is a new reading of the machine. Its keys:
+    - [sys/cpu_busy_pct], a rate: the percent of all CPUs' time spent
+      neither idle nor waiting for I/O. On Linux, time that a CPU ran a
+      virtual machine counts once, as user time.
+    - [sys/load_per_core], a level: the one-minute load average over the
+      number of logical CPUs. Windows keeps no load average.
+    - [sys/mem_used_bytes], a level: total memory less available memory,
+      where available memory is Linux's [MemAvailable], macOS's free and
+      inactive pages, and Windows's available physical memory.
+    - [sys/mem_total_bytes] and [sys/swap_used_bytes], levels.
+    - [sys/disk_read_bytes_per_s] and [sys/disk_write_bytes_per_s], rates
+      summed over the physical disks, each disk's own change; absent for a
+      window over which the set of disks changed, or a disk's counter went
+      back, which reads as a disk replaced.
+    - [sys/disk_busy_pct], a rate on Linux alone: the mean over the disks
+      of the percent of the window each had requests in flight, each disk's
+      capped at [100.], since Linux counts busy time when a request starts
+      or ends.
+    - [sys/interval_s]: the window's length. *)
 
-    Each module samples instantaneous or cumulative values. CPU, network, and
-    disk I/O statistics are cumulative since boot and require two samples to
-    compute usage percentages; memory statistics are instantaneous. The caller
-    manages state and sampling intervals. *)
+(** {1:process This process} *)
 
-(** {1:monitor Background monitoring}
+val process : unit -> unit -> (string * float) list
+(** [process ()] is a new reading of this process. Its keys:
+    - [sys/proc_cpu_cores], a rate: the process's CPU seconds per second,
+    so [2.] is two cores busy.
+    - [sys/proc_rss_bytes], a level: its resident memory.
+    - [sys/proc_interval_s]: the window's length. *)
 
-    {!start} spawns a background thread that periodically samples CPU, memory,
-    process, disk I/O and GPU statistics and logs them as scalar metrics via
-    {!Munin.Session}.
+(** {1:devices Devices}
 
-    Logged metrics (all with [sys/] prefix):
+    munin reads no device. A program builds a device's reading from what
+    the device's library reports, through {!device}, which fixes the keys
+    the run records and a reader looks for. Each field holds one quantity
+    under one key, whichever vendor made the device. The fields beside
+    [allocated] and [budget] carry rig's [Rig.usage] under its own names,
+    which states each one's source per driver. *)
 
-    {b System-wide:}
-    - [sys/cpu_user] — user CPU percentage (0–100)
-    - [sys/cpu_system] — system CPU percentage (0–100)
-    - [sys/mem_used_pct] — memory usage percentage (0–100)
-    - [sys/mem_used_gb] — memory used in GB
+type device = {
+  allocated : int option;
+      (** The bytes this process holds on the device, under
+          [allocated_bytes]. *)
+  budget : int option;
+      (** The bytes this process may hold on the device before its runtime
+          reclaims memory, if they are bounded, under [budget_bytes]. *)
+  memory : int option;
+      (** The bytes of the device's own memory from which its driver
+          allocates, for every process and for itself, under
+          [memory_bytes]. *)
+  used : int option;
+      (** Of [memory], the bytes that allocations of every process and of
+          the driver hold, under [used_bytes]. *)
+  busy : float option;
+      (** The percent of the window's time during which the device's
+          compute engine ran work of any process, under [busy_pct]. It
+          measures time, so one small kernel that runs through the window
+          makes the device [100.] busy. *)
+  activity : float option;
+      (** The percent of activity that the device's firmware measures
+          across its compute units, over a window of its own, under
+          [activity_pct]. The firmware defines it, and it is a different
+          quantity from [busy]. *)
+  temperature : float option;
+      (** The temperature at the device's edge sensor, in degrees Celsius,
+          under [temperature_c]. A device without one reports none. *)
+  power : float option;
+      (** The power the device drew, in watts, averaged by its driver over
+          a window of the driver's own, under [power_w]. *)
+}
+(** The type for what is known of a device at a call. *)
 
-    {b Per-process:}
-    - [sys/proc_cpu_pct] — process CPU percentage
-    - [sys/proc_mem_mb] — process resident set size in MB
+val unknown : device
+(** [unknown] is a device of which nothing is known, every field
+    [None]. *)
 
-    {b Disk I/O:}
-    - [sys/disk_read_mbs] — disk read rate in MB/s
-    - [sys/disk_write_mbs] — disk write rate in MB/s
-    - [sys/disk_util_pct] — disk utilization percentage
+val device : string -> (unit -> device) -> unit -> (string * float) list
+(** [device name read] is a reading that calls [read] and gives each field
+    that is [Some] as a level, under [dev/<name>/] and the key its field
+    names. It raises what [read] raises.
 
-    {b GPU} [i], the [i]th GPU the monitor saw by {!Stat.Gpu.field-id}: in
-    the order of {!Stat.Gpu.sample} when it starts, then in the order GPUs
-    appear:
-    - [sys/gpu]{i i}[_util_pct] — how busy the GPU is (0–100), on NVIDIA a
-      mean over the interval
-    - [sys/gpu]{i i}[_mem_used_gb] — GPU memory used in GB
-    - [sys/gpu]{i i}[_mem_used_pct] — GPU memory used, percent of its own
-    - [sys/gpu]{i i}[_temp_c] — temperature in Celsius
-    - [sys/gpu]{i i}[_power_w] — power in watts
+    Raises [Invalid_argument] if [name] is empty, is not UTF-8, holds a [/]
+    or a control character, or starts with [.]. *)
 
-    Each group of metrics above comes from one sampler of {!Stat}, the
-    per-process group from {!Stat.Proc.Self.sample}. A group whose sampler
-    raises [Sys_error] when the monitor starts is neither defined nor logged.
-    A GPU's metric is defined when the monitor starts if the first sample has
-    its value, else the first time a sample has it, as the load of a GPU that
-    was suspended at the start. A sample that raises later leaves its group
-    out of that interval's samples, and the group's next rates are means over
-    both intervals; a GPU missing from a sample, or a value its sample lacks,
-    is left out of that interval. An interval over which the wall clock
-    stepped back logs no rates. *)
+(**/**)
 
-type t
-(** The type for background monitors. *)
+(* For the tests: the formulas of the rates, apart from the system. *)
 
-val start : ?interval:float -> Munin.Session.t -> t
-(** [start session] begins periodic system monitoring of [session].
+type disk = {
+  name : string;
+  read_bytes : int;
+  written_bytes : int;
+  busy_ms : int option;
+}
 
-    Every [interval] seconds the monitor logs one sample per metric. Rates
-    ([sys/cpu_*], [sys/proc_cpu_pct], [sys/disk_*]) are means over the interval,
-    computed from cumulative counters; an NVIDIA GPU's load is the mean of its
-    driver's samples over the interval; memory and the other GPU metrics are
-    the value at the sample's instant.
+val disk_rates :
+  dt:float -> prev:disk list -> disk list -> (string * float) list
+(** [disk_rates ~dt ~prev next] are the disk pairs of {!host} for a window of
+    [dt > 0.] seconds from the disks [prev] to the disks [next]. *)
 
-    [interval] defaults to [15.0] seconds. The first sample is taken after one
-    interval. The monitor thread is a daemon thread.
+val proc_stat_busy : string -> string -> float option
+(** [proc_stat_busy prev next] is [sys/cpu_busy_pct] between two texts of
+    Linux's [/proc/stat], or [None] if no CPU time passed. *)
 
-    Raises [Invalid_argument] if [interval] is not positive (or is NaN),
-    having sampled and declared nothing. *)
-
-val stop : t -> unit
-(** [stop t] wakes the monitoring thread and blocks until it terminates. It
-    waits for a sample in progress, never for the rest of the interval. Safe to
-    call multiple times. *)
+(**/**)
