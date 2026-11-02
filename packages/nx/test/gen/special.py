@@ -3209,7 +3209,7 @@ SECTIONS = {
                   "minimum from [lgamma_b] and the one beside 1 below it. From "
                   "[lgamma_small] to 2, the one about 2 runs from [lgamma_f], the one "
                   "about the minimum from [lgamma_e] and the one beside 1 below it.\n\n"
-                  "From [lgamma_shift_from], x is shifted down to 2 + f, f in [0, 1), where "
+                  "From [lgamma_shift_from], x is shifted down to 2 + f, f in \\[0, 1), where "
                   "lgamma (2 + f) = f/2 + f S(f)/R(f), S/R [lgamma_s]/[lgamma_r]. From "
                   "[lgamma_stirling_from], lgamma x = (x - 1/2)(log x - 1) + [lgamma_w0] + z "
                   "W(z^2), z = 1/x, W [lgamma_w]."),
@@ -3313,7 +3313,7 @@ FIELD_DOCS = {
                            "value. [igamma_atanh] is S(w) = sum_j w^(j-1)/(2j + 1), highest "
                            "degree first, to the least count within u/8 of bd0's series, mu "
                            "- log1p mu, to |v| = [igamma_near_v] and of its derivative. The "
-                           "shift of Stirling's correction from [1, 8) runs the last "
+                           "shift of Stirling's correction from \\[1, 8) runs the last "
                            "[igamma_shift_terms.(k)] of S in its k-th term, each the least "
                            "within u/64, absolutely, of the term and of its derivative. "
                            "[igamma_temme] holds Temme's c_k(eta), k < K, each to the degree "
