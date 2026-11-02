@@ -71,15 +71,12 @@ raven / llama.cpp b12048 Vulkan:
   and ends a submission. Done when a step of `Rig_program` makes or frees a
   slot's memory, so a per-run schedule is one program, and a split step's
   loads and submissions, counted on a rune bench row, match a linked one's.
-- `upcast_vectors` (heuristic.ml) has no term for a kernel's size: 8 nested
-  float64 sines over 1024 values take 8 lanes, run 4.5x as fast, and compile
-  in 2.2 s against 1.4 s without lanes. Done when an A/B on fudge of
-  `trig/sin-nested-8` and the `compiled` suite's sine rows decides whether a
-  kernel's size bounds its lanes. Masked axes upcast to up to 49 lanes give
-  Clang straight-line blocks whose instruction scheduling takes seconds:
-  rune's test_iterate case (float64 [4;2;2] over 3 lanes, a deep step)
-  becomes a fully unrolled 48-lane kernel, 4.8 s in Clang and 12.8 s with
-  `-march=x86-64`
+- masked axes upcast to up to 49 lanes once gave Clang straight-line
+  blocks whose scheduling took seconds (rune's test_iterate, float64
+  [4;2;2] over 3 lanes, 4.8 s in Clang), but one run's 8205 host kernels
+  (seed `s1:c80c8eab911c4a5e`) reach at most 16 masked lanes: find the
+  property draw that makes 48, then time Clang and a replay at 48, 24 and
+  8 lanes
 - a compile on 10 domains takes about twice the CPU of one domain. At load
   25-40 on the M1 Max, a jera tsit5 solve of y'' = -sin y took 18 s of CPU on
   10 domains, 8.9 s on 1 and 10 s on 10 with `OCAMLRUNPARAM=s=4M`; of
@@ -155,18 +152,26 @@ raven / llama.cpp b12048 Vulkan:
   the symbolic passes before decomposition the largest. What is left is the
   rewrite engine's cost per node (its tables, rebuilds and keys) and Clang;
   test_special runs 80-85 s on fudge loaded, 317-340 s on Ubuntu CI
-- host upcast width per target: D141's 64-byte lanes (heuristic.ml:446)
-  slowed memory-bound select-zero ~15% on x86; time 32 against 64 bytes on
-  fudge
+- whether memory-bound host kernels take lanes at all: no upcast ran 4-7%
+  faster than 64-byte lanes in two of seven loaded fudge runs of a 4M
+  float32 select-zero; decide on the scheduled quiet re-record
+- `r_32_3_2_4_3_400` (lorenz) runs 1.57x slower than beam's choice because
+  the heuristic's candidates, tinygrad's, offer no output upcast; no lane
+  bound fixes it
 - apply_experts' contractions run 56 ms against the block path's 36 ms:
   one route row per thread group, so decoded weights are not shared across
-  rows (D92's case); decide with D89's layout. At prefill-512 (CUDA) the
+  rows (D92's case). No layout rule can share reuse the gather hides:
+  nx.quant should present routes in blocks as `Nx.map_segments` does,
+  blocks past 32 rows on a tensor core. At prefill-512 (CUDA) the
   decoded weights are stored, 64 rows an expert (D163): E_8294400_32_2
   writes 2.1 GB in 4.74 ms for gate_up, which a layout sharing them across
   rows could keep in the gated per-group loads
 - D163 counts repeats pooled over a shared range, which overestimates `c`,
   and a collapsed read counts every range of its sum, which can overcount:
-  tighten both if a case shows a wrong store
+  tighten both if a case shows a wrong store. D163 stores a decoded weight
+  for `R` decodes, but a streamed matrix-vector layout decodes it
+  `ceil(R / 16)` times, and decoding inline is 2.1-2.3x faster at `R = 64`
+  (bf16 model on fudge): decide which layer counts a consumer's decodes
 - running sums cost ~257 ops per element (shape.ml:955): `Nx.cumsum` over
   float64 [100; 50500] takes ~1.0 s on CPU. A scan with constant work per
   element, and a compiled cumsum row
