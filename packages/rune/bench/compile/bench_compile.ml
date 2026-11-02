@@ -277,6 +277,31 @@ let betainccinv_grad () =
           (Rune.grad s (fun ((a, b), p) -> Nx.sum (Nx.betainccinv a b p)))
           ((a, b), p)))
 
+(* The gradient of the float64 beta quantile of 4 values in its shapes and
+   its probability: the guess and the Halley steps, which no derivative
+   passes, each an incomplete beta whose regions every value computes, and
+   the last step with its derivative. *)
+let betaincinv_grad () =
+  let s = Nx.Ptree.(pair (pair tensor tensor) tensor) in
+  let grad = Rune.grad s (fun ((a, b), p) -> Nx.sum (Nx.betaincinv a b p)) in
+  let a = input ~n:4 0.5 30. and b = input ~n:4 0.5 30. in
+  ignore
+    (Sys.opaque_identity
+       (Rune.jit Nx.Ptree.(s @-> returns s) grad ((a, b), input ~n:4 0.01 0.99)))
+
+(* The gradient of the float64 gamma quantile of 4 values in its shape and
+   its probability: the guess and the Halley steps, which no derivative
+   passes, and the last step with its derivative. *)
+let gammaincinv_grad () =
+  let s = Nx.Ptree.(pair tensor tensor) in
+  let grad = Rune.grad s (fun (a, p) -> Nx.sum (Nx.gammaincinv a p)) in
+  ignore
+    (Sys.opaque_identity
+       (Rune.jit
+          Nx.Ptree.(s @-> returns s)
+          grad
+          (input ~n:4 0.5 30., input ~n:4 0.01 0.99)))
+
 (* A normal draw of 1024 values of [dt] from a key argument: a Box-Muller
    transform, whose cosine and sine read an angle its bits bound below 2 pi. *)
 let normal dt () =
@@ -388,6 +413,8 @@ let cases =
     ("shaped-4k-3-lanes", shaped_padded);
     ("special/betainc-chain-f32", betainc_chain);
     ("special/betainccinv-grad-f32", betainccinv_grad);
+    ("special/betaincinv-grad-f64", betaincinv_grad);
+    ("special/gammaincinv-grad-f64", gammaincinv_grad);
     ("wide/sum-1e6", wide_sum);
     ("devices/dp-step-16", data_parallel);
     ("devices/partials-16", partials);
