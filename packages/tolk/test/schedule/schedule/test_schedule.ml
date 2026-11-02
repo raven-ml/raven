@@ -1865,10 +1865,25 @@ let on_disk =
    run's first element. A copy stored into elements that are no run lands in
    storage of its own, which a kernel stores. *)
 
+(* A call's body and destination, as their operations, and the first element
+   and size of a destination that shrinks a buffer, read through a bitcast of
+   the shrink. *)
+let destination c =
+  let name u = Format.asprintf "%a" Op.pp (Ops.op u) in
+  let d = Ops.nth c 1 in
+  let shrunk = if Ops.op d = Bitcast then Ops.nth d 0 else d in
+  let run =
+    if Ops.op shrunk <> Shrink then []
+    else
+      match Shape.marg shrunk with
+      | Shrink [ (Ops.Int lo, Ops.Int k) ] -> [ (lo, k) ]
+      | _ -> []
+  in
+  (name (Ops.nth c 0), name d, run)
+
 (* The calls of the schedule that stores into [into], a view of a buffer of 64
-   floats on CPU:1, a copy of a buffer of the host: each call's body and its
-   destination, as their operations, and the first element and size of a
-   destination that shrinks the buffer. *)
+   floats on CPU:1, a copy of a buffer of the host, each as {!destination}
+   gives it. *)
 let copied_into ?(dt = Dtype.Float32) into =
   let dst = Ops.new_buffer "CPU:1" 64 Float32 in
   let view = into (Shape.reshape dst [ Int 8; Int 8 ]) in
@@ -1881,19 +1896,7 @@ let copied_into ?(dt = Dtype.Float32) into =
     Schedule.create_linear_with_vars ~capturing:true
       (Ops.sink [ Ops.after dst [ Ops.store view value ] ])
   in
-  let name u = Format.asprintf "%a" Op.pp (Ops.op u) in
-  List.map
-    (fun c ->
-      let d = Ops.nth c 1 in
-      let run =
-        if Ops.op d <> Shrink then []
-        else
-          match Shape.marg d with
-          | Shrink [ (Ops.Int lo, Ops.Int k) ] -> [ (lo, k) ]
-          | _ -> []
-      in
-      (name (Ops.nth c 0), name d, run))
-    (Ops.src linear)
+  List.map destination (Ops.src linear)
 
 (* {!copied_into}'s calls for a buffer of 4 floats on CPU:1 filled by a copy
    from the host, then element 2 of it stored with a copy of one element. *)
@@ -1908,19 +1911,7 @@ let one_copied () =
     Schedule.create_linear_with_vars ~capturing:true
       (Ops.sink [ Ops.after filled [ Ops.store into value ] ])
   in
-  let name u = Format.asprintf "%a" Op.pp (Ops.op u) in
-  List.map
-    (fun c ->
-      let d = Ops.nth c 1 in
-      let run =
-        if Ops.op d <> Shrink then []
-        else
-          match Shape.marg d with
-          | Shrink [ (Ops.Int lo, Ops.Int k) ] -> [ (lo, k) ]
-          | _ -> []
-      in
-      (name (Ops.nth c 0), name d, run))
-    (Ops.src linear)
+  List.map destination (Ops.src linear)
 
 let calls = list (triple string string (list (pair int int)))
 let store = Format.asprintf "%a" Op.pp Store
@@ -1956,13 +1947,10 @@ let runs =
           | calls -> failf "%d calls, not a copy and a kernel" (List.length calls));
       test "a copy stored into a run of a bitcast copies into a view of it"
         (fun () ->
-          match
-            copied_into ~dt:Dtype.Int32 (fun g ->
-                Shape.shrink (Ops.bitcast g Int32) [ Some (Int 2, Int 4); None ])
-          with
-          | [ (copy, into, _) ] ->
-              equal (pair string string) (store, bitcast) (copy, into)
-          | calls -> failf "%d calls, not one copy" (List.length calls));
+          equal calls
+            [ (store, bitcast, [ (16, 16) ]) ]
+            (copied_into ~dt:Dtype.Int32 (fun g ->
+                 Shape.shrink (Ops.bitcast g Int32) [ Some (Int 2, Int 4); None ])));
     ]
 
 let () =

@@ -2125,11 +2125,13 @@ let storage_per_run () =
 (* Storage made per run, against a model of each buffer's first and last use
 
    A schedule of calls [x <- y + z] over values of [per_run_size] floats on a
-   memory device of its own: value 0 is parameter 1, the others storage the
-   schedule makes, and a last call writes parameter 0 from the newest value and
-   value 0. A buffer lives from the call that writes it to the last that reads
-   it, so the most a run holds beyond its parameters is the most buffers live
-   at one call; a budget below it runs out of memory, and one at it does not. *)
+   memory device of its own, some of them two calls in a loop of two trips:
+   value 0 is parameter 1, the others storage the schedule makes, and a last
+   call writes parameter 0 from the newest value and value 0. A buffer lives
+   from the entry that writes it to the last that reads it, a loop being one
+   entry, so the most a run holds beyond its parameters is the most buffers
+   live at one entry; a budget below it runs out of memory, and one at it does
+   not. *)
 
 let per_run_size = 64
 let per_run_bytes = 4 * per_run_size
@@ -2148,10 +2150,11 @@ let per_run_add =
           [ Ops.end_ (Ops.store (at 0) (at 1 + at 2)) [ i ] ])
        (Lazy.force clang))
 
-(* The model: each call's value and the two it reads, newest first. *)
-type uses = { count : int; reads : (int * int * int) list }
+(* The model: each entry's calls, newest entry first, each call's value and
+   the two it reads. *)
+type uses = { count : int; reads : (int * int * int) list list }
 
-(* The schedule: each value's node, newest first, and its calls. *)
+(* The schedule: each value's node, newest first, and its entries. *)
 type calls = { nodes : Ops.t list; calls : Ops.t list }
 
 let per_run_param slot =
@@ -2161,27 +2164,46 @@ let pick n k = k mod n
 
 let model_add y z (m : uses) =
   let y = pick m.count y and z = pick m.count z in
-  { count = m.count + 1; reads = (m.count, y, z) :: m.reads }
+  { count = m.count + 1; reads = [ (m.count, y, z) ] :: m.reads }
+
+(* Two values, the second of which may read the first. *)
+let model_loop y z y' z' (m : uses) =
+  let x = m.count in
+  let first = (x, pick x y, pick x z)
+  and second = (x + 1, pick (x + 1) y', pick (x + 1) z') in
+  { count = x + 2; reads = [ first; second ] :: m.reads }
+
+(* A call of a new value, and the nodes with it. *)
+let added y z nodes =
+  let n = List.length nodes in
+  let node k = List.nth nodes (n - 1 - pick n k) in
+  let x = Ops.new_buffer "PER_RUN" per_run_size Float32 in
+  (Ops.call (Lazy.force per_run_add) [ x; node y; node z ], x :: nodes)
 
 let system_add y z (c : calls) =
-  let n = List.length c.nodes in
-  let node k = List.nth c.nodes (n - 1 - pick n k) in
-  let x = Ops.new_buffer "PER_RUN" per_run_size Float32 in
-  {
-    nodes = x :: c.nodes;
-    calls = Ops.call (Lazy.force per_run_add) [ x; node y; node z ] :: c.calls;
-  }
+  let call, nodes = added y z c.nodes in
+  { nodes; calls = call :: c.calls }
+
+let system_loop y z y' z' (c : calls) =
+  let first, nodes = added y z c.nodes in
+  let second, nodes = added y' z' nodes in
+  let r = Ops.range (Int 2) [ 100 + List.length c.nodes ] in
+  let loop = Ops.end_ (Ops.v Op.Linear ~src:[ first; second ]) [ r ] in
+  { nodes; calls = loop :: c.calls }
 
 let input_values = Array.init per_run_size (fun i -> Float.of_int (i + 1))
 
-(* The most bytes live at one call, and parameter 0's values. *)
+(* The most bytes live at one entry, and parameter 0's values. *)
 let model_run (m : uses) =
-  let calls = List.rev ((-1, m.count - 1, 0) :: m.reads) in
+  let calls = List.rev ([ (-1, m.count - 1, 0) ] :: m.reads) in
   let first = Array.make m.count max_int and last = Array.make m.count (-1) in
   List.iteri
-    (fun i (x, y, z) ->
-      if x > 0 then first.(x) <- i;
-      List.iter (fun v -> if v > 0 then last.(v) <- i) [ x; y; z ])
+    (fun i entry ->
+      List.iter
+        (fun (x, y, z) ->
+          if x > 0 then first.(x) <- i;
+          List.iter (fun v -> if v > 0 then last.(v) <- i) [ x; y; z ])
+        entry)
     calls;
   let live i =
     let n = ref 0 in
@@ -2195,7 +2217,7 @@ let model_run (m : uses) =
   let value = Array.make m.count input_values in
   List.iter
     (fun (x, y, z) -> value.(x) <- Array.map2 ( +. ) value.(y) value.(z))
-    (List.rev m.reads);
+    (List.concat (List.rev m.reads));
   ( !peak * per_run_bytes,
     floats (Array.map2 ( +. ) value.(m.count - 1) value.(0)) )
 
@@ -2257,6 +2279,9 @@ let per_run_model =
         system_add;
       command "add" (k @-> k @-> schedule ^-> makes schedule) model_add
         system_add;
+      command "loop"
+        (k @-> k @-> k @-> k @-> schedule ^-> makes schedule)
+        model_loop system_loop;
       command "run"
         (schedule ^-> returns (pair int values))
         model_run system_run;
