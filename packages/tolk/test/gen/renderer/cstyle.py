@@ -21,6 +21,14 @@ after the one-word names Metal gives their elements, so a Metal source
 is tinygrad's with `signed_char`, `unsigned_char`, `unsigned_short` and
 `unsigned_long` vectors named `char`, `uchar`, `ushort` and `ulong` ones.
 
+`to_program` packs the arguments of every launched kernel for a renderer
+with `packed_args`, Clang's and Metal's, as bytes in one parameter `args`
+(`pack_args`). The cases linearize their kernels unpacked, as a body another
+kernel calls is, so that the renderers' writing of each kind of parameter
+stays covered, except a Metal kernel with a scalar parameter: Metal takes no
+scalar argument by value, so it is linearized packed, as `to_program`
+linearizes it.
+
 The rewrites are a table `rewrites`, whose rows give the position of an input
 in `rewrite_inputs` and of its result in `rewritten`. The table `declarations`
 holds what each renderer declares for a target, and `written` how each writes
@@ -39,13 +47,13 @@ compiler_amd.c.DLL._loaded_[compiler_amd.comgr.dll.nm] = compiler_amd.comgr.dll
 
 from golden import graph, table, text
 from tinygrad import Tensor, Variable, dtypes
-from tinygrad.codegen import full_rewrite_to_sink, line_rewrite, pm_alloc_to_buf, pm_linearize_cleanups
+from tinygrad.codegen import full_rewrite_to_sink, line_rewrite, pack_args, pm_alloc_to_buf, pm_linearize_cleanups
 from tinygrad.codegen.late.linearizer import linearize
 from tinygrad.codegen.opt import Opt, OptOps
 from tinygrad.dtype import AddrSpace
 from tinygrad.helpers import Context, Target
 from tinygrad.renderer.cstyle import ClangRenderer, CUDARenderer, HIPRenderer, MetalRenderer
-from tinygrad.uop.ops import AxisType, GroupOp, KernelInfo, Ops, UOp, graph_rewrite
+from tinygrad.uop.ops import AxisType, GroupOp, KernelInfo, Ops, ProgramInfo, UOp, graph_rewrite
 
 RENDERERS = {"CLANG": ClangRenderer, "METAL": MetalRenderer, "CUDA": CUDARenderer, "HIP": HIPRenderer}
 
@@ -91,8 +99,17 @@ def vectors(build, axis=0):
     return lambda ren: tensors(build, opts=[up(axis, 4)] if ren.target.device == "CPU" else None)(ren)
 
 
+def launched(sink, ren):
+    """`sink` reading its arguments packed if it is a launched Metal kernel
+    with a scalar parameter, as `to_program` packs it."""
+    if not isinstance(ren, MetalRenderer) or not sink.arg.kernel: return sink
+    params = ProgramInfo.from_sink(sink, ren.target).params
+    if all(p.addrspace is not AddrSpace.ALU for p in params): return sink
+    return pack_args(sink, params)
+
+
 def lowered(sink, ren, optimize=False):
-    full = full_rewrite_to_sink(sink, ren, optimize=optimize)
+    full = launched(full_rewrite_to_sink(sink, ren, optimize=optimize), ren)
     return line_rewrite(linearize(full), pm_linearize_cleanups + pm_alloc_to_buf)
 
 
@@ -103,12 +120,12 @@ def ast(make):
 
 def raw(make):
     """The nodes of the sink `make()` builds, in order, rendered as they are."""
-    return lambda ren: make().toposort()
+    return lambda ren: launched(make(), ren).toposort()
 
 
 def raw_for(make):
     """The nodes of the sink `make(ren)` builds for the case's renderer."""
-    return lambda ren: make(ren).toposort()
+    return lambda ren: launched(make(ren), ren).toposort()
 
 
 # Kernels

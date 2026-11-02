@@ -1,8 +1,13 @@
 # tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
 #include <metal_stdlib>
 using namespace metal;
-kernel void E_28n2A429(device float* data0_256, device float* data1_256, const int n_, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  int gidx0 = gid.x; /* (n<<2) */
-  float val0 = (*(data1_256+gidx0));
-  *(data0_256+gidx0) = (val0+1.0f);
+kernel void E_28n2A429(device unsigned char* args_24, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int val0 = (*(((device int*)(args_24))+4));
+  unsigned long val1 = (*(((device unsigned long*)(args_24))+0));
+  unsigned long val2 = (*(((device unsigned long*)(args_24))+1));
+  int gidx0 = gid.x; /* (UOp(Ops.BITCAST, arg=dtypes.i32, src=(
+    UOp(Ops.PARAM, arg=ParamArg(0, dtypes.u8, name='args'), src=(
+      UOp(Ops.CONST, arg=24, src=()),)),))[4]<<2) */
+  float val3 = (*(((device float*)(val2))+gidx0));
+  *(((device float*)(val1))+gidx0) = (val3+1.0f);
 }
