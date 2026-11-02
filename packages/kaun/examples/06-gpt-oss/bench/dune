@@ -9,6 +9,7 @@
   nx
   rig
   rig.cuda
+  rig.nv.nvidia
   rig.amd.amdgpu
   nx.io
   nx.quant

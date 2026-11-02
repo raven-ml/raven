@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* gpt-oss-20b at its own shapes on a CUDA or AMD GPU, the example's model
+(* gpt-oss-20b at its own shapes on a CUDA, NV or AMD GPU, the example's model
    compiled one layer kind at a time ([Layer_loop]): a decode step and
    prefills of 512 and 12 tokens, over random weights at bfloat16 with the
    experts packed as MXFP4, a decode step with the attention projections and
@@ -19,7 +19,7 @@
    maps for the GPU as writable, so the worker would copy every page: twice
    the weights in memory, more than a 32 GB host holds. Kernels compile in
    [--warm], a process of its own, into tolk's disk cache; a case's setup reads
-   them back. Without a CUDA or AMD GPU there is nothing to measure. *)
+   them back. Without a CUDA, NV or AMD GPU there is nothing to measure. *)
 
 open Kaun
 
@@ -162,15 +162,27 @@ let q8_0 (w : _ Gpt_oss.params) =
   in
   { w with blocks = List.map block w.blocks; head = Option.map pack w.head }
 
-let cuda () = Rig.open_ (Rig_cuda.gpu 0)
-let amd () = Rig.open_ (Rig_amd_amdgpu.gpu 0)
+(* The paths tried, in order: an NVIDIA GPU through CUDA, then through its
+   kernel driver (NV), then an AMD GPU through its kernel driver. Hiding the
+   CUDA devices ([CUDA_VISIBLE_DEVICES=]) measures the card through NV. *)
+let paths =
+  [
+    (fun () -> Rig.open_ (Rig_cuda.gpu 0));
+    (fun () -> Rig.open_ (Rig_nv_nvidia.gpu 0));
+    (fun () -> Rig.open_ (Rig_amd_amdgpu.gpu 0));
+  ]
 
-(* The GPU: CUDA's first, else AMD's first. A set of it computes under
+let first () =
+  let rec go why = function
+    | [] -> Error (String.concat "; " (List.rev why))
+    | open_ :: rest -> (
+        match open_ () with Ok d -> Ok d | Error e -> go (e :: why) rest)
+  in
+  go [] paths
+
+(* The GPU [0] of the first path that opens one. A set of it computes under
    [Rune.jit] alone. *)
-let gpu () =
-  match cuda () with
-  | Ok d -> d
-  | Error _ -> ( match amd () with Ok d -> d | Error e -> failwith e)
+let gpu () = match first () with Ok d -> d | Error e -> failwith e
 
 (* A step on the GPU warmed past its compilations: [`Decode] feeds back the
    token it predicts at a fixed position in the middle of the cache,
@@ -265,7 +277,7 @@ let case kind =
     name
     (fun call -> call ())
 
-let opens () = Result.is_ok (cuda ()) || Result.is_ok (amd ())
+let opens () = Result.is_ok (first ())
 
 (* Whether a GPU opens, asked of a fresh process: the driver must not be
    initialized before the fork that isolates a case. *)
@@ -286,7 +298,7 @@ let () =
         List.iter (fun kind -> (setup weights kind) ()) kinds
   | _ ->
       if not (opens_in_child ()) then begin
-        prerr_endline "gpt_oss: no CUDA or AMD GPU, nothing to measure";
+        prerr_endline "gpt_oss: no CUDA, NV or AMD GPU, nothing to measure";
         exit 0
       end;
       (* A trial's deadline covers its setup, which builds the 13.8 GB of
