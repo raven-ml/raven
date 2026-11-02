@@ -1,11 +1,8 @@
-; mdx runs the OCaml and shell fences, except those marked skip: installation
-; commands, which need the network; `munin` command lines, which name run ids
-; generated per run and show output from the reader's store (04-cli.md and
-; 05-dashboard.md give them as plain fences); and the Kaun training loop, which
-; downloads MNIST.
-;
-; The guides sample the system through munin.sys, which reads no load average
-; on Windows.
+; mdx runs the OCaml fences, except those marked skip: installation commands,
+; which need the network, and the glue over rig, which needs a GPU. Shell
+; examples (`munin`, `jq`, `tail`) are marked skip: they name run ids drawn
+; per run and print what the reader's store holds. The guides stand for a
+; crashed program with a forked child, so they do not run on Windows.
 
 (mdx
  (files *.md)

@@ -3,63 +3,62 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Parameter sweep with grouped runs.
-
-    Runs the same computation with different configurations, grouped under a
-    single sweep. Compares results at the end via Store queries. *)
+(* A sweep: one run that drives three configurations, each a run whose parent is
+   the sweep, compared by their best error once they have ended. *)
 
 open Munin
 
+let configs =
+  [
+    ("aggressive", 0.1, 50);
+    ("moderate", 0.01, 100);
+    ("conservative", 0.001, 200);
+  ]
+
+let trial store ~parent (name, step_size, max_iter) =
+  Session.within
+    (Session.start ~store ~experiment:"optimisation" ~name ~parent
+       ~params:[ ("step_size", `Float step_size); ("max_iter", `Int max_iter) ]
+       ~steps:max_iter ())
+  @@ fun s ->
+  let error = Session.metric s ~goal:`Minimize "error" in
+  let e = ref 10.0 in
+  for step = 1 to max_iter do
+    e := (!e *. (1.0 -. step_size)) +. Random.float 0.01;
+    if step mod 10 = 0 then Session.log error ~step !e
+  done
+
 let () =
-  let store = Store.open_ ~root:"_munin" () in
-  let group = "sweep-1" in
-
-  (* Sweep over three configurations. *)
-  let configs =
-    [
-      ("aggressive", 0.1, 50);
-      ("moderate", 0.01, 100);
-      ("conservative", 0.001, 200);
-    ]
+  let store = Store.open_ () in
+  let sweep =
+    Session.within
+      (Session.start ~store ~experiment:"optimisation" ~name:"sweep-1" ())
+    @@ fun s ->
+    List.iter (trial store ~parent:(Session.id s)) configs;
+    Session.id s
   in
+  let trials =
+    List.filter (fun r -> Run.parent r = Some sweep) (Store.runs store)
+  in
+  Printf.printf "sweep %s\n" sweep;
   List.iter
-    (fun (name, step_size, max_iter) ->
-      Session.with_run ~store ~experiment:"optimisation" ~name ~group
-        ~params:[ ("step_size", `Float step_size); ("max_iter", `Int max_iter) ]
-      @@ fun session ->
-      let error_metric = Session.metric session ~goal:`Minimize "error" in
-
-      (* Simulate convergence: smaller steps converge slower but lower. *)
-      let error = ref 10.0 in
-      for i = 1 to max_iter do
-        error := (!error *. (1.0 -. step_size)) +. Random.float 0.01;
-        if i mod 10 = 0 then Metric.log error_metric ~step:i !error
-      done)
-    configs;
-
-  (* Compare: list all runs in the group and print a results table. *)
-  let runs = Store.list_runs store ~experiment:"optimisation" ~group () in
-  Printf.printf "%-15s  %-10s  %-10s  %-12s\n" "name" "step_size" "max_iter"
-    "final_error";
-  Printf.printf "%s\n" (String.make 52 '-');
-  List.iter
-    (fun run ->
-      let name = Option.value ~default:"?" (Run.name run) in
+    (fun r ->
+      (* An ended run's statistics come from the hint beside its log. *)
+      let best =
+        match List.assoc_opt "error" (History.stats_of r) with
+        | Some { goal = Some goal; stats; _ } -> Metric.best goal stats
+        | _ -> None
+      in
       let step_size =
-        match Run.find_param run "step_size" with
-        | Some (`Float f) -> Printf.sprintf "%g" f
-        | _ -> "?"
+        Option.fold ~none:"-"
+          ~some:(Format.asprintf "%a" Value.pp)
+          (List.assoc_opt "step_size" (Run.params r))
       in
-      let max_iter =
-        match Run.find_param run "max_iter" with
-        | Some v -> Format.asprintf "%a" Value.pp v
-        | None -> "?"
-      in
-      let latest = Run.latest_metrics run in
-      let error =
-        match List.assoc_opt "error" latest with
-        | Some m -> Printf.sprintf "%.6f" m.value
-        | None -> "?"
-      in
-      Printf.printf "%-15s  %-10s  %-10s  %-12s\n" name step_size max_iter error)
-    runs
+      Printf.printf "%-13s step_size %-6s best error %s\n"
+        (Option.value ~default:"-" (Run.name r))
+        step_size
+        (Option.fold ~none:"-"
+           ~some:(fun (b : Metric.sample) ->
+             Printf.sprintf "%.6f at step %d" b.value b.step)
+           best))
+    trials

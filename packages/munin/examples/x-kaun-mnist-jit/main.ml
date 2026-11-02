@@ -9,12 +9,13 @@
     forward, backward, and SGD update — compiles into one program with
     [Rune.jit] and runs on Metal (the default; pass [--device CPU] or
     [--device CUDA]). Parameters stay resident on the device between steps: only
-    the scalar loss is read back each step. Metrics stream to munin; watch the
-    run live with:
+    the scalar loss is read back each step. Metrics stream to munin, with
+    readings of the machine, the process and the device; read them while the run
+    trains with:
 
     {v
     dune exec packages/munin/examples/x-kaun-mnist-jit/main.exe
-    munin watch   # in another terminal
+    munin metrics RUN train/loss   # in another terminal
     v}
 
     The first step traces and compiles the program (a few seconds, cached across
@@ -100,34 +101,49 @@ let () =
   let count = ref (Vega.sgd_init cnn !params).step in
   let n_params = Nx.Ptree.fold cnn (fun _ t n -> n + Nx.numel t) !params 0 in
 
-  (* Start a tracked run. *)
-  let session =
-    Munin.Session.start ~experiment:"mnist"
-      ~name:("cnn-jit-" ^ String.lowercase_ascii !device)
-      ~tags:[ "jit"; String.lowercase_ascii !device ]
-      ~params:
-        [
-          ("device", `String !device);
-          ("lr", `Float !lr);
-          ("batch_size", `Int !batch_size);
-          ("epochs", `Int !epochs);
-          ("optimizer", `String "sgd");
-          ("model", `String "cnn");
-          ("n_params", `Int n_params);
-        ]
-      ()
-  in
+  (* Start a tracked run, which [within] ends as finished, or as failed if
+     training raises. *)
+  Munin.Session.within
+    (Munin.Session.start ~experiment:"mnist"
+       ~name:("cnn-jit-" ^ String.lowercase_ascii !device)
+       ~tags:[ "jit"; String.lowercase_ascii !device ]
+       ~params:
+         [
+           ("device", `String !device);
+           ("lr", `Float !lr);
+           ("batch_size", `Int !batch_size);
+           ("epochs", `Int !epochs);
+           ("optimizer", `String "sgd");
+           ("model", `String "cnn");
+           ("n_params", `Int n_params);
+         ]
+       ())
+  @@ fun session ->
   let train_loss = Munin.Session.metric session ~goal:`Minimize "train/loss" in
   let train_loss_avg = Munin.Session.metric session "train/loss_avg" in
   let val_accuracy =
     Munin.Session.metric session ~goal:`Maximize "val/accuracy"
   in
-  let images_per_sec =
-    Munin.Session.metric session ~summary:`Mean "perf/images_per_sec"
-  in
+  let images_per_sec = Munin.Session.metric session "perf/images_per_sec" in
   let step_ms = Munin.Session.metric session "perf/step_ms" in
   let epoch_metric = Munin.Session.metric session "epoch" in
-  let sysmon = Munin_sys.start session in
+  (* Readings of the machine, the process, and each device of the set: what this
+     process holds on it and its budget, as rig reports them. A lost device
+     raises [Sys_error], so the sampler skips it that time. *)
+  let device_reading d =
+    Munin_sys.device (Rig.name d) (fun () ->
+        match (Rig.allocated d, Rig.budget d) with
+        | exception Rig.Lost (_, why) -> raise (Sys_error why)
+        | allocated, budget ->
+            {
+              Munin_sys.unknown with
+              allocated = Some allocated;
+              budget = (if budget = max_int then None else Some budget);
+            })
+  in
+  Munin.Session.sample session ~every:15.
+    (Munin_sys.host () :: Munin_sys.process ()
+    :: List.map device_reading (Nx.rigs Set.v));
 
   Printf.printf "run: %s  device: %s  params: %d\n%!" (Munin.Session.id session)
     !device n_params;
@@ -217,37 +233,29 @@ let () =
         if s mod !eval_every = 0 then begin
           let acc = evaluate !params in
           last_acc := acc;
-          Munin.Metric.log val_accuracy ~step:s acc
+          Munin.Session.log val_accuracy ~step:s acc
         end;
         Printf.printf "\r  step %d/%d  loss: %.4f  val_acc: %.2f%%%!"
           (((s - 1) mod num_batches) + 1)
           num_batches loss (!last_acc *. 100.));
 
     let loss_avg = !loss_sum /. float_of_int !loss_count in
-    Munin.Metric.log train_loss_avg ~step:!global_step loss_avg;
+    Munin.Session.log train_loss_avg ~step:!global_step loss_avg;
     Printf.printf "\nepoch %d  loss: %.4f  val_acc: %.2f%%\n%!" epoch loss_avg
       (!last_acc *. 100.)
   done;
 
   let acc = evaluate !params in
   last_acc := acc;
-  Munin.Metric.log val_accuracy ~step:!global_step acc;
+  Munin.Session.log val_accuracy ~step:!global_step acc;
 
   (* Save the trained model as a versioned artifact. *)
-  let checkpoint_path =
-    Filename.concat (Munin.Session.dir session) "model.safetensors"
-  in
+  let checkpoint_path = Filename.temp_file "mnist-cnn-jit" ".safetensors" in
   Nx_io.save_safetensors checkpoint_path (Nx_io.Archive.of_value cnn !params);
   ignore
-    (Munin.Session.log_artifact session ~name:"mnist-cnn-jit" ~kind:`Checkpoint
-       ~path:checkpoint_path
+    (Munin.Session.log_artifact session ~step:!global_step ~name:"mnist-cnn-jit"
        ~metadata:[ ("format", `String "safetensors") ]
-       ~aliases:[ "latest" ] ());
+       checkpoint_path);
 
-  Munin_sys.stop sysmon;
-  Munin.Session.set_notes session
-    (Some
-       (Printf.sprintf "Jitted on %s. Final val accuracy: %.2f%%" !device
-          (!last_acc *. 100.)));
-  Munin.Session.finish session;
+  Munin.Session.set_summary session [ ("final/val_accuracy", `Float !last_acc) ];
   Printf.printf "\nDone. Run: %s\n" (Munin.Session.id session)

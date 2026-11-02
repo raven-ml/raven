@@ -1,8 +1,10 @@
 # munin
 
-Local run tracking: metrics, artifacts and run comparison on the local
-filesystem, as plain JSON readable with `jq`, with a terminal dashboard.
-No server and no accounts.
+Run tracking in plain files: a store is a directory that
+`lib/store_format.mli` specifies, written by one session per run and read
+by anyone, with no server and no account.
 
-- `munin.sys` samples system metrics through C stubs per operating system,
-  one sample per tick with no averaging, every 15 s by default.
+- `munin` depends on no raven library. It reads no device: a program
+  builds device readings from its own libraries, as the guides do over rig.
+- `munin.sys` depends on no part of munin. Its readings read the machine
+  and the process through C stubs per system, and keep their own windows.
