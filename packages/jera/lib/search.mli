@@ -205,18 +205,19 @@ val judge :
   f:('q, 'd) source ->
   (float, 'q, 'd) Nx.t ->
   ('q, 'd) state * ('q, 'd) limit
-(** [judge tol s ~map ~mu ~resolution ~f delta] tests the undamped step
-    [delta] at [s.x] in each running lane, [f] the function the step is taken
-    from: the lane converges at [s.x + delta] where its error meets [tol]
-    there. The error is [error q ~x:s.x ~f delta] with [q] the {!contraction};
-    with [mu], the least curvature a quasi-Newton method's steps measured, at
-    least [|σ g| / (mu √n)] times each component's scale [σ] at
-    [s.x + delta], [g] the gradient [f] holds; and with [resolution], at least
-    it, per component. A lane whose [map], the step the method takes,
-    cannot move its estimate, one within a unit in the last place of every
-    component or, with [resolution], of the estimate's largest magnitude, is
-    at the floats' limit, and ends as {!limit} says. The result holds what
-    {!limit} needs for the lanes the method's search leaves there. *)
+(** [judge tol s ~map ~mu ~resolution ~f delta] tests the undamped step [delta]
+    at [s.x] in each running lane, [f] the function the step is taken from: the
+    lane converges at [s.x + delta] where its error meets [tol] there. The error
+    is [error q ~x:s.x ~f delta] with [q] the {!contraction}; with [mu], the
+    least curvature a quasi-Newton method's steps measured, at least the
+    gradient's bound [b = |σ g| / (mu √n)] times each component's scale [σ] at
+    [s.x + delta], [g] the gradient [f] holds, and at most [|delta| + b]; and
+    with [resolution], at least it, per component. A lane whose [map], the step
+    the method takes, cannot move its estimate, one within a unit in the last
+    place of every component or, where [resolution] alone fails [tol], of the
+    estimate's largest magnitude, is at the floats' limit, and ends as {!limit}
+    says. The result holds what {!limit} needs for the lanes the method's search
+    leaves there. *)
 
 val limit : ('q, 'd) state -> ('q, 'd) limit -> at:'d Nx.bool_t -> ('q, 'd) state
 (** [limit s l ~at] ends each running lane of [at] at the floats' limit, with

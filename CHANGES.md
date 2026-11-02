@@ -661,12 +661,18 @@ All notable changes to this project will be documented in this file.
 - `Minimize.solve` under a tolerance finer than the floats resolve ends a lane
   `Stalled` near the minimum instead of `Budget_spent`: Newton and Newton–CG
   stepped between floats for up to 31 000 evaluations. Newton's search now
-  asks the gradient's norm to fall within `f`'s rounding.
+  asks the gradient's norm to fall where `f` cannot show a decrease.
+- `Minimize.bfgs` and `lbfgs` bound their error by the step plus the
+  gradient's bound whatever their readings: BFGS stalled at an answer
+  `1e-101` from a zero component under `Tol.v ~rel:1e-10 ~abs:1e-14`, its
+  readings above 1.
 - `Minimize.solve` counts an error of at least `ε κ |x|∞` per component, `κ`
   the condition its newest moves measured: BFGS and `levenberg_marquardt`
   converged under `Tol.ulps` with a component 4e-17 from its zero at 0,
   where the gradient rounded to 0. Under a tolerance finer than that, lanes
-  now end `Stalled` even where they land on the minimum.
+  now end `Stalled` even where they land on the minimum, coupled or not: a
+  relative tolerance `r` fails at every component below `ε κ |x|∞ / r`, and
+  an absolute term of `ε κ |x|∞` avoids it.
 - `Tol.pp` and Jera's messages write each float as the shortest decimal that
   reads back, the same text on every system: `abs 1000000` where they wrote
   `abs 1e+06`, or `1e+006` under Windows.

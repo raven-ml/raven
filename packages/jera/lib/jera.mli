@@ -643,7 +643,11 @@ module Minimize : sig
       |s / σ|²] their accepted steps [s] measured, and no bound before one did.
       It is the distance in [tol]'s scaled norm where [f]'s curvature near the
       minimum is at least [μ], an estimate since the steps sample the curvature
-      only along their path. A gradient method's error, and
+      only along their path. Their error is also at most [|δ|] plus this bound,
+      whatever the readings: the bound holds [x]'s distance to the minimum and
+      [δ] moves the answer from [x], so a lane whose readings do not contract,
+      as where the curvature estimate overshoots a component, still converges
+      once both are small. A gradient method's error, and
       {!levenberg_marquardt}'s, is also at least [ε κ |x|∞] in each component,
       [κ] the ratio of the larger to the smaller of the curvatures [yᵀs / sᵀs]
       its two newest moves measured, 1 before two, and for
@@ -651,19 +655,23 @@ module Minimize : sig
       gradient's rounding is [ε] times its largest terms, about the largest
       curvature times [|x|∞], and a coupled problem's gradient rounds to 0
       within that over the least curvature of its zero, so a gradient that is 0
-      there fixes a component no closer; a step within [ε |x|∞] in every
-      component is at the floats' limit. A coordinate held at a bound its
-      gradient pushes against is fixed by the bound and keeps its error. Under a
-      tolerance finer than this resolution, as [Tol.ulps] below a few ulps of a
-      coupled minimum or any [Tol.ulps] at a component of 0, a lane ends
-      [Stalled] even where it lands on the minimum: the gradient's value cannot
-      tell that it did, and [Converged] states only what the floats can show. A
-      lane whose error does not meet [tol] ends [Stalled] as in {!System}, and
-      at a step that is not downhill; a non-finite [f] or gradient at the start
-      ends it [Not_finite]; [budget] iterations end it [Budget_spent]. At the
-      floats' limit the gradient is rounding, and a step its slopes accept
-      raises [f] as readily as it lowers it: {!newton}'s search there asks the
-      gradient's norm to fall, so it finds no decrease.
+      there fixes a component no closer. Where this resolution alone fails
+      [tol], a step within [ε |x|∞] in every component is at the floats' limit.
+      A coordinate held at a bound its gradient pushes against is fixed by the
+      bound and keeps its error. The resolution reaches every component, coupled
+      or not, since a gradient's value cannot tell: a relative tolerance [r]
+      fails at each component below [ε κ |x|∞ / r], as [Tol.rel 1e-10] does at a
+      component of [10⁻⁷] beside one of 1, and [Tol.ulps k] at any component
+      below [κ / k] times the largest; an absolute term of [ε κ |x|∞] in [tol]
+      avoids it. Under a tolerance finer than the resolution a lane ends
+      [Stalled] even where it lands on the minimum, and [Converged] states only
+      what the floats can show. A lane whose error does not meet [tol] ends
+      [Stalled] as in {!System}, and at a step that is not downhill; a
+      non-finite [f] or gradient at the start ends it [Not_finite]; [budget]
+      iterations end it [Budget_spent]. At the floats' limit the gradient is
+      rounding, and a step its slopes accept raises [f] as readily as it lowers
+      it: {!newton}'s search there asks the gradient's norm to fall, so it finds
+      no decrease.
 
       {b Derivative.} The answer is stated as the zero of rune's gradient of [f]
       through {!Rune.root}, so its derivative is [−H⁻¹ ∂θ∇f] through every

@@ -548,13 +548,20 @@ let judge tol s ~map ~mu ~resolution ~f delta =
   let answer = Nx.add s.x delta in
   let scale = Tol.scale tol answer in
   let size, exact = size ~x:s.x ~f delta in
+  let step = Nx.where exact (Nx.zeros_like delta) size in
+  (* A quasi-Newton method's error is at least its gradient's bound [b], and
+     at most [|δ| + b] whatever its readings: [b] bounds [x]'s distance to
+     the zero and [δ] moves the answer from [x], so a map whose readings do
+     not contract, as one whose curvature estimate overshoots a component,
+     still converges once both are small. *)
   let bounded e =
     let e =
       match (mu, f) with
       | None, _ -> e
       | Some mu, (Paired g | Solved g) ->
           let floor = Nx.clamp ~min:(Num.tiny (Nx.dtype g)) scale in
-          Nx.maximum e (gradient_bound ~scale:floor ~mu g)
+          let b = gradient_bound ~scale:floor ~mu g in
+          Nx.minimum (Nx.maximum e b) (Nx.add step b)
     in
     match resolution with None -> e | Some r -> Nx.maximum e r
   in
@@ -562,16 +569,20 @@ let judge tol s ~map ~mu ~resolution ~f delta =
     bounded (Nx.where exact (Nx.zeros_like delta) (Nx.div size (gap q)))
   in
   let newest = error s.q in
-  (* With a resolution, a step within an ulp of the estimate's largest
-     magnitude is at the floats' limit as well: no component is resolved
-     closer than that, whatever the condition. *)
+  (* Where the resolution alone fails [tol], a step within an ulp of the
+     estimate's largest magnitude is at the floats' limit as well: no
+     component is resolved closer than that, whatever the condition, and no
+     later step can meet [tol]. Elsewhere such a step still converges. *)
   let stuck =
     match resolution with
     | None -> still s.x map
-    | Some _ ->
+    | Some r ->
         let top = Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs s.x) in
         let ulp = Nx.mul_s top (Num.eps (Nx.dtype s.x)) in
-        Nx.logical_or (still s.x map) (every (Nx.less_equal (Nx.abs map) ulp))
+        Nx.logical_or (still s.x map)
+          (Nx.logical_and
+             (Nx.logical_not (within ~scale r))
+             (every (Nx.less_equal (Nx.abs map) ulp)))
   in
   let e = Nx.where (column stuck) newest (error (contraction s)) in
   let converged = Nx.logical_and run (within ~scale e) in

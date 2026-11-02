@@ -1002,8 +1002,14 @@ let start_at z d r =
 let quadratics =
   let open Gen in
   (let* n = int_range 2 6 in
+   (* Half the draws have every component normal: a zero or subnormal one is
+      below the resolution of any tolerance in ulps, and only these can
+      converge. *)
+   let* all_normal = bool in
    let+ d = list ~size:(constant n) (float_range (-3.) 3.)
-   and+ c = list ~size:(constant n) magnitude
+   and+ c =
+     list ~size:(constant n)
+       (if all_normal then float_range 0.5 2. else magnitude)
    and+ signs = list ~size:(constant n) bool
    and+ offsets = list ~size:(constant n) (float_range (-1.) 1.)
    and+ k = float_range 4. 64. in
@@ -1015,6 +1021,24 @@ let quadratics =
   |> with_pp (fun ppf (d, (c, (x0, k))) ->
       Format.fprintf ppf "d = %a@ c = %a@ x0 = %a@ k = %g" Nx.pp d Nx.pp c
         Nx.pp x0 k)
+
+(* The ulps of [p]'s smaller parameter that the fit of [a e^(b t)] at [p] is
+   fixed to: [κ |p|∞ / |p|min], [κ] the condition of the Jacobian, whose
+   columns are [e^(b t)] and [a t e^(b t)], from the eigenvalues of its
+   2 × 2 Gram matrix. *)
+let resolution_ulps p =
+  let a = Nx.item [ 0 ] p and b = Nx.item [ 1 ] p in
+  let ts = Oracle.floats times in
+  let sum f = Array.fold_left (fun acc t -> acc +. f t) 0. ts in
+  let e t = exp (2. *. b *. t) in
+  let s11 = sum e
+  and s12 = sum (fun t -> a *. t *. e t)
+  and s22 = sum (fun t -> a *. a *. t *. t *. e t) in
+  let mean = (s11 +. s22) /. 2. in
+  let gap = sqrt ((((s11 -. s22) /. 2.) ** 2.) +. (s12 *. s12)) in
+  let kappa = sqrt ((mean +. gap) /. (mean -. gap)) in
+  kappa *. Float.max (Float.abs a) (Float.abs b)
+  /. Float.min (Float.abs a) (Float.abs b)
 
 let law_tests =
   [
@@ -1064,9 +1088,10 @@ let law_tests =
         (* Under a tolerance below an ulp, a search whose last steps contract
            slowly, as L-BFGS's and a fit's with large residuals do, reaches the
            floats' resolution short of it. A fit's answer is fixed to [ε κ]
-           times its largest parameter, which a tolerance of [k] ulps of the
-           smaller never meets: it takes [fit] times as many. *)
-        let fit = 16. in
+           times its largest parameter, [κ] its Jacobian's condition, which
+           [k] ulps of the smaller meet only from [k ≥ κ |p|∞ / |p|min]: the
+           fit takes [2 k] times that, met for [k] above about a half. *)
+        let fit = Float.min (2. *. resolution_ulps p) 1e12 in
         let y =
           Nx.add (model p) (Nx.mul_s (Nx.sin (Nx.mul_s times noise)) amp)
         in
@@ -1092,7 +1117,7 @@ let law_tests =
           (fun (name, (k, s)) ->
             let ok = Nx.item [] (Solution.ok s) in
             cover (name ^ " converges") ok;
-            if List.mem name [ "lbfgs"; "levenberg_marquardt" ] then
+            if name = "lbfgs" then
               cover (name ^ " stalls") (Nx.item [] (Solution.is Stalled s));
             (* The solve adds pairwise, [Oracle.ulps] in order: they differ by
                rounding. *)
@@ -1229,6 +1254,39 @@ let exact_minima =
       Format.fprintf ppf "a = %a@ x* = %a@ boxed %b@ c = %g@ k = %g" Nx.pp a
         Nx.pp x boxed c k)
 
+(* As {!exact_minima} without a box, with components of [k / 64] scaled by
+   [2^-e], [e] up to 32, so that they spread over ten decades and [b = a x*]
+   stays exact. *)
+let spread_minima =
+  let open Gen in
+  (let* n = int_range 1 6 in
+   let+ off = list ~size:(constant (n * n)) (int_range (-1) 1)
+   and+ diag = list ~size:(constant n) (int_range (n + 1) ((2 * n) + 2))
+   and+ xs =
+     list ~size:(constant n)
+       (pair (int_range 0 3)
+          (pair (int_range 1 255) (pair (int_range 0 32) bool)))
+   in
+   let off = Array.of_list off and diag = Array.of_list diag in
+   let a =
+     Array.init (n * n) (fun ij ->
+         let i = ij / n and j = ij mod n in
+         if i = j then Float.of_int diag.(i)
+         else Float.of_int off.((min i j * n) + max i j))
+   in
+   let xs =
+     List.mapi
+       (fun i (zero, (m, (e, neg))) ->
+         if zero = 0 && i > 0 then 0.
+         else
+           let v = Float.ldexp (Float.of_int m /. 64.) (-e) in
+           if neg then -.v else v)
+       xs
+   in
+   (Nx.create f64 [| n; n |] a, vec (Array.of_list xs)))
+  |> with_pp (fun ppf (a, x) ->
+      Format.fprintf ppf "a = %a@ x* = %a" Nx.pp a Nx.pp x)
+
 let exact_objective a xstar ~boxed c =
   let b = Nx.matmul a xstar in
   let lambda =
@@ -1363,6 +1421,30 @@ let termination_tests =
                        (exact_objective a xstar ~boxed c)
                        (Nx.full_like xstar 0.5) ))
                methods));
+    prop "with an absolute term of its resolution every search converges"
+      spread_minima (fun (a, xstar) ->
+        (* The converse of the resolution: an absolute term of [ε κ |x*|∞],
+           [κ] the bound by Gershgorin's discs, is met however small a
+           component is; 16 of them leave room for the gradient's bound and
+           the last step, each about one. *)
+        let n = Nx.dim 0 xstar in
+        let kappa = Float.of_int ((3 * n) + 1) /. 2. in
+        let top = Nx.item [] (Nx.max (Nx.abs xstar)) in
+        let tol =
+          Tol.v ~rel:1e-10 ~abs:(16. *. kappa *. Float.epsilon *. top)
+        in
+        cover "a component below 10⁻⁶ of the largest"
+          (Array.exists
+             (fun v -> v <> 0. && Float.abs v < 1e-6 *. top)
+             (Oracle.floats xstar));
+        List.iter
+          (fun (name, m) ->
+            equal ~msg:name status_t Converged
+              (status
+                 (Minimize.solve one m ~tol ~budget:200
+                    (exact_objective a xstar ~boxed:false 0.)
+                    (Nx.full_like xstar 0.5))))
+          methods);
     prop ~count:2 "a constant added to f leaves a solve's status (law)" rotated
       (fun (h, a) ->
         let f c x =
