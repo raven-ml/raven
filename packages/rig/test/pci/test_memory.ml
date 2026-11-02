@@ -603,6 +603,41 @@ let test_unconfirmed () =
   equal ~msg:"no more at a free after the release" int (snd before)
     (snd (tree_capacity x))
 
+(* An exception at any allocation of a free after the release, which gives
+   back the regions whose unmap the GPU did not confirm, gives none of them
+   back twice: the next free after it raises nothing. *)
+let test_unconfirmed_cut () =
+  let base = own_space () in
+  let rec walk n =
+    let reached =
+      with_gpus ~base 1 @@ fun _ _ gpus ->
+      let x = List.hd gpus in
+      let lent, _ = lend ~at:(base + space_length) x page in
+      let host = given (Memory.alloc x.t_memory Host (64 * kib)) in
+      let borrowed =
+        mapped (Memory.map_host x.t_memory (Window.address lent) page)
+      in
+      let first = given (Memory.alloc x.t_memory Gpu page) in
+      let second = given (Memory.alloc x.t_memory Gpu page) in
+      x.t_g.confirms <- false;
+      List.iter (Memory.free x.t_memory) [ host; borrowed ];
+      x.t_g.confirms <- true;
+      Function.release x.t_fn;
+      let reached =
+        Rig_support.interrupted n (fun () -> Memory.free x.t_memory first)
+      in
+      (match Memory.free x.t_memory second with
+      | () -> ()
+      | exception e ->
+          failf "the free after a cut at %d raised %s" n
+            (Printexc.to_string e));
+      reached
+    in
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk (n + 1)
+  in
+  walk 1
+
 (* Once the function is released, a free of any region writes no table. *)
 let test_free_released from =
   with_gpus 2 @@ fun _ _ gpus ->
@@ -1048,38 +1083,41 @@ let test_cut_request request =
     let a = take_gpu ~space m (List.nth buses 0) in
     let b = take_gpu ~space m (List.nth buses 1) in
     (* A failing round stops both, as it would have. *)
-    Fun.protect ~finally:(fun () ->
-        stop a;
-        stop b)
-    @@ fun () ->
-    let own = given (Memory.alloc b.t_memory Host page) in
-    let shared = given (Memory.alloc a.t_memory Host page) in
-    let seen = mapped (Memory.map_peer b.t_memory shared) in
-    Window.write (window own) 0 "b's own";
-    Window.write (window shared) 0 "a's, b maps";
-    let lent = fst (lend ~at:(base + space_length) a page) in
-    let theirs =
-      match request with
-      | Map_peer k -> given (Memory.alloc b.t_memory k (64 * kib))
-      | Alloc _ | Map_host -> own
-    in
     let cut =
-      Rig_support.interrupted n (fun () ->
-          ignore (make request a ~lent ~theirs))
+      Fun.protect ~finally:(fun () ->
+          stop a;
+          stop b)
+      @@ fun () ->
+        let own = given (Memory.alloc b.t_memory Host page) in
+        let shared = given (Memory.alloc a.t_memory Host page) in
+        let seen = mapped (Memory.map_peer b.t_memory shared) in
+        Window.write (window own) 0 "b's own";
+        Window.write (window shared) 0 "a's, b maps";
+        let lent = fst (lend ~at:(base + space_length) a page) in
+        let theirs =
+          match request with
+          | Map_peer k -> given (Memory.alloc b.t_memory k (64 * kib))
+          | Alloc _ | Map_host -> own
+        in
+        let landed =
+          Rig_support.interrupted n (fun () ->
+              ignore (make request a ~lent ~theirs))
+        in
+        stop a;
+        equal ~msg:(at "b's memory in a's block") string "b's own"
+          (Window.read (window own) 0 7);
+        equal ~msg:(at "a's memory through b's mapping") string "a's, b maps"
+          (Window.read (window seen) 0 11);
+        Memory.free b.t_memory seen;
+        if theirs != own then Memory.free b.t_memory theirs;
+        Memory.free b.t_memory own;
+        Memory.free b.t_memory (given (Memory.alloc b.t_memory Host page));
+        stop b;
+        equal ~msg:(at "system memory held") int 0 (held_bytes root);
+        equal ~msg:(at "addresses taken") int 0 (Space.taken space);
+        if n = 1 then equal ~msg:"the walk lands" bool true landed;
+      landed
     in
-    stop a;
-    equal ~msg:(at "b's memory in a's block") string "b's own"
-      (Window.read (window own) 0 7);
-    equal ~msg:(at "a's memory through b's mapping") string "a's, b maps"
-      (Window.read (window seen) 0 11);
-    Memory.free b.t_memory seen;
-    if theirs != own then Memory.free b.t_memory theirs;
-    Memory.free b.t_memory own;
-    Memory.free b.t_memory (given (Memory.alloc b.t_memory Host page));
-    stop b;
-    equal ~msg:(at "system memory held") int 0 (held_bytes root);
-    equal ~msg:(at "addresses taken") int 0 (Space.taken space);
-    if n = 1 then equal ~msg:"the walk lands" bool true cut;
     if cut then walk (n + 1)
   in
   walk 1
@@ -2656,6 +2694,10 @@ let on_files =
         "a free the GPU does not confirm keeps the region's memory and \
          addresses until a free after the release"
         test_unconfirmed;
+      test
+        "a free after the release cut at any allocation gives no unconfirmed \
+         region back twice"
+        test_unconfirmed_cut;
       test "system memory a peer maps stays until neither GPU reaches it"
         test_peer_reach;
       cases "memory a peer maps stays until the peer's free"
