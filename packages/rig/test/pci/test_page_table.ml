@@ -136,9 +136,12 @@ let drain alloc free =
 let capacity t =
   drain (fun () -> Page_table.palloc ~zero:false t page) (Page_table.pfree t)
 
+(* The holder of the tests' allocations. *)
+let holder = Space.holder ()
+
 let space_capacity t =
   let s = Page_table.space t in
-  drain (fun () -> Space.alloc s page) (Space.free s)
+  drain (fun () -> Space.alloc s holder page) Space.free
 
 (* Creating tables *)
 
@@ -634,7 +637,7 @@ let test_out_of_tables () =
     (List.length (snd (walk g t)));
   is_none ~msg:"tables refuses too" (Page_table.tables t ~va:(far k) page);
   for _ = 1 to 20 do
-    is_none ~msg:"alloc" (Page_table.alloc t page)
+    is_none ~msg:"alloc" (Page_table.alloc t holder page)
   done;
   equal ~msg:"a failed alloc gives back its memory" int free (capacity t);
   equal ~msg:"and its addresses" int addresses (space_capacity t);
@@ -1181,7 +1184,7 @@ let test_booting () =
     (snd (walk g t));
   let pa = require_some (Page_table.palloc t page) in
   less ~msg:"physical memory from the boot pool" hex ~than:mib pa;
-  let m = require_some (Page_table.alloc t page) in
+  let _, m = require_some (Page_table.alloc t holder page) in
   List.iter
     (fun (pa, _) -> less ~msg:"allocations from the boot pool" hex ~than:mib pa)
     m.pages;
@@ -1204,7 +1207,7 @@ let test_contiguous =
     (fun (n, align) ->
       let t, g = tables () in
       g.zeroed <- [];
-      let m = require_some (Page_table.alloc ~contiguous:true t n) in
+      let _, m = require_some (Page_table.alloc ~contiguous:true t holder n) in
       let size = round_up n page in
       equal ~msg:"rounded up to 4 KiB" int size m.size;
       let pa, len =
@@ -1222,7 +1225,7 @@ let test_contiguous =
 let test_blocks () =
   let t, g = tables () in
   let n = (4 * mib) + (3 * page) in
-  let m = require_some (Page_table.alloc ~uncached:true t n) in
+  let _, m = require_some (Page_table.alloc ~uncached:true t holder n) in
   equal ~msg:"size" int n m.size;
   equal ~msg:"blocks cover it" int n (sum (sizes m.pages));
   equal ~msg:"uncached" bool true m.uncached;
@@ -1235,18 +1238,23 @@ let test_blocks () =
 let test_free () =
   let t, g = tables ~length:(64 * mib) () in
   let free = capacity t and addresses = space_capacity t in
-  let m = require_some (Page_table.alloc t (5 * mib)) in
-  let c = require_some (Page_table.alloc ~contiguous:true t (3 * mib)) in
+  let x, m = require_some (Page_table.alloc t holder (5 * mib)) in
+  let y, c =
+    require_some (Page_table.alloc ~contiguous:true t holder (3 * mib))
+  in
   equal ~msg:"confirmed" (pair bool bool) (true, true)
-    (Page_table.free t m, Page_table.free t c);
+    (Page_table.free t x m, Page_table.free t y c);
   equal ~msg:"nothing mapped" (list entry) [] (pages g t);
   equal ~msg:"memory back in the pool" int free (capacity t);
   equal ~msg:"addresses back in the space" int addresses (space_capacity t);
   let s = Page_table.space t in
-  let va = require_some (Space.alloc s (2 * mib)) in
+  let x = require_some (Space.alloc s holder (2 * mib)) in
   let taken = require_some (Page_table.palloc ~zero:false t page) in
-  let sys = require_some (Page_table.map t ~va System [ (taken, page) ]) in
-  equal ~msg:"system memory: confirmed" bool true (Page_table.free t sys);
+  let sys =
+    require_some
+      (Page_table.map t ~va:(Space.address x) System [ (taken, page) ])
+  in
+  equal ~msg:"system memory: confirmed" bool true (Page_table.free t x sys);
   equal ~msg:"system memory: addresses back" int addresses (space_capacity t);
   Page_table.pfree t taken
 
@@ -1255,9 +1263,9 @@ let test_free () =
 let test_free_unconfirmed () =
   let t, g = tables ~length:(64 * mib) () in
   let free = capacity t and addresses = space_capacity t in
-  let m = require_some (Page_table.alloc t (5 * mib)) in
+  let x, m = require_some (Page_table.alloc t holder (5 * mib)) in
   g.confirms <- false;
-  equal ~msg:"the answer" bool false (Page_table.free t m);
+  equal ~msg:"the answer" bool false (Page_table.free t x m);
   equal ~msg:"nothing mapped" (list entry) [] (pages g t);
   less ~msg:"memory kept" int ~than:free (capacity t);
   less ~msg:"addresses kept" int ~than:addresses (space_capacity t)
@@ -1609,10 +1617,32 @@ let alloc_bounds =
       ]
       @ List.concat_map (fun (a, k) -> [ a + k - 1; a + k; a + k + 1 ]) p.live)
 
+(* The hold each live mapping of the model was given with, by the mapping,
+   for its free. Either domain changes it. *)
+let held : (Page_table.mapping * Space.hold) list Atomic.t = Atomic.make []
+
+let rec keep m x =
+  let l = Atomic.get held in
+  if not (Atomic.compare_and_set held l ((m, x) :: l)) then keep m x
+
+let rec forget m =
+  let l = Atomic.get held in
+  let rest = List.filter (fun (m', _) -> m' != m) l in
+  if not (Atomic.compare_and_set held l rest) then forget m
+
+let free_held t m =
+  let confirmed = Page_table.free t (List.assq m (Atomic.get held)) m in
+  if confirmed then forget m;
+  confirmed
+
 let alloc ?below contiguous uncached n (t, g) =
   g.zeroed <- [];
-  let m = Page_table.alloc ~contiguous ~uncached ?below t n in
-  Option.map (fun m -> (m, g.zeroed)) m
+  let m = Page_table.alloc ~contiguous ~uncached ?below t holder n in
+  Option.map
+    (fun (x, m) ->
+      keep m x;
+      (m, g.zeroed))
+    m
 
 let alloc_commands =
   let outcome = option (pair mapping (list (pair hex int))) in
@@ -1637,7 +1667,7 @@ let alloc_commands =
       (fun m a ->
         free_alloc m a;
         true)
-      (fun (t, _) a -> Page_table.free t a);
+      (fun (t, _) a -> free_held t a);
   ]
 
 let () =

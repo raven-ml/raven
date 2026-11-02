@@ -456,13 +456,9 @@ let test_far_released () =
     (Function.wait f ~us:0 "a wait" (fun () -> true));
   Function.free_dma f w;
   Function.unpin f base far_page;
-  equal (list string)
-    [
-      "release";
-      strf "free_dma 0x%x" (Window.address w);
-      strf "unpin 0x%x %d" base far_page;
-    ]
-    (asked r)
+  misuse "a free_dma twice" (fun () -> Function.free_dma f w);
+  equal ~msg:"the release gave back the memory and the pin" (list string)
+    [ "release" ] (asked r)
 
 let transports =
   group ~timeout:patience "transports"
@@ -478,8 +474,8 @@ let transports =
       test "the largest DMA memory whose size rounds up is asked of the machine"
         test_far_largest;
       test
-        "a released function asks its transport only free_dma, unpin and one \
-         release"
+        "a released function asks its transport one release, which gives back \
+         its memory and pins"
         test_far_released;
     ]
 

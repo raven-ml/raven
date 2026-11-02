@@ -68,8 +68,9 @@
     ({!Memory}) are the function's {e uses}. Each counts among the locks its
     thread holds while it runs ({{!Rig_pci.errors}errors}). Once a {!release}
     has begun, no use starts. A pin or an allocation then raises
-    [Invalid_argument], and a free or an unpin gives memory back as
-    {{!dma}system memory} states. The function is {e given back} once its
+    [Invalid_argument], and a free or an unpin leaves the memory to the
+    give-back, as {{!dma}system memory} states. The function is {e given back}
+    once its
     release has begun and no use runs. The release gives it back itself if no
     use runs as it begins, and otherwise the last use to end gives it back. A
     use refused after the release, or {!finish_releases}, gives back what an
@@ -119,9 +120,12 @@ val take : Machine.t -> string -> (t, string) result
 val release : t -> unit
 (** [release f] gives [f] back. Giving it back turns [f]'s bus mastering off,
     which ends its DMA, restores the legacy interrupts {!take} turned off,
-    unmaps [f]'s BAR windows, closes the process's files for [f] and unlocks
-    it. Memory from {!alloc_dma} stays until {!free_dma}
-    ({{!dma}system memory}). While uses of [f] run, on other threads or
+    unmaps [f]'s BAR windows, gives back its memory from {!alloc_dma} and its
+    pins that no {!free_dma} or {!unpin} gave back, once its bus mastering
+    reads off ({{!dma}system memory}), closes the process's files for [f] and
+    unlocks it. [f] holds each window, memory and pin from the step that
+    takes it, so what an exception kept a call from returning goes back too.
+    While uses of [f] run, on other threads or
     below a callback on this one, the release returns immediately, and the
     last of them to end gives [f] back. A release called once one has begun
     returns immediately.
@@ -339,12 +343,14 @@ val reset : t -> (unit, string) result
       pin is {!unpin}ned or the pinning function is reset ({!Driver.reset})
       or renewed ({!Driver.renew}).
 
-    From a release's start until the function is given back, and after a
-    release that could not turn its bus mastering off because the system
-    refused the write, as a kernel locked down since the take does,
-    {!free_dma} and {!unpin} give no memory back, since the function may
-    still reach it. That memory stays the process's until it exits, and
-    taken physically, past its exit.
+    From a release's start, {!free_dma} and {!unpin} give no memory back: the
+    give-back gives back all the function's memory and pins once its bus
+    mastering reads off, and the process's windows on the memory are gone
+    then. After a release that could not turn its bus mastering off because
+    the system refused the write, as a kernel locked down since the take
+    does, none goes back, since the function may still reach it: that memory
+    stays the process's until it exits, and taken physically, past its
+    exit.
 
     Either way, a function reaches only the addresses its engines hold,
     which its driver states with {!set_dma_bits}, as Linux's drivers do with
@@ -387,7 +393,8 @@ val alloc_dma :
     [Ok None] if the machine has no free memory for it now, within the limits
     {{!dma}system memory} names, or if the memory it gave lies past [f]'s
     addresses ({!set_dma_bits}). Freeing memory makes room, but for memory
-    past [f]'s addresses taken physically.
+    past [f]'s addresses taken physically. An exception that ends the call,
+    such as an asynchronous one, leaves what it took to [f]'s give-back.
 
     [Error why], naming what is missing, if the machine refuses: a privilege or
     a file system named above, or, taken physically, a 2 MiB block of [va] that
@@ -400,9 +407,9 @@ val alloc_dma :
     than a page on a function taken physically. *)
 
 val free_dma : t -> Window.t -> unit
-(** [free_dma f w] frees [w], and [f] reaches it no more. From a release's
-    start until [f] is given back, or after a release that could not turn
-    [f]'s bus mastering off, [w] stays instead ({{!dma}system memory}).
+(** [free_dma f w] frees [w], and [f] reaches it no more. Once a release of
+    [f] has begun, [w] goes back with the give-back instead
+    ({{!dma}system memory}).
 
     Raises [Invalid_argument] if [w] is not a live window {!alloc_dma} returned
     for [f]. *)
@@ -411,7 +418,8 @@ val pin : t -> int -> int -> ((int * int) list option, string) result
 (** [pin f a n] locks the [n] bytes at [a] of [f]'s machine, which start on a
     page, and is [Some runs], with [runs] the addresses at which [f] reaches
     them. Pins are counted. The memory stays locked until each pin is
-    {!unpin}ned, and behind an IOMMU [(a, n)] stays mapped for [f] as long.
+    {!unpin}ned or [f] is given back, and behind an IOMMU [(a, n)] stays mapped
+    for [f] as long.
     Behind an IOMMU, a child of [fork] gets copies of pinned pages of private
     mappings, and the parent keeps the pinned pages.
 
@@ -432,9 +440,8 @@ val pin : t -> int -> int -> ((int * int) list option, string) result
     Raises [Invalid_argument] if [a] is not on a page or [n <= 0]. *)
 
 val unpin : t -> int -> int -> unit
-(** [unpin f a n] releases one pin of the [n] bytes at [a]. From a release's
-    start until [f] is given back, or after a release that could not turn
-    [f]'s bus mastering off, the memory stays locked instead
+(** [unpin f a n] releases one pin of the [n] bytes at [a]. Once a release of
+    [f] has begun, the pin goes with the give-back instead
     ({{!dma}system memory}).
 
     Raises [Invalid_argument] if [(a, n)] is not pinned for [f]. *)
@@ -464,6 +471,18 @@ val take_into : t -> (t, string) result
    {!take_into}. Raises [Invalid_argument] if [f] is taken or released, or if
    [l] locks another bus. *)
 val take_locked_into : t -> 's Sysfs.lock -> (t, string) result
+
+(* [holder f] is the holder of the addresses [f]'s GPU's memory lies at in
+   its space ({!Space.holder}). [f]'s give-back releases them once the
+   machine gave back [f]'s take and [f] masters the bus no more, since the
+   memory at them goes back with the take. *)
+val holder : t -> Space.holder
+
+(* [placed f ~va n] is [true] iff the [n] bytes at [va], a multiple of the
+   page, lie where {!alloc_dma} places memory at an address it is given: in
+   one range {!Machine.val-reserve} reserved, whole with the 2 MiB blocks that
+   hold them if [f] is taken physically. *)
+val placed : t -> va:int -> int -> bool
 
 (* [set_own_length n] makes each range of this process's own addresses that
    {!alloc_dma} reserves from then on, for memory of a function taken
@@ -508,11 +527,11 @@ val inherited : t -> bool
    [true], or is [false], counting nothing, if a release of [f] has begun.
    While a lend is counted, or a function named by {!unlend_after} is not
    released or may still master the bus, [f] {e lends} its memory: its
-   give-back ({!release}) turns its bus mastering off, unmaps its windows
-   and keeps its take, so that {!take} of its bus is [Error] and no open
-   resets the GPU and gives the memory out. The take goes back once [f]
-   lends nothing, at the last {!unlend} that ends it, or else at a take of
-   [f]'s bus or a {!finish_releases}, whichever comes first. *)
+   give-back ({!release}) turns its bus mastering off and keeps its take,
+   its windows and memory included, so that {!take} of its bus is [Error]
+   and no open resets the GPU and gives the memory out. The take goes back
+   once [f] lends nothing, at the last {!unlend} that ends it, or else at a
+   take of [f]'s bus or a {!finish_releases}, whichever comes first. *)
 val lend : t -> bool
 
 (* [lend_refused f] settles [f] after {!lend} returned [false]: it may give

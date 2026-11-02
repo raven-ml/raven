@@ -601,36 +601,37 @@ let block ?below t n =
   | None when align > page -> take t pool ?below n
   | found -> found
 
-(* Gives back the addresses at [va] and the blocks [pages] of an allocation that
+(* Gives back the hold [x] and the blocks [pages] of an allocation that
    failed. *)
-let give_back t va pages =
+let give_back t x pages =
   Option.iter (List.iter (fun (pa, _) -> pfree t pa)) pages;
-  Space.free t.space va
+  Space.free x
 
-let alloc ?(uncached = false) ?(contiguous = false) ?below t n =
+let alloc ?(uncached = false) ?(contiguous = false) ?below t h n =
   if n <= 0 then
     invalid_argf "Page_table.alloc: %d bytes, expected more than 0" n;
   if n > Space.length t.space then None
   else
     let n = round_up n page in
-    match Space.alloc t.space n with
+    match Space.alloc t.space h n with
     | None -> None
-    | Some va -> (
+    | Some x -> (
+        let va = Space.address x in
         let pages =
           if contiguous then
             Option.map (fun pa -> [ (pa, n) ]) (block ?below t n)
           else blocks ?below t n
         in
         match Option.bind pages (map ~uncached t ~va Gpu) with
-        | Some _ as m -> m
+        | Some m -> Some (x, m)
         | None ->
-            give_back t va pages;
+            give_back t x pages;
             None)
 
-let free t (m : mapping) =
+let free t x (m : mapping) =
   let confirmed = unmap t ~va:m.va m.size in
   if confirmed then begin
-    Space.free t.space m.va;
+    Space.free x;
     if m.target = Gpu then List.iter (fun (pa, _) -> pfree t pa) m.pages
   end;
   confirmed

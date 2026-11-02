@@ -283,9 +283,12 @@ let alloc ?(align = 1) ?below t n =
           let b = suitable t f (second f need) in
           if b == nil then None else take_from t ~align b req
 
+(* A free allocates nothing, so that a caller frees inside a section that
+   must not allocate. *)
 let free t x =
-  match Tables.Address.find_opt t.blocks (x - t.base) with
-  | Some b when b.state = Taken ->
+  match Tables.Address.find t.blocks (x - t.base) with
+  | exception Not_found -> false
+  | b when b.state = Taken ->
       let p = b.prev and n = b.next in
       let join_p = p != nil && p.state = Free in
       let join_n = n != nil && n.state = Free in

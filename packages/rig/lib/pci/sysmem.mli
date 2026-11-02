@@ -22,14 +22,16 @@ val reserve : base:int -> int -> unit
 (** [reserve ~base n] reserves [n] addresses from [base] once per range, for
     {!map} and {!alloc} only. *)
 
-val map : ?va:int -> int -> Window.t
-(** [map n] is [n] bytes, rounded up to {!page}, of new, zeroed, shared memory
-    of the process, at [va] or where the system chooses. It is neither locked
-    nor read for its addresses, since a function behind an IOMMU reaches it
-    through mappings that VFIO removes when the process's files close. *)
+val map : ?va:int -> int -> int
+(** [map n] is the address of [n] bytes, a multiple of {!page}, of new, zeroed,
+    shared memory of the process, at [va] or where the system chooses. It is
+    neither locked nor read for its addresses, since a function behind an
+    IOMMU reaches it through mappings that VFIO removes when the process's
+    files close. It allocates nothing once the system answered, so that a
+    caller records the address before anything can cut it. *)
 
-val unmap : Window.t -> unit
-(** [unmap w] releases {!map} memory. *)
+val unmap : int -> int -> unit
+(** [unmap a n] releases the [n] bytes of {!map} memory at [a]. *)
 
 (** {1:store Memory that outlives the process}
 
@@ -44,7 +46,12 @@ val unmap : Window.t -> unit
     {!left} is [false]. Only Linux takes a function physically. *)
 
 type store
-(** The type for the memory of one function taken physically. *)
+(** The type for the memory of one take of a function taken physically. A
+    store counts each 2 MiB block that holds memory it allocated or reached
+    ({!reach}), and a block's huge page goes back once no store counts it.
+    A store's count of a block changes in one step with the block's, so an
+    exception, an asynchronous one too, leaves each store giving back exactly
+    what it counts ({!close}). *)
 
 val store : root:string -> bus:string -> store
 (** [store ~root ~bus] is the memory of the function at [bus] of the machine
@@ -67,22 +74,26 @@ val alloc :
     memory is larger than a page. [va] and the 2 MiB blocks around it lie in a
     range {!reserve} reserved, as {!Function.alloc_dma} checks. It is [None] if
     the machine has no free huge page for a new block, or the process no free
-    addresses of its own. Raises {!Fail.Failed} if a block holds memory of
+    addresses of its own. [s] counts each block from the step that takes it,
+    so an exception that ends the call leaves the memory to {!close} of [s].
+    Raises {!Fail.Failed}, counting nothing, if a block holds memory of
     another root, or if the root's [proc/self/mounts] shows its [dev/hugepages]
     on no hugetlbfs of 2 MiB pages. *)
 
-val free : Window.t -> unit
-(** [free w] unmaps {!alloc}'s live memory [w]. A huge page goes back once no
-    allocation holds it and no function maps it as a peer's ({!reach}). *)
+val free : store -> Window.t -> unit
+(** [free s w] gives back [s]'s count of {!alloc}'s memory [w]. A huge page goes
+    back once no store counts it. A [w] that [s] counts no more, such as after
+    {!close}, gives back nothing. *)
 
 val close : store -> unit
 (** [close s] records that [s]'s function, with its bus mastering off, reaches
-    no memory any more. The function leaves the lists of the process's files,
-    each of which goes once it lists no function and holds no memory. The
-    process's mappings keep their pages until {!free}. A file a dead process
-    left goes at {!collect_dead} once it lists no function, or at {!forget} of
-    each function it lists. A [close] of [s] called again after an exception
-    ended one finishes it. *)
+    no memory any more: it gives back every count of [s], its memory from
+    {!alloc} included, which the process's windows on it then no longer
+    reach. The function leaves the lists of the process's files, each of
+    which goes once it lists no function and holds no memory. A file a dead
+    process left goes at {!collect_dead} once it lists no function, or at
+    {!forget} of each function it lists. A [close] of [s] called again after
+    an exception ended one finishes it. *)
 
 val set_own_length : int -> int
 (** [set_own_length n] makes each range of the process's own addresses that
@@ -90,18 +101,19 @@ val set_own_length : int -> int
     or as many as a request needs. It is the length it replaces. The first
     is 1 GiB. *)
 
-val reach : root:string -> bus:string -> int -> int -> (int * int) list option
-(** [reach ~root ~bus a n] is the physical runs of the [n] bytes at [a], if
-    {!alloc} gave every 2 MiB block that holds them under [root]. It records
-    that the function at [bus] reaches them, so their huge pages stay until
-    {!unreach}, and their file stays until that function no longer reaches it
-    either. It is [None], recording nothing, otherwise.
+val reach : store -> int -> int -> (int * int) list option
+(** [reach s a n] is the physical runs of the [n] bytes at [a], if {!alloc}
+    gave every 2 MiB block that holds them under [s]'s root. [s] counts them,
+    so their huge pages stay until {!unreach}, and their file stays until
+    [s]'s function no longer reaches it either. It is [None], recording
+    nothing, otherwise.
 
     Raises {!Fail.Failed}, recording nothing, if the record cannot be written
     for after the process's death. *)
 
-val unreach : a:int -> n:int -> unit
-(** [unreach ~a ~n] ends one {!reach} of the [n] bytes at [a]. *)
+val unreach : store -> int -> int -> unit
+(** [unreach s a n] ends one {!reach} of [s] of the [n] bytes at [a], if [s]
+    counts one. *)
 
 val exit : unit -> unit
 (** [exit ()] deletes the process's files that list no function, blocks and

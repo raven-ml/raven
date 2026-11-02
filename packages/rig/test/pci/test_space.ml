@@ -16,11 +16,14 @@ type model = {
   length : int;
   mutable live : (int * int) list;  (** (address, addresses), newest first. *)
   mutable freed : int list;  (** Addresses freed and not handed out again. *)
+  mutable handed : int;  (** Ranges handed out. *)
+  mutable turns : (int * int) list;
+      (** The hand-out that each live address came from. *)
 }
 
 let create (base, n) =
   if base < 0 || n < 0 || n > max_int - base then invalid_arg "Space.create";
-  { base; length = n; live = []; freed = [] }
+  { base; length = n; live = []; freed = []; handed = 0; turns = [] }
 
 (* The alignment [alloc] promises: the size's and [align]'s. *)
 let alignment ?(align = 4096) n = max align (pow2_floor n)
@@ -71,12 +74,51 @@ let alloc_judge ~covered align n m got =
             failf "[0x%x, +%d) overlaps [0x%x, +%d)" x n b k)
         m.live;
       m.live <- (x, n) :: m.live;
-      m.freed <- List.filter (( <> ) x) m.freed
+      m.freed <- List.filter (( <> ) x) m.freed;
+      m.handed <- m.handed + 1;
+      m.turns <- (x, m.handed) :: m.turns
 
 let free m x =
-  if not (List.mem_assoc x m.live) then invalid_arg "Space.free";
   m.live <- List.remove_assoc x m.live;
+  m.turns <- List.remove_assoc x m.turns;
   m.freed <- x :: m.freed
+
+(* The holds the tests' holder took, by space and address, while live:
+   either domain changes them. *)
+let holder = Space.holder ()
+let held : (Space.t * Space.hold) list Atomic.t = Atomic.make []
+
+let rec update f =
+  let l = Atomic.get held in
+  if not (Atomic.compare_and_set held l (f l)) then update f
+
+let alloc_held ?align s n =
+  Option.map
+    (fun x ->
+      update (List.cons (s, x));
+      Space.address x)
+    (Space.alloc ?align s holder n)
+
+(* The hold of the live range at [a] of [s]. *)
+let hold_at s a =
+  snd
+    (List.find
+       (fun (s', x) -> s' == s && Space.address x = a)
+       (Atomic.get held))
+
+(* Frees the hold of [s] at [a], taken off [held] first, so that one of two
+   frees of it on two domains finds it. *)
+let free_at s a =
+  let rec take () =
+    let l = Atomic.get held in
+    match List.find_opt (fun (s', x) -> s' == s && Space.address x = a) l with
+    | None -> None
+    | Some (_, x) as found ->
+        if Atomic.compare_and_set held l (List.filter (fun (_, y) -> y != x) l)
+        then Option.map snd found
+        else take ()
+  in
+  Option.iter Space.free (take ())
 
 (* Commands *)
 
@@ -88,17 +130,10 @@ let space =
 
 let live = among hex space (fun m -> List.map fst m.live)
 
-(* Remember an address while it is live. The pair survives a free, so parallel
-   calls can free it again or after its address has been handed out anew. *)
-let allocation = abstract "a" ~pp:(fun ppf (_, a) -> pp_hex ppf a)
-
-(* Addresses [free] must refuse, beside live ones: inside or just after a live
-   range, freed already, around the space. *)
-let starts =
-  among hex space (fun m ->
-      List.concat_map (fun (a, n) -> [ a; a + 1; a + n ]) m.live
-      @ m.freed
-      @ [ m.base - 1; m.base + m.length ])
+(* Remember a live range's hold. It survives a free, so parallel calls can free
+   it again or after its address has been handed out anew, which frees
+   nothing. The model remembers which hand-out it came from. *)
+let allocation = abstract "a" ~pp:(fun ppf (_, a, _) -> pp_hex ppf a)
 
 (* The sizes right at the fit bound of a free range of [g] addresses: [n] that
    fits with its alignment [a] where [n + 1] would not, [n = g / 2 - a]. *)
@@ -191,7 +226,7 @@ let roomy =
     (Gen.of_list ~pp:pp_hex [ 0; 4096; 1 lsl 40; 0x2000_0000_0000 ])
     (Gen.of_list ~pp:pp_hex [ 0x3000; 0x1_0000; 0x1_0123; 1 lsl 20; 1 lsl 44 ])
 
-let alloc align n s = Space.alloc ?align s n
+let alloc align n s = alloc_held ?align s n
 
 let commands ~covered ~spaces =
   let alloc_judge = alloc_judge ~covered in
@@ -206,17 +241,17 @@ let commands ~covered ~spaces =
     command "alloc"
       (space ^-> edges ^-> judges (option hex))
       (fun m n got -> alloc_judge None n m got)
-      (fun s n -> Space.alloc s n);
-    command "free" (space ^-> live ^-> returns unit) free Space.free;
-    command "free" (space ^-> starts ^-> returns unit) free Space.free;
+      (fun s n -> alloc_held s n);
+    command "free" (space ^-> live ^-> returns unit) free free_at;
     command "remember"
       (space ^-> live ^-> makes allocation)
-      (fun m a -> (m, a))
-      (fun s a -> (s, a));
-    command "free"
+      (fun m a -> (m, a, List.assoc a m.turns))
+      (fun s a -> (s, a, hold_at s a));
+    command "free a remembered hold"
       (allocation ^-> returns unit)
-      (fun (m, a) -> free m a)
-      (fun (s, a) -> Space.free s a);
+      (fun (m, a, turn) ->
+        if List.assoc_opt a m.turns = Some turn then free m a)
+      (fun (_, _, x) -> Space.free x);
   ]
 
 (* Creating a space allocates its handle and nothing else, whatever its length,
@@ -239,12 +274,14 @@ let test_lazy () =
 let test_whole () =
   let s = Space.create ~base:(1 lsl 40) (1 lsl 24) in
   let rec take acc =
-    match Space.alloc s 0x3000 with Some a -> take (a :: acc) | None -> acc
+    match Space.alloc s holder 0x3000 with
+    | Some x -> take (x :: acc)
+    | None -> acc
   in
   let all = take [] in
   greater ~msg:"ranges taken" int ~than:16 (List.length all);
-  List.iter (Space.free s) (List.rev all);
-  is_some ~msg:"a quarter" (Space.alloc s (1 lsl 22))
+  List.iter Space.free (List.rev all);
+  is_some ~msg:"a quarter" (Space.alloc s holder (1 lsl 22))
 
 (* Interrupts *)
 
@@ -256,7 +293,7 @@ let test_interrupted () =
   let before = Rig_support.holds () in
   let rec from n =
     let s = Space.create ~base:(1 lsl 40) (1 lsl 30) in
-    let calls () = Option.iter (Space.free s) (Space.alloc s 0x3000) in
+    let calls () = Option.iter Space.free (Space.alloc s holder 0x3000) in
     let raised = Rig_support.interrupted n calls in
     equal
       ~msg:(Printf.sprintf "locks held, interrupted at %d" n)
@@ -273,9 +310,11 @@ let test_interrupted () =
    at the alloc's first new block. Is the space and its taken pages. *)
 let fragmented () =
   let s = Space.create ~base:(1 lsl 40) (256 * 4096) in
-  let pages = List.init 127 (fun _ -> Option.get (Space.alloc s 4096)) in
-  let freed, taken = List.partition (fun a -> (a lsr 12) land 1 = 1) pages in
-  List.iter (Space.free s) freed;
+  let pages = List.init 127 (fun _ -> Option.get (Space.alloc s holder 4096)) in
+  let freed, taken =
+    List.partition (fun x -> (Space.address x lsr 12) land 1 = 1) pages
+  in
+  List.iter Space.free freed;
   (s, taken)
 
 (* Whether [s], a space of 256 pages, is whole: half of it, aligned to half,
@@ -283,37 +322,28 @@ let fragmented () =
    tlsf.mli does not promise this; the allocator's search does, since it
    looks for a block of the request plus its alignment less one, 256 pages
    less a byte, rounded up to its class, which starts at 256 pages. *)
-let whole s = Space.alloc s (128 * 4096)
+let whole s = Space.alloc s holder (128 * 4096)
 
 (* An exception at any allocation of an alloc or a free loses no range: once
    the ranges that the calls hold are freed, the interrupted one's if it
    returned, the space is whole again. A free interrupted before it returned
-   may have freed its range or not. *)
+   may have freed its range or not, and a second free of it frees nothing
+   more. *)
 let test_lost () =
   let rec from n =
     let s, taken = fragmented () in
     let got = ref None in
     let reached =
-      Rig_support.interrupted n (fun () -> got := Space.alloc s 0x2000)
+      Rig_support.interrupted n (fun () -> got := Space.alloc s holder 0x2000)
     in
-    List.iter (Space.free s) taken;
-    Option.iter (Space.free s) !got;
+    List.iter Space.free taken;
+    Option.iter Space.free !got;
     let at what = Printf.sprintf "whole, %s interrupted at %d" what n in
     is_some ~msg:(at "an alloc") (whole s);
     let s, taken = fragmented () in
     let x = List.nth taken 10 in
-    let freed = ref false in
-    let reached' =
-      Rig_support.interrupted n (fun () ->
-          Space.free s x;
-          freed := true)
-    in
-    List.iter
-      (fun a ->
-        if a <> x then Space.free s a
-        else if not !freed then
-          try Space.free s a with Invalid_argument _ -> ())
-      taken;
+    let reached' = Rig_support.interrupted n (fun () -> Space.free x) in
+    List.iter Space.free taken;
     is_some ~msg:(at "a free") (whole s);
     if reached || reached' then from (n + 1)
   in
@@ -331,17 +361,17 @@ let test_reentered () =
     let got = ref None and again = ref None in
     let landing, landed =
       Rig_support.landing seen "Rig_pci: a lock taken again" (fun () ->
-          again := Space.alloc s 4096)
+          again := Space.alloc s holder 4096)
     in
     let reached =
       Rig_support.interrupted ~landing n (fun () ->
-          got := Space.alloc s 0x2000)
+          got := Space.alloc s holder 0x2000)
     in
     let at what = Printf.sprintf "%s, called at %d" what n in
     ignore (Rig_support.answered (at "the callback's alloc") landed
       : bool option);
-    List.iter (Space.free s) taken;
-    List.iter (Option.iter (Space.free s)) [ !got; !again ];
+    List.iter Space.free taken;
+    List.iter (Option.iter Space.free) [ !got; !again ];
     is_some ~msg:(at "whole") (whole s);
     if reached then from (n + 1)
   in

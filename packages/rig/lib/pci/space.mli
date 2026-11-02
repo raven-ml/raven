@@ -8,7 +8,8 @@
     A space is a range of virtual addresses that the GPUs of one vendor share.
     An address in it means the same memory on each GPU that maps it and, for
     system memory a GPU allocates, in the process. A space hands out parts of
-    the range; {!Page_table} maps them. Any domain may use a space. *)
+    the range to holders ({!holders}); {!Page_table} maps them. Any domain may
+    use a space. *)
 
 type t
 (** The type for virtual address spaces. *)
@@ -26,21 +27,54 @@ val base : t -> int
 val length : t -> int
 (** [length s] is [s]'s number of addresses. *)
 
-val alloc : ?align:int -> t -> int -> int option
-(** [alloc s n] is the first of [n] free addresses of [s], aligned to [a], the
-    larger of [align] (defaults to 4096) and the largest power of two not above
-    [n], so that large ranges map with large pages. It is [Some _] while [s]
-    has a free range of [2 * (max n 16 + a)] addresses, and may be [None] with
-    a smaller free range that would fit. An allocation and a free take a time
-    bounded independently of what [s] holds.
+(** {1:holders Holders}
+
+    Every range a space hands out is held. A {e holder} holds ranges: the
+    function of a GPU's open holds the ranges its memory lies at, and another
+    GPU that maps that memory at the same addresses holds them too. A range
+    goes back to its space once no holder holds it. *)
+
+type holder
+(** The type for holders of ranges. *)
+
+type hold
+(** The type for one holder's hold on one range. *)
+
+val holder : unit -> holder
+(** [holder ()] holds no range. *)
+
+val alloc : ?align:int -> t -> holder -> int -> hold option
+(** [alloc s h n] is [h]'s hold on [n] free addresses of [s], aligned to [a],
+    the larger of [align] (defaults to 4096) and the largest power of two not
+    above [n], so that large ranges map with large pages. It is [Some _] while
+    [s] has a free range of [2 * (max n 16 + a)] addresses, and may be [None]
+    with a smaller free range that would fit. An allocation and a free take a
+    time bounded independently of what [s] holds.
+
+    The range is [h]'s from the step that takes it: an exception that ends
+    the call after it, such as an asynchronous one, leaves the range to
+    {!release} of [h].
 
     Raises [Invalid_argument] if [n <= 0] or [align] is not a positive power of
     two. *)
 
-val free : t -> int -> unit
-(** [free s a] frees the range {!alloc} returned at [a].
+val address : hold -> int
+(** [address x] is the first address of [x]'s range. *)
 
-    Raises [Invalid_argument] if no allocated range of [s] starts at [a]. *)
+val share : holder -> hold -> hold
+(** [share h x] is [h]'s hold on the range of [x], which then goes back once
+    neither holds it.
+
+    Raises [Invalid_argument] if [x] was given back. *)
+
+val free : hold -> unit
+(** [free x] gives back [x]: its range goes back with the last hold on it.
+    Freeing [x] again, or after {!release} of its holder, does nothing. *)
+
+val release : holder -> unit
+(** [release h] gives back every hold of [h], as {!free} does. Each goes as
+    one step, so a release called again after an exception ended one gives
+    back the rest. *)
 
 (**/**)
 

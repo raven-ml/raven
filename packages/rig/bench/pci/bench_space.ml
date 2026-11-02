@@ -38,6 +38,9 @@ let fragments = [ 16; 4096 ]
 let slots = 64
 let steps = 1024
 
+(* The holder of every range the benches take. *)
+let holder = Space.holder ()
+
 let churn_sizes =
   [| 4 * kib; 16 * kib; 64 * kib; 256 * kib; mib; 2 * mib; 8 * mib; 64 * mib |]
 
@@ -60,32 +63,31 @@ let fragmented n =
   let s = Space.create ~base:space_base space_length in
   let fragment (_, size) =
     let ranges =
-      Array.init (2 * n) (fun _ -> Option.get (Space.alloc s (2 * size)))
+      Array.init (2 * n) (fun _ -> Option.get (Space.alloc s holder (2 * size)))
     in
-    Array.iteri (fun i a -> if i land 1 = 0 then Space.free s a) ranges
+    Array.iteri (fun i x -> if i land 1 = 0 then Space.free x) ranges
   in
   List.iter fragment sizes;
   s
 
 let alloc_free s n =
-  match Space.alloc s n with
-  | Some a -> Space.free s a
+  match Space.alloc s holder n with
+  | Some x -> Space.free x
   | None -> failwith "alloc-free: the space is full"
 
 let churn s live =
   for i = 0 to steps - 1 do
     let slot = churn_slot.(i) in
-    if live.(slot) >= 0 then begin
-      Space.free s live.(slot);
-      live.(slot) <- -1
-    end
-    else live.(slot) <- Option.get (Space.alloc s churn_size.(i))
+    match live.(slot) with
+    | Some x ->
+        Space.free x;
+        live.(slot) <- None
+    | None ->
+        live.(slot) <- Some (Option.get (Space.alloc s holder churn_size.(i)))
   done;
   for slot = 0 to slots - 1 do
-    if live.(slot) >= 0 then begin
-      Space.free s live.(slot);
-      live.(slot) <- -1
-    end
+    Option.iter Space.free live.(slot);
+    live.(slot) <- None
   done
 
 let space_rows =
@@ -104,7 +106,7 @@ let space_rows =
     Thumper.group "alloc-free" (List.map alloc_free sizes);
     Thumper.bench_with_setup
       ~setup:(fun () ->
-        (Space.create ~base:space_base space_length, Array.make slots (-1)))
+        (Space.create ~base:space_base space_length, Array.make slots None))
       "churn"
       (fun (s, live) -> churn s live);
   ]
@@ -125,7 +127,7 @@ let maps =
 let page_table () =
   let t = Buffer_tables.create (Space.create ~base:(1 lsl 40) (1 lsl 40)) in
   ignore (Option.get (Page_table.map t ~va Gpu [ (pa, 4 * kib) ]));
-  ignore (Option.get (Page_table.alloc t (4 * kib)));
+  ignore (Option.get (Page_table.alloc t holder (4 * kib)));
   t
 
 let map_unmap t va size pa =
@@ -134,8 +136,8 @@ let map_unmap t va size pa =
   | None -> failwith err_no_table
 
 let alloc_free t n =
-  match Page_table.alloc t n with
-  | Some m -> Page_table.free t m
+  match Page_table.alloc t holder n with
+  | Some (x, m) -> Page_table.free t x m
   | None -> failwith "alloc-free: no memory"
 
 (* System memory taken page by page: 16 MiB of one-page runs, every other

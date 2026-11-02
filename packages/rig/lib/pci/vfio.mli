@@ -87,20 +87,25 @@ val device : t -> Unix.file_descr
 val map_dma : string -> string -> t -> below:int -> int -> int -> int option
 (** [map_dma fn bus t ~below a n] is the device address at which [t]'s
     container maps the [n] bytes at [a], ending at or below [below]. Maps are
-    counted, and each map of the same [(a, n)], for [t] or another function of
-    the container, adds a count. It is [None] if the process reached its
+    counted, each by the function it is for, and each map of the same
+    [(a, n)], for [t] or another function of the container, adds a count. [t]
+    counts the map from the step that makes it, so an exception that ends the
+    call leaves it to {!close} of [t]. It is [None] if the process reached its
     locked-memory limit, or the container holds as many mappings as
     [dma_entry_limit] allows, has no device addresses left below [below], or
     maps [(a, n)] already past [below]. [fn] is the public function that asks,
     named in the [Invalid_argument] for a released function. *)
 
 val unmap_dma : string -> t -> int -> int -> unit
-(** [unmap_dma bus t a n] drops a count of [(a, n)], unmapping it with the
-    last. *)
+(** [unmap_dma bus t a n] drops one of [t]'s counts of [(a, n)], unmapping
+    it with the container's last. It drops nothing if [t] counts none, as
+    after {!close}. *)
 
 val close : t -> unit
-(** [close t] marks [t] released at its function's release, and closes its
-    container with the container's last function, which removes every mapping
-    the container holds. A [close] called again after an exception ended one
-    finishes it, and counts [t] out of its container once. Raises [Failure],
-    having counted [t] out, if the container's descriptor was not open. *)
+(** [close t] marks [t] released at its function's release, drops each of
+    [t]'s counts, unmapping the pairs no other function of the container
+    counts, and closes its container with the container's last function, which
+    removes every mapping the container holds. A [close] called again after an
+    exception ended one finishes it, and counts [t] out of its container once.
+    Raises [Failure], having counted [t] out, if the container's descriptor was
+    not open. *)

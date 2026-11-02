@@ -181,8 +181,9 @@ let given = function
 
 let tree_capacity x =
   let t = x.t_tables and s = Page_table.space x.t_tables in
+  let h = Space.holder () in
   ( drain (fun () -> Page_table.palloc ~zero:false t 4096) (Page_table.pfree t),
-    drain (fun () -> Space.alloc s page) (Space.free s) )
+    drain (fun () -> Space.alloc s h page) Space.free )
 
 (* The memory files under [root], without the markers of their reachers, and the
    bytes they hold. *)
@@ -563,8 +564,9 @@ let test_peer_of_peer () =
   List.iter2 Memory.free [ y.t_memory; x.t_memory; o.t_memory ] [ q; p; r ]
 
 (* A free the GPU does not confirm keeps the region's memory and addresses, of
-   every source, until a free once the function is released, which gives back
-   system memory and addresses only. *)
+   every source, until the function's release, which gives back system memory
+   and addresses once the function masters the bus no more; a free after it
+   gives back nothing more. *)
 let test_unconfirmed () =
   with_gpus 1 @@ fun root _ gpus ->
   let x = List.hd gpus in
@@ -584,10 +586,11 @@ let test_unconfirmed () =
   equal ~msg:"the GPU's memory and addresses kept" (pair int int) held
     (tree_capacity x);
   Function.release x.t_fn;
-  equal ~msg:"kept through the release" int bytes (held_bytes root);
+  equal ~msg:"given back at the release" int 0 (held_bytes root);
+  equal ~msg:"the addresses" int (snd before) (snd (tree_capacity x));
   Memory.free x.t_memory later;
-  equal ~msg:"given back at a free after the release" int 0 (held_bytes root);
-  equal ~msg:"the addresses" int (snd before) (snd (tree_capacity x))
+  equal ~msg:"no more at a free after the release" int (snd before)
+    (snd (tree_capacity x))
 
 (* Once the function is released, a free of any region writes no table. *)
 let test_free_released from =
@@ -960,9 +963,9 @@ let test_released_refused =
       Memory.free o.t_memory theirs)
 
 (* A released GPU's memory, allocated before its release, mapped by the other
-   GPU: its system memory stays until its region's free, so it maps as before;
-   its GPU memory another open may have reset and given out, so a view of it
-   is refused, naming the GPU, taking nothing. *)
+   GPU: another open may have reset the GPU and given its own memory out, and
+   the release gave back its system memory, so a view of any of it is
+   refused, naming the GPU, taking nothing. *)
 let test_released_peer () =
   with_gpus 2 @@ fun _ _ gpus ->
   let x = List.nth gpus 0 and o = List.nth gpus 1 in
@@ -975,13 +978,8 @@ let test_released_peer () =
     (fun (msg, r) ->
       contains ~msg ~sub:(Function.bus x.t_fn)
         (require_error (Memory.map_peer o.t_memory r)))
-    [ ("Gpu memory", gpu); ("Bar memory", bar) ];
+    [ ("Host memory", host); ("Gpu memory", gpu); ("Bar memory", bar) ];
   equal ~msg:"nothing taken" (pair int int) before (tree_capacity o);
-  let p = mapped (Memory.map_peer o.t_memory host) in
-  equal ~msg:"the view's address" hex (Memory.address host) (Memory.address p);
-  equal ~msg:"the view's pages" (pair target ranges) (Memory.pages host)
-    (Memory.pages p);
-  Memory.free o.t_memory p;
   List.iter (Memory.free x.t_memory) [ host; gpu; bar ]
 
 (* Interrupted requests
@@ -1579,7 +1577,9 @@ let test_reopened () =
       ~memory:gpu_memory ~boot:mib ~tables:Pool ~pages:large_pages
   in
   Page_table.booted reopened;
-  let fresh = require_some (Page_table.alloc reopened (3 * mib)) in
+  let x', fresh =
+    require_some (Page_table.alloc reopened (Space.holder ()) (3 * mib))
+  in
   let before = bindings x.t_g and touches = x.t_g.touches in
   List.iter (Memory.free x.t_memory) (p :: held);
   equal ~msg:"no entry written" int touches x.t_g.touches;
@@ -1589,7 +1589,7 @@ let test_reopened () =
   raises_match ~msg:"its system memory given back" (Exn.invalid_arg ~sub:"")
     (fun () -> Function.free_dma x.t_fn host);
   equal ~msg:"the new instance's free" bool true
-    (Page_table.free reopened fresh);
+    (Page_table.free reopened x' fresh);
   Memory.free o.t_memory shared
 
 let placement =
@@ -1835,6 +1835,7 @@ type s_pair = {
   root : string;
   slot : int;
   gpus : on_tree array;
+  lender : Function.t;
   lent : Window.t;
   initial : (int * int) array;
   bytes : int;  (** System memory held at the start: the lent memory. *)
@@ -1867,8 +1868,10 @@ let create_pair () =
   let k = take_slot () in
   let base = slots_base + (k * slot_size) in
   let borrowed = base + slot_size - (2 * mib) in
-  let buses = [ "0000:03:00.0"; "0000:04:00.0" ] in
-  let root = Tree.make ~privileged:true (List.map Tree.gpu buses) in
+  let buses = [ "0000:03:00.0"; "0000:04:00.0" ] and lender = "0000:05:00.0" in
+  let root =
+    Tree.make ~privileged:true (List.map Tree.gpu (buses @ [ lender ]))
+  in
   let m = Machine.at root in
   (match Machine.reserve m ~base:slots_base (slots * slot_size) with
   | Ok () -> ()
@@ -1882,13 +1885,15 @@ let create_pair () =
   let gpus =
     Array.of_list (List.map (take_gpu ~memory:(8 * mib) ~space m) buses)
   in
-  let lent =
-    fst (given (Function.alloc_dma ~va:borrowed gpus.(0).t_fn (2 * page)))
-  in
+  (* The memory the GPUs borrow is a third function's, which no command
+     releases. *)
+  let lender = require_ok (Function.take m lender) in
+  let lent = fst (given (Function.alloc_dma ~va:borrowed lender (2 * page))) in
   {
     root;
     slot = k;
     gpus;
+    lender;
     lent;
     initial = Array.map tree_capacity gpus;
     bytes = held_bytes root;
@@ -1899,7 +1904,8 @@ let release_pair s =
   List.iter (fun (i, r) -> Memory.free s.gpus.(i).t_memory r) s.live;
   s.live <- [];
   Array.iter (fun x -> Function.release x.t_fn) s.gpus;
-  Function.free_dma s.gpus.(0).t_fn s.lent;
+  Function.free_dma s.lender s.lent;
+  Function.release s.lender;
   equal ~msg:"system memory held once all is given back" int 0
     (held_bytes s.root);
   give_slot s.slot
@@ -1965,7 +1971,7 @@ let peer_pre _ _ r =
 (* A region of another pair's GPU is of another machine. *)
 exception Other_machine
 
-(* A view of a released GPU's own memory is refused. *)
+(* A view of a released GPU's memory is refused. *)
 exception Released_memory
 
 let map_peer_ref m i r =
@@ -1975,7 +1981,7 @@ let map_peer_ref m i r =
   let same = o.gpus_released == m.released in
   cover "a region of another machine" (not same);
   if not same then raise Other_machine;
-  if o.gpus_released.(o.owner) && o.gpu then raise Released_memory;
+  if o.gpus_released.(o.owner) then raise Released_memory;
   (* The GPU maps the memory already: its own, or a peer's it mapped. *)
   let over p = p.owner = i && origin p == o in
   let mapping =
@@ -2588,8 +2594,7 @@ let on_files =
         test_peer_unrecorded;
       test_released_refused;
       test
-        "a released GPU's system memory maps, and its GPU memory is refused, \
-         naming it"
+"a released GPU's memory is refused to a peer, naming it"
         test_released_peer;
       cases
         "a request cut at any allocation, then its GPU's stop, leaves its \

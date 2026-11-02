@@ -310,12 +310,30 @@ let iova bus fd =
    another IOMMU, or whose IOMMU leaves out part of the container's window,
    joins the next container that takes it, or one of its own. Mappings are
    counted by their (address, bytes), as Function counts pins, because DMA
-   memory and a pin may be the same pair, for one function or several. *)
+   memory and a pin may be the same pair, for one function or several. Each
+   function counts its own maps of each pair, so that its release gives back
+   exactly those: the count of a pair is the sum of its functions'. *)
+
+(* A container's mapping of a pair: its device addresses, [-1] until taken,
+   whether the kernel mapped it, and its functions' counts. A mapping is
+   bound before its addresses are taken, and they before the map, and each
+   step is recorded with nothing between it and its record that allocates or
+   polls, so that an exception between steps leaves a mapping no count holds,
+   which the next map of the pair makes anew. *)
+type mapping = {
+  mutable iova : int;
+  mutable mapped : bool;
+  mutable count : int;
+}
+
+(* A function's count of its maps of one pair. *)
+type tally = { mutable held : int }
+
 type container = {
   fd : fd;
   window : int * int; (* its device addresses: (base, n) *)
   iova : Tlsf.t; (* under [mutex] *)
-  maps : (int * int) Tables.Range.t; (* to (device address, count) *)
+  maps : mapping Tables.Range.t;
   mutex : Lock.t;
   pid : int; (* the process that opened it *)
   mutable users : int; (* the functions it holds, under [containers_lock] *)
@@ -325,7 +343,9 @@ type container = {
 (* A function behind an IOMMU, in its container. *)
 type t = {
   c : container;
+  bus : string;
   device : fd;
+  tallies : tally Tables.Range.t; (* under [c.mutex] *)
   mutable released : bool;
   mutable left : bool; (* once [close] left the container *)
 }
@@ -433,7 +453,15 @@ let open_ files fds bus =
   let c = Lock.protect containers_lock (fun () -> join files fds bus file) in
   match
     let device, efd = open_device fds bus (last fds) in
-    ({ c; device; released = false; left = false }, efd)
+    ( {
+        c;
+        bus;
+        device;
+        tallies = Tables.Range.create 16;
+        released = false;
+        left = false;
+      },
+      efd )
   with
   | r -> r
   | exception e ->
@@ -450,60 +478,105 @@ let alignment n =
   let rec go b = if b > n / 2 then b else go (b * 2) in
   Int.max page (go 1)
 
+(* [table]'s binding of [k], made by [make] if missing. *)
+let bound table k make =
+  match Tables.Range.find table k with
+  | v -> v
+  | exception Not_found ->
+      let v = make () in
+      Tables.Range.replace table k v;
+      v
+
+(* Takes off [c] the mapping [m] of the [n] bytes at [a] that no function
+   counts any more: its binding first, so that an exception after leaves no
+   binding a later map would count for device addresses the IOMMU no longer
+   maps, only a leak. A closed container has unmapped it already. *)
+let drop bus c a n (m : mapping) =
+  Tables.Range.remove c.maps (a, n);
+  if m.mapped && not c.closed then
+    Fail.bug (strf "unmapping %d bytes for %s" n bus) (fun () ->
+        unmap c.fd m.iova n);
+  if m.iova >= 0 then give_back c m.iova
+
+(* Device addresses and a map for the pair of [m], which no map made or one
+   an exception cut before its record. A cut map the kernel made is unmapped
+   first, which unmaps nothing where it made none. *)
+let make_mapping bus c ~below a n (m : mapping) =
+  if m.iova >= 0 then begin
+    (try unmap c.fd m.iova n with Unix.Unix_error _ -> ());
+    m.mapped <- false;
+    give_back c m.iova;
+    m.iova <- -1
+  end;
+  (match Tlsf.alloc ~align:(alignment n) ~below c.iova n with
+  | Some iova -> m.iova <- iova
+  | None -> ());
+  if m.iova < 0 then false
+  else
+    match map c.fd a m.iova n with
+    | () ->
+        m.mapped <- true;
+        true
+    (* Mapping memory pins it: the kernel counts the pinned bytes against the
+       process's locked-memory limit (ENOMEM) and the mapping against the
+       container's dma_entry_limit (ENOSPC). *)
+    | exception Unix.Unix_error ((ENOMEM | ENOSPC), _, _) -> false
+    | exception Unix.Unix_error (e, _, _) ->
+        drop bus c a n m;
+        Fail.fail "mapping %d bytes for %s: %s" n bus (Unix.error_message e)
+
 (* The device address at which [t]'s container maps the [n] bytes at [a],
    ending at or below [below], mapping them for the first count. A mapping
-   another function made past [below] serves none. *)
+   another function made past [below] serves none. [t]'s tally and the
+   mapping's count change together. *)
 let map_dma fn bus t ~below a n =
   let c = t.c in
   Lock.protect c.mutex @@ fun () ->
   if t.released then Fail.err_released fn bus;
-  match Tables.Range.find_opt c.maps (a, n) with
-  | Some (iova, _) when iova > below - n -> None
-  | Some (iova, k) ->
-      Tables.Range.replace c.maps (a, n) (iova, k + 1);
-      Some iova
-  | None -> (
-      match Tlsf.alloc ~align:(alignment n) ~below c.iova n with
-      | None -> None
-      | Some iova -> (
-          match map c.fd a iova n with
-          | () ->
-              Tables.Range.replace c.maps (a, n) (iova, 1);
-              Some iova
-          (* Mapping memory pins it: the kernel counts the pinned bytes
-             against the process's locked-memory limit (ENOMEM) and the
-             mapping against the container's dma_entry_limit (ENOSPC). *)
-          | exception Unix.Unix_error ((ENOMEM | ENOSPC), _, _) ->
-              give_back c iova;
-              None
-          | exception Unix.Unix_error (e, _, _) ->
-              give_back c iova;
-              Fail.fail "mapping %d bytes for %s: %s" n bus
-                (Unix.error_message e)))
+  let k = bound t.tallies (a, n) (fun () -> { held = 0 }) in
+  let m =
+    bound c.maps (a, n) (fun () -> { iova = -1; mapped = false; count = 0 })
+  in
+  if m.count > 0 && m.iova > below - n then None
+  else if m.count = 0 && not (make_mapping bus c ~below a n m) then begin
+    drop bus c a n m;
+    None
+  end
+  else begin
+    m.count <- m.count + 1;
+    k.held <- k.held + 1;
+    Some m.iova
+  end
 
-(* Drops a count of the [n] bytes at [a], unmapping them with the last. A
-   closed container has unmapped them already. The last count leaves the
-   table before the unmap, so that an exception between leaves no entry that
-   a later map would count for device addresses the IOMMU no longer maps: it
-   leaves the mapping and its addresses, a leak. *)
-let unmap_dma bus t a n =
+(* Drops [k] of [t]'s maps of the pair, unmapping it with the last count.
+   [c.mutex] is held. *)
+let uncount bus t (a, n) tally k =
   let c = t.c in
-  Lock.protect c.mutex @@ fun () ->
   match Tables.Range.find c.maps (a, n) with
-  | iova, k when k > 1 -> Tables.Range.replace c.maps (a, n) (iova, k - 1)
-  | iova, _ ->
-      Tables.Range.remove c.maps (a, n);
-      if not c.closed then
-        Fail.bug (strf "unmapping %d bytes for %s" n bus) (fun () ->
-            unmap c.fd iova n);
-      give_back c iova
+  | exception Not_found -> ()
+  | m ->
+      tally.held <- tally.held - k;
+      m.count <- m.count - k;
+      if tally.held = 0 then Tables.Range.remove t.tallies (a, n);
+      if m.count = 0 then drop bus c a n m
+
+let unmap_dma bus t a n =
+  Lock.protect t.c.mutex @@ fun () ->
+  match Tables.Range.find t.tallies (a, n) with
+  | exception Not_found -> ()
+  | tally -> if tally.held > 0 then uncount bus t (a, n) tally 1
 
 let device t = t.device
 
 (* [left] is recorded as [leave] returns, and the bug it reports raised
    after. *)
+(* [t] gives back its maps first, each pair as one step, so that a close an
+   exception ended gives back the rest when called again. *)
 let close t =
-  Lock.protect t.c.mutex (fun () -> t.released <- true);
+  Lock.protect t.c.mutex (fun () ->
+      t.released <- true;
+      Tables.Range.fold (fun k tally l -> (k, tally) :: l) t.tallies []
+      |> List.iter (fun (k, tally) -> uncount t.bus t k tally tally.held));
   if not t.left then begin
     let open_ = leave t.c in
     t.left <- true;

@@ -34,6 +34,100 @@ let rec update a f =
    memory in files of its own. *)
 type way = Iommu_take of Vfio.t | Physical_take of Sysmem.store
 
+(* Mappings
+
+   The process's mappings a take made, which its release unmaps: windows on
+   its BARs and, behind an IOMMU, its system memory. The system chooses where
+   a mapping lies, so its record is listed before the system call that makes
+   it, and the call's answer is stored in it before anything allocates or
+   polls. An exception therefore leaves each mapping the take made on its
+   list. A record is also found by its address once filled. *)
+
+type kind = Bar | Dma
+
+type mapping = {
+  kind : kind;
+  len : int;
+  mutable at : int; (* [-1] until made, and once taken off *)
+  mutable prev : mapping;
+  mutable next : mapping;
+}
+
+let rec none = { kind = Bar; len = 0; at = -1; prev = none; next = none }
+
+type mappings = {
+  lock : Lock.t;
+  mutable first : mapping;
+  by_at : mapping Tables.Address.t;
+}
+
+let mappings () =
+  { lock = Lock.create (); first = none; by_at = Tables.Address.create 16 }
+
+(* A record of a mapping of [len] bytes about to be made, listed. *)
+let listed ms kind len =
+  let m = { kind; len; at = -1; prev = none; next = none } in
+  Lock.protect ms.lock (fun () ->
+      m.next <- ms.first;
+      if ms.first != none then ms.first.prev <- m;
+      ms.first <- m);
+  m
+
+let unlink ms m =
+  if m.prev != none then m.prev.next <- m.next else ms.first <- m.next;
+  if m.next != none then m.next.prev <- m.prev;
+  m.prev <- none;
+  m.next <- none
+
+(* Takes [m] off [ms]: its address, now [-1], and [-1] if it had none. *)
+let take_off ms m =
+  let a = m.at in
+  m.at <- -1;
+  unlink ms m;
+  if a >= 0 then Tables.Address.remove ms.by_at a;
+  a
+
+(* [m], made at [m.at], found by its address from now on. *)
+let made ms m =
+  Lock.protect ms.lock (fun () -> Tables.Address.replace ms.by_at m.at m)
+
+(* [m], which the system did not make, off [ms]. *)
+let unmade ms m = Lock.protect ms.lock (fun () -> ignore (take_off ms m : int))
+
+(* The mapping at [a] taken off [ms], if [ms] has one: its address goes
+   first, so that an exception after it leaks the mapping and unmaps it
+   never twice. *)
+let found ms a =
+  Lock.protect ms.lock (fun () ->
+      match Tables.Address.find ms.by_at a with
+      | exception Not_found -> None
+      | m ->
+          ignore (take_off ms m : int);
+          Some m)
+
+let unmap_bar a n =
+  Fail.bug (strf "unmapping %d bytes of a BAR at 0x%x" n a) (fun () ->
+      file_unmap a n)
+
+(* Unmaps every mapping of [ms], one at a time. *)
+let unmap_all ms =
+  let rec go () =
+    match
+      Lock.protect ms.lock (fun () ->
+          let m = ms.first in
+          if m == none then None else Some (m.kind, take_off ms m, m.len))
+    with
+    | None -> ()
+    | Some (_, a, _) when a < 0 -> go ()
+    | Some (Bar, a, n) ->
+        unmap_bar a n;
+        go ()
+    | Some (Dma, a, n) ->
+        Sysmem.unmap a n;
+        go ()
+  in
+  go ()
+
 type taken = {
   files : Sysfs.t;
   bus : string;
@@ -45,6 +139,7 @@ type taken = {
   way : way;
   inherited : bool; (* a dead process left it reaching memory, at the take *)
   fds : Vfio.fds; (* every descriptor the take opened that no release closed *)
+  maps : mappings;
   mutable given : bool; (* once a release gave a physical take back *)
   mutable stopped : bool; (* whether that release turned bus mastering off *)
 }
@@ -219,11 +314,14 @@ let map t ~combine i off n =
   else
     let first, len = pages off n in
     let window ?combines fd base =
-      let a =
-        Fail.step (strf "mapping BAR %d of %s" i t.bus) (fun () ->
-            file_map fd (base + first) len)
-      in
-      Window.v ?combines ~prefetchable:t.prefetchable.(i) (a + off - first) n
+      let m = listed t.maps Bar len in
+      (match file_map fd (base + first) len with
+      | a -> m.at <- a
+      | exception Unix.Unix_error (e, _, _) ->
+          unmade t.maps m;
+          Fail.fail "mapping BAR %d of %s: %s" i t.bus (Unix.error_message e));
+      made t.maps m;
+      Window.v ?combines ~prefetchable:t.prefetchable.(i) (m.at + off - first) n
     in
     match t.way with
     | Iommu_take c ->
@@ -250,11 +348,12 @@ let map t ~combine i off n =
             size;
         window ~combines fd 0
 
-let unmap w =
+(* A window the take no longer lists, as after its release, unmaps
+   nothing. *)
+let unmap t w =
   if Window.length w > 0 then
-    let a, n = pages (Window.address w) (Window.length w) in
-    Fail.bug (strf "unmapping %d bytes of a BAR at 0x%x" n a) (fun () ->
-        file_unmap a n)
+    let a, _ = pages (Window.address w) (Window.length w) in
+    match found t.maps a with Some m -> unmap_bar a m.len | None -> ()
 
 let interrupt t ms =
   match t.interrupts with Some fd -> Vfio.wait fd ms | None -> false
@@ -266,35 +365,51 @@ let reset t =
   | Physical_take _ -> Sysfs.reset t.files t.bus
 
 (* Physical addresses are the kernel's to choose: Function refuses those past
-   [below]. *)
+   [below]. Behind an IOMMU the memory is mapped into the process first,
+   listed for the release, then for the function: [Vfio] counts the map. *)
 let alloc_dma t ~contiguous ~va ~below n =
   match t.way with
   | Physical_take s -> Sysmem.alloc ~contiguous ?va s n
   | Iommu_take c -> (
-      let w = Sysmem.map ?va n in
-      let n = Window.length w in
-      match Vfio.map_dma "alloc_dma" t.bus c ~below (Window.address w) n with
-      | Some iova -> Some (w, [ (iova, n) ])
+      let n = round_page n in
+      let m = listed t.maps Dma n in
+      (match Sysmem.map ?va n with
+      | a -> m.at <- a
+      | exception e ->
+          unmade t.maps m;
+          raise e);
+      made t.maps m;
+      let a = m.at in
+      let give_back () =
+        match found t.maps a with Some _ -> Sysmem.unmap a n | None -> ()
+      in
+      match Vfio.map_dma "alloc_dma" t.bus c ~below a n with
+      | Some iova -> Some (Window.v a n, [ (iova, n) ])
       | None ->
-          Sysmem.unmap w;
+          give_back ();
           None
       | exception e ->
-          Sysmem.unmap w;
+          give_back ();
           raise e)
 
+(* Memory the take no longer lists, as after its release, frees nothing. *)
 let free_dma t w =
   match t.way with
-  | Iommu_take c ->
-      Vfio.unmap_dma t.bus c (Window.address w) (Window.length w);
-      Sysmem.unmap w
-  | Physical_take _ -> Sysmem.free w
+  | Iommu_take c -> (
+      match found t.maps (Window.address w) with
+      | Some m ->
+          let a = Window.address w in
+          Vfio.unmap_dma t.bus c a m.len;
+          Sysmem.unmap a m.len
+      | None -> ())
+  | Physical_take s -> Sysmem.free s w
 
 (* Taken physically, a function reaches only memory that outlives the process:
    what alloc_dma gave on its machine. *)
 let pin t ~below a n =
   match t.way with
   | Physical_take s -> (
-      match Sysmem.reach ~root:(Sysmem.root s) ~bus:t.bus a (round_page n) with
+      match Sysmem.reach s a (round_page n) with
       | Some _ as runs -> runs
       | None ->
           Fail.fail
@@ -311,7 +426,7 @@ let pin t ~below a n =
 
 let unpin t a n =
   match t.way with
-  | Physical_take _ -> Sysmem.unreach ~a ~n:(round_page n)
+  | Physical_take s -> Sysmem.unreach s a (round_page n)
   | Iommu_take c -> Vfio.unmap_dma t.bus c a (round_page n)
 
 (* A reset GPU reaches none of the memory processes that died left. Behind an
@@ -327,21 +442,27 @@ let forget t =
 let close_fds t = Vfio.close_fds t.fds
 
 (* A release that an exception ended goes on from where it was when called
-   again. Behind an IOMMU a take's descriptors close whatever happens before:
-   Linux then stops the function's DMA, and the function reaches only what the
-   IOMMU maps for it, whose pages VFIO keeps until it unmaps them. A physical
-   take's close only once it is given back and has left the exit's list, so
-   that an exception before leaves the take, files open and the function
-   locked, for the exit or the next release to give back, and neither gives
-   back a take through descriptors closed. [given] is recorded as the
-   give-back returns, and leaving the list, which allocates, is made again
-   by each call. *)
+   again. Behind an IOMMU the function gives back its maps, then the process
+   unmaps its windows and memory, and its take's descriptors close whatever
+   happens before: Linux then stops the function's DMA, and the function
+   reaches only what the IOMMU maps for it, whose pages VFIO keeps until it
+   unmaps them. A physical take is given back first, its DMA stopped and,
+   once its bus mastering reads off, the memory its store counts given
+   back, then its windows unmap. It closes only once it has left the exit's
+   list, so that an exception before leaves the take, files open and the
+   function locked, for the exit or the next release to give back, and
+   neither gives back a take through descriptors closed. [given] is recorded
+   as the give-back returns, and leaving the list, which allocates, is made
+   again by each call. *)
 let release t =
   match t.way with
   | Iommu_take c ->
       (match Vfio.close c with
-      | () -> close_fds t
+      | () ->
+          unmap_all t.maps;
+          close_fds t
       | exception e ->
+          unmap_all t.maps;
           close_fds t;
           reraise e);
       true
@@ -350,6 +471,7 @@ let release t =
         t.stopped <- give_back t s;
         t.given <- true
       end;
+      unmap_all t.maps;
       unhold t;
       close_fds t;
       t.stopped
@@ -364,7 +486,7 @@ let fn t =
     bar = (fun i -> if i < Array.length t.bars then t.bars.(i) else None);
     map =
       (fun ~combine i off n -> Fail.result (fun () -> map t ~combine i off n));
-    unmap;
+    unmap = unmap t;
     interrupt = interrupt t;
     reset = (fun () -> Fail.result (fun () -> reset t));
     forget = (fun () -> Fail.result (fun () -> forget t));
@@ -400,6 +522,7 @@ let take_iommu files fds bus bars prefetchable =
     way = Iommu_take c;
     inherited = false;
     fds;
+    maps = mappings ();
     given = false;
     stopped = false;
   }
@@ -447,6 +570,7 @@ let take_physical l fds u bars prefetchable =
       way = Physical_take (Sysmem.store ~root ~bus);
       inherited;
       fds;
+      maps = mappings ();
       given = false;
       stopped = false;
     }

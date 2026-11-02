@@ -249,10 +249,16 @@ val discard : t -> va:int -> int -> bool
     requires. *)
 
 val alloc :
-  ?uncached:bool -> ?contiguous:bool -> ?below:int -> t -> int -> mapping option
-(** [alloc t n] is [n] bytes, rounded up to 4 KiB, of new physical memory from
-    the pool {!palloc} takes from by default, mapped at new virtual addresses of
-    [space t].
+  ?uncached:bool ->
+  ?contiguous:bool ->
+  ?below:int ->
+  t ->
+  Space.holder ->
+  int ->
+  (Space.hold * mapping) option
+(** [alloc t h n] is [n] bytes, rounded up to 4 KiB, of new physical memory
+    from the pool {!palloc} takes from by default, mapped at new virtual
+    addresses of [space t], with [h]'s hold on them ({!Space.alloc}).
     - With [~contiguous:true] (defaults to [false]) the memory is one zeroed
       block, aligned as the largest block of [pages] it could hold when the
       pool has one, so that it maps with large pages.
@@ -264,12 +270,15 @@ val alloc :
 
     It is [None] if the space or the pool cannot supply the memory, as
     {!Space.alloc} and {!palloc} bound each request, or if a table has no room,
-    after giving back what it took.
+    after giving back what it took. An exception that ends it, such as an
+    asynchronous one, leaves the addresses to [h]'s release
+    ({!Space.release}).
 
     Raises [Invalid_argument] if [n <= 0]. *)
 
-val free : t -> mapping -> bool
-(** [free t m] unmaps [m] and flushes. It is [true] iff the flush was
-    confirmed, and then it has freed [m]'s virtual addresses and, if [m] is in
-    the GPU's own memory ({!Gpu}), its physical memory. On [false] it keeps
-    both, which the GPU may still reach. *)
+val free : t -> Space.hold -> mapping -> bool
+(** [free t x m] unmaps [m], which {!alloc} gave with the hold [x], and
+    flushes. It is [true] iff the flush was confirmed, and then it has freed
+    [x] ({!Space.free}) and, if [m] is in the GPU's own memory ({!Gpu}), its
+    physical memory. On [false] it keeps both, which the GPU may still
+    reach. *)

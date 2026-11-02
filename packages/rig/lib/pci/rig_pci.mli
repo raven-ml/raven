@@ -51,7 +51,8 @@
     + Before the GPU can be left running, [f] gives the hold the GPU's stop
       ({!Driver.set_stop}).
     + The driver submits work through windows.
-    + {!Driver.stop} ends the GPU's work and releases its function. The
+    + {!Driver.stop} ends the GPU's work and releases its function, which
+      gives back the memory, pins and addresses the function holds. The
       process's exit does this for each GPU it still holds.
 
     The modules below are in reading order, from the hardware up; each builds

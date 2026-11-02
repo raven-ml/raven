@@ -13,8 +13,8 @@
     open, a reset or a change, and a hold's lock over its stop. Under either
     come the driver's holds ({!Driver}) and the driver's own locks, then a
     function's release ({!Function}). Under those come VFIO's list of
-    containers, then a container's lock ({!Vfio}), then a space's
-    ({!Space}); and system memory's state ({!Sysmem}), then its
+    containers, then a container's lock ({!Vfio}), then the
+    spaces' ({!Space}); and system memory's state ({!Sysmem}), then its
     reservations' lock. A function's lock ({!Function}), the firmware found
     ({!Firmware}) and a GPU memory's lock ({!Memory}), which other GPUs'
     requests take too, hold no other.

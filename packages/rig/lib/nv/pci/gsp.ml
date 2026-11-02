@@ -90,7 +90,7 @@ type group = { runlist : int option; mthd : int }
 
 (* GPU memory the process gave the GSP for an object: a channel's instance
    block, a method buffer, or a compute engine's context buffers. *)
-type given = Mapped of Page_table.mapping | Block of int
+type given = Mapped of Space.hold * Page_table.mapping | Block of int
 
 (* An object of one of the process's clients: its parent, and the memory the
    process gave the GSP for it, which goes back once the GSP freed the object
@@ -128,9 +128,9 @@ type t = {
   taken : sys list ref; (* the system memory the boot took *)
 }
 
-(* System memory for the GSP: [w], its address in the space and the bus address
-   of each 4 KiB page. *)
-and sys = { w : Window.t; va : int; pages : int list }
+(* System memory for the GSP: [w], its address in the space, held by the
+   GPU's function, and the bus address of each 4 KiB page. *)
+and sys = { w : Window.t; space : Space.hold; pages : int list }
 
 let sys p ~taken ?(contiguous = false) n =
   let n = round_up n page in
@@ -138,15 +138,17 @@ let sys p ~taken ?(contiguous = false) n =
     if contiguous && n > Machine.page (Function.machine p.chip.fn) then 2 * mib
     else page
   in
-  match Space.alloc ~align p.space (round_up n align) with
+  let holder = Function.holder p.chip.fn in
+  match Space.alloc ~align p.space holder (round_up n align) with
   | None -> Error "no addresses for the GSP's system memory"
-  | Some va -> (
+  | Some x -> (
+      let va = Space.address x in
       match Function.alloc_dma ~contiguous ~va p.chip.fn n with
       | Error why ->
-          Space.free p.space va;
+          Space.free x;
           Error why
       | Ok None ->
-          Space.free p.space va;
+          Space.free x;
           Error
             "the machine has no free system memory for the GSP; free some, or \
              reserve huge pages (vm.nr_hugepages)"
@@ -156,7 +158,7 @@ let sys p ~taken ?(contiguous = false) n =
               (fun (a, len) -> List.init (len / page) (fun i -> a + (i * page)))
               runs
           in
-          let s = { w; va; pages } in
+          let s = { w; space = x; pages } in
           taken := s :: !taken;
           Ok s)
 
@@ -172,7 +174,7 @@ let give_back p taken =
     | s :: rest ->
         taken := rest;
         (match Function.free_dma p.chip.fn s.w with
-        | () -> Space.free p.space s.va
+        | () -> Space.free s.space
         | exception e ->
             if Option.is_none !first then
               first := Some (e, Printexc.get_raw_backtrace ()));
@@ -598,10 +600,11 @@ let on_tables g f = Rig_nv.Lock.protect g.p.tables_lock (fun () -> f g.p.tables)
 (* Memory of the GSP's objects: GPU memory mapped at addresses of the GPU's
    space, recorded for [obj] of [client]. *)
 let object_memory g ~client obj n =
-  match on_tables g (fun t -> Page_table.alloc ~contiguous:true t n) with
+  let holder = Function.holder g.p.chip.fn in
+  match on_tables g (fun t -> Page_table.alloc ~contiguous:true t holder n) with
   | None -> Error "no GPU memory for the GSP's objects"
-  | Some m ->
-      given g ~client obj (Mapped m);
+  | Some (x, m) ->
+      given g ~client obj (Mapped (x, m));
       Ok m
 
 let paddr (m : Page_table.mapping) = fst (List.hd m.pages)
@@ -789,7 +792,7 @@ let drop_objects g ~client obj =
   on_tables g (fun t ->
       List.iter
         (function
-          | Mapped m -> ignore (Page_table.free t m : bool)
+          | Mapped (x, m) -> ignore (Page_table.free t x m : bool)
           | Block pa -> Page_table.pfree t pa)
         memory)
 
@@ -1456,7 +1459,7 @@ let give_addresses g =
   Objects.iter
     (fun _ h ->
       List.iter
-        (function Mapped m -> Space.free g.p.space m.va | Block _ -> ())
+        (function Mapped (x, _) -> Space.free x | Block _ -> ())
         h.given)
     held
 

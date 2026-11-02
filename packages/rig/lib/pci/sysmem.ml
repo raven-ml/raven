@@ -136,11 +136,8 @@ let unmap_range a n =
       if Lock.protect lock (fun () -> reserved_at a n) then release_at a n
       else unmap_at a n)
 
-let map ?va n =
-  let n = round_page n in
-  Window.v (map_bytes ?va n) n
-
-let unmap w = unmap_range (Window.address w) (Window.length w)
+let map ?va n = map_bytes ?va n
+let unmap a n = unmap_range a n
 
 (* Memory that outlives the process
 
@@ -199,7 +196,18 @@ type block = {
   mutable users : int; (* bytes allocations and peers hold in it *)
 }
 
-type store = { root : string; bus : string }
+(* A take's count of the [n] bytes at [a]: [whole] takes of them, and
+   [part] bytes from [a] of one more under way, counted block by block. *)
+type count = { mutable whole : int; mutable part : int }
+
+(* The memory of one take, with its counts of the blocks it holds: by
+   [alloc], and by [reach], keyed by (address, bytes). *)
+type store = {
+  root : string;
+  bus : string;
+  allocs : count Tables.Range.t;
+  reaches : count Tables.Range.t;
+}
 
 (* [state] guards every value below and every store, file and block. *)
 let state = Lock.create ()
@@ -218,7 +226,13 @@ let set_own_length n =
   let was = !own_length in
   own_length := n;
   was
-let store ~root ~bus = { root; bus }
+let store ~root ~bus =
+  {
+    root;
+    bus;
+    allocs = Tables.Range.create 16;
+    reaches = Tables.Range.create 16;
+  }
 let root s = s.root
 let prefix = "rig-pci-"
 let hugepages = "dev/hugepages"
@@ -462,17 +476,20 @@ let parts a n =
   in
   go [] a
 
-(* [b] goes once nothing holds it. *)
-let drop b len =
-  b.users <- b.users - len;
-  if b.users = 0 then begin
-    Tables.Address.remove blocks b.at;
-    unmap_range b.at huge;
-    let f = b.file in
-    release_range f.fd b.off huge;
-    f.spare <- b.off :: f.spare;
-    collect f
-  end
+(* [b], which nothing holds, goes. *)
+let free_block b =
+  Tables.Address.remove blocks b.at;
+  unmap_range b.at huge;
+  let f = b.file in
+  release_range f.fd b.off huge;
+  f.spare <- b.off :: f.spare;
+  collect f
+
+(* A block counted by no take: one whose count an exception kept from
+   following its making. *)
+let free_unheld () =
+  Tables.Address.fold (fun _ b l -> if b.users = 0 then b :: l else l) blocks []
+  |> List.iter free_block
 
 (* A new range of the process's own addresses that holds [n] bytes aligned
    to [align]. A process out of addresses has no room. *)
@@ -522,61 +539,113 @@ let runs a n =
     [] (parts a n)
   |> List.rev
 
-(* [s] holds the blocks of the [n] bytes at [a], or none of them. *)
-let hold s a n =
-  let held = ref [] in
-  try
+(* Counts
+
+   A take counts the blocks that hold its bytes in its store's count of
+   them. Each block's count and the count's [part] change together, with
+   nothing between that allocates or polls, and the take ends as [part]
+   moves to [whole] the same way. A give-back unwinds [part] from the last
+   block, as it was counted. So an exception, an asynchronous one too, leaves
+   each block's users the sum of what the counts of the stores record, and a
+   store gives back exactly what it counts. *)
+
+(* [table]'s count of the [n] bytes at [a], made before the blocks count. *)
+let count_of table a n =
+  match Tables.Range.find table (a, n) with
+  | c -> c
+  | exception Not_found ->
+      let c = { whole = 0; part = 0 } in
+      Tables.Range.replace table (a, n) c;
+      c
+
+(* Gives back [c.part], the bytes of a take under way, last block first. A
+   block left with no user goes. *)
+let unwind c a n =
+  if c.part > 0 then
     List.iter
       (fun (at, x, len) ->
-        let b =
-          match Tables.Address.find_opt blocks at with
-          | Some b when b.file.root <> s.root ->
-              Fail.fail
-                "the 2 MiB of addresses at 0x%x hold another machine's memory"
-                at
-          | Some b ->
-              join b.file s.bus;
-              zero x len;
-              b
-          | None -> new_block ~root:s.root ~bus:s.bus at
-        in
-        b.users <- b.users + len;
-        held := (b, len) :: !held)
-      (parts a n)
-  with e ->
-    List.iter (fun (b, len) -> drop b len) !held;
-    raise e
+        if x - a < c.part then
+          match Tables.Address.find blocks at with
+          | b ->
+              b.users <- b.users - len;
+              c.part <- x - a;
+              if b.users = 0 then free_block b
+          | exception Not_found -> c.part <- x - a)
+      (List.rev (parts a n))
 
+(* Counts one take of the blocks of the [n] bytes at [a] in [c], each block
+   first readied by [ready]. A take an exception cut is given back first. *)
+let count c a n ready =
+  unwind c a n;
+  List.iter
+    (fun ((_, x, len) as p) ->
+      let b = ready p in
+      b.users <- b.users + len;
+      c.part <- x + len - a)
+    (parts a n);
+  c.whole <- c.whole + 1;
+  c.part <- 0
+
+(* Gives back one take of [c], and drops [c] from [table] once it counts
+   none: [true] then. *)
+let uncount table c a n =
+  unwind c a n;
+  if c.whole > 0 then begin
+    c.whole <- c.whole - 1;
+    c.part <- n;
+    unwind c a n
+  end;
+  c.whole = 0
+  && begin
+       Tables.Range.remove table (a, n);
+       true
+     end
+
+(* The block at [at] of [s]'s root, made with its huge page if missing, and
+   zeroed where a take of another adds [len] bytes at [x]. *)
+let ready s (at, x, len) =
+  match Tables.Address.find blocks at with
+  | b when b.file.root <> s.root ->
+      Fail.fail "the 2 MiB of addresses at 0x%x hold another machine's memory"
+        at
+  | b ->
+      join b.file s.bus;
+      zero x len;
+      b
+  | exception Not_found -> new_block ~root:s.root ~bus:s.bus at
+
+(* A refusal gives back what the take counted, and the take's own
+   addresses. *)
 let alloc ?(contiguous = false) ?va s n =
   let n = round_page n in
   Lock.protect state @@ fun () ->
   match
     match va with
-    | Some a ->
-        hold s a n;
-        a
-    | None -> (
-        let a =
-          own_addresses ~align:(if contiguous && n > page then huge else page) n
-        in
-        try
-          hold s a n;
-          a
-        with e ->
-          own_free a;
-          raise e)
+    | Some a -> a
+    | None ->
+        own_addresses ~align:(if contiguous && n > page then huge else page) n
   with
   | exception Exhausted -> None
-  | a -> Some (Window.v a n, runs a n)
+  | a -> (
+      let c = count_of s.allocs a n in
+      match count c a n (ready s) with
+      | () -> Some (Window.v a n, runs a n)
+      | exception ((Exhausted | Fail.Failed _) as e) ->
+          unwind c a n;
+          if c.whole = 0 then begin
+            Tables.Range.remove s.allocs (a, n);
+            if Option.is_none va then own_free a
+          end;
+          if e == Exhausted then None else raise e)
 
-let free w =
+(* The count goes before the process's own addresses: an exception between
+   leaks the addresses and frees nobody else's. *)
+let free s w =
   let a = Window.address w and n = Window.length w in
   Lock.protect state @@ fun () ->
-  List.iter
-    (fun (at, _, len) ->
-      Option.iter (fun b -> drop b len) (Tables.Address.find_opt blocks at))
-    (parts a n);
-  own_free a
+  match Tables.Range.find s.allocs (a, n) with
+  | exception Not_found -> ()
+  | c -> if uncount s.allocs c a n then own_free a
 
 (* The function at [bus] under [root] leaves the lists of the process's
    files, each as its marker goes, and each file of [root] that then lists no
@@ -594,36 +663,53 @@ let leave ~root bus =
       end)
     !files
 
-let close s = Lock.protect state @@ fun () -> leave ~root:s.root s.bus
+(* Gives back every take [table] counts, one at a time. *)
+let uncount_all table ~own =
+  Tables.Range.fold (fun k c l -> (k, c) :: l) table []
+  |> List.iter (fun ((a, n), c) ->
+         unwind c a n;
+         while c.whole > 0 do
+           c.whole <- c.whole - 1;
+           c.part <- n;
+           unwind c a n
+         done;
+         Tables.Range.remove table (a, n);
+         if own then own_free a)
 
-(* Every block of the [n] bytes at [a] must be [root]'s: memory of the process's
-   own, or of another machine, would not outlive the process. *)
-let reach ~root ~bus a n =
+let close s =
+  Lock.protect state @@ fun () ->
+  uncount_all s.reaches ~own:false;
+  uncount_all s.allocs ~own:true;
+  free_unheld ();
+  leave ~root:s.root s.bus
+
+(* Every block of the [n] bytes at [a] must be [s]'s root's: memory of the
+   process's own, or of another machine, would not outlive the process. *)
+let reach s a n =
   Lock.protect state @@ fun () ->
   let held (at, _, _) =
-    match Tables.Address.find_opt blocks at with
-    | Some b -> b.file.root = root
-    | None -> false
+    match Tables.Address.find blocks at with
+    | b -> b.file.root = s.root
+    | exception Not_found -> false
   in
   let ps = parts a n in
   if not (List.for_all held ps) then None
   else begin
-    let bs =
-      List.map (fun (at, _, len) -> (Tables.Address.find blocks at, len)) ps
-    in
-    (* Each file lists [bus] before a block counts it: a failed marker counts
-       nothing, and a list longer than needed only leaks. *)
-    List.iter (fun (b, _) -> join b.file bus) bs;
-    List.iter (fun (b, len) -> b.users <- b.users + len) bs;
+    (* Each file lists the bus before a block counts it: a failed marker
+       counts nothing, and a list longer than needed only leaks. *)
+    List.iter
+      (fun (at, _, _) -> join (Tables.Address.find blocks at).file s.bus)
+      ps;
+    count (count_of s.reaches a n) a n (fun (at, _, _) ->
+        Tables.Address.find blocks at);
     Some (runs a n)
   end
 
-let unreach ~a ~n =
+let unreach s a n =
   Lock.protect state @@ fun () ->
-  List.iter
-    (fun (at, _, len) ->
-      Option.iter (fun b -> drop b len) (Tables.Address.find_opt blocks at))
-    (parts a n)
+  match Tables.Range.find s.reaches (a, n) with
+  | exception Not_found -> ()
+  | c -> ignore (uncount s.reaches c a n : bool)
 
 (* Whether the process that made the file at [path] died: the lock it held
    while it lived is free. A lock that cannot be tested reads as held. Raises

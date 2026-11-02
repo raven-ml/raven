@@ -19,37 +19,48 @@
     memory here, whatever the GPU's vendor. Each allocation or mapping is a
     {!region}, and {!free} gives any region back.
 
+    {b Holders.} The GPU's function holds what the GPU's regions take: system
+    memory, pins and virtual addresses, from the step that takes each. An
+    exception that ends a request, an asynchronous one too, leaves what the
+    request took held. Another GPU holds what it maps of this GPU's memory
+    itself ({b Peers}).
+
     {b After the GPU is given back.} Once the GPU's function is released
-    ({!Function.release}, which {!Driver.stop} and {!release} do), {!free}
-    writes none of the GPU's tables. It gives back system memory, pins and
-    virtual addresses only, and none of them while the function may still write
-    them ({!Function.release}). Each request that writes the tables, {!val-
-    alloc}, {!map_host}, {!map_peer} and {!free}, is a use of the function, so
-    a release that begins meanwhile leaves the function's give-back to that
-    request's end ({!Function}). A request that began before the release and
-    reaches a step of {!Function} after it, such as an allocation, a pin or a
-    map, may raise [Invalid_argument] there and keep what it took until the
-    process exits. {!val-alloc}, {!map_host} and {!map_peer} on this {!t} raise
-    [Invalid_argument]. Once the function is released, another open may reset
-    the GPU, and this {!t} never writes it again. Its system memory stays until
-    its region's {!free}, and another GPU maps it as before ({!map_peer}).
+    ({!Function.release}, which {!Driver.stop} and {!release} do), its
+    give-back gives back all the function holds, regions that are out
+    included, once the function masters the bus no more ({!Function.release}).
+    {!free} then writes none of the GPU's tables and gives back nothing more,
+    and windows on the GPU's memory ({!host}) are gone. Each request that
+    writes the tables, {!val-alloc}, {!map_host}, {!map_peer} and {!free}, is
+    a use of the function, so a release that begins meanwhile leaves the
+    function's give-back to that request's end ({!Function}). A request that
+    began before the release and reaches a step of {!Function} after it, such
+    as an allocation, a pin or a map, may raise [Invalid_argument] there,
+    leaving what it took to the give-back. {!val-alloc}, {!map_host} and
+    {!map_peer} on this {!t} raise [Invalid_argument]. Once the function is
+    released, another open may reset the GPU, and this {!t} never writes it
+    again.
 
     {b Unconfirmed flushes.} A {!free} whose flush the GPU does not confirm
     ({!Page_table.unmap}) keeps the region's memory and addresses, which the GPU
-    may still reach. A {!free} after the GPU's function has been released
-    gives back the region's system memory, pins and virtual addresses, as
-    above.
+    may still reach, until the give-back after the function's release.
 
     {b Peers.} Memory of a region that another GPU maps ({!map_peer}) stays
-    until no other GPU reaches it, whichever frees first. The owner's last
-    {!free} of its regions over that memory, while another GPU's region over
-    it is out, keeps the memory and its addresses. They go back at the
-    owner's first {!val-alloc}, {!map_host}, {!map_peer}, {!free} or
-    {!release} after the last such region's free, or at that free itself
-    once the owner's function is released. A peer's free that its GPU
-    does not confirm ({b Unconfirmed flushes}), or that follows its
-    function's release while the function may still master the bus
-    ({!Function.release}), leaves the memory reached: none of it goes back.
+    until no other GPU reaches it, whichever frees first. The other GPU's
+    function holds the region's addresses and, for system memory, its pin,
+    from before its tables point there. The owner's last {!free} of its
+    regions over that memory, while another GPU's region over it is out,
+    keeps the memory and its addresses. They go back at the owner's first
+    {!val-alloc}, {!map_host}, {!map_peer}, {!free} or {!release} after the
+    last such region's free, and the owner's give-back gives back what the
+    owner holds whatever other GPUs still map, which their own holds keep. A
+    peer's free that its GPU does not confirm ({b Unconfirmed flushes}), or
+    that follows its function's release while the function may still master
+    the bus ({!Function.release}), leaves the memory reached: none of what the
+    owner holds goes back before the owner's release, and none of what the
+    peer holds before its own. Behind an IOMMU, the process's window on a
+    GPU's system memory ({!host}) goes with that GPU's give-back, while the
+    memory stays pinned for the other GPUs that map it.
 
     The owner's {!release} while another GPU maps its GPU memory, or may still
     write it after its free, as above, turns the owner's bus mastering off and
@@ -90,12 +101,13 @@ val create : ?link:link -> Function.t -> Page_table.t -> bar:int -> t
 
 val release : t -> unit
 (** [release m] releases the function of [m]'s GPU ({!Function.release}), then
-    drops the page tables {!create} was given, which only a live GPU uses. A
-    driver that keeps [m] past the GPU's stop ({!Driver.stop}) releases it
-    there, so that [m] holds no page table. Releasing [m] again does nothing
-    but drop the page tables if an earlier release did not, and give back the
-    memory that no other GPU reaches any more. While another GPU maps [m]'s
-    GPU memory, the function stays taken ({b Peers}).
+    drops the page tables {!create} was given, which only a live GPU uses, and
+    ends the GPU's mappings of other GPUs' memory, as their frees would, so
+    that those GPUs' functions go back once released. A driver that keeps [m]
+    past the GPU's stop ({!Driver.stop}) releases it there, so that [m] holds
+    no page table. Releasing [m] again does nothing but what an earlier
+    release did not. While another GPU maps [m]'s GPU memory, the function
+    stays taken ({b Peers}).
 
     An exception that ends the function's release passes
     ({!Function.release}), and leaves the page tables to the next release of
@@ -172,7 +184,8 @@ val host : region -> Window.t option
     missing as {!Function.alloc_dma} does, or if the GPU's entries cannot hold
     a peer's addresses ({!Page_table.val-pa_bits}). System memory lies within
     them ({!create}). Each gives back what it took before it returns [None] or
-    [Error]. *)
+    [Error], and an exception that ends one leaves what it took to the
+    function's give-back ({b Holders}). *)
 
 val alloc : ?uncached:bool -> t -> kind -> int -> (region option, string) result
 (** [alloc m k n] is [n] new bytes of kind [k]. System memory is rounded up to
@@ -218,15 +231,17 @@ val map_peer : t -> region -> (region option, string) result
 
     [Error why] if the GPUs are on different machines, if their page tables
     take addresses from different spaces, naming both, if [r] is GPU memory
-    that [m]'s GPU does not reach ({!reaches}), or GPU memory of a GPU whose
+    that [m]'s GPU does not reach ({!reaches}), or memory of a GPU whose
     function was released, naming it, since another open may have reset that
-    GPU and given the memory out, or if the system memory cannot be pinned,
-    with {!Function.pin}'s reason.
+    GPU and given its own memory out, and its give-back gave back its system
+    memory, or if the system memory cannot be pinned, with {!Function.pin}'s
+    reason.
 
-    A [map_peer] that an exception other than [Invalid_argument] ended, such
-    as an asynchronous one, leaves what it wrote to the next [map_peer] on
-    [m] of the same memory, which adopts the mapping if the tables hold it
-    whole, and otherwise clears what they hold of it and maps it again.
+    A [map_peer] that an exception ended other than its own refusal by
+    [Invalid_argument], such as an asynchronous one, leaves what it wrote to
+    the next [map_peer] on [m] of the same memory, which adopts the mapping if
+    the tables hold it whole, and otherwise clears what they hold of it and
+    maps it again, or to [m]'s {!release}.
 
     Raises [Invalid_argument] if [r], or the region it maps, was freed, or if
     [m]'s GPU maps other memory at [r]'s addresses. *)
@@ -236,9 +251,10 @@ val free : t -> region -> unit
     Once no other region of [m] over [r]'s mapping is out, it unmaps [r], then
     frees its memory or unpins it, and returns its addresses. The memory of a
     region {!map_peer} gave stays its owner's. After the function's release it
-    writes no table. A region whose memory {!bus} gave another
-    function gives back nothing, nor does one whose memory another GPU may
-    still reach, and memory another GPU maps goes back later ({b Peers}).
+    writes no table, and gives back nothing the give-back gave back. A region
+    whose memory {!bus} gave another function gives back nothing, nor does one
+    whose memory another GPU may still reach, and memory another GPU maps goes
+    back later ({b Peers}).
 
     Raises [Invalid_argument] if [r] is not [m]'s or was freed. *)
 

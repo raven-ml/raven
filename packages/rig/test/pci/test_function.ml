@@ -1022,8 +1022,7 @@ let refused_code = 3
    allocation, then dies by SIGKILL. With [how] ["die"] it then dies by SIGKILL,
    which runs no exit function; with ["wait"] it waits for its standard input to
    close and exits. ["released-die"] and ["released-wait"] release the function
-   first. ["released-quit"] releases it, waits as ["wait"] does, and leaves by
-   [_exit], which runs no exit function either. *)
+   first. *)
 let hold_memory how root bus va =
   let ok = function Ok x -> x | Error _ -> exit refused_code in
   if how = "renew-die" then begin
@@ -1044,10 +1043,6 @@ let hold_memory how root bus va =
   if String.starts_with ~prefix:"released-" how then Function.release f;
   match how with
   | "die" | "released-die" -> Unix.kill (Unix.getpid ()) Sys.sigkill
-  | "released-quit" ->
-      print_endline "holding";
-      ignore (In_channel.input_all stdin);
-      Unix._exit 0
   | _ ->
       print_endline "holding";
       ignore (In_channel.input_all stdin);
@@ -1241,8 +1236,9 @@ let test_reset_held () =
   equal ~msg:"given back at the holder's exit" (list string) []
     (memory_files root)
 
-(* A released function's memory stays, and a later take of the machine allocates
-   beside it in its huge page. *)
+(* A released function's memory goes back with its release, its bus mastering
+   off, and its free after gives back nothing more: a later take of the
+   machine allocates in its huge page anew, and keeps it through the free. *)
 let test_released_block () =
   with_fixture @@ fun root f ->
   reserved f;
@@ -1250,18 +1246,19 @@ let test_released_block () =
   ignore (frames root va (2 * page));
   let w, _ = given (Function.alloc_dma ~va f page) in
   Function.release f;
-  equal ~msg:"kept while it holds memory" int 1
-    (List.length (memory_files root));
+  equal ~msg:"gone with the release" (list string) [] (memory_files root);
   let f' = require_ok (Function.take (Function.machine f) (Function.bus f)) in
   let w', _ = given (Function.alloc_dma ~va:(va + page) f' page) in
   Function.free_dma f w;
+  equal ~msg:"the later take's kept through the free" int 1
+    (List.length (memory_files root));
   Function.free_dma f' w';
   Function.release f';
   equal ~msg:"gone once it lists no function and holds nothing" (list string) []
     (memory_files root)
 
-(* A reset deletes the file of a process that died after it released its
-   function, and keeps that of a process that lives. *)
+(* A process that released its function left no memory file, whether it
+   died by a signal after or lives on. *)
 let test_released_holder how () =
   if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let fn = Tree.gpu "0000:03:00.0" in
@@ -1279,10 +1276,10 @@ let test_released_holder how () =
       (match wait_exit pid with
       | WSIGNALED s when s = Sys.sigkill -> ()
       | _ -> fail "the holder did not die by SIGKILL");
-      equal ~msg:"left by the dead process" int 1
-        (List.length (memory_files root));
+      equal ~msg:"nothing left by the dead process" (list string) []
+        (memory_files root);
       reset ();
-      equal ~msg:"gone at the reset" (list string) [] (memory_files root)
+      equal ~msg:"nothing after the reset" (list string) [] (memory_files root)
   | _ ->
       if In_channel.input_line (Unix.in_channel_of_descr said) <> Some "holding"
       then begin
@@ -1290,47 +1287,14 @@ let test_released_holder how () =
         ignore (wait_exit pid);
         fail "the holder did not hold the function"
       end;
-      let held = memory_files root in
-      equal ~msg:"the holder's memory" int 1 (List.length held);
-      reset ();
-      equal ~msg:"kept while its process lives" (list string) held
+      equal ~msg:"none while the holder lives" (list string) []
         (memory_files root);
+      reset ();
       Unix.close feed;
       (match wait_exit pid with
       | WEXITED 0 -> ()
       | _ -> fail "the holder did not exit");
-      equal ~msg:"gone at its process's exit" (list string) []
-        (memory_files root)
-
-(* The memory of a function its process released, its bus mastering off, stays
-   while the process lives, through takes of other functions of the machine. A
-   death that runs no exit function leaves it, and the next take of any function
-   of the machine deletes it. *)
-let test_released_death () =
-  if not flocks then skip ~reason:"locking a function's file needs flock" ();
-  let fn = Tree.gpu "0000:03:00.0" and other = "0000:04:00.0" in
-  let root = Tree.make [ fn; Tree.gpu other ] in
-  let m = Machine.at root and va = free_base + (6 * mib) in
-  ignore (frames root va mib);
-  let pid, feed, said = holder "released-quit" root fn.bus va in
-  if In_channel.input_line (Unix.in_channel_of_descr said) <> Some "holding"
-  then begin
-    Unix.close feed;
-    ignore (wait_exit pid);
-    fail "the holder did not hold the function"
-  end;
-  let file = memory_file root in
-  equal ~msg:"listing no function" (list string) [] (reachers file);
-  Function.release (require_ok (Function.take m other));
-  equal ~msg:"kept through a take while its process lives" bool true
-    (Sys.file_exists file);
-  Unix.close feed;
-  (match wait_exit pid with
-  | WEXITED 0 -> ()
-  | _ -> fail "the holder did not exit");
-  equal ~msg:"left by its death" bool true (Sys.file_exists file);
-  Function.release (require_ok (Function.take m other));
-  equal ~msg:"gone at the next take" (list string) [] (hugepages root)
+      equal ~msg:"none after its exit" (list string) [] (memory_files root)
 
 (* At a take, the files processes that died left go if they list no function,
    as one that died being made lists none. A marker whose file is gone goes
@@ -1608,20 +1572,17 @@ let system_memory =
          died left (SIGKILL in a child)"
         test_renew;
       test
-        "a released function's memory stays, and a later take shares its page"
+        "a released function's memory goes with the release, and a later take \
+         allocates anew"
         test_released_block;
       test
-        "a reset deletes the file of a process that died after releasing its \
-         function (SIGKILL in a child)"
+        "a process that released its function and died leaves no memory \
+         (SIGKILL in a child)"
         (test_released_holder "released-die");
       test
-        "a reset keeps the file of a living process that released its function \
-         (a child holds)"
+        "a living process that released its function holds no memory (a \
+         child holds)"
         (test_released_holder "released-wait");
-      test
-        "a released function's memory stays while its process lives and goes \
-         at the first take after its death (a child holds, then _exits)"
-        test_released_death;
       test
         "a take deletes the files processes that died left listing no \
          function, and keeps one that lists a function until its reset"

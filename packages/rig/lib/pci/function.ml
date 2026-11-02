@@ -30,8 +30,7 @@ type t = {
   dmas : unit Tables.Window.t;
   pins : unit Tables.Range.t; (* (address, bytes) *)
   giving : Lock.t; (* held by the one call that gives it back *)
-  mutable listed : bool; (* whether [unmapping] lists the windows *)
-  mutable unmapping : Window.t list; (* the windows left to unmap *)
+  space : Space.holder; (* the addresses its GPU's memory lies at *)
   given : bool Atomic.t;
       (* once the machine's release or [keep]'s returned, read from any
          domain *)
@@ -100,8 +99,7 @@ let vacant machine bus =
       dmas = Tables.Window.create 16;
       pins = Tables.Range.create 16;
       giving = Lock.create ();
-      listed = false;
-      unmapping = [];
+      space = Space.holder ();
       given = Atomic.make false;
       lent = Atomic.make 0;
       writers = Atomic.make [];
@@ -144,15 +142,25 @@ let lends f =
          Atomic.get w.state land 1 = 0 || not (Atomic.get w.quiet))
        (Atomic.get f.writers)
 
+(* The machine's release of [f]'s take, which gives back what the take
+   holds, then, once the function masters the bus no more, the addresses its
+   memory lay at: the memory goes first, since another GPU's memory there
+   would be mapped over it. *)
+let give_take f =
+  let quiet = f.fn.release () in
+  if quiet then begin
+    Space.release f.space;
+    Atomic.set f.quiet true
+  end;
+  quiet
+
 (* Gives back the take that [f]'s parked give-back kept, once: of two calls,
    the one that clears [parked] gives it back. An exception that ends the
    machine's release parks [f] again, for the next call. *)
 let unpark f =
   if Atomic.compare_and_set f.parked true false then
-    match f.fn.release () with
-    | quiet ->
-        if quiet then Atomic.set f.quiet true;
-        unlist f
+    match give_take f with
+    | (_ : bool) -> unlist f
     | exception e ->
         let bt = Printexc.get_raw_backtrace () in
         Atomic.set f.parked true;
@@ -225,52 +233,33 @@ let take_locked_into f l =
 
 let machine f = f.machine
 let bus f = f.bus
+let holder f = f.space
 let addressing f = f.fn.addressing
 let released f = Atomic.get f.state land 1 = 1
 let live f fn = if released f then Fail.err_released fn f.bus
 
 external reraise : exn -> 'a = "%reraise"
 
-(* The windows a release unmaps, one at a time, each dropped from
-   [unmapping] as its unmap returns, with nothing between that allocates or
-   polls. *)
-let rec unmap_listed f =
-  match f.unmapping with
-  | [] -> ()
-  | w :: rest ->
-      f.fn.unmap w;
-      f.unmapping <- rest;
-      unmap_listed f
-
 (* Gives [f] back, recording each step that gives something back as the step
    returns, with nothing between that allocates or polls, so that an
    exception that ends it part-way leaves the rest to the next call, and no
-   step runs twice. A kept function's release stops its DMA and gives back
-   nothing more: its take stays the process's until the exit gives it back.
-   The function is quiet once its bus mastering reads off: a write the
-   function refused leaves it writing the memory it reached. *)
+   step runs twice. The machine's release gives back what the take holds,
+   its windows, memory and pins. A kept or lent function's release stops its
+   DMA and gives back nothing more: its take stays the process's until the
+   exit, or until it lends nothing, gives it back. The function is quiet once
+   its bus mastering reads off: a write the function refused leaves it
+   writing the memory it reached. *)
 let give_back f =
   if not (Atomic.get f.given) then begin
-    if not f.listed then begin
-      let ws =
-        Lock.protect f.lock (fun () ->
-            Tables.Window.fold (fun w _ ws -> w :: ws) f.maps [])
-      in
-      f.unmapping <- ws;
-      f.listed <- true
-    end;
-    unmap_listed f;
     let kept = Atomic.get f.kept in
     let lent = (not kept) && lends f in
-    let quiet =
-      if kept || lent then begin
-        f.fn.set_config Local.command 2
-          (f.fn.config Local.command 2 land lnot Local.bus_master);
-        not (Local.masters (f.fn.config Local.command 2))
-      end
-      else f.fn.release ()
-    in
-    if quiet then Atomic.set f.quiet true;
+    if kept || lent then begin
+      f.fn.set_config Local.command 2
+        (f.fn.config Local.command 2 land lnot Local.bus_master);
+      if not (Local.masters (f.fn.config Local.command 2)) then
+        Atomic.set f.quiet true
+    end
+    else ignore (give_take f : bool);
     if lent then Atomic.set f.parked true;
     Atomic.set f.given true;
     (* A last [unlend] that ran before [parked] was set left the take to
@@ -676,6 +665,17 @@ let on_page f fn a =
     invalid_argf "Function.%s: 0x%x is not on a %d-byte page" fn a
       (Machine.page f.machine)
 
+(* Reached physically, memory lies in huge pages, each mapped whole on the 2
+   MiB block of addresses that holds it; contiguous memory larger than a page
+   is one of them. *)
+let placed f ~va n =
+  let lo, hi =
+    if f.fn.addressing = Machine.Physical then
+      (va / huge * huge, (va + n + huge - 1) / huge * huge)
+    else (va, va + n)
+  in
+  Machine.reserved f.machine lo (hi - lo)
+
 let alloc_dma_entered ~contiguous ?va f n =
   let page = Machine.page f.machine in
   (* The largest [n] whose rounding up to [page] stays at most [max_int]. *)
@@ -688,9 +688,6 @@ let alloc_dma_entered ~contiguous ?va f n =
       "Function.alloc_dma: %d bytes of contiguous memory, expected at most 2 \
        MiB"
       n;
-  (* Reached physically, memory lies in huge pages, each mapped whole on the 2
-     MiB block of addresses that holds it; contiguous memory larger than a page
-     is one of them. *)
   let physical = f.fn.addressing = Machine.Physical in
   (match va with
   | None -> ()
@@ -699,11 +696,7 @@ let alloc_dma_entered ~contiguous ?va f n =
       if physical && contiguous && n > page && va mod huge <> 0 then
         invalid_argf
           "Function.alloc_dma: 0x%x is not on 2 MiB, which a huge page needs" va;
-      let lo, hi =
-        if physical then (va / huge * huge, (va + n + huge - 1) / huge * huge)
-        else (va, va + n)
-      in
-      if not (Machine.reserved f.machine lo (hi - lo)) then
+      if not (placed f ~va n) then
         invalid_argf
           "Function.alloc_dma: %d bytes at 0x%x lie in no range \
            Machine.reserve reserved%s"
@@ -737,8 +730,8 @@ let alloc_dma ?(contiguous = false) ?va f n =
       reraise e
 
 (* A free and an unpin are uses, so that no give-back runs while they give
-   memory back. One refused, once a release has begun, gives memory back
-   only once the give-back has turned bus mastering off. *)
+   memory back. One refused, once a release has begun, leaves the memory to
+   the give-back, which gives back all the take holds. *)
 let free_dma f w =
   unlist f f.dmas "free_dma" w;
   if use f then
@@ -747,7 +740,6 @@ let free_dma f w =
     | exception e ->
         leave f;
         reraise e
-  else if Atomic.get f.quiet then f.fn.free_dma w
 
 let pin_entered f a n =
   on_page f "pin" a;
@@ -788,4 +780,3 @@ let unpin f a n =
     | exception e ->
         leave f;
         reraise e
-  else if Atomic.get f.quiet then f.fn.unpin a n

@@ -52,7 +52,7 @@ val alloc : ?align:int -> ?below:int -> t -> int -> int option
 val free : t -> int -> bool
 (** [free a x] frees the block {!alloc} returned at [x], and is [true] iff there
     was one. It is [false], changing nothing, if no block of [a] starts at [x]
-    or that block is free already. *)
+    or that block is free already. It allocates nothing. *)
 
 val taken : t -> int
 (** [taken a] is the number of blocks {!alloc} returned that are not free, in
