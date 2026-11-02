@@ -69,6 +69,12 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## tolk
 
+- A schedule linked per run (D173) is one rig program per part, cut
+  wherever storage is made or freed, because `Rig_program` binds its inputs
+  once, before its first step: each part loads its kernels' images again
+  and ends a submission. Done when a step of `Rig_program` makes or frees a
+  slot's memory, so a per-run schedule is one program, and a split step's
+  loads and submissions, counted on a rune bench row, match a linked one's.
 - `upcast_vectors` (heuristic.ml) has no term for a kernel's size: 8 nested
   float64 sines over 1024 values take 8 lanes, run 4.5x as fast, and compile
   in 2.2 s against 1.4 s without lanes. Done when an A/B on fudge of
