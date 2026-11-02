@@ -21,9 +21,9 @@ val indexing_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
 
 val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
 (** [memory_coalescing sink r] merges the loads, and the stores, of [sink] that
-    access consecutive elements of one buffer, under one gate and with one
-    argument, into vector loads and stores, if [r] supports them
-    ([supports_float4]):
+    access consecutive elements of one buffer, under one gate, with one
+    argument and at one depth, into vector loads and stores, if [r] supports
+    them ([supports_float4]):
     - where [r] knows its vector registers ({!Renderer.t.registers}), of a
       power of two elements that fills at most one register, if the buffer's
       elements are {!Dtype.Float64}, {!Dtype.Float32}, {!Dtype.Float16},
@@ -45,6 +45,11 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
     index; a merged store stores the stack of the former values. An access
     merged with no other is left as it is, and so are register memory, volatile
     parameters, the bodies of calls, and everything under {!Setting.dmc}.
+
+    The depth of an access is the greatest pair, in lexicographic order, of
+    the counts of global and of local stores on a chain of sources it waits
+    on; for an access of global memory, the count of global stores alone. Two
+    accesses at different depths would make a merged store wait on itself.
 
     Raises [Invalid_argument] if a load or store is gated, is not through an
     {!Op.Index} of one index, or two stores write one element. *)

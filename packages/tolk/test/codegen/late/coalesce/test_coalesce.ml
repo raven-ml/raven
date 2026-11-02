@@ -396,6 +396,54 @@ let errors =
                    [ Ops.store first (value 0); Ops.store first (value 1) ])));
     ]
 
+(* Stores that wait on stores: a merge of accesses one of which waits on a store
+   the other comes before would close a cycle. Stores into registers order
+   nothing outside the thread; stores into local memory order global accesses,
+   and global stores order local ones. *)
+let stores_in space sink =
+  List.length
+    (List.filter
+       (fun u ->
+         Ops.op u = Op.Store && Ops.addrspace (Ops.nth u 0) = Some space)
+       (Ops.toposort ~calls:Skip (coalesce sink)))
+
+let dependencies =
+  let i32 n = Ops.int ~dtype:Int32 n in
+  let int_param n = Shape.param ~shape:[ Int n ] 0 Int32 in
+  let scratch space n =
+    Shape.placeholder ~slot:1 ~addrspace:space [ n ] Int32
+  in
+  let store b i v = Ops.store (at b (Ops.int i)) v in
+  group "stores waiting on stores"
+    [
+      test "global stores after register stores merge" (fun () ->
+          let buf = int_param 2 and reg = scratch Reg 2 in
+          let lane i =
+            store buf i (Ops.after (i32 i) [ store reg i (i32 i) ])
+          in
+          equal int 1 (stores_in Global (Ops.sink [ lane 0; lane 1 ])));
+      test "global stores after local stores merge" (fun () ->
+          let buf = int_param 4 and local = scratch Local 4 in
+          let lane i =
+            store buf i (Ops.after (i32 i) [ store local i (i32 i) ])
+          in
+          let sink =
+            Ops.sink (store buf 0 (i32 0) :: List.map lane [ 1; 2; 3 ])
+          in
+          equal int 1 (stores_in Global sink));
+      test "local stores each waited on by a merged global store stay apart"
+        (fun () ->
+          let buf = int_param 2 and local = scratch Local 2 in
+          let s1 = store buf 1 (i32 5) and t0 = store local 0 (i32 7) in
+          let s0 =
+            store buf 0 (Ops.load (at (Ops.after local [ t0 ]) (Ops.int 0)) [])
+          in
+          let t1 =
+            store local 1 (Ops.load (at (Ops.after buf [ s1 ]) (Ops.int 1)) [])
+          in
+          equal int 2 (stores_in Local (Ops.sink [ s0; s1; t0; t1 ])));
+    ]
+
 let memory_coalescing =
   group "memory_coalescing"
     [
@@ -409,6 +457,7 @@ let memory_coalescing =
         ];
       lengths;
       left_alone;
+      dependencies;
       errors;
     ]
 

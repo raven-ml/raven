@@ -46,14 +46,21 @@ let indexing_simplify =
 
 (* Memory coalescing *)
 
-(* The accesses that may merge: of one operation, buffer, base index, gate and
-   argument. The base is [None] for constant indices. *)
-type key = { op : Op.t; buf : t; base : t option; valid : t; arg : arg }
+(* The accesses that may merge: of one operation, buffer, base index, gate,
+   argument and depth. The base is [None] for constant indices. *)
+type key = {
+  op : Op.t;
+  buf : t;
+  base : t option;
+  valid : t;
+  arg : arg;
+  depth : int * int;
+}
 
 let same k0 k1 =
   k0.op = k1.op && k0.buf == k1.buf
   && Option.equal ( == ) k0.base k1.base
-  && k0.valid == k1.valid && equal_arg k0.arg k1.arg
+  && k0.valid == k1.valid && equal_arg k0.arg k1.arg && k0.depth = k1.depth
 
 let int_value u =
   match value u with
@@ -85,8 +92,28 @@ let memory_coalescing sink (r : Renderer.t) =
           | None -> offsets := (offset, ref [ u ]) :: !offsets)
       | None -> groups := (key, ref [ (offset, ref [ u ]) ]) :: !groups
     in
+    (* The depth of a node is the greatest pair, in lexicographic order, of
+       counts of global and of local stores on a chain it waits on, itself
+       included. Accesses merge only at one depth, a global access counting
+       global stores alone, so that no merge closes a cycle: a merged store
+       would otherwise wait on a store that waits on one of its parts. *)
+    let depth = Tbl.create 256 in
+    let depth_of u = Option.value (Tbl.find_opt depth u) ~default:(0, 0) in
     List.iter
       (fun u ->
+        let waits =
+          List.fold_left
+            (fun d s -> max d (depth_of s))
+            (0, 0) (src_without_body u)
+        in
+        let d =
+          if op u <> Op.Store then waits
+          else
+            let space = addrspace (nth u 0) in
+            let count a = if space = Some a then 1 else 0 in
+            (fst waits + count Dtype.Global, snd waits + count Dtype.Local)
+        in
+        Tbl.replace depth u d;
         if op u = Op.Load || op u = Op.Store then begin
           if List.length (src u) <> if op u = Op.Store then 2 else 1 then
             invalid_arg "memory coalescing does not support gated loads/stores";
@@ -118,7 +145,11 @@ let memory_coalescing sink (r : Renderer.t) =
                   | Op.Const, _ -> (None, int_value idx)
                   | _ -> (Some idx, Bigint.zero)
                 in
-                add { op = op u; buf; base; valid; arg = arg u } offset u
+                let depth =
+                  if addrspace buf = Some Dtype.Global then (fst waits, 0)
+                  else waits
+                in
+                add { op = op u; buf; base; valid; arg = arg u; depth } offset u
               end
           | _ -> invalid_arg "an index of memory needs a buffer and one index"
         end)
