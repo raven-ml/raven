@@ -1376,3 +1376,4 @@ module Lower_arith = Lower_arith
 let derivations = Program.derivations
 let evaluations = Compile.evaluations
 let variants = Compile.variants
+let lowerings = Compile.lowerings

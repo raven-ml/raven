@@ -1960,4 +1960,13 @@ val variants : unit -> int
     compiled program makes one variant per layout, phase and donation of its
     arguments and value of tolk's settings and its [DEBUG]. *)
 
+val lowerings : unit -> int
+(** [lowerings ()] is the number of times compiled programs were lowered to
+    tolk's graphs on the calling domain, for the suites. A compiled program is
+    lowered once to find whether the compiler declines it, and once more for
+    each variant other than the one that lowering was made at: its first call's
+    layouts and donation at phase [0] for a program on one device, and
+    C-contiguous pieces at phase [0] that none donates for a program split over
+    several. *)
+
 (**/**)

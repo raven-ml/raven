@@ -1513,6 +1513,113 @@ let test_phase () =
         (bits (f x)))
     [ 0; 4; 8; 12; 0 ]
 
+(* A first call's lowerings (rune.mli, [Rune.lowerings]): a fresh compiled
+   function's first call lowers its program once where the program lies on one
+   device and the argument's run starts at phase [0], whatever its layout and
+   donation, and once more otherwise. A split program's first lowering is over
+   C-contiguous pieces at phase [0] that none donates. *)
+
+type first_layout = Plain_first | Transposed_first | Offset_first of int
+
+type first_case = {
+  wide : bool;
+  rows : int;
+  first_layout : first_layout;
+  donates : bool;
+  split : bool;
+}
+
+let pp_first_case ppf c =
+  Format.fprintf ppf "%s [%d; 2] %s%s%s"
+    (if c.wide then "float64" else "float32")
+    c.rows
+    (match c.first_layout with
+    | Plain_first -> "contiguous"
+    | Transposed_first -> "transposed"
+    | Offset_first k -> Printf.sprintf "at element %d" k)
+    (if c.donates then " donated" else "")
+    (if c.split then " cut over two devices" else "")
+
+let first_cases =
+  let open Gen in
+  (let* split = frequency [ (4, constant false); (1, constant true) ] in
+   let* wide = bool and+ donates = bool in
+   if split then
+     (* Pieces of [2; 2], each run a multiple of 16 bytes. *)
+     constant { wide; rows = 4; first_layout = Plain_first; donates; split }
+   else
+     let+ rows = frequency [ (1, constant 0); (4, int_range 1 4) ]
+     and+ first_layout =
+       frequency
+         [
+           (1, constant Plain_first);
+           (1, constant Transposed_first);
+           (2, map (fun k -> Offset_first k) (int_range 1 7));
+         ]
+     in
+     { wide; rows; first_layout; donates; split })
+  |> with_pp pp_first_case
+
+(* The bytes by which the argument's run starts past 16. *)
+let first_phase c =
+  let bytes = if c.wide then 8 else 4 in
+  match c.first_layout with
+  | Offset_first k when c.rows > 0 -> k * bytes mod 16
+  | Plain_first | Transposed_first | Offset_first _ -> 0
+
+let first_arg (type s) (dt : (float, s) Nx.dtype) c =
+  let n = c.rows * 2 in
+  let values k = Array.init k (fun i -> Float.of_int (i - 3) *. 0.5) in
+  match c.first_layout with
+  | Plain_first -> Nx.create dt [| c.rows; 2 |] (values n)
+  | Transposed_first -> Nx.transpose (Nx.create dt [| 2; c.rows |] (values n))
+  | Offset_first k ->
+      (* Memory that starts [k] elements into its buffer, as [test_phase]'s. *)
+      let size = Nx.Dtype.bits dt / 8 in
+      let x = Nx.create dt [| c.rows; 2 |] (values n) in
+      let b = Rig.Buffer.create Rig.host ((k + n) * size) in
+      let run = Rig.Buffer.view b ~first:(k * size) ~length:(n * size) in
+      if n > 0 then Rig.Buffer.copy ~src:(Nx.Repr.read x Nx_array.buffer) ~dst:run;
+      Nx.Repr.of_array Nx.Host.v
+        (Nx_array.v dt
+           (Nx_array.Layout.contiguous (Iarray.of_list [ c.rows; 2 ]))
+           run)
+
+(* The lowerings and bits of a fresh compiled function's first call over [x],
+   and eager's bits. *)
+let first_lowerings ~donates x =
+  let expected = bits (Nx.mul_s x 2.) in
+  let f = Rune.jit' (fun x -> Nx.mul_s x 2.) in
+  let before = Rune.lowerings () in
+  let y = f (if donates then Nx.donate x else x) in
+  let got = bits y in
+  (Rune.lowerings () - before, expected, got)
+
+let law_first_lowering c =
+  cover "a C-contiguous argument"
+    ((not c.split) && c.first_layout = Plain_first && c.rows > 0);
+  cover "a transposed view" (c.first_layout = Transposed_first && c.rows > 1);
+  cover "a donated argument" ((not c.split) && c.donates && c.rows > 0);
+  cover "a zero-size argument" (c.rows = 0);
+  cover "a run off 16 bytes" (first_phase c <> 0);
+  cover "a run at a multiple of 16 bytes past its buffer's start"
+    ((match c.first_layout with Offset_first _ -> true | _ -> false)
+    && c.rows > 0
+    && first_phase c = 0);
+  cover "a split program" c.split;
+  cover "a donated split program" (c.split && c.donates);
+  let lowered, expected, got =
+    let run (type s) (dt : (float, s) Nx.dtype) =
+      let x = first_arg dt c in
+      if c.split then first_lowerings ~donates:c.donates (Nx.place (on Cut) x)
+      else first_lowerings ~donates:c.donates x
+    in
+    if c.wide then run f64 else run f32
+  in
+  let once = if c.split then not c.donates else first_phase c = 0 in
+  equal bits_t expected got;
+  equal ~msg:"lowerings" int (if once then 1 else 2) lowered
+
 (* A memory device that counts the eager kernels it runs. *)
 
 module C = Nx_support.Counting
@@ -4647,6 +4754,8 @@ let () =
                 results apart"
                donating_case law_donating;
              test "an argument off 16 bytes" test_phase;
+             prop "a first call lowers once at phase 0 on one device"
+               first_cases law_first_lowering;
              test "a donated argument is consumed" test_consumed;
              test "a result takes a donated argument's memory" test_lending;
              test "a shared donor lends nothing" test_shared;

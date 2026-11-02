@@ -124,6 +124,11 @@ val variants : unit -> int
 (** [variants ()] is the number of variants that calls on the calling domain
     lowered and linked, or whose decline they kept. *)
 
+val lowerings : unit -> int
+(** [lowerings ()] is the number of lowerings of programs on the calling
+    domain: {!make}'s, and each {!run}'s at a variant new to its program that
+    is not the one {!make} lowered. *)
+
 val evaluations : unit -> int
 (** [evaluations ()] is the number of calls on the calling domain that evaluated
     their program: each {!run} of a declined variant, plus each call counted by

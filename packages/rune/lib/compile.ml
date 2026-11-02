@@ -2133,12 +2133,16 @@ and inline_over st cs (q : Program.t) operands =
   program st cs sub;
   Array.map (operand st sub) q.outputs
 
+let lowerings_made = Domain.DLS.new_key (fun () -> ref 0)
+let lowerings () = !(Domain.DLS.get lowerings_made)
+
 (* [lower ~rig p forms ~layouts ~phases ~donated] is [p] over arguments of
    [forms], each laid out over its run as [layouts] says, its run at [phases],
    the arguments [donated] says lending their storage where a result may take
    it. *)
 let lower ~rig ~split ~uploads (p : Program.t) (forms : form array) ~layouts
     ~phases ~donated =
+  incr (Domain.DLS.get lowerings_made);
   let st =
     {
       rig;
