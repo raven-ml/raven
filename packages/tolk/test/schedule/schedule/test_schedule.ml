@@ -1927,6 +1927,7 @@ let store = Format.asprintf "%a" Op.pp Store
 let sink = Format.asprintf "%a" Op.pp Sink
 let shrink = Format.asprintf "%a" Op.pp Shrink
 let buffer = Format.asprintf "%a" Op.pp Buffer
+let bitcast = Format.asprintf "%a" Op.pp Bitcast
 
 let runs =
   group "copies into runs"
@@ -1953,15 +1954,15 @@ let runs =
               equal (triple string string string) (store, sink, buffer)
                 (copy, kernel, into)
           | calls -> failf "%d calls, not a copy and a kernel" (List.length calls));
-      test "a copy stored into a run of a bitcast lands in storage of its own"
+      test "a copy stored into a run of a bitcast copies into a view of it"
         (fun () ->
           match
             copied_into ~dt:Dtype.Int32 (fun g ->
                 Shape.shrink (Ops.bitcast g Int32) [ Some (Int 2, Int 4); None ])
           with
-          | [ (copy, _, _); (kernel, _, _) ] ->
-              equal (pair string string) (store, sink) (copy, kernel)
-          | calls -> failf "%d calls, not a copy and a kernel" (List.length calls));
+          | [ (copy, into, _) ] ->
+              equal (pair string string) (store, bitcast) (copy, into)
+          | calls -> failf "%d calls, not one copy" (List.length calls));
     ]
 
 let () =

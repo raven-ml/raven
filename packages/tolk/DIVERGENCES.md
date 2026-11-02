@@ -4949,7 +4949,10 @@ fold wraps integers and holds its float bound`, hold.
   destination at its range plus the run's first element, and lowers to a copy
   between views of the call's arguments, each the run it copies. tinygrad
   copies into storage of its own and stores that into the run with a kernel,
-  so both are live at once. No recorded program stores a copy into a part of
+  so both are live at once. A copy stored into a run of a bitcast of storage
+  is a copy into a view of it (D184): the copy moves bytes, so it lands in
+  place too. A copy of one element indexes each side at its element and
+  lowers the same way. No recorded program stores a copy into a part of
   storage, so the patch leaves tinygrad's rules as they are.
 - **Reason:** (b): rune's split assembly of a gathered value (RFC 0005),
   which stores each device's piece into its run of the whole. With that
@@ -4961,9 +4964,10 @@ fold wraps integers and holds its float bound`, hold.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`): `copies into
   runs › a copy stored into rows of storage on its device copies into them`,
   `› a copy stored into a first row copies into it`, `› a copy stored
-  into columns lands in storage of its own` and `› a copy stored into a run
-  of a bitcast lands in storage of its own`; the Engine suite's `link and run
-  › a copy stored into rows of a buffer writes them alone`.
+  into columns lands in storage of its own`, `› a copy stored into a run of
+  a bitcast copies into a view of it` and `› a copy of one element stored
+  into filled storage copies into it`; the Engine suite's `link and run › a
+  copy stored into rows of a buffer writes them alone`.
 
 ## D183. Ready kernels run by their number, and one that frees storage first
 
