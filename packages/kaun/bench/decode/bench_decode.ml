@@ -383,10 +383,11 @@ let quant () =
   in
   (("host", host) :: metal ()) @ gpu
 
-(* A GPU case times its calls only: a GPU buffer's release allocates when the
-   collector finalises it, so a call's count depends on the collection's phase.
-   Its allocation is measured again once rig's release path allocates
-   nothing. *)
+(* A GPU case times its calls only. A dropped GPU result returns to rig's cache
+   once a major cycle finalises it, so whether a call's result takes cached
+   memory or new memory from the driver, and the words that cost, follows the
+   collection's phase. rig's bench counts a create that hits the cache and one
+   that misses it exactly. *)
 let gpu_metrics = [ Thumper.Metric.wall_time ]
 
 let bench c =
