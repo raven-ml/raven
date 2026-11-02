@@ -1072,9 +1072,24 @@ let slice_stops (((r, _, kind, t) as c), (offset, length)) =
   | _ when r >= offset -> fail "the failure in the slice is not met"
   | _ -> ()
 
+(* A text compared with itself is null on a null row, where one batch of two
+   rows compares by words and two of one row compare by bytes: the bits under
+   the nulls are one way either way. *)
+let text_compare_layouts () =
+  let row () = Column.of_options Type.binary [| None |] in
+  let one = Talon.v [ ("c", Column.of_options Type.binary [| None; None |]) ]
+  and two =
+    Talon.of_batches [ Talon.v [ ("c", row ()) ]; Talon.v [ ("c", row ()) ] ]
+  in
+  let c = Col.binary "c" in
+  let q t = Query.select Expr.[ "r" := not (c = c) ] (Query.of_table t) in
+  same_outcome (q one) (q two)
+
 let laws =
   group "Laws"
     [
+      test "a text compared with itself has one layout whatever the batches"
+        text_compare_layouts;
       prop "a streaming step that fails at row r emits the rows before r"
         failing emits_before;
       prop "a slice from the start never meets a failure past its rows" sliced

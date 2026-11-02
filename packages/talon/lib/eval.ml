@@ -206,16 +206,20 @@ let text_name : Expr.compare -> string = function
 
 let compare op a b =
   let valid = valid [ a; b ] in
+  let masked r = Option.fold ~none:r ~some:(Nx.logical_and r) valid in
   let r =
     match (Column.data a, Column.data b) with
     | Fixed (P x), Fixed q when Nx.ndim x = 1 ->
         Nx.cast Nx.bit (ordered op x (Nx.unpack (Nx.dtype x) q))
+    (* Text is compared with one row's bytes, or by words, and a batch of one
+       row takes either way: both are masked under the nulls, so that the bits
+       there are the same whatever the batches. *)
     | Bytes r, Bytes one when Column.length b = 1 ->
         let s = Strings.compare ~by:(text_name op) r one in
-        Nx.cast Nx.bit (ordered op s (Nx.zeros_like s))
+        masked (Nx.cast Nx.bit (ordered op s (Nx.zeros_like s)))
     | Bytes one, Bytes r when Column.length a = 1 ->
         let s = Strings.compare ~by:(text_name op) r one in
-        Nx.cast Nx.bit (ordered op (Nx.zeros_like s) s)
+        masked (Nx.cast Nx.bit (ordered op (Nx.zeros_like s) s))
     | _ ->
         let use : Key.use =
           match op with `Eq | `Ne -> Identity | `Lt | `Le | `Gt | `Ge -> Order
@@ -224,8 +228,7 @@ let compare op a b =
            the comparison is masked under the nulls: there it would depend on
            the batch. *)
         let x, y = words use a b in
-        let r = Nx.cast Nx.bit (ordered op x y) in
-        Option.fold ~none:r ~some:(Nx.logical_and r) valid
+        masked (Nx.cast Nx.bit (ordered op x y))
   in
   boolean ?valid r
 

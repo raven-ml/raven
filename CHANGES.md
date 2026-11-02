@@ -2937,6 +2937,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A comparison of a text column with a text of one row gives its null rows
+  the bits a comparison of two columns gives them, so that a result's layout
+  no longer depends on how its input is batched.
 - `Str.trim` removes Unicode white space at both ends of text, and
   `Str.concat` joins texts with a separator.
 - `Temporal.field` of a datetime within a day of its least tick read a day
