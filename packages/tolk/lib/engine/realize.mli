@@ -77,6 +77,13 @@ val lower_and_compile :
     Raises as {!Codegen.to_program} does, and [Invalid_argument] if
     {!Device.renderer} finds no renderer for a target. *)
 
+val kernels : (unit -> 'a) -> 'a * (string * string) list
+(** [kernels f] is [f ()] and, for each kernel of each schedule that
+    {!lower_and_compile} compiles on the calling domain while [f] runs, in
+    order, its name and its program key ({!Codegen.program_key}), whether its
+    program was made or kept. A [kernels] inside [f] takes the kernels found
+    while it runs. For the suites. *)
+
 val compile_linear :
   ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
   targets:(string -> Helpers.Target.t) ->

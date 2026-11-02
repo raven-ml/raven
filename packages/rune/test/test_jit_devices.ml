@@ -1194,14 +1194,45 @@ let onto_mesh set =
 (* Programs
 
    A program for one device serves every device of its target, so a
-   data-parallel step over [n] memory devices makes as many programs whatever
+   data-parallel step over [n] memory devices takes as many programs whatever
    [n]: each device's kernels, its moves of windows included, are another's.
-   The hidden width depends on [n], so no two counts share a program, and every
-   cut is even, so each device's windows have one shape. *)
+   A step's programs are counted by their keys, made or kept, so that one this
+   process made before counts. The hidden width grows with [n] so that every
+   cut, the gradients' closing sums' included, is even, and each device's
+   windows have one shape: a width of 24 over 16 devices cuts unevenly and
+   takes 16 programs where 8 devices take 13. *)
 
 let sixteen =
   Array.init 16 (fun k ->
       Result.get_ok (Rig.memory_device (Printf.sprintf "programs-%d" k)))
+
+(* The number of program keys among the kernels [f ()] compiles, and the
+   name and a digest of each key, for a failure to name them. *)
+let keys f =
+  let (), ks = Tolk.Realize.kernels f in
+  let keys = List.sort_uniq String.compare (List.map snd ks) in
+  let named k =
+    let name, _ = List.find (fun (_, k') -> String.equal k k') ks in
+    name ^ " " ^ String.sub (Digest.to_hex (Digest.string k)) 0 8
+  in
+  (List.length keys, String.concat ", " (List.map named keys))
+
+(* Counts over 2, 4, 8 and 16 devices that do not grow with the devices:
+   those over 4, 8 and 16 are equal, and that over 2 is at most theirs. Each
+   count's kernels name what differs. *)
+let flat what counts =
+  let msg =
+    String.concat "\n"
+      (List.map2
+         (fun n (c, names) ->
+           Printf.sprintf "%s over %d: %d: %s" what n c names)
+         [ 2; 4; 8; 16 ] counts)
+  in
+  match List.map fst counts with
+  | [ c2; c4; c8; c16 ] ->
+      at_most ~msg int ~than:c4 c2;
+      equal ~msg (list int) [ c4; c4 ] [ c8; c16 ]
+  | _ -> invalid_arg "flat: four counts"
 
 let programs n =
   let module S = (val Nx.devices (Array.to_list (Array.sub sixteen 0 n))) in
@@ -1223,10 +1254,10 @@ let programs n =
       T.(tensor @-> pair tensor tensor @-> returns (pair tensor tensor))
       step
   in
-  let before = Tolk.Codegen.programs () and evaluated = Rune.evaluations () in
-  ignore (f x (w1, w2));
+  let evaluated = Rune.evaluations () in
+  let programs = keys (fun () -> ignore (f x (w1, w2))) in
   equal ~msg:"calls evaluated" int evaluated (Rune.evaluations ());
-  Tolk.Codegen.programs () - before
+  programs
 
 (* Maps over a cut axis
 
@@ -1360,9 +1391,8 @@ let partials set =
 
 (* A data-parallel step written as per-device code, each device's loss offset
    by its lane's index and gathered by a sum over the lanes, and one that
-   accumulates stacked partial gradients, each make as many programs over 2, 4,
-   8 and 16 memory devices, as the data-parallel step above does. Their widths
-   are that step's none, so that no program of one is the other's. *)
+   accumulates stacked partial gradients, each take as many programs over 2,
+   4, 8 and 16 memory devices, as the data-parallel step above does. *)
 let mapped_programs n =
   let module S = (val Nx.devices (Array.to_list (Array.sub sixteen 0 n))) in
   let hidden = 48 + n in
@@ -1401,15 +1431,15 @@ let mapped_programs n =
     descend w (Nx.sum ~axes:[ 0 ] g1, Nx.sum ~axes:[ 0 ] g2)
   in
   let count f =
-    let before = Tolk.Codegen.programs () and evaluated = Rune.evaluations () in
+    let evaluated = Rune.evaluations () in
     let step =
       Rune.jit
         T.(tensor @-> pair tensor tensor @-> returns (pair tensor tensor))
         f
     in
-    ignore (step x (w1, w2));
+    let programs = keys (fun () -> ignore (step x (w1, w2))) in
     equal ~msg:"calls evaluated" int evaluated (Rune.evaluations ());
-    Tolk.Codegen.programs () - before
+    programs
   in
   let per_device = count per_device in
   (per_device, count accumulated)
@@ -1538,11 +1568,9 @@ let () =
            ];
          group "programs"
            [
-             test "a data-parallel step makes as many over 2, 4, 8 and 16"
+             test "a data-parallel step takes as many over 2, 4, 8 and 16"
                (fun () ->
-                 let counts = List.map programs [ 2; 4; 8; 16 ] in
-                 let first = List.hd counts in
-                 equal (list int) (List.map (fun _ -> first) counts) counts);
+                 flat "programs" (List.map programs [ 2; 4; 8; 16 ]));
            ];
          group "maps over a cut axis"
            [
@@ -1553,13 +1581,11 @@ let () =
                  over 4 { law = indices });
              test "stacked partials stay on their devices, then close"
                (fun () -> over 4 { law = partials });
-             test "per-device code makes as many programs over 2 to 16"
+             test "per-device code takes as many programs over 2 to 16"
                (fun () ->
                  let counts = List.map mapped_programs [ 2; 4; 8; 16 ] in
-                 let first = List.hd counts in
-                 equal (list (pair int int))
-                   (List.map (fun _ -> first) counts)
-                   counts);
+                 flat "per-device" (List.map fst counts);
+                 flat "accumulated" (List.map snd counts));
            ];
          group "each device runs its own kernels"
            [

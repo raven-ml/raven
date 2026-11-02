@@ -395,6 +395,33 @@ let compiling =
           equal int ~msg:"programs made" 1 (Codegen.programs () - before);
           equal (list (list string)) [ [ "CPU:1" ]; [ "CPU:2" ] ]
             (List.map devices (calls_of l)));
+      test "collects each kernel's name and key, made or kept, on its domain"
+        (fun () ->
+          let fresh = float_of_int (Ops.unique_num ()) in
+          let call d =
+            let scale x = Ops.mul x (Ops.float ~dtype:Float32 fresh) in
+            let kernel = map_kernel ~device:d scale in
+            Ops.call kernel [ storage ~device:d 4; storage ~device:d 4 ]
+          in
+          let compile () =
+            ignore
+              (Realize.lower_and_compile ~targets
+                 (linear [ call "CPU:1"; call "CPU:2" ]))
+          in
+          let kernels = list (pair string string) in
+          let (), made = Realize.kernels compile in
+          let ((), kept), outer =
+            Realize.kernels (fun () -> Realize.kernels compile)
+          in
+          let (), elsewhere =
+            Realize.kernels (fun () -> Domain.join (Domain.spawn compile))
+          in
+          equal int ~msg:"kernels" 2 (List.length made);
+          equal int ~msg:"keys" 1
+            (List.length (List.sort_uniq String.compare (List.map snd made)));
+          equal kernels ~msg:"kept" made kept;
+          equal kernels ~msg:"around an inner collector" [] outer;
+          equal kernels ~msg:"on another domain" [] elsewhere);
       test "keeps each call's arguments" (fun () ->
           let args = [ storage 4; storage 4 ] in
           match

@@ -4796,7 +4796,7 @@ fold wraps integers and holds its float bound`, hold.
   (`Pieces.split`, `Compile.moving`) bind each device's window start, of a
   move or of a loop's coordinates, to a variable named by its bound, so that
   every device's kernel is one program (D170) and the data-parallel step
-  makes as many programs over 2 to 16 memory devices.
+  takes as many programs over 2 to 16 memory devices.
 - **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › two
   variables of one name bound to two values are passed by the calls that read
   them` and `› loops of calls › loops whose calls read one name at two values
@@ -4804,8 +4804,8 @@ fold wraps integers and holds its float bound`, hold.
   on several devices computes each device's window at its start` and `›
   kernels whose sizes are one name of two values run each its own`, and the
   same on each GPU; rune's `Rune.jit over
-  several devices › maps over a cut axis › per-device code makes as many
-  programs over 2 to 16`, `› programs › a data-parallel step makes as many
+  several devices › maps over a cut axis › per-device code takes as many
+  programs over 2 to 16`, `› programs › a data-parallel step takes as many
   over 2, 4, 8 and 16`, `› loops › a step that reads its coordinates gives
   eager's bits`.
 

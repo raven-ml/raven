@@ -118,6 +118,23 @@ let get_call_to_compile targets c =
       Some (ast, Result.fold ~ok:Fun.id ~error:invalid_arg (Device.renderer t))
   | _ -> None
 
+(* The kernels [lower_and_compile] finds on a domain while a [kernels] runs
+   there, latest first. *)
+let found : (string * string) list ref option Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> None)
+
+let kernels f =
+  let outer = Domain.DLS.get found and inner = ref [] in
+  Domain.DLS.set found (Some inner);
+  let v = Fun.protect ~finally:(fun () -> Domain.DLS.set found outer) f in
+  (v, List.rev !inner)
+
+(* [prg]'s linearized sink names its kernel as optimisation named it. *)
+let note prg key =
+  match (Domain.DLS.get found, arg (nth prg 0)) with
+  | Some l, Kernel k -> l := (k.name, key) :: !l
+  | Some _, _ | None, _ -> ()
+
 let lower_and_compile ?search ~targets linear =
   let calls =
     List.filter_map
@@ -155,7 +172,10 @@ let lower_and_compile ?search ~targets linear =
   (* Each kernel now finds its program kept, its parameters on its devices. *)
   substitute ~calls:Skip ~pass:Fixed_point linear
     (List.map
-       (fun (c, a) -> (c, replace c ~src:(compile a :: List.tl (src c))))
+       (fun (c, ((ast, ren) as a)) ->
+         let prg = compile a in
+         note prg (Codegen.program_key ast ren);
+         (c, replace c ~src:(prg :: List.tl (src c))))
        calls)
 
 (* A kernel that asks for no beam search asks for one of the setting's width. *)
