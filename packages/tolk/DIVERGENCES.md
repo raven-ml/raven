@@ -5255,3 +5255,45 @@ fold wraps integers and holds its float bound`, hold.
   read at its range adds each trip it selects`; on rune, `Lower_reduce ›
   contractions › contracting pairs in blocks give eager's integers and hold
   their bound`.
+
+## D190. Clang of LLVM 18 compiles for x86_64 without AVX10.1 and avx512fp16
+
+- **tinygrad:** `runtime/support/compiler_cpu.py:10` (`ClangCompiler`'s
+  x86_64 arguments, `-march=<cpu>` and its features); `runtime/ops_cpu.py:68`
+  (the CPU's arch, its machine and `native`).
+- **tolk:** `Compiler_cpu.flags` (`fixed` and `llvm18_x86_off`), which
+  `Compiler_cpu.clang` and `Compiler_cpu.registers` take, with the LLVM
+  version `Compiler_cpu.llvm_major` reads from the statement
+  `Compiler_cpu.version` asks for.
+- **Differs:** under a Clang that states LLVM 18, an x86_64 arch's arguments
+  end with `-mno-avx10.1-512 -mno-avx10.1-256 -mno-avx512fp16`, after
+  `-march` and the arch's features, so they win over what `native` or the
+  arch enables. A Clang host's half is an `__fp16`, which computes in
+  `float` on every processor (D17), so values are unchanged: only the
+  instructions converting halves differ, as on a processor without AVX-512
+  FP16. Every other Clang, and every other machine,
+  takes tinygrad's arguments.
+- **Reason:** (b): rune's `Lower_arith › casts give eager's values` at
+  `(float16, 11)` and `rune vmap › compositions › under jit` at float16
+  failed on GitHub's ubuntu-latest under Ubuntu 24.04's Clang 18.1.3 with "clang
+  frontend command failed with exit code 139", after "invalid feature
+  combination: +avx10.1-256; will be promoted to avx10.1-512", on runners
+  whose processor states AVX10.1, and passed on others. The cast kernel
+  `E_21_230` loads a half and stores its double bits in one row and the half
+  converted to a saturated short in another; Clang 18.1.3 and 18.1.8 crash on
+  it in machine loop-invariant code motion for `sapphirerapids`,
+  `graniterapids`, `graniterapids` with `-mavx10.1-256`, `x86-64-v3` with
+  `-mavx10.1-256` and `x86-64-v4` with `-mavx512fp16`, and compile it for
+  `x86-64-v4`, `znver4` and each of these with avx512fp16 off. AVX10.1
+  implies avx512fp16, and under LLVM 18 disabling avx512fp16 or avx10.1-256
+  alone leaves it on: avx10.1-512, then avx10.1-256, then avx512fp16 must go.
+  Clang 17.0.6 and 19.1.7 compile the kernel for each of these processors,
+  so every other Clang keeps the features.
+- **Pinned by:** `Tolk.Compiler_cpu › flags › under LLVM 18, x86_64 ends by
+  disabling AVX10.1 and avx512fp16:` (every row), `› LLVM's own release of
+  18 is LLVM 18`, `› x86_64,native takes its own arguments alone under`
+  (every row) and `› another machine under LLVM 18 takes its own arguments
+  alone:`; `Tolk.Compiler_cpu › features › a loop of half casts compiles
+  with AVX-512's half arithmetic on` (`x86_64,sapphirerapids`,
+  `x86_64,x86-64-v4,avx512fp16`), which crashes Clang 18 without the flags;
+  rune's two tests above, under Clang 18 on an x86 host with avx512fp16.

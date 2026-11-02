@@ -84,6 +84,26 @@ __attribute__((min_vector_width(512))) void r_3_2(unsigned char* restrict data0_
   *(data0_3+2) = (alu17[0]+alu17[1]);
 }|}
 
+(* Part of the kernel rune compiles for casts from float16: in its first row
+   the bits of each half as a double, in the others the half converted to a
+   short, saturated, 0 at NaN. *)
+let half_casts =
+  {|void casts(unsigned long* restrict out, __fp16* restrict in, int n) {
+  for (int row = 0; row < 21; row++) {
+    for (int i = 0; i < n; i++) {
+      __fp16 h = in[i];
+      float f = ((float)(h));
+      _Bool below = (f<-32768.0f);
+      _Bool within = (f<32768.0f);
+      float clamped = (((f!=f)|(below|(within==0)))?0.0f:f);
+      short s = (below?((short)(-32768)):(within?((short)(clamped)):((short)(32767))));
+      short s2 = ((f==f)?s:((short)(0)));
+      unsigned long d = __builtin_bit_cast(unsigned long, (double)(h));
+      out[(row*230)+i] = ((row==0)?d:((unsigned long)(__builtin_bit_cast(unsigned short, s2))));
+    }
+  }
+}|}
+
 (* The kernels of kernels.golden, each a linear program named after its kernel,
    whose sources are the kernel's nodes in order. *)
 let kernels = lazy (Ops.src (Golden.sink "kernels.golden"))
@@ -316,6 +336,14 @@ let features =
         (fun arch ->
           is_relocatable_elf64 ~machine:(elf_machine "x86_64")
             (compile arch clamped_gathers));
+      (* Clang 18 crashed on this loop for these processors, which have
+         AVX-512's half arithmetic. *)
+      cases "a loop of half casts compiles with AVX-512's half arithmetic on"
+        ~id:Fun.id
+        [ "x86_64,sapphirerapids"; "x86_64,x86-64-v4,avx512fp16" ]
+        (fun arch ->
+          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
+            (compile arch half_casts));
       (* SSE2 adds four floats with [addps] and one with [addss]: a packed
          loop adds its last floats one at a time. *)
       cases
@@ -338,6 +366,76 @@ let features =
           let text = disassembly "arm64,generic" pressure in
           is_false ~msg:"x18" (mentions "x18" text);
           is_false ~msg:"w18" (mentions "w18" text));
+    ]
+
+(* Flags *)
+
+let llvm18 = "Ubuntu clang version 18.1.3 (1ubuntu1)"
+let x86_64_elf = "--target=x86_64-none-unknown-elf"
+
+let windows =
+  [
+    "--target=x86_64-w64-windows-gnu-elf";
+    "-mno-stack-arg-probe";
+    "-mno-red-zone";
+  ]
+
+let llvm18_off = [ "-mno-avx10.1-512"; "-mno-avx10.1-256"; "-mno-avx512fp16" ]
+
+let flags =
+  group "flags"
+    [
+      cases "under LLVM 18, x86_64 ends by disabling AVX10.1 and avx512fp16:"
+        ~id:fst
+        [
+          ("x86_64,native", [ x86_64_elf; "-march=native" ] @ llvm18_off);
+          ( "x86_64,graniterapids,avx10.1-256",
+            [ x86_64_elf; "-march=graniterapids"; "-mavx10.1-256" ]
+            @ llvm18_off );
+          ( "x86_64,sapphirerapids,avx512fp16,-avx",
+            [ x86_64_elf; "-march=sapphirerapids"; "-mavx512fp16"; "-mno-avx" ]
+            @ llvm18_off );
+          ("x86_64-windows,native", windows @ [ "-march=native" ] @ llvm18_off);
+        ]
+        (fun (arch, expected) ->
+          equal (list string) expected
+            (Compiler_cpu.flags ~version:llvm18 arch));
+      test "LLVM's own release of 18 is LLVM 18" (fun () ->
+          equal (list string)
+            ([ x86_64_elf; "-march=native" ] @ llvm18_off)
+            (Compiler_cpu.flags ~version:"clang version 18.1.8"
+               "x86_64,native"));
+      cases "x86_64,native takes its own arguments alone under" ~id:Fun.id
+        [
+          "Debian clang version 19.1.7 (3+b1)";
+          "Homebrew clang version 20.1.8";
+          "clang version 17.0.6";
+          "Apple clang version 18.0.0 (clang-1800.0.31.1)";
+          "";
+        ]
+        (fun version ->
+          equal (list string)
+            [ x86_64_elf; "-march=native" ]
+            (Compiler_cpu.flags ~version "x86_64,native"));
+      cases "another machine under LLVM 18 takes its own arguments alone:"
+        ~id:fst
+        [
+          ( "arm64,generic,fp16",
+            [
+              "--target=arm64-none-unknown-elf";
+              "-ffixed-x18";
+              "-mcpu=generic+fp16";
+            ] );
+          ( "riscv64,rv64g,c",
+            [ "--target=riscv64-none-unknown-elf"; "-march=rv64g_c" ] );
+        ]
+        (fun (arch, expected) ->
+          equal (list string) expected
+            (Compiler_cpu.flags ~version:llvm18 arch));
+      test "a malformed architecture is refused" (fun () ->
+          raises_match
+            (Exn.invalid_arg ~sub:"'x86_64'")
+            (fun () -> Compiler_cpu.flags ~version:llvm18 "x86_64"));
     ]
 
 (* Architecture strings *)
@@ -526,6 +624,7 @@ let () =
          tinygrad;
          execution;
          features;
+         flags;
          registers;
          architectures;
          errors;

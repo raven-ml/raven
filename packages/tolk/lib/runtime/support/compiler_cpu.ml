@@ -55,6 +55,9 @@ let statement =
         Hashtbl.replace stated (prog, args) s;
         s
 
+(* What a Clang states about itself: its version and installation. *)
+let version prog = statement prog [ "--version" ]
+
 (* The major version of LLVM that a statement names, as in "Ubuntu clang
    version 18.1.3". Apple's Clang numbers its own releases, so its statement
    names none. *)
@@ -99,6 +102,19 @@ let mac_native = if mac_fp16 () then [ "fp16" ] else []
 
 let win64 arch =
   List.hd (String.split_on_char ',' arch) = "x86_64-windows"
+
+(* LLVM 18 crashes, in machine loop-invariant code motion, compiling some
+   loops over halves for a processor with AVX-512's half arithmetic
+   ([avx512fp16]), such as one that stores a half's double bits in one row and
+   the half converted to a short in the others: rune's casts from float16.
+   AVX10.1 implies it, and [native] on a runner whose processor states AVX10.1
+   enables both. LLVM 17 and 19 compile the loop. Under LLVM 18 these flags
+   follow [arch]'s, so they win; avx10.1-512 is disabled first, since
+   disabling avx10.1-256 leaves it on. A half is a storage format that
+   computes in float ([Cstyle.clang]), so only the instructions converting it
+   change: F16C's or AVX-512F's, as on a processor without AVX-512 FP16. *)
+let llvm18_x86_off =
+  [ "-mno-avx10.1-512"; "-mno-avx10.1-256"; "-mno-avx512fp16" ]
 
 (* The machine of [arch] and the flags that make Clang compile for it: its
    triple, processor and features. *)
@@ -159,6 +175,13 @@ let selection arch =
   in
   (machine, triple @ target_args)
 
+(* The flags of a [selection] for a Clang of LLVM [llvm]. *)
+let fixed ~llvm (machine, flags) =
+  if machine = "x86_64" && llvm = Some 18 then flags @ llvm18_x86_off
+  else flags
+
+let flags ~version arch = fixed ~llvm:(llvm_major version) (selection arch)
+
 (* The vector registers of what Clang compiles [arch] for. Its statement names
    the processor alone, as [-target-cpu x86-64-v3], and the processor's features
    only for [native]; the macros the preprocessor defines name them for every
@@ -173,14 +196,15 @@ let registers =
   let lock = Mutex.create () and known = Hashtbl.create 4 in
   fun arch ->
     let cc = Setting.value Setting.cc in
-    let machine, flags = selection arch in
+    let selected = selection arch in
     Mutex.protect lock @@ fun () ->
     match Hashtbl.find_opt known (cc, arch) with
     | Some r -> r
     | None ->
         let r : Renderer.registers option =
-          match machine with
+          match fst selected with
           | "x86_64" ->
+              let flags = fixed ~llvm:(llvm_major (version cc)) selected in
               let macros =
                 match
                   run cc ([ "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) ""
@@ -210,7 +234,7 @@ let registers =
    working directory out of the object, and out of what Clang states. *)
 let clang arch =
   let cc = Setting.value Setting.cc in
-  let flags = snd (selection arch) in
+  let selected = selection arch in
   let base =
     [
       "-c";
@@ -225,7 +249,6 @@ let clang arch =
       "-fno-ident";
       "-ffile-compilation-dir=.";
     ]
-    @ flags
   in
   let io = [ "-"; "-o"; "-" ] in
   (* LLVM 18's straight-line vectorizer narrows the integer lanes it packs and
@@ -237,12 +260,13 @@ let clang arch =
      vectorizers back on. The statement is memoized: asking for the arguments
      again costs a lookup. *)
   let args ~long =
-    let slp =
-      match llvm_major (statement cc (base @ io)) with
-      | Some 18 -> [ "-fno-slp-vectorize" ]
-      | _ -> []
-    in
-    base @ slp @ (if long then [ "-fno-vectorize" ] else []) @ io
+    let llvm = llvm_major (version cc) in
+    let slp = if llvm = Some 18 then [ "-fno-slp-vectorize" ] else [] in
+    base
+    @ fixed ~llvm selected
+    @ slp
+    @ (if long then [ "-fno-vectorize" ] else [])
+    @ io
   in
   (* An object is a function of its source and of the arguments its length
      selects, so the table names both statements and the length. *)

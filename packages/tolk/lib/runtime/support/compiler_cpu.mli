@@ -35,7 +35,8 @@ val clang : string -> Renderer.Compiler.t
     register [x18] is left alone, since macOS and Windows clobber it. Under a
     Clang of LLVM 18, the straight-line vectorizer, which packs independent
     scalar operations into vectors, is off, since it writes invalid code for
-    some packed integer lanes. On x86_64 Windows the stack is not probed, since
+    some packed integer lanes, and so are AVX10.1 and AVX-512's half
+    arithmetic ({!flags}). On x86_64 Windows the stack is not probed, since
     rig commits a thread's stack before it runs linked code, and nothing is
     kept below the stack pointer, which Windows may write. A source of more
     than 400 000 bytes compiles without the loop vectorizer, which packs a
@@ -50,8 +51,8 @@ val clang : string -> Renderer.Compiler.t
     installation, the processor and features it compiles for, and every
     option, or why it rejects them or does not run. An object is read back
     only for its source, compiled by the same Clang with the same options.
-    Clang is asked once per process for each set of options, when the table
-    or a compile first needs it.
+    Clang is asked once per process for its version and for each set of
+    options, when the table or a compile first needs it.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
     Clang's diagnostics if Clang rejects the source or does not run, and
     {!Renderer.Compiler.disassemble} prints what [objdump -d] prints
@@ -59,6 +60,21 @@ val clang : string -> Renderer.Compiler.t
 
     Raises [Invalid_argument] naming [arch] if it has fewer than two fields, and
     naming its [MACHINE] if that is another. *)
+
+val flags : version:string -> string -> string list
+(** [flags ~version arch] is the arguments that make a Clang whose [--version]
+    states [version], such as ["Ubuntu clang version 18.1.3 (1ubuntu1)"],
+    compile for [arch] as {!clang} reads it: its target, processor and
+    features, in that order. Under LLVM 18 an x86_64 [arch]'s arguments end
+    by disabling AVX10.1 and AVX-512's half arithmetic, [avx512fp16], which
+    AVX10.1 implies, whatever [arch] or [native] enables: LLVM 18 crashes
+    compiling some loops over halves with them. Without them halves convert
+    to and from [float] by other instructions, to the same values. Any other
+    [version], including one that names no
+    LLVM release, such as Apple's, and any other machine take [arch]'s
+    arguments alone.
+
+    Raises [Invalid_argument] as {!clang} does. *)
 
 val registers : string -> Renderer.registers option
 (** [registers arch] is the vector register file of the processor
