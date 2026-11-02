@@ -78,7 +78,14 @@
     by the maps below. A device so holds at most two slots of a piece and
     their combination at a time, and every device folds a window's slots in
     one order, so each result's bits depend on the slots alone, whatever the
-    pieces and whichever device computes it. Each device of the route's
+    pieces and whichever device computes it. A [Logsumexp], which has no
+    monoid, takes every slot's elements of a piece at once, and one [Reduce]
+    over the leading axes gives the piece's results, by the kernels'
+    association of each output's terms: where that association depends on
+    their count alone, as nx.cpu's does ({!Nx_cpu.section-lane_order}), each
+    result has the bits of one [Reduce] of every slot of the group's window,
+    and a device holds every slot of a piece at once. Each device of the
+    route's
     result then gathers its window from the pieces, its own where it holds
     them. A [Reduce] of several reductions computes each one alone.
 
