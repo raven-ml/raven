@@ -4,32 +4,40 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
-# forced: blessed under load 78.3 on 14 cores
+# forced: blessed under load 35.0 on 14 cores
+# forced: blessed BERT-base/Encode/batch_ids_32 BERT-base/Encode/batch_ids_long_domains under load 34.8 on 14 cores
 
 BERT-base/Decode/long	alloc_words	exact	4687665
-BERT-base/Encode/batch_32	alloc_words	exact	127402
-BERT-base/Encode/batch_ids_32	alloc_words	exact	20767
-BERT-base/Encode/ids_long	alloc_words	exact	36896
-BERT-base/Encode/single_long	alloc_words	exact	168700
-BERT-base/Encode/single_short	alloc_words	exact	3974
+BERT-base/Encode/batch_32	alloc_words	exact	127210
+BERT-base/Encode/batch_ids_32	alloc_words	exact	20575
+BERT-base/Encode/batch_ids_long_domains	alloc_words	exact	9815
+BERT-base/Encode/ids_long	alloc_words	exact	36890
+BERT-base/Encode/single_long	alloc_words	exact	168694
+BERT-base/Encode/single_short	alloc_words	exact	3968
 GPT-2/Decode/long	alloc_words	exact	216476
-GPT-2/Encode/batch_32	alloc_words	exact	66858
-GPT-2/Encode/batch_ids_32	alloc_words	exact	6143
-GPT-2/Encode/ids_long	alloc_words	exact	14578
-GPT-2/Encode/single_long	alloc_words	exact	91434
-GPT-2/Encode/single_short	alloc_words	exact	2082
+GPT-2/Encode/batch_32	alloc_words	exact	66698
+GPT-2/Encode/batch_ids_32	alloc_words	exact	5983
+GPT-2/Encode/ids_long	alloc_words	exact	14573
+GPT-2/Encode/single_long	alloc_words	exact	91429
+GPT-2/Encode/single_short	alloc_words	exact	2077
 LLaMA/Decode/long	alloc_words	exact	846900
-LLaMA/Encode/batch_32	alloc_words	exact	244618
-LLaMA/Encode/batch_ids_32	alloc_words	exact	141980
-LLaMA/Encode/ids_long	alloc_words	exact	238291
-LLaMA/Encode/single_long	alloc_words	exact	363325
-LLaMA/Encode/single_short	alloc_words	exact	7637
+LLaMA/Encode/batch_32	alloc_words	exact	122602
+LLaMA/Encode/batch_ids_32	alloc_words	exact	19964
+LLaMA/Encode/ids_long	alloc_words	exact	55915
+LLaMA/Encode/single_long	alloc_words	exact	180949
+LLaMA/Encode/single_short	alloc_words	exact	3824
 Llama-3/Decode/long	alloc_words	exact	208550
-Llama-3/Encode/batch_32	alloc_words	exact	108426
-Llama-3/Encode/batch_ids_32	alloc_words	exact	6273
-Llama-3/Encode/ids_long	alloc_words	exact	27419
-Llama-3/Encode/single_long	alloc_words	exact	154145
-Llama-3/Encode/single_short	alloc_words	exact	3381
+Llama-3/Encode/batch_32	alloc_words	exact	108266
+Llama-3/Encode/batch_ids_32	alloc_words	exact	6113
+Llama-3/Encode/ids_long	alloc_words	exact	27414
+Llama-3/Encode/single_long	alloc_words	exact	154140
+Llama-3/Encode/single_short	alloc_words	exact	3376
+Mistral/Decode/long	alloc_words	exact	830037
+Mistral/Encode/batch_32	alloc_words	exact	117962
+Mistral/Encode/batch_ids_32	alloc_words	exact	21451
+Mistral/Encode/ids_long	alloc_words	exact	56570
+Mistral/Encode/single_long	alloc_words	exact	176339
+Mistral/Encode/single_short	alloc_words	exact	3679
 Pre-tokenize/bert	alloc_words	exact	164180
 Pre-tokenize/byte_level	alloc_words	exact	209334
 Pre-tokenize/byte_level/short	alloc_words	exact	4656
@@ -43,11 +51,11 @@ Pre-tokenize/split_o200k	alloc_words	exact	169711
 Pre-tokenize/split_tekken	alloc_words	exact	174716
 Pre-tokenize/whitespace	alloc_words	exact	156914
 T5-base/Decode/long	alloc_words	exact	712956
-T5-base/Encode/batch_32	alloc_words	exact	506506
-T5-base/Encode/batch_ids_32	alloc_words	exact	223935
-T5-base/Encode/ids_long	alloc_words	exact	364942
-T5-base/Encode/single_long	alloc_words	exact	774978
-T5-base/Encode/single_short	alloc_words	exact	15821
+T5-base/Encode/batch_32	alloc_words	exact	505962
+T5-base/Encode/batch_ids_32	alloc_words	exact	223391
+T5-base/Encode/ids_long	alloc_words	exact	364925
+T5-base/Encode/single_long	alloc_words	exact	774961
+T5-base/Encode/single_short	alloc_words	exact	15804
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos

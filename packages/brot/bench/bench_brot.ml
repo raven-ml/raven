@@ -44,7 +44,7 @@ let encode_batch tok texts = encode_batch tok texts
 let encode_batch_ids tok texts = encode_batch_ids tok texts
 let decode_ids tok ids = decode tok ids
 
-let make_suite ~label ~tokenizer =
+let make_suite ?(extra = []) ~label ~tokenizer () =
   let open Fixtures in
   let decode_input =
     let encoding = encode tokenizer long_text in
@@ -63,6 +63,7 @@ let make_suite ~label ~tokenizer =
           encode_batch_ids tokenizer batch_32);
       Thumper.bench "Decode/long" (fun () -> decode_ids tokenizer decode_input);
     ]
+    @ extra
   in
   Thumper.group label benches
 
@@ -170,21 +171,37 @@ let pre_tokenizer_suite =
 let all_benchmarks =
   let open Fixtures in
   let gpt2 =
-    make_suite ~label:"GPT-2" ~tokenizer:(load_tokenizer "gpt2.json")
+    make_suite ~label:"GPT-2" ~tokenizer:(load_tokenizer "gpt2.json") ()
   in
+  (* Four texts of 64 KB over four domains: each fills a chunk, the least a
+     batch is spread by, so three domains are spawned for the call and their
+     pretoken caches start cold. *)
   let bert =
-    make_suite ~label:"BERT-base" ~tokenizer:(load_tokenizer "bert_base.json")
+    let tokenizer = load_tokenizer "bert_base.json" in
+    let batch = [ long_text; long_text; long_text; long_text ] in
+    make_suite ~label:"BERT-base" ~tokenizer
+      ~extra:
+        [
+          Thumper.bench "Encode/batch_ids_long_domains" (fun () ->
+              Brot.encode_batch_ids tokenizer ~domains:4 batch);
+        ]
+      ()
   in
   let llama =
-    make_suite ~label:"LLaMA" ~tokenizer:(load_tokenizer "llama.json")
+    make_suite ~label:"LLaMA" ~tokenizer:(load_tokenizer "llama.json") ()
   in
   let llama3 =
-    make_suite ~label:"Llama-3" ~tokenizer:(load_tokenizer "llama3.json")
+    make_suite ~label:"Llama-3" ~tokenizer:(load_tokenizer "llama3.json") ()
   in
   (* Unigram behind SentencePiece's Precompiled normalizer. *)
   let t5 =
-    make_suite ~label:"T5-base" ~tokenizer:(load_tokenizer "t5_base.json")
+    make_suite ~label:"T5-base" ~tokenizer:(load_tokenizer "t5_base.json") ()
   in
-  [ pre_tokenizer_suite; gpt2; bert; llama; llama3; t5 ]
+  (* SentencePiece BPE behind a Metaspace pre-tokenizer, its added tokens
+     matched against raw text. *)
+  let mistral =
+    make_suite ~label:"Mistral" ~tokenizer:(load_tokenizer "mistral.json") ()
+  in
+  [ pre_tokenizer_suite; gpt2; bert; llama; llama3; t5; mistral ]
 
 let () = Thumper.run "brot" all_benchmarks |> exit

@@ -26,8 +26,9 @@ Benchmark inputs live in `./data/`:
   DeepSeek-V3, gpt-oss (the o200k pattern) and Phi-4
 
 The benchmarks read `gpt2.json`, `bert_base.json`, `llama.json`,
-`llama3.json` and `t5_base.json`; the others are read by the HuggingFace
-parity test, and `test/gen/gen_parity_expected.py` documents the whole set.
+`llama3.json`, `t5_base.json` and `mistral.json`; the others are read by the
+HuggingFace parity test, and `test/gen/gen_parity_expected.py` documents the
+whole set.
 
 Download the tokenizer model files:
 
