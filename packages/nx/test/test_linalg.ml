@@ -520,7 +520,7 @@ let test_svd =
       Array.iteri
         (fun i x ->
           if i mod k > 0 then
-            less ~msg:"descending" float_exact ~than:(values.(i - 1) +. Float.min_float) x)
+            at_most ~msg:"descending" float_exact ~than:values.(i - 1) x)
         values;
       let u, _, vh = Nx.svd ~factors:Complete r a in
       near ~msg:"complete u" (Nx.matmul (adj u) u) (identity dt (lead s) m);
@@ -657,7 +657,7 @@ let test_eigh =
       Array.iteri
         (fun i x ->
           if i mod n > 0 then
-            less ~msg:"ascending" float_exact ~than:x (values.(i - 1) -. Float.min_float))
+            at_least ~msg:"ascending" float_exact ~than:values.(i - 1) x)
         values;
       let noise = Nx.tril ~k:(-1) (Nx.add g g) in
       let upper = Nx.add (Nx.triu a) noise in
@@ -694,7 +694,7 @@ let test_svdvals =
       Array.iteri
         (fun i x ->
           if i mod k > 0 then
-            less ~msg:"descending" float_exact ~than:(values.(i - 1) +. Float.min_float) x)
+            at_most ~msg:"descending" float_exact ~than:values.(i - 1) x)
         values;
       let squares = Nx.sum ~axes:[ -1 ] (Nx.square (Nx.cast Nx.float64 sv)) in
       let fro = Nx.sum ~axes:[ -2; -1 ] (Nx.square (Nx.magnitude Nx.float64 (Nx.cast Nx.complex128 a))) in
@@ -729,7 +729,7 @@ let test_eigvalsh =
       Array.iteri
         (fun i x ->
           if i mod n > 0 then
-            less ~msg:"ascending" float_exact ~than:x (values.(i - 1) -. Float.min_float))
+            at_least ~msg:"ascending" float_exact ~than:values.(i - 1) x)
         values;
       let trace = Nx.real Nx.float64 (Nx.cast Nx.complex128 (Nx.trace a)) in
       near ~tol:(tolerance dt) ~msg:"Σ w" (Nx.sum ~axes:[ -1 ] (Nx.cast Nx.float64 w)) trace;

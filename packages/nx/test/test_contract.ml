@@ -2760,9 +2760,27 @@ module Conv = struct
     in
     from 0
 
-  (* [x]'s spatial extents are [c.spatial], each a count [t]. *)
+  (* [x]'s spatial extents are [c.spatial], each a count [t]. A count of one
+     window under a padding of one each side, which an input of 0 already
+     exceeds; that count at stride 2, which an input of 0 has, below the
+     formula's extent; and nine channels each way over eight windows: drawn,
+     each is a few cases in a hundred, which some seeds never reach. *)
   let law_transpose =
-    prop "conv_transpose is conv's adjoint" case (fun c ->
+    let examples =
+      let one ~cg ~og ~spatial ~stride ~padding =
+        let c0 =
+          { n = 1; spatial = [| spatial |]; groups = 1; cg; og; taps = [| 1 |];
+            stride = [| stride |]; dilation = [| 1 |]; padding = [| padding |];
+            xs = [||]; ws = [||] }
+        in
+        let v m = Array.init m (fun i -> Float.of_int ((i mod 7) - 3)) in
+        { c0 with xs = v (numel (x_shape c0)); ws = v (numel (w_shape c0)) }
+      in
+      [ one ~cg:1 ~og:1 ~spatial:1 ~stride:1 ~padding:(1, 1);
+        one ~cg:1 ~og:1 ~spatial:1 ~stride:2 ~padding:(1, 1);
+        one ~cg:9 ~og:9 ~spatial:8 ~stride:1 ~padding:(0, 0) ]
+    in
+    prop ~examples "conv_transpose is conv's adjoint" case (fun c ->
         let t = c.spatial in
         let least = Array.mapi (least c) t in
         cover "no input has the count" (Array.exists Option.is_none least);
