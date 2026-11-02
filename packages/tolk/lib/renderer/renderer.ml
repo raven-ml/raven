@@ -67,6 +67,16 @@ module Estimates = struct
 
   let of_uops ?(ignore_indexing = false) uops =
     let flops = ref (Int 0) and lds = ref (Int 0) and mults = ref (Int 1) in
+    (* The ALU operations counted since [mults] last changed, which join
+       [flops] as one product: under a symbolic multiplier, such as a split
+       loop's, [ssimplify] then folds one term per loop body. *)
+    let work = ref Bigint.zero in
+    let flush () =
+      if not (Bigint.equal !work Bigint.zero) then begin
+        flops := X.(!flops + (!mults * of_z !work));
+        work := Bigint.zero
+      end
+    in
     let mem = ref [] and mult_stack = ref [] and excluded = Tbl.create 16 in
     if ignore_indexing then
       List.iter
@@ -105,6 +115,7 @@ module Estimates = struct
              total := smin [ accessed; bytes buf (dtype buf) ]);
         match o with
         | Op.Range ->
+            flush ();
             mult_stack := !mults :: !mult_stack;
             if not (Dtype.equal (dtype u) Dtype.Void) then
               (* a bound that reads other ranges counts its greatest value *)
@@ -115,12 +126,15 @@ module Estimates = struct
               in
               mults := without_specials X.(!mults * n)
         | Op.End | Op.Backedge -> (
+            flush ();
             match !mult_stack with
             | m :: rest ->
                 mults := m;
                 mult_stack := rest
             | [] -> invalid_arg "an END or BACKEDGE closes no RANGE")
-        | Op.Special -> mults := X.(!mults * ssimplify (nth u 0))
+        | Op.Special ->
+            flush ();
+            mults := X.(!mults * ssimplify (nth u 0))
         | Op.Load when addrspace (nth u 0) <> Some Dtype.Reg ->
             lds := X.(!lds + times (bytes u (dtype u)))
         | Op.Store when addrspace (nth u 0) <> Some Dtype.Reg ->
@@ -129,15 +143,16 @@ module Estimates = struct
             match arg u with
             | Wmma { dims = n, m, k; threads; _ } ->
                 let per_thread = 2 * n * m * k / threads in
+                flush ();
                 flops := X.(!flops + times (Int per_thread))
             | _ -> invalid_arg "a WMMA without its tensor core argument")
         | o when Op.Set.mem o Op.Set.alu && counted u ->
-            let per = Int (if Op.equal o Op.Mulacc then 2 else 1) in
-            let n = Int (max_numel u) in
-            flops := X.(!flops + (!mults * per * n))
+            let per = if Op.equal o Op.Mulacc then 2 else 1 in
+            work := Bigint.add !work (Bigint.of_int (per * max_numel u))
         | _ -> ())
       uops;
     let mem = List.fold_left (fun s (_, t) -> X.(s + !t)) (Int 0) !mem in
+    flush ();
     { ops = ssimplify_sint !flops; lds = !lds; mem }
 end
 
