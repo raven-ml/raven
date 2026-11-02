@@ -396,7 +396,7 @@ let delivered (body : Program.t) ems out =
    of its own. *)
 let rec compiled ~beam ~parallel name body forms =
   let made = Atomic.make None and lock = Mutex.create () in
-  let get () =
+  let get args =
     match Atomic.get made with
     | Some c -> c
     | None -> (
@@ -409,7 +409,7 @@ let rec compiled ~beam ~parallel name body forms =
               | Some (p, ems) -> (p, ems)
               | None -> (body, [])
             in
-            let c = Compile.make ~name ?beam ?parallel p forms in
+            let c = Compile.make ~name ?beam ?parallel ~first:args p forms in
             Result.iter_error (report "evaluates its program uncompiled: %s") c;
             let q =
               if Result.is_ok c then p
@@ -422,7 +422,7 @@ let rec compiled ~beam ~parallel name body forms =
             r)
   in
   fun args ->
-    let p, fresh, ems, c = get () in
+    let p, fresh, ems, c = get args in
     let out =
       match c with
       | Ok c -> Compile.run c args

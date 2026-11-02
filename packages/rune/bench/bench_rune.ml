@@ -690,11 +690,33 @@ let root_rows () =
 (* WarmStart: a compiled function's first call, its trace, lowering and link,
    with tolk's caches warm, as a fresh process's would be. *)
 let warm_rows () =
-  let x = one () in
+  let x = one () and w = floats n and g = floats n in
+  (* A step's first call that donates the weights it updates, as a training or
+     decoding step does. *)
+  let donated () =
+    let step =
+      Rune.jit (pair_fn ()) (fun w g ->
+          Nx.sub w (Nx.mul (Nx.scalar_like w 0.01) g))
+    in
+    synced (step (Nx.donate (Nx.copy w)) g)
+  in
+  (* A layer's first call over a weight stored transposed, as an imported
+     checkpoint's [out; in] matrix is read as [in; out]. *)
+  let m = Nx.reshape [| 64; 64 |] w and xs = Nx.reshape [| 64; 64 |] g in
+  let wt = Nx.matrix_transpose m in
+  let transposed () =
+    synced (Rune.jit (pair_fn ()) (fun x w -> Nx.matmul x w) xs wt)
+  in
   [
     Thumper.bench_with_setup "chain-100"
       ~setup:(fun () -> ignore (Rune.jit' chain x))
       (fun () -> synced (Rune.jit' chain x));
+    Thumper.bench_with_setup "donated-step-4096"
+      ~setup:(fun () -> ignore (donated ()))
+      donated;
+    Thumper.bench_with_setup "transposed-matmul-64"
+      ~setup:(fun () -> ignore (transposed ()))
+      transposed;
   ]
 
 (* Custom: a custom_jvp call outside every transformation, the shape of a log

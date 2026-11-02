@@ -362,6 +362,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit`'s first call lowers its program once where it donates arguments
+  (`Nx.donate`) or passes strided views, such as transposed weights. It
+  lowered it a second time, at that call's layouts and donation.
 - `Rune.jit` multiplies MXFP4 weights by `bfloat16` activations on tensor
   cores: `Nx_quant.apply` and `Nx_quant.apply_experts` enter each scaled value
   as the `bfloat16` it is.

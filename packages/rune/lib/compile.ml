@@ -2535,10 +2535,10 @@ type t = {
   uploads : (value * A.any) list ref;
       (** The copies of the constants of other devices, made by the first
           lowering, under [lock]. *)
-  mutable first : (L.t array * lowered) option;
-      (** The lowering {!make} checks, at contiguous layouts, phase [0] and no
-          donation, until the first variant takes it, under [lock]: a program's
-          first call lowers it once. *)
+  mutable first : ((L.t array * int array * bool array) * lowered) option;
+      (** The lowering {!make} made, and its layouts, phases and donation,
+          until the first variant takes it, under [lock]: a program's first call
+          lowers it once. *)
 }
 
 (* The program's device: the one its first argument, or else its first result,
@@ -2668,10 +2668,10 @@ let variant t layouts phases donated settings =
           t.first <- None;
           let lowered () =
             match first with
-            | Some (l, lowered)
+            | Some ((l, ph, d), lowered)
               when Array.for_all2 L.equal l layouts
-                   && Array.for_all (Int.equal 0) phases
-                   && not (Array.exists Fun.id donated) ->
+                   && Array.for_all2 Int.equal ph phases
+                   && Array.for_all2 Bool.equal d donated ->
                 lowered
             | _ ->
                 lower ~rig:t.rig ~split:(Option.is_some t.split)
@@ -2705,7 +2705,29 @@ let variant t layouts phases donated settings =
           incr (Domain.DLS.get variants_made);
           v)
 
-let make ~name ?beam ?parallel p forms =
+(* A leaf's layout over its run ({!within}) and its run's phase. *)
+let layout_of (A.Any a) = within (A.dtype a) (A.layout a)
+
+let phase_of (A.Any a) =
+  let l = A.layout a in
+  if L.numel l = 0 then 0
+  else phase (A.buffer a) (fst (run_bytes (A.dtype a) l))
+
+(* The variant that a call over [args], each on the program's one device,
+   reads, as their forms tell it: each argument's layout over its run and its
+   donation, at phase [0]. Reading their memory for the phases would share it,
+   so that no result would take a donated argument's. Where a phase differs,
+   the call lowers its variant again. *)
+let foreseen args =
+  ( Array.map
+      (fun (V x) ->
+        let f = Nx.Prim.form x in
+        within f.dtype f.layout)
+      args,
+    Array.map (fun _ -> 0) args,
+    Array.map (fun (V x) -> Nx.Prim.donated x) args )
+
+let make ~name ?beam ?parallel ?first p forms =
   match
     let home = if Pieces.needed p forms then Some (home p forms) else None in
     let split =
@@ -2721,17 +2743,34 @@ let make ~name ?beam ?parallel p forms =
       | _ -> (p, forms, [ device p forms ])
     in
     let rig = List.hd rigs in
-    let layouts =
-      Array.map
-        (fun (F f) -> within f.dtype (L.contiguous (L.shape f.layout)))
-        forms
-    in
-    let phases = Array.map (fun _ -> 0) forms in
-    let donated = Array.map (fun _ -> false) forms in
     let uploads = ref [] in
-    let lowered =
+    let lower (layouts, phases, donated) =
       lower ~rig ~split:(Option.is_some split) ~uploads p forms ~layouts ~phases
         ~donated
+    in
+    let contiguous =
+      ( Array.map
+          (fun (F f) -> within f.dtype (L.contiguous (L.shape f.layout)))
+          forms,
+        Array.map (fun _ -> 0) forms,
+        Array.map (fun _ -> false) forms )
+    in
+    (* Lowered at the first call's variant, which that call then links, or
+       over C-contiguous arguments where lowering declines that variant or
+       there is none, as for a split program: a decline there declines the
+       program. *)
+    let first, lowered =
+      let at_contiguous () = (contiguous, lower contiguous) in
+      let one_device args =
+        Option.is_none split && Array.length args = Array.length forms
+      in
+      match first with
+      | Some args when one_device args -> (
+          let v = foreseen args in
+          match lower v with
+          | lowered -> (v, lowered)
+          | exception e when Option.is_some (declined e) -> at_contiguous ())
+      | Some _ | None -> at_contiguous ()
     in
     {
       name;
@@ -2748,7 +2787,7 @@ let make ~name ?beam ?parallel p forms =
       lock = Mutex.create ();
       variants = Atomic.make [];
       uploads;
-      first = Some (layouts, lowered);
+      first = Some (first, lowered);
     }
   with
   | t -> Ok t
@@ -2978,17 +3017,8 @@ let rec run t args =
     let k, piece = owners.(j) in
     take k ~piece a
   in
-  let layouts =
-    Array.map (fun (A.Any a) -> within (A.dtype a) (A.layout a)) leaves
-  in
-  let phases =
-    Array.map
-      (fun (A.Any a) ->
-        let l = A.layout a in
-        if L.numel l = 0 then 0
-        else phase (A.buffer a) (fst (run_bytes (A.dtype a) l)))
-      leaves
-  in
+  let layouts = Array.map layout_of leaves in
+  let phases = Array.map phase_of leaves in
   match (variant t layouts phases donated (settings t.shaping)).linked with
   | Error _ ->
       evaluated_call ();

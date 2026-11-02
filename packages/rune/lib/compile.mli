@@ -38,8 +38,13 @@
     ({!Tolk.Jit.shaping}) and whether
     {!Tolk.Setting.debug} is 2 or more. The life cycle of a compiled program
     goes like this:
-    + {!make} lowers the program once, over C-contiguous arguments, to find
-      whether lowering declines it, and links nothing.
+    + {!make} lowers the program once, to find whether lowering declines it,
+      and links nothing. It lowers it at the variant that the first call's
+      arguments' forms give, their layouts and donation at phase [0], for a
+      program on one device. Where lowering declines that variant, or for a
+      split program or without a first call, it lowers it over C-contiguous
+      arguments at phase [0] that none donates, and a decline there
+      declines the program.
     + A call ({!run}) at a variant new to the program lowers and links that
       variant, or keeps its decline.
     + Later calls at that variant run its schedule, or evaluate the program
@@ -67,14 +72,18 @@ val make :
   name:string ->
   ?beam:int ->
   ?parallel:int ->
+  ?first:Program.value array ->
   Program.t ->
   Program.form array ->
   (t, string) result
-(** [make ~name ~beam ~parallel p forms] is [p] ready to run over arguments of
-    [forms], its kernels searched at the width [beam], or else the one tolk's
-    settings give, on [parallel] domains, or else as many as they give; or
-    [Error why] where lowering declines it, where [why] names the value,
-    construct or failure. [name] is the entry point that {!run}'s messages name.
+(** [make ~name ~beam ~parallel ~first p forms] is [p] ready to run over
+    arguments of [forms], its kernels searched at the width [beam], or else the
+    one tolk's settings give, on [parallel] domains, or else as many as they
+    give; or [Error why] where lowering declines it, where [why] names the
+    value, construct or failure. [name] is the entry point that {!run}'s
+    messages name. [first] are the arguments of the first call, of which [make]
+    reads the forms and donation, and nothing else: a first call at the
+    variant they give links the lowering [make] made.
 
     Lowering declines a map's construct ({!Program.Lanes},
     {!Program.Lane_index}), a scan that runs some of its rows, an iterate that
