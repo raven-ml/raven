@@ -4,6 +4,7 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
+# forced: blessed WarmStart/donated-step-4096 WarmStart/transposed-matmul-64 under load 42.0 on 14 cores
 
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	alloc_words	exact	52810
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	wall_time	batch=32	n=20	2.070e-04	2.020e-04 2.025e-04 2.025e-04 2.028e-04 2.033e-04 2.034e-04 2.037e-04 2.057e-04 2.057e-04 2.061e-04 2.079e-04 2.088e-04 2.093e-04 2.095e-04 2.101e-04 2.105e-04 2.108e-04 2.108e-04 2.109e-04 2.116e-04
@@ -142,3 +143,7 @@ TrainStep/train-step	alloc_words	exact	10533
 TrainStep/train-step	wall_time	batch=8	n=20	8.240e-04	7.294e-04 7.322e-04 7.539e-04 7.582e-04 7.851e-04 8.011e-04 8.107e-04 8.124e-04 8.133e-04 8.160e-04 8.320e-04 8.323e-04 8.332e-04 8.342e-04 8.346e-04 8.364e-04 8.375e-04 8.387e-04 8.402e-04 8.625e-04
 WarmStart/chain-100	alloc_words	batch=16	n=20	1.631e+05	1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.631e+05 1.632e+05 1.634e+05 1.679e+05
 WarmStart/chain-100	wall_time	batch=16	n=20	6.140e-04	5.560e-04 5.604e-04 5.633e-04 5.646e-04 5.756e-04 5.781e-04 5.820e-04 5.834e-04 6.051e-04 6.111e-04 6.169e-04 6.183e-04 6.354e-04 6.373e-04 6.390e-04 6.403e-04 6.405e-04 6.457e-04 6.488e-04 6.506e-04
+WarmStart/donated-step-4096	alloc_words	batch=64	n=20	2.385e+04	2.375e+04 2.376e+04 2.377e+04 2.383e+04 2.384e+04 2.385e+04 2.385e+04 2.385e+04 2.385e+04 2.385e+04 2.385e+04 2.385e+04 2.385e+04 2.385e+04 2.385e+04 2.385e+04 2.385e+04 2.385e+04 2.385e+04 2.387e+04
+WarmStart/donated-step-4096	wall_time	batch=64	n=20	9.843e-05	8.358e-05 8.803e-05 9.026e-05 9.041e-05 9.065e-05 9.101e-05 9.225e-05 9.276e-05 9.350e-05 9.476e-05 1.021e-04 1.126e-04 1.153e-04 1.204e-04 1.240e-04 1.506e-04 1.536e-04 1.884e-04 2.954e-04 3.632e-04
+WarmStart/transposed-matmul-64	alloc_words	batch=32	n=20	4.984e+04	4.980e+04 4.981e+04 4.981e+04 4.981e+04 4.981e+04 4.981e+04 4.982e+04 4.982e+04 4.982e+04 4.984e+04 4.985e+04 4.985e+04 4.985e+04 4.985e+04 4.985e+04 4.986e+04 5.115e+04 5.287e+04 5.287e+04 5.442e+04
+WarmStart/transposed-matmul-64	wall_time	batch=32	n=20	2.586e-04	2.067e-04 2.071e-04 2.076e-04 2.106e-04 2.109e-04 2.137e-04 2.157e-04 2.179e-04 2.574e-04 2.580e-04 2.592e-04 2.751e-04 2.753e-04 2.832e-04 2.839e-04 2.886e-04 3.069e-04 3.074e-04 3.079e-04 5.838e-04
