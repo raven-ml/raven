@@ -1012,24 +1012,22 @@ let split_blocks sink =
       in
       let lo = bound slots "block_lo" and hi = bound (slots + 1) "block_hi" in
       let r' = replace r ~src:[ alu hi Op.Sub [ lo ] ] in
-      let moved = alu lo Op.Add [ r' ] in
-      let sink = substitute ~calls:Skip ~pass:Fixed_point sink [ (r, moved) ] in
+      (* The loop's uses read [block_lo + r'], and its ends end [r']. *)
       let ends =
         pm (fun () ->
             [
               rule (Upat.op ~name:"e" Op.End) (fun m ->
                   let e = m "e" in
-                  if List.memq moved (src e) then
-                    Some
-                      (replace e
-                         ~src:
-                           (List.map
-                              (fun x -> if x == moved then r' else x)
-                              (src e)))
+                  if List.memq r (src e) then
+                    let ended x = if x == r then r' else x in
+                    Some (replace e ~src:(List.map ended (src e)))
                   else None);
             ])
       in
-      let sink = rewrite ends sink in
+      let sink =
+        substitute ~extra_pm:ends ~calls:Skip ~pass:Fixed_point sink
+          [ (r, alu lo Op.Add [ r' ]) ]
+      in
       let k = match arg sink with Kernel k -> k | _ -> assert false in
       let split = { iterations = ssimplify n; lo = slots; hi = slots + 1 } in
       replace sink ~arg:(Kernel { k with split = Some split })
