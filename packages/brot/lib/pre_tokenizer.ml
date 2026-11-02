@@ -758,13 +758,17 @@ let fill_whole ~pos ~stop spans =
   end
   else pos
 
+let rec skip_spaces s j stop =
+  if j < stop && String.unsafe_get s j = ' ' then skip_spaces s (j + 1) stop
+  else j
+
 let skip_whitespace s i stop =
-  let j = ref i in
+  let j = ref (skip_spaces s i stop) in
   let scanning = ref true in
   while !scanning && !j < stop do
     let d = Char_class.at s !j ~stop in
     if Char_class.at_category d = Char_class.whitespace then
-      j := !j + Char_class.at_len d
+      j := skip_spaces s (!j + Char_class.at_len d) stop
     else scanning := false
   done;
   !j
@@ -826,6 +830,28 @@ let fill_whitespace s ~pos ~stop spans =
   Spans.set_count spans !n;
   !p
 
+(* For each ASCII byte, whether it ends a Bert word: white space or
+   punctuation, as {!Char_class.at} classes it. *)
+let bert_breaks =
+  String.init 128 (fun b ->
+      let d = Char_class.at (String.make 1 (Char.chr b)) 0 ~stop:1 in
+      if
+        Char_class.at_is_punctuation d
+        || Char_class.at_category d = Char_class.whitespace
+      then '\001'
+      else '\000')
+
+(* The end of the run of ASCII bytes from [j] that do not end a Bert word: a
+   loop of its own, which keeps its position in a register. *)
+let rec bert_ascii_run s j stop =
+  if
+    j < stop
+    &&
+    let c = Char.code (String.unsafe_get s j) in
+    c < 0x80 && String.unsafe_get bert_breaks c = '\000'
+  then bert_ascii_run s (j + 1) stop
+  else j
+
 let fill_bert s ~pos ~stop spans =
   let capacity = Spans.capacity spans in
   let n = ref (Spans.count spans) in
@@ -844,15 +870,17 @@ let fill_bert s ~pos ~stop spans =
         p := i + l
       end
       else begin
-        let j = ref (i + l) in
+        let j = ref (bert_ascii_run s (i + l) stop) in
         let scanning = ref true in
         while !scanning && !j < stop do
-          let d = Char_class.at s !j ~stop in
-          if
-            Char_class.at_is_punctuation d
-            || Char_class.at_category d = Char_class.whitespace
-          then scanning := false
-          else j := !j + Char_class.at_len d
+          if Char.code (String.unsafe_get s !j) < 0x80 then scanning := false
+          else
+            let d = Char_class.at s !j ~stop in
+            if
+              Char_class.at_is_punctuation d
+              || Char_class.at_category d = Char_class.whitespace
+            then scanning := false
+            else j := bert_ascii_run s (!j + Char_class.at_len d) stop
         done;
         Spans.write spans !n i !j;
         incr n;

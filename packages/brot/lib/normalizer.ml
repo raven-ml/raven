@@ -85,6 +85,7 @@ let[@inline] is_control code =
 (* Byte scanning, eight bytes at a time *)
 
 external word : string -> int -> int64 = "%caml_string_get64u"
+external set_word : Bytes.t -> int -> int64 -> unit = "%caml_bytes_set64u"
 
 let ones = 0x0101010101010101L
 let highs = 0x8080808080808080L
@@ -935,6 +936,57 @@ let bert_tables =
   Array.init 4 (fun k ->
       bert_ascii ~clean_text:(k land 1 = 1) ~lowercase:(k land 2 = 2))
 
+(* The ASCII words of [s] from [i] on, untracked, eight bytes at a time: a word
+   of printable bytes is copied whole, its capitals lowered by adding 0x20 where
+   [b + 0x3F] reaches 0x80 and [b + 0x25] does not; a word holding a control
+   byte goes through [table] a byte at a time. Stops at the first word holding
+   a byte that is not ASCII, or with fewer than eight bytes left; returns
+   where. *)
+let bert_words o s i table ~lowercase =
+  let len = String.length s in
+  ensure o (len - i);
+  let bytes = o.bytes and p = ref o.len in
+  let j = ref i and scanning = ref true in
+  while !scanning && !j + 8 <= len do
+    let w = word s !j in
+    if Int64.logand w highs <> 0L then scanning := false
+    else begin
+      let below_space =
+        Int64.logand
+          (Int64.logand (Int64.sub w (Int64.mul ones 0x20L)) (Int64.lognot w))
+          highs
+      in
+      let delete = Int64.logxor w (Int64.mul ones 0x7FL) in
+      if below_space <> 0L || has_zero delete then
+        for k = !j to !j + 7 do
+          let c = Array.unsafe_get table (Char.code (String.unsafe_get s k)) in
+          if c >= 0 then begin
+            Bytes.unsafe_set bytes !p (Char.unsafe_chr c);
+            incr p
+          end
+        done
+      else begin
+        let w =
+          if not lowercase then w
+          else
+            let upper =
+              Int64.logand
+                (Int64.logand
+                   (Int64.add w (Int64.mul ones 0x3FL))
+                   (Int64.lognot (Int64.add w (Int64.mul ones 0x25L))))
+                highs
+            in
+            Int64.add w (Int64.shift_right_logical upper 2)
+        in
+        set_word bytes !p w;
+        p := !p + 8
+      end;
+      j := !j + 8
+    end
+  done;
+  o.len <- !p;
+  !j
+
 (* Cleaning, spacing of ideographs, decomposition with the nonspacing marks
    dropped, and lowercasing, in that order for every character, so that the text
    and its alignment are those of the four passes. ASCII is decided by a table
@@ -977,7 +1029,10 @@ let bert_text ~clean_text ~handle_chinese_chars ~strip_accents ~lowercase s o =
       then incr i
       else begin
         if pending nf then flush nf;
-        i := ascii_run o s !i ~lookahead:false table
+        let start =
+          if o.track then !i else bert_words o s !i table ~lowercase
+        in
+        i := ascii_run o s start ~lookahead:false table
       end
       end
     else begin
@@ -1106,6 +1161,74 @@ let replace_literal ~pattern ~replacement s ~matches o =
       end
   in
   loop 0 0 matches;
+  text o
+
+(* The index of the lowest byte of [marks] whose high bit is set, in the byte
+   order of a little-endian load: isolated and shifted down, the bit stands at
+   [8 * j], so multiplying by the byte ramp 7, 6, ..., 0 lifts [j] into the top
+   byte. *)
+let[@inline] first_marked marks =
+  let low = Int64.logand marks (Int64.neg marks) in
+  Int64.to_int
+    (Int64.shift_right_logical
+       (Int64.mul (Int64.shift_right_logical low 7) 0x0001020304050607L)
+       56)
+
+(* [replacement] written at [p] in an output of [size] bytes, as a word when it
+   is [short] and the output has room for one; returns where it ends. *)
+let[@inline] put bytes p ~size ~short replacement replacement_word =
+  let rlen = String.length replacement in
+  if short && p + 8 <= size then set_word bytes p replacement_word
+  else Bytes.blit_string replacement 0 bytes p rlen;
+  p + rlen
+
+(* A one-byte pattern, untracked, in one pass into an output of the exact size
+   [matches] give. Eight bytes are copied at a time: a word is stored whole,
+   and where it holds the pattern the output resumes after its first match,
+   with the replacement, overwriting the rest. Stores stay within the output,
+   and the tail goes a byte at a time. *)
+let replace_byte ~byte ~replacement s ~matches o =
+  let len = String.length s and rlen = String.length replacement in
+  let size = o.len + len + (matches * (rlen - 1)) in
+  ensure o (size - o.len);
+  let bytes = o.bytes and p = ref o.len and i = ref 0 in
+  let pattern = Int64.mul (Int64.of_int (Char.code byte)) ones in
+  (* A replacement of up to eight bytes is one store where the output has room
+     for a word. *)
+  let short = rlen <= 8 in
+  let replacement_word =
+    let b = Bytes.make 8 '\000' in
+    Bytes.blit_string replacement 0 b 0 (min rlen 8);
+    Bytes.get_int64_ne b 0
+  in
+  if not Sys.big_endian then
+    while !i + 8 <= len && !p + 8 <= size do
+      let w = word s !i in
+      set_word bytes !p w;
+      let x = Int64.logxor w pattern in
+      let marks =
+        Int64.logand (Int64.logand (Int64.sub x ones) (Int64.lognot x)) highs
+      in
+      if marks = 0L then begin
+        i := !i + 8;
+        p := !p + 8
+      end
+      else begin
+        let j = first_marked marks in
+        p := put bytes (!p + j) ~size ~short replacement replacement_word;
+        i := !i + j + 1
+      end
+    done;
+  while !i < len do
+    let c = String.unsafe_get s !i in
+    if c <> byte then begin
+      Bytes.unsafe_set bytes !p c;
+      incr p
+    end
+    else p := put bytes !p ~size ~short replacement replacement_word;
+    incr i
+  done;
+  o.len <- !p;
   text o
 
 (* Matches are taken leftmost first without overlap. An empty match right after
@@ -1603,7 +1726,12 @@ let rec normalize t s a ~track =
           String.length s
           + (matches * (String.length replacement - String.length pattern))
         in
-        step ~cap s a ~track (replace_literal ~pattern ~replacement s ~matches)
+        if (not track) && String.length pattern = 1 then
+          step ~cap s a ~track
+            (replace_byte ~byte:pattern.[0] ~replacement s ~matches)
+        else
+          step ~cap s a ~track
+            (replace_literal ~pattern ~replacement s ~matches)
   | Replace { pattern = Regex { compiled; _ }; replacement } ->
       if String.length s = 0 then (s, a)
       else step s a ~track (replace_matches compiled ~replacement s)

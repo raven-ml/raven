@@ -2372,6 +2372,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Normalizer.replace` with a one-byte pattern, the Bert normalizer and the
+  Bert pre-tokenizer go through ASCII text eight bytes or a run at a time:
+  SentencePiece's `▁` rewrite costs a quarter of what it did, and BERT-base
+  encodes with about 23% fewer instructions.
 - Added tokens are found by one walk of a trie of all of them, which seeks the
   last byte of the prefix they share: tokens such as SentencePiece's `▁<s>`,
   matched against normalized text, no longer stop the scan at every word.

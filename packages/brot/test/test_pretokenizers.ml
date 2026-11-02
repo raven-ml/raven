@@ -3253,6 +3253,73 @@ let test_json_of_hf () =
   accepts "punctuation without behavior" {|{"type":"Punctuation"}|}
     {|{"type":"Punctuation","behavior":"Isolated"}|}
 
+(* Bert's words are the runs of characters that are neither white space nor
+   punctuation, and each punctuation character is a word of its own. The
+   characters are drawn from classes the reference knows: ASCII by its bytes,
+   Unicode white space and punctuation, letters beyond ASCII, and bytes of no
+   character, which belong to words. *)
+let bert_spaces = [ " "; "  "; "\t"; "\n"; "\r"; "\x0b"; "\u{a0}"; "\u{3000}" ]
+let bert_puncts = [ "."; ","; "_"; "!"; "~"; "\u{ab}"; "\u{2014}"; "\u{3002}" ]
+
+let bert_others =
+  [ "a"; "Z"; "7"; "word"; "\u{e9}"; "\u{65e5}"; "\x01"; "\x7f"; "\xff";
+    "\xc3"; "\u{2581}" ]
+[@@ocamlformat "disable"]
+
+let bert_class s i =
+  let d = String.get_utf_8_uchar s i in
+  let n =
+    if Uchar.utf_decode_is_valid d then Uchar.utf_decode_length d else 1
+  in
+  let c = String.sub s i n in
+  let ascii_punct =
+    n = 1
+    && (let b = Char.code c.[0] in
+        b >= 33 && b <= 126
+        && not
+             ((b >= 48 && b <= 57)
+             || (b >= 65 && b <= 90)
+             || (b >= 97 && b <= 122)))
+  in
+  let space =
+    List.mem c [ " "; "\t"; "\n"; "\r"; "\x0b"; "\x0c"; "\u{a0}"; "\u{3000}" ]
+  in
+  let cls =
+    if space then `Space
+    else if ascii_punct || List.mem c bert_puncts then `Punct
+    else `Word
+  in
+  (cls, n)
+
+let reference_bert s =
+  let len = String.length s in
+  let rec go i acc =
+    if i >= len then List.rev acc
+    else
+      match bert_class s i with
+      | `Space, n -> go (i + n) acc
+      | `Punct, n -> go (i + n) ((String.sub s i n, (i, i + n)) :: acc)
+      | `Word, _ ->
+          let rec stop j =
+            if j >= len then j
+            else
+              match bert_class s j with `Word, n -> stop (j + n) | _ -> j
+          in
+          let j = stop i in
+          go j ((String.sub s i (j - i), (i, j)) :: acc)
+  in
+  go 0 []
+
+let bert_walker_law =
+  prop ~count:1000 "the bert walker cuts at spaces and punctuation"
+    (Gen.map (String.concat "")
+       (Gen.list ~size:(Gen.int_range 0 40)
+          (Gen.of_list (bert_spaces @ bert_puncts @ bert_others))))
+    (fun text ->
+      check_tokenization (Printf.sprintf "bert on %S" text)
+        (Pre.pre_tokenize Pre.bert text)
+        (reference_bert text))
+
 let () =
   exit
     (run "Pre-tokenizers Test Suite"
@@ -3276,6 +3343,7 @@ let () =
            [
              test "BERT tokenization" test_bert_pretokenizer;
              test "punctuation class" test_punctuation_class;
+             bert_walker_law;
            ];
          group "whitespace"
            [

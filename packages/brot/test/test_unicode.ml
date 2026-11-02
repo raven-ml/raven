@@ -1470,6 +1470,91 @@ let precompiled_props =
           (fst (Normalizer.apply_aligned n text)));
   ]
 
+(* A literal pattern is replaced leftmost first, without overlap, byte for
+   byte. The patterns are mostly one byte, which [Normalizer.replace] rewrites
+   in a single pass when no alignment is asked for; the aligned path writes the
+   same text. *)
+let reference_replace ~pattern ~replacement s =
+  let n = String.length pattern and len = String.length s in
+  let b = Buffer.create len in
+  let rec go i =
+    if i >= len then ()
+    else if i + n <= len && String.sub s i n = pattern then begin
+      Buffer.add_string b replacement;
+      go (i + n)
+    end
+    else begin
+      Buffer.add_char b s.[i];
+      go (i + 1)
+    end
+  in
+  go 0;
+  Buffer.contents b
+
+let replace_alphabet =
+  [ "a"; " "; "  "; "\t"; "\xC3\xA9"; "\xE2\x96\x81"; "\xE3\x80\x80";
+    "\xFF"; "\x81"; "\xE2" ]
+[@@ocamlformat "disable"]
+
+let replace_case =
+  let open Gen in
+  let+ pattern = of_list [ " "; "a"; "\x81"; "\xE2"; "a "; "\xE2\x96\x81" ]
+  and+ replacement = of_list [ ""; "\xE2\x96\x81"; "_"; "  "; "\xFF" ]
+  and+ text =
+    map (String.concat "")
+      (list ~size:(int_range 0 40) (of_list replace_alphabet))
+  in
+  (pattern, replacement, text)
+
+let replace_props =
+  [
+    prop ~count:1000 "replace: a literal leftmost first, without overlap"
+      replace_case (fun (pattern, replacement, text) ->
+        let n = Normalizer.replace ~pattern ~replacement in
+        let expected = reference_replace ~pattern ~replacement text in
+        cover ~share:0.3 "a one-byte pattern found"
+          (String.length pattern = 1 && expected <> text);
+        equal ~msg:(Printf.sprintf "%S" text) string expected
+          (Normalizer.apply n text);
+        equal ~msg:(Printf.sprintf "%S aligned" text) string expected
+          (fst (Normalizer.apply_aligned n text)));
+  ]
+
+(* The Bert normalizer's text does not depend on whether its alignment is
+   tracked. Untracked, ASCII goes eight bytes at a time; the drawn text puts
+   capitals, controls, marks, ideographs and stray bytes at every offset of
+   those words. *)
+let bert_alphabet =
+  [ "a"; "Z"; "M"; "q"; "0"; " "; "\t"; "\n"; "\r"; "\x00"; "\x07"; "\x7F";
+    "!"; "@"; "["; "`"; "{"; "~"; "\xC3\xA9"; "\xC3\x89"; "\xCC\x81";
+    "\xE6\x97\xA5"; "\xEF\xBF\xBD"; "\xE2\x80\x8B"; "\xC2\xA0"; "\xFF";
+    "\xC3"; "HELLO"; "world" ]
+[@@ocamlformat "disable"]
+
+let bert_case =
+  let open Gen in
+  let+ text =
+    map (String.concat "")
+      (list ~size:(int_range 0 40) (of_list bert_alphabet))
+  and+ clean_text = bool
+  and+ handle_chinese_chars = bool
+  and+ strip_accents = option bool
+  and+ lowercase = bool in
+  (text, clean_text, handle_chinese_chars, strip_accents, lowercase)
+
+let bert_props =
+  [
+    prop ~count:1000 "bert: the text does not depend on alignment" bert_case
+      (fun (text, clean_text, handle_chinese_chars, strip_accents, lowercase) ->
+        let n =
+          Normalizer.bert ~clean_text ~handle_chinese_chars ~strip_accents
+            ~lowercase ()
+        in
+        equal ~msg:(Printf.sprintf "%S" text) string
+          (fst (Normalizer.apply_aligned n text))
+          (Normalizer.apply n text));
+  ]
+
 (* Integration with Tokenizer *)
 
 let test_tokenize_with_normalization () =
@@ -1552,7 +1637,7 @@ let unicode_tests =
     test "precompiled json" test_precompiled_json;
     test "precompiled rejected" test_precompiled_rejected;
   ]
-  @ precompiled_props
+  @ precompiled_props @ replace_props @ bert_props
   @ [
     (* Integration *)
     test "tokenize with normalization" test_tokenize_with_normalization;
