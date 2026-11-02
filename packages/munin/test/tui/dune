@@ -1,0 +1,19 @@
+(test
+ (name test_munin_tui)
+ (package munin)
+ (modules test_munin_tui fixture)
+ (deps
+  ../support/child.exe
+  (glob_files golden/*.txt))
+ (libraries
+  munin
+  munin.tui
+  munin_float_text
+  unix
+  windtrap
+  mosaic
+  mosaic.test
+  matrix
+  matrix.test
+  matrix.charts
+  matrix.grid))

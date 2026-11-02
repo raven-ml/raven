@@ -333,3 +333,18 @@ check lists each path that breaks the format and why.
   [1]
   $ munin gc --root store
   removed 1
+
+The dashboard needs a terminal. Bare munin elsewhere prints its help, and
+watch fails, naming an unknown run first.
+
+  $ munin < /dev/null | head -2
+  NAME
+         munin - Read and change a munin store, or show it in the terminal
+
+  $ munin watch --root store < /dev/null
+  munin: the dashboard needs a terminal
+  [1]
+
+  $ munin watch nope --root store < /dev/null
+  munin: no run nope in $TESTCASE_ROOT/store
+  [1]

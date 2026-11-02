@@ -866,6 +866,12 @@ device itself and depends on no rig. The `munin` command lists, shows,
 compares, tags, annotates, deletes, collects and checks, printing
 tab-separated lines.
 
+`munin.tui` is a terminal dashboard of a store, opened by bare `munin` on a
+terminal and by `munin watch [RUN]`: the store's runs with the params that
+differ and each run's best value, and one run's metrics charted from every
+sample, beside up to two marked runs, with its machine's readings. A run's
+state word comes from its lock and from samples the dashboard saw arrive.
+
 ### Tolk (new)
 
 - `Rangeify.get_kernel_graph` stores a value whose copies past the first

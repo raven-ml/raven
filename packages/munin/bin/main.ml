@@ -411,6 +411,13 @@ let gc store =
   Printf.printf "removed %d\n" (Store.gc store);
   0
 
+(* [dashboard screen store] shows the dashboard of [store] until the user
+   quits. *)
+let dashboard screen store =
+  match Munin_tui.run store screen with
+  | Ok () -> 0
+  | Error why -> fail "%s" why
+
 let check store =
   match Store.check store with
   | [] -> 0
@@ -547,13 +554,31 @@ let gc_cmd =
   cmd "gc" "Remove blobs no version names and what crashed writers left."
     (Term.const gc)
 
+let watch_cmd =
+  let id = Arg.(value & pos 0 (some string) None & info [] ~docv:"RUN") in
+  cmd "watch"
+    "Monitor a run in the terminal: $(i,RUN), else the newest run without an \
+     end that has not crashed, else the newest run, else the first run to \
+     start. Esc goes to the store's runs."
+    Term.(const (fun id -> dashboard (Munin_tui.Run id)) $ id)
+
 let check_cmd =
   cmd "check" "List the paths that break the store's format, with why."
     (Term.const check)
 
+(* Bare munin shows the store's runs on a terminal, and its help elsewhere. *)
+let default =
+  let run root =
+    if Unix.isatty Unix.stdin && Unix.isatty Unix.stdout then
+      `Ok (guard 1 (fun () -> dashboard Munin_tui.Runs (open_store root)))
+    else `Help (`Plain, None)
+  in
+  Term.(ret (const run $ root_arg))
+
 let main =
-  Cmd.group
-    (Cmd.info "munin" ~doc:"Read and change a munin store" ~exits)
+  Cmd.group ~default
+    (Cmd.info "munin"
+       ~doc:"Read and change a munin store, or show it in the terminal" ~exits)
     [
       root_cmd;
       runs_cmd;
@@ -569,6 +594,7 @@ let main =
       rm_artifact_cmd;
       gc_cmd;
       check_cmd;
+      watch_cmd;
     ]
 
 (* Every error, a command line's included, exits with status 1. *)

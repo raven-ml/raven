@@ -154,6 +154,12 @@ $ munin runs --tag baseline
 20261101T222625Z-038c51d3	finished	2026-11-01T22:26:25.779050Z	demo	baseline	baseline
 ```
 
+## The dashboard
+
+`munin` without a command shows the store's runs on the terminal, and
+`munin watch [RUN]` one run as it trains ([The dashboard](06-dashboard.md)).
+Without a terminal, `munin` prints its help and `munin watch` fails.
+
 ## Maintenance
 
 `munin rm RUN...` deletes runs and every file they hold. It refuses a run

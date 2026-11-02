@@ -6,8 +6,8 @@
   munin_float_text
   unix
   mosaic
-  mosaic.ui
-  jsont
-  jsont.bytesrw
+  matrix
+  matrix.ansi
+  matrix.text
   matrix.charts
   matrix.grid))

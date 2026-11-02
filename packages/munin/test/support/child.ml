@@ -17,6 +17,9 @@
 
    [resume ROOT ID STEP] resumes the run ID at STEP and finishes.
 
+   [take ROOT ID] resumes the run ID at step 0, prints "taken", waits for the
+   end of its standard input and exits without finishing the run.
+
    [publishing ROOT] holds the store's shared lock, as a publication does, with
    a [.]-named entry under blobs/, prints "held", waits for the end of its
    standard input, and prints whether the entry is still there.
@@ -79,6 +82,11 @@ let () =
         Session.resume ~provenance run ~step:(int_of_string Sys.argv.(4))
       in
       Session.finish s
+  | "take" ->
+      let run = Option.get (Store.run store Sys.argv.(3)) in
+      ignore (Session.resume ~provenance run ~step:0);
+      print_endline "taken";
+      ignore (In_channel.input_all stdin)
   | "publishing" ->
       Store.with_publication_lock store (fun () ->
           let blobs = Filename.concat (Store.root store) "blobs" in

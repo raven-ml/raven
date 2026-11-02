@@ -3,489 +3,729 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Mosaic
-open Munin_float_text
+open Munin
+module K = Matrix.Input.Keystroke
 
-(* Model *)
+type screen = Runs | Run of string option
+
+(* The screens of the stack. Help is drawn over whichever is on top. *)
+type kind = Runs_k | Run_k | Zoom_k | Details_k
 
 type model = {
-  run : Munin.Run.t;
-  run_status : Munin_theme.run_status;
-  metrics_state : Metrics.state;
-  mode : mode;
-  smooth : Munin_theme.smooth;
-  show_system : bool;
-  screen_width : int;
-  was_live : bool;
-  run_completed : bool;
+  store : Store.t;
+  clock : unit -> float;
+  now : float;
+  width : int;
+  height : int;
+  stack : kind list; (* never empty; its head is shown, its last is Runs *)
+  help : bool;
+  data : Data.t;
+  table : Runs_screen.table; (* Runs, as of the last change it shows *)
+  reading : bool;
+  again : bool; (* a key asked for a read while one ran *)
+  waiting : bool; (* Run started without an id and no run chosen yet *)
+  focus : string option;
+  detail : string option; (* the run Details shows *)
+  cursor : string option; (* Runs's cursor *)
+  marks : (char * string) list;
+  metric : string option;
+  filter : string;
+  metric_filter : string;
+  typing : bool;
+  order : Runs_screen.order;
+  reverse : bool;
+  chart : Chart.view;
+  zoom_at : int option;
+  scroll : int;
+  light : bool;
+  notice : string option; (* a key's refusal, until the next key *)
+  error : string option; (* a run the last poll could not read *)
 }
 
-and mode = Dashboard | Detail of string | Info
-
 type msg =
-  | Tick of float
-  | Quit
-  | Metrics_msg of Metrics.msg
-  | Open_selected
-  | Close_metric
-  | Open_info
-  | Close_info
-  | Toggle_smooth
-  | Toggle_system
-  | Terminal_resize of int * int
+  | Tick
+  | Read of Data.result
+  | Key of K.t
+  | Resize of int * int
+  | Scheme of [ `Dark | `Light ]
 
-(* Helpers *)
+let top m = List.hd m.stack
 
-(* How long a running run may go without logging before it reads as stalled
-   rather than live. *)
-let stale_after = 5.0
+(* Views of the model *)
 
-let live_status run =
-  match Munin.Run.status run with
-  | `Finished -> Munin_theme.Done
-  | `Failed -> Munin_theme.Failed
-  | `Killed -> Munin_theme.Killed
-  | `Running ->
-      (* A run that just started has yet to log anything, so its start time is
-         the last sign of life we have. *)
-      let last =
-        Option.value
-          (Munin.Run.last_event_at run)
-          ~default:(Munin.Run.started_at run)
-      in
-      if Unix.gettimeofday () -. last > stale_after then Munin_theme.Stopped
-      else Munin_theme.Live
+let runs_view m =
+  {
+    Runs_screen.data = m.data;
+    now = m.now;
+    root = Store.root m.store;
+    filter = m.filter;
+    metric = m.metric;
+    order = m.order;
+    reverse = m.reverse;
+  }
 
-let history_for_tag run tag =
-  List.map
-    (fun (m : Munin.Metric.sample) -> (m.step, m.value))
-    (Munin.Run.metric_history run tag)
+(* Runs's table is built when what it shows changes, and only while Runs is
+   shown or about to be. *)
+let tabulate m =
+  {
+    m with
+    table =
+      Runs_screen.table (runs_view m) ~width:m.width
+        ~typing:(m.typing && top m = Runs_k);
+  }
 
-let latest_step run =
-  match Munin.Run.latest_metrics run with
-  | [] -> None
-  | ms ->
-      Some
-        (List.fold_left
-           (fun acc (_, (m : Munin.Metric.sample)) -> max acc m.step)
-           0 ms)
+let row_ids m = Runs_screen.row_ids m.table
 
-let latest_epoch run =
-  match List.assoc_opt "epoch" (Munin.Run.latest_metrics run) with
-  | Some (m : Munin.Metric.sample) -> Some (int_of_float m.value)
-  | None -> None
+let full_entry m id =
+  match Data.entry m.data id with
+  | Some ({ keys = All; _ } as e) -> Some e
+  | _ -> None
 
-let total_epochs run =
-  match Munin.Run.find_param run "epochs" with
-  | Some v -> Munin.Value.to_int v
-  | None -> None
+let run_view m id =
+  Option.map
+    (fun r ->
+      {
+        Run_screen.data = m.data;
+        now = m.now;
+        focus = r;
+        entry = full_entry m id;
+        marked =
+          List.filter_map
+            (fun (l, mid) ->
+              if mid = id then None
+              else Option.map (fun mr -> (l, mr)) (Data.run m.data mid))
+            m.marks;
+        metric = m.metric;
+        chart = m.chart;
+        zoom_at = m.zoom_at;
+        filter = m.metric_filter;
+        light = m.light;
+      })
+    (Data.run m.data id)
 
-let elapsed_secs m =
-  let end_time =
-    match m.run_status with
-    | Munin_theme.Live -> Unix.gettimeofday ()
-    | Stopped | Done | Failed | Killed -> (
-        match Munin.Run.ended_at m.run with
-        | Some t -> t
-        | None -> Unix.gettimeofday ())
+let focus_view m = Option.bind m.focus (run_view m)
+
+(* Reading *)
+
+(* What a screen of the stack needs read: each run with the keys it keeps. *)
+let needs m kind =
+  match kind with
+  | Runs_k -> (
+      List.filter_map
+        (fun r ->
+          if Run.ended_at r = None then Some (Run.id r, Data.Keys []) else None)
+        (Data.listing m.data)
+      @
+      match
+        (m.cursor, m.metric, Runs_screen.pane_chart m.table ~height:m.height)
+      with
+      | Some id, Some key, Some _ -> [ (id, Data.Keys [ key ]) ]
+      | _ -> [])
+  | Run_k | Zoom_k -> (
+      match focus_view m with
+      | Some v ->
+          let shown =
+            Run_screen.shown v ~width:m.width ~height:m.height
+              ~zoom:(kind = Zoom_k)
+          in
+          (Run.id v.focus, Data.All)
+          :: List.map (fun (_, r) -> (Run.id r, Data.Keys shown)) v.marked
+      | None -> Option.to_list (Option.map (fun id -> (id, Data.All)) m.focus))
+  | Details_k -> Option.to_list (Option.map (fun id -> (id, Data.All)) m.detail)
+
+let request m =
+  let shown = top m in
+  let follow = needs m shown in
+  let keep =
+    List.concat_map (fun k -> List.map fst (needs m k)) (List.tl m.stack)
   in
-  end_time -. Munin.Run.started_at m.run
-
-let metrics_width m =
-  if m.show_system then int_of_float (float_of_int m.screen_width *. 0.66)
-  else m.screen_width
-
-let best_value run tag =
-  Option.map (fun (b : Munin.Metric.sample) -> b.value) (Munin.Run.best run tag)
-
-(* View *)
-
-let divider () =
-  box
-    ~size:{ width = px 1; height = pct 100 }
-    ~background:(Ansi.Color.grayscale ~level:8)
-    [ text " " ]
-
-let is_sys_metric tag = String.length tag > 4 && String.sub tag 0 4 = "sys/"
-
-let step_metrics run =
-  let defs = Munin.Run.metric_defs run in
-  let from_defs =
-    List.filter_map (fun (_, (d : Munin.Metric.def)) -> d.step_metric) defs
+  let charts, trends, zoom =
+    match (shown, focus_view m) with
+    | (Run_k | Zoom_k), Some v ->
+        Run_screen.requests v ~width:m.width ~height:m.height
+          ~zoom:(shown = Zoom_k)
+    | Runs_k, _ -> (
+        match (m.cursor, Runs_screen.pane_chart m.table ~height:m.height) with
+        | Some id, Some spec ->
+            ( [
+                {
+                  Data.focus = id;
+                  marked = [];
+                  view = Runs_screen.pane_view;
+                  spec;
+                };
+              ],
+              [],
+              None )
+        | _ -> ([], [], None))
+    | _ -> ([], [], None)
   in
-  if List.mem "epoch" from_defs then from_defs else "epoch" :: from_defs
+  let list = shown = Runs_k || Data.listing m.data = [] || m.waiting in
+  Data.request m.data ~time:m.now ~list ~follow ~keep ~charts ~trends ~zoom
 
-let user_metric_tags run =
-  let sms = step_metrics run in
-  List.filter_map
-    (fun (tag, _) ->
-      if is_sys_metric tag || List.mem tag sms then None else Some tag)
-    (Munin.Run.latest_metrics run)
+let read m =
+  let q = request m in
+  let store = m.store in
+  ( { m with reading = true; again = false },
+    Mosaic.Cmd.perform (fun dispatch -> dispatch (Read (Data.read store q))) )
 
-let blocks =
-  [|
-    "\u{2581}";
-    "\u{2582}";
-    "\u{2583}";
-    "\u{2584}";
-    "\u{2585}";
-    "\u{2586}";
-    "\u{2587}";
-    "\u{2588}";
-  |]
-
-let mini_sparkline history ~width =
-  let values = List.map snd history in
-  let n = List.length values in
-  if n = 0 then ""
+(* A key that changes what the screen shows reads at once, or after the read in
+   progress. *)
+let read_soon (m, cmd) =
+  if m.reading then ({ m with again = true }, cmd)
   else
-    let arr =
-      if n <= width then Array.of_list values
+    let m, r = read m in
+    (m, Mosaic.Cmd.batch [ cmd; r ])
+
+(* The newest run without an end that has not crashed, else the newest. *)
+let chosen m =
+  let l = Data.listing m.data in
+  match
+    List.find_opt (fun r -> Run.ended_at r = None && Run.status r <> `Crashed) l
+  with
+  | Some r -> Some (Run.id r)
+  | None -> Option.map Run.id (List.nth_opt l 0)
+
+let settle m =
+  let m =
+    if m.waiting then
+      match chosen m with
+      | Some id -> { m with waiting = false; focus = Some id; cursor = Some id }
+      | None -> m
+    else m
+  in
+  let m =
+    match m.metric with
+    | Some _ -> m
+    | None ->
+        {
+          m with
+          metric =
+            Runs_screen.default_metric m.data (Runs_screen.rows (runs_view m));
+        }
+  in
+  let m = if top m = Runs_k then tabulate m else m in
+  let ids = row_ids m in
+  match m.cursor with
+  | Some id when List.mem id ids -> m
+  | _ ->
+      { m with cursor = (match ids with id :: _ -> Some id | [] -> m.cursor) }
+
+let char (k : K.t) =
+  match k.key with K.Char u -> Some (Uchar.to_int u) | _ -> None
+
+let is c k = char k = Some (Char.code c) && not k.mods.ctrl
+
+let move_in l x d =
+  match l with
+  | [] -> None
+  | _ ->
+      let n = List.length l in
+      let i =
+        match x with
+        | Some x -> Option.value (List.find_index (( = ) x) l) ~default:0
+        | None -> 0
+      in
+      Some (List.nth l (max 0 (min (n - 1) (i + d))))
+
+let cursor_move m d = { m with cursor = move_in (row_ids m) m.cursor d }
+
+let metrics_of_focus m =
+  match focus_view m with Some v -> Run_screen.metrics v | None -> []
+
+let metric_move m d =
+  match top m with
+  | Runs_k ->
+      {
+        m with
+        metric =
+          move_in
+            (Runs_screen.metrics m.data (Runs_screen.rows (runs_view m)))
+            m.metric d;
+      }
+  | _ ->
+      let keys = metrics_of_focus m in
+      let cur = Option.bind (focus_view m) Run_screen.cursor in
+      { m with metric = move_in keys cur d; zoom_at = None }
+
+(* The layout of Run moves the cursor by lines of charts or of rows. *)
+let run_steps m =
+  match focus_view m with
+  | Some v when Run_screen.grid_fits v ~width:m.width ~height:m.height ->
+      (Run_screen.chart_cols ~width:m.width, 1)
+  | _ ->
+      let n = List.length (metrics_of_focus m) in
+      (1, (n + 1) / 2)
+
+let focus_move m d =
+  let ids = row_ids m in
+  let id = match top m with Details_k -> m.detail | _ -> m.focus in
+  match move_in ids id d with
+  | Some id ->
+      { m with focus = Some id; detail = Some id; zoom_at = None; scroll = 0 }
+  | None -> m
+
+let toggle_mark m id =
+  if List.exists (fun (_, x) -> x = id) m.marks then
+    {
+      m with
+      marks = List.filter (fun (_, x) -> x <> id) m.marks;
+      notice = None;
+    }
+  else
+    match
+      List.find_opt (fun l -> not (List.mem_assoc l m.marks)) [ 'a'; 'b' ]
+    with
+    | Some l ->
+        { m with marks = List.sort compare ((l, id) :: m.marks); notice = None }
+    | None ->
+        {
+          m with
+          notice = Some "2 runs marked: unmark one (space) to mark another";
+        }
+
+let zoom_move m d =
+  match focus_view m with
+  | Some v -> (
+      match (v.entry, Run_screen.cursor v) with
+      | Some e, Some key -> (
+          match History.series e.history key with
+          | s when Metric.length s > 0 ->
+              let n = Metric.length s in
+              let i = Option.value m.zoom_at ~default:(n - 1) in
+              { m with zoom_at = Some (max 0 (min (n - 1) (i + d))) }
+          | _ -> m
+          | exception Invalid_argument _ -> m)
+      | _ -> m)
+  | None -> m
+
+(* The x window narrows and widens with its right end at the latest x, and pans
+   by half its span within the domain, read from the cursor's chart as last
+   prepared. *)
+let window m how =
+  let prepared =
+    Option.bind (focus_view m) (fun v ->
+        let charts, _, _ =
+          Run_screen.requests v ~width:m.width ~height:m.height
+            ~zoom:(top m = Zoom_k)
+        in
+        let key = Run_screen.cursor v in
+        List.find_map
+          (fun (c : Data.chart) ->
+            if Some c.spec.key = key then Data.chart m.data c else None)
+          charts)
+  in
+  match prepared with
+  | None -> m
+  | Some p ->
+      let lo, hi = (Chart.lo p, Chart.hi p) in
+      let dlo, dhi =
+        match m.chart.window with
+        | None -> (lo, hi)
+        | Some _ ->
+            (0., Float.max hi (Option.value (Chart.latest p) ~default:hi))
+      in
+      let span = hi -. lo in
+      let latest = Option.value (Chart.latest p) ~default:dhi in
+      let at_latest span =
+        if span >= dhi -. dlo then None
+        else
+          let lo = Float.max dlo (latest -. span) in
+          Some (lo, lo +. span)
+      in
+      let pan d =
+        let lo =
+          Float.max dlo (Float.min (dhi -. span) (lo +. (d *. span /. 2.)))
+        in
+        Some (lo, lo +. span)
+      in
+      let window =
+        match how with
+        | `Narrow -> at_latest (span /. 2.)
+        | `Widen -> at_latest (span *. 2.)
+        | `Reset -> None
+        | `Left -> if m.chart.window = None then None else pan (-1.)
+        | `Right -> if m.chart.window = None then None else pan 1.
+      in
+      { m with chart = { m.chart with window } }
+
+let open_screen m kind = { m with stack = kind :: m.stack; help = false }
+
+let back m =
+  match m.stack with
+  | [ _ ] -> if m.filter <> "" then { m with filter = "" } else m
+  | _ :: rest ->
+      tabulate
+        { m with stack = rest; zoom_at = None; scroll = 0; metric_filter = "" }
+  | [] -> m
+
+let typing_key m (k : K.t) =
+  let set f =
+    match top m with
+    | Runs_k -> { m with filter = f }
+    | _ -> { m with metric_filter = f }
+  in
+  let text = match top m with Runs_k -> m.filter | _ -> m.metric_filter in
+  match k.key with
+  | K.Enter -> { m with typing = false }
+  | K.Escape -> { (set "") with typing = false }
+  | K.Backspace ->
+      let n = String.length text in
+      if n = 0 then m
       else
-        let a = Array.of_list values in
-        Array.sub a (n - width) width
-    in
-    let len = Array.length arr in
-    let lo = Array.fold_left min infinity arr in
-    let hi = Array.fold_left max neg_infinity arr in
-    let range = hi -. lo in
-    let buf = Buffer.create (len * 3) in
-    Array.iter
-      (fun v ->
-        let idx =
-          if range = 0. then 3
-          else int_of_float ((v -. lo) /. range *. 7.) |> max 0 |> min 7
+        (* Drop the last UTF-8 sequence. *)
+        let i = ref (n - 1) in
+        while !i > 0 && Char.code text.[!i] land 0xC0 = 0x80 do
+          decr i
+        done;
+        set (String.sub text 0 !i)
+  | _ when k.text <> "" && not k.mods.ctrl -> set (text ^ k.text)
+  | _ -> m
+
+let key m (k : K.t) =
+  if m.typing then (settle (typing_key m k), Mosaic.Cmd.none)
+  else if m.help then
+    if is '?' k || k.key = K.Escape then
+      ({ m with help = false }, Mosaic.Cmd.none)
+    else if is 'q' k then (m, Mosaic.Cmd.quit)
+    else (m, Mosaic.Cmd.none)
+  else
+    let none m = (m, Mosaic.Cmd.none) in
+    let kind = top m in
+    let up = k.key = K.Up || is 'k' k and down = k.key = K.Down || is 'j' k in
+    let left = k.key = K.Left || is 'h' k
+    and right = k.key = K.Right || is 'l' k in
+    let charts = kind = Run_k || kind = Zoom_k in
+    if is 'q' k then (m, Mosaic.Cmd.quit)
+    else if is '?' k then none { m with help = true }
+    else if k.key = K.Escape then none (back m)
+    else if is '/' k && (kind = Runs_k || kind = Run_k) then
+      none { m with typing = true }
+    else if up || down then
+      let d = if up then -1 else 1 in
+      none
+        (match kind with
+        | Runs_k -> cursor_move m d
+        | Run_k -> metric_move m (d * fst (run_steps m))
+        | Zoom_k -> metric_move m d
+        | Details_k -> { m with scroll = max 0 (m.scroll + d) })
+    else if left || right then
+      let d = if left then -1 else 1 in
+      none
+        (match kind with
+        | Runs_k -> metric_move m d
+        | Run_k -> metric_move m (d * snd (run_steps m))
+        | Zoom_k -> zoom_move m d
+        | Details_k -> m)
+    else if is 'g' k || is 'G' k then
+      let far = if is 'g' k then -max_int / 2 else max_int / 2 in
+      none
+        (match kind with
+        | Runs_k -> cursor_move m far
+        | Run_k -> metric_move m far
+        | Zoom_k -> zoom_move m far
+        | Details_k -> { m with scroll = (if far < 0 then 0 else max_int / 2) })
+    else if k.key = K.Enter then
+      none
+        (match kind with
+        | Runs_k -> (
+            match m.cursor with
+            | Some id ->
+                open_screen
+                  {
+                    m with
+                    focus = Some id;
+                    chart = { m.chart with window = None };
+                  }
+                  Run_k
+            | None -> m)
+        | Run_k -> open_screen { m with zoom_at = None } Zoom_k
+        | _ -> m)
+    else if is ' ' k then
+      none
+        (match kind with
+        | Runs_k -> Option.fold ~none:m ~some:(toggle_mark m) m.cursor
+        | _ -> Option.fold ~none:m ~some:(toggle_mark m) m.focus)
+    else if (is '[' k || is ']' k) && kind <> Runs_k then
+      none (focus_move m (if is '[' k then -1 else 1))
+    else if (is 'o' k || is 'O' k) && kind = Runs_k then
+      if is 'O' k then none { m with reverse = not m.reverse }
+      else
+        let order : Runs_screen.order =
+          match m.order with
+          | Started -> Value
+          | Value -> State
+          | State -> Name
+          | Name -> Started
         in
-        Buffer.add_string buf blocks.(idx))
-      arr;
-    Buffer.contents buf
+        none { m with order; reverse = false }
+    else if is 's' k && charts then
+      none
+        { m with chart = { m.chart with smooth = (m.chart.smooth + 1) mod 4 } }
+    else if is 'x' k && charts then
+      let axis : Chart.axis =
+        match m.chart.axis with
+        | Step -> Step_metric
+        | Step_metric -> Time
+        | Time -> Step
+      in
+      none
+        { m with chart = { m.chart with axis; window = None }; zoom_at = None }
+    else if is 'L' k && charts then
+      none { m with chart = { m.chart with log = not m.chart.log } }
+    else if is '+' k && charts then none (window m `Narrow)
+    else if is '-' k && charts then none (window m `Widen)
+    else if is '0' k && charts then none (window m `Reset)
+    else if is '<' k && charts then none (window m `Left)
+    else if is '>' k && charts then none (window m `Right)
+    else if is 'i' k && kind <> Details_k then
+      let id = match kind with Runs_k -> m.cursor | _ -> m.focus in
+      none
+        (match id with
+        | Some _ -> open_screen { m with detail = id; scroll = 0 } Details_k
+        | None -> m)
+    else if is 'y' k then
+      let id =
+        match kind with
+        | Runs_k -> m.cursor
+        | Details_k -> m.detail
+        | _ -> m.focus
+      in
+      match id with
+      | Some id -> (m, Mosaic.Cmd.copy_to_clipboard id)
+      | None -> none m
+    else none m
 
-let spark_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:10) ()
-let bold_white = Ansi.Style.make ~bold:true ~fg:Ansi.Color.white ()
+(* The program *)
 
-let view_summary_banner m =
-  let elapsed = elapsed_secs m in
-  let h = int_of_float elapsed / 3600 in
-  let mi = int_of_float elapsed mod 3600 / 60 in
-  let s = int_of_float elapsed mod 60 in
-  let duration = Printf.sprintf "%02d:%02d:%02d" h mi s in
-  let status_color = Munin_theme.status_color m.run_status in
-  let status_label = Munin_theme.status_label m.run_status in
-  let metric_tags = user_metric_tags m.run in
-  let capped =
-    if List.length metric_tags > 8 then
-      List.filteri (fun i _ -> i < 8) metric_tags
-    else metric_tags
+let init ~clock store screen () =
+  let now = clock () in
+  let stack, focus, waiting =
+    match screen with
+    | Runs -> ([ Runs_k ], None, false)
+    | Run (Some id) -> ([ Run_k; Runs_k ], Some id, false)
+    | Run None -> ([ Run_k; Runs_k ], None, true)
   in
-  let metric_entries =
-    List.map
-      (fun tag ->
-        let history = history_for_tag m.run tag in
-        let spark = mini_sparkline history ~width:8 in
-        let value =
-          match best_value m.run tag with
-          | Some v -> Float_text.g ~precision:4 v
-          | None -> (
-              match Munin_theme.last_value history with
-              | Some v -> Float_text.g ~precision:4 v
-              | None -> "-")
-        in
-        box ~flex_direction:Row ~gap:(gap 1)
-          ~size:{ width = pct 50; height = auto }
-          [
-            text ~style:Munin_theme.muted_style tag;
-            text ~style:spark_style spark;
-            text ~style:bold_white value;
-          ])
-      capped
+  let m =
+    {
+      store;
+      clock;
+      now;
+      width = 80;
+      height = 24;
+      stack;
+      help = false;
+      data = Data.empty;
+      table =
+        Runs_screen.table
+          {
+            Runs_screen.data = Data.empty;
+            now;
+            root = Store.root store;
+            filter = "";
+            metric = None;
+            order = Started;
+            reverse = false;
+          }
+          ~width:80 ~typing:false;
+      reading = false;
+      again = false;
+      waiting;
+      focus;
+      detail = None;
+      cursor = focus;
+      marks = [];
+      metric = None;
+      filter = "";
+      metric_filter = "";
+      typing = false;
+      order = Started;
+      reverse = false;
+      chart = { axis = Step; smooth = 0; log = false; window = None };
+      zoom_at = None;
+      scroll = 0;
+      light = false;
+      notice = None;
+      error = None;
+    }
   in
-  let rec pairs = function
-    | [] -> []
-    | [ x ] -> [ [ x ] ]
-    | x :: y :: rest -> [ x; y ] :: pairs rest
-  in
-  let metric_rows =
-    List.map
-      (fun row ->
-        box ~flex_direction:Row ~size:{ width = pct 100; height = auto } row)
-      (pairs metric_entries)
-  in
-  box ~border:true
-    ~border_color:(Ansi.Color.grayscale ~level:8)
-    ~title:(Printf.sprintf " Run %s " status_label)
-    ~padding:(padding_xy 2 0)
-    ~size:{ width = pct 100; height = auto }
-    ([
-       box ~flex_direction:Row ~gap:(gap 1)
-         ~size:{ width = pct 100; height = auto }
-         [
-           text
-             ~style:(Ansi.Style.make ~fg:status_color ())
-             (Printf.sprintf "%s in %s" status_label duration);
-         ];
-     ]
-    @ metric_rows)
-
-(* The GPUs of the run's GPU metrics, by index. *)
-let sys_gpus tags sys_latest =
-  let index tag = Option.map fst (Munin.Metric.gpu_metric tag) in
-  let gpu index =
-    let key name = sys_latest (Munin.Metric.gpu_key index name) in
-    System.
-      {
-        index;
-        util_pct = key "util_pct";
-        mem_used_gb = key "mem_used_gb";
-        mem_used_pct = key "mem_used_pct";
-        temp_c = key "temp_c";
-        power_w = key "power_w";
-      }
-  in
-  List.map gpu (List.sort_uniq compare (List.filter_map index tags))
-
-let view_dashboard m =
-  let all_metrics = Munin.Run.latest_metrics m.run in
-  let metric_tags = user_metric_tags m.run in
-  let history_for_tag tag = history_for_tag m.run tag in
-  let best_for_tag tag = best_value m.run tag in
-  let goal_for_tag tag =
-    match List.assoc_opt tag (Munin.Run.metric_defs m.run) with
-    | Some (d : Munin.Metric.def) -> d.goal
-    | None -> None
-  in
-  let metrics_pct = if m.show_system then 66 else 100 in
-  let sys_latest tag =
-    Option.map
-      (fun (m : Munin.Metric.sample) -> m.value)
-      (List.assoc_opt tag all_metrics)
-  in
-  let sys_values =
-    System.
-      {
-        cpu_user = sys_latest "sys/cpu_user";
-        cpu_system = sys_latest "sys/cpu_system";
-        mem_pct = sys_latest "sys/mem_used_pct";
-        mem_gb = sys_latest "sys/mem_used_gb";
-        proc_cpu = sys_latest "sys/proc_cpu_pct";
-        proc_mem_mb = sys_latest "sys/proc_mem_mb";
-        disk_read_mbs = sys_latest "sys/disk_read_mbs";
-        disk_write_mbs = sys_latest "sys/disk_write_mbs";
-        disk_util_pct = sys_latest "sys/disk_util_pct";
-        gpus = sys_gpus (List.map fst all_metrics) sys_latest;
-      }
-  in
-  let right_panel =
-    if m.show_system then
-      [
-        divider ();
-        box ~flex_direction:Column ~padding:(padding_lrtb 1 1 1 0) ~gap:(gap 1)
-          ~size:{ width = pct 34; height = auto }
-          [
-            System.view sys_values ~history_for_tag;
-            Overview.view ~run:m.run ~latest_metrics:all_metrics
-              ~step_metrics:(step_metrics m.run)
-              ~metric_defs:(Munin.Run.metric_defs m.run)
-              ~best_for_tag:(best_value m.run);
-          ];
-      ]
-    else []
-  in
-  let banner = if m.run_completed then [ view_summary_banner m ] else [] in
-  box ~flex_direction:Column
-    ~size:{ width = pct 100; height = pct 100 }
-    ([
-       Header.view ~run_id:(Munin.Run.id m.run) ~run_name:(Munin.Run.name m.run)
-         ~tags:(Munin.Run.tags m.run) ~latest_epoch:(latest_epoch m.run)
-         ~total_epochs:(total_epochs m.run) ~latest_step:(latest_step m.run)
-         ~elapsed_secs:(elapsed_secs m) ~status:m.run_status;
-     ]
-    @ banner
-    @ [
-        box ~flex_direction:Row ~flex_grow:1.0 ~flex_shrink:1.0
-          ~overflow:{ x = Hidden; y = Hidden }
-          ~size:{ width = pct 100; height = auto }
-          ([
-             box
-               ~size:{ width = pct metrics_pct; height = auto }
-               [
-                 Metrics.view m.metrics_state ~metric_tags ~history_for_tag
-                   ~best_for_tag ~goal_for_tag;
-               ];
-           ]
-          @ right_panel);
-        Footer.view ~mode:`Dashboard;
-      ])
-
-let view_detail m tag =
-  let smooth_param = Munin_theme.smooth_alpha m.smooth in
-  let history_for_tag tag = history_for_tag m.run tag in
-  let metric_def = List.assoc_opt tag (Munin.Run.metric_defs m.run) in
-  box ~flex_direction:Column
-    ~size:{ width = pct 100; height = pct 100 }
-    [
-      box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
-        ~size:{ width = pct 100; height = pct 100 }
-        [
-          Detail.view ~tag ~history_for_tag ~best:(best_value m.run tag)
-            ~smooth:smooth_param ~metric_def
-            ~size:{ width = pct 80; height = pct 80 };
-        ];
-      Footer.view ~mode:(`Detail m.smooth);
-    ]
-
-let view_info m =
-  let all_metrics = Munin.Run.latest_metrics m.run in
-  box ~flex_direction:Column
-    ~size:{ width = pct 100; height = pct 100 }
-    [
-      Header.view ~run_id:(Munin.Run.id m.run) ~run_name:(Munin.Run.name m.run)
-        ~tags:(Munin.Run.tags m.run) ~latest_epoch:(latest_epoch m.run)
-        ~total_epochs:(total_epochs m.run) ~latest_step:(latest_step m.run)
-        ~elapsed_secs:(elapsed_secs m) ~status:m.run_status;
-      box ~flex_grow:1.0 ~flex_shrink:1.0 ~overflow:{ x = Hidden; y = Hidden }
-        ~size:{ width = pct 100; height = auto }
-        [
-          Info.view ~run:m.run ~status:m.run_status
-            ~elapsed_secs:(elapsed_secs m)
-            ~metric_defs:(Munin.Run.metric_defs m.run)
-            ~latest_metrics:all_metrics ~step_metrics:(step_metrics m.run)
-            ~best_for_tag:(best_value m.run);
-        ];
-      Footer.view ~mode:`Info;
-    ]
-
-let view m =
-  match m.mode with
-  | Dashboard -> view_dashboard m
-  | Detail tag -> view_detail m tag
-  | Info -> view_info m
-
-(* TEA core *)
-
-let init ~run =
-  let run = Munin.Run.reload run in
-  let run_status = live_status run in
-  let metrics_state = Metrics.initial_state () in
-  ( {
-      run;
-      run_status;
-      metrics_state;
-      mode = Dashboard;
-      smooth = Munin_theme.Off;
-      show_system = true;
-      screen_width = 80;
-      was_live = run_status = Munin_theme.Live;
-      run_completed = false;
-    },
-    Cmd.none )
+  let m, read = read m in
+  (m, Mosaic.Cmd.batch [ read; Mosaic.Cmd.query_color_scheme ])
 
 let update msg m =
   match msg with
-  | Tick _dt ->
-      let run = Munin.Run.reload m.run in
-      let run_status = live_status run in
-      let run_completed =
-        m.run_completed
-        || m.was_live
-           && run_status <> Munin_theme.Live
-           && run_status <> Munin_theme.Stopped
+  | Tick ->
+      let m = { m with now = m.clock () } in
+      if m.reading then (m, Mosaic.Cmd.none) else read m
+  | Read r ->
+      (* A run that could not be read is named on the line above the keys until
+         a poll reads every run. *)
+      let error =
+        match Data.errors r with
+        | [] -> None
+        | ("", why) :: _ -> Some ("cannot list the store: " ^ why)
+        | (id, why) :: _ -> Some (Printf.sprintf "cannot read %s: %s" id why)
       in
-      ({ m with run; run_status; run_completed }, Cmd.none)
-  | Terminal_resize (width, height) ->
-      let m = { m with screen_width = width } in
-      let mw = metrics_width m in
-      let metrics_state' =
-        Metrics.update
-          (Metrics.Resize (mw, height))
-          m.metrics_state
-          ~total_metrics:(List.length (user_metric_tags m.run))
+      let m =
+        settle { m with data = Data.apply m.data r; reading = false; error }
       in
-      ({ m with metrics_state = metrics_state' }, Cmd.none)
-  | Metrics_msg metrics_msg ->
-      let total_metrics = List.length (user_metric_tags m.run) in
-      let metrics_state' =
-        Metrics.update metrics_msg m.metrics_state ~total_metrics
+      if m.again then read m else (m, Mosaic.Cmd.none)
+  | Key k ->
+      let m', cmd = key { m with notice = None } k in
+      (* The table changes with what it shows, never with the cursor. *)
+      let shows m = (m.filter, m.order, m.reverse, m.metric, m.typing, top m) in
+      let m' =
+        if top m' = Runs_k && shows m' <> shows m then tabulate m' else m'
       in
-      ({ m with metrics_state = metrics_state' }, Cmd.none)
-  | Open_selected -> (
-      let all_tags = user_metric_tags m.run in
-      let total_metrics = List.length all_tags in
-      match Metrics.selected_tag m.metrics_state ~total_metrics ~all_tags with
-      | Some tag -> ({ m with mode = Detail tag }, Cmd.none)
-      | None -> (m, Cmd.none))
-  | Close_metric -> ({ m with mode = Dashboard }, Cmd.none)
-  | Open_info -> ({ m with mode = Info }, Cmd.none)
-  | Close_info -> ({ m with mode = Dashboard }, Cmd.none)
-  | Toggle_smooth -> (
-      match m.mode with
-      | Detail _ ->
-          ({ m with smooth = Munin_theme.next_smooth m.smooth }, Cmd.none)
-      | Dashboard | Info -> (m, Cmd.none))
-  | Toggle_system ->
-      let m = { m with show_system = not m.show_system } in
-      let mw = metrics_width m in
-      let total_metrics = List.length (user_metric_tags m.run) in
-      let metrics_state' =
-        Metrics.update
-          (Metrics.Resize (mw, m.metrics_state.screen_height))
-          m.metrics_state ~total_metrics
-      in
-      ({ m with metrics_state = metrics_state' }, Cmd.none)
-  | Quit -> (m, Cmd.quit)
+      read_soon (m', cmd)
+  | Resize (width, height) ->
+      read_soon (settle { m with width; height }, Mosaic.Cmd.none)
+  | Scheme s -> ({ m with light = s = `Light }, Mosaic.Cmd.none)
 
-let subscriptions m =
-  Sub.batch
+let subscriptions _ =
+  Mosaic.Sub.batch
     [
-      Sub.on_tick ~id:"tick" (fun ~dt -> Tick dt);
-      Sub.on_resize (fun ~width ~height -> Terminal_resize (width, height));
-      Sub.on_key (fun ev ->
-          let is c ch =
-            let lo = Uchar.of_char ch in
-            let hi = Uchar.of_char (Char.uppercase_ascii ch) in
-            Uchar.equal c lo || Uchar.equal c hi
-          in
-          let data = Mosaic_ui.Event.Key.data ev in
-          match (data.key, m.mode) with
-          | Char c, Detail _ when is c 's' -> Some Toggle_smooth
-          | Char c, Dashboard when is c 'q' -> Some Quit
-          | Char c, Detail _ when is c 'q' -> Some Close_metric
-          | Char c, Info when is c 'q' -> Some Close_info
-          | Char c, Dashboard when is c 'i' -> Some Open_info
-          | Escape, Dashboard -> Some Quit
-          | Escape, Detail _ -> Some Close_metric
-          | Escape, Info -> Some Close_info
-          | Left, Dashboard -> Some (Metrics_msg Metrics.Select_left)
-          | Right, Dashboard -> Some (Metrics_msg Metrics.Select_right)
-          | Up, Dashboard -> Some (Metrics_msg Metrics.Select_up)
-          | Down, Dashboard -> Some (Metrics_msg Metrics.Select_down)
-          | Char c, Dashboard when is c '[' -> Some Toggle_system
-          | Char c, Dashboard when is c ']' -> Some Toggle_system
-          | Char c, Dashboard when Uchar.equal c (Uchar.of_char '<') ->
-              Some (Metrics_msg Metrics.Prev_batch)
-          | Char c, Dashboard when Uchar.equal c (Uchar.of_char '>') ->
-              Some (Metrics_msg Metrics.Next_batch)
-          | Enter, Dashboard -> Some Open_selected
-          | Char c, Dashboard when is c ' ' -> Some Open_selected
-          | _ -> None);
+      Mosaic.Sub.every ~id:"poll" 1. (fun _ -> Tick);
+      Mosaic.Sub.on_key (fun e -> Some (Key (Mosaic.Event.Key.data e)));
+      Mosaic.Sub.on_resize (fun ~width ~height -> Resize (width, height));
+      Mosaic.Sub.on_color_scheme (fun s -> Some (Scheme s));
     ]
 
-let run ?root ?experiment ?runs () =
-  let store = Munin.Store.open_ ?root () in
-  let run =
-    match runs with
-    | Some [ run_id ] -> Munin.Store.find_run store run_id
-    | None | Some [] -> Munin.Store.latest_run store ?experiment ()
-    | Some _ ->
-        Printf.printf "munin: please specify a single run\n%!";
-        None
+(* Painting *)
+
+let small m g =
+  let line =
+    match (top m, focus_view m) with
+    | (Run_k | Zoom_k | Details_k), Some v ->
+        let r = v.focus in
+        let step = Run_screen.latest_step v in
+        let pct =
+          match (step, Run.steps r) with
+          | Some s, Some t when t > 0 ->
+              Printf.sprintf " %.0f%%" (100. *. Float.of_int s /. Float.of_int t)
+          | _ -> ""
+        in
+        Printf.sprintf "%s %s%s · needs 40×10"
+          (Data.word m.data ~now:m.now r)
+          (Runs_screen.name r) pct
+    | _ ->
+        Printf.sprintf "munin %d runs · needs 40×10"
+          (List.length (Data.listing m.data))
   in
-  match run with
-  | Some run ->
-      let init () = init ~run in
-      Mosaic.run { init; update; view; subscriptions }
-  | None -> (
-      match runs with
-      | Some [ run_id ] -> Printf.printf "munin: run not found: %s\n%!" run_id
-      | _ ->
-          Printf.printf "munin: no runs found in %s\n%!"
-            (Munin.Store.root store))
+  Paint.text g ~x:0 ~y:0 ~w:m.width line
+
+let paint m g =
+  let width = m.width and height = m.height in
+  if width < 40 || height < 10 then small m g
+  else begin
+    (match top m with
+    | Runs_k ->
+        Runs_screen.paint m.table g ~height ~cursor:m.cursor ~marks:m.marks
+          ~typing:m.typing ~light:m.light
+    | Run_k -> (
+        match focus_view m with
+        | Some v -> Run_screen.paint v g ~width ~height
+        | None ->
+            Paint.text g ~x:0 ~y:0 ~w:width
+              (if m.waiting then
+                 "waiting for a run to start in "
+                 ^ Runs_screen.tilde (Store.root m.store)
+               else "reading the run"))
+    | Zoom_k ->
+        Option.iter
+          (fun v -> Run_screen.paint_zoom v g ~width ~height)
+          (focus_view m)
+    | Details_k -> (
+        match Option.bind m.detail (Data.run m.data) with
+        | Some r ->
+            let marked =
+              List.filter_map
+                (fun (l, id) ->
+                  if Some id = m.detail then None
+                  else Option.map (fun r -> (l, r)) (Data.run m.data id))
+                m.marks
+            in
+            Details.paint
+              ~word:(Data.word m.data ~now:m.now r)
+              ~scroll:m.scroll r
+              ~stats:(Option.value (Data.stats m.data r) ~default:[])
+              (Option.map
+                 (fun (e : Data.entry) -> e.history)
+                 (Option.bind m.detail (full_entry m)))
+              ~marked g ~width ~height
+        | None -> ()));
+    (match (m.typing, top m) with
+    | true, Run_k ->
+        let field = "/" ^ m.metric_filter in
+        Paint.text g ~x:0 ~y:(height - 1) ~w:width (Text.pad width field);
+        Paint.text ~style:Paint.reverse g ~x:(Text.width field) ~y:(height - 1)
+          ~w:1 " "
+    | _ -> ());
+    Option.iter
+      (fun n ->
+        Paint.text ~style:Paint.alert g ~x:0 ~y:(height - 2) ~w:width
+          (Text.pad width n))
+      (match m.notice with Some _ as n -> n | None -> m.error);
+    if m.help then
+      Help.paint
+        ~screen:
+          (match top m with
+          | Runs_k -> `Runs
+          | Run_k -> `Run
+          | Zoom_k -> `Zoom
+          | Details_k -> `Details)
+        g ~width ~height
+  end
+
+let view m =
+  Mosaic.canvas
+    ~size:{ width = Mosaic.pct 100; height = Mosaic.pct 100 }
+    (fun c ~dt:_ ->
+      let g = Mosaic.Canvas.grid c in
+      Matrix_grid.clear g;
+      paint m g)
+
+let app ~clock store screen =
+  { Mosaic.init = init ~clock store screen; update; view; subscriptions }
+
+let run store screen =
+  match screen with
+  | Run (Some id) when Store.run store id = None ->
+      Error (Printf.sprintf "no run %s in %s" id (Store.root store))
+  | _ when not (Unix.isatty Unix.stdin && Unix.isatty Unix.stdout) ->
+      Error "the dashboard needs a terminal"
+  | _ ->
+      let config = Matrix.config ~mouse:`Off ~fps:10. () in
+      Mosaic.run ~config (app ~clock:Unix.gettimeofday store screen);
+      Ok ()
+
+(* For the tests *)
+
+module Curve = Curve
+
+module Chart = struct
+  let draw ~width ~height ~lo ~hi ~key focus marked =
+    let g = Matrix_grid.create ~width ~height () in
+    let view =
+      { Chart.axis = Step; smooth = 0; log = false; window = Some (lo, hi) }
+    in
+    let spec = { Chart.key; width; height; x_axis = true } in
+    ignore
+      (Chart.draw ~light:false
+         (Chart.prepare view spec focus marked)
+         g ~x:0 ~y:0);
+    g
+
+  let paired h key = Chart.x_of Step_metric h key (History.series h key)
+  let domain h key = Chart.domain Step ~key [ h ]
+end
+
+module Watch = Watch
+
+let key k = Key k
+let resize ~width ~height = Resize (width, height)
+
+let frame m =
+  let g = Matrix_grid.create ~width:m.width ~height:m.height () in
+  paint m g;
+  g

@@ -1,0 +1,25 @@
+01 |munin  0 runs
+02 |
+03 |
+04 |No run in ~/empty yet. Runs appear here as they start.
+05 |
+06 |
+07 |
+08 |
+09 |
+10 |
+11 |
+12 |
+13 |
+14 |
+15 |
+16 |
+17 |
+18 |
+19 |
+20 |
+21 |
+22 |
+23 |
+24 |↑↓ run  ←→ metric  enter open  space mark  / filter  o order  ? help  q quit
+cursor hidden

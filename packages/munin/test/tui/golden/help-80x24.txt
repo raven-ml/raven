@@ -1,0 +1,25 @@
+01 |KEYS                                     each key means the same on every screen
+02 |↑↓ j k   move: run, metric, line        ←→ h l   sideways: metric, step cursor
+03 |g G      first, last                    enter    open: run, metric
+04 |esc      back; clear the filter         space    mark the run, at most 2
+05 |/        filter the list on screen      o O      order by next column, reverse
+06 |i        details of the run             y        copy the run's id
+07 |?        this help                      q ^C     quit
+08 |[ ]      previous, next run             < >      pan the x window
+09 |s        smoothing: off, τ = span/100, span/30, span/10
+10 |x        x axis: step, step metric, time
+11 |L        log y, where every value shown is above 0
+12 |+ - 0    narrow, widen, reset the x window at the latest step
+13 |
+14 |STATES   starting  no sample yet            writing   not probed, arriving
+15 |         running   no arrival seen yet      silent    not probed, none seen
+16 |         live      lock held, arriving      crashed   its writer left no end
+17 |         stalled   held, none for 3 gaps    finished  failed  killed  its end
+18 |
+19 |MARKS    ━ focus   a b marked runs   × ↑ ↓ NaN, +inf, -inf   * best of its
+20 |         experiment   ▸ cursor   ! needs attention
+21 |Not on Runs: [ ] s x L + - 0 < >
+22 |
+23 |
+24 |esc close  q quit
+cursor hidden

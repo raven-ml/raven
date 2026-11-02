@@ -118,6 +118,8 @@ munin metrics 20261101T140307Z-a1f3c9e2 train/loss
 - [The munin command](04-cli.md): each command and what it prints.
 - [Reading a store without munin](05-files.md): the files, with `cat`, `jq`
   and `tail -f`.
+- [The dashboard](06-dashboard.md): the store's runs and one run as it
+  trains, in the terminal.
 
 The `.mli` files in [`lib/`](../lib) state every rule these pages rely on,
 starting with [`munin.mli`](../lib/munin.mli).
