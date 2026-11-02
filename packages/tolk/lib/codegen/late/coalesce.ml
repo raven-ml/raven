@@ -131,31 +131,42 @@ let memory_coalescing sink (r : Renderer.t) =
           List.rev_map (fun (o, us) -> (o, List.rev !us)) !offsets
         in
         let accesses o = List.assoc o offsets in
+        let dt = dtype key.buf and size = Dtype.itemsize (dtype key.buf) in
+        let merged = Dtype.([ Float32; Float16; Int32; Uint32 ] @ fp8s) in
+        (* Where the target's vector registers are known, an access of these
+           types or of doubles fills up to one register: Clang packs a kernel's
+           values into registers as wide as the stores it reads them from, so a
+           store of four floats leaves half of a 32-byte register empty, and
+           loads as wide feed it whole. *)
+        let width =
+          match r.registers () with
+          | Some { bytes; _ } when r.supports_float4 -> Some bytes
+          | _ -> None
+        in
         let lengths =
-          (if
-             List.mem (dtype key.buf)
-               Dtype.([ Float32; Float16; Int32; Uint32 ] @ fp8s)
-             && r.supports_float4
-           then
-             if
-               dtype key.buf = Dtype.Float16
-               && Setting.value Setting.allow_half8
-             then [ 8; 4; 2 ]
-             else [ 4; 2 ]
-           else [])
-          @ [ 1 ]
+          match width with
+          | Some bytes when List.mem dt (Dtype.Float64 :: merged) ->
+              let rec halves l = if l < 2 then [ 1 ] else l :: halves (l / 2) in
+              halves (bytes / size)
+          | _ ->
+              (if List.mem dt merged && r.supports_float4 then
+                 if dt = Dtype.Float16 && Setting.value Setting.allow_half8 then
+                   [ 8; 4; 2 ]
+                 else [ 4; 2 ]
+               else [])
+              @ [ 1 ]
         in
         (* Elements before the buffer's first from the boundary behind it, a
-           multiple of its alignment: an access of [l] elements is aligned
-           where the element count from that boundary is a multiple of [l], and
-           is no wider than the alignment. *)
-        let size = Dtype.itemsize (dtype key.buf) in
-        (* A vector on the CPU device is aligned to its element, so it loads
-           from any element: storage there is taken to start on a boundary,
-           as storage of no known start is. *)
+           multiple of its alignment: an access of [l] elements is aligned where
+           the element count from that boundary is a multiple of [l], and is no
+           wider than the alignment. A vector on the CPU device is aligned to
+           its element, so it loads from any element: storage there is taken to
+           start on a boundary of its widest access, as storage of no known
+           start is. *)
         let phase, align =
-          match arg (buf_uop key.buf) with
-          | Param p when r.target.device <> "CPU" -> (p.phase, p.align)
+          match (arg (buf_uop key.buf), width) with
+          | Param p, _ when r.target.device <> "CPU" -> (p.phase, p.align)
+          | _, Some bytes when r.target.device = "CPU" -> (0, bytes)
           | _ -> (0, 16)
         in
         let lead = Bigint.of_int (phase / size) in

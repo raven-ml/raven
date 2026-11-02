@@ -1513,15 +1513,15 @@
 1511 Ops.LINEAR dtypes.void [75, 405, 437, 438, 4, 201, 202, 1299, 1300, 7, 8, 9, 10, 222, 439, 440, 441, 442, 443, 444, 445, 446, 1505, 1506, 1507, 1508, 1509, 1510] "clang_dtype_f32"
 1512 Ops.PARAM dtypes.f64 [75] ParamArg(slot=2, dtype=dtypes.f64, device="NULL")
 1513 Ops.CAST dtypes.f64 [1299] dtypes.f64
-1514 Ops.INDEX dtypes.f64 [1512, 1428]
+1514 Ops.SHRINK dtypes.f64 [1512, 1431, 8]
 1515 Ops.LOAD dtypes.f64 [1514]
-1516 Ops.INDEX dtypes.f64 [1512, 1431]
+1516 Ops.SHRINK dtypes.f64 [1512, 441, 8]
 1517 Ops.LOAD dtypes.f64 [1516]
-1518 Ops.INDEX dtypes.f64 [1512, 1434]
-1519 Ops.LOAD dtypes.f64 [1518]
-1520 Ops.INDEX dtypes.f64 [1512, 441]
-1521 Ops.LOAD dtypes.f64 [1520]
-1522 Ops.STACK dtypes.f64 [1521, 1515, 1517, 1519]
+1518 Ops.INDEX dtypes.f64 [1515, 32]
+1519 Ops.INDEX dtypes.f64 [1515, 36]
+1520 Ops.INDEX dtypes.f64 [1517, 32]
+1521 Ops.INDEX dtypes.f64 [1517, 36]
+1522 Ops.STACK dtypes.f64 [1520, 1521, 1518, 1519]
 1523 Ops.CAST dtypes.f64 [443] dtypes.f64
 1524 Ops.ADD dtypes.f64 [1523, 1522]
 1525 Ops.MUL dtypes.f64 [1524, 1513]
@@ -1530,7 +1530,7 @@
 1528 Ops.AFTER dtypes.void [4, 1527]
 1529 Ops.END dtypes.void [1528, 439]
 1530 Ops.SINK dtypes.void [1529] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True, split=(4, 3, 4))
-1531 Ops.LINEAR dtypes.void [75, 405, 437, 1512, 4, 201, 202, 1299, 1513, 26, 36, 7, 8, 37, 38, 9, 10, 222, 439, 440, 441, 442, 443, 1428, 1514, 1515, 1431, 1516, 1517, 1434, 1518, 1519, 1520, 1521, 1522, 446, 1523, 1524, 1525, 1526, 1527, 1528, 1529, 1530] "clang_dtype_f64"
+1531 Ops.LINEAR dtypes.void [75, 405, 437, 1512, 4, 201, 202, 1299, 1513, 31, 32, 26, 36, 7, 8, 9, 10, 222, 439, 440, 441, 442, 443, 1431, 1514, 1515, 1516, 1517, 1518, 1519, 1520, 1521, 1522, 446, 1523, 1524, 1525, 1526, 1527, 1528, 1529, 1530] "clang_dtype_f64"
 1532 Ops.PARAM dtypes.u8 [75] ParamArg(slot=2, dtype=dtypes.u8, device="NULL")
 1533 Ops.INDEX dtypes.u8 [1532, 1428]
 1534 Ops.LOAD dtypes.u8 [1533]
@@ -3985,15 +3985,15 @@
 3983 Ops.LINEAR dtypes.void [75, 405, 437, 4, 407, 408, 522, 523, 1732, 1733, 34, 35, 409, 410, 1746, 1747, 1748, 1749, 7, 8, 9, 10, 413, 414, 415, 416, 456, 457, 430, 3971, 3972, 3973, 3974, 3975, 3976, 3977, 3978, 3979, 3980, 3981, 3982] "clang_inf_nan_f32"
 3984 Ops.PARAM dtypes.f64 [75] ParamArg(slot=0, dtype=dtypes.f64, device="NULL")
 3985 Ops.PARAM dtypes.f64 [75] ParamArg(slot=1, dtype=dtypes.f64, device="NULL")
-3986 Ops.INDEX dtypes.f64 [3985, 3886]
+3986 Ops.SHRINK dtypes.f64 [3985, 421, 8]
 3987 Ops.LOAD dtypes.f64 [3986]
-3988 Ops.INDEX dtypes.f64 [3985, 421]
+3988 Ops.SHRINK dtypes.f64 [3985, 416, 8]
 3989 Ops.LOAD dtypes.f64 [3988]
-3990 Ops.INDEX dtypes.f64 [3985, 3891]
-3991 Ops.LOAD dtypes.f64 [3990]
-3992 Ops.INDEX dtypes.f64 [3985, 416]
-3993 Ops.LOAD dtypes.f64 [3992]
-3994 Ops.STACK dtypes.f64 [3993, 3987, 3989, 3991]
+3990 Ops.INDEX dtypes.f64 [3987, 32]
+3991 Ops.INDEX dtypes.f64 [3987, 36]
+3992 Ops.INDEX dtypes.f64 [3989, 32]
+3993 Ops.INDEX dtypes.f64 [3989, 36]
+3994 Ops.STACK dtypes.f64 [3992, 3993, 3990, 3991]
 3995 Ops.INDEX dtypes.f64 [3984, 3886]
 3996 Ops.INDEX dtypes.f64 [3984, 421]
 3997 Ops.INDEX dtypes.f64 [3984, 3891]
@@ -4017,7 +4017,7 @@
 4015 Ops.AFTER dtypes.void [4, 4014, 4011, 4012, 4013]
 4016 Ops.END dtypes.void [4015, 414]
 4017 Ops.SINK dtypes.void [4016] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True, split=(4, 2, 3))
-4018 Ops.LINEAR dtypes.void [75, 3984, 3985, 4, 407, 408, 522, 3164, 1732, 3165, 34, 3166, 409, 3170, 1746, 3171, 1748, 3645, 31, 32, 26, 36, 7, 8, 37, 38, 413, 414, 415, 416, 3886, 3986, 3987, 421, 3988, 3989, 3891, 3990, 3991, 3992, 3993, 3994, 3995, 3996, 3997, 3998, 3999, 4000, 4001, 4002, 4003, 4004, 4005, 4006, 4007, 4008, 4009, 4010, 4011, 4012, 4013, 4014, 4015, 4016, 4017] "clang_inf_nan_f64"
+4018 Ops.LINEAR dtypes.void [75, 3984, 3985, 4, 407, 408, 522, 3164, 1732, 3165, 34, 3166, 409, 3170, 1746, 3171, 1748, 3645, 31, 32, 26, 36, 7, 8, 37, 38, 413, 414, 415, 416, 421, 3986, 3987, 3988, 3989, 3990, 3991, 3992, 3993, 3994, 3886, 3995, 3996, 3891, 3997, 3998, 3999, 4000, 4001, 4002, 4003, 4004, 4005, 4006, 4007, 4008, 4009, 4010, 4011, 4012, 4013, 4014, 4015, 4016, 4017] "clang_inf_nan_f64"
 4019 Ops.PARAM dtypes.f16 [75] ParamArg(slot=0, dtype=dtypes.f16)
 4020 Ops.PARAM dtypes.f16 [75] ParamArg(slot=1, dtype=dtypes.f16)
 4021 Ops.PARAM dtypes.f16 [75] ParamArg(slot=2, dtype=dtypes.f16)

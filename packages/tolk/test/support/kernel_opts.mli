@@ -39,9 +39,10 @@ val settings_of_cell : string -> Setting.binding list
 
 val renderer_of_row : (string -> string) -> Renderer.t
 (** [renderer_of_row cell] is the renderer of a row with the columns [device],
-    [arch], [has_local], [has_shared] and [shared_max], and the tensor cores of
-    its device and architecture: {!Tc.metal} on [METAL], [Tc.cuda arch] on
-    [CUDA] and [NV], and [Tc.amd arch] on [AMD], none elsewhere.
+    [arch], [has_local], [has_shared], [shared_max] and [registers], the vector
+    registers' number and bytes as [16x32] or none if empty, and the tensor
+    cores of its device and architecture: {!Tc.metal} on [METAL], [Tc.cuda arch]
+    on [CUDA] and [NV], and [Tc.amd arch] on [AMD], none elsewhere.
 
     Raises [Failure] if their number is not the row's [tensor_cores]. *)
 

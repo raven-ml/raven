@@ -63,7 +63,8 @@ val clang : Helpers.Target.t -> Renderer.t
     extension. Half floats are [__fp16], and bfloat16 values are converted to
     and from floats with integer operations. The data types are those of
     {!Dtype.all} without the 8-bit floats, and without {!Dtype.Bfloat16} unless
-    the architecture starts with [x86] or [arm].
+    the architecture starts with [x86] or [arm]. Its vector registers are those
+    of Clang's processor ({!Compiler_cpu.registers}).
 
     Under [x86_64-windows], whose objects call by Windows' convention and
     whose [long] has 32 bits, a 64-bit integer is a [long long], its literals

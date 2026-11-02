@@ -138,9 +138,15 @@ let leaves_its_argument =
 (* Laws *)
 
 (* The interpreter cannot evaluate a matrix multiply-accumulate, which a tensor
-   core used in full makes. The cases of the default process are enough. *)
+   core used in full makes. The cases of the default process are enough, and
+   of AVX2's those whose optimisations differ from SSE's. *)
 let evaluable c =
+  let as_sse c' =
+    c'.kernel = c.kernel && c'.renderer = "cpu" && c'.settings = c.settings
+    && c'.opts = c.opts
+  in
   c.environment = ""
+  && (c.renderer <> "avx2" || not (List.exists as_sse recorded_cases))
   && not
        (List.exists
           (function Opt.Tc { use_tc = 1; _ } -> true | _ -> false)
@@ -184,7 +190,10 @@ let bigint = Testable.make ~pp:Bigint.pp_print ~equal:Bigint.equal
 let gpu_cases =
   List.filter_map
     (fun c ->
-      if c.renderer = "cpu" || c.settings <> [] || c.environment <> "" then
+      if
+        c.renderer = "cpu" || c.renderer = "avx2" || c.settings <> []
+        || c.environment <> ""
+      then
         None
       else
         let k = K.v (kernel c.kernel) (renderer c.renderer) in
@@ -510,6 +519,289 @@ let applies =
       let _, _, o = List.find (fun (c, _, _) -> c.name = name) gpu_cases in
       equal Testable.bool streamed (streams o))
 
+(* The host's budget *)
+
+(* Vector register files, as a count of registers of a number of bytes: SSE's,
+   AVX2's, NEON's, and AVX-512's at its full width. *)
+let files = [ (16, 16); (16, 32); (32, 16); (32, 64) ]
+let file_id (count, bytes) = Printf.sprintf "%dx%d" count bytes
+let registers (count, bytes) = { Renderer.count; bytes }
+
+let host file =
+  let row =
+    List.find
+      (fun cell -> cell "renderer" = "cpu")
+      (Golden.rows "renderers.golden")
+  in
+  Kernel_opts.renderer_of_row (fun column ->
+      if column = "registers" then file_id file else row column)
+
+(* The kernels of lorenz_simple's step that the tolk bench times, without the
+   optimisations a search chose for them. *)
+let lorenz =
+  let graph name =
+    let file =
+      Filename.concat
+        (Filename.dirname Sys.executable_name)
+        ("../../../../bench/" ^ name ^ ".graph")
+    in
+    let k =
+      Graph.of_string (In_channel.with_open_bin file In_channel.input_all)
+    in
+    match Ops.arg k with
+    | Ops.Kernel info ->
+        Ops.replace k ~arg:(Kernel { info with opts_to_apply = None })
+    | _ -> k
+  in
+  List.map
+    (fun name -> (name, lazy (graph name)))
+    [
+      "r_128_16_3_4_4_3_3_400_400"; "r_32_256_50_4_4_2_4_4"; "r_32_3_2_4_3_400";
+    ]
+
+let host_kernels =
+  List.map
+    (fun name -> (name, lazy (kernel name)))
+    (List.sort_uniq String.compare
+       (List.map (fun c -> c.kernel) recorded_cases))
+  @ lorenz
+
+let optimized k file =
+  let s = K.v k (host file) in
+  K.convert_loop_to_global s;
+  Heuristic.hand_coded_optimizations s
+
+(* The ranges a reduce closes that are axes of its kernel [s]. *)
+let closing s u = List.filter (fun r -> List.memq r (K.rngs s)) (List.tl (Ops.src u))
+let is_upcast r = Ops.axis_type r = Ops.Axis_type.Upcast
+
+(* The output lanes of [s]: the product of its upcast axes no reduce closes. *)
+let output_lanes s =
+  List.fold_left
+    (fun n i ->
+      match List.nth (K.full_shape s) i with Ops.Int m -> n * m | _ -> n)
+    1
+    (K.axes_of ~reduce:false s [ Ops.Axis_type.Upcast ])
+
+(* The shapes of the budget's clauses that a kernel has once optimised for
+   [file]. *)
+let shapes k file =
+  let before = K.v k (host file) in
+  let s = optimized k file in
+  let reduces = K.reduceops s in
+  let trips u =
+    List.fold_left
+      (fun n r ->
+        match Ops.vmax r with `Int m -> n * (Bigint.to_int m + 1) | _ -> n)
+      1 (closing before u)
+  in
+  List.filter_map
+    (fun (label, holds) -> if holds then Some label else None)
+    [
+      ("no reduce", reduces = []);
+      ("one reduce", List.length reduces = 1);
+      ( "reduces sharing a loop",
+        List.exists
+          (fun u ->
+            List.exists
+              (fun v ->
+                u != v
+                && List.exists
+                     (fun r -> List.memq r (closing s v))
+                     (closing s u))
+              reduces)
+          reduces );
+      ( "a short reduce beside a long one",
+        List.exists (fun u -> trips u <= 32) (K.reduceops before)
+        && List.exists (fun u -> trips u > 32) (K.reduceops before) );
+      ( "a partial unroll",
+        List.exists
+          (fun u ->
+            List.exists is_upcast (closing s u)
+            && List.exists (fun r -> not (is_upcast r)) (closing s u))
+          reduces );
+      ( "a whole unroll",
+        List.exists
+          (fun u -> closing s u <> [] && List.for_all is_upcast (closing s u))
+          reduces );
+    ]
+
+(* [k] with its 32-bit floats made 64-bit ones. *)
+let retyped k =
+  let text = Graph.to_string k in
+  let f32 = "dtypes.f32" and f64 = "dtypes.f64" in
+  let n = String.length f32 and b = Buffer.create (String.length text) in
+  let rec go i =
+    if i >= String.length text then ()
+    else if i + n <= String.length text && String.sub text i n = f32 then begin
+      Buffer.add_string b f64;
+      go (i + n)
+    end
+    else begin
+      Buffer.add_char b text.[i];
+      go (i + 1)
+    end
+  in
+  go 0;
+  Graph.of_string (Buffer.contents b)
+
+(* Registers held by kernels of known optimisations on AVX2's file, 16 of 32
+   bytes, from the count's statement: a register holds 8 floats or 4 doubles,
+   no more than a store writes at consecutive addresses, and a reduce that no
+   longer loops holds nothing. *)
+let held_cases =
+  let up axis amount =
+    Opt.Split { axis; amount; target = Opt.Upcast; top = false }
+  in
+  let avx2 = (16, 32) in
+  cases "on AVX2 a kernel's accumulators hold"
+    ~id:(fun (name, _, _, _) -> name)
+    [
+      (* 16 floats stored at consecutive addresses by 4 rows, the matmul's
+         reduce unrolled by 4 and still looping: 64 lanes, 8 a register. *)
+      ("8 registers for a 16 by 4 tile of floats", "matmul", false,
+       ([ up 1 16; up 0 4; up 4 4 ], 8));
+      (* 8 doubles by 4 rows: 32 lanes, 4 a register. *)
+      ("8 registers for an 8 by 4 tile of doubles", "matmul", true,
+       ([ up 1 8; up 0 4; up 4 4 ], 8));
+      (* 4 rows, which the store writes 128 floats apart: one lane a
+         register. *)
+      ("4 registers for 4 lanes stored apart", "matmul", false, ([ up 0 4 ], 4));
+      (* Both sums of 4 unrolled whole: nothing loops. *)
+      ("nothing once no reduce loops", "tangent_products", false,
+       ([ up 2 4; up 1 4; up 5 0 ], 0));
+      ("nothing for a reduce unrolled whole", "max_rows", false,
+       ([ up 0 4; up 2 0 ], 0));
+    ]
+    (fun (_, name, doubles, (opts, expected)) ->
+      let k = kernel name in
+      let k = if doubles then retyped k else k in
+      let s = K.v k (host avx2) in
+      K.convert_loop_to_global s;
+      List.iter
+        (fun o ->
+          match K.apply_opt s o with
+          | Ok _ -> ()
+          | Error e -> failf "%a: %s" Opt.pp o e)
+        opts;
+      equal int expected (Heuristic.held_registers s (registers avx2)))
+
+let budget_rows =
+  List.concat_map
+    (fun (name, k) -> List.map (fun file -> (name, k, file)) files)
+    host_kernels
+
+let budget =
+  group "the register budget"
+    [
+      cases
+        "the accumulators of the hottest loop take at most half the registers"
+        ~id:(fun (name, _, file) -> name ^ " " ^ file_id file)
+        budget_rows
+        (fun (name, k, file) ->
+          let s = optimized (Lazy.force k) file in
+          at_most ~msg:name int ~than:(fst file / 2)
+            (Heuristic.held_registers s (registers file)));
+      test "the kernels the budget is checked on have each of its shapes"
+        (fun () ->
+          let found =
+            List.sort_uniq String.compare
+              (List.concat_map
+                 (fun (_, k, file) -> shapes (Lazy.force k) file)
+                 budget_rows)
+          in
+          equal (list string)
+            [
+              "a partial unroll";
+              "a short reduce beside a long one";
+              "a whole unroll";
+              "no reduce";
+              "one reduce";
+              "reduces sharing a loop";
+            ]
+            found);
+    ]
+
+(* A file of no fewer registers, each no narrower, holds no fewer lanes. *)
+let more_registers =
+  let wider (c0, b0) (c1, b1) = c0 <= c1 && b0 <= b1 && (c0, b0) <> (c1, b1) in
+  let rows =
+    List.concat_map
+      (fun (name, k) ->
+        List.concat_map
+          (fun f ->
+            List.filter_map
+              (fun g -> if wider f g then Some (name, k, f, g) else None)
+              files)
+          files)
+      host_kernels
+  in
+  cases "on the host a larger register file never holds fewer output lanes"
+    ~id:(fun (name, _, f, g) ->
+      Printf.sprintf "%s %s %s" name (file_id f) (file_id g))
+    rows
+    (fun (_, k, f, g) ->
+      let k = Lazy.force k in
+      at_most int
+        ~than:(output_lanes (optimized k g))
+        (output_lanes (optimized k f)))
+
+
+(* The axis and amount of [s]'s first optimisation, when it is an upcast. *)
+let first_upcast s =
+  match K.applied_opts s with
+  | Opt.Split { axis; amount; target = Opt.Upcast; _ } :: _ ->
+      Some (axis, amount)
+  | _ -> None
+
+(* Whether the axis [axis] of [k] holds a multiple of 32 elements, so that an
+   upcast of floats by 16 leaves an axis of doubles to fill. *)
+let divisible_by_32 k axis =
+  match List.nth (K.full_shape k) axis with
+  | Ops.Int n -> n mod 32 = 0
+  | _ -> false
+
+let doubles =
+  let rows =
+    List.concat_map
+      (fun (name, k) ->
+        List.filter_map
+          (fun file ->
+            let k = Lazy.force k in
+            let s = optimized k file in
+            let floats =
+              K.reduceops s <> []
+              && List.for_all
+                   (fun u -> Dtype.equal (Ops.dtype u) Float32)
+                   (K.reduceops s)
+            in
+            let input = K.v k (host file) in
+            K.convert_loop_to_global input;
+            match first_upcast s with
+            | Some (axis, 16)
+              when floats && divisible_by_32 input axis
+                   && Heuristic.held_registers s (registers file)
+                      = fst file / 2 ->
+                Some (name, k, file, s)
+            | _ -> None)
+          files)
+      host_kernels
+  in
+  cases
+    "on the host a reduce of doubles over a stored axis of a multiple of 32 \
+     takes half the lanes of floats, in the registers floats fill"
+    ~id:(fun (name, _, file, _) -> name ^ " " ^ file_id file)
+    rows
+    (fun (_, k, file, s) ->
+      let d = optimized (retyped k) file in
+      equal
+        (option (pair int int))
+        (Option.map (fun (axis, n) -> (axis, n / 2)) (first_upcast s))
+        (first_upcast d);
+      equal int
+        (Heuristic.held_registers s (registers file))
+        (Heuristic.held_registers d (registers file)))
+
 let () =
   exit
     (Windtrap.run "Tolk.Heuristic"
@@ -519,4 +811,6 @@ let () =
          keeps_kernel_writes;
          group "streaming"
            [ loads_once_a_tile; coalesces; unrolls_in_flight; applies ];
+         group "the host's budget"
+           [ held_cases; budget; more_registers; doubles ];
        ])

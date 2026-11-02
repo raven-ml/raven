@@ -105,7 +105,15 @@ let renderer_of_row cell =
   in
   if List.length tensor_cores <> int_of_string (cell "tensor_cores") then
     failwith ("the tensor cores of " ^ device ^ " " ^ arch ^ " differ in number");
+  let registers =
+    match String.split_on_char 'x' (cell "registers") with
+    | [ count; bytes ] ->
+        Some
+          { Renderer.count = int_of_string count; bytes = int_of_string bytes }
+    | _ -> None
+  in
   Renderer.v
+    ~registers:(fun () -> registers)
     ~has_local:(bool_of_cell (cell "has_local"))
     ~has_shared:(bool_of_cell (cell "has_shared"))
     ~shared_max:(int_of_string (cell "shared_max"))

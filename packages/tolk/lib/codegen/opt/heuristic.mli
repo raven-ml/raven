@@ -87,10 +87,45 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       split by the first of 32 (axis [0] only), 16, 8, 4, 3 and 2 that divides
       them while the workgroup stays within 128 threads.
 
-    A kernel of the host without a reduce, whose lanes the host computes as
-    vectors, takes in place of the upcasts after its masked axes one upcast of
-    its last output axis that 2 divides, by the largest power of two, at most
-    16, that keeps its lanes within 64 bytes of the widest type it reads,
-    writes or computes, and again while they have room. It takes none when its
-    stored values hold 5 operations or more for each operation of their
-    longest chain, or when it computes a type the target emulates. *)
+    The host is the [CPU] device; a host vector spans 64 bytes, two registers
+    of AVX2. A kernel of the host without a reduce, whose lanes the host computes
+    as vectors, takes in place of the upcasts after its masked axes one upcast
+    of its last output axis that 2 divides, by the largest power of two, at most
+    16, that keeps its lanes within a vector of the widest type it reads, writes
+    or computes, and again while they have room. It takes none when its stored
+    values hold 5 operations or more for each operation of their longest chain,
+    or when it computes a type the target emulates.
+
+    A kernel of the host with a reduce, for a renderer that knows its vector
+    registers ({!Renderer.t.registers}), counts its lanes in registers
+    ({!held_registers}): its upcasts after the masked and shared ones, and its
+    unroll, take only what keeps the accumulators of its hottest loop within
+    half the registers, and a file of no fewer registers, each no narrower,
+    takes no fewer output lanes. While the upcastable axes hold at least 1024
+    elements, it first upcasts the axis its stores write at unit stride, when
+    every access that reads the axis reads it at unit stride, by the largest
+    power of two, at most 16, that keeps the lanes within a vector of the
+    accumulators' type, divides the axis and fits; the upcasts by 3 or 4 follow
+    while they fit, whatever the lanes; when none is left, one more, by 2, of an
+    output axis that an access reading a reduce axis does not index, while it
+    fits. The unroll takes what fits while the lanes upcast fill fewer registers
+    than the target has, and next to a wholly unrolled axis of at most 3,
+    unrolls the next reduce axis by the largest power of two that keeps the
+    unrolled lanes within a vector of the reduce's type. *)
+
+val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
+(** [held_registers k file] is the registers of [file] that the accumulators of
+    [k]'s hottest loop take. A register of [file.bytes] holds as many lanes of a
+    reduce's type as fit, at 4 bytes for a type narrower than 4, which C
+    computes as an [int] or a [float], and no more than [k]'s stores write at
+    consecutive addresses.
+
+    The hottest loop is the loop of the reduce with the most iterations around
+    its body: its own loops and those of the reduces it runs inside. A reduce of
+    at most 32 iterations belongs to the body around it, the hottest reduce's
+    loop, or the output loop when no reduce is longer. The loop holds, for each
+    output lane, one accumulator of each reduce it runs inside or shares a loop
+    with and of each shorter reduce that runs inside it. An unroll that keeps a
+    reduce's loop holds nothing more; a reduce unrolled whole holds each
+    unrolled lane while another reduce of the loop still loops, and nothing once
+    none does. A kernel without a reduce holds nothing. *)

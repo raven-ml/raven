@@ -129,6 +129,12 @@ end
 
 (** {1:renderers Renderers} *)
 
+type registers = {
+  count : int;  (** The number of vector registers. *)
+  bytes : int;  (** The bytes of a vector register. *)
+}
+(** The type for a target's vector register file. *)
+
 type t = private {
   name : string;
       (** The renderer's name, which tells apart renderers of one target. *)
@@ -137,8 +143,13 @@ type t = private {
       (** A mark of the renderer's output, which tells apart programs of one
           device that different renderers made. *)
   supports_float4 : bool;
-      (** Loads and stores of four or two consecutive elements may be merged
-          into one vector access. *)
+      (** Loads and stores of consecutive elements may be merged into one vector
+          access. *)
+  registers : unit -> registers option;
+      (** [registers ()] is the target's vector register file, if known, asked
+          when first needed. It sets the widest merged access
+          ({!Coalesce.memory_coalescing}) and, on the [CPU] device, how many
+          lanes a kernel's accumulators hold ({!Heuristic}). *)
   vector_alu : bool;
       (** Arithmetic, logic, comparisons, selections and conversions compute on
           all the lanes of a vector at once. Otherwise each lane is computed
@@ -180,6 +191,7 @@ val v :
   ?name:string ->
   ?suffix:string ->
   ?supports_float4:bool ->
+  ?registers:(unit -> registers option) ->
   ?vector_alu:bool ->
   ?has_local:bool ->
   ?has_shared:bool ->
@@ -199,8 +211,8 @@ val v :
 (** [v target] is the renderer for [target] with these fields. The defaults
     describe a target that renders nothing:
     - [name] is ["Renderer"] and [suffix] is [""];
-    - [supports_float4], [has_local] and [has_shared] are [true], and
-      [vector_alu] is [false];
+    - [supports_float4], [has_local] and [has_shared] are [true], [registers]
+      gives [None], and [vector_alu] is [false];
     - [global_max] and [local_max] are [0x8FFFFFFF] on each axis, the greatest
       size a 32-bit signed index holds, and [global_prod_max] is [None];
     - [shared_max] is [32768];

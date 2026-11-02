@@ -95,10 +95,17 @@ let pm_commit_weak =
             let x = ccast (m "x") (dtype dst) in
             Some (replace ~src:(dst :: x :: List.drop 2 (src u)) u));
         (* No constant arm: a committed cast over a weak constant is already
-           committed, built that way by Ops.const. *)
+           committed, built that way by Ops.const. A stack of them, which a
+           cast of host vector lanes reads, commits as each would: a
+           conversion of narrower constants would quiet a signalling NaN. *)
         rule
           (Upat.op Op.Cast ~name:"c"
-             ~src:[ Upat.v ~op:Op.Set.alu ~dtype:Dtype.weaks ~name:"u" () ])
+             ~src:
+               [
+                 Upat.v
+                   ~op:Op.Set.(union alu (of_list [ Op.Stack ]))
+                   ~dtype:Dtype.weaks ~name:"u" ();
+               ])
           (fun m -> cast_weak_srcs (m "c") (m "u"));
       ]))
 

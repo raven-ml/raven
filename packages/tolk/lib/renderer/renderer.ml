@@ -207,11 +207,14 @@ end
 
 (* Renderer *)
 
+type registers = { count : int; bytes : int }
+
 type t = {
   name : string;
   target : Helpers.Target.t;
   suffix : string;
   supports_float4 : bool;
+  registers : unit -> registers option;
   vector_alu : bool;
   has_local : bool;
   has_shared : bool;
@@ -232,9 +235,9 @@ type t = {
 let int32_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ]
 
 let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
-    ?(vector_alu = false) ?(has_local = true) ?(has_shared = true)
-    ?(global_max = int32_max) ?(local_max = int32_max) ?global_prod_max
-    ?(shared_max = 32768) ?(tensor_cores = [])
+    ?(registers = fun () -> None) ?(vector_alu = false) ?(has_local = true)
+    ?(has_shared = true) ?(global_max = int32_max) ?(local_max = int32_max)
+    ?global_prod_max ?(shared_max = 32768) ?(tensor_cores = [])
     ?(extra_matcher = Pattern_matcher.v (fun () -> [])) ?(packed_args = false)
     ?(code_for_op = [])
     ?(native = fun _ -> true)
@@ -245,6 +248,7 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     target;
     suffix;
     supports_float4;
+    registers;
     vector_alu;
     has_local;
     has_shared;

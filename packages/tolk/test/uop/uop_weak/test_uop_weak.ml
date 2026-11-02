@@ -102,6 +102,21 @@ let pm_commit_weak =
            Int32);
       commit ~default_float:"half" "cast_anchors_a_mixed_expression_at_the_cast"
         (Ops.cast Ops.O.(i32 1 + float 1.0) Float32);
+      (* A host vector of doubles stores a stack of weak constants through one
+         cast: committed narrower and converted, a signalling NaN would come out
+         quiet. *)
+      test
+        "a cast of a stack of weak constants commits them at its type, \
+         signalling NaN bits kept" (fun () ->
+          let snan = Int64.float_of_bits 0x7FF0_0000_2000_0000L in
+          let u = Ops.cast (Shape.stack [ float snan; float (-.snan) ]) Float64 in
+          let lowered =
+            rewrite Uop_weak.pm_lower_weak (rewrite Uop_weak.pm_commit_weak u)
+          in
+          let double x = Ops.const ~dtype:Float64 (`Float x) in
+          equal Uops.uop
+            (Ops.cast (Shape.stack [ double snan; double (-.snan) ]) Float64)
+            lowered);
     ]
 
 (* pm_lower_weak *)

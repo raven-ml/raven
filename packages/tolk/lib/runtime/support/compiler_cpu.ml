@@ -100,8 +100,9 @@ let mac_native = if mac_fp16 () then [ "fp16" ] else []
 let win64 arch =
   List.hd (String.split_on_char ',' arch) = "x86_64-windows"
 
-let clang arch =
-  let cc = Setting.value Setting.cc in
+(* The machine of [arch] and the flags that make Clang compile for it: its
+   triple, processor and features. *)
+let selection arch =
   let machine, cpu, feats =
     match String.split_on_char ',' arch with
     | machine :: cpu :: feats ->
@@ -146,12 +147,70 @@ let clang arch =
      -fPIC. rig commits a thread's stack before it runs linked code (rig's
      host code), so the code probes none, and Windows may write below the
      stack pointer, so the code keeps nothing there. On arm64, Windows' convention for
-     functions of fixed arguments is the ELF object's.
+     functions of fixed arguments is the ELF object's. *)
+  let triple =
+    if win64 arch then
+      [
+        "--target=x86_64-w64-windows-gnu-elf";
+        "-mno-stack-arg-probe";
+        "-mno-red-zone";
+      ]
+    else [ "--target=" ^ machine ^ "-none-unknown-elf" ]
+  in
+  (machine, triple @ target_args)
 
-     -fno-math-errno is required for __builtin_sqrt to become an instruction
-     instead of a function call. -ffp-contract=off keeps each product and sum
-     its own rounding, as the graph states them. -ffile-compilation-dir=. keeps
-     the working directory out of the object, and out of what Clang states. *)
+(* The vector registers of what Clang compiles [arch] for. Its statement names
+   the processor alone, as [-target-cpu x86-64-v3], and the processor's features
+   only for [native]; the macros the preprocessor defines name them for every
+   processor. On x86_64: 16 registers, 32 with AVX-512, of 32 bytes with AVX and
+   16 without. AVX-512's registers hold 64 bytes, but a processor with them is
+   taken at 32 until one is measured: tolk renders its vectors, so Clang's
+   preference for 256 bits on such processors does not choose for it. On arm64,
+   NEON's 32 registers of 16 bytes. On riscv64, none known. A Clang that does
+   not run gives SSE's 16 of 16 bytes, which every x86_64 processor has. Each
+   Clang and [arch] is asked once per process. *)
+let registers =
+  let lock = Mutex.create () and known = Hashtbl.create 4 in
+  fun arch ->
+    let cc = Setting.value Setting.cc in
+    let machine, flags = selection arch in
+    Mutex.protect lock @@ fun () ->
+    match Hashtbl.find_opt known (cc, arch) with
+    | Some r -> r
+    | None ->
+        let r : Renderer.registers option =
+          match machine with
+          | "x86_64" ->
+              let macros =
+                match
+                  run cc ([ "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) ""
+                with
+                | Ok (WEXITED 0, out, _) -> String.split_on_char '\n' out
+                | Ok _ | Error _ -> []
+              in
+              let defines m =
+                List.exists
+                  (String.starts_with ~prefix:("#define " ^ m ^ " "))
+                  macros
+              in
+              Some
+                {
+                  count = (if defines "__AVX512F__" then 32 else 16);
+                  bytes = (if defines "__AVX__" then 32 else 16);
+                }
+          | "arm64" -> Some { count = 32; bytes = 16 }
+          | _ -> None
+        in
+        Hashtbl.replace known (cc, arch) r;
+        r
+
+(* -fno-math-errno is required for __builtin_sqrt to become an instruction
+   instead of a function call. -ffp-contract=off keeps each product and sum its
+   own rounding, as the graph states them. -ffile-compilation-dir=. keeps the
+   working directory out of the object, and out of what Clang states. *)
+let clang arch =
+  let cc = Setting.value Setting.cc in
+  let flags = snd (selection arch) in
   let base =
     [
       "-c";
@@ -166,14 +225,7 @@ let clang arch =
       "-fno-ident";
       "-ffile-compilation-dir=.";
     ]
-    @ (if win64 arch then
-         [
-           "--target=x86_64-w64-windows-gnu-elf";
-           "-mno-stack-arg-probe";
-           "-mno-red-zone";
-         ]
-       else [ "--target=" ^ machine ^ "-none-unknown-elf" ])
-    @ target_args
+    @ flags
   in
   let io = [ "-"; "-o"; "-" ] in
   (* LLVM 18's straight-line vectorizer narrows the integer lanes it packs and

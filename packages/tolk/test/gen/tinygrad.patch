@@ -993,7 +993,7 @@ index 70841c562..b6e75fb6d 100644
    return d.ne(d).where(r.const_like(math.nan), r)
  
 diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
-index 51791c39e..e8058d967 100644
+index 51791c39e..bfa3dc455 100644
 --- a/tinygrad/codegen/late/coalesce.py
 +++ b/tinygrad/codegen/late/coalesce.py
 @@ -39,7 +39,9 @@ def _drop_valid_stmts(valid:UOp, idx:UOp, height:int, width:int) -> list[UOp]:
@@ -1007,6 +1007,21 @@ index 51791c39e..e8058d967 100644
    return None if idx is start_idx or idx is start_idx.simplify() else buf.index(idx.valid(valid))
  
  def simplify_valid_image_load(buf:UOp, idx_y:UOp, idx_x:UOp, valid:UOp) -> UOp|None:
+@@ -134,6 +136,14 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+     if ctx.target.device == "DSP":
+       lengths = [128,64,32,16,8,4]
+       must_divide = False
++    # where the target's vector registers are known, an access fills up to one: clang packs a kernel's values into registers as the stores
++    # it reads them from, so a store of four floats leaves half of a 32-byte register empty. doubles merge there too
++    # doubles computed lane by lane are stored one by one: merged, clang packs the computations behind them, which ran twice as slow on a
++    # float64 normal sampler. a load, as an accumulator's read, is already a value in memory
++    elif ctx.registers is not None and buf.dtype in (dtypes.double, dtypes.float, dtypes.half, dtypes.int, dtypes.uint, *dtypes.fp8s) and \
++         ctx.supports_float4 and (op is not Ops.STORE or buf.dtype != dtypes.double or
++                                  all(u.src[1].op is Ops.LOAD for us in offsets.values() for u in us)):
++      lengths = [l for l in [64,32,16,8,4,2] if l*buf.dtype.itemsize <= ctx.registers[1]]
+     elif buf.dtype in (dtypes.float, dtypes.half, dtypes.int, dtypes.uint, *dtypes.fp8s) and ctx.supports_float4:
+       # TODO: a better way to get this than ctx
+       lengths = [8,4,2] if buf.dtype == dtypes.half and getenv("ALLOW_HALF8") else [4,2]
 diff --git a/tinygrad/codegen/late/linearizer.py b/tinygrad/codegen/late/linearizer.py
 index 0838d70c9..dadd54ab5 100644
 --- a/tinygrad/codegen/late/linearizer.py
@@ -1022,10 +1037,10 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..9c989b9ae 100644
+index ec97cac6f..88b188ddb 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -1,9 +1,171 @@
+@@ -1,9 +1,256 @@
 -import itertools
 +import itertools, math
  from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
@@ -1041,6 +1056,91 @@ index ec97cac6f..9c989b9ae 100644
 +# the fewest workgroups that keep every compute unit of a large GPU busy, whose count the renderer does not know: an RTX
 +# 5000 Ada's 100 SMs
 +MIN_WORKGROUPS = 100
++
++# on the host a kernel's lanes are counted in its target's vector registers: a register holds bytes // e lanes of a type that computes
++# in e bytes, and c computes a type narrower than 4 bytes as an int or a float. a host renderer that does not know its registers keeps
++# the host's vectors but takes the upcasts and unroll of other devices
++def host_registers(k:Scheduler) -> tuple[int, int]|None: return k.ren.registers if k.ren.target.device == "CPU" else None
++def computed_bytes(dt) -> int: return max(4, dt.itemsize)
++
++# each accumulator held across a loop is a dependency chain: a fused multiply-add's latency of 4 cycles on each of 2 pipes leaves 8
++# chains in flight, and the operands they read take the rest. so the accumulators of the kernel's hottest loop take at most 1/HELD_SHARE
++# of the registers. the hottest loop is the loop of the reduce with the most iterations around its body, its own loops and those its
++# value runs inside; a reduce of at most SHORT_TRIPS iterations belongs to the body around it, the hottest reduce's loop or the output
++# loop. the loop holds the accumulators of every reduce live in it, those it runs inside or shares and the short reduces that run inside
++# it, one for each output lane, as many to a register as fit and the stores write at consecutive addresses. an unrolled axis that keeps
++# its loop holds nothing more; a reduce unrolled whole holds each unrolled lane while another reduce of its body still loops, and nothing
++# once none does
++HELD_SHARE, SHORT_TRIPS = 2, 32
++def held_registers(k:Scheduler, regs:tuple[int, int], upcast:tuple[int, int]|None=None, unroll:tuple[int, int]|None=None) -> int:
++  size = dict(zip(k.rngs, k.full_shape))
++  output = (upcast[1] if upcast is not None else 1) * prod(k.full_shape[a] for a in k.axes_of(AxisType.UPCAST, reduce=False))
++  # the iterations of r's loop and the lanes it is unrolled into
++  def split(r):
++    s = size.get(r, 1)
++    if r.axis_type is AxisType.UPCAST: return 1, (s if isinstance(s, int) else 1)
++    if unroll is not None and k.rngs[unroll[0]] is r:
++      if not isinstance(s, int): return None, unroll[1]
++      return (1, s) if unroll[1] == 0 or unroll[1] >= s else (s // unroll[1], unroll[1])
++    return (s if isinstance(s, int) else None), 1
++  def product(xs): return None if any(x is None for x in xs) else prod(xs)
++  reduce_ranges, reduces = k.reduce_ranges, []
++  for u in k.reduceops:
++    closing = [r for r in u.src[1:] if r in size]
++    loops = [r for r in closing if split(r)[0] != 1]
++    inside = [r for r in u.src[0].ranges if r in reduce_ranges and split(r)[0] != 1]
++    trips = product([split(r)[0] for r in loops])
++    reduces.append((u, loops, inside, product([split(r)[0] for r in inside]), prod(split(r)[1] for r in closing), trips is None or trips > SHORT_TRIPS))
++  def deeper(a, b): return (a is None and b is not None) or (a is not None and b is not None and a > b)
++  hottest = None
++  for r in reduces:
++    if r[5] and (hottest is None or deeper(r[3], hottest[3])): hottest = r
++  members = reduces if hottest is None else [r for r in reduces if r[0] is hottest[0] or any(x in hottest[2] for x in r[1]) or
++                                                                 (not r[5] and any(x in hottest[1] for x in r[2]))]
++  # the lanes a store writes at consecutive addresses, upcast among them: clang packs a register with no more of them
++  def stride(r, i):
++    for t in i.split_uop(Ops.ADD):
++      if t is r: return 1
++      if t.op is Ops.MUL and t.src[0] is r and t.src[1].op is Ops.CONST: return t.src[1].arg
++    return None
++  def run(i):
++    terms = {}
++    for a, r in enumerate(k.rngs):
++      n = upcast[1] if upcast is not None and upcast[0] == a else size.get(r) if r.axis_type is AxisType.UPCAST else None
++      if isinstance(n, int) and (s:=stride(r, i)) is not None: terms.setdefault(s, n)
++    c = 1
++    while (n:=terms.get(c, 1)) > 1: c *= n
++    return c
++  stored = [u.src[0] for u in k.ast.toposort() if u.op is Ops.STORE]
++  packed = max([run(b.src[1].get_idx()) for b in k.bufs if b in stored] + [1])
++  total = 0
++  for u, loops, _, _, unrolled, _ in members:
++    looping_other = any(v is not u and vl for v, vl, *_ in members)
++    held = output if loops else output * unrolled if looping_other else 0
++    per = min(max(1, regs[1] // computed_bytes(u.dtype)), packed)
++    total += (held + per - 1) // per
++  return total
++def host_fits(k:Scheduler, upcast:tuple[int, int]|None=None, unroll:tuple[int, int]|None=None) -> bool:
++  return (regs:=host_registers(k)) is None or held_registers(k, regs, upcast, unroll) <= regs[0] // HELD_SHARE
++
++# on the host the first output upcast of a reduce kernel takes the axis its stores write at unit stride to a host vector of the
++# accumulators' lanes, HOST_VECTOR_BYTES, the largest power of two that divides it and fits: as the target's vector width splits a
++# contiguous dimension, its stores fill each register. every access that reads the axis must read it at unit stride, or its lanes
++# gather from apart, as a matrix's rows would for a product with a vector
++def upcast_contiguous(k:Scheduler, regs:tuple[int, int]):
++  stored = [u.src[0] for u in k.ast.toposort() if u.op is Ops.STORE]
++  def unit(r, b): return any(t is r for t in b.src[1].get_idx().split_uop(Ops.ADD))
++  axis = next((a for a in k.upcastable_dims()[::-1] if any(b in stored and unit(k.rngs[a], b) for b in k.bufs) and
++               all(k.rngs[a] not in b.src[1].get_idx().toposort() or unit(k.rngs[a], b) for b in k.bufs)), None)
++  if axis is None: return
++  if DEBUG >= 4: print(f"host contiguous axis : {axis}")
++  pow2, n = 1, max([computed_bytes(u.dtype) for u in k.reduceops] + [1])
++  while 2 * pow2 <= min(HOST_VECTOR_BYTES // n, SPLIT_LANES): pow2 *= 2
++  while pow2 >= 2:
++    if isinstance(s:=k.full_shape[axis], int) and s % pow2 == 0 and host_fits(k, upcast=(axis, pow2)):
++      k.apply_opt(Opt(OptOps.SPLIT, axis, (pow2, AxisType.UPCAST)))
++      return
++    pow2 //= 2
 +
 +def upcast_vectors(k:Scheduler):
 +  values = UOp.sink(*[u.src[1] for u in k.ast.toposort() if u.op is Ops.STORE]).toposort(lambda u: u.op is not Ops.INDEX)
@@ -1199,7 +1299,7 @@ index ec97cac6f..9c989b9ae 100644
  
  def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # first try the tensor cores
-@@ -24,8 +186,21 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,8 +271,21 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
@@ -1222,7 +1322,7 @@ index ec97cac6f..9c989b9ae 100644
      for axis in range(3):
        tk = k.copy()
        # check TC first and apply hand-coded opts if successful
-@@ -37,10 +212,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -37,10 +297,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if (size:=next(filter(lambda sz: rngs[0].src[0].divides(sz) is not None, [4,2]), None)) is not None: split(0, size, AxisType.LOCAL)
          if ((size:=next(filter(lambda sz: rngs[0].src[0].divides(sz) is not None, [5,4,3,2]), None)) is not None and
              resolve(prod(tk.full_shape[i] for i in tk.axes_of(AxisType.GLOBAL)) >= size*TC_MIN_GLOBALS.value, False)): split(0, size, AxisType.UPCAST)
@@ -1239,7 +1339,7 @@ index ec97cac6f..9c989b9ae 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +235,20 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,25 +320,20 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1279,11 +1379,11 @@ index ec97cac6f..9c989b9ae 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,25 +283,44 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,25 +368,47 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
-+  def host_fits(amount): return k.ren.target.device != "CPU" or resolve(k.upcast_size()*amount <= 32)
++  host = host_registers(k) is not None
 +  def strides(rng):
 +    num_strides, sum_strides = 0, 0
 +    for b in k.bufs:
@@ -1300,16 +1400,19 @@ index ec97cac6f..9c989b9ae 100644
 +  # them in compile time: it takes no upcast after its masked axes
 +  host_elementwise = k.ren.target.device == "CPU" and not k.reduceops
 +  if host_elementwise: upcast_vectors(k)
++  # on the host the upcasts take the contiguous axis first and continue while the accumulators fit, whatever the lanes
++  def enough_work(): return resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) >= 1024)
++  if host and not host_elementwise and enough_work(): upcast_contiguous(k, host_registers(k))
    upcasted_axis: set[int] = set()
 -  while resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) >= 1024) and (k.upcast_size() < 32):
-+  while not host_elementwise and resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) >= 1024) and (k.upcast_size() < 32):
++  while not host_elementwise and enough_work() and (host or k.upcast_size() < 32):
      xb_choices = []
      # consider all upcastable axes with 3 or 4 upcast (128 on the DSP)
      for axis, upcast_amount in itertools.product(k.upcastable_dims(), ([128] if not len(upcasted_axis) else []) if is_dsp else [3,4]):
        # if we haven't upcasted it, it mods, and buffer has stride 0 on axis while having no stride 0 in the upcasted axis already
        if axis in upcasted_axis or k.full_shape[axis]%upcast_amount != 0: continue
-+      # on the host the upcast lanes stay within 32: each holds a value across the loops, and more spill
-+      if not host_fits(upcast_amount): continue
++      # on the host the accumulators of the hottest loop stay within their registers
++      if not host_fits(k, upcast=(axis, upcast_amount)): continue
        rng = k.rngs[axis]
        if any(rng not in b.src[1].get_idx().backward_slice and all(k.rngs[a] in b.src[1].get_idx().backward_slice
            for a in k.axes_of(AxisType.UPCAST)) for b in k.bufs):
@@ -1325,40 +1428,49 @@ index ec97cac6f..9c989b9ae 100644
 +        xb_choices.append((*strides(rng), axis, upcast_amount))
 +    # on the host, when no upcast by 3 or 4 is left, an upcast by 2 within its lanes of an axis that a load a reduce reads does not
 +    # read, so that its lanes share the load in every iteration of the reduce
-+    if not xb_choices and k.ren.target.device == "CPU" and host_fits(2):
++    if not xb_choices and host:
 +      for axis in k.upcastable_dims():
-+        if axis in upcasted_axis or k.full_shape[axis]%2 != 0: continue
++        if axis in upcasted_axis or k.full_shape[axis]%2 != 0 or not host_fits(k, upcast=(axis, 2)): continue
 +        rng = k.rngs[axis]
 +        if any(rng not in (s:=b.src[1].get_idx().toposort()) and any(k.rngs[a] in s for a in k.axes_of(AxisType.WEAK, reduce=True)) for b in k.bufs):
 +          xb_choices.append((*strides(rng), axis, 2))
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -140,17 +332,28 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -139,18 +419,36 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+   # if last reduce dim is small(ish), loop unroll the reduce
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:
-     if (axes:=k.upcastable_dims(reduce=True)) and (k.upcast_size() <= 4 or not k.axes_of(AxisType.UPCAST, reduce=True)) and k.upcast_size() < 64:
-+      # on the host the unrolled lanes of a kernel of several reduces stay within 32 too
-+      def unroll_fits(n): return len(k.reduceops) < 2 or host_fits(n)
+-    if (axes:=k.upcastable_dims(reduce=True)) and (k.upcast_size() <= 4 or not k.axes_of(AxisType.UPCAST, reduce=True)) and k.upcast_size() < 64:
++    # on the host the unroll holds the accumulators of the hottest loop within their registers, and needs fewer registers of lanes than
++    # the target has, as 64 lanes are 16 registers of 4 lanes
++    def unroll_room():
++      if not host: return k.upcast_size() < 64
++      if not isinstance(n:=k.upcast_size(), int): return False
++      regs, nbytes = host_registers(k), max([computed_bytes(u.dtype) for u in k.reduceops] + [4])
++      return (n * nbytes + regs[1] - 1) // regs[1] < regs[0]
++    if (axes:=k.upcastable_dims(reduce=True)) and (k.upcast_size() <= 4 or not k.axes_of(AxisType.UPCAST, reduce=True)) and \
++       unroll_room():
++      def unroll_fits(axis, n): return host_fits(k, unroll=(axis, n))
        if (s:=k.full_shape[axes[-1]]) <= 32:
 -        k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (0, AxisType.UPCAST)))
 -        # if it's small, upcast a second reduce dimension too
 -        if (axes:=k.upcastable_dims(reduce=True)) and s <= 3 and k.full_shape[axes[-1]] <= 3:
-+        if unroll_fits(s):
++        if unroll_fits(axes[-1], 0):
            k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (0, AxisType.UPCAST)))
 -      elif k.full_shape[axes[-1]] % 4 == 0:
 +          # if it's small, upcast a second reduce dimension too
 +          if (axes:=k.upcastable_dims(reduce=True)) and s <= 3 and (s2:=k.full_shape[axes[-1]]) <= 3:
-+            if unroll_fits(s2): k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (0, AxisType.UPCAST)))
++            if unroll_fits(axes[-1], 0): k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (0, AxisType.UPCAST)))
 +          # on the host, the lanes of the next axis fill the rest of a vector of HOST_VECTOR_BYTES of the reduce's type, by the
 +          # largest power of two that divides it: the unrolled lanes compute as one vector, and one iteration's work outweighs its loop
 +          # and the loads its unrolled lanes share
 +          elif axes and s <= 3 and k.ren.target.device == "CPU":
 +            room, n, axis = HOST_VECTOR_BYTES // k.reduceops[0].dtype.itemsize // s, 1, axes[-1]
 +            while 2 * n <= room: n *= 2
-+            while n >= 2 and not (isinstance(k.full_shape[axis], int) and k.full_shape[axis] % n == 0 and unroll_fits(n)): n //= 2
++            while n >= 2 and not (isinstance(k.full_shape[axis], int) and k.full_shape[axis] % n == 0 and unroll_fits(axis, n)): n //= 2
 +            if n >= 2: k.apply_opt(Opt(OptOps.SPLIT, axis, (n, AxisType.UPCAST)))
-+      elif k.full_shape[axes[-1]] % 4 == 0 and unroll_fits(4):
++      elif k.full_shape[axes[-1]] % 4 == 0 and unroll_fits(axes[-1], 4):
          k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
    except KernelOptError: pass
  
@@ -1815,20 +1927,23 @@ index 761f59c11..bf523239d 100644
  @functools.cache
  def to_function_name(s:str): return ''.join([c if c in (string.ascii_letters+string.digits+'_') else f'{ord(c):02X}' for c in ansistrip(s)])
 diff --git a/tinygrad/renderer/__init__.py b/tinygrad/renderer/__init__.py
-index 7fb5ccac2..8d63d6f63 100644
+index 7fb5ccac2..489f4fc09 100644
 --- a/tinygrad/renderer/__init__.py
 +++ b/tinygrad/renderer/__init__.py
-@@ -67,6 +67,8 @@ class Renderer:
+@@ -67,6 +67,11 @@ class Renderer:
    inline_prefix: str|None = None
    # TODO: make this generic with a list of supported types
    supports_float4: bool = True
++  # the target's vector registers, their number and the bytes of each, if known: a merged access fills up to one, and on the host
++  # they bound the lanes a kernel's accumulators hold
++  registers: tuple[int, int]|None = None
 +  # arithmetic, logic, comparisons, selections and conversions compute on all the lanes of a vector at once
 +  vector_alu: bool = False
    has_local: bool = True
    has_shared: bool = True
    # NOTE: these two should be in (x,y,z) order to match the max_sizes argument in get_grouped_dims
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 6eec3e198..41ec6a82a 100644
+index 6eec3e198..8f2b25e0c 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -1970,7 +2085,7 @@ index 6eec3e198..41ec6a82a 100644
  
      # NOTE: this relies on bufs dict preserving order
      return (name, kernel, list(bufs.values()))
-@@ -284,7 +324,94 @@ class CStyleLanguage(Renderer):
+@@ -284,7 +324,106 @@ class CStyleLanguage(Renderer):
                '\n'.join(inlines[b][1]) + "\n}" for b in bodies]
      return self.render_kernel(*self._render(uops), uops+[u for b in inlines for u in b.src], prefix or None)
  
@@ -2059,13 +2174,25 @@ index 6eec3e198..41ec6a82a 100644
 +   if _is_mask(x) else None),
 +])
 +
++def clang_registers(compiler) -> tuple[int, int]|None:
++  # the vector registers of the processor clang compiles for, from the macros it defines, as the statement names the processor alone: on
++  # x86_64 16, 32 with avx512, of 32 bytes with avx and 16 without (avx512's 64 bytes are taken at 32 until a processor with them is
++  # measured); on arm64 neon's 32 of 16 bytes
++  if compiler.arch == "arm64": return (32, 16)
++  if compiler.arch != "x86_64": return None
++  import subprocess
++  out = subprocess.run([getenv("CC", "clang"), "-dM", "-E", "-x", "c", f"--target={compiler.arch}-none-unknown-elf", *compiler.args, "-"],
++                       input=b"", capture_output=True).stdout.decode()
++  macros = {l.split()[1] for l in out.splitlines() if l.startswith("#define ")}
++  return (32 if "__AVX512F__" in macros else 16, 32 if "__AVX__" in macros else 16)
++
  class ClangRenderer(CStyleLanguage):
 +  string_rewrite = PatternMatcher([(UPat((Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ), name="x"), _opaque_compare)]) + clang_vectors + base_rewrite
 +  vector_alu = True
    float4 = "(float4)"
    float4_style = ('{', '}')
    gep_arr_threshold = 0
-@@ -301,7 +428,8 @@ class ClangRenderer(CStyleLanguage):
+@@ -301,7 +440,8 @@ class ClangRenderer(CStyleLanguage):
    code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.RECIP]}),
                   Ops.SQRT: lambda x,dtype: f"__builtin_sqrt({x})" if dtype == dtypes.float64 else f"__builtin_sqrtf({x})",
                   Ops.TRUNC: lambda x,dtype: f"__builtin_trunc({x})" if dtype == dtypes.float64 else f"__builtin_truncf({x})",
@@ -2075,7 +2202,7 @@ index 6eec3e198..41ec6a82a 100644
  
    # LLVM legalizes double => half cast on systems that don't support it natively (like x86 cpus without AVX512-FP16) into a compiler-rt libcall.
    extra_matcher = PatternMatcher([(UPat.var("x", dtypes.float64).cast(dtypes.float16), lambda x: x.cast(dtypes.float32).cast(dtypes.float16))]) \
-@@ -313,7 +441,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -313,7 +453,15 @@ class ClangRenderer(CStyleLanguage):
      vec = self._render_dtype(dt, count, AddrSpace.REG)
      return f"typedef {self.render_dtype(dt)} {vec} __attribute__((aligned({alignment}),ext_vector_type({count})));"
  
@@ -2092,10 +2219,11 @@ index 6eec3e198..41ec6a82a 100644
    def _render_body(self, function_name, kernel, bufs, uops, pref=None) -> str: return super().render_kernel(function_name, kernel, bufs, uops, pref)
    def _render_entry(self, function_name:str, bufs:list[tuple[str,tuple[UOp,bool]]]) -> str: return ""
  
-@@ -328,6 +464,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -328,6 +476,16 @@ class ClangRenderer(CStyleLanguage):
      super().__init__(target)
      from tinygrad.runtime.support.compiler_cpu import ClangCompiler
      self.compiler = ClangCompiler(target.arch.split(","))
++    self.registers = clang_registers(self.compiler)
 +    # llvm's x86 backend legalizes a bfloat16 value it only moves (a select, a gated load's merge, a bitcast of stacked lanes)
 +    # through float32, aborting on a select of vectors or calling compiler-rt's __truncsfbf2. every bfloat16 alu computes in
 +    # float32, so on x86 a bfloat16 is held as its bits, as OpenCL holds it
@@ -2108,7 +2236,7 @@ index 6eec3e198..41ec6a82a 100644
  
  class OpenCLRenderer(CStyleLanguage):
    # language options
-@@ -337,6 +482,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -337,6 +495,7 @@ class OpenCLRenderer(CStyleLanguage):
    smem_prefix = "__local "
    barrier = "barrier(CLK_LOCAL_MEM_FENCE);"
    float4 = "(float4)"
@@ -2116,7 +2244,7 @@ index 6eec3e198..41ec6a82a 100644
    code_for_workitem = {"g": lambda x: f"get_group_id({x})", "l": lambda x: f"get_local_id({x})"}
    type_map = {**CStyleLanguage.type_map, dtypes.i8: "char", dtypes.u8: "uchar", dtypes.u32: "uint", dtypes.u16: "ushort",
                dtypes.u64: "ulong", dtypes.bf16: "ushort"}
-@@ -364,6 +510,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -364,6 +523,7 @@ class OpenCLRenderer(CStyleLanguage):
                                        (d != dtypes.double or "cl_khr_fp64" in self.target.arch) and d not in dtypes.fp8s}
  
  class MetalRenderer(CStyleLanguage):
@@ -2124,7 +2252,7 @@ index 6eec3e198..41ec6a82a 100644
    def __init__(self, target:Target):
      super().__init__(target)
      from tinygrad.runtime.ops_metal import MetalCompiler
-@@ -415,6 +562,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
+@@ -415,6 +575,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
  _nms = list("xyzwabcdefghijkl") + [f'v{i}' for i in range(16, 32)]
  
  class CUDARenderer(CStyleLanguage):
@@ -2132,7 +2260,7 @@ index 6eec3e198..41ec6a82a 100644
    global_max = (2147483647, 65535, 65535)
    local_max = (1024, 1024, 64)
    shared_max = 49152
-@@ -441,7 +589,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -441,7 +602,8 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
@@ -2142,7 +2270,7 @@ index 6eec3e198..41ec6a82a 100644
    type_map = {**CStyleLanguage.type_map, dtypes.u32: "uint", dtypes.bf16: "nv_bfloat16",
                dtypes.fp8e4m3: "__nv_fp8_e4m3", dtypes.fp8e5m2: "__nv_fp8_e5m2"}
    extra_matcher = pm_narrow_uint + create_non_native_float_pats(dtypes.fp8s, casting=False) + PatternMatcher([
-@@ -521,8 +670,9 @@ class HIPRenderer(CStyleLanguage):
+@@ -521,8 +683,9 @@ class HIPRenderer(CStyleLanguage):
      if amd_fp8s(target.arch):
        self.extra_matcher += tc.pm_wmma_fp8(dtypes.uint64 if self.is_cdna(target.arch) else dtypes.uint32)
        self.string_rewrite = PatternMatcher([
@@ -2154,7 +2282,7 @@ index 6eec3e198..41ec6a82a 100644
            f" {fp8_index(x.dtype)})"),
          (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
            lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
-@@ -538,7 +688,8 @@ class HIPRenderer(CStyleLanguage):
+@@ -538,7 +701,8 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),
@@ -3633,3 +3761,19 @@ index ab8800b84..cd5237d08 100644
      # multi match (fork)
      elif len(self.src) > 1 and all(isinstance(x, tuple) for x in self.src):
        fork_cond = [UOp(Ops.AND, src=tuple([_get_clause(s, base.index(i), depth) for i,s in enumerate(ss)])) for ss in self.src]
+diff --git a/tinygrad/uop/weak.py b/tinygrad/uop/weak.py
+index 52a4c30bc..89324309f 100644
+--- a/tinygrad/uop/weak.py
++++ b/tinygrad/uop/weak.py
+@@ -37,8 +37,9 @@ pm_commit_weak = PatternMatcher([
+   (UPat(GroupOp.Broadcastable, name="u"), commit_weak_srcs),
+   (UPat(Ops.STORE, src=(UPat(), UPat(dtype=dtypes.weaks)), allow_any_len=True, name="u"),
+    lambda u: u.replace(src=(u.src[0], u.src[1].ccast(u.src[0].dtype), *u.src[2:]))),
+-  # no CONST arm: a concrete CAST over a weak CONST is already committed, minted that way by UOp.const
+-  (UPat(Ops.CAST, name="c", src=(UPat(GroupOp.ALU, dtype=dtypes.weaks, name="u"),)), cast_weak_srcs),
++  # no CONST arm: a concrete CAST over a weak CONST is already committed, minted that way by UOp.const. a STACK of them, which a cast
++  # of host vector lanes reads, commits as each would: a conversion of narrower consts would quiet a signalling nan
++  (UPat(Ops.CAST, name="c", src=(UPat(GroupOp.ALU|{Ops.STACK}, dtype=dtypes.weaks, name="u"),)), cast_weak_srcs),
+ ])
+ 
+ # consumers absorb the weak CAST off their srcs and default underivable consts; dtype-producing ops settle here.

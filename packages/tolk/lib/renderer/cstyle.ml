@@ -1401,8 +1401,10 @@ let clang (target : Helpers.Target.t) =
         suffix64 = "ll";
       }
   in
-  Renderer.v ~name:"ClangRenderer" ~vector_alu:true ~has_local:false
-    ~global_max:[ 1; 0; 0 ] ~extra_matcher:clang_extra_matcher ~packed_args:true
+  Renderer.v ~name:"ClangRenderer"
+    ~registers:(fun () -> Compiler_cpu.registers arch)
+    ~vector_alu:true ~has_local:false ~global_max:[ 1; 0; 0 ]
+    ~extra_matcher:clang_extra_matcher ~packed_args:true
     ~code_for_op:clang_lang.code_for_op ~native
     ~render:(render (clang_kernel ~cpu:(target.device = "CPU")) lang)
     ~compiler:(Compiler_cpu.clang arch) target

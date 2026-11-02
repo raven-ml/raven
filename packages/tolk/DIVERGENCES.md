@@ -1275,8 +1275,9 @@ driver sizes local memory as it loads a function (D146).
   `Coalesce.memory_coalescing` (the merge).
 - **Differs:** a parameter or buffer carries a congruence for its start: its
   first element lies `phase` bytes past a multiple of `align`, a power of two
-  up to 16, the width of the widest vector access, and `phase` is a multiple
-  of its element's size or of `align`, whichever is less. They default to `0`
+  up to 16, the width of the widest vector access off the CPU device, and
+  `phase` is a multiple of its element's size or of `align`, whichever is
+  less. They default to `0`
   and `16`, tinygrad's assumption, so no graph of tinygrad's changes. Off the
   CPU device, a run of `l` elements merges where `l` divides the element's
   count from that boundary and the run is no wider than `align`, so every
@@ -1322,7 +1323,8 @@ driver sizes local memory as it loads a function (D146).
   in Clang's vector types aligned to their size; on the CPU device they are
   now aligned to their element (`renderer/cstyle.py:312`), so an access there
   is defined from any element's address: the merge there takes every buffer
-  to start on a boundary, as tinygrad's does (`Coalesce.memory_coalescing`).
+  to start on a boundary of its widest access, as tinygrad's takes it on 16
+  bytes (`Coalesce.memory_coalescing`; the width, D187).
 - **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase › one float past a boundary, eight loads are of one, two, four and
   one`, `› three floats past a boundary, a load of four starts at element 1`,
   `› stores start where loads would`, `› two halves past a boundary, a load of
@@ -2263,27 +2265,10 @@ Withdrawn: multi-device is out of scope, see README.
   `› computes exactly where int arithmetic overflows` and `› raises as exact
   arithmetic does where a value fits no int`.
 
-## D91. The host's upcast lanes stay within 32
+## D91. Withdrawn
 
-- **tinygrad:** `codegen/opt/heuristic.py:111-137` (`hand_coded_optimizations`:
-  more upcasts while `k.upcast_size() < 32`, each by 3 or 4, so the last one
-  can take a kernel to 64 lanes or more).
-- **tolk:** `Heuristic.host_lanes`, `Heuristic.beyond_host_lanes` and
-  `Heuristic.upcast_more`.
-- **Differs:** on the host (`target.device = "CPU"`), the heuristic does not
-  take an upcast that would make the kernel's upcast lanes, its unrolled
-  reduce axes' among them, more than 32. Other devices upcast as tinygrad
-  does.
-- **Reason:** (d): lorenz_simple's step (sofo-raven). Each lane holds a value
-  across the kernel's loops, and past 32 they spill out of the host's
-  registers. Its tangent kernel `r_32_256_400_4_2_4_2` takes 2.12 ms as
-  tinygrad's heuristic optimises it (64 lanes) and 1.51 ms within 32 (six
-  P-cores of an Intel Core Ultra 5 235, the machine unnamed). To re-measure
-  on fudge, where the tolk bench's `lorenz/*/heuristic` rows time the step's
-  kernels as the heuristic optimises them.
-- **Pinned by:** `Tolk.Heuristic`'s `paired_products` cases (on `cpu` two
-  upcasts by 4 and D108's by 2, on `metal`, `cuda` and `amd` three by 4); the
-  goldens, from tinygrad with D91 applied by its generator.
+The host's upcast lanes stayed within 32; merged into D186, which counts the
+host's accumulators in its vector registers.
 
 ## D92. On the host, a decoded operand shared by a run of an output axis is decoded once a run
 
@@ -2635,67 +2620,15 @@ verification on the expand, as there.
 A batch submitted a streamed queue after the queues it waited for. rig orders
 submissions across queues (D146).
 
-## D108. On the host, a load a reduce reads fills the lanes by 2
+## D108. Withdrawn
 
-- **tinygrad:** `codegen/opt/heuristic.py:111-137` (`hand_coded_optimizations`'
-  upcasts of output axes: by 3 or 4, of an axis that some access does not
-  read while it reads every upcast axis, until the kernel has 32 lanes).
-- **tolk:** `Heuristic.reads`, and `Heuristic.upcast_more`'s `choice ~fill`
-  and the fill; `test/gen/tinygrad.patch`, which gives
-  tinygrad the same before the goldens are recorded.
-- **Differs:** on the host (`target.device = "CPU"`), when no upcast by 3 or 4
-  is left, an output axis not yet upcast is upcast by 2 if the kernel's lanes
-  stay within D91's 32 and some access that reads a serial reduce axis, a
-  weak range that a reduction closes, does not read the axis. A range counts as read by an index that is the range itself. Among
-  such axes the order is tinygrad's: fewest accesses reading the axis, then
-  the least sum of their strides.
-- **Reason:** (d): lorenz_simple's step (sofo-raven), measured on kimchi's
-  P-cores (cores 0-5 of an Intel Core Ultra 5 235). Its kernel of four sums
-  into a `[128 tangents, 256, 3]` output stopped at 12 lanes: once its axis of
-  3 is upcast whole, no access reads every upcast axis and not another, so
-  tinygrad finds no axis to upcast next. Upcast by 2 along the
-  tangents, whose lanes then share each load of the hidden activations and
-  the weights in the 400-long sums, it takes 1.36 ms instead of 1.84 ms
-  (`r_128_64_3_4_3_3_400_100_4` to `r_64_64_3_4_2_3_3_400_400`); a beam search
-  of width 2 finds 1.36 ms with 48 lanes. The step's other tangent kernel
-  fills its 32 lanes the same way (`r_32_128_100_4_4_2_4_4`, D109). Of the
-  recorded kernels, `conv` on the host goes from 35 us to 27 us and
-  `paired_products` from 21 us to 19 us. To re-measure on fudge, where the
-  tolk bench's `lorenz/*/heuristic` rows time the step's kernels.
-- **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, cases `tangent_products_cpu`, `conv_cpu`,
-  `conv_half_cpu` and `paired_products_cpu`, recorded from the equally
-  patched tinygrad; the tolk bench's `lorenz/*/heuristic` rows on fudge.
+On the host, a load a reduce reads filled the lanes by 2; merged into D186,
+where the fill is a candidate within the register budget.
 
-## D109. On the host, a kernel of several reduces unrolls within 32 lanes
+## D109. Withdrawn
 
-- **tinygrad:** `codegen/opt/heuristic.py:139-150` (the unroll, an upcast, of
-  the last reduce axis: whole when it is at most 32, by 4 otherwise, while the
-  kernel has fewer than 64 lanes).
-- **tolk:** `Heuristic.unroll`, its `fits`;
-  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
-  are recorded.
-- **Differs:** on the host, a kernel with more than one reduce does not take
-  an unroll that would make its upcast lanes, the unrolled ones among them,
-  more than D91's 32. A kernel of one reduce unrolls as tinygrad's does.
-- **Reason:** (d): lorenz_simple's step, measured as in D108. Its hidden
-  layer's tangent, two sums of 4 into a `[128, 256, 400]` output, had 16
-  upcast lanes and tinygrad's whole unroll of one of the sums took it to 64:
-  1.42 ms (`r_32_256_100_4_4_4_4`). The unrolled sum folds into the store's
-  code for each lane, which clang leaves scalar. Within 32 lanes it takes
-  0.79 ms with no unroll, and 0.85 ms with D108's upcast by 2 that the
-  heuristic now takes (`r_32_128_100_4_4_2_4_4`); a beam search finds 0.72
-  ms. The four-sum kernel of D108, unrolled by 4 at its 24 lanes, takes 1.52
-  ms instead of 1.36 ms. Kernels of one reduce keep tinygrad's unroll past 32
-  lanes, which they need: `max_rows` on the host takes 2.1 us unrolled to 64
-  lanes and 6.2 us within 32, `matmul` 14.8 us and 19.1 us, and lorenz_simple's
-  `r_64_100_4_4_4` 2.0 ms and 3.0 ms a step. With D108, the step goes from
-  117 ms to 83 ms, against 80 ms with the beam search, which takes 65 s cold.
-  To re-measure on fudge, as for D108.
-- **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, case `tangent_products_cpu` (no unroll; on
-  `metal`, `cuda` and `amd` the sum is unrolled), recorded from the equally
-  patched tinygrad; the tolk bench's `lorenz/*/heuristic` rows on fudge.
+On the host, a kernel of several reduces unrolled within 32 lanes; merged
+into D186, whose unroll clauses hold what an unroll keeps across a loop.
 
 ## D110. Withdrawn
 
@@ -3511,24 +3444,20 @@ driver signals its own (D146).
   scan searched with beam 2 draws as eager does` went with its rewrite;
   `rune jit › jit › a function searched at a width` searches no loop).
 
-## D141. The host computes upcast lanes as vectors of 64 bytes
+## D141. The host computes upcast lanes as vectors
 
 - **tinygrad:** `codegen/__init__.py:116` (`do_devectorize`, which splits
   every elementwise operation, load and store of several lanes into one per
   lane, on every target);
   `renderer/cstyle.py:40`, which writes every conversion as a C cast, for a
-  vector a reinterpretation of its bits;
-  `codegen/opt/heuristic.py:111-137` (the upcasts of output axes by 3 or 4)
-  and `:152-154` (the upcast by 4 of a kernel that has none).
+  vector a reinterpretation of its bits.
 - **tolk:** `Renderer.t`'s `vector_alu`; `Codegen.constant_lanes`,
   `Codegen.in_order`, `Codegen.vector_operation`, `Codegen.distinct_lanes`,
   `Codegen.vector_dtypes`, `Codegen.do_devectorize`,
   `Codegen.address_lanes`, `Codegen.pm_vector_constants`,
   `Codegen.product_operands` and `Codegen.first_lane`;
   `Cstyle.mask_widths`, `Cstyle.clang_vectors` and `Cstyle.clang_kernel`;
-  `Decomp_dtype.emulates`;
-  `Heuristic.host_vector_bytes`, `Heuristic.parallel_operations` and
-  `Heuristic.upcast_vectors`;
+  `Decomp_dtype.emulates`; `Uop_weak.pm_commit_weak`'s cast over a stack;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded, and makes its compiled patterns match a repeated source
   lazily, as its interpreted ones do: a stack whose first lane is a constant
@@ -3559,17 +3488,11 @@ driver signals its own (D146).
   mask of -1 and 0 lanes as wide as the values it compares, converted to the
   width of the masks or values it meets; a lane of a mask is read as a
   `_Bool`, and a mask of one-byte lanes, which C types as plain chars, as
-  signed chars.
-
-  On the host, a kernel with no reduce takes, after its masked axes, one
-  upcast of its last output axis that 2 divides, by the largest power of two,
-  at most 16, that keeps its lanes within 64 bytes of the widest type it
-  reads, writes or computes, and again while they have room: 16 float32
-  lanes, 8 float64, 32 float16. It takes none when its stored values hold 5
-  arithmetic operations or more for each of their longest chain, or when it
-  computes a type the target emulates. tinygrad upcasts output axes by 3 or 4
-  while 1024 elements remain and fewer than 32 lanes, and by 4 a kernel that
-  has none.
+  signed chars. A cast of a stack of weak constants commits them at the
+  cast's type, as tinygrad commits the weak sources of a cast of an
+  operation, so that the vector is of constants of that type, as each lane
+  would be alone (`uop/weak.py:41`). Which lanes a host kernel takes is
+  D188's.
 - **Reason:** (d): RFC 0025's special functions on the host. Lanes copied as
   scalars made Clang compile each lane's copy of the body, in a time that
   grows faster than the copies, and kept its loop vectorizer off a float32
@@ -3582,13 +3505,11 @@ driver signals its own (D146).
   `ndtri` and `tanh` replay 1.03-1.50 times as fast, float64 `exp`, `erf`,
   `erfc`, `erfinv`, `ndtri` and `tanh` 1.14-1.56 times, and float32 `sin`,
   whose reduction multiplies 64-bit integers, which NEON lacks, 0.96 times.
-  A kernel whose operations already run 5 at a time gains nothing from lanes
-  and pays for them in compile time, which grows with lanes times operations:
-  `lgamma`, float64 `sin` and `log_betainc` take none, and `log_betainc` and
-  its gradients compile as fast as without the upcast (2.7 s and 4.9-8.9 s
-  cold). The 64 bytes and the 5 were measured on the M1 alone; to
-  re-measure on fudge, where rune's compile bench rows `shaped-4k` and
-  `shaped-4k-3-lanes` time host compiles that the vectors decide.
+  Rune's compile bench rows `shaped-4k` and `shaped-4k-3-lanes` time host
+  compiles that the vectors decide. A stack of weak constants committed
+  apart from its cast took the narrowest type that holds them, and a
+  complex128 signalling NaN stored as two doubles of a vector became a
+  conversion of floats, which quiets it (e).
 
   nx.quant's MXFP4 product unpacks a byte of uint4 codes into two lanes, a
   load each lane of the pair reads, shifted by a broadcast of the constants 0
@@ -3602,7 +3523,7 @@ driver signals its own (D146).
   fills lanes the other sources fill alike repeats work instead: Q6_K's scale
   byte serves 16 values, and converting it in each of their lanes made the
   dense product's x86 kernel 45% longer and 33% slower on kimchi, so such
-  lanes stay apart, where each is computed once. With D143, the
+  lanes stay apart, where each is computed once. With D188, the
   host's products of a checkpoint's codes run 1.7-3.6 times as fast for one
   token's routed product and 2.4-3.3 times for a dense one, on an M1 Max
   (alternated under load). These were measured on kimchi and the Mac; to
@@ -3657,22 +3578,19 @@ driver signals its own (D146).
   6, 12, 24 or 48 lanes by a comparison of integers takes each lane's arm`
   (every case), `› a weak constant stored into four lanes of half on the host
   converts them` and `multiply-adds` (every test);
-  rune's `rune jit › classes › a uint4 sort along the last axis of every
+  `Tolk.Uop_weak › pm_commit_weak › a cast of a stack of weak constants
+  commits them at its type, signalling NaN bits kept`;
+  rune's `Lower › padded loads give eager's bits` (a complex128 signalling NaN
+  fill); rune's `rune jit › classes › a uint4 sort along the last axis of every
   other row and column, flipped, gives eager's codes` and `› nx.quant's
   decodes compile`; rune's compile bench: `shaped-4k-3-lanes`. On rune,
   missing (went with the old rune's rewrite): its Rune.jit suite's `lanes`,
   `stated values › a window set into bits at an odd offset keeps the bits
   around it`, and lower_index's `quantised products › a product decodes a
-  checkpoint's codes 16 at once on the host` (with D143) and `› a product
+  checkpoint's codes 16 at once on the host` (with D188) and `› a product
   over GGUF's Q6_K blocks converts each scale once`. The
   Codegen suite's `invalid_lanes_clang` and `invalid_lanes_int8_clang`, whose
-  lanes of one constant compute once;
-  the Heuristic suite's `the
-  optimisations chosen are tinygrad's › applied_opts`, the host cases
-  `exp_float_cpu`, `exp_double_cpu`, `add_half_cpu`, `add_uchar_cpu`,
-  `cast_to_double_cpu`, `compare_cpu`, `add_24_cpu`, `add_17_cpu`,
-  `wide_tree_cpu` and `long_chain_cpu`, and every other host case without a
-  reduce, recorded from the equally patched tinygrad.
+  lanes of one constant compute once.
 
 ## D142. Withdrawn
 
@@ -3680,42 +3598,10 @@ The host ran a run of its calls as one host program, which called each through
 nx.device's entry. Each call is a launch of rig's host, consecutive ones one
 submission, and a range a loop of rig's program (D146).
 
-## D143. The host unrolls a reduce beside a small unrolled axis to a vector
+## D143. Withdrawn
 
-- **tinygrad:** `codegen/opt/heuristic.py:139-150` (the unroll, an upcast, of
-  the last reduce axis, and of a second one when both are at most 3).
-- **tolk:** `Heuristic.unroll_vector` and `Heuristic.unroll`;
-  `test/gen/tinygrad.patch`, which gives tinygrad the same before
-  the goldens are recorded.
-- **Differs:** on the host, when the last reduce axis is at most 3 and wholly
-  unrolled and the next one is larger than 3, the next is unrolled by the
-  largest power of two that divides it and keeps the unrolled lanes within 64
-  bytes of the reduce's type (`host_vector_bytes`, D141): 8 beside a pair of
-  float32 lanes, 4 beside 3. It reaches every host reduce of that shape, as
-  `experts_down`'s product summed over its two experts. tinygrad unrolls the
-  next axis only when it is at most 3 too.
-- **Reason:** (d). nx.quant's MXFP4 product of a checkpoint's codes reduces
-  over a byte axis and the pair of codes each byte holds: the pair alone left
-  each iteration two decoded codes per row, against 16 for GGUF's blocks,
-  whose 16 code bytes are the last axis, and an iteration's loop, its scale
-  decode and its loads outweighed them. With D141's vectors, kaun's decode
-  bench on an M1 Max (alternated under load 22-24) times the dense product of
-  a checkpoint's codes at 2.6-3.0 ms against 2.6-3.3 ms for the blocks, from
-  6.7-9.8 ms; one token's routed product at 11-21 ms from 37-55 ms; 64 tokens'
-  at 270-326 ms from 340-563 ms. Without D141's vectors the same unroll is
-  slower: its lanes decode one at a time (64 tokens' product 780-985 ms). On
-  one core, the dense kernel unrolled by 4, 8 and 16 bytes ran in 8.5, 7.7
-  and 8.9 ms, the blocks' in 7.3 ms; the routed one's in 39, 34 and 32 ms,
-  compiled in 0.11, 0.15 and 0.26 s. Measured on the Mac; to re-measure on
-  fudge, where kaun's `Quant/host/*` rows hold baselines with the rule and
-  none without.
-- **Pinned by:** the Heuristic suite's `the optimisations chosen are
-  tinygrad's › applied_opts`, the host cases `vecmat_decoded_cpu`,
-  `gpt_oss_gate_up_cpu`, `routed_blocks_cpu`, `routed_tiles_cpu` and
-  `experts_down_cpu`, recorded from the equally patched tinygrad. On rune:
-  missing (the old rune's `lower_index › quantised products › a product
-  decodes a checkpoint's codes 16 at once on the host` went with its
-  rewrite).
+The host unrolled a reduce beside a small unrolled axis to a vector; merged
+into D188, which holds the host's vector width.
 
 ## D144. Withdrawn
 
@@ -5150,3 +5036,193 @@ fold wraps integers and holds its float bound`, hold.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
   `create_schedule › order by storage › a kernel that only frees runs before
   one that also makes storage`.
+
+## D186. The host's accumulators take half its vector registers
+
+- **tinygrad:** `codegen/opt/heuristic.py:111-137` (`hand_coded_optimizations`'
+  upcasts of output axes: by 3 or 4, of an axis that some access does not
+  index while it indexes every upcast axis, while 1024 elements remain and
+  the kernel has fewer than 32 lanes) and `:139-150` (the unroll of the last
+  reduce axis, whole when it is at most 32, by 4 otherwise, while the kernel
+  has fewer than 64 lanes).
+- **tolk:** `Heuristic.held_registers` (`held`, `held_share`, `short_trips`,
+  `computed_bytes`), `Heuristic.fits`, `Heuristic.stored_contiguous`,
+  `Heuristic.upcast_contiguous`, and `Heuristic.upcast_more`'s and
+  `Heuristic.unroll`'s use of them; `Renderer.registers`, which
+  `Cstyle.clang` sets from `Compiler_cpu.registers`; `test/gen/tinygrad.patch`,
+  which gives tinygrad the same before the goldens are recorded.
+- **Differs:** on the host (the `CPU` device of a renderer that knows its
+  vector registers: 16 of 32 bytes on x86-64 with AVX, 16 of 16 without, 32
+  with AVX-512, 32 of 16 on arm64), a reduce kernel's lanes are counted in
+  registers, a register holding as many lanes of a reduce's type as fit, at
+  4 bytes for a narrower type, and no more than its stores write at
+  consecutive addresses. The accumulators of the kernel's hottest loop
+  (`Heuristic.held_registers` states which) take at most half the
+  registers. The upcasts after the masked and shared ones (D92) and the
+  unroll take the budget in place of tinygrad's lane counts:
+  - the first output upcast, while 1024 elements are left, takes the axis
+    the stores write at unit stride, when every access that reads it reads it
+    at unit stride, to a host vector of the accumulators' type (D188), the
+    largest power of two that divides it and fits;
+  - the upcasts by 3 or 4 follow while they fit, without tinygrad's 32
+    lanes, while 1024 elements are left as tinygrad's do;
+  - when none is left, an output axis not yet upcast is upcast by 2 if it
+    fits and some access that indexes a serial reduce axis does not index it
+    (the fill; among such axes, tinygrad's order: fewest accesses indexing
+    the axis, then the least sum of their strides);
+  - the unroll takes what fits, while the lanes upcast fill fewer registers
+    than the target has, where tinygrad's take fewer than 64 lanes, 16
+    registers of 4: a partial unroll holds nothing, a whole one its lanes
+    while another reduce of the loop still loops.
+  Other devices, and a host renderer that knows no registers (riscv64's),
+  upcast and unroll as tinygrad does.
+- **Reason:** (d): lorenz_simple's step (sofo-raven) and the host's
+  contractions. Each accumulator carried around a loop is a dependency chain:
+  Intel's optimization manual (248966-051, §15.15.1, Rule 31; Golden Cove's FMA
+  on ports 0 and 1 at latency 4) asks for latency × pipes independent chains, 8
+  vector accumulators, and Rule 38 for loop-carried values in registers before
+  invariants; BLIS (Low et al., TOMS 2016, §4.2.2-4.2.3) takes the smallest tile
+  above that floor with the contiguous axis a multiple of a register's elements,
+  as its Haswell kernels hold 6 × 16 floats in 12 of 16 registers. Clang packs a
+  register only as wide as the stores it reads (D187), so a register holds no
+  more lanes than the stores write at consecutive addresses. Timed on fudge, one
+  P-core (`taskset -c 4`, the variants interleaved under the timing lock,
+  loaded, three runs), q1-q3 against origin/main: a float32 matmul of 128³
+  (`host/matmul/heuristic`) 69.8-71.9 µs to 30.0-30.5, its float64 one 74.6-75.8
+  to 67.4-69.1, `conv` 140.2-142.2 to 82.2-83.4, `conv_half` 1147-1151 to
+  980-986, `tangent_products` 338.6-375.0 to 49.9-50.5, `paired_products`
+  85.9-86.1 and 85.5-85.6 (the same optimisations); lorenz_simple's four-sum
+  kernel (`lorenz/r_128_16_3_4_4_3_3_400_400/heuristic`) 6.87-7.02 ms to
+  6.16-6.25, its two-sum kernel 3.31-3.37 ms to 2.51-2.65; `r_32_3_2_4_3_400`,
+  `routed_blocks`, `routed_tiles` and `vecmat_decoded` keep their optimisations
+  and times, `experts_down` 0.6 to 0.5 µs, the stack and pad kernels unchanged.
+  The fill, re-timed at this render: the four-sum kernel takes 6.23-6.68 ms with
+  it and 8.01-8.40 without, the two-sum kernel 2.50-2.73 ms and 3.13-3.32. The
+  float32 matmul's unroll by 4 at 64 lanes, which tinygrad's 64 lanes refuse,
+  takes it from 50.0-50.1 µs to 34.1-36.2 (one run). D91's 32 lanes were this
+  budget at a render that filled half of each float32 register: AVX2's 8
+  registers of 4 floats. The whole-unroll clause, timed at that render on the
+  real path (this campaign's audit and its skeptic, two runs each): the
+  two-sum kernel at 16 lanes takes 3.31-3.42 ms, and 7.92-8.32 with one of
+  its sums unrolled whole while the other loops, D109's case, which the
+  clause refuses; `tangent_products` at 16 lanes takes 277-291 µs, and 183-194
+  with its sums' one axis unrolled whole, which removes every loop, and which
+  the clause takes.
+- **Pinned by:** the Heuristic suite: `the host's budget › on AVX2 a
+  kernel's accumulators hold` (every case), `the host's budget › the register
+  budget › the accumulators of the hottest loop take at most half the
+  registers` and `› the kernels the budget is checked on have each of its
+  shapes`, `the host's budget › on the host a larger register file never
+  holds fewer output lanes` and `› on the host a reduce of doubles over a
+  stored axis of a multiple of 32 takes half the lanes of floats, in the
+  registers floats fill`, over every recorded kernel and lorenz_simple's,
+  on files of 16 × 16, 16 × 32, 32 × 16 and 32 × 64; `the optimisations
+  chosen are tinygrad's › … › the optimised kernel`, the `cpu` (16 × 16) and
+  `avx2` (16 × 32) cases, recorded from the equally patched tinygrad; the
+  Compiler_cpu suite's `the vector registers, their number and bytes, of`
+  (every case) and `without Clang › an x86_64 processor has SSE's 16
+  registers of 16 bytes`; the tolk bench's `host/*/heuristic` and
+  `lorenz/*/heuristic` rows on fudge.
+
+## D187. The host's stores take a full vector register
+
+- **tinygrad:** `codegen/late/coalesce.py:131-140` (`memory_coalescing`'s
+  lengths: 4 or 2 elements of float32, float16, int32, uint32 and the 8-bit
+  floats, 8 of float16 under `ALLOW_HALF8`, none of the others).
+- **tolk:** `Coalesce.memory_coalescing`, through `Renderer.registers`;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the
+  goldens are recorded.
+- **Differs:** where the renderer knows its vector registers, loads and
+  stores of float64, float32, float16, int32, uint32 and the 8-bit floats
+  merge into accesses of a power of two of elements up to one register:
+  8 floats or 4 doubles of 32 bytes on AVX2, 4 floats or 2 doubles on SSE
+  and NEON. On the CPU device a buffer is taken to start on a boundary of
+  that width (D54). Other renderers merge as tinygrad does.
+- **Reason:** (d): the host's contractions and lorenz_simple's step. Clang's
+  straight-line vectorizer packs values into registers as wide as the stores it
+  reads them from: a float32 matmul's inner loop with its 16 stores as `float4`
+  takes 65 instructions and spills 11 values, as `float8` 31 instructions and
+  none (`clang -S` with tolk's flags), and merging the loads alone changes
+  nothing. A load as wide as a register feeds it whole: `tangent_products`
+  replays in 51.0-55.6 µs with its loads of one register against 190.5-193.5 µs
+  with loads of 16 bytes, `conv` in 84.4-90.4 µs against 109.0-110.0, and a
+  float32 selection of zero over 4M elements (`host/select_zero/heuristic`),
+  whose lanes stay as they were, in 737-834 µs against 862-953 on origin/main.
+  Cost: a kernel whose loads of a register are read lane by lane into a reduce
+  along them takes longer: `max_rows` (`host/max_rows/heuristic`) 2.8 µs to
+  3.4-3.5, its loads of 8 floats split back into the four rows it reduces,
+  gpt-oss's MXFP4 gate and up product 12.65-12.72 ms to 13.32-13.42, and
+  lorenz_simple's four-sum kernel with the beam search's 48 lanes
+  (`lorenz/r_128_16_3_4_4_3_3_400_400/searched`) 6.53-6.60 ms to 7.22-7.28,
+  where the wider stores pack accumulators past the registers; kept because the
+  gains above are larger, and the heuristic's own four-sum kernel runs in
+  6.16-6.25 ms. Timed as in D186.
+- **Pinned by:** the Coalesce suite's `lengths › eight consecutive stores
+  fill registers of` (every case) and `› without ALLOW_HALF8 or known
+  registers, eight halves are two loads of four`, and its kernels'
+  goldens, recorded from the equally patched tinygrad for SSE's 16 bytes;
+  the tolk bench's `host/*/heuristic` rows on fudge.
+
+## D188. A host vector spans 64 bytes
+
+- **tinygrad:** `codegen/opt/heuristic.py:111-137` (the upcasts of output
+  axes by 3 or 4), `:139-150` (the unroll of the last reduce axis, and of a
+  second one when both are at most 3) and `:152-154` (the upcast by 4 of a
+  kernel that has none).
+- **tolk:** `Heuristic.host_vector_bytes`, `Heuristic.parallel_operations`,
+  `Heuristic.upcast_vectors`, `Heuristic.upcast_contiguous` and
+  `Heuristic.unroll_vector`; `test/gen/tinygrad.patch`, which gives tinygrad
+  the same before the goldens are recorded.
+- **Differs:** on the host a group of lanes computed as one vector spans 64
+  bytes of its widest type, two registers of AVX2. A kernel with no reduce
+  takes, after its masked axes, one upcast of its last output axis that 2
+  divides, by the largest power of two, at most 16, that keeps its lanes
+  within 64 bytes of the widest type it reads, writes or computes, and again
+  while they have room: 16 float32 lanes, 8 float64, 32 float16. It takes
+  none when its stored values hold 5 arithmetic operations or more for each
+  of their longest chain, or when it computes a type the target emulates.
+  A reduce kernel's first upcast takes its stored axis to 64 bytes of its
+  accumulators (D186). When the last reduce axis is at most 3 and wholly
+  unrolled and the next one is larger than 3, the next is unrolled by the
+  largest power of two that divides it and keeps the unrolled lanes within
+  64 bytes of the reduce's type, if the budget holds: 8 beside a pair of
+  float32 lanes, 4 beside 3. tinygrad upcasts output axes by 3 or 4 while
+  1024 elements remain and fewer than 32 lanes, by 4 a kernel that has none,
+  and unrolls the next reduce axis only when it is at most 3 too.
+- **Reason:** (d). Elementwise kernels (RFC 0025's special functions, from
+  D141): lanes give the core independent chains while each waits on its latency,
+  and computed as vectors (D141) they compile once. Eight nested float64 sines
+  over 1024 elements replay 1.25 times as fast at 64 bytes as at 32 and as with
+  none (fudge, one P-core, two runs); 128 bytes replay a further 1.05 times at
+  1.6 times Clang's time, and Clang takes 0.34-0.45 s at 64 bytes against
+  0.35-0.54 s with no lanes. A kernel whose operations already run 5 at a time
+  gains nothing from lanes and pays for them in compile time: `lgamma`,
+  `log_betainc` and its gradients take none and compile as fast as without the
+  upcast (2.7 s and 4.9-8.9 s cold, on an M1 Max, where 5 was measured; a sine
+  is one operation when the heuristic runs, so float64 `sin` takes lanes). A
+  reduce kernel's stored axis at 64 bytes runs a float64 matmul in 70.8-73.7 µs
+  against 96.9-97.3 µs at one register and a float32 one in 30.3-33.7 against
+  37.1-37.4, the 6 × 16 floats of BLIS's Haswell kernels; on 16-byte registers,
+  SSE's and NEON's, a vector is four of them, unmeasured. From D143, nx.quant's
+  MXFP4 product reduces over a byte axis and the pair of codes each byte holds:
+  the pair alone left each iteration two decoded codes per row and its loop, its
+  scale decode and its loads outweighed them; unrolled to a vector, the dense
+  product of a checkpoint's codes ran 2.6-3.0 ms against 6.7-9.8 ms and one
+  token's routed product 11-21 ms against 37-55 ms on an M1 Max. Timed on fudge
+  as in D186: `routed_blocks` 12.7-13.4 µs, `routed_tiles` 38.5-40.2,
+  `experts_down` 0.5, the nested sines 101.6-105.7 µs and a float32 selection of
+  zero over 4M elements 737-834 µs. kaun's `Quant/host/*` rows hold the MXFP4
+  products; the tolk bench's `host/sin_nested_8/heuristic` and
+  `host/select_zero/heuristic` the elementwise kernels, and rune's compile bench
+  `trig/sin-nested-8` their compile. Whether memory-bound kernels take lanes at
+  all is open (TODO).
+- **Pinned by:** the Heuristic suite's `the optimisations chosen are tinygrad's
+  › … › the optimised kernel`: the host cases `exp_float`, `exp_double`,
+  `add_half`, `add_uchar`, `cast_to_double`, `compare`, `add_24`, `add_17`,
+  `wide_tree`, `long_chain` and every host case without a reduce, and
+  `vecmat_decoded`, `gpt_oss_gate_up`, `routed_blocks`, `routed_tiles` and
+  `experts_down`, on `cpu` and `avx2`, recorded from the equally patched
+  tinygrad; the tolk bench's `host/*/heuristic` rows and rune's compile bench
+  `trig/sin-nested-8` on fudge. On rune: missing (the old rune's `lower_index ›
+  quantised products › a product decodes a checkpoint's codes 16 at once on the
+  host` went with its rewrite).

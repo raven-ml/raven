@@ -22,21 +22,29 @@ val indexing_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
 val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
 (** [memory_coalescing sink r] merges the loads, and the stores, of [sink] that
     access consecutive elements of one buffer, under one gate and with one
-    argument, into loads and stores of [4] or [2] elements, if the buffer's
-    elements are {!Dtype.Float32}, {!Dtype.Float16}, {!Dtype.Int32},
-    {!Dtype.Uint32} or 8-bit floats and [r] supports such accesses
-    ([supports_float4]); [8], [4] or [2] for {!Dtype.Float16} under
-    {!Setting.allow_half8}. A group starts at an element whose count from the
-    boundary behind the buffer's first element, a multiple of its alignment (its
-    phase and alignment, {!Ops.type-param_arg}), the group's length divides, and
-    is no wider than that alignment, so that every vector access is aligned to
-    its width. On the ["CPU"] device, whose vectors are aligned to their
-    element, every buffer is taken to start on a 16-byte boundary. A merged load
-    is a {!Op.Shrink} of the buffer from its first access's index, gate
-    included, whose elements each former load reads by index; a merged store
-    stores the stack of the former values. An access merged with no other is
-    left as it is, and so are register memory, volatile parameters, the bodies
-    of calls, and everything under {!Setting.dmc}.
+    argument, into vector loads and stores, if [r] supports them
+    ([supports_float4]):
+    - where [r] knows its vector registers ({!Renderer.t.registers}), of a
+      power of two
+      elements that fills at most one register, if the buffer's elements are
+      {!Dtype.Float64}, {!Dtype.Float32}, {!Dtype.Float16}, {!Dtype.Int32},
+      {!Dtype.Uint32} or 8-bit floats;
+    - otherwise of [4] or [2] elements, if they are {!Dtype.Float32},
+      {!Dtype.Float16}, {!Dtype.Int32}, {!Dtype.Uint32} or 8-bit floats; [8],
+      [4] or [2] for {!Dtype.Float16} under {!Setting.allow_half8}.
+
+    The longest length that fits is taken first. A group starts at an element
+    whose count from the boundary behind the buffer's first element, a multiple
+    of its alignment (its phase and alignment, {!Ops.type-param_arg}), the
+    group's length divides, and is no wider than that alignment, so that every
+    vector access is aligned to its width. On the ["CPU"] device, whose vectors
+    are aligned to their element, every buffer is taken to start on a boundary
+    of one vector register, or of 16 bytes where [r] does not know its
+    registers. A merged load is a {!Op.Shrink} of the buffer from its first
+    access's index, gate included, whose elements each former load reads by
+    index; a merged store stores the stack of the former values. An access
+    merged with no other is left as it is, and so are register memory, volatile
+    parameters, the bodies of calls, and everything under {!Setting.dmc}.
 
     Raises [Invalid_argument] if a load or store is gated, is not through an
     {!Op.Index} of one index, or two stores write one element. *)

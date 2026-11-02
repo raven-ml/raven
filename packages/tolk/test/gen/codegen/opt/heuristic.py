@@ -34,6 +34,7 @@ def hip(arch):
 
 RENDERERS = {
     "cpu": ClangRenderer(Target("CPU", "CLANG", "x86_64,x86-64")),
+    "avx2": ClangRenderer(Target("CPU", "CLANG", "x86_64,x86-64-v3")),
     "metal": MetalRenderer(Target("METAL", "METAL", "Apple9")),
     "cuda": CUDARenderer(Target("CUDA", "CUDA", "sm_89")),
     "amd": hip("gfx1100"),
@@ -42,8 +43,9 @@ RENDERERS = {
 
 @table
 def renderers():
-    return ["renderer", "device", "arch", "has_local", "has_shared", "shared_max", "tensor_cores"], [
-        (name, r.target.device, r.target.arch, r.has_local, r.has_shared, r.shared_max, len(r.tensor_cores))
+    return ["renderer", "device", "arch", "has_local", "has_shared", "shared_max", "tensor_cores", "registers"], [
+        (name, r.target.device, r.target.arch, r.has_local, r.has_shared, r.shared_max, len(r.tensor_cores),
+         "" if r.registers is None else f"{r.registers[0]}x{r.registers[1]}")
         for name, r in RENDERERS.items()]
 
 
@@ -237,7 +239,7 @@ def case(kernel, renderer, suffix="", **context):
 
 
 for kernel in KERNELS:
-    for renderer in ["cpu"] if kernel in HOST_KERNELS else ["cpu", "metal", "cuda", "amd"]:
+    for renderer in ["cpu", "avx2"] if kernel in HOST_KERNELS else ["cpu", "avx2", "metal", "cuda", "amd"]:
         case(kernel, renderer)
 for renderer in ["metal", "cuda", "amd"]:
     case("matmul_half", renderer, "_no_tc", TC=0)

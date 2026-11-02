@@ -912,6 +912,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On the host, `Heuristic.hand_coded_optimizations` counts a kernel's lanes in
+  the target's vector registers (`Renderer.registers`, read from Clang by
+  `Compiler_cpu.registers`): a reduce kernel's stored axis takes a 64-byte
+  vector first, and its accumulators then take up to half the registers;
+  `Coalesce.memory_coalescing` merges accesses up to one register, doubles
+  included. A float32 matmul on fudge runs 2.3 times as fast, a conv 1.7.
+  `Heuristic.held_registers` states the count.
 - On a GPU, `Heuristic.hand_coded_optimizations` streams a contraction's
   operand of least reuse: lanes along its unit-stride range, its reuse held in
   registers, before the tensor cores up to a reuse of 32. A Q8_0 token's

@@ -2,7 +2,14 @@ open Windtrap
 open Tolk
 
 let cpu = Result.get_ok (Helpers.Target.of_string "CPU:CLANG:x86_64,x86-64")
-let vector = Renderer.v cpu
+
+(* A renderer of the CPU device whose vector registers are [count] of [bytes],
+   as Clang's are for x86-64's SSE, AVX2 and NEON. *)
+let host count bytes =
+  Renderer.v ~registers:(fun () -> Some { Renderer.count; bytes }) cpu
+
+let vector = host 16 16
+let tinygrad = Renderer.v cpu
 let scalar = Renderer.v ~supports_float4:false cpu
 
 (* A GPU's vectors are aligned to their size, so its merges read where storage
@@ -27,11 +34,16 @@ let at buf i = Ops.index buf [ i ]
 let load_at buf i = Ops.load (at buf (Ops.int i)) []
 let loads buf offsets = Ops.sink (List.map (load_at buf) offsets)
 
-let value k =
-  Ops.variable ~dtype:Float32 (Printf.sprintf "v%d" k) (`Float (-1.))
-    (`Float 1.)
+let value ?(dtype = Dtype.Float32) k =
+  let lo, hi =
+    if Dtype.is_float dtype then (`Float (-1.), `Float 1.)
+    else (`Int Bigint.minus_one, `Int Bigint.one)
+  in
+  Ops.variable ~dtype (Printf.sprintf "v%d" k) lo hi
 
-let store_at buf i = Ops.store (at buf (Ops.int i)) (value i)
+let store_at buf i =
+  Ops.store (at buf (Ops.int i)) (value ~dtype:(Ops.dtype buf) i)
+
 let stores buf offsets = Ops.sink (List.map (store_at buf) offsets)
 let int_of u = Bigint.to_int (Shape.to_z u)
 
@@ -206,11 +218,33 @@ let lengths =
           equal (list Uops.uop)
             (List.init 4 (fun k -> Ops.index merged [ Ops.int k ]))
             lanes);
-      test "without ALLOW_HALF8, eight halves are two loads of four" (fun () ->
+      test
+        "without ALLOW_HALF8 or known registers, eight halves are two loads of \
+         four" (fun () ->
           let half = Shape.param ~shape:[ Int 64 ] 2 Float16 in
           equal runs
             [ (0, 4); (4, 4) ]
-            (accesses Op.Load (coalesce (loads half (List.init 8 Fun.id)))));
+            (accesses Op.Load
+               (coalesce ~renderer:tinygrad (loads half (List.init 8 Fun.id)))));
+      cases "eight consecutive stores fill registers of"
+        ~id:(fun (name, _, dtype, _) ->
+          Format.asprintf "%s, %a" name Dtype.pp dtype)
+        [
+          ("16 bytes", host 16 16, Dtype.Float32, [ (0, 4); (4, 4) ]);
+          ("32 bytes", host 16 32, Dtype.Float32, [ (0, 8) ]);
+          ( "16 bytes",
+            host 32 16,
+            Dtype.Float64,
+            [ (0, 2); (2, 2); (4, 2); (6, 2) ] );
+          ("32 bytes", host 16 32, Dtype.Float64, [ (0, 4); (4, 4) ]);
+          ("32 bytes", host 16 32, Dtype.Float16, [ (0, 8) ]);
+          ("32 bytes", host 16 32, Dtype.Int32, [ (0, 8) ]);
+        ]
+        (fun (_, renderer, dtype, expected) ->
+          let b = Shape.param ~shape:[ Int 64 ] 0 dtype in
+          equal runs expected
+            (accesses Op.Store
+               (coalesce ~renderer (stores b (List.init 8 Fun.id)))));
     ]
 
 (* A buffer whose first element lies [phase] bytes past a multiple of [align]

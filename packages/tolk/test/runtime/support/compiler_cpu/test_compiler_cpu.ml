@@ -384,6 +384,26 @@ let errors =
 
 let missing_clang = "/nonexistent/clang"
 
+(* The macros of each processor name its features; Clang's statement names the
+   processor alone. *)
+let registers =
+  let file arch =
+    Option.map
+      (fun (r : Renderer.registers) -> (r.count, r.bytes))
+      (Compiler_cpu.registers arch)
+  in
+  cases "the vector registers, their number and bytes, of" ~id:fst
+    [
+      ("x86_64,x86-64", Some (16, 16));
+      ("x86_64,x86-64-v3", Some (16, 32));
+      ("x86_64,x86-64-v4", Some (32, 32));
+      ("x86_64,znver4", Some (32, 32));
+      ("x86_64-windows,x86-64-v3", Some (16, 32));
+      ("arm64,apple-m1", Some (32, 16));
+      ("riscv64,rv64g", None);
+    ]
+    (fun (arch, expected) -> equal (option (pair int int)) expected (file arch))
+
 let without_clang =
   tag "no-clang"
   @@ group "without Clang"
@@ -399,6 +419,14 @@ let without_clang =
                  Compiler.compile
                    (Compiler_cpu.clang (host_machine ^ ",native"))
                    increment));
+         test "an x86_64 processor has SSE's 16 registers of 16 bytes"
+           (fun () ->
+             equal
+               (option (pair int int))
+               (Some (16, 16))
+               (Option.map
+                  (fun (r : Renderer.registers) -> (r.count, r.bytes))
+                  (Compiler_cpu.registers "x86_64,x86-64-v3")));
          test "a cached object is served without a Clang that runs" (fun () ->
              let clang = Compiler_cpu.clang (host_machine ^ ",native") in
              let table = Option.get (Compiler.cachekey clang) in
@@ -498,6 +526,7 @@ let () =
          tinygrad;
          execution;
          features;
+         registers;
          architectures;
          errors;
          without_clang;

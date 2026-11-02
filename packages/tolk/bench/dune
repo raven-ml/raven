@@ -5,7 +5,8 @@
 
 (executable
  (name bench_tolk)
- (modules bench_tolk programs lorenz gpt_oss_kernels stream_kernels)
+ (modules bench_tolk programs lorenz host_kernels gpt_oss_kernels
+  stream_kernels)
  (libraries tolk tolk.engine tolk_test tolk_run rig rig.cuda thumper unix))
 
 (executable
@@ -38,6 +39,30 @@
    r_128_16_3_4_4_3_3_400_400.graph
    r_32_256_50_4_4_2_4_4.graph
    r_32_3_2_4_3_400.graph))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:embed.exe} %{graphs}))))
+
+; The host kernels are kernel graphs whose lanes the host's register budget
+; decides: the Heuristic suite's matmul, conv, conv_half, tangent_products,
+; paired_products and max_rows, matmul_f64 its matmul over doubles,
+; sin_nested_8 eight nested float64 sines over 1024 elements, as rune compiles
+; them, and select_zero a float32 selection of zero over 4M elements.
+
+(rule
+ (target host_kernels.ml)
+ (deps
+  (:graphs
+   ../test/codegen/opt/heuristic/matmul.golden
+   matmul_f64.graph
+   ../test/codegen/opt/heuristic/conv.golden
+   ../test/codegen/opt/heuristic/conv_half.golden
+   ../test/codegen/opt/heuristic/tangent_products.golden
+   ../test/codegen/opt/heuristic/paired_products.golden
+   ../test/codegen/opt/heuristic/max_rows.golden
+   sin_nested_8.graph
+   select_zero.graph))
  (action
   (with-stdout-to
    %{target}

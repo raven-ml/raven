@@ -403,6 +403,13 @@ let cases =
     (* A float64 sine of an unbounded angle, reduced by the bits of 1/(2pi) at
        its exponent: its lowering's size. *)
     ("trig/sin", fun () -> compile Nx.sin (input (-10.) 10.));
+    (* Eight nested sines: one elementwise kernel whose host lanes, a vector of
+       64 bytes, set Clang's work. *)
+    ( "trig/sin-nested-8",
+      fun () ->
+        compile
+          (fun x -> List.fold_left (fun x _ -> Nx.sin x) x (List.init 8 Fun.id))
+          (input (-10.) 10.) );
     ("scan/tridiagonal-100", tridiagonal);
     ("model/schools-start", schools);
     ("scan/checks-48", checked_scan);

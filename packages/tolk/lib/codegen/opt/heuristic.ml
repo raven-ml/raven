@@ -605,15 +605,226 @@ let upcast_masked k =
     (fun axis -> ignore (split k axis 0 Opt.Upcast))
     (List.rev to_upcast)
 
-(* On the host, an upcast of [amount] that would take the kernel past
-   [host_lanes] lanes: each lane holds a value across the loops, and past the
-   registers they spill. An unroll of a kernel of several reduces is held to the
-   same lanes. *)
-let host_lanes = 32
-let on_host k = (K.ren k).target.device = "CPU"
+(* The host
 
-let beyond_host_lanes k amount =
-  on_host k && not (holds Sint.(K.upcast_size k * Int amount <= Int host_lanes))
+   On the host ([CPU] device) a kernel's lanes are counted in its target's
+   vector registers: a register of [bytes] holds [bytes / e] lanes of a type
+   that computes in [e] bytes. C computes a type narrower than 4 bytes as an
+   [int] or a [float], so its lanes take 4 bytes each. A host renderer that
+   does not know its registers, as riscv64's, keeps the host's vectors but
+   takes tinygrad's upcasts and unroll. *)
+
+let registers k =
+  if (K.ren k).target.device = "CPU" then (K.ren k).registers () else None
+
+let on_host k = (K.ren k).target.device = "CPU"
+let budgeted k = Option.is_some (registers k)
+let computed_bytes dt = max 4 (Dtype.itemsize dt)
+
+(* Each accumulator held across a loop is a dependency chain: a fused
+   multiply-add's latency of 4 cycles on each of 2 pipes leaves 8 chains in
+   flight, and the operands they read take the rest. So the accumulators of the
+   kernel's hottest loop take at most one register in [held_share]: 8 of AVX2's
+   16, a tile of 16 floats by 4 rows. Past it they spill a loop-carried value
+   into the chain it delays.
+
+   The hottest loop is the loop of the reduce with the most iterations around
+   its body, its own loops and those its value runs inside. A reduce of at most
+   [short_trips] iterations, which Clang unrolls, belongs to the body around it:
+   the hottest reduce's loop, or with no longer reduce the output loop. The loop
+   holds the accumulators of every reduce live in it: those it runs inside or
+   shares, and the short reduces that run inside it, each one for each output
+   lane, as many to a register as fit and as its stores write at consecutive
+   addresses, since Clang packs registers as wide as the stores. An unrolled
+   reduce axis that keeps its loop adds lanes that each iteration sums into
+   those accumulators, and holds nothing more. A reduce unrolled whole holds
+   each unrolled lane across the loop of another reduce of its body, and nothing
+   once none loops: no value of it is carried from one iteration to the next. *)
+let held_share = 2
+let short_trips = 32
+
+(* The registers the accumulators of [k]'s hottest loop take once [upcast], if
+   any, upcasts an axis by [n] lanes, and [unroll], if any, unrolls an axis by
+   [n] lanes, [0] for whole. *)
+let held ?upcast ?unroll k (file : Renderer.registers) =
+  let rngs = K.rngs k and shape = K.full_shape k in
+  let lanes = match upcast with Some (_, n) -> n | None -> 1 in
+  let axis_size r =
+    match List.find_index (fun x -> x == r) rngs with
+    | Some i -> (
+        match known_size (List.nth shape i) with
+        | Some n -> Some (Bigint.to_int n)
+        | None -> None)
+    | None -> Some 1
+  in
+  let output =
+    List.fold_left
+      (fun n i -> n * Bigint.to_int (size_at k i))
+      lanes
+      (K.axes_of ~reduce:false k [ Upcast ])
+  in
+  (* The iterations of [r]'s loop and the lanes it is unrolled into. *)
+  let split r =
+    let size = axis_size r in
+    if axis_type r = Upcast then (Some 1, Option.value size ~default:1)
+    else
+      match unroll with
+      | Some (axis, n) when List.nth rngs axis == r -> (
+          match size with
+          | Some s when n = 0 || n >= s -> (Some 1, s)
+          | Some s -> (Some (s / n), n)
+          | None -> (None, n))
+      | _ -> (size, 1)
+  in
+  let reduce_ranges = K.reduce_ranges k in
+  let product =
+    List.fold_left
+      (fun t n -> Option.bind t (fun t -> Option.map (( * ) t) n))
+      (Some 1)
+  in
+  let reduces =
+    List.map
+      (fun u ->
+        let closing =
+          List.filter (fun r -> List.memq r rngs) (List.tl (src u))
+        in
+        let loops = List.filter (fun r -> fst (split r) <> Some 1) closing in
+        let inside =
+          List.filter
+            (fun r -> List.memq r reduce_ranges && fst (split r) <> Some 1)
+            (Nodes.to_list (ranges (nth u 0)))
+        in
+        let trips = product (List.map (fun r -> fst (split r)) loops) in
+        let around = product (List.map (fun r -> fst (split r)) inside) in
+        let unrolled =
+          List.fold_left (fun n r -> n * snd (split r)) 1 closing
+        in
+        let long =
+          match trips with Some t -> t > short_trips | None -> true
+        in
+        (u, loops, inside, around, unrolled, long))
+      (K.reduceops k)
+  in
+  (* Whether [a] iterations are more than [b], an unknown count being more
+     than any known one: the first of equals stays the hottest. *)
+  let deeper a b =
+    match (a, b) with
+    | None, None | Some _, None -> false
+    | None, Some _ -> true
+    | Some a, Some b -> a > b
+  in
+  let hottest =
+    List.fold_left
+      (fun best ((_, _, _, around, _, long) as r) ->
+        match best with
+        | _ when not long -> best
+        | Some (_, _, _, a, _, _) when not (deeper around a) -> best
+        | _ -> Some r)
+      None reduces
+  in
+  let members =
+    match hottest with
+    | None -> reduces
+    | Some (h, h_loops, h_inside, _, _, _) ->
+        List.filter
+          (fun (u, loops, inside, _, _, long) ->
+            u == h
+            || List.exists (fun r -> List.memq r h_inside) loops
+            || ((not long) && List.exists (fun r -> List.memq r h_loops) inside))
+          reduces
+  in
+  (* The lanes a store writes at consecutive addresses, the upcast [upcast]
+     among them: Clang packs a register with no more of them. *)
+  let stride r i =
+    List.find_map
+      (fun t ->
+        if t == r then Some 1
+        else if op t = Op.Mul && nth t 0 == r && op (nth t 1) = Op.Const then
+          match value (nth t 1) with
+          | #Dtype.value as v -> Some (Dtype.Value.to_int v)
+          | `Invalid -> None
+        else None)
+      (split_uop i Op.Add)
+  in
+  let run i =
+    let upcast_terms =
+      List.filter_map
+        (fun (axis, r) ->
+          let size =
+            match upcast with
+            | Some (a, n) when a = axis -> Some n
+            | _ when axis_type r = Upcast -> axis_size r
+            | _ -> None
+          in
+          match (size, stride r i) with
+          | Some n, Some s -> Some (s, n)
+          | _ -> None)
+        (List.mapi (fun axis r -> (axis, r)) rngs)
+    in
+    let rec extend c =
+      match List.assoc_opt c upcast_terms with
+      | Some n when n > 1 -> extend (c * n)
+      | _ -> c
+    in
+    extend 1
+  in
+  let stored =
+    List.filter_map
+      (fun u -> if op u = Op.Store then Some (nth u 0) else None)
+      (toposort ~calls:Skip (K.ast k))
+  in
+  let packed =
+    List.fold_left
+      (fun c b -> if List.memq b stored then max c (run (idx b)) else c)
+      1 (K.bufs k)
+  in
+  let lanes_registers n dt =
+    let per = max 1 (file.bytes / computed_bytes dt) in
+    let per = min per packed in
+    (n + per - 1) / per
+  in
+  List.fold_left
+    (fun total (u, loops, _, _, unrolled, _) ->
+      let looping_other =
+        List.exists
+          (fun (v, loops, _, _, _, _) -> v != u && loops <> [])
+          members
+      in
+      let held =
+        if loops <> [] then output
+        else if looping_other then output * unrolled
+        else 0
+      in
+      total + lanes_registers held (dtype u))
+    0 members
+
+(* Whether [k]'s hottest loop holds its accumulators within the budget once
+   [upcast] and [unroll] are applied; always off the host. *)
+let fits ?upcast ?unroll k =
+  match registers k with
+  | None -> true
+  | Some file -> held ?upcast ?unroll k file <= file.count / held_share
+
+(* On the host, the first output upcast of a reduce kernel takes the axis its
+   stores write at unit stride to a host vector of the accumulators' type
+   ([host_vector_bytes]), the largest power of two that divides it and fits:
+   as the target's vector width splits a contiguous dimension, its stores fill
+   each register. Every access
+   that reads the axis must read it at unit stride, or its lanes gather from
+   apart, as a matrix's rows would for a product with a vector. *)
+let stored_contiguous k =
+  let stored =
+    List.filter_map
+      (fun u -> if op u = Op.Store then Some (nth u 0) else None)
+      (toposort ~calls:Skip (K.ast k))
+  in
+  let unit r i = List.exists (fun t -> t == r) (split_uop i Op.Add) in
+  List.find_opt
+    (fun axis ->
+      let r = List.nth (K.rngs k) axis in
+      List.exists (fun b -> List.memq b stored && unit r (idx b)) (K.bufs k)
+      && List.for_all (fun b -> (not (reads r b)) || unit r (idx b)) (K.bufs k))
+    (List.rev (K.upcastable_dims k))
 
 (* On the host, a kernel without a reduce computes its upcast lanes as vectors,
    and its output axis is upcast until one value spans [host_vector_bytes]: the
@@ -703,12 +914,39 @@ let upcast_vectors k =
       upcast (host_vector_bytes / widest / Bigint.to_int upcast_size)
   | _ -> ()
 
-(* potentially do more upcasts of non reduce axes based on a heuristic *)
+let upcast_contiguous k =
+  match stored_contiguous k with
+  | None -> ()
+  | Some axis ->
+      if debug () >= 4 then
+        Format.eprintf "host contiguous axis : %d of %s@." axis
+          (K.colored_shape k);
+      let bytes =
+        List.fold_left
+          (fun b u -> max b (computed_bytes (dtype u)))
+          1 (K.reduceops k)
+      in
+      let rec pow2 p =
+        if 2 * p > min (host_vector_bytes / bytes) split_lanes then p
+        else pow2 (2 * p)
+      in
+      let rec largest n =
+        if n >= 2 then
+          if divisible (shape_at k axis) n && fits ~upcast:(axis, n) k then
+            ignore (split k axis n Opt.Upcast)
+          else largest (n / 2)
+      in
+      largest (pow2 1)
+
+let enough_work k =
+  Sint.resolve Sint.(prod_at k (K.upcastable_dims k) >= Int 1024)
+
+(* potentially do more upcasts of non reduce axes based on a heuristic; on the
+   host, after the contiguous axis, while the accumulators fit *)
 let upcast_more k =
+  if budgeted k && enough_work k then upcast_contiguous k;
   let rec loop upcasted_axis =
-    if
-      Sint.resolve Sint.(prod_at k (K.upcastable_dims k) >= Int 1024)
-      && holds Sint.(K.upcast_size k < Int 32)
+    if enough_work k && (budgeted k || holds Sint.(K.upcast_size k < Int 32))
     then begin
       let choice ~fill axis upcast_amount =
         (* if we haven't upcasted it, it mods, and buffer has stride 0 on axis
@@ -731,7 +969,7 @@ let upcast_more k =
         if
           List.mem axis upcasted_axis
           || (not (divisible (shape_at k axis) upcast_amount))
-          || beyond_host_lanes k upcast_amount
+          || (not (fits ~upcast:(axis, upcast_amount) k))
           || not (List.exists reuses bufs)
         then None
         else
@@ -769,7 +1007,7 @@ let upcast_more k =
          is left, fill its lanes with 2 *)
       let xb_choices =
         match choices ~fill:false [ 3; 4 ] with
-        | [] when on_host k -> choices ~fill:true [ 2 ]
+        | [] when budgeted k -> choices ~fill:true [ 2 ]
         | xb_choices -> xb_choices
       in
       match List.sort Stdlib.compare xb_choices with
@@ -801,6 +1039,22 @@ let unroll_vector k ~fits unrolled axis =
   let rec pow2 p = if 2 * p > room then p else pow2 (2 * p) in
   largest (pow2 1)
 
+(* An unroll needs fewer than 64 lanes upcast: 16 registers at four lanes a
+   register. On the host, fewer registers of lanes than the target has, a
+   register holding as many lanes of the reduces' widest type as fit. *)
+let unroll_room k =
+  match (registers k, known_size (K.upcast_size k)) with
+  | None, _ -> holds Sint.(K.upcast_size k < Int 64)
+  | Some file, Some lanes ->
+      let bytes =
+        List.fold_left
+          (fun b u -> max b (computed_bytes (dtype u)))
+          4 (K.reduceops k)
+      in
+      ((Bigint.to_int lanes * bytes) + file.bytes - 1) / file.bytes
+      < file.count
+  | Some _, None -> false
+
 (* if last reduce dim is small(ish), loop unroll the reduce. NOTE: this can fail
    on multireduce with mismatching dimensions, this is okay *)
 let unroll k =
@@ -809,34 +1063,27 @@ let unroll k =
   if
     unrollable () <> []
     && (small 4 || K.axes_of ~reduce:true k [ Upcast ] = [])
-    && holds Sint.(K.upcast_size k < Int 64)
+    && unroll_room k
   then
     let s = size_at k (last (unrollable ())) in
     let at_most n x = Bigint.(leq x (of_int n)) in
-    let fits n =
-      List.length (K.reduceops k) < 2 || not (beyond_host_lanes k n)
-    in
+    let fits axis n = fits ~unroll:(axis, n) k in
+    let axis = last (unrollable ()) in
     if at_most 32 s then
-      begin if
-        fits (Bigint.to_int s)
-        && try_split k (last (unrollable ())) 0 Opt.Upcast
-      then
+      begin if fits axis 0 && try_split k axis 0 Opt.Upcast then
         (* if it's small, upcast a second reduce dimension too *)
         match unrollable () with
         | [] -> ()
         | dims ->
-            let s2 () = size_at k (last dims) in
-            if at_most 3 s && at_most 3 (s2 ()) then begin
-              if fits (Bigint.to_int (s2 ())) then
-                ignore (try_split k (last dims) 0 Opt.Upcast)
-            end
+            let next = last dims in
+            if at_most 3 s && at_most 3 (size_at k next) then
+              begin if fits next 0 then ignore (try_split k next 0 Opt.Upcast)
+              end
             else if at_most 3 s && on_host k then
-              unroll_vector k ~fits (Bigint.to_int s) (last dims)
+              unroll_vector k ~fits:(fits next) (Bigint.to_int s) next
       end
-    else
-      let axis = last (unrollable ()) in
-      if divisible (shape_at k axis) 4 && fits 4 then
-        ignore (try_split k axis 4 Opt.Upcast)
+    else if divisible (shape_at k axis) 4 && fits axis 4 then
+      ignore (try_split k axis 4 Opt.Upcast)
 
 (* if nothing at all is upcasted and it's easy to, do an upcast *)
 let upcast_one k =
@@ -957,3 +1204,5 @@ let hand_coded_optimizations k =
       match tensor_cores k with
       | Some tk -> tk
       | None -> ( match late () with Some k -> k | None -> general k))
+
+let held_registers k file = held k file

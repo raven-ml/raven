@@ -1,0 +1,12 @@
+0 Ops.CONST dtypes.weakint [] 4194304
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+3 Ops.INDEX dtypes.f32 [1, 2]
+4 Ops.CONST dtypes.weakfloat [] 0.0
+5 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+6 Ops.INDEX dtypes.f32 [5, 2]
+7 Ops.CMPLT dtypes.bool [4, 6]
+8 Ops.WHERE dtypes.f32 [7, 6, 4]
+9 Ops.STORE dtypes.void [3, 8]
+10 Ops.END dtypes.void [9, 2]
+11 Ops.SINK dtypes.void [10] KernelInfo()

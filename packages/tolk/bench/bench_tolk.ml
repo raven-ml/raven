@@ -25,6 +25,9 @@
    with the hand-coded ones ([heuristic]). No public call applies chosen
    optimisations to a kernel, so these run through tolk's engine.
 
+   [host] runs, on the host, kernels whose lanes the host's register budget and
+   vector width decide, each with the hand-coded optimisations.
+
    [gpt_oss] runs, on the first CUDA GPU, kernels of gpt-oss-20b's step at
    bfloat16 as rune compiles them, with the hand-coded optimisations: a decode
    step's attention values, 64 by 64 outputs summed over 1024 cache slots, and
@@ -188,6 +191,23 @@ let lorenz =
            [ case text false "searched"; case text true "heuristic" ])
        Lorenz.all)
 
+(* Host kernels *)
+
+let host =
+  Thumper.group "host"
+    (List.map
+       (fun (kernel, text) ->
+         Thumper.group kernel
+           [
+             Thumper.bench_with_setup
+               ~setup:(fun () ->
+                 compiled ~scratch:(values element) Rig.host
+                   (lorenz_kernel ~heuristic:true text))
+               "heuristic"
+               (fun run -> run ());
+           ])
+       Host_kernels.all)
+
 (* gpt-oss kernels *)
 
 (* An element of a buffer a gpt-oss kernel reads: a small float, the position
@@ -340,6 +360,7 @@ let suite () =
   List.map (fun (name, _) -> program name) Programs.all
   @ [
       lorenz;
+      host;
       gpt_oss ();
       stream ();
       Thumper.group "search"
@@ -359,7 +380,8 @@ let () =
       ignore
         (Thumper.measure
            ~config:Thumper.Config.(default |> samples 3 |> warmup 0.)
-           ~filter:(`Or [ `Id "lorenz/"; `Id "gpt_oss/"; `Id "stream/" ])
+           ~filter:
+             (`Or [ `Id "lorenz/"; `Id "host/"; `Id "gpt_oss/"; `Id "stream/" ])
            (suite ()))
   | _ ->
       Thumper.run "tolk"
