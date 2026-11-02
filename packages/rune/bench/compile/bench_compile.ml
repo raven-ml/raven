@@ -332,6 +332,45 @@ let data_parallel () =
             pair tensor (pair tensor tensor) @-> returns (pair tensor tensor))
           step (x, w)))
 
+(* A fold, a running maximum's positions, a gather and an [Add] scatter over
+   an axis of 64 rows cut across 16 memory devices of one set. Each computes
+   by partials, each device over its tile, whose start each device's call
+   binds: each device's own partial kernels are the first device's
+   programs. The gather's and the sums' closings still make programs that
+   grow with the devices. *)
+let partials () =
+  let devices =
+    List.init 16 (fun i ->
+        let name = Printf.sprintf "bench-partials-%d" i in
+        Result.get_ok (Rig.memory_device name))
+  in
+  let module S = (val Nx.devices devices) in
+  let cut = Nx.Placement.split ~axis:0 S.v and on = Nx.Placement.on S.v in
+  let rows = 64 and width = 16 in
+  let positions bound shape =
+    let n = Array.fold_left ( * ) 1 shape in
+    Nx.create Nx.int64 shape
+      (Array.init n (fun j -> Int64.of_int (j * 5 mod bound)))
+  in
+  let x =
+    Nx.place cut
+      (Nx.create Nx.float32 [| rows; width |]
+         (Array.init (rows * width) (fun j -> sin (Float.of_int j))))
+  in
+  let along = Nx.place on (positions rows [| 3; width |]) in
+  let at = Nx.place cut (positions rows [| rows; width |]) in
+  let into = Nx.place on (Nx.zeros Nx.float32 [| rows; width |]) in
+  let f x =
+    let first = Nx.cast Nx.float32 (Nx.argmax ~axis:0 x) in
+    let peaks = snd (Rune.jvp' (Nx.cummax ~axis:0) x x) in
+    let taken = Nx.take_along_axis ~axis:0 along peaks in
+    let added = Nx.scatter ~combine:Add ~axis:0 at x into in
+    Nx.add
+      (Nx.add first (Nx.sum ~axes:[ 0 ] added))
+      (Nx.sum ~axes:[ 0 ] taken)
+  in
+  compile f x
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -351,6 +390,7 @@ let cases =
     ("special/betainccinv-grad-f32", betainccinv_grad);
     ("wide/sum-1e6", wide_sum);
     ("devices/dp-step-16", data_parallel);
+    ("devices/partials-16", partials);
   ]
 
 let rec remove path =
