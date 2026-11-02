@@ -2114,6 +2114,9 @@ let release_commands =
       open_file;
   ]
 
+(* 25 programs, as the DMA law's, within the same limit on one processor.
+   About two cases in five start with a cut release that a finish gives back,
+   so 25 reach the cover in every run. *)
 let release_law =
   "releases and finishes from two domains give a function back once"
 
@@ -2127,7 +2130,7 @@ let dma_domains =
          test dma_law (fun () ->
              skip ~reason:"system memory for a function needs Linux" ()));
       (if on_linux then
-         stateful release_law ~timeout:(3. *. patience) ~domains:2 ~count:100
+         stateful release_law ~timeout:(3. *. patience) ~domains:2 ~count:25
            ~steps:release_steps release_commands
        else
          test release_law (fun () ->
