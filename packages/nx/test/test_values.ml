@@ -279,7 +279,7 @@ let test_two_values_of_a_host_set () =
   equal ~msg:"lies on its set" (list string)
     [ Rig.name Rig.host ]
     (List.map Rig.name
-       (Nx.rigs (Nx.Placement.devices (Nx.placement z))))
+       (Nx.Devices.to_list (Nx.Placement.devices (Nx.placement z))))
 
 (* A creation holds bytes from the call on, which Repr hands out. *)
 let test_repr_of_creation () =

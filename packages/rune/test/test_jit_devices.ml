@@ -39,7 +39,7 @@ let pp_cut ppf = function
   | Mesh (a, b) -> Format.fprintf ppf "mesh axis %d over x, %d over y" a b
 
 (* A set, and the mesh over it where it has four devices. *)
-type 'd set = { s : 'd Nx.devices; mesh : 'd Nx.Mesh.t option }
+type 'd set = { s : 'd Nx.Devices.t; mesh : 'd Nx.Mesh.t option }
 
 let at (type d) (set : d set) c : d Nx.Placement.t =
   match (c, set.mesh) with
@@ -1277,7 +1277,7 @@ let copied run =
    [4 / n] rows by 3 float32s from each device, [48 (n - 1)] bytes in all, and
    its own sums: the others' sums are copied nowhere. *)
 let own_window set =
-  let n = List.length (Nx.rigs set.s) in
+  let n = List.length (Nx.Devices.to_list set.s) in
   let x = Nx.place (at set (Split 0)) (value [| 8; 4 |]) in
   let w = Nx.place (at set (Split 0)) (value ~seed:1 [| 4; 3 |]) in
   let loss w = Nx.sum (Nx.matmul x (Nx.place (at set On) (Nx.mul w w))) in
@@ -2355,7 +2355,7 @@ let nested_check set =
 (* A passing check moves only its flags: one per device other than the one that
    computes. *)
 let check_moves set =
-  let n = List.length (Nx.rigs set.s) in
+  let n = List.length (Nx.Devices.to_list set.s) in
   let ok = Nx.place (at set (Split 0)) (Nx.full Nx.bool [| 8 |] true) in
   let d = Nx.place (at set (Split 0)) (value [| 8 |]) in
   let f ok d =
@@ -2609,7 +2609,7 @@ let nested_switch set =
   equal ~msg:"rows" bits_t (bits (snd eager)) (bits (snd jit))
 
 (* [xs] in a file of the disk, on [set]. *)
-let on_disk (type d) (set : d Nx.devices) xs =
+let on_disk (type d) (set : d Nx.Devices.t) xs =
   let n = Array.length xs in
   let path = Filename.temp_file "rune-io-" ".bin" in
   Sys.remove path;

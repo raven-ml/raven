@@ -79,9 +79,14 @@ type 'd complex64_t = (Complex.t, Dtype.complex32_elt, 'd) t
 type 'd bool_t = (bool, Dtype.bool_elt, 'd) t
 type 'd bit_t = (bool, Dtype.bit_elt, 'd) t
 type host = Devices.host
-type 'd devices = 'd Devices.t
 
-let rigs s = List.init (Devices.count s) (Devices.rig s)
+(* The public [Devices] extends the private one, which the rest of this file
+   keeps using by that name; nx.mli exposes its [t] and [to_list] alone. *)
+module Devices = struct
+  include Devices
+
+  let to_list s = List.init (count s) (rig s)
+end
 
 module Mesh = struct
   type 'd t = 'd Devices.mesh
@@ -137,7 +142,7 @@ end
 module type Devices = sig
   type d
 
-  val v : d devices
+  val v : d Devices.t
   val on : d Placement.t
   val split : axis:int -> d Placement.t
 end
@@ -7542,7 +7547,7 @@ module Prim = struct
 
   (* [x] at [dt] and [set]'s brand where run-time facts allow it: a dtype and
      a set are each their own witness. *)
-  let coerce (type v s d w r e) (dt : (v, s) dtype) (set : d devices)
+  let coerce (type v s d w r e) (dt : (v, s) dtype) (set : d Devices.t)
       (x : (w, r, e) Value.t) : (v, s, d) Value.t option =
     (* Inside nx, ['d Placement.t] is [place] at every ['d], so the annotation
        names the brands that [same]'s cast relates. *)

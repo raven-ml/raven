@@ -494,8 +494,10 @@ module Total = struct
   let collect (type v s d) (t : (v, s, d) t) ~(init : (v, s, d) Nx.t) f =
     let sum = ref init in
     let at = Nx.placement init in
-    let rigs p = List.map Rig.name (Nx.rigs (Nx.Placement.devices p)) in
-    let on ppf p = Format.fprintf ppf "[%s]" (String.concat "; " (rigs p)) in
+    let names p =
+      List.map Rig.name (Nx.Devices.to_list (Nx.Placement.devices p))
+    in
+    let on ppf p = Format.fprintf ppf "[%s]" (String.concat "; " (names p)) in
     let refused shape =
       Invalid_argument
         (Format.asprintf
@@ -505,7 +507,7 @@ module Total = struct
     (* Two sets of one device list are told apart by name only. *)
     let elsewhere p =
       Invalid_argument
-        (if rigs p = rigs at then
+        (if names p = names at then
            Format.asprintf
              "Rune.Total.add: a value on another set of the devices %a than \
               the total's init's"

@@ -143,7 +143,7 @@ let () =
   in
   Munin.Session.sample session ~every:15.
     (Munin_sys.host () :: Munin_sys.process ()
-    :: List.map device_reading (Nx.rigs Set.v));
+    :: List.map device_reading (Nx.Devices.to_list Set.v));
 
   Printf.printf "run: %s  device: %s  params: %d\n%!" (Munin.Session.id session)
     !device n_params;

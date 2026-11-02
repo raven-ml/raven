@@ -46,7 +46,7 @@ let pp_where ppf = function
   | Minor x -> Format.fprintf ppf "cut %d/b" x
 
 (* A placement over the set [v], whose devices [mesh] lays out. *)
-let over (type d) (v : d Nx.devices) mesh w : d Nx.Placement.t =
+let over (type d) (v : d Nx.Devices.t) mesh w : d Nx.Placement.t =
   match w with
   | Host | One -> invalid_arg "over: not a placement of the set"
   | On -> Nx.Placement.on v
@@ -1689,7 +1689,7 @@ let law_item_of_a_sum (Summed c) =
         failf "element %d: item reads another value than its terms' sum" i)
     sums
 
-let names = String.concat "; " (List.map Rig.name (Nx.rigs Mem.v))
+let names = String.concat "; " (List.map Rig.name (Nx.Devices.to_list Mem.v))
 let pp_at p = Format.asprintf "%a" Nx.Placement.pp p
 
 let test_sum_placements () =

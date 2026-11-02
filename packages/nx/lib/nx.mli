@@ -162,19 +162,22 @@ val unpack : ('v, 's) dtype -> 'd packed -> ('v, 's, 'd) t
     two sets of two brands. {!Placement.same} tells whether two brands name
     one set. *)
 
-type +'d devices
-(** The type for device sets of brand ['d]: distinct devices, and the kernels
-    that compute on them. *)
+(** Device sets. *)
+module Devices : sig
+  type +'d t
+  (** The type for device sets of brand ['d]: distinct devices, and the
+      kernels that compute on them. *)
 
-val rigs : 'd devices -> Rig.t list
-(** [rigs s] is [s]'s devices in order. *)
+  val to_list : 'd t -> Rig.t list
+  (** [to_list s] is [s]'s devices in order. *)
+end
 
 (** Named axes over a set's devices. *)
 module Mesh : sig
   type +'d t
   (** The type for named axes over a set of brand ['d]. *)
 
-  val v : 'd devices -> (string * int) list -> 'd t
+  val v : 'd Devices.t -> (string * int) list -> 'd t
   (** [v s axes] lays [s]'s devices in row-major order over the named [axes].
 
       Raises [Invalid_argument] unless the extents are positive and multiply to
@@ -186,17 +189,17 @@ module Placement : sig
   type +'d t
   (** The type for placements over a set of brand ['d]. *)
 
-  val on : 'd devices -> 'd t
+  val on : 'd Devices.t -> 'd t
   (** [on s] holds the whole value on every device of [s]. *)
 
-  val device : 'd devices -> Rig.t -> 'd t
+  val device : 'd Devices.t -> Rig.t -> 'd t
   (** [device s d] holds the whole value on [d] alone, a device of [s];
       [on s] where [s] has [d] alone.
 
       Raises [Invalid_argument] naming [Nx.Placement.device] unless [d]
       is a device of [s] ({!Rig.equal}). *)
 
-  val split : axis:int -> 'd devices -> 'd t
+  val split : axis:int -> 'd Devices.t -> 'd t
   (** [split ~axis s] cuts [axis] into one window per device of [s], in
       order, as evenly as its extent allows: of [n] elements over [k] devices,
       the first [n mod k] windows hold [n / k + 1] and the others [n / k]. A
@@ -241,7 +244,7 @@ module Placement : sig
       not partial, so [place (closed (placement x)) x] closes [x] where it
       lies, and is [x] on any other placement. *)
 
-  val devices : 'd t -> 'd devices
+  val devices : 'd t -> 'd Devices.t
   (** [devices p] is [p]'s set. *)
 
   val equal : 'd t -> 'e t -> bool
@@ -298,7 +301,7 @@ module type Devices = sig
   type d
   (** The set's brand. *)
 
-  val v : d devices
+  val v : d Devices.t
   (** [v] is the set. *)
 
   val on : d Placement.t
@@ -5255,7 +5258,7 @@ val pp_dtype : Format.formatter -> ('v, 's) dtype -> unit
 *)
 
 module Repr : sig
-  val of_array : 'd devices -> ('v, 's) Nx_array.t -> ('v, 's, 'd) t
+  val of_array : 'd Devices.t -> ('v, 's) Nx_array.t -> ('v, 's, 'd) t
   (** [of_array s a] is the value whose bytes are [a]'s. The value reads [a]'s
       memory from then on: a write to it through any handle leaves what values
       over it read unspecified. The memory stays its caller's: no donation of
@@ -5267,7 +5270,7 @@ module Repr : sig
       Raises [Invalid_argument] naming [Nx.Repr.of_array] unless [a] lies on a
       device of [s]. *)
 
-  val unsafe_of_array : 'd devices -> ('v, 's) Nx_array.t -> ('v, 's, 'd) t
+  val unsafe_of_array : 'd Devices.t -> ('v, 's) Nx_array.t -> ('v, 's, 'd) t
   (** [unsafe_of_array s a] is {!of_array}[ s a] for an [a] its caller gives
       up: the value owns [a]'s memory, as it owns memory nx allocated for it,
       so a donation of the value may write its result there ({!donate}).
@@ -6159,7 +6162,7 @@ module Prim : sig
       axis in turn, from the longest, which holds each position's row times
       the extents of the others. *)
 
-  val has_kernels : 'd devices -> bool
+  val has_kernels : 'd Devices.t -> bool
   (** [has_kernels s] is [true] iff [s] has kernels to evaluate an operation
       ({!val-devices}). *)
 
@@ -6174,7 +6177,7 @@ module Prim : sig
       Raises [Invalid_argument] if [p] cuts an axis [s] lacks. *)
 
   val coerce :
-    ('v, 's) dtype -> 'd devices -> ('w, 'r, 'e) nx -> ('v, 's, 'd) nx option
+    ('v, 's) dtype -> 'd Devices.t -> ('w, 'r, 'e) nx -> ('v, 's, 'd) nx option
   (** [coerce dt s x] is [Some x] at [dt] and [s]'s brand iff [x]'s dtype is
       [dt] and [x] lies on [s], at any placement of [s]. A value on [s] is a
       value of [s]'s brand ({!section-devices}).

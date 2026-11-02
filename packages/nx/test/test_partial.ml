@@ -2019,7 +2019,7 @@ let shard_bytes (type v s d) (x : (v, s, d) Nx.t) =
     (Iarray.to_array (Nx.Repr.shards x))
 
 let law_replicas c =
-  let run (type d) (s : d Nx.devices) =
+  let run (type d) (s : d Nx.Devices.t) =
     let n = (2 * c.devices) + 1 and el = Array.fold_left ( * ) 1 c.rshape in
     let x = Nx.reshape (Array.append [| n |] c.rshape) (spread (n * el)) in
     let summed =

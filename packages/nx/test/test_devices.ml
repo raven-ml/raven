@@ -15,7 +15,7 @@ module S2 = (val Nx.devices [ m 0; m 1 ])
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 let pp p = Format.asprintf "%a" Nx.Placement.pp p
-let names s = List.map Rig.name (Nx.rigs s)
+let names s = List.map Rig.name (Nx.Devices.to_list s)
 
 module Nowhere = struct
   include Nx_cpu

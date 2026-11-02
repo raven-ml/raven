@@ -161,7 +161,7 @@
     - a tensor type, a key or a packed array whose set is not the set parameter,
       the set parameter alone as a part, and a tensor type that mentions a
       parameter in its element types;
-    - [Nx.Placement.t], [Nx.Mesh.t] and [Nx.devices], which hold no array to
+    - [Nx.Placement.t], [Nx.Mesh.t] and [Nx.Devices.t], which hold no array to
       walk, other [Nx] types without a walk, and an [Nx] name ending in [_t]
       that is not a tensor alias;
     - [ref], [lazy_t] and [result], functions, objects, classes, polymorphic

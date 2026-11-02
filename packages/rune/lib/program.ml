@@ -16,7 +16,7 @@ let form (V x) = F (Nx.Prim.form x)
    value is read back at the dtype and set of the form its stand-in was traced
    at, so a failure is a binding at the wrong variable, or a trace at other
    forms than the evaluation's. *)
-let cast (type v s d) (dt : (v, s) D.t) (set : d Nx.devices) (V y) :
+let cast (type v s d) (dt : (v, s) D.t) (set : d Nx.Devices.t) (V y) :
     (v, s, d) Nx.t =
   match Nx.Prim.coerce dt set y with
   | Some y -> y

@@ -414,11 +414,11 @@ let f32 = Nx.float32
 type cut = On | Split of int | Dev of int | Rows | Grid of bool
 
 (* A set, and the mesh over it where it has four devices. *)
-type 'd set = { s : 'd Nx.devices; mesh : 'd Nx.Mesh.t option }
+type 'd set = { s : 'd Nx.Devices.t; mesh : 'd Nx.Mesh.t option }
 
-let set_of (type d) (s : d Nx.devices) =
+let set_of (type d) (s : d Nx.Devices.t) =
   let mesh =
-    if List.length (Nx.rigs s) = 4 then
+    if List.length (Nx.Devices.to_list s) = 4 then
       Some (Nx.Mesh.v s [ ("x", 2); ("y", 2) ])
     else None
   in
@@ -427,7 +427,7 @@ let set_of (type d) (s : d Nx.devices) =
 let at set = function
   | On -> Nx.Placement.on set.s
   | Split axis -> Nx.Placement.split ~axis set.s
-  | Dev k -> Nx.Placement.device set.s (List.nth (Nx.rigs set.s) k)
+  | Dev k -> Nx.Placement.device set.s (List.nth (Nx.Devices.to_list set.s) k)
   | Rows -> Nx.Placement.mesh (Option.get set.mesh) [ (0, [ "x" ]) ]
   | Grid a ->
       let x, y = if a then ("x", "y") else ("y", "x") in
@@ -690,13 +690,14 @@ let check (type d e) (mixed : d set) (memory : e set) c =
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
   equal ~msg:"placement" (placement ()) (at mixed c.result) (Nx.placement jit);
   c.close x y (host eager) (host jit);
-  let ps = pieces jit and rigs = Array.of_list (Nx.rigs mixed.s) in
+  let ps = pieces jit
+  and devices = Array.of_list (Nx.Devices.to_list mixed.s) in
   Array.iteri
     (fun j (b, w) ->
       match Array.find_index (fun (_, w') -> w' = w) ps with
       | Some i when i < j ->
           equal
-            ~msg:("the replica on " ^ Rig.name rigs.(j))
+            ~msg:("the replica on " ^ Rig.name devices.(j))
             bits_t (fst ps.(i)) b
       | _ -> ())
     ps

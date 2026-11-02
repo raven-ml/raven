@@ -25,7 +25,7 @@ let device_of p =
   let s = Nx.Placement.devices p in
   List.find
     (fun r -> Nx.Placement.equal p (Nx.Placement.device s r))
-    (Nx.rigs s)
+    (Nx.Devices.to_list s)
 
 let window x (w : Nx_array.Move.range array) =
   Nx.Prim.eval ~by (Move (Slice (Iarray.of_array w), x))
@@ -96,7 +96,7 @@ let pp_cut ppf = function
   | Split a -> Format.fprintf ppf "split ~axis:%d" a
   | Device k -> Format.fprintf ppf "device %d" k
 
-let at (type d) (s : d Nx.devices) c : d Nx.Placement.t =
+let at (type d) (s : d Nx.Devices.t) c : d Nx.Placement.t =
   match c with
   | On -> Nx.Placement.on s
   | Split axis -> Nx.Placement.split ~axis s
@@ -153,7 +153,7 @@ let result_t =
     ~equal:( = )
 
 (* Each function of the case's operands over [s], eagerly and partitioned. *)
-let law_on (type d) (s : d Nx.devices) c =
+let law_on (type d) (s : d Nx.Devices.t) c =
   let x = Nx.place (at s c.x) (value [| c.rows; c.cols |]) in
   let y = Nx.place (at s c.y) (value ~seed:1 [| c.rows; c.cols |]) in
   let w = Nx.place (at s c.y) (value ~seed:2 [| c.cols; 3 |]) in

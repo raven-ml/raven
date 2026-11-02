@@ -216,7 +216,9 @@ let min_normal = Float.ldexp 1.0 (-126)
 
 let dequant ~jit s fx =
   let on = Nx.Placement.on s in
-  let metal = List.exists (fun d -> Rig.name d = "METAL") (Nx.rigs s) in
+  let metal =
+    List.exists (fun d -> Rig.name d = "METAL") (Nx.Devices.to_list s)
+  in
   List.iter
     (fun (name, case) ->
       let shape = ints (mem "blocks_shape" case) in
@@ -416,7 +418,7 @@ let compiled_cached cfg (p : ((float, 'b, 'd) Nx.t, 'd) Gpt_oss.params) =
       caches @-> v Cache_index.walk @-> tensor @-> returns (pair tensor caches))
     (Gpt_oss.cached cfg p)
 
-let model (type b d) ~jit (s : d Nx.devices) ~tol ~exact ~label fx case
+let model (type b d) ~jit (s : d Nx.Devices.t) ~tol ~exact ~label fx case
     (cfg : d Gpt_oss.config) (p : ((float, b, d) Nx.t, d) Gpt_oss.params)
     (dt : (float, b) Nx.dtype) =
   let name what = Printf.sprintf "%s: %s" label what in

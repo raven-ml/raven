@@ -22,7 +22,7 @@ let device_of p =
   let s = Nx.Placement.devices p in
   List.find_opt
     (fun r -> Nx.Placement.equal p (Nx.Placement.device s r))
-    (Nx.rigs s)
+    (Nx.Devices.to_list s)
 
 (* Whether a program needs splitting *)
 
@@ -158,7 +158,7 @@ let from_operands (prog : P.t) (at : int option array) =
 
 (* The set of a loop's operands, or of the placement of a creation. *)
 let set_of (type d) (loads : d Nx.Prim.load iarray)
-    (at : d Nx.Placement.t option) : d Nx.devices option =
+    (at : d Nx.Placement.t option) : d Nx.Devices.t option =
   match at with
   | Some q -> Some (Nx.Placement.devices q)
   | None when Iarray.length loads = 0 -> None

@@ -1308,7 +1308,7 @@ let every_function (type d) name (x : (float, D.float32_elt, d) Nx.t) =
   equal ~msg:(msg "copy") (array bits) xs (elements (Nx.copy x));
   ignore (Nx.Repr.array x);
   equal ~msg:(msg "shards") int
-    (List.length (Nx.rigs (Nx.Placement.devices (Nx.placement x))))
+    (List.length (Nx.Devices.to_list (Nx.Placement.devices (Nx.placement x))))
     (Iarray.length (Nx.Repr.shards x))
 
 let test_every_placement () =

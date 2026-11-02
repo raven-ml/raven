@@ -17,7 +17,7 @@ module Pair =
          (List.init 2 (fun k ->
               Result.get_ok (Rig.memory_device (Printf.sprintf "norn-s%d" k)))))
 
-let first = Nx.Placement.device Pair.v (List.hd (Nx.rigs Pair.v))
+let first = Nx.Placement.device Pair.v (List.hd (Nx.Devices.to_list Pair.v))
 let placements = [ ("whole", Pair.on); ("split", Pair.split ~axis:0) ]
 let pp p = Format.asprintf "%a" Nx.Placement.pp p
 let at x = pp (Nx.placement x)

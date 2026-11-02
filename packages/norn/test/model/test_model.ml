@@ -798,7 +798,9 @@ let sets =
                   () ))
           in
           (* A key on one device: the values lie where the model does. *)
-          let one = Nx.Placement.device Pair.v (List.hd (Nx.rigs Pair.v)) in
+          let one =
+            Nx.Placement.device Pair.v (List.hd (Nx.Devices.to_list Pair.v))
+          in
           let key = Nx.Rng.place one (Nx.Rng.key 0) in
           let pp p = Format.asprintf "%a" Nx.Placement.pp p in
           let x, () = M.simulate on_pair key in

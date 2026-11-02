@@ -135,7 +135,7 @@ type role =
           and their biases. *)
   | Kv_heads  (** Cut along its heads: a cache pool. *)
 
-val expert_parallel : 'd Nx.devices -> role -> axis:int -> 'd Nx.Placement.t
+val expert_parallel : 'd Nx.Devices.t -> role -> axis:int -> 'd Nx.Placement.t
 (** [expert_parallel s] splits the experts over [s] along their expert axis and
     keeps every other leaf, and the caches, a copy on each device: the
     [placement] of {!of_hf} and {!cache} for expert parallelism. Over one device

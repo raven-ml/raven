@@ -58,7 +58,7 @@ type form =
 val form : value -> form
 (** [form v] is [v]'s form. *)
 
-val cast : ('v, 's) Nx.dtype -> 'd Nx.devices -> value -> ('v, 's, 'd) Nx.t
+val cast : ('v, 's) Nx.dtype -> 'd Nx.Devices.t -> value -> ('v, 's, 'd) Nx.t
 (** [cast dt s v] is [v] at [dt] and [s]'s brand, as {!Nx.Prim.coerce} checks
     it.
 

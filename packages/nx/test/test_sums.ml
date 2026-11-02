@@ -535,8 +535,12 @@ let ub = Float.ldexp 1. (-8)
 
 (* [a b] over [s]'s devices, [k] cut: closed, and asked for its sum then
    closed. *)
-let narrow_products (type d) (s : d Nx.devices) a b =
-  let sum = Nx.Placement.partial (Nx.Mesh.v s [ ("x", List.length (Nx.rigs s)) ]) [ "x" ] [] in
+let narrow_products (type d) (s : d Nx.Devices.t) a b =
+  let sum =
+    Nx.Placement.partial
+      (Nx.Mesh.v s [ ("x", List.length (Nx.Devices.to_list s)) ])
+      [ "x" ] []
+  in
   let a = Nx.place (Nx.Placement.split ~axis:1 s) a
   and b = Nx.place (Nx.Placement.split ~axis:0 s) b in
   let read y = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on y)) in
@@ -896,7 +900,7 @@ let refuses ~by f =
     f
 
 let x () = Nx.place (sum_at Line) (Nx.ones Nx.float32 [| 4 |])
-let names = String.concat "; " (List.map Rig.name (Nx.rigs Mem.v))
+let names = String.concat "; " (List.map Rig.name (Nx.Devices.to_list Mem.v))
 
 let test_refusals () =
   let p = x () in
