@@ -3349,18 +3349,59 @@ search's memos and what it keeps.
 A Metal command buffer signalled through the device's signaler. rig's Metal
 driver signals its own (D146).
 
-## D137. Reductions of one domain share their loops
+## D137. Consumers of one domain share their loops
 
-- **tinygrad:** `schedule/indexing.py:293-295` (`run_rangeify`: each
-  reduction takes new ranges for the axes it reduces); `codegen/__init__.py:163`
+- **tinygrad:** `schedule/indexing.py:225` (new ranges for every stored value)
+  and `:245-268` (a node its consumers index apart is stored);
+  `schedule/rangeify.py:48` (`remove_bufferize`, which inlines such a store
+  back into each consumer) and `:321-336` (`split_store`, one kernel per
+  store). Upstream calls scheduling several outputs into one kernel pending:
+  `test/runtime/test_assign.py:345`, `:374` and `:387` skip "multi output not
+  supported anymore", and `test/runtime/test_jit.py:485` skips "Pending
+  multioutput implementation #3607". Codegen already compiles a kernel of one
+  end over a group of stores (`test/runtime/test_custom_kernel.py:139`). For
+  reductions, `schedule/indexing.py:293-295` (`run_rangeify`: each reduction
+  takes new ranges for the axes it reduces); `codegen/__init__.py:163`
   (`merge_reduce_ends`, which already makes one loop of the reductions that
   close one range); `codegen/simplify.py:20` (`simplify_merge_adjacent`, which
   merges a reduction's ranges in that reduction alone).
-- **tolk:** `Indexing.reaches`, `Indexing.reduce_loops` and its use in
-  `Indexing.assign_ranges`; `Simplify.merge_reductions`;
+- **tolk:** for stores, `Indexing.region`, `Indexing.views`,
+  `Indexing.waits_over`, `Indexing.share_loops` (its `crossed`),
+  `Indexing.loops_of` and `Indexing.end_shared` (which
+  `Indexing.bufferize_and_index` returns for each store of a group), with
+  `Indexing.data_srcs`, `Indexing.create_bufferize_and_index_based_on_ranges`
+  and `Rangeify.handle_after`, which take a group (`Ops.is_group`) as its
+  stores and no state of a buffer; for reductions, `Indexing.reaches`,
+  `Indexing.reduce_loops` and its use in `Indexing.assign_ranges`;
+  `Simplify.merge_reductions`;
   `Codegen.merge_reduce_ends`; `test/gen/tinygrad.patch`, which gives tinygrad
   the same before the goldens are recorded.
-- **Differs:** a reduction whose output is indexed by the same ranges as an
+- **Differs:** consumers of one domain take one set of ranges, so a node they
+  share is indexed alike and computed once, where tinygrad indexes each
+  consumer apart, stores what they share and inlines it back into each. Stores
+  and reductions are its two cases.
+
+  Stores: before ranges are assigned, the stores of the tensor graph that have
+  a loop are grouped. Two join when their values have one shape and one
+  device, they write different storage, neither reads the other or the storage
+  the other writes, through anything, neither waits for a write over storage
+  that the other reads in a state before it, which one kernel of both could
+  run neither before nor after, the computed nodes each reaches before storage
+  or another stored value share one, and no computed node that both read
+  through views (movements) is read through different views. A node behind a
+  view is read at the view's indices, so two stores index it alike only
+  through the same views: two slices of one reduction, each stored, stay two
+  kernels, each holding its slice alone, whatever else they share. Two groups
+  join only when neither reads the other through the stores of a third: where
+  `b` reads `c` and `d` reads `a`, a kernel of `a` and `b` and one of `c` and
+  `d` would each run before and after the other. Neither may reach a reduction
+  the other does not: a kernel of two reductions can lose the optimisations
+  each would take. A group's stores take one set of loops, so their shared
+  nodes are indexed alike and computed once, and they end as one end over a
+  group of the stores, which the kernel split makes one kernel writing them
+  all. Outputs that share only loads stay apart.
+
+  Reductions: a reduction whose output is indexed by the same ranges as an
   earlier one's in the walk, and that reduces axes of the same sizes, takes
   that reduction's reduce ranges when no reduction of the group reaches it,
   through anything. The walk meets a reduction before those it reads, so only
@@ -3382,24 +3423,37 @@ driver signals its own (D146).
   them to every end that closes a range an earlier end closes, so each range
   has one end. No recorded kernel has such ends, so the patch leaves
   tinygrad's `merge_reduce_ends` as it is.
-
-  Stores no longer share loops. Each stored value is a kernel of its own, as
-  tinygrad's (`schedule/rangeify.py:324-339`, `split_store`): two outputs of
-  one chain, such as a double word's high and low parts, each compute the
-  chain, and two slices of one value are stored by two kernels. The store
-  half grouped such stores into one kernel of several stores; it is
-  withdrawn, since its reason was kernel counts alone, measured by no fudge
-  bench row, and no rune test pinned it, and it held every slice of a
-  partial live at once in fully sharded training (`rune jit › fully
-  sharded`).
-- **Reason:** (d): rune's reverse mode. The cotangent of a value that
+- **Reason:** for stores, (d): `Nx_wide`, whose operations return a double
+  word's high and low parts, the two ends of one chain, and rune's gradients
+  of several arguments, which share their chain. tinygrad schedules each part
+  as a kernel that computes the whole chain: a compiled double-word add ran
+  six kernels and runs one, and the old rune's `compile/wide/sum-1e6` row
+  compiled 17 kernels. Without the grouping, rune's
+  `compile/special/betainccinv-grad-f32` row, the gradient of a float32
+  `Nx.betainccinv` in its three arguments, ran 593 kernels in place of one,
+  its first call took 29.7 s against 6.1 s, under load on fudge, and it held
+  1.3 MB of scratch against none. Through views, (b): rune's fully sharded
+  training (RFC 0005's memory bound), whose closing slices one partial into a
+  piece for each device; grouped, every slice was live at once. The check
+  costs kernel graphs up to 2% more words (tolk's `*/kernel_graph` rows). For
+  reductions, (d): rune's reverse mode. The cotangent of a value that
   operations broadcast sums one reduction per operation, each over the same
   cotangent computation: the gradient of an aperture's weights over a 104 x
   104 grid in its radius, which 28 operations broadcast, was one kernel of 28
   loops, each computing the whole cell, and took 647-672 ms compiled against
   93-171 ms eagerly on an M1 Max under load 11-15; one loop takes 30-31 ms.
   Measured on the Mac; to re-measure on fudge, where no bench row holds it.
-- **Pinned by:** the Rangeify suite (`test/schedule/rangeify`):
+- **Pinned by:** for stores, the Rangeify suite (`test/schedule/rangeify`):
+  `get_kernel_graph › outputs that share a computation` (every test, `slices
+  of one product through two views run as two kernels`, `slices that also
+  share a computation run as two kernels` and `outputs that read a product
+  through one view run as one kernel` among them); its recorded
+  `read_around_assign_kernels`, `crossed_pairs_kernels` and `kernel_counts`,
+  and the Postrange suite's `where_max_multioutput`, `padto_where_multioutput`
+  and `axes` cases, recorded from the equally patched tinygrad. On rune: the
+  `compile/special/betainccinv-grad-f32` bench row, and `rune jit › fully
+  sharded` for the views (the old rune's `Rune nx.wide › kernels` went with
+  its rewrite). For reductions, the Rangeify suite (`test/schedule/rangeify`):
   `get_kernel_graph › reductions that share a domain` (every test), and its
   law over generated programs, whose `sum k + max k` and `x - sum k` steps
   cover reductions that share a loop; its recorded `multireduce_*` and
@@ -3417,12 +3471,7 @@ driver signals its own (D146).
   two views a bit apart whose sums share their loops; its Jit suite's
   `transformations › a compiled gradient of a parameter broadcast over a grid
   is its gradient`; and its bench row
-  `reverse/jit-of-grad-clipped-disc-float64-104x104-host`. The withdrawn store
-  half's absence: the Rangeify suite's `get_kernel_graph › outputs of one
-  computation` (every test), its recorded `crossed_pairs_kernels` and
-  `kernel_counts`, and the Postrange suite's `axes`, `where_max_multioutput`
-  and `padto_where_multioutput` cases, recorded from tinygrad, which groups
-  no stores.
+  `reverse/jit-of-grad-clipped-disc-float64-104x104-host`.
 
 ## D138. A load's index is simplified without the loads in it assuming its gate
 
@@ -3727,7 +3776,7 @@ submission, and a range a loop of rig's program (D146).
 ## D144. Withdrawn
 
 Reductions of one domain that read none of each other shared their loop;
-merged into D137, which holds the loops that reductions of one domain share.
+merged into D137, which holds the loops that consumers of one domain share.
 
 ## D145. An integer division on padding divides by 1 there
 

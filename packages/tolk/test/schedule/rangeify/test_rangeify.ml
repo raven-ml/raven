@@ -550,12 +550,15 @@ let rules =
                (Ops.toposort ~calls:Enter (Rangeify.get_kernel_graph sink))));
     ]
 
-(* Outputs of one computation
+(* Outputs that share a computation
 
-   Each stored value is a kernel of its own, whatever its computation shares
-   with another's: a double word's high and low parts, the two ends of one
-   chain, compute the chain in each kernel, and two slices of one reduction
-   are stored by two kernels. *)
+   Stored values of one shape and device whose computations share a node
+   reached through no view, or one view of a computation, and neither of which
+   reads the other, run as one kernel that writes both. A double word's high
+   and low parts are one chain's two ends. Two views of one computation read
+   it at different indices: slices of it run as kernels of their own. *)
+
+let out2 = Shape.param ~device:cpu ~shape:[ Int 16 ] 4 Float32
 
 let stores2 ?(size = 16) v w =
   let at slot = Shape.param ~device:cpu ~shape:[ Int size ] slot Float32 in
@@ -577,42 +580,124 @@ let writes sink =
     (Tensors.writes ~buffers sink)
     (Kernel_graphs.writes ~buffers (schedule sink))
 
-(* The stores of each kernel of [sink]'s schedule. *)
-let stores_per_kernel sink =
-  List.map
-    (fun c ->
-      List.length
-        (List.filter
-           (fun u -> Ops.op u = Store)
-           (Ops.toposort ~calls:Skip (Ops.nth c 0))))
-    (calls (schedule sink))
-
-let one_store_each sink =
-  let per = stores_per_kernel sink in
-  equal (list int) (List.map (fun _ -> 1) per) per
-
 let shared =
   let hi, lo = two_sum (input 1) (input 2) in
-  group "get_kernel_graph › outputs of one computation"
+  let x = input 1 in
+  let v = Ops.O.(input 1 * input 2) in
+  group "get_kernel_graph › outputs that share a computation"
     [
-      test "a two-sum's sum and error run as two kernels" (fun () ->
-          let sink = stores2 hi lo in
-          equal (list int) [ 1; 1 ] (stores_per_kernel sink);
-          writes sink);
-      test "two slices of one reduction are stored by kernels of their own"
-        (fun () ->
-          let r = Shape.reshape (Shape.rop (input 1) Add [ 1 ]) (ints [ 4 ]) in
-          let half lo = Shape.shrink r [ Some (Int lo, Int (lo + 2)) ] in
-          let sink = stores2 ~size:2 (half 0) (half 2) in
-          one_store_each sink;
-          writes sink);
-      test "outputs that share a reduction run as kernels of their own"
-        (fun () ->
+      test "a two-sum's sum and error run as one kernel" (fun () ->
+          equal int 1 (kernels_of (stores2 hi lo)));
+      test "a two-sum's sum and error are written as their tensors write them"
+        (fun () -> writes (stores2 hi lo));
+      test "outputs that share only a load run as two kernels" (fun () ->
+          equal int 2 (kernels_of (stores2 Ops.O.(x + x) Ops.O.(x * x))));
+      test "outputs that share a reduction run as one kernel" (fun () ->
           let m = Shape.rop (input 1) Max [ 1 ] in
           let sink =
             stores2 ~size:4 Ops.O.(m + float 1.) Ops.O.(m * float 2.)
           in
-          one_store_each sink;
+          equal int 1 (kernels_of sink);
+          writes sink);
+      test "outputs that share a broadcast reduction read it from its kernel"
+        (fun () ->
+          let m =
+            Shape.expand (Shape.rop (input 1) Max [ 1 ]) (ints [ 4; 4 ])
+          in
+          let sink = stores2 Ops.O.(m + input 2) Ops.O.(m * input 3) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "outputs with a reduction each run as two kernels" (fun () ->
+          let sink =
+            stores2 ~size:4 (Shape.rop v Add [ 1 ]) (Shape.rop v Max [ 1 ])
+          in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "slices of one product through two views run as two kernels"
+        (fun () ->
+          let rows lo = Shape.shrink v [ Some (Int lo, Int (lo + 2)); None ] in
+          let sink = stores2 ~size:8 (rows 0) (rows 2) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "slices that also share a computation run as two kernels"
+        (fun () ->
+          let rows lo = Shape.shrink v [ Some (Int lo, Int (lo + 2)); None ] in
+          let e = Ops.exp2 (input ~shape:[ 2; 4 ] 3) in
+          let sink = stores2 ~size:8 Ops.O.(rows 0 + e) Ops.O.(rows 2 * e) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "outputs that read a product through one view run as one kernel"
+        (fun () ->
+          let w = Shape.shrink v [ Some (Int 1, Int 3); None ] in
+          let sink =
+            stores2 ~size:8 Ops.O.(w + float 1.) Ops.O.(w * float 2.)
+          in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      test "outputs of shapes that differ run as two kernels" (fun () ->
+          let w = Shape.reshape v (ints [ 2; 8 ]) in
+          equal int 2 (kernels_of (stores2 v Ops.O.(w * w))));
+      test "an output that reads what another writes runs after it" (fun () ->
+          let first =
+            Ops.after out [ Ops.store (Shape.reshape out (ints [ 4; 4 ])) v ]
+          in
+          let read = Shape.reshape first (ints [ 4; 4 ]) in
+          let sink =
+            Ops.sink
+              [
+                first;
+                Ops.after out2
+                  [
+                    Ops.store
+                      (Shape.reshape out2 (ints [ 4; 4 ]))
+                      Ops.O.((v * v) + read);
+                  ];
+              ]
+          in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "an output that overwrites what another reads runs apart" (fun () ->
+          let old = Shape.reshape out2 (ints [ 4; 4 ]) in
+          let sink = stores2 Ops.O.(v + old) Ops.O.(v * v) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "outputs reading a storage before and after its overwrite run apart"
+        (fun () ->
+          let a = Shape.param ~device:cpu ~shape:[ Int 16 ] 5 Float32 in
+          let written = Ops.after a [ Ops.store a Ops.O.(a * a) ] in
+          let at u = Shape.reshape u (ints [ 4; 4 ]) in
+          let store o v = Ops.after o [ Ops.store (at o) v ] in
+          let sink =
+            Ops.sink
+              [
+                written;
+                store out Ops.O.(v + at a);
+                store out2 Ops.O.((v * v) + at written);
+              ]
+          in
+          equal int 3 (kernels_of sink);
+          writes sink);
+      test "two pairs of outputs that each read the other pair run as three"
+        (fun () ->
+          (* [a] and [b] share [p], [c] and [d] share [q], [b] reads [c] and
+             [d] reads [a]: one kernel of each pair would run both before and
+             after the other. *)
+          let at u = Shape.reshape u (ints [ 4; 4 ]) in
+          let store o v = Ops.after o [ Ops.store (at o) v ] in
+          let out3 = Shape.param ~device:cpu ~shape:[ Int 16 ] 6 Float32 in
+          let out4 = Shape.param ~device:cpu ~shape:[ Int 16 ] 7 Float32 in
+          let p = Ops.O.(input 1 * input 2) and q = Ops.O.(input 1 - input 2) in
+          let a = store out p and c = store out3 q in
+          let sink =
+            Ops.sink
+              [
+                a;
+                store out2 Ops.O.((p * p) + at c);
+                c;
+                store out4 Ops.O.((q * q) + at a);
+              ]
+          in
+          equal int 3 (kernels_of sink);
           writes sink);
     ]
 

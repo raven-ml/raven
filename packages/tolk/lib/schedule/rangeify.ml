@@ -690,8 +690,9 @@ let debuf slot buf =
   then ret
   else shrink ret (List.map (fun s -> Some (Int 0, s)) (shape buf))
 
+(* A group of stores is no state of a buffer. *)
 let handle_after ctx after =
-  if addrspace after = Some Dtype.Local then None
+  if addrspace after = Some Dtype.Local || is_group after then None
   else
     let buf = buf_uop after in
     (* Bottom up, so it is added once. *)

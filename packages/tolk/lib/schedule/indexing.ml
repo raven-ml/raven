@@ -24,6 +24,11 @@ type ctx = {
   range_map : (t list * t list) Tbl.t;
       (* Each node's ranges: those that index its sources, then its output. *)
   mutable range_idx : int;
+  shares : t list Tbl.t;
+      (* Each store that shares its loops with others: the stores of its group,
+         in order. *)
+  loops : t list Tbl.t; (* A group's loops, by its first store. *)
+  ends : t Tbl.t; (* A group's end, by its first store. *)
   mutable siblings : siblings list;
       (* The reductions that share their loops, newest group first. *)
   topo : t list;
@@ -160,6 +165,7 @@ let data_srcs u =
   if Op.Set.mem op (Op.Set.union Op.Set.defines (ops Op.[ Range; Special ]))
   then []
   else if op = Op.Index && is_gather_src src then src
+  else if is_group u then (* every store is data *) src
   else if
     Op.Set.mem op
       (Op.Set.union Op.Set.movement
@@ -170,8 +176,23 @@ let data_srcs u =
 (* [s], a source of an indexed node read at [src_rngs] if [indexed]: storage
    indexed, a source stored whole staged over its own ranges and indexed, and
    any other source as it is. *)
+(* The end of a group of stores: one end of all of them over their loops. *)
+let end_shared ctx members =
+  let first = List.hd members in
+  match Tbl.find_opt ctx.ends first with
+  | Some e -> e
+  | None ->
+      let closed = snd (Tbl.find ctx.range_map first) in
+      List.iter (Tbl.remove ctx.realize_map) members;
+      let e =
+        end_ (group members) (List.filter (fun r -> op r = Op.Range) closed)
+      in
+      Tbl.replace ctx.ends first e;
+      e
+
 let bufferize_and_index ctx ~indexed s src_rngs =
   if Op.Set.mem (op s) storage then if indexed then index s src_rngs else s
+  else if Tbl.mem ctx.shares s then end_shared ctx (Tbl.find ctx.shares s)
   else
     match Tbl.find_opt ctx.realize_map s with
     | None -> s
@@ -226,8 +247,10 @@ let convert_gather ctx x =
 let scalar_index x =
   op x = Op.Index && (not (is_gather x)) && op (nth x 0) <> Op.Stage
 
+(* A group's stores are its own: each indexes its sources as any node does. *)
 let create_bufferize_and_index_based_on_ranges ctx x =
-  Some (replace x ~src:(create_bufferize_and_index_srcs ctx x))
+  if is_group x then None
+  else Some (replace x ~src:(create_bufferize_and_index_srcs ctx x))
 
 (* The first source is taken from the list: rebuilding [x] on an indexed source
    would give it a shape its argument does not fit. An index by scalars reads
@@ -571,6 +594,235 @@ let merge_consumer_rngs rctx x consumer_rngs =
     new_ranges rctx (List.take (List.length axes) (shape x))
   end
 
+(* Stores that share their loops
+
+   Stored values of one shape and device share their loops when the nodes each
+   computes before it reads storage or another stored value share a computed
+   node, the two read no computed node through different views, as two slices
+   of one reduction are, neither reads what the other writes, and neither
+   waits for a write over storage the other reads as it was. Each then indexes the shared nodes
+   alike, which are computed once, and the stores end as one kernel that writes
+   them all: a double word's high and low parts, the two ends of one chain, are
+   one kernel. A reduction of one of them alone keeps them apart, since a
+   kernel of two reductions can lose the optimisations each would take.
+
+   Two groups join only when neither reads the other through the stores of a
+   third: where [b] reads [c] and [d] reads [a], the groups {a, b} and {c, d}
+   would each run before and after the other. *)
+
+let computed u =
+  Op.Set.mem (op u) (Op.Set.union Op.Set.elementwise (ops [ Op.Reduce ]))
+
+(* Whether [s] computes [u] in its own kernel, as its value or a node that is
+   neither stored nor always contiguous. *)
+let fused rctx s u =
+  u == nth s 1
+  || not (Tbl.mem rctx.realize_map u || Op.Set.mem (op u) always_contiguous)
+
+(* The nodes [s]'s value reaches before storage or a stored value, each after
+   its sources. *)
+let reached rctx s =
+  let value = nth s 1 in
+  if Tbl.mem rctx.realize_map value then []
+  else toposort ~calls:Skip ~gate:(fused rctx s) value
+
+(* The computed nodes of {!reached}. *)
+let region topo = List.filter computed topo
+
+(* The views of computed nodes among [topo], the nodes a store reaches
+   ({!reached}): each movement over a computed node that [s] computes, by the
+   computed node behind it. *)
+let views rctx s topo =
+  let movement u = Op.Set.mem (op u) Op.Set.movement in
+  let rec behind u = if movement u then behind (nth u 0) else u in
+  let by = Tbl.create 4 in
+  List.iter
+    (fun u ->
+      if movement u then
+        let c = behind (nth u 0) in
+        if computed c && fused rctx s c then
+          Tbl.replace by c (u :: Option.value (Tbl.find_opt by c) ~default:[]))
+    topo;
+  by
+
+(* Whether the store [b], of backward slice [slice], is read through anything:
+   its value or where it stores, which may be storage another store wrote. *)
+let reads slice b = Nodes.mem b slice || Nodes.mem (base (nth b 0)) slice
+
+(* Whether a store of backward slice [sa] waits for a write over storage that
+   one of [sb] reads in a state before it. One kernel of both would run
+   neither before nor after the write, as for [v + a] and [v * v + a'], where
+   [a'] is [a] once assigned. *)
+let waits_over sa sb =
+  Nodes.fold
+    (fun w found ->
+      found
+      || op w = Op.After
+         && (not (Nodes.mem w sb))
+         && Nodes.mem (base (nth w 0)) sb)
+    sa false
+
+let joinable regions ~crossed slice a b =
+  let reductions s =
+    List.filter (fun u -> op u = Op.Reduce) (Tbl.find regions s)
+  in
+  let within s t =
+    List.for_all (fun r -> List.memq r (Tbl.find regions t)) (reductions s)
+  in
+  let apart () =
+    let sa = slice a and sb = slice b in
+    reads sa b || reads sb a || waits_over sa sb || waits_over sb sa
+  in
+  List.equal Sint.equal (shape (nth a 1)) (shape (nth b 1))
+  && Option.equal String.equal (device (nth a 0)) (device (nth b 0))
+  && base (nth a 0) != base (nth b 0)
+  && within a b && within b a
+  && (not (crossed a b))
+  && not (apart ())
+
+let share_loops rctx topo =
+  (* A store of no loop ends nothing, so it stays alone. *)
+  let looped u = List.exists (fun s -> Sint.(resolve (s <> Int 1))) (shape u) in
+  let stores =
+    List.filter
+      (fun u -> op u = Op.Store && Tbl.mem rctx.realize_map u && looped u)
+      topo
+  in
+  (* A region holds each node once, so a store enters each node's list once. *)
+  let regions = Tbl.create 16 and by_node = Tbl.create 64 in
+  let views_of = Tbl.create 16 in
+  List.iter
+    (fun s ->
+      let topo = reached rctx s in
+      let r = region topo in
+      Tbl.replace regions s r;
+      Tbl.replace views_of s (lazy (views rctx s topo));
+      List.iter
+        (fun u ->
+          let ss = Option.value (Tbl.find_opt by_node u) ~default:[] in
+          Tbl.replace by_node u (s :: ss))
+        r)
+    stores;
+  (* Whether [a] and [b] read one computed node through different views, as
+     two slices of it are: indexed alike, they would compute none of it
+     once. *)
+  let crossed a b =
+    let va = Lazy.force (Tbl.find views_of a)
+    and vb = Lazy.force (Tbl.find views_of b) in
+    let same us us' =
+      List.for_all (fun u -> List.memq u us') us
+      && List.for_all (fun u -> List.memq u us) us'
+    in
+    Tbl.fold
+      (fun c us found ->
+        found
+        ||
+        match Tbl.find_opt vb c with
+        | Some us' -> not (same us us')
+        | None -> false)
+      va false
+  in
+  (* Each store's backward slice, made once. *)
+  let slices = Tbl.create 16 in
+  let slice s =
+    match Tbl.find_opt slices s with
+    | Some sl -> sl
+    | None ->
+        let sl = backward_slice ~calls:Skip s in
+        Tbl.replace slices s sl;
+        sl
+  in
+  (* The stores each store reads through anything. *)
+  let reads_of = Tbl.create 16 in
+  let read s =
+    match Tbl.find_opt reads_of s with
+    | Some r -> r
+    | None ->
+        let sl = slice s in
+        let r = List.filter (fun t -> Nodes.mem t sl) stores in
+        Tbl.replace reads_of s r;
+        r
+  in
+  (* A group's members, in the order of [stores]: two groups merge by the
+     stores' positions there. *)
+  let position = Tbl.create 16 in
+  List.iteri (fun i s -> Tbl.replace position s i) stores;
+  let rec merge a b =
+    match (a, b) with
+    | [], l | l, [] -> l
+    | x :: a', y :: b' ->
+        if Tbl.find position x < Tbl.find position y then x :: merge a' b
+        else y :: merge a b'
+  in
+  (* Groups by their first store, each store's group by its first store. *)
+  let groups = Tbl.create 16 and first = Tbl.create 16 in
+  List.iter
+    (fun s ->
+      Tbl.replace groups s [ s ];
+      Tbl.replace first s s)
+    stores;
+  (* Whether a store of the group of [fa] reads one of the group of [fb],
+     through anything and the stores of other groups. *)
+  let reaches fa fb =
+    let seen = Tbl.create 8 in
+    let rec go = function
+      | [] -> false
+      | f :: _ when f == fb -> true
+      | f :: rest when Tbl.mem seen f -> go rest
+      | f :: rest ->
+          Tbl.replace seen f ();
+          let next =
+            List.concat_map
+              (fun s -> List.map (Tbl.find first) (read s))
+              (Tbl.find groups f)
+          in
+          go (List.rev_append next rest)
+    in
+    go [ fa ]
+  in
+  let join a b =
+    let fa = Tbl.find first a and fb = Tbl.find first b in
+    if fa != fb then
+      let ga = Tbl.find groups fa and gb = Tbl.find groups fb in
+      if
+        List.for_all
+          (fun s -> List.for_all (joinable regions ~crossed slice s) gb)
+          ga
+        && not (reaches fa fb || reaches fb fa)
+      then begin
+        let members = merge ga gb in
+        let f = List.hd members in
+        Tbl.remove groups fa;
+        Tbl.remove groups fb;
+        Tbl.replace groups f members;
+        List.iter (fun s -> Tbl.replace first s f) members
+      end
+  in
+  List.iter
+    (fun u ->
+      match Tbl.find_opt by_node u with
+      | Some (s :: rest) -> List.iter (join s) rest
+      | _ -> ())
+    topo;
+  Tbl.iter
+    (fun _ members ->
+      if List.length members > 1 then
+        List.iter (fun s -> Tbl.replace rctx.shares s members) members)
+    groups
+
+(* A realized node's loops: new ones, or its group's. *)
+let loops_of rctx x =
+  match Tbl.find_opt rctx.shares x with
+  | None -> new_ranges rctx (shape x)
+  | Some members -> (
+      let f = List.hd members in
+      match Tbl.find_opt rctx.loops f with
+      | Some r -> r
+      | None ->
+          let r = new_ranges rctx (shape x) in
+          Tbl.replace rctx.loops f r;
+          r)
+
 (* Reductions that share their loops
 
    A reduction reduces its source over ranges of its own. Reductions whose
@@ -660,7 +912,7 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
     if Tbl.mem rctx.realize_map x then begin
       ending := [];
       Tbl.replace rctx.realize_map x (Some (List.init (ndim x) Fun.id));
-      Some (new_ranges rctx (shape x))
+      Some (loops_of rctx x)
     end
     else
       match consumer_rngs with
@@ -748,6 +1000,9 @@ let run_rangeify ?(debug = false) tsink =
       broadcast = Tbl.create 8;
       range_map = Tbl.create 256;
       range_idx = 0;
+      shares = Tbl.create 8;
+      loops = Tbl.create 8;
+      ends = Tbl.create 8;
       siblings = [];
       topo = tsink_toposort;
       size = List.length tsink_toposort;
@@ -758,6 +1013,7 @@ let run_rangeify ?(debug = false) tsink =
   ignore
     (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:rctx tsink
        (After_sources pm_generate_realize_map));
+  share_loops rctx tsink_toposort;
   let consumer_map = Tbl.create 256 in
   List.iter (fun x -> Tbl.replace consumer_map x []) tsink_toposort;
   List.iter

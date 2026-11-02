@@ -1432,6 +1432,10 @@ thread.
   `Nx.take`, no longer reads its indices before their buffer and faults: the
   index's simplification under the pad's gate dropped the gate of the loads
   inside it.
+- Stored values of one shape that share a computation, and do not read each
+  other, run as one kernel that writes them all: a compiled `Nx_wide.add`
+  runs one kernel, from six, and computes its chain once. Slices of one
+  computation, stored through two views of it, run as kernels of their own.
 - On the host, a kernel without a reduce computes 64 bytes of elements at
   once as Clang vectors, 16 float32 or 8 float64, and Clang compiles its body
   once: `Nx.erf`, `Nx.erfc`, `Nx.erfinv` and `Nx.ndtri` replay 1.2 to 1.6
