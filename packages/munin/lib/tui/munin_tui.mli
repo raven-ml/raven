@@ -275,9 +275,13 @@ val run : Munin.Store.t -> screen -> (unit, string) result
     and follows the history of each run without an end, with statistics alone,
     and the cursor's run's focus metric while its pane shows. On Run it follows
     the focus's history with every key, and the marked runs' with the keys its
-    charts show. A key kept costs 24 bytes a sample. A history is held while a
-    screen of the stack needs its run, and charts are reduced as polls read, so
-    a key and a frame cost what the screen shows.
+    charts show. A key kept costs 24 bytes a sample. When the cursor leaves an
+    ended run whose pane's chart was drawn from the run's end, that chart is
+    kept and its history is not: the run's log no longer changes, so coming back
+    reads nothing, and the kept charts cost a reduction of the pane's width per
+    row. A change of the focus metric reads them again. A history is held while
+    a screen of the stack needs its run, and charts are reduced as polls read,
+    so a key and a frame cost what the screen shows.
 
     [Error why] if standard input or output is not a terminal, or no run of
     [store] has the id given. *)

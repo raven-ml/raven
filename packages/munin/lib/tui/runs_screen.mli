@@ -43,7 +43,9 @@ val rows : view -> Munin.Run.t list
 val pane_chart : table -> height:int -> Chart.spec option
 (** [pane_chart t ~height] is the chart of the cursor's pane, when it shows. *)
 
-val pane_view : Chart.view
+val pane_request : table -> height:int -> Munin.Run.t -> Data.chart option
+(** [pane_request t ~height r] is the chart of [r]'s pane, when it shows, asked
+    for as kept. *)
 
 val paint :
   table ->

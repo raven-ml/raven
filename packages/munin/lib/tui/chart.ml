@@ -394,9 +394,11 @@ let draw ?cursor ~light p g ~x ~y =
       ( C.Layout.position l "x" (C.Layout.Num px),
         C.Layout.position l "y" (C.Layout.Num py) )
     in
-    (* A letter along a line goes where no other line inks; a line's end
-       letter may also replace another marked run's ink, never the focus's. *)
-    let marked_ink i = List.exists (fun (c, _) -> G.get_fg g i = palette c) levels in
+    (* A letter along a line goes where no other line inks; a line's end letter
+       may also replace another marked run's ink, never the focus's. *)
+    let marked_ink i =
+      List.exists (fun (c, _) -> G.get_fg g i = palette c) levels
+    in
     let letter ?(at_end = false) c (cx, cy) =
       let gx = x + cx and gy = y + 1 + cy in
       if gx >= x && gx < x + width && gy > y && gy <= y + rows then begin

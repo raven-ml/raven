@@ -292,7 +292,13 @@ let grid_fits v ~width ~height =
 let marked_ids v = List.map (fun (l, r) -> (l, Run.id r)) v.marked
 
 let chart_request v spec =
-  { Data.focus = Run.id v.focus; marked = marked_ids v; view = v.chart; spec }
+  {
+    Data.focus = Run.id v.focus;
+    marked = marked_ids v;
+    view = v.chart;
+    spec;
+    kept = false;
+  }
 
 let cursor v =
   let keys = metrics v in

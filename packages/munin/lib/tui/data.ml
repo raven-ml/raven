@@ -21,6 +21,8 @@ type chart = {
   marked : (char * string) list;
   view : Chart.view;
   spec : Chart.spec;
+  kept : bool;
+      (* kept, once its run has ended, after the screen stops asking for it *)
 }
 
 type trend = {
@@ -57,11 +59,14 @@ module Tmap = Map.Make (struct
   let compare = compare
 end)
 
+(* A prepared chart, and whether its focus's history had read the run's end. *)
+type made = { chart : Chart.prepared; whole : bool }
+
 type t = {
   listing : Run.t list;
   entries : entry Smap.t;
   hints : (string * History.key_stats) list Smap.t; (* ended runs' *)
-  charts : Chart.prepared Cmap.t;
+  charts : made Cmap.t;
   trends : Chart.trend Tmap.t;
   cursor : cursor option;
 }
@@ -104,15 +109,20 @@ let word d ~now r =
   let w = Option.map (fun e -> e.watch) (Smap.find_opt (Run.id r) d.entries) in
   Watch.word (Run.status r) w ~now
 
-let chart d (c : chart) =
+let made d (c : chart) =
   match Cmap.find_opt c d.charts with
-  | Some p -> Some p
+  | Some m -> Some m
   | None ->
       Cmap.fold
-        (fun (c' : chart) p acc ->
-          if c'.focus = c.focus && c'.spec.key = c.spec.key then Some p else acc)
+        (fun (c' : chart) m acc ->
+          if c'.focus = c.focus && c'.spec.key = c.spec.key then Some m
+          else acc)
         d.charts None
 
+let chart d c = Option.map (fun m -> m.chart) (made d c)
+
+let whole d c =
+  match Cmap.find_opt c d.charts with Some m -> m.whole | None -> false
 let trend d t = Option.map Chart.text (Tmap.find_opt t d.trends)
 let cursor d = d.cursor
 
@@ -127,7 +137,7 @@ type request = {
   held : entry Smap.t;
   hinted : string list;
   want_charts : chart list;
-  old_charts : Chart.prepared Cmap.t;
+  old_charts : made Cmap.t;
   want_trends : trend list;
   old_trends : Chart.trend Tmap.t;
   want_zoom : zoom option;
@@ -157,7 +167,7 @@ type result = {
   listing : Run.t list option;
   read : (string * History.t * keys * float option * (float * float) list) list;
   hints : (string * (string * History.key_stats) list) list;
-  charts : Chart.prepared Cmap.t;
+  charts : made Cmap.t;
   trends : Chart.trend Tmap.t;
   cursor : cursor option;
   errors : (string * string) list;
@@ -307,12 +317,16 @@ let read store (q : request) =
               c.marked )
         with
         | Some focus, marked -> (
-            let prev = Cmap.find_opt c q.old_charts in
+            let prev =
+              Option.map (fun m -> m.chart) (Cmap.find_opt c q.old_charts)
+            in
             match
               guard c.focus (fun () ->
                   Chart.prepare ?prev c.view c.spec focus marked)
             with
-            | Some p -> Cmap.add c p m
+            | Some chart ->
+                let whole = Run.ended_at (History.run focus) <> None in
+                Cmap.add c { chart; whole } m
             | None -> m)
         | None, _ -> m)
       Cmap.empty q.want_charts
@@ -438,10 +452,29 @@ let apply (d : t) (r : result) =
   let charts =
     List.fold_left
       (fun m c ->
-        match (Cmap.find_opt c r.charts, chart d c) with
+        match (Cmap.find_opt c r.charts, made d c) with
         | Some p, _ | None, Some p -> Cmap.add c p m
         | None, None -> m)
       Cmap.empty r.want_charts
+  in
+  (* An ended run's kept chart stays if it was prepared from the run's whole
+     log, unless a newer one of the run took its place. A chart prepared before
+     the end lacks the samples written after it. *)
+  let ended id =
+    List.exists (fun x -> Run.id x = id && Run.ended_at x <> None) listing
+  in
+  let charts =
+    Cmap.fold
+      (fun (c : chart) p m ->
+        if
+          c.kept && p.whole && ended c.focus
+          && not
+               (Cmap.exists
+                  (fun (c' : chart) _ -> c'.kept && c'.focus = c.focus)
+                  m)
+        then Cmap.add c p m
+        else m)
+      d.charts charts
   in
   let trends =
     List.fold_left

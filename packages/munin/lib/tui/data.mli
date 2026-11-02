@@ -15,8 +15,11 @@
 
    A history stays held while a screen of the stack needs its run and the run is
    in the store, and a poll that does not follow it, or fails to read it, leaves
-   it as it was. Values are immutable: a read never changes the data the loop
-   holds. *)
+   it as it was. A chart asked for as [kept] outlives the request while its run
+   has ended and is in the store, one per run, if its focus's history had read
+   the run's end: an ended run's log never changes, so the chart holds and its
+   history need not. Values are immutable: a read
+   never changes the data the loop holds. *)
 
 type keys =
   | All  (** Every key's samples. *)
@@ -55,6 +58,8 @@ type chart = {
   marked : (char * string) list;
   view : Chart.view;
   spec : Chart.spec;
+  kept : bool;
+      (* kept, once its run has ended, after the screen stops asking for it *)
 }
 
 type trend = {
@@ -104,6 +109,10 @@ val errors : result -> (string * string) list
 val chart : t -> chart -> Chart.prepared option
 (** [chart d c] is the chart [c] as last prepared, else one prepared of the same
     runs and metric for another region or view. *)
+
+val whole : t -> chart -> bool
+(** [whole d c] is [true] iff [c] was prepared for its region and view from a
+    history of its focus that had read the run's end. *)
 
 val trend : t -> trend -> string option
 

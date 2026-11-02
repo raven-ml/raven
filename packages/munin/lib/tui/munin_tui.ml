@@ -116,10 +116,13 @@ let needs m kind =
           if Run.ended_at r = None then Some (Run.id r, Data.Keys []) else None)
         (Data.listing m.data)
       @
-      match
-        (m.cursor, m.metric, Runs_screen.pane_chart m.table ~height:m.height)
-      with
-      | Some id, Some key, Some _ -> [ (id, Data.Keys [ key ]) ]
+      (* The cursor's run, unless its pane's chart holds the run's end. *)
+      match (Option.bind m.cursor (Data.run m.data), m.metric) with
+      | Some r, Some key -> (
+          match Runs_screen.pane_request m.table ~height:m.height r with
+          | Some c when not (Data.whole m.data c) ->
+              [ (Run.id r, Data.Keys [ key ]) ]
+          | _ -> [])
       | _ -> [])
   | Run_k | Zoom_k -> (
       match focus_view m with
@@ -145,19 +148,13 @@ let request m =
         Run_screen.requests v ~width:m.width ~height:m.height
           ~zoom:(shown = Zoom_k)
     | Runs_k, _ -> (
-        match (m.cursor, Runs_screen.pane_chart m.table ~height:m.height) with
-        | Some id, Some spec ->
-            ( [
-                {
-                  Data.focus = id;
-                  marked = [];
-                  view = Runs_screen.pane_view;
-                  spec;
-                };
-              ],
+        match Option.bind m.cursor (Data.run m.data) with
+        | Some r ->
+            ( Option.to_list
+                (Runs_screen.pane_request m.table ~height:m.height r),
               [],
               None )
-        | _ -> ([], [], None))
+        | None -> ([], [], None))
     | _ -> ([], [], None)
   in
   let list = shown = Runs_k || Data.listing m.data = [] || m.waiting in

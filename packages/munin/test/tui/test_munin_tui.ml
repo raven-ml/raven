@@ -974,6 +974,84 @@ let held =
       in
       equal string "live" word)
 
+(* The cursor leaves an ended run and comes back: the pane's chart was kept, so
+   the dashboard reads nothing of the run, and the log moved away meanwhile is
+   never missed. Any fold of it would fail and name the run. *)
+let kept_pane =
+  test "a cursor back on an ended run reads nothing of it" (fun () ->
+      with_store Fixture.runs @@ fun store ->
+      let log =
+        Filename.concat
+          (Run.dir (Option.get (Store.run store (id_of Fixture.amber_fox))))
+          "events.jsonl"
+      in
+      let term = T.Terminal.create ~cols:160 ~rows:48 () in
+      (elapsed := fun () -> 0);
+      let app = Munin_tui.app ~clock store Munin_tui.Runs in
+      let screen =
+        Mosaic_test.run term app @@ fun s ->
+        (elapsed := fun () -> T.now s);
+        T.advance s second;
+        List.iter
+          (fun k ->
+            send term s k;
+            T.advance s second)
+          [ char 'j'; char 'j' ];
+        (* tidy-otter, amber-fox, brisk-wren: the cursor left amber-fox. *)
+        Sys.rename log (log ^ ".away");
+        List.iter
+          (fun k ->
+            send term s k;
+            T.advance s second)
+          [ char 'k' ];
+        T.advance s (3 * second);
+        T.Terminal.screen term
+      in
+      Sys.rename (log ^ ".away") log;
+      equal (list (pair int int)) [] (T.Screen.find screen "cannot read");
+      equal bool true (T.Screen.find screen "over steps" <> []);
+      equal bool true (T.Screen.find screen "▸ finished  amber-fox" <> []))
+
+(* A run logs its last samples and ends after its pane's chart was prepared,
+   and the cursor leaves it before a poll reads them: coming back draws them,
+   since a chart prepared before the end is not kept. *)
+let ended_away =
+  test "a cursor back on a run that ended away draws its last samples"
+    (fun () ->
+      with_store Fixture.runs @@ fun store ->
+      let s =
+        Session.start ~store ~experiment:"late" ~name:"late-end" ~steps:100
+          ~provenance:(Provenance.detect ~cwd:home ())
+          ()
+      in
+      let loss = Session.metric s ~goal:`Minimize "train/loss" in
+      for step = 1 to 50 do
+        Session.log loss ~step 1.0
+      done;
+      let term = T.Terminal.create ~cols:160 ~rows:48 () in
+      (elapsed := fun () -> 0);
+      let app = Munin_tui.app ~clock store Munin_tui.Runs in
+      let screen =
+        Mosaic_test.run term app @@ fun t ->
+        (elapsed := fun () -> T.now t);
+        T.advance t second;
+        for step = 51 to 100 do
+          Session.log loss ~step 9.0
+        done;
+        Session.finish s;
+        (* late-end, the newest run, is the first row: the cursor leaves it
+           before a poll reads its last samples. *)
+        send term t (char 'j');
+        T.advance t (2 * second);
+        send term t (char 'k');
+        T.advance t (3 * second);
+        T.Terminal.screen term
+      in
+      (* The first 50 samples, all 1, span a y axis from 0.95 to 1.05; the last
+         50, all 9, stretch it past a tick at 7.5. *)
+      equal bool true (T.Screen.find screen "7.5 ┤" <> []);
+      equal bool true (T.Screen.find screen "▸ finished  late-end" <> []))
+
 (* The state words, against a model of the arrivals a dashboard times. *)
 type arrivals = {
   now : float;
@@ -1208,6 +1286,6 @@ let () =
            ];
          group "runs" [ filter; stars; metric_filter ];
          group "run" [ non_finite_count; all_orphans ];
-         group "held" [ held; watch_test ];
+         group "held" [ held; kept_pane; ended_away; watch_test ];
          stack_test;
        ])

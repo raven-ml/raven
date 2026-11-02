@@ -457,6 +457,20 @@ let pane_chart t ~height =
 
 let pane_view = { Chart.axis = Step; smooth = 0; log = false; window = None }
 
+(* The pane's chart of an ended run is kept when the cursor leaves it, so that
+   coming back reads nothing. *)
+let pane_request t ~height r =
+  Option.map
+    (fun spec ->
+      {
+        Data.focus = Run.id r;
+        marked = [];
+        view = pane_view;
+        spec;
+        kept = true;
+      })
+    (pane_chart t ~height)
+
 let pane t r g ~y ~height ~screen ~light =
   let v = t.view in
   let width = t.width in
@@ -519,9 +533,9 @@ let pane t r g ~y ~height ~screen ~light =
   List.iteri
     (fun i l -> if i < height then Paint.text g ~x:0 ~y:(y + i) ~w:half l)
     (left @ metric_rows);
-  match pane_chart t ~height:screen with
-  | Some spec -> (
-      let c = { Data.focus = Run.id r; marked = []; view = pane_view; spec } in
+  match pane_request t ~height:screen r with
+  | Some c -> (
+      let spec = c.spec in
       match Data.chart d c with
       | Some p ->
           Paint.text g ~x:(half + 2) ~y ~w:half (spec.key ^ " over steps");
