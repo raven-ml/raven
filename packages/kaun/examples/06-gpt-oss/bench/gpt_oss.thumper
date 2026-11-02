@@ -21,5 +21,11 @@ GptOss/experts-at-prefill-512	alloc_words	batch=1	n=11	1.362e+03	1.362e+03 1.362
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
 
+GptOss/decode-step-Q8_0-cache-1024	alloc_words	exact	124236
+GptOss/decode-step-Q8_0-cache-1024	wall_time	batch=1	n=20	2.449e-02	2.140e-02 2.232e-02 2.258e-02 2.390e-02 2.424e-02 2.443e-02 2.445e-02 2.446e-02 2.446e-02 2.448e-02 2.451e-02 2.451e-02 2.452e-02 2.454e-02 2.456e-02 2.485e-02 2.486e-02 2.496e-02 2.498e-02 2.498e-02
+GptOss/decode-step-cache-1024	alloc_words	batch=1	n=20	1.214e+05	1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.214e+05 1.215e+05 1.216e+05 1.216e+05 1.217e+05 1.217e+05
+GptOss/decode-step-cache-1024	wall_time	batch=1	n=20	2.030e-02	1.991e-02 2.019e-02 2.024e-02 2.026e-02 2.027e-02 2.027e-02 2.028e-02 2.029e-02 2.029e-02 2.029e-02 2.030e-02 2.031e-02 2.032e-02 2.034e-02 2.037e-02 2.047e-02 2.049e-02 2.054e-02 2.058e-02 2.066e-02
 GptOss/experts-at-prefill-512	alloc_words	exact	1325
-GptOss/experts-at-prefill-512	wall_time	batch=1	n=20	5.529e-02	5.164e-02 5.223e-02 5.269e-02 5.359e-02 5.445e-02 5.526e-02 5.526e-02 5.527e-02 5.528e-02 5.528e-02 5.531e-02 5.533e-02 5.533e-02 5.534e-02 5.534e-02 5.535e-02 5.536e-02 5.536e-02 5.540e-02 5.542e-02
+GptOss/experts-at-prefill-512	wall_time	batch=1	n=20	5.561e-02	5.537e-02 5.539e-02 5.539e-02 5.539e-02 5.540e-02 5.544e-02 5.548e-02 5.551e-02 5.553e-02 5.558e-02 5.563e-02 5.584e-02 5.637e-02 5.697e-02 5.758e-02 5.822e-02 5.931e-02 6.106e-02 6.317e-02 6.331e-02
+GptOss/prefill-512	alloc_words	exact	121275
+GptOss/prefill-512	wall_time	batch=1	n=20	1.607e+00	1.605e+00 1.605e+00 1.606e+00 1.606e+00 1.606e+00 1.606e+00 1.607e+00 1.607e+00 1.607e+00 1.607e+00 1.607e+00 1.608e+00 1.608e+00 1.608e+00 1.609e+00 1.609e+00 1.609e+00 1.609e+00 1.610e+00 1.610e+00
