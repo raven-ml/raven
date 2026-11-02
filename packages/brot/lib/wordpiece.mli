@@ -27,6 +27,7 @@ val create :
   ?unk_token:string ->
   ?continuing_subword_prefix:string ->
   ?max_input_chars_per_word:int ->
+  ?cache_capacity:int ->
   unit ->
   t
 (** [create ~vocab ()] is a WordPiece model backed by [vocab].
@@ -38,6 +39,9 @@ val create :
     - [max_input_chars_per_word] is the UTF-8 character count above which a word
       is replaced by [unk_token] without attempting decomposition. Defaults to
       [100].
+    - [cache_capacity] is the most entries of the pretoken cache each domain
+      keeps for the model (see {!Pretoken_cache.create}); [0] disables it.
+      Defaults to {!Pretoken_cache.default_capacity}.
 
     Raises [Invalid_argument] if [unk_token] is not in [vocab]. *)
 
@@ -69,6 +73,17 @@ val len_table : t -> int array
     accounts for when it is a match of its entry: the entry stripped of the
     continuation prefix. The unknown token spent on a word stands for the word,
     which {!encode_into} records. Owned by [t]; do not mutate. *)
+
+val encoder_slot : t -> Pretoken_cache.encoder Pretoken_cache.slot
+(** [encoder_slot t] is the calling domain's slot of {!encode_into} through a
+    pretoken cache of [create]'s [cache_capacity] entries. *)
+
+val uncached : t -> Pretoken_cache.encoder
+(** [uncached t] is {!encode_into} [t], for a thread that cannot claim the
+    slot. *)
+
+val cache_capacity : t -> int
+(** [cache_capacity t] is [create]'s [cache_capacity]. *)
 
 (** {1:vocabulary Vocabulary} *)
 

@@ -179,13 +179,30 @@ let alg_len_table = function
   | Alg_unigram m -> Unigram.len_table m
   | Alg_chars m -> Chars.len_table m
 
+(* [f] given the encoder in [slot], claimed for the duration of [f] and given
+   back even when [f] raises, or [spare model] when another thread of the
+   domain holds it. Nothing is allocated on the way. *)
+let with_encoder (slot : Pretoken_cache.encoder Pretoken_cache.slot) spare model
+    f =
+  if not (Pretoken_cache.take slot) then f (spare model) None
+  else
+    match f slot.value None with
+    | v ->
+        Pretoken_cache.give slot;
+        v
+    | exception e ->
+        let backtrace = Printexc.get_raw_backtrace () in
+        Pretoken_cache.give slot;
+        Printexc.raise_with_backtrace e backtrace
+
 (* The model's span encoder for a document. A BPE model's merge buffers and
    pretoken cache are claimed once for the document rather than once per span,
    and the closure keeps the dispatch out of the span loop. A fused BPE also
    hands out its walking encoder, which cuts and encodes in one pass. Handed a
    batch sink, a BPE's encoders write the kernels' ids into it and treat the ids
    buffer they are given as the spill; the others keep writing to that buffer,
-   which the batch driver flushes at document end either way. *)
+   which the batch driver flushes at document end either way. A WordPiece or
+   Unigram model's cached encoder is claimed the same way. *)
 let with_span_encoder t ?ids32 f =
   match t.algorithm with
   | Alg_bpe m ->
@@ -202,10 +219,10 @@ let with_span_encoder t ?ids32 f =
                 (Option.map
                    (fun walker -> Bpe.encode_walk m st ~walker)
                    t.fused))
-  | Alg_wordpiece m -> f (Wordpiece.encode_into m) None
+  | Alg_wordpiece m ->
+      with_encoder (Wordpiece.encoder_slot m) Wordpiece.uncached m f
   | Alg_wordlevel m -> f (Word_level.encode_into m) None
-  | Alg_unigram m ->
-      Unigram.with_state (fun st -> f (Unigram.encode_into m st) None)
+  | Alg_unigram m -> with_encoder (Unigram.encoder_slot m) Unigram.uncached m f
   | Alg_chars m -> f (Chars.encode_into m) None
 
 let alg_name = function
@@ -485,14 +502,14 @@ let bpe ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
 
 let wordpiece ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token ?vocab ?continuing_subword_prefix
-    ?max_input_chars_per_word () =
+    ?max_input_chars_per_word ?cache_capacity () =
   let vocab_tbl =
     match vocab with None -> Hashtbl.create 100 | Some v -> vocab_to_hashtbl v
   in
   let algorithm =
     Alg_wordpiece
       (Wordpiece.create ~vocab:vocab_tbl ?unk_token ?continuing_subword_prefix
-         ?max_input_chars_per_word ())
+         ?max_input_chars_per_word ?cache_capacity ())
   in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token algorithm
@@ -507,7 +524,7 @@ let word_level ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?pad_token ?unk_token algorithm
 
 let unigram ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
-    ?pad_token ?unk_token ?vocab ?unk_id ?byte_fallback () =
+    ?pad_token ?unk_token ?vocab ?unk_id ?byte_fallback ?cache_capacity () =
   let vocab = Option.value vocab ~default:[] in
   let unk_id =
     match unk_id with
@@ -516,7 +533,9 @@ let unigram ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
         Option.bind unk_token (fun unk ->
             List.find_index (fun (token, _) -> token = unk) vocab)
   in
-  let algorithm = Alg_unigram (Unigram.create ?unk_id ?byte_fallback vocab) in
+  let algorithm =
+    Alg_unigram (Unigram.create ?unk_id ?byte_fallback ?cache_capacity vocab)
+  in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token algorithm
 
@@ -2102,3 +2121,23 @@ let pp ppf t =
     (alg_vocab_size t.algorithm)
     (yes_no t.normalizer) (yes_no t.pre_tokenizer) (yes_no t.post_processor)
     (yes_no t.decoder)
+
+(* Testing *)
+
+let hold_cache t f =
+  let hold slot =
+    if not (Pretoken_cache.take slot) then f ()
+    else
+      match f () with
+      | v ->
+          Pretoken_cache.give slot;
+          v
+      | exception e ->
+          let backtrace = Printexc.get_raw_backtrace () in
+          Pretoken_cache.give slot;
+          Printexc.raise_with_backtrace e backtrace
+  in
+  match t.algorithm with
+  | Alg_wordpiece m -> hold (Wordpiece.encoder_slot m)
+  | Alg_unigram m -> hold (Unigram.encoder_slot m)
+  | Alg_bpe _ | Alg_wordlevel _ | Alg_chars _ -> f ()

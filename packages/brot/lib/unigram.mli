@@ -21,7 +21,12 @@ type t
 
 (** {1:creation Creation} *)
 
-val create : ?unk_id:int -> ?byte_fallback:bool -> (string * float) list -> t
+val create :
+  ?unk_id:int ->
+  ?byte_fallback:bool ->
+  ?cache_capacity:int ->
+  (string * float) list ->
+  t
 (** [create vocab] is a unigram model from [(token, log_probability)] pairs,
     identified by their position in the list. The trie is built at creation
     time.
@@ -33,7 +38,10 @@ val create : ?unk_id:int -> ?byte_fallback:bool -> (string * float) list -> t
       identifier of an entry. No default.
     - [byte_fallback], when [true], spells such a run out as byte tokens (e.g.
       ["<0xFF>"]) when the vocabulary holds one for every byte of it, and falls
-      back to the unknown token when it does not. Defaults to [false]. *)
+      back to the unknown token when it does not. Defaults to [false].
+    - [cache_capacity] is the most entries of the pretoken cache each domain
+      keeps for the model (see {!Pretoken_cache.create}); [0] disables it.
+      Defaults to {!Pretoken_cache.default_capacity}. *)
 
 (** {1:tokenization Tokenization} *)
 
@@ -41,12 +49,6 @@ type state
 (** The type for encoding scratch: the arrays a pretoken's best path is worked
     out in. A state has a single writer, so it is never shared; it grows to the
     longest pretoken it is asked for and keeps the room. *)
-
-val with_state : (state -> 'a) -> 'a
-(** [with_state f] is [f st] for a state [st] held for the duration of the call,
-    and released even if [f] raises. The calling domain has one, built when it
-    first asks; a thread that finds it already held gets a state of its own.
-    [st] must not escape [f]. *)
 
 val encode_into :
   t -> state -> Ints.t -> opaque:Ints.t -> string -> pos:int -> len:int -> unit
@@ -71,6 +73,18 @@ val len_table : t -> int array
     accounts for when it is a match of its entry: the entry's length. The tokens
     spent on a run no entry covers stand for the run instead, which
     {!encode_into} records. Owned by [t]; do not mutate. *)
+
+val encoder_slot : t -> Pretoken_cache.encoder Pretoken_cache.slot
+(** [encoder_slot t] is the calling domain's slot of {!encode_into} through a
+    pretoken cache of [create]'s [cache_capacity] entries, with a state of its
+    own. *)
+
+val uncached : t -> Pretoken_cache.encoder
+(** [uncached t] is {!encode_into} on a fresh state, for a thread that cannot
+    claim the slot. *)
+
+val cache_capacity : t -> int
+(** [cache_capacity t] is [create]'s [cache_capacity]. *)
 
 (** {1:vocabulary Vocabulary} *)
 

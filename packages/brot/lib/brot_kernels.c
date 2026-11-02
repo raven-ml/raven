@@ -12,7 +12,8 @@
    15 bytes, a byte or character without a vocabulary id, a model whose
    misses may not be merged here, and a merge whose result stands for other
    bytes than its entry's. The OCaml implementations in pre_tokenizer.ml,
-   char_class.ml and bpe.ml are the reference; every function here mirrors
+   char_class.ml, bpe.ml and pretoken_cache.ml are the reference; every
+   function here mirrors
    one there by name, and the native-vs-bytecode dump differential holds the
    two together.
 
@@ -100,6 +101,17 @@ static inline uint64_t load64(const void *p)
 }
 
 static inline void store64(void *p, uint64_t w) { memcpy(p, &w, 8); }
+
+/* Eight bytes in little-endian order, the first lowest: a cache key holds the
+   same bytes on every machine, as Pretoken_cache's keys do. */
+static inline uint64_t load64le(const void *p)
+{
+  uint64_t w = load64(p);
+#ifdef ARCH_BIG_ENDIAN
+  w = __builtin_bswap64(w);
+#endif
+  return w;
+}
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <intrin.h>
@@ -1031,10 +1043,10 @@ static intnat mask_next_span(mask_state *ms, walker *w, intnat i)
   }
 }
 
-/* The cache probe — Bpe.key0/key1/hash_of, the direct-mapped front table and
-   the two-way layout of the 64-byte back set, bit for bit: every word is
-   loaded and stored native-endian, so the table OCaml writes and the table
-   written here are one format. A key
+/* The cache probe — Pretoken_cache.key0/key1/hash_of, the direct-mapped front
+   table and the two-way layout of the 64-byte back set, bit for bit: keys are
+   built from little-endian loads and every word is stored native-endian, so
+   the table OCaml writes and the table written here are one format. A key
    word is one eight-byte read masked to the bytes it keeps; a pretoken
    ending within eight bytes of the end of the text reads the last eight
    bytes shifted down, and a text shorter than eight bytes gathers bytes one
@@ -1046,9 +1058,9 @@ static inline uint64_t key_word0(const unsigned char *s, intnat n, intnat pos,
 {
   uint64_t w;
   if (pos + 8 <= n)
-    w = load64(s + pos);
+    w = load64le(s + pos);
   else if (n >= 8)
-    w = load64(s + n - 8) >> ((pos - n + 8) * 8);
+    w = load64le(s + n - 8) >> ((pos - n + 8) * 8);
   else {
     intnat k;
     w = 0;
@@ -1065,21 +1077,22 @@ static inline uint64_t key_word1(const unsigned char *s, intnat n, intnat pos,
   uint64_t w;
   if (len <= 8) return tag;
   if (pos + 16 <= n)
-    w = load64(s + pos + 8);
+    w = load64le(s + pos + 8);
   else
-    w = load64(s + n - 8) >> ((pos + 16 - n) * 8);
+    w = load64le(s + n - 8) >> ((pos + 16 - n) * 8);
   return tag | (w & ((1ULL << (8 * (len - 8))) - 1));
 }
 
-/* Bpe.hash_of: OCaml truncates the shifted hash to 63 bits; only 40 bits are
-   set after the shift, so the two agree. The back set and front slot byte
-   offsets are Bpe.set_at and Bpe.front_at on this one hash. */
+/* Pretoken_cache.hash_of: OCaml truncates the shifted hash to 63 bits; only
+   40 bits are set after the shift, so the two agree. The back set and front
+   slot byte offsets are Pretoken_cache.set_at and front_at on this one
+   hash. */
 static inline uint64_t hash_of(uint64_t k0, uint64_t k1)
 {
   return ((k0 ^ (k1 * 0x9E3779B97F4A7C15ULL)) * 0xD6E8FEB86659FD93ULL) >> 24;
 }
 
-/* The hit test of Bpe.encode_into on the back table: way 0 then way 1.
+/* The hit test of Pretoken_cache.encode on the back table: way 0 then way 1.
    Returns the byte offset of the way, or -1. */
 static inline intnat probe(const unsigned char *tbl, intnat set, uint64_t k0,
                            uint64_t k1)
@@ -1090,9 +1103,9 @@ static inline intnat probe(const unsigned char *tbl, intnat set, uint64_t k0,
   return -1;
 }
 
-/* Bpe.store, in the same order: way 0 shifts into way 1 and the new entry
-   fills way 0, values first, then k1, then k0, so a read torn by anything at
-   all comes out a miss rather than a wrong hit. */
+/* Pretoken_cache.store_at, in the same order: way 0 shifts into way 1 and the
+   new entry fills way 0, values first, then k1, then k0, so a read torn by
+   anything at all comes out a miss rather than a wrong hit. */
 static void cache_store(unsigned char *tbl, intnat set, uint64_t k0,
                         uint64_t k1, uint64_t v0, uint64_t v1)
 {
@@ -1106,7 +1119,7 @@ static void cache_store(unsigned char *tbl, intnat set, uint64_t k0,
   store64(tbl + set, k0);
 }
 
-/* Bpe.promote: a back-table hit is written into its front slot, in
+/* Pretoken_cache.promote: a back-table hit is written into its front slot, in
    cache_store's publish order. */
 static inline void front_store(unsigned char *front, intnat fslot, uint64_t k0,
                                uint64_t k1, uint64_t v0, uint64_t v1)
@@ -1117,7 +1130,7 @@ static inline void front_store(unsigned char *front, intnat fslot, uint64_t k0,
   store64(front + fslot, k0);
 }
 
-/* Bpe.add_cached: a hit's four lanes are stored unconditionally, as
+/* Pretoken_cache.add_lanes: a hit's four lanes are stored unconditionally, as
    Ints.add4 does; the returned count advances the id cursor. */
 static inline intnat emit_lanes(value *lane, uint64_t v0, uint64_t v1)
 {
@@ -1397,8 +1410,9 @@ static value byte_level_encode_impl(value text, value vpos, value vstop,
             for (k = 0; k < m; k++)
               if (ids15[k] >= 1 << 24) fits = 0;
             if (fits) {
-              /* Bpe.value_lo/value_hi: two 24-bit lanes per word, the count
-                 in bits 24..31 of the first, absent lanes zero. */
+              /* Pretoken_cache.value_lo/value_hi: two 24-bit lanes per
+                 word, the count in bits 24..31 of the first, absent lanes
+                 zero. */
               uint64_t v0 = (uint64_t)ids15[0] | ((uint64_t)m << 24)
                             | (m > 1 ? (uint64_t)ids15[1] << 32 : 0);
               uint64_t v1 = (m > 2 ? (uint64_t)ids15[2] : 0)
@@ -1753,8 +1767,9 @@ static value sp_encode_impl(value text, value vpos, value vstop, value vids,
             for (k = 0; k < m; k++)
               if (ids15[k] >= 1 << 24) fits = 0;
             if (fits) {
-              /* Bpe.value_lo/value_hi: two 24-bit lanes per word, the count
-                 in bits 24..31 of the first, absent lanes zero. */
+              /* Pretoken_cache.value_lo/value_hi: two 24-bit lanes per
+                 word, the count in bits 24..31 of the first, absent lanes
+                 zero. */
               uint64_t v0 = (uint64_t)ids15[0] | ((uint64_t)m << 24)
                             | (m > 1 ? (uint64_t)ids15[1] << 32 : 0);
               uint64_t v1 = (m > 2 ? (uint64_t)ids15[2] : 0)

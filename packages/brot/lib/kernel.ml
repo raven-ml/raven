@@ -8,7 +8,8 @@ let available = Sys.backend_type = Sys.Native
 (* ABI pins, mirrored in brot_kernels.c — change neither without the other: the
    [byte_level] field order is the C [BROT_BL_*] enum, the [reason] constructor
    order the [BROT_*] enum, and the cursor offsets the [CUR_*] enum. The cache
-   entry layout is pinned in bpe.ml, the span word layout in spans.ml. *)
+   entry layout is pinned in pretoken_cache.mli, the span word layout in
+   spans.ml. *)
 
 type byte_level = {
   lead : Bytes.t; (* 0: BROT_BL_LEAD *)

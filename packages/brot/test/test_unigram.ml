@@ -233,6 +233,67 @@ let test_json_round_trip () =
   equal ~msg:"model json" (result string string)
     (Ok {|{"type":"Unigram","unk_id":0,"byte_fallback":true}|}) model_text
 
+(* Pretoken cache. A word answered from the cache is encoded as it was the
+   first time, unknown characters and byte fallback included, and as it is with
+   no cache: the first round meets each word cold, the second finds all of
+   them. *)
+
+let cache_words =
+  [ "a"; "abc"; "bca"; "cab"; "\u{e9}"; "a\u{e9}"; "q"; "aq";
+    "abcabcabcabcabca"; "\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}";
+    "\xff" ]
+[@@ocamlformat "disable"]
+
+let cache_text =
+  let open Gen in
+  map (String.concat " ") (list ~size:(int_range 0 20) (of_list cache_words))
+
+let cache_props =
+  [
+    prop ~count:200 "cache: a word seen before is encoded as it was"
+      (Gen.pair cache_text Gen.bool) (fun (text, byte_fallback) ->
+        let vocab =
+          overlapping @ [ ("\u{e9}", -1.0) ]
+          @ List.init 256 (fun b -> (Printf.sprintf "<0x%02X>" b, -10.0))
+        in
+        let make ?cache_capacity () =
+          unigram ~vocab ~unk_id:0 ~byte_fallback ?cache_capacity
+            ~pre:Pre_tokenizer.whitespace_split ()
+        in
+        let t = make () in
+        let encoding ?(t = t) () =
+          let e = encode t text in
+          List.combine
+            (Array.to_list (Encoding.ids e))
+            (Array.to_list (Encoding.offsets e))
+        in
+        let cold = encoding () in
+        equal ~msg:(Printf.sprintf "%S" text)
+          (list (pair int (pair int int)))
+          cold (encoding ());
+        equal ~msg:(Printf.sprintf "%S without a cache" text)
+          (list (pair int (pair int int)))
+          cold
+          (encoding ~t:(make ~cache_capacity:0 ()) ());
+        equal ~msg:(Printf.sprintf "%S ids" text) (list int) (List.map fst cold)
+          (Array.to_list (encode_ids t text)));
+    (* A thread that finds the domain's cache held encodes without it. *)
+    test "cache: held by another thread" (fun () ->
+        let vocab = overlapping @ [ ("\u{e9}", -1.0) ] in
+        let make ?cache_capacity () =
+          unigram ~vocab ~unk_id:0 ?cache_capacity
+            ~pre:Pre_tokenizer.whitespace_split ()
+        in
+        let t = make () in
+        let text = "abc bca abc q a\u{e9} abc" in
+        let expected = encode_ids (make ~cache_capacity:0 ()) text in
+        let ids = ref [||] in
+        hold_cache t (fun () ->
+            Thread.join (Thread.create (fun () -> ids := encode_ids t text) ()));
+        equal ~msg:"while held" (array int) expected !ids;
+        equal ~msg:"after" (array int) expected (encode_ids t text));
+  ]
+
 let () =
   exit
     (run "Unigram tests"
@@ -257,4 +318,5 @@ let () =
                test_unk_id_outside_the_vocabulary;
              test "JSON round trip" test_json_round_trip;
            ];
+         group "cache" cache_props;
        ])

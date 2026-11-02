@@ -1043,6 +1043,7 @@ val wordpiece :
   ?vocab:(string * int) list ->
   ?continuing_subword_prefix:string ->
   ?max_input_chars_per_word:int ->
+  ?cache_capacity:int ->
   unit ->
   t
 (** [wordpiece ()] is a WordPiece tokenizer. Used by BERT, DistilBERT, Electra.
@@ -1057,6 +1058,14 @@ val wordpiece :
       ["##"].
     - [max_input_chars_per_word]: words longer than this are replaced with
       [unk_token]. Default: [100].
+    - [cache_capacity]: the most entries of the pretoken cache, which keeps
+      the ids of pretokens of up to 15 bytes so that one seen before is not
+      encoded again. Each domain that encodes with the tokenizer keeps a cache
+      of its own: it starts at 144 KB, doubles as it fills up to 128 KB plus
+      32 bytes per entry, and stays with the domain after the tokenizer is
+      dropped, and keeps the model with it, until the domain has begun
+      encoding with eight other models of its kind or ends. [0] disables it.
+      Default: [262144] (8 MB at most).
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
@@ -1101,6 +1110,7 @@ val unigram :
   ?vocab:(string * float) list ->
   ?unk_id:int ->
   ?byte_fallback:bool ->
+  ?cache_capacity:int ->
   unit ->
   t
 (** [unigram ()] is a Unigram tokenizer. Used by AlBERT, T5, mBART.
@@ -1122,6 +1132,14 @@ val unigram :
       vocabulary holds one for every byte of it. Default: [false].
     - [unk_token]: the role marker, and the model's unknown entry when [vocab]
       holds it and [unk_id] is not given. Default: none.
+    - [cache_capacity]: the most entries of the pretoken cache, which keeps
+      the ids of pretokens of up to 15 bytes so that one seen before is not
+      encoded again. Each domain that encodes with the tokenizer keeps a cache
+      of its own: it starts at 144 KB, doubles as it fills up to 128 KB plus
+      32 bytes per entry, and stays with the domain after the tokenizer is
+      dropped, and keeps the model with it, until the domain has begun
+      encoding with eight other models of its kind or ends. [0] disables it.
+      Default: [262144] (8 MB at most).
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
@@ -1643,3 +1661,11 @@ val save_pretrained : t -> path:string -> unit
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a tokenizer for inspection. Shows algorithm type, vocabulary
     size, and configured pipeline stages. *)
+
+(**/**)
+
+val hold_cache : t -> (unit -> 'a) -> 'a
+(** [hold_cache t f] is [f ()] while the calling domain's pretoken cache of
+    [t]'s WordPiece or Unigram model is held, so that what the domain encodes
+    with [t] meanwhile takes the path of a thread that finds it held. For
+    tests. *)

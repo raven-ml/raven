@@ -43,7 +43,7 @@
   ; Downloaded by bench/download_data.sh; a missing tokenizer is skipped
   ; unless BROT_REQUIRE_FIXTURES is set.
   (glob_files %{project_root}/packages/brot/bench/data/*.json))
- (libraries brot fixture windtrap unix jsont jsont.bytesrw))
+ (libraries brot fixture windtrap unix threads.posix jsont jsont.bytesrw))
 
 ; These two suites run twice: the native binary exercises the C kernels, the
 ; byte_complete one (stubs linked statically; a plain .bc could not find them)

@@ -135,6 +135,8 @@ let[@inline] trie_step trie node byte =
 (* Model type *)
 
 type t = {
+  stamp : int;
+  cache_capacity : int;
   vocab : (string, int) Hashtbl.t;
   vocab_r : string array;
   (* How many bytes of a word an id accounts for: the entry, stripped of the
@@ -149,7 +151,8 @@ type t = {
 }
 
 let create ~vocab ?(unk_token = "[UNK]") ?(continuing_subword_prefix = "##")
-    ?(max_input_chars_per_word = 100) () =
+    ?(max_input_chars_per_word = 100)
+    ?(cache_capacity = Pretoken_cache.default_capacity) () =
   let max_id = Hashtbl.fold (fun _ id acc -> max id acc) vocab (-1) in
   let vocab_r = Array.make (max_id + 1) "" in
   Hashtbl.iter (fun k v -> Array.unsafe_set vocab_r v k) vocab;
@@ -172,6 +175,8 @@ let create ~vocab ?(unk_token = "[UNK]") ?(continuing_subword_prefix = "##")
   in
   let trie = build_trie vocab in
   {
+    stamp = Pretoken_cache.stamp ();
+    cache_capacity;
     vocab;
     vocab_r;
     len_table;
@@ -280,6 +285,21 @@ let encode_into model ids ~opaque text ~pos ~len =
       end
     end
   end
+
+(* A domain's cached encoder of a model, made once with its cache. *)
+let encoders : Pretoken_cache.encoder Pretoken_cache.registry =
+  Pretoken_cache.registry ()
+
+let cached_encoder model =
+  Pretoken_cache.cached
+    (Pretoken_cache.create model.cache_capacity)
+    ~len_table:model.len_table (encode_into model)
+
+let encoder_slot model =
+  Pretoken_cache.slot encoders ~stamp:model.stamp cached_encoder model
+
+let uncached model = encode_into model
+let cache_capacity model = model.cache_capacity
 
 let token_table model = model.vocab_r
 let len_table model = model.len_table

@@ -2372,6 +2372,14 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- WordPiece and Unigram tokenizers keep a pretoken cache per domain, as BPE
+  ones do, so a word seen before is not cut again: about a fifth fewer
+  instructions for BERT-base and T5-base on OpenWebText. The cache starts at
+  144 KB and grows to `~cache_capacity` entries (`wordpiece`, `unigram`;
+  default 262144, 8 MB; 0 disables it).
+- Added tokens that match the same text, such as two normalized ones whose
+  contents normalize alike, are refused with `Invalid_argument`, as Hugging
+  Face refuses them; the last of them used to win.
 - `Normalizer.replace` with a one-byte pattern, the Bert normalizer and the
   Bert pre-tokenizer go through ASCII text eight bytes or a run at a time:
   SentencePiece's `▁` rewrite costs a quarter of what it did, and BERT-base

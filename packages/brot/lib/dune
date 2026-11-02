@@ -22,6 +22,7 @@
   normalizer
   post_processor
   pre_tokenizer
+  pretoken_cache
   regex
   run
   script_data

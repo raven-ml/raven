@@ -193,145 +193,12 @@ module Merge_queue = struct
     end
 end
 
-(* Pretoken cache.
+(* The pretoken cache: see {!Pretoken_cache}. *)
 
-   Two levels sharing one 32-byte entry layout. The front table is small,
-   direct-mapped and probed first: pretoken frequency is Zipfian, so a few
-   thousand distinct pretokens answer most probes from a table that stays cache
-   resident where the back table's megabytes cannot. The back table is two-way
-   set-associative: 64-byte sets of two 32-byte ways, a pretoken hashes to
-   exactly one set and may sit in either way. A miss stores into way 0 of the
-   back table after shifting way 0 into way 1, so the older of the two goes and
-   no state bits are kept; a back-table hit promotes the entry into its front
-   slot. Nothing is ever probed beyond the set or grown.
+module Cache = Pretoken_cache
 
-   Way 0 is at byte 0 of its set and way 1 at byte 32. Within a way (and within
-   a front entry):
 
-   [0..7] k0: bytes 0..7 of the pretoken, zero-padded;
-
-   [8..15] k1: bytes 8..14 zero-padded, the length 1..15 in the top byte;
-
-   [16..23] ids 0 and 1 as 24-bit fields at bits 0 and 32, the token count in
-   bits 24..31;
-
-   [24..31] ids 2 and 3 in the same two fields.
-
-   Every word is stored native-endian, so a table has one format wherever it is
-   read. Carrying the length in the key means keys of different lengths never
-   collide and a live key is never zero, so a zeroed table reads as empty. A hit
-   is at most four 64-bit compares within one set and two 64-bit loads.
-
-   A table is written — and read — only by the thread holding the claim on the
-   state that owns it, so no probe ever races a store: that single-claimant
-   rule, not the order of the writes, is what keeps the tables safe. [store] and
-   [promote] still publish values before keys and [k0] last of all, which
-   narrows what a reader outside the claim could misread, but does not protect
-   one — values are overwritten while the old keys still stand. *)
-
-external string_get64u : string -> int -> int64 = "%caml_string_get64u"
-external bytes_get64u : Bytes.t -> int -> int64 = "%caml_bytes_get64u"
-external bytes_set64u : Bytes.t -> int -> int64 -> unit = "%caml_bytes_set64u"
-
-let max_key_len = 15
-let max_lanes = 4
-let entry_bytes = 32
-let set_bytes = 2 * entry_bytes
-let cached_id_limit = 1 lsl 24
-
-(* The front table's entry count (128 KB at 32 bytes each). Measured on a 290 MB
-   OpenWebText sample with the GPT-2 vocabulary: the 4096 most frequent
-   pretokens cover 82 % of short-pretoken occurrences, and a direct-mapped table
-   this size answers 75 % of probes — 79 % of all cache hits — with 2^14 entries
-   adding only 8 points for four times the footprint. *)
-let front_entries = 4096
-
-(* For each length, the mask keeping the bytes each key word holds. *)
-let key_masks =
-  let ones n =
-    if n >= 8 then -1L else Int64.sub (Int64.shift_left 1L (8 * n)) 1L
-  in
-  let b = Bytes.make ((max_key_len + 1) * 16) '\000' in
-  for len = 0 to max_key_len do
-    bytes_set64u b (len * 16) (ones (min len 8));
-    bytes_set64u b ((len * 16) + 8) (ones (max 0 (len - 8)))
-  done;
-  b
-
-let[@inline] byte_word text pos count =
-  let w = ref 0L in
-  for i = 0 to count - 1 do
-    w :=
-      Int64.logor !w
-        (Int64.shift_left
-           (Int64.of_int (Char.code (String.unsafe_get text (pos + i))))
-           (8 * i))
-  done;
-  !w
-
-(* A key word is one eight-byte read masked to the bytes it keeps. The read has
-   to stay inside the string — being unchecked is a property of native code
-   alone, and bytecode raises on it — so a pretoken that ends within eight bytes
-   of the end of the text is read from the last eight bytes of the text and
-   shifted down instead. Only a text shorter than eight bytes has no such read,
-   and gathers its bytes one at a time. [n] is the length of [text]. *)
-
-let[@inline] key0 text n pos len =
-  let w =
-    if pos + 8 <= n then string_get64u text pos
-    else if n >= 8 then
-      Int64.shift_right_logical (string_get64u text (n - 8)) ((pos - n + 8) * 8)
-    else byte_word text pos (n - pos)
-  in
-  Int64.logand w (bytes_get64u key_masks (len lsl 4))
-
-let[@inline] key1 text n pos len =
-  let tag = Int64.of_int (len lsl 56) in
-  if len <= 8 then tag
-  else
-    let w =
-      if pos + 16 <= n then string_get64u text (pos + 8)
-      else
-        Int64.shift_right_logical
-          (string_get64u text (n - 8))
-          ((pos + 16 - n) * 8)
-    in
-    Int64.logor tag (Int64.logand w (bytes_get64u key_masks ((len lsl 4) + 8)))
-
-(* [mask] is the back table's set index mask: it holds [mask + 1] sets. The
-   front table holds [fmask + 1] entries, indexed by the same hash. *)
-type cache = { front : Bytes.t; fmask : int; table : Bytes.t; mask : int }
-
-let no_cache =
-  { front = Bytes.empty; fmask = -1; table = Bytes.empty; mask = -1 }
-
-let[@inline] hash_of k0 k1 =
-  Int64.to_int
-    (Int64.shift_right_logical
-       (Int64.mul
-          (Int64.logxor k0 (Int64.mul k1 0x9E3779B97F4A7C15L))
-          0xD6E8FEB86659FD93L)
-       24)
-
-(* The byte offsets of a hash's back set and front slot. *)
-let[@inline] set_at h mask = (h land mask) lsl 6
-let[@inline] front_at h fmask = (h land fmask) lsl 5
-let[@inline] set_of cache k0 k1 = set_at (hash_of k0 k1) cache.mask
-
-(* [entries] rounded up to a power of two, two per set; at least one set. *)
-let create_cache entries =
-  let sets = ref 1 in
-  while !sets * 2 < entries do
-    sets := !sets * 2
-  done;
-  {
-    front = Bytes.make (front_entries * entry_bytes) '\000';
-    fmask = front_entries - 1;
-    table = Bytes.make (!sets * set_bytes) '\000';
-    mask = !sets - 1;
-  }
-
-(* Pretokens above [max_key_len] bytes are keyed by their bytes; they are a
+(* Pretokens longer than a cache key are keyed by their bytes; they are a
    percent or two of a corpus, so one substring per lookup is affordable. The
    table is dropped whole once it grows past [long_capacity] rather than
    evicting, and pretokens beyond [long_max_len] are not kept at all. *)
@@ -346,9 +213,9 @@ type state = {
   mutable st_word : word;
   mutable st_queue : Merge_queue.t;
   st_rank : int array;
-  st_cache : cache;
+  st_cache : Cache.t;
   st_long : (string, int array) Hashtbl.t;
-  st_busy : bool Atomic.t;
+  mutable st_miss : Cache.encoder;
   st_kernel : Kernel.byte_level;
   st_sp : Kernel.sp option;
   st_cursor : Bytes.t;
@@ -437,13 +304,9 @@ let ensure_queue_capacity queue capacity =
 (* Above this many symbols the linear rank scan is dropped for the heap. *)
 let max_linear = 32
 
-(* A domain holds the states of the models it has encoded with, most recent
-   first, and forgets the oldest past this many: a state carries a cache of
-   several megabytes. *)
-let max_states = 8
-
-let states_key : (int * state) list ref Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> ref [])
+(* A domain's states of the models it encodes with, as {!Pretoken_cache.slot}
+   keeps them: a state carries a cache of several megabytes. *)
+let states : state Cache.registry = Cache.registry ()
 
 let[@inline] add_symbol word c byte_len =
   let s = word.size in
@@ -900,65 +763,16 @@ let exact model word len =
   done;
   !ok && !total = len
 
-let in_lanes word =
-  let n = word.size in
-  if n < 1 || n > max_lanes then false
-  else begin
-    let ok = ref true in
-    for i = 0 to n - 1 do
-      if Array.unsafe_get word.sym_c i >= cached_id_limit then ok := false
-    done;
-    !ok
-  end
-
-let[@inline] cacheable model word len = in_lanes word && exact model word len
-
-(* Writes the entry [(k0, k1, v0, v1)] into way 0 of the set at [set], after
-   shifting what way 0 held into way 1. *)
-let[@inline] store cache set k0 k1 v0 v1 =
-  let table = cache.table in
-  bytes_set64u table (set + 48) (bytes_get64u table (set + 16));
-  bytes_set64u table (set + 56) (bytes_get64u table (set + 24));
-  bytes_set64u table (set + 40) (bytes_get64u table (set + 8));
-  bytes_set64u table (set + 32) (bytes_get64u table set);
-  bytes_set64u table (set + 16) v0;
-  bytes_set64u table (set + 24) v1;
-  bytes_set64u table (set + 8) k1;
-  bytes_set64u table set k0
-
-(* Writes the entry into the front slot at [fslot], in [store]'s publish
-   order. *)
-let[@inline] promote cache fslot k0 k1 v0 v1 =
-  let front = cache.front in
-  bytes_set64u front (fslot + 16) v0;
-  bytes_set64u front (fslot + 24) v1;
-  bytes_set64u front (fslot + 8) k1;
-  bytes_set64u front fslot k0
-
-(* The two value words of a cacheable word. *)
-let[@inline] value_lo word =
-  let n = word.size in
-  let c = word.sym_c in
-  let id1 = if n > 1 then Array.unsafe_get c 1 else 0 in
-  Int64.of_int (Array.unsafe_get c 0 lor (n lsl 24) lor (id1 lsl 32))
-
-let[@inline] value_hi word =
-  let n = word.size in
-  let c = word.sym_c in
-  let id2 = if n > 2 then Array.unsafe_get c 2 else 0 in
-  let id3 = if n > 3 then Array.unsafe_get c 3 else 0 in
-  Int64.of_int (id2 lor (id3 lsl 32))
-
 (* The tables the C kernel reads, in the field order it pins. A miss may be
    merged in C unless [ignore_merges] asks for the whole-word lookup, which
    needs [source_vocab]; dropout rules the kernel out at selection instead. *)
 let kernel_tables model cache =
   {
     Kernel.lead = Pre_tokenizer.lead_class;
-    front = cache.front;
-    front_mask = cache.fmask;
-    cache = cache.table;
-    cache_mask = cache.mask;
+    front = cache.Cache.front;
+    front_mask = cache.Cache.fmask;
+    cache = cache.Cache.table;
+    cache_mask = cache.Cache.mask;
     byte_ids = model.byte_ids;
     merge_keys = model.merges.Merge_map.keys;
     merge_values = model.merges.Merge_map.values;
@@ -982,10 +796,10 @@ let sp_kernel_tables model cache : Kernel.sp option =
       Bytes.set scan 0xE2 (Char.chr 9);
       Some
         {
-          Kernel.front = cache.front;
-          front_mask = cache.fmask;
-          cache = cache.table;
-          cache_mask = cache.mask;
+          Kernel.front = cache.Cache.front;
+          front_mask = cache.Cache.fmask;
+          cache = cache.Cache.table;
+          cache_mask = cache.Cache.mask;
           merge_keys = model.merges.Merge_map.keys;
           merge_values = model.merges.Merge_map.values;
           merge_mask = model.merges.Merge_map.mask;
@@ -999,6 +813,9 @@ let sp_kernel_tables model cache : Kernel.sp option =
         }
   | _ -> None
 
+(* A state's miss before its first: see [encode_unit_into]. *)
+let no_miss : Cache.encoder = fun _ ~opaque:_ _ ~pos:_ ~len:_ -> ()
+
 (* Buffers of its own and no cache, for the thread that does not claim the
    domain's state and for building the seed. *)
 let private_state model =
@@ -1006,11 +823,11 @@ let private_state model =
     st_word = create_word 16;
     st_queue = Merge_queue.create 16;
     st_rank = Array.make max_linear 0;
-    st_cache = no_cache;
+    st_cache = Cache.none;
     st_long = Hashtbl.create 16;
-    st_busy = Atomic.make true;
-    st_kernel = kernel_tables model no_cache;
-    st_sp = sp_kernel_tables model no_cache;
+    st_miss = no_miss;
+    st_kernel = kernel_tables model Cache.none;
+    st_sp = sp_kernel_tables model Cache.none;
     st_cursor = Kernel.cursor ();
   }
 
@@ -1021,87 +838,54 @@ let private_state model =
    out. *)
 let build_seeds model =
   let st = private_state model in
-  let buf = Buffer.create (entry_bytes * 1024) in
+  let buf = Buffer.create (32 * 1024) in
   Hashtbl.iter
     (fun text _ ->
       let len = String.length text in
-      if len >= 1 && len <= max_key_len then begin
+      if len >= 1 && len <= Cache.max_key_len then begin
         build_word model st text 0 len;
         let word = st.st_word in
-        if cacheable model word len then begin
-          Buffer.add_int64_ne buf (key0 text len 0 len);
-          Buffer.add_int64_ne buf (key1 text len 0 len);
-          Buffer.add_int64_ne buf (value_lo word);
-          Buffer.add_int64_ne buf (value_hi word)
-        end
+        if exact model word len then Cache.seed buf text word.sym_c word.size
       end)
     model.source_vocab;
   Buffer.to_bytes buf
 
-let seed_cache model cache =
-  let seeds = model.seeds in
-  for i = 0 to (Bytes.length seeds / entry_bytes) - 1 do
-    let o = i * entry_bytes in
-    let k0 = bytes_get64u seeds o in
-    let k1 = bytes_get64u seeds (o + 8) in
-    store cache (set_of cache k0 k1) k0 k1
-      (bytes_get64u seeds (o + 16))
-      (bytes_get64u seeds (o + 24))
-  done
-
+(* The kernels store into the back table without growing it, so a BPE cache is
+   allocated whole. *)
 let make_state model =
-  let cache =
-    if model.cache_slots = 0 then no_cache else create_cache model.cache_slots
-  in
-  if cache.mask >= 0 then seed_cache model cache;
+  let cache = Cache.create ~grow:false model.cache_slots in
+  Cache.load_seeds cache model.seeds;
   {
     st_word = create_word 16;
     st_queue = Merge_queue.create 16;
     st_rank = Array.make max_linear 0;
     st_cache = cache;
     st_long = Hashtbl.create 512;
-    st_busy = Atomic.make false;
+    st_miss = no_miss;
     st_kernel = kernel_tables model cache;
     st_sp = sp_kernel_tables model cache;
     st_cursor = Kernel.cursor ();
   }
 
-(* Two threads of one domain that both find no state for the model build one
-   each and one of the two entries is lost; the loser is collected and its owner
-   works on unshared buffers, so the race costs a table and nothing else. *)
-let state model =
-  let states = Domain.DLS.get states_key in
-  let rec find = function
-    | (stamp, st) :: _ when stamp = model.stamp -> st
-    | _ :: rest -> find rest
-    | [] ->
-        let st = make_state model in
-        states :=
-          (model.stamp, st)
-          :: List.filteri (fun i _ -> i < max_states - 1) !states;
-        st
-  in
-  find !states
-
 (* The domain's state, held for the duration of [f]. Threads of one domain share
    the state it holds — its word, queue and cache are all single-writer — so the
-   second to ask gets buffers of its own instead. The claim is given back even
-   when [f] raises: otherwise one exception would cost that domain its cache for
-   the rest of the program. *)
+   second to ask gets buffers of its own instead. Two threads of one domain that
+   both find no state for the model build one each and one is lost, which costs
+   a table and nothing else. The claim is given back even when [f] raises:
+   otherwise one exception would cost that domain its cache for the rest of the
+   program. *)
 let with_state model f =
-  let st = state model in
-  let st =
-    if Atomic.compare_and_set st.st_busy false true then st
-    else private_state model
-  in
-  match f st with
-  | v ->
-      Atomic.set st.st_busy false;
-      v
-  | exception e ->
-      let backtrace = Printexc.get_raw_backtrace () in
-      Atomic.set st.st_busy false;
-      Printexc.raise_with_backtrace e backtrace
+  let slot = Cache.slot states ~stamp:model.stamp make_state model in
+  if not (Cache.take slot) then f (private_state model)
+  else
+    match f slot.value with
+    | v ->
+        Cache.give slot;
+        v
+    | exception e ->
+        let backtrace = Printexc.get_raw_backtrace () in
+        Cache.give slot;
+        Printexc.raise_with_backtrace e backtrace
 
 (* The ids of a merged word. A symbol whose bytes are not what its id accounts
    for — the unknown token, a fallback token the text spelled by name — is
@@ -1121,61 +905,22 @@ let emit_word model word ids ~opaque =
     Ints.add ids id
   done
 
-(* The lanes of a cache entry's value words, appended as ids. *)
-let[@inline] add_cached ids v0 v1 =
-  Ints.add4 ids (v0 land 0xFFFFFF)
-    ((v0 lsr 32) land 0xFFFFFF)
-    (v1 land 0xFFFFFF)
-    ((v1 lsr 32) land 0xFFFFFF)
-    ~count:((v0 lsr 24) land 0xFF)
+(* A miss: the word merged, and its ids emitted. *)
+let miss model st ids ~opaque text ~pos ~len =
+  build_word model st text pos len;
+  emit_word model st.st_word ids ~opaque
 
+(* The cache's miss closes over the state, so a state makes it once, on its
+   first short pretoken. *)
 let encode_unit_into model st ids ~opaque text ~pos ~len =
   if len > 0 then begin
     let cache = st.st_cache in
-    if cache.mask >= 0 && len <= max_key_len then begin
-      let n = String.length text in
-      let k0 = key0 text n pos len in
-      let k1 = key1 text n pos len in
-      let h = hash_of k0 k1 in
-      let fslot = front_at h cache.fmask in
-      let front = cache.front in
-      if
-        (bytes_get64u front fslot : int64) = k0
-        && (bytes_get64u front (fslot + 8) : int64) = k1
-      then
-        add_cached ids
-          (Int64.to_int (bytes_get64u front (fslot + 16)))
-          (Int64.to_int (bytes_get64u front (fslot + 24)))
-      else begin
-        let set = set_at h cache.mask in
-        let table = cache.table in
-        let way =
-          if
-            (bytes_get64u table set : int64) = k0
-            && (bytes_get64u table (set + 8) : int64) = k1
-          then set
-          else if
-            (bytes_get64u table (set + 32) : int64) = k0
-            && (bytes_get64u table (set + 40) : int64) = k1
-          then set + 32
-          else -1
-        in
-        if way >= 0 then begin
-          let v0 = bytes_get64u table (way + 16) in
-          let v1 = bytes_get64u table (way + 24) in
-          promote cache fslot k0 k1 v0 v1;
-          add_cached ids (Int64.to_int v0) (Int64.to_int v1)
-        end
-        else begin
-          build_word model st text pos len;
-          let word = st.st_word in
-          emit_word model word ids ~opaque;
-          if cacheable model word len then
-            store cache set k0 k1 (value_lo word) (value_hi word)
-        end
-      end
+    if len <= Cache.max_key_len then begin
+      if st.st_miss == no_miss then st.st_miss <- miss model st;
+      Cache.encode cache ~len_table:model.len_table st.st_miss ids ~opaque text
+        ~pos ~len
     end
-    else if cache.mask >= 0 && len <= long_max_len then begin
+    else if cache.Cache.mask >= 0 && len <= long_max_len then begin
       let long = st.st_long in
       let key =
         if pos = 0 && len = String.length text then text
@@ -1373,7 +1118,7 @@ let encode_sp_kernel model st t ids ~opaque text ~pos ~len =
 
 let encode_into model st ids ~opaque text ~pos ~len =
   match model.sp_cut with
-  | Some cut when len > max_key_len -> (
+  | Some cut when len > Cache.max_key_len -> (
       match st.st_sp with
       | Some t -> encode_sp_kernel model st t ids ~opaque text ~pos ~len
       | None -> encode_sp_units model st cut ids ~opaque text ~pos ~len)
@@ -1440,7 +1185,7 @@ let encode_sp_kernel_ids32 model st t sink spill ~opaque text ~pos ~len =
 
 let encode_into_ids32 model st sink spill ~opaque text ~pos ~len =
   match model.sp_cut with
-  | Some cut when len > max_key_len -> (
+  | Some cut when len > Cache.max_key_len -> (
       match st.st_sp with
       | Some t ->
           encode_sp_kernel_ids32 model st t sink spill ~opaque text ~pos ~len

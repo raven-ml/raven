@@ -134,6 +134,8 @@ let build_trie tokens =
 let unk_penalty = 10.0
 
 type t = {
+  stamp : int;
+  cache_capacity : int;
   token_table : string array;
   scores : float array;
   token_to_ids : (string, int) Hashtbl.t;
@@ -145,7 +147,8 @@ type t = {
   byte_ids : int array; (* A byte to the id of its ["<0xXX>"] entry, or [-1]. *)
 }
 
-let create ?unk_id ?(byte_fallback = false) vocab_list =
+let create ?unk_id ?(byte_fallback = false)
+    ?(cache_capacity = Pretoken_cache.default_capacity) vocab_list =
   let vocab = Array.of_list vocab_list in
   let size = Array.length vocab in
   let unk_id =
@@ -172,6 +175,8 @@ let create ?unk_id ?(byte_fallback = false) vocab_list =
     | None -> ()
   done;
   {
+    stamp = Pretoken_cache.stamp ();
+    cache_capacity;
     token_table;
     scores;
     token_to_ids;
@@ -209,7 +214,6 @@ type state = {
   mutable back : int array;
   mutable piece : int array;
   mutable path : int array;
-  busy : bool Atomic.t;
 }
 
 (* Pretokens run to a handful of bytes, and a state that has met a long one
@@ -220,27 +224,7 @@ let fresh_state () =
     back = Array.make 256 (-1);
     piece = Array.make 256 0;
     path = Array.make 256 0;
-    busy = Atomic.make false;
   }
-
-let state_key = Domain.DLS.new_key fresh_state
-
-(* The domain's state, held for the duration of [f]. Its arrays have a single
-   writer, so a second thread of the domain asking while it is held gets a state
-   of its own. The claim is given back even when [f] raises. *)
-let with_state f =
-  let st = Domain.DLS.get state_key in
-  let st =
-    if Atomic.compare_and_set st.busy false true then st else fresh_state ()
-  in
-  match f st with
-  | v ->
-      Atomic.set st.busy false;
-      v
-  | exception e ->
-      let backtrace = Printexc.get_raw_backtrace () in
-      Atomic.set st.busy false;
-      Printexc.raise_with_backtrace e backtrace
 
 let grow st needed =
   if Array.length st.score < needed then begin
@@ -503,3 +487,20 @@ let train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
   in
   let model = create ?unk_id vocab_with_probs in
   (model, special_tokens)
+
+(* A domain's cached encoder of a model, made once with its cache and a state
+   of its own. *)
+let encoders : Pretoken_cache.encoder Pretoken_cache.registry =
+  Pretoken_cache.registry ()
+
+let cached_encoder model =
+  Pretoken_cache.cached
+    (Pretoken_cache.create model.cache_capacity)
+    ~len_table:model.len_table
+    (encode_into model (fresh_state ()))
+
+let encoder_slot model =
+  Pretoken_cache.slot encoders ~stamp:model.stamp cached_encoder model
+
+let uncached model = encode_into model (fresh_state ())
+let cache_capacity model = model.cache_capacity
