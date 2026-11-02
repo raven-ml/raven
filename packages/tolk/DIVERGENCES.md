@@ -462,11 +462,16 @@ folds to `True` there as in `Shape.fold_const_alu`; tinygrad's
   first compile, once per process (comgr: by each compile's own process;
   NVRTC: by each process that serves compiles, D5), and a compile without it
   raises `Compile_error` with the reason.
-- **Reason:** none. The renderers made on machines without NVRTC, comgr or
-  MTLCompiler are the `Cstyle` suite's, which render its source goldens, and
-  tests are no consumer. rune renders no kernel without compiling it:
-  `Rune.program` prints a traced program. A binary the disk cache holds needs
-  no library, but no raven path is shown to run without one.
+- **Reason:** none. The renderers made where the library does not load are
+  the tests': the `Cstyle`, `Codegen`, `Device` and `Search` suites render for
+  CUDA and HIP on machines without NVRTC or comgr (fudge has no comgr, and its NVRTC only
+  through `NVRTC_PATH`), and the tolk bench's `search/*` rows make a CUDA
+  renderer whose compiler they replace, which a bench can gate on the library
+  as its `gpt_oss` rows do. rune makes a renderer only to compile with it. A
+  binary the disk cache holds needs no library, but no raven path is shown to
+  run without one. Withdrawing the entry moves those suites' renders behind
+  the library, as tinygrad's generator works around for HIP
+  (`test/gen/renderer/cstyle.py` marks comgr loaded).
 - **Pinned by:** `Tolk.Compiler_cuda › a library that does not load`,
   `Tolk.Compiler_amd › a library that does not load` and
   `Tolk.Compiler_metal › a library that does not load`, run where the library's
@@ -2201,9 +2206,10 @@ Withdrawn: multi-device is out of scope, see README.
   (`Shape.sym_compile`, which simplifies once and computes on `int`s, exactly
   where a value does not fit), and a value that moves with a loop's trips a
   hole of rig's program, the sum of trip words times constant factors.
-  `Shape.sym_compile` is the port of `_sym_fxn`; `Shape.sym_infer`, which
-  simplifies and walks its integer on every call, is a second evaluator
-  tinygrad does not have. A `DEBUG` report of a call lists the run's
+  `Shape.sym_compile` is the port of `_sym_fxn`, and `Shape.sym_infer` of
+  `sym_infer` (`uop/ops.py:94`), which evaluates once; a caller that
+  evaluates an integer many times keeps the function `Shape.sym_compile`
+  returns, where tinygrad caches it on the node. A `DEBUG` report of a call lists the run's
   variables that the schedule reads, where it listed every variable of the
   run.
 - **Reason:** (c): rig's program takes words and holes (D146), which a link
@@ -2213,7 +2219,6 @@ Withdrawn: multi-device is out of scope, see README.
   for kernels of 0.3 to 40 us: a jitted scan of 256 small steps (1,024
   launches) took 5.13 ms and took 0.27 ms resolved at link. To re-measure on
   fudge, where rune's `JitLoops/*-replay` rows replay compiled scans.
-  `Shape.sym_infer` has no reason of its own.
 - **Pinned by:** the Tolk_engine suite (`test/engine/tolk_engine`): `link and
   run › a linked scan carries its storage across runs on each run's
   parameters`, `› a scan runs its body once per trip, carrying in place`, `› a
@@ -3237,7 +3242,7 @@ other cores. `Search.beam_search` times each candidate as its compilation ends
   4096 x 4096 one-token product kernel took 40 ms where the same kernel
   unpacking at uint32 takes 21.6 ms. kaun's decode bench times the products a
   user calls (`Quant/host/*`). Measured on arm64 and kimchi; to re-measure on
-  fudge, where `Quant/host/*` has no baseline.
+  fudge, where `Quant/host/*` holds baselines with the rule and none without.
 - **Cost:** on x86, for codes of one value. The routed one-token product's
   kernel, the only one the rule changes in its program, is faster with it on
   random codes, as real weights hold, on arm64 and on x86 (kimchi, clang 19,
@@ -3569,7 +3574,8 @@ driver signals its own (D146).
   host's products of a checkpoint's codes run 1.7-3.6 times as fast for one
   token's routed product and 2.4-3.3 times for a dense one, on an M1 Max
   (alternated under load). These were measured on kimchi and the Mac; to
-  re-measure on fudge, where kaun's `Quant/host/*` rows have no baseline.
+  re-measure on fudge, where kaun's `Quant/host/*` rows hold baselines with
+  the rule and none without.
   A matmul's upcast products read their loads, or
   the lanes of a loaded vector, in each lane's multiply-add
   (`clang_matmul_upcasted*`). They computed a vector product of their shared
@@ -3669,7 +3675,8 @@ submission, and a range a loop of rig's program (D146).
   one core, the dense kernel unrolled by 4, 8 and 16 bytes ran in 8.5, 7.7
   and 8.9 ms, the blocks' in 7.3 ms; the routed one's in 39, 34 and 32 ms,
   compiled in 0.11, 0.15 and 0.26 s. Measured on the Mac; to re-measure on
-  fudge, where kaun's `Quant/host/*` rows have no baseline.
+  fudge, where kaun's `Quant/host/*` rows hold baselines with the rule and
+  none without.
 - **Pinned by:** the Heuristic suite's `the optimisations chosen are
   tinygrad's › applied_opts`, the host cases `vecmat_decoded_cpu`,
   `gpt_oss_gate_up_cpu`, `routed_blocks_cpu`, `routed_tiles_cpu` and
