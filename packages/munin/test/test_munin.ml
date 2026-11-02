@@ -6,2137 +6,1811 @@
 open Windtrap
 open Munin
 
-(* Sessions *)
+(* Fixtures *)
 
-(* [Session.start] defaults its provenance to [Provenance.detect ()], which runs
-   git twice: in this repository, most of the suite's time. Sessions here record
-   [provenance] unless a test passes its own. *)
+(* A fixed provenance keeps git out of every start. *)
 let provenance =
   {
     Provenance.command = [ "test_munin" ];
     cwd = "/";
     hostname = None;
     pid = 0;
-    git_commit = None;
-    git_dirty = None;
+    ocaml = Sys.ocaml_version;
+    raven = "test";
+    os = "test";
+    arch = "test";
+    cpu = None;
+    git = None;
+    seeds = [];
     env = [];
   }
 
-module Session = struct
-  include Session
+let rec rm_rf p =
+  match Unix.lstat p with
+  | exception Unix.Unix_error _ -> ()
+  | { Unix.st_kind = Unix.S_DIR; _ } ->
+      Array.iter (fun e -> rm_rf (Filename.concat p e)) (Sys.readdir p);
+      Unix.rmdir p
+  | _ -> Sys.remove p
 
-  let start ?(provenance = provenance) = start ~provenance
-  let with_run ?(provenance = provenance) = with_run ~provenance
-end
+let with_store f =
+  let root = Filename.temp_dir "munin" "" in
+  Fun.protect ~finally:(fun () -> rm_rf root) @@ fun () ->
+  f (Store.open_ ~root ())
 
-(* Helpers *)
+let start ?(experiment = "e") ?params ?tags ?steps store =
+  Session.start ~store ~provenance ?params ?tags ?steps ~experiment ()
 
-let rec rm_rf path =
-  if Sys.is_directory path then begin
-    Array.iter (fun e -> rm_rf (Filename.concat path e)) (Sys.readdir path);
-    Sys.rmdir path
-  end
-  else Sys.remove path
+let reread store s = require_some (Store.run store (Session.id s))
+let history store s = History.read (reread store s)
 
-let with_temp_dir f =
-  let base = Filename.temp_file "munin" "test" in
-  Sys.remove base;
-  Unix.mkdir base 0o755;
-  Fun.protect ~finally:(fun () -> rm_rf base) (fun () -> f base)
+let write_file path data =
+  Out_channel.with_open_bin path (fun oc -> Out_channel.output_string oc data)
 
-let write_text path text =
-  let oc = open_out path in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc text)
+let read_file path = In_channel.with_open_bin path In_channel.input_all
 
-let read_text path =
-  let ic = open_in_bin path in
-  Fun.protect
-    ~finally:(fun () -> close_in ic)
-    (fun () -> really_input_string ic (in_channel_length ic))
-
-let make_file root name text =
-  let path = Filename.concat root name in
-  write_text path text;
-  path
-
-let make_dir root name files =
-  let dir = Filename.concat root name in
-  Unix.mkdir dir 0o755;
-  List.iter
-    (fun (fname, text) -> write_text (Filename.concat dir fname) text)
-    files;
-  dir
-
-(* Session lifecycle *)
-
-let test_start_creates_run_dir () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let run = Session.run session in
-  is_true ~msg:"run dir exists" (Sys.file_exists (Run.dir run));
-  is_true ~msg:"manifest exists"
-    (Sys.file_exists (Filename.concat (Run.dir run) "run.json"));
-  is_true ~msg:"status is running" (Run.status run = `Running);
-  Session.finish session
-
-let test_finish_sets_status () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  let run = Session.run session in
-  is_true ~msg:"status finished" (Run.status run = `Finished);
-  is_true ~msg:"ended_at set" (Option.is_some (Run.ended_at run))
-
-let test_finish_failed () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish ~status:`Failed session;
-  is_true ~msg:"status failed" (Run.status (Session.run session) = `Failed)
-
-let test_finish_killed () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish ~status:`Killed session;
-  is_true ~msg:"status killed" (Run.status (Session.run session) = `Killed)
-
-let test_finish_idempotent () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  Session.finish ~status:`Failed session;
-  is_true ~msg:"still finished" (Run.status (Session.run session) = `Finished)
-
-let test_with_run_success () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let result =
-    Session.with_run ~store ~experiment:"exp" (fun session ->
-        Metric.log (Session.metric session "x") ~step:1 1.0;
-        42)
+let replace_first text ~sub ~by =
+  let n = String.length sub in
+  let rec find i =
+    if i + n > String.length text then text
+    else if String.sub text i n = sub then
+      String.sub text 0 i ^ by
+      ^ String.sub text (i + n) (String.length text - i - n)
+    else find (i + 1)
   in
-  equal ~msg:"return value" int 42 result;
-  let run = Option.get (Store.latest_run store ()) in
-  is_true ~msg:"status finished" (Run.status run = `Finished)
+  find 0
 
-let test_with_run_exception () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let raised =
-    try
-      ignore
-        (Session.with_run ~store ~experiment:"exp" (fun _session ->
-             failwith "boom"));
-      false
-    with Failure _ -> true
-  in
-  is_true ~msg:"exception re-raised" raised;
-  let run = Option.get (Store.latest_run store ()) in
-  is_true ~msg:"status failed" (Run.status run = `Failed)
+let child_exe = Filename.concat (Sys.getcwd ()) "support/child.exe"
 
-let test_resume () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Metric.log (Session.metric session "x") ~step:1 1.0;
-  let run = Session.run session in
-  is_true ~msg:"resumable before finish" (Run.resumable run);
-  let resumed = Session.resume run in
-  Metric.log (Session.metric resumed "x") ~step:2 0.5;
-  Session.finish resumed;
-  let final = Session.run resumed in
-  equal ~msg:"history length" int 2 (List.length (Run.metric_history final "x"));
-  is_false ~msg:"not resumable after finish" (Run.resumable final)
+(* Witnesses *)
 
-let test_resume_finished_raises () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  let run = Session.run session in
-  raises (Invalid_argument "Munin.Session.resume: run is not resumable")
-    (fun () -> ignore (Session.resume run))
+let value : Value.t testable =
+  Testable.make ~pp:Value.pp ~equal:(fun a b ->
+      match (a, b) with
+      | `Float x, `Float y -> Testable.equal float_exact x y
+      | a, b -> a = b)
 
-let test_ops_after_finish_ignored () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let x = Session.metric session "x" in
-  Metric.log x ~step:1 1.0;
-  Session.finish session;
-  Metric.log x ~step:2 2.0;
-  Session.set_notes session (Some "late");
-  Session.add_tags session [ "late" ];
-  Session.set_summary session [ ("late", `Float 1.0) ];
-  let run = Session.run session in
-  equal ~msg:"only one metric" int 1 (List.length (Run.metric_history run "x"));
-  is_true ~msg:"no late note" (Run.notes run = None);
-  equal ~msg:"no tags" (list string) [] (Run.tags run)
+let sample : Metric.sample testable =
+  Testable.make
+    ~pp:(fun ppf (s : Metric.sample) ->
+      Format.fprintf ppf "{step=%d; time=%a; value=%a}" s.step
+        (Testable.pp float_exact) s.time (Testable.pp float_exact) s.value)
+    ~equal:(fun (a : Metric.sample) b ->
+      a.step = b.step
+      && Testable.equal float_exact a.time b.time
+      && Testable.equal float_exact a.value b.value)
 
-let test_session_identity () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let run = Session.run session in
-  equal ~msg:"id matches run" string (Run.id run) (Session.id session);
-  equal ~msg:"dir matches run" string (Run.dir run) (Session.dir session);
-  Session.finish session
+let samples_of s = List.init (Metric.length s) (Metric.sample s)
 
-let lifecycle =
-  [
-    test "start creates run dir" test_start_creates_run_dir;
-    test "session identity" test_session_identity;
-    test "finish sets status" test_finish_sets_status;
-    test "finish failed" test_finish_failed;
-    test "finish killed" test_finish_killed;
-    test "finish is idempotent" test_finish_idempotent;
-    test "with_run success" test_with_run_success;
-    test "with_run exception" test_with_run_exception;
-    test "resume" test_resume;
-    test "resume finished raises" test_resume_finished_raises;
-    test "ops after finish ignored" test_ops_after_finish_ignored;
-  ]
+let status : Run.status testable =
+  Testable.make
+    ~pp:(fun ppf s ->
+      Format.pp_print_string ppf
+        (match s with
+        | `Running -> "running"
+        | `Silent -> "silent"
+        | `Crashed -> "crashed"
+        | `Finished -> "finished"
+        | `Failed e -> "failed: " ^ e
+        | `Killed -> "killed"))
+    ~equal:( = )
 
-(* Scalars *)
+(* Generators *)
 
-let test_metric_log () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let loss = Session.metric session "train/loss" in
-  equal ~msg:"key" string "train/loss" (Metric.key loss);
-  Metric.log loss ~step:1 1.5;
-  Session.finish session;
-  let run = Session.run session in
-  let m =
-    match List.assoc_opt "train/loss" (Run.latest_metrics run) with
-    | Some m -> m
-    | None -> failwith "missing"
-  in
-  equal ~msg:"step" int 1 m.step;
-  equal ~msg:"value" float_exact 1.5 m.value
+let gen_float = Gen.any_float
 
-let test_log_metrics_batch () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let loss = Session.metric session "train/loss" in
-  let acc = Session.metric session "val/acc" in
-  Session.log_metrics session ~step:1 [ (loss, 1.0); (acc, 0.6) ];
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"two keys" int 2 (List.length (Run.metric_keys run))
+let gen_value : Value.t Gen.t =
+  Gen.one_of
+    [
+      Gen.map (fun b -> `Bool b) Gen.bool;
+      Gen.map (fun n -> `Int n) Gen.int;
+      Gen.map (fun n -> `Int n) (Gen.int_range (-(1 lsl 54)) (1 lsl 54));
+      Gen.map (fun x -> `Float x) gen_float;
+      Gen.map (fun x -> `Float (Float.of_int x)) Gen.small_int;
+      Gen.map (fun s -> `String s) (Gen.string_of (Gen.char_range ' ' '~'));
+      Gen.constant (`String "tab\tline\nfeed \xc3\xa9 \"q\" \\");
+    ]
 
-let test_log_metrics_shared_timestamp () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let a = Session.metric session "a" in
-  let b = Session.metric session "b" in
-  Session.log_metrics session ~step:1 [ (a, 1.0); (b, 2.0) ];
-  Session.finish session;
-  let run = Session.run session in
-  let timestamp key =
-    match List.assoc_opt key (Run.latest_metrics run) with
-    | Some (m : Metric.sample) -> m.timestamp
-    | None -> failwith "missing"
-  in
-  equal ~msg:"one timestamp for the batch" float_exact (timestamp "a")
-    (timestamp "b")
+(* A log written from the format's text alone *)
 
-let test_metric_history_chronological () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let x = Session.metric session "x" in
-  Metric.log x ~step:1 3.0;
-  Metric.log x ~step:2 2.0;
-  Metric.log x ~step:3 1.0;
-  Session.finish session;
-  let run = Session.run session in
-  let history = Run.metric_history run "x" in
-  equal ~msg:"length" int 3 (List.length history);
-  let values = List.map (fun (m : Metric.sample) -> m.value) history in
-  equal ~msg:"order" (list float_exact) [ 3.0; 2.0; 1.0 ] values
+(* The records a law test draws: samples of metrics, samples of readings and
+   resumes. *)
+type ev =
+  | Sample of string * int * float
+  | Reading of string * float
+  | Resume of int
 
-let test_latest_metrics () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let x = Session.metric session "x" in
-  Metric.log x ~step:1 1.0;
-  Metric.log x ~step:2 2.0;
-  Session.finish session;
-  let run = Session.run session in
-  let latest =
-    match List.assoc_opt "x" (Run.latest_metrics run) with
-    | Some m -> m
-    | None -> failwith "missing"
-  in
-  equal ~msg:"latest step" int 2 latest.step;
-  equal ~msg:"latest value" float_exact 2.0 latest.value
+let pp_ev ppf = function
+  | Sample (k, s, v) -> Format.fprintf ppf "sample %s@%d=%h" k s v
+  | Reading (k, v) -> Format.fprintf ppf "reading %s=%h" k v
+  | Resume s -> Format.fprintf ppf "resume %d" s
 
-let test_metric_keys_sorted () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Metric.log (Session.metric session "z/loss") ~step:1 1.0;
-  Metric.log (Session.metric session "a/acc") ~step:1 0.5;
-  Metric.log (Session.metric session "m/lr") ~step:1 0.01;
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"sorted keys" (list string)
-    [ "a/acc"; "m/lr"; "z/loss" ]
-    (Run.metric_keys run)
+let json_float x =
+  if Float.is_nan x then {|{"float":"NaN"}|}
+  else if x = Float.infinity then {|{"float":"Infinity"}|}
+  else if x = Float.neg_infinity then {|{"float":"-Infinity"}|}
+  else Printf.sprintf "%.17g" x
 
-let test_explicit_timestamp () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Metric.log (Session.metric session "x") ~step:1 ~timestamp:42.0 1.0;
-  Session.finish session;
-  let run = Session.run session in
-  let m =
-    match List.assoc_opt "x" (Run.latest_metrics run) with
-    | Some m -> m
-    | None -> failwith "missing"
-  in
-  equal ~msg:"timestamp" float_exact 42.0 m.timestamp
+let prov_json =
+  {|{"command":["t"],"cwd":"/","pid":1,"ocaml":"5","raven":"t","os":"t","arch":"t","seeds":{},"env":{}}|}
 
-let test_missing_metric_history_empty () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"empty history" (list int) []
+let start_line =
+  Printf.sprintf
+    {|{"type":"start","time":1.0,"format":1,"experiment":"spec","params":{},"provenance":%s}|}
+    prov_json
+
+let ev_line i = function
+  | Sample (k, s, v) ->
+      Printf.sprintf
+        {|{"type":"metrics","time":%d.0,"step":%d,"values":{"%s":%s}}|} (i + 2)
+        s k (json_float v)
+  | Reading (k, v) ->
+      Printf.sprintf
+        {|{"type":"reading","time":%d.0,"step":0,"values":{"%s":%s}}|} (i + 2) k
+        (json_float v)
+  | Resume s ->
+      Printf.sprintf {|{"type":"resume","time":%d.0,"step":%d,"provenance":%s}|}
+        (i + 2) s prov_json
+
+let metric_line k =
+  Printf.sprintf {|{"type":"metric","time":1.5,"key":"%s","goal":"minimize"}|} k
+
+let log_text evs =
+  String.concat ""
     (List.map
-       (fun (m : Metric.sample) -> m.step)
-       (Run.metric_history run "nonexistent"))
+       (fun l -> l ^ "\n")
+       (start_line :: metric_line "a" :: metric_line "b"
+      :: List.mapi ev_line evs))
 
-let scalars =
-  [
-    test "Metric.log" test_metric_log;
-    test "log_metrics batch" test_log_metrics_batch;
-    test "log_metrics shares a timestamp" test_log_metrics_shared_timestamp;
-    test "history chronological" test_metric_history_chronological;
-    test "latest_metrics" test_latest_metrics;
-    test "metric_keys sorted" test_metric_keys_sorted;
-    test "explicit timestamp" test_explicit_timestamp;
-    test "missing key history empty" test_missing_metric_history_empty;
-  ]
+let mkdir_p d =
+  try Unix.mkdir d 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ()
 
-(* Metric declarations *)
+let spec_run store text =
+  let runs = Filename.concat (Store.root store) "runs" in
+  mkdir_p (Store.root store);
+  mkdir_p runs;
+  let dir = Filename.concat runs "spec" in
+  rm_rf dir;
+  mkdir_p dir;
+  write_file (Filename.concat dir "events.jsonl") text;
+  require_some (Store.run store "spec")
 
-let test_metric_summary_and_goal () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  ignore (Session.metric session ~summary:`Min ~goal:`Minimize "train/loss");
-  ignore (Session.metric session ~summary:`Max ~goal:`Maximize "val/acc");
-  Session.finish session;
-  let run = Session.run session in
-  let defs = Run.metric_defs run in
-  equal ~msg:"two defs" int 2 (List.length defs);
-  let loss_def = List.assoc "train/loss" defs in
-  is_true ~msg:"loss summary min" (loss_def.summary = `Min);
-  is_true ~msg:"loss goal minimize" (loss_def.goal = Some `Minimize);
-  let acc_def = List.assoc "val/acc" defs in
-  is_true ~msg:"acc summary max" (acc_def.summary = `Max);
-  is_true ~msg:"acc goal maximize" (acc_def.goal = Some `Maximize)
-
-let test_metric_all_summaries () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let declare summary key = ignore (Session.metric session ~summary key) in
-  declare `Min "a";
-  declare `Max "b";
-  declare `Mean "c";
-  declare `Last "d";
-  declare `None "e";
-  Session.finish session;
-  let run = Session.run session in
-  let defs = Run.metric_defs run in
-  equal ~msg:"five defs" int 5 (List.length defs);
-  is_true ~msg:"a=Min" ((List.assoc "a" defs).summary = `Min);
-  is_true ~msg:"b=Max" ((List.assoc "b" defs).summary = `Max);
-  is_true ~msg:"c=Mean" ((List.assoc "c" defs).summary = `Mean);
-  is_true ~msg:"d=Last" ((List.assoc "d" defs).summary = `Last);
-  is_true ~msg:"e=None" ((List.assoc "e" defs).summary = `None)
-
-let test_metric_step_metric () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let epoch = Session.metric session "epoch" in
-  ignore (Session.metric session ~step_metric:epoch "train/loss");
-  Session.finish session;
-  let run = Session.run session in
-  let def = List.assoc "train/loss" (Run.metric_defs run) in
-  equal ~msg:"step_metric is the referenced key" (option string) (Some "epoch")
-    def.step_metric
-
-let test_metric_default_summary () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  ignore (Session.metric session "x");
-  Session.finish session;
-  let run = Session.run session in
-  let def = List.assoc "x" (Run.metric_defs run) in
-  is_true ~msg:"default summary is Last" (def.summary = `Last);
-  is_none ~msg:"no goal by default" def.goal
-
-let test_metric_summary_from_goal () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  ignore (Session.metric session ~goal:`Minimize "loss");
-  ignore (Session.metric session ~goal:`Maximize "acc");
-  Session.finish session;
-  let defs = Run.metric_defs (Session.run session) in
-  is_true ~msg:"minimize implies Min" ((List.assoc "loss" defs).summary = `Min);
-  is_true ~msg:"maximize implies Max" ((List.assoc "acc" defs).summary = `Max)
-
-let test_metric_summary_overrides_goal () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  ignore (Session.metric session ~summary:`Mean ~goal:`Minimize "loss");
-  Session.finish session;
-  let def = List.assoc "loss" (Run.metric_defs (Session.run session)) in
-  is_true ~msg:"explicit summary wins" (def.summary = `Mean);
-  is_true ~msg:"goal is kept" (def.goal = Some `Minimize)
-
-let test_metric_redeclare_replaces () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let first = Session.metric session ~summary:`Min "loss" in
-  let second = Session.metric session ~summary:`Max "loss" in
-  Metric.log first ~step:1 1.0;
-  Metric.log second ~step:2 2.0;
-  Session.finish session;
-  let run = Session.run session in
-  let defs = Run.metric_defs run in
-  equal ~msg:"one def" int 1 (List.length defs);
-  is_true ~msg:"last declaration wins" ((List.assoc "loss" defs).summary = `Max);
-  equal ~msg:"both handles write the same key" int 2
-    (List.length (Run.metric_history run "loss"))
-
-let test_metric_defs_sorted () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let declare key = ignore (Session.metric session key) in
-  declare "z";
-  declare "a";
-  declare "m";
-  Session.finish session;
-  let run = Session.run session in
-  let keys = List.map fst (Run.metric_defs run) in
-  equal ~msg:"sorted" (list string) [ "a"; "m"; "z" ] keys
-
-let metric_declarations =
-  [
-    test "summary and goal" test_metric_summary_and_goal;
-    test "all summary modes" test_metric_all_summaries;
-    test "step_metric" test_metric_step_metric;
-    test "default summary is Last" test_metric_default_summary;
-    test "summary defaults from goal" test_metric_summary_from_goal;
-    test "explicit summary overrides goal" test_metric_summary_overrides_goal;
-    test "redeclaring replaces the def" test_metric_redeclare_replaces;
-    test "defs sorted" test_metric_defs_sorted;
-  ]
-
-(* Metadata *)
-
-let test_set_notes () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.set_notes session (Some "hello");
-  Session.finish session;
-  equal ~msg:"notes set" (option string) (Some "hello")
-    (Run.notes (Session.run session))
-
-let test_set_notes_replace () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.set_notes session (Some "first");
-  Session.set_notes session (Some "second");
-  Session.finish session;
-  equal ~msg:"notes replaced" (option string) (Some "second")
-    (Run.notes (Session.run session))
-
-let test_clear_notes () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" ~notes:"initial" () in
-  Session.set_notes session None;
-  Session.finish session;
-  equal ~msg:"notes cleared" (option string) None
-    (Run.notes (Session.run session))
-
-let test_set_summary_merge () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.set_summary session [ ("a", `Float 1.0) ];
-  Session.set_summary session [ ("b", `Float 2.0); ("a", `Float 3.0) ];
-  Session.finish session;
-  let run = Session.run session in
-  let summary = Run.summary run in
-  equal ~msg:"two keys" int 2 (List.length summary);
-  is_true ~msg:"a replaced"
-    (Value.to_float (Option.get (Run.find_summary run "a")) = Some 3.0);
-  is_true ~msg:"b present"
-    (Value.to_float (Option.get (Run.find_summary run "b")) = Some 2.0)
-
-let test_find_summary_missing () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  equal ~msg:"missing key" (option unit) None
-    (Option.map ignore (Run.find_summary (Session.run session) "nope"))
-
-let test_add_tags () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" ~tags:[ "initial" ] () in
-  Session.add_tags session [ "added" ];
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"tags" (list string) [ "initial"; "added" ] (Run.tags run)
-
-let test_add_tags_dedup () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" ~tags:[ "a" ] () in
-  Session.add_tags session [ "a"; "b" ];
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"deduped" (list string) [ "a"; "b" ] (Run.tags run)
-
-let test_add_tags_empty_noop () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.add_tags session [];
-  Session.finish session;
-  equal ~msg:"no tags" (list string) [] (Run.tags (Session.run session))
-
-let test_params_immutable () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session =
-    Session.start ~store ~experiment:"exp"
-      ~params:[ ("lr", `Float 0.001); ("bs", `Int 32) ]
-      ()
+(* The reference: the format's orphan rule read off the record list, and the
+   statistics by their definitions. *)
+let reference_samples evs k =
+  let arr = Array.of_list evs in
+  let n = Array.length arr in
+  let orphan i s =
+    let rec go j =
+      j < n
+      && ((match arr.(j) with Resume r -> r < s | _ -> false) || go (j + 1))
+    in
+    go (i + 1)
   in
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"param count" int 2 (List.length (Run.params run))
+  List.concat
+    (List.mapi
+       (fun i e ->
+         match e with
+         | Sample (k', s, v) when k' = k && not (orphan i s) ->
+             [
+               ({ step = s; time = Float.of_int (i + 2); value = v }
+                 : Metric.sample);
+             ]
+         | Reading (k', v) when k' = k ->
+             [ { step = 0; time = Float.of_int (i + 2); value = v } ]
+         | _ -> [])
+       evs)
 
-let metadata =
-  [
-    test "set_notes" test_set_notes;
-    test "set_notes replace" test_set_notes_replace;
-    test "clear notes" test_clear_notes;
-    test "set_summary merge" test_set_summary_merge;
-    test "find_summary missing" test_find_summary_missing;
-    test "add_tags" test_add_tags;
-    test "add_tags dedup" test_add_tags_dedup;
-    test "add_tags empty noop" test_add_tags_empty_noop;
-    test "params immutable" test_params_immutable;
-  ]
+let gen_ev =
+  Gen.frequency
+    [
+      ( 8,
+        Gen.map
+          (fun ((k, s), v) -> Sample (k, s, v))
+          Gen.(
+            pair
+              (pair (of_list [ "a"; "b" ]) (int_range 0 20))
+              (frequency
+                 [
+                   (6, float_range (-5.) 5.);
+                   (1, gen_float);
+                   (1, of_list [ 1.; -0.; 0. ]);
+                 ])) );
+      (1, Gen.map (fun v -> Reading ("r", v)) (Gen.float_range 0. 100.));
+      (1, Gen.map (fun s -> Resume s) (Gen.int_range 0 20));
+    ]
 
-(* Provenance *)
+let gen_evs = Gen.list ~size:(Gen.int_range 0 60) (Gen.with_pp pp_ev gen_ev)
 
-let test_provenance_fields () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session =
-    Session.start ~store ~experiment:"exp"
-      ~provenance:
-        {
-          Provenance.command = [ "ocaml"; "train.ml" ];
-          cwd = root;
-          hostname = Some "node0";
-          pid = 42;
-          git_commit = Some "abc123";
-          git_dirty = Some true;
-          env = [];
-        }
-      ()
-  in
-  Session.finish session;
-  let prov = Run.provenance (Session.run session) in
-  equal ~msg:"command" (list string) [ "ocaml"; "train.ml" ] prov.command;
-  equal ~msg:"cwd" string root prov.cwd;
-  equal ~msg:"hostname" (option string) (Some "node0") prov.hostname;
-  equal ~msg:"pid" int 42 prov.pid;
-  equal ~msg:"git_commit" (option string) (Some "abc123") prov.git_commit;
-  equal ~msg:"git_dirty" (option bool) (Some true) prov.git_dirty
+let check_stats ~msg (expected : Metric.sample list) (got : Metric.stats option)
+    =
+  match (expected, got) with
+  | [], None -> ()
+  | [], Some _ -> fail (msg ^ ": statistics of no sample")
+  | _, None -> fail (msg ^ ": no statistics")
+  | l, Some st -> (
+      equal ~msg:(msg ^ " count") int (List.length l) st.count;
+      equal ~msg:(msg ^ " last") sample (List.nth l (List.length l - 1)) st.last;
+      let finite =
+        List.filter (fun (s : Metric.sample) -> Float.is_finite s.value) l
+      in
+      let non_finite =
+        List.filter (fun (s : Metric.sample) -> not (Float.is_finite s.value)) l
+      in
+      (match (finite, st.finite) with
+      | [], None -> ()
+      | [], Some _ | _ :: _, None -> fail (msg ^ ": finite statistics disagree")
+      | f, Some fs ->
+          let pick better =
+            List.fold_left
+              (fun (b : Metric.sample) (s : Metric.sample) ->
+                if better s.value b.value then s else b)
+              (List.hd f) (List.tl f)
+          in
+          equal ~msg:(msg ^ " least") sample (pick ( < )) fs.least;
+          equal ~msg:(msg ^ " greatest") sample (pick ( > )) fs.greatest;
+          (* The mean by its definition, each term divided first so that no sum
+             overflows; within the rounding of that naive sum. *)
+          let n = Float.of_int (List.length f) in
+          let mean =
+            List.fold_left
+              (fun a (s : Metric.sample) -> a +. (s.value /. n))
+              0. f
+          in
+          let scale =
+            List.fold_left
+              (fun a (s : Metric.sample) -> Float.max a (Float.abs s.value))
+              0. f
+          in
+          equal ~msg:(msg ^ " mean")
+            (float_rel ~rel:1e-9 ~abs:(Float.max 1e-300 (1e-12 *. scale)))
+            mean fs.mean);
+      match (non_finite, st.non_finite) with
+      | [], None -> ()
+      | (s :: _ as l), Some (n, first) ->
+          equal ~msg:(msg ^ " non-finite count") int (List.length l) n;
+          equal ~msg:(msg ^ " first non-finite") sample s first
+      | _ -> fail (msg ^ ": non-finite statistics disagree"))
 
-let test_capture_env () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  Unix.putenv "MUNIN_TEST_A" "alpha";
-  let session =
-    Session.start ~store ~experiment:"exp"
-      ~provenance:(Provenance.detect ~capture_env:[ "MUNIN_TEST_A" ] ())
-      ()
-  in
-  Session.finish session;
-  let prov = Run.provenance (Session.run session) in
-  equal ~msg:"env captured"
-    (list (pair string string))
-    [ ("MUNIN_TEST_A", "alpha") ]
-    prov.env
-
-let test_capture_env_missing () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  (* Use a variable name that won't exist *)
-  let session =
-    Session.start ~store ~experiment:"exp"
-      ~provenance:
-        (Provenance.detect ~capture_env:[ "MUNIN_NONEXISTENT_9999" ] ())
-      ()
-  in
-  Session.finish session;
-  let prov = Run.provenance (Session.run session) in
-  equal ~msg:"missing env omitted" (list (pair string string)) [] prov.env
-
-let test_explicit_env () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session =
-    Session.start ~store ~experiment:"exp"
-      ~provenance:{ (Provenance.detect ()) with env = [ ("KEY", "value") ] }
-      ()
-  in
-  Session.finish session;
-  let prov = Run.provenance (Session.run session) in
-  equal ~msg:"explicit env"
-    (list (pair string string))
-    [ ("KEY", "value") ]
-    prov.env
-
-let test_detected_by_default () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Munin.Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  let prov = Run.provenance (Session.run session) in
-  let detected = Provenance.detect () in
-  (* git_dirty can change between the two detections. *)
-  equal ~msg:"command" (list string) detected.command prov.command;
-  equal ~msg:"cwd" string detected.cwd prov.cwd;
-  equal ~msg:"hostname" (option string) detected.hostname prov.hostname;
-  equal ~msg:"pid" int detected.pid prov.pid;
-  equal ~msg:"git_commit" (option string) detected.git_commit prov.git_commit
-
-let provenance_tests =
-  [
-    test "all fields round-trip" test_provenance_fields;
-    test "start without one records the detected provenance"
-      test_detected_by_default;
-    test "capture_env" test_capture_env;
-    test "capture_env missing var" test_capture_env_missing;
-    test "explicit env" test_explicit_env;
-  ]
-
-(* Run loading *)
-
-let test_run_load () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  let id = Session.id session in
-  is_some ~msg:"load existing" (Store.find_run store id)
-
-let test_run_load_missing () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  is_none ~msg:"load missing" (Store.find_run store "nonexistent")
-
-let test_run_list_sorted_descending () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let s1 = Session.start ~store ~experiment:"exp" () in
-  Session.finish s1;
-  let s2 = Session.start ~store ~experiment:"exp" () in
-  Session.finish s2;
-  let runs = Store.list_runs store ~experiment:"exp" () in
-  equal ~msg:"newest first" (list string)
-    [ Session.id s2; Session.id s1 ]
-    (List.map Run.id runs)
-
-let test_run_list_filter_status () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let s1 = Session.start ~store ~experiment:"exp" () in
-  Session.finish s1;
-  let s2 = Session.start ~store ~experiment:"exp" () in
-  Session.finish ~status:`Failed s2;
-  equal ~msg:"finished only" int 1
-    (List.length (Store.list_runs store ~experiment:"exp" ~status:`Finished ()));
-  equal ~msg:"failed only" int 1
-    (List.length (Store.list_runs store ~experiment:"exp" ~status:`Failed ()))
-
-let test_run_list_filter_tag () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let s1 = Session.start ~store ~experiment:"exp" ~tags:[ "train" ] () in
-  Session.finish s1;
-  let s2 = Session.start ~store ~experiment:"exp" ~tags:[ "eval" ] () in
-  Session.finish s2;
-  equal ~msg:"train tagged" int 1
-    (List.length (Store.list_runs store ~experiment:"exp" ~tag:"train" ()));
-  equal ~msg:"eval tagged" int 1
-    (List.length (Store.list_runs store ~experiment:"exp" ~tag:"eval" ()))
-
-let test_run_list_filter_parent () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let parent = Session.start ~store ~experiment:"exp" () in
-  Session.finish parent;
-  let parent_run = Session.run parent in
-  let child = Session.start ~store ~experiment:"exp" ~parent:parent_run () in
-  Session.finish child;
-  let _other = Session.start ~store ~experiment:"exp" () in
-  Session.finish _other;
-  equal ~msg:"one child" int 1
-    (List.length
-       (Store.list_runs store ~experiment:"exp" ~parent:(Run.id parent_run) ()))
-
-let test_run_children () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let parent = Session.start ~store ~experiment:"exp" () in
-  Session.finish parent;
-  let parent_run = Session.run parent in
-  let c1 = Session.start ~store ~experiment:"exp" ~parent:parent_run () in
-  Session.finish c1;
-  let c2 = Session.start ~store ~experiment:"exp" ~parent:parent_run () in
-  Session.finish c2;
-  let children = Store.list_runs store ~parent:(Run.id parent_run) () in
-  equal ~msg:"two children" int 2 (List.length children);
+let check_history ~msg evs h =
   List.iter
-    (fun child ->
-      equal ~msg:"parent_id" (option string)
-        (Some (Run.id parent_run))
-        (Run.parent_id child))
-    children
-
-let test_run_name () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let s1 = Session.start ~store ~experiment:"exp" ~name:"baseline" () in
-  Session.finish s1;
-  let s2 = Session.start ~store ~experiment:"exp" () in
-  Session.finish s2;
-  equal ~msg:"named" (option string) (Some "baseline")
-    (Run.name (Session.run s1));
-  equal ~msg:"unnamed" (option string) None (Run.name (Session.run s2))
-
-let test_experiment () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"my-exp" () in
-  Session.finish session;
-  equal ~msg:"experiment name" string "my-exp"
-    (Run.experiment (Session.run session))
-
-let run_loading =
-  [
-    test "load existing" test_run_load;
-    test "load missing" test_run_load_missing;
-    test "list sorted descending" test_run_list_sorted_descending;
-    test "list filter status" test_run_list_filter_status;
-    test "list filter tag" test_run_list_filter_tag;
-    test "list filter parent" test_run_list_filter_parent;
-    test "children" test_run_children;
-    test "name" test_run_name;
-    test "experiment" test_experiment;
-  ]
-
-(* Artifacts *)
-
-let test_file_artifact () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "weights.bin" "model weights" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let artifact =
-    Session.log_artifact session ~name:"model" ~kind:`Checkpoint ~path:src ()
-  in
-  Session.finish session;
-  equal ~msg:"name" string "model" (Artifact.name artifact);
-  equal ~msg:"version" string "v1" (Artifact.version artifact);
-  is_true ~msg:"kind" (Artifact.kind artifact = `Checkpoint);
-  is_true ~msg:"payload file" (Artifact.payload artifact = `File);
-  is_true ~msg:"size positive" (Artifact.size_bytes artifact > 0);
-  is_true ~msg:"path exists" (Sys.file_exists (Artifact.path artifact));
-  is_true ~msg:"digest is 64 hex characters"
-    (String.length (Artifact.digest artifact) = 64)
-
-let test_dir_artifact () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let dir =
-    make_dir root "dataset" [ ("a.txt", "data a"); ("b.txt", "data b") ]
-  in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let artifact =
-    Session.log_artifact session ~name:"data" ~kind:`Dataset ~path:dir ()
-  in
-  Session.finish session;
-  is_true ~msg:"payload dir" (Artifact.payload artifact = `Dir);
-  is_true ~msg:"kind dataset" (Artifact.kind artifact = `Dataset);
-  is_true ~msg:"blob dir exists" (Sys.file_exists (Artifact.path artifact))
-
-let test_artifact_versioning () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "model.bin" "v1 weights" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let a1 =
-    Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ()
-  in
-  write_text src "v2 weights";
-  let a2 =
-    Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ()
-  in
-  Session.finish session;
-  equal ~msg:"first version" string "v1" (Artifact.version a1);
-  equal ~msg:"second version" string "v2" (Artifact.version a2)
-
-let test_artifact_aliases () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let artifact =
-    Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
-      ~aliases:[ "best"; "latest" ] ()
-  in
-  Session.finish session;
-  is_true ~msg:"has best alias" (Artifact.has_alias artifact "best");
-  is_true ~msg:"has latest alias" (Artifact.has_alias artifact "latest");
-  is_false ~msg:"no nope alias" (Artifact.has_alias artifact "nope")
-
-let test_artifact_alias_resolution () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  ignore
-    (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
-       ~aliases:[ "latest" ] ());
-  write_text src "v2 weights";
-  ignore
-    (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
-       ~aliases:[ "latest" ] ());
-  Session.finish session;
-  let resolved = Store.find_artifact store ~name:"model" ~version:"latest" in
-  is_true ~msg:"alias resolves to v2"
-    (match resolved with Some a -> Artifact.version a = "v2" | None -> false);
-  let v1 = Store.find_artifact store ~name:"model" ~version:"v1" in
-  is_some ~msg:"explicit v1 loads" v1
-
-let test_artifact_metadata () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let artifact =
-    Session.log_artifact session ~name:"model" ~kind:`Model ~path:src
-      ~metadata:[ ("framework", `String "rune") ]
-      ()
-  in
-  Session.finish session;
-  equal ~msg:"metadata count" int 1 (List.length (Artifact.metadata artifact))
-
-let test_artifact_lineage () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "model.bin" "weights" in
-  let producer = Session.start ~store ~experiment:"exp" ~name:"producer" () in
-  let artifact =
-    Session.log_artifact producer ~name:"model" ~kind:`Model ~path:src ()
-  in
-  let consumer = Session.start ~store ~experiment:"exp" ~name:"consumer" () in
-  Session.use_artifact consumer artifact;
-  Session.finish producer;
-  Session.finish consumer;
-  let producer_run = Session.run producer in
-  let consumer_run = Session.run consumer in
-  equal ~msg:"producer_run_id" (option string)
-    (Some (Run.id producer_run))
-    (Artifact.producer_run_id artifact);
-  (* Reload to see consumer linkage *)
-  let reloaded =
-    match Store.find_artifact store ~name:"model" ~version:"v1" with
-    | Some a -> a
-    | None -> failwith "missing artifact"
-  in
-  equal ~msg:"consumer_run_ids" (list string)
-    [ Run.id consumer_run ]
-    (Artifact.consumer_run_ids reloaded);
-  equal ~msg:"output artifacts" int 1
-    (List.length (Run.output_artifacts producer_run));
-  equal ~msg:"input artifacts" int 1
-    (List.length (Run.input_artifacts consumer_run))
-
-let test_log_artifact_closed_raises () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  raises (Failure "Munin.Session.log_artifact: closed session") (fun () ->
-      ignore
-        (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ()))
-
-let test_log_artifact_missing_path_raises () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  raises
-    (Invalid_argument
-       "Munin.Session.log_artifact: path does not exist: /nonexistent/path")
-    (fun () ->
-      ignore
-        (Session.log_artifact session ~name:"model" ~kind:`Model
-           ~path:"/nonexistent/path" ()))
-
-let test_artifact_content_dedup () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "model.bin" "same content" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let a1 =
-    Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ()
-  in
-  let a2 =
-    Session.log_artifact session ~name:"backup" ~kind:`Model ~path:src ()
-  in
-  Session.finish session;
-  equal ~msg:"same digest" string (Artifact.digest a1) (Artifact.digest a2)
-
-let artifacts =
-  [
-    test "file artifact" test_file_artifact;
-    test "directory artifact" test_dir_artifact;
-    test "versioning" test_artifact_versioning;
-    test "aliases" test_artifact_aliases;
-    test "alias resolution" test_artifact_alias_resolution;
-    test "metadata" test_artifact_metadata;
-    test "lineage" test_artifact_lineage;
-    test "closed session raises" test_log_artifact_closed_raises;
-    test "missing path raises" test_log_artifact_missing_path_raises;
-    test "content dedup" test_artifact_content_dedup;
-  ]
-
-(* Store *)
-
-let test_store_open () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  equal ~msg:"root" string root (Store.root store);
-  is_true ~msg:"experiments dir exists"
-    (Sys.file_exists (Filename.concat root "experiments"));
-  is_true ~msg:"artifacts dir exists"
-    (Sys.file_exists (Filename.concat root "artifacts"))
-
-let test_store_list_experiments () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let s1 = Session.start ~store ~experiment:"mnist" () in
-  Session.finish s1;
-  let s2 = Session.start ~store ~experiment:"cifar" () in
-  Session.finish s2;
-  let exps = Store.list_experiments store in
-  equal ~msg:"two experiments" int 2 (List.length exps);
-  is_true ~msg:"has mnist" (List.mem "mnist" exps);
-  is_true ~msg:"has cifar" (List.mem "cifar" exps)
-
-let test_store_list_runs_all () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let s1 = Session.start ~store ~experiment:"exp1" () in
-  Session.finish s1;
-  let s2 = Session.start ~store ~experiment:"exp2" () in
-  Session.finish s2;
-  equal ~msg:"all runs" int 2 (List.length (Store.list_runs store ()))
-
-let test_store_list_runs_experiment () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let s1 = Session.start ~store ~experiment:"exp1" () in
-  Session.finish s1;
-  let s2 = Session.start ~store ~experiment:"exp2" () in
-  Session.finish s2;
-  equal ~msg:"exp1 runs" int 1
-    (List.length (Store.list_runs store ~experiment:"exp1" ()));
-  equal ~msg:"exp2 runs" int 1
-    (List.length (Store.list_runs store ~experiment:"exp2" ()))
-
-let test_store_find_run () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  let id = Session.id session in
-  is_some ~msg:"found" (Store.find_run store id)
-
-let test_store_find_run_missing () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  is_none ~msg:"not found" (Store.find_run store "nonexistent")
-
-let test_store_latest_run () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" ~name:"only" () in
-  Session.finish session;
-  let latest = Store.latest_run store () in
-  is_true ~msg:"latest returns the run"
-    (match latest with Some run -> Run.name run = Some "only" | None -> false)
-
-let test_store_latest_run_with_filter () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let s1 =
-    Session.start ~store ~experiment:"exp" ~tags:[ "train" ] ~name:"a" ()
-  in
-  Session.finish s1;
-  let s2 =
-    Session.start ~store ~experiment:"exp" ~tags:[ "eval" ] ~name:"b" ()
-  in
-  Session.finish s2;
-  let latest = Store.latest_run store ~tag:"train" () in
-  equal ~msg:"latest with tag filter"
-    (option (option string))
-    (Some (Some "a"))
-    (Option.map Run.name latest)
-
-let test_store_latest_run_parent () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let parent = Session.start ~store ~experiment:"exp" () in
-  Session.finish parent;
-  let parent_run = Session.run parent in
-  let child =
-    Session.start ~store ~experiment:"exp" ~parent:parent_run ~name:"child" ()
-  in
-  Session.finish child;
-  let latest = Store.latest_run store ~parent:(Run.id parent_run) () in
-  equal ~msg:"latest with parent filter"
-    (option (option string))
-    (Some (Some "child"))
-    (Option.map Run.name latest)
-
-(* Runs started back to back mostly share a second; with sixteen of them, an
-   order that guesses within a second gets one wrong. *)
-let test_store_latest_run_same_second () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let ids =
-    List.init 16 (fun i ->
-        let session = Session.start ~store ~experiment:"exp" () in
-        Session.finish session;
-        let latest = Option.map Run.id (Store.latest_run store ()) in
-        equal
-          ~msg:(Printf.sprintf "latest after run %d" i)
-          (option string)
-          (Some (Session.id session))
-          latest;
-        Session.id session)
-  in
-  let runs = Store.list_runs store () in
-  let seconds =
-    List.sort_uniq Float.compare
-      (List.map (fun run -> Float.floor (Run.started_at run)) runs)
-  in
-  less ~msg:"seconds spanned, so two runs share one" int ~than:16
-    (List.length seconds);
-  equal ~msg:"newest first" (list string) (List.rev ids) (List.map Run.id runs)
-
-let test_store_delete_run () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  let run = Session.run session in
-  is_true ~msg:"run dir exists before" (Sys.file_exists (Run.dir run));
-  Store.delete_run store run;
-  is_false ~msg:"run dir removed" (Sys.file_exists (Run.dir run))
-
-let test_store_delete_run_cleans_experiment () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"temp" () in
-  Session.finish session;
-  let run = Session.run session in
-  Store.delete_run store run;
-  let exp_dir = Filename.concat (Filename.concat root "experiments") "temp" in
-  is_false ~msg:"experiment dir removed" (Sys.file_exists exp_dir)
-
-let test_store_gc () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  (* Use directory artifact so blob is a directory (gc uses list_dirs) *)
-  let dir = make_dir root "dataset" [ ("a.txt", "data") ] in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let artifact =
-    Session.log_artifact session ~name:"data" ~kind:`Dataset ~path:dir ()
-  in
-  Session.finish session;
-  (* Blob is referenced, gc should remove 0 *)
-  let removed_before = Store.gc store in
-  equal ~msg:"no unreferenced before" int 0 removed_before;
-  is_true ~msg:"blob exists" (Sys.file_exists (Artifact.path artifact));
-  (* Remove artifact manifest to make blob unreferenced *)
-  let version_dir =
-    Filename.concat
-      (Filename.concat
-         (Filename.concat (Filename.concat root "artifacts") "data")
-         "versions")
-      "v1"
-  in
-  rm_rf version_dir;
-  let removed_after = Store.gc store in
-  equal ~msg:"one blob removed" int 1 removed_after
-
-let test_store_find_artifact () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  ignore (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ());
-  Session.finish session;
-  is_some ~msg:"found" (Store.find_artifact store ~name:"model" ~version:"v1")
-
-let test_store_list_artifacts () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "model.bin" "weights" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  ignore (Session.log_artifact session ~name:"model" ~kind:`Model ~path:src ());
-  ignore (Session.log_artifact session ~name:"data" ~kind:`Dataset ~path:src ());
-  Session.finish session;
-  equal ~msg:"all artifacts" int 2 (List.length (Store.list_artifacts store ()));
-  equal ~msg:"filter by kind" int 1
-    (List.length (Store.list_artifacts store ~kind:`Model ()));
-  equal ~msg:"filter by name" int 1
-    (List.length (Store.list_artifacts store ~name:"data" ()))
-
-(* The index at the store root caches the header of each run on disk. The runs a
-   store lists are the run directories with a manifest, whatever the index holds
-   or lacks. *)
-
-let index_path root = Filename.concat root "index.json"
-
-let start_runs store n =
-  List.init n (fun _ ->
-      let session = Session.start ~store ~experiment:"exp" () in
-      Session.finish session;
-      Session.id session)
-
-let listed store = List.map Run.id (Store.list_runs store ())
-
-let test_store_index_wrong_shape () =
-  List.iter
-    (fun text ->
-      with_temp_dir @@ fun root ->
-      let store = Store.open_ ~root () in
-      let ids = start_runs store 2 in
-      write_text (index_path root) text;
+    (fun k ->
+      let expected = reference_samples evs k in
       equal
-        ~msg:(Printf.sprintf "runs under an index of %s" text)
-        (slist string String.compare)
-        ids (listed store);
-      List.iter
-        (fun id -> is_some ~msg:("find_run " ^ id) (Store.find_run store id))
-        ids)
-    [ "{}"; "[]"; "42"; "null"; "\"runs\"" ]
-
-(* An index that lacks a run on disk, as a process killed between writing a
-   run's manifest and its index entry leaves, or that holds a run whose
-   directory is gone. *)
-let test_store_index_stale () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let kept = start_runs store 2 in
-  let saved = read_text (index_path root) in
-  let missing = start_runs store 1 in
-  write_text (index_path root) saved;
-  let gone = List.hd kept in
-  rm_rf (Run.dir (Option.get (Store.find_run store gone)));
-  let ids = List.tl kept @ missing in
-  equal ~msg:"runs listed" (slist string String.compare) ids (listed store);
-  List.iter
-    (fun id -> is_some ~msg:("find_run " ^ id) (Store.find_run store id))
-    ids;
-  is_none ~msg:("find_run " ^ gone) (Store.find_run store gone)
-
-(* An index is damaged by hand, or by a power loss before its write reached the
-   disk. A store written before it had an index has none. The next change
-   rebuilds the index from the runs on disk. *)
-let test_store_index_damaged () =
-  List.iter
-    (fun damage ->
-      with_temp_dir @@ fun root ->
-      let store = Store.open_ ~root () in
-      let before = start_runs store 2 in
-      damage (index_path root);
-      let after = start_runs store 1 in
-      let ids = before @ after in
-      equal ~msg:"runs listed" (slist string String.compare) ids (listed store);
-      List.iter
-        (fun id -> is_some ~msg:("find_run " ^ id) (Store.find_run store id))
-        ids)
-    [
-      (fun path ->
-        let text = read_text path in
-        write_text path (String.sub text 0 (String.length text / 2)));
-      (fun path -> write_text path "");
-      (fun path -> write_text path "[]");
-      Sys.remove;
-    ]
-
-(* A process killed after it appends its run's Finished event and before it
-   updates the index leaves the index calling the run running. The run's event
-   log ends with the Finished event, so the store reports the run ended. *)
-let status_name = function
-  | `Running -> "running"
-  | `Finished -> "finished"
-  | `Failed -> "failed"
-  | `Killed -> "killed"
-
-let test_store_index_status_behind () =
-  List.iter
-    (fun status ->
-      with_temp_dir @@ fun root ->
-      let store = Store.open_ ~root () in
-      let session = Session.start ~store ~experiment:"exp" () in
-      let running = read_text (index_path root) in
-      Session.finish ~status session;
-      write_text (index_path root) running;
-      let id = Session.id session in
-      equal ~msg:"listed" (list string)
-        [ status_name status ]
-        (List.map
-           (fun run -> status_name (Run.status run))
-           (Store.list_runs store ()));
-      equal ~msg:"found" (option string)
-        (Some (status_name status))
-        (Option.map
-           (fun run -> status_name (Run.status run))
-           (Store.find_run store id)))
-    [ `Finished; `Failed; `Killed ]
-
-let events_path store id =
-  Filename.concat
-    (Run.dir (Option.get (Store.find_run store id)))
-    "events.jsonl"
-
-let append_text path text =
-  Out_channel.with_open_gen [ Open_append; Open_creat; Open_binary ] 0o644 path
-    (fun oc -> Out_channel.output_string oc text)
-
-let found_status store id =
-  Option.map (fun run -> status_name (Run.status run)) (Store.find_run store id)
-
-(* A process killed after [Session.resume] appends its [Resumed] event and
-   before it updates the index leaves the index calling a resumed run finished.
-   The run's event log, which runs on after the [Resumed] event, says the run is
-   running again, and the store reports it so. *)
-let test_store_index_resume_behind () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  let id = Session.id session in
-  let events = events_path store id in
-  append_text events {|{"type":"resumed","at":1.0}|};
-  append_text events "\n";
-  equal ~msg:"found" (option string) (Some "running") (found_status store id);
-  equal ~msg:"listed" (list string) [ "running" ]
-    (List.map
-       (fun run -> status_name (Run.status run))
-       (Store.list_runs store ()))
-
-(* A last line that starts at the first of the log's last 4096 bytes is read
-   whole. The line is a [Finished] event padded with spaces to 4095 bytes. *)
-let test_store_log_tail_bound () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let id = Session.id session in
-  let events = events_path store id in
-  append_text events {|{"type":"resumed","at":1.0}|};
-  append_text events "\n";
-  let finished = {|{"type":"finished","status":"failed","ended_at":2.0}|} in
-  let line = String.make (4095 - String.length finished) ' ' ^ finished in
-  append_text events (line ^ "\n");
-  equal ~msg:"found" (option string) (Some "failed") (found_status store id)
-
-(* A run directory that no longer holds a manifest, as a [delete_run] killed
-   partway leaves, is not a run, whatever its cached header. *)
-let test_store_index_no_manifest () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let ids = start_runs store 2 in
-  let gone = List.hd ids in
-  Sys.remove
-    (Filename.concat
-       (Run.dir (Option.get (Store.find_run store gone)))
-       "run.json");
-  equal ~msg:"runs listed"
-    (slist string String.compare)
-    (List.tl ids) (listed store);
-  is_none ~msg:("find_run " ^ gone) (Store.find_run store gone)
-
-(* Processes that change one store at once each keep their change: a sweep
-   starts its runs together, and each run's finished status reaches the store.
-   Each child of [support/start_run.exe] starts and finishes one run once its
-   standard input ends, so closing their pipes releases them all at once. A lost
-   change shows only when the children's changes overlap, so code that loses one
-   can still pass a run of this test. *)
-
-let start_run = Filename.concat "support" "start_run.exe"
-let writers = 8
-
-let status_to_string = function
-  | Unix.WEXITED n -> Printf.sprintf "exited %d" n
-  | Unix.WSIGNALED n -> Printf.sprintf "killed by signal %d" n
-  | Unix.WSTOPPED n -> Printf.sprintf "stopped by signal %d" n
-
-let spawn_start root =
-  let stdin_r, stdin_w = Unix.pipe ~cloexec:true () in
-  let stdout_r, stdout_w = Unix.pipe ~cloexec:true () in
-  let pid =
-    Unix.create_process start_run [| start_run; root |] stdin_r stdout_w
-      Unix.stderr
-  in
-  Unix.close stdin_r;
-  Unix.close stdout_w;
-  (pid, stdin_w, stdout_r)
-
-let wait_start (pid, _, stdout_r) =
-  let ic = Unix.in_channel_of_descr stdout_r in
-  let id = In_channel.input_all ic in
-  close_in ic;
-  let _, status = Unix.waitpid [] pid in
-  equal ~msg:"start_run" string "exited 0" (status_to_string status);
-  id
-
-let test_store_concurrent_starts () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let children = List.init writers (fun _ -> spawn_start root) in
-  List.iter (fun (_, stdin_w, _) -> Unix.close stdin_w) children;
-  let ids = List.map wait_start children in
-  equal ~msg:"runs finished"
-    (slist string String.compare)
-    ids
-    (List.map Run.id (Store.list_runs store ~status:`Finished ()))
-
-(* Domains of one process that start and finish runs in one store at once each
-   keep their changes too. The model is the number of runs finished.
-
-   A program calls "start" only when it holds the command, which it does with
-   probability 3/4, and its prefix opens a store, which an empty prefix, one in
-   21, does not: about one program in four never starts a run. Over 12
-   programs, a run misses "start" with odds below one in a million. *)
-
-let open_store () =
-  let root = Filename.temp_file "munin" "test" in
-  Sys.remove root;
-  Unix.mkdir root 0o755;
-  Store.open_ ~root ()
-
-let store_w = abstract "store" ~release:(fun store -> rm_rf (Store.root store))
-
-let store_commands =
-  [
-    command "open" (Gen.unit @-> makes store_w) (fun () -> ref 0) open_store;
-    command "start"
-      (store_w ^-> returns unit)
-      incr
-      (fun store -> ignore (start_runs store 1));
-    command "count"
-      (store_w ^-> returns int)
-      ( ! )
-      (fun store -> List.length (Store.list_runs store ~status:`Finished ()));
-  ]
-
-let store_tests =
-  [
-    test "open creates dirs" test_store_open;
-    test "list_experiments" test_store_list_experiments;
-    test "list_runs all" test_store_list_runs_all;
-    test "list_runs by experiment" test_store_list_runs_experiment;
-    test "find_run" test_store_find_run;
-    test "find_run missing" test_store_find_run_missing;
-    test "latest_run" test_store_latest_run;
-    test "latest_run with filter" test_store_latest_run_with_filter;
-    test "latest_run with parent" test_store_latest_run_parent;
-    test "latest_run within a second" test_store_latest_run_same_second;
-    test "delete_run" test_store_delete_run;
-    test "delete_run cleans experiment" test_store_delete_run_cleans_experiment;
-    test "gc" test_store_gc;
-    test "find_artifact" test_store_find_artifact;
-    test "list_artifacts" test_store_list_artifacts;
-    test "index of another shape" test_store_index_wrong_shape;
-    test "stale index" test_store_index_stale;
-    test "damaged index" test_store_index_damaged;
-    test "index behind a run's status" test_store_index_status_behind;
-    test "index behind a resume" test_store_index_resume_behind;
-    test "log tail bound" test_store_log_tail_bound;
-    test "run without a manifest" test_store_index_no_manifest;
-    test "runs started by processes at once" test_store_concurrent_starts;
-    stateful ~count:12 ~domains:2 "runs started by domains at once"
-      store_commands;
-  ]
-
-(* Reloading *)
-
-let test_reload_reads_metrics () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let run = Session.run session in
-  let loss = Session.metric session "train/loss" in
-  Metric.log loss ~step:1 1.0;
-  Metric.log loss ~step:2 0.5;
-  let run = Run.reload run in
-  let metrics = Run.latest_metrics run in
-  equal ~msg:"one key" int 1 (List.length metrics);
-  let latest = List.assoc "train/loss" metrics in
-  equal ~msg:"latest step" int 2 latest.step;
-  Session.finish session
-
-let test_reload_incremental () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let x = Session.metric session "x" in
-  Metric.log x ~step:1 1.0;
-  let run = Session.run session in
-  equal ~msg:"one point when loaded" int 1
-    (List.length (Run.metric_history run "x"));
-  Metric.log x ~step:2 2.0;
-  let run = Run.reload run in
-  equal ~msg:"two points after reload" int 2
-    (List.length (Run.metric_history run "x"));
-  Session.finish session
-
-let test_reload_history_chronological () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let run = Session.run session in
-  let x = Session.metric session "x" in
-  Metric.log x ~step:1 3.0;
-  Metric.log x ~step:2 1.0;
-  Metric.log x ~step:3 2.0;
-  let run = Run.reload run in
-  let steps =
-    List.map (fun (m : Metric.sample) -> m.step) (Run.metric_history run "x")
-  in
-  equal ~msg:"chronological steps" (list int) [ 1; 2; 3 ] steps;
-  Session.finish session
-
-let test_reload_metric_defs () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let run = Session.run session in
-  ignore (Session.metric session ~summary:`Min ~goal:`Minimize "loss");
-  let run = Run.reload run in
-  let defs = Run.metric_defs run in
-  equal ~msg:"one def" int 1 (List.length defs);
-  let def = List.assoc "loss" defs in
-  is_true ~msg:"summary min" (def.summary = `Min);
-  Session.finish session
-
-let test_reload_after_truncation () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let x = Session.metric session "x" in
-  Metric.log x ~step:1 1.0;
-  Metric.log x ~step:2 2.0;
-  Metric.log x ~step:3 3.0;
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"three points" int 3 (List.length (Run.metric_history run "x"));
-  (* Keep the metric declaration and the first sample only. *)
-  let path = Filename.concat (Run.dir run) "events.jsonl" in
-  let lines = String.split_on_char '\n' (read_text path) in
-  write_text path
-    (String.concat "\n" (List.filteri (fun i _ -> i < 2) lines) ^ "\n");
-  let run = Run.reload run in
-  equal ~msg:"re-read from the start" int 1
-    (List.length (Run.metric_history run "x"))
-
-let test_last_event_at () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let x = Session.metric session "x" in
-  let run = Session.run session in
-  equal ~msg:"no timestamped events yet" (option float_exact) None
-    (Run.last_event_at run);
-  Metric.log x ~step:1 1.0;
-  Metric.log x ~step:2 2.0;
-  let run = Run.reload run in
-  let last = List.nth (Run.metric_history run "x") 1 in
-  is_true ~msg:"timestamp of the last sample"
-    (Run.last_event_at run = Some last.timestamp);
-  Session.finish session
-
-(* A NaN or an infinity, which JSON has no number for, is read back. *)
-let test_reload_not_finite () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let x = Session.metric session "x" in
-  List.iteri
-    (fun step v -> Metric.log x ~step v)
-    [ Float.nan; Float.infinity; Float.neg_infinity; 1. ];
-  Session.finish session;
-  let run = Option.get (Store.find_run store (Session.id session)) in
-  equal (list float_exact)
-    [ Float.nan; Float.infinity; Float.neg_infinity; 1. ]
-    (List.map (fun (m : Metric.sample) -> m.value) (Run.metric_history run "x"))
-
-(* A value that is a float JSON has no number for reads back as that float,
-   and a string that spells one stays a string. *)
-let test_value_not_finite () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session =
-    Session.start ~store ~experiment:"exp"
-      ~params:[ ("lr", `Float Float.infinity); ("name", `String "NaN") ]
-      ()
-  in
-  Session.set_summary session
-    [ ("loss", `Float Float.nan); ("best", `String "-Infinity") ];
-  Session.finish session;
-  let run = Option.get (Store.find_run store (Session.id session)) in
-  let value = Testable.make ~pp:Value.pp ~equal:(fun a b -> compare a b = 0) in
-  equal (option value) (Some (`Float Float.infinity)) (Run.find_param run "lr");
-  equal (option value) (Some (`String "NaN")) (Run.find_param run "name");
-  equal (option value) (Some (`Float Float.nan)) (Run.find_summary run "loss");
-  equal (option value) (Some (`String "-Infinity"))
-    (Run.find_summary run "best")
-
-(* [nullify key text] is the JSON [text] with the value of its member [key],
-   a number, replaced by [null], as munin wrote a NaN param before. *)
-let nullify key text =
-  let mark = Printf.sprintf "%S" key in
-  let n = String.length mark in
-  let rec find i = if String.sub text i n = mark then i else find (i + 1) in
-  let colon = String.index_from text (find 0 + n) ':' + 1 in
-  let rec stop i =
-    match text.[i] with ',' | '}' | '\n' -> i | _ -> stop (i + 1)
-  in
-  let e = stop colon in
-  String.sub text 0 colon ^ " null" ^ String.sub text e (String.length text - e)
-
-(* A run whose param is not a value lists and loads without it, its metrics
-   intact. *)
-let test_unreadable_param () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session =
-    Session.start ~store ~experiment:"exp"
-      ~params:[ ("lr", `Float 0.5); ("seed", `Int 7) ]
-      ()
-  in
-  Metric.log (Session.metric session "loss") ~step:1 2.5;
-  Session.finish session;
-  let manifest = Filename.concat (Session.dir session) "run.json" in
-  let text = In_channel.with_open_bin manifest In_channel.input_all in
-  Out_channel.with_open_bin manifest (fun oc ->
-      Out_channel.output_string oc (nullify "lr" text));
-  let store = Store.open_ ~root () in
-  equal (list string) [ Session.id session ]
-    (List.map Run.id (Store.list_runs store ()));
-  let run = Option.get (Store.find_run store (Session.id session)) in
-  equal (list string) [ "seed" ] (List.map fst (Run.params run));
-  equal (list float_exact) [ 2.5 ]
-    (List.map
-       (fun (m : Metric.sample) -> m.value)
-       (Run.metric_history run "loss"))
-
-(* JSON that no value writes is not a value. *)
-let value_malformed =
-  cases "JSON no value writes is not a value" ~id:Fun.id
-    [
-      "null";
-      "[1]";
-      "{}";
-      {|{"x": "NaN"}|};
-      {|{"float": "nan"}|};
-      {|{"float": 1.5}|};
-      {|{"float": "NaN", "x": 1}|};
-    ]
-  @@ fun text ->
-  let json = Result.get_ok (Jsont_bytesrw.decode_string Jsont.json text) in
-  is_none (Value.of_json json)
-
-let test_reload_finished () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Metric.log (Session.metric session "x") ~step:1 1.0;
-  let run = Session.run session in
-  is_true ~msg:"running during session" (Run.status run = `Running);
-  Session.finish session;
-  let run = Run.reload run in
-  is_true ~msg:"finished after reload" (Run.status run = `Finished);
-  is_some ~msg:"ended_at set" (Run.ended_at run)
-
-let test_best_minimize () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let loss = Session.metric session ~goal:`Minimize "loss" in
-  Metric.log loss ~step:1 1.0;
-  Metric.log loss ~step:2 0.3;
-  Metric.log loss ~step:3 0.7;
-  Session.finish session;
-  let best = Run.best (Session.run session) "loss" in
-  is_true ~msg:"best is 0.3 at step 2"
-    (match best with Some m -> m.value = 0.3 && m.step = 2 | None -> false)
-
-let test_best_maximize () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let acc = Session.metric session ~goal:`Maximize "acc" in
-  Metric.log acc ~step:1 0.5;
-  Metric.log acc ~step:2 0.9;
-  Metric.log acc ~step:3 0.7;
-  Session.finish session;
-  let best = Run.best (Session.run session) "acc" in
-  is_true ~msg:"best is 0.9 at step 2"
-    (match best with Some m -> m.value = 0.9 && m.step = 2 | None -> false)
-
-let test_best_without_goal () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let loss = Session.metric session "train/loss" in
-  Metric.log loss ~step:1 1.0;
-  Metric.log loss ~step:2 0.2;
-  Session.finish session;
-  is_none ~msg:"no goal declared, no best"
-    (Run.best (Session.run session) "train/loss")
-
-let test_best_nonexistent () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  ignore (Session.metric session ~goal:`Minimize "loss");
-  Session.finish session;
-  let run = Session.run session in
-  is_none ~msg:"no best for a key without samples" (Run.best run "loss");
-  is_none ~msg:"no best for a missing key" (Run.best run "nope")
-
-let reloading =
-  [
-    test "reload reads metrics" test_reload_reads_metrics;
-    test "reload is incremental" test_reload_incremental;
-    test "history chronological" test_reload_history_chronological;
-    test "metric_defs" test_reload_metric_defs;
-    test "reload after truncation" test_reload_after_truncation;
-    test "last_event_at" test_last_event_at;
-    test "reload picks up finish" test_reload_finished;
-    test "reload reads NaN and infinities" test_reload_not_finite;
-    test "params and summaries read back NaN and infinities"
-      test_value_not_finite;
-    value_malformed;
-    test "a run whose param is not a value loads without it"
-      test_unreadable_param;
-    test "best minimize" test_best_minimize;
-    test "best maximize" test_best_maximize;
-    test "best without goal" test_best_without_goal;
-    test "best nonexistent key" test_best_nonexistent;
-  ]
-
-(* Robustness *)
-
-let test_partial_log () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Metric.log (Session.metric session "x") ~step:1 1.0;
-  let run = Session.run session in
-  (* Append truncated JSON *)
-  let oc =
-    open_out_gen
-      [ Open_append; Open_creat ]
-      0o644
-      (Filename.concat (Run.dir run) "events.jsonl")
-  in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc "{\"type\":\"metric\"");
-  let run = Session.run session in
-  equal ~msg:"partial line ignored" int 1
-    (List.length (Run.metric_history run "x"));
-  Session.finish session
-
-let test_malformed_line () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Metric.log (Session.metric session "x") ~step:1 1.0;
-  let run = Session.run session in
-  let oc =
-    open_out_gen
-      [ Open_append; Open_creat ]
-      0o644
-      (Filename.concat (Run.dir run) "events.jsonl")
-  in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc "this is not json at all\n");
-  let run = Session.run session in
-  equal ~msg:"malformed line skipped" int 1
-    (List.length (Run.metric_history run "x"));
-  Session.finish session
-
-let test_empty_event_log () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let run = Session.run session in
-  (* No events logged *)
-  equal ~msg:"no metrics" int 0 (List.length (Run.metric_keys run));
-  equal ~msg:"no tags" (list string) [] (Run.tags run);
-  is_true ~msg:"running" (Run.status run = `Running);
-  Session.finish session
-
-let test_mixed_valid_invalid () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let x = Session.metric session "x" in
-  Metric.log x ~step:1 1.0;
-  let run = Session.run session in
-  let oc =
-    open_out_gen
-      [ Open_append; Open_creat ]
-      0o644
-      (Filename.concat (Run.dir run) "events.jsonl")
-  in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () ->
-      output_string oc "garbage\n";
-      output_string oc "{\"bad\":true}\n");
-  Metric.log x ~step:2 2.0;
-  let run = Session.run session in
-  equal ~msg:"only valid metrics" int 2
-    (List.length (Run.metric_history run "x"));
-  Session.finish session
-
-let robustness =
-  [
-    test "partial log" test_partial_log;
-    test "malformed line" test_malformed_line;
-    test "empty event log" test_empty_event_log;
-    test "mixed valid and invalid" test_mixed_valid_invalid;
-  ]
-
-(* Auto-computed summaries *)
-
-let summary_float run key =
-  match Run.find_summary run key with
-  | Some v -> Value.to_float v
-  | None -> None
-
-let test_auto_summary_min () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let loss = Session.metric session ~summary:`Min "loss" in
-  Metric.log loss ~step:1 1.0;
-  Metric.log loss ~step:2 0.3;
-  Metric.log loss ~step:3 0.7;
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"min summary" (option float_exact) (Some 0.3)
-    (summary_float run "loss")
-
-let test_auto_summary_max () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let acc = Session.metric session ~summary:`Max "acc" in
-  Metric.log acc ~step:1 0.5;
-  Metric.log acc ~step:2 0.9;
-  Metric.log acc ~step:3 0.7;
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"max summary" (option float_exact) (Some 0.9)
-    (summary_float run "acc")
-
-let test_auto_summary_mean () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let x = Session.metric session ~summary:`Mean "x" in
-  Metric.log x ~step:1 1.0;
-  Metric.log x ~step:2 2.0;
-  Metric.log x ~step:3 3.0;
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"mean summary" (option float_exact) (Some 2.0)
-    (summary_float run "x")
-
-let test_auto_summary_last () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let x = Session.metric session ~summary:`Last "x" in
-  Metric.log x ~step:1 1.0;
-  Metric.log x ~step:2 2.0;
-  Metric.log x ~step:3 3.0;
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"last summary" (option float_exact) (Some 3.0)
-    (summary_float run "x")
-
-let test_auto_summary_none () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Metric.log (Session.metric session ~summary:`None "x") ~step:1 1.0;
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"no auto-summary"
-    (option (Testable.make ~pp:Value.pp ~equal:( = )))
-    None (Run.find_summary run "x")
-
-let test_explicit_summary_wins () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  let loss = Session.metric session ~summary:`Min "loss" in
-  Metric.log loss ~step:1 1.0;
-  Metric.log loss ~step:2 0.3;
-  Session.set_summary session [ ("loss", `Float 999.0) ];
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"explicit wins" (option float_exact) (Some 999.0)
-    (summary_float run "loss")
-
-let auto_summaries =
-  [
-    test "auto-summary min" test_auto_summary_min;
-    test "auto-summary max" test_auto_summary_max;
-    test "auto-summary mean" test_auto_summary_mean;
-    test "auto-summary last" test_auto_summary_last;
-    test "auto-summary none" test_auto_summary_none;
-    test "explicit summary wins" test_explicit_summary_wins;
-  ]
-
-(* Grouping *)
-
-let test_group_round_trip () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" ~group:"sweep-lr" () in
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"group" (option string) (Some "sweep-lr") (Run.group run)
-
-let test_group_none_by_default () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  equal ~msg:"no group" (option string) None (Run.group (Session.run session))
-
-let test_run_list_filter_group () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let s1 = Session.start ~store ~experiment:"exp" ~group:"a" () in
-  Session.finish s1;
-  let s2 = Session.start ~store ~experiment:"exp" ~group:"b" () in
-  Session.finish s2;
-  let s3 = Session.start ~store ~experiment:"exp" () in
-  Session.finish s3;
-  equal ~msg:"group a" int 1
-    (List.length (Store.list_runs store ~experiment:"exp" ~group:"a" ()));
-  equal ~msg:"group b" int 1
-    (List.length (Store.list_runs store ~experiment:"exp" ~group:"b" ()));
-  equal ~msg:"all" int 3
-    (List.length (Store.list_runs store ~experiment:"exp" ()))
-
-let test_store_list_runs_group () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let s1 = Session.start ~store ~experiment:"exp" ~group:"sweep" () in
-  Session.finish s1;
-  let s2 = Session.start ~store ~experiment:"exp" () in
-  Session.finish s2;
-  equal ~msg:"sweep only" int 1
-    (List.length (Store.list_runs store ~group:"sweep" ()))
-
-let test_store_latest_run_group () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let s1 = Session.start ~store ~experiment:"exp" ~group:"a" () in
-  Session.finish s1;
-  let s2 = Session.start ~store ~experiment:"exp" ~group:"b" () in
-  Session.finish s2;
-  let latest = Store.latest_run store ~group:"a" () in
-  is_true ~msg:"latest in group a"
-    (match latest with Some r -> Run.group r = Some "a" | None -> false)
-
-let grouping =
-  [
-    test "group round-trip" test_group_round_trip;
-    test "group none by default" test_group_none_by_default;
-    test "run list filter group" test_run_list_filter_group;
-    test "store list_runs group" test_store_list_runs_group;
-    test "store latest_run group" test_store_latest_run_group;
-  ]
-
-(* Media *)
-
-let test_log_media_copies_file () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "pred.png" "image data" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_media session ~step:1 ~key:"predictions" ~kind:`Image ~path:src;
-  Session.finish session;
-  let run = Session.run session in
-  let entries = Run.media_history run "predictions" in
-  equal ~msg:"one entry" int 1 (List.length entries);
-  let entry = List.hd entries in
-  is_true ~msg:"file exists" (Sys.file_exists entry.path);
-  is_true ~msg:"kind is image" (entry.kind = `Image);
-  equal ~msg:"step" int 1 entry.step
-
-let test_log_media_nested_key () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "img.png" "pixels" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_media session ~step:5 ~key:"train/predictions" ~kind:`Image
-    ~path:src;
-  Session.finish session;
-  let run = Session.run session in
-  let entries = Run.media_history run "train/predictions" in
-  equal ~msg:"one entry" int 1 (List.length entries);
-  let entry = List.hd entries in
-  is_true ~msg:"file in subdir"
-    (Filename.basename (Filename.dirname entry.path) = "train")
-
-let test_log_media_multiple_steps () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "img.png" "pixels" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_media session ~step:1 ~key:"pred" ~kind:`Image ~path:src;
-  Session.log_media session ~step:5 ~key:"pred" ~kind:`Image ~path:src;
-  Session.log_media session ~step:10 ~key:"pred" ~kind:`Image ~path:src;
-  Session.finish session;
-  let run = Session.run session in
-  let entries = Run.media_history run "pred" in
-  equal ~msg:"three entries" int 3 (List.length entries);
-  let steps = List.map (fun (e : Run.media_entry) -> e.step) entries in
-  equal ~msg:"chronological" (list int) [ 1; 5; 10 ] steps
-
-let test_log_media_missing_path_raises () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  raises
-    (Invalid_argument
-       "Munin.Session.log_media: path does not exist: /no/such/file") (fun () ->
-      Session.log_media session ~step:1 ~key:"x" ~kind:`File
-        ~path:"/no/such/file");
-  Session.finish session
-
-let test_log_media_closed_ignored () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "img.png" "pixels" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  Session.log_media session ~step:1 ~key:"pred" ~kind:`Image ~path:src;
-  let run = Session.run session in
-  equal ~msg:"no media" int 0 (List.length (Run.media_keys run))
-
-let test_log_table () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_table session ~step:1 ~key:"confusion" ~columns:[ "cat"; "dog" ]
-    ~rows:[ [ `Int 90; `Int 10 ]; [ `Int 5; `Int 95 ] ];
-  Session.finish session;
-  let run = Session.run session in
-  let entries = Run.media_history run "confusion" in
-  equal ~msg:"one entry" int 1 (List.length entries);
-  let entry = List.hd entries in
-  is_true ~msg:"kind is table" (entry.kind = `Table);
-  is_true ~msg:"json file exists" (Sys.file_exists entry.path)
-
-let test_media_keys_sorted () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let src = make_file root "f.bin" "data" in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.log_media session ~step:1 ~key:"z/output" ~kind:`File ~path:src;
-  Session.log_media session ~step:1 ~key:"a/input" ~kind:`File ~path:src;
-  Session.log_media session ~step:1 ~key:"m/middle" ~kind:`File ~path:src;
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"sorted" (list string)
-    [ "a/input"; "m/middle"; "z/output" ]
-    (Run.media_keys run)
-
-let test_media_empty_history () =
-  with_temp_dir @@ fun root ->
-  let store = Store.open_ ~root () in
-  let session = Session.start ~store ~experiment:"exp" () in
-  Session.finish session;
-  let run = Session.run session in
-  equal ~msg:"no media keys" (list string) [] (Run.media_keys run);
-  equal ~msg:"empty history" int 0
-    (List.length (Run.media_history run "nonexistent"))
-
-let media =
-  [
-    test "log_media copies file" test_log_media_copies_file;
-    test "log_media nested key" test_log_media_nested_key;
-    test "log_media multiple steps" test_log_media_multiple_steps;
-    test "log_media missing path raises" test_log_media_missing_path_raises;
-    test "log_media closed ignored" test_log_media_closed_ignored;
-    test "log_table" test_log_table;
-    test "media_keys sorted" test_media_keys_sorted;
-    test "media empty history" test_media_empty_history;
-  ]
-
-(* GPU metrics' keys *)
-
-(* A GPU metric's key reads back as its GPU and name. *)
-let test_gpu_key =
-  let gen =
-    Gen.pair
-      (Gen.one_of [ Gen.int_range 0 0; Gen.int_range 0 10_000 ])
-      (Gen.of_list [ "util_pct"; "mem_used_gb"; "temp_c"; "a_b"; "x" ])
-  in
-  prop "gpu_metric reads gpu_key back" gen @@ fun (i, name) ->
-  cover "GPU 0" (i = 0);
-  cover "two digits or more" (i >= 10);
-  equal (option (pair int string)) (Some (i, name))
-    (Metric.gpu_metric (Metric.gpu_key i name))
-
-(* Any key that no [gpu_key] prints is no GPU metric. *)
-let test_gpu_metric_others =
-  cases "gpu_metric of other keys" ~id:(Printf.sprintf "%S")
-    [
-      "sys/gpu_util_pct";
-      "sys/gpu1";
-      "sys/gpu1_";
-      "sys/gpu01_util_pct";
-      "sys/gpu-1_util_pct";
-      "sys/gpux_util_pct";
-      "sys/cpu_user";
-      "gpu1_util_pct";
-      "";
-    ]
-  @@ fun key ->
-  equal (option (pair int string)) None (Metric.gpu_metric key)
-
-(* The keys no GPU and name give are refused. *)
-let test_gpu_key_domain () =
-  raises_match Exn.invalid_arg (fun () -> Metric.gpu_key (-1) "util_pct");
-  raises_match Exn.invalid_arg (fun () -> Metric.gpu_key 0 "")
-
-let gpu_keys =
-  [
-    test_gpu_key;
-    test_gpu_metric_others;
-    test "gpu_key refuses a negative GPU or an empty name" test_gpu_key_domain;
-  ]
+        ~msg:(msg ^ " series " ^ k)
+        (list sample) expected
+        (samples_of (History.series h k));
+      check_stats ~msg:(msg ^ " " ^ k) expected (History.stats h k))
+    [ "a"; "b"; "r" ];
+  let with_samples = List.filter (fun k -> reference_samples evs k <> []) in
+  equal ~msg:(msg ^ " metrics") (list string)
+    (with_samples [ "a"; "b" ])
+    (History.metrics h);
+  equal ~msg:(msg ^ " readings") (list string) (with_samples [ "r" ])
+    (History.readings h)
 
 (* Values *)
 
-(* A float prints as C's [%g] writes it, the same on every system: msvcrt
-   writes 1e+006. *)
-let value_floats =
-  cases "a float prints six significant digits"
-    ~id:(fun (x, _) -> Printf.sprintf "%h" x)
+let values_tests =
+  group "values"
     [
-      (1e6, "1e+06");
-      (4.58e-72, "4.58e-72");
-      (1. /. 3., "0.333333");
-      (-0., "-0");
-      (Float.nan, "nan");
-      (Float.neg_infinity, "-inf");
+      prop "params read back equal, with their constructors"
+        (Gen.list ~size:(Gen.int_range 0 8) gen_value)
+        (fun vs ->
+          List.iter
+            (fun v ->
+              cover "integral float"
+                (match v with `Float x -> Float.is_integer x | _ -> false);
+              cover "non-finite float"
+                (match v with
+                | `Float x -> not (Float.is_finite x)
+                | _ -> false);
+              cover "int beyond 2^53"
+                (match v with `Int n -> abs n > 1 lsl 53 | _ -> false))
+            vs;
+          with_store @@ fun store ->
+          let params = List.mapi (fun i v -> (Printf.sprintf "p%d" i, v)) vs in
+          let s = start ~params store in
+          Session.finish s;
+          equal (list (pair string value)) params (Run.params (reread store s)));
+      prop "samples read back equal"
+        (Gen.list ~size:(Gen.int_range 1 20) (Gen.pair gen_float gen_float))
+        (fun pairs ->
+          cover "NaN" (List.exists (fun (_, v) -> Float.is_nan v) pairs);
+          with_store @@ fun store ->
+          let s = start store in
+          let m = Session.metric s "m" in
+          let expected =
+            List.mapi
+              (fun step (t, v) ->
+                let time = if Float.is_finite t then t else 1. in
+                Session.log m ~step ~time v;
+                ({ step; time; value = v } : Metric.sample))
+              pairs
+          in
+          Session.finish s;
+          equal (list sample) expected
+            (samples_of (History.series (history store s) "m")));
+      test "Value.pp prints tab-separated text" (fun () ->
+          equal string {|a\tb\nc|}
+            (Format.asprintf "%a" Value.pp (`String "a\tb\nc"));
+          equal string "1.0" (Format.asprintf "%a" Value.pp (`Float 1.));
+          equal string "-0.0" (Format.asprintf "%a" Value.pp (`Float (-0.)));
+          equal string "nan" (Format.asprintf "%a" Value.pp (`Float Float.nan)));
     ]
-  @@ fun (x, text) ->
-  equal string text (Format.asprintf "%a" Value.pp (`Float x))
 
-(* NaN and the infinities have the names Protocol Buffers' JSON mapping
-   gives them; a finite float has none. *)
-let float_names =
-  cases "a float's name in JSON" ~id:(fun (x, _) -> Printf.sprintf "%h" x)
+(* Reading floats *)
+
+let gen_decimal =
+  let open Gen in
+  let digits = string_of ~size:(int_range 1 20) (char_range '0' '9') in
+  map
+    (fun ((neg, (int, frac)), e) ->
+      (if neg then "-" else "")
+      ^ (if int.[0] = '0' && String.length int > 1 then "1" ^ int else int)
+      ^ (if frac = "" then "" else "." ^ frac)
+      ^ match e with None -> "" | Some e -> "e" ^ string_of_int e)
+    (pair
+       (pair bool
+          (pair digits (string_of ~size:(int_range 0 20) (char_range '0' '9'))))
+       (option (int_range (-340) 330)))
+
+(* A decimal of at most 18 significant digits, with an exponent that keeps most
+   of them within 10^-22 to 10^22 of an integer. *)
+let gen_short_decimal =
+  let open Gen in
+  map
+    (fun ((neg, m), (e, point)) ->
+      let d = string_of_int m in
+      let point = Int.min point (String.length d) in
+      let int = String.sub d 0 (String.length d - point)
+      and frac = String.sub d (String.length d - point) point in
+      (if neg then "-" else "")
+      ^ (if int = "" then "0" else int)
+      ^ (if frac = "" then "" else "." ^ frac)
+      ^ if e = 0 then "" else "e" ^ string_of_int e)
+    (pair
+       (pair bool
+          (one_of
+             [
+               int_range 1 (1 lsl 53);
+               int_range (1 lsl 53) 999_999_999_999_999_999;
+             ]))
+       (pair (int_range (-30) 30) (int_range 0 20)))
+
+(* A midpoint between two floats [M 2^k] and [(M + 1) 2^k], [M] from 2^52 to
+   2^53, as [D 10^-j] with [D] of at most 18 digits, or [D] moved by one unit
+   below or above it, and the float it reads as: the even one of the two at the
+   midpoint, else the nearer. [padded] adds three zeros to [D], taking the text
+   past 18 digits. *)
+let gen_midpoint =
+  let open Gen in
+  map
+    (fun (((m, k), off), padded) ->
+      let mid = (2 * m) + 1 in
+      let d, j =
+        match k with
+        | -1 -> (mid * 25, 2)
+        | 0 -> (mid * 5, 1)
+        | k -> (mid lsl (k - 1), 0)
+      in
+      let text =
+        if padded then Printf.sprintf "%d000e-%d" (d + off) (j + 3)
+        else Printf.sprintf "%de-%d" (d + off) j
+      in
+      let lo = Float.ldexp (Float.of_int m) k
+      and hi = Float.ldexp (Float.of_int (m + 1)) k in
+      let expected =
+        if off < 0 then lo
+        else if off > 0 then hi
+        else if m mod 2 = 0 then lo
+        else hi
+      in
+      (text, off, expected))
+    (pair
+       (pair
+          (pair (int_range (1 lsl 52) ((1 lsl 53) - 1)) (int_range (-1) 6))
+          (int_range (-1) 1))
+       bool)
+
+let float_text_tests =
+  group "float text"
     [
-      (Float.nan, Some "NaN");
-      (Float.infinity, Some "Infinity");
-      (Float.neg_infinity, Some "-Infinity");
-      (0., None);
-      (Float.max_float, None);
+      cases "decimals the C library reads wrongly somewhere" ~id:fst
+        [ ("3.839223843572815e-239", Float.of_string "0x1.fffffffffffffp-793") ]
+        (fun (text, expected) ->
+          equal float_exact expected
+            (require_some (Munin_float_text.Float_text.of_string text)));
+      prop "a float's shortest text reads back as it" Gen.float (fun x ->
+          equal float_exact x
+            (require_some
+               (Munin_float_text.Float_text.of_string
+                  (Munin_float_text.Float_text.exact x))));
+      prop "a decimal reads as the float nearest it" gen_decimal (fun text ->
+          cover "beyond the fast path" (String.length text > 18);
+          equal (option float_exact)
+            (Munin_float_text.Float_text.read text)
+            (Munin_float_text.Float_text.of_string text));
+      prop "a decimal of at most 18 digits reads as the float nearest it"
+        gen_short_decimal (fun text ->
+          equal (option float_exact)
+            (Munin_float_text.Float_text.read text)
+            (Munin_float_text.Float_text.of_string text));
+      prop "a midpoint reads as the even float, a unit off it as the nearer"
+        gen_midpoint (fun (text, off, expected) ->
+          cover "a midpoint" (off = 0);
+          equal float_exact expected
+            (require_some (Munin_float_text.Float_text.of_string text)));
+      prop "a substring reads as its copy" gen_decimal (fun text ->
+          let s = "[" ^ text ^ "]" in
+          equal (option float_exact)
+            (Munin_float_text.Float_text.of_string text)
+            (Munin_float_text.Float_text.of_substring s 1 (String.length text)));
+      test "a sample of a decimal strtod misreads reads back exactly" (fun () ->
+          with_store @@ fun store ->
+          let line =
+            {|{"type":"metrics","time":2.0,"step":0,"values":{"a":3.839223843572815e-239}}|}
+          in
+          let run = spec_run store (start_line ^ "\n" ^ line ^ "\n") in
+          equal float_exact
+            (Float.of_string "0x1.fffffffffffffp-793")
+            (Metric.value (History.series (History.read run) "a") 0));
     ]
-  @@ fun (x, name) -> equal (option string) name (Value.float_name x)
 
-(* Suite *)
+(* The fold *)
 
-let suite =
-  [
-    group "Session lifecycle" lifecycle;
-    group "Scalars" scalars;
-    group "Metric declarations" metric_declarations;
-    group "Metadata" metadata;
-    group "Provenance" provenance_tests;
-    group "Run loading" run_loading;
-    group "Artifacts" artifacts;
-    group "Store" store_tests;
-    group "Reloading" reloading;
-    group "Robustness" robustness;
-    group "Auto-computed summaries" auto_summaries;
-    group "Grouping" grouping;
-    group "Media" media;
-    group "GPU metrics' keys" gpu_keys;
-    group "Values" [ value_floats; float_names ];
-  ]
+(* Values records, in the layout munin writes and in another: members reordered,
+   spaces between tokens, every key escaped. *)
+let gen_layout =
+  let open Gen in
+  let key = Gen.of_list [ "a"; "b"; "c/d"; "q\"\\"; "caf\xc3\xa9" ] in
+  list ~size:(int_range 0 12)
+    (map
+       (fun (((reading, time), step), values) -> (reading, time, step, values))
+       (pair
+          (pair (pair bool gen_float) (int_range 0 1000))
+          (list ~size:(int_range 0 4) (pair key gen_float))))
 
-let () = exit (run "Munin" suite)
+let json_key k =
+  let b = Buffer.create 16 in
+  Buffer.add_char b '"';
+  String.iter
+    (function
+      | '"' -> Buffer.add_string b {|\"|}
+      | '\\' -> Buffer.add_string b {|\\|}
+      | c -> Buffer.add_char b c)
+    k;
+  Buffer.add_char b '"';
+  Buffer.contents b
+
+(* Every byte escaped, as \u00XX for ASCII. *)
+let escaped_key k =
+  if String.exists (fun c -> Char.code c >= 0x80) k then json_key k
+  else
+    "\""
+    ^ String.concat ""
+        (List.map
+           (fun c -> Printf.sprintf "\\u%04x" (Char.code c))
+           (List.of_seq (String.to_seq k)))
+    ^ "\""
+
+let shortest x =
+  if Float.is_finite x then Munin_float_text.Float_text.exact_float x
+  else json_float x
+
+let canonical_line (reading, time, step, values) =
+  Printf.sprintf {|{"type":"%s","time":%s,"step":%d,"values":{%s}}|}
+    (if reading then "reading" else "metrics")
+    (shortest time) step
+    (String.concat ","
+       (List.map (fun (k, v) -> json_key k ^ ":" ^ shortest v) values))
+
+let spaced_line (reading, time, step, values) =
+  Printf.sprintf
+    {|{ "values" : { %s } , "step" : %d , "time" : %s , "type" : "%s" }|}
+    (String.concat " , "
+       (List.map (fun (k, v) -> escaped_key k ^ " : " ^ shortest v) values))
+    step (shortest time)
+    (if reading then "reading" else "metrics")
+
+let fold_tests =
+  group "fold"
+    [
+      prop "a history follows the format's orphan rule and statistics" gen_evs
+        (fun evs ->
+          cover "a resume orphans a sample"
+            (List.exists (function Resume _ -> true | _ -> false) evs
+            && List.length (reference_samples evs "a")
+               < List.length
+                   (List.filter
+                      (function Sample ("a", _, _) -> true | _ -> false)
+                      evs));
+          cover "a non-finite sample"
+            (List.exists
+               (function
+                 | Sample (_, _, v) -> not (Float.is_finite v) | _ -> false)
+               evs);
+          cover "every sample of a key is an orphan"
+            (List.exists
+               (fun k ->
+                 reference_samples evs k = []
+                 && List.exists
+                      (function Sample (k', _, _) -> k' = k | _ -> false)
+                      evs)
+               [ "a"; "b" ]);
+          with_store @@ fun store ->
+          let run = spec_run store (log_text evs) in
+          check_history ~msg:"keep all" evs (History.read run);
+          (* Statistics alone, a resume's re-read included. *)
+          let h = History.read ~series:[] run in
+          List.iter
+            (fun k ->
+              check_stats ~msg:("keep none " ^ k) (reference_samples evs k)
+                (History.stats h k))
+            [ "a"; "b"; "r" ];
+          equal ~msg:"best is the least finite under minimize" (option sample)
+            (match
+               List.filter
+                 (fun (s : Metric.sample) -> Float.is_finite s.value)
+                 (reference_samples evs "a")
+             with
+            | [] -> None
+            | x :: rest ->
+                Some
+                  (List.fold_left
+                     (fun (b : Metric.sample) (s : Metric.sample) ->
+                       if s.value < b.value then s else b)
+                     x rest))
+            (History.best h "a"));
+      prop
+        "following in pieces equals reading at once, and leaves snapshots as \
+         they were"
+        (Gen.pair gen_evs
+           (Gen.list ~size:(Gen.int_range 1 6) (Gen.int_range 0 100000)))
+        (fun (evs, cuts) ->
+          with_store @@ fun store ->
+          let text = log_text evs in
+          let n = String.length text in
+          let first = String.length start_line + 1 in
+          let cuts =
+            List.sort_uniq compare
+              (List.map (fun c -> first + (c mod (n - first + 1))) cuts)
+          in
+          cover "a cut inside a line"
+            (List.exists (fun c -> c < n && text.[c - 1] <> '\n') cuts);
+          let run = spec_run store (String.sub text 0 first) in
+          let path = Filename.concat (Run.dir run) "events.jsonl" in
+          let h0 = History.read run in
+          let snaps =
+            List.fold_left
+              (fun acc c ->
+                let h = match acc with (h, _) :: _ -> h | [] -> h0 in
+                write_file path (String.sub text 0 c);
+                (* Rewriting keeps the inode; the prefix is unchanged. *)
+                let h' = History.follow h in
+                (h', samples_of (History.series h' "a")) :: acc)
+              [] cuts
+          in
+          let last = match snaps with (h, _) :: _ -> h | [] -> h0 in
+          write_file path text;
+          let final = History.follow last in
+          check_history ~msg:"followed" evs final;
+          List.iter
+            (fun (h, seen) ->
+              equal ~msg:"a snapshot stays" (list sample) seen
+                (samples_of (History.series h "a")))
+            snaps;
+          (* A second follow of one history copies. *)
+          let again = History.follow last in
+          check_history ~msg:"followed twice" evs again;
+          check_history ~msg:"first follow kept" evs final);
+      prop "a values record reads the same in any layout" gen_layout
+        (fun records ->
+          cover "a key with an escape"
+            (List.exists
+               (fun (_, _, _, vs) -> List.mem_assoc "q\"\\" vs)
+               records);
+          cover "a non-finite value"
+            (List.exists
+               (fun (_, _, _, vs) ->
+                 List.exists (fun (_, v) -> not (Float.is_finite v)) vs)
+               records);
+          with_store @@ fun store ->
+          let read layout =
+            History.read
+              (spec_run store
+                 (String.concat ""
+                    (List.map
+                       (fun l -> l ^ "\n")
+                       (start_line :: List.map layout records))))
+          in
+          let canonical = read canonical_line and spaced = read spaced_line in
+          equal ~msg:"damaged" int (History.damaged spaced)
+            (History.damaged canonical);
+          equal ~msg:"metrics" (list string) (History.metrics spaced)
+            (History.metrics canonical);
+          equal ~msg:"readings" (list string) (History.readings spaced)
+            (History.readings canonical);
+          List.iter
+            (fun k ->
+              equal ~msg:k (list sample)
+                (samples_of (History.series spaced k))
+                (samples_of (History.series canonical k)))
+            (History.metrics canonical @ History.readings canonical));
+      prop "a damaged line is skipped and counted, and never raises"
+        (Gen.triple gen_evs (Gen.int_range 0 1000)
+           (Gen.of_list
+              [
+                ( "invalid UTF-8",
+                  "{\"type\":\"metrics\",\"time\":1.0,\"step\":0,\"values\":{\"a\":\xff}}"
+                );
+                ( "a repeated member",
+                  {|{"type":"metrics","type":"metrics","time":1.0,"step":0,"values":{}}|}
+                );
+                (* Any nesting past the format's depth is the same case. *)
+                ("deep nesting", String.make 1_000 '[');
+                ("an unknown type", {|{"type":"unknown","time":1.0}|});
+                ( "a wrong type",
+                  {|{"type":"metrics","time":"x","step":0,"values":{"a":1.0}}|}
+                );
+                ( "a negative step",
+                  {|{"type":"metrics","time":1.0,"step":-1,"values":{"a":1.0}}|}
+                );
+                ( "a bad key",
+                  {|{"type":"metrics","time":1.0,"step":0,"values":{"../a":1.0}}|}
+                );
+                ("not JSON", "not json at all");
+                ( "a repeated key",
+                  {|{"type":"metrics","time":1.0,"step":0,"values":{"a":1.0,"a":2.0}}|}
+                );
+                ( "a leading zero",
+                  {|{"type":"metrics","time":1.0,"step":01,"values":{"a":1.0}}|}
+                );
+                ( "a number cut short",
+                  {|{"type":"metrics","time":1.0,"step":0,"values":{"a":1.}}|}
+                );
+                ( "a control character in a key",
+                  "{\"type\":\"metrics\",\"time\":1.0,\"step\":0,\"values\":{\"a\tb\":1.0}}"
+                );
+                ( "trailing bytes",
+                  {|{"type":"metrics","time":1.0,"step":0,"values":{"a":1.0}}x|}
+                );
+              ]))
+        (fun (evs, at, (kind, garbage)) ->
+          List.iter
+            (fun k -> cover k (k = kind))
+            [
+              "invalid UTF-8";
+              "a repeated member";
+              "deep nesting";
+              "an unknown type";
+              "a wrong type";
+              "a negative step";
+              "a bad key";
+              "not JSON";
+              "a repeated key";
+              "a leading zero";
+              "a number cut short";
+              "a control character in a key";
+              "trailing bytes";
+            ];
+          with_store @@ fun store ->
+          let lines = List.mapi ev_line evs in
+          let at = at mod (List.length lines + 1) in
+          let damaged =
+            List.filteri (fun i _ -> i < at) lines
+            @ [ garbage ]
+            @ List.filteri (fun i _ -> i >= at) lines
+          in
+          let text l =
+            String.concat ""
+              (List.map
+                 (fun l -> l ^ "\n")
+                 (start_line :: metric_line "a" :: metric_line "b" :: l))
+          in
+          let clean = History.read (spec_run store (text lines)) in
+          let h = History.read (spec_run store (text damaged)) in
+          equal ~msg:"counted" int 1 (History.damaged h);
+          equal ~msg:"skipped" (list sample)
+            (samples_of (History.series clean "a"))
+            (samples_of (History.series h "a")));
+      test "a replaced log is read again from its start" (fun () ->
+          with_store @@ fun store ->
+          let evs = [ Sample ("a", 1, 1.); Sample ("a", 2, 2.) ] in
+          let run = spec_run store (log_text evs) in
+          let h = History.read run in
+          let path = Filename.concat (Run.dir run) "events.jsonl" in
+          let tmp = path ^ ".new" in
+          write_file tmp (log_text [ Sample ("a", 1, 5.) ]);
+          Sys.rename tmp path;
+          let h' = History.follow h in
+          equal ~msg:"restarted" bool true (History.restarted h');
+          equal (list sample)
+            [ { step = 1; time = 2.; value = 5. } ]
+            (samples_of (History.series h' "a"));
+          equal ~msg:"an unchanged log" bool false
+            (History.restarted (History.follow h')));
+      test "a line with a NUL byte stops the reader until it is filled"
+        (fun () ->
+          with_store @@ fun store ->
+          let good = log_text [ Sample ("a", 1, 1.) ] in
+          let line = ev_line 1 (Sample ("a", 2, 2.)) ^ "\n" in
+          let hole = String.make (String.length line - 1) '\000' ^ "\n" in
+          let run =
+            spec_run store (good ^ hole ^ ev_line 2 (Sample ("a", 3, 3.)) ^ "\n")
+          in
+          let h = History.read run in
+          equal ~msg:"stops before the hole" int 1
+            (Metric.length (History.series h "a"));
+          write_file
+            (Filename.concat (Run.dir run) "events.jsonl")
+            (good ^ line ^ ev_line 2 (Sample ("a", 3, 3.)) ^ "\n");
+          equal ~msg:"reads on once filled" int 3
+            (Metric.length (History.series (History.follow h) "a")));
+      test "a sample of a key of the other kind is damaged" (fun () ->
+          with_store @@ fun store ->
+          let run =
+            spec_run store
+              (log_text
+                 [ Reading ("a", 1.); Reading ("r", 1.); Sample ("r", 1, 2.) ])
+          in
+          let h = History.read run in
+          equal ~msg:"damaged" int 2 (History.damaged h);
+          equal (list string) [] (History.readings h |> List.filter (( = ) "a"));
+          equal (list string) [ "r" ] (History.readings h));
+      test "a limit within the start reads no record" (fun () ->
+          with_store @@ fun store ->
+          let run =
+            spec_run store
+              (start_line ^ "\n" ^ ev_line 0 (Sample ("a", 0, 1.)) ^ "\n")
+          in
+          equal int 0
+            (Metric.length (History.series (History.read ~limit:1 run) "a")));
+      test "series raises for a key not kept" (fun () ->
+          with_store @@ fun store ->
+          let run = spec_run store (log_text [ Sample ("a", 1, 1.) ]) in
+          let h = History.read ~series:[ "b" ] run in
+          raises_match (Exn.invalid_arg ~sub:"\"a\"") (fun () ->
+              History.series h "a"));
+    ]
+
+(* Sessions *)
+
+let session_tests =
+  group "session"
+    [
+      test "writes on a finished session raise" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          let m = Session.metric s "m" in
+          Session.finish s;
+          Session.finish s;
+          raises_match (Exn.invalid_arg ~sub:"finished") (fun () ->
+              Session.log m ~step:0 1.));
+      test "a handle of another session is refused" (fun () ->
+          with_store @@ fun store ->
+          let s1 = start store and s2 = start store in
+          let m = Session.metric s1 "m" in
+          raises_match (Exn.invalid_arg ~sub:"another session") (fun () ->
+              Session.log_metrics s2 ~step:0 [ (m, 1.) ]);
+          Session.finish s1;
+          Session.finish s2);
+      cases "names that are not keys are refused" ~id:Fun.id
+        [ ""; "a//b"; ".x"; "a/.."; "a\nb"; "/a"; "a/" ] (fun key ->
+          with_store @@ fun store ->
+          let s = start store in
+          raises_match
+            (fun e -> Exn.invalid_arg e)
+            (fun () -> Session.metric s key);
+          Session.finish s);
+      test "steps outside [0;2^53] are refused" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          let m = Session.metric s "m" in
+          raises_match (Exn.invalid_arg ~sub:"step") (fun () ->
+              Session.log m ~step:(-1) 0.);
+          raises_match (Exn.invalid_arg ~sub:"step") (fun () ->
+              Session.log m ~step:((1 lsl 53) + 1) 0.);
+          Session.finish s);
+      test "within finishes as failed and raises again" (fun () ->
+          with_store @@ fun store ->
+          let id = ref "" in
+          raises (Failure "boom") (fun () ->
+              Session.within (start store) (fun s ->
+                  id := Session.id s;
+                  failwith "boom"));
+          equal status (`Failed "Failure(\"boom\")")
+            (Run.status (require_some (Store.run store !id))));
+      test "provenance and failure text that are not UTF-8 are kept, escaped"
+        (fun () ->
+          with_store @@ fun store ->
+          let bad =
+            { provenance with cwd = "/data/caf\xe9"; command = [ "x\xff" ] }
+          in
+          let s = Session.start ~store ~provenance:bad ~experiment:"e" () in
+          Session.finish ~status:(`Failed "caf\xe9") s;
+          let run = require_some (Store.run store (Session.id s)) in
+          equal string "/data/caf\xef\xbf\xbd" (Run.provenance run).cwd;
+          equal (list string) [ "x\xef\xbf\xbd" ] (Run.provenance run).command;
+          equal status (`Failed "caf\xef\xbf\xbd") (Run.status run));
+      test "a summary keeps each key's latest value" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          Session.set_summary s [ ("acc", `Float 0.5); ("note", `String "x") ];
+          Session.set_summary s [ ("acc", `Float 0.9) ];
+          Session.finish s;
+          equal
+            (list (pair string value))
+            [ ("acc", `Float 0.9); ("note", `String "x") ]
+            (History.summary (history store s)));
+      test "files are copied and named by step" (fun () ->
+          with_store @@ fun store ->
+          let src = Filename.temp_file "munin" ".png" in
+          write_file src "png";
+          let s = start store in
+          Session.log_file s ~step:1 ~key:"viz/cm" src;
+          Session.log_file s ~step:1 ~key:"viz/cm" src;
+          Session.finish s;
+          let files = History.files (history store s) in
+          equal (list string) [ "1.png"; "1-1.png" ]
+            (List.map
+               (fun (f : History.file) -> Filename.basename f.path)
+               files);
+          equal string "png" (read_file (List.hd files).path);
+          Sys.remove src);
+      test "an equal declaration writes nothing, another raises" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          let a = Session.metric s ~goal:`Minimize "a" in
+          let a' = Session.metric s ~goal:`Minimize "a" in
+          raises_match (Exn.invalid_arg ~sub:"declared otherwise") (fun () ->
+              Session.metric s ~goal:`Maximize "a");
+          Session.log a ~step:0 1.;
+          Session.log a' ~step:1 2.;
+          equal ~msg:"the session's store" string (Store.root store)
+            (Store.root (Session.store s));
+          Session.finish s;
+          let log =
+            read_file
+              (Filename.concat (Run.dir (reread store s)) "events.jsonl")
+          in
+          let declarations =
+            List.length
+              (List.filter
+                 (fun l ->
+                   String.length l > 16
+                   && String.sub l 0 16 = {|{"type":"metric"|})
+                 (String.split_on_char '\n' log))
+          in
+          equal ~msg:"one metric record" int 1 declarations;
+          equal int 2 (Metric.length (History.series (history store s) "a")));
+      test "logging a file streams it" (fun () ->
+          with_store @@ fun store ->
+          let size = 32 * 1024 * 1024 in
+          let src = Filename.temp_file "munin" ".bin" in
+          write_file src (String.make size 'x');
+          let s = start store in
+          let words () = (Gc.quick_stat ()).Gc.major_words in
+          let before = words () in
+          Session.log_file s ~step:0 ~key:"big" src;
+          let allocated =
+            (words () -. before) *. Float.of_int (Sys.word_size / 8)
+          in
+          Session.finish s;
+          Sys.remove src;
+          less ~msg:"bytes allocated on the major heap" float_exact
+            ~than:(Float.of_int (size / 8))
+            allocated);
+      test "a reading's key cannot become a metric" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          Session.sample s ~every:1000. [ (fun () -> [ ("k", 1.) ]) ];
+          raises_match (Exn.invalid_arg ~sub:"reading") (fun () ->
+              Session.metric s "k");
+          Session.finish s);
+    ]
+
+(* Sampling *)
+
+(* [counting f] is a reading that runs [f n] on its [n]th call, from 1, and then
+   posts to a semaphore that the test waits on: the sampler's thread is held by
+   its calls, never by time. *)
+let counting f =
+  let calls = Atomic.make 0 and posted = Semaphore.Counting.make 0 in
+  let reading () =
+    let n = Atomic.fetch_and_add calls 1 + 1 in
+    Fun.protect
+      ~finally:(fun () -> Semaphore.Counting.release posted)
+      (fun () -> f n)
+  in
+  let await n =
+    for _ = 1 to n do
+      Semaphore.Counting.acquire posted
+    done
+  in
+  (reading, await, calls)
+
+let sampling_tests =
+  group "sampling"
+    [
+      test "readings are logged as reading records, never orphans" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          let m = Session.metric s "m" in
+          Session.log m ~step:7 1.;
+          let reading, await, _ =
+            counting (fun n -> [ ("sys/x", Float.of_int n) ])
+          in
+          Session.sample s ~every:0.001 [ reading ];
+          await 3;
+          Session.finish s;
+          let h = history store s in
+          equal (list string) [ "sys/x" ] (History.readings h);
+          let series = History.series h "sys/x" in
+          greater ~msg:"several calls" int ~than:2 (Metric.length series);
+          equal ~msg:"at the latest step" (list int)
+            (List.init (Metric.length series) (fun _ -> 7))
+            (List.init (Metric.length series) (Metric.step series)));
+      test "a reading that raises Sys_error gives nothing that time" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          let reading, await, calls =
+            counting (fun n ->
+                if n mod 2 = 0 then raise (Sys_error "gone") else [ ("k", 1.) ])
+          in
+          Session.sample s ~every:0.001 [ reading ];
+          await 4;
+          Session.finish s;
+          let n = Atomic.get calls in
+          equal ~msg:"one sample per call that gave one" int
+            ((n + 1) / 2)
+            (Metric.length (History.series (history store s) "k")));
+      test
+        "a reading that raises stops the sampler, and finish raises after the \
+         end" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          let reading, await, _ =
+            counting (fun n -> if n > 1 then raise Exit else [])
+          in
+          Session.sample s ~every:0.001 [ reading ];
+          await 2;
+          raises Exit (fun () -> Session.finish s);
+          equal status `Finished (Run.status (reread store s)));
+      test "finish stops the sampler without waiting for its period" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          Session.sample s ~every:3600. [ (fun () -> []) ];
+          let t = Unix.gettimeofday () in
+          Session.finish s;
+          less ~msg:"seconds to finish" float_exact ~than:1.
+            (Unix.gettimeofday () -. t));
+    ]
+
+(* Statistics hint *)
+
+let key_stats : History.key_stats testable =
+  Testable.make
+    ~pp:(fun ppf (k : History.key_stats) ->
+      Format.fprintf ppf "{count=%d; last=%a}" k.stats.count
+        (Testable.pp sample) k.stats.last)
+    ~equal:(fun a b -> compare a b = 0)
+
+let hint_path run = Filename.concat (Run.dir run) "stats.json"
+
+let hint_tests =
+  group "hint"
+    [
+      prop ~count:25 "an ended run's hint gives what its fold gives" gen_evs
+        (fun evs ->
+          with_store @@ fun store ->
+          let s = start store in
+          let a = Session.metric s ~goal:`Minimize "a" in
+          List.iteri
+            (fun i e ->
+              match e with
+              | Sample (_, st, v) ->
+                  Session.log a ~step:st ~time:(Float.of_int i) v
+              | _ -> ())
+            evs;
+          Session.finish s;
+          let run = reread store s in
+          let hinted = History.stats_of run in
+          Sys.remove (hint_path run);
+          equal (list (pair string key_stats)) (History.stats_of run) hinted);
+      prop ~count:40 "a resumed run's hint gives what its fold gives"
+        (Gen.triple gen_evs (Gen.int_range 0 20) gen_evs)
+        (fun (before, step, after) ->
+          cover "the resume orphans a sample"
+            (List.exists
+               (function Sample (_, s, _) -> s > step | _ -> false)
+               before);
+          cover "a resume in the log before"
+            (List.exists (function Resume _ -> true | _ -> false) before);
+          with_store @@ fun store ->
+          (* The log a crashed writer left, then a session that resumes it. *)
+          let run = spec_run store (log_text before) in
+          let s = Session.resume ~provenance run ~step in
+          let a = Session.metric s ~goal:`Minimize "a" in
+          List.iteri
+            (fun i e ->
+              match e with
+              | Sample (_, st, v) ->
+                  Session.log a ~step:st ~time:(Float.of_int i) v
+              | _ -> ())
+            after;
+          Session.finish s;
+          let run = require_some (Store.run store "spec") in
+          let hinted = History.stats_of run in
+          Sys.remove (hint_path run);
+          equal (list (pair string key_stats)) (History.stats_of run) hinted);
+      test "a damaged hint is ignored and named by check" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          Session.log (Session.metric s "a") ~step:0 1.;
+          Session.finish s;
+          let run = reread store s in
+          let good = History.stats_of run in
+          write_file (hint_path run) "{\"format\":1,";
+          equal (list (pair string key_stats)) good (History.stats_of run);
+          equal (list string)
+            [ hint_path run ]
+            (List.map fst (Store.check store)));
+      test "a hint that disagrees with its log is named by check" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          Session.log (Session.metric s "a") ~step:0 1.;
+          Session.finish s;
+          let run = reread store s in
+          write_file (hint_path run)
+            (replace_first
+               (read_file (hint_path run))
+               ~sub:{|"count":1|} ~by:{|"count":2|});
+          equal (list string)
+            [ hint_path run ]
+            (List.map fst (Store.check store)));
+      test "check reads a hint's floats bit for bit" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          let a = Session.metric s "a" in
+          Session.log a ~step:0 Float.nan;
+          Session.log a ~step:1 (-0.);
+          Session.finish s;
+          let run = reread store s in
+          equal ~msg:"a NaN and a -0. agree with their log" (list string) []
+            (List.map fst (Store.check store));
+          write_file (hint_path run)
+            (replace_first
+               (read_file (hint_path run))
+               ~sub:{|"value":-0.0|} ~by:{|"value":0.0|});
+          equal ~msg:"0. disagrees with -0." (list string)
+            [ hint_path run ]
+            (List.map fst (Store.check store)));
+    ]
+
+(* Processes *)
+
+(* [spawn args] runs the support program with a pipe on its standard input, and
+   is its pid, the pipe and its standard output. *)
+let spawn args =
+  let in_r, in_w = Unix.pipe ~cloexec:true () in
+  let out_r, out_w = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process child_exe
+      (Array.of_list (child_exe :: args))
+      in_r out_w Unix.stderr
+  in
+  Unix.close in_r;
+  Unix.close out_w;
+  (pid, in_w, Unix.in_channel_of_descr out_r)
+
+let wait pid =
+  match snd (Unix.waitpid [] pid) with
+  | Unix.WEXITED 0 -> ()
+  | _ -> fail "the child failed"
+
+let process_tests =
+  group "processes"
+    [
+      test
+        "a live writer's run reads running and refuses a resume; a dead one \
+         reads crashed" (fun () ->
+          with_store @@ fun store ->
+          let pid, stdin, out = spawn [ "hold"; Store.root store ] in
+          let id = input_line out in
+          let run = require_some (Store.run store id) in
+          equal ~msg:"while it lives" status `Running (Run.status run);
+          raises_match (Exn.failure ~sub:"being written") (fun () ->
+              Session.resume ~provenance run ~step:0);
+          raises_match (Exn.failure ~sub:"being written") (fun () ->
+              Store.delete_run store id);
+          Unix.close stdin;
+          wait pid;
+          close_in out;
+          let run = require_some (Store.run store id) in
+          equal ~msg:"after it exits" status `Crashed (Run.status run);
+          let s = Session.resume ~provenance run ~step:0 in
+          Session.finish s;
+          equal ~msg:"resumed and finished" status `Finished
+            (Run.status (reread store s)));
+      test "a reader sees whole records while a run is written" (fun () ->
+          with_store @@ fun store ->
+          let pid, stdin, out = spawn [ "log"; Store.root store; "40" ] in
+          Unix.close stdin;
+          let id = input_line out in
+          let run = require_some (Store.run store id) in
+          let rec poll h k =
+            let h = History.follow h in
+            let got =
+              List.map
+                (fun (s : Metric.sample) -> s.value)
+                (samples_of (History.series h "big"))
+            in
+            equal ~msg:"a prefix" (list float_exact)
+              (List.init (List.length got) Float.of_int)
+              got;
+            if Run.status (History.run h) = `Running && k < 10_000 then
+              poll h (k + 1)
+            else h
+          in
+          ignore (poll (History.read run) 0);
+          wait pid;
+          close_in out;
+          equal int 40
+            (Metric.length
+               (History.series
+                  (History.read (require_some (Store.run store id)))
+                  "big")));
+      test "a file a resume abandoned is an orphan, and check names nothing"
+        (fun () ->
+          with_store @@ fun store ->
+          let src = Filename.temp_file "munin" ".png" in
+          write_file src "png";
+          let pid, stdin, out = spawn [ "file"; Store.root store; src ] in
+          Unix.close stdin;
+          let id = input_line out in
+          wait pid;
+          close_in out;
+          let r =
+            Session.resume ~provenance
+              (require_some (Store.run store id))
+              ~step:3
+          in
+          Session.log_file r ~step:4 ~key:"viz" src;
+          Session.finish r;
+          Sys.remove src;
+          let h = History.read (require_some (Store.run store id)) in
+          equal (list int) [ 4 ]
+            (List.map (fun (f : History.file) -> f.step) (History.files h));
+          equal (list (pair string string)) [] (Store.check store));
+      test "a file whose copy fails leaves no temporary" (fun () ->
+          with_store @@ fun store ->
+          let src = Filename.temp_file "munin" ".bin" in
+          write_file src (String.make 65536 'x');
+          let cmd =
+            Printf.sprintf "ulimit -f 4; exec %s logfile %s %s"
+              (Filename.quote child_exe)
+              (Filename.quote (Store.root store))
+              (Filename.quote src)
+          in
+          let ic = Unix.open_process_in cmd in
+          let id = input_line ic in
+          let line = input_line ic in
+          ignore (Unix.close_process_in ic);
+          Sys.remove src;
+          equal string "Sys_error" line;
+          let dir =
+            Filename.concat
+              (Run.dir (require_some (Store.run store id)))
+              "files/big"
+          in
+          equal (list string) []
+            (Array.to_list (try Sys.readdir dir with Sys_error _ -> [||])));
+      test "a write the system refuses raises Sys_error" (fun () ->
+          with_store @@ fun store ->
+          let src = Filename.temp_file "munin" ".bin" in
+          write_file src (String.make 65536 'x');
+          (* A limit of 4 blocks of 512 bytes on each file the child writes. *)
+          let cmd =
+            Printf.sprintf "ulimit -f 4; exec %s fill %s %s"
+              (Filename.quote child_exe)
+              (Filename.quote (Store.root store))
+              (Filename.quote src)
+          in
+          let ic = Unix.open_process_in cmd in
+          let line = input_line ic in
+          ignore (Unix.close_process_in ic);
+          Sys.remove src;
+          equal string "Sys_error" line);
+      test "gc waits for a publication in progress" (fun () ->
+          with_store @@ fun store ->
+          let pid, stdin, out = spawn [ "publishing"; Store.root store ] in
+          equal string "held" (input_line out);
+          (* gc can only start once the child's lock is gone; the child looks at
+             its entry before it lets the lock go. *)
+          let gc = Thread.create (fun () -> ignore (Store.gc store)) () in
+          Unix.close stdin;
+          equal string "intact" (input_line out);
+          wait pid;
+          close_in out;
+          Thread.join gc);
+      test "two processes publishing one name claim distinct numbers" (fun () ->
+          with_store @@ fun store ->
+          let src = Filename.temp_file "munin" ".bin" in
+          write_file src "x";
+          let a = spawn [ "publish"; Store.root store; "ckpt"; "20"; src ] in
+          let b = spawn [ "publish"; Store.root store; "ckpt"; "20"; src ] in
+          List.iter
+            (fun (pid, stdin, out) ->
+              Unix.close stdin;
+              wait pid;
+              close_in out)
+            [ a; b ];
+          equal (list int) (List.init 40 succ)
+            (List.map Artifact.version (Store.artifacts ~name:"ckpt" store));
+          Sys.remove src);
+    ]
+
+(* Crashes *)
+
+let crash_tests =
+  group "crashes"
+    [
+      test
+        "every byte prefix of a log reads as whole records, and a resume cuts \
+         the rest" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          let m = Session.metric s "m" in
+          for step = 0 to 9 do
+            Session.log m ~step (Float.of_int step)
+          done;
+          Session.finish s;
+          let text =
+            read_file
+              (Filename.concat (Run.dir (reread store s)) "events.jsonl")
+          in
+          let first = String.index text '\n' + 1 in
+          for n = first to String.length text do
+            let run = spec_run store (String.sub text 0 n) in
+            let h = History.read run in
+            let got =
+              List.map
+                (fun (x : Metric.sample) -> x.value)
+                (samples_of (History.series h "m"))
+            in
+            equal
+              ~msg:(Printf.sprintf "prefix of %d bytes" n)
+              (list float_exact)
+              (List.init (List.length got) Float.of_int)
+              got;
+            equal ~msg:"no damage" int 0 (History.damaged h)
+          done;
+          let run =
+            spec_run store (String.sub text 0 (String.length text - 30))
+          in
+          let r = Session.resume ~provenance run ~step:3 in
+          Session.finish r;
+          let h = History.read (require_some (Store.run store "spec")) in
+          equal ~msg:"orphans left out" (list float_exact) [ 0.; 1.; 2.; 3. ]
+            (List.map
+               (fun (x : Metric.sample) -> x.value)
+               (samples_of (History.series h "m")));
+          equal ~msg:"the cut tail is gone" int 0 (History.damaged h));
+    ]
+
+(* Stores *)
+
+let store_tests =
+  group "store"
+    [
+      test "opening and reading a missing root creates nothing" (fun () ->
+          let root =
+            Filename.concat (Filename.get_temp_dir_name ()) "munin-missing-root"
+          in
+          rm_rf root;
+          let store = Store.open_ ~root () in
+          equal (list string) [] (List.map Run.id (Store.runs store));
+          equal (list string) []
+            (List.map Artifact.name (Store.artifacts store));
+          equal int 0 (Store.gc store);
+          equal bool false (Sys.file_exists root));
+      test "tags are equal by their bytes, and change after a run ends"
+        (fun () ->
+          with_store @@ fun store ->
+          let s = start ~tags:[ "best" ] store in
+          Session.finish s;
+          let id = Session.id s in
+          Store.add_tags store id [ "Best"; "caf\xc3\xa9"; "best" ];
+          equal (list string)
+            [ "Best"; "best"; "caf\xc3\xa9" ]
+            (Run.tags (reread store s));
+          Store.remove_tags store id [ "best" ];
+          equal (list string) [ "Best"; "caf\xc3\xa9" ]
+            (Run.tags (reread store s));
+          raises_match
+            (fun e -> Exn.invalid_arg e)
+            (fun () -> Store.add_tags store id [ "a\nb" ]));
+      test "notes are replaced whole, and a listing with prev sees the change"
+        (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          Session.finish s;
+          let listing = Store.runs store in
+          Store.set_notes store (Session.id s) (Some "first");
+          let listing = Store.runs ~prev:listing store in
+          equal (option string) (Some "first") (Run.notes (List.hd listing));
+          Store.set_notes store (Session.id s) (Some "second");
+          Store.add_tags store (Session.id s) [ "t" ];
+          let listing = Store.runs ~prev:listing store in
+          equal (option string) (Some "second") (Run.notes (List.hd listing));
+          equal (list string) [ "t" ] (Run.tags (List.hd listing));
+          Store.set_notes store (Session.id s) None;
+          equal (option string) None (Run.notes (reread store s)));
+      test
+        "a listing with prev reads again tags changed within the time \
+         resolution" (fun () ->
+          with_store @@ fun store ->
+          let s = start ~tags:[ "a" ] store in
+          Session.finish s;
+          let tags = Filename.concat (Run.dir (reread store s)) "tags" in
+          (* A file system that keeps whole seconds: the directory's time is
+             this second, and another tag leaves its time, size and inode as
+             they were. *)
+          let second = Float.of_int (truncate (Unix.gettimeofday ())) in
+          Unix.utimes tags second second;
+          let before = Unix.stat tags in
+          let listing = Store.runs store in
+          Store.add_tags store (Session.id s) [ "b" ];
+          Store.remove_tags store (Session.id s) [ "a" ];
+          Unix.utimes tags second second;
+          equal ~msg:"the stamp as it was" int before.Unix.st_size
+            (Unix.stat tags).Unix.st_size;
+          equal (list string) [ "b" ]
+            (Run.tags (List.hd (Store.runs ~prev:listing store))));
+      test "a listing allocates less than 64 KiB a run" (fun () ->
+          (* A buffer of a read chunk for each of a run's small files cost 64
+             KiB apiece. *)
+          with_store @@ fun store ->
+          let runs = 20 in
+          for i = 1 to runs do
+            let s = start ~tags:[ "a"; string_of_int i ] store in
+            Session.log (Session.metric s "loss") ~step:0 1.;
+            Session.finish s;
+            Store.set_notes store (Session.id s) (Some "notes")
+          done;
+          ignore (Store.runs store);
+          let words () =
+            let minor, promoted, major = Gc.counters () in
+            minor +. major -. promoted
+          in
+          let before = words () in
+          let listing = Store.runs store in
+          let per_run = (words () -. before) /. Float.of_int runs in
+          equal ~msg:"every run" int runs (List.length listing);
+          less ~msg:"bytes allocated a run" float_exact ~than:65536.
+            (per_run *. Float.of_int (Sys.word_size / 8)));
+      cases "notes, a start and a failure of any length read back whole"
+        ~id:string_of_int
+        [ 0; 1; 511; 512; 513; 4096; 65535; 65536; 65537; 200_000 ] (fun n ->
+          with_store @@ fun store ->
+          let text = String.make n 'x' in
+          let s = start ~params:[ ("p", `String text) ] store in
+          Session.finish ~status:(`Failed text) s;
+          let notes = if n = 0 then None else Some text in
+          Store.set_notes store (Session.id s) notes;
+          let run = reread store s in
+          equal ~msg:"notes" (option string) notes (Run.notes run);
+          equal ~msg:"params"
+            (list (pair string value))
+            [ ("p", `String text) ]
+            (Run.params run);
+          equal ~msg:"failure" status (`Failed text) (Run.status run));
+      test "a run whose log the user cannot write is deleted" (fun () ->
+          with_store @@ fun store ->
+          let s = start store in
+          Session.finish s;
+          let dir = Run.dir (reread store s) in
+          Unix.chmod (Filename.concat dir "events.jsonl") 0o444;
+          Store.delete_run store (Session.id s);
+          equal (option string) None
+            (Option.map Run.id (Store.run store (Session.id s))));
+      test "a silent run is not deleted" (fun () ->
+          with_store @@ fun store ->
+          (* A run without its writer file, as one copied, reads silent. *)
+          let run = spec_run store (log_text []) in
+          equal status `Silent (Run.status run);
+          raises_match (Exn.failure ~sub:"silent") (fun () ->
+              Store.delete_run store "spec"));
+      test "runs are listed newest first, and a deleted run goes" (fun () ->
+          with_store @@ fun store ->
+          let a = start ~experiment:"x" store in
+          Session.finish a;
+          let b = start ~experiment:"y" store in
+          Session.finish b;
+          (* Newest first by start time, then by id. *)
+          let key s =
+            let r = reread store s in
+            (Run.started_at r, Run.id r)
+          in
+          let newest =
+            List.map snd (List.sort (fun x y -> compare y x) [ key a; key b ])
+          in
+          equal (list string) newest (List.map Run.id (Store.runs store));
+          Store.delete_run store (Session.id a);
+          equal (list string)
+            [ Session.id b ]
+            (List.map Run.id (Store.runs store)));
+      test "a free lock reads crashed under the writer's boot, silent elsewhere"
+        (fun () ->
+          with_store @@ fun store ->
+          (* This machine's [writer] file, as a session writes it. *)
+          let s = start store in
+          let mine =
+            read_file (Filename.concat (Run.dir (reread store s)) "writer")
+          in
+          let s_status = Run.status (reread store s) in
+          Session.finish s;
+          equal ~msg:"a held lock" status `Running s_status;
+          let field k =
+            match String.split_on_char '"' mine with
+            | l ->
+                let rec find = function
+                  | k' :: _ :: v :: _ when k' = k -> Some v
+                  | _ :: rest -> find rest
+                  | [] -> None
+                in
+                find l
+          in
+          let run = spec_run store (log_text [ Sample ("a", 0, 1.) ]) in
+          let writer = Filename.concat (Run.dir run) "writer" in
+          let log = Filename.concat (Run.dir run) "events.jsonl" in
+          let status_now () =
+            Run.status (require_some (Store.run store "spec"))
+          in
+          equal ~msg:"no writer file" status `Silent (status_now ());
+          (match field "boot" with
+          | None -> skip ~reason:"this system names no boot" ()
+          | Some boot ->
+              write_file writer (Printf.sprintf {|{"boot":"%s"}|} boot);
+              equal ~msg:"same boot" status `Crashed (status_now ()));
+          write_file writer {|{"machine":"elsewhere","boot":"another"}|};
+          equal ~msg:"another machine" status `Silent (status_now ());
+          match field "machine" with
+          | None -> ()
+          | Some machine ->
+              write_file writer
+                (Printf.sprintf {|{"machine":"%s","boot":"another"}|} machine);
+              equal ~msg:"same machine, log written since this boot" status
+                `Silent (status_now ());
+              Unix.utimes log 1. 1.;
+              equal ~msg:"same machine, log older than this boot" status
+                `Crashed (status_now ()));
+    ]
+
+(* Artifacts *)
+
+let artifact_tests =
+  group "artifacts"
+    [
+      test "a version whose digest is not 64 hexadecimal digits is unreadable"
+        (fun () ->
+          with_store @@ fun store ->
+          let dir = Filename.concat (Store.root store) "artifacts" in
+          Unix.mkdir dir 0o755;
+          Unix.mkdir (Filename.concat dir "x") 0o755;
+          write_file
+            (Filename.concat dir "x/1.json")
+            {|{"format":1,"time":1.0,"run":"r","digest":"blake2b-256:../../../etc/passwd","size":1,"metadata":{}}|};
+          equal (option string) None
+            (Option.map Artifact.path (Store.artifact store "x" (`Version 1))));
+      test "versions, aliases, latest and deletion" (fun () ->
+          with_store @@ fun store ->
+          let src = Filename.temp_file "munin" ".bin" in
+          write_file src "weights";
+          let s = start store in
+          let v1 =
+            Session.log_artifact s ~step:1
+              ~metadata:[ ("f", `String "raw") ]
+              ~name:"ckpt" src
+          in
+          let v2 = Session.log_artifact s ~step:2 ~name:"ckpt" src in
+          Session.finish s;
+          equal (list int) [ 1; 2 ] [ Artifact.version v1; Artifact.version v2 ];
+          equal ~msg:"same bytes share a blob" string (Artifact.path v1)
+            (Artifact.path v2);
+          equal ~msg:"content" string "weights" (read_file (Artifact.path v1));
+          Store.set_alias store v1 "best";
+          equal (option int) (Some 1)
+            (Option.map Artifact.version
+               (Store.artifact store "ckpt" (`Alias "best")));
+          equal (option int) (Some 2)
+            (Option.map Artifact.version (Store.artifact store "ckpt" `Latest));
+          Store.delete_artifact store v2;
+          equal ~msg:"latest after a delete" (option int) (Some 1)
+            (Option.map Artifact.version (Store.artifact store "ckpt" `Latest));
+          let s = start store in
+          let v3 = Session.log_artifact s ~name:"ckpt" src in
+          Session.finish s;
+          equal ~msg:"a deleted number is never reused" int 3
+            (Artifact.version v3);
+          equal (list (pair string string)) [] (Store.check store);
+          Store.delete_artifact store v1;
+          Store.delete_artifact store v3;
+          equal ~msg:"gc removes the blob no version names" int 1
+            (Store.gc store);
+          Sys.remove src);
+      test
+        "a directory is stored with its listing's digest; a linked directory \
+         is refused" (fun () ->
+          with_store @@ fun store ->
+          let dir = Filename.temp_dir "munin" "" in
+          Unix.mkdir (Filename.concat dir "sub") 0o755;
+          write_file (Filename.concat dir "a.txt") "a";
+          write_file (Filename.concat dir "sub/b") "b";
+          let s = start store in
+          let v = Session.log_artifact s ~name:"data" dir in
+          equal string "b"
+            (read_file (Filename.concat (Artifact.path v) "sub/b"));
+          equal int 2 (Artifact.size_bytes v);
+          Unix.symlink (Filename.concat dir "sub") (Filename.concat dir "link");
+          raises_match (Exn.invalid_arg ~sub:"links to a directory") (fun () ->
+              Session.log_artifact s ~name:"data" dir);
+          Session.finish s;
+          write_file (Filename.concat (Artifact.path v) "a.txt") "changed";
+          equal ~msg:"check sees a changed blob" (list string)
+            [ Artifact.path v ]
+            (List.map fst (Store.check store));
+          rm_rf dir);
+    ]
+
+(* Provenance *)
+
+let git args cwd =
+  Unix.system
+    (Filename.quote_command "git" ("-C" :: cwd :: args) ~stdout:Filename.null
+       ~stderr:Filename.null)
+
+let provenance_tests =
+  group "provenance"
+    [
+      test "two environment names that escape alike are refused" (fun () ->
+          Unix.putenv "MUNIN_TEST_\xff" "1";
+          Unix.putenv "MUNIN_TEST_\xfe" "2";
+          raises_match (Exn.invalid_arg ~sub:"capture_env") (fun () ->
+              Provenance.detect ~cwd:"/"
+                ~capture_env:[ "MUNIN_TEST_\xff"; "MUNIN_TEST_\xfe" ]
+                ()));
+      test "a clean tree, a dirty tree and no tree" (fun () ->
+          let dir = Filename.temp_dir "munin-git" "" in
+          Fun.protect ~finally:(fun () -> rm_rf dir) @@ fun () ->
+          let outside = Provenance.detect ~cwd:dir () in
+          equal ~msg:"outside a tree" bool true (outside.git = None);
+          if git [ "init"; "-q" ] dir <> Unix.WEXITED 0 then
+            skip ~reason:"no git" ();
+          write_file (Filename.concat dir "f") "1";
+          ignore (git [ "add"; "f" ] dir);
+          ignore
+            (git
+               [
+                 "-c";
+                 "user.name=t";
+                 "-c";
+                 "user.email=t@t";
+                 "commit";
+                 "-qm";
+                 "c";
+               ]
+               dir);
+          let clean = Provenance.detect ~cwd:dir () in
+          equal ~msg:"clean" (option bool) (Some false)
+            (Option.map (fun (g : Provenance.git) -> g.dirty) clean.git);
+          write_file (Filename.concat dir "f") "2";
+          let dirty = Provenance.detect ~cwd:dir ~seeds:[ ("init", 7) ] () in
+          equal ~msg:"dirty" (option bool) (Some true)
+            (Option.map (fun (g : Provenance.git) -> g.dirty) dirty.git);
+          with_store @@ fun store ->
+          let s = Session.start ~store ~provenance:dirty ~experiment:"e" () in
+          Session.finish s;
+          let run = reread store s in
+          let diff = read_file (require_some (Run.diff run)) in
+          contains ~sub:"+2" diff;
+          equal
+            (list (pair string int))
+            [ ("init", 7) ]
+            (Run.provenance run).seeds);
+    ]
+
+(* A store against a model *)
+
+(* The operations of a program on two runs, and the model of what a reader must
+   then see: each run's samples, tags, notes, summary and end. *)
+type op =
+  | Log of int * int * float
+  | Tag of int * string
+  | Untag of int * string
+  | Note of int * string option
+  | Summary of int * string * float
+  | Finish of int
+
+let pp_op ppf = function
+  | Log (r, s, v) -> Format.fprintf ppf "log r%d %d %g" r s v
+  | Tag (r, t) -> Format.fprintf ppf "tag r%d %s" r t
+  | Untag (r, t) -> Format.fprintf ppf "untag r%d %s" r t
+  | Note (r, n) ->
+      Format.fprintf ppf "note r%d %s" r (Option.value ~default:"-" n)
+  | Summary (r, k, v) -> Format.fprintf ppf "summary r%d %s=%g" r k v
+  | Finish r -> Format.fprintf ppf "finish r%d" r
+
+let gen_op =
+  let open Gen in
+  let r = int_range 0 1 and tag = of_list [ "a"; "A"; "b" ] in
+  frequency
+    [
+      ( 6,
+        map
+          (fun ((r, s), v) -> Log (r, s, v))
+          (pair (pair r (int_range 0 9)) (float_range (-1.) 1.)) );
+      (2, map (fun (r, t) -> Tag (r, t)) (pair r tag));
+      (1, map (fun (r, t) -> Untag (r, t)) (pair r tag));
+      ( 1,
+        map
+          (fun (r, n) -> Note (r, n))
+          (pair r (option (of_list [ "x"; "y\nz" ]))) );
+      ( 1,
+        map
+          (fun ((r, k), v) -> Summary (r, k, v))
+          (pair (pair r (of_list [ "k"; "l" ])) (float_range 0. 1.)) );
+      (1, map (fun r -> Finish r) r);
+    ]
+
+type model = {
+  values : float list; (* reversed *)
+  tags : string list;
+  notes : string option;
+  summary : (string * float) list;
+  ended : bool;
+}
+
+let model_tests =
+  group "model"
+    [
+      prop ~count:40 "a store's readers see what its writers did"
+        (Gen.list ~size:(Gen.int_range 0 30) (Gen.with_pp pp_op gen_op))
+        (fun ops ->
+          with_store @@ fun store ->
+          let sessions = Array.init 2 (fun _ -> start store) in
+          let metrics = Array.map (fun s -> Session.metric s "m") sessions in
+          let model =
+            Array.make 2
+              {
+                values = [];
+                tags = [];
+                notes = None;
+                summary = [];
+                ended = false;
+              }
+          in
+          let id r = Session.id sessions.(r) in
+          List.iter
+            (fun op ->
+              let r =
+                match op with
+                | Log (r, _, _)
+                | Tag (r, _)
+                | Untag (r, _)
+                | Note (r, _)
+                | Summary (r, _, _)
+                | Finish r ->
+                    r
+              in
+              let m = model.(r) in
+              match op with
+              | Log (_, step, v) when not m.ended ->
+                  Session.log metrics.(r) ~step v;
+                  model.(r) <- { m with values = v :: m.values }
+              | Summary (_, k, v) when not m.ended ->
+                  Session.set_summary sessions.(r) [ (k, `Float v) ];
+                  model.(r) <-
+                    { m with summary = (k, v) :: List.remove_assoc k m.summary }
+              | Finish _ when not m.ended ->
+                  Session.finish sessions.(r);
+                  model.(r) <- { m with ended = true }
+              | Log _ | Summary _ | Finish _ -> ()
+              | Tag (_, t) ->
+                  Store.add_tags store (id r) [ t ];
+                  model.(r) <-
+                    { m with tags = List.sort_uniq compare (t :: m.tags) }
+              | Untag (_, t) ->
+                  Store.remove_tags store (id r) [ t ];
+                  model.(r) <- { m with tags = List.filter (( <> ) t) m.tags }
+              | Note (_, n) ->
+                  Store.set_notes store (id r) n;
+                  model.(r) <- { m with notes = n })
+            ops;
+          let listing = Store.runs store in
+          Array.iteri
+            (fun r m ->
+              let run = List.find (fun x -> Run.id x = id r) listing in
+              equal ~msg:"tags" (list string) m.tags (Run.tags run);
+              equal ~msg:"notes" (option string) m.notes (Run.notes run);
+              equal ~msg:"status" status
+                (if m.ended then `Finished else `Running)
+                (Run.status run);
+              let h = History.read run in
+              equal ~msg:"samples" (list float_exact) (List.rev m.values)
+                (List.map
+                   (fun (x : Metric.sample) -> x.value)
+                   (samples_of (History.series h "m")));
+              equal ~msg:"summary"
+                (list (pair string value))
+                (List.sort compare
+                   (List.map (fun (k, v) -> (k, `Float v)) m.summary))
+                (History.summary h))
+            model;
+          Array.iter (fun s -> Session.finish s) sessions);
+    ]
+
+(* Histories across domains *)
+
+(* A log of [n] samples of "a", 0 to n - 1, read a line at a time with [follow
+   ~limit:1]: a history's reference is how many samples it holds. *)
+let domain_log =
+  lazy
+    (let root = Filename.temp_dir "munin-domains" "" in
+     at_exit (fun () -> rm_rf root);
+     let store = Store.open_ ~root () in
+     let evs = List.init 40 (fun i -> Sample ("a", i, Float.of_int i)) in
+     (* No metric record: each line after the start is one sample. *)
+     spec_run store
+       (String.concat ""
+          (List.map (fun l -> l ^ "\n") (start_line :: List.mapi ev_line evs))))
+
+let n_samples = 40
+let hist_w : (int, History.t) abstract = abstract "h"
+
+let held h =
+  List.map
+    (fun (x : Metric.sample) -> x.value)
+    (samples_of (History.series h "a"))
+
+let domain_tests =
+  group "domains"
+    [
+      stateful ~count:30 ~domains:2
+        "following one history on two domains leaves both right"
+        [
+          (* A limit of one byte ends within the start: no sample. *)
+          command "read"
+            (Gen.unit @-> makes hist_w)
+            (fun () -> 0)
+            (fun () -> History.read ~limit:1 (Lazy.force domain_log));
+          command "follow"
+            (hist_w ^-> makes hist_w)
+            (fun c -> min (c + 1) n_samples)
+            (fun h -> History.follow ~limit:1 h);
+          command "samples"
+            (hist_w ^-> returns (list float_exact))
+            (fun c -> List.init c Float.of_int)
+            held;
+        ];
+    ]
+
+let () =
+  exit
+    (run "munin"
+       [
+         values_tests;
+         float_text_tests;
+         fold_tests;
+         session_tests;
+         sampling_tests;
+         hint_tests;
+         process_tests;
+         crash_tests;
+         store_tests;
+         artifact_tests;
+         provenance_tests;
+         model_tests;
+         domain_tests;
+       ])

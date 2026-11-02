@@ -3,10 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+module Store_format = Store_format
 module Value = Value
-module Metric = Metric
 module Provenance = Provenance
-module Artifact = Artifact
+module Metric = Metric
 module Run = Run
-module Session = Session
+module History = History
+module Artifact = Artifact
 module Store = Store
+module Session = Session
