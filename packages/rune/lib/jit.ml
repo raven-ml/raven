@@ -151,14 +151,27 @@ let count = function Some n -> n | None -> -1
 (* The lanes of each map of [axes] around the call. *)
 let lanes axes = List.map (fun a -> count (Program.bound a)) axes
 
-(* Whether a collect of each probe of [ps] is open around the call. *)
-let opened ps =
-  List.map (fun (Probe p) -> (Program.probe_id p, Program.opened p)) ps
+(* Whether the maps of [axes] around the call have [ns] lanes, [lanes axes =
+   ns] without building the list: a call compares them on every hit. *)
+let rec same_lanes axes ns =
+  match (axes, ns) with
+  | [], [] -> true
+  | a :: axes, n :: ns -> count (Program.bound a) = n && same_lanes axes ns
+  | [], _ :: _ | _ :: _, [] -> false
+
+(* Whether a collect of each probe of [ps] is open around the call as [os]
+   says, by each probe's id. *)
+let rec same_opened ps os =
+  match (ps, os) with
+  | [], [] -> true
+  | Probe p :: ps, (id, o) :: os ->
+      Program.probe_id p = id && Program.opened p = o && same_opened ps os
+  | [], _ :: _ | _ :: _, [] -> false
 
 (* Whether the call answers each question [e]'s trace asked as the trace was
    answered, so that [e]'s program is the call's: its trace would ask the same
    questions in the same order. *)
-let current e = lanes e.axes = e.lanes && opened e.asked = e.probes
+let current e = same_lanes e.axes e.lanes && same_opened e.asked e.probes
 
 (* [xs] then each of [ys] that [same] finds in none before it, in order. *)
 let union same xs ys =

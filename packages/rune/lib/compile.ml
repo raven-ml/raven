@@ -2804,17 +2804,43 @@ let evaluations_made = Domain.DLS.new_key (fun () -> ref 0)
 let evaluations () = !(Domain.DLS.get evaluations_made)
 let evaluated_call () = incr (Domain.DLS.get evaluations_made)
 
-(* [consumed ~by args f] is [f arrays take value] under a consumer of
-   [args], [arrays k] the arrays of argument [k], [take k ~piece a] the memory
-   of its array [a] on the device at position [piece] of its placement for a
-   result, if it may take it ({!Nx.Prim.Consumer.take}), and
-   [value k] the argument as a value of its own, owning its memory where a
-   donation of it may write there ({!Nx.Prim.Consumer.value}). *)
+(* A consumer of a call's arguments, read through {!arrays_of}, {!take_of} and
+   {!value_of}: one block per call rather than a closure per reader.
+   [Unclaimed] stands for a call without arguments, which reads none. *)
+type consumer =
+  | Consumer : 'd Nx.Prim.Consumer.t * value array -> consumer
+  | Unclaimed of string
+
+let unclaimed by = invalid_arg (by ^ ": no argument")
+
+(* The arrays of argument [k]. *)
+let arrays_of c k =
+  match c with
+  | Consumer (c, _) -> Nx.Prim.Consumer.arrays c k
+  | Unclaimed by -> unclaimed by
+
+(* The memory of argument [k]'s array [a] on the device at position [piece] of
+   its placement for a result, if it may take it ({!Nx.Prim.Consumer.take}). *)
+let take_of c k ~piece (A.Any a) =
+  match c with
+  | Consumer (c, _) ->
+      Option.map A.buffer
+        (Nx.Prim.Consumer.take c k ~piece (A.dtype a) (A.layout a))
+  | Unclaimed by -> unclaimed by
+
+(* Argument [k] as a value of its own, owning its memory where a donation of
+   it may write there ({!Nx.Prim.Consumer.value}). *)
+let value_of c k =
+  match c with
+  | Consumer (c, args) ->
+      let (V x) = args.(k) in
+      V (Nx.Prim.Consumer.value c k (Nx.dtype x))
+  | Unclaimed by -> unclaimed by
+
+(* [consumed ~by args f] is [f c] under a consumer [c] of [args]. *)
 let consumed ~by args f =
   match List.init (Array.length args) Fun.id with
-  | [] ->
-      let none _ = invalid_arg (by ^ ": no argument") in
-      f none (fun k ~piece:_ _ -> none k) none
+  | [] -> f (Unclaimed by)
   | k0 :: _ as all ->
       let (V x0) = args.(k0) in
       let set = Nx.Placement.devices (Nx.placement x0) in
@@ -2825,14 +2851,7 @@ let consumed ~by args f =
         | None -> invalid_arg (by ^ ": arguments on several sets")
       in
       Nx.Prim.Consumer.with_ ~by (List.map any all) (fun c ->
-          f
-            (fun k -> Nx.Prim.Consumer.arrays c k)
-            (fun k ~piece (A.Any a) ->
-              Option.map A.buffer
-                (Nx.Prim.Consumer.take c k ~piece (A.dtype a) (A.layout a)))
-            (fun k ->
-              let (V x) = args.(k) in
-              V (Nx.Prim.Consumer.value c k (Nx.dtype x))))
+          f (Consumer (c, args)))
 
 (* The array of the output [r] over [buffer], or else over fresh memory. *)
 let array_of r buffer =
@@ -2848,13 +2867,14 @@ let value r a =
     (Nx.Repr.unsafe_of_array (Nx.Placement.devices f.placement)
        (A.expect f.dtype a))
 
-(* The results of [t] from the arrays of its program's outputs: each the
-   output's array, or, where [t] is split, a value over several devices
-   gathered from its pieces' arrays. *)
-let results t arrays =
+(* The results of [t] from the buffers of its program's outputs ({!array_of}):
+   each the output's array, or, where [t] is split, a value over several
+   devices gathered from its pieces' arrays. *)
+let results t buffers =
   match t.split with
-  | None -> Array.mapi (fun j r -> value r arrays.(j)) t.results
+  | None -> Array.mapi (fun j r -> value r (array_of r buffers.(j))) t.results
   | Some s ->
+      let arrays = Array.mapi (fun j r -> array_of r buffers.(j)) t.results in
       Array.map
         (function
           | Pieces.One j -> value t.results.(j) arrays.(j)
@@ -2900,9 +2920,9 @@ let took arrays ys =
    every other result is copied. A value over an argument's memory shares
    it for good, so a later donation of that argument computes into fresh
    memory: the cost of this path. *)
-let evaluated ~fresh p args arrays value =
+let evaluated ~fresh p args c =
   let donated = Array.map (fun (V x) -> Nx.Prim.donated x) args in
-  let values = Array.mapi (fun k _ -> value k) args in
+  let values = Array.mapi (fun k _ -> value_of c k) args in
   (* A callback may keep what it receives, so it receives copies. *)
   let values =
     if Program.holds Program.calls p then
@@ -2916,16 +2936,17 @@ let evaluated ~fresh p args arrays value =
   else
     (* The results' arrays, read under a consumer of their own, which leaves
        their memory unshared. *)
-    let arrays = List.init (Array.length args) arrays in
+    let arrays = List.init (Array.length args) (arrays_of c) in
     (* A donated argument's memory lends to one result at most, the first:
        a result over memory an earlier kept result holds is copied. *)
     let kept =
-      consumed ~by:"Rune.jit" out (fun ys _ _ ->
+      consumed ~by:"Rune.jit" out (fun r ->
           let held = ref [] in
           Array.init (Array.length out) (fun i ->
-              let bs = Array.map (fun (A.Any a) -> A.buffer a) (ys i) in
+              let ys = arrays_of r i in
+              let bs = Array.map (fun (A.Any a) -> A.buffer a) ys in
               let shares b = List.exists (Rig.Buffer.overlaps b) !held in
-              let keep = took arrays (ys i) && not (Array.exists shares bs) in
+              let keep = took arrays ys && not (Array.exists shares bs) in
               if keep then held := Array.to_list bs @ !held;
               keep))
     in
@@ -2933,17 +2954,20 @@ let evaluated ~fresh p args arrays value =
 
 let evaluate ~fresh ~name p args =
   if Array.exists (fun (V x) -> Nx.Prim.donated x) args then
-    consumed ~by:name args (fun arrays _ value ->
-        evaluated ~fresh p args arrays value)
+    consumed ~by:name args (fun c -> evaluated ~fresh p args c)
   else
     (* Each result is a copy. [eval] returns an argument or a constant as
        itself, and a reshape of one lies over its memory. *)
     let out = eval_all p args in
     if fresh then out else Array.map (fun (V y) -> V (Nx.copy y)) out
 
+(* The layout of one element, made once: a call that checks reads its flag
+   through it. *)
+let single = L.contiguous (Iarray.of_list [ 1 ])
+
 (* The element of the one-element array over [b], read on the host. *)
 let element (type v s) (dt : (v, s) D.t) b : A.any =
-  let a = A.v dt (L.contiguous (Iarray.of_list [ 1 ])) b in
+  let a = A.v dt single b in
   A.Any (A.to_device Rig.host a)
 
 (* The index of C-order position [i] of [shape]. *)
@@ -2972,9 +2996,7 @@ let failure ((c : check), first, data) =
    set ({!Nx.section-waiting}). The buffers it reads are the call's own, which
    no donation reaches, so the check holds none of them. *)
 let issue_checks t v slots s =
-  let flag =
-    A.v Nx.bool (L.contiguous (Iarray.of_list [ 1 ])) (Option.get slots.(s))
-  in
+  let flag = A.v Nx.bool single (Option.get slots.(s)) in
   let checks =
     List.map
       (fun (c, first, data) ->
@@ -2994,44 +3016,60 @@ let issue_checks t v slots s =
 (* A buffer for one element of [dt]. *)
 let one rig (type v s) (dt : (v, s) D.t) = Rig.Buffer.create rig (D.bytes dt 1)
 
-(* Each leaf of a call's arguments, an argument's piece in a split program: the
-   argument and the piece's position in its placement. *)
-let owners t args =
+(* Each leaf of a split program's arguments, an argument's piece: the
+   argument and the piece's position in its placement. Unsplit, leaf [k] is
+   argument [k], at position [0]. *)
+let owners t =
   match t.split with
-  | None -> Array.mapi (fun k _ -> (k, 0)) args
+  | None -> None
   | Some s ->
-      Array.concat
-        (Array.to_list
-           (Array.mapi (fun k n -> Array.init n (fun j -> (k, j))) s.args))
+      Some
+        (Array.concat
+           (Array.to_list
+              (Array.mapi (fun k n -> Array.init n (fun j -> (k, j))) s.args)))
+
+(* [c]'s memory of leaf [j]'s array [a] for a result, the piece of its
+   argument [owners] names. *)
+let lent c owners j a =
+  match owners with
+  | None -> take_of c j ~piece:0 a
+  | Some o ->
+      let k, piece = o.(j) in
+      take_of c k ~piece a
 
 let rec run t args =
   (* A split program reads each piece of an argument as an argument of its
-     own, and a donated argument's pieces each lend their device's memory. *)
-  let owners = owners t args in
+     own, and a donated argument's pieces each lend their device's memory.
+     An unsplit call builds no owners. *)
+  let owners = owners t in
   let donated =
-    Array.map
-      (fun (k, _) ->
-        let (V x) = args.(k) in
-        Nx.Prim.donated x)
-      owners
+    match owners with
+    | None -> Array.map (fun (V x) -> Nx.Prim.donated x) args
+    | Some o ->
+        Array.map
+          (fun (k, _) ->
+            let (V x) = args.(k) in
+            Nx.Prim.donated x)
+          o
   in
-  consumed ~by:t.name args @@ fun arrays take value ->
-  let leaves = Array.concat (List.init (Array.length args) arrays) in
-  let take j a =
-    let k, piece = owners.(j) in
-    take k ~piece a
+  consumed ~by:t.name args @@ fun c ->
+  (* An unsplit program's leaf [k] is argument [k]'s one array. *)
+  let leaves =
+    match owners with
+    | None -> Array.init (Array.length args) (fun k -> (arrays_of c k).(0))
+    | Some _ -> Array.concat (List.init (Array.length args) (arrays_of c))
   in
   let layouts = Array.map layout_of leaves in
   let phases = Array.map phase_of leaves in
   match (variant t layouts phases donated (settings t.shaping)).linked with
   | Error _ ->
       evaluated_call ();
-      evaluated ~fresh:false t.source args arrays value
-  | Ok v -> linked t v leaves take
+      evaluated ~fresh:false t.source args c
+  | Ok v -> linked t v leaves c owners
 
-(* [linked t v leaves take] runs the variant [v] of [t] on the arrays of its
-   arguments under the call's consumer, [leaves]. *)
-and linked t v leaves take =
+(* [linked t v leaves c owners] runs the variant [v] of [t] on the arrays of
+   its arguments under the call's consumer [c], [leaves]. *)
+and linked t v leaves c owners =
   let slots = Array.make v.inputs None in
   (* The run an argument binds: its buffer itself where the run is all of
      it. *)
@@ -3050,7 +3088,7 @@ and linked t v leaves take =
     | Some b -> b
     | None ->
         let b =
-          match take k leaves.(k) with
+          match lent c owners k leaves.(k) with
           | Some b -> b
           | None ->
               let src = run_of k in
@@ -3092,14 +3130,21 @@ and linked t v leaves take =
         | Empty -> None)
       v.out_slots
   in
-  List.iter
-    (fun ((c : check), first, data) ->
-      slots.(first) <- Some (one t.rig D.Int64);
-      List.iter2
-        (fun (D.Any dt, _) s -> slots.(s) <- Some (one t.rig dt))
-        c.data data)
-    v.checks;
-  Option.iter (fun s -> slots.(s) <- Some (one t.rig Nx.bool)) v.ok;
-  Option.iter (fun (l, vars) -> Engine.run ~vars l slots) v.schedule;
-  Option.iter (issue_checks t v slots) v.ok;
-  results t (Array.mapi (fun j r -> array_of r buffers.(j)) t.results)
+  (* A variant has a flag exactly where it checks. Matched rather than
+     iterated, so that a call that checks nothing allocates no closure. *)
+  (match v.ok with
+  | None -> ()
+  | Some s ->
+      List.iter
+        (fun ((c : check), first, data) ->
+          slots.(first) <- Some (one t.rig D.Int64);
+          List.iter2
+            (fun (D.Any dt, _) s -> slots.(s) <- Some (one t.rig dt))
+            c.data data)
+        v.checks;
+      slots.(s) <- Some (one t.rig Nx.bool));
+  (match v.schedule with
+  | None -> ()
+  | Some (l, vars) -> Engine.run ~vars l slots);
+  (match v.ok with None -> () | Some s -> issue_checks t v slots s);
+  results t buffers

@@ -362,6 +362,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.jit` call allocates 63 fewer words on a hit and 66 fewer where
+  its program checks: it builds no closures for checks it does not make or
+  for reading its arguments, no table of argument pieces or list of leaves
+  for a program over one device, and no list of the lanes it compares with
+  each traced program's.
 - The gradients of `Nx.gammaincinv` and `Nx.gammainccinv` run through their
   last step alone, as the beta's inverses' do, where they ran through every
   Halley step: the compiled gradient is half the program and compiles in
