@@ -57,24 +57,20 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
       let x = Nx.add s.x (Search.along alpha delta) in
       let fx = residual x in
       let phi = merit fx in
-      ((x, fx), phi, accept alpha phi)
+      ((x, fx), phi, accept alpha phi, Search.moves ~from:s.x x)
     in
     let (x, fx), found, tries =
       Search.backtrack
         Nx.Ptree.(pair tensor tensor)
         dtype ~trials ~running:run ~shrink trial (s.x, s.fx)
     in
-    (* A search that finds no decrease, or one below the floats' resolution,
-       is at the floats' limit. *)
-    let moved =
-      Nx.logical_and found
-        (Nx.logical_not (Nx.all ~axes:[ -1 ] (Nx.equal x s.x)))
-    in
-    let s = Search.limit s at_limit ~at:(Nx.logical_not moved) in
+    (* A search that finds no decrease, a step below the floats' resolution
+       among them, is at the floats' limit. *)
+    let s = Search.limit s at_limit ~at:(Nx.logical_not found) in
     ( {
         s with
-        x = Search.hold moved x s.x;
-        fx = Search.hold moved fx s.fx;
+        x = Search.hold found x s.x;
+        fx = Search.hold found fx s.fx;
         n = Nx.add s.n tries;
       },
       () )
@@ -135,7 +131,7 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
       let x = Nx.add s.x (Search.along alpha delta) in
       let fx = residual x in
       let phi = Search.norm fx in
-      ((x, fx), phi, accept alpha phi)
+      ((x, fx), phi, accept alpha phi, Search.moves ~from:s.x x)
     in
     let (x, fx), found, tries =
       Search.backtrack

@@ -42,23 +42,30 @@ val accepted :
 (** [accepted tol ~e ~y] is [true] in each lane whose error [e] at [y] meets
     [tol]: the root mean square of the scaled components is at most [1]. *)
 
+val moves : from:(float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> 'd Nx.bool_t
+(** [moves ~from x] is [true] in each lane where [x] differs from [from] in
+    some component. *)
+
 val backtrack :
   ('p, 'd) Nx.Ptree.t ->
   (float, 'b) Nx.dtype ->
   trials:int ->
   running:'d Nx.bool_t ->
   shrink:((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
-  ((float, 'b, 'd) Nx.t -> 'p * (float, 'b, 'd) Nx.t * 'd Nx.bool_t) ->
+  ((float, 'b, 'd) Nx.t ->
+  'p * (float, 'b, 'd) Nx.t * 'd Nx.bool_t * 'd Nx.bool_t) ->
   'p ->
   'p * 'd Nx.bool_t * 'd Nx.int32_t
 (** [backtrack p dtype ~trials ~running ~shrink trial last] searches from the
     step length [α = 1] of [dtype] in each running lane: [trial α] is a point's
     payload of structure [p], whose tensors' shapes start with the lanes', its
-    merit [φ] and whether the lane accepts it. A lane ends at the first accepted
-    [α], and otherwise moves to [shrink α φ], which is at most [α / 2], for at
-    most [trials] trials. The result is the accepted payload, or [last] in a
-    lane that accepted none, whether each lane accepted and the trials each
-    lane took. *)
+    merit [φ], whether the lane accepts it and whether the point differs from
+    the search's start. A lane ends at the first accepted [α] whose point
+    differs, ends without a step at a point that does not, since every shorter
+    step rounds to it too, and otherwise moves to [shrink α φ], which is at
+    most [α / 2], for at most [trials] trials. The result is the accepted
+    payload, or [last] in a lane that accepted none, whether each lane
+    accepted and the trials each lane took. *)
 
 val c : float
 (** [c] is the sufficient-decrease constant, [10⁻⁴]: a step must take [c] of the

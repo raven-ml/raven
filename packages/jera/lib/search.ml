@@ -65,39 +65,46 @@ let within ~scale e =
   Nx.less_equal_s (Nx.reshape (lanes e) r) 1.
 
 let accepted tol ~e ~y = within ~scale:(Tol.scale tol y) e
+let moves ~from x = Nx.logical_not (every (Nx.equal x from))
 
 (* Backtracking
 
    The carry holds the trial length, the payload, whether each lane still
-   searches, the trials each lane took and the count of trips. *)
+   searches and whether it accepted a trial, the trials each lane took and the
+   count of trips. A trial at the estimate itself is no decrease and ends the
+   search: every shorter step rounds to it too. *)
 
 let backtrack p dtype ~trials ~running ~shrink trial last =
-  let step (alpha, (payload, (searching, (n, j)))) =
-    let next, phi, accepted = trial alpha in
+  let step (alpha, (payload, ((searching, found), (n, j)))) =
+    let next, phi, accepted, moved = trial alpha in
     let n = Nx.add n (Nx.cast Nx.int32 searching) in
-    let ok = Nx.logical_and searching accepted in
+    let ok = Nx.logical_and searching (Nx.logical_and accepted moved) in
     let payload = Nx.Ptree.map2 p (fun _ a b -> hold ok a b) next payload in
-    let searching = Nx.logical_and searching (Nx.logical_not ok) in
+    let searching =
+      Nx.logical_and searching (Nx.logical_and (Nx.logical_not ok) moved)
+    in
     let alpha = Nx.where searching (shrink alpha phi) alpha in
-    (alpha, (payload, (searching, (n, Nx.add_s j 1l))))
+    ( alpha,
+      (payload, ((searching, Nx.logical_or found ok), (n, Nx.add_s j 1l))) )
   in
   let lanes = Nx.shape running in
   let at = Nx.placement running in
-  let _, (payload, (searching, (n, _))) =
+  let _, (payload, ((_, found), (n, _))) =
     Rune.iterate
-      Nx.Ptree.(pair tensor (pair p (pair tensor (pair tensor tensor))))
+      Nx.Ptree.(
+        pair tensor (pair p (pair (pair tensor tensor) (pair tensor tensor))))
       ~max:trials
-      ~until:(fun (_, (_, (searching, (_, j)))) ->
+      ~until:(fun (_, (_, ((searching, _), (_, j)))) ->
         Nx.logical_or
           (Nx.logical_not (Nx.any searching))
           (Nx.greater_equal_s j (Int32.of_int trials)))
       step
       ( Nx.ones_at at dtype lanes,
         ( last,
-          (running, (Nx.zeros_at at Nx.int32 lanes, Nx.scalar_at at Nx.int32 0l))
-        ) )
+          ( (running, Nx.zeros_like running),
+            (Nx.zeros_at at Nx.int32 lanes, Nx.scalar_at at Nx.int32 0l) ) ) )
   in
-  (payload, Nx.logical_and running (Nx.logical_not searching), n)
+  (payload, found, n)
 
 (* The sufficient-decrease constant: a step must take [c] of the decrease the
    slope predicts. *)

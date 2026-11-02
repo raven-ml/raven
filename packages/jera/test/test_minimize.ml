@@ -1182,8 +1182,169 @@ let law_tests =
 let evaluation_bound budget = Int32.of_int (1 + (budget * 3 * 53))
 let gradient_methods = List.filter (fun (n, _) -> n <> "newton-cg") methods
 
+(* [½ xᵀ a x − bᵀ x + λᵀ x + c] with [b = a x*] exact: [a] has integer entries,
+   a diagonal of [n + 1] to [2n + 2] and off-diagonal entries in [{−1, 0, 1}],
+   so its condition is at most [(3n + 1) / 2] by Gershgorin's discs, and [x*]
+   has components of [k / 64], a quarter of them 0. In a box [lo = 0] the
+   other components are positive and [λ] is 1 at the zeros, whose bound is
+   then active; without one [λ = 0]. Either way the minimum is [x*], exactly,
+   and [c] is 0 or [10⁸], a large [|f*|]. *)
+let exact_minima =
+  let open Gen in
+  (let* n = int_range 1 6 in
+   let* boxed = bool in
+   let* large = bool in
+   let+ off = list ~size:(constant (n * n)) (int_range (-1) 1)
+   and+ diag = list ~size:(constant n) (int_range (n + 1) ((2 * n) + 2))
+   and+ xs =
+     list ~size:(constant n)
+       (pair (int_range 0 3) (pair (int_range 1 255) bool))
+   and+ k = float_range 0.25 1. in
+   let off = Array.of_list off and diag = Array.of_list diag in
+   let a =
+     Array.init (n * n) (fun ij ->
+         let i = ij / n and j = ij mod n in
+         if i = j then Float.of_int diag.(i)
+         else Float.of_int off.((min i j * n) + max i j))
+   in
+   let xs =
+     List.mapi
+       (fun i (zero, (m, neg)) ->
+         (* One component nonzero, so the minimum has a scale. *)
+         if zero = 0 && i > 0 then 0.
+         else
+           let v = Float.of_int m /. 64. in
+           if neg && not boxed then -.v else v)
+       xs
+   in
+   ( Nx.create f64 [| n; n |] a,
+     (vec (Array.of_list xs), (boxed, ((if large then 1e8 else 0.), k))) ))
+  |> with_pp (fun ppf (a, (x, (boxed, (c, k)))) ->
+      Format.fprintf ppf "a = %a@ x* = %a@ boxed %b@ c = %g@ k = %g" Nx.pp a
+        Nx.pp x boxed c k)
+
+let exact_objective a xstar ~boxed c =
+  let b = Nx.matmul a xstar in
+  let lambda =
+    if boxed then Nx.cast f64 (Nx.equal_s xstar 0.) else Nx.zeros_like xstar
+  in
+  fun x ->
+    Nx.add_s
+      (Nx.add
+         (Nx.sub (Nx.mul_s (Nx.sum (Nx.mul x (Nx.matmul a x))) 0.5)
+            (Nx.sum (Nx.mul b x)))
+         (Nx.sum (Nx.mul lambda x)))
+      c
+
+(* [c + ½ (x − a)ᵀ h (x − a)] on 10 unknowns, [h] of condition 10⁴ in a
+   random basis. *)
+let rotated =
+  let n = 10 in
+  Gen.(
+    let+ m = list ~size:(constant (n * n)) (float_range (-1.) 1.)
+    and+ a = list ~size:(constant n) (float_range 0.5 2.5) in
+    let q, _ = Nx.qr (Nx.create f64 [| n; n |] (Array.of_list m)) in
+    let d =
+      Nx.create f64 [| 1; n |]
+        (Array.init n (fun i ->
+             1e4 ** (Float.of_int i /. Float.of_int (n - 1))))
+    in
+    let h = Nx.matmul (Nx.mul q d) (Nx.transpose q) in
+    (Nx.div_s (Nx.add h (Nx.transpose h)) 2., vec (Array.of_list a)))
+  |> Gen.with_pp (fun ppf (h, a) ->
+      Format.fprintf ppf "h = %a@ a = %a" Nx.pp h Nx.pp a)
+
+let status s =
+  List.find
+    (fun st -> Nx.item [] (Solution.is st s))
+    Solution.[ Converged; Budget_spent; Not_finite; Stalled ]
+
+let status_t =
+  Testable.make
+    ~pp:(fun ppf st ->
+      Format.pp_print_string ppf
+        (match st with
+        | Solution.Converged -> "Converged"
+        | Budget_spent -> "Budget_spent"
+        | Not_bracketed -> "Not_bracketed"
+        | Not_finite -> "Not_finite"
+        | Stalled -> "Stalled"))
+    ~equal:( = )
+
 let termination_tests =
   [
+    test "Newton below an ulp ends Stalled at the floats' limit" (fun () ->
+        (* At its minimum the gradient's rounding gives steps of 64 ulps of
+           the small first component, which a tolerance of 0.27 ulps cannot
+           follow. *)
+        let a =
+          Nx.create f64 [| 3; 3 |]
+            [|
+              0x1.bed1bf54c1e5ep+1; -0x1.23095b14ba6c1p-1; -0x1.2c8702f961b4p-4;
+              -0x1.23095b14ba6c1p-1; 0x1.058f40653edcp+2; -1.;
+              -0x1.2c8702f961b4p-4; -1.; 4.;
+            |]
+        and b =
+          vec
+            [|
+              0x1.f8cf36f7fba8p-2; -0x1.c360e38ae8a33p+1; -0x1.7c3e8eb7c7248p+0;
+            |]
+        in
+        List.iter
+          (fun (name, m) ->
+            if String.starts_with ~prefix:"newton" name then
+              equal ~msg:name status_t Stalled
+                (status
+                   (Minimize.solve one m ~tol:(Tol.ulps 0x1.116ff1e7a3881p-2)
+                      ~budget:200 (objective a b) (Nx.zeros_like b))))
+          methods);
+    prop "below an ulp a search ends at the floats' limit, near the minimum"
+      exact_minima (fun (a, (xstar, (boxed, (c, k)))) ->
+        let n = Nx.dim 0 xstar in
+        cover "a zero component" (Array.mem 0. (Oracle.floats xstar));
+        cover "an active bound" (boxed && Array.mem 0. (Oracle.floats xstar));
+        cover "a large minimum value" (c > 0.);
+        let kappa = Float.of_int ((3 * n) + 1) /. 2. in
+        let top = Nx.item [] (Nx.max (Nx.abs xstar)) in
+        let lo = if boxed then Some (Nx.zeros_like xstar) else None in
+        List.iter
+          (fun (name, m) ->
+            let s =
+              Minimize.solve one m ?lo ~tol:(Tol.ulps k) ~budget:200
+                (exact_objective a xstar ~boxed c)
+                (Nx.full_like xstar 0.5)
+            in
+            let st = status s in
+            (* Newton meets a quadratic in one step; the reproduction above
+               stalls it. *)
+            if not (String.starts_with ~prefix:"newton" name) then
+              cover (name ^ " stalls") (st = Stalled);
+            not_equal ~msg:name status_t Budget_spent st;
+            (* The answer is fixed to about ε |x*|∞ times the condition: the
+               gradient's rounding is ε times its largest terms. *)
+            if st = Stalled then
+              at_most float_exact ~msg:name
+                ~than:(2. *. kappa *. Float.epsilon *. top)
+                (Nx.item [] (Nx.max (Nx.abs (Nx.sub (Solution.best s) xstar)))))
+          methods);
+    prop ~count:2 "a constant added to f leaves a solve's status (law)" rotated
+      (fun (h, a) ->
+        let f c x =
+          let d = Nx.sub x a in
+          Nx.add_s (Nx.mul_s (Nx.sum (Nx.mul d (Nx.matmul h d))) 0.5) c
+        in
+        List.iter
+          (fun (name, m) ->
+            let solve c =
+              status
+                (Minimize.solve one m ~tol:tight ~budget:2000 (f c)
+                   (Nx.zeros_like a))
+            in
+            let base = solve 0. in
+            List.iter
+              (fun c -> equal ~msg:name status_t base (solve c))
+              [ 1e4; 1e8 ])
+          methods);
     prop ~count:10
       "a NaN at the trial points ends every search within its bound" centers
       (fun c ->

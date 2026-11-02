@@ -646,7 +646,10 @@ module Minimize : sig
       only along their path. A lane whose error does not meet [tol] ends
       [Stalled] as in {!System}, and at a step that is not downhill; a
       non-finite [f] or gradient at the start ends it [Not_finite]; [budget]
-      iterations end it [Budget_spent].
+      iterations end it [Budget_spent]. At the floats' limit the gradient is
+      rounding, and a step its slopes accept raises [f] as readily as it
+      lowers it: {!newton}'s search there asks the gradient's norm to fall, so
+      it finds no decrease.
 
       {b Derivative.} The answer is stated as the zero of rune's gradient of [f]
       through {!Rune.root}, so its derivative is [−H⁻¹ ∂θ∇f] through every
@@ -691,11 +694,15 @@ module Minimize : sig
 
       {b Method.} Each step solves [H δ = −∇f] with [linear] on rune's
       Hessian-vector products, truncated by its tolerance with {!Linear.cg},
-      then searches from [x + δ] to the strong Wolfe conditions, as {!bfgs}
-      does, so near a minimum it takes the full step. A Hessian that is not
-      positive-definite gives a step that is not downhill, or ends {!Linear.cg},
-      and the lane stalls. {b Cost.} One solve of [linear] per iteration;
-      quadratic convergence near a minimum. *)
+      then backtracks by halving from [x + δ] to the sufficient decrease
+      [f ≤ f x + 10⁻⁴ ∇fᵀ (α δ)], Bertsekas's (1982) search, so near a minimum
+      it takes the full step. Within [√ε |f x|] of [f x], where the decrease a
+      step predicts falls below [f]'s rounding, a trial decreases where the
+      gradient's norm strictly falls, as {!System.newton}'s search does on
+      [|f|] for [∇f = 0]. A Hessian that is not positive-definite gives a step
+      that is not downhill, or ends {!Linear.cg}, and the lane stalls.
+      {b Cost.} One solve of [linear] per iteration and one evaluation of [f]
+      and its gradient per trial; quadratic convergence near a minimum. *)
 
   val levenberg_marquardt :
     ('r, 'd) Nx.Ptree.t -> linear:'x Linear.t -> ('x, 'x -> 'r, 'd) t
@@ -772,19 +779,20 @@ module Minimize : sig
       the norm of [x − P (x − ∇f x)], its Hessian solve acts on the others and
       [−∇f] on the held ones, and the search backtracks by halving along the
       projection arc [P (x + α d)] to the sufficient decrease
-      [f ≤ f x + 10⁻⁴ ∇fᵀ (P (x + α d) − x)]. {!levenberg_marquardt} holds the
-      same coordinates and solves its damped system on the others, with the
-      diagonal of [JᵀJ + λ D] on the held ones, so every step tends to zero as
-      [λ] grows; its trial point is [P (x + δ)], rejected where the linear model
-      predicts no decrease there. {!nelder_mead} clips its vertices. The
-      undamped step is the projected one, [P (x + δ) − x], and the gradient of
-      {!bfgs}'s and {!lbfgs}'s bound the projected one, [x − P (x − ∇f x)]. The
-      answer is stated as the zero of [x − P (x − ∇f x)], so its derivative is
-      zero in a coordinate held at a constant bound and follows a bound that
-      moves; that system is not symmetric, so its [linear] must not be
-      {!Linear.cg}. A box that holds no point, where a coordinate's [lo] exceeds
-      its [hi] or is [+∞] or its [hi] is [−∞], or either is NaN, ends the lane
-      [Stalled].
+      [f ≤ f x + 10⁻⁴ ∇fᵀ (P (x + α d) − x)], within [f x]'s rounding to a
+      strict fall of the norm of [x − P (x − ∇f x)]. {!levenberg_marquardt}
+      holds the same coordinates and solves its damped system on the others,
+      with the diagonal of [JᵀJ + λ D] on the held ones, so every step tends to
+      zero as [λ] grows; its trial point is [P (x + δ)], rejected where the
+      linear model predicts no decrease there. {!nelder_mead} clips its
+      vertices. The undamped step is the projected one, [P (x + δ) − x], and
+      the gradient of {!bfgs}'s and {!lbfgs}'s bound the projected one,
+      [x − P (x − ∇f x)]. The answer is stated as the zero of
+      [x − P (x − ∇f x)], so its derivative is zero in a coordinate held at a
+      constant bound and follows a bound that moves; that system is not
+      symmetric, so its [linear] must not be {!Linear.cg}. A box that holds no
+      point, where a coordinate's [lo] exceeds its [hi] or is [+∞] or its [hi]
+      is [−∞], or either is NaN, ends the lane [Stalled].
 
       [x0] is projected on the box first. Its evaluations count the calls of
       [f], with its gradient for a gradient method, and [budget] its iterations,

@@ -330,11 +330,10 @@ let point_ptree () = Nx.Ptree.(pair tensor (pair tensor tensor))
 let pack p = (p.x, (p.value, p.g))
 let unpack (x, (value, g)) = { x; value; g }
 
-(* Every gradient method searches to the strong Wolfe conditions, from its full
-   step: the quasi-Newton methods so that every pair they keep has positive
-   curvature [yᵀ s], Newton so that its full step is taken near a minimum, where
-   the conditions' approximate form accepts a decrease below [f]'s rounding by
-   its slope. *)
+(* The quasi-Newton methods search to the strong Wolfe conditions, from their
+   full step, so that every pair they keep has positive curvature [yᵀ s]; the
+   conditions' approximate form accepts a decrease below [f]'s rounding by its
+   slope. *)
 let wolfe dtype ~trials evaluate ~running ~longest (p : _ point) delta =
   let trial alpha =
     let q = evaluate (Nx.add p.x (Search.along alpha delta)) in
@@ -580,9 +579,52 @@ let lbfgs_method at dtype n m ~trials evaluate =
       curvature = true;
     }
 
+(* Newton searches by Bertsekas's (1982) projected step: in a box, the
+   coordinates within [ε] of a bound whose gradient pushes out of the box are
+   active, [ε] the projected gradient's norm [|x − P (x − g)|], at most half
+   the coordinate's width; its Hessian solve acts on the free ones and [−g]
+   on the active ones; and the search backtracks by halving along the
+   projection arc [P (x + α d)], [P] the identity without a box, to the
+   sufficient decrease [f ≤ f x + c gᵀ (P (x + α d) − x)]. The undamped step
+   is [P (x + d) − x].
+
+   Near a minimum the decrease of [f] that a step predicts falls below [f]'s
+   rounding, and within [√ε |f x|] of [f x], the band of the line search's
+   approximate conditions (Hager and Zhang, 2005), the step is judged as
+   Newton's for the equation [r = 0], [r = x − P (x − g)] the projected
+   gradient: a trial there decreases where [|r|] strictly falls, as
+   {!System.newton}'s search on its merit. A strict fall cannot go on, so at
+   the floats' limit, where [g] is rounding and slopes pass a step that raises
+   [f] as readily as one that lowers it, the search finds none. *)
+let projected ~trials evaluate ~project ~residual ~running (p : _ point) d =
+  let dtype = Nx.dtype p.x in
+  let rounding = Nx.mul_s (Nx.abs p.value) (sqrt (Num.eps dtype)) in
+  let r0 = Search.norm (residual p) in
+  let trial alpha =
+    let x = project (Nx.add p.x (Search.along alpha d)) in
+    let q = evaluate x in
+    let slope = Search.dot p.g (Nx.sub x p.x) in
+    let decrease =
+      Nx.where
+        (Nx.less_equal (Nx.abs (Nx.sub q.value p.value)) rounding)
+        (Nx.less (Search.norm (residual q)) r0)
+        (Nx.less_equal q.value (Nx.add p.value (Nx.mul_s slope Search.c)))
+    in
+    ( pack q,
+      q.value,
+      Nx.logical_and (Nx.less_s slope 0.) decrease,
+      Search.moves ~from:p.x x )
+  in
+  let shrink alpha _ = Nx.mul_s alpha 0.5 in
+  let q, found, tries =
+    Search.backtrack (point_ptree ()) dtype ~trials ~running ~shrink trial
+      (pack p)
+  in
+  (unpack q, found, tries)
+
 (* Newton solves [H δ = −g] with [linear] on Hessian-vector products, on the
    free coordinates: the operator is [H] there and the identity elsewhere. *)
-let newton_method dtype ~trials evaluate ~solve =
+let newton_method ~trials evaluate ~solve =
   let direction (s : _ Search.state) () = solve s.x ~free:None (Nx.neg s.fx) in
   let restricted (s : _ Search.state) () ~free =
     let u, failed = solve s.x ~free:(Some free) (Nx.neg (Nx.mul free s.fx)) in
@@ -593,49 +635,15 @@ let newton_method dtype ~trials evaluate ~solve =
       memory = Nx.Ptree.unit;
       init = ();
       direction;
-      search = wolfe dtype ~trials evaluate;
+      search =
+        (fun ~running ~longest:_ p d ->
+          projected ~trials evaluate ~project:Fun.id
+            ~residual:(fun (q : _ point) -> q.g)
+            ~running p d);
       update = (fun _ _ () -> ());
       boxed = Projected restricted;
       curvature = false;
     }
-
-(* Under a box every gradient method takes Bertsekas's (1982) projected step:
-   the coordinates within [ε] of a bound whose gradient pushes out of the box
-   are active, [ε] the projected gradient's norm [|x − P (x − g)|], at most half
-   the coordinate's width; the method's scaling acts on the free ones and [−g]
-   on the active ones; and the search backtracks by halving along the projection
-   arc [P (x + α d)] to the sufficient decrease [f ≤ f x + c gᵀ (P (x + α d) −
-   x)]. The undamped step is [P (x + d) − x]. *)
-let projected ~trials evaluate ~project ~running (p : _ point) d =
-  let dtype = Nx.dtype p.x in
-  let rounding = Nx.mul_s (Nx.abs p.value) (sqrt (Num.eps dtype)) in
-  let trial alpha =
-    let x = project (Nx.add p.x (Search.along alpha d)) in
-    let q = evaluate x in
-    let step = Nx.sub x p.x in
-    let slope = Search.dot p.g step in
-    let sufficient =
-      Nx.less_equal q.value (Nx.add p.value (Nx.mul_s slope Search.c))
-    in
-    (* Within [f]'s rounding the decrease shows in the gradients along the
-       displacement, as in the line search's approximate conditions. *)
-    let approximate =
-      Nx.logical_and
-        (Nx.less_equal q.value (Nx.add p.value rounding))
-        (Nx.less_equal (Search.dot q.g step)
-           (Nx.mul_s slope ((2. *. Search.c) -. 1.)))
-    in
-    ( pack q,
-      q.value,
-      Nx.logical_and (Nx.less_s slope 0.) (Nx.logical_or sufficient approximate)
-    )
-  in
-  let shrink alpha _ = Nx.mul_s alpha 0.5 in
-  let q, found, tries =
-    Search.backtrack (point_ptree ()) dtype ~trials ~running ~shrink trial
-      (pack p)
-  in
-  (unpack q, found, tries)
 
 type ('q, 'd) box = { lo : ('q, 'd) vector; hi : ('q, 'd) vector }
 
@@ -770,7 +778,10 @@ let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
           ( Nx.sub (project b (Nx.add s.x d)) s.x,
             failed,
             fun ~running ->
-              projected ~trials evaluate ~project:(project b) ~running here d )
+              projected ~trials evaluate ~project:(project b)
+                ~residual:(fun (q : _ point) ->
+                  Nx.sub q.x (project b (Nx.sub q.x q.g)))
+                ~running here d )
     in
     let s = { s with st = settle s.st failed Stalled } in
     let s = Search.read tol s ~map:delta in
@@ -972,7 +983,7 @@ let problem fn x kind linear f start =
           let r = Linear.run linear dtype size hessian precondition rhs in
           (Rune.detach r.u, Rune.detach (Linear.failed r))
         in
-        newton_method dtype ~trials evaluate ~solve
+        newton_method ~trials evaluate ~solve
   in
   let start = evaluate (Rune.detach (ravel start)) in
   Problem
