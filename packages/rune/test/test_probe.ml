@@ -34,17 +34,26 @@ let offers_t = list (pair int bits_t)
 (* The offer of the site [k] whose executions gave [rows], in order. *)
 let offer k rows = (k, bits (Nx.stack ~axis:0 rows))
 
-(* The outcome of [f ()] and the offers to [p] it made. *)
+(* The outcome of [f ()] and the offers to [p] it made. The raises the tests
+   expect, an [Invalid_argument] or [Exit], are outcomes; any other passes on,
+   so that a collect hides no failure, windtrap's timeout among them. *)
 let collected p f =
   let r, offers = Probe.collect p f in
   let r =
     match r with
     | Ok v -> Value v
-    | Error (e, _) -> Raised (Printexc.to_string e)
+    | Error (((Invalid_argument _ | Exit) as e), _) ->
+        Raised (Printexc.to_string e)
+    | Error (e, bt) -> Printexc.raise_with_backtrace e bt
   in
   (r, List.map seen offers)
 
-let offers p f = snd (collected p f)
+(* The offers to [p] of [f ()], which must return. *)
+let offers p f =
+  match collected p f with
+  | Value _, offers -> offers
+  | Raised m, _ -> failf "the call raised %s" m
+
 let invalid ~msg ~sub f = raises_match ~msg (Exn.invalid_arg ~sub) f
 
 (* Eager emits *)
@@ -695,7 +704,7 @@ let test_rules () =
     Rune.custom_jvp T.tensor T.tensor (fun x ->
         ( Nx.mul x x,
           fun dx ->
-            let t = Nx.mul dx dx in
+            let t = Nx.neg dx in
             let s = Nx.sin x in
             Probe.emit p (tag 0, s);
             Nx.add (Nx.mul (Nx.mul_s x 2.) dx) (Nx.mul s t) ))

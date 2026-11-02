@@ -31,6 +31,13 @@ let logged g =
 let values = Gen.(list ~size:(int_range 0 5) (float_range (-4.) 4.))
 let fl = Testable.(list (list float_exact))
 
+(* [f ()] and its offers to [p], whose raise passes on: a collect hides no
+   failure, windtrap's timeout among them. *)
+let offered p f =
+  match Rune.Probe.collect p f with
+  | Ok v, l -> (v, l)
+  | Error (e, bt), _ -> Printexc.raise_with_backtrace e bt
+
 (* Eager: once, at the call, its function's result. *)
 let law_eager xs =
   let x = vec (Array.of_list xs) in
@@ -119,7 +126,7 @@ let test_inner_scan () =
              ~init:(Nx.zeros f64 [| 3 |]) xs)
       in
       let f = if mode = "jit" then Rune.jit' scan else scan in
-      if collect then ignore (Rune.Probe.collect p (fun () -> f xs))
+      if collect then ignore (offered p (fun () -> f xs))
       else ignore (f xs);
       let rows = [ [ 0.; 0.; 0. ]; [ 1.; 2.; 3. ] ] in
       let msg = mode ^ if collect then ", collected" else "" in
@@ -389,8 +396,8 @@ let test_outlined_effects () =
     Nx.sin b
   in
   let offers g =
-    let r, l = Rune.Probe.collect p (fun () -> g (vec [| 0.5; 1. |])) in
-    (floats (Result.get_ok r), List.map floats l)
+    let y, l = offered p (fun () -> g (vec [| 0.5; 1. |])) in
+    (floats y, List.map floats l)
   in
   let ofl = Testable.(pair (list (float 1e-12)) (list (list (float 1e-12)))) in
   let eager = offers f in
@@ -919,7 +926,7 @@ let test_unread () =
 let test_outside () =
   let p = Rune.Probe.make T.tensor in
   let count v =
-    let _, l = Rune.Probe.collect p (fun () -> Rune.Probe.emit p v) in
+    let _, l = offered p (fun () -> Rune.Probe.emit p v) in
     scalar (float_of_int (List.length l))
   in
   let x = scalar 5. in
@@ -974,7 +981,10 @@ let test_raise () =
   raises
     (Invalid_argument
        "Rune.callback: the function emits to a probe collected around the call")
-    (fun () -> match r with Ok _ -> () | Error (e, _) -> raise e);
+    (fun () ->
+      match r with
+      | Ok _ -> ()
+      | Error (e, bt) -> Printexc.raise_with_backtrace e bt);
   raises (Invalid_argument "Nx.Rng.uniform: no key inside Rune.callback, which refuses keyless draws")
     (fun () ->
       ignore (Rune.callback tt ~like:x (fun _ -> Nx.Rng.uniform f64 [||]) x))

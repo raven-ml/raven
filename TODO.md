@@ -253,9 +253,6 @@ raven / llama.cpp b12048 Vulkan:
   scan), cummax's tangent 16/15/17 and gradient 14/13/15. argmax and
   scatter are constant and sit in test_jit_devices' `uniform` list; move
   each op there as its closing or assembly becomes one program per device
-- rune's `test_probe › scans › a step offers a row per row` failed once
-  under load and passed on replay of its counterexample: find whether it
-  is load-dependent or flaky
 
 ## nx
 
