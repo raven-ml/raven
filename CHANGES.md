@@ -1771,6 +1771,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   extents, as five ids over two devices, each index its own group; it raised
   from an internal reshape. Ids of several axes so split raise at the call,
   naming the `Nx.place` that puts `ids` and `x` whole.
+- `Nx_quant.apply_experts` computes with `x` cut where flattening its
+  leading axes cannot keep the cut, along a later axis of more than one
+  index or into windows of unequal extents, gathering its rows along each
+  axis where they lie; it raised from `Nx.reshape`.
 - `Nx_ragged.of_strings` fills its offsets and bytes in place, where it
   copied them from bigarrays the OCaml heap alone paced the collector by.
 - `Nx_array.host` makes a host array of a dtype and shape, and

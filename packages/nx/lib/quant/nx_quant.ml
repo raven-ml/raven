@@ -731,6 +731,48 @@ let slots r e =
   in
   (ids, offsets)
 
+(* Whether flattening [x]'s leading axes [xs] keeps where they lie. A
+   reshape drops axes of one index and keeps a cut of the axis the others
+   merge into, the first of more than one index, where its windows have one
+   extent, so each holds whole rows of the merged axis: [[| 4; 3; k |]] cut
+   along its first axis over two devices, not over three, nor along its
+   second. *)
+let flat_keeps x xs =
+  let pieces = Nx.Prim.pieces (Nx.placement x) (Nx.shape x) in
+  let counts i =
+    Array.map (fun (_, (w : Nx_array.Move.range array)) -> w.(i).count) pieces
+  in
+  let one_extent c = Array.for_all (Int.equal c.(0)) c in
+  let axes = List.init (Array.length xs) Fun.id in
+  match List.filter (fun i -> xs.(i) > 1) axes with
+  | [] | [ _ ] -> true
+  | first :: rest ->
+      List.for_all (fun i -> Array.for_all (Int.equal xs.(i)) (counts i)) rest
+      && one_extent (counts first)
+
+(* [x]'s rows, [[| p; k |]], at the flat positions [source], [[| p |]], over
+   its leading axes [xs]. Where flattening those axes keeps where they lie,
+   one gather from [x] flattened. Else a gather along each leading axis of
+   more than one index reads [x] where it lies, and closes by partials
+   where it reads a cut axis: first along the longest, holding [p] rows
+   times the extents of the others. *)
+let rows_at x xs source =
+  let l = Array.length xs and k = Nx.dim (-1) x in
+  let m = Array.fold_left ( * ) 1 xs and p = Nx.dim 0 source in
+  if flat_keeps x xs then Nx.take ~axis:0 source (Nx.reshape [| m; k |] x)
+  else
+    let at = Array.of_list (Nx.unravel_index source xs) in
+    let longest = ref 0 in
+    Array.iteri (fun i d -> if d > xs.(!longest) then longest := i) xs;
+    let a = !longest in
+    let one = Array.init (l + 1) (fun i -> if i = a then p else 1) in
+    let rows = ref (Nx.take ~axis:a at.(a) x) in
+    for i = 0 to l - 1 do
+      if i <> a && xs.(i) > 1 then
+        rows := Nx.take_along_axis ~axis:i (Nx.reshape one at.(i)) !rows
+    done;
+    Nx.reshape [| p; k |] !rows
+
 (* [segmented r x b scale offsets] is the product of [x]'s rows with the
    matrices [b], [[| g; n; k |]], scaled by [scale], cut by [offsets], summed
    at float64 for a float64 [x], else at float32, and rounded once to [x]'s
@@ -738,16 +780,14 @@ let slots r e =
 let segmented (type b) ?(sum = false) r (x : (float, b, _) Nx.t) b scale
     offsets =
   let ws = Nx.shape b in
-  let n = ws.(1) and k = ws.(2) in
+  let n = ws.(1) in
   (* Each position's row of [x], whose leading axes broadcast to the ids'. *)
   let xs = Array.sub (Nx.shape x) 0 (Array.length r.lead) in
   let m = Array.fold_left ( * ) 1 xs in
   let here = Nx.beside x in
   let positions = Nx.reshape xs (Nx.arange_at here Nx.int64 0 m 1) in
   let source = Nx.reshape [| r.p |] (Nx.broadcast_to r.lead positions) in
-  let rows =
-    Nx.take ~axis:0 (Nx.take r.order source) (Nx.reshape [| m; k |] x)
-  in
+  let rows = rows_at x xs (Nx.take r.order source) in
   let acc : Nx.Dtype.any =
     if wide x then Any Nx.float64 else Any Nx.float32
   in

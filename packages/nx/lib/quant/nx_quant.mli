@@ -253,7 +253,13 @@ val apply_experts :
     {!Nx.contract}'s do, where the result would lie with [k] whole. Routing
     the positions sorts [ids], which reads them whole, and gathers [x]'s
     rows where they lie ({!Nx.take}): [ids] cut across devices raise as the
-    operation reading them does ({!Nx.section-routing}). The sum needs
+    operation reading them does ({!Nx.section-routing}). [x]'s leading axes
+    are flattened where that keeps where they lie: at most one has more
+    than one index, or only the first such is cut, into windows of one
+    extent. Cut otherwise, along a later such axis or into windows of
+    unequal extents, [x] is gathered along each such axis in turn, from
+    the longest, which holds each position's row times the extents of the
+    others. The sum needs
     kernels that compute a segmented contraction, block-scaled for [Mxfp4],
     as nx.cpu's do.
 

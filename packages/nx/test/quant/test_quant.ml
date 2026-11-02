@@ -1967,6 +1967,48 @@ let placements =
               in
               raises (named "Nx_quant.apply_experts") (fun () ->
                   Nx_quant.apply_experts ~ids ep x));
+      (* An input of several leading axes cut along one of them, in
+         windows of equal or unequal extents, the longest or not, one row
+         for every position or one for several: its rows are gathered where
+         they lie, and the product has the bits it has whole. *)
+      cases "an input cut along a leading axis gives the bits it gives whole"
+        ~id:(fun (f, ids, xs, axis) ->
+          Format.asprintf "%s, ids %a, x %a cut along axis %d" (format_name f)
+            pp_shape ids pp_shape xs axis)
+        (List.concat_map
+           (fun f ->
+             List.map
+               (fun (ids, xs, axis) -> (f, ids, xs, axis))
+               [
+                 ([| 2; 4 |], [| 2; 4 |], 1);
+                 ([| 2; 3 |], [| 2; 3 |], 1);
+                 ([| 3; 2 |], [| 3; 2 |], 0);
+                 ([| 3; 2 |], [| 3; 1 |], 0);
+                 ([| 2; 2; 3 |], [| 2; 1; 3 |], 2);
+                 ([| 2; 4 |], [| 2; 4 |], 0);
+                 ([| 4; 3 |], [| 4; 3 |], 0);
+                 ([| 3; 4 |], [| 3; 4 |], 0);
+                 ([| 2; 3; 4 |], [| 2; 3; 4 |], 1);
+               ])
+           [ Mxfp4; Q8_0 ])
+        (fun (f, s, xs, axis) ->
+          let k = 64 in
+          let w = random_weight ~format:f [| 3; 4; k |] in
+          let p = Array.fold_left ( * ) 1 s in
+          let ids =
+            Nx.create Nx.int64 s
+              (Array.init p (fun i -> Int64.of_int ((i * 2 mod 5) - 1)))
+          in
+          let x = random_floats (Array.append xs [| k |]) in
+          let module S = Mem_two in
+          let y =
+            Nx_quant.apply_experts ~ids:(Nx.place S.on ids)
+              (Nx_quant.place S.on w)
+              (Nx.place (S.split ~axis) x)
+          in
+          equal (array int64)
+            (product_bits (Nx_quant.apply_experts ~ids w x))
+            (product_bits y));
       (* Two blocks of 32 values over four devices: each holds half a
          block's codes, and the scales, one per block, are read whole. *)
       test "an MXFP4 weight cut inside its blocks raises from its product"
