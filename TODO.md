@@ -56,8 +56,10 @@ raven / llama.cpp b12048 Vulkan:
 ### perf
 
 - kaun's GPU decode rows measure allocation again (bench_decode.ml's
-  `gpu_metrics`) once a decode call's words are shown not to depend on
-  the collector's phase: on fudge (CUDA) and nonnormal (AMD)
+  `gpu_metrics`) once an allocation that misses rig's cache allocates no
+  OCaml words (AMD: ~97, memory.ml:1794 → rig_amd.ml:240-281 →
+  rig_amd_amdgpu.ml:400-416); misses follow when the collector returns
+  buffers: on fudge (CUDA) and nonnormal (AMD)
 - AMD 4 KiB copies: `Buffer.copy` of 4 KiB on nonnormal lands 35-40% of
   calls at 9-12 µs, the same submission submitted directly 2.5%
   (probe_4k.exe split). With held_ns at 50 µs none did, but twice as many
