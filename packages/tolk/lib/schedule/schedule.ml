@@ -225,32 +225,45 @@ let linearize ~written ~children in_degree =
     storage;
   let bytes b = max_numel b * element_size b in
   let net = Hashtbl.create 4 in
-  let frees i =
+  (* Whether kernel [i] frees storage and, where [~makes] is false, makes
+     none, else makes on no device more than it frees. *)
+  let frees ~makes i =
     Hashtbl.reset net;
     let add b n =
       let d = Option.value (device b) ~default:"" in
       Hashtbl.replace net d (n + Option.value (Hashtbl.find_opt net d) ~default:0)
     in
-    let freed = ref false in
+    let freed = ref false and making = ref false in
     List.iter
       (fun b ->
-        if not (Tbl.mem made b) then add b (bytes b)
+        if not (Tbl.mem made b) then begin
+          add b (bytes b);
+          making := true
+        end
         else if Tbl.find users b = 1 then begin
           add b (-bytes b);
           freed := true
         end)
       storage.(i);
-    !freed && Hashtbl.fold (fun _ n ok -> ok && n <= 0) net true
+    !freed
+    && (if makes then Hashtbl.fold (fun _ n ok -> ok && n <= 0) net true
+        else not !making)
   in
   let ready = ref Iset.empty in
   Array.iteri
     (fun i k ->
       if Ordered.find_opt in_degree k = Some 0 then ready := Iset.add i !ready)
     kernels;
+  (* A kernel holds what it makes beside what it reads: one that only frees
+     runs before one that makes storage too. *)
   let pick () =
-    match Seq.find frees (Iset.to_seq !ready) with
+    let seq = Iset.to_seq !ready in
+    match Seq.find (frees ~makes:false) seq with
     | Some i -> i
-    | None -> Iset.min_elt !ready
+    | None -> (
+        match Seq.find (frees ~makes:true) seq with
+        | Some i -> i
+        | None -> Iset.min_elt !ready)
   in
   let linearized = ref [] in
   while not (Iset.is_empty !ready) do

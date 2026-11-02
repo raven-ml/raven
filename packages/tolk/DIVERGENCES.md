@@ -5028,3 +5028,27 @@ fold wraps integers and holds its float bound`, hold.
   buffer after a store has no view`, `› a store into rows of a buffer of a
   value that reads it has no view` and `› a store into columns of storage
   has no view`; rune's `Rune.jit over several devices › programs`.
+
+## D185. A ready kernel that only frees runs before one that also makes storage
+
+- **tinygrad:** `schedule/__init__.py:66-78` (`create_schedule`'s linearize,
+  Kahn's algorithm over a FIFO `deque`).
+- **tolk:** `Schedule.linearize`'s `pick`; `test/gen/tinygrad.patch`, which
+  gives tinygrad the same before the goldens are recorded.
+- **Differs:** of the ready kernels that free storage (D183), one that makes
+  no storage runs first, by its number; only where none does, one that on no
+  device makes more than it frees. A kernel holds what it makes beside what
+  it reads, so one that frees much but makes some raises what a schedule
+  holds at once where one that only frees does not. tinygrad has no such
+  order.
+- **Reason:** (b): rune's fully sharded training (RFC 0005's memory bound).
+  At the end of a closing, the copy of a device's own slot of the last piece
+  is the last reader of the partial and makes the slot's storage; the sum of
+  the piece before it only frees. Run first, the copy held three slots
+  beside the partial: the backward call of one layer at d = 512 held 1.938,
+  1.594 and 1.422 layers over 2, 4 and 8 memory devices, and 1.812, 1.531
+  and 1.391 in this order, against the bound of 1.875, 1.562 and 1.406.
+- **Pinned by:** the Schedule suite (`test/schedule/schedule`):
+  `create_schedule › order by storage › a kernel that only frees runs before
+  one that also makes storage`; every recorded schedule, from the equally
+  patched tinygrad.

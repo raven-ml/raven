@@ -907,6 +907,9 @@ thread.
 
 ### Tolk (new)
 
+- Of the ready kernels that free storage, a schedule runs one that makes none
+  first, then one that frees what it makes: a kernel holds its new storage
+  beside what it reads, so a schedule holds less at once.
 - A store into a contiguous run of a buffer stores into a view of the run:
   stores of one shape at other offsets of one buffer are one program.
 - A schedule runs its ready kernels in the order the program reaches them,

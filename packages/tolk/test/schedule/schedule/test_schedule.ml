@@ -948,11 +948,41 @@ let pieces_interleave () =
     (Ops.src (Schedule.create_schedule kg));
   keeps kg
 
+(* [ms] makes [s] from [t], then [k] reads [t] last and makes [n], and [r]
+   reads [s] last into [o], which [m] made: both free, [k] as much as it
+   makes and [r] making nothing, so [r] runs first though [k] comes before
+   it. *)
+let only_frees_first () =
+  let t = param 4 and s = param 5 and o = param 6 and n = param 7 in
+  let m = copies ~into:o ~from:y in
+  let mt = copies ~into:t ~from:y in
+  let tv = Ops.after t [ mt ] in
+  let ms = copies ~into:s ~from:tv in
+  let k = copies ~into:n ~from:tv in
+  let ov = Ops.after o [ m ] in
+  let r = copies ~into:ov ~from:(Ops.after s [ ms ]) in
+  let kg =
+    Ops.sink
+      [ ov; tv; Ops.after s [ ms ]; Ops.after n [ k ]; Ops.after ov [ r ] ]
+  in
+  equal (list uop)
+    [
+      m;
+      mt;
+      copies ~into:s ~from:t;
+      copies ~into:o ~from:s;
+      copies ~into:n ~from:t;
+    ]
+    (Ops.src (Schedule.create_schedule kg));
+  keeps kg
+
 let by_storage =
   group "create_schedule › order by storage"
     [
       test "a kernel that frees storage runs before one that only makes it"
         frees_first;
+      test "a kernel that only frees runs before one that also makes storage"
+        only_frees_first;
       test "pieces of one value are each read before the next is made"
         pieces_interleave;
     ]
