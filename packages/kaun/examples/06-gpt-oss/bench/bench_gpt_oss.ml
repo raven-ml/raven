@@ -10,9 +10,12 @@
    Q8_0 too, quantised in its case's setup, and one layer's experts at the
    prefill.
 
-   The 13.8 GB of weights are built once, on the host, before the cases fork:
-   every case's worker shares them and places them on the GPU itself, since a
-   GPU's driver must not be initialized before the fork. Kernels compile in
+   Each case's setup builds the 13.8 GB of weights on the host, in the worker
+   thumper forks for it, and places them on the GPU; a GPU's driver must not be
+   initialized before the fork. Weights built in the parent would be shared
+   with the worker copy-on-write, and AMD's driver faults the host pages it
+   maps for the GPU as writable, so the worker would copy every page: twice
+   the weights in memory, more than a 32 GB host holds. Kernels compile in
    [--warm], a process of its own, into tolk's disk cache; a case's setup reads
    them back. Without a CUDA or AMD GPU there is nothing to measure. *)
 
@@ -43,17 +46,33 @@ let config =
 let context = 1024
 let prompt = 512
 
-(* Bytes in [lo, lo + span) from a linear congruential generator: the expert
-   blocks and their scales, in the range a trained checkpoint's scales take. *)
+(* Bytes drawn per array before they repeat. With all 10 GB of expert bytes
+   drawn, building the weights took 75 s on nonnormal's i9-9900K, in every
+   case's setup. *)
+let period = 1 lsl 20
+
+(* Bytes in [lo, lo + span) from a linear congruential generator, the first
+   [period] repeated through the array: the expert blocks and their scales, in
+   the range a trained checkpoint's scales take. *)
 let random_bytes seed shape lo span =
   let n = Array.fold_left ( * ) 1 shape in
   let a = Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout n in
+  let drawn = min n period in
   let s = ref !seed in
-  for i = 0 to n - 1 do
+  for i = 0 to drawn - 1 do
     s := ((!s * 1103515245) + 12345) land 0x7fffffff;
     Bigarray.Array1.unsafe_set a i (lo + ((!s lsr 16) mod span))
   done;
   seed := !s;
+  let base = Bigarray.Array1.sub a 0 drawn in
+  let i = ref drawn in
+  while !i < n do
+    let len = min drawn (n - !i) in
+    Bigarray.Array1.blit
+      (Bigarray.Array1.sub base 0 len)
+      (Bigarray.Array1.sub a !i len);
+    i := !i + len
+  done;
   Nx.of_bigarray (Bigarray.reshape (Bigarray.genarray_of_array1 a) shape)
 
 (* Uniform values in [-scale, scale), 256 rows repeated to the shape's first
@@ -227,7 +246,7 @@ let setup weights = function
   | (`Decode | `Decode_q8_0 | `Prefill) as kind -> step weights kind
   | `Experts -> experts weights
 
-let case weights kind =
+let case kind =
   let name =
     match kind with
     | `Decode -> Printf.sprintf "decode step, cache %d" context
@@ -236,7 +255,7 @@ let case weights kind =
     | `Experts -> Printf.sprintf "experts at prefill %d" prompt
   in
   Thumper.bench_with_setup
-    ~setup:(fun () -> setup (Lazy.force weights) kind)
+    ~setup:(fun () -> setup (weights ()) kind)
     name
     (fun call -> call ())
 
@@ -259,20 +278,16 @@ let () =
       if opens () then
         let weights = weights () in
         List.iter (fun kind -> (setup weights kind) ()) kinds
-  | argv ->
+  | _ ->
       if not (opens_in_child ()) then begin
         prerr_endline "gpt_oss: no CUDA or AMD GPU, nothing to measure";
         exit 0
       end;
-      (* Built before the cases fork, so that they share them; [list] and the
-         help need none. *)
-      let weights = lazy (weights ()) in
-      (match argv with
-      | _ :: ("list" | "-h" | "--help" | "-V" | "--version") :: _ -> ()
-      | _ -> ignore (Lazy.force weights));
-      (* A trial places 13.8 GB on the GPU before its samples. *)
+      (* A trial's deadline covers its setup, which builds the 13.8 GB of
+         weights and places them on the GPU, and its 28 calls: a prefill trial
+         takes 52 s on nonnormal's R9700. *)
       Thumper.run "gpt_oss"
-        ~config:Thumper.Config.(default |> deadline 60.)
+        ~config:Thumper.Config.(default |> deadline 120.)
         ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-        [ Thumper.group "GptOss" (List.map (case weights) kinds) ]
+        [ Thumper.group "GptOss" (List.map case kinds) ]
       |> exit
