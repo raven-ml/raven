@@ -48,7 +48,7 @@
 
 val windows :
   by:string ->
-  ?into:Nx_array.any ->
+  ?into:'d Value.any ->
   unit Devices.placement ->
   Nx_array.Layout.t array ->
   'r Value.prim ->
@@ -56,8 +56,8 @@ val windows :
 (** [windows ~by ?into p layouts op] is [op] computed at the one-device
     placement [p], where its operands must lie, its results of the shapes
     of [layouts] ({!Prim.val-layouts}), fresh and C-contiguous but the
-    first, which is [into] where it is given: memory of a donated operand
-    ({!Donate.reuse}) that holds the first result.
+    first, which is over [into]'s array where it is given: memory of a
+    donated operand ({!Donate.reuse}) that holds the first result.
 
     Raises [Invalid_argument] as an internal fault for a [Place] or a
     [Check]. *)

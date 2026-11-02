@@ -62,17 +62,27 @@ let fresh_over (type w r) (dt : (w, r) D.t) l d : (w, r) A.t =
   if D.bits dt >= 8 then A.v dt l (Rig.Buffer.create d (D.bytes dt (L.numel l)))
   else A.create d dt (L.shape l)
 
+(* The one array of [x], a value on one device: an [Array]'s own, which
+   builds no [iarray]. *)
+let one (type v s d) (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Array { a; _ } -> a
+  | Value.Shards _ | Value.Handle _ | Value.Traced _ ->
+      Iarray.get (Prim.arrays x) 0
+
 (* A maker of fresh results at their form's placement, on one device: the
-   first into [into] where it is given. The layout of a result it makes is
-   C-contiguous from offset 0, as {!Prim.val-layouts} states for every
-   operation but a movement, a bitcast and a placement, which make no fresh
-   result, and as a partition lays out each device's results, so it lays out
-   the result as it is. *)
-let alloc (type v s d) ?into k (f : (v, s, d) Value.form) : (v, s, d) Value.t =
+   first over [into]'s array where it is given. The layout of a result it
+   makes is C-contiguous from offset 0, as {!Prim.val-layouts} states for
+   every operation but a movement, a bitcast and a placement, which make no
+   fresh result, and as a partition lays out each device's results, so it
+   lays out the result as it is. *)
+let alloc (type v s d e) ?(into : e Value.any option) k
+    (f : (v, s, d) Value.form) : (v, s, d) Value.t =
   let p = f.placement in
   match into with
-  | Some a when k = 0 ->
-      Value.Array { at = p; a = A.expect f.dtype a; dead = Value.Live }
+  | Some (Value.Any x) when k = 0 ->
+      Value.Array
+        { at = p; a = A.expect f.dtype (A.Any (one x)); dead = Value.Live }
   | Some _ | None ->
       let a = fresh_over f.dtype f.layout (rig_of p) in
       Value.Array { at = p; a; dead = Value.Live }
@@ -109,14 +119,6 @@ let as_view ~by set f m a =
   | None ->
       let kernels = kernels_of ~by ~op:"Copy" set in
       Option.get (f m (copy_array ~by kernels a))
-
-(* The one array of [x], a value on one device: an [Array]'s own, which
-   builds no [iarray]. *)
-let one (type v s d) (x : (v, s, d) Value.t) =
-  match x with
-  | Value.Array { a; _ } -> a
-  | Value.Shards _ | Value.Handle _ | Value.Traced _ ->
-      Iarray.get (Prim.arrays x) 0
 
 (* The load a kernel reads of [l], over a value on one device. *)
 let kernel_load (type d) (l : d Value.load) : Nx_kernel.load =
@@ -580,9 +582,9 @@ let created : type r.
       placed_one host (A.expect f.dtype arrays.(k).(0)) p)
     op
 
-let windows : type r.
+let windows : type r d.
     by:string ->
-    ?into:A.any ->
+    ?into:d Value.any ->
     unit Devices.placement ->
     L.t array ->
     r Value.prim ->
@@ -616,7 +618,8 @@ let windows : type r.
 (* [windows], over the memory [into]'s array holds, or {!local} where the
    two give one result: a map beside its loads into fresh results, whose
    one result, if alone, is laid out C-contiguous from offset 0, as
-   [windows] lays it. *)
+   [windows] lays it. [into] passes on as it came: a donating call
+   allocates no option for it. *)
 let run : type r d.
     by:string ->
     ?into:d Value.any ->
@@ -634,8 +637,7 @@ let run : type r d.
             | [ _ ] -> L.is_contiguous layout && L.offset layout = 0
             | _ -> true) ->
       local_in ~by layouts op
-  | None, _ -> windows ~by p layouts op
-  | Some (Value.Any v), _ -> windows ~by ~into:(A.Any (one v)) p layouts op
+  | _ -> windows ~by ?into p layouts op
 
 let eager = { Partition.run; piece; view; bring = bring_one; gather; assemble }
 

@@ -3535,6 +3535,8 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- An operation that writes its result over a donated operand allocates 5
+  fewer words: the option and the array choice it built on every call.
 - `Nx.betaincinv`, `Nx.betainccinv`, `Nx.gammaincinv` and `Nx.gammainccinv`
   take one Halley step at float64 where they took two, and a last step of
   fifth order: each is one incomplete beta or gamma shorter. At float64

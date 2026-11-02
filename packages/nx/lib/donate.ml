@@ -177,43 +177,40 @@ let has_bytes (type v s d) (x : (v, s, d) Value.t) =
    and its shard there over several. *)
 type at = One | Piece of int
 
+(* The buffer of a handle's array [a], if it holds the result over memory no
+   earlier reuse took and every operand of [c] lies apart from its memory but
+   those at positions of [own], which may read it as [a] places it and no
+   other way: a view of the array in another layout reads other indices of
+   it. *)
+let held c ~own dt layout a =
+  let n = Array.length c.operands in
+  let b = A.buffer a in
+  let apart j a' =
+    (not (share (A.buffer a') b)) || (List.mem j own && identical a a')
+  in
+  let rec alone j =
+    j = n
+    ||
+    let (Value.Any y) = c.operands.(j) in
+    ((not (has_bytes y)) || Iarray.for_all (apart j) (Prim.arrays y))
+    && alone (j + 1)
+  in
+  if holds dt layout a && unconsumed b && alone 0 then Some b else None
+
 let reuse_at (type w r d) (c : d claim) ~own ~at (dt : (w, r) D.t) layout :
     (Rig.Buffer.t * (w, r) A.t) option =
   unended c;
-  let n = Array.length c.operands in
-  (* The buffer of operand [i], a handle whose array there holds the result
-     over memory no earlier reuse took, if every operand lies apart from its
-     memory but those at positions of [own], which may read it as that array
-     places it and no other way: a view of the array in another layout reads
-     other indices of it. *)
+  (* The buffer of operand [i], a handle whose array there {!held} holds. *)
   let fits i =
     let (Value.Any x) = operand c i in
-    let array =
-      match (x, at) with
-      | Value.Handle { over = Value.Array { a; _ }; _ }, (One | Piece 0) ->
-          Some (A.Any a)
-      | Value.Handle { over = Value.Shards { arrays; _ }; _ }, Piece j
-        when j >= 0 && j < Iarray.length arrays ->
-          Some (A.Any (Iarray.get arrays j))
-      | (Value.Handle _ | Value.Array _ | Value.Shards _ | Value.Traced _), _
-        ->
-          None
-    in
-    match array with
-    | Some (A.Any a) ->
-        let b = A.buffer a in
-        let apart j a' =
-          (not (share (A.buffer a') b)) || (List.mem j own && identical a a')
-        in
-        let rec alone j =
-          j = n
-          ||
-          let (Value.Any y) = c.operands.(j) in
-          ((not (has_bytes y)) || Iarray.for_all (apart j) (Prim.arrays y))
-          && alone (j + 1)
-        in
-        if holds dt layout a && unconsumed b && alone 0 then Some b else None
-    | None -> None
+    match (x, at) with
+    | Value.Handle { over = Value.Array { a; _ }; _ }, (One | Piece 0) ->
+        held c ~own dt layout a
+    | Value.Handle { over = Value.Shards { arrays; _ }; _ }, Piece j
+      when j >= 0 && j < Iarray.length arrays ->
+        held c ~own dt layout (Iarray.get arrays j)
+    | (Value.Handle _ | Value.Array _ | Value.Shards _ | Value.Traced _), _ ->
+        None
   in
   List.find_map
     (fun i ->
