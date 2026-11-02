@@ -4432,6 +4432,340 @@ let int_powers =
            [ 0; 1; -1; 1; 1 ]);
     ]
 
+(* Effects run as often as written
+
+   Merging two ranges, shrinking one to its guards and collapsing a reduction
+   each change how often the nodes inside run. A store, a call and code written
+   in the target's language act each time they run, so each kernel here reads
+   back what its effects wrote: merged, shrunk or collapsed around one, they
+   would write elsewhere, less often or in another order. *)
+
+let effect_loop n axis = Ops.range ~axis_type:Loop (Int n) [ axis ]
+let effect_kernel l = Ops.sink ~kernel:(Ops.kernel_info ~opts_to_apply:[] ()) l
+
+(* The contents of the buffers of slots [slots] after one run of [k ()] on the
+   host, each slot starting as [inputs] gives it, or as zeros. *)
+let effects_of ?vars k inputs slots =
+  let out =
+    Run.on_host ?vars (Codegen.to_program (k ()) (Lazy.force host)) inputs
+  in
+  List.map (fun s -> List.assoc s out) slots
+
+let writes ?vars k inputs expected () =
+  equal
+    (list (array Dtypes.value))
+    (List.map int_values expected)
+    (effects_of ?vars k inputs (List.init (List.length expected) Fun.id))
+
+(* [C[q] = 1] over [q], and [D[4q + r] = 1] where [q < 2] and [r < 2]: [q] is
+   unguarded in [C], so it keeps its four steps after [r] shrinks to its
+   guard. *)
+let ungated_index () =
+  let q = effect_loop 4 0 and r = effect_loop 4 1 in
+  let c = int_param ~name:"C" 0 4 and d = int_param ~name:"D" 1 16 in
+  let guard = Ops.O.((q < int 2) land (r < int 2)) in
+  let d_at = at d (Shape.valid Ops.O.((q * int 4) + r) guard) in
+  effect_kernel
+    [
+      Ops.end_
+        (Ops.group [ Ops.store (at c q) (i32 1); Ops.store d_at (i32 1) ])
+        [ q; r ];
+    ]
+
+(* [C[0]] counts once per step of [i] or of [o], so it counts to 4: merged, [o]
+   and [i] would make it count to 16. *)
+let after_domain store () =
+  let o = effect_loop 4 0 and i = effect_loop 4 1 in
+  let c = int_param ~name:"C" 0 1 and a = int_param ~name:"A" 1 1 in
+  effect_kernel [ Ops.end_ (store o i c a) [ o; i ] ]
+
+let after_domains =
+  let incr cell = Ops.store cell Ops.O.(cell + i32 1) in
+  [
+    ( "ordered after the inner range",
+      fun _ i c _ -> incr (first (Ops.after c [ i ])) );
+    ( "ordered after the outer range, beside a store after both",
+      fun o i c a ->
+        Ops.group
+          [
+            incr (first (Ops.after c [ o ]));
+            Ops.store (first (Ops.after a [ o; i ])) (i32 1);
+          ] );
+    ( "read after the outer range, stored after both",
+      fun o i c _ ->
+        Ops.store
+          (first (Ops.after c [ o; i ]))
+          Ops.O.(Ops.load (first (Ops.after c [ o ])) [] + i32 1) );
+  ]
+
+(* [C[c o] += 1] beside [B[4o + i] = 1]: [C] is indexed by [o] alone, so each of
+   its two cells counts to 2. *)
+let index_domain cell () =
+  let o = effect_loop 4 0 and i = effect_loop 4 1 in
+  let c = int_param ~name:"C" 0 2 and b = int_param ~name:"B" 1 16 in
+  let cell = at c (cell o) in
+  effect_kernel
+    [
+      Ops.end_
+        (Ops.group
+           [
+             Ops.store cell Ops.O.(cell + i32 1);
+             Ops.store (at b Ops.O.((o * int 4) + i)) (i32 1);
+           ])
+        [ o; i ];
+    ]
+
+(* The sum over [r0], [r1] and [r2] of the sum over [r1] of [A[r2]], [A] ones:
+   the inner sum closes [r1] alone, so [r0] and [r1] stay apart, and the result
+   is [4 * 4 * 4 * 4]. *)
+let inner_reduce () =
+  let r n = Ops.range ~axis_type:Upcast (Int 4) [ n ] in
+  let r0 = r 0 and r1 = r 1 and r2 = r 2 in
+  let c = int_param ~name:"C" 0 1 and a = int_param ~name:"A" 1 4 in
+  let inner = Ops.reduce (at a r2) Op.Add [ r1 ] in
+  effect_kernel [ Ops.store (first c) (Ops.reduce inner Op.Add [ r0; r1; r2 ]) ]
+
+(* A sum over [a], [k] and [b] whose value stores [S[0] * 10 + A[2a + b]] into
+   [S[0]], directly or through a call: the sum loops [a], [k], [b] in order, and
+   [S]'s digits are the elements it visits. *)
+let reduce_order ~call () =
+  let a = effect_loop 2 0 and k = effect_loop 2 1 and b = effect_loop 2 2 in
+  let o = int_param ~name:"O" 0 1
+  and s = int_param ~name:"S" 1 1
+  and x = int_param ~name:"A" 2 4 in
+  let elt = at x Ops.O.((a * int 2) + b) in
+  let digit s x = Ops.store (first s) Ops.O.((first s * i32 10) + x) in
+  let write =
+    if call then
+      let update =
+        let s = int_param ~name:"S" 0 1 and x = int_param ~name:"A" 1 1 in
+        Ops.sink [ digit s (first x) ]
+      in
+      Ops.call ~name:"update" update [ Ops.after s [ k ]; elt ]
+    else digit (Ops.after s [ a; k; b ]) elt
+  in
+  effect_kernel
+    [
+      Ops.store (first o)
+        (Ops.reduce (Ops.after elt [ write ]) Op.Add [ a; k; b ]);
+    ]
+
+(* [S[0] = S[0] * 10 + A[2y + x]], the end listing [y] before [x]: loops nest by
+   axis, so [x] is outer, and [S]'s digits are [A[0]], [A[2]], [A[1]],
+   [A[3]]. *)
+let loop_order () =
+  let x = effect_loop 2 0 and y = effect_loop 2 1 in
+  let s = int_param ~name:"S" 0 1 and a = int_param ~name:"A" 1 4 in
+  let cell = first (Ops.after s [ x; y ]) in
+  effect_kernel
+    [
+      Ops.end_
+        (Ops.store cell Ops.O.((cell * i32 10) + at a Ops.O.((y * int 2) + x)))
+        [ y; x ];
+    ]
+
+(* [C[2 r0 + r1] += 1] where [r0 < 2]: the merged range of 8 shrinks to 4, a
+   range the same node as [r0], which is not shrunk again to 2. *)
+let merge_then_shrink () =
+  let r0 = effect_loop 4 0 and r1 = effect_loop 2 1 in
+  let c = int_param ~name:"C" 0 8 in
+  let cell = at c (Shape.valid Ops.O.((r0 * int 2) + r1) Ops.O.(r0 < int 2)) in
+  effect_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r0; r1 ] ]
+
+(* [C[0] = r] at each step of [r], beside [D[r] = 1] where [r < 2], [C]'s store
+   unguarded or guarded by [r >= 2]: [r] keeps its four steps. *)
+let ungated_store ~gated () =
+  let r = effect_loop 4 0 in
+  let c = int_param ~name:"C" 0 1 and d = int_param ~name:"D" 1 4 in
+  let c_at =
+    if gated then at c (Shape.valid (Ops.int 0) Ops.O.(lnot (r < int 2)))
+    else first c
+  in
+  effect_kernel
+    [
+      Ops.end_
+        (Ops.group
+           [
+             Ops.store c_at (Ops.cast r Int32);
+             Ops.store (at d (Shape.valid r Ops.O.(r < int 2))) (i32 1);
+           ])
+        [ r ];
+    ]
+
+(* [D[r] = 1] where [r < 4], over [r < n]: the range shrinks to the lesser of 4
+   and [n]. *)
+let symbolic_end () =
+  let n = Ops.variable "n" (`Int Bigint.one) (`Int (Bigint.of_int 8)) in
+  let r = Ops.range ~axis_type:Loop (Sym n) [ 0 ] in
+  let d = int_param ~name:"D" 0 8 in
+  effect_kernel
+    [
+      Ops.end_
+        (Ops.store (at d (Shape.valid r Ops.O.(r < int 4))) (i32 1))
+        [ r ];
+    ]
+
+let code ?(dtype = Dtype.Void) c src =
+  Ops.v Custom ~src ~arg:(Code { code = c; dtype })
+
+(* [C[r] += 1] in the target's language, beside [D[r] = 1]. *)
+let group_custom () =
+  let r = effect_loop 4 0 in
+  let c = int_param ~name:"C" 0 4 and d = int_param ~name:"D" 1 4 in
+  effect_kernel
+    [
+      Ops.end_
+        (Ops.group
+           [ code "{0}[0] += 1;" [ at c r ]; Ops.store (at d r) (i32 1) ])
+        [ r ];
+    ]
+
+(* The sum over [r] of [C[r] += 1] where [r = 2]: the sum picks one step, but
+   the increment runs at each. *)
+let collapse_custom () =
+  let r = effect_loop 4 0 in
+  let c = int_param ~name:"C" 0 4 and o = int_param ~name:"O" 1 1 in
+  let inc = code ~dtype:Int32 "({0}[0] += 1)" [ at c r ] in
+  let picked = Ops.where (Ops.eq (i32 2) (Ops.cast r Int32)) inc (i32 0) in
+  effect_kernel [ Ops.store (first o) (Ops.reduce picked Op.Add [ r ]) ]
+
+(* [D[r] = (C[0] = r)] where [r < 2]: the assignment runs at each step of [r],
+   so [C[0]] ends at 3. *)
+let shrink_custom () =
+  let r = effect_loop 4 0 in
+  let c = int_param ~name:"C" 0 1 and d = int_param ~name:"D" 1 4 in
+  let set = code ~dtype:Int32 "({0}[0] = {1})" [ first c; Ops.cast r Int32 ] in
+  effect_kernel
+    [ Ops.end_ (Ops.store (at d (Shape.valid r Ops.O.(r < int 2))) set) [ r ] ]
+
+let frexp x out =
+  let f = Ops.custom_function ~dtype:Float64 "frexp" [] in
+  Ops.call f [ Ops.cast x Float64; out ]
+
+(* [D[r] = frexp r] where [r < 2], the exponent of [r] written to [C[0]] at each
+   step: [C[0]] ends as the exponent of 3. *)
+let shrink_call () =
+  let r = effect_loop 4 0 in
+  let c = int_param ~name:"C" 0 1 and d = int_param ~name:"D" 1 4 in
+  effect_kernel
+    [
+      Ops.end_
+        (Ops.store
+           (at d (Shape.valid r Ops.O.(r < int 2)))
+           (Ops.cast (frexp r (first c)) Int32))
+        [ r ];
+    ]
+
+(* The sum over [r] of [frexp (r + 1)] where [r = 2], the exponent of [r + 1]
+   written to [C[r]] at each step. *)
+let collapse_call () =
+  let r = effect_loop 4 0 in
+  let c = int_param ~name:"C" 0 4 and o = int_param ~name:"O" 1 1 in
+  let call = frexp Ops.O.(r + int 1) (at c r) in
+  let picked =
+    Ops.where (Ops.eq r (Ops.int 2)) Ops.O.(Ops.cast call Int32 + i32 1) (i32 0)
+  in
+  effect_kernel [ Ops.store (first o) (Ops.reduce picked Op.Add [ r ]) ]
+
+(* Stores of [A], from [0, 0, 5, 0], whose values wait on other stores of [A]:
+   merged into one vector store, a store would wait on itself. *)
+let behind_coalesced stores () =
+  let a = int_param ~name:"A" 0 4 in
+  effect_kernel (stores a)
+
+let coalesced_stores =
+  let store a i v = Ops.store (at a (Ops.int i)) v in
+  [
+    ( "a value read after a store beside it",
+      (fun a ->
+        [
+          store a 0 (i32 7);
+          store a 1 Ops.O.(first (Ops.after a [ store a 0 (i32 7) ]) + i32 5);
+        ]),
+      [ 7; 12; 5; 0 ] );
+    ( "a constant after a store, beside a load",
+      (fun a ->
+        [
+          store a 1
+            Ops.O.(
+              Ops.after (i32 1) [ store a 0 (i32 7) ]
+              + Ops.load (at a (Ops.int 2)) []);
+        ]),
+      [ 7; 6; 5; 0 ] );
+    ( "constants each after a store",
+      (fun a ->
+        [
+          store a 1 (Ops.after (i32 1) [ store a 2 (i32 2) ]);
+          store a 3 (Ops.after (i32 3) [ store a 0 (i32 10) ]);
+        ]),
+      [ 10; 1; 2; 3 ] );
+  ]
+
+let effects =
+  group "effects run as often as written"
+    [
+      test "an index unguarded in one store keeps its range's steps"
+        (writes ungated_index []
+           [
+             [ 1; 1; 1; 1 ]; [ 1; 1; 0; 0; 1; 1; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0 ];
+           ]);
+      cases "a store ordered after a range runs once per step" ~id:fst
+        after_domains (fun (_, store) ->
+          writes (after_domain store) [] [ [ 4 ] ] ());
+      cases "a store indexed by one of two merged ranges counts its own" ~id:fst
+        [
+          ("by a quotient", fun o -> Ops.O.(o // int 2));
+          ("by a comparison", fun o -> Ops.cast Ops.O.(o < int 2) Int32);
+        ]
+        (fun (_, cell) -> writes (index_domain cell) [] [ [ 2; 2 ] ] ());
+      test "a reduction closing one range keeps it apart from the others"
+        (writes inner_reduce [ (1, int_values [ 1; 1; 1; 1 ]) ] [ [ 256 ] ]);
+      test "a reduction whose value stores loops in its ranges' order"
+        (fun () ->
+          equal (array Dtypes.value) (int_values [ 12123434 ])
+            (List.hd
+               (effects_of (reduce_order ~call:false)
+                  [ (2, int_values [ 1; 2; 3; 4 ]) ]
+                  [ 1 ])));
+      test "a reduction over a call loops in its ranges' order" (fun () ->
+          equal (array Dtypes.value) (int_values [ 12123434 ])
+            (List.hd
+               (effects_of (reduce_order ~call:true)
+                  [ (2, int_values [ 1; 2; 3; 4 ]) ]
+                  [ 1 ])));
+      test "an end's loops nest by axis, whatever order it lists them in"
+        (writes loop_order [ (1, int_values [ 1; 2; 3; 4 ]) ] [ [ 1324 ] ]);
+      test "a merged range shrinks once"
+        (writes merge_then_shrink [] [ [ 1; 1; 1; 1; 0; 0; 0; 0 ] ]);
+      test "an unguarded store keeps its range's steps"
+        (writes (ungated_store ~gated:false) [] [ [ 3 ]; [ 1; 1; 0; 0 ] ]);
+      test "a store guarded otherwise keeps its range's steps"
+        (writes (ungated_store ~gated:true) [] [ [ 3 ]; [ 1; 1; 0; 0 ] ]);
+      test "a guard past a variable end shrinks to the end"
+        (writes
+           ~vars:[ ("n", 2) ]
+           symbolic_end []
+           [ [ 1; 1; 0; 0; 0; 0; 0; 0 ] ]);
+      test "code in the target's language beside a store runs at each step"
+        (writes group_custom [] [ [ 1; 1; 1; 1 ]; [ 1; 1; 1; 1 ] ]);
+      test "code in the target's language in a collapsed sum runs at each step"
+        (writes collapse_custom [] [ [ 1; 1; 1; 1 ]; [ 1 ] ]);
+      test "code in the target's language keeps its range's steps"
+        (writes shrink_custom [] [ [ 3 ]; [ 0; 1; 0; 0 ] ]);
+      test "a call keeps its range's steps" (fun () ->
+          equal (array Dtypes.value) (int_values [ 2 ])
+            (List.hd (effects_of shrink_call [] [ 0 ])));
+      test "a call in a collapsed sum runs at each step"
+        (writes collapse_call [] [ [ 1; 2; 2; 3 ]; [ 1 ] ]);
+      cases "a store whose value waits on a store is not merged with it"
+        ~id:(fun (name, _, _) -> name)
+        coalesced_stores
+        (fun (_, stores, expected) ->
+          writes (behind_coalesced stores)
+            [ (0, int_values [ 0; 0; 5; 0 ]) ]
+            [ expected ] ());
+    ]
+
 let () =
   Disk_cache.play (("breaking graph", lowers_a_breaking_graph) :: parts);
   exit
@@ -4477,4 +4811,5 @@ let () =
          calls;
          stacks;
          int_powers;
+         effects;
        ])

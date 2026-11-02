@@ -1,6 +1,6 @@
 # Divergences from tinygrad
 
-tolk follows tinygrad `6b7b018dae9ec20264f2a4b6a1322da1bb49b141`. This
+tolk follows tinygrad `f1d8f0f0def436ee45b3907fc12e30bb1a17d387`. This
 ledger lists every place where it does something else. An entry is admitted
 for one of five reasons only:
 
@@ -49,7 +49,7 @@ memory it uses, and tolk encodes no queue (D146).
 ## D2. Withdrawn
 
 tinygrad matches patterns without generating code when `UPAT_COMPILE` is 0
-(`uop/ops.py:1523`, `upat_interpret`), and `UPat`, `PatternMatcher` and
+(`uop/ops.py:1524`, `upat_interpret`), and `UPat`, `PatternMatcher` and
 `graph_rewrite` live in `uop/ops.py`. tolk ports that path in
 `Ops`, so leaving out `uop/upat.py`, the pattern compiler, is scope: see
 the Exclusions of `README.md`.
@@ -85,7 +85,7 @@ the Exclusions of `README.md`.
 ## D4. Import cycles are broken
 
 - **tinygrad:** the imports inside functions that Python uses to hide a cycle:
-  - `uop/ops.py:15,197,257,491,896,1122-1145,1539` calls `symbolic`, `render`,
+  - `uop/ops.py:15,197,257,491,896,1123-1146,1540` calls `symbolic`, `render`,
     `spec`, `upat`, `schedule.prepare`, `mixin.rand` and `renderer`;
   - `uop/spec.py:6` against `device`;
   - `renderer/__init__.py` imports `device.Compiler`, while `device.Compiled`
@@ -406,7 +406,7 @@ sign is unspecified, and rune hands tolk no 8-bit float, so
   committed const conversions), and `fold_const_alu` and `:170-173` (two
   stage ALU folding), which read a weak operand of an operation on a
   committed integer as written;
-  `uop/ops.py:1053-1118` (`_min_max`), which bounds such an operand by its
+  `uop/ops.py:1053-1119` (`_min_max`), which bounds such an operand by its
   written value; `uop/weak.py:90-95` (`uncast_const`), which leaves the
   literal bare. tinygrad's own `TestModularWraparound` expects the wrapped
   results and is marked `xfail_broken_const_wraparound`: its cases fold to
@@ -600,24 +600,24 @@ scope, see README.
   that stays is that of float powers, a constant one computed by products and
   square roots and any other as `exp2 (y * log2 x)` (`Transcendental.xpow`).
   - **Integer bounds wrap.** tinygrad: `uop/ops.py:58-60` (`wrapped`),
-    which `_min_max` (`:1053-1118`) applies to an unsigned sum, difference,
-    product, left shift and complement, `:1109-1118` (a cast), `:1102-1104`
+    which `_min_max` (`:1053-1119`) applies to an unsigned sum, difference,
+    product, left shift and complement, `:1109-1119` (a cast), `:1102-1104`
     (a constant table). tolk: `Ops.at_width`, `Ops.min_max`,
     `Ops.cast_bounds`, and the constant table's case of
     `Ops.compute_min_max`. The bounds of a committed integer that leave its
     type are one value wrapped, or the type's, signed or not, whatever the
     operation: tinygrad wraps those of the unsigned operations alone, and to
     the type's, one value included; an integer cast to an integer keeps its
-    interval, which then wraps, where tinygrad clamps a signed target to the
-    overlap; a constant table holding a NaN has its type's bounds, as a NaN
+    interval, which then wraps, where tinygrad gives a cast that leaves its
+    type the type's bounds, one value included (69c2c1bce); a constant table holding a NaN has its type's bounds, as a NaN
     constant has. tinygrad folds int8 `(y + 100) < 0` for `y` in `[0, 50]` to
     `false`, which is `true` at 40, and so `y * 4 < 0` and `y << 2 < 0`,
     `true` at 40 too, and `cast (cast (y + 100) uint8) int32` to one cast,
     `-116` where the machine gives `140`.
   - **Wrapping rules.** tinygrad: `uop/symbolic.py:298-300` (`(x // c1) //
-    c2`), `:302-304` (`c0 + x < c1`), `codegen/simplify.py:96-101` (`x + y <
-    c`, `x * y < c`) and `:121-123` (`x + y = c` under a cast),
-    `uop/symbolic.py:401-411` (`reduce_mul_chain`, a factor out of a maximum),
+    c2`), `:302-304` (`c0 + x < c1`), `codegen/simplify.py:99-104` (`x + y <
+    c`, `x * y < c`) and `:124-126` (`x + y = c` under a cast),
+    `uop/symbolic.py:402-412` (`reduce_mul_chain`, a factor out of a maximum),
     `uop/symbolic.py:315-316` (`-x < -y`, `-x < c`). tolk:
     `Shape.symbolic_simple`, `Shape.symbolic`, `Simplify.solves_sum`,
     `Simplify.pm_reduce_collapse`, `Simplify.pm_reduce_load_collapse`,
@@ -648,7 +648,7 @@ scope, see README.
     `-0.`.
   - **Reassociation.** tinygrad: `uop/symbolic.py:170-173` (two constants
     of an associative operation), `:251-264` (like terms), `:281-283` (a sum
-    of two selections), `:308-311` (constants to the end), `:401-411,481`
+    of two selections), `:308-311` (constants to the end), `:402-412,482`
     (`reduce_mul_chain`). tolk: `Shape.fold_where_closure`,
     `Shape.symbolic_simple`, `Shape.symbolic`, `Symbolic.reduce_mul_chain`.
     Sums, products and maxima regroup for integers and booleans only, and a
@@ -661,11 +661,13 @@ scope, see README.
     `max (NaN, max (x, 0.))` is NaN, where `max (x, max (0., NaN))` is `x`.
     `x + x` is still `x * 2`, which is exact, and `(x * -1) * y` is `(x * y) *
     -1`, since a negation commutes with rounding. tinygrad restricts these
-    rules to integers too (7e36b6735), but for `x + x * -1`, which it makes
-    `x * 0`: at `x = -1.` that is `-0.`, where the sum is `+0.`. It checks that
-    an intermediate it makes does not overflow (`no_overflow`,
-    `uop/symbolic.py:34`), which holds wherever tolk would check it, since the
-    bounds of a committed integer wrap (`Ops.at_width`), so tolk makes none.
+    rules to integers too (7e36b6735), the two stage fold of a sum since
+    5e826e373, but not that of a product or a maximum, nor `x + x * -1`,
+    which it makes `x * 0`: at `x = -1.` that is `-0.`, where the sum is
+    `+0.`. It checks that an intermediate it makes does not overflow
+    (`no_overflow`, `uop/symbolic.py:34`), which holds wherever tolk would
+    check it, since the bounds of a committed integer wrap (`Ops.at_width`),
+    so tolk makes none.
   - **Maxima.** tinygrad: `uop/symbolic.py:290-295`. tolk:
     `Shape.symbolic`. A maximum by bounds applies to integers
     only, since a float's bounds leave out NaN and the order of zeros:
@@ -675,7 +677,7 @@ scope, see README.
     into a maximum that renders as the target's own, and it took `-0.` and
     `+0.` for one constant: `where (x < -0.) 0. x` at `-1e-45` is `+0.`,
     where `max (x, -0.)` is `-0.`. A float ReLU stays a selection.
-  - **Sigmoid forms.** tinygrad: `uop/symbolic.py:477-479`. tolk: the rules
+  - **Sigmoid forms.** tinygrad: `uop/symbolic.py:478-480`. tolk: the rules
     are left out of `sym`. `x * (1 / (1 + x))` at `1e-8` is `1e-8`, where
     `1 - 1 / (1 + x)` is `0.`, and at `inf` is NaN, where it is `1.`.
   - **Pow.** tinygrad: `uop/symbolic.py:16-22` (`simplify_pow`), `:199-201`
@@ -690,8 +692,8 @@ scope, see README.
     IEEE's `pow (1, x)` is at every `x`, NaN included: tinygrad no longer
     folds it (89ce9c494, which fixed the type of the `1` it gave), and leaves
     a float `x` to `exp2 (x * 0)`, NaN at an infinity.
-  - **Simplify's reductions.** tinygrad: `codegen/simplify.py:102-109`
-    (`sum_between`), `:113-114` (a parameter lifted out of a sum) and `:116`
+  - **Simplify's reductions.** tinygrad: `codegen/simplify.py:105-112`
+    (`sum_between`), `:116-117` (a parameter lifted out of a sum) and `:119`
     (a product by a boolean cast). tolk: `Simplify.sum_between`,
     `Simplify.pm_reduce_collapse`.
     A float sum counted in closed form is `+0.` over an empty part of its
@@ -1244,7 +1246,7 @@ driver sizes local memory as it loads a function (D146).
 
 ## D52. A selection of -0. stays off a gated load
 
-- **tinygrad:** `uop/symbolic.py:434-438` (`pm_move_where_on_load`), whose
+- **tinygrad:** `uop/symbolic.py:435-439` (`pm_move_where_on_load`), whose
   pattern constant `0` matches `-0.` since `-0. == 0`.
 - **tolk:** `Symbolic.pm_move_where_on_load`.
 - **Differs:** a selection between a load and `-0.` stays a selection.
@@ -1260,7 +1262,7 @@ driver sizes local memory as it loads a function (D146).
 ## D54. Storage says what it knows of where it starts within 16 bytes
 
 - **tinygrad:** `uop/ops.py:25-36` (`ParamArg`, which has no such field) and
-  `codegen/late/coalesce.py:147` (`memory_coalescing` merges a run of `l`
+  `codegen/late/coalesce.py:152` (`memory_coalescing` merges a run of `l`
   elements where `l` divides its element offset, taking every buffer to start
   on a 16-byte boundary). tinygrad folds a view's offset into a kernel's
   index, except for a contiguous slice that it stages without a copy
@@ -1708,11 +1710,11 @@ does the same.
 
 ## D74. Float arithmetic has bounds, and a bounded sine takes the short reduction
 
-- **tinygrad:** `uop/ops.py:1053-1118` (`UOp._min_max`), which bounds binary
+- **tinygrad:** `uop/ops.py:1053-1119` (`UOp._min_max`), which bounds binary
   operations on integers only (`:1054`), has no case for `TRUNC` or `NEG`, and
   bounds a `WHERE` by both its branches whatever selects them (`:1093`),
   and gives a value it cannot bound, or a cast it cannot, its type's
-  `min` and `max` (`:1118`), finite in the 8-bit formats without infinities
+  `min` and `max` (`:1119`), finite in the 8-bit formats without infinities
   (`dtype.py:74-78`);
   `codegen/decomp/transcendental.py:170-191` (`xsin`), which builds the
   Payne-Hanek reduction unless its caller passes `fast`, and chooses between
@@ -1942,7 +1944,7 @@ unrolled reduce`).
   which calls a kernel once per launch on the calling thread;
   `codegen/__init__.py:352` (the pipeline after `pm_cast_const`),
   `:34-39,363-365` (`do_number_param` and its pass) and `:446`
-  (`do_estimates`); `uop/ops.py:1294` (`KernelInfo`) and `:1321`
+  (`do_estimates`); `uop/ops.py:1295` (`KernelInfo`) and `:1322`
   (`ProgramInfo.from_sink`); `engine/realize.py:17`
   (`get_call_kernel_args`) and `:157` (`exec_kernel`).
 - **tolk:** `Codegen.split_blocks`, its place in
@@ -2229,7 +2231,7 @@ Withdrawn: multi-device is out of scope, see README.
 
 - **tinygrad:** `engine/realize.py:132` (`resolve_params`) and `:157`
   (`exec_kernel`), which find a call's buffers, launch dimensions and variable
-  values on every run, and `uop/ops.py:1121-1134` (`UOp._sym_fxn`, a cached
+  values on every run, and `uop/ops.py:1122-1135` (`UOp._sym_fxn`, a cached
   property that simplifies a symbolic integer once and compiles it to a
   Python function, which `UOp.sym_infer` calls on each evaluation).
 - **tolk:** `Tolk_engine.affine`, `Tolk_engine.value`, `Tolk_engine.locate`
@@ -2311,7 +2313,7 @@ host's accumulators in its vector registers.
   boolean nodes it reaches) and `:263-273` (`backward_slice`, a
   `cached_property` holding the whole slice of each node asked, and
   `op_in_backward_slice_with_self`, which walks it);
-  `codegen/late/coalesce.py:151` (`memory_coalescing`, which addresses a
+  `codegen/late/coalesce.py:156` (`memory_coalescing`, which addresses a
   load of several elements by a `SHRINK` of the buffer where one element's
   address is an `INDEX`).
 - **tolk:** `Shape.fold_where_closure`, `Ops.reaches`, `Ops.ops_reached` and
@@ -2935,7 +2937,7 @@ AMD's packet layouts were nx.amd.packet's. tolk encodes no packet (D146).
 - **tinygrad:** `schedule/rangeify.py:227` (`bufferize_to_store`'s `ALLOC`),
   `:283` (`debuf`) and `schedule/prepare.py:153,161` (`copy_to_anon_store`,
   `stage_to_anon_store`), whose storage carries no bounds, so a read of it
-  has its type's; `uop/ops.py:1118` (`_min_max`, which bounds a `BITCAST` by
+  has its type's; `uop/ops.py:1119` (`_min_max`, which bounds a `BITCAST` by
   its type).
 - **tolk:** `Ops.stored_bounds` and `Ops.bitcast_bounds`;
   `Rangeify.bufferize_to_store` (a stage's storage) and `Rangeify.debuf`;
@@ -3233,15 +3235,14 @@ driver signals its own (D146).
   `schedule/rangeify.py:48` (`remove_bufferize`, which inlines such a store
   back into each consumer) and `:321-336` (`split_store`, one kernel per
   store). Upstream calls scheduling several outputs into one kernel pending:
-  `test/runtime/test_assign.py:345`, `:374` and `:387` skip "multi output not
+  `test/runtime/test_assign.py:356`, `:385` and `:398` skip "multi output not
   supported anymore", and `test/runtime/test_jit.py:485` skips "Pending
   multioutput implementation #3607". Codegen already compiles a kernel of one
   end over a group of stores (`test/runtime/test_custom_kernel.py:139`). For
   reductions, `schedule/indexing.py:293-295` (`run_rangeify`: each reduction
   takes new ranges for the axes it reduces); `codegen/__init__.py:163`
   (`merge_reduce_ends`, which already makes one loop of the reductions that
-  close one range); `codegen/simplify.py:20` (`simplify_merge_adjacent`, which
-  merges a reduction's ranges in that reduction alone).
+  close one range).
 - **tolk:** for stores, `Indexing.region`, `Indexing.views`,
   `Indexing.waits_over`, `Indexing.share_loops` (its `crossed`),
   `Indexing.loops_of` and `Indexing.end_shared` (which
@@ -3250,7 +3251,6 @@ driver signals its own (D146).
   and `Rangeify.handle_after`, which take a group (`Ops.is_group`) as its
   stores and no state of a buffer; for reductions, `Indexing.reaches`,
   `Indexing.reduce_loops` and its use in `Indexing.assign_ranges`;
-  `Simplify.merge_reductions`;
   `Codegen.merge_reduce_ends`; `test/gen/tinygrad.patch`, which gives tinygrad
   the same before the goldens are recorded.
 - **Differs:** consumers of one domain take one set of ranges, so a node they
@@ -3287,11 +3287,8 @@ driver signals its own (D146).
   where tinygrad indexes it by each reduction's ranges, stores it, and inlines
   the store back into each loop. A group of a loop that several reductions
   close takes a buffer of shared memory for each (D101). Two ranges that
-  reductions close merge, at the kernel's sink, in every reduction that closes
-  them, when that leaves all of them no more floor divisions and remainders:
-  merged in one alone, they would leave its siblings' loops apart from its
-  own, a range that runs again after the loop that ends it, which the
-  linearizer refuses. A reduction can stop closing its group's ranges: a sum
+  reductions close merge in every reduction that closes them or not at all,
+  as tinygrad merges ranges since df93a6cb8. A reduction can stop closing its group's ranges: a sum
   over a range its source does not read drops it (`pm_reduce_unparented`), so
   a sum over `i` and `k` of a source that reads `k` alone closes `k` alone,
   where a maximum beside it closes `k` within `i`'s loop. Both merge every
@@ -3341,9 +3338,7 @@ driver signals its own (D146).
   `two_grouped_stores_local`, whose upstream axes count one loop for the two
   maximums; all from the equally patched tinygrad. The Codegen suite's
   `reductions that share a range › a range two reductions close at two depths
-  runs as two loops`. The Simplify suite's `pm_simplify_ranges › merging ›
-  reductions that share ranges merge them in all of them` and `… keep them
-  when one would divide`. On rune: missing (went with the old rune's rewrite):
+  runs as two loops`. On rune: missing (went with the old rune's rewrite):
   its Packed suite's bit example of `a compiled call computes eager's values`,
   two views a bit apart whose sums share their loops; its Jit suite's
   `transformations › a compiled gradient of a parameter broadcast over a grid
@@ -3353,7 +3348,7 @@ driver signals its own (D146).
 ## D138. A load's index is simplified without the loads in it assuming its gate
 
 - **tinygrad:** `codegen/late/coalesce.py:41-43` (`simplify_valid_load`),
-  which simplifies a gated index with `uop/symbolic.py:353`
+  which simplifies a gated index with `uop/symbolic.py:354`
   (`uop_given_valid`) down into the loads the index reads.
 - **tolk:** `Coalesce.simplify_valid_load`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
@@ -3365,7 +3360,7 @@ driver signals its own (D146).
   as a pad's, loses that gate, and the load, which runs whatever the outer
   gate, reads outside its buffer: the index of a gather through a pad is read
   before the pad's first element. tinygrad's own `gated_given_valid`
-  (`uop/symbolic.py:440`) refuses an index that loads for the same reason.
+  (`uop/symbolic.py:441`) refuses an index that loads for the same reason.
 - **Reason:** (b): `Nx.concatenate` of a buffer and an `Nx.take` under
   `Rune.jit`, as nested sampling's evidence concatenates its dead points and
   its live points in likelihood order: the compiled kernel read up to the
@@ -3755,7 +3750,7 @@ does. A Windows host's code is compiled for Windows' convention by D178.
 
 ## D150. The folder's sine is correctly rounded
 
-- **tinygrad:** `uop/ops.py:1378` (`python_alu`'s `SIN`, `math.sin`, the C
+- **tinygrad:** `uop/ops.py:1379` (`python_alu`'s `SIN`, `math.sin`, the C
   library's).
 - **tolk:** `Ops.sine`, which `python_alu` calls; `test/gen/tinygrad.patch`,
   which gives tinygrad's `python_alu` a correctly rounded sine (`cr_sin`,
@@ -3870,7 +3865,7 @@ does. A Windows host's code is compiled for Windows' convention by D178.
 
 - **tinygrad:** `codegen/late/linearizer.py:20` (`run_count`, the product of
   `vmax + 1` over a node's ranges) and `:33` (the key, by run count, then
-  depth) and `uop/symbolic.py:401-411` (`reduce_mul_chain`, an integer
+  depth) and `uop/symbolic.py:402-412` (`reduce_mul_chain`, an integer
   maximum of a product times the factor that ignores its ranges).
 - **tolk:** `Linearizer.runs` and `Symbolic.reduce_mul_chain`;
   `gen/tinygrad.patch` makes the two changes in tinygrad, so the goldens
@@ -4311,7 +4306,7 @@ does. A Windows host's code is compiled for Windows' convention by D178.
 The read of an accumulator after its loop waited on the initial store as well
 as the loop's end, since `sym` folded a store of a loaded accumulator to a bare
 `NOOP` and the loop could end holding no store, so nothing ordered the read
-after the initial store. At `uop/symbolic.py:466,473` a folded store is
+after the initial store. At `uop/symbolic.py:467,474` a folded store is
 `NOOP.after(*x.src)`, which keeps its sources and so the initial store before
 the read, and `codegen/__init__.py:183-195` (`lower_reduce`) orders the read
 after the end alone, as `Codegen.lower_reduce` does. The
@@ -4563,8 +4558,8 @@ fold wraps integers and holds its float bound`, hold.
 ## D171. A store's check for reading its destination walks what follows it
 
 - **tinygrad:** `schedule/indexing.py:32` (`realize_store_after_src`): each
-  store walks its value's whole backward slice for its destination's
-  storage.
+  store walks its value's backward slice, entering no other buffer's state
+  (`AFTER`), for its destination's storage.
 - **tolk:** `Indexing.realize_store_after_src`, over the order
   `Indexing.run_rangeify` gives the graph.
 - **Differs:** once the stores' walks have entered as many nodes as the
@@ -4715,7 +4710,7 @@ fold wraps integers and holds its float bound`, hold.
 
 ## D176. A folded selection or negation keeps a NaN's bits
 
-- **tinygrad:** `uop/ops.py:1385-1391` (`exec_alu`), which truncates every
+- **tinygrad:** `uop/ops.py:1386-1392` (`exec_alu`), which truncates every
   result to its type through `dtype.py:293-297` (`truncate`), whose
   conversions to `float`, `half` and `bfloat16` quiet a signalling NaN; the
   patch's `exec_alu` (`test/gen/tinygrad.patch`) applies tolk's rule before
@@ -5126,7 +5121,7 @@ fold wraps integers and holds its float bound`, hold.
 
 ## D187. The host's stores take a full vector register
 
-- **tinygrad:** `codegen/late/coalesce.py:131-140` (`memory_coalescing`'s
+- **tinygrad:** `codegen/late/coalesce.py:136-145` (`memory_coalescing`'s
   lengths: 4 or 2 elements of float32, float16, int32, uint32 and the 8-bit
   floats, 8 of float16 under `ALLOW_HALF8`, none of the others).
 - **tolk:** `Coalesce.memory_coalescing`, through `Renderer.registers`;
@@ -5240,7 +5235,7 @@ fold wraps integers and holds its float bound`, hold.
   host` went with its rewrite).
 ## D189. A sum gated on an index read at its range is not collapsed
 
-- **tinygrad:** `codegen/simplify.py:124-128` (`pm_reduce_load_collapse`'s
+- **tinygrad:** `codegen/simplify.py:127-131` (`pm_reduce_load_collapse`'s
   rule for a sum of a value gated on an index equal to the range), which
   substitutes the index for the range in the value whatever the index
   depends on.

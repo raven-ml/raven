@@ -672,10 +672,13 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       one cast; a cast of an unsigned [x land y], or [x lsr k] with [k] below
       [x]'s width, to a wider unsigned type is the operation on the widened
       operands; a binary operation on 64-bit or weak integers whose values fit
-      32 bits computes in {!Dtype.Int32} and casts back; a cast of [x + c] to a
-      signed integer is the cast of [x] plus [c];
-    - {b ordering}: an {!Op.After} waits only on ranges, stores, calls,
-      barriers, ends, backedges, linear programs and stages, on a reduction's
+      32 bits computes in {!Dtype.Int32} and casts back, but for a right shift
+      whose count can reach 32 and a remainder of a dividend that can be the
+      least {!Dtype.Int32} by a divisor that can be [-1], which have no value
+      there; a cast of [x + c] to a signed integer is the cast of [x] plus [c];
+    - {b ordering}: an {!Op.After} waits only on effects
+      ({!Op.Set.effectful}), ranges, ends, backedges, linear programs and
+      stages, on a reduction's
       source with the reduction's ranges ended, and on the sources of any other
       node it names; an {!Op.After} or {!Op.End} of nothing is its value, and
       an {!Op.End} drops the ranges that became constants;

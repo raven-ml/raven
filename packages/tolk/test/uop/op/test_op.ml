@@ -283,6 +283,7 @@ let named =
       ("Defines", defines);
       ("Irreducible", irreducible);
       ("Movement", movement);
+      ("Effect", effectful);
       ("Commutative", commutative);
       ("Associative", associative);
       ("Idempotent", idempotent);

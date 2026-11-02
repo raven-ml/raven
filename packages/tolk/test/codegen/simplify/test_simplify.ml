@@ -168,15 +168,6 @@ let shrinking =
             Ops.sink [ Ops.end_ (gated_load Ops.O.(r < Ops.int 4) r) [ r ] ]
           in
           equal uop u (simplify u));
-      test "the kernel's sink empties the context" (fun () ->
-          let ctx = Ops.Tbl.create 8 in
-          let u =
-            kernel [ Ops.end_ (gated_load Ops.O.(r < Ops.int 4) r) [ r ] ]
-          in
-          ignore
-            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx u
-               (After_sources Simplify.pm_simplify_ranges));
-          equal int 0 (Ops.Tbl.length ctx));
     ]
 
 (* Range splitting *)

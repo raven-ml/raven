@@ -97,6 +97,29 @@ def custom_kernel_scalar():
     return Tensor.custom_kernel(empty(4, dtype=dtypes.int32, device="CPU:1"), n, a, fxn=add_n)[0] + 1
 
 
+def store_split_by_n(D, N):
+    a, b = UOp.range(2, 0), UOp.range(4, 1)
+    i = a * 4 + b
+    return D[i].store((i % 2 + N).cast(dtypes.int)).end(a, b).sink(arg=KernelInfo(name="store_split_by_n"))
+
+
+def custom_kernel_variable_arg():
+    """A kernel of a buffer and a variable, which is no copy between devices
+    (runtime/test_custom_kernel.py, test_variable_arg_is_not_copy)."""
+    n = Tensor(Variable("n", 1, 8, dtype=dtypes.int32).bind(2))
+    return Tensor.custom_kernel(empty(8, dtype=dtypes.int32), n, fxn=store_split_by_n)[0] + 1
+
+
+def assign_reads_behind_other_after():
+    # an assign whose value reads a buffer after that buffer's own assign,
+    # which read the destination: the value waits on the other assign, not on
+    # the destination's state (runtime/test_assign.py,
+    # test_assign_reads_behind_other_after)
+    a, b = empty(2), empty(2)
+    b.assign(a + 1)
+    return a.assign(b.sum().expand(2)), b
+
+
 def add_first_n(n, C, A):
     C, A = C.flatten(), A.flatten()
     i = UOp.range(A.numel(), 0)
@@ -234,6 +257,7 @@ PROGRAMS = {
     "select_no_lane_rows": lambda: (lambda x: ((x * x) == 2.).reshape(2, 2).where(empty(4).reshape(2, 2), 0.).sum(axis=1))(
         Tensor.arange(4).cast(dtypes.float32)),
     "assign_double_diamond": assign_double_diamond,
+    "assign_reads_behind_other_after": assign_reads_behind_other_after,
     "read_then_overwrite": read_then_overwrite,
     "read_overwritten_through": read_overwritten_through,
     "setitem": setitem,
@@ -243,6 +267,7 @@ PROGRAMS = {
     # calls
     "custom_kernel": lambda: Tensor.custom_kernel(empty(4, 4), empty(4, 4) * 2, fxn=add_one)[0] + 1,
     "custom_kernel_scalar": custom_kernel_scalar,
+    "custom_kernel_variable_arg": custom_kernel_variable_arg,
     "custom_kernel_scalar_first": custom_kernel_scalar_first,
     "custom_kernel_scalar_with_other_variable": custom_kernel_scalar_with_other_variable,
     "custom_kernel_unused_then_variable": custom_kernel_unused_then_variable,

@@ -23,23 +23,26 @@ val pm_flatten_range : (unit, Ops.t) Ops.Pattern_matcher.t
 val pm_simplify_ranges : (Ops.t Ops.Tbl.t, Ops.t) Ops.Pattern_matcher.t
 (** [pm_simplify_ranges] simplifies a kernel's ranges, with a context that
     starts empty:
-    - two ranges that an {!Op.End} closes one after the other, of one axis
-      type and in the same reductions, are merged into one of the product of
-      their sizes, when that leaves the end no more floor divisions and
-      remainders than before;
-    - at the kernel's {!Op.Sink}, two ranges of one axis type that the same
-      reductions ({!Op.Reduce}) close, and the same reductions run inside, are
-      merged in all of them, when that leaves them no more floor divisions and
-      remainders than before. Reductions that share their ranges keep sharing
-      them;
-    - a range that every index guards with [r < c] for constants [c], and no
-      reduction closes, is shrunk to the greatest such [c] when the kernel's
-      {!Op.Sink} is reached.
+    - at a {!Op.Sink}, two ranges [r0] and [r1] of one axis type, neither of
+      whose sizes reads the other, merge into one range [n] of the product of
+      their sizes, [r0] becoming [n / size r1] and [r1] [n mod size r1], when
+      that quotient and remainder fold away, when every node that closes
+      either may merge them, and when every node that is not pure runs inside
+      both or neither. The pure nodes are {!Op.Set.elementwise},
+      {!Op.Set.irreducible}, {!Op.Index}, {!Op.Load} and {!Op.Stack}. A
+      reduction ({!Op.Reduce}) whose value reads only pure nodes and
+      reductions merges any two of its ranges; an {!Op.End}, and any other
+      reduction, run their ranges as loops nested by axis type, then
+      identity, so they merge only ranges next to each other in that order;
+      no other node merges the ranges it closes. One pair merges per
+      rewrite;
+    - a range that every index guards with [r < c] for constants [c], that
+      no effect runs inside unguarded by its own index, and that no reduction
+      closes, is shrunk to the least of its size and the greatest such [c] when
+      the kernel's {!Op.Sink} is reached.
 
-    Only a sink carrying kernel information is rewritten.
-
-    The guards must be simplified first ({!Shape.val-symbolic}): a guard [r < c]
-    with [c] at least the range's size sets the size to [c]. *)
+    Only a sink carrying kernel information is shrunk. The context keeps the
+    guards recorded until the rewrite ends. *)
 
 val pm_split_ranges : (Ops.t Ops.Tbl.t, Ops.t) Ops.Pattern_matcher.t
 (** [pm_split_ranges] splits a range of constant size [n] whose remainder by a
@@ -82,8 +85,8 @@ val pm_reduce_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
     ranges ({!Op.Reduce} of {!Op.Add}) that {!pm_reduce_collapse} computes
     without any range by its closed form. Each range is collapsed in turn, with
     the values its part of the graph reads from outside standing for variables
-    bounded as those values are; a sum whose part holds a store or another
-    reduction is left as it is.
+    bounded as those values are; a sum whose part holds an effect
+    ({!Op.Set.effectful}) or another reduction is left as it is.
 
     Raises [Invalid_argument] as {!pm_reduce_collapse} does. *)
 

@@ -1,4 +1,4 @@
-# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
+# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 case	frag_a	frag_b	frag_c	accepted
 metal as it is	k1 m0 m1 k2 m2/k0	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/n0	True
 rdna3 broadcasts an N bit across A's lanes	m0 m1 m2 m3 n0/k0 k1 k2 k3	n0 n1 n2 n3 m0/k0 k1 k2 k3	n0 n1 n2 n3 m0/m1 m2 m3	True

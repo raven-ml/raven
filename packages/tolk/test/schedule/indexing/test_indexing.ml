@@ -353,6 +353,7 @@ let programs =
     "assign";
     "assign_permuted";
     "assign_double_diamond";
+    "assign_reads_behind_other_after";
     "setitem";
     "custom_kernel";
     "variable_shrink";

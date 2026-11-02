@@ -2885,22 +2885,13 @@ let symbolic =
              (fun m ->
                let c = m "cast" in
                Some O.(cast (m "x") (dtype c) + const_like c (value (m "c"))));
-           (* an AFTER waits only on the effect ops listed here, any other dep
-              is replaced by its srcs *)
+           (* an AFTER waits only on effects and the ops listed here, any
+              other dep is replaced by its srcs *)
            rule (Upat.op Op.After ~name:"x") (fun m ->
                let x = m "x" in
                let effects =
-                 ops
-                   [
-                     Op.Range;
-                     Op.Store;
-                     Op.Call;
-                     Op.Barrier;
-                     Op.End;
-                     Op.Backedge;
-                     Op.Linear;
-                     Op.Stage;
-                   ]
+                 Op.Set.union Op.Set.effectful
+                   (ops [ Op.Range; Op.End; Op.Backedge; Op.Linear; Op.Stage ])
                in
                (* a reduction waited on is its source, with its ranges ended *)
                let deps y =

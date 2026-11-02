@@ -912,8 +912,20 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A kernel's stores, calls and code in the target's language
+  (`Op.Set.effectful`) run as often, and in the order, they are written: two
+  loops merge (`Simplify.pm_simplify_ranges`) only where each runs as often
+  as before, a loop shrinks to its guards only where every effect is guarded
+  and never past its own end, a sum holding one is not collapsed, and
+  `Coalesce.memory_coalescing` no longer merges stores whose values wait on
+  each other.
 - An int64 shift right by 32 or more, and an int64 remainder of the least
   int32 by -1, are no longer computed at int32, where C gives them no value.
+- A store whose value reads another buffer after that buffer's own store no
+  longer stores its value in a kernel of its own; a kernel of a buffer and a
+  variable is no copy between devices.
+- A gather of a comparison of two elements, `b[i] + 1 = a[i]`, compiles:
+  `Simplify.load_collapse` no longer rewrites it without end.
 - On the host, `Heuristic.hand_coded_optimizations` counts a kernel's lanes in
   the target's vector registers (`Renderer.registers`, read from Clang by
   `Compiler_cpu.registers`): a reduce kernel's stored axis takes a 64-byte

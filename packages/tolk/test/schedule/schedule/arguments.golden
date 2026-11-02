@@ -1,4 +1,4 @@
-# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
+# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 graph	arguments
 add_kernels	-
 sum_kernels	-
@@ -28,6 +28,7 @@ select_no_lane_kernels	-
 select_one_lane_kernels	-
 select_no_lane_rows_kernels	-
 assign_double_diamond_kernels	-
+assign_reads_behind_other_after_kernels	-
 read_then_overwrite_kernels	-
 read_overwritten_through_kernels	-
 setitem_kernels	-
@@ -36,6 +37,7 @@ clone_kernels	-
 full_invalid_kernels	-
 custom_kernel_kernels	-
 custom_kernel_scalar_kernels	1=5
+custom_kernel_variable_arg_kernels	1=2
 custom_kernel_scalar_first_kernels	1=5
 custom_kernel_scalar_with_other_variable_kernels	2=70 4=5
 custom_kernel_unused_then_variable_kernels	3=5

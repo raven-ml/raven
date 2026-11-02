@@ -68,7 +68,8 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
     are {!Ops.Axis_type.Weak}: a range is a reduction's when the reduction
     closes it. A node is stored whole when it is a {!Op.Store}, a source
     of a call to a kernel given as code that is not storage, a gathered source
-    that is not storage, or a value stored into a destination it reads.
+    that is not storage, or a value stored into a destination it reads
+    through no other buffer's state ({!Op.After}).
 
     The graph is then rewritten from the bottom up:
 

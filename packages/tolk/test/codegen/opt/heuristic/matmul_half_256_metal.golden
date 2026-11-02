@@ -1,4 +1,4 @@
-# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
+# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 65536
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 8

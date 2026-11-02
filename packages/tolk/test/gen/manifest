@@ -1,4 +1,4 @@
-# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
+# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 codegen/codegen/add_big_clang.golden
 codegen/codegen/add_big_cuda.golden
 codegen/codegen/add_big_hip.golden
@@ -2711,6 +2711,8 @@ schedule/indexing/assign_double_diamond_rangeified.golden
 schedule/indexing/assign_permuted.golden
 schedule/indexing/assign_permuted_rangeified.golden
 schedule/indexing/assign_rangeified.golden
+schedule/indexing/assign_reads_behind_other_after.golden
+schedule/indexing/assign_reads_behind_other_after_rangeified.golden
 schedule/indexing/attention.golden
 schedule/indexing/attention_rangeified.golden
 schedule/indexing/avgpool.golden
@@ -3500,6 +3502,10 @@ schedule/schedule/assign_permuted_self.golden
 schedule/schedule/assign_permuted_self_kernels.golden
 schedule/schedule/assign_permuted_self_linear.golden
 schedule/schedule/assign_permuted_self_schedule.golden
+schedule/schedule/assign_reads_behind_other_after.golden
+schedule/schedule/assign_reads_behind_other_after_kernels.golden
+schedule/schedule/assign_reads_behind_other_after_linear.golden
+schedule/schedule/assign_reads_behind_other_after_schedule.golden
 schedule/schedule/assign_schedule.golden
 schedule/schedule/attention.golden
 schedule/schedule/attention_kernels.golden
@@ -3563,6 +3569,10 @@ schedule/schedule/custom_kernel_unused_then_variable.golden
 schedule/schedule/custom_kernel_unused_then_variable_kernels.golden
 schedule/schedule/custom_kernel_unused_then_variable_linear.golden
 schedule/schedule/custom_kernel_unused_then_variable_schedule.golden
+schedule/schedule/custom_kernel_variable_arg.golden
+schedule/schedule/custom_kernel_variable_arg_kernels.golden
+schedule/schedule/custom_kernel_variable_arg_linear.golden
+schedule/schedule/custom_kernel_variable_arg_schedule.golden
 schedule/schedule/disk_store.golden
 schedule/schedule/disk_store_kernels.golden
 schedule/schedule/disk_store_kernels_1.golden

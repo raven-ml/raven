@@ -1,4 +1,4 @@
-# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
+# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 %0 = [38;2;20;104;111mparam[0m 16 : dtype=f32 slot=0
 %1 = [38;2;192;192;255mspecial[0m 4 : gidx0
 %2 = [38;2;255;255;192mmul[0m %1, 4

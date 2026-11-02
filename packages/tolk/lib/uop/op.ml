@@ -302,6 +302,7 @@ module Set = struct
   let defines = of_list [ Param; Refparam; Buffer; Alloc; Binary ]
   let irreducible = of_list [ Const; Special; Range; Param; Getaddr ]
   let movement = of_list [ Reshape; Expand; Permute; Pad; Shrink ]
+  let effectful = of_list [ Store; Custom; Call; Barrier ]
   let commutative = of_list [ Add; Mul; Max; Cmpne; Cmpeq; Xor; And; Or ]
   let associative = of_list [ Add; Mul; And; Or; Max; Xor ]
   let idempotent = of_list [ Or; And; Max ]

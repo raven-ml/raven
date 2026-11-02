@@ -35,6 +35,7 @@ let programs =
     "assign";
     "assign_bitcast";
     "assign_double_diamond";
+    "assign_reads_behind_other_after";
     "assign_flipped_from_self";
     "assign_permuted_self";
     "attention";
@@ -48,6 +49,7 @@ let programs =
     "copy_one";
     "copy_view";
     "custom_kernel";
+    "custom_kernel_variable_arg";
     "disk_store";
     "disk_to";
     "disk_view_to";
@@ -86,6 +88,7 @@ let kernel_graphs =
     "add_row_from_self_kernels";
     "assign_bitcast_kernels";
     "assign_double_diamond_kernels";
+    "assign_reads_behind_other_after_kernels";
     "assign_flipped_from_self_kernels";
     "assign_kernels";
     "assign_permuted_self_kernels";
@@ -101,6 +104,7 @@ let kernel_graphs =
     "copy_one_kernels";
     "copy_view_kernels";
     "custom_kernel_kernels";
+    "custom_kernel_variable_arg_kernels";
     "disk_store_kernels";
     "disk_store_kernels_1";
     "disk_to_kernels";
@@ -233,11 +237,14 @@ let calls_only_kernels u =
 (* Custom kernels keep their views until they are compiled, which the
    Interpreter does not run. The call of assign_bitcast passes a buffer and a
    bitcast of it as two arguments, one memory that storage, a memory per slot,
-   cannot alias. *)
+   cannot alias. The call of custom_kernel_variable_arg passes a variable,
+   which the kernel graph's writes hold no storage for. *)
 let apart_from_values =
   [
     "custom_kernel_kernels";
     "custom_kernel";
+    "custom_kernel_variable_arg_kernels";
+    "custom_kernel_variable_arg";
     "assign_bitcast_kernels";
     "assign_bitcast";
   ]

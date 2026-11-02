@@ -728,8 +728,9 @@ let copy_runs call dst src ~n ~d ~s =
     Some (replace call ~src:(store dst src :: Array.to_list args))
 
 (* The copy kernels are code for copy engines. *)
+(* A kernel of a variable is no copy, though the variable has no device. *)
 let simplify_copy_kernel call ast dst src =
-  if not (is_copy dst src) then None
+  if is_virtual dst || is_virtual src || not (is_copy dst src) then None
   else
     let sink =
       graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Tbl.create 8) ast

@@ -239,6 +239,12 @@ module Set : sig
   (** [movement] is the operations that move elements without computing:
       {!Reshape}, {!Expand}, {!Permute}, {!Pad} and {!Shrink}. *)
 
+  val effectful : t
+  (** [effectful] is the operations that may act beyond their value each time
+      they run: {!Store}, {!Custom}, {!Call} and {!Barrier}. A rewrite that
+      changes how often one runs, or whether it runs, changes what the kernel
+      does. *)
+
   val commutative : t
   (** [commutative] is the binary operations [f] with [f x y = f y x], whose
       operands rewrites may swap: {!Add}, {!Mul}, {!Max}, {!Cmpne}, {!Cmpeq},

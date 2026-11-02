@@ -91,19 +91,22 @@ let order ctx =
       ctx.order
 
 (* An assign needs this only for a write-after-read hazard, the destination read
-   by the value stored into it. With [order], the walk enters only the nodes
-   after the destination, since a node before it cannot reach it (D171). *)
+   by the value stored into it. The walk stops at another buffer's state: what
+   it read was read before that state's writes, which the value waits on. With
+   [order], the walk enters only the nodes after the destination, since a node
+   before it cannot reach it. *)
 let realize_store_after_src ctx dest s =
   let b = base dest in
+  let state u = u == b || op u <> Op.After in
   let after o i u =
-    match Tbl.find_opt o u with Some j -> j >= i | None -> true
+    state u && match Tbl.find_opt o u with Some j -> j >= i | None -> true
   in
   let gate =
     match order ctx with
-    | None -> None
-    | Some o -> Option.map (after o) (Tbl.find_opt o b)
+    | Some o when Tbl.mem o b -> after o (Tbl.find o b)
+    | _ -> state
   in
-  let slice = toposort ?gate ~calls:Skip s in
+  let slice = toposort ~gate ~calls:Skip s in
   ctx.walked <- ctx.walked + List.length slice;
   if List.memq b slice then realize ctx s
 

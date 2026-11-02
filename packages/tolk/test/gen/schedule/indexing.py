@@ -57,6 +57,15 @@ def assign_double_diamond():
     return b0.assign(r0 * b0), b1.assign(r1 * b1)
 
 
+def assign_reads_behind_other_after():
+    # an assign whose value reads a buffer after that buffer's own assign,
+    # which read the destination (runtime/test_assign.py,
+    # test_assign_reads_behind_other_after)
+    a, b = empty(2), empty(2)
+    b.assign(a + 1)
+    return a.assign(b.sum().expand(2)), b
+
+
 def add_one_kernel(B, A):
     A, B = A.flatten(), B.flatten()
     i = UOp.range(A.numel(), 0)
@@ -164,6 +173,7 @@ PROGRAMS = {
     "assign": lambda: empty(4, 4).assign(empty(4, 4) + 1),
     "assign_permuted": lambda: empty(4, 4, dtype="int").permute(1, 0).assign(Tensor.arange(16).reshape(4, 4)),
     "assign_double_diamond": assign_double_diamond,
+    "assign_reads_behind_other_after": assign_reads_behind_other_after,
     "setitem": setitem,
     "custom_kernel": custom_kernel,
     # symbolic shapes and variables as data

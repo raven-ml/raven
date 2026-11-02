@@ -1,4 +1,4 @@
-# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
+# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 program	var_vals
 add	-
 sum	-
@@ -28,6 +28,7 @@ select_no_lane	-
 select_one_lane	-
 select_no_lane_rows	-
 assign_double_diamond	-
+assign_reads_behind_other_after	-
 read_then_overwrite	-
 read_overwritten_through	-
 setitem	-
@@ -36,6 +37,7 @@ clone	-
 full_invalid	-
 custom_kernel	-
 custom_kernel_scalar	n=5
+custom_kernel_variable_arg	n=2
 custom_kernel_scalar_first	n=5
 custom_kernel_scalar_with_other_variable	m=70 n=5
 custom_kernel_unused_then_variable	n=5

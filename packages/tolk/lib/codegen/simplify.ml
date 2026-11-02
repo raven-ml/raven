@@ -28,14 +28,6 @@ let pm_flatten_range =
         (fun m -> flatten_range (m "r"));
     ])
 
-(* Index and range arithmetic uses floor division and remainder until the late
-   rewrites. *)
-let count_divmod x =
-  Nodes.fold
-    (fun u n -> if op u = Op.Div || op u = Op.Mod then n + 1 else n)
-    (backward_slice ~calls:Skip x)
-    0
-
 let merge_rewrite =
   Pattern_matcher.concat
     [
@@ -44,90 +36,106 @@ let merge_rewrite =
       Pattern_matcher.with_ctx pm_flatten_range;
     ]
 
-(* [merge (r0, r1) scope] is [scope] with [r0] and [r1] the quotient and
-   remainder of one range of their sizes' product, when that leaves it no more
-   floor divisions and remainders. *)
-let merge (r0, r1) scope =
-  let s0 = nth r0 0 and s1 = nth r1 0 in
-  let new_range = replace r0 ~src:[ O.(s0 * s1) ] in
-  let subs = Tbl.create 2 in
-  Tbl.replace subs r0 O.(new_range // s1);
-  Tbl.replace subs r1 O.(new_range % s1);
-  let before = sink scope in
-  let after =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:subs before
-      (After_sources merge_rewrite)
-  in
-  if count_divmod after <= count_divmod before then Some (src after) else None
+(* The operations that compute a value and nothing else: merging two ranges
+   around them changes nothing but their indices. *)
+let pure_ops =
+  Op.Set.union Op.Set.elementwise
+    (Op.Set.union Op.Set.irreducible (Op.Set.of_list Op.[ Index; Load; Stack ]))
 
-(* Two ranges of one axis type, neither of whose ends reads the other, merge
-   when each reduction, listed in [reduced] by the ranges it runs inside, runs
-   inside both or neither. *)
-let mergeable reduced (r0, r1) =
-  Axis_type.equal (axis_type r0) (axis_type r1)
-  && (not (Nodes.mem r0 (ranges r1)))
-  && (not (Nodes.mem r1 (ranges r0)))
-  && List.for_all (fun rngs -> Nodes.mem r0 rngs = Nodes.mem r1 rngs) reduced
+let rec pairwise = function
+  | r0 :: (r1 :: _ as rest) -> (r0, r1) :: pairwise rest
+  | _ -> []
 
-(* An end merges ranges it closes one after the other, and a reduction any two.
-   Each rewrite makes one merge, so that the next merges the new ranges, not
-   stale pairs of the old ones. *)
-let merge_end u =
-  let reduced =
+let permutations rs =
+  List.concat_map
+    (fun r0 ->
+      List.filter_map (fun r1 -> if r0 == r1 then None else Some (r0, r1)) rs)
+    rs
+
+(* The pairs of ranges the node [x] closes that may merge. A reduction whose
+   value has no effect merges any two; an end, or a reduction with effects, runs
+   its ranges as loops nested by axis type, then identity, whatever order it
+   lists them in, so only neighbours in that order merge. *)
+let mergeable_pairs x =
+  let pure () =
     Nodes.fold
-      (fun x acc -> if op x = Op.Reduce then ranges x :: acc else acc)
-      (backward_slice_with_self ~calls:Skip u)
+      (fun y ok -> ok && (Op.Set.mem (op y) pure_ops || op y = Op.Reduce))
+      (backward_slice ~calls:Skip x)
+      true
+  in
+  match (op x, ended_ranges x) with
+  | (Op.End | Op.Reduce), ([] | [ _ ]) -> []
+  | Op.Reduce, ended when pure () -> permutations ended
+  | (Op.End | Op.Reduce), ended ->
+      pairwise (List.stable_sort compare_range_arg ended)
+  | _ -> []
+
+(* [merge_ranges u] merges, in the sink [u], two ranges [r0] and [r1] into one
+   [n] of their sizes' product, [r0] becoming [n / size r1] and [r1] [n mod size
+   r1], when each node that closes either may merge them, each node that is not
+   pure runs inside both or neither, so that it runs as often as before, and the
+   quotient and remainder fold away. Each rewrite makes one merge, so that the
+   next pairs the new ranges, not stale ones. *)
+let merge_ranges u =
+  let slice = Nodes.to_list (backward_slice ~calls:Skip u) in
+  let enders =
+    List.filter_map
+      (fun x ->
+        if Option.is_some (range_start (op x)) then
+          Some (ended_ranges x, mergeable_pairs x)
+        else None)
+      slice
+  in
+  let impure =
+    lazy (List.filter (fun x -> not (Op.Set.mem (op x) pure_ops)) slice)
+  in
+  let same (a0, a1) (b0, b1) = a0 == b0 && a1 == b1 in
+  let candidates =
+    List.fold_left
+      (fun acc p -> if List.exists (same p) acc then acc else p :: acc)
       []
+      (List.concat_map snd enders)
   in
-  let rec adjacent = function
-    | r0 :: (r1 :: _ as rest) -> (r0, r1) :: adjacent rest
-    | _ -> []
+  let merges (r0, r1) =
+    Axis_type.equal (axis_type r0) (axis_type r1)
+    && (not (Nodes.mem r0 (ranges r1)))
+    && (not (Nodes.mem r1 (ranges r0)))
+    && List.for_all
+         (fun (ended, pairs) ->
+           (not (List.memq r0 ended || List.memq r1 ended))
+           || List.exists (same (r0, r1)) pairs)
+         enders
+    && List.for_all
+         (fun x -> Nodes.mem r0 (ranges x) = Nodes.mem r1 (ranges x))
+         (Lazy.force impure)
   in
-  List.find_map
-    (fun pair ->
-      if mergeable reduced pair then Option.map List.hd (merge pair [ u ])
-      else None)
-    (adjacent (ended_ranges u))
-
-(* A pair is merged, and judged, in every reduction of the kernel [k] that
-   closes it: reductions of one domain share their loops, and a pair merged in
-   one of them alone would leave the others' loops apart from its own. *)
-let merge_reductions k =
-  let reductions =
-    List.filter (fun u -> op u = Op.Reduce) (toposort ~calls:Skip k)
-  in
-  let reduced = List.map ranges reductions in
-  let closing r =
-    List.filter (fun x -> List.memq r (ended_ranges x)) reductions
-  in
-  let merged ((r0, r1) as pair) =
-    let scope = closing r0 in
-    if not (mergeable reduced pair && List.equal ( == ) scope (closing r1))
-    then None
-    else
-      Option.map
-        (fun merged ->
-          substitute ~calls:Skip ~pass:Fixed_point k
-            (List.combine scope merged))
-        (merge pair scope)
-  in
-  let pairs ended =
-    List.concat_map
-      (fun r0 ->
-        List.filter_map
-          (fun r1 -> if r0 == r1 then None else Some (r0, r1))
-          ended)
-      ended
+  let merge (r0, r1) =
+    let s1 = nth r1 0 in
+    let n = replace r0 ~src:[ simplify O.(nth r0 0 * s1) ] in
+    let q = O.(n // s1) and m = O.(n % s1) in
+    let subs = Tbl.create 2 in
+    Tbl.replace subs r0 q;
+    Tbl.replace subs r1 m;
+    let ret =
+      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:subs u
+        (After_sources merge_rewrite)
+    in
+    let left = backward_slice ~calls:Skip ret in
+    if Nodes.mem q left || Nodes.mem m left then None else Some ret
   in
   List.find_map
-    (fun u -> List.find_map merged (pairs (ended_ranges u)))
-    reductions
+    (fun p -> if merges p then merge p else None)
+    (List.rev candidates)
 
-let mark_gated ctx idx =
+(* [mark_gated ctx u] records in [ctx] the size each range may shrink to, for an
+   index or an effect [u]. *)
+let mark_gated ctx u =
+  (* A store is the only effect with an index of its own. *)
+  let idx = if op u = Op.Store then nth u 0 else u in
   let guards = Tbl.create 4 in
   let x =
     match src idx with
-    | _ :: v :: _ when op v = Op.Where ->
+    | _ :: v :: _ when op idx = Op.Index && op v = Op.Where ->
         List.iter
           (fun g ->
             match src g with
@@ -139,17 +147,20 @@ let mark_gated ctx idx =
         get_idx v
     | _ -> idx
   in
-  (* The greatest bound [c] over the guards [r < c]... *)
+  (* The greatest bound [c] over the guards [r < c], within the range's size,
+     which may be a variable... *)
   Tbl.iter
     (fun r c ->
       match Tbl.find_opt ctx r with
       | Some b when not V.(vmax b < vmax c) -> ()
-      | _ -> Tbl.replace ctx r c)
+      | _ -> Tbl.replace ctx r (minimum c (nth r 0)))
     guards;
-  (* ...but a range that is ever unguarded cannot shrink. *)
+  (* ...but a range that is ever unguarded cannot shrink, and an effect runs at
+     every step of a range its index does not guard. *)
+  let unguarded = if op u = Op.Index then x else u in
   List.iter
     (fun r -> if not (Tbl.mem guards r) then Tbl.replace ctx r (nth r 0))
-    (Nodes.to_list (ranges x))
+    (Nodes.to_list (ranges unguarded))
 
 let do_substitute ctx x sub =
   match arg x with
@@ -157,37 +168,35 @@ let do_substitute ctx x sub =
      its enclosing end unchanged. *)
   | No_arg -> None
   | _ ->
+      (* The context keeps what earlier rounds recorded, since the nodes a round
+         leaves are not visited again; a range it no longer holds is left. *)
+      let within = backward_slice ~calls:Skip x in
       let ret =
         substitute ~calls:Skip ~pass:Fixed_point x
-          (Tbl.fold (fun k v acc -> (k, sub k v) :: acc) ctx [])
+          (Tbl.fold
+             (fun k v acc ->
+               if Nodes.mem k within then (k, sub k v) :: acc else acc)
+             ctx [])
       in
-      Tbl.reset ctx;
       if ret == x then None else Some (simplify ret)
 
 let pm_simplify_ranges =
-  Pattern_matcher.v
-    (fun () -> [
-      rule (Upat.op Op.End ~name:"u") (fun m -> merge_end (m "u"));
-      rule_ctx (Upat.op Op.Index ~name:"idx") (fun ctx m ->
-          mark_gated ctx (m "idx");
-          None);
-      (* Reduction ranges cannot shrink. *)
-      rule_ctx (Upat.op Op.Reduce ~name:"red") (fun ctx m ->
-          List.iter
-            (fun r -> Tbl.replace ctx r (nth r 0))
-            (List.tl (src (m "red")));
-          None);
-      rule_ctx (Upat.op Op.Sink ~name:"x") (fun ctx m ->
-          let x = m "x" in
-          match arg x with
-          (* Only the kernel's root holds every reduction that may share a
-             loop. *)
-          | No_arg -> None
-          | _ -> (
-              match merge_reductions x with
-              | Some _ as merged -> merged
-              | None -> do_substitute ctx x (fun r c -> replace r ~src:[ c ])));
-    ])
+  let marked = Op.Set.union (Op.Set.of_list [ Op.Index ]) Op.Set.effectful in
+  Pattern_matcher.v (fun () ->
+      [
+        rule (Upat.op Op.Sink ~name:"u") (fun m -> merge_ranges (m "u"));
+        rule_ctx (Upat.v ~op:marked ~name:"u" ()) (fun ctx m ->
+            mark_gated ctx (m "u");
+            None);
+        (* Reduction ranges cannot shrink. *)
+        rule_ctx (Upat.op Op.Reduce ~name:"red") (fun ctx m ->
+            List.iter
+              (fun r -> Tbl.replace ctx r (nth r 0))
+              (List.tl (src (m "red")));
+            None);
+        rule_ctx (Upat.op Op.Sink ~name:"x") (fun ctx m ->
+            do_substitute ctx (m "x") (fun r c -> replace r ~src:[ c ]));
+      ])
 
 let mark_range_mod ctx r c =
   (* A range that is not looped over cannot be split. *)
@@ -442,7 +451,10 @@ let reduce_collapse ?(pm = pm_reduce_collapse) red u =
         let included =
           toposort ~calls:Skip ~gate:(fun x -> Nodes.mem r (ranges x)) u
         in
-        if List.exists (fun x -> op x = Op.Store || op x = Op.Reduce) included
+        if
+          List.exists
+            (fun x -> Op.Set.mem (op x) Op.Set.effectful || op x = Op.Reduce)
+            included
         then None
         else
           let inside = Tbl.create 64 in

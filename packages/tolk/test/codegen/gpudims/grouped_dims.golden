@@ -1,4 +1,4 @@
-# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
+# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 dims	max_sizes	reverse	specials	idxs
 (2,)	(16, 16, 16)	False	gidx0=2	[gidx0]
 (2, 3)	(16, 16, 16)	False	gidx0=2 gidx1=3	[gidx0, gidx1]

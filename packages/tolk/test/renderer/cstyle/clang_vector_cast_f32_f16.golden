@@ -1,4 +1,4 @@
-# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
+# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 typedef __fp16 __fp164 __attribute__((aligned(2),ext_vector_type(4)));
 __attribute__((min_vector_width(512))) void cast(__fp16* restrict data0_4, float* restrict data1_4) {
