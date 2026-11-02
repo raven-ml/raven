@@ -57,17 +57,18 @@ let linearize sink =
     lst;
   (* Number the nodes in the ideal order. *)
   let tuple_order = Setting.value Setting.tuple_order in
-  let ideal u0 u1 =
-    let (r0, d0, p0, e0), (r1, d1, p1, e1) =
-      (Tbl.find priorities u0, Tbl.find priorities u1)
-    in
+  let ideal ((r0, d0, p0, e0), u0) ((r1, d1, p1, e1), u1) =
     let c = Bigint.compare r0 r1 in
-    let c = if c <> 0 then c else Stdlib.compare (d0, p0, e0) (d1, p1, e1) in
+    let c = if c <> 0 then c else Int.compare d0 d1 in
+    let c = if c <> 0 then c else Int.compare p0 p1 in
+    let c = if c <> 0 then c else Option.compare Int.compare e0 e1 in
     match c with
     | 0 when tuple_order -> compare_structure u0 u1
     | c -> c
   in
-  let by_nkey = Array.of_list (List.stable_sort ideal lst) in
+  (* Each node is sorted with its priority, looked up once. *)
+  let keyed = List.map (fun u -> (Tbl.find priorities u, u)) lst in
+  let by_nkey = Array.of_list (List.map snd (List.stable_sort ideal keyed)) in
   let nkey = Tbl.create (Array.length by_nkey) in
   Array.iteri (fun i u -> Tbl.replace nkey u i) by_nkey;
   (* Then place them in the topological order closest to it, from the end. *)
