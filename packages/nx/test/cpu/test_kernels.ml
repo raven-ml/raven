@@ -821,6 +821,238 @@ let law_guards b (g, side) =
   | Large (c, d) -> law_large_guards b (c, d, side)
   | Program (p, seed) -> law_map_guards b ((p, seed), side)
 
+(* Broadcast loads *)
+
+(* The floats narrower than float32 of a byte or more, which a map holds
+   as their codes and decodes where it reads them. *)
+let narrow_floats =
+  D.[ Any Float16; Any Bfloat16; Any Float8_e4m3fn; Any Float8_e5m2 ]
+
+let is_narrow (D.Any d) =
+  List.exists (fun (D.Any n) -> D.equal d n) narrow_floats
+
+(* What a map over broadcast loads computes: a drawn program over its
+   loads, or the cast of its one load into a dtype. *)
+type broadcast_prog = Drawn | Cast_to of D.any
+
+(* A map over one to three loads of [dt] and [shape], the first
+   broadcast along some axes, each through its view; the elements and a
+   drawn program from [seed]. *)
+type broadcast = {
+  dt : D.any;
+  shape : int array;
+  views : Elements.view array;
+  prog : broadcast_prog;
+  seed : int;
+}
+
+let pp_broadcast ppf c =
+  let axes (v : Elements.view) =
+    "[" ^ String.concat ";" (List.map string_of_int v.broadcast) ^ "]"
+  in
+  let prog =
+    match c.prog with
+    | Drawn -> "a drawn program"
+    | Cast_to (D.Any t) -> "a cast to " ^ D.name t
+  in
+  Format.fprintf ppf "%a %a, loads broadcast along %s (%s), %s, seed %d"
+    pp_dtype c.dt pp_ints c.shape
+    (String.concat " " (Array.to_list (Array.map axes c.views)))
+    (String.concat ", "
+       (List.concat_map Elements.view_names (Array.to_list c.views)))
+    prog c.seed
+
+(* Axes of a rank [r] to broadcast along, the last more often than not; at
+   least one where [some]. *)
+let broadcast_axes ~some r =
+  let open Gen in
+  let* last = frequency [ (2, constant true); (1, bool) ] in
+  let+ outer = list ~size:(constant (r - 1)) bool in
+  let chosen a = if a = r - 1 then last else List.nth outer a in
+  let axes = List.filter chosen (List.init r Fun.id) in
+  if axes = [] && some then [ r - 1 ] else axes
+
+(* How the first load is broadcast: one element along each row, rows
+   apart, over outer axes of two elements or more; one row repeated along
+   the first axis; or along drawn axes. *)
+type spread = Apart | Row | Any_axes
+
+let broadcast_cases =
+  Gen.with_pp pp_broadcast
+    (let open Gen in
+     (* A narrow float a third of the time: a map decodes such a load
+        where it reads it. *)
+     let* (D.Any d as dt) =
+       frequency [ (1, of_list ~pp:pp_dtype narrow_floats); (2, dtypes) ]
+     in
+     let* n =
+       frequency
+         [
+           (6, int_range 1 72);
+           (2, int_range 73 300);
+           (1, of_list ~pp:Format.pp_print_int [ 511; 512; 513; 1025 ]);
+         ]
+     in
+     let* spread =
+       frequency
+         [ (2, constant Apart); (1, constant Row); (1, constant Any_axes) ]
+     in
+     let* outer =
+       match spread with
+       | Apart | Row -> array ~size:(int_range 1 2) (int_range 2 5)
+       | Any_axes -> array ~size:(int_range 0 2) (int_range 1 5)
+     in
+     let n = if spread = Apart then max n 2 else n in
+     let shape = Array.append outer [| n |] in
+     let r = Array.length shape in
+     (* A load is C-contiguous where its view is plain, else permuted,
+        stepped or reversed as drawn. *)
+     let view broadcast =
+       frequency
+         [
+           (1, constant { (Elements.plain r) with broadcast });
+           (2, Elements.view_of ~broadcast r);
+         ]
+     in
+     let* first =
+       match spread with
+       | Apart -> view [ r - 1 ]
+       | Row -> view [ 0 ]
+       | Any_axes ->
+           let* axes = broadcast_axes ~some:true r in
+           view axes
+     in
+     (* A cast a quarter of the time: its operand's rows are made
+        contiguous before it converts them. *)
+     let targets =
+       List.filter
+         (fun (D.Any t) -> P.accepts1 Cast d t && not (D.equal d t))
+         D.all
+     in
+     let* prog =
+       if targets = [] then constant Drawn
+       else
+         frequency
+           [
+             (3, constant Drawn);
+             (1, map (fun t -> Cast_to t) (of_list ~pp:pp_dtype targets));
+           ]
+     in
+     let* others =
+       match prog with
+       | Cast_to _ -> constant []
+       | Drawn ->
+           let other =
+             let* axes = broadcast_axes ~some:false r in
+             view axes
+           in
+           list ~size:(int_range 0 2) other
+     in
+     let+ seed = int in
+     { dt; shape; views = Array.of_list (first :: others); prog; seed })
+
+(* float32 rows of 2048 elements, longer than a block, beside a contiguous
+   load: one element repeated along each row, or one row repeated. *)
+let broadcast_examples =
+  let case axes side =
+    ( {
+        dt = D.Any D.Float32;
+        shape = [| 16; 2048 |];
+        views =
+          [| { (Elements.plain 2) with broadcast = axes }; Elements.plain 2 |];
+        prog = Drawn;
+        seed = 1;
+      },
+      side )
+  in
+  List.concat_map
+    (fun axes -> [ case axes Support.Before; case axes Support.After ])
+    [ [ 1 ]; [ 0 ] ]
+
+(* A map reads a broadcast load as it reads the load's copy into a
+   C-contiguous array: the same outputs, bit for bit, any NaN for a NaN,
+   with the loads and destinations against an inaccessible page. *)
+let law_map_broadcast (b : Support.backend) (c, side) =
+  let module K = (val b.kernels) in
+  let st = Random.State.make [| c.seed |] in
+  let r = Array.length c.shape in
+  let ops =
+    Array.map
+      (fun v ->
+        Elements.operand c.dt c.shape v (fun _ -> Elements.element c.dt st))
+      c.views
+  in
+  let p, types =
+    match c.prog with
+    | Drawn ->
+        let ins = Array.map (fun _ -> c.dt) ops in
+        program st ins ~room:16 ~rank:r
+    | Cast_to t ->
+        ( P.v
+            ~ins:(Iarray.of_list [ c.dt ])
+            (Iarray.of_list [ P.In 0; P.Op1 (Cast, t, 0) ])
+            ~outs:(Iarray.of_list [ 1 ]),
+          [| c.dt; t |] )
+  in
+  let dsts =
+    Array.map (fun o -> (types.(o), c.shape)) (Iarray.to_array p.outs)
+  in
+  (* The first load's axes of more than one element it does not
+     broadcast, and whether its view reverses one or orders two apart
+     from the result's order: made axis [m] holds the result's axis
+     [inv.(m)]. *)
+  let first = c.views.(0) and axes = List.init r Fun.id in
+  let along a = List.mem a first.broadcast and wide a = c.shape.(a) > 1 in
+  let kept = List.filter (fun a -> wide a && not (along a)) axes in
+  let inv = Elements.inverse first.perm in
+  let reversed =
+    match first.reversed with Some m -> List.mem inv.(m) kept | None -> false
+  in
+  let permuted =
+    List.exists
+      (fun a ->
+        List.exists (fun b -> a < b && first.perm.(a) > first.perm.(b)) kept)
+      kept
+  in
+  let apart = along (r - 1) && wide (r - 1) && kept <> [] in
+  let cast = match c.prog with Cast_to _ -> true | Drawn -> false in
+  let narrow = is_narrow c.dt in
+  cover "one element repeated along each row, rows apart" apart;
+  cover "rows apart, the first load reversed" (apart && reversed);
+  cover "rows apart, the first load permuted" (apart && permuted);
+  cover "rows apart, a narrow float" (apart && narrow);
+  cover "rows apart, cast" (apart && cast);
+  cover "rows apart, a narrow float cast" (apart && narrow && cast);
+  cover "a row repeated"
+    ((not (along (r - 1))) && List.exists (fun a -> wide a && along a) axes);
+  cover "one element repeated"
+    (List.for_all along axes && Elements.total c.shape > 1);
+  cover "beside another load stepped, permuted or reversed"
+    (Array.exists
+       (fun v -> List.exists (( <> ) "broadcast") (Elements.view_names v))
+       (Array.sub c.views 1 (Array.length c.views - 1)));
+  let call xs ds =
+    K.map p ~dsts:ds (Array.map (fun (A.Any x) -> Nx_kernel.Plain x) xs)
+  in
+  let fresh =
+    Array.map
+      (fun (D.Any dt, s) -> A.Any (A.create Rig.host dt (Iarray.of_array s)))
+      dsts
+  in
+  let copies = Array.map (fun (A.Any x) -> A.Any (A.copy x)) ops in
+  equal ~msg:"copied" answer A.Done (call copies fresh);
+  Elements.with_guards side (fun guard place ->
+      let ds = Array.map (fun (d, s) -> place d s) dsts in
+      equal ~msg:"broadcast" answer A.Done (call (Array.map guard ops) ds);
+      Array.iteri
+        (fun i d ->
+          equal
+            ~msg:(strf "output %d of %s" i (describe p))
+            (array (Elements.same (fst dsts.(i))))
+            (Elements.elements fresh.(i))
+            (Elements.elements d))
+        ds)
+
 (* Programs that hold hundreds to thousands of values at once *)
 
 (* How a held program's values are made: each straight from the operand, so
@@ -1078,6 +1310,10 @@ let cpu =
         (strf "%s computes maps of any number of arrays" b.name)
         (Gen.pair (Gen.pair pairs Gen.int) widths)
         (fun c -> b.around (fun () -> law_map_widths b c));
+      prop ~count:300 ~examples:broadcast_examples
+        (strf "%s reads a broadcast load as its copy" b.name)
+        (Gen.pair broadcast_cases Elements.sides)
+        (fun c -> b.around (fun () -> law_map_broadcast b c));
       prop ~count:600 ~examples:guarded_examples
         (strf
            "%s reads and writes no byte past its operands, loads and \

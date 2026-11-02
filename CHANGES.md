@@ -1674,6 +1674,10 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On nx.cpu, a fused map reads an operand broadcast along its rows, as
+  `Nx.softmax`'s and `Nx.log_softmax`'s lane maxima and sums are, where it
+  lies instead of copying it: `Nx.softmax` over 8 x 512 x 512 float32 runs
+  42% fewer instructions, `Nx.log_softmax` 54%. Results keep their bits.
 - `Nx.rshift` computes with integers at every width, where integers of 32
   bits or fewer went through float64: a kernel that shifts needs no float64,
   and a compiled one-token Q6_K product's kernel takes 0.53 ms where it took

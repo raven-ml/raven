@@ -15,8 +15,9 @@
 
    - a load held in its own dtype whose rows are contiguous is read in
      place;
-   - a load held in its own dtype of which the plane reads one element, as
-     a broadcast's, is read in place with a step of 0, as a constant is;
+   - a load held in its own dtype whose rows step by no element, as a
+     broadcast's, is read in place with a step of 0, as a constant is:
+     one element for the plane, or one for each row;
    - a load identical to an output is staged, since a node may write the
      output first, and so is any other load: into its slot;
    - a constant is read in place with a step of 0;
@@ -189,18 +190,16 @@ static void sub_bitcast(int xt, int dt, const uint8_t *x, uint8_t *codes,
   else round_held(dt, codes, d, NULL, n);
 }
 
-/* Whether the plane [p] reads one element of operand [k]. */
-static int repeated(const plane *p, int k) {
-  return p->s0[k] == 0 && (p->s1[k] == 0 || p->n1 == 1);
-}
-
-/* Whether load [k] of plane [p] is read in place. A load identical to an
-   output is not: a node may write the output before another reads the
-   load. */
+/* Whether load [k] of plane [p] is read in place: its rows step by one
+   element or none, which the rows read as they are. Staging a row that
+   repeats one element took nx_copy_box about 16 instructions an element
+   on fudge, a fifth of eager attention's forward at 512. A load identical
+   to an output is not: a node may write the output before another reads
+   the load. */
 static int in_place(const prog *j, const plane *p, int k) {
   const nx_array *a = &j->a[k];
   return !a->alias && a->dtype == held(a->dtype) &&
-         (p->s0[k] == 1 || repeated(p, k));
+         (p->s0[k] == 1 || p->s0[k] == 0);
 }
 
 /* Where node [i], a node with a slot, computes its value in plane [f]: its
@@ -224,22 +223,21 @@ static view value_of(const prog *j, const plane *f, int i) {
   if (s->tag == NX_NODE_IN && in_place(j, f, s->k)) {
     const nx_array *a = &j->a[s->k];
     int64_t w = width(a->dtype);
-    uint8_t *e = a->base + f->at[s->k] * w;
-    if (repeated(f, s->k)) return (view){e, 0, 0};
-    return (view){e, 1, f->s1[s->k] * w};
+    int64_t s1 = f->n1 == 1 ? 0 : f->s1[s->k] * w;
+    return (view){a->base + f->at[s->k] * w, f->s0[s->k], s1};
   }
   return home(j, f, i);
 }
 
-/* [v], of the dtype [dt], with contiguous rows: itself, or copied into
-   [t]. */
+/* [v], of the dtype [dt], with contiguous rows: itself, or each row's
+   repeated element filled into [t]. A value's rows step by one element or
+   none. */
 static view runs(view v, int dt, const plane *p, uint8_t *t) {
   if (v.s0 == 1) return v;
   int64_t w = width(dt);
+  nx_cpu_row0 fill = nx_cpu_rows.fill[nx_cpu_width_index((int)w)];
   for (int64_t r = 0; r < p->n1; r++)
-    for (int64_t i = 0; i < p->n0; i++)
-      memcpy(t + (r * p->n0 + i) * w, v.p + r * v.s1 + i * v.s0 * w,
-             (size_t)w);
+    fill(p->n0, t + r * p->n0 * w, 1, v.p + r * v.s1);
   return (view){t, 1, p->n0 * w};
 }
 
@@ -253,8 +251,10 @@ static view wide_of(const prog *j, const plane *f, int i, int o) {
   uint8_t *t = temp(j, f, o);
   nx_cpu_run decode = nx_cpu_convert(dt, c);
   if (v.s0 == 0) {
-    decode(v.p, t, 1);
-    return (view){t, 0, 0};
+    /* One element for the plane or one for each row, each decoded once. */
+    int64_t rows = v.s1 == 0 ? 1 : f->n1, wc = width(c);
+    for (int64_t r = 0; r < rows; r++) decode(v.p + r * v.s1, t + r * wc, 1);
+    return (view){t, 0, v.s1 == 0 ? 0 : wc};
   }
   for (int64_t r = 0; r < f->n1; r++)
     decode(v.p + r * v.s1, t + r * f->n0 * width(c), f->n0);
