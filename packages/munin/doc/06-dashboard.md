@@ -45,7 +45,7 @@ older runs of an MLP:
    ✗ failed    eager-hawk        1,100      1.670                     0.03
  mnist-mlp  2 runs · ✗ 1 failed or crashed
    ✓ finished  mlp-wide          4,690    0.05831*                     0.1
-   ✗ crashed   mlp-base     2,900  62%    0.06576                      0.1
+   ✗ crashed   mlp-base     2,900  61%    0.06576                      0.1
 ```
 
 The first line answers the morning's question: how many runs, which
@@ -94,19 +94,19 @@ against first; here `amber-fox` is marked `a` and `dusty-mole` `b`:
 val/loss ↓   0.4077   best 0.4077 at 12,000
 ━ tidy-otter   a amber-fox  lr 0.001   b dusty-mole  lr 0.01
 
-            2.002 ┤⢣⡀
-                  │ ⢣⡀
-                  │  ⢣
-                  │   ⠱⡀
-                1 ┤    ⠈⠑⢄  b
-                  │       ⠉⠢⣀⡀
-           0.3841 ┤          ⠈⠉⠑⠒⠢⠤⠤⠤⠤⣀⣀⣀⣀⣀⣀⣀⡀⢀⢀a⢀⢀ ⡀⡀⡀⡀⡀⡀⡀⡀⡀⡀⡀a
-                  └┬─────────────────────┬────────────────────┬
-                   0                   10,000               20,000
-  a amber-fox      ⡀⢀⠤⠔⠢⢄⠔⠤⠒⠒⠒⠊⠑⠒⠒⠒⠒⠉⠉⠉⠒⠊⠉⠉⠉⠑⠂┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄       +0.01379
-    focus − a      ⠈⠁                                                    worse
-  b dusty-mole     ⡀┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄       -0.04625
-    focus − b      ⠈⠒⠢⠤⠤⣀⣀⣀⣀ b NaN from step 4,500                      better
+            2.002 ┤⢇
+                  │⠘⡄
+                  │ ⠘⡄
+                  │  ⠈⢆
+                1 ┤    ⠑⢄  b
+                  │      ⠑⢄⡀
+           0.3841 ┤        ⠈⠉⠑⠒⠢⠤⠤⠤⣀⣀⣀⣀⣀⣀⡀⢀a⢀⢀⢀⢀⢀⢀⡀⡀⡀⡀⡀⡀a
+                  └┬─────────────────┬─────────────────┬
+                   0               10,000            20,000
+  a amber-fox      ⡀⡠⠤⠒⢄⠔⠔⠒⠒⠊⠑⠒⠒⠒⠉⠉⠉⠒⠉⠉⠉⠑⠂┄┄┄┄┄┄┄┄┄┄┄┄┄┄              +0.01379
+    focus − a      ⠈                                           worse at 12,000
+  b dusty-mole     ⡀┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄              -0.04625
+    focus − b      ⠘⠒⠤⠤⣀⣀⣀⡀ b NaN from step 4,500              better at 4,000
 ```
 
 The first line states the run in words. `live` means a process holds the
@@ -133,9 +133,11 @@ NaN reads as one span.
 
 Where the focus runs over a marked run, the overlay cannot show both, so
 under the chart each marked run has two rows: the focus minus that run
-at the same step, around a zero rule, with the latest difference and
-whether the focus is `worse` or `better` by the metric's goal. A marked
-run that stops early, as `dusty-mole` does at its first NaN, says where.
+at each step both logged, around a zero rule, with the difference at the
+latest such step and whether the focus is `worse` or `better` there by
+the metric's goal. Two runs that log at different cadences are compared
+only where both logged. A marked run that stops early, as `dusty-mole`
+does at its first NaN, says where.
 
 Under them every metric is a strip, drawn over the same x as the chart
 and in its columns, so reading down a column reads one step across every

@@ -98,13 +98,14 @@
     Then comes one chart, the cursor's metric ({!section-charts}), under a title
     with its latest and best values and, with marked runs, a legend that names
     each marked run and the params in which it differs from the focus. Under the
-    chart each marked run has a pair of {e difference rows}: the focus's level
-    minus the marked run's, per dot column that holds both, around a dim zero
-    rule, the latest difference and whether the focus is [worse] or [better] by
-    the metric's goal at the right. A marked run that stops before the focus's
-    latest step, by an end or a sample that is not finite, says where after its
-    row's end. A metric is a key of the run's metrics with a sample
-    ({!Munin.History.metrics}).
+    chart each marked run has a pair of {e difference rows}: the focus's sample
+    minus the marked run's at each step both logged with finite values, the
+    marked run's latest sample at a step taken, averaged per dot column, around
+    a dim zero rule; at the right the difference at the latest such step, and
+    whether the focus is [worse] or [better] there by the metric's goal, with
+    that step. A marked run that stops before the focus's latest step, by an end
+    or a sample that is not finite, says where after its row's end. A metric is
+    a key of the run's metrics with a sample ({!Munin.History.metrics}).
 
     Under them each metric has a {e strip}: the metric drawn over the chart's x
     domain in the chart's own columns, one or two rows high, its name in a
@@ -254,7 +255,8 @@
     - Memory prints in GiB and a rate of bytes in MB/s.
     - The {e latest step} is the largest step of the latest samples of the run's
       metrics. Progress is the latest step over the run's [steps]
-      ({!Munin.Run.steps}), and absent without them.
+      ({!Munin.Run.steps}), and absent without them; its percentage is rounded
+      down, so it reads [100%] only once the steps are reached.
     - The {e rate} is the steps per second over the last 10 minutes, or over the
       last tenth of the active time when that is longer, once that window holds
       60 s of samples. The {e time left} is the steps left over the rate, shown

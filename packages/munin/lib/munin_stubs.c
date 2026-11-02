@@ -103,7 +103,7 @@ CAMLprim value caml_munin_lock(value fd, value kind, value wait) {
   if (k == 2) {
     ok = UnlockFileEx(h, 0, 1, 0, &ov);
     if (!ok) {
-      win32_maperr(GetLastError());
+      caml_win32_maperr(GetLastError());
       caml_uerror("UnlockFileEx", Nothing);
     }
     CAMLreturn(Val_true);
@@ -117,7 +117,7 @@ CAMLprim value caml_munin_lock(value fd, value kind, value wait) {
   DWORD err = GetLastError();
   if (err == ERROR_LOCK_VIOLATION || err == ERROR_IO_PENDING)
     CAMLreturn(Val_false);
-  win32_maperr(err);
+  caml_win32_maperr(err);
   caml_uerror("LockFileEx", Nothing);
 #else
   int op = k == 0 ? LOCK_EX : k == 1 ? LOCK_SH : LOCK_UN;
@@ -144,7 +144,7 @@ CAMLprim value caml_munin_full_fsync(value fd) {
   ok = FlushFileBuffers(Handle_val(fd));
   caml_leave_blocking_section();
   if (!ok) {
-    win32_maperr(GetLastError());
+    caml_win32_maperr(GetLastError());
     caml_uerror("FlushFileBuffers", Nothing);
   }
 #else

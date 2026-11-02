@@ -33,6 +33,11 @@ val value : float -> string
     [1e6], as [5.116e-05]; or [NaN], [inf], [-inf]. A value that is not zero
     never prints as [0]. *)
 
+val percent_of : int -> int -> string
+(** [percent_of s t] is [s] of [t] as a whole percentage, rounded down, as [99%]
+    for [19950] of [20000]: [100%] only once [s] reaches [t]. It is [""] for a
+    [t] that is not above 0. *)
+
 val signed : float -> string
 (** [signed x] is [value x], with [+] before a positive [x]. *)
 

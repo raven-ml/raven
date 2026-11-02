@@ -10,7 +10,7 @@
 10 |     ✗ failed    eager-hawk         03:03  9m51s        1,100      1.670                     0.03       —     500    256      10  adamw  0.05  3c1d9e0
 11 |   mnist-mlp  2 runs · ✗ 1 failed or crashed
 12 |     ✓ finished  mlp-wide    Oct 31 16:20  8m17s        4,690    0.05831*                     0.1    1024       —     64       —    sgd     —  3c1d9e0
-13 |     ✗ crashed   mlp-base    Oct 31 14:05  5m08s   2,900  62%    0.06576                      0.1     256       —     64       —    sgd     —  3c1d9e0
+13 |     ✗ crashed   mlp-base    Oct 31 14:05  5m08s   2,900  61%    0.06576                      0.1     256       —     64       —    sgd     —  3c1d9e0
 14 |
 15 |  tidy-otter  ● live · lr 0.0003 · warmup 500 · batch 256 · epochs 10 · wd 0.05 · opt adamw
 16 |  val/loss ↓  0.4077 at 12,000 · best 0.4077 at 12,000

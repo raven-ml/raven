@@ -255,9 +255,7 @@ let columns v rows =
         | Some s, None, Some t when t > 0 && s < t ->
             [
               (Paint.plain, Text.count s);
-              ( Paint.dim,
-                Printf.sprintf " %3.0f%%"
-                  (100. *. Float.of_int s /. Float.of_int t) );
+              (Paint.dim, " " ^ Text.pad_left 4 (Text.percent_of s t));
             ]
         | Some s, _, _ -> [ (Paint.plain, Text.count s) ])
   in

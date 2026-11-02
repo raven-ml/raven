@@ -113,12 +113,15 @@ let made d (c : chart) =
   match Cmap.find_opt c d.charts with
   | Some m -> Some m
   | None ->
-      (* One prepared for the same focus and region under another view or marks,
-         as while a key changes them: never one of another region, whose plot is
-         not this one's. *)
+      (* One prepared for the same focus, marks and region under another view,
+         as while a key changes the smoothing: never one of another region,
+         whose plot is not this one's, nor of other marks, whose letters would
+         name the runs marked before. *)
       Cmap.fold
         (fun (c' : chart) m acc ->
-          if c'.focus = c.focus && c'.spec = c.spec then Some m else acc)
+          if c'.focus = c.focus && c'.spec = c.spec && c'.marked = c.marked then
+            Some m
+          else acc)
         d.charts None
 
 let chart d c = Option.map (fun m -> m.chart) (made d c)

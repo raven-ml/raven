@@ -6,6 +6,7 @@
 open Munin
 module C = Matrix_charts
 module G = Matrix_grid
+module Float_text = Munin_float_text.Float_text
 
 type axis = Step | Step_metric | Time
 
@@ -169,6 +170,12 @@ let round_125 x =
   in
   pick *. p
 
+(* The difference rows' pairs, made in [prepare] ({!pair}). *)
+type paired = {
+  points : (float * float) array; (* per dot column: its middle, the mean *)
+  last : (int * float * float) option; (* the latest pair: step, x, difference *)
+}
+
 type prepared = {
   view : view;
   spec : spec;
@@ -186,7 +193,9 @@ type prepared = {
   resumes : float list; (* their steps, on the step axis *)
   y : float * float;
   log : bool;
-  differences : (char * (float * float) array) list;
+  differences : (char * paired) list;
+  paired_at : (char * (int * int * int)) list;
+      (* the series' lengths and resumes each pairing read *)
       (* the focus's level minus each marked run's, per dot column *)
 }
 
@@ -207,14 +216,14 @@ let x_label axis v =
   | Step | Step_metric ->
       if Float.is_integer v && Float.abs v < 1e15 then
         Text.count (Float.to_int v)
-      else Printf.sprintf "%.12g" v
+      else Float_text.g ~precision:12 v
 
 let y_label ~extreme v =
   Text.cut label_cells
     (if extreme then Text.value v
      else if Float.is_integer v && Float.abs v < 1e15 then
        Text.count (Float.to_int v)
-     else Printf.sprintf "%.12g" v)
+     else Float_text.g ~precision:12 v)
 
 (* The y ticks of a plot of [rows] over [(lo, hi)]: both extremes, so that the
    region the run is in is labelled, and between them multiples of a 1, 2 or 5
@@ -231,9 +240,13 @@ let y_ticks ~log (lo, hi) rows =
       in
       f *. Float.of_int (rows - 1)
     in
-    (* A product such as [4. *. 0.2] is not [0.8]: each tick is snapped to its
-       shortest decimal, which matrix would otherwise print digit for digit. *)
-    let snap v = float_of_string (Printf.sprintf "%.12g" v) in
+    (* A product such as [4. *. 0.2] is not [0.8]: each tick is snapped to the
+       float nearest its twelve significant digits, the same on every system. *)
+    let snap v =
+      Option.value
+        (Float_text.of_string (Float_text.g ~precision:12 v))
+        ~default:v
+    in
     let candidates =
       if log then
         let a = Float.ceil (Float.log10 lo)
@@ -342,17 +355,56 @@ let dots ~axis ~lo ~hi spec =
   * (C.Layout.plot (C.layout ~width:spec.width ~height:(spec.height - 1) fig))
       .width
 
-(* The focus's level minus a marked run's, per dot column holding both. *)
-let differences focus other =
-  let at = Hashtbl.create (Array.length other) in
-  Array.iter (fun (x, y) -> Hashtbl.replace at x y) other;
-  Array.of_list
-    (List.filter_map
-       (fun (x, y) ->
-         match Hashtbl.find_opt at x with
-         | Some o when Float.is_finite y && Float.is_finite o -> Some (x, y -. o)
-         | _ -> None)
-       (Array.to_list focus))
+(* Difference rows
+
+   The focus's sample minus a marked run's at the same step, for each step both
+   logged with finite values: the marked run's sample at a step is its latest
+   one there, as on the step metric's axis. The differences are averaged per dot
+   column of the focus's x, and the latest is kept with its step. Two runs that
+   log at different cadences, or one that ends inside a column, are compared
+   only where both logged. *)
+
+let pair axis plot focus key marked_h =
+  match (series focus key, series marked_h key) with
+  | Some fs, Some ms ->
+      let at = Hashtbl.create (Metric.length ms) in
+      for i = 0 to Metric.length ms - 1 do
+        Hashtbl.replace at (Metric.step ms i) (Metric.value ms i)
+      done;
+      let x = x_of axis focus key fs in
+      let sums = Array.make plot.Curve.dots 0.
+      and counts = Array.make plot.Curve.dots 0 in
+      let last = ref None in
+      for i = 0 to Metric.length fs - 1 do
+        let step = Metric.step fs i and v = Metric.value fs i in
+        match Hashtbl.find_opt at step with
+        | Some o when Float.is_finite v && Float.is_finite o ->
+            let d = v -. o and xi = x i in
+            if not (Float.is_nan xi) then begin
+              let k = Curve.column plot xi in
+              if k >= 0 && k < plot.dots then begin
+                sums.(k) <- sums.(k) +. d;
+                counts.(k) <- counts.(k) + 1
+              end;
+              match !last with
+              | Some (s, _, _) when s > step -> ()
+              | _ -> last := Some (step, xi, d)
+            end
+        | _ -> ()
+      done;
+      let width = (plot.hi -. plot.lo) /. Float.of_int plot.dots in
+      let points =
+        Array.of_list
+          (List.filter_map Fun.id
+             (List.init plot.dots (fun k ->
+                  if counts.(k) = 0 then None
+                  else
+                    Some
+                      ( plot.lo +. ((Float.of_int k +. 0.5) *. width),
+                        sums.(k) /. Float.of_int counts.(k) ))))
+      in
+      { points; last = !last }
+  | _ -> { points = [||]; last = None }
 
 let prepare ?prev view spec focus marked =
   let key = spec.key in
@@ -447,6 +499,34 @@ let prepare ?prev view spec focus marked =
         (History.resumes focus)
     else []
   in
+  (* Pairing reads both series whole: a preparation's pairs are kept while its
+     plot, both series' lengths and their resumes stay. *)
+  let differences =
+    List.map
+      (fun (l, h) ->
+        let lengths =
+          ( Option.fold ~none:0 ~some:Metric.length (series focus key),
+            Option.fold ~none:0 ~some:Metric.length (series h key),
+            List.length (History.resumes focus)
+            + List.length (History.resumes h) )
+        in
+        let kept =
+          if History.restarted focus || History.restarted h then None
+          else
+            Option.bind prev (fun p ->
+                match
+                  (List.assoc_opt l p.differences, List.assoc_opt l p.paired_at)
+                with
+                | Some d, Some n when n = lengths -> Some d
+                | _ -> None)
+        in
+        ( l,
+          (match kept with
+          | Some d -> d
+          | None -> pair view.axis plot focus key h),
+          lengths ))
+      (List.tl all)
+  in
   {
     view;
     spec;
@@ -464,15 +544,8 @@ let prepare ?prev view spec focus marked =
     resumes;
     y = widen extent;
     log;
-    differences =
-      (let level =
-         match (smooth, focus_track) with
-         | Some t, _ | None, Some t -> Curve.level t.curve
-         | None, None -> [||]
-       in
-       List.map
-         (fun (l, _, t) -> (l, differences level (Curve.level t.curve)))
-         marked);
+    differences = List.map (fun (l, d, _) -> (l, d)) differences;
+    paired_at = List.map (fun (l, _, n) -> (l, n)) differences;
   }
 
 type placed = { px : int; pw : int }
@@ -644,12 +717,18 @@ let draw ?cursor ?(inline = false) ?(faint = false) ~light p g ~x ~y =
     Some { px = x + plot.x; pw = plot.width }
   end
 
-type versus = { last : float; at : float; scale : float; zero_row : int }
+type versus = {
+  last : float;
+  step : int;
+  at : float;
+  scale : float;
+  zero_row : int;
+}
 
 let draw_versus ~light p c g ~(under : placed) ~y ~rows =
   match List.assoc_opt c p.differences with
-  | None | Some [||] -> None
-  | Some d ->
+  | None | Some { last = None; _ } | Some { points = [||]; _ } -> None
+  | Some { points = d; last = Some (step, at, last) } ->
       let big =
         Array.fold_left (fun a (_, v) -> Float.max a (Float.abs v)) 0. d
       in
@@ -685,8 +764,7 @@ let draw_versus ~light p c g ~(under : placed) ~y ~rows =
             G.draw_text ~style:Paint.dim g ~x:cx ~y:zy ~text:"┄"
         end
       done;
-      let at, last = d.(Array.length d - 1) in
-      Some { last; at; scale = big; zero_row = zy }
+      Some { last; step; at; scale = big; zero_row = zy }
 
 type trend = {
   t_axis : axis;

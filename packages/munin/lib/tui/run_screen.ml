@@ -78,9 +78,7 @@ let sentence v ~width =
   let progress () =
     match (step, steps) with
     | Some s, Some t when t > 0 && s < t ->
-        let pct =
-          Printf.sprintf "%.0f%%" (100. *. Float.of_int s /. Float.of_int t)
-        in
+        let pct = Text.percent_of s t in
         if wide then
           [
             [ plain ("step " ^ Text.count s); dim (" of " ^ Text.count t) ];
@@ -458,7 +456,8 @@ let layout v ~width ~height =
     caption;
     versus_y = (chart_y + chart_h + if caption then 1 else 0);
     name_w = max Chart.left (min 22 (longest + 3));
-    value_w = (if width >= 120 then 12 else 10);
+    (* Wide enough, with marked runs, for a verdict and its step. *)
+    value_w = (if marks > 0 then 17 else if width >= 120 then 12 else 10);
     strips_y = chart_y + chart_h + versus + 1;
     strip_rows;
     strip_h;
@@ -715,8 +714,10 @@ let use_parts v =
     ( somes
         [
           opt (fun p -> Text.percent p ^ " busy") (k "busy_pct");
-          opt (fun t -> Printf.sprintf "%.0f °C" t) (k "temperature_c");
-          opt (fun t -> Printf.sprintf "%.0f W" t) (k "power_w");
+          opt
+            (fun t -> Munin_float_text.Float_text.f 0 t ^ " °C")
+            (k "temperature_c");
+          opt (fun t -> Munin_float_text.Float_text.f 0 t ^ " W") (k "power_w");
         ],
       somes
         [
@@ -876,16 +877,9 @@ let paint_versus v g l c (placed : Chart.placed) key ~width =
   let mx = margin ~width in
   let w = width - (2 * mx) in
   let goal = Option.bind (key_stats v key) (fun s -> s.goal) in
-  if l.caption then begin
-    let y = l.versus_y - 1 in
-    Paint.spans g ~x:mx ~y ~w
+  if l.caption then
+    Paint.spans g ~x:mx ~y:(l.versus_y - 1) ~w
       [ (Paint.dim, "focus minus each marked run, at the same step") ];
-    match latest_step v with
-    | Some s ->
-        Paint.right g ~x:mx ~y ~w
-          [ (Paint.dim, "at step "); (Paint.plain, Text.count s) ]
-    | None -> ()
-  end;
   List.iteri
     (fun i (m, mr) ->
       let y = l.versus_y + (2 * i) in
@@ -953,17 +947,20 @@ let paint_versus v g l c (placed : Chart.placed) key ~width =
               if room >= Text.width note then
                 Paint.text ~style:Paint.dim g ~x:ex ~y:ny ~w:room note
           | None -> ());
+          (* The latest difference, and its verdict at its step, the latest both
+             runs logged. *)
           Paint.right g
             ~x:(mx + w - l.value_w)
             ~y ~w:l.value_w
-            [
-              ( (if early = None then Paint.plain else Paint.dim),
-                Text.signed d.last );
-            ];
+            [ (Paint.plain, Text.signed d.last) ];
           Paint.right g
             ~x:(mx + w - l.value_w)
             ~y:(y + 1) ~w:l.value_w
-            [ ((if worse then Paint.bad else Paint.dim), verdict) ])
+            [
+              ((if worse then Paint.bad else Paint.dim), verdict);
+              ( Paint.dim,
+                (if verdict = "" then "at " else " at ") ^ Text.count d.step );
+            ])
     v.marked
 
 let hints =

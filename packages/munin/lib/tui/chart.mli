@@ -93,8 +93,9 @@ val draw :
 
 type versus = {
   last : float; (* the latest difference *)
+  step : int; (* the step of that difference *)
   at : float; (* its x *)
-  scale : float; (* the largest difference, which the row's edges stand for *)
+  scale : float; (* the largest column mean, which the row's edges stand for *)
   zero_row : int; (* the grid row of the zero rule *)
 }
 
@@ -108,8 +109,9 @@ val draw_versus :
   rows:int ->
   versus option
 (** [draw_versus p c g ~under ~y ~rows] draws, in the plot columns of [under],
-    the focus's level minus the marked run [c]'s, per dot column that holds
-    both, about a dim zero rule; [None] when no column holds both. *)
+    the focus's samples minus the marked run [c]'s at the same steps, averaged
+    per dot column, about a dim zero rule, from the pairs [p] made in its
+    preparation; [None] when no step holds both. *)
 
 type trend
 

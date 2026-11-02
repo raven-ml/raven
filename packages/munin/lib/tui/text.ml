@@ -41,12 +41,32 @@ let value x =
   else if x = 0. then "0"
   else
     let a = Float.abs x in
-    if a < 1e-4 || a >= 1e6 then Printf.sprintf "%.3e" x
+    if a < 1e-4 || a >= 1e6 then
+      (* [Float_text.g] drops trailing zeros: they are put back in the mantissa,
+         so that it has four digits. *)
+      let s = Float_text.g ~precision:4 x in
+      match String.index_opt s 'e' with
+      | None -> s
+      | Some i ->
+          let m = String.sub s 0 i
+          and rest = String.sub s i (String.length s - i) in
+          let digits =
+            String.length m
+            - (if m.[0] = '-' then 1 else 0)
+            - if String.contains m '.' then 1 else 0
+          in
+          let m = if String.contains m '.' then m else m ^ "." in
+          m ^ String.make (max 0 (4 - digits)) '0' ^ rest
     else
       let e = Float.to_int (Float.floor (Float.log10 a)) in
-      Printf.sprintf "%.*f" (max 0 (3 - e)) x
+      Float_text.f (max 0 (3 - e)) x
 
 let signed x = if x > 0. then "+" ^ value x else value x
+
+let percent_of s t =
+  if t <= 0 then ""
+  else Printf.sprintf "%d%%" (if s >= t then 100 else max 0 s * 100 / t)
+
 let given x = if Float.is_finite x then Float_text.exact x else non_finite x
 
 let count n =

@@ -605,9 +605,7 @@ let small m g =
                 [
                   (Paint.plain, Text.count s);
                   (Paint.dim, " of " ^ Text.count t ^ " · ");
-                  ( Paint.plain,
-                    Printf.sprintf "%.0f%%"
-                      (100. *. Float.of_int s /. Float.of_int t) );
+                  (Paint.plain, Text.percent_of s t);
                 ];
               ]
           | Some s, _ ->

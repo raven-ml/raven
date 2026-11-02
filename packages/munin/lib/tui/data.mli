@@ -108,7 +108,7 @@ val errors : result -> (string * string) list
 
 val chart : t -> chart -> Chart.prepared option
 (** [chart d c] is the chart [c] as last prepared, else one prepared for the
-    same focus and region under another view or marks. *)
+    same focus, marks and region under another view. *)
 
 val whole : t -> chart -> bool
 (** [whole d c] is [true] iff [c] was prepared for its region and view from a

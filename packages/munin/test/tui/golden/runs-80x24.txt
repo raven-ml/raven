@@ -10,7 +10,7 @@
 10 |    ✗ failed    eager-hawk        1,100      1.670                     0.03
 11 |  mnist-mlp  2 runs · ✗ 1 failed or crashed
 12 |    ✓ finished  mlp-wide          4,690    0.05831*                     0.1
-13 |    ✗ crashed   mlp-base     2,900  62%    0.06576                      0.1
+13 |    ✗ crashed   mlp-base     2,900  61%    0.06576                      0.1
 14 |
 15 | tidy-otter  ● live · val/loss ↓  0.4077 at 12,000 · best 0.4077 at 12,000
 16 |

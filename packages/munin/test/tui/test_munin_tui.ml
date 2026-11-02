@@ -207,7 +207,7 @@ let metric_record ?(goal = "") ?(step_metric = "") key =
     (if step_metric = "" then ""
      else Printf.sprintf {|,"step_metric":"%s"|} step_metric)
 
-let write_log store ?goal ?steps ?declare records =
+let write_log store ?goal ?steps ?declare ?(started = 1) records =
   let declare = Option.value declare ~default:[ metric_record ?goal "m" ] in
   incr law_runs;
   let id = Printf.sprintf "20261101T000000Z-%08x" !law_runs in
@@ -218,7 +218,8 @@ let write_log store ?goal ?steps ?declare records =
   Sys.mkdir (Filename.concat dir id) 0o755;
   let start =
     Printf.sprintf
-      {|{"type":"start","time":1.0,"format":1,"experiment":"law",%s"params":{},"provenance":{"command":["t"],"cwd":"/","pid":1,"ocaml":"5","raven":"t","os":"t","arch":"t","seeds":{},"env":{}}}|}
+      {|{"type":"start","time":%d.0,"format":1,"experiment":"law",%s"params":{},"provenance":{"command":["t"],"cwd":"/","pid":1,"ocaml":"5","raven":"t","os":"t","arch":"t","seeds":{},"env":{}}}|}
+      started
       (match steps with
       | Some n -> Printf.sprintf {|"steps":%d,|} n
       | None -> "")
@@ -909,6 +910,120 @@ let non_finite_count =
       equal (list string) [ "7"; "5"; "0" ]
         [ List.nth row (n - 3); List.nth row (n - 2); List.nth row (n - 1) ])
 
+(* A run 50 steps short of its 20,000 is at 99.75%: it reads 99% on Run and on
+   Runs, never 100% before its end. *)
+let short_of_steps =
+  test "a run short of its steps never reads 100%" (fun () ->
+      with_store ~name:"short" [] @@ fun store ->
+      let id, _ =
+        write_log store ~goal:"minimize" ~steps:20000
+          [ sample_record (0, 1.); sample_record (19950, 0.5) ]
+      in
+      let run = show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [] in
+      let runs = show ~cols:120 ~rows:40 store Munin_tui.Runs [] in
+      let found screen s = T.Screen.find screen s <> [] in
+      equal (list bool)
+        [ true; false; true; false ]
+        [
+          found run "99%";
+          found run "100%";
+          found runs " 99%";
+          found runs "100%";
+        ])
+
+(* Runs that log as programs do: the focus every 10 steps with the value [step /
+   1000], the marked run [marked] samples of [0]. The difference rows pair the
+   two at the same step, so their latest value is the focus's at the latest step
+   both logged, and its verdict and step are that step's. *)
+let paired =
+  cases "a difference row compares the two runs at the same step"
+    ~id:(fun (name, _, _, _) -> name)
+    [
+      ( "the marked run logs every 100 steps",
+        List.init 21 (fun k -> k * 100),
+        "+0.9000",
+        "worse at 900" );
+      ( "the marked run ends in the focus's last column",
+        List.init 99 (fun k -> k * 10) @ [ 989 ],
+        "+0.9800",
+        "worse at 980" );
+    ]
+    (fun (_, marked, value, verdict) ->
+      with_store ~name:"paired" [] @@ fun store ->
+      ignore
+        (write_log store ~goal:"minimize" ~started:1
+           (List.map (fun st -> sample_record (st, 0.)) marked));
+      ignore
+        (write_log store ~goal:"minimize" ~started:2
+           (List.init 100 (fun k ->
+                sample_record (k * 10, Float.of_int (k * 10) /. 1000.))));
+      (* The focus, the newest, is the first row: mark the second, come back and
+         open the first. *)
+      let screen =
+        show ~cols:120 ~rows:40 store Munin_tui.Runs
+          [ char 'j'; Text " "; char 'k'; Key Enter ]
+      in
+      let found s = T.Screen.find screen s <> [] in
+      equal (list bool) [ true; true ] [ found value; found verdict ])
+
+(* The marks change and the poll that prepares the new chart has not returned:
+   no difference row draws the run a letter named before. The reads are held on
+   a queue of the test's until it releases them. *)
+let remarked =
+  test "a difference row never draws a run no longer marked" (fun () ->
+      with_store ~name:"remarked" [] @@ fun store ->
+      let flat v = List.init 100 (fun k -> sample_record (k * 10, v)) in
+      ignore (write_log store ~goal:"minimize" ~started:1 (flat 1.));
+      ignore (write_log store ~goal:"minimize" ~started:2 (flat 0.));
+      ignore
+        (write_log store ~goal:"minimize" ~started:3
+           (List.init 100 (fun k ->
+                sample_record (k * 10, Float.of_int (k * 10) /. 1000.))));
+      let queue = Queue.create () and holding = ref true in
+      let session = ref None in
+      let process_perform job =
+        match (!holding, !session) with
+        | false, Some s -> T.perform s job
+        | _ -> Queue.push job queue
+      in
+      let release s =
+        holding := false;
+        Queue.iter (T.perform s) queue;
+        Queue.clear queue
+      in
+      let term = T.Terminal.create ~cols:120 ~rows:40 () in
+      (elapsed := fun () -> 0);
+      let app = Munin_tui.app ~clock store Munin_tui.Runs in
+      Mosaic_test.run ~process_perform term app @@ fun s ->
+      session := Some s;
+      (elapsed := fun () -> T.now s);
+      release s;
+      T.advance s second;
+      let keys ks =
+        List.iter
+          (fun k ->
+            send term s k;
+            T.advance s second)
+          ks
+      in
+      (* Rows: the focus, the run of 0s, the run of 1s. Mark the run of 0s as a
+         and open the focus. *)
+      keys [ char 'j'; Text " "; char 'k'; Key Enter ];
+      let before = T.Terminal.screen term in
+      (* From Run: focus the run of 0s and unmark it, focus the run of 1s and
+         mark it, a again, and come back to the focus, while no read returns. *)
+      holding := true;
+      keys [ char ']'; Text " "; char ']'; Text " "; char '['; char '[' ];
+      let held = T.Terminal.screen term in
+      release s;
+      T.advance s second;
+      let after = T.Terminal.screen term in
+      let found screen v = T.Screen.find screen v <> [] in
+      (* At step 990 the focus is 0.99: 0.99 above the run of 0s, 0.01 below the
+         run of 1s. *)
+      equal (list bool) [ true; false; true ]
+        [ found before "+0.9900"; found held "+0.9900"; found after "-0.01000" ])
+
 (* A metric whose every sample a resume orphans has no statistics, and Details
    lists the run all the same. *)
 let all_orphans =
@@ -1197,25 +1312,31 @@ let model_key st k =
       match top with Runs_s | Run_s -> { st with typing = true } | _ -> st)
   | _ -> st
 
-(* The screen shown, from its text: Help's keys box, Zoom's and Details' ways
-   out, Runs's count of runs on its first line, else Run; typing when the key
-   line holds the filter. *)
+(* The screen shown, from its key line, which names each screen's keys: Help
+   over it by its first section; typing when the key line holds the filter,
+   which on Runs says how Enter and Esc end it. *)
 let observed screen =
   let rows = T.Screen.rows screen in
-  let last = T.Screen.row screen (rows - 1) in
+  let last = String.trim (T.Screen.row screen (rows - 1)) in
   let has s = T.Screen.find screen s <> [] in
   let starts p s =
     String.length s >= String.length p && String.sub s 0 (String.length p) = p
   in
-  if has "Everywhere" then "help"
-  else
-    let top =
-      if has "back to the run" then "zoom"
-      else if has "esc close" then "details"
-      else if has " runs" && not (has "esc runs") then "runs"
-      else "run"
+  let holds sub s =
+    let n = String.length sub in
+    let rec go i =
+      i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
     in
-    if starts "/" (String.trim last) then top ^ " typing" else top
+    go 0
+  in
+  if has "Everywhere" then "help"
+  else if starts "/" last then
+    if holds "enter keep" last then "runs typing" else "run typing"
+  else if holds "enter open" last then "runs"
+  else if holds "enter zoom" last then "run"
+  else if starts "esc run" last then "zoom"
+  else if starts "↑↓ scroll" last then "details"
+  else "unknown: " ^ last
 
 let model_name st =
   if st.help then "help"
@@ -1310,7 +1431,8 @@ let () =
              demonstration;
            ];
          group "runs" [ filter; stars; metric_filter ];
-         group "run" [ non_finite_count; all_orphans ];
+         group "run"
+           [ non_finite_count; all_orphans; short_of_steps; paired; remarked ];
          group "held" [ held; kept_pane; ended_away; watch_test ];
          stack_test;
        ])
