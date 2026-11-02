@@ -71,25 +71,26 @@
     where its slots fit in [C], or where its dtype is narrower than a byte
     and the host does not address the device's memory, since a piece may
     start inside a byte. For each
-    piece in turn, the device takes every slot's elements there
-    ({!Partition.take}), and one [Reduce] over the leading axes gives the
-    piece's results, the fold's monoid over the slots in C order of their
-    indices by the kernels' association of each output's terms, finished
-    by the maps below. Where the kernels' association of an output's terms
-    depends on their count alone, as nx.cpu's does
-    ({!Nx_cpu.section-lane_order}), each result so has the bits of one
-    [Reduce] of every slot of the group's window. Each device of the route's
+    piece in turn, the device takes the slots' elements there one slot at a
+    time, in C order of their indices ({!Partition.take}), and combines each
+    with what the slots before it gave, by one map of the fold's monoid: the
+    piece's results are the left fold of the slots in that order, finished
+    by the maps below. A device so holds at most two slots of a piece and
+    their combination at a time, and every device folds a window's slots in
+    one order, so each result's bits depend on the slots alone, whatever the
+    pieces and whichever device computes it. Each device of the route's
     result then gathers its window from the pieces, its own where it holds
     them. A [Reduce] of several reductions computes each one alone.
 
     A [Sum], [Prod], [Max] or [Min] partial reduces its tile into the
-    carrier, and the closing reduces the slots by the same monoid. Over
+    carrier, and the closing folds the slots by the same monoid. Over
     integers and booleans this is exact: the result has the bits of the
     reduction on one device. A float or complex [Max] or [Min] has them too
     where it is not a NaN, since {!Nx_kernel.Prog}'s [Maximum] and
     [Minimum] round nothing and put [-0] below [+0]. Any other float or
-    complex result has the kernels' association over its tile and over the
-    slots, and does not keep the bits of the reduction on one device. A
+    complex result has the kernels' association over its tile and the left
+    fold over the slots, and does not keep the bits of the reduction on one
+    device. A
     float sum is within [γ(n - 1) Σ|x|] of the exact sum, as on one device,
     and a complex sum so part by part: a tile of [m] terms sums within
     [γ(m - 1)] of its magnitudes, the slots within [γ(t - 1)] of theirs, and

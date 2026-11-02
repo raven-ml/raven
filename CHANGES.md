@@ -3544,6 +3544,10 @@ thread.
 
 ### Nx
 
+- A fold over a cut axis closes each piece by folding its slots one at a time,
+  in C order of their indices, where one `Reduce` read all of them: a device
+  holds two slots of a piece at a time, so a fully sharded step's closing fits
+  RFC 0005's bound. A float result's association over the slots changes.
 - `Nx_quant.apply` sums a Q6_K weight's int8 quants times their scales, and
   reads Q8_0 where it lies at a float64 input, where it decoded both first;
   float64 products decode other weights at float32. Results keep their bits.

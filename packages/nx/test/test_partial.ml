@@ -1491,6 +1491,12 @@ let tiles_of (type v s d) cuts (x : (v, s, d) Nx.t) =
    leading axis in order: a reduction over axis [0] closes them. *)
 let stack ps = Nx.stack ~axis:0 ps
 
+(* The partials [ps] combined by [f] from the first, in order: a monoid's
+   slots close so. *)
+let fold f = function
+  | p :: ps -> List.fold_left f p ps
+  | [] -> invalid_arg "fold: no partial"
+
 (* A reduction of floats alone [r] of [x] along [axes] from its [tiles], as
    {!combined}: the variance from the mean of the tiles' sums, then the
    tiles' sums of the deviations from it and of their squares; a logsumexp
@@ -1503,7 +1509,7 @@ let floats_combined (type s) r axes tiles (x : (float, s, Nx.Host.d) Nx.t) =
   let n = k (Float.of_int n) in
   let xs = List.map (Nx.cast w) tiles in
   let sum t = Nx.sum ~axes ~keepdims:true t in
-  let sums f = Nx.sum ~axes:[ 0 ] (stack (List.map (fun t -> sum (f t)) xs)) in
+  let sums f = fold Nx.add (List.map (fun t -> sum (f t)) xs) in
   let var () =
     let s = sums Fun.id in
     let m = Nx.where (Nx.isnan s) s (Nx.div s n) in
@@ -1527,7 +1533,7 @@ let floats_combined (type s) r axes tiles (x : (float, s, Nx.Host.d) Nx.t) =
 
 (* The float or complex fold [r] of [x] along [axes] from its [tiles], as
    partial.mli combines them: each tile reduced on the host into the
-   carrier, the partials stacked and reduced, rounded once to [x]'s dtype;
+   carrier, the partials folded in order, rounded once to [x]'s dtype;
    each result kept along [axes]. *)
 let combined (type v s) r axes tiles (x : (v, s, Nx.Host.d) Nx.t) : v array =
   let dt = Nx.dtype x in
@@ -1536,13 +1542,13 @@ let combined (type v s) r axes tiles (x : (v, s, Nx.Host.d) Nx.t) : v array =
   let partials f = List.map (fun t -> f (Nx.cast c t)) tiles in
   let sum t = Nx.sum ~axes ~keepdims:true t in
   match r with
-  | Sum -> elements (Nx.cast dt (Nx.sum ~axes:[ 0 ] (stack (partials sum))))
+  | Sum -> elements (Nx.cast dt (fold Nx.add (partials sum)))
   | Prod ->
       let prod t = Nx.prod ~axes ~keepdims:true t in
-      elements (Nx.cast dt (Nx.prod ~axes:[ 0 ] (stack (partials prod))))
+      elements (Nx.cast dt (fold Nx.mul (partials prod)))
   | Mean ->
       let n = Nx.scalar c (D.of_float c (Float.of_int n)) in
-      let s = Nx.sum ~axes:[ 0 ] (stack (partials sum)) in
+      let s = fold Nx.add (partials sum) in
       elements (Nx.cast dt (Nx.div s n))
   | _ -> (
       match D.kind dt with
@@ -2616,7 +2622,7 @@ let law_cut ~pairs (module S : Sets) c =
           contracted k.acc ad batch contracting (tiled c fst t a)
             (tiled c snd t b) None
         in
-        let sum = Nx.sum ~axes:[ 0 ] (stack (List.map part ts)) in
+        let sum = fold Nx.add (List.map part ts) in
         let sum = if c.init then Nx.add sum (Nx.cast ad init) else sum in
         Nx.cast dt sum
       in
@@ -2833,11 +2839,11 @@ let law_nx_case c =
         (elements a) (elements b) None got
 
 (* A float32 contraction over two pairs, each cut over one axis of a 2 x 2
-   mesh, so that each device holds one product. Its four sums, stacked in
-   C order of the tiles' first indices, are [1e7; -1e7; 0.1; 0]: nx.cpu
-   adds lanes 0 and 2, 1 and 3, then the two, which gives [0.]. Stacked
-   with the second pair's tiles major, they would give [0.1]. The pairs'
-   order leaves the stack's alone. *)
+   mesh, so that each device holds one product. Its four sums, in C order
+   of the tiles' first indices, are [1e7; -1e7; 0.1; 0], which folded in
+   that order give [0.1]. Folded with the second pair's tiles major, as
+   [1e7; 0.1; -1e7; 0], they would give [0.]. The pairs' order leaves the
+   slots' alone. *)
 let test_contract_pair_order () =
   let a =
     Nx.place
@@ -2846,8 +2852,10 @@ let test_contract_pair_order () =
   in
   let b = Nx.ones_like a in
   let sum axes = (elements (Nx.tensordot ~axes a b)).(0) in
-  equal ~msg:"pairs in order" float_exact 0. (sum ([ 0; 1 ], [ 0; 1 ]));
-  equal ~msg:"pairs reversed" float_exact 0. (sum ([ 1; 0 ], [ 1; 0 ]))
+  (* 0.1 rounded to float32. *)
+  let tenth = Int32.float_of_bits (Int32.bits_of_float 0.1) in
+  equal ~msg:"pairs in order" float_exact tenth (sum ([ 0; 1 ], [ 0; 1 ]));
+  equal ~msg:"pairs reversed" float_exact tenth (sum ([ 1; 0 ], [ 1; 0 ]))
 
 (* Scans along cut axes *)
 
