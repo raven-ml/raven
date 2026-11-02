@@ -173,7 +173,9 @@ raven / llama.cpp b12048 Vulkan:
   tighten both if a case shows a wrong store. D163 stores a decoded weight
   for `R` decodes, but a streamed matrix-vector layout decodes it
   `ceil(R / 16)` times, and decoding inline is 2.1-2.3x faster at `R = 64`
-  (bf16 model on fudge): decide which layer counts a consumer's decodes
+  (bf16 model on fudge): decide which layer counts a consumer's decodes. MXFP4 at
+  `R = 12` past L2 runs 3.10 ms on CUDA where a streamed inline decode
+  is modelled at ~640 us
 - running sums cost ~257 ops per element (shape.ml:955): `Nx.cumsum` over
   float64 [100; 50500] takes ~1.0 s on CPU. A scan with constant work per
   element, and a compiled cumsum row
