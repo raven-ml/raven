@@ -124,11 +124,9 @@ let tree_machine ?(gpu = fun _ bus -> Tree.gpu bus) ?(others = [])
     (List.init (2 * mib / page) (fun i -> 0x30_0000 + i));
   (root, m, buses)
 
-(* The GPU at [bus] of [m], its function taken, released at the end of the
-   test. *)
-let take_gpu ?link ?(memory = gpu_memory) ?(pa_bits = 52)
-    ?(tables = Page_table.Pool) ?(format = Fun.id) ~space m bus =
-  let fn = require_ok (Function.take m bus) in
+(* The GPU of the taken function [fn], with its tables and memory. *)
+let on_function ?link ?(memory = gpu_memory) ?(pa_bits = 52)
+    ?(tables = Page_table.Pool) ?(format = Fun.id) ~space fn =
   let g = Tables.memory () in
   let tables =
     Page_table.create ~base:tables_base
@@ -142,6 +140,12 @@ let take_gpu ?link ?(memory = gpu_memory) ?(pa_bits = 52)
     t_tables = tables;
     t_memory = Memory.create ?link fn tables ~bar:0;
   }
+
+(* The GPU at [bus] of [m], its function taken, released at the end of the
+   test. *)
+let take_gpu ?link ?memory ?pa_bits ?tables ?format ~space m bus =
+  on_function ?link ?memory ?pa_bits ?tables ?format ~space
+    (require_ok (Function.take m bus))
 
 (* [with_gpus n f] is [f root m gpus], [gpus] the [n] GPUs of a new tree sharing
    a space, released after. *)
@@ -979,6 +983,122 @@ let test_released_peer () =
     (Memory.pages p);
   Memory.free o.t_memory p;
   List.iter (Memory.free x.t_memory) [ host; gpu; bar ]
+
+(* Interrupted requests
+
+   An exception may land at any allocation of a request, as an asynchronous
+   one does. The request's GPU [a] then stops as its driver stops it, and its
+   peer [b], which shares [a]'s memory, goes on: [b]'s system memory lies in
+   the 2 MiB block of [a]'s, and [b] maps [a]'s system memory. Each walk
+   lands at every allocation of the request, one landing a round, on a new
+   pair of takes of one tree. *)
+
+type request = Alloc of Memory.kind | Map_host | Map_peer of Memory.kind
+
+let pp_request ppf = function
+  | Alloc k -> Format.fprintf ppf "alloc %a" pp_kind k
+  | Map_host -> Format.pp_print_string ppf "map_host"
+  | Map_peer k -> Format.fprintf ppf "map_peer of %a" pp_kind k
+
+let requests =
+  [
+    Alloc Memory.Gpu;
+    Alloc Bar;
+    Alloc Host;
+    Map_host;
+    Map_peer Gpu;
+    Map_peer Host;
+  ]
+
+(* A GPU's stop as its driver makes it: its function's release, then its
+   memory's. *)
+let stop x =
+  Function.release x.t_fn;
+  Memory.release x.t_memory
+
+let window r = require_some ~msg:"a window" (Memory.host r)
+
+(* [request] on [a]: [lent] is memory of the machine [a] borrows, [theirs] a
+   region of [b]'s that [a] maps. *)
+let make request a ~lent ~theirs =
+  match request with
+  | Alloc k -> Memory.alloc a.t_memory k page
+  | Map_host -> Memory.map_host a.t_memory (Window.address lent) page
+  | Map_peer _ -> Memory.map_peer a.t_memory theirs
+
+(* After [a]'s stop, [b] still reads what it wrote to its memory in [a]'s
+   block and to [a]'s memory it maps, and frees and allocates as before. Once
+   [b] stops too, the machine holds none of their system memory and the space
+   none of their addresses, whatever the request took. *)
+let test_cut_request request =
+  let root, m, buses = tree_machine 2 in
+  let rec walk n =
+    let at what = strf "%s, landing at %d" what n in
+    let space = Space.create ~base:space_base space_length in
+    let a = take_gpu ~space m (List.nth buses 0) in
+    let b = take_gpu ~space m (List.nth buses 1) in
+    let own = given (Memory.alloc b.t_memory Host page) in
+    let shared = given (Memory.alloc a.t_memory Host page) in
+    let seen = mapped (Memory.map_peer b.t_memory shared) in
+    Window.write (window own) 0 "b's own";
+    Window.write (window shared) 0 "a's, b maps";
+    let lent = fst (lend a page) in
+    let theirs =
+      match request with
+      | Map_peer k -> given (Memory.alloc b.t_memory k (64 * kib))
+      | Alloc _ | Map_host -> own
+    in
+    let cut =
+      Rig_support.interrupted n (fun () ->
+          ignore (make request a ~lent ~theirs))
+    in
+    stop a;
+    equal ~msg:(at "b's memory in a's block") string "b's own"
+      (Window.read (window own) 0 7);
+    equal ~msg:(at "a's memory through b's mapping") string "a's, b maps"
+      (Window.read (window seen) 0 11);
+    Memory.free b.t_memory seen;
+    if theirs != own then Memory.free b.t_memory theirs;
+    Memory.free b.t_memory own;
+    Memory.free b.t_memory (given (Memory.alloc b.t_memory Host page));
+    stop b;
+    equal ~msg:(at "system memory held") int 0 (held_bytes root);
+    equal ~msg:(at "addresses taken") int 0 (Space.taken space);
+    if n = 1 then equal ~msg:"the walk lands" bool true cut;
+    if cut then walk (n + 1)
+  in
+  walk 1
+
+(* An exception may land at any allocation of an open, from the take of the
+   GPU's function on: the take, the tables and memory, the system and GPU
+   memory it lays out and memory of the machine it keeps for itself. The
+   open's failure releases the function, with no stop of its memory, as
+   [Driver.open_] does before the driver has a stop. The machine then holds
+   none of the open's system memory, the space none of its addresses, and the
+   GPU takes again. *)
+let test_cut_open () =
+  let root, m, buses = tree_machine 1 in
+  let bus = List.hd buses in
+  let rec walk n =
+    let at what = strf "%s, landing at %d" what n in
+    let space = Space.create ~base:space_base space_length in
+    let fn = Function.vacant m bus in
+    let cut =
+      Rig_support.interrupted n (fun () ->
+          ignore (require_ok (Function.take_into fn) : Function.t);
+          let x = on_function ~space fn in
+          ignore (given (Memory.alloc x.t_memory Host page) : Memory.region);
+          ignore (given (Memory.alloc x.t_memory Gpu page) : Memory.region);
+          ignore (lend x page))
+    in
+    Function.release fn;
+    equal ~msg:(at "system memory held") int 0 (held_bytes root);
+    equal ~msg:(at "addresses taken") int 0 (Space.taken space);
+    Function.release (require_ok (Function.take m bus));
+    if n = 1 then equal ~msg:"the walk lands" bool true cut;
+    if cut then walk (n + 1)
+  in
+  walk 1
 
 (* Placement *)
 
@@ -2471,6 +2591,15 @@ let on_files =
         "a released GPU's system memory maps, and its GPU memory is refused, \
          naming it"
         test_released_peer;
+      cases
+        "a request cut at any allocation, then its GPU's stop, leaves its \
+         peer whole and, once the peer stops, nothing held"
+        ~id:(Format.asprintf "%a" pp_request)
+        requests test_cut_request;
+      test
+        "an open cut at any allocation, then its function's release, leaves \
+         nothing held"
+        test_cut_open;
       cases "after the release, a free writes no table"
         ~id:(Format.asprintf "%a" pp_from)
         froms test_free_released;
@@ -2598,6 +2727,30 @@ let test_bus_reserved () =
       Function.release f;
       fail "a take of a GPU whose memory was given succeeded"
   | Error why -> contains ~sub:"given to another PCI function" why
+
+(* System memory given to another function stays through its GPU's stop, as
+   its driver makes it, beside a peer's memory in its 2 MiB block, which the peer
+   reads, frees and gives back as before. *)
+let test_bus_stop () =
+  incr given_spaces;
+  let base = (1 lsl 42) + (!given_spaces * space_length) in
+  let root, m, buses = tree_machine ~others:[ nic () ] ~space:base 2 in
+  let space = Space.create ~base space_length in
+  let a = take_gpu ~space m (List.nth buses 0) in
+  let b = take_gpu ~space m (List.nth buses 1) in
+  let r = given (Memory.alloc a.t_memory Host page) in
+  ignore (require_ok (Memory.bus a.t_memory r ~client:nic_bus));
+  let own = given (Memory.alloc b.t_memory Host page) in
+  Window.write (window r) 0 "given";
+  Window.write (window own) 0 "b's own";
+  let bytes = held_bytes root in
+  stop a;
+  equal ~msg:"b's memory in a's block" string "b's own"
+    (Window.read (window own) 0 7);
+  Memory.free b.t_memory own;
+  stop b;
+  equal ~msg:"the given memory" string "given" (Window.read (window r) 0 5);
+  equal ~msg:"its block held" int bytes (held_bytes root)
 
 (* Each refusal names its cause and reserves nothing: the region frees as
    any. *)
@@ -2734,6 +2887,10 @@ let others =
         "given memory never returns, and the GPU stays taken until the \
          process exits"
         test_bus_reserved;
+      test
+        "given system memory stays through its GPU's stop, and a peer's \
+         memory in its block goes back with the peer's"
+        test_bus_stop;
       cases "a refusal names its cause and reserves nothing"
         ~id:(fun (n, _, _, _, _) -> n)
         refusals test_bus_refused;
