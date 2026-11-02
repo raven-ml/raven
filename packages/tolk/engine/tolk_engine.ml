@@ -1216,11 +1216,18 @@ let inputs (p : part) slots =
 let idle (p : part) =
   Array.fill p.frame.inputs 0 (Array.length p.frame.inputs) p.idle
 
+(* Runs the part [p] on [slots], calling [each] with it and its ends. *)
+let run_part each slots (p : part) =
+  inputs p slots;
+  Fun.protect
+    ~finally:(fun () -> idle p)
+    (fun () -> each p (Rig_program.run p.loaded p.frame))
+
 (* Runs [t]'s parts in order on [slots], calling [each] with each part and its
    ends. A part's storage is made before it runs, in its slot, and returned
-   after the last part that reads it, its memory coming back once the work on it
+   after the last part that takes it, its memory coming back once the work on it
    is done; on a raise, all of it is returned. *)
-let run_parts t ~vars slots each =
+let run_made t ~vars slots each =
   let all = Array.make t.width None in
   Array.blit slots 0 all 0 (Int.min (Array.length slots) t.width);
   Array.iter (fun p -> words p ~vars) t.parts;
@@ -1238,17 +1245,28 @@ let run_parts t ~vars slots each =
     held.(m.slot) <- Some whole;
     all.(m.slot) <- Some buf
   in
-  let run_part (p : part) =
-    List.iter make p.makes;
-    inputs p all;
-    Fun.protect
-      ~finally:(fun () -> idle p)
-      (fun () -> each p (Rig_program.run p.loaded p.frame));
-    List.iter return p.frees
-  in
   Fun.protect
     ~finally:(fun () -> Array.iter return t.made)
-    (fun () -> Array.iter run_part t.parts)
+    (fun () ->
+      Array.iter
+        (fun (p : part) ->
+          List.iter make p.makes;
+          run_part each all p;
+          List.iter return p.frees)
+        t.parts)
+
+(* Runs [t] as {!run_made} does. A schedule that makes no storage runs its
+   parts on the caller's slots, allocating no more than one part's run. *)
+let run_parts t ~vars slots each =
+  if Array.length t.made > 0 then run_made t ~vars slots each
+  else begin
+    for i = 0 to Array.length t.parts - 1 do
+      words t.parts.(i) ~vars
+    done;
+    for i = 0 to Array.length t.parts - 1 do
+      run_part each slots t.parts.(i)
+    done
+  end
 
 (* Reports *)
 
