@@ -1,0 +1,17 @@
+(executable
+ (name bench_munin)
+ (libraries munin unix thumper))
+
+; Not attached to runtest on purpose: run with `dune build @bench`, or run the
+; built exe directly. [--tiny] makes every input small, to see the rows work
+; on a machine where timing is not taken.
+
+(rule
+ (alias bench)
+ ; Serialize bench rules across the workspace: concurrent suites contend for
+ ; cores and distort measurements.
+ (locks %{workspace_root}/bench)
+ (deps
+  (glob_files *.thumper))
+ (action
+  (run %{exe:bench_munin.exe})))

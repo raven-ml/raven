@@ -387,6 +387,7 @@
     :with-test
     (>= 0.2.0)))
   (mdx :with-test)
+  (thumper :with-test)
   ; examples
   (nx
    (and
