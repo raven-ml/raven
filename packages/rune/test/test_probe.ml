@@ -119,9 +119,14 @@ type scan =
     }
       -> scan
 
+(* A row of rank 0, 1 and 2 and a zero-size one: how many rows a step offers
+   does not depend on its row's extent, and a few shapes let the compiled
+   modes' programs repeat across cases. *)
+let rows = [ [||]; [| 0 |]; [| 3 |]; [| 2; 3 |] ]
+
 let scans =
   let open Gen in
-  (let* s = shape in
+  (let* s = of_list ~pp:pp_shape rows in
    let* n = int_range 0 3 in
    let* xs = operand (Array.append [| n |] s) in
    let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any f64 ] in
