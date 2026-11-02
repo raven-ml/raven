@@ -207,12 +207,14 @@ let busy = 32768
 let in_flight = 8
 let in_flight_held = 4
 
-(* The reuse at most that streams before a tensor core is tried: up to it a
-   streamed product runs faster than a core's tiles, which leave each warp a
-   serial reduce. A bfloat16 matrix of 16384 by 4096 multiplies 16 rows in
-   288 us streamed and 805 us on a core, 32 rows in 550 and 840 us; at 64
-   rows the core wins, 1079 to 1149 us against 1149 to 1258 in a model of
-   the kernel. *)
+(* The reuse at most that streams: up to it a streamed product runs faster
+   than a core's tiles, which leave each warp a serial reduce, and than the
+   general rules. A bfloat16 matrix of 16384 by 4096 multiplies 16 rows in
+   288 us streamed and 805 us on a core, 32 rows in 550 and 840 us; 64 rows
+   take 1.55 ms on a core. Past it a float32 operand streamed loses to the
+   general rules' tiles, read once a pass where they share each load: at 64
+   rows 2107 to 2171 us against 1909 to 1987, a 1024-cube product 1054
+   against 398 us. *)
 let stream_first = 32
 
 (* The most values an upcast of one axis takes (apply_opt's bound). *)
@@ -289,43 +291,29 @@ let stride r i =
       else None)
     (split_uop i Op.Add)
 
-(* The accesses an operand [u] of a sum over the ranges [over] computes from,
-   outside the reductions it reads, none when one of those runs inside a range
-   of [over]: the sum would compute it again at each of its steps. A
-   reduction that runs inside none is a value of the outputs alone, as a
-   route's expert found by a reduction over its block is. *)
-let accesses over u =
-  let inside r = List.exists (fun c -> Nodes.mem c (ranges r)) over in
-  if
-    List.exists
-      (fun x -> op x = Op.Reduce && inside x)
-      (Nodes.to_list (backward_slice_with_self ~calls:Skip u))
-  then []
-  else
-    List.filter
-      (fun x -> op x = Op.Index)
-      (toposort ~calls:Skip ~gate:(fun x -> op x <> Op.Reduce) u)
+(* The accesses [u] computes from, when it computes with no reduce. *)
+let accesses u =
+  let slice = Nodes.to_list (backward_slice_with_self ~calls:Skip u) in
+  if List.exists (fun x -> op x = Op.Reduce) slice then []
+  else List.filter (fun x -> op x = Op.Index) slice
 
-let is_sum r = match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false
-
-(* [k]'s contraction: its first reduction that sums a product of two
-   computations of accesses, and the ranges it closes in the order of [k]'s
-   axes. A reduction an operand reads, such as a route's, comes before it. *)
+(* [k]'s contraction: its first reduction, when it sums a product of two
+   computations of accesses with no reduce, and the ranges it closes in the
+   order of [k]'s axes. *)
 let contraction k =
-  List.find_map
-    (fun r ->
+  match K.reduceop k with
+  | Some r
+    when (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
+         && op (nth r 0) = Op.Mul ->
       let m = nth r 0 in
-      if not (is_sum r && op m = Op.Mul) then None
+      if accesses (nth m 0) = [] || accesses (nth m 1) = [] then None
       else
-        let over =
-          List.filter
-            (fun u -> List.memq u (List.tl (src r)))
-            (ranges_of ~reduce:true k [ Weak ])
-        in
-        if accesses over (nth m 0) = [] || accesses over (nth m 1) = [] then
-          None
-        else Some (m, over))
-    (K.reduceops k)
+        Some
+          ( m,
+            List.filter
+              (fun u -> List.memq u (List.tl (src r)))
+              (ranges_of ~reduce:true k [ Weak ]) )
+  | _ -> None
 
 let contracted k =
   match contraction k with Some (_, over) -> over | None -> []
@@ -359,7 +347,7 @@ let main_access k w =
       | Some b when Bigint.(geq (bytes b) (bytes a)) -> best
       | _ -> Some a)
     None
-    (List.filter (fun a -> units a <> []) (accesses red w))
+    (List.filter (fun a -> units a <> []) (accesses w))
 
 (* What [w] is laid out along: [`Rows (u, a)] when the range of unit stride of
    its main access [a] is the contracted range [u], [`Columns g] when it is the
@@ -905,20 +893,26 @@ let locals k =
        0
        (List.sort Stdlib.compare first_three))
 
-(* Past [stream_first], a streamed operand of 4-byte elements or wider is
-   read once a pass, at the speed of memory, where the general rules' tiles
-   share each load among the threads of a workgroup: a float32 matrix of
-   16384 by 4096 at a reuse of 64 took 2107 to 2171 us streamed and 1909 to
-   1987 us tiled, and a float32 product of 1024 by 1024 by 1024 1054 us
-   streamed and 398 us tiled. Narrower elements take more of a pass's time to
-   multiply than to read, and stream faster at every reuse measured: bfloat16,
-   Q8_0 and MXFP4 matrices 1.4 to 3.2 times at a reuse of 32 to 256. *)
-let narrow_bytes = 4
+(* A contraction streams before a tensor core when it sums at least [summed]
+   values an output, between the sums measured: the keys of a decode step's
+   attention, a sum of 64, took 8.4 us on a core and 13.9 to 14.6 us
+   streamed, its 32 lanes holding 2 loads each and a sum across them that a
+   core takes in one step; its values, a sum of 1024, 25.2 to 26.6 us on a
+   core and 14.6 to 15.3 us streamed. *)
+let summed = lanes * in_flight
 
-let narrow k (w, _, _) =
-  match main_access k w with
-  | Some a -> Dtype.itemsize (dtype a) < narrow_bytes
-  | None -> false
+let early k (_, _, reuse) =
+  Bigint.(leq reuse (of_int stream_first))
+  &&
+  let n =
+    List.fold_left
+      (fun n r ->
+        match known_size (shape_at k (index_of r (K.rngs k))) with
+        | Some s -> Option.map (Bigint.mul s) n
+        | None -> None)
+      (Some Bigint.one) (contracted k)
+  in
+  match n with Some n -> Bigint.(geq n (of_int summed)) | None -> true
 
 (* The streamed operand of [k]'s contraction, on a renderer with local
    indices and shared memory. *)
@@ -949,15 +943,13 @@ let general k =
 let hand_coded_optimizations k =
   let s = streams k in
   let stream s = stream (K.copy k) s in
-  let early =
+  let early = match s with Some s when early k s -> stream s | _ -> None in
+  let late () =
     match s with
     | Some ((_, _, reuse) as s) when Bigint.(leq reuse (of_int stream_first))
       ->
         stream s
     | _ -> None
-  in
-  let late () =
-    match s with Some s when narrow k s -> stream s | _ -> None
   in
   match early with
   | Some k -> k

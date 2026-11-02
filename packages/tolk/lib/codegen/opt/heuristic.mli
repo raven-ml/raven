@@ -18,7 +18,8 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     [k] itself is left as it is. The first of these that applies decides:
 
     - {b streaming}, below, when the reuse of the streamed operand is at most
-      32;
+      32 and the contraction sums at least 256 values an output, or a number
+      of them not known;
     - {b tensor cores}, when the setting {!Setting.use_tc} is positive and [k]
       reduces over one axis, or {!Setting.tc_opt} admits more: the first of the
       three candidate axes on which a tensor core applies ({!Opt.Tc}), then
@@ -32,16 +33,14 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       With {!Setting.tc_min_globals}, [M] is upcast and [N] split locally
       whatever the workgroups, and [N] is upcast only while that many
       workgroups remain;
-    - {b streaming} at any reuse, when the streamed operand's main access reads
-      elements of fewer than 4 bytes;
+    - {b streaming}, when the reuse is at most 32;
     - {b grouping}: when the upcastable axes hold at most 2048 elements, the
       first of the first three reduce axes that splits by 16 into local threads
       from the top; nothing more is applied then.
 
     {b Streaming} applies on a renderer with local indices and shared memory,
-    when {!Setting.mv} is on, to [k]'s first reduce that sums a product of two
-    computations of accesses, each of whose own reduces runs inside none of
-    the summed axes. Each element of an operand
+    when {!Setting.mv} is on, to a sum over [k]'s first reduce of a product of
+    two computations of accesses with no reduce. Each element of an operand
     feeds as many outputs as its reuse: the product of the sizes of the global
     axes it does not read, times [d] for each it reads only as its quotient by
     [d]. The operand of least reuse is streamed, or of two of equal reuse the
@@ -60,6 +59,9 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
         threads without reuse, into upcast lanes with it;}
      {- what the threads leave of [u], or else the axis of the next stride, is
         unrolled by its largest divisor up to 8, or 4 with reuse.}}
+    The rows layout declines, and the next rule applies, when no global axis
+    that the streamed operand reads other than as a quotient divides by 4,
+    when [u] takes one thread, or when a split it asks for is refused.
     When that axis is a global axis, after the upcast of the reuse, it splits
     into 32 local threads and 2 upcast lanes, and the first reduce axis into
     the least power of two of local threads that makes 32768 threads, at most

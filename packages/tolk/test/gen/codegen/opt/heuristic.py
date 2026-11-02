@@ -108,16 +108,8 @@ def gguf_mxfp4(n, k):
 
 
 def rows(m):
-    """m rows of a bfloat16 activation by a [64, 128] bfloat16 matrix, each widened to float32."""
-    return empty(m, 128, dtype=dtypes.bfloat16).float() @ empty(64, 128, dtype=dtypes.bfloat16).float().T
-
-
-def routed_by_reduce(rows, n, k, experts):
-    """Each of `rows` rows multiplied by the [n, k] matrix of its expert, which the kernel finds by a reduction over the row's 4
-    candidates: a reduction an operand reads that runs in none of the contraction's ranges."""
-    owner = empty(rows, 4, dtype=dtypes.int).max(1).maximum(0).minimum(experts - 1).cast(dtypes.weakint)
-    w = Tensor(empty(experts, n * k).uop.index(owner.uop)).reshape(rows, n, k)
-    return empty(rows, 1, k) @ w.transpose(1, 2)
+    """m rows of a bfloat16 activation by a [32, 256] bfloat16 matrix, each widened to float32."""
+    return empty(m, 256, dtype=dtypes.bfloat16).float() @ empty(32, 256, dtype=dtypes.bfloat16).float().T
 
 
 def normed(k):
@@ -181,13 +173,13 @@ KERNELS = {
     "rows_m4": lambda: last(rows(4)),
     "rows_m12": lambda: last(rows(12)),
     "rows_m32": lambda: last(rows(32)),
+    # 16 rows summing 64 values each: a sum short enough that a tensor core takes it first
+    "rows_short": lambda: last(empty(16, 64, dtype=dtypes.bfloat16).float() @ empty(32, 64, dtype=dtypes.bfloat16).float().T),
     # quantised matrices whose codes run along a range other than the first of the reduce: Q8_0's 32 values of a block of 34
     # bytes, and GGUF's MXFP4 blocks of 17 bytes, 16 bytes of codes each, at one token; MXFP4 decoded by a table at 12 tokens
     "q8_0_blocks": lambda: last(empty(1, 256) @ q8_0(64, 256).T),
     "gguf_mxfp4": lambda: last(empty(1, 256) @ gguf_mxfp4(64, 256).T),
     "mxfp4_m12": lambda: last(empty(12, 256) @ decoded(64, 256).T),
-    # routed rows whose experts a reduction in the kernel finds
-    "routed_by_reduce": lambda: last(routed_by_reduce(16, 64, 64, 4)),
     # a prompt's routed product, its positions sorted by expert into blocks of 2 rows that share their expert's matrix
     "routed_blocks": lambda: last(routed(8, 2, 64, 64, 4)),
     # the same at bfloat16 in blocks of 64 rows, tiles of a tensor core: the rows are the core's M, each block's matrix its B

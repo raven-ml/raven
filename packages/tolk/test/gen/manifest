@@ -1283,11 +1283,6 @@ codegen/opt/heuristic/routed_blocks_amd.golden
 codegen/opt/heuristic/routed_blocks_cpu.golden
 codegen/opt/heuristic/routed_blocks_cuda.golden
 codegen/opt/heuristic/routed_blocks_metal.golden
-codegen/opt/heuristic/routed_by_reduce.golden
-codegen/opt/heuristic/routed_by_reduce_amd.golden
-codegen/opt/heuristic/routed_by_reduce_cpu.golden
-codegen/opt/heuristic/routed_by_reduce_cuda.golden
-codegen/opt/heuristic/routed_by_reduce_metal.golden
 codegen/opt/heuristic/routed_tiles.golden
 codegen/opt/heuristic/routed_tiles_amd.golden
 codegen/opt/heuristic/routed_tiles_cpu.golden
@@ -1308,6 +1303,11 @@ codegen/opt/heuristic/rows_m4_amd.golden
 codegen/opt/heuristic/rows_m4_cpu.golden
 codegen/opt/heuristic/rows_m4_cuda.golden
 codegen/opt/heuristic/rows_m4_metal.golden
+codegen/opt/heuristic/rows_short.golden
+codegen/opt/heuristic/rows_short_amd.golden
+codegen/opt/heuristic/rows_short_cpu.golden
+codegen/opt/heuristic/rows_short_cuda.golden
+codegen/opt/heuristic/rows_short_metal.golden
 codegen/opt/heuristic/shared_keys.golden
 codegen/opt/heuristic/shared_keys_amd.golden
 codegen/opt/heuristic/shared_keys_cpu.golden

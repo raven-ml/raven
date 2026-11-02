@@ -2196,8 +2196,8 @@ let small_integers seed size =
   let st = Random.State.make [| seed |] in
   Array.init size (fun _ -> Random.State.int st 5 - 2)
 
-(* A tensor core, asked for: the hand-coded optimisations stream a product of
-   up to 32 rows instead of taking a core. *)
+(* A tensor core, asked for, so that the core is what runs whatever the
+   hand-coded optimisations would choose. *)
 let core = [ Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 } ]
 
 let product_on_cuda ?opts_to_apply (dt, (tm, tk, tn), seed) =

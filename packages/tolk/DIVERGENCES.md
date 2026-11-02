@@ -2098,31 +2098,31 @@ Withdrawn: multi-device is out of scope, see README.
 - **tolk:** `Heuristic.lanes`, `Heuristic.rows`, `Heuristic.columns`,
   `Heuristic.sector_lanes`, `Heuristic.busy`, `Heuristic.in_flight`,
   `Heuristic.in_flight_held`, `Heuristic.stream_first`,
-  `Heuristic.upcast_max`, `Heuristic.narrow_bytes`, `Heuristic.run`,
+  `Heuristic.upcast_max`, `Heuristic.summed`, `Heuristic.run`,
   `Heuristic.reuse_ranges`, `Heuristic.reuse`, `Heuristic.stride`,
   `Heuristic.accesses`, `Heuristic.contraction`, `Heuristic.contracted`,
   `Heuristic.units`, `Heuristic.main_access`, `Heuristic.layout`,
-  `Heuristic.streamed`, `Heuristic.narrow`, `Heuristic.stream`,
+  `Heuristic.streamed`, `Heuristic.early`, `Heuristic.stream`,
   `Heuristic.streams` and their order in
   `Heuristic.hand_coded_optimizations`; `Postrange.Scheduler.apply`'s check
   of a group inside a reduce; `test/gen/tinygrad.patch`, which gives tinygrad
   the same before the goldens are recorded.
 - **Differs:**
-  - the contraction: the first reduction of the kernel that sums a product
-    of two computations of accesses, on a renderer with local indices and
-    shared memory; `MV=0` turns it off. An operand may read its loads
-    through conversions (`CAST`, `BITCAST`), decode codes, scale a vector
-    (D81's part), and read reductions that run inside none of the
-    contraction's ranges, as a route's expert found by a reduction is;
+  - the contraction: a sum over the kernel's first reduction of a product of
+    two computations of accesses with no reduce, on a renderer with local
+    indices and shared memory; `MV=0` turns it off. An operand may read its
+    loads through conversions (`CAST`, `BITCAST`), decode codes and scale a
+    vector (D81's part);
   - the streamed operand: an operand's reuse `R` is the product of the sizes
     of the global axes it does not read, times `d` for each it reads only as
     its quotient by `d`. The operand of least `R` is streamed, `W`; of two of
     equal reuse, the one laid out along a contracted range. A gathered
     operand reads every row: `R = 1`;
-  - the order against the tensor cores: up to `R = 32`, the contraction
-    streams before the cores are tried; past it a core takes it where one
-    applies, and where none does it streams when `W`'s main access reads
-    elements under 4 bytes, and takes the other rules otherwise;
+  - the order against the tensor cores: up to `R = 32`, a contraction that
+    sums at least 256 values an output, or a number not known, streams
+    before the cores are tried; a shorter sum tries a core first and streams
+    where none applies. Past `R = 32` a core takes it where one applies, and
+    the other rules where none does;
   - the layout: `W`'s main access is the one with a range of unit stride
     whose terms of contracted ranges span the most bytes. When that range `u`
     is contracted (rows): `W`'s reuse axes are upcast, each by its share of
@@ -2180,16 +2180,22 @@ Withdrawn: multi-device is out of scope, see README.
   - the order against the cores: `stream/dense-bf16-16` 805-807 us on a core
     to 288-289 us streamed, `stream/dense-bf16-32` 839-844 to 548-550 us; at
     `R = 64` the core keeps it (`stream/dense-bf16-64`, 1.55 ms both). The
-    decode step's attention values, `gpt_oss/gpt_oss_decode_values` (`R = 8`
-    over 8 query heads a key head), 25.2-26.6 us on a core to 14.7-15.3 us;
-    its keys, `stream/decode-keys`, 8.4 to 13.9-14.6 us, a reduce of 64 that
-    32 lanes leave 2 loads each and a reduction across them, where the core
-    takes 64 at once; streamed without the upcast of the 8 heads they take
-    16.6 us, so floats are upcast as decoded operands are;
-  - the bound past `R = 32`: a float32 operand streamed is read once a pass,
-    where the other rules' tiles share loads among a workgroup's threads: a
-    float32 product of 1024 by 1024 by 1024 took 1054 us streamed against 398
-    us, 4096 cubed 58.3 against 20.0 ms;
+    decode step's attention values, `gpt_oss/gpt_oss_decode_values` (`R = 8`,
+    a sum of 1024 slots), 25.2-26.6 us on a core to 14.6-15.3 us streamed;
+    its keys, `stream/decode-keys` (`R = 8`, a sum of 64), 8.4 us on a core
+    and 13.9-14.6 us streamed, where 32 lanes leave 2 loads each and a sum
+    across them that a core takes in one step: a sum under 256 values tries
+    the cores first, a constant between the sums measured. Floats are upcast
+    as decoded operands are: streamed without the upcast of their 8 heads the
+    keys took 16.6 us against 13.9-14.6, and the float32 routed blocks hold
+    their 16 rows in 20.6 ms against 28.6 ms in SIMD groups;
+  - the bound past `R = 32`: a streamed operand is read once a pass, where
+    the other rules' tiles share loads among a workgroup's threads. Float32
+    streamed loses from `R = 64` (2107-2171 against 1909-1987 us for a matrix
+    of 16384 by 4096) to `R = 1024` (a 1024-cube product, 1054 against 398
+    us). Narrower operands streamed faster than tiled to `R = 256` in a model
+    of the kernel on tinygrad at the pin, on matrices past L2, which no tolk
+    row confirms: they take the other rules past 32 until one does;
   - unchanged: `stream/dense-bf16-1`, `stream/mxfp4-1`, `stream/decode-head`,
     `stream/q8_0-64`, kaun's `mxfp4-product-1-token` and
     `routed-product-1-tokens`;
@@ -2203,11 +2209,13 @@ Withdrawn: multi-device is out of scope, see README.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
   tinygrad's › applied_opts`, cases `matvec_*`, `vecmat_*`, `gpt_oss_*`,
   `experts_down_*`, `routed_blocks_*`, `shared_keys_*`, `rows_m{4,12,32}_*`,
-  `q8_0_blocks_*`, `gguf_mxfp4_*`, `mxfp4_m12_*` and `routed_by_reduce_*`,
+  `q8_0_blocks_*`, `gguf_mxfp4_*`, `mxfp4_m12_*` and `rows_short_*` (a sum of
+  64 on the cores),
   recorded from the equally patched tinygrad; `streaming › the streamed
   operand's reuse outside a thread is its reuse over its tile`, `› a SIMD
-  group's load of the streamed operand reads whole sectors`, `› an unroll is
-  the largest divisor of its range up to 8, 4 with reuse` and `› a
+  group's load of an operand streamed along the reduce reads whole
+  sectors`, `› the unroll
+  is the largest divisor of its loop up to 8, 4 with reuse` and `› a
   contraction streams up to a reuse of 32, before a tensor core`; `the
   hand-coded optimisations keep a kernel's writes › small kernels ›
   experts_down_metal` (a group inside another reduce); the Postrange suite's
