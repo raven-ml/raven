@@ -912,6 +912,10 @@ thread.
 
 ### Tolk (new)
 
+- `Memory.memory_plan_rewrite` plans a buffer that a call reaches through a
+  view, that call one of its uses, where it left the buffer memory of its own
+  for the whole schedule: a store into a run of a buffer stores through a view
+  of it. `Schedule.create_linear_with_vars` holds the buffers its call views.
 - Of the ready kernels that free storage, a schedule runs one that makes none
   first, then one that frees what it makes: a kernel holds its new storage
   beside what it reads, so a schedule holds less at once.

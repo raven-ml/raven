@@ -1361,8 +1361,9 @@ tinygrad's): the schedules of tinygrad's `test_memory_planner.py`, random
 ones, and those `linear_with_vars` plans for `Tensor` programs on CPU devices.
 `ME › memory_plan_rewrite › laws` states, over generated schedules, that a
 planned buffer is the bytes of an arena at a block, viewed as its type; that
-buffers alive at once share no byte; that copies and other calls use arenas of
-their own; and that held buffers stay.
+buffers alive at once share no byte, a call that views a buffer taking it;
+that copies and other calls use arenas of their own; and that held buffers
+stay.
 
 ### tinygrad
 
@@ -1375,6 +1376,7 @@ their own; and that held buffers stay.
 | tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_copy_bufs_separate_from_compute, test_copy_bufs_reuse_among_copies, test_compute_bufs_reuse_among_compute, test_copy_and_compute_no_cross_reuse | copies and other calls use arenas of their own, each shared within its kind | `ME › memory_plan_rewrite › recorded › copy_apart_from_compute_planned.golden`, `copies_share_planned.golden`, `computes_share_planned.golden`; the laws |
 | tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_multiple_copy_bufs_with_offsets, test_copy_bufs_pinned_mixed | | `ME › memory_plan_rewrite › recorded › copies_held_mixed_planned.golden`; the laws |
 | tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_deferred_copy_frees_chain | a copy's buffer lives on after its last call | replaced by a copy's buffer free from the call after its last (D41): `ME › memory_plan_rewrite › recorded › copy_chain_planned.golden`, recorded from the patched tinygrad; `ME › memory_plan_rewrite › rules › a copy's buffer is free from the call after its last`; the laws |
+| tinygrad: schedule/memory.py `_collect_bufs` (no test) | a call takes the buffers among its sources, so one only views reach is not planned | replaced (D41): a call takes the buffers its sources view too; `ME › memory_plan_rewrite › the buffers a call takes ›` "a buffer a call views is planned", "a buffer viewed after another's life is not placed over it"; the laws; `SC › create_linear_with_vars › recorded › copy_view_linear.golden`, whose call is given a view |
 | tinygrad: schedule/memory.py `_can_plan` on CL and WEBGPU devices | no plan on devices without views | dropped: those devices are excluded (README Exclusions); a disk is `ME › memory_plan_rewrite › recorded › disk_planned.golden` and `ME › memory_plan_rewrite › rules › a schedule on a disk is itself` |
 
 ## Device

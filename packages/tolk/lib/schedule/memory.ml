@@ -71,18 +71,15 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
        appearance. *)
     let first = Tbl.create 64 and last = Tbl.create 64 in
     let order = ref [] and copy_bufs = Tbl.create 16 in
-    (* A buffer a call reaches through a view stays where it is: the plan does
-       not see the calls that reach it that way. *)
-    let through_views = Tbl.create 16 in
+    (* A call takes the buffers it passes and those it views: a store into a
+       run of a buffer passes a view of it. *)
     List.iteri
       (fun i si ->
         List.iter
           (fun (kind, args) ->
-            List.iter
-              (fun b -> Tbl.replace through_views b ())
-              (List.concat_map viewed args);
             let call_bufs =
-              List.filter (can_plan held) (List.concat_map collect_bufs args)
+              List.filter (can_plan held)
+                (List.concat_map (fun a -> collect_bufs a @ viewed a) args)
             in
             List.iter
               (fun b ->
@@ -96,9 +93,7 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
               List.iter (fun b -> Tbl.replace copy_bufs b ()) call_bufs)
           (uses si))
       (src linear);
-    let bufs =
-      List.filter (fun b -> not (Tbl.mem through_views b)) (List.rev !order)
-    in
+    let bufs = List.rev !order in
     if List.is_empty bufs then linear
     else begin
       (* Copies and kernels plan in separate lanes, lest reuse add a dependency

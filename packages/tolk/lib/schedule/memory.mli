@@ -17,15 +17,15 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     {!Op.Linear} of calls run in order, with its buffers placed in arenas.
 
     A buffer is planned unless it is among [held_bufs] (default [[]]), whose
-    contents outlive the schedule, lives on a disk, or is reached through a view
-    ({!Op.Shrink}, {!Op.Bitcast}, {!Op.After}) by some call. A call takes the
-    buffers of its arguments, an argument passing itself if it is a buffer. A
-    buffer lives from the first call that takes it to the last, a loop around
-    calls ({!Op.End} or {!Op.Backedge}) counting as one call that takes the
-    buffers of each of its calls and a back edge's flag. The buffers of copies,
-    the calls whose body is an {!Op.Store}, are planned apart from the others
-    on each device, so that planning adds no dependency between copies and
-    kernels. A buffer's bytes are free from the call after its last: an arena
+    contents outlive the schedule, or lives on a disk. A call takes the buffers
+    of its arguments, an argument passing itself if it is a buffer and the
+    buffers it views if it is a view ({!Op.Shrink}, {!Op.Bitcast},
+    {!Op.After}). A buffer lives from the first call that takes it to the
+    last, a loop around calls ({!Op.End} or {!Op.Backedge}) counting as one
+    call that takes the buffers of each of its calls and a back edge's flag.
+    The buffers of copies, the calls whose body is an {!Op.Store}, are planned
+    apart from the others on each device, so that planning adds no dependency
+    between copies and kernels. A buffer's bytes are free from the call after its last: an arena
     is one allocation, and the executor runs the work that writes an
     allocation after every earlier use of it, a copy's included.
 
@@ -34,10 +34,10 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     phase ({!Ops.type-param_arg}) together are rounded up to 256 bytes, and its
     place is found by a {!Support_memory.Tlsf_allocator}, the buffers ending at
     a call freed before those starting there are placed. Each planned buffer is
-    replaced wherever [linear] reaches it outside call bodies by the bytes of
-    its arena from its phase past its place ({!Shape.shrink}), viewed as its
-    type ({!Ops.bitcast}), so that it keeps its phase. New arenas take
-    the next slots ({!Ops.unique_num}).
+    replaced wherever [linear] reaches it outside call bodies, inside views
+    included, by the bytes of its arena from its phase past its place
+    ({!Shape.shrink}), viewed as its type ({!Ops.bitcast}), so that it keeps
+    its phase. New arenas take the next slots ({!Ops.unique_num}).
 
     [linear] is itself if {!Setting.no_memory_planner} is set or no buffer is
     planned. With {!Setting.debug} at [1] or more, the memory saved is printed

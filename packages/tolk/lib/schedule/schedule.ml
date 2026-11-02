@@ -975,7 +975,12 @@ let create_linear_with_vars ?(capturing = false) big_sink =
   in
   if capturing then (linear, var_vals)
   else
+    (* The storage the call is given, passed or viewed, outlives it. *)
     let held_bufs =
-      List.filter (fun b -> op b = Op.Buffer) (List.tl (src linear_call))
+      List.filter_map
+        (fun a ->
+          let b = storage_base a in
+          if op b = Op.Buffer then Some b else None)
+        (List.tl (src linear_call))
     in
     (Memory.memory_plan_rewrite ~held_bufs linear, var_vals)

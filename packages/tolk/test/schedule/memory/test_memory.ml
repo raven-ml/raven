@@ -123,11 +123,22 @@ let taken =
           in
           let r = Ops.range ~axis_type:Loop (Int 2) [ 0 ] in
           equal (list uop) [ a; c; b ] (Memory.taken (Ops.end_ si [ r ])));
-      test "a view of a buffer keeps it out of the plan" (fun () ->
+      test "a buffer a call views is planned" (fun () ->
           let linear = run [ c; Shape.shrink a [ Some (Int 0, Int 4) ] ] in
           let planned = Memory.memory_plan_rewrite linear in
-          equal (list bool) [ true; false ]
+          equal (list bool) [ true; true ]
             (List.map (planned_away planned) [ c; a ]));
+      test "a buffer viewed after another's life is not placed over it"
+        (fun () ->
+          let a = buf 256 and b = buf 256 and x = buf 256 in
+          let view = Shape.shrink a [ Some (Int 0, Int 4) ] in
+          let call args = Ops.call (Ops.sink args) args in
+          let linear =
+            Ops.v Linear ~src:[ call [ a; x ]; call [ b; x ]; call [ view; x ] ]
+          in
+          let planned = Memory.memory_plan_rewrite ~held_bufs:[ x ] linear in
+          equal (list int) [ 512 ]
+            (List.map Shape.max_numel (arenas linear planned)));
     ]
 
 (* Rules *)
@@ -170,23 +181,28 @@ let rules =
 (* Laws
 
    Over generated schedules of calls of buffers, some calls copies between two,
-   some buffers held: a planned buffer is the bytes of an arena at its place,
+   some arguments views of a buffer, some buffers held: a planned buffer is the
+   bytes of an arena at its place,
    viewed as its type and at its phase; two buffers whose lifetimes meet never
    share a byte;
    copies and the other calls use arenas of their own; held buffers stay. A
-   buffer lives from the first call that takes it to the last. *)
+   buffer lives from the first call that takes it, passed or viewed, to the
+   last. *)
 
 type drawn = {
   sizes : (int * Dtype.t * int) list;
-  calls : (int list * bool) list;
+  calls : ((int * bool) list * bool) list;
   held : int list;
 }
 
 let pp_drawn ppf d =
+  let pp_arg (b, view) =
+    if view then Printf.sprintf "view %d" b else string_of_int b
+  in
   let pp_call ppf (bs, copy) =
     Format.fprintf ppf "%s(%s)"
       (if copy then "copy" else "call")
-      (String.concat ", " (List.map string_of_int bs))
+      (String.concat ", " (List.map pp_arg bs))
   in
   Format.fprintf ppf "sizes [%s], %a, held [%s]"
     (String.concat "; "
@@ -211,9 +227,12 @@ let drawn =
          (of_list [ 0; 0; 4; 12 ]))
   and+ calls =
     list ~size:(int_range 1 12)
-      (let* bs = list ~size:(int_range 1 4) buffer in
+      (let* bs = list ~size:(int_range 1 4) (pair buffer bool) in
        let+ copy = bool in
-       (bs, copy && List.length bs = 2 && List.hd bs <> List.nth bs 1))
+       let copy =
+         copy && List.length bs = 2 && fst (List.hd bs) <> fst (List.nth bs 1)
+       in
+       (bs, copy))
   and+ held = list ~size:(int_range 0 3) buffer in
   { sizes; calls; held }
 
@@ -223,22 +242,35 @@ let build d =
   let buffers =
     Array.of_list (List.map (fun (n, dt, phase) -> buf ~dt ~phase n) d.sizes)
   in
+  (* A call passes a buffer, or views its first element. *)
+  let arg (i, view) =
+    let b = buffers.(i) in
+    if view then Shape.shrink b [ Some (Int 0, Int 1) ] else b
+  in
   let calls =
     List.map
       (fun (bs, copy) ->
-        let bs = List.map (fun i -> buffers.(i)) bs in
-        if copy then Shape.store_call (List.hd bs) (List.nth bs 1)
-        else Ops.call (Ops.sink bs) bs)
+        if copy then
+          let dst, src = (fst (List.hd bs), fst (List.nth bs 1)) in
+          Shape.store_call buffers.(dst) buffers.(src)
+        else
+          let args = List.map arg bs in
+          Ops.call (Ops.sink args) args)
       d.calls
   in
   (buffers, Ops.v Linear ~src:calls, List.map (fun i -> buffers.(i)) d.held)
 
-(* [placed linear planned] is each buffer a call of [linear] passes, with what
-   the same call of [planned] passes in its place. *)
+(* [placed linear planned] is each buffer a call of [linear] passes or views,
+   with what the same call of [planned] passes or views in its place. *)
 let placed linear planned =
+  let unview (a, p) =
+    if Ops.op a = Shrink then (Ops.nth a 0, Ops.nth p 0) else (a, p)
+  in
   List.concat
     (List.map2
-       (fun c p -> List.combine (List.tl (Ops.src c)) (List.tl (Ops.src p)))
+       (fun c p ->
+         List.map unview
+           (List.combine (List.tl (Ops.src c)) (List.tl (Ops.src p))))
        (Ops.src linear) (Ops.src planned))
 
 let view u =
@@ -255,7 +287,7 @@ let lifetimes d =
   List.iteri
     (fun i (bs, copy) ->
       List.iter
-        (fun b ->
+        (fun (b, _) ->
           if not (Hashtbl.mem first b) then Hashtbl.replace first b i;
           Hashtbl.replace last b i;
           if copy then Hashtbl.replace copies b ())
@@ -335,6 +367,14 @@ let plans d =
         views)
     views;
   cover "buffers share an arena" (List.length views > 1);
+  cover "a buffer a call views is planned"
+    (List.exists
+       (fun (bs, copy) ->
+         (not copy)
+         && List.exists
+              (fun (b, view) -> view && List.mem_assoc b views)
+              bs)
+       d.calls);
   cover "a buffer off 16 bytes is planned"
     (List.exists
        (fun (b, _) -> snd (Shape.storage_phase buffers.(b)) <> 0)

@@ -1078,28 +1078,34 @@ own submissions (D146).
 NV's copy engine signalled the high word of a value too. rig's NV driver
 encodes its own releases (D146).
 
-## D41. The memory plan sees a range's calls, leaves buffers reached through views, and holds no copy past its last call
+## D41. The memory plan sees a range's calls and the buffers views reach, and holds no copy past its last call
 
 - **tinygrad:** `schedule/memory.py:27-32` (`memory_plan_rewrite` takes each
   entry's buffers from its sources after the first, through `_collect_bufs`,
   which passes buffers, `MSELECT` and `MSTACK` only) and `:36-43`
-  (`buf_hold`: a copy's buffer lives `last - first + 1` calls past its last).
+  (`buf_hold`: a copy's buffer lives `last - first + 1` calls past its last);
+  `schedule/__init__.py:295` (`create_linear_with_vars` holds the buffers
+  among its call's sources).
 - **tolk:** `Memory.viewed`, `Memory.uses` and
-  `Memory.memory_plan_rewrite`'s lifetimes (`through_views`, the events);
+  `Memory.memory_plan_rewrite`'s lifetimes (`call_bufs`, the events);
+  `Schedule.create_linear_with_vars`'s `held_bufs`;
   `test/gen/tinygrad.patch`, which drops `buf_hold` before the goldens are
   recorded.
 - **Differs:** an `END` of ranges around calls counts as one entry that takes
-  the buffers of each call it runs, and a buffer that some call reaches
-  through a view (`SHRINK`, `BITCAST`, `AFTER`) is not planned. tinygrad
-  takes an `END`'s sources after the first, its ranges, so a buffer used
-  inside a range lives only where it is used outside it; and a buffer reached
-  both directly and through a view lives only where it is reached directly.
-  Either way the plan can place it over bytes another buffer still needs. A
-  schedule that reaches a buffer only through views, as tinygrad's do, plans
-  as tinygrad's. The rule gives up the reuse of a buffer reached through a
-  view: a scan's stacked rows, its double-buffered carries and any other
-  viewed intermediate keep their own memory for the whole schedule, where
-  planning them through their views could share it once they are dead.
+  the buffers of each call it runs, and a call takes the buffers its
+  arguments view (`SHRINK`, `BITCAST`, `AFTER`) as well as those they are.
+  tinygrad takes an `END`'s sources after the first, its ranges, so a buffer
+  used inside a range lives only where it is used outside it; it leaves a
+  buffer only views reach where it is, and a buffer reached both directly and
+  through a view lives only where it is reached directly, so the plan can
+  place it over bytes another buffer still needs. A schedule's call holds the
+  buffers its sources are or view, where tinygrad's holds those they are: its
+  planner never moves a viewed one. No recorded schedule plans a buffer a view
+  reaches, so the patch leaves tinygrad's collection as it is. A planned
+  buffer takes whole blocks of 256 bytes of its arena, so one placed past the
+  arena's other buffers can cost what its own storage did not: rune's
+  `compile/scan/checks-48` row's program holds 75 520 bytes, where it held
+  75 328 with a buffer of 320 bytes, reached through a view, apart.
 
   A copy's buffer is free from the call after its last, as a kernel's is,
   where tinygrad holds it as many calls again, lest a later copy overwrite it
@@ -1108,22 +1114,29 @@ encodes its own releases (D146).
 - **Reason:** (b) for ranges and views: `Rune.scan`'s staged loop (RFC 0012)
   schedules calls inside a range, whose arguments are views that move with
   it, of buffers the calls after it read whole; tinygrad's scheduler hands
-  the planner neither. (c) for the hold: an arena is one rig allocation, and
-  rig orders work that writes an allocation after every use of it by any
-  device (`Rig.section-order`, rule 3, Memory), its device's work by device
-  order (rule 1) and the parts of a submission that share memory (rule 2);
-  `tolk.engine` passes no unordered ref. A later call that reuses a copy's
-  bytes therefore follows the copy, and the hold guards nothing: it only
-  costs memory, as the copy lane of tinygrad's `test_deferred_copy_frees_chain`
-  schedule, which needs 512 bytes with it and 256 without.
+  the planner neither. rune's compiled programs over one device store into
+  runs of a buffer through views of it (D184); left out of the plan, such a
+  buffer would hold its own memory for the whole schedule. (c) for the hold:
+  an arena is one rig allocation, and rig orders work that writes an
+  allocation after every use of it by any device (`Rig.section-order`, rule
+  3, Memory), its device's work by device order (rule 1) and the parts of a
+  submission that share memory (rule 2); `tolk.engine` passes no unordered
+  ref. A later call that reuses a copy's bytes therefore follows the copy,
+  and the hold guards nothing: it only costs memory, as the copy lane of
+  tinygrad's `test_deferred_copy_frees_chain` schedule, which needs 512
+  bytes with it and 256 without.
 - **Pinned by:** the Engine suite (`test/engine/tolk_engine`): `link and
   run › a planned buffer a range writes is not placed over one it leaves` and
   `› a buffer a range writes through a view is not placed over another`, each
   of which fails without its half; the Memory suite
-  (`test/schedule/memory`): `memory_plan_rewrite › rules › a copy's buffer is
-  free from the call after its last`, the recorded `copy_chain`, `random_5`
-  and `random_11` plans of the equally patched tinygrad, and the law over
-  drawn schedules, whose copies live no longer than their last call.
+  (`test/schedule/memory`): `memory_plan_rewrite › the buffers a call takes ›
+  a buffer a call views is planned` and `› a buffer viewed after another's
+  life is not placed over it`, `› rules › a copy's buffer is free from the
+  call after its last`, the recorded `copy_chain`, `random_5` and
+  `random_11` plans of the equally patched tinygrad, and the law over drawn
+  schedules, whose calls view some buffers and whose copies live no longer
+  than their last call; the Schedule suite's recorded `copy_view` schedule,
+  whose copy reads a view of a buffer its call is given.
 
 ## D42. Withdrawn
 

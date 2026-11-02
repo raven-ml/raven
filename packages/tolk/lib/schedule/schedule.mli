@@ -95,7 +95,7 @@ val create_linear_with_vars :
       copies a run of one into a run of the other;
     + unless [capturing] (default [false]), the schedule's buffers are placed in
       arenas ({!Memory.memory_plan_rewrite}), except those the call's arguments
-      name, whose contents outlive the schedule. A jit capturing the schedule
+      name or view, whose contents outlive the schedule. A jit capturing the schedule
       plans it with the schedules it captures along with it.
 
     With the setting {!Setting.spec} at [1] or more, [big_sink] and each body
