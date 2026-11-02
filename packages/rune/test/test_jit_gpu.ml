@@ -690,6 +690,57 @@ let test_routed_prompt () =
         (K.axes_of ~reduce:true o [ Local ]))
     products
 
+(* Quantised products
+
+   [Nx_quant.apply] by one row of [x], as a decode step multiplies each
+   projection, and by 512, as a prompt does: compiled on the GPU, eagerly and
+   compiled on the host, each within {!Nx.contract}'s bound of the float64
+   reference product (Quants.reference). *)
+
+type quant = { format : Quants.format; m : int; seed : int }
+
+let quant_k = 512
+
+let pp_quant ppf c =
+  Format.fprintf ppf "%s by %d rows, seed %d" (Quants.name c.format) c.m c.seed
+
+let quant_gen =
+  let open Gen in
+  (let+ format = of_list Quants.formats
+   and+ m = of_list [ 1; 512 ]
+   and+ seed = int_range 0 1000 in
+   { format; m; seed })
+  |> with_pp pp_quant
+
+let quant_examples =
+  List.concat_map
+    (fun format -> List.map (fun m -> { format; m; seed = 3 }) [ 1; 512 ])
+    Quants.formats
+
+let quant_law c =
+  let _, (module S) = on_gpu () in
+  cover (Printf.sprintf "%s by %d rows" (Quants.name c.format) c.m) true;
+  let blocks = quant_k / Quants.block_values c.format in
+  let w = Quants.weight c.format ~rows:64 ~blocks in
+  let x = value ~seed:c.seed [| c.m; quant_k |] in
+  let exact, side = Quants.reference x w in
+  let near msg y =
+    let e = Nx.to_array exact and y = Nx.to_array (host y) in
+    let b = Nx.to_array side in
+    Array.iteri
+      (fun i e ->
+        less
+          ~msg:(Printf.sprintf "%s at %d" msg i)
+          float_exact ~than:(b.(i) +. Float.min_float)
+          (Float.abs (y.(i) -. e)))
+      e
+  in
+  let compiled w x = Rune.jit' (Nx_quant.apply w) x in
+  near "eager" (Nx_quant.apply w x);
+  near "compiled on the host" (compiled w x);
+  near "compiled on the GPU"
+    (compiled (Nx_quant.place S.on w) (Nx.place S.on x))
+
 let () =
   exit
     (run "Rune.jit on a GPU"
@@ -746,6 +797,12 @@ let () =
               (fun c -> test c.name (over ~devices:4 ~first:1 c))
               mesh_cases);
          group "a contraction on matrix units holds its bound" unit_cases;
+         group "quantised products"
+           [
+             prop ~count:10 ~examples:quant_examples
+               "one row and 512 rows hold the bound, eager and compiled"
+               quant_gen quant_law;
+           ];
          group "keys"
            [
              prop ~count:20

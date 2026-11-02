@@ -324,21 +324,11 @@ let expert_product set c =
 
    [Nx_quant.apply] compiled, at each format and each input dtype, its weight
    on one device of the set, whole on each device or cut along its rows, under
-   a vector or rows of [x]: eager and compiled are each within
-   {!Nx.contract}'s bound of the exact product of [x] with the weight's values,
-   [γ(k + 1, 2u) Σ|x||v|] in its accumulator, float64's for a float64 [x], and
-   round once to [x]'s dtype, half its ulp. *)
-
-type format = Q8_0 | Q6_K | Q4_K | Mxfp4 | Mxfp4_blocks
-
-let format_name = function
-  | Q8_0 -> "q8_0"
-  | Q6_K -> "q6_k"
-  | Q4_K -> "q4_k"
-  | Mxfp4 -> "mxfp4"
-  | Mxfp4_blocks -> "mxfp4_blocks"
-
-let formats = [ Q8_0; Q6_K; Q4_K; Mxfp4; Mxfp4_blocks ]
+   a vector or rows of [x]: eager and compiled are each within the distance
+   {!Quants.reference} states of its float64 product of [x] with the weight's
+   values: {!Nx.contract}'s bound [γ(k + 1, 2u) Σ|x||v|] in the accumulator,
+   float64's for a float64 [x], the reference's own, and half an ulp of
+   [x]'s dtype where it rounds into it. *)
 
 type input = X : (float, 'b) Nx.dtype -> input
 
@@ -351,7 +341,7 @@ let input_name (X dt) = Nx_array.Dtype.name dt
 
 type quant_case = {
   qn : int;
-  format : format;
+  format : Quants.format;
   input : input;
   rows : int;
   blocks : int;
@@ -361,58 +351,18 @@ type quant_case = {
 
 let pp_quant_case ppf c =
   Format.fprintf ppf "%d devices, %s by %s, %d rows of %d blocks, %s%s" c.qn
-    (format_name c.format) (input_name c.input) c.rows c.blocks
+    (Quants.name c.format) (input_name c.input) c.rows c.blocks
     (match c.m with None -> "a vector" | Some m -> Printf.sprintf "%d rows" m)
     (match c.lies with
     | One -> ", the weight on one device"
     | Whole -> ", the weight whole on each device"
     | Rows -> ", the weight cut along its rows")
 
-(* Values and bytes of a block, and the offsets of its float16 fields. *)
-let block_values = function Q8_0 | Mxfp4 | Mxfp4_blocks -> 32 | _ -> 256
-
-let block_bytes = function
-  | Q8_0 -> 34
-  | Q6_K -> 210
-  | Q4_K -> 144
-  | Mxfp4 -> 16
-  | Mxfp4_blocks -> 17
-
-let halves = function
-  | Q8_0 -> [ 0 ]
-  | Q6_K -> [ 208 ]
-  | Q4_K -> [ 0; 2 ]
-  | Mxfp4 | Mxfp4_blocks -> []
-
-(* A weight of [rows] rows of [blocks] blocks, its bytes a fixed pattern, its
-   float16 fields of either sign in [2^-9, 2^-4), and its MXFP4 scale
-   bytes in [118, 136], so that every value is finite. *)
-let quant_weight format ~rows ~blocks =
-  let size = block_bytes format in
-  let count = rows * blocks in
-  let b = Array.init (count * size) (fun i -> ((i * 37) + (i / 7)) mod 256) in
-  for j = 0 to count - 1 do
-    let at o = (j * size) + o in
-    List.iter
-      (fun o -> b.(at (o + 1)) <- (0x18 + (j mod 20)) lor (j mod 2 * 0x80))
-      (halves format);
-    if format = Mxfp4_blocks then b.(at 0) <- 118 + (j mod 19)
-  done;
-  let u8 last a = Nx.create Nx.uint8 [| rows; last |] a in
-  match format with
-  | Q8_0 -> Nx_quant.q8_0 (u8 (blocks * size) b)
-  | Q6_K -> Nx_quant.q6_k (u8 (blocks * size) b)
-  | Q4_K -> Nx_quant.q4_k (u8 (blocks * size) b)
-  | Mxfp4_blocks -> Nx_quant.mxfp4_blocks (u8 (blocks * size) b)
-  | Mxfp4 ->
-      let scales = Array.init count (fun j -> 118 + (j mod 19)) in
-      Nx_quant.mxfp4 ~scales:(u8 blocks scales) (u8 (blocks * size) b)
-
 let quant_cases =
   let open Gen in
   (let* qn = int_range 2 4 in
    let+ format = of_list ~pp:(fun ppf f -> Format.pp_print_string ppf
-         (format_name f)) formats
+         (Quants.name f)) Quants.formats
    and+ input = of_list ~pp:(fun ppf i -> Format.pp_print_string ppf
          (input_name i)) inputs
    and+ rows = int_range 1 (qn + 1)
@@ -451,12 +401,12 @@ let quant_examples =
                lies = List.nth [ One; Rows; Whole; Rows ] i;
              })
            inputs)
-    formats
+    Quants.formats
 
 let quant_product set c =
   let (X dt) = c.input in
   cover
-    (Printf.sprintf "%s by %s" (format_name c.format) (input_name c.input))
+    (Printf.sprintf "%s by %s" (Quants.name c.format) (input_name c.input))
     true;
   let one_row = match c.m with None | Some 1 -> true | Some _ -> false in
   cover "a weight on one device" (c.lies = One);
@@ -466,8 +416,8 @@ let quant_product set c =
     (one_row && c.lies = Rows);
   cover "one row of x by a weight whole on each device"
     (one_row && c.lies = Whole);
-  let k = c.blocks * block_values c.format in
-  let w = quant_weight c.format ~rows:c.rows ~blocks:c.blocks in
+  let k = c.blocks * Quants.block_values c.format in
+  let w = Quants.weight c.format ~rows:c.rows ~blocks:c.blocks in
   let shape = match c.m with None -> [| k |] | Some m -> [| m; k |] in
   let x = Nx.cast dt (value ~seed:3 shape) in
   let w_at, x_at =
@@ -483,30 +433,7 @@ let quant_product set c =
   | Raised m -> fail m
   | Value jit ->
       let eager = f xp xp in
-      let x64 = Nx.cast Nx.float64 x
-      and v64 = Nx.matrix_transpose (Nx_quant.dequant Nx.float64 w) in
-      let exact = Nx.matmul x64 v64 in
-      let mass = Nx.matmul (Nx.abs x64) (Nx.abs v64) in
-      let g =
-        match dt with
-        | Nx_array.Dtype.Float64 ->
-            let v = ldexp 1. (-52) and n = float_of_int (k + 1) in
-            n *. v /. (1. -. (n *. v))
-        | _ -> product (k + 1)
-      in
-      (* One side's distance from [exact]: its sum's bound, and half an ulp
-         of [x]'s dtype at the sum and at least a subnormal step. *)
-      let sum = Nx.mul_s mass g in
-      let side =
-        match dt with
-        | Nx_array.Dtype.Float32 | Nx_array.Dtype.Float64 -> sum
-        | _ ->
-            let format = Nx_array.Dtype.float_format dt in
-            Nx.add sum
-              (Nx.add_s
-                 (Nx.mul_s (Nx.add (Nx.abs exact) sum) (format.epsilon /. 2.))
-                 (format.min_normal *. format.epsilon))
-      in
+      let exact, side = Quants.reference x w in
       let host t = Nx.cast Nx.float64 (Nx.place Nx.Host.on t) in
       let near msg v =
         let e = Nx.to_array exact and v = Nx.to_array (host v) in
