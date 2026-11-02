@@ -2146,9 +2146,14 @@ module Query : sig
       columns ({!section-compiled}) a step that can fail on a value, such as a
       cast that may lose one, raises at the trace.
 
-      A function of [q]'s expressions may be called on rows past a limit. Every
-      reader [fold] opens is closed when it returns, also when [f], a function
-      of [q]'s expressions or a source raises; the exception then propagates.
+      A function of [q]'s expressions may be called on rows past a limit of
+      [q] as written: the optimized plan may read them, as a filter it moves
+      below a sort reads every row. A failure on such a row, an error or an
+      exception, ends the run where the optimized plan, evaluated one row at a
+      time, reads the row, whatever the batches, and is never met elsewhere.
+      Every reader [fold] opens is closed when it returns, also when [f], a
+      function of [q]'s expressions or a source raises; the exception then
+      propagates.
   *)
 
   val run : t -> (table, Error.t) result

@@ -792,10 +792,31 @@ let failing_select =
   in
   Gen.bind (Gen.one_of [ parse; cast; raising ]) (fun x -> above 1 (base x))
 
+(* A slice from the start of rows filtered by a function that raises on a row
+   past it, over a sort: the optimized plan may filter below the sort, which
+   reads every row. The raise's value is the row. *)
+let past_limit =
+  let open Gen in
+  let* n = int_range 3 30 in
+  let* k = int_range 1 (n - 1) in
+  let* r = int_range k (n - 1) in
+  let+ label = int_range 0 99 in
+  let x = Column.v Type.int64 (Array.init n Fun.id) in
+  let f v = if v = r then raise (Boom (label, v)) else 0 in
+  let raising = R.Map (Type.int8, f, R.Col (Type.int64, "x")) in
+  let sorted = R.Sort ([], R.Table (v [ ("x", x) ])) in
+  let filtered = R.Filter (R.Not (R.Is_null raising), sorted) in
+  R.Slice { offset = 0; length = k; plan = filtered }
+
 let plans =
   let drawn = Gen.bind (Gen.int_range 0 3) plan in
   Gen.frequency
-    [ (18, drawn); (2, Gen.bind drawn starved); (2, failing_select) ]
+    [
+      (18, drawn);
+      (2, Gen.bind drawn starved);
+      (2, failing_select);
+      (2, past_limit);
+    ]
 
 let split_plans =
   Gen.with_pp pp_plan
@@ -811,6 +832,7 @@ let split_plans =
 
 (* [attempt f] is [Ok (f ())], or [Error b] where [f] raises [Boom b]. *)
 let attempt f = match f () with r -> Ok r | exception Boom b -> Error b
+
 let error e = Format.asprintf "%a" Error.pp e
 
 (* [same_failure expected actual] checks that the run's [actual] is the
@@ -842,6 +864,28 @@ let occurs w s =
 
 let mentions w p = occurs w (Format.asprintf "%a" pp_plan p)
 
+(* [past p actual] is [true] iff the run's [actual] is a failure that [p] meets
+   on a row past a limit ({!R.beyond}): the optimized plan reads such rows
+   where a step reads all of its input above a step the limit would stop, and
+   a failure there ends the run ({!Query.fold}). An exception is told by its
+   function and the value it raised on, a data failure by its reason. *)
+let past p actual =
+  let raised, reasons = R.beyond p in
+  match actual with
+  | Error b -> List.exists (function Boom b' -> b' = b | _ -> false) raised
+  | Ok (Error e) ->
+      List.exists (fun why -> occurs (": " ^ why ^ ".") (error e)) reasons
+  | Ok (Ok _) -> false
+
+(* [agreeing expected actual] is [true] iff the run's failure [actual] is the
+   reference's [expected]. *)
+let agreeing expected actual =
+  match (expected, actual) with
+  | Error b, Error b' -> b = b'
+  | Ok (Error (row, why)), Ok (Error e) ->
+      occurs (Printf.sprintf ": row %d: %s." row why) (error e)
+  | _ -> false
+
 let agrees p =
   let q = R.query p in
   let kept = Query.equal (Query.optimize q) q in
@@ -855,7 +899,16 @@ let agrees p =
   cover "a sort" (mentions "sort" p);
   cover "a source" (mentions "source" p);
   cover "is_in" (mentions "is_in" p);
-  match (attempt (fun () -> R.run p), attempt (fun () -> Query.run q)) with
+  let expected = attempt (fun () -> R.run p)
+  and actual = attempt (fun () -> Query.run q) in
+  let escaped =
+    Result.fold ~ok:Result.is_error ~error:(fun _ -> true) actual
+    && (not (agreeing expected actual))
+    && past p actual
+  in
+  cover "the run fails past a limit" escaped;
+  match (expected, actual) with
+  | _ when escaped -> ()
   | Ok (Ok cs), Ok (Ok t) ->
       cover "rows in the result" (rows t > 0);
       at_most int ~than:1 (List.length (batches t));
@@ -1008,6 +1061,9 @@ let values_agree (p, E e) =
       match (attempt (fun () -> R.values e p), actual) with
       | Ok (Ok expected), Ok (Ok actual) ->
           equal (array (G.witness (R.type_of e))) expected actual
+      | expected, actual when (not (agreeing expected actual)) && past p actual
+        ->
+          ()
       | Ok (Ok _), Ok (Error e) -> failf "values failed: %s" (error e)
       | Ok (Ok _), Error (label, _) -> failf "values raised Boom %d" label
       | expected, actual ->

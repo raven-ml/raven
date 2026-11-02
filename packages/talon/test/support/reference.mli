@@ -178,6 +178,13 @@ val run : plan -> ((string * column) list, int * string) result
     [Error (row, reason)] where it fails at the row [row] of a step's input,
     [reason] as the run says it. *)
 
+val beyond : plan -> exn list * string list
+(** [beyond p] is the exceptions that functions of [p]'s expressions raise and
+    the reasons its steps fail on rows past a limit: those a slice from the
+    start reads past its own rows when it reads all of its input, as an
+    optimized plan may. Every step goes on past every failure, the failing
+    value null. *)
+
 val values : 'a expr -> plan -> ('a array, int * string) result
 (** [values e p] is [e] on each of [p]'s rows, or [Error (row, reason)] where
     [p] fails, or where [e] fails or is null at [p]'s row [row]. *)

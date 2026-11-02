@@ -385,10 +385,18 @@ let size fr = if fr.one then 1 else Array.length fr.rows
 let start fr =
   Array.fold_left Int.min (if fr.at = [||] then 0 else max_int) fr.at
 
+(* Where {!beyond} reads rows past the limits, it collects the failures met
+   while a slice from the start reads its input past its own rows ([past]), and
+   steps go on past every failure, the failing value null. *)
+type beyond = { mutable past : bool; mutable met : failure list }
+
+let beyond_limits = ref None
+
 let record fr row why =
-  match !(fr.failed) with
-  | Some (r, _) when r <= row -> ()
-  | _ -> fr.failed := Some (row, why)
+  match (!beyond_limits, !(fr.failed)) with
+  | Some b, _ -> if b.past then b.met <- why :: b.met
+  | None, Some (r, _) when r <= row -> ()
+  | None, _ -> fr.failed := Some (row, why)
 
 let fail fr i why = record fr (if fr.one then start fr else fr.at.(i)) why
 
@@ -978,48 +986,68 @@ let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
       in
       List.to_seq (pairs @ rest) ()
 
-let rec rows : plan -> row Seq.t = function
+(* [rows ~past p] is [p]'s rows, evaluated as they are read. Where [past], a
+   slice from the start reads every row of its input, and marks the rows past
+   its own for {!beyond}. *)
+let rec rows ~past : plan -> row Seq.t = function
   | Table t | Source (_, t) -> List.to_seq (table_rows t)
-  | Select (os, p) -> step (local_outs os) (fun fr -> outs fr os) (rows p)
+  | Select (os, p) ->
+      step (local_outs os) (fun fr -> outs fr os) (rows ~past p)
   | Derive (os, p) ->
       step (local_outs os)
         (fun fr -> Array.map2 derived fr.rows (outs fr os))
-        (rows p)
+        (rows ~past p)
   | Filter (e, p) ->
       let keep fr =
         let k = eval fr e in
         Array.of_list
           (List.filteri (fun i _ -> k.(i) = Some true) (Array.to_list fr.rows))
       in
-      step (local e) keep (rows p)
+      step (local e) keep (rows ~past p)
   | Slice { offset; length; plan } when offset >= 0 ->
-      if length = 0 then Seq.empty
-      else
-        let stop =
-          if length > max_int - offset then max_int else offset + length
+      let stop =
+        if length > max_int - offset then max_int else offset + length
+      in
+      if not past then
+        if length = 0 then Seq.empty
+        else Seq.drop offset (Seq.take stop (rows ~past plan))
+      else fun () ->
+        let marked k f =
+          match !beyond_limits with
+          | Some b when k >= stop ->
+              let was = b.past in
+              b.past <- true;
+              Fun.protect ~finally:(fun () -> b.past <- was) f
+          | _ -> f ()
         in
-        Seq.drop offset (Seq.take stop (rows plan))
+        let rec read k rs acc =
+          match marked k rs with
+          | Seq.Nil -> List.rev acc
+          | Seq.Cons (r, rs) -> read (k + 1) rs (r :: acc)
+        in
+        let rs = read 0 (rows ~past plan) [] in
+        List.to_seq (List.filteri (fun i _ -> i >= offset && i < stop) rs) ()
   | Slice { offset; length; plan } ->
       fun () ->
-        let rs = List.of_seq (rows plan) in
+        let rs = List.of_seq (rows ~past plan) in
         let start = List.length rs + offset in
         List.to_seq
           (List.filteri (fun i _ -> i >= start && i - start < length) rs)
           ()
-  | Append (p, rest) -> Seq.append (rows p) (rows rest)
-  | Aggregate (by, os, p) -> aggregate by os (rows p)
+  | Append (p, rest) -> Seq.append (rows ~past p) (rows ~past rest)
+  | Aggregate (by, os, p) -> aggregate by os (rows ~past p)
   | Join { kind; each_left; each_right; on; left; right } ->
       join kind (each_left, each_right) on
         (schema left, schema right)
-        (rows left) (rows right)
+        (rows ~past left) (rows ~past right)
   | Sort (ks, p) ->
       fun () ->
         List.to_seq
-          (List.stable_sort (compare_keys ks) (List.of_seq (rows p)))
+          (List.stable_sort (compare_keys ks) (List.of_seq (rows ~past p)))
           ()
 
 let run p =
-  match List.of_seq (rows p) with
+  match List.of_seq (rows ~past:false p) with
   | exception Failed (row, why) -> Error (row, why)
   | rs ->
       let column (n, Type.Any ty) =
@@ -1029,6 +1057,18 @@ let run p =
       in
       Ok (List.map column (schema p))
 
+let beyond p =
+  let b = { past = false; met = [] } in
+  beyond_limits := Some b;
+  Fun.protect
+    ~finally:(fun () -> beyond_limits := None)
+    (fun () -> try ignore (List.of_seq (rows ~past:true p)) with _ -> ());
+  List.fold_left
+    (fun (raised, reasons) -> function
+      | Raised e -> (e :: raised, reasons)
+      | Data why -> (raised, why :: reasons))
+    ([], []) b.met
+
 let values e p =
   let null = "the value is null; read it through Expr.option" in
   let value fr =
@@ -1036,6 +1076,6 @@ let values e p =
     check fr.failed;
     match v with Some v -> [| v |] | None -> raise (Failed (fr.at.(0), null))
   in
-  match Array.of_seq (step true value (rows p)) with
+  match Array.of_seq (step true value (rows ~past:false p)) with
   | vs -> Ok vs
   | exception Failed (row, why) -> Error (row, why)
