@@ -1,7 +1,7 @@
 (executable
- (name log_run)
+ (name make_store)
  (libraries munin))
 
 (cram
  (package munin)
- (deps log_run.exe %{bin:munin}))
+ (deps make_store.exe %{bin:munin}))
