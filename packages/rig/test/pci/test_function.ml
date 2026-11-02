@@ -1297,14 +1297,17 @@ let test_released_holder how () =
       equal ~msg:"none after its exit" (list string) [] (memory_files root)
 
 (* At a take, the files processes that died left go if they list no function,
-   as one that died being made lists none. A marker whose file is gone goes
-   too. One that lists a function stays until that function's GPU is reset. *)
+   whatever memory they hold, as one that died between giving back a
+   function's memory and leaving its list holds some, or one that died being
+   made holds none. A marker whose file is gone goes too. One that lists a
+   function stays until that function's GPU is reset. *)
 let test_left_files () =
   if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let gpu0 = "0000:03:00.0" and gpu1 = "0000:04:00.0" in
   let root = Tree.make [ Tree.gpu gpu0; Tree.gpu gpu1 ] in
   let add name = Tree.add root ("dev/hugepages/" ^ name) "" in
-  add "rig-pci-1-1";
+  Tree.add root "dev/hugepages/rig-pci-1-1" (String.make (64 * kib) 'm');
+  add "rig-pci-2-2";
   add "rig-pci-3-3";
   add ("rig-pci-3-3.reach-" ^ gpu1);
   add ("rig-pci-4-4.reach-" ^ gpu1);

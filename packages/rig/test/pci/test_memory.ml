@@ -87,6 +87,16 @@ let target = Testable.make ~pp:pp_target ~equal:( = )
 
 let lend_base = space_base + space_length
 
+(* Addresses of a test's own, from [2^42] on: a space and, past it, its lent
+   range, which no other test takes. Memory a process holds is placed by
+   address whatever the tree, so memory one test leaves, as a failing walk
+   may, would refuse another's at the same addresses. *)
+let own_spaces = ref 0
+
+let own_space () =
+  incr own_spaces;
+  (1 lsl 42) + (!own_spaces * 2 * space_length)
+
 (* The page map gives the first [space_frames] bytes of the space the frames
    from [first_frame] on, one after the other. *)
 let space_frames = 64 * mib
@@ -103,11 +113,12 @@ let needs_linux () =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ()
 
 (* The machine of a new tree of [n] GPUs under one root port, as root reads
-   it, its root and their buses, with the space and the lent range
+   it, its root and their buses, with the space and the lent range past it
    reserved. *)
 let tree_machine ?(gpu = fun _ bus -> Tree.gpu bus) ?(others = [])
     ?(space = space_base) n =
   needs_linux ();
+  let lent = space + space_length in
   let buses = List.init n (fun i -> strf "0000:%02x:00.0" (3 + i)) in
   let root = Tree.make ~privileged:true (List.mapi gpu buses @ others) in
   let m = Machine.at root in
@@ -116,11 +127,11 @@ let tree_machine ?(gpu = fun _ bus -> Tree.gpu bus) ?(others = [])
       match Machine.reserve m ~base n with
       | Ok () -> ()
       | Error why -> skip ~reason:why ())
-    [ (space, space_length); (lend_base, 2 * mib) ];
+    [ (space, space_length); (lent, 2 * mib) ];
   let page = Machine.page m in
   Tree.pagemap root ~page space
     (List.init (space_frames / page) (fun i -> first_frame + i));
-  Tree.pagemap root ~page lend_base
+  Tree.pagemap root ~page lent
     (List.init (2 * mib / page) (fun i -> 0x30_0000 + i));
   (root, m, buses)
 
@@ -149,9 +160,9 @@ let take_gpu ?link ?memory ?pa_bits ?tables ?format ~space m bus =
 
 (* [with_gpus n f] is [f root m gpus], [gpus] the [n] GPUs of a new tree sharing
    a space, released after. *)
-let with_gpus ?(memories = []) n f =
-  let root, m, buses = tree_machine n in
-  let space = Space.create ~base:space_base space_length in
+let with_gpus ?(memories = []) ?(base = space_base) n f =
+  let root, m, buses = tree_machine ~space:base n in
+  let space = Space.create ~base space_length in
   let gpus =
     List.mapi
       (fun i bus -> take_gpu ?memory:(List.nth_opt memories i) ~space m bus)
@@ -199,7 +210,7 @@ let held_bytes root =
 
 (* Memory of the machine that a GPU borrows: [n] bytes [alloc_dma] gave its
    function in the lent range. *)
-let lend x n = given (Function.alloc_dma ~va:lend_base x.t_fn n)
+let lend ?(at = lend_base) x n = given (Function.alloc_dma ~va:at x.t_fn n)
 
 let unpinned ~msg x (a, n) =
   raises_match ~msg (Exn.invalid_arg ~sub:"") (fun () ->
@@ -1029,18 +1040,24 @@ let make request a ~lent ~theirs =
    [b] stops too, the machine holds none of their system memory and the space
    none of their addresses, whatever the request took. *)
 let test_cut_request request =
-  let root, m, buses = tree_machine 2 in
+  let base = own_space () in
+  let root, m, buses = tree_machine ~space:base 2 in
   let rec walk n =
     let at what = strf "%s, landing at %d" what n in
-    let space = Space.create ~base:space_base space_length in
+    let space = Space.create ~base space_length in
     let a = take_gpu ~space m (List.nth buses 0) in
     let b = take_gpu ~space m (List.nth buses 1) in
+    (* A failing round stops both, as it would have. *)
+    Fun.protect ~finally:(fun () ->
+        stop a;
+        stop b)
+    @@ fun () ->
     let own = given (Memory.alloc b.t_memory Host page) in
     let shared = given (Memory.alloc a.t_memory Host page) in
     let seen = mapped (Memory.map_peer b.t_memory shared) in
     Window.write (window own) 0 "b's own";
     Window.write (window shared) 0 "a's, b maps";
-    let lent = fst (lend a page) in
+    let lent = fst (lend ~at:(base + space_length) a page) in
     let theirs =
       match request with
       | Map_peer k -> given (Memory.alloc b.t_memory k (64 * kib))
@@ -1077,20 +1094,21 @@ let test_cut_request request =
    the space none of its addresses, and the GPU takes again: the next round's
    take, and one after the walk. *)
 let test_cut_open () =
-  let root, m, buses = tree_machine 1 in
+  let base = own_space () in
+  let root, m, buses = tree_machine ~space:base 1 in
   let bus = List.hd buses in
   let rec walk n =
     let at what = strf "%s, landing at %d" what n in
-    let space = Space.create ~base:space_base space_length in
+    let space = Space.create ~base space_length in
     let fn = require_ok (Function.take m bus) in
     let cut =
+      Fun.protect ~finally:(fun () -> Function.release fn) @@ fun () ->
       Rig_support.interrupted n (fun () ->
           let x = on_function ~space fn in
           ignore (given (Memory.alloc x.t_memory Host page) : Memory.region);
           ignore (given (Memory.alloc x.t_memory Gpu page) : Memory.region);
-          ignore (lend x page))
+          ignore (lend ~at:(base + space_length) x page))
     in
-    Function.release fn;
     equal ~msg:(at "system memory held") int 0 (held_bytes root);
     equal ~msg:(at "addresses taken") int 0 (Space.taken space);
     if n = 1 then equal ~msg:"the walk lands" bool true cut;
@@ -1103,9 +1121,10 @@ let test_cut_open () =
    [map_peer] of its memory, as a callback there makes it: the map is [Ok] or
    [Error], never an exception, and frees as any. *)
 let test_peer_owner_released kind =
+  let base = own_space () in
   let rec walk n =
     let reached =
-      with_gpus 2 @@ fun _ _ gpus ->
+      with_gpus ~base 2 @@ fun _ _ gpus ->
       let o = List.nth gpus 0 and x = List.nth gpus 1 in
       let r = given (Memory.alloc o.t_memory kind (64 * kib)) in
       let release () =
@@ -2209,9 +2228,10 @@ let test_lent_release_cut () =
    once the peer is released too and the releases are finished, a take of the
    owner's bus succeeds. *)
 let test_lent_writer_cut () =
+  let base = own_space () in
   let rec from n =
     let reached =
-      with_gpus 2 @@ fun _ m gpus ->
+      with_gpus ~base 2 @@ fun _ m gpus ->
       let o = List.nth gpus 0 and x = List.nth gpus 1 in
       let bus = Function.bus o.t_fn in
       let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
@@ -2726,13 +2746,9 @@ let bar_base = 0x7c_0000_0000
 
 (* Memory [Memory.bus] gave stays held until the process exits, its system
    memory included, which the process holds by address: each GPU here takes
-   its space at addresses of its own, so no later test's system memory lands
-   on the addresses of memory an earlier one gave. *)
-let given_spaces = ref 0
-
+   its space at addresses of its own ([own_space]). *)
 let with_nic ?(nic = nic ()) ?memory f =
-  incr given_spaces;
-  let base = (1 lsl 42) + (!given_spaces * space_length) in
+  let base = own_space () in
   let root, m, buses = tree_machine ~others:[ nic ] ~space:base 1 in
   let space = Space.create ~base space_length in
   let x = take_gpu ?memory ~space m (List.hd buses) in
@@ -2808,8 +2824,7 @@ let test_bus_reserved () =
    its driver makes it, beside a peer's memory in its 2 MiB block, which the
    peer reads, frees and gives back as before. *)
 let test_bus_stop () =
-  incr given_spaces;
-  let base = (1 lsl 42) + (!given_spaces * space_length) in
+  let base = own_space () in
   let root, m, buses = tree_machine ~others:[ nic () ] ~space:base 2 in
   let space = Space.create ~base space_length in
   let a = take_gpu ~space m (List.nth buses 0) in
@@ -2940,8 +2955,7 @@ type stop = Released | Kept
 let stops = [ ("released", Released); ("kept for another function", Kept) ]
 
 let test_refused_stop (_, stop) =
-  incr given_spaces;
-  let base = (1 lsl 42) + (!given_spaces * space_length) in
+  let base = own_space () in
   let root, m, buses = tree_machine ~others:[ nic () ] ~space:base 1 in
   let bus = List.hd buses in
   let config =
