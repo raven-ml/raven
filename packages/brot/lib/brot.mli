@@ -1670,3 +1670,7 @@ val hold_cache : t -> (unit -> 'a) -> 'a
     [t]'s WordPiece or Unigram model is held, so that what the domain encodes
     with [t] meanwhile takes the path of a thread that finds it held. For
     tests. *)
+
+val cache_set : string -> sets:int -> int
+(** [cache_set key ~sets] is the back set, among [sets], a power of two, that a
+    pretoken cache stores the pretoken [key] of 1 to 15 bytes in. For tests. *)

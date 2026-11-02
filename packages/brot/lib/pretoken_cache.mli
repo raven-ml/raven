@@ -70,6 +70,10 @@ val cached : t -> len_table:int array -> encoder -> encoder
 (** [cached t ~len_table miss] is [encode t ~len_table miss], or [miss] when [t]
     is no cache, as one closure. *)
 
+val set_index : string -> sets:int -> int
+(** [set_index key ~sets] is the back set, among [sets], a power of two, that
+    the pretoken [key] of 1 to {!max_key_len} bytes is stored in. *)
+
 val seed : Buffer.t -> string -> int array -> int -> unit
 (** [seed buf text ids count] appends to [buf] the entry mapping [text] to the
     first [count] of [ids], if a cache can hold it. *)

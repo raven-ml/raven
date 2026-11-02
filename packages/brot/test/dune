@@ -20,7 +20,8 @@
   test_processors
   test_pretokenizers
   test_added_tokens
-  test_json)
+  test_json
+  test_pretoken_cache)
  (modules
   test_tokenization
   test_vocab
@@ -33,7 +34,8 @@
   test_processors
   test_pretokenizers
   test_added_tokens
-  test_json)
+  test_json
+  test_pretoken_cache)
  (package brot)
  (deps
   (glob_files support/parity/*)

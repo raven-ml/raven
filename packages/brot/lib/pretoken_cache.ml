@@ -117,13 +117,14 @@ let none =
     live = 0;
   }
 
+(* A product only carries upward, and the index is the low bits of
+   [product lsr 24]: without the fold, keys that agree in their first five
+   bytes, [▁the] and [▁their], share a set and a front slot. The fold brings
+   the high half of the key down first. *)
 let[@inline] hash_of k0 k1 =
-  Int64.to_int
-    (Int64.shift_right_logical
-       (Int64.mul
-          (Int64.logxor k0 (Int64.mul k1 0x9E3779B97F4A7C15L))
-          0xD6E8FEB86659FD93L)
-       24)
+  let x = Int64.logxor k0 (Int64.mul k1 0x9E3779B97F4A7C15L) in
+  let x = Int64.logxor x (Int64.shift_right_logical x 32) in
+  Int64.to_int (Int64.shift_right_logical (Int64.mul x 0xD6E8FEB86659FD93L) 24)
 
 (* The byte offsets of a hash's back set and front slot. *)
 let[@inline] set_at h mask = (h land mask) lsl 6
@@ -301,6 +302,10 @@ let cached t ~len_table miss : encoder =
     encode t ~len_table miss ids ~opaque text ~pos ~len
 
 (* Seeds *)
+
+let set_index key ~sets =
+  let n = String.length key in
+  hash_of (key0 key n 0 n) (key1 key n 0 n) land (sets - 1)
 
 let seed buf text ids count =
   let len = String.length text in

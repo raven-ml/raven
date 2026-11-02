@@ -2154,3 +2154,5 @@ let hold_cache t f =
   | Alg_wordpiece m -> hold (Wordpiece.encoder_slot m)
   | Alg_unigram m -> hold (Unigram.encoder_slot m)
   | Alg_bpe _ | Alg_wordlevel _ | Alg_chars _ -> f ()
+
+let cache_set = Pretoken_cache.set_index

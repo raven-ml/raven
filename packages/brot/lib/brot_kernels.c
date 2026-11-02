@@ -1120,13 +1120,15 @@ static inline uint64_t key_word1(const unsigned char *s, intnat n, intnat pos,
   return tag | (w & ((1ULL << (8 * (len - 8))) - 1));
 }
 
-/* Pretoken_cache.hash_of: OCaml truncates the shifted hash to 63 bits; only
-   40 bits are set after the shift, so the two agree. The back set and front
-   slot byte offsets are Pretoken_cache.set_at and front_at on this one
-   hash. */
+/* Pretoken_cache.hash_of, with its fold of the key's high half into the low
+   one: OCaml truncates the shifted hash to 63 bits; only 40 bits are set
+   after the shift, so the two agree. The back set and front slot byte
+   offsets are Pretoken_cache.set_at and front_at on this one hash. */
 static inline uint64_t hash_of(uint64_t k0, uint64_t k1)
 {
-  return ((k0 ^ (k1 * 0x9E3779B97F4A7C15ULL)) * 0xD6E8FEB86659FD93ULL) >> 24;
+  uint64_t x = k0 ^ (k1 * 0x9E3779B97F4A7C15ULL);
+  x ^= x >> 32;
+  return (x * 0xD6E8FEB86659FD93ULL) >> 24;
 }
 
 /* The hit test of Pretoken_cache.encode on the back table: way 0 then way 1.

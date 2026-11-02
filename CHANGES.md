@@ -2405,6 +2405,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- The pretoken cache of BPE, WordPiece and Unigram models no longer sends the
+  words that agree in their first five bytes to one place, where `▁the`,
+  `▁they`, `▁them` and `▁their` evicted each other: Mistral merged 169k words
+  over 5 MB of OpenWebText, now 62k.
 - `encode_batch_ids` moves each row's ids into its result with one block copy
   rather than an id at a time.
 - Byte-level BPE (GPT-2 and the cl100k and o200k pipelines) and SentencePiece
