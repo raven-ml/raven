@@ -26,6 +26,8 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### drivers
 
+- a CUDA module load spins while queued GPU work runs (183 ms at gpt-oss's
+  first call, overlapped with compute): wait on an event instead
 - rig.amd over PCI on SDMA 4: program the page queue (regSDMA_PAGE_*,
   doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
   second slot (`Sdma.slots`) and drop its 16 MiB ring (`most_ring`).
@@ -131,6 +133,15 @@ raven / llama.cpp (Vulkan; ROCm):
   a 5 KB r_32_32 kernel, max |x| over `where (i >= j) x xᵀ` at 32x32,
   renders as 32-lane float selects of transposed loads that clang -O2
   takes over 2 min on
+- first call of a cached program (gpt-oss on CUDA: 0.44 s against 0.22 s
+  on the old stack): `Worker.map` spawns up to PARALLEL−1 domains when
+  every program is a disk-cache hit, and their GC stop-the-world costs
+  ~600 ms (prefill) and ~200 ms (step) summed over domains (PARALLEL=1 cut
+  jit_lower from 258 to 72 ms of CPU): spawn only for programs that need a
+  compile; `to_program` reads and parses a cached program in 3-7 ms per
+  kernel; `create_linear_with_vars` on a hit spends ~10 ms on the key
+  digest and ~24 ms in other passes; the engine assembles 4 programs in
+  28-57 ms
 - compile time and launch counts: NUTS on eight_schools lowers to 464
   kernels, 187 of them scalar, 27 CPU-s cold to compile against 2 CPU-s to
   run; a NUTS program takes 9-14 s to build, a
