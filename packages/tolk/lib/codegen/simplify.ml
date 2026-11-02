@@ -399,7 +399,9 @@ let pm_reduce_load_collapse =
               let x = m "x" and y = m "y" and c = m "c" in
               let dt = dtype y in
               if
-                no_range y && no_range c && solves_sum x y c
+                no_range y && no_range c
+                && (not (no_range x))
+                && solves_sum x y c
                 && Dtype.can_lossless_cast dt (dtype (m "s"))
                 && exact dt [ vmin c; vmax c ]
               then Some (eq x O.(cast c dt - y))

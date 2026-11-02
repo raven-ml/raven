@@ -621,6 +621,31 @@ let load_collapsing =
       test "a comparison of a shifted variable is left" (fun () ->
           let u = Ops.O.(var "v" 0 9 + Ops.int 5 < Ops.int 20) in
           equal uop u (load_collapse u));
+      (* The selected value compares two elements read at the index, [x + 1 =
+         c]: neither runs inside a range once the range is the index, so the
+         sum is not lifted out of the equality, which would lift it back. *)
+      test "an equality of two values read at the selected index is reached"
+        (fun () ->
+          let a = buf ~slot:1 ~size:10 Uint8
+          and b = buf ~slot:2 ~size:10 Uint8 in
+          let at t = Ops.cast (Ops.index t [ r ]) Int32 in
+          let hit = Ops.cast (Ops.eq Ops.O.(at b + i32 1) (at a)) Float32 in
+          let u = sum (Ops.where Ops.O.(label <> r) zero hit) [ r ] in
+          let bytes l = Array.of_list (List.map (fun n -> i n) l) in
+          let buffers =
+            [
+              (1, bytes [ 1; 2; 3; 4; 5; 6; 7; 8; 9; 10 ]);
+              (2, bytes [ 0; 2; 2; 4; 4; 6; 6; 8; 8; 10 ]);
+            ]
+          in
+          let at_label v u =
+            Interpreter.eval ~vars:[ ("label", i v) ] ~buffers u
+          in
+          let collapsed = load_collapse u in
+          equal (list int) [] (sizes collapsed);
+          List.iter
+            (fun v -> equal Dtypes.const (at_label v u) (at_label v collapsed))
+            [ 0; 1; 2; 9 ]);
     ]
 
 (* Laws *)
