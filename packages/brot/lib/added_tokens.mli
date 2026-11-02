@@ -29,13 +29,14 @@ val make : normalize:(string -> string) -> token list -> t
 (** [make ~normalize tokens] is the table of [tokens]. [normalize] is the
     tokenizer's normalizer; it is applied to the content of the tokens whose
     [normalized] is [true], since those are matched against normalized text.
-    Tokens whose content is empty, or normalizes to empty, are dropped. Two
+    Tokens whose content is empty are dropped. Two
     tokens with the same content are one: it keeps the identifier of the first
     and the flags of the last.
 
-    Raises [Invalid_argument], naming both, if two tokens of different content
-    are matched against the same text, as two whose [normalized] is set and
-    whose contents normalize alike are. *)
+    Raises [Invalid_argument] if a token whose [normalized] is set normalizes
+    to the empty text, and, naming both, if two tokens of different content are
+    matched against the same text, as two whose [normalized] is set and whose
+    contents normalize alike are. *)
 
 val without_special : t -> t
 (** [without_special t] is [t] with the tokens whose [special] is set no longer

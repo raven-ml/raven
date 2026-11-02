@@ -714,6 +714,19 @@ let test_normalized_collision () =
   let t = make [ added_token ~special:false "A" ] in
   equal ~msg:"one is found" (array int) [| 2 |] (encode_ids t "a")
 
+(* Hugging Face refuses an added token that normalizes to the empty text. *)
+let test_normalized_to_nothing () =
+  let make tokens =
+    word_level ~normalizer:(Normalizer.strip ())
+      ~vocab:[ ("[UNK]", 0); ("a", 1) ]
+      ~unk_token:"[UNK]" ~added_tokens:tokens ()
+  in
+  raises
+    (Invalid_argument "added token \"  \" normalizes to the empty text")
+    (fun () -> make [ added_token ~special:false "  " ]);
+  let t = make [ added_token "  " ] in
+  equal ~msg:"matched raw" (array int) [| 1; 2; 1 |] (encode_ids t "a  a")
+
 let suite =
   [
     test "leftmost longest" test_leftmost_longest;
@@ -745,6 +758,7 @@ let suite =
     test "scan long space run" test_scan_long_space_run;
     law_scan;
     test "normalized collision" test_normalized_collision;
+    test "normalized to nothing" test_normalized_to_nothing;
   ]
 
 let () = exit (run "Added tokens" [ group "added_tokens" suite ])

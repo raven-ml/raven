@@ -2372,6 +2372,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- An added token matched against normalized text whose content normalizes to
+  the empty text is refused with `Invalid_argument`, as Hugging Face refuses
+  it; it used to be dropped silently.
 - WordPiece and Unigram tokenizers keep a pretoken cache per domain, as BPE
   ones do, so a word seen before is not cut again: about a fifth fewer
   instructions for BERT-base and T5-base on OpenWebText. The cache starts at

@@ -364,7 +364,10 @@ let make ~normalize tokens =
         if token.content = "" then None
         else if token.normalized then
           match normalize token.content with
-          | "" -> None
+          | "" ->
+              invalid_arg
+                (Printf.sprintf "added token %S normalizes to the empty text"
+                   token.content)
           | text -> Some { text; token }
         else Some { text = token.content; token }
       in
