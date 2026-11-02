@@ -190,7 +190,8 @@ val compile : Ops.t -> Renderer.t -> Ops.t
     nowhere: neither the program, in memory or on disk, nor its binary, which
     [ren]'s compiler makes ({!Renderer.Compiler.compile}) without reading or
     filling its disk cache table, so that {!Setting.assert_compile} does not
-    apply. A beam search compiles its candidates so.
+    apply. A beam search hands it a renderer whose compiler reads and fills
+    that table ({!Search.beam_search}).
 
     When the setting {!Setting.debug} is [4] or more, the source is printed on
     standard output, and from [7] the binary is disassembled.
