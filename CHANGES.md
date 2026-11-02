@@ -891,6 +891,9 @@ state word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- An operation on an emulated narrow float rounds its result only at the
+  store, and a cast of a float64 or a 32- or 64-bit integer to a narrow float
+  without native arithmetic goes through a float32 rounded to nearest.
 - `Spec.program` accepts an elementwise operation on a vector and a lane of a
   vector read at a variable, and `Spec.vector_program` is gone: a CUDA kernel
   that holds one fails at NVRTC, where it failed at lowering.

@@ -14,12 +14,13 @@
       as many words, and its operations are built from 32-bit ones.
     - A narrow float ({!Dtype.Float16}, {!Dtype.Bfloat16} and the 8-bit floats)
       is stored in its own format, as the unsigned integer of its width, and
-      computed with as a {!Dtype.Float32} that holds a value of the narrow
-      float: a load converts it up, a store converts it down ({!f2f}), and a
-      cast to it or an operation on it computes in {!Dtype.Float32} and rounds
-      its result to it, once, so that the store's conversion is exact. A cast
-      from a source more precise than a {!Dtype.Float32} reaches one rounded
-      to odd. A copy or a selection keeps the stored bits.
+      computed with as a {!Dtype.Float32}: a load converts it up, a store
+      converts it down ({!f2f}). A cast to it rounds its source to it, once; a
+      source more precise than a {!Dtype.Float32} reaches one rounded to odd.
+      An operation on it computes in {!Dtype.Float32}, and its result is
+      rounded to the narrow float only where a store converts it down: a later
+      operation, or a cast of it to another type, reads the unrounded value. A
+      copy or a selection keeps the stored bits.
 
     The conversions are IEEE's: one rounding, to nearest with ties to even,
     gradual underflow, and infinities and NaNs kept where the format has them.

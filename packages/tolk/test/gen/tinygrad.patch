@@ -421,13 +421,10 @@ index d9fee876d..05df72bcc 100644
  from tinygrad.helpers import flatten, DEBUG, EMULATED_DTYPES
  from tinygrad.uop import GroupOp
  from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher, graph_rewrite, shape_to_shape_arg
-@@ -140,6 +141,29 @@ def f2f_store(st, idx, val, fr:DType, to:DType):
+@@ -140,6 +141,26 @@ def f2f_store(st, idx, val, fr:DType, to:DType):
  
  def f2f_rewrite(ctx:FloatDecompCtx, x:UOp) -> UOp: return graph_rewrite(x, pm_float_decomp, ctx=ctx, bottom_up=True)
  
-+# x, a value of the emulating float, rounded to the emulated float: every emulated node holds a value of its float
-+def f2f_round(x:UOp, fr:DType, to:DType) -> UOp: return f2f(f2f(x.bitcast(f2f_dt[to]), to, fr), fr, to)
-+
 +# the bits a value of the emulated float moves from storage without arithmetic: a load, a constant, a selection between
 +# such values, and stacks and lanes of them. a move keeps every code, a signalling NaN's included
 +def f2f_moved(ctx:FloatDecompCtx, x:UOp) -> UOp|None:
@@ -451,20 +448,18 @@ index d9fee876d..05df72bcc 100644
  pm_long_decomp: PatternMatcher = PatternMatcher([
    # the decomp's own bottom-up rewrite can mint bare consts mid-flight: word splitting commits them at the long sibling's dtype
    (UPat(GroupOp.All, name='x'), lambda x: commit_weak_consts(x, next((s.dtype for s in x.src if s.dtype in l2i_dt), None))),
-@@ -183,7 +207,11 @@ pm_float_decomp: PatternMatcher = PatternMatcher([
+@@ -183,7 +204,10 @@ pm_float_decomp: PatternMatcher = PatternMatcher([
    (UPat(Ops.CAST, dtypes.floats, src=(UPat.var("val"),), name="x"), lambda ctx,x,val:
     f2f(f2f(val.cast(ctx.to).bitcast(f2f_dt[ctx.to]), ctx.to, ctx.fr), ctx.fr, ctx.to) if x.dtype == ctx.fr else None),
    (UPat(GroupOp.ALU|{Ops.STACK, Ops.INDEX}, dtypes.floats, name="x"), lambda ctx,x:
--   x.replace(src=tuple(s.cast(ctx.to) if s.dtype == ctx.fr else s for s in x.src)) if x.dtype == ctx.fr else None),
-+   (y if x.op in {Ops.STACK, Ops.INDEX, Ops.WHERE} else f2f_round(y, ctx.fr, ctx.to))
-+   if x.dtype == ctx.fr and (y:=x.replace(src=tuple(s.cast(ctx.to) if s.dtype == ctx.fr else s for s in x.src))) is not None else None),
+    x.replace(src=tuple(s.cast(ctx.to) if s.dtype == ctx.fr else s for s in x.src)) if x.dtype == ctx.fr else None),
 +  # a store of a move stores the bits moved
 +  (UPat(Ops.STORE, src=(UPat.var("idx"), UPat.var("val")), allow_any_len=True, name='st'), lambda ctx,st,idx,val:
 +   st.replace(src=(f2f_rewrite(ctx, idx), bits, *st.src[2:])) if val.dtype == ctx.fr and (bits:=f2f_moved(ctx, val)) is not None else None),
    (UPat(Ops.STORE, src=(UPat.var("idx"), UPat(Ops.BITCAST, dtypes.floats, name="val")), name='st'), lambda ctx,st,idx,val:
     st.replace(src=(idx, val.src[0].bitcast(f2f_dt[ctx.fr]))) if val.dtype == ctx.fr and idx.dtype == f2f_dt[ctx.fr] else None),
    (UPat(Ops.STORE, src=(UPat.var("idx").or_casted(), UPat.var("val", dtypes.floats)), name='st'), lambda ctx,st,idx,val:
-@@ -195,9 +223,14 @@ class DTypeDecompCtx:
+@@ -195,9 +220,14 @@ class DTypeDecompCtx:
    renderer: Renderer
    dtypes: set[DType] = field(default_factory=set)
  

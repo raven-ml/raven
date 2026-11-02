@@ -1583,61 +1583,25 @@ Withdrawn: multi-device is out of scope, see README.
   `shaping ›` tests; and the `Compiler_cpu` suite's `without Clang › an
   object cached by the default compiler is not served under CC`.
 
-## D64. A cast to a narrow float through a float32 rounds once
+## D64. Withdrawn
 
-- **tinygrad:** `renderer/cstyle.py:100-101` (`create_non_native_float_pats`,
-  which casts a source of any type but float32 to a float32, then to the
-  narrow float).
-- **tolk:** the cast rule of `Cstyle.create_non_native_float_pats`, with
-  `Decomp_dtype.narrow` (D9's).
-- **Differs:** a renderer without arithmetic on a narrow float, Clang's on
-  bfloat16 and HIP's on bfloat16 and the 8-bit floats, casts to it through a
-  float32. A source more precise than a float32 (a float64, or an integer of
-  32 or 64 bits) reaches the float32 rounded to odd, as an emulated cast's
-  does (D9), so that the cast rounds once, from the exact value. tinygrad
-  rounds to the float32 to nearest, then again: on the host, the bfloat16 of
-  the int64 `2^40 + 2^32 + 1` is `2^40` there, where its correctly rounded
-  value, which Metal's native conversion gives, is `2^40 + 2^33`. No golden
-  holds such a cast.
-- **Reason:** none. It was (b): nx casts with one rounding, and rune
-  compiled its casts to bfloat16 for the host. rune now rounds a result into a
-  narrow float itself, from a float32 rounded to odd (`Lower_arith.store_real`,
-  `Lower_arith.float_odd`), so no such cast reaches tolk from rune.
-- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `casts to
-  bfloat16 › an integer or a double rounds once on the host`, for
-  int64, int32, uint32, uint64 and float64 sources. On rune: missing (the old
-  rune's `Jit › values › a bfloat16 arange from 2^40 inside a compiled call
-  equals eager's` went with its rewrite).
+A renderer without arithmetic on a narrow float cast a source more precise than
+a float32 to it through a float32 rounded to odd, so that the cast rounded once.
+rune hands tolk only a float32 to cast to a narrow float, which it rounds to odd
+itself when its source is more precise (`Lower_arith.store_real`), so no raven
+cast reached the rule. The cast rule of `Cstyle.create_non_native_float_pats`
+casts through a float32 rounded to nearest, as `renderer/cstyle.py:100-101`
+does.
 
+## D65. Withdrawn
 
-## D65. An emulated value is a value of its float
-
-- **tinygrad:** `codegen/decomp/dtype.py:185-186` (`pm_float_decomp`: an
-  operation on the emulated float computes in the emulating float; only a
-  store rounds its result).
-- **tolk:** `Decomp_dtype.rounded` and the operation rule of
-  `Decomp_dtype.pm_float_decomp`, and `test/gen/tinygrad.patch`, which gives
-  tinygrad the same rule.
-- **Differs:** an operation on an emulated narrow float rounds its result to
-  it in the kernel, as a cast to it does in both: its bits encoded as the
-  narrow float's and decoded back. Every emulated node then holds a value of
-  its float, and the store's conversion is exact. tinygrad rounds an
-  operation's result only at the store, so it feeds the next operation
-  unrounded. A lane, a stack and a selection move values already rounded,
-  and stay as they are.
-- **Reason:** none. It was (b): nx rounds each operation's result to its
-  dtype, and rune compiled chains of operations on the 8-bit floats into one
-  kernel on the host and on Metal, which emulate them. rune now computes each
-  narrow-float operation in float32 and encodes its result itself
-  (`Lower_arith.narrowed`), so no operation on an emulated float reaches
-  tolk from rune.
-- **Pinned by:** the `Decomp_dtype` suite
-  (`test/codegen/decomp/decomp_dtype`): `rounding in the kernel › an
-  operation on an emulated float rounds its result to it`, on every emulated
-  float, and the goldens of every kernel that computes in an emulated float,
-  from the patched tinygrad. On rune: missing (the old rune's
-  `Jit › one device › a chain of 8-bit float operations rounds after each, as
-  eager does` went with its rewrite).
+An operation on an emulated narrow float rounded its result to the float in
+the kernel, so that a chain of operations rounded after each, as nx does. rune
+computes each narrow-float operation in float32 and encodes its result itself
+(`Lower_arith.narrowed`), so no operation on an emulated float reaches tolk
+from rune. The operation rule of `Decomp_dtype.pm_float_decomp` computes in
+the emulating float and rounds at the store, as `codegen/decomp/dtype.py:185-186`
+does; a cast to the emulated float rounds, as `:183-184` does.
 
 ## D66. Withdrawn
 

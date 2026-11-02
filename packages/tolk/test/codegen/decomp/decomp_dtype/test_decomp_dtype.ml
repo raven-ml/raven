@@ -767,18 +767,6 @@ let rounding =
           equal (list value)
             (List.map (rounded dt) in_range)
             (written ~on:on_narrows k [ in_range ]));
-      cases "an operation on an emulated float rounds its result to it"
-        ~id:alias narrows (fun dt ->
-          let xs = List.map (fun x -> code (encode dt x)) in_range in
-          let ys = List.rev xs in
-          let k =
-            kernel [ dt; dt ] Float32 (List.length xs) (fun l ->
-                Ops.cast (Ops.add (List.nth l 0) (List.nth l 1)) Float32)
-          in
-          let sum x y = `Float (decode dt (as_int x) +. decode dt (as_int y)) in
-          equal (list value)
-            (List.map2 (fun x y -> rounded dt (sum x y)) xs ys)
-            (written ~on:on_narrows k [ xs; ys ]));
     ]
 
 (* 64-bit integers *)

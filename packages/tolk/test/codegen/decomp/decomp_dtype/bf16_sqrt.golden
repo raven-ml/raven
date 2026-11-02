@@ -49,70 +49,46 @@
 47 Ops.CUSTOM dtypes.f32 [46] ("f2f bf16 f32 True", dtypes.f32)
 48 Ops.CAST dtypes.f32 [47] dtypes.f32
 49 Ops.SQRT dtypes.f32 [48]
-50 Ops.BITCAST dtypes.u32 [49] dtypes.u32
-51 Ops.CUSTOM dtypes.u16 [50] ("f2f f32 bf16 True", dtypes.u16)
-52 Ops.CUSTOM dtypes.f32 [51] ("f2f bf16 f32 True", dtypes.f32)
-53 Ops.CAST dtypes.f32 [52] dtypes.f32
-54 Ops.ADD dtypes.f32 [53, 13]
-55 Ops.BITCAST dtypes.u32 [54] dtypes.u32
-56 Ops.CUSTOM dtypes.u16 [55] ("f2f f32 bf16 True", dtypes.u16)
-57 Ops.CUSTOM dtypes.f32 [56] ("f2f bf16 f32 True", dtypes.f32)
-58 Ops.BITCAST dtypes.u32 [57] dtypes.u32
-59 Ops.CUSTOM dtypes.u16 [58] ("f2f f32 bf16 True", dtypes.u16)
-60 Ops.STORE dtypes.void [43, 59]
-61 Ops.INDEX dtypes.u16 [42, 17]
-62 Ops.INDEX dtypes.u16 [44, 17]
-63 Ops.LOAD dtypes.u16 [62]
-64 Ops.CUSTOM dtypes.f32 [63] ("f2f bf16 f32 True", dtypes.f32)
-65 Ops.CAST dtypes.f32 [64] dtypes.f32
-66 Ops.SQRT dtypes.f32 [65]
-67 Ops.BITCAST dtypes.u32 [66] dtypes.u32
-68 Ops.CUSTOM dtypes.u16 [67] ("f2f f32 bf16 True", dtypes.u16)
+50 Ops.CAST dtypes.f32 [49] dtypes.f32
+51 Ops.ADD dtypes.f32 [50, 13]
+52 Ops.BITCAST dtypes.u32 [51] dtypes.u32
+53 Ops.CUSTOM dtypes.u16 [52] ("f2f f32 bf16 True", dtypes.u16)
+54 Ops.STORE dtypes.void [43, 53]
+55 Ops.INDEX dtypes.u16 [42, 17]
+56 Ops.INDEX dtypes.u16 [44, 17]
+57 Ops.LOAD dtypes.u16 [56]
+58 Ops.CUSTOM dtypes.f32 [57] ("f2f bf16 f32 True", dtypes.f32)
+59 Ops.CAST dtypes.f32 [58] dtypes.f32
+60 Ops.SQRT dtypes.f32 [59]
+61 Ops.CAST dtypes.f32 [60] dtypes.f32
+62 Ops.ADD dtypes.f32 [61, 13]
+63 Ops.BITCAST dtypes.u32 [62] dtypes.u32
+64 Ops.CUSTOM dtypes.u16 [63] ("f2f f32 bf16 True", dtypes.u16)
+65 Ops.STORE dtypes.void [55, 64]
+66 Ops.INDEX dtypes.u16 [42, 24]
+67 Ops.INDEX dtypes.u16 [44, 24]
+68 Ops.LOAD dtypes.u16 [67]
 69 Ops.CUSTOM dtypes.f32 [68] ("f2f bf16 f32 True", dtypes.f32)
 70 Ops.CAST dtypes.f32 [69] dtypes.f32
-71 Ops.ADD dtypes.f32 [70, 13]
-72 Ops.BITCAST dtypes.u32 [71] dtypes.u32
-73 Ops.CUSTOM dtypes.u16 [72] ("f2f f32 bf16 True", dtypes.u16)
-74 Ops.CUSTOM dtypes.f32 [73] ("f2f bf16 f32 True", dtypes.f32)
-75 Ops.BITCAST dtypes.u32 [74] dtypes.u32
-76 Ops.CUSTOM dtypes.u16 [75] ("f2f f32 bf16 True", dtypes.u16)
-77 Ops.STORE dtypes.void [61, 76]
-78 Ops.INDEX dtypes.u16 [42, 24]
-79 Ops.INDEX dtypes.u16 [44, 24]
-80 Ops.LOAD dtypes.u16 [79]
-81 Ops.CUSTOM dtypes.f32 [80] ("f2f bf16 f32 True", dtypes.f32)
-82 Ops.CAST dtypes.f32 [81] dtypes.f32
-83 Ops.SQRT dtypes.f32 [82]
-84 Ops.BITCAST dtypes.u32 [83] dtypes.u32
-85 Ops.CUSTOM dtypes.u16 [84] ("f2f f32 bf16 True", dtypes.u16)
-86 Ops.CUSTOM dtypes.f32 [85] ("f2f bf16 f32 True", dtypes.f32)
-87 Ops.CAST dtypes.f32 [86] dtypes.f32
-88 Ops.ADD dtypes.f32 [87, 13]
-89 Ops.BITCAST dtypes.u32 [88] dtypes.u32
-90 Ops.CUSTOM dtypes.u16 [89] ("f2f f32 bf16 True", dtypes.u16)
-91 Ops.CUSTOM dtypes.f32 [90] ("f2f bf16 f32 True", dtypes.f32)
-92 Ops.BITCAST dtypes.u32 [91] dtypes.u32
-93 Ops.CUSTOM dtypes.u16 [92] ("f2f f32 bf16 True", dtypes.u16)
-94 Ops.STORE dtypes.void [78, 93]
-95 Ops.INDEX dtypes.u16 [42, 32]
-96 Ops.INDEX dtypes.u16 [44, 32]
-97 Ops.LOAD dtypes.u16 [96]
-98 Ops.CUSTOM dtypes.f32 [97] ("f2f bf16 f32 True", dtypes.f32)
-99 Ops.CAST dtypes.f32 [98] dtypes.f32
-100 Ops.SQRT dtypes.f32 [99]
-101 Ops.BITCAST dtypes.u32 [100] dtypes.u32
-102 Ops.CUSTOM dtypes.u16 [101] ("f2f f32 bf16 True", dtypes.u16)
-103 Ops.CUSTOM dtypes.f32 [102] ("f2f bf16 f32 True", dtypes.f32)
-104 Ops.CAST dtypes.f32 [103] dtypes.f32
-105 Ops.ADD dtypes.f32 [104, 13]
-106 Ops.BITCAST dtypes.u32 [105] dtypes.u32
-107 Ops.CUSTOM dtypes.u16 [106] ("f2f f32 bf16 True", dtypes.u16)
-108 Ops.CUSTOM dtypes.f32 [107] ("f2f bf16 f32 True", dtypes.f32)
-109 Ops.BITCAST dtypes.u32 [108] dtypes.u32
-110 Ops.CUSTOM dtypes.u16 [109] ("f2f f32 bf16 True", dtypes.u16)
-111 Ops.STORE dtypes.void [95, 110]
-112 Ops.AFTER dtypes.void [0, 60, 77, 94, 111]
-113 Ops.END dtypes.void [112, 5]
-114 Ops.SINK dtypes.void [113] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-115 Ops.SINK dtypes.void [41, 114]
+71 Ops.SQRT dtypes.f32 [70]
+72 Ops.CAST dtypes.f32 [71] dtypes.f32
+73 Ops.ADD dtypes.f32 [72, 13]
+74 Ops.BITCAST dtypes.u32 [73] dtypes.u32
+75 Ops.CUSTOM dtypes.u16 [74] ("f2f f32 bf16 True", dtypes.u16)
+76 Ops.STORE dtypes.void [66, 75]
+77 Ops.INDEX dtypes.u16 [42, 32]
+78 Ops.INDEX dtypes.u16 [44, 32]
+79 Ops.LOAD dtypes.u16 [78]
+80 Ops.CUSTOM dtypes.f32 [79] ("f2f bf16 f32 True", dtypes.f32)
+81 Ops.CAST dtypes.f32 [80] dtypes.f32
+82 Ops.SQRT dtypes.f32 [81]
+83 Ops.CAST dtypes.f32 [82] dtypes.f32
+84 Ops.ADD dtypes.f32 [83, 13]
+85 Ops.BITCAST dtypes.u32 [84] dtypes.u32
+86 Ops.CUSTOM dtypes.u16 [85] ("f2f f32 bf16 True", dtypes.u16)
+87 Ops.STORE dtypes.void [77, 86]
+88 Ops.AFTER dtypes.void [0, 54, 65, 76, 87]
+89 Ops.END dtypes.void [88, 5]
+90 Ops.SINK dtypes.void [89] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+91 Ops.SINK dtypes.void [41, 90]
 

@@ -380,10 +380,6 @@ let pm_long_decomp =
 
 (* Floats *)
 
-(* The operations that move values of an emulated float without computing:
-   a lane, a stack and a selection. *)
-let moves = ops [ Op.Stack; Op.Index; Op.Where ]
-
 (* The unsigned integer of a float's width, which holds its bits. *)
 let f2f_dt dt =
   match Dtype.bitsize dt with
@@ -591,8 +587,7 @@ and moved ((fr, _) as ctx) x =
   | _ -> None
 
 (* [x], a value of the emulating float, rounded to the emulated float [fr]: its
-   bits encoded as [fr]'s, decoded back. Every emulated node holds a value of
-   [fr], so a cast or an operation rounds where nx rounds it. *)
+   bits encoded as [fr]'s, decoded back. *)
 and rounded (fr, to_) x =
   f2f (f2f (bitcast x (f2f_dt to_)) to_ fr) fr to_
 
@@ -679,18 +674,13 @@ and pm_float_decomp =
              let x = m "x" in
              if not (emulated ctx x) then None
              else
-               let y =
-                 replace x
-                   ~src:
-                     (List.map
-                        (fun s ->
-                          if Dtype.equal (dtype s) fr then cast s to_ else s)
-                        (src x))
-               in
-               (* A lane, a stack or a selection moves values already of
-                  [fr]; arithmetic rounds its result. *)
                Some
-                 (if Op.Set.mem (op x) moves then y else rounded ctx y));
+                 (replace x
+                    ~src:
+                      (List.map
+                         (fun s ->
+                           if Dtype.equal (dtype s) fr then cast s to_ else s)
+                         (src x))));
          (* A store of a move stores the bits moved. *)
          rule_ctx
            (Upat.v ~op:(ops [ Op.Store ]) ~allow_any_len:true
