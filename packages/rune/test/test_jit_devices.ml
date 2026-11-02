@@ -1602,6 +1602,66 @@ let mapped_programs n =
   let per_device = count per_device in
   (per_device, count accumulated)
 
+(* Partials over a cut axis
+
+   A fold, a scan, a gather or an [Add] scatter over an axis cut across devices
+   computes by partials, each device over its tile of the axis, and gives
+   eager's placement and bits. Each device's positions in the whole axis are
+   its tile's start, which each device's call binds: an argmax along the axis
+   and a scatter over it, of [Add] or into a value cut along it, make programs
+   that do not grow over 2, 4 and 8 memory devices ({!flat}). Each cut is
+   even, so each device's tiles have one shape; the other axis's width depends
+   on [n], so that no two counts share a program. The elements are small
+   integers, so that every sum is exact in any order. *)
+
+let positions ~seed ~bound shape =
+  let n = Array.fold_left ( * ) 1 shape in
+  Nx.create Nx.int64 shape
+    (Array.init n (fun i -> Int64.of_int (((seed * 7) + (i * 5)) mod bound)))
+
+(* The operations whose programs do not grow with the devices. *)
+let uniform = [ "argmax"; "scatter ~combine:Add"; "scatter" ]
+
+(* Each operation's programs over [n] devices ({!keys}), in order. *)
+let partial_programs n =
+  let module S = (val Nx.devices (Array.to_list (Array.sub sixteen 0 n))) in
+  let rows = 4 * n and width = 2 + n in
+  let cut = Nx.Placement.split ~axis:0 S.v and on = Nx.Placement.on S.v in
+  let x = Nx.place cut (integers [| rows; width |]) in
+  let along = Nx.place on (positions ~seed:1 ~bound:rows [| 3; width |]) in
+  let cut_positions =
+    Nx.place cut (positions ~seed:2 ~bound:rows [| rows; width |])
+  in
+  let target = Nx.place on (integers ~seed:3 [| rows; width |]) in
+  let updates = Nx.place on (integers ~seed:4 [| 3; width |]) in
+  let ops =
+    [
+      ("argmax", fun x -> Nx.cast f32 (Nx.argmax ~axis:0 x));
+      ("cumsum", fun x -> Nx.cumsum ~axis:0 x);
+      ("cummax's tangent", fun x -> snd (Rune.jvp' (Nx.cummax ~axis:0) x x));
+      ("cummax's gradient", Rune.grad' (fun x -> Nx.sum (Nx.cummax ~axis:0 x)));
+      ("take_along_axis", fun x -> Nx.take_along_axis ~axis:0 along x);
+      ( "scatter ~combine:Add",
+        fun x -> Nx.scatter ~combine:Add ~axis:0 cut_positions x target );
+      ("scatter", fun x -> Nx.scatter ~axis:0 along updates x);
+      ("sum", fun x -> Nx.sum ~axes:[ 0 ] x);
+    ]
+  in
+  List.map
+    (fun (name, f) ->
+      let evaluated = Rune.evaluations () in
+      let y = ref None in
+      let made = keys (fun () -> y := Some (Rune.jit' f x)) in
+      equal
+        ~msg:(name ^ ": calls evaluated")
+        int evaluated (Rune.evaluations ());
+      let y = Option.get !y and e = f x in
+      equal ~msg:(name ^ ": placement") (placement ()) (Nx.placement e)
+        (Nx.placement y);
+      equal ~msg:name bits_t (bits e) (bits y);
+      (name, made))
+    ops
+
 let examples =
   [
     { n = 2; shape = [| 4; 3 |]; x = Split 0; y = On };
@@ -1758,6 +1818,14 @@ let () =
                  let counts = List.map mapped_programs [ 2; 4; 8; 16 ] in
                  flat "per-device" (List.map fst counts);
                  flat "accumulated" (List.map snd counts));
+             test "partials give eager's bits, argmax's and scatters' programs"
+               (fun () ->
+                 let counts = List.map partial_programs [ 2; 4; 8 ] in
+                 List.iter
+                   (fun name ->
+                     flat ~ns:[ 2; 4; 8 ] name
+                       (List.map (List.assoc name) counts))
+                   uniform);
            ];
          group "each device runs its own kernels"
            [
