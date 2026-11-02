@@ -1321,9 +1321,10 @@ let onto_mesh set =
    copies sums its slots in a kernel of its own from 4 devices on, where over
    2 tolk inlines a sum of two slots into each reader (a value reading at
    most 3 buffers is inlined). A step's programs are counted by their keys,
-   made or kept, so that one this process made before counts. The hidden
-   width grows with [n] so that every cut, the gradients' closing sums'
-   included, is even, and each device's windows have one shape. *)
+   made or kept, so that one this process made before counts. Over 2, 4, 8
+   and 16 devices the hidden width grows with [n], and over 2 to 8, 3, 5 and 6
+   among them, every width is 120, so that every cut, the gradients' closing
+   sums' included, is even, and each device's windows have one shape. *)
 
 let sixteen =
   Array.init 16 (fun k ->
@@ -1340,29 +1341,34 @@ let keys f =
   in
   (List.length keys, String.concat ", " (List.map named keys))
 
-(* Counts over 2, 4, 8 and 16 devices that do not grow with the devices:
-   those over 4, 8 and 16 are equal, and that over 2 is at most theirs. Each
-   count's kernels name what differs. *)
-let flat what counts =
+(* Counts over the device counts [ns], among them 4, that do not grow with the
+   devices: those over 4 devices or more are equal, and those over fewer are
+   at most theirs. Each count's kernels name what differs. *)
+let flat ?(ns = [ 2; 4; 8; 16 ]) what counts =
   let msg =
     String.concat "\n"
       (List.map2
          (fun n (c, names) ->
            Printf.sprintf "%s over %d: %d: %s" what n c names)
-         [ 2; 4; 8; 16 ] counts)
+         ns counts)
   in
-  match List.map fst counts with
-  | [ c2; c4; c8; c16 ] ->
-      at_most ~msg int ~than:c4 c2;
-      equal ~msg (list int) [ c4; c4 ] [ c8; c16 ]
-  | _ -> invalid_arg "flat: four counts"
+  let at = List.combine ns (List.map fst counts) in
+  let four = List.assoc 4 at in
+  List.iter
+    (fun (n, c) ->
+      if n < 4 then at_most ~msg int ~than:four c else equal ~msg int four c)
+    at
 
-let programs n =
+(* [inner] is the step's input width and [hidden] its hidden one, by default
+   [32] and [16 + n]. *)
+let programs ?(inner = 32) ?hidden n =
   let module S = (val Nx.devices (Array.to_list (Array.sub sixteen 0 n))) in
-  let hidden = 16 + n in
-  let x = Nx.place (Nx.Placement.split ~axis:0 S.v) (value [| 4 * n; 32 |]) in
+  let hidden = Option.value hidden ~default:(16 + n) in
+  let x =
+    Nx.place (Nx.Placement.split ~axis:0 S.v) (value [| 4 * n; inner |])
+  in
   let on = Nx.Placement.on S.v in
-  let w1 = Nx.place on (value ~seed:1 [| 32; hidden |]) in
+  let w1 = Nx.place on (value ~seed:1 [| inner; hidden |]) in
   let w2 = Nx.place on (value ~seed:2 [| hidden; 4 |]) in
   let step x (w1, w2) =
     let loss (w1, w2) =
@@ -1706,6 +1712,10 @@ let () =
              test "a data-parallel step's programs do not grow over 2 to 16"
                (fun () ->
                  flat "programs" (List.map programs [ 2; 4; 8; 16 ]));
+             test "nor over 3, 5 and 6, every cut even" (fun () ->
+                 let ns = [ 2; 3; 4; 5; 6; 8 ] in
+                 flat ~ns "programs"
+                   (List.map (programs ~inner:120 ~hidden:120) ns));
            ];
          group "maps over a cut axis"
            [
