@@ -207,6 +207,9 @@ raven / llama.cpp (Vulkan; ROCm):
   core reduce split, or `decoded` covering float widening
 - Metal's packed kernel arguments (8869adcc8, af8961676) have not run on
   Metal hardware; check `rig_metal.mli`'s contract against them on a Mac
+- rune hands tolk one sink over several devices; D170, D173, D177 and D180
+  each exist because of it. Decide whether a per-device sink, which
+  tinygrad's own multi-device path also avoids, would remove them
 
 ## rune, kaun, vega
 
