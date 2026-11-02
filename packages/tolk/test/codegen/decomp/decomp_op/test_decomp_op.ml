@@ -1037,10 +1037,10 @@ let powers_at_width =
             [ 1; bits - 1; bits; bits + 3 ])
         Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ])
 
-(* A quotient or remainder reads a weak divisor in its operand's type: on
-   int32, 2^31 is the least int32, and no shift computes a division by it.
-   Where the divisor is a power of two in the type, the lowering keeps the
-   values. *)
+(* A quotient or remainder reads a weak divisor in its operand's type, as
+   compiled code commits it: on int8, 2^7 is -128, so 1 // 128 is -1 and
+   1 % 128 is -127, and no shift or mask computes them. The lowering keeps the values at every
+   power. *)
 let quotients_at_width =
   test "a quotient by a power of two reads it in its operand's type" (fun () ->
       let shr_and = ops [ Shr; And ] in
@@ -1071,13 +1071,12 @@ let quotients_at_width =
                       (fun n -> Ops.op n = Shr)
                       (Ops.toposort ~calls:Enter r)
                   in
-                  if not power then is_false ~msg shifts
-                  else
-                    List.iter
-                      (fun n ->
-                        let vars = [ ("x", `Int n) ] in
-                        equal ~msg const (at vars e) (at vars r))
-                      points)
+                  if not power then is_false ~msg shifts;
+                  List.iter
+                    (fun n ->
+                      let vars = [ ("x", `Int n) ] in
+                      equal ~msg const (at vars e) (at vars r))
+                    points)
                 [
                   Ops.alu x Div [ c ];
                   Ops.alu x Mod [ c ];

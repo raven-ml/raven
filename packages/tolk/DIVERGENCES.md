@@ -338,7 +338,15 @@ stamps nothing (D146).
   signalling one (D62).
 - **Reason:** (b). rune folds constants with `Dtype`, and nx converts eagerly
   with one rounding. An emulated kernel exists only because its target lacks
-  the type, so it must give the values a native one gives. The 8-bit facets
+  the type, so it must give the values a native one gives. The emulated
+  cast's rounding to odd: (e). rune hands tolk only a float32 to cast to a
+  narrow float, so no raven call site reaches it, but without it the cast
+  rounds twice, first to a float32 to nearest: `1 + 2^-8 + 2^-40` becomes
+  bfloat16 `0x3f80` (1.0) where IEEE's one rounding, which `Dtype.truncate`
+  folds, gives `0x3f81` (1.0078125). Repro on the CPU with
+  `EMULATED_DTYPES=bfloat16`: `Tensor([1 + 2**-8 + 2**-40],
+  dtype=dtypes.float64).cast(dtypes.bfloat16).bitcast(dtypes.uint16)`
+  gives `0x3f80`. The 8-bit facets
   have no consumer: rune hands tolk no 8-bit float, since it stores each as
   `Uint8` and converts it itself (rune's `Lower_arith.dtype`), and no other
   raven code names one.
@@ -348,8 +356,8 @@ stamps nothing (D146).
   integer rounds to a narrower float once, from its value`; for emulation, one
   test per facet in `Tolk.Decomp_dtype › narrow float conversions are IEEE
   conversions`: `an emulated narrow float keeps its subnormals, both ways`, `a
-  double, or an integer more precise than a float32, rounds once`, `an
-  emulated 64-bit integer converts to a float32 once`, `an fnuz format stores
+  double, or an integer more precise than a float32, rounds once` (the
+  rounding to odd: `1 + 2^-8 + 2^-40` is `0x3f81`), `an emulated 64-bit integer converts to a float32 once`, `an fnuz format stores
   an underflow to negative zero as positive zero`; `Tolk.Decomp_dtype › NaNs ›
   f2f narrows a quiet NaN to a quiet NaN` and `› an emulated cast of a quiet
   float32 or double NaN is a quiet NaN`, which state the rule;
@@ -4150,6 +4158,15 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   dtype=dtypes.int32).contiguous().realize(); p = y * c; (p * p).tolist()`
   renders `<< 32` and `<< 36` on the CPU for `c = 65536`, and for `c = -2**31`
   renders `<< 62` and the literal `73786976294838206464`, which clang refuses.
+  A quotient's rule computes a value its own folder does not: on int8 the
+  folder gives `1 // 128` as -1 and `1 % 128` as -127, reading 128 as -128,
+  while the rules lower `x // 128` to `x >> 7` and `x % 128` to `x & 127`, 0
+  and 1 at `x = 1`; on int32 `x // 2**31` becomes `x >> 31`, 0 where the
+  folder gives -1. Repro: `x = UOp.variable("x", -128, 127, dtypes.int8);
+  graph_rewrite(x.alu(Ops.DIV, UOp.const(128)),
+  get_simplifying_rewrite_patterns((Ops.SHR, Ops.AND, Ops.CMPLT,
+  Ops.CMPNE)))` against `UOp.const(1, dtypes.int8).alu(Ops.DIV,
+  UOp.const(128)).simplify()`.
 - **tolk:** `Shape.wrap_folded` and its use in `Shape.symbolic_simple`
   (the two stage fold); `Decomp_op.at_width`, `Decomp_op.power_of_two` and
   `Decomp_op.shift_of`; `test/gen/tinygrad.patch`, which makes
@@ -4162,16 +4179,23 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   remainder reads it in the operand's type, before it becomes a shift or a
   mask: no shift reaches the width, and on int32 a division by `2^31`, the
   least int32, is no shift.
-- **Reason:** (b). rune's compiled `Nx.square (Nx.mul c y)` at int32 and
-  uint32, with `c` 65536 or the least int32, gave values that varied by run
-  where eager gives 0: rune's `jit gives eager's bits for exact functions at
-  every dtype` left such functions out.
-- **Pinned by:** the `Symbolic` suite: `integers wrap › a square of a product
-  keeps its value, its constants folded at an unsigned width`; the `Decomp_op`
-  suite: `late_patterns › a product by a power of two shifts by less than its
-  width` and `› a quotient by a power of two reads it in its operand's type`;
-  the `Codegen` suite: `constants past the width › a square of a product whose
-  constant squares to 0 is 0`.
+- **Reason:** the fold and the product: (b). rune's compiled `Nx.square
+  (Nx.mul c y)` at int32 and uint32, with `c` 65536 or the least int32, gave
+  values that varied by run where eager gives 0: rune's `jit gives eager's
+  bits for exact functions at every dtype` left such functions out. The
+  quotient and remainder: (e). Without the reading, an int8 `x // 128` gives
+  0 where -1 is due for a positive `x`, and `x % 128` gives `x` where `x -
+  128` is, with no error; no raven call site is known to reach it. D162 reads
+  every other divisor past the width so, and its `Decomp_op` pin fails without
+  this rule.
+- **Pinned by:** the fold and the product: the `Symbolic` suite: `integers
+  wrap › a square of a product keeps its value, its constants folded at an
+  unsigned width`; the `Decomp_op` suite: `late_patterns › a product by a
+  power of two shifts by less than its width`; the `Codegen` suite:
+  `constants past the width › a square of a product whose constant squares to
+  0 is 0`. The quotient and remainder: the `Decomp_op` suite: `late_patterns
+  › a quotient by a power of two reads it in its operand's type`, whose
+  values at the width's power, int8 `1 // 128` among them, fail without it.
 
 ## D162. A divisor past its operand's width is read in its operand's type
 
