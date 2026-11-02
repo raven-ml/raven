@@ -644,10 +644,10 @@ module Minimize : sig
       It is the distance in [tol]'s scaled norm where [f]'s curvature near the
       minimum is at least [μ], an estimate since the steps sample the curvature
       only along their path. Their error is also at most [|δ|] plus this bound,
-      whatever the readings: the bound holds [x]'s distance to the minimum and
-      [δ] moves the answer from [x], so a lane whose readings do not contract,
-      as where the curvature estimate overshoots a component, still converges
-      once both are small. A gradient method's error, and
+      whatever the readings: the bound estimates [x]'s distance to the minimum
+      and [δ] moves the answer from [x], so a lane whose readings do not
+      contract, as where the curvature estimate overshoots a component, still
+      converges once both are small. A gradient method's error, and
       {!levenberg_marquardt}'s, is also at least [ε κ |x|∞] in each component,
       [κ] the ratio of the larger to the smaller of the curvatures [yᵀs / sᵀs]
       its two newest moves measured, 1 before two, and for

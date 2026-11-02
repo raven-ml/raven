@@ -1090,7 +1090,9 @@ let law_tests =
            floats' resolution short of it. A fit's answer is fixed to [ε κ]
            times its largest parameter, [κ] its Jacobian's condition, which
            [k] ulps of the smaller meet only from [k ≥ κ |p|∞ / |p|min]: the
-           fit takes [2 k] times that, met for [k] above about a half. *)
+           fit takes [2 k] times that, met for [k] above about a half. Where
+           the Gram matrix is near singular, [κ] grows without bound: 1e12 ulps
+           keeps the drawn tolerance finite there. *)
         let fit = Float.min (2. *. resolution_ulps p) 1e12 in
         let y =
           Nx.add (model p) (Nx.mul_s (Nx.sin (Nx.mul_s times noise)) amp)
