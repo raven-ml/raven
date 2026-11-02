@@ -2094,13 +2094,11 @@ index 6eec3e198..41ec6a82a 100644
    smem_prefix_for_cast: bool = False
    barrier = '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");' + '__builtin_amdgcn_s_barrier();' + \
 diff --git a/tinygrad/schedule/__init__.py b/tinygrad/schedule/__init__.py
-index b6b3609..9a44ab9 100644
+index b6b36094a..4221512eb 100644
 --- a/tinygrad/schedule/__init__.py
 +++ b/tinygrad/schedule/__init__.py
-@@ -1,8 +1,7 @@
--import time, inspect
--from collections import deque
-+import time, inspect, bisect
+@@ -2,7 +2,7 @@ import time, inspect
+ from collections import deque
  from dataclasses import dataclass, field, replace
  from tinygrad.dtype import AddrSpace
 -from tinygrad.uop.ops import GroupOp, UOp, Ops, UOpMetaClass, graph_rewrite, MapCtx, gate_kernel_sink, KernelInfo
@@ -2108,7 +2106,7 @@ index b6b3609..9a44ab9 100644
  from tinygrad.uop.spec import type_verify, spec_tensor
  from tinygrad.helpers import DEBUG, cpu_profile, TracingKey, SPEC, SCACHE, BASEDIR, partition, dedup, all_int, VIZ
  from tinygrad.helpers import diskcache_get, diskcache_put, colored
-@@ -28,13 +27,44 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
+@@ -28,13 +28,44 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
      raise AssertionError(f"AFTER source should be CALL, END, STORE, or AFTER, not {invalid[0].op}")
    return tuple(kernels), tuple(deps)
  
@@ -2154,7 +2152,7 @@ index b6b3609..9a44ab9 100644
      for u in sched_sink.toposort(gate_kernel_sink):
        if u.op is not Ops.AFTER: continue
        kernels, after_deps = _split_after(u)
-@@ -59,25 +89,61 @@ def create_schedule(sched_sink:UOp) -> UOp:
+@@ -59,9 +90,16 @@ def create_schedule(sched_sink:UOp) -> UOp:
        for a, write_kernels in writes.get(s, []):
          if a is u: continue
          for t in write_kernels:
@@ -2173,49 +2171,8 @@ index b6b3609..9a44ab9 100644
 +      return _schedule(_copy_before_overwrites(sched_sink, hazards), False)
  
    with cpu_profile(TracingKey("linearize schedule")):
--    queue: deque[UOp] = deque(k for k,v in in_degree.items() if v == 0)
-+    # a ready kernel runs by its number, the order the walk of the sink meets it, so that a value is consumed soon after it is
-+    # made, and one that frees storage and on no device makes more than it frees runs before it. the storage a kernel writes
-+    # lives from the first kernel that takes it to the last; other storage, which only kernels read, lives throughout
-+    kernels = list(in_degree)
-+    number = {k:i for i,k in enumerate(kernels)}
-+    written = {u.buf_uop for u in sched_sink.toposort(gate_kernel_sink) if u.op is Ops.AFTER}
-+    def call(rk:UOp) -> UOp: return rk.src[0] if rk.op is Ops.END else rk
-+    storage = {rk: [b for b in dict.fromkeys(_unwrap_src(s).buf_uop for s in call(rk).src[1:] if not s.is_bound_var)
-+                    if b in written and not b.on_disk()] for rk in kernels}
-+    users: dict[UOp, int] = {}
-+    for bs in storage.values():
-+      for b in bs: users[b] = users.get(b, 0) + 1
-+    made: set[UOp] = set()
-+    # a kernel holds what it makes beside what it reads: one that frees and makes nothing runs before one that also makes
-+    def frees(rk:UOp, makes:bool) -> bool:
-+      net: dict = {}
-+      for b in storage[rk]:
-+        if b not in made: net[b.device] = net.get(b.device, 0) + b.max_numel() * b.dtype.itemsize
-+        elif users[b] == 1: net[b.device] = net.get(b.device, 0) - b.max_numel() * b.dtype.itemsize
-+      if not any(b in made and users[b] == 1 for b in storage[rk]): return False
-+      return all(n <= 0 for n in net.values()) if makes else all(b in made for b in storage[rk])
-+    ready = sorted(number[k] for k,v in in_degree.items() if v == 0)
-     linearized: list[UOp] = []
--    while len(queue):
--      rk = queue.popleft()
--      k = rk.src[0] if rk.op is Ops.END else rk
-+    while len(ready):
-+      i = next((j for j in ready if frees(kernels[j], False)), None)
-+      if i is None: i = next((j for j in ready if frees(kernels[j], True)), ready[0])
-+      ready.remove(i)
-+      rk = kernels[i]
-+      for b in storage[rk]:
-+        made.add(b)
-+        users[b] -= 1
-+      k = call(rk)
-       assert k.op is Ops.CALL, f"unexpected op in queue: {k.op}"
-       buf_uops = tuple(_unwrap_src(s).buf_uop for s in k.src[1:] if not s.is_bound_var)
-       linearized.append(k.replace(src=(k.body, *buf_uops)))
-       for x in children.get(rk, []):
-         in_degree[x] -= 1
--        if in_degree[x] == 0: queue.append(x)
-+        if in_degree[x] == 0: bisect.insort(ready, number[x])
+     queue: deque[UOp] = deque(k for k,v in in_degree.items() if v == 0)
+@@ -78,6 +116,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
      if any(in_degree.values()): raise RuntimeError("cycle detected in assign graph")
    return UOp(Ops.LINEAR, src=tuple(linearized))
  

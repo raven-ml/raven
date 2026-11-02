@@ -5031,26 +5031,29 @@ fold wraps integers and holds its float bound`, hold.
   into filled storage copies into it`; the Engine suite's `link and run › a
   copy stored into rows of a buffer writes them alone`.
 
-## D183. Ready kernels run by their number, and one that frees storage first
+## D183. In a schedule made per run, ready kernels run by their number, and one that frees storage first
 
 - **tinygrad:** `schedule/__init__.py:66-78` (`create_schedule`'s linearize:
   Kahn's algorithm over a FIFO `deque`, so ready kernels run in the order
   they became ready).
-- **tolk:** `Schedule.linearize` and `Schedule.scheduled`, and the storage
+- **tolk:** `Schedule.storage_order`, chosen by `create_schedule
+  ~by_storage` and `create_linear_with_vars ~by_storage`, and the storage
   `Schedule.schedule` sees written; `Memory.taken`, the storage an entry
-  takes as the memory plan counts it; `test/gen/tinygrad.patch`, which gives
-  tinygrad the same before the goldens are recorded.
-- **Differs:** a ready kernel runs by its number, the order the walk of the
-  sink meets it, so a value is consumed soon after it is made, as the program
-  wrote it. A ready kernel that frees storage, being the last to take storage
-  an earlier kernel made, and that on no device makes more than it frees,
-  runs before the others. The storage a kernel writes lives from the first
-  kernel that takes it to the last; storage only kernels read lives
-  throughout. tinygrad runs every kernel whose inputs are ready breadth
-  first: a closing slices its whole partial into every piece before any is
-  copied or summed, and computes a partial gradient before the last reader of
-  the gathered weights. Picking costs one pass over each ready kernel's
-  storage, so a schedule of `k` kernels costs `O(k²)` at worst.
+  takes as the memory plan counts it; rune's `Compile.link`, which asks for
+  it for a schedule linked per run.
+- **Differs:** in a schedule whose storage is made at each run (D173), a ready
+  kernel runs by its number, the order the walk of the sink meets it, so a
+  value is consumed soon after it is made, as the program wrote it. A schedule
+  linked once, as rune links every program it does not split, keeps tinygrad's
+  order, and scheduling it costs what it did. A ready kernel that frees
+  storage, being the last to take storage an earlier kernel made, and that on
+  no device makes more than it frees, runs before the others. The storage a
+  kernel writes lives from the first kernel that takes it to the last; storage
+  only kernels read lives throughout. tinygrad runs every kernel whose inputs
+  are ready breadth first: a closing slices its whole partial into every piece
+  before any is copied or summed, and computes a partial gradient before the
+  last reader of the gathered weights. Picking costs one pass over each ready
+  kernel's storage, so a schedule of `k` kernels costs `O(k²)` at worst.
 - **Reason:** (b): rune's fully sharded training (RFC 0005's memory bound),
   whose split programs make each buffer at its first call and free it after
   its last (D173). With the split assembly as storage and copies landing in
@@ -5061,9 +5064,10 @@ fold wraps integers and holds its float bound`, hold.
   (`rune jit › fully sharded`).
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
   `create_schedule › order by storage › a kernel that frees storage runs
-  before one that only makes it` and `› pieces of one value are each read
-  before the next is made`; every recorded schedule, from the equally patched
-  tinygrad.
+  before one that only makes it`, `› pieces of one value are each read
+  before the next is made` and `› without it, ready kernels run as they
+  become ready`; rune's `fully sharded` tests. Any other schedule keeps
+  tinygrad's order, as every recorded schedule does.
 
 ## D184. A store into a run of a buffer stores into a view of it
 
@@ -5100,8 +5104,8 @@ fold wraps integers and holds its float bound`, hold.
 
 - **tinygrad:** `schedule/__init__.py:66-78` (`create_schedule`'s linearize,
   Kahn's algorithm over a FIFO `deque`).
-- **tolk:** `Schedule.linearize`'s `pick`; `test/gen/tinygrad.patch`, which
-  gives tinygrad the same before the goldens are recorded.
+- **tolk:** `Schedule.storage_order`'s `pick`, for a schedule made per run
+  (D183).
 - **Differs:** of the ready kernels that free storage (D183), one that makes
   no storage runs first, by its number; only where none does, one that on no
   device makes more than it frees. A kernel holds what it makes beside what
@@ -5117,5 +5121,4 @@ fold wraps integers and holds its float bound`, hold.
   and 1.391 in this order, against the bound of 1.875, 1.562 and 1.406.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
   `create_schedule › order by storage › a kernel that only frees runs before
-  one that also makes storage`; every recorded schedule, from the equally
-  patched tinygrad.
+  one that also makes storage`.

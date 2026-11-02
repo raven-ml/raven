@@ -2477,7 +2477,8 @@ let link ~beam ~parallel ~storage rigs l =
       in
       let ok = Option.map slot l.ok in
       let linear, vars =
-        Tolk.Schedule.create_linear_with_vars ~capturing:true sink
+        Tolk.Schedule.create_linear_with_vars ~capturing:true
+          ~by_storage:(storage = Engine.Per_run) sink
       in
       let linear =
         Tolk.Jit.jit_lower ?beam ~search:(search rigs ~parallel)

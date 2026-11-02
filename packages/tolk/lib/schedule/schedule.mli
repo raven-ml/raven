@@ -16,15 +16,17 @@
 
 (** {1:linear Linearizing} *)
 
-val create_schedule : Ops.t -> Ops.t
-(** [create_schedule sched_sink] is the {!Op.Linear} of the kernel calls of the
-    kernel graph [sched_sink] ({!Rangeify.get_kernel_graph}), in an order that
-    runs each kernel after those that write the storage it reads, and before
-    those that overwrite the storage it reads. A ready kernel runs in the order
-    the graph reaches it, after any ready kernel that frees storage, being
-    the last to take storage a kernel wrote: first one that makes no
-    storage, then one that on no device makes more storage than it frees,
-    storage living from the first kernel that takes it to the last
+val create_schedule : ?by_storage:bool -> Ops.t -> Ops.t
+(** [create_schedule ~by_storage sched_sink] is the {!Op.Linear} of the kernel
+    calls of the kernel graph [sched_sink] ({!Rangeify.get_kernel_graph}), in
+    an order that runs each kernel after those that write the storage it
+    reads, and before those that overwrite the storage it reads. Ready kernels
+    run in the order they become ready, unless [by_storage] (default [false]),
+    for a schedule whose storage is made at each run: then a ready kernel runs
+    in the order the graph reaches it, after any ready kernel that frees
+    storage, being the last to take storage a kernel wrote: first one that
+    makes no storage, then one that on no device makes more storage than it
+    frees, storage living from the first kernel that takes it to the last
     ({!Memory.taken}). Each call's arguments are the storage of its
     reads and writes, or the views of it that move with the loops the call runs in. A
     loop of a call, an {!Op.End} of the call over {!Ops.Axis_type.Loop} ranges,
@@ -63,10 +65,10 @@ val is_store_after : Ops.t -> bool
 (** {1:schedules Schedules} *)
 
 val create_linear_with_vars :
-  ?capturing:bool -> Ops.t -> Ops.t * (string * int) list
-(** [create_linear_with_vars ~capturing big_sink] is the schedule that realizes
-    the values of [big_sink], whose results are stored into buffers
-    ({!Op.Buffer}), with the value of each variable it reads, by name:
+  ?capturing:bool -> ?by_storage:bool -> Ops.t -> Ops.t * (string * int) list
+(** [create_linear_with_vars ~capturing ~by_storage big_sink] is the schedule
+    that realizes the values of [big_sink], whose results are stored into
+    buffers ({!Op.Buffer}), with the value of each variable it reads, by name:
 
     + the stores of [big_sink] become the body of a call compiled on its own,
       whose arguments are the buffers, the contiguous views of buffers that
@@ -74,7 +76,8 @@ val create_linear_with_vars :
       bound variables, each replaced in the body by a parameter; call-local
       storage is numbered by its order in each body, so equal graphs schedule
       alike;
-    + each such call's body is scheduled ({!create_schedule}), once per body
+    + each such call's body is scheduled ({!create_schedule}, [by_storage]
+      default [false]), once per body and order
       when the setting {!Setting.scache} is [1] or more: a call that asks for a
       body another domain is scheduling waits for it. From [2], the default,
       schedules are also kept on disk ({!Helpers.Diskcache}, table

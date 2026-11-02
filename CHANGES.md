@@ -916,15 +916,14 @@ thread.
   view, that call one of its uses, where it left the buffer memory of its own
   for the whole schedule: a store into a run of a buffer stores through a view
   of it. `Schedule.create_linear_with_vars` holds the buffers its call views.
-- Of the ready kernels that free storage, a schedule runs one that makes none
-  first, then one that frees what it makes: a kernel holds its new storage
-  beside what it reads, so a schedule holds less at once.
 - A store into a contiguous run of a buffer stores into a view of the run:
   stores of one shape at other offsets of one buffer are one program.
-- A schedule runs its ready kernels in the order the program reaches them,
-  and first one that frees storage without making more, where it ran them as
-  they became ready: a value is read soon after it is made, so a schedule
-  holds less at once.
+- `Schedule.create_schedule ~by_storage` and
+  `Schedule.create_linear_with_vars ~by_storage` run ready kernels in the
+  order the program reaches them, and first one that frees storage without
+  making any, then one that frees what it makes, for a schedule whose storage
+  is made at each run: a value is read soon after it is made, so a run holds
+  less at once. Other schedules keep their order.
 - A copy stored into a run of consecutive elements of storage on its device
   copies into the run, where it copied into storage of its own and a kernel
   stored that: the two are no longer live at once.

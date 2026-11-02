@@ -903,9 +903,10 @@ let bound_argument () =
 
 (* Order by storage
 
-   A ready kernel runs by its number, the order the walk of the sink meets it,
-   and one that frees storage and on no device makes more than it frees runs
-   before it. Storage that kernels write lives from the first kernel that takes
+   Ordered by storage, a ready kernel runs by its number, the order the walk of
+   the sink meets it, and one that frees storage and on no device makes more
+   than it frees runs before it; otherwise ready kernels run as they become
+   ready. Storage that kernels write lives from the first kernel that takes
    it to the last. Each parameter below holds as many elements as [y]. *)
 
 let param slot = like_y slot
@@ -920,6 +921,19 @@ let frees_first () =
   let kg = Ops.sink [ Ops.after t [ a ]; Ops.after w [ c ]; Ops.after z [ b ] ] in
   equal (list uop)
     [ a; copies ~into:z ~from:t; c ]
+    (Ops.src (Schedule.create_schedule ~by_storage:true kg));
+  keeps kg
+
+(* {!frees_first}'s kernels, ordered as they become ready: [b] waits for [a],
+   which [c] does not. *)
+let as_ready () =
+  let t = param 4 and w = param 5 and z = param 6 in
+  let a = copies ~into:t ~from:y in
+  let c = copies ~into:w ~from:y in
+  let b = copies ~into:z ~from:(Ops.after t [ a ]) in
+  let kg = Ops.sink [ Ops.after t [ a ]; Ops.after w [ c ]; Ops.after z [ b ] ] in
+  equal (list uop)
+    [ a; c; copies ~into:z ~from:t ]
     (Ops.src (Schedule.create_schedule kg));
   keeps kg
 
@@ -945,7 +959,7 @@ let pieces_interleave () =
       copies ~into:s2 ~from:p;
       copies ~into:o2 ~from:s2;
     ]
-    (Ops.src (Schedule.create_schedule kg));
+    (Ops.src (Schedule.create_schedule ~by_storage:true kg));
   keeps kg
 
 (* [ms] makes [s] from [t], then [k] reads [t] last and makes [n], and [r]
@@ -973,7 +987,7 @@ let only_frees_first () =
       copies ~into:o ~from:s;
       copies ~into:n ~from:t;
     ]
-    (Ops.src (Schedule.create_schedule kg));
+    (Ops.src (Schedule.create_schedule ~by_storage:true kg));
   keeps kg
 
 let by_storage =
@@ -985,6 +999,7 @@ let by_storage =
         only_frees_first;
       test "pieces of one value are each read before the next is made"
         pieces_interleave;
+      test "without it, ready kernels run as they become ready" as_ready;
     ]
 
 let ordering =
