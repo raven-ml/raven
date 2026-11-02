@@ -31,7 +31,11 @@ val make : normalize:(string -> string) -> token list -> t
     [normalized] is [true], since those are matched against normalized text.
     Tokens whose content is empty, or normalizes to empty, are dropped. Two
     tokens with the same content are one: it keeps the identifier of the first
-    and the flags of the last. *)
+    and the flags of the last.
+
+    Raises [Invalid_argument], naming both, if two tokens of different content
+    are matched against the same text, as two whose [normalized] is set and
+    whose contents normalize alike are. *)
 
 val without_special : t -> t
 (** [without_special t] is [t] with the tokens whose [special] is set no longer

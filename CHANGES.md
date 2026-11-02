@@ -2372,6 +2372,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Added tokens are found by one walk of a trie of all of them, which seeks the
+  last byte of the prefix they share: tokens such as SentencePiece's `▁<s>`,
+  matched against normalized text, no longer stop the scan at every word.
+  Llama 2 encodes with about a third fewer instructions.
 - `decode_stream`, `decode_step` and `decode_finish` decode ids one at a time,
   as a model generates them, giving each piece of text once no later id can
   change it. Their texts make up `decode` of the ids, and none ends inside a

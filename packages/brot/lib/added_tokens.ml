@@ -16,17 +16,35 @@ type token = {
 (* The text a token matches: its content, or the normalized form of it. *)
 type pattern = { text : string; token : token }
 
-(* How the scan seeks the next byte that can start a pattern: a SWAR search for
-   one or two broadcast bytes, eight bytes per load, or the bytewise [starts]
-   test when the patterns start with more than two distinct bytes. *)
+(* How the scan seeks the next byte that can stand at the anchor of a pattern:
+   a SWAR search for one or two broadcast bytes, eight bytes per load, or the
+   bytewise [anchors] test when more than two bytes can stand there. *)
 type seek = Seek_one of int64 | Seek_two of int64 * int64 | Seek_bytewise
 
-(* Patterns bucketed by their first byte, longest first within a bucket.
-   [starts] flags the 256 bytes that can start a pattern; [seek] is how the scan
-   skips to the next flagged byte, so that text holding none costs a load and a
-   compare per eight bytes rather than a bucket probe per byte. The empty
-   matcher has no buckets at all. *)
-type matcher = { buckets : pattern array array; starts : Bytes.t; seek : seek }
+(* The patterns as a trie, walked once from each candidate start: the longest
+   pattern there is the last terminal node the walk passes, whatever the
+   number of patterns sharing a prefix. [root] maps a first byte to its node;
+   node [n]'s children are [kid_byte] and [kid_node] from [kids.(n)] to
+   [kids.(n + 1)], and [term.(n)] is the pattern it ends, or [-1].
+
+   Every match holds the patterns' common prefix, so the scan seeks the
+   prefix's last byte, at [anchor] bytes from the start, and passes over text
+   in which that byte does not occur at a load and a compare per eight bytes.
+   Patterns that share a marker and a bracket, as SentencePiece's [▁<s>] and
+   [▁</s>] do once normalized, then cost nothing where the marker alone
+   occurs at every word. Without a common prefix the anchor is the first byte,
+   which [anchors] flags. The empty matcher has no patterns at all. *)
+type matcher = {
+  patterns : pattern array;
+  root : int array;
+  term : int array;
+  kids : int array;
+  kid_byte : Bytes.t;
+  kid_node : int array;
+  anchor : int;
+  anchors : Bytes.t;
+  seek : seek;
+}
 
 type t = {
   tokens : token list;
@@ -111,48 +129,126 @@ let[@inline] zero_marks w =
 
 let[@inline] broadcast byte = Int64.mul (Int64.of_int byte) ones
 
+(* A trie under construction: each node numbered as it is made, with its
+   children by byte. *)
+type draft = {
+  serial : int;
+  mutable ends : int;
+  mutable children : (char * draft) list;
+}
+
+type drafts = { mutable made : draft list; mutable count : int }
+
+let draft drafts =
+  let node = { serial = drafts.count; ends = -1; children = [] } in
+  drafts.made <- node :: drafts.made;
+  drafts.count <- drafts.count + 1;
+  node
+
+(* The node [text] from byte [i] ends at, below [node]. *)
+let rec insert drafts node text i =
+  if i = String.length text then node
+  else
+    let c = text.[i] in
+    let child =
+      match List.assoc_opt c node.children with
+      | Some child -> child
+      | None ->
+          let child = draft drafts in
+          node.children <- (c, child) :: node.children;
+          child
+    in
+    insert drafts child text (i + 1)
+
+(* The length of the prefix all of [patterns] share. *)
+let common_prefix patterns =
+  let first = patterns.(0).text in
+  Array.fold_left
+    (fun n p ->
+      let k = ref 0 and n = min n (String.length p.text) in
+      while !k < n && p.text.[!k] = first.[!k] do
+        incr k
+      done;
+      !k)
+    (String.length first) patterns
+
+let empty_matcher =
+  {
+    patterns = [||];
+    root = [||];
+    term = [||];
+    kids = [||];
+    kid_byte = Bytes.empty;
+    kid_node = [||];
+    anchor = 0;
+    anchors = Bytes.empty;
+    seek = Seek_bytewise;
+  }
+
 let matcher patterns =
   match patterns with
-  | [] -> { buckets = [||]; starts = Bytes.empty; seek = Seek_bytewise }
+  | [] -> empty_matcher
   | _ ->
-      let buckets = Array.make 256 [||] in
-      let pending = Array.make 256 [] in
-      let starts = Bytes.make 256 '\000' in
-      List.iter
-        (fun pattern ->
-          let first = Char.code pattern.text.[0] in
-          Bytes.set starts first '\001';
-          pending.(first) <- pattern :: pending.(first))
+      let patterns = Array.of_list patterns in
+      let drafts = { made = []; count = 0 } in
+      let top = { serial = -1; ends = -1; children = [] } in
+      Array.iteri
+        (fun index p ->
+          let node = insert drafts top p.text 0 in
+          if node.ends >= 0 then
+            invalid_arg
+              (Printf.sprintf
+                 "added tokens %S and %S match the same text %S once \
+                  normalized"
+                 patterns.(node.ends).token.content p.token.content p.text);
+          node.ends <- index)
         patterns;
-      let longest_first a b =
-        Int.compare (String.length b.text) (String.length a.text)
-      in
-      let firsts = ref [] in
-      for first = 255 downto 0 do
-        match pending.(first) with
-        | [] -> ()
-        | candidates ->
-            let bucket = Array.of_list candidates in
-            Array.sort longest_first bucket;
-            buckets.(first) <- bucket;
-            firsts := first :: !firsts
+      let n = drafts.count in
+      let nodes = Array.of_list (List.rev drafts.made) in
+      let root = Array.make 256 (-1) in
+      List.iter
+        (fun (c, child) -> root.(Char.code c) <- child.serial)
+        top.children;
+      let term = Array.map (fun node -> node.ends) nodes in
+      let kids = Array.make (n + 1) 0 in
+      Array.iteri
+        (fun i node -> kids.(i + 1) <- kids.(i) + List.length node.children)
+        nodes;
+      let kid_byte = Bytes.create kids.(n) in
+      let kid_node = Array.make kids.(n) 0 in
+      Array.iteri
+        (fun i node ->
+          List.iteri
+            (fun k (c, child) ->
+              Bytes.set kid_byte (kids.(i) + k) c;
+              kid_node.(kids.(i) + k) <- child.serial)
+            node.children)
+        nodes;
+      let anchor = max 0 (common_prefix patterns - 1) in
+      let anchors = Bytes.make 256 '\000' in
+      Array.iter
+        (fun p -> Bytes.set anchors (Char.code p.text.[anchor]) '\001')
+        patterns;
+      let flagged = ref [] in
+      for b = 255 downto 0 do
+        if Bytes.get anchors b <> '\000' then flagged := b :: !flagged
       done;
       let seek =
-        match !firsts with
+        match !flagged with
         | [ b ] -> Seek_one (broadcast b)
         | [ b0; b1 ] -> Seek_two (broadcast b0, broadcast b1)
         | _ -> Seek_bytewise
       in
-      { buckets; starts; seek }
+      { patterns; root; term; kids; kid_byte; kid_node; anchor; anchors; seek }
 
-let[@inline] starts_pattern m c =
-  Bytes.unsafe_get m.starts (Char.code c) <> '\000'
+let[@inline] is_anchor m c = Bytes.unsafe_get m.anchors (Char.code c) <> '\000'
 
 (* [candidate m text ~pos ~len] is the first position at or after [pos] whose
-   byte can start a pattern of [m], or [len] if there is none. The SWAR loops
-   stop on the eight-byte window holding such a byte; the bytewise loop pins it
-   down, and covers the trailing window, which keeps every load within [text] —
-   the primitive is bounds-checked under the bytecode runtime. *)
+   byte can stand at the anchor of a pattern of [m], or [len] if there is none.
+   The SWAR loops stop on the eight-byte window holding such a byte; the
+   bytewise loop pins it down, and covers the trailing window, which keeps
+   every load within [text] — the primitive is bounds-checked under the
+   bytecode runtime. *)
 let candidate m text ~pos ~len =
   let i = ref pos in
   (match m.seek with
@@ -175,67 +271,66 @@ let candidate m text ~pos ~len =
         else scanning := false
       done
   | Seek_bytewise -> ());
-  while !i < len && not (starts_pattern m (String.unsafe_get text !i)) do
+  while !i < len && not (is_anchor m (String.unsafe_get text !i)) do
     incr i
   done;
   !i
 
-let matches_at text pos pattern =
-  let len = String.length pattern in
-  let rec same i =
-    i >= len
-    || String.unsafe_get text (pos + i) = String.unsafe_get pattern i
-       && same (i + 1)
-  in
-  same 0
+(* The child of [node] by byte [c], or [-1]. *)
+let child m node c =
+  let stop = Array.unsafe_get m.kids (node + 1) in
+  let k = ref (Array.unsafe_get m.kids node) in
+  while !k < stop && Bytes.unsafe_get m.kid_byte !k <> c do
+    incr k
+  done;
+  if !k < stop then Array.unsafe_get m.kid_node !k else -1
+
+(* The longest pattern of [m] at [start] in [text], as its index, or [-1]. *)
+let longest m text start len =
+  let first = Char.code (String.unsafe_get text start) in
+  let node = ref (Array.unsafe_get m.root first) in
+  let best = ref (-1) and i = ref (start + 1) in
+  while !node >= 0 do
+    let ends = Array.unsafe_get m.term !node in
+    if ends >= 0 then best := ends;
+    node := if !i < len then child m !node (String.unsafe_get text !i) else -1;
+    incr i
+  done;
+  !best
 
 (* A special token passed over keeps the text it covers, as a [single_word]
    token that does not stand alone does: no other token of [m] is sought inside
    it. *)
 let find m ~match_special text ~pos =
-  if Array.length m.buckets = 0 then None
+  if Array.length m.patterns = 0 then None
   else begin
     let len = String.length text in
     let at = ref pos in
     let hit = ref None in
     let scanning = ref true in
     while !scanning do
-      let start = candidate m text ~pos:!at ~len in
-      if start >= len then scanning := false
-      else begin
-        let bucket =
-          Array.unsafe_get m.buckets (Char.code (String.unsafe_get text start))
-        in
-        let count = Array.length bucket in
-        let index = ref 0 in
-        let matched = ref None in
-        while Option.is_none !matched && !index < count do
-          let pattern = Array.unsafe_get bucket !index in
+      let start = candidate m text ~pos:(!at + m.anchor) ~len - m.anchor in
+      if start + m.anchor >= len then scanning := false
+      else
+        let index = longest m text start len in
+        if index < 0 then at := start + 1
+        else begin
+          let { text = content; token } = Array.unsafe_get m.patterns index in
+          let stop = start + String.length content in
           if
-            start + String.length pattern.text <= len
-            && matches_at text start pattern.text
-          then matched := Some pattern
-          else incr index
-        done;
-        match !matched with
-        | None -> at := start + 1
-        | Some { text = content; token } ->
-            let stop = start + String.length content in
-            if
-              (token.special && not match_special)
-              || token.single_word
-                 && (ends_with_word text start || starts_with_word text stop)
-            then at := stop
-            else begin
-              let start =
-                if token.lstrip then max pos (space_before text start)
-                else start
-              in
-              let stop = if token.rstrip then space_after text stop else stop in
-              hit := Some (start, stop, token.id);
-              scanning := false
-            end
-      end
+            (token.special && not match_special)
+            || token.single_word
+               && (ends_with_word text start || starts_with_word text stop)
+          then at := stop
+          else begin
+            let start =
+              if token.lstrip then max pos (space_before text start) else start
+            in
+            let stop = if token.rstrip then space_after text stop else stop in
+            hit := Some (start, stop, token.id);
+            scanning := false
+          end
+        end
     done;
     !hit
   end

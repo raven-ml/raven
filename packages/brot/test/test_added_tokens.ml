@@ -416,6 +416,304 @@ let test_scan_long_space_run () =
     ~tokens:[| "a"; String.make 12 ' ' ^ "L" |]
     ~offsets:[| (0, 1); (1, 14) |]
 
+(* The scan, against a reference that tries every token at every position.
+
+   The text and the tokens are drawn from characters whose classes the
+   reference knows: word characters, white space (Unicode's too), others, and
+   bytes of no character, among them the first two bytes of the three of [▁].
+   Token contents often share a prefix, as SentencePiece's [▁<s>] and [▁</s>]
+   do once normalized, so the scan has to tell them apart past it. *)
+
+let word_chars = [ "a"; "b"; "A"; "x"; "_"; "1"; "\u{e9}"; "\u{65e5}" ]
+let space_chars = [ " "; "\t"; "\n"; "\u{a0}"; "\u{3000}" ]
+let other_chars = [ "<"; ">"; "/"; "."; "-"; "\u{2581}" ]
+let stray_bytes = [ "\xff"; "\xc3"; "\xe2\x96" ]
+let law_chars = word_chars @ space_chars @ other_chars
+
+(* No pretoken cache: building one per case is what would cost. *)
+let law_tokenizer ?normalizer added_tokens =
+  bpe ?normalizer
+    ~vocab:(List.mapi (fun i c -> (c, i)) law_chars)
+    ~merges:[] ~added_tokens ~cache_capacity:0 ()
+
+let law_model = law_tokenizer []
+
+type spec = {
+  content : string;
+  special : bool;
+  single_word : bool;
+  lstrip : bool;
+  rstrip : bool;
+  normalized : bool;
+}
+
+(* The class of the character [s.[start..stop)], if it is one. *)
+let class_of s start stop =
+  let d = String.get_utf_8_uchar s start in
+  if
+    Uchar.utf_decode_is_valid d && start + Uchar.utf_decode_length d = stop
+  then
+    let c = String.sub s start (stop - start) in
+    let alphanumeric = function
+      | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true
+      | _ -> false
+    in
+    if List.mem c word_chars || (String.length c = 1 && alphanumeric c.[0])
+    then `Word
+    else if List.mem c space_chars then `Space
+    else `Other
+  else `None
+
+let is_continuation s i = Char.code s.[i] land 0xc0 = 0x80
+
+let char_before s i =
+  if i <= 0 then None
+  else begin
+    let start = ref (i - 1) in
+    while !start > 0 && is_continuation s !start do
+      decr start
+    done;
+    Some (class_of s !start i, !start)
+  end
+
+let char_after s i =
+  if i >= String.length s then None
+  else
+    let d = String.get_utf_8_uchar s i in
+    let n =
+      if Uchar.utf_decode_is_valid d then Uchar.utf_decode_length d else 1
+    in
+    Some (class_of s i (i + n), i + n)
+
+let rec space_before s i =
+  match char_before s i with Some (`Space, at) -> space_before s at | _ -> i
+
+let rec space_after s i =
+  match char_after s i with Some (`Space, at) -> space_after s at | _ -> i
+
+(* What the reference met on the last case, for the law's coverage. *)
+let found = ref 0 and refused = ref 0 and stripped = ref 0
+
+let reference_find specs ~match_special s ~pos =
+  let len = String.length s in
+  let occurs at spec =
+    let n = String.length spec.content in
+    at + n <= len && String.sub s at n = spec.content
+  in
+  let longest at =
+    List.fold_left
+      (fun best spec ->
+        match best with
+        | Some b
+          when String.length b.content >= String.length spec.content ->
+            best
+        | _ -> if occurs at spec then Some spec else best)
+      None specs
+  in
+  let rec scan at =
+    if at >= len then None
+    else
+      match longest at with
+      | None -> scan (at + 1)
+      | Some spec ->
+          let stop = at + String.length spec.content in
+          let word = function Some (`Word, _) -> true | _ -> false in
+          if
+            (spec.special && not match_special)
+            || spec.single_word
+               && (word (char_before s at) || word (char_after s stop))
+          then begin
+            incr refused;
+            scan stop
+          end
+          else
+            let start =
+              if spec.lstrip then max pos (space_before s at) else at
+            in
+            let stop' = if spec.rstrip then space_after s stop else stop in
+            if start < at || stop' > stop then incr stripped;
+            incr found;
+            Some (start, stop', spec)
+  in
+  scan pos
+
+(* Raw tokens cut the text, normalized ones each stretch left between them, and
+   the model encodes what is left. *)
+(* [norm] is the normalizer: normalized tokens are matched by their content
+   normalized, in each stretch the raw ones leave, normalized. *)
+let reference_ids t model specs ~norm ~match_special text =
+  let raw = List.filter (fun spec -> not spec.normalized) specs in
+  let normalized =
+    List.filter_map
+      (fun spec ->
+        if spec.normalized then Some { spec with content = norm spec.content }
+        else None)
+      specs
+  in
+  let content_of pattern =
+    (List.find
+       (fun spec -> spec.normalized && norm spec.content = pattern.content)
+       specs)
+      .content
+  in
+  let ids = ref [] in
+  let emit spec =
+    let content = if spec.normalized then content_of spec else spec.content in
+    ids := Option.get (token_to_id t content) :: !ids
+  in
+  let encode s =
+    ids := List.rev_append (Array.to_list (encode_ids model s)) !ids
+  in
+  let rec split specs s ~gap pos =
+    let len = String.length s in
+    match reference_find specs ~match_special s ~pos with
+    | None -> if pos < len then gap (String.sub s pos (len - pos))
+    | Some (start, stop, spec) ->
+        if pos < start then gap (String.sub s pos (start - pos));
+        emit spec;
+        split specs s ~gap stop
+  in
+  split raw text ~gap:(fun s -> split normalized (norm s) ~gap:encode 0) 0;
+  Array.of_list (List.rev !ids)
+
+let prefixes = [ ""; "<"; "\u{2581}<"; "a" ]
+let suffixes =
+  [ "s>"; "/s>"; "unk>"; "a"; "A"; "b"; "\u{e9}"; " "; "_"; "\u{2581}" ]
+
+let spec_gen =
+  let open Gen in
+  let+ prefix =
+    frequency
+      (List.map (fun p -> ((if p = "\u{2581}<" then 3 else 1), constant p))
+         prefixes)
+  and+ suffix = of_list suffixes
+  and+ special = bool
+  and+ single_word = bool
+  and+ lstrip = bool
+  and+ rstrip = bool
+  and+ normalized = bool in
+  {
+    content = prefix ^ suffix;
+    special;
+    single_word;
+    lstrip;
+    rstrip;
+    normalized;
+  }
+
+(* Distinct contents, so that no two entries collapse into one token. *)
+let distinct specs =
+  List.fold_left
+    (fun acc spec ->
+      if List.exists (fun s -> s.content = spec.content) acc then acc
+      else spec :: acc)
+    [] specs
+  |> List.rev
+
+let law_case =
+  let open Gen in
+  let* specs = map distinct (list ~size:(int_range 1 6) spec_gen) in
+  (* A twin in capitals collides with its token under a lowercasing normalizer
+     when both are normalized. *)
+  let* twin = frequency [ (3, constant false); (1, constant true) ] in
+  let specs =
+    match specs with
+    | first :: _ when twin ->
+        let content = String.uppercase_ascii first.content in
+        distinct (specs @ [ { first with content } ])
+    | _ -> specs
+  in
+  let pieces = List.map (fun spec -> spec.content) specs in
+  let fragment =
+    frequency
+      [
+        (6, of_list (law_chars @ stray_bytes));
+        (2, of_list prefixes);
+        (2, of_list pieces);
+      ]
+  in
+  let+ text = map (String.concat "") (list ~size:(int_range 0 30) fragment)
+  and+ match_special = bool
+  and+ lowercase = bool in
+  (specs, text, match_special, lowercase)
+
+let pp_case ppf (specs, text, match_special, lowercase) =
+  let pp_spec ppf s =
+    Format.fprintf ppf
+      "%S special=%b single_word=%b lstrip=%b rstrip=%b normalized=%b" s.content
+      s.special s.single_word s.lstrip s.rstrip s.normalized
+  in
+  Format.fprintf ppf "@[<v>%a@,text %S match_special=%b lowercase=%b@]"
+    (Format.pp_print_list pp_spec)
+    specs text match_special lowercase
+
+let law_case = Gen.with_pp pp_case law_case
+
+let added_of spec =
+  added_token ~special:spec.special ~single_word:spec.single_word
+    ~lstrip:spec.lstrip ~rstrip:spec.rstrip ~normalized:spec.normalized
+    spec.content
+
+let law_scan =
+  prop ~count:1000 "scan: every token tried at every position" law_case
+    (fun (specs, text, match_special, lowercase) ->
+      let normalizer = if lowercase then Some Normalizer.lowercase else None in
+      let norm s =
+        if lowercase then Normalizer.apply Normalizer.lowercase s else s
+      in
+      let normalized =
+        List.filter_map
+          (fun spec ->
+            if spec.normalized then Some (norm spec.content) else None)
+          specs
+      in
+      let collide =
+        List.length (List.sort_uniq compare normalized)
+        < List.length normalized
+      in
+      cover ~share:0.01 "normalized tokens that collide" collide;
+      match law_tokenizer ?normalizer (List.map added_of specs) with
+      | exception Invalid_argument _ when collide -> ()
+      | t ->
+          equal ~msg:"no two tokens match the same text" bool false collide;
+          found := 0;
+          refused := 0;
+          stripped := 0;
+          let expected =
+            reference_ids t law_model specs ~norm ~match_special text
+          in
+          cover ~share:0.5 "a token found" (!found > 0);
+          cover ~share:0.1 "a token refused" (!refused > 0);
+          cover ~share:0.05 "white space taken in" (!stripped > 0);
+          cover ~share:0.1 "contents sharing a multi-byte prefix"
+            (List.length
+               (List.filter
+                  (fun spec ->
+                    String.starts_with ~prefix:"\u{2581}<" spec.content)
+                  specs)
+            >= 2);
+          equal ~msg:(Printf.sprintf "%S" text) (array int) expected
+            (encode_ids t ~match_special_tokens:match_special text))
+
+(* Hugging Face refuses two added tokens that match the same text
+   (DuplicatePatternError), as two normalized ones whose contents normalize
+   alike do. *)
+let test_normalized_collision () =
+  let make tokens =
+    word_level ~normalizer:Normalizer.lowercase
+      ~vocab:[ ("[UNK]", 0); ("a", 1) ]
+      ~unk_token:"[UNK]" ~added_tokens:tokens ()
+  in
+  raises
+    (Invalid_argument
+       "added tokens \"A\" and \"a\" match the same text \"a\" once \
+        normalized")
+    (fun () ->
+      make
+        [ added_token ~special:false "A"; added_token ~special:false "a" ]);
+  let t = make [ added_token ~special:false "A" ] in
+  equal ~msg:"one is found" (array int) [| 2 |] (encode_ids t "a")
+
 let suite =
   [
     test "leftmost longest" test_leftmost_longest;
@@ -445,6 +743,8 @@ let suite =
     test "scan long stretch" test_scan_long_stretch;
     test "scan single word resume" test_scan_single_word_resume;
     test "scan long space run" test_scan_long_space_run;
+    law_scan;
+    test "normalized collision" test_normalized_collision;
   ]
 
 let () = exit (run "Added tokens" [ group "added_tokens" suite ])

@@ -1000,7 +1000,9 @@ val bpe :
     - [added_tokens]: added tokens. They are matched atomically in the input on
       {!encode} — against the raw text before normalization when [normalized] is
       unset, against the normalized text when it is set — and are numbered from
-      the end of [vocab] without entering it. Default: [[]].
+      the end of [vocab] without entering it. Raises [Invalid_argument] when
+      two of different content match the same text, as two normalized tokens
+      whose contents normalize alike do. Default: [[]].
     - [bos_token], [eos_token], [pad_token]: role markers. Each is a special
       token in its own right, matched in the input like the entries of
       [added_tokens] and numbered like them when [vocab] does not hold it.
