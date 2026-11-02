@@ -17,6 +17,15 @@ munin --root DIR      # another store
 Without a terminal, `munin` prints its help and `munin watch` fails, so
 a script that calls them by mistake stops.
 
+To try it, run the example that writes a sweep into a temporary store,
+starts a run that trains while you watch, and opens the dashboard on
+that store; `q` quits, ends the run and removes the store:
+
+<!-- $MDX skip -->
+```sh
+dune exec packages/munin/examples/08-dashboard/main.exe
+```
+
 ## Runs
 
 A sweep of six learning rates over a ResNet, one still training, and two

@@ -9,6 +9,7 @@
 | [05-parameter-sweep](05-parameter-sweep/) | Runs whose parent is a sweep, compared by their best error |
 | [06-inspect](06-inspect/) | Runs, status, provenance, metrics and artifacts read from a store |
 | [07-system-monitor](07-system-monitor/) | Readings of the machine and the process, sampled into a run |
+| [08-dashboard](08-dashboard/) | The dashboard over a sweep and a run that trains while it shows |
 | [x-kaun-mnist](x-kaun-mnist/) | MNIST training with kaun, tracked by munin |
 | [x-kaun-mnist-jit](x-kaun-mnist-jit/) | Jitted MNIST training on a GPU, with readings of the device |
 
@@ -25,5 +26,6 @@ Examples write to the default store. To keep them out of it, point
 RAVEN_TRACKING_DIR=/tmp/munin dune exec packages/munin/examples/01-basic/main.exe
 ```
 
-`06-inspect` reads what the others wrote. The `x-kaun-mnist` examples
+`08-dashboard` writes to a temporary store of its own and removes it when
+you quit. `06-inspect` reads what the others wrote. The `x-kaun-mnist` examples
 download MNIST on their first run.
