@@ -2,21 +2,24 @@
 
 tolk follows tinygrad `6b7b018dae9ec20264f2a4b6a1322da1bb49b141`. This
 ledger lists every place where it does something else. An entry is admitted
-for one of four reasons only:
+for one of five reasons only:
 
 - **(a) an OCaml constraint:** acyclic modules, static types, the GC, domains;
 - **(b) a named consumer:** a raven call site that fails without it;
 - **(c) the executor's contract:** rig's devices, submissions and programs,
   which `tolk.engine` drives with the compiler's output;
 - **(d) measured speed:** of a named raven workload, pinned by a bench row on
-  fudge whose baseline would catch the regression.
+  fudge whose baseline would catch the regression;
+- **(e) a correct value:** a divergence that keeps a value correct where
+  tinygrad computes a wrong one, pinned by a test of that value, stays without
+  a consumer (`doc/dev/design.md`: correctness is never traded).
 
 Taste, speed without such a measurement, "the old tolk did it" and the
 maintainer's call alone are not reasons. A speed measured only on another
 machine is marked "to re-measure on fudge" until a fudge row holds it. An
 entry whose reason has lapsed says "Reason: none" until it is withdrawn or
 redesigned. A difference in numerics also needs a failing rune test, since
-nx semantics belong in rune's lowering.
+nx semantics belong in rune's lowering, unless it keeps a value correct (e).
 
 NaNs follow nx's rule. A NaN result is some NaN, its sign and payload
 unspecified, and it is signalling only where an operand is a signalling NaN.
@@ -4200,13 +4203,14 @@ does. A Windows host's code is compiled for Windows' convention by D178.
 - **Differs:** a weak integer divisor past a committed integer operand's
   width is wrapped to the operand's type before a division or remainder
   lowers: on int8, 128 is -128 and 200 is -56, and on uint8 259 is 3.
-- **Reason:** none. No raven call site is known to reach it. The gap gives
-  a wrong value with no error, and the change is a guard in the rules that
-  read the divisor, in tinygrad's place.
-- **Pinned by:** the `Decomp_op` suite: `late_patterns › a quotient by a weak
-  divisor past its width reads it in its type`; the `Codegen` suite:
-  `constants past the width › a weak divisor past the width divides as its
-  value there`.
+- **Reason:** (e). Without the wrap, an int8 `x // 128` gives 0 where -1 is
+  due for a positive `x`, with no error. No raven call site is known to reach
+  it.
+- **Pinned by:** the `Codegen` suite: `constants past the width › a weak
+  divisor past the width divides as its value there`, which compiles and runs
+  int8 `x // 128` among the divisors past each width; the `Decomp_op` suite:
+  `late_patterns › a quotient by a weak divisor past its width reads it in its
+  type`.
 
 ## D163. An inlined value computes at most 360 nodes again
 

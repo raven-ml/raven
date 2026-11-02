@@ -112,6 +112,10 @@ raven / llama.cpp (Vulkan; ROCm):
   D143; the matrix-vector layout (D89) with its fudge rows; entries marked
   "Reason: none" decided once the port reaches HEAD. rune's DIVERGENCES.md
   is not audited yet
+- D15 has no reason, but withdrawing it moves every CUDA/HIP render in the
+  Cstyle, Codegen, Device and Search suites behind NVRTC or comgr (fudge has
+  no comgr): decide in its own unit; D161's quotient half and D9's
+  rounded-to-odd emulated cast have no consumer: withdraw or give a reason
 - compile speed: one Clang process per kernel (~30 ms each; one per program
   saves ~20%). Hypothesis, to time first: on fudge, each Clang run's wall
   time against its source's bytes, on a model-size schedule; if the process

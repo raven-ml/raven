@@ -13,11 +13,14 @@ runs that data on rig.
   and their order, where logic lives. Keep emitted source diffable against
   tinygrad's for covered kernels.
 - Numerics follow nx's documented meaning, decided in rune's lowering with a
-  failing rune test. tinygrad has bugs; a value it computes is a datapoint.
+  failing rune test. tinygrad has bugs; a value it computes is a datapoint,
+  and where it computes a wrong one in the IR's own types, tolk keeps the
+  correct value with a test of it.
 - Each difference is an entry in `DIVERGENCES.md`, admitted only for an
-  OCaml constraint, a named raven consumer, the executor's contract, or a
-  named workload's speed held by a fudge bench row. Taste and unmeasured
-  speed are not reasons.
+  OCaml constraint, a named raven consumer, the executor's contract, a
+  named workload's speed held by a fudge bench row, or a value kept correct
+  where tinygrad computes a wrong one, pinned by a test of that value. Taste
+  and unmeasured speed are not reasons.
 - tolk stays at tinygrad's low-level uops: no matmul, contraction, attention
   or scan node.
 
