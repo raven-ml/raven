@@ -602,7 +602,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 ### I3. Gather by an index
 
 - **Reference:** `mixin/op.py:1064` (`gather`: a one-hot selection summed).
-- **Raven:** `lower_index.ml` (`take`, `gather`).
+- **Raven:** `lower_index.ml` (`gather`), `lower_bits.ml` (`take`).
 - **Differs:** a gather is one tolk INDEX of the operand, flattened, at each
   element's offset. A position outside the axis, found by an unsigned
   comparison, is read at 0 and selected as zero. The read is a load, so each
