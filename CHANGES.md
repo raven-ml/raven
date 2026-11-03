@@ -939,6 +939,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Rangeify.get_kernel_graph` inlines the positions a one-hot gather compares
+  with, read in a product's sum past 181 values: they were stored, so that
+  each row multiplied every expert's matrix. `Nx_quant.apply_experts`,
+  compiled, of gpt-oss-20b's gate and up projection at 512 tokens takes 27 ms
+  on fudge's RTX 5000 Ada, where it took 1.49 s.
 - `Prepare.contiguous_view` gives its offset as an `Ops.sint`, of bound
   variables where a run starts at them, and a store into such a run stores
   into a view of it (`Schedule.contiguous_mops_to_view`). Kernels that differ

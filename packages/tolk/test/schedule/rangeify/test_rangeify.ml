@@ -178,6 +178,7 @@ let programs =
     "long_read_by_two";
     "routed_product_2";
     "routed_product_64";
+    "routed_product_wide";
     "blocked_product_16";
     "dense_decoded_64";
     "windowed_scaled";
@@ -1278,6 +1279,12 @@ let recomputation =
         (fun () -> equal int 1 (windows (staged (chain_of (within 8)))));
       test "a value reduced in windows whose work passes the budget is stored"
         (fun () -> equal int 2 (windows (staged (chain_of (past 8)))));
+      (* A value of its positions alone reads no storage. *)
+      test "a value of no storage reduced in windows past the budget is stored"
+        (fun () ->
+          let s = Ops.range ~axis_type:Loop (Int 32) [ 0 ] in
+          let v = chain_of (past 8) (Ops.cast s Float32) in
+          equal int 2 (windows (Ops.bufferize ~opts:removable v [ s ])));
       (* Each window computes the copied nodes 8 times an element, and the two
          16 times. *)
       test "two windowed reads of a stage add up" (fun () ->

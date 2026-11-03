@@ -108,6 +108,7 @@ read_by_two	2
 long_read_by_two	3
 routed_product_2	1
 routed_product_64	2
+routed_product_wide	1
 blocked_product_16	1
 dense_decoded_64	1
 tiled_chain	1

@@ -4238,7 +4238,8 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   `Rangeify.digit_of` (a range read through floor divisions and remainders);
   `Rangeify.collapses`, `Rangeify.outer` and `Rangeify.collapsed` (a sum
   that selects one trip, asked only where the answer changes a stage's
-  decision), through `Simplify.load_collapse`, which
+  decision), and `Rangeify.storage` (a stage of no storage read in such a
+  sum), through `Simplify.load_collapse`, which
   `Simplify.pm_load_collapse` applies; `Rangeify.reads`,
   `Rangeify.stage_reads`, `Rangeify.reduced`, `Rangeify.stage_copies` and
   `Rangeify.stage_bounds` (the copies of each stage);
@@ -4307,6 +4308,23 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   Counting the work after the substitution follows Mullapudi et al. 2016,
   §4.3: "a more accurate measure of cost because bounds analysis can
   overestimate the actual number of values required by a consumer".
+
+  A read of a stage whose value reads no storage, in a sum the test finds
+  selecting one trip, counts that sum's own trips, as a read in a sum that
+  selects none: the test saw it as its value, which tinygrad inlines, and
+  stored, it would leave the sum comparing a load with its range, which no
+  kernel computes at one trip. A one-hot gather compares each row's index
+  with the positions of the gathered axis, `arange`, a stage of a running
+  sum whose ranges reach two of its nodes; counted at the sum's outer
+  ranges, it made `k` copies in a product's sum over `k`, past the budget
+  from `k = 182`, and was stored, so that every row multiplied every
+  expert's matrix while the decoded matrices were counted, and stored, as
+  read once a row: `Nx_quant.apply_experts` of gpt-oss-20b's gate and up
+  projection at 512 tokens on fudge's RTX 5000 Ada took 1.49 s, and takes
+  26.4-27.6 ms, against 3.14-3.23 ms through blocks of rows
+  (`Nx.map_segments`). Its reads elsewhere count as before, so such a value
+  past the budget in other reads stays stored, and the sum then runs every
+  trip.
 
   The bound weighs work: an index copies the value into the code of each
   output, and a window's trips run it again in each output's loop, each copy
@@ -4410,7 +4428,9 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   product in a running sum of 400, inlined into its windows of 16), `read_by_two` (some forty nodes read by two
   kernels, inlined), `long_read_by_two` (some four hundred, stored),
   `routed_product_2` (a decoded matrix gathered by 2 rows an expert over 64
-  experts, inlined) and `routed_product_64` (64 rows an expert, stored),
+  experts, inlined), `routed_product_64` (64 rows an expert, stored) and
+  `routed_product_wide` (16 rows an expert in a product's sum of 192, the
+  gather's positions inlined),
   `blocked_product_16` (rows in blocks of 16 reading their block's matrix
   of some forty nodes at `r // 16`, inlined) and `dense_decoded_64` (64 rows
   merged with a matrix's 4 columns, read at `r % 4`, inlined),
@@ -4425,6 +4445,7 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   reduced once an element is inlined`, `› a cheap value reduced in windows
   is inlined`, `› a value reduced in windows whose work is under the budget
   is inlined`, `› a value reduced in windows whose work passes the budget is
+  stored`, `› a value of no storage reduced in windows past the budget is
   stored`, `› two windowed reads of a stage add up`, `› a value of symbolic
   size counts at its largest`, `› a value reduced in windows counts no axis
   it does not vary along`, `› a read counts at most the trips of its
@@ -4438,7 +4459,10 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   inlined, and windows, a reduction range's digit, a gather, frames, digit
   sums, a range read by two components, constants not dividing and a
   symbolic size stored, `› a read of merged outputs decides as one of them
-  split` and `› a digit a selection runs in stays counted`; rune's `rune
+  split` and `› a digit a selection runs in stays counted`; rune's
+  `Lower_reduce › work › a Rows contraction's work is one slice's over 256
+  contracted` and `› a scaled float4 Rows contraction's work is one slice's
+  over 256`; rune's `rune
   jit › classes › an associative scan over a tuple gives eager's bits` and
   `› a value stored or computed again in its readers gives eager's bits`,
   which reads the value in blocks of rows and in a product of merged rows

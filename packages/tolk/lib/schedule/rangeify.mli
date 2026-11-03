@@ -45,7 +45,9 @@ val get_kernel_graph : Ops.t -> Ops.t
           ({!Simplify.load_collapse}), is computed at that index alone, once for
           each point of the ranges the sum runs in, so its range counts as those
           ranges; reads of stages a later pass may inline whose values read no
-          storage, as a range's positions do, are seen as those values there. An
+          storage, as a range's positions do, are seen as those values there,
+          and count such a sum's own trips, so that they are inlined as that
+          test assumes. An
           axis the value does not vary along counts neither elements nor trips,
           since inlining at its index leaves the value as it is, and a symbolic
           size counts at its largest. The reads are those of the graph this step

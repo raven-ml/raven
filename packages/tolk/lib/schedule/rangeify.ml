@@ -71,6 +71,16 @@ let inlined src buf idx =
   substitute ~calls:Skip ~pass:Fixed_point ~extra_pm:pm_gate_substitute src
     replaced
 
+(* Whether [x] reads storage, searched until the first read: a stage's value
+   is new to the graph a question is asked of, so a memo over its whole slice
+   would be built for one question. *)
+let storage x =
+  let reads_storage n =
+    match op n with Op.Param | Op.Stage | Op.After -> true | _ -> false
+  in
+  let gate n = if reads_storage n then raise_notrace Exit else true in
+  match toposort ~calls:Skip ~gate x with _ -> false | exception Exit -> true
+
 (* Whether the sum [red] over one range is computed at one trip
    ({!Simplify.load_collapse}) as its kernel holds it: with its reads of stages
    a later pass may inline whose values read no storage, as a range's positions
@@ -85,18 +95,6 @@ let collapses red =
       let included = toposort ~calls:Skip ~gate:inside u in
       let local = Tbl.create 64 in
       List.iter (fun x -> Tbl.replace local x ()) included;
-      (* Whether [x] reads storage, searched until the first read: the stage's
-         value is new to this graph, so a memo over its whole slice would be
-         built for one question. *)
-      let storage x =
-        let reads_storage n =
-          match op n with Op.Param | Op.Stage | Op.After -> true | _ -> false
-        in
-        let gate n = if reads_storage n then raise_notrace Exit else true in
-        match toposort ~calls:Skip ~gate x with
-        | _ -> false
-        | exception Exit -> true
-      in
       let index_function x =
         op x = Op.Index
         && op (nth x 0) = Op.Stage
@@ -186,8 +184,10 @@ type axis_copies = { lo : float; hi : float; shares : share list }
    the value once. Trips in padding count, since only the inlined value's loads
    are gated there. A sum that selects one trip, where an index equals its
    range, is computed at that index alone ({!Simplify.load_collapse}), once for
-   each point of the ranges the sum runs in: its range counts as those ranges.
-   A coordinate the value does not vary along
+   each point of the ranges the sum runs in: its range counts as those ranges,
+   but for a stage that reads no storage, which the sum's test sees as its
+   value ({!collapses}), as a one-hot gather's positions. A coordinate the
+   value does not vary along
    counts neither elements nor trips: substituting its index leaves the value as
    it is. An output range of constant size that each component reading it reads
    through one chain of floor divisions and remainders by constants dividing
@@ -249,9 +249,14 @@ let read_copies ~reduced ~outer ~collapses buf idx =
       Float.max 1.
         (Float.min (extent reduce) (extent read /. elements /. shared))
   in
+  (* A value that reads no storage is seen as itself by the test of a sum
+     that selects one trip, which then compares the index it selects with
+     the range: its reads count the sum's own trips, as one that does not
+     select, so that it is inlined as that test assumes. *)
   let sums =
     List.filter_map (fun r -> Option.map (fun o -> (r, o)) (outer r)) rs
   in
+  let sums = if sums <> [] && not (storage (nth buf 0)) then [] else sums in
   let known c = { no = c; yes = c; sum = None } in
   match sums with
   | [] -> known (count [])

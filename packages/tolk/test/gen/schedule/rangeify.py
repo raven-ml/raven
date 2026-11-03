@@ -383,6 +383,8 @@ PROGRAMS = {
     # products of rows by their expert's decoded matrix: 2 rows for each of 64 experts, and 64 for each of 2
     "routed_product_2": lambda: routed_product(64, 2, 4),
     "routed_product_64": lambda: routed_product(2, 64, 64),
+    # 16 rows for each of 4 experts, whose product sums 192 values: the one-hot gather's positions are read in that sum
+    "routed_product_wide": lambda: routed_product(4, 16, 192),
     # products whose rows read a matrix at a digit of their index: blocks of 16 rows, and 64 rows merged with the columns
     "blocked_product_16": lambda: blocked_product(16),
     "dense_decoded_64": lambda: dense_decoded(64),

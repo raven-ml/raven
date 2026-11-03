@@ -2302,10 +2302,12 @@ let scan_work n =
    work grew with [g]. A scaled slice's decode is stored where enough rows
    read it and computed again in each row where few do, as the compiler's
    store rule decides, so a scaled contraction's unit is [g] unsegmented
-   contractions of a group's [n / g] rows by one slice. *)
+   contractions of a group's [n / g] rows by one slice. The bounds hold at
+   any [k], 256 among them, where a row's sum over its groups, which selects
+   one, runs inside a sum over [k] of 256 trips. *)
 let work_bounds =
-  let n = 256 and k = 16 and j = 16 in
-  let rows ~scaled () =
+  let n = 256 and j = 16 in
+  let rows ~scaled ~k () =
     let ops, lds = work ~scaled Plain ~n ~k ~j 1 in
     let at g =
       let o, l = work ~scaled Rows_of ~n ~k ~j g in
@@ -2324,10 +2326,15 @@ let work_bounds =
   group "work"
     [
       test "a Rows contraction's work is one slice's at 8 and 32 groups"
-        (rows ~scaled:false);
+        (rows ~scaled:false ~k:16);
       test "a scaled float4 Rows contraction's work is one slice's"
-        (rows ~scaled:true);
+        (rows ~scaled:true ~k:16);
+      test "a Rows contraction's work is one slice's over 256 contracted"
+        (rows ~scaled:false ~k:256);
+      test "a scaled float4 Rows contraction's work is one slice's over 256"
+        (rows ~scaled:true ~k:256);
       test "a Contracting contraction of 8 groups works in blocks" (fun () ->
+          let k = 16 in
           let ops, lds = work Plain ~n ~k ~j 1 in
           let o, l = work Contracting_of ~n ~k ~j 8 in
           at_most int ~msg:"operations" ~than:(4 * ops) o;
