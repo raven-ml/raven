@@ -1196,6 +1196,8 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() ast
       (Before_sources Prepare.pm_mops)
   in
+  (* effects keep their ranges until the expander *)
+  let sink = Simplify.pin_effects sink in
   let sink =
     if not optimize then sink
     else
@@ -1227,6 +1229,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
            Symbolic.pm_move_where_on_load;
            Simplify.pm_flatten_range;
            Simplify.pm_reduce_unparented;
+           Simplify.pm_unpin_effects;
          ])
       sink
   in

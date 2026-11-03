@@ -5561,6 +5561,215 @@ let crossed_ends () =
   let pair k = Ops.load (at r ((l * int 2) + int k)) [] in
   effect_kernel [ Ops.end_ (Ops.store (at d l) (pair 0 + pair 1)) [ l ] ]
 
+(* Effects whose index is one constant at every step: the effect still runs
+   once per step of the loops its index reads. *)
+
+let bounded_var name hi =
+  Ops.variable name (`Int Bigint.zero) (`Int (Bigint.of_int hi))
+
+(* [C[r // 8] += 1] over [r < bound]: the quotient is 0 at every step, so
+   [C[0]] counts the steps. *)
+let quotient_count bound () =
+  let r = Ops.range ~axis_type:Loop bound [ 0 ] in
+  let cell = at (int_param ~name:"C" 0 1) Ops.O.(r // int 8) in
+  effect_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
+
+(* [O[r // 2] = 5] over [r < bound], a loop of at most one step: it stores
+   only when the loop steps. *)
+let skipped_store bound () =
+  let r = Ops.range ~axis_type:Loop (bound ()) [ 0 ] in
+  let out = int_param ~name:"O" 0 2 in
+  effect_kernel
+    [ Ops.end_ (Ops.store (at out Ops.O.(r // int 2)) (i32 5)) [ r ] ]
+
+let one_step () : Ops.sint = Sym (bounded_var "n" 1)
+
+(* [C[r // 8] += 1] over [r < 32] where [r < 8]: the quotient is 0 where the
+   guard holds, so [C[0]] counts 8 steps. *)
+let guarded_quotient () =
+  let r = effect_loop 32 0 in
+  let cell =
+    at (int_param ~name:"C" 0 1) (Shape.valid Ops.O.(r // int 8) Ops.O.(r < int 8))
+  in
+  effect_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
+
+(* [C[r // 8] += 1] in the target's language over [r < n]. *)
+let folded_code () =
+  let r = Ops.range ~axis_type:Loop (Sym (bounded_var "n" 4)) [ 0 ] in
+  let c = int_param ~name:"C" 0 1 in
+  effect_kernel [ Ops.end_ (code "{0}[0] += 1;" [ at c Ops.O.(r // int 8) ]) [ r ] ]
+
+(* [O[0] = r // 8] over [r < n]: the value is 0 at every step. *)
+let folded_value () =
+  let r = Ops.range ~axis_type:Loop (Sym (bounded_var "n" 8)) [ 0 ] in
+  let value = Ops.cast Ops.O.(r // int 8) Int32 in
+  effect_kernel
+    [ Ops.end_ (Ops.store (first (int_param ~name:"O" 0 1)) value) [ r ] ]
+
+(* A bound of [F[0] <> 0] steps, known only when the kernel runs. *)
+let flag_steps () : Ops.sint =
+  let flag = Ops.load (first (int_param ~name:"F" 1 1)) [] in
+  Sym (Ops.cast Ops.O.(flag <> i32 0) Int32)
+
+(* A loop nest whose bounds are constants, or variables, of at most [max_trips]
+   steps, and an index of one term per loop, each a constant at every step
+   given those bounds. *)
+
+let max_trips = 4
+
+type fold =
+  | Quotient of int (* [r // k], [k >= max_trips] *)
+  | Below of int (* [r < k], [k >= max_trips] *)
+  | Equal of int (* [r = k], [k < 0] *)
+  | Mod_one (* [r % 1] *)
+  | Sum_quotient (* the sum of the nest's loops over [4 * max_trips] *)
+
+let pp_fold ppf = function
+  | Quotient k -> Format.fprintf ppf "r // %d" k
+  | Below k -> Format.fprintf ppf "r < %d" k
+  | Equal k -> Format.fprintf ppf "r = %d" k
+  | Mod_one -> Format.pp_print_string ppf "r % 1"
+  | Sum_quotient -> Format.fprintf ppf "(sum of r) // %d" (4 * max_trips)
+
+(* The value of a term at every step. *)
+let folded = function
+  | Quotient _ | Equal _ | Mod_one | Sum_quotient -> 0
+  | Below _ -> 1
+
+let fold_term loops (r, fold) =
+  let open Ops.O in
+  match fold with
+  | Quotient k -> r // int k
+  | Below k -> Ops.cast (r < int k) Int32
+  | Equal k -> Ops.cast (Ops.eq r (int k)) Int32
+  | Mod_one -> r % int 1
+  | Sum_quotient ->
+      let sum = List.fold_left (fun acc r -> acc + r) (int 0) loops in
+      sum // int Stdlib.(4 * max_trips)
+
+let trips = function `Const n | `Var n -> n
+let var_name i = Printf.sprintf "n%d" i
+
+(* [C[t0 + t1 + ...] += 1] inside every loop of the nest, [ti] the term of the
+   [i]th loop. A loop [`Var n] is bounded by a variable bound to [n]. *)
+let folded_nest (loops, folds) () =
+  let range i l =
+    let bound : Ops.sint =
+      match l with
+      | `Const n -> Int n
+      | `Var _ -> Sym (bounded_var (var_name i) max_trips)
+    in
+    Ops.range ~axis_type:Loop bound [ i ]
+  in
+  let rs = List.mapi range loops in
+  let index =
+    List.fold_left
+      (fun acc t -> Ops.O.(acc + fold_term rs t))
+      (Ops.int 0) (List.combine rs folds)
+  in
+  let cell = at (int_param ~name:"C" 0 8) index in
+  effect_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) rs ]
+
+let nests =
+  let loop =
+    Gen.frequency
+      [
+        (2, Gen.map (fun n -> `Const n) (Gen.int_range 1 max_trips));
+        (3, Gen.map (fun n -> `Var n) (Gen.int_range 0 max_trips));
+      ]
+  in
+  let fold =
+    Gen.frequency
+      [
+        (2, Gen.map (fun k -> Quotient k) (Gen.int_range max_trips 9));
+        (2, Gen.map (fun k -> Below k) (Gen.int_range max_trips 9));
+        (1, Gen.map (fun k -> Equal k) (Gen.int_range (-3) (-1)));
+        (1, Gen.constant Mod_one);
+        (1, Gen.constant Sum_quotient);
+      ]
+  in
+  let pp_loop ppf = function
+    | `Const n -> Format.fprintf ppf "%d" n
+    | `Var n -> Format.fprintf ppf "n=%d" n
+  in
+  let list pp = Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ") pp in
+  let pp ppf (loops, folds) =
+    Format.fprintf ppf "loops [%a], index terms [%a]" (list pp_loop) loops
+      (list pp_fold) folds
+  in
+  Gen.with_pp pp
+    Gen.(
+      let* depth = int_range 1 3 in
+      pair (list ~size:(constant depth) loop) (list ~size:(constant depth) fold))
+
+(* Every step of the nest names the same cell of [C], which counts the steps. *)
+let counts_each_step ((loops, folds) as nest) =
+  cover "a loop of no steps" (List.exists (fun l -> trips l = 0) loops);
+  cover "a nest of several loops" (List.length loops > 1);
+  cover "a variable bound"
+    (List.exists (function `Var _ -> true | `Const _ -> false) loops);
+  List.iter
+    (fun (name, is) -> cover name (List.exists is folds))
+    [
+      ("a quotient", function Quotient _ -> true | _ -> false);
+      ("a comparison", function Below _ | Equal _ -> true | _ -> false);
+      ("a remainder by one", ( = ) Mod_one);
+      ("a quotient of a sum", ( = ) Sum_quotient);
+    ];
+  let vars =
+    List.concat
+      (List.mapi
+         (fun i -> function `Var n -> [ (var_name i, n) ] | `Const _ -> [])
+         loops)
+  in
+  let steps = List.fold_left (fun acc l -> acc * trips l) 1 loops in
+  let cell = List.fold_left (fun acc f -> acc + folded f) 0 folds in
+  writes ~vars (folded_nest nest) []
+    [ List.init 8 (fun i -> if i = cell then steps else 0) ]
+    ()
+
+let folded_effects =
+  group "effects at an index that folds run as often as written"
+    [
+      cases "a store at a quotient that is 0 counts its loop's steps"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ("a constant loop of 8", (fun () : Ops.sint -> Int 8), []);
+          ("a variable loop of 0", (fun () : Ops.sint -> Sym (bounded_var "n" 8)), [ ("n", 0) ]);
+          ("a variable loop of 5", (fun () : Ops.sint -> Sym (bounded_var "n" 8)), [ ("n", 5) ]);
+          ("a variable loop of 8", (fun () : Ops.sint -> Sym (bounded_var "n" 8)), [ ("n", 8) ]);
+        ]
+        (fun (_, bound, vars) ->
+          let steps = match vars with [ (_, n) ] -> n | _ -> 8 in
+          writes ~vars (quotient_count (bound ())) [] [ [ steps ] ] ());
+      cases "a store in a loop of at most one step stores only when it steps"
+        ~id:(fun (name, _, _, _, _) -> name)
+        [
+          ("a variable loop of 0", one_step, [ ("n", 0) ], [], [ [ 0; 0 ] ]);
+          ("a variable loop of 1", one_step, [ ("n", 1) ], [], [ [ 5; 0 ] ]);
+          ("a loop of a flag that is 0", flag_steps, [], [ (1, int_values [ 0 ]) ], [ [ 0; 0 ]; [ 0 ] ]);
+          ("a loop of a flag that is 1", flag_steps, [], [ (1, int_values [ 1 ]) ], [ [ 5; 0 ]; [ 1 ] ]);
+        ]
+        (fun (_, bound, vars, inputs, expected) ->
+          writes ~vars (skipped_store bound) inputs expected ());
+      cases "a store of a value that folds stores only when its loop steps"
+        ~id:(fun (name, _, _) -> name)
+        [ ("a loop of 0", 0, [ 7 ]); ("a loop of 5", 5, [ 0 ]) ]
+        (fun (_, n, expected) ->
+          writes ~vars:[ ("n", n) ] folded_value
+            [ (0, int_values [ 7 ]) ]
+            [ expected ] ());
+      test "a store at a guarded quotient that is 0 counts the guarded steps"
+        (writes guarded_quotient [] [ [ 8 ] ]);
+      cases "code in the target's language at an index that folds runs at each step"
+        ~id:(fun n -> Printf.sprintf "a loop of %d" n)
+        [ 0; 4 ]
+        (fun n -> writes ~vars:[ ("n", n) ] folded_code [] [ [ n ] ] ());
+      prop ~count:40
+        "a store at an index that folds runs once per step of its loops" nests
+        counts_each_step;
+    ]
+
 let effects =
   group "effects run as often as written"
     [
@@ -5771,4 +5980,5 @@ let () =
          stacks;
          int_powers;
          effects;
+         folded_effects;
        ])

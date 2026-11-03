@@ -2,17 +2,18 @@
 0 Ops.CONST dtypes.weakint [] 17
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 1)
-3 Ops.INDEX dtypes.i32 [1, 2]
-4 Ops.CONST dtypes.weakint [] 324
-5 Ops.PARAM dtypes.bool [4] ParamArg(slot=1, dtype=dtypes.bool)
-6 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
-7 Ops.CONST dtypes.weakint [] 18
-8 Ops.MUL dtypes.weakint [6, 7]
-9 Ops.ADD dtypes.weakint [8, 2]
-10 Ops.INDEX dtypes.bool [5, 9]
-11 Ops.CAST dtypes.i32 [10] dtypes.i32
-12 Ops.REDUCE dtypes.i32 [11, 6] (Ops.ADD, 0)
-13 Ops.STORE dtypes.void [3, 12]
-14 Ops.END dtypes.void [13, 2]
-15 Ops.SINK dtypes.void [14] KernelInfo()
+3 Ops.AFTER dtypes.i32 [1, 2]
+4 Ops.INDEX dtypes.i32 [3, 2]
+5 Ops.CONST dtypes.weakint [] 324
+6 Ops.PARAM dtypes.bool [5] ParamArg(slot=1, dtype=dtypes.bool)
+7 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+8 Ops.CONST dtypes.weakint [] 18
+9 Ops.MUL dtypes.weakint [7, 8]
+10 Ops.ADD dtypes.weakint [9, 2]
+11 Ops.INDEX dtypes.bool [6, 10]
+12 Ops.CAST dtypes.i32 [11] dtypes.i32
+13 Ops.REDUCE dtypes.i32 [12, 7] (Ops.ADD, 0)
+14 Ops.STORE dtypes.void [4, 13]
+15 Ops.END dtypes.void [14, 2]
+16 Ops.SINK dtypes.void [15] KernelInfo()
 

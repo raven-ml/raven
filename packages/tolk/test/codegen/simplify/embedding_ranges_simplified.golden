@@ -4,33 +4,34 @@
 2 Ops.CONST dtypes.weakint [] 6
 3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
 4 Ops.CONST dtypes.weakint [] 4
-5 Ops.MUL dtypes.weakint [3, 4]
-6 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 3)
-7 Ops.ADD dtypes.weakint [5, 6]
-8 Ops.INDEX dtypes.f32 [1, 7]
-9 Ops.PARAM dtypes.i32 [2] ParamArg(slot=1, dtype=dtypes.i32)
-10 Ops.INDEX dtypes.i32 [9, 3]
-11 Ops.CONST dtypes.weakint [] 0
-12 Ops.CMPLT dtypes.bool [10, 11]
-13 Ops.CONST dtypes.weakint [] 10
-14 Ops.ADD dtypes.i32 [10, 13]
-15 Ops.WHERE dtypes.i32 [12, 14, 10]
-16 Ops.CAST dtypes.weakint [15] dtypes.weakint
-17 Ops.CMPLT dtypes.bool [16, 11]
-18 Ops.CONST dtypes.bool [] False
-19 Ops.CMPEQ dtypes.bool [17, 18]
-20 Ops.CMPLT dtypes.bool [16, 13]
-21 Ops.AND dtypes.bool [19, 20]
-22 Ops.CONST dtypes.weakint [] 40
-23 Ops.PARAM dtypes.f32 [22] ParamArg(slot=2, dtype=dtypes.f32)
-24 Ops.MUL dtypes.weakint [16, 4]
-25 Ops.ADD dtypes.weakint [24, 6]
-26 Ops.CONST dtypes.bool [] Invalid
-27 Ops.WHERE dtypes.weakint [21, 25, 26]
-28 Ops.INDEX dtypes.f32 [23, 27]
-29 Ops.CONST dtypes.weakfloat [] 0.0
-30 Ops.WHERE dtypes.f32 [21, 28, 29]
-31 Ops.STORE dtypes.void [8, 30]
-32 Ops.END dtypes.void [31, 3, 6]
-33 Ops.SINK dtypes.void [32] KernelInfo()
+5 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 3)
+6 Ops.AFTER dtypes.f32 [1, 3, 5]
+7 Ops.MUL dtypes.weakint [3, 4]
+8 Ops.ADD dtypes.weakint [7, 5]
+9 Ops.INDEX dtypes.f32 [6, 8]
+10 Ops.PARAM dtypes.i32 [2] ParamArg(slot=1, dtype=dtypes.i32)
+11 Ops.INDEX dtypes.i32 [10, 3]
+12 Ops.CONST dtypes.weakint [] 0
+13 Ops.CMPLT dtypes.bool [11, 12]
+14 Ops.CONST dtypes.weakint [] 10
+15 Ops.ADD dtypes.i32 [11, 14]
+16 Ops.WHERE dtypes.i32 [13, 15, 11]
+17 Ops.CAST dtypes.weakint [16] dtypes.weakint
+18 Ops.CMPLT dtypes.bool [17, 12]
+19 Ops.CONST dtypes.bool [] False
+20 Ops.CMPEQ dtypes.bool [18, 19]
+21 Ops.CMPLT dtypes.bool [17, 14]
+22 Ops.AND dtypes.bool [20, 21]
+23 Ops.CONST dtypes.weakint [] 40
+24 Ops.PARAM dtypes.f32 [23] ParamArg(slot=2, dtype=dtypes.f32)
+25 Ops.MUL dtypes.weakint [17, 4]
+26 Ops.ADD dtypes.weakint [25, 5]
+27 Ops.CONST dtypes.bool [] Invalid
+28 Ops.WHERE dtypes.weakint [22, 26, 27]
+29 Ops.INDEX dtypes.f32 [24, 28]
+30 Ops.CONST dtypes.weakfloat [] 0.0
+31 Ops.WHERE dtypes.f32 [22, 29, 30]
+32 Ops.STORE dtypes.void [9, 31]
+33 Ops.END dtypes.void [32, 3, 5]
+34 Ops.SINK dtypes.void [33] KernelInfo()
 

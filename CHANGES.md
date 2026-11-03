@@ -1007,6 +1007,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   routed MXFP4 gate and up projection at 512 float32 tokens takes 12.6-12.9
   ms against 24.4-25.9 on an RTX 5000 Ada, 64 rows of a 16384-square MXFP4
   matrix 2.7 against 4.8-5.0 ms.
+- A store, a call or code in the target's language runs once per step of the
+  loops its index or value reads even where these fold to a constant:
+  `C[r / 8] += 1` over 8 steps counts 8 where it counted 1, and such a store in
+  a loop of no step writes nothing (`Simplify.pin_effects`).
 - A device's copies and kernels share one arena in every schedule, where
   copies had one of their own in a schedule linked `Linked`: on one device
   a copy lane ordered nothing more and held its own peak. Where a memory

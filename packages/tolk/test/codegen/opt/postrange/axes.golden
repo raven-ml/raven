@@ -139,7 +139,7 @@ local_ignores_shared_memory	4	[4, 128, 32, 128]	[AxisType.GLOBAL, AxisType.GLOBA
 tc_operands_swapped	5	[16, 16, 32, 2, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.WARP, AxisType.UPCAST, AxisType.WEAK]	[4]	[0, 1]	[4]	2	0	1	3	  16   16   32    2   16	1:16:GLOBAL 2:16:GLOBAL 0:16:WEAK
 stage_then_reduce_globals	3	[4, 8, 8]	[AxisType.GLOBAL, AxisType.LOOP, AxisType.LOOP]	[2]	[0]	[]	1	0	1	3	   4    8    8	
 stage_outside_an_output_globals	4	[4, 2, 8, 8]	[AxisType.GLOBAL, AxisType.WEAK, AxisType.LOOP, AxisType.LOOP]	[3]	[0, 1]	[]	1	0	1	3	   4    2    8    8	
-loop_counter_upcast	2	[2, 2]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	2	0	0	6	   2    2	0:2:WEAK 2:2:UPCAST
+loop_counter_upcast	2	[2, 2]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	2	0	0	5	   2    2	0:2:WEAK 2:2:UPCAST
 local_sum_axes	2	[4, 8]	[AxisType.GLOBAL, AxisType.LOCAL]	[1]	[0]	[1]	1	1	1	2	   4    8	
 warp_sum_axes	2	[4, 8]	[AxisType.GLOBAL, AxisType.WARP]	[1]	[0]	[]	1	1	1	2	   4    8	
 group_within_symbolic_shared_memory	3	[n, 2, 4]	[AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK]	[1, 2]	[]	[1, 2]	1	1	1	2	   n    2    4	1:4:WEAK 2:2:LOCAL

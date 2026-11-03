@@ -345,8 +345,9 @@ let node ~check p i operands =
       | `Invalid -> `Invalid)
   | op, _, _ -> invalid_arg (Format.asprintf "cannot evaluate %a" Op.pp op)
 
+(* The kernel has no order, so storage read after other nodes is that storage. *)
 let storage_slot u =
-  match Ops.arg u with
+  match Ops.arg (Ops.without_after u) with
   | Param { slot; _ } when Shape.max_shape u <> [] -> slot
   | _ -> invalid_arg "cannot access a node that is not storage"
 

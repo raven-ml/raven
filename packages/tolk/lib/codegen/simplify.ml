@@ -229,6 +229,116 @@ let pm_split_ranges =
           do_substitute ctx (m "x") split);
     ])
 
+(* Effects *)
+
+(* An effect runs once per step of the ranges it depends on, and a rewrite
+   that keeps every value can still drop a range from an index: [r // 8] over
+   [r < 8] is [0], and a guard [r < 8] holds everywhere once [r] shrinks to 8
+   steps. So until vector axes become lanes, an effect reads its storage through an
+   [After] of the ranges its index and its other sources read, whatever these
+   fold to. A load of that storage keeps its ranges too: the effect it reads
+   may run at each step. *)
+
+(* An effect's index: a store's destination, or the first index a call or code
+   in the target's language takes. *)
+let effect_index u =
+  match op u with
+  | Op.Store -> if op (nth u 0) = Op.Index then Some (nth u 0) else None
+  | Op.Custom | Op.Call -> List.find_opt (fun s -> op s = Op.Index) (src u)
+  | _ -> None
+
+(* [pin idx deps] is the index [idx] reading its storage after the ranges
+   [deps]. *)
+let pin idx deps =
+  replace idx ~src:(after (nth idx 0) deps :: List.tl (src idx))
+
+let offset_ranges idx =
+  dedup_nodes
+    (List.concat_map (fun s -> Nodes.to_list (ranges s)) (List.tl (src idx)))
+
+let pm_pin_effects =
+  Pattern_matcher.v
+    (fun () -> [
+      rule_ctx (Upat.op Op.Index ~name:"x") (fun stored m ->
+          let x = m "x" in
+          let deps = offset_ranges x in
+          if deps = [] || not (List.memq (buf_uop (nth x 0)) stored) then
+            None
+          else Some (pin x deps));
+      (* an effect whose other sources read ranges its index does not *)
+      rule_ctx
+        (Upat.v ~op:(Op.Set.of_list [ Op.Store; Op.Custom; Op.Call ]) ~name:"x" ())
+        (fun _ m ->
+          let x = m "x" in
+          match effect_index x with
+          | None -> None
+          | Some idx ->
+              let held = ranges idx in
+              let extra =
+                List.filter
+                  (fun r -> not (Nodes.mem r held))
+                  (Nodes.to_list (ranges x))
+              in
+              if extra = [] then None
+              else
+                let pinned = pin idx extra in
+                Some
+                  (replace x
+                     ~src:(List.map (fun s -> if s == idx then pinned else s) (src x))));
+    ])
+
+(* The storage an effect may write: that of each index it takes. *)
+let effect_storage u =
+  let indices =
+    match op u with
+    | Op.Store -> [ nth u 0 ]
+    | Op.Custom | Op.Call -> src u
+    | _ -> []
+  in
+  List.filter_map
+    (fun s -> if op s = Op.Index then Some (buf_uop (nth s 0)) else None)
+    indices
+
+let pin_effects sink =
+  let stored =
+    Nodes.fold
+      (fun u acc -> effect_storage u @ acc)
+      (backward_slice ~calls:Skip sink)
+      []
+  in
+  if stored = [] then sink
+  else
+    graph_rewrite ~calls:Skip ~pass:Once ~ctx:stored sink
+      (After_sources pm_pin_effects)
+
+(* [unpin x idx] is [x] reading the storage of its index [idx] directly, where
+   [idx] reads it through an [After] of ranges alone that [x] runs inside
+   without it. *)
+let unpin x idx =
+  let b = nth idx 0 in
+  let deps = List.tl (src b) in
+  if op b <> Op.After || not (List.for_all (fun d -> op d = Op.Range) deps)
+  then None
+  else
+    let bare = replace idx ~src:(nth b 0 :: List.tl (src idx)) in
+    let x =
+      if x == idx then bare
+      else replace x ~src:(List.map (fun s -> if s == idx then bare else s) (src x))
+    in
+    let rs = ranges x in
+    if List.for_all (fun d -> Nodes.mem d rs) deps then Some x else None
+
+let pm_unpin_effects =
+  Pattern_matcher.v
+    (fun () -> [
+      rule (Upat.op Op.Index ~name:"x") (fun m -> unpin (m "x") (m "x"));
+      rule
+        (Upat.v ~op:(Op.Set.of_list [ Op.Store; Op.Custom; Op.Call ]) ~name:"x" ())
+        (fun m ->
+          let x = m "x" in
+          Option.bind (effect_index x) (unpin x));
+    ])
+
 (* Reductions *)
 
 let no_range u = not (op_in_backward_slice_with_self ~calls:Skip u [ Op.Range ])

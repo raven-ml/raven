@@ -14,10 +14,10 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index f4535a4f7..887fbbfcf 100644
+index f4535a4f7..80bf0b4c6 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
-@@ -2,19 +2,19 @@ from dataclasses import replace, dataclass, field
+@@ -2,31 +2,31 @@ from dataclasses import replace, dataclass, field
  import itertools, functools
  from tinygrad.helpers import DISABLE_FAST_IDIV, TRANSCENDENTAL, SPEC, DEBUG, VIZ, IMAGE, NOOPT, EMULATED_DTYPES, USE_TC
  from tinygrad.helpers import ALLOW_TF32, DEFAULT_FLOAT, DEFAULT_INT, TC_SELECT, TC_OPT, TC_MIN_GLOBALS, TracingKey, Context, panic
@@ -40,7 +40,12 @@ index f4535a4f7..887fbbfcf 100644
  from tinygrad.codegen.decomp.op import get_late_rewrite_patterns, get_simplifying_rewrite_patterns
  from tinygrad.codegen.decomp.transcendental import get_transcendental_patterns
  from tinygrad.codegen.late.coalesce import indexing_simplify
-@@ -26,7 +26,7 @@ from tinygrad.schedule.prepare import pm_mops
+ from tinygrad.codegen.opt.postrange import apply_opts
+ from tinygrad.codegen.late.gater import pm_move_gates_from_index
+-from tinygrad.codegen.simplify import pm_simplify_ranges, pm_flatten_range, pm_split_ranges, pm_load_collapse, pm_reduce_unparented
++from tinygrad.codegen.simplify import pm_simplify_ranges, pm_flatten_range, pm_split_ranges, pm_load_collapse, pm_reduce_unparented, pin_effects, pm_unpin_effects
+ from tinygrad.schedule.multi import multi_pm
+ from tinygrad.schedule.prepare import pm_mops
  from tinygrad.codegen.late.linearizer import CFGContext, pm_split_ends, pm_add_control_flow, linearize
  from tinygrad.codegen.late.regalloc import LinearScanRegallocContext, pm_regalloc_rewrite
  from tinygrad.codegen.late.coalesce import memory_coalescing, pm_simplify_add_image
@@ -400,7 +405,25 @@ index f4535a4f7..887fbbfcf 100644
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if DEBUG >= 5: print(render_uir(ast))
    if SPEC: type_verify(ast, spec_tensor)
-@@ -288,7 +536,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -260,6 +508,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+ 
+   # preprocess
+   sink = graph_rewrite(sink, pm_mops, name="early movement ops", bottom_up=True)
++  # effects keep their ranges until the expander
++  sink = pin_effects(sink)
+ 
+   # first we optimize
+   if optimize:
+@@ -280,7 +530,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+ 
+   # ** expander (expand_rewrite) **
+   # reduce_unparented: a REDUCE whose src folded to a CONST (e.g. x*0) has no parented ranges, collapse it before the expander
+-  sink = graph_rewrite(sink, sym+pm_move_where_on_load+pm_flatten_range+pm_reduce_unparented, name="postopt symbolic")
++  sink = graph_rewrite(sink, sym+pm_move_where_on_load+pm_flatten_range+pm_reduce_unparented+pm_unpin_effects, name="postopt symbolic")
+ 
+   # expand
+   sink = graph_rewrite(sink, expander, ctx=build_range_map(sink), name="expander")
+@@ -288,7 +538,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -409,7 +432,7 @@ index f4535a4f7..887fbbfcf 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -301,7 +549,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -301,7 +551,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
@@ -418,7 +441,7 @@ index f4535a4f7..887fbbfcf 100644
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -326,11 +574,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -326,11 +576,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -433,7 +456,7 @@ index f4535a4f7..887fbbfcf 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -345,11 +595,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -345,11 +597,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -447,7 +470,7 @@ index f4535a4f7..887fbbfcf 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -443,9 +694,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -443,9 +696,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -472,7 +495,7 @@ index f4535a4f7..887fbbfcf 100644
  
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp|None:
    if getattr(type(ctx), "asm") is Renderer.asm: return None
-@@ -493,7 +758,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
+@@ -493,7 +760,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
      full_sink = full_rewrite_to_sink(ast, renderer, optimize=not ast.arg.optimized)
      prog_info = ProgramInfo.from_sink(full_sink, renderer.target)
      if (isinstance(renderer, ISARenderer) or renderer.packed_args) and full_sink.arg.estimates is None:
@@ -1996,7 +2019,7 @@ index af2199821..901f0054c 100644
      uops = prg.src[1].src
      if len(uops) >= (uops_max:=getenv("BEAM_UOPS_MAX", 3000)) > 0:
 diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
-index b68c1d948..ef78caa51 100644
+index b68c1d948..f9f3e1f7b 100644
 --- a/tinygrad/codegen/simplify.py
 +++ b/tinygrad/codegen/simplify.py
 @@ -1,9 +1,9 @@
@@ -2020,7 +2043,7 @@ index b68c1d948..ef78caa51 100644
  
  pm_split_ranges = PatternMatcher([
    (UPat(Ops.RANGE, name="r")%UPat.cvar("c"), mark_range_mod),
-@@ -80,6 +80,12 @@ pm_split_ranges = PatternMatcher([
+@@ -80,6 +80,55 @@ pm_split_ranges = PatternMatcher([
  
  def no_range(u:UOp) -> bool: return not u.op_in_backward_slice_with_self(Ops.RANGE)
  
@@ -2030,10 +2053,53 @@ index b68c1d948..ef78caa51 100644
 +  count = ((upper.minimum(r.src[0]) if upper is not None else r.src[0]) - (lower.maximum(0) if lower is not None else r.const_like(0))).maximum(0)
 +  return (0 < count).where(count * val, val.const_like(0.0)) if dtypes.is_float(val.dtype) else count * val
 +
++# an effect runs once per step of the ranges it depends on, and a rewrite that keeps every value can still drop a range (r//8 over r<8 is 0,
++# a guard r<8 holds once r shrinks to 8): until the ranges are final, an effect's index, and a load of its buffer, read the buffer after
++# the ranges the index and the effect's other sources read
++def effect_index(u:UOp) -> UOp|None:
++  if u.op is Ops.STORE: return u.src[0] if u.src[0].op is Ops.INDEX else None
++  if u.op in {Ops.CUSTOM, Ops.CALL}: return next((s for s in u.src if s.op is Ops.INDEX), None)
++  return None
++
++def pin_index(ctx:set[UOp], x:UOp) -> UOp|None:
++  if x.src[0].buf_uop not in ctx or not (deps:=dedup(r for s in x.src[1:] for r in s.ranges)): return None
++  return x.replace(src=(x.src[0].after(*deps),)+x.src[1:])
++
++def pin_effect(x:UOp) -> UOp|None:
++  if (idx:=effect_index(x)) is None or not (extra:=[r for r in x.ranges if r not in idx.ranges]): return None
++  pinned = idx.replace(src=(idx.src[0].after(*extra),)+idx.src[1:])
++  return x.replace(src=tuple(pinned if s is idx else s for s in x.src))
++
++pm_pin_effects = PatternMatcher([
++  (UPat(Ops.INDEX, name="x"), pin_index),
++  (UPat((Ops.STORE, Ops.CUSTOM, Ops.CALL), name="x"), lambda ctx,x: pin_effect(x)),
++])
++
++# the buffers an effect may write: those of each index it takes
++def effect_buffers(u:UOp) -> list[UOp]:
++  idxs = (u.src[0],) if u.op is Ops.STORE else u.src if u.op in {Ops.CUSTOM, Ops.CALL} else ()
++  return [s.src[0].buf_uop for s in idxs if s.op is Ops.INDEX]
++
++def pin_effects(sink:UOp) -> UOp:
++  stored = {b for u in sink.toposort() for b in effect_buffers(u)}
++  return graph_rewrite(sink, pm_pin_effects, ctx=stored, name="pin effects", walk=True) if stored else sink
++
++# an INDEX, or an effect of it, whose buffer is read through an AFTER of ranges alone that it runs inside anyway reads the buffer directly
++def unpin(x:UOp, idx:UOp) -> UOp|None:
++  if (b:=idx.src[0]).op is not Ops.AFTER or any(d.op is not Ops.RANGE for d in b.src[1:]): return None
++  bare = idx.replace(src=(b.src[0],)+idx.src[1:])
++  ret = bare if x is idx else x.replace(src=tuple(bare if s is idx else s for s in x.src))
++  return ret if all(d in ret.ranges for d in b.src[1:]) else None
++
++pm_unpin_effects = PatternMatcher([
++  (UPat(Ops.INDEX, name="x"), lambda x: unpin(x, x)),
++  (UPat((Ops.STORE, Ops.CUSTOM, Ops.CALL), name="x"), lambda x: unpin(x, idx) if (idx:=effect_index(x)) is not None else None),
++])
++
  def reduce_unparented(red:UOp) -> UOp|None:
    assert all(x.op is Ops.RANGE for x in red.src[1:]), "some reduce srcs aren't ranges"
    reduce_parented, reduce_unparented = partition(red.src[1:], lambda x: x in red.src[0].ranges)
-@@ -98,36 +104,39 @@ pm_reduce_unparented = PatternMatcher([
+@@ -98,36 +147,39 @@ pm_reduce_unparented = PatternMatcher([
  pm_reduce_collapse = pm_reduce_unparented + PatternMatcher([
    # lift x+y out of reduce on lt
    (UPat(Ops.ADD, dtypes.sints+(dtypes.weakint,), [UPat.var("x"), UPat.var("y")]) < UPat.var("c"),

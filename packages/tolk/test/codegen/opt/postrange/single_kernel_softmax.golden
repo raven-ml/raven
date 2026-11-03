@@ -3,34 +3,35 @@
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 32
 3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
-4 Ops.MUL dtypes.weakint [3, 2]
-5 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 3)
-6 Ops.ADD dtypes.weakint [4, 5]
-7 Ops.INDEX dtypes.f32 [1, 6]
-8 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
-9 Ops.INDEX dtypes.f32 [8, 6]
-10 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
-11 Ops.ADD dtypes.weakint [4, 10]
-12 Ops.INDEX dtypes.f32 [8, 11]
-13 Ops.REDUCE dtypes.f32 [12, 10] (Ops.MAX, 0)
-14 Ops.CONST dtypes.weakfloat [] -1.0
-15 Ops.MUL dtypes.f32 [13, 14]
-16 Ops.ADD dtypes.f32 [9, 15]
-17 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
-18 Ops.MUL dtypes.f32 [16, 17]
-19 Ops.EXP2 dtypes.f32 [18]
-20 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
-21 Ops.ADD dtypes.weakint [4, 20]
-22 Ops.INDEX dtypes.f32 [8, 21]
-23 Ops.REDUCE dtypes.f32 [22, 20] (Ops.MAX, 0)
-24 Ops.MUL dtypes.f32 [23, 14]
-25 Ops.ADD dtypes.f32 [12, 24]
-26 Ops.MUL dtypes.f32 [25, 17]
-27 Ops.EXP2 dtypes.f32 [26]
-28 Ops.REDUCE dtypes.f32 [27, 10] (Ops.ADD, 0)
-29 Ops.RECIP dtypes.f32 [28]
-30 Ops.MUL dtypes.f32 [19, 29]
-31 Ops.STORE dtypes.void [7, 30]
-32 Ops.END dtypes.void [31, 3, 5]
-33 Ops.SINK dtypes.void [32] KernelInfo()
+4 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 3)
+5 Ops.AFTER dtypes.f32 [1, 3, 4]
+6 Ops.MUL dtypes.weakint [3, 2]
+7 Ops.ADD dtypes.weakint [6, 4]
+8 Ops.INDEX dtypes.f32 [5, 7]
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+10 Ops.INDEX dtypes.f32 [9, 7]
+11 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+12 Ops.ADD dtypes.weakint [6, 11]
+13 Ops.INDEX dtypes.f32 [9, 12]
+14 Ops.REDUCE dtypes.f32 [13, 11] (Ops.MAX, 0)
+15 Ops.CONST dtypes.weakfloat [] -1.0
+16 Ops.MUL dtypes.f32 [14, 15]
+17 Ops.ADD dtypes.f32 [10, 16]
+18 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+19 Ops.MUL dtypes.f32 [17, 18]
+20 Ops.EXP2 dtypes.f32 [19]
+21 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+22 Ops.ADD dtypes.weakint [6, 21]
+23 Ops.INDEX dtypes.f32 [9, 22]
+24 Ops.REDUCE dtypes.f32 [23, 21] (Ops.MAX, 0)
+25 Ops.MUL dtypes.f32 [24, 15]
+26 Ops.ADD dtypes.f32 [13, 25]
+27 Ops.MUL dtypes.f32 [26, 18]
+28 Ops.EXP2 dtypes.f32 [27]
+29 Ops.REDUCE dtypes.f32 [28, 11] (Ops.ADD, 0)
+30 Ops.RECIP dtypes.f32 [29]
+31 Ops.MUL dtypes.f32 [20, 30]
+32 Ops.STORE dtypes.void [8, 31]
+33 Ops.END dtypes.void [32, 3, 4]
+34 Ops.SINK dtypes.void [33] KernelInfo()
 

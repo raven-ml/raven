@@ -7174,6 +7174,54 @@ and an initial value is added after it (D260).
 - **Pinned by:** `Tolk.Compiler_cpu › invalid IR › a source that LLVM 19's
   straight-line vectorizer makes invalid raises Compile_error naming its
   function`, under a Clang of LLVM 19 with that vectorizer turned back on.
+## D280. An effect keeps its ranges when its index folds
+
+- **tinygrad:** `codegen/__init__.py:254-262` (`full_rewrite_to_sink`,
+  which simplifies a kernel's indices and ranges with nothing holding an
+  effect's ranges), `uop/symbolic.py:286-289` (a value whose bounds meet
+  folds to a constant) and `uop/ops.py:457-473` (a node depends on the
+  ranges its sources depend on).
+- **tolk:** `Simplify.pin_effects`, called by
+  `Codegen.full_rewrite_to_sink` after the movements are lowered, and
+  `Simplify.pm_unpin_effects`, in its symbolic pass before the expander;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the
+  goldens are recorded.
+- **Differs:** before its indices are simplified, an index of storage that
+  an effect (a store, a call, code in the target's language) indexes reads
+  it through an `After` of the ranges its offsets depend on, and an effect
+  that depends on ranges its index does not, through an `After` of those
+  too. Once opts and range shrinking are done, before the expander, such an
+  `After` of ranges alone goes where the index or effect depends on them
+  without it, so it stays only where a rewrite removed a range: a fold
+  (`C[r // 8] += 1` over `r < 8`), or a range shrunk to a guard that then
+  folds (`C[r // 8]` where `r < 8`, over `r < 32`). tinygrad folds the
+  index to `0`, and the effect, which no longer depends on `r`, runs once:
+  it counts 1 where 0, 5 or 8 is wanted, and the store writes in a loop
+  that runs no trip (run at `6b7b018da` and at the pinned commit). An
+  `After` of ranges alone that a builder wrote goes too where the effect
+  depends on them without it, which places nothing differently:
+  `reg_placeholder_then_reduce`'s golden reads its register directly where
+  its store's value depends on the range. Not covered: an effect with no
+  index, a rewrite after the expander, and an upcast or unroll of a range
+  an effect reads only through the `After` (`C[r // 8] += 1` with `r`
+  upcast by 4 counts 2 of 8), since the expander drops an `After`'s
+  upcast ranges, as it does for one a builder writes
+  (`a store ordered after a range runs once per step` with its range
+  upcast counts 1 of 4, here and in tinygrad); lanes of one address that
+  is read and written cannot be steps, which is Postrange's to refuse, and
+  the same holds of an upcast `C[r // 8] += 1` that folds only after opts.
+- **Reason:** (e): an effect that runs once per step of its loops as built
+  runs once, or runs in a loop of no trip.
+- **Pinned by:** the Codegen suite's `effects at an index that folds run as
+  often as written` (the counts of `C[r // 8] += 1` at 0, 5 and 8 trips, a
+  store in a loop of no trip, a variable's and a flag's, a stored value
+  that folds, a guarded quotient whose range shrinks, code in the target's
+  language, and a law over loop nests of indices that fold);
+  `reg_placeholder_then_reduce`'s goldens, and the kernels the Heuristic,
+  Postrange, Search and Simplify suites record where their passes receive
+  them, which carry the `After`s, all recorded from the equally patched
+  tinygrad.
+
 ## D285. A loop holding a barrier or a matrix instruction has a uniform bound
 
 - **tinygrad:** `codegen/__init__.py:355-358` (`full_rewrite_to_sink`),

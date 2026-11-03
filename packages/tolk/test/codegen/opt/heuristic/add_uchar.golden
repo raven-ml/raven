@@ -2,12 +2,13 @@
 0 Ops.CONST dtypes.weakint [] 4096
 1 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8)
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
-3 Ops.INDEX dtypes.u8 [1, 2]
-4 Ops.PARAM dtypes.u8 [0] ParamArg(slot=1, dtype=dtypes.u8)
-5 Ops.INDEX dtypes.u8 [4, 2]
-6 Ops.CONST dtypes.weakint [] 1
-7 Ops.ADD dtypes.u8 [5, 6]
-8 Ops.STORE dtypes.void [3, 7]
-9 Ops.END dtypes.void [8, 2]
-10 Ops.SINK dtypes.void [9] KernelInfo()
+3 Ops.AFTER dtypes.u8 [1, 2]
+4 Ops.INDEX dtypes.u8 [3, 2]
+5 Ops.PARAM dtypes.u8 [0] ParamArg(slot=1, dtype=dtypes.u8)
+6 Ops.INDEX dtypes.u8 [5, 2]
+7 Ops.CONST dtypes.weakint [] 1
+8 Ops.ADD dtypes.u8 [6, 7]
+9 Ops.STORE dtypes.void [4, 8]
+10 Ops.END dtypes.void [9, 2]
+11 Ops.SINK dtypes.void [10] KernelInfo()
 

@@ -40,7 +40,7 @@
 38 Ops.LOAD dtypes.f32 [37]
 39 Ops.BUFFER dtypes.f32 [9] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
 40 Ops.AFTER dtypes.f32 [39, 7]
-41 Ops.INDEX dtypes.f32 [40, 13]
+41 Ops.INDEX dtypes.f32 [39, 13]
 42 Ops.INDEX dtypes.f32 [26, 29]
 43 Ops.LOAD dtypes.f32 [42]
 44 Ops.STORE dtypes.void [41, 43]
@@ -92,19 +92,18 @@
 90 Ops.INDEX dtypes.f32 [89, 13]
 91 Ops.LOAD dtypes.f32 [90]
 92 Ops.AFTER dtypes.f32 [39, 67]
-93 Ops.INDEX dtypes.f32 [92, 13]
-94 Ops.INDEX dtypes.f32 [81, 82]
-95 Ops.LOAD dtypes.f32 [94]
-96 Ops.STORE dtypes.void [93, 95]
-97 Ops.AFTER dtypes.f32 [92, 96]
-98 Ops.INDEX dtypes.f32 [97, 13]
-99 Ops.LOAD dtypes.f32 [98]
-100 Ops.ADD dtypes.f32 [91, 99]
-101 Ops.STORE dtypes.void [68, 100]
-102 Ops.END dtypes.void [101, 66]
-103 Ops.SINK dtypes.void [102] KernelInfo(name="r_4_8", estimates=Estimates(ops=36, lds=160, mem=144), optimized=True, split=(4, 2, 3))
-104 Ops.LINEAR dtypes.void [25, 52, 9, 39, 69, 0, 58, 57, 59, 60, 61, 62, 63, 64, 12, 13, 53, 54, 55, 78, 79, 80, 56, 81, 15, 16, 27, 28, 18, 19, 65, 66, 73, 67, 70, 71, 82, 72, 74, 83, 84, 85, 75, 76, 77, 86, 87, 88, 94, 95, 89, 90, 91, 92, 93, 96, 97, 98, 99, 68, 100, 101, 102, 103]
-105 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void r_4_8(unsigned char* restrict args_32) {\n  float buf0[1];\n  float buf1[1];\n  int val0 = (*(((int*)(args_32))+4));\n  int val1 = (*(((int*)(args_32))+5));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+1));\n  for (int Lidx0 = 0; Lidx0 < (val1-val0); Lidx0++) {\n    int alu0 = (val0+Lidx0);\n    int alu1 = (alu0<<3);\n    *(buf1+0) = 0.0f;\n    for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {\n      float val4 = (*(((float*)(val3))+(alu1+Lidx1)));\n      *(buf1+0) = ((*(buf1+0))+val4);\n    }\n    float val5 = (*(((float*)(val3))+alu1));\n    *(buf0+0) = val5;\n    *(((float*)(val2))+alu0) = ((*(buf1+0))+(*(buf0+0)));\n  }\n}\n"
-106 Ops.PROGRAM dtypes.void [103, 104, 105] ProgramInfo(global_size=(4, 1, 1), params=(%1, %26, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-107 Ops.SINK dtypes.void [51, 106]
+93 Ops.INDEX dtypes.f32 [81, 82]
+94 Ops.LOAD dtypes.f32 [93]
+95 Ops.STORE dtypes.void [41, 94]
+96 Ops.AFTER dtypes.f32 [92, 95]
+97 Ops.INDEX dtypes.f32 [96, 13]
+98 Ops.LOAD dtypes.f32 [97]
+99 Ops.ADD dtypes.f32 [91, 98]
+100 Ops.STORE dtypes.void [68, 99]
+101 Ops.END dtypes.void [100, 66]
+102 Ops.SINK dtypes.void [101] KernelInfo(name="r_4_8", estimates=Estimates(ops=36, lds=160, mem=144), optimized=True, split=(4, 2, 3))
+103 Ops.LINEAR dtypes.void [25, 52, 9, 39, 69, 0, 58, 57, 59, 60, 61, 62, 63, 64, 12, 13, 53, 54, 55, 78, 79, 80, 56, 81, 41, 15, 16, 27, 28, 18, 19, 65, 66, 73, 67, 70, 71, 82, 72, 74, 83, 84, 85, 75, 76, 77, 86, 87, 88, 93, 94, 89, 90, 91, 92, 95, 96, 97, 98, 68, 99, 100, 101, 102]
+104 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void r_4_8(unsigned char* restrict args_32) {\n  float buf0[1];\n  float buf1[1];\n  int val0 = (*(((int*)(args_32))+4));\n  int val1 = (*(((int*)(args_32))+5));\n  unsigned long val2 = (*(((unsigned long*)(args_32))+0));\n  unsigned long val3 = (*(((unsigned long*)(args_32))+1));\n  for (int Lidx0 = 0; Lidx0 < (val1-val0); Lidx0++) {\n    int alu0 = (val0+Lidx0);\n    int alu1 = (alu0<<3);\n    *(buf1+0) = 0.0f;\n    for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {\n      float val4 = (*(((float*)(val3))+(alu1+Lidx1)));\n      *(buf1+0) = ((*(buf1+0))+val4);\n    }\n    float val5 = (*(((float*)(val3))+alu1));\n    *(buf0+0) = val5;\n    *(((float*)(val2))+alu0) = ((*(buf1+0))+(*(buf0+0)));\n  }\n}\n"
+105 Ops.PROGRAM dtypes.void [102, 103, 104] ProgramInfo(global_size=(4, 1, 1), params=(%1, %26, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+106 Ops.SINK dtypes.void [51, 105]
 

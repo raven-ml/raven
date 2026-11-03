@@ -34,7 +34,11 @@ val full_rewrite_to_sink :
   Renderer.t ->
   Ops.t
 (** [full_rewrite_to_sink ~optimize ~beam ast ren] is the kernel [ast] lowered
-    for [ren], ready to be linearized.
+    for [ren], ready to be linearized. Each of its effects runs as often as
+    in [ast], however its indices fold or its ranges shrink before the
+    vector axes are expanded ({!Simplify.pin_effects}); an effect that
+    reads an upcast or unrolled range only through its own ordering runs
+    once per lane group.
 
     If [optimize] (default [true]), its loops are first simplified and optimised
     ({!Postrange.apply_opts}): with the optimisations its argument lists, or

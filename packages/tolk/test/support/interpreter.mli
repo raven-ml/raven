@@ -32,7 +32,8 @@
 
     A kernel is denoted by the set of its writes ({!writes}): which element of
     which storage takes which value. It has no memory state and no order: a
-    rewrite of its loops keeps the kernel iff it keeps that set. *)
+    rewrite of its loops keeps the kernel iff it keeps that set, and storage
+    read after other nodes ({!Tolk.Op.After}) is that storage. *)
 
 open Tolk
 
