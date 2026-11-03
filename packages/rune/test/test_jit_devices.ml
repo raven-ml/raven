@@ -1224,6 +1224,24 @@ let kernels set n rows =
   let holding = min n rows in
   equal ~msg:"kernels" int holding (List.length launched)
 
+(* Searches
+
+   A function searched at a width compiles over memory devices, its candidates
+   timed on a device of the set: no call is evaluated, and it gives eager's
+   bits. The search ignores its cache, so that it times candidates. *)
+
+let searched set c =
+  let x = Nx.place (at set c) (value [| 8; 3 |]) in
+  let f x = Nx.add_s (Nx.mul x x) 0.5 in
+  let before = Rune.evaluations () in
+  let y =
+    Tolk.Setting.context
+      [ B (Tolk.Setting.ignore_beam_cache, true) ]
+      (fun () -> Rune.jit' ~beam:1 f x)
+  in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  equal bits_t (bits (f x)) (bits y)
+
 (* Moves
 
    Positions that a placement leaves whole along an axis they repeat, as a
@@ -1807,5 +1825,12 @@ let () =
                  over 2 { law = (fun s -> kernels s 2 4) });
              test "over four, one window empty" (fun () ->
                  over 4 { law = (fun s -> kernels s 4 3) });
+           ];
+         group "searches"
+           [
+             test "a value whole on one memory device" (fun () ->
+                 over 2 { law = (fun s -> searched s (Device 0)) });
+             test "a value cut across two" (fun () ->
+                 over 2 { law = (fun s -> searched s (Split 0)) });
            ];
        ])

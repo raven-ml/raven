@@ -368,6 +368,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit ~beam` (and `BEAM`, `JITBEAM`) compiles a program over devices
+  of which none is named by its kind, such as memory devices or `CUDA:1`
+  alone. It evaluated such a program uncompiled, with the right values and
+  no error. A search now times its candidates on a device of the kernel's
+  target.
 - `Rune.jit` stores a result through a view of its own shape, so its kernel
   keeps each of the result's axes: attention's scores and every batched
   contraction keep their batch axis apart from the rows, and the scores of

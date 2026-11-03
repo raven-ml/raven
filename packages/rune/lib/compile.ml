@@ -2449,13 +2449,29 @@ let named rigs name =
   | Some r -> r
   | None -> invalid_arg ("Rune.jit: no device named " ^ name)
 
-(* A kernel searched at width [width], each candidate timed on its device of
-   [rigs], on the slots of the first one timed, compiled on [parallel]
-   domains, or as many as the [PARALLEL] setting gives. *)
+(* A kernel searched at width [width], each candidate timed on the first device
+   of [rigs] that its renderer's target is, on the slots of the first one
+   timed, compiled on [parallel] domains, or as many as the [PARALLEL] setting
+   gives. Devices of one target run one program alike, so any of them times
+   it, whatever devices the kernel's parameters name. *)
 let search rigs ~parallel width k =
   report "searched a kernel at width %d" width;
+  let target = (Tolk.Postrange.Scheduler.ren k).target in
+  let compiles r =
+    match Engine.target r with
+    | t -> t = target
+    | exception Invalid_argument _ -> false
+  in
+  let rig =
+    match List.find_opt compiles rigs with
+    | Some r -> r
+    | None ->
+        invalid_arg
+          (Format.asprintf "Rune.jit: no device of target %a"
+             Tolk.Helpers.Target.pp target)
+  in
   let slots = ref None in
-  let link call = Engine.link_call ~devices:(named rigs) call in
+  let link call = Engine.link_call ~devices:(fun _ -> rig) call in
   (* Each sample starts from a cold cache, where a device's memory holds the
      scrub; where it cannot, the samples find what the caches hold. *)
   let scrub s =
