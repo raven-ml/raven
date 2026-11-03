@@ -75,6 +75,29 @@ let test_host_allocated () =
   at_most ~msg:"once collected" int ~than:(before + kib)
     (Rig.allocated Rig.host)
 
+(* An array {!B.export} made keeps its buffer's memory, which counts in the
+   host's allocated bytes while the array is reachable, once its buffer is
+   collected too, and leaves once the array is collected. *)
+let test_host_exported () =
+  let n = 512 * kib and k = 64 in
+  let settle () =
+    Gc.full_major ();
+    Gc.full_major ();
+    ignore (B.create Rig.host 0);
+    Gc.full_major ();
+    Rig.allocated Rig.host
+  in
+  let before = settle () in
+  let arrays =
+    ref (Array.init k (fun _ -> B.export (B.create Rig.host n) Bigarray.char))
+  in
+  at_least ~msg:"with the arrays, their buffers collected" int
+    ~than:(before + (k * n))
+    (settle ());
+  ignore (Sys.opaque_identity !arrays);
+  arrays := [||];
+  equal ~msg:"once the arrays are collected" int before (settle ())
+
 let test_over_budget () =
   let d, p = P.open_ "memory:over-budget" in
   Rig.set_budget d (8 * kib);
@@ -1418,6 +1441,8 @@ let tests =
       [
         test "the host's allocated bytes count its buffers"
           test_host_allocated;
+        test "an exported array's memory counts until it is collected"
+          test_host_exported;
         test "an allocation over the budget raises at once and keeps the cache"
           test_over_budget;
         test "a copy whose staging memory the host refuses gives its slot back"
