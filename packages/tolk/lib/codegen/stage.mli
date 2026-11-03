@@ -55,7 +55,23 @@ val operands : Renderer.t -> Ops.t -> Ops.t
     operand, its index's validity or a selection of [0], copies [0] where it
     fails. An operand whose terms mix the box's ranges with others stays
     unstaged, as do the cores of a kernel that holds other shared memory or
-    reduces across threads. *)
+    reduces across threads. On a renderer with {!Renderer.t.load_matrix}, a
+    read of 16-bit elements of an operand staged in two stages whose fragment
+    ldmatrix delivers is marked as one ({!is_ldmatrix}); an operand staged in
+    one stage is read narrow. *)
+
+val is_ldmatrix : Ops.t -> bool
+(** [is_ldmatrix u] is [true] iff [u] is a load {!operands} marked for
+    ldmatrix: its argument is ["ldmatrix"] or ["ldmatrix.trans"]. Its value is
+    the read of its index until {!lower_ldmatrix}. *)
+
+val lower_ldmatrix : Ops.t -> Ops.t option
+(** [lower_ldmatrix x] is the load [x] that {!is_ldmatrix} holds of, its
+    index the stack of the lane's elements, as the instruction reads: a window
+    ({!Op.Shrink}) of its elements at the address its lane supplies, the
+    element that PTX's row assignment names, read by the lane it names. It is
+    [None] for any other load. Its value is then the instruction's, which only
+    a renderer with {!Renderer.t.load_matrix} prints. *)
 
 val admits : Renderer.t -> Ops.t -> bool
 (** [admits ren sink] is [true] iff {!operands} stages every operand of each
@@ -64,6 +80,13 @@ val admits : Renderer.t -> Ops.t -> bool
     ({!Heuristic.hand_coded_optimizations}). *)
 
 (**/**)
+
+val ldmatrix_rows : trans:bool -> nbits:int -> Ops.t -> Ops.t * Ops.t list
+(** [ldmatrix_rows ~trans ~nbits t] is the lane, and the element bits, least
+    significant first, of a fragment of [nbits] element bits, whose element
+    begins the row lane [t] supplies to ldmatrix, [.trans] if [trans]: lanes
+    [8j] to [8j + 7] supply the rows of matrix [j], whose register [j]'s half
+    [h] is the fragment's element [2j + h]. *)
 
 val layout : itemsize:int -> cols:int -> Ops.t -> Ops.t -> Ops.t
 (** [layout ~itemsize ~cols col row] is the offset in a staged tile of the

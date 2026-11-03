@@ -986,6 +986,11 @@ word comes from its lock and from samples the dashboard saw arrive.
   kernel, one program and one beam search, in memory and on disk
   (`Codegen.program_key`, `Search.beam_search`). `Spec.program` refuses a
   parameter that names a device.
+- On CUDA from sm_80, a tensor core's 16-bit operands staged in two stages
+  are loaded by `ldmatrix` where it delivers their fragments
+  (`Renderer.t.load_matrix`): bfloat16 products of 512 by 4096 over 2880,
+  2048 cubed and 512 by 2880 over 4096 run 1.07 to 1.25 times faster on an
+  RTX 5000 Ada; 512 by 512 over 2880 runs 1.08 times slower.
 - A tensor core's operands are staged through shared memory
   (`Stage.operands`): the workgroup copies each tile 16 bytes a thread into a
   swizzled layout, in two stages with `cp.async` on CUDA from sm_80, and a
