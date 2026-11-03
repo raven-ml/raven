@@ -23,10 +23,23 @@ let reports ~msg cause = function
   | code, lines ->
       failf "%s exited %d, printing [%s]" msg code (String.concat "; " lines)
 
+(* Runs [f] with [p], a child, stopped, and resumes it after. A process of
+   several threads stops only once one of them takes the signal, and until then
+   the others run and may notice the death first. The wait returns once all of
+   them stopped. *)
 let stopped p f =
   if Sys.win32 then
     skip ~reason:"Windows has no signal that stops a process" ();
   Unix.kill p.pid Sys.sigstop;
+  (match Unix.waitpid [ Unix.WUNTRACED ] p.pid with
+  | _, Unix.WSTOPPED _ -> ()
+  | _, Unix.WEXITED n ->
+      p.status <- Some (n, []);
+      failf "process %d exited %d before it stopped" p.pid n
+  | _, Unix.WSIGNALED n ->
+      p.status <- Some (-n, []);
+      failf "process %d died of %s before it stopped" p.pid
+        (Sys.signal_to_string n));
   Fun.protect ~finally:(fun () -> Unix.kill p.pid Sys.sigcont) f
 
 (* The other agent is stopped: this process, the controller, notices first.
