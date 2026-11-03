@@ -974,6 +974,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A device's copies and kernels share one arena in every schedule, where
+  copies had one of their own in a schedule linked `Linked`: on one device
+  a copy lane ordered nothing more and held its own peak. Where a memory
+  device's work reuses bytes a GPU copy touched, the run waits for the
+  GPU's earlier work.
+  `Memory.memory_plan_rewrite` loses `per_run`, `Jit.jit_lower` loses
+  `storage`, and `Tolk_engine.storage` is a type of its own.
 - A kernel's parameters name no device: the device is its call's
   arguments', so one expression on several devices of a target is one
   kernel, one program and one beam search, in memory and on disk
@@ -1156,10 +1163,8 @@ word comes from its lock and from samples the dashboard saw arrive.
   (`Codegen.program_key`).
 - A schedule linked `Per_run` runs as one rig program, its storage made before
   the run's first call: each image loads once per device, and a GPU no longer
-  holds every buffer of a run while its work is pending. `Jit.jit_lower` takes
-  the `~storage` the schedule is linked with (`Tolk_engine.storage` is
-  `Jit.storage`), and `Memory.memory_plan_rewrite ~per_run` plans a device's
-  copies and kernels in one arena; `Jit.jit_lower ~arenas` is gone.
+  holds every buffer of a run while its work is pending. `Jit.jit_lower
+  ~arenas` is gone.
 - `Realize.lower_and_compile` compiles a schedule's host kernels in one Clang
   run per domain (`Codegen.to_programs`, `Renderer.Compiler.compile_all`),
   not one process per kernel, whose start cost what a small kernel's compile does.

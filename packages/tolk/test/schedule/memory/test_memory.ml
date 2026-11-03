@@ -177,8 +177,8 @@ let rules =
           equal (list int) [ 256 ]
             (List.map Shape.max_numel (arenas linear planned)));
       test
-        "per run, a copy's buffer and a call's of one device share bytes once \
-         their lives are apart" (fun () ->
+        "a copy's buffer and a call's of one device share bytes once their \
+         lives are apart" (fun () ->
           let held = buf 256 and copied = buf 256 and computed = buf 256 in
           let linear =
             Ops.v Linear
@@ -189,7 +189,7 @@ let rules =
                 ]
           in
           let planned =
-            Memory.memory_plan_rewrite ~held_bufs:[ held ] ~per_run:true linear
+            Memory.memory_plan_rewrite ~held_bufs:[ held ] linear
           in
           equal (list int) [ 256 ]
             (List.map Shape.max_numel (arenas linear planned)));
@@ -201,15 +201,15 @@ let rules =
    some arguments views of a buffer, some buffers held: a planned buffer is the
    bytes of an arena at its place,
    viewed as its type and at its phase; two buffers whose lifetimes meet never
-   share a byte; copies and the other calls use arenas of their own, but in a
-   plan per run, where the device has one arena; held buffers stay. A buffer
-   lives from the first call that takes it, passed or viewed, to the last. *)
+   share a byte; the device has one arena, copies' buffers and the others'
+   alike, of at least the bytes its buffers live at once, each rounded as the
+   plan rounds it; held buffers stay. A buffer lives from the first call that
+   takes it, passed or viewed, to the last. *)
 
 type drawn = {
   sizes : (int * Dtype.t * int) list;
   calls : ((int * bool) list * bool) list;
   held : int list;
-  per_run : bool;
 }
 
 let pp_drawn ppf d =
@@ -221,7 +221,7 @@ let pp_drawn ppf d =
       (if copy then "copy" else "call")
       (String.concat ", " (List.map pp_arg bs))
   in
-  Format.fprintf ppf "sizes [%s], %a, held [%s]%s"
+  Format.fprintf ppf "sizes [%s], %a, held [%s]"
     (String.concat "; "
        (List.map
           (fun (n, dt, p) -> Format.asprintf "%d %a at %d" n Dtype.pp dt p)
@@ -231,7 +231,6 @@ let pp_drawn ppf d =
        pp_call)
     d.calls
     (String.concat "; " (List.map string_of_int d.held))
-    (if d.per_run then ", per run" else "")
 
 let drawn =
   let open Gen in
@@ -251,9 +250,8 @@ let drawn =
          copy && List.length bs = 2 && fst (List.hd bs) <> fst (List.nth bs 1)
        in
        (bs, copy))
-  and+ held = list ~size:(int_range 0 3) buffer
-  and+ per_run = bool in
-  { sizes; calls; held; per_run }
+  and+ held = list ~size:(int_range 0 3) buffer in
+  { sizes; calls; held }
 
 let drawn = Gen.with_pp pp_drawn drawn
 
@@ -317,9 +315,7 @@ let lifetimes d =
 
 let plans d =
   let buffers, linear, held_bufs = build d in
-  let planned =
-    Memory.memory_plan_rewrite ~held_bufs ~per_run:d.per_run linear
-  in
+  let planned = Memory.memory_plan_rewrite ~held_bufs linear in
   let places = placed linear planned in
   let index b =
     let rec find k = if Ops.equal buffers.(k) b then k else find (k + 1) in
@@ -365,26 +361,36 @@ let plans d =
             (Ops.dtype p)
       | None -> ())
     places;
-  (* Buffers that live at once share no byte, and copies share no arena with
-     other calls but per run, where the device has one arena. *)
-  let arenas =
-    List.sort_uniq compare (List.map (fun (_, (a, _, _)) -> a) views)
+  (* Buffers that live at once share no byte, and the device has one arena,
+     of at least the bytes its buffers live at once, each rounded up to 256
+     bytes from its phase. *)
+  let arenas = arenas linear planned in
+  at_most int ~msg:"the device's arenas" ~than:1 (List.length arenas);
+  let rounded b =
+    let _, phase = Shape.storage_phase buffers.(b) in
+    (phase + Shape.nbytes buffers.(b) + 255) / 256 * 256
   in
-  if d.per_run then
-    at_most int ~msg:"per run, the device's arenas" ~than:1
-      (List.length arenas);
+  let planned_bufs = List.sort_uniq compare (List.map fst views) in
+  let live_at t =
+    List.fold_left
+      (fun n b ->
+        let s, e, _ = life b in
+        if s <= t && t < e then n + rounded b else n)
+      0 planned_bufs
+  in
+  let peak =
+    List.fold_left max 0 (List.init (List.length d.calls) live_at)
+  in
+  (match arenas with
+  | [ arena ] ->
+      at_least int ~msg:"the arena's bytes" ~than:peak (Shape.max_numel arena)
+  | _ -> equal int ~msg:"no planned buffer" 0 peak);
   List.iter
     (fun (b0, (a0, o0, l0)) ->
       List.iter
         (fun (b1, (a1, o1, l1)) ->
           if b0 < b1 && a0 = a1 then begin
-            let s0, e0, c0 = life b0 and s1, e1, c1 = life b1 in
-            if not d.per_run then
-              equal
-                ~msg:
-                  (Printf.sprintf
-                     "buffers %d and %d share an arena, copy and call" b0 b1)
-                bool c0 c1;
+            let s0, e0, _ = life b0 and s1, e1, _ = life b1 in
             if s0 < e1 && s1 < e0 then
               is_true
                 ~msg:
@@ -395,18 +401,17 @@ let plans d =
         views)
     views;
   cover "buffers share an arena" (List.length views > 1);
-  cover "per run, a copy's buffer and a call's share an arena"
-    (d.per_run
-    && List.exists
-         (fun (b0, (a0, _, _)) ->
-           List.exists
-             (fun (b1, (a1, _, _)) ->
-               a0 = a1
-               &&
-               let _, _, c0 = life b0 and _, _, c1 = life b1 in
-               c0 <> c1)
-             views)
-         views);
+  cover "a copy's buffer and a call's share an arena"
+    (List.exists
+       (fun (b0, (a0, _, _)) ->
+         List.exists
+           (fun (b1, (a1, _, _)) ->
+             a0 = a1
+             &&
+             let _, _, c0 = life b0 and _, _, c1 = life b1 in
+             c0 <> c1)
+           views)
+       views);
   cover "a buffer a call views is planned"
     (List.exists
        (fun (bs, copy) ->

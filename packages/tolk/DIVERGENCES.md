@@ -1117,7 +1117,7 @@ own submissions (D146).
 NV's copy engine signalled the high word of a value too. rig's NV driver
 encodes its own releases (D146).
 
-## D41. The memory plan sees a range's calls and the buffers views reach, and holds no copy past its last call
+## D41. The memory plan sees a range's calls and the buffers views reach, holds no copy past its last call, and plans a device's copies with its kernels
 
 - **tinygrad:** `schedule/memory.py:27-32` (`memory_plan_rewrite` takes each
   entry's buffers from its sources after the first, through `_collect_bufs`,
@@ -1127,10 +1127,10 @@ encodes its own releases (D146).
   among its call's sources).
 - **tolk:** `Memory.viewed`, `Memory.uses` and
   `Memory.memory_plan_rewrite`'s lifetimes (`call_bufs`, the events) and
-  lanes (`key`, `per_run`);
+  lanes (`key`);
   `Schedule.create_linear_with_vars`'s `held_bufs`;
-  `test/gen/tinygrad.patch`, which drops `buf_hold` before the goldens are
-  recorded.
+  `test/gen/tinygrad.patch`, which drops `buf_hold` and plans one lane
+  (`_key = (b.device, 0)`) before the goldens are recorded.
 - **Differs:** an `END` of ranges around calls counts as one entry that takes
   the buffers of each call it runs, and a call takes the buffers its
   arguments view (`SHRINK`, `BITCAST`, `AFTER`) as well as those they are.
@@ -1149,11 +1149,22 @@ encodes its own releases (D146).
 
   A copy's buffer is free from the call after its last, as a kernel's is,
   where tinygrad holds it as many calls again, lest a later copy overwrite it
-  while the first may still run. Copies keep a lane of their own on each
-  device, as tinygrad's do, except in a schedule linked per run (D173), whose
-  copies and kernels share their device's lane: its arenas live through the
-  run, so two lanes add their peaks, and rune's fully sharded steps then hold
-  more than RFC 0005's bound.
+  while the first may still run. Copies and kernels of a device share one
+  lane in every schedule, where tinygrad keeps copies in a lane of their
+  own. tinygrad's copy lane keeps reuse from ordering a copy against a
+  kernel, which rig's device order makes moot on one device: on fudge's
+  RTX 5000 beside a memory device, a value moved into the GPU mid-chain is
+  a submission of the GPU's copy queue, ordered after its earlier products
+  with either lane count, and `run` returned in 12.2 ms with one lane
+  against 11.8 ms with two. Across devices rig orders by allocation, which
+  a lane avoids only in part, and two lanes add their peaks, past RFC
+  0005's bound for a schedule linked per run (D173). Where a host-run
+  device's work reuses bytes a GPU copy touched, the call waits for the
+  GPU: a memory device's sum placed over a value just moved into the GPU
+  waited for all eight products before it, `run` returning in 168-200 ms
+  against 13 ms where that order does not reuse the bytes. A copy lane
+  avoided that case (51 ms) but not host work that writes the lane after a
+  GPU copy used it; removing the wait is rig's to do.
 - **Reason:** (b) for ranges and views: `Rune.scan`'s staged loop (RFC 0012)
   schedules calls inside a range, whose arguments are views that move with
   it, of buffers the calls after it read whole; tinygrad's scheduler hands
@@ -1167,7 +1178,9 @@ encodes its own releases (D146).
   ref. A later call that reuses a copy's bytes therefore follows the copy,
   and the hold guards nothing: it only costs memory, as the copy lane of
   tinygrad's `test_deferred_copy_frees_chain` schedule, which needs 512
-  bytes with it and 256 without.
+  bytes with it and 256 without. (b) for one lane: the same order makes a
+  copy lane guard nothing on one device, and rune's fully sharded steps
+  hold within RFC 0005's bound only with one.
 - **Pinned by:** the Engine suite (`test/engine/tolk_engine`): `link and
   run › a planned buffer a range writes is not placed over one it leaves` and
   `› a buffer a range writes through a view is not placed over another`, each
@@ -1175,12 +1188,15 @@ encodes its own releases (D146).
   (`test/schedule/memory`): `memory_plan_rewrite › the buffers a call takes ›
   a buffer a call views is planned` and `› a buffer viewed after another's
   life is not placed over it`, `› rules › a copy's buffer is free from the
-  call after its last` and `› per run, a copy's buffer and a call's of one
-  device share bytes once their lives are apart`, the recorded `copy_chain`,
-  `random_5` and
-  `random_11` plans of the equally patched tinygrad, and the law over drawn
-  schedules, whose calls view some buffers and whose copies live no longer
-  than their last call; the Schedule suite's recorded `copy_view` schedule,
+  call after its last` and `› a copy's buffer and a call's of one device
+  share bytes once their lives are apart`, the recorded `copy_chain`,
+  `copies_share`, `random_*` plans of the equally patched tinygrad, and the
+  law over drawn schedules, whose calls view some buffers, whose copies live
+  no longer than their last call and whose device has one arena of at least
+  its live bytes; the Jit suite's `jit_lower › arenas › a device's buffers
+  share one arena, a copy's among them` and its recorded
+  `weights_copy_lowered`, `held_constant_lowered`,
+  `split_multidev_xfer_lowered` and `split_multidev_copy_lowered`; the Schedule suite's recorded `copy_view` schedule,
   whose copy reads a view of a buffer its call is given.
 
 ## D42. Withdrawn
@@ -5010,21 +5026,25 @@ the walk of `Rangeify.fix_store_hazard`.
   captured schedule holds its intermediates' buffers from its first call
   until `free_intermediates` drops it, so they outlive every run, and
   `engine/jit.py:32` (`jit_lower`) places them in arenas
-  (`memory_plan_rewrite`), copies' and kernels' apart
-  (`schedule/memory.py:35-37`).
+  (`memory_plan_rewrite`).
 - **tolk:** `Tolk_engine.link`'s `storage`, `Tolk_engine.per_run_storage`,
-  `Tolk_engine.run_with`; `Jit.jit_lower`'s `storage` and
-  `Memory.memory_plan_rewrite`'s `per_run`.
-- **Differs:** a schedule linked `Per_run` is planned into arenas, one lane
-  per device (D41), in the order by storage (D183, D185), and makes each
-  storage node no buffer is bound to before its run's first call and frees
-  it after its last, its memory coming back once the work on it is done. A
-  run is one program of rig's, which loads each image once per device, and
-  whose submissions are those of the same schedule linked `Linked`: the order
-  by storage interleaves devices, so a data-parallel step over 16 memory
-  devices makes 1411 `Submit` steps where tinygrad's order makes 84. Linked
-  `Linked`, the default, its storage is the program's, as tinygrad's. A run
-  of either keeps none of the buffers it was given once it returns.
+  `Tolk_engine.run_with`.
+- **Differs:** a schedule linked `Per_run` is planned into arenas (D41), in
+  the order by storage (D183, D185), and makes each storage node no buffer
+  is bound to before its run's first call and frees it after its last, its
+  memory coming back once the work on it is done. A run is one program of
+  rig's, which loads each image once per device. A run's submissions are
+  those of the same schedule linked `Linked`: the order by storage
+  interleaves devices, 1411 `Submit` steps for a data-parallel step over 16
+  memory devices where tinygrad's order makes 84, and under rig's one point
+  per submission they are what cross-device overlap costs: grouping a
+  device's work into fewer submissions lengthens a GPU-faithful critical
+  path 8 to 11 times. Linked `Linked`, the default, its storage is the
+  program's, as tinygrad's. A run of either keeps none of the buffers it
+  was given once it returns. In a set of a GPU and a host-run device, where
+  the plan places host work over bytes a GPU copy touched, the run waits
+  for the GPU's earlier work before it returns (D41: 168-200 ms against
+  13 ms): the plan keeps the bound and gives up that call's asynchrony.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Compile.variant`, for a split program) promise that a device holds
   between calls only the values its caller keeps, and RFC 0005 bounds what a
@@ -5056,8 +5076,8 @@ the walk of `Rangeify.fix_store_hazard`.
   once), `› a
   schedule linked per run does the work it does linked` and `› a run keeps
   none of the buffers it was given`; `Tolk.Memory › memory_plan_rewrite ›
-  rules › per run, a copy's buffer and a call's of one device share bytes
-  once their lives are apart` and the plan law; rune's `fully sharded`
+  rules › a copy's buffer and a call's of one device share bytes once their
+  lives are apart` and the plan law; rune's `fully sharded`
   tests, whose shares are exact after a step, and `Rune.jit on a GPU ›
   memory › a split program holds at its return at most its result and its
   plan`.
@@ -5434,7 +5454,9 @@ and an initial value is added after it (D260).
   devices, so a data-parallel step over 16 memory devices makes 1411
   `Submit` steps where tinygrad's makes 84; preferring, among each kind of
   ready kernel, one on the last kernel's device made 1016, and raised four
-  of rune's five `fully sharded` cases over their bounds.
+  of rune's five `fully sharded` cases over their bounds. Grouping a
+  device's work at link instead keeps the bounds but lengthens a
+  GPU-faithful critical path 8 times under rig's one point per submission.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
   `create_schedule › order by storage › a kernel that frees storage runs
   before one that only makes it`, `› pieces of one value are each read

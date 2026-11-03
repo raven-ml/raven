@@ -186,7 +186,7 @@ type word_kind = Computed of (env -> int) | Trip
    consuming what each run accesses while the schedule lives. *)
 type input = Slot of int | Bound of Rig.Buffer.t * Rig.Claim.hold
 
-type storage = Jit.storage = Linked | Per_run
+type storage = Linked | Per_run
 
 (* Where a view lies: in memory made at link, of its bytes from its byte
    [first], or in an input, at an offset; and the alignment and phase its

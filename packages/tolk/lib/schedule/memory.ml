@@ -19,21 +19,17 @@ let rec viewed u =
       collect_bufs v @ viewed v
   | _ -> []
 
-(* What an entry of a schedule takes: the arguments of each call it runs, a
-   copy's apart, and the flag of each loop that stops on one, which the loop
-   reads between its calls. *)
+(* What an entry of a schedule takes: the arguments of each call it runs, and
+   the flag of each loop that stops on one, which the loop reads between its
+   calls. *)
 let rec uses si =
   match op si with
   | Op.End | Op.Backedge ->
       let body = nth si 0 in
       let calls = if op body = Op.Linear then src body else [ body ] in
-      let flag =
-        if op si = Op.Backedge then [ (`Kernel, [ nth si 2 ]) ] else []
-      in
+      let flag = if op si = Op.Backedge then [ [ nth si 2 ] ] else [] in
       flag @ List.concat_map uses calls
-  | _ ->
-      let kind = if op (nth si 0) = Op.Store then `Copy else `Kernel in
-      [ (kind, List.tl (src si)) ]
+  | _ -> [ List.tl (src si) ]
 
 let can_plan held b =
   (not (Tbl.mem held b))
@@ -45,7 +41,7 @@ let storage_ops = Op.Set.of_list Op.[ Buffer; Alloc; Param ]
 let taken si =
   let seen = Tbl.create 8 and acc = ref [] in
   List.iter
-    (fun (_, args) ->
+    (fun args ->
       List.iter
         (fun a ->
           let b = storage_base a in
@@ -62,7 +58,7 @@ let taken si =
 
 type lane = { mutable peak : int; tlsf : Tlsf.t }
 
-let memory_plan_rewrite ?(held_bufs = []) ?(per_run = false) linear =
+let memory_plan_rewrite ?(held_bufs = []) linear =
   if Setting.value Setting.no_memory_planner then linear
   else begin
     let held = Tbl.create 16 in
@@ -70,13 +66,13 @@ let memory_plan_rewrite ?(held_bufs = []) ?(per_run = false) linear =
     (* The lifetimes of the buffers that can be planned, in order of first
        appearance. *)
     let first = Tbl.create 64 and last = Tbl.create 64 in
-    let order = ref [] and copy_bufs = Tbl.create 16 in
+    let order = ref [] in
     (* A call takes the buffers it passes and those it views: a store into a
        run of a buffer passes a view of it. *)
     List.iteri
       (fun i si ->
         List.iter
-          (fun (kind, args) ->
+          (fun args ->
             let call_bufs =
               List.filter (can_plan held)
                 (List.concat_map (fun a -> collect_bufs a @ viewed a) args)
@@ -88,22 +84,20 @@ let memory_plan_rewrite ?(held_bufs = []) ?(per_run = false) linear =
                   order := b :: !order
                 end;
                 Tbl.replace last b i)
-              call_bufs;
-            if kind = `Copy then
-              List.iter (fun b -> Tbl.replace copy_bufs b ()) call_bufs)
+              call_bufs)
           (uses si))
       (src linear);
     let bufs = List.rev !order in
     if List.is_empty bufs then linear
     else begin
-      (* Copies and kernels plan in separate lanes, lest reuse add a dependency
-         from a copy to a kernel to a copy, except per run: there two lanes'
-         peaks would add, and one lane holds what is live at once. A buffer's
-         bytes are free once its last call is: an arena is one allocation, and
-         work that writes an allocation follows every earlier use of it. *)
-      let key b =
-        (Option.get (device b), (not per_run) && Tbl.mem copy_bufs b)
-      in
+      (* A device's copies and kernels plan in one lane: a lane of copies would
+         keep reuse from ordering a copy against a kernel, which the device's
+         order of its work makes moot on one device, and would add its peak to
+         the kernels'. Across devices it would avoid a wait only in part. A
+         buffer's bytes are free once its last call is: an arena is one
+         allocation, and work that writes an allocation follows every earlier
+         use of it. *)
+      let key b = Option.get (device b) in
       let block_size = 256 in
       (* A buffer whose first byte lies [phase] bytes past a 16-byte boundary,
          which its kernels read it at, lies as far past its place. *)
@@ -122,8 +116,7 @@ let memory_plan_rewrite ?(held_bufs = []) ?(per_run = false) linear =
       let total_memory = 2 * List.fold_left (fun n b -> n + rounded b) 0 bufs in
       let lanes = ref [] in
       let lane k =
-        let same (d, c) = String.equal d (fst k) && c = snd k in
-        match List.find_opt (fun (k', _) -> same k') !lanes with
+        match List.find_opt (fun (k', _) -> String.equal k k') !lanes with
         | Some (_, l) -> l
         | None ->
             let l =
@@ -150,7 +143,7 @@ let memory_plan_rewrite ?(held_bufs = []) ?(per_run = false) linear =
       let arenas =
         List.rev
           (List.fold_left
-             (fun acc ((d, _), l) ->
+             (fun acc (d, l) ->
                (l, new_buffer d (Helpers.round_up l.peak block_size) Dtype.Int8)
                :: acc)
              [] !lanes)

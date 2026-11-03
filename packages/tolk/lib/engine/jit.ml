@@ -22,9 +22,7 @@ let bindings ?beam () =
 
 let shaping ?beam () = Setting.shaping_under (bindings ?beam ())
 
-type storage = Linked | Per_run
-
-let jit_lower ?beam ?search ~storage ~targets ~held_bufs ~inputs ~input_vars
+let jit_lower ?beam ?search ~targets ~held_bufs ~inputs ~input_vars
     linear =
   let param i u =
     let align, phase = Shape.storage_phase u in
@@ -47,8 +45,7 @@ let jit_lower ?beam ?search ~storage ~targets ~held_bufs ~inputs ~input_vars
       (Ops.toposort ~calls:Skip linear)
   in
   let linear = Ops.substitute ~calls:Skip ~pass:Once linear unbound in
-  let per_run = storage = Per_run in
-  let linear = Memory.memory_plan_rewrite ~held_bufs ~per_run linear in
+  let linear = Memory.memory_plan_rewrite ~held_bufs linear in
   (* The buffers left unheld hold only what one run computes: they become
      storage of the program, allocated where it is linked. *)
   let scratch =

@@ -2595,7 +2595,6 @@ let link ~beam ~parallel ~storage rigs l =
       in
       let linear =
         Tolk.Jit.jit_lower ?beam ~search:(search rigs ~parallel)
-          ~storage
           ~targets:(fun name -> Engine.target (named rigs name))
           ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order)
           ~input_vars:vars linear

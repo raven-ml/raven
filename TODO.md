@@ -131,17 +131,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   for AMD through amdgpu (L2 plus MALL) or NV over PCI
 - Metal's packed kernel arguments (8869adcc8, af8961676) have not run on
   Metal hardware; check `rig_metal.mli`'s contract against them on a Mac
-- one lane for `Linked` schedules too (D41): rig orders one device's work on
-  one timeline, so a copies' lane buys overlap only across devices. Decide
-  on a GPU beside a memory device whose value moves into the GPU mid-chain,
-  linked `Linked` with one lane and two: the time `run` takes to return and
-  the GPU's timeline in `Rig.Profile`; and count the goldens one lane changes
-  (`generate.py --check` with one lane in the planner and `tinygrad.patch`)
-- the per-run order (D183) interleaves devices: a data-parallel step over 16
-  memory devices makes 1411 `Submit` steps against 84 in tinygrad's order. A
-  same-device tie-break in `Schedule.storage_order` made 1016 but raised four
-  of rune's five `fully sharded` peaks over their bounds; find a tie-break
-  that cuts the submissions and keeps the five peaks
 - custom code and calls, after D265 and D271: inline custom expressions
   (`Op.Customi`) still take vector lanes; a plain store such as
   `n[0] = n[0] + 1` in a kernel with a thread axis it does not read runs

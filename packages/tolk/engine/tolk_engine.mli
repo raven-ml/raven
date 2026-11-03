@@ -54,7 +54,7 @@ type t
 (** The type for linked schedules. *)
 
 (** The type for where a schedule's storage that no buffer is bound to lives. *)
-type storage = Jit.storage =
+type storage =
   | Linked
       (** Made at link, in its device's memory, which the runs share and the
           schedule holds while it is reachable. *)
@@ -62,10 +62,10 @@ type storage = Jit.storage =
       (** Made by each run in its device's memory before its first call, and
           returned after its last ({!Rig.Buffer.free}), its memory coming back
           once the work on it is done, so that the schedule holds none of it
-          between runs. A run holds its storage whole, so a schedule lowered
-          by {!Tolk.Jit.jit_lower} must be lowered with [~storage:Per_run],
-          which plans one arena per device: a run then holds what its plan
-          places at once. *)
+          between runs. A run holds its storage whole: a schedule lowered by
+          {!Tolk.Jit.jit_lower} plans one arena per device
+          ({!Tolk.Memory.memory_plan_rewrite}), so a run then holds what its
+          plan places at once. *)
 
 val link :
   devices:(string -> Rig.t) ->

@@ -3303,17 +3303,21 @@ index 3c92ff0b2..8a4df187a 100644
      if debug:
        realized_ranges = rctx.realize_map.get(x, None)
 diff --git a/tinygrad/schedule/memory.py b/tinygrad/schedule/memory.py
-index c02f1b0c9..f60913085 100644
+index c02f1b0c9..1dfc7c36f 100644
 --- a/tinygrad/schedule/memory.py
 +++ b/tinygrad/schedule/memory.py
-@@ -33,14 +33,15 @@ def memory_plan_rewrite(linear:UOp, held_bufs:set[UOp]|None=None) -> UOp:
+@@ -32,15 +32,17 @@ def memory_plan_rewrite(linear:UOp, held_bufs:set[UOp]|None=None) -> UOp:
+     if si.src[0].op is Ops.STORE: copy_bufs.update(si_bufs)
    if not first_appearance: return linear
  
-   # separate copy and compute buffers into different lanes to avoid introducing dependencies (copy->compute->copy)
+-  # separate copy and compute buffers into different lanes to avoid introducing dependencies (copy->compute->copy)
+-  def _key(b:UOp): return (b.device, 1 if b in copy_bufs else 0)
+-  buf_hold = {b: last_appearance[b] - first_appearance[b] + 1 for b in first_appearance if b in copy_bufs}
++  # a device's copies and kernels share one lane: the executor runs a device's work in order, so a lane of copies
++  # would order nothing more and would add its peak to the kernels'
 +  # a buffer's bytes are free once its last call is: an arena is one allocation, and the executor runs work that
 +  # writes an allocation after every earlier use of it, a copy's included
-   def _key(b:UOp): return (b.device, 1 if b in copy_bufs else 0)
--  buf_hold = {b: last_appearance[b] - first_appearance[b] + 1 for b in first_appearance if b in copy_bufs}
++  def _key(b:UOp): return (b.device, 0)
  
    # suballocation: build sorted open/close events, then alloc/free in order
    block_size = 256

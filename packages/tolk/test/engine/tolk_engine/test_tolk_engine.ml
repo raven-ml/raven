@@ -2318,7 +2318,7 @@ let system_run (c : calls) =
   let newest = List.hd c.nodes and input = per_run_param 1 in
   let last = Ops.call (Lazy.force per_run_add) [ per_run_param 0; newest; input ] in
   let linear =
-    Memory.memory_plan_rewrite ~per_run:true
+    Memory.memory_plan_rewrite
       (Ops.v Op.Linear ~src:(List.rev (last :: c.calls)))
   in
   let storage =
@@ -2441,7 +2441,7 @@ let two_device_schedule steps =
     steps;
   let newest = on 0 (List.hd !nodes) in
   calls := add [ per_run_param 0; newest; per_run_param 1 ] :: !calls;
-  Memory.memory_plan_rewrite ~per_run:true
+  Memory.memory_plan_rewrite
     (Ops.v Op.Linear ~src:(List.rev !calls))
 
 (* [linear]'s link and one run under a profile: the images loaded, by device

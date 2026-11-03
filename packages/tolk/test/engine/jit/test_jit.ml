@@ -205,7 +205,7 @@ let capture_binding case =
 
 let lower ?search ?(targets = fun _ -> recorded_target) case =
   plain (fun () ->
-      Jit.jit_lower ?search ~storage:Linked ~targets ~held_bufs:(held case)
+      Jit.jit_lower ?search ~targets ~held_bufs:(held case)
         ~inputs:(inputs case) ~input_vars:(capture_binding case)
         (captured case))
 
@@ -597,7 +597,7 @@ let runs_a_phased_input () =
     Ops.v Op.Linear ~src:[ Ops.call (Lazy.force inc_phased) [ out; input ] ]
   in
   let lowered =
-    Jit.jit_lower ~storage:Linked
+    Jit.jit_lower
       ~targets:(fun n -> Engine.target (devices n))
       ~held_bufs:[ out ] ~inputs:[ input ] ~input_vars:[] linear
   in
@@ -670,7 +670,7 @@ let bindings_of name linear =
 let unbinds_capture_variables () =
   let linear, out, src = capture_with_variables () in
   let lowered =
-    Jit.jit_lower ~storage:Linked
+    Jit.jit_lower
       ~targets:(fun n -> Engine.target (devices n))
       ~held_bufs:[ Ops.buf_uop out; src ] ~inputs:[] ~input_vars:[ ("n", 5) ]
       linear
@@ -699,7 +699,7 @@ let unbinds_capture_variables () =
 let storage_of_lowered () =
   let linear, out, src = capture_with_variables () in
   let lowered =
-    Jit.jit_lower ~storage:Linked
+    Jit.jit_lower
       ~targets:(fun n -> Engine.target (devices n))
       ~held_bufs:[ Ops.buf_uop out; src ] ~inputs:[] ~input_vars:[] linear
   in
@@ -709,11 +709,11 @@ let storage_of_lowered () =
       else None)
     (Ops.toposort ~calls:Skip lowered)
 
-(* The arenas of a capture lowered for [storage] on CPU:1: [copied], a copy
+(* The arenas of a capture lowered on CPU:1: [copied], a copy
    of the input, lives from the copy to the first kernel, and [k1] and [k2],
    which only kernels take, from the kernel that writes each to the one that
    reads it. *)
-let arenas_lowered storage =
+let arenas_lowered () =
   let node d = Ops.new_buffer d 4 Float32 in
   let input = node "CPU" and copied = node "CPU:1" in
   let k1 = node "CPU:1" and k2 = node "CPU:1" and out = node "CPU:1" in
@@ -729,7 +729,7 @@ let arenas_lowered storage =
         ]
   in
   let lowered =
-    Jit.jit_lower ~storage
+    Jit.jit_lower
       ~targets:(fun n -> Engine.target (devices n))
       ~held_bufs:[ input; out ] ~inputs:[] ~input_vars:[] linear
   in
@@ -746,12 +746,8 @@ let arenas =
             (list (pair int Dtypes.dtype))
             [ (256, Dtype.Int8) ]
             (storage_of_lowered ()));
-      test
-        "linked, a copy's buffer has an arena of its own; per run, the \
-         device's buffers share one" (fun () ->
-          equal ~msg:"linked" (slist int Int.compare) [ 256; 512 ]
-            (arenas_lowered Linked);
-          equal ~msg:"per run" (list int) [ 512 ] (arenas_lowered Per_run));
+      test "a device's buffers share one arena, a copy's among them"
+        (fun () -> equal (list int) [ 512 ] (arenas_lowered ()));
     ]
 
 let captured_variables =
@@ -764,7 +760,7 @@ let captured_variables =
     ]
 
 let lower_drawn (linear, held, inputs) =
-  Jit.jit_lower ~storage:Linked
+  Jit.jit_lower
     ~targets:(fun n -> Engine.target (devices n))
     ~held_bufs:held ~inputs ~input_vars:[] linear
 

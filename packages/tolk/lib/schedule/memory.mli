@@ -12,9 +12,8 @@
     lifetimes do not overlap at shared addresses of a few large buffers, the
     arenas, so the schedule needs less memory. *)
 
-val memory_plan_rewrite :
-  ?held_bufs:Ops.t list -> ?per_run:bool -> Ops.t -> Ops.t
-(** [memory_plan_rewrite ~held_bufs ~per_run linear] is the schedule [linear],
+val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
+(** [memory_plan_rewrite ~held_bufs linear] is the schedule [linear],
     an {!Op.Linear} of calls run in order, with its buffers placed in arenas.
 
     A buffer is planned unless it is among [held_bufs] (default [[]]), whose
@@ -24,17 +23,17 @@ val memory_plan_rewrite :
     {!Op.After}). A buffer lives from the first call that takes it to the
     last, a loop around calls ({!Op.End} or {!Op.Backedge}) counting as one
     call that takes the buffers of each of its calls and a back edge's flag.
-    The buffers of copies, the calls whose body is an {!Op.Store}, are planned
-    apart from the others on each device, so that planning adds no dependency
-    between copies and kernels, unless [per_run] (default [false]), for a
-    schedule whose storage is made at each run: there a device's buffers are
-    planned together, since a run holds its arenas whole, and two would hold
-    the peaks of both kinds at once. A buffer's bytes are free from the call
-    after its last: an arena is one allocation, and the executor runs the work
-    that writes an allocation after every earlier use of it, a copy's
-    included.
+    A buffer's bytes are free from the call after its last: an arena is one
+    allocation, and the executor runs the work that writes an allocation after
+    every earlier use of it, a copy's included.
 
-    Each device has one arena for each kind of buffer planned apart, an
+    Each device has one arena, which its copies' buffers, those of the calls
+    whose body is an {!Op.Store}, share with its kernels': the executor runs a
+    device's work in order, so on one device planning copies apart would order
+    nothing more, and two arenas, held at once, would hold both peaks. Across
+    devices the executor orders work by allocation: where a device whose work
+    the host runs reuses bytes a GPU's copy touched, its work, and the run
+    that submits it, wait for the GPU's earlier work. The arena is an
     {!Op.Buffer} of {!Dtype.Int8} as large as its buffers need at once. A buffer's size and
     phase ({!Ops.type-param_arg}) together are rounded up to 256 bytes, and its
     place is found by a {!Support_memory.Tlsf_allocator}, the buffers ending at
