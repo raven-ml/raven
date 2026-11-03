@@ -237,9 +237,11 @@ let bfloat16 m =
 
 (* At bfloat16 the prompt's logits over four devices, against one
    device's: the largest gap, a baseline, printed with [%h] to be exact
-   on every system. A row projection rounds each device's term into
-   bfloat16 and adds the four in bfloat16, which the norms, the attention
-   and the head carry to the logits. *)
+   on every system. The gap is the row projections': each rounds every
+   device's term into bfloat16 and adds the four in bfloat16, which the
+   norms, the attention and the head carry to the logits. Attention adds
+   none of it where nx.cpu computes it, as
+   [test_attention_over_heads] shows. *)
 let test_bfloat16 () =
   let m = bfloat16 (model ()) in
   let slots = 8 in
@@ -310,6 +312,27 @@ let within ~msg ~tol want got =
           got.(i) w)
     want
 
+(* Attention over heads cut across four devices, at bfloat16 under a causal
+   mask with grouped heads: each device computes its heads' rows as one
+   device does (nx.mli's routing, nx_cpu.mli's attention), so the result
+   is one device's, bit for bit. *)
+let test_attention_over_heads () =
+  let bf16 x = Nx.cast Nx.bfloat16 x in
+  let q = bf16 (values 3 [| 2; 8; 3; 2 |]) in
+  let k = bf16 (values 4 [| 2; 4; 5; 2 |]) in
+  let v = bf16 (values 5 [| 2; 4; 5; 3 |]) in
+  let bits x =
+    Array.map Int64.bits_of_float
+      (Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)))
+  in
+  let one = Attention.attend ~mask:Nx.causal q k v in
+  let cut = Four.split ~axis:1 in
+  let four =
+    Attention.attend ~mask:Nx.causal (Nx.place cut q) (Nx.place cut k)
+      (Nx.place cut v)
+  in
+  equal ~msg:"one device's bits" (array int64) (bits one) (bits four)
+
 (* Attention reads each query and key whole: with [q] and [k] cut along their
    [d] features it raises, at the call, naming the placement that reads them
    whole. *)
@@ -361,6 +384,8 @@ let () =
              test "generation over four devices"
                test_generation_over_four_devices;
              test "a bfloat16 prompt over four devices" test_bfloat16;
+             test "bfloat16 attention over heads cut across four devices"
+               test_attention_over_heads;
              test "a bfloat16 row projection's sum rounds each term"
                test_row_projection;
            ];
