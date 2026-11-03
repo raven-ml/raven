@@ -5,7 +5,8 @@
 
 (** Scatters past the work bound: 33 to 48 updates over 33 to 40 positions,
     along the middle axis of three, which a mask would compute in more than 16
-    times eager's work. *)
+    times eager's work, and scatters into a donated target, updated in place
+    whatever the bound, of 1 to 48 updates. *)
 
 (** The type for how the positions reach the scatter: as drawn, or broadcast
     or transposed inside the traced function from fewer elements. *)
@@ -40,8 +41,9 @@ val gen : t Windtrap.Gen.t
 
 val examples : t list
 (** [examples] holds a case of each combine of each kind of dtype, of each
-    kind of {!positions}, with its target donated, with its updates an offset
-    view, and of each narrow float's [Add] and each complex combine. *)
+    kind of {!positions}, with its target donated, of one or a few updates
+    into a donated target, with its updates an offset view, and of each narrow
+    float's [Add] and each complex combine. *)
 
 val law : ?flushes:bool -> (module Nx.Devices) -> t -> unit
 (** [law ~flushes s c] checks that a compiled call on [s]'s first device gives
@@ -52,5 +54,6 @@ val law : ?flushes:bool -> (module Nx.Devices) -> t -> unit
     nonzero float or part below float32's least normal reads each zero and
     each such value as one. It covers each combine, each kind of dtype and of
     {!positions}, positions broadcast along the trailing axes and positions
-    not, a donated target, a position outside the axis, a narrow float's
-    [Add], an offset view of the updates, and each complex combine. *)
+    not, a donated target, one of a few updates, a position outside the axis,
+    a narrow float's [Add], an offset view of the updates, and each complex
+    combine. *)

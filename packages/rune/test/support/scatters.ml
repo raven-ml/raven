@@ -131,7 +131,10 @@ let gen =
   let* p = int_range 1 2 in
   let* q = int_range 1 3 in
   let* n = int_range 33 40 in
-  let* k = int_range 33 48 in
+  (* A donated target is updated in place whatever the bound, so it also
+     draws few updates. *)
+  let* donated = bool in
+  let* k = if donated then int_range 1 48 else int_range 33 48 in
   let s = [| p; n; q |] and t = [| p; k; q |] in
   let* positions = of_list [ Full; Trailing; Leading; Transposed ] in
   let at =
@@ -146,8 +149,7 @@ let gen =
   let* updates = draw t in
   let exact = exactly d combine in
   let* into = if exact then halved d into else constant into in
-  let* updates = if exact then halved d updates else constant updates in
-  let+ donated = bool in
+  let+ updates = if exact then halved d updates else constant updates in
   {
     dtype = d;
     combine;
@@ -162,8 +164,8 @@ let gen =
 
 (* Examples *)
 
-let example i (d, (combine : Nx.combine), positions, offset, donated) =
-  let s = [| 2; 33; 3 |] and t = [| 2; 40; 3 |] in
+let example i (d, (combine : Nx.combine), positions, offset, donated, k) =
+  let s = [| 2; 33; 3 |] and t = [| 2; k; 3 |] in
   let ps = [| 0L; 0L; 2L; -1L; 33L; 1L; Int64.max_int; 32L; Int64.min_int |] in
   let operand view m : Operand.t =
     let value j =
@@ -194,19 +196,21 @@ let examples =
   List.mapi example
     Nx.Dtype.
       [
-        (Any Nx.float32, Set, Full, false, true);
-        (Any Nx.float64, Add, Trailing, false, false);
-        (Any Nx.float16, Add, Leading, false, true);
-        (Any Nx.bfloat16, Add, Transposed, true, false);
-        (Any Nx.complex64, Add, Full, true, true);
-        (Any Nx.complex64, Max, Trailing, false, false);
-        (Any Nx.complex64, Min, Leading, false, true);
-        (Any Nx.int8, Set, Transposed, false, false);
-        (Any Nx.int32, Max, Full, true, false);
-        (Any Nx.uint64, Min, Trailing, false, true);
-        (Any Nx.bool, Set, Leading, false, false);
-        (Any Nx.bool, Max, Transposed, false, true);
-        (Any Nx.float32, Min, Trailing, true, true);
+        (Any Nx.float32, Set, Full, false, true, 40);
+        (Any Nx.float64, Add, Trailing, false, false, 40);
+        (Any Nx.float16, Add, Leading, false, true, 40);
+        (Any Nx.bfloat16, Add, Transposed, true, false, 40);
+        (Any Nx.complex64, Add, Full, true, true, 40);
+        (Any Nx.complex64, Max, Trailing, false, false, 40);
+        (Any Nx.complex64, Min, Leading, false, true, 40);
+        (Any Nx.int8, Set, Transposed, false, false, 40);
+        (Any Nx.int32, Max, Full, true, false, 40);
+        (Any Nx.uint64, Min, Trailing, false, true, 40);
+        (Any Nx.bool, Set, Leading, false, false, 40);
+        (Any Nx.bool, Max, Transposed, false, true, 40);
+        (Any Nx.float32, Min, Trailing, true, true, 40);
+        (Any Nx.bfloat16, Set, Trailing, false, true, 1);
+        (Any Nx.int32, Add, Full, false, true, 3);
       ]
 
 (* The law *)
@@ -249,6 +253,8 @@ let law ?(flushes = false) (module S : Nx.Devices) c =
       cover ("a complex " ^ combine_name k) complex)
     [ Add; Max; Min ];
   cover "a donated target" c.donated;
+  cover "a donated target of a few updates"
+    (c.donated && c.updates_shape.(1) < 16);
   cover "an offset view of the updates"
     (match c.updates.view with Offset _ -> true | _ -> false);
   List.iter

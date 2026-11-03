@@ -368,6 +368,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled scatter of few updates into a donated array on a GPU, such as
+  a decode step's `Nx.set` of one row into its key cache, runs no more
+  threads than its updates need: 8.2 µs a call on CUDA, from 12.2 µs.
 - A compiled negation or absolute value of a `float16` or `bfloat16` constant
   keeps a signalling NaN's bits, as nx's sign operations do: it went through
   a float32 conversion that the compiler folded, which quieted it.

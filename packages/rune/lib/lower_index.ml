@@ -153,7 +153,10 @@ let summed ca ~landed xs us =
 
    The host takes one run: at 1024 rows of 64 floats into 4096, one thread's
    walk takes 6 µs, and 16 runs split among its threads take 37 µs. A GPU takes
-   up to [gpu_runs], which bounds the walks to [gpu_runs·k].
+   up to [gpu_runs], which bounds the walks to [gpu_runs·k], and at most [k]:
+   updates land in at most [k] runs, and a thread of any other run only
+   compares. A decode step's one row into a [1; 8; 4096; 64] bfloat16 cache
+   takes 3.6 µs of an RTX 5000 Ada in one run, 7.6 µs in 16.
 
    A narrow float's Add sums in a [float32] copy and marks where updates land
    in a byte per element, so that elsewhere the result keeps [into]'s bits,
@@ -185,7 +188,8 @@ let rec spread u =
    position in [i], into [y], [w] parts an element, and sets [hit] to [1] where
    one lands. Where [rows], [i] holds one position per row of [q] updates. *)
 let walk ~host ~rows ~w ~p ~n ~q ~k f args =
-  let len = if host then n else ceil_div n (Int.min n gpu_runs) in
+  let most = if host then 1 else Int.min n (Int.min k gpu_runs) in
+  let len = ceil_div n most in
   let runs = ceil_div n len in
   let range t e id = Ops.range ~axis_type:t (Ops.Int e) [ id ] in
   let a = range Weak p 0 and g = range Weak runs 1 in
