@@ -54,17 +54,18 @@ type t
 (** The type for linked schedules. *)
 
 (** The type for where a schedule's storage that no buffer is bound to lives. *)
-type storage =
+type storage = Jit.storage =
   | Linked
       (** Made at link, in its device's memory, which the runs share and the
           schedule holds while it is reachable. *)
   | Per_run
-      (** Made by each run in its device's memory before the first call that
-          takes it, and returned after the last ({!Rig.Buffer.free}), its
-          memory coming back once the work on it is done, so that the
-          schedule holds none of it between runs, and a run holds at each
-          call only the storage that calls before and after it take. A range
-          around calls counts as one call. *)
+      (** Made by each run in its device's memory before its first call, and
+          returned after its last ({!Rig.Buffer.free}), its memory coming back
+          once the work on it is done, so that the schedule holds none of it
+          between runs. A run holds its storage whole, so a schedule lowered
+          by {!Tolk.Jit.jit_lower} must be lowered with [~storage:Per_run],
+          which plans one arena per device: a run then holds what its plan
+          places at once. *)
 
 val link :
   devices:(string -> Rig.t) ->
@@ -91,9 +92,7 @@ val link :
       ({!Rig.runs_on_host}); otherwise it is a move of the program
       ({!Rig_program.step}), one {!Rig.Buffer.submit_copy}.
     - Consecutive kernels and copies of one device are one submission
-      ({!Rig.Submission}), but where a schedule linked {!Per_run} makes or
-      returns storage between them, and each of them is a submission of its
-      own while
+      ({!Rig.Submission}), and each of them is a submission of its own while
       {!Tolk.Setting.debug} is [2] or more, so that a submission's work in a
       profile ({!Rig.Profile.Work}) is one kernel's.
     - A range around calls is a loop of the program, and so is a back edge,
@@ -153,8 +152,7 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     buffer a kernel accesses does not start at its parameter's phase, if a
     variable is unbound, and as {!Rig_program.run} does; {!Rig.Out_of_memory}
     if a device cannot allocate the storage of a schedule linked {!Per_run}:
-    the calls before the first that takes it have run, and the storage the
-    run made is returned. *)
+    no call has run, and the storage the run made is returned. *)
 
 val slots : t -> Rig.Buffer.t option array
 (** [slots s] is, for each slot that a parameter of [s] takes, a buffer of the

@@ -20,17 +20,24 @@ val shaping : ?beam:int -> unit -> (string * string) list
     ({!Setting.shaping_under}). Two lowerings whose [shaping] is equal compile
     alike, whatever [BEAM] and [JITBEAM] were. It binds no setting. *)
 
+(** The type for where a lowered schedule's storage lives, which the engine
+    links it with ([Tolk_engine.storage] is this type). *)
+type storage =
+  | Linked  (** Made at link, and held by the linked schedule. *)
+  | Per_run  (** Made at each run, before its first call, and returned after
+                 its last. *)
+
 val jit_lower :
   ?beam:int ->
   ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
-  ?arenas:bool ->
+  storage:storage ->
   targets:(string -> Helpers.Target.t) ->
   held_bufs:Ops.t list ->
   inputs:Ops.t list ->
   input_vars:(string * int) list ->
   Ops.t ->
   Ops.t
-(** [jit_lower ~beam ~search ~arenas ~targets ~held_bufs ~inputs ~input_vars
+(** [jit_lower ~beam ~search ~storage ~targets ~held_bufs ~inputs ~input_vars
     linear] is
     the captured schedule [linear], an {!Op.Linear} of calls, ready to link:
     + the [i]th buffer of [inputs] is replaced wherever [linear] reaches it by
@@ -39,12 +46,12 @@ val jit_lower :
     + each variable named in [input_vars], the variables of the capture, is
       unbound wherever [linear] binds it: a run binds it. A variable bound
       under another name keeps its binding;
-    + where [arenas] (default [true]) holds, its buffers are placed in arenas
-      ({!Memory.memory_plan_rewrite}), except [held_bufs], whose contents
-      outlive a run, such as the buffers a caller keeps or that hold
-      constants. Otherwise each buffer keeps storage of its own, which a
-      schedule that makes its storage at each run can make at the buffer's
-      first call and return after its last;
+    + its buffers are placed in arenas ({!Memory.memory_plan_rewrite}),
+      except [held_bufs], whose contents outlive a run, such as the buffers a
+      caller keeps or that hold constants. [storage] must be the storage the
+      result is linked with: {!Per_run} plans a device's copies and kernels
+      in one arena ([~per_run:true]), since a run holds its arenas whole, and
+      {!Linked} plans them apart;
     + each buffer not in [held_bufs], which holds only what one run computes,
       becomes storage of the program ({!Shape.alloc}) of its size, type and
       device, which the program's link allocates;

@@ -2136,12 +2136,12 @@ let storage_per_run () =
 
    A schedule of calls [x <- y + z] over values of [per_run_size] floats on a
    memory device of its own, some of them two calls in a loop of two trips:
-   value 0 is parameter 1, the others storage the schedule makes, and a last
-   call writes parameter 0 from the newest value and value 0. A buffer lives
-   from the entry that writes it to the last that reads it, a loop being one
-   entry, so the most a run holds beyond its parameters is the most buffers
-   live at one entry; a budget below it runs out of memory, and one at it does
-   not. *)
+   value 0 is parameter 1, the others buffers the schedule plans per run
+   ({!Memory.memory_plan_rewrite}), and a last call writes parameter 0 from
+   the newest value and value 0. A run holds its storage whole: a budget below
+   its bytes runs out of memory, and one at them does not. A buffer lives from
+   the entry that writes it to the last that reads it, a loop being one entry,
+   so no plan holds less than the most buffers live at one entry. *)
 
 let per_run_size = 64
 let per_run_bytes = 4 * per_run_size
@@ -2204,7 +2204,7 @@ let system_loop y z y' z' (c : calls) =
 let input_values = Array.init per_run_size (fun i -> Float.of_int (i + 1))
 
 (* The most bytes live at one entry, and parameter 0's values. *)
-let model_run (m : uses) =
+let model_peak (m : uses) =
   let calls = List.rev ([ (-1, m.count - 1, 0) ] :: m.reads) in
   let first = Array.make m.count max_int and last = Array.make m.count (-1) in
   List.iteri
@@ -2232,12 +2232,25 @@ let model_run (m : uses) =
     floats (Array.map2 ( +. ) value.(m.count - 1) value.(0)) )
 
 (* The least budget beyond what the device holds that a run fits in, found by
-   bisection, and parameter 0's values after a run. *)
+   bisection, the bytes of the storage the schedule makes, and parameter 0's
+   values after a run. *)
 let system_run (c : calls) =
   let d = Lazy.force per_run_device in
   let newest = List.hd c.nodes and input = per_run_param 1 in
   let last = Ops.call (Lazy.force per_run_add) [ per_run_param 0; newest; input ] in
-  let linear = Ops.v Op.Linear ~src:(List.rev (last :: c.calls)) in
+  let linear =
+    Memory.memory_plan_rewrite ~per_run:true
+      (Ops.v Op.Linear ~src:(List.rev (last :: c.calls)))
+  in
+  let storage =
+    List.fold_left
+      (fun n u ->
+        if Ops.op u = Op.Buffer then
+          n + (Shape.max_numel u * Dtype.itemsize (Ops.dtype u))
+        else n)
+      0
+      (Ops.toposort ~calls:Skip linear)
+  in
   let devices _ = d in
   let s = Engine.link ~devices ~storage:Per_run (compile ~devices linear) in
   let out = Run.buffer d Float32 (floats (Array.make per_run_size 0.)) in
@@ -2273,13 +2286,24 @@ let system_run (c : calls) =
   in
   let peak = least 0 (List.length c.nodes * per_run_bytes) in
   Engine.run s slots;
-  (peak, Run.values Float32 out)
+  (peak, storage, Run.values Float32 out)
+
+(* A run fits its storage's bytes, which hold what is live at once, and
+   computes the model's values. *)
+let model_run (m : uses) outcome =
+  let live, want = model_peak m in
+  match outcome with
+  | Error e -> raise e
+  | Ok (least, storage, got) ->
+      equal ~msg:"the least budget, the storage's bytes" int storage least;
+      at_least int ~msg:"the most live at once" ~than:live storage;
+      equal ~msg:"parameter 0" values want got
 
 let per_run_model =
   let schedule = abstract "s" in
   let k = Gen.int_range 0 63 in
   stateful ~count:40 ~steps:12
-    "a run makes each buffer at its first call and returns it after its last"
+    "a run holds its storage whole, no less than its buffers live at once"
     [
       command "start"
         (Gen.unit @-> makes schedule)
@@ -2293,9 +2317,123 @@ let per_run_model =
         (k @-> k @-> k @-> k @-> schedule ^-> makes schedule)
         model_loop system_loop;
       command "run"
-        (schedule ^-> returns (pair int values))
+        (schedule ^-> judges (triple int int values))
         model_run system_run;
     ]
+
+(* Per run and linked
+
+   A schedule of calls [x <- y + z] over two memory devices, each value on the
+   device its step draws, an operand of the other device copied over first: a
+   chain where each call reads the value before it, a diamond where it reads
+   older ones. Planned per run, it gives the same work linked either way: the
+   same values, the same submissions on each device, and the same images, one
+   per device and binary. *)
+
+let per_run_other =
+  lazy (Result.get_ok (Rig.memory_device "per-run-other"))
+
+let two_devices name =
+  if name = "PER_RUN" then Lazy.force per_run_device
+  else Lazy.force per_run_other
+
+let two_names = [| "PER_RUN"; "PER_RUN:1" |]
+
+(* [steps] as a schedule: each step's device and the values it reads, counted
+   back from the newest. *)
+let two_device_schedule steps =
+  let add args = Ops.call (Lazy.force per_run_add) args in
+  let calls = ref [] and nodes = ref [ (per_run_param 1, 0) ] in
+  (* [u] of device [from] on device [d]: itself, or a copy of it. *)
+  let on d (u, from) =
+    if from = d then u
+    else
+      let c = Ops.new_buffer two_names.(d) per_run_size Float32 in
+      calls := Shape.store_call c u :: !calls;
+      c
+  in
+  let back k = List.nth !nodes (k mod List.length !nodes) in
+  List.iter
+    (fun (d, y, z) ->
+      let y = on d (back y) and z = on d (back z) in
+      let x = Ops.new_buffer two_names.(d) per_run_size Float32 in
+      calls := add [ x; y; z ] :: !calls;
+      nodes := (x, d) :: !nodes)
+    steps;
+  let newest = on 0 (List.hd !nodes) in
+  calls := add [ per_run_param 0; newest; per_run_param 1 ] :: !calls;
+  Memory.memory_plan_rewrite ~per_run:true
+    (Ops.v Op.Linear ~src:(List.rev !calls))
+
+(* [linear]'s link and one run under a profile: the images loaded, by device
+   and binary, each device's submissions in order, and parameter 0's
+   values. *)
+let linked_and_run storage linear =
+  let devices = two_devices in
+  let d = Lazy.force per_run_device in
+  let compiled = compile ~devices linear in
+  let s, linking =
+    Rig.Profile.take (fun () -> Engine.link ~devices ~storage compiled)
+  in
+  let out = Run.buffer d Float32 (floats (Array.make per_run_size 0.)) in
+  let slots = [| Some out; Some (Run.buffer d Float32 (floats input_values)) |] in
+  let (), running = Rig.Profile.take (fun () -> Engine.run s slots) in
+  let loads =
+    List.filter_map
+      (function
+        | Rig.Profile.Load l ->
+            Some (Rig.name (Rig.Image.device l.image), Digest.string l.binary)
+        | _ -> None)
+      linking
+  in
+  (* A kernel of a memory device runs on its host ({!Engine.link}). *)
+  let work =
+    List.filter_map
+      (function
+        | Rig.Profile.Work w -> Some (Rig.name w.device, (w.start, w.name))
+        | _ -> None)
+      running
+  in
+  let working = List.sort_uniq compare (List.map fst work) in
+  let names n =
+    ( n,
+      List.map snd
+        (List.sort compare
+           (List.filter_map
+              (fun (n', w) -> if n = n' then Some w else None)
+              work)) )
+  in
+  (List.sort compare loads, List.map names working, Run.values Float32 out)
+
+let pp_steps ppf steps =
+  Format.pp_print_list
+    ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
+    (fun ppf (d, y, z) -> Format.fprintf ppf "%d: %d + %d" d y z)
+    ppf steps
+
+let two_device_steps =
+  let step =
+    Gen.triple (Gen.int_range 0 1) (Gen.int_range 0 3) (Gen.int_range 0 3)
+  in
+  Gen.with_pp pp_steps (Gen.list ~size:(Gen.int_range 1 8) step)
+
+let per_run_as_linked steps =
+  let linear = two_device_schedule steps in
+  let loads, work, got = linked_and_run Per_run linear in
+  let loads', work', got' = linked_and_run Linked linear in
+  let image = pair string string in
+  equal ~msg:"parameter 0" values got' got;
+  not_equal ~msg:"the run's submissions" (list (pair string (list string)))
+    [] work;
+  equal ~msg:"each device's submissions"
+    (list (pair string (list string)))
+    work' work;
+  equal ~msg:"the images" (list image) loads' loads;
+  equal ~msg:"an image per device and binary" (list image)
+    (List.sort_uniq compare loads) loads;
+  cover "a copy between the devices"
+    (List.exists (fun (d, _, _) -> d = 1) steps);
+  cover "a diamond" (List.exists (fun (_, y, z) -> y > 0 || z > 0) steps)
 
 (* A run keeps none of the buffers it was given: dropped after it, they return
    to their device while the schedule lives. *)
@@ -2458,6 +2596,9 @@ let runs =
       test "a schedule linked per run holds no storage between runs"
         storage_per_run;
       per_run_model;
+      prop ~count:40
+        "a schedule linked per run does the work it does linked"
+        two_device_steps per_run_as_linked;
       test "a run keeps none of the buffers it was given" slots_let_go;
       test "each kernel of a run is in a span of the host under a profile"
         spans_each_kernel;

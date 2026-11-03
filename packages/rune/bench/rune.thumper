@@ -42,6 +42,10 @@ Jit/cumsum-neg-log-uniform-8x1024	alloc_words	exact	714
 Jit/cumsum-neg-log-uniform-8x1024	wall_time	batch=64	n=20	7.146e-05	7.025e-05 7.034e-05 7.044e-05 7.046e-05 7.063e-05 7.088e-05 7.099e-05 7.124e-05 7.132e-05 7.140e-05 7.153e-05 7.155e-05 7.253e-05 7.365e-05 7.883e-05 7.908e-05 7.920e-05 7.953e-05 8.614e-05 1.009e-04
 Jit/cumsum-scaled-float32-100x400	alloc_words	exact	698
 Jit/cumsum-scaled-float32-100x400	wall_time	batch=8	n=20	9.407e-04	9.376e-04 9.387e-04 9.389e-04 9.390e-04 9.391e-04 9.392e-04 9.399e-04 9.401e-04 9.406e-04 9.406e-04 9.409e-04 9.410e-04 9.418e-04 9.422e-04 9.478e-04 9.564e-04 9.581e-04 9.593e-04 9.891e-04 9.973e-04
+Jit/devices/dp-step-16	alloc_words	exact	23015
+Jit/devices/dp-step-16	wall_time	batch=4	n=20	2.281e-03	1.128e-03 1.180e-03 1.255e-03 1.551e-03 1.607e-03 1.661e-03 1.945e-03 1.955e-03 1.974e-03 2.269e-03 2.292e-03 2.409e-03 2.418e-03 2.426e-03 2.452e-03 2.461e-03 2.493e-03 2.513e-03 2.516e-03 2.519e-03
+Jit/devices/fsdp-backward-8	alloc_words	exact	9212
+Jit/devices/fsdp-backward-8	wall_time	batch=1	n=20	8.213e-03	6.486e-03 6.495e-03 6.731e-03 6.837e-03 6.862e-03 7.854e-03 7.958e-03 8.046e-03 8.132e-03 8.144e-03 8.281e-03 8.289e-03 8.295e-03 8.374e-03 8.382e-03 8.387e-03 8.389e-03 8.423e-03 8.513e-03 8.688e-03
 Jit/donated-step-4096	alloc_words	exact	917
 Jit/donated-step-4096	wall_time	batch=4096	n=20	1.504e-06	1.486e-06 1.491e-06 1.495e-06 1.497e-06 1.498e-06 1.499e-06 1.499e-06 1.501e-06 1.503e-06 1.503e-06 1.504e-06 1.506e-06 1.506e-06 1.509e-06 1.511e-06 1.513e-06 1.514e-06 1.517e-06 1.518e-06 1.532e-06
 Jit/eigh-float32-64x8x8	alloc_words	exact	860

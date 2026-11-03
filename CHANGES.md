@@ -368,6 +368,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled call over several devices runs as one program, its storage
+  planned into an arena per device made for the call: on a GPU it holds at
+  most what the plan places at once, where it held every value it computed
+  until the GPU caught up. A data-parallel step over 16 memory devices loads
+  11 images where it loaded 656, and its warm call allocates 23 015 words
+  where it allocated 153 580.
 - A compiled scatter of few updates into a donated array on a GPU, such as
   a decode step's `Nx.set` of one row into its key cache, runs no more
   threads than its updates need: 8.2 µs a call on CUDA, from 12.2 µs.
@@ -927,6 +933,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A schedule linked `Per_run` runs as one rig program, its storage made before
+  the run's first call: each image loads once per device, and a GPU no longer
+  holds every buffer of a run while its work is pending. `Jit.jit_lower` takes
+  the `~storage` the schedule is linked with (`Tolk_engine.storage` is
+  `Jit.storage`), and `Memory.memory_plan_rewrite ~per_run` plans a device's
+  copies and kernels in one arena; `Jit.jit_lower ~arenas` is gone.
 - `Realize.lower_and_compile` compiles a schedule's host kernels in one Clang
   run per domain (`Codegen.to_programs`, `Renderer.Compiler.compile_all`),
   not one process per kernel, whose start cost what a small kernel's compile does.
@@ -1134,11 +1146,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 - A CPU program split into blocks over many buffers gives its values on
   x86_64 Windows, where they were garbage: its entry copies its parameters
   inline, where Clang called the process's `memcpy`, of another convention.
-- `Tolk_engine.link ~storage:Per_run` makes a schedule's storage at each run,
-  each buffer before the first call that takes it and returned after the last,
-  so the schedule holds none between runs and a run holds only what its calls
-  need at once. `Jit.jit_lower ~arenas:false` leaves the buffers out of arenas
-  for it. A run keeps none of the buffers it was given once it returns.
+- `Tolk_engine.link ~storage:Per_run` makes a schedule's storage at each run
+  and returns it after, so the schedule holds none between runs. A run keeps
+  none of the buffers it was given once it returns.
 - `Dtype.const` wraps an integer to a signed type too: 300 as an `Int8` is
   44, as it was through `Ops`' reads at the width.
 - A HIP kernel that calls a body compiles: its program defines the body's

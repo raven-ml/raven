@@ -62,7 +62,7 @@ let taken si =
 
 type lane = { mutable peak : int; tlsf : Tlsf.t }
 
-let memory_plan_rewrite ?(held_bufs = []) linear =
+let memory_plan_rewrite ?(held_bufs = []) ?(per_run = false) linear =
   if Setting.value Setting.no_memory_planner then linear
   else begin
     let held = Tbl.create 16 in
@@ -97,10 +97,13 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
     if List.is_empty bufs then linear
     else begin
       (* Copies and kernels plan in separate lanes, lest reuse add a dependency
-         from a copy to a kernel to a copy. A buffer's bytes are free once its
-         last call is: an arena is one allocation, and work that writes an
-         allocation follows every earlier use of it. *)
-      let key b = (Option.get (device b), Tbl.mem copy_bufs b) in
+         from a copy to a kernel to a copy, except per run: there two lanes'
+         peaks would add, and one lane holds what is live at once. A buffer's
+         bytes are free once its last call is: an arena is one allocation, and
+         work that writes an allocation follows every earlier use of it. *)
+      let key b =
+        (Option.get (device b), (not per_run) && Tbl.mem copy_bufs b)
+      in
       let block_size = 256 in
       (* A buffer whose first byte lies [phase] bytes past a 16-byte boundary,
          which its kernels read it at, lies as far past its place. *)

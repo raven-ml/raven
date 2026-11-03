@@ -131,6 +131,65 @@ let test_deferred () =
     (Big ([| 0; 0 |], float_of_int n))
     (fun () -> Nx.sync y)
 
+(* Memory of a split program
+
+   A chain of [chain] products of [chain_n] by [chain_n] float32 matrices on
+   the GPU, in a program split by an argument on a memory device. A product
+   reads the one before it, so at most two products live at once beside the
+   arguments and the result, and the call holds no more: its plan places
+   the products in that much memory. The call returns while its products
+   run, 17 GFLOP each, at least 2 ms in all at the RTX 5000 Ada's float32
+   peak. The GPU reuses memory a call returns only once the work on it is
+   done, so at the call's return it holds, beside what it held before, at
+   most the result and the two products. *)
+let chain = 8
+let chain_n = 2048
+
+let test_split_memory () =
+  let gpu, _ = on_gpu () in
+  let mem = Result.get_ok (Rig.memory_device "rune-jit-gpu-chain") in
+  let (module S) = Nx.devices [ gpu; mem ] in
+  let on_gpu = Nx.Placement.device S.v gpu
+  and on_mem = Nx.Placement.device S.v mem in
+  let x = Nx.place on_gpu (Nx.full Nx.float32 [| chain_n; chain_n |] 1.) in
+  let w =
+    Nx.place on_gpu
+      (Nx.full Nx.float32 [| chain_n; chain_n |] (1. /. float_of_int chain_n))
+  in
+  let z = Nx.place on_mem (Nx.full Nx.float32 [| 4 |] 1.) in
+  let f (x, (w, z)) =
+    let y = ref x in
+    for _ = 1 to chain do
+      y := Nx.matmul !y w
+    done;
+    (!y, Nx.mul_s z 2.)
+  in
+  let g =
+    Rune.jit
+      Nx.Ptree.(pair tensor (pair tensor tensor) @-> returns (pair tensor tensor))
+      f
+  in
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      Rig.free_cache gpu
+    done;
+    Rig.allocated gpu
+  in
+  (* The first call compiles. *)
+  Nx.sync (fst (g (x, (w, z))));
+  let before = settled () in
+  let evaluated = Rune.evaluations () in
+  let y, _ = g (x, (w, z)) in
+  let held = Rig.allocated gpu - before in
+  let signaled = Rig.signaled gpu and submitted = Rig.submitted gpu in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - evaluated);
+  less ~msg:"the call returned before its work completed" int ~than:submitted
+    signaled;
+  let product = chain_n * chain_n * 4 in
+  at_most int ~msg:"the result and two products" ~than:(3 * product) held;
+  equal ~msg:"the result" float_exact 1. (Nx.item [ 0; 0 ] (Nx.place Nx.Host.on y))
+
 (* Several targets
 
    A program over the GPU beside a memory device compiles, each device running
@@ -796,6 +855,13 @@ let () =
            [
              test "a call's check raises at the next wait, not at the call"
                test_deferred;
+           ];
+         group "memory"
+           [
+             test
+               "a split program holds at its return at most its result and \
+                its plan"
+               test_split_memory;
            ];
          group "a GPU beside a memory device"
            (List.map

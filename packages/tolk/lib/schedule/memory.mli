@@ -12,9 +12,10 @@
     lifetimes do not overlap at shared addresses of a few large buffers, the
     arenas, so the schedule needs less memory. *)
 
-val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
-(** [memory_plan_rewrite ~held_bufs linear] is the schedule [linear], an
-    {!Op.Linear} of calls run in order, with its buffers placed in arenas.
+val memory_plan_rewrite :
+  ?held_bufs:Ops.t list -> ?per_run:bool -> Ops.t -> Ops.t
+(** [memory_plan_rewrite ~held_bufs ~per_run linear] is the schedule [linear],
+    an {!Op.Linear} of calls run in order, with its buffers placed in arenas.
 
     A buffer is planned unless it is among [held_bufs] (default [[]]), whose
     contents outlive the schedule, or lives on a disk. A call takes the buffers
@@ -25,12 +26,16 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     call that takes the buffers of each of its calls and a back edge's flag.
     The buffers of copies, the calls whose body is an {!Op.Store}, are planned
     apart from the others on each device, so that planning adds no dependency
-    between copies and kernels. A buffer's bytes are free from the call after its last: an arena
-    is one allocation, and the executor runs the work that writes an
-    allocation after every earlier use of it, a copy's included.
+    between copies and kernels, unless [per_run] (default [false]), for a
+    schedule whose storage is made at each run: there a device's buffers are
+    planned together, since a run holds its arenas whole, and two would hold
+    the peaks of both kinds at once. A buffer's bytes are free from the call
+    after its last: an arena is one allocation, and the executor runs the work
+    that writes an allocation after every earlier use of it, a copy's
+    included.
 
-    Each device and kind of buffer has one arena, an {!Op.Buffer} of
-    {!Dtype.Int8} as large as its buffers need at once. A buffer's size and
+    Each device has one arena for each kind of buffer planned apart, an
+    {!Op.Buffer} of {!Dtype.Int8} as large as its buffers need at once. A buffer's size and
     phase ({!Ops.type-param_arg}) together are rounded up to 256 bytes, and its
     place is found by a {!Support_memory.Tlsf_allocator}, the buffers ending at
     a call freed before those starting there are placed. Each planned buffer is

@@ -2486,7 +2486,7 @@ let link ~beam ~parallel ~storage rigs l =
       in
       let linear =
         Tolk.Jit.jit_lower ?beam ~search:(search rigs ~parallel)
-          ~arenas:(storage = Engine.Linked)
+          ~storage
           ~targets:(fun name -> Engine.target (named rigs name))
           ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order)
           ~input_vars:vars linear
@@ -2685,10 +2685,10 @@ let variant t layouts phases donated settings =
              search, keeps nothing. *)
           let linked =
             (* A split program holds no memory between calls: each call
-               makes each value it computes on a device at the value's first
-               kernel and returns it after its last, so a device holds
-               between calls only the values its caller keeps, and within one
-               only the values live at each of its kernels. *)
+               makes its devices' arenas before its first kernel and returns
+               them after its last, so a device holds between calls only the
+               values its caller keeps, and within one what its plan places
+               at once. *)
             let storage : Engine.storage =
               if Option.is_some t.split then Per_run else Linked
             in

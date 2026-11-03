@@ -393,6 +393,74 @@ let gaussian () =
         (Rune.value_and_grad params density))
     (fun g -> synced_all out (g p))
 
+(* [n] memory devices of one set, named apart from every other set's. *)
+let memory_set =
+  let sets = ref 0 in
+  fun n ->
+    incr sets;
+    let name i = Printf.sprintf "bench-jit-%d-%d" !sets i in
+    Nx.devices
+      (List.init n (fun i -> Result.get_ok (Rig.memory_device (name i))))
+
+let sine shape seed =
+  let n = Array.fold_left ( * ) 1 shape in
+  Nx.create f32 shape
+    (Array.init n (fun j -> 0.3 *. sin (Float.of_int ((seed * 7919) + j))))
+
+(* The compile bench's data-parallel step, warm: a two-layer perceptron, its
+   batch of 64 cut across 16 memory devices and its weights whole on each, the
+   gradient summed across them before the update. Its call is one program of
+   rig's, its storage made per call. *)
+let data_parallel_step () =
+  warm "devices/dp-step-16"
+    (fun () ->
+      let (module S) = memory_set 16 in
+      let step (x, (w1, w2)) =
+        let loss (w1, w2) =
+          let y = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
+          Nx.mean (Nx.mul y y)
+        in
+        let g1, g2 = Rune.grad Nx.Ptree.(pair tensor tensor) loss (w1, w2) in
+        (Nx.sub w1 (Nx.mul_s g1 0.1), Nx.sub w2 (Nx.mul_s g2 0.1))
+      in
+      let x = Nx.place (S.split ~axis:0) (sine [| 64; 64 |] 3) in
+      let w =
+        ( Nx.place S.on (sine [| 64; 128 |] 1),
+          Nx.place S.on (sine [| 128; 16 |] 2) )
+      in
+      let f =
+        Rune.jit
+          Nx.Ptree.(
+            pair tensor (pair tensor tensor) @-> returns (pair tensor tensor))
+          step
+      in
+      fun () -> ignore (synced2 (f (x, w))))
+    (fun call -> call ())
+
+(* The backward call of one layer [relu (h w)] of fully sharded training, warm:
+   512 by 512 float32 weights and a batch of 64, both cut along axis 0 across
+   8 memory devices, the weights gathered whole on each. *)
+let sharded_backward () =
+  warm "devices/fsdp-backward-8"
+    (fun () ->
+      let (module S) = memory_set 8 in
+      let d = 512 in
+      let layer (w, h) =
+        let y = Nx.matmul h (Nx.place S.on w) in
+        Nx.maximum y (Nx.zeros_like y)
+      in
+      let two = Nx.Ptree.(pair tensor tensor) in
+      let backward =
+        Rune.jit
+          Nx.Ptree.(two @-> tensor @-> returns two)
+          (fun wh dy -> snd (Rune.vjp two Nx.Ptree.tensor layer wh) dy)
+      in
+      let w = Nx.place (S.split ~axis:0) (sine [| d; d |] 0) in
+      let h = Nx.place (S.split ~axis:0) (sine [| 64; d |] 4) in
+      let dy = Nx.place (S.split ~axis:0) (sine [| 64; d |] 5) in
+      fun () -> ignore (synced2 (backward (w, h) dy)))
+    (fun call -> call ())
+
 let jit_rows () =
   let x = x64 () and a = one () and b = one () in
   let xs = floats n and ps = positions n n and g = floats n in
@@ -588,6 +656,8 @@ let jit_rows () =
             let s = Nx_wide.sum (Nx_wide.v x) in
             (Nx_wide.hi s, Nx_wide.lo s)))
       (fun f -> synced2 (f wide));
+    data_parallel_step ();
+    sharded_backward ();
   ]
 
 (* Loops whose lanes stop apart: Newton's iteration for one value's square root,

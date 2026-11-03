@@ -1116,7 +1116,8 @@ encodes its own releases (D146).
   `schedule/__init__.py:295` (`create_linear_with_vars` holds the buffers
   among its call's sources).
 - **tolk:** `Memory.viewed`, `Memory.uses` and
-  `Memory.memory_plan_rewrite`'s lifetimes (`call_bufs`, the events);
+  `Memory.memory_plan_rewrite`'s lifetimes (`call_bufs`, the events) and
+  lanes (`key`, `per_run`);
   `Schedule.create_linear_with_vars`'s `held_bufs`;
   `test/gen/tinygrad.patch`, which drops `buf_hold` before the goldens are
   recorded.
@@ -1139,7 +1140,10 @@ encodes its own releases (D146).
   A copy's buffer is free from the call after its last, as a kernel's is,
   where tinygrad holds it as many calls again, lest a later copy overwrite it
   while the first may still run. Copies keep a lane of their own on each
-  device, as tinygrad's do.
+  device, as tinygrad's do, except in a schedule linked per run (D173), whose
+  copies and kernels share their device's lane: its arenas live through the
+  run, so two lanes add their peaks, and rune's fully sharded steps then hold
+  more than RFC 0005's bound.
 - **Reason:** (b) for ranges and views: `Rune.scan`'s staged loop (RFC 0012)
   schedules calls inside a range, whose arguments are views that move with
   it, of buffers the calls after it read whole; tinygrad's scheduler hands
@@ -1161,7 +1165,9 @@ encodes its own releases (D146).
   (`test/schedule/memory`): `memory_plan_rewrite › the buffers a call takes ›
   a buffer a call views is planned` and `› a buffer viewed after another's
   life is not placed over it`, `› rules › a copy's buffer is free from the
-  call after its last`, the recorded `copy_chain`, `random_5` and
+  call after its last` and `› per run, a copy's buffer and a call's of one
+  device share bytes once their lives are apart`, the recorded `copy_chain`,
+  `random_5` and
   `random_11` plans of the equally patched tinygrad, and the law over drawn
   schedules, whose calls view some buffers and whose copies live no longer
   than their last call; the Schedule suite's recorded `copy_view` schedule,
@@ -4787,23 +4793,25 @@ fold wraps integers and holds its float bound`, hold.
   tensors compute` and its `select_one_lane` and `select_no_lane_rows`
   versions, which run the kernels on the host.
 
-## D173. A schedule linked per run makes its storage at each run
+## D173. A schedule linked per run makes its arenas at each run
 
 - **tinygrad:** `engine/jit.py:50-80` (`CapturedJit`): the linked linear of a
   captured schedule holds its intermediates' buffers from its first call
   until `free_intermediates` drops it, so they outlive every run, and
   `engine/jit.py:32` (`jit_lower`) places them in arenas
-  (`memory_plan_rewrite`).
-- **tolk:** `Tolk_engine.link`'s `storage`, `Tolk_engine.run_parts`,
-  `Tolk_engine.per_run_parts`; `Jit.jit_lower`'s `arenas`.
-- **Differs:** a schedule linked `Per_run` makes each storage node no buffer
-  is bound to at each run, before the first call that takes it, and frees it
-  after the last, its memory coming back once the work on it is done. The
-  calls between two points where storage is made or freed are one program of
-  rig's, which binds its inputs before its first step, so a submission ends
-  at each such point. Such a schedule is lowered without arenas
-  (`jit_lower ~arenas:false`): a buffer's own life is the plan, and an arena
-  would live from the first call of any buffer in it to the last. Linked
+  (`memory_plan_rewrite`), copies' and kernels' apart
+  (`schedule/memory.py:35-37`).
+- **tolk:** `Tolk_engine.link`'s `storage`, `Tolk_engine.per_run_storage`,
+  `Tolk_engine.run_with`; `Jit.jit_lower`'s `storage` and
+  `Memory.memory_plan_rewrite`'s `per_run`.
+- **Differs:** a schedule linked `Per_run` is planned into arenas, one lane
+  per device (D41), in the order by storage (D183, D185), and makes each
+  storage node no buffer is bound to before its run's first call and frees
+  it after its last, its memory coming back once the work on it is done. A
+  run is one program of rig's, which loads each image once per device, and
+  whose submissions are those of the same schedule linked `Linked`: the order
+  by storage interleaves devices, so a data-parallel step over 16 memory
+  devices makes 1411 `Submit` steps where tinygrad's order makes 84. Linked
   `Linked`, the default, its storage is the program's, as tinygrad's. A run
   of either keeps none of the buffers it was given once it returns.
 - **Reason:** (b): rune's compiled programs over several devices
@@ -4813,15 +4821,35 @@ fold wraps integers and holds its float bound`, hold.
   fully sharded training over two memory devices, its gathers compiled, held
   4.75 layers on each device beside its share after a step (`rune jit ›
   fully sharded`, d = 128): 3.75 of scratch, and one of the buffers the
-  frames kept from their last runs. Made at the start of each run and freed
-  at its end, the backward call of one layer at d = 512 held 3.625, 4.062
-  and 4.156 layers beside its arguments over 2, 4 and 8 memory devices; made
-  and freed at each buffer's first and last call, 2.562, 2.312 and 2.156.
+  frames kept from their last runs. Each buffer made at its first call and
+  freed after its last, as tolk did before, met the bound on memory devices,
+  whose work is done when it is submitted, but not on a GPU, which reuses
+  freed memory only once its work is done while a run returns before it
+  is: on fudge's RTX 5000, eight chained products of 64 MiB, two live at
+  once, held 640 MiB at the call's return, where planned into an arena they
+  hold 320 MiB with the arguments and the result. That design was also one
+  program of rig's per stretch between makes and frees: the data-parallel
+  step over 16 memory devices was 1168 programs, loaded 656 images where one
+  program loads 11, and made 1584 submissions a call, allocating 153 580
+  words where one program allocates 23 015 (rune's `Jit/devices/dp-step-16`
+  row). Planned
+  per run, rune's five `fully sharded` cases held 2.128, 1.692, 1.473, 4.001
+  and 2.626 layers against bounds of 2.188, 1.719, 1.484, 4.250 and 2.812,
+  as each buffer of its own did; with copies in a lane of their own, 3.068,
+  2.538, 2.273, 4.756 and 2.944, each over its bound, since two arenas made
+  for the whole run hold both lanes' peaks at once.
 - **Pinned by:** `Tolk_engine › runs › a schedule linked per run holds no
-  storage between runs`, `› a run makes each buffer at its first call and
-  returns it after its last` (a model of each buffer's first and last use)
-  and `› a run keeps none of the buffers it was given`; rune's `fully
-  sharded` tests, whose shares are exact after a step.
+  storage between runs`, `› a run holds its storage whole, no less than its
+  buffers live at once` (the least budget a run fits is its plan's bytes,
+  which hold what a model of each buffer's first and last use has live at
+  once), `› a
+  schedule linked per run does the work it does linked` and `› a run keeps
+  none of the buffers it was given`; `Tolk.Memory › memory_plan_rewrite ›
+  rules › per run, a copy's buffer and a call's of one device share bytes
+  once their lives are apart` and the plan law; rune's `fully sharded`
+  tests, whose shares are exact after a step, and `Rune.jit on a GPU ›
+  memory › a split program holds at its return at most its result and its
+  plan`.
 
 ## D174. A kernel's call bodies are functions of its own source on every target
 
@@ -5151,13 +5179,17 @@ fold wraps integers and holds its float bound`, hold.
   last reader of the gathered weights. Picking costs one pass over each ready
   kernel's storage, so a schedule of `k` kernels costs `O(k²)` at worst.
 - **Reason:** (b): rune's fully sharded training (RFC 0005's memory bound),
-  whose split programs make each buffer at its first call and free it after
-  its last (D173). With the split assembly as storage and copies landing in
-  place (D182), the backward call of one layer at d = 512 held 3.062, 3.031
-  and 3.016 layers beside its arguments over 2, 4 and 8 memory devices in
-  tinygrad's order, 2.875, 2.562 and 2.406 by number alone, and 1.812, 1.531
-  and 1.391 in this order, against the bound of 1.875, 1.562 and 1.406
-  (`rune jit › fully sharded`).
+  whose split programs' storage is planned by each buffer's life (D173). With
+  the split assembly as storage and copies landing in place (D182), the
+  backward call of one layer at d = 512 held 2.625, 2.312 and 2.156 layers
+  beside its arguments over 2, 4 and 8 memory devices in tinygrad's order,
+  3.625, 3.312 and 3.156 by number alone, and 1.812, 1.531 and 1.391 in this
+  order, as much as with each buffer of its own, against the bound of 1.875,
+  1.562 and 1.406 (`rune jit › fully sharded`). The order interleaves
+  devices, so a data-parallel step over 16 memory devices makes 1411
+  `Submit` steps where tinygrad's makes 84; preferring, among each kind of
+  ready kernel, one on the last kernel's device made 1016, and raised four
+  of rune's five `fully sharded` cases over their bounds.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
   `create_schedule › order by storage › a kernel that frees storage runs
   before one that only makes it`, `› pieces of one value are each read
@@ -5208,7 +5240,8 @@ fold wraps integers and holds its float bound`, hold.
   it reads, so one that frees much but makes some raises what a schedule
   holds at once where one that only frees does not. tinygrad has no such
   order.
-- **Reason:** (b): rune's fully sharded training (RFC 0005's memory bound).
+- **Reason:** (b): rune's fully sharded training (RFC 0005's memory bound),
+  whose split programs' storage is planned by each buffer's life (D173).
   At the end of a closing, the copy of a device's own slot of the last piece
   is the last reader of the partial and makes the slot's storage; the sum of
   the piece before it only frees. Run first, the copy held three slots

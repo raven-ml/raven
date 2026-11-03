@@ -50,12 +50,6 @@ raven / llama.cpp b12048 Vulkan:
 
 ## tolk
 
-- A schedule linked per run (D173) is one rig program per part, cut
-  wherever storage is made or freed, because `Rig_program` binds its inputs
-  once, before its first step: each part loads its kernels' images again
-  and ends a submission. Done when a step of `Rig_program` makes or frees a
-  slot's memory, so a per-run schedule is one program, and a split step's
-  loads and submissions, counted on a rune bench row, match a linked one's.
 - masked axes upcast to up to 49 lanes once gave Clang straight-line
   blocks whose scheduling took seconds (rune's test_iterate, float64
   [4;2;2] over 3 lanes, 4.8 s in Clang), but one run's 8205 host kernels
@@ -159,9 +153,6 @@ raven / llama.cpp b12048 Vulkan:
   inner loop's loaded bound reads makes a vector bound (`Lidx1 < long16`),
   and a bare loaded bound makes an AFTER of a LOAD, which tinygrad's spec
   refuses too. Decide what such loops lower to before one reaches users
-- a link reloads images an earlier link loaded: measure on fudge the load
-  cost a search pays, and if it matters, design how rig.program takes loaded
-  images (a description entry naming a Rig.Image.t)
 - D175 and D110 use constants for a device's size (100 workgroups,
   `busy = 32768`): neither the renderer nor rig knows a device's compute
   units; decide where that count lives without making source depend on the
@@ -170,9 +161,25 @@ raven / llama.cpp b12048 Vulkan:
   core reduce split, or `decoded` covering float widening
 - Metal's packed kernel arguments (8869adcc8, af8961676) have not run on
   Metal hardware; check `rig_metal.mli`'s contract against them on a Mac
-- rune hands tolk one sink over several devices; D170, D173, D177 and D180
-  each exist because of it. Decide whether a per-device sink, which
-  tinygrad's own multi-device path also avoids, would remove them
+- kernel parameters that name no device, the device a fact of the call's
+  arguments, would rewrite D170 and delete `params_on`'s substitution,
+  `rename`, `served`, `same_devices` and search's `on_device` (about -60
+  lines, unverified). Audit the readers first: the device enters at
+  `rangeify.ml:887-896`, public `codegen.mli:118-125` changes, the beam cache
+  key includes parameter devices (`search.ml:335-346`) and is re-keyed, and
+  rune's reads and hash-consing are unchecked
+  (_plans/tolk-campaign/device-sink/adjudication.md §1)
+- one lane for `Linked` schedules too (D41): rig orders one device's work on
+  one timeline, so a copies' lane buys overlap only across devices. Decide
+  on a GPU beside a memory device whose value moves into the GPU mid-chain,
+  linked `Linked` with one lane and two: the time `run` takes to return and
+  the GPU's timeline in `Rig.Profile`; and count the goldens one lane changes
+  (`generate.py --check` with one lane in the planner and `tinygrad.patch`)
+- the per-run order (D183) interleaves devices: a data-parallel step over 16
+  memory devices makes 1411 `Submit` steps against 84 in tinygrad's order. A
+  same-device tie-break in `Schedule.storage_order` made 1016 but raised four
+  of rune's five `fully sharded` peaks over their bounds; find a tie-break
+  that cuts the submissions and keeps the five peaks
 
 ## rune, kaun, vega
 
