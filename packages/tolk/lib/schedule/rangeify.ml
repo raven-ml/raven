@@ -184,8 +184,11 @@ type axis_copies = { lo : float; hi : float; shares : share list }
    the value once. Trips in padding count, since only the inlined value's loads
    are gated there. A sum that selects one trip, where an index equals its
    range, is computed at that index alone ({!Simplify.load_collapse}), once for
-   each point of the ranges the sum runs in: its range counts as those ranges,
-   but for a stage that reads no storage, which the sum's test sees as its
+   each point of the ranges the index runs in: its range counts as those
+   ranges, the ranges its selecting conditions read besides it, as a read at
+   the selected index would, and a factor over another range inside the sum
+   broadcasts the selected value as it would that read. That holds but for a
+   stage that reads no storage, which the sum's test sees as its
    value ({!collapses}), as a one-hot gather's positions. A coordinate the
    value does not vary along
    counts neither elements nor trips: substituting its index leaves the value as
@@ -202,12 +205,13 @@ type axis_copies = { lo : float; hi : float; shares : share list }
    range. Reduction ranges keep their count. A symbolic size counts at its
    largest.
 
-   [outer r] is the ranges the sum over [r] runs in, if a reduction closes [r],
-   and [collapses r] whether that sum is computed at one trip. A read of one
+   [selected r] is the ranges the sum over [r] is computed at when it selects
+   one trip, if a reduction closes [r], and [collapses r] whether that sum is
+   computed at one trip. A read of one
    such range leaves the test pending, with its copies either way, for the
    stage's decision to ask only where the answer changes it; a read of several
    asks it now. *)
-let read_copies ~reduced ~outer ~collapses buf idx =
+let read_copies ~reduced ~selected ~collapses buf idx =
   let live =
     List.filter
       (fun (r, _) -> op r = Op.Range && Nodes.mem r (ranges (nth buf 0)))
@@ -227,7 +231,7 @@ let read_copies ~reduced ~outer ~collapses buf idx =
   let digit d = List.memq d digits in
   let reuse = Float.max 1. (extent digits /. extent (List.map fst pure)) in
   (* The copies when the sums over the ranges of [collapsing] are computed at
-     one trip, each range then counting as its sum's [outer]. *)
+     one trip, each range then counting as its sum's [selected]. *)
   let count collapsing =
     let add rs r = if List.memq r rs then rs else r :: rs in
     let read =
@@ -235,7 +239,7 @@ let read_copies ~reduced ~outer ~collapses buf idx =
         (fun rs r ->
           match List.assq_opt r collapsing with
           | None -> add rs r
-          | Some outer -> List.fold_left add rs outer)
+          | Some selected -> List.fold_left add rs selected)
         [] rs
     in
     let reduce = List.filter reduced read in
@@ -254,7 +258,7 @@ let read_copies ~reduced ~outer ~collapses buf idx =
      the range: its reads count the sum's own trips, as one that does not
      select, so that it is inlined as that test assumes. *)
   let sums =
-    List.filter_map (fun r -> Option.map (fun o -> (r, o)) (outer r)) rs
+    List.filter_map (fun r -> Option.map (fun o -> (r, o)) (selected r)) rs
   in
   let sums = if sums <> [] && not (storage (nth buf 0)) then [] else sums in
   let known c = { no = c; yes = c; sum = None } in
@@ -274,11 +278,13 @@ let axis r = (axis_type r, axis_id r)
    axis. Reads at several distinct indices copy the value at each. The axes of
    a stage's ranges are its own and name it while the cleanups rebuild it on
    its rewritten value. [reduce_axes] holds the axes of the ranges a reduction
-   closes, with the reduction, and [collapsed] whether each reduction's sum is
-   computed at one trip, once asked. *)
+   closes, with the reduction, [selections] the ranges each reduction's sum
+   is computed at when it selects one trip, and [collapsed] whether it does,
+   each once asked. *)
 type reads = {
   by_axis : (Axis_type.t * int list, axis_copies) Hashtbl.t;
   reduce_axes : (Axis_type.t * int list, Ops.t) Hashtbl.t;
+  selections : (Axis_type.t * int list, Ops.t list) Hashtbl.t;
   collapsed : (Axis_type.t * int list, bool) Hashtbl.t;
 }
 
@@ -286,14 +292,44 @@ type reads = {
    closes. *)
 let reduced reads r = op r = Op.Range && Hashtbl.mem reads.reduce_axes (axis r)
 
-(* The ranges the sum over [r] runs in, if [r] is a range that a reduction of
-   the graph [reads] was taken from closes. *)
-let outer reads r =
+(* The ranges the sum over [r] is computed at when it selects one trip, if [r]
+   is a range that a reduction of the graph [reads] was taken from closes:
+   those its conditions that compare [r] with a value of other ranges read
+   besides it, from which the index it selects is computed, or, with no such
+   condition, every range it runs in. A condition of [r] alone, as a padding
+   gate's, selects nothing.
+   [where (ids (j) = e) (v (e, d) * y (m)) 0] summed over [e] is computed at
+   [v (ids (j), d)], once a point of [j] and [d]: [y (m)] broadcasts it along
+   [m], as it would a read at that index. *)
+let selected reads r =
   if op r <> Op.Range then None
   else
-    Option.map
-      (fun red -> Nodes.fold (fun x rs -> x :: rs) (ranges red) [])
-      (Hashtbl.find_opt reads.reduce_axes (axis r))
+    let k = axis r in
+    match Hashtbl.find_opt reads.selections k with
+    | Some s -> Some s
+    | None ->
+        Option.map
+          (fun red ->
+            let inside x = Nodes.mem r (ranges x) in
+            let conditions =
+              List.filter_map
+                (fun x ->
+                  let c = nth x 0 in
+                  let others =
+                    Nodes.fold (fun y found -> found || y != r) (ranges c) false
+                  in
+                  if op x = Op.Where && inside c && others then Some c
+                  else None)
+                (toposort ~calls:Skip ~gate:inside (nth red 0))
+            in
+            let s =
+              if conditions = [] then
+                Nodes.fold (fun x rs -> x :: rs) (ranges red) []
+              else List.filter (fun x -> x != r) (read_ranges conditions)
+            in
+            Hashtbl.replace reads.selections k s;
+            s)
+          (Hashtbl.find_opt reads.reduce_axes k)
 
 (* Whether the sum over [r], a range that a reduction of the graph [reads] was
    taken from closes, is computed at one trip ({!Simplify.load_collapse}). *)
@@ -346,13 +382,20 @@ let stage_reads tsink =
         gather (u :: nodes) (List.fold_left push rest (src_without_body u))
   in
   let nodes = gather [] (push [] tsink) in
-  let reads = { by_axis; reduce_axes; collapsed = Hashtbl.create 16 } in
+  let reads =
+    {
+      by_axis;
+      reduce_axes;
+      selections = Hashtbl.create 16;
+      collapsed = Hashtbl.create 16;
+    }
+  in
   List.iter
     (fun u ->
       if op u = Op.Index && op (nth u 0) = Op.Stage then begin
         let buf = nth u 0 in
         let c =
-          read_copies ~reduced:(reduced reads) ~outer:(outer reads)
+          read_copies ~reduced:(reduced reads) ~selected:(selected reads)
             ~collapses:(collapsed reads) buf u
         in
         List.iter (count c) (List.tl (src buf))

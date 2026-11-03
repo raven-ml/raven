@@ -112,6 +112,7 @@ scalar_chain	41
 routed_product_2	1
 routed_product_64	2
 routed_product_wide	1
+selected_scaled	1
 blocked_product_16	1
 dense_decoded_64	1
 tiled_chain	1

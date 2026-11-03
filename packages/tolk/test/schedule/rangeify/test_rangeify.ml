@@ -1753,6 +1753,170 @@ let digits =
           equal int 2 (kernels_routed ~experts:2 ~rows:4 v));
     ]
 
+(* Selections
+
+   A sum over one range that selects one trip, where an index equals the
+   range, is computed at the selected index alone: a stage it reads counts the
+   ranges that index runs in, as a read at that index would. A factor over
+   another range inside the sum broadcasts the selected value along that
+   range, as it would the gathered one. *)
+
+type selecting = Selected | Gathered
+
+(* The kernels of a graph that stores, at each output [r] of [experts * rows *
+   2] and [m] of [width], the sum over [k] of 4 of [x] at [(r / 2, k)] times
+   [v] at the row's expert [ids (r / 2)], [r mod 2] and [k], times [y] at [m]:
+   the expert's matrix read by a sum over the experts that selects one and
+   multiplies [y] inside it ([Selected]), or at the expert's index
+   ([Gathered]). *)
+let kernels_scaled ~experts ~rows ~width form v =
+  let n = experts * rows in
+  let o = Shape.param ~device:cpu ~shape:[ Int (2 * n * width) ] 0 Float32 in
+  let ids = Shape.param ~device:cpu ~shape:[ Int n ] 2 Int32 in
+  let x = Shape.param ~device:cpu ~shape:[ Int (4 * n) ] 3 Float32 in
+  let y = Shape.param ~device:cpu ~shape:[ Int width ] 4 Float32 in
+  let r = loop (2 * n) 9 and m = loop width 12 in
+  let k = Ops.range (Int 4) [ 10 ] in
+  let row = Ops.O.(r // int 2) in
+  let scale = Ops.index y [ m ] in
+  let term =
+    match form with
+    | Selected ->
+        let e = Ops.range (Int experts) [ 11 ] in
+        let selected =
+          Ops.eq (Ops.index ids [ row ]) (Ops.cast e Dtype.Int32)
+        in
+        let read = Ops.index v [ e; Ops.O.(r % int 2); k ] in
+        Ops.reduce
+          (Ops.where selected Ops.O.(read * scale) (Ops.O.float 0.))
+          Add [ e ]
+    | Gathered ->
+        let e = Ops.cast (Ops.index ids [ row ]) Weak_int in
+        Ops.O.(Ops.index v [ e; r % int 2; k ] * scale)
+  in
+  let product =
+    Ops.reduce Ops.O.(term * Ops.index x [ (row * int 4) + k ]) Add [ k ]
+  in
+  let at = Ops.O.((r * int width) + m) in
+  let store = Ops.store (Ops.index o [ at ]) product in
+  kernels
+    (Rangeify.get_kernel_graph
+       (Ops.sink [ Ops.after o [ Ops.end_ store [ r; m ] ] ]))
+
+(* Experts, rows an expert, the width of the factor's range and a chain's
+   steps, its copied nodes either side of the budget at a row's copies of its
+   expert's matrix, [min 4 rows], and at those times the width. *)
+let scaled_gen =
+  Gen.(
+    let* experts = of_list [ 2; 4; 8 ] in
+    let* rows = of_list [ 1; 1; 2; 4 ] in
+    let* width = of_list [ 1; 2; 4; 8 ] in
+    let+ k = int_range 0 200 in
+    (experts, rows, width, k))
+  |> Gen.with_pp (fun ppf (e, r, w, k) ->
+         Format.fprintf ppf "%d rows for each of %d experts, width %d, chain %d"
+           r e w k)
+
+(* Own ranges
+
+   A stage's copies are counted at each axis of its ranges and the least taken,
+   so reads of stages that share a range pool there. The ranges that indexing
+   gives a stage that a later pass may remove are new to it, but an axis whose
+   size is a range, which it indexes by that range: each such stage has a range
+   of its own, where its reads are its own, and the least is no pool. *)
+
+(* [drawn]'s program, its value stored again, doubled, into a second output,
+   so that the two stores share their loops. *)
+let two_outputs drawn =
+  let sink, _ = build drawn in
+  let store =
+    List.find (fun u -> Ops.op u = Op.Store) (Ops.toposort ~calls:Skip sink)
+  in
+  let value = Ops.nth store 1 in
+  let size = List.fold_left ( * ) 1 (dims value) in
+  let twice = Shape.param ~device:cpu ~shape:[ Int size ] 9 Float32 in
+  Ops.sink
+    [
+      Ops.nth sink 0;
+      Ops.after twice
+        [
+          Ops.store
+            (Shape.reshape twice (Shape.shape value))
+            Ops.O.(value * float 2.);
+        ];
+    ]
+
+let removable_stage u =
+  match Ops.arg u with
+  | Bufferize { keep = Whole; _ } -> false
+  | Bufferize _ -> Ops.op u = Op.Stage
+  | _ -> false
+
+let own_ranges =
+  group "get_kernel_graph › own ranges"
+    [
+      prop ~count:400 "a removable stage has a range no other stage has"
+        program
+        (fun drawn ->
+          let indexed =
+            Indexing.run_rangeify
+              (Prepare.prepare_rangeify (two_outputs drawn))
+          in
+          let nodes = Ops.toposort ~calls:Skip indexed in
+          let stages = List.filter (fun u -> Ops.op u = Op.Stage) nodes in
+          let ranges_of u =
+            List.filter (fun r -> Ops.op r = Op.Range) (List.tl (Ops.src u))
+          in
+          let live u =
+            List.filter
+              (fun r -> Ops.Nodes.mem r (Ops.ranges (Ops.nth u 0)))
+              (ranges_of u)
+          in
+          let removable =
+            List.filter (fun u -> removable_stage u && live u <> []) stages
+          in
+          let stores = List.filter (fun u -> Ops.op u = Op.Store) nodes in
+          cover "two removable stages" (List.length removable >= 2);
+          cover "stores sharing a loop"
+            (List.exists
+               (fun a ->
+                 List.exists
+                   (fun b ->
+                     a != b
+                     && Ops.Nodes.fold
+                          (fun r found ->
+                            found || Ops.Nodes.mem r (Ops.ranges b))
+                          (Ops.ranges a) false)
+                   stores)
+               stores);
+          let pooled u =
+            let others = List.filter (fun v -> v != u) stages in
+            let own r =
+              not (List.exists (fun v -> List.memq r (ranges_of v)) others)
+            in
+            not (List.exists own (live u))
+          in
+          equal int ~msg:"removable stages with no range of their own" 0
+            (List.length (List.filter pooled removable)));
+    ]
+
+let selections =
+  group "get_kernel_graph › selections"
+    [
+      prop "a read a sum selects decides as one at the selected index"
+        scaled_gen (fun (experts, rows, width, k) ->
+          let work c = copied (Routed (experts, rows)) k * (c - 1) in
+          let at_index = work (min 4 rows) > budget in
+          let at_sum = work (min 4 (rows * width)) > budget in
+          cover "a factor's range inside the sum" (width > 1);
+          cover "past the budget at the sum's ranges, within at the index's"
+            (at_sum && not at_index);
+          cover "past the budget at the index's" at_index;
+          let v = routed_staged ~experts (chain k) in
+          let count form = kernels_scaled ~experts ~rows ~width form v in
+          equal int (count Gathered) (count Selected));
+    ]
+
 (* Dead reads
 
    A staged value read at an index in padding is read nowhere. Here [s]'s two
@@ -1933,6 +2097,8 @@ let () =
          recomputation;
          work_bound;
          digits;
+         selections;
+         own_ranges;
          dead_reads;
          shared_scalars;
        ])

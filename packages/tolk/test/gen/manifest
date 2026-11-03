@@ -3547,6 +3547,8 @@ schedule/rangeify/scalar_chain.golden
 schedule/rangeify/scalar_chain_kernels.golden
 schedule/rangeify/scalar_read_by_two.golden
 schedule/rangeify/scalar_read_by_two_kernels.golden
+schedule/rangeify/selected_scaled.golden
+schedule/rangeify/selected_scaled_kernels.golden
 schedule/rangeify/setitem.golden
 schedule/rangeify/setitem_column.golden
 schedule/rangeify/setitem_column_kernels.golden

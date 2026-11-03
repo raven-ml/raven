@@ -91,9 +91,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - whether memory-bound host kernels take lanes at all: no upcast ran 4-7%
   faster than 64-byte lanes in two of seven loaded fudge runs of a 4M
   float32 select-zero; decide on the scheduled quiet re-record
-- D163 counts repeats pooled over a shared range, which overestimates `c`,
-  and a collapsed read of a stage that reads storage counts every range of
-  its sum, which can overcount: tighten both if a case shows a wrong store
 - Metal groups: after D137, lorenz-step-batch-1024's r_3_256_16_64_64 went
   10.7 -> 18.9 ms (loads stride across 16 threads). Decided without Apple
   timing (maintainer, 2026-10-31): a rule for loads that stride across a

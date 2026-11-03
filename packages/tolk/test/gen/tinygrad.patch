@@ -3646,7 +3646,7 @@ index 8238ec207..259725566 100644
  from tinygrad.schedule.indexing import run_rangeify, BufferizeOpts, apply_movement_op
  from tinygrad.schedule.prepare import pm_mops
  
-@@ -45,7 +45,115 @@ def gate_substitute(ctx, b:UOp) -> None:
+@@ -45,7 +45,124 @@ def gate_substitute(ctx, b:UOp) -> None:
  pm_gate_substitute = PatternMatcher([(UPat(GroupOp.All, name="b"), gate_substitute)], compiled=False)
  # if a buffer is being stored just for permutes or something, remove it
  # we want to reexpress the indexes of idx2 in terms of the implied b1
@@ -3679,6 +3679,13 @@ index 8238ec207..259725566 100644
 +  except (RuntimeError, AssertionError): return False
 +  return reduce_load_collapse(red, body) is not None
 +
++# the ranges the sum red over r is computed at when it selects one trip: those its conditions that compare r with a value of other
++# ranges read besides it, from which the index it selects is computed, or, with no such condition, every range it runs in
++def selected(red:UOp, r:UOp) -> list[UOp]:
++  conds = [x.src[0] for x in red.src[0].toposort(gate=lambda x: r in x.ranges)
++           if x.op is Ops.WHERE and r in x.src[0].ranges and any(c is not r for c in x.src[0].ranges)]
++  return dedup(c for x in conds for c in x.ranges if c is not r) if conds else list(red.ranges)
++
 +# the product of the largest sizes of the ranges among rngs
 +def extent(rngs) -> int: return prod(r.src[0].vmax for r in rngs if r.op is Ops.RANGE)
 +
@@ -3694,8 +3701,10 @@ index 8238ec207..259725566 100644
 +# it computes an element again, which storing would save, so the count is at most the trips of the index per element. a
 +# read whose index runs in no reduction, as a broadcast through an expand, a reshape or padding, copies the value once.
 +# trips in padding count, since only the inlined value's loads are gated there. a sum that selects one trip, where an index
-+# equals its range, is computed at that index alone (collapses), once for each point of the ranges the sum runs in: its range
-+# counts as those ranges, but for a stage that reads no storage, which the sum's test sees as its value. the
++# equals its range, is computed at that index alone (collapses), once for each point of the ranges the index runs in: its range
++# counts as those ranges, those its selecting conditions read besides it (selected), as a read at that index would, and a factor
++# over another range inside the sum broadcasts the selected value as it would that read. that holds but for a stage that reads
++# no storage, which the sum's test sees as its value. the
 +# coordinates the value does not vary along are dropped before it is inlined, so they count neither elements nor trips.
 +# an output range of constant size that each component reading it reads through one chain of floor divisions and
 +# remainders by constants dividing what they apply to (digit_of), in components reading no other range, repeats the value
@@ -3736,12 +3745,12 @@ index 8238ec207..259725566 100644
 +  copies: dict[tuple, float]
 +  reduced: dict[tuple, UOp]
 +  collapsed: dict[tuple, list[UOp]|None] = field(default_factory=dict)
-+  # the ranges the sum over r runs in, if it is computed at one trip
++  # the ranges the sum over r is computed at, if it is computed at one trip
 +  def collapses(self, r:UOp) -> list[UOp]|None:
 +    if r.op is not Ops.RANGE or r.arg not in self.reduced: return None
 +    if r.arg not in self.collapsed:
 +      red = self.reduced[r.arg]
-+      self.collapsed[r.arg] = list(red.ranges) if collapses(red) else None
++      self.collapsed[r.arg] = selected(red, r) if collapses(red) else None
 +    return self.collapsed[r.arg]
 +
 +def stage_reads(sink:UOp) -> StageReads:
@@ -3763,7 +3772,7 @@ index 8238ec207..259725566 100644
    # see if we can't do it, should this ever hit?
    assert len(buf.src) == len(idx.src), f"index on wrong bufferize, {len(buf.src)} != {len(idx.src)}"
    assert all(x.op in {Ops.RANGE, Ops.CONST} for x in buf.src[1:])
-@@ -72,13 +180,35 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+@@ -72,13 +189,35 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
        accessed_buffers.append(x)
      if x.op is Ops.REDUCE: reduces.append(x)
      return True
@@ -3800,7 +3809,7 @@ index 8238ec207..259725566 100644
    # if any reduces access a buffer, don't remove this buffer
    buffer_in_reduce = False
    def buf_gate(x:UOp):
-@@ -92,8 +222,11 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+@@ -92,8 +231,11 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
  
    # if it makes it here, the bufferize is removed
    # this is the ranges replaced
@@ -3814,7 +3823,7 @@ index 8238ec207..259725566 100644
    return src.substitute(replaced, extra_pm=pm_gate_substitute)
  
  def remove_noop_bufferize(idx,b2):
-@@ -191,8 +324,18 @@ def fix_store_hazard(ctx:LimitBufsContext, dst:UOp, src:UOp):
+@@ -191,8 +333,18 @@ def fix_store_hazard(ctx:LimitBufsContext, dst:UOp, src:UOp):
    loads = [u for u in src.toposort(gate=lambda u: u.op not in {Ops.STAGE, Ops.AFTER}) if u.op is Ops.INDEX and u.buf_uop is dst.buf_uop]
    if any(u.src[1].get_idx() is not dst.src[1].get_idx() for u in loads): return dst.store(stage(ctx, src))
  
@@ -3834,7 +3843,7 @@ index 8238ec207..259725566 100644
  
  # *****************
  # 4. put in buffers for bufferize
-@@ -224,10 +367,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
+@@ -224,10 +376,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
      return buf.after(*ended_stores)
  
    if x.arg.addrspace == AddrSpace.GLOBAL:
@@ -3856,7 +3865,7 @@ index 8238ec207..259725566 100644
  # collapse any BUFFERIZE to single input BUFFERIZE
  def flatten_bufferize(x:UOp):
    if len(x.src) == 2: return None
-@@ -255,6 +407,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -255,6 +416,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
    # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
    (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
     lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
@@ -3866,7 +3875,7 @@ index 8238ec207..259725566 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -275,33 +430,50 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -275,33 +439,50 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
  class LocalAddBufferContext:
    map:dict = field(default_factory=dict)
    ranges:dict = field(default_factory=dict)
@@ -3931,7 +3940,7 @@ index 8238ec207..259725566 100644
    (UPat((Ops.BUFFER, Ops.ALLOC, Ops.MSTACK, Ops.MSELECT), name="buf"), add_buf),
    # Only storage parameters get kernel-local slots; scalar parameters retain their enclosing call's slots.
    (UPat(Ops.PARAM, name="buf"), lambda ctx, buf:
-@@ -329,12 +501,92 @@ def split_store(x:UOp) -> UOp|None:
+@@ -329,12 +510,92 @@ def split_store(x:UOp) -> UOp|None:
    ret = graph_rewrite(ret, pm_renumber_range, ctx={a:i for i,a in enumerate(lctx.ranges)}, walk=True)
  
    # create the Kernel. NOTE: buffers can be on different devices here now, they are compiled to SDMA copies later by schedule
@@ -4025,7 +4034,7 @@ index 8238ec207..259725566 100644
  @rewrite_group(new_ctx=False)
  def get_kernel_graph(tsink:UOp) -> UOp:
    # convert movement ops to ranges
-@@ -342,10 +594,12 @@ def get_kernel_graph(tsink:UOp) -> UOp:
+@@ -342,10 +603,12 @@ def get_kernel_graph(tsink:UOp) -> UOp:
  
    # cleanups for speed and runability
    tsink = graph_rewrite(tsink,

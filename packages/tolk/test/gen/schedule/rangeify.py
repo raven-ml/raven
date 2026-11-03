@@ -192,6 +192,16 @@ def routed_product(experts, rows, k):
     return (decoded[empty(experts * rows, dtype=dtypes.int)] * empty(experts * rows, 1, k)).sum(2)
 
 
+def selected_scaled(experts, width, k):
+    """One row for each of `experts` experts multiplied by its expert's matrix of 2 by `k`, a value of some 160 nodes, gathered
+    by a sum over the experts that selects one and multiplies a factor over `width` columns inside it: inlined, the matrix is
+    computed at the row's expert, broadcast along the columns, once for each row of its expert."""
+    w = chain(experts, 2, k, 1, steps=64)
+    hit = empty(experts, dtype=dtypes.int).reshape(experts, 1, 1, 1, 1) == Tensor.arange(experts).reshape(1, experts, 1, 1, 1)
+    picked = hit.where(w.reshape(1, experts, 2, k, 1) * empty(width).reshape(1, 1, 1, 1, width), 0).sum(1)
+    return (picked * empty(experts, 1, k, 1)).sum(2)
+
+
 def blocked_product(rows):
     """4 blocks of `rows` rows, each multiplied by its block's matrix of 4 by 16, a value of some forty nodes: the rows read
     the matrix at their quotient by `rows`, which drops their remainder, so inlined a tile of a block's rows shares it."""
@@ -407,6 +417,8 @@ PROGRAMS = {
     "routed_product_64": lambda: routed_product(2, 64, 64),
     # 16 rows for each of 4 experts, whose product sums 192 values: the one-hot gather's positions are read in that sum
     "routed_product_wide": lambda: routed_product(4, 16, 192),
+    # one row for each of 4 experts, its expert's matrix selected by a sum that multiplies a factor over 4 columns inside it
+    "selected_scaled": lambda: selected_scaled(4, 4, 4),
     # products whose rows read a matrix at a digit of their index: blocks of 16 rows, and 64 rows merged with the columns
     "blocked_product_16": lambda: blocked_product(16),
     "dense_decoded_64": lambda: dense_decoded(64),

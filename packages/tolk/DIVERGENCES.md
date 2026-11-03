@@ -4430,7 +4430,7 @@ does. A Windows host's code is compiled for Windows' convention by D178.
 - **tolk:** `Rangeify.extent`, `Rangeify.read_ranges` and
   `Rangeify.read_copies` (the copies a read makes of a stage's value), with
   `Rangeify.digit_of` (a range read through floor divisions and remainders);
-  `Rangeify.collapses`, `Rangeify.outer` and `Rangeify.collapsed` (a sum
+  `Rangeify.collapses`, `Rangeify.selected` and `Rangeify.collapsed` (a sum
   that selects one trip, asked only where the answer changes a stage's
   decision), and `Rangeify.storage` (a stage of no storage read in such a
   sum), through `Simplify.load_collapse`, which
@@ -4495,10 +4495,16 @@ does. A Windows host's code is compiled for Windows' convention by D178.
 
   A sum over one range that selects one trip, where an index equals the
   range, as a routed product's rows select their expert's matrix, counts
-  that range as the ranges the sum runs in: the kernel computes it at the
-  selected index alone (`Simplify.load_collapse`), once for each point of
-  those, so a row decodes only its own expert's weights, `p / e` times a
-  weight for `p` rows over `e` experts, where the trips count `p`. The test
+  that range as the ranges its selecting conditions read besides it, from
+  which the selected index is computed: the kernel computes it at that index
+  alone (`Simplify.load_collapse`), once for each point of those, so a row
+  decodes only its own expert's weights, `p / e` times a weight for `p` rows
+  over `e` experts, where the trips count `p`. A factor over another range
+  inside the sum, `where (ids (j) = e) (v (e, d) * y (m)) 0` summed over
+  `e`, broadcasts the selected value along `m` as it would a read of `v` at
+  `ids (j)`, which counts `m` neither, and the codegen shares it as it
+  shares a broadcast; a sum with no such condition counts every range it
+  runs in. The test
   is the collapse's own, run on the sum as its kernel holds it: reads of
   stages whose values read no storage, as a range's positions do, are seen
   as those values, simplified as the cleanups simplify them, since the
@@ -4603,8 +4609,16 @@ does. A Windows host's code is compiled for Windows' convention by D178.
 
   The reads are counted once, in a walk of the graph the cleanups start
   from, at each axis of a stage's ranges; a stage's count is the least over
-  its axes, since stages over one range share that axis, so stages with no
-  other range pool their reads and may stay stored when read once. A read
+  its axes, since stages over one range share that axis. Indexing gives
+  each stage a later pass may remove ranges new to it, except on an axis
+  whose size is a range, which that range indexes: a stage with any other
+  range has one of its own, where its reads are counted alone, and the least
+  is its own count. A stage over such axes alone, as one value of each of a
+  device's lanes, shares them and pools its reads; traced with each stage's
+  own reads beside the pooled count, the Rangeify suite, rune's (its
+  multi-device programs among them) and jera's decide every stage alike, so
+  no program shows a wrong store, and hand-built graphs whose stages share
+  their only range pool. A read
   the cleanups make is not counted, and a read through a stack is not one:
   every stage has a device by then, so no cleanup turns it into a read of
   the stage.
@@ -4679,7 +4693,9 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   `routed_product_2` (a decoded matrix gathered by 2 rows an expert over 64
   experts, inlined), `routed_product_64` (64 rows an expert, stored) and
   `routed_product_wide` (16 rows an expert in a product's sum of 192, the
-  gather's positions inlined),
+  gather's positions inlined), `selected_scaled` (a matrix of some 160 nodes
+  selected by a sum that multiplies a factor over 4 columns inside it, read
+  once a row, inlined),
   `blocked_product_16` (rows in blocks of 16 reading their block's matrix
   of some forty nodes at `r // 16`, inlined) and `dense_decoded_64` (64 rows
   merged with a matrix's 4 columns, read at `r % 4`, inlined),
@@ -4708,7 +4724,10 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   inlined, and windows, a reduction range's digit, a gather, frames, digit
   sums, a range read by two components, constants not dividing and a
   symbolic size stored, `› a read of merged outputs decides as one of them
-  split` and `› a digit a selection runs in stays counted`; rune's
+  split` and `› a digit a selection runs in stays counted`; `selections › a
+  read a sum selects decides as one at the selected index`, which a factor
+  over another range inside the sum made 4 copies, stored past 120 nodes;
+  `own ranges › a removable stage has a range no other stage has`; rune's
   `Lower_reduce › work › a Rows contraction's work is one slice's over 256
   contracted` and `› a scaled float4 Rows contraction's work is one slice's
   over 256`; rune's `rune

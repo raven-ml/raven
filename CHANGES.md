@@ -990,6 +990,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   `Uniform.varying`): a routed product's blocks of padding skip their
   products, and a 2048-cubed bfloat16 product with 5 of its 16 blocks off
   runs in 83 µs against 120 on an RTX 5000 Ada.
+- A stage read through a sum that selects one trip counts its copies at the
+  ranges of the selected index: a factor over another range inside the sum
+  no longer stores a value each row reads once (`Rangeify.get_kernel_graph`).
+
 - A product streams its matrix where an argmax in the same kernel finds
   each row's expert (`Heuristic.hand_coded_optimizations`); the general
   rules took it before: 16 bfloat16 rows over gpt-oss-20b's experts run 2.5
