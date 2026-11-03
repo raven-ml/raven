@@ -5301,8 +5301,9 @@ fold wraps integers and holds its float bound`, hold.
   one shape into runs of one buffer at other offsets are one program. A store
   into a buffer's state after earlier stores keeps indexing it, since a view
   of the buffer would not be ordered after them, and so does a store whose
-  value reads the buffer, which the kernel split stages by the buffer's
-  identity. A run may start at bound variables, whose values its call knows
+  value reads the buffer in its own kernel, short of the stored states of
+  other storage, which the kernel split stages by the buffer's identity. A
+  run may start at bound variables, whose values its call knows
   (`Prepare.contiguous_view` checks the run at those values): a store into
   it stores into a view at that start, whose kernel knows the start modulo
   what the variables move it by (D54), so stores of one shape at starts of
@@ -5327,9 +5328,14 @@ fold wraps integers and holds its float bound`, hold.
   the start`, `› stores of one shape into two runs of a buffer share a
   kernel`, `› a store into contiguous rows of a buffer stores into a view of
   them`, `› a store into rows of a buffer after a store has no view`, `› a
-  store into rows of a buffer of a value that reads it has no view` and `› a
-  store into columns of storage has no view`; rune's `Rune.jit over several
-  devices › programs` and `› maps over a cut axis › partials give eager's
+  store into rows of a buffer of a value that reads it has no view`, `› a
+  store into rows of a buffer of a value that reads it through other storage
+  stores into a view` and `› a store into columns of storage has no view`;
+  `Tolk_engine › link and run › a store into rows of a buffer of a value
+  read through other storage writes what it computes`; `Tolk.Schedule ›
+  create_linear_with_vars › merged calls › the work on a schedule of many
+  outputs is linear in their number`; rune's `Rune.jit over several devices ›
+  programs` and `› maps over a cut axis › partials give eager's
   bits, their programs do not grow`, and `rune jit › fully sharded`.
 
 ## D185. A ready kernel that only frees runs before one that also makes storage

@@ -859,6 +859,24 @@ let copies_off_phase () =
   Engine.run ~vars s (slots storage);
   equal slot_values (expected ~vars big storage) (by_slot storage contents)
 
+(* Floats 1 to 8 of sixteen store one more than twice floats 0 to 7, doubled
+   into other storage first: the store's kernel reads that storage, which a
+   kernel that runs before it fills, and stores into a view of its floats. *)
+let stores_rows_read_elsewhere () =
+  let buffer = Ops.new_buffer "CPU" 16 Float32
+  and other = Ops.new_buffer "CPU" 8 Float32 in
+  let run lo = Shape.shrink buffer [ Some (Int lo, Int (lo + 8)) ] in
+  let doubled =
+    Ops.after other [ Ops.store other Ops.O.(run 0 * float 2.) ]
+  in
+  let big =
+    Ops.sink
+      [ Ops.after buffer [ Ops.store (run 1) Ops.O.(doubled + float 1.) ] ]
+  in
+  let s, vars, storage = linked big in
+  Engine.run ~vars s [||];
+  equal slot_values (expected big storage) (by_slot storage contents)
+
 (* A range of three trips around a call of a kernel that adds one to four
    floats, each trip on the next four of twelve. *)
 (* A kernel that stores its parameter 1 plus one into its parameter 0, four
@@ -1920,6 +1938,8 @@ let schedules =
         scans_with_a_carry;
       test "a scan's merged calls carry in place as its calls apart do"
         (carries_merged "CPU");
+      test "a store into rows of a buffer of a value read through other \
+            storage writes what it computes" stores_rows_read_elsewhere;
       test "a copy stored into rows of a buffer writes them alone"
         copies_into_rows;
       replays_a_scan;

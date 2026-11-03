@@ -812,6 +812,23 @@ let graphs =
                     (Ops.reaches ~calls:Enter u x))
                 nodes)
             nodes);
+      prop "reaches through a gate is a source of the gated toposort" gen_dag
+        (fun edges ->
+          let nodes = Ops.toposort ~calls:Enter (dag edges) in
+          let at = index_of nodes in
+          let gate u = at u mod 3 <> 1 in
+          List.iter
+            (fun u ->
+              let walked = Ops.toposort ~gate ~calls:Enter u in
+              List.iter
+                (fun x ->
+                  let reference =
+                    x == u
+                    || List.exists (fun n -> List.memq x (Ops.src n)) walked
+                  in
+                  equal bool reference (Ops.reaches ~gate ~calls:Enter u x))
+                nodes)
+            nodes);
       prop "op_in_backward_slice_with_self is an operation of the slice"
         gen_dag (fun edges ->
           let nodes = Ops.toposort ~calls:Enter (dag edges) in

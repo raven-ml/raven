@@ -829,9 +829,13 @@ let view_of ctx c src =
     in
     let buf = storage (base src) in
     (* A store's value that reads its buffer keeps the buffer's identity, by
-       which the kernel split stages it before the store. *)
+       which the kernel split stages it before the store. Its kernel reads
+       other storage at a stored state, an after, which ends the walk: each
+       store walks its own kernel's values, and a chain of outputs, each
+       reading the last, costs its length. *)
     let reads_target () =
-      op c = Op.Store && Nodes.mem buf (backward_slice ~calls:Skip (nth c 1))
+      let walked u = op u <> Op.After || storage_base u == buf in
+      op c = Op.Store && reaches ~gate:walked ~calls:Skip (nth c 1) buf
     in
     if op buf <> Op.Buffer || reads_target () then None
     else

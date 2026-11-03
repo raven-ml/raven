@@ -25,6 +25,9 @@
    with the hand-coded ones ([heuristic]). No public call applies chosen
    optimisations to a kernel, so these run through tolk's engine.
 
+   [outputs] builds and schedules a program of 2000 outputs of one element,
+   each reading an earlier one: its cost is linear in the outputs.
+
    [host] runs, on the host, kernels whose lanes the host's register budget and
    vector width decide, each with the hand-coded optimisations.
 
@@ -393,9 +396,33 @@ let searches =
                 (Postrange.Scheduler.copy s)));
     ]
 
+(* [outputs] builds and schedules a program of many outputs of one element in
+   two chains, each output one more than the output two before it, as a chain
+   of scalars makes: the whole of [Schedule.create_linear_with_vars], over
+   storage and nodes no earlier call made. *)
+let chained n =
+  let element () = Shape.reshape (Ops.new_buffer "CPU" 1 Float32) [] in
+  let rec go j prev prev' acc =
+    if j = n then Ops.sink (List.rev acc)
+    else
+      let o = element () in
+      let o = Ops.after o [ Ops.store o Ops.O.(prev + float 1.) ] in
+      go (j + 1) prev' o (o :: acc)
+  in
+  let x = element () in
+  go 0 x x []
+
+let outputs =
+  Thumper.group "outputs"
+    [
+      Thumper.bench "chain-2000" (fun () ->
+          Schedule.create_linear_with_vars ~capturing:true (chained 2000));
+    ]
+
 let suite () =
   List.map (fun (name, _) -> program name) Programs.all
   @ [
+      outputs;
       lorenz;
       host;
       gpt_oss ();

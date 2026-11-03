@@ -1327,6 +1327,28 @@ let views =
           let run lo = Shape.shrink buffer [ Some (Int lo, Int (lo + 8)) ] in
           let c = Ops.store (run 1) (run 0) in
           equal (option uop) None (Schedule.contiguous_mops_to_view c (run 1)));
+      (* The value's kernel reads [other], which a kernel that runs before it
+         stores: no kernel reads and writes the buffer. *)
+      test
+        "a store into rows of a buffer of a value that reads it through other \
+         storage stores into a view" (fun () ->
+          let buffer = Ops.new_buffer ~slot:9 cpu 16 Float32 in
+          let run lo = Shape.shrink buffer [ Some (Int lo, Int (lo + 8)) ] in
+          let other = Ops.new_buffer ~slot:10 cpu 8 Float32 in
+          let doubled =
+            Ops.after other [ Ops.store other Ops.O.(run 0 * float 2.) ]
+          in
+          let c = Ops.store (run 1) Ops.O.(doubled + float 1.) in
+          let viewed =
+            require_some (Schedule.contiguous_mops_to_view c (run 1))
+          in
+          equal bool ~msg:"the store stays" true (Ops.op viewed = Store);
+          let view = Ops.nth viewed 0 in
+          through_buffer view;
+          let buffers = filled c in
+          equal values
+            (Tensors.eval ~buffers (run 1))
+            (Tensors.eval ~buffers view));
       test "a store into columns of storage has no view" (fun () ->
           let value = Ops.new_buffer ~slot:2 cpu 32 Float32 in
           let c = Ops.store columns (Shape.reshape value [ Int 8; Int 4 ]) in
@@ -2456,6 +2478,13 @@ let merged_calls =
           equal int ~msg:"pairs" 500
             (List.length
                (Ops.src (Schedule.merge_calls ~held:[] (chained_calls 1000))));
+          less float_exact ~than:(2.2 *. short) long);
+      (* Each output reads an earlier one, whose store reads the one before
+         it: the whole schedule's work, not only its merge's. *)
+      test "the work on a schedule of many outputs is linear in their number"
+        (fun () ->
+          let work n = words (fun () -> unplanned (two_chains n)) in
+          let short = work 2000 and long = work 4000 in
           less float_exact ~than:(2.2 *. short) long);
       prop "outputs run as one write what their tensors compute, bit for bit"
         outputs_gen merges_keep_values;

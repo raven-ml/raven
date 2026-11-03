@@ -1048,10 +1048,10 @@ let op_in_backward_slice_with_self ~calls u ops =
 
 (* A node is built after its sources, so ids grow along every edge: the search
    for [x] never enters a node built before it, and stops once it meets [x]. *)
-let reaches ~calls u x =
+let reaches ?(gate = fun _ -> true) ~calls u x =
   let gate n =
     if n == x then raise_notrace Exit;
-    n.id >= x.id
+    n.id >= x.id && gate n
   in
   u == x
   || x.id < u.id

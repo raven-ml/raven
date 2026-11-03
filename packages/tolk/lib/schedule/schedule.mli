@@ -54,9 +54,11 @@ val contiguous_mops_to_view : Ops.t -> Ops.t -> Ops.t option
     movements and bitcasts [src] of a buffer, [c] of a view of the buffer's
     elements ({!Prepare.contiguous_view}) when they are contiguous, and that
     view for any other [c]; [None] when they are not contiguous or [src]'s shape
-    is symbolic, and for a copy or a stage when the elements start at bound
-    variables. The view is the buffer shrunk to the elements and bitcast to
-    [src]'s type, reshaped to [c]'s shape. *)
+    is symbolic, for a copy or a stage when the elements start at bound
+    variables, and for a store into a buffer's state after earlier stores or
+    of a value that reads the buffer short of the stored states of other
+    storage, which the kernel split then stages. The view is the buffer shrunk
+    to the elements and bitcast to [src]'s type, reshaped to [c]'s shape. *)
 
 val is_store_after : Ops.t -> bool
 (** [is_store_after u] is [true] iff [u] is an {!Op.After} that orders a store
