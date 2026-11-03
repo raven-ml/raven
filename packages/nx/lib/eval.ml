@@ -521,7 +521,7 @@ let unreached ~by op =
     op;
   run ~by op
 
-let eval ~by op =
+let dispatch ~by op =
   if quiet () && (Exec.is_local op || not (Prim.exists is_traced op)) then
     run ~by op
   else
@@ -531,6 +531,44 @@ let eval ~by op =
     | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e ->
         (match e with Receive cell -> cell.op <- None | _ -> ());
         unreached ~by op
+
+(* Composites *)
+
+let composite ~by args f =
+  let arg (name, Any x) = (name, Prim.placement x, Composite.Value x) in
+  Composite.call ~by (List.map arg args) f
+
+(* Notes, inside a composite, how [op]'s results [r] derive from its
+   operands ({!Composite.record}): those of the first's shape, as the
+   rule's windows are the first's. A placement's results lie where it puts
+   them, whatever its operand's placement. *)
+let note (type r) (op : r prim) (r : r) =
+  match op with
+  | Place _ | Check _ -> ()
+  | _ ->
+      let xs = ref List.[] and ys = ref List.[] and first = ref None in
+      Prim.iteri
+        (fun _ x -> xs := List.cons (Composite.Value x, Prim.shape x) !xs)
+        op;
+      Prim.iter_results
+        (fun y ->
+          let s = Prim.shape y in
+          let f = Option.value !first ~default:s in
+          first := Some f;
+          if s = f then ys := List.cons (Composite.Value y) !ys)
+        op r;
+      Composite.record (Prim.rule op) (Array.of_list (List.rev !xs)) !ys
+
+let eval ~by op =
+  let r = dispatch ~by op in
+  if not (Composite.idle ()) then note op r;
+  r
+
+(* Notes, inside a composite, [y] as an elementwise result of [xs]. *)
+let mapped xs y =
+  let operand (Any x) = (Composite.Value x, Prim.shape x) in
+  Composite.record Route.Elementwise (Array.map operand xs)
+    (List.cons (Composite.Value y) List.[])
 
 (* The one-node maps, built and evaluated: the paths an interpretation may
    reach. *)
@@ -584,17 +622,34 @@ let apply1 ~by k dt x =
   match x with
   | Traced _ -> eval1 ~by k dt x
   | Array _ | Shards _ | Handle _ ->
-      if quiet () then fast1 ~by k dt x else eval1 ~by k dt x
+      if quiet () then begin
+        let y = fast1 ~by k dt x in
+        if not (Composite.idle ()) then mapped [| Any x |] y;
+        y
+      end
+      else eval1 ~by k dt x
 
 let apply2 ~by k dt x y =
   match (x, y) with
   | Traced _, _ | _, Traced _ -> eval2 ~by k dt x y
-  | _ -> if quiet () then fast2 ~by k dt x y else eval2 ~by k dt x y
+  | _ ->
+      if quiet () then begin
+        let z = fast2 ~by k dt x y in
+        if not (Composite.idle ()) then mapped [| Any x; Any y |] z;
+        z
+      end
+      else eval2 ~by k dt x y
 
 let apply3 ~by k c x y =
   match (c, x, y) with
   | Traced _, _, _ | _, Traced _, _ | _, _, Traced _ -> eval3 ~by k c x y
-  | _ -> if quiet () then fast3 ~by k c x y else eval3 ~by k c x y
+  | _ ->
+      if quiet () then begin
+        let z = fast3 ~by k c x y in
+        if not (Composite.idle ()) then mapped [| Any c; Any x; Any y |] z;
+        z
+      end
+      else eval3 ~by k c x y
 
 (* The map of [prog] over [x], into [dt]. *)
 let map_of prog dt x =
@@ -604,10 +659,28 @@ let map_of prog dt x =
 let apply ~by prog dt x =
   match (x, Exec.live_kernels x) with
   | Array { at; a; _ }, Some kernels when quiet () ->
-      Exec.map ~by kernels at prog dt a [| Nx_kernel.Plain a |]
+      let y = Exec.map ~by kernels at prog dt a [| Nx_kernel.Plain a |] in
+      if not (Composite.idle ()) then mapped [| Any x |] y;
+      y
   | _ ->
       let v, () = eval ~by (map_of prog dt x) in
       v
+
+let contraction ~sum ~batch ~contracting ~acc dt a b init =
+  Contract
+    {
+      batch;
+      contracting;
+      acc;
+      out = dt;
+      a;
+      b;
+      init;
+      a_scale = None;
+      b_scale = None;
+      segments = None;
+      sum;
+    }
 
 let contract ~by ?(sum = false) ~batch ~contracting ~acc dt a b init =
   let fast =
@@ -615,25 +688,11 @@ let contract ~by ?(sum = false) ~batch ~contracting ~acc dt a b init =
     else None
   in
   match fast with
-  | Some y -> y
-  | None ->
-      let op =
-        Contract
-          {
-            batch;
-            contracting;
-            acc;
-            out = dt;
-            a;
-            b;
-            init;
-            a_scale = None;
-            b_scale = None;
-            segments = None;
-            sum;
-          }
-      in
-      eval ~by op
+  | Some y ->
+      if not (Composite.idle ()) then
+        note (contraction ~sum ~batch ~contracting ~acc dt a b init) y;
+      y
+  | None -> eval ~by (contraction ~sum ~batch ~contracting ~acc dt a b init)
 
 let place ~by p x =
   match x with
@@ -658,7 +717,9 @@ let move ~by mv x =
       match A.move mv a with
       | Some v ->
           Exec.view_of a;
-          Array { at; a = v; dead = Live }
+          let y = Array { at; a = v; dead = Live } in
+          if not (Composite.idle ()) then note (Move (mv, x)) y;
+          y
       | None | (exception Invalid_argument _) -> eval ~by (Move (mv, x)))
   | Array _ | Shards _ | Handle _ | Traced _ -> eval ~by (Move (mv, x))
 
@@ -670,7 +731,9 @@ let bitcast ~by dt x =
       match A.bitcast dt a with
       | Some v ->
           Exec.view_of a;
-          Array { at; a = v; dead = Live }
+          let y = Array { at; a = v; dead = Live } in
+          if not (Composite.idle ()) then note (Bitcast (dt, x)) y;
+          y
       | None | (exception Invalid_argument _) -> eval ~by (Bitcast (dt, x)))
   | Array _ | Shards _ | Handle _ | Traced _ -> eval ~by (Bitcast (dt, x))
 

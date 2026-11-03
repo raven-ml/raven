@@ -238,10 +238,10 @@ let cut_segments =
 
 (* [Add] is a scatter's [Add], which sums rows cut along the positions by
    partials: it gives the host's bits, its rows whole on each device and
-   its columns cut as [x]'s. [Max], [Min] and [Set] read the rows whole and
-   raise on [ids] or [x] split along them, naming the [place] that puts
-   them whole; so does [Add] on [ids] split beside [x] split along its
-   columns over the same devices. Placed so, each gives the host's bits. *)
+   its columns cut as [x]'s. [Max], [Min] and [Set] read the rows whole:
+   [x] split along them raises, naming the [place] that puts them whole,
+   and [ids] split moves where the rows are read. Placed so, each gives the
+   host's bits. *)
 let law_cut_segments (Rows (dt, c, _, x), k, ids, ids_rows, x_cut) =
   let px = match x_cut with None -> S2.on | Some axis -> S2.split ~axis in
   let pi = if ids_rows then S2.split ~axis:0 else S2.on in
@@ -270,11 +270,7 @@ let law_cut_segments (Rows (dt, c, _, x), k, ids, ids_rows, x_cut) =
              (Placement.on s) %s"
             name Nx.Placement.pp p Nx.Placement.pp S2.on name))
   in
-  if ids_rows && (c <> Nx.Add || x_cut = Some 1) then (
-    refused "ids" pi (fun () ->
-        Nx.reduce_segments c ~segments:k (Nx.place pi ids) (Nx.place px x));
-    run S2.on (if c = Nx.Add then px else whole))
-  else if x_cut = Some 0 && c <> Nx.Add then (
+  if x_cut = Some 0 && c <> Nx.Add && n > 0 && k > 0 then (
     refused "x" px (fun () ->
         Nx.reduce_segments c ~segments:k (Nx.place pi ids) (Nx.place px x));
     run pi whole)
@@ -670,20 +666,25 @@ let test_range_rows_cut () =
 
 (* The bounds cut the result's first axis, and [x]'s other cuts its other
    axes: split over the devices that cut [x]'s columns, a bound raises
-   naming the [place] that puts it whole, and over other devices of a mesh
-   the call gives the host's bits, lying at both cuts. *)
+   naming a bound or [x] and the [place] that reads it beside the other,
+   and over other devices of a mesh the call gives the host's bits, lying
+   at both cuts. *)
 let test_range_bounds_cut () =
   let x = Nx.create Nx.float64 [| 5; 4 |] (Array.init 20 Float.of_int) in
   let lo = Nx.create Nx.int64 [| 4 |] [| 0L; 1L; -1L; 3L |] in
   let hi = Nx.create Nx.int64 [| 4 |] [| 9L; 3L; 1L; 3L |] in
-  let refused name p =
-    raises
-      (Invalid_argument
-         (Format.asprintf
-            "Nx.reduce_ranges: %s lies at %a and is read at %a; Nx.place \
-             (Placement.on s) %s"
-            name Nx.Placement.pp p Nx.Placement.pp
-            (Nx.Placement.uncut p) name))
+  let refused f =
+    let named = function
+      | Invalid_argument m ->
+          List.exists
+            (fun name ->
+              let prefix = "Nx.reduce_ranges: " ^ name ^ " lies at " in
+              String.starts_with ~prefix m
+              && String.ends_with ~suffix:(") " ^ name) m)
+            [ "lo"; "hi"; "x" ]
+      | _ -> false
+    in
+    raises_match named f
   in
   List.iter
     (fun c ->
@@ -697,14 +698,14 @@ let test_range_bounds_cut () =
         y
       in
       let rows = S2.split ~axis:0 and cols = S2.split ~axis:1 in
-      refused "lo" rows (fun () -> run rows rows cols);
-      refused "hi" rows (fun () -> run S2.on rows cols);
+      refused (fun () -> run rows rows cols);
+      refused (fun () -> run S2.on rows cols);
       let y = run S2.on S2.on cols in
       equal ~msg:"where it lies" (placement ()) cols (Nx.placement y);
       let a = Nx.Placement.mesh mesh [ (0, [ "a" ]) ]
       and b = Nx.Placement.mesh mesh [ (0, [ "b" ]) ] in
       let x_cols = Nx.Placement.mesh mesh [ (1, [ "b" ]) ] in
-      refused "lo" b (fun () -> run b b x_cols);
+      refused (fun () -> run b b x_cols);
       let y = run a a x_cols in
       equal ~msg:"where it lies" (placement ())
         (Nx.Placement.mesh mesh [ (0, [ "a" ]); (1, [ "b" ]) ])

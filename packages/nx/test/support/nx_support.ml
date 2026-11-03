@@ -285,6 +285,71 @@ let index s k =
 let placement () =
   Windtrap.Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
+(* Remedies *)
+
+(* [m]'s text between [left] and the next [right] past it, and the rest. *)
+let between m ~from left right =
+  let find sub i =
+    let n = String.length sub and l = String.length m in
+    let rec go i =
+      if i + n > l then None
+      else if String.sub m i n = sub then Some i
+      else go (i + 1)
+    in
+    go i
+  in
+  match find left from with
+  | None -> None
+  | Some i -> (
+      let start = i + String.length left in
+      match find right start with
+      | None -> None
+      | Some j -> Some (String.sub m start (j - start), j))
+
+let remedied ~by ~candidates args run =
+  let at = ref args in
+  let tried = ref [] in
+  let fmt p = Format.asprintf "%a" Nx.Placement.pp p in
+  let rec go () =
+    let get name = List.assoc name !at in
+    match run get with
+    | y -> y
+    | exception (Invalid_argument m as e) -> (
+        let prefix = by ^ ": " in
+        let parsed =
+          if not (String.starts_with ~prefix m) then None
+          else
+            let from = String.length prefix in
+            match between m ~from "" " lies at " with
+            | None -> None
+            | Some (name, i) -> (
+                match
+                  ( between m ~from:i " lies at " " and is read at ",
+                    between m ~from:i " and is read at " "; Nx.place (" )
+                with
+                | Some (p, _), Some (q, _)
+                  when String.ends_with ~suffix:(") " ^ name) m ->
+                    Some (name, p, q)
+                | _ -> None)
+        in
+        match parsed with
+        | None -> raise e
+        | Some (name, p, q) ->
+            let fail what = Windtrap.failf "%s, in %S" what m in
+            if not (List.mem_assoc name args) then fail "not an argument";
+            if p <> fmt (get name) then fail "not where it lies";
+            if List.mem (name, q) !tried then fail "a refusal repeated";
+            tried := (name, q) :: !tried;
+            let read =
+              match List.find_opt (fun c -> fmt c = q) (candidates name) with
+              | Some c when q <> p -> c
+              | Some _ | None -> fail "no other placement reads so"
+            in
+            at := (name, read) :: List.remove_assoc name !at;
+            go ())
+  in
+  go ()
+
 let same_float a b =
   (Float.is_nan a && Float.is_nan b)
   || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)

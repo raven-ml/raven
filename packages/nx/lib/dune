@@ -9,6 +9,7 @@
   devices
   route
   value
+  composite
   prim
   partition
   pairwise
@@ -30,6 +31,7 @@
   devices
   route
   value
+  composite
   prim
   partition
   pairwise

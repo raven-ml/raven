@@ -246,15 +246,27 @@ type 'd t = {
   compute : compute;
 }
 
+(** The type for the argument of a composite operation that an operand
+    derives from, which a refusal names in its place: the composite [by],
+    the argument's [name], its placement [at], and the grid [read] that
+    places it where the operand would be read. *)
+type named = {
+  by : string;
+  name : string;
+  at : unit Devices.placement;
+  read : Grid.t;
+}
+
 val route :
   by:string ->
+  ?named:(int -> Grid.t -> named option) ->
   ?positions:int list ->
   ?terms:terms ->
   rule ->
   'd Devices.placement array ->
   int array array ->
   'd t
-(** [route ~by ~positions ~terms r ps shapes] routes an operation of rule
+(** [route ~by ~named ~positions ~terms r ps shapes] routes an operation of rule
     [r] over operands at [ps] of [shapes], as the module's preamble states,
     the operands numbered in [positions] (default none) holding positions
     the others are read at, and its partial operands as [terms] (default
@@ -273,7 +285,19 @@ val route :
     axis its shape lacks ({!Grid.window}), with the preamble's message
     where an operand cannot be read where it lies, and naming the
     [Nx.place] that closes a partial operand where [terms] does not keep it
-    or where two partial operands are sums over other groups. *)
+    or where two partial operands are sums over other groups. Where
+    [named i q] (default [None]) is [Some n] for the operand [i] a refusal
+    names, and [q] the grid that places it as the remedy needs, the message
+    names [n] in its place: [n.by], then [n.name], [n.at] and [n.read]
+    where the preamble's message names the operand, its placement and its
+    remedy. *)
+
+val backward : rule -> int -> int array -> Grid.t -> Grid.t
+(** [backward r i s q] is the grid of operand [i], of shape [s], that
+    results at the grid [q] read by [r]: [q]'s cut of a result axis that an
+    axis of the operand becomes, scans, indexes or regroups into in tiles
+    that divide both extents cuts that axis, and every other cut of [q]
+    holds copies. *)
 
 val gathers : 'd t -> int -> 'e Devices.placement -> int array -> bool
 (** [gathers r i p s] is [true] iff [r] reads its operand [i], at [p] of

@@ -4921,40 +4921,23 @@ let identity (type v s) ~by (c : combine) (dt : (v, s) D.t) : v =
 let rows_of ~by x =
   if ndim x = 0 then invalid_argf "%s: %a has no rows" by pp_value x
 
-(* Raises naming the argument [name], which lies at [p], the placement [q]
-   it is read at, and the [place] that puts it there. *)
-let refuse ~by name p q =
-  invalid_argf "%s: %s lies at %a and is read at %a; Nx.place (%a) %s" by name
-    Devices.pp_placement p Devices.pp_placement q
-    (Route.pp_call ~by (Devices.set q))
-    (Devices.grid q) name
-
-(* Raises unless [t]'s first axis, its rows or its positions, lies whole on
-   each device, naming the [place] that keeps its other cuts. *)
-let rows_whole ~by name t =
-  let p = placement t in
+(* Raises unless [x]'s rows lie whole on each device, naming the [place]
+   that keeps its other cuts. *)
+let rows_whole ~by x =
+  let p = placement x in
   if Array.exists (fun (a, _) -> a = 0) (Grid.cuts (Devices.grid p)) then
-    refuse ~by name p (Devices.uncut ~axis:0 p)
-
-(* The grid that cuts the first axis as [t] does, [t] holding positions or
-   bounds along it, and the others as [g] does. Raises where no grid does,
-   [t] cut over other devices or over those that cut another axis, naming
-   the [place] that puts [t] whole on [like]'s devices, where every device
-   reads a view of it. *)
-let beside_cuts ~by name t g ~like =
-  let p = placement t in
-  let gt = Devices.grid p in
-  if not (Grid.is_cut gt) then g
-  else
-    match Grid.union gt g with
-    | Some u -> u
-    | None -> refuse ~by name p (Devices.uncut like)
+    let q = Devices.uncut ~axis:0 p in
+    invalid_argf "%s: x lies at %a and is read at %a; Nx.place (%a) x" by
+      Devices.pp_placement p Devices.pp_placement q
+      (Route.pp_call ~by (Devices.set q))
+      (Devices.grid q)
 
 (* [Add] is a scatter's [Add], which sums the rows of each device by partials
    where [ids] and [x] are split along them. [Max], [Min] and [Set] are
    scatters that read their updates whole along the positions. *)
 let reduce_segments c ~segments ids x =
   let by = "Nx.reduce_segments" in
+  Eval.composite ~by [ ("ids", Any ids); ("x", Any x) ] @@ fun () ->
   if segments < 0 then invalid_argf "%s: %d segments" by segments;
   rows_of ~by x;
   if ndim ids <> 1 || Prim.dim ids 0 <> Prim.dim x 0 then
@@ -4962,16 +4945,14 @@ let reduce_segments c ~segments ids x =
   let dt = dtype x and s = shape x in
   let start = identity ~by c dt in
   let px = placement x in
-  (match c with
-  | Add -> ()
-  | Max | Min | Set ->
-      rows_whole ~by "ids" ids;
-      rows_whole ~by "x" x);
-  ignore (beside_cuts ~by "ids" ids (Devices.grid px) ~like:px : Grid.t);
   let into = Array.mapi (fun a d -> if a = 0 then segments else d) s in
   let along = Array.mapi (fun a d -> if a = 0 then d else 1) s in
-  let idx = Eval.broadcast ~by s (Eval.reshape ~by along ids) in
-  scattered ~by c idx x (fill ~by (Devices.uncut ~axis:0 px) dt into start)
+  let into = fill ~by (Devices.uncut ~axis:0 px) dt into start in
+  (* With no row or no segment, nothing is scattered. *)
+  if s.(0) = 0 || segments = 0 then into
+  else
+    let idx = Eval.broadcast ~by s (Eval.reshape ~by along ids) in
+    scattered ~by c idx x into
 
 (* The disjoint sparse table: level [k] holds, at each row, its chunk of [2^k]
    rows combined from that row to the chunk's end, its suffix, and from the
@@ -5063,6 +5044,8 @@ let reduce_ranges c ~lo ~hi x =
   let lo = Donate.read ~by lo in
   let hi = Donate.read ~by hi in
   let x = Donate.read ~by x in
+  Eval.composite ~by [ ("lo", Any lo); ("hi", Any hi); ("x", Any x) ]
+  @@ fun () ->
   rows_of ~by x;
   if ndim lo <> 1 || not (same_shape lo hi) then
     invalid_argf "%s: bounds %a and %a, not one of each per range" by pp_value
@@ -5075,20 +5058,20 @@ let reduce_ranges c ~lo ~hi x =
      to [n], which a cut would split or close by partials. [Set] takes each
      range's last row, a gather that computes where the rows lie. The
      remedy keeps the other axes' cuts, along which each device computes
-     its own columns. The bounds cut the result's first axis, beside [x]'s
-     cuts of the others. *)
-  (match c with Set -> () | Add | Max | Min -> rows_whole ~by "x" x);
-  let px = placement x in
-  let cols = Grid.uncut (Devices.grid px) ~axis:0 in
-  let cuts = beside_cuts ~by "lo" lo cols ~like:px in
-  ignore (beside_cuts ~by "hi" hi cuts ~like:px : Grid.t);
+     its own columns. *)
+  (match c with Set -> () | Add | Max | Min -> rows_whole ~by x);
   let clip b =
     elementwise ~by D.Int64 [ Any b ]
       E.(minimum (maximum (operand 0 b) (i64 0)) (i64 n))
   in
   let l = clip lo and h = clip hi in
   let r = elementwise ~by D.Int64 [ Any h ] E.(operand 0 h - i64 1) in
-  let empty dt v = fill ~by (placement x) dt (Array.append [| m |] rows) v in
+  (* The ranges' identities, whole along the ranges beside [x]'s other
+     cuts: a range's row is read wherever the bounds cut the ranges. *)
+  let empty dt v =
+    let at = Devices.uncut ~axis:0 (placement x) in
+    fill ~by at dt (Array.append [| m |] rows) v
+  in
   match c with
   | Set ->
       let some =
@@ -5364,6 +5347,7 @@ let map_segments ~segments ids f x =
   let by = "Nx.map_segments" in
   let ids = Donate.read ~by ids in
   let x = Donate.read ~by x in
+  Eval.composite ~by [ ("ids", Any ids); ("x", Any x) ] @@ fun () ->
   if segments < 0 then invalid_argf "%s: %d segments" by segments;
   let s = shape ids and xs = shape x in
   let ns = Array.length s in
@@ -7105,6 +7089,7 @@ module Prim = struct
   let quiet = Eval.quiet
   let donated = Donate.is_handle
   let eval = Eval.eval
+  let composite = Eval.composite
 
   module Consumer = struct
     type 'd t = 'd Donate.claim

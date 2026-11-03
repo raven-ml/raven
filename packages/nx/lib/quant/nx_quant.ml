@@ -324,83 +324,28 @@ let values = function
   | Q4_K { blocks } -> q4_k_values blocks
   | Q6_K { blocks } -> q6_k_values blocks
 
-(* A cut along [k] *)
+(* Composites *)
 
-(* The window of each device of [t]'s placement along [t]'s last axis. *)
-let last_windows t =
-  let s = Nx.shape t in
-  let r = Array.length s in
-  Array.map
-    (fun (_, (w : Nx_array.Move.range array)) -> w.(r - 1))
-    (Nx.Prim.pieces (Nx.placement t) s)
+(* The parts of [w], its arguments. *)
+let parts = function
+  | Mxfp4 { codes; scales } -> [ Nx.Prim.Any codes; Any scales ]
+  | Mxfp4_blocks { blocks }
+  | Q8_0 { blocks }
+  | Q4_K { blocks }
+  | Q6_K { blocks } ->
+      [ Any blocks ]
 
-(* Whether each device's window of [t], whose last axis holds blocks of
-   [bytes] elements, starts and ends at blocks' boundaries. *)
-let at_blocks bytes t =
-  Array.for_all
-    (fun (x : Nx_array.Move.range) ->
-      x.count = 0
-      || (x.start mod bytes = 0 && (x.start + x.count) mod bytes = 0))
-    (last_windows t)
-
-(* Whether each device holds all of [t]'s last axis. *)
-let whole_along t =
-  let k = (Nx.shape t).(Nx.ndim t - 1) in
-  Array.for_all (fun (x : Nx_array.Move.range) -> x.count = k) (last_windows t)
-
-let some t = Array.fold_left ( * ) 1 (Nx.shape t) > 0
-
-(* Whether each device that holds MXFP4 codes holds the scales of the
-   blocks its codes' window reaches. *)
-let scales_cover codes scales =
-  let r = Nx.ndim codes in
-  let held = Nx.Prim.pieces (Nx.placement scales) (Nx.shape scales) in
-  Array.for_all
-    (fun (here, (w : Nx_array.Move.range array)) ->
-      let c = w.(r - 1) in
-      c.count = 0
-      || Array.exists
-           (fun (there, (v : Nx_array.Move.range array)) ->
-             let g = v.(r - 1) in
-             Nx.Placement.equal here there
-             && g.start <= c.start / mxfp4_bytes
-             && (c.start + c.count + mxfp4_bytes - 1) / mxfp4_bytes
-                <= g.start + g.count)
-           held)
-    (Nx.Prim.pieces (Nx.placement codes) (Nx.shape codes))
-
-(* Raises naming [fn] where a cut of [w] along [k] splits a block, or puts
-   MXFP4 codes on a device without their blocks' scales, which each device
-   would read whole: before any block is decoded, at the call that reads
-   them. An MXFP4 weight of one block whose scales lie whole decodes its
-   codes where they lie. *)
-let check_k fn w =
-  let splits =
-    match w with
-    | Mxfp4 { codes; scales } ->
-        let one_block = (Nx.shape scales).(Nx.ndim scales - 1) = 1 in
-        some codes
-        && ((not (scales_cover codes scales))
-           || (not (at_blocks mxfp4_bytes codes))
-              && not (one_block && whole_along scales))
-    | Mxfp4_blocks { blocks } ->
-        some blocks && not (at_blocks mxfp4_block_bytes blocks)
-    | Q8_0 { blocks } -> some blocks && not (at_blocks q8_0_bytes blocks)
-    | Q4_K { blocks } -> some blocks && not (at_blocks q4_k_bytes blocks)
-    | Q6_K { blocks } -> some blocks && not (at_blocks q6_k_bytes blocks)
-  in
-  if splits then
-    invalid_arg
-      (strf
-         "%s: the weight lies cut along k so that a device lacks part of a \
-          block or its scale; Nx.place (Placement.on s) w"
-         fn)
+(* [f ()], the body of [by] over the weight [w], whose parts are all named
+   [w], and [args]: a refusal inside names the argument its operand derives
+   from, as a cut along [k] that splits a block where the decoding or the
+   product reads it whole. *)
+let composite ~by w args f =
+  Nx.Prim.composite ~by (List.map (fun t -> ("w", t)) (parts w) @ args) f
 
 (* Products *)
 
 let dequant dt w =
-  check_k "Nx_quant.dequant" w;
-  Nx.cast dt (values w)
+  composite ~by:"Nx_quant.dequant" w [] @@ fun () -> Nx.cast dt (values w)
 
 (* Batch axes, aligned on the right and broadcast as Nx.matmul's. *)
 let broadcast fn a b =
@@ -574,11 +519,9 @@ let scaled ?(sum = false) ~by ~wide x ws
 let apply ?sum w x =
   let ws = shape w in
   check_input ws (Nx.shape x);
-  let wide = wide x in
   let by = "Nx_quant.apply" in
-  (* An MXFP4 weight read where it lies names its scales as the contraction
-     reads them; any other has its cut along [k] checked before it is read. *)
-  (match w with Mxfp4 _ when not wide -> () | _ -> check_k by w);
+  composite ~by w [ ("x", Any x) ] @@ fun () ->
+  let wide = wide x in
   scaled ?sum ~by ~wide x ws (stored ~wide ws w)
 
 (* Quantising. Q8_0 as ggml's quantize_row_q8_0_ref stores a block of 32
@@ -589,6 +532,7 @@ let apply ?sum w x =
    quant [0], the low byte x86's conversion gives it in ggml. Nx.max keeps
    a NaN, so a NaN makes its block's scale NaN. *)
 let quantize_q8_0 x =
+  Nx.Prim.composite ~by:"Nx_quant.quantize_q8_0" [ ("x", Any x) ] @@ fun () ->
   let s = Nx.shape x in
   let r = Array.length s in
   if r < 2 || s.(r - 1) mod qk8_0 <> 0 then
@@ -634,6 +578,7 @@ let take ~axis p w =
          "Nx_quant.take: axis %d is the weight's last axis, which a gather \
           would cut across blocks"
          axis);
+  composite ~by:"Nx_quant.take" w [ ("p", Any p) ] @@ fun () ->
   map (Nx.take ~axis:a p) w
 
 (* Experts *)
@@ -848,12 +793,8 @@ let experts ?sum ~ids w x =
 
 let apply_experts ?sum ~ids w x =
   check_experts (shape w) (Nx.shape ids) (Nx.shape x);
-  (* An MXFP4 weight summed at float32 is read where it lies and names its
-     scales as the contraction reads them; any other decodes the blocks the
-     positions name, none for no position. *)
-  let in_place = match w with Mxfp4 _ -> not (wide x) | _ -> false in
-  if (not in_place) && some ids then check_k "Nx_quant.apply_experts" w;
-  experts ?sum ~ids w x
+  composite ~by:"Nx_quant.apply_experts" w [ ("ids", Any ids); ("x", Any x) ]
+  @@ fun () -> experts ?sum ~ids w x
 
 (* Structure *)
 

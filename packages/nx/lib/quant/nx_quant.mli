@@ -39,14 +39,14 @@
     as it sums them. Any other cut along [k] splits a block, which each
     device would read whole, and a cut that leaves [Mxfp4] codes on a device
     without their blocks' scales is read whole too. Either way {!dequant},
-    {!apply} and {!apply_experts} raise at the call, before any block is
-    decoded, naming [Nx.place (Placement.on s) w], the placement that puts
-    it whole on each device; {!apply_experts} where a position names a
-    block. {!apply} and {!apply_experts} of an [Mxfp4] weight read where it
-    lies name its scales: with them whole on each device, and the
-    weight rebuilt by {!mxfp4}, they read the codes where they lie where [t]
-    divides [k / 2], their bytes, each device holding every scale, and raise
-    on the codes otherwise. Of one block, such a weight decodes so too, at
+    {!apply} and {!apply_experts} raise as the operation reading the part
+    whole does, naming [w], where that part lies, and the placement that
+    puts it whole along [k] ({!Nx.section-routing}); {!apply_experts} where
+    a position names a block. {!apply} and {!apply_experts} of an [Mxfp4]
+    weight read where it lies read its scales so: with them whole on each
+    device, and the weight rebuilt by {!mxfp4}, they read the codes where
+    they lie where [t] divides [k / 2], their bytes, each device holding
+    every scale, and raise on the codes otherwise. Of one block, such a weight decodes so too, at
     any dtype: {!dequant}'s result is cut along [k] as its codes are.
     Padding [k] and the input with zero blocks to a multiple of [t] blocks
     keeps each block on one device instead.
@@ -252,8 +252,9 @@ val apply_experts :
     [k] for every row and the devices' sums close by partials, as
     {!Nx.contract}'s do, where the result would lie with [k] whole. Routing
     the positions sorts [ids], which reads them whole, and gathers [x]'s
-    rows where they lie ({!Nx.take}): [ids] cut across devices raise as the
-    operation reading them does ({!Nx.section-routing}). [x]'s leading axes
+    rows where they lie ({!Nx.take}): [ids] cut across devices raise,
+    naming [ids] and the placement that puts them whole on each device
+    ({!Nx.section-routing}). [x]'s leading axes
     are flattened where that keeps where they lie: at most one has more
     than one index, or only the first such is cut, into windows of one
     extent. Cut otherwise, along a later such axis or into windows of

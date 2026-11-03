@@ -1672,7 +1672,19 @@ let route_of (type r) ~by (op : r prim) : unit Route.t =
         | _ ->
             if Array.exists Devices.partial ps then terms op summed else Closes
       in
-      let r = Route.route ~by ~positions ~terms (rule op) ps shapes in
+      (* Inside a composite, a refused operand that derives from one of
+         its arguments names the argument ({!Composite}). *)
+      let named =
+        if Composite.idle () then None
+        else
+          let (Operands xs) = operands op in
+          let named i q =
+            let (Any x) = List.nth xs i in
+            Composite.named (Value x) q
+          in
+          Some named
+      in
+      let r = Route.route ~by ?named ~positions ~terms (rule op) ps shapes in
       summed_results ~by op r;
       r
 

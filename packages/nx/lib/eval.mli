@@ -125,6 +125,14 @@ val partition : Partition.engine -> by:string -> 'r prim -> 'r
     rule, what [e]'s steps raise, and [Invalid_argument] as an internal fault
     for a [Check]. *)
 
+val composite :
+  by:string -> (string * 'd any) list -> (unit -> 'a) -> 'a
+(** [composite ~by args f] is [f ()], the body of the composite operation
+    [by] over the arguments [args], each with its name ({!Composite.call}).
+    Each operation inside it notes how its results derive from its operands
+    ({!Composite.record}), so that a refusal names the argument an operand
+    derives from. *)
+
 val apply1 :
   by:string ->
   Nx_kernel.Prog.op1 ->

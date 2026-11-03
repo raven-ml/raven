@@ -379,6 +379,20 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
     v}
 
+    A function that computes by several operations over values it derives
+    from its arguments, as {!reduce_segments} does by a scatter of its rows,
+    raises in their place where one of them refuses an operand derived from
+    an argument: the message names the function, the argument as its
+    documentation names it, where it lies, and the {!place} of it that
+    reads the operand where the operation needs it, the grid moved back
+    through each operation between them ({!Prim.composite}). An argument
+    that the remedy leaves where it lies is passed over for the next:
+
+    {v
+    Nx.reduce_segments: x lies at split ~axis:0 [CUDA:0; CUDA:1] and is
+    read at on [CUDA:0; CUDA:1]; Nx.place (Placement.on s) x
+    v}
+
     An operation linear in its partial operands ({!Placement.partial}),
     sums over the same groups, keeps them sums, each device computing on
     its terms: {!add}, {!sub} and {!where} by a condition that is no sum, a
@@ -3798,11 +3812,11 @@ val reduce_segments :
     identity, lying as [x] does with its rows whole on each device, so its
     sums have {!scatter}'s bits. [Add] over [ids] or [x] split along the
     rows sums each device's rows by partials, as {!scatter}'s [Add] does.
-    [Max], [Min] and [Set] read the rows whole on each device: [ids] or [x]
-    cut along them raises [Invalid_argument] naming the {!place} that puts
-    its rows whole and keeps its other cuts. [ids] cut where [x] is not, over
-    the devices that cut [x]'s other axes, raises naming the {!place} that
-    puts [ids] whole on [x]'s devices.
+    [Max], [Min] and [Set] read the rows whole on each device: [x] cut along
+    them raises [Invalid_argument] naming the {!place} that puts its rows
+    whole and keeps its other cuts. [ids] that lie elsewhere than the
+    devices read them move there, as a scatter's positions do
+    ({!section-routing}).
 
     {[
     let ids = Nx.create Nx.int64 [| 5 |] [| 0L; 2L; 0L; -1L; 2L |]
@@ -3845,8 +3859,9 @@ val reduce_ranges :
     lies as [x] does. [lo] and [hi] lie whole on [x]'s devices or cut along
     their axis, which cuts the result's first axis, over devices other than
     those that cut [x]'s other axes, such as another axis of a mesh. A
-    bound cut otherwise raises [Invalid_argument] naming the {!place} that
-    puts it whole on [x]'s devices.
+    bound cut otherwise raises [Invalid_argument] naming [x] or a bound and
+    the {!place} of it that reads it beside the other
+    ({!section-routing}).
 
     {[
     let x = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
@@ -5677,6 +5692,20 @@ module Prim : sig
   val eval : by:string -> 'r t -> 'r
   (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's
       functions apply it. *)
+
+  val composite : by:string -> (string * 'd any) list -> (unit -> 'a) -> 'a
+  (** [composite ~by args f] is [f ()], the body of the operation [by] over
+      its arguments [args], each named as the caller's interface names it;
+      the parts of one structure share its name. An operation [f] calls that
+      refuses an operand derived from an argument, by movements or any
+      other operations, raises as {!Nx.section-routing} states but naming
+      [by], the argument, where it lies, and the [Nx.place] of the argument
+      that reads the operand where the operation needs it: the first
+      argument, in operand order, that the remedy places elsewhere than it
+      lies, of the outermost such call around [f]. An operand derived from
+      none keeps the operation's own message. Each operation inside [f]
+      notes its operands, holding no value alive; on another domain than
+      the one [f] started on, nothing is noted. *)
 
   (** {1:consumers Consumers}
 

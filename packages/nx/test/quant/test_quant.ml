@@ -1142,10 +1142,19 @@ let decoded w = function
       else if blocks mod tiles = 0 then Lies c
       else Raises
 
-(* A call that reads a weight's parts whole where they lie cut: its raise
-   names the placement to write, [Nx.place (Placement.on s)]. *)
-let read_whole f =
-  raises_match (Exn.invalid_arg ~sub:"; Nx.place (Placement.on s) ") f
+(* A call that reads its argument [name], a weight's parts by default,
+   whole where it lies cut: its raise names the argument, where it lies,
+   and the placement to write, [Nx.place (Placement.on s)]. *)
+let read_whole ?(name = "w") f =
+  let named = function
+    | Invalid_argument m ->
+        String.ends_with ~suffix:("; Nx.place (Placement.on s) " ^ name) m
+        && Exn.invalid_arg
+             ~sub:(": " ^ name ^ " lies at ")
+             (Invalid_argument m)
+    | _ -> false
+  in
+  raises_match named f
 
 (* Where [apply] puts its product of a weight lying at [c] with an input of
    [[| m; k |]] whole on each device: cut as the weight is along a leading
@@ -1183,7 +1192,7 @@ let placement_law ((_, w), c) =
     (match c with Cut { axis; _ } -> axis < r - 1 | Whole -> false);
   (* A float32 input reads an MXFP4 weight where it lies: the product's own
      contraction routes it, and refuses the scales a block-splitting cut
-     leaves, read whole, as its operand 2. *)
+     leaves, read whole, naming the weight. *)
   let in_place = format_of w = Mxfp4 in
   cover "an MXFP4 weight cut along n or a leading axis, read in place"
     (in_place && match c with Cut { axis; _ } -> axis < r - 1 | Whole -> false);
@@ -1199,7 +1208,7 @@ let placement_law ((_, w), c) =
       read_whole run;
       if in_place then
         raises_match
-          (Exn.invalid_arg ~sub:"Nx_quant.apply: operand 2 lies at ")
+          (Exn.invalid_arg ~sub:"Nx_quant.apply: w lies at ")
           run
   | (Lies _ | Unstated) as d ->
       let got = Nx_quant.dequant Nx.float32 wp in
@@ -1787,7 +1796,10 @@ let cut_experts_law (c, routed, scales_whole, (_, w, ids, X { at; x })) =
         (product_bits (Nx_quant.apply_experts ~ids w x))
         b
   in
-  if routing_whole || raises then read_whole run else computes (run ())
+  (* The ids are routed before the weight is read. *)
+  if routing_whole then read_whole ~name:"ids" run
+  else if raises then read_whole run
+  else computes (run ())
 
 (* [apply_experts] of {!experts_of}'s case of 3072 inputs, 96 blocks of 32
    values and 12 of 256, with its weight at [p], the ids whole on each device
@@ -1882,11 +1894,135 @@ let whole_scales_law (t, b, lead, cut_x) =
   | 3 -> run (module Mem_three)
   | _ -> run (module Mem)
 
-(* The message of a call over a weight cut along [k] so that a device lacks
-   part of a block or its scale. *)
-let split_blocks =
-  ": the weight lies cut along k so that a device lacks part of a block or \
-   its scale; Nx.place (Placement.on s) w"
+(* The message of the call [fn] over a weight cut along [k] so that a device
+   lacks part of a block or its scale, the part read whole lying at [p]. *)
+let split_blocks fn p =
+  Invalid_argument
+    (Format.asprintf
+       "%s: w lies at %a and is read at on [m0; m1; m2; m3]; Nx.place \
+        (Placement.on s) w"
+       fn Nx.Placement.pp p)
+
+(* Composites. Each function computes by other operations over values it
+   derives from its arguments; a refusal names the argument, where it
+   lies, and the placement that resolves it. *)
+
+(* The placements of a value of rank [r] over {!Mem}: whole, split along an
+   axis, cut along an axis over either axis of the mesh, and along two
+   axes over both. *)
+let candidates r =
+  let axes = List.init r Fun.id in
+  let cut l = Nx.Placement.mesh mesh l in
+  (Mem.on :: List.map (fun axis -> Mem.split ~axis) axes)
+  @ List.concat_map
+      (fun a -> [ cut [ (a, [ "a" ]) ]; cut [ (a, [ "b" ]) ] ])
+      axes
+  @ List.concat_map
+      (fun a ->
+        List.filter_map
+          (fun b ->
+            if a = b then None else Some (cut [ (a, [ "a" ]); (b, [ "b" ]) ]))
+          axes)
+      axes
+
+type composite = Dequant | Apply | Take | Quantize | Experts
+
+let composite_name = function
+  | Dequant -> "Nx_quant.dequant"
+  | Apply -> "Nx_quant.apply"
+  | Take -> "Nx_quant.take"
+  | Quantize -> "Nx_quant.quantize_q8_0"
+  | Experts -> "Nx_quant.apply_experts"
+
+(* Each composite's arguments with their ranks, and a run that checks its
+   result against the host's, the arguments placed by name. *)
+let composite_case f c =
+  let k = 256 in
+  let w2 = random_weight ~format:f [| 3; k |] in
+  let x = random_floats [| 2; k |] in
+  let p = Nx.create Nx.int64 [| 4 |] [| 2L; 0L; 1L; 2L |] in
+  let w3, ids, xe = experts_of ~k f in
+  let weight (get : string -> Mem.d Nx.Placement.t) w =
+    Nx_quant.place (get "w") w
+  in
+  let bits32 t = bits (Nx.cast Nx.float32 t) in
+  match c with
+  | Dequant ->
+      ( [ ("w", 2) ],
+        fun get ->
+          equal (array int64)
+            (bits (Nx_quant.dequant Nx.float32 w2))
+            (bits (Nx_quant.dequant Nx.float32 (weight get w2))) )
+  | Apply ->
+      ( [ ("w", 2); ("x", 2) ],
+        fun get ->
+          applied ~at:f32 w2 x
+            (Nx_quant.apply (weight get w2) (Nx.place (get "x") x)) )
+  | Take ->
+      ( [ ("w", 2); ("p", 1) ],
+        fun get ->
+          let p' = Nx.place (get "p") p in
+          let t = Nx_quant.take ~axis:0 p' (weight get w2) in
+          equal (array int64)
+            (bits (Nx_quant.dequant Nx.float32 (Nx_quant.take ~axis:0 p w2)))
+            (bits (Nx_quant.dequant Nx.float32 (Nx_quant.place Mem.on t))) )
+  | Quantize ->
+      ( [ ("x", 2) ],
+        fun get ->
+          let q = Nx_quant.quantize_q8_0 x in
+          let q' = Nx_quant.quantize_q8_0 (Nx.place (get "x") x) in
+          equal (array int64)
+            (bits32 (Nx_quant.dequant Nx.float32 q))
+            (bits32 (Nx_quant.dequant Nx.float32 q')) )
+  | Experts ->
+      ( [ ("w", 3); ("ids", 1); ("x", 2) ],
+        fun get ->
+          let y =
+            Nx_quant.apply_experts
+              ~ids:(Nx.place (get "ids") ids)
+              (weight get w3)
+              (Nx.place (get "x") xe)
+          in
+          routed_rows ~at:f32 w3 ids xe (flat64 y) )
+
+let composites =
+  let open Gen in
+  with_pp
+    (fun ppf (f, c, at) ->
+      Format.fprintf ppf "%s of %a, %a" (composite_name c) pp_format f
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+           (fun ppf (name, p) ->
+             Format.fprintf ppf "%s at %a" name Nx.Placement.pp p))
+        at)
+    (let* f = format in
+     let* c = of_list [ Dequant; Apply; Take; Quantize; Experts ] in
+     let args, _ = composite_case f c in
+     let place (name, r) = map (fun p -> (name, p)) (of_list (candidates r)) in
+     let+ at =
+       List.fold_right
+         (fun arg rest ->
+           let+ a = place arg and+ rest = rest in
+           a :: rest)
+         args (constant [])
+     in
+     (f, c, at))
+
+(* Following each refusal's remedy, each composite over arguments placed
+   anywhere computes its host result, within its bound for a product. *)
+let composites_law (f, c, at) =
+  let args, run = composite_case f c in
+  let calls = ref 0 in
+  let run get =
+    incr calls;
+    run get
+  in
+  let candidates name = candidates (List.assoc name args) in
+  remedied ~by:(composite_name c) ~candidates at run;
+  cover "a refusal followed" (!calls > 1);
+  cover "computed where placed" (!calls = 1);
+  cover "the ids refused" (c = Experts && !calls > 1);
+  cover "a product refused" (c = Apply && !calls > 1)
 
 let placements =
   group "placement"
@@ -1919,14 +2055,14 @@ let placements =
           match call with
           | `Dequant ->
               raises
-                (Invalid_argument ("Nx_quant.dequant" ^ split_blocks))
+                (split_blocks "Nx_quant.dequant" (Mem.split ~axis:1))
                 (fun () -> Nx_quant.dequant Nx.float32 w)
           | `Apply ->
               let x =
                 Nx.cast Nx.float64 (Nx.place Mem.on (random_floats [| 3; k |]))
               in
               raises
-                (Invalid_argument ("Nx_quant.apply" ^ split_blocks))
+                (split_blocks "Nx_quant.apply" (Mem.split ~axis:1))
                 (fun () -> Nx_quant.apply w x));
       (* A cut along k inside the blocks raises at the call, before any
          block is decoded, naming the placement that puts the weight whole:
@@ -1947,7 +2083,7 @@ let placements =
           let k = blocks * block_values f in
           let w = random_weight ~format:f [| 2; k |] in
           let wp = Nx_quant.place (at c) w in
-          let named fn = Invalid_argument (fn ^ split_blocks) in
+          let named fn = split_blocks fn (at c) in
           match call with
           | `Dequant ->
               raises (named "Nx_quant.dequant") (fun () ->
@@ -1965,8 +2101,10 @@ let placements =
               let x =
                 Nx.cast Nx.float64 (Nx.place Mem.on (random_floats [| 3; k |]))
               in
-              raises (named "Nx_quant.apply_experts") (fun () ->
-                  Nx_quant.apply_experts ~ids ep x));
+              raises
+                (split_blocks "Nx_quant.apply_experts"
+                   (at (Cut { axis = 2; tiles = 4 })))
+                (fun () -> Nx_quant.apply_experts ~ids ep x));
       (* An input of several leading axes cut along one of them, in
          windows of equal or unequal extents, the longest or not, one row
          for every position or one for several: its rows are gathered where
@@ -2016,11 +2154,12 @@ let placements =
           let w = Nx_quant.place (Mem.split ~axis:1) (random_weight [| 2; 64 |])
           and x = Nx.place Mem.on (random_floats [| 3; 64 |]) in
           raises
-            (Invalid_argument
-               "Nx_quant.apply: operand 2 lies at split ~axis:1 [m0; m1; m2; \
-                m3] and is read at on [m0; m1; m2; m3]; Nx.place \
-                (Placement.on s) z")
+            (split_blocks "Nx_quant.apply" (Mem.split ~axis:1))
             (fun () -> Nx_quant.apply w x));
+      prop
+        "a composite's refusal names the caller's argument and the place \
+         that resolves it"
+        composites composites_law;
       prop
         "an MXFP4 weight's codes cut along k, its scales whole, apply where \
          they lie where the tiles divide k / 2, and raise otherwise"

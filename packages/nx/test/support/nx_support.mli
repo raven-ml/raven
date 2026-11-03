@@ -103,6 +103,23 @@ val equal_elements : ('v, 's) Nx_array.Dtype.t -> 'v array -> 'v array -> unit
 (** [equal_elements dt expected actual] asserts [equal (elements dt)] over
     the elements of [expected] and [actual]. *)
 
+(** {1:remedies Remedies} *)
+
+val remedied :
+  by:string ->
+  candidates:(string -> 'd Nx.Placement.t list) ->
+  (string * 'd Nx.Placement.t) list ->
+  ((string -> 'd Nx.Placement.t) -> 'a) ->
+  'a
+(** [remedied ~by ~candidates args run] is [run at] for the placements [at]
+    of the arguments, starting at [args], once it returns. Each refusal of
+    [run at] must read
+    [by: name lies at p and is read at q; Nx.place (e) name] for an
+    argument [name] of [args], its placement [p] at [at], and [q] the format
+    of one of [candidates name] other than [p]; [run] is then called again
+    with [name] there. It fails the test at a refusal that is not so, or
+    that repeats an earlier one. *)
+
 (** {1:bits Bits to place} *)
 
 type bits = Bits : ('v, 's) Nx_array.t -> bits
