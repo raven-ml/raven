@@ -33,6 +33,8 @@ read_then_overwrite_kernels	-
 read_overwritten_through_kernels	-
 read_join_of_assigned_kernels	-
 read_join_of_overwritten_kernels	-
+stage_of_overwritten_kernels	-
+copy_of_overwritten_kernels	-
 setitem_kernels	-
 assign_bitcast_kernels	-
 clone_kernels	-

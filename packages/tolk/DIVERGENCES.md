@@ -5336,6 +5336,13 @@ fold wraps integers and holds its float bound`, hold.
   value reads the buffer in its own kernel, short of the stored states of
   other storage, which the kernel split stages by the buffer's identity. A
   run may start at bound variables, whose values its call knows
+
+  value reads the buffer, which the kernel split stages by the buffer's
+  identity. A copy or a stage of a run of a buffer that a store of the call
+  writes keeps reading the run itself, which the kernel split stages: a view,
+  a parameter of its own in the call's body that nothing writes, would be
+  read when its reader runs, in whatever state the buffer then holds, and
+  not in the state it was taken of. A run may start at bound variables, whose values its call knows
   (`Prepare.contiguous_view` checks the run at those values): a store into
   it stores into a view at that start, whose kernel knows the start modulo
   what the variables move it by (D54), so stores of one shape at starts of
@@ -5354,7 +5361,11 @@ fold wraps integers and holds its float bound`, hold.
   and 9 programs, and 4, 7, 7 and 7 with each device's own part stored at a
   bound start. Indexing the whole buffer at that start instead held 3.02 MB
   per device in fully sharded training over two devices, against the 2.29 MB
-  its bound allows and views keep.
+  its bound allows and views keep. The refusal of a view of a buffer the
+  call writes is (e): `x[0:2].contiguous()` read after `x.assign(...)` in
+  one realize read the assigned `x` (tinygrad's
+  `test/runtime/test_assign.py::test_swap_slices`, an expected failure, is
+  that bug), at the cost of a stage kernel per such view.
 - **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores into runs
   of a buffer at a bound start store into views of one alignment, whatever
   the start`, `› stores of one shape into two runs of a buffer share a
@@ -5368,6 +5379,14 @@ fold wraps integers and holds its float bound`, hold.
   create_linear_with_vars › merged calls › the work on a schedule of many
   outputs is linear in their number`; rune's `Rune.jit over several devices ›
   programs` and `› maps over a cut axis › partials give eager's
+
+  store into rows of a buffer of a value that reads it has no view` and `› a
+  store into columns of storage has no view`, `create_linear_with_vars ›
+  views of written buffers › a stage of a run of a buffer the call
+  overwrites reads it as it was` and `› halves of a buffer swapped through
+  stages swap`, and the programs `stage_of_overwritten` and
+  `copy_of_overwritten`; rune's `Rune.jit over several
+  devices › programs` and `› maps over a cut axis › partials give eager's
   bits, their programs do not grow`, and `rune jit › fully sharded`.
 
 ## D185. A ready kernel that only frees runs before one that also makes storage

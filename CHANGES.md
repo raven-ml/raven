@@ -943,6 +943,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A copy or a stage of a run of a buffer that the same realize overwrites
+  reads the run as it was (`Schedule.create_linear_with_vars`): it read the
+  overwritten values, as a swap of two halves of a buffer through stages
+  did.
 - A read through a join (`Ops.is_join`, an `Ops.after` whose dependencies
   are all `After`s) reads the state under it and waits for that state's
   writers: `x` read through `x.after y` after an assign of `x` no longer

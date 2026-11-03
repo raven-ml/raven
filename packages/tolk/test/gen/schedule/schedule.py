@@ -201,6 +201,22 @@ def read_join_of_overwritten():
     return Tensor(x0.after(y.uop)) * 2, x, y
 
 
+def stage_of_overwritten():
+    # a stage of a run of a buffer, read after the buffer is overwritten
+    x = empty(4).contiguous()
+    lo = x[0:2].contiguous()
+    x.assign(x * 2 + 7)
+    return lo + (x * 3).contiguous()[0:2], x
+
+
+def copy_of_overwritten():
+    # a copy of a run of a buffer to another device, read after the buffer is overwritten
+    x = empty(4).contiguous()
+    lo = x[0:2].to("CPU:1")
+    x.assign(x * 2 + 7)
+    return lo + (x * 3).contiguous()[0:2].to("CPU:1"), x
+
+
 def setitem():
     t = empty(8, 8).contiguous()
     t[2:4] = 1.0
@@ -281,6 +297,8 @@ PROGRAMS = {
     "read_overwritten_through": read_overwritten_through,
     "read_join_of_assigned": read_join_of_assigned,
     "read_join_of_overwritten": read_join_of_overwritten,
+    "stage_of_overwritten": stage_of_overwritten,
+    "copy_of_overwritten": copy_of_overwritten,
     "setitem": setitem,
     "assign_bitcast": lambda: empty(4, dtype=dtypes.uint32).contiguous().bitcast(dtypes.float).assign(empty(4) + 1),
     "clone": lambda: empty(4).clone(),

@@ -46,6 +46,7 @@ let programs =
     "conv";
     "copy";
     "copy_computed";
+    "copy_of_overwritten";
     "copy_one";
     "copy_view";
     "custom_kernel";
@@ -74,6 +75,7 @@ let programs =
     "softmax";
     "sort";
     "split_sum";
+    "stage_of_overwritten";
     "sum";
     "two_outputs";
     "variable_offset";
@@ -103,6 +105,7 @@ let kernel_graphs =
     "conv_kernels";
     "copy_computed_kernels";
     "copy_kernels";
+    "copy_of_overwritten_kernels";
     "copy_one_kernels";
     "copy_view_kernels";
     "custom_kernel_kernels";
@@ -134,6 +137,7 @@ let kernel_graphs =
     "softmax_kernels";
     "sort_kernels";
     "split_sum_kernels";
+    "stage_of_overwritten_kernels";
     "sum_kernels";
     "two_outputs_kernels";
     "variable_offset_kernels";
@@ -2639,6 +2643,35 @@ let joins =
         join_one_parameter;
     ]
 
+(* [x]'s first two elements, staged, read after [x] is overwritten: they are
+   [x]'s as it was. *)
+let stage_of_written () =
+  let x = f32 1 in
+  let first_two u = Shape.shrink u [ Some (Int 0, Int 2) ] in
+  let lo = Ops.contiguous (first_two x) in
+  let x1 = assign x Ops.O.((x * fl 2.) + fl 7.) in
+  let r =
+    assign (f32 ~n:2 2) Ops.O.(lo + first_two (Ops.contiguous Ops.O.(x1 * fl 3.)))
+  in
+  ignore (keeps_values [ r; x1 ])
+
+(* Halves of [x] swapped through stages of each. *)
+let swap_halves () =
+  let x = f32 1 in
+  let half lo u = Shape.shrink u [ Some (Int lo, Int (lo + 2)) ] in
+  let a = Ops.contiguous (half 0 x) and b = Ops.contiguous (half 2 x) in
+  let x1 = Ops.after x [ Ops.store (half 0 x) b ] in
+  let x2 = Ops.after x1 [ Ops.store (half 2 x1) a ] in
+  ignore (keeps_values [ x2 ])
+
+let views_of_written =
+  group "create_linear_with_vars › views of written buffers"
+    [
+      test "a stage of a run of a buffer the call overwrites reads it as it was"
+        stage_of_written;
+      test "halves of a buffer swapped through stages swap" swap_halves;
+    ]
+
 let () =
   exit
     (run "Tolk.Schedule"
@@ -2662,4 +2695,5 @@ let () =
          merged_calls;
          on_disk;
          joins;
+         views_of_written;
        ])

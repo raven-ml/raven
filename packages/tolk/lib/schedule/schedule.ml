@@ -829,6 +829,7 @@ type callify_ctx = {
   allocs : t Ordered.t;
   views : unit Tbl.t;
   mutable stores : t list; (* Last first. *)
+  written : unit Tbl.t; (* The buffers the call's stores write. *)
 }
 
 let callify_ctx () =
@@ -837,6 +838,7 @@ let callify_ctx () =
     allocs = Ordered.create ();
     views = Tbl.create 8;
     stores = [];
+    written = Tbl.create 8;
   }
 
 let all_int shape =
@@ -860,7 +862,13 @@ let view_of ctx c src =
       let walked u = op u <> Op.After || storage_base u == buf in
       op c = Op.Store && reaches ~gate:walked ~calls:Skip (nth c 1) buf
     in
-    if op buf <> Op.Buffer || reads_target () then None
+    (* A copy or a stage of a buffer the call writes reads the state it was
+       taken of, which a view, read when its reader runs, would not hold. *)
+    let overwritten () =
+      op c <> Op.Store
+      && match ctx with Some ctx -> Tbl.mem ctx.written buf | None -> false
+    in
+    if op buf <> Op.Buffer || reads_target () || overwritten () then None
     else
       (* A store's run may start at bound variables, which its call knows: its
          kernel then knows the start modulo what they move it by. *)
@@ -992,8 +1000,13 @@ let pm_replace_buf =
 let transform_to_call big_sink =
   if setting Setting.spec <> 0 then
     Spec.type_verify ~calls:Skip Spec.tensor big_sink;
-  (* The stores are collected before these rewrites change node identities. *)
+  (* The stores are collected before these rewrites change node identities,
+     and the buffers they write before any view is made. *)
   let ctx = callify_ctx () in
+  List.iter
+    (fun u ->
+      if is_store_after u then Tbl.replace ctx.written (storage_base u) ())
+    (toposort ~calls:Skip big_sink);
   ignore
     (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx big_sink
        (After_sources pm_callify_ctx_collect));

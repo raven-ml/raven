@@ -2419,7 +2419,7 @@ index 6eec3e198..78afe4e78 100644
    smem_prefix_for_cast: bool = False
    barrier = '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");' + '__builtin_amdgcn_s_barrier();' + \
 diff --git a/tinygrad/schedule/__init__.py b/tinygrad/schedule/__init__.py
-index 7ead5c9c6..124d40ac3 100644
+index 7ead5c9c6..9658af51c 100644
 --- a/tinygrad/schedule/__init__.py
 +++ b/tinygrad/schedule/__init__.py
 @@ -2,7 +2,7 @@ import time, inspect
@@ -2556,6 +2556,42 @@ index 7ead5c9c6..124d40ac3 100644
  from tinygrad.schedule.memory import memory_plan_rewrite
  from tinygrad.engine.realize import capturing, pm_flatten_linear
  from tinygrad.schedule.prepare import prepare_rangeify
+@@ -191,6 +241,7 @@ class CallifyCtx:
+   allocs: dict[UOp, UOp] = field(default_factory=dict)
+   views: set[UOp] = field(default_factory=set)
+   stores: list[UOp] = field(default_factory=list)
++  written: set[UOp] = field(default_factory=set)  # the buffers the call's stores write
+ 
+ def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
+   """MOPS(BUFFER) → SHRINK when movement ops collapse to a contiguous range."""
+@@ -204,6 +255,9 @@ def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
+     return None if view is None else view.unshard(unshard.arg, unshard.src[1:])
+ 
+   if buf.op is not Ops.BUFFER or (cv := src.contiguous_view()) is None or cv[0].op is not Ops.BUFFER: return None
++  # a copy or a stage of a buffer the call writes reads the state it was taken of, which a view, read when its reader runs,
++  # would not hold
++  if c.op is not Ops.STORE and ctx is not None and cv[0] in ctx.written: return None
+   buf, offset = cv
+   view = buf[offset:offset + src.max_numel() * src.element_size() // buf.element_size()].bitcast(src.dtype)
+   if ctx is not None: ctx.views.add(view)
+@@ -258,8 +312,15 @@ def transform_to_call(big_sink:UOp) -> UOp:
+   if VIZ: graph_rewrite(big_sink, PatternMatcher([]), name="View Graph")
+   if SPEC: type_verify(big_sink, spec_tensor)
+ 
+-  # The tensor replacement map is collected before these rewrites change node identities.
+-  graph_rewrite(big_sink, pm_callify_ctx_collect, ctx=(ctx:=CallifyCtx()), name="early transform tensor graph")
++  # The tensor replacement map is collected before these rewrites change node identities, and the buffers the stores write
++  # before any view is made.
++  ctx = CallifyCtx()
++  for u in big_sink.toposort(enter_calls=False):
++    if is_store_after(u):
++      b = u.src[0]
++      while b.op in GroupOp.Movement|{Ops.BITCAST, Ops.AFTER}: b = b.src[0]
++      ctx.written.add(b)
++  graph_rewrite(big_sink, pm_callify_ctx_collect, ctx=ctx, name="early transform tensor graph")
+   ret = graph_rewrite(UOp.sink(*ctx.stores), pm_canonicalize_alloc+pm_replace_buf, ctx=ctx, bottom_up=True, name="replace bufs")
+   ret = ret.call(*ctx.replacements, precompile=True)
+   if VIZ: graph_rewrite(ret, PatternMatcher([]), name="View Call")
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
 index 3c92ff0b2..e29222d2e 100644
 --- a/tinygrad/schedule/indexing.py

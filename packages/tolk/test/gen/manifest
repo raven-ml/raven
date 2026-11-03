@@ -3633,6 +3633,10 @@ schedule/schedule/copy_computed_linear.golden
 schedule/schedule/copy_computed_schedule.golden
 schedule/schedule/copy_kernels.golden
 schedule/schedule/copy_linear.golden
+schedule/schedule/copy_of_overwritten.golden
+schedule/schedule/copy_of_overwritten_kernels.golden
+schedule/schedule/copy_of_overwritten_linear.golden
+schedule/schedule/copy_of_overwritten_schedule.golden
 schedule/schedule/copy_one.golden
 schedule/schedule/copy_one_kernels.golden
 schedule/schedule/copy_one_linear.golden
@@ -3784,6 +3788,10 @@ schedule/schedule/split_sum.golden
 schedule/schedule/split_sum_kernels.golden
 schedule/schedule/split_sum_linear.golden
 schedule/schedule/split_sum_schedule.golden
+schedule/schedule/stage_of_overwritten.golden
+schedule/schedule/stage_of_overwritten_kernels.golden
+schedule/schedule/stage_of_overwritten_linear.golden
+schedule/schedule/stage_of_overwritten_schedule.golden
 schedule/schedule/sum.golden
 schedule/schedule/sum_kernels.golden
 schedule/schedule/sum_linear.golden
