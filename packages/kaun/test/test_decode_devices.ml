@@ -236,9 +236,10 @@ let bfloat16 m =
   }
 
 (* At bfloat16 the prompt's logits over four devices, against one
-   device's: the largest gap, a baseline. A row projection rounds each
-   device's term into bfloat16 and adds the four in bfloat16, which the
-   norms, the attention and the head carry to the logits. *)
+   device's: the largest gap, a baseline, printed with [%h] to be exact
+   on every system. A row projection rounds each device's term into
+   bfloat16 and adds the four in bfloat16, which the norms, the attention
+   and the head carry to the logits. *)
 let test_bfloat16 () =
   let m = bfloat16 (model ()) in
   let slots = 8 in
@@ -259,8 +260,8 @@ let test_bfloat16 () =
   Array.iteri
     (fun i w -> gap := Float.max !gap (Float.abs (w -. four.(i))))
     one;
-  expect (Printf.sprintf "largest gap %g" !gap) @@ __POS_OF__ {|
-    largest gap 0.046875
+  expect (Printf.sprintf "largest gap %h" !gap) @@ __POS_OF__ {|
+    largest gap 0x1.8p-5
   |}
 
 (* One row projection at bfloat16: [x] of ones against a column of

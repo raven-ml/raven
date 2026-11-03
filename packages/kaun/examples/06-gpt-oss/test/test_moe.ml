@@ -127,7 +127,9 @@ let places f x =
   List.filter (fun l -> has "= Place (" l && has "partial" l) lines
 
 (* The largest gap between [want] and [got], each element, for a baseline:
-   the devices reassociate float32 sums one device sums otherwise. *)
+   the devices reassociate float32 sums one device sums otherwise. Baselines
+   print it with [%h], exact and the same on every system: the C library's
+   [%g] writes 1.19209e-007 under mingw-w64. *)
 let gap want got =
   let want = Nx.to_array want and got = Nx.to_array got in
   let g = ref 0. in
@@ -152,7 +154,7 @@ let test_rows weight baseline () =
   let eager = gap host (close y) in
   let step x = close (f x) in
   let compiled = gap host (Rune.jit' step (on x)) in
-  expect (Printf.sprintf "eager %g, compiled %g" eager compiled) baseline;
+  expect (Printf.sprintf "eager %h, compiled %h" eager compiled) baseline;
   equal ~msg:"one closing, after the combine" int 1
     (List.length (places step (on x)))
 
@@ -185,9 +187,9 @@ let test_rows_bf16 () =
   let on v = Nx.place S.on v in
   let p = rows p and ids = on ids and weights = on weights in
   let step x = close (Moe.apply ~limit p (ids, weights) x) in
-  expect (Printf.sprintf "largest gap %g" (gap host (step (on x))))
+  expect (Printf.sprintf "largest gap %h" (gap host (step (on x))))
   @@ __POS_OF__ {|
-    largest gap 0.0078125
+    largest gap 0x1p-7
   |};
   equal ~msg:"one closing, compiled" int 1 (List.length (places step (on x)))
 
@@ -207,7 +209,7 @@ let test_split_compiled weight baseline () =
   let ids = on ids and weights = on weights in
   let step x = close (Moe.apply ~limit p (ids, weights) x) in
   expect
-    (Printf.sprintf "compiled %g" (gap host (Rune.jit' step (on x))))
+    (Printf.sprintf "compiled %h" (gap host (Rune.jit' step (on x))))
     baseline;
   equal ~msg:"no closing" (list string) [] (places step (on x))
 
@@ -226,22 +228,22 @@ let () =
            [
              test "float experts split compile, with no sum to close"
                (test_split_compiled float_weight @@ __POS_OF__ {|
-                 compiled 1.78814e-07
+                 compiled 0x1.8p-23
                |});
              test "MXFP4 experts split compile, with no sum to close"
                (test_split_compiled mxfp4_weight @@ __POS_OF__ {|
-                 compiled 0.000976562
+                 compiled 0x1p-10
                |});
            ];
          group "row parallelism"
            [
              test "float experts cut along their features close once"
                (test_rows float_weight @@ __POS_OF__ {|
-                 eager 1.19209e-07, compiled 1.19209e-07
+                 eager 0x1p-23, compiled 0x1p-23
                |});
              test "MXFP4 experts cut along their features close once"
                (test_rows mxfp4_weight @@ __POS_OF__ {|
-                 eager 0.00195312, compiled 0.000976562
+                 eager 0x1p-9, compiled 0x1p-10
                |});
              test "bfloat16 experts cut along their features close once"
                test_rows_bf16;
