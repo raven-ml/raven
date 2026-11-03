@@ -92,8 +92,7 @@ let rec fill fd b off =
    that a small file costs its bytes alone. A /proc file reports a size of 0,
    and a file may grow after the [fstat]: the buffer doubles until a read finds
    the end. *)
-let read_all path =
-  let fd = open_read path in
+let read_fd path fd =
   Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
   wrap path @@ fun () ->
   let size = (Unix.fstat fd).Unix.st_size in
@@ -111,10 +110,12 @@ let read_all path =
   in
   go (Bytes.create size) 0
 
-let read_opt path =
-  match read_all path with
-  | s -> Some s
-  | exception Sys_error _ when not (Sys.file_exists path) -> None
+let read_all path = read_fd path (open_read path)
+
+(* Only the open's own ENOENT says the file does not exist: a test of its
+   existence after a failed open would race with a writer that renames the
+   file into place meanwhile. *)
+let read_opt path = Option.map (read_fd path) (open_read_opt path)
 
 (* [read_small p] is [p]'s content, or [None] if it cannot be read. *)
 let read_small path = try read_opt path with Sys_error _ -> None

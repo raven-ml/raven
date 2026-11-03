@@ -1946,9 +1946,32 @@ let ended_run =
      ^ "\n");
     id
 
+(* A run's notes as two domains set, remove and read them. A reference is the
+   notes a run holds; a system side is its id. *)
+let notes_w : (string option ref, string) abstract = abstract "n"
+
 let domain_tests =
   group "domains"
     [
+      stateful ~count:30 ~domains:2
+        "notes set, removed and read on two domains read as some order left them"
+        [
+          command "start"
+            (Gen.unit @-> makes notes_w)
+            (fun () -> ref None)
+            ended_run;
+          command "set"
+            (Gen.bool @-> notes_w ^-> returns unit)
+            (fun some r -> r := if some then Some "n" else None)
+            (fun some id ->
+              Store.set_notes (Lazy.force race_store) id
+                (if some then Some "n" else None));
+          command "read"
+            (notes_w ^-> returns (option string))
+            (fun r -> !r)
+            (fun id ->
+              Run.notes (require_some (Store.run (Lazy.force race_store) id)));
+        ];
       stateful ~count:10 ~domains:2
         "a deletion and annotations on two domains leave the run whole or gone"
         [
