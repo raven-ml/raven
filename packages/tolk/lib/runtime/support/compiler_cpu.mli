@@ -43,6 +43,12 @@ val clang : string -> Renderer.Compiler.t
     loop's iterations into vectors, so that a long source compiles in a
     fraction of the time.
 
+    Several sources ({!Renderer.Compiler.compile_all}) compile in one run of
+    Clang's compiler proper, its [-cc1] command as Clang states it runs for
+    these options ([clang -###]), each source from a file of its own, so that
+    Clang starts once for them; each object is the one Clang makes of its
+    source alone, from standard input.
+
     Objects do not depend on the working directory. With {!Setting.ccache}, they
     are cached in the table [compile_C_obj_A_D], where [C] is the Clang run, [A]
     is [arch] with its commas replaced by underscores, and [D] the digest of

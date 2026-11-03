@@ -1593,18 +1593,26 @@ let host_entry ~arch prg source =
 
 let text source = match arg source with String s -> s | _ -> assert false
 
-(* The text [ren]'s compiler compiles for [prg]'s rendered [source]. *)
+(* The text [ren]'s compiler compiles for [prg]'s rendered [source]: on the
+   host, with the entry rig calls. *)
 let compiled_text (ren : Renderer.t) prg source =
   if ren.target.device = "CPU" then
     host_entry ~arch:ren.target.arch prg (text source)
   else text source
 
-let do_compile ((ren : Renderer.t), compile) prg source =
+(* [compiled_text], printing the program's source from DEBUG 4. *)
+let compiled_source ren prg source =
   if setting Setting.debug >= 4 then print_endline (text source);
-  let lib = compile ren.compiler (compiled_text ren prg source) in
+  compiled_text ren prg source
+
+let with_binary (ren : Renderer.t) prg lib =
   if setting Setting.debug >= 7 then
     Renderer.Compiler.disassemble ren.compiler lib;
-  Some (replace prg ~src:(src prg @ [ v Op.Binary ~arg:(Bytes lib) ]))
+  replace prg ~src:(src prg @ [ v Op.Binary ~arg:(Bytes lib) ])
+
+let do_compile ((ren : Renderer.t), compile) prg source =
+  let lib = compile ren.compiler (compiled_source ren prg source) in
+  Some (with_binary ren prg lib)
 
 let program_with srcs = Upat.op Op.Program ~src:srcs ~name:"prg"
 
@@ -1779,20 +1787,23 @@ let programs () = Atomic.get programs_made
    no binary kept on disk. *)
 exception Unkept
 
-(* A program read back is compiled as a made one is, so it shows its source
-   from DEBUG 4 and its instructions from 7. [only_read] makes the program
-   from what the disk keeps alone, and raises [Unkept] for want of it, before
-   it shows anything. *)
-let made_program ?beam ~only_read ~key ~kernel ast (ren : Renderer.t) =
+(* A program up to its source, made or read back from disk, and whether it
+   was read. [only_read] raises [Unkept] where it would render. *)
+let rendered_program ?beam ~only_read ~key ~kernel ast (ren : Renderer.t) =
   let render () =
     if only_read then raise_notrace Unkept;
     let prg = linearized ?beam ast ren in
     Option.get (do_render ren prg (nth prg 1))
   in
-  let prg, read =
-    if not (kept kernel ren) then (render (), false)
-    else Graph.cached ~table:"to_program" ~key ~valid:rendered render
-  in
+  if not (kept kernel ren) then (render (), false)
+  else Graph.cached ~table:"to_program" ~key ~valid:rendered render
+
+(* A program read back is compiled as a made one is, so it shows its source
+   from DEBUG 4 and its instructions from 7. [only_read] makes the program
+   from what the disk keeps alone, and raises [Unkept] for want of it, before
+   it shows anything. *)
+let made_program ?beam ~only_read ~key ~kernel ast (ren : Renderer.t) =
+  let prg, read = rendered_program ?beam ~only_read ~key ~kernel ast ren in
   let compile =
     if not only_read then Renderer.Compiler.compile_cached
     else
@@ -1871,3 +1882,77 @@ let read ast ren =
   with
   | m -> Option.map (served p) m
   | exception Unkept -> None
+
+(* A kernel's program up to its source, to be compiled. *)
+type pending = {
+  ren : Renderer.t;
+  params : params;
+  key : string;
+  prg : Ops.t;
+  read : bool;
+  source : string;
+}
+
+let to_programs ?beam kernels =
+  let seen = Hashtbl.create 64 in
+  let fresh (ast, ren) =
+    let key = program_key ast ren in
+    let fresh = (not (Hashtbl.mem seen key)) && Option.is_none (read ast ren) in
+    Hashtbl.replace seen key ();
+    fresh
+  in
+  let render (ast, (ren : Renderer.t)) =
+    let kernel = kernel_of ast and params = params ast ren in
+    let key = keyed params ren in
+    let prg, read =
+      rendered_program ?beam ~only_read:false ~key ~kernel ast ren
+    in
+    let source = compiled_source ren prg (nth prg 2) in
+    { ren; params; key; prg; read; source }
+  in
+  let kernels = List.filter fresh kernels in
+  (* A beam search times its candidates, which concurrent compiles would
+     disturb: kernels then make their programs one at a time, in order. *)
+  if List.exists (fun (ast, _) -> (kernel_of ast).beam > 0) kernels then
+    List.iter (fun (ast, ren) -> ignore (to_program ?beam ast ren)) kernels
+  else
+  (* Each of up to [PARALLEL] workers takes kernels to render until none is
+     left, then compiles its sources, each compiler's in one call, which
+     starts its toolchain once for them. A worker that starts once the
+     kernels are taken does nothing. *)
+  let kernels = Array.of_list kernels and next = Atomic.make 0 in
+  let compile mine =
+    let compilers =
+      List.fold_left
+        (fun cs k ->
+          if List.memq k.ren.compiler cs then cs else k.ren.compiler :: cs)
+        [] mine
+    in
+    List.concat_map
+      (fun c ->
+        let ks = List.filter (fun k -> k.ren.compiler == c) mine in
+        List.combine ks
+          (Renderer.Compiler.compile_all c (List.map (fun k -> k.source) ks)))
+      (List.rev compilers)
+  in
+  let work _ =
+    let rec take mine =
+      let i = Atomic.fetch_and_add next 1 in
+      if i >= Array.length kernels then List.rev mine
+      else take (render kernels.(i) :: mine)
+    in
+    compile (take [])
+  in
+  let keep (k, lib) =
+    let made () =
+      let prg = with_binary k.ren k.prg lib in
+      Atomic.incr programs_made;
+      let named = if k.read then rename k.params.devices prg else prg in
+      { devices = k.params.devices; named; prg }
+    in
+    ignore (Helpers.Memo.get to_program_cache k.key made)
+  in
+  let workers =
+    min (max 1 (Setting.value Setting.parallel)) (Array.length kernels)
+  in
+  List.init workers Fun.id |> Worker.map work |> List.concat |> List.iter keep

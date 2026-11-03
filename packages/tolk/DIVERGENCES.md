@@ -5633,3 +5633,47 @@ fold wraps integers and holds its float bound`, hold.
   tinygrad, and every host golden with a vector bitcast; rune's compile
   bench row `special/betaincinv-grad-f64`, whose fudge baseline the
   scheduled re-record records.
+
+## D196. A schedule's host kernels compile in one run of Clang per domain
+
+- **tinygrad:** `engine/realize.py:238` (`lower_and_compile`, which makes
+  each kernel's program, `to_program`, apart on its pool's workers);
+  `codegen/__init__.py:461` (`do_compile`) and `device.py:333`
+  (`Compiler.compile_cached`, one source at a time);
+  `runtime/support/compiler_cpu.py:18` (`ClangCompiler.compile`, a `clang`
+  process per source, from standard input).
+- **tolk:** `Codegen.to_programs`, which `Realize.lower_and_compile` calls
+  for every kernel; `Renderer.Compiler.batch` and
+  `Renderer.Compiler.compile_all`; `Compiler_cpu.clang`'s `compile`, with
+  `Compiler_cpu.cc1` and `Compiler_cpu.compile_files`.
+- **Differs:** up to `PARALLEL` workers on `Worker.map` each take the
+  kernels a schedule lacks, those `Codegen.read` does not find, one at a
+  time, to lower and render until none is left, then compile their sources,
+  each compiler's in one call (`Renderer.Compiler.compile_all`), which Clang
+  serves with one run of its compiler proper (`clang -cc1`, the command
+  Clang states for the options with `-###`), each source the file `-` of a
+  directory of its own, after a line marker that names it `<stdin>`, the
+  files named in a response file. Each object is the one Clang's driver
+  makes of the source alone from standard input, so the cache keys, tables
+  and entries are unchanged. When a kernel asks for a beam search, each
+  kernel compiles alone, in order. Clang's driver runs the compiler proper
+  in its own process for one source, and starts a process for each of
+  several (`clang -c a.c b.c` costs as many starts as `clang -c` per
+  source), so only the compiler proper's own command saves the starts.
+- **Reason:** (d): rune's compile bench rows `scan/checks-48`,
+  `scan/tridiagonal-100`, `devices/partials-16` and `model/schools-start`,
+  which compile 111, 52, 60 and 39 host kernels, most under 8 KB. On fudge,
+  Clang took 30 ms of wall for a kernel under 2 KB and 41 ms for one of 2-8
+  KB, and 25-33 ms for an empty source (111 runs, loaded): the start
+  dominates. checks-48's 111 kernels took 2.4-3.5 s of CPU as 111 runs and
+  0.54-0.65 s as one run of the compiler proper (three interleaved pairs).
+- **Pinned by:** the Compiler_cpu suite's `several sources › each object is
+  the one its source compiles to alone` and `› a rejected source among
+  others raises its own diagnostics`; the Renderer suite's `Compiler ›
+  compile_all compiles the sources the table lacks in one call, each once`,
+  `› compile_all calls nothing when the table holds every source`, `›
+  compile_all raises for the first source the toolchain rejects` and `›
+  compile_cached behaves as a table of binaries`; the Codegen suite's
+  `programs are kept › to_programs makes each kernel's program, compiled in
+  at most a list per domain` and `› to_programs on one domain compiles every
+  source in one call`; rune's compile bench rows above.

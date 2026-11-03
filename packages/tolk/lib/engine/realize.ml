@@ -152,35 +152,13 @@ let lower_and_compile ?search ~targets linear =
         else Option.map (fun a -> (c, a)) (get_call_to_compile targets c))
       (toposort ~calls:Skip linear)
   in
-  (* One kernel of each program key, as kernels of one key take one program:
-     those that differ only in their parameters' devices (D170). A program
-     made or kept on disk is read here: a read took 0.4 to 0.5 ms on fudge,
-     less than a domain's start and the collections it then joins. One that
-     another domain is making goes to the map, where [to_program] waits for
-     it. Only the others are compiled, so a schedule whose programs are all
-     made or kept spawns no domain. *)
-  let seen = Hashtbl.create 64 in
-  let first (_, (ast, ren)) =
-    let key = Codegen.program_key ast ren in
-    if Hashtbl.mem seen key then None
-    else begin
-      Hashtbl.replace seen key ();
-      match Codegen.read ast ren with Some _ -> None | None -> Some (ast, ren)
-    end
-  in
-  let missing = List.filter_map first calls in
-  (* A beam search times its candidates, which concurrent compilations would
-     disturb. *)
-  let beam (_, (ast, _)) =
-    match arg ast with Kernel k -> k.beam > 0 | _ -> false
-  in
-  let map =
-    if List.compare_length_with missing 1 <= 0 || List.exists beam calls then
-      List.map
-    else Worker.map
-  in
+  (* Kernels of one program key take one program: those that differ only in
+     their parameters' devices. A program made or kept on disk is read on the
+     calling domain: a read took 0.4 to 0.5 ms on fudge, less than a domain's
+     start and the collections it then joins, so a schedule whose programs are
+     all made or kept spawns no domain. *)
+  Codegen.to_programs ?beam:search (List.map snd calls);
   let compile (ast, ren) = Codegen.to_program ?beam:search ast ren in
-  ignore (map compile missing);
   (* Each kernel now finds its program kept, its parameters on its devices. *)
   substitute ~calls:Skip ~pass:Fixed_point linear
     (List.map

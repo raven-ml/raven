@@ -647,6 +647,37 @@ let compiles_once_across_domains () =
     programs;
   equal int ~msg:"compilations" 1 (Atomic.get compiled)
 
+(* to_programs over [n] fresh kernels with [parallel] domains, by a compiler of
+   several sources at once that records how many each call compiles. *)
+let made_together ~parallel n =
+  let calls = ref [] and lock = Mutex.create () in
+  let compiler =
+    Renderer.Compiler.batch (fun srcs ->
+        Mutex.protect lock (fun () -> calls := List.length srcs :: !calls);
+        srcs)
+  in
+  let r = renderer_for ~compiler clang_target in
+  let ks = List.init n (fun _ -> fresh_kernel ()) in
+  Setting.context
+    [ B (Setting.parallel, parallel) ]
+    (fun () -> Codegen.to_programs (List.map (fun k -> (k, r)) ks));
+  (ks, r, !calls)
+
+let compiles_together () =
+  let ks, r, calls = made_together ~parallel:3 7 in
+  equal int ~msg:"sources compiled" 7 (List.fold_left ( + ) 0 calls);
+  less int ~msg:"calls" ~than:4 (List.length calls);
+  List.iter
+    (fun k ->
+      match Codegen.read k r with
+      | Some made -> same_graph (Codegen.to_program k r) made
+      | None -> fail "a kernel has no program")
+    ks
+
+let compiles_in_one_call () =
+  let _, _, calls = made_together ~parallel:1 5 in
+  equal (list int) [ 5 ] calls
+
 (* A compiler that rejects its first source: the call that raises keeps
    nothing, and the next makes the program. *)
 let raising_keeps_nothing () =
@@ -835,6 +866,12 @@ let caching =
         compiles_once_across_domains;
       test "a call that raises keeps nothing, and the next makes the program"
         raising_keeps_nothing;
+      test
+        "to_programs makes each kernel's program, compiled in at most a list \
+         per domain"
+        compiles_together;
+      test "to_programs on one domain compiles every source in one call"
+        compiles_in_one_call;
       test "a program made under one setting is not returned under another"
         separates_settings;
       group "a program is made again under another value of"

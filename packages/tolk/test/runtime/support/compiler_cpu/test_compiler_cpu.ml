@@ -240,6 +240,77 @@ let objects =
           not_contains ~sub:"sqrtf" text);
     ]
 
+(* Several sources at once *)
+
+let ccache_off f = Setting.context [ B (Setting.ccache, false) ] f
+
+(* Sources of each length class, the loop vectorizer's on and off. *)
+let pool =
+  [
+    ("increment", increment);
+    ("add", add);
+    ("square_root", square_root);
+    ("add_n", add_n);
+    ("pressure", pressure);
+    ("clamped_gathers", clamped_gathers);
+    ("half_casts", half_casts);
+    ("long", add_n_of (long_source + 1));
+  ]
+
+let alone =
+  lazy
+    (let clang = Compiler_cpu.clang (host_machine ^ ",native") in
+     List.map (fun (name, src) -> (name, ccache_off (fun () -> Compiler.compile clang src))) pool)
+
+let batches =
+  group "several sources"
+    [
+      prop "each object is the one its source compiles to alone" ~count:25
+        Gen.(
+          list ~size:(int_range 2 6)
+            (of_list ~pp:Format.pp_print_string (List.map fst pool)))
+        (fun names ->
+          cover "a source twice" (List.length (List.sort_uniq compare names) < List.length names);
+          cover "a long source among short ones"
+            (List.mem "long" names && List.exists (( <> ) "long") names);
+          let clang = Compiler_cpu.clang (host_machine ^ ",native") in
+          let objs =
+            ccache_off (fun () ->
+                Compiler.compile_all clang
+                  (List.map (fun n -> List.assoc n pool) names))
+          in
+          equal (list string)
+            (List.map (fun n -> List.assoc n (Lazy.force alone)) names)
+            objs);
+      test "a source that names its own file compiles to one object" (fun () ->
+          let clang = Compiler_cpu.clang (host_machine ^ ",native") in
+          let named = "const char *file(void) { return __FILE__; }" in
+          let objs () =
+            ccache_off (fun () -> Compiler.compile_all clang [ add; named ])
+          in
+          let first = List.nth (objs ()) 1 in
+          equal string ~msg:"again" first (List.nth (objs ()) 1);
+          equal string ~msg:"alone" first
+            (ccache_off (fun () -> Compiler.compile clang named)));
+      test "a rejected source among others raises its own diagnostics"
+        (fun () ->
+          let clang = Compiler_cpu.clang (host_machine ^ ",native") in
+          raises_match
+            (function
+              | Compiler.Compile_error msg ->
+                  has_infix ~affix:"undeclared_name" msg
+                  && not (has_infix ~affix:"other_name" msg)
+              | _ -> false)
+            (fun () ->
+              ccache_off (fun () ->
+                  Compiler.compile_all clang
+                    [
+                      increment;
+                      "int f(void) { return undeclared_name; }";
+                      "int g(void) { return other_name; }";
+                    ])));
+    ]
+
 (* tinygrad's tests *)
 
 let tinygrad =
@@ -564,8 +635,6 @@ let disassembly_ =
 
 (* The cache *)
 
-let ccache_off f = Setting.context [ B (Setting.ccache, false) ] f
-
 (* The table of the host's compiler, as a process of its own names it. *)
 let host_table () =
   print_string
@@ -621,6 +690,7 @@ let () =
     (run "Tolk.Compiler_cpu"
        [
          objects;
+         batches;
          tinygrad;
          execution;
          features;

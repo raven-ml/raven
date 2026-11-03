@@ -26,10 +26,6 @@ let run prog args src =
   | Ok None -> Error (prog ^ ": its exit status is lost")
   | Error why -> Error why
 
-let compile prog args src =
-  match run prog args src with
-  | Ok (WEXITED 0, obj, _) -> obj
-  | Ok (_, _, err) | Error err -> raise (Renderer.Compiler.Compile_error err)
 
 (* What Clang states it runs for [args] ([-###]), without running it: its
    version and installation, then the command of its compiler proper, which
@@ -54,6 +50,113 @@ let statement =
         in
         Hashtbl.replace stated (prog, args) s;
         s
+
+(* The arguments of a command as Clang states it: each in double quotes, in
+   which a backslash escapes the character after it. *)
+let unquoted line =
+  let n = String.length line and arg = Buffer.create 64 in
+  let rec outside i args =
+    if i >= n then List.rev args
+    else if line.[i] = '"' then inside (i + 1) args
+    else outside (i + 1) args
+  and inside i args =
+    if i >= n then List.rev args
+    else
+      match line.[i] with
+      | '\\' when i + 1 < n ->
+          Buffer.add_char arg line.[i + 1];
+          inside (i + 2) args
+      | '"' ->
+          let a = Buffer.contents arg in
+          Buffer.clear arg;
+          outside (i + 1) (a :: args)
+      | c ->
+          Buffer.add_char arg c;
+          inside (i + 1) args
+  in
+  outside 0 []
+
+(* The command of Clang's compiler proper ([-cc1]) that a statement of a
+   compile from standard input to standard output names, without its input
+   and output, or the statement if it names none: then Clang rejected the
+   arguments or did not run. *)
+let cc1 stated =
+  let command line =
+    match unquoted line with
+    | prog :: "-cc1" :: args -> Some (prog, "-cc1" :: args)
+    | _ -> None
+  in
+  let rec without_io = function
+    | "-o" :: "-" :: args -> without_io args
+    | [ "-" ] -> []
+    | a :: args -> a :: without_io args
+    | [] -> []
+  in
+  match List.find_map command (String.split_on_char '\n' stated) with
+  | Some (prog, args) -> Ok (prog, without_io args)
+  | None -> Error stated
+
+(* Several sources compiled by one run of Clang's compiler proper, each from a
+   file of its own, as Clang's driver would compile it alone: the driver runs
+   the compiler proper in its own process for one source, and starts one
+   process for each of several, whose start costs about what a small kernel's
+   compile does. Each source is the file [-] in a directory of its own, which
+   the object names as it names standard input, and starts with a line marker
+   that names it [<stdin>], as its diagnostics and [__FILE__] then do: the
+   object is the one the driver makes of the source from standard input,
+   wherever the directory is. The compiler writes it beside the source as
+   [-.o]. The inputs are named in a response file, since Windows bounds a
+   command line to 32767 characters. *)
+let compile_files (prog, args) srcs =
+  let out = Filename.temp_file "tolk" "" and err = Filename.temp_file "tolk" "" in
+  let rsp = Filename.temp_file "tolk" ".rsp" in
+  let dir = Filename.temp_dir "tolk" "" in
+  let input i = Filename.concat (Filename.concat dir (string_of_int i)) "-" in
+  let remove () =
+    let rm f = if Sys.file_exists f then Sys.remove f in
+    List.iteri
+      (fun i _ ->
+        rm (input i);
+        rm (input i ^ ".o");
+        Sys.rmdir (Filename.dirname (input i)))
+      srcs;
+    Sys.rmdir dir;
+    List.iter rm [ out; err; rsp ]
+  in
+  Fun.protect ~finally:remove @@ fun () ->
+  List.iteri
+    (fun i src ->
+      Sys.mkdir (Filename.dirname (input i)) 0o700;
+      Out_channel.with_open_bin (input i) (fun oc ->
+          output_string oc "# 1 \"<stdin>\"\n";
+          output_string oc src))
+    srcs;
+  (* A response file is read by Windows' rules on Windows, where a path's
+     backslashes may be slashes, and by the shell's elsewhere. *)
+  let quoted path =
+    let path =
+      if Sys.win32 then String.map (function '\\' -> '/' | c -> c) path
+      else
+        String.concat ""
+          (List.map
+             (function
+               | ('\\' | '"') as c -> "\\" ^ String.make 1 c
+               | c -> String.make 1 c)
+             (List.of_seq (String.to_seq path)))
+    in
+    "\"" ^ path ^ "\""
+  in
+  Out_channel.with_open_bin rsp (fun oc ->
+      List.iteri (fun i _ -> output_string oc (quoted (input i) ^ "\n")) srcs);
+  let read path = In_channel.with_open_bin path In_channel.input_all in
+  let fail why = raise (Renderer.Compiler.Compile_error why) in
+  match
+    Helpers.run_program ~stdout:out ~stderr:err prog (args @ [ "@" ^ rsp ])
+  with
+  | Ok (Some (WEXITED 0)) -> List.mapi (fun i _ -> read (input i ^ ".o")) srcs
+  | Ok (Some _) -> fail (read err)
+  | Ok None -> fail (prog ^ ": its exit status is lost")
+  | Error why -> fail why
 
 (* What a Clang states about itself: its version and installation. *)
 let version prog = statement prog [ "--version" ]
@@ -283,5 +386,26 @@ let clang arch =
       (String.map (function ',' -> '_' | c -> c) arch)
       (Digest.to_hex (Digest.string stated))
   in
-  Renderer.Compiler.v ~cachekey:table ~disassemble:Helpers.cpu_objdump
-    (fun src -> compile cc (args ~long:(String.length src > long_source)) src)
+  (* Sources of each length class compile in one run, with that class's
+     arguments; their objects come back in the sources' order. *)
+  let compile srcs =
+    let long src = String.length src > long_source in
+    let run longer =
+      match List.filter (fun src -> long src = longer) srcs with
+      | [] -> []
+      | some -> (
+          match cc1 (statement cc (args ~long:longer)) with
+          | Ok command -> compile_files command some
+          | Error why -> raise (Renderer.Compiler.Compile_error why))
+    in
+    let longs = ref (run true) and shorts = ref (run false) in
+    List.map
+      (fun src ->
+        let objs = if long src then longs else shorts in
+        let obj = List.hd !objs in
+        objs := List.tl !objs;
+        obj)
+      srcs
+  in
+  Renderer.Compiler.batch ~cachekey:table ~disassemble:Helpers.cpu_objdump
+    compile

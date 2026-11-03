@@ -927,6 +927,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Realize.lower_and_compile` compiles a schedule's host kernels in one Clang
+  run per domain (`Codegen.to_programs`, `Renderer.Compiler.compile_all`),
+  not one process per kernel, whose start cost what a small kernel's compile does.
 - `Cstyle.clang` writes a bitcast between vectors as a vector cast, one
   instruction to Clang: rune's float64 `betaincinv` gradient takes 2.7-4.8 s
   of Clang from 6.8-11.9 s, to the same object.

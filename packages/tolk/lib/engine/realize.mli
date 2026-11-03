@@ -69,12 +69,11 @@ val lower_and_compile :
     The kernels of one program key ({!Codegen.program_key}) take one program,
     compiled once: a key whose program this process has made or the disk
     keeps ({!Codegen.read}) takes it, read on the calling domain, and the
-    others, and those another domain is making, are compiled in parallel on
-    {!Worker.map}, one kernel of each,
-    except when there is only one, or when a kernel of [linear] asks for a beam
-    search: the search times candidates ([search]), which a concurrent
-    compilation would disturb, so the kernels are then compiled in order.
-    [search] is {!Codegen.to_program}'s [beam].
+    others, one kernel of each, are made together in parallel
+    ({!Codegen.to_programs}), except when one of them asks for a beam search:
+    the search times candidates ([search]), which a concurrent compilation
+    would disturb, so they are then compiled in order. [search] is
+    {!Codegen.to_program}'s [beam].
 
     Raises as {!Codegen.to_program} does, [Invalid_argument] if
     {!Device.renderer} finds no renderer for a target, and [Failure] if the

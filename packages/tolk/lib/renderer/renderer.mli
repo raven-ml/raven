@@ -102,6 +102,16 @@ module Compiler : sig
       setting {!Setting.ccache} holds. [cachekey] is called when the name is
       first needed, and again only after it raised. *)
 
+  val batch :
+    ?cachekey:(unit -> string) ->
+    ?disassemble:(string -> unit) ->
+    (string list -> string list) ->
+    t
+  (** [batch ~cachekey ~disassemble compile] is {!v}'s compiler, whose
+      [compile] is given several sources at once and returns their binaries in
+      their order. Each binary is the one [compile] makes of its source given
+      alone. *)
+
   val cachekey : t -> string option
   (** [cachekey c] is the name of [c]'s toolchain and options, if [c] has one:
       the table of its binaries, whether or not they are kept.
@@ -129,6 +139,14 @@ module Compiler : sig
       Raises {!Compile_error} as {!compile}, what {!cachekey} raises, and
       [Invalid_argument] naming [src] if it must be compiled under
       {!Setting.assert_compile}. *)
+
+  val compile_all : t -> string list -> string list
+  (** [compile_all c srcs] is [List.map (compile_cached c) srcs], with the
+      sources that [c]'s disk cache does not hold, each once, compiled by one
+      call of [c]'s function: one of {!batch}'s compiles them in one run of its
+      toolchain.
+
+      Raises as {!compile_cached} does, for the first of [srcs] that raises. *)
 
   val disassemble : t -> string -> unit
   (** [disassemble c lib] prints the binary [lib] as instructions on standard

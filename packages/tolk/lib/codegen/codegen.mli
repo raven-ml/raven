@@ -153,6 +153,27 @@ val to_program :
     {!full_rewrite_to_sink} does. Raises
     {!Renderer.Compiler.Compile_error} if the compiler rejects the source. *)
 
+val to_programs :
+  ?beam:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
+  (Ops.t * Renderer.t) list ->
+  unit
+(** [to_programs ~beam kernels] makes the program of each kernel [(ast, ren)]
+    of [kernels] that {!read}, run on the calling domain, does not find, as
+    {!to_program}[ ~beam ast ren] does and keeps it, so that a later
+    {!to_program} returns it; kernels whose programs are all found spawn no
+    domain. Up to as many workers as the setting {!Setting.parallel} allows
+    run on {!Worker.map}; each takes kernels to lower and render until none is
+    left, then compiles its sources, each compiler's by one call of
+    {!Renderer.Compiler.compile_all}, so that a compiler that compiles several
+    sources in one run of its toolchain ({!Renderer.Compiler.batch}) starts it
+    once per worker. When a kernel asks for a beam search, whose timings
+    concurrent compiles would disturb, each kernel is made in turn, in order,
+    by {!to_program}. A kernel another domain is making at once may be made
+    twice, and the first made is kept.
+
+    Raises what {!to_program} raises, that of the first worker that raises,
+    and then keeps no program. *)
+
 val program_key : Ops.t -> Renderer.t -> string
 (** [program_key ast ren] is the key under which {!to_program} keeps the
     program of the kernel's sink [ast] for [ren], in memory and on disk: two

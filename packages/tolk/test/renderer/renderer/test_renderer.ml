@@ -760,6 +760,55 @@ let errors_are_not_cached () =
   fails := false;
   equal string "lib:a" (Renderer.Compiler.compile_cached c "a")
 
+(* A compiler of several sources at once that records each call's sources. *)
+let batched () =
+  let table = fresh_table () and calls = ref [] in
+  let compile srcs =
+    calls := srcs :: !calls;
+    List.map
+      (fun src ->
+        if String.starts_with ~prefix:"bad" src then rejected src
+        else "lib:" ^ src)
+      srcs
+  in
+  (Renderer.Compiler.batch ~cachekey:(fun () -> table) compile, table, calls)
+
+let compiles_all_at_once () =
+  let c, table, calls = batched () in
+  Helpers.Diskcache.put ~table "b" "held";
+  equal (list string)
+    [ "lib:a"; "held"; "lib:c"; "lib:a" ]
+    (Renderer.Compiler.compile_all c [ "a"; "b"; "c"; "a" ]);
+  equal (list (list string)) [ [ "a"; "c" ] ]
+    (List.map (List.sort String.compare) !calls);
+  equal (option string) (Some "lib:c") (get table "c")
+
+let compiles_nothing_held () =
+  let c, table, calls = batched () in
+  Helpers.Diskcache.put ~table "a" "held";
+  equal (list string) [ "held"; "held" ]
+    (Renderer.Compiler.compile_all c [ "a"; "a" ]);
+  equal int ~msg:"calls" 0 (List.length !calls)
+
+let reports_the_first_rejected () =
+  let c, table, _ = batched () in
+  raises (Renderer.Compiler.Compile_error "rejected bad1") (fun () ->
+      Renderer.Compiler.compile_all c [ "a"; "bad1"; "bad0" ]);
+  equal (option string) None (get table "a")
+
+(* A compiler whose call of several sources fails for none of them. *)
+let fails_together () =
+  let c, table, _ = batched () in
+  let c =
+    Renderer.Compiler.batch ~cachekey:(fun () -> table) (fun srcs ->
+        if List.length srcs > 1 then
+          raise (Renderer.Compiler.Compile_error "together")
+        else List.map (fun src -> Renderer.Compiler.compile c src) srcs)
+  in
+  equal (list string) [ "lib:a"; "lib:b" ]
+    (Renderer.Compiler.compile_all c [ "a"; "b" ]);
+  equal (option string) (Some "lib:b") (get table "b")
+
 let disassembling () =
   let c =
     Renderer.Compiler.v
@@ -821,6 +870,20 @@ let cache_commands =
     command "compile_cached"
       (cache ^-> source @-> returns (pair string bool))
       model_compile_cached system_compile_cached;
+    command "compile_all"
+      (cache ^-> Gen.list ~size:(Gen.int_range 0 4) source
+      @-> returns (pair (list string) int))
+      (fun model srcs ->
+        let missing =
+          List.sort_uniq String.compare
+            (List.filter (fun src -> not (Hashtbl.mem model src)) srcs)
+        in
+        let libs = List.map (fun src -> fst (model_compile_cached model src)) srcs in
+        (libs, List.length missing))
+      (fun s srcs ->
+        let before = s.t.runs in
+        let libs = Renderer.Compiler.compile_all s.compiler srcs in
+        (libs, s.t.runs - before));
     command "compile"
       (cache ^-> source @-> returns string)
       (fun _ src -> "lib:" ^ src)
@@ -868,6 +931,14 @@ let compilers =
           let c, _, t = cached () in
           ignore (Renderer.Compiler.compile_cached c "a");
           equal int 1 t.runs);
+      test "compile_all compiles the sources the table lacks in one call, each once"
+        compiles_all_at_once;
+      test "compile_all calls nothing when the table holds every source"
+        compiles_nothing_held;
+      test "compile_all raises for the first source the toolchain rejects"
+        reports_the_first_rejected;
+      test "compile_all compiles each source alone when a call of several fails for none"
+        fails_together;
       stateful "compile_cached behaves as a table of binaries" cache_commands;
       test "disassemble prints with the given function" disassembling;
       test "disassemble prints nothing by default" disassembling_by_default;

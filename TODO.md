@@ -76,16 +76,10 @@ raven / llama.cpp b12048 Vulkan:
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML
 - divergences: tolk's entries are audited against tinygrad HEAD; rune's
   DIVERGENCES.md is not audited yet
-- compile speed: one Clang process per kernel (~30 ms each; one per program
-  saves ~20%). Hypothesis, to time first: on fudge, each Clang run's wall
-  time against its source's bytes, on a model-size schedule; if the process
-  start dominates, one Clang invocation over several translation units, one
-  object per kernel (`clang -c 0/k.c 1/k.c ...`), keeps per-kernel cache
-  keys and Worker.map's balance, once each object is shown a function of its
-  source alone; float64 sin/cos inline the full Payne–Hanek reduction (40-170
-  KB kernels); parallel compile saturates at ~4 domains (a shard lock per
-  node, domains spawned per `Worker.map`); Metal builds run one at a time;
-  a 5 KB r_32_32 kernel, max |x| over `where (i >= j) x xᵀ` at 32x32,
+- compile speed: float64 sin/cos inline the full Payne–Hanek reduction
+  (40-170 KB kernels); parallel compile saturates at ~4 domains (a shard
+  lock per node, domains spawned per `Worker.map`); Metal builds run one at
+  a time; a 5 KB r_32_32 kernel, max |x| over `where (i >= j) x xᵀ` at 32x32,
   renders as 32-lane float selects of transposed loads that clang -O2
   takes over 2 min on
 - gpt-oss bf16 prefill-12's first call is ~70 ms slower in wall time
