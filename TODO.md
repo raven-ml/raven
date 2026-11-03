@@ -146,9 +146,6 @@ raven / llama.cpp b12048 Vulkan:
 - D163 counts repeats pooled over a shared range, which overestimates `c`,
   and a collapsed read counts every range of its sum, which can overcount:
   tighten both if a case shows a wrong store
-- running sums cost ~257 ops per element (shape.ml:955): `Nx.cumsum` over
-  float64 [100; 50500] takes ~1.0 s on CPU. A scan with constant work per
-  element, and a compiled cumsum row
 - Metal groups: after D137, lorenz-step-batch-1024's r_3_256_16_64_64 went
   10.7 -> 18.9 ms (loads stride across 16 threads). Decided without Apple
   timing (maintainer, 2026-10-31): a rule for loads that stride across a

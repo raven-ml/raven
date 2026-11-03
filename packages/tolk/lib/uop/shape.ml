@@ -925,7 +925,9 @@ let cat ?(axis = 0) u rest =
 
 (* Running operations *)
 
-let split_cumalu = 256
+(* Chunks of 16: each element reduces a window of at most 32 elements, and each
+   factor of 16 in the axis's length adds a stage. *)
+let split_cumalu = 16
 
 (* [None] for each axis of [u] but [axis], which is [Some p]. *)
 let at_axis u axis p =
@@ -947,7 +949,7 @@ let pooled_cumalu u op =
     op
     [ last + 1 ]
 
-let cumalu u axis op =
+let rec cumalu u axis op =
   let axis = resolve_dim u axis and last = ndim u - 1 in
   let s = running_size u axis and t = transpose u axis last in
   if List.exists (fun d -> equal_sint d (Int 0)) (shape u) then u
@@ -968,7 +970,7 @@ let cumalu u axis op =
               (Int (split_cumalu - 1), Int split_cumalu)))
     in
     let base =
-      pad ~value (pooled_cumalu ends op) (at_axis ends last (Int 1, Int (-1)))
+      pad ~value (cumalu ends last op) (at_axis ends last (Int 1, Int (-1)))
     in
     let combine =
       if Op.equal op Op.Add then add

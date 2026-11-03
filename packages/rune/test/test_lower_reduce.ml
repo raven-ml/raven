@@ -175,7 +175,7 @@ let int_raw (type v s) (dt : (v, s) D.t) =
 let raw ?special ~spread ~subnormal (D.Any dt) =
   match D.kind dt with
   | D.Float -> float_raw ?special ~spread ~subnormal dt
-  | D.Complex -> float_raw ~spread ~subnormal D.Float64
+  | D.Complex -> float_raw ?special ~spread ~subnormal D.Float64
   | _ -> int_raw dt
 
 let extent =
@@ -241,9 +241,17 @@ let pp_case ppf c =
     (ints c.axes) (raws c.raws)
     (match c.carry with None -> "" | Some a -> " carry [" ^ raws a ^ "]")
 
-(* [case ~spread ~carry dts ms] draws a case of a dtype of the weighted [dts]
-   and a monoid of [ms], over one axis where [scan]. *)
-let case ?(spread = 4) ?(subnormal = 1) ?(scan = false) dts ms =
+(* A long scan axis: past 32 terms a running monoid scans chunks of 16 and
+   then their last terms, which past 512 terms are chunked again. *)
+let long_extent =
+  Gen.frequency [ (1, Gen.int_range 33 96); (1, Gen.int_range 513 640) ]
+
+(* [case ~spread ~carry ~long dts ms] draws a case of a dtype of the weighted
+   [dts] and a monoid of [ms], over one axis where [scan], of {!long_extent}
+   where [long], whose float terms are then zeros, infinities and NaNs about
+   once in 1600, so that most rows stay numbers through several chunks. *)
+let case ?(spread = 4) ?(subnormal = 1) ?(scan = false) ?(long = false) dts ms
+    =
   let open Gen in
   let* dt = frequency (List.map (fun (w, d) -> (w, constant d)) dts) in
   let* m = among ms in
@@ -252,15 +260,29 @@ let case ?(spread = 4) ?(subnormal = 1) ?(scan = false) dts ms =
   let r = Array.length s in
   let* keep = list ~size:(constant r) bool in
   let* first = int_range 0 (r - 1) in
+  let* s =
+    if not long then constant s
+    else
+      map
+        (fun n -> Array.mapi (fun a e -> if a = first then n else e) s)
+        long_extent
+  in
   let axes =
     if scan then [ first ]
     else
       List.filter (fun a -> a = first || List.nth keep a) (List.init r Fun.id)
   in
+  let term =
+    if not long then raw ~spread ~subnormal dt
+    else
+      frequency
+        [
+          (512, raw ~special:0 ~spread ~subnormal dt);
+          (1, raw ~spread ~subnormal dt);
+        ]
+  in
   let* raws =
-    array
-      ~size:(constant (raws_of dt (numel (base view s))))
-      (raw ~spread ~subnormal dt)
+    array ~size:(constant (raws_of dt (numel (base view s)))) term
   in
   let+ carry =
     if not scan then constant None
@@ -277,8 +299,8 @@ let case ?(spread = 4) ?(subnormal = 1) ?(scan = false) dts ms =
   in
   { dt; m; shape = s; view; axes; raws; carry }
 
-let case ?spread ?subnormal ?scan dts ms =
-  Gen.with_pp pp_case (case ?spread ?subnormal ?scan dts ms)
+let case ?spread ?subnormal ?scan ?long dts ms =
+  Gen.with_pp pp_case (case ?spread ?subnormal ?scan ?long dts ms)
 
 let operand (type v s) (dt : (v, s) D.t) c : (v, s, Nx.host) Nx.t =
   viewed c.view c.shape (value dt (base c.view c.shape) c.raws)
@@ -814,6 +836,129 @@ let complex_scans =
     (fun c ->
       cover "a carry" (c.carry <> None);
       bounded ~scan:true c)
+
+(* Long axes. Examples every run takes, one for each monoid the law draws:
+   float64 sums of 600 terms, one row of numbers, one with a NaN, one with
+   both infinities; an int8 sum of 40 extremes from a carry at an extreme; an
+   int32 product of 40 terms that wraps; a float64 product of 600 terms near
+   1; a float32 maximum of 600 terms with a NaN late in the row, flipped; a
+   float64 minimum of 600 terms with a [-∞]; a complex128 sum of 600
+   numbers. *)
+let long_examples =
+  let f64 xs = Array.map Int64.bits_of_float xs in
+  let f32 xs = Array.map (fun x -> Int64.of_int32 (Int32.bits_of_float x)) xs in
+  let n = 600 in
+  let numbers i = Float.of_int ((i mod 7) - 3) +. 0.25 in
+  let row k i =
+    match (k, i) with
+    | 1, 100 -> Float.nan
+    | 2, 20 -> Float.infinity
+    | 2, 300 -> Float.neg_infinity
+    | _ -> numbers i
+  in
+  let extremes = Array.init 80 (fun i -> if i mod 3 = 0 then 127L else -128L) in
+  [
+    {
+      dt = D.Any D.Float64;
+      m = Sum;
+      shape = [| 3; n |];
+      view = Plain;
+      axes = [ 1 ];
+      raws = f64 (Array.init (3 * n) (fun i -> row (i / n) (i mod n)));
+      carry = None;
+    };
+    {
+      dt = D.Any D.Int8;
+      m = Sum;
+      shape = [| 2; 40 |];
+      view = Plain;
+      axes = [ 1 ];
+      raws = extremes;
+      carry = Some [| 127L; -128L |];
+    };
+    {
+      dt = D.Any D.Int32;
+      m = Prod;
+      shape = [| 40 |];
+      view = Plain;
+      axes = [ 0 ];
+      raws = Array.init 40 (fun i -> Int64.of_int ((i mod 5) - 7));
+      carry = None;
+    };
+    {
+      dt = D.Any D.Float64;
+      m = Prod;
+      shape = [| n |];
+      view = Transposed;
+      axes = [ 0 ];
+      raws = f64 (Array.init n (fun i -> 1. +. (numbers i /. 64.)));
+      carry = None;
+    };
+    {
+      dt = D.Any D.Float32;
+      m = Max;
+      shape = [| n |];
+      view = Flipped;
+      axes = [ 0 ];
+      raws =
+        f32 (Array.init n (fun i -> if i = 50 then Float.nan else numbers i));
+      carry = None;
+    };
+    {
+      dt = D.Any D.Float64;
+      m = Min;
+      shape = [| n |];
+      view = Plain;
+      axes = [ 0 ];
+      raws =
+        f64
+          (Array.init n (fun i ->
+               if i = 400 then Float.neg_infinity else numbers i));
+      carry = None;
+    };
+    {
+      dt = D.Any D.Complex128;
+      m = Sum;
+      shape = [| n |];
+      view = Plain;
+      axes = [ 0 ];
+      raws = f64 (Array.init (2 * n) numbers);
+      carry = None;
+    };
+  ]
+
+let long_scans =
+  let draw w ?spread ?subnormal dts ms =
+    (w, case ~scan:true ~long:true ?spread ?subnormal dts ms)
+  in
+  prop ~count:16 ~examples:long_examples
+    "running scans along long axes give eager's values"
+    (Gen.with_pp pp_case
+       (Gen.frequency
+          [
+            draw 3 ~spread:0 ~subnormal:0 (weigh 1 floats) [ Sum ];
+            draw 3 (weigh 1 ints) [ Sum; Prod ];
+            draw 2
+              (weigh 2 floats @ weigh 2 ints @ weigh 1 D.[ Any Bool ])
+              [ Max; Min ];
+            draw 1 (weigh 1 complexes) [ Sum ];
+          ]))
+    (fun c ->
+      let n = c.shape.(List.hd c.axes) in
+      cover_monoids c [ Sum; Prod; Max; Min ];
+      cover "an axis in chunks" (n > 32 && n <= 512);
+      cover "an axis in chunks of chunks" (n > 512);
+      cover "a carry" (c.carry <> None);
+      cover "a strided or broadcast view" (c.view <> Plain);
+      cover "a NaN term"
+        (float_raws c (fun dt r -> float_class dt r = Nan) <> []);
+      cover "an infinity"
+        (float_raws c (fun dt r -> float_class dt r = Inf) <> []);
+      cover "a complex number" (is_complex c.dt);
+      let (D.Any dt) = c.dt in
+      match (D.kind dt, c.m) with
+      | (D.Float | D.Complex), (Sum | Prod) -> bounded ~scan:true c
+      | _ -> exact ~scan:true c)
 
 (* Logsumexp, Moments and Arg
 
@@ -2140,6 +2285,14 @@ let work ?(scaled = false) form ~n ~k ~j g =
       run (ramp [| n; j |]) [ (0, 0) ] None
         (Some (K.Contracting { offsets; pair = 0 }))
 
+(* The estimated work of a float32 running sum of [n] terms, which grows
+   linearly: its work per term at 65536 terms is at most twice a 32-term
+   one's, where a sum of windows growing with the axis would be many times
+   it. *)
+let scan_work n =
+  let x = f32 [| n |] (Array.init n (fun i -> Float.of_int (i mod 7))) in
+  fst (Lowered.work (fun () -> P.eval ~by:"t" (scan_op Sum 0 x None)))
+
 (* Each row of [Rows] loads its own group's slice, so tolk cannot share a
    slice's loads, or [x]'s, between rows and columns as it does the
    unsegmented contraction's: a float32 one loads a few times its bytes, a
@@ -2179,6 +2332,10 @@ let work_bounds =
           let o, l = work Contracting_of ~n ~k ~j 8 in
           at_most int ~msg:"operations" ~than:(4 * ops) o;
           at_most int ~msg:"bytes" ~than:(4 * lds) l);
+      test
+        "a running sum's work per term at most doubles from 32 to 65536 terms"
+        (fun () ->
+          at_most int ~than:(2 * 2048 * scan_work 32) (scan_work 65536));
     ]
 
 let cases =
@@ -2218,7 +2375,8 @@ let () =
        [
          group "reductions"
            [ extremes; int_folds; float_sums; float_products; complex_sums ];
-         group "scans" [ extreme_scans; int_scans; float_scans; complex_scans ];
+         group "scans"
+           [ extreme_scans; int_scans; float_scans; complex_scans; long_scans ];
          group "logsumexp, moments and arg"
            [
              logsumexps;

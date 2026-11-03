@@ -100,9 +100,9 @@ symbolic_kept	2
 symbolic_contiguous	2
 variable_read_twice	1
 read_at_offsets	2
-windowed_chain	2
+windowed_chain	4
 windowed_scaled	1
-windowed_scaled_long	2
+windowed_scaled_long	3
 windowed_pair	2
 read_by_two	2
 long_read_by_two	3
@@ -130,7 +130,7 @@ precompiled_function	1
 precompiled_function_1	1
 two_outputs	2
 empty_sum	1
-long_cumsum	3
+long_cumsum	4
 disk_view_to	2
 disk_bitcast_to	2
 disk_store	0

@@ -319,9 +319,11 @@ val cat : ?axis:int -> Ops.t -> Ops.t list -> Ops.t
 val cumalu : Ops.t -> int -> Op.t -> Ops.t
 (** [cumalu u axis op] is the inclusive running [op] ({!Op.Add}, {!Op.Mul} or
     {!Op.Max}) of [u] along [axis], at [u]'s type: each element reduces the
-    window of the elements up to it. Past 512 elements it runs in two stages,
-    within chunks of 256 and across the chunks' last elements. It is [u] if an
-    axis of [u] is empty.
+    window of the elements up to it. Past 32 elements it runs within chunks of
+    16, then along the chunks' last elements the same way, and combines each
+    chunk with the result before it: an axis of [n] elements takes [O(n)]
+    operations in about [log₁₆ n] stages. It is [u] if an axis of [u] is
+    empty.
 
     Raises [Invalid_argument] if [axis] has a symbolic size. *)
 

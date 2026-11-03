@@ -927,6 +927,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Shape.cumalu` scans chunks of 16, and their last elements the same way,
+  so a running operation's work is linear in its axis: compiled float64
+  `Nx.cumsum` over 100 × 50500 takes 8-36 ms against 45-65, over 100 × 400 50
+  times less.
 - Kernel code generation runs about 2-3% faster: tolk tests membership in a
   list of data types with the new `Dtype.mem`, which compares them as
   integers, where `List.mem` called the runtime's generic comparison.

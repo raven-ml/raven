@@ -325,7 +325,7 @@ let movement =
           rejects (fun () -> Shape.reshape p (ints [ -1; -1 ])));
       test "reshape rejects a different number of elements" (fun () ->
           rejects (fun () -> Shape.reshape p (ints [ 5; 5 ])));
-      test "cumalu past 512 elements runs in two stages" (fun () ->
+      test "cumalu past 512 elements sums each prefix" (fun () ->
           let sums = Shape.cumalu (Shape.arange ~dtype:Int32 600) 0 Op.Add in
           equal (list int)
             (List.init 600 (fun i -> i * (i + 1) / 2))

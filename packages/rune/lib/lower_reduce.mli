@@ -103,8 +103,8 @@ val scan :
     once to [dt], its nodes as {!reduce}'s, each of [x]'s shape. With [Some c],
     each slice starts from its element of [c], a value of the carrier of extent
     [1] along [axis]. Only a [Monoid] uses a carry; another [r] ignores it. A
-    [Logsumexp] or [Moments] scan takes about [2 log₂ n] kernels and [O(n)] work
-    for a slice of [n] terms.
+    slice of [n] terms takes [O(n)] work, in about [2 log₁₆ n] kernels for a
+    [Monoid] and [2 log₂ n] for a [Logsumexp] or [Moments].
 
     Raises [Invalid_argument] for a complex [Prod], and a [complex128] [Max],
     [Min] or [Arg]. *)

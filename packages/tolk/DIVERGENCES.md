@@ -4406,9 +4406,10 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   nested sampling, whose error is a running sum over 100 × 1213 negated logs
   of uniform draws: inlined, the draw and its log ran once per window
   element, and the kernel took 0.87 s a call against 0.18 s with the draws
-  stored. Compiled running sums over 100 × 400 values on fudge take 0.59 ms
-  stored against 1.24 ms inlined for `2x`, and 0.57 ms against 1.25 ms for
-  `x * x + x`. gpt-oss-20b's decode step with Q8_0 projections on fudge's
+  stored. Compiled running sums over 100 × 400 values on fudge, in windows
+  of 400 before D194, took 0.59 ms stored against 1.24 ms inlined for `2x`,
+  and 0.57 ms against 1.25 ms for `x * x + x`; in windows of 16 `2x` is
+  inlined. gpt-oss-20b's decode step with Q8_0 projections on fudge's
   RTX 5000 keeps each block's scale inlined, 1.1% faster, as above.
   Counting a dropped digit's reuse as copies stored every decoded weight a
   quantised product of many rows reads, which the product's tiles share
@@ -4439,8 +4440,8 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   (a value of some forty nodes read at 32 offsets, stored), `windowed_chain`
   (in a running sum of 300, stored), `windowed_pair` (in two running sums of
   16, stored), `windowed_scaled` (a product in a running sum of 16, its
-  copies past the first 90 nodes, inlined), `windowed_scaled_long` (in a
-  running sum of 400, stored), `read_by_two` (some forty nodes read by two
+  copies past the first 90 nodes, inlined), `windowed_scaled_long` (a
+  product in a running sum of 400, inlined into its windows of 16), `read_by_two` (some forty nodes read by two
   kernels, inlined), `long_read_by_two` (some four hundred, stored),
   `routed_product_2` (a decoded matrix gathered by 2 rows an expert over 64
   experts, inlined) and `routed_product_64` (64 rows an expert, stored),
@@ -5559,3 +5560,47 @@ fold wraps integers and holds its float bound`, hold.
   texts given`; the Device suite: `Tiny_elf.of_program › keys equal programs
   alike and programs that differ apart`; rune's
   `compile/special/betaincinv-grad-f64` row, once recorded on fudge.
+
+## D194. A running operation scans chunks of 16 at every level
+
+- **tinygrad:** `mixin/op.py:781-791` (`_split_cumalu`: past 512 elements,
+  chunks of 256 scanned by windows, then the chunks' last elements scanned
+  by one window each).
+- **tolk:** `Shape.split_cumalu` and `Shape.cumalu`;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same.
+- **Differs:** past 32 elements an axis runs in chunks of 16, and the
+  chunks' last elements run through `Shape.cumalu` again, chunked in turn
+  past 32 of them. Each element reduces a window of at most 32 elements and
+  combines once per stage, so the work is linear in the axis: estimated
+  (`Realize.estimate_uop`) at 6 operations an element over 65536 float32
+  elements against tinygrad's 285, whose window is 256 elements, or the
+  whole axis below 513. An axis of `n` elements takes about `log₁₆ n`
+  stages. Values are a reassociation of the same terms: integers, booleans
+  and extremes are unchanged, and a float sum or product of `n` terms keeps
+  rune's bound of `γ(n - 1)`.
+- **Reason:** (d): compiled running sums, `Nx.cumsum` under `Rune.jit`, as
+  norn's nested sampling's error estimate takes, and rune's lowering of an
+  extreme's position and of segments' starts (`Lower_reduce`). On fudge
+  (interleaved, three rounds, one process under the timing lock per run,
+  load 60 to 92): float64 over 100 × 50500 8.5-35.6 ms against 44.8-64.9 ms;
+  float32 over 100 × 400 55-66 µs against 2.75-5.00 ms; the nested sampling
+  estimate over 8 × 1024 100-200 µs against 305-465 µs. Each row allocates
+  the same words. On fudge's RTX 5000 Ada, float32 over 100 × 50500 206-220
+  µs against 736-770 µs, and over 8 × 1024, 11.5 µs against 13.0-13.4 µs
+  (three rounds, one that shared the GPU left out); over 100 × 400, three
+  stages against one kernel, 10.7 µs against 19.6-20.2 µs (two rounds
+  before, one after). The block of 16 was chosen among 8, 16, 32, 64 and
+  256 by an interleaved sweep over running sums of `2x`, three rounds of one
+  process per block size: over float64 100 × 50500, 8, 16 and 32 overlapped
+  at 6.1-13.4 ms against 11.1-19.1 at 64 and 26.3-38.4 at 256; over float32
+  64 × 64, 8 and 16 took 3-5 µs against 20-25 µs at 32 and above, which scan
+  it in one window; 16 takes one stage fewer than 8.
+- **Pinned by:** rune's `Lower_reduce › work › a running sum's work per term
+  at most doubles from 32 to 65536 terms` and `› scans › running scans along
+  long axes give eager's values`; the Rangeify suite's `long_cumsum`,
+  `windowed_chain` and `windowed_scaled_long` rows of `kernel_counts.golden`
+  and their goldens, and the Codegen and Heuristic suites' `cumsum` kernels,
+  from the equally patched tinygrad; on fudge, rune's bench rows
+  `Jit/cumsum-float64-100x50500`, `Jit/cumsum-scaled-float32-100x400`,
+  `Jit/cumsum-neg-log-uniform-8x1024`, `Cuda/cumsum-float32-100x400`,
+  `Cuda/cumsum-float32-8x1024` and `Cuda/cumsum-float32-100x50500`.

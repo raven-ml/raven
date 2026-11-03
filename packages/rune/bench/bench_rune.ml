@@ -416,6 +416,7 @@ let jit_rows () =
   let bases = between f32 43 0.01 30. [| 65536 |] in
   let exponents = between f32 47 (-3.) 3. [| 65536 |] in
   let scaled = between f32 49 (-1.) 1. [| 100; 400 |] in
+  let long_rows = between f64 53 (-1.) 1. [| 100; 50500 |] in
   let wide = between f64 50 0. 1. [| 1_000_000 |] in
   let experts_ids = positions 64 32 |> Nx.reshape [| 16; 4 |] in
   let experts_x = between f32 52 (-1.) 1. [| 16; 1; 256 |] in
@@ -553,8 +554,8 @@ let jit_rows () =
       (fun () -> Rune.jit' Nx.tanh)
       (fun f -> synced (f angles));
     (* A running sum over the negated logs of uniform draws, as nested
-       sampling's error estimate: its windows of 256 read each element up to
-       256 times, which compute each draw and its log once when stored. *)
+       sampling's error estimate: its windows of 16 read each element up to 16
+       times, which compute each draw and its log once when stored. *)
     warm "cumsum-neg-log-uniform-8x1024"
       (fun () ->
         ( Rune.jit
@@ -569,6 +570,11 @@ let jit_rows () =
     warm "cumsum-scaled-float32-100x400"
       (fun () -> Rune.jit' (fun x -> Nx.cumsum ~axis:1 (Nx.mul_s x 2.)))
       (fun f -> synced (f scaled));
+    (* A running sum along rows of 50500 terms: chunks of 16, then their
+       chunks, a few operations per element. *)
+    warm "cumsum-float64-100x50500"
+      (fun () -> Rune.jit' (fun x -> Nx.cumsum ~axis:1 x))
+      (fun f -> synced (f long_rows));
     (* Powers of bases in [[0.01, 30)] to exponents in [[-3, 3)]. *)
     warm "pow-float32-64K"
       (fun () -> Rune.jit (pair_fn ()) Nx.pow)
@@ -1086,6 +1092,16 @@ let kv_append ~donated =
 (* A GPU row times its calls only: a GPU buffer's release allocates when the
    collector finalises it, so a call's count depends on the collection's
    phase. *)
+(* A running sum along the last axis of uniform values of [shape]. *)
+let cumsum_at dt shape =
+  {
+    at =
+      (fun at ->
+        let x = Nx.place at (Nx.Rng.uniform ~key:(Nx.Rng.key 54) dt shape) in
+        let f = Rune.jit' (fun x -> Nx.cumsum ~axis:1 x) in
+        fun () -> ignore (synced (f x)));
+  }
+
 let gpu_rows g =
   if not (opens g) then []
   else
@@ -1107,6 +1123,11 @@ let gpu_rows g =
               in
               fun () -> ignore (synced2 (f x)));
         };
+      (* Running sums: rows of 400 and of 1024, whose time is mostly one
+         launch per stage, and long rows of 50500. *)
+      on_gpu g "cumsum-float32-100x400" (cumsum_at f32 [| 100; 400 |]);
+      on_gpu g "cumsum-float32-8x1024" (cumsum_at f32 [| 8; 1024 |]);
+      on_gpu g "cumsum-float32-100x50500" (cumsum_at f32 [| 100; 50500 |]);
       on_gpu g "kv-append-4096" (kv_append ~donated:true);
       on_gpu g "kv-append-4096-copied" (kv_append ~donated:false);
     ]

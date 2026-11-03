@@ -1866,6 +1866,24 @@ index 761f59c11..bf523239d 100644
  
  @functools.cache
  def to_function_name(s:str): return ''.join([c if c in (string.ascii_letters+string.digits+'_') else f'{ord(c):02X}' for c in ansistrip(s)])
+diff --git a/tinygrad/mixin/op.py b/tinygrad/mixin/op.py
+index 34d111b14..4a973d467 100644
+--- a/tinygrad/mixin/op.py
++++ b/tinygrad/mixin/op.py
+@@ -783,11 +783,11 @@ class OpMixin(ElementwiseMixin, ReduceMixin):
+     if self.ndim == 0 or 0 in self.shape: return self.cast(self.sum().dtype) if op is Ops.ADD else self
+     # TODO: someday the optimizer will find this on its own
+     # for now this is a two stage cumsum
+-    SPLIT = 256
++    SPLIT = 16
+     value = identity_element(op, self.commit_dtype())
+     if not isinstance(s:=self.shape[axis], int) or s <= SPLIT*2: return self._cumalu(axis, op)
+     chunks = self.transpose(axis,-1)._pad_constant((None,)*(self.ndim-1)+((round_up(s,SPLIT)-s,0),), value).unflatten(-1,(-1,SPLIT))._cumalu(-1, op)
+-    base = chunks[..., -1]._cumalu(-1, op)._pad_constant((None,)*(chunks.ndim-2) + ((1, -1),), value)
++    base = chunks[..., -1]._split_cumalu(-1, op)._pad_constant((None,)*(chunks.ndim-2) + ((1, -1),), value)
+     return chunks.alu(op, base.unsqueeze(-1)).flatten(start_dim=-2)[..., -s:].transpose(axis,-1)
+ 
+   def cumsum(self, axis:int=0) -> Self:
 diff --git a/tinygrad/renderer/__init__.py b/tinygrad/renderer/__init__.py
 index 7fb5ccac2..489f4fc09 100644
 --- a/tinygrad/renderer/__init__.py
