@@ -18,9 +18,9 @@ runs that data on rig.
   correct value with a test of it.
 - Each difference is an entry in `DIVERGENCES.md`, admitted only for an
   OCaml constraint, a named raven consumer, the executor's contract, a
-  named workload's speed held by a fudge bench row, or a value kept correct
-  where tinygrad computes a wrong one, pinned by a test of that value. Taste
-  and unmeasured speed are not reasons.
+  named workload's speed held by a fudge bench row, or correctness kept where
+  tinygrad computes a wrong value or does not terminate, pinned by a test.
+  Taste and unmeasured speed are not reasons.
 - tolk stays at tinygrad's low-level uops: no matmul, contraction, attention
   or scan node.
 

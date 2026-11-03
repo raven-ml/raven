@@ -10,16 +10,16 @@ for one of five reasons only:
   which `tolk.engine` drives with the compiler's output;
 - **(d) measured speed:** of a named raven workload, pinned by a bench row on
   fudge whose baseline would catch the regression;
-- **(e) a correct value:** a divergence that keeps a value correct where
-  tinygrad computes a wrong one, pinned by a test of that value, stays without
-  a consumer (`doc/dev/design.md`: correctness is never traded).
+- **(e) correctness:** a divergence that keeps correctness where tinygrad
+  computes a wrong value or does not terminate, pinned by a test, stays
+  without a consumer (`doc/dev/design.md`: correctness is never traded).
 
 Taste, speed without such a measurement, "the old tolk did it" and the
 maintainer's call alone are not reasons. A speed measured only on another
 machine is marked "to re-measure on fudge" until a fudge row holds it. An
 entry whose reason has lapsed says "Reason: none" until it is withdrawn or
 redesigned. A difference in numerics also needs a failing rune test, since
-nx semantics belong in rune's lowering, unless it keeps a value correct (e).
+nx semantics belong in rune's lowering, unless it keeps correctness (e).
 
 NaNs follow nx's rule. A NaN result is some NaN, its sign and payload
 unspecified, and it is signalling only where an operand is a signalling NaN.
@@ -6240,8 +6240,8 @@ fold wraps integers and holds its float bound`, hold.
   CUDA, which has no rule of its own.
 - **Differs:** a tensor core takes such a bitcast as the vector it is, and
   CUDA renders it `tg_bitcast<nv_bfloat168>((uint4)(...))`. A scalar bitcast
-  renders as before. tinygrad computes no product on these kernels; tolk
-  computes the right one.
+  renders as before. tinygrad does not terminate on these kernels; tolk
+  computes the right product.
 - **Reason:** (e).
 - **Pinned by:** `Tolk.Codegen › tensor cores written by hand › a tensor
   core's operand bitcast from words lowers for CUDA`, which needs no GPU; on
@@ -6266,7 +6266,8 @@ fold wraps integers and holds its float bound`, hold.
   context does, and every other end that closes one of those ranges, along
   other ranges too, stands aside while its ranges are renamed, so the loop
   it reads runs once. Ends that do not reach each other merge as before.
-  tinygrad computes no value on these kernels; tolk computes the right one.
+  tinygrad does not terminate on these kernels; tolk computes the right
+  values.
 - **Reason:** (e).
 - **Pinned by:** `Tolk.Codegen › effects run as often as written › a copy
   reads the copy ended before it`, over upcast and loop ranges, apart and
