@@ -656,70 +656,11 @@ let fold_tests =
                 (samples_of (History.series canonical k)))
             (History.metrics canonical @ History.readings canonical));
       prop "a damaged line is skipped and counted, and never raises"
-        (Gen.triple gen_evs (Gen.int_range 0 1000)
-           (Gen.of_list
-              [
-                ( "invalid UTF-8",
-                  "{\"type\":\"metrics\",\"time\":1.0,\"step\":0,\"values\":{\"a\":\xff}}"
-                );
-                ( "a repeated member",
-                  {|{"type":"metrics","type":"metrics","time":1.0,"step":0,"values":{}}|}
-                );
-                (* Any nesting past the format's depth is the same case. *)
-                ("deep nesting", String.make 1_000 '[');
-                ("an unknown type", {|{"type":"unknown","time":1.0}|});
-                ( "a wrong type",
-                  {|{"type":"metrics","time":"x","step":0,"values":{"a":1.0}}|}
-                );
-                ( "a negative step",
-                  {|{"type":"metrics","time":1.0,"step":-1,"values":{"a":1.0}}|}
-                );
-                ( "a bad key",
-                  {|{"type":"metrics","time":1.0,"step":0,"values":{"../a":1.0}}|}
-                );
-                ("not JSON", "not json at all");
-                ( "a repeated key",
-                  {|{"type":"metrics","time":1.0,"step":0,"values":{"a":1.0,"a":2.0}}|}
-                );
-                ( "a leading zero",
-                  {|{"type":"metrics","time":1.0,"step":01,"values":{"a":1.0}}|}
-                );
-                ( "a number cut short",
-                  {|{"type":"metrics","time":1.0,"step":0,"values":{"a":1.}}|}
-                );
-                ( "a control character in a key",
-                  "{\"type\":\"metrics\",\"time\":1.0,\"step\":0,\"values\":{\"a\tb\":1.0}}"
-                );
-                ( "trailing bytes",
-                  {|{"type":"metrics","time":1.0,"step":0,"values":{"a":1.0}}x|}
-                );
-              ]))
-        (fun (evs, at, (kind, garbage)) ->
-          List.iter
-            (fun k -> cover k (k = kind))
-            [
-              "invalid UTF-8";
-              "a repeated member";
-              "deep nesting";
-              "an unknown type";
-              "a wrong type";
-              "a negative step";
-              "a bad key";
-              "not JSON";
-              "a repeated key";
-              "a leading zero";
-              "a number cut short";
-              "a control character in a key";
-              "trailing bytes";
-            ];
+        (Gen.pair gen_evs (Gen.int_range 0 1000))
+        (fun (evs, at) ->
           with_store @@ fun store ->
           let lines = List.mapi ev_line evs in
           let at = at mod (List.length lines + 1) in
-          let damaged =
-            List.filteri (fun i _ -> i < at) lines
-            @ [ garbage ]
-            @ List.filteri (fun i _ -> i >= at) lines
-          in
           let text l =
             String.concat ""
               (List.map
@@ -727,11 +668,56 @@ let fold_tests =
                  (start_line :: metric_line "a" :: metric_line "b" :: l))
           in
           let clean = History.read (spec_run store (text lines)) in
-          let h = History.read (spec_run store (text damaged)) in
-          equal ~msg:"counted" int 1 (History.damaged h);
-          equal ~msg:"skipped" (list sample)
-            (samples_of (History.series clean "a"))
-            (samples_of (History.series h "a")));
+          (* Every kind of damage in every case, so that every run checks
+             each. *)
+          List.iter
+            (fun (kind, garbage) ->
+              let damaged =
+                List.filteri (fun i _ -> i < at) lines
+                @ [ garbage ]
+                @ List.filteri (fun i _ -> i >= at) lines
+              in
+              let h = History.read (spec_run store (text damaged)) in
+              equal ~msg:(kind ^ ": counted") int 1 (History.damaged h);
+              equal ~msg:(kind ^ ": skipped") (list sample)
+                (samples_of (History.series clean "a"))
+                (samples_of (History.series h "a")))
+            [
+              ( "invalid UTF-8",
+                "{\"type\":\"metrics\",\"time\":1.0,\"step\":0,\"values\":{\"a\":\xff}}"
+              );
+              ( "a repeated member",
+                {|{"type":"metrics","type":"metrics","time":1.0,"step":0,"values":{}}|}
+              );
+              (* Any nesting past the format's depth is the same case. *)
+              ("deep nesting", String.make 1_000 '[');
+              ("an unknown type", {|{"type":"unknown","time":1.0}|});
+              ( "a wrong type",
+                {|{"type":"metrics","time":"x","step":0,"values":{"a":1.0}}|}
+              );
+              ( "a negative step",
+                {|{"type":"metrics","time":1.0,"step":-1,"values":{"a":1.0}}|}
+              );
+              ( "a bad key",
+                {|{"type":"metrics","time":1.0,"step":0,"values":{"../a":1.0}}|}
+              );
+              ("not JSON", "not json at all");
+              ( "a repeated key",
+                {|{"type":"metrics","time":1.0,"step":0,"values":{"a":1.0,"a":2.0}}|}
+              );
+              ( "a leading zero",
+                {|{"type":"metrics","time":1.0,"step":01,"values":{"a":1.0}}|}
+              );
+              ( "a number cut short",
+                {|{"type":"metrics","time":1.0,"step":0,"values":{"a":1.}}|}
+              );
+              ( "a control character in a key",
+                "{\"type\":\"metrics\",\"time\":1.0,\"step\":0,\"values\":{\"a\tb\":1.0}}"
+              );
+              ( "trailing bytes",
+                {|{"type":"metrics","time":1.0,"step":0,"values":{"a":1.0}}x|}
+              );
+            ]);
       test "a replaced log is read again from its start" (fun () ->
           with_store @@ fun store ->
           let evs = [ Sample ("a", 1, 1.); Sample ("a", 2, 2.) ] in
