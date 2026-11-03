@@ -969,6 +969,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A kernel that calls a function on an element of each point compiles when
+  optimised: no axis a call's argument reads is upcast or padded, which made
+  a vector pointer Clang rejects, or ran the call on a padded point
+  (`Postrange.Scheduler.read_by_calls`).
 - Compiling float64 `Nx.betaincinv`'s gradient allocates 238 M words
   against 365 M and runs 17% fewer instructions, with unchanged output.
 - On the host, `Heuristic` upcasts a reduce kernel's outputs however few

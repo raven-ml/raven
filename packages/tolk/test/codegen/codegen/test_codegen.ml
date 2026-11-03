@@ -4498,6 +4498,23 @@ let call_loop () =
   kernel "call_loop_mini"
     [ Ops.end_ (Ops.call ~name:"mul" mul [ at c i; at a i ]) [ i ] ]
 
+(* [C[i] = A[i] * 3 + i] over 16 elements, each by a call of [mul_add] on one
+   element of each and the index, in a kernel the heuristic optimises. *)
+let call_optimised () =
+  let mul_add =
+    let p = int_param ~name:"p" 0 1 and q = int_param ~name:"q" 1 1 in
+    let v = Shape.param ~addrspace:Alu 2 Int32 in
+    Ops.sink [ Ops.store (first p) Ops.O.((first q * i32 3) + v) ]
+  in
+  let c = int_param ~name:"C" 0 16 and a = int_param ~name:"A" 1 16 in
+  let i = Ops.range (Int 16) [ 0 ] in
+  let call =
+    Ops.call ~name:"mul_add" mul_add [ at c i; at a i; Ops.cast i Int32 ]
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"call_optimised" ())
+    [ Ops.end_ call [ i ] ]
+
 (* [C[i] = A[i] + i]: the loop's index passed to the body as a scalar. *)
 let call_scalar () =
   let add =
@@ -4877,6 +4894,10 @@ let calls =
         (runs_on_host call_loop
            [ (1, int_values [ 1; 2; 3; 4 ]) ]
            [ 3; 6; 9; 12 ]);
+      test "a call in an optimised kernel runs once per element"
+        (runs_on_host call_optimised
+           [ (1, int_values (List.init 16 Fun.id)) ]
+           (List.init 16 (fun x -> 4 * x)));
       test "a call of a program not yet compiled runs its instructions"
         (fun () ->
           (* a body another kernel calls takes its arguments as parameters,

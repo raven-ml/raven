@@ -438,6 +438,104 @@ let bounded_loops =
             (K.apply_opt bounded tc));
     ]
 
+(* Axes a call reads
+
+   A call takes one pointer or value for each argument and runs once for each
+   point of the axes they read, so such an axis cannot become a thread's lanes,
+   nor take padding. *)
+
+(* [f(&x[i])] and [out[i * 8 + n] = n], for four [i] and eight [n]. *)
+let called_rows () =
+  let i = Ops.range (Int 4) [ 0 ] and n = Ops.range (Int 8) [ 1 ] in
+  let x = Shape.param ~shape:[ Int 4 ] 1 Int32
+  and out = Shape.param ~shape:[ Int 32 ] 0 Int32 in
+  let p = Shape.param ~shape:[ Int 1 ] 0 Int32 in
+  let f =
+    Ops.sink [ Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.int ~dtype:Int32 1) ]
+  in
+  let call = Ops.call ~name:"f" f [ Ops.index x [ i ] ] in
+  let at = Ops.index out [ Ops.O.((i * Ops.int 8) + n) ] in
+  let st = Ops.store at (Ops.cast n Int32) in
+  ( i,
+    n,
+    Ops.sink ~kernel:(Ops.kernel_info ())
+      [ Ops.end_ (Ops.group [ call; st ]) [ i; n ] ] )
+
+(* [ast] with a call beside its stores, of [f(&y[r])] for its first axis [r]. *)
+let with_call k =
+  let ast = K.ast k in
+  let r = List.hd (K.rngs k) in
+  let y = Shape.param ~shape:[ Int 4096 ] 11 Int32 in
+  let p = Shape.param ~shape:[ Int 1 ] 0 Int32 in
+  let f =
+    Ops.sink [ Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.int ~dtype:Int32 1) ]
+  in
+  let call = Ops.end_ (Ops.call ~name:"f" f [ Ops.index y [ r ] ]) [ r ] in
+  Ops.replace ast ~src:(Ops.src ast @ [ call ])
+
+let called_axes =
+  group "axes a call reads"
+    [
+      test "read_by_calls is the axes a call's arguments read" (fun () ->
+          let i, _, ast = called_rows () in
+          equal (list Uops.uop) [ i ]
+            (K.read_by_calls (K.v ast (renderer "cpu"))));
+      test "upcastable_dims leaves out an axis a call's argument reads"
+        (fun () ->
+          let i, n, ast = called_rows () in
+          let k = K.v ast (renderer "cpu") in
+          equal (list int)
+            [ position n k ]
+            (List.filter
+               (fun a -> a = position i k || a = position n k)
+               (K.upcastable_dims k)));
+      test
+        "apply_opt refuses an upcast of an axis a call's argument reads, \
+         leaving the kernel as it was" (fun () ->
+          let i, _, ast = called_rows () in
+          let k = K.v ast (renderer "cpu") in
+          let before = K.ast k in
+          equal
+            (result (list Uops.uop) string)
+            (Error "a call's argument reads axis 0")
+            (K.apply_opt k (split (position i k) 4 Upcast));
+          equal Uops.uop before (K.ast k);
+          equal (list Kernel_opts.opt) [] (K.applied_opts k));
+      test "apply_opt refuses a pad of an axis a call's argument reads"
+        (fun () ->
+          let i, _, ast = called_rows () in
+          let k = K.v ast (renderer "cpu") in
+          equal
+            (result (list Uops.uop) string)
+            (Error "a call's argument reads axis 0")
+            (K.apply_opt k (Opt.Padto { axis = position i k; amount = 8 })));
+      test "apply_opt upcasts and pads an axis no call's argument reads"
+        (fun () ->
+          let _, n, ast = called_rows () in
+          let ok opt =
+            let k = K.v ast (renderer "cpu") in
+            is_ok ~pp:Format.pp_print_string
+              (K.apply_opt k (opt (position n k)))
+          in
+          ok (fun axis -> split axis 4 Upcast);
+          ok (fun axis -> Opt.Padto { axis; amount = 3 }));
+      test "apply_opt splits an axis a call's argument reads into threads"
+        (fun () ->
+          let i, _, ast = called_rows () in
+          let k = K.v ast (renderer "cuda") in
+          is_ok ~pp:Format.pp_print_string
+            (K.apply_opt k (split (position i k) 2 Local)));
+      test "a tensor core is refused where a call's argument reads an axis"
+        (fun () ->
+          let k = K.v (kernel "tc_metal_0") (renderer "metal") in
+          is_ok ~pp:Format.pp_print_string (K.apply_opt (K.copy k) tc);
+          let called = K.v (with_call k) (renderer "metal") in
+          equal
+            (result (list Uops.uop) string)
+            (Error "tensor cores need calls whose arguments read no axis")
+            (K.apply_opt called tc));
+    ]
+
 (* Splitting *)
 
 let shifts =
@@ -797,6 +895,7 @@ let () =
          colors;
          schedulers;
          bounded_loops;
+         called_axes;
          queries;
          shifts;
          split_targets;

@@ -536,6 +536,43 @@ let applies =
       let _, _, o = List.find (fun (c, _, _) -> c.name = name) gpu_cases in
       equal Testable.bool streamed (streams o))
 
+(* [k]'s kernel with a call beside its stores, of [f(&y[r0], &y[r1], ...)]
+   for its output axes [r0], [r1], ... *)
+let with_call k =
+  let ast = K.ast k in
+  let outputs = ranges_at k ~reduce:false [] in
+  let param slot = Shape.param ~shape:[ Int 1 ] slot Int32 in
+  let f =
+    Ops.sink
+      (List.mapi
+         (fun slot _ ->
+           Ops.store
+             (Ops.index (param slot) [ Ops.int 0 ])
+             (Ops.int ~dtype:Int32 1))
+         outputs)
+  in
+  let y = Shape.param ~shape:[ Int 65536 ] 99 Int32 in
+  let args = List.map (fun r -> Ops.index y [ r ]) outputs in
+  let call = Ops.end_ (Ops.call ~name:"f" f args) outputs in
+  Ops.replace ast ~src:(Ops.src ast @ [ call ])
+
+(* A contraction the heuristic would stream, beside a call that reads its
+   output axes, is optimised without a lane of any axis the call reads. *)
+let streams_no_call =
+  cases "a kernel whose call reads its output axes is not streamed" ~id
+    streamed_cases_all (fun (c, k, _, _) ->
+      let s = K.v (with_call k) (renderer c.renderer) in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      equal Testable.bool false (streams o);
+      equal (list Testable.string) []
+        (List.filter_map
+           (fun r ->
+             if Ops.axis_type r = Ops.Axis_type.Upcast then
+               Some (Ops.range_str r)
+             else None)
+           (K.read_by_calls o)))
+
 (* A target's bound of multiply-adds per byte: 64 on every renderer, sm_89's
    measured crossover, which the others take until they measure their own. *)
 let per_byte_bounds =
@@ -1561,6 +1598,7 @@ let () =
              per_byte_bounds;
              per_byte_order;
              recorded_order;
+             streams_no_call;
            ];
          warps_within_runs;
          group "the host's budget"

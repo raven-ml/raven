@@ -6734,3 +6734,35 @@ the walk of `Rangeify.fix_store_hazard`.
   optimisations chosen are tinygrad's`; rune's compile bench row
   `products/vecmat-bf16`, whose fudge baseline the scheduled re-record
   records.
+
+## D265. No axis a call's argument reads runs as lanes or takes padding
+
+- **tinygrad:** `codegen/opt/postrange.py:84-85` (`upcastable_dims`) and
+  `87-147` (`apply_opt`), which upcast and pad an axis a call's argument
+  reads; `codegen/opt/heuristic.py:62`, whose matrix-vector layout upcasts
+  output axes; `test/runtime/test_custom_kernel.py:738-753`
+  (`test_call_loop_mini_opts`, `test_call_loop_split`, `test_call_loop_pad`,
+  expected failures).
+- **tolk:** `Postrange.Scheduler.read_by_calls`, `upcastable_dims` and
+  `apply_opt`; `Heuristic.streams`; `test/gen/tinygrad.patch`, which gives
+  tinygrad the same rules.
+- **Differs:** an axis that an argument of a call in the kernel reads, as
+  `i` in `f(&x[i])` or `f(i)`, is not upcastable, and an upcast or a pad of
+  it is refused, as is a tensor core in such a kernel; the heuristic
+  streams no contraction there. tinygrad upcasts such an axis and renders
+  the call with a vector where its parameter takes one pointer or value,
+  which C compilers reject, and pads it with the call run on every padded
+  point.
+- **Reason:** (e): `test_call_loop_pad`'s kernel, `C[i] += A[i]` by a call
+  over three `i` padded to four, computes `[2, 2, 3, 0]` for `[1, 2, 3,
+  0]`, the padded point adding `A[0]` into `C[0]` again; under the
+  heuristic, `test_call_loop_mini`'s kernel fails at the C compiler. A
+  call takes one pointer or value for each argument; a call per lane,
+  gated on its point, would keep the upcast, for a kernel no raven
+  library builds yet.
+- **Pinned by:** the Codegen suite: `calls in a kernel › a call in an
+  optimised kernel runs once per element`. The Postrange suite: `axes a
+  call reads`, the axes it lists, upcastable and not, an upcast and a pad
+  refused on such an axis and applied on another, a local split applied,
+  and a tensor core refused. The Heuristic suite: `streaming › a kernel
+  whose call reads its output axes is not streamed`.
