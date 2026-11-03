@@ -319,6 +319,20 @@ let kernels =
             (Interpreter.writes
                ~buffers:[ (1, Array.map int [| 2; 3; 9; 9 |]) ]
                (store (Ops.int 0) total)));
+      test "a store's reductions read its ranges at each of their values"
+        (fun () ->
+          let scaled = Ops.reduce Ops.O.(int32 r * int32 s) Add [ s ] in
+          let count = Ops.reduce (int32 s) Add [ s ] in
+          equal (list write)
+            [ (0, 0, int 1); (0, 1, int 2); (0, 2, int 3); (0, 3, int 4) ]
+            (writes (Ops.end_ (store r Ops.O.(scaled + count)) [ r ])));
+      test "a reduction's range ends read the store's ranges at each value"
+        (fun () ->
+          let t = Ops.range (Sym Ops.O.(r + int 1)) [ 2 ] in
+          let count = Ops.reduce (Ops.int ~dtype:Dtype.Int32 1) Add [ t; r ] in
+          equal (list write)
+            [ (0, 0, int 4); (0, 1, int 8); (0, 2, int 12); (0, 3, int 16) ]
+            (writes (Ops.end_ (store r count) [ r ])));
       test "a store through a vector writes each lane past the offset"
         (fun () ->
           let lanes = Shape.stack [ int32 (Ops.int 7); int32 (Ops.int 8) ] in

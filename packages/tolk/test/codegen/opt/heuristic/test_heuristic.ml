@@ -156,6 +156,19 @@ let iterations c =
   let k = K.v (kernel c.kernel) (renderer c.renderer) in
   List.fold_left (fun n r -> Bigint.mul n (size r)) Bigint.one (K.rngs k)
 
+(* A kernel's writes, kept: the rows of a kernel compare against the same
+   writes, and renderers that choose the same optimisations make the same
+   kernel. *)
+let writes =
+  let known = Ops.Tbl.create 64 in
+  fun k ->
+    match Ops.Tbl.find_opt known k with
+    | Some w -> w
+    | None ->
+        let w = Kernel_opts.writes k in
+        Ops.Tbl.add known k w;
+        w
+
 (* Kernels of more than 2^18 iterations are pinned by their goldens alone. *)
 let keeps_kernel_writes =
   let evaluable = List.filter evaluable recorded_cases in
@@ -168,8 +181,8 @@ let keeps_kernel_writes =
   in
   let keeps c =
     equal (list Kernel_opts.write)
-      (Kernel_opts.writes (kernel c.kernel))
-      (Kernel_opts.writes (optimize c))
+      (writes (kernel c.kernel))
+      (writes (optimize c))
   in
   group "the hand-coded optimisations keep a kernel's writes"
     [

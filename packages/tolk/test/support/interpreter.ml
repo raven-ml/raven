@@ -11,6 +11,10 @@ let is_invalid = function `Invalid -> true | #Dtype.value -> false
 let zero dt = Dtype.const dt (`Int Bigint.zero)
 let weak u = List.mem (Ops.dtype u) Dtype.weaks
 
+(* [dt] is one of {!Dtype.ints}, tested without the generic equality of
+   [List.mem], which a node's evaluation would pay at each step. *)
+let committed_int dt = Dtype.is_int dt && dt <> Dtype.Weak_int
+
 (* [held ~check dt v] is [v] as [dt] holds it: converted, then wrapped to [dt]'s
    width, after [check dt] has seen the exact value. A NaN converted to a float
    keeps its sign and payload as far as [dt] does, as compiled code keeps them;
@@ -21,12 +25,12 @@ let held ~check dt (v : Dtype.value) : Dtype.const =
       (Dtype.truncate dt v :> Dtype.const)
   (* a NaN or an infinity has no exact integer: an integer type takes the value
      a constant of it does ({!Dtype.const}) *)
-  | `Float x when (not (Float.is_finite x)) && List.mem dt Dtype.ints ->
+  | `Float x when (not (Float.is_finite x)) && committed_int dt ->
       Dtype.const dt v
   | _ -> (
       (* An integer type wraps its constants: the exact value is the weak
          one. *)
-      let exact = if List.mem dt Dtype.ints then Dtype.Weak_int else dt in
+      let exact = if committed_int dt then Dtype.Weak_int else dt in
       match (Dtype.const exact v, Dtype.const dt v) with
       | (#Dtype.value as e), (#Dtype.value as v) ->
           check dt e;
@@ -88,12 +92,13 @@ let rec lane known memo k u =
 (* A graph is evaluated as a program: its nodes numbered once, each with the
    numbers of its sources and what its evaluation needs beyond its node, so that
    evaluating reads arrays, not tables. Named leaves read an environment of
-   slots, one per name. Each state of the environment has a generation, and a
-   node's value is kept with the generation it was computed in: a value is
-   reused only under the binding it was computed under. A node whose sources
-   reach no named leaf (not [bound]) has one value per evaluation, kept with the
-   evaluation's first generation, its epoch. A lane of stacks adds the nodes it
-   makes when it is first read. *)
+   slots, one per name. A clock counts the changes of the environment, each slot
+   keeps the time it was last bound, and a node's value is kept with the time it
+   was computed: it is reused while none of the slots it reads ([deps]) has been
+   bound since, and while the evaluation that computed it lasts, which began at
+   its epoch. A value inside a loop that reads only the ranges outside it is
+   thus computed once for each binding of those, as compiled code hoists it. A
+   lane of stacks adds the nodes it makes when it is first read. *)
 type program = {
   ids : int Ops.Tbl.t;
   slots : (string, int) Hashtbl.t;
@@ -110,14 +115,14 @@ type program = {
   mutable commits : Dtype.t option array array;
   mutable stacks : bool array;
   mutable selects : bool array;
-  mutable bound : bool array;
+  mutable deps : int array array;
   mutable values : Dtype.const array;
   mutable stamps : int array;
   mutable count : int;
   mutable env : Dtype.value option array;
+  mutable bound_at : int array;
   mutable epoch : int;
-  mutable generation : int;
-  mutable generations : int;
+  mutable clock : int;
 }
 
 let grown a n x =
@@ -133,7 +138,7 @@ let grow p =
   p.commits <- grown p.commits n [||];
   p.stacks <- grown p.stacks n false;
   p.selects <- grown p.selects n false;
-  p.bound <- grown p.bound n false;
+  p.deps <- grown p.deps n [||];
   p.values <- grown p.values n `Invalid;
   p.stamps <- grown p.stamps n (-1)
 
@@ -147,7 +152,9 @@ let leaf_slot p u =
       | None ->
           let slot = Hashtbl.length p.slots in
           Hashtbl.replace p.slots n slot;
-          if slot = Array.length p.env then p.env <- grown p.env (2 * slot) None;
+          if slot = Array.length p.env then (
+            p.env <- grown p.env (2 * slot) None;
+            p.bound_at <- grown p.bound_at (2 * slot) 0);
           p.env.(slot) <- List.assoc_opt n p.vars;
           slot)
 
@@ -175,6 +182,31 @@ let commits u =
          | _ -> None)
        src)
 
+(* The slots that the value of node [i], [u], reads: its own and its sources'.
+   A reduction over [r1; ...; rn] binds those ranges itself: its body reads
+   none of them from outside, and the range [rj], its end included, reads from
+   outside all but [r1] to [rj], which are bound when its end is evaluated. *)
+let deps p u i srcs =
+  let except bound s = List.filter (fun x -> not (List.mem x bound)) s in
+  let read =
+    match (Ops.op u, Array.to_list srcs) with
+    | Reduce, body :: ranges ->
+        let slots = List.map (fun r -> p.leaves.(r)) ranges in
+        let rec ends bound = function
+          | [] -> []
+          | r :: rs ->
+              let bound = p.leaves.(r) :: bound in
+              except bound (Array.to_list p.deps.(r)) @ ends bound rs
+        in
+        except slots (Array.to_list p.deps.(body)) @ ends [] ranges
+    | _ ->
+        Array.fold_left
+          (fun acc s -> Array.to_list p.deps.(s) @ acc)
+          (if p.leaves.(i) >= 0 then [ p.leaves.(i) ] else [])
+          srcs
+  in
+  Array.of_list (List.sort_uniq Int.compare read)
+
 let rec add p u =
   match Ops.Tbl.find_opt p.ids u with
   | Some i -> i
@@ -193,8 +225,7 @@ let rec add p u =
         | op when Op.Set.mem op Op.Set.alu || op = Cast || op = Bitcast ->
             Array.exists (fun s -> p.stacks.(s)) srcs
         | _ -> false);
-      p.bound.(i) <-
-        p.leaves.(i) >= 0 || Array.exists (fun s -> p.bound.(s)) srcs;
+      p.deps.(i) <- deps p u i srcs;
       p.selects.(i) <-
         (match (Ops.op u, Ops.src u) with
         | Where, _ :: operands -> not (List.exists weak operands)
@@ -223,14 +254,14 @@ let make u =
       commits = Array.make n [||];
       stacks = Array.make n false;
       selects = Array.make n false;
-      bound = Array.make n false;
+      deps = Array.make n [||];
       values = Array.make n `Invalid;
       stamps = Array.make n (-1);
       count = 0;
       env = Array.make 16 None;
+      bound_at = Array.make 16 0;
       epoch = 0;
-      generation = 0;
-      generations = 0;
+      clock = 0;
     }
   in
   List.iter (fun u -> ignore (add p u)) nodes;
@@ -242,7 +273,7 @@ let make u =
 let last = Domain.DLS.new_key (fun () -> None)
 
 (* [program ~vars ~params ~buffers u] is the program of [u] with its leaves
-   bound by [vars], in a generation of its own. *)
+   bound by [vars], in an evaluation of its own. *)
 let program ~vars ~params ~buffers u =
   let p =
     match Domain.DLS.get last with
@@ -256,9 +287,8 @@ let program ~vars ~params ~buffers u =
   p.params <- params;
   p.buffers <- buffers;
   Hashtbl.iter (fun n slot -> p.env.(slot) <- List.assoc_opt n vars) p.slots;
-  p.generations <- p.generations + 1;
-  p.epoch <- p.generations;
-  p.generation <- p.generations;
+  p.clock <- p.clock + 1;
+  p.epoch <- p.clock;
   p
 
 let lane_of p vector k =
@@ -320,11 +350,25 @@ let storage_slot u =
   | Param { slot; _ } when Shape.max_shape u <> [] -> slot
   | _ -> invalid_arg "cannot access a node that is not storage"
 
+(* [bind p slot v] binds [slot] to [v], at a time of its own. *)
+let bind p slot v =
+  p.env.(slot) <- v;
+  p.clock <- p.clock + 1;
+  p.bound_at.(slot) <- p.clock
+
+(* [fresh p i] is [true] iff the value kept for node [i] was computed in this
+   evaluation and none of the slots it reads has been bound since. *)
+let fresh p i =
+  let stamp = p.stamps.(i) and deps = p.deps.(i) in
+  let rec unbound j =
+    j = Array.length deps || (p.bound_at.(deps.(j)) <= stamp && unbound (j + 1))
+  in
+  stamp >= p.epoch && unbound 0
+
 (* [over ~check p ranges f acc] folds [f] over the bindings of the environment
    extended by each value of [ranges], the last varying fastest, each range's
-   end evaluated under the binding of those before it. Each binding is a
-   generation of its own; the environment and its generation are restored
-   after. *)
+   end evaluated under the binding of those before it. The environment is
+   restored after, a binding again. *)
 let rec over :
     'a.
     check:(Dtype.t -> Dtype.value -> unit) ->
@@ -342,24 +386,20 @@ let rec over :
       match value ~check p p.srcs.(r).(0) with
       | `Int n ->
           let slot = p.leaves.(r) in
-          let saved = p.env.(slot) and generation = p.generation in
+          let saved = p.env.(slot) in
           let acc = ref acc in
           for k = 0 to Bigint.to_int n - 1 do
-            p.env.(slot) <- Some (`Int (Bigint.of_int k));
-            p.generations <- p.generations + 1;
-            p.generation <- p.generations;
+            bind p slot (Some (`Int (Bigint.of_int k)));
             acc := over ~check p rs f !acc
           done;
-          p.env.(slot) <- saved;
-          p.generation <- generation;
+          bind p slot saved;
           !acc
       | _ -> invalid_arg "a range's end is not an integer")
 
 (* A reduction and an index evaluate their sources themselves: a reduction at
    each value of its ranges, an index without reading its storage. *)
 and value ~check p i =
-  let generation = if p.bound.(i) then p.generation else p.epoch in
-  if p.stamps.(i) = generation then p.values.(i)
+  if fresh p i then p.values.(i)
   else
     let v =
       match Ops.op p.nodes.(i) with
@@ -373,7 +413,7 @@ and value ~check p i =
       | _ -> node ~check p i (operands ~check p i 0)
     in
     p.values.(i) <- v;
-    p.stamps.(i) <- generation;
+    p.stamps.(i) <- p.clock;
     v
 
 (* [operands ~check p i j] is the values of the sources of [i] from the [j]th,
