@@ -4934,9 +4934,7 @@ let rows_whole ~by x =
 
 (* A scatter of [x]'s rows, which folds the rows of each device and closes
    them by partials where [ids] and [x] are split along them. *)
-let reduce_segments c ~segments ids x =
-  let by = "Nx.reduce_segments" in
-  Eval.composite ~by [ ("ids", Any ids); ("x", Any x) ] @@ fun () ->
+let segments_of ~by c ~segments ids x =
   if segments < 0 then invalid_argf "%s: %d segments" by segments;
   rows_of ~by x;
   if ndim ids <> 1 || Prim.dim ids 0 <> Prim.dim x 0 then
@@ -4952,6 +4950,13 @@ let reduce_segments c ~segments ids x =
   else
     let idx = Eval.broadcast ~by s (Eval.reshape ~by along ids) in
     scattered ~by c idx x into
+
+let reduce_segments c ~segments ids x =
+  let by = "Nx.reduce_segments" in
+  if Eval.apart ids x then
+    Eval.composite ~by [ Arg ("ids", ids); Arg ("x", x) ] (fun () ->
+        segments_of ~by c ~segments ids x)
+  else segments_of ~by c ~segments ids x
 
 (* The disjoint sparse table: level [k] holds, at each row, its chunk of [2^k]
    rows combined from that row to the chunk's end, its suffix, and from the
@@ -5038,13 +5043,7 @@ let ranges (type v s d) ~by (c : P.binary) ~l ~r (x : (v, s, d) t)
     in
     go 0 xp xp res
 
-let reduce_ranges c ~lo ~hi x =
-  let by = "Nx.reduce_ranges" in
-  let lo = Donate.read ~by lo in
-  let hi = Donate.read ~by hi in
-  let x = Donate.read ~by x in
-  Eval.composite ~by [ ("lo", Any lo); ("hi", Any hi); ("x", Any x) ]
-  @@ fun () ->
+let ranges_of ~by c ~lo ~hi x =
   rows_of ~by x;
   if ndim lo <> 1 || not (same_shape lo hi) then
     invalid_argf "%s: bounds %a and %a, not one of each per range" by pp_value
@@ -5068,7 +5067,10 @@ let reduce_ranges c ~lo ~hi x =
   (* The ranges' identities, whole along the ranges beside [x]'s other
      cuts: a range's row is read wherever the bounds cut the ranges. *)
   let empty dt v =
-    let at = Devices.uncut ~axis:0 (placement x) in
+    let at = placement x in
+    let at =
+      if Grid.is_cut (Devices.grid at) then Devices.uncut ~axis:0 at else at
+    in
     fill ~by at dt (Array.append [| m |] rows) v
   in
   match c with
@@ -5091,6 +5093,16 @@ let reduce_ranges c ~lo ~hi x =
       let zero = D.zero w in
       let s = ranges ~by Add ~l ~r (cast_by ~by w x) (empty w zero) in
       cast_by ~by dt (literal ~by ~swapped:false (Binary Add) w s zero)
+
+let reduce_ranges c ~lo ~hi x =
+  let by = "Nx.reduce_ranges" in
+  let lo = Donate.read ~by lo in
+  let hi = Donate.read ~by hi in
+  let x = Donate.read ~by x in
+  if Eval.apart lo hi || Eval.apart lo x then
+    Eval.composite ~by [ Arg ("lo", lo); Arg ("hi", hi); Arg ("x", x) ]
+      (fun () -> ranges_of ~by c ~lo ~hi x)
+  else ranges_of ~by c ~lo ~hi x
 
 (* Maps over segments
 
@@ -5342,11 +5354,7 @@ let grouped ~by ~segments ~c ~call ~named ids x =
       (Eval.broadcast ~by (Array.append [| r; j |] out) (by_out slot)),
     out )
 
-let map_segments ~segments ids f x =
-  let by = "Nx.map_segments" in
-  let ids = Donate.read ~by ids in
-  let x = Donate.read ~by x in
-  Eval.composite ~by [ ("ids", Any ids); ("x", Any x) ] @@ fun () ->
+let map_segments_of ~by ~segments ids f x =
   if segments < 0 then invalid_argf "%s: %d segments" by segments;
   let s = shape ids and xs = shape x in
   let ns = Array.length s in
@@ -5440,6 +5448,15 @@ let map_segments ~segments ids f x =
       (Array.append s out)
       (ternary ~by Where named y
          (scalar_beside ~by y (dtype y) (D.zero (dtype y))))
+
+let map_segments ~segments ids f x =
+  let by = "Nx.map_segments" in
+  let ids = Donate.read ~by ids in
+  let x = Donate.read ~by x in
+  if Eval.apart ids x then
+    Eval.composite ~by [ Arg ("ids", ids); Arg ("x", x) ] (fun () ->
+        map_segments_of ~by ~segments ids f x)
+  else map_segments_of ~by ~segments ids f x
 
 (* Convolution *)
 
@@ -7088,6 +7105,12 @@ module Prim = struct
   let quiet = Eval.quiet
   let donated = Donate.is_handle
   let eval = Eval.eval
+  let apart = Eval.apart
+
+  type 'd arg = 'd Eval.arg =
+    | Arg : string * ('v, 's, 'd) Value.t -> 'd arg
+    | Parts : string * string * 'd any list -> 'd arg
+
   let composite = Eval.composite
 
   module Consumer = struct

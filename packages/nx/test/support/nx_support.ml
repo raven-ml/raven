@@ -325,7 +325,9 @@ let remedied ~by ~candidates args run =
             | Some (name, i) -> (
                 match
                   ( between m ~from:i " lies at " " and is read at ",
-                    between m ~from:i " and is read at " "; Nx.place (" )
+                    (* The placing function is [Nx.place] or another
+                       library's, as [Nx_quant.place]. *)
+                    between m ~from:i " and is read at " "; Nx" )
                 with
                 | Some (p, _), Some (q, _)
                   when String.ends_with ~suffix:(") " ^ name) m ->

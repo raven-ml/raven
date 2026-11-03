@@ -12,7 +12,7 @@
     value the caller never made. A composite declares its arguments by name
     for the extent of its body ({!call}). Each operation in that extent
     notes how its results derive from its operands that derive from an
-    argument ({!record}), and a refusal of such an operand names, in its
+    argument ({!note}), and a refusal of such an operand names, in its
     place, the argument and the grid that reads the operand where the route
     needs it: that grid moved back through each operation's rule
     ({!Route.backward}), to the first argument, in operand order, that it
@@ -32,22 +32,39 @@ type value = Value : ('v, 's, 'd) Value.t -> value
 
 val call :
   by:string ->
-  (string * unit Devices.placement * value) list ->
+  (string * string * unit Devices.placement * value) list ->
   (unit -> 'a) ->
   'a
-(** [call ~by args f] is [f ()], with each [(name, at, x)] of [args] the
-    argument [name] of the composite [by], [x] lying at [at]. Several values
-    may share a name: the parts of one structure. *)
+(** [call ~by args f] is [f ()], with each [(name, place, at, x)] of [args]
+    the argument [name] of the composite [by], which the function [place]
+    places, [x] lying at [at]. Several values may share a name: the parts
+    of one structure, which its own function places. *)
 
 val idle : unit -> bool
 (** [idle ()] is [true] iff no composite's extent is open on the calling
     domain. It allocates nothing. *)
 
-val record : Route.rule -> (value * int array) array -> value list -> unit
-(** [record r xs ys] notes that the results [ys], each of the first's shape,
-    derive by the rule [r] from the operands [xs], each with its shape, in
-    the operation's operand order. It notes nothing where no operand derives
-    from an argument, or no composite's extent is open. *)
+type node
+(** The type for how a value derives from a composite's arguments. *)
+
+val source : ('v, 's, 'd) Value.t -> node option
+(** [source x] is how [x] derives from an argument of an open composite:
+    the argument's node where [x] is one, else the node an operation noted
+    for it ({!note}), else [None], as where no composite's extent is open.
+    A miss allocates nothing. *)
+
+val derives : ('v, 's, 'd) Value.t -> bool
+(** [derives x] is [Option.is_some (source x)]. *)
+
+val made : Route.rule -> (int iarray * node) option array -> node
+(** [made r xs] is the node of a result an operation made by the rule [r]
+    from its operands [xs], in operand order: [Some (s, n)] for an operand
+    of shape [s] that derives as [n], [None] for one that does not. *)
+
+val note : ('v, 's, 'd) Value.t -> node -> unit
+(** [note y n] notes that [y] derives as [n], holding [y] weakly, until the
+    outermost composite's extent ends. An operation notes each of its
+    results of the first's shape, as its rule's windows are the first's. *)
 
 val named : value -> Grid.t -> Route.named option
 (** [named x q] is the argument of an open composite that [x] derives from

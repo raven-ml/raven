@@ -1677,8 +1677,8 @@ let route_of (type r) ~by (op : r prim) : unit Route.t =
       let named =
         if Composite.idle () then None
         else
-          let (Operands xs) = operands op in
           let named i q =
+            let (Operands xs) = operands op in
             let (Any x) = List.nth xs i in
             Composite.named (Value x) q
           in

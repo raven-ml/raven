@@ -534,30 +534,58 @@ let dispatch ~by op =
 
 (* Composites *)
 
+(* Whether [x]'s placement cuts an axis or is a sum. *)
+let spread x =
+  let g = Devices.grid (Prim.placement x) in
+  Grid.is_cut g || Grid.is_partial g
+
+let apart x y =
+  spread x || spread y
+  || not (Devices.equal (Prim.placement x) (Prim.placement y))
+
+type 'd arg =
+  | Arg : string * ('v, 's, 'd) t -> 'd arg
+  | Parts : string * string * 'd any list -> 'd arg
+
 let composite ~by args f =
-  let arg (name, Any x) = (name, Prim.placement x, Composite.Value x) in
-  Composite.call ~by (List.map arg args) f
+  let part name place (Any x) =
+    (name, place, Prim.placement x, Composite.Value x)
+  in
+  let arg = function
+    | Arg (name, x) -> List.[ part name "Nx.place" (Any x) ]
+    | Parts (name, place, xs) -> List.map (part name place) xs
+  in
+  Composite.call ~by (List.concat_map arg args) f
 
 (* Notes, inside a composite, how [op]'s results [r] derive from its
-   operands ({!Composite.record}): those of the first's shape, as the
-   rule's windows are the first's. A placement's results lie where it puts
-   them, whatever its operand's placement. *)
+   operands that derive from an argument ({!Composite.note}): those of the
+   first's shape, as the rule's windows are the first's. A placement's
+   results lie where it puts them, whatever its operand's placement. An
+   operation none of whose operands derives allocates nothing here. *)
 let note (type r) (op : r prim) (r : r) =
   match op with
   | Place _ | Check _ -> ()
+  | _ when not (Prim.exists Composite.derives op) -> ()
   | _ ->
-      let xs = ref List.[] and ys = ref List.[] and first = ref None in
+      let n = Prim.fold (fun () n _ -> n + 1) () 0 op in
+      let operands = Array.make n None in
       Prim.iteri
-        (fun _ x -> xs := List.cons (Composite.Value x, Prim.shape x) !xs)
+        (fun i x ->
+          match Composite.source x with
+          | Some d -> operands.(i) <- Some (Prim.layout_shape x, d)
+          | None -> ())
         op;
+      let node = Composite.made (Prim.rule op) operands in
+      let first = ref None in
       Prim.iter_results
         (fun y ->
-          let s = Prim.shape y in
-          let f = Option.value !first ~default:s in
-          first := Some f;
-          if s = f then ys := List.cons (Composite.Value y) !ys)
-        op r;
-      Composite.record (Prim.rule op) (Array.of_list (List.rev !xs)) !ys
+          let s = Prim.layout_shape y in
+          match !first with
+          | None ->
+              first := Some s;
+              Composite.note y node
+          | Some f -> if s = f then Composite.note y node)
+        op r
 
 let eval ~by op =
   let r = dispatch ~by op in
@@ -566,9 +594,12 @@ let eval ~by op =
 
 (* Notes, inside a composite, [y] as an elementwise result of [xs]. *)
 let mapped xs y =
-  let operand (Any x) = (Composite.Value x, Prim.shape x) in
-  Composite.record Route.Elementwise (Array.map operand xs)
-    (List.cons (Composite.Value y) List.[])
+  let source (Any x) =
+    Option.map (fun d -> (Prim.layout_shape x, d)) (Composite.source x)
+  in
+  let operands = Array.map source xs in
+  if Array.exists Option.is_some operands then
+    Composite.note y (Composite.made Route.Elementwise operands)
 
 (* The one-node maps, built and evaluated: the paths an interpretation may
    reach. *)

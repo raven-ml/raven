@@ -335,17 +335,36 @@ let parts = function
   | Q6_K { blocks } ->
       [ Any blocks ]
 
-(* [f ()], the body of [by] over the weight [w], whose parts are all named
-   [w], and [args]: a refusal inside names the argument its operand derives
-   from, as a cut along [k] that splits a block where the decoding or the
-   product reads it whole. *)
+(* [w]'s codes or blocks. *)
+let part = function
+  | Mxfp4 { codes; _ } -> codes
+  | Mxfp4_blocks { blocks }
+  | Q8_0 { blocks }
+  | Q4_K { blocks }
+  | Q6_K { blocks } ->
+      blocks
+
+(* Whether [w]'s parts and [x] are apart ({!Nx.Prim.apart}): only then may
+   an operation over values derived from them refuse one. *)
+let apart w x =
+  match w with
+  | Mxfp4 { codes; scales } ->
+      Nx.Prim.apart codes scales || Nx.Prim.apart codes x
+  | Mxfp4_blocks _ | Q8_0 _ | Q4_K _ | Q6_K _ -> Nx.Prim.apart (part w) x
+
+(* [f ()], the body of [by] over the weight [w], whose parts are named [w]
+   and placed by {!place}, and [args]: a refusal inside names the argument
+   its operand derives from, as a cut along [k] that splits a block where
+   the decoding or the product reads it whole. *)
 let composite ~by w args f =
-  Nx.Prim.composite ~by (List.map (fun t -> ("w", t)) (parts w) @ args) f
+  Nx.Prim.composite ~by (Parts ("w", "Nx_quant.place", parts w) :: args) f
 
 (* Products *)
 
 let dequant dt w =
-  composite ~by:"Nx_quant.dequant" w [] @@ fun () -> Nx.cast dt (values w)
+  let by = "Nx_quant.dequant" in
+  if apart w (part w) then composite ~by w [] (fun () -> Nx.cast dt (values w))
+  else Nx.cast dt (values w)
 
 (* Batch axes, aligned on the right and broadcast as Nx.matmul's. *)
 let broadcast fn a b =
@@ -516,13 +535,17 @@ let scaled ?(sum = false) ~by ~wide x ws
   if kernel = result then y
   else Nx.transpose ~axes:(List.map (index kernel) result) y
 
+let product ?sum ~by w ws x =
+  let wide = wide x in
+  scaled ?sum ~by ~wide x ws (stored ~wide ws w)
+
 let apply ?sum w x =
   let ws = shape w in
   check_input ws (Nx.shape x);
   let by = "Nx_quant.apply" in
-  composite ~by w [ ("x", Any x) ] @@ fun () ->
-  let wide = wide x in
-  scaled ?sum ~by ~wide x ws (stored ~wide ws w)
+  if apart w x then
+    composite ~by w [ Arg ("x", x) ] (fun () -> product ?sum ~by w ws x)
+  else product ?sum ~by w ws x
 
 (* Quantising. Q8_0 as ggml's quantize_row_q8_0_ref stores a block of 32
    float32 values [v]: [d = amax / 127] for the block's greatest magnitude
@@ -531,8 +554,7 @@ let apply ?sum w x =
    not finite, where [id] is infinite or [v] or [d] is not finite, has the
    quant [0], the low byte x86's conversion gives it in ggml. Nx.max keeps
    a NaN, so a NaN makes its block's scale NaN. *)
-let quantize_q8_0 x =
-  Nx.Prim.composite ~by:"Nx_quant.quantize_q8_0" [ ("x", Any x) ] @@ fun () ->
+let quantized x =
   let s = Nx.shape x in
   let r = Array.length s in
   if r < 2 || s.(r - 1) mod qk8_0 <> 0 then
@@ -557,6 +579,12 @@ let quantize_q8_0 x =
   let blocks = Nx.concatenate ~axis:(-1) [ d; q ] in
   Q8_0 { blocks = rows g ~values:q8_0_bytes blocks }
 
+let quantize_q8_0 x =
+  let by = "Nx_quant.quantize_q8_0" in
+  if Nx.Prim.apart x x then
+    Nx.Prim.composite ~by [ Arg ("x", x) ] (fun () -> quantized x)
+  else quantized x
+
 (* [map f w] is [w] with [f] of each part. *)
 let map f = function
   | Mxfp4 { codes; scales } -> Mxfp4 { codes = f codes; scales = f scales }
@@ -578,8 +606,10 @@ let take ~axis p w =
          "Nx_quant.take: axis %d is the weight's last axis, which a gather \
           would cut across blocks"
          axis);
-  composite ~by:"Nx_quant.take" w [ ("p", Any p) ] @@ fun () ->
-  map (Nx.take ~axis:a p) w
+  if apart w p then
+    composite ~by:"Nx_quant.take" w [ Arg ("p", p) ] (fun () ->
+        map (Nx.take ~axis:a p) w)
+  else map (Nx.take ~axis:a p) w
 
 (* Experts *)
 
@@ -793,8 +823,10 @@ let experts ?sum ~ids w x =
 
 let apply_experts ?sum ~ids w x =
   check_experts (shape w) (Nx.shape ids) (Nx.shape x);
-  composite ~by:"Nx_quant.apply_experts" w [ ("ids", Any ids); ("x", Any x) ]
-  @@ fun () -> experts ?sum ~ids w x
+  if apart w x || Nx.Prim.apart ids x then
+    composite ~by:"Nx_quant.apply_experts" w [ Arg ("ids", ids); Arg ("x", x) ]
+      (fun () -> experts ?sum ~ids w x)
+  else experts ?sum ~ids w x
 
 (* Structure *)
 

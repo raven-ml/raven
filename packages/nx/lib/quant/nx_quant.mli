@@ -40,8 +40,8 @@
     device would read whole, and a cut that leaves [Mxfp4] codes on a device
     without their blocks' scales is read whole too. Either way {!dequant},
     {!apply} and {!apply_experts} raise as the operation reading the part
-    whole does, naming [w], where that part lies, and the placement that
-    puts it whole along [k] ({!Nx.section-routing}); {!apply_experts} where
+    whole does, naming [w], where that part lies, and the {!place} of [w]
+    that puts it whole along [k] ({!Nx.section-routing}); {!apply_experts} where
     a position names a block. {!apply} and {!apply_experts} of an [Mxfp4]
     weight read where it lies read its scales so: with them whole on each
     device, and the weight rebuilt by {!mxfp4}, they read the codes where

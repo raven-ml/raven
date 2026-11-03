@@ -249,11 +249,13 @@ type 'd t = {
 
 (** The type for the argument of a composite operation that an operand
     derives from, which a refusal names in its place: the composite [by],
-    the argument's [name], its placement [at], and the grid [read] that
-    places it where the operand would be read. *)
+    the argument's [name], the function that places it, as ["Nx.place"],
+    its placement [at], and the grid [read] that places it where the
+    operand would be read. *)
 type named = {
   by : string;
   name : string;
+  place : string;
   at : unit Devices.placement;
   read : Grid.t;
 }
@@ -289,9 +291,9 @@ val route :
     or where two partial operands are sums over other groups. Where
     [named i q] (default [None]) is [Some n] for the operand [i] a refusal
     names, and [q] the grid that places it as the remedy needs, the message
-    names [n] in its place: [n.by], then [n.name], [n.at] and [n.read]
-    where the preamble's message names the operand, its placement and its
-    remedy. *)
+    names [n] in its place: [n.by], then [n.name], [n.at], [n.place] and
+    [n.read] where the preamble's message names the operand, its placement,
+    [Nx.place] and its remedy. *)
 
 val backward : rule -> int -> int array -> Grid.t -> Grid.t
 (** [backward r i s q] is the grid of operand [i], of shape [s], that

@@ -114,7 +114,7 @@ val remedied :
 (** [remedied ~by ~candidates args run] is [run at] for the placements [at]
     of the arguments, starting at [args], once it returns. Each refusal of
     [run at] must read
-    [by: name lies at p and is read at q; Nx.place (e) name] for an
+    [by: name lies at p and is read at q; place (e) name] for an
     argument [name] of [args], its placement [p] at [at], and [q] the format
     of one of [candidates name] other than [p]; [run] is then called again
     with [name] there. It fails the test at a refusal that is not so, or

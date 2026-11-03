@@ -1764,8 +1764,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   argument and the `Nx.place` of it that resolves the refusal, where it
   named an internal operation's operand: `Nx.reduce_segments`,
   `Nx.reduce_ranges`, `Nx.map_segments`, and `Nx_quant.dequant`, `apply`,
-  `apply_experts`, `take` and `quantize_q8_0`, whose weight's parts are `w`.
-  `Nx.Prim.composite` declares a function's arguments so.
+  `apply_experts`, `take` and `quantize_q8_0`, whose weight is `w`, placed
+  by `Nx_quant.place`. `Nx.Prim.composite` declares a function's arguments
+  so, where `Nx.Prim.apart` finds two of them apart: a call over arguments
+  whole at one placement records nothing and allocates as before.
 - `Nx.scatter` with positions and updates cut along its axis computes
   `Set`, `Max` and `Min` by partials, as `Add`: each device combines the
   updates it holds, and the partial results close in tile order, `Set`
@@ -1774,10 +1776,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Nx.reduce_segments` computes over `ids` or `x` split along the rows for
   every combine, folding each device's rows by partials; it raised for every
   combine, naming an operand the caller never made. `ids` split beside `x`
-  cut along its columns move where the rows are read.
+  cut along its columns move where the rows are read. With no row or no
+  segment it returns the identity rows without reading `ids` or `x`.
 - `Nx.reduce_ranges` with `lo` or `hi` cut over the devices that cut `x`'s
   columns raises naming `x` or the bound and the `Nx.place` that reads it
-  beside the other, where it named an internal operand.
+  beside the other, where it named an internal operand. The remedy may now
+  move `x` off its cut of the columns, where the bound's placement named
+  the bound.
 - `Nx.map_segments` computes over one-axis `ids` split in windows of unequal
   extents, as five ids over two devices, each index its own group; it raised
   from an internal reshape. Ids of several axes so split raise at the call,

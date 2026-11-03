@@ -125,13 +125,26 @@ val partition : Partition.engine -> by:string -> 'r prim -> 'r
     rule, what [e]'s steps raise, and [Invalid_argument] as an internal fault
     for a [Check]. *)
 
-val composite :
-  by:string -> (string * 'd any) list -> (unit -> 'a) -> 'a
+val apart : ('a, 'b, 'd) t -> ('c, 'e, 'd) t -> bool
+(** [apart x y] is [true] iff [x] or [y] lies cut or as a sum, or they lie
+    at different placements. Where every two arguments of a composite are
+    not apart, no operation over values derived from them alone refuses
+    one, and the composite needs no {!composite}. It allocates nothing. *)
+
+(** The type for a composite's argument: a value and its name, or the parts
+    of a structure, its name and the function that places it. *)
+type 'd arg =
+  | Arg : string * ('v, 's, 'd) t -> 'd arg
+  | Parts : string * string * 'd any list -> 'd arg
+
+val composite : by:string -> 'd arg list -> (unit -> 'a) -> 'a
 (** [composite ~by args f] is [f ()], the body of the composite operation
     [by] over the arguments [args], each with its name ({!Composite.call}).
     Each operation inside it notes how its results derive from its operands
     ({!Composite.record}), so that a refusal names the argument an operand
-    derives from. *)
+    derives from. A composite calls it only where some two of its
+    arguments are {!apart}, so that a call over arguments whole at one
+    placement notes nothing. *)
 
 val apply1 :
   by:string ->

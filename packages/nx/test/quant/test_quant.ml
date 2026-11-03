@@ -1144,11 +1144,15 @@ let decoded w = function
 
 (* A call that reads its argument [name], a weight's parts by default,
    whole where it lies cut: its raise names the argument, where it lies,
-   and the placement to write, [Nx.place (Placement.on s)]. *)
+   and the placement to write, [(Placement.on s)], by {!Nx_quant.place} for
+   a weight and {!Nx.place} for a value. *)
 let read_whole ?(name = "w") f =
+  let place = if name = "w" then "Nx_quant.place" else "Nx.place" in
   let named = function
     | Invalid_argument m ->
-        String.ends_with ~suffix:("; Nx.place (Placement.on s) " ^ name) m
+        String.ends_with
+          ~suffix:("; " ^ place ^ " (Placement.on s) " ^ name)
+          m
         && Exn.invalid_arg
              ~sub:(": " ^ name ^ " lies at ")
              (Invalid_argument m)
@@ -1899,8 +1903,8 @@ let whole_scales_law (t, b, lead, cut_x) =
 let split_blocks fn p =
   Invalid_argument
     (Format.asprintf
-       "%s: w lies at %a and is read at on [m0; m1; m2; m3]; Nx.place \
-        (Placement.on s) w"
+       "%s: w lies at %a and is read at on [m0; m1; m2; m3]; \
+        Nx_quant.place (Placement.on s) w"
        fn Nx.Placement.pp p)
 
 (* Composites. Each function computes by other operations over values it

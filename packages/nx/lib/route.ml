@@ -30,6 +30,7 @@ type 'd t = {
 type named = {
   by : string;
   name : string;
+  place : string;
   at : unit Devices.placement;
   read : Grid.t;
 }
@@ -418,9 +419,9 @@ let refuse ~by ~named rule set i p s u =
   match named i q with
   | Some n ->
       let set = Devices.set n.at in
-      invalid_argf "%s: %s lies at %a and is read at %a; Nx.place (%a) %s" n.by
+      invalid_argf "%s: %s lies at %a and is read at %a; %s (%a) %s" n.by
         n.name Devices.pp_placement n.at Devices.pp_placement
-        (Devices.v ~by set n.read) (pp_call ~by set) n.read n.name
+        (Devices.v ~by set n.read) n.place (pp_call ~by set) n.read n.name
   | None ->
       invalid_argf
         "%s: operand %d lies at %a and is read at %a; Nx.place (%a) %s" by i
@@ -433,8 +434,8 @@ let refuse ~by ~named rule set i p s u =
 let unkept ~by ~named ?(what = "a sum the operation does not keep") i p =
   match named i (Grid.closed (Devices.grid p)) with
   | Some n ->
-      invalid_argf "%s: %s lies at %a, %s; Nx.place (%a) %s" n.by n.name
-        Devices.pp_placement n.at what
+      invalid_argf "%s: %s lies at %a, %s; %s (%a) %s" n.by n.name
+        Devices.pp_placement n.at what n.place
         (pp_call ~by (Devices.set n.at))
         n.read n.name
   | None ->

@@ -380,17 +380,19 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     v}
 
     A function that computes by several operations over values it derives
-    from its arguments, as {!reduce_segments} does by a scatter of its rows,
-    raises in their place where one of them refuses an operand derived from
-    an argument: the message names the function, the argument as its
-    documentation names it, where it lies, and the {!place} of it that
-    reads the operand where the operation needs it, the grid moved back
-    through each operation between them ({!Prim.composite}). An argument
-    that the remedy leaves where it lies is passed over for the next:
+    from its arguments, as {!reduce_ranges} does by gathers and maps of its
+    rows and bounds, raises in their place where one of them refuses an
+    operand derived from an argument: the message names the function, the
+    argument as its documentation names it, where it lies, and the call of
+    the argument's placing function, {!place} for a value, that reads the
+    operand where the operation needs it, the grid moved back through each
+    operation between them ({!Prim.composite}). An argument that the remedy
+    leaves where it lies is passed over for the next. Over [lo] and [x]
+    split along their rows and columns over the same devices:
 
     {v
-    Nx.reduce_segments: x lies at split ~axis:0 [CUDA:0; CUDA:1] and is
-    read at on [CUDA:0; CUDA:1]; Nx.place (Placement.on s) x
+    Nx.reduce_ranges: x lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
+    at on [CUDA:0; CUDA:1]; Nx.place (Placement.on s) x
     v}
 
     An operation linear in its partial operands ({!Placement.partial}),
@@ -3819,7 +3821,8 @@ val reduce_segments :
     in row order, as {!scatter} does: [Add] sums, [Max] and [Min] give the
     bits of one device, and [Set] keeps the last row. [ids] that lie
     elsewhere than the devices read them move there, as a scatter's
-    positions do ({!section-routing}).
+    positions do ({!section-routing}). With no row or no segment, it is the
+    rows of the identity, lying so, and reads neither [ids] nor [x].
 
     {[
     let ids = Nx.create Nx.int64 [| 5 |] [| 0L; 2L; 0L; -1L; 2L |]
@@ -3864,7 +3867,8 @@ val reduce_ranges :
     those that cut [x]'s other axes, such as another axis of a mesh. A
     bound cut otherwise raises [Invalid_argument] naming [x] or a bound and
     the {!place} of it that reads it beside the other
-    ({!section-routing}).
+    ({!section-routing}): one that puts [x] whole, off its cut of the
+    columns, where the bounds join the operations first.
 
     {[
     let x = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
@@ -3926,7 +3930,10 @@ val map_segments :
     differ in extent, as five ids over two devices, each index is a group of
     its own, so [ids] then holds one position per index: one axis, or
     further axes of extent [1]. Each block is then one row, and [f] reads
-    each owner's data once per position.
+    each owner's data once per position. An operation in [f] that refuses a
+    value derived from [owners] or [rows] raises naming [ids] or [x], and
+    the {!place} of it that reads the value where the operation needs it
+    ({!section-routing}).
 
     {[
     let ids = Nx.create Nx.int64 [| 4 |] [| 1L; -1L; 0L; 1L |]
@@ -5696,14 +5703,33 @@ module Prim : sig
   (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's
       functions apply it. *)
 
-  val composite : by:string -> (string * 'd any) list -> (unit -> 'a) -> 'a
+  val apart : ('a, 'b, 'd) nx -> ('c, 'e, 'd) nx -> bool
+  (** [apart x y] is [true] iff [x] or [y] lies cut across devices or as a
+      sum, or they lie at different placements. Over arguments no two of
+      which are apart, no operation over values derived from them alone
+      refuses one: a function calls {!composite} only where some two of its
+      arguments are apart, so that a call over values whole at one
+      placement costs nothing more. It allocates nothing. *)
+
+  (** The type for a composite's argument. *)
+  type 'd arg =
+    | Arg : string * ('v, 's, 'd) nx -> 'd arg
+        (** [Arg (name, x)]: the value [x], named [name], which
+            {!Nx.place} places. *)
+    | Parts : string * string * 'd any list -> 'd arg
+        (** [Parts (name, place, xs)]: the parts [xs] of one structure
+            named [name], which the function named [place] places, as
+            ["Nx_quant.place"]. *)
+
+  val composite : by:string -> 'd arg list -> (unit -> 'a) -> 'a
   (** [composite ~by args f] is [f ()], the body of the operation [by] over
-      its arguments [args], each named as the caller's interface names it;
-      the parts of one structure share its name. An operation [f] calls that
-      refuses an operand derived from an argument, by movements or any
-      other operations, raises as {!Nx.section-routing} states but naming
-      [by], the argument, where it lies, and the [Nx.place] of the argument
-      that reads the operand where the operation needs it: the first
+      its arguments [args], each named as the caller's interface names it.
+      An operation [f] calls that refuses an operand derived from an
+      argument, by movements or any other operations, raises as
+      {!Nx.section-routing} states but naming [by], the argument, where it
+      lies (the part's placement, for a structure), and the call of the
+      argument's placing function that reads the operand where the
+      operation needs it: the first
       argument, in operand order, that the remedy places elsewhere than it
       lies, of the outermost such call around [f]. An operand derived from
       none keeps the operation's own message. Each operation inside [f]
