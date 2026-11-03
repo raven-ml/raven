@@ -211,7 +211,29 @@ let examples =
 
 (* The law *)
 
-let law (module S : Nx.Devices) c =
+(* The value of [p], a float's code or a complex number's part's. *)
+let value_of p = Int64.float_of_bits (Int64.of_string ("0x" ^ p))
+
+(* The codes of the parts of [e], a float's or a complex number's code. *)
+let parts e = String.split_on_char ',' e
+
+(* Whether codes [k] hold a nonzero value below float32's least normal. *)
+let subnormal ((_, c) : codes) =
+  let tiny p =
+    let x = value_of p in
+    x <> 0. && Float.abs x < 0x1p-126
+  in
+  Array.exists (fun e -> List.exists tiny (parts e)) c
+
+(* [k] with each zero and each value below float32's least normal read as
+   [+0]. Where an operand or the result is such a value, a device that
+   flushes float32's subnormals gives [±0] or the value, the sign of a zero
+   that a flushed operand of an extreme no longer decides. *)
+let flushed ((s, c) : codes) : codes =
+  let part p = if Float.abs (value_of p) < 0x1p-126 then "0" else p in
+  (s, Array.map (fun e -> String.concat "," (List.map part (parts e))) c)
+
+let law ?(flushes = false) (module S : Nx.Devices) c =
   let (Nx.Dtype.Any dt) = c.dtype in
   List.iter
     (fun k -> cover (combine_name k) (c.combine = k))
@@ -247,6 +269,15 @@ let law (module S : Nx.Devices) c =
     Nx.scatter ~combine:c.combine ~axis:1 (shaped c.positions t i) u x
   in
   let eager = outcome (fun () -> codes (f i u x)) in
+  let relaxed =
+    flushes && is_floating c.dtype
+    && (subnormal (codes x) || subnormal (codes u)
+       || match eager with Value k -> subnormal k | Raised _ -> false)
+  in
+  let settled = function
+    | Value k when relaxed -> Value (flushed k)
+    | o -> o
+  in
   let g =
     Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor) f
   in
@@ -256,4 +287,4 @@ let law (module S : Nx.Devices) c =
   let call () = codes (Nx.place Nx.Host.on (g (put i) (put u) x)) in
   let y = outcome call in
   equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
-  equal (outcome_t codes_t) eager y
+  equal (outcome_t codes_t) (settled eager) (settled y)

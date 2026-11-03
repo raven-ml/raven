@@ -63,7 +63,24 @@ let on_gpu () =
           compiles s;
           (d, s))
 
-let law c = Scatters.law (snd (on_gpu ())) c
+(* Whether the kernels of [d] have float64, which Metal's lack. *)
+let has_float64 d =
+  List.exists (Tolk.Dtype.equal Tolk.Dtype.Float64)
+    (Tolk.Renderer.supported_dtypes (Tolk_engine.renderer d))
+
+(* Whether [d] flushes float32's subnormals to zero, as rune.mli's Numerics
+   says Metal does. *)
+let flushes d =
+  String.equal (Tolk_engine.target d).Tolk.Helpers.Target.device "METAL"
+
+(* The scatter law on the GPU. A float64 case is discarded where the GPU's
+   kernels lack float64, since no compiled call computes it there. *)
+let law c =
+  let d, s = on_gpu () in
+  let (Nx.Dtype.Any dt) = c.Scatters.dtype in
+  if Nx.Dtype.equal dt Nx.float64 then assume (has_float64 d);
+  Scatters.law ~flushes:(flushes d) s c
+
 let casts16 dt () = Casts16.law (snd (on_gpu ())) dt
 
 exception Big of int array * float

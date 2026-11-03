@@ -43,11 +43,14 @@ val examples : t list
     kind of {!positions}, with its target donated, with its updates an offset
     view, and of each narrow float's [Add] and each complex combine. *)
 
-val law : (module Nx.Devices) -> t -> unit
-(** [law s c] checks that a compiled call on [s]'s first device gives eager's
-    values on the host, with no call evaluated: integers and booleans exactly,
-    floats with every NaN read as one ({!Witness.codes}). It covers each
-    combine, each kind of dtype and of {!positions}, positions broadcast along
-    the trailing axes and positions not, a donated target, a position outside
-    the axis, a narrow float's [Add], an offset view of the updates, and each
-    complex combine. *)
+val law : ?flushes:bool -> (module Nx.Devices) -> t -> unit
+(** [law ~flushes s c] checks that a compiled call on [s]'s first device gives
+    eager's values on the host, with no call evaluated: integers and booleans
+    exactly, floats with every NaN read as one ({!Witness.codes}). With
+    [~flushes:true] (default [false]), for a device that flushes float32's
+    subnormals to zero, a case where an operand or eager's result holds a
+    nonzero float or part below float32's least normal reads each zero and
+    each such value as one. It covers each combine, each kind of dtype and of
+    {!positions}, positions broadcast along the trailing axes and positions
+    not, a donated target, a position outside the axis, a narrow float's
+    [Add], an offset view of the updates, and each complex combine. *)
