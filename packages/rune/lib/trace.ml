@@ -347,10 +347,10 @@ let rule (type r) st i ~by (op : r Nx.Prim.t) : r =
       scan_part st i ~by layout axis prog reduction loads carry
   (* A program holds attention as the operations it composes, which every
      interpretation and the lowering take ({!Attention}). *)
-  | _, Attention { prog; scale; q; kv; lengths; loads } ->
+  | _, Attention { prog; scale; out; q; kv; lengths; loads } ->
       Attention.compose
         { eval = (fun op -> record_op st i ~by op) }
-        ~prog ~scale q kv lengths loads
+        ~prog ~scale ~out q kv lengths loads
   | _ -> record_op st i ~by op
 
 let owned i (V x) = owns i x

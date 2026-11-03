@@ -192,7 +192,8 @@ let logsumexp_bound t r =
 (* The definition *)
 
 (* The row [b]'s length: keys at or past it are hidden. *)
-let length c b = match c.lengths with None -> c.tk | Some l -> l.(b)
+let length c b =
+  match c.lengths with None -> c.tk | Some l -> max 0 (min l.(b) c.tk)
 
 let visible c b h i j =
   let len = length c b in
@@ -693,6 +694,55 @@ let test_zero () =
   equal ~msg:"finite" same_bits [| 0.; 1. |] (o [| -0.; 2. |]);
   equal ~msg:"NaN" same_bits [| 0.; nan |] (o [| -0.; nan |])
 
+(* A program whose visibility reads the score: [Nx.Prim.eval] raises, and
+   nx.cpu answers [Shape_mismatch]. *)
+let test_scored_visibility () =
+  let module E = Nx_kernel.Prog.E in
+  let prog =
+    Nx_kernel.Prog.of_exprs ~ins:[| D.Any D.Float32 |]
+      [|
+        E.any E.(const D.Float32 0. < input 0 D.Float32);
+        E.any (E.input 0 D.Float32);
+      |]
+  in
+  let q = f32 [| 1; 1; 1 |] [| 1. |] in
+  let k = f32 [| 1; 2; 1 |] [| -3.; 2. |] in
+  let v = f32 [| 1; 2; 1 |] [| 100.; 1. |] in
+  let op =
+    Nx.Prim.Attention
+      {
+        prog; scale = 1.; out = Nx.float32; q; kv = Nx.Dense { k; v };
+        lengths = None; loads = [||];
+      }
+  in
+  raises_match (Exn.invalid_arg ~sub:"reads its score") (fun () ->
+      ignore (Nx.Prim.eval ~by:"test" op));
+  let a x = Option.get (Nx.Repr.array x) in
+  let o = Nx_array.create Rig.host Nx.float32 (Iarray.of_array [| 1; 1; 1 |]) in
+  let lse = Nx_array.create Rig.host Nx.float32 (Iarray.of_array [| 1; 1 |]) in
+  let answer =
+    Nx_cpu.attention prog ~scale:1. ~o ~lse (a q)
+      (Nx_kernel.Dense { k = a k; v = a v })
+      [||]
+  in
+  equal ~msg:"nx.cpu" bool true (answer = Nx_array.Shape_mismatch)
+
+(* A length past the keys is the keys' count, the causal mask's too. *)
+let test_long_lengths () =
+  let q = f32 [| 1; 2; 1 |] [| 1.; -1. |] in
+  let k = f32 [| 1; 3; 1 |] [| 0.5; 2.; -1. |] in
+  let v = f32 [| 1; 3; 1 |] [| 3.; -1.; 4. |] in
+  let at len =
+    let o, lse =
+      Nx.attention ~lengths:(Nx.scalar Nx.int64 len) ~mask:Nx.causal
+        ~kv:(Nx.Dense { k; v }) q
+    in
+    (Nx.to_array o, Nx.to_array lse)
+  in
+  let o, lse = at 3L and o', lse' = at 7L in
+  equal ~msg:"o" same_bits o o';
+  equal ~msg:"lse" same_bits lse lse'
+
 let test_rejections () =
   let q = f32 [| 2; 3; 4 |] (Array.make 24 1.) in
   let k = f32 [| 1; 5; 4 |] (Array.make 20 1.) in
@@ -861,6 +911,8 @@ let () =
          test "empty extents" test_empty_extents;
          test "a sum of zeros" test_zero;
          test "rejections" test_rejections;
+         test "lengths past the keys" test_long_lengths;
+         test "visibility that reads the score" test_scored_visibility;
          test "keys of 1100 dimensions" test_wide_keys;
          group "nx.cpu"
            [

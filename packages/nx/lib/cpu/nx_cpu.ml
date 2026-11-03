@@ -532,7 +532,7 @@ let with_target t f =
 external attention_c :
   Nx_kernel.Prog.t ->
   float ->
-  ('v, 's) Nx_array.t ->
+  ('w, 'r) Nx_array.t ->
   (float, Nx_array.Dtype.float32_elt) Nx_array.t ->
   (int64, Nx_array.Dtype.int64_elt) Nx_array.t option ->
   ('v, 's) Nx_array.t ->

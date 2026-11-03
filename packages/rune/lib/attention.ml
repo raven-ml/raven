@@ -83,9 +83,9 @@ let paged_read e (positions : 'd Nx.int64_t) (pool : ('v, 's, 'd) Nx.t) =
   in
   e.eval (Gather { axis = r; idx; x })
 
-let compose (type v s d) e ~prog ~scale (q : (v, s, d) Nx.t)
-    (kv : (v, s, d) Nx.kv) (lengths : d Nx.int64_t option)
-    (loads : d Prim.any iarray) : (v, s, d) Nx.t * d Nx.float32_t =
+let compose (type v s w r d) e ~prog ~scale ~(out : (w, r) D.t)
+    (q : (v, s, d) Nx.t) (kv : (v, s, d) Nx.kv) (lengths : d Nx.int64_t option)
+    (loads : d Prim.any iarray) : (w, r, d) Nx.t * d Nx.float32_t =
   let r = Nx.ndim q in
   let l = r - 3 in
   let lead = Array.sub (Nx.shape q) 0 l in
@@ -219,7 +219,7 @@ let compose (type v s d) e ~prog ~scale (q : (v, s, d) Nx.t)
            batch;
            contracting = ia [| (l + 3, l + 1) |];
            acc = D.Any D.Float32;
-           out = dt;
+           out;
            a = grouped p;
            b = v;
            init = None;
@@ -232,10 +232,10 @@ let compose (type v s d) e ~prog ~scale (q : (v, s, d) Nx.t)
   let os = with_lead [| hq; tq; dv |] in
   let o = reshape e os o in
   let o =
-    map e dt os [ Prim.Any o; Prim.Any (spread e ~ones:1 os lse) ]
+    map e out os [ Prim.Any o; Prim.Any (spread e ~ones:1 os lse) ]
       E.(
         where
           (input 1 D.Float32 = const D.Float32 Float.neg_infinity)
-          (const dt (D.zero dt)) (input 0 dt))
+          (const out (D.zero out)) (input 0 out))
   in
   (o, lse)

@@ -2792,7 +2792,8 @@ type ('v, 's, 'd) kv =
 
 type 'd pair = { q : 'd int64_t; k : 'd int64_t; len : 'd int64_t; tq : int }
 (** The 0-d coordinates of one query-key pair: the query row, the key column,
-    the row's visible length, and the number of query rows. *)
+    the row's visible length, its entry of [lengths] within \[[0], [tk]\],
+    and the number of query rows. *)
 
 val causal : 'd pair -> 'd bool_t
 (** [causal p] holds where [p.k <= p.q + (p.len - p.tq)]: the last query row
@@ -5616,17 +5617,19 @@ module Prim : sig
     | Attention : {
         prog : Nx_kernel.Prog.t;
         scale : float;
+        out : ('w, 'r) dtype;
+            (** [o]'s dtype: float32 or [q]'s. *)
         q : ('v, 's, 'd) nx;
         kv : ('v, 's, 'd) kv;
         lengths : (int64, Dtype.int64_elt, 'd) nx option;
         loads : 'd any iarray;
       }
-        -> (('v, 's, 'd) nx * (float, Dtype.float32_elt, 'd) nx) t
+        -> (('w, 'r, 'd) nx * (float, Dtype.float32_elt, 'd) nx) t
         (** {!attention} of [q] over [kv], bounded by [lengths], at [scale],
             its mask and score the pair program [prog] over its [loads],
             each of shape [[lead…; hq; tq; tk]], as
             {!Nx_kernel.S.attention} states: [o], C-contiguous of
-            [[lead…; hq; tq; dv]] in [q]'s dtype, and [lse], of
+            [[lead…; hq; tq; dv]] in [out], and [lse], of
             [[lead…; hq; tq]] in float32. *)
 
   type operands = Operands : 'd any list -> operands

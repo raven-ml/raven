@@ -235,12 +235,13 @@ and _ prim =
   | Attention : {
       prog : Nx_kernel.Prog.t;
       scale : float;
+      out : ('w, 'r) dtype;
       q : ('v, 's, 'd) t;
       kv : ('v, 's, 'd) kv;
       lengths : 'd index option;
       loads : 'd any iarray;
     }
-      -> (('v, 's, 'd) t * (float, Nx_array.Dtype.float32_elt, 'd) t) prim
+      -> (('w, 'r, 'd) t * (float, Nx_array.Dtype.float32_elt, 'd) t) prim
 
 (** Keys and values, as {!Nx_kernel.type-kv} states them. *)
 and ('v, 's, 'd) kv =

@@ -6001,7 +6001,13 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
   let load (Captured (_, x)) =
     Value.Any (Eval.broadcast ~by f (Donate.lent x))
   in
+  (* A pair's length is its row's, within [[0, tk]], as the keys a row
+     reads are; the lengths are lent, the operation reading them too. *)
   let length_load l =
+    let l =
+      elementwise ~by D.Int64 [ Any (Donate.lent l) ]
+        E.(maximum (i64 0) (minimum (input 0 D.Int64) (i64 tk)))
+    in
     Value.Any
       (Eval.broadcast ~by f (Eval.reshape ~by (with_lead [| 1; 1; 1 |]) l))
   in
@@ -6010,7 +6016,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
   in
   Eval.eval ~by
     (Value.Attention
-       { prog; scale; q; kv; lengths; loads = Iarray.of_list loads })
+       { prog; scale; out = dtype q; q; kv; lengths; loads = Iarray.of_list loads })
 
 (* Fourier transforms *)
 
@@ -7048,12 +7054,13 @@ module Prim = struct
     | Attention : {
         prog : Nx_kernel.Prog.t;
         scale : float;
+        out : ('w, 'r) dtype;
         q : ('v, 's, 'd) Value.t;
         kv : ('v, 's, 'd) kv;
         lengths : 'd index option;
         loads : 'd any iarray;
       }
-        -> (('v, 's, 'd) Value.t * (float, Dtype.float32_elt, 'd) Value.t) t
+        -> (('w, 'r, 'd) Value.t * (float, Dtype.float32_elt, 'd) Value.t) t
 
   type operands = Prim.operands = Operands : 'd any list -> operands
 

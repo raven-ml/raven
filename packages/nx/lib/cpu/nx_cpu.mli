@@ -323,7 +323,7 @@
       pair's weight [0] included; where a value of the block hidden from
       the row is a NaN or an infinity, over its visible pairs alone.
     A block in which the row has no visible pair leaves its state as it
-    was. At the end, [o = a / l] in float32, rounded once to [q]'s dtype,
+    was. At the end, [o = a / l] in float32, rounded once to [o]'s dtype,
     and [lse = m + log l], [+∞] where [m] is; a row of [l = 0] has
     [o = +0] and [lse = -∞]. [exp] and [log] are {!Nx_kernel.Prog.Exp}'s
     and {!Nx_kernel.Prog.Log}'s. So a value at a pair hidden from a row,

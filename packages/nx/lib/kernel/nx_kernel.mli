@@ -359,8 +359,8 @@ val full_precision : ('v, 's) Nx_array.Dtype.t -> bool
     the key's products, each element widened to [float32], in an
     association its library states. A program over the pair computes two
     outputs from its operand [0], the score, and its loads, operands [1]
-    on, each of the loop's shape: output [0], a [bool], and output [1], a
-    [float32]. Its [Coord] nodes read the loop's axes: [rank - 2] the query
+    on, each of the loop's shape: output [0], a [bool], which reads no
+    score, and output [1], a [float32]. Its [Coord] nodes read the loop's axes: [rank - 2] the query
     row, [rank - 1] the key.
 
     A pair is {e visible} where its key is before its lead index's length,
@@ -857,7 +857,7 @@ module type S = sig
   val attention :
     Prog.t ->
     scale:float ->
-    o:('v, 's) a ->
+    o:('w, 'r) a ->
     lse:(float, Nx_array.Dtype.float32_elt) a ->
     ?lengths:index ->
     ('v, 's) a ->
@@ -866,12 +866,14 @@ module type S = sig
     answer
   (** [attention p ~scale ~o ~lse ?lengths q kv loads] stores the attention
       of [q]'s rows over [kv] ({!section-attention}), [p] the pair's
-      program over its loads [loads], into [o] in [q]'s dtype and [lse] in
-      [float32]. [lengths], [[lead…]], bounds each lead index's keys. The
+      program over its loads [loads], into [o], of [float32] or [q]'s
+      dtype, and [lse] in [float32]. [lengths], [[lead…]], bounds each lead index's keys. The
       scores, their maxima and sums, the weights and [lse] compute in
-      [float32], and each element of [o] rounds once. [q], [k] and [v] are
+      [float32], and each element of [o] rounds once into [o]'s dtype.
+      [q], [k] and [v] are
       of one dtype, [float16], [bfloat16] or [float32], [p]'s operand [0]
       and output [1] are [float32] and its output [0] [bool]: it answers
-      [Wrong_dtype] otherwise. Each library states its association and its
+      [Wrong_dtype] otherwise, and [Shape_mismatch] for an output [0] that
+      reads operand [0]. Each library states its association and its
       bounds. *)
 end

@@ -655,7 +655,7 @@ module type S = sig
   val attention :
     Prog.t ->
     scale:float ->
-    o:('v, 's) a ->
+    o:('w, 'r) a ->
     lse:(float, Nx_array.Dtype.float32_elt) a ->
     ?lengths:index ->
     ('v, 's) a ->

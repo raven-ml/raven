@@ -233,7 +233,7 @@ let call : type r.
         in
         K.assemble ~fill ~dst:(one r) pieces
     | Value.Copy x -> map1 (module K) Copy ~dst:(one r) (one x)
-    | Value.Attention { prog; scale; q; kv; lengths; loads } ->
+    | Value.Attention { prog; scale; q; kv; lengths; loads; _ } ->
         let o, lse = r in
         let kv : _ Nx_kernel.kv =
           match kv with

@@ -24,12 +24,13 @@ val compose :
   eval ->
   prog:Nx_kernel.Prog.t ->
   scale:float ->
+  out:('w, 'r) Nx.dtype ->
   ('v, 's, 'd) Nx.t ->
   ('v, 's, 'd) Nx.kv ->
   'd Nx.int64_t option ->
   'd Nx.Prim.any iarray ->
-  ('v, 's, 'd) Nx.t * 'd Nx.float32_t
-(** [compose e ~prog ~scale q kv lengths loads] is the attention
+  ('w, 'r, 'd) Nx.t * 'd Nx.float32_t
+(** [compose e ~prog ~scale ~out q kv lengths loads] is the attention
     {!Nx.Prim.Attention} of these fields states, [(o, lse)], by contractions,
     maps, a log-sum-exp, movements and, for paged keys, gathers, each given
     its meaning by [e]. *)

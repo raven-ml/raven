@@ -897,22 +897,21 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
 (* Attention *)
 
 (* Attention over keys cut across devices: each device of the result
-   computes [(o, lse)] over its tile of the keys, in float32, as one device
-   does (its operands' windows, its program's coordinates offset to its
+   computes [(o, lse)] over its tile of the keys, [o] in float32, as one
+   device does (its operands' windows, its program's coordinates offset to its
    rows and keys, its lengths less its first key); [lse] closes as the
    [Logsumexp] of the parts, and [o] as the sum of each part's [o] times
    [exp (lse_part - lse)], in C order of the parts, each product fused,
-   rounded once to [q]'s dtype: [+0] where [lse] is [-∞]. A paged call's
+   rounded once to the call's [out]: [+0] where [lse] is [-∞]. A paged call's
    factor is its table's pages, of [page] keys each. *)
-let attention_parts (type v s d) eng ~by (route : unit Route.t) rule prog
-    scale (q : (v, s, d) Value.t) (kv : (v, s, d) Value.kv)
+let attention_parts (type v s w q d) eng ~by (route : unit Route.t) rule prog
+    scale (out : (w, q) D.t) (q : (v, s, d) Value.t) (kv : (v, s, d) Value.kv)
     (lengths : d Value.index option) (loads : d Value.any iarray) :
-    (v, s, d) Value.t * (float, D.float32_elt, d) Value.t =
+    (w, q, d) Value.t * (float, D.float32_elt, d) Value.t =
   let r = Prim.rank q in
   let lead = r - 3 in
   let p = route.result in
   let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
-  let dt = Prim.dtype q in
   let qs = Prim.shape q in
   let factor, page, dv =
     match kv with
@@ -931,7 +930,6 @@ let attention_parts (type v s d) eng ~by (route : unit Route.t) rule prog
   let co = closing_of os and cl = closing_of ls in
   let outw j = Devices.window ~by p os j in
   let here j = Devices.one set ks.(j) in
-  let f32 (Value.Any x : d Value.any) = cast eng ~by (D.Any D.Float32) (Value.Any x) in
   let part j =
     let w = outw j and tile = tiles.(j).(0) in
     let k = ks.(j) and h = here j in
@@ -946,13 +944,12 @@ let attention_parts (type v s d) eng ~by (route : unit Route.t) rule prog
       window.(r - 1) <- { M.start = first; count = keys; step = 1 };
       view eng ~by k window x
     in
-    let widen x = Prim.expect D.Float32 (f32 (Value.Any x)) in
-    let q = widen (read 0 q) in
-    let kv : (float, D.float32_elt, d) Value.kv =
+    let q = read 0 q in
+    let kv : (v, s, d) Value.kv =
       match kv with
-      | Dense { k; v } -> Dense { k = widen (read 1 k); v = widen (read 2 v) }
+      | Dense { k; v } -> Dense { k = read 1 k; v = read 2 v }
       | Paged { k; v; table } ->
-          Paged { k = widen (read 1 k); v = widen (read 2 v); table = read 3 table }
+          Paged { k = read 1 k; v = read 2 v; table = read 3 table }
     in
     let ix = match kv with Dense _ -> 3 | Paged _ -> 4 in
     let lengths =
@@ -972,7 +969,9 @@ let attention_parts (type v s d) eng ~by (route : unit Route.t) rule prog
     let start = Array.map (fun (x : M.range) -> x.start) w in
     start.(r - 1) <- first;
     let origin = { Prim.start; extents = [||] } in
-    at eng ~by ~origin h (Value.Attention { prog; scale; q; kv; lengths; loads })
+    at eng ~by ~origin h
+      (Value.Attention
+         { prog; scale; out = D.Float32; q; kv; lengths; loads })
   in
   let parts = Array.init (Array.length ks) (fun j -> lazy (part j)) in
   let o j = fst (Lazy.force parts.(j)) and l j = snd (Lazy.force parts.(j)) in
@@ -1018,18 +1017,20 @@ let attention_parts (type v s d) eng ~by (route : unit Route.t) rule prog
       | _ -> invalid_arg "Partial.attention: a part's o and lse"
     in
     match List.fold_left step None (slots co) with
-    | Some y -> [ cast eng ~by (D.Any dt) y ]
+    | Some y -> [ cast eng ~by (D.Any out) y ]
     | None -> invalid_arg "Partial.attention: no part holds keys"
   in
-  let o = closed eng ~by co os [ D.Any dt ] [ Value.Any os_; Value.Any ls_ ] sum in
-  (Prim.expect dt (List.hd o), lse)
+  let o =
+    closed eng ~by co os [ D.Any out ] [ Value.Any os_; Value.Any ls_ ] sum
+  in
+  (Prim.expect out (List.hd o), lse)
 
 let attention : type r.
     Partition.engine -> by:string -> unit Route.t -> Route.rule -> r Value.prim -> r =
  fun eng ~by route rule op ->
   match op with
-  | Value.Attention { prog; scale; q; kv; lengths; loads } ->
-      attention_parts eng ~by route rule prog scale q kv lengths loads
+  | Value.Attention { prog; scale; out; q; kv; lengths; loads } ->
+      attention_parts eng ~by route rule prog scale out q kv lengths loads
   | _ -> invalid_arg "Partial.attention: not attention"
 
 (* Scans *)

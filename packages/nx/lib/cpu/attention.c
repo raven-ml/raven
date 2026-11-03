@@ -96,7 +96,7 @@ typedef struct {
   int64_t ext[NX_MAX_RANK];
   int64_t hq, hk, g, tq, tk, dk, dv;
   int64_t pages, page, max_pages;
-  int dt, w; /* q's dtype and its element's bytes */
+  int dt, odt, w; /* q's dtype, o's and its element's bytes */
   float scale;
   /* Units: heads of a group and rows of a head each holds. */
   int64_t hg, tr, chunks, tiles;
@@ -587,7 +587,7 @@ static void unit(att *c, scratch *x, int64_t u) {
     }
   }
   /* o = acc / l, rounded once to q's dtype, and lse. */
-  nx_cpu_run store = nx_cpu_convert(NX_FLOAT32, c->dt);
+  nx_cpu_run store = nx_cpu_convert(NX_FLOAT32, c->odt);
   const nx_array *o = &c->a[O], *lse = &c->a[LSE];
   for (int hh = 0; hh < nh; hh++)
     for (int i = 0; i < nt; i++) {
@@ -761,14 +761,14 @@ static struct custom_operations held_ops = {
 /* The door's operands from the roots of the call. */
 typedef struct {
   const value *vo, *vlse, *vq, *vkv, *vlengths, *vloads;
-  int dt, paged, lengths;
+  int dt, odt, paged, lengths;
   const nx_cpu_prog *g;
 } operands;
 
 static int operand(void *ctx, int k, nx_operand *in) {
   const operands *o = ctx;
   int at = 5 + o->paged;
-  if (k == O) *in = (nx_operand){*o->vo, o->dt, 1};
+  if (k == O) *in = (nx_operand){*o->vo, o->odt, 1};
   else if (k == LSE) *in = (nx_operand){*o->vlse, NX_FLOAT32, 1};
   else if (k == Q) *in = (nx_operand){*o->vq, o->dt, 0};
   else if (k == K || k == V)
@@ -874,7 +874,10 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
   c.score = !is_default(vp, 1);
   c.scale = (float)Double_val(vscale);
   c.dt = dt;
-  c.w = dt == NX_FLOAT32 ? 4 : 2;
+  /* o is float32 or q's dtype. */
+  c.odt = nx_array_dtype(vo);
+  if (c.odt != NX_FLOAT32 && c.odt != dt) CAMLreturn(Val_int(NX_DTYPE));
+  c.w = c.odt == NX_FLOAT32 ? 4 : 2;
   /* What the call holds, owned by a custom block: the program's copy, the
      descriptors of more operands than the stack's table holds, the
      program's loads and the places' tables. */
@@ -893,6 +896,22 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
       release(owner);
       CAMLreturn(Val_int(NX_DTYPE));
     }
+    /* Visibility is decided before the scores exist: output 0 reads no
+       score. */
+    uint8_t axes[NX_MAX_RANK] = {0};
+    uint8_t local[64], *reads = nins <= 64 ? local : calloc((size_t)nins, 1);
+    if (reads == NULL) {
+      release(owner);
+      caml_raise_out_of_memory();
+    }
+    memset(reads, 0, (size_t)nins);
+    nx_cpu_prog_reads(g, 0, reads, axes);
+    int scored = reads[0];
+    if (reads != local) free(reads);
+    if (scored) {
+      release(owner);
+      CAMLreturn(Val_int(NX_SHAPE));
+    }
   }
   size_t tables = (size_t)n * sizeof(nx_array) +
                   (size_t)(nl + 1) * sizeof(nx_array) +
@@ -908,7 +927,7 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
   int64_t(*st)[NX_MAX_RANK] = (int64_t(*)[NX_MAX_RANK])(ins + nl + 1);
   int64_t *first = (int64_t *)(st + nl + 3);
   operands ops = {&vo, &vlse, &vq, &vkv, &vlengths, &vloads,
-                  dt,  paged, lengths, g};
+                  dt,  c.odt, paged, lengths, g};
   int e = nx_read_each(n, operand, &ops, a);
   if (e) {
     release(owner);

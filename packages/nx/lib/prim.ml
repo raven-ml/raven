@@ -2229,6 +2229,24 @@ let attention_shapes (type v s d) ~by (prog : P.t) (q : (v, s, d) t)
            (List.init outs (fun k ->
                 let (D.Any dt) = out k in
                 D.name dt))));
+  (* Output 0, visibility, is decided before the scores exist. *)
+  let seen = Array.make (Iarray.length prog.nodes) false in
+  seen.(Iarray.get prog.outs 0) <- true;
+  for i = Iarray.length prog.nodes - 1 downto 0 do
+    if seen.(i) then
+      match Iarray.get prog.nodes i with
+      | P.In 0 ->
+          invalid_argf "%s: a pair's visibility reads its score" by
+      | P.Op1 (_, _, a) -> seen.(a) <- true
+      | P.Op2 (_, a, b) ->
+          seen.(a) <- true;
+          seen.(b) <- true
+      | P.Op3 (_, a, b, c) ->
+          seen.(a) <- true;
+          seen.(b) <- true;
+          seen.(c) <- true
+      | P.In _ | P.Coord _ | P.Const _ -> ()
+  done;
   let r = rank q in
   Iarray.iter
     (function
@@ -2302,7 +2320,10 @@ let layouts : type r. by:string -> r prim -> L.t array =
               (shape x) pp_shape s)
         (data_any data);
       [||]
-  | Attention { prog; q; kv; lengths; loads; _ } ->
+  | Attention { prog; out; q; kv; lengths; loads; _ } ->
+      if not (same_dtype out D.Float32 || same_dtype out (dtype q)) then
+        invalid_argf "%s: attention's o of %s, not float32 or %s" by
+          (D.name out) (D.name (dtype q));
       let o, lse = attention_shapes ~by prog q kv lengths loads in
       [| contiguous o; contiguous lse |]
 
@@ -2349,8 +2370,8 @@ let results_at : type r.
   | Bitcast (dt, _) -> m 0 (of_layout dt layouts.(0) p)
   | Place (p, x) -> m 0 (of_layout (dtype x) layouts.(0) p)
   | Check _ -> ()
-  | Attention { q; _ } ->
-      let o = m 0 (of_layout (dtype q) layouts.(0) p) in
+  | Attention { out; _ } ->
+      let o = m 0 (of_layout out layouts.(0) p) in
       (o, m 1 (of_layout D.Float32 layouts.(1) p))
 
 (* Where [op]'s results lie, by its route: the operands' placement where they
