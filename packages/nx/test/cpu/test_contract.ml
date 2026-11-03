@@ -52,64 +52,110 @@ let cpu_computes c = List.mem c.acc accs || is_integer c.acc
 (* The order *)
 
 (* [x] rounded to float32. *)
-let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
+let[@inline] round32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
 (* float32's fused multiply-add: a · b, exact in a double for float32 [a] and
    [b], plus [c], rounded to odd in a double and then to float32, which
-   rounds once since 53 >= 2·24 + 2. *)
-let fma32 a b c =
+   rounds once since 53 >= 2·24 + 2. The sum's error is TwoSum's, written
+   out. *)
+let[@inline] fma32 a b c =
   let p = a *. b in
-  let s, e = two_sum c p in
+  let s = c +. p in
+  let z = s -. c in
+  let e = c -. (s -. z) +. (p -. z) in
   if e = 0. || not (Float.is_finite s) then round32 s
   else if Int64.logand (Int64.bits_of_float s) 1L = 1L then round32 s
   else round32 (if e > 0. then Float.succ s else Float.pred s)
 
 (* float32's addition, rounded once through a double for the same reason. *)
-let add32 x y = round32 (x +. y)
+let[@inline] add32 x y = round32 (x +. y)
+
+(* float64's fused multiply-add, Exact.fma's bits: its cases that need no
+   integers, an operand not finite or a factor zero, as it takes them; then
+   the hardware's where it rounds in the normal range. Inline, where
+   Exact.fma is a call that boxes its floats: a NaN chain, or a product
+   with a zero, took it at every product. *)
+let[@inline] fma64 a b c =
+  if not (Float.is_finite a && Float.is_finite b) then (a *. b) +. c
+  else if not (Float.is_finite c) then c
+  else if a = 0. || b = 0. then (a *. b) +. c
+  else
+    let r = Float.fma a b c in
+    if Float.abs r >= Float.min_float && Float.abs (a *. b) >= 0x1p-968 then r
+    else Exact.fma a b c
+
+(* The fused chain from [init] over the products of [av] and [bv], and
+   block [x]'s products added into the 16 lanes of [l], term t into lane
+   t mod 16; by fma32 and by fma64, which each calls directly and inlines
+   with its floats unboxed: through a closure, each product boxed its
+   operands and its result, 9 of the order law's 11 billion words. *)
+let chain32 init av bv =
+  let acc = ref init in
+  for t = 0 to Array.length av - 1 do
+    acc := fma32 (Array.unsafe_get av t) (Array.unsafe_get bv t) !acc
+  done;
+  !acc
+
+let chain64 init av bv =
+  let acc = ref init in
+  for t = 0 to Array.length av - 1 do
+    acc := fma64 (Array.unsafe_get av t) (Array.unsafe_get bv t) !acc
+  done;
+  !acc
+
+let block32 av bv x l =
+  for t = x * 1024 to min (Array.length av) ((x + 1) * 1024) - 1 do
+    let q = t land 15 in
+    Array.unsafe_set l q
+      (fma32 (Array.unsafe_get av t) (Array.unsafe_get bv t)
+         (Array.unsafe_get l q))
+  done
+
+let block64 av bv x l =
+  for t = x * 1024 to min (Array.length av) ((x + 1) * 1024) - 1 do
+    let q = t land 15 in
+    Array.unsafe_set l q
+      (fma64 (Array.unsafe_get av t) (Array.unsafe_get bv t)
+         (Array.unsafe_get l q))
+  done
 
 (* [o]'s result in [acc], in chain order where [chain], one fused chain
    from init or +0; or in lane order, blocks of 1024 terms in 16 lanes,
-   summed by trees, then init, with no term init as it is. *)
-let ordered ~chain acc o =
-  let fma, add =
-    if part_of acc = D.Any D.Float32 then (fma32, add32)
-    else (Exact.fma, ( +. ))
-  in
-  let k = Array.length o.av in
-  if chain then begin
-    let acc = ref (Option.value ~default:0. o.init) in
-    for t = 0 to k - 1 do
-      acc := fma o.av.(t) o.bv.(t) !acc
-    done;
-    !acc
-  end
-  else begin
-    let block x =
-      let l = Array.make 16 0. in
-      for t = x * 1024 to min k ((x + 1) * 1024) - 1 do
-        l.(t mod 16) <- fma o.av.(t) o.bv.(t) l.(t mod 16)
-      done;
-      List.iter
-        (fun w ->
-          for i = 0 to w - 1 do
-            l.(i) <- add l.(i) l.(i + w)
-          done)
-        [ 8; 4; 2; 1 ];
-      l.(0)
-    in
-    let rec tree s n =
-      if n = 1 then s.(0)
-      else
-        let h = ref 1 in
-        while 2 * !h < n do
-          h := 2 * !h
-        done;
-        add (tree s !h) (tree (Array.sub s !h (n - !h)) (n - !h))
-    in
-    let n = (k + 1023) / 1024 in
-    let sum = if n = 0 then 0. else tree (Array.init n block) n in
-    match o.init with None -> sum | Some i -> if n = 0 then i else add i sum
-  end
+   summed by trees, then init, with no term init as it is. Given [chain]
+   and [acc], it takes its dtype's functions once for every output. *)
+let ordered ~chain acc =
+  let f32 = part_of acc = D.Any D.Float32 in
+  let add = if f32 then add32 else ( +. ) in
+  let chain_of = if f32 then chain32 else chain64 in
+  let block_of = if f32 then block32 else block64 in
+  fun o ->
+    let k = Array.length o.av in
+    if chain then chain_of (Option.value ~default:0. o.init) o.av o.bv
+    else begin
+      let block x =
+        let l = Array.make 16 0. in
+        block_of o.av o.bv x l;
+        List.iter
+          (fun w ->
+            for i = 0 to w - 1 do
+              l.(i) <- add l.(i) l.(i + w)
+            done)
+          [ 8; 4; 2; 1 ];
+        l.(0)
+      in
+      let rec tree s n =
+        if n = 1 then s.(0)
+        else
+          let h = ref 1 in
+          while 2 * !h < n do
+            h := 2 * !h
+          done;
+          add (tree s !h) (tree (Array.sub s !h (n - !h)) (n - !h))
+      in
+      let n = (k + 1023) / 1024 in
+      let sum = if n = 0 then 0. else tree (Array.init n block) n in
+      match o.init with None -> sum | Some i -> if n = 0 then i else add i sum
+    end
 
 (* Each output adds its products in the order nx_cpu.mli states for its
    shape ({!order}). *)
@@ -1159,13 +1205,13 @@ let seg_reference (b : Support.backend) s sa sb =
   in
   let dst = cast_to c.out start in
   let nb = Array.length c.batch in
-  let chain = seg_order s = Chain in
+  let ordered = ordered ~chain:(seg_order s = Chain) c.acc in
   let model a b init =
     let y, each = outputs { c with a; b; init; views = [] } in
     let parts = if is_complex c.acc then 2 else 1 in
     let v = Array.init parts (fun _ -> Array.make (total y) 0.) in
     each (fun _ k parts ->
-        Array.iteri (fun p o -> v.(p).(k) <- ordered ~chain c.acc o) parts);
+        Array.iteri (fun p o -> v.(p).(k) <- ordered o) parts);
     let ys = Iarray.of_array y in
     if Array.length v = 1 then A.Any (A.of_array D.Float64 ys v.(0))
     else
@@ -1943,8 +1989,9 @@ let few_rows_examples =
 (* Lane order's dots at the edges of their units and outputs, at float32,
    bfloat16, float16 and float64, b stored [n × k], a too, or b stepped:
    thousands of columns, which units of several groups take with a
-   partial last one; depths of 1, 16, 64 and 71 without init, one block
-   with init, two and three blocks with and without it, no product; no
+   partial last one; depths of 1, 16, 64 and 71 without init, and 528,
+   past the 2 KiB from which a dot prefetches its rows; one block with
+   init, two and three blocks with and without it, no product; no
    row; and more rows than columns, whose transpose writes R's columns
    apart. *)
 let edge_examples =
@@ -1969,7 +2016,7 @@ let edge_examples =
           (4, 2053, 16, false); (1, 4101, 64, true); (3, 40, 1030, true);
           (1, 37, 2049, true); (4, 1500, 1030, false); (2, 21, 3000, false);
           (1, 1, 4097, false); (1, 3, 0, false); (0, 5, 64, false);
-          (4, 3001, 1024, false); (1, 3001, 1025, true); (8, 3, 64, false);
+          (4, 3001, 528, false); (1, 3001, 1025, true); (8, 3, 64, false);
           (9, 2, 64, false);
         ])
     [ (f32, f32); (f32, D.Any D.Bfloat16); (f32, D.Any D.Float16); (f64, f64) ]
