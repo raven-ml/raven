@@ -1036,10 +1036,10 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..4f613dc4a 100644
+index ec97cac6f..f781aa80b 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -1,9 +1,264 @@
+@@ -1,9 +1,273 @@
 -import itertools
 +import itertools, math
  from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
@@ -1257,6 +1257,15 @@ index ec97cac6f..4f613dc4a 100644
 +  def divisible(u, n): return isinstance(s:=k.full_shape[axis(u)], int) and s % n == 0
 +  shared, held = reuse_ranges(k, w) or [], r > 1
 +  def upcast_reuse():
++    # one range w does not read takes the fewest passes, ceil(f / UPCAST_MAX), padded where its rows do not split evenly into them
++    if len(shared) == 1 and shared[0][0] not in w.ranges:
++      g, f = shared[0]
++      t = -(-f // -(-f // UPCAST_MAX))
++      try:
++        if f % t: k.apply_opt(Opt(OptOps.PADTO, axis(g), t))
++        k.apply_opt(Opt(OptOps.SPLIT, axis(g), (t, AxisType.UPCAST)))
++        return
++      except KernelOptError: pass
 +    left = next(t for t in range(UPCAST_MAX, 0, -1) if r % t == 0)
 +    for g, f in shared:
 +      a = math.gcd(math.gcd(left, f), n) if isinstance(n:=k.full_shape[axis(g)], int) else 1
@@ -1306,7 +1315,7 @@ index ec97cac6f..4f613dc4a 100644
  
  def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # first try the tensor cores
-@@ -24,23 +279,56 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,23 +288,56 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
@@ -1368,7 +1377,7 @@ index ec97cac6f..4f613dc4a 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +345,20 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,25 +354,20 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1408,7 +1417,7 @@ index ec97cac6f..4f613dc4a 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,25 +393,47 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,25 +402,47 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1466,7 +1475,7 @@ index ec97cac6f..4f613dc4a 100644
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -139,18 +444,36 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -139,18 +453,36 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # if last reduce dim is small(ish), loop unroll the reduce
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:

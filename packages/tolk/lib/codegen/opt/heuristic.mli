@@ -62,7 +62,10 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     reduce contracts span the most bytes. When that axis [u] is contracted:
     {ul
      {- with reuse, the axes it comes from are upcast, each by its share of the
-        largest divisor of the reuse up to 16;}
+        largest divisor of the reuse up to 16; a reuse of [f] outputs along
+        one axis the operand does not read takes [ceil (f / 16)] passes
+        instead, of as many outputs each, the axis padded where they do not
+        divide it;}
      {- [u] splits into the largest of 32, 16, 8, 4 and 2 local threads that
         divides it, and when they take [u] whole and are fewer than 32, the
         contracted axis of the next stride in the main access into as many
@@ -82,6 +85,16 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     the global axis, down to 8, and more the reduce. It does not apply when
     more than 32768 outputs are left after the upcast. Like the tensor
     core's floor, 32768 threads is [sm_89]'s bound, fixed for every target.
+
+    {b Decodes.} On a GPU, an operand decoded from integers, one whose value
+    converts integers it reads into floats, that [R] outputs along an axis it
+    does not read read at one index, as every row of a product reads its
+    matrix, is decoded at most [ceil (R / 16)] times a value when the kernel
+    streams or takes a tensor core: a thread's upcast or a core's [M] with its
+    upcast holds up to 16 of the outputs, and each pass over the others decodes
+    it again. A core whose fragment holds each value of the operand in several
+    lanes ({!Tc.fragment}), as RDNA3's holds its [B] in two, decodes it that
+    many times more. The host is exempt: its tiles share 3 or 4 lanes.
 
     Otherwise, in order:
 

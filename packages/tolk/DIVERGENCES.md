@@ -4315,6 +4315,8 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   what a tile shares is the codegen's, and a target that shares fewer lanes
   computes the value again more often than counted, as the host does
   (Reason).
+  On a GPU the codegen owes that sharing, and states it: D230's bound of
+  `ceil(R / 16)` decodes a value.
 
   A sum over one range that selects one trip, where an index equals the
   range, as a routed product's rows select their expert's matrix, counts
@@ -4455,7 +4457,17 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   rows (`Quant/cuda/mxfp4-product-of-16384-*`), 0.65 ms against 3.2 ms at
   12 rows, 1.49-1.50 against 6.0 at 64 and 1.81 against 6.1-6.2 at 128. Of
   float32 rows, which no tensor core multiplies, 64 rows take 12.5-12.6 ms
-  against 9.6-9.7, 1.3 times slower. One MoE layer at 512
+  against 9.6-9.7, 1.3 times slower. The count is the same on fudge's RTX
+  5000 Ada and nonnormal's R9700, read from the inlined kernels' sources (1,
+  2, 1, 2 and 4 decodes a value at 16 to 256 bfloat16 rows, 16 at 64 float32
+  rows), with opposite outcomes: inlined, every bfloat16 row is faster on
+  CUDA and slower on AMD (64 rows 8.2-8.8 ms against 5.0-5.1 stored), where
+  the loss lies in the kernels the heuristic makes (256 single-wave
+  workgroups, 48 spilled registers, a byte's values loaded 2 bytes apart),
+  and a search over tolk's own optimisations finds inlined kernels faster
+  than stored ones on both (64 rows 1.15 against 3.58 ms on CUDA, 128 rows
+  3.31-3.47 against 6.57-6.68 ms on AMD): the count stands, and the codegen
+  owes its sharing (D230). One MoE layer at 512
   tokens runs 18.6-18.8 ms against 47.4-47.9; its inlined products are
   streamed (`Setting.mv`), and on the tensor cores, with streaming off, the
   layer takes 4.5 ms against 79.5; D89's order by multiply-adds per byte now
@@ -6121,3 +6133,37 @@ fold wraps integers and holds its float bound`, hold.
   axis`, and `axes.golden`'s `padto_reduction_bound` from the patched tinygrad. The
   Spec suite: `verdicts.golden`'s `an int32 load after a range`, `a range
   bounded by a load after a range` and `a load after a store`.
+## D230. A GPU kernel decodes a value R rows read at most ceil(R / 16) times
+
+- **tinygrad:** `codegen/opt/heuristic.py:9-44` (the tensor cores) and
+  `:111-137` (the upcasts of output axes by 3 or 4); it streams nothing
+  (D89), and states no bound on how often a kernel computes a value its
+  outputs share.
+- **tolk:** `Heuristic.stream`'s upcast of the reuse ranges;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same.
+- **Differs:** rangeify inlines a decoded value that rows read at one index
+  as one copy (D163), so the codegen owes the sharing that count assumes:
+  on a GPU, a decoded operand that reads every output axis but one, along
+  which its `R` outputs read it at one index, is decoded at most
+  `ceil(R / 16)` times a value where the kernel streams or takes a tensor
+  core whose upcast of those rows applies, times the lanes its core's
+  fragment holds each value in (two on RDNA3, whose `B` lanes carry an `M`
+  bit). A core whose floor (D175) refuses the upcast decodes it once a tile
+  of its rows, `ceil(R / 8)` times on Metal's core of 8, and an operand that
+  several output axes reuse takes the largest divisor of their product up
+  to 16, as before. The streamed layout upcasts such an axis of `f` outputs into
+  `ceil(f / 16)` passes of as many outputs, padding the axis where they do
+  not divide it, where it took the largest divisor of `f` up to 16: 17 rows
+  take 2 passes of 9, padded to 18, where they took 17 of 1. The host is
+  exempt: its tiles share 3 or 4 lanes (D163's Reason).
+- **Reason:** (d): MXFP4 products of 16384 by 16384 on fudge's RTX 5000 Ada
+  (kaun's `Quant/cuda/mxfp4-product-of-16384-*`, three interleaved rounds
+  under the timing lock, GPU shared with other jobs): 17 bfloat16 rows
+  4.58-11.91 ms to 1.07-3.28 ms; 12, 16, 32, 64, 128 and 256 bfloat16 rows
+  and 64 float32 rows unchanged within noise. nonnormal's R9700 rows are
+  pending.
+- **Pinned by:** the Heuristic suite's `a GPU kernel decodes a value R rows
+  read at one index at most ceil(R / 16) times its core's copies`, over
+  decoded products of 1 to 512 rows of bfloat16, half and float32 on the
+  CUDA, RDNA3, RDNA4, CDNA and Metal renderers, from the equally patched
+  tinygrad; kaun's `Quant/cuda/mxfp4-product-of-16384-17-bfloat16-tokens`.

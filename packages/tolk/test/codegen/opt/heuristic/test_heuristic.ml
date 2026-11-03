@@ -1116,6 +1116,132 @@ let monotone =
       | Int l, Int h -> at_most int ~than:h l
       | _ -> ())
 
+(* The decode bound *)
+
+(* Decoded products of an MXFP4 matrix of 16384 by 16384, by [rows] rows of
+   bfloat16, half or float32, the operands widened to float32: the matrix's
+   values are read at one index by every row. *)
+let decoded_rows =
+  List.concat_map
+    (fun rows ->
+      List.map (fun dtype -> (rows, dtype)) [ "bfloat16"; "half"; "float" ])
+    [ 1; 2; 12; 16; 17; 32; 64; 128; 256; 512 ]
+
+let amd arch =
+  lazy
+    (Kernel_opts.renderer_of_row (function
+      | "device" -> "AMD"
+      | "arch" -> arch
+      | "has_local" | "has_shared" -> "True"
+      | "shared_max" -> "65536"
+      | "tensor_cores" -> string_of_int (List.length (Tc.amd arch))
+      | _ -> ""))
+
+let gpus =
+  [
+    ("cuda", lazy (renderer "cuda"));
+    ("rdna3", lazy (renderer "amd"));
+    ("rdna4", amd "gfx1201");
+    ("cdna", cdna);
+    ("metal", lazy (renderer "metal"));
+  ]
+
+let is_code a = Ops.dtype (Ops.nth a 0) = Dtype.Uint8
+
+(* The loads of the codes of [o]'s decoded operand, its largest buffer of
+   bytes. *)
+let code_loads o =
+  let loads = List.filter is_code (accesses (K.ast o)) in
+  let bytes a = Shape.max_numel (Ops.nth a 0) in
+  let most = List.fold_left (fun n a -> max n (bytes a)) 0 loads in
+  List.filter (fun a -> bytes a = most) loads
+
+(* The threads of [o] that load each code, the product of the launch and lane
+   ranges absent from a load's index. *)
+let loading o =
+  let threads r =
+    match Ops.axis_type r with Global | Local | Warp -> true | _ -> false
+  in
+  List.fold_left
+    (fun n a ->
+      max n
+        (List.fold_left
+           (fun t r ->
+             if threads r && not (Ops.Nodes.mem r (Ops.ranges a)) then
+               t * Bigint.to_int (size r)
+             else t)
+           1 (K.rngs o)))
+    0 (code_loads o)
+
+(* The lanes of [o]'s tensor core that hold each value of its decoded operand:
+   a lane bit of the other operand's dimension broadcasts (Tc.fragment). *)
+let fragment_copies o =
+  let wmma =
+    List.find_opt
+      (fun u -> Ops.op u = Op.Wmma)
+      (Ops.toposort ~calls:Skip (K.ast o))
+  in
+  match wmma with
+  | None -> 1
+  | Some u ->
+      let info =
+        match Ops.arg u with Ops.Wmma w -> w | _ -> failf "a core of no shape"
+      in
+      let tc =
+        List.find
+          (fun tc ->
+            Tc.dims tc = info.dims && Dtype.equal tc.Tc.dtype_in info.dtype_in)
+          (K.ren o).tensor_cores
+      in
+      let reads x =
+        List.exists
+          (fun a ->
+            Ops.Nodes.mem a (Ops.backward_slice_with_self ~calls:Skip x))
+          (code_loads o)
+      in
+      let broadcast (frag : Tc.fragment) other =
+        List.fold_left
+          (fun n b -> if other b then 2 * n else n)
+          1 frag.lanes
+      in
+      if reads (Ops.nth u 0) then
+        broadcast tc.frag_a (function Tc.N _ -> true | _ -> false)
+      else broadcast tc.frag_b (function Tc.M _ -> true | _ -> false)
+
+let decode_bound =
+  let rows =
+    List.concat_map (fun d -> List.map (fun g -> (d, g)) gpus) decoded_rows
+  in
+  prop
+    "a GPU kernel decodes a value R rows read at one index at most \
+     ceil(R / 16) times its core's copies"
+    ~count:0 ~max_discard:(List.length rows) ~examples:rows (Gen.of_list rows)
+    (fun ((rows, dtype), (gpu, ren)) ->
+      let s =
+        K.v
+          (kernel (Printf.sprintf "decoded_rows_%d_%s" rows dtype))
+          (Lazy.force ren)
+      in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      let cored =
+        List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts o)
+      in
+      let copies = fragment_copies o in
+      assume (cored || streams o);
+      cover "a tensor core" cored;
+      cover "streamed" (streams o);
+      cover "rows padded"
+        (List.exists (function Opt.Padto _ -> true | _ -> false)
+           (K.applied_opts o));
+      cover "a core's fragment held twice" (copies = 2);
+      at_most int
+        ~msg:
+          (Format.asprintf "%d %s on %s: %a" rows dtype gpu
+             (Format.pp_print_list Opt.pp) (K.applied_opts o))
+        ~than:((rows + 15) / 16 * copies)
+        (loading o * copies))
+
 let () =
   exit
     (Windtrap.run "Tolk.Heuristic"
@@ -1135,4 +1261,5 @@ let () =
          group "the host's budget"
            [ held_cases; budget; more_registers; doubles ];
          group "the tensor core's floor" [ floored; monotone ];
+         decode_bound;
        ])

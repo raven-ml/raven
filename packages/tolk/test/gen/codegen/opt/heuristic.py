@@ -241,6 +241,33 @@ HOST_KERNELS = {
 }
 KERNELS.update(HOST_KERNELS)
 
+
+def mxfp4(n, k, dtype):
+    """An [n, k] MXFP4 matrix decoded to `dtype`: value j of a row is the low or high half of the row's code byte j // 2, an
+    E2M1 value of a sign bit, two exponent bits and a mantissa bit, times its group of 32's scale byte e, 2^(e - 127)."""
+    codes = empty(n, k // 2, dtype=dtypes.uint8)
+    nibbles = Tensor.stack(codes & 15, codes >> 4, dim=-1).reshape(n, k).cast(dtypes.uint32)
+    e, m = (nibbles >> 1) & 3, nibbles & 1
+    normal = (((e + 126) << 23) | (m << 22)).bitcast(dtypes.float)
+    magnitude = (e == 0).where(m.cast(dtypes.float) * 0.5, normal)
+    values = (magnitude.bitcast(dtypes.uint32) | ((nibbles >> 3) << 31)).bitcast(dtypes.float)
+    s = empty(n, k // 32, dtype=dtypes.uint8).cast(dtypes.uint32)
+    scales = (s == 255).where(float("nan"), (s == 0).where(0x400000, s << 23).bitcast(dtypes.float))
+    return (values.reshape(n, k // 32, 32) * scales.reshape(n, k // 32, 1)).reshape(n, k).cast(dtype)
+
+
+def decoded_rows(rows, dtype):
+    """`rows` rows of `dtype` by an MXFP4 matrix of 16384 by 16384 decoded to `dtype`, each operand widened to float32."""
+    x, w = empty(rows, 16384, dtype=dtype), mxfp4(16384, 16384, dtype)
+    return last((x.float() @ w.float().T).cast(dtype))
+
+
+# Decoded products of a dense MXFP4 matrix by rows of activations, which the Heuristic suite optimises on GPU renderers to
+# count how many threads decode each value; kernels without cases
+DECODED = {f"decoded_rows_{rows}_{name}": (lambda rows=rows, dtype=dtype: decoded_rows(rows, dtype))
+           for rows in [1, 2, 12, 16, 17, 32, 64, 128, 256, 512]
+           for name, dtype in [("bfloat16", dtypes.bfloat16), ("half", dtypes.half), ("float", dtypes.float)]}
+
 CASES = []
 
 
@@ -270,7 +297,7 @@ INPUTS = {}
 
 def kernel_input(kernel):
     if kernel not in INPUTS:
-        with Context(DEV="CPU"): INPUTS[kernel] = stage("apply_opts", KERNELS[kernel](), RENDERERS["cpu"])
+        with Context(DEV="CPU"): INPUTS[kernel] = stage("apply_opts", {**KERNELS, **DECODED}[kernel](), RENDERERS["cpu"])
     return INPUTS[kernel]
 
 
@@ -306,7 +333,7 @@ def declare(name, fn):
     graph(fn)
 
 
-for kernel in KERNELS:
+for kernel in [*KERNELS, *DECODED]:
     declare(kernel, lambda kernel=kernel: kernel_input(kernel))
 for name, optimized in OUTCOMES.items():
     declare(name, lambda optimized=optimized: optimized)

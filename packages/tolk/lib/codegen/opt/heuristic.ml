@@ -471,22 +471,38 @@ let stream k (w, x, reuse) =
   (* The reuse ranges are upcast by the largest divisor of their product at
      most [upcast_max], each by its share: a thread holds the outputs that
      share each element of [w] it loads. The rest stay global, each a pass
-     over [w]. *)
+     over [w]. One range that [w] does not read takes the fewest passes,
+     [ceil (f / upcast_max)], padded where its rows do not split evenly into
+     them: 17 rows take 2 passes of 9, padded to 18, where the largest
+     divisor would take 17 passes of 1. *)
   let upcast_reuse () =
     let rec most t =
       if Bigint.(equal (rem reuse (of_int t)) zero) then t else most (t - 1)
     in
-    ignore
-      (List.fold_left
-         (fun left (g, f) ->
-           let a =
-             match known_size (shape_at k (axis g)) with
-             | Some n -> gcd_with (gcd_with left f) n
-             | None -> 1
-           in
-           if a > 1 then ignore (split k (axis g) a Opt.Upcast);
-           left / a)
-         (most upcast_max) shared)
+    let divisors () =
+      ignore
+        (List.fold_left
+           (fun left (g, f) ->
+             let a =
+               match known_size (shape_at k (axis g)) with
+               | Some n -> gcd_with (gcd_with left f) n
+               | None -> 1
+             in
+             if a > 1 then ignore (split k (axis g) a Opt.Upcast);
+             left / a)
+           (most upcast_max) shared)
+    in
+    match shared with
+    | [ (g, f) ] when not (Nodes.mem g (ranges w)) ->
+        let f = Bigint.to_int f in
+        let passes = (f + upcast_max - 1) / upcast_max in
+        let t = (f + passes - 1) / passes in
+        let padded =
+          f mod t = 0
+          || Result.is_ok (K.apply_opt k (Opt.Padto { axis = axis g; amount = t }))
+        in
+        if padded then ignore (split k (axis g) t Opt.Upcast) else divisors ()
+    | _ -> divisors ()
   in
   let rows_layout u a =
     let i = idx a in

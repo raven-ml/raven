@@ -382,7 +382,8 @@ let host =
 let get_ok = function Ok d -> d | Error e -> failwith e
 
 let gpu_many =
-  [ (12, Bfloat16); (64, Bfloat16); (128, Bfloat16); (64, Float32) ]
+  List.map (fun n -> (n, Bfloat16)) [ 12; 16; 17; 32; 64; 128; 256 ]
+  @ [ (64, Float32) ]
 
 (* The GPU: CUDA's first, else AMD's first. *)
 let gpu =
