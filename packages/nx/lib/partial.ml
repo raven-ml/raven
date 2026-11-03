@@ -1743,8 +1743,9 @@ let run (type r) eng ~by route (op : r Value.prim) : r =
   | Value.Contract { segments = Some (Contracting _); _ } ->
       invalid_arg "Partial.run: groups of a contracting pair by partials"
   | Value.Scan { carry = Some _; _ }
-  | Value.Map _ | Value.Sort _ | Value.Fft _ | Value.Linalg _ | Value.Fold _
-  | Value.Assemble _ | Value.Copy _ | Value.Move _ | Value.Bitcast _
-  | Value.Attention _ -> attention eng ~by route rule op
+  | Value.Map _ | Value.Sort _ | Value.Unique _ | Value.Fft _
+  | Value.Linalg _ | Value.Fold _ | Value.Assemble _ | Value.Copy _
+  | Value.Move _ | Value.Bitcast _ | Value.Attention _ ->
+      attention eng ~by route rule op
   | Value.Place _ | Value.Check _ ->
       invalid_arg "Partial.run: an operation no route computes by partials"

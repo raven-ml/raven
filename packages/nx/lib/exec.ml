@@ -202,6 +202,10 @@ let call : type r.
         let values, positions = r in
         K.sort ~axis ~descending ~values:(one values)
           ~positions:(one positions) (one x)
+    | Value.Unique { keys; _ } ->
+        let ids, first, counts, count = r in
+        K.unique ~ids:(one ids) ~first:(one first) ~counts:(one counts)
+          ~count:(one count) (one keys)
     | Value.Fold { pad; x; _ } -> K.fold pad ~dst:(one r) (one x)
     | Value.Fft (Value.C2c { direction; axes; x }) ->
         K.c2c direction ~axes ~dst:(one r) (one x)
@@ -616,8 +620,9 @@ let windows : type r d.
     when Iarray.length loads = 0 && Devices.bare p ->
       created ~by p layouts op
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
-  | Value.Scatter _ | Value.Sort _ | Value.Fold _ | Value.Fft _ | Value.Linalg _
-  | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Attention _ ->
+  | Value.Scatter _ | Value.Sort _ | Value.Unique _ | Value.Fold _ | Value.Fft _
+  | Value.Linalg _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
+  | Value.Attention _ ->
       (* Fresh results on the route's one device, computed there by its
          kernels over the operands, which lie there. *)
       let r = Prim.results_at p layouts (fun k f -> alloc ?into k f) op in

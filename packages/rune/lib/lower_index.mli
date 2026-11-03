@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Gathers, scatters, folds, assemblies and sorts as tolk graphs.
+(** Gathers, scatters, folds, assemblies, sorts and numberings as tolk
+    graphs.
 
     Each function takes nodes as {!Lower_arith} holds elements and computes what
     {!Nx_kernel.S} states of its operation. Every shape must be static.
@@ -133,3 +134,14 @@ val sort :
     dtype or [complex64], four for [complex128].
 
     Raises [Invalid_argument] for an axis of more than [2{^31}] elements. *)
+
+val unique :
+  host:bool -> Ops.device -> size:int -> Ops.t -> Ops.t array
+(** [unique ~host device ~size keys] is the numbering of the rows of the
+    [int64] node [keys], of [[n; w]], as {!Nx_kernel.S.unique} states: [ids],
+    [first] and [counts] of [size] entries, and [count], 0-d, for a program
+    on [device] whose kernels compile for the host's processors where [host]
+    holds. It sorts the rows stably by {!sort}, a sort of [n] [uint64] words
+    for each column, then scatters by {!scatter}: [O(w n log² n)] work.
+
+    Raises [Invalid_argument] for more than [2{^31}] rows. *)

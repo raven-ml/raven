@@ -35,16 +35,17 @@
     element's position, the layouts, the operands' addresses or the
     threads. An element's association, its algorithm and whether the
     kernel declines depend on the extents the element reads whole (a
-    reduction's, a scan's, a sort's or a transform's axes, the contracted
-    extent, a routine's matrices, a gather's or a scatter's axis, the axes
-    a padded load or a fold pads or windows), the dtypes, the attributes
-    and the host's architecture, never on the result's other extents; a
-    contraction's association follows its rows, columns and depth, as
-    stated below. Each kind computes through the function of its name in
-    [nx_kinds.h], with that function's bits, NaNs aside, on every target.
-    So [Exp2] is exact at integers whose power is in the dtype, and [Log2]
-    at powers of two. The kinds keep subnormal operands and results. A
-    transform's bits too are the same on every target, NaNs aside. *)
+    reduction's, a scan's, a sort's or a transform's axes, a numbering's
+    keys, the contracted extent, a routine's matrices, a gather's or a
+    scatter's axis, the axes a padded load or a fold pads or windows), the
+    dtypes, the attributes and the host's architecture, never on the
+    result's other extents; a contraction's association follows its rows,
+    columns and depth, as stated below. Each kind computes through the
+    function of its name in [nx_kinds.h], with that function's bits, NaNs
+    aside, on every target. So [Exp2] is exact at integers whose power is
+    in the dtype, and [Log2] at powers of two. The kinds keep subnormal
+    operands and results. A transform's bits too are the same on every
+    target, NaNs aside. *)
 
 (** {1:lane_order Lane order}
 
@@ -266,6 +267,28 @@
     [+0] before the first; it stores [+0] at an index no tap reads. A
     narrow float's or a sub-byte dtype's fold rounds each addition to its
     dtype, as {!Nx_kernel.Prog.Add} does. *)
+
+(** {1:numbering Numbering}
+
+    [unique] refuses with [Shape_mismatch] operands and destinations whose
+    shapes do not fit, and declines keys of [2{^40} - 1] rows or more. Its
+    [k] keys of [w] words each find their number in a hash table of linear
+    probing, by a multiply and xor-shift hash of their words. Keys of at
+    most 4 words whose columns' spans, from each column's least word to its
+    greatest, multiply to at most [2{^20}] values, and to at most twice a
+    thread's rows and 1024 more, find it at their place among those values
+    in a direct table, from one more read of the keys that finds the spans.
+    A thread takes up to [2 (w + 3) k] words for its keys, their words,
+    hashes, first rows and counts, and a table of 1024 slots or 2 to 4
+    times its keys, a word each, or a direct table of 4 bytes a value.
+
+    On one thread keys are numbered as their first rows are met. On several,
+    each thread numbers the keys of a block of consecutive rows. The blocks'
+    keys then merge into tables by their hashes, which take as much again
+    as the blocks' tables, and each key is numbered by its first row's rank
+    among the keys' first rows, from a bit a row. A last pass maps each
+    row's number in its block to its key's, one more read and write of 8
+    bytes a row. *)
 
 (** {1:transforms Fourier transforms}
 

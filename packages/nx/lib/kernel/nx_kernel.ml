@@ -255,6 +255,14 @@ module Shape = struct
           y.(axis) <- n;
           Ok y
 
+  let unique ~size keys =
+    if Array.length keys <> 2 then
+      errorf "keys %a are not of rank 2" pp keys
+    else if size < 0 then errorf "a size of %d" size
+    else
+      let* first = admit "a numbering's first" [| size |] in
+      Ok ([| keys.(0) |], first, [||])
+
   let assemble y regions =
     let* y = admit "an assembly" y in
     let y = Iarray.of_array y in
@@ -604,6 +612,9 @@ module type S = sig
     positions:index ->
     ('v, 's) a ->
     answer
+
+  val unique :
+    ids:index -> first:index -> counts:index -> count:index -> index -> answer
 
   val assemble :
     fill:'v ->

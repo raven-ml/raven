@@ -32,7 +32,7 @@
   (language c)
   (include_dirs ../array ../kernel)
   (flags :standard (:include vector_flags.sexp) (:include v3_flags.sexp))
-  (names job walk stage copy apply map rows reduce index sort assemble convert gemm gemm_complex gemm_quads gemm_runs gemm_rounded gemm_scales gemm_segments gemm_view gemm_generic gemm_neon gemm_avx2 gemm_amx linalg fft attention))
+  (names job walk stage copy apply map rows reduce index sort unique assemble convert gemm gemm_complex gemm_quads gemm_runs gemm_rounded gemm_scales gemm_segments gemm_view gemm_generic gemm_neon gemm_avx2 gemm_amx linalg fft attention))
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)

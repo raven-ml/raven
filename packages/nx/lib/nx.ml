@@ -4144,9 +4144,6 @@ let sized ~by = function
   | Some s when s < 0 -> invalid_argf "%s: size %d" by s
   | _ -> ()
 
-(* The 1-d [x] cut or padded with [v] to [l] entries. *)
-let fit ~by l v x = padded ~by ~lo:[| 0 |] ~hi:[| l - Prim.dim x 0 |] v x
-
 type 'd groups = {
   ids : 'd int64_t;
   first : 'd int64_t;
@@ -4154,129 +4151,27 @@ type 'd groups = {
   count : 'd int64_t;
 }
 
-(* [dense ~by keys] numbers the values the rows of [keys] can take, where
-   there are at most as many as rows: a column takes the order keys from its
-   least to its greatest, and a row's number is the mixed-radix number of its
-   keys' places among them. It is each row's number and how many values there
-   are, or [None]. The least and greatest keys are read on the host: over
-   wider keys, an unsized {!unique} pays these reads and three passes, the
-   keys' order keys and their two extremes, before it sorts. *)
-let dense ~by keys =
-  let n = Prim.dim keys 0 in
-  let k = keys64 ~by ~merge:false keys in
-  let k = if ndim keys = 1 then Eval.reshape ~by [| n; 1 |] k else k in
-  let w = Prim.dim k 1 in
-  let bound m = Nx_array.to_array (read ~by (reduce ~by m [| 0 |] k)) in
-  let lo = bound Min and hi = bound Max in
-  (* [hi - lo] is unsigned: below [n / r], the product stays at most [n]. *)
-  let rec values j r =
-    if j = w then Some r
-    else
-      let span = Int64.sub hi.(j) lo.(j) in
-      if Int64.unsigned_compare span (Int64.of_int (n / r)) >= 0 then None
-      else values (j + 1) (r * (Int64.to_int span + 1))
+(* The numbering of the rows of the words [k], with [first] and [counts] of
+   [size] entries. *)
+let numbered ~by size k =
+  let ids, first, counts, count =
+    Eval.eval ~by (Value.Unique { size; keys = k })
   in
-  match values 0 1 with
-  | Some r when r <= n ->
-      (* Column [j]'s place, times the values the later columns take. *)
-      let rec number j stride acc =
-        if j < 0 then acc
-        else
-          let place = E.(input j D.Uint64 - const D.Uint64 lo.(j)) in
-          let at = E.(place * const D.Uint64 (Int64.of_int stride)) in
-          let values = Int64.to_int (Int64.sub hi.(j) lo.(j)) + 1 in
-          number (j - 1) (stride * values) E.(acc + at)
-      in
-      let columns = List.init w (fun j -> Value.Any (column ~by j k)) in
-      let numbers =
-        if w = 0 then fill ~by (beside keys) D.Uint64 [| n |] 0L
-        else
-          elementwise ~by D.Uint64 columns
-            (number (w - 1) 1 (E.const D.Uint64 0L))
-      in
-      Some (bitcast D.Int64 numbers, r)
-  | _ -> None
+  { ids; first; counts; count }
 
-(* Groups the keys of [r] values, at most the keys ({!dense}), numbered
-   [slot]: each value's first key is the least position a scatter puts at
-   its number, [n] where none does. The values ranked by their first keys,
-   those of no key last, are the groups in order of first appearance: the
-   ranks, scattered at the values, give every key its group, and the first
-   keys in rank order are the groups' first keys, [n] past the count. No sort
-   of the keys, and every random access is into the [r] numbers but the
-   ranking's sort of [r] first keys. *)
-let numbered ~by at i slot r =
-  let n = Prim.dim slot 0 in
-  let least =
-    scattered ~by Min slot i (fill ~by at D.Int64 [| r |] (Int64.of_int n))
-  in
-  let order = positions_of ~by least in
-  let ranks =
-    scattered ~by ~unique:true Set order
-      (arange_by ~by at D.Int64 0 r 1)
-      (fill ~by at D.Int64 [| r |] 0L)
-  in
-  let ids = take_axis ~by 0 slot ranks in
-  let ones = Eval.broadcast ~by [| n |] (fill ~by at D.Int64 [||] 1L) in
-  let counts = scattered ~by Add ids ones (fill ~by at D.Int64 [| r |] 0L) in
-  let filled =
-    elementwise ~by D.Int64 [ Any least ]
-      E.(where (operand 0 least < i64 n) (i64 1) (i64 0))
-  in
-  let count = reduce ~by Sum [| 0 |] filled in
-  let l = length ~by count in
-  {
-    ids;
-    first = fit ~by l (Int64.of_int n) (take_axis ~by 0 order least);
-    counts = fit ~by l 0L counts;
-    count;
-  }
+(* The [size] an unsized {!unique} asks for: past the keys, [first] and
+   [counts] are written, at most a byte a row from [n / 16]. *)
+let guess n = Int.min n (Int.max 4096 (n / 16))
 
-(* Groups the keys by one stable sort, then in sorted order a flag where a
-   key's order key differs from its predecessor's, the start of its run by a
-   cumulative maximum, and the run's first position in the input, which the
-   stable sort put at the run's start. Scattered to input order, the flags
-   mark each group's first key and their cumulative sum ranks the groups by
-   first appearance; each run's rank, gathered at its first position,
-   numbers its keys. Every array has [n] entries, padded by construction,
-   until the count, or [size], cuts them. *)
-let sorted_groups ~by ?size at i keys =
+(* The words of [keys], equal iff the keys are: an [int64] or [uint64] key's
+   bits, another's order key. *)
+let words (type v s d) ~by (keys : (v, s, d) t) : (int64, D.int64_elt, d) t =
   let n = Prim.dim keys 0 in
-  let zeros = fill ~by at D.Int64 [| n |] 0L in
-  let less_one x = elementwise ~by D.Int64 [ Any x ] E.(operand 0 x - i64 1) in
-  let p = rows_order ~by keys in
-  let k = take_axis ~by 0 p (keys64 ~by ~merge:false keys) in
-  let before = take_axis ~by 0 (less_one i) k in
-  let differs = comparison ~by (Compare Not_equal) k before in
-  let differs =
-    if ndim keys = 1 then differs else truth ~by Max ~axes:[ 1 ] differs
-  in
-  let fresh =
-    elementwise ~by D.Int64 [ Any i; Any differs ]
-      E.(where (operand 0 i = i64 0 || operand 1 differs) (i64 1) (i64 0))
-  in
-  let start = scan_along ~by Max 0 (binary ~by (Binary Mul) fresh i) in
-  let from = take_axis ~by 0 start p in
-  let flags = scattered ~by ~unique:true Set p fresh zeros in
-  let rank = scan_along ~by Sum 0 flags in
-  let of_sorted = less_one (take_axis ~by 0 from rank) in
-  let ids = scattered ~by ~unique:true Set p of_sorted zeros in
-  let target =
-    elementwise ~by D.Int64 [ Any flags; Any rank ]
-      E.(where (operand 0 flags = i64 1) (operand 1 rank - i64 1) (i64 (-1)))
-  in
-  let first =
-    scattered ~by Set target i (fill ~by at D.Int64 [| n |] (Int64.of_int n))
-  in
-  let counts = scattered ~by Add ids (fill ~by at D.Int64 [| n |] 1L) zeros in
-  let count = reduce ~by Sum [| 0 |] flags in
-  let l = match size with Some l -> l | None -> length ~by count in
-  {
-    ids;
-    first = fit ~by l (Int64.of_int n) first;
-    counts = fit ~by l 0L counts;
-    count;
-  }
+  let rows x = if ndim x = 1 then Eval.reshape ~by [| n; 1 |] x else x in
+  match dtype keys with
+  | D.Int64 -> rows keys
+  | D.Uint64 -> bitcast D.Int64 (rows keys)
+  | _ -> bitcast D.Int64 (rows (keys64 ~by ~merge:false keys))
 
 let unique ?size keys =
   let by = "Nx.unique" in
@@ -4284,13 +4179,30 @@ let unique ?size keys =
   keyed ~by keys;
   sized ~by size;
   let n = Prim.dim keys 0 in
-  (* Its counters lie where [keys] lies, whole on each of its devices. *)
-  let at = beside keys in
-  let i = arange_by ~by at D.Int64 0 n 1 in
-  let dense = if size = None && n > 0 then dense ~by keys else None in
-  match dense with
-  | Some (slot, r) -> numbered ~by at i slot r
-  | None -> sorted_groups ~by ?size at i keys
+  let k = words ~by keys in
+  match size with
+  | Some l -> numbered ~by l k
+  | None ->
+      let g = numbered ~by (guess n) k in
+      let l = length ~by g.count in
+      if l > guess n then
+        (* More keys: each key's first row is the least row a scatter puts
+           at its number, and its count a scatter of ones. *)
+        let at = beside keys in
+        let rows = arange_by ~by at D.Int64 0 n 1 in
+        let none = fill ~by at D.Int64 [| l |] (Int64.of_int n) in
+        let ones = Eval.broadcast ~by [| n |] (fill ~by at D.Int64 [||] 1L) in
+        let zeros = fill ~by at D.Int64 [| l |] 0L in
+        {
+          g with
+          first = scattered ~by Min g.ids rows none;
+          counts = scattered ~by Add g.ids ones zeros;
+        }
+      else
+        let cut x =
+          sliced ~by [| { Nx_array.Move.start = 0; count = l; step = 1 } |] x
+        in
+        { g with first = cut g.first; counts = cut g.counts }
 
 (* Each index's run starts at the sum of the counts before it; a scatter of the
    indices at their starts, a cumulative maximum along the result, and [n] past
@@ -7012,6 +6924,15 @@ module Prim = struct
         x : ('v, 's, 'd) Value.t;
       }
         -> (('v, 's, 'd) Value.t * (int64, Dtype.int64_elt, 'd) Value.t) t
+    | Unique : {
+        size : int;
+        keys : (int64, Dtype.int64_elt, 'd) Value.t;
+      }
+        -> ((int64, Dtype.int64_elt, 'd) Value.t
+           * (int64, Dtype.int64_elt, 'd) Value.t
+           * (int64, Dtype.int64_elt, 'd) Value.t
+           * (int64, Dtype.int64_elt, 'd) Value.t)
+           t
     | Fold : {
         shape : int iarray;
         pad : Nx_kernel.pad;

@@ -628,6 +628,12 @@ let same_results : type r. string -> r Nx.Prim.t -> r -> r -> unit =
       let (v, p), (v', p') = (a, b) in
       same_form ~msg v v';
       same_form ~msg p p'
+  | Unique _ ->
+      let (i, f, c, k), (i', f', c', k') = (a, b) in
+      same_form ~msg i i';
+      same_form ~msg f f';
+      same_form ~msg c c';
+      same_form ~msg k k'
   | Fft (C2c _) -> same_form ~msg a b
   | Fft (R2c _) -> same_form ~msg a b
   | Fft (C2r _) -> same_form ~msg a b
@@ -906,8 +912,8 @@ let test_keeps_bits () =
 
 (* Operations of each count of results beside [cases_of]'s, each with its
    count from the constructor's doc: reductions of six results, a scan's
-   two, a sort's, a transform's, factorisations of two and three, and a check
-   of none. *)
+   two, a sort's, a numbering's four, a transform's, factorisations of two
+   and three, and a check of none. *)
 let counted_cases () =
   let x = operand Concrete [| 2; 3 |] and m = operand Concrete [| 3; 3 |] in
   let layout = L.contiguous [| 2; 3 |] in
@@ -944,6 +950,11 @@ let counted_cases () =
             } ),
       2 );
     (Case ("sort", Sort { axis = 1; descending = false; k = None; x }), 2);
+    ( Case
+        ( "unique",
+          Unique
+            { size = 2; keys = Nx.bitcast Nx.int64 (Nx.cast Nx.float64 x) } ),
+      4 );
     ( Case
         ("r2c", Fft (R2c { dtype = Nx.complex64; axes = [| 1 |]; x })),
       1 );
@@ -1098,6 +1109,9 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
       let p, t = parts i s.x in
       let v, idx = Nx.Prim.eval ~by (Sort { s with x = p }) in
       (dual i v (Nx.Prim.eval ~by (Gather { axis = s.axis; idx; x = t })), idx)
+  | Unique u ->
+      (* Integers: no tangent. *)
+      Nx.Prim.eval ~by (Unique { u with keys = fst (parts i u.keys) })
   | Assemble a ->
       (* Linear in the pieces; the fill's tangent is zero. *)
       let assemble fill pieces =

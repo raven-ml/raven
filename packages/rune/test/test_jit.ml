@@ -4323,6 +4323,47 @@ let law_recomputed (how, k) =
   let jitted = compiled (fun () -> codes (Rune.jit' f x)) in
   equal (outcome_t codes_t) eager jitted
 
+(* Numberings
+
+   Nx.unique with a size: eager, nx.cpu's table; compiled, rune's composition
+   of sorts and scatters. Keys of int32 from three values, or float64 NaNs of
+   either sign and zeros of either sign, as elements or rows. *)
+
+type unique_case =
+  | Unique_case : ('v, 's) Nx.dtype * int array * 'v array * int -> unique_case
+
+let unique_cases =
+  let open Gen in
+  (let* rows = bool in
+   let* n = int_range 0 9 in
+   let* w = int_range 0 3 in
+   let s = if rows then [| n; w |] else [| n |] in
+   let size = Array.fold_left ( * ) 1 s in
+   let* m = int_range 0 (n + 2) in
+   let* floats = bool in
+   if floats then
+     let floats = of_list [ nan; -.nan; 0.; -0.; 1. ] in
+     let+ vs = array ~size:(constant size) floats in
+     Unique_case (f64, s, vs, m)
+   else
+     let+ vs = array ~size:(constant size) (map Int32.of_int (int_range 0 2)) in
+     Unique_case (Nx.int32, s, vs, m))
+  |> with_pp (fun ppf (Unique_case (dt, s, _, m)) ->
+      Format.fprintf ppf "%a %a size %d" Nx.pp_dtype dt pp_shape s m)
+
+let law_unique (Unique_case (dt, s, vs, m)) =
+  cover "rows" (Array.length s = 2);
+  cover "first and counts cut" (m < s.(0));
+  let x = Nx.create dt s vs in
+  let f x =
+    let g = Nx.unique ~size:m x in
+    Nx.concatenate ~axis:0
+      [ g.ids; g.first; g.counts; Nx.reshape [| 1 |] g.count ]
+  in
+  equal (outcome_t codes_t)
+    (outcome (fun () -> codes (f x)))
+    (compiled (fun () -> codes (Rune.jit' f x)))
+
 (* Packed views
 
    A uint4 sort along the last axis of a [2; 3] view of a [3; 5] uint4 of
@@ -5119,6 +5160,9 @@ let () =
              prop ~count:60 ~examples:shift_examples
                "rshift is the integer shift at every dtype, eager and compiled"
                shift_cases law_rshift;
+             prop ~count:30
+               "a numbering gives eager's ids, first rows and counts"
+               unique_cases law_unique;
              prop ~count:12
                "a uint4 sort along the last axis of every other row and \
                 column, flipped, gives eager's codes"

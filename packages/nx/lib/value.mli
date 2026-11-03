@@ -193,6 +193,11 @@ and _ prim =
       x : ('v, 's, 'd) t;
     }
       -> (('v, 's, 'd) t * 'd index) prim
+  | Unique : {
+      size : int;
+      keys : 'd index;
+    }
+      -> ('d index * 'd index * 'd index * 'd index) prim
   | Fold : {
       shape : int iarray;
       pad : Nx_kernel.pad;

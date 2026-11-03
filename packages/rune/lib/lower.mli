@@ -18,9 +18,9 @@
       {!Lower_reduce.contract} does.
     - A [Copy] and a [Place] are their operand, a [Move] its operand moved, and
       a [Bitcast] its operand's bits as {!Lower_arith.bitcast} reads them.
-    - A [Gather], a [Scatter], a [Fold], an [Assemble] and a [Sort] compute as
-      {!Lower_index} states, a [Linalg] as {!Lower_linalg} states, and an [Fft]
-      transforms as {!Lower_fft} does.
+    - A [Gather], a [Scatter], a [Fold], an [Assemble], a [Sort] and a
+      [Unique] compute as {!Lower_index} states, a [Linalg] as
+      {!Lower_linalg} states, and an [Fft] transforms as {!Lower_fft} does.
 
     {b Numerics.} A result is what {!Nx.Prim.t} states of its operation, within
     the bounds the modules above state. Those bounds implement
@@ -50,6 +50,7 @@ val op :
     refuses, a boolean [Add] [Scatter] or [Fold], an [Assemble] that would do
     more than 16 times the work of nx's kernel ({!Lower_index.assemble}), a
     [Sort] along an axis of more than [2{^31}] elements ({!Lower_index.sort}),
+    a [Unique] of more than [2{^31}] rows,
     an [Fft] of a precision other than [float32] and [float64] or whose
     result's precision is not its operand's, a [Contract] scaled in an
     accumulator other than [float32] or [float64], a reduction or a scan of a

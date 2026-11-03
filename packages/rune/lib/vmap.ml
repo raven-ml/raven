@@ -544,6 +544,57 @@ let move (type v s d) i n ~by mv (x : (v, s, d) Nx.t) () =
   in
   [| Batch (Program.V y) |]
 
+(* Every lane's numbering ({!Nx.Prim.Unique}) as one: each row led by its
+   lane's index as a word, so that a lane's keys are its own and are numbered
+   after the earlier lanes'. A lane's first row starts its first key, whose
+   number counts the keys of the lanes before it, which its ids, first rows
+   and counts are read past. *)
+let unique ~by n size (b : (int64, Nx.int64_elt, 'd) Nx.t) () =
+  let rows = Nx.dim 1 b and w = Nx.dim 2 b in
+  let at = Nx.beside b in
+  let out ids first counts count =
+    Array.map
+      (fun x -> Batch (Program.V x))
+      [| ids; first; counts; count |]
+  in
+  if n = 0 || rows = 0 then
+    out
+      (Nx.zeros_at at Nx.int64 [| n; rows |])
+      (Nx.full_at at Nx.int64 [| n; size |] (Int64.of_int rows))
+      (Nx.zeros_at at Nx.int64 [| n; size |])
+      (Nx.zeros_at at Nx.int64 [| n |])
+  else
+    let lane = Nx.arange_at at Nx.int64 0 n 1 in
+    let lead =
+      Nx.broadcast_to [| n; rows; 1 |] (Nx.reshape [| n; 1; 1 |] lane)
+    in
+    let words =
+      Nx.reshape [| n * rows; w + 1 |] (Nx.concatenate ~axis:2 [ lead; b ])
+    in
+    let ids, first, counts, count =
+      Prim.eval ~by (Unique { size = n * rows; keys = words })
+    in
+    let lane_rows = Nx.mul lane (Nx.scalar_like lane (Int64.of_int rows)) in
+    let before = Nx.take lane_rows ids in
+    let after =
+      Nx.concatenate ~axis:0
+        [ Nx.slice [ Nx.R (1, n) ] before; Nx.reshape [| 1 |] count ]
+    in
+    let column x = Nx.reshape [| n; 1 |] x in
+    let g = Nx.reshape [| 1; size |] (Nx.arange_at at Nx.int64 0 size 1) in
+    let kept = Nx.less g (column (Nx.sub after before)) in
+    let read x =
+      let last = Nx.scalar_like g (Int64.of_int ((n * rows) - 1)) in
+      Nx.take (Nx.minimum (Nx.add (column before) g) last) x
+    in
+    out
+      (Nx.sub (Nx.reshape [| n; rows |] ids) (column before))
+      (Nx.where kept
+         (Nx.sub (read first) (column lane_rows))
+         (Nx.full_at at Nx.int64 [| n; size |] (Int64.of_int rows)))
+      (Nx.where kept (read counts) (Nx.zeros_at at Nx.int64 [| n; size |]))
+      (Nx.sub after before)
+
 (* A lane's [Place] onto the placement it has passes its batch through: placing
    the batch at that placement with a leading axis would gather a batch cut
    along it onto every device. *)
@@ -786,6 +837,7 @@ let rule (type r) n held i ~by (op : r Prim.t) : r =
              into = b s.into;
            })
   | Sort s -> batched (Sort { s with axis = s.axis + 1; x = b s.x })
+  | Unique { size; keys } -> results i ~by op (unique ~by n size (b keys))
   | Fold f ->
       batched (Fold { shape = lead n f.shape; pad = lead_pad f.pad; x = b f.x })
   | Assemble a ->

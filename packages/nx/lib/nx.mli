@@ -3660,11 +3660,11 @@ val unique : ?size:int -> ('v, 's, 'd) t -> 'd groups
     holds [n] and [counts] [0]; below [k], the later groups are cut from them,
     and [ids] still numbers those groups from [size].
 
-    It is one stable sort of the keys and a few passes over them. Without
-    [size], it first reads each column's least and greatest order key
-    ({!order_key}) on the host: where the product of the columns' spans, from
-    least to greatest key, is at most the number of rows, it numbers the rows
-    in a few passes and no sort.
+    It numbers the keys in one call of the kernel {!Nx_kernel.S.unique},
+    over their order keys ({!order_key}), or their bits for [int64] and
+    [uint64] keys. Without [size] it asks for [first] and [counts] of
+    [min n (max 4096 (n / 16))] entries; where [k] is more, each key's first
+    row and count are a scatter of the rows and one of ones at the ids.
 
     Raises [Invalid_argument] if [keys] is neither 1-d nor 2-d, is complex, or
     if [size] is negative. *)
@@ -5547,6 +5547,21 @@ module Prim : sig
         (** [x]'s elements along [axis], stably, in {!Nx_kernel.S.sort}'s
             order, reversed where [descending], then their positions along
             [axis]; with [Some k], the first [k] of each slice. *)
+    | Unique : {
+        size : int;
+        keys : (int64, Dtype.int64_elt, 'd) nx;
+      }
+        -> ((int64, Dtype.int64_elt, 'd) nx
+           * (int64, Dtype.int64_elt, 'd) nx
+           * (int64, Dtype.int64_elt, 'd) nx
+           * (int64, Dtype.int64_elt, 'd) nx)
+           t
+        (** The rows of [keys], of [[n; w]], numbered in order of their first
+            rows, two rows one key iff their words are equal as unsigned
+            64-bit words ({!Nx_kernel.S.unique}): each row's number, of [n]
+            entries; each key's first row and its number of rows, of [size]
+            entries, [n] and [0] past the keys; and the number of keys,
+            0-d. *)
     | Fold : {
         shape : int iarray;
         pad : Nx_kernel.pad;

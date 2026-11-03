@@ -56,6 +56,10 @@ module Counting = struct
     Atomic.incr count;
     Nx_cpu.sort ~axis ~descending ~values ~positions x
 
+  let unique ~ids ~first ~counts ~count:k keys =
+    Atomic.incr count;
+    Nx_cpu.unique ~ids ~first ~counts ~count:k keys
+
   let assemble ~fill ~dst pieces =
     Atomic.incr count;
     Nx_cpu.assemble ~fill ~dst pieces

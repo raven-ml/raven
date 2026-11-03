@@ -368,6 +368,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles `Nx.unique ~size`, its numbering lowered to sorts and
+  scatters, and `Rune.vmap` maps it, each lane's keys led by the lane.
 - A compiled `Contracting` segmented contraction, such as a grouped
   product's weight gradient, keeps each group's bits whatever the other
   groups' counts, as `Nx_kernel.S.contract` promises: a group's terms were
@@ -1882,6 +1884,14 @@ word comes from its lock and from samples the dashboard saw arrive.
 - **Breaking:** `Nx.attention` is one operation, `Nx.Prim.Attention`;
   nx.cpu runs it by blocks of keys and a hidden value no longer reaches
   `o`, which `Rune.jit` and rune's derivatives still make NaN.
+- `Nx.unique` numbers keys in one call of the new kernel operation
+  `Nx_kernel.S.unique` (`Nx.Prim.Unique`), in place of a stable sort and
+  passes of random access over the keys. nx.cpu finds each key in a hash
+  table, or in a direct table where the columns' spans are small, in one
+  pass over the keys; `int64` and `uint64` keys are read as they are. A
+  million int32 keys of 100 values take 20 instructions a row where they
+  took 61, and one-word texts 48 where they took 277. `Nx_ragged.ids`
+  numbers its words through it, asking for no first rows or counts.
 - Add `Nx.Rng.placement`, where a key's words lie. Draw from `k` at
   `Nx.Rng.placement k`, and make a cut batch's constants of other shapes at
   `Nx.Placement.uncut (Nx.Rng.placement k)`.
@@ -3262,6 +3272,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Group-bys, joins, `distinct` and `n_unique` number their keys in one pass
+  over them through `Nx.unique`'s hash or direct table, in place of a sort:
+  at a million rows, H2O group-by q01 takes 317 instructions a row where it
+  took 547, and q10 1,604 where it took 3,112.
 - Reading Parquet runs a sixth of the major collections it ran (309 to 54 on
   decision-support q06 at scale factor 1): columns, and the arrays of
   `Talon_csv` text columns, text kernels, `Column.parse` and `Column.print`,

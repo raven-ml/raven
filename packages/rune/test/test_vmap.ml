@@ -268,6 +268,19 @@ let cases =
       (scatter Max ~lane:`Positions);
     case ~shape:(rows 2) "scatter min of a lane" (scatter Min ~lane:`Updates);
     case ~shape:matrix "sort" (fun x -> fst (Nx.sort ~axis:1 x));
+    case ~values:(Gen.map Float.of_int (Gen.int_range 0 2))
+      ~shape:Gen.(map (fun n -> [| n |]) (int_range 0 5))
+      "unique of a lane's elements" (fun x ->
+        let g = Nx.unique ~size:(Nx.dim 0 x) x in
+        Nx.cast f64
+          (Nx.concatenate ~axis:0
+             [ g.ids; g.first; g.counts; Nx.reshape [| 1 |] g.count ]));
+    case ~values:(Gen.map Float.of_int (Gen.int_range 0 1)) ~shape:matrix
+      "unique of a lane's rows, cut to two" (fun x ->
+        let g = Nx.unique ~size:2 x in
+        Nx.cast f64
+          (Nx.concatenate ~axis:0
+             [ g.ids; g.first; g.counts; Nx.reshape [| 1 |] g.count ]));
     case ~shape:matrix "argsort" (fun x -> Nx.cast f64 (Nx.argsort ~axis:0 x));
     case
       ~shape:Gen.(map (fun n -> [| n + 2 |]) (int_range 0 3))

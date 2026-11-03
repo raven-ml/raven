@@ -345,6 +345,16 @@ external sort :
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_sort"
 
+(* Numbering (unique.c) *)
+
+external unique :
+  ids:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
+  first:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
+  counts:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
+  count:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
+  (int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_unique"
+
 (* Contractions (gemm.c) *)
 
 (* [contract_c ~batch ~contracting acc ~dst ~init a b sa sb segs]

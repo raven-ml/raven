@@ -324,6 +324,7 @@ let name : type r. r prim -> string = function
   | Gather _ -> "Gather"
   | Scatter _ -> "Scatter"
   | Sort _ -> "Sort"
+  | Unique _ -> "Unique"
   | Fold _ -> "Fold"
   | Fft _ -> "Fft"
   | Linalg _ -> "Linalg"
@@ -408,6 +409,7 @@ let operands : type r. r prim -> operands = function
   | Scatter { idx; updates; into; _ } ->
       Operands [ Any idx; Any updates; Any into ]
   | Sort { x; _ } -> Operands [ Any x ]
+  | Unique { keys; _ } -> Operands [ Any keys ]
   | Fold { x; _ } -> Operands [ Any x ]
   | Fft f -> Operands [ fft_operand f ]
   | Linalg l -> Operands (linalg_operands l)
@@ -460,9 +462,9 @@ let own_index : type r. r prim -> (int list * L.t * D.any) option =
   | Assemble { dtype; shape; pieces = (region, _) :: _; _ }
     when whole_region region shape ->
       Some ([ 0 ], L.contiguous shape, D.Any dtype)
-  | Map _ | Reduce _ | Scan _ | Gather _ | Contract _ | Sort _ | Fft _
-  | Linalg _ | Fold _ | Assemble _ | Copy _ | Move _ | Bitcast _ | Place _
-  | Check _ | Attention _ ->
+  | Map _ | Reduce _ | Scan _ | Gather _ | Contract _ | Sort _ | Unique _
+  | Fft _ | Linalg _ | Fold _ | Assemble _ | Copy _ | Move _ | Bitcast _
+  | Place _ | Check _ | Attention _ ->
       None
 
 (* [l] with its operand mapped by [m i]. *)
@@ -547,6 +549,7 @@ let fold : type e a r.
   | Gather { idx; x; _ } -> f e (f e acc idx) x
   | Scatter { idx; updates; into; _ } -> f e (f e (f e acc idx) updates) into
   | Sort { x; _ } -> f e acc x
+  | Unique { keys; _ } -> f e acc keys
   | Fold { x; _ } -> f e acc x
   (* Each kind's operand read in place: [fft_operand] would box it. *)
   | Fft (C2c { x; _ }) -> f e acc x
@@ -668,6 +671,9 @@ let mapi : type r.
   | Sort s ->
       let x = m 0 s.x in
       if x == s.x then op else Sort { s with x }
+  | Unique u ->
+      let keys = m 0 u.keys in
+      if keys == u.keys then op else Unique { u with keys }
   | Fold f ->
       let x = m 0 f.x in
       if x == f.x then op else Fold { f with x }
@@ -1031,6 +1037,7 @@ let pp : type r. Format.formatter -> r prim -> unit =
       Format.fprintf ppf " along %d%s%s" axis
         (if descending then " descending" else "")
         (match k with Some k -> Printf.sprintf " keeping %d" k | None -> "")
+  | Unique { size; _ } -> Format.fprintf ppf " keeping %d" size
   | Fft f ->
       let kind =
         match f with
@@ -1323,8 +1330,8 @@ let loop_rule : type r. r prim -> int array -> Route.rule =
       if carries reduction && Option.is_none carry && plain && loaded then
         rows ~scanned:axis [||] [||]
       else rows [||] (padded layout loads [| axis |])
-  | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
-  | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _
+  | Gather _ | Scatter _ | Sort _ | Unique _ | Fold _ | Fft _ | Linalg _
+  | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _
   | Attention _ ->
       invalid_arg "Prim.loop_rule: not a loop"
 
@@ -1543,6 +1550,7 @@ let rule : type r. r prim -> Route.rule =
           read (rank idx); read (rank updates); Array.init (rank into) target;
         |]
   | Sort { axis; x; _ } -> Axes [| reading [| axis |] (rank x) |]
+  | Unique { keys; _ } -> Axes [| reading [| 0; 1 |] (rank keys) |]
   | Fold { pad; x; _ } -> fold_rule pad x
   | Fft f ->
       let (Any x) = fft_operand f in
@@ -1724,8 +1732,8 @@ let terms (type r) (op : r prim) summed : Route.terms =
       if (summed 0 && summed 1) || not (rest 2) then Closes
       else if c.sum || summed 0 || summed 1 then Sums
       else Closes
-  | Reduce _ | Scan _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _
-  | Assemble _ | Bitcast _ | Place _ | Check _ | Attention _ ->
+  | Reduce _ | Scan _ | Scatter _ | Sort _ | Unique _ | Fold _ | Fft _
+  | Linalg _ | Assemble _ | Bitcast _ | Place _ | Check _ | Attention _ ->
       Closes
 
 let summable (type v s) ~by (dt : (v, s) D.t) =
@@ -1911,8 +1919,9 @@ let offset : type r. r prim -> origin -> r prim =
     | Reduce m -> Reduce { m with prog = with_offsets m.prog start }
     | Scan m -> Scan { m with prog = with_offsets m.prog start }
     | Attention a -> Attention { a with prog = with_offsets a.prog start }
-    | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
-    | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ ->
+    | Gather _ | Scatter _ | Sort _ | Unique _ | Fold _ | Fft _ | Linalg _
+    | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _ | Place _
+    | Check _ ->
         op
 
 let within : type r. r prim -> Nx_array.Move.range array -> r prim * origin =
@@ -1925,8 +1934,8 @@ let within : type r. r prim -> Nx_array.Move.range array -> r prim * origin =
   | Map m -> (Map { m with layout }, origin m.layout)
   | Reduce m -> (Reduce { m with layout }, origin m.layout)
   | Scan m -> (Scan { m with layout }, origin m.layout)
-  | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
-  | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _
+  | Gather _ | Scatter _ | Sort _ | Unique _ | Fold _ | Fft _ | Linalg _
+  | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _
   | Attention _ ->
       invalid_arg "Prim.within: not a loop"
 
@@ -1989,8 +1998,8 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim * origin =
       let start = starts w in
       start.(Array.length start - 1) <- 0;
       (op, { no_origin with start })
-  | Gather _ | Scatter _ | Sort _ | Fft _ | Linalg _ | Contract _ | Copy _
-  | Bitcast _ | Place _ | Check _ ->
+  | Gather _ | Scatter _ | Sort _ | Unique _ | Fft _ | Linalg _ | Contract _
+  | Copy _ | Bitcast _ | Place _ | Check _ ->
       (op, no_origin)
 
 (* A bitcast's layout and shape: one width keeps them; a narrower dtype appends
@@ -2042,6 +2051,9 @@ let scatter_shape ~by (combine : Nx_kernel.combine) axis idx updates into =
 
 (* A sort's values' shape, and its positions': its rule. *)
 let sort_shape ~by axis k x = shaped ~by (Shape.sort ~axis ~k (shape x))
+
+let unique_shapes ~by size keys =
+  shaped ~by (Shape.unique ~size (shape keys))
 
 let check_fft (type d r) ~by (f : (d, r) fft) =
   let into x y fits =
@@ -2188,8 +2200,9 @@ let linalg_results : type d r.
   | Eig { dtype; _ } -> two dtype dtype
   | Solve_triangular { a; _ } -> one 0 (dtype a)
 
-(* [op]'s results' layouts, by its rule: one per result of a factorisation,
-   one that every result of another operation shares, none for a check.
+(* [op]'s results' layouts, by its rule: one per result of a factorisation
+   or a numbering, one that every result of another operation shares, none
+   for a check.
    Raises naming [by] where [op]'s operands break the rule. *)
 (* Attention's rule: [q], [k] and [v] of one float dtype it takes, the
    program's operands the score in float32 then the loads' dtypes, its
@@ -2280,6 +2293,9 @@ let layouts : type r. by:string -> r prim -> L.t array =
   | Scatter { combine; axis; idx; updates; into; _ } ->
       [| contiguous (scatter_shape ~by combine axis idx updates into) |]
   | Sort { axis; k; x; _ } -> [| contiguous (sort_shape ~by axis k x) |]
+  | Unique { size; keys } ->
+      let ids, first, count = unique_shapes ~by size keys in
+      [| contiguous ids; contiguous first; contiguous first; contiguous count |]
   | Fft f -> [| contiguous (fft_shape ~by f) |]
   | Linalg l -> Array.map contiguous (linalg_shapes ~by l)
   | Fold { shape; pad; x } ->
@@ -2334,9 +2350,9 @@ let route : type r. by:string -> r prim -> routed =
   let layouts = layouts ~by op in
   match op with
   | Place _ | Check _ -> { route = None; layouts }
-  | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _
-  | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _
-  | Attention _ ->
+  | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Unique _
+  | Fft _ | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _
+  | Bitcast _ | Attention _ ->
       { route = Some (route_of ~by op); layouts }
 
 let results_at : type r.
@@ -2356,6 +2372,11 @@ let results_at : type r.
   | Sort { x; _ } ->
       let values = m 0 (of_layout (dtype x) layouts.(0) p) in
       (values, m 1 (of_layout D.Int64 layouts.(0) p))
+  | Unique _ ->
+      let ids = m 0 (of_layout D.Int64 layouts.(0) p) in
+      let first = m 1 (of_layout D.Int64 layouts.(1) p) in
+      let counts = m 2 (of_layout D.Int64 layouts.(2) p) in
+      (ids, first, counts, m 3 (of_layout D.Int64 layouts.(3) p))
   | Fft f -> (
       match f with
       | C2c { x; _ } -> m 0 (of_layout (dtype x) layouts.(0) p)
@@ -2394,8 +2415,8 @@ let results : type r.
   let p =
     match op with
     | Place _ | Check _ -> host
-    | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _
-    | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _
+    | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Unique _
+    | Fft _ | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _
     | Bitcast _ | Attention _ ->
         result_placement ~by op
   in
@@ -2629,6 +2650,12 @@ let iter_results : type r.
       let values, positions = r in
       f values;
       f positions
+  | Unique _ ->
+      let ids, first, counts, count = r in
+      f ids;
+      f first;
+      f counts;
+      f count
   | Fft t -> iter_fft f t r
   | Linalg l -> iter_linalg f l r
   | Gather _ -> f r
@@ -2729,6 +2756,12 @@ let zip : type r.
   | Sort _ ->
       let values = f 0 (fsts rs) in
       (values, f 1 (snds rs))
+  | Unique _ ->
+      let nth g = Array.map (Option.map g) rs in
+      let ids = f 0 (nth (fun (a, _, _, _) -> a)) in
+      let first = f 1 (nth (fun (_, b, _, _) -> b)) in
+      let counts = f 2 (nth (fun (_, _, c, _) -> c)) in
+      (ids, first, counts, f 3 (nth (fun (_, _, _, d) -> d)))
   | Fft (C2c _) -> f 0 rs
   | Fft (R2c _) -> f 0 rs
   | Fft (C2r _) -> f 0 rs

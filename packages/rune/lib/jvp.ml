@@ -990,6 +990,7 @@ let rule (type r) name i ~by (op : r Prim.t) : r =
         | None -> v
       in
       (v, idx)
+  | Unique u -> Prim.eval ~by (Unique { u with keys = primal i u.keys })
   | Fold f -> both ~fresh:true (fun x -> Prim.eval ~by (Fold { f with x })) f.x
   | Assemble a ->
       let assemble fill pieces =

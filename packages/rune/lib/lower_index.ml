@@ -718,3 +718,78 @@ let sort d ~axis ~descending ~k x =
                if i = axis then Some (Ops.Int 0, Ops.Int k) else None))
       in
       (first values, first positions)
+
+(* Numbering
+
+   The rows' order by a stable sort of each column's words from the last, as
+   unsigned integers: each sort keeps the order of the columns after it
+   among its ties. In that order a run of equal rows starts where a row
+   differs from the one before, and the run's first row in the input is at
+   its start, where the stable sorts put it. Flags at those first rows, in
+   input order, rank the keys by first appearance by their running sum; each
+   run's rank, read at its start, numbers its rows. A scatter of the rows at
+   their keys' first rows' ranks and of ones at their numbers gives each
+   key's first row and count. *)
+
+let unique ~host device ~size keys =
+  let take = Bits.take in
+  let n = Bits.extent keys 0 and w = Bits.extent keys 1 in
+  let i64 = D.Any D.Int64 in
+  let fill v s =
+    broadcast (Ops.const ~dtype:Int64 (`Int (Bigint.of_int v))) s
+  in
+  if n = 0 then
+    [|
+      zeros Int64 [ 0 ];
+      fill 0 [ size ];
+      zeros Int64 [ size ];
+      Shape.reshape (fill 0 [ 1 ]) [];
+    |]
+  else
+    let i = Shape.arange ~dtype:Int64 n in
+    let column j =
+      let c = Shape.shrink keys [ None; Some (Ops.Int j, Ops.Int (j + 1)) ] in
+      Ops.bitcast (Shape.reshape c [ Ops.Int n ]) Uint64
+    in
+    let positions u =
+      snd (sort (D.Any D.Uint64) ~axis:0 ~descending:false ~k:None u)
+    in
+    let rec from j p =
+      if j < 0 then p
+      else from (j - 1) (take p 0 (positions (take (column j) 0 p)))
+    in
+    let p = if w = 0 then i else from (w - 2) (positions (column (w - 1))) in
+    let first_row = Ops.eq i (int i 0) in
+    let fresh =
+      if w = 0 then first_row
+      else
+        let rows u = laid [ n; w ] 0 u in
+        let k = take keys 0 (rows p) in
+        let before = take k 0 (rows (Ops.sub i (int i 1))) in
+        let differs = Ops.cast (Ops.ne k before) Uint8 in
+        let any = Shape.rop differs Op.Max [ 1 ] in
+        let differs = Shape.reshape any [ Ops.Int n ] in
+        Ops.bitwise_or first_row (Ops.ne differs (int differs 0))
+    in
+    let fresh = Ops.cast fresh Int64 in
+    let scan m x =
+      List.hd (Lower_reduce.scan (Monoid m) 0 ~carry:None ~src:i64 i64 x)
+    in
+    let scatter c ~idx ~updates into =
+      scatter ~host device i64 c ~axis:0 ~idx ~updates into
+    in
+    let start = scan Max (Ops.mul fresh i) in
+    let flags = scatter Set ~idx:p ~updates:fresh (zeros Int64 [ n ]) in
+    let rank = scan Sum flags in
+    let numbers = Ops.sub (take rank 0 (take p 0 start)) (int i 1) in
+    let ids = scatter Set ~idx:p ~updates:numbers (zeros Int64 [ n ]) in
+    let target =
+      let opens = Ops.eq flags (int flags 1) in
+      Ops.where opens (Ops.sub rank (int rank 1)) (int rank (-1))
+    in
+    let first = scatter Set ~idx:target ~updates:i (fill n [ size ]) in
+    let counts =
+      scatter Add ~idx:ids ~updates:(fill 1 [ n ]) (zeros Int64 [ size ])
+    in
+    let k = Lower_reduce.reduce (Monoid Sum) [ 0 ] ~src:i64 i64 flags in
+    [| ids; first; counts; List.hd k |]

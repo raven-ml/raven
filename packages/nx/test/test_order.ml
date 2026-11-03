@@ -398,11 +398,11 @@ let test_search_cases () =
 
 type unique_case = Unique_case : rows_case * int option -> unique_case
 
-(* Integer rows that take about as many values as there are rows, where an
-   unsized {!Nx.unique} chooses between numbering them and sorting them:
-   [n] rows of one column, or of two whose second holds one value, the first
-   taking [r] values, [n - 1], [n] or [n + 1], from a drawn value up, values
-   that may wrap past the dtype's greatest. *)
+(* Integer rows whose values span about twice as many as there are rows and
+   1024 more, where nx.cpu's numbering moves from a direct table to a hash
+   table: [n] rows of one column, or of two whose second holds one value, the
+   first taking [r] values, one either side of [2n + 1024] or on it, from a
+   drawn value up, values that may wrap past the dtype's greatest. *)
 let near_case =
   let open Gen in
   let ints =
@@ -413,7 +413,7 @@ let near_case =
   in
   let* (D.Any dt) = of_list ints in
   let* n = int_range 3 300 in
-  let* r = map (fun d -> n + d) (int_range (-1) 1) in
+  let* r = map (fun d -> (2 * n) + 1024 + d) (int_range (-1) 1) in
   let* two = bool in
   let* base = value dt in
   let+ steps = array ~size:(constant (n - 2)) (int_range 0 (r - 1)) in
@@ -494,11 +494,14 @@ let law_unique (Unique_case (Rows_case (dt, s, vs), size)) =
   cover "padded" (l > k);
   cover "cut" (l < k);
   let r = values_taken x and n = s.(0) in
+  let edge = (2 * n) + 1024 in
   if size = None && n >= 3 then begin
-    cover "rows taking n - 1 values" (r = n - 1);
-    cover "rows taking n values" (r = n);
-    cover "rows taking n + 1 values" (r = n + 1)
+    cover "rows taking 2n + 1023 values" (r = edge - 1);
+    cover "rows taking 2n + 1024 values" (r = edge);
+    cover "rows taking 2n + 1025 values" (r = edge + 1)
   end;
+  cover "one key of many rows" (k = 1 && n > 1);
+  cover "every row its own key" (k = n && n > 1);
   equal ~msg:"ids" (array int64) ids (Nx.to_array g.ids);
   equal ~msg:"count" int64 (Int64.of_int k) (Nx.item [] g.count);
   equal ~msg:"first" (array int64)
@@ -549,6 +552,36 @@ let test_unique_long () =
   equal ~msg:"counts" (array int64) [| 25_000L; 30_000L; 15_000L |]
     (Nx.to_array g.counts);
   equal ~msg:"count" int64 3L (Nx.item [] g.count)
+
+(* Groups past the size an unsized unique first asks for: 80,000 int64 keys
+   of 50,000 values, [i * 7919 mod 50,000], against a table of keys numbered
+   as they are first met. *)
+let test_unique_many () =
+  let n = 80_000 in
+  let key i = Int64.of_int (i * 7919 mod 50_000) in
+  let g = Nx.unique (Nx.create Nx.int64 [| n |] (Array.init n key)) in
+  let seen = Hashtbl.create n and first = ref [] in
+  let ids =
+    Array.init n (fun i ->
+        match Hashtbl.find_opt seen (key i) with
+        | Some (id, c) ->
+            incr c;
+            id
+        | None ->
+            let c = ref 1 in
+            Hashtbl.add seen (key i) (Hashtbl.length seen, c);
+            first := (i, c) :: !first;
+            Hashtbl.length seen - 1)
+  in
+  let first = Array.of_list (List.rev !first) in
+  equal ~msg:"ids" (array int64) (Array.map Int64.of_int ids) (Nx.to_array g.ids);
+  equal ~msg:"first" (array int64)
+    (Array.map (fun (f, _) -> Int64.of_int f) first)
+    (Nx.to_array g.first);
+  equal ~msg:"counts" (array int64)
+    (Array.map (fun (_, c) -> Int64.of_int !c) first)
+    (Nx.to_array g.counts);
+  equal ~msg:"count" int64 (Int64.of_int (Array.length first)) (Nx.item [] g.count)
 
 (* positions *)
 
@@ -1029,6 +1062,7 @@ let () =
              prop "groups in order of first appearance" unique_case law_unique;
              test "cases" test_unique_cases;
              test "70,000 keys" test_unique_long;
+             test "50,000 groups of 80,000 keys" test_unique_many;
            ];
          group "positions"
            [

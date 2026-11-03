@@ -535,7 +535,7 @@ let ids r =
     let column x = Nx.reshape [| Nx.dim 0 x; 1 |] x in
     if longest * w <= 7 then
       let word = Nx.reshape [| n |] (words ~at:start ~rem:len ~least:0 1) in
-      if shortest = longest then (Nx.unique word).ids
+      if shortest = longest then (Nx.unique ~size:0 word).ids
       else
         (* Row [c] of [tags] is the word whose last key is [c]. *)
         let k = arange q in
@@ -547,13 +547,12 @@ let ids r =
             (Nx.zeros_at here dt [| q; q |])
         in
         let tag = Nx.take ~axis:0 len (packed tags) in
-        (Nx.unique (Nx.bitwise_or word (Nx.reshape [| n |] tag))).ids
+        (Nx.unique ~size:0 (Nx.bitwise_or word (Nx.reshape [| n |] tag))).ids
     else
       (* The key of the rows [active] from their key [seen] on: [head], if
          any, then as many words as the [longest] row left needs, up to
          [round_words]; with the rows' keys left and the keys the round
-         covers. A key of several words has a span too wide for {!Nx.unique}'s
-         numbering without a sort, so a round sizes it and reads nothing. *)
+         covers. A round sizes its numbering, so that it reads nothing. *)
       let key ~seen ~active ~longest ~least head =
         let b = Int.min round_words ((longest + q - 1) / q) in
         let rem = Nx.sub_s (Nx.take active len) (Int64.of_int seen) in
@@ -574,7 +573,7 @@ let ids r =
         let _, _, key =
           key ~seen:0 ~active:rows ~longest ~least:shortest first_head
         in
-        (Nx.unique ~size:n key).ids
+        (Nx.unique ~size:0 key).ids
       else
         let rec round ~seen ~active ~longest ~least code =
           let m = Nx.dim 0 active in

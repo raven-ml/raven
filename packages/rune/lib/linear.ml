@@ -1043,6 +1043,7 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
   | Sort { x; _ } ->
       if env.lin x && (Option.is_some (cts 0) || Option.is_some (cts 1)) then
         nonlinear env "a sort"
+  | Unique { keys; _ } -> if env.lin keys then nonlinear env "a numbering"
   | Fold { pad; x; shape = _ } ->
       first (fun (V w) ->
           if env.lin x then

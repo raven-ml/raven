@@ -323,6 +323,7 @@ let op ?dst ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
         Lower_index.sort (D.Any (Nx.dtype x)) ~axis ~descending ~k (node x)
       in
       [| values; positions |]
+  | Unique { size; keys } -> Lower_index.unique ~host device ~size (node keys)
   | Linalg l -> Lower_linalg.op ~device node l
   | Fft f -> [| fft node f |]
   | Check _ | Attention _ ->

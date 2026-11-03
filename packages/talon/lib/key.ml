@@ -50,8 +50,8 @@ let rec value use c =
   in
   (* The values under a null are any: its word is 0, or for [Identity] the
      word of a fixed value's zero, which keeps the words of a column of small
-     values within a small span, so that {!Nx.unique} numbers them without a
-     sort. *)
+     values within a small span, which {!Nx.unique} numbers by a direct table
+     on nx.cpu. *)
   let zero () =
     match (use, Column.data c) with
     | Identity, Fixed (P x) when Nx.ndim x = 1 ->

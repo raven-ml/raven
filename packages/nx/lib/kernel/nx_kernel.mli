@@ -440,6 +440,14 @@ module Shape : sig
       with [k] elements along [axis] with [Some k], [x] with [None]. It is an
       [Error] for a [k] past that axis's extent or negative. *)
 
+  (** {1:numbering Numbering} *)
+
+  val unique : size:int -> t -> (t * t * t) result
+  (** [unique ~size keys] is the shapes of a numbering's [ids], of its
+      [first] and [counts], and of its [count], for [keys] of [[n; w]]:
+      [[n]], [[size]] and [[]]. It is an [Error] unless [keys] has rank 2
+      and [size] is not negative. *)
+
   (** {1:assembly Assemblies} *)
 
   val assemble : t -> Nx_array.Move.range iarray array -> t array result
@@ -530,11 +538,11 @@ end
     above and those of their sections. Whether one declines depends only on
     the dtypes, the attributes, the device model and the extents of the
     axes along which one result element reads every index: a reduction's,
-    a scan's, a sort's or a transform's axes, the contracted extent, a
-    routine's matrices, a gather's or a scatter's axis, attention's keys
-    and their two dimensions, and the axes a padded load or a fold pads or
-    windows. Each library states whether several domains may call its
-    kernels concurrently. *)
+    a scan's, a sort's or a transform's axes, a numbering's keys, the
+    contracted extent, a routine's matrices, a gather's or a scatter's
+    axis, attention's keys and their two dimensions, and the axes a padded
+    load or a fold pads or windows. Each library states whether several
+    domains may call its kernels concurrently. *)
 module type S = sig
   type answer := Nx_array.answer
   type any := Nx_array.any
@@ -679,6 +687,19 @@ module type S = sig
       NaN, and every complex number with a NaN part, above [+∞] and equal to
       each other: [-∞ < … < -0 < +0 < … < +∞ < NaN]. [descending] reverses
       the order and keeps equal elements in increasing position. *)
+
+  (** {1:numbering Numbering} *)
+
+  val unique :
+    ids:index -> first:index -> counts:index -> count:index -> index -> answer
+  (** [unique ~ids ~first ~counts ~count keys] numbers the rows of [keys], an
+      [[n; w]] array whose elements are read as unsigned 64-bit words: two
+      rows are one key iff their words are equal, and a [w] of [0] makes
+      every row one key. Keys are numbered from [0] in order of their first
+      rows, [k] of them. [ids], of [n] entries, gets each row's key.
+      [first] and [counts] have one length [m]: entry [g] below [min m k]
+      gets key [g]'s first row and its number of rows, and entries from [k]
+      on get [n] and [0]. [count], 0-d, gets [k]. *)
 
   (** {1:assembly Assemblies and folds}
 
