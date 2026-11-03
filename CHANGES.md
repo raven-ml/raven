@@ -976,6 +976,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   within 64 lanes: gpt-oss's bfloat16 key and value projection runs 17x
   faster on a core, lorenz's step kernel 1.9x, and `conv_half` compiles in
   0.06 s where Clang took 6.5 s.
+- `Nx.matmul_segments` and `Nx_quant.apply_experts` under `vmap` and `jit`
+  give every row on an AVX2 host with a Clang of LLVM 19, where some rows were
+  `0`: `Compiler_cpu.clang` compiles without the straight-line vectorizer under
+  LLVM 19 as under 18, since it wrote invalid code for a search of the rows.
 - A host operation that reads a broadcast or a permutation of a computed
   vector's lanes stays a vector, its operand put together by a shuffle
   (`Codegen.do_devectorize`): it and every operation after it went lane by

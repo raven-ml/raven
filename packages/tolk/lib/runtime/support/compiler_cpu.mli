@@ -33,10 +33,10 @@ val clang : string -> Renderer.Compiler.t
     Objects are ELF, optimized at [-O2] and position independent. Math functions
     do not set [errno], so that a square root is one instruction. On [arm64] the
     register [x18] is left alone, since macOS and Windows clobber it. Under a
-    Clang of LLVM 18, the straight-line vectorizer, which packs independent
-    scalar operations into vectors, is off, since it writes invalid code for
-    some packed integer lanes, and so are AVX10.1 and AVX-512's half
-    arithmetic ({!flags}). On x86_64 Windows the stack is not probed, since
+    Clang of LLVM 18 or 19, the straight-line vectorizer, which packs
+    independent scalar operations into vectors, is off, since it writes
+    invalid code for some packed integer lanes; under LLVM 18 so are AVX10.1
+    and AVX-512's half arithmetic ({!flags}). On x86_64 Windows the stack is not probed, since
     rig commits a thread's stack before it runs linked code, and nothing is
     kept below the stack pointer, which Windows may write. A source of more
     than 400 000 bytes compiles without the loop vectorizer, which packs a

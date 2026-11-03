@@ -1483,7 +1483,12 @@ let contraction ?(extras = Plain_contraction) dts accs =
     let* n = int_range lo hi in
     extents n
   in
-  let* eb = count 0 1 in
+  (* [Long_rows] draws a batch axis of two in half the draws, so that each
+     run holds blocks at each of two batch indices. *)
+  let* eb =
+    if long_rows then frequency [ (1, count 0 1); (1, constant [| 2 |]) ]
+    else count 0 1
+  in
   let* ek =
     if long then
       let* n = int_range 24 40 in
@@ -2093,6 +2098,25 @@ let blocked_contractions =
       cover "no product" (numel c.ek = 0);
       contract_check c)
 
+(* Rows of one group in one block at each of two batch indices: [a] of
+   [2; 48] and [b] of [2; 1], each of [0.25]. Clang 19's straight-line
+   vectorizer compiled the search of each slot's row for AVX2 into garbage
+   rows, and five products read [0]. *)
+let batched_block =
+  let c = List.hd (empty (D.Any D.Float32)) in
+  {
+    c with
+    eb = [| 2 |];
+    ek = [||];
+    fa = [| 48 |];
+    fb = [| 1 |];
+    ra = [| B 0; F 0 |];
+    rb = [| B 0; F 0 |];
+    araws = Array.make 96 0x3e800000L;
+    braws = Array.make 2 0x3e800000L;
+    seg = Some (Rows (0, 0, Array.make 96 0L));
+  }
+
 (* Rows of 4 a group or more, which the lowering routes into blocks of 64:
    groups past a block's rows, empty groups and rows in no group. *)
 let blocked_rows =
@@ -2116,6 +2140,11 @@ let blocked_rows =
       cover "a row in no group"
         (any (fun o -> List.fold_left (fun k e -> k + count o e) 0 groups < n));
       cover "a batch axis" (Array.length c.eb > 0);
+      cover "a part-full block at each of two batch indices"
+        (numel c.eb = 2
+        && List.for_all
+             (fun o -> List.exists (fun e -> count o e mod 64 <> 0) groups)
+             os);
       contract_check c)
 
 (* Cases *)
@@ -2514,6 +2543,8 @@ let cases =
       test "a complex128 running maximum is refused"
         (refused_complex ~scan:true Max);
       test "a running variance that overflows is +∞" moments_overflow;
+      test "rows of one group in a block at each batch index give eager's values"
+        (fun () -> contract_check batched_block);
     ]
 
 let () =

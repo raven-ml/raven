@@ -4745,16 +4745,16 @@ fold wraps integers and holds its float bound`, hold.
   narrowing rounds; rune's `rune jit › classes › a selection of a minimum
   against its constant is exact`, at `float16` and `bfloat16` too.
 
-## D167. Clang of LLVM 18 compiles without its straight-line vectorizer, and a long source without its loop vectorizer
+## D167. Clang of LLVM 18 or 19 compiles without its straight-line vectorizer, and a long source without its loop vectorizer
 
 - **tinygrad:** `runtime/support/compiler_cpu.py:21` (`ClangCompiler.compile`,
   Clang's arguments at `-O2`, which runs LLVM's SLP and loop vectorizers).
 - **tolk:** `Compiler_cpu.llvm_major` (the LLVM version a Clang's `-###`
   statement names), `Compiler_cpu.long_source`, and `Compiler_cpu.clang` (its
-  `args`, which adds `-fno-slp-vectorize` when it is 18 and `-fno-vectorize`
+  `args`, which adds `-fno-slp-vectorize` when it is 18 or 19 and `-fno-vectorize`
   for a source past `long_source`, and its `table`, which names both
   statements and the length).
-- **Differs:** a Clang that states LLVM 18 compiles every kernel with
+- **Differs:** a Clang that states LLVM 18 or 19 compiles every kernel with
   `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer back on.
   Every Clang compiles a source of more than 400 000 bytes with
   `-fno-vectorize`, after `-O2`. Otherwise every Clang, Apple's included,
@@ -4785,6 +4785,25 @@ fold wraps integers and holds its float bound`, hold.
   of a sample of those kernels (265 of 604, Clang 18 for the host): it stays
   on wherever it is correct.
 
+  Clang 19 has the same defect without the crash: rune's `Lower_reduce`
+  test `rows in blocks give eager's integers and hold their bound` failed on
+  fudge (Clang 19.1.7, Intel Core Ultra 5 235) at one seed of three, five
+  float32 products of 96 reading `0` where `0x1p-4` was expected, and so did
+  `Nx.matmul_segments` and `Nx_quant.apply_experts` under `vmap` and `jit`,
+  rows of one expert in one block of 64 at each of two batch indices. The
+  kernel `E_16_2_4` searches each slot's row by halving, four slots and two
+  batch indices a thread, its bounds selected longs and their midpoint an
+  int. For `x86-64-v3`, `x86-64-v4`, `arrowlake` or `znver4` (not
+  `x86-64-v2` or arm64's `apple-m1`), the vectorizer packs four lanes'
+  bounds, narrows them to 8 bits, and writes `trunc <4 x i8> ... to <4 x
+  i32>`, invalid IR that a release Clang does not verify and compiles into
+  garbage rows (202116109); `opt-19 -passes=verify` rejects it, and
+  `-opt-bisect-limit` names `SLPVectorizerPass` as the pass that breaks the
+  kernel. `llvm-reduce` brings it to 40 instructions of selects, truncations
+  to i32, `or`, `lshr` and `zext`. Without the vectorizer the kernel gives
+  every row. The Clangs of LLVM 20 and later are not checked; Apple's state
+  no LLVM version and keep the vectorizer.
+
   (d), the loop vectorizer: rune's test_special timed out at 60 s on Ubuntu
   CI compiling float64 `betainccinv`'s gradients. Each is one scalar loop
   kernel, `E_1021`, of 1.3 MB of C; the loop vectorizer weighs every width
@@ -4811,7 +4830,9 @@ fold wraps integers and holds its float bound`, hold.
   `x86_64,znver4`), which compiles the indices of `r_3_2` and fails under
   Clang 18 without the flag; rune's `rune jit › classes › a uint4 sort along
   the last axis of every other row and column, flipped, gives eager's
-  codes`, under Clang 18 on an x86 host with AVX-512. The loop vectorizer:
+  codes`, under Clang 18 on an x86 host with AVX-512; rune's `Lower_reduce ›
+  cases › rows of one group in a block at each batch index give eager's
+  values`, under Clang 19 on an x86 host with AVX2. The loop vectorizer:
   `Tolk.Compiler_cpu › features › a loop over a count it takes is packed
   into vectors iff its source is at most 400000 bytes long:` (rows 400000 and
   400001 among them); rune's compile bench `special/betainccinv-grad-f32`, the float32

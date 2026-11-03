@@ -354,17 +354,24 @@ let clang arch =
     ]
   in
   let io = [ "-"; "-o"; "-" ] in
-  (* LLVM 18's straight-line vectorizer narrows the integer lanes it packs and
-     can then extend a lane to a narrower type, which is invalid IR: for four
-     clamped gather indices on a processor with AVX-512 it wrote [sext <4 x
-     i32> to <4 x i16>], on which instruction selection crashed. LLVM 19 packs
-     them correctly. Under LLVM 18 only, that vectorizer is off, so that other
-     Clangs compile as before. The flags follow -O2, which would turn the
-     vectorizers back on. The statement is memoized: asking for the arguments
-     again costs a lookup. *)
+  (* The straight-line vectorizers of LLVM 18 and 19 narrow the integer lanes
+     they pack and can then cast a lane to a type of the wrong width, which is
+     invalid IR. For four clamped gather indices on a processor with AVX-512,
+     LLVM 18 wrote [sext <4 x i32> to <4 x i16>], on which instruction
+     selection crashed. For four lanes of a binary search on a processor with
+     AVX2, LLVM 19 wrote [trunc <4 x i8> to <4 x i32>], which a Clang without
+     its IR verifier compiles into wrong values: rune's routed rows read
+     garbage row numbers. Under LLVM 18 and 19 only, that vectorizer is off,
+     so that other Clangs compile as before. The flags follow -O2, which would
+     turn the vectorizers back on. The statement is memoized: asking for the
+     arguments again costs a lookup. *)
   let args ~long =
     let llvm = llvm_major (version cc) in
-    let slp = if llvm = Some 18 then [ "-fno-slp-vectorize" ] else [] in
+    let slp =
+      match llvm with
+      | Some (18 | 19) -> [ "-fno-slp-vectorize" ]
+      | _ -> []
+    in
     base
     @ fixed ~llvm selected
     @ slp
