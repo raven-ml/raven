@@ -773,7 +773,8 @@ let program ?(length = 6) st (ins : D.any array) ~room ~rank =
   let nodes = ref (Array.to_list (Array.init nins (fun k -> P.In k))) in
   let tys = ref (Array.to_list ins) in
   (* Whether each node's bits follow from its loads' and constants': a NaN a
-     kind makes is any NaN, so a bitcast reads only such nodes. *)
+     kind makes is any NaN, so a bitcast, and a complex kind that may take
+     a sign from a NaN part, reads only such nodes. *)
   let settled = ref (List.init nins (fun _ -> true)) in
   let axes = ref [] in
   let pick l = List.nth l (Random.State.int st (List.length l)) in
@@ -850,6 +851,21 @@ let program ?(length = 6) st (ins : D.any array) ~room ~rank =
     | Op2 (_, i, j) -> [ i; j ]
     | Op3 (_, i, j, k) -> [ i; j; k ]
   in
+  (* Whether [node] is a complex kind of C99 Annex G over a node whose
+     bits do not settle. Such a kind may take a result's sign from a NaN
+     part, as [Asinh (NaN - i inf)] takes its infinite real part's, so a
+     NaN of either sign gives an infinity of either. *)
+  let unsettled_annex_g node =
+    let (D.Any d) = dtype_of node in
+    let annex_g =
+      match node with
+      | P.Op1 (Unary (Neg | Recip | Sign), _, _) -> false
+      | Op1 (Unary _, _, _) | Op2 (Binary Pow, _, _) -> true
+      | _ -> false
+    in
+    D.is D.Complex d && annex_g
+    && not (List.for_all (List.nth !settled) (operands node))
+  in
   (* Whether [node]'s kind takes its operands' dtypes [dts], as Prog.v
      states. *)
   let accepts (node : P.node) dts =
@@ -874,7 +890,10 @@ let program ?(length = 6) st (ins : D.any array) ~room ~rank =
   for i = 1 to 1 + Random.State.int st length do
     let rec attempt tries =
       let node = draw () in
-      if accepts node (List.map (List.nth !tys) (operands node)) then node
+      if
+        accepts node (List.map (List.nth !tys) (operands node))
+        && not (unsettled_annex_g node)
+      then node
       else if tries = 0 then P.Op1 (Copy, List.nth !tys 0, 0)
       else attempt (tries - 1)
     in
