@@ -562,6 +562,8 @@ let place p k =
   whole ~by p (Prim.rank k);
   Eval.place ~by p k
 
+let placement (k : 'd key) = Prim.placement k
+
 (* Samplers *)
 
 let bits_programs = programs ()

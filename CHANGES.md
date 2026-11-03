@@ -1841,6 +1841,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `Nx.Rng.placement`, where a key's words lie. Draw from `k` at
+  `Nx.Rng.placement k`, and make a cut batch's constants of other shapes at
+  `Nx.Placement.uncut (Nx.Rng.placement k)`.
 - Add `Nx.Ptree.triple` and `Nx.Ptree.quad`, which walk a tuple's
   components at `0` to `3`, as a derived walk of a tuple does. Nested pairs
   put a triple's last part at `1.1`; `triple` puts it at `2`.

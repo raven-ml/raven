@@ -970,6 +970,89 @@ let placed_draws =
               Rng.bits_at p ~key [| 4 |]));
     ]
 
+(* A key's placement *)
+
+(* The placements of [placements] that keep a single key's words whole. *)
+let whole =
+  Gen.of_list
+    ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
+    [ ("on", S2.on); ("device 1", Nx.Placement.device S2.v (m 1)) ]
+
+(* A key or a batch of [batches], and a placement over [S2] that keeps its
+   words whole: a batch's may cut axis 0. *)
+let placed_keys =
+  (let open Gen in
+   let* k = batches in
+   let single = Nx.ndim (Rng.to_tensor k) = 1 in
+   let+ name, p = if single then whole else placements in
+   (k, name, p))
+  |> Gen.with_pp (fun ppf (k, name, _) ->
+      Format.fprintf ppf "%a at %s" pp_shape (Nx.shape (Rng.to_tensor k)) name)
+
+let law_placed (k, name, p) =
+  let r = Nx.ndim (Rng.to_tensor k) in
+  cover "one key" (r = 1);
+  cover "a cut batch" (name = "split ~axis:0");
+  cover "a batch on one device" (r > 1 && name = "device 1");
+  equal (placement ()) p (Rng.placement (Rng.place p k))
+
+(* A single key's placement cuts no axis, so a constant of the draw's trailing
+   axes made there adds to the key's draw as on the host. *)
+let law_single (seed, (_, p), shape) =
+  cover "a 0-d constant" (Array.length shape = 1);
+  let k = Rng.place p (Rng.key seed) in
+  let at = Rng.placement k in
+  let tail = Array.sub shape 1 (Array.length shape - 1) in
+  let draw = Rng.normal_at at ~key:k Nx.float32 shape in
+  let host = Rng.normal ~key:(Rng.key seed) Nx.float32 shape in
+  equal ~msg:"cuts no axis" (placement ()) (Nx.Placement.uncut at) at;
+  equal ~msg:"a constant added" (array float_exact)
+    (read (Nx.add host (Nx.full Nx.float32 tail 0.5)))
+    (read (Nx.add draw (Nx.full_at at Nx.float32 tail 0.5)))
+
+(* A batch of [n] keys cut along axis 0 draws at its placement, each device
+   from its own keys, and a constant of a key's draw shape made at the uncut
+   placement adds to the draws as on the host. *)
+let law_cut_batch (seed, n, w) =
+  cover "a device holds no key" (n < 2);
+  let batch = Rng.split_batch ~n (Rng.key seed) in
+  let cut = S2.split ~axis:0 in
+  let k = Rng.place cut batch in
+  let at = Rng.placement k in
+  let draw = Rng.normal_at at ~key:k Nx.float32 [| w |] in
+  let host = Rng.normal ~key:batch Nx.float32 [| w |] in
+  let beside = Nx.full_at (Nx.Placement.uncut at) Nx.float32 [| w |] 0.5 in
+  equal ~msg:"the draws' placement" (placement ()) cut (Nx.placement draw);
+  equal ~msg:"a constant added" (array float_exact)
+    (read (Nx.add host (Nx.full Nx.float32 [| w |] 0.5)))
+    (read (Nx.add draw beside))
+
+let key_placement =
+  group "a key's placement"
+    [
+      prop "is where place put the key or batch" placed_keys law_placed;
+      prop
+        "a single key's cuts no axis, and a constant made there adds to its \
+         draws"
+        (Gen.triple seeds whole cuttable)
+        law_single;
+      prop
+        "a batch cut along axis 0 draws there, and a constant at its uncut \
+         placement adds to the draws"
+        (Gen.triple seeds (Gen.int_range 1 5) (Gen.int_range 0 4))
+        law_cut_batch;
+      test "a constant made at a cut batch's placement raises added to its \
+            draws"
+        (fun () ->
+          let batch = Rng.split_batch ~n:4 (Rng.key 1) in
+          let k = Rng.place (S2.split ~axis:0) batch in
+          let at = Rng.placement k in
+          let draw = Rng.normal_at at ~key:k Nx.float32 [| 3 |] in
+          let bias = Nx.full_at at Nx.float32 [| 3 |] 0.1 in
+          raises_match (Exn.invalid_arg ~sub:"Nx.add: ") (fun () ->
+              Nx.add draw bias));
+    ]
+
 (* Distributions. Each moment of [n] draws is checked within 6 standard errors
    of its value, over drawn keys. *)
 
@@ -2941,6 +3024,7 @@ let () =
          ptree_group;
          draws;
          placed_draws;
+         key_placement;
          distributions;
          rejection;
          others;

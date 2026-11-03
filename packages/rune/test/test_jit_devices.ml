@@ -1265,6 +1265,46 @@ let onto_mesh set =
       let eager = outcome (fun () -> f x x) in
       equal (outcome_t bits_t) (omap bits eager) (omap bits (compiled f x x))
 
+(* Keys
+
+   A key's placement inside a program is its argument's, and a draw at it,
+   plus a constant at its uncut placement, gives eager's placement and bits:
+   a key whole on each device, one on device 1, and a batch of [4] cut along
+   axis 0. *)
+let key_placement set =
+  let draw k =
+    let at = Nx.Rng.placement k in
+    Nx.add
+      (Nx.Rng.normal_at at ~key:k f32 [| 3 |])
+      (Nx.full_at (Nx.Placement.uncut at) f32 [| 3 |] 0.5)
+  in
+  let root = Nx.Rng.key 11 in
+  List.iter
+    (fun (name, c, key) ->
+      let k = Nx.Rng.place (at set c) key in
+      let inside = ref None in
+      let jit =
+        Rune.jit
+          T.(Nx.Rng.ptree @-> returns tensor)
+          (fun k ->
+            inside := Some (Nx.Rng.placement k);
+            draw k)
+          k
+      in
+      let eager = draw k in
+      equal ~msg:(name ^ ": inside the program")
+        (option (placement ()))
+        (Some (Nx.Rng.placement k))
+        !inside;
+      equal ~msg:(name ^ ": placement") (placement ()) (Nx.placement eager)
+        (Nx.placement jit);
+      equal ~msg:name bits_t (bits eager) (bits jit))
+    [
+      ("a key on each device", On, root);
+      ("a key on device 1", Device 1, root);
+      ("a batch cut along axis 0", Split 0, Nx.Rng.split_batch ~n:4 root);
+    ]
+
 (* Programs
 
    A program for one device serves every device of its target, so the
@@ -1722,6 +1762,11 @@ let () =
                (fun () -> over 2 { law = moves });
              test "a whole value placed onto a mesh" (fun () ->
                  over 4 { law = onto_mesh });
+           ];
+         group "keys"
+           [
+             test "a key's placement in a program, and draws there" (fun () ->
+                 over 2 { law = key_placement });
            ];
          group "programs"
            [

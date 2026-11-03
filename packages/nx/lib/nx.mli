@@ -4688,6 +4688,26 @@ module Rng : sig
       Raises [Invalid_argument] if [p] cuts the last axis, and as
       {!Nx.place} does. *)
 
+  val placement : 'd key -> 'd Placement.t
+  (** [placement k] is where [k]'s words lie, {!Nx.placement} of
+      {!to_tensor}[ k]. A draw from [k] at [placement k] has each device
+      draw from the keys it holds. A single key's placement cuts no axis, so
+      a value of any shape made there combines with its draws. A batch's may
+      cut its batch axes, and a value of another shape that combines with
+      its draws is made at {!Placement.uncut}[ (placement k)]. For [b] a
+      batch of [4] keys split along axis [0]:
+
+      {[
+      let at = Nx.Rng.placement b in
+      let x = Nx.Rng.normal_at at ~key:b Nx.float32 [| 3 |] in
+      let bias = Nx.full_at (Nx.Placement.uncut at) Nx.float32 [| 3 |] 0.1 in
+      Nx.add x bias
+      ]}
+
+      [x] has shape [[4; 3]] at [at], each device drawing its rows from its
+      own keys, and [bias] lies whole on each device. Made at [at], [bias]
+      would be split along its only axis, and [add] would raise. *)
+
   val walk : ('a, 'b, 'd, 'e) Ptree.Walk.cursor -> 'd key -> 'e key
   (** [walk c k] walks [k], a key or a batch of keys, at [c]'s path as one
       fixed array ({!Ptree.Walk.tensor}), and rebuilds it as {!of_tensor}

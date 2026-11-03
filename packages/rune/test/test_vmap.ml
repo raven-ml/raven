@@ -1293,6 +1293,42 @@ let law_key_lanes (s, n) =
         (Nx.to_array (Nx.get [ i ] y)))
     (Nx.Rng.split ~n k)
 
+(* A map over a batch of keys cut along axis 0 draws each lane, and a constant
+   beside it, at the lane key's placement, which cuts no axis: the result lies
+   where the batch lies, each row the draw of its key alone. *)
+let law_cut_keys (s, n) =
+  cover "a device holds no row" (n < 2);
+  let k = Nx.Rng.key s and cut = Two.split ~axis:0 in
+  let draw k =
+    let at = Nx.Rng.placement k in
+    Nx.add
+      (Nx.Rng.normal_at at ~key:k f64 [| 3 |])
+      (Nx.full_at at f64 [| 3 |] 0.5)
+  in
+  let lane = ref None in
+  let y =
+    Rune.vmap
+      T.(Nx.Rng.ptree @-> returns tensor)
+      (fun k ->
+        lane := Some (Nx.Rng.placement k);
+        draw k)
+      (Nx.Rng.place cut (Nx.Rng.split_batch ~n k))
+  in
+  equal ~msg:"a lane key's placement"
+    (option (Nx_support.placement ()))
+    (Some (Nx.Placement.uncut cut))
+    !lane;
+  equal ~msg:"where it lies" (Nx_support.placement ()) cut (Nx.placement y);
+  let y = Nx.place Nx.Host.on y in
+  Array.iteri
+    (fun i k ->
+      equal
+        ~msg:(Printf.sprintf "lane %d" i)
+        floats
+        (Nx.to_array (draw k))
+        (Nx.to_array (Nx.get [ i ] y)))
+    (Nx.Rng.split ~n k)
+
 (* A scope at each lane's key draws as the scope at that key alone; one at a
    captured key draws one value, which every lane shares. *)
 let law_scoped (seed, n) =
@@ -1381,6 +1417,11 @@ let () =
              prop "a batch of keys, one per lane"
                (Gen.pair Gen.int (Gen.of_list [ 1; 3 ]))
                law_key_lanes;
+             prop
+               "a batch of keys cut along axis 0, drawn at each lane's \
+                placement"
+               (Gen.pair Gen.int (Gen.int_range 1 5))
+               law_cut_keys;
              prop "a scope at each lane's key draws as that key's scope"
                (Gen.pair Gen.int (Gen.int_range 1 4))
                law_scoped;
