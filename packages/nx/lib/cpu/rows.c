@@ -13,8 +13,12 @@
    A row whose destination is contiguous and whose operands are contiguous
    or one repeated element, as a broadcast operand or a program's constant
    is, takes a loop the compiler vectorises, the transcendental kinds'
-   polynomials included. Rows exist at the carriers alone (cpu.h): apply.c
-   runs a narrow or sub-byte dtype's kinds at its carrier's rows. */
+   polynomials included. A row whose operands each repeat one element
+   computes its one value once and stores it along the row, where a scalar
+   loop took about 24 instructions an element on fudge: a Where of two
+   repeated values, as the derivative of a maximum takes, was an eighth of
+   eager attention's backward. Rows exist at the carriers alone (cpu.h):
+   apply.c runs a narrow or sub-byte dtype's kinds at its carrier's rows. */
 
 #include "cpu.h"
 
@@ -173,11 +177,22 @@ IDENT(2, uint16_t)
 IDENT(4, uint32_t)
 IDENT(8, uint64_t)
 
+/* Stores [v] along the row of [n] elements of [d], [sd] apart. */
+#define SPREAD(v)                                                            \
+  if (sd == 1)                                                               \
+    for (int64_t i = 0; i < n; i++) d[i] = v;                                \
+  else                                                                       \
+    for (int64_t i = 0; i < n; i++) d[i * sd] = v
+
 /* The loops of a row of [F] over two operands of the storage type [T],
-   loaded by [LD] into the compute type: contiguous, one of them a repeated
-   element, or any steps. */
-#define LOOPS2(T, LD, F)                                                     \
-  if (sd == 1 && sx == 1 && sy == 1)                                         \
+   loaded by [LD] into the compute type, stored as [R]: both a repeated
+   element, the row's one value computed once and stored along it;
+   contiguous or one of them a repeated element; or any steps. */
+#define LOOPS2(T, R, LD, F)                                                  \
+  if (sx == 0 && sy == 0) {                                                  \
+    R v = F(LD(x[0]), LD(y[0]));                                             \
+    SPREAD(v);                                                               \
+  } else if (sd == 1 && sx == 1 && sy == 1)                                  \
     for (int64_t i = 0; i < n; i++) d[i] = F(LD(x[i]), LD(y[i]));            \
   else if (sd == 1 && sx == 1 && sy == 0) {                                  \
     T b = y[0];                                                              \
@@ -196,27 +211,36 @@ IDENT(8, uint64_t)
            int64_t sx, const uint8_t *y_, int64_t sy) {                      \
     R *d = (R *)d_;                                                          \
     const T *x = (const T *)x_, *y = (const T *)y_;                          \
-    LOOPS2(T, LD, F);                                                        \
+    LOOPS2(T, R, LD, F);                                                     \
   }
 
+/* An operand's element at [i] where it steps [S], 1 or 0: its own, or [v],
+   the one it repeats, read once. */
+#define E3(p, S, v) ((S) ? (p)[i] : (v))
+
 /* The loops of a row of [F] over three operands of the type [T], loaded by
-   [LD]: contiguous, one of them a repeated element, or any steps. */
+   [LD]: all three a repeated element, the row's one value computed once;
+   each contiguous or a repeated element; or any steps. */
+#define LOOP3(T, LD, F, SA, SB, SC)                                          \
+  else if (sd == 1 && sa == SA && sb == SB && sc == SC) {                    \
+    for (int64_t i = 0; i < n; i++)                                          \
+      d[i] = (T)F(LD(E3(a, SA, a0)), LD(E3(b, SB, b0)), LD(E3(c, SC, c0)));  \
+  }
 #define LOOPS3(T, LD, F)                                                     \
-  if (sd == 1 && sa == 1 && sb == 1 && sc == 1)                              \
-    for (int64_t i = 0; i < n; i++)                                          \
-      d[i] = (T)F(LD(a[i]), LD(b[i]), LD(c[i]));                             \
-  else if (sd == 1 && sa == 1 && sb == 1 && sc == 0) {                       \
-    T v = c[0];                                                              \
-    for (int64_t i = 0; i < n; i++) d[i] = (T)F(LD(a[i]), LD(b[i]), LD(v));  \
-  } else if (sd == 1 && sa == 1 && sb == 0 && sc == 1) {                     \
-    T v = b[0];                                                              \
-    for (int64_t i = 0; i < n; i++) d[i] = (T)F(LD(a[i]), LD(v), LD(c[i]));  \
-  } else if (sd == 1 && sa == 0 && sb == 1 && sc == 1) {                     \
-    T v = a[0];                                                              \
-    for (int64_t i = 0; i < n; i++) d[i] = (T)F(LD(v), LD(b[i]), LD(c[i]));  \
-  } else                                                                     \
-    for (int64_t i = 0; i < n; i++)                                          \
-      d[i * sd] = (T)F(LD(a[i * sa]), LD(b[i * sb]), LD(c[i * sc]))
+  T a0 = a[0], b0 = b[0], c0 = c[0];                                         \
+  if (sa == 0 && sb == 0 && sc == 0) {                                       \
+    T v = (T)F(LD(a0), LD(b0), LD(c0));                                      \
+    SPREAD(v);                                                               \
+  }                                                                          \
+  LOOP3(T, LD, F, 1, 1, 1)                                                   \
+  LOOP3(T, LD, F, 1, 1, 0)                                                   \
+  LOOP3(T, LD, F, 1, 0, 1)                                                   \
+  LOOP3(T, LD, F, 0, 1, 1)                                                   \
+  LOOP3(T, LD, F, 1, 0, 0)                                                   \
+  LOOP3(T, LD, F, 0, 1, 0)                                                   \
+  LOOP3(T, LD, F, 0, 0, 1)                                                   \
+  else for (int64_t i = 0; i < n; i++)                                       \
+    d[i * sd] = (T)F(LD(a[i * sa]), LD(b[i * sb]), LD(c[i * sc]))
 
 #define FMA(NAME, T, LD, F)                                                  \
   ROW NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *a_,            \
@@ -268,7 +292,7 @@ IDENT(8, uint64_t)
       }                                                                      \
       return;                                                                \
     }                                                                        \
-    LOOPS2(T, (CT), F);                                                      \
+    LOOPS2(T, T, (CT), F);                                                   \
   }
 
 #define ARITH(D, T, LD, S)                                                   \
@@ -457,56 +481,65 @@ ROW threefry_u64(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,
   for (; i < n; i++) d[i * sd] = nx_threefry_u64(x[i * sx], y[i * sy]);
 }
 
-/* Where selects bits and a fill stores them: one row per width. */
-/* A where of [w]-byte words selects by a mask, so that contiguous rows
-   vectorise: a select of the form c ? x : y with a byte condition and wider
-   words ran scalar on the M1 (where-f32-1M 86-126 us against 31-34 for a
-   fill of its bytes). */
-#define WHERE(W, T)                                                          \
+/* Where selects bits and a fill stores them: one row per width. A where's
+   rows select by a mask, so that they vectorise: a select of the form
+   c ? x : y with a byte condition and wider words ran scalar on the M1
+   (where-f32-1M 86-126 us against 31-34 for a fill of its bytes). A
+   condition repeated along the row selects one operand's row, copied; a
+   value operand repeated along it is read once. [PICK] stores into d[i]
+   the one of [A] and [B] that the condition [k], 0 or 1, picks: by a mask
+   of [k] in every bit of [T], or by a branch. */
+#define BY_MASK(T, k, A, B)                                                  \
+  {                                                                          \
+    T m = (T)0 - (T)(k);                                                     \
+    d[i] = ((A) & m) | ((B) & (T)~m);                                        \
+  }
+#define BY_BRANCH(T, k, A, B) d[i] = (k) ? (A) : (B);
+#define WHERE_LOOP(PICK, T, SX, SY)                                          \
+  else if (sx == SX && sy == SY) {                                           \
+    for (int64_t i = 0; i < n; i++)                                          \
+      PICK(T, c[i] != 0, E3(x, SX, a), E3(y, SY, b))                         \
+  }
+#define WHERE(W, T, PICK)                                                    \
   static void where_##W(int64_t n, uint8_t *d_, int64_t sd,                 \
                         const uint8_t *c, int64_t sc, const uint8_t *x_,     \
                         int64_t sx, const uint8_t *y_, int64_t sy) {         \
     T *d = (T *)d_;                                                          \
     const T *x = (const T *)x_, *y = (const T *)y_;                          \
-    if (sd == 1 && sc == 1 && sx == 1 && sy == 1)                            \
-      for (int64_t i = 0; i < n; i++) {                                      \
-        T m = (T)0 - (T)(c[i] != 0);                                         \
-        d[i] = (x[i] & m) | (y[i] & (T)~m);                                  \
-      }                                                                      \
-    else if (sd == 1 && sc == 1 && sx == 1 && sy == 0) {                     \
-      T b = y[0];                                                            \
-      for (int64_t i = 0; i < n; i++) {                                      \
-        T m = (T)0 - (T)(c[i] != 0);                                         \
-        d[i] = (x[i] & m) | (b & (T)~m);                                     \
-      }                                                                      \
-    } else if (sd == 1 && sc == 1 && sx == 0 && sy == 1) {                   \
-      T a = x[0];                                                            \
-      for (int64_t i = 0; i < n; i++) {                                      \
-        T m = (T)0 - (T)(c[i] != 0);                                         \
-        d[i] = (a & m) | (y[i] & (T)~m);                                     \
-      }                                                                      \
-    } else                                                                   \
+    if (sc == 0) {                                                           \
+      const T *p = c[0] ? x : y;                                             \
+      int64_t sp = c[0] ? sx : sy;                                           \
+      if (sp == 0) {                                                         \
+        T v = p[0];                                                          \
+        SPREAD(v);                                                           \
+      } else if (sd == 1 && sp == 1)                                         \
+        for (int64_t i = 0; i < n; i++) d[i] = p[i];                         \
+      else                                                                   \
+        for (int64_t i = 0; i < n; i++) d[i * sd] = p[i * sp];               \
+      return;                                                                \
+    }                                                                        \
+    T a = x[0], b = y[0];                                                    \
+    if (sd != 1 || sc != 1) {                                                \
       for (int64_t i = 0; i < n; i++)                                        \
         d[i * sd] = c[i * sc] ? x[i * sx] : y[i * sy];                       \
+    }                                                                        \
+    WHERE_LOOP(PICK, T, 1, 1)                                                \
+    WHERE_LOOP(PICK, T, 1, 0)                                                \
+    WHERE_LOOP(PICK, T, 0, 1)                                                \
+    WHERE_LOOP(PICK, T, 0, 0)                                                \
+    else for (int64_t i = 0; i < n; i++)                                     \
+      d[i] = c[i] ? x[i * sx] : y[i * sy];                                   \
   }
 
 typedef struct {
   uint64_t lo, hi;
 } w16;
 
-WHERE(1, uint8_t)
-WHERE(2, uint16_t)
-WHERE(4, uint32_t)
-WHERE(8, uint64_t)
-
-static void where_16(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *c,
-                     int64_t sc, const uint8_t *x_, int64_t sx,
-                     const uint8_t *y_, int64_t sy) {
-  w16 *d = (w16 *)d_;
-  const w16 *x = (const w16 *)x_, *y = (const w16 *)y_;
-  for (int64_t i = 0; i < n; i++)
-    d[i * sd] = c[i * sc] ? x[i * sx] : y[i * sy];
-}
+WHERE(1, uint8_t, BY_MASK)
+WHERE(2, uint16_t, BY_MASK)
+WHERE(4, uint32_t, BY_MASK)
+WHERE(8, uint64_t, BY_MASK)
+WHERE(16, w16, BY_BRANCH)
 
 #define FILL(W, T)                                                           \
   static void fill_##W(int64_t n, uint8_t *d_, int64_t sd,                  \

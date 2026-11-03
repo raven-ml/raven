@@ -603,13 +603,24 @@ let guard_shape =
   let+ outer = array ~size:(int_range 0 2) (int_range 1 3) in
   Array.append outer [| n |]
 
-(* An operand of [d] and shape [s] through a drawn view, broadcast along
-   its first axis one time in four, its elements from [rs]. *)
-let guard_operand d s rs =
+(* An operand of [d] and shape [s] through a drawn view, its elements
+   from [rs]: one element repeated along each row where [along], else
+   broadcast along its first axis one time in five, and one time in five
+   along its last. *)
+let guard_operand ~along d s rs =
   let open Gen in
   let r = Array.length s in
-  let* lead = frequency [ (3, constant false); (1, constant (r >= 2)) ] in
-  let+ v = Elements.view_of ~broadcast:(if lead then [ 0 ] else []) r in
+  let* broadcast =
+    if along then constant [ r - 1 ]
+    else
+      frequency
+        [
+          (3, constant []);
+          (1, constant (if r >= 2 then [ 0 ] else []));
+          (1, constant [ r - 1 ]);
+        ]
+  in
+  let+ v = Elements.view_of ~broadcast r in
   ( Elements.operand d s v (fun _ -> Elements.element d rs),
     Elements.view_names v )
 
@@ -677,10 +688,13 @@ let guard_case =
        | K3 Where -> [ cond; d; d ]
        | K3 Fma -> [ d; d; d ]
      in
+     (* Every operand repeated along each row one time in six: a row of
+        such operands computes its one value once. *)
+     let* along = frequency [ (1, constant true); (5, constant false) ] in
      let rec operands = function
        | [] -> constant []
        | d :: rest ->
-           let* x = guard_operand d shape rs in
+           let* x = guard_operand ~along d shape rs in
            let+ xs = operands rest in
            x :: xs
      in
@@ -723,6 +737,13 @@ let law_kind_guards (b : Support.backend) (g, side) =
   cover "a reversed operand at the page after"
     (after && List.mem "reversed" g.views);
   cover "a broadcast operand" (List.mem "broadcast" g.views);
+  let along (A.Any x) =
+    let l = A.layout x in
+    let r = L.rank l in
+    r > 0 && L.stride l (r - 1) = 0 && Iarray.get (L.shape l) (r - 1) > 1
+  in
+  cover "every operand one element repeated along each row"
+    (Array.length g.ops >= 2 && Array.for_all along g.ops);
   let call xs ds =
     let (A.Any dst) = ds.(0) in
     match g.kind with
@@ -820,6 +841,125 @@ let law_guards b (g, side) =
   | Kind g -> law_kind_guards b (g, side)
   | Large (c, d) -> law_large_guards b (c, d, side)
   | Program (p, seed) -> law_map_guards b ((p, seed), side)
+
+(* Kinds over repeated operands *)
+
+(* A kind of two or three operands of [dtype] and [extents], each through
+   its view, a Where's condition of [cond] through the first: a view
+   repeats one element along each row of the last axis, or one element in
+   all, or is drawn; [all] where every one repeats along each row. *)
+type repeated = {
+  dtype : D.any;
+  cond : D.any;
+  extents : int array;
+  layouts : Elements.view array;
+  all : bool;
+  seed : int;
+}
+
+let pp_repeated ppf c =
+  Format.fprintf ppf "%a, condition %a, %a (%s), seed %d" pp_dtype c.dtype
+    pp_dtype c.cond pp_ints c.extents
+    (String.concat " | "
+       (Array.to_list
+          (Array.map
+             (fun (v : Elements.view) ->
+               String.concat " "
+                 (List.map string_of_int v.broadcast
+                 @ Elements.view_names v))
+             c.layouts)))
+    c.seed
+
+let repeated_cases =
+  Gen.with_pp pp_repeated
+    (let open Gen in
+     let* dtype = dtypes in
+     let* cond = of_list ~pp:pp_dtype D.[ Any Bool; Any Bit ] in
+     let* n =
+       frequency
+         [
+           (6, int_range 2 72);
+           (1, int_range 73 300);
+           (1, of_list ~pp:Format.pp_print_int [ 1; 511; 512; 513 ]);
+         ]
+     in
+     let* outer = array ~size:(int_range 0 2) (int_range 1 3) in
+     let extents = Array.append outer [| n |] in
+     let r = Array.length extents in
+     let along = Elements.view_of ~broadcast:[ r - 1 ] r in
+     let layout =
+       frequency
+         [
+           (3, along);
+           (1, Elements.view_of ~broadcast:(List.init r Fun.id) r);
+           (1, Elements.view_of r);
+           (1, constant (Elements.plain r));
+         ]
+     in
+     let* all = frequency [ (1, constant true); (2, constant false) ] in
+     let one = if all then along else layout in
+     let* a = one in
+     let* b = one in
+     let* c = one in
+     let+ seed = int in
+     { dtype; cond; extents; layouts = [| a; b; c |]; all; seed })
+
+(* Each kind of two operands, and Where and Fma, over operands that repeat
+   one element along each row gives nx_kinds.h's bits at each index: a
+   row computes such an operand's element once, and a row of operands
+   that all repeat one, its one value once. *)
+let law_repeated (b : Support.backend) c =
+  let module K = (val b.kernels) in
+  let st = Random.State.make [| c.seed |] in
+  let r = Array.length c.extents in
+  let make d v =
+    Elements.operand d c.extents v (fun _ -> Elements.element d st)
+  in
+  let along (v : Elements.view) =
+    List.mem (r - 1) v.broadcast && c.extents.(r - 1) > 1
+  in
+  let rows = Elements.total (Array.sub c.extents 0 (r - 1)) > 1 in
+  let a = along c.layouts.(0) and x = along c.layouts.(1)
+  and y = along c.layouts.(2) in
+  cover "both operands repeated along each row" (x && y);
+  cover "both repeated along each row, rows apart" (x && y && rows);
+  cover "one repeated along each row, the other not" (x <> y);
+  cover "the condition repeated along each row" a;
+  cover "both values repeated along each row, the condition not"
+    (x && y && not a);
+  cover "all three repeated along each row" (c.all && c.extents.(r - 1) > 1);
+  cover "beside a stepped, permuted or reversed operand"
+    (Array.exists
+       (fun v -> List.exists (( <> ) "broadcast") (Elements.view_names v))
+       c.layouts);
+  let (D.Any dt) = c.dtype in
+  let x = A.expect dt (make c.dtype c.layouts.(1)) in
+  let y = A.expect dt (make c.dtype c.layouts.(2)) in
+  let z = A.expect dt (make c.dtype c.layouts.(0)) in
+  let shape = Iarray.of_array c.extents in
+  law_map2 b (Pair (x, y));
+  let w = max 1 (D.bits dt / 8) in
+  let where (type s) (cnd : (bool, s) A.t) =
+    answers b (K3 Where) c.dtype c.dtype shape
+      ~accepted:(P.accepts3 Where (A.dtype cnd) dt)
+      ~want:(fun () ->
+        let cs = A.to_array cnd and xs = bits_of x and ys = bits_of y in
+        Array.concat
+          (List.mapi
+             (fun i k -> Array.sub (if k then xs else ys) (i * w) w)
+             (Array.to_list cs)))
+      (fun dst ->
+        Support.map3 (module K) Where ~dst:(A.expect dt (A.Any dst))
+          (on b cnd) (on b x) (on b y))
+  in
+  (match make c.cond c.layouts.(0) with
+  | A.Any k -> (
+      match A.dtype k with D.Bool -> where k | D.Bit -> where k | _ -> ()));
+  answers b (K3 Fma) c.dtype c.dtype shape ~accepted:(P.accepts3 Fma dt dt)
+    ~want:(fun () -> expected "fma" dt ~compare:false [| z; x; y |])
+    (fun dst ->
+      Support.map3 (module K) Fma ~dst:(A.expect dt (A.Any dst)) (on b z)
+        (on b x) (on b y))
 
 (* Broadcast loads *)
 
@@ -970,8 +1110,10 @@ let broadcast_examples =
     [ [ 1 ]; [ 0 ] ]
 
 (* A map reads a broadcast load as it reads the load's copy into a
-   C-contiguous array: the same outputs, bit for bit, any NaN for a NaN,
-   with the loads and destinations against an inaccessible page. *)
+   C-contiguous array, and computes what its nodes run one by one do:
+   the same outputs, bit for bit, any NaN for a NaN, with the loads and
+   destinations against an inaccessible page. A map whose loads all repeat
+   one element along each row holds a value of them one element a row. *)
 let law_map_broadcast (b : Support.backend) (c, side) =
   let module K = (val b.kernels) in
   let st = Random.State.make [| c.seed |] in
@@ -1031,6 +1173,10 @@ let law_map_broadcast (b : Support.backend) (c, side) =
     (Array.exists
        (fun v -> List.exists (( <> ) "broadcast") (Elements.view_names v))
        (Array.sub c.views 1 (Array.length c.views - 1)));
+  cover "every load repeated along each row, rows apart"
+    (wide (r - 1) && kept <> []
+    && Array.for_all (fun (v : Elements.view) -> List.mem (r - 1) v.broadcast)
+         c.views);
   let call xs ds =
     K.map p ~dsts:ds (Array.map (fun (A.Any x) -> Nx_kernel.Plain x) xs)
   in
@@ -1041,6 +1187,17 @@ let law_map_broadcast (b : Support.backend) (c, side) =
   in
   let copies = Array.map (fun (A.Any x) -> A.Any (A.copy x)) ops in
   equal ~msg:"copied" answer A.Done (call copies fresh);
+  (match split b p types (Iarray.of_array c.shape) ops with
+  | exception Skip -> fail "a node declined"
+  | values ->
+      Array.iteri
+        (fun i o ->
+          equal
+            ~msg:(strf "output %d of %s, node by node" i (describe p))
+            (array (Elements.same (fst dsts.(i))))
+            (Elements.elements fresh.(i))
+            (Elements.elements values.(o)))
+        (Iarray.to_array p.outs));
   Elements.with_guards side (fun guard place ->
       let ds = Array.map (fun (d, s) -> place d s) dsts in
       equal ~msg:"broadcast" answer A.Done (call (Array.map guard ops) ds);
@@ -1052,6 +1209,127 @@ let law_map_broadcast (b : Support.backend) (c, side) =
             (Elements.elements fresh.(i))
             (Elements.elements d))
         ds)
+
+(* Values held one element a row late in a program *)
+
+(* How a late program's second output is its sum: itself, or a Copy, a
+   Cast or a Bitcast of it into a dtype of its width, which a map writes in
+   place as it writes the sum. *)
+type wrap = Bare | Copied | Cast_same | Bitcast_f64
+
+(* A program of [negs] Negs of an int64 load of [outer] rows of [n]
+   elements, repeated along each row, then a coordinate along the outer
+   axis or along the rows, and the sum of the two. *)
+type late = {
+  negs : int;
+  outer : int;
+  n : int;
+  along_rows : bool;
+  wrap : wrap;
+  seed : int;
+}
+
+let wrap_name = function
+  | Bare -> "the sum"
+  | Copied -> "a copy of the sum"
+  | Cast_same -> "a cast of the sum into int64"
+  | Bitcast_f64 -> "a bitcast of the sum into float64"
+
+let pp_late ppf c =
+  Format.fprintf ppf "%d negs, [%d; %d], coordinate along %s, %s, seed %d"
+    c.negs c.outer c.n
+    (if c.along_rows then "the rows" else "the outer axis")
+    (wrap_name c.wrap) c.seed
+
+let late_cases =
+  Gen.with_pp pp_late
+    (let open Gen in
+     let* negs =
+       frequency [ (3, int_range 505 700); (1, int_range 1 40) ]
+     in
+     let* outer = int_range 2 4 in
+     let* n = int_range 2 100 in
+     let* along_rows = frequency [ (3, constant false); (1, constant true) ] in
+     let* wrap =
+       of_list
+         ~pp:(fun ppf w -> Format.pp_print_string ppf (wrap_name w))
+         [ Bare; Copied; Cast_same; Bitcast_f64 ]
+     in
+     let+ seed = int in
+     { negs; outer; n; along_rows; wrap; seed })
+
+(* A map holds a value one element a row wherever it lies in its program,
+   past its 512th node too, and writes an output that is a Copy, Cast or
+   Bitcast of a kind in place: its outputs, the last Neg and the sum, are
+   what its nodes run one by one give. *)
+let law_map_late (b : Support.backend) c =
+  let module K = (val b.kernels) in
+  let st = Random.State.make [| c.seed |] in
+  let shape = [| c.outer; c.n |] in
+  let i64 = D.Any D.Int64 in
+  let repeated = { (Elements.plain 2) with broadcast = [ 1 ] } in
+  let x =
+    Elements.operand i64 shape repeated (fun _ -> Elements.element i64 st)
+  in
+  let negs = List.init c.negs (fun k -> P.Op1 (Unary Neg, i64, k)) in
+  let coord = c.negs + 1 and sum = c.negs + 2 in
+  let wrap =
+    match c.wrap with
+    | Bare -> []
+    | Copied -> [ P.Op1 (Copy, i64, sum) ]
+    | Cast_same -> [ P.Op1 (Cast, i64, sum) ]
+    | Bitcast_f64 -> [ P.Op1 (Bitcast, D.Any D.Float64, sum) ]
+  in
+  let nodes =
+    (P.In 0 :: negs)
+    @ [
+        P.Coord (if c.along_rows then 1 else 0);
+        P.Op2 (Binary Add, coord, c.negs);
+      ]
+    @ wrap
+  in
+  let last = List.length nodes - 1 in
+  let p =
+    P.v
+      ~ins:(Iarray.of_list [ i64 ])
+      (Iarray.of_list nodes)
+      ~outs:(Iarray.of_list [ c.negs; last ])
+  in
+  let late = coord >= 512 in
+  cover "a Neg of a repeated load past node 512" (c.negs >= 512);
+  cover "a coordinate held one element a row past node 512"
+    (late && not c.along_rows);
+  cover "a coordinate along the rows past node 512" (late && c.along_rows);
+  cover "a short program" (not late);
+  cover "an output that is a Copy of a kind, written in place"
+    (c.wrap = Copied);
+  cover "an output that is a Cast of a kind, written in place"
+    (c.wrap = Cast_same);
+  cover "an output that is a Bitcast of a kind, written in place"
+    (c.wrap = Bitcast_f64);
+  let types = Array.init (List.length nodes) (P.dtype p) in
+  match split b p types (Iarray.of_array shape) [| x |] with
+  | exception Skip -> fail "a node declined"
+  | values ->
+      let outs = Iarray.to_array p.outs in
+      let dsts =
+        Array.map
+          (fun o ->
+            let (D.Any d) = types.(o) in
+            A.Any (A.create b.device d (Iarray.of_array shape)))
+          outs
+      in
+      equal ~msg:"map" answer A.Done
+        (K.map p ~dsts
+           (Array.map (fun (A.Any x) -> Nx_kernel.Plain x) [| x |]));
+      Array.iteri
+        (fun i o ->
+          equal
+            ~msg:(strf "output %d" i)
+            (array (Elements.same types.(o)))
+            (Elements.elements values.(o))
+            (Elements.elements dsts.(i)))
+        outs
 
 (* Programs that hold hundreds to thousands of values at once *)
 
@@ -1310,6 +1588,14 @@ let cpu =
         (strf "%s computes maps of any number of arrays" b.name)
         (Gen.pair (Gen.pair pairs Gen.int) widths)
         (fun c -> b.around (fun () -> law_map_widths b c));
+      prop ~count:200
+        (strf "%s's kinds read operands repeated along their rows" b.name)
+        repeated_cases
+        (fun c -> b.around (fun () -> law_repeated b c));
+      prop ~count:100
+        (strf "%s holds values one element a row late in a program" b.name)
+        late_cases
+        (fun c -> b.around (fun () -> law_map_late b c));
       prop ~count:300 ~examples:broadcast_examples
         (strf "%s reads a broadcast load as its copy" b.name)
         (Gen.pair broadcast_cases Elements.sides)

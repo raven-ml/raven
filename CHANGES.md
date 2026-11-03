@@ -1763,6 +1763,15 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On nx.cpu, a kind whose operands all repeat one element along a row
+  computes the row's value once, and Where and Fma read any such operand
+  once: `Nx.where c t 0` with `t` broadcast along the last axis ran a scalar
+  loop of about 24 instructions an element. A fused map holds a value of
+  such operands, or a coordinate constant along a row, one element a row,
+  and writes a result cast into its own dtype in place instead of copying
+  it. On one thread `Nx.attention`'s causal forward at 8 x 2048 x 2048 runs
+  29% fewer instructions, its causal gradient at 8 x 512 x 512 21%.
+  Results keep their bits.
 - A function that computes by several operations raises, where one of them
   refuses a value derived from an argument, naming the function, the
   argument and the `Nx.place` of it that resolves the refusal, where it
