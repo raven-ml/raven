@@ -1604,7 +1604,7 @@ observable in a kernel graph of any program or hand-built graph tried:
 | tinygrad: runtime/test_custom_kernel.py, runtime/test_function.py | custom kernels and functions | `custom_kernel`, `custom_kernel_permuted`, `custom_kernel_in_place`, `custom_kernel_of_views`, `inline_function`, `precompiled_function`, `precompiled_function_1`: graphs and counts |
 | tinygrad: schedule/rangeify.py `DEBUG_RANGEIFY` | the ranges printed | `RA › get_kernel_graph › debug` (2 tests) |
 | tinygrad: schedule/rangeify.py `SPEC` | | `RA › get_kernel_graph › spec › with spec checks on, every recorded kernel graph passes them` |
-| tinygrad: schedule/rangeify.py `check_buf_states` | a kernel reading one storage in two states | `RA › get_kernel_graph › rules › a kernel reading one storage in two states is refused` |
+| tinygrad: schedule/rangeify.py `check_buf_states` | a kernel reading one storage in two states | D160: a parameter for each state, the kernel cut and given a copy, `RA › get_kernel_graph › buffer states` and `SC › create_linear_with_vars › orders and copies` |
 | tinygrad: schedule/rangeify.py `bufferize_to_store`'s size assertion | a symbolic stage | `RA › get_kernel_graph › rules › a materialisation of a symbolic size takes its greatest size`: as in tinygrad, the stage's size is its greatest, and nothing raises |
 | tinygrad: schedule/rangeify.py `DEVICE_MAX_BUFS` | WebGPU's limit | dropped: excluded (README) |
 
@@ -1678,7 +1678,7 @@ survive:
 | tinygrad: runtime/test_schedule_cache.py::TestScheduleCache::test_simple_precompile | | `precompiled_function`; the backward pass is dropped, being the gradient's (L8) |
 | tinygrad: null/test_schedule.py, runtime/test_schedule.py (TestSchedule, TestLimitBufs, TestSwizzle, TestView) | kernel counts and realized values | Rangeify's section for the counts; the realized values are the `Tensor` surface (L8) |
 | tinygrad: runtime/test_buffer.py, runtime/test_subbuffer.py | device buffers and their views, a bitcast's the buffer of its source | dropped here: the device runtime's; the schedule's views are `SC › contiguous_mops_to_view` and `copy_view`, `disk_view_to`, `assign_bitcast`; the engine runs a bitcast of storage on that storage (`EN › assign_bitcast stores through a bitcast`) |
-| tinygrad: schedule/__init__.py `create_schedule`'s assertions | a cycle, an effect that is not a call, end, store or After, an end of something else, an argument that is not storage | `SC › create_schedule › rules` |
+| tinygrad: schedule/__init__.py `create_schedule`'s assertions | a cycle, an effect that is not a call, end, store or After, an end of something else, an argument that is not storage | `SC › create_schedule › rules`; a cycle is cut by a copy (D160), `SC › create_schedule › laws` |
 | tinygrad: schedule/__init__.py `assert_all_same_devices` | | `SC › create_linear_with_vars › rules › a kernel on buffers of two devices is refused` |
 | tinygrad: schedule/__init__.py `create_linear_with_vars`'s bind mismatch | two values of one name are each passed by the calls that read them (D177) | `SC › create_linear_with_vars › rules ›` "two variables of one name bound to two values are passed by the calls that read them", "… to one value are one"; `Tolk_engine › link and run › one program launched on several devices computes each device's window at its start` |
 | tinygrad: schedule/__init__.py `pm_copy_from_store` | copy kernels become stores | `copy`, `copy_one`, `copy_view`, `disk_to`, `disk_view_to`, `disk_store`: their linears |

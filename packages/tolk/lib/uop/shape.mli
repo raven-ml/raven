@@ -526,7 +526,8 @@ val written_params : Ops.t -> int list option
 
 val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
 (** [custom_kernel args f] calls the kernel [f] builds on placeholders of
-    [args], and is [args], each ordered after it. The placeholder of the [i]th
+    [args], and is [args], each that the kernel writes ({!written_params})
+    ordered after it: an argument it only reads is itself. The placeholder of the [i]th
     argument takes slot [i]: a variable's is the variable, unbound, and any
     other's is a buffer of its shape ({!placeholder_like}). *)
 

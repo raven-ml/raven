@@ -4138,52 +4138,81 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   `Tolk.Setting` suite: `shaping › under bindings is shaping in their
   context, and binds nothing`.
 
-## D160. A kernel that waits for the overwrite of a state it reads reads a copy
+## D160. A read no order keeps reads a copy of its state
 
-- **tinygrad:** `schedule/__init__.py:56-64` (`create_schedule`), which adds a
-  write-after-read edge from a kernel to every overwrite of a state it reads,
-  so a kernel that also waits for the overwrite, through a value computed
-  after it, makes a cycle, and the schedule raises "cycle detected in assign
-  graph" (`:78`). Repro: `a = Tensor([1., 2., 3.]).contiguous().realize();
-  b = a * 2; a.assign(a + 1); (b + (a * 3).contiguous()).tolist()` raises;
-  `test/runtime/test_assign.py::TestAssignOrdering::
-  test_war_reader_already_depends_on_write` states the raise, with the
-  values `[2, 4, 15]` "once that read is staged" as its TODO.
-- **tolk:** `Schedule.copy_state`, `Schedule.copy_before_overwrites` and
-  `Schedule.schedule`; `test/gen/tinygrad.patch`, which
-  makes tinygrad copy the same way before the goldens are generated.
-- **Differs:** no order runs such a kernel both before and after the
-  overwrite, so it reads instead a copy of the state it read: a kernel of its
-  own copies the whole state into call-local storage before the overwrite,
-  and the schedule is made again from the graph with the copy. This holds for
-  any overwrite of the storage, whichever elements each kernel touches, so a
-  partial overwrite of elements the kernel does not read copies too, at a
-  kernel and the state's size in storage. A call given one state at an
-  argument its body writes and at one it does not reads, as `memmove` reads
-  its source, a copy of the state made before it at the argument it only
-  reads (`Shape.written_params`); in a loop, the copy is made in the loop as
-  each trip starts. A call whose body does not show its writes, given one
-  state twice, is refused.
-- **Reason:** none. jera's compiled gradient of an adaptive solve reaches it,
-  the only kernel of rune's, jera's, norn's and kaun's suites to:
-  `Ode › solve derivatives › compiled grad equals eager grad` (jera's
-  `test_ode.ml`). With tinygrad's refusal, rune's `Compile.declined` takes
-  the `Invalid_argument` and evaluates the program, with the same values, so
-  no call site fails without the copy: what it keeps is the gradient's
-  compilation, a speed no bench row measures. Staging only the stale read in
-  rangeify, as tinygrad's TODO says, would cost the read's size where the
-  copy costs the state's.
-- **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › rules › a
-  kernel that waits for the overwrite of a state it reads reads it`, on the
-  kernel graph `read_overwritten_through_kernels.golden`, `› a kernel reading
-  storage before and after a write reads both` and `› reads it before`, and
-  the rules after them, for a copy two kernels share, a kernel with two
-  copies, a copy of a state a rebuilt kernel writes and the copy's phase;
-  `create_linear_with_vars › calls given one state twice`, and the program
-  `call_given_one_state_twice`;
-  and the program `read_overwritten_through`, whose recorded schedule and
-  linear and whose values (`create_linear_with_vars › values`) are
-  tinygrad's, patched.
+- **tinygrad:** `schedule/__init__.py:31-78` (`create_schedule`), which adds
+  a write-after-read edge from a kernel to every other kernel writing over a
+  state it reads, and raises "cycle detected in assign graph" (`:78`) where
+  those edges and the reads after writes form a cycle; `schedule/rangeify.py:
+  297-301` (`check_buf_states`), which raises "cycle detected while
+  indexing" where one kernel reads a storage in two states. Repro: `a =
+  Tensor([1., 2., 3.]).contiguous().realize(); b = a * 2; a.assign(a + 1);
+  (b + (a * 3).contiguous()).tolist()` raises, and so does a swap `a, b =
+  b * 1, a * 1` through assigns; `test/runtime/test_assign.py::
+  TestAssignOrdering::test_war_reader_already_depends_on_write` states the
+  raise, with the values `[2, 4, 15]` "once that read is staged" as its
+  TODO. A call given one buffer at two arguments, writing one, is ordered
+  against no other kernel and races with itself.
+- **tolk:** `Schedule.schedule`, `Schedule.cuts`, `Schedule.copy_call`,
+  `Schedule.copy_before_overwrites` and `Schedule.aliases`;
+  `Schedule.written_over`; `Rangeify.stand_in`; `Shape.written_params` and
+  `Shape.custom_kernel`; `test/gen/tinygrad.patch`, which gives tinygrad the
+  same relation, its copies hoisted, since tinygrad builds no loop of a
+  call.
+- **Differs:** one relation orders every kernel of the graph, a call of a
+  kernel, of a copy, of a precompiled body or a custom kernel, and a loop of
+  a call. A kernel reads the states its arguments name, a join being the
+  state under it (D202), and writes the states the Afters that list it are
+  over. It runs after the kernels that write the states it reads, and before
+  every other kernel that writes over them, whichever elements each touches.
+  Where these orders form a cycle, the cycle is cut: one read on it reads a
+  copy of its whole state, which a kernel of its own makes into call-local
+  storage before the state's overwrite, and the schedule is made again from
+  the graph with the copy. Kahn's order finds the cycle where no kernel is
+  ready, walking back through the kernels not run; the read cut is one whose
+  state is copied already, else the one of fewest bytes, of storage that can
+  be copied first. Fewest copies is NP-hard (Sethi, by Rideau, Serpette and
+  Leroy, "Tilting at windmills with Coq", §1); the walk is greedy. A cycle in
+  the graph made again raises as an internal error. A graph whose kernels
+  form no cycle gets no copy; grouping stores into one kernel can make one,
+  so the promise is of the kernel graph `create_schedule` is given. Swaps,
+  rotations and crossed reads compute, with a copy for each cycle. A kernel
+  reading one storage in two states takes a parameter for each, and lies on
+  a cycle, so no uncut kernel binds one buffer at two parameters. A call
+  given one state at an argument its body writes and at one it does not
+  reads, as `memmove` reads its source (C11 §7.24.2.2), a copy of the state
+  made before it at the argument it only reads (`Shape.written_params`, at
+  any depth through the calls the body makes); in a loop, the copy is made
+  in the loop as each trip starts. A custom kernel orders after it only the
+  arguments its body writes. A write's prior state is the latest state of the
+  After's storage its calls are given, else the state the After is after:
+  rune's loops name their carry's storage after the loop and pass the carry's
+  first state. Two writes over one state, which no
+  storage holds, raise `Invalid_argument` naming the storage, and so does a call
+  whose body does not show its writes given one state twice. A partial
+  overwrite of elements a kernel does not read copies too, at a kernel and
+  the state's size in storage.
+- **Reason:** (e). tinygrad raises on valid graphs (the swap, the stale read
+  beside its overwrite), and computes wrong values where it orders silently:
+  a call given one buffer twice, and the join cases of D202. rune's jit
+  promises eager's values, and a program refused on a set of GPUs, which
+  have no eager kernels, raises. No raven suite schedules a cycle today:
+  jera's compiled gradient of an adaptive solve made the one copy they reach
+  (`Ode › solve derivatives › compiled grad equals eager grad`).
+- **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › laws › a
+  schedule copies a state iff its kernels form a cycle` and
+  `create_linear_with_vars › laws › a schedule writes what its tensors
+  compute`; `create_linear_with_vars › orders and copies`, `› writes` and
+  `› calls given one state twice`; `create_schedule › rules › kernels that
+  overwrite each other's inputs read one copy`, `› a kernel that waits for
+  the overwrite of a state it reads reads it` and the rules beside it, for a
+  copy two kernels share, a kernel with two copies, a copy of a state a
+  rebuilt kernel writes and the copy's phase; the programs
+  `read_overwritten_through`, `read_beside_overwrite`,
+  `swap_through_values` and `call_given_one_state_twice`, whose recorded
+  schedules and linears and whose values (`create_linear_with_vars ›
+  values`) are tinygrad's, patched; and the `Tolk.Rangeify` suite's
+  `get_kernel_graph › buffer states`.
 
 ## D161. A folded weak constant wraps, and a power of two is read at its width
 

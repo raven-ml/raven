@@ -475,7 +475,6 @@ let stores value =
 
 let schedule sink = Rangeify.get_kernel_graph (Prepare.prepare_rangeify sink)
 let kernels_of sink = kernels (schedule sink)
-let rejects ~because f = raises_match (Exn.invalid_arg ~sub:because) f
 
 let sum_of us =
   List.fold_left (fun acc u -> Ops.O.(acc + u)) (List.hd us) (List.tl us)
@@ -516,18 +515,6 @@ let rules =
             (calls u));
       test "without a limit, one kernel reads every storage" (fun () ->
           equal int 1 (kernels (kernel_graph "many_inputs")));
-      test "a kernel reading one storage in two states is refused" (fun () ->
-          let a = Shape.param ~device:cpu ~shape:[ Int 16 ] 1 Float32 in
-          let written =
-            Ops.after a
-              [
-                Ops.store a (Shape.param ~device:cpu ~shape:[ Int 16 ] 2 Float32);
-              ]
-          in
-          let sink =
-            Ops.sink [ Ops.after out [ Ops.store out Ops.O.(a + written) ] ]
-          in
-          rejects ~because:"cycle" (fun () -> Rangeify.get_kernel_graph sink));
       test "a materialisation of a symbolic size takes its greatest size"
         (fun () ->
           let v =
@@ -1139,9 +1126,8 @@ let loops =
 
 (* Buffer states
 
-   A kernel reads each buffer in one state: a value read beside a later state of
-   a buffer it reads is stored first. No program rune emits needs the rule yet,
-   so each of these is expected to fail until it lands. *)
+   A kernel reading a buffer in two states takes a parameter for each, which
+   its call passes in the state it names. *)
 
 let states =
   let flat slot = Shape.param ~device:cpu ~shape:[ Int 16 ] slot Float32 in
@@ -1164,8 +1150,8 @@ let states =
       (into_given (Kernel_graphs.writes ~buffers (schedule sink)))
   in
   let one_state name sink =
-    xfail ~reason:"a kernel may read a buffer in two states"
-      (test name (reads_what_tensors_read sink))
+    test name
+      (reads_what_tensors_read (Ops.sink (Ops.src sink @ [ assigned ])))
   in
   group "get_kernel_graph › buffer states"
     [

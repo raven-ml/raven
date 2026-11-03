@@ -4982,6 +4982,105 @@ let test_sharded_bound ~n ~d ~layers () =
   equal ~msg:"a layer beside the activations" bool false
     (fits (layer + activations))
 
+(* In-place updates
+
+   A step that writes each of three donated arguments from the others, as a
+   swap, a rotation or a crossed update does, gives eager's bits: its call
+   reads each argument as it was given, though it writes over it. In a scan,
+   the step updates three rows of the carry so. Values are small integers,
+   whose sums are exact. *)
+
+type term = Plain of int | Flipped of int | Summed of int
+
+type update = term list array (* Each output's terms, of three inputs. *)
+
+let updates =
+  let open Gen in
+  let term =
+    let* j = int_range 0 2 in
+    of_list [ Plain j; Flipped j; Summed j ]
+  in
+  let output = list ~size:(int_range 1 2) term in
+  (let+ a = output and+ b = output and+ c = output in
+   [| a; b; c |])
+  |> with_pp (fun ppf u ->
+      Array.iteri
+        (fun i ts ->
+          Format.fprintf ppf "%d := %s; " i
+            (String.concat " + "
+               (List.map
+                  (function
+                    | Plain j -> string_of_int j
+                    | Flipped j -> Printf.sprintf "flip %d" j
+                    | Summed j -> Printf.sprintf "sum %d" j)
+                  ts)))
+        u)
+
+let apply (u : update) xs =
+  let term = function
+    | Plain j -> xs.(j)
+    | Flipped j -> Nx.flip xs.(j)
+    | Summed j -> Nx.add (Nx.zeros_like xs.(j)) (Nx.sum xs.(j))
+  in
+  Array.mapi
+    (fun i ts ->
+      List.fold_left
+        (fun acc t -> Nx.add acc (term t))
+        (Nx.add_s (term (List.hd ts)) (Float.of_int i))
+        (List.tl ts))
+    u
+
+let inputs () =
+  Array.init 3 (fun i ->
+      v (Array.init 4 (fun k -> Float.of_int (((k * 3) + (i * 5)) mod 7))))
+
+(* Whether some output reads an input another output writes over. *)
+let crossed (u : update) =
+  let reads i =
+    List.map (function Plain j | Flipped j | Summed j -> j) u.(i)
+  in
+  List.exists (fun i -> List.exists (fun j -> j <> i) (reads i)) [ 0; 1; 2 ]
+
+let three = T.(pair (pair tensor tensor) tensor)
+
+let law_update u =
+  cover "an output reads another argument" (crossed u);
+  let f ((a, b), c) =
+    match apply u [| a; b; c |] with
+    | [| a; b; c |] -> ((a, b), c)
+    | _ -> assert false
+  in
+  let all ((a, b), c) = List.map bits [ a; b; c ] in
+  let eager =
+    let xs = inputs () in
+    all (f ((xs.(0), xs.(1)), xs.(2)))
+  in
+  let jitted =
+    compiled (fun () ->
+        let xs = Array.map Nx.donate (inputs ()) in
+        all (Rune.jit T.(three @-> returns three) f ((xs.(0), xs.(1)), xs.(2))))
+  in
+  equal (outcome_t (list bits_t)) (Value eager) jitted
+
+let law_update_scan u =
+  let step c _ =
+    let rows = Array.init 3 (fun i -> Nx.get [ i ] c) in
+    let c' = Nx.stack (Array.to_list (apply u rows)) in
+    (c', Nx.sum c')
+  in
+  let scan c = Rune.scan' step ~init:c (Nx.zeros f32 [| 3; 1 |]) in
+  let init () = Nx.stack (Array.to_list (inputs ())) in
+  let run g =
+    let c, ys = g (init ()) in
+    [ bits c; bits ys ]
+  in
+  let eager = run scan in
+  let jitted =
+    compiled (fun () ->
+        run (Rune.jit T.(tensor @-> returns (pair tensor tensor)) scan))
+  in
+  equal (outcome_t (list bits_t)) (Value eager) jitted
+
 let () =
   exit
     (run "rune jit"
@@ -4989,6 +5088,12 @@ let () =
          group "classes"
            [
              prop "jit gives eager's bits for exact functions" cases law;
+             prop ~count:40
+               "a step updating its donated arguments from each other gives \
+                eager's bits" updates law_update;
+             prop ~count:20
+               "a scan updating rows of its carry from each other gives \
+                eager's bits" updates law_update_scan;
              prop "jit gives eager's bits for exact functions at every dtype"
                any_cases law_any;
              prop "a function of one kind is within its bounds" unary_cases

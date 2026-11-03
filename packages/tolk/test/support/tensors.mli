@@ -29,7 +29,10 @@
     {!Tolk.Op.After} reads its first source once its other sources have run,
     and a join ({!Tolk.Ops.is_join}) holds the value its first source has. A
     {!Tolk.Op.Call} runs its body with each parameter of slot [k] standing for
-    the call's [k]th argument, reshaped to the parameter's shape. Each node runs
+    the call's [k]th argument, reshaped to the parameter's shape. An
+    {!Tolk.Op.End} of a call over a range runs the call once for each of the
+    range's values, each trip reading the storage the loop writes, that of the
+    {!Tolk.Op.After}s that list it, as the trips before left it. Each node runs
     once. *)
 
 open Tolk

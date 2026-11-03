@@ -943,6 +943,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Schedule.create_schedule` orders every kernel, call and loop of a call by
+  one relation and copies a state only where the order has a cycle: swaps,
+  rotations and crossed updates of buffers in one realize compute where they
+  raised "cycle detected", and a kernel may read a buffer in two states.
+  Two writes over one state raise `Invalid_argument`. `Shape.custom_kernel`
+  orders after the kernel only the arguments it writes.
 - A call given one state at an argument it writes and at another it only
   reads reads the state as it was before the call, as `memmove` does: the
   schedule copies it first, in a loop as each trip starts. `Shape.written_params`

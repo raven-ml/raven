@@ -3414,8 +3414,13 @@ let custom_kernel args f =
     else placeholder_like s i
   in
   let placeholders = List.mapi placeholder args in
-  let kernel = call (f placeholders) args in
-  List.map (fun s -> after s [ kernel ]) args
+  let body = f placeholders in
+  let kernel = call body args in
+  (* An argument the kernel only reads is no state the kernel leaves. *)
+  let written i =
+    match written_params body with Some w -> List.mem i w | None -> true
+  in
+  List.mapi (fun i s -> if written i then after s [ kernel ] else s) args
 
 (* Programs *)
 

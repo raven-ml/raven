@@ -288,6 +288,19 @@ let none = { shape = []; cells = [||] }
    the value [params] gives [k], if any. *)
 let rec run m params u =
   let values = Ops.Tbl.create 64 in
+  (* The storage each loop writes: that of the Afters that list it. *)
+  let loops = Ops.Tbl.create 8 in
+  List.iter
+    (fun a ->
+      if Ops.op a = After then
+        List.iter
+          (fun e ->
+            if Ops.op e = End then
+              Ops.Tbl.replace loops e
+                (Ops.storage_base a
+                :: Option.value (Ops.Tbl.find_opt loops e) ~default:[]))
+          (List.tl (Ops.src a)))
+    (Ops.toposort ~calls:Skip u);
   let rec value u =
     match Ops.Tbl.find_opt values u with
     | Some v -> v
@@ -337,12 +350,17 @@ let rec run m params u =
         none
     | End, _ -> (
         (* A loop calls its body once a trip, each trip reading what the
-           previous ones stored. *)
+           previous ones stored into the storage the call writes; other
+           storage it reads in the state its argument names. *)
         match src with
         | [ c; r ] when Ops.op c = Call ->
+            let written =
+              Option.value (Ops.Tbl.find_opt loops u) ~default:[]
+            in
+            let carried a = List.memq (Ops.storage_base a) written in
             for k = 0 to count r - 1 do
               call
-                (fun a -> reread m (value a))
+                (fun a -> if carried a then reread m (value a) else value a)
                 (Ops.substitute ~calls:Skip ~pass:Fixed_point c
                    [ (r, Ops.int k) ])
             done;

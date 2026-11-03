@@ -30,18 +30,37 @@ val create_schedule : ?by_storage:bool -> Ops.t -> Ops.t
     ({!Memory.taken}). Each call's arguments are the storage of its
     reads and writes, or the views of it that move with the loops the call runs in. A
     loop of a call, an {!Op.End} of the call over {!Ops.Axis_type.Loop} ranges,
-    stays such an end around the call, and a back edge of a call
+    stays such an end around the call, or around an {!Op.Linear} of the copies
+    it makes as each trip starts and the call, and a back edge of a call
     ({!Ops.backedge}) stays a back edge, its condition the storage it reads.
 
-    A kernel that reads a state of storage on one device and depends on a
-    kernel that overwrites it, whichever elements each touches, as [b + a * 3]
-    does where [b] read [a] before [a] was assigned, reads instead a copy of
-    the whole state into call-local storage ({!Op.Alloc}) at the state's
-    phase, which a kernel of its own makes before the overwrite.
+    A kernel reads the states its arguments name, a join ({!Ops.is_join})
+    being the state under it, and writes the states the {!Op.After}s that list
+    it are over. It runs after the kernels that write the states it reads and
+    those the joins it reads through wait for, and before every other kernel
+    that writes over a state it reads, whichever elements each touches. A
+    call that writes a state through an argument its body writes
+    ({!Shape.written_params}) and reads it through another reads it as it was
+    before the call. Where these orders form a cycle, one read on the cycle
+    reads instead a copy of its whole state into call-local storage
+    ({!Op.Alloc}) at the state's phase, which a kernel of its own makes before
+    the state's overwrite; as [b + a * 3] does where [b] read [a] before [a]
+    was assigned, or as two buffers swapped through values computed from each
+    do. The read copied is one whose state is copied already, else the one of
+    fewest bytes. A loop whose call writes a state through one argument and
+    reads it through another copies it in the loop, as each trip starts; any
+    other copy is made once, before the loop. A write's prior state is the
+    latest state of the {!Op.After}'s storage its call is given, and the state
+    the {!Op.After} is after where it is given none: a loop after its carry's storage, given the carry's first
+    state, writes over that state. A graph whose kernels form no cycle gets no
+    copy.
 
-    Raises [Invalid_argument] if the kernels' dependencies form a cycle, if a
-    state such a kernel reads a copy of has no device, or if an effect is not
-    a call, a loop of a call, a store or an {!Op.After}. *)
+    Raises [Invalid_argument] if two {!Op.After}s list different kernels over
+    one state, which no storage holds both successors of, if a call whose body
+    does not show its writes takes one state at two arguments and writes it,
+    if a state a kernel reads a copy of has no device, if a cut graph still
+    has a cycle, or if an effect is not a call, a loop of a call, a store or an
+    {!Op.After}. *)
 
 val pm_flatten_linear : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_flatten_linear] inlines each {!Op.Linear} among the sources of an

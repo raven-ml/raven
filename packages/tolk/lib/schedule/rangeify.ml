@@ -873,8 +873,9 @@ let pm_add_buffers =
 type local_ctx = {
   map : t Tbl.t;
   mutable order : t list; (* The keys of [map], last first. *)
+  params : t Tbl.t; (* The key of [map] standing for each state. *)
   joined : t list Tbl.t;
-      (* What the joins the kernel reads storage through wait for, by storage. *)
+      (* What the joins the kernel reads a state through wait for, by key. *)
   ranges : (Axis_type.t * int list, unit) Hashtbl.t;
   mutable range_order : (Axis_type.t * int list) list; (* last first *)
 }
@@ -885,10 +886,33 @@ let add_arg ctx buf value =
     ctx.order <- buf :: ctx.order
   end
 
+(* A kernel takes a parameter per state of storage it reads or writes, the
+   argument its call passes being that state. Storage stands for the state it
+   is; any other state of it, an {!Op.After}, for a node of its own, storage
+   in a slot of no storage's, which [debuf] makes a parameter as it makes
+   storage one. A kernel taking two states of one storage reads one before an
+   overwrite it waits for: the schedule cuts it, and passes it a copy of that
+   state. *)
+let stand_in ctx state =
+  match Tbl.find_opt ctx.params state with
+  | Some p -> p
+  | None ->
+      let buf = buf_uop state in
+      let p =
+        match arg buf with
+        | Param a when state != buf ->
+            replace buf
+              ~arg:(Param { a with slot = min_int + Tbl.length ctx.params })
+        | _ -> buf
+      in
+      Tbl.replace ctx.params state p;
+      add_arg ctx p state;
+      p
+
 (* Storage is a parameter of the kernel: its slot is set once the kernel's
    storage is all known, and its sources are not the kernel's. *)
 let add_buf ctx buf =
-  add_arg ctx buf buf;
+  ignore (stand_in ctx buf);
   raise Bottom_up_gate
 
 let debuf slot buf =
@@ -925,13 +949,11 @@ let handle_after ctx after =
   if addrspace after = Some Dtype.Local || is_group after then None
   else
     let state, deps = unjoin after in
-    let buf = buf_uop state in
-    (* Bottom up, so it is added once. *)
-    add_arg ctx buf state;
+    let p = stand_in ctx state in
     if deps <> [] then
-      Tbl.replace ctx.joined buf
-        (Option.value (Tbl.find_opt ctx.joined buf) ~default:[] @ deps);
-    Some buf
+      Tbl.replace ctx.joined p
+        (Option.value (Tbl.find_opt ctx.joined p) ~default:[] @ deps);
+    Some p
 
 let add_range ctx r =
   let key = (axis_type r, axis_id r) in
@@ -955,31 +977,9 @@ let pm_renumber_range =
             (Hashtbl.find_opt numbers (axis_type, axis_id r)));
     ])
 
-let check_buf_states x =
-  let idxs =
-    List.filter
-      (fun s -> op s = Op.Index)
-      (toposort ~calls:Skip ~gate:(fun x -> op x <> Op.After) x)
-  in
-  let read_from = Tbl.create 8 in
-  List.iter
-    (fun idx ->
-      let buf = buf_uop idx and state = fst (unjoin (nth idx 0)) in
-      if Op.Set.mem (op buf) Op.Set.defines then
-        match Tbl.find_opt read_from buf with
-        | Some s when s != state ->
-            invalid_arg
-              (Format.asprintf "cycle detected while indexing %a" pp buf)
-        | Some _ -> ()
-        | None -> Tbl.replace read_from buf state)
-    idxs
-
 let to_define_global =
   Pattern_matcher.v
     (fun () -> [
-      rule_ctx (Upat.op Op.Store ~name:"x") (fun _ m ->
-          check_buf_states (m "x");
-          None);
       rule_ctx
         (Upat.v ~op:(ops Op.[ Buffer; Alloc ]) ~name:"buf" ())
         (fun ctx m -> add_buf ctx (m "buf"));
@@ -1016,6 +1016,7 @@ let split_store x =
       {
         map = Tbl.create 8;
         order = [];
+        params = Tbl.create 8;
         joined = Tbl.create 8;
         ranges = Hashtbl.create 8;
         range_order = [];

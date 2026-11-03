@@ -90,10 +90,11 @@ val get_kernel_graph : Ops.t -> Ops.t
         those writes instead. Invalid writes are dropped;
      }
      {- each store or end whose ranges are all closed becomes a call to a
-        kernel of its own: its storage becomes parameters, numbered from [0] in
-        the order the kernel reaches them, its ranges are renumbered from [0],
-        and the call's arguments are that storage, after the kernels that write
-        it. An end of a call over {!Ops.Axis_type.Loop}
+        kernel of its own: each state of storage it reads or writes becomes a
+        parameter, numbered from [0] in the order the kernel reaches them, its
+        ranges are renumbered from [0], and the call's arguments are those
+        states, a state read through a join ({!Ops.is_join}) being the state
+        under it, after what the join waits for. An end of a call over {!Ops.Axis_type.Loop}
         ranges is a loop that runs the call once per trip, and no kernel;
      }
      {- the calls' arguments and the storage lose their indices and their views,
@@ -105,6 +106,5 @@ val get_kernel_graph : Ops.t -> Ops.t
     With the setting {!Setting.spec} at [1] or more, the result is checked
     against {!Spec.kernel_graph}.
 
-    Raises [Invalid_argument] if a kernel reads one storage in two different
-    states, which is a cycle, if a stage has no elements, which a prepared graph
-    does not have, or if the check fails. *)
+    Raises [Invalid_argument] if a stage has no elements, which a prepared
+    graph does not have, or if the check fails. *)

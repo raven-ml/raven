@@ -65,6 +65,7 @@ let programs =
     "precompiled_scalar";
     "read_join_of_assigned";
     "read_join_of_overwritten";
+    "read_beside_overwrite";
     "read_overwritten_through";
     "read_then_overwrite";
     "reduce_multiple_paths";
@@ -78,6 +79,7 @@ let programs =
     "split_sum";
     "stage_of_overwritten";
     "sum";
+    "swap_through_values";
     "two_outputs";
     "variable_offset";
     "variable_reduce";
@@ -129,6 +131,7 @@ let kernel_graphs =
     "precompiled_scalar_kernels_1";
     "read_join_of_assigned_kernels";
     "read_join_of_overwritten_kernels";
+    "read_beside_overwrite_kernels";
     "read_overwritten_through_kernels";
     "read_then_overwrite_kernels";
     "reduce_multiple_paths_kernels";
@@ -142,6 +145,7 @@ let kernel_graphs =
     "split_sum_kernels";
     "stage_of_overwritten_kernels";
     "sum_kernels";
+    "swap_through_values_kernels";
     "two_outputs_kernels";
     "variable_offset_kernels";
     "variable_reduce_kernels";
@@ -739,19 +743,24 @@ let x, y =
 
 let copies ~into ~from = Ops.replace ~src:[ copy_kernel; into; from ] copy_call
 
-let swap () =
-  (* each kernel overwrites what the other reads as it was given *)
-  let a = copies ~into:x ~from:y and b = copies ~into:y ~from:x in
-  let kg = Ops.sink [ Ops.after x [ a ]; Ops.after y [ b ] ] in
-  raises_match (Exn.invalid_arg ~sub:"cycle") (fun () ->
-      Schedule.create_schedule kg)
-
 (* Running the schedule of [kg] writes what [kg] does. *)
 let keeps kg =
   let buffers = filled kg in
   equal (list write)
     (Kernel_graphs.writes ~buffers kg)
     (Kernel_graphs.linear_writes ~buffers (Schedule.create_schedule kg))
+
+let swap () =
+  (* each kernel overwrites what the other reads as it was given: one reads a
+     copy *)
+  let a = copies ~into:x ~from:y and b = copies ~into:y ~from:x in
+  let kg = Ops.sink [ Ops.after x [ a ]; Ops.after y [ b ] ] in
+  keeps kg;
+  let allocs =
+    List.filter (fun n -> Ops.op n = Alloc)
+      (Ops.toposort ~calls:Skip (Schedule.create_schedule kg))
+  in
+  equal int 1 (List.length allocs)
 
 (* The kernel graph of read_overwritten_through: [b + (a * 3)], where [b] read
    [a] before [a] was assigned. The last kernel reads [a] as it was and waits,
@@ -1045,7 +1054,7 @@ let ordering =
       test "an end of something other than a call is refused" ended_store;
       test "a bound variable among a kernel's arguments leaves its call"
         bound_argument;
-      test "kernels that overwrite each other's inputs are a cycle" swap;
+      test "kernels that overwrite each other's inputs read one copy" swap;
       test "a kernel that waits for the overwrite of a state it reads reads it"
         read_overwritten;
       test "a kernel runs after the one it reads and before its overwriter"
@@ -2804,6 +2813,425 @@ let aliased =
         opaque_aliases;
     ]
 
+(* Orders and copies
+
+   Each program writes what its tensors compute, and its schedule copies a
+   state only to break a cycle of its kernels: a kernel that must run both
+   before and after another. A sum is a kernel of its own, which reads its
+   source before any overwrite: no copy. *)
+
+let three = fl 3.
+let doubled u = Ops.O.(u * fl 2.)
+
+(* [name], the program [outputs] and the copies its schedule makes. *)
+let ordered_case (name, copies, outputs) =
+  test (Printf.sprintf "%s: %d %s" name copies (if copies = 1 then "copy" else "copies"))
+    (fun () -> equal int ~msg:"copies" copies (copied (outputs ())))
+
+let first_half u = Shape.shrink u [ Some (Int 0, Int 2) ]
+let second_half u = Shape.shrink u [ Some (Int 2, Int 4) ]
+let summed u = Shape.expand (Shape.reshape (Shape.rop u Add [ 0 ]) [ Int 1 ]) [ Int 4 ]
+
+let cases =
+  [
+    ( "a value of x read beside x's overwrite, waiting for it",
+      1,
+      fun () ->
+        let x = f32 1 in
+        let x1 = assign x Ops.O.(x + fl 1.) in
+        [ assign (f32 2) Ops.O.(doubled x + Ops.contiguous Ops.O.(x1 * three)); x1 ] );
+    ( "x flipped read beside x's overwrite, waiting for it",
+      1,
+      fun () ->
+        let x = f32 1 in
+        let x1 = assign x Ops.O.(x + fl 1.) in
+        [ assign (f32 2) Ops.O.(Shape.flip x [ 0 ] + Ops.contiguous Ops.O.(x1 * three)); x1 ] );
+    ( "x summed read beside x's overwrite, waiting for it",
+      0,
+      fun () ->
+        let x = f32 1 in
+        let x1 = assign x Ops.O.(x + fl 1.) in
+        [ assign (f32 2) Ops.O.(summed x + Ops.contiguous Ops.O.(x1 * three)); x1 ] );
+    ( "x and x overwritten in one kernel",
+      1,
+      fun () ->
+        let x = f32 1 in
+        let x1 = assign x Ops.O.(x + fl 1.) in
+        [ assign (f32 2) Ops.O.(doubled x + x1); x1 ] );
+    ( "x read, then overwritten",
+      0,
+      fun () ->
+        let x = f32 1 in
+        let b = Ops.contiguous (doubled x) in
+        [ assign (f32 2) b; assign x Ops.O.(b + fl 1.) ] );
+    ( "x and y swapped through values",
+      1,
+      fun () ->
+        let x = f32 1 and y = f32 2 in
+        [ assign x Ops.O.(y * fl 1.); assign y Ops.O.(x * fl 1.) ] );
+    ( "x and y swapped through stages",
+      0,
+      fun () ->
+        let x = f32 1 and y = f32 2 in
+        let tx = Ops.contiguous Ops.O.(x * fl 1.)
+        and ty = Ops.contiguous Ops.O.(y * fl 1.) in
+        [ assign x ty; assign y tx ] );
+    ( "x, y and z rotated through values",
+      1,
+      fun () ->
+        let x = f32 1 and y = f32 2 and z = f32 3 in
+        [
+          assign x Ops.O.(y * fl 1.);
+          assign y Ops.O.(z * fl 1.);
+          assign z Ops.O.(x * fl 1.);
+        ] );
+    ( "x from y, y from z",
+      0,
+      fun () ->
+        let x = f32 1 and y = f32 2 and z = f32 3 in
+        [ assign x Ops.O.(y * fl 1.); assign y Ops.O.(z * fl 1.) ] );
+    ( "x and y each reading both",
+      1,
+      fun () ->
+        let x = f32 1 and y = f32 2 in
+        [ assign x Ops.O.(y + x); assign y Ops.O.(x - y) ] );
+    ( "x and y each reading the other's sum",
+      0,
+      fun () ->
+        let x = f32 1 and y = f32 2 in
+        [ assign x Ops.O.(x + summed y); assign y Ops.O.(y - summed x) ] );
+    ( "x read through a join, y's write waiting for nothing of x",
+      0,
+      fun () ->
+        let x = f32 1 and y = f32 2 in
+        let y1 = assign y (doubled y) in
+        [ assign (f32 3) Ops.O.(Ops.after x [ y1 ] + y1); y1 ] );
+    ( "x's halves swapped through values",
+      0,
+      fun () ->
+        let x = f32 1 in
+        let lo = Ops.O.(first_half x * fl 1.) and hi = Ops.O.(second_half x * fl 1.) in
+        let x1 = Ops.after x [ Ops.store (first_half x) hi ] in
+        [ Ops.after x1 [ Ops.store (second_half x1) lo ] ] );
+    ( "x's first half overwritten, its second read beside, waiting for it",
+      1,
+      fun () ->
+        let x = f32 1 in
+        let x1 = Ops.after x [ Ops.store (first_half x) Ops.O.(first_half x * fl 0. + fl 9.) ] in
+        let late = Ops.contiguous Ops.O.(second_half x1 * three) in
+        [ assign (f32 ~n:2 2) Ops.O.(second_half x + late); x1 ] );
+    (* Two stores computing [a * 2] share their loops, b's first write and
+       c's overwrite: the group runs after b's second write, which reads c as
+       it was and overwrites what the group wrote, and before it. One copy, a
+       baseline: the grouping makes the cycle, which the program does not
+       have. *)
+    ( "b from a, then from c, as c from a",
+      1,
+      fun () ->
+        let a = f32 1 and b = f32 2 and c = f32 3 in
+        let b1 = assign b (doubled a) in
+        [ assign b1 (doubled c); assign c (doubled a) ] );
+  ]
+
+let relation =
+  group "create_linear_with_vars › orders and copies" (List.map ordered_case cases)
+
+(* Two writes over one state *)
+
+let fork () =
+  let x = f32 1 in
+  raises_match (Exn.invalid_arg ~sub:"two writes over one state") (fun () ->
+      ignore
+        (keeps_values
+           [ assign x (doubled x); assign x Ops.O.(x + fl 10.) ]))
+
+(* A loop of a call reads x as it was given, and waits, through the
+   storage it adds into, for x's overwrite: it reads a copy, made outside the
+   loop, once. *)
+let loop_reader () =
+  let x = f32 1 and o = f32 2 in
+  let x1 = assign x Ops.O.(x + fl 1.) in
+  let o0 = assign o Ops.O.(x1 * fl 1.) in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 0 + p4 1) ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body [ o0; x ]) [ r ] in
+  let linear, made =
+    copies_while (fun () -> keeps_values [ Ops.after o0 [ e ]; x1 ])
+  in
+  equal int ~msg:"copies" 1 made;
+  match List.filter (fun e -> Ops.op e = End) (Ops.src linear) with
+  | [ e ] ->
+      equal int ~msg:"the loop runs its call alone" 1
+        (List.length (Ops.src (Ops.nth e 0)))
+  | ends -> failf "%d loops" (List.length ends)
+
+let kernels_apart () =
+  let x = f32 1 and y = f32 2 and z = f32 3 in
+  let outs k = Shape.custom_kernel k reverse in
+  let a = outs [ x; z ] and b = outs [ y; z ] in
+  equal (list uop) ~msg:"the argument read is itself" [ z; z ]
+    [ List.nth a 1; List.nth b 1 ];
+  let big = Ops.sink [ List.hd a; List.hd b ] in
+  equal int ~msg:"copies" 0 (snd (copies_while (fun () -> unplanned big)))
+
+(* Two calls, each writing [x] as it is given. *)
+let fork_of_calls () =
+  let x = f32 1 in
+  let call v = Ops.call ~precompile:true (Ops.sink [ Ops.store (p4 0) v ]) [ x ] in
+  raises_match (Exn.invalid_arg ~sub:"two writes over one state") (fun () ->
+      ignore
+        (keeps_values
+           [ Ops.after x [ call (fl 1.) ]; Ops.after x [ call (fl 2.) ] ]))
+
+(* A loop of three trips adding one into [x]'s storage, given [x] once
+   assigned, its after naming the storage alone, as a loop's carry is built:
+   it writes over the state it is given. A reader of that state beside runs
+   before it. *)
+let loop_after_storage () =
+  let x = f32 1 in
+  let x1 = assign x (doubled x) in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 0 + fl 1.) ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body [ x1 ]) [ r ] in
+  let seen = assign (f32 2) Ops.O.(x1 * fl 3.) in
+  equal int ~msg:"copies" 0 (copied [ Ops.after x [ e ]; seen ])
+
+let writes =
+  group "create_linear_with_vars › writes"
+    [
+      test "two calls writing one state are refused" fork_of_calls;
+      test "a loop after its storage writes over the state it is given"
+        loop_after_storage;
+      test "two writes over one state are refused" fork;
+      test "a loop reading a state a kernel it waits for overwrites reads a copy"
+        loop_reader;
+      test "custom kernels reading one buffer write nothing over it"
+        kernels_apart;
+    ]
+
+(* Laws
+
+   Programs drawn over three buffers of one size: each statement stores into a
+   buffer, whole or a half of it, a value read from the buffers' current
+   states, their older states, joins of them, stages of them, flipped or
+   summed. The schedule writes what the tensors compute. *)
+
+type statement = {
+  target : int;
+  half : bool; (* Into the first half, of an even size, once written. *)
+  reads : (int * int * [ `Plain | `Flip | `Sum | `Stage | `Join of int ]) list;
+      (* Each read: a buffer, how many states back, and how. *)
+}
+
+let gen_program =
+  let open Gen in
+  let gen_read =
+    let* b = int_range 0 2 in
+    let* back = int_range 0 2 in
+    let+ how =
+      one_of
+        [
+          constant `Plain; constant `Flip; constant `Sum; constant `Stage;
+          map (fun j -> `Join j) (int_range 0 2);
+        ]
+    in
+    (b, back, how)
+  in
+  let gen_statement =
+    let* target = int_range 0 2 in
+    let* half = bool in
+    let+ reads = list ~size:(int_range 1 3) gen_read in
+    { target; half; reads }
+  in
+  let* n = int_range 1 5 in
+  let+ statements = list ~size:(int_range 1 5) gen_statement in
+  (n, statements)
+
+let pp_program ppf (n, statements) =
+  let how = function
+    | `Plain -> "" | `Flip -> " flipped" | `Sum -> " summed"
+    | `Stage -> " staged" | `Join j -> Printf.sprintf " joined after %d" j
+  in
+  Format.fprintf ppf "%d elements:" n;
+  List.iter
+    (fun s ->
+      Format.fprintf ppf "@ %d%s := %s;" s.target
+        (if s.half then "[half]" else "")
+        (String.concat " + "
+           (List.map
+              (fun (b, back, h) -> Printf.sprintf "%d@-%d%s" b back (how h))
+              s.reads)))
+    statements
+
+(* The program's outputs, and whether it reads an older state, through a
+   join or not. *)
+let program (n, statements) =
+  let bufs = Array.init 3 (fun i -> f32 ~n (i + 1)) in
+  (* Each buffer's states, newest first. *)
+  let states = Array.map (fun b -> [ b ]) bufs in
+  let old = ref false and joined = ref false in
+  let state b back =
+    let l = states.(b) in
+    if back > 0 && List.length l > back then old := true;
+    List.nth l (min back (List.length l - 1))
+  in
+  let read (b, back, how) =
+    let s = state b back in
+    match how with
+    | `Plain -> s
+    | `Flip -> Shape.flip s [ 0 ]
+    | `Sum ->
+        Shape.expand (Shape.reshape (Shape.rop s Add [ 0 ]) [ Int 1 ]) [ Int n ]
+    | `Stage -> Ops.contiguous Ops.O.(s * fl 2.)
+    | `Join j ->
+        let dep = List.hd states.(j) in
+        if Ops.op dep = After then begin
+          joined := true;
+          Ops.after s [ dep ]
+        end
+        else s
+  in
+  List.iter
+    (fun st ->
+      let cur = List.hd states.(st.target) in
+      let value =
+        List.fold_left
+          (fun acc r -> Ops.O.(acc + read r))
+          (fl 1.) st.reads
+      in
+      let next =
+        (* Into a buffer as given, a half would be a view of it (D184), which
+           Kernel_graphs does not run. *)
+        if st.half && n mod 2 = 0 && Ops.op cur = After then
+          let h u = Shape.shrink u [ Some (Int 0, Int (n / 2)) ] in
+          Ops.after cur [ Ops.store (h cur) (h value) ]
+        else assign cur value
+      in
+      states.(st.target) <- next :: states.(st.target))
+    statements;
+  (Array.to_list (Array.map List.hd states), !old, !joined)
+
+let values_law =
+  prop "a schedule writes what its tensors compute"
+    (Gen.with_pp pp_program gen_program)
+    (fun p ->
+      let outputs, old, joined = program p in
+      let _, made =
+        copies_while (fun () -> ignore (keeps_values outputs))
+      in
+      cover "an older state read" old;
+      cover "a join read" joined;
+      cover "a copy" (made > 0);
+      cover "no copy" (made = 0))
+
+(* Kernel graphs drawn over four storages of clone's copy kernel: each kernel
+   copies into a storage's current state from a state of another, or of the
+   same, possibly older or read through a join, and reads one more such state
+   beside. A copy is made exactly when the kernels, related as below, form a
+   cycle: a kernel follows the writers of the states it reads and what the
+   joins it reads through wait for, and precedes every other writer over a
+   state it reads; a kernel writing a state that it reads through another
+   argument precedes itself. *)
+
+let gen_graph =
+  let open Gen in
+  let gen_ref =
+    let* b = int_range 0 3 in
+    let* back = int_range 0 2 in
+    let+ join = option (int_range 0 3) in
+    (b, back, join)
+  in
+  let gen_kernel =
+    let* into = int_range 0 3 in
+    let* from = gen_ref in
+    let+ beside = option gen_ref in
+    (into, from, beside)
+  in
+  list ~size:(int_range 1 6) gen_kernel
+
+let pp_graph ppf ks =
+  let r (b, back, join) =
+    Printf.sprintf "%d@-%d%s" b back
+      (match join with Some j -> Printf.sprintf " after %d" j | None -> "")
+  in
+  List.iter
+    (fun (into, from, beside) ->
+      Format.fprintf ppf "@ %d := %s%s;" into (r from)
+        (match beside with Some b -> ", " ^ r b | None -> ""))
+    ks
+
+(* The graph, and whether its kernels form a cycle. *)
+let graph ks =
+  let storage = [| x; y; z; w |] in
+  let states = Array.map (fun s -> [ s ]) storage in
+  let state (b, back, join) =
+    let l = states.(b) in
+    let s = List.nth l (min back (List.length l - 1)) in
+    match join with
+    | Some j when Ops.op (List.hd states.(j)) = After ->
+        Ops.after s [ List.hd states.(j) ]
+    | _ -> s
+  in
+  (* Each kernel, the states it reads with the kernels it waits for through
+     joins, and the state it writes over. *)
+  let kernels = ref [] in
+  List.iter
+    (fun (into, from, beside) ->
+      let cur = List.hd states.(into) in
+      let read = List.map state (from :: Option.to_list beside) in
+      let k = reads ~into:cur ~from:(List.hd read) (List.tl read) in
+      kernels := (k, cur, read) :: !kernels;
+      states.(into) <- Ops.after cur [ k ] :: states.(into))
+    ks;
+  let kernels = List.rev !kernels in
+  let rec value s = if Ops.is_join s then value (Ops.nth s 0) else s in
+  let rec waits s =
+    (if Ops.op s = After && not (Ops.is_join s) then [ Ops.nth s 1 ] else [])
+    @ if Ops.is_join s then List.concat_map waits (Ops.src s) else []
+  in
+  (* Edges from a kernel to those that must run after it. *)
+  let succ (k, cur, read) =
+    let war =
+      List.concat_map
+        (fun s ->
+          List.filter_map
+            (fun (t, cur', _) -> if t != k && cur' == value s then Some t else None)
+            kernels)
+        read
+    in
+    let own = List.exists (fun s -> value s == cur) read in
+    war @ (if own then [ k ] else [])
+    @ List.filter_map
+        (fun (t, cur', read') ->
+          if List.exists (fun s -> List.memq k (waits s)) (cur' :: read') then
+            Some t
+          else None)
+        kernels
+  in
+  let succs = List.map (fun ((k, _, _) as e) -> (k, succ e)) kernels in
+  (* A cycle: a kernel reached again from itself. *)
+  let rec reaches seen k t =
+    List.exists
+      (fun n -> n == t || ((not (List.memq n seen)) && reaches (n :: seen) n t))
+      (List.assq k succs)
+  in
+  let cycle = List.exists (fun (k, _, _) -> reaches [] k k) kernels in
+  (Ops.sink (Array.to_list (Array.map List.hd states)), cycle)
+
+let copy_iff_cycle =
+  prop "a schedule copies a state iff its kernels form a cycle"
+    (Gen.with_pp pp_graph gen_graph)
+    (fun ks ->
+      let kg, cycle = graph ks in
+      let allocs =
+        List.filter (fun n -> Ops.op n = Alloc)
+          (Ops.toposort ~calls:Skip (Schedule.create_schedule kg))
+      in
+      cover "a cycle" cycle;
+      cover "no cycle" (not cycle);
+      equal bool ~msg:"a copy" cycle (allocs <> []);
+      keeps kg)
+
 let () =
   exit
     (run "Tolk.Schedule"
@@ -2829,4 +3257,8 @@ let () =
          joins;
          views_of_written;
          aliased;
+         relation;
+         writes;
+         group "create_linear_with_vars › laws" [ values_law ];
+         group "create_schedule › laws" [ copy_iff_cycle ];
        ])

@@ -224,6 +224,23 @@ def call_given_one_state_twice():
     return Tensor(a.uop.after(body.call(a.uop, a.uop, precompile=True)))
 
 
+def swap_through_values():
+    # two buffers swapped through values computed from each: each assign reads what the other overwrites
+    a, b = empty(4).contiguous(), empty(4).contiguous()
+    na, nb = b * 1, a * 1
+    a.assign(na)
+    b.assign(nb)
+    return a, b
+
+
+def read_beside_overwrite():
+    # one kernel reads a buffer as it was and once assigned
+    a = empty(4).contiguous()
+    b = a * 2
+    a.assign(a + 1)
+    return b + a, a
+
+
 def setitem():
     t = empty(8, 8).contiguous()
     t[2:4] = 1.0
@@ -306,6 +323,8 @@ PROGRAMS = {
     "read_join_of_overwritten": read_join_of_overwritten,
     "stage_of_overwritten": stage_of_overwritten,
     "call_given_one_state_twice": call_given_one_state_twice,
+    "swap_through_values": swap_through_values,
+    "read_beside_overwrite": read_beside_overwrite,
     "copy_of_overwritten": copy_of_overwritten,
     "setitem": setitem,
     "assign_bitcast": lambda: empty(4, dtype=dtypes.uint32).contiguous().bitcast(dtypes.float).assign(empty(4) + 1),

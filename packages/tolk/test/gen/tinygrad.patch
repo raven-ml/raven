@@ -2419,7 +2419,7 @@ index 6eec3e198..78afe4e78 100644
    smem_prefix_for_cast: bool = False
    barrier = '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");' + '__builtin_amdgcn_s_barrier();' + \
 diff --git a/tinygrad/schedule/__init__.py b/tinygrad/schedule/__init__.py
-index 7ead5c9c6..d8a60c903 100644
+index 7ead5c9c6..f3d07464a 100644
 --- a/tinygrad/schedule/__init__.py
 +++ b/tinygrad/schedule/__init__.py
 @@ -2,7 +2,7 @@ import time, inspect
@@ -2427,7 +2427,7 @@ index 7ead5c9c6..d8a60c903 100644
  from dataclasses import dataclass, field, replace
  from tinygrad.dtype import AddrSpace
 -from tinygrad.uop.ops import GroupOp, UOp, Ops, UOpMetaClass, graph_rewrite, MapCtx, gate_kernel_sink, KernelInfo
-+from tinygrad.uop.ops import GroupOp, UOp, Ops, UOpMetaClass, graph_rewrite, MapCtx, gate_kernel_sink, KernelInfo, ParamArg
++from tinygrad.uop.ops import GroupOp, UOp, Ops, UOpMetaClass, graph_rewrite, MapCtx, gate_kernel_sink, KernelInfo, ParamArg, written_params
  from tinygrad.uop.spec import type_verify, spec_tensor
  from tinygrad.helpers import DEBUG, cpu_profile, TracingKey, SPEC, SCACHE, BASEDIR, partition, dedup, all_int, VIZ
  from tinygrad.helpers import diskcache_get, diskcache_put, colored
@@ -2453,16 +2453,16 @@ index 7ead5c9c6..d8a60c903 100644
  
  def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
    kernels, remaining = partition(after.src[1:], lambda s: s.op in {Ops.CALL, Ops.END})
-@@ -28,17 +32,98 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
+@@ -28,40 +32,139 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
      raise AssertionError(f"AFTER source should be CALL, END, STORE, or AFTER, not {invalid[0].op}")
    return tuple(kernels), tuple(deps)
  
 -def create_schedule(sched_sink:UOp) -> UOp:
-+# a kernel that reads a buffer state and waits, through a value computed after it, for a kernel that overwrites it runs
-+# neither before nor after the overwrite: it reads instead a copy of the state into storage of its own, made before it
++# a read on a cycle of the kernels reads instead a copy of its state into storage of its own, made before the overwrite. the
++# copy is made once, before the reader; tinygrad builds no loop of a call, whose own reads tolk copies in the loop
 +def _copy_state(s:UOp, slot:int) -> UOp:
 +  buf = s.buf_uop
-+  if not isinstance(buf.device, str): raise RuntimeError("a kernel reads a buffer state that a kernel it waits for overwrites, off one device")
++  if not isinstance(buf.device, str): raise RuntimeError("a copied buffer state needs a device")
 +  dst = UOp(Ops.ALLOC, src=(UOp.const(buf.max_numel()),), arg=ParamArg(slot, buf.dtype, device=buf.device))
 +  r = UOp.range(buf.max_numel(), 0)
 +  body = dst.param_like(0).index(r).store(buf.param_like(1).index(r)).end(r).sink(arg=KernelInfo())
@@ -2476,37 +2476,8 @@ index 7ead5c9c6..d8a60c903 100644
 +  if d.op in {Ops.MSELECT, Ops.MSTACK}: return d.replace(src=tuple(_swap(s, c, x) for x in d.src))
 +  return d.replace(src=(_swap(s, c, d.src[0]),)+d.src[1:])
 +
-+# the positions of a call's arguments its body writes: the stores into its parameters at any depth, a call the body makes
-+# writing the parameters it passes where its own body writes. None where the body does not show them
-+def _written(call:UOp) -> list[int]|None:
-+  def param(u:UOp) -> UOp|None:
-+    while u.op is not Ops.PARAM:
-+      if not len(u.src): return None
-+      u = u.src[0]
-+    return u if u.addrspace is not AddrSpace.ALU else None
-+  out: set[int] = set()
-+  def add(u:UOp):
-+    if (p:=param(u)) is not None and p.arg.slot >= 0: out.add(p.arg.slot)
-+  def inner(c:UOp):
-+    w = _written(c)
-+    for i, a in enumerate(c.src[1:]):
-+      if w is None or i in w: add(a)
-+  def entry(e:UOp):
-+    if e.op is Ops.CALL: inner(e)
-+    elif e.op in {Ops.END, Ops.BACKEDGE}: entry(e.src[0])
-+    elif e.op is Ops.LINEAR:
-+      for x in e.src: entry(x)
-+  body = call.src[0]
-+  if body.op is Ops.SINK:
-+    nodes = body.toposort(enter_calls=False)
-+    if any(u.op in {Ops.CUSTOM, Ops.CUSTOMI} for u in nodes): return None
-+    for u in nodes:
-+      if u.op is Ops.STORE: add(u.src[0])
-+      elif u.op is Ops.CALL: inner(u)
-+  elif body.op is Ops.LINEAR: entry(body)
-+  elif body.op is Ops.STORE: add(body.src[0])
-+  else: return None
-+  return sorted(out)
++# the positions of a call's arguments its body writes, None where the body does not show them
++def _written(call:UOp) -> list[int]|None: return written_params(call.src[0])
 +
 +# whether the call c reads the state s through an argument its body does not write while it writes s through another: as
 +# memmove reads its source, it reads s as it was before the call
@@ -2531,14 +2502,65 @@ index 7ead5c9c6..d8a60c903 100644
 +    rebuilt[k] = kk.replace(src=(call,)+kk.src[1:]) if kk.op in {Ops.END, Ops.BACKEDGE} else call
 +  return sched_sink.substitute(rebuilt)
 +
++# a kernel reads the states its arguments name and writes the states the AFTERs that list it are over. it runs after the
++# kernels that write the states it reads, and before every other kernel that writes over them. where these orders form a
++# cycle, one read on it reads a copy of its state, made before the state's overwrite. a cycle is found where Kahn's order
++# stops, walking back through kernels not run; the read cut is one whose state is copied already, else the one of fewest
++# bytes, of storage that can be copied first
++# the state the kernels ks of the AFTER u write over: the latest state of u's storage their calls are given, as a loop is
++# given its carry's first state while its AFTER names the storage alone; else the state u is after
++def _written_over(u:UOp, ks:tuple[UOp, ...]) -> UOp:
++  declared = _states(u.src[0])[0]
++  given = [st for k in ks for a in (k.src[0] if k.op in {Ops.END, Ops.BACKEDGE} else k).src[1:]
++           if not a.is_bound_var and a.addrspace is not AddrSpace.ALU and (st := _states(a)[0]).buf_uop is declared.buf_uop]
++  def chain(s:UOp) -> list[UOp]: return [s] + (chain(_states(s.src[0])[0]) if s.op is Ops.AFTER else [])
++  return next((s for s in given if all(o in chain(s) for o in given)), declared)
++
++def _cuts(order:list[UOp], in_degree:dict[UOp, int], children:dict[UOp, list[tuple[UOp, tuple|None]]],
++          parents:dict[UOp, list[tuple[UOp, tuple|None]]], copies:bool) -> list[tuple[UOp, UOp]]:
++  deg, finished, cut = dict(in_degree), set(), []
++  queue: deque[UOp] = deque(k for k in order if deg[k] == 0)
++  def release(k:UOp):
++    deg[k] -= 1
++    if deg[k] == 0: queue.append(k)
++  def cost(s:UOp):
++    b = s.buf_uop
++    copyable = isinstance(b.device, str) and not b.device.startswith("DISK")
++    return (0 if copyable else 1, 0 if any(c[1] is s for c in cut) else b.max_numel()*b.dtype.itemsize)
++  while True:
++    while queue:
++      k = queue.popleft(); finished.add(k)
++      for x, war in children.get(k, []):
++        if war not in cut: release(x)
++    if (k := next((k for k in order if k not in finished), None)) is None: return cut
++    if not copies: raise RuntimeError("cycle detected in assign graph")
++    path: list[tuple|None] = []; met: dict[UOp, int] = {}
++    while k not in met:
++      met[k] = len(path)
++      k, war = next((p, w) for p, w in parents[k] if p not in finished and w not in cut)
++      path.append(war)
++    if not (wars := [w for w in path[met[k]:] if w is not None]): raise RuntimeError("cycle detected in assign graph")
++    cut.append(war := min(wars, key=lambda w: cost(w[1])))
++    for c, ps in parents.items():
++      if c not in finished:
++        for p, w in ps:
++          if w == war and p not in finished: release(c)
++
 +def _schedule(sched_sink:UOp, copies:bool) -> UOp:
    with cpu_profile(TracingKey("toposort sched_sink")):
-     # build kernel dependency graph: edges from producer kernel to consumer kernels
+-    # build kernel dependency graph: edges from producer kernel to consumer kernels
++    # build kernel dependency graph: edges from producer kernel to consumer kernels, each through the read it orders
      children: dict[UOp, list[UOp]] = {}
++    edges: dict[UOp, list[tuple[UOp, tuple|None]]] = {}
++    parents: dict[UOp, list[tuple[UOp, tuple|None]]] = {}
      in_degree: dict[UOp, int] = {}
-     writes: dict[UOp, list[tuple[UOp, tuple[UOp, ...]]]] = {}  # superseded state -> (AFTER, new kernels)
+-    writes: dict[UOp, list[tuple[UOp, tuple[UOp, ...]]]] = {}  # superseded state -> (AFTER, new kernels)
++    def edge(t:UOp, k:UOp, war:tuple|None=None):
++      children.setdefault(t, []).append(k); edges.setdefault(t, []).append((k, war)); parents.setdefault(k, []).append((t, war))
++      in_degree[k] += 1
++    writes: dict[UOp, list[tuple[UOp, tuple[UOp, ...]]]] = {}  # written state -> (AFTER, its kernels)
      reads: list[tuple[UOp, UOp, UOp]] = []  # (reader AFTER, reader kernel, buffer state read)
-+    hazards: list[tuple[UOp, UOp]] = []  # (reader kernel, buffer state read) whose overwrite it waits for
++    seen: set[UOp] = set()
 +    waits_memo: dict[UOp, tuple[UOp, ...]] = {}
 +    def waits(x:UOp) -> tuple[UOp, ...]:
 +      # the kernels a reader of x waits for: the writers of the state it reads, and what each join on the way waits for
@@ -2551,24 +2573,32 @@ index 7ead5c9c6..d8a60c903 100644
 +      if u.op is not Ops.AFTER or u.is_join: continue
        kernels, after_deps = _split_after(u)
 -      prev_state = _unwrap_src(u.src[0])
-+      prev_state = _states(u.src[0])[0]
-       prev_kernels = set(_split_after(prev_state)[0]) if prev_state.op is Ops.AFTER else set()
-       writes.setdefault(prev_state, []).append((u, tuple(k for k in kernels if k not in prev_kernels)))
+-      prev_kernels = set(_split_after(prev_state)[0]) if prev_state.op is Ops.AFTER else set()
+-      writes.setdefault(prev_state, []).append((u, tuple(k for k in kernels if k not in prev_kernels)))
++      if kernels:
++        prev_state = _written_over(u, kernels)
++        # no storage holds two successors of one state
++        if any(ks != kernels for _, ks in writes.get(prev_state, [])): raise RuntimeError(f"two writes over one state of {prev_state.buf_uop}")
++        writes.setdefault(prev_state, []).append((u, kernels))
        for k in kernels:
-@@ -48,20 +133,28 @@ def create_schedule(sched_sink:UOp) -> UOp:
-         read_states = [st for s in kernel_deps for st in _states(s)]
-         reads += [(u, k, st) for st in read_states]
+         in_degree.setdefault(k, 0)
+         if k.op is Ops.END: assert k.src[0].op is Ops.CALL, f"END src[0] should be KERNEL, not {k.src[0].op}"
+         kernel_deps = k.src[0].src[1:] if k.op is Ops.END else k.src[1:]
+-        read_states = [st for s in kernel_deps for st in _states(s)]
+-        reads += [(u, k, st) for st in read_states]
++        reads += [(u, k, st) for s in kernel_deps for st in _states(s)]
          # RAW deps: a kernel runs after the kernels that produced the states it reads or joins
 -        for st in read_states + [st for s in after_deps for st in _states(s)]:
 -          if st.op is Ops.AFTER:
 -            for t in _split_after(st)[0]:
 -              children.setdefault(t, []).append(k)
 -              in_degree[k] += 1
-+        for t in [t for s in kernel_deps+after_deps for t in waits(s)]:
-+          children.setdefault(t, []).append(k)
-+          in_degree[k] += 1
-     # WAR deps: a kernel reading buffer state S must run before another write that supersedes S. an AFTER only
-     # supersedes its immediate prior state; join members already present in that prior state are ordering deps, not writes
+-    # WAR deps: a kernel reading buffer state S must run before another write that supersedes S. an AFTER only
+-    # supersedes its immediate prior state; join members already present in that prior state are ordering deps, not writes
++        for t in [t for s in (() if k in seen else kernel_deps)+after_deps for t in waits(s)]: edge(t, k)
++        seen.add(k)
++    # WAR deps: a kernel reading a state runs before every other write over it. a kernel writing the state it reads
++    # through another argument runs before itself, a cycle of one kernel
      for u, k, s in reads:
        for a, write_kernels in writes.get(s, []):
 -        if a is u: continue
@@ -2577,23 +2607,13 @@ index 7ead5c9c6..d8a60c903 100644
 -            children.setdefault(k, []).append(t)
 -            in_degree[t] += 1
 +          if t is k:
-+            # a kernel writing the state it reads through another argument reads a copy made before it
-+            if _aliases(k.src[0] if k.op is Ops.END else k, s) and (k, s) not in hazards: hazards.append((k, s))
-+            continue
-+          if a is u: continue
-+          # a kernel that waits for the write reads the state it overwrote: it reads a copy made before the write
-+          if t in k.backward_slice:
-+            if (k, s) not in hazards: hazards.append((k, s))
-+            continue
-+          children.setdefault(k, []).append(t)
-+          in_degree[t] += 1
-+    if hazards:
-+      if not copies: raise RuntimeError("a kernel reads a buffer state that a kernel it waits for overwrites")
-+      return _schedule(_copy_before_overwrites(sched_sink, hazards), False)
++            if _aliases(k.src[0] if k.op is Ops.END else k, s): edge(k, k, (k, s))
++          elif a is not u: edge(k, t, (k, s))
++    if cut := _cuts(list(in_degree), in_degree, edges, parents, copies): return _schedule(_copy_before_overwrites(sched_sink, cut), False)
  
    with cpu_profile(TracingKey("linearize schedule")):
      queue: deque[UOp] = deque(k for k,v in in_degree.items() if v == 0)
-@@ -78,6 +171,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
+@@ -78,6 +181,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
      if any(in_degree.values()): raise RuntimeError("cycle detected in assign graph")
    return UOp(Ops.LINEAR, src=tuple(linearized))
  
@@ -2602,7 +2622,7 @@ index 7ead5c9c6..d8a60c903 100644
  from tinygrad.schedule.memory import memory_plan_rewrite
  from tinygrad.engine.realize import capturing, pm_flatten_linear
  from tinygrad.schedule.prepare import prepare_rangeify
-@@ -191,6 +286,7 @@ class CallifyCtx:
+@@ -191,6 +296,7 @@ class CallifyCtx:
    allocs: dict[UOp, UOp] = field(default_factory=dict)
    views: set[UOp] = field(default_factory=set)
    stores: list[UOp] = field(default_factory=list)
@@ -2610,7 +2630,7 @@ index 7ead5c9c6..d8a60c903 100644
  
  def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
    """MOPS(BUFFER) → SHRINK when movement ops collapse to a contiguous range."""
-@@ -204,6 +300,9 @@ def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
+@@ -204,6 +310,9 @@ def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
      return None if view is None else view.unshard(unshard.arg, unshard.src[1:])
  
    if buf.op is not Ops.BUFFER or (cv := src.contiguous_view()) is None or cv[0].op is not Ops.BUFFER: return None
@@ -2620,7 +2640,7 @@ index 7ead5c9c6..d8a60c903 100644
    buf, offset = cv
    view = buf[offset:offset + src.max_numel() * src.element_size() // buf.element_size()].bitcast(src.dtype)
    if ctx is not None: ctx.views.add(view)
-@@ -258,8 +357,15 @@ def transform_to_call(big_sink:UOp) -> UOp:
+@@ -258,8 +367,15 @@ def transform_to_call(big_sink:UOp) -> UOp:
    if VIZ: graph_rewrite(big_sink, PatternMatcher([]), name="View Graph")
    if SPEC: type_verify(big_sink, spec_tensor)
  
@@ -2630,7 +2650,7 @@ index 7ead5c9c6..d8a60c903 100644
 +  # before any view is made.
 +  ctx = CallifyCtx()
 +  for u in big_sink.toposort(enter_calls=False):
-+    if is_store_after(u):
++    if is_store_after(u) and not u.is_join:
 +      b = u.src[0]
 +      while b.op in GroupOp.Movement|{Ops.BITCAST, Ops.AFTER}: b = b.src[0]
 +      ctx.written.add(b)
@@ -3091,12 +3111,13 @@ index 9a24394a6..7f206714e 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 8238ec207..2c6856344 100644
+index 8238ec207..aaea1588e 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,13 +1,13 @@
- from dataclasses import dataclass, field
+-from dataclasses import dataclass, field
 -from typing import cast
++from dataclasses import dataclass, field, replace
 +from typing import cast, Callable
  import itertools
 -from tinygrad.dtype import dtypes, AddrSpace, Invalid
@@ -3312,20 +3333,34 @@ index 8238ec207..2c6856344 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -275,29 +420,42 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -275,33 +420,50 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
  class LocalAddBufferContext:
    map:dict = field(default_factory=dict)
    ranges:dict = field(default_factory=dict)
-+  joined:dict = field(default_factory=dict)  # what the joins the kernel reads storage through wait for, by storage
++  params:dict = field(default_factory=dict)  # the key of map standing for each state
++  joined:dict = field(default_factory=dict)  # what the joins the kernel reads a state through wait for, by key
 +
 +# the state under the joins u reads through, and what they wait for
 +def _unjoin(u:UOp) -> tuple[UOp, tuple[UOp, ...]]:
 +  deps: tuple[UOp, ...] = ()
 +  while u.is_join: u, deps = u.src[0], deps+u.src[1:]
 +  return u, deps
++
++# a kernel takes a parameter per state of storage it reads or writes, the argument its call passes being that state. storage
++# stands for the state it is; any other state of it for a node of its own, storage in a slot of no storage's, which debuf
++# makes a parameter as it makes storage one. a kernel taking two states of one storage reads one before an overwrite it waits
++# for: the schedule cuts it, and passes it a copy of that state
++def _stand_in(ctx:LocalAddBufferContext, state:UOp) -> UOp:
++  if state not in ctx.params:
++    buf = state.buf_uop
++    p = buf.replace(arg=replace(buf.arg, slot=-(1<<62)+len(ctx.params))) if state is not buf and isinstance(buf.arg, ParamArg) else buf
++    ctx.params[state] = p
++    if p not in ctx.map: ctx.map[p] = state
++  return ctx.params[state]
  
  def add_buf(ctx:LocalAddBufferContext, buf:UOp):
-   if buf not in ctx.map: ctx.map[buf] = buf
+-  if buf not in ctx.map: ctx.map[buf] = buf
++  _stand_in(ctx, buf)
    raise BottomUpGate
  
  def debuf(slot:int, buf:UOp):
@@ -3341,26 +3376,29 @@ index 8238ec207..2c6856344 100644
  def handle_after(ctx:LocalAddBufferContext, after:UOp):
 -  if after.addrspace == AddrSpace.LOCAL: return None
 -  buf = after.buf_uop
+-  # NOTE: this is bottom up, so we only add it once
+-  if buf not in ctx.map: ctx.map[buf] = after
+-  return buf
+-
+-def check_buf_states(x:UOp):
+-  idxs = [s for s in x.toposort(gate=lambda x: x.op is not Ops.AFTER) if s.op is Ops.INDEX]
+-  read_from: dict[UOp, UOp] = {}
+-  if any((buf:=idx.buf_uop).op in GroupOp.Defines and read_from.setdefault(buf, state:=idx.src[0]) is not state for idx in idxs):
+-    raise RuntimeError(f"cycle detected while indexing {buf}")
 +  # a group of stores, an AFTER of an empty STACK, is no state of a buffer
 +  if after.addrspace == AddrSpace.LOCAL or (after.src[0].op is Ops.STACK and not after.src[0].src): return None
 +  # a join is no state either: the kernel reads the state under it, and its call's argument waits for what the join waits for
 +  state, deps = _unjoin(after)
-+  buf = state.buf_uop
-   # NOTE: this is bottom up, so we only add it once
--  if buf not in ctx.map: ctx.map[buf] = after
-+  if buf not in ctx.map: ctx.map[buf] = state
-+  if deps: ctx.joined[buf] = ctx.joined.get(buf, ())+deps
-   return buf
- 
- def check_buf_states(x:UOp):
-   idxs = [s for s in x.toposort(gate=lambda x: x.op is not Ops.AFTER) if s.op is Ops.INDEX]
-   read_from: dict[UOp, UOp] = {}
--  if any((buf:=idx.buf_uop).op in GroupOp.Defines and read_from.setdefault(buf, state:=idx.src[0]) is not state for idx in idxs):
-+  if any((buf:=idx.buf_uop).op in GroupOp.Defines and read_from.setdefault(buf, state:=_unjoin(idx.src[0])[0]) is not state for idx in idxs):
-     raise RuntimeError(f"cycle detected while indexing {buf}")
++  p = _stand_in(ctx, state)
++  if deps: ctx.joined[p] = ctx.joined.get(p, ())+deps
++  return p
  
  to_define_global = PatternMatcher([
-@@ -329,12 +487,92 @@ def split_store(x:UOp) -> UOp|None:
+-  (UPat(Ops.STORE, name="x"), check_buf_states),
+   (UPat((Ops.BUFFER, Ops.ALLOC, Ops.MSTACK, Ops.MSELECT), name="buf"), add_buf),
+   # Only storage parameters get kernel-local slots; scalar parameters retain their enclosing call's slots.
+   (UPat(Ops.PARAM, name="buf"), lambda ctx, buf:
+@@ -329,12 +491,92 @@ def split_store(x:UOp) -> UOp|None:
    ret = graph_rewrite(ret, pm_renumber_range, ctx={a:i for i,a in enumerate(lctx.ranges)}, walk=True)
  
    # create the Kernel. NOTE: buffers can be on different devices here now, they are compiled to SDMA copies later by schedule
@@ -3454,7 +3492,7 @@ index 8238ec207..2c6856344 100644
  @rewrite_group(new_ctx=False)
  def get_kernel_graph(tsink:UOp) -> UOp:
    # convert movement ops to ranges
-@@ -342,10 +580,12 @@ def get_kernel_graph(tsink:UOp) -> UOp:
+@@ -342,10 +584,12 @@ def get_kernel_graph(tsink:UOp) -> UOp:
  
    # cleanups for speed and runability
    tsink = graph_rewrite(tsink,
@@ -3470,7 +3508,7 @@ index 8238ec207..2c6856344 100644
  
    # bufferize -> store
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index f0a41c9b5..23d8aeb1c 100644
+index f0a41c9b5..8a39622fb 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -3648,7 +3686,18 @@ index f0a41c9b5..23d8aeb1c 100644
                             addrspace=addrspace, device=device, spec=spec, bind_on_realize=bind_on_realize, name=name))
      return ret.reshape(()) if not shape else ret.view_as(shape, axis)
    def alloc_like(self, slot:int|None=None, addrspace=AddrSpace.GLOBAL): return UOp.alloc(self.max_shard_shape, self.dtype, slot, addrspace)
-@@ -1300,6 +1371,8 @@ class KernelInfo:
+@@ -1263,7 +1334,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+     placeholders = [s.replace(arg=replace(s.arg, slot=i, val=None)) if s.is_variable else UOp.placeholder_like(s, slot=i)
+                     for i,s in enumerate(srcs)]
+     kernel = fxn(*placeholders).call(*srcs, grad_fxn=grad_fxn)
+-    return [s.after(kernel) for s in srcs]
++    # an argument the kernel only reads is no state the kernel leaves
++    written = written_params(kernel.src[0])
++    return [s.after(kernel) if written is None or i in written else s for i,s in enumerate(srcs)]
+ 
+   @functools.cached_property
+   def kernel_params(self) -> tuple[UOp, ...]:
+@@ -1300,6 +1373,8 @@ class KernelInfo:
    beam: int = 0
    optimized: bool = False       # the AST has been through the optimizer, skip re-optimization
    kernel: bool = True           # launched by the runtime, not called from another kernel
@@ -3657,7 +3706,7 @@ index f0a41c9b5..23d8aeb1c 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1326,6 +1399,7 @@ class ProgramInfo:
+@@ -1326,6 +1401,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -3665,7 +3714,7 @@ index f0a41c9b5..23d8aeb1c 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM: _params.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1363,22 +1437,99 @@ class CallInfo:
+@@ -1363,22 +1439,99 @@ class CallInfo:
  
  # ******** ops in python ********
  
@@ -3770,7 +3819,7 @@ index f0a41c9b5..23d8aeb1c 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.TRUNCMOD: cmod, Ops.TRUNCDIV: cdiv, Ops.DIV: floordiv, Ops.MOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1389,6 +1540,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
+@@ -1389,6 +1542,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
@@ -3781,6 +3830,41 @@ index f0a41c9b5..23d8aeb1c 100644
    return truncate_fxn(alu) if (truncate_fxn:=truncate.get(dtype)) is not None else alu
  
  # ***** pattern matcher *****
+@@ -1887,3 +2044,34 @@ sint = int|UOp
+ Variable = UOp
+ 
+ ConstLike = ConstType|Variable|tuple[ConstType, ...]
++
++# the slots of the storage parameters a call body writes: the stores into its parameters at any depth, a call the body makes
++# writing the parameters it passes where its own body writes. None where the body does not show them
++def written_params(body:UOp) -> list[int]|None:
++  def param(u:UOp) -> UOp|None:
++    while u.op is not Ops.PARAM:
++      if not len(u.src): return None
++      u = u.src[0]
++    return u if u.addrspace is not AddrSpace.ALU else None
++  out: set[int] = set()
++  def add(u:UOp):
++    if (p:=param(u)) is not None and p.arg.slot >= 0: out.add(p.arg.slot)
++  def inner(c:UOp):
++    w = written_params(c.src[0])
++    for i, a in enumerate(c.src[1:]):
++      if w is None or i in w: add(a)
++  def entry(e:UOp):
++    if e.op is Ops.CALL: inner(e)
++    elif e.op in {Ops.END, Ops.BACKEDGE}: entry(e.src[0])
++    elif e.op is Ops.LINEAR:
++      for x in e.src: entry(x)
++  if body.op is Ops.SINK:
++    nodes = body.toposort(enter_calls=False)
++    if any(u.op in {Ops.CUSTOM, Ops.CUSTOMI} for u in nodes): return None
++    for u in nodes:
++      if u.op is Ops.STORE: add(u.src[0])
++      elif u.op is Ops.CALL: inner(u)
++  elif body.op is Ops.LINEAR: entry(body)
++  elif body.op is Ops.STORE: add(body.src[0])
++  else: return None
++  return sorted(out)
 diff --git a/tinygrad/uop/spec.py b/tinygrad/uop/spec.py
 index c359a697f..bea525e32 100644
 --- a/tinygrad/uop/spec.py
