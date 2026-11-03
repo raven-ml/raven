@@ -1771,6 +1771,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.softmax` at float32 and float64 takes one exponential per element,
+  where it took two: it stores `exp (scale x - m)`, sums it, and divides it
+  in place. Values keep their bits; gradients change by rounding.
 - On nx.cpu, few rows by a `[k × n]` operand sum in registers and products of
   depth one write each output once, bits unchanged: a float32 token by 4096
   values of 64 takes 0.07 of the instructions, an outer product 0.54.

@@ -825,6 +825,45 @@ let test_softmax_cases () =
   invalid ~by:"Nx.log_softmax" (fun () ->
       Nx.log_softmax ~axes:[ 0; 0 ] (f64 [| 1. |]))
 
+(* The bytes the host holds after four rounds of collection, each of which
+   returns to it what it collected. *)
+let settled () =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (Rig.Buffer.create Rig.host 0);
+    Rig.free_cache Rig.host
+  done;
+  Rig.allocated Rig.host
+
+(* At every float dtype a softmax holds, after the call and before any
+   collection, the result alone of its operand's size: the bytes the host
+   holds more than settled, its cache included, count every buffer the call
+   took. Lanes of 4096, so that each lane's greatest element and sum, held
+   too, are a page between them. One uncounted run comes first. *)
+let test_softmax_memory () =
+  List.iter
+    (fun (D.Any dt) ->
+      match D.kind dt with
+      | D.Float ->
+          let x = Nx.cast dt (Nx.Rng.normal ~key:(Nx.Rng.key 5) Nx.float32 [| 4; 4096 |]) in
+          Nx.sync x;
+          let call () =
+            let y = Nx.softmax x in
+            Nx.sync y;
+            y
+          in
+          ignore (call ());
+          let before = settled () in
+          let y = call () in
+          let grew = Rig.allocated Rig.host - before in
+          let result = D.bytes dt (4 * 4096) in
+          less
+            ~msg:(Printf.sprintf "bytes held above the settled ones, %s" (D.name dt))
+            int ~than:(result + 4096) grew;
+          equal (array int) [| 4; 4096 |] (Nx.shape y)
+      | _ -> ())
+    D.all
+
 (* RMS norm *)
 
 (* [a + b] as a float64 and its rounding error. *)
@@ -1061,6 +1100,8 @@ let () =
                (law_softmax D.Float32 0x1p-23 0x1p-149);
              test "along several axes" test_axes;
              test "cases" test_softmax_cases;
+             test "holds the result alone at every float dtype"
+               test_softmax_memory;
              narrow "softmax" (fun x -> Nx.softmax (in_rows x));
              narrow "log_softmax" (fun x -> Nx.log_softmax (in_rows x));
            ];

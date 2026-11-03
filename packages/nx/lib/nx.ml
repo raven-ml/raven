@@ -2749,51 +2749,87 @@ let untracked (type s d) ~by (x : (float, s, d) t) : (float, s, d) t =
       | Float8_e4m3fn | Float8_e5m2 -> through D.Uint8
       | Float4_e2m1fn -> through D.Uint4)
 
-(* [finish w shifted sum] of each [scale x - m] and its lane's sum of
-   exponentials, [m] the lane's greatest [scale x], computed in [x]'s wide
-   format and rounded once. The result does not depend on [m], so the terms
-   [m]'s derivative adds cancel: [m] is taken of [x] {!untracked}, and its
-   tangent, a mask of the ties over every element, is never computed. *)
-let normalised (type s d) ~by
-    (finish : 'w. (float, 'w) D.t -> (float, 'w) E.t -> (float, 'w) E.t -> (float, 'w) E.t)
-    ?(axes = [ -1 ]) ?(scale = 1.) (x : (float, s, d) t) : (float, s, d) t =
+(* [x] scaled in its wide format [w], [scale x], and each lane's greatest
+   [scale x] [m], broadcast to [x]'s shape. [m] is taken of [x]
+   {!untracked}: the results do not depend on it, so the terms [m]'s
+   derivative adds cancel, and its tangent, a mask of the ties over every
+   element, is never computed. *)
+let shift (type s d w) ~by (w : (float, w) D.t) s axes ~scale
+    (x : (float, s, d) t) =
+  let scaled =
+    let x = at w (operand 0 x) in
+    if scale = 1. then x else E.(x * const w scale)
+  in
+  let m, () =
+    reduce_by ~by s axes
+      [ Any (untracked ~by x) ]
+      Value.[ Monoid (Max, 0, w) ]
+      scaled
+  in
+  (scaled, Eval.broadcast ~by s (kept ~by ~keepdims:true s axes m))
+
+(* [e / Σ e] for [e = exp (scale x - m)], computed in [x]'s wide format and
+   rounded once. At float32 and float64, the wide format itself, each [e] is
+   taken once and stored, the sum read from it, and the quotient written over
+   it. A narrower float's result could not take that memory: the sum takes
+   its exponentials in the reduction and the quotient takes them again, so
+   that nothing of [x]'s size is held but the result. *)
+let softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) (x : (float, s, d) t) :
+    (float, s, d) t =
+  let by = "Nx.softmax" in
+  let x = Donate.read ~by x in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x (Some axes) in
   if numel x = 0 then x
   else
     let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-    let scaled =
-      let x = at w (operand 0 x) in
-      if scale = 1. then x else E.(x * const w scale)
-    in
+    let scaled, m = shift ~by w s axes ~scale x in
     let lanes y = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes y) in
-    let m, () =
-      reduce_by ~by s axes
-        [ Any (untracked ~by x) ]
-        Value.[ Monoid (Max, 0, w) ]
-        scaled
-    in
-    let m = lanes m in
+    let shifted = E.(scaled - operand 1 m) in
+    match D.equal_witness w dt with
+    | Some Type.Equal ->
+        let e = elementwise ~by w [ Any x; Any m ] (E.exp shifted) in
+        let sum, () =
+          reduce_by ~by s axes [ Any e ] Value.[ Monoid (Sum, 0, w) ]
+            (operand 0 e)
+        in
+        let sum = lanes sum in
+        elementwise ~by dt
+          [ Any (Donate.donate ~by e); Any sum ]
+          E.(operand 0 e / operand 1 sum)
+    | None ->
+        let sum, () =
+          reduce_by ~by s axes [ Any x; Any m ]
+            Value.[ Monoid (Sum, 0, w) ]
+            (E.exp shifted)
+        in
+        let sum = lanes sum in
+        elementwise ~by dt
+          [ Any x; Any m; Any sum ]
+          (E.cast dt E.(exp shifted / operand 2 sum))
+
+(* [(scale x - m) - log Σ exp (scale x - m)], the sum's exponentials taken in
+   the reduction, computed in [x]'s wide format and rounded once. *)
+let log_softmax (type s d) ?(axes = [ -1 ]) ?(scale = 1.) (x : (float, s, d) t)
+    : (float, s, d) t =
+  let by = "Nx.log_softmax" in
+  let x = Donate.read ~by x in
+  let s = shape x and dt = dtype x in
+  let axes = reduced_axes ~by x (Some axes) in
+  if numel x = 0 then x
+  else
+    let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
+    let scaled, m = shift ~by w s axes ~scale x in
     let shifted = E.(scaled - operand 1 m) in
     let sum, () =
       reduce_by ~by s axes [ Any x; Any m ]
         Value.[ Monoid (Sum, 0, w) ]
         (E.exp shifted)
     in
-    let sum = lanes sum in
+    let sum = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes sum) in
     elementwise ~by dt
       [ Any x; Any m; Any sum ]
-      (E.cast dt (finish w shifted (operand 2 sum)))
-
-let softmax ?axes ?scale x =
-  let by = "Nx.softmax" in
-  normalised ~by (fun _ d sum -> E.(exp d / sum)) ?axes ?scale
-    (Donate.read ~by x)
-
-let log_softmax ?axes ?scale x =
-  let by = "Nx.log_softmax" in
-  normalised ~by (fun _ d sum -> E.(d - log sum)) ?axes ?scale
-    (Donate.read ~by x)
+      (E.cast dt E.(shifted - log (operand 2 sum)))
 
 (* One reduction of the squares, a map of each lane's scale, then one map
    of [x] by its lane's scale: no array of [x]'s size but the result. *)
