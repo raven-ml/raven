@@ -5709,28 +5709,51 @@ fold wraps integers and holds its float bound`, hold.
 ## D194. A running operation scans chunks of 16 at every level
 
 - **tinygrad:** `mixin/op.py:781-791` (`_split_cumalu`: past 512 elements,
-  chunks of 256 scanned by windows, then the chunks' last elements scanned
-  by one window each).
+  chunks of 256, the first padded before, scanned by windows, then the
+  chunks' last elements scanned by one window each).
 - **tolk:** `Shape.split_cumalu` and `Shape.cumalu`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same.
-- **Differs:** past 32 elements an axis runs in chunks of 16, and the
-  chunks' last elements run through `Shape.cumalu` again, chunked in turn
-  past 32 of them. Each element reduces a window of at most 32 elements and
-  combines once per stage, so the work is linear in the axis: estimated
-  (`Realize.estimate_uop`) at 6 operations an element over 65536 float32
-  elements against tinygrad's 285, whose window is 256 elements, or the
-  whole axis below 513. An axis of `n` elements takes about `log₁₆ n`
-  stages. Values are a reassociation of the same terms: integers, booleans
-  and extremes are unchanged, and a float sum or product of `n` terms keeps
-  rune's bound of `γ(n - 1)`.
+- **Differs:** past 16 elements an axis runs in chunks of 16 from its first
+  element, and the chunks' last elements run through the same scan again,
+  chunked in turn past 16 of them. The first stage runs over the axis's full
+  chunks alone, whose loads are those of whole rows, and a tail of fewer
+  than 16 elements runs as a chunk of its own, padded after, joined to them
+  by the operation with its identity; the later stages, 16 times smaller,
+  pad their last chunk after. An element's chunk at each stage, and so the
+  order of its operations, depends on its index alone, but for operations
+  with the identity, which change only the sign of a zero sum or a float
+  maximum's result at a NaN (`Op.Max` gives it in its operands' order): the
+  running operation of a prefix of the axis is the prefix of the axis's, bit
+  for bit, as nx.mli promises of `Nx.cumsum`, whose sum of `-0` terms rune
+  makes `+0`; rune computes extremes over integer keys. Padded before, an
+  element's chunk moves with the axis's length, and a float sum of a prefix
+  rounds otherwise. Padded after at the first stage, a chunk's loads are
+  gated each by its own element, and the host kernel loads them one at a
+  time: float64 over 100 × 50500 took twice as long in that stage. Each
+  element reduces a window of at most 16 elements and combines once per
+  stage, a tail's elements once more in the first, so the work is linear in
+  the axis: estimated (`Realize.estimate_uop`) at 6 operations an element
+  over 65536 float32 elements against tinygrad's 285, whose window is 256
+  elements, or the whole axis below 513. An axis of `n` elements takes about
+  `log₁₆ n` stages. Values are a reassociation of the same terms: integers,
+  booleans and extremes are unchanged, and a float sum or product of `n`
+  terms keeps rune's bound of `γ(n - 1)`.
 - **Reason:** (d): compiled running sums, `Nx.cumsum` under `Rune.jit`, as
   norn's nested sampling's error estimate takes, and rune's lowering of an
-  extreme's position and of segments' starts (`Lower_reduce`). On fudge
-  (interleaved, three rounds, one process under the timing lock per run,
-  load 60 to 92): float64 over 100 × 50500 8.5-35.6 ms against 44.8-64.9 ms;
-  float32 over 100 × 400 55-66 µs against 2.75-5.00 ms; the nested sampling
-  estimate over 8 × 1024 100-200 µs against 305-465 µs. Each row allocates
-  the same words. On fudge's RTX 5000 Ada, float32 over 100 × 50500 206-220
+  extreme's position and of segments' starts (`Lower_reduce`). The aligned
+  chunks against chunks padded before, with one window up to 32 elements
+  (fudge, five interleaved rounds, one process under the timing lock per
+  run, load 15 to 43): float64 over 100 × 50500 5.4-13.5 ms against
+  5.4-16.9 ms, 3326 words against 3322; float32 over 4096 × 32 80-127 µs
+  against 203-466 µs, and 2281 words against 1268, its three kernels
+  against one, the cost of the windows of 16 the alignment needs; float32
+  over 100 × 400 44-59 µs against 44-47 µs, 2804 words against 2281, a
+  stage more for its 25 chunks. The chunks padded before against
+  tinygrad's (three interleaved rounds, load 60 to 92): float64 over
+  100 × 50500 8.5-35.6 ms against 44.8-64.9 ms; float32 over 100 × 400
+  55-66 µs against 2.75-5.00 ms; the nested sampling estimate over
+  8 × 1024 100-200 µs against 305-465 µs. Each row allocates the same
+  words. On fudge's RTX 5000 Ada, float32 over 100 × 50500 206-220
   µs against 736-770 µs, and over 8 × 1024, 11.5 µs against 13.0-13.4 µs
   (three rounds, one that shared the GPU left out); over 100 × 400, three
   stages against one kernel, 10.7 µs against 19.6-20.2 µs (two rounds
@@ -5742,7 +5765,9 @@ fold wraps integers and holds its float bound`, hold.
   it in one window; 16 takes one stage fewer than 8.
 - **Pinned by:** rune's `Lower_reduce › work › a running sum's work per term
   at most doubles from 32 to 65536 terms` and `› scans › running scans along
-  long axes give eager's values`; the Rangeify suite's `long_cumsum`,
+  long axes give eager's values`; `rune jit › classes › a running
+  operation's prefix is the prefix of its result`, on the host and, in
+  `Rune.jit on a GPU`, on the GPU; the Rangeify suite's `long_cumsum`,
   `windowed_chain` and `windowed_scaled_long` rows of `kernel_counts.golden`
   and their goldens, and the Codegen and Heuristic suites' `cumsum` kernels,
   from the equally patched tinygrad; on fudge, rune's bench rows

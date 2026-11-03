@@ -1929,23 +1929,45 @@ index 761f59c11..bf523239d 100644
  @functools.cache
  def to_function_name(s:str): return ''.join([c if c in (string.ascii_letters+string.digits+'_') else f'{ord(c):02X}' for c in ansistrip(s)])
 diff --git a/tinygrad/mixin/op.py b/tinygrad/mixin/op.py
-index 34d111b14..4a973d467 100644
+index 34d111b14..80db84b3d 100644
 --- a/tinygrad/mixin/op.py
 +++ b/tinygrad/mixin/op.py
-@@ -783,11 +783,11 @@ class OpMixin(ElementwiseMixin, ReduceMixin):
+@@ -778,17 +778,29 @@ class OpMixin(ElementwiseMixin, ReduceMixin):
+     pooled = self.transpose(axis,-1)._pad_constant(pads, identity_element(op, self.commit_dtype()))._pool((self.shape[axis],))
+     return getattr(pooled, {Ops.ADD: "sum", Ops.MAX: "max", Ops.MUL: "prod"}[op])(-1).transpose(axis, -1)
+ 
+-  def _split_cumalu(self, axis:int, op:Ops) -> Self:
++  def _split_cumalu(self, axis:int, op:Ops, dense:bool=True) -> Self:
+     axis = self._resolve_dim(axis)
      if self.ndim == 0 or 0 in self.shape: return self.cast(self.sum().dtype) if op is Ops.ADD else self
      # TODO: someday the optimizer will find this on its own
      # for now this is a two stage cumsum
 -    SPLIT = 256
 +    SPLIT = 16
      value = identity_element(op, self.commit_dtype())
-     if not isinstance(s:=self.shape[axis], int) or s <= SPLIT*2: return self._cumalu(axis, op)
-     chunks = self.transpose(axis,-1)._pad_constant((None,)*(self.ndim-1)+((round_up(s,SPLIT)-s,0),), value).unflatten(-1,(-1,SPLIT))._cumalu(-1, op)
+-    if not isinstance(s:=self.shape[axis], int) or s <= SPLIT*2: return self._cumalu(axis, op)
+-    chunks = self.transpose(axis,-1)._pad_constant((None,)*(self.ndim-1)+((round_up(s,SPLIT)-s,0),), value).unflatten(-1,(-1,SPLIT))._cumalu(-1, op)
 -    base = chunks[..., -1]._cumalu(-1, op)._pad_constant((None,)*(chunks.ndim-2) + ((1, -1),), value)
-+    base = chunks[..., -1]._split_cumalu(-1, op)._pad_constant((None,)*(chunks.ndim-2) + ((1, -1),), value)
-     return chunks.alu(op, base.unsqueeze(-1)).flatten(start_dim=-2)[..., -s:].transpose(axis,-1)
+-    return chunks.alu(op, base.unsqueeze(-1)).flatten(start_dim=-2)[..., -s:].transpose(axis,-1)
++    if not isinstance(s:=self.shape[axis], int) or s <= SPLIT: return self._cumalu(axis, op)
++    # chunks start at the axis's first element. dense, the first stage runs over the full chunks alone and the tail joins
++    # after, by op with its identity; the later stages pad the last chunk after
++    t, q, r = self.transpose(axis,-1), s//SPLIT, s%SPLIT
++    pads = lambda lo, hi: (None,)*(t.ndim-1) + ((lo, hi),)
++    if r == 0: body, n = t, q
++    elif dense: body, n = t[..., :q*SPLIT], q
++    else: body, n = t._pad_constant(pads(0, SPLIT-r), value), q+1
++    chunks = body.unflatten(-1,(n,SPLIT))._cumalu(-1, op)
++    sums = chunks[..., -1]._split_cumalu(-1, op, dense=False)
++    base = sums._pad_constant((None,)*(sums.ndim-1) + ((1, -1),), value)
++    whole = chunks.alu(op, base.unsqueeze(-1)).flatten(start_dim=-2)
++    if r == 0: return whole.transpose(axis,-1)
++    if not dense: return whole[..., :s].transpose(axis,-1)
++    tail = t[..., q*SPLIT:]._pad_constant(pads(0, SPLIT-r), value)._cumalu(-1, op)[..., :r].alu(op, sums[..., q-1:q])
++    return whole._pad_constant(pads(0, r), value).alu(op, tail._pad_constant(pads(q*SPLIT, 0), value)).transpose(axis,-1)
  
    def cumsum(self, axis:int=0) -> Self:
+     """
 diff --git a/tinygrad/renderer/__init__.py b/tinygrad/renderer/__init__.py
 index 7fb5ccac2..489f4fc09 100644
 --- a/tinygrad/renderer/__init__.py

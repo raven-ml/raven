@@ -224,7 +224,7 @@ KERNELS = {
     "sum_and_max": lambda: last((a := empty(7, 11, 13)).sum((1, 2)) + a.max((1, 2))),
     "flip_pad_sum": lambda: last(empty(17, 19).flip(0).pad(((2, 3), (0, 0))).sum(0)),
     "strided_conv": lambda: last(empty(1, 3, 15, 15).conv2d(empty(4, 3, 3, 3), padding=1, stride=2)),
-    "cumsum": lambda: last(empty(13, 17).cumsum(1)),
+    "cumsum": lambda: last(empty(13, 15).cumsum(1)),
     "elementwise": lambda: last(((a := empty(16, 16)) + empty(16, 16)).sqrt() * (a + 1).exp()),
     "elementwise_4": lambda: last(((a := empty(4)) + empty(4)).sqrt() * (a + 1).exp()),
     "matmul": lambda: last(empty(128, 128) @ empty(128, 128)),

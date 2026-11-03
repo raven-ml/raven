@@ -9,7 +9,8 @@
    weights holds its bound, a call's check raises at the next wait, so the
    call returns while its work runs, a key split there has the host's words,
    and a program over the GPU and a memory device, devices of two targets,
-   compiles to eager's values with replicas equal bit for bit. It skips
+   compiles to eager's values with replicas equal bit for bit, and a running
+   operation of a prefix is the prefix of its result. It skips
    without a GPU, or without the compiler the GPU's kernels need. *)
 
 open Windtrap
@@ -82,6 +83,13 @@ let law c =
   Scatters.law ~flushes:(flushes d) s c
 
 let casts16 dt () = Casts16.law (snd (on_gpu ())) dt
+
+(* The prefix law on the GPU, a float64 case discarded where its kernels lack
+   float64. *)
+let prefixes (Prefixes.Case { dt; _ } as c) =
+  let d, s = on_gpu () in
+  if Nx.Dtype.equal dt Nx.float64 then assume (has_float64 d);
+  Prefixes.law s c
 
 exception Big of int array * float
 
@@ -827,6 +835,13 @@ let () =
                "a scatter past 16 times eager's work compiles to eager's values"
                (Gen.with_pp Scatters.pp Scatters.gen)
                law;
+           ];
+         group "running operations"
+           [
+             prop ~count:4 ~examples:Prefixes.examples
+               "a running operation's prefix is the prefix of its result"
+               (Gen.with_pp Prefixes.pp Prefixes.gen)
+               prefixes;
            ];
          group "16-bit casts"
            [

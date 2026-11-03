@@ -241,8 +241,8 @@ let pp_case ppf c =
     (ints c.axes) (raws c.raws)
     (match c.carry with None -> "" | Some a -> " carry [" ^ raws a ^ "]")
 
-(* A long scan axis: past 32 terms a running monoid scans chunks of 16 and
-   then their last terms, which past 512 terms are chunked again. *)
+(* A long scan axis: past 16 terms a running monoid scans chunks of 16 and
+   then their last terms, which past 256 terms are chunked again. *)
 let long_extent =
   Gen.frequency [ (1, Gen.int_range 33 96); (1, Gen.int_range 513 640) ]
 

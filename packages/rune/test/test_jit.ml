@@ -5034,6 +5034,10 @@ let () =
              prop ~count:20 ~examples:scan_examples
                "an associative scan over a tuple gives eager's bits" scan_cases
                law_scan;
+             prop ~count:6 ~examples:Prefixes.examples
+               "a running operation's prefix is the prefix of its result"
+               (Gen.with_pp Prefixes.pp Prefixes.gen)
+               (Prefixes.law (module Nx.Host));
              prop ~count:40
                "a value stored or computed again in its readers gives eager's \
                 bits"

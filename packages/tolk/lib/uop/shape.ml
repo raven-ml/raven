@@ -925,7 +925,7 @@ let cat ?(axis = 0) u rest =
 
 (* Running operations *)
 
-(* Chunks of 16: each element reduces a window of at most 32 elements, and each
+(* Chunks of 16: each element reduces a window of at most 16 elements, and each
    factor of 16 in the axis's length adds a stage. *)
 let split_cumalu = 16
 
@@ -949,19 +949,39 @@ let pooled_cumalu u op =
     op
     [ last + 1 ]
 
-let rec cumalu u axis op =
-  let axis = resolve_dim u axis and last = ndim u - 1 in
-  let s = running_size u axis and t = transpose u axis last in
-  if List.exists (fun d -> equal_sint d (Int 0)) (shape u) then u
-  else if s <= 2 * split_cumalu then transpose (pooled_cumalu t op) axis last
+let combiner op =
+  if Op.equal op Op.Add then add
+  else if Op.equal op Op.Mul then mul
+  else maximum
+
+(* The running [op] along the last axis of [t], past 16 elements: chunks of 16
+   from the axis's first element, each combined with the running [op] of the
+   chunks' last elements before it. Chunks start at the axis's first element so
+   that an element's chunk, and the order of its operations, depend on its
+   index alone. *)
+let rec scan ~dense t op =
+  let last = ndim t - 1 in
+  let s = running_size t last in
+  if s <= split_cumalu then pooled_cumalu t op
   else
-    let value = identity_element op (dtype u) in
-    let rounded = Helpers.round_up s split_cumalu in
-    let t = pad ~value t (at_axis t last (Int (rounded - s), Int 0)) in
+    let value = identity_element op (dtype t) in
+    let along x lo hi = shrink x (at_axis x last (Int lo, Int hi)) in
+    let combine = combiner op in
+    let q = s / split_cumalu and r = s mod split_cumalu in
+    let span = q * split_cumalu in
+    (* Dense, the first stage runs over the axis's full chunks alone, whose
+       loads are those of whole rows, and the tail joins after; otherwise the
+       last chunk is padded after, which the later stages, 16 times smaller,
+       can afford. *)
+    let body, n =
+      if r = 0 then (t, q)
+      else if dense then (along t 0 span, q)
+      else
+        ( pad ~value t (at_axis t last (Int 0, Int (split_cumalu - r))),
+          q + 1 )
+    in
     let chunks =
-      pooled_cumalu
-        (unflatten t last [ Int (rounded / split_cumalu); Int split_cumalu ])
-        op
+      pooled_cumalu (unflatten body last [ Int n; Int split_cumalu ]) op
     in
     let ends =
       squeeze ~axis:(last + 1)
@@ -969,21 +989,34 @@ let rec cumalu u axis op =
            (at_axis chunks (last + 1)
               (Int (split_cumalu - 1), Int split_cumalu)))
     in
-    let base =
-      pad ~value (cumalu ends last op) (at_axis ends last (Int 1, Int (-1)))
-    in
-    let combine =
-      if Op.equal op Op.Add then add
-      else if Op.equal op Op.Mul then mul
-      else maximum
-    in
+    let sums = scan ~dense:false ends op in
+    let base = pad ~value sums (at_axis sums last (Int 1, Int (-1))) in
     let whole =
       flatten ~start:last
         (combine chunks (reshape base (shape base @ [ Int 1 ])))
     in
-    transpose
-      (shrink whole (at_axis whole last (Int (rounded - s), Int rounded)))
-      axis last
+    if r = 0 then whole
+    else if not dense then along whole 0 s
+    else
+      (* The tail runs as a chunk of its own and joins the full chunks by [op]
+         with its identity, which changes only a zero sum's sign or a
+         maximum's result at a NaN. *)
+      let tail = along t span s in
+      let tail =
+        pad ~value tail (at_axis tail last (Int 0, Int (split_cumalu - r)))
+      in
+      let tail =
+        combine (along (pooled_cumalu tail op) 0 r) (along sums (q - 1) q)
+      in
+      combine
+        (pad ~value whole (at_axis whole last (Int 0, Int r)))
+        (pad ~value tail (at_axis tail last (Int span, Int 0)))
+
+let cumalu u axis op =
+  let axis = resolve_dim u axis and last = ndim u - 1 in
+  ignore (running_size u axis);
+  if List.exists (fun d -> equal_sint d (Int 0)) (shape u) then u
+  else transpose (scan ~dense:true (transpose u axis last) op) axis last
 
 let arange ?(start = 0) ?(step = 1) ?dtype stop =
   if step = 0 then invalid_arg "an arange of step 0";

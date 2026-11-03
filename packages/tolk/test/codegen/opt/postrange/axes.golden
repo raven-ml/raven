@@ -14,7 +14,7 @@ local_and_grouped_reduce_10	10	[128, 2, 2, 2, 2, 2, 2, 2, 2, 8]	[AxisType.GLOBAL
 sum_and_max_grouped	3	[7, 32, 11]	[AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST]	[1, 2]	[0]	[1]	11	1	2	2	   7   32   11	5:32:LOCAL
 flip_pad_sum_grouped	3	[22, 2, 12]	[AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST]	[0]	[1]	[0]	12	1	1	2	  22    2   12	1:1:GLOBAL 4:2:LOCAL
 strided_conv_grouped	6	[4, 8, 3, 8, 3, 3]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.WEAK, AxisType.WEAK]	[2, 4, 5]	[0, 1, 3]	[2, 4, 5]	1	1	1	3	   4    8    3    8    3    3	4:1:GLOBAL 7:8:LOCAL
-cumsum_unrolled_padded	3	[20, 13, 17]	[AxisType.WEAK, AxisType.UPCAST, AxisType.UPCAST]	[2]	[0]	[]	221	0	1	2	  20   13   17	2:20:WEAK
+cumsum_unrolled_padded	3	[16, 13, 15]	[AxisType.WEAK, AxisType.UPCAST, AxisType.UPCAST]	[2]	[0]	[]	195	0	1	2	  16   13   15	2:16:WEAK
 elementwise_upcast_2	2	[128, 2]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	2	0	0	3	 128    2	0:128:WEAK 1:2:UPCAST
 elementwise_upcast_4	2	[64, 4]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	4	0	0	3	  64    4	0:64:WEAK 1:4:UPCAST
 elementwise_upcast_8	2	[32, 8]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	8	0	0	3	  32    8	0:32:WEAK 1:8:UPCAST

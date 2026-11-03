@@ -155,7 +155,7 @@ PROGRAMS = {
     "tensor_of_list": lambda: Tensor(list(range(40)), dtype="int") + 1,
     "arange": lambda: Tensor.arange(16).reshape(4, 4) + 1,
     "cumsum": lambda: empty(8).cumsum(),
-    "cumsum_rows": lambda: empty(4, 32).cumsum(1),
+    "cumsum_rows": lambda: empty(4, 16).cumsum(1),
     "triu": lambda: empty(6, 6).triu(1),
     # gathers, sorts and selections
     "embedding": lambda: empty(10, 4)[Tensor([1, 2, 3], dtype="int")],

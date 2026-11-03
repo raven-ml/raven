@@ -100,9 +100,9 @@ symbolic_kept	2
 symbolic_contiguous	2
 variable_read_twice	1
 read_at_offsets	2
-windowed_chain	4
+windowed_chain	5
 windowed_scaled	1
-windowed_scaled_long	3
+windowed_scaled_long	4
 windowed_pair	2
 read_by_two	2
 long_read_by_two	3
