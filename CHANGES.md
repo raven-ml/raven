@@ -970,6 +970,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   (`Codegen.do_devectorize`): it and every operation after it went lane by
   lane. A float8 loop of 36 lanes that stop apart compiled to 0.8 MB of C,
   which Clang took 2.4-4.5 s on; it is now 38 KB and 0.2-0.3 s.
+- After a tensor core, `Heuristic.hand_coded_optimizations` upcasts N once
+  more by 2 while a lane holds at most 160 outputs: a CUDA warp's tile grows
+  to 64 by 64 or 64 by 80, and bfloat16 products run 1.2 to 1.6 times faster
+  on an RTX 5000 Ada.
 - On GPUs, adjacent `bfloat16` loads and stores merge into vectors of 2 and 4
   as `float16`'s do (`Coalesce.memory_coalescing`): bfloat16 products on an
   RTX 5000 Ada's tensor cores run about 1.5 times faster.

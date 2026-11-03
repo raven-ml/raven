@@ -1,0 +1,92 @@
+# tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
+0 Ops.CONST dtypes.weakint [] 3276800
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 16
+3 Ops.RANGE dtypes.weakint [2] (AxisType.GLOBAL, 1)
+4 Ops.CONST dtypes.weakint [] 5
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 9)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.CONST dtypes.weakint [] 2
+9 Ops.MUL dtypes.weakint [7, 8]
+10 Ops.RANGE dtypes.weakint [8] (AxisType.UPCAST, 4)
+11 Ops.ADD dtypes.weakint [9, 10]
+12 Ops.MUL dtypes.weakint [11, 8]
+13 Ops.CONST dtypes.weakint [] 32
+14 Ops.RANGE dtypes.weakint [13] (AxisType.WARP, -1)
+15 Ops.DIV dtypes.weakint [14, 2]
+16 Ops.MOD dtypes.weakint [15, 8]
+17 Ops.ADD dtypes.weakint [12, 16]
+18 Ops.MUL dtypes.weakint [17, 8]
+19 Ops.CONST dtypes.weakint [] 8
+20 Ops.DIV dtypes.weakint [14, 19]
+21 Ops.MOD dtypes.weakint [20, 8]
+22 Ops.ADD dtypes.weakint [18, 21]
+23 Ops.MUL dtypes.weakint [22, 8]
+24 Ops.CONST dtypes.weakint [] 4
+25 Ops.DIV dtypes.weakint [14, 24]
+26 Ops.MOD dtypes.weakint [25, 8]
+27 Ops.ADD dtypes.weakint [23, 26]
+28 Ops.CONST dtypes.weakint [] 2560
+29 Ops.MUL dtypes.weakint [27, 28]
+30 Ops.CONST dtypes.weakint [] 64
+31 Ops.RANGE dtypes.weakint [30] (AxisType.GLOBAL, 2)
+32 Ops.MUL dtypes.weakint [31, 4]
+33 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 10)
+34 Ops.ADD dtypes.weakint [32, 33]
+35 Ops.MUL dtypes.weakint [34, 8]
+36 Ops.DIV dtypes.weakint [14, 8]
+37 Ops.MOD dtypes.weakint [36, 8]
+38 Ops.ADD dtypes.weakint [35, 37]
+39 Ops.MUL dtypes.weakint [38, 8]
+40 Ops.CONST dtypes.weakint [] 1
+41 Ops.DIV dtypes.weakint [14, 40]
+42 Ops.MOD dtypes.weakint [41, 8]
+43 Ops.ADD dtypes.weakint [39, 42]
+44 Ops.MUL dtypes.weakint [43, 8]
+45 Ops.RANGE dtypes.weakint [8] (AxisType.UPCAST, 3)
+46 Ops.ADD dtypes.weakint [44, 45]
+47 Ops.ADD dtypes.weakint [29, 46]
+48 Ops.INDEX dtypes.f32 [1, 47]
+49 Ops.CONST dtypes.weakint [] 81920
+50 Ops.PARAM dtypes.f16 [49] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
+51 Ops.ADD dtypes.weakint [9, 45]
+52 Ops.MUL dtypes.weakint [51, 8]
+53 Ops.ADD dtypes.weakint [52, 16]
+54 Ops.MUL dtypes.weakint [53, 8]
+55 Ops.ADD dtypes.weakint [54, 21]
+56 Ops.MUL dtypes.weakint [55, 8]
+57 Ops.ADD dtypes.weakint [56, 26]
+58 Ops.MUL dtypes.weakint [57, 30]
+59 Ops.RANGE dtypes.weakint [24] (AxisType.WEAK, 0)
+60 Ops.MUL dtypes.weakint [59, 8]
+61 Ops.ADD dtypes.weakint [60, 10]
+62 Ops.MUL dtypes.weakint [61, 8]
+63 Ops.ADD dtypes.weakint [62, 37]
+64 Ops.MUL dtypes.weakint [63, 8]
+65 Ops.ADD dtypes.weakint [64, 42]
+66 Ops.MUL dtypes.weakint [65, 8]
+67 Ops.RANGE dtypes.weakint [8] (AxisType.UPCAST, 8)
+68 Ops.ADD dtypes.weakint [66, 67]
+69 Ops.ADD dtypes.weakint [58, 68]
+70 Ops.INDEX dtypes.f16 [50, 69]
+71 Ops.CONST dtypes.weakint [] 163840
+72 Ops.PARAM dtypes.f16 [71] ParamArg(slot=2, dtype=dtypes.f16, device="CPU")
+73 Ops.ADD dtypes.weakint [66, 45]
+74 Ops.MUL dtypes.weakint [73, 28]
+75 Ops.ADD dtypes.weakint [35, 16]
+76 Ops.MUL dtypes.weakint [75, 8]
+77 Ops.ADD dtypes.weakint [76, 21]
+78 Ops.MUL dtypes.weakint [77, 8]
+79 Ops.ADD dtypes.weakint [78, 26]
+80 Ops.ADD dtypes.weakint [74, 79]
+81 Ops.INDEX dtypes.f16 [72, 80]
+82 Ops.CONST dtypes.weakfloat [] 0.0
+83 Ops.CAST dtypes.f32 [82] dtypes.f32
+84 Ops.STACK dtypes.f32 [83, 83, 83, 83]
+85 Ops.WMMA dtypes.f32 [70, 81, 84] ((8, 16, 16), dtypes.f16, 32, ((((AxisType.UPCAST, 4), 2), ((AxisType.UPCAST, 3), 2), ((AxisType.UPCAST, 8), 2)), (((AxisType.UPCAST, 4), 2), ((AxisType.UPCAST, 3), 2), ((AxisType.UPCAST, 8), 1)), (((AxisType.UPCAST, 4), 2), ((AxisType.UPCAST, 3), 2), ((AxisType.UPCAST, 8), 1))))
+86 Ops.REDUCE dtypes.f32 [85, 59] (Ops.ADD, 0)
+87 Ops.STORE dtypes.void [48, 86]
+88 Ops.END dtypes.void [87, 3, 6, 10, 14, 31, 33, 45]
+89 Ops.SINK dtypes.void [88] KernelInfo(name="r_16_64_32_2_2_2_5_5_4", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=0, arg=(5, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(5, AxisType.UPCAST))), optimized=True)
+

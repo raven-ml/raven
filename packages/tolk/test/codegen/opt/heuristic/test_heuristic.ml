@@ -1000,6 +1000,78 @@ let doubles =
         (Heuristic.held_registers s (registers file))
         (Heuristic.held_registers d (registers file)))
 
+(* Tensor cores' warp tiles *)
+
+(* The accumulators a lane of a tensor core holds at most once its splits
+   apply. *)
+let accumulators = 160
+
+let uses_core c =
+  List.exists (function Opt.Tc { use_tc = 1; _ } -> true | _ -> false) c.opts
+
+(* The outputs a lane of [o] holds: the product of the sizes of its upcast
+   axes that a stored address reads. *)
+let lane_outputs_of o =
+  let stored =
+    List.filter_map
+      (fun u -> if Ops.op u = Op.Store then Some (Ops.nth u 0) else None)
+      (Ops.toposort ~calls:Skip (K.ast o))
+  in
+  let read r =
+    List.exists
+      (fun s -> Ops.Nodes.mem r (Ops.backward_slice ~calls:Skip s))
+      stored
+  in
+  List.fold_left
+    (fun n r -> if read r then n * Bigint.to_int (size r) else n)
+    1
+    (List.map (List.nth (K.rngs o)) (K.axes_of o [ Upcast ]))
+
+(* The outputs a lane of [c]'s optimised kernel holds. *)
+let lane_outputs c =
+  Setting.context c.settings (fun () ->
+      let k = K.v (kernel c.kernel) (renderer c.renderer) in
+      K.convert_loop_to_global k;
+      lane_outputs_of (Heuristic.hand_coded_optimizations k))
+
+let recorded name = List.find (fun c -> c.name = name) recorded_cases
+
+(* Whether [c]'s optimisations upcast an axis twice: [N]'s last upcast, as the
+   core's first upcasts take each axis once. *)
+let upcasts_twice c =
+  let axes =
+    List.filter_map
+      (function
+        | Opt.Split { axis; target = Upcast; _ } -> Some axis | _ -> None)
+      c.opts
+  in
+  List.length (List.sort_uniq Int.compare axes) < List.length axes
+
+let warp_tiles =
+  group "a tensor core's warp tile"
+    [
+      cases "after N's last upcast a lane holds at most 160 accumulators"
+        ~id:(fun c -> c.name)
+        (List.filter
+           (fun c -> c.environment = "" && uses_core c && upcasts_twice c)
+           recorded_cases)
+        (fun c ->
+          at_most int ~than:accumulators (lane_outputs c));
+      (* CUDA's m16n8 core holds 4 outputs a lane; [M] and [N] are first upcast
+         by the first of 5, 4, 3 and 2 that divides them, while 100
+         workgroups remain. *)
+      cases "N's last upcast by 2 applies while 160 accumulators and the \
+             workgroups hold"
+        ~id:(fun (name, why, _) -> name ^ ", " ^ why)
+        [
+          ("matmul_bf16_5760_cuda", "4 by 5 by 2, at the bound", 160);
+          ("matmul_half_1280x2560_cuda", "refused: 5 by 5 by 2 is 200", 100);
+          ("matmul_half_1024_cuda", "refused: 256 workgroups would remain", 64);
+        ]
+        (fun (name, _, expected) ->
+          equal int expected (lane_outputs (recorded name)));
+    ]
+
 (* The tensor core's floor *)
 
 (* A renderer of CDNA's cores, whose workgroup is 64 threads. *)
@@ -1073,11 +1145,13 @@ let core_threads_of s tc =
   | Error e -> failf "the core does not apply: %s" e
 
 (* The splits the interface states after the core [tc] of [s]: upcasts of
-   its M and N axes by the first of 5, 4, 3 and 2 that divides them, then a
-   local split of N by 4 or 2, each applied only while it leaves at least
-   [core_threads / t] workgroups, [t] the core's threads, or an unknown
-   count. M's upcast, where it applies, takes the amount the heuristic gives
-   it in [opts], which keeps a warp within a run of rows. *)
+   its M and N axes by the first of 5, 4, 3 and 2 that divides them, and of N
+   by 2 while a lane then holds at most 160 outputs, each applied only while
+   it leaves at least [core_threads / t] workgroups, [t] the core's threads,
+   or an unknown count, then a local split of N by 4 or 2 under the same
+   floor. M's
+   upcast, where it applies, takes the amount the heuristic gives it in
+   [opts], which keeps a warp within a run of rows. *)
 let stated ~core_threads s tc opts =
   let s = K.copy s in
   let rngs =
@@ -1086,14 +1160,20 @@ let stated ~core_threads s tc opts =
     | Error e -> failf "the core does not apply: %s" e
   in
   let floor = core_threads / threads_of s in
-  let step i sizes target =
+  let leaves floor n =
+    Shape.Sint.resolve ~default:true
+      Shape.Sint.(workgroups s >= Int n * Int floor)
+  in
+  let step ?(keep = fun n -> leaves floor n) i sizes target =
     let divides n =
       Option.is_some (Shape.divides (Ops.nth rngs.(i) 0) (Bigint.of_int n))
     in
-    match List.find_opt divides sizes with
-    | Some n
-      when Shape.Sint.resolve ~default:true
-             Shape.Sint.(workgroups s >= Int n * Int floor) -> (
+    let chosen =
+      Option.bind (List.find_opt divides sizes) (fun n ->
+          if keep n then Some n else None)
+    in
+    match chosen with
+    | Some n -> (
         let axis = index_of_range rngs.(i) (K.rngs s) in
         let amount =
           match opts with
@@ -1106,10 +1186,13 @@ let stated ~core_threads s tc opts =
         match K.apply_opt s split with
         | Ok (r :: _) -> rngs.(i) <- r
         | Ok [] | Error _ -> failf "%a does not apply" Opt.pp split)
-    | _ -> ()
+    | None -> ()
   in
   step 1 [ 5; 4; 3; 2 ] Opt.Upcast;
   step 0 [ 5; 4; 3; 2 ] Opt.Upcast;
+  step
+    ~keep:(fun n -> leaves floor n && lane_outputs_of s * n <= accumulators)
+    0 [ 2 ] Opt.Upcast;
   step 0 [ 4; 2 ] Opt.Local;
   K.applied_opts s
 
@@ -1329,6 +1412,7 @@ let () =
        [
          chosen;
          leaves_its_argument;
+         warp_tiles;
          keeps_kernel_writes;
          group "streaming"
            [

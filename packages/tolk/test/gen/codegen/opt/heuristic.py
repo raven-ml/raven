@@ -148,6 +148,11 @@ KERNELS = {
     "matmul_half_1024": lambda: last(empty(1024, 1024, dtype=dtypes.half).matmul(empty(1024, 1024, dtype=dtypes.half), dtype=dtypes.float)),
     "matmul_half_512": lambda: last(empty(512, 512, dtype=dtypes.half).matmul(empty(512, 512, dtype=dtypes.half), dtype=dtypes.float)),
     "matmul_half_256": lambda: last(empty(256, 256, dtype=dtypes.half).matmul(empty(256, 256, dtype=dtypes.half), dtype=dtypes.float)),
+    # N's upcast by 2 more: a 512-token prompt's product by a 5760-column bfloat16 matrix holds 4 by 4 by 5 by 2, 160 outputs a
+    # lane of CUDA's core, and takes it; a product of 1280 by 2560 holds 4 by 5 by 5, 100, leaves the workgroups for it, and 200
+    # would pass the bound
+    "matmul_bf16_5760": lambda: last(empty(512, 2880, dtype=dtypes.bfloat16).float() @ empty(2880, 5760, dtype=dtypes.bfloat16).float()),
+    "matmul_half_1280x2560": lambda: last(empty(1280, 64, dtype=dtypes.half).matmul(empty(64, 2560, dtype=dtypes.half), dtype=dtypes.float)),
     # gpt-oss-20b's attention values at a decode step: 64 by 64 outputs over 1024 slots, from bfloat16 widened
     "attention_values": lambda: last(empty(64, 1024, dtype=dtypes.bfloat16).float() @ empty(1024, 64, dtype=dtypes.bfloat16).float()),
     # products a variable counts: the workgroups are not known, and every split applies

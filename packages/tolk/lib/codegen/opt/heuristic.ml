@@ -97,6 +97,28 @@ let decoded_product k =
    one measures another. *)
 let core_threads = 16384
 
+(* The outputs a lane of a tensor core holds at most once [N] takes its last
+   upcast. A larger warp tile loads fewer operands for each of the core's
+   steps, until its accumulators fill the registers: on sm_89, 64 by 80
+   outputs a warp of CUDA's m16n8 core, 160 a lane, compile to 228 of a
+   thread's 255 registers and ran fastest; 192 ran slower and 256 spill. *)
+let accumulators = 160
+
+(* The outputs a lane of [k] holds: the product of the sizes of the upcast axes
+   its stored addresses read. A tensor core's upcasts of its reduce do not
+   count: they hold the operands of one step. *)
+let lane_outputs k =
+  let stored =
+    List.filter_map
+      (fun u -> if op u = Op.Store then Some (nth u 0) else None)
+      (toposort ~calls:Skip (K.ast k))
+  in
+  let read axis =
+    let r = List.nth (K.rngs k) axis in
+    List.exists (fun s -> Nodes.mem r (backward_slice ~calls:Skip s)) stored
+  in
+  prod_at k (List.filter read (K.axes_of k [ Upcast ]))
+
 let rec gcd a b = if b = 0 then a else gcd b (a mod b)
 
 (* The run of [o] along the range [r]: [d] if [o] reads [r] only as [r / d], 1
@@ -232,6 +254,13 @@ let tensor_cores ~core_threads k =
               let keep = leaves ~default:true floor in
               upcast_m ~keep;
               upcast ~keep 0 core_upcasts Opt.Upcast;
+              (* N takes one more upcast by 2 while a lane holds at most
+                 [accumulators] outputs. *)
+              let fits size =
+                keep size
+                && holds Sint.(lane_outputs tk * Int size <= Int accumulators)
+              in
+              upcast ~keep:fits 0 [ 2 ] Opt.Upcast;
               upcast ~keep 0 [ 4; 2 ] Opt.Local
             end;
             Some tk)

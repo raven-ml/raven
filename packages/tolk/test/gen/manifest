@@ -1237,6 +1237,12 @@ codegen/opt/heuristic/long_chain_cpu.golden
 codegen/opt/heuristic/matmul.golden
 codegen/opt/heuristic/matmul_amd.golden
 codegen/opt/heuristic/matmul_avx2.golden
+codegen/opt/heuristic/matmul_bf16_5760.golden
+codegen/opt/heuristic/matmul_bf16_5760_amd.golden
+codegen/opt/heuristic/matmul_bf16_5760_avx2.golden
+codegen/opt/heuristic/matmul_bf16_5760_cpu.golden
+codegen/opt/heuristic/matmul_bf16_5760_cuda.golden
+codegen/opt/heuristic/matmul_bf16_5760_metal.golden
 codegen/opt/heuristic/matmul_cpu.golden
 codegen/opt/heuristic/matmul_cuda.golden
 codegen/opt/heuristic/matmul_cuda_tf32.golden
@@ -1247,6 +1253,12 @@ codegen/opt/heuristic/matmul_half_1024_avx2.golden
 codegen/opt/heuristic/matmul_half_1024_cpu.golden
 codegen/opt/heuristic/matmul_half_1024_cuda.golden
 codegen/opt/heuristic/matmul_half_1024_metal.golden
+codegen/opt/heuristic/matmul_half_1280x2560.golden
+codegen/opt/heuristic/matmul_half_1280x2560_amd.golden
+codegen/opt/heuristic/matmul_half_1280x2560_avx2.golden
+codegen/opt/heuristic/matmul_half_1280x2560_cpu.golden
+codegen/opt/heuristic/matmul_half_1280x2560_cuda.golden
+codegen/opt/heuristic/matmul_half_1280x2560_metal.golden
 codegen/opt/heuristic/matmul_half_256.golden
 codegen/opt/heuristic/matmul_half_256_amd.golden
 codegen/opt/heuristic/matmul_half_256_avx2.golden

@@ -6500,3 +6500,47 @@ the walk of `Rangeify.fix_store_hazard`.
   rule; the tolk bench's `contract/bf16-2048`, `contract/bf16-4096` and
   `contract/bf16-512x5760x2880` rows on fudge, their baselines pending the
   scheduled re-record.
+
+## D211. A tensor core's N takes one more upcast within 160 outputs a lane
+
+- **tinygrad:** `codegen/opt/heuristic.py:40-43` (`hand_coded_optimizations`,
+  without `TC_MIN_GLOBALS`: after the core, M and N are upcast by the first of
+  5, 4, 3 and 2 that divides them, then N split into local threads; the same
+  at `6b7b018da`).
+- **tolk:** `Heuristic.accumulators`, `Heuristic.lane_outputs` and
+  `Heuristic.tensor_cores`; `test/gen/tinygrad.patch`, which gives tinygrad's
+  heuristic the same rule before the goldens are generated.
+- **Differs:** after the upcasts of M and N, before the local split, N takes
+  an upcast by 2 more when a lane then holds at most 160 outputs, the product
+  of the upcast axes its stored addresses read, and the upcast leaves the
+  core's floor of workgroups (D175); where the floor refused N's first upcast,
+  it is N's only one. The core's own upcasts of its reduce hold one step's
+  operands and do not count. CUDA's `m16n8` core holds 4 outputs a lane, so a
+  warp's tile grows from 64 by 32 to 64 by 64, and from 64 by 40 to 64 by 80.
+- **Reason:** (d): the core's kernels on fudge's RTX 5000 Ada are bound by
+  operand loads for each step of the core, which a larger warp tile cuts until
+  its outputs fill the registers: 64 by 80, 160 a lane, compiles to 228 of a
+  thread's 255 registers and ran fastest on a 512 by 5760 product over 2880;
+  64 by 96 (192) ran slower, and 128 by 64 (256) spills. 160 is a fit to sm_89
+  within that interval; CUTLASS's GEMM notes give its lower side ("The
+  accumulator elements typically occupy at least half a thread's total
+  register budget", `efficient_gemm.md`). GPU time, three interleaved rounds,
+  against D210 alone: 2048 cubed 310-325 to 195-219 us, 4096 cubed 1824-1848
+  to 1440-1468 us, the query projection 191-201 to 173-179 us, the 512 by 5760
+  product 249-260 to 206-232 us, one layer's experts 4337-4441 to 4063-4132
+  us, the 512-token prefill 176.3-176.9 to 167.5-168.4 ms in two of three
+  rounds. The key and output projections and 1024 cubed keep their kernels:
+  the floor refuses the upcast. Attention's bfloat16 scores
+  ran 273-293 against 277-279 us, overlapping. Metal's 8 by 8 core holds 2 outputs a lane
+  and AMD's 16 by 16 core 8, so the bound stops their tiles at their own
+  sizes; unmeasured, as fudge has neither.
+- **Pinned by:** `Tolk.Heuristic`'s `a tensor core's warp tile › after N's
+  last upcast a lane holds at most 160 accumulators` (every recorded case that
+  takes it) and `› N's last upcast by 2 applies while 160 accumulators and the
+  workgroups hold` (`matmul_bf16_5760` at the bound, `matmul_half_1280x2560`
+  refused by the bound alone, `matmul_half_1024` by the workgroups), and `the
+  tensor core's floor › the splits after a tensor core are those that leave
+  its floor of workgroups`, with the goldens from tinygrad with D211 applied
+  by its generator; the tolk bench's `contract/bf16-2048`,
+  `contract/bf16-4096` and `contract/bf16-512x5760x2880` rows on fudge, their
+  baselines pending the scheduled re-record.
