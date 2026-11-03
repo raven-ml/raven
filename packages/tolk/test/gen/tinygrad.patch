@@ -2818,7 +2818,7 @@ index 9a24394a6..7f206714e 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 8238ec207..102b3f42e 100644
+index 8238ec207..66dc81ab1 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,13 +1,13 @@
@@ -3059,7 +3059,94 @@ index 8238ec207..102b3f42e 100644
    buf = after.buf_uop
    # NOTE: this is bottom up, so we only add it once
    if buf not in ctx.map: ctx.map[buf] = after
-@@ -342,7 +490,7 @@ def get_kernel_graph(tsink:UOp) -> UOp:
+@@ -335,6 +483,86 @@ split_kernels = PatternMatcher([
+   (UPat((Ops.STORE, Ops.END), name="x"), split_store),
+ ])
+ 
++# values that several kernels compute. each kernel computes the values it reads that are not stored, so a value of no
++# range that k kernels read is computed k times. one is stored once, in one element, when the nodes computed again past
++# the first copy, (k-1)*n for the n computed nodes of its value, exceed INLINE_BUDGET
++def kernel_boundary(u:UOp) -> bool:
++  if u.op is Ops.STAGE: return u.arg.addrspace == AddrSpace.GLOBAL
++  return u.op in {Ops.AFTER, Ops.CALL} or u.op in GroupOp.Defines
++def computes(u:UOp) -> bool: return (u.op in GroupOp.Elementwise or u.op is Ops.REDUCE) and u.device is not None
++def is_kernel(u:UOp) -> bool: return u.op in {Ops.STORE, Ops.END} and all(r.axis_type is AxisType.DEVICE for r in u.ranges)
++# the least n whose (k-1)*n passes the budget, and the kernel count past which any computed node does
++def past_budget(k:int) -> int: return INLINE_BUDGET // (k - 1) + 1
++SATURATED = INLINE_BUDGET + 2
++
++# the computed nodes of v's value, counted to cap at most, the walk stopping at kernel boundaries and at the nodes stop
++# accepts, which it returns
++def computed_nodes(v:UOp, cap:int, stop:Callable[[UOp], bool]) -> tuple[int, list[UOp]]:
++  seen: set[UOp] = set()
++  n, below, todo = 0, [], [v]
++  while todo and n < cap:
++    x = todo.pop()
++    if x in seen: continue
++    seen.add(x)
++    if x is not v and stop(x): below.append(x)
++    elif x is v or not kernel_boundary(x):
++      if computes(x): n += 1
++      todo.extend(x.src)
++  return n, below
++
++# the values to store, consumers first, with the kernels each is computed in: a node is computed in the kernels of its
++# consumers, a kernel computing its root and a stored value being a kernel of its own. a candidate is a computed value of
++# no range, not weak, that some consumer computes in fewer kernels than it. under a node that is no candidate, the
++# consumers' fewest kernels pass down. its nodes are counted to storage
++def shared_candidates(nodes:list[UOp]) -> list[tuple[UOp, int]]:
++  kernels: dict[UOp, frozenset[int]] = {}
++  least: dict[UOp, int] = {}
++  fresh = itertools.count()
++  def push(s:UOp, ks:frozenset[int], k:int):
++    if s.op in GroupOp.Irreducible: return
++    cur = kernels.get(s, frozenset())
++    if cur is not ks and len(cur) < SATURATED: kernels[s] = frozenset(sorted(cur | ks)[:SATURATED])
++    least[s] = min(least.get(s, k), k)
++  chosen: list[tuple[UOp, int]] = []
++  for x in nodes:
++    if x.op is Ops.STAGE and kernel_boundary(x): push(x.src[0], frozenset((next(fresh),)), 1)
++    elif not kernel_boundary(x):
++      ks = frozenset((next(fresh),)) if is_kernel(x) else kernels.get(x, frozenset())
++      k, fewest = len(ks), least.get(x, len(ks))
++      eligible = computes(x) and x.dtype not in dtypes.weaks and not x.ranges
++      if k >= 2 and fewest < k and eligible and (k - 1) * computed_nodes(x, past_budget(k), lambda _: False)[0] > INLINE_BUDGET:
++        chosen.append((x, k))
++        ks = frozenset((next(fresh),))
++      # under a node that is no candidate (weak, a load, ranged), the consumers' fewest kernels pass down
++      passed = len(ks) if eligible else fewest
++      if ks:
++        for s in x.src: push(s, ks, passed)
++  return chosen
++
++# the candidates, consumers first, without those whose nodes, counted to the candidates kept below them, are within the
++# budget: each is computed again in its kernels, whose count the candidates below it then take on
++def shared_kept(chosen:list[tuple[UOp, int]]) -> set[UOp]:
++  count = dict(chosen)
++  keep = set(count)
++  for y, _ in chosen:
++    n, below = computed_nodes(y, past_budget(k:=count[y]), lambda x: x in keep)
++    if (k - 1) * n <= INLINE_BUDGET:
++      keep.remove(y)
++      for z in below: count[z] += k - 1
++  return keep
++
++def store_shared(ctx:LimitBufsContext, tsink:UOp) -> UOp:
++  nodes = list(tsink.toposort())
++  if not (chosen:=shared_candidates(nodes[::-1])): return tsink
++  keep = shared_kept(chosen)
++  image: dict[UOp, UOp] = {}
++  for u in nodes:
++    src = tuple(image.get(s, s) for s in u.src)
++    v = u if src == u.src else u.replace(src=src)
++    if u in keep: v = stage(ctx, v)
++    if v is not u: image[u] = v
++  return image.get(tsink, tsink)
++
+ @rewrite_group(new_ctx=False)
+ def get_kernel_graph(tsink:UOp) -> UOp:
+   # convert movement ops to ranges
+@@ -342,10 +570,12 @@ def get_kernel_graph(tsink:UOp) -> UOp:
  
    # cleanups for speed and runability
    tsink = graph_rewrite(tsink,
@@ -3067,7 +3154,13 @@ index 8238ec207..102b3f42e 100644
 +                        symbolic+pm_reduce_simplify+pm_const_buffer_folding+pm_remove_bufferize, ctx=stage_reads(tsink),
                          name="symbolic+reduce_collapse+debuf")
    next_range = max((x.axis_id[0] for x in tsink.toposort() if x.op is Ops.RANGE), default=-1) + 1
-   tsink = graph_rewrite(tsink, pm_limit_bufs, ctx=LimitBufsContext(range_idx=itertools.count(next_range)), name="limit buffers")
+-  tsink = graph_rewrite(tsink, pm_limit_bufs, ctx=LimitBufsContext(range_idx=itertools.count(next_range)), name="limit buffers")
++  lctx = LimitBufsContext(range_idx=itertools.count(next_range))
++  tsink = store_shared(lctx, tsink)
++  tsink = graph_rewrite(tsink, pm_limit_bufs, ctx=lctx, name="limit buffers")
+   if VIZ: graph_rewrite(tsink, PatternMatcher([]), name="View Rangeify")
+ 
+   # bufferize -> store
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
 index f0a41c9b5..9e2d0e149 100644
 --- a/tinygrad/uop/ops.py

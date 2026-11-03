@@ -166,6 +166,23 @@ def read_by_two(steps):
     return (lambda x: (x.sum(), x + 1))(chain(1000, steps=steps))
 
 
+def scalar_read_by_two(steps):
+    """A value of no range, `steps` steps of `x * b + c` over buffers of one element, read by two kernels of different
+    sizes: each computes it unless it is stored."""
+    return (lambda x: (x + empty(16), x * empty(8)))(chain(steps=steps))
+
+
+def scalar_chain(m):
+    """`m` steps of `x * b + c` over buffers of one element, step `j` read by a kernel of its own, of `j + 2` elements:
+    step `j` is computed in the kernels of steps `j` to `m`."""
+    a, b, c = empty(), empty(), empty()
+    x, outputs = a, []
+    for j in range(m):
+        x = x * b + c
+        outputs.append(x + empty(j + 2))
+    return tuple(outputs)
+
+
 def routed_product(experts, rows, k):
     """`rows` rows for each of `experts` experts multiplied by their expert's decoded matrix of 2 by `k`: the rows gather the
     decoded matrices by a sum over the experts that selects one, inside the product's sum, so inlined the decoding runs
@@ -380,6 +397,11 @@ PROGRAMS = {
     # values read by two kernels, of some forty nodes and of some four hundred
     "read_by_two": lambda: read_by_two(16),
     "long_read_by_two": lambda: read_by_two(180),
+    # values of no range read by two kernels, of some forty nodes and of some four hundred, and a chain of 40 such
+    # values, each an output
+    "scalar_read_by_two": lambda: scalar_read_by_two(16),
+    "long_scalar_read_by_two": lambda: scalar_read_by_two(181),
+    "scalar_chain": lambda: scalar_chain(40),
     # products of rows by their expert's decoded matrix: 2 rows for each of 64 experts, and 64 for each of 2
     "routed_product_2": lambda: routed_product(64, 2, 4),
     "routed_product_64": lambda: routed_product(2, 64, 64),

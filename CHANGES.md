@@ -939,6 +939,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Rangeify.get_kernel_graph` stores once a value of no range that several
+  kernels compute past 360 nodes of work done again, and computes it in each
+  under that: ymir's aperture gradient compiles cold in 23-26 CPU-s from
+  32-37, and a chain of scalars, each read by its own kernel, schedules in
+  time linear in its length where it was quadratic.
 - A store whose value reads its destination only at the element it writes,
   as a loop's carry `c := c * 2 + exp2 c` does, runs as one kernel where a
   sum or more than three buffers in the value made it a kernel and a copy:

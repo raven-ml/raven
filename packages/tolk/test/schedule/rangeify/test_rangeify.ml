@@ -176,6 +176,9 @@ let programs =
     "windowed_pair";
     "read_by_two";
     "long_read_by_two";
+    "scalar_read_by_two";
+    "long_scalar_read_by_two";
+    "scalar_chain";
     "routed_product_2";
     "routed_product_64";
     "routed_product_wide";
@@ -1783,6 +1786,131 @@ let dead_reads =
           writes (dead_read_sink ()));
     ]
 
+(* Values that several kernels compute
+
+   A value of no range that [k] kernels compute is stored once, in one
+   element, when the nodes of its value that each kernel past the first
+   computes again, [(k - 1) n], exceed [budget], [n] counting its computed
+   nodes down to storage and to the values stored below it. Under the budget,
+   each kernel computes it. A weak value is never stored, and below it, as
+   below a load the kernels share, the value beneath is weighed. *)
+
+(* The one element of slot [slot], of type [dt]. *)
+let scalar ?(dt = Dtype.Float32) slot =
+  Shape.reshape (Shape.param ~device:cpu ~shape:[ Int 1 ] slot dt) []
+
+(* A sink whose outputs, of [sizes], each read the scalar of [reads] for it:
+   output [j] stores [reads j] broadcast over its size plus an input. The
+   outputs differ in size, so each is a kernel of its own. *)
+let read_by sizes reads =
+  let output j n =
+    let o = Shape.param ~device:cpu ~shape:[ Int n ] (10 + j) Float32 in
+    let x = Shape.param ~device:cpu ~shape:[ Int n ] (20 + j) Float32 in
+    let v = Shape.expand (Shape.reshape (reads j) [ Int 1 ]) [ Int n ] in
+    Ops.after o [ Ops.store o Ops.O.(v + x) ]
+  in
+  Ops.sink (List.mapi output sizes)
+
+(* [steps k] is [k] steps of [y * y + x] from the scalar [x]: [2k] computed
+   nodes. *)
+let steps k = chain k (scalar 1)
+
+(* The types of the storage a kernel graph makes. *)
+let made_types sink =
+  List.filter_map
+    (fun n -> if Ops.op n = Alloc then Some (Ops.dtype n) else None)
+    (Ops.toposort ~calls:Skip (schedule sink))
+
+(* [t_(j+1) = t_j / 2 + 1], each [t_j] of [m] an output of its own: [t_j] is
+   computed in the kernels of [t_j] to [t_m]. *)
+let outputs_chain m =
+  let rec go j t acc =
+    if j > m then Ops.sink (List.rev acc)
+    else
+      let t = Ops.O.((t * float 0.5) + float 1.) in
+      let o = Shape.param ~device:cpu ~shape:[ Int 1 ] (1 + j) Float32 in
+      go (j + 1) t (Ops.after o [ Ops.store (Shape.reshape o []) t ] :: acc)
+  in
+  go 1 (scalar 0) []
+
+let shared_scalars =
+  group "get_kernel_graph › values that several kernels compute"
+    [
+      test "a value of no range read by two kernels within the budget is \
+            computed in each" (fun () ->
+          let sink = read_by [ 16; 8 ] (fun _ -> steps (budget / 2)) in
+          equal int 2 (kernels_of sink));
+      test "a value of no range read by two kernels past the budget is stored \
+            once" (fun () ->
+          let sink = read_by [ 16; 8 ] (fun _ -> steps ((budget / 2) + 1)) in
+          equal int 3 (kernels_of sink);
+          equal (list Dtypes.dtype) [ Float32 ] (made_types sink);
+          writes sink);
+      test "a value read by three kernels counts two copies past the first"
+        (fun () ->
+          let v k = read_by [ 16; 8; 4 ] (fun _ -> steps k) in
+          equal int ~msg:"within" 3 (kernels_of (v (budget / 4)));
+          equal int ~msg:"past" 4 (kernels_of (v ((budget / 4) + 1))));
+      (* The index is a weak integer of the sum's low bits: the sum, an int32,
+         is stored and each read converts it again. Tensors evaluates no index
+         computed from storage, so the values are not compared. *)
+      test "a weak value is never stored, and the value below it is" (fun () ->
+          let x = scalar ~dt:Int32 1 in
+          let t = chain ((budget / 2) + 1) x in
+          let at =
+            Ops.cast
+              (Ops.bitwise_and t
+                 (Ops.const ~dtype:Int32 (`Int (Bigint.of_int 3))))
+              Weak_int
+          in
+          let table j =
+            Shape.param ~device:cpu ~shape:[ Int 4 ] (30 + j) Float32
+          in
+          let sink = read_by [ 16; 8 ] (fun j -> Ops.index (table j) [ at ]) in
+          equal int 3 (kernels_of sink);
+          equal (list Dtypes.dtype) [ Int32 ] (made_types sink));
+      (* One load of one table at the sum's low bits is shared by both
+         readers: the load is no candidate, and the sum below it is. *)
+      test "a value read through a load several kernels share is stored once"
+        (fun () ->
+          let t = chain ((budget / 2) + 1) (scalar ~dt:Int32 1) in
+          let at =
+            Ops.cast
+              (Ops.bitwise_and t
+                 (Ops.const ~dtype:Int32 (`Int (Bigint.of_int 3))))
+              Weak_int
+          in
+          let table = Shape.param ~device:cpu ~shape:[ Int 4 ] 30 Float32 in
+          let sink = read_by [ 16; 8 ] (fun _ -> Ops.index table [ at ]) in
+          equal int 3 (kernels_of sink);
+          equal (list Dtypes.dtype) [ Int32 ] (made_types sink));
+      (* [l], two nodes over [h], is read by two kernels and [h] by a third:
+         stored, [h] leaves [l] two nodes, which its two kernels compute
+         again. *)
+      test "a value cheap above the values stored below it is computed in each"
+        (fun () ->
+          let h = steps ((budget / 2) + 1) in
+          let l = Ops.O.((h * float 2.) + float 1.) in
+          let sink = read_by [ 16; 8; 4 ] (fun j -> if j < 2 then l else h) in
+          equal int 4 (kernels_of sink);
+          writes sink);
+      (* Without the rule, the last output computes the whole chain and the
+         kernels hold [m^2] nodes. Past the budget's first few hundred
+         outputs, a kernel computes at most the budget again. *)
+      test "the work on a chain of outputs is linear in its length" (fun () ->
+          let work m =
+            let sink = outputs_chain m in
+            words (fun () -> schedule sink)
+          in
+          let short = work 1000 and long = work 2000 in
+          less float_exact ~than:(2.2 *. short) long);
+      test "a chain of outputs makes kernels that stop growing with its length"
+        (fun () ->
+          let shallow = largest (outputs_chain 1000)
+          and deep = largest (outputs_chain 2000) in
+          at_most int ~than:shallow deep);
+    ]
+
 let () =
   exit
     (run "Tolk.Rangeify"
@@ -1807,4 +1935,5 @@ let () =
          work_bound;
          digits;
          dead_reads;
+         shared_scalars;
        ])

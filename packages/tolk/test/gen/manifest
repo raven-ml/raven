@@ -3349,6 +3349,8 @@ schedule/rangeify/long_cumsum.golden
 schedule/rangeify/long_cumsum_kernels.golden
 schedule/rangeify/long_read_by_two.golden
 schedule/rangeify/long_read_by_two_kernels.golden
+schedule/rangeify/long_scalar_read_by_two.golden
+schedule/rangeify/long_scalar_read_by_two_kernels.golden
 schedule/rangeify/many_cubes_limited.golden
 schedule/rangeify/many_cubes_limited_kernels.golden
 schedule/rangeify/many_inputs.golden
@@ -3451,6 +3453,10 @@ schedule/rangeify/routed_product_64.golden
 schedule/rangeify/routed_product_64_kernels.golden
 schedule/rangeify/routed_product_wide.golden
 schedule/rangeify/routed_product_wide_kernels.golden
+schedule/rangeify/scalar_chain.golden
+schedule/rangeify/scalar_chain_kernels.golden
+schedule/rangeify/scalar_read_by_two.golden
+schedule/rangeify/scalar_read_by_two_kernels.golden
 schedule/rangeify/setitem.golden
 schedule/rangeify/setitem_column.golden
 schedule/rangeify/setitem_column_kernels.golden

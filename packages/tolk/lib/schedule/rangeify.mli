@@ -59,6 +59,23 @@ val get_kernel_graph : Ops.t -> Ops.t
         - an index of storage whose every write is invalid is invalid;
         - a store of a value into itself does nothing;
      }
+     {- a value of no range that [k] kernels compute, each kernel being a
+        stage or a store or end whose ranges are all closed, is staged once,
+        in one element, and read by each, when [(k - 1) n > 360], [n] the
+        computed nodes of its value (elementwise operations and reductions on
+        a device) down to storage. Values are weighed from the kernels down,
+        each where some consumer computes it in fewer kernels; a weak value
+        is never staged, and below it, as below a load or a value with
+        ranges, the value beneath is weighed in its place. A
+        value whose nodes, counted down to the values staged below it, are
+        within the bound is computed in each kernel again, and those below it
+        count its kernels as theirs. A value of [n] nodes that 3 kernels
+        compute is staged past 180 nodes. With the bound on stages, a program
+        of [N] nodes makes kernels of at most [N] nodes plus 360 for each
+        stage inlined and for each value of no range left in several kernels;
+        values with ranges that several kernels share through a range are not
+        bounded;
+     }
      {- when a kernel may access at most [n] buffers (the setting
         {!Setting.max_kernel_buffers}, if not [0]), an operation that reads [n]
         buffers or more stores its elementwise sources first; and a store

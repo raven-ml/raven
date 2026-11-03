@@ -984,14 +984,17 @@ let to_define_global =
           None);
     ])
 
-let split_store x =
-  (* A loop around a call runs that call, and is no kernel. *)
-  if
-    Nodes.cardinal (ranges x) > 0
-    || op x = Op.End
+(* Whether the store or end [x] is a kernel of its own: its ranges are all
+   closed, and it is no loop around a call, which runs that call. *)
+let is_kernel x =
+  Nodes.cardinal (ranges x) = 0
+  && not
+       (op x = Op.End
        && op (nth x 0) = Op.Call
-       && List.exists loop_range (List.tl (src x))
-  then None
+       && List.exists loop_range (List.tl (src x)))
+
+let split_store x =
+  if not (is_kernel x) then None
   else
     let lctx =
       {
@@ -1043,6 +1046,189 @@ let pm_cleanups =
       pm_remove_bufferize;
     ]
 
+(* Values that several kernels compute
+
+   Each kernel computes the values it reads that are not stored, so a value of
+   no range that [k] kernels read is computed [k] times. One is stored once, in
+   one element, when the nodes computed again past the first copy, [(k - 1) n]
+   for the [n] computed nodes of its value, exceed [inline_budget], the bound
+   that stages within a kernel keep. A value of [n] nodes that 3 kernels read
+   is stored past 180 nodes. A value with ranges is computed in several
+   kernels only through a range they share, which no kernel graph makes yet,
+   and storing it would hold its extent alive between its kernels. *)
+
+(* Where a kernel's walk of its values stops: storage, a later state, a stage
+   stored whole and a call. *)
+let kernel_boundary u =
+  match op u with
+  | Op.Stage -> (opts u).addrspace = Dtype.Global
+  | Op.After | Op.Call -> true
+  | o -> Op.Set.mem o Op.Set.defines
+
+(* A node that computes on a device: an elementwise operation or a
+   reduction. *)
+let computes u =
+  (Op.Set.mem (op u) Op.Set.elementwise || op u = Op.Reduce)
+  && Option.is_some (device u)
+
+(* A weak value has no storage: it takes the width of the values it meets,
+   which differ between its readers. *)
+let is_weak u = List.exists (Dtype.equal (dtype u)) Dtype.weaks
+
+(* The kernels that compute a node, as their numbers in increasing order and
+   their count, the count kept exact up to [saturated]: past [saturated - 1]
+   kernels any computed node passes the budget. *)
+type kernels = { ids : int list; count : int }
+
+let saturated = int_of_float inline_budget + 2
+let no_kernels = { ids = []; count = 0 }
+
+let union a b =
+  if a == b || b.count = 0 then a
+  else if a.count = 0 then b
+  else
+    let rec merge n acc a b =
+      if n = saturated then (n, acc)
+      else
+        match (a, b) with
+        | [], [] -> (n, acc)
+        | x :: a', [] | [], x :: a' -> merge (n + 1) (x :: acc) a' []
+        | x :: a', y :: b' ->
+            if x = y then merge (n + 1) (x :: acc) a' b'
+            else if x < y then merge (n + 1) (x :: acc) a' b
+            else merge (n + 1) (y :: acc) a b'
+    in
+    let count, ids = merge 0 [] a.ids b.ids in
+    { ids = List.rev ids; count }
+
+(* The least [n] whose [(k - 1) n] passes the budget. *)
+let past_budget k = (int_of_float inline_budget / (k - 1)) + 1
+
+(* The computed nodes of [v]'s value, counted to [cap] at most, its walk
+   stopping at kernel boundaries and at the nodes [stop] accepts, which it
+   returns. *)
+let computed_nodes ~stop v cap =
+  let seen = Tbl.create 64 in
+  let rec go n below = function
+    | [] -> (n, below)
+    | _ when n >= cap -> (n, below)
+    | x :: rest when Tbl.mem seen x -> go n below rest
+    | x :: rest ->
+        Tbl.replace seen x ();
+        if x != v && stop x then go n (x :: below) rest
+        else if x != v && kernel_boundary x then go n below rest
+        else
+          let n = if computes x then n + 1 else n in
+          go n below (List.rev_append (src x) rest)
+  in
+  go 0 [] [ v ]
+
+(* The values to store, with the kernels each is computed in. One walk,
+   consumers first: a node is computed in the kernels of its consumers, a
+   kernel computing its root and a stored value being a kernel of its own, so
+   its kernels are known when the walk reaches it. A candidate is a computed
+   value of no range, not weak, that some consumer computes in fewer kernels
+   than it: the values below it move with it. Under a node that is no
+   candidate, as a weak value or a load several kernels share, the fewest
+   kernels of its consumers pass down, so the value below it is weighed in its
+   place. Its nodes are counted to storage, and those past the budget are
+   stored. *)
+let candidates nodes =
+  let never _ = false in
+  let kernels = Tbl.create 256 and least = Tbl.create 256 in
+  let next = ref 0 in
+  let fresh () =
+    incr next;
+    { ids = [ !next ]; count = 1 }
+  in
+  let push s ks k =
+    if not (Op.Set.mem (op s) Op.Set.irreducible) then begin
+      let cur = Option.value (Tbl.find_opt kernels s) ~default:no_kernels in
+      Tbl.replace kernels s (union cur ks);
+      match Tbl.find_opt least s with
+      | Some m when m <= k -> ()
+      | _ -> Tbl.replace least s k
+    end
+  in
+  let chosen = ref [] in
+  let visit x =
+    if op x = Op.Stage && kernel_boundary x then push (nth x 0) (fresh ()) 1
+    else if not (kernel_boundary x) then begin
+      let ks =
+        if (op x = Op.Store || op x = Op.End) && is_kernel x then fresh ()
+        else Option.value (Tbl.find_opt kernels x) ~default:no_kernels
+      in
+      let k = ks.count in
+      let fewest = Option.value (Tbl.find_opt least x) ~default:k in
+      let eligible =
+        computes x && (not (is_weak x)) && Nodes.cardinal (ranges x) = 0
+      in
+      let ks =
+        if
+          k >= 2 && fewest < k && eligible
+          && (k - 1) * fst (computed_nodes ~stop:never x (past_budget k))
+             > int_of_float inline_budget
+        then begin
+          chosen := (x, k) :: !chosen;
+          fresh ()
+        end
+        else ks
+      in
+      let passed = if eligible then ks.count else fewest in
+      if ks.count > 0 then List.iter (fun s -> push s ks passed) (src x)
+    end
+  in
+  List.iter visit nodes;
+  List.rev !chosen
+
+(* The candidates [chosen], consumers first, without those whose nodes, counted
+   to the candidates kept below them, are within the budget: each is computed
+   again in its kernels, whose count the candidates below it then take on. *)
+let kept chosen =
+  let keep = Tbl.create 64 and count = Tbl.create 64 in
+  List.iter
+    (fun (x, k) ->
+      Tbl.replace keep x ();
+      Tbl.replace count x k)
+    chosen;
+  List.iter
+    (fun (y, _) ->
+      let k = Tbl.find count y in
+      let n, below = computed_nodes ~stop:(Tbl.mem keep) y (past_budget k) in
+      if (k - 1) * n <= int_of_float inline_budget then begin
+        Tbl.remove keep y;
+        List.iter
+          (fun z -> Tbl.replace count z (Tbl.find count z + k - 1))
+          below
+      end)
+    chosen;
+  keep
+
+(* [tsink] with each value that several kernels compute past the budget
+   stored once, read by each. *)
+let store_shared ctx tsink =
+  let nodes = toposort ~calls:Skip tsink in
+  match candidates (List.rev nodes) with
+  | [] -> tsink
+  | chosen ->
+      let keep = kept chosen in
+      let image = Tbl.create 64 in
+      let rebuilt u =
+        let srcs = src u in
+        let srcs' =
+          List.map
+            (fun s -> Option.value (Tbl.find_opt image s) ~default:s)
+            srcs
+        in
+        let u' =
+          if List.for_all2 ( == ) srcs srcs' then u else replace u ~src:srcs'
+        in
+        let u' = if Tbl.mem keep u then stage ctx u' else u' in
+        if u' != u then Tbl.replace image u u'
+      in
+      List.iter rebuilt nodes;
+      Option.value (Tbl.find_opt image tsink) ~default:tsink
+
 let get_kernel_graph tsink =
   let setting = Setting.value in
   let tsink =
@@ -1058,10 +1244,11 @@ let get_kernel_graph tsink =
   let next_range =
     1 + List.fold_left (fun m r -> max m (List.hd (axis_id r))) (-1) ranges
   in
+  let ctx = { buf_cache = Tbl.create 64; range_idx = next_range } in
+  let tsink = store_shared ctx tsink in
   let tsink =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point
-      ~ctx:{ buf_cache = Tbl.create 64; range_idx = next_range }
-      tsink (After_sources pm_limit_bufs)
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx tsink
+      (After_sources pm_limit_bufs)
   in
   let slots =
     List.filter_map

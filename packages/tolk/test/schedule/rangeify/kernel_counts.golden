@@ -106,6 +106,9 @@ windowed_scaled_long	3
 windowed_pair	2
 read_by_two	2
 long_read_by_two	3
+scalar_read_by_two	2
+long_scalar_read_by_two	3
+scalar_chain	41
 routed_product_2	1
 routed_product_64	2
 routed_product_wide	1

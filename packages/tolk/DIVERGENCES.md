@@ -4246,8 +4246,10 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   `Rangeify.inline_budget` and `Rangeify.copied`;
   `Rangeify.inlined`; `copies` in `Rangeify.remove_bufferize`;
   `Rangeify.pm_cleanups` and `Rangeify.get_kernel_graph`, which counts the
-  reads before the cleanups; `test/gen/tinygrad.patch`, which gives tinygrad
-  the same rule.
+  reads before the cleanups; across kernels, `Rangeify.store_shared`,
+  `Rangeify.candidates`, `Rangeify.kept`, `Rangeify.computed_nodes`,
+  `Rangeify.union` and `Rangeify.is_kernel`; `test/gen/tinygrad.patch`, which
+  gives tinygrad the same rules.
 - **Differs:** a stage whose reads make `c` copies of its value stays stored
   when `n * (c - 1) > 360`, the nodes inlining computes again past the copy
   storing computes, where `n` counts the nodes of its value, its producers
@@ -4339,10 +4341,39 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   work, at most 360 nodes, under the 1024 a kernel of a thousand nodes costs
   to compile (about 50 ms on fudge, growing faster than its nodes; XLA
   bounds the same duplication by the copies alone, at 15,
-  `FusionNodeIndexingEvaluation::kAllowedCodeDuplication`). A program of `N`
-  nodes and `S` stages makes kernels of at most `N + 360 S` nodes, the
-  reads the cleanups make aside. Several windowed reads of one stage add
-  up, as several indices do.
+  `FusionNodeIndexingEvaluation::kAllowedCodeDuplication`). Several windowed
+  reads of one stage add up, as several indices do.
+
+  Across kernels, the same count applies to a value of no range, which
+  `run_rangeify` never stages: every consumer indexes it alike, so each
+  kernel that reads it computes it, once. Once the cleanups have run, the
+  kernels are known (no later pass removes a stage), and a computed value of
+  no range that `k` kernels compute is staged in one element and read by
+  each when `(k - 1) n > 360`, `n` its computed nodes. One walk, kernels
+  first, gives each node the kernels its consumers are computed in, a
+  staged value being a kernel of its own; a value is weighed where some
+  consumer is computed in fewer kernels than it, so the values below it
+  move with it. A weak value is never staged, since it takes its readers'
+  widths and has no storage of its own; below it, as below a load several
+  kernels share or a value with ranges, the consumers' fewest kernels pass
+  down, and the value under it is weighed. Its `n` is then counted again down
+  to the values kept below it, consumers first, and a value within the
+  budget is computed in its kernels after all, the values below it counting
+  those kernels too: the cost after the substitution, as Mullapudi et al.
+  2016, §4.3, decide one function for all its consumers: "Either a function
+  is inlined into all of its consumers (essentially removing the function
+  from the program DAG), or to none of its consumers", weighing "the cost
+  of inlining a function into all consumers". The walk is linear: a node's
+  kernels are counted exactly to 362, past which any computed node passes
+  the budget, and each weighing stops at the `360 / (k - 1) + 1` computed
+  nodes that decide it. A value with ranges is computed in several kernels
+  only through a range they share; it is left as it is, since storing it
+  would hold its extent alive between its kernels (RFC 0005's bound).
+
+  So a program of `N` nodes makes kernels of at most `N` nodes plus 360 for
+  each stage inlined and for each value of no range left in several
+  kernels, the reads the cleanups make aside; nodes with ranges that several
+  kernels share, which no rule bounds, aside too.
 
   360 is placed by the cases whose stage it decides, each run with the stage
   stored and inlined (the bound at either side of the stage's count),
@@ -4419,8 +4450,22 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   (ranges overlapping), and a MoE layer 256 wide at 512 tokens 60-67 ms
   against 30-36 ms (apart in two rounds). Deciding for the host needs the
   target's operations per byte, which the scheduler does not take.
+  Across kernels, (d) too: ymir's aperture gradient (`aperture-104/
+  compiled-grad`) computes the transform of the aperture's centre, a value
+  of no range of about 3,000 nodes, in 18 kernels. Stored where its copies
+  pass the budget, its cold first call takes 22.7-25.9 CPU-s (the process
+  and Clang) against 31.8-36.9 s, compiling 211 programs against 196, with
+  the same bits (fudge, three interleaved rounds under the timing lock at a
+  1-minute load of 36 to 76). A chain of scalars each read by a kernel of
+  its own, as rune's chain of outputs reads it, was quadratic in its length
+  and is linear (the Rangeify suite's chain test). The row's wall-clock
+  baseline is pending the scheduled re-record.
 - **Pinned by:** the Rangeify suite's rows of `kernel_counts.golden` and
-  their kernel goldens, from the equally patched tinygrad: `read_at_offsets`
+  their kernel goldens, from the equally patched tinygrad: across kernels,
+  `scalar_read_by_two` (a value of no range of some forty nodes read by two
+  kernels, computed in each), `long_scalar_read_by_two` (of some four
+  hundred, stored) and `scalar_chain` (40 values of no range, each read by a
+  kernel of its own and the next, one stored); `read_at_offsets`
   (a value of some forty nodes read at 32 offsets, stored), `windowed_chain`
   (in a running sum of 300, stored), `windowed_pair` (in two running sums of
   16, stored), `windowed_scaled` (a product in a running sum of 16, its
@@ -4473,7 +4518,13 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   `root-newton-kepler-1k/compiled` and `root-bracket-kepler-1k/compiled`,
   gpt-oss's `GptOss/prefill-512` and `GptOss/experts-at-prefill-512`, and
   kaun's `Quant/cuda/mxfp4-product-of-16384-*-tokens` and
-  `Quant/host/mxfp4-product-of-1024-*-tokens`.
+  `Quant/host/mxfp4-product-of-1024-*-tokens`. Across kernels, the
+  Rangeify suite's `get_kernel_graph › values that several kernels compute`
+  (every test: the budget's two sides for two and three kernels, a weak
+  value, a value read through a load the kernels share, a value cheap above
+  a stored one, and the chain of outputs whose
+  work is linear in its length and whose kernels stop growing with it), and
+  ymir's `aperture-104/compiled-grad` row.
 
 ## D164. Withdrawn
 
