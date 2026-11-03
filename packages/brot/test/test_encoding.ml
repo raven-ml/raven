@@ -163,6 +163,55 @@ let test_offsets_byte_level () =
     [ (0, 1); (1, 3) ]
     (offsets_of tokenizer "a b")
 
+(* A byte that belongs to no character — a continuation byte with no lead
+   before it, a lead cut short — stands for itself, and the bytes of a
+   character all stand for the character. Through the GPT-2 walker and through
+   a cl100k split. *)
+let test_offsets_of_stray_bytes () =
+  let byte_vocab =
+    List.map
+      (fun (s, b) -> (s, Char.code b))
+      [
+        ("R", 'R');
+        ("a", 'a');
+        ("\u{122}", '\x80');
+        ("\u{c3}", '\xC3');
+        ("\u{a9}", '\xA9');
+        ("\u{e2}", '\xE2');
+        ("\u{124}", '\x82');
+      ]
+  in
+  let cl100k =
+    {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
+  in
+  let pipelines =
+    [
+      ("GPT-2", Pre_tokenizer.byte_level ~add_prefix_space:false ());
+      ( "cl100k",
+        Pre_tokenizer.sequence
+          [
+            Pre_tokenizer.split_regex ~pattern:cl100k ~behavior:`Isolated ();
+            Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:false ();
+          ] );
+    ]
+  in
+  List.iter
+    (fun (name, pre) ->
+      let tokenizer = bpe ~pre ~vocab:byte_vocab ~merges:[] () in
+      let case text offsets =
+        equal
+          ~msg:(Printf.sprintf "%s %S" name text)
+          (list (pair int int))
+          offsets
+          (offsets_of tokenizer text)
+      in
+      case "R\x80" [ (0, 1); (1, 2) ];
+      case "R\x80\x80a" [ (0, 1); (1, 2); (2, 3); (3, 4) ];
+      case "\xC3\xA9\x80" [ (0, 2); (0, 2); (2, 3) ];
+      case "a\xE2\x82" [ (0, 1); (1, 2); (2, 3) ];
+      case "\xE2\x82R" [ (0, 1); (1, 2); (2, 3) ])
+    pipelines
+
 (* Word ids number the pretokens of a text from zero. An added token is one
    pretoken of its own, and takes the span it matched. *)
 let test_word_ids () =
@@ -738,6 +787,8 @@ let suite =
     test "chars model" test_chars_model;
     test "offsets through a normalizer" test_offsets_through_normalizer;
     test "offsets of a byte-level pipeline" test_offsets_byte_level;
+    test "offsets of bytes that belong to no character"
+      test_offsets_of_stray_bytes;
     test "word ids" test_word_ids;
     test "word ids of special tokens" test_word_ids_of_special_tokens;
     test "offsets of a rewriting pre-tokenizer"

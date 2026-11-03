@@ -703,6 +703,16 @@ let walked_case ~pattern behavior ~invert text expected =
 
 let test_split_regex_cl100k () =
   let case = walked_case in
+  (* A byte that belongs to no character is no part of a word, a number,
+     punctuation or white space before it. *)
+  case ~pattern:cl100k `Isolated ~invert:false "R\x80"
+    [ ("R", (0, 1)); ("\x80", (1, 2)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "ab\x80\x81 c"
+    [ ("ab", (0, 2)); ("\x80\x81", (2, 4)); (" c", (4, 6)) ];
+  case ~pattern:cl100k `Isolated ~invert:false "1\x80!\xBF"
+    [ ("1", (0, 1)); ("\x80", (1, 2)); ("!", (2, 3)); ("\xBF", (3, 4)) ];
+  case ~pattern:cl100k `Isolated ~invert:false " \x80\n\xC3"
+    [ (" ", (0, 1)); ("\x80", (1, 2)); ("\n", (2, 3)); ("\xC3", (3, 4)) ];
   case ~pattern:cl100k `Isolated ~invert:false "a  b"
     [ ("a", (0, 1)); (" ", (1, 2)); (" b", (2, 4)) ];
   case ~pattern:cl100k `Isolated ~invert:false "x\x0A\x0A  y"

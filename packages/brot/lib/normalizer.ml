@@ -229,19 +229,47 @@ let rec original_length = function
   | Map m -> m.original
   | View v -> original_length v.base
 
-(* A character of text that was not normalized is a byte that is not a
-   continuation byte and the continuation bytes after it. *)
+(* The byte length of the character a byte opens as {!Char_class.at} reads
+   it, 1 for a byte that cannot open one. *)
+let[@inline] lead_length b =
+  if b < 0xC2 then 1
+  else if b < 0xE0 then 2
+  else if b < 0xF0 then 3
+  else if b < 0xF8 then 4
+  else 1
+
+(* Whether the [n] bytes of [s] from [p] are its lead and continuation bytes. *)
+let whole s p n =
+  p + n <= String.length s
+  &&
+  let ok = ref true in
+  for k = 1 to n - 1 do
+    if not (is_continuation s (p + k)) then ok := false
+  done;
+  !ok
+
+(* The range of continuation byte [i] of [s]: the character of the nearest
+   byte before it that is no continuation byte, at most three back, if that
+   lead's character reaches [i]; [i] alone otherwise. [p] walks back from
+   [i - 1]. *)
+let rec owner s i p =
+  if p < 0 || p < i - 3 then pack i (i + 1)
+  else if is_continuation s p then owner s i (p - 1)
+  else
+    let n = lead_length (Char.code (String.unsafe_get s p)) in
+    if p + n > i && whole s p n then pack p (p + n) else pack i (i + 1)
+
+(* A character of text that was not normalized is what {!Char_class.at} and
+   the pre-tokenizers read: a lead byte with all the continuation bytes its
+   length asks for. Any other byte, a stray continuation byte or a lead cut
+   short, is a character of its own: ["R\x80"] is two. *)
 let identity_range s i =
-  let len = String.length s in
-  let start = ref i in
-  while !start > 0 && is_continuation s !start do
-    decr start
-  done;
-  let stop = ref (i + 1) in
-  while !stop < len && is_continuation s !stop do
-    incr stop
-  done;
-  pack !start !stop
+  let b = Char.code (String.unsafe_get s i) in
+  if b < 0x80 then pack i (i + 1)
+  else if b land 0xC0 <> 0x80 then
+    let n = lead_length b in
+    if n > 1 && whole s i n then pack i (i + n) else pack i (i + 1)
+  else owner s i (i - 1)
 
 (* The range of the character byte [i] falls in. Byte [-1] is what a character
    inserted before anything stands for. *)
@@ -260,15 +288,11 @@ let[@inline] range a i =
     | Map m -> span_get m.spans i
     | View _ -> range_through a i
 
-(* The range of ASCII byte [i] of a stage's input, which is the original text
-   when the alignment is the identity: the byte itself, and any continuation
-   bytes that follow it. *)
+(* The range of ASCII byte [i] of a stage's input, which is the original text,
+   and so the byte itself, when the alignment is the identity. *)
 let[@inline] ascii_range a i =
   match a with
-  | Identity s ->
-      if i + 1 < String.length s && is_continuation s (i + 1) then
-        identity_range s i
-      else pack i (i + 1)
+  | Identity _ -> pack i (i + 1)
   | Map m -> span_get m.spans i
   | View _ -> range a i
 
@@ -279,14 +303,12 @@ let rec fill spans at a pos n =
   match a with
   | Map m -> spans_blit m.spans pos spans at n
   | Identity s ->
-      let len = String.length s in
       let r = ref 0 in
       for k = 0 to n - 1 do
         let j = pos + k in
         let b = Char.code (String.unsafe_get s j) in
-        if k > 0 && b land 0xC0 = 0x80 then ()
-        else if b < 0x80 && (j + 1 = len || not (is_continuation s (j + 1)))
-        then r := pack j (j + 1)
+        if k > 0 && b land 0xC0 = 0x80 && j < low !r then ()
+        else if b < 0x80 then r := pack j (j + 1)
         else r := identity_range s j;
         span_set spans (at + k) !r
       done
@@ -1433,8 +1455,7 @@ let edit_replace sc ~removed ~added =
 (* The spans of [normalized], the text [s] became, from its edit script. A
    character stands for the range of the input character it is aligned with. In
    text not normalized before, that is the character's bytes as [decode] reads
-   them, a malformed byte alone, where the identity would join a byte to any
-   continuation bytes after it. *)
+   them, a malformed byte alone. *)
 let replay s base normalized sc =
   let len = String.length s in
   let spans = spans_create (String.length normalized) in

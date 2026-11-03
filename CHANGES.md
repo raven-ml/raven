@@ -2634,6 +2634,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Encoding.offsets` give a byte of text that is no part of a character, such
+  as a continuation byte with no lead byte before it, a span of its own; it
+  took the span of the character before it, which spanned it too.
 - Encoding new text takes fewer instructions behind the cl100k pattern and
   under `ignore_merges`: 41% fewer for Llama 3, 25% for Mistral NeMo, 24% for
   gpt-oss and 10% for Qwen 2.5 on a first pass over OpenWebText. The cl100k
