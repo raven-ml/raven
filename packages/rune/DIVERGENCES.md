@@ -102,8 +102,8 @@ tinygrad's `Tensor` builds the same operation, the lowering builds tinygrad's
 decomposition if it computes what nx states. This section lists every place
 where it builds something else, or builds what tinygrad has no source for,
 except these, not yet recorded: the complex kinds (`lower_complex.ml`), the
-transforms (`lower_fft.ml`), `eigh`, logsumexp and moments, `expm1` and
-`log1p`, and scaled contractions.
+transforms (`lower_fft.ml`), `eigh`, logsumexp and moments, and scaled
+contractions.
 
 An entry is admitted for one of four reasons only:
 
@@ -478,6 +478,23 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b).
 - **Pinned by:** `Lower_real › transcendental › log within 1 ulps at float32, 1
   at float64`, whose golden points crowd around 1.
+
+### A25. `expm1` and `log1p`
+
+- **Reference:** none.
+- **Raven:** `lower_real.ml` (`expm1`, `log1p`).
+- **No source:** `expm1` is Kahan's: with `w = e^x` rounded, `(w - 1) x / log
+  w`, so that `exp`'s error passes through, halved near 0. It is `x` where
+  `w` is 1, -1 where `w - 1` is, and `w` where `w` is infinite. `log1p` is
+  Goldberg's: with `w = 1 + x` rounded, `log w x / (w - 1)`, `w - 1` exact,
+  and `x` where `w` is 1 or `x` is `+inf`. The `exp` and `log` are A7's and
+  A24's.
+- **nx:** `prog.mli`, `Expm1`, `Log1p`: accurate near 0; Results.
+- **Class:** ulp bound: `expm1` 23, `log1p` 5.
+- **Reason:** (b).
+- **Pinned by:** `Lower_real › transcendental › expm1 within 23 ulps at
+  float32, 23 at float64`, `› log1p within 5 ulps at float32, 5 at float64`,
+  whose points include Annex F's specials.
 
 ### R1. A float sum adds +0.
 
