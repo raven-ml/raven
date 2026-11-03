@@ -195,9 +195,6 @@ raven / llama.cpp b12048 Vulkan:
   inner loop's loaded bound reads makes a vector bound (`Lidx1 < long16`),
   and a bare loaded bound makes an AFTER of a LOAD, which tinygrad's spec
   refuses too. Decide what such loops lower to before one reaches users
-- compile.thumper's fudge rows run 9-25% faster than c0682e939 does at
-  equal load: find whether a regression landed unexplained before it or
-  the baseline was recorded under other conditions
 - a link reloads images an earlier link loaded: measure on fudge the load
   cost a search pays, and if it matters, design how rig.program takes loaded
   images (a description entry naming a Rig.Image.t)
