@@ -1160,9 +1160,11 @@ let int_binary = function
   | Op.Mod -> Some (int_remainder ~toward_zero:false)
   | _ -> None
 
-let sym_compile (s : sint) var =
+(* [s]'s value in an environment, computed exactly, and the same on [int]s,
+   which raises [Inexact], if [s] is an integer of integer operations. *)
+let compiled (s : sint) var =
   match s with
-  | Int n -> fun _ -> n
+  | Int n -> ((fun _ -> `Int (Bigint.of_int n)), Some (fun _ -> n))
   | Sym u ->
       let s = simplify u in
       let memo tbl f n =
@@ -1226,11 +1228,20 @@ let sym_compile (s : sint) var =
               | _ -> None)
           | _ -> None
       in
-      let exact = compute s in
-      let to_int env = Value.to_int (exact env) in
-      match int s with
-      | None -> to_int
-      | Some f -> fun env -> ( try f env with Inexact -> to_int env)
+      (compute s, int s)
+
+let sym_compile s var =
+  match compiled s var with
+  | exact, None -> fun env -> Value.to_int (exact env)
+  | exact, Some f -> (
+      fun env -> try f env with Inexact -> Value.to_int (exact env))
+
+let sym_compile_z s var =
+  match compiled s var with
+  | exact, None -> fun env -> Value.to_z (exact env)
+  | exact, Some f -> (
+      fun env ->
+        try Bigint.of_int (f env) with Inexact -> Value.to_z (exact env))
 
 let sym_infer s vars =
   let var n vars =

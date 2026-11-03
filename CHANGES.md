@@ -940,6 +940,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   every host, where it took the C library's value, which glibc rounds one unit
   off for about one operand in two thousand; `c ** x` rewrites with `log2 c`
   correctly rounded.
+- A kernel whose estimated operations fit no `int`, as over a loop bounded by
+  an int64 value loaded from memory, compiles, runs split on the host, is
+  searched and is reported at DEBUG=2: each raised `Invalid_argument`.
+  `Shape.sym_compile_z` evaluates a symbolic integer of any size.
 - `Renderer.Estimates.of_uops` counts a loop bounded by a value loaded outside
   any range at its type's greatest trips, as one bounded by a value loaded in
   a range: its count read the load, which no search or host launch could

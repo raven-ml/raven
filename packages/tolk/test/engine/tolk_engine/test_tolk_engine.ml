@@ -2766,6 +2766,75 @@ let named_as_bounds =
         (fun d -> List.map (case d) [ "n"; "block_lo"; "block_hi" ])
         [ "CPU"; "CPU:1" ])
 
+(* Host programs in blocks: estimates past an int *)
+
+(* [out[i] = j^2] for each [j < x[i]] in turn, or [j < x[0]] if not [own],
+   over four [i], [x] of int64: its estimated operations count [j] up to
+   2^63 - 1 times on each [i], which fits no int. *)
+let counts_to_loaded ~own =
+  let x = Shape.placeholder ~slot:1 [ 4 ] Int64
+  and out = Shape.placeholder ~slot:0 [ 4 ] Float32 in
+  let i = Ops.range (Int 4) [ 0 ] in
+  let count = Ops.load (Ops.index x [ (if own then i else Ops.int 0) ]) [] in
+  let bound =
+    Ops.cast (Ops.alu count Op.Max [ Ops.int ~dtype:Int64 0 ]) Weak_int
+  in
+  let j = Ops.range ~axis_type:Loop (Sym bound) [ 1 ] in
+  let jf = Ops.cast j Float32 in
+  let st = Ops.end_ (Ops.store (Ops.index out [ i ]) Ops.O.(jf * jf)) [ j ] in
+  let kernel =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"counts_to_loaded" ())
+      [ Ops.end_ st [ i ] ]
+  in
+  let y = Ops.new_buffer "CPU" 4 Float32
+  and xs = Ops.new_buffer "CPU" 4 Int64 in
+  (y, xs, Ops.call kernel [ y; xs ])
+
+let loaded_counts = [| 3; 0; 1; 2 |]
+
+(* What a run of [counts_to_loaded] writes, its loop whole, which the host
+   splits. *)
+let counted ~own =
+  let y, xs, call = counts_to_loaded ~own in
+  let compiled =
+    unoptimized (fun () -> compile (Ops.v Op.Linear ~src:[ call ]))
+  in
+  let out = Run.buffer host Float32 (floats [| 0.; 0.; 0.; 0. |])
+  and counts =
+    Run.buffer host Int64
+      (Array.map (fun n -> `Int (Bigint.of_int n)) loaded_counts)
+  in
+  let s = Engine.link ~devices ~bound:[ (y, out); (xs, counts) ] compiled in
+  Engine.run s [||];
+  Run.values Float32 out
+
+let counted_floats ~own =
+  let last n = if n = 0 then 0. else Float.of_int ((n - 1) * (n - 1)) in
+  let counts = if own then loaded_counts else Array.make 4 loaded_counts.(0) in
+  floats (Array.map last counts)
+
+let estimates_past_an_int =
+  group "a kernel whose estimates fit no int"
+    [
+      test "splits and runs" (fun () ->
+          equal values (counted_floats ~own:true) (counted ~own:true));
+      test "splits and runs, its loop bounded by a value loaded outside it"
+        (fun () ->
+          equal values (counted_floats ~own:false) (counted ~own:false));
+      test "prints a timed line at DEBUG=2" (fun () ->
+          ignore (output ());
+          let written =
+            Setting.context
+              [ B (Setting.debug, 2) ]
+              (fun () -> counted ~own:true)
+          in
+          equal values (counted_floats ~own:true) written;
+          match reported () with
+          | [ words ] -> mem string ~msg:"timed" "GFLOPS" words
+          | lines -> failf "%d lines, not one" (List.length lines));
+    ]
+
 (* The minor words a run of one kernel on [d] of [devices] allocates on the
    calling domain, the run before it having linked and loaded everything. *)
 let run_words ?(devices = devices) d () =
@@ -2882,6 +2951,7 @@ let () =
          runs;
          timing;
          named_as_bounds;
+         estimates_past_an_int;
          words;
          group "GPUs" (List.map on_a_gpu gpus);
        ])

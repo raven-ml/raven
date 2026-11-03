@@ -592,6 +592,22 @@ let counter b (s : Ops.sint) =
       fail b.fn "a split loop's iterations move with its loop's trips"
   | Sym _ -> Shape.sym_compile s (reader b.cells)
 
+(* How a run computes the estimated operations [s], saturated at an [int]'s
+   bounds: a loop bounded by a loaded value counts its type's greatest trips,
+   which only need to be many. *)
+let magnitude b (s : Ops.sint) =
+  match s with
+  | Int n -> fun _ -> n
+  | Sym u when moves u ->
+      fail b.fn "a split loop's operations move with its loop's trips"
+  | Sym _ ->
+      let z = Shape.sym_compile_z s (reader b.cells) in
+      fun env ->
+        let n = z env in
+        if Bigint.fits_int n then Bigint.to_int n
+        else if Bigint.sign n > 0 then max_int
+        else min_int
+
 (* The grid of a host program that splits its loop of [extent] iterations into
    blocks: a group of threads per block, a thread per iteration. *)
 let split_grid b (extent : Ops.sint) (ops : Ops.sint) : grid * grid =
@@ -600,7 +616,7 @@ let split_grid b (extent : Ops.sint) (ops : Ops.sint) : grid * grid =
       let n, t = blocks ~extent ~ops in
       ((Fixed n, Fixed 1, Fixed 1), (Fixed t, Fixed 1, Fixed 1))
   | extent, ops ->
-      let extent = counter b extent and ops = counter b ops in
+      let extent = counter b extent and ops = magnitude b ops in
       let n env = fst (blocks ~extent:(extent env) ~ops:(ops env)) in
       let t env = snd (blocks ~extent:(extent env) ~ops:(ops env)) in
       ( (Int (new_word b (Computed n)), Fixed 1, Fixed 1),
@@ -1290,7 +1306,7 @@ let report ~device ~name ~args ~vars (e : Ops.estimates) time =
           | None, _ -> invalid_arg ("the variable " ^ Ops.expr n ^ " has no value")
         in
         let per x =
-          Float.of_int (Shape.sym_compile x var vars) /. Float.max s 1e-20
+          Bigint.to_float (Shape.sym_compile_z x var vars) /. Float.max s 1e-20
         in
         Printf.sprintf " tm %s (%7.0f GFLOPS %4.0f GB/s)"
           (Helpers.time_to_str ~w:9 s)

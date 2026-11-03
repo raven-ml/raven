@@ -1402,7 +1402,7 @@ let do_linearize prg sink =
 (* A split kernel's estimates count all its blocks: its loop's variables span
    the whole loop. The counts are in the index's type, which a whole loop's
    count outgrows past 2^31 operations, so a count that reads no other variable
-   is evaluated exactly. *)
+   is evaluated exactly, a constant node past an [int]. *)
 let whole_loop (k : kernel_info) lin (e : estimates) =
   match k.split with
   | None -> e
@@ -1426,7 +1426,10 @@ let whole_loop (k : kernel_info) lin (e : estimates) =
         | Sym u as count -> (
             match s.iterations with
             | Int whole when bounds_only u ->
-                Int (sym_infer count [ (expr lo, 0); (expr hi, whole) ])
+                let bound v () = if expr v = expr hi then whole else 0 in
+                let z = sym_compile_z count bound () in
+                if Bigint.fits_int z then Int (Bigint.to_int z)
+                else Sym (const (`Int z))
             | _ ->
                 ssimplify
                   (substitute ~calls:Skip ~pass:Fixed_point u

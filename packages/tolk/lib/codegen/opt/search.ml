@@ -463,7 +463,8 @@ let beam_search ~link ~time ?allow_test_size amt s =
               let this_compute_ops =
                 match arg (nth prg 0) with
                 | Kernel { estimates = Some e; _ } ->
-                    Float.of_int (sym_compile e.ops (fun v () -> value v) ())
+                    Bigint.to_float
+                      (sym_compile_z e.ops (fun v () -> value v) ())
                 | _ -> 0.
               in
               least_compute_ops := Float.min this_compute_ops !least_compute_ops;

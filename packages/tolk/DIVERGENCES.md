@@ -2013,8 +2013,9 @@ unrolled reduce`).
   never split`, `› a serial loop is never split`, `› a loop shrunk by its
   guard splits at its shrunk end, unguarded`, `› a split loop of 2^25 iterations keeps 32-bit indices` and `› a split's bounds and a variable take slots of their own past buffers that skip one`; the
   Tolk_engine suite: `host programs in blocks › a program writes the same bits in 1, 3 and 32
-  blocks` and `› a run of a large kernel computes its sums`, and `a variable
-  named as a block's bounds is a variable like any other`.
+  blocks` and `› a run of a large kernel computes its sums`, `a variable
+  named as a block's bounds is a variable like any other`, and `a kernel
+  whose estimates fit no int › splits and runs`.
 
 ## D81. Withdrawn
 
@@ -5475,4 +5476,29 @@ fold wraps integers and holds its float bound`, hold.
   when it is linked, before the kernel reads memory.
 - **Pinned by:** the Renderer suite: `estimates of hand-written kernels ›
   counts a range bounded by a value loaded outside any range at its greatest
-  trips`.
+  trips`; the Tolk_engine suite: `a kernel whose estimates fit no int ›
+  splits and runs, its loop bounded by a value loaded outside it`; the Search
+  suite: `a search measures candidates whose estimates fit no int`.
+
+## D192. A call that stores to LOCAL memory orders its writes with barriers
+
+- **tinygrad:** `codegen/__init__.py:228-247` (`_is_local_store`,
+  `add_raw_barrier` and `add_war_barrier`), whose walks of an AFTER's
+  dependencies and of a loop's body do not enter call bodies.
+- **tolk:** `Codegen.local_writes`, which `Codegen.add_raw_barrier` and
+  `Codegen.add_war_barrier` take.
+- **Differs:** a call whose body, or a body that body calls, stores to LOCAL
+  memory writes each of its LOCAL arguments' buffers. A read of LOCAL memory
+  ordered after such a call waits at a workgroup barrier, and a loop that
+  makes such a call and loads one of those buffers ends each trip with one,
+  as for a store of the kernel's own. A body lowered alone orders only its
+  own accesses. tinygrad's kernel reads before other threads' calls have
+  written.
+- **Reason:** (e): a thread that reads an element another warp's call
+  writes reads it unwritten; without the barrier, one run in three on
+  fudge's RTX 5000 read wrong values.
+- **Pinned by:** the Codegen suite: `calls in a kernel › a kernel reads
+  what a call writes to local memory after a barrier`, `› a loop whose call
+  writes local memory the loop reads ends with a barrier` and `› threads
+  read what other warps' calls wrote to local memory, on CUDA` (skipped
+  without a CUDA GPU).

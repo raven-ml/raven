@@ -1194,7 +1194,7 @@ let exn =
 
 (* The reference: [e] simplified, then each node computed on unbounded
    integers, each variable read from [env]. *)
-let exact e env =
+let exact_value e env =
   let values = Ops.Tbl.create 16 in
   let eval n : Dtype.const =
     match Ops.op n with
@@ -1207,8 +1207,11 @@ let exact e env =
           (List.map (Ops.Tbl.find values) (Ops.src n))
   in
   match Ops.topovisit (Shape.simplify e) eval values with
-  | #Dtype.value as v -> Dtype.Value.to_int v
+  | #Dtype.value as v -> v
   | `Invalid -> invalid_arg "Invalid is not a number"
+
+let exact e env = Dtype.Value.to_int (exact_value e env)
+let exact_z e env = Dtype.Value.to_z (exact_value e env)
 
 (* [e] at [a] = [va] and [b] = [vb], exactly and by sym_compile. *)
 let both e va vb =
@@ -1304,6 +1307,40 @@ let raises_as_exact (_, e, va, vb) =
   let exact, compiled = both e va vb in
   ignore (require_error ~msg:"exact raises" ~pp:Format.pp_print_int exact);
   equal (result int exn) exact compiled
+
+(* sym_compile_z computes what exact arithmetic does, of any size. *)
+
+let z = Testable.make ~pp:Bigint.pp_print ~equal:Bigint.equal
+
+let both_z e va vb =
+  let env = [ ("a", va); ("b", vb) ] in
+  let var u = List.assoc (Ops.expr u) in
+  ( outcome (fun () -> exact_z e env),
+    outcome (fun () -> Shape.sym_compile_z (Sym e) var env) )
+
+let exact_compilation =
+  let some = Gen.of_list ~pp:Format.pp_print_int extremes in
+  let a = weak_var "a" min_int max_int and b = weak_var "b" min_int max_int in
+  let draw =
+    Gen.triple
+      (Gen.with_pp Ops.pp
+         (expression ~constants:(Gen.such_that (( <> ) 0) some) a b 3))
+      some some
+  in
+  group "sym_compile_z"
+    [
+      prop "computes what exact arithmetic does, at the int extremes" draw
+        (fun (e, va, vb) ->
+          let exact, compiled = both_z e va vb in
+          equal (result z exn) exact compiled);
+      cases "computes values that fit no int"
+        ~id:(fun (name, _, _, _) -> name)
+        unfit
+        (fun (_, e, va, vb) ->
+          let exact, compiled = both_z e va vb in
+          is_ok ~msg:"exact" ~pp:(Testable.pp exn) exact;
+          equal (result z exn) exact compiled);
+    ]
 
 let compilation =
   group "sym_compile"
@@ -1515,5 +1552,6 @@ let groups =
     divisibility;
     inference;
     compilation;
+    exact_compilation;
     programs;
   ]

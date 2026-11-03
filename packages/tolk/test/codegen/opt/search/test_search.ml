@@ -635,6 +635,33 @@ let uncompiled_kernel =
         (List.length (List.filter (fun c -> depth c = 0) r.calls));
       equal int 1 (List.length (K.applied_opts chosen)))
 
+(* [out[i] = j^2] for each [j < x[0]] in turn, over 16 [i], [x] of
+   int64: its estimated operations count [j] up to 2^63 - 1 times on each [i],
+   which fits no int. *)
+let counts_to_loaded () =
+  let x = Shape.param ~shape:[ Int 16 ] 1 Int64
+  and out = Shape.param ~shape:[ Int 16 ] 0 Int64 in
+  let i = Ops.range (Int 16) [ 0 ] in
+  let count = Ops.load (Ops.index x [ Ops.int 0 ]) [] in
+  let bound =
+    Ops.cast (Ops.alu count Op.Max [ Ops.int ~dtype:Int64 0 ]) Weak_int
+  in
+  let j = Ops.range ~axis_type:Loop (Sym bound) [ 1 ] in
+  let jl = Ops.cast j Int64 in
+  let st = Ops.store (Ops.index out [ i ]) Ops.O.(jl * jl) in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"counts_to_loaded" ())
+    [ Ops.end_ (Ops.end_ st [ j ]) [ i ] ]
+
+let estimates_past_an_int =
+  test "a search measures candidates whose estimates fit no int" (fun () ->
+      let timing, record = sampling (fun ~vars:_ _ _ -> 1.) in
+      let k = K.v (counts_to_loaded ()) (renderer "clang") in
+      K.convert_loop_to_global k;
+      ignore (search ~timing 1 k);
+      greater int ~msg:"candidates measured" ~than:0
+        (List.length (List.filter (fun c -> depth c > 0) (record ()).calls)))
+
 (* The fastest program of [depth] optimisations and its samples, the first of
    ties, if any. *)
 let fastest r depth =
@@ -1412,5 +1439,6 @@ let () =
          rounds;
          incumbent_first;
          uncompiled_kernel;
+         estimates_past_an_int;
          progress_law;
        ])

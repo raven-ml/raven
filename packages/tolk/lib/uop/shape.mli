@@ -148,7 +148,8 @@ val sym_infer : Ops.sint -> (string * int) list -> int
     bound to its value. Integer arithmetic is exact, divisions round as their
     operations say, and casts convert without truncating.
 
-    Raises [Invalid_argument] if [s] reads a variable [vars] lacks. *)
+    Raises [Invalid_argument] if [s] reads a variable [vars] lacks, or if its
+    value does not fit an [int] ({!sym_compile_z} computes one of any size). *)
 
 val sym_compile : Ops.sint -> (Ops.t -> 'env -> int) -> 'env -> int
 (** [sym_compile s var] is the function computing [s] in an environment, each
@@ -159,6 +160,16 @@ val sym_compile : Ops.sint -> (Ops.t -> 'env -> int) -> 'env -> int
     computes on each run, such as the offset of a view that moves with a range.
 
     The function raises as {!sym_infer} does, and as [var] does. *)
+
+val sym_compile_z : Ops.sint -> (Ops.t -> 'env -> int) -> 'env -> Bigint.t
+(** [sym_compile_z s var] is {!sym_compile}'s function with values of any size:
+    [sym_compile_z s var env] is the exact value of [s], an integer whether or
+    not it fits an [int], such as a kernel's estimated operations over a loop
+    bounded by a value loaded from memory ({!Ops.type-estimates}). It costs what
+    {!sym_compile} does where values fit an [int].
+
+    The function raises as {!sym_compile}'s does, but never for a value past
+    an [int]. *)
 
 (** {1:syntax Construction} *)
 
