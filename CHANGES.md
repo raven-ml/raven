@@ -1848,8 +1848,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   runs by blocks of 64 keys with a running softmax and stores no
   `[lead…; hq; tq; tk]` array: it skips blocks a mask hides whole, reads
   paged keys and values in place, and a value hidden from a row no longer
-  reaches its `o`, a NaN or an infinity included. The bound's `ε` is
-  nx.cpu's for attention. Rune's transformations and `Rune.jit` compute
+  reaches its `o`, a NaN or an infinity included. Over keys cut across
+  devices, each device attends to its keys and the parts combine by their
+  `lse`. The bound's `ε` is nx.cpu's for attention. Rune's transformations and `Rune.jit` compute
   it as before, by contractions, maps and a log-sum-exp.
 - Add `Nx.Rng.placement`, where a key's words lie. Draw from `k` at
   `Nx.Rng.placement k`, and make a cut batch's constants of other shapes at

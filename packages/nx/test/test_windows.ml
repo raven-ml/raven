@@ -871,6 +871,79 @@ let test_attention () =
   same 0 (Nx.P o) (Nx.P o');
   same 1 (Nx.P lse) (Nx.P lse')
 
+(* Attention over keys cut across 2 and 4 devices against one device,
+   within the bounds nx.mli states for each: dense keys with lengths and
+   paged ones through a table cut by pages, under a mask that hides every
+   key of a device from some rows, where that part's lse is -∞, and from
+   one row every key. Values lie in [[-1, 1]]: each score is at most
+   [a = 8 / √8] in magnitude and [η] at most [(2 dk + 4) u a]. With [e]
+   nx.cpu's bound over the keys and [e4] its [Logsumexp] bound of 4
+   terms, one device's [ε] is [e] and the cut call's [2 e + e4], its [η]
+   doubled: the two differ by at most the sum of their bounds, to first
+   order, every value being at most 1. *)
+let test_attention_keys () =
+  let draw seed s =
+    Nx.create Nx.float32 s
+      (Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 0.37) +. seed)))
+  in
+  let u = 0x1p-24 and tk = 96 in
+  let a = 8. /. Float.sqrt 8. in
+  let eta = 20. *. u *. a in
+  let e lse =
+    ((6. *. 2. +. 14. +. (10. *. Float.log (Float.of_int tk))) *. u)
+    +. (u *. Float.abs lse)
+  in
+  let e4 lse = ((4. +. 5. +. (6. *. Float.log 4.)) *. u) +. (u *. Float.abs lse) in
+  let gamma n = Float.of_int n *. 2. *. u in
+  let close ~msg (o, lse) (o', lse') =
+    let o = Nx.to_array o and o' = Nx.to_array o' in
+    let lse = Nx.to_array lse and lse' = Nx.to_array lse' in
+    let dv = Array.length o / Array.length lse in
+    Array.iteri
+      (fun i l ->
+        let l' = lse'.(i) in
+        if l = Float.neg_infinity || l' = Float.neg_infinity then
+          equal ~msg:(msg ^ ": an empty row's lse") float_exact l l'
+        else begin
+          let one = e l and cut = (2. *. e l) +. e4 l in
+          at_most ~msg:(msg ^ ": lse") float_exact
+            ~than:((3. *. eta) +. one +. cut) (Float.abs (l -. l'));
+          let rest = ((2. *. a) +. Float.log (Float.of_int tk) +. 5.) *. u in
+          let w eta eps = (2. *. eta) +. eps +. rest in
+          for d = 0 to dv - 1 do
+            at_most ~msg:(msg ^ ": o") float_exact
+              ~than:(w eta one +. gamma (tk + 1) +. w (2. *. eta) cut +. gamma (tk + 5))
+              (Float.abs (o.((i * dv) + d) -. o'.((i * dv) + d)))
+          done
+        end)
+      lse
+  in
+  let mask p = Nx.(less_equal (mul_s p.q 30L) p.k) in
+  let lengths = Nx.create Nx.int64 [| 2 |] [| 70L; 96L |] in
+  let dense on keys =
+    let q = Nx.place on (draw 1. [| 2; 4; 6; 8 |]) in
+    let k = Nx.place keys (draw 2. [| 2; 2; tk; 8 |]) in
+    let v = Nx.place keys (draw 3. [| 2; 2; tk; 3 |]) in
+    Nx.attention ~lengths:(Nx.place on lengths) ~mask ~kv:(Nx.Dense { k; v }) q
+  in
+  let table =
+    Nx.create Nx.int64 [| 2; 8 |]
+      [| 3L; 0L; 7L; 1L; -1L; 2L; 9L; 5L; 6L; 6L; 4L; 0L; 1L; 8L; 2L; 3L |]
+  in
+  let paged on pages =
+    let q = Nx.place on (draw 1. [| 2; 4; 6; 8 |]) in
+    let k = Nx.place on (draw 4. [| 9; 2; 12; 8 |]) in
+    let v = Nx.place on (draw 5. [| 9; 2; 12; 3 |]) in
+    Nx.attention ~lengths:(Nx.place on lengths) ~mask
+      ~kv:(Nx.Paged { k; v; table = Nx.place pages table })
+      q
+  in
+  let one = Set1.on in
+  close ~msg:"dense over 2" (dense one one) (dense Set2.on (Set2.split ~axis:2));
+  close ~msg:"dense over 4" (dense one one) (dense Set4.on (Set4.split ~axis:2));
+  close ~msg:"paged over 2" (paged one one) (paged Set2.on (Set2.split ~axis:1));
+  close ~msg:"paged over 4" (paged one one) (paged Set4.on (Set4.split ~axis:1))
+
 let () =
   exit
     (run "nx windows"
@@ -883,6 +956,7 @@ let () =
                case law;
              test "a transform over cut NaNs of both signs" test_fft_nans;
              test "attention over cut heads and rows" test_attention;
+             test "attention over cut keys" test_attention_keys;
              test "a contraction over cut NaNs of both signs"
                test_contract_nans;
            ];

@@ -2862,6 +2862,18 @@ val attention :
     compiler such as [Rune.jit], the compiler's bounds compose the same
     way.
 
+    Over keys cut across devices into [n] parts, a page table's pages for
+    [Paged], each device computes [(o, lse)] over its part in float32 as one
+    device does, its mask and score reading the pair's coordinates in the
+    whole; [lse] is the parts' log-sum-exp, a [Logsumexp] of [n] terms, and
+    [o] the sum over the parts in their order of each one's [o] times
+    [exp (lse_part - lse)], each product fused, rounded once to [q]'s
+    dtype. Its bits depend on the placement alone. The bound above then
+    holds with [η] doubled, [ε] twice the greatest part's plus the
+    library's bound for a [Logsumexp] of [n] terms, and
+    [γ(tk + n + 1, 2u)] in place of [γ(tk + 1, 2u)]. A paged call's loads
+    are read whole.
+
     It is one operation, {!Prim.Attention}, whose [mask] and [score] are
     one program of two outputs over a pair. The set's kernel library
     computes it ({!Nx_kernel.S.attention}), reading paged keys and values

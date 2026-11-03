@@ -1447,8 +1447,10 @@ let bitcast_rule dt x =
    axes and their key heads, which become [q]'s where they are as many and
    regroup into them in tiles otherwise, a query head reading the key head
    of its group; a page table and the lengths their lead axes; a load its
-   lead axes, heads and rows. Every other axis, the keys and the
-   dimensions, a pool's and [o]'s, is read whole. *)
+   lead axes, heads and rows. The keys, a page table's pages and a dense
+   call's loads' keys are the one reduced factor, which {!Partial} closes.
+   Every other axis, the dimensions, a pool's and a paged call's loads'
+   keys, is read whole. *)
 let attention_rule (type v s d) (q : (v, s, d) t) (kv : (v, s, d) kv)
     (lengths : d index option) (loads : d any iarray) =
   let r = rank q in
@@ -1460,25 +1462,37 @@ let attention_rule (type v s d) (q : (v, s, d) t) (kv : (v, s, d) kv)
   let heads x =
     let hk = dim x lead in
     row r (fun a ->
-        if a <> lead then Route.Whole
+        if a = r - 2 then Route.Reduced 0
+        else if a <> lead then Whole
         else if hk = hq then Becomes lead
         else if hk > 1 && hq > 1 then Regroups { axis = lead; extent = hq }
         else Whole)
   in
-  let pairs _ = row r (fun a -> if a < r - 1 then Route.Becomes a else Whole) in
+  let paged = match kv with Dense _ -> false | Paged _ -> true in
+  let pairs _ =
+    row r (fun a ->
+        if a < r - 1 then Route.Becomes a
+        else if paged then Whole
+        else Reduced 0)
+  in
   let kv =
     match kv with
     | Dense { k; v } -> [| heads k; heads v |]
     | Paged _ ->
         let pool = Array.make 4 Route.Whole in
-        [| pool; pool; row (lead + 1) whole |]
+        [| pool; pool; row (lead + 1) (fun _ -> Route.Reduced 0) |]
   in
   let lengths =
     match lengths with Some _ -> [| row lead whole |] | None -> [||]
   in
   Route.Axes
     (Array.concat
-       [ [| pairs () |]; kv; lengths; Array.map pairs (Iarray.to_array loads) ])
+       [
+         [| row r (fun a -> if a < r - 1 then Route.Becomes a else Whole) |];
+         kv;
+         lengths;
+         Array.map pairs (Iarray.to_array loads);
+       ])
 
 let rule : type r. r prim -> Route.rule =
  fun op ->
@@ -1896,12 +1910,7 @@ let offset : type r. r prim -> origin -> r prim =
     | Map m -> Map { m with prog = with_offsets m.prog start }
     | Reduce m -> Reduce { m with prog = with_offsets m.prog start }
     | Scan m -> Scan { m with prog = with_offsets m.prog start }
-    | Attention a ->
-        (* [o]'s window starts its loop's but along the keys, which no
-           window cuts: [o]'s last axis is its values' dimension. *)
-        let first = Array.copy start in
-        first.(Array.length first - 1) <- 0;
-        Attention { a with prog = with_offsets a.prog first }
+    | Attention a -> Attention { a with prog = with_offsets a.prog start }
     | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
     | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ ->
         op
@@ -1973,8 +1982,13 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim * origin =
       ( Assemble
           { a with shape = Route.extents w; pieces = List.map piece a.pieces },
         no_origin )
-  (* Its program's coordinates are offset to the window ({!offset}). *)
-  | Attention _ -> (op, { no_origin with start = starts w })
+  (* Its program's coordinates are offset to the window ({!offset}): [o]'s
+     window starts its loop's but along the keys, read whole, where [o]'s
+     last axis is its values' dimension. *)
+  | Attention _ ->
+      let start = starts w in
+      start.(Array.length start - 1) <- 0;
+      (op, { no_origin with start })
   | Gather _ | Scatter _ | Sort _ | Fft _ | Linalg _ | Contract _ | Copy _
   | Bitcast _ | Place _ | Check _ ->
       (op, no_origin)

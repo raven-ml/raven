@@ -894,6 +894,144 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
   in
   each rs
 
+(* Attention *)
+
+(* Attention over keys cut across devices: each device of the result
+   computes [(o, lse)] over its tile of the keys, in float32, as one device
+   does (its operands' windows, its program's coordinates offset to its
+   rows and keys, its lengths less its first key); [lse] closes as the
+   [Logsumexp] of the parts, and [o] as the sum of each part's [o] times
+   [exp (lse_part - lse)], in C order of the parts, each product fused,
+   rounded once to [q]'s dtype: [+0] where [lse] is [-∞]. A paged call's
+   factor is its table's pages, of [page] keys each. *)
+let attention_parts (type v s d) eng ~by (route : unit Route.t) rule prog
+    scale (q : (v, s, d) Value.t) (kv : (v, s, d) Value.kv)
+    (lengths : d Value.index option) (loads : d Value.any iarray) :
+    (v, s, d) Value.t * (float, D.float32_elt, d) Value.t =
+  let r = Prim.rank q in
+  let lead = r - 3 in
+  let p = route.result in
+  let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
+  let dt = Prim.dtype q in
+  let qs = Prim.shape q in
+  let factor, page, dv =
+    match kv with
+    | Dense { k; v } -> ((1, Prim.shape k, r - 2), 1, Prim.dim v (r - 1))
+    | Paged { k; v; table } -> ((3, Prim.shape table, lead), Prim.dim k 2, Prim.dim v 3)
+  in
+  let operand, fshape, faxis = factor in
+  let os = Array.append (Array.sub qs 0 (r - 1)) [| dv |] in
+  let ls = Array.sub qs 0 (r - 1) in
+  let tiles = tiles ~by route ~operand fshape [| faxis |] in
+  let closing_of shape =
+    closing ~by route ~operand ~axes:[ faxis ]
+      ~extent:(fun a -> fshape.(a))
+      shape
+  in
+  let co = closing_of os and cl = closing_of ls in
+  let outw j = Devices.window ~by p os j in
+  let here j = Devices.one set ks.(j) in
+  let f32 (Value.Any x : d Value.any) = cast eng ~by (D.Any D.Float32) (Value.Any x) in
+  let part j =
+    let w = outw j and tile = tiles.(j).(0) in
+    let k = ks.(j) and h = here j in
+    let first = tile.M.start * page and keys = tile.count * page in
+    let read i x =
+      let window = reads rule i (Prim.shape x) w (fun _ -> tile) in
+      view eng ~by k window x
+    in
+    (* The loads' keys, read whole where paged, are the device's. *)
+    let read_load i x =
+      let window = reads rule i (Prim.shape x) w (fun _ -> tile) in
+      window.(r - 1) <- { M.start = first; count = keys; step = 1 };
+      view eng ~by k window x
+    in
+    let widen x = Prim.expect D.Float32 (f32 (Value.Any x)) in
+    let q = widen (read 0 q) in
+    let kv : (float, D.float32_elt, d) Value.kv =
+      match kv with
+      | Dense { k; v } -> Dense { k = widen (read 1 k); v = widen (read 2 v) }
+      | Paged { k; v; table } ->
+          Paged { k = widen (read 1 k); v = widen (read 2 v); table = read 3 table }
+    in
+    let ix = match kv with Dense _ -> 3 | Paged _ -> 4 in
+    let lengths =
+      Option.map
+        (fun l ->
+          let l = read ix l in
+          Prim.expect D.Int64
+            (List.hd
+               (map eng ~by h [ Value.Any l ]
+                  [ E.any E.(input 0 D.Int64 - const D.Int64 (Int64.of_int first)) ])))
+        lengths
+    in
+    let ix = ix + Option.fold ~none:0 ~some:(fun _ -> 1) lengths in
+    let loads =
+      Iarray.mapi (fun i (Value.Any x) -> Value.Any (read_load (ix + i) x)) loads
+    in
+    let start = Array.map (fun (x : M.range) -> x.start) w in
+    start.(r - 1) <- first;
+    let origin = { Prim.start; extents = [||] } in
+    at eng ~by ~origin h (Value.Attention { prog; scale; q; kv; lengths; loads })
+  in
+  let parts = Array.init (Array.length ks) (fun j -> lazy (part j)) in
+  let o j = fst (Lazy.force parts.(j)) and l j = snd (Lazy.force parts.(j)) in
+  let lse =
+    reduced eng ~by cl ls D.Float32 (Logsumexp (0, D.Float32))
+      (stack eng ~by cl D.Float32 ls l)
+  in
+  let os_ = stack eng ~by co D.Float32 os o in
+  let ls_ =
+    stack eng ~by co D.Float32 os (fun j ->
+        let x = l j in
+        let s = Prim.shape (o j) in
+        spread eng ~by s
+          (reshape eng ~by (Array.append (Prim.shape x) [| 1 |]) x))
+  in
+  let sum k here w taken =
+    let lw = Array.sub w 0 (r - 1) in
+    let total = view eng ~by k lw lse in
+    let total =
+      spread eng ~by (counts w)
+        (reshape eng ~by (Array.append (counts lw) [| 1 |]) total)
+    in
+    let weight =
+      E.(
+        where
+          (input 2 D.Float32 = const D.Float32 Float.neg_infinity)
+          (const D.Float32 0.)
+          (exp (input 1 D.Float32 - input 2 D.Float32)))
+    in
+    let step acc i =
+      match taken.slot i with
+      | [ oj; lj ] ->
+          let ins = [ oj; lj; Value.Any total ] in
+          let ins, prior =
+            match acc with
+            | Some a -> (ins @ [ a ], E.input 3 D.Float32)
+            | None -> (ins, E.const D.Float32 0.)
+          in
+          Some
+            (List.hd
+               (map eng ~by here ins
+                  [ E.any (E.fma weight (E.input 0 D.Float32) prior) ]))
+      | _ -> invalid_arg "Partial.attention: a part's o and lse"
+    in
+    match List.fold_left step None (slots co) with
+    | Some y -> [ cast eng ~by (D.Any dt) y ]
+    | None -> invalid_arg "Partial.attention: no part holds keys"
+  in
+  let o = closed eng ~by co os [ D.Any dt ] [ Value.Any os_; Value.Any ls_ ] sum in
+  (Prim.expect dt (List.hd o), lse)
+
+let attention : type r.
+    Partition.engine -> by:string -> unit Route.t -> Route.rule -> r Value.prim -> r =
+ fun eng ~by route rule op ->
+  match op with
+  | Value.Attention { prog; scale; q; kv; lengths; loads } ->
+      attention_parts eng ~by route rule prog scale q kv lengths loads
+  | _ -> invalid_arg "Partial.attention: not attention"
+
 (* Scans *)
 
 let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
@@ -1594,5 +1732,6 @@ let run (type r) eng ~by route (op : r Value.prim) : r =
   | Value.Scan { carry = Some _; _ }
   | Value.Map _ | Value.Sort _ | Value.Fft _ | Value.Linalg _ | Value.Fold _
   | Value.Assemble _ | Value.Copy _ | Value.Move _ | Value.Bitcast _
-  | Value.Place _ | Value.Check _ | Value.Attention _ ->
+  | Value.Attention _ -> attention eng ~by route rule op
+  | Value.Place _ | Value.Check _ ->
       invalid_arg "Partial.run: an operation no route computes by partials"
