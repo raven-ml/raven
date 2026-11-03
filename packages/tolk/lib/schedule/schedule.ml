@@ -81,6 +81,56 @@ let split_after after =
   | None -> ());
   (kernels, deps)
 
+(* The calls a kernel runs: itself, or the calls a loop runs each trip, its
+   call or a linear of calls. *)
+let calls_of k =
+  if not (is_loop k) then [ k ]
+  else
+    let b = nth k 0 in
+    let calls = if op b = Op.Linear then src b else [ b ] in
+    if List.exists (fun c -> op c <> Op.Call) calls then
+      invalid_arg "a loop of a kernel loops over a call";
+    calls
+
+(* [k] running [calls] in place of its own. *)
+let with_calls k calls =
+  if not (is_loop k) then List.hd calls
+  else
+    let b = match calls with [ c ] -> c | cs -> v Op.Linear ~src:cs in
+    replace k ~src:(b :: List.tl (src k))
+
+(* The positions of the call [c]'s arguments its body writes, or [None] where
+   the body does not show them ({!Shape.written_params}). *)
+let written_positions c = Shape.written_params (body c)
+
+(* The positions of [c]'s arguments that hold the state [s]. *)
+let positions c s =
+  List.concat
+    (List.mapi
+       (fun i a ->
+         if (not (scalar_argument c a)) && fst (value_state a) == s then [ i ]
+         else [])
+       (List.tl (src c)))
+
+(* Whether the call [c] reads the state [s] through an argument its body does
+   not write while it writes [s] through another: as [memmove] does, it reads
+   [s] as it was before the call. A body whose writes do not show, given [s]
+   twice, has no such reading. *)
+let aliases c s =
+  match positions c s with
+  | [] | [ _ ] -> false
+  | at -> (
+      match written_positions c with
+      | Some w ->
+          List.exists (fun i -> List.mem i w) at
+          && List.exists (fun i -> not (List.mem i w)) at
+      | None ->
+          invalid_arg
+            (Format.asprintf
+               "a call whose writes do not show takes %a twice: pass it \
+                distinct storage"
+               pp (buf_uop s)))
+
 (* Copies before overwrites
 
    A kernel that reads a state and waits, through a value computed after it,
@@ -93,6 +143,10 @@ let split_after after =
      a --assign--> a         the overwrite, after the copy reads a
      a', a*3 --reader-->     the reader reads a' *)
 
+(* The copies made, for tests. *)
+let made = Atomic.make 0
+let copies () = Atomic.get made
+
 (* The next free slot of the graph's storage. *)
 let next_slot sink =
   let slot u =
@@ -103,9 +157,9 @@ let next_slot sink =
   let slots = List.map slot (toposort ~calls:Skip sink) in
   1 + List.fold_left max (-1) slots
 
-(* The state [s] copied into new storage of slot [slot] by a kernel of its
-   own. *)
-let copy_state ~slot s =
+(* New storage of slot [slot], and the kernel that copies the state [s] into
+   it. *)
+let copy_call ~slot s =
   let buf = buf_uop s in
   let device =
     match device buf with
@@ -124,7 +178,7 @@ let copy_state ~slot s =
     sink ~kernel:(kernel_info ())
       [ end_ (store (index into [ r ]) (index from [ r ])) [ r ] ]
   in
-  after dst [ call body [ dst; s ] ]
+  (dst, call body [ dst; s ])
 
 (* [d], a source of a kernel, reading [c] where it reads the state [s]: its
    path to the state is the one {!states} follows. *)
@@ -137,32 +191,48 @@ let rec swap s c d =
     | _, x :: rest -> replace d ~src:(swap s c x :: rest)
 
 (* [sink] with each kernel of [hazards], a list of a kernel and a state it
-   reads, reading a copy of the state. *)
+   reads, reading a copy of the state through the arguments its calls do not
+   write. A loop whose call writes the state it reads copies it as each trip
+   starts, in the loop; any other kernel reads one copy, which a kernel of its
+   own makes before it. *)
 let copy_before_overwrites sink hazards =
   let slot = ref (next_slot sink) and copies = ref [] in
+  let fresh s =
+    let c = copy_call ~slot:!slot s in
+    incr slot;
+    Atomic.incr made;
+    c
+  in
   let copy s =
     match List.assq_opt s !copies with
     | Some c -> c
     | None ->
-        let c = copy_state ~slot:!slot s in
-        incr slot;
+        let dst, c = fresh s in
+        let c = after dst [ c ] in
         copies := (s, c) :: !copies;
         c
+  in
+  let reread s x c =
+    let w = Option.value (written_positions c) ~default:[] in
+    replace c
+      ~src:
+        (body c
+        :: List.mapi
+             (fun i a -> if List.mem i w then a else swap s x a)
+             (List.tl (src c)))
   in
   let rebuilt =
     List.fold_left
       (fun acc (k, s) ->
         let k' = Option.value (List.assq_opt k acc) ~default:k in
-        let call = if is_loop k' then nth k' 0 else k' in
-        let call =
-          replace call
-            ~src:(body call :: List.map (swap s (copy s)) (List.tl (src call)))
+        let calls = calls_of k' in
+        let calls =
+          if is_loop k' && List.exists (fun c -> aliases c s) calls then
+            let dst, c = fresh s in
+            c :: List.map (reread s dst) calls
+          else List.map (reread s (copy s)) calls
         in
-        let k'' =
-          if is_loop k' then replace k' ~src:(call :: List.tl (src k'))
-          else call
-        in
-        (k, k'') :: List.remove_assq k acc)
+        (k, with_calls k' calls) :: List.remove_assq k acc)
       [] hazards
   in
   (* A rebuilt kernel may read another, directly or through the copy of a
@@ -173,8 +243,6 @@ let copy_before_overwrites sink hazards =
 (* A kernel as the schedule runs it: a call of its storage, in a loop where it
    runs in one. *)
 let scheduled rk =
-  let k = if is_loop rk then nth rk 0 else rk in
-  if op k <> Op.Call then invalid_arg "a scheduled kernel is a call";
   let loops r = Axis_type.equal (axis_type r) Axis_type.Loop in
   (* A call's argument is the storage it reads, or a view of it that moves with
      the loops the call runs in. *)
@@ -185,23 +253,27 @@ let scheduled rk =
     then replace s ~src:(argument (nth s 0) :: List.tl (src s))
     else buf_uop (unwrap_src s)
   in
-  let args =
-    List.filter_map
-      (fun s ->
-        if is_bound_var s then None
-        else if scalar_argument k s then Some s
-        else Some (argument s))
-      (List.tl (src k))
+  let call k =
+    if op k <> Op.Call then invalid_arg "a scheduled kernel is a call";
+    let args =
+      List.filter_map
+        (fun s ->
+          if is_bound_var s then None
+          else if scalar_argument k s then Some s
+          else Some (argument s))
+        (List.tl (src k))
+    in
+    replace k ~src:(body k :: args)
   in
-  let call = replace k ~src:(body k :: args) in
-  (* A loop around a call stays, a back edge's condition read from the storage
-     it names. *)
+  let calls = List.map call (calls_of rk) in
+  (* A loop around a call, or a linear of calls, stays, a back edge's
+     condition read from the storage it names. *)
   match op rk with
-  | Op.End when List.exists loops (List.tl (src rk)) ->
-      replace rk ~src:(call :: List.tl (src rk))
+  | Op.End when List.exists loops (List.tl (src rk)) -> with_calls rk calls
   | Op.Backedge ->
-      replace rk ~src:[ call; nth rk 1; buf_uop (unwrap_src (nth rk 2)) ]
-  | _ -> call
+      let rk = with_calls rk calls in
+      replace rk ~src:[ nth rk 0; nth rk 1; buf_uop (unwrap_src (nth rk 2)) ]
+  | _ -> List.hd calls
 
 module Iset = Set.Make (Int)
 
@@ -374,18 +446,13 @@ let rec schedule ~by_storage ~copies sched_sink =
           (fun k ->
             if Ordered.find_opt in_degree k = None then
               Ordered.replace in_degree k 0;
-            let call =
-              if is_loop k then begin
-                if op (nth k 0) <> Op.Call then
-                  invalid_arg "a loop of a kernel loops over a call";
-                nth k 0
-              end
-              else k
-            in
             let kernel_deps =
-              List.filter
-                (fun s -> not (scalar_argument call s))
-                (List.tl (src call))
+              List.concat_map
+                (fun call ->
+                  List.filter
+                    (fun s -> not (scalar_argument call s))
+                    (List.tl (src call)))
+                (calls_of k)
             in
             let read_states = List.concat_map states kernel_deps in
             reads :=
@@ -406,7 +473,13 @@ let rec schedule ~by_storage ~copies sched_sink =
      keeps, as [b + (a * 3)] does where [b] read [a] before [a] was assigned. *)
   let hazards = ref [] in
   let overwrite k s t =
-    if t == k then ()
+    if t == k then begin
+      (* A kernel writing the state it reads through another argument. *)
+      if
+        List.exists (fun c -> aliases c s) (calls_of k)
+        && not (List.exists (fun (k', s') -> k' == k && s' == s) !hazards)
+      then hazards := (k, s) :: !hazards
+    end
     else if Nodes.mem t (backward_slice ~calls:Skip k) then begin
       if not (List.exists (fun (k', s') -> k' == k && s' == s) !hazards) then
         hazards := (k, s) :: !hazards
@@ -417,7 +490,9 @@ let rec schedule ~by_storage ~copies sched_sink =
     (fun (u, k, s) ->
       List.iter
         (fun (a, write_kernels) ->
-          if a != u then List.iter (overwrite k s) write_kernels)
+          List.iter
+            (fun t -> if a != u || t == k then overwrite k s t)
+            write_kernels)
         (List.rev (Option.value (Tbl.find_opt writes s) ~default:[])))
     (List.rev !reads);
   match List.rev !hazards with

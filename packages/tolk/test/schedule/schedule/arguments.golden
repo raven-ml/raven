@@ -34,6 +34,8 @@ read_overwritten_through_kernels	-
 read_join_of_assigned_kernels	-
 read_join_of_overwritten_kernels	-
 stage_of_overwritten_kernels	-
+call_given_one_state_twice_kernels	-
+call_given_one_state_twice_kernels_1	-
 copy_of_overwritten_kernels	-
 setitem_kernels	-
 assign_bitcast_kernels	-

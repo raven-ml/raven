@@ -4158,7 +4158,12 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   and the schedule is made again from the graph with the copy. This holds for
   any overwrite of the storage, whichever elements each kernel touches, so a
   partial overwrite of elements the kernel does not read copies too, at a
-  kernel and the state's size in storage.
+  kernel and the state's size in storage. A call given one state at an
+  argument its body writes and at one it does not reads, as `memmove` reads
+  its source, a copy of the state made before it at the argument it only
+  reads (`Shape.written_params`); in a loop, the copy is made in the loop as
+  each trip starts. A call whose body does not show its writes, given one
+  state twice, is refused.
 - **Reason:** none. jera's compiled gradient of an adaptive solve reaches it,
   the only kernel of rune's, jera's, norn's and kaun's suites to:
   `Ode › solve derivatives › compiled grad equals eager grad` (jera's
@@ -4174,6 +4179,8 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   storage before and after a write reads both` and `› reads it before`, and
   the rules after them, for a copy two kernels share, a kernel with two
   copies, a copy of a state a rebuilt kernel writes and the copy's phase;
+  `create_linear_with_vars › calls given one state twice`, and the program
+  `call_given_one_state_twice`;
   and the program `read_overwritten_through`, whose recorded schedule and
   linear and whose values (`create_linear_with_vars › values`) are
   tinygrad's, patched.

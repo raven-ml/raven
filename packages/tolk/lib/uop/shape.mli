@@ -513,6 +513,17 @@ val call_with_output :
 (** [call_with_output value args] is the one output of
     [call_with_outputs [value] args]. *)
 
+val written_params : Ops.t -> int list option
+(** [written_params body] is the slots of the storage parameters the call
+    body [body] writes, in increasing order: those a store of a {!Op.Sink} or
+    an {!Op.Store} stores into, through indices, movements and {!Op.After}s,
+    and, for a call the body makes, the parameters it passes where that call's
+    body writes, at any depth; a call whose body does not show its writes
+    writes every parameter it is passed. A body of an {!Op.Linear} writes what
+    its calls write, in loops too. [None] when [body] does not show what it
+    writes: a {!Op.Program}, a {!Op.Custom_function}, or a sink holding code
+    of the target's ({!Op.Custom}). *)
+
 val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
 (** [custom_kernel args f] calls the kernel [f] builds on placeholders of
     [args], and is [args], each ordered after it. The placeholder of the [i]th

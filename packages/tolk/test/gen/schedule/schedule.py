@@ -217,6 +217,13 @@ def copy_of_overwritten():
     return lo + (x * 3).contiguous()[0:2].to("CPU:1"), x
 
 
+def call_given_one_state_twice():
+    # a precompiled call storing the reverse of its parameter 1 into its parameter 0, given one buffer at both
+    a = empty(4).contiguous()
+    body = UOp.sink(a.uop.param_like(0).store(Tensor(a.uop.param_like(1)).flip(0).uop))
+    return Tensor(a.uop.after(body.call(a.uop, a.uop, precompile=True)))
+
+
 def setitem():
     t = empty(8, 8).contiguous()
     t[2:4] = 1.0
@@ -298,6 +305,7 @@ PROGRAMS = {
     "read_join_of_assigned": read_join_of_assigned,
     "read_join_of_overwritten": read_join_of_overwritten,
     "stage_of_overwritten": stage_of_overwritten,
+    "call_given_one_state_twice": call_given_one_state_twice,
     "copy_of_overwritten": copy_of_overwritten,
     "setitem": setitem,
     "assign_bitcast": lambda: empty(4, dtype=dtypes.uint32).contiguous().bitcast(dtypes.float).assign(empty(4) + 1),

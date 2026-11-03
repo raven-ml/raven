@@ -2419,7 +2419,7 @@ index 6eec3e198..78afe4e78 100644
    smem_prefix_for_cast: bool = False
    barrier = '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");' + '__builtin_amdgcn_s_barrier();' + \
 diff --git a/tinygrad/schedule/__init__.py b/tinygrad/schedule/__init__.py
-index 7ead5c9c6..9658af51c 100644
+index 7ead5c9c6..d8a60c903 100644
 --- a/tinygrad/schedule/__init__.py
 +++ b/tinygrad/schedule/__init__.py
 @@ -2,7 +2,7 @@ import time, inspect
@@ -2453,7 +2453,7 @@ index 7ead5c9c6..9658af51c 100644
  
  def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
    kernels, remaining = partition(after.src[1:], lambda s: s.op in {Ops.CALL, Ops.END})
-@@ -28,17 +32,56 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
+@@ -28,17 +32,98 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
      raise AssertionError(f"AFTER source should be CALL, END, STORE, or AFTER, not {invalid[0].op}")
    return tuple(kernels), tuple(deps)
  
@@ -2476,6 +2476,46 @@ index 7ead5c9c6..9658af51c 100644
 +  if d.op in {Ops.MSELECT, Ops.MSTACK}: return d.replace(src=tuple(_swap(s, c, x) for x in d.src))
 +  return d.replace(src=(_swap(s, c, d.src[0]),)+d.src[1:])
 +
++# the positions of a call's arguments its body writes: the stores into its parameters at any depth, a call the body makes
++# writing the parameters it passes where its own body writes. None where the body does not show them
++def _written(call:UOp) -> list[int]|None:
++  def param(u:UOp) -> UOp|None:
++    while u.op is not Ops.PARAM:
++      if not len(u.src): return None
++      u = u.src[0]
++    return u if u.addrspace is not AddrSpace.ALU else None
++  out: set[int] = set()
++  def add(u:UOp):
++    if (p:=param(u)) is not None and p.arg.slot >= 0: out.add(p.arg.slot)
++  def inner(c:UOp):
++    w = _written(c)
++    for i, a in enumerate(c.src[1:]):
++      if w is None or i in w: add(a)
++  def entry(e:UOp):
++    if e.op is Ops.CALL: inner(e)
++    elif e.op in {Ops.END, Ops.BACKEDGE}: entry(e.src[0])
++    elif e.op is Ops.LINEAR:
++      for x in e.src: entry(x)
++  body = call.src[0]
++  if body.op is Ops.SINK:
++    nodes = body.toposort(enter_calls=False)
++    if any(u.op in {Ops.CUSTOM, Ops.CUSTOMI} for u in nodes): return None
++    for u in nodes:
++      if u.op is Ops.STORE: add(u.src[0])
++      elif u.op is Ops.CALL: inner(u)
++  elif body.op is Ops.LINEAR: entry(body)
++  elif body.op is Ops.STORE: add(body.src[0])
++  else: return None
++  return sorted(out)
++
++# whether the call c reads the state s through an argument its body does not write while it writes s through another: as
++# memmove reads its source, it reads s as it was before the call
++def _aliases(c:UOp, s:UOp) -> bool:
++  at = [i for i, a in enumerate(c.src[1:]) if not a.is_bound_var and a.addrspace is not AddrSpace.ALU and _states(a) == [s]]
++  if len(at) < 2: return False
++  if (w := _written(c)) is None: raise RuntimeError(f"a call whose writes do not show takes {s.buf_uop} twice: pass it distinct storage")
++  return any(i in w for i in at) and any(i not in w for i in at)
++
 +def _copy_before_overwrites(sched_sink:UOp, hazards:list[tuple[UOp, UOp]]) -> UOp:
 +  slot = 1 + max([u.arg.slot for u in sched_sink.toposort(enter_calls=False) if u.op in {Ops.ALLOC, Ops.BUFFER, Ops.PARAM}
 +                  and isinstance(u.arg, ParamArg)], default=-1)
@@ -2485,7 +2525,9 @@ index 7ead5c9c6..9658af51c 100644
 +    if s not in copies: copies[s], slot = _copy_state(s, slot), slot+1
 +    kk = rebuilt.get(k, k)
 +    call = kk.src[0] if kk.op in {Ops.END, Ops.BACKEDGE} else kk
-+    call = call.replace(src=(call.src[0],)+tuple(_swap(s, copies[s], x) for x in call.src[1:]))
++    # a position the call writes keeps the state: the write lands in its storage
++    w = _written(call) or []
++    call = call.replace(src=(call.src[0],)+tuple(x if i in w else _swap(s, copies[s], x) for i, x in enumerate(call.src[1:])))
 +    rebuilt[k] = kk.replace(src=(call,)+kk.src[1:]) if kk.op in {Ops.END, Ops.BACKEDGE} else call
 +  return sched_sink.substitute(rebuilt)
 +
@@ -2513,7 +2555,7 @@ index 7ead5c9c6..9658af51c 100644
        prev_kernels = set(_split_after(prev_state)[0]) if prev_state.op is Ops.AFTER else set()
        writes.setdefault(prev_state, []).append((u, tuple(k for k in kernels if k not in prev_kernels)))
        for k in kernels:
-@@ -48,20 +91,25 @@ def create_schedule(sched_sink:UOp) -> UOp:
+@@ -48,20 +133,28 @@ def create_schedule(sched_sink:UOp) -> UOp:
          read_states = [st for s in kernel_deps for st in _states(s)]
          reads += [(u, k, st) for st in read_states]
          # RAW deps: a kernel runs after the kernels that produced the states it reads or joins
@@ -2529,12 +2571,16 @@ index 7ead5c9c6..9658af51c 100644
      # supersedes its immediate prior state; join members already present in that prior state are ordering deps, not writes
      for u, k, s in reads:
        for a, write_kernels in writes.get(s, []):
-         if a is u: continue
+-        if a is u: continue
          for t in write_kernels:
 -          if t is not k:
 -            children.setdefault(k, []).append(t)
 -            in_degree[t] += 1
-+          if t is k: continue
++          if t is k:
++            # a kernel writing the state it reads through another argument reads a copy made before it
++            if _aliases(k.src[0] if k.op is Ops.END else k, s) and (k, s) not in hazards: hazards.append((k, s))
++            continue
++          if a is u: continue
 +          # a kernel that waits for the write reads the state it overwrote: it reads a copy made before the write
 +          if t in k.backward_slice:
 +            if (k, s) not in hazards: hazards.append((k, s))
@@ -2547,7 +2593,7 @@ index 7ead5c9c6..9658af51c 100644
  
    with cpu_profile(TracingKey("linearize schedule")):
      queue: deque[UOp] = deque(k for k,v in in_degree.items() if v == 0)
-@@ -78,6 +126,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
+@@ -78,6 +171,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
      if any(in_degree.values()): raise RuntimeError("cycle detected in assign graph")
    return UOp(Ops.LINEAR, src=tuple(linearized))
  
@@ -2556,7 +2602,7 @@ index 7ead5c9c6..9658af51c 100644
  from tinygrad.schedule.memory import memory_plan_rewrite
  from tinygrad.engine.realize import capturing, pm_flatten_linear
  from tinygrad.schedule.prepare import prepare_rangeify
-@@ -191,6 +241,7 @@ class CallifyCtx:
+@@ -191,6 +286,7 @@ class CallifyCtx:
    allocs: dict[UOp, UOp] = field(default_factory=dict)
    views: set[UOp] = field(default_factory=set)
    stores: list[UOp] = field(default_factory=list)
@@ -2564,7 +2610,7 @@ index 7ead5c9c6..9658af51c 100644
  
  def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
    """MOPS(BUFFER) → SHRINK when movement ops collapse to a contiguous range."""
-@@ -204,6 +255,9 @@ def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
+@@ -204,6 +300,9 @@ def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
      return None if view is None else view.unshard(unshard.arg, unshard.src[1:])
  
    if buf.op is not Ops.BUFFER or (cv := src.contiguous_view()) is None or cv[0].op is not Ops.BUFFER: return None
@@ -2574,7 +2620,7 @@ index 7ead5c9c6..9658af51c 100644
    buf, offset = cv
    view = buf[offset:offset + src.max_numel() * src.element_size() // buf.element_size()].bitcast(src.dtype)
    if ctx is not None: ctx.views.add(view)
-@@ -258,8 +312,15 @@ def transform_to_call(big_sink:UOp) -> UOp:
+@@ -258,8 +357,15 @@ def transform_to_call(big_sink:UOp) -> UOp:
    if VIZ: graph_rewrite(big_sink, PatternMatcher([]), name="View Graph")
    if SPEC: type_verify(big_sink, spec_tensor)
  

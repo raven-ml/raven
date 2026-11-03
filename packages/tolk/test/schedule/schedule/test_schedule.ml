@@ -38,6 +38,7 @@ let programs =
     "assign_flipped_from_self";
     "assign_permuted_self";
     "assign_reads_behind_other_after";
+    "call_given_one_state_twice";
     "attention";
     "cat";
     "chained_functions";
@@ -96,6 +97,8 @@ let kernel_graphs =
     "assign_kernels";
     "assign_permuted_self_kernels";
     "assign_reads_behind_other_after_kernels";
+    "call_given_one_state_twice_kernels";
+    "call_given_one_state_twice_kernels_1";
     "attention_kernels";
     "cat_kernels";
     "chained_functions_kernels";
@@ -2672,6 +2675,135 @@ let views_of_written =
       test "halves of a buffer swapped through stages swap" swap_halves;
     ]
 
+(* Calls given one state twice
+
+   A call that writes a state through one argument and reads it through
+   another reads it as it was before the call, as [memmove] reads its
+   source: a copy of it, made before the call, at the arguments it reads. *)
+
+(* The copies of states the schedules made while [f] ran, each body
+   scheduled anew. *)
+let copies_while f =
+  let before = Schedule.copies () in
+  let x = with_settings ~debug:0 ~scache:0 f in
+  (x, Schedule.copies () - before)
+
+(* [keeps_values outputs], and the copies its schedule made. *)
+let copied outputs = snd (copies_while (fun () -> ignore (keeps_values outputs)))
+let p4 slot = Shape.param ~shape:[ Int 4 ] ~device:cpu slot Float32
+
+(* A precompiled call storing [f] of its parameter 1 into its parameter 0,
+   given [x] at both. *)
+let into_self f x =
+  Ops.after x [ Ops.call ~precompile:true (Ops.sink [ Ops.store (p4 0) (f (p4 1)) ]) [ x; x ] ]
+
+let flipped u = Shape.flip u [ 0 ]
+
+let shifted u =
+  Shape.shrink (Shape.pad u [ Some (Int 1, Int 0) ]) [ Some (Int 0, Int 4) ]
+
+let call_aliases (name, f) =
+  test ("a call storing " ^ name ^ " of a state into it reads it as it was")
+    (fun () -> equal int ~msg:"copies" 1 (copied [ into_self f (f32 1) ]))
+
+(* Given two buffers, the call copies nothing. *)
+let call_apart () =
+  let x = f32 1 in
+  let c =
+    Ops.call ~precompile:true (Ops.sink [ Ops.store (p4 0) (flipped (p4 1)) ]) [ x; f32 2 ]
+  in
+  equal int ~msg:"copies" 0 (copied [ Ops.after x [ c ] ])
+
+(* A kernel reversing its argument 1 into its argument 0, by element. *)
+let reverse = function
+  | [ o; i ] ->
+      let r = Ops.range (Int 4) [ 0 ] in
+      Ops.sink
+        [ Ops.end_ (Ops.store (Ops.index o [ r ]) (Ops.index i [ Ops.O.(int 3 - r) ])) [ r ] ]
+  | _ -> failwith "two arguments"
+
+(* A custom kernel given [x] twice reverses [x]. Its body becomes the
+   stores of a kernel, which reads [x] at other elements than it writes: it
+   stores a stage of its value, and no copy is made. *)
+let kernel_aliases () =
+  let x = f32 1 in
+  let big =
+    Ops.sink [ List.hd (Shape.custom_kernel [ x; x ] reverse) ]
+  in
+  let buffers = filled big in
+  let linear, made =
+    copies_while (fun () -> unplanned big)
+  in
+  let given = Array.to_list (List.assoc 1 buffers) in
+  equal (list write) ~msg:"x reversed"
+    (List.mapi (fun i v -> (1, i, v)) (List.rev given))
+    (List.filter
+       (fun (s, _, _) -> s = 1)
+       (Kernel_graphs.linear_writes ~buffers linear));
+  equal int ~msg:"kernels" 2 (List.length (Ops.src linear));
+  equal int ~msg:"copies" 0 made
+
+(* A loop of three trips around a call storing [x] reversed, plus one, into
+   [x]: each trip reads [x] as the trip before left it. *)
+let loop_aliases () =
+  let x = f32 1 in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let body = Ops.sink [ Ops.store (p4 0) Ops.O.(flipped (p4 1) + fl 1.) ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body [ x; x ]) [ r ] in
+  let linear, made =
+    copies_while (fun () -> keeps_values [ Ops.after x [ e ] ])
+  in
+  equal int ~msg:"copies" 1 made;
+  match Ops.src linear with
+  | [ e ] ->
+      equal (list string) ~msg:"a loop of a linear" [ "END"; "LINEAR" ]
+        (ops_of [ e; Ops.nth e 0 ]);
+      equal int ~msg:"of the copy and the call" 2
+        (List.length (Ops.src (Ops.nth e 0)))
+  | entries -> failf "%d entries" (List.length entries)
+
+(* A call whose body does not show what it writes, given [x] twice and
+   ordered as writing it, is refused. *)
+let opaque_aliases () =
+  let x = f32 1 in
+  let c = Ops.call (Ops.custom_function "f" [ p4 0; p4 1 ]) [ x; x ] in
+  raises_match (Exn.invalid_arg ~sub:"distinct storage") (fun () ->
+      Schedule.create_schedule (Ops.sink [ Ops.after x [ c ] ]))
+
+(* A precompiled call whose body calls a body storing the reverse of its
+   parameter 1 into its parameter 0, passing its own parameters 0 and 1 and
+   ordering its parameter 0 after it, given [x] at both: its body writes [x]
+   at depth. *)
+let nested_aliases () =
+  let inner =
+    Ops.sink [ Ops.store (p4 0) (flipped (p4 1)) ]
+  in
+  let outer =
+    Ops.sink
+      [ Ops.after (p4 0) [ Ops.call ~precompile:true inner [ p4 0; p4 1 ] ] ]
+  in
+  let x = f32 1 in
+  equal (option (list int)) ~msg:"the outer body writes its parameter 0"
+    (Some [ 0 ]) (Shape.written_params outer);
+  equal int ~msg:"copies" 1
+    (copied [ Ops.after x [ Ops.call ~precompile:true outer [ x; x ] ] ])
+
+let aliased =
+  group "create_linear_with_vars › calls given one state twice"
+    [
+      test "a call whose body writes through a call it makes reads a copy"
+        nested_aliases;
+      call_aliases ("the reverse", flipped);
+      call_aliases ("a shift", shifted);
+      call_aliases ("one plus each element", fun u -> Ops.O.(u + fl 1.));
+      test "a call given two buffers copies nothing" call_apart;
+      test "a custom kernel given a buffer twice reverses it" kernel_aliases;
+      test "a loop of a call given a state twice reads it as each trip starts"
+        loop_aliases;
+      test "a call whose writes do not show, given a state twice, is refused"
+        opaque_aliases;
+    ]
+
 let () =
   exit
     (run "Tolk.Schedule"
@@ -2696,4 +2828,5 @@ let () =
          on_disk;
          joins;
          views_of_written;
+         aliased;
        ])

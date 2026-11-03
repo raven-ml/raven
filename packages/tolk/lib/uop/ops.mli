@@ -893,7 +893,9 @@ val custom_function : ?dtype:Dtype.t -> string -> t list -> t
 
 val call : ?name:string -> ?precompile:bool -> t -> t list -> t
 (** [call body args] calls [body] on [args]. The call has the type and the
-    shape of [body].
+    shape of [body]. Given one state of storage at an argument [body] writes
+    ({!Shape.written_params}) and at another, it reads that state at the other
+    as it was before the call, as [memmove] reads its source.
 
     Raises [Invalid_argument] if [body] cannot be called ({!opaque_call_bodies})
     or a range leaks out of it. *)

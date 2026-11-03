@@ -943,6 +943,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A call given one state at an argument it writes and at another it only
+  reads reads the state as it was before the call, as `memmove` does: the
+  schedule copies it first, in a loop as each trip starts. `Shape.written_params`
+  gives the arguments a call body writes. A call whose body does not show its
+  writes, given one state twice, raises `Invalid_argument`.
 - A copy or a stage of a run of a buffer that the same realize overwrites
   reads the run as it was (`Schedule.create_linear_with_vars`): it read the
   overwritten values, as a swap of two halves of a buffer through stages

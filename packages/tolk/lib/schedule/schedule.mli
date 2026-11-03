@@ -135,3 +135,7 @@ val merge_calls : held:Ops.t list -> Ops.t -> Ops.t
 (** [merge_calls ~held linear] is the schedule [linear] with the calls that
     can run as one merged, as {!create_linear_with_vars} merges them, [held]
     being the storage the schedule is given. *)
+
+val copies : unit -> int
+(** [copies ()] is the number of copies of states {!create_schedule} has
+    made, in every domain, since the program started. *)

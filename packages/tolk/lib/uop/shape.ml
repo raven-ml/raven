@@ -3351,6 +3351,61 @@ let call_with_outputs ?name ?(precompile = false) ?output_pos values args =
 let call_with_output ?name ?precompile value args =
   List.hd (call_with_outputs ?name ?precompile [ value ] args)
 
+(* The storage parameter [u] reaches through its first sources, if any. *)
+let rec param_under u =
+  match op u with
+  | Op.Param -> if addrspace u = Some Dtype.Alu then None else Some u
+  | _ -> ( match src u with x :: _ -> param_under x | [] -> None)
+
+let rec written_params body =
+  let slots = ref [] in
+  let add u =
+    match param_under u with
+    | Some p ->
+        let s = (param_arg_of p).slot in
+        if s >= 0 && not (List.mem s !slots) then slots := s :: !slots
+    | None -> ()
+  in
+  (* A call writes its arguments at the positions its body writes, or every
+     argument where the body does not show them. *)
+  let call c =
+    let args = Array.of_list (List.tl (src c)) in
+    match written_params (nth c 0) with
+    | Some w ->
+        List.iter (fun i -> if i < Array.length args then add args.(i)) w
+    | None -> Array.iter add args
+  in
+  let rec entry e =
+    match op e with
+    | Op.Call -> call e
+    | Op.End | Op.Backedge -> entry (nth e 0)
+    | Op.Linear -> List.iter entry (src e)
+    | _ -> ()
+  in
+  let shown () = Some (List.sort Int.compare !slots) in
+  match op body with
+  | Op.Sink ->
+      let nodes = toposort ~calls:Skip body in
+      if List.exists (fun u -> op u = Op.Custom || op u = Op.Customi) nodes
+      then None
+      else begin
+        List.iter
+          (fun u ->
+            match op u with
+            | Op.Store -> add (nth u 0)
+            | Op.Call -> call u
+            | _ -> ())
+          nodes;
+        shown ()
+      end
+  | Op.Linear ->
+      List.iter entry (src body);
+      shown ()
+  | Op.Store ->
+      add (nth body 0);
+      shown ()
+  | _ -> None
+
 let custom_kernel args f =
   (* A variable stays a variable of the kernel, unbound, in its own slot. *)
   let placeholder i s =

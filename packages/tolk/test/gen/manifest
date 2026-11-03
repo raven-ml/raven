@@ -3604,6 +3604,12 @@ schedule/schedule/attention.golden
 schedule/schedule/attention_kernels.golden
 schedule/schedule/attention_linear.golden
 schedule/schedule/attention_schedule.golden
+schedule/schedule/call_given_one_state_twice.golden
+schedule/schedule/call_given_one_state_twice_kernels.golden
+schedule/schedule/call_given_one_state_twice_kernels_1.golden
+schedule/schedule/call_given_one_state_twice_linear.golden
+schedule/schedule/call_given_one_state_twice_schedule.golden
+schedule/schedule/call_given_one_state_twice_schedule_1.golden
 schedule/schedule/cat.golden
 schedule/schedule/cat_kernels.golden
 schedule/schedule/cat_linear.golden
