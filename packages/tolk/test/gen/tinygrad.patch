@@ -1093,7 +1093,7 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..e314e4d70 100644
+index ec97cac6f..c6e8172ac 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
 @@ -1,9 +1,278 @@
@@ -1487,7 +1487,7 @@ index ec97cac6f..e314e4d70 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,25 +415,47 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,47 +415,105 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1513,6 +1513,7 @@ index ec97cac6f..e314e4d70 100644
 +  if host and not host_elementwise and enough_work(): upcast_contiguous(k, host_registers(k))
    upcasted_axis: set[int] = set()
 -  while resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) >= 1024) and (k.upcast_size() < 32):
++  upcasted: list[tuple[int, int]] = []
 +  while not host_elementwise and enough_work() and (host or k.upcast_size() < 32):
      xb_choices = []
      # consider all upcastable axes with 3 or 4 upcast (128 on the DSP)
@@ -1545,7 +1546,27 @@ index ec97cac6f..e314e4d70 100644
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -139,18 +466,36 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+       k.apply_opt(Opt(OptOps.SPLIT, xb_choices[0][2], (xb_choices[0][3], AxisType.UPCAST)))
+       upcasted_axis.add(xb_choices[0][2])
++      upcasted.append((xb_choices[0][2], xb_choices[0][3]))
+     else: break
+ 
++  # a contraction on a GPU, summed in 4 bytes or fewer, whose two upcast output axes are each reused, an operand not reading it, is blocked: each axis, upcast by
++  # 4, takes a second upcast by 2, so that a thread holds 8 by 8 outputs, its reduce is unrolled by 4, and its workgroup takes one
++  # SIMD group of LANES threads. measured on an RTX 5000 Ada
++  blocked = False
++  def reused(axis): return any(k.rngs[axis] not in b.src[1].get_idx().backward_slice for b in k.bufs)
++  # the threads the axes leave a workgroup once doubled
++  def pow2(n, cap): return 1 if not isinstance(n, int) else cap if cap <= 1 or n % cap == 0 else pow2(n, cap // 2)
++  def threads(): return prod(pow2(k.full_shape[axis], 2 * LANES) // 2 for axis, _ in upcasted)
++  if k.ren.has_local and contraction(k) is not None and k.reduceop.dtype.itemsize <= 4 and [a for _, a in upcasted] == [4, 4] and \
++     all(reused(axis) and k.full_shape[axis] % 2 == 0 for axis, _ in upcasted) and threads() >= LANES:
++    for axis, _ in upcasted: k.apply_opt(Opt(OptOps.SPLIT, axis, (2, AxisType.UPCAST)))
++    if (axes:=k.upcastable_dims(reduce=True)) and k.full_shape[axes[-1]] % 4 == 0:
++      try: k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
++      except KernelOptError: pass
++    blocked = True
++
    # if last reduce dim is small(ish), loop unroll the reduce
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:
@@ -1588,6 +1609,15 @@ index ec97cac6f..e314e4d70 100644
      k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
  
    # **** local groups ****
+@@ -176,7 +539,7 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+       to_local: list[tuple[int, int]] = []
+       for _, axis in sorted(local_axis_ranking, key=lambda x: (-x[0], -x[1])):
+         local_size = prod(sz for _, sz in to_local)
+-        local_sz: int|None = next((x for x in ([32] * (axis == 0) + [16,8,4,3,2]) if k.full_shape[axis] % x == 0 and local_size * x <= 128), None)
++        local_sz: int|None = next((x for x in ([32] * (axis == 0) + [16,8,4,3,2]) if k.full_shape[axis] % x == 0 and local_size * x <= (LANES if blocked else 128)), None)
+         if local_sz is not None: to_local.append((axis, local_sz))
+       deleted_shape = 0
+       for axis, local_sz in sorted(to_local[:3]):
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
 index d7f19cd30..dad07ba4c 100644
 --- a/tinygrad/codegen/opt/postrange.py

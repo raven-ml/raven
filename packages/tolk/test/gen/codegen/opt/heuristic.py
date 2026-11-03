@@ -153,6 +153,11 @@ KERNELS = {
     # would pass the bound
     "matmul_bf16_5760": lambda: last(empty(512, 2880, dtype=dtypes.bfloat16).float() @ empty(2880, 5760, dtype=dtypes.bfloat16).float()),
     "matmul_half_1280x2560": lambda: last(empty(1280, 64, dtype=dtypes.half).matmul(empty(64, 2560, dtype=dtypes.half), dtype=dtypes.float)),
+    # float32 contractions on a GPU's registers: a product whose rows and columns each one operand does not read holds 8 by 8 outputs
+    # a thread, attention's scores per head likewise; a product of 1000 by 1000 leaves its halved axes no power of two of threads
+    "matmul_256": lambda: last(empty(256, 64) @ empty(64, 256)),
+    "scores": lambda: last(empty(8, 128, 16) @ empty(8, 128, 16).transpose(1, 2)),
+    "matmul_1000": lambda: last(empty(1000, 16) @ empty(16, 1000)),
     # gpt-oss-20b's attention values at a decode step: 64 by 64 outputs over 1024 slots, from bfloat16 widened
     "attention_values": lambda: last(empty(64, 1024, dtype=dtypes.bfloat16).float() @ empty(1024, 64, dtype=dtypes.bfloat16).float()),
     # products a variable counts: the workgroups are not known, and every split applies

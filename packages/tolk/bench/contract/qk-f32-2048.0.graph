@@ -1,0 +1,33 @@
+0 Ops.CONST dtypes.weakint [] 33554432
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CUDA")
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+4 Ops.CONST dtypes.weakint [] 2048
+5 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 2)
+6 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 3)
+7 Ops.CONST dtypes.weakint [] 4194304
+8 Ops.MUL dtypes.weakint [3, 7]
+9 Ops.MUL dtypes.weakint [5, 4]
+10 Ops.ADD dtypes.weakint [8, 9]
+11 Ops.ADD dtypes.weakint [10, 6]
+12 Ops.INDEX dtypes.f32 [1, 11]
+13 Ops.CONST dtypes.weakint [] 1048576
+14 Ops.PARAM dtypes.f32 [13] ParamArg(slot=1, dtype=dtypes.f32, device="CUDA")
+15 Ops.CONST dtypes.weakint [] 64
+16 Ops.RANGE dtypes.weakint [15] (AxisType.WEAK, 0)
+17 Ops.PARAM dtypes.f32 [13] ParamArg(slot=2, dtype=dtypes.f32, device="CUDA")
+18 Ops.CONST dtypes.weakint [] 131072
+19 Ops.MUL dtypes.weakint [3, 18]
+20 Ops.MUL dtypes.weakint [5, 15]
+21 Ops.ADD dtypes.weakint [19, 20]
+22 Ops.ADD dtypes.weakint [21, 16]
+23 Ops.INDEX dtypes.f32 [14, 22]
+24 Ops.MUL dtypes.weakint [6, 15]
+25 Ops.ADD dtypes.weakint [19, 24]
+26 Ops.ADD dtypes.weakint [25, 16]
+27 Ops.INDEX dtypes.f32 [17, 26]
+28 Ops.MUL dtypes.f32 [23, 27]
+29 Ops.REDUCE dtypes.f32 [28, 16] (Ops.ADD, 0)
+30 Ops.STORE dtypes.void [12, 29]
+31 Ops.END dtypes.void [30, 3, 5, 6]
+32 Ops.SINK dtypes.void [31] KernelInfo()

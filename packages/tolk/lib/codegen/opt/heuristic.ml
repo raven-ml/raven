@@ -1067,10 +1067,12 @@ let enough_work k =
   Sint.resolve Sint.(prod_at k (K.upcastable_dims k) >= Int 1024)
 
 (* potentially do more upcasts of non reduce axes based on a heuristic; on the
-   host, after the contiguous axis, while the accumulators fit *)
+   host, after the contiguous axis, while the accumulators fit. The axes its
+   loop upcast, each with its amount, latest first. *)
 let upcast_more k =
   if budgeted k && enough_work k then upcast_contiguous k;
-  let rec loop upcasted_axis =
+  let rec loop upcasted =
+    let upcasted_axis = List.map fst upcasted in
     if enough_work k && (budgeted k || holds Sint.(K.upcast_size k < Int 32))
     then begin
       let choice ~fill axis upcast_amount =
@@ -1140,9 +1142,10 @@ let upcast_more k =
           if debug () >= 4 then
             Format.eprintf "more upcast axis : %d by %d@." axis amount;
           ignore (split k axis amount Opt.Upcast);
-          loop (axis :: upcasted_axis)
-      | [] -> ()
+          loop ((axis, amount) :: upcasted)
+      | [] -> upcasted
     end
+    else upcasted
   in
   loop []
 
@@ -1219,8 +1222,58 @@ let upcast_one k =
       if K.axes_of k [ Upcast ] = [] && divisible (shape_at k axis) 4 then
         ignore (split k axis 4 Opt.Upcast)
 
+(* A contraction on a GPU, summed in 4 bytes or fewer, whose two upcast
+   output axes are each reused, an operand not reading it, is blocked: each axis, upcast by 4, takes a second
+   upcast by 2, so that a thread holds 8 by 8 outputs and each element it loads
+   feeds 8 of them, its reduce is unrolled by 4, and its workgroup takes one
+   SIMD group, [lanes] threads. More outputs a thread hide the loads' latency
+   with fewer threads in flight. On an RTX 5000 Ada a float32 product of 2048
+   cubed took 2.8 ms with 4 by 4 outputs a thread in workgroups of 128 threads,
+   0.84 ms blocked; workgroups of 64 and 128 threads blocked took 0.93 and 1.6
+   ms. Whether it blocked. *)
+let block k upcasted =
+  let reused (axis, _) =
+    let r = List.nth (K.rngs k) axis in
+    List.exists (fun b -> not (indexes r b)) (K.bufs k)
+  in
+  let doubles (axis, _) = divisible (shape_at k axis) 2 in
+  (* The threads the axes leave a workgroup once doubled. *)
+  let threads axes =
+    List.fold_left
+      (fun n (axis, _) ->
+        n * (pow2_dividing (List.nth (K.rngs k) axis) (2 * lanes) / 2))
+      1 axes
+  in
+  (* 64 accumulators of 8 bytes and their operands would pass a thread's
+     registers. *)
+  let narrow =
+    match K.reduceop k with
+    | Some r -> Dtype.itemsize (dtype r) <= 4
+    | None -> false
+  in
+  match List.rev upcasted with
+  | [ (_, 4); (_, 4) ] as axes
+    when (K.ren k).has_local
+         && Option.is_some (contraction k)
+         && narrow
+         && List.for_all reused axes && List.for_all doubles axes
+         && threads axes >= lanes ->
+      List.iter (fun (axis, _) -> ignore (split k axis 2 Opt.Upcast)) axes;
+      (match K.upcastable_dims ~reduce:true k with
+      | [] -> ()
+      | dims ->
+          let axis = last dims in
+          if divisible (shape_at k axis) 4 then
+            ignore (try_split k axis 4 Opt.Upcast));
+      true
+  | _ -> false
+
+(* The threads of a workgroup the local splits make at most, and of a blocked
+   contraction's. *)
+let workgroup_threads = 128
+
 (* prioritize making expand axes local *)
-let locals k =
+let locals ~threads k =
   let ranking =
     List.filter_map
       (fun axis ->
@@ -1242,7 +1295,7 @@ let locals k =
         in
         match
           List.find_opt
-            (fun x -> divisible (shape_at k axis) x && local_size * x <= 128)
+            (fun x -> divisible (shape_at k axis) x && local_size * x <= threads)
             candidates
         with
         | Some sz -> to_local @ [ (axis, sz) ]
@@ -1349,13 +1402,20 @@ let general k =
   (* no more opt if we are grouping *)
   if K.group_for_reduces k = 0 then begin
     upcast_masked k;
-    if host_elementwise k then upcast_vectors k
-    else begin
-      upcast_more k;
-      unroll k;
-      upcast_one k
-    end;
-    if (K.ren k).has_local then locals k
+    let blocked =
+      if host_elementwise k then begin
+        upcast_vectors k;
+        false
+      end
+      else begin
+        let blocked = block k (upcast_more k) in
+        unroll k;
+        upcast_one k;
+        blocked
+      end
+    in
+    if (K.ren k).has_local then
+      locals ~threads:(if blocked then lanes else workgroup_threads) k
   end;
   k
 

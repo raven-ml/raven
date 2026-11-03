@@ -1075,6 +1075,37 @@ let warp_tiles =
           equal int expected (lane_outputs (recorded name)));
     ]
 
+(* Contractions in registers *)
+
+(* The threads of a workgroup of [c]'s optimised kernel. *)
+let workgroup c =
+  Setting.context c.settings (fun () ->
+      let k = K.v (kernel c.kernel) (renderer c.renderer) in
+      K.convert_loop_to_global k;
+      let o = Heuristic.hand_coded_optimizations k in
+      List.fold_left
+        (fun n axis -> n * Bigint.to_int (size (List.nth (K.rngs o) axis)))
+        1
+        (K.axes_of o [ Local ]))
+
+let blocks =
+  group "a contraction in registers"
+    [
+      cases "on a GPU, both upcast axes reused, a thread holds 8 by 8 outputs \
+             in a workgroup of at most 32 threads"
+        ~id:Fun.id
+        [ "matmul_cuda"; "matmul_256_cuda"; "matmul_256_amd"; "scores_cuda" ]
+        (fun name ->
+          let c = recorded name in
+          equal ~msg:"outputs" int 64 (lane_outputs c);
+          at_most ~msg:"threads" int ~than:32 (workgroup c));
+      cases "a thread holds 4 by 4 outputs where halved axes hold no SIMD \
+             group"
+        ~id:Fun.id
+        [ "matmul_1000_cuda" ]
+        (fun name -> equal int 16 (lane_outputs (recorded name)));
+    ]
+
 (* The tensor core's floor *)
 
 (* A renderer of CDNA's cores, whose workgroup is 64 threads. *)
@@ -1404,6 +1435,7 @@ let () =
          chosen;
          leaves_its_argument;
          warp_tiles;
+         blocks;
          keeps_kernel_writes;
          group "streaming"
            [

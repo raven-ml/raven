@@ -6560,3 +6560,49 @@ the walk of `Rangeify.fix_store_hazard`.
   by its generator; the tolk bench's `contract/bf16-2048`,
   `contract/bf16-4096` and `contract/bf16-512x5760x2880` rows on fudge, their
   baselines pending the scheduled re-record.
+
+## D212. A contraction on a GPU's registers holds 8 by 8 outputs a thread
+
+- **tinygrad:** `codegen/opt/heuristic.py:114-179`
+  (`hand_coded_optimizations`: the upcast loop takes each axis once, by 3 or
+  4, while fewer than 32 lanes are upcast; the unroll needs fewer than 64; the
+  locals stop at 128 threads; the same at `6b7b018da`).
+- **tolk:** `Heuristic.block`, `Heuristic.upcast_more`, `Heuristic.locals` and
+  `Heuristic.general`; `test/gen/tinygrad.patch`, which gives tinygrad's
+  heuristic the same rule before the goldens are generated.
+- **Differs:** on a renderer with local indices, a contraction summed in 4
+  bytes or fewer whose upcast loop took two axes, each by 4, each unread by
+  some operand, takes a second upcast of each by 2 when 2 divides both and
+  what is left of them holds a SIMD group of 32 threads in powers of two; its
+  last unrollable axis is then unrolled by 4 where 4 divides it, and its
+  workgroup takes at most 32 threads. A thread then holds 8 by 8 outputs, and
+  each element it loads feeds 8 of them.
+- **Reason:** (d): float32 contractions on fudge's RTX 5000 Ada, which take no
+  tensor core (TF32 is off), ran at 6 TFLOP/s of the part's 65 with 4 by 4
+  outputs a thread in workgroups of 128 threads. More outputs a thread cover
+  the loads' latency with fewer threads in flight (Volkov, "Better Performance
+  at Lower Occupancy", GTC 2010, slide 48: "This often can be accomplished by
+  computing multiple outputs per thread"); CUTLASS's SIMT default holds 8 by 8
+  a thread. GPU time, three interleaved rounds, against the rules before it:
+  1024 cubed 361-375 to 142-161 us, 2048 cubed 2799-2810 to 846-855 us, 4096
+  cubed 19.3-19.8 to 6.0-6.7 ms, 8 products of 512 cubed 416-433 to 119-141
+  us, attention's scores at 2048 positions 651-660 to 543-548 us; attention's
+  values (`h i j, h j d -> h i d`, float32 weights) 842-843 and 837-854 us,
+  read-bound. No reference fixes the threads of a workgroup: 32 is measured.
+  Attention's scores (`h i d, h j d -> h i j`, 8 heads of 64 at 2048
+  positions) ran faster at 64 threads (365-373 against 527-534 us, three
+  rounds on main before device facts landed), the products of 1024 to 4096 and attention's
+  values at 32; that row is the band. Metal and AMD take the same rule,
+  unmeasured, as fudge has neither. Under `--fmad=false` (D25) the unrolled
+  reduce renders a multiply and three fused multiply-adds per four products,
+  which caps these kernels below the part's peak whatever their layout.
+- **Pinned by:** `Tolk.Heuristic`'s `a contraction in registers` cases
+  (`matmul`, `matmul_256` and `scores` blocked on CUDA, `matmul_256` on AMD;
+  `matmul_1000`, whose halved axes hold one thread, not blocked), with the
+  goldens from tinygrad with D212 applied by its generator; rune's
+  `test_jit_gpu` `products › a float32 matmul is within its bound of the exact
+  product` at extents of 64 and 128 summed over 13 and 52, on the machine's
+  first GPU; the tolk bench's `contract/f32-2048` and `contract/qk-f32-2048`
+  rows on fudge, their baselines pending the scheduled re-record. A sum in 8
+  bytes is not blocked: 64 accumulators of 8 bytes and their operands would
+  pass a thread's 255 registers.

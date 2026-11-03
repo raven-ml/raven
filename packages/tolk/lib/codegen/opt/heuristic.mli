@@ -115,6 +115,12 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       lanes are upcast, one more axis is upcast by 3 or 4, chosen among axes
       some access does not index while indexing every upcast axis, least indexed
       and of least stride first;
+    - on a renderer with local indices, a contraction summed in 4 bytes or
+      fewer whose loop upcast two axes, each by 4, is blocked when an operand
+      does not index each, 2 divides each, and what is left of them once
+      halved holds a SIMD group of 32 threads in powers of two: each axis is upcast again by 2, so that
+      a thread holds 8 by 8 outputs, the last unrollable axis is unrolled by 4
+      when 4 divides it, and the workgroup takes at most 32 threads;
     - the last unrollable axis is unrolled whole if of size at most 32 (and a
       second one if both are at most 3), or else by 4, when at most 4 lanes are
       upcast or no reduce axis is, and fewer than 64;
@@ -123,7 +129,7 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     - for a renderer with local indices, global and weak axes of a constant size
       become local: up to three axes, those some access does not index first,
       split by the first of 32 (axis [0] only), 16, 8, 4, 3 and 2 that divides
-      them while the workgroup stays within 128 threads.
+      them while the workgroup stays within 128 threads, or 32 when blocked.
 
     The host is the [CPU] device; a host vector spans 64 bytes, two registers
     of AVX2. A kernel of the host without a reduce, whose lanes the host computes

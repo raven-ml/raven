@@ -614,10 +614,26 @@ let products_gen =
   Gen.with_pp pp_product
     (Gen.triple (Gen.of_list narrows) shape (Gen.int_range 0 1_000_000))
 
-let product_law (Narrow (dt, u, tiny), (m, k, n), seed) =
+(* Float32 products on a GPU's registers: extents of 64 and 128 on both output
+   axes block a thread's outputs 8 by 8, and unroll a sum of 52 by 4; a sum
+   of 13 is not unrolled. *)
+let float32_products_gen =
+  let outputs = Gen.of_list [ 1; 13; 64; 128 ] in
+  let blocked = Gen.of_list [ 64; 128 ] in
+  let shape =
+    Gen.frequency
+      [
+        (1, Gen.triple outputs (Gen.of_list [ 1; 13; 64 ]) outputs);
+        (2, Gen.triple blocked (Gen.of_list [ 13; 52 ]) blocked);
+      ]
+  in
+  Gen.with_pp pp_product
+    (Gen.triple
+       (Gen.constant (Narrow (Nx.float32, 0x1p-24, 0x1p-149)))
+       shape (Gen.int_range 0 1_000_000))
+
+let within_bound (Narrow (dt, u, tiny), (m, k, n), seed) =
   let _, (module S) = on_gpu () in
-  cover "extents that 16 divides"
-    (m > 0 && k > 0 && n > 0 && m mod 16 = 0 && k mod 16 = 0 && n mod 16 = 0);
   let draw seed s =
     let x = Nx.Rng.uniform ~key:(Nx.Rng.key seed) Nx.float32 s in
     Nx.cast dt (Nx.sub_s (Nx.mul_s x 4.) 2.)
@@ -643,6 +659,17 @@ let product_law (Narrow (dt, u, tiny), (m, k, n), seed) =
         float_exact ~than:bound
         (Float.abs (y.(i) -. z)))
     exact
+
+let product_law ((_, (m, k, n), _) as c) =
+  cover "extents that 16 divides"
+    (m > 0 && k > 0 && n > 0 && m mod 16 = 0 && k mod 16 = 0 && n mod 16 = 0);
+  within_bound c
+
+let float32_law ((_, (m, k, n), _) as c) =
+  let blocked = m mod 64 = 0 && n mod 64 = 0 && m > 0 && n > 0 in
+  cover "outputs that 64 divides, a sum that 4 divides" (blocked && k = 52);
+  cover "outputs that 64 divides, a sum of 13" (blocked && k = 13);
+  within_bound c
 
 (* Sixteen products of [1] by [1; t; ...; t], [t = 255 2^-31] just under
    float32's [u], every value a bfloat16: rows of ones by columns of these
@@ -878,6 +905,9 @@ let () =
                "a float16 or bfloat16 matmul is within its bound of the exact \
                 product"
                products_gen product_law;
+             prop ~count:24
+               "a float32 matmul is within its bound of the exact product"
+               float32_products_gen float32_law;
              test "sixteen terms under float32's unit hold the bound"
                test_sixteen_terms;
              Windtrap.cases

@@ -974,6 +974,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   (`Codegen.do_devectorize`): it and every operation after it went lane by
   lane. A float8 loop of 36 lanes that stop apart compiled to 0.8 MB of C,
   which Clang took 2.4-4.5 s on; it is now 38 KB and 0.2-0.3 s.
+- On a GPU without a tensor core for it, a contraction whose two upcast
+  output axes are each reused holds 8 by 8 outputs a thread in a workgroup
+  of 32 threads (`Heuristic.hand_coded_optimizations`): float32 products on
+  an RTX 5000 Ada run 2.4 to 3.3 times faster.
 - After a tensor core, N's local split takes the largest of 4 and 2 that
   leaves 256 workgroups, where it took the first that divides and kept 512:
   a prompt's projections on an RTX 5000 Ada run up to 1.2 times faster.
