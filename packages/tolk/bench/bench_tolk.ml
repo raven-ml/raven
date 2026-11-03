@@ -36,7 +36,12 @@
    step's attention values, 64 by 64 outputs summed over 1024 cache slots, and
    a prefill's router, 512 tokens by 32 experts summed over 2880. Each takes a
    tensor core that leaves few workgroups. Without a CUDA GPU the group is
-   empty. *)
+   empty.
+
+   [contract] runs, on the first CUDA GPU, dense contractions as rune compiles
+   them, with the hand-coded optimisations, each summed in float32: products
+   of bfloat16 on tensor cores, and of float32 in registers. Without a CUDA GPU
+   the group is empty. *)
 
 open Tolk
 
@@ -267,29 +272,35 @@ let filled d dt n =
     Rig.Buffer.fill b '\x3e';
     b
 
-(* The rows of [stream]: each a call's kernels, recorded as [row.i], run in
-   the order of [i]. *)
-let stream_rows =
+(* The rows of a group of recorded kernels: each a call's kernels, recorded as
+   [row.i], run in the order of [i]. *)
+let rows_of all =
   let row (name, _) = String.sub name 0 (String.index name '.') in
-  let kernels = List.sort compare Stream_kernels.all in
+  let kernels = List.sort compare all in
   List.map
     (fun r -> (r, List.map snd (List.filter (fun k -> row k = r) kernels)))
     (List.sort_uniq String.compare (List.map row kernels))
 
-let stream () =
-  let case (name, kernels) =
+let gpu_rows name all =
+  let case (row, kernels) =
     Thumper.bench_with_setup
       ~setup:(fun () ->
         let d = cuda () in
         List.map
           (fun text -> compiled ~scratch:filled d (Graph.of_string text))
           kernels)
-      name
+      row
       (fun runs -> List.iter (fun run -> run ()) runs)
   in
-  Thumper.group "stream"
+  Thumper.group name
     ~metrics:[ Thumper.Metric.wall_time ]
-    (if cuda_opens () then List.map case stream_rows else [])
+    (if cuda_opens () then List.map case (rows_of all) else [])
+
+let stream () = gpu_rows "stream" Stream_kernels.all
+
+(* Contractions on tensor cores and in registers *)
+
+let contract () = gpu_rows "contract" Contract_kernels.all
 
 (* Searches *)
 
@@ -427,6 +438,7 @@ let suite () =
       host;
       gpt_oss ();
       stream ();
+      contract ();
       Thumper.group "search"
         (searches
         ::

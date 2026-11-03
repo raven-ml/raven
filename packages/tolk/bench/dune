@@ -6,7 +6,7 @@
 (executable
  (name bench_tolk)
  (modules bench_tolk programs lorenz host_kernels gpt_oss_kernels
-  stream_kernels)
+  stream_kernels contract_kernels)
  (libraries tolk tolk.engine tolk_test tolk_run rig rig.cuda thumper unix))
 
 (executable
@@ -97,6 +97,21 @@
  (deps
   (:graphs
    (glob_files stream/*.graph)))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:embed.exe} %{graphs}))))
+
+; The contract kernels are kernel graphs of dense contractions as rune compiles
+; them for CUDA, without optimisations, each operand widened to float32 by a
+; cast where it is narrower: a row's kernels are [row.i], run in the order of
+; [i].
+
+(rule
+ (target contract_kernels.ml)
+ (deps
+  (:graphs
+   (glob_files contract/*.graph)))
  (action
   (with-stdout-to
    %{target}

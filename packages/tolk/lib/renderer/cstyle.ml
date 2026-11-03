@@ -1691,6 +1691,12 @@ let cuda_kernel ?(prefix = []) l ~name kernel bufs uops =
        else [])
     @ (if uses (Dtype.equal Dtype.Bfloat16) then [ "#include <cuda_bf16.h>" ]
        else [])
+    (* cuda_bf16.h defines the 2-lane vector [nv_bfloat162] and names its
+       constructor [make_bfloat162]. *)
+    @ (if List.exists (fun (dt, n) -> Dtype.equal dt Dtype.Bfloat16 && n = 2) used
+       then
+         [ "#define make_nv_bfloat162 make_bfloat162" ]
+       else [])
     @ List.map (cuda_vector_prefix l) (List.filter vector used)
     @ List.map (cuda_wmma l) (wmma_args uops)
   in

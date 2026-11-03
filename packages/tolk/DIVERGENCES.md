@@ -6458,3 +6458,45 @@ the walk of `Rangeify.fix_store_hazard`.
 - **Pinned by:** `Tolk.Search on the host`: `a kernel whose loop's bound
   loads from memory is not searched, and takes the heuristic's
   optimisations`.
+## D210. A GPU merges bfloat16 accesses as float16's
+
+- **tinygrad:** `codegen/late/coalesce.py:142` (`memory_coalescing`: a GPU
+  merges adjacent accesses of `float`, `half`, `int`, `uint` and the 8-bit
+  floats into vectors of 4 and 2, and leaves `bfloat16` scalar; the same at
+  `6b7b018da`, `:137`); `renderer/cstyle.py:467`
+  (`CUDARenderer.render_kernel`, whose 2-lane `bfloat16` vector, never merged
+  there, has no constructor: it renders `make_nv_bfloat162`, which
+  `cuda_bf16.h` names `make_bfloat162`).
+- **tolk:** `Coalesce.memory_coalescing`; `Cstyle.cuda_kernel`;
+  `test/gen/tinygrad.patch`, which gives tinygrad's coalescing and CUDA
+  renderer the same rule before the goldens are generated.
+- **Differs:** on a renderer other than the CPU device's, adjacent `bfloat16`
+  accesses merge into vectors of 4 and 2 as `float16`'s do, and the CUDA
+  renderer defines `make_nv_bfloat162` as `make_bfloat162` when a kernel holds
+  a 2-lane `bfloat16` vector. The host is unchanged: its `bfloat16` accesses
+  stay scalar. tinygrad states no reason for leaving `bfloat16` out, and its
+  CUDA kernels could not build its 2-lane vector, a defect of its own that the
+  patch fixes there too.
+- **Reason:** (d): a tensor core's `bfloat16` operands, each loaded as a
+  2-byte scalar, made every bfloat16 product on fudge's RTX 5000 Ada about 1.5
+  times slower than its float16 product of the same optimisations. GPU time,
+  three interleaved rounds, before and after: 2048 cubed 480-482 to 310-325
+  us, 4096 cubed 2908-2920 to 1824-1848 us, gpt-oss-20b's query projection at
+  a 512-token prompt (512 by 4096 over 2880) 274-277 to 191-201 us, its key
+  projection (512 by 512) 124-125 to 88-110 us, its output projection (512 by
+  2880 over 4096) 243-245 to 185-199 us, a 512 by 5760 product over 2880
+  308-312 to 249-260 us, attention's values at 2048 slots (float32 weights by
+  bfloat16 values) 1060-1081 to 913-931 us; the model's 512-token prefill
+  183.0-184.9 to 176.3-176.9 ms (two rounds). One layer's experts, which
+  decode their MXFP4 weights in place, overlap (4380-4497 and 4337-4441 us),
+  and so do attention's bfloat16 scores. Metal (`bfloat2`) and AMD (an
+  `ext_vector_type` of `__bf16`) render the same merges; unmeasured, as fudge
+  has neither.
+- **Pinned by:** the Coalesce suite's `lengths › on a GPU, eight consecutive
+  loads are two loads of four, of bfloat16` and `› on the host, bfloat16 loads
+  stay apart`; the Codegen suite's `bfloat16 vectors on CUDA › a bfloat16 sum
+  of lanes loaded and stored together is exact` (2 and 4 lanes, on the
+  machine's first CUDA GPU); the goldens generated from tinygrad with this
+  rule; the tolk bench's `contract/bf16-2048`, `contract/bf16-4096` and
+  `contract/bf16-512x5760x2880` rows on fudge, their baselines pending the
+  scheduled re-record.

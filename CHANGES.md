@@ -970,6 +970,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   (`Codegen.do_devectorize`): it and every operation after it went lane by
   lane. A float8 loop of 36 lanes that stop apart compiled to 0.8 MB of C,
   which Clang took 2.4-4.5 s on; it is now 38 KB and 0.2-0.3 s.
+- On GPUs, adjacent `bfloat16` loads and stores merge into vectors of 2 and 4
+  as `float16`'s do (`Coalesce.memory_coalescing`): bfloat16 products on an
+  RTX 5000 Ada's tensor cores run about 1.5 times faster.
 - Two stores of one value into one storage are two states, each a kernel: a
   loop given both, writing the later, reads the earlier as it was, where it
   read what each trip left (`Schedule.create_linear_with_vars`).

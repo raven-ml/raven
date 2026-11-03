@@ -250,6 +250,20 @@ let lengths =
           equal runs expected
             (accesses Op.Store
                (coalesce ~renderer (Ops.sink (List.init 8 copy)))));
+      cases "on a GPU, eight consecutive loads are two loads of four, of"
+        ~id:(Format.asprintf "%a" Dtype.pp)
+        [ Dtype.Float16; Dtype.Bfloat16 ]
+        (fun dtype ->
+          let b = Shape.param ~shape:[ Int 64 ] 0 dtype in
+          equal runs
+            [ (0, 4); (4, 4) ]
+            (accesses Op.Load
+               (coalesce ~renderer:gpu (loads b (List.init 8 Fun.id)))));
+      test "on the host, bfloat16 loads stay apart" (fun () ->
+          let b = Shape.param ~shape:[ Int 64 ] 0 Bfloat16 in
+          equal runs
+            (List.init 8 (fun k -> (k, 1)))
+            (accesses Op.Load (coalesce (loads b (List.init 8 Fun.id)))));
       cases "eight consecutive stores of lanes computed apart, on 32 bytes, are"
         ~id:(fun (dtype, _) -> Format.asprintf "%a" Dtype.pp dtype)
         [

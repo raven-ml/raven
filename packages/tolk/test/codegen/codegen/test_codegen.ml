@@ -2373,6 +2373,38 @@ let products_gen =
        (Gen.of_list [ Dtype.Float16; Dtype.Bfloat16 ])
        tiles (Gen.int_range 0 1_000_000))
 
+(* [c = a + b] over 64 bfloat16s, each thread adding [lanes] of them: a GPU
+   loads and stores the lanes of a thread as one vector. *)
+let bfloat16_sum lanes =
+  let n = 64 in
+  let c = Shape.param ~shape:[ Ops.Int n ] 0 Bfloat16
+  and a = Shape.param ~shape:[ Ops.Int n ] 1 Bfloat16
+  and b = Shape.param ~shape:[ Ops.Int n ] 2 Bfloat16 in
+  let i = Ops.range (Int n) [ 0 ] in
+  let at x = Ops.index x [ i ] in
+  let opts_to_apply =
+    [ Opt.Split { axis = 0; amount = lanes; target = Upcast; top = false } ]
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply ())
+    [ Ops.end_ (Ops.store (at c) Ops.O.(at a + at b)) [ i ] ]
+
+let sum_on_cuda lanes =
+  let d, r = on_cuda () in
+  let a = small_integers 1 64 and b = small_integers 2 64 in
+  let values x = Array.map (fun v -> `Float (Float.of_int v)) x in
+  let exact = Array.map2 (fun x y -> `Float (Float.of_int (x + y))) a b in
+  let prg = compiled_for r (bfloat16_sum lanes) in
+  equal (array Dtypes.value) exact
+    (List.assoc 0 (Run.on d prg [ (1, values a); (2, values b) ]))
+
+let bfloat16_vectors_on_cuda =
+  group "bfloat16 vectors on CUDA"
+    [
+      cases "a bfloat16 sum of lanes loaded and stored together is exact"
+        ~id:(Printf.sprintf "%d lanes") [ 2; 4 ] sum_on_cuda;
+    ]
+
 let tensor_cores_on_cuda =
   group "tensor cores on CUDA"
     [
@@ -5383,6 +5415,7 @@ let () =
          accumulators;
          tensor_cores_on_cuda;
          tensor_cores_by_hand;
+         bfloat16_vectors_on_cuda;
          variable_sizes;
          multiply_adds;
          shared_ranges;

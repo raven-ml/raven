@@ -200,7 +200,14 @@ let memory_coalescing sink (r : Renderer.t) =
               let rec halves l = if l < 2 then [ 1 ] else l :: halves (l / 2) in
               halves (bytes / size)
           | _ ->
-              (if Dtype.mem dt merged && r.supports_float4 then
+              (* A GPU merges bfloat16 accesses as float16's: a tensor core's
+                 operands, loaded two bytes at a time, made an RTX 5000 Ada's
+                 bfloat16 products 1.5 times slower than its float16 ones. *)
+              let gpu_bfloat16 =
+                Dtype.equal dt Dtype.Bfloat16 && r.target.device <> "CPU"
+              in
+              (if (Dtype.mem dt merged || gpu_bfloat16) && r.supports_float4
+               then
                  if dt = Dtype.Float16 && Setting.value Setting.allow_half8 then
                    [ 8; 4; 2 ]
                  else [ 4; 2 ]

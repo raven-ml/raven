@@ -30,7 +30,8 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
       {!Dtype.Int32}, {!Dtype.Uint32} or 8-bit floats, but for a store of
       doubles whose values are not all loads, which merges as below;
     - otherwise of [4] or [2] elements, if they are {!Dtype.Float32},
-      {!Dtype.Float16}, {!Dtype.Int32}, {!Dtype.Uint32} or 8-bit floats; [8],
+      {!Dtype.Float16}, {!Dtype.Int32}, {!Dtype.Uint32} or 8-bit floats, or
+      {!Dtype.Bfloat16} for a renderer other than the [CPU] device's; [8],
       [4] or [2] for {!Dtype.Float16} under {!Setting.allow_half8}.
 
     The longest length that fits is taken first. A group starts at an element
