@@ -67,6 +67,12 @@ let scalar_argument k s =
   (match arg k with Call c -> c.precompile | _ -> false)
   && match addrspace s with Some Dtype.Alu -> true | _ -> false
 
+(* The walk of a kernel graph enters no kernel, and enters a loop's linear of
+   calls, which copies it makes as each trip starts precede: a linear of a
+   precompiled call is the call's body, which the walk skips. *)
+let in_graph u =
+  match (op u, arg u) with Op.Sink, Kernel _ -> false | _ -> true
+
 (* A loop around a call: a range's end, or a back edge. *)
 let is_loop k = op k = Op.End || op k = Op.Backedge
 
@@ -416,7 +422,7 @@ let linearize ~by_storage ~children sched_sink in_degree =
       (fun u ->
         if op u = Op.After && not (is_join u) then
           Tbl.replace written (buf_uop u) ())
-      (toposort ~calls:Skip ~gate:gate_kernel_sink sched_sink);
+      (toposort ~calls:Skip ~gate:in_graph sched_sink);
     storage_order ~written ~children in_degree
 
 (* The state the kernels [ks] of the after [u] write over: the latest state of
@@ -634,7 +640,7 @@ let rec schedule ~by_storage ~copies sched_sink =
               (List.concat_map waits (read_deps @ after_deps)))
           kernels
       end)
-    (toposort ~calls:Skip ~gate:gate_kernel_sink sched_sink);
+    (toposort ~calls:Skip ~gate:in_graph sched_sink);
   (* Write after read: a kernel reading a state runs before every other write
      over it. A kernel writing the state it reads through another argument
      runs before itself, a cycle of one kernel. *)
