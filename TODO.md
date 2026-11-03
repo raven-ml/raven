@@ -187,10 +187,6 @@ raven / llama.cpp b12048 Vulkan:
   weight of the same shape runs at 1.39 TFLOPS holding one row per thread.
   Decide with D89's matrix-vector layout, by tinygrad's heuristic at HEAD
   and a fudge bench row
-- `Device.Tiny_elf.of_program` keys the whole program at every link (as
-  tinygrad does), 30 M words per special-function gradient; and
-  `share_loops` (D137) retries `joinable` at every shared node when two
-  stores cannot join, O(N²) in that case, which no program here reaches yet
 - loops bounded by a loaded value fail Spec: upcasting an axis that an
   inner loop's loaded bound reads makes a vector bound (`Lidx1 < long16`),
   and a bare loaded bound makes an AFTER of a LOAD, which tinygrad's spec

@@ -109,3 +109,11 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
 
     Raises [Invalid_argument] if a reduction of leading axes gets no ranges, or
     if a gather has more than one index. *)
+
+(**/**)
+
+val store_checks : unit -> int
+(** [store_checks ()] is the number of times {!run_rangeify} has checked
+    whether two stores can share their loops, in every domain, since the
+    program started. Two stores are checked at most once per pair of their
+    groups, however many nodes they share. *)

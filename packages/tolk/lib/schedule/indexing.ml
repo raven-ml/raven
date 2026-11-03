@@ -665,7 +665,12 @@ let waits_over sa sb =
          && Nodes.mem (base (nth w 0)) sb)
     sa false
 
+(* The checks of a pair of stores, for tests. *)
+let checks = Atomic.make 0
+let store_checks () = Atomic.get checks
+
 let joinable regions ~crossed slice a b =
+  Atomic.incr checks;
   let reductions s =
     List.filter (fun u -> op u = Op.Reduce) (Tbl.find regions s)
   in
@@ -783,9 +788,16 @@ let share_loops rctx topo =
     in
     go [ fa ]
   in
+  (* Pairs of groups that cannot join, by their first stores' positions [i <
+     j] as [i * n + j]. A group only grows and keeps its first store, or stops
+     being a group, so a pair that failed fails again: two stores are checked
+     once, not at each node they share. *)
+  let apart = Hashtbl.create 16 and n = List.length stores in
   let join a b =
     let fa = Tbl.find first a and fb = Tbl.find first b in
-    if fa != fb then
+    let i = Tbl.find position fa and j = Tbl.find position fb in
+    let pair = (min i j * n) + max i j in
+    if fa != fb && not (Hashtbl.mem apart pair) then
       let ga = Tbl.find groups fa and gb = Tbl.find groups fb in
       if
         List.for_all
@@ -800,6 +812,7 @@ let share_loops rctx topo =
         Tbl.replace groups f members;
         List.iter (fun s -> Tbl.replace first s f) members
       end
+      else Hashtbl.replace apart pair ()
   in
   List.iter
     (fun u ->

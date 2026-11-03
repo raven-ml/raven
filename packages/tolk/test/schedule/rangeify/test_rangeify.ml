@@ -683,6 +683,22 @@ let shared =
           in
           equal int 3 (kernels_of sink);
           writes sink);
+      test "outputs that run apart are checked once, however much they share"
+        (fun () ->
+          let old = Shape.reshape out2 (ints [ 4; 4 ]) in
+          List.iter
+            (fun n ->
+              let v =
+                Seq.fold_left (fun u _ -> Ops.exp2 u) v (Seq.init n Fun.id)
+              in
+              let sink = stores2 Ops.O.(v + old) Ops.O.(v * v) in
+              let before = Indexing.store_checks () in
+              equal int 2 (kernels_of sink);
+              equal
+                ~msg:(Printf.sprintf "%d shared operations" (n + 1))
+                int 1
+                (Indexing.store_checks () - before))
+            [ 0; 64 ]);
       test "two pairs of outputs that each read the other pair run as three"
         (fun () ->
           (* [a] and [b] share [p], [c] and [d] share [q], [b] reads [c] and
