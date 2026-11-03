@@ -175,14 +175,17 @@ let all_benchmarks =
   in
   (* Four texts of 64 KB over four domains: each fills a chunk, the least a
      batch is spread by, so three domains are spawned for the call and their
-     pretoken caches start cold. *)
+     pretoken caches start cold. The row times the batch alone: Gc.counters
+     reads the calling domain's words only, and which chunks the caller claims
+     is a race, so its words vary from call to call. *)
   let bert =
     let tokenizer = load_tokenizer "bert_base.json" in
     let batch = [ long_text; long_text; long_text; long_text ] in
     make_suite ~label:"BERT-base" ~tokenizer
       ~extra:
         [
-          Thumper.bench "Encode/batch_ids_long_domains" (fun () ->
+          Thumper.bench "Encode/batch_ids_long_domains"
+            ~metrics:[ Thumper.Metric.wall_time ] (fun () ->
               Brot.encode_batch_ids tokenizer ~domains:4 batch);
         ]
       ()
