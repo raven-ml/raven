@@ -453,6 +453,12 @@ let stream_threads = 32768
 let in_flight = 8
 let in_flight_held = 4
 
+(* The bytes of the widest load a GPU renderer merges a thread's adjacent
+   values into, and of a line of a GPU's first-level cache, which serves a
+   SIMD group's load a line at a time. *)
+let vector_bytes = 16
+let line_bytes = 128
+
 (* The reuse at most that streams: up to it a streamed product runs faster
    than a core's tiles, which leave each warp a serial reduce, and than the
    general rules. A bfloat16 matrix of 16384 by 4096 multiplies 16 rows in
@@ -664,6 +670,46 @@ let stream k (w, x, reuse) =
         if padded then ignore (split k (axis g) t Opt.Upcast) else divisors ()
     | _ -> divisors ()
   in
+  (* Each contracted range that no split has taken, other than the lanes'
+     [u], along which [x] is read at unit stride is unrolled whole where its
+     values there fit one load of [vector_bytes] and the [lanes] lanes,
+     stepping [x] by its stride along [u], load across more than a line: a
+     byte's two MXFP4 values multiply [x] at [2 b] and [2 b + 1], so that a
+     loop of 2 trips has 32 lanes load float32 values 8 bytes apart, over
+     two lines a load, where unrolled each loads both at once. On an RTX 5000
+     Ada 64 float32 rows of a 16384-square MXFP4 matrix took 4.8-5.0 ms
+     looped and 2.7 ms unrolled; bfloat16 rows, whose lanes load within one
+     line, ran up to 1.2 times slower unrolled. A refused split is
+     skipped. *)
+  let unroll_together u =
+    let together a t =
+      let bytes = Dtype.itemsize (dtype a) in
+      let span = Bigint.of_int (lanes * bytes) in
+      match (rest t, stride u (idx a)) with
+      | Some r, Some step
+        when axis_id r <> axis_id u
+             && List.mem (axis r) (K.upcastable_dims ~reduce:true k)
+             && Bigint.(gt (mul step span) (of_int line_bytes))
+        -> (
+          match (known_size (Sym (nth t 0)), known_size (shape_at k (axis r))) with
+          | Some n, Some n'
+            when Bigint.(
+                   equal n n' && gt n one
+                   && leq (mul n (of_int bytes)) (of_int vector_bytes)) ->
+              Some r
+          | _ -> None)
+      | _ -> None
+    in
+    List.iter
+      (fun a ->
+        List.iter
+          (fun t ->
+            Option.iter
+              (fun r -> ignore (try_split k (axis r) 0 Opt.Upcast))
+              (together a t))
+          (units a))
+      (accesses x)
+  in
   let rows_layout u a =
     let i = idx a in
     let threads = pow2_dividing u lanes in
@@ -720,6 +766,7 @@ let stream k (w, x, reuse) =
               in
               if n > 1 then ignore (try_split k (axis r) n Opt.Upcast)
           | None -> ());
+          unroll_together u;
           Some k
         end
     | _ -> None

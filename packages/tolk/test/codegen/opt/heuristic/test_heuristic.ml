@@ -519,6 +519,59 @@ let unrolls_in_flight =
             (largest_divisor (Bigint.mul n left) cap)
             (Bigint.to_int n))
 
+(* A thread loads at once the values of its other operand along a contracted
+   range that the lanes leave and along which the other operand is laid out
+   at unit stride, where its values there fit one load of 16 bytes and a
+   SIMD group's lanes load one of them across more than a 128-byte line: a
+   range of a byte's values, such as MXFP4's two, which a float32 operand
+   reads as [2 byte + v], is unrolled whole, so that no loop over it is
+   left. *)
+let loads_together =
+  prop "no loop is left over the other operand's values of one load"
+    ~count:0 ~examples:streamed_cases
+    (Gen.with_pp
+       (fun ppf c -> Format.pp_print_string ppf (id c))
+       (Gen.of_list streamed_cases))
+    (fun (_, _, o, (_, _, w')) ->
+      let x' =
+        match operands o with
+        | Some (a, b) -> if a == w' then b else a
+        | None -> failf "the streamed kernel sums no product"
+      in
+      let locals = ranges_at o ~reduce:true [ Local ] in
+      let lanes = List.map Ops.axis_id locals in
+      (* the bytes a SIMD group's lanes span loading one value of [a], each
+         lane a step of the fastest of them along [a] *)
+      let span a =
+        let i = Ops.get_idx (Ops.nth a 1) in
+        let width = Bigint.of_int (simd_lanes * Dtype.itemsize (Ops.dtype a)) in
+        match List.filter_map (fun l -> stride l i) locals with
+        | [] -> Bigint.zero
+        | s :: rest ->
+            Bigint.mul width
+              (List.fold_left (fun m s -> if Bigint.compare s m < 0 then s else m) s rest)
+      in
+      let together l a =
+        let bytes = Bigint.(mul (size l) (of_int (Dtype.itemsize (Ops.dtype a)))) in
+        stride l (Ops.get_idx (Ops.nth a 1)) = Some Bigint.one
+        && Bigint.(leq bytes (of_int 16))
+        && Bigint.(gt (span a) (of_int 128))
+      in
+      let left =
+        List.filter
+          (fun l ->
+            (not (List.mem (Ops.axis_id l) lanes))
+            && List.exists (together l) (accesses x'))
+          (ranges_at o ~reduce:true [ Weak; Loop ])
+      in
+      cover "a byte's values unrolled"
+        (List.exists
+           (fun l ->
+             (not (List.mem (Ops.axis_id l) lanes))
+             && List.exists (together l) (accesses x'))
+           (ranges_at o ~reduce:true [ Upcast ]));
+      equal (list Testable.string) [] (List.map Ops.range_str left))
+
 (* A contraction of little reuse streams, the quantised matrices of a block
    range of unit stride among them, before a tensor core up to a reuse of 32
    when it sums 256 values or more and does at most 64 multiply-adds per byte
@@ -1788,6 +1841,7 @@ let () =
              loads_once_a_tile;
              coalesces;
              unrolls_in_flight;
+             loads_together;
              applies;
              per_byte_bounds;
              per_byte_order;

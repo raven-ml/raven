@@ -91,13 +91,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - whether memory-bound host kernels take lanes at all: no upcast ran 4-7%
   faster than 64-byte lanes in two of seven loaded fudge runs of a 4M
   float32 select-zero; decide on the scheduled quiet re-record
-- `Nx_quant.apply_experts` of gpt-oss's gate and up projection at 512
-  tokens takes 26.4-27.6 ms on fudge's CUDA against 3.14-3.23 ms through
-  `Nx.map_segments`' blocks: one route row per thread group, so no decoded
-  weight is shared across rows, and no layout rule can share reuse the
-  gather hides. rune's lowering of the segmented contraction owns the
-  blocks, 64 rows of one expert
-  (_plans/tolk-campaign/routed-experts/adjudication.md)
 - D163 counts repeats pooled over a shared range, which overestimates `c`,
   and a collapsed read of a stage that reads storage counts every range of
   its sum, which can overcount: tighten both if a case shows a wrong store
@@ -114,14 +107,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   NVRTC's cache disabled. Move comgr to
   serving workers once nonnormal times search/amd and a first call both
   ways
-- a float32 routed product on CUDA, which no core takes, runs at 7.4% of
-  the RTX 5000's SIMT float32 peak: 17.4-17.9 ms at 512 tokens streamed in
-  blocks of 16 rows (kaun `Quant/cuda/routed-product-512-tokens`), 68-69
-  ms under the general rules in blocks of 64, which rune's lowering takes
-  from 4 rows an expert. One token's gathered products stream at 74-93% of DRAM and
-  bfloat16 blocks of 64 take the cores; what is left is tolk's no-core
-  layout past 32 rows (the GPU contraction rules' 8 x 8 outputs a thread),
-  on that row
 - device facts (762ad1c31): `core_threads = 16384` and `stream_threads =
   32768` are fudge's (sm_89, 100 SMs); a small part (an RTX 4060-class
   sm_89) may lose 1.4-2x by the model: a row owed there, and values for

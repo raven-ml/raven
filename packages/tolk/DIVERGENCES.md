@@ -7179,3 +7179,43 @@ and an initial value is added after it (D260).
   builder fixed its threads asks for`; `Tolk.Codegen`'s `kernels whose
   builder fixed their threads`, on CUDA; and the tolk, rune, jera and kaun
   suites, which lower every kernel through the check.
+
+## D300. A streamed thread loads a pair of float32 values at once
+
+- **tinygrad:** streams nothing (D89); its `codegen/opt/heuristic.py:139-150`
+  unrolls the last reduce range whole when it is at most 32 and few lanes
+  are upcast, which the stream's own unroll leaves no room for.
+- **tolk:** `Heuristic.stream`'s rows layout (`unroll_together`,
+  `Heuristic.vector_bytes`, `Heuristic.line_bytes`);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same.
+- **Differs:** after the lanes and the unroll of the loads in flight, each
+  contracted range that no split has taken, other than the lanes', and
+  along which the other operand is read at unit stride, is unrolled whole
+  where its values there fit one 16-byte load and 32 lanes, stepping the
+  other operand by its stride along the lanes' range, load across more
+  than a 128-byte line. A byte's two MXFP4 values multiply the other
+  operand at `2 b` and `2 b + 1`: in a loop of 2 trips 32 lanes load
+  float32 values 8 bytes apart, over two lines a load with half of each
+  unused; unrolled, each thread loads its pair as one 8-byte vector.
+  bfloat16 activations, whose 32 loads 4 bytes apart span one line, keep
+  the loop. A refused split is skipped, as the in-flight unroll's is.
+- **Reason:** (d): GPU time on fudge's RTX 5000 Ada, three interleaved
+  rounds under the timing lock: gpt-oss-20b's gate and up projection,
+  float32 activations routed in blocks of 64 rows at 512 tokens (kaun's
+  `Quant/cuda/routed-product-512-tokens`), 24.4-25.9 to 12.6-12.9 ms; 64
+  float32 rows of a 16384-square MXFP4 matrix
+  (`Quant/cuda/mxfp4-product-of-16384-64-float32-tokens`), 4.8-5.0 to
+  2.7 ms; bfloat16 rows' kernels unchanged. Unrolled for bfloat16 too,
+  12 and 17 rows ran 1.1-1.15 times faster and 16 and 32 rows 1.1-1.2
+  times slower, with no spills either way, so bfloat16 keeps the loop
+  until a rule separates them. AMD and Metal take the same rule,
+  unmeasured.
+- **Pinned by:** the Heuristic suite's `streaming › no loop is left over
+  the other operand's values of one load`, over the recorded streamed
+  kernels, with the goldens from tinygrad with D300 applied by its
+  generator (`gpt_oss_gate_up`, `gpt_oss_down`, `mxfp4_m12`,
+  `routed_blocks`, `vecmat_decoded`); kaun's
+  `Quant/cuda/mxfp4-product-of-16384-64-float32-tokens` and
+  `Quant/cuda/routed-product-512-tokens`, whose fudge baselines (the first
+  recorded before D300, the second not yet recorded) wait for the
+  scheduled re-record.

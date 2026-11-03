@@ -23,48 +23,52 @@
 21 Ops.ADD dtypes.weakint [19, 20]
 22 Ops.CONST dtypes.weakint [] 2
 23 Ops.MUL dtypes.weakint [21, 22]
-24 Ops.RANGE dtypes.weakint [22] (AxisType.WEAK, 0, 1)
-25 Ops.ADD dtypes.weakint [23, 24]
-26 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 1)
-27 Ops.MUL dtypes.weakint [26, 0]
-28 Ops.ADD dtypes.weakint [25, 27]
-29 Ops.INDEX dtypes.f32 [11, 28]
-30 Ops.CONST dtypes.weakint [] 512
-31 Ops.PARAM dtypes.f32 [30] ParamArg(slot=2, dtype=dtypes.f32)
-32 Ops.CONST dtypes.weakint [] 16588800
-33 Ops.PARAM dtypes.u8 [32] ParamArg(slot=3, dtype=dtypes.u8)
-34 Ops.CONST dtypes.weakint [] 4147200
-35 Ops.MUL dtypes.weakint [26, 34]
-36 Ops.CONST dtypes.weakint [] 1440
-37 Ops.MUL dtypes.weakint [7, 36]
-38 Ops.ADD dtypes.weakint [35, 37]
-39 Ops.ADD dtypes.weakint [38, 21]
-40 Ops.INDEX dtypes.u8 [33, 39]
-41 Ops.CAST dtypes.weakint [40] dtypes.weakint
-42 Ops.MUL dtypes.weakint [41, 22]
-43 Ops.ADD dtypes.weakint [42, 24]
-44 Ops.INDEX dtypes.f32 [31, 43]
-45 Ops.CONST dtypes.weakint [] 1036800
-46 Ops.PARAM dtypes.f32 [45] ParamArg(slot=4, dtype=dtypes.f32)
-47 Ops.CONST dtypes.weakint [] 259200
-48 Ops.MUL dtypes.weakint [26, 47]
-49 Ops.CONST dtypes.weakint [] 90
-50 Ops.MUL dtypes.weakint [7, 49]
-51 Ops.ADD dtypes.weakint [48, 50]
-52 Ops.CONST dtypes.weakint [] 16
-53 Ops.DIV dtypes.weakint [21, 52]
-54 Ops.ADD dtypes.weakint [51, 53]
-55 Ops.INDEX dtypes.f32 [46, 54]
-56 Ops.MUL dtypes.f32 [44, 55]
-57 Ops.MUL dtypes.f32 [29, 56]
-58 Ops.REDUCE dtypes.f32 [57, 13, 16, 20, 24] (Ops.ADD, 0)
-59 Ops.CMPLT dtypes.bool [9, 58]
-60 Ops.WHERE dtypes.f32 [59, 58, 9]
-61 Ops.PARAM dtypes.f32 [4] ParamArg(slot=5, dtype=dtypes.f32)
-62 Ops.INDEX dtypes.f32 [61, 26]
-63 Ops.MUL dtypes.f32 [60, 62]
-64 Ops.REDUCE dtypes.f32 [63, 26] (Ops.ADD, 0)
-65 Ops.STORE dtypes.void [8, 64]
-66 Ops.END dtypes.void [65, 3, 6]
-67 Ops.SINK dtypes.void [66] KernelInfo(name="r_720_32_4_9_2_4_5", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(32, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=3, arg=(5, AxisType.UPCAST))), optimized=True)
+24 Ops.CONST dtypes.weakint [] 1
+25 Ops.RANGE dtypes.weakint [24] (AxisType.WEAK, 0, 1)
+26 Ops.MUL dtypes.weakint [25, 22]
+27 Ops.RANGE dtypes.weakint [22] (AxisType.UPCAST, 6)
+28 Ops.ADD dtypes.weakint [26, 27]
+29 Ops.ADD dtypes.weakint [23, 28]
+30 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 1)
+31 Ops.MUL dtypes.weakint [30, 0]
+32 Ops.ADD dtypes.weakint [29, 31]
+33 Ops.INDEX dtypes.f32 [11, 32]
+34 Ops.CONST dtypes.weakint [] 512
+35 Ops.PARAM dtypes.f32 [34] ParamArg(slot=2, dtype=dtypes.f32)
+36 Ops.CONST dtypes.weakint [] 16588800
+37 Ops.PARAM dtypes.u8 [36] ParamArg(slot=3, dtype=dtypes.u8)
+38 Ops.CONST dtypes.weakint [] 4147200
+39 Ops.MUL dtypes.weakint [30, 38]
+40 Ops.CONST dtypes.weakint [] 1440
+41 Ops.MUL dtypes.weakint [7, 40]
+42 Ops.ADD dtypes.weakint [39, 41]
+43 Ops.ADD dtypes.weakint [42, 21]
+44 Ops.INDEX dtypes.u8 [37, 43]
+45 Ops.CAST dtypes.weakint [44] dtypes.weakint
+46 Ops.MUL dtypes.weakint [45, 22]
+47 Ops.ADD dtypes.weakint [46, 28]
+48 Ops.INDEX dtypes.f32 [35, 47]
+49 Ops.CONST dtypes.weakint [] 1036800
+50 Ops.PARAM dtypes.f32 [49] ParamArg(slot=4, dtype=dtypes.f32)
+51 Ops.CONST dtypes.weakint [] 259200
+52 Ops.MUL dtypes.weakint [30, 51]
+53 Ops.CONST dtypes.weakint [] 90
+54 Ops.MUL dtypes.weakint [7, 53]
+55 Ops.ADD dtypes.weakint [52, 54]
+56 Ops.CONST dtypes.weakint [] 16
+57 Ops.DIV dtypes.weakint [21, 56]
+58 Ops.ADD dtypes.weakint [55, 57]
+59 Ops.INDEX dtypes.f32 [50, 58]
+60 Ops.MUL dtypes.f32 [48, 59]
+61 Ops.MUL dtypes.f32 [33, 60]
+62 Ops.REDUCE dtypes.f32 [61, 13, 16, 20, 25, 27] (Ops.ADD, 0)
+63 Ops.CMPLT dtypes.bool [9, 62]
+64 Ops.WHERE dtypes.f32 [63, 62, 9]
+65 Ops.PARAM dtypes.f32 [4] ParamArg(slot=5, dtype=dtypes.f32)
+66 Ops.INDEX dtypes.f32 [65, 30]
+67 Ops.MUL dtypes.f32 [64, 66]
+68 Ops.REDUCE dtypes.f32 [67, 30] (Ops.ADD, 0)
+69 Ops.STORE dtypes.void [8, 68]
+70 Ops.END dtypes.void [69, 3, 6]
+71 Ops.SINK dtypes.void [70] KernelInfo(name="r_720_32_4_9_4_5_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(32, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=3, arg=(5, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=4, arg=(0, AxisType.UPCAST))), optimized=True)
 

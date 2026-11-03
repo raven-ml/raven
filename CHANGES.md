@@ -992,6 +992,11 @@ word comes from its lock and from samples the dashboard saw arrive.
   graph holding a huge slot reads at once (`Graph.of_string`, which hung
   counting up to it), and one of `max_int` fails (`Ops.take_unique`).
 
+- On a GPU, a streamed product of a packed weight with float32 activations
+  loads each byte's pair of activations at once (`Heuristic`): gpt-oss-20b's
+  routed MXFP4 gate and up projection at 512 float32 tokens takes 12.6-12.9
+  ms against 24.4-25.9 on an RTX 5000 Ada, 64 rows of a 16384-square MXFP4
+  matrix 2.7 against 4.8-5.0 ms.
 - A device's copies and kernels share one arena in every schedule, where
   copies had one of their own in a schedule linked `Linked`: on one device
   a copy lane ordered nothing more and held its own peak. Where a memory

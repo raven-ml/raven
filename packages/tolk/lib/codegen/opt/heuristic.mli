@@ -95,7 +95,15 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
         not, and 4 divides, or else one both read, splits by 4: into local
         threads without reuse, into upcast lanes with it;}
      {- what the threads leave of [u], or else the axis of the next stride, is
-        unrolled by its largest divisor up to 8, or 4 with reuse.}}
+        unrolled by its largest divisor up to 8, or 4 with reuse;}
+     {- each contracted axis that no split has taken, other than [u], and
+        along which the other operand is read at unit stride, is unrolled
+        whole where its values there fit one load of 16 bytes and 32 lanes,
+        stepping the other operand by its stride along [u], load across
+        more than a 128-byte line: a byte's two MXFP4 values multiply a
+        float32 operand at [2 b] and [2 b + 1], which a thread then loads
+        at once.}}
+    These two unrolls are skipped where their split is refused.
     The rows layout declines, and the next rule applies, when no global axis
     that the streamed operand reads other than as a quotient divides by 4,
     when [u] takes one thread, or when a split it asks for is refused.
