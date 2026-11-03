@@ -1576,11 +1576,21 @@ let ragged_rows =
     ]
 
 (* Nx.attention as a model calls it: a causal prefill of 8 heads of 1024
-   queries and keys of 64 features, in float32, bfloat16 and float64, and a
-   decode step of 64 query heads over 8 key heads of 4096 cached keys. *)
+   queries and keys of 64 features, in float32, bfloat16 and float64; a
+   prefill of 2048 whose heads each see a window of 64 to 512 keys, read from
+   a captured array, of which a kernel computes the blocks in the window
+   alone; and a decode step of 64 query heads over 8 key heads of 4096
+   cached keys. *)
 let attend ?mask acc (q, k, v) =
   let o, lse = Nx.attention ?mask ~acc ~kv:(Dense { k; v }) q in
   (Nx.Repr.array o, Nx.Repr.array lse)
+
+let windows =
+  Nx.create Nx.int32 [| 8; 1; 1 |]
+    (Array.init 8 (fun h -> Int32.shift_left 64l (h mod 4)))
+
+let head_window p =
+  Nx.(logical_and (causal p) (less (cast int32 (sub p.q p.k)) windows))
 
 let heads dt hq hk tq tk () =
   ( matrix dt [| 1; hq; tq; 64 |],
@@ -1599,6 +1609,9 @@ let sdpa_rows =
       Thumper.bench_with_setup "prefill-f64-8x1024x64-causal"
         ~setup:(heads D.Float64 8 8 1024 1024)
         (attend ~mask:Nx.causal Nx.float64);
+      Thumper.bench_with_setup "prefill-f32-8x2048x64-window-per-head"
+        ~setup:(heads D.Float32 8 8 2048 2048)
+        (attend ~mask:head_window Nx.float32);
       Thumper.bench_with_setup "decode-f32-64x8x4096x64"
         ~setup:(heads D.Float32 64 8 1 4096)
         (attend Nx.float32);
