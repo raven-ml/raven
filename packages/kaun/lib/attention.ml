@@ -108,15 +108,9 @@ let scaled_dot_product_attention ?mask ?scale ?sinks q k v =
         in
         Nx.div e total
     | Some m, None ->
-        let scores = Nx.where m scores (neg_inf scores) in
-        let top = Nx.max ~axes:[ -1 ] ~keepdims:true scores in
-        (* A query that sees no key: its weights are zero, not 0 / 0. *)
-        let empty = Nx.equal top (neg_inf top) in
-        let e =
-          Nx.exp (Nx.sub scores (Nx.where empty (Nx.zeros_like top) top))
-        in
-        let total = Nx.sum ~axes:[ -1 ] ~keepdims:true e in
-        Nx.div e (Nx.where empty (Nx.ones_like total) total)
+        (* A query's visible keys alone, its greatest score taken with no
+           derivative; a query that sees no key has zero weights. *)
+        Nx.softmax ~where:m scores
   in
   let dt = Nx.dtype q in
   (* Half and quarter precision floats overflow the scores and starve the

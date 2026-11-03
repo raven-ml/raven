@@ -11,7 +11,9 @@
    the same MLP's forward pass in isolation; - a small CNN (two conv + max-pool
    blocks then a dense head) trained one full step with Adam; - a single Linear
    layer (512 -> 512, batch 128) forward, and forward+backward; - a layer norm
-   over 8 x 512 tokens of 512 features.
+   over 8 x 512 tokens of 512 features; - causal attention over 8 heads of 256
+   positions, with and without sinks, forward, and its gradient in the
+   queries.
 
    Every case measures only the operation: inputs, parameters and optimizer
    state are built once in setup, outside the timed region. The train-step cases
@@ -159,6 +161,21 @@ let () =
   let norm = Kaun.Layer_norm.init ~dim:512 Nx.Host.on in
   let acts = Nx.Rng.normal Nx.float32 [| 8; 512; 512 |] in
 
+  (* Causal attention over 8 heads of 256 positions of 64 features, with and
+     without sinks: its output, and its gradient in the queries. *)
+  let heads () = Nx.Rng.normal Nx.float32 [| 8; 256; 64 |] in
+  let aq = heads () and ak = heads () and av = heads () in
+  let causal =
+    Nx.less_equal
+      (Nx.reshape [| 1; 256 |] (Nx.arange Nx.int32 0 256 1))
+      (Nx.reshape [| 256; 1 |] (Nx.arange Nx.int32 0 256 1))
+  in
+  let sinks = Nx.Rng.normal Nx.float32 [| 8; 1 |] in
+  let attend ?sinks q =
+    Kaun.Attention.scaled_dot_product_attention ~mask:causal ?sinks q ak av
+  in
+  let attend_grad ?sinks q = Rune.grad' (fun q -> Nx.sum (attend ?sinks q)) q in
+
   let budgets =
     [
       Thumper.Budget.no_slower_than 0.05; Thumper.Budget.no_more_alloc_than 0.01;
@@ -187,6 +204,14 @@ let () =
         [
           Thumper.bench "layer norm 8x512x512" (fun () ->
               Kaun.Layer_norm.apply norm acts);
+        ];
+      Thumper.group "Attention"
+        [
+          Thumper.bench "causal 8x256x64" (fun () -> attend aq);
+          Thumper.bench "causal 8x256x64 grad" (fun () -> attend_grad aq);
+          Thumper.bench "causal sinks 8x256x64" (fun () -> attend ~sinks aq);
+          Thumper.bench "causal sinks 8x256x64 grad" (fun () ->
+              attend_grad ~sinks aq);
         ];
     ]
   |> exit

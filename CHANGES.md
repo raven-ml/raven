@@ -2223,6 +2223,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun.Attention.scaled_dot_product_attention` under a mask without sinks
+  takes `Nx.softmax ~where`, with no derivative through each query's
+  greatest score: its gradient takes 3-7.5% fewer instructions, its forward
+  1-4% more. A query whose visible scores are all `-∞` is NaN on its
+  visible keys, where it was all `0.`; a row holding a NaN has masked
+  weights `0.`, where they were NaN, as unmasked `Nx.softmax` and JAX give.
 - `Kaun.Linear.apply`, `Kaun.Attention.apply`, `Kaun.Attention.cached` and
   `Kaun.Attention.merge` take `~sum`: a row-parallel output projection
   keeps the devices' terms, and the caller closes them once after the
