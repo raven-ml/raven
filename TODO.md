@@ -62,25 +62,7 @@ raven / llama.cpp b12048 Vulkan:
   (seed `s1:c80c8eab911c4a5e`) reach at most 16 masked lanes: find the
   property draw that makes 48, then time Clang and a replay at 48, 24 and
   8 lanes
-- a compile on 10 domains takes about twice the CPU of one domain. On
-  fudge (2026-11-03), a linearize-only probe without Clang: 14 domains cost
-  1.7-3.7x one domain's CPU and ran slower than 4; with
-  `OCAMLRUNPARAM=s=4M` the 14-domain wall fell from 70-160 to 13-38 ms,
-  pointing at minor-GC stop-the-world, not the shard lock (a 1M-word minor
-  heap on Worker's domains alone did not clearly help). At load
-  25-40 on the M1 Max, a jera tsit5 solve of y'' = -sin y took 18 s of CPU on
-  10 domains, 8.9 s on 1 and 10 s on 10 with `OCAMLRUNPARAM=s=4M`; of
-  y'' = -tanh y, 5.0, 3.4 and 3.8 s. Counts: minor collections do not grow
-  with domains (rune's test_laws compilation group, 1971 at `PARALLEL=1`,
-  1874 at 10), which rules out more collections. Each compiling domain's
-  exit also empties every minor heap (191 spawns among the 1874).
-  Candidates: time inside each collection, waiting for the slowest domain
-  (an E-core's, or one descheduled at that load); major marking and
-  sweeping shared across domains; the shard lock per node; spawn and join
-  per `Worker.map`. Decided by time: on fudge (6P+8E), quiet, wall and CPU
-  at 1, 2, 4, 6 and 14 domains, and 6 pinned to the P-cores; `s` at the
-  default and at 4M; a sample of the 14-domain run, the stop-the-world
-  barrier against `pthread_mutex_lock`. nx's P-core cap, on this CPU
+- placement on hybrid cores: nx's P-core cap, on fudge's CPU model
   (kimchi, 2026-10-01), timed large GEMMs at x0.96-1.04 and batched
   64x32x32 at x1.59 slower. The Mac's cap closes on fudge's numbers
   (maintainer, 2026-10-31). Host blocks' placement matters as much:
