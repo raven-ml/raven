@@ -28,6 +28,10 @@ and rune), raven / llama.cpp b12048 Vulkan:
   doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
   second slot (`Sdma.slots`) and drop its 16 MiB ring (`most_ring`).
   Needs an SDMA 4 GPU (Vega, MI100-MI300); nonnormal's gfx1201 runs SDMA 7
+- host buffers on CUDA: a call that makes the process's first copy from
+  the host pays one 8-11 ms `cuMemHostRegister`, and gpt-oss's prefill
+  pays 17-19 ms of `cuMemHostUnregister` for weight buffers the GC freed
+  just before; registration and release belong in rig's staging
 
 ### limits and size
 
@@ -128,6 +132,9 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - the host's routed decode (D92): dense at 64 rows runs 1.4x slower than
   the stored decode (12.05 against 8.5 ms on a P-core); register files of
   32 (NEON, AVX-512) take 16 rows, unmeasured
+- programs that share a cubin load it once each (31 of 74 loads in a
+  gpt-oss first call, about 1.8 ms): sharing needs `Rig.Image.load` to drop
+  its promise of module variables per load (D146)
 
 ## rune, kaun, vega
 
