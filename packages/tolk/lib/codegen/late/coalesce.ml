@@ -97,13 +97,19 @@ let memory_coalescing sink (r : Renderer.t) =
        included. Accesses merge only at one depth, a global access counting
        global stores alone, so that no merge closes a cycle: a merged store
        would otherwise wait on a store that waits on one of its parts. *)
-    let depth = Tbl.create 256 in
-    let depth_of u = Option.value (Tbl.find_opt depth u) ~default:(0, 0) in
+    (* Most nodes wait on no store: the table holds the others. *)
+    let depth = Tbl.create 16 in
+    let depth_of u =
+      match Tbl.find depth u with d -> d | exception Not_found -> (0, 0)
+    in
+    let later ((g, l) as d) ((g', l') as d') =
+      if g > g' || (g = g' && l >= l') then d else d'
+    in
     List.iter
       (fun u ->
         let waits =
           List.fold_left
-            (fun d s -> max d (depth_of s))
+            (fun d s -> later d (depth_of s))
             (0, 0) (src_without_body u)
         in
         let d =
@@ -113,7 +119,7 @@ let memory_coalescing sink (r : Renderer.t) =
             let count a = if space = Some a then 1 else 0 in
             (fst waits + count Dtype.Global, snd waits + count Dtype.Local)
         in
-        Tbl.replace depth u d;
+        if fst d > 0 || snd d > 0 then Tbl.replace depth u d;
         if op u = Op.Load || op u = Op.Store then begin
           if List.length (src u) <> if op u = Op.Store then 2 else 1 then
             invalid_arg "memory coalescing does not support gated loads/stores";
