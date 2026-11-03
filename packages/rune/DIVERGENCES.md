@@ -448,7 +448,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### R1. A float sum adds +0.
 
-- **Reference:** `mixin/reduce.py:20` (`sum`), `mixin/op.py:758`
+- **Reference:** `mixin/reduce.py:20` (`sum`), `mixin/op.py:781`
   (`_split_cumalu`).
 - **Raven:** `lower_reduce.ml` (`arith`, `negative_zeros`).
 - **Differs:** the lowering adds `+0.` to each float sum it computes, once per
