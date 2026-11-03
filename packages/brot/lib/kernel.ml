@@ -53,7 +53,7 @@ external set64u : Bytes.t -> int -> int64 -> unit = "%caml_bytes_set64u"
 
 (* The counts, then the stage: 328 spans of 40 bytes ([STAGE_CAP] and [staged]
    in the C). *)
-let cursor () = Bytes.make (64 + (328 * 40)) '\000'
+let cursor () = Bytes.make (72 + (328 * 40)) '\000'
 let restart cur = set64u cur 40 0L
 
 let set cur ~spans ~ids ~marks =
@@ -67,6 +67,7 @@ let[@inline] marks cur = Int64.to_int (get64u cur 16)
 let[@inline] resume cur = Int64.to_int (get64u cur 24)
 let[@inline] code_point cur = Int64.to_int (get64u cur 32)
 let[@inline] unit_stop cur = Int64.to_int (get64u cur 32)
+let[@inline] added cur = Int64.to_int (get64u cur 64)
 
 (* [@@noalloc] holds by construction: the C allocates nothing, raises nothing
    and never releases the runtime lock, so there is no GC point in a call. *)

@@ -85,7 +85,7 @@ enum {
 /* Kernel.cursor byte offsets. */
 enum { CUR_SPANS = 0, CUR_IDS = 8, CUR_MARKS = 16, CUR_RESUME = 24,
        CUR_CP = 32, CUR_STAGED = 40, CUR_NEXT = 48, CUR_STAGE_STOP = 56,
-       CUR_STAGE = 64 };
+       CUR_ADDED = 64, CUR_STAGE = 72 };
 
 /* Pre_tokenizer.lead_class values: the four Char_class categories, then the
    space, the apostrophe and the two shapes of non-ASCII byte. */
@@ -1558,15 +1558,18 @@ static inline intnat neighbour(intnat set, intnat mask)
 }
 
 /* Pretoken_cache.insert_at: [cache_store], the entry way 1 held moving on into
-   the neighbour set as [cache_store] puts it there. */
-static void cache_insert(unsigned char *tbl, intnat set, intnat mask,
-                         uint64_t k0, uint64_t k1, uint64_t v0, uint64_t v1)
+   the neighbour set as [cache_store] puts it there. Returns whether no entry
+   was dropped, which is what counts toward the table's growth. */
+static int cache_insert(unsigned char *tbl, intnat set, intnat mask,
+                        uint64_t k0, uint64_t k1, uint64_t v0, uint64_t v1)
 {
   intnat nset = neighbour(set, mask);
   uint64_t w0 = load64(tbl + set + 32), w1 = load64(tbl + set + 40);
   uint64_t w2 = load64(tbl + set + 48), w3 = load64(tbl + set + 56);
+  int dropped = w1 != 0 && (nset == set || load64(tbl + nset + 40) != 0);
   cache_store(tbl, set, k0, k1, v0, v1);
   if (w1 != 0 && nset != set) cache_store(tbl, nset, w0, w1, w2, w3);
+  return !dropped;
 }
 
 /* Pretoken_cache.add_lanes: a hit's four lanes are stored unconditionally, as
@@ -1866,19 +1869,19 @@ static inline int probe_set(const tables *t, const staged *st, uint64_t v[2])
 /* Stores a merged miss of [m] ids when Pretoken_cache.encode would keep it:
    at most four, each within 24 bits. Pretoken_cache.value_lo/value_hi: two
    24-bit lanes per word, the count in bits 24..31 of the first, absent lanes
-   zero. */
-static inline void remember(const tables *t, const staged *st,
-                            const int32_t *ids, int m)
+   zero. Returns whether the table holds one entry more, as [cache_insert]. */
+static inline int remember(const tables *t, const staged *st,
+                           const int32_t *ids, int m)
 {
   int k;
-  if (st->set < 0 || m > 4) return;
+  if (st->set < 0 || m > 4) return 0;
   for (k = 0; k < m; k++)
-    if (ids[k] >= 1 << 24) return;
-  cache_insert(t->cache, st->set, t->cache_mask, st->k0, st->k1,
-               (uint64_t)ids[0] | ((uint64_t)m << 24)
-                   | (m > 1 ? (uint64_t)ids[1] << 32 : 0),
-               (m > 2 ? (uint64_t)ids[2] : 0)
-                   | (m > 3 ? (uint64_t)ids[3] << 32 : 0));
+    if (ids[k] >= 1 << 24) return 0;
+  return cache_insert(t->cache, st->set, t->cache_mask, st->k0, st->k1,
+                      (uint64_t)ids[0] | ((uint64_t)m << 24)
+                          | (m > 1 ? (uint64_t)ids[1] << 32 : 0),
+                      (m > 2 ? (uint64_t)ids[2] : 0)
+                          | (m > 3 ? (uint64_t)ids[3] << 32 : 0));
 }
 
 /* Pretoken_cache.encode past a miss in the span's own set: the neighbour set,
@@ -2006,7 +2009,7 @@ byte_level_encode_impl(value text, value vpos, value vstop, value vspans,
   intnat digits = split ? Long_val(vwalker) >> 2 : 0;
   int o200k = split ? (int)((Long_val(vwalker) >> 1) & 1) : 0;
   int flag = split ? (int)(Long_val(vwalker) & 1) : 0;
-  intnat resume;
+  intnat resume, added = 0;
   int reason;
   tables t;
   int cached;
@@ -2117,7 +2120,7 @@ byte_level_encode_impl(value text, value vpos, value vstop, value vspans,
         }
         emit_ids(ids_base, ids32_base, emit32, nids, ids15, m);
         nids += m;
-        remember(&t, p, ids15, m);
+        added += remember(&t, p, ids15, m);
       }
       if (!emit32) {
         /* Spans.write's word: the start in the low 32 bits, the stop in the
@@ -2171,6 +2174,7 @@ out:
   store64(cur + CUR_RESUME, (uint64_t)resume);
   store64(cur + CUR_STAGED, (uint64_t)nb);
   store64(cur + CUR_NEXT, (uint64_t)k);
+  store64(cur + CUR_ADDED, (uint64_t)added);
   return Val_int(reason);
 }
 
@@ -2484,7 +2488,7 @@ static BROT_INLINE value sp_encode_impl(value text, value vpos,
       (const value *)&Field(Field(vt, BROT_SP_FALLBACK_IDS), 0);
   intnat nids = (intnat)load64(cur + CUR_IDS);
   intnat i = Long_val(vpos);
-  intnat resume;
+  intnat resume, added = 0;
   int reason;
   tables t;
   int cached;
@@ -2555,7 +2559,7 @@ static BROT_INLINE value sp_encode_impl(value text, value vpos,
         }
         emit_ids(ids_base, ids32_base, emit32, nids, ids15, m);
         nids += m;
-        remember(&t, p, ids15, m);
+        added += remember(&t, p, ids15, m);
       }
     }
     if (i >= stop) {
@@ -2581,6 +2585,7 @@ out:
   store64(cur + CUR_RESUME, (uint64_t)resume);
   store64(cur + CUR_STAGED, (uint64_t)nb);
   store64(cur + CUR_NEXT, (uint64_t)k);
+  store64(cur + CUR_ADDED, (uint64_t)added);
   return Val_int(reason);
 }
 

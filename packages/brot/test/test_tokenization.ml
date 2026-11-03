@@ -1663,9 +1663,10 @@ let test_dropped_tokenizer_is_collected () =
     ~than:(before + 65536) (live ())
 
 (* A BPE tokenizer builds at most [Domain.recommended_domain_count ()] states,
-   8 MB each, however many encodings hold one at once: an encoding that finds
-   them all in use does without a cache. Measured on one domain by nesting
-   claims three deeper than that; a state's size is measured as one claim's. *)
+   each with a cache its vocabulary seeds, however many encodings hold one at
+   once: an encoding that finds them all in use does without a cache. Measured
+   on one domain by nesting claims three deeper than that; a state's size is
+   measured as one claim's. *)
 let live_words () =
   Gc.full_major ();
   (Gc.stat ()).live_words
@@ -1673,9 +1674,21 @@ let live_words () =
 let small_bpe () =
   bpe ~vocab:[ ("h", 0); ("e", 1); ("he", 2) ] ~merges:[ ("h", "e") ] ()
 
+(* Every word of one to three letters is an entry its letters spell, so the
+   18278 entries are seeded into the cache, which doubles to 65536 entries,
+   2 MB, to hold them. *)
+let seeded_bpe () =
+  let letters = List.init 26 (fun i -> String.make 1 (Char.chr (97 + i))) in
+  let longer words =
+    List.concat_map (fun w -> List.map (( ^ ) w) letters) words
+  in
+  let two = longer letters in
+  let vocab = List.mapi (fun i w -> (w, i)) (letters @ two @ longer two) in
+  bpe ~vocab ~merges:[] ()
+
 let test_states_are_bounded () =
   let most = Domain.recommended_domain_count () in
-  let t = small_bpe () in
+  let t = seeded_bpe () in
   let before = live_words () in
   let one = hold_cache t (fun () -> live_words ()) - before in
   let rec nest depth =
@@ -1685,7 +1698,7 @@ let test_states_are_bounded () =
   let peak = nest (most + 3) in
   let after = live_words () in
   ignore (Sys.opaque_identity t : Brot.t);
-  greater ~msg:"a state holds its 8 MB cache" int ~than:(1 lsl 20) one;
+  greater ~msg:"a state holds its 2 MB cache" int ~than:(1 lsl 17) one;
   at_most ~msg:"live words while every claim is held" int
     ~than:(before + (most * one) + 65536)
     peak;

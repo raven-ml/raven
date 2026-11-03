@@ -1017,13 +1017,17 @@ val bpe :
     - [vocab]: initial vocabulary as [(token, id)] pairs. Default: [[]].
     - [merges]: merge rules as [(left, right)] pairs learned during training.
       Default: [[]].
-    - [cache_capacity]: number of entries in a pretoken cache, rounded up to a
-      power of two. An entry costs about 32 bytes. The tokenizer makes a
-      cache for each encoding that runs while the others are in use, from any
-      domains or threads, and holds at most
-      [Domain.recommended_domain_count ()] of them at any time, in use or not,
-      for as long as it lives; an encoding past that runs without one. Each is
-      allocated whole. Default: [262144] (8 MB each). [0] disables caching.
+    - [cache_capacity]: the most entries of a pretoken cache, rounded up to a
+      power of two, which keeps the ids of pretokens of up to 15 bytes so that
+      one seen before is not merged again. The tokenizer makes a cache for
+      each encoding that runs while the others are in use, from any domains or
+      threads, and holds at most [Domain.recommended_domain_count ()] of them
+      at any time, in use or not, for as long as it lives; an encoding past
+      that runs without one. Each starts at 16 KB, grows to hold the
+      vocabulary's short entries, and doubles as the pretokens it meets fill
+      half of it, up to 32 bytes per entry: about 32 MB over 100 MB of web
+      text, 128 MB over a gigabyte. Default: [4194304] (128 MB each at most).
+      [0] disables caching.
     - [dropout]: probability \[[0]; [1]\] of skipping merges (data
       augmentation). Default: none (no dropout).
     - [continuing_subword_prefix]: prefix for non-initial subwords (e.g.,
@@ -1072,7 +1076,7 @@ val wordpiece :
       most [Domain.recommended_domain_count ()] of them at any time, in use or
       not, for as long as it lives; an encoding past that runs without one.
       Each starts at 144 KB and doubles as it fills, up to 128 KB plus 32
-      bytes per entry. [0] disables them. Default: [262144] (8 MB each at
+      bytes per entry. [0] disables them. Default: [4194304] (128 MB each at
       most).
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
@@ -1147,7 +1151,7 @@ val unigram :
       most [Domain.recommended_domain_count ()] of them at any time, in use or
       not, for as long as it lives; an encoding past that runs without one.
       Each starts at 144 KB and doubles as it fills, up to 128 KB plus 32
-      bytes per entry. [0] disables them. Default: [262144] (8 MB each at
+      bytes per entry. [0] disables them. Default: [4194304] (128 MB each at
       most).
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],

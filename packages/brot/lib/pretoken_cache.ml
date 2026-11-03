@@ -100,7 +100,7 @@ let initial_sets = 256
 (* The smallest string the runtime allocates as a large block: over 256 words
    (Max_young_wosize), the most the minor heap takes. *)
 let large_bytes = 257 * 8
-let default_capacity = 262144
+let default_capacity = 4194304
 
 type t = {
   front : Bytes.t;
@@ -157,11 +157,11 @@ let sets_for entries =
   done;
   !sets
 
-let create ?(grow = true) ?(front = true) capacity =
+let create ?(front = true) capacity =
   if capacity <= 0 then { none with live = 0 }
   else
     let limit = sets_for capacity in
-    let sets = if grow then min limit initial_sets else limit in
+    let sets = min limit initial_sets in
     let entries = if front then front_entries else 0 in
     let table, base = table_of sets in
     {
@@ -246,9 +246,11 @@ let[@inline] insert_at table set mask k0 k1 v0 v1 =
     dropped
   end
 
+let[@inline] growing t = t.mask < t.limit - 1 && t.live > t.mask
+
 (* Inlined, so that the value words reach the table unboxed. *)
 let[@inline] store t k0 k1 v0 v1 =
-  if t.mask < t.limit - 1 && t.live > t.mask then grow t;
+  if growing t then grow t;
   let set = set_at (hash_of k0 k1) t.mask t.base in
   if not (insert_at t.table set t.mask k0 k1 v0 v1) then t.live <- t.live + 1
 
@@ -376,6 +378,10 @@ let encode t ~len_table (miss : encoder) ids ~opaque text ~pos ~len =
       end
     end
   end
+
+let stored t n =
+  t.live <- t.live + n;
+  if growing t then grow t
 
 let cached t ~len_table miss : encoder =
   if t.mask < 0 then miss

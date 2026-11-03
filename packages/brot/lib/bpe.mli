@@ -79,14 +79,16 @@ val create :
       Raises [Invalid_argument] when {!spaceable} is [false] for [vocab],
       together with [byte_level], or with [continuing_subword_prefix] or
       [end_of_word_suffix]. Defaults to [false].
-    - [cache_capacity] is the number of entries in the pretoken cache, rounded
-      up to a power of two and held two per set: a pretoken may sit in either
+    - [cache_capacity] is the most entries of the pretoken cache, rounded up
+      to a power of two and held two per set: a pretoken may sit in either
       entry of its set or of the set beside it, and a miss evicts the older of
       the two of its set into the set beside it, which drops its own older one.
       Each entry costs 32 bytes and each state of the model (see {!with_state})
-      holds a table of its own, allocated whole. Defaults to [262144] (8 MB).
-      Set to [0] to disable caching. Pretokens over 4096 bytes are never
-      cached.
+      holds a table of its own, which starts at 512 entries, takes the
+      vocabulary's seeds and doubles once half its entries are live, as
+      {!Pretoken_cache.create} grows it. Defaults to
+      {!Pretoken_cache.default_capacity} (128 MB at most). Set to [0] to
+      disable caching. Pretokens over 4096 bytes are never cached.
     - [dropout] is the probability of randomly skipping a merge during
       tokenization (BPE-dropout regularization). Defaults to [0.] (no dropout).
       A non-zero value disables the cache and [ignore_merges], both of which

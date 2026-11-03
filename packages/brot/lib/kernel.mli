@@ -110,9 +110,9 @@ type reason =
 val cursor : unit -> Bytes.t
 (** [cursor ()] is a fresh kernel cursor: the bytes the kernel reads its input
     counts from and writes its results to, at the byte offsets [0] span count,
-    [8] id count, [16] mark count, [24] resume position and [32] code point
-    after [Class] or {!unit_stop} after [Encode], then the spans the kernel has
-    walked ahead of their probes. A call that resumes on the range the last
+    [8] id count, [16] mark count, [24] resume position, [32] code point after
+    [Class] or {!unit_stop} after [Encode] and [64] {!added}, then the spans the
+    kernel has walked ahead of their probes. A call that resumes on the range the last
     one left at the next of those spans resolves them before walking on. *)
 
 val restart : Bytes.t -> unit
@@ -139,6 +139,11 @@ val resume : Bytes.t -> int
 
 val code_point : Bytes.t -> int
 (** [code_point cur] is the code point needing a class, after [Class]. *)
+
+val added : Bytes.t -> int
+(** [added cur] is how many entries the last call stored into the pretoken
+    cache without evicting one, which [Pretoken_cache.stored] counts toward its
+    growth. *)
 
 val unit_stop : Bytes.t -> int
 (** [unit_stop cur] is the end of the unit or span that needs OCaml, after an

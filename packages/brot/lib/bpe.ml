@@ -215,8 +215,9 @@ type state = {
   st_cache : Cache.t;
   st_long : (string, int array) Hashtbl.t;
   mutable st_miss : Cache.encoder;
-  st_kernel : Kernel.byte_level;
-  st_sp : Kernel.sp option;
+  (* The kernels' views of [st_cache], taken again whenever its table moves. *)
+  mutable st_kernel : Kernel.byte_level;
+  mutable st_sp : Kernel.sp option;
   st_cursor : Bytes.t;
 }
 
@@ -882,11 +883,10 @@ let whole_word_exceptions model =
     model.source_vocab;
   exceptions
 
-(* The kernels store into the back table without growing it, so a BPE cache is
-   allocated whole, and they probe it without a front table, a stage of spans
+(* The kernels probe the back table without a front table, a stage of spans
    ahead of time. *)
 let make_state model =
-  let cache = Cache.create ~grow:false ~front:false model.cache_slots in
+  let cache = Cache.create ~front:false model.cache_slots in
   Cache.load_seeds cache model.seeds;
   {
     st_word = create_word 16;
@@ -902,6 +902,21 @@ let make_state model =
 
 let with_state model f =
   Cache.with_state model.states ~make:make_state ~spare:private_state model f
+
+(* Before a kernel call: the cache doubles as it fills, from a kernel's stores
+   ([counted]) or OCaml's, and moves when it does, so the kernels' tables are
+   taken from it again, and the spans the cursor walked ahead, whose sets were
+   found in the old table, are walked again. *)
+let refresh model st =
+  if st.st_kernel.Kernel.cache != st.st_cache.Cache.table then begin
+    st.st_kernel <- kernel_tables model st.st_cache;
+    st.st_sp <- sp_kernel_tables model st.st_cache;
+    Kernel.restart st.st_cursor
+  end
+
+(* After a kernel call: the entries it stored count toward the cache's
+   growth. *)
+let[@inline] counted st = Cache.stored st.st_cache (Kernel.added st.st_cursor)
 
 (* The ids of a merged word. A symbol whose bytes are not what its id accounts
    for — the unknown token, a fallback token the text spelled by name — is
@@ -1107,6 +1122,9 @@ let encode_sp_units model st cut ids ~opaque text ~pos ~len =
   encode_unit_into model st ids ~opaque text ~pos:!unit_start
     ~len:(stop - !unit_start)
 
+(* The state's SentencePiece kernel tables, which a caller has seen are there. *)
+let sp st = match st.st_sp with Some t -> t | None -> assert false
+
 (* The fused SentencePiece walk: the C kernel cuts units, probes the cache and
    merges short misses, and everything it refuses comes back here with a resume
    position — a full ids buffer is grown, and an [Encode] unit (over 15 bytes, a
@@ -1114,14 +1132,16 @@ let encode_sp_units model st cut ids ~opaque text ~pos ~len =
    goes through [encode_unit_into], which owns the miss reference, before the
    walk re-enters at its end. Every resume position is a unit boundary or the
    stretch start, which [Kernel.sp_encode]'s contract asks for. *)
-let encode_sp_kernel model st t ids ~opaque text ~pos ~len =
+let encode_sp_kernel model st ids ~opaque text ~pos ~len =
   let cur = st.st_cursor in
   let stop = pos + len in
   let rec go p =
     if p < stop then begin
       Ints.reserve ids (max 4096 (min (stop - p) 65536));
+      refresh model st;
       Kernel.set cur ~spans:0 ~ids:(Ints.length ids) ~marks:0;
-      let r = Kernel.sp_encode text p stop (Ints.buffer ids) cur t in
+      let r = Kernel.sp_encode text p stop (Ints.buffer ids) cur (sp st) in
+      counted st;
       Ints.set_length ids (Kernel.ids cur);
       let resume = Kernel.resume cur in
       match r with
@@ -1143,10 +1163,10 @@ let encode_sp_kernel model st t ids ~opaque text ~pos ~len =
 
 let encode_into model st ids ~opaque text ~pos ~len =
   match model.sp_cut with
-  | Some cut when len > Cache.max_key_len -> (
-      match st.st_sp with
-      | Some t -> encode_sp_kernel model st t ids ~opaque text ~pos ~len
-      | None -> encode_sp_units model st cut ids ~opaque text ~pos ~len)
+  | Some cut when len > Cache.max_key_len ->
+      if Option.is_some st.st_sp then
+        encode_sp_kernel model st ids ~opaque text ~pos ~len
+      else encode_sp_units model st cut ids ~opaque text ~pos ~len
   | _ -> encode_unit_into model st ids ~opaque text ~pos ~len
 
 (* The batch sink: the int32 buffer the fused kernels write a chunk's ids into
@@ -1182,15 +1202,17 @@ let flush_spill sink spill =
 (* [encode_sp_kernel] on the sink: the kernel appends int32 ids at [sink.used],
    a hand-back unit goes through [encode_unit_into] into the spill, and the
    flush at the top of the next call keeps the order. *)
-let encode_sp_kernel_ids32 model st t sink spill ~opaque text ~pos ~len =
+let encode_sp_kernel_ids32 model st sink spill ~opaque text ~pos ~len =
   let cur = st.st_cursor in
   let stop = pos + len in
   let rec go p =
     if p < stop then begin
       flush_spill sink spill;
       sink_reserve sink (max 4096 (min (stop - p) 65536));
+      refresh model st;
       Kernel.set cur ~spans:0 ~ids:sink.used ~marks:0;
-      let r = Kernel.sp_encode_ids32 text p stop sink.ba cur t in
+      let r = Kernel.sp_encode_ids32 text p stop sink.ba cur (sp st) in
+      counted st;
       sink.used <- Kernel.ids cur;
       let resume = Kernel.resume cur in
       match r with
@@ -1212,11 +1234,10 @@ let encode_sp_kernel_ids32 model st t sink spill ~opaque text ~pos ~len =
 
 let encode_into_ids32 model st sink spill ~opaque text ~pos ~len =
   match model.sp_cut with
-  | Some cut when len > Cache.max_key_len -> (
-      match st.st_sp with
-      | Some t ->
-          encode_sp_kernel_ids32 model st t sink spill ~opaque text ~pos ~len
-      | None -> encode_sp_units model st cut spill ~opaque text ~pos ~len)
+  | Some cut when len > Cache.max_key_len ->
+      if Option.is_some st.st_sp then
+        encode_sp_kernel_ids32 model st sink spill ~opaque text ~pos ~len
+      else encode_sp_units model st cut spill ~opaque text ~pos ~len
   | _ -> encode_unit_into model st spill ~opaque text ~pos ~len
 
 let fused model =
@@ -1243,15 +1264,16 @@ let packed_walker : Pre_tokenizer.walker -> int = function
 let encode_walk model st ~walker ids ~opaque ~marks spans text ~pos ~stop =
   if pos < 0 || stop < pos || stop > String.length text || stop > 0xFFFF_FFFF
   then invalid_arg err_range;
-  let cur = st.st_cursor and t = st.st_kernel in
+  let cur = st.st_cursor in
   let rec go p =
     if p >= stop then stop
     else begin
       Ints.reserve ids (max 4096 (min (stop - p) 65536));
       Ints.reserve marks (Spans.capacity spans - Spans.count spans);
+      refresh model st;
       Kernel.set cur ~spans:(Spans.count spans) ~ids:(Ints.length ids)
         ~marks:(Ints.length marks);
-      let unicode = Char_class.unicode_table () in
+      let unicode = Char_class.unicode_table () and t = st.st_kernel in
       let r =
         match (walker : Pre_tokenizer.walker) with
         | Gpt2 ->
@@ -1262,6 +1284,7 @@ let encode_walk model st ~walker ids ~opaque ~marks spans text ~pos ~stop =
               (Ints.buffer ids) (Ints.buffer marks) cur unicode t
               (packed_walker walker)
       in
+      counted st;
       Spans.set_count spans (Kernel.spans cur);
       Ints.set_length ids (Kernel.ids cur);
       Ints.set_length marks (Kernel.marks cur);
@@ -1292,14 +1315,15 @@ let encode_walk model st ~walker ids ~opaque ~marks spans text ~pos ~stop =
 let encode_walk_ids32 model st ~walker sink spill ~opaque text ~pos ~stop =
   if pos < 0 || stop < pos || stop > String.length text || stop > 0xFFFF_FFFF
   then invalid_arg err_range;
-  let cur = st.st_cursor and t = st.st_kernel in
+  let cur = st.st_cursor in
   let rec go p =
     if p >= stop then stop
     else begin
       flush_spill sink spill;
       sink_reserve sink (max 4096 (min (stop - p) 65536));
+      refresh model st;
       Kernel.set cur ~spans:0 ~ids:sink.used ~marks:0;
-      let unicode = Char_class.unicode_table () in
+      let unicode = Char_class.unicode_table () and t = st.st_kernel in
       let r =
         match (walker : Pre_tokenizer.walker) with
         | Gpt2 ->
@@ -1308,6 +1332,7 @@ let encode_walk_ids32 model st ~walker sink spill ~opaque text ~pos ~stop =
             Kernel.split_encode_ids32 text p stop sink.ba cur unicode t
               (packed_walker walker)
       in
+      counted st;
       sink.used <- Kernel.ids cur;
       let resume = Kernel.resume cur in
       match r with
@@ -1488,9 +1513,9 @@ let char_id chars c =
   else Merge_map.find chars.multi (pack_char_key c 0 n)
 
 let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
-    ?(cache_capacity = 262144) ?dropout ?unk_token ?continuing_subword_prefix
-    ?end_of_word_suffix ?(fuse_unk = false) ?(byte_fallback = false)
-    ?(ignore_merges = false) () : t =
+    ?(cache_capacity = Cache.default_capacity) ?dropout ?unk_token
+    ?continuing_subword_prefix ?end_of_word_suffix ?(fuse_unk = false)
+    ?(byte_fallback = false) ?(ignore_merges = false) () : t =
   (* Tokenizer files spell "no prefix" and "no suffix" as [""]. *)
   let non_empty = function Some "" -> None | given -> given in
   let continuing_subword_prefix = non_empty continuing_subword_prefix in

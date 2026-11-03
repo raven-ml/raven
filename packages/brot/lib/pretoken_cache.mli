@@ -42,19 +42,26 @@ type t = private {
 val none : t
 (** [none] is no cache: nothing is found in it or stored into it. *)
 
-val create : ?grow:bool -> ?front:bool -> int -> t
+val create : ?front:bool -> int -> t
 (** [create capacity] is an empty cache of at most [capacity] back entries,
     rounded up to a power of two, or no cache when [capacity] is zero or less.
-    With [grow] (default [true]) the back table starts at 512 entries (16 KB)
-    and doubles once half its entries are live; without it
-    the table is allocated at its full size, as the C kernels, which store
-    without growing it, need. With [front] (default [true]) the front table is
-    allocated; the C kernels, which prefetch the back sets of the spans they
-    walk ahead, have none. A full table takes 32 bytes per entry. *)
+    The back table starts at 512 entries (16 KB) and doubles once half its
+    entries are live, up to [capacity]: an entry stored without evicting
+    another makes one more live, whether {!encode} or a C kernel stored it
+    ({!stored}). Doubling moves the table, so a kernel's tables are taken from
+    [t] again after anything that stores. With [front] (default [true]) the
+    front table is allocated; the C kernels, which prefetch the back sets of
+    the spans they walk ahead, have none. A full table takes 32 bytes per
+    entry. *)
+
+val stored : t -> int -> unit
+(** [stored t n] counts [n] entries a C kernel stored into [t] without evicting
+    one, and doubles [t]'s back table when {!encode} would have. *)
 
 val default_capacity : int
-(** [default_capacity] is the capacity models default to: 262144 entries,
-    8 MB once full. *)
+(** [default_capacity] is the capacity models default to: 4194304 entries, 128
+    MB once full, which a cache reaches only for the million or so distinct
+    pretokens of about a gigabyte of web text. *)
 
 val max_key_len : int
 (** [max_key_len] is the length of the longest pretoken a cache holds: 15. *)

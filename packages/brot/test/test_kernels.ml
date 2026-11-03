@@ -1102,6 +1102,60 @@ let spaced_law =
             y
       | _ -> failf "two rows expected")
 
+(* A cache starts at 512 entries and doubles while the kernels fill it, from
+   their stores and from OCaml's hand-backs, moving under the kernels' tables
+   between calls. Thousands of distinct words of one to six letters, which the
+   letter pairs merge to at most four ids and so are kept, encoded three times
+   over, must still give the ids an uncached tokenizer gives: the byte-level
+   kernel on words with a space before them, the SentencePiece one on ▁ units,
+   with some units past the 15-byte key among them. *)
+let grown_letters = List.init 6 (fun i -> String.make 1 (Char.chr (97 + i)))
+
+let grown_pairs =
+  List.concat_map (fun a -> List.map (fun b -> (a, b)) grown_letters)
+    grown_letters
+
+let grown_vocab first extra =
+  first
+  @ List.mapi
+      (fun i (a, b) -> (a ^ b, List.length first + i))
+      (extra @ grown_pairs)
+
+let grown_byte_level cache_capacity =
+  let space = "\196\160" in
+  let extra = List.map (fun l -> (space, l)) grown_letters in
+  Brot.bpe
+    ~vocab:(grown_vocab base_vocab extra)
+    ~merges:(grown_pairs @ extra) ~pre:(pre ()) ?cache_capacity ()
+
+let grown_sp cache_capacity =
+  Brot.bpe ~vocab:(grown_vocab sp_vocab []) ~merges:grown_pairs ?cache_capacity
+    ()
+
+let grown_case =
+  let open Gen in
+  let word size = string_of ~size (char_range 'a' 'f') in
+  with_pp
+    (fun ppf words -> Format.fprintf ppf "%d words" (List.length words))
+    (list ~size:(int_range 2000 4000)
+       (frequency [ (20, word (int_range 1 6)); (1, word (constant 18)) ]))
+
+let grown_law =
+  prop ~count:10 "a cache grown by the kernels finds what it held" grown_case
+    (fun words ->
+      let check ~msg make text =
+        let cached = make None and uncached = make (Some 0) in
+        let expect = ids uncached text in
+        for round = 1 to 3 do
+          equal
+            ~msg:(Printf.sprintf "%s, round %d" msg round)
+            (array int) expect (ids cached text)
+        done
+      in
+      check ~msg:"byte-level" grown_byte_level (String.concat " " words);
+      check ~msg:"sentencepiece" grown_sp
+        (String.concat "" (List.map (( ^ ) sp_mark) words)))
+
 (* The tokenizer and the reference are read once, on the first case. *)
 let law ?(text = law_text) ?(cover = cover_law) name make =
   let loaded =
@@ -1184,6 +1238,7 @@ let () =
          group "laws"
            [
              spaced_law;
+             grown_law;
              law "gpt2" gpt2_reference;
              law "mistral" mistral_reference;
              law ~text:cl100k_text ~cover:cover_cl100k "llama3"
