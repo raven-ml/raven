@@ -4,27 +4,26 @@
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
-# forced: blessed under load 44.5 on 14 cores
-# forced: blessed Talon/Filter/high_value Talon/Group/category_region Talon/Join/customer_lookup Talon/Nulls/group-sum Talon/Nulls/join-left Talon/Nulls/is_in-3-texts under load 49.3 on 14 cores
+# forced: blessed under load 19.6 on 14 cores
 
-Talon/Filter/high_value	alloc_words	exact	14565
-Talon/Group/category_region	alloc_words	exact	10233
-Talon/Join/customer_lookup	alloc_words	exact	29382
-Talon/Nulls/concat-3	alloc_words	exact	1071
-Talon/Nulls/filter-1pct	alloc_words	exact	10499
-Talon/Nulls/filter-50pct	alloc_words	exact	10499
-Talon/Nulls/filter-90pct	alloc_words	exact	10499
-Talon/Nulls/group-sum	alloc_words	exact	9164
-Talon/Nulls/is_in-3-texts	alloc_words	exact	13004
-Talon/Nulls/join-left	alloc_words	exact	25060
-Talon/Nulls/kleene-and	alloc_words	exact	4473
-Talon/Nulls/kleene-or	alloc_words	exact	3943
-Talon/Nulls/sort	alloc_words	exact	7788
-Talon/Nulls/take-random	alloc_words	exact	607
-Talon/Sort/amount_desc	alloc_words	exact	246029
-Talon_csv/read-mixed	alloc_words	exact	888098
-Talon_parquet/read-nullable	alloc_words	exact	34946
-Talon_text/parse-float64-17-digits	alloc_words	exact	318
+Talon/Filter/high_value	alloc_words	exact	14586
+Talon/Group/category_region	alloc_words	exact	9201
+Talon/Join/customer_lookup	alloc_words	exact	28304
+Talon/Nulls/concat-3	alloc_words	exact	1065
+Talon/Nulls/filter-1pct	alloc_words	exact	10500
+Talon/Nulls/filter-50pct	alloc_words	exact	10500
+Talon/Nulls/filter-90pct	alloc_words	exact	10500
+Talon/Nulls/group-sum	alloc_words	exact	8263
+Talon/Nulls/is_in-3-texts	alloc_words	exact	13007
+Talon/Nulls/join-left	alloc_words	exact	24095
+Talon/Nulls/kleene-and	alloc_words	exact	4476
+Talon/Nulls/kleene-or	alloc_words	exact	3946
+Talon/Nulls/sort	alloc_words	exact	7790
+Talon/Nulls/take-random	alloc_words	exact	613
+Talon/Sort/amount_desc	alloc_words	exact	246012
+Talon_csv/read-mixed	alloc_words	exact	888634
+Talon_parquet/read-nullable	alloc_words	exact	35499
+Talon_text/parse-float64-17-digits	alloc_words	exact	322
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
