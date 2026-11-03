@@ -536,9 +536,19 @@ let exact ~scan c =
 (* Each part of the eager and the lowered results of a float sum or product of
    at most [n] terms, the carry's included, is within [γ(n - 1) Σ|x|] of the
    exact sum, a relative [γ(n - 1)] of the exact product: [Σ|x|] is eager's
-   float64 sum of the terms' magnitudes. *)
+   float64 sum of the terms' magnitudes. A zero sum keeps its sign where it is
+   the carrier's, or where every term is a zero: the rounding into a narrower
+   destination gives a zero of the carrier sum's sign, which within the bound
+   can be either. *)
 let bounded ~scan c =
   let (D.Any dt) = c.dt in
+  let narrow =
+    match dt with
+    | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2
+    | D.Float4_e2m1fn ->
+        true
+    | _ -> false
+  in
   let e, l = results dt ~scan c in
   let axis = List.hd c.axes in
   let xs = parts64 (operand dt c) in
@@ -569,7 +579,8 @@ let bounded ~scan c =
           | Prod -> 2.01 *. g *. Float.max (Float.abs e) (Float.abs l)
           | _ -> 2. *. g *. mags.(o)
         in
-        near ~bits ~bound:(bound +. round e l) e l)
+        let zeros = c.m <> Sum || (not narrow) || mags.(o) = 0. in
+        near ~zeros ~bits ~bound:(bound +. round e l) e l)
       e
   in
   List.iter2 check
@@ -843,8 +854,23 @@ let complex_scans =
    int32 product of 40 terms that wraps; a float64 product of 600 terms near
    1; a float32 maximum of 600 terms with a NaN late in the row, flipped; a
    float64 minimum of 600 terms with a [-∞]; a complex128 sum of 600
-   numbers. *)
+   numbers; float4_e2m1fn and float8_e4m3fn sums from a carry of [-2⁻³⁰] of
+   16 zeros, then [x], [-x], ..., whose zero results round a carrier sum of
+   either sign, as [x] absorbs the carry or not. *)
 let long_examples =
+  let cancelling dt x neg_x =
+    {
+      dt;
+      m = Sum;
+      shape = [| 40 |];
+      view = Plain;
+      axes = [ 0 ];
+      raws =
+        Array.init 40 (fun i ->
+            if i < 16 then 0L else if i mod 2 = 0 then x else neg_x);
+      carry = Some [| 0xb0800000L |];
+    }
+  in
   let f64 xs = Array.map Int64.bits_of_float xs in
   let f32 xs = Array.map (fun x -> Int64.of_int32 (Int32.bits_of_float x)) xs in
   let n = 600 in
@@ -925,6 +951,8 @@ let long_examples =
       raws = f64 (Array.init (2 * n) numbers);
       carry = None;
     };
+    cancelling (D.Any D.Float4_e2m1fn) 0x7L 0xfL;
+    cancelling (D.Any D.Float8_e4m3fn) 0x78L 0xf8L;
   ]
 
 let long_scans =
