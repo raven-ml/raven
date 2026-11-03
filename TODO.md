@@ -103,9 +103,20 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - whether memory-bound host kernels take lanes at all: no upcast ran 4-7%
   faster than 64-byte lanes in two of seven loaded fudge runs of a 4M
   float32 select-zero; decide on the scheduled quiet re-record
-- `r_32_3_2_4_3_400` (lorenz) runs 1.57x slower than beam's choice because
-  the heuristic's candidates, tinygrad's, offer no output upcast; no lane
-  bound fixes it
+- host output upcasts: tinygrad's 1024-output floor gates every host
+  output upcast. Lifting it gives 1.2-6x on 22 of 23 recorded host kernels
+  (`r_32_3_2_4_3_400` 47.0 -> 24.9 us on a P-core, beam 23.4; gpt_oss_kv
+  1888 -> 304 us; vecmat_1000 2688 -> 808 us) but raises Clang time
+  sharply (gpt_oss_kv 22-34 ms -> 0.9-1.1 s, qkv 0.26 -> 1.5 s) and may lose
+  1.2x on an 8-output matvec at K = 1M across all cores (estimated): a
+  floor counted in D80's split-loop iterations, with both costs measured
+- float8 emulation upcast lane by lane makes large host kernels: a
+  float8_e4m3fn kernel at 36 masked lanes is 829 KB of C and 1.9-2.2 s in
+  Clang (0.07 s at 12 lanes; seed s1:a9af9f06d362c663 of test_iterate's
+  "lanes stop apart")
+- rune test_jit "fully sharded training of four layers over eight devices"
+  hung once for 600 s under runtest past its 60 s limit; it passes alone
+  (6 runs): find why windtrap's kill did not end it and what it waited on
 - `Nx_quant.apply_experts` of gpt-oss's gate and up projection at 512
   tokens takes 26.4-27.6 ms on fudge's CUDA against 3.14-3.23 ms through
   `Nx.map_segments`' blocks: one route row per thread group, so no decoded
