@@ -92,8 +92,8 @@ The reference is JAX's `jax.lax` and `jax.vmap` at `jax-v0.12.0.1`
   code that acts only inside a map, such as a custom rule's tangent map that
   gathers the lanes, asks without raising.
 - **Pinned by:** `Jit › maps around › a call retraces iff its shape and its
-  trace's answers are new`, `› a caught raise outside the map is keyed`, `Vmap › names
-  › lane counts`.
+  trace's answers are new`, `› a caught raise outside the map is keyed`,
+  `Vmap › names › lane counts`.
 
 ## Lowering
 
@@ -145,8 +145,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Pinned by:** `Lower_arith › exact unary kinds give eager's bits`, `› exact
   binary kinds, comparisons, where and fma give eager's bits`, `› narrow
   floats' transcendental kinds are within one ulp of the correctly rounded
-  result`, `› 16-bit casts › *` on the host and `test_jit_gpu`'s `16-bit casts
-  › *` on a GPU (every code and every tie, the targets' casts against eager's
+  result`, `› 16-bit casts › *` on the host and `Jit_gpu › 16-bit casts › *`
+  on a GPU (every code and every tie, the targets' casts against eager's
   bits).
 
 ### A2. Integer arithmetic wraps
@@ -191,7 +191,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   payload kept.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › unary › abs`, `Lower_arith › exact unary kinds
+- **Pinned by:** `Lower_real › exact › abs`, `Lower_arith › exact unary kinds
   give eager's bits`.
 
 ### A5. Sign of NaN
@@ -202,7 +202,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, `Sign`: NaN for a NaN.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › unary › sign`.
+- **Pinned by:** `Lower_real › exact › sign`.
 
 ### A6. Rounding half away from zero
 
@@ -213,7 +213,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, `Round`.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › unary › round`.
+- **Pinned by:** `Lower_real › exact › round`.
 
 ### A7. Exponential in two parts
 
@@ -227,7 +227,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, Results, `Exp`.
 - **Class:** ulp bound: 9 at `float32` and `float64`.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › unary › exp`.
+- **Pinned by:** `Lower_real › transcendental › exp within 2 ulps at float32, 9
+  at float64`.
 
 ### A8. Cosine reduced by a quarter turn
 
@@ -242,7 +243,9 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, Results, `Cos`.
 - **Class:** ulp bound: 9.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › unary › cos`.
+- **Pinned by:** `Lower_real › transcendental › cos within 2 ulps at float32, 9
+  at float64`, `Lower_real › bounded arguments › cos of an argument bounded
+  below the switch-over`.
 
 ### A9. Tangent of the reduced argument
 
@@ -253,7 +256,9 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, Results, `Tan`.
 - **Class:** ulp bound: 19.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › unary › tan`.
+- **Pinned by:** `Lower_real › transcendental › tan within 19 ulps at float32,
+  19 at float64`, `Lower_real › bounded arguments › tan of an argument bounded
+  below the switch-over`.
 
 ### A10. Arcsine and arccosine by the arctangent
 
@@ -267,7 +272,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, Results, `Asin`, `Acos`.
 - **Class:** ulp bound: 5 at `float32`, 9 at `float64`.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › unary › asin`, `› acos`.
+- **Pinned by:** `Lower_real › transcendental › asin within 5 ulps at float32,
+  9 at float64`, `› acos within 5 ulps at float32, 9 at float64`.
 
 ### A11. Arctangent
 
@@ -280,7 +286,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, Results, `Atan`.
 - **Class:** ulp bound: 2 at `float32`, 7 at `float64`.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › unary › atan`.
+- **Pinned by:** `Lower_real › transcendental › atan within 2 ulps at float32,
+  7 at float64`.
 
 ### A12. Two-argument arctangent
 
@@ -292,7 +299,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, `Atan2`.
 - **Class:** ulp bound: 6 at `float32`, 8 at `float64`.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › binary › atan2`.
+- **Pinned by:** `Lower_real › transcendental › atan2 within 6 ulps at float32,
+  8 at float64`.
 
 ### A13. Hyperbolic functions
 
@@ -309,7 +317,9 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, Results, `Sinh`, `Cosh`, `Tanh`.
 - **Class:** ulp bound: `sinh` 21, `cosh` 10, `tanh` 18.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › unary › sinh`, `› cosh`, `› tanh`.
+- **Pinned by:** `Lower_real › transcendental › sinh within 23 ulps at float32,
+  23 at float64`, `› cosh within 10 ulps at float32, 10 at float64`, `› tanh
+  within 18 ulps at float32, 18 at float64`.
 
 ### A14. Error function
 
@@ -323,7 +333,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, Results, `Erf`.
 - **Class:** ulp bound: 2 at `float32`, 3 at `float64`, measured.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › unary › erf`.
+- **Pinned by:** `Lower_real › transcendental › erf within 2 ulps at float32, 3
+  at float64`.
 
 ### A15. True division
 
@@ -334,7 +345,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, `Fdiv`: the IEEE 754 quotient.
 - **Class:** exact where the target's division is correctly rounded.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › binary › fdiv`.
+- **Pinned by:** `Lower_real › exact › fdiv`.
 
 ### A16. Integer quotient and remainder by 0 and -1
 
@@ -365,7 +376,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, `Mod`: `fmod` on floats.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › binary › mod`.
+- **Pinned by:** `Lower_real › exact › mod`.
 
 ### A18. Power with its product in two parts
 
@@ -380,7 +391,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, `Pow` and Results.
 - **Class:** ulp bound: `9 + 6 |y log2 |x||`.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › binary › pow`.
+- **Pinned by:** `Lower_real › transcendental › pow within 2 ulps at float32, 2
+  at float64`.
 
 ### A19. Maximum and minimum
 
@@ -395,7 +407,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   below `+0`.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › binary › maximum`, `› minimum`.
+- **Pinned by:** `Lower_real › exact › maximum`, `› minimum`.
 
 ### A20. Less than or equal
 
@@ -406,7 +418,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   `Not_equal`.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › compare › less_equal`.
+- **Pinned by:** `Lower_real › exact › less_equal`.
 
 ### A21. Saturating conversion to integers
 
@@ -419,7 +431,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   their range.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_arith › casts give eager's bits`.
+- **Pinned by:** `Lower_arith › casts give eager's values`.
 
 ### A23. A double narrows through float32 rounded to odd
 
@@ -435,7 +447,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   once.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `Lower_arith › casts give eager's bits`, whose `float64`
+- **Pinned by:** `Lower_arith › casts give eager's values`, whose `float64`
   operands lie one ulp around each narrow format's ties.
 
 ### A24. Logarithm by fdlibm, NaN below zero
@@ -452,7 +464,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `prog.mli`, Results, `Log`: NaN below zero, `-inf` at either zero.
 - **Class:** ulp bound: 1, on every target.
 - **Reason:** (b).
-- **Pinned by:** `Lower_real › unary › log`, `› log within one ulp near 1`.
+- **Pinned by:** `Lower_real › transcendental › log within 1 ulps at float32, 1
+  at float64`, whose golden points crowd around 1.
 
 ### R1. A float sum adds +0.
 
@@ -568,8 +581,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b).
 - **Pinned by:** `Lower_index › folds and assemblies › an assembly gives
   eager's bits`, `Lower_index › work bounds › a scatter and an assembly past
-  16 times eager's work are refused`, `Rune.jit over several devices ›
-  assemblies give eager's bits`.
+  16 times eager's work are refused`, `Jit_devices › assemblies give eager's
+  bits`.
 
 ### I3. Gather by an index
 
@@ -803,7 +816,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   eager's integers and hold their bound`, `Lower_reduce › work › a Rows
   contraction's work is one slice's at 8 and 32 groups`, `› a scaled float4
   Rows contraction's work is one slice's`, `› a Contracting contraction of 8
-  groups works in blocks`, `rune jit › classes › a segmented contraction
-  gives eager's values`, `› a segmented contraction's gradients give eager's
+  groups works in blocks`, `Jit › classes › a segmented contraction gives
+  eager's values`, `› a segmented contraction's gradients give eager's
   values`, `› a group's weight gradient keeps its bits whatever the other
   groups' counts`, `› experts applied give eager's values`.
