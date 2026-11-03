@@ -14,13 +14,14 @@
 # forced: blessed order/unique-i32-1M-1000 order/unique-i64-1M-wide ragged/ids-text-64K-of-4-to-20B under load 54.0 on 14 cores
 # forced: blessed attention/prefill-f32-8x1024x64-causal attention/prefill-bf16-8x1024x64-causal attention/decode-f32-64x8x4096x64 under load 18.5 on 14 cores
 # forced: blessed attention/prefill-f32-8x1024x64-causal attention/prefill-bf16-8x1024x64-causal attention/decode-f32-64x8x4096x64 under load 23.3 on 14 cores
+# forced: blessed attention/prefill-f32-8x1024x64-causal attention/prefill-bf16-8x1024x64-causal attention/decode-f32-64x8x4096x64 under load 44.2 on 14 cores
 
-attention/decode-f32-64x8x4096x64	alloc_words	exact	891
-attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.278e-03	8.079e-04 8.165e-04 8.332e-04 8.469e-04 8.559e-04 8.933e-04 9.526e-04 9.737e-04 1.140e-03 1.264e-03 1.292e-03 1.357e-03 1.380e-03 1.500e-03 1.509e-03 1.543e-03 1.553e-03 1.643e-03 1.687e-03 1.935e-03
-attention/prefill-bf16-8x1024x64-causal	alloc_words	exact	1399
-attention/prefill-bf16-8x1024x64-causal	wall_time	batch=1	n=20	5.931e-03	4.257e-03 4.781e-03 4.932e-03 5.121e-03 5.392e-03 5.398e-03 5.419e-03 5.420e-03 5.664e-03 5.708e-03 6.154e-03 6.185e-03 6.430e-03 6.560e-03 6.636e-03 6.640e-03 6.763e-03 7.560e-03 7.920e-03 8.826e-03
-attention/prefill-f32-8x1024x64-causal	alloc_words	exact	1399
-attention/prefill-f32-8x1024x64-causal	wall_time	batch=1	n=20	4.908e-03	3.352e-03 3.720e-03 3.797e-03 3.862e-03 4.185e-03 4.256e-03 4.315e-03 4.323e-03 4.336e-03 4.809e-03 5.007e-03 5.123e-03 5.427e-03 5.796e-03 5.967e-03 6.226e-03 6.693e-03 6.910e-03 7.335e-03 9.392e-03
+attention/decode-f32-64x8x4096x64	alloc_words	exact	899
+attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.364e-03	9.401e-04 9.802e-04 9.986e-04 9.990e-04 1.039e-03 1.198e-03 1.219e-03 1.260e-03 1.295e-03 1.346e-03 1.383e-03 1.600e-03 1.727e-03 2.126e-03 2.527e-03 3.246e-03 3.993e-03 3.993e-03 5.491e-03 1.163e-02
+attention/prefill-bf16-8x1024x64-causal	alloc_words	exact	1410
+attention/prefill-bf16-8x1024x64-causal	wall_time	batch=1	n=20	1.140e-02	5.636e-03 5.894e-03 7.798e-03 7.958e-03 8.103e-03 8.669e-03 9.324e-03 9.511e-03 9.588e-03 1.101e-02 1.178e-02 1.263e-02 1.554e-02 1.621e-02 1.797e-02 1.813e-02 1.827e-02 1.840e-02 1.957e-02 2.347e-02
+attention/prefill-f32-8x1024x64-causal	alloc_words	exact	1410
+attention/prefill-f32-8x1024x64-causal	wall_time	batch=1	n=20	8.667e-03	3.515e-03 4.478e-03 5.119e-03 5.841e-03 6.206e-03 6.634e-03 7.951e-03 8.164e-03 8.359e-03 8.640e-03 8.694e-03 8.779e-03 8.971e-03 9.000e-03 9.393e-03 9.684e-03 1.245e-02 1.378e-02 1.708e-02 1.932e-02
 constant/chain-1000	alloc_words	exact	94146
 contract/contract-i32-m128x4096x4096	alloc_words	exact	342
 contract/contract-i8-i32-1024	alloc_words	exact	342
