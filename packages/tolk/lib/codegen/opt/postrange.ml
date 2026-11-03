@@ -479,7 +479,7 @@ module Scheduler = struct
     in
     let tile x =
       op x = Op.Div
-      && op (nth x 1) = Op.Const
+      && is_literal (nth x 1)
       &&
       match value (nth x 1) with
       | `Int d -> Bigint.(equal (rem d (of_int dim)) zero)

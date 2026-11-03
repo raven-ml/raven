@@ -199,7 +199,12 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     unroll takes what fits while the lanes upcast fill fewer registers than the
     target has, and next to a wholly unrolled axis of at most 3, unrolls the
     next reduce axis by the largest power of two that keeps the unrolled lanes
-    within a vector of the reduce's type. *)
+    within a vector of the reduce's type.
+
+    The optimisations do not depend on the integer type of [k]'s ranges and
+    index: a bound, stride, tile or divisor that is a constant of a type
+    other than the weak ones, a cast of a weak one ({!Ops.is_literal}), is
+    read as its value. *)
 
 val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
 (** [held_registers k file] is the registers of [file] that the accumulators of

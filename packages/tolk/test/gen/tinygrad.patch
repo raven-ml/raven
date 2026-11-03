@@ -1310,10 +1310,10 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..a7af1bd33 100644
+index ec97cac6f..3267e2ce0 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -1,9 +1,321 @@
+@@ -1,9 +1,324 @@
 -import itertools
 +import itertools, math
  from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
@@ -1324,6 +1324,9 @@ index ec97cac6f..a7af1bd33 100644
  from tinygrad.codegen.late.coalesce import image_valid_dims
  from tinygrad.codegen.opt.postrange import Scheduler
 +from tinygrad.codegen.decomp.dtype import emulates
++
++# a constant, or a cast of one, as a constant of a type other than the weak ones is: .val reads its value
++def literal(u:UOp) -> bool: return u.op is Ops.CONST or (u.op is Ops.CAST and u.src[0].op is Ops.CONST)
 +
 +HOST_VECTOR_BYTES, HOST_ILP, SPLIT_LANES = 64, 5, 16
 +# the threads a kernel keeps once a tensor core's splits apply: a split applies only while CORE_THREADS // the core's threads workgroups
@@ -1380,7 +1383,7 @@ index ec97cac6f..a7af1bd33 100644
 +  def stride(r, i):
 +    for t in i.split_uop(Ops.ADD):
 +      if t is r: return 1
-+      if t.op is Ops.MUL and t.src[0] is r and t.src[1].op is Ops.CONST: return t.src[1].arg
++      if t.op is Ops.MUL and t.src[0] is r and literal(t.src[1]): return t.src[1].val
 +    return None
 +  def run(i):
 +    terms = {}
@@ -1420,7 +1423,7 @@ index ec97cac6f..a7af1bd33 100644
 +      s = {}
 +      for x in u.src:
 +        for r, n in spread(x).items(): s[r] = max(s.get(r, 1), n)
-+      if u.op is Ops.DIV and u.src[1].op is Ops.CONST: s = {r: n // math.gcd(n, u.src[1].arg) for r, n in s.items()}
++      if u.op is Ops.DIV and literal(u.src[1]): s = {r: n // math.gcd(n, u.src[1].val) for r, n in s.items()}
 +    known[u] = s
 +    return s
 +  return max([prod(spread(u).values()) for u in k.ast.toposort() if u.op is Ops.CAST] + [1])
@@ -1491,7 +1494,7 @@ index ec97cac6f..a7af1bd33 100644
 +  return max(cap, 1)
 +def divisor_at_most(r:UOp, n:int) -> int: return next((d for d in range(n, 1, -1) if r.src[0].divides(d) is not None), 1)
 +def run(o:UOp, r:UOp) -> int:
-+  divs = [u.src[1].arg if u.op is Ops.DIV and u.src[1].op is Ops.CONST else None for u in o.toposort() if any(s is r for s in u.src)]
++  divs = [u.src[1].val if u.op is Ops.DIV and literal(u.src[1]) else None for u in o.toposort() if any(s is r for s in u.src)]
 +  return divs[0] if divs and divs[0] is not None and all(d == divs[0] for d in divs) else 1
 +def globals_of(k:Scheduler) -> list[UOp]: return [k.rngs[i] for i in k.axes_of(AxisType.GLOBAL)]
 +def reduces_of(k:Scheduler) -> list[UOp]: return [k.rngs[i] for i in k.axes_of(AxisType.WEAK, reduce=True)]
@@ -1507,7 +1510,7 @@ index ec97cac6f..a7af1bd33 100644
 +def stride(r:UOp, i:UOp) -> int|None:
 +  for t in i.split_uop(Ops.ADD):
 +    if t is r: return 1
-+    if t.op is Ops.MUL and t.src[0] is r and t.src[1].op is Ops.CONST: return t.src[1].arg
++    if t.op is Ops.MUL and t.src[0] is r and literal(t.src[1]): return t.src[1].val
 +  return None
 +# the contraction: the first reduction that sums a product of two computations of accesses, neither reading a reduction that runs in
 +# a range the sum closes, with the ranges it closes. A reduction an operand reads, such as a row's expert, comes before it
@@ -1614,7 +1617,7 @@ index ec97cac6f..a7af1bd33 100644
 +      if (st:=stride(u, xa.src[1].get_idx())) is None or LANES * st * xa.dtype.itemsize <= LINE_BYTES: continue
 +      for t in units(xa):
 +        if (rr:=rest(t)) is None or rr.axis_id == u.axis_id or axis(rr) not in k.upcastable_dims(reduce=True): continue
-+        if t.src[0].op is Ops.CONST and isinstance(n:=k.full_shape[axis(rr)], int) and n == t.src[0].arg and n > 1 and \
++        if literal(t.src[0]) and isinstance(n:=k.full_shape[axis(rr)], int) and n == t.src[0].val and n > 1 and \
 +           n * xa.dtype.itemsize <= VECTOR_BYTES:
 +          try: k.apply_opt(Opt(OptOps.SPLIT, axis(rr), (0, AxisType.UPCAST)))
 +          except KernelOptError: pass
@@ -1637,7 +1640,7 @@ index ec97cac6f..a7af1bd33 100644
  
  def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # first try the tensor cores
-@@ -24,23 +336,63 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,23 +339,63 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
@@ -1669,12 +1672,12 @@ index ec97cac6f..a7af1bd33 100644
 +      def within_run(size:int) -> int:
 +        m = next((r for r in k.rngs if r.axis_id == rngs[1].axis_id), None)
 +        # the tile is exact where the core did not pad M
-+        if m is None or m.src[0].op is not Ops.CONST or rngs[1].src[0].op is not Ops.CONST or rngs[1].src[0].arg <= 0 or \
-+           m.src[0].arg % rngs[1].src[0].arg != 0: return size
++        if m is None or not literal(m.src[0]) or not literal(rngs[1].src[0]) or rngs[1].src[0].val <= 0 or \
++           m.src[0].val % rngs[1].src[0].val != 0: return size
 +        red = k.reduceop.src[0] if k.reduceop.src[0].op is not Ops.CAST else k.reduceop.src[0].src[0]
 +        if red.op is Ops.WHERE: red = red.src[1] if red.src[1].op is not Ops.CAST else red.src[1].src[0]
 +        runs = [d for o in red.src if (d:=run(o, m)) > 1] if red.op is Ops.MUL else []
-+        tile, owned = m.src[0].arg // rngs[1].src[0].arg, math.gcd(*runs) if runs else 1
++        tile, owned = m.src[0].val // rngs[1].src[0].val, math.gcd(*runs) if runs else 1
 +        def fits(v): return owned % (tile * v) == 0
 +        if fits(size): return size
 +        return next((v for v in [5,4,3,2] if fits(v) and rngs[1].src[0].divides(v) is not None), size)
@@ -1706,7 +1709,7 @@ index ec97cac6f..a7af1bd33 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +409,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,25 +412,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1750,7 +1753,7 @@ index ec97cac6f..a7af1bd33 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,47 +461,106 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,47 +464,106 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1762,8 +1765,8 @@ index ec97cac6f..a7af1bd33 100644
 +      if rng in idx.backward_slice: num_strides += 1
 +      for c in idx.split_uop(Ops.ADD):
 +        if c is rng: sum_strides += 1
-+        if c.op is Ops.MUL and c.src[0] is rng and c.src[1].op is Ops.CONST: sum_strides += c.src[1].val
-+        if c.op is Ops.MUL and c.src[1] is rng and c.src[0].op is Ops.CONST: sum_strides += c.src[0].val
++        if c.op is Ops.MUL and c.src[0] is rng and literal(c.src[1]): sum_strides += c.src[1].val
++        if c.op is Ops.MUL and c.src[1] is rng and literal(c.src[0]): sum_strides += c.src[0].val
 +    return num_strides, sum_strides
 +  # on the host a kernel without a reduce computes its upcast lanes as vectors, and its output axis is upcast until one value spans
 +  # HOST_VECTOR_BYTES: the lanes give the core independent work while each lane waits on the latency of its chain. a kernel whose own
@@ -1873,7 +1876,7 @@ index ec97cac6f..a7af1bd33 100644
      k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
  
    # **** local groups ****
-@@ -172,11 +582,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -172,11 +585,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      else:
        # prioritize making expand axes local
        local_axis_ranking = [(any(k.rngs[axis] not in b.src[1].get_idx().backward_slice for b in k.bufs), axis) \
@@ -1890,7 +1893,7 @@ index ec97cac6f..a7af1bd33 100644
        deleted_shape = 0
        for axis, local_sz in sorted(to_local[:3]):
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
-index d7f19cd30..ba484f32a 100644
+index d7f19cd30..b71ba6758 100644
 --- a/tinygrad/codegen/opt/postrange.py
 +++ b/tinygrad/codegen/opt/postrange.py
 @@ -1,10 +1,10 @@
@@ -2092,7 +2095,7 @@ index d7f19cd30..ba484f32a 100644
 +          # a tile of r's values reads one value of the other, as a block of rows reads its block's matrix
 +          def in_tiles(u, r, dim):
 +            readers = [x for x in u.toposort() if any(s is r for s in x.src)]
-+            return len(readers) > 0 and all(x.op is Ops.DIV and x.src[1].op is Ops.CONST and x.src[1].arg % dim == 0 for x in readers)
++            return len(readers) > 0 and all(x.op is Ops.DIV and (x.src[1].op is Ops.CONST or (x.src[1].op is Ops.CAST and x.src[1].src[0].op is Ops.CONST)) and x.src[1].val % dim == 0 for x in readers)
 +          def own(a, b, dim): return sorted([u for u in a.ranges if u not in b.ranges or in_tiles(b, u, dim)], key=lambda x: x.arg, reverse=True)
            red_ranges = sorted(reduceop.src[1:], key=lambda x: x.arg, reverse=True)
 -          if DEBUG >= 3:

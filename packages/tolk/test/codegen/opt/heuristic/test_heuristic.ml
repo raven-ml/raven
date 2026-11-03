@@ -1200,6 +1200,55 @@ let range_types =
       in
       equal (list Kernel_opts.opt) (opts Weak_int) (opts dt))
 
+(* [k] with its index arithmetic in [dt]: each weak integer constant that a
+   range or the arithmetic over ranges reads becomes one of [dt], a cast of the
+   weak one, and they take its type. A buffer's size and a constant of a value
+   stay. *)
+let typed dt k =
+  let seen = Ops.Tbl.create 256 and seen_index = Ops.Tbl.create 256 in
+  let rec go ~index u =
+    let tbl = if index then seen_index else seen in
+    match Ops.Tbl.find_opt tbl u with
+    | Some v -> v
+    | None ->
+        let v =
+          match Ops.op u with
+          | Op.Param | Op.Buffer | Op.Alloc -> u
+          | Op.Const when Ops.dtype u = Dtype.Weak_int ->
+              if index then Ops.const ~dtype:dt (Ops.value u) else u
+          | _ ->
+              let index = Ops.dtype u = Dtype.Weak_int in
+              Ops.replace u ~src:(List.map (go ~index) (Ops.src u))
+        in
+        Ops.Tbl.replace tbl u v;
+        v
+  in
+  go ~index:false k
+
+(* The optimisations of a recorded case's kernel, built by [build]. *)
+let optimised_opts build c =
+  let info k =
+    match Ops.arg k with Ops.Kernel i -> i.applied_opts | _ -> []
+  in
+  Setting.context
+    (Setting.B (Setting.no_color, true) :: B (Setting.stage, false) :: c.settings)
+    (fun () ->
+      info
+        (Postrange.apply_opts ~hand_coded:Heuristic.hand_coded_optimizations
+           (build (kernel c.kernel)) (renderer c.renderer)))
+
+(* The strides, tiles and divisors the heuristic reads of an index are
+   constants of its type: a kernel whose index computes in [Int32] takes the
+   optimisations of the same kernel in the weak integer. *)
+let typed_kernels =
+  cases "a kernel indexed in a typed integer is optimised as in the weak one"
+    ~id:(fun c -> c.name)
+    (List.filter (fun c -> c.environment = "") recorded_cases)
+    (fun c ->
+      equal (list Kernel_opts.opt)
+        (optimised_opts Fun.id c)
+        (optimised_opts (typed Int32) c))
+
 (* Tensor cores' warp tiles *)
 
 (* The accumulators a lane of a tensor core holds at most once its splits
@@ -1914,4 +1963,5 @@ let () =
            ];
          decoded_writes;
          range_types;
+         typed_kernels;
        ])

@@ -985,6 +985,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A kernel whose index computes in a typed integer, such as `Int32`, takes
+  the optimisations of the same kernel in the weak integer: `Heuristic` read
+  a stride, tile or divisor of a typed constant as unknown, so 119 of its
+  431 recorded kernels chose otherwise, a matmul's upcasts among them.
 - A store to global memory whose index uses no workgroup index runs in one
   workgroup (`Gpudims.group_gpudims`). `n[0] = n[0] + 1` beside a store
   over 2^20 elements on CUDA ran in each of 8192 workgroups and counted

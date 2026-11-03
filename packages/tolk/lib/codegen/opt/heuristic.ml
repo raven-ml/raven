@@ -140,7 +140,7 @@ let run o r =
       (Nodes.to_list (backward_slice_with_self ~calls:Skip o))
   in
   let divisor u =
-    if op u = Op.Div && op (nth u 1) = Op.Const then
+    if op u = Op.Div && is_literal (nth u 1) then
       known_size (Sym (nth u 1))
     else None
   in
@@ -517,7 +517,7 @@ let stride r i =
   List.find_map
     (fun t ->
       if t == r then Some Bigint.one
-      else if op t = Op.Mul && nth t 0 == r && op (nth t 1) = Op.Const then
+      else if op t = Op.Mul && nth t 0 == r && is_literal (nth t 1) then
         match value (nth t 1) with `Int c -> Some c | _ -> None
       else None)
     (split_uop i Op.Add)
@@ -997,7 +997,7 @@ let held ?upcast ?unroll k (file : Renderer.registers) =
     List.find_map
       (fun t ->
         if t == r then Some 1
-        else if op t = Op.Mul && nth t 0 == r && op (nth t 1) = Op.Const then
+        else if op t = Op.Mul && nth t 0 == r && is_literal (nth t 1) then
           match value (nth t 1) with
           | #Dtype.value as v -> Some (Dtype.Value.to_int v)
           | `Invalid -> None
@@ -1111,7 +1111,7 @@ let conversion_lanes ?upcast ?unroll k =
                 List.fold_left (fun acc x -> merge acc (spread x)) [] (src u)
               in
               let divisor =
-                if op u = Op.Div && op (nth u 1) = Op.Const then
+                if op u = Op.Div && is_literal (nth u 1) then
                   known_size (Sym (nth u 1))
                 else None
               in
@@ -1326,9 +1326,9 @@ let upcast_more k =
               | `Invalid -> 0
             in
             if c == rng then 1
-            else if op c = Op.Mul && nth c 0 == rng && op (nth c 1) = Op.Const
+            else if op c = Op.Mul && nth c 0 == rng && is_literal (nth c 1)
             then const_val (nth c 1)
-            else if op c = Op.Mul && nth c 1 == rng && op (nth c 0) = Op.Const
+            else if op c = Op.Mul && nth c 1 == rng && is_literal (nth c 0)
             then const_val (nth c 0)
             else 0
           in

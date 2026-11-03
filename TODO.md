@@ -111,12 +111,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   for AMD through amdgpu (L2 plus MALL) or NV over PCI
 - Metal's packed kernel arguments (8869adcc8, af8961676) have not run on
   Metal hardware; check `rig_metal.mli`'s contract against them on a Mac
-- custom code and calls, after D265 and D271: inline custom expressions
-  (`Op.Customi`) still take vector lanes; a plain store such as
-  `n[0] = n[0] + 1` in a kernel with a thread axis it does not read runs
-  once a workgroup; the heuristic's stride and tile checks still read only
-  bare constants, so a typed range gets slower kernels (D270 fixed the
-  splits)
 - comgr may compile with LLVM's verifier off, as Clang did before D275:
   check `Compiler_amd`'s commands on a ROCm build and keep the verifier on
 - LLVM 20+ and Apple Clang keep the straight-line vectorizer that D167
