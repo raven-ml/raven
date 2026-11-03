@@ -80,7 +80,7 @@ clone	1
 contiguous	2
 assign	1
 assign_permuted	1
-assign_double_diamond	4
+assign_double_diamond	2
 setitem	1
 setitem_tensor	1
 setitem_column	1

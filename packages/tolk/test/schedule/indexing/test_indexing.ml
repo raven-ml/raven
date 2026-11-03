@@ -631,11 +631,13 @@ let storage =
   let staged_op = list (pair bool (Testable.make ~pp:Op.pp ~equal:( = ))) in
   group "run_rangeify › stores"
     [
-      test "a value stored into storage it reads is stored whole first"
+      (* The kernel split stages it, where the kernel's indices show it
+         reads other elements than it writes. *)
+      test "a value stored into storage it reads is not stored whole here"
         (fun () ->
           let value = Ops.O.(Shape.permute dest [ 1; 0 ] + Ops.float 1.) in
           equal staged_op
-            [ (true, Add) ]
+            [ (false, Add) ]
             (stored_value (Indexing.run_rangeify (assign value))));
       test "a value that does not read its destination is not" (fun () ->
           let value = Ops.O.(p 1 [ 4; 4 ] + Ops.float 1.) in

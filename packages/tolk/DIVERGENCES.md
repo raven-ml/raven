@@ -4867,27 +4867,13 @@ fold wraps integers and holds its float bound`, hold.
   serves another of its target`; rune's `Rune.jit over several devices`.
 
 
-## D171. A store's check for reading its destination walks what follows it
+## D171. Withdrawn
 
-- **tinygrad:** `schedule/indexing.py:32` (`realize_store_after_src`): each
-  store walks its value's backward slice, entering no other buffer's state
-  (`AFTER`), for its destination's storage.
-- **tolk:** `Indexing.realize_store_after_src`, over the order
-  `Indexing.run_rangeify` gives the graph.
-- **Differs:** once the stores' walks have entered as many nodes as the
-  graph holds, each walk enters only the nodes that come after the
-  destination's storage in one walk of the graph that finishes each node
-  after its sources: a node before it cannot reach it. The values stored
-  are tinygrad's.
-- **Reason:** (d): rune's data-parallel step over 16 memory devices
-  (`Rune.jit` over `Nx.Placement.split`) has a store per move between
-  devices, about 1500, each of whose values reaches its device's whole step.
-  Their walks covered 1.84 million nodes, 235 ms of a 1.05 s schedule on
-  fudge; pruned, 38 thousand in 8 ms. Pinned by rune's `devices/dp-step-16`
-  row on fudge.
-- **Pinned by:** `Tolk.Indexing › run_rangeify › recorded graphs`
-  (`assign`, `assign_permuted`, `assign_double_diamond`), whose stores read
-  their destinations.
+A store's check for reading its destination walked only the nodes after the
+destination in the graph's order. The check is gone: a store that reads its
+destination is ordered across kernels by D160's relation and staged within
+its kernel by D198's rules. rune's `devices/dp-step-16` row keeps guarding
+the walk of `Rangeify.fix_store_hazard`.
 
 ## D172. An index of an Invalid value folds after construction
 
@@ -5968,36 +5954,40 @@ fold wraps integers and holds its float bound`, hold.
   `Rune.jit over several devices › maps over a cut axis › partials give
   eager's bits, their programs do not grow`.
 
-## D198. A store that reads only its own element is not staged
+## D198. A store that reads its destination is staged only where it reads it elsewhere
 
 - **tinygrad:** `schedule/indexing.py:31-34` (`realize_store_after_src`,
   which stores the value of every store whose value reaches its
   destination's buffer: "you don't usually have to do this for assign unless
   there's a WAR hazard like TestAssign.test_assign_double_diamond_reduce").
-- **tolk:** `Indexing.reads_own_element`, `Indexing.keeps_elements` and
-  `Indexing.readers`, which `Indexing.realize_store_after_src` asks.
-- **Differs:** a store into a view of its storage that expands nothing,
-  whose value reaches that storage only through the destination itself and
-  elementwise operations, a bitcast only between types of one size, keeps
-  its value unstaged when no other store or call reaches that storage but
-  through a later state (`After`). Each element is then loaded by the value
-  that stores it, a data dependency of the store, so the kernel loads it
-  before it overwrites it, with no order relied on; no other kernel reads
-  the old state, so there is no write after read to break. Through an
-  expand, two elements of the destination are one of the storage, and one
-  would load what another stored. tinygrad stages the value, and
-  `remove_bufferize` inlines the stage back unless it stays stored for its
-  own reasons (more than three buffers, a reduction reading one, D163's
-  copies): then a kernel computes the value into a stage and another copies
-  it into the destination. A value read at another element, through a
-  movement or a reduction, or read by another store, is staged as tinygrad
-  stages it.
-- **Reason:** (d). rune's carries, which a loop's trip updates in place:
-  NUTS on eight schools (`norn` bench `nuts/schools/4`), whose doubling
-  cascade's trip ran 17 kernels and runs 10, its main body's 189 and 182,
-  and whose cold compile makes 145 programs against 147, with the same bits
-  (fudge, counted). The bench row's wall-clock baseline is pending the
-  scheduled re-record.
+- **tolk:** no `realize_store_after_src`; `Rangeify.fix_store_hazard` and
+  `Rangeify.fix_repeated_store` decide within a kernel, and
+  `Schedule.create_schedule` across kernels (D160); `test/gen/tinygrad.patch`,
+  which gives tinygrad the same rules.
+- **Differs:** a store whose value reads its destination's storage is not
+  staged for that alone. Within its kernel, whose iterations run in
+  parallel, the value is staged where it reads the destination at another
+  index than it writes (`fix_store_hazard`, as tinygrad), or where the store
+  writes an element on several trips of a range its index lacks, as a store
+  into a broadcast of its destination does (`fix_repeated_store`). A value
+  that reads its destination only at the element it writes, as an optimizer
+  step `p := p - lr * g` or a loop's carry `c := c * 2 + exp2 c` does, loads
+  each element before it stores it, a data dependency of the store: one
+  kernel. Across kernels, another kernel reading the destination's old state
+  runs before the store, or reads a copy where no order does (D160): the
+  double diamond, each store reading through a sum what the other
+  overwrites, is a cycle that one copy breaks.
+- **Reason:** (d). Kernels per optimizer step drop with bit-equal values:
+  in tinygrad, measured, an Adam step's 13 kernels to 7, an SGD step over a
+  convolution's 5 to 3, a convolution, batch norm and Adam's 30 to 18; in
+  tolk, rune's carries, which a loop's trip updates in place: NUTS on eight
+  schools (`norn` bench `nuts/schools/4`), whose doubling cascade's trip ran
+  17 kernels and runs 10, its main body's 189 and 182, and whose cold
+  compile makes 145 programs against 147, with the same bits (fudge,
+  counted). Measured on fudge in tinygrad only for the optimizer steps until
+  vega's Adam row, rune's MLP step row and tolk's `adam_mlp` rows are
+  re-recorded; the wall-clock baselines are pending the scheduled
+  re-record.
 - **Pinned by:** the Rangeify suite (`test/schedule/rangeify`):
   `get_kernel_graph › stores that read their destination` (`a value that
   reads its destination at the element written is one kernel`, `› a value
@@ -6005,10 +5995,15 @@ fold wraps integers and holds its float bound`, hold.
   kernel`, `› a value that reads a slice of its destination at the element
   written is one kernel`, `› a value that reads its destination through a
   bitcast of one size is one kernel`, `› a value that reads its destination
-  at another element is staged`, `› a value that reduces its destination is
-  staged`, `› a value stored into a broadcast of its destination is staged`
-  and `› a value whose destination another store reads is staged`), each
-  against the values its tensors write; the norn bench's `nuts/schools/4`.
+  at another element is staged`, `› a value that reduces its destination
+  reads the sums first`, `› a value stored into a broadcast of its
+  destination is staged` and `› a value whose destination another store
+  reads runs after it`), each against the values its tensors write; the
+  Indexing suite's `run_rangeify › stores › a value stored into storage it
+  reads is not stored whole here`; the program `assign_double_diamond`,
+  whose recorded graphs are tinygrad's, patched; the norn bench's
+  `nuts/schools/4`, tolk's `adam_mlp` rows, vega's Adam row and rune's MLP
+  step row.
 
 ## D199. Independent calls of one domain run as one call where no lifetime grows past one element
 

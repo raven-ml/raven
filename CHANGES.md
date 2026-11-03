@@ -943,26 +943,19 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
-- `Schedule.create_schedule` orders every kernel, call and loop of a call by
-  one relation and copies a state only where the order has a cycle: swaps,
-  rotations and crossed updates of buffers in one realize compute where they
-  raised "cycle detected", and a kernel may read a buffer in two states.
-  Two writes over one state raise `Invalid_argument`. `Shape.custom_kernel`
-  orders after the kernel only the arguments it writes.
-- A call given one state at an argument it writes and at another it only
-  reads reads the state as it was before the call, as `memmove` does: the
-  schedule copies it first, in a loop as each trip starts. `Shape.written_params`
-  gives the arguments a call body writes. A call whose body does not show its
-  writes, given one state twice, raises `Invalid_argument`.
-- A copy or a stage of a run of a buffer that the same realize overwrites
-  reads the run as it was (`Schedule.create_linear_with_vars`): it read the
-  overwritten values, as a swap of two halves of a buffer through stages
-  did.
-- A read through a join (`Ops.is_join`, an `Ops.after` whose dependencies
-  are all `After`s) reads the state under it and waits for that state's
-  writers: `x` read through `x.after y` after an assign of `x` no longer
-  reads `x` before the assign, and `x` as it was is copied before an
-  overwrite a join waits for (`Schedule.create_linear_with_vars`).
+- A store reading its destination is staged only where its kernel reads other
+  elements than it writes, or writes one element twice: `p := p - lr * g` is
+  one kernel beside other readers of `p` (`Rangeify.get_kernel_graph`).
+- `Schedule.create_schedule` copies a state only where its kernels form a
+  cycle: swaps, rotations and crossed updates in one realize compute, and two
+  writes over one state raise. `Shape.custom_kernel` orders only what it writes.
+- A call given one state at an argument it writes and at another reads it as
+  it was, as `memmove` does (`Shape.written_params`); a call whose body hides
+  its writes, given one state twice, raises.
+- A copy or a stage of a run of a buffer the same realize overwrites reads the
+  run as it was (`Schedule.create_linear_with_vars`).
+- A read through a join (`Ops.is_join`) reads the state under it and waits for
+  that state's writers (`Schedule.create_linear_with_vars`).
 - `Renderer.t.per_byte_first` holds a target's bound of multiply-adds per
   byte up to which a contraction streams before a tensor core is tried, where
   `Heuristic` held one constant: 64 on every target, sm_89's measured

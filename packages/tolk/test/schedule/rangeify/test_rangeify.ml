@@ -752,13 +752,15 @@ let self_reads =
           let sink = stores Ops.O.(Shape.permute own [ 1; 0 ] + reduced) in
           equal int 2 (kernels_of sink);
           writes sink);
-      (* Three kernels: the broadcast row sums, the stage and its store. *)
-      test "a value that reduces its destination is staged" (fun () ->
+      (* Two kernels: the row sums, which read the destination before the
+         store overwrites it, and the store. *)
+      test "a value that reduces its destination reads the sums first"
+        (fun () ->
           let sums = Shape.reshape (Shape.rop own Add [ 1 ]) (ints [ 4; 1 ]) in
           let sink =
             stores Ops.O.(own + Shape.expand sums (ints [ 4; 4 ]) + reduced)
           in
-          equal int 3 (kernels_of sink);
+          equal int 2 (kernels_of sink);
           writes sink);
       test
         "a value that reads a slice of its destination at the element written \
@@ -792,8 +794,19 @@ let self_reads =
           let sink =
             Ops.sink [ Ops.after row [ Ops.store dest Ops.O.(dest + sums) ] ]
           in
+          equal int ~msg:"the sums, the stage and its store" 3
+            (List.length
+            (List.filter_map
+               (fun u ->
+                 if Ops.op u = End && Ops.op (Ops.nth u 0) = Store then
+                   Some (List.length (Ops.src u) - 1)
+                 else None)
+               (Ops.toposort ~calls:Enter (schedule sink))));
           writes sink);
-      test "a value whose destination another store reads is staged" (fun () ->
+      (* Two kernels: the other store reads the destination before its
+         overwrite. *)
+      test "a value whose destination another store reads runs after it"
+        (fun () ->
           let sink =
             Ops.sink
               [
@@ -806,7 +819,7 @@ let self_reads =
                   ];
               ]
           in
-          equal int 3 (kernels_of sink);
+          equal int 2 (kernels_of sink);
           writes sink);
     ]
 

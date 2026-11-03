@@ -2659,7 +2659,7 @@ index 7ead5c9c6..f3d07464a 100644
    ret = ret.call(*ctx.replacements, precompile=True)
    if VIZ: graph_rewrite(ret, PatternMatcher([]), name="View Call")
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index 3c92ff0b2..e29222d2e 100644
+index 3c92ff0b2..8a4df187a 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
 @@ -1,17 +1,35 @@
@@ -2699,29 +2699,33 @@ index 3c92ff0b2..e29222d2e 100644
  
    # create ranges
    range_idx: Iterator[int] = field(default_factory=itertools.count)
-@@ -33,6 +51,13 @@ def realize_store_after_src(ctx:IndexingContext, dest:UOp, src:UOp):
-   # you don't usually have to do this for assign unless there's a WAR hazard like TestAssign.test_assign_double_diamond_reduce
-   if dest.base in src.toposort(gate=lambda u: u is dest.base or u.op is not Ops.AFTER): ctx.realize_map[src] = None
+@@ -29,9 +47,12 @@ def realize_srcs(ctx:IndexingContext, rb:UOp) -> None:
+   for s in rb.src:
+     if s.base.op not in ALWAYS_CONTIGUOUS: ctx.realize_map[s] = None
  
+-def realize_store_after_src(ctx:IndexingContext, dest:UOp, src:UOp):
+-  # you don't usually have to do this for assign unless there's a WAR hazard like TestAssign.test_assign_double_diamond_reduce
+-  if dest.base in src.toposort(gate=lambda u: u is dest.base or u.op is not Ops.AFTER): ctx.realize_map[src] = None
 +# a gather is an INDEX by an integer value with axes: its source is read at loaded positions, so it is stored unless it is
 +# storage. a view of storage is stored too, and its stage, which reads one buffer, is inlined back
 +def is_gather(src:tuple[UOp, ...]) -> bool: return any(i.shape != () for i in src[1:])
 +
 +def realize_gathered(ctx:IndexingContext, g:UOp) -> None:
 +  if is_gather(g.src) and g.src[0].op not in {Ops.PARAM, Ops.BUFFER, Ops.ALLOC, Ops.MSTACK, Ops.MSELECT, Ops.AFTER}: ctx.realize_map[g.src[0]] = None
-+
+ 
  def realize_custom_kernel_srcs(ctx:IndexingContext, c:UOp) -> None:
    for s in c.src[1:]:
-     while s.op is Ops.RESHAPE: s = s.src[0]
-@@ -47,6 +72,7 @@ pm_generate_realize_map = PatternMatcher([
+@@ -47,8 +68,7 @@ pm_generate_realize_map = PatternMatcher([
    (UPat(Ops.STORE, name="tr"), realize),
    # realize srcs of these
    (UPat((Ops.MSELECT, Ops.MSTACK), name="rb"), realize_srcs),
+-  # sometimes we need to realize the src of STORE if there's a self-access, or if it's a cross device store
+-  (UPat(Ops.STORE, src=(UPat.var("dest"), UPat.var("src"))), realize_store_after_src),
 +  (UPat(Ops.INDEX, name="g", allow_any_len=True), realize_gathered),
-   # sometimes we need to realize the src of STORE if there's a self-access, or if it's a cross device store
-   (UPat(Ops.STORE, src=(UPat.var("dest"), UPat.var("src"))), realize_store_after_src),
  ])
-@@ -56,6 +82,8 @@ class BufferizeOpts:
+ 
+ @dataclass(frozen=True)
+@@ -56,6 +76,8 @@ class BufferizeOpts:
    device: str|tuple[str, ...]|None
    addrspace: AddrSpace = AddrSpace.GLOBAL
    removable: bool = True
@@ -2730,7 +2734,7 @@ index 3c92ff0b2..e29222d2e 100644
  
  def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
    if x.op not in GroupOp.Broadcastable: return rngs
-@@ -65,34 +93,54 @@ def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
+@@ -65,34 +87,54 @@ def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
  # TODO: srcs contain (real data srcs, something else, ranges) and the boundary is confusing. see range_start
  def data_srcs(op:Ops, src:tuple[UOp, ...]) -> tuple[UOp, ...]:
    if op in GroupOp.Defines|{Ops.RANGE, Ops.SPECIAL}: return ()
@@ -2805,7 +2809,7 @@ index 3c92ff0b2..e29222d2e 100644
    return x.replace(src=tuple(create_bufferize_and_index_srcs(ctx, x)))
  
  def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
-@@ -102,6 +150,22 @@ def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
+@@ -102,6 +144,22 @@ def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
    valid: UOp = UOp.const(True).uprod([r.get_valid() for r in ctx.range_map[x][0]])
    return valid.where(bx.src[0], UOp.const(x.dtype.const(0)))
  
@@ -2828,7 +2832,7 @@ index 3c92ff0b2..e29222d2e 100644
  def convert_reduce_to_reduce_with_ranges(ctx:IndexingContext, x:UOp):
    if x.arg[1] == 0: return None
    if x not in ctx.range_map: raise RuntimeError("REDUCE has no ranges in rangeify, UOp verification failed")
-@@ -133,6 +197,10 @@ pm_apply_rangeify = PatternMatcher([
+@@ -133,6 +191,10 @@ pm_apply_rangeify = PatternMatcher([
    (UPat((Ops.PAD, Ops.INDEX), name="x"), convert_pad_to_where_to_keep_behavior_local),
    # STACK -> WHERE select on the leading range
    (UPat(Ops.STACK, name="x"), convert_stack_to_where),
@@ -2839,7 +2843,7 @@ index 3c92ff0b2..e29222d2e 100644
    # finally, apply_rangeify
    (UPat(GroupOp.All-{Ops.STAGE, Ops.INDEX}, name="x"), create_bufferize_and_index_based_on_ranges),
    # remove movement op
-@@ -178,6 +246,103 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
+@@ -178,6 +240,103 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
      case _: raise RuntimeError(f"{op} is not a MovementOp")
    return rngs
  
@@ -2943,7 +2947,7 @@ index 3c92ff0b2..e29222d2e 100644
  @rewrite_group(new_ctx=False)
  def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    if debug: print("**************************")
-@@ -189,6 +354,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -189,6 +348,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    # get the consumer map
    with cpu_profile("consumer map in rangeify", "TINY"):
      tsink_toposort = tsink.toposort(gate_kernel_sink)
@@ -2951,7 +2955,7 @@ index 3c92ff0b2..e29222d2e 100644
      consumer_map: dict[UOp, dict[UOp, None]] = {x:{} for x in tsink_toposort}
      for c in tsink_toposort:
        for x in data_srcs(c.op, c.src):
-@@ -219,10 +385,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -219,10 +379,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
      #  2. from the single consumer if this op only has one consumer
      #  3. potentially new if this op has 2+ consumers
  
@@ -2968,7 +2972,7 @@ index 3c92ff0b2..e29222d2e 100644
        # all ranges are ended now
        ending_ranges[x] = []
        # mark all ranges as ended
-@@ -257,14 +426,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -257,14 +420,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
        out_rngs = tuple(_out_rngs)
  
        # we have to (partially) realize here if there's new ranges
@@ -2992,7 +2996,7 @@ index 3c92ff0b2..e29222d2e 100644
          out_rngs = tuple(rctx.new_range(x.shape[i]) for i in range(len(out_rngs)))
      ending_ranges[x] += broadcast_ending_ranges
  
-@@ -292,7 +466,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -292,7 +460,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
  
      # REDUCE creates ranges for the axes it is reducing
      if x.op is Ops.REDUCE:
@@ -3111,7 +3115,7 @@ index 9a24394a6..7f206714e 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 8238ec207..aaea1588e 100644
+index 8238ec207..0f68dfde2 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,13 +1,13 @@
@@ -3301,7 +3305,27 @@ index 8238ec207..aaea1588e 100644
    return src.substitute(replaced, extra_pm=pm_gate_substitute)
  
  def remove_noop_bufferize(idx,b2):
-@@ -224,10 +357,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
+@@ -191,8 +324,18 @@ def fix_store_hazard(ctx:LimitBufsContext, dst:UOp, src:UOp):
+   loads = [u for u in src.toposort(gate=lambda u: u.op not in {Ops.STAGE, Ops.AFTER}) if u.op is Ops.INDEX and u.buf_uop is dst.buf_uop]
+   if any(u.src[1].get_idx() is not dst.src[1].get_idx() for u in loads): return dst.store(stage(ctx, src))
+ 
++# a store reading its destination that writes an element on several trips of a range it runs over that its index lacks, as
++# a store into a broadcast of its destination does, reads what an earlier trip wrote: it stores a stage of its value
++def fix_repeated_store(ctx:LimitBufsContext, e:UOp, dst:UOp, src:UOp):
++  if not any(u.op is Ops.INDEX and u.buf_uop is dst.buf_uop for u in src.toposort(gate=lambda u: u.op not in {Ops.STAGE, Ops.AFTER})):
++    return None
++  if any(r.op is Ops.RANGE and r not in dst.src[1].get_idx().ranges for r in e.src[1:]):
++    return e.replace(src=(dst.store(stage(ctx, src)),)+e.src[1:])
++  return None
++
+ pm_limit_bufs = PatternMatcher([(UPat(set.union(GroupOp.Binary, GroupOp.Ternary), name="root"), _limit_bufs),
+-  (UPat(Ops.INDEX, name="dst").store(UPat.var("src")), fix_store_hazard)])
++  (UPat(Ops.INDEX, name="dst").store(UPat.var("src")), fix_store_hazard),
++  (UPat(Ops.END, src=(UPat(Ops.INDEX, name="dst").store(UPat.var("src")),), allow_any_len=True, name="e"), fix_repeated_store)])
+ 
+ # *****************
+ # 4. put in buffers for bufferize
+@@ -224,10 +367,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
      return buf.after(*ended_stores)
  
    if x.arg.addrspace == AddrSpace.GLOBAL:
@@ -3323,7 +3347,7 @@ index 8238ec207..aaea1588e 100644
  # collapse any BUFFERIZE to single input BUFFERIZE
  def flatten_bufferize(x:UOp):
    if len(x.src) == 2: return None
-@@ -255,6 +397,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -255,6 +407,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
    # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
    (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
     lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
@@ -3333,7 +3357,7 @@ index 8238ec207..aaea1588e 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -275,33 +420,50 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -275,33 +430,50 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
  class LocalAddBufferContext:
    map:dict = field(default_factory=dict)
    ranges:dict = field(default_factory=dict)
@@ -3398,7 +3422,7 @@ index 8238ec207..aaea1588e 100644
    (UPat((Ops.BUFFER, Ops.ALLOC, Ops.MSTACK, Ops.MSELECT), name="buf"), add_buf),
    # Only storage parameters get kernel-local slots; scalar parameters retain their enclosing call's slots.
    (UPat(Ops.PARAM, name="buf"), lambda ctx, buf:
-@@ -329,12 +491,92 @@ def split_store(x:UOp) -> UOp|None:
+@@ -329,12 +501,92 @@ def split_store(x:UOp) -> UOp|None:
    ret = graph_rewrite(ret, pm_renumber_range, ctx={a:i for i,a in enumerate(lctx.ranges)}, walk=True)
  
    # create the Kernel. NOTE: buffers can be on different devices here now, they are compiled to SDMA copies later by schedule
@@ -3492,7 +3516,7 @@ index 8238ec207..aaea1588e 100644
  @rewrite_group(new_ctx=False)
  def get_kernel_graph(tsink:UOp) -> UOp:
    # convert movement ops to ranges
-@@ -342,10 +584,12 @@ def get_kernel_graph(tsink:UOp) -> UOp:
+@@ -342,10 +594,12 @@ def get_kernel_graph(tsink:UOp) -> UOp:
  
    # cleanups for speed and runability
    tsink = graph_rewrite(tsink,

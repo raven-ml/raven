@@ -31,13 +31,6 @@ type ctx = {
   ends : t Tbl.t; (* A group's end, by its first store. *)
   mutable siblings : siblings list;
       (* The reductions that share their loops, newest group first. *)
-  topo : t list;
-      (* A walk of the graph that finishes a node after its sources. *)
-  size : int; (* The length of [topo]. *)
-  mutable walked : int; (* The nodes the stores' walks have entered. *)
-  mutable order : int Tbl.t option; (* Each node's position in [topo]. *)
-  mutable readers : t list Tbl.t option;
-      (* The nodes of [topo] each node is a source of. *)
 }
 
 and siblings = {
@@ -78,114 +71,6 @@ let realize_gathered ctx g =
   let x = nth g 0 in
   if is_gather g && not (Op.Set.mem (op x) storage) then realize ctx x
 
-(* Each node's position in [ctx.topo], once the stores' walks have entered as
-   many nodes as the graph holds: from then on the table costs less than the
-   walks it shortens. A program with a store per move between devices gets
-   there within a few stores, one with a few stores never does. *)
-let order ctx =
-  match ctx.order with
-  | Some _ as o -> o
-  | None when ctx.walked < ctx.size -> None
-  | None ->
-      let o = Tbl.create ctx.size in
-      List.iteri (fun i u -> Tbl.replace o u i) ctx.topo;
-      ctx.order <- Some o;
-      ctx.order
-
-(* The nodes of [ctx.topo] each node is a source of, made at the first store
-   that asks. *)
-let readers ctx =
-  match ctx.readers with
-  | Some r -> r
-  | None ->
-      let r = Tbl.create ctx.size in
-      List.iter
-        (fun u ->
-          List.iter
-            (fun x ->
-              let rs = Option.value (Tbl.find_opt r x) ~default:[] in
-              match rs with
-              | u' :: _ when u' == u -> ()
-              | _ -> Tbl.replace r x (u :: rs))
-            (src u))
-        ctx.topo;
-      ctx.readers <- Some r;
-      r
-
-(* An operation that keeps each element where it is: elementwise, and a bitcast
-   only between types of one size. *)
-let keeps_elements u =
-  Op.Set.mem (op u) Op.Set.elementwise
-  && (op u <> Op.Bitcast
-     || Dtype.itemsize (dtype u) = Dtype.itemsize (dtype (nth u 0)))
-
-(* Whether the value [s] that [store] stores into [dest] reads [dest]'s storage
-   [b] only at the element it writes, so that loading each element before
-   storing it is a dependency of the value: [s] reaches [b] only through [dest]
-   itself and operations that keep each element where it is, and nothing else
-   reads [b] but through a later state ({!Op.After}). For example, the store
-   [c := c * 2 + exp2 c] reads [c] at the element written, and
-   [c := c + permute c] does not. *)
-let reads_own_element ctx store dest s b =
-  (* Through an expand, two elements of [dest] are one of [b]: each would load
-     what another stores. *)
-  let rec distinct u =
-    u == b
-    || op u <> Op.Expand
-       && Op.Set.mem (op u) Op.Set.movement
-       && distinct (nth u 0)
-  in
-  distinct dest
-  &&
-  let state u = u == b || op u <> Op.After in
-  let slice = toposort ~calls:Skip ~gate:(fun u -> u != dest && state u) s in
-  (not (List.memq b slice))
-  &&
-  let reaches = Tbl.create 16 in
-  List.iter
-    (fun u ->
-      if List.exists (fun x -> x == dest || Tbl.mem reaches x) (src u) then
-        Tbl.replace reaches u ())
-    slice;
-  List.for_all (fun u -> keeps_elements u || not (Tbl.mem reaches u)) slice
-  &&
-  (* No other store or call reaches [b] but through a later state. *)
-  let readers = readers ctx and seen = Tbl.create 16 in
-  let rec only_this = function
-    | [] -> true
-    | u :: rest when u == store || Tbl.mem seen u || op u = Op.After ->
-        only_this rest
-    | u :: _ when op u = Op.Store || op u = Op.Call -> false
-    | u :: rest ->
-        Tbl.replace seen u ();
-        only_this
-          (List.rev_append
-             (Option.value (Tbl.find_opt readers u) ~default:[])
-             rest)
-  in
-  only_this (Option.value (Tbl.find_opt readers b) ~default:[])
-
-(* An assign needs this only for a write-after-read hazard, the destination read
-   by the value stored into it, at another element or by another store. The
-   walk stops at another buffer's state: what it read was read before that
-   state's writes, which the value waits on. With [order], the walk enters only
-   the nodes after the destination, since a node before it cannot reach it. *)
-let realize_store_after_src ctx store dest s =
-  let b = base dest in
-  let state u = u == b || op u <> Op.After in
-  let after o i u =
-    state u && match Tbl.find_opt o u with Some j -> j >= i | None -> true
-  in
-  let gate =
-    match order ctx with
-    | Some o when Tbl.mem o b -> after o (Tbl.find o b)
-    | _ -> state
-  in
-  let slice = toposort ~gate ~calls:Skip s in
-  ctx.walked <- ctx.walked + List.length slice;
-  if List.memq b slice && not (reads_own_element ctx store dest s b) then
-    realize ctx s
-
 let realize_custom_kernel_srcs ctx c =
   let rec strip s = if op s = Op.Reshape then strip (nth s 0) else s in
   List.iter
@@ -214,10 +99,6 @@ let pm_generate_realize_map =
         rule_ctx
           (Upat.op Op.Index ~name:"g" ~allow_any_len:true)
           (mark (fun ctx m -> realize_gathered ctx (m "g")));
-        rule_ctx
-          (Upat.op Op.Store ~name:"st" ~src:[ Upat.var "dest"; Upat.var "src" ])
-          (mark (fun ctx m ->
-               realize_store_after_src ctx (m "st") (m "dest") (m "src")));
       ])
 
 (* Applying ranges *)
@@ -1096,11 +977,6 @@ let run_rangeify ?(debug = false) tsink =
       loops = Tbl.create 8;
       ends = Tbl.create 8;
       siblings = [];
-      topo = tsink_toposort;
-      size = List.length tsink_toposort;
-      walked = 0;
-      order = None;
-      readers = None;
     }
   in
   ignore
