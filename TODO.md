@@ -48,13 +48,6 @@ raven / llama.cpp b12048 Vulkan:
   each, no RDMA NIC): the box and fill laws on SDMA 4 to 6; two GPUs
   (peers); mlx5 and bnxt NICs
 
-### perf
-
-- AMD 4 KiB copies: `Buffer.copy` of 4 KiB on nonnormal lands 35-40% of
-  calls at 9-12 µs, the same submission submitted directly 2.5%
-  (probe_4k.exe split). With held_ns at 50 µs none did, but twice as many
-  took the GPU's 20 µs mode: find what Buffer.copy adds after a drain
-
 ## tolk
 
 - A schedule linked per run (D173) is one rig program per part, cut

@@ -9,8 +9,10 @@
    [shapes] times box shapes; [series], [chunks] and [gaps] time 4 KiB
    copies four ways (Buffer.copy; a prepared submission waited by spinning
    on the word, by Point.wait, by Point.reached), per call, per chunk of
-   1024 with the GPU's clock levels after each, and after a host idle gap.
-   It is no bench row: it prints raw numbers. *)
+   1024 with the GPU's clock levels after each, and after a host idle gap;
+   [watch] splits the host's time from one copy's completion to the next
+   one's doorbell, and [costs] times host steps alone. It is no bench row:
+   it prints raw numbers. *)
 
 module A = Rig_amd
 module B = Rig.Buffer
@@ -319,6 +321,146 @@ let fine_gaps name ~n f =
         g (pct t 50) (count 0 7000) (count 7000 14000) (count 14000 max_int) n)
     [ 0; 100; 200; 300; 400; 500; 600; 800; 1000; 1500; 2000 ]
 
+(* Where the host's time goes between a copy's completion and the next
+   copy's doorbell. A second domain spins on the timeline word and stamps
+   the clock as each value shows; per call the main domain stamps its start,
+   its submit's return where it sees one, and its return:
+
+     completion of j-1 --exit--> return of j-1 --loop--> call j
+       --pre--> submit's return, after the doorbell --> completion of j
+
+   [lat] is from call [j] to its completion, so two variants' [lat] differ
+   by their [pre] where the GPU's part is the same; [pre] is 0 where no
+   submit's return shows. Variants run in rotating blocks of [k] calls, so
+   that a change of the GPU's clocks reaches all of them. Per round it
+   prints each variant's modes, the share of 7-14 us calls after a fast
+   one, and the medians of fast calls after fast ones; then, over all
+   rounds, the medians by the modes of consecutive calls. *)
+type calls = {
+  call : int array;
+  sub : int array;
+  ret : int array;
+  value : int array;
+}
+
+let mode t = if t < 7000 then 0 else if t < 14_000 then 1 else 2
+let modes = [| "fast"; "7-14us"; "slow" |]
+
+let median l =
+  match l with
+  | [] -> 0
+  | _ ->
+      let a = Array.of_list l in
+      Array.sort compare a;
+      a.(Array.length a / 2)
+
+(* Per call [i] after the first of its block: its mode, the previous call's,
+   and the previous call's exit, the loop, its [pre] and its [lat]. *)
+let pairs c stamp ~k i0 i1 =
+  List.filter_map
+    (fun i ->
+      if i mod k = 0 then None
+      else
+        let p = mode (c.ret.(i - 1) - c.call.(i - 1))
+        and m = mode (c.ret.(i) - c.call.(i)) in
+        Some
+          ( p,
+            m,
+            c.ret.(i - 1) - stamp c.value.(i - 1),
+            c.call.(i) - c.ret.(i - 1),
+            (if c.sub.(i) > 0 then c.sub.(i) - c.call.(i) else 0),
+            stamp c.value.(i) - c.call.(i) ))
+    (List.init (i1 - i0) (fun j -> i0 + j))
+
+let print_pairs what l =
+  let col f = median (List.map f l) in
+  pr "%s calls %d exit %d loop %d pre %d lat %d\n" what (List.length l)
+    (col (fun (_, _, e, _, _, _) -> e))
+    (col (fun (_, _, _, o, _, _) -> o))
+    (col (fun (_, _, _, _, s, _) -> s))
+    (col (fun (_, _, _, _, _, t) -> t))
+
+let watched g variants ~rounds ~k =
+  let n = (rounds * List.length variants * (k + 200)) + 1000 in
+  let stamps = Array.make n 0 and stop = Atomic.make false in
+  let base = A.signaled g in
+  let rec go last =
+    if not (Atomic.get stop) then begin
+      let w = A.signaled g in
+      if w <> last then begin
+        let t = now () in
+        for v = last + 1 to min w (base + n - 1) do
+          stamps.(v - base) <- t
+        done
+      end;
+      go w
+    end
+  in
+  let watcher = Domain.spawn (fun () -> go base) in
+  let stamp v = stamps.(v - base) in
+  let per =
+    List.map
+      (fun (name, sub_end, _) ->
+        let m = rounds * k in
+        ( name,
+          sub_end,
+          { call = Array.make m 0; sub = Array.make m 0; ret = Array.make m 0;
+            value = Array.make m 0 } ))
+      variants
+  in
+  for r = 0 to rounds - 1 do
+    List.iter2
+      (fun (_, _, f) (name, sub_end, c) ->
+        for _ = 1 to 200 do
+          f ()
+        done;
+        for i = r * k to ((r + 1) * k) - 1 do
+          sub_end := 0;
+          let a = now () in
+          f ();
+          let b = now () in
+          c.call.(i) <- a;
+          c.sub.(i) <- !sub_end;
+          c.ret.(i) <- b;
+          c.value.(i) <- A.signaled g
+        done;
+        pr "watch clocks %d %s %s\n%!" r name (clocks ()))
+      variants per
+  done;
+  Atomic.set stop true;
+  Domain.join watcher;
+  for r = 0 to rounds - 1 do
+    List.iter
+      (fun (name, _, c) ->
+        let l = pairs c stamp ~k (r * k) ((r + 1) * k) in
+        let count m = List.length (List.filter (fun (_, m', _, _, _, _) -> m' = m) l) in
+        let after_fast = List.filter (fun (p, _, _, _, _, _) -> p = 0) l in
+        let mid = List.filter (fun (_, m, _, _, _, _) -> m = 1) after_fast in
+        pr "watch round %2d %-11s fast %4d 7-14us %4d slow %4d, 7-14us after \
+            fast %5.1f%%, " r name (count 0) (count 1) (count 2)
+          (100. *. float (List.length mid)
+          /. float (max 1 (List.length after_fast)));
+        print_pairs "fast after fast"
+          (List.filter (fun (p, m, _, _, _, _) -> p = 0 && m = 0) l))
+      per
+  done;
+  List.iter
+    (fun (name, _, c) ->
+      let l = pairs c stamp ~k 0 (Array.length c.call) in
+      for p = 0 to 2 do
+        for m = 0 to 2 do
+          match List.filter (fun (p', m', _, _, _, _) -> p' = p && m' = m) l with
+          | [] -> ()
+          | l ->
+              print_pairs
+                (Printf.sprintf "watch %s %s after %s" name modes.(m)
+                   modes.(p))
+                l
+        done
+      done;
+      flush stdout)
+    per
+
 (* Spins until [reached ()], reading the clock once every [check] spins so
    that the spin's latency stays a spin's; past [patience_ns], [late ()]
    waits instead, which checks the hang bound. *)
@@ -387,6 +529,65 @@ let probe what { Rig_amd_support.d; g } =
     gpu_split "buffer-copy" ~n:20_000 copy;
     gpu_split "slots" ~n:20_000 (fun () -> submit_slots () ())
   in
+  (* Each with its own cell for its submit's return, which Buffer.copy
+     leaves 0. *)
+  let watch () =
+    let direct name run buffers wait =
+      let s = ref 0 in
+      (name, s, fun () ->
+        let p = Rig.submit run ~buffers in
+        s := now ();
+        wait p)
+    in
+    watched g ~rounds:60 ~k:500
+      [ direct "fixed" run [||] spin_point;
+        direct "slots" slots [| src; dst |] spin_point;
+        direct "slots-wait" slots [| src; dst |] Rig.Point.wait;
+        ("buffer-copy", ref 0, copy) ]
+  in
+  (* Host costs alone, each the time of [n] calls: Buffer.copy's checks,
+     claims and drain, as a copy of no bytes between device buffers; an
+     empty submission's submit, which places only its release; the waits of
+     a point already reached. *)
+  let costs () =
+    let n = 50_000 in
+    let time name f =
+      for _ = 1 to 2000 do
+        f ()
+      done;
+      let t = Array.init n (fun _ -> let a = now () in f (); now () - a) in
+      pr "cost %-22s p10 %d p50 %d p90 %d ns\n%!" name (pct t 10) (pct t 50)
+        (pct t 90)
+    in
+    let none = B.view src ~first:0 ~length:0
+    and into = B.view dst ~first:0 ~length:0 in
+    let empty = Rig.Submission.(Run.make (make d [||])) in
+    let s = ref 0 in
+    let empty_pre () =
+      let a = now () in
+      let p = Rig.submit empty ~buffers:[||] in
+      s := now () - a;
+      spin_point p
+    in
+    time "buffer-copy no bytes" (fun () -> B.copy ~src:none ~dst:into);
+    time "host-copy" host_copy;
+    let p = Rig.submit run ~buffers:[||] in
+    Rig.Point.wait p;
+    time "point-wait reached" (fun () -> Rig.Point.wait p);
+    time "point-reached" (fun () -> ignore (Rig.Point.reached p : bool));
+    let pres = Array.init n (fun _ -> empty_pre (); !s) in
+    pr "cost %-22s p10 %d p50 %d p90 %d ns\n%!" "empty submit" (pct pres 10)
+      (pct pres 50) (pct pres 90);
+    let fixed_pre () =
+      let a = now () in
+      let p = Rig.submit run ~buffers:[||] in
+      s := now () - a;
+      spin_point p
+    in
+    let pres = Array.init n (fun _ -> fixed_pre (); !s) in
+    pr "cost %-22s p10 %d p50 %d p90 %d ns\n%!" "fixed submit" (pct pres 10)
+      (pct pres 50) (pct pres 90)
+  in
   let fs = [ ("buffer-copy", copy); ("raw-spin", raw_spin);
              ("raw-wait", raw_wait); ("raw-reached", poll_reached) ] in
   pr "load %s" (read_file "/proc/loadavg");
@@ -397,6 +598,8 @@ let probe what { Rig_amd_support.d; g } =
   | "shapes" -> time_boxes d; 0
   | "split" -> split_all (); 0
   | "fine" -> fine (); 0
+  | "watch" -> watch (); 0
+  | "costs" -> costs (); 0
   | "series" -> List.iter (fun (n, f) -> series n ~n:200_000 f) fs; 0
   | "chunks" -> List.iter (fun (n, f) -> chunks n ~k:1024 ~n:100 f) fs; 0
   | "gaps" -> List.iter (fun (n, f) -> gapped n ~n:3000 f) fs; 0
@@ -408,7 +611,9 @@ let probe what { Rig_amd_support.d; g } =
           gapped s ~n:3000 f;
           0
       | None ->
-          prerr_endline "check | shapes | series | chunks | gaps | <name>";
+          prerr_endline
+            "check | shapes | split | fine | watch | costs | series | chunks | gaps \
+             | <name>";
           2)
 
 (* The device closes before the exit, an exception's included. *)
