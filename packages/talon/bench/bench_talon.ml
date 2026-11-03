@@ -155,6 +155,30 @@ let nulls =
 
 let run q = Error.get_ok (Query.run q)
 
+(* Groups: 2^20 rows of a text key [t] of 100 values, ["id001"] to
+   ["id100"], an int32 key [k] of 100 values and an int32 measure [v] in
+   [1, 5], drawn from a seeded key, as H2O's group-by table holds. *)
+let groups =
+  let keys = Nx.Rng.split ~n:3 (Nx.Rng.key 25) in
+  let draw k high = Nx.Rng.randint ~key:keys.(k) ~high [| n |] in
+  let text i = Some (Printf.sprintf "id%03ld" (Int32.succ i)) in
+  Talon.v
+    [
+      ( "t",
+        Column.of_options Type.string
+          (Array.map text (Nx.to_array (draw 0 100))) );
+      ("k", nullable (draw 1 100));
+      ("v", nullable (Nx.add_s (draw 2 5) 1l));
+    ]
+
+(* [by key] sums [v] and takes its mean in each group of [key]. *)
+let by key =
+  run
+    Query.(
+      of_table groups
+      |> aggregate ~by:[ key ]
+           Expr.[ "s" := sum (Col.int "v"); "m" := mean (Col.int "v") ])
+
 (* [filter th] keeps the rows whose [key] is below [th]: [th / 10] percent of
    them. *)
 let filter th =
@@ -282,6 +306,8 @@ let () =
                   of_table nulls
                   |> aggregate ~by:[ "key" ] Expr.[ "f" := sum (Col.float "f") ]));
           Thumper.bench "Nulls/join-left" (fun () -> run joined_nulls);
+          Thumper.bench "Group/text-100-1M" (fun () -> by "t");
+          Thumper.bench "Group/int32-100-1M" (fun () -> by "k");
           Thumper.bench "Nulls/is_in-3-texts" (fun () ->
               let texts = [ "s1"; "s22"; "s333" ] in
               run

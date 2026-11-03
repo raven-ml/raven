@@ -1917,6 +1917,18 @@ let reductions =
           equal
             (array (option (float 1e-12)))
             [| None; Some 1.; None |] (floats t "s"));
+      test "an int32 mean is of the exact sum" (fun () ->
+          (* 2^23 values of 2^31 - 1: a float64 sum of them passes 2^53,
+             where it rounds. *)
+          let n = 1 lsl 23 in
+          let x = Column.of_tensor (Nx.full Nx.int32 [| n |] Int32.max_int) in
+          let t =
+            require_ok ~pp:Error.pp
+              (aggregate [] Expr.[ "m" := mean (Col.int "x") ] (v [ ("x", x) ]))
+          in
+          equal
+            (array (option float_exact))
+            [| Some 2147483647. |] (floats t "m"));
       test "a duration sum that overflows fails at its group's first row"
         (fun () ->
           let t =

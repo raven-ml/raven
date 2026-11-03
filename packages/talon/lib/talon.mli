@@ -1321,7 +1321,10 @@ module Expr : sig
       frame when [a] has several. *)
 
   val mean : ('a, row) t -> (float, agg) t
-  (** [mean a] is the arithmetic mean of [a]'s values, as [float64]. [a] is an
+  (** [mean a] is the arithmetic mean of [a]'s values, as [float64]: their
+      sum divided by their count. Integers of at most 32 bits over fewer than
+      2{^31} rows sum exactly in [int64], and the sum rounds once to
+      [float64]; other values sum in [float64] in row order. [a] is an
       integer or float expression, as for {!std}, {!var}, {!median} and
       {!quantile}; other types are a problem. *)
 

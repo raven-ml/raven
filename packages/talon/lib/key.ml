@@ -69,20 +69,21 @@ and words use c =
   | None -> [ value use c ]
   | Some v -> [ Nx.cast Nx.uint64 (Nx.logical_not v); value use c ]
 
+(* A lone word is its own row, a view, where stacking would copy it. *)
 let identity = function
   | [] -> invalid_arg "Key.identity: no column"
-  | cs -> Nx.stack ~axis:1 (List.concat_map (words Identity) cs)
+  | cs -> (
+      match List.concat_map (words Identity) cs with
+      | [ w ] -> Nx.reshape [| Nx.dim 0 w; 1 |] w
+      | ws -> Nx.stack ~axis:1 ws)
 
 (* [of_ids ids] is the groups that [ids], numbered in order of first appearance
-   from 0, give their rows. A scatter keeps the last update in index order, so
-   over the rows reversed it keeps each group's first row. *)
+   from 0, give their rows: each group's first row is the least of its rows. *)
 let of_ids ids : Nx.host Nx.groups =
   let n = Nx.dim 0 ids in
   let k = if n = 0 then 0 else Int64.to_int (Nx.item [] (Nx.max ids)) + 1 in
   let first =
-    Nx.scatter ~axis:0 (Nx.flip ids)
-      (Nx.flip (Nx.arange Nx.int64 0 n 1))
-      (Nx.zeros Nx.int64 [| k |])
+    Nx.reduce_segments Nx.Min ~segments:k ids (Nx.arange Nx.int64 0 n 1)
   and counts = Nx.reduce_segments Nx.Add ~segments:k ids (Nx.ones_like ids) in
   { ids; first; counts; count = Nx.scalar Nx.int64 (Int64.of_int k) }
 

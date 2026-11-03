@@ -86,6 +86,17 @@ let tensor dt c =
 
 let segment_sum s ids x = Nx.reduce_segments Nx.Add ~segments:s.count ids x
 
+(* Whether [c]'s values are integers whose int64 sum is exact. *)
+let exact_sums c =
+  match Column.data c with
+  | Fixed (P x) -> (
+      let dt = Nx.dtype x in
+      match Nx.Dtype.kind dt with
+      | Signed | Unsigned ->
+          Nx.Dtype.bits dt <= 32 && Column.length c < 1 lsl 31
+      | _ -> false)
+  | _ -> false
+
 let sizes s =
   match s.sizes with
   | Some c -> c
@@ -171,8 +182,15 @@ let reduce : type a b.
   in
   let at_least k = Nx.greater_equal_s (Lazy.force count) (Int64.of_int k) in
   let sum dt = segment_sum s ids (tensor dt c) in
+  (* Integers of at most 32 bits sum exactly in int64 over fewer than 2^31
+     rows, then round once to float64, as a float64 sum does wherever its
+     partial sums are exact. *)
   let mean () =
-    Nx.div (sum Nx.float64) (Nx.cast Nx.float64 (Lazy.force count))
+    let sum =
+      if exact_sums c then Nx.cast Nx.float64 (sum Nx.int64)
+      else sum Nx.float64
+    in
+    Nx.div sum (Nx.cast Nx.float64 (Lazy.force count))
   in
   let var () =
     let d = Nx.sub (tensor Nx.float64 c) (Nx.take s.ids (mean ())) in

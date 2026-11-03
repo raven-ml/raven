@@ -3496,6 +3496,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.mean` of integers of at most 32 bits sums them exactly in int64
+  and rounds the sum once, so a mean of many large values no longer
+  carries a float64 sum's rounding; where that sum was exact the result is
+  the same. Group-bys number a lone key column without copying it, and
+  find each group's first row by a segment minimum. With nx's integer
+  segment sums and row takes, H2O group-by q04 at 1e7 rows takes 35 ms
+  where it took 56 on fudge's 14 threads, and q01 61 where it took 86.
 - Group-bys, joins, `distinct` and `n_unique` number their keys in one pass
   over them through `Nx.unique`'s hash or direct table, in place of a sort:
   at a million rows, H2O group-by q01 takes 317 instructions a row where it
