@@ -273,7 +273,8 @@
     [unique] refuses with [Shape_mismatch] operands and destinations whose
     shapes do not fit, and declines keys of [2{^40} - 1] rows or more. Its
     [k] keys of [w] words each find their number in a hash table of linear
-    probing, by a multiply and xor-shift hash of their words. Keys of at
+    probing, by a hash that folds each word in by the high and low halves of
+    a 128-bit product xored, wyhash's, keyed by secrets. Keys of at
     most 4 words whose columns' spans, from each column's least word to its
     greatest, multiply to at most [2{^20}] values, and to at most twice a
     thread's rows and 1024 more, find it at their place among those values

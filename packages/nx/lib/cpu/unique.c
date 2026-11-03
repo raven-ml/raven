@@ -43,15 +43,26 @@
 
 #include "cpu.h"
 
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+#endif
+
 /* A slot's group number plus one takes its low ID_BITS bits, its key's
    hash the rest: numberings of fewer than 2^40 rows. */
 #define ID_BITS 40
 #define ID_MASK ((1ull << ID_BITS) - 1)
 
-/* Fibonacci hashing's multiplier, 2^64 over the golden ratio, and
-   SplitMix64's finishing multiplier. */
+/* Fibonacci hashing's multiplier, 2^64 over the golden ratio; SplitMix64's
+   finishing multiplier; wyhash's first prime, the multiplier of its
+   folded products. */
 #define GOLDEN 0x9E3779B97F4A7C15ull
 #define FINISH 0xBF58476D1CE4E5B9ull
+#define WYP0 0xA0761D6478BD642Full
+
+/* The hash's keys: its first state, the word its finish mixes in, and
+   SECRETS secrets its words take in turn. */
+#define SECRETS 4
+#define KEYS (2 + SECRETS)
 
 /* A table's first slots, and a block's first room for groups. */
 #define FIRST_LOG 10
@@ -107,18 +118,37 @@ typedef struct {
   int64_t m;
   int64_t *first_out, *counts_out;
   uint64_t *span;   /* each block's least and greatest of each column */
-  uint64_t start, end; /* the hash's keys: its first state, its finish */
+  uint64_t key[KEYS]; /* the hash's keys (Hashes) */
 } numbering;
 
 /* Hashes */
 
-/* The seed's two keys: the state a hash starts from, and the word its
-   finish mixes in. */
-static uint64_t seed_start, seed_end;
+/* The seed's keys (KEYS): key[0] the state a hash starts from, key[1]
+   the word its finish mixes in, the rest the secrets of its words.
 
-static inline uint64_t mix(uint64_t h, uint64_t k) {
-  h = (h ^ k) * GOLDEN;
-  return h ^ (h >> 32);
+   Each word folds in as wyhash's: h = mum(h ^ k ^ s, WYP0), mum(a, b) the
+   high and low halves of the 128-bit product a b xored. The fold is no
+   bijection, so a difference in one word's bits does not pass through it
+   as a fixed difference: the product's carries depend on every bit of
+   h ^ k ^ s, which the secrets hide. A multiply and xor-shift step passed
+   the difference of a word's top bit through unchanged for every input,
+   whatever the seed, so rows of many words could cancel it word by word
+   and share their hash under every seed. */
+static uint64_t seed_key[KEYS];
+
+static inline uint64_t mum(uint64_t a, uint64_t b) {
+#if defined(_MSC_VER) && !defined(__clang__)
+  uint64_t hi, lo = _umul128(a, b, &hi);
+  return hi ^ lo;
+#else
+  unsigned __int128 p = (unsigned __int128)a * b;
+  return (uint64_t)(p >> 64) ^ (uint64_t)p;
+#endif
+}
+
+static inline uint64_t mix(const uint64_t *key, uint64_t h, int j,
+                           uint64_t k) {
+  return mum(h ^ k ^ key[2 + (j & (SECRETS - 1))], WYP0);
 }
 
 /* A bijection of the state: equal hashes are equal states. */
@@ -129,33 +159,38 @@ static inline uint64_t finish(uint64_t h, uint64_t end) {
 
 static inline __attribute__((always_inline)) uint64_t hash_of(
     const numbering *u, const uint64_t *row, int w) {
-  uint64_t h = u->start;
-  for (int j = 0; j < w; j++) h = mix(h, row[j]);
-  return finish(h, u->end);
+  uint64_t h = u->key[0];
+  for (int j = 0; j < w; j++) h = mix(u->key, h, j, row[j]);
+  return finish(h, u->key[1]);
 }
 
-/* Sets the seed: its keys are SplitMix64's next two outputs from it. */
+/* Sets the seed: its keys are SplitMix64's next KEYS outputs from it. */
 value nx_cpu_unique_seed(value v) {
-  uint64_t x = (uint64_t)Int64_val(v), k[2];
-  for (int i = 0; i < 2; i++) {
+  uint64_t x = (uint64_t)Int64_val(v);
+  for (int i = 0; i < KEYS; i++) {
     x += GOLDEN;
     uint64_t z = x;
     z = (z ^ (z >> 30)) * FINISH;
     z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-    k[i] = z ^ (z >> 31);
+    __atomic_store_n(&seed_key[i], z ^ (z >> 31), __ATOMIC_RELAXED);
   }
-  __atomic_store_n(&seed_start, k[0], __ATOMIC_RELAXED);
-  __atomic_store_n(&seed_end, k[1], __ATOMIC_RELAXED);
   return Val_unit;
+}
+
+static void keys_now(uint64_t *key) {
+  for (int i = 0; i < KEYS; i++)
+    key[i] = __atomic_load_n(&seed_key[i], __ATOMIC_RELAXED);
 }
 
 /* The hash's state after the words of the OCaml int64 array [vw], under
    the seed: rows whose words leave one state hash alike. */
 value nx_cpu_unique_state(value vw) {
   CAMLparam1(vw);
-  uint64_t h = __atomic_load_n(&seed_start, __ATOMIC_RELAXED);
+  uint64_t key[KEYS];
+  keys_now(key);
+  uint64_t h = key[0];
   for (mlsize_t j = 0; j < Wosize_val(vw); j++)
-    h = mix(h, (uint64_t)Int64_val(Field(vw, j)));
+    h = mix(key, h, (int)j, (uint64_t)Int64_val(Field(vw, j)));
   CAMLreturn(caml_copy_int64((int64_t)h));
 }
 
@@ -668,9 +703,8 @@ value nx_cpu_unique(value vids, value vfirst, value vcounts, value vcount,
                  .blocks = 1,
                  .m = m,
                  .first_out = (int64_t *)a[1].base + a[1].offset,
-                 .counts_out = (int64_t *)a[2].base + a[2].offset,
-                 .start = __atomic_load_n(&seed_start, __ATOMIC_RELAXED),
-                 .end = __atomic_load_n(&seed_end, __ATOMIC_RELAXED)};
+                 .counts_out = (int64_t *)a[2].base + a[2].offset};
+  keys_now(u.key);
   int64_t *count = (int64_t *)a[3].base + a[3].offset;
   int64_t bytes = n * (8 * w + 8) + 16 * m;
   double past = n > CACHED_ROWS ? (double)(n - CACHED_ROWS) : 0;
