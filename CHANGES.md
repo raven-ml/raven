@@ -969,6 +969,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Lowering a kernel raises `Invalid_argument`, naming it, where a barrier or
+  a tensor core runs in a loop whose trips may differ between a workgroup's
+  threads (`Uniform.check`), which hung the GPU or read unwritten memory.
+- `Postrange.apply_opts` no longer applies the heuristic or BEAM to a kernel
+  that holds workgroup or register storage, a barrier, a tensor core or
+  custom code, which it split into threads its buffers were not sized for,
+  giving wrong values; the optimisations such a kernel lists still apply.
 - On a GPU, a call or custom code runs once for each point of the axes its
   sources read: an axis it does not read takes no threads, which ran it once
   in each (`Postrange.Scheduler.unread_by_opaque`). `n[0] += 1` beside a

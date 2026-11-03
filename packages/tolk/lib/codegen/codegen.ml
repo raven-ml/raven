@@ -1297,6 +1297,10 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   (* add implicit barriers (stores/loads through LOCAL memory ordered by AFTER
      or across loop iterations need workgroup barriers) *)
   let sink = rewrite pm_implicit_barriers sink in
+  (* every barrier exists and every range keeps its role: a barrier or a
+     matrix multiply-accumulate in a loop whose trips differ between threads
+     hangs the workgroup or reads memory not yet written *)
+  Uniform.check sink;
   (* hardware ranges are no longer loops; preserve their already lowered
      bounds *)
   let sink = rewrite Gpudims.pm_range_to_special sink in

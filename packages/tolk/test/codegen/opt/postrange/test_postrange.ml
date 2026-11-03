@@ -696,6 +696,62 @@ let upcasting k =
 let without_opts ast =
   Ops.replace ~arg:(Kernel { (info ast) with opts_to_apply = None }) ast
 
+(* [out[i] = inp[i]] over 256 elements [i], through what its builder chose for
+   its threads: workgroup memory, a register, a barrier after its store, a
+   matrix multiply-accumulate, custom code, a call whose body holds a barrier;
+   or through none of them. *)
+let fixed_by reason =
+  let open Ops.O in
+  let buffer slot = Shape.param ~shape:[ Int 256 ] slot Float32 in
+  let i = Ops.range (Int 256) [ 0 ] in
+  let at b j = Ops.index b [ j ] in
+  let value = Ops.load (at (buffer 1) i) [] in
+  let through space n j =
+    let b = Shape.placeholder ~slot:10 ~addrspace:space [ n ] Float32 in
+    Ops.load (at (Ops.after b [ Ops.store (at b j) value ]) j) []
+  in
+  let store v = Ops.store (at (buffer 0) i) v in
+  let effects =
+    match reason with
+    | "workgroup memory" -> store (through Local 256 i)
+    | "a register" -> store (through Reg 1 (int 0))
+    | "a barrier" -> Ops.barrier (store value) []
+    | "a matrix multiply-accumulate" ->
+        let lanes n =
+          Shape.stack (List.init n (fun _ -> Ops.cast value Bfloat16))
+        in
+        let acc = Shape.stack (List.init 4 (fun _ -> value)) in
+        let d =
+          Ops.wmma (lanes 8) (lanes 4) ~acc ~dims:(8, 16, 16) ~threads:32
+        in
+        store (Ops.index d [ Ops.int ~dtype:Int32 0 ])
+    | "custom code" ->
+        Ops.group
+          [
+            store value;
+            Ops.v Op.Custom ~arg:(Code { code = "f();"; dtype = Void });
+          ]
+    | "a call whose body holds a barrier" ->
+        let p = Shape.param ~shape:[ Int 1 ] 0 Float32 in
+        let fence =
+          Ops.sink [ Ops.barrier (Ops.store (at p (int 0)) (Ops.float 1.)) [] ]
+        in
+        Ops.group
+          [ store value; Ops.call ~name:"fence" fence [ at (buffer 2) i ] ]
+    | _ -> store value
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ effects [ i ] ]
+
+let fixing =
+  [
+    "workgroup memory";
+    "a register";
+    "a barrier";
+    "a matrix multiply-accumulate";
+    "custom code";
+    "a call whose body holds a barrier";
+  ]
+
 let dispatch =
   let cpu = renderer "cpu" and metal = renderer "metal" in
   group "apply_opts"
@@ -766,6 +822,31 @@ let dispatch =
           equal (list Kernel_opts.opt) []
             (applied
                (Postrange.apply_opts ~hand_coded:never_hand_coded ast metal)));
+      cases
+        "neither hand-optimises nor searches a kernel whose builder fixed its \
+         threads with"
+        ~id:Fun.id fixing (fun reason ->
+          let k = fixed_by reason and cuda = renderer "cuda" in
+          let optimise ?beam () =
+            applied
+              (Postrange.apply_opts ?beam ~hand_coded:never_hand_coded k cuda)
+          in
+          equal (list Kernel_opts.opt) [] (optimise ());
+          equal (list Kernel_opts.opt) [] (optimise ~beam:never_searched ()));
+      test "hand-optimises the same kernel through none of them" (fun () ->
+          let calls = ref 0 in
+          let hand_coded k =
+            incr calls;
+            k
+          in
+          let cuda = renderer "cuda" in
+          ignore (Postrange.apply_opts ~hand_coded (fixed_by "none") cuda);
+          equal int 1 !calls);
+      test
+        "applies the optimisations a kernel whose builder fixed its threads \
+         asks for" (fun () ->
+          let c = case "loop_counter_upcast" in
+          equal (list Kernel_opts.opt) c.opts (applied (optimize c)));
       test "keeps a kernel's name other than test" (fun () ->
           let ast = kernel "sum_rows_64" in
           let named =

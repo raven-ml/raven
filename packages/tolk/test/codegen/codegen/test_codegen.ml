@@ -2613,6 +2613,197 @@ let tensor_cores_by_hand =
                [ (1, words_values words) ]));
     ]
 
+(* Kernels whose builder fixed their threads
+
+   [fixed_gs] workgroups [g] of [fixed_ls] threads [l], each thread staging a
+   value through workgroup memory, a barrier, and reading its neighbour's. The
+   builder sized the workgroup memory for one workgroup and the registers for
+   one thread, and kept the barriers where every thread reaches them; given no
+   optimisation to apply, lowering must keep its threads as they are. *)
+
+let fixed_gs = 8
+let fixed_ls = 32
+let fixed_flags = [| 1; 0; 1; 1; 0; 0; 1; 0 |]
+let fixed_tiles = 3
+let fixed_n = fixed_gs * fixed_ls
+let fixed_tile_count = fixed_gs * fixed_tiles
+let fixed_rows = fixed_tile_count * fixed_ls
+
+(* A tensor core's 16x8 product and 16x16 operand per workgroup. *)
+let fixed_c = fixed_gs * 128
+let fixed_a = fixed_gs * 256
+let sentinel = -7.
+
+module Fixed = struct
+  open Ops.O
+
+  let int = Ops.int
+  let i32 n = Ops.int ~dtype:Int32 n
+  let ld b i = Ops.load (Ops.index b [ i ]) []
+  let st b i v = Ops.store (Ops.index b [ i ]) v
+  let param slot n dt = Shape.param ~shape:[ Int n ] slot dt
+  let local n = Shape.placeholder ~slot:10 ~addrspace:Local [ n ] Float32
+  let workgroup () = Ops.range ~axis_type:Global (Int fixed_gs) [ 0 ]
+  let thread () = Ops.range ~axis_type:Local (Int fixed_ls) [ 1 ]
+  let next l = (l + int 1) % int fixed_ls
+
+  (* A loop of one trip where [c] holds and none elsewhere. *)
+  let guard c =
+    Ops.range ~axis_type:Loop ~dtype:Int32 (Sym (Ops.cast c Int32)) [ 3 ]
+
+  let kernel name l = Ops.sink ~kernel:(Ops.kernel_info ~name ()) l
+
+  (* [out[g*ls + l] = 2 * inp[g*ls + (l + 1) % ls]], where [flags[g]] holds if
+     [guarded]. *)
+  let neighbours ~guarded =
+    let out = param 0 fixed_n Float32
+    and inp = param 1 fixed_n Float32
+    and flags = param 2 fixed_gs Int32 in
+    let g = workgroup () and l = thread () in
+    let row j = (g * int fixed_ls) + j in
+    let s = guard (ld flags g <> i32 0) in
+    let inp = if guarded then Ops.after inp [ s ] else inp in
+    let w = st (local fixed_ls) l (ld inp (row l) * Ops.float 2.) in
+    let back = ld (Ops.after (local fixed_ls) [ w ]) (next l) in
+    let store = st out (row l) back in
+    let store = if guarded then Ops.end_ store [ s ] else store in
+    kernel
+      (if guarded then "neighbours" else "neighbours_unguarded")
+      [ Ops.end_ store [ g; l ] ]
+
+  (* [neighbours] over [fixed_tiles] tiles [t] of a workgroup, each under its
+     flag: each tile's own row of [out], or their sum in a register. *)
+  let tiles ~sum =
+    let out = param 0 (if sum then fixed_n else fixed_rows) Float32
+    and inp = param 1 fixed_rows Float32
+    and flags = param 2 fixed_tile_count Int32 in
+    let g = workgroup () and l = thread () in
+    let t = Ops.range ~axis_type:Loop (Int fixed_tiles) [ 2 ] in
+    let tile = (g * int fixed_tiles) + t in
+    let s = guard (ld flags tile <> i32 0) in
+    let row j = (tile * int fixed_ls) + j in
+    let w =
+      st (local fixed_ls) l (ld (Ops.after inp [ s ]) (row l) * Ops.float 2.)
+    in
+    let back = ld (Ops.after (local fixed_ls) [ w ]) (next l) in
+    if not sum then
+      let tile_loop = Ops.end_ (Ops.end_ (st out (row l) back) [ s ]) [ t ] in
+      kernel "tiles" [ Ops.end_ tile_loop [ g; l ] ]
+    else
+      let acc = Shape.placeholder ~slot:11 ~addrspace:Reg [ 1 ] Float32 in
+      let init = st acc (int 0) (Ops.float 0.) in
+      let acc_t = Ops.after acc [ init; t ] in
+      let add = st acc_t (int 0) (ld acc_t (int 0) + back) in
+      let tile_loop = Ops.end_ (Ops.end_ add [ s ]) [ t ] in
+      let total = ld (Ops.after acc [ tile_loop ]) (int 0) in
+      kernel "tile_sums"
+        [ Ops.end_ (st out ((g * int fixed_ls) + l) total) [ g; l ] ]
+
+  (* Per workgroup, one warp's C (16x8 f32) = A (16x16 bf16) B (16x8), B given
+     transposed and staged in workgroup memory, where [flags[g]] holds. *)
+  let product () =
+    let out = param 0 fixed_c Float32
+    and a = param 1 fixed_a Bfloat16
+    and bt = param 2 fixed_c Bfloat16
+    and flags = param 3 fixed_gs Int32 in
+    let g = workgroup () and lane = Ops.range ~axis_type:Warp (Int 32) [ 1 ] in
+    let s = guard (ld flags g <> i32 0) in
+    let a = Ops.after a [ s ] and bt = Ops.after bt [ s ] in
+    let bs = Shape.placeholder ~slot:10 ~addrspace:Local [ 128 ] Bfloat16 in
+    let copies =
+      Ops.group
+        (List.init 4 (fun e ->
+             let i = (lane * int 4) + int e in
+             st bs i (ld bt ((g * int 128) + i))))
+    in
+    let bs = Ops.after bs [ copies ] in
+    let gq = lane // int 4 and c0 = int 2 * (lane % int 4) in
+    let g8 = gq + int 8 in
+    let am r c = ld a ((g * int 256) + (r * int 16) + c) in
+    let bm k = ld bs ((gq * int 16) + k) in
+    let afrag =
+      Shape.stack
+        [
+          am gq c0;
+          am gq (c0 + int 1);
+          am g8 c0;
+          am g8 (c0 + int 1);
+          am gq (c0 + int 8);
+          am gq (c0 + int 9);
+          am g8 (c0 + int 8);
+          am g8 (c0 + int 9);
+        ]
+    in
+    let bfrag =
+      Shape.stack [ bm c0; bm (c0 + int 1); bm (c0 + int 8); bm (c0 + int 9) ]
+    in
+    let zero = Ops.float ~dtype:Float32 0. in
+    let d =
+      Ops.wmma afrag bfrag
+        ~acc:(Shape.stack [ zero; zero; zero; zero ])
+        ~dims:(8, 16, 16) ~threads:32
+    in
+    let elt e = Ops.index d [ i32 e ] in
+    let at r c = (g * int 128) + (r * int 8) + c in
+    let stores =
+      [
+        st out (at gq c0) (elt 0);
+        st out (at gq (c0 + int 1)) (elt 1);
+        st out (at g8 c0) (elt 2);
+        st out (at g8 (c0 + int 1)) (elt 3);
+      ]
+    in
+    kernel "product"
+      [ Ops.end_ (Ops.end_ (Ops.group stores) [ s ]) [ g; lane ] ]
+end
+
+let fixed_kernels =
+  [
+    ("a guarded neighbour", fun () -> Fixed.neighbours ~guarded:true);
+    ("an unguarded neighbour", fun () -> Fixed.neighbours ~guarded:false);
+    ("guarded tiles", fun () -> Fixed.tiles ~sum:false);
+    ("guarded tiles summed in a register", fun () -> Fixed.tiles ~sum:true);
+    ("a guarded tensor core", Fixed.product);
+  ]
+
+let fixed_inputs = Array.init fixed_n (fun i -> Float.of_int (i mod 97) +. 0.25)
+
+let neighbours_expected ~guarded =
+  Array.init (fixed_gs * fixed_ls) (fun i ->
+      let g = i / fixed_ls and l = i mod fixed_ls in
+      if guarded && fixed_flags.(g) = 0 then `Float sentinel
+      else `Float (2. *. fixed_inputs.((g * fixed_ls) + ((l + 1) mod fixed_ls))))
+
+let neighbours_on_cuda guarded =
+  let d, r = on_cuda () in
+  let prg = compiled_for r (Fixed.neighbours ~guarded) in
+  let floats a = Array.map (fun x -> `Float x) a in
+  let ints a = Array.map (fun n -> `Int (Bigint.of_int n)) a in
+  equal (array Dtypes.value)
+    (neighbours_expected ~guarded)
+    (List.assoc 0
+       (Run.on d prg
+          [
+            (0, floats (Array.make (fixed_gs * fixed_ls) sentinel));
+            (1, floats fixed_inputs);
+            (2, ints fixed_flags);
+          ]))
+
+let fixed_threads =
+  group "kernels whose builder fixed their threads"
+    [
+      cases "the hand-coded optimisations apply none, for CUDA, to" ~id:fst
+        fixed_kernels (fun (_, k) ->
+          let r = renderer_for (target "CUDA" "CUDA" "sm_89") in
+          equal (list Kernel_opts.opt) []
+            (kernel_info (Codegen.full_rewrite_to_sink (k ()) r)).applied_opts);
+      cases
+        "a thread reads its neighbour's staged value, where its workgroup's \
+         flag holds, on CUDA"
+        ~id:(fun guarded -> if guarded then "guarded" else "unguarded")
+        [ true; false ] neighbours_on_cuda;
+    ]
+
 (* Reductions over a variable size
 
    A kernel reduces [x], of [hi] floats, over a range whose size is a variable
@@ -5565,6 +5756,7 @@ let () =
          accumulators;
          tensor_cores_on_cuda;
          tensor_cores_by_hand;
+         fixed_threads;
          bfloat16_vectors_on_cuda;
          counted_once;
          variable_sizes;

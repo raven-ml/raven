@@ -1,0 +1,18 @@
+; No machine here has comgr, which making a HIP renderer finds: COMGR_PATH
+; names a file that stands in for it, so that kernels lower everywhere.
+
+(test
+ (name test_uniform)
+ (package tolk)
+ (libraries windtrap tolk)
+ (deps comgr_stand_in)
+ (action
+  (setenv
+   COMGR_PATH
+   ./comgr_stand_in
+   (run %{test}))))
+
+(rule
+ (target comgr_stand_in)
+ (action
+  (write-file %{target} "This file stands in for comgr.\n")))

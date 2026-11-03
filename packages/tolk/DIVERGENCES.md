@@ -6881,3 +6881,38 @@ the walk of `Rangeify.fix_store_hazard`.
 - **Pinned by:** `Tolk.Compiler_cpu › invalid IR › a source that LLVM 19's
   straight-line vectorizer makes invalid raises Compile_error naming its
   function`, under a Clang of LLVM 19 with that vectorizer turned back on.
+## D285. A loop holding a barrier or a matrix instruction has a uniform bound
+
+- **tinygrad:** `codegen/__init__.py:355-358` (`full_rewrite_to_sink`),
+  which places the implicit barriers and lowers the ranges to hardware
+  indices with no check of the loops a barrier runs in;
+  `codegen/opt/postrange.py:251-255` (`apply_opts`), which runs the
+  heuristic, or BEAM, on any kernel without a `STAGE`.
+- **tolk:** `Uniform.varying`, `Uniform.check` and its call in
+  `Codegen.full_rewrite_to_sink` after `pm_implicit_barriers`;
+  `Postrange.apply_opts` (`threads_fixed`); `test/gen/tinygrad.patch`,
+  which gives tinygrad's `apply_opts` the same skip before the goldens are
+  recorded.
+- **Differs:** a kernel whose barrier, matrix multiply-accumulate, or call
+  of a body holding one, runs in a serial loop whose trips may differ
+  between a workgroup's threads is refused when lowered, naming the kernel,
+  the operation and the loop, under `SPEC=0` too. Neither the heuristic nor
+  a search optimises a kernel that holds, or calls a body that holds,
+  workgroup or register storage, a barrier, a matrix multiply-accumulate or
+  custom code; the optimisations such a kernel lists still apply.
+- **Reason:** (e): a barrier some threads skip, or reach fewer times, hangs
+  the workgroup or reads workgroup memory not yet written (CUDA C++
+  Programming Guide §7.6, PTX §9.7.15.1 `bar`; non-termination is (e)), and
+  tinygrad compiles a barrier in a loop bounded by a thread index without a
+  word. Its heuristic splits a hand-made kernel's axes into threads and
+  lanes while the kernel's workgroup and register buffers stay sized for
+  one workgroup and one thread: on CUDA, a kernel reading its neighbour's
+  staged value computed 224 of 256 values wrong, and one whose staging ran
+  in a loop of one trip per flagged workgroup got that loop's bound from
+  `threadIdx.y`, around a barrier, which once hung the GPU.
+- **Pinned by:** `Tolk.Uniform` (`varying`, `check`); `Tolk.Postrange`'s
+  `apply_opts › neither hand-optimises nor searches a kernel whose builder
+  fixed its threads with` and `› applies the optimisations a kernel whose
+  builder fixed its threads asks for`; `Tolk.Codegen`'s `kernels whose
+  builder fixed their threads`, on CUDA; and the tolk, rune, jera and kaun
+  suites, which lower every kernel through the check.

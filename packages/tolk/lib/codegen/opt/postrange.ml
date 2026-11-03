@@ -944,12 +944,28 @@ let bound_by_memory ast =
     (fun u -> op u = Op.Range && bound_loads u)
     (toposort ~calls:Enter ast)
 
+(* Whether the builder of [ast], or of a body it calls, fixed its threads:
+   workgroup memory sized for one workgroup, registers for one thread, a
+   barrier every thread must reach, a matrix multiply-accumulate on a warp's
+   lanes, or custom code. A split of an axis into threads or lanes would leave
+   each of them as the builder made it, for threads it did not make. *)
+let threads_fixed ast =
+  List.exists
+    (fun u ->
+      match (op u, arg u) with
+      | (Op.Param | Op.Buffer | Op.Alloc), Param p ->
+          List.mem p.addrspace Dtype.[ Local; Reg ]
+      | (Op.Barrier | Op.Wmma | Op.Custom | Op.Customi), _ -> true
+      | _ -> false)
+    (toposort ~calls:Enter ast)
+
 let apply_opts ?beam ~hand_coded ast ren =
   let info = match arg ast with Kernel i -> Some i | _ -> None in
   if Option.exists (fun (i : kernel_info) -> i.optimized) info then ast
   else
     let k = Scheduler.v ast ren in
     Scheduler.convert_loop_to_global k;
+    let fixed = lazy (threads_fixed ast) in
     let k =
       match (info, beam) with
       | Some { opts_to_apply = Some opts; _ }, _ ->
@@ -960,13 +976,18 @@ let apply_opts ?beam ~hand_coded ast ren =
           in
           List.iter apply opts;
           k
-      | _, Some search when not (bound_by_memory ast) -> search k
+      | _, Some search
+        when not (bound_by_memory ast || Lazy.force fixed) ->
+          search k
       | _
         when (not (Setting.value Setting.noopt))
              && match info with Some i -> i.applied_opts = [] | None -> true ->
           (* NOTE: hand_coded_optimizations doesn't support multiblock opts
              yet *)
-          if op_in_backward_slice_with_self ~calls:Skip ast [ Op.Stage ] then k
+          if
+            op_in_backward_slice_with_self ~calls:Skip ast [ Op.Stage ]
+            || Lazy.force fixed
+          then k
           else hand_coded k
       | _ -> k
     in

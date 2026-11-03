@@ -206,8 +206,13 @@ val apply_opts :
     one of whose loops, or of the loops of a body it calls, has a bound that
     loads from memory ({!Ops.bound_loads}) is not searched: its time depends on
     what memory holds, which a search's samples do not, so it takes
-    [hand_coded] as without [beam]. A kernel [ast] already
-    optimised ([optimized]) is returned as it is.
+    [hand_coded] as without [beam]. A kernel whose builder fixed its threads is
+    neither searched nor given [hand_coded]: it, or a body it calls, holds
+    workgroup or register storage ({!Dtype.Local}, {!Dtype.Reg}), a barrier, a
+    matrix multiply-accumulate or custom code, made for the threads and lanes
+    its builder chose, which splitting its axes would change; the
+    optimisations it asks for still apply. A kernel [ast] already optimised
+    ([optimized]) is returned as it is.
 
     Raises [Invalid_argument] if an optimisation asked for does not apply, with
     the reason {!Scheduler.apply_opt} gives. *)

@@ -41,7 +41,8 @@ val full_rewrite_to_sink :
     else, if its argument asks for a beam search of width [w] greater than [0]
     and no loop's bound loads from memory, with [beam w], or else with
     {!Heuristic.hand_coded_optimizations} unless the setting {!Setting.noopt}
-    holds. The settings {!Setting.disable_fast_idiv}
+    holds. A kernel whose builder fixed its threads takes neither, and one that
+    buffers values does not take the heuristic ({!Postrange.apply_opts}). The settings {!Setting.disable_fast_idiv}
     and {!Setting.transcendental} choose how divisions by constants and
     transcendental functions are decomposed ({!Decomp_op.late_patterns},
     {!Transcendental.val-patterns}). When the setting {!Setting.spec} is [1] or
@@ -50,6 +51,11 @@ val full_rewrite_to_sink :
     first printed on standard output ({!Render.render_uir}). When
     {!Setting.debug} is [5] or more, [ast] is printed so before it is
     lowered.
+
+    Once its workgroup barriers are placed, the kernel is checked
+    ({!Uniform.check}) whatever the setting {!Setting.spec}: a barrier or a
+    matrix multiply-accumulate in a loop whose trips may differ between a
+    workgroup's threads is refused.
 
     Raises [Invalid_argument] if [optimize] holds and [ast]'s argument is not a
     {!Ops.type-kernel_info}, if its beam search is asked for without [beam], if
