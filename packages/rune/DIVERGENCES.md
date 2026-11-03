@@ -113,9 +113,10 @@ An entry is admitted for one of three reasons only:
   kernels compute;
 - **(c) the engine's contract:** rig's submission protocol.
 
-Each entry also gives the reference (tinygrad `79af1ca70`, or none), nx's
-meaning, the agreement class (exact, bit for bit as `rune.mli` defines it; an
-ulp bound; a rounded sum; a stated bound) and its reason. An ulp bound is the
+Each entry also gives the reference (tinygrad `f1d8f0f0def4`, the commit
+tolk follows, its files under `tinygrad/`; or none), nx's meaning, the
+agreement class (exact, bit for bit as `rune.mli` defines it; an ulp bound; a
+rounded sum; a stated bound) and its reason. An ulp bound is the
 one `lower_real.mli` states, which `Lower_real`'s suite holds on the host; a
 rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 `lower_linalg.mli`'s.
@@ -150,8 +151,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A2. Integer arithmetic wraps
 
-- **Reference:** `mixin/elementwise.py:74,84,103,125` (`neg`, `add`, `sub`,
-  `mul`) and `pow`.
+- **Reference:** `mixin/elementwise.py:73,83,102,124,547` (`neg`, `add`,
+  `sub`, `mul`, `pow`).
 - **Raven:** `lower_arith.ml` (`lift`, `store`, `int_unary`, `int_pow`,
   `int_binary`).
 - **Differs:** signed `Neg`, `Abs`, `Add`, `Sub`, `Mul`, `Fma` and integer
@@ -169,10 +170,10 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A3. Integer reciprocal
 
-- **Reference:** `mixin/elementwise.py:460` (`reciprocal`).
+- **Reference:** `mixin/elementwise.py:459` (`reciprocal`).
 - **Raven:** `lower_arith.ml` (`int_unary`, its `Recip` case).
 - **Differs:** on integers, `x` at 1 and -1, 0 elsewhere and at 0. tinygrad's
-  reciprocal is a float operation.
+  reciprocal is a float operation (`uop/ops.py:148`).
 - **nx:** `prog.mli`, `Recip`.
 - **Class:** exact.
 - **Reason:** (b).
@@ -180,7 +181,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A4. Absolute value
 
-- **Reference:** `mixin/elementwise.py:911` (`x * sign x`).
+- **Reference:** `mixin/elementwise.py:909` (`x * sign x`).
 - **Raven:** `lower_bits.ml` (`magnitude`), through `lower_real.ml`
   (`unary`); `lower_arith.ml` (`int_unary`).
 - **Differs:** a float's sign bit is cleared, so `abs (-0.)` is `0.` and a
@@ -195,7 +196,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A5. Sign of NaN
 
-- **Reference:** `mixin/elementwise.py:901` (`sign`).
+- **Reference:** `mixin/elementwise.py:899` (`sign`).
 - **Raven:** `lower_real.ml` (`sign`).
 - **Differs:** `sign nan` is NaN; tinygrad gives 1.
 - **nx:** `prog.mli`, `Sign`: NaN for a NaN.
@@ -205,7 +206,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A6. Rounding half away from zero
 
-- **Reference:** `mixin/elementwise.py:890` (`round`, half to even).
+- **Reference:** `mixin/elementwise.py:888` (`round`, half to even).
 - **Raven:** `lower_real.ml` (`round`).
 - **Differs:** a half rounds away from zero, decided on the exact rest
   `x - trunc x`.
@@ -216,7 +217,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A7. Exponential in two parts
 
-- **Reference:** `mixin/elementwise.py:511` (`exp2 (x * 1/ln 2)`).
+- **Reference:** `mixin/elementwise.py:510` (`exp2 (x * 1/ln 2)`).
 - **Raven:** `lower_real.ml` (`exp_parts`, `exp2_split`, `exp`).
 - **Differs:** rounding the product `x log2 e` costs up to about `|x|` ulps.
   The product is kept in two parts, its error exact from an fma, and
@@ -230,7 +231,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A8. Cosine reduced by a quarter turn
 
-- **Reference:** `mixin/elementwise.py:500` (`sin (pi/2 - x)`).
+- **Reference:** `mixin/elementwise.py:499` (`sin (pi/2 - x)`).
 - **Raven:** `lower_real.ml` (`reduce`, `sin_cos`, `cos`).
 - **Differs:** `pi/2 - x` rounds first, so tinygrad's cosine is 0 at
   `f32(pi/2)`, where it is `-4.4e-8`. The lowering reduces `|x|` to
@@ -245,7 +246,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A9. Tangent of the reduced argument
 
-- **Reference:** `mixin/elementwise.py:921` (`sin / cos`).
+- **Reference:** `mixin/elementwise.py:919` (`sin / cos`).
 - **Raven:** `lower_real.ml` (`tan`).
 - **Differs:** A8's reduction, then `sin r / cos r` or `-cos r / sin r` by the
   quadrant's parity, with `x`'s sign.
@@ -256,7 +257,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A10. Arcsine and arccosine by the arctangent
 
-- **Reference:** `mixin/elementwise.py:931,944` (Abramowitz-Stegun 4.4.46,
+- **Reference:** `mixin/elementwise.py:929,942` (Abramowitz-Stegun 4.4.46,
   `acos = pi/2 - asin`).
 - **Raven:** `lower_real.ml` (`asin`, `acos`).
 - **Differs:** tinygrad's polynomial is float32-grade, has no relative accuracy
@@ -270,7 +271,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A11. Arctangent
 
-- **Reference:** `mixin/elementwise.py:954` (`asin (x / sqrt (1 + x^2))`).
+- **Reference:** `mixin/elementwise.py:952` (`asin (x / sqrt (1 + x^2))`).
 - **Raven:** `lower_real.ml` (`atan_unit`, `angle`, `atan`).
 - **Differs:** `x^2` overflows past `1.8e19` in `float32`, where tinygrad's
   arctangent is 0. The lowering takes the arctangent of `min (|x|, 1/|x|)`,
@@ -295,7 +296,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A13. Hyperbolic functions
 
-- **Reference:** `mixin/elementwise.py:1034,1046` (`(e^x -+ e^-x) / 2`), `:757`
+- **Reference:** `mixin/elementwise.py:1032,1044` (`(e^x -+ e^-x) / 2`), `:755`
   (`2 sigmoid (2x) - 1`).
 - **Raven:** `lower_real.ml` (`half_exp`, `cosh`, `sinh`, `tanh`).
 - **Differs:** `sinh` and `tanh` cancel near 0 (`tanh` is 0 below about
@@ -312,7 +313,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A14. Error function
 
-- **Reference:** `mixin/elementwise.py:1058` (Abramowitz-Stegun 7.1.26).
+- **Reference:** `mixin/elementwise.py:1056` (Abramowitz-Stegun 7.1.26).
 - **Raven:** `lower_real.ml` (`erf32`, `erf_near64`, `erf_far64`, `erf`).
 - **Differs:** tinygrad's approximation has an absolute error of `1.5e-7` and
   no relative accuracy near 0. The lowering takes a polynomial per range: at
@@ -326,7 +327,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A15. True division
 
-- **Reference:** `mixin/elementwise.py:229` (`a * (1/b)`).
+- **Reference:** `mixin/elementwise.py:228` (`a * (1/b)`).
 - **Raven:** `lower_real.ml` (`( /: )`, through `binary`).
 - **Differs:** one rounding: `Ops.FDIV`, which tolk renders as `a / b`.
   tinygrad multiplies by the reciprocal, two roundings.
@@ -337,7 +338,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A16. Integer quotient and remainder by 0 and -1
 
-- **Reference:** `mixin/elementwise.py:229,216` (`Ops.CDIV`, `Ops.CMOD`).
+- **Reference:** `mixin/elementwise.py:228,215` (`Ops.TRUNCDIV`,
+  `Ops.TRUNCMOD`).
 - **Raven:** `lower_arith.ml` (`int_div`).
 - **Differs:** a quotient by 0 is 0 and a remainder by 0 the dividend; a
   quotient by -1 is the modular negation, so the least integer's is itself,
@@ -352,7 +354,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A17. Exact float remainder
 
-- **Reference:** `mixin/elementwise.py:216` (`x - trunc (x * (1/y)) * y`).
+- **Reference:** `mixin/elementwise.py:215` (`x - trunc (x * (1/y)) * y`).
 - **Raven:** `lower_real.ml` (`fmod`).
 - **Differs:** tinygrad's composition rounds three times and fails for
   `|x/y| >= 2^24`. The lowering computes C's exact `fmod` on the significands
@@ -367,7 +369,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A18. Power with its product in two parts
 
-- **Reference:** `mixin/elementwise.py:548` (`Ops.POW`, `xpow` =
+- **Reference:** `mixin/elementwise.py:547` (`Ops.POW`, `xpow` =
   `exp2 (y log2 |x|)`).
 - **Raven:** `lower_real.ml` (`pow`).
 - **Differs:** rounding `y log2 |x|` costs up to about its magnitude in ulps.
@@ -382,7 +384,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A19. Maximum and minimum
 
-- **Reference:** `mixin/elementwise.py:378,393` (`Ops.MAX`; `minimum` as
+- **Reference:** `mixin/elementwise.py:377,392` (`Ops.MAX`; `minimum` as
   `-max(-x, -y)`).
 - **Raven:** `lower_real.ml` (`maximum`, `minimum`).
 - **Differs:** NaN where an operand is NaN; otherwise the greater (lesser)
@@ -397,7 +399,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A20. Less than or equal
 
-- **Reference:** `mixin/elementwise.py:330` (`not (x > y)`).
+- **Reference:** `mixin/elementwise.py:329` (`not (x > y)`).
 - **Raven:** `lower_real.ml` (`le`, through `compare`).
 - **Differs:** `x < y or x = y`, false on NaN; tinygrad's is true on NaN.
 - **nx:** `prog.mli`, Domains: every comparison with a NaN is false but
@@ -438,7 +440,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### A24. Logarithm by fdlibm, NaN below zero
 
-- **Reference:** `mixin/elementwise.py:830` (`log2 (x) * ln 2`), whose `log2`
+- **Reference:** `mixin/elementwise.py:828` (`log2 (x) * ln 2`), whose `log2`
   is `codegen/decomp/transcendental.py:219` (`xlog2`) on a target without it.
 - **Raven:** `lower_real.ml` (`log`).
 - **Differs:** the product by `ln 2` adds its rounding to `log2`'s error, two
@@ -493,8 +495,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### R3. Extremes of reductions and scans order keys
 
-- **Reference:** `mixin/reduce.py:73` (`max`, `Ops.MAX`), `mixin/op.py:473`
-  (`min`, `-max(-x)`), `:798`, `:816` (`cummax`, `cummin`).
+- **Reference:** `mixin/reduce.py:73` (`max`, `Ops.MAX`), `mixin/op.py:496`
+  (`min`, `-max(-x)`), `:821`, `:839` (`cummax`, `cummin`).
 - **Raven:** `lower_reduce.ml` (`order`, `extreme`).
 - **Differs:** a float extreme is the `Max` of order keys: the signed integer
   of the bits with a negative float's magnitude flipped, complemented for a
@@ -510,7 +512,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### R4. Arg-reductions match bits
 
-- **Reference:** `mixin/op.py:863` (`argmax`), `:890` (`argmin`).
+- **Reference:** `mixin/op.py:886` (`argmax`), `:913` (`argmin`).
 - **Raven:** `lower_reduce.ml` (`same`, `position`, `changes`).
 - **Differs:** the extreme is R3's; its position is that of the first term
   with its bits, or with a NaN where it is a NaN. tinygrad's equality with the
@@ -526,8 +528,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### R5. Stable sorts of packed keys
 
-- **Reference:** `mixin/op.py:913` (`sort`: a bitonic network of the values,
-  each position recovered by matching equal values and their counts), `:965`
+- **Reference:** `mixin/op.py:936` (`sort`: a bitonic network of the values,
+  each position recovered by matching equal values and their counts), `:988`
   (`argsort`).
 - **Raven:** `lower_index.ml` (`bitonic`, `ranked`, `key`, `keys`, `sort`).
 - **Differs:** tinygrad's network sorts order keys, each the unsigned integer
@@ -547,7 +549,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### I2. Pieces are selected as their bits
 
-- **Reference:** `mixin/op.py:750` (`cat`: each piece zero-padded to the whole,
+- **Reference:** `mixin/op.py:773` (`cat`: each piece zero-padded to the whole,
   the pieces summed).
 - **Raven:** `lower_index.ml` (`assemble`, `placed`, `joined`).
 - **Differs:** an assembly places each piece at its region and selects it with
@@ -571,7 +573,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### I3. Gather by an index
 
-- **Reference:** `mixin/op.py:1041` (`gather`: a one-hot selection summed).
+- **Reference:** `mixin/op.py:1064` (`gather`: a one-hot selection summed).
 - **Raven:** `lower_index.ml` (`take`, `gather`).
 - **Differs:** a gather is one tolk INDEX of the operand, flattened, at each
   element's offset. A position outside the axis, found by an unsigned
@@ -587,8 +589,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### I4. Scatter keeps unreached positions and sets bits
 
-- **Reference:** `mixin/op.py:1077` (`_pre_scatter`), `:1127`
-  (`scatter_reduce` sum: the masked updates summed, then `x` added), `:1168`
+- **Reference:** `mixin/op.py:1100` (`_pre_scatter`), `:1150`
+  (`scatter_reduce` sum: the masked updates summed, then `x` added), `:1191`
   (`scatter` through `_masked_merge`, one `where` per update along the axis).
 - **Raven:** `lower_index.ml` (`scatter`, `summed`).
 - **Differs:** each element meets each update along the axis in a mask.
@@ -632,7 +634,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### I7. A window longer than its axis gives none
 
-- **Reference:** `mixin/op.py:1323` (`pool`).
+- **Reference:** `mixin/movement.py:614,619` (`_pool`).
 - **Raven:** `lower.ml` (`window`).
 - **Differs:** a window whose span exceeds its axis gives an axis of no
   windows; tinygrad's pool refuses it.
@@ -646,7 +648,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### L1. Products widen before they multiply
 
-- **Reference:** `mixin/op.py:367` (`dot`: `(x * w).sum(-1)`, the products at
+- **Reference:** `mixin/op.py:390` (`dot`: `(x * w).sum(-1)`, the products at
   the operands' dtype, summed in `sum_acc_dtype`'s).
 - **Raven:** `lower_reduce.ml` (`entered`, `sum`, `contract`).
 - **Differs:** each operand is stored into the accumulator's dtype, times its
@@ -666,7 +668,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### L2. QR by Householder reflections, R triangular
 
-- **Reference:** `mixin/op.py:1799` (`qr`).
+- **Reference:** `mixin/op.py:1838` (`qr`).
 - **Raven:** `lower_linalg.ml` (`householder`, `triu`, `qr`).
 - **Differs:** tinygrad's reflections, with LAPACK's choice of columns: a
   column already zero below the diagonal takes no reflection and keeps its
@@ -687,7 +689,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### L3. SVD sweeps to the roundoff and completes its vectors
 
-- **Reference:** `mixin/op.py:1817` (`svd`: `4 num` rounds of one-sided Jacobi
+- **Reference:** `mixin/op.py:1856` (`svd`: `4 num` rounds of one-sided Jacobi
   rotations over a round-robin pairing, the singular values sorted by
   `sort`, `U`'s columns divided by them).
 - **Raven:** `lower_linalg.ml` (`sweeps`, `rounds`, `converged`, `svd`).
@@ -771,9 +773,9 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 ### L7. Segmented contractions read each group's indices by position
 
 - **Reference:** none: tinygrad has no segmented contraction. Its gather,
-  `mixin/op.py:1041`, is a one-hot `where` summed over the axis, which
-  `codegen/simplify.py:153` (`pm_reduce_load_collapse`, under
-  `pm_load_collapse`) rewrites into a load at the index.
+  `mixin/op.py:1064`, is a one-hot `where` summed over the axis, which
+  `codegen/simplify.py:122` (`pm_reduce_load_collapse`, under
+  `pm_load_collapse`, `:157`) rewrites into a load at the index.
 - **Raven:** `lower_reduce.ml` (`rows`, `blocked`, `group_sums`,
   `block_size`), `lower_bits.ml` (`take`).
 - **Differs:** a `Rows` row reads `b` at its group's index as a sum over the
