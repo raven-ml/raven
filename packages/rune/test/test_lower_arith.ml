@@ -702,6 +702,18 @@ let constant_divisors =
   family "divisions by constants give eager's bits" integers by_constants
     ~arity:1
 
+(* Powers by constants: tolk unrolls a constant exponent into products, and a
+   negative one gives 0 but for a base of 1 or -1. *)
+let by_exponents d =
+  List.map
+    (fun c ->
+      ( Printf.sprintf "pow by %Ld" c,
+        fun add -> add (K.Op2 (Binary Pow, 0, add (constant d c))) ))
+    [ 0L; 1L; 2L; 3L; 7L; 33L; 65L; -1L; -2L ]
+
+let constant_exponents =
+  family "powers by constants give eager's bits" integers by_exponents ~arity:1
+
 (* A narrow float's transcendental kind computes at float32 and rounds once, so
    it is within one ulp of the correctly rounded result: float64's function of
    the operands, rounded once by nx's cast, and exact where C99 Annex F gives a
@@ -1190,6 +1202,7 @@ let () =
          unary;
          binary;
          constant_divisors;
+         constant_exponents;
          rounded;
          cast;
          casts16;

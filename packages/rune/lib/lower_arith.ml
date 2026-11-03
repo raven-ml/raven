@@ -277,18 +277,12 @@ let int_unary d (k : P.unary) x =
   | Floor | Ceil | Round | Trunc -> x
   | _ -> invalid_arg "Lower_arith: a float kind of an integer"
 
-(* [x] to the power [e], wrapping, by squaring over [e]'s bits. A negative
-   exponent gives 0 but for a base of 1 or -1. *)
+(* [x] to the power [e], wrapping: tolk's power of the unsigned patterns, which
+   squares over the exponent's bits, or multiplies out a constant one, in a type
+   whose products wrap. A negative exponent gives 0 but for a base of 1 or -1,
+   selected on the signed values. *)
 let int_pow d x e =
-  let b = lift d x and n = lift d e in
-  let width = Stdlib.( * ) 8 (Dtype.itemsize (Ops.dtype b)) in
-  let rec go k r b =
-    if Stdlib.( = ) k width then r
-    else
-      let set = Ops.shr n (num n k) land 1 <> num n 0 in
-      go (Stdlib.( + ) k 1) (where set (r * b) r) (b * b)
-  in
-  let power = store d (go 0 (num b 1) b) in
+  let power = store d (Ops.alu (lift d x) Op.Pow [ lift d e ]) in
   if not (is_signed d) then power
   else
     let one = num x 1 and minus = num x (-1) in
