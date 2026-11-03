@@ -3,19 +3,22 @@
 rune follows JAX for what its transformations mean and tinygrad, through
 tolk, for how it lowers nx's operations. This file lists where it departs
 from either: each entry names the code (file and function), what differs
-and why, and the test that pins it. An entry goes when its reason goes,
-and its number is not reused.
+and why, and the test that pins it. A reference is cited by file and line at
+the version its section pins; raven code by file and function, never by line.
+An entry goes when its reason goes, and its number is not reused.
 
 A test is named by its module's suite (`packages/rune/test/test_<module>.ml`)
 and its path in it.
 
 ## Transformations
 
-The reference is JAX's `jax.lax` and `jax.vmap`.
+The reference is JAX's `jax.lax` and `jax.vmap` at `jax-v0.12.0.1`
+(`dc4af684446e`), its files under `jax/_src/`.
 
 ### T1. A switch index out of range raises
 
-- **Reference:** `lax.switch` clamps its index into `0 .. n-1`.
+- **Reference:** `lax/control_flow/conditionals.py:70,132` (`switch`: the
+  index clamped into `0 .. n-1`).
 - **Raven:** `program.ml` (`default`, its `Switch` case); `compile.ml`
   (`switch`); `vmap.ml` (`switch_apart`).
 - **Differs:** an index outside `0 .. n-1` raises `Invalid_argument` at the
@@ -26,8 +29,10 @@ The reference is JAX's `jax.lax` and `jax.vmap`.
 
 ### T2. An iterate is bounded and differentiates in reverse
 
-- **Reference:** `lax.while_loop` runs any number of steps and has no reverse
-  derivative; a loop differentiated in reverse is a `scan` of fixed length.
+- **Reference:** `lax/control_flow/loops.py:1663` (`while_loop`, any number of
+  steps), `:2131` (`_while_transpose_error`: no reverse derivative), `:2671`
+  (`fori_loop`: a loop differentiated in reverse is a `scan` of fixed
+  length).
 - **Raven:** `rune.ml` (`iterate_named`); `trace.ml` (`iterate_parts`);
   `program.ml` (`iterate`); `compile.ml` (`loop`).
 - **Differs:** an iterate takes a `max` and raises when `until` still fails
@@ -49,10 +54,11 @@ The reference is JAX's `jax.lax` and `jax.vmap`.
 ### T3. Lanes that part are held
 
 - **Reference:** under `vmap`, a `lax.switch` whose index has lanes runs every
-  branch over every lane and selects. A `lax.while_loop` whose test has lanes
-  runs the body over every lane until the last stops, selecting each stopped
-  lane's carry: its documentation is silent there, and its batching rule
-  (`jax/_src/lax/control_flow/loops.py`, `_while_loop_batching_rule`) does
+  branch over every lane and selects (`lax/control_flow/conditionals.py:461`,
+  `_cond_batching_rule`). A `lax.while_loop` whose test has lanes runs the
+  body over every lane until the last stops, selecting each stopped lane's
+  carry: its documentation is silent there, and its batching rule
+  (`lax/control_flow/loops.py:1860`, `_while_loop_batching_rule`) does
   this.
 - **Raven:** `vmap.ml` (`donors`, `lend`, `switch_apart`, `iterate`,
   `masked_scan`).
@@ -74,8 +80,8 @@ The reference is JAX's `jax.lax` and `jax.vmap`.
 
 - **Reference:** `jax.jit`'s tracing cache keys on the whole axis
   environment, the name and size of every enclosing named map
-  (`axis_env_state`, `include_in_jit_key=True`, `jax/_src/core.py`), and
-  `jax.lax.axis_size` raises for a name no map binds.
+  (`core.py:1427`, `axis_env_state`, `include_in_jit_key=True`), and
+  `lax.axis_size` raises for a name no map binds (`lax/parallel.py:844`).
 - **Raven:** `jit.ml` (`find`, `current`); `trace.ml` (`trace_in`, its `Bound`
   answer; `claims`); `rune.ml` (`lane_count`).
 - **Differs:** a key holds, for each name the trace passed to `lanes`,
