@@ -977,6 +977,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   optimised: no axis a call's argument reads is upcast or padded, which made
   a vector pointer Clang rejects, or ran the call on a padded point
   (`Postrange.Scheduler.read_by_calls`).
+- `Compiler_cpu.clang` runs LLVM's IR verifier, which a release Clang turns
+  off: a host kernel that an optimization makes invalid raises
+  `Compile_error` naming the kernel instead of compiling into wrong values.
+  Compiles take about 1-2% more instructions.
 - Compiling float64 `Nx.betaincinv`'s gradient allocates 238 M words
   against 365 M and runs 17% fewer instructions, with unchanged output.
 - On the host, `Heuristic` upcasts a reduce kernel's outputs however few

@@ -1,6 +1,8 @@
 ; Settings are read when the program starts, so CACHEDB is set here, to a
-; directory of the sandbox, and the tests tagged no-clang run in a second
-; process, where CC names a program that does not exist.
+; directory of the sandbox, the tests tagged no-clang run in a second
+; process, where CC names a program that does not exist, and those tagged
+; slp-clang in a third, where CC names a script that runs Clang with its
+; straight-line vectorizer on.
 
 (test
  (name test_compiler_cpu)
@@ -8,17 +10,23 @@
  (libraries windtrap tolk tolk_test tolk_run tolk.engine rig unix)
  (deps
   (sandbox always)
-  (glob_files *.golden))
+  (glob_files *.golden)
+  clang_slp
+  vectorized_search.c)
  (action
   (setenv
    CACHEDB
    cache
    (progn
-    (run %{test} --exclude-tag no-clang)
+    (run %{test} --exclude-tag no-clang --exclude-tag slp-clang)
     (setenv
      CC
      /nonexistent/clang
-     (run %{test} --tag no-clang))))))
+     (run %{test} --tag no-clang))
+    (setenv
+     CC
+     ./clang_slp
+     (run %{test} --tag slp-clang))))))
 
 ; The system and machine the suite runs on, whose processor it compiles for.
 

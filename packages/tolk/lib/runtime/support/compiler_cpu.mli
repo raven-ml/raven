@@ -43,20 +43,24 @@ val clang : string -> Renderer.Compiler.t
     loop's iterations into vectors, so that a long source compiles in a
     fraction of the time.
 
-    Several sources ({!Renderer.Compiler.compile_all}) compile in one run of
-    Clang's compiler proper, its [-cc1] command as Clang states it runs for
-    these options ([clang -###]), each source from a file of its own, so that
-    Clang starts once for them; each object is the one Clang makes of its
-    source alone, from standard input.
+    Clang's compiler proper runs as Clang states it runs for these options
+    ([clang -###]), its [-cc1] command, with LLVM's IR verifier on, which a
+    release Clang turns off: code that an optimization makes invalid raises
+    {!Renderer.Compiler.Compile_error} with Clang's diagnostic, which names the
+    function, where it would compile into wrong values or crash Clang. Several
+    sources ({!Renderer.Compiler.compile_all}) compile in one run of it, each
+    source from a file of its own, so that Clang starts once for them; each
+    object is the one Clang makes of its source alone, from standard input.
 
     Objects do not depend on the working directory. With {!Setting.ccache}, they
     are cached in the table [compile_C_obj_A_D], where [C] is the Clang run, [A]
     is [arch] with its commas replaced by underscores, and [D] the digest of
-    what that Clang states it runs ([clang -###]) to compile a source of at
-    most and of more than 400 000 bytes, and of that length: its version and
-    installation, the processor and features it compiles for, and every
-    option, or why it rejects them or does not run. An object is read back
-    only for its source, compiled by the same Clang with the same options.
+    that Clang's version and installation ([clang --version]), of the command
+    of its compiler proper that compiles a source of at most and of more than
+    400 000 bytes, and of that length: the command names the processor and
+    features it compiles for and every option, or is replaced by why Clang
+    rejects them or does not run. An object is read back only for its source,
+    compiled by the same Clang with the same options.
     Clang is asked once per process for its version and for each set of
     options, when the table or a compile first needs it.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with

@@ -2830,10 +2830,12 @@ encodes its barriers (D146).
   (`Setting.beam_padto` to `Setting.beam_estimate`) and `Search.beam_search`'s
   key.
 - **Differs:** a table also names everything besides the source that
-  determines a binary: for Clang, the digest of what `clang -###` states it
-  runs (its version and installation, the processor and features `native`
-  resolves to, every option) for a short and a long source, and the length
-  between them (D167), with `-ffile-compilation-dir=.` keeping the
+  determines a binary: for Clang, the digest of its version and
+  installation (`clang --version`), of the command of its compiler proper
+  that compiles a short and a long source, as `clang -###` states it with
+  the IR verifier on (D275: the processor and features `native` resolves
+  to, every option), and of the length between them (D167), with
+  `-ffile-compilation-dir=.` keeping the
   working directory out; for MTLCompiler, NVRTC and comgr, the build of macOS
   or the library's file, size and modification time, and the options, PTX or
   cubin included. The table is the compiler's identity whatever `CCACHE`
@@ -4802,7 +4804,8 @@ fold wraps integers and holds its float bound`, hold.
   kernel. `llvm-reduce` brings it to 40 instructions of selects, truncations
   to i32, `or`, `lshr` and `zext`. Without the vectorizer the kernel gives
   every row. The Clangs of LLVM 20 and later are not checked; Apple's state
-  no LLVM version and keep the vectorizer.
+  no LLVM version and keep the vectorizer. With the IR verifier on (D275),
+  invalid IR from it is a compile error naming the kernel.
 
   (d), the loop vectorizer: rune's test_special timed out at 60 s on Ubuntu
   CI compiling float64 `betainccinv`'s gradients. Each is one scalar loop
@@ -5976,7 +5979,8 @@ the walk of `Rangeify.fix_store_hazard`.
   time, to lower and render until none is left, then compile their sources,
   each compiler's in one call (`Renderer.Compiler.compile_all`), which Clang
   serves with one run of its compiler proper (`clang -cc1`, the command
-  Clang states for the options with `-###`), each source the file `-` of a
+  Clang states for the options with `-###`, its IR verifier on, D275), each
+  source the file `-` of a
   directory of its own, after a line marker that names it `<stdin>`, the
   files named in a response file. Each object is the one Clang's driver
   makes of the source alone from standard input, so the cache keys, tables
@@ -6766,3 +6770,40 @@ the walk of `Rangeify.fix_store_hazard`.
   refused on such an axis and applied on another, a local split applied,
   and a tensor core refused. The Heuristic suite: `streaming › a kernel
   whose call reads its output axes is not streamed`.
+
+## D275. Clang compiles with LLVM's IR verifier on
+
+- **tinygrad:** `runtime/support/compiler_cpu.py:21`
+  (`ClangCompiler.compile`, Clang's driver with its defaults, which in a
+  release build pass `-disable-llvm-verifier` to the compiler proper).
+- **tolk:** `Compiler_cpu.cc1`, which drops `-disable-llvm-verifier` from
+  the command Clang states, and `Compiler_cpu.clang`'s `table`, which
+  digests the command run (D113).
+- **Differs:** the compiler proper runs with the verifier on: it checks the
+  IR Clang makes of the source before the optimizations, and again before
+  instruction selection, and invalid IR stops the compile with a diagnostic
+  that names the function, which `Renderer.Compiler.Compile_error` carries.
+  Clang's release notes put the verifier's cost at "a few percent". On
+  fudge (Clang 19.1.7, the host's arguments, cachegrind's instruction
+  counts) it costs 0.5-2.2% of a kernel's compile: 1.1% for `trig/sin`'s
+  kernel, 2.2% for a `scan/checks-48` kernel, 0.5% for a
+  `model/schools-start` kernel, 1.5% for `rng/normal-f64`'s, 1.9% for
+  `special/betainc-chain-f32`'s and 1.5% for
+  `special/betaincinv-grad-f64`'s, of 600 M to 25 G instructions. The
+  verifier after every pass (`-llvm-verify-each`) cost 6.6-36% on the same
+  kernels and names the pass, not the function; both cases below survive
+  to instruction selection, where the verifier above stops them.
+- **Reason:** (e): an optimization that writes invalid IR goes unseen by a
+  release Clang. LLVM 19's straight-line vectorizer wrote `trunc <4 x i8>
+  ... to <4 x i32>` for rune's routed rows (D167), which compiled into
+  garbage row numbers; LLVM 18's wrote `sext <4 x i32> to <4 x i16>` for
+  `r_3_2`, which crashed instruction selection. D167 turns that vectorizer
+  off for those two releases only; Clangs of LLVM 20 and later and Apple's
+  are unchecked, and with the verifier on, a defect of their passes of that
+  kind is a compile error instead of wrong values. With the verifier,
+  Clang 18 rejects `r_3_2` naming it, and Clang 19 `E_16_2_4`. tinygrad's
+  own LLVM compiler verifies its input and runs the verifier after every
+  pass (`runtime/support/compiler_llvm.py:29,57`).
+- **Pinned by:** `Tolk.Compiler_cpu › invalid IR › a source that LLVM 19's
+  straight-line vectorizer makes invalid raises Compile_error naming its
+  function`, under a Clang of LLVM 19 with that vectorizer turned back on.

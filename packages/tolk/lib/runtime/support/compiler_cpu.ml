@@ -76,24 +76,34 @@ let unquoted line =
   in
   outside 0 []
 
-(* The command of Clang's compiler proper ([-cc1]) that a statement of a
-   compile from standard input to standard output names, without its input
-   and output, or the statement if it names none: then Clang rejected the
-   arguments or did not run. *)
+(* The command of Clang's compiler proper ([-cc1]) that a statement of a compile
+   from standard input to standard output names, without its input and output
+   and with LLVM's IR verifier on, or the statement if it names none: then Clang
+   rejected the arguments or did not run.
+
+   A release Clang turns the verifier off ([-disable-llvm-verifier]) to compile
+   a few percent faster. An optimization that writes invalid IR then goes
+   unseen, and the code compiles into wrong values or crashes the instruction
+   selector: LLVM 19's straight-line vectorizer wrote [trunc <4 x i8> to <4 x
+   i32>] for four lanes of a binary search, and the kernel read garbage row
+   numbers. With the verifier on, the IR is checked before the optimizations and
+   again before instruction selection, and invalid IR stops the compile with
+   Clang's diagnostic, which names the function. *)
 let cc1 stated =
   let command line =
     match unquoted line with
     | prog :: "-cc1" :: args -> Some (prog, "-cc1" :: args)
     | _ -> None
   in
-  let rec without_io = function
-    | "-o" :: "-" :: args -> without_io args
+  let rec kept = function
+    | "-o" :: "-" :: args -> kept args
     | [ "-" ] -> []
-    | a :: args -> a :: without_io args
+    | "-disable-llvm-verifier" :: args -> kept args
+    | a :: args -> a :: kept args
     | [] -> []
   in
   match List.find_map command (String.split_on_char '\n' stated) with
-  | Some (prog, args) -> Ok (prog, without_io args)
+  | Some (prog, args) -> Ok (prog, kept args)
   | None -> Error stated
 
 (* Several sources compiled by one run of Clang's compiler proper, each from a
@@ -364,7 +374,8 @@ let clang arch =
      selection crashed. For four lanes of a binary search on a processor with
      AVX2, LLVM 19 wrote [trunc <4 x i8> to <4 x i32>], which a Clang without
      its IR verifier compiles into wrong values: rune's routed rows read
-     garbage row numbers. Under LLVM 18 and 19 only, that vectorizer is off,
+     garbage row numbers, and with it ([cc1]) the compile fails. Under LLVM 18
+     and 19 only, that vectorizer is off,
      so that other Clangs compile as before. The flags follow -O2, which would
      turn the vectorizers back on. The statement is memoized: asking for the
      arguments again costs a lookup. *)
@@ -381,14 +392,21 @@ let clang arch =
     @ (if long then [ "-fno-vectorize" ] else [])
     @ io
   in
-  (* An object is a function of its source and of the arguments its length
-     selects, so the table names both statements and the length. *)
+  let command ~long = cc1 (statement cc (args ~long)) in
+  (* An object is a function of its source, of the Clang and of the command its
+     length selects, so the table names the Clang's version, both commands, or
+     why Clang states none, and the length. *)
   let table () =
+    let named = function
+      | Ok (prog, args) -> String.concat "\n" (prog :: args)
+      | Error stated -> stated
+    in
     let stated =
       String.concat "\n"
         [
-          statement cc (args ~long:false);
-          statement cc (args ~long:true);
+          version cc;
+          named (command ~long:false);
+          named (command ~long:true);
           string_of_int long_source;
         ]
     in
@@ -404,7 +422,7 @@ let clang arch =
       match List.filter (fun src -> long src = longer) srcs with
       | [] -> []
       | some -> (
-          match cc1 (statement cc (args ~long:longer)) with
+          match command ~long:longer with
           | Ok command -> compile_files command some
           | Error why -> raise (Renderer.Compiler.Compile_error why))
     in

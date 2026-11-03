@@ -1,0 +1,3 @@
+#!/bin/sh
+# Clang with its straight-line vectorizer on, after whatever turns it off.
+exec clang "$@" -fslp-vectorize

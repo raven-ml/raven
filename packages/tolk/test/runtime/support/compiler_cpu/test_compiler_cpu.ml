@@ -608,6 +608,39 @@ let errors =
               in_order ~subs:[ "error"; "undeclared_name" ] msg);
     ]
 
+(* With the straight-line vectorizer on: CC is read once, when the first
+   compile runs, so these tests run in a process of their own, where CC names
+   a script that runs Clang with that vectorizer on, whatever turns it off
+   before. *)
+
+let invalid_ir =
+  tag "slp-clang"
+  @@ group "invalid IR"
+       [
+         test
+           "a source that LLVM 19's straight-line vectorizer makes invalid \
+            raises Compile_error naming its function" (fun () ->
+             if Sys.win32 then skip ~reason:"CC is a shell script" ();
+             let stated =
+               Helpers.system (Setting.value Setting.cc ^ " --version")
+             in
+             if
+               has_infix ~affix:"Apple" stated
+               || not (has_infix ~affix:"clang version 19." stated)
+             then skip ~reason:"not a Clang of LLVM 19" ();
+             let src =
+               In_channel.with_open_bin "vectorized_search.c"
+                 In_channel.input_all
+             in
+             match
+               ccache_off (fun () ->
+                   Compiler.compile (Compiler_cpu.clang "x86_64,x86-64-v3") src)
+             with
+             | _ -> fail "Clang compiled the invalid IR"
+             | exception Compiler.Compile_error msg ->
+                 contains ~sub:"E_16_2_4" msg);
+       ]
+
 (* Without Clang: CC is read once, when the first compile runs, so these tests
    run in a process of their own, where CC names a program that does not
    exist. *)
@@ -760,6 +793,7 @@ let () =
          registers;
          architectures;
          errors;
+         invalid_ir;
          without_clang;
          disassembly_;
          cache;
