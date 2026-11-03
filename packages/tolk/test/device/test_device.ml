@@ -448,6 +448,35 @@ let refuses_textual_binary () =
   refuses (fun () ->
       Elf.of_program (with_source 3 (Ops.v Binary ~arg:(String "lib")) prg))
 
+(* Every program of a source and a binary from a few texts, each with the pair
+   it was made of. *)
+let compiled =
+  let texts = [ ""; "a"; "\x7fELF'\x00" ] in
+  List.concat_map
+    (fun source ->
+      List.map
+        (fun binary ->
+          let prg =
+            with_source 3
+              (Ops.v Binary ~arg:(Bytes binary))
+              (with_source 2 (Ops.v Source ~arg:(String source)) (program []))
+          in
+          ((source, binary), prg))
+        texts)
+    texts
+
+let keys_programs_apart () =
+  List.iter
+    (fun (t0, p0) ->
+      List.iter
+        (fun (t1, p1) ->
+          let k0 = (Elf.of_program p0).profile_key
+          and k1 = (Elf.of_program p1).profile_key in
+          if t0 = t1 then equal (option string) k0 k1
+          else not_equal (option string) k0 k1)
+        compiled)
+    compiled
+
 let of_program =
   group "Tiny_elf.of_program"
     [
@@ -472,6 +501,8 @@ let of_program =
                 (Some (Ops.key prg))
                 (Elf.of_program prg).profile_key)
             cases);
+      test "keys equal programs alike and programs that differ apart"
+        keys_programs_apart;
       test "names the program after its kernel, as an identifier" (fun () ->
           equal string "r3Ascalars202" (elf_of "scalars").name;
           equal string "a_b2E"

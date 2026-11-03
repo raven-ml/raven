@@ -563,6 +563,11 @@ let structure_order =
           Law.order by_structure (build vars r0, build vars r1, build vars r2));
     ]
 
+(* Short texts of quotes, escapes and bytes past ASCII, often equal. *)
+let texts =
+  Gen.string_of ~size:(Gen.int_range 0 2)
+    (Gen.of_list [ 'a'; '\''; '\000'; '\xff' ])
+
 let keys =
   group "key"
     [
@@ -594,6 +599,18 @@ let keys =
           not_equal string
             (Ops.key (Ops.sink ~kernel:(Ops.kernel_info ()) []))
             (Ops.key (Ops.sink ~kernel:(Ops.kernel_info ~beam:3 ()) [])));
+      prop "tells apart sources and binaries by their text"
+        (Gen.pair texts texts) (fun (t0, t1) ->
+          cover "equal texts" (String.equal t0 t1);
+          List.iter
+            (fun (what, node) ->
+              let k0 = Ops.key (node t0) and k1 = Ops.key (node t1) in
+              if String.equal t0 t1 then equal ~msg:what string k0 k1
+              else not_equal ~msg:what string k0 k1)
+            [
+              ("source", fun t -> Ops.v Source ~arg:(String t));
+              ("binary", fun t -> Ops.v Binary ~arg:(Bytes t));
+            ]);
       test "tells apart NaN constants of different bits" (fun () ->
           let nan bits = Ops.float (Int64.float_of_bits bits) in
           let quiet = nan 0x7FF8_0000_0000_0000L in
@@ -632,6 +649,17 @@ let keys_with =
           let u = Ops.O.(fvar "x" + quiet) in
           let payload = Ops.arg (nan 0x7FF8_0000_0000_0001L) in
           let arg n = if n == quiet then Some payload else None in
+          equal string (Ops.key (with_args arg u)) (Ops.key_with ~arg u);
+          not_equal string (Ops.key u) (Ops.key_with ~arg u));
+      test "is the key of a source and a binary of the texts given" (fun () ->
+          let source = Ops.v Source ~arg:(String "a")
+          and binary = Ops.v Binary ~arg:(Bytes "\x7fELF") in
+          let u = Ops.sink [ source; binary ] in
+          let arg n =
+            if n == source then Some (Ops.String "b'")
+            else if n == binary then Some (Ops.Bytes "\x00\xff")
+            else None
+          in
           equal string (Ops.key (with_args arg u)) (Ops.key_with ~arg u);
           not_equal string (Ops.key u) (Ops.key_with ~arg u));
       test "is the key when no argument is given" (fun () ->

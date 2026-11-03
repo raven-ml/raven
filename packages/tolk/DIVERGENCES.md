@@ -405,7 +405,8 @@ sign is unspecified, and rune hands tolk no 8-bit float, so
 - **tinygrad:** `uop/ops.py:253-255` (`key`, the SHA-256 of
   `str((op, dtype, arg))` followed by the keys of the sources).
 - **tolk:** `Ops.key`.
-- **Differs:** the same text is digested with BLAKE2b-256.
+- **Differs:** the same text is digested with BLAKE2b-256, but for a string
+  or bytes argument, which enters as its own digest (D193).
 - **Reason:** (a). No key is ever compared with a key tinygrad computed: keys
   name compiled programs in caches that tolk alone writes, so the digest
   is free to differ, and tolk takes the one OCaml's standard library
@@ -5518,3 +5519,32 @@ fold wraps integers and holds its float bound`, hold.
   read what other warps' calls wrote to local memory, on CUDA` and `› calls
   read what other warps wrote to local memory, on CUDA` (both skipped
   without a CUDA GPU).
+
+## D193. A string or bytes argument enters a key as its digest
+
+- **tinygrad:** `uop/ops.py:253-255` (`key`, the SHA-256 of
+  `str((op, dtype, arg))`, which quotes a string or bytes argument whole,
+  followed by the keys of the sources) and `:1277` (`to_elf`, whose profile
+  key is the program's `key`).
+- **tolk:** `Ops.key_of_arg`, which `Ops.key` and `Ops.key_with` read, and
+  so `Device.Tiny_elf.of_program`.
+- **Differs:** a `String` or `Bytes` argument enters the digested text as
+  `String(h)` or `Bytes(h)`, `h` the BLAKE2b-256 digest of its contents in
+  hexadecimal, where tinygrad writes its literal. Keys stay equal for equal
+  graphs and different for different ones; no key is compared with one
+  tinygrad computed (D12).
+- **Reason:** (d): a compiled program's profile key digests its source and
+  binary, megabytes for rune's special-function gradients. Writing the
+  binary's literal, a `\xNN` for each byte past ASCII, took 22 M of the 28 M
+  words that keying the program took in rune's
+  `compile/special/betaincinv-grad-f64` row, whose cold compile now
+  allocates 357 M words against 382 M, counted at the process's exit. Every
+  rune compile row allocates 0.6% to 23% fewer words. A literal written
+  without the formatter would still be several times the binary's size,
+  built once to be digested and held by the node after. The row's baseline on
+  fudge is pending a quiet run, and the compile bench records time alone.
+- **Pinned by:** the Ops suite: `key › tells apart sources and binaries by
+  their text` and `key_with › is the key of a source and a binary of the
+  texts given`; the Device suite: `Tiny_elf.of_program › keys equal programs
+  alike and programs that differ apart`; rune's
+  `compile/special/betaincinv-grad-f64` row, once recorded on fudge.

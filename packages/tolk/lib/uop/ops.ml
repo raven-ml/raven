@@ -1083,14 +1083,23 @@ let compare_structure u0 u1 =
   in
   cmp u0 u1
 
-(* An argument as [key] reads it: its repr, which writes every NaN [nan], with a
-   NaN constant's bits, since NaNs of different bits are different nodes. *)
+(* An argument as [key] reads it. A NaN constant enters with its bits, since
+   NaNs of different bits are different nodes and a repr writes every NaN [nan].
+   A string or bytes argument, which can be a program's source or binary of
+   megabytes, enters as its digest: its repr would be several times its size.
+   Any other enters as its repr, which [repr] gives. *)
 let nan_key x = strf "ConstFloat(nan 0x%Lx)" (Int64.bits_of_float x)
 
-let arg_key n =
-  match n.arg with
+let text_key kind s =
+  kind ^ "(" ^ Digest.BLAKE256.to_hex (Digest.BLAKE256.string s) ^ ")"
+
+let key_of_arg repr = function
   | Const (`Float x) when Float.is_nan x -> nan_key x
-  | _ -> arg_repr n
+  | String s -> text_key "String" s
+  | Bytes b -> text_key "Bytes" b
+  | _ -> repr ()
+
+let arg_key n = key_of_arg (fun () -> arg_repr n) n.arg
 
 (* A node's digest from its argument's key and its sources' digests. *)
 let rec add_keys b src_key = function
@@ -1126,9 +1135,9 @@ let key_with ~arg u =
   List.iter
     (fun n ->
       match arg n with
-      | Some (Const (`Float x)) when Float.is_nan x ->
-          Tbl.replace moved n (digest n (nan_key x) src_key)
-      | Some a -> Tbl.replace moved n (digest n (repr_arg a) src_key)
+      | Some a ->
+          let text = key_of_arg (fun () -> repr_arg a) a in
+          Tbl.replace moved n (digest n text src_key)
       | None ->
           if List.exists is_moved n.src then
             Tbl.replace moved n (digest n (arg_key n) src_key)

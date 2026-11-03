@@ -924,6 +924,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Ops.key` digests a string or bytes argument without writing its literal,
+  so keying a compiled program, as `Device.Tiny_elf.of_program` does, no longer
+  quotes its source and binary: rune's cold compiles allocate up to 23% fewer
+  words, 6% for a special function's gradient.
 - `Heuristic.hand_coded_optimizations` tries the tensor cores first for a
   contraction past 64 multiply-adds per byte of its streamed operand, as routed
   blocks sharing experts are: gpt-oss-20b's 512-token prefill 0.19 s from 0.45.
