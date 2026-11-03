@@ -110,10 +110,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   sharply (gpt_oss_kv 22-34 ms -> 0.9-1.1 s, qkv 0.26 -> 1.5 s) and may lose
   1.2x on an 8-output matvec at K = 1M across all cores (estimated): a
   floor counted in D80's split-loop iterations, with both costs measured
-- float8 emulation upcast lane by lane makes large host kernels: a
-  float8_e4m3fn kernel at 36 masked lanes is 829 KB of C and 1.9-2.2 s in
-  Clang (0.07 s at 12 lanes; seed s1:a9af9f06d362c663 of test_iterate's
-  "lanes stop apart")
 - `Nx_quant.apply_experts` of gpt-oss's gate and up projection at 512
   tokens takes 26.4-27.6 ms on fudge's CUDA against 3.14-3.23 ms through
   `Nx.map_segments`' blocks: one route row per thread group, so no decoded

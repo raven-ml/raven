@@ -3535,7 +3535,7 @@ driver signals its own (D146).
   lane, on every target);
   `renderer/cstyle.py:40`, which writes every conversion as a C cast, for a
   vector a reinterpretation of its bits.
-- **tolk:** `Renderer.t`'s `vector_alu`; `Codegen.constant_lanes`,
+- **tolk:** `Renderer.t`'s `vector_alu`; `Codegen.lanes_of`,
   `Codegen.in_order`, `Codegen.vector_operation`, `Codegen.distinct_lanes`,
   `Codegen.vector_dtypes`, `Codegen.do_devectorize`,
   `Codegen.address_lanes`, `Codegen.pm_vector_constants`,
@@ -3551,15 +3551,15 @@ driver signals its own (D146).
   Clang does). There an elementwise operation of several lanes on a type the
   target computes natively stays one operation on a vector of its lanes, on
   one axis, when each source holds them in order: a vector
-  operation, constants in any view (a literal), a stack of loads of memory, a
-  load in as many lanes as read it, and of lanes of vectors, each in one
-  lane, or a scalar that every lane reads, and when no two of its lanes read
-  the same sources: a lane of a vector operation is its own, a lane of a
-  stack its element. A source that holds computed lanes in
-  another order, a broadcast or a permutation across lanes, or apart in
-  registers, as an accumulator's lanes, costs a vector shuffles that a scalar
-  reads for free, and lanes that repeat are computed once each apart: such an
-  operation computes each lane apart. Loads, stores, tensor-core products,
+  operation, or a view (reshapes, broadcasts, permutations, stacks) of
+  constants (a literal), of loads of memory, of lanes of vectors and of vector
+  operations, a load or a lane in as many lanes as read it (a shuffle), or a
+  scalar that every lane reads, and when no two of its lanes read the same
+  sources: a lane of a vector operation is its own, a lane of a stack its
+  element. A source that holds lanes computed apart, or apart in registers,
+  as an accumulator's lanes, would be put together lane by lane, and lanes
+  that repeat are computed once each apart: such an operation computes each
+  lane apart. Loads, stores, tensor-core products,
   calls, and operations on a weak type (an address) or an emulated one still
   compute each lane apart; an address is computed lane by lane through the vector
   operations it reads, so that accesses still merge. A sum fuses each lane of
@@ -3633,6 +3633,31 @@ driver signals its own (D146).
   time that grows faster than the copies: jera's compiled Milstein march over
   3 elements fuses into one kernel of 3 lanes, whose test compiled in 57 s
   cold, and in 14 s as one vector.
+
+  A broadcast or a permutation of a vector operation's lanes is a shuffle, as
+  a load in several lanes is. Computed apart, an operation that read one went
+  lane by lane, and so did every operation after it, since each read lanes
+  computed apart: a map of 3 lanes over a loop whose lanes stop apart selects
+  each step's values by a lane's flag, a comparison of 3 lanes broadcast
+  across the lane's values, and rune computes each float8 operation in float32
+  between a decode and an encode. rune's test_iterate (`maps › compiled, lanes
+  stop apart at every dtype`, seed `s1:a9af9f06d362c663`) compiled one such
+  kernel of 36 lanes to 828 KB of C, which Clang took 2.4-4.5 s on, and to 38
+  KB, 0.22-0.28 s, as vectors; the test ran in 16.8 s against 3.1 s. The
+  compile bench's `lanes/held-fp8-36`, a step of that shape whose kernel is
+  705 KB of C against 35 KB, takes 3.2-7.2 s against 0.49-1.04 s (fudge at
+  load 24-31, three interleaved runs, the timing lock held per run).
+  Elsewhere the rule turns kernels whose lanes were read apart into vectors
+  read back lane by lane: GGUF's q8_0, q4_k and q6_k host products multiply
+  128 code lanes by a scale broadcast from 4 lanes as one vector, which each
+  lane's multiply-add then reads. On fudge at load 30-60, kaun's
+  `Quant/host/q8_0-product-1-token` took 2.6-3.9 ms against 1.8-3.1 ms
+  unpinned, and 1.2-5.7 ms against 1.8-4.5 ms on its E-cores (six
+  interleaved runs each), and its kernel alone on one E-core 4.6-5.6 ms
+  against 3.9-5.3 ms (four runs, minima of 15 rounds), the q4_k and q6_k rows
+  overlapping as well; no range stands apart. The cascade cost 2-7 s of
+  Clang per kernel at each first call, which outweighs a replay difference
+  no range shows.
 - **Rejected:** host vectors of a power of two of lanes only, made for Ubuntu
   24.04's Clang 18.1.3, which crashed on x86 compiling rune's sort of a uint4
   [2; 3] view (D167): m·2^k lanes as m vectors of 2^k, 6 lanes as 3 of 2, and
@@ -3661,7 +3686,8 @@ driver signals its own (D146).
   programs › a host program computes on vectors of its lanes` (every host
   case), `› a host program of 6 lanes computes one vector`, `› a host program
   of 48 lanes computes one vector`, `› a host program of 24 lanes computes
-  one vector`, `› a host program of n lanes computes one vector` and `› a
+  one vector`, `› a host program of n lanes computes one vector`, `› a host
+  selection by a broadcast of computed lanes computes no lane apart` and `› a
   host sum of a product's unrolled lanes multiplies no vectors` (every case),
   `› a host selection of 8, 16 or 32 lanes by a
   comparison of integers takes each lane's arm` and `› a host selection of 3,
@@ -3673,12 +3699,13 @@ driver signals its own (D146).
   rune's `Lower › padded loads give eager's bits` (a complex128 signalling NaN
   fill); rune's `rune jit › classes › a uint4 sort along the last axis of every
   other row and column, flipped, gives eager's codes` and `› nx.quant's
-  decodes compile`; rune's compile bench: `shaped-4k-3-lanes`. On rune,
-  missing (went with the old rune's rewrite): its Rune.jit suite's `lanes`,
-  `stated values › a window set into bits at an odd offset keeps the bits
-  around it`, and lower_index's `quantised products › a product decodes a
-  checkpoint's codes 16 at once on the host` (with D188) and `› a product
-  over GGUF's Q6_K blocks converts each scale once`. The
+  decodes compile`; rune's compile bench: `shaped-4k-3-lanes` and
+  `lanes/held-fp8-36`. On rune, missing (went with the old rune's rewrite):
+  its Rune.jit suite's `lanes`, `stated values › a window set into bits at an
+  odd offset keeps the bits around it`, and lower_index's `quantised
+  products › a product decodes a checkpoint's codes 16 at once on the host`
+  (with D188) and `› a product over GGUF's Q6_K blocks converts each scale
+  once`. The
   Codegen suite's `invalid_lanes_clang` and `invalid_lanes_int8_clang`, whose
   lanes of one constant compute once.
 

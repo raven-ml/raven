@@ -245,6 +245,45 @@ let shaped_padded () =
     (fun x -> shaped 4096 (Nx.scalar f64 0.5) (Nx.pad [| (0, 1) |] 0.5 x))
     (input ~n:2 0. 1.)
 
+(* A map over 3 lanes of a loop on 4 by 3 float8 values, whose step selects
+   between two polynomials of the values, one of them flipped: lane [i] steps
+   [trips.(i)] times, so the lanes stop apart and each step keeps a stopped
+   lane's values by a selection on its flag. The host upcasts the 3 by 4 by 3
+   values whole, 36 lanes, and rune computes each float8 operation in float32
+   between a decode and an encode. A lane's flag, broadcast across its 12
+   values, left every operation after its selection lane by lane: 0.7 MB of C,
+   and a first call of 3.2-7.2 s against 0.5-1.0 s. *)
+let held_lanes_fp8 () =
+  let x =
+    Nx.place Nx.Host.on
+      (Nx.cast Nx.float8_e4m3fn
+         (Nx.add_s
+            (Nx.mul_s (Nx.Rng.uniform Nx.float32 [| 3; 4; 3 |]) 3.)
+            (-1.5)))
+  in
+  let trips =
+    Nx.place Nx.Host.on (Nx.create Nx.int32 [| 3 |] [| 0l; 2l; 1l |])
+  in
+  let carry = Nx.Ptree.(pair tensor tensor) in
+  let one = Nx.scalar Nx.int32 1l in
+  let step (x, k) =
+    let open Nx in
+    let a = flip ~axes:[ 1 ] (sub (square (sub_s x 3.)) (square (mul x x))) in
+    let b = mul (maximum (mul x x) (abs x)) (sub (maximum x (neg x)) x) in
+    (where (less a b) (mul a b) (sub a b), add k one)
+  in
+  let iterated (x, t) =
+    fst
+      (Rune.iterate carry ~max:2
+         ~until:(fun (_, k) -> Nx.greater_equal k t)
+         step
+         (x, Nx.scalar Nx.int32 0l))
+  in
+  let signature = Nx.Ptree.(carry @-> returns tensor) in
+  ignore
+    (Sys.opaque_identity
+       (Rune.jit signature (Rune.vmap signature iterated) (x, trips)))
+
 (* A chain of 4 float32 incomplete betas of 4 values, each link's point the
    last link's value, under shapes read from memory. The host upcasts the 4
    values whole, so each operation is a vector of 4 lanes over loads of the
@@ -436,6 +475,7 @@ let cases =
     ( "shaped-4k",
       fun () -> compile (shaped 4096 (Nx.scalar f64 0.5)) (input 0. 1.) );
     ("shaped-4k-3-lanes", shaped_padded);
+    ("lanes/held-fp8-36", held_lanes_fp8);
     ("special/betainc-chain-f32", betainc_chain);
     ("special/betainccinv-grad-f32", betainccinv_grad);
     ("special/betaincinv-grad-f64", betaincinv_grad);

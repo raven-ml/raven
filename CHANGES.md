@@ -965,6 +965,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A host operation that reads a broadcast or a permutation of a computed
+  vector's lanes stays a vector, its operand put together by a shuffle
+  (`Codegen.do_devectorize`): it and every operation after it went lane by
+  lane. A float8 loop of 36 lanes that stop apart compiled to 0.8 MB of C,
+  which Clang took 2.4-4.5 s on; it is now 38 KB and 0.2-0.3 s.
 - Two stores of one value into one storage are two states, each a kernel: a
   loop given both, writing the later, reads the earlier as it was, where it
   read what each trip left (`Schedule.create_linear_with_vars`).

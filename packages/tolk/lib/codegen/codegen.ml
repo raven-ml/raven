@@ -250,26 +250,30 @@ let splat x =
 
 let constant l = is Op.Const l || (is Op.Cast l && is Op.Const (nth l 0))
 
-(* The constants [x] holds in the flat order of its shape, if it holds only
-   constants: through reshapes, expansions, which repeat their source's lanes,
+(* The lanes [x] holds in the flat order of its shape, if it is a view of values
+   that move into a vector as a literal, memory or registers do: constants,
+   loads of memory, lanes of vectors and elementwise operations, whose lanes are
+   their own, through reshapes, expansions, which repeat their source's lanes,
    permutations and stacks. *)
-let rec constant_lanes x =
+let rec lanes_of x =
   let known = function Int _ -> true | Sym _ -> false in
-  if shape x = [] then if constant x then Some [ x ] else None
-  else if is Op.Reshape x then constant_lanes (nth x 0)
+  let memory l = is Op.Load l && addrspace (nth l 0) <> Some Dtype.Reg in
+  if shape x = [] then
+    if constant x || memory x || is Op.Index x then Some [ x ] else None
+  else if is Op.Reshape x then lanes_of (nth x 0)
   else if is Op.Stack x then
-    let lanes = List.map constant_lanes (src x) in
+    let lanes = List.map lanes_of (src x) in
     if List.for_all Option.is_some lanes then
       Some (List.concat_map Option.get lanes)
     else None
   else if is Op.Expand x then
-    match (constant_lanes (nth x 0), marg x) with
+    match (lanes_of (nth x 0), marg x) with
     | Some l, Expand front when List.for_all known front ->
         let copies = Helpers.prod (int_shape front) in
         Some (List.concat (List.init copies (fun _ -> l)))
     | _ -> None
   else if is Op.Permute x then
-    match (constant_lanes (nth x 0), marg x) with
+    match (lanes_of (nth x 0), marg x) with
     | Some l, Permute order ->
         let lanes = Array.of_list l and sizes = int_shape (shape (nth x 0)) in
         let stride i = Helpers.prod (List.filteri (fun j _ -> j > i) sizes) in
@@ -278,33 +282,32 @@ let rec constant_lanes x =
         in
         Some (List.map (fun i -> lanes.(at i)) (product (int_shape (shape x))))
     | _ -> None
-  else None
+  else
+    match shape x with
+    | [ Int m ] when Op.Set.mem (op x) Op.Set.elementwise ->
+        Some (List.init m (fun k -> index_ints x [ k ]))
+    | _ -> None
 
 (* The vector [x] is of [n] lanes in the flat order of its shape, if it holds
-   them in order, through reshapes: an elementwise operation of [n] lanes, [n]
-   constants in any view, or a stack of [n] loads of memory and lanes of
-   vectors, a lane of a vector in one lane only. These move into a vector as a
-   literal, memory or registers do, and a load fills every lane that reads it. A
-   view across the lanes of computed values, a broadcast or a permutation, holds
-   them in another order, and a stack of lanes computed apart, or held apart in
-   registers, would be put together lane by lane. *)
-let rec in_order n x =
-  let memory l = is Op.Load l && addrspace (nth l 0) <> Some Dtype.Reg in
-  let seen = Tbl.create 16 in
-  let unseen l =
-    (not (Tbl.mem seen l))
-    && (Tbl.replace seen l ();
-        true)
-  in
-  let moved l = constant l || memory l || (is Op.Index l && unseen l) in
-  if is Op.Reshape x then in_order n (nth x 0)
-  else if not (List.equal Sint.equal (shape x) [ Int n ]) then
-    match constant_lanes x with
-    | Some l when List.compare_length_with l n = 0 -> Some (stack l)
+   them in order, through reshapes: an elementwise operation of [n] lanes, or a
+   stack of [n] lanes of values that move into a vector ([lanes_of]). A load
+   fills every lane that reads it, and a lane of a computed vector any lanes
+   that read it, through a broadcast or a permutation: the vector is put
+   together by a shuffle. A stack of lanes computed apart would be put
+   together lane by lane. *)
+let in_order n x =
+  let rec base x = if is Op.Reshape x then base (nth x 0) else x in
+  let x = base x in
+  if
+    List.equal Sint.equal (shape x) [ Int n ]
+    && Op.Set.mem (op x) Op.Set.elementwise
+  then Some x
+  else
+    match lanes_of x with
+    | Some l when List.compare_length_with l n = 0 ->
+        if is Op.Stack x && List.equal ( == ) l (src x) then Some x
+        else Some (stack l)
     | _ -> None
-  else if Op.Set.mem (op x) Op.Set.elementwise then Some x
-  else if is Op.Stack x && List.for_all moved (src x) then Some x
-  else None
 
 (* An elementwise operation of a renderer that computes on vectors keeps its
    lanes whole, on one axis, the flat order of its shape: each source is a
@@ -362,8 +365,9 @@ let vector_dtypes (ren : Renderer.t) =
 
 (* Elementwise operations, loads and stores of vectors compute each lane apart,
    except an elementwise operation on the [vectors] types of several distinct
-   lanes whose sources hold them in order: a scalar reads a view across lanes for
-   free, and a vector pays shuffles for it. *)
+   lanes whose sources hold them in order ([in_order]): a source of lanes
+   computed apart would be put together lane by lane, and lanes that repeat
+   are computed once each apart. *)
 let do_devectorize vectors b =
   let s = shape b in
   let invalid x = is_invalid (base x) in

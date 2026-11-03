@@ -2981,6 +2981,72 @@ let selects_lanes n () =
   equal (array Dtypes.value) (floats expected)
     (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats y) ]))
 
+(* A step of [rows * cols] float32 lanes that a flag per column holds: where
+   [y], the column's flag, is below 1 in square, [x * x - 3] twice, and [x]
+   elsewhere, both axes upcast whole, as a loop of [cols] lanes over [rows]
+   values whose lanes stop apart computes its steps. The flag's comparison is
+   computed on the [cols] lanes and broadcast across the rows. *)
+let held_kernel rows cols =
+  let n = rows * cols in
+  let open Ops.O in
+  let out = Shape.param ~shape:[ Int n ] 0 Float32 in
+  let x = Shape.param ~shape:[ Int n ] 1 Float32 in
+  let y = Shape.param ~shape:[ Int cols ] 2 Float32 in
+  let i = Ops.range (Int rows) [ 0 ] in
+  let j = Ops.range (Int cols) [ 1 ] in
+  let at = (i * int cols) + j in
+  let a = Ops.index x [ at ] and flag = Ops.index y [ j ] in
+  let held = flag * flag < float 1. in
+  let step v = (v * v) - float 3. in
+  let once = Ops.where held (step a) a in
+  let twice = Ops.where held (step once) once in
+  let whole axis =
+    Opt.Split { axis; amount = 0; target = Upcast; top = false }
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole 1; whole 0 ] ())
+    [ Ops.end_ (Ops.store (Ops.index out [ at ]) twice) [ i; j ] ]
+
+(* Each operation of the steps computes one vector of all lanes, the flag's on
+   one vector of the columns' lanes, and no lane apart: a selection by a flag
+   broadcast across lanes keeps the operations after it on vectors. *)
+let holds_lanes rows cols () =
+  let n = rows * cols in
+  let prg = Codegen.to_program (held_kernel rows cols) (Lazy.force host) in
+  let uops = Ops.src (Ops.nth prg 1) in
+  let apart u =
+    Op.Set.mem (Ops.op u) Op.Set.elementwise
+    && Shape.shape_opt u = Some []
+    && List.mem (Ops.dtype u) Dtype.[ Float32; Bool ]
+    && not (Ops.op u = Op.Cast && Ops.op (Ops.nth u 0) = Op.Const)
+  in
+  equal (list Uops.uop) [] (List.filter apart uops);
+  equal
+    (list (triple op_w int int))
+    (List.sort compare
+       Op.
+         [
+           (Mul, cols, 1);
+           (Cmplt, cols, 1);
+           (Mul, n, 2);
+           (Add, n, 2);
+           (Where, n, 2);
+         ])
+    (vector_operations uops);
+  let x = Array.init n (fun k -> Float.of_int ((k * 7 mod 11) - 5) /. 2.)
+  and y = Array.init cols (fun k -> Float.of_int ((k * 5 mod 9) - 4) /. 2.) in
+  let floats = Array.map (fun f -> `Float f) in
+  let step v = (v *. v) -. 3. in
+  let expected =
+    Array.mapi
+      (fun k a ->
+        let flag = y.(k mod cols) in
+        if flag *. flag < 1. then step (step a) else a)
+      x
+  in
+  equal (array Dtypes.value) (floats expected)
+    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats y) ]))
+
 (* A dot product of 2 rows of [n] float64 pairs, the rows' axis upcast whole
    and the reduce unrolled: a sum of each row's [n] lanes of products. *)
 let dot_kernel n =
@@ -3176,6 +3242,12 @@ let vectors =
                   [ (1, bytes [| 0x10; 0x2f; 0xf3; 0x04; 0x7a; 0x80 |]) ])));
       test "a host program of 48 lanes computes one vector" (selects_rows 3 16);
       test "a host program of 24 lanes computes one vector" (selects_rows 3 8);
+      cases
+        "a host selection by a broadcast of computed lanes computes no lane \
+         apart"
+        ~id:(fun (rows, cols) -> Printf.sprintf "%d by %d lanes" rows cols)
+        [ (12, 3); (4, 3) ]
+        (fun (rows, cols) -> holds_lanes rows cols ());
       cases "a host program of n lanes computes one vector"
         ~id:(Printf.sprintf "%d lanes") [ 3; 5; 7; 9; 12; 15 ] (fun n ->
           selects_lanes n ());

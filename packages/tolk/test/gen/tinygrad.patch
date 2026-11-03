@@ -14,7 +14,7 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index f4535a4f7..3fab2e4b1 100644
+index f4535a4f7..020f66325 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,19 +2,19 @@ from dataclasses import replace, dataclass, field
@@ -91,34 +91,34 @@ index f4535a4f7..3fab2e4b1 100644
 +
 +def constant(l:UOp) -> bool: return l.op is Ops.CONST or (l.op is Ops.CAST and l.src[0].op is Ops.CONST)
 +
-+# the constants x holds in the flat order of its shape, if it holds only constants: through reshapes, expansions, which repeat their
-+# source's lanes, permutations and stacks
-+def constant_lanes(x:UOp) -> list[UOp]|None:
-+  if x.shape == (): return [x] if constant(x) else None
-+  if x.op is Ops.RESHAPE: return constant_lanes(x.src[0])
++# the lanes x holds in the flat order of its shape, if it is a view of values that move into a vector as a literal, memory or registers
++# do: constants, loads of memory, lanes of vectors and elementwise operations, whose lanes are their own, through reshapes, expansions,
++# which repeat their source's lanes, permutations and stacks
++def lanes_of(x:UOp) -> list[UOp]|None:
++  if x.shape == ():
++    return [x] if constant(x) or (x.op is Ops.LOAD and x.src[0].addrspace is not AddrSpace.REG) or x.op is Ops.INDEX else None
++  if x.op is Ops.RESHAPE: return lanes_of(x.src[0])
 +  if x.op is Ops.STACK:
-+    lanes = [constant_lanes(s) for s in x.src]
++    lanes = [lanes_of(s) for s in x.src]
 +    return None if any(l is None for l in lanes) else [c for l in lanes for c in l]
-+  if x.op is Ops.EXPAND and (l:=constant_lanes(x.src[0])) is not None and all_int(x.marg): return l * prod(x.marg)
-+  if x.op is Ops.PERMUTE and (l:=constant_lanes(x.src[0])) is not None:
++  if x.op is Ops.EXPAND: return None if (l:=lanes_of(x.src[0])) is None or not all_int(x.marg) else l * prod(x.marg)
++  if x.op is Ops.PERMUTE:
++    if (l:=lanes_of(x.src[0])) is None: return None
 +    sizes = x.src[0].shape
 +    strides = [prod(sizes[i+1:]) for i in range(len(sizes))]
 +    return [l[sum(strides[a]*i for a,i in zip(x.marg, index))] for index in itertools.product(*[range(s) for s in x.shape])]
++  if len(x.shape) == 1 and isinstance(m:=x.shape[0], int) and x.op in GroupOp.Elementwise: return [x.index(UOp.const(k)) for k in range(m)]
 +  return None
 +
 +# the vector x is of n lanes in the flat order of its shape, if it holds them in order, through reshapes: an elementwise operation of
-+# n lanes, n constants in any view, or a stack of n loads of memory and lanes of vectors, a lane of a vector in one lane only. these
-+# move into a vector as a literal, memory or registers do, and a load fills every lane that reads it. a view across the lanes of
-+# computed values, a broadcast or a permutation, holds them in another order, and a stack of lanes computed apart, or held apart in
-+# registers, would be put together lane by lane
++# n lanes, or a stack of n lanes of values that move into a vector (lanes_of). a load fills every lane that reads it, and a lane of a
++# computed vector any lanes that read it, through a broadcast or a permutation: the vector is put together by a shuffle. a stack of
++# lanes computed apart would be put together lane by lane
 +def in_order(n:int, x:UOp) -> UOp|None:
-+  if x.op is Ops.RESHAPE: return in_order(n, x.src[0])
-+  if x.shape != (n,): return UOp.stack(*l) if (l:=constant_lanes(x)) is not None and len(l) == n else None
-+  if x.op in GroupOp.Elementwise: return x
-+  if x.op is not Ops.STACK: return None
-+  def memory(l:UOp) -> bool: return l.op is Ops.LOAD and l.src[0].addrspace is not AddrSpace.REG
-+  lanes = [l for l in x.src if l.op is Ops.INDEX]
-+  return x if all(constant(l) or memory(l) or l.op is Ops.INDEX for l in x.src) and len(set(lanes)) == len(lanes) else None
++  while x.op is Ops.RESHAPE: x = x.src[0]
++  if x.shape == (n,) and x.op in GroupOp.Elementwise: return x
++  if (l:=lanes_of(x)) is None or len(l) != n: return None
++  return x if x.op is Ops.STACK and len(x.src) == n and all(a is b for a,b in zip(l, x.src)) else UOp.stack(*l)
 +
 +# an elementwise operation of a renderer that computes on vectors keeps its lanes whole, on one axis, the flat order of its shape:
 +# each source is a vector of those lanes in order, or a scalar every lane reads. where every source is a scalar, the operation is
@@ -152,8 +152,8 @@ index f4535a4f7..3fab2e4b1 100644
 +  return all(any(a is not b for a,b in zip(lanes[i], lanes[j])) for i in range(n) for j in range(i+1, n))
 +
 +# elementwise operations, loads and stores of vectors compute each lane apart, except an elementwise operation of several distinct
-+# lanes on the dtypes ctx holds, those computed on vectors, whose sources hold them in order: a scalar reads a view across lanes for free,
-+# and a vector pays shuffles for it
++# lanes on the dtypes ctx holds, those computed on vectors, whose sources hold them in order (in_order): a source of lanes computed apart
++# would be put together lane by lane, and lanes that repeat are computed once each apart
 +def do_devectorize(ctx:tuple[DType, ...], b:UOp):
    if b.shape == (): return None
    # broadcasting needs to be already unpacked, Invalid matches any dtype and shape
