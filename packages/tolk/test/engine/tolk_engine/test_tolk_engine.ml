@@ -1411,6 +1411,60 @@ let reads_trips_under_a_back_edge ?devices d =
     (fun (k, limit) ->
       reads_its_trip ?devices ~limit d 4 (List.nth (trip_arguments 4) k))
 
+(* Scalar arguments of each width from one byte to eight, signed and unsigned:
+   constants, and the variables [a] and [b] a run binds. A kernel that takes
+   them all holds some past padding to their width. With the value each holds
+   in a run. *)
+let mixed_scalars =
+  let int dt i = Ops.const ~dtype:dt (`Int (Bigint.of_int i)) in
+  let var dt name hi =
+    Ops.variable ~dtype:dt name (Dtype.Value.of_int 0) (Dtype.Value.of_int hi)
+  in
+  let a = 0x12345678 and b = 0x0123456789abcdef in
+  ( [ ("a", a); ("b", b) ],
+    [
+      (Dtype.Int8, int Int8 (-7), -7);
+      (Int16, int Int16 (-1234), -1234);
+      (Int32, var Int32 "a" 0x7fffffff, a);
+      (Uint8, int Uint8 200, 200);
+      (Int64, var Int64 "b" max_int, b);
+      (Bool, Ops.const ~dtype:Bool (`Bool true), 1);
+      (Uint16, int Uint16 0xbeef, 0xbeef);
+      (Int64, int Int64 (-0x0fedcba987654321), -0x0fedcba987654321);
+      (Int8, int Int8 99, 99);
+    ] )
+
+(* A call on [d] of one kernel whose first parameter is [y], then each of
+   [mixed_scalars], then [x]: it stores each scalar, widened to 64 bits, plus
+   its element of [x] into its element of [y]. *)
+let reads_mixed_scalars ?(devices = devices) d () =
+  let vars, scalars = mixed_scalars in
+  let n = List.length scalars in
+  let param slot = Shape.param ~shape:[ Int n ] ~device:d slot Int64 in
+  let widened i (dt, _, _) =
+    Ops.cast (Shape.param ~addrspace:Alu (i + 1) dt) Int64
+  in
+  let added = param (n + 1) in
+  let sum = Ops.O.(Shape.stack (List.mapi widened scalars) + added) in
+  let body = Ops.sink [ Ops.store (param 0) sum ] in
+  let y = Ops.new_buffer d n Int64 and x = Ops.new_buffer d n Int64 in
+  let call =
+    Ops.call ~precompile:true body
+      ((y :: List.map (fun (_, v, _) -> v) scalars) @ [ x ])
+  in
+  let linear, _ =
+    Schedule.create_linear_with_vars (Ops.sink [ Ops.after y [ call ] ])
+  in
+  let compiled = compile ~devices linear in
+  let on = devices d in
+  let int i = `Int (Bigint.of_int i) in
+  let ys = Run.buffer on Int64 (Array.make n (int 0))
+  and xs = Run.buffer on Int64 (Array.init n (fun i -> int (1000 * i))) in
+  let s = Engine.link ~devices ~bound:[ (y, ys); (x, xs) ] compiled in
+  Engine.run ~vars s [||];
+  let expected = List.mapi (fun i (_, _, v) -> int (v + (1000 * i))) scalars in
+  equal values (Array.of_list expected) (Run.values Int64 ys)
+
 (* A scan of three trips, linked once and run on rows of [xs] and [ys], which
    each run binds to its parameters, and of [zs], linked with the carry [c].
    Each trip stores [c * 2] into its row of [ys] and adds its row of [xs] to
@@ -1816,6 +1870,8 @@ let schedules =
       loops_around_calls_on_the_host;
       reads_trips_on "CPU";
       reads_trips_under_a_back_edge "CPU";
+      test "a call's scalar arguments of mixed widths reach its kernel"
+        (reads_mixed_scalars "CPU");
       test "a loop of one trip passes its call the trip as a scalar argument"
         (fun () -> reads_its_trip "CPU" 1 (List.nth (trip_arguments 1) 1));
       test "loops of any range and trips around one call compile one program"
@@ -2797,6 +2853,8 @@ let on_a_gpu (kind, _) =
              loops_around_calls ~devices "CPU:1" bounds);
       slow @@ loops_across_devices_on ~devices "CPU:1";
       reads_trips_on ~devices "CPU:1";
+      test "a call's scalar arguments of mixed widths reach its kernel"
+        (reads_mixed_scalars ~devices "CPU:1");
       reads_trips_under_a_back_edge ~devices "CPU:1";
       test "a loop's move copies the rows its trips name"
         (copies_moving_rows ~devices "CPU:1" "CPU");
