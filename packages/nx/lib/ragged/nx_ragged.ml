@@ -335,10 +335,12 @@ let quantile qs r =
 
 (* Ids and ranks of rows *)
 
-(* [keys fn x] is the order keys of [x]'s elements at their own width. *)
+(* [keys fn x] is the order keys of [x]'s elements at their own width: an
+   unsigned integer is its own. *)
 let keys (type v s d) fn (x : (v, s, d) Nx.t) : d Nx.packed =
   match Nx.dtype x with
   | Complex128 | Complex64 -> err fn "complex values have no order"
+  | Uint8 | Uint16 | Uint32 | Uint64 -> P x
   | dt -> (
       match Nx.Dtype.bits dt with
       | 64 -> P (Nx.order_key Nx.uint64 x)
@@ -522,11 +524,15 @@ let ids r =
       packed (Nx.where (Nx.less p c) (Nx.bitwise_not none) none)
     in
     (* The [b] words of keys from [at], each row's keys past its [rem] zero:
-       where the [least] of [rem] fills the words, none is past. *)
-    let words ~at ~rem ~least b =
+       where the [least] of [rem] fills the words, none is past, and where
+       it is the [most] too, one row of masks clears every row's. *)
+    let words ~at ~rem ~least ~most b =
       let e = b * q in
       let chunk = Nx.take ~axis:0 at (Nx.sliding_window ~window:e keys) in
       if least >= e then packed chunk
+      else if least = most then
+        Nx.bitwise_and (packed chunk)
+          (Nx.slice [ R (least, least + 1); R (0, b) ] masks)
       else
         let corner = Nx.slice [ R (0, e + 1); R (0, b) ] masks in
         let rows = Nx.take ~axis:0 (Nx.minimum_s rem (Int64.of_int e)) corner in
@@ -534,7 +540,10 @@ let ids r =
     in
     let column x = Nx.reshape [| Nx.dim 0 x; 1 |] x in
     if longest * w <= 7 then
-      let word = Nx.reshape [| n |] (words ~at:start ~rem:len ~least:0 1) in
+      let word =
+        Nx.reshape [| n |]
+          (words ~at:start ~rem:len ~least:shortest ~most:longest 1)
+      in
       if shortest = longest then (Nx.unique ~size:0 word).ids
       else
         (* Row [c] of [tags] is the word whose last key is [c]. *)
@@ -557,7 +566,7 @@ let ids r =
         let b = Int.min round_words ((longest + q - 1) / q) in
         let rem = Nx.sub_s (Nx.take active len) (Int64.of_int seen) in
         let at = Nx.add_s (Nx.take active start) (Int64.of_int seen) in
-        let words = words ~at ~rem ~least b in
+        let words = words ~at ~rem ~least ~most:longest b in
         let key =
           match head with
           | None -> words

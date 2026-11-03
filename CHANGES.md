@@ -2051,6 +2051,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_ragged.ids` packs rows of one length with one row of masks, and
+  takes an unsigned integer's elements as their own order keys, in place
+  of a gather of masks and a copy: talon's H2O group-by q01 at 1e6 rows
+  takes 150 instructions a row where it took 164.
 - A take of whole rows, as `Nx.take ~axis:0` of a matrix, copies each row
   in place of a call a row: rows of 8 to 64 bytes, the windows that
   `Nx_ragged.ids` and `Nx_ragged.rank` pack text into, cost a few loads and
