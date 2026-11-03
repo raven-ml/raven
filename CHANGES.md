@@ -2051,6 +2051,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.reduce_segments` and `Nx.scatter` of integers by `Add`, `Max` or
+  `Min` into few targets fold each thread's share of the updates into
+  targets of its own, in place of sorting them by target: 1M int64 sums
+  into 100 segments take 11 instructions an update where they took 47, and
+  10M 2.4 ms where they took 12.9 on fudge's 14 threads.
 - `Nx_io.save_npz` saves an archive of many small arrays faster: 4096
   one-element arrays take 0.72 of the instructions.
 - Add `Nx_kernel.Prog.ranges`, the program of a program's ranges over a

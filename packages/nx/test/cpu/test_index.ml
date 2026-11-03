@@ -357,6 +357,36 @@ let blocked_examples =
     f32 Nx_kernel.Max;
   ]
 
+(* Sums and extremes whose result is the same in any order of the updates,
+   which threads fold into targets of their own: integers', over shared
+   targets and positions past the axis, a row of three slices per position,
+   and updates through a stepped and reversed view; and booleans'. *)
+let owned_examples =
+  let ex ?(ts = [| 1000 |]) ?broadcast ?uv d combine =
+    scatter_example (D.Any d) combine ~ts ~axis:0 ~m:200_000 ?broadcast ?uv
+      cycled
+  in
+  [
+    ex D.Int64 Nx_kernel.Add;
+    ex D.Uint8 Nx_kernel.Add
+      ~uv:{ (plain 1) with stepped = true; reversed = Some 0 };
+    ex D.Int8 Nx_kernel.Max;
+    ex D.Uint32 Nx_kernel.Min;
+    ex D.Bool Nx_kernel.Max;
+    ex D.Bool Nx_kernel.Min;
+    ex D.Int16 Nx_kernel.Add ~ts:[| 1003; 3 |] ~broadcast:[ 1 ];
+  ]
+  @
+  (* Booleans whose true bytes are 2, into targets 900 to 999 that no update
+     reaches: an unreached element keeps its bits. *)
+  let short = Array.init 900 (fun i -> Int64.of_int (i * 7 mod 900)) in
+  let twos _ r = if Random.State.bool r then "\002" else "\000" in
+  List.map
+    (fun combine ->
+      scatter_example (D.Any D.Bool) combine ~ts:[| 1000 |] ~axis:0
+        ~m:200_000 ~draw:twos short)
+    Nx_kernel.[ Max; Min ]
+
 (* An embedding gradient's rows: into transposed and the updates stepped
    and reversed; a narrow float's sum of half a million updates. *)
 let row_examples =
@@ -633,7 +663,8 @@ let threaded_scatters =
        ])
 
 let threaded_examples =
-  narrow_examples @ row_examples @ sub_byte_examples @ [ wide_rows ]
+  narrow_examples @ row_examples @ sub_byte_examples @ owned_examples
+  @ [ wide_rows ]
 
 (* Scatters of many updates against the reference: large shapes, long axes
    of few slices, hundreds of thousands of updates into one axis, and
@@ -710,7 +741,7 @@ let cpu (b : Support.backend) =
         (run (law_nan_extremes b));
       prop ~count:10 "large gathers on the job's threads" large_gathers
         (run (gather_agrees b));
-      prop ~count:10 ~examples:blocked_examples
+      prop ~count:10 ~examples:(blocked_examples @ owned_examples)
         "scatters of many updates combine each target's updates in C order"
         many_scatters
         (run (fun c ->

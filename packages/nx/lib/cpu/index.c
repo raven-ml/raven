@@ -28,7 +28,10 @@
    each run's updates are sorted into bins of their targets (Sorted
    scatters below), or each thread also takes a part of the targets along
    the axis and walks every update of its run, applying those that land in
-   its part: the order per target stays C order.
+   its part: the order per target stays C order. A combine whose result is
+   the same in any order, an integer's, folds each thread's share of the
+   updates into targets of its own instead, where they are few (Owned
+   targets below).
 
    Add adds left to right from the target's element, x + u1 + ... + un,
    with no +0 before it, so that a -0 target and -0 updates sum to -0, as
@@ -1110,6 +1113,124 @@ static void sorted(scatter *c, int64_t v, int threads) {
   }
 }
 
+/* Owned targets
+
+   An integer's Add wraps, and its Max and Min pick one of their operands,
+   so the result is the same in any order of the updates. Where few runs
+   of many updates reach few targets, each thread then folds its shares of
+   the updates into a copy of the targets of its own, and the copies fold
+   into the destination after: each update is read once, with no sort and
+   no part of the targets. A target no update reaches keeps its bits
+   through the fold, x + 0 or the extreme of x and x. A boolean's Max and
+   Min store 0 or 1, and would rewrite an unreached true byte of 2, so
+   booleans sort. A copy takes at most half a core's L2, as a sorted
+   scatter's bin does, and the copies together no more elements than the
+   updates, so their fold costs no more than the updates do. 1M int64 Adds
+   into 100 targets on four threads took 47 instructions an update sorted
+   and 11 so, as many as on one thread; 10M took 12.9 ms sorted on fudge's
+   14 threads under load 8 to 25, 6.6 on one thread, and 2.4 so. */
+
+/* Updates of a run each share of it takes. */
+#define OWN_SHARE (64 * 1024)
+
+typedef struct {
+  const scatter *c;
+  int64_t shares; /* of each run */
+  int64_t total;  /* the destination's elements, each copy's */
+  uint8_t *own;   /* each worker's copy, total elements apart */
+  uint8_t *used;  /* whether each worker's copy holds its targets */
+} owning;
+
+/* Whether [combine]'s result at [dt] is the same in any order of the
+   updates, and its fold keeps an unreached target's bits. */
+static int order_free(int combine, int dt) {
+  if (combine == NX_COMBINE_SET) return 0;
+  switch (dt) {
+    case NX_INT8: case NX_UINT8: case NX_INT16: case NX_UINT16:
+    case NX_INT32: case NX_UINT32: case NX_INT64: case NX_UINT64: return 1;
+    default: return 0;
+  }
+}
+
+/* Folds shares into the worker's copy, which starts as Add's identity,
+   zero, or as the destination, which Max and Min may meet again. */
+static void own_shares(int64_t lo, int64_t hi, int worker, void *ctx) {
+  const owning *o = ctx;
+  const scatter *c = o->c;
+  int64_t w = c->a[0].bits / 8, off = c->a[0].offset;
+  uint8_t *own = o->own + worker * o->total * w;
+  if (!o->used[worker]) {
+    if (c->combine == NX_COMBINE_ADD) memset(own, 0, (size_t)(o->total * w));
+    else memcpy(own, c->a[0].base + off * w, (size_t)(o->total * w));
+    o->used[worker] = 1;
+  }
+  nx_array a[4] = {c->a[0], c->a[1], c->a[2], c->a[3]};
+  a[0].base = own;
+  scatter s = *c;
+  s.a = a;
+  for (int64_t u = lo; u < hi; u++) {
+    int64_t p[4], j = u % o->shares;
+    int64_t n = run_at(c, u / o->shares, p);
+    int64_t t0 = c->m * j / o->shares, t1 = c->m * (j + 1) / o->shares;
+    s.m = t1 - t0;
+    c->run(&s, p[0] - off, p[1] + t0 * c->ia, p[2] + t0 * c->ua, n, 0,
+           c->dim);
+  }
+}
+
+/* Folds the copies' elements [lo, hi) into the destination's, each copy
+   as one row of updates at position 0. */
+static void fold_owned(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const owning *o = ctx;
+  const scatter *c = o->c;
+  int64_t w = c->a[0].bits / 8, zero = 0;
+  nx_array a[4] = {c->a[0], c->a[1], c->a[2], c->a[3]};
+  a[2].base = (uint8_t *)&zero;
+  scatter s = {.a = a, .m = 1, .sd = 1, .su = 1};
+  for (int64_t k = 0; o->used[k] != 2; k++) {
+    if (!o->used[k]) continue;
+    a[3].base = o->own + k * o->total * w;
+    c->run(&s, c->a[0].offset + lo, 0, lo, hi - lo, 0, 1);
+  }
+}
+
+/* Whether the scatter [c] of [updates] into [total] contiguous targets,
+   of fewer runs than [threads], folds into owned copies. */
+static int owns(const scatter *c, int64_t total, int64_t updates,
+                int threads) {
+  const nx_array *d = &c->a[0];
+  return threads > 1 && order_free(c->combine, c->dt) &&
+         (d->flags & NX_CONTIGUOUS) &&
+         total * (d->bits / 8) <= nx_cpu_l2 / 2 && threads * total <= updates;
+}
+
+/* Scatters the [units] runs into owned copies on at most [threads]
+   threads, the updates' [bytes] costing [cost]: answers 0 where memory
+   runs out. */
+static int owned(const scatter *c, int64_t units, int64_t total,
+                 int threads, int64_t bytes, double cost) {
+  int64_t w = c->a[0].bits / 8;
+  owning o = {.c = c,
+              .shares = (c->m + OWN_SHARE - 1) / OWN_SHARE,
+              .total = total};
+  o.own = malloc((size_t)(threads * total * w));
+  /* Each worker's flag, then 2. */
+  o.used = calloc((size_t)threads + 1, 1);
+  if (o.own == NULL || o.used == NULL) {
+    free(o.own);
+    free(o.used);
+    return 0;
+  }
+  o.used[threads] = 2;
+  nx_cpu_job(units * o.shares, bytes, cost, own_shares, &o);
+  int64_t folded = (threads + 2) * total * w;
+  nx_cpu_job(total, folded, (double)folded, fold_owned, &o);
+  free(o.own);
+  free(o.used);
+  return 1;
+}
+
 /* Fills the loop of slices from the shape [us] of rank [r], off [axis],
    with into's strides [ts], and answers its units. Only a sorted
    scatter's copy_bin reads into's steps; other scatters pass zeros, which
@@ -1211,13 +1332,17 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
      whose positions step 0 along them, as an embedding gradient's, sort
      their updates; a dtype of under a byte shares its bytes across bins,
      so doesn't; a narrow float's rows of several slices sort them by
-     target once a row (narrow_rows). Otherwise each thread takes a part
-     of the targets and walks every update of its run. */
+     target once a row (narrow_rows). Where the result is the same in any
+     order of the updates and the targets are few, each thread folds its
+     shares into targets of its own (Owned targets). Otherwise each thread
+     takes a part of the targets and walks every update of its run. */
   c.parts = 1;
   int few = units < threads && (c.m >= PART_UPDATES || c.narrow);
   int rows = few && c.narrow && c.len > 1 && c.si == 0;
-  int sort = few && !rows && (one_slice(&c) || c.si == 0) && a[0].bits >= 8;
-  if (few && !sort && !rows) c.parts = (threads + units - 1) / units;
+  int own = few && !rows && owns(&c, total, updates, threads);
+  int sort = few && !rows && !own && (one_slice(&c) || c.si == 0) &&
+             a[0].bits >= 8;
+  if (few && !sort && !rows && !own) c.parts = (threads + units - 1) / units;
   /* Into's steps may part the loop's axes further; a row of one slice, or
      of positions stepping 0, stays one. */
   if (sort) units = slices(&c, us, r, axis, a[1].dim + r);
@@ -1284,10 +1409,13 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
     nx_done(4, a);
     caml_raise_out_of_memory();
   }
+  int ok = 1;
   if (rows)
     for (int64_t v = 0; v < units; v += c.pieces) narrow_rows(&c, v, bytes);
   else if (sort)
     for (int64_t v = 0; v < units; v++) sorted(&c, v, threads);
+  else if (own)
+    ok = owned(&c, units, total, threads, bytes, cost);
   else
     nx_cpu_job(jobs, bytes, per * (double)bytes, scatter_units, &c);
   free(c.sums);
@@ -1299,6 +1427,7 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
   free(c.gather);
   nx_cpu_reacquire(released);
   nx_done(4, a);
+  if (!ok) caml_raise_out_of_memory();
   CAMLreturn(Val_int(NX_OK));
 }
 

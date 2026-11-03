@@ -836,6 +836,13 @@ let scatter_64k () =
     host 65536,
     Nx.zeros D.Float32 [| 1024 |] )
 
+(* 1M int64 updates and their segments, of 100, drawn once from a fixed
+   key: a group-by's sum, which threads fold into segments of their own. *)
+let segments_1m () =
+  let ids = Nx.Rng.randint ~key:(Nx.Rng.key 13) ~high:100 [| 1 lsl 20 |] in
+  let ids = Nx.place Nx.Host.on (Nx.cast D.Int64 ids) in
+  (ids, Nx.copy ids)
+
 (* A cache of 8 heads, 4096 positions and 64 features, 8 MiB, one
    position's row and the position. *)
 let set_8m () =
@@ -934,6 +941,9 @@ let index_rows =
       Thumper.bench_with_setup "scatter-add-64K-into-1K" ~setup:scatter_64k
         (fun (ids, updates, sums) ->
           Nx.scatter ~combine:Add ~axis:0 ids updates sums);
+      Thumper.bench_with_setup "segment-sum-i64-1M-into-100"
+        ~setup:segments_1m (fun (ids, x) ->
+          Nx.reduce_segments Add ~segments:100 ids x);
       Thumper.bench_with_setup "set-row-8M" ~setup:set_8m
         (fun (cache, row, pos) -> Nx.set Nx.[ A; A; D (pos, 1); A ] row cache);
       Thumper.bench_with_setup "set-held-3-axes-4K-of-32K" ~setup:set_held
