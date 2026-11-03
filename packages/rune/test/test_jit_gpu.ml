@@ -845,7 +845,9 @@ let () =
                "an MXFP4 product is within its bound of the exact one"
                ~id:(Format.asprintf "%a" Mxfp4_products.pp)
                Mxfp4_products.cases
-               (fun c -> Mxfp4_products.law (snd (on_gpu ())) c);
+               (fun c ->
+                 let d, s = on_gpu () in
+                 Mxfp4_products.law ~flushes:(flushes d) s c);
              test
                "a routed MXFP4 expert of 12 tokens streams its matrices across \
                 threads"

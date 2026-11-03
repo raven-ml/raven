@@ -27,12 +27,18 @@ val cases : t list
 (** [cases] holds each dtype at extents that 16 divides, as a tensor core
     takes them, and at extents it does not divide, [m] of 1 among them. *)
 
-val law : (module Nx.Devices) -> t -> unit
-(** [law s c] checks that [Nx_quant.apply w x], eagerly on the host and
-    compiled on [s]'s first device with no call evaluated, is within
+val law : ?flushes:bool -> (module Nx.Devices) -> t -> unit
+(** [law ~flushes s c] checks that [Nx_quant.apply w x], eagerly on the host
+    and compiled on [s]'s first device with no call evaluated, is within
     {!Nx.contract}'s bound of the exact product of [x] by
     [Nx_quant.dequant Nx.float32 w] transposed, computed in [float64]:
     [γ(K + 1, 2u) Σ|x w|] for [K = k] and float32's [u], plus [K 2{^-149}]
     for products below [float32]'s least normal, then rounded once to [x]'s
     dtype.
-    A NaN of the exact product is a NaN, and an infinity that infinity. *)
+    A NaN of the exact product is a NaN, and an infinity that infinity.
+
+    With [~flushes:true] (default [false]), for a device that flushes
+    subnormals to zero, the compiled product is checked only in the outputs
+    of weight rows of scale bytes 126 and above, where no value it computes
+    is subnormal. {!Nx.contract}'s bound excludes underflow, which a row of a
+    smaller byte holds. *)

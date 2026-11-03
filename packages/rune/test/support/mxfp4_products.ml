@@ -52,9 +52,9 @@ let gamma k =
   kv /. (1. -. kv)
 
 (* [y], a product of [x] by [w], against [exact] and [mass], [Σ|x w|], each
-   [float64] arrays of [m n]: the label of each output out of its bound, at
-   most eight. *)
-let broken (type b) ~label (dt : (float, b) Nx.dtype) ~k exact mass y =
+   [float64] arrays of [m n]: the label of each output out of its bound among
+   those [kept] holds, at most eight. *)
+let broken (type b) ~label ~kept (dt : (float, b) Nx.dtype) ~k exact mass y =
   let round v =
     let v = Nx.create Nx.float64 [| Array.length v |] v in
     Nx.to_array (Nx.cast Nx.float64 (Nx.cast dt v))
@@ -73,7 +73,7 @@ let broken (type b) ~label (dt : (float, b) Nx.dtype) ~k exact mass y =
         else if Float.is_finite z then lo.(i) <= g && g <= hi.(i)
         else g = z
       in
-      if (not ok) && List.length !out < 8 then
+      if (not ok) && kept i && List.length !out < 8 then
         out :=
           Printf.sprintf "%s [%d]: exactly %h, got %h, within [%h, %h]" label i
             z g lo.(i) hi.(i)
@@ -81,7 +81,17 @@ let broken (type b) ~label (dt : (float, b) Nx.dtype) ~k exact mass y =
     exact;
   List.rev !out
 
-let law (module S : Nx.Devices) c =
+(* Whether output [i], of [n] columns, has no value below float32's least
+   normal: its weight row's scale byte is 126 or more. A row of byte 0, 1 or 2
+   scales its codes to at most [6 2{^-125}], so their products with [x]'s
+   elements, at most [2{^-8}], are [0] or below the least normal. A row of a
+   larger byte scales its codes to multiples of [2{^-2}], and [x]'s elements,
+   float32 draws of multiples of [2{^-24}] times [2{^-8}], are multiples of
+   [2{^-32}] in each dtype, so each product and partial sum is [0] or at
+   least [2{^-34}]. *)
+let normal ~n i = scale_bytes.(i mod n mod Array.length scale_bytes) >= 126
+
+let law ?(flushes = false) (module S : Nx.Devices) c =
   let (Nx.Dtype.Any dt) = c.dtype in
   match Nx.Dtype.kind dt with
   | Float ->
@@ -106,10 +116,10 @@ let law (module S : Nx.Devices) c =
       in
       equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
       let values y = Nx.to_array (wide (Nx.place Nx.Host.on y)) in
-      let check label y =
+      let check ~kept label y =
         equal ~msg:label (list string) []
-          (broken ~label dt ~k:c.k exact mass (values y))
+          (broken ~label ~kept dt ~k:c.k exact mass (values y))
       in
-      check "eager" (Nx_quant.apply w x);
-      check "compiled" y
+      check ~kept:(Fun.const true) "eager" (Nx_quant.apply w x);
+      check ~kept:(fun i -> (not flushes) || normal ~n:c.n i) "compiled" y
   | _ -> invalid_arg "Mxfp4_products.law: not a float dtype"
