@@ -101,8 +101,7 @@ rune lowers each nx kernel operation to tolk's UOps (`lower*.ml`). Where
 tinygrad's `Tensor` builds the same operation, the lowering builds tinygrad's
 decomposition if it computes what nx states. This section lists every place
 where it builds something else, or builds what tinygrad has no source for,
-except these, not yet recorded: the transforms (`lower_fft.ml`) and scaled
-contractions.
+except these, not yet recorded: the transforms (`lower_fft.ml`).
 
 An entry is admitted for one of four reasons only:
 
@@ -1039,3 +1038,39 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   upper triangle is garbage, `› NaN in the lower triangle is NaN`, `› norms
   past the dtype's range, and subnormals`; `Lower_linalg › Nx's values alone
   compiled are eager's`.
+
+### L9. Block scales multiply each element in the accumulator
+
+- **Reference:** none in `Tensor`. `llm/gguf.py:29` (`ggml_data_to_tensor`)
+  decodes a block-scaled weight into a `float32` tensor, each element times
+  its block's scale (MXFP4 `:171`, Q8_0 `:63`), which `mixin/op.py:390`
+  (`dot`) then multiplies.
+- **Raven:** `lower_reduce.ml` (`entered`, `blocks`, `power`,
+  `bfloat16_values`, `contract`).
+- **Differs:**
+  - Each element is stored into the accumulator and multiplied there by its
+    block's scale, read into the accumulator, rounded once; `float64`
+    included. tinygrad's decode computes in `float32`.
+  - Code 255 makes its block NaN. tinygrad's MXFP4 decode reads 255 as
+    `2^127` times twice the element, infinite unless the element is `±0` or
+    `±0.5`.
+  - A `float4_e2m1fn` element with a code scale in `float32`, against a
+    `bfloat16` operand, enters as the `float32` of its `bfloat16`, the same
+    value, so that both operands take tolk's `bfloat16` tensor cores.
+  - A scale with an accumulator other than `float32` or `float64` is
+    refused, and the program runs uncompiled.
+- **nx:** `nx_kernel.mli`, `scale`: code `e` scales by `2^(e - 127)`, 255
+  makes it NaN; Contraction: the library states which a scale multiplies,
+  each element rounded once into the accumulator among them.
+- **Class:** rounded sum: `Nx.contract`'s bound with `K + 1 + s` for `s`
+  scaled operands.
+- **Reason:** (b). The `bfloat16` entry: none; it would be (d) by
+  `GptOss/experts-at-prefill-512` (`gpt_oss.thumper`), whose fudge baseline
+  holds allocated words alone. The refusal: none.
+- **Pinned by:** `Lower_reduce › contractions › scaled float contractions
+  hold their bound`, which covers a NaN code; `Lower_reduce › work › a scaled
+  float4 Rows contraction's work is one slice's`; `Lower_reduce › cases › a
+  contraction scaled in int32 is not lowered`; `Jit › classes › an MXFP4
+  product is within its bound of the exact one` on the host and `Jit_gpu ›
+  products › an MXFP4 product is within its bound of the exact one` on a GPU,
+  each over `bfloat16` operands and scale bytes up to 255.
