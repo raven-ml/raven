@@ -158,6 +158,26 @@ let tolerances c lse =
   ( (2. *. eta) +. kernel +. compiled,
     w ~exp:5. kernel +. w ~exp:19. compiled +. (2. *. gamma) +. (2. *. u) )
 
+(* A case each of [law_jit]'s 12 draws may miss: paged, with lengths and a
+   captured mask. *)
+let examples =
+  [
+    {
+      hk = 1;
+      groups = 2;
+      tq = 2;
+      tk = 6;
+      dk = 3;
+      dv = 2;
+      page = Some 2;
+      table = [| 0; 1; -1; 2; 3; 0 |];
+      lengths = Some [| 3; 6 |];
+      mask = Captured;
+      alibi = true;
+      seed = 1.5;
+    };
+  ]
+
 let law_jit c =
   cover "paged" (c.page <> None);
   cover "lengths" (c.lengths <> None);
@@ -274,7 +294,7 @@ let () =
   exit
     (run "rune attention"
        [
-         prop ~count:12 "jit within the bounds of eager"
+         prop ~count:12 ~examples "jit within the bounds of eager"
            (Gen.with_pp pp_case case) law_jit;
          prop ~count:60 "vmap is each lane, bit for bit"
            (Gen.with_pp pp_case case) law_vmap;
