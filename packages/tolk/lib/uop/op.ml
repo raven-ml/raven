@@ -249,19 +249,33 @@ let pp ppf o = Format.fprintf ppf "Ops.%s" (name o)
 module Set = struct
   let pp_op = pp
 
-  (* Indexed by [to_int]; never mutated once built. *)
-  type t = bool array
+  (* Bits indexed by [to_int], the first [width] in [low] and the others in
+     [high]: a set is three words and testing it reads one. *)
+  type t = { low : int; high : int }
 
-  let of_list os =
-    let s = Array.make (List.length ops) false in
-    List.iter (fun o -> s.(to_int o) <- true) os;
-    s
+  let width = 62
+  let () = assert (List.length ops <= 2 * width)
+  let empty = { low = 0; high = 0 }
 
-  let mem o s = Array.unsafe_get s (to_int o)
-  let union s s' = Array.map2 ( || ) s s'
-  let diff s s' = Array.map2 (fun m m' -> m && not m') s s'
+  let add s o =
+    let i = to_int o in
+    if i < width then { s with low = s.low lor (1 lsl i) }
+    else { s with high = s.high lor (1 lsl (i - width)) }
+
+  let of_list os = List.fold_left add empty os
+
+  let mem o s =
+    let i = to_int o in
+    if i < width then (s.low lsr i) land 1 = 1
+    else (s.high lsr (i - width)) land 1 = 1
+
+  let union s s' = { low = s.low lor s'.low; high = s.high lor s'.high }
+
+  let diff s s' =
+    { low = s.low land lnot s'.low; high = s.high land lnot s'.high }
+
   let to_list s = List.filter (fun o -> mem o s) ops
-  let equal s s' = Array.for_all2 Bool.equal s s'
+  let equal s s' = s.low = s'.low && s.high = s'.high
 
   let pp ppf s =
     let pp_sep ppf () = Format.fprintf ppf ",@ " in
