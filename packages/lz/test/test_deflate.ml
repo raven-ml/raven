@@ -643,11 +643,20 @@ let case =
         (1, map (fun i -> Cut i) nat);
       ]
   in
-  let golden = frequency [ (5, of_list small_goldens); (1, of_list several) ] in
+  (* A whole stream of several members is drawn in a sixth of the cases,
+     so that every run reaches it. *)
+  let golden_change =
+    frequency
+      [
+        (4, pair (of_list small_goldens) change);
+        (1, pair (of_list several) change);
+        (1, pair (of_list several) (constant Same));
+      ]
+  in
   with_pp pp_case
     (map
-       (fun (golden, change, slices) -> { golden; change; slices })
-       (triple golden change sizes))
+       (fun ((golden, change), slices) -> { golden; change; slices })
+       (pair golden_change sizes))
 
 let apply change data =
   let n = String.length data in
