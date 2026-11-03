@@ -461,6 +461,21 @@ let sharded_backward () =
       fun () -> ignore (synced2 (backward (w, h) dy)))
     (fun call -> call ())
 
+(* The distances from the centre of a 104 x 104 grid over [[-1, 1)], and the sum
+   of 14 rational terms over them, each of a multiple of [r]. *)
+let grid () =
+  let n = 104 in
+  let c = Nx.sub_s (Nx.div_s (Nx.arange_f f64 0. (Float.of_int n) 1.) 52.) 1. in
+  let xs = Nx.reshape [| n; 1 |] c and ys = Nx.reshape [| 1; n |] c in
+  host (Nx.sqrt (Nx.add (Nx.mul xs xs) (Nx.mul ys ys)))
+
+let waves grid r =
+  List.fold_left
+    (fun acc k ->
+      let rk = Nx.mul_s r (Float.of_int k) in
+      Nx.add acc (Nx.div (Nx.sub rk grid) (Nx.add_s (Nx.mul rk grid) 1.)))
+    (Nx.zeros_like grid) (List.init 14 succ)
+
 let jit_rows () =
   let x = x64 () and a = one () and b = one () in
   let xs = floats n and ps = positions n n and g = floats n in
@@ -486,6 +501,7 @@ let jit_rows () =
   let scaled = between f32 49 (-1.) 1. [| 100; 400 |] in
   let long_rows = between f64 53 (-1.) 1. [| 100; 50500 |] in
   let wide = between f64 50 0. 1. [| 1_000_000 |] in
+  let radius = host (Nx.full f64 [| 1 |] 0.7) in
   let experts_ids = positions 64 32 |> Nx.reshape [| 16; 4 |] in
   let experts_x = between f32 52 (-1.) 1. [| 16; 1; 256 |] in
   [
@@ -621,6 +637,27 @@ let jit_rows () =
     warm "tanh-float32-64K"
       (fun () -> Rune.jit' Nx.tanh)
       (fun f -> synced (f angles));
+    (* 2^20 normal draws from a key argument: a Box-Muller transform, whose sine
+       and cosine read an angle its uniform bounds below 2 pi. *)
+    warm "normal-float32-1M"
+      (fun () ->
+        ( Rune.jit
+            Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
+            (fun key -> Nx.Rng.normal ~key f32 [| 1 lsl 20 |]),
+          Nx.Rng.key 53 ))
+      (fun (f, key) -> synced (f key));
+    (* The gradient in its radius [r] of a sum over a 104 x 104 grid of [w / (1
+       + w^2)], [w] the sum of 14 terms of multiples of [r], which 28 operations
+       broadcast: reverse mode sums a cotangent over the grid for each, and each
+       reads [w]'s, which computes every term of the cell. *)
+    warm "grad-broadcast-radius-float64-104x104"
+      (fun () ->
+        let grid = grid () in
+        Rune.jit'
+          (Rune.grad' (fun r ->
+               let w = waves grid r in
+               Nx.sum (Nx.div w (Nx.add_s (Nx.mul w w) 1.)))))
+      (fun g -> synced (g radius));
     (* A running sum over the negated logs of uniform draws, as nested
        sampling's error estimate: its windows of 16 read each element up to 16
        times, which compute each draw and its log once when stored. *)
@@ -1159,6 +1196,23 @@ let kv_append ~donated =
           cache := synced (f c row pos));
   }
 
+(* 148 float16 gradients of 256 to 2048 values at [at], as many as GPT-2 124M's
+   parameters, and whether every one is finite. *)
+let gradients at =
+  List.init 148 (fun i ->
+      Nx.place at
+        (Nx.cast Nx.float16
+           (Nx.Rng.uniform
+              ~key:(Nx.Rng.key (60 + i))
+              f32
+              [| 256 * (1 + (i mod 8)) |])))
+
+let finite gs =
+  List.fold_left
+    (fun acc g -> Nx.logical_and acc (Nx.all (Nx.isfinite g)))
+    (Nx.all (Nx.isfinite (List.hd gs)))
+    (List.tl gs)
+
 (* A GPU row times its calls only: a GPU buffer's release allocates when the
    collector finalises it, so a call's count depends on the collection's
    phase. *)
@@ -1198,6 +1252,35 @@ let gpu_rows g =
       on_gpu g "cumsum-float32-100x400" (cumsum_at f32 [| 100; 400 |]);
       on_gpu g "cumsum-float32-8x1024" (cumsum_at f32 [| 8; 1024 |]);
       on_gpu g "cumsum-float32-100x50500" (cumsum_at f32 [| 100; 50500 |]);
+      (* Whether 148 float16 gradients are all finite, as a loss scale's step
+         asks of a model's: one kernel of 148 reductions joined by a
+         conjunction. *)
+      on_gpu g "finite-of-148-float16"
+        {
+          at =
+            (fun at ->
+              let gs = gradients at in
+              let f =
+                Rune.jit Nx.Ptree.(list tensor @-> returns tensor) finite
+              in
+              fun () -> ignore (synced (f gs)));
+        };
+      (* The same check selecting each gradient or zeros, as a loss scale's step
+         selects its updates: each of the 148 selections reads the check's one
+         value. *)
+      on_gpu g "finite-selects-148-float16"
+        {
+          at =
+            (fun at ->
+              let gs = gradients at in
+              let selected gs =
+                let ok = finite gs in
+                List.map (fun g -> Nx.where ok g (Nx.zeros_like g)) gs
+              in
+              let s = Nx.Ptree.(list tensor) in
+              let f = Rune.jit Nx.Ptree.(s @-> returns s) selected in
+              fun () -> ignore (synced_all s (f gs)));
+        };
       on_gpu g "kv-append-4096" (kv_append ~donated:true);
       on_gpu g "kv-append-4096-copied" (kv_append ~donated:false);
     ]

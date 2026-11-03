@@ -15,9 +15,9 @@
    instructions, which every candidate pays, for the kernels of [lorenz] on a
    CUDA renderer, and [search/actions] its making of the candidates one action
    makes of a kernel, which a round pays for each kernel of its beam; without
-   NVRTC, which the renderer's compiler needs, the group is empty. What a
-   search pays per candidate beyond them, and what it costs whole, rune's
-   compile suite times through [Rune.jit ~beam].
+   NVRTC, which the renderer's compiler needs, they are left out.
+   [search/beam] times a whole search on the host, its candidates compiled,
+   over rounds a timing of their optimisations alone fixes.
 
    [lorenz] runs the kernels of lorenz_simple's step (sofo-raven's tangent step)
    on the host where the hand-coded optimisations lost most to a beam search,
@@ -356,6 +356,43 @@ let kernel_actions cuda_renderer =
            (fun s -> Search.get_kernel_actions s))
        Lorenz.all)
 
+(* A whole search of width 1 of lorenz's r_128_16_3_4_4_3_3_400_400 on the
+   host, its candidates compiled by Clang with no compile cache, and timed by
+   a function of their optimisations alone, so that every run compiles the
+   same candidates over the same rounds, whose last ones drop candidates past
+   BEAM_UOPS_MAX. *)
+let host_renderer = Cstyle.clang target
+
+let applied prg =
+  match Ops.arg (Ops.nth prg 0) with
+  | Ops.Kernel info -> info.applied_opts
+  | _ -> []
+
+(* A program of more optimisations is faster, ties broken by a hash of them:
+   each round goes on to a kernel of one more, until a round's candidates are
+   all dropped. *)
+let opts_time ~vars:_ prg =
+  let opts = applied prg in
+  let tie = Float.of_int (Hashtbl.hash opts mod 1000) /. 1e4 in
+  1e-3 /. (Float.of_int (1 + List.length opts) +. tie)
+
+let searched = "r_128_16_3_4_4_3_3_400_400"
+
+let searches =
+  Thumper.group "beam"
+    ~metrics:[ Thumper.Metric.wall_time ]
+    [
+      Thumper.bench_with_setup
+        ~setup:(fun () -> handed host_renderer (List.assoc searched Lorenz.all))
+        searched
+        (fun s ->
+          Setting.context
+            [ B (Setting.ccache, false); B (Setting.ignore_beam_cache, true) ]
+            (fun () ->
+              Search.beam_search ~link:Ops.body ~time:opts_time 1
+                (Postrange.Scheduler.copy s)));
+    ]
+
 let suite () =
   List.map (fun (name, _) -> program name) Programs.all
   @ [
@@ -364,9 +401,11 @@ let suite () =
       gpt_oss ();
       stream ();
       Thumper.group "search"
+        (searches
+        ::
         (match cuda_renderer with
         | Some r -> [ linearize_candidates r; kernel_actions r ]
-        | None -> []);
+        | None -> []));
     ]
 
 let () =

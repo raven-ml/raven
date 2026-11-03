@@ -12,7 +12,8 @@
    serves a program after its first compile. A case takes three samples. The
    cases are those whose compile time rune's lowering, tolk's vectors, a
    library's stores of its intermediates or the number of devices a program
-   spans decide.
+   spans decide. The [cuda/] cases run on CUDA's first GPU, whose driver also
+   loads each binary, and are left out without one.
 
    A [warm/] case's sample is a later process's first call: the case's setup
    compiles it into a disk cache, which each sample's process reads its
@@ -402,6 +403,18 @@ let partials () =
   in
   compile f x
 
+(* Eight nested float64 sines of 1024 values on CUDA's first GPU: one kernel of
+   some thousand lines, whose binary the GPU's driver loads. *)
+let cuda_sines () =
+  match Rig.open_ (Rig_cuda.gpu 0) with
+  | Error e -> failwith e
+  | Ok gpu ->
+      let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
+      let x = Nx.place D.on (Nx.linspace f64 (-10.) 10. 1024) in
+      compile
+        (fun x -> List.fold_left (fun x _ -> Nx.sin x) x (List.init 8 Fun.id))
+        x
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -431,11 +444,29 @@ let cases =
     ("wide/sum-1e6", wide_sum);
     ("devices/dp-step-16", data_parallel);
     ("devices/partials-16", partials);
+    ("cuda/sin-nested-8", cuda_sines);
   ]
 
-(* The cases timed again over a warm disk cache: a model's first steps,
-   whose schedule reads 40 programs back, and a scan that reads 112. *)
-let warm_cases = [ "model/schools-start"; "scan/checks-48" ]
+(* The cases timed again over a warm disk cache, as a user's next run of a
+   program makes its first call: a model's first steps, whose schedule reads 40
+   programs back, a scan that reads 112, a decomposition, and a kernel whose
+   binary CUDA's driver loads. *)
+let warm_cases =
+  [
+    "model/schools-start";
+    "scan/checks-48";
+    "linalg/eigh-8x8";
+    "cuda/sin-nested-8";
+  ]
+
+(* Whether CUDA's first GPU opens, asked of a fresh process. *)
+let cuda_opens () =
+  let exe = Sys.executable_name in
+  let pid =
+    Unix.create_process exe [| exe; "--cuda" |] Unix.stdin Unix.stdout
+      Unix.stderr
+  in
+  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
 
 let rec remove path =
   if Sys.is_directory path then (
@@ -443,28 +474,29 @@ let rec remove path =
     Sys.rmdir path)
   else Sys.remove path
 
-(* A fresh process's first call of [id] over the disk cache in [dir], with the
-   variables [env] set. *)
+(* A fresh process's first call of [id] over the disk cache in [dir], and over a
+   cache of the GPU driver's binaries there too, as a kernel never loaded before
+   is, with the variables [env] set. *)
 let first_call ~env dir id =
   let exe = Sys.executable_name in
   let env =
     Array.concat
       [
-        [| "CACHEDB=" ^ Filename.concat dir "cache.db" |];
+        [|
+          "CACHEDB=" ^ Filename.concat dir "cache.db";
+          "CUDA_CACHE_PATH=" ^ Filename.concat dir "driver";
+        |];
         env;
         Unix.environment ();
       ]
   in
-  let status =
-    let null = Unix.openfile Filename.null [ Unix.O_WRONLY ] 0 in
-    Fun.protect ~finally:(fun () -> Unix.close null) @@ fun () ->
-    let pid =
-      Unix.create_process_env exe [| exe; "--cold"; id |] env Unix.stdin null
-        Unix.stderr
-    in
-    snd (Unix.waitpid [] pid)
+  let null = Unix.openfile Filename.null [ Unix.O_WRONLY ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close null) @@ fun () ->
+  let pid =
+    Unix.create_process_env exe [| exe; "--cold"; id |] env Unix.stdin null
+      Unix.stderr
   in
-  match status with
+  match snd (Unix.waitpid [] pid) with
   | Unix.WEXITED 0 -> ()
   | _ -> failwith ("bench_compile: the first call of " ^ id ^ " failed")
 
@@ -503,9 +535,16 @@ let () =
       | None ->
           prerr_endline ("bench_compile: no case " ^ id);
           exit 2)
+  | [ _; "--cuda" ] ->
+      exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
   | _ ->
+      let cuda = cuda_opens () in
+      let runs id = cuda || not (String.starts_with ~prefix:"cuda/" id) in
       Thumper.run "compile" ~config
         ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-        (List.map (fun (id, _) -> Thumper.bench id (cold id)) cases
-        @ List.map warm warm_cases)
+        (List.filter_map
+           (fun (id, _) ->
+             if runs id then Some (Thumper.bench id (cold id)) else None)
+           cases
+        @ List.map warm (List.filter runs warm_cases))
       |> exit
