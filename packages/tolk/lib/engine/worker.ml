@@ -18,27 +18,113 @@ let rec reserve wanted =
 
 let release k = ignore (Atomic.fetch_and_add spawned (-k))
 
+(* Signals
+
+   A signal's handler runs at the next poll point of any domain whose thread
+   does not block the signal, and a domain takes its spawner's mask. One spawned
+   with signals unblocked could run it at its first poll, before [Domain.spawn]
+   has made the domain's DLS, and crash the process; later, it would fail an
+   application with the handler's exception, such as [Sys.Break]. So a call
+   spawns its domains with every signal but a fault's blocked ([block]), and
+   they keep that mask: handlers run on the program's own threads. The calling
+   thread blocks them too, but in [body] and in its waits for the domains, where
+   it has its own mask ([restore]): a handler's exception then cuts nothing
+   short that must run whole, and a signal's default action, such as a
+   SIGTERM's, takes effect at once. *)
+external block : unit -> (int64[@unboxed])
+  = "tolk_worker_block_byte" "tolk_worker_block"
+[@@noalloc]
+
+external restore : (int64[@unboxed]) -> unit
+  = "tolk_worker_restore_byte" "tolk_worker_restore"
+
+external reraise : exn -> 'a = "%reraise"
+
+(* [settle outer wanted work body] spawns the domains and joins them, with the
+   calling thread's signals blocked, but in [body] and in the joins, where its
+   mask is [outer]: what [body] ended with, the first exception of a handler
+   that cut a join short, and the exceptions the domains' [work] raised. *)
+let settle outer wanted work body =
+  let domains = ref [] in
+  (* A domain's [work] raises only an exception such as [Out_of_memory]: it
+     comes back as the domain's result, so that a join raises only a
+     handler's. *)
+  let guarded () =
+    match work () with
+    | () -> None
+    | exception e -> Some (e, Printexc.get_raw_backtrace ())
+  in
+  let rec spawn k =
+    if k > 0 then
+      match Domain.spawn guarded with
+      | d ->
+          domains := d :: !domains;
+          spawn (k - 1)
+      | exception Failure _ -> release k
+      | exception e ->
+          release k;
+          reraise e
+  in
+  (* [f ()] with the caller's mask, then signals blocked again however it ends.
+     The mask is restored inside the [match], so that a handler's exception at
+     any poll point after it is [f]'s. *)
+  let unblocked f =
+    match
+      restore outer;
+      f ()
+    with
+    | r ->
+        ignore (block ());
+        Ok r
+    | exception e ->
+        ignore (block ());
+        Error (e, Printexc.get_raw_backtrace ())
+  in
+  let outcome =
+    match spawn (reserve wanted) with
+    | () -> unblocked body
+    | exception e -> Error (e, Printexc.get_raw_backtrace ())
+  in
+  (* A join that a handler's exception cuts short is made again, and the first
+     such exception is kept. *)
+  let interrupted = ref None in
+  let rec join d =
+    match unblocked (fun () -> Domain.join d) with
+    | Ok r -> r
+    | Error failure ->
+        if Option.is_none !interrupted then interrupted := Some failure;
+        join d
+  in
+  let failed = List.filter_map join !domains in
+  release (List.length !domains);
+  (outcome, !interrupted, failed)
+
+(* [alongside wanted work body] where a domain may be spawned. An exception
+   that is not a handler's, from a finaliser, a memory profiler's callback or
+   [Out_of_memory] at an allocation while signals are blocked, still gives the
+   caller its mask back, but may leave domains unjoined. *)
+let spawning wanted work body =
+  let outer = block () in
+  let ended =
+    match settle outer wanted work body with
+    | ended -> ended
+    | exception e ->
+        restore outer;
+        reraise e
+  in
+  restore outer;
+  match ended with
+  | _, Some (e, bt), _ | Error (e, bt), None, _ | Ok _, None, (e, bt) :: _ ->
+      Printexc.raise_with_backtrace e bt
+  | Ok r, None, [] -> r
+
 (* [body ()] on the calling domain while up to [wanted] other domains run
    [work], returning once they all have. The runtime refuses a domain past its
    limit, which other domains of the program may have reached: the call then
    does with fewer. *)
 let alongside wanted work body =
-  let domains = ref [] in
-  let rec spawn k =
-    if k > 0 then
-      match Domain.spawn work with
-      | d ->
-          domains := d :: !domains;
-          spawn (k - 1)
-      | exception Failure _ -> release k
-  in
-  Fun.protect
-    ~finally:(fun () ->
-      List.iter Domain.join !domains;
-      release (List.length !domains))
-    (fun () ->
-      spawn (reserve wanted);
-      body ())
+  if wanted <= 0 || Setting.value Setting.parallel <= 1 then body ()
+  else spawning wanted work body
 
 let map f l =
   let tasks = Array.of_list l in

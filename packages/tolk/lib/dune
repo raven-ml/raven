@@ -19,7 +19,8 @@
    helpers_stubs
    compiler_cpu_stubs
    compiler_worker_stubs
-   compiler_metal_stubs))
+   compiler_metal_stubs
+   worker_stubs))
  (c_library_flags
   (:include dl_flags.sexp))
  (instrumentation

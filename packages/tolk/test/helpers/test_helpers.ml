@@ -1108,9 +1108,33 @@ let compiled ?(flags = "") compilers src =
 
 let last_line s = List.hd (List.rev (String.split_on_char '\n' (String.trim s)))
 
+(* A shell started from a thread that blocks SIGTERM, as a domain Worker spawns
+   does, sends itself SIGTERM: it ends by it unless it started with the signal
+   blocked. *)
+let starts_unblocked () =
+  if Sys.win32 then skip ~reason:"Windows has no signal masks" ();
+  let script = Filename.temp_file "tolk" ".sh" in
+  let out = Filename.temp_file "tolk" ".out" in
+  Out_channel.with_open_bin script (fun oc ->
+      output_string oc "kill -TERM $$\necho blocked\n");
+  let old = Unix.sigprocmask Unix.SIG_BLOCK [ Sys.sigterm ] in
+  let status =
+    Fun.protect
+      ~finally:(fun () -> ignore (Unix.sigprocmask Unix.SIG_SETMASK old))
+      (fun () -> run_program ~stdin:script ~stdout:out ~stderr:out "sh" [])
+  in
+  match status with
+  | Ok (Some (Unix.WSIGNALED s)) -> equal int Sys.sigterm s
+  | Ok (Some (WEXITED c)) -> failf "exited %d: %s" c (In_channel.with_open_bin out In_channel.input_all)
+  | Ok (Some (WSTOPPED s)) -> failf "stopped by signal %d" s
+  | Ok None -> fail "the status is lost"
+  | Error why -> fail why
+
 let programs =
   group "programs"
     [
+      test "run_program starts the program with no signal blocked"
+        starts_unblocked;
       test "system is the output of a command" (fun () ->
           equal string "hello" (system "echo hello"));
       test "system splits a command at runs of white space" (fun () ->

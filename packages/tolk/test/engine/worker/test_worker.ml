@@ -233,6 +233,81 @@ let beyond_runtime_limit () =
   equal (list int) (List.map succ l)
     (with_parallel 300 (fun () -> Worker.map f l))
 
+(* By system number, every signal OCaml names that the system has, but those a
+   fault raises and the two no thread can block. A handler that ran on a domain
+   the call spawned, before [Domain.spawn] had made the domain's DLS, would end
+   the process. *)
+let faults =
+  List.map Sys.signal_to_int
+    Sys.[ sigsegv; sigbus; sigfpe; sigill; sigtrap; sigabrt; sigsys ]
+
+let maskable =
+  List.init 30 (fun i -> Sys.signal_to_int (-i - 1))
+  |> List.filter (fun s ->
+      s > 0
+      && not
+           (List.mem s
+              (Sys.signal_to_int Sys.sigkill
+              :: Sys.signal_to_int Sys.sigstop
+              :: faults)))
+  |> List.sort_uniq Int.compare
+
+(* The calling thread's mask, by system number. *)
+let thread_mask () =
+  Unix.sigprocmask Unix.SIG_BLOCK []
+  |> List.map Sys.signal_to_int |> List.sort Int.compare
+
+(* [run mask] applies [mask] to two elements, one on the calling domain and one
+   on a domain the call spawns, and is their results. The spawned domain blocks
+   the signals, and the calling thread's mask is as it was. *)
+let blocks_signals run =
+  if Sys.win32 then skip ~reason:"Windows has no signal masks" ();
+  let caller = domain () and meet = meeting 2 in
+  let mask () =
+    meet ();
+    if domain () = caller then None else Some (thread_mask ())
+  in
+  let before = thread_mask () in
+  let results = with_parallel 2 (fun () -> run mask) in
+  equal ~msg:"the caller's mask" (list int) before (thread_mask ());
+  match List.filter_map Fun.id results with
+  | [ blocked ] ->
+      List.iter (fun s -> mem int s blocked) maskable;
+      equal ~msg:"faults blocked" (list int) []
+        (List.filter (fun s -> List.mem s blocked) faults)
+  | masks -> failf "%d applications on a spawned domain" (List.length masks)
+
+exception Interrupted
+
+(* A signal comes while the call joins the domain it spawned, which blocks the
+   signal: the call raises the handler's exception once the domain's application
+   has ended, and gives the domain back. The spawned domain waits for the caller
+   to reach its join. *)
+let signal_while_joining () =
+  if Sys.win32 then skip ~reason:"Windows has no signal masks" ();
+  let caller = domain () and meet = meeting 2 in
+  let returned = Atomic.make false and ended = Atomic.make false in
+  let f () =
+    meet ();
+    if domain () = caller then Atomic.set returned true
+    else begin
+      await "the caller's application" (fun () -> Atomic.get returned);
+      Unix.sleepf 0.05;
+      Unix.kill (Unix.getpid ()) Sys.sigusr1;
+      Unix.sleepf 0.05;
+      Atomic.set ended true
+    end
+  in
+  let interrupt = Sys.Signal_handle (fun _ -> raise Interrupted) in
+  let previous = Sys.signal Sys.sigusr1 interrupt in
+  Fun.protect
+    ~finally:(fun () -> Sys.set_signal Sys.sigusr1 previous)
+    (fun () ->
+      raises Interrupted (fun () ->
+          with_parallel 2 (fun () -> Worker.map f [ (); () ])));
+  equal ~msg:"the spawned application ended" bool true (Atomic.get ended);
+  spreads 2
+
 let domains =
   group "domains"
     [
@@ -252,6 +327,10 @@ let domains =
       test "gives its domains back when it returns or raises" gives_domains_back;
       test "computes List.map with PARALLEL above the runtime's domain limit"
         beyond_runtime_limit;
+      test "runs no signal handler on the domains it spawns" (fun () ->
+          blocks_signals (fun mask -> Worker.map mask [ (); () ]));
+      test "raises a signal's exception during its joins once they end"
+        signal_while_joining;
     ]
 
 (* Nesting *)
@@ -659,6 +738,11 @@ let streaming =
         joins_before_raising_from_g;
       test "every application of f sees the caller's settings"
         iter_sees_caller_settings;
+      test "runs no signal handler on the domains it spawns" (fun () ->
+          blocks_signals (fun mask ->
+              let masks = ref [] in
+              Worker.iter mask (fun () m -> masks := m :: !masks) [ (); () ];
+              !masks));
     ]
 
 (* Compiling *)

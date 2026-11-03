@@ -763,6 +763,17 @@ let with_temp_file contents f =
 
 let read_file path = In_channel.with_open_bin path In_channel.input_all
 
+external spawn : string -> string array -> Unix.file_descr array -> int
+  = "tolk_spawn"
+
+(* [Unix.create_process], whose child takes its thread's mask, except that
+   outside Windows the child starts with no signal blocked ([tolk_spawn]): on a
+   domain Worker spawns, which blocks every signal, a Clang would outlive a
+   Ctrl-C. *)
+let create_process prog argv input output errors =
+  if Sys.win32 then Unix.create_process prog argv input output errors
+  else spawn prog argv [| input; output; errors |]
+
 (* The program runs as a process of this one, with no shell between, waited for
    with the runtime released: [Sys.command] goes through the C library's
    [system], which macOS runs one at a time, so domains would wait for each
@@ -794,7 +805,7 @@ let run_program ?stdin ~stdout ~stderr prog args =
       else open_file stderr [ O_WRONLY; O_TRUNC ]
     in
     let argv = Array.of_list (prog :: args) in
-    match Unix.create_process prog argv input output errors with
+    match create_process prog argv input output errors with
     | pid -> Ok pid
     | exception Unix.Unix_error (e, _, _) ->
         Error (prog ^ ": " ^ Unix.error_message e)

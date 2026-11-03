@@ -190,8 +190,10 @@ the Exclusions of `README.md`.
   spawns its domains for the call and joins them before it returns, where
   tinygrad keeps a pool: an idle domain still takes part in every minor
   collection. So the process machinery goes with the pool: the hidden
-  `__main__`, the copied environment, the ignored SIGINT, the recycling of
-  a worker after 16 tasks, and `terminate_worker_pool`. The workers' context
+  `__main__`, the copied environment, the recycling of a worker after 16
+  tasks, and `terminate_worker_pool`. A tinygrad worker ignores SIGINT,
+  which a domain cannot, since a handler is the process's: the domains
+  block every signal but a fault's instead. The workers' context
   (`ALLOW_DEVICE_USAGE`, `VIZ`, `TRACK_MATCH_STATS`) goes too: the compiler
   opens no device and has neither of the other settings. A setting holds one
   value per domain, where tinygrad holds one per process: a domain starts with

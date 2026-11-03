@@ -277,7 +277,8 @@ val run_program :
     standard output and standard error to the files [stdout] and [stderr],
     emptied first, in order when they are the same file. The files can be
     removed while another process holds them, which on Windows a process started
-    meanwhile does.
+    meanwhile does. It starts with no signal blocked, whatever the calling
+    thread blocks.
 
     It is [Error] naming [prog] with the reason if [prog] cannot start. Raises
     [Unix.Unix_error] if a file cannot be opened. *)

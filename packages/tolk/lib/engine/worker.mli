@@ -11,7 +11,15 @@
     one function to many independent inputs. {!map} spreads these applications
     over as many domains as {!Setting.parallel} allows, and returns what a
     serial map returns. {!iter} hands each result, as it is computed, to a
-    consumer on the calling domain while others are computed. *)
+    consumer on the calling domain while others are computed.
+
+    The domains they spawn block every signal but those a fault raises, so that
+    a signal's handler, and the exception it raises such as [Sys.Break], runs on
+    the program's own threads. A handler's exception that cuts short the calling
+    domain's wait for them is raised once they have all ended. Windows has no
+    signal masks: there a handler may run on a spawned domain, its exception
+    then an application's, and one that runs as the domain starts can crash the
+    process. *)
 
 val map : ('a -> 'b) -> 'a list -> 'b list
 (** [map f l] is [List.map f l], computed on the calling domain and on up to

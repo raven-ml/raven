@@ -924,6 +924,15 @@ word comes from its lock and from samples the dashboard saw arrive.
 - `Heuristic.hand_coded_optimizations` tries the tensor cores first for a
   contraction past 64 multiply-adds per byte of its streamed operand, as routed
   blocks sharing experts are: gpt-oss-20b's 512-token prefill 0.19 s from 0.45.
+- Outside Windows, a signal during a compile, such as Ctrl-C under
+  `Sys.catch_break`, no longer crashes the process or fails a compile on
+  another domain: `Worker.map` and `Worker.iter` spawn their domains with every
+  signal but a fault's blocked, and `Helpers.run_program` starts its program
+  with none blocked.
+- `Worker.map` and `Worker.iter` raise a handler's exception that comes while
+  they wait for their domains, or a domain's own, once every domain has ended.
+  They raised `Fun.Finally_raised` and kept the domains from later calls.
+
 - `Compiler_cpu.clang` compiles for x86_64 without AVX10.1 and AVX-512's half
   arithmetic under a Clang of LLVM 18, which crashed on float16 casts for such
   processors, as Ubuntu 24.04's did with `native`. `Compiler_cpu.flags` states

@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*/
 
 /* Setting a file's times through a descriptor, which OCaml's Unix library
-   does only by path ([Unix.utimes]), and renaming a file over one that is
-   open, which OCaml's rename does not do on Windows. */
+   does only by path ([Unix.utimes]), renaming a file over one that is open,
+   which OCaml's rename does not do on Windows, and starting a process with no
+   signal blocked, which [Unix.create_process] does not do. */
 
 #define _GNU_SOURCE
 
@@ -16,6 +17,7 @@
 #endif
 
 #define CAML_NAME_SPACE
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/osdeps.h>
@@ -37,8 +39,14 @@ CAMLextern void caml_win32_maperr(DWORD errcode);
 #include <stdlib.h>
 #include <windows.h>
 #else
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <unistd.h>
+extern char **environ;
 #endif
 
 /* [tolk_touch fd] sets the access and modification times of the file [fd]
@@ -165,4 +173,63 @@ CAMLprim value tolk_rename(value src, value dst)
   if (r == -1) caml_uerror("rename", src);
 #endif
   CAMLreturn(Val_unit);
+}
+
+/* [tolk_spawn prog argv fds] starts [prog], found in PATH as by execvp, with
+   the arguments [argv] and the descriptors [fds.(0)], [fds.(1)] and [fds.(2)]
+   as its standard input, output and error, and is its pid. The process starts
+   with no signal blocked: [Unix.create_process] gives it the calling thread's
+   mask, which on a domain Worker spawns blocks every signal. A descriptor of
+   [fds] below 3 that is not its own is first copied above 2, so that no
+   redirection overwrites one still to come. Every other descriptor that is
+   not close-on-exec, a source of the three included, stays open in it.
+   Raises Unix.Unix_error if the process does not start. Unix only. */
+CAMLprim value tolk_spawn(value v_prog, value v_argv, value v_fds)
+{
+#ifdef _WIN32
+  (void)v_prog;
+  (void)v_argv;
+  (void)v_fds;
+  caml_failwith("tolk_spawn: Windows uses Unix.create_process");
+#else
+  CAMLparam3(v_prog, v_argv, v_fds);
+  int fds[3], copies[3] = {-1, -1, -1}, r = 0;
+  pid_t pid = 0;
+  posix_spawn_file_actions_t actions;
+  posix_spawnattr_t attributes;
+  sigset_t none;
+  caml_unix_check_path(v_prog, "create_process");
+  char **argv = caml_unix_cstringvect(v_argv, "create_process");
+  for (int i = 0; i < 3; i++) {
+    fds[i] = Int_val(Field(v_fds, i));
+    if (fds[i] < 3 && fds[i] != i && r == 0) {
+      copies[i] = fcntl(fds[i], F_DUPFD_CLOEXEC, 3);
+      if (copies[i] == -1) r = errno;
+      else fds[i] = copies[i];
+    }
+  }
+  if (r == 0) r = posix_spawn_file_actions_init(&actions);
+  if (r == 0) {
+    for (int i = 0; i < 3 && r == 0; i++)
+      if (fds[i] != i)
+        r = posix_spawn_file_actions_adddup2(&actions, fds[i], i);
+    if (r == 0) r = posix_spawnattr_init(&attributes);
+    if (r == 0) {
+      sigemptyset(&none);
+      r = posix_spawnattr_setsigmask(&attributes, &none);
+      if (r == 0)
+        r = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK);
+      if (r == 0)
+        r = posix_spawnp(&pid, String_val(v_prog), &actions, &attributes, argv,
+                         environ);
+      posix_spawnattr_destroy(&attributes);
+    }
+    posix_spawn_file_actions_destroy(&actions);
+  }
+  caml_unix_cstringvect_free(argv);
+  for (int i = 0; i < 3; i++)
+    if (copies[i] != -1) close(copies[i]);
+  if (r != 0) caml_unix_error(r, "create_process", v_prog);
+  CAMLreturn(Val_long(pid));
+#endif
 }
