@@ -1838,6 +1838,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `Nx.Ptree.triple` and `Nx.Ptree.quad`, which walk a tuple's
+  components at `0` to `3`, as a derived walk of a tuple does. Nested pairs
+  put a triple's last part at `1.1`; `triple` puts it at `2`.
 - **Breaking:** `Nx.softmax` and `Nx.log_softmax` take `~where`, as JAX's
   do: a lane holds the elements the mask selects; one outside it is exactly
   `0.` (`-∞`), whatever its value, and a lane holding none is all `0.`

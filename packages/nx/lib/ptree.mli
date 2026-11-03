@@ -102,6 +102,15 @@ val v : ('a 'b. ('a, 'b, 'd, 'd) Walk.cursor -> 's -> 's) -> ('s, 'd) t
 val tensor : (('v, 's, 'd) Value.t, 'd) t
 val unit : (unit, 'd) t
 val pair : ('a, 'd) t -> ('b, 'd) t -> ('a * 'b, 'd) t
+val triple : ('a, 'd) t -> ('b, 'd) t -> ('c, 'd) t -> ('a * 'b * 'c, 'd) t
+
+val quad :
+  ('a, 'd) t ->
+  ('b, 'd) t ->
+  ('c, 'd) t ->
+  ('e, 'd) t ->
+  ('a * 'b * 'c * 'e, 'd) t
+
 val option : ('a, 'd) t -> ('a option, 'd) t
 val list : ('a, 'd) t -> ('a list, 'd) t
 

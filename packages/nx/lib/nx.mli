@@ -4284,6 +4284,21 @@ module Ptree : sig
   (** [pair a b] walks a pair's first component with [a] at [Index 0], then its
       second with [b] at [Index 1]. *)
 
+  val triple : ('a, 'd) t -> ('b, 'd) t -> ('c, 'd) t -> ('a * 'b * 'c, 'd) t
+  (** [triple a b c] walks a triple's components with [a], [b] and [c] at
+      [Index 0], [Index 1] and [Index 2], in that order. *)
+
+  val quad :
+    ('a, 'd) t ->
+    ('b, 'd) t ->
+    ('c, 'd) t ->
+    ('e, 'd) t ->
+    ('a * 'b * 'c * 'e, 'd) t
+  (** [quad a b c e] walks a quadruple's components with [a], [b], [c] and [e]
+      at [Index 0] to [Index 3], in that order. A value of more parts is a
+      record or a labelled tuple described with {!v}, each part walked with
+      {!Walk.field} at its name. *)
+
   val option : ('a, 'd) t -> ('a option, 'd) t
   (** [option a] reports presence as {!Walk.option} does and walks the content
       with [a] at the same path. *)

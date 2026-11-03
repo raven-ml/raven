@@ -127,6 +127,21 @@ let pair a b =
       let y = Walk.index c 1 (Walk.structure b) y in
       (x, y))
 
+let triple a b c =
+  v (fun k (x, y, z) ->
+      let x = Walk.index k 0 (Walk.structure a) x in
+      let y = Walk.index k 1 (Walk.structure b) y in
+      let z = Walk.index k 2 (Walk.structure c) z in
+      (x, y, z))
+
+let quad a b c d =
+  v (fun k (x, y, z, w) ->
+      let x = Walk.index k 0 (Walk.structure a) x in
+      let y = Walk.index k 1 (Walk.structure b) y in
+      let z = Walk.index k 2 (Walk.structure c) z in
+      let w = Walk.index k 3 (Walk.structure d) w in
+      (x, y, z, w))
+
 let option a = v (fun c x -> Walk.option (Walk.structure a) c x)
 let list a = v (fun c l -> Walk.list (Walk.structure a) c l)
 

@@ -173,9 +173,9 @@ end
 
 A dictionary reports its size with `int` and each key with `case` before walking that key's value with `field`.
 
-## Pairs, Lists and Records Without Names
+## Tuples, Lists and Records Without Names
 
-The combinators are descriptions at one type: `Nx.Ptree.tensor` and `unit`, and `pair`, `option` and `list`, which build one from others. A pair walks its sides at `0` and `1`:
+The combinators are descriptions at one type: `Nx.Ptree.tensor` and `unit`, and `pair`, `triple`, `quad`, `option` and `list`, which build one from others. A pair walks its sides at `0` and `1`:
 
 ```ocaml
 # let pairs = Nx.Ptree.(pair tensor (list tensor)) in
@@ -185,6 +185,18 @@ The combinators are descriptions at one type: `Nx.Ptree.tensor` and `unit`, and 
     [];;
 - : string list = ["1.0"; "0"]
 ```
+
+A triple walks its components at `0`, `1` and `2`, and a quadruple at `0` to `3`, as a loop's carry of a solution, a factor and a permutation:
+
+```ocaml
+# let carry = Nx.Ptree.(triple tensor tensor tensor) in
+  Nx.Ptree.visits carry
+    (Nx.ones Nx.float32 [| 3 |], Nx.eye Nx.float32 3, Nx.zeros Nx.int32 [| 3 |])
+  |> List.map (Format.asprintf "%a" Nx.Ptree.pp_visit);;
+- : string list = ["0: a leaf"; "1: a leaf"; "2: a leaf"]
+```
+
+A value of more parts is a record or a labelled tuple, described with `Nx.Ptree.v` as in [Records of Structures](#records-of-structures), and its paths are its parts' names.
 
 A key, or a batch of keys, is `Nx.Rng.ptree`: one array at the root, rebuilt through `Nx.Rng.of_tensor`, which checks that its last axis holds a key's two words. As `tensor` and `unit` are, it is at every set, so one binding describes keys on the host and on any other set. A key is one visit, at the root:
 
