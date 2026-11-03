@@ -13,23 +13,13 @@ let applied_opts prg =
   | _ -> failf "the program %a has no kernel" Ops.pp prg
 
 (* The engine's linking and timing of a kernel's programs on the host, on the
-   slots of the first one timed, with the samples of an unoptimised program
-   lengthened by a microsecond and those of an optimised one scaled down a
-   thousandfold, so that a search progresses past its kernel whatever the host's
-   noise, and a span shorter than the host clock's tick, which reads 0: when a
-   search stops is the Search suite's. *)
+   slots of the first one timed. *)
 let timing () =
   let slots = ref None in
-  let link call =
-    let prg = Ops.body call in
-    let adjust =
-      if applied_opts prg = [] then fun t -> t +. 1e-6 else fun t -> t *. 1e-3
-    in
-    (Tolk_engine.link_call ~devices call, adjust)
-  in
-  let time ~vars (s, adjust) =
+  let link call = Tolk_engine.link_call ~devices call in
+  let time ~vars s =
     if Option.is_none !slots then slots := Some (Tolk_engine.slots s);
-    adjust (Tolk_engine.time ~vars s (Option.get !slots))
+    Tolk_engine.time ~vars s (Option.get !slots)
   in
   (link, time)
 

@@ -1503,7 +1503,7 @@ word comes from its lock and from samples the dashboard saw arrive.
   and accepts positional scalar arguments, so `Rune.jit ~beam` searches a loop
   that reads its index. A search allocates its buffers once, and not at all
   when its result is cached, links each candidate once, runs each sample once
-  and silently, compiles each kernel once, and compiles no candidate past
+  and silently, and compiles no candidate past
   `BEAM_UOPS_MAX` (`Codegen.linearize`). A candidate's setup on Metal takes
   about 1.2 ms, from about 3.9 ms.
 - Reductions over one domain that read none of each other share their loop
@@ -1573,10 +1573,6 @@ word comes from its lock and from samples the dashboard saw arrive.
   timed kernels is lost during the run, where it raised `Invalid_argument`
   "no span": a search on NV that a GPU co-tenant held past the hang timeout
   died naming a missing span instead of the lost device.
-- `Search.beam_search` compiles each source once: candidates of distinct
-  kernels that render one source each ran the compiler, a rejected one again
-  for every domain waiting on it. A domain asking for a source another is
-  compiling now waits for its binary or rejection.
 - `Compiler_cpu.clang` runs Clang as a process of its own, waited for with
   the runtime released, instead of through the C library's `system`, which
   macOS runs one at a time: 16 compiles on 8 domains take 0.11 s, from
@@ -1638,12 +1634,6 @@ word comes from its lock and from samples the dashboard saw arrive.
   once: comgr serialises the compiles of a process. A source that crashes
   LLVM raises `Compile_error` instead of ending the program. A beam search of GNODE's step on an R9700
   takes 19 s at `PARALLEL=8`, from 43 s.
-- `Search.beam_search` times its kernel before its first round and starts
-  from it, and a round progresses only when every sample of its fastest
-  candidate beats every sample of the beam's first kernel by
-  `BEAM_MIN_PROGRESS`, so a search never answers a kernel slower than the one
-  it was given. The least of noisy timings is biased low, and searches ran
-  rounds on gains within the noise, as PR #235 found.
 - Every environment variable is one setting of the new module `Tolk.Setting`,
   declared and documented there with its reach, so each can be bound with
   `Setting.context` (`Ops.rewrite_stack_limit` is `Setting.rewrite_stack_limit`).

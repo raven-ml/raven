@@ -2915,101 +2915,64 @@ encodes its barriers (D146).
   linearize and compile › compile completes linearize into the program
   to_program makes` and `› linearize compiles nothing`.
 
-## D116. A search compiles each kernel and source once, and keeps no candidate's program
+## D116. A search keeps no candidate's program
 
-- **tinygrad:** `codegen/opt/search.py:133-143` (each candidate compiled,
-  then dropped if its binary is in `seen_libs`), `:63` (`_try_compile` calls
-  `to_program`); `codegen/__init__.py:477-505` (`do_to_program` takes a
-  sink or a program at any stage), `:516-518` (`to_program_cache`) and
-  `:463` (`do_compile` calls `compile_cached`); `engine/realize.py:234`
+- **tinygrad:** `codegen/opt/search.py:63` (`_try_compile` calls
+  `to_program`); `codegen/__init__.py:477-505` (`do_to_program` takes a sink
+  or a program at any stage), `:516-518` (`to_program_cache`) and `:463`
+  (`do_compile` calls `compile_cached`); `engine/realize.py:234`
   (`_get_call_to_compile` takes a program not yet compiled).
-- **tolk:** `Search.beam_search` (its `compiled`, the compiler it memoizes
-  and its `compile`); `Search.memo`; `Search.try_compile`, `Codegen.compile`
-  and `Codegen.to_program`, and `Realize.get_call_to_compile`.
-- **Differs:** a search compiles through memos of its own, and keeps nothing
-  beyond them. It keeps each kernel's compilation, by its scheduler's
-  kernel (`Postrange.Scheduler.ast`), and a candidate whose kernel it met
-  before, in this round or an earlier one, takes that result uncompiled: a
-  round compiles each of its distinct kernels once, and each candidate of
-  that kernel takes its compilation as it ends.
-  tinygrad compiles both: two sequences of actions, such as an upcast then a
-  swap and the swap then the upcast of the swapped axis, reach equal kernels
-  whose kernel information records different optimisations, so
-  `to_program`'s cache misses, and `seen_libs` drops the second binary only
-  after compiling it. A program depends only on its kernel and its name,
-  `"test"`, so the search keeps and drops the same candidates. Distinct
-  kernels can also render one source: the search compiles through a memo of
-  its compiler, so a source is compiled or rejected once, and a domain asking
-  for one another is compiling waits for it. A binary or a rejection depends
-  only on its source, so `seen_libs` sees the same binaries.
+- **tolk:** `Search.try_compile`, `Codegen.compile` and `Codegen.to_program`,
+  and `Realize.get_call_to_compile`.
+- **Differs:** a candidate is compiled by `Codegen.linearize` then
+  `Codegen.compile`, through its compiler's disk cache
+  (`Renderer.Compiler.compile_cached`), as tinygrad's `compile_cached` does;
+  its program enters neither of `to_program`'s tables, where tinygrad's
+  `to_program` keeps it in the memory of the process that compiled it. A
+  search keeps its choice, and the kernel compiled with it keeps its own
+  program and binary, as in tinygrad; that kernel is compiled apart from the
+  candidate it was, since a candidate is named `"test"`. `to_program` takes
+  only a kernel's sink, and `compile` only what `linearize` returns:
+  `to_program ast ren` is `compile (linearize ast ren) ren`, kept. tinygrad's
+  `do_to_program`, and `lower_and_compile` with it, also resume a program from
+  any stage.
+- **Reason:** (a): tinygrad compiles candidates in worker processes
+  (`get_worker_pool`), which exit after `BEAM_MAX_TASKS_PER_CHILD` (16) tasks
+  and free the programs they kept, where tolk compiles them on domains of the
+  calling process (D5), whose `to_program` table would hold every candidate of
+  every search for the life of the process. A stage resumed by `to_program` is
+  a stage reached by `Codegen.linearize` or `Codegen.compile`, so no caller
+  loses one. The entry also kept memos of each kernel and each source a search
+  compiled, for duplicate candidates measured on AMD; they are withdrawn: on
+  fudge, the tolk bench's `search/beam/r_128_16_3_4_4_3_3_400_400` took 0.52,
+  0.50 and 1.39 s with them against 0.47 and 1.26 s without, in the same
+  rounds (medians of 11, interleaved runs), and a first call of `Rune.jit
+  ~beam:2` of a 64 by 64 float32 product and its tanh on the host 9.4, 7.3
+  and 7.0 s with them against 3.7, 7.6 and 10.0 s (medians of 3 cold
+  processes). As tinygrad's `codegen/opt/search.py:133-143`, every candidate
+  compiles, and a binary timed before is dropped after its compilation.
+- **Pinned by:** `Tolk.Search › a search keeps each candidate's binary in its
+  compiler's table, as a kernel compiled with it keeps its own`; an absence:
+  `Search.try_compile` calls `Codegen.linearize` and `Codegen.compile`, which
+  keep nothing; `Tolk.Codegen › linearize and compile` (every test).
 
-  A candidate is compiled by `Codegen.linearize` then `Codegen.compile`,
-  through its compiler's disk cache (`Renderer.Compiler.compile_cached`), as
-  tinygrad's `compile_cached` does; its program enters neither of
-  `to_program`'s tables, where tinygrad's `to_program` keeps it in the memory
-  of the process that compiled it. A search keeps its choice, and the kernel
-  compiled with it keeps its own program and binary, as in tinygrad; that
-  kernel is compiled apart from the candidate it was, since a candidate is
-  named `"test"`. `to_program` takes only a kernel's sink, and `compile` only
-  what `linearize` returns: `to_program ast ren` is
-  `compile (linearize ast ren) ren`, kept. tinygrad's `do_to_program`, and
-  `lower_and_compile` with it, also resume a program from any stage.
-- **Reason:** for the memos, (d): the beam searches of GNODE and of
-  lorenz_simple's step (sofo-raven) on AMD, where 12 to 16% of a search's
-  candidates were such duplicates, and the host searches of a lorenz_simple
-  step on AMD, where 10 of 12 candidates of a round compiled to binaries
-  already timed. Measured on AMD; to re-measure on fudge. No fudge bench row
-  times a search's compilations: tolk's `search/linearize/*` rows lower
-  candidates and compile none. For the programs, (a): tinygrad compiles
-  candidates in worker processes (`get_worker_pool`), which exit after
-  `BEAM_MAX_TASKS_PER_CHILD` (16) tasks and free the programs they kept,
-  where tolk compiles them on domains of the calling process (D5), whose
-  `to_program` table would hold every candidate of every search for the life
-  of the process. A stage resumed by `to_program` is a stage reached by
-  `Codegen.linearize` or `Codegen.compile`, so no caller loses one.
-- **Pinned by:** `Tolk.Search › a search compiles each kernel once, on several
-  domains`
-  (`matmul_small`, whose upcast and swap commute; it counts renders), `› a
-  search compiles each source once` (both tests) and `› a search keeps each
-  candidate's binary in its compiler's table, as a kernel compiled with it
-  keeps its own`; for the programs, an absence: `Search.try_compile` calls
-  `Codegen.linearize` and `Codegen.compile`, which keep nothing;
-  `Tolk.Codegen › linearize and compile` (every test).
+## D117. Withdrawn
 
-## D117. A search starts from its kernel's samples and progresses beyond their spread
-
-- **tinygrad:** `codegen/opt/search.py:112` (the beam starts as
-  `[(s, inf)]`, and `s` is never timed) and `:161-164` (a round ends the
-  search if nothing was timed, if the fastest took less than
-  `BEAM_MIN_PROGRESS`, or if it beat the beam's first by less than that;
-  the search then keeps the fastest alone if it beat the beam's first).
-- **tolk:** `Search.beam_search` (its `progresses` and `start`); the golden
-  generator, `test/gen/codegen/opt/search.py`
-  (`beam_search`).
-- **Differs:** the search compiles and times its kernel before its first
-  round, with no early stop, and the beam starts as the kernel with its
-  samples. A round progresses only when the greatest sample of its fastest
-  candidate plus `BEAM_MIN_PROGRESS` is less than the least sample of the
-  beam's first kernel. Otherwise the search answers the beam's first kernel:
-  the exit on a fastest time under `BEAM_MIN_PROGRESS` and the fastest kept
-  alone are gone. One comparison decides each round. The first round's early
-  stop is three times the kernel's least sample, where tinygrad's is
-  infinite.
-- **Reason:** (d): a search must never answer a kernel slower than the one
-  it started from. tinygrad's rule compares the least of each program's
-  noisy timings, and the least over hundreds of candidates is biased low: a
-  round continues, and a candidate is kept alone, on a gain within the noise
-  of the samples. Searches of GNODE and lorenz_simple on AMD had
-  trailing rounds that ran on gains of 2 to 4% (25.96 to 25.42 us), and first
-  rounds that searched kernels already at their floor, with nothing to
-  compare against. Measured on AMD; to re-measure on fudge. No fudge bench
-  row times a search's choice.
-- **Pinned by:** `Tolk.Search › a round goes on iff each sample of its
-  fastest beats each of the incumbent's by more than BEAM_MIN_PROGRESS`
-  (law); `› the kernel is sampled three times before any candidate`; `› a
-  search whose kernel does not compile progresses on any candidate`; `›
-  rounds` (4 tests); `searches.golden` and `searches_environment.golden`,
-  whose measurements count the kernel's three samples.
+A search timed its kernel before its first round and started the beam from
+its samples, and a round progressed only when every sample of its fastest
+candidate beat every sample of the beam's first kernel by
+`BEAM_MIN_PROGRESS`, so that it would not run rounds on gains within the
+noise, as searches on AMD did. On fudge, a first call of `Rune.jit ~beam:2`
+of a 64 by 64 float32 product and its tanh on the host took 9.4, 7.3 and
+7.0 s with the rule and 2.4, 4.7 and 4.6 s with tinygrad's (medians of 3
+cold processes, interleaved runs), and the
+kernel each search chose, replayed after a search over an empty cache, ran
+in 43, 61, 40 and 40 us against 104, 53, 55 and 36 us (medians of 11): no
+gain beyond the ranges. As tinygrad's
+`codegen/opt/search.py:112,161-164`, `Search.beam_search` starts from its
+kernel untimed, ends a round on no timing, a fastest time under
+`BEAM_MIN_PROGRESS` or a gain under it, and then keeps the fastest alone if it
+beat the beam's first.
 
 ## D118. Withdrawn
 
@@ -3227,8 +3190,8 @@ nothing, so `Gater.holds` went.
 
 ## D129. Withdrawn
 
-A search kept nothing of its candidates; merged into D116, which holds the
-search's memos and what it keeps.
+A search kept nothing of its candidates; merged into D116, which holds what
+a search keeps.
 
 ## D130. Withdrawn
 

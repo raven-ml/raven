@@ -99,18 +99,13 @@ val beam_search :
     cache ({!Renderer.Compiler.compile_cached}); its program is not kept past
     the search. A kernel whose compilation raises [Failure] is dropped, and so
     is one whose compilation raises another exception, unless
-    {!Setting.beam_strict_mode} holds and the exception is raised. A search
-    compiles each kernel ({!Postrange.Scheduler.ast}) once: a candidate whose
-    kernel it met before takes that kernel's result. It also compiles each
-    source once: a kernel that renders a source compiled or rejected before
-    takes that binary or rejection.
+    {!Setting.beam_strict_mode} holds and the exception is raised.
 
     A program is timed up to three times, stopping once its least time exceeds
     an early stop. Its samples are the times measured.
 
-    The search compiles and times [k] itself, with no early stop. The beam holds
-    up to [amt] kernels and starts as [k] with its samples, or with none if [k]
-    was dropped. Each round:
+    The beam holds up to [amt] kernels, and starts as [k], untimed, of an
+    infinite time. Each round:
     + The candidates are the kernels {!get_kernel_actions} makes of the beam's
       kernels, in order. They are compiled on the domains {!Worker.iter}
       spreads them over while the calling domain times those compiled, in the
@@ -120,15 +115,16 @@ val beam_search :
       [0] if unknown) are more than [1000] times the fewest of this round's
       programs so far. Each other one is timed with an early stop of three times
       the least sample of the beam's first kernel.
-    + The fastest candidate is the one of least sample, the first timed of ties. The
-      round progresses if each of its samples is less than each sample of the
-      beam's first kernel by more than {!Setting.beam_min_progress}
-      microseconds. A kernel with no samples is slower than any. If the round
-      progresses, the beam becomes the [amt] candidates of least sample, ties in
-      the order they were timed, and a new round starts. Otherwise the search ends.
+    + The fastest candidate is the one of least sample, the first timed of ties.
+      The search ends if no candidate was timed, if the fastest took less than
+      {!Setting.beam_min_progress} microseconds, or if its least sample beats
+      the beam's first kernel's by less than that, or not at all. It then keeps
+      the fastest candidate alone if it is faster than the beam's first
+      kernel.
+      Otherwise the beam becomes the [amt] candidates of least sample, ties in
+      the order they were timed, and a new round starts.
 
-    The result is the beam's first kernel. It is [k] unless a candidate
-    progressed on it.
+    The result is the beam's first kernel.
 
     With [allow_test_size] (default {!Setting.beam_estimate}), a program
     launching more than [65536] workgroups is timed launching fewer: of its

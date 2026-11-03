@@ -373,27 +373,37 @@ let rounds =
     [
       test
         "a candidate is measured three times unless slower than three times \
-         the incumbent" (fun () ->
-          let _, calls = searched [ 1.; 0.25; 0.75 ] in
+         the best" (fun () ->
+          let _, calls = searched [ 0.; 0.25; 0.75 ] in
           is_true ~msg:"measured" (measured_times 2 calls <> []);
           List.iter (equal int 3) (measured_times 2 calls);
-          let _, calls = searched [ 1.; 0.25; 0.875 ] in
+          let _, calls = searched [ 0.; 0.25; 0.875 ] in
           List.iter (equal int 1) (measured_times 2 calls));
-      test "a search goes on while it gains more than BEAM_MIN_PROGRESS"
+      test "a search goes on while it gains BEAM_MIN_PROGRESS or more"
         (fun () ->
           let _, calls =
-            searched [ 1.; 3. *. min_progress; min_progress; 1. ]
+            searched [ 0.; 2. *. min_progress; min_progress; 1. ]
           in
           is_true ~msg:"a third round"
             (List.exists (fun c -> depth c = 3) calls));
-      test "a search that gains BEAM_MIN_PROGRESS exactly stops" (fun () ->
-          let k, calls = searched [ 1.; 2. *. min_progress; min_progress ] in
+      test "a search that gains nothing keeps its best kernel" (fun () ->
+          let k, calls = searched [ 0.; 1e-3; 1e-3 ] in
           is_true ~msg:"a second round"
             (List.exists (fun c -> depth c = 2) calls);
           equal int 1 (List.length (K.applied_opts k)));
-      test "a search that gains nothing answers its kernel" (fun () ->
-          let k, _ = searched [ 1e-3; 1e-3 ] in
-          equal opts [] (K.applied_opts k));
+      test "a search whose fastest takes less than BEAM_MIN_PROGRESS stops"
+        (fun () ->
+          let k, calls = searched [ 0.; min_progress /. 2.; 0. ] in
+          equal int 0 (List.length (List.filter (fun c -> depth c = 2) calls));
+          equal int 1 (List.length (K.applied_opts k)));
+      test
+        "a search keeps the fastest alone when it gains less than \
+         BEAM_MIN_PROGRESS" (fun () ->
+          let k, _ = searched [ 0.; 1e-3; 1e-3 -. (min_progress /. 2.) ] in
+          equal int 2 (List.length (K.applied_opts k)));
+      test "the kernel is never timed" (fun () ->
+          let _, calls = searched [ 1.; 1e-3; 1e-3 ] in
+          equal int 0 (List.length (List.filter (fun c -> depth c = 0) calls)));
     ]
 
 let chooses_the_fastest =
@@ -588,53 +598,6 @@ let exceptions =
           equal opts [] (K.applied_opts chosen));
     ]
 
-(* The incumbent *)
-
-let incumbent_first =
-  test "the kernel is sampled three times before any candidate" (fun () ->
-      let timing, record =
-        sampling (fun ~vars prg _ -> by_depth [ 1e-6; 1e-3 ] ~vars prg)
-      in
-      let k = scheduled "sum_rows" "clang" in
-      let chosen = search ~timing 2 k in
-      let depths = List.map depth (record ()).calls in
-      equal (list int) [ 0; 0; 0 ] (List.filteri (fun i _ -> i < 3) depths);
-      equal ~msg:"its samples" int 3
-        (List.length (List.filter (Int.equal 0) depths));
-      equal opts [] (K.applied_opts chosen))
-
-(* A Clang renderer whose compiler rejects its first source, the kernel's in a
-   search, for the architecture [arch] of its own. *)
-let rejecting_first arch =
-  let first = Atomic.make true in
-  let compile src =
-    if Atomic.exchange first false then
-      raise (Renderer.Compiler.Compile_error "rejected")
-    else src
-  in
-  let t =
-    {
-      Helpers.Target.device = "CPU";
-      renderer = "CLANG";
-      arch;
-      interface = "";
-      indices = "";
-    }
-  in
-  Renderer.with_compiler (Renderer.Compiler.v compile) (Cstyle.clang t)
-
-let uncompiled_kernel =
-  test "a search whose kernel does not compile progresses on any candidate"
-    (fun () ->
-      let timing, record = sampling (fun ~vars:_ _ _ -> 1.) in
-      let k = K.v (kernel "sum_rows") (rejecting_first "x86_64,znver4") in
-      K.convert_loop_to_global k;
-      let chosen = search ~timing 1 k in
-      let r = record () in
-      equal ~msg:"the kernel's samples" int 0
-        (List.length (List.filter (fun c -> depth c = 0) r.calls));
-      equal int 1 (List.length (K.applied_opts chosen)))
-
 (* [out[i] = j^2] for each [j < x[0]] in turn, over 16 [i], [x] of
    int64: its estimated operations count [j] up to 2^63 - 1 times on each [i],
    which fits no int. *)
@@ -662,8 +625,8 @@ let estimates_past_an_int =
       greater int ~msg:"candidates measured" ~than:0
         (List.length (List.filter (fun c -> depth c > 0) (record ()).calls)))
 
-(* The fastest program of [depth] optimisations and its samples, the first of
-   ties, if any. *)
+(* The fastest program of [depth] optimisations, the first timed of ties, if
+   any. *)
 let fastest r depth =
   List.fold_left
     (fun best (p, ts) ->
@@ -674,16 +637,14 @@ let fastest r depth =
         | _ -> Some (p, ts))
     None (samples_of r)
 
-let most = List.fold_left Float.max neg_infinity
-
-let progress_law =
+let rounds_law =
   let min_progress = 0.01 /. 1e6 in
   let pp ppf (kernel, amt, seed) =
     Format.fprintf ppf "%s, width %d, seed %d" kernel amt seed
   in
   prop ~count:30
-    "a round goes on iff each sample of its fastest beats each of the \
-     incumbent's by more than BEAM_MIN_PROGRESS"
+    "a round goes on while its fastest beats the beam's first by \
+     BEAM_MIN_PROGRESS or more, and the last keeps its fastest if it beat it"
     Gen.(
       with_pp pp
         (triple
@@ -696,17 +657,22 @@ let progress_law =
       in
       let r = record () in
       let rounds = List.length (K.applied_opts chosen) in
-      let progresses d =
-        match fastest r d with
-        | None -> false
-        | Some (_, ts) -> most ts +. min_progress < incumbent r (d - 1)
-      in
       for d = 1 to rounds do
-        is_true ~msg:(Printf.sprintf "round %d progressed" d) (progresses d)
+        let msg = Printf.sprintf "round %d" d in
+        less float_exact ~msg ~than:(incumbent r (d - 1)) (incumbent r d);
+        if d < rounds then begin
+          at_least float_exact ~msg ~than:min_progress (incumbent r d);
+          at_least float_exact ~msg ~than:min_progress
+            (incumbent r (d - 1) -. incumbent r d)
+        end
       done;
-      is_true
-        ~msg:(Printf.sprintf "round %d stopped" (rounds + 1))
-        (not (progresses (rounds + 1)));
+      (match fastest r (rounds + 1) with
+      | Some _ ->
+          at_least float_exact
+            ~msg:(Printf.sprintf "round %d" (rounds + 1))
+            ~than:(incumbent r rounds)
+            (incumbent r (rounds + 1))
+      | None -> ());
       (match fastest r rounds with
       | Some (p, _) ->
           equal opts (kernel_info p).applied_opts (K.applied_opts chosen)
@@ -848,21 +814,15 @@ let count c src =
       Hashtbl.replace c.table src
         (1 + Option.value ~default:0 (Hashtbl.find_opt c.table src)))
 
-let counted c src =
-  Mutex.protect c.lock (fun () ->
-      Option.value ~default:0 (Hashtbl.find_opt c.table src))
-
 let to_list c =
   Mutex.protect c.lock (fun () ->
       Hashtbl.fold (fun src n l -> (src, n) :: l) c.table [])
 
 (* A Metal renderer for the family [arch] of its own, so that no other test's
-   programs are reused, whose renders and compilations are counted per source.
-   Each render of a source calls [rendering src] first. Its compiler counts a
-   source, then compiles it to itself after [before ~rendered ~compiled src]. *)
-let counting ?(rendering = ignore)
-    ?(before = fun ~rendered:_ ~compiled:_ _ -> ()) arch =
-  let rendered = counts () and compiled = counts () in
+   programs are reused, whose compilations are counted per source. Its
+   compiler counts a source, then compiles it to itself. *)
+let counting arch =
+  let compiled = counts () in
   let t =
     {
       Helpers.Target.device = "METAL";
@@ -877,15 +837,8 @@ let counting ?(rendering = ignore)
     | m -> m
     | exception Failure why -> skip ~reason:why ()
   in
-  let render uops =
-    let src = m.render uops in
-    rendering src;
-    count rendered src;
-    src
-  in
   let compile src =
     count compiled src;
-    before ~rendered ~compiled src;
     src
   in
   let ren =
@@ -894,150 +847,11 @@ let counting ?(rendering = ignore)
       ~local_max:m.local_max ?global_prod_max:m.global_prod_max
       ~shared_max:m.shared_max ~tensor_cores:m.tensor_cores
       ~extra_matcher:m.extra_matcher ~code_for_op:m.code_for_op ~native:m.native
-      ~render
+      ~render:m.render
       ~compiler:(Renderer.Compiler.v compile)
       t
   in
-  (ren, rendered, compiled)
-
-(* A search of width 2 whose beam after its first round is an upcast and a swap,
-   and whose second round gains nothing, compiles its kernel and the candidates
-   of two rounds. Its second round reaches kernels by both orders of the two, as
-   [[upcast; swap]] and [[swap; upcast']], which are equal kernels. *)
-let compiles_once =
-  let upcast = Opt.Split { axis = 1; amount = 2; target = Upcast; top = false }
-  and swap = Opt.Swap { axis = 0; with_axis = 1 } in
-  let favoured ~vars:_ prg _ =
-    match (kernel_info prg).applied_opts with
-    | [] -> 1.
-    | [ o ] when Opt.equal o upcast || Opt.equal o swap -> 1e-4
-    | _ -> 1e-3
-  in
-  test "a search compiles each kernel once, on several domains" (fun () ->
-      let ren, rendered, _ = counting "Apple7" in
-      let k = scheduled_for ren "matmul_small" in
-      let timing, record = sampling favoured in
-      ignore (search ~settings:[ B (Setting.parallel, 4) ] ~timing 2 k);
-      let applied =
-        List.map (fun p -> (kernel_info p).applied_opts) (record ()).linked
-      in
-      is_true ~msg:"the beam was timed"
-        (List.mem [ upcast ] applied && List.mem [ swap ] applied);
-      let acted o =
-        let k' = K.copy k in
-        ignore (K.apply_opt k' o);
-        k'
-      in
-      let actions k =
-        List.map snd (quietly (fun () -> Search.get_kernel_actions k))
-      in
-      let distinct = Ops.Tbl.create 64 in
-      List.iter
-        (fun k -> Ops.Tbl.replace distinct (K.ast k) ())
-        ((k :: actions k) @ actions (acted upcast) @ actions (acted swap));
-      equal int ~msg:"renders" (Ops.Tbl.length distinct)
-        (List.fold_left (fun n (_, c) -> n + c) 0 (to_list rendered)))
-
-(* The sources of [kernel] that a search of width 2 for the family [arch]
-   renders twice within its first round, in the order of their second render:
-   every candidate is slower than [kernel], so the search ends after that
-   round. The first round's candidates are the actions of [kernel], whatever
-   order they are timed in. *)
-let repeated arch kernel =
-  let seen = Hashtbl.create 64 and repeats = ref [] in
-  let rendering src =
-    match Hashtbl.find_opt seen src with
-    | Some () -> if not (List.mem src !repeats) then repeats := src :: !repeats
-    | None -> Hashtbl.replace seen src ()
-  in
-  let ren, _, _ = counting ~rendering arch in
-  let timing, _ =
-    sampling (fun ~vars:_ prg _ ->
-        if (kernel_info prg).applied_opts = [] then 1e-6 else 1.)
-  in
-  ignore
-    (search
-       ~settings:[ B (Setting.parallel, 0) ]
-       ~timing 2 (scheduled_for ren kernel));
-  List.rev !repeats
-
-(* [cond ()] held, waited for for at most ten seconds. *)
-let await what cond =
-  let deadline = Unix.gettimeofday () +. 10. in
-  while not (cond ()) do
-    if Unix.gettimeofday () > deadline then
-      failf "waited ten seconds for %s" what;
-    Domain.cpu_relax ()
-  done
-
-let compiles_sources_once =
-  group "a search compiles each source once"
-    [
-      test "and keeps a rejection, on one domain" (fun () ->
-          (* The first repeat: rejecting it leaves the search as it was up to
-             its round, whose candidates render it again. *)
-          let repeats =
-            match repeated "Apple72" "sum_rows" with
-            | src :: _ -> [ src ]
-            | [] -> fail "no source rendered twice in a round"
-          in
-          let before ~rendered:_ ~compiled:_ src =
-            if List.mem src repeats then
-              raise (Renderer.Compiler.Compile_error "rejected")
-          in
-          let ren, rendered, compiled = counting ~before "Apple71" in
-          let timing, _ = recording (golden_time ~failing:false) in
-          ignore
-            (search
-               ~settings:[ B (Setting.parallel, 0) ]
-               ~timing 2
-               (scheduled_for ren "sum_rows"));
-          List.iter
-            (fun src ->
-              let msg = Digest.to_hex (Digest.string src) in
-              at_least int ~msg ~than:2 (counted rendered src);
-              equal int ~msg 1 (counted compiled src))
-            repeats);
-      test
-        "when a domain asks for a source another is compiling, on several \
-         domains" (fun () ->
-          let first =
-            match repeated "Apple74" "sum_rows" with
-            | src :: _ -> src
-            | [] -> fail "no source rendered twice in a round"
-          in
-          (* The first compilation of the source lasts until the source is
-             rendered again, and then until it is compiled again or for a fifth
-             of a second: the second candidate asks for it while it is being
-             compiled, and a search that compiled it again would do so within
-             that time. Other domains keep compiling meanwhile. *)
-          let before ~rendered ~compiled src =
-            let compiled_again () = counted compiled first >= 2 in
-            if src = first && not (compiled_again ()) then begin
-              await "the source rendered again" (fun () ->
-                  counted rendered src >= 2);
-              let deadline = Unix.gettimeofday () +. 0.2 in
-              while
-                (not (compiled_again ())) && Unix.gettimeofday () < deadline
-              do
-                Domain.cpu_relax ()
-              done
-            end
-          in
-          let ren, rendered, compiled = counting ~before "Apple73" in
-          let timing, _ = recording (golden_time ~failing:false) in
-          ignore
-            (search
-               ~settings:[ B (Setting.parallel, 4) ]
-               ~timing 2
-               (scheduled_for ren "sum_rows"));
-          at_least int ~msg:"renders of the source" ~than:2
-            (counted rendered first);
-          List.iter
-            (fun (src, n) ->
-              equal int ~msg:(Digest.to_hex (Digest.string src)) 1 n)
-            (to_list compiled));
-    ]
+  (ren, compiled)
 
 let uncompilable =
   let dropped reject () =
@@ -1273,7 +1087,7 @@ let under_environment =
          test
            "a candidate of BEAM_UOPS_MAX instructions or more is not compiled"
            (fun () ->
-             let ren, _, compiled = counting "Apple8" in
+             let ren, compiled = counting "Apple8" in
              let timing, record =
                sampling (fun ~vars prg _ ->
                    golden_time ~failing:false ~vars prg)
@@ -1430,15 +1244,11 @@ let () =
          cache_kinds;
          cache_candidates;
          uncompilable;
-         compiles_once;
-         compiles_sources_once;
          progress;
          quiet;
          failure_printed;
          storage_placed;
          rounds;
-         incumbent_first;
-         uncompiled_kernel;
+         rounds_law;
          estimates_past_an_int;
-         progress_law;
        ])

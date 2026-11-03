@@ -64,7 +64,6 @@ let get_test_global_size input max_global_size =
   (size, Bigint.to_float (zprod input) /. Bigint.to_float (zprod size))
 
 let least = List.fold_left Float.min infinity
-let most = List.fold_left Float.max neg_infinity
 
 (* The program timed for [prg]: with [allow_test_size], one launching fewer
    workgroups, and the factor that scales its times up. *)
@@ -158,42 +157,6 @@ let try_compile (ren : Renderer.t) k =
       None
   | exception e when setting Setting.beam_strict_mode -> raise e
   | exception _ -> None
-
-(* [compile] memoized: each source is compiled once, and a domain asking for one
-   that another is compiling waits for it, holding the entry's lock. A rejection
-   depends only on the source, so it is kept too; any other exception passes
-   through and leaves the source to be compiled again. *)
-type outcome = Compiled of string | Rejected of string
-type entry = { lock : Mutex.t; mutable outcome : outcome option }
-
-let memo compile =
-  let lock = Mutex.create () and entries = Hashtbl.create 64 in
-  fun src ->
-    let entry =
-      Mutex.protect lock (fun () ->
-          match Hashtbl.find_opt entries src with
-          | Some e -> e
-          | None ->
-              let e = { lock = Mutex.create (); outcome = None } in
-              Hashtbl.replace entries src e;
-              e)
-    in
-    let outcome =
-      Mutex.protect entry.lock (fun () ->
-          match entry.outcome with
-          | Some o -> o
-          | None ->
-              let o =
-                match compile src with
-                | lib -> Compiled lib
-                | exception Renderer.Compiler.Compile_error msg -> Rejected msg
-              in
-              entry.outcome <- Some o;
-              o)
-    in
-    match outcome with
-    | Compiled lib -> lib
-    | Rejected msg -> raise (Renderer.Compiler.Compile_error msg)
 
 (* The least and greatest product of [sizes] over their variables' values. *)
 let product_bounds sizes =
@@ -370,51 +333,22 @@ let beam_search ~link ~time ?allow_test_size amt s =
       in
       let min_progress = setting Setting.beam_min_progress /. 1e6 in
       let seen_libs = Hashtbl.create 256 in
-      (* Each kernel is compiled once: two sequences of actions can reach equal
-         kernels, whose kernel information records different optimisations. *)
-      let compiled = Ops.Tbl.create 256 in
-      (* Distinct kernels can render one source: it is compiled once. *)
+      (* Candidates compile through the compiler's disk cache. *)
       let ren =
         Renderer.with_compiler
           (Renderer.Compiler.v
              ~disassemble:(Renderer.Compiler.disassemble ren.compiler)
-             (memo (Renderer.Compiler.compile_cached ren.compiler)))
+             (Renderer.Compiler.compile_cached ren.compiler))
           ren
       in
       (* [f i k] applied to each kernel [k] of [ks], the [i]th, and its
          compilation, in the order the compilations end, while other domains
-         compile the rest. Kernels equal to one another are compiled once, and
-         a kernel met in an earlier round takes its compilation. *)
+         compile the rest. *)
       let compile ks f =
-        let groups = Ops.Tbl.create 64 and order = ref [] in
-        List.iteri
-          (fun i k ->
-            let ast = K.ast k in
-            match Ops.Tbl.find_opt groups ast with
-            | Some l -> Ops.Tbl.replace groups ast ((i, k) :: l)
-            | None ->
-                Ops.Tbl.add groups ast [ (i, k) ];
-                order := ast :: !order)
-          ks;
-        let tasks =
-          List.rev_map
-            (fun ast ->
-              (Ops.Tbl.find_opt compiled ast, List.rev (Ops.Tbl.find groups ast)))
-            !order
-        in
-        let compile_one = function
-          | Some r, _ -> r
-          | None, (_, k) :: _ -> try_compile ren k
-          | None, [] -> None
-        in
-        let take (_, group) r =
-          List.iter
-            (fun (i, k) ->
-              Ops.Tbl.replace compiled (K.ast k) r;
-              f i k r)
-            group
-        in
-        Worker.iter compile_one take tasks
+        Worker.iter
+          (fun (_, k) -> try_compile ren k)
+          (fun (i, k) r -> f i k r)
+          (List.mapi (fun i k -> (i, k)) ks)
       in
       (* [k]'s program linked and timed with an early stop, or [None] if its
          linking or timing failed. *)
@@ -443,10 +377,6 @@ let beam_search ~link ~time ?allow_test_size amt s =
       if debug () >= 2 then
         Printf.printf "   0.00s:                from   1 ->   1 actions %s\n%!"
           (K.colored_shape s);
-      (* A round progresses when each sample of its fastest beats each of the
-         beam's first by more than [min_progress]: the least of noisy times is
-         biased low, and a search never answers a kernel slower than [s]. *)
-      let progresses (_, c) (_, b) = most c +. min_progress < least b in
       let rec search beam =
         let best = least (snd (List.hd beam)) in
         let candidates =
@@ -503,13 +433,21 @@ let beam_search ~link ~time ?allow_test_size amt s =
             (fun (_, t0) (_, t1) -> Float.compare (least t0) (least t1))
             (List.rev !timed)
         in
+        (* The search ends when nothing was timed, when the fastest took less
+           than [min_progress], or when it beat the beam's first by less; it
+           then keeps the fastest alone if it beat the beam's first. *)
         let exiting =
           match opts with
-          | fastest :: _ -> not (progresses fastest (List.hd beam))
+          | (_, t) :: _ ->
+              least t < min_progress || best -. least t < min_progress
           | [] -> true
         in
         let beam =
-          if exiting then beam else List.filteri (fun i _ -> i < amt) opts
+          match opts with
+          | ((_, t) as fastest) :: _ when exiting && least t < best ->
+              [ fastest ]
+          | _ when exiting -> beam
+          | _ -> List.filteri (fun i _ -> i < amt) opts
         in
         (if debug () >= 2 then
            let tm = Helpers.time_to_str ~w:12 (least (snd (List.hd beam))) in
@@ -520,19 +458,8 @@ let beam_search ~link ~time ?allow_test_size amt s =
              (K.colored_shape (fst (List.hd beam))));
         if exiting then beam else search beam
       in
-      (* [s] itself, timed with no early stop, starts the beam. *)
-      let start =
-        let r = try_compile ren s in
-        Ops.Tbl.replace compiled (K.ast s) r;
-        match r with
-        | None -> []
-        | Some (prg, _) -> (
-            Hashtbl.add seen_libs (binary prg) ();
-            match sampled s prg ~early_stop:infinity with
-            | Some (_, samples) -> samples
-            | None -> [])
-      in
-      let k, samples = List.hd (search [ (s, start) ]) in
+      (* [s] starts the beam, untimed, of an infinite time. *)
+      let k, samples = List.hd (search [ (s, [ infinity ]) ]) in
       Helpers.Diskcache.put ~table:"beam_search" key
         (encode_opts (K.applied_opts k));
       if beam_debug > 0 then
