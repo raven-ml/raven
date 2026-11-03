@@ -6,7 +6,7 @@ gpt-oss-20b, RTX 5000 Ada (fudge, 31aa4521b, the new nx and rune), raven
 CUDA / NV / llama.cpp b12032 CUDA, at a load of 33 to 65:
 - decode 11.0 / 10.7 ms of GPU time (bench medians 15.5 / 12.0 ms) /
   6.83 ms at depth 512; with Q8_0 attention and head 23.4 / 22.8 ms
-- prefill-512 0.45 s on CUDA (NV not measured again) / 56.0 ms
+- prefill-512 0.186 s on CUDA (f2af3251b; NV not measured again) / 56.0 ms
 - first call 0.45 / 0.37 to 0.54 s (12 tokens, kernels cached; 1.36 /
   1.47 s at the first run) / 75 ms (59 to 151 ms, no warmup)
 
