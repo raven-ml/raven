@@ -134,7 +134,7 @@ let build_trie tokens =
 let unk_penalty = 10.0
 
 type t = {
-  stamp : int;
+  encoders : Pretoken_cache.encoder Pretoken_cache.states;
   cache_capacity : int;
   token_table : string array;
   scores : float array;
@@ -175,7 +175,7 @@ let create ?unk_id ?(byte_fallback = false)
     | None -> ()
   done;
   {
-    stamp = Pretoken_cache.stamp ();
+    encoders = Pretoken_cache.states ();
     cache_capacity;
     token_table;
     scores;
@@ -488,19 +488,15 @@ let train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
   let model = create ?unk_id vocab_with_probs in
   (model, special_tokens)
 
-(* A domain's cached encoder of a model, made once with its cache and a state
-   of its own. *)
-let encoders : Pretoken_cache.encoder Pretoken_cache.registry =
-  Pretoken_cache.registry ()
-
 let cached_encoder model =
   Pretoken_cache.cached
     (Pretoken_cache.create model.cache_capacity)
     ~len_table:model.len_table
     (encode_into model (fresh_state ()))
 
-let encoder_slot model =
-  Pretoken_cache.slot encoders ~stamp:model.stamp cached_encoder model
+let with_encoder model f =
+  Pretoken_cache.with_state model.encoders ~make:cached_encoder
+    ~spare:(fun model -> encode_into model (fresh_state ()))
+    model f
 
-let uncached model = encode_into model (fresh_state ())
 let cache_capacity model = model.cache_capacity

@@ -44,6 +44,21 @@ let encode_batch tok texts = encode_batch tok texts
 let encode_batch_ids tok texts = encode_batch_ids tok texts
 let decode_ids tok ids = decode tok ids
 
+(* An executor over [d] domains started for the call, the caller's among them,
+   as brot.mli shows. The bench handles no signal, so it blocks none. *)
+let spawn d n task =
+  let next = Atomic.make 0 in
+  let rec pull () =
+    let i = Atomic.fetch_and_add next 1 in
+    if i < n then begin
+      task i;
+      pull ()
+    end
+  in
+  let others = List.init (min d n - 1) (fun _ -> Domain.spawn pull) in
+  pull ();
+  List.iter Domain.join others
+
 let make_suite ?(extra = []) ~label ~tokenizer () =
   let open Fixtures in
   let decode_input =
@@ -174,10 +189,11 @@ let all_benchmarks =
     make_suite ~label:"GPT-2" ~tokenizer:(load_tokenizer "gpt2.json") ()
   in
   (* Four texts of 64 KB over four domains: each fills a chunk, the least a
-     batch is spread by, so three domains are spawned for the call and their
-     pretoken caches start cold. The row times the batch alone: Gc.counters
-     reads the calling domain's words only, and which chunks the caller claims
-     is a race, so its words vary from call to call. *)
+     batch is spread by, so three domains are spawned for the call, and they
+     take the encoder states the calls before left in the model. The row times
+     the batch alone: Gc.counters reads the calling domain's words only, and
+     which chunks the caller claims is a race, so its words vary from call to
+     call. *)
   let bert =
     let tokenizer = load_tokenizer "bert_base.json" in
     let batch = [ long_text; long_text; long_text; long_text ] in
@@ -186,7 +202,7 @@ let all_benchmarks =
         [
           Thumper.bench "Encode/batch_ids_long_domains"
             ~metrics:[ Thumper.Metric.wall_time ] (fun () ->
-              Brot.encode_batch_ids tokenizer ~domains:4 batch);
+              Brot.encode_batch_ids tokenizer ~exec:(spawn 4) batch);
         ]
       ()
   in

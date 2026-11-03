@@ -108,10 +108,52 @@ let pairs =
     [ ("the cat sat", "how are you"); ("good", "the cat") ]
 ```
 
-Both spread the batch over `Domain.recommended_domain_count ()` domains,
-splitting the work by bytes so that one long text does not leave the
-other domains idle. Pass `~domains` to encode on a given number instead;
-a batch holding under 64 KB is encoded on the calling domain.
+Both encode the batch on the calling domain. Where a program's work
+runs is the program's decision, so a batch reaches other domains only
+through an executor it is given: `exec n task` calls `task i` for each
+`i` below `n`, on any domains, and returns once every call has returned.
+The batch splits the work by bytes, so that one long text does not leave
+the other domains idle, and hands it out to the tasks largest first. A
+batch holding under 64 KB is encoded on the calling domain without the
+executor. The ids never depend on it.
+
+A program with a pool of domains passes an executor over that pool, so
+that no batch starts a domain. One over domains started for the call
+must mind signals: a domain runs the program's signal handlers, and a
+handler that raises on a new domain before the runtime has set it up
+crashes the program. So it blocks the signals the program handles while
+it starts its domains, which keep that mask. That takes the
+`threads.posix` and `unix` libraries; on Windows, which has no signal
+masks, `signals` is `[]`.
+
+```ocaml
+let spawn ~signals d n task =
+  let next = Atomic.make 0 in
+  let rec pull () =
+    let i = Atomic.fetch_and_add next 1 in
+    if i < n then (task i; pull ())
+  in
+  let start () = List.init (min d n - 1) (fun _ -> Domain.spawn pull) in
+  let others =
+    if signals = [] then start ()
+    else
+      let mask = Thread.sigmask Unix.SIG_BLOCK signals in
+      let restore () = ignore (Thread.sigmask Unix.SIG_SETMASK mask) in
+      Fun.protect ~finally:restore start
+  in
+  pull ();
+  List.iter Domain.join others
+
+let encodings =
+  encode_batch tokenizer
+    ~exec:(spawn ~signals:(if Sys.win32 then [] else [ Sys.sigint ]) 4)
+    [ "the cat"; "the cat sat"; "good" ]
+```
+
+A tokenizer keeps the pretoken caches and buffers its encodings use, up
+to `Domain.recommended_domain_count ()` sets, so a batch starts warm on
+any domain; an encoding that finds them all in use runs without one.
+They are freed with the tokenizer.
 
 ## Flat ID Buffers
 
@@ -158,11 +200,12 @@ and truncation behave as they do everywhere else. The one thing an
 `ids` buffer cannot hold is the overflowing windows truncation produces:
 they are dropped, and `encode_batch` is the way to keep them.
 
-A single long text is spread over the domains as well: when the pipeline
-has no normalizer and its pre-tokenizer splits on spaces, the text is cut
-at spaces the pipeline cannot tell were cut, and the pieces are encoded
-side by side. A pipeline that could tell — one with a normalizer, or one
-that keeps its spaces, like Metaspace — encodes each text on one domain.
+A single long text is spread through the executor as well: when the
+pipeline has no normalizer and its pre-tokenizer splits on spaces, the
+text is cut at spaces the pipeline cannot tell were cut, and the pieces
+are encoded side by side. A pipeline that could tell — one with a
+normalizer, or one that keeps its spaces, like Metaspace — encodes each
+text in one piece.
 
 ## Padding
 

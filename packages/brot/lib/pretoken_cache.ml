@@ -338,35 +338,52 @@ let load_seeds t seeds =
         (bytes_get64u seeds (o + 24))
     done
 
-(* Claims *)
+(* Encoder states *)
 
-let next_stamp = Atomic.make 0
-let stamp () = Atomic.fetch_and_add next_stamp 1
+(* A lock-free stack of the states not in use, and a count of the states that
+   exist, in the stack or held. A cell is never pushed twice, since giving back
+   allocates a fresh one, so a compare-and-set that sees the list it read sees
+   the same stack. *)
+type 'a states = { free : 'a list Atomic.t; made : int Atomic.t }
 
-type 'a slot = { value : 'a; busy : bool Atomic.t }
-type 'a registry = (int * 'a slot) list ref Domain.DLS.key
+(* As many states as can encode at once without oversubscribing the cores. An
+   encoding past that, from one of a pool of systhreads say, gets a spare that
+   is never kept, so a model's caches are bounded while they are built, not
+   only once they are given back. *)
+let max_states = Domain.recommended_domain_count ()
 
-(* A domain keeps the slots of the last [max_slots] models it began encoding
-   with, newest first, and drops the oldest of them past that: a slot can hold
-   megabytes. *)
-let max_slots = 8
+let states () = { free = Atomic.make []; made = Atomic.make 0 }
 
-let registry () = Domain.DLS.new_key (fun () -> ref [])
+let rec give s st =
+  let seen = Atomic.get s.free in
+  if not (Atomic.compare_and_set s.free seen (st :: seen)) then give s st
 
-let rec find stamp = function
-  | (s, slot) :: _ when s = stamp -> slot
-  | _ :: rest -> find stamp rest
-  | [] -> raise_notrace Not_found
+(* [f st] for a state [st] the model counts: given back when [f] returns, and
+   dropped from the count when [f] or the [make] that built it raises. *)
+let counted s st f =
+  match f st with
+  | value ->
+      give s st;
+      value
+  | exception e ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      Atomic.decr s.made;
+      Printexc.raise_with_backtrace e backtrace
 
-let slot registry ~stamp make arg =
-  let slots = Domain.DLS.get registry in
-  match find stamp !slots with
-  | slot -> slot
-  | exception Not_found ->
-      let slot = { value = make arg; busy = Atomic.make false } in
-      slots :=
-        (stamp, slot) :: List.filteri (fun i _ -> i < max_slots - 1) !slots;
-      slot
-
-let take slot = Atomic.compare_and_set slot.busy false true
-let give slot = Atomic.set slot.busy false
+let rec with_state s ~make ~spare arg f =
+  match Atomic.get s.free with
+  | st :: rest as seen ->
+      if Atomic.compare_and_set s.free seen rest then counted s st f
+      else with_state s ~make ~spare arg f
+  | [] ->
+      if Atomic.fetch_and_add s.made 1 >= max_states then begin
+        Atomic.decr s.made;
+        f (spare arg)
+      end
+      else
+        match make arg with
+        | st -> counted s st f
+        | exception e ->
+            let backtrace = Printexc.get_raw_backtrace () in
+            Atomic.decr s.made;
+            Printexc.raise_with_backtrace e backtrace

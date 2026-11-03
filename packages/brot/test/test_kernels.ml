@@ -484,9 +484,9 @@ let test_sp_dropout_not_selected () =
    spill shows up as a permuted row; every row must be what [encode_ids] gives
    for that text alone. *)
 
-let batch_rows tok docs domains =
+let batch_rows tok docs exec =
   let buf, lengths =
-    Brot.encode_batch_ids tok ~add_special_tokens:false ~domains docs
+    Brot.encode_batch_ids tok ~add_special_tokens:false ?exec docs
   in
   let pos = ref 0 in
   Array.to_list lengths
@@ -500,14 +500,14 @@ let batch_rows tok docs domains =
 
 let check_batch tok docs =
   List.iter
-    (fun domains ->
+    (fun (on, exec) ->
       List.iteri
         (fun i (row, doc) ->
           equal
-            ~msg:(Printf.sprintf "row %d over %d domains" i domains)
+            ~msg:(Printf.sprintf "row %d on %s" i on)
             (array int) (ids tok doc) row)
-        (List.combine (batch_rows tok docs domains) docs))
-    [ 1; 4 ]
+        (List.combine (batch_rows tok docs exec) docs))
+    [ ("the calling domain", None); ("four domains", Some (Fixture.spawn 4)) ]
 
 (* Byte-level: cache-hit runs (kernel, sink), <sep> literals and a 20-byte
    pretoken (OCaml, spill) interleaved; enough ids that the sink outgrows its
@@ -755,7 +755,7 @@ let law name make =
       cover_law text;
       equal ~msg:(Printf.sprintf "%S alone" text) (array int) expect
         (ids tok text);
-      match batch_rows tok [ text; text ] 1 with
+      match batch_rows tok [ text; text ] None with
       | [ a; b ] ->
           equal ~msg:(Printf.sprintf "%S in a batch" text) (array int) expect a;
           equal

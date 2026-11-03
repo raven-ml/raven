@@ -2454,6 +2454,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- **Breaking:** `encode_batch*` run on the calling domain unless given
+  `~exec` (`Brot.exec`), which replaces `?domains`: placement is the program's,
+  and brot no longer spawns domains whose signals it cannot mask.
+- A tokenizer holds its caches, at most `Domain.recommended_domain_count ()`,
+  and frees them with itself; before, each domain kept one and the model alive.
 - A batch encoder whose document raises on one domain stops its other domains
   at their next chunk; they used to encode the rest of the batch before the
   failure reached the caller.

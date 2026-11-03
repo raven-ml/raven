@@ -16,8 +16,9 @@
     rarest entry of the vocabulary. *)
 
 type t
-(** The type for unigram models. Immutable after creation, and shared freely
-    between domains: the scratch encoding needs is passed in. *)
+(** The type for unigram models. What a model encodes to is fixed at creation,
+    and it is shared freely between domains: {!encode_into} takes the scratch
+    it needs, and {!with_encoder} lends one. *)
 
 (** {1:creation Creation} *)
 
@@ -39,8 +40,8 @@ val create :
     - [byte_fallback], when [true], spells such a run out as byte tokens (e.g.
       ["<0xFF>"]) when the vocabulary holds one for every byte of it, and falls
       back to the unknown token when it does not. Defaults to [false].
-    - [cache_capacity] is the most entries of the pretoken cache each domain
-      keeps for the model (see {!Pretoken_cache.create}); [0] disables it.
+    - [cache_capacity] is the most entries of each pretoken cache the model
+      holds (see {!Pretoken_cache.create} and {!with_encoder}); [0] disables it.
       Defaults to {!Pretoken_cache.default_capacity}. *)
 
 (** {1:tokenization Tokenization} *)
@@ -74,14 +75,14 @@ val len_table : t -> int array
     spent on a run no entry covers stand for the run instead, which
     {!encode_into} records. Owned by [t]; do not mutate. *)
 
-val encoder_slot : t -> Pretoken_cache.encoder Pretoken_cache.slot
-(** [encoder_slot t] is the calling domain's slot of {!encode_into} through a
-    pretoken cache of [create]'s [cache_capacity] entries, with a state of its
-    own. *)
-
-val uncached : t -> Pretoken_cache.encoder
-(** [uncached t] is {!encode_into} on a fresh state, for a thread that cannot
-    claim the slot. *)
+val with_encoder : t -> (Pretoken_cache.encoder -> 'a) -> 'a
+(** [with_encoder t f] is [f enc] for one of [t]'s encoders: {!encode_into}
+    through a pretoken cache of [create]'s [cache_capacity] entries, with a
+    scratch of its own. [enc] is held for the duration of the call, as
+    {!Pretoken_cache.with_state} holds it: one is made when every one [t]
+    holds is in use, up to [Domain.recommended_domain_count ()]; past that,
+    [enc] is {!encode_into} on a fresh scratch, without a cache. One is
+    dropped when [f] raises. [enc] must not escape [f]. *)
 
 val cache_capacity : t -> int
 (** [cache_capacity t] is [create]'s [cache_capacity]. *)

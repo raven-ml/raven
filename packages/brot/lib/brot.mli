@@ -847,7 +847,10 @@ end
 (** {1:types Types} *)
 
 type t
-(** The type for tokenizers. Immutable after creation. *)
+(** The type for tokenizers. What a tokenizer gives is a function of its
+    configuration alone. It holds encoder states, the pretoken caches and
+    buffers that encodings reuse, which grow as it encodes and are freed with
+    it. One tokenizer can encode from several domains and threads at once. *)
 
 type direction = [ `Left | `Right ]
 (** The type for padding and truncation directions. [`Left] operates at the
@@ -1014,10 +1017,13 @@ val bpe :
     - [vocab]: initial vocabulary as [(token, id)] pairs. Default: [[]].
     - [merges]: merge rules as [(left, right)] pairs learned during training.
       Default: [[]].
-    - [cache_capacity]: number of entries in the pretoken cache, rounded up to a
-      power of two. An entry costs about 32 bytes, and each domain encoding with
-      the tokenizer keeps a table of its own. Default: [262144] (8 MB). [0]
-      disables caching.
+    - [cache_capacity]: number of entries in a pretoken cache, rounded up to a
+      power of two. An entry costs about 32 bytes. The tokenizer makes a
+      cache for each encoding that runs while the others are in use, from any
+      domains or threads, and holds at most
+      [Domain.recommended_domain_count ()] of them at any time, in use or not,
+      for as long as it lives; an encoding past that runs without one. Each is
+      allocated whole. Default: [262144] (8 MB each). [0] disables caching.
     - [dropout]: probability \[[0]; [1]\] of skipping merges (data
       augmentation). Default: none (no dropout).
     - [continuing_subword_prefix]: prefix for non-initial subwords (e.g.,
@@ -1059,14 +1065,15 @@ val wordpiece :
       ["##"].
     - [max_input_chars_per_word]: words longer than this are replaced with
       [unk_token]. Default: [100].
-    - [cache_capacity]: the most entries of the pretoken cache, which keeps
-      the ids of pretokens of up to 15 bytes so that one seen before is not
-      encoded again. Each domain that encodes with the tokenizer keeps a cache
-      of its own: it starts at 144 KB, doubles as it fills up to 128 KB plus
-      32 bytes per entry, and stays with the domain after the tokenizer is
-      dropped, and keeps the model with it, until the domain has begun
-      encoding with eight other models of its kind or ends. [0] disables it.
-      Default: [262144] (8 MB at most).
+    - [cache_capacity]: the most entries of a pretoken cache, which keeps the
+      ids of pretokens of up to 15 bytes so that one seen before is not
+      encoded again. The tokenizer makes a cache for each encoding that runs
+      while the others are in use, from any domains or threads, and holds at
+      most [Domain.recommended_domain_count ()] of them at any time, in use or
+      not, for as long as it lives; an encoding past that runs without one.
+      Each starts at 144 KB and doubles as it fills, up to 128 KB plus 32
+      bytes per entry. [0] disables them. Default: [262144] (8 MB each at
+      most).
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
@@ -1133,14 +1140,15 @@ val unigram :
       vocabulary holds one for every byte of it. Default: [false].
     - [unk_token]: the role marker, and the model's unknown entry when [vocab]
       holds it and [unk_id] is not given. Default: none.
-    - [cache_capacity]: the most entries of the pretoken cache, which keeps
-      the ids of pretokens of up to 15 bytes so that one seen before is not
-      encoded again. Each domain that encodes with the tokenizer keeps a cache
-      of its own: it starts at 144 KB, doubles as it fills up to 128 KB plus
-      32 bytes per entry, and stays with the domain after the tokenizer is
-      dropped, and keeps the model with it, until the domain has begun
-      encoding with eight other models of its kind or ends. [0] disables it.
-      Default: [262144] (8 MB at most).
+    - [cache_capacity]: the most entries of a pretoken cache, which keeps the
+      ids of pretokens of up to 15 bytes so that one seen before is not
+      encoded again. The tokenizer makes a cache for each encoding that runs
+      while the others are in use, from any domains or threads, and holds at
+      most [Domain.recommended_domain_count ()] of them at any time, in use or
+      not, for as long as it lives; an encoding past that runs without one.
+      Each starts at 144 KB and doubles as it fills, up to 128 KB plus 32
+      bytes per entry. [0] disables them. Default: [262144] (8 MB each at
+      most).
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
@@ -1296,22 +1304,77 @@ val encode :
     - [padding]: padding configuration. Default: none (no padding).
     - [truncation]: truncation configuration. Default: none (no truncation). *)
 
+type exec = int -> (int -> unit) -> unit
+(** The type for executors, which run the tasks of a batch on the program's
+    domains. [exec n task] calls [task i] once for each [i] from [0] to
+    [n - 1], on any domains and in any order, and returns once every call has
+    returned. A task never raises: a batch records what its work raised and
+    re-raises it once [exec] returns.
+
+    The batch plans the work, since only it knows where a text may be cut and
+    how padding spans the rows; each task takes chunks of it until none is
+    left. A batch calls its executor at most once, so an executor over a pool
+    the program already runs spreads every batch without starting a domain.
+    Over domainslib's [Task] pool, for instance:
+    {[
+      let exec pool n task =
+        Domainslib.Task.run pool (fun () ->
+            Domainslib.Task.parallel_for pool ~start:0 ~finish:(n - 1)
+              ~body:task)
+    ]}
+    A batch asks for at most [Domain.recommended_domain_count ()] tasks, so
+    an executor may start a domain for each.
+
+    An executor over [d] domains started for the call, the caller's among
+    them. A domain runs the program's signal handlers, and a handler that
+    raises on a new domain before the runtime has set it up crashes the
+    program. So the executor blocks the [signals] the program handles while it
+    starts its domains, which keep that mask. Blocking them takes the
+    [threads.posix] and [unix] libraries in the caller's program; brot
+    depends on neither. On Windows, which has no signal masks, [signals] is
+    [[]].
+    {[
+      let spawn ~signals d n task =
+        let next = Atomic.make 0 in
+        let rec pull () =
+          let i = Atomic.fetch_and_add next 1 in
+          if i < n then (task i; pull ())
+        in
+        let start () = List.init (min d n - 1) (fun _ -> Domain.spawn pull) in
+        let others =
+          if signals = [] then start ()
+          else
+            let mask = Thread.sigmask Unix.SIG_BLOCK signals in
+            let restore () = ignore (Thread.sigmask Unix.SIG_SETMASK mask) in
+            Fun.protect ~finally:restore start
+        in
+        pull ();
+        List.iter Domain.join others
+    ]}
+    A domain that ends stops every domain for a collection, so a program
+    that encodes many batches passes an executor over a pool. *)
+
 val encode_batch :
   t ->
   ?add_special_tokens:bool ->
   ?match_special_tokens:bool ->
   ?padding:padding ->
   ?truncation:truncation ->
-  ?domains:int ->
+  ?exec:exec ->
   string list ->
   Encoding.t list
 (** [encode_batch t texts] is the encoding of each text in [texts].
 
-    - [domains]: how many domains to encode on. Default:
-      [Domain.recommended_domain_count ()]. Work is handed out by bytes, in
-      chunks of 64 KB to 256 KB, and a batch holding under 64 KB is encoded on
-      the calling domain whatever this says. Raises [Invalid_argument] if under
-      one.
+    A batch is encoded on the calling domain unless an executor spreads it over
+    others: where a program's work runs is its decision.
+
+    - [exec]: the executor the batch is spread through, as {!type-exec} says.
+      Default: none, and the batch is encoded on the calling domain. The work
+      is planned in chunks of consecutive texts holding 64 KB to 256 KB,
+      handed out largest first; a batch holding under 64 KB is encoded on the
+      calling domain without calling [exec]. The result does not depend on
+      [exec]. Raises [Invalid_argument] if [exec] returns before every chunk
+      is encoded, and what [exec] raises.
     - Other optional parameters are as in {!encode}. For sentence-pair tasks,
       use {!encode_batch_pairs}. *)
 
@@ -1321,7 +1384,7 @@ val encode_batch_pairs :
   ?match_special_tokens:bool ->
   ?padding:padding ->
   ?truncation:truncation ->
-  ?domains:int ->
+  ?exec:exec ->
   (string * string) list ->
   Encoding.t list
 (** [encode_batch_pairs t pairs] encodes a batch of sentence pairs. Each element
@@ -1358,7 +1421,7 @@ val encode_batch_ids :
   ?match_special_tokens:bool ->
   ?padding:padding ->
   ?truncation:truncation ->
-  ?domains:int ->
+  ?exec:exec ->
   string list ->
   ids * int array
 (** [encode_batch_ids t texts] is [(ids, lengths)]: the token ids of every text
@@ -1372,9 +1435,9 @@ val encode_batch_ids :
     [`Batch_longest] resolved over the whole batch as {!encode_batch} resolves
     it. Overflowing windows produced by [truncation] are dropped, since an [ids]
     buffer has nowhere to put them; {!encode_batch} keeps them. A long text is
-    spread over several domains too, in pieces cut where the pipeline cannot
-    tell the difference — a pipeline with a normalizer, or one that does not
-    split on spaces, encodes each text on one domain.
+    spread through [exec] too, in pieces cut where the pipeline cannot tell
+    the difference — a pipeline with a normalizer, or one that does not split
+    on spaces, encodes each text in one piece.
 
     Identifiers are narrowed to 32 bits. No vocabulary reaches that far: an
     identifier is an index into the token table, which holds one string per
@@ -1666,10 +1729,9 @@ val pp : Format.formatter -> t -> unit
 (**/**)
 
 val hold_cache : t -> (unit -> 'a) -> 'a
-(** [hold_cache t f] is [f ()] while the calling domain's pretoken cache of
-    [t]'s WordPiece or Unigram model is held, so that what the domain encodes
-    with [t] meanwhile takes the path of a thread that finds it held. For
-    tests. *)
+(** [hold_cache t f] is [f ()] while one of the encoder states of [t]'s BPE,
+    WordPiece or Unigram model is held, so that what is encoded with [t]
+    meanwhile does without it. For tests. *)
 
 val cache_set : string -> sets:int -> int
 (** [cache_set key ~sets] is the back set, among [sets], a power of two, that a
@@ -1683,7 +1745,7 @@ val cache_hashes : int64 -> int64 -> int * int
 (** [cache_hashes k0 k1] is the hash a pretoken cache indexes the key words [k0]
     and [k1] by, as OCaml computes it and as the C kernels do. For tests. *)
 
-val run_chunks : domains:int -> int array -> (int -> unit) -> unit
-(** [run_chunks ~domains sizes work] is [work c] for every chunk [c] of the
-    [sizes] in bytes, on [domains] domains as the batch encoders spread their
-    work, raising what a chunk raised. For tests. *)
+val run_chunks : ?exec:exec -> int array -> (int -> unit) -> unit
+(** [run_chunks ?exec sizes work] is [work c] for every chunk [c] of the
+    [sizes] in bytes, through [exec] as the batch encoders spread their work,
+    raising what a chunk raised. For tests. *)

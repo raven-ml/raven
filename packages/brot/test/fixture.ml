@@ -79,3 +79,21 @@ let with_tokenizer_file name f =
           (Printf.sprintf
              "packages/brot/bench/download_data.sh (not committed: %s)" licence)
         f
+
+(* Executors *)
+
+(* An executor over [d] domains started for the call, the caller's among them,
+   each taking the next task until none is left. The tests handle no signal, so
+   it blocks none while it starts them. *)
+let spawn d n task =
+  let next = Atomic.make 0 in
+  let rec pull () =
+    let i = Atomic.fetch_and_add next 1 in
+    if i < n then begin
+      task i;
+      pull ()
+    end
+  in
+  let others = List.init (min d n - 1) (fun _ -> Domain.spawn pull) in
+  pull ();
+  List.iter Domain.join others

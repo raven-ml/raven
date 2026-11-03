@@ -179,22 +179,6 @@ let alg_len_table = function
   | Alg_unigram m -> Unigram.len_table m
   | Alg_chars m -> Chars.len_table m
 
-(* [f] given the encoder in [slot], claimed for the duration of [f] and given
-   back even when [f] raises, or [spare model] when another thread of the
-   domain holds it. Nothing is allocated on the way. *)
-let with_encoder (slot : Pretoken_cache.encoder Pretoken_cache.slot) spare model
-    f =
-  if not (Pretoken_cache.take slot) then f (spare model) None
-  else
-    match f slot.value None with
-    | v ->
-        Pretoken_cache.give slot;
-        v
-    | exception e ->
-        let backtrace = Printexc.get_raw_backtrace () in
-        Pretoken_cache.give slot;
-        Printexc.raise_with_backtrace e backtrace
-
 (* The model's span encoder for a document. A BPE model's merge buffers and
    pretoken cache are claimed once for the document rather than once per span,
    and the closure keeps the dispatch out of the span loop. A fused BPE also
@@ -226,10 +210,9 @@ let with_span_encoder t ?ids32 f =
                 (Option.map
                    (fun walker -> Bpe.encode_walk m st ~walker)
                    t.fused))
-  | Alg_wordpiece m ->
-      with_encoder (Wordpiece.encoder_slot m) Wordpiece.uncached m f
+  | Alg_wordpiece m -> Wordpiece.with_encoder m (fun encoder -> f encoder None)
   | Alg_wordlevel m -> f (Word_level.encode_into m) None
-  | Alg_unigram m -> with_encoder (Unigram.encoder_slot m) Unigram.uncached m f
+  | Alg_unigram m -> Unigram.with_encoder m (fun encoder -> f encoder None)
   | Alg_chars m -> f (Chars.encode_into m) None
 
 let alg_name = function
@@ -1098,20 +1081,23 @@ let apply_padding t encodings = function
 (* Batch driver *)
 
 (* Work is handed out by bytes rather than by document, so that a batch of one
-   long text and a thousand short ones fills every domain just as evenly. A
-   chunk is a run of consecutive documents holding about a [2 * domains]th of
-   the batch, so that every domain has a couple to balance over — but never less
-   than [min_chunk_bytes]: a domain costs about a millisecond before it encodes
-   its first byte, its spawn and then the model state it builds and seeds, which
-   is what encoding a hundred kilobytes takes; and never more than
-   [max_chunk_bytes], past which a large batch balances too coarsely. The last
-   chunk of a batch holds whatever is left, and a batch that does not fill one
-   chunk never spawns a domain. *)
+   long text and a thousand short ones spreads just as evenly. A chunk is a run
+   of consecutive documents holding about a [2 * width]th of the batch, so that
+   each of [width] domains has a couple to balance over. Under an executor
+   [width] is the most domains a program should run at once, whatever the
+   executor runs; on the calling domain alone it is one, since smaller chunks
+   only add buffers. A chunk holds no less than [min_chunk_bytes], below which
+   handing it to another domain costs about what encoding it does, and no more
+   than [max_chunk_bytes], past which a large batch balances too coarsely. The
+   last chunk of a batch holds whatever is left. *)
 let min_chunk_bytes = 1 lsl 16
 let max_chunk_bytes = 1 lsl 18
 
-let chunk_size ~domains bytes =
-  max min_chunk_bytes (min max_chunk_bytes (bytes / (2 * domains)))
+let chunk_size ~exec bytes =
+  let width =
+    match exec with None -> 1 | Some _ -> Domain.recommended_domain_count ()
+  in
+  max min_chunk_bytes (min max_chunk_bytes (bytes / (2 * width)))
 
 type chunk = { first : int; stop : int; bytes : int }
 
@@ -1129,56 +1115,61 @@ let chunks_of ~chunk ~bytes count =
     chunks := { first = !first; stop = count; bytes = !acc } :: !chunks;
   Array.of_list (List.rev !chunks)
 
-let domain_count = function
-  | Some n when n < 1 -> invalid_arg "domains must be at least one"
-  | Some n -> n
-  | None -> Domain.recommended_domain_count ()
+type exec = int -> (int -> unit) -> unit
 
-(* [work] over every chunk, on [domains] domains at once. Chunks are claimed one
-   at a time through a single counter, largest first, so that a domain drawing
-   the longest chunk is not left holding the batch on its own. The caller's
-   domain works too. The first chunk to raise — or a spawn that fails — stops
-   the handout at once: every domain finishes the chunk it holds and claims no
-   other. The failure is re-raised to the caller once every domain spawned has
-   been joined: a batch leaves no domain running and no result comes out of a
-   failure. *)
-let run_chunks ~domains chunks work =
+(* [work] over every chunk through [exec], in as many tasks as there are chunks
+   but no more than the domains a program should run at once, so that an
+   executor starting a domain per task stays within the runtime's limit. A task
+   claims chunks one at a time through a single counter, largest first, until
+   none is left, so the order holds whatever runs the tasks and however many
+   run at once. The first chunk to raise stops the handout: every task finishes
+   the chunk it holds and claims no other, and the failure is re-raised once
+   [exec] returns. When [exec] returns or raises the handout stops too, so that
+   a task it left running claims nothing more. Whether every chunk was encoded
+   is a count of chunks finished, not of tasks called: an [exec] that returns
+   while a task still runs would otherwise hand back chunks still being
+   written. *)
+let spread exec chunks work =
   let count = Array.length chunks in
   let order = Array.init count Fun.id in
   Array.sort (fun a b -> Int.compare chunks.(b).bytes chunks.(a).bytes) order;
-  if min domains count <= 1 then Array.iter work order
-  else begin
-    let cursor = Atomic.make 0 in
-    let failure = Atomic.make None in
-    let failed e =
+  let cursor = Atomic.make 0 and finished = Atomic.make 0 in
+  let failure = Atomic.make None in
+  let stop () = Atomic.set cursor count in
+  let task _ =
+    try
+      let claim = ref (Atomic.fetch_and_add cursor 1) in
+      while !claim < count do
+        work order.(!claim);
+        Atomic.incr finished;
+        claim := Atomic.fetch_and_add cursor 1
+      done
+    with e ->
       let backtrace = Printexc.get_raw_backtrace () in
       ignore (Atomic.compare_and_set failure None (Some (e, backtrace)) : bool);
-      Atomic.set cursor count
-    in
-    let pull () =
-      try
-        let claim = ref (Atomic.fetch_and_add cursor 1) in
-        while !claim < count do
-          work order.(!claim);
-          claim := Atomic.fetch_and_add cursor 1
-        done
-      with e -> failed e
-    in
-    let spawned = Array.make (min domains count - 1) None in
-    (try
-       for i = 0 to Array.length spawned - 1 do
-         spawned.(i) <- Some (Domain.spawn pull)
-       done
-     with e -> failed e);
-    pull ();
-    Array.iter (Option.iter Domain.join) spawned;
-    match Atomic.get failure with
-    | None -> ()
-    | Some (e, backtrace) -> Printexc.raise_with_backtrace e backtrace
-  end
+      stop ()
+  in
+  (match exec (min count (Domain.recommended_domain_count ())) task with
+  | () -> stop ()
+  | exception e ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      stop ();
+      Printexc.raise_with_backtrace e backtrace);
+  match Atomic.get failure with
+  | Some (e, backtrace) -> Printexc.raise_with_backtrace e backtrace
+  | None ->
+      if Atomic.get finished < count then
+        invalid_arg "exec returned before every chunk was encoded"
+
+(* Without an executor, or with a single chunk, the batch is encoded on the
+   calling domain. *)
+let run_chunks ?exec chunks work =
+  match exec with
+  | Some exec when Array.length chunks > 1 -> spread exec chunks work
+  | _ -> Array.iteri (fun c _ -> work c) chunks
 
 let encode_sequences t sequences ~add_special_tokens ~padding ~truncation
-    ~domains =
+    ?exec () =
   match sequences with
   | [] -> []
   | _ ->
@@ -1194,9 +1185,9 @@ let encode_sequences t sequences ~add_special_tokens ~padding ~truncation
       for i = 0 to count - 1 do
         total := !total + bytes i
       done;
-      let chunk = chunk_size ~domains !total in
+      let chunk = chunk_size ~exec !total in
       let chunks = chunks_of ~chunk ~bytes count in
-      run_chunks ~domains chunks (fun c ->
+      run_chunks ?exec chunks (fun c ->
           for i = chunks.(c).first to chunks.(c).stop - 1 do
             results.(i) <-
               encode_single t ~add_special_tokens ~truncation sequences.(i)
@@ -1221,16 +1212,16 @@ let encode t ?pair ?(add_special_tokens = true) ?(match_special_tokens = true)
   | _ -> assert false
 
 let encode_batch t ?(add_special_tokens = true) ?(match_special_tokens = true)
-    ?padding ?truncation ?domains = function
+    ?padding ?truncation ?exec = function
   | [] -> []
   | texts ->
       let t = matching t ~match_special_tokens in
       let sequences = List.map (fun text -> { text; pair = None }) texts in
       encode_sequences t sequences ~add_special_tokens ~padding ~truncation
-        ~domains:(domain_count domains)
+        ?exec ()
 
 let encode_batch_pairs t ?(add_special_tokens = true)
-    ?(match_special_tokens = true) ?padding ?truncation ?domains = function
+    ?(match_special_tokens = true) ?padding ?truncation ?exec = function
   | [] -> []
   | pairs ->
       let t = matching t ~match_special_tokens in
@@ -1238,7 +1229,7 @@ let encode_batch_pairs t ?(add_special_tokens = true)
         List.map (fun (text, pair) -> { text; pair = Some pair }) pairs
       in
       encode_sequences t sequences ~add_special_tokens ~padding ~truncation
-        ~domains:(domain_count domains)
+        ?exec ()
 
 (* Asked for the ids alone, there is no encoding to build whenever the
    post-processor only wraps the sequence: what is left is the body, a prefix
@@ -1403,11 +1394,11 @@ let pieces_of t rows ~cut ~chunk =
    copied into the result at offsets that are known only once every chunk has
    been encoded — a row's length is the whole batch's business as soon as
    padding is [`Batch_longest]. Affixes, truncation and padding are applied
-   during that copy, chunk by chunk again: they move no ids the model produced.
+   during that copy, piece by piece: they move no ids the model produced.
    The buffers are [ids] rather than [Ints.t]: they hold the bulk of a batch,
    and outside the heap the collector neither scans nor sweeps them. *)
 let encode_batch_ids t ?(add_special_tokens = true)
-    ?(match_special_tokens = true) ?padding ?truncation ?domains texts =
+    ?(match_special_tokens = true) ?padding ?truncation ?exec texts =
   let t = matching t ~match_special_tokens in
   let rows = Array.of_list texts in
   let nrows = Array.length rows in
@@ -1419,9 +1410,8 @@ let encode_batch_ids t ?(add_special_tokens = true)
   let wrapped = Option.is_some affixes in
   let prefix, suffix = Option.value affixes ~default:([||], [||]) in
   let np = Array.length prefix and ns = Array.length suffix in
-  let domains = domain_count domains in
   let chunk =
-    chunk_size ~domains
+    chunk_size ~exec
       (Array.fold_left (fun total text -> total + String.length text) 0 rows)
   in
   let texts, owner = pieces_of t rows ~cut:(wrapped && cuttable t) ~chunk in
@@ -1434,7 +1424,7 @@ let encode_batch_ids t ?(add_special_tokens = true)
   let buffers = Array.make (Array.length chunks) (create_ids 0) in
   let chunk_of = Array.make npieces 0 in
   let start = Array.make npieces 0 and stop = Array.make npieces 0 in
-  run_chunks ~domains chunks (fun c ->
+  run_chunks ?exec chunks (fun c ->
       let chunk = chunks.(c) in
       if wrapped then
         (* The fused kernels write their ids into the chunk's buffer as int32
@@ -1548,45 +1538,32 @@ let encode_batch_ids t ?(add_special_tokens = true)
     if len > 0 then
       Bigarray.Array1.fill (Bigarray.Array1.sub result at len) pad_id
   in
-  (* A piece copies the part of itself that truncation keeps, as one blit
-     between views cut here, on the caller's domain, so that what a batch
-     allocates does not depend on which domain copies which piece. *)
-  let moves =
-    Array.init npieces (fun i ->
-        let row = owner.(i) in
-        let kept = min body.(row) budget in
-        let skip = if trim_left then body.(row) - kept else 0 in
-        let front = if pad_left then lengths.(row) - content.(row) else 0 in
-        let lo = max place.(i) skip
-        and hi = min (place.(i) + stop.(i) - start.(i)) (skip + kept) in
-        if lo >= hi then None
-        else
-          Some
-            ( Bigarray.Array1.sub
-                buffers.(chunk_of.(i))
-                (start.(i) + lo - place.(i))
-                (hi - lo),
-              Bigarray.Array1.sub result
-                (offset.(row) + front + np + lo - skip)
-                (hi - lo) ))
-  in
-  (* The first piece of a row lays out the row around the body. *)
-  run_chunks ~domains chunks (fun c ->
-      let chunk = chunks.(c) in
-      for i = chunk.first to chunk.stop - 1 do
-        Option.iter (fun (src, dst) -> Bigarray.Array1.blit src dst) moves.(i);
-        let row = owner.(i) in
-        if i = 0 || owner.(i - 1) <> row then begin
-          let padded = lengths.(row) - content.(row) in
-          let front = if pad_left then padded else 0 in
-          let kept = min body.(row) budget in
-          let base = offset.(row) + front + np in
-          fill ~at:offset.(row) ~len:front;
-          fill ~at:(base + kept + ns) ~len:(padded - front);
-          write prefix ~at:(offset.(row) + front);
-          write suffix ~at:(base + kept)
-        end
-      done);
+  (* The copy runs on the calling domain, so that a batch calls its executor
+     once. A piece copies the part of itself that truncation keeps, as one blit;
+     the first piece of a row lays out the row around the body. *)
+  for i = 0 to npieces - 1 do
+    let row = owner.(i) in
+    let kept = min body.(row) budget in
+    let skip = if trim_left then body.(row) - kept else 0 in
+    let padded = lengths.(row) - content.(row) in
+    let front = if pad_left then padded else 0 in
+    let base = offset.(row) + front + np in
+    let lo = max place.(i) skip
+    and hi = min (place.(i) + stop.(i) - start.(i)) (skip + kept) in
+    if lo < hi then
+      Bigarray.Array1.blit
+        (Bigarray.Array1.sub
+           buffers.(chunk_of.(i))
+           (start.(i) + lo - place.(i))
+           (hi - lo))
+        (Bigarray.Array1.sub result (base + lo - skip) (hi - lo));
+    if i = 0 || owner.(i - 1) <> row then begin
+      fill ~at:offset.(row) ~len:front;
+      fill ~at:(base + kept + ns) ~len:(padded - front);
+      write prefix ~at:(offset.(row) + front);
+      write suffix ~at:(base + kept)
+    end
+  done;
   (result, lengths)
 
 (* Decoding *)
@@ -2135,29 +2112,18 @@ let pp ppf t =
 (* Testing *)
 
 let hold_cache t f =
-  let hold slot =
-    if not (Pretoken_cache.take slot) then f ()
-    else
-      match f () with
-      | v ->
-          Pretoken_cache.give slot;
-          v
-      | exception e ->
-          let backtrace = Printexc.get_raw_backtrace () in
-          Pretoken_cache.give slot;
-          Printexc.raise_with_backtrace e backtrace
-  in
   match t.algorithm with
-  | Alg_wordpiece m -> hold (Wordpiece.encoder_slot m)
-  | Alg_unigram m -> hold (Unigram.encoder_slot m)
-  | Alg_bpe _ | Alg_wordlevel _ | Alg_chars _ -> f ()
+  | Alg_bpe m -> Bpe.with_state m (fun _ -> f ())
+  | Alg_wordpiece m -> Wordpiece.with_encoder m (fun _ -> f ())
+  | Alg_unigram m -> Unigram.with_encoder m (fun _ -> f ())
+  | Alg_wordlevel _ | Alg_chars _ -> f ()
 
 let cache_set = Pretoken_cache.set_index
 
 let cache_key = Pretoken_cache.key_words
 let cache_hashes k0 k1 = (Pretoken_cache.hash k0 k1, Kernel.cache_hash k0 k1)
 
-let run_chunks ~domains sizes work =
-  run_chunks ~domains
+let run_chunks ?exec sizes work =
+  run_chunks ?exec
     (Array.mapi (fun i bytes -> { first = i; stop = i + 1; bytes }) sizes)
     work

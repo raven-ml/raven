@@ -9,9 +9,9 @@
    bench_owt.exe TOKENIZER.json CORPUS.txt [-domains N] [-repeat N] [-bytes N]
 
    [-bytes N] reads the documents that end within the corpus's first N bytes.
-   With [-domains 1] the calling domain encodes, and a run reuses the pretoken
-   caches the runs before it filled; with more, each run also spawns domains
-   of its own, whose caches start cold.
+   With [-domains 1] the calling domain encodes; with more, each run spawns
+   domains for the call. Either way a run reuses the encoder states, pretoken
+   caches included, that the runs before it left in the tokenizer.
    [-repeat 0] stops before encoding: the baseline that, subtracted from a
    one-run count of instructions, leaves the run's.
 
@@ -59,14 +59,29 @@ let split_on_marker marker s =
   in
   go [] 0
 
+(* An executor over [d] domains started for the call, the caller's among them,
+   as brot.mli shows. The bench handles no signal, so it blocks none. *)
+let spawn d n task =
+  let next = Atomic.make 0 in
+  let rec pull () =
+    let i = Atomic.fetch_and_add next 1 in
+    if i < n then begin
+      task i;
+      pull ()
+    end
+  in
+  let others = List.init (min d n - 1) (fun _ -> Domain.spawn pull) in
+  pull ();
+  List.iter Domain.join others
+
 let () =
-  let domains = ref 0 in
+  let domains = ref 1 in
   let repeat = ref 3 in
   let limit = ref 0 in
   let anon = ref [] in
   Arg.parse
     [
-      ("-domains", Arg.Set_int domains, "N domains to encode on (default: auto)");
+      ("-domains", Arg.Set_int domains, "N domains to encode on (default: 1)");
       ("-repeat", Arg.Set_int repeat, "N timed runs (default: 3)");
       ("-bytes", Arg.Set_int limit, "N read the corpus's first N bytes");
     ]
@@ -114,26 +129,33 @@ let () =
       long_pretokens
       (100. *. float_of_int long_pretokens /. float_of_int pretokens);
   print_newline ();
-  let domains = if !domains > 0 then Some !domains else None in
+  let exec = if !domains > 1 then Some (spawn !domains) else None in
   (* Warm what a first call sets up, without seeding the pretoken caches with
      the corpus. *)
-  ignore (Brot.encode_batch_ids tok ~add_special_tokens:false ?domains [ "a" ]);
+  ignore (Brot.encode_batch_ids tok ~add_special_tokens:false ?exec [ "a" ]);
   let best = ref infinity in
   for run = 1 to !repeat do
     let t0 = Unix.gettimeofday () in
-    let ids, _ =
-      Brot.encode_batch_ids tok ~add_special_tokens:false ?domains docs
+    let ids, lengths =
+      Brot.encode_batch_ids tok ~add_special_tokens:false ?exec docs
     in
     let dt = Unix.gettimeofday () -. t0 in
     if dt < !best then best := dt;
-    (* The sum of the ids tells two tokenizers' outputs apart. *)
-    let sum = ref 0 in
+    (* The sum of the ids, and a hash of them and of the row lengths in order,
+       tell two tokenizers' outputs apart: the hash is [h * 1000003 + v + 1]
+       over each value [v], modulo 2^62, and allocates nothing. *)
+    let sum = ref 0 and hash = ref 0 in
+    let mix v = hash := ((!hash * 1000003) + v + 1) land ((1 lsl 62) - 1) in
     for i = 0 to Bigarray.Array1.dim ids - 1 do
-      sum := !sum + Int32.to_int (Bigarray.Array1.unsafe_get ids i)
+      let id = Int32.to_int (Bigarray.Array1.unsafe_get ids i) in
+      sum := !sum + id;
+      mix id
     done;
-    Printf.printf "run %d: %.2f s, %.1f MB/s, %d ids, sum %d%s\n%!" run dt
+    Array.iter mix lengths;
+    Printf.printf "run %d: %.2f s, %.1f MB/s, %d ids, sum %d, hash %d%s\n%!"
+      run dt
       (float_of_int bytes /. 1e6 /. dt)
-      (Bigarray.Array1.dim ids) !sum
+      (Bigarray.Array1.dim ids) !sum !hash
       (if pretokens > 0 then
          Printf.sprintf ", %.1f ns/pretoken"
            (dt *. 1e9 /. float_of_int pretokens)

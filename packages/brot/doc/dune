@@ -5,4 +5,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries brot unix))
+ (libraries brot unix threads.posix))

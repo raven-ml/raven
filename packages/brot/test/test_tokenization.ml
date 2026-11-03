@@ -999,7 +999,7 @@ let rows (buffer, lengths) =
          row)
        lengths)
 
-let check_batch ?add_special_tokens ?padding ?truncation ?domains ~msg tokenizer
+let check_batch ?add_special_tokens ?padding ?truncation ?exec ~msg tokenizer
     documents =
   equal ~msg
     (list (array int))
@@ -1008,7 +1008,7 @@ let check_batch ?add_special_tokens ?padding ?truncation ?domains ~msg tokenizer
        documents)
     (rows
        (encode_batch_ids tokenizer ?add_special_tokens ?padding ?truncation
-          ?domains documents))
+          ?exec documents))
 
 let test_batch_ids_matches_encode_ids model () =
   with_pretrained model (fun tokenizer ->
@@ -1051,10 +1051,10 @@ let test_batch_ids_pads_to_the_longest () =
 let test_batch_ids_one_domain () =
   with_pretrained "gpt2" (fun tokenizer ->
       let documents = parity_documents "sample" in
-      equal ~msg:"one domain and all of them agree"
+      equal ~msg:"the calling domain and four agree"
         (list (array int))
-        (rows (encode_batch_ids tokenizer ~domains:1 documents))
-        (rows (encode_batch_ids tokenizer documents)))
+        (rows (encode_batch_ids tokenizer documents))
+        (rows (encode_batch_ids tokenizer ~exec:(Fixture.spawn 4) documents)))
 
 let test_batch_ids_empty () =
   with_pretrained "gpt2" (fun tokenizer ->
@@ -1108,7 +1108,8 @@ let test_batch_ids_cut_document model () =
         (rows (encode_batch_ids tokenizer [ corpus ]));
       let documents = [ "a short one"; corpus; ""; "another short one" ] in
       check_batch ~msg:"among short documents" tokenizer documents;
-      check_batch ~msg:"on two domains" ~domains:2 tokenizer documents;
+      check_batch ~msg:"on two domains" ~exec:(Fixture.spawn 2) tokenizer
+        documents;
       check_batch ~msg:"among short documents, truncated from the left"
         ~truncation:(truncation ~direction:`Left 64)
         tokenizer documents)
@@ -1176,7 +1177,8 @@ let test_batch_ids_cut_avoids_added_tokens () =
     ]
   in
   check_batch ~msg:"cut documents keep their ids" tokenizer documents;
-  check_batch ~msg:"on two domains" ~domains:2 tokenizer documents
+  check_batch ~msg:"on two domains" ~exec:(Fixture.spawn 2) tokenizer
+    documents
 
 (* A normalizer may act across a space, so a pipeline with one is never cut,
    however long the document. *)
@@ -1195,7 +1197,8 @@ let test_batch_ids_uncut_under_normalizer () =
     List.init 4 (fun j -> String.make j 'x' ^ repeat "the cat the cat " mib)
   in
   check_batch ~msg:"whole documents" tokenizer documents;
-  check_batch ~msg:"on two domains" ~domains:2 tokenizer documents
+  check_batch ~msg:"on two domains" ~exec:(Fixture.spawn 2) tokenizer
+    documents
 
 (* A vocabulary of space runs sees a cut inside a run: the guards on the bytes
    either side of the cut keep the run whole. Only a BPE model walks a
@@ -1243,7 +1246,8 @@ let test_batch_ids_cut_keeps_space_runs () =
     List.init 5 (fun j -> String.make j 'x' ^ repeat "the   cat  the " mib)
   in
   check_batch ~msg:"cut documents keep their runs" tokenizer documents;
-  check_batch ~msg:"on two domains" ~domains:2 tokenizer documents
+  check_batch ~msg:"on two domains" ~exec:(Fixture.spawn 2) tokenizer
+    documents
 
 (* A document a worker cannot encode fails the whole batch, once every domain
    has been joined, and leaves the tokenizer usable. *)
@@ -1268,13 +1272,14 @@ let test_batch_worker_failure () =
   let good = List.init 8 (fun _ -> repeat "hello world " (2 * mib)) in
   let bad = List.concat [ good; [ "hello world zzz" ]; good ] in
   let failure = function Failure _ -> true | _ -> false in
+  let exec = Fixture.spawn 6 in
   raises_match ~msg:"encode_batch_ids fails" failure (fun () ->
-      encode_batch_ids tokenizer ~domains:6 bad);
+      encode_batch_ids tokenizer ~exec bad);
   raises_match ~msg:"encode_batch fails" failure (fun () ->
-      encode_batch tokenizer ~domains:6 bad);
-  check_batch ~msg:"the tokenizer still encodes" ~domains:6 tokenizer good;
+      encode_batch tokenizer ~exec bad);
+  check_batch ~msg:"the tokenizer still encodes" ~exec tokenizer good;
   equal ~msg:"encodings too" int (List.length good)
-    (List.length (encode_batch tokenizer ~domains:6 good))
+    (List.length (encode_batch tokenizer ~exec good))
 
 (* A chunk raising on a spawned domain stops the batch: the others finish the
    chunk they hold and start no other. The first chunk a spawned domain takes
@@ -1297,16 +1302,317 @@ let test_batch_failure_stops_domains () =
     end
   in
   raises ~msg:"the batch fails" (Failure "chunk") (fun () ->
-      Brot.run_chunks ~domains:4 (Array.make 64 1) work);
+      Brot.run_chunks ~exec:(Fixture.spawn 4) (Array.make 64 1) work);
   at_most ~msg:"chunks run after the failure" int ~than:6 (Atomic.get done_)
 
-let test_batch_domains_at_least_one () =
-  with_pretrained "gpt2" (fun tokenizer ->
-      let refused = Invalid_argument "domains must be at least one" in
-      raises ~msg:"encode_batch_ids" refused (fun () ->
-          encode_batch_ids tokenizer ~domains:0 [ "a" ]);
-      raises ~msg:"encode_batch" refused (fun () ->
-          encode_batch tokenizer ~domains:(-1) [ "a" ]))
+(* Executors *)
+
+(* Every task on the calling domain, last first. *)
+let sequential n task =
+  for i = n - 1 downto 0 do
+    task i
+  done
+
+(* Every task on one of three domains started for the call, none on the
+   caller's. *)
+let elsewhere n task =
+  let worker j () =
+    let i = ref j in
+    while !i < n do
+      task !i;
+      i := !i + 3
+    done
+  in
+  List.iter Domain.join (List.init 3 (fun j -> Domain.spawn (worker j)))
+
+(* A pool in domainslib's shape: domains started once, a [run] that enters the
+   pool, and a [parallel_for] that waits for its body over every index. *)
+module Pool = struct
+  type t = {
+    jobs : (unit -> unit) Queue.t;
+    lock : Mutex.t;
+    changed : Condition.t;
+    mutable closing : bool;
+    mutable workers : unit Domain.t list;
+  }
+
+  let rec work pool =
+    Mutex.lock pool.lock;
+    while Queue.is_empty pool.jobs && not pool.closing do
+      Condition.wait pool.changed pool.lock
+    done;
+    let job = Queue.take_opt pool.jobs in
+    Mutex.unlock pool.lock;
+    match job with
+    | None -> ()
+    | Some job ->
+        job ();
+        work pool
+
+  let setup ~num_domains =
+    let pool =
+      {
+        jobs = Queue.create ();
+        lock = Mutex.create ();
+        changed = Condition.create ();
+        closing = false;
+        workers = [];
+      }
+    in
+    pool.workers <-
+      List.init num_domains (fun _ -> Domain.spawn (fun () -> work pool));
+    pool
+
+  let teardown pool =
+    Mutex.protect pool.lock (fun () ->
+        pool.closing <- true;
+        Condition.broadcast pool.changed);
+    List.iter Domain.join pool.workers
+
+  let run _ f = f ()
+
+  let parallel_for pool ~start ~finish ~body =
+    let left = ref (finish - start + 1) in
+    let job i () =
+      body i;
+      Mutex.protect pool.lock (fun () ->
+          decr left;
+          if !left = 0 then Condition.broadcast pool.changed)
+    in
+    Mutex.protect pool.lock (fun () ->
+        for i = start to finish do
+          Queue.push (job i) pool.jobs
+        done;
+        Condition.broadcast pool.changed;
+        while !left > 0 do
+          Condition.wait pool.changed pool.lock
+        done)
+end
+
+(* The adapter brot.mli shows, over the pool above. *)
+let pooled pool n task =
+  Pool.run pool (fun () ->
+      Pool.parallel_for pool ~start:0 ~finish:(n - 1) ~body:task)
+
+(* Long documents that cut into many chunks among short ones, so that every
+   task of an executor has chunks to take. *)
+let spread_documents () =
+  [ repeat "hello world the cat sat on the mat " (256 * 1024); "the cat"; "" ]
+  @ List.init 24 (fun j -> repeat "cat sat on the mat hello world " (j * 2048))
+
+let spread_tokenizer () =
+  word_level
+    ~vocab:
+      [
+        ("hello", 0);
+        ("world", 1);
+        ("the", 2);
+        ("cat", 3);
+        ("sat", 4);
+        ("on", 5);
+        ("mat", 6);
+        ("[UNK]", 7);
+        ("[PAD]", 8);
+      ]
+    ~pre:Pre_tokenizer.whitespace ~unk_token:"[UNK]" ~pad_token:"[PAD]"
+    ~post:
+      (Post_processor.template ~single:"[UNK] $A"
+         ~special_tokens:[ ("[UNK]", 7) ]
+         ())
+    ()
+
+let test_executors () =
+  let tokenizer = spread_tokenizer () and documents = spread_documents () in
+  let pool = Pool.setup ~num_domains:3 in
+  Fun.protect
+    ~finally:(fun () -> Pool.teardown pool)
+    (fun () ->
+      List.iter
+        (fun (name, exec) ->
+          check_batch ~msg:name ~exec tokenizer documents;
+          check_batch ~msg:(name ^ ", padded and truncated") ~exec
+            ~padding:(padding ~direction:`Left (`To_multiple 8))
+            ~truncation:(truncation ~direction:`Left 100000)
+            tokenizer documents;
+          equal ~msg:(name ^ ", encodings")
+            (list (array int))
+            (List.map Encoding.ids (encode_batch tokenizer documents))
+            (List.map Encoding.ids (encode_batch tokenizer ~exec documents)))
+        [
+          ("sequential, last task first", sequential);
+          ("on other domains", elsewhere);
+          ("a pool", pooled pool);
+          ("the same pool again", pooled pool);
+        ])
+
+(* What an executor raises fails the batch, and the tokenizer still encodes. *)
+let test_executor_raises () =
+  let tokenizer = spread_tokenizer () and documents = spread_documents () in
+  let first_then_exit n task =
+    if n > 0 then task 0;
+    raise Exit
+  in
+  raises ~msg:"encode_batch_ids" Exit (fun () ->
+      encode_batch_ids tokenizer ~exec:first_then_exit documents);
+  raises ~msg:"encode_batch" Exit (fun () ->
+      encode_batch tokenizer ~exec:first_then_exit documents);
+  check_batch ~msg:"afterwards" ~exec:sequential tokenizer documents
+
+(* An executor that returns before its tasks have run leaves chunks unencoded,
+   or still being written: the batch fails rather than hand them back. *)
+let test_executor_returns_early () =
+  let tokenizer = spread_tokenizer () and documents = spread_documents () in
+  let refused =
+    Invalid_argument "exec returned before every chunk was encoded"
+  in
+  let nothing _ _ = () in
+  raises ~msg:"encode_batch_ids, no task run" refused (fun () ->
+      encode_batch_ids tokenizer ~exec:nothing documents);
+  raises ~msg:"encode_batch, no task run" refused (fun () ->
+      encode_batch tokenizer ~exec:nothing documents);
+  check_batch ~msg:"afterwards" tokenizer documents
+
+(* Tasks an executor runs after the batch failed, because it returned early or
+   raised, take no chunk. The executor hands its tasks to a domain held until
+   the batch has failed. *)
+let test_late_tasks_take_nothing () =
+  let late outcome =
+    let release = Atomic.make false and worked = Atomic.make 0 in
+    let held = ref None in
+    let exec n task =
+      held :=
+        Some
+          (Domain.spawn (fun () ->
+               while not (Atomic.get release) do
+                 Domain.cpu_relax ()
+               done;
+               for i = 0 to n - 1 do
+                 task i
+               done));
+      outcome ()
+    in
+    let failed =
+      match Brot.run_chunks ~exec (Array.make 8 1) (fun _ -> Atomic.incr worked)
+      with
+      | () -> false
+      | exception (Exit | Invalid_argument _) -> true
+    in
+    Atomic.set release true;
+    Option.iter Domain.join !held;
+    (failed, Atomic.get worked)
+  in
+  equal ~msg:"returned early" (pair bool int) (true, 0) (late (fun () -> ()));
+  equal ~msg:"raised" (pair bool int) (true, 0) (late (fun () -> raise Exit))
+
+(* A batch asks for no more tasks than domains a program should run at once,
+   however many chunks it holds, and the tasks still take every chunk. *)
+let test_task_count_is_bounded () =
+  let most = Domain.recommended_domain_count () in
+  let asked = ref 0 and worked = ref 0 in
+  let exec n task =
+    asked := n;
+    sequential n task
+  in
+  Brot.run_chunks ~exec (Array.make (most + 50) 1) (fun _ -> incr worked);
+  equal ~msg:"tasks" int most !asked;
+  equal ~msg:"chunks run" int (most + 50) !worked
+
+(* A chunk that raises stops the handout: the tasks after it take no chunk. *)
+let test_failure_stops_the_handout () =
+  let calls = ref 0 in
+  let work _ =
+    incr calls;
+    if !calls = 3 then failwith "chunk"
+  in
+  raises ~msg:"the batch fails" (Failure "chunk") (fun () ->
+      Brot.run_chunks ~exec:sequential (Array.make 64 1) work);
+  equal ~msg:"chunks run" int 3 !calls
+
+(* A tokenizer's encoder states, caches included, live in it: once it is
+   dropped, nothing keeps them or its model. A vocabulary entry built at run
+   time is finalised with the model that holds it; a BPE state holds no entry,
+   so its 8 MB table is seen in the live words instead. *)
+let collected tokenizer_of ~vocab =
+  let entry = String.concat "" [ "wor"; "ld" ] in
+  let freed = ref false in
+  Gc.finalise_last (fun () -> freed := true) entry;
+  let encode_and_drop () =
+    let tokenizer = tokenizer_of (vocab entry) in
+    let text = repeat "hello world " (256 * 1024) in
+    ignore (encode_ids tokenizer "hello world" : int array);
+    ignore
+      (encode_batch_ids tokenizer ~exec:(Fixture.spawn 4) [ text; text ]
+        : ids * _)
+  in
+  (Sys.opaque_identity encode_and_drop) ();
+  Gc.full_major ();
+  !freed
+
+let test_dropped_tokenizer_is_collected () =
+  let words entry = [ "[UNK]"; "hello"; entry; "##o" ] in
+  equal ~msg:"wordpiece" bool true
+    (collected ~vocab:words (fun words ->
+         wordpiece
+           ~vocab:(List.mapi (fun i w -> (w, i)) words)
+           ~pre:Pre_tokenizer.whitespace ()));
+  equal ~msg:"unigram" bool true
+    (collected ~vocab:words (fun words ->
+         unigram
+           ~vocab:(List.map (fun w -> (w, -1.)) words)
+           ~unk_id:0 ~pre:Pre_tokenizer.whitespace ()));
+  let live () =
+    Gc.full_major ();
+    (Gc.stat ()).live_words
+  in
+  let before = live () in
+  ignore
+    (collected
+       ~vocab:(fun entry -> [ ("h", 0); ("e", 1); ("he", 2); (entry, 3) ])
+       (fun vocab -> bpe ~vocab ~merges:[ ("h", "e") ] ())
+      : bool);
+  at_most ~msg:"live words after a BPE tokenizer is dropped" int
+    ~than:(before + 65536) (live ())
+
+(* A BPE tokenizer builds at most [Domain.recommended_domain_count ()] states,
+   8 MB each, however many encodings hold one at once: an encoding that finds
+   them all in use does without a cache. Measured on one domain by nesting
+   claims three deeper than that; a state's size is measured as one claim's. *)
+let live_words () =
+  Gc.full_major ();
+  (Gc.stat ()).live_words
+
+let small_bpe () =
+  bpe ~vocab:[ ("h", 0); ("e", 1); ("he", 2) ] ~merges:[ ("h", "e") ] ()
+
+let test_states_are_bounded () =
+  let most = Domain.recommended_domain_count () in
+  let t = small_bpe () in
+  let before = live_words () in
+  let one = hold_cache t (fun () -> live_words ()) - before in
+  let rec nest depth =
+    if depth = 0 then live_words ()
+    else hold_cache t (fun () -> nest (depth - 1))
+  in
+  let peak = nest (most + 3) in
+  let after = live_words () in
+  ignore (Sys.opaque_identity t : Brot.t);
+  greater ~msg:"a state holds its 8 MB cache" int ~than:(1 lsl 20) one;
+  at_most ~msg:"live words while every claim is held" int
+    ~than:(before + (most * one) + 65536)
+    peak;
+  at_most ~msg:"live words once every claim is given back" int
+    ~than:(before + (most * one) + 65536)
+    after
+
+(* A state an exception went through is dropped, and its cache freed. *)
+let test_raised_state_is_dropped () =
+  let t = small_bpe () in
+  let before = live_words () in
+  raises ~msg:"the exception passes" Exit (fun () ->
+      hold_cache t (fun () -> raise Exit));
+  let after = live_words () in
+  ignore (Sys.opaque_identity t : Brot.t);
+  at_most ~msg:"live words after the raise" int ~than:(before + 65536) after
 
 let batch_tests =
   [
@@ -1326,7 +1632,7 @@ let batch_tests =
       (test_batch_ids_matches_encode_ids "gpt_oss");
     test "batch ids pad to the longest of the batch"
       test_batch_ids_pads_to_the_longest;
-    test "batch ids do not depend on the domain count" test_batch_ids_one_domain;
+    test "batch ids do not depend on the executor" test_batch_ids_one_domain;
     test "batch ids of an empty batch" test_batch_ids_empty;
     test "batch ids under a post-processor that does not wrap"
       test_batch_ids_without_affixes;
@@ -1347,7 +1653,18 @@ let batch_tests =
       test_batch_ids_uncut_under_normalizer;
     test "a cut keeps space runs whole" test_batch_ids_cut_keeps_space_runs;
     slow @@ test "a worker failure fails the batch" test_batch_worker_failure;
-    test "domains must be at least one" test_batch_domains_at_least_one;
+    test "a dropped tokenizer is collected" test_dropped_tokenizer_is_collected;
+    test "a tokenizer's states are bounded" test_states_are_bounded;
+    test "a state an exception went through is dropped"
+      test_raised_state_is_dropped;
+    test "executors give the same ids" test_executors;
+    test "an executor that raises fails the batch" test_executor_raises;
+    test "an executor that returns early fails the batch"
+      test_executor_returns_early;
+    test "tasks after a failure take no chunk" test_late_tasks_take_nothing;
+    test "a failing chunk stops the handout" test_failure_stops_the_handout;
+    test "a batch asks for at most a domain per core"
+      test_task_count_is_bounded;
   ]
 
 (* Test Suite *)

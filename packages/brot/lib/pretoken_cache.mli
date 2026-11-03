@@ -18,7 +18,8 @@
     bits 0 and 32, the first also holding the id count in bits 24 to 31. The
     byte-level and SentencePiece C kernels read and write the same tables.
 
-    A table is read and written only by the thread holding the claim on it. *)
+    A table is read and written by one encoding at a time, the one holding
+    the {{!states}state} it belongs to. *)
 
 type t = private {
   front : Bytes.t;
@@ -90,31 +91,21 @@ val load_seeds : t -> Bytes.t -> unit
 (** [load_seeds t seeds] stores into [t] the entries {!seed} appended to
     [seeds]. *)
 
-(** {1:claims Claims} *)
+(** {1:states Encoder states} *)
 
-val stamp : unit -> int
-(** [stamp ()] is a number no other call returns, which names a model's slots.
-*)
+type 'a states
+(** The type for a model's encoder states: values, such as a cache with the
+    buffers that fill it, each written by one encoding at a time. *)
 
-type 'a slot = private { value : 'a; busy : bool Atomic.t }
-(** The type for a domain's slot of a model: a value, such as a cache, and
-    whether a thread of the domain holds it. *)
+val states : unit -> 'a states
+(** [states ()] holds no state. *)
 
-type 'a registry
-(** The type for per-domain slots of ['a] values. *)
-
-val registry : unit -> 'a registry
-(** [registry ()] is a registry holding no slot. *)
-
-val slot : 'a registry -> stamp:int -> ('b -> 'a) -> 'b -> 'a slot
-(** [slot r ~stamp make arg] is the calling domain's slot in [r] of the model
-    [stamp] names, made with [make arg] the first time. A domain keeps the slots
-    of the last eight models it began encoding with: past that, the slot it
-    made longest ago is dropped, whether or not it was used since, and its
-    memory goes with it. *)
-
-val take : 'a slot -> bool
-(** [take s] claims [s] and is [true], or is [false] if a thread holds it. *)
-
-val give : 'a slot -> unit
-(** [give s] gives back the claim {!take} made. *)
+val with_state :
+  'a states -> make:('b -> 'a) -> spare:('b -> 'a) -> 'b -> ('a -> 'c) -> 'c
+(** [with_state s ~make ~spare arg f] is [f st] for a state [st] taken from
+    [s], or [make arg] when [s] holds none free and fewer than
+    [Domain.recommended_domain_count ()] states exist; [st] goes back to [s]
+    when [f] returns. Past that count, [st] is [spare arg], which [s] never
+    keeps, so [s] never holds more states than that, in use or free. When [f]
+    raises, [st] is dropped: the exception may have left it half-written.
+    [st] must not escape [f]. *)

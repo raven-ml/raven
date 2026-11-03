@@ -205,10 +205,9 @@ module Cache = Pretoken_cache
 let long_capacity = 65536
 let long_max_len = 4096
 
-(* Merging needs a word, a queue, a rank scan and the caches to work in. They
-   are held per (model, domain) and grow to the longest pretoken merged there;
-   within a domain the first thread to claim them wins and the others work in
-   buffers of their own. *)
+(* Merging needs a word, a queue, a rank scan and the caches to work in. A model
+   holds states of them, each used by one encoding at a time, and its buffers
+   grow to the longest pretoken merged with it. *)
 type state = {
   mutable st_word : word;
   mutable st_queue : Merge_queue.t;
@@ -233,13 +232,14 @@ type char_table = { ascii : int array; multi : Merge_map.t }
 type sp_cut = { punct_slot : int array; punct_safe : bool array }
 
 type t = {
-  stamp : int;
+  (* The encoder states of this model, which no other model shares. *)
+  states : state Cache.states;
   vocab : vocab;
   vocab_r : string array;
   merges : Merge_map.t;
   cache_slots : int;
   (* Every vocabulary entry short enough to be keyed, tokenized once at creation
-     and laid out as cache entries, so that each domain seeds its own table by
+     and laid out as cache entries, so that each state seeds its own table by
      replaying them instead of merging them again. *)
   seeds : Bytes.t;
   dropout : float option;
@@ -303,10 +303,6 @@ let ensure_queue_capacity queue capacity =
 
 (* Above this many symbols the linear rank scan is dropped for the heap. *)
 let max_linear = 32
-
-(* A domain's states of the models it encodes with, as {!Pretoken_cache.slot}
-   keeps them: a state carries a cache of several megabytes. *)
-let states : state Cache.registry = Cache.registry ()
 
 let[@inline] add_symbol word c byte_len =
   let s = word.size in
@@ -819,8 +815,8 @@ let sp_kernel_tables model cache : Kernel.sp option =
 (* A state's miss before its first: see [encode_unit_into]. *)
 let no_miss : Cache.encoder = fun _ ~opaque:_ _ ~pos:_ ~len:_ -> ()
 
-(* Buffers of its own and no cache, for the thread that does not claim the
-   domain's state and for building the seed. *)
+(* Buffers and no cache, for building the seeds and for an encoding that finds
+   every state of the model in use. *)
 let private_state model =
   {
     st_word = create_word 16;
@@ -870,25 +866,8 @@ let make_state model =
     st_cursor = Kernel.cursor ();
   }
 
-(* The domain's state, held for the duration of [f]. Threads of one domain share
-   the state it holds — its word, queue and cache are all single-writer — so the
-   second to ask gets buffers of its own instead. Two threads of one domain that
-   both find no state for the model build one each and one is lost, which costs
-   a table and nothing else. The claim is given back even when [f] raises:
-   otherwise one exception would cost that domain its cache for the rest of the
-   program. *)
 let with_state model f =
-  let slot = Cache.slot states ~stamp:model.stamp make_state model in
-  if not (Cache.take slot) then f (private_state model)
-  else
-    match f slot.value with
-    | v ->
-        Cache.give slot;
-        v
-    | exception e ->
-        let backtrace = Printexc.get_raw_backtrace () in
-        Cache.give slot;
-        Printexc.raise_with_backtrace e backtrace
+  Cache.with_state model.states ~make:make_state ~spare:private_state model f
 
 (* The ids of a merged word. A symbol whose bytes are not what its id accounts
    for — the unknown token, a fallback token the text spelled by name — is
@@ -1386,8 +1365,6 @@ let convert_merges_to_merge_map vocab merges continuing_subword_prefix =
        (fun ((a_id, b_id), packed) -> (merge_key a_id b_id, packed))
        entries)
 
-let next_stamp = Atomic.make 0
-
 (* How many bytes of a pretoken an id accounts for: the entry it stands for,
    stripped of the affixes its position gives it, or the byte a fallback token
    spells out. A symbol that stands for anything else — the unknown token for
@@ -1513,7 +1490,7 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
       source;
   let model =
     {
-      stamp = Atomic.fetch_and_add next_stamp 1;
+      states = Cache.states ();
       vocab;
       vocab_r;
       merges;
@@ -1554,7 +1531,7 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
      [##ing] — and no pretoken ever looks like that, so seeding an affixed model
      would fill the table with entries nothing can hit. *)
   if model.cache_slots > 0 && prefix = "" && suffix = "" then
-    { model with seeds = build_seeds model }
+    { model with seeds = build_seeds model; states = Cache.states () }
   else model
 
 let json_of_string s =

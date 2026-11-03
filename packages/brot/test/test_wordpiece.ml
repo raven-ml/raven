@@ -372,7 +372,7 @@ let cache_props =
           (List.length (List.sort_uniq compare words) > 512);
         equal ~msg:"cold" (array int) expected (encode_ids t text);
         equal ~msg:"warm" (array int) expected (encode_ids t text));
-    (* A thread that finds the domain's cache held encodes without it. *)
+    (* A thread that finds the model's state held makes one of its own. *)
     test "cache: held by another thread" (fun () ->
         let t = cache_tokenizer () in
         let text = "abc abcabc a\u{e9}b q abc ." in

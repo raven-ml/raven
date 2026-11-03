@@ -100,7 +100,8 @@ let dump_encoding tok name text =
 
 let dump_batch tok name texts =
   let ids, lengths =
-    Brot.encode_batch_ids tok ~add_special_tokens:false ~domains:4 texts
+    Brot.encode_batch_ids tok ~add_special_tokens:false
+      ~exec:(Fixture.spawn 4) texts
   in
   let n = Bigarray.Array1.dim ids in
   let buf = Buffer.create (4 * n) in

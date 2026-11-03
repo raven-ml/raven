@@ -248,6 +248,31 @@ let cache_text =
   let open Gen in
   map (String.concat " ") (list ~size:(int_range 0 20) (of_list cache_words))
 
+(* Every encoding takes one of the model's states and gives it back, from any
+   domain, and one an exception went through is dropped. A model without an
+   unknown token fails on ["q"], after the words before it are cached. *)
+let states_commands =
+  let texts = [| "abc"; "bca abc"; "cab cab abc"; "abc q"; "a b c ab" |] in
+  let make ?cache_capacity () =
+    unigram ~vocab:overlapping ?cache_capacity
+      ~pre:Pre_tokenizer.whitespace_split ()
+  in
+  let t = make () and reference = make ~cache_capacity:0 () in
+  let expected =
+    Array.map
+      (fun text ->
+        match encode_ids reference text with
+        | ids -> Ok ids
+        | exception e -> Error e)
+      texts
+  in
+  [
+    command "encode"
+      (Gen.int_range 0 (Array.length texts - 1) @-> returns (array int))
+      (fun i -> match expected.(i) with Ok ids -> ids | Error e -> raise e)
+      (fun i -> encode_ids t texts.(i));
+  ]
+
 let cache_props =
   [
     prop ~count:200 "cache: a word seen before is encoded as it was"
@@ -277,7 +302,7 @@ let cache_props =
           (encoding ~t:(make ~cache_capacity:0 ()) ());
         equal ~msg:(Printf.sprintf "%S ids" text) (list int) (List.map fst cold)
           (Array.to_list (encode_ids t text)));
-    (* A thread that finds the domain's cache held encodes without it. *)
+    (* A thread that finds the model's state held makes one of its own. *)
     test "cache: held by another thread" (fun () ->
         let vocab = overlapping @ [ ("\u{e9}", -1.0) ] in
         let make ?cache_capacity () =
@@ -292,6 +317,9 @@ let cache_props =
             Thread.join (Thread.create (fun () -> ids := encode_ids t text) ()));
         equal ~msg:"while held" (array int) expected !ids;
         equal ~msg:"after" (array int) expected (encode_ids t text));
+    stateful ~domains:2 ~count:10 ~steps:6
+      "cache: encodings on two domains share the model's states"
+      states_commands;
   ]
 
 let () =

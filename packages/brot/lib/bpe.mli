@@ -28,11 +28,11 @@
     the OCaml walk, which is the reference the kernel is held to. *)
 
 type t
-(** The type for BPE models. Immutable after creation.
+(** The type for BPE models. What a model encodes to is fixed at creation.
 
-    Several domains may tokenize with the same model: the merge buffers and the
-    pretoken cache are held per (model, domain) and claimed by one thread at a
-    time. *)
+    Several domains and threads may tokenize with the same model: it holds
+    states of merge buffers and a pretoken cache, each used by one encoding at
+    a time, as {!with_state} says. *)
 
 type vocab = (string, int) Hashtbl.t
 (** The type for vocabularies mapping token strings to IDs. *)
@@ -70,10 +70,11 @@ val create :
     - [cache_capacity] is the number of entries in the pretoken cache, rounded
       up to a power of two and held two per set: a pretoken may sit in either
       entry of its set, and a miss evicts the older of the two. Each entry costs
-      32 bytes and each domain encoding with the model keeps a table of its own,
-      fronted by a table of 4096 entries (128 KB) that hits answer from without
-      touching the main one. Defaults to [262144] (8 MB). Set to [0] to disable
-      caching, front table included. Pretokens over 4096 bytes are never cached.
+      32 bytes and each state of the model (see {!with_state}) holds a table of
+      its own, allocated whole and fronted by a table of 4096 entries (128 KB)
+      that hits answer from without touching the main one. Defaults to
+      [262144] (8 MB). Set to [0] to disable caching, front table included.
+      Pretokens over 4096 bytes are never cached.
     - [dropout] is the probability of randomly skipping a merge during
       tokenization (BPE-dropout regularization). Defaults to [0.] (no dropout).
       A non-zero value disables the cache and [ignore_merges], both of which
@@ -111,13 +112,12 @@ type state
     cache. Every one of them has a single writer, so a state is never shared. *)
 
 val with_state : t -> (state -> 'a) -> 'a
-(** [with_state t f] is [f st] for a state [st] held for the duration of the
-    call, and released even if [f] raises.
-
-    The calling domain has one state per model, built and seeded when it first
-    asks. A thread that finds it already held — another thread of the same
-    domain is encoding — gets unshared buffers and no cache instead, so [f] is
-    always correct and only sometimes fast. [st] must not escape [f]. *)
+(** [with_state t f] is [f st] for one of [t]'s states, held for the duration of
+    the call, as {!Pretoken_cache.with_state} holds it: a state is built and
+    seeded when every one [t] holds is in use, up to
+    [Domain.recommended_domain_count ()] states; past that, [st] is merge
+    buffers without a cache, built for the call. A state is dropped when [f]
+    raises. [st] must not escape [f]. *)
 
 val encode_into :
   t -> state -> Ints.t -> opaque:Ints.t -> string -> pos:int -> len:int -> unit
