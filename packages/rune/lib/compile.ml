@@ -2442,16 +2442,25 @@ let search rigs ~parallel width k =
   report "searched a kernel at width %d" width;
   let slots = ref None in
   let link call = Engine.link_call ~devices:(named rigs) call in
+  (* Each sample starts from a cold cache, where a device's memory holds the
+     scrub; where it cannot, the samples find what the caches hold. *)
+  let scrub s =
+    match Engine.scrub s with
+    | scrub -> Some scrub
+    | exception Rig.Out_of_memory _ ->
+        report "searched warm: no memory for a scrub";
+        None
+  in
   let time ~vars s =
-    let slots =
+    let slots, scrub =
       match !slots with
       | Some b -> b
       | None ->
-          let b = Engine.slots s in
+          let b = (Engine.slots s, scrub s) in
           slots := Some b;
           b
     in
-    Engine.time ~vars s slots
+    Engine.time ~vars ?scrub s slots
   in
   let search () =
     Tolk.Search.beam_search ~link ~time width k

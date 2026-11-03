@@ -2869,6 +2869,39 @@ let slots_fit name =
   equal (list bool) (held (slots storage)) (held fresh);
   Engine.run ~vars s fresh
 
+(* A time with a scrub reads it before the run: the device's work in a
+   profile around the time holds the scrub's read, which ends before the timed
+   kernel starts, and a time without it holds none. *)
+let reads_scrub name =
+  let devices, _ = timing_on name in
+  let d = devices name in
+  if Option.is_none (Rig.cache_bytes d) then
+    skip ~reason:"the driver states no cache bytes" ();
+  let s, slots = timed name in
+  let scrub = Engine.scrub s in
+  let spans ?scrub () =
+    let _, _, events =
+      profiled (fun () -> Engine.time ~vars:n_bound ?scrub s slots)
+    in
+    let named prefix =
+      List.filter_map
+        (function
+          | Rig.Profile.Work w
+            when String.starts_with ~prefix w.name ->
+              Some (w.start, w.stop)
+          | _ -> None)
+        events
+    in
+    (named "scrub", named "long_axpy")
+  in
+  let reads, timed = spans ~scrub () in
+  equal int ~msg:"reads of the scrub" 1 (List.length reads);
+  equal int ~msg:"timed runs" 1 (List.length timed);
+  at_most int ~msg:"the read ends before the run starts"
+    ~than:(fst (List.hd timed)) (snd (List.hd reads));
+  let reads, _ = spans () in
+  equal int ~msg:"reads without a scrub" 0 (List.length reads)
+
 let timing =
   let on f = cases "on" ~id:fst timed_on (fun (_, name) -> f name) in
   group "timing"
@@ -2903,6 +2936,8 @@ let timing =
       group "slots and a linked program, dropped, return their memory"
         [ on returns_its_memory ];
       group "a time prints nothing at DEBUG=2" [ on prints_nothing ];
+      group "a time with a scrub reads it before the run"
+        [ on reads_scrub ];
       test "a time refuses an unbound variable" (fun () ->
           let s, slots = timed "CPU" in
           raises_match Exn.invalid_arg (fun () -> Engine.time s slots));

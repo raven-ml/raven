@@ -63,8 +63,8 @@ raven / llama.cpp b12048 Vulkan:
   Jit/chain-100-rooted-hit runs its 4 blocks in 12.9 µs pinned to the
   P-cores, 43.5 µs on one core, and 13.0 or 20.4 µs unpinned on a quiet
   fudge depending on which cores they reach
-- search timing on NV clears no L2 (tinygrad's invalidate_caches); AMD
-  counters and thread traces are not collected: encode both as words parts
+- AMD counters and thread traces are not collected: encode them as words
+  parts
 - AMD machine code without comgr (_plans/amd-isa/design-reviewed.md): an
   assembly renderer and assembler, gfx12 first, the default once its gate
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML

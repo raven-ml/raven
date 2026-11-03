@@ -5002,9 +5002,8 @@ fold wraps integers and holds its float bound`, hold.
   core's floor › the splits after a tensor core are those that leave its
   floor of workgroups` and `› a larger floor after a tensor core never
   leaves fewer workgroups`, over every recorded core kernel, CDNA's
-  included; the tolk bench's `stream/decode-keys`, `stream/dense-bf16-64`,
-  `stream/key-projection`, `gpt_oss/gpt_oss_decode_values` and
-  `gpt_oss/gpt_oss_prefill_router` rows on fudge.
+  included; the tolk bench's `stream/decode-keys`, `stream/dense-bf16-64`
+  and `stream/key-projection` rows on fudge.
 
 ## D176. A folded selection or negation keeps a NaN's bits
 
@@ -5997,3 +5996,51 @@ fold wraps integers and holds its float bound`, hold.
   upcast of the core's rows keeps it in one`; on fudge, once rune lowers
   routed products in blocks of 64, gpt-oss-20b's experts rows at 128, 512
   and 2048 tokens.
+
+## D201. A search's samples start from a clean, cold cache
+
+- **tinygrad:** `codegen/opt/search.py:145` (`_time_program` is asked to
+  clear the L2 only where the device has `invalidate_caches`, NV's) and
+  `engine/realize.py:292-299` (`time_call`, which invalidates NV's caches
+  before each sample, and elsewhere realizes a tensor of 4 MB, which the
+  search never asks for): CUDA, AMD, Metal and the host time warm.
+- **tolk:** `Tolk_engine.scrub` (`device_scrub`, `scrub_kernel`,
+  `cache_bytes`) and `Tolk_engine.time` (`read_scrub`); rune's
+  `Compile.search`; `Rig.cache_bytes`.
+- **Differs:** a search makes, beside the slots it times on, a scrub: for
+  each device that runs the kernel and whose driver states its last-level
+  cache's bytes, a buffer of twice those bytes, written once, and a kernel
+  that reads it. Before each sample, outside its time, the kernel reads it
+  and the time waits for the read. Where the scrub does not fit in memory,
+  rune's search times warm. A read leaves clean lines, so the timed kernel finds none of its
+  buffers cached and no line to write back. On every driver that states the
+  size, CUDA, NV, AMD through amdgpu and the host; a Metal device and an
+  AMD GPU over PCI are timed warm.
+- **Reason:** (c): `Search.beam_search` promises each sample from cold
+  caches where the device can, and rig gives no flush on CUDA, its default
+  path on fudge, while AMD's L2 is invalidated on every submission and its
+  memory-side cache is not; a read reaches every driver. Measured on fudge's
+  RTX 5000 Ada (64 MiB of L2, libcuda's figure), GPU time, three
+  interleaved rounds:
+  - warm, a search times a state a model's run rarely gives a kernel whose
+    operands other kernels evicted. On `matmul_half_1024`, six rounds at
+    width 4, the warm search chose one program each round, 43.1-44.0 us warm
+    and 65.7-66.5 cold; the cold search chose one of 44.2-44.4 and 44.9-45.0
+    us in three rounds, 50.2 and 51.0 in one, and in two, programs no faster
+    cold (67.6) or slower (84.0), where its greedy beam kept a worse first
+    level. Before this change's floor, cold searches picked programs
+    1.09-1.85x faster from memory on `matmul_half_1024` and 1.33-1.41x on a
+    prefill's key projection;
+  - a write of the cache's size leaves the cache dirty, and the beam's
+    first ranking follows the write-back: a search timed after a fill picks
+    a `matmul_half_1024` program 1.48-1.51x slower from a clean cache and
+    1.13-1.20x slower even in its own dirty state, 3 of 3 rounds;
+  - a fill of the cache's own 64 MiB left 4 of 19 rows warm in every round,
+    by where their buffers lay; 128 and 256 MiB evicted every row;
+  - the read costs about 0.25 ms a sample on fudge, 0.07-0.26 s a search.
+- **Pinned by:** the Tolk_engine suite's `timing › a time with a scrub
+  reads it before the run` (the host, a memory device, and CUDA, NV and AMD
+  where present); rig's tests of `Rig.cache_bytes`. Whether the read leaves
+  the cache cold is the timing above: on a GPU other processes share, a
+  warm sample is not reliably warm, so no test times it. A bench row of a searched program would flap with the
+  search's pick, as the rounds above do, so none holds it.

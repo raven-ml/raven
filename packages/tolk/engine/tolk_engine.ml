@@ -1281,6 +1281,96 @@ let run ?(vars = []) t slots =
     let _, events = Rig.Profile.take (fun () -> submit t ~vars slots) in
     print_reports t events
 
+(* Timing *)
+
+let link_call ~devices call =
+  if Ops.op call <> Op.Call || Ops.op (Ops.body call) <> Op.Program then
+    fail "Tolk_engine.link_call" "not a call of a compiled program";
+  let targets n = target (devices n) in
+  link_with ~separate:true ~devices
+    (Realize.compile_linear ~targets (Ops.v Op.Linear ~src:[ call ]))
+
+(* Clean, cold caches
+
+   A sample starts from a clean, cold cache: before it, outside its time, a
+   kernel reads a buffer of twice its device's last-level cache, the scrub,
+   written once when it is made. A read leaves clean lines, which the timed
+   kernel evicts without writing any back, and twice the cache's bytes evict
+   every line wherever the timed buffers lie: a read of the cache's own bytes
+   leaves some cached, by the cache's placement of addresses. *)
+
+(* The bytes of [d]'s last-level cache, where its driver knows them: a fact of
+   the part, which sizes the scrub alone and never what is compiled. *)
+let cache_bytes d = Rig.cache_bytes d
+
+(* The words of a row of the scrub, each summed down its column by a thread
+   of its own: adjacent threads read adjacent words. *)
+let scrub_width = 32768
+
+(* out[i] = sum_j scrub[j * scrub_width + i] over [rows] rows of 32-bit
+   words. *)
+let scrub_kernel rows =
+  let words slot n = Shape.placeholder ~slot [ n ] Dtype.Uint32 in
+  let i = Ops.range (Int scrub_width) [ 0 ] in
+  let j = Ops.range (Int rows) [ 1 ] in
+  let word =
+    Ops.index (words 1 (rows * scrub_width)) Ops.O.[ (j * int scrub_width) + i ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ~name:"scrub" ())
+    [
+      Ops.end_
+        (Ops.store
+           (Ops.index (words 0 scrub_width) [ i ])
+           (Ops.reduce word Op.Add [ j ]))
+        [ i ];
+    ]
+
+type device_scrub = {
+  on : Rig.t;
+  read : t; (* the scrub's read, linked *)
+  buffers : Rig.Buffer.t option array; (* its sums, then the scrub *)
+}
+
+(* Reads [s]'s buffer and waits for the read. *)
+let read_scrub s =
+  Mutex.protect s.read.lock (fun () ->
+      run_with s.read ~vars:[] s.buffers ignore);
+  Rig.Buffer.wait (Option.get s.buffers.(0)) Read
+
+let device_scrub d bytes =
+  let row = 4 * scrub_width in
+  let rows = max 1 (((2 * bytes) + row - 1) / row) in
+  let prg = Codegen.to_program (scrub_kernel rows) (renderer d) in
+  let device = (target d).device in
+  let param slot n =
+    Shape.param ~shape:[ Ops.Int n ] ~device slot Dtype.Uint32
+  in
+  let read =
+    link_call ~devices:(fun _ -> d)
+      (Ops.call prg [ param 0 scrub_width; param 1 (rows * scrub_width) ])
+  in
+  let words = Rig.Buffer.create d (rows * scrub_width * 4) in
+  Rig.Buffer.fill words '\x00';
+  let s =
+    {
+      on = d;
+      read;
+      buffers = [| Some (Rig.Buffer.create d (scrub_width * 4)); Some words |];
+    }
+  in
+  (* A first read writes the fill's lines back, so the first sample starts
+     from clean lines too. *)
+  read_scrub s;
+  s
+
+(* The devices that run a kernel of [t], once each. *)
+let timed_devices t =
+  List.fold_left
+    (fun ds (k : kernel) ->
+      if List.exists (Rig.equal k.device) ds then ds else k.device :: ds)
+    [] t.kernels
+  |> List.rev
+
 let slots t =
   let n = List.fold_left (fun n (slot, _, _) -> max n (slot + 1)) 0 t.given in
   let slots = Array.make n None in
@@ -1295,14 +1385,12 @@ let slots t =
     t.given;
   slots
 
-(* Timing *)
+type scrub = device_scrub list
 
-let link_call ~devices call =
-  if Ops.op call <> Op.Call || Ops.op (Ops.body call) <> Op.Program then
-    fail "Tolk_engine.link_call" "not a call of a compiled program";
-  let targets n = target (devices n) in
-  link_with ~separate:true ~devices
-    (Realize.compile_linear ~targets (Ops.v Op.Linear ~src:[ call ]))
+let scrub t =
+  List.filter_map
+    (fun d -> Option.map (device_scrub d) (cache_bytes d))
+    (timed_devices t)
 
 (* Whether the work [w] runs a kernel of [t]: its name lists the kernels of its
    submission, joined by [", "]. A submission of copies alone names none. *)
@@ -1318,8 +1406,13 @@ let runs_kernel t (w : Rig.Profile.event) =
 (* The run's work in a profile is the [Work] whose point a step of the run
    reported in the frame, which the lock keeps the run's until it is copied:
    another domain's work of the same kernels has other points. *)
-let time ?(vars = []) t slots =
+let time ?(vars = []) ?(scrub = []) t slots =
   check_slots t slots;
+  List.iter
+    (fun s ->
+      if List.exists (fun (k : kernel) -> Rig.equal k.device s.on) t.kernels
+      then read_scrub s)
+    scrub;
   let steps = ref [] and ends = ref [] in
   let run () =
     Mutex.protect t.lock (fun () ->

@@ -943,6 +943,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A beam search times each sample from a clean, cold cache:
+  `Tolk_engine.scrub` makes a buffer of twice each timed device's last-level
+  cache (`Rig.cache_bytes`), which `Tolk_engine.time ~scrub` reads before each
+  run, outside the time. Searched programs are chosen for operands that other
+  kernels evicted, as in a model's step; a Metal device is still timed warm.
 - After a tensor core, `Heuristic` upcasts and splits only while 16384 threads'
   workgroups remain, where it kept 100 workgroups: a decode step's keys and a
   prefill's key projection on an RTX 5000 Ada run 1.15-2.2x faster. The floor

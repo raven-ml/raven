@@ -154,19 +154,12 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     if a device cannot allocate the storage of a schedule linked {!Per_run}:
     no call has run, and the storage the run made is returned. *)
 
-val slots : t -> Rig.Buffer.t option array
-(** [slots s] is, for each slot that a parameter of [s] takes, a buffer of the
-    parameter's device holding the parameter's bytes, starting at its phase,
-    and [None] for a slot no parameter takes: slots {!run} and
-    {!time} accept. Their contents are unspecified.
-
-    Raises {!Rig.Out_of_memory} if a device cannot allocate a buffer. *)
-
 (** {1:timing Timing}
 
     A search times many programs of one kernel, each a few times: it links each
     call ({!link_call}), allocates slots once, for the first ({!slots}), and
-    times the runs of each on them ({!time}). *)
+    times the runs of each on them ({!time}), each from a clean, cold cache
+    ({!scrub}). *)
 
 val link_call : devices:(string -> Rig.t) -> Ops.t -> t
 (** [link_call ~devices call] is the call [call] of a compiled program
@@ -177,7 +170,35 @@ val link_call : devices:(string -> Rig.t) -> Ops.t -> t
     Raises [Invalid_argument] if [call] is not a call of a compiled program, and
     as {!link} does. *)
 
-val time : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> float
+val slots : t -> Rig.Buffer.t option array
+(** [slots s] is, for each slot that a parameter of [s] takes, a buffer of the
+    parameter's device holding the parameter's bytes, starting at its phase,
+    and [None] for a slot no parameter takes: slots {!run} and
+    {!time} accept. Their contents are unspecified.
+
+    Raises {!Rig.Out_of_memory} if a device cannot allocate a buffer. *)
+
+type scrub
+(** The type for what empties the caches of a schedule's devices before a
+    time. *)
+
+val scrub : t -> scrub
+(** [scrub s] is, for each device that runs a kernel of [s] and whose
+    last-level cache's bytes its driver states ({!Rig.cache_bytes}), a buffer
+    of twice those bytes in the device's memory, written once, and a kernel
+    compiled for the device that reads it whole. It serves {!time} of every
+    schedule whose kernels run on those devices. A device whose driver states
+    no cache bytes, such as a Metal device or an AMD GPU over PCI, has none.
+
+    Raises {!Rig.Out_of_memory} if a device cannot allocate its buffer, and
+    [Failure] with the reason if a kernel does not compile or load. *)
+
+val time :
+  ?vars:(string * int) list ->
+  ?scrub:scrub ->
+  t ->
+  Rig.Buffer.t option array ->
+  float
 (** [time ~vars s slots] is the time in seconds of one run of [s] on [slots]
     with [vars] ({!run}), reporting nothing on standard output whatever
     {!Tolk.Setting.debug} holds. The time is the sum, over the run's
@@ -188,6 +209,19 @@ val time : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> float
     other domains and of profiles taken around it adds nothing. A time loads
     nothing, and allocates no device memory but the storage of a schedule
     linked {!Per_run}.
+
+    With [scrub], the run starts from a clean, cold cache on each device of
+    [scrub] that runs a kernel of [s]: before the run, and outside its time,
+    [time] reads that device's buffer and waits for the read, which leaves
+    none of the run's buffers in the device's last-level cache and none of
+    their lines to write back. A read of twice the cache's bytes evicts every
+    line wherever the run's buffers lie. On the host this holds for the cache
+    the system states, the largest of its first core's: a cache it does not
+    state, such as Apple silicon's system cache, and the last-level caches of
+    other core complexes, which the read shares among them, may keep lines.
+    Without [scrub], or on a device it has none for, the run finds what the
+    caches hold. A read of twice a cache of 64 MiB takes about 0.25 ms on a
+    GPU of 576 GB/s.
 
     Raises as {!run} does, and {!Rig.Lost} if a device that runs a kernel of [s]
     is lost during the run, or if another domain's device whose work the
