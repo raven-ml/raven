@@ -264,13 +264,15 @@ let npz =
             (Archive.of_list
                [ ("w", Nx.P (Nx.create Nx.uint8 [| Array.length w |] w)) ])
             (Nx_io.load_npz path));
-      (* Noise over two of the encoder's blocks of 65535 bytes, which it stores,
-         after a run of zeros, which it codes. *)
+      (* Noise over two stored blocks, a full one of 65535 bytes and up to
+         16 KiB more, after a run of zeros, which the encoder codes and which
+         makes the entry's first 64 KiB shrink. Each case writes and syncs its
+         file, so the entry is no longer than that needs. *)
       prop ~count:20
         "an entry of a run of zeros then noise, saved as npz, loads as itself"
         (Gen.triple
-           (Gen.int_range 65_536 100_000)
-           (Gen.int_range 131_070 160_000)
+           (Gen.int_range 8_192 16_384)
+           (Gen.int_range 65_536 81_920)
            Gen.nat)
         (fun (run, noise, seed) ->
           let random = Random.State.make [| seed |] in
