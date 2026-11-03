@@ -203,6 +203,10 @@ type t = private {
       (** If any, the greatest number of threads on each axis, workgroups times
           their threads. *)
   shared_max : int;  (** The bytes of memory a workgroup shares. *)
+  async_copy : bool;
+      (** A thread copies from global to shared memory without waiting for
+          the copy, which a barrier then waits for: PTX's [cp.async], from
+          sm_80. Staged operands then take two stages ({!Stage.depth}). *)
   tensor_cores : Tc.t list;  (** The tensor cores, in order of preference. *)
   per_byte_first : int;
       (** The multiply-adds per byte of a contraction's streamed operand up to
@@ -244,6 +248,7 @@ val v :
   ?local_max:int list ->
   ?global_prod_max:int list ->
   ?shared_max:int ->
+  ?async_copy:bool ->
   ?tensor_cores:Tc.t list ->
   ?per_byte_first:int ->
   ?extra_matcher:(unit, Ops.t) Ops.Pattern_matcher.t ->
@@ -261,7 +266,7 @@ val v :
       gives [None], and [half8] and [vector_alu] are [false];
     - [global_max] and [local_max] are [0x8FFFFFFF] on each axis, the greatest
       size a 32-bit signed index holds, and [global_prod_max] is [None];
-    - [shared_max] is [32768];
+    - [shared_max] is [32768], and [async_copy] is [false];
     - [tensor_cores] and [code_for_op] are empty, and so are the rules of
       [extra_matcher];
     - [per_byte_first] is [64], [sm_89]'s crossover, which every target

@@ -1179,7 +1179,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
              (lift Simplify.pm_flatten_range ++ Simplify.pm_simplify_ranges))
       in
       (* do postrange optimization, BEAM or hand_coded_optimizations *)
-      apply_opts ?beam sink ren
+      Stage.operands ren (apply_opts ?beam sink ren)
   in
   (* reduce_unparented: a REDUCE whose src folded to a CONST (e.g. x*0) has no
      parented ranges, collapse it before the expander *)

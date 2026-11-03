@@ -269,10 +269,16 @@ let shared : t =
                  ();
              ]);
       (* An after of a scalar computation orders a range's computed bound after
-         effects. *)
+         effects, and a staged operand's read after the next stage's copies
+         through its slot, which a loop of two trips makes its range. *)
       check
         (pat [ Op.After ] ~allow_any_len:true
-           ~src:[ Upat.v ~op:Op.Set.alu ~name:"x" () ])
+           ~src:
+             [
+               Upat.v
+                 ~op:(Op.Set.union Op.Set.alu (Op.Set.of_list [ Op.Range ]))
+                 ~name:"x" ();
+             ])
         "x"
         (fun x -> shape_opt x = Some []);
       accept (pat [ Op.Customi; Op.Custom ]);

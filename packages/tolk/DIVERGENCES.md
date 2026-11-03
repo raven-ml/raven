@@ -5081,6 +5081,9 @@ the walk of `Rangeify.fix_store_hazard`.
   of sm_89's parts, and every target takes it until one measures another;
   then `core_threads` becomes a field of `Renderer.t` set per target. Under
   `TC_MIN_GLOBALS` the splits are tinygrad's.
+  A core whose operands are staged through shared memory takes neither
+  these splits nor their floors but a tile of its own (D262), with the
+  floor `core_threads / stages`.
 - **Reason:** (d): gpt-oss-20b on fudge's RTX 5000 Ada, its products at
   bfloat16 widened by a cast (D29). GPU time, three interleaved rounds under
   the timing lock, warm and from a clean, cold cache:
@@ -6549,6 +6552,8 @@ and an initial value is added after it (D260).
   it is N's only one. The core's own upcasts of its reduce hold one step's
   operands and do not count. CUDA's `m16n8` core holds 4 outputs a lane, so a
   warp's tile grows from 64 by 32 to 64 by 64, and from 64 by 40 to 64 by 80.
+  A core whose operands are staged through shared memory takes a warp tile
+  of 64 by 64 instead (D262).
 - **Reason:** (d): the core's kernels on fudge's RTX 5000 Ada are bound by
   operand loads for each step of the core, which a larger warp tile cuts until
   its outputs fill the registers: 64 by 80, 160 a lane, compiles to 228 of a
@@ -6772,13 +6777,100 @@ and an initial value is added after it (D260).
   elsewhere they merge into 4 and 2, as before. No setting changes it.
 - **Reason:** (d): a tensor core's operands staged through shared memory
   (D262) are copied 16 bytes a thread, which PTX's `cp.async` copies in one
-  instruction (D263); copied 8 bytes at a time, they take twice the
-  instructions and no asynchronous copy. GPU time below, as D262 measures.
+  instruction (D263); 8 bytes at a time they take twice the copies and no
+  asynchronous one. Alone it moves no row: GPU time on fudge's RTX 5000 Ada,
+  three interleaved rounds, bfloat16, us, before and after: 2048 cubed
+  187.4-189.4 and 188.4-189.5, 512 by 4096 over 2880 163.8-165.7 and
+  162.8-165.7, 512 by 512 over 2880 77.8-79.9 and 74.6-76.8, 4096 cubed
+  1391-1444 and 1397-1442.
 - **Pinned by:** the Coalesce suite's `vectors of eight 16-bit floats` group
   (`half_cuda`, `half8_cuda` and `accesses_cuda`, generated from tinygrad
   with this rule, and `eight 16-bit floats are one load of eight`, of
   `float16` and `bfloat16`); the goldens of every CUDA and HIP kernel whose
   16-bit accesses now merge.
+
+## D262. A tensor core's operands are staged through shared memory
+
+- **tinygrad:** none: no pass stages an operand. Its `OptOps.LDS`, one opt a
+  buffer, was reverted (#9669, #9691), and its hand-written kernels stage by a
+  scheduler `STAGE`, which skips the heuristic. `uop/spec.py:103-104`
+  (`spec_shared`: an AFTER of a scalar ALU only).
+- **tolk:** `Stage.operands`, which `Codegen.full_rewrite_to_sink` runs after
+  the opts; `Stage.depth` and `Stage.layout`; `Heuristic.staged_tile`;
+  `Renderer.t.async_copy`; `Setting.stage`; `Spec`'s AFTER of a range.
+- **Differs:** after the opts, each core operand that reads global memory
+  through an index whose terms reading the workgroup's threads and lanes form
+  a dense box of strided dimensions is copied by every thread of the
+  workgroup into shared memory, 16 bytes a copy where its innermost
+  dimension is contiguous, in rows whose 16-byte chunks are permuted by an
+  XOR with the row (`line` 128 bytes of 32 banks, `copy` 16 bytes: CuTe's
+  `Swizzle` and Triton's `perPhase`, generalized to rows of any even count of
+  chunks); the core reads its fragments back through the same layout. Two
+  stages where the renderer copies asynchronously and they fit
+  `shared_max`, the next trip's copy issued before this trip's reads and
+  ordered so by the slot's offset, an AFTER of the loop's range at two trips;
+  one stage otherwise. The barriers are those the implicit rules place. A
+  gated operand (PADTO's validity, or a core's selection of 0) copies 0
+  where its gate fails, its thread ranges rebuilt from the tile's
+  coordinates. A staged core takes its own tile: 2 by 2 warps of 64 by 64,
+  the warp tile halved, M then N, to 32 by 32 while the kernel keeps fewer
+  than `core_threads / stages` threads, and K unrolled to chunks of 32; its
+  rows stay within a run of rows that read one value of an operand, and the
+  heuristic takes it only where `Stage.admits` the kernel as the core leaves
+  it, so a core staging refuses keeps the unstaged splits. An operand whose
+  terms mix the box's ranges with others, a core whose operands step through
+  different loops, a kernel with other shared memory, and `Setting.stage`
+  off, as the goldens compare with tinygrad, stay unstaged; a tile whose
+  address gathers copies in one stage, so that no gather reads past the
+  loop's bound.
+- **Reason:** (d): GPU time on fudge's RTX 5000 Ada, bfloat16, three
+  interleaved rounds, us, before and after: 2048 cubed 187.4-189.4 to
+  137.2-137.3, 4096 cubed 1391-1444 to 917-936, gpt-oss-20b's projections at a
+  512-token prompt, query (512 by 4096 over 2880) 163.8-165.7 to 120.1-121.7,
+  key and value (512 by 512) 77.8-79.9 to 27.5-45.1, gate and up (512 by
+  5760) 196.6-197.6 to 130.0-134.2, output (512 by 2880 over 4096)
+  167.8-170.1 to 104.4-105.5, and its experts' blocks of 64 rows, gate and up
+  (64 by 5760 over 2880) 91.3-92.2 to 29.7-39.9, down (64 by 2880) 57.2-61.4
+  to 26.5-26.6. The warp tile's halving is a fit at two stages on fudge: the
+  window lies between 5760 and 11520 threads, below the 100 SMs of fudge's
+  part, so a part of 142 SMs may leave SMs idle and one of 24 halve tiles it
+  could keep. End to end, with ldmatrix (D264), kaun's `GptOss/prefill-512`
+  ran 188.3-188.9 ms on main and 139.8-140.5 ms staged, and
+  `GptOss/experts-at-prefill-512` 4.14-4.30 and 3.53-3.55 ms (two
+  interleaved rounds, words equal). AMD gfx1201 and Metal stage in one stage
+  of register copies with CUDA's bank constants; correct, unmeasured.
+- **Pinned by:** the Stage suite: `values › a staged kernel computes the bits
+  of the same optimisations unstaged` (CUDA's renderer against itself
+  without shared memory, both tiles, one and two stages, padded, batched,
+  `[N; K]` operands, a refused operand), `barriers › …` (every store and load
+  of an element separated by a barrier over two trips, on CUDA and on HIP's
+  RDNA3 and RDNA4, and every barrier of a kernel with `cp.async` waiting for
+  it), `races` (`compute-sanitizer`'s race checker in hazard mode on a
+  kernel of each depth), `stages` (`Stage.depth`), `a staged core's
+  workgroups, threads and trips`, `the layout` and `sources`; the tolk
+  bench's `contract/bf16-*` rows, `bf16-512x4096x2880` and
+  `bf16-512x512x2880` among them, their baselines pending the scheduled
+  re-record.
+
+## D263. CUDA copies 16 bytes from global to shared memory asynchronously
+
+- **tinygrad:** `renderer/cstyle.py:434` (`CUDARenderer.barrier`,
+  `__syncthreads()`), `:47` (a store is an assignment).
+- **tolk:** `Cstyle.cuda` (`copies_async`, `cuda_async_lang`, `cp_async`);
+  `Renderer.t.async_copy`, from sm_80.
+- **Differs:** a store into shared memory of a 16-byte load from global
+  memory prints as `cp.async.cg.shared.global`, a gated load with
+  `ignore-src` where its gate fails, which copies zeros (PTX ISA
+  §9.7.10.28.3.1), and every barrier of a kernel holding one prints as
+  `cp.async.wait_all; __syncthreads()`: a thread waits only for its own
+  copies (CUDA C++ Programming Guide §4.12.1). A kernel without one renders
+  as tinygrad's. With at most one stage in flight, waiting for all copies
+  waits for none too many, so no group is counted.
+- **Reason:** (d): the second stage of D262 overlaps the next trip's copy
+  with this trip's cores only where the copy does not wait; its rows are
+  D262's.
+- **Pinned by:** the Stage suite's `barriers` (its second clause), `races`
+  and `sources`.
 
 ## D265. No axis a call or custom code reads runs as lanes or takes padding
 

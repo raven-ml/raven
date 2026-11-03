@@ -1592,6 +1592,79 @@ let cuda_lang =
     string_rewrite = base_rewrite;
   }
 
+(* Asynchronous copies
+
+   A store into shared memory of a 16-byte load from global memory is PTX's
+   [cp.async], which copies without the thread waiting for it; a gated load
+   ignores its source where its gate fails and copies zeros (PTX ISA
+   §9.7.10.28.3.1, [ignore-src]). A thread waits only for its own copies, so
+   every barrier of a kernel holding one first waits for all of them
+   ([cp.async.wait_all]), then for the workgroup (CUDA C++ Programming Guide
+   §4.12.1: "if you use LDGSTS to prefetch some data that will be shared with
+   other threads, a __syncthreads() is necessary after synchronizing with the
+   LDGSTS completion mechanism"). *)
+
+let zeros u =
+  let zero c =
+    (is Op.Const c || (is Op.Cast c && is Op.Const (nth c 0)))
+    &&
+    match value c with
+    | `Int z -> Bigint.(equal z zero)
+    | `Float f -> f = 0. && not (Float.sign_bit f)
+    | _ -> false
+  in
+  zero u || (is Op.Stack u && List.for_all zero (src u))
+
+let copies_async u =
+  match (op u, src u) with
+  | Op.Store, [ bidx; var ] when addrspace bidx = Some Dtype.Local -> (
+      let from = if is Op.Load var then Some (nth var 0) else None in
+      match (from, src var) with
+      | Some from, ([ _ ] | [ _; _; _ ]) ->
+          addrspace from = Some Dtype.Global
+          && max_numel from = max_numel bidx
+          && max_numel bidx * Dtype.itemsize (dtype bidx) = 16
+          && (List.length (src var) = 1 || zeros (nth var 1))
+      | _ -> false)
+  | _ -> false
+
+(* [.cg] caches the copy in L2 alone, the only level of a 16-byte copy that
+   skips L1. *)
+let cp_async =
+  "__device__ __forceinline__ void tg_cp_async(void *d, const void *s, int \
+   ignore) { asm volatile(\"{ .reg .pred p; setp.ne.b32 p, %2, 0; \
+   cp.async.cg.shared.global [%0], [%1], 16, p; }\" :: \
+   \"r\"((unsigned)__cvta_generic_to_shared(d)), \"l\"(s), \"r\"(ignore) : \
+   \"memory\"); }"
+
+let async_rewrite =
+  Pattern_matcher.fold
+    (fun () -> [
+      rule_ctx
+        (Upat.op ~name:"x" ~src:[ Upat.var "bidx"; Upat.var "var" ] Op.Store)
+        (fun ctx m ->
+          let x = m "x" and var = m "var" in
+          if not (copies_async x) then None
+          else
+            let ignore =
+              match src var with
+              | [ _; _; gate ] -> strf "!(%s)" ctx.%{gate}
+              | _ -> "0"
+            in
+            Some
+              (strf "tg_cp_async(%s, %s, %s);" (render_ptr ctx (m "bidx"))
+                 (render_ptr ctx (nth var 0)) ignore));
+    ])
+
+let cuda_async_lang =
+  {
+    cuda_lang with
+    barrier =
+      "asm volatile(\"cp.async.wait_all;\" ::: \"memory\"); __syncthreads();";
+    string_rewrite =
+      Pattern_matcher.append async_rewrite cuda_lang.string_rewrite;
+  }
+
 let cuda_extra_matcher =
   Pattern_matcher.concat
     [
@@ -1670,7 +1743,7 @@ let cuda_wmma l (name, (n, m, k), dtype_in, dtype_out, upcast_sizes) =
       "}";
     ]
 
-let cuda_kernel ?(prefix = []) l ~name kernel bufs uops =
+let cuda_kernel ?(copies = false) ?(prefix = []) l ~name kernel bufs uops =
   let used = uops_to_dtypes uops in
   let uses p = List.exists (fun (dt, _) -> p dt) used in
   let is_fp8 dt = Dtype.mem dt Dtype.fp8s in
@@ -1697,13 +1770,14 @@ let cuda_kernel ?(prefix = []) l ~name kernel bufs uops =
        then
          [ "#define make_nv_bfloat162 make_bfloat162" ]
        else [])
+    @ (if copies then [ cp_async ] else [])
     @ List.map (cuda_vector_prefix l) (List.filter vector used)
     @ List.map (cuda_wmma l) (wmma_args uops)
   in
   (* Its own definitions first, then the functions it calls. *)
   render_kernel l ~prefix:(defines @ prefix) ~name kernel bufs uops
 
-let cuda (target : Helpers.Target.t) =
+let cuda_renderer ~sync (target : Helpers.Target.t) =
   let arch = target.arch in
   let tensor_cores = Tc.cuda arch in
   let ver =
@@ -1725,12 +1799,24 @@ let cuda (target : Helpers.Target.t) =
       ~cache_key:(String.lowercase_ascii target.device)
       arch
   in
-  Renderer.v ~name:"CUDARenderer" ~half8:true
+  (* cp.async "Requires sm_80 or higher" (PTX ISA §9.7.10.28.3.1). A kernel
+     that copies asynchronously renders its barriers to wait for the copies. *)
+  let async_copy = ver >= 80 && not sync in
+  let render uops =
+    let copies = async_copy && List.exists copies_async uops in
+    render (cuda_kernel ~copies)
+      (if copies then cuda_async_lang else cuda_lang)
+      uops
+  in
+  let name = if sync then "CUDARenderer without cp.async" else "CUDARenderer" in
+  Renderer.v ~name ~half8:true
     ~global_max:[ 2147483647; 65535; 65535 ]
-    ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~tensor_cores
+    ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~async_copy ~tensor_cores
     ~extra_matcher:cuda_extra_matcher ~code_for_op:cuda_lang.code_for_op ~native
-    ~render:(render cuda_kernel cuda_lang)
-    ~compiler target
+    ~render ~compiler target
+
+let cuda target = cuda_renderer ~sync:false target
+let cuda_sync target = cuda_renderer ~sync:true target
 
 (* HIP *)
 

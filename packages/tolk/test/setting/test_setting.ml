@@ -565,6 +565,7 @@ let output_settings =
     "REDUCEOP_SPLIT_SIZE";
     "REDUCEOP_SPLIT_THRESHOLD";
     "SPLIT_REDUCEOP";
+    "STAGE";
     "TC";
     "TC_MIN_GLOBALS";
     "TC_OPT";
@@ -594,6 +595,7 @@ let other_outputs =
       B (default_int, "long");
       B (tuple_order, false);
       B (allow_tf32, true);
+      B (stage, false);
     ]
 
 let keyed key = List.assoc_opt key (shaping ())

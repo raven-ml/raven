@@ -96,6 +96,10 @@ val cuda : Helpers.Target.t -> Renderer.t
     A workgroup has at most 1024 by 1024 by 64 threads, a launch at most
     [2^31 - 1] by 65535 by 65535 workgroups, and a workgroup shares 48 KiB of
     memory. The tensor cores are those of the compute capability ({!Tc.cuda}).
+    From capability 80 a store into shared memory of a 16-byte load from global
+    memory is an asynchronous copy, PTX's [cp.async]
+    ({!Renderer.t.async_copy}), and each barrier of a kernel holding one first
+    waits for the thread's copies.
     {!Dtype.Float16} needs capability 53, {!Dtype.Bfloat16} 80, and the 8-bit
     floats {!Dtype.fp8_ocp} 89. The [fnuz] floats are not supported. A
     conversion to an 8-bit float saturates: a value too large for the format,
@@ -119,3 +123,10 @@ val hip : Helpers.Target.t -> Renderer.t
     marked ["nontemporal"] bypasses the caches.
 
     Raises [Failure] if no comgr is found ({!Compiler_amd.hip}). *)
+
+(**/**)
+
+val cuda_sync : Helpers.Target.t -> Renderer.t
+(** [cuda_sync target] is {!cuda} without asynchronous copies, named apart, as
+    a capability below 80 renders: a test's kernel staged in one stage of copies
+    through registers. *)

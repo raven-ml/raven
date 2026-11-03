@@ -1,0 +1,28 @@
+; The staged kernels run on the first CUDA GPU and skip without one; the race
+; checker runs from the CUDA toolkit that CUDA_PATH names, and skips without
+; it.
+
+(executable
+ (name test_stage)
+ (libraries windtrap tolk tolk_test tolk_run tolk.engine rig rig.cuda unix))
+
+; No machine here has comgr, which making a HIP renderer finds: COMGR_PATH
+; names a file that stands in for it, so that HIP's kernels lower everywhere.
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (deps
+  (sandbox always)
+  comgr_stand_in
+  (glob_files *.cu))
+ (action
+  (setenv
+   COMGR_PATH
+   ./comgr_stand_in
+   (run %{exe:test_stage.exe}))))
+
+(rule
+ (target comgr_stand_in)
+ (action
+  (write-file %{target} "This file stands in for comgr.\n")))

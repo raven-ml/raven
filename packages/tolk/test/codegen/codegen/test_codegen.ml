@@ -62,10 +62,13 @@ let kernel_of name = kernel (row_named name)
 let renderer_of_row row =
   renderer_for (target (row "device") (row "renderer") (row "arch"))
 
-(* tinygrad's goldens name kernels without colour. *)
+(* tinygrad's goldens name kernels without colour, and stage no tensor core's
+   operands. *)
 let under row f =
   Setting.context
-    (B (Setting.no_color, true) :: Kernel_opts.settings_of_cell (row "setting"))
+    (B (Setting.no_color, true)
+    :: B (Setting.stage, false)
+    :: Kernel_opts.settings_of_cell (row "setting"))
     f
 
 let optimize k =

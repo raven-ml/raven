@@ -101,14 +101,17 @@ let core_threads = 16384
    upcast. A larger warp tile loads fewer operands for each of the core's
    steps, until its accumulators fill the registers: on sm_89, 64 by 80
    outputs a warp of CUDA's m16n8 core, 160 a lane, compile to 228 of a
-   thread's 255 registers and ran fastest; 192 ran slower and 256 spill. *)
+   thread's 255 registers and ran fastest; 192 ran slower and 256 spill. A
+   staged core takes its own tile ([staged_tile]). *)
 let accumulators = 160
 
 (* The fewest workgroups a local split of a tensor core's [N] leaves. The split
    keeps the threads and packs a workgroup's warps onto one compute unit,
    which balances the units coarser: on an RTX 5000 Ada's 100 SMs a split
    that left 512 workgroups ran as fast as one that left 256, and 128 or 144
-   lost up to 1.34 times. Fitted to sm_89's parts, as [core_threads] is. *)
+   lost up to 1.34 times. Fitted to sm_89's parts, as [core_threads] is. It
+   governs a core whose operands are not staged: a staged core's local split
+   shares each copied tile among its warps, which [staged_tile] decides. *)
 let local_workgroups = 256
 
 (* The outputs a lane of [k] holds: the product of the sizes of the upcast axes
@@ -188,6 +191,118 @@ let within_run k m rest u =
           (List.find_opt (fun v -> fits v && divides v) core_upcasts)
   | _ -> u
 
+(* A staged core's tile. Where a core's operands are staged through shared
+   memory ({!Stage}), the warps of a workgroup share each copied tile, so a
+   local split reuses what a copy loads. Each warp computes [warp_tile] by
+   [warp_tile] outputs, by upcasts of powers of two, and a workgroup takes 2 by
+   2 warps where M and N divide, one on each of the four schedulers of every
+   NVIDIA SM since Volta. K is unrolled to [chunk] elements a trip. While the
+   kernel holds fewer than [core_threads / stages] threads, [stages] the
+   pipeline's depth ({!Stage.depth}), the warp tile halves, M then N, down to
+   half of [warp_tile] a side: a pipeline overlaps a warp's copies with its
+   cores, so it needs fewer warps in flight. On an RTX 5000 Ada, bfloat16
+   products of 512 by 512 by 2880 and of 64 rows by 5760 by 2880 ran 1.6 to 1.9
+   times slower without the halving; at two stages the knee lies between 5760
+   and 11520 threads. *)
+let warp_tile = 64
+let chunk = 32
+
+(* The staged core's splits, applied to [tk], [k] with the core applied,
+   whose core made the axes [rngs] (N, M and K), if the core is staged:
+   [split i size target] splits the axis [rngs.(i)]. A warp's rows, and a
+   workgroup's, stay within a run of rows that read one value of an operand
+   ({!within_run}). *)
+let staged_tile ~core_threads k tk rngs split =
+  let core =
+    List.find_map
+      (fun u -> match arg u with Wmma w -> Some w | _ -> None)
+      (toposort ~calls:Skip (K.ast tk))
+  in
+  let size i =
+    match known_size (Sym (nth rngs.(i) 0)) with
+    | Some b -> Bigint.to_int b
+    | None -> 0
+  in
+  match core with
+  | None -> false
+  | Some w ->
+      let n, m, kd = w.dims and itemsize = Dtype.itemsize w.dtype_in in
+      let sn = size 0 and sm = size 1 and sk = size 2 in
+      let unroll =
+        if chunk mod kd = 0 && sk mod (chunk / kd) = 0 then chunk / kd else 1
+      in
+      let workgroups =
+        match prod_at tk (K.axes_of tk [ Global ]) with
+        | Int g -> Some g
+        | Sym _ -> None
+      in
+      let rows =
+        List.find_opt (fun r -> axis_id r = axis_id rngs.(1)) (K.rngs k)
+      in
+      (* Whether [u] of the core's tiles of rows stay within a run of rows
+         that read one value of an operand ({!owner_run}), where the core did
+         not pad M. *)
+      let in_run u =
+        match rows with
+        | None -> true
+        | Some r -> (
+            let owned = owner_run k r in
+            match known_size (Sym (nth r 0)) with
+            | _ when owned = 1 -> true
+            | Some a when sm > 0 && Bigint.(equal (rem a (of_int sm)) zero) ->
+                owned mod (Bigint.to_int a / sm * u) = 0
+            | _ -> false)
+      in
+      let rec within u = if u <= 1 || in_run u then u else within (u / 2) in
+      (* The upcasts of M and N, and their local splits, of a warp tile
+         halved [hm] and [hn] times. *)
+      let plan (hm, hn) =
+        let um = within (warp_tile / m / hm) and un = warp_tile / n / hn in
+        if um < 1 || un < 1 || sm = 0 || sn = 0 || sm mod um <> 0
+           || sn mod un <> 0
+        then None
+        else
+          let lm = if sm / um mod 2 = 0 && in_run (um * 2) then 2 else 1
+          and ln = if sn / un mod 2 = 0 then 2 else 1 in
+          Some (um, un, lm, ln)
+      in
+      let plans = List.filter_map plan [ (1, 1); (2, 1); (2, 2) ] in
+      let bytes (um, un, lm, ln) =
+        let depth = kd * unroll * itemsize in
+        [ lm * um * m * depth; ln * un * n * depth ]
+      in
+      (* The staged tile is taken only where staging stages the core's
+         operands, which it decides of the kernel as the core leaves it. *)
+      let stages =
+        match plans with
+        | p :: _ when Stage.admits (K.ren tk) (K.ast tk) ->
+            Stage.depth (K.ren tk) (bytes p)
+        | _ -> 0
+      in
+      if stages = 0 then false
+      else
+        let threads (um, un, lm, ln) =
+          match workgroups with
+          | Some g -> g / (um * un * lm * ln) * w.threads * lm * ln
+          | None -> max_int
+        in
+        let fits p = threads p >= core_threads / stages in
+        let um, un, lm, ln =
+          match List.find_opt fits plans with
+          | Some p -> p
+          | None -> List.hd (List.rev plans)
+        in
+        if um > 1 then split 1 um Opt.Upcast;
+        if un > 4 then begin
+          split 0 4 Opt.Upcast;
+          split 0 (un / 4) Opt.Upcast
+        end
+        else if un > 1 then split 0 un Opt.Upcast;
+        if lm = 2 then split 1 2 Opt.Local;
+        if ln = 2 then split 0 2 Opt.Local;
+        if unroll > 1 then split 2 unroll Opt.Upcast;
+        true
+
 (* first try the tensor cores *)
 let tensor_cores ~core_threads k =
   let use_tc = setting Setting.use_tc in
@@ -247,6 +362,7 @@ let tensor_cores ~core_threads k =
                 ~keep:(leaves ~default:false min_globals)
                 0 core_upcasts Opt.Upcast
             end
+            else if staged_tile ~core_threads k tk rngs split then ()
             else begin
               (* attempt to upcast M, N, local N. Each gives a workgroup more of
                  the outputs and the kernel fewer workgroups, which pays only

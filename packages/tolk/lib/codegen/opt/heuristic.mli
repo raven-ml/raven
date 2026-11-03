@@ -42,6 +42,19 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       order of a sum, so they are one for every device of a target, never read
       from a device: 16384 threads and 256 workgroups are the bounds of
       [sm_89]'s parts, which every target takes.
+      A core whose operands are staged through shared memory ({!Stage}),
+      where {!Stage.depth} stages its largest tile, takes a tile of its own
+      instead of these splits and their floors, whose local split shares each
+      copied tile among its warps:
+      each warp holds 64 by 64 outputs, by upcasts of powers of two, a
+      workgroup 2 by 2 warps where [M] and [N] divide by 2 past them, and [K]
+      is unrolled to 32 elements a trip where it divides. While the kernel
+      would keep fewer than [16384 / s] threads, [s] the stages, the warp
+      tile halves, [M] then [N], down to 32 by 32: a pipeline overlaps a
+      warp's copies with its cores, so fewer warps keep the loads in flight.
+      Its warp's rows, and its workgroup's, stay within a run of the rows
+      below, [M]'s upcast halved and its local split left out while they do
+      not.
       Where the operands read [M] only as its quotient by
       [d], as blocks of [d] rows read their expert's matrix, and the core's
       tile times [M]'s upcast does not divide [d], [M] is upcast instead by

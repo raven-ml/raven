@@ -41,8 +41,10 @@ val full_rewrite_to_sink :
     else, if its argument asks for a beam search of width [w] greater than [0]
     and no loop's bound loads from memory, with [beam w], or else with
     {!Heuristic.hand_coded_optimizations} unless the setting {!Setting.noopt}
-    holds. A kernel whose builder fixed its threads takes neither, and one that
-    buffers values does not take the heuristic ({!Postrange.apply_opts}). The settings {!Setting.disable_fast_idiv}
+    holds. A kernel whose builder fixed its threads takes neither, and one
+    that buffers values does not take the heuristic ({!Postrange.apply_opts}).
+    Its tensor cores' operands are then staged through shared memory
+    ({!Stage.operands}). The settings {!Setting.disable_fast_idiv}
     and {!Setting.transcendental} choose how divisions by constants and
     transcendental functions are decomposed ({!Decomp_op.late_patterns},
     {!Transcendental.val-patterns}). When the setting {!Setting.spec} is [1] or

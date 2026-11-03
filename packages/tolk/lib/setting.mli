@@ -168,6 +168,12 @@ val tc_min_globals : int t
     optimization does not upcast its N axis, from [TC_MIN_GLOBALS]. Defaults to
     [0]. *)
 
+val stage : bool t
+(** [stage] stages a tensor core's operands through shared memory where the
+    target has it ({!Stage}), and gives a staged core its own tile
+    ({!Heuristic.hand_coded_optimizations}), from [STAGE]. Off, no operand is
+    staged and no core takes the staged tile. Defaults to [true]. *)
+
 val transcendental : int t
 (** [transcendental] is how code generation decomposes transcendental functions
     into polynomial approximations, from [TRANSCENDENTAL]: from [2] on, all of

@@ -81,10 +81,11 @@ let in_process environment tests =
               has_environment
            :: tests in_environment)
 
-(* The goldens were recorded without colours. *)
+(* The goldens were recorded without colours, by a tinygrad that stages no
+   tensor core's operands. *)
 let optimize c =
   Setting.context
-    (Setting.B (Setting.no_color, true) :: c.settings)
+    (Setting.B (Setting.no_color, true) :: B (Setting.stage, false) :: c.settings)
     (fun () ->
       Postrange.apply_opts ~hand_coded:Heuristic.hand_coded_optimizations
         (kernel c.kernel) (renderer c.renderer))
@@ -130,7 +131,11 @@ let leaves_its_argument =
       let k = K.v (kernel name) (renderer c.renderer) in
       K.convert_loop_to_global k;
       let ast = K.ast k in
-      let optimized = Heuristic.hand_coded_optimizations k in
+      let optimized =
+        Setting.context
+          [ Setting.B (Setting.stage, false) ]
+          (fun () -> Heuristic.hand_coded_optimizations k)
+      in
       equal Uops.uop ast (K.ast k);
       equal (list Kernel_opts.opt) [] (K.applied_opts k);
       equal (list Kernel_opts.opt) c.opts (K.applied_opts optimized))
@@ -1129,7 +1134,7 @@ let lane_outputs_of o =
 
 (* The outputs a lane of [c]'s optimised kernel holds. *)
 let lane_outputs c =
-  Setting.context c.settings (fun () ->
+  Setting.context (Setting.B (Setting.stage, false) :: c.settings) (fun () ->
       let k = K.v (kernel c.kernel) (renderer c.renderer) in
       K.convert_loop_to_global k;
       lane_outputs_of (Heuristic.hand_coded_optimizations k))
@@ -1176,7 +1181,7 @@ let warp_tiles =
 
 (* The threads of a workgroup of [c]'s optimised kernel. *)
 let workgroup c =
-  Setting.context c.settings (fun () ->
+  Setting.context (Setting.B (Setting.stage, false) :: c.settings) (fun () ->
       let k = K.v (kernel c.kernel) (renderer c.renderer) in
       K.convert_loop_to_global k;
       let o = Heuristic.hand_coded_optimizations k in
@@ -1454,14 +1459,18 @@ let core_threads =
 let case_and_floor =
   Gen.pair (Gen.int_range 0 (Array.length core_kernels - 1)) core_threads
 
+(* The floor governs a core whose operands are not staged; a staged core
+   takes its own tile. *)
+let unstaged f = Setting.context [ Setting.B (Setting.stage, false) ] f
+
 let floored =
   prop
     "the splits after a tensor core are those that leave its floor of \
-     workgroups"
+     workgroups, unstaged"
     case_and_floor
     (fun (i, core_threads) ->
       let name, (s, tc) = core_kernels.(i) in
-      let o = Heuristic.hand_coded_with ~core_threads s in
+      let o = unstaged (fun () -> Heuristic.hand_coded_with ~core_threads s) in
       let expected = stated ~core_threads s tc (K.applied_opts o) in
       cover "every split applies" (List.length expected = 4);
       cover "no split applies" (List.length expected = 1);

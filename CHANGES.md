@@ -969,6 +969,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A tensor core's operands are staged through shared memory
+  (`Stage.operands`): the workgroup copies each tile 16 bytes a thread into a
+  swizzled layout, in two stages with `cp.async` on CUDA from sm_80, and a
+  staged core takes 2 by 2 warps of 64 by 64 with K unrolled to 32. bfloat16
+  products on an RTX 5000 Ada run 1.35 to 3 times faster (2048 cubed 188 to
+  137 us). `STAGE=0` (`Setting.stage`) keeps the unstaged kernels.
+
 - On CUDA and HIP, adjacent `float16` and `bfloat16` accesses merge into
   16-byte vectors (`Renderer.t.half8`); the `ALLOW_HALF8` setting
   (`Setting.allow_half8`) is removed.

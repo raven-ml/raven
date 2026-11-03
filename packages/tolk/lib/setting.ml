@@ -269,6 +269,7 @@ let use_tc = int ~reach:Output "TC" 1
 let tc_select = int ~reach:Output "TC_SELECT" (-1)
 let tc_opt = int ~reach:Output "TC_OPT" 0
 let tc_min_globals = int ~reach:Output "TC_MIN_GLOBALS" 0
+let stage = bool ~reach:Output "STAGE" true
 let transcendental = int ~reach:Output "TRANSCENDENTAL" 1
 let split_reduceop = bool ~reach:Output "SPLIT_REDUCEOP" true
 let no_memory_planner = bool ~reach:Output "NO_MEMORY_PLANNER" false
