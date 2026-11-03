@@ -1262,7 +1262,9 @@ let pp_summed ppf = function
 
 (* Elements whose sums are exact in every order: integers, which wrap, and
    floats of few bits, signed zeros, infinities and NaNs among them, a
-   NaN's bits shown alike. *)
+   NaN's bits shown alike; complex numbers with NaN parts, and sharing a
+   real part, which an extreme orders by the imaginary one; and booleans,
+   whose [Max] is or and [Min] and. *)
 let summed_kinds =
   let float dt =
     Reduced
@@ -1280,7 +1282,10 @@ let summed_kinds =
         rvalues =
           List.map
             (fun (re, im) -> { Complex.re; im })
-            [ (0., 0.); (1., -1.); (-0., 2.); (0.5, 0.); (infinity, 1.) ];
+            [
+              (0., 0.); (1., -1.); (-0., 2.); (0.5, 0.); (infinity, 1.);
+              (1., 2.); (1., -0.); (1., 0.); (nan, 1.); (1., nan);
+            ];
         rshow = complex_bits;
         is_nan = (fun c -> Float.is_nan c.Complex.re || Float.is_nan c.im);
       }
@@ -1293,8 +1298,17 @@ let summed_kinds =
         | D.Float | D.Complex | D.Boolean -> false)
       reduced_kinds
   in
+  let truth =
+    Reduced
+      {
+        rdtype = D.Bool;
+        rvalues = [ true; false ];
+        rshow = string_of_bool;
+        is_nan = (fun _ -> false);
+      }
+  in
   [ float D.Float32; float D.Float64; float D.Float16; float D.Bfloat16 ]
-  @ (complex :: ints)
+  @ (complex :: truth :: ints)
 
 (* A target's dtype, shape and elements, where it lies, the axis, the
    updates' shape, the positions and the updates. *)
@@ -1347,7 +1361,12 @@ let summed_case =
      in
      let* p = array ~size:(constant n) position in
      let* (Reduced k) = of_list summed_kinds in
-     let* c = of_list [ Nx.Add; Set; Max; Min ] in
+     let* c =
+       match D.kind k.rdtype with
+       | D.Boolean -> of_list [ Nx.Set; Max; Min ]
+       | D.Float | D.Complex | D.Signed | D.Unsigned ->
+           of_list [ Nx.Add; Set; Max; Min ]
+     in
      let value = of_list k.rvalues in
      let* data = array ~size:(constant (Array.fold_left ( * ) 1 s)) value in
      let+ u = array ~size:(constant n) value in
@@ -1381,11 +1400,17 @@ let law_summed (Sumcase (k, c, s, data, w, whole, a, us, p, u)) =
     match D.kind k.rdtype with
     | D.Float -> "a float"
     | D.Complex -> "a complex number"
-    | D.Signed | D.Unsigned | D.Boolean -> "an integer"
+    | D.Signed | D.Unsigned -> "an integer"
+    | D.Boolean -> "a boolean"
   in
   List.iter
     (fun c -> cover c (kind = c))
-    [ "a float"; "a complex number"; "an integer" ];
+    [ "a float"; "a complex number"; "an integer"; "a boolean" ];
+  let several = m >= tiles && Array.length p > 0 in
+  cover "a boolean Max or Min in several tiles"
+    (kind = "a boolean" && c <> Nx.Set && several);
+  cover "a complex extreme in several tiles"
+    (kind = "a complex number" && (c = Nx.Max || c = Nx.Min) && several);
   List.iter
     (fun c' ->
       cover
