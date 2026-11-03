@@ -18,7 +18,8 @@
     miss looks before merging.
 
     A span longer than a cache key is first cut into SentencePiece word units —
-    each opening at a ["▁"] that follows a non-["▁"] character, or at one of
+    each opening at a ["▁"] that follows a non-["▁"] character (at a space that
+    follows a non-space byte, for a [spaced] model), or at one of
     eight punctuation bytes no vocabulary piece reaches across — whenever
     scanning the vocabulary at creation proves the cut exact, so pipelines that
     hand the model whole documents (Llama, Mistral, Gemma) encode through the
@@ -46,6 +47,7 @@ val create :
   vocab:vocab ->
   merges:merges ->
   ?byte_level:bool ->
+  ?spaced:bool ->
   ?cache_capacity:int ->
   ?dropout:float ->
   ?unk_token:string ->
@@ -65,6 +67,17 @@ val create :
       once, at creation; the vocabulary, {!token_to_id}, {!id_to_token},
       {!get_vocab} and {!save} keep speaking the encoded form. Raises
       [Invalid_argument] together with [continuing_subword_prefix] or
+      [end_of_word_suffix]. Defaults to [false].
+    - [spaced], when [true], matches pretokens against each vocabulary entry
+      with every ["▁"] read as a space. A SentencePiece pipeline writes ["▁"]
+      for every space just before the model, and so can hand a spaced model
+      its text with the spaces in place instead, every ["▁"] in it a space and
+      every ["▁"] it prefixes a space too: both texts give the same tokens,
+      since an entry and the text match the same way once each ["▁"] reads as
+      a space. As with [byte_level], the entries are read once, at creation,
+      and everything that speaks the vocabulary keeps the form it holds.
+      Raises [Invalid_argument] when {!spaceable} is [false] for [vocab],
+      together with [byte_level], or with [continuing_subword_prefix] or
       [end_of_word_suffix]. Defaults to [false].
     - [cache_capacity] is the number of entries in the pretoken cache, rounded
       up to a power of two and held two per set: a pretoken may sit in either
@@ -94,6 +107,11 @@ val create :
     - [ignore_merges], when [true], emits a word that is itself in [vocab] as
       that single token, without applying any merge; other words are merged as
       usual. Defaults to [false]. *)
+
+val spaceable : vocab -> bool
+(** [spaceable vocab] is [true] iff a model of [vocab] can be {!create}d
+    [spaced]: [vocab] holds ["▁"], which a space then stands for, and no entry
+    holds a space, which would read as one holding ["▁"] there. *)
 
 val from_files :
   ?byte_level:bool -> vocab_file:string -> merges_file:string -> unit -> t
@@ -249,6 +267,10 @@ val get_dropout : t -> float option
 val get_byte_level : t -> bool
 (** [get_byte_level t] is [true] iff [t] matches pretokens against the bytes its
     entries stand for rather than against the entries. *)
+
+val get_spaced : t -> bool
+(** [get_spaced t] is [true] iff [t] matches pretokens against its entries with
+    every ["▁"] read as a space. *)
 
 val get_cache_capacity : t -> int
 (** [get_cache_capacity t] is the number of pretoken cache entries asked for at

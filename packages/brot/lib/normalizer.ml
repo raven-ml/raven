@@ -1850,6 +1850,46 @@ let rec normalize t s a ~track =
 let apply t s = fst (normalize t s (Identity s) ~track:false)
 let apply_aligned t s = normalize t s (Identity s) ~track:true
 
+(* SentencePiece *)
+
+(* SentencePiece's marker for a space. *)
+let space_marker = "\xE2\x96\x81"
+let unmark = Replace { pattern = Literal space_marker; replacement = " " }
+
+let rec flatten ns =
+  List.concat_map (function Sequence ns -> flatten ns | n -> [ n ]) ns
+
+(* With [h] the map from text without ▁ to text without spaces that writes ▁
+   for every space, [t'] writes [h⁻¹] of [t]'s text. Replacing spaces with ▁
+   gives [h (unmark x)] for any [x], so that stage turns into [unmark]. A
+   prepend of [p] right before it gives [h (unmark p ^ unmark y)], so it
+   prepends [unmark p] instead, and one after it gives [p ^ h z], which is
+   [h (unmark p ^ z)] when [p] holds no space. *)
+let spaced t =
+  let marks = function
+    | Replace { pattern = Literal " "; replacement } ->
+        replacement = space_marker
+    | _ -> false
+  in
+  let unmarked p = Prepend (apply unmark p) in
+  (* The prepends right before the replacement, from the stages before it in
+     reverse, and those stages in order. *)
+  let rec leading prepends = function
+    | Prepend p :: before -> leading (unmarked p :: prepends) before
+    | before -> (List.rev before, prepends)
+  in
+  let rec find after = function
+    | [] -> None
+    | n :: before when marks n ->
+        let before, prepends = leading [] before in
+        Some (Sequence (before @ prepends @ (unmark :: after)))
+    | Prepend p :: before when not (String.contains p ' ') ->
+        find (unmarked p :: after) before
+    | _ -> None
+  in
+  let stages = match t with Sequence ns -> flatten ns | n -> [ n ] in
+  find [] (List.rev stages)
+
 (* Formatting *)
 
 let pp_bool_opt ppf = function

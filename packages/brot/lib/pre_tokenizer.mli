@@ -244,12 +244,21 @@ type plan =
 val plan : t -> plan
 (** [plan t] is how [t] takes part in the walking path. *)
 
-val rewriter : rewrite -> first:bool Lazy.t -> string -> Normalizer.t option
+val rewriter :
+  ?spaced:bool -> rewrite -> first:bool Lazy.t -> string -> Normalizer.t option
 (** [rewriter rewrite ~first text] is the normalizer that performs [rewrite] on
     [text], or [None] when it would leave [text] as it is. [first] says whether
     [text] opens the document, and is only forced by a [Space_marker] that
-    prepends on [`First]. The normalizers are built when [rewriter rewrite] is
-    applied, so a caller with many texts applies it once. *)
+    prepends on [`First]. With [spaced] (default [false]), a [Space_marker]
+    writes its text with every [marker] a space instead: it turns every
+    [marker] into a space, and prepends a space where it would prepend
+    [marker]. The normalizers are built when [rewriter rewrite] is applied, so
+    a caller with many texts applies it once. *)
+
+val marks_spaces : t -> bool
+(** [marks_spaces t] is [true] iff [t] hands on its text whole with ["▁"] for
+    every space and prefixed as its prepend scheme asks: a {!metaspace} with
+    replacement ["▁"] that does not split. *)
 
 val pieces : t -> first:bool Lazy.t -> string -> (string * (int * int)) list
 (** [pieces t ~first text] is {!pre_tokenize} for a [text] that opens the

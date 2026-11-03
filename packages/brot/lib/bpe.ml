@@ -251,13 +251,18 @@ type t = {
   ignore_merges : bool;
   (* Whether a long span may be cut into SentencePiece word units before
      encoding, decided once at creation, and the punctuation tables the walker
-     splits with: see [encode_into]. *)
+     splits with: see [encode_into]. [marker] is what opens a unit in the text
+     the model is handed: ▁, or a space for a spaced model. *)
   sp_cut : sp_cut option;
+  marker : string;
   (* Byte-level models match raw bytes: [source_vocab] maps every entry decoded
      through the byte-to-unicode table to its id and [byte_ids] gives the id of
      each single byte. The vocabulary itself keeps the encoded form, which is
      what serialization and decoding speak. *)
   byte_level : bool;
+  (* Spaced models read every ▁ of an entry as a space, and [source_vocab] maps
+     every entry read so to its id. *)
+  spaced : bool;
   source_vocab : vocab;
   (* Under [ignore_merges], when the fused kernel encodes, the short entries of
      [source_vocab] whose merge does not give the entry back, as the kernel
@@ -786,7 +791,7 @@ let kernel_tables model cache =
 (* The tables the SentencePiece kernel reads, in the field order it pins; [None]
    when the walk stays in OCaml: bytecode, or no sub-cut. The scan byte says
    what a byte value opens — 0 nothing, 1 + slot a punctuation split byte, 9 the
-   0xE2 lead of the mark — matching kernel.mli's pins. *)
+   first byte of the marker — matching kernel.mli's pins. *)
 let sp_kernel_tables model cache : Kernel.sp option =
   match model.sp_cut with
   | Some cut when Kernel.available ->
@@ -795,7 +800,7 @@ let sp_kernel_tables model cache : Kernel.sp option =
         (fun b slot ->
           if slot >= 0 then Bytes.unsafe_set scan b (Char.chr (1 + slot)))
         cut.punct_slot;
-      Bytes.set scan 0xE2 (Char.chr 9);
+      Bytes.set scan (Char.code model.marker.[0]) (Char.chr 9);
       Some
         {
           Kernel.cache = cache.Cache.table;
@@ -814,6 +819,7 @@ let sp_kernel_tables model cache : Kernel.sp option =
           fallback_ids =
             (if model.byte_fallback then model.byte_fallback_ids
              else Array.make 256 (-1));
+          marker = model.marker;
         }
   | _ -> None
 
@@ -962,7 +968,9 @@ let encode_unit_into model st ids ~opaque text ~pos ~len =
    into word units instead, each unit opening at a ▁ (bytes E2 96 81) whose
    previous character is not itself ▁, so a ▁-run stays with the word it
    indents. Units are a few bytes, so they take the pretoken cache and the
-   linear merge.
+   linear merge. A spaced model's text has a space where the vocabulary has ▁,
+   and its units open at a space instead: [marker] is what the walker looks
+   for, and every argument below holds of the vocabulary read the same way.
 
    The cut is exact when no vocabulary piece contains a ▁ in that opening
    position: a merge result is always a vocabulary piece covering the very bytes
@@ -996,27 +1004,28 @@ let encode_unit_into model st ids ~opaque text ~pos ~len =
    bytecode and js_of_ocaml run, and everything the kernel refuses funnels back
    through [encode_unit_into]. *)
 
-let[@inline] sp_mark text p limit =
-  p + 3 <= limit
-  && String.unsafe_get text p = '\xE2'
-  && String.unsafe_get text (p + 1) = '\x96'
-  && String.unsafe_get text (p + 2) = '\x81'
+let rec marked_from marker text p k =
+  k = String.length marker
+  || String.unsafe_get text (p + k) = String.unsafe_get marker k
+     && marked_from marker text p (k + 1)
 
-(* ▁ as [pack_char_key] packs it. *)
-let sp_marker_key = 0xE29681
+(* Whether [marker] is at [p] of [text], within [limit]. *)
+let[@inline] marked marker text p limit =
+  p >= 0 && p + String.length marker <= limit && marked_from marker text p 0
 
-let sp_crossing vocab_r =
+let sp_crossing ~marker source =
+  let m = String.length marker in
   Array.exists
     (fun piece ->
       let crossing = ref false in
-      for i = 1 to String.length piece - 3 do
+      for i = 1 to String.length piece - m do
         if
-          sp_mark piece i (String.length piece)
-          && not (i >= 3 && sp_mark piece (i - 3) i)
+          marked marker piece i (String.length piece)
+          && not (marked marker piece (i - m) i)
         then crossing := true
       done;
       !crossing)
-    vocab_r
+    source
 
 (* A token that does not stand for the bytes of its own name — the unknown
    token, a byte fallback — lends those bytes to whatever is merged from it, so
@@ -1038,7 +1047,7 @@ let sp_opaque_merge merges ~unk_id ~byte_fallback_ids =
 
 let sp_split_bytes = [ '.'; ','; '"'; ')'; ';'; ':'; '!'; '?' ]
 
-let sp_cut_tables vocab_r chars ~unk_reachable =
+let sp_cut_tables source chars ~unk_reachable =
   let adjacent = Array.make 65536 false in
   Array.iter
     (fun piece ->
@@ -1046,7 +1055,7 @@ let sp_cut_tables vocab_r chars ~unk_reachable =
         adjacent.((Char.code (String.unsafe_get piece i) lsl 8)
                   lor Char.code (String.unsafe_get piece (i + 1))) <- true
       done)
-    vocab_r;
+    source;
   let punct_slot = Array.make 256 (-1) in
   let punct_safe = Array.make (8 * 256) false in
   List.iteri
@@ -1063,19 +1072,23 @@ let sp_cut_tables vocab_r chars ~unk_reachable =
 
 let encode_sp_units model st cut ids ~opaque text ~pos ~len =
   let punct_slot = cut.punct_slot and punct_safe = cut.punct_safe in
+  let marker = model.marker in
+  let m = String.length marker in
   let stop = pos + len in
   let unit_start = ref pos in
   let p = ref pos in
   while !p < stop do
     let c = String.unsafe_get text !p in
-    if c = '\xE2' && sp_mark text !p stop then begin
-      if !p > !unit_start && not (!p >= pos + 3 && sp_mark text (!p - 3) stop)
+    if c = String.unsafe_get marker 0 && marked marker text !p stop then begin
+      if
+        !p > !unit_start
+        && not (!p >= pos + m && marked marker text (!p - m) stop)
       then begin
         encode_unit_into model st ids ~opaque text ~pos:!unit_start
           ~len:(!p - !unit_start);
         unit_start := !p
       end;
-      p := !p + 3
+      p := !p + m
     end
     else begin
       let slot = Array.unsafe_get punct_slot (Char.code c) in
@@ -1319,6 +1332,7 @@ let encode_walk_ids32 model st ~walker sink spill ~opaque text ~pos ~stop =
 let len_table model = model.len_table
 let token_table model = model.vocab_r
 let get_byte_level model = model.byte_level
+let get_spaced model = model.spaced
 let get_cache_capacity model = model.cache_slots
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 
@@ -1453,10 +1467,30 @@ let words_table words =
     (table, mask)
   end
 
-let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
-    ?dropout ?unk_token ?continuing_subword_prefix ?end_of_word_suffix
-    ?(fuse_unk = false) ?(byte_fallback = false) ?(ignore_merges = false) () : t
-    =
+(* The marker SentencePiece writes for a space. *)
+let space_marker = "\xE2\x96\x81"
+
+(* An entry with every ▁ read as a space. *)
+let unmark =
+  Normalizer.apply (Normalizer.replace ~pattern:space_marker ~replacement:" ")
+
+let spaceable vocab =
+  Hashtbl.mem vocab space_marker
+  && not
+       (Hashtbl.fold
+          (fun entry _ found -> found || String.contains entry ' ')
+          vocab false)
+
+(* The id of the character [c] spells, or [-1]. *)
+let char_id chars c =
+  let n = String.length c in
+  if n = 1 then chars.ascii.(Char.code c.[0])
+  else Merge_map.find chars.multi (pack_char_key c 0 n)
+
+let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
+    ?(cache_capacity = 262144) ?dropout ?unk_token ?continuing_subword_prefix
+    ?end_of_word_suffix ?(fuse_unk = false) ?(byte_fallback = false)
+    ?(ignore_merges = false) () : t =
   (* Tokenizer files spell "no prefix" and "no suffix" as [""]. *)
   let non_empty = function Some "" -> None | given -> given in
   let continuing_subword_prefix = non_empty continuing_subword_prefix in
@@ -1468,6 +1502,18 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
     invalid_arg
       "Bpe.create: byte_level is incompatible with continuing_subword_prefix \
        and end_of_word_suffix";
+  if
+    spaced
+    && (byte_level || continuing_subword_prefix <> None
+       || end_of_word_suffix <> None)
+  then
+    invalid_arg
+      "Bpe.create: spaced is incompatible with byte_level, \
+       continuing_subword_prefix and end_of_word_suffix";
+  if spaced && not (spaceable vocab) then
+    invalid_arg
+      "Bpe.create: spaced needs a vocabulary that holds \"\xE2\x96\x81\" and \
+       no entry with a space";
   let max_id = Hashtbl.fold (fun _ id acc -> max id acc) vocab (-1) in
   let vocab_r = Array.make (max_id + 1) "" in
   Hashtbl.iter (fun k v -> Array.unsafe_set vocab_r v k) vocab;
@@ -1483,7 +1529,32 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
   done;
   let prefix = affix continuing_subword_prefix in
   let suffix = affix end_of_word_suffix in
-  let chars = build_char_table vocab ~prefix:"" ~suffix:"" in
+  (* The source form of an entry is what a pretoken is matched against: the
+     entry itself, the bytes it stands for for a byte-level model, or the
+     entry with every ▁ a space for a spaced one. Ids ascend so the lowest one
+     wins whenever two entries share a source. *)
+  let source =
+    if byte_level then Array.map Pre_tokenizer.byte_level_decode vocab_r
+    else if spaced then Array.map unmark vocab_r
+    else vocab_r
+  in
+  let source_vocab =
+    if not (byte_level || spaced) then vocab
+    else begin
+      let tbl = Hashtbl.create (Array.length source) in
+      Array.iteri
+        (fun id s ->
+          if s <> "" && not (Hashtbl.mem tbl s) then Hashtbl.add tbl s id)
+        source;
+      tbl
+    end
+  in
+  (* A byte-level model never looks a character up; a spaced one looks it up
+     in the form it reads. *)
+  let chars =
+    build_char_table (if spaced then source_vocab else vocab) ~prefix:""
+      ~suffix:""
+  in
   let prefixed_chars =
     if prefix = "" then chars else build_char_table vocab ~prefix ~suffix:""
   in
@@ -1502,6 +1573,7 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
     | None -> -1
   in
   (* The SentencePiece sub-cut's gates, argued where the walker lives. *)
+  let marker = if spaced then " " else space_marker in
   let sp_cut =
     let unk_reachable =
       unk_id >= 0
@@ -1513,29 +1585,11 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
       && (match dropout with Some p -> p <= 0.0 | None -> true)
       && continuing_subword_prefix = None
       && end_of_word_suffix = None
-      && ((not unk_reachable) || Merge_map.find chars.multi sp_marker_key >= 0)
-      && (not (sp_crossing vocab_r))
+      && ((not unk_reachable) || char_id chars marker >= 0)
+      && (not (sp_crossing ~marker source))
       && not (sp_opaque_merge merges ~unk_id ~byte_fallback_ids)
-    then Some (sp_cut_tables vocab_r chars ~unk_reachable)
+    then Some (sp_cut_tables source chars ~unk_reachable)
     else None
-  in
-  (* The source form of an entry is what a pretoken is matched against: the
-     entry itself, or, for a byte-level model, the bytes it stands for. Ids
-     ascend so the lowest one wins whenever two entries share a source. *)
-  let source =
-    if byte_level then Array.map Pre_tokenizer.byte_level_decode vocab_r
-    else vocab_r
-  in
-  let source_vocab =
-    if not byte_level then vocab
-    else begin
-      let tbl = Hashtbl.create (Array.length source) in
-      Array.iteri
-        (fun id s ->
-          if s <> "" && not (Hashtbl.mem tbl s) then Hashtbl.add tbl s id)
-        source;
-      tbl
-    end
   in
   let byte_ids = Array.make 256 (-1) in
   if byte_level then
@@ -1567,7 +1621,9 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
       byte_fallback;
       ignore_merges;
       sp_cut;
+      marker;
       byte_level;
+      spaced;
       source_vocab;
       words = Bytes.empty;
       words_mask = -1;

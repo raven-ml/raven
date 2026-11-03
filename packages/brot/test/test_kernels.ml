@@ -996,6 +996,112 @@ let cover_cl100k text =
   cover "punctuation before a newline" (has_sub text ".\n");
   cover "a text over two batches" (String.length text > 128)
 
+(* A SentencePiece pipeline writes ▁ for every space right before the model, in
+   its normalizer or in a metaspace that does not split; a BPE model then reads
+   the spaces themselves, so the text it is handed keeps them. The same
+   pipeline with a stage that changes nothing after the marking (a strip of
+   neither side, a sequence of the one metaspace) writes the same text and is
+   read marked, and both must give the same tokens, offsets included. The
+   vocabulary merges across ▁ runs, spells "ü" with fallback bytes and has no
+   piece for "😀"; one added token is matched in the raw text and one in the
+   normalized text. *)
+let spaced_vocab =
+  sp_vocab
+  @ [
+      (sp_mark ^ sp_mark, 31); (sp_mark ^ "t", 32); ("he", 33);
+      (sp_mark ^ "the", 34); ("<0xC3>", 35); ("<0xBC>", 36); ("<unk>", 37);
+      ("<s>", 38);
+    ]
+[@@ocamlformat "disable"]
+
+let spaced_merges =
+  [ (sp_mark, "a"); (sp_mark, sp_mark); (sp_mark, "t"); ("h", "e");
+    (sp_mark ^ "t", "he") ]
+[@@ocamlformat "disable"]
+
+let spaced_alphabet =
+  [ "a"; "the"; "q q"; "b"; " "; "  "; "   "; sp_mark; sp_mark ^ sp_mark;
+    " " ^ sp_mark; "."; ","; "a.b"; "959"; "9588"; "😀"; "
+";
+    "<s>"; "aaaaaaaaaaaaaaaaaaaa"; " xxxxxxxxxxxxxxx" ]
+[@@ocamlformat "disable"]
+
+let spaced_case =
+  let open Gen in
+  let+ text =
+    map (String.concat "")
+      (list ~size:(int_range 0 60) (of_list spaced_alphabet))
+  and+ pipeline = int_range 0 3
+  and+ byte_fallback = bool in
+  (text, pipeline, byte_fallback)
+
+let spaced_case =
+  let pp ppf (text, pipeline, byte_fallback) =
+    Format.fprintf ppf "%S, pipeline %d, byte_fallback %b" text pipeline
+      byte_fallback
+  in
+  Gen.with_pp pp spaced_case
+
+(* The spaced pipeline and its marked twin: the normalizer Llama spells, then a
+   metaspace prepending on [`First], on [`Always] and never. *)
+let spaced_pair pipeline ~byte_fallback =
+  let make ?normalizer ?pre () =
+    Brot.bpe ?normalizer ?pre ~vocab:spaced_vocab ~merges:spaced_merges
+      ~unk_token:"<unk>" ~byte_fallback ~fuse_unk:true
+      ~added_tokens:
+        [
+          Brot.added_token ~special:true "<s>";
+          Brot.added_token ~special:false ~normalized:true "q q";
+        ]
+      ()
+  in
+  let marking =
+    [
+      Brot.Normalizer.prepend sp_mark;
+      Brot.Normalizer.replace ~pattern:" " ~replacement:sp_mark;
+    ]
+  in
+  let noop = Brot.Normalizer.strip ~left:false ~right:false () in
+  let metaspace prepend_scheme =
+    Brot.Pre_tokenizer.metaspace ~prepend_scheme ~split:false ()
+  in
+  match pipeline with
+  | 0 ->
+      ( make ~normalizer:(Brot.Normalizer.sequence marking) (),
+        make ~normalizer:(Brot.Normalizer.sequence (marking @ [ noop ])) () )
+  | n ->
+      let scheme = List.nth [ `First; `Always; `Never ] (n - 1) in
+      ( make ~pre:(metaspace scheme) (),
+        make ~pre:(Brot.Pre_tokenizer.sequence [ metaspace scheme ]) () )
+
+let spaced_law =
+  prop ~count:500 "a spaced pipeline encodes as a marked one" spaced_case
+    (fun (text, pipeline, byte_fallback) ->
+      let spaced, marked = spaced_pair pipeline ~byte_fallback in
+      cover "a space run" (has_sub text "  ");
+      cover "a ▁ next to a space" (has_sub text (" " ^ sp_mark));
+      cover "a unit past the key" (has_sub text "aaaaaaaaaaaaaaaaaaaa");
+      cover "a character with fallback bytes" (has_sub text "9588");
+      cover "an added token" (has_sub text "<s>" || has_sub text "q q");
+      cover "a text that opens with a space"
+        (String.length text > 0 && text.[0] = ' ');
+      let encode t = Brot.encode t ~add_special_tokens:false text in
+      let a = encode spaced and b = encode marked in
+      let msg what = Printf.sprintf "%S: %s" text what in
+      equal ~msg:(msg "ids") (array int) (Brot.Encoding.ids b)
+        (Brot.Encoding.ids a);
+      equal ~msg:(msg "tokens") (array string) (Brot.Encoding.tokens b)
+        (Brot.Encoding.tokens a);
+      equal ~msg:(msg "offsets")
+        (array (pair int int))
+        (Brot.Encoding.offsets b) (Brot.Encoding.offsets a);
+      match batch_rows spaced [ text; text ] None with
+      | [ x; y ] ->
+          equal ~msg:(msg "in a batch") (array int) (Brot.Encoding.ids b) x;
+          equal ~msg:(msg "again in a batch") (array int) (Brot.Encoding.ids b)
+            y
+      | _ -> failf "two rows expected")
+
 (* The tokenizer and the reference are read once, on the first case. *)
 let law ?(text = law_text) ?(cover = cover_law) name make =
   let loaded =
@@ -1077,6 +1183,7 @@ let () =
            ];
          group "laws"
            [
+             spaced_law;
              law "gpt2" gpt2_reference;
              law "mistral" mistral_reference;
              law ~text:cl100k_text ~cover:cover_cl100k "llama3"

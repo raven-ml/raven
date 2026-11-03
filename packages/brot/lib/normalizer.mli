@@ -184,6 +184,17 @@ val original_span : alignment -> start:int -> stop:int -> int * int
     Raises [Invalid_argument] unless [0 <= start <= stop <= n], where [n] is the
     length of the normalized text. *)
 
+(** {1:sentencepiece SentencePiece} *)
+
+val spaced : t -> t option
+(** [spaced n] is [Some n'] iff [n] ends by writing ["▁"] for every space: a
+    {!replace} of [" "] by ["▁"], last or followed by nothing but {!prepend}s of
+    text without a space. [n'] writes the text [n] writes with every ["▁"] a
+    space: the replacement turns every ["▁"] into a space instead, and the
+    prepends right before and after it prepend their text with every ["▁"] a
+    space. Every text [n] writes holds no space, and every text [n'] writes no
+    ["▁"]. *)
+
 (** {1:formatting Formatting} *)
 
 val pp : Format.formatter -> t -> unit

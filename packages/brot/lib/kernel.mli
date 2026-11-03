@@ -68,13 +68,16 @@ type sp = {
   char_mask : int;  (** The character map's slot index mask. *)
   scan : Bytes.t;
       (** What each of the 256 byte values opens: [0] nothing, [1 + slot] a
-          punctuation split byte, [9] the ["\xE2"] lead of ["▁"]. *)
+          punctuation split byte, [9] the first byte of [marker]. *)
   punct_safe : bool array;
       (** Whether a unit may end between a previous byte and a slot's byte, at
           [(slot lsl 8) lor prev] — [Bpe.sp_cut]'s table. *)
   fallback_ids : int array;
       (** The 256 byte fallback ids a character without a piece is spelled
           with, [-1] for none and everywhere without byte fallback. *)
+  marker : string;
+      (** What a unit opens at: ["▁"], or a space for a spaced model. One to
+          four bytes. *)
 }
 (** Tables of the fused SentencePiece kernel: the ▁/punctuation unit walker over
     normalized bytes, the pretoken cache probe and the character-level short
@@ -226,8 +229,8 @@ val split_encode_ids32 :
 
 val sp_encode : string -> int -> int -> int array -> Bytes.t -> sp -> reason
 (** [sp_encode text pos stop ids cursor t] cuts [text.\[pos..stop)] at
-    SentencePiece unit boundaries — before each ["▁"] whose previous character
-    is not itself ["▁"] and before each vocabulary-safe punctuation byte,
+    SentencePiece unit boundaries — before each [marker] that does not follow
+    another and before each vocabulary-safe punctuation byte,
     exactly as [Bpe.encode_into]'s walker does — and appends each unit's token
     ids to [ids] from the id count [cursor] holds, probing the pretoken cache
     and short-merging misses character by character. Never returns [Class],

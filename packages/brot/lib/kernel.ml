@@ -42,6 +42,7 @@ type sp = {
   scan : Bytes.t; (* 11: BROT_SP_SCAN *)
   punct_safe : bool array; (* 12: BROT_SP_PUNCT_SAFE *)
   fallback_ids : int array; (* 13: BROT_SP_FALLBACK_IDS *)
+  marker : string; (* 14: BROT_SP_MARKER *)
 }
 
 type reason = Done | Spans_full | Ids_full | Class | Encode

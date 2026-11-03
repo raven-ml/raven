@@ -78,7 +78,8 @@ enum {
   BROT_SP_CHAR_MASK,
   BROT_SP_SCAN,
   BROT_SP_PUNCT_SAFE,
-  BROT_SP_FALLBACK_IDS
+  BROT_SP_FALLBACK_IDS,
+  BROT_SP_MARKER
 };
 
 /* Kernel.cursor byte offsets. */
@@ -2247,41 +2248,41 @@ CAMLprim value brot_split_encode_ids32_byte(value *argv, int argn)
    span, exactly as the OCaml walker's caller does. */
 
 /* Kernel.sp scan values (kernel.mli pins them): 1 + slot for a punctuation
-   split byte, this for the 0xE2 lead of ▁. */
+   split byte, this for the first byte of the marker. */
 #define SP_SCAN_MARK 9
 
 /* The unit walk finds its boundary candidates 64 bytes at a time: a bit per
    byte that the scan table can open something at, then the rules of
    Bpe.encode_into's cut on the candidates alone. The vector paths test the
-   bytes Bpe.sp_split_bytes and ▁'s lead can be, a superset of the bytes the
-   scan table marks (a slot can be dropped), so every candidate is checked
-   against the table; the last partial block reads the table directly and
-   no byte at or past [stop] is read. */
+   bytes Bpe.sp_split_bytes and the marker's first byte [lead] can be, a
+   superset of the bytes the scan table marks (a slot can be dropped), so
+   every candidate is checked against the table; the last partial block
+   reads the table directly and no byte at or past [stop] is read. */
 
 #if defined(BROT_MASK_NEON)
-static uint64_t sp_block(const unsigned char *p)
+static uint64_t sp_block(const unsigned char *p, unsigned char lead)
 {
-  static const uint8_t opens[9] = {0xE2, '.', ',', '"', ')', ';', ':', '!', '?'};
+  static const uint8_t opens[8] = {'.', ',', '"', ')', ';', ':', '!', '?'};
   uint8x16_t m[4];
   int k, j;
   for (k = 0; k < 4; k++) {
     uint8x16_t v = vld1q_u8(p + 16 * k);
-    uint8x16_t a = vceqq_u8(v, vdupq_n_u8(opens[0]));
-    for (j = 1; j < 9; j++) a = vorrq_u8(a, vceqq_u8(v, vdupq_n_u8(opens[j])));
+    uint8x16_t a = vceqq_u8(v, vdupq_n_u8(lead));
+    for (j = 0; j < 8; j++) a = vorrq_u8(a, vceqq_u8(v, vdupq_n_u8(opens[j])));
     m[k] = a;
   }
   return movemask64(m[0], m[1], m[2], m[3]);
 }
 #elif defined(BROT_MASK_SSE2)
-static uint64_t sp_block(const unsigned char *p)
+static uint64_t sp_block(const unsigned char *p, unsigned char lead)
 {
-  static const char opens[9] = {'\xE2', '.', ',', '"', ')', ';', ':', '!', '?'};
+  static const char opens[8] = {'.', ',', '"', ')', ';', ':', '!', '?'};
   uint64_t m = 0;
   int k, j;
   for (k = 0; k < 4; k++) {
     __m128i v = _mm_loadu_si128((const __m128i *)(p + 16 * k));
-    __m128i a = _mm_cmpeq_epi8(v, _mm_set1_epi8(opens[0]));
-    for (j = 1; j < 9; j++)
+    __m128i a = _mm_cmpeq_epi8(v, _mm_set1_epi8((char)lead));
+    for (j = 0; j < 8; j++)
       a = _mm_or_si128(a, _mm_cmpeq_epi8(v, _mm_set1_epi8(opens[j])));
     m |= (uint64_t)(unsigned)_mm_movemask_epi8(a) << (16 * k);
   }
@@ -2305,6 +2306,8 @@ typedef struct {
   intnat anchor; /* where the call began: the stretch start or a boundary */
   const unsigned char *scan;
   const value *safe;
+  const unsigned char *mark; /* Kernel.sp's marker, [mlen] bytes */
+  intnat mlen;
   intnat base;   /* the block the candidates are relative to */
   uint64_t cand; /* its candidates not yet passed */
 } sp_walker;
@@ -2314,7 +2317,7 @@ static void sp_load(sp_walker *u)
   intnat left = u->stop - u->base;
 #if defined(BROT_MASK_NEON) || defined(BROT_MASK_SSE2)
   if (left >= 64) {
-    u->cand = sp_block(u->s + u->base);
+    u->cand = sp_block(u->s + u->base, u->mark[0]);
     return;
   }
 #endif
@@ -2323,24 +2326,39 @@ static void sp_load(sp_walker *u)
 
 static void sp_init(sp_walker *u, const unsigned char *s, intnat stop,
                     intnat anchor, const unsigned char *scan,
-                    const value *safe)
+                    const value *safe, value mark)
 {
   u->s = s;
   u->stop = stop;
   u->anchor = anchor;
   u->scan = scan;
   u->safe = safe;
+  u->mark = (const unsigned char *)String_val(mark);
+  u->mlen = (intnat)caml_string_length(mark);
   u->base = anchor;
   sp_load(u);
 }
 
+/* Bpe.marked: whether the marker is at [p], within [stop], for a [p] in
+   [anchor, stop). A spaced model's marker is the one byte a space is. */
+static inline int sp_marked(const sp_walker *u, intnat p)
+{
+  intnat k;
+  if (u->mlen == 1) return u->s[p] == u->mark[0];
+  if (p + u->mlen > u->stop) return 0;
+  for (k = 0; k < u->mlen; k++)
+    if (u->s[p + k] != u->mark[k]) return 0;
+  return 1;
+}
+
 /* Bpe.encode_into's unit cut: the end of the unit opening at [b], which is
-   the previous call's return. A ▁ ends the unit unless it extends a ▁ run;
-   a split byte ends it after a byte the vocabulary never joins it to. The
-   run test reads back to [anchor], which stands in for the walker's [pos]:
-   within [anchor, anchor + 3) the look-behind window always covers the
-   boundary's opening byte, an 0xE2 lead or an ASCII punctuation byte, never
-   a mark continuation, so the guard resolves as the walker's would. */
+   the previous call's return. A marker ends the unit unless it extends a run
+   of them; a split byte ends it after a byte the vocabulary never joins it
+   to. The run test reads back to [anchor], which stands in for the walker's
+   [pos]: within [anchor, anchor + mlen) the look-behind window always covers
+   the boundary's opening byte, a marker's first byte or an ASCII punctuation
+   byte, never a byte inside a marker, so the guard resolves as the walker's
+   would. */
 static BROT_INLINE intnat sp_next(sp_walker *u, intnat b)
 {
   const unsigned char *s = u->s;
@@ -2351,9 +2369,8 @@ static BROT_INLINE intnat sp_next(sp_walker *u, intnat b)
       if (p > b) {
         k = u->scan[s[p]];
         if (k == SP_SCAN_MARK) {
-          if (p + 3 <= u->stop && s[p + 1] == 0x96 && s[p + 2] == 0x81
-              && !(p >= u->anchor + 3 && s[p - 3] == 0xE2 && s[p - 2] == 0x96
-                   && s[p - 1] == 0x81))
+          if (sp_marked(u, p)
+              && !(p >= u->anchor + u->mlen && sp_marked(u, p - u->mlen)))
             return p;
         } else if (k != 0 && Bool_val(u->safe[((k - 1) << 8) | s[p - 1]]))
           return p;
@@ -2489,7 +2506,8 @@ static BROT_INLINE value sp_encode_impl(value text, value vpos,
     nb = k = 0;
   store64(cur + CUR_STAGE_STOP, (uint64_t)stop);
   sp_init(&u, s, stop, i, Bytes_val(Field(vt, BROT_SP_SCAN)),
-          (const value *)&Field(Field(vt, BROT_SP_PUNCT_SAFE), 0));
+          (const value *)&Field(Field(vt, BROT_SP_PUNCT_SAFE), 0),
+          Field(vt, BROT_SP_MARKER));
 
   for (;;) {
     int roomy;

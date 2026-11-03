@@ -84,6 +84,10 @@ type batch_buffers = { free : Bpe.sink list Atomic.t; kept : int Atomic.t }
 type t = {
   algorithm : algorithm;
   normalizer : Normalizer.t option;
+  (* The normalizer encoding runs: [normalizer], or its spaced form in front of
+     a spaced model (see [spaces]), which [spaced_text] says. *)
+  normalize : Normalizer.t option;
+  spaced_text : bool;
   pre_tokenizer : Pre_tokenizer.t option;
   cut : cut;
   (* The walker documents walk and encode with through the fused C kernel, if
@@ -306,8 +310,9 @@ let added_tokens_of algorithm tokens =
 (* Spans index the text as it is, so a walked byte-level pre-tokenizer hands the
    model the raw bytes of a pretoken rather than their encoded form; only a BPE
    model can match its vocabulary against those (it is flipped below), so any
-   other model behind one is handed pieces, which come encoded. *)
-let cut_of ~algorithm = function
+   other model behind one is handed pieces, which come encoded. A rewrite in
+   front of a spaced model writes the spaces as they are. *)
+let cut_of ~algorithm ~spaced = function
   | None -> Whole
   | Some pre -> (
       let matches_bytes =
@@ -319,9 +324,10 @@ let cut_of ~algorithm = function
           Pieces pre
       | Pre_tokenizer.Walk { rewrite = Verbatim; _ } -> Walk pre
       | Pre_tokenizer.Walk { rewrite; _ } ->
-          Rewritten { pre; rewrite = Pre_tokenizer.rewriter rewrite }
+          Rewritten { pre; rewrite = Pre_tokenizer.rewriter ~spaced rewrite }
       | Pre_tokenizer.Segmented { outer; rewrite; inner; _ } ->
-          Segmented { outer; rewrite = Pre_tokenizer.rewriter rewrite; inner }
+          Segmented
+            { outer; rewrite = Pre_tokenizer.rewriter ~spaced rewrite; inner }
       | Pre_tokenizer.Pieces -> Pieces pre)
 
 (* An added token's identifier may lie past the model vocabulary. How many
@@ -365,36 +371,96 @@ let byte_level_pipeline pre =
       | Pre_tokenizer.Walk _ | Pre_tokenizer.Segmented _ -> true
       | Pre_tokenizer.Pieces -> false)
 
+(* A SentencePiece pipeline writes ▁ for every space just before the model: in
+   the last stages of its normalizer when no pre-tokenizer follows
+   ([Normalizer.spaced]), or in a metaspace that does not split
+   ([Pre_tokenizer.marks_spaces]). A BPE model can read the spaces themselves
+   instead ([Bpe.create]'s [spaced]): the pipeline then writes its text with
+   every ▁ a space, which takes no pass to mark and two bytes less for every
+   space. Like the byte-level flip, this is derived from the pipeline and is
+   never a knob of its own. A normalized added token that takes in the white
+   space beside it would take in those spaces too, so its pipeline is left as
+   it is. *)
+let spaces ~normalizer ~pre ~(added_tokens : added_token list) =
+  match pre with
+  | Some pre -> Pre_tokenizer.marks_spaces pre
+  | None ->
+      Option.is_some (Option.bind normalizer Normalizer.spaced)
+      && List.for_all
+           (fun (a : added_token) ->
+             not (a.normalized && (a.lstrip || a.rstrip)))
+           added_tokens
+
+(* What a spaced normalizer leaves out. *)
+let marking = Normalizer.replace ~pattern:" " ~replacement:"\xE2\x96\x81"
+
+(* Whether a BPE model of [vocab] in a pipeline that [spaces] is made spaced. *)
+let spaced_model ~spaces ~byte_level ?continuing_subword_prefix
+    ?end_of_word_suffix vocab =
+  let none = function None | Some "" -> true | Some _ -> false in
+  spaces && (not byte_level)
+  && none continuing_subword_prefix
+  && none end_of_word_suffix && Bpe.spaceable vocab
+
 (* A model built for another pipeline — one just trained, say — is rebuilt on
    the same vocabulary and merges. The constructors that hold those already flip
    the model as they build it, so this only ever fires for the others. *)
-let fit_to_pipeline pre algorithm =
-  match (algorithm, pre) with
-  | Alg_bpe model, _
-    when byte_level_pipeline pre && not (Bpe.get_byte_level model) ->
-      Alg_bpe
-        (Bpe.create
-           ~vocab:(vocab_to_hashtbl (Bpe.get_vocab model))
-           ~merges:(Bpe.get_merges model) ~byte_level:true
-           ~cache_capacity:(Bpe.get_cache_capacity model)
-           ?dropout:(Bpe.get_dropout model) ?unk_token:(Bpe.get_unk_token model)
-           ~fuse_unk:(Bpe.get_fuse_unk model)
-           ~byte_fallback:(Bpe.get_byte_fallback model)
-           ~ignore_merges:(Bpe.get_ignore_merges model)
-           ())
+let fit_to_pipeline ~spaces pre algorithm =
+  match algorithm with
+  | Alg_bpe model ->
+      let byte_level = byte_level_pipeline pre || Bpe.get_byte_level model in
+      let prefix = Bpe.get_continuing_subword_prefix model in
+      let suffix = Bpe.get_end_of_word_suffix model in
+      let spaced =
+        if Bpe.get_spaced model then spaces && not byte_level
+        else
+          spaces
+          && spaced_model ~spaces ~byte_level ?continuing_subword_prefix:prefix
+               ?end_of_word_suffix:suffix
+               (vocab_to_hashtbl (Bpe.get_vocab model))
+      in
+      if
+        byte_level = Bpe.get_byte_level model
+        && spaced = Bpe.get_spaced model
+      then algorithm
+      else
+        Alg_bpe
+          (Bpe.create
+             ~vocab:(vocab_to_hashtbl (Bpe.get_vocab model))
+             ~merges:(Bpe.get_merges model) ~byte_level ~spaced
+             ?continuing_subword_prefix:(if byte_level then None else prefix)
+             ?end_of_word_suffix:(if byte_level then None else suffix)
+             ~cache_capacity:(Bpe.get_cache_capacity model)
+             ?dropout:(Bpe.get_dropout model)
+             ?unk_token:(Bpe.get_unk_token model)
+             ~fuse_unk:(Bpe.get_fuse_unk model)
+             ~byte_fallback:(Bpe.get_byte_fallback model)
+             ~ignore_merges:(Bpe.get_ignore_merges model)
+             ())
   | _ -> algorithm
 
 let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
     ?eos_token ?pad_token ?unk_token algorithm =
-  let algorithm = fit_to_pipeline pre algorithm in
   let given =
     List.filter (fun (a : added_token) -> a.content <> "") added_tokens
   in
   let requested = given @ role_tokens ~bos_token ~eos_token ~pad_token given in
+  let algorithm =
+    fit_to_pipeline
+      ~spaces:(spaces ~normalizer ~pre ~added_tokens:requested)
+      pre algorithm
+  in
+  let spaced =
+    match algorithm with Alg_bpe m -> Bpe.get_spaced m | _ -> false
+  in
+  let spaced_text = spaced && Option.is_none pre in
+  let normalize =
+    if spaced_text then Option.bind normalizer Normalizer.spaced else normalizer
+  in
   let added =
     Added_tokens.make
       ~normalize:
-        (match normalizer with Some n -> Normalizer.apply n | None -> Fun.id)
+        (match normalize with Some n -> Normalizer.apply n | None -> Fun.id)
       (added_tokens_of algorithm requested)
   in
   let token_id token =
@@ -404,7 +470,7 @@ let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
   in
   let pad_id = Option.bind pad_token token_id in
   let token_table, len_table = id_tables algorithm added in
-  let cut = cut_of ~algorithm pre in
+  let cut = cut_of ~algorithm ~spaced pre in
   let fused =
     match (cut, algorithm) with
     | Walk pre, Alg_bpe m when Bpe.fused m ->
@@ -414,6 +480,8 @@ let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
   {
     algorithm;
     normalizer;
+    normalize;
+    spaced_text;
     pre_tokenizer = pre;
     cut;
     fused;
@@ -485,12 +553,20 @@ let bpe ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
   let vocab_tbl =
     match vocab with None -> Hashtbl.create 100 | Some v -> vocab_to_hashtbl v
   in
+  let byte_level = byte_level_pipeline pre in
+  let spaced =
+    spaced_model
+      ~spaces:
+        (spaces ~normalizer ~pre
+           ~added_tokens:(Option.value added_tokens ~default:[]))
+      ~byte_level ?continuing_subword_prefix ?end_of_word_suffix vocab_tbl
+  in
   let algorithm =
     Alg_bpe
       (Bpe.create ~vocab:vocab_tbl
          ~merges:(Option.value merges ~default:[])
-         ~byte_level:(byte_level_pipeline pre) ?cache_capacity ?dropout
-         ?unk_token ?continuing_subword_prefix ?end_of_word_suffix ?fuse_unk
+         ~byte_level ~spaced ?cache_capacity ?dropout ?unk_token
+         ?continuing_subword_prefix ?end_of_word_suffix ?fuse_unk
          ?byte_fallback ?ignore_merges ())
   in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
@@ -683,7 +759,7 @@ let encode_document t sc ?ids32 text ~record =
       else None )
   in
   let normalized raw =
-    match t.normalizer with
+    match t.normalize with
     | Some n -> apply n raw
     | None ->
         ( raw,
@@ -834,22 +910,40 @@ let encode_document t sc ?ids32 text ~record =
       in
       (* An added token is one span of one id, and its token string is the text
          it matched: [lstrip] and [rstrip] take in the white space beside it,
-         which the identifier alone does not describe. *)
-      let literal walked align ~base ~start ~stop ~id =
+         which the identifier alone does not describe. A spaced normalizer
+         leaves the spaces its pipeline marks, so a token matched in its text
+         reports that text marked, as the pipeline writes it: a frame of its own
+         over the marked text. *)
+      let literal ~marked walked align ~base ~start ~stop ~id =
         Ints.add sc.ids id;
-        if record then begin
-          Ints.add sc.span_start start;
-          Ints.add sc.span_stop stop;
-          Ints.add sc.marks (Ints.length sc.ids)
-        end;
-        close ~literal:true ~walked ~place:verbatim ~rewrite:None ~base align
+        if record then
+          if marked then begin
+            let source = slice walked start stop in
+            let walked = Normalizer.apply marking source in
+            let rewrite =
+              Some
+                (Run.Deferred { normalizer = marking; source; alignment = None })
+            in
+            Ints.add sc.span_start 0;
+            Ints.add sc.span_stop (String.length walked);
+            Ints.add sc.marks (Ints.length sc.ids);
+            close ~literal:true ~walked ~place:(Run.Shifted start) ~rewrite
+              ~base align
+          end
+          else begin
+            Ints.add sc.span_start start;
+            Ints.add sc.span_stop stop;
+            Ints.add sc.marks (Ints.length sc.ids);
+            close ~literal:true ~walked ~place:verbatim ~rewrite:None ~base
+              align
+          end
       in
       let stretch ~base raw =
         let norm, align = normalized raw in
         let opens =
           if base > 0 then continuing
           else
-            match t.normalizer with
+            match t.normalize with
             | None -> opening
             | Some n -> lazy (opens_document n norm align raw)
         in
@@ -862,7 +956,8 @@ let encode_document t sc ?ids32 text ~record =
               scanning := false
           | Some (start, finish, id) ->
               segment norm align ~base ~start:!pos ~stop:start ~opens;
-              literal norm align ~base ~start ~stop:finish ~id;
+              literal ~marked:t.spaced_text norm align ~base ~start
+                ~stop:finish ~id;
               pos := finish
         done
       in
@@ -877,7 +972,7 @@ let encode_document t sc ?ids32 text ~record =
               scanning := false
           | Some (start, finish, id) ->
               if !pos < start then stretch ~base:!pos (slice text !pos start);
-              literal text
+              literal ~marked:false text
                 (if record then Some (Lazy.force raw_align) else None)
                 ~base:0 ~start ~stop:finish ~id;
               pos := finish
@@ -2124,7 +2219,7 @@ let parse_merge = function
       | _ -> failwith "Invalid merge string format")
   | _ -> failwith "Invalid merge entry"
 
-let alg_of_json ~byte_level mj =
+let alg_of_json ~byte_level ~spaces mj =
   let mem name = json_mem name mj in
   let str name = json_string_or_null (mem name) in
   let flag name = match mem name with Jsont.Bool (b, _) -> b | _ -> false in
@@ -2135,12 +2230,17 @@ let alg_of_json ~byte_level mj =
       let dropout =
         match mem "dropout" with Jsont.Number (f, _) -> Some f | _ -> None
       in
+      let vocab = vocab_to_hashtbl vocab_list in
+      let continuing_subword_prefix = str "continuing_subword_prefix" in
+      let end_of_word_suffix = str "end_of_word_suffix" in
+      let spaced =
+        spaced_model ~spaces ~byte_level ?continuing_subword_prefix
+          ?end_of_word_suffix vocab
+      in
       Alg_bpe
-        (Bpe.create
-           ~vocab:(vocab_to_hashtbl vocab_list)
-           ~merges ~byte_level ?dropout ?unk_token:(str "unk_token")
-           ?continuing_subword_prefix:(str "continuing_subword_prefix")
-           ?end_of_word_suffix:(str "end_of_word_suffix")
+        (Bpe.create ~vocab ~merges ~byte_level ~spaced ?dropout
+           ?unk_token:(str "unk_token") ?continuing_subword_prefix
+           ?end_of_word_suffix
            ~fuse_unk:(flag "fuse_unk") ~byte_fallback:(flag "byte_fallback")
            ~ignore_merges:(flag "ignore_merges") ())
   | "WordPiece" ->
@@ -2193,13 +2293,15 @@ let of_json json =
       json_result_to_option Post_processor.of_json (mem "post_processor")
     in
     let decoder = json_result_to_option Decoder.of_json (mem "decoder") in
-    let algorithm =
-      alg_of_json ~byte_level:(byte_level_pipeline pre) (mem "model")
-    in
     let added_tokens =
       match mem "added_tokens" with
       | Jsont.Array (l, _) -> List.map added_token_of_json l
       | _ -> []
+    in
+    let algorithm =
+      alg_of_json ~byte_level:(byte_level_pipeline pre)
+        ~spaces:(spaces ~normalizer ~pre ~added_tokens)
+        (mem "model")
     in
     Ok (create ?normalizer ?pre ?post ?decoder ~added_tokens algorithm)
   with

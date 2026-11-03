@@ -1511,7 +1511,7 @@ let span_chunk = 1024
    nothing, which leaves the text as it is. Prepending the marker before or
    after replacing the spaces gives the same text, the marker holding no
    space. *)
-let rewriter rewrite =
+let rewriter ?(spaced = false) rewrite =
   match rewrite with
   | Verbatim -> fun ~first:_ _ -> None
   | Prefix_space ->
@@ -1521,9 +1521,14 @@ let rewriter rewrite =
           Some space
         else None
   | Space_marker { marker; prepend } -> (
-      let mark = Normalizer.replace ~pattern:" " ~replacement:marker in
+      (* Spaced, the text keeps its spaces and the marker becomes one. *)
+      let mark =
+        if spaced then Normalizer.replace ~pattern:marker ~replacement:" "
+        else Normalizer.replace ~pattern:" " ~replacement:marker
+      in
       let mark_and_prepend =
-        Normalizer.sequence [ mark; Normalizer.prepend marker ]
+        Normalizer.sequence
+          [ mark; Normalizer.prepend (if spaced then " " else marker) ]
       in
       let unmarked text =
         String.unsafe_get text 0 <> ' '
@@ -1541,6 +1546,10 @@ let rewriter rewrite =
             if text = "" then None
             else if unmarked text && Lazy.force first then Some mark_and_prepend
             else Some mark)
+
+let marks_spaces = function
+  | Metaspace { replacement = "\xe2\x96\x81"; split = false; _ } -> true
+  | _ -> false
 
 let pre_tokenize_fixed_length ~length text =
   if length <= 0 || String.length text = 0 then []

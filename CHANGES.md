@@ -2951,6 +2951,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- SentencePiece BPE models behind Llama's normalizer or a metaspace that does
+  not split read the text with its spaces in place of `▁`, so encoding no
+  longer copies the text to mark them: Llama and Mistral take 29% fewer
+  instructions and 30% fewer cache misses per byte of OpenWebText, with the
+  same ids, tokens and offsets.
 - `encode_batch_ids` with GPT-2's pattern takes 25% fewer instructions, 83%
   fewer mispredicted branches and 60% fewer cache misses per byte of
   OpenWebText, and SentencePiece models 31% fewer mispredictions: spans are
