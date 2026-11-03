@@ -1130,11 +1130,42 @@ let starts_unblocked () =
   | Ok None -> fail "the status is lost"
   | Error why -> fail why
 
+(* A shell that records its process, signals its parent and sleeps: the
+   handler's exception abandons the wait. The signal is held until the wait,
+   however early the shell sends it. *)
+let abandons () =
+  if Sys.win32 then skip ~reason:"Windows has no SIGUSR1" ();
+  let pid_file = Filename.temp_file "tolk" ".pid"
+  and script = Filename.temp_file "tolk" ".sh"
+  and out = Filename.temp_file "tolk" ".out" in
+  Out_channel.with_open_bin script (fun oc ->
+      Printf.fprintf oc "echo $$ > %s\nkill -USR1 $PPID\nexec sleep 30\n"
+        (Filename.quote pid_file));
+  let handler = Sys.Signal_handle (fun _ -> raise Exit) in
+  let previous = Sys.signal Sys.sigusr1 handler in
+  Fun.protect
+    ~finally:(fun () -> Sys.set_signal Sys.sigusr1 previous)
+    (fun () ->
+      raises Exit (fun () ->
+          run_program ~stdin:script ~stdout:out ~stderr:out "sh" []));
+  let pid =
+    int_of_string
+      (String.trim (In_channel.with_open_bin pid_file In_channel.input_all))
+  in
+  raises_match
+    (function Unix.Unix_error (ESRCH, _, _) -> true | _ -> false)
+    (fun () -> Unix.kill pid 0);
+  List.iter Sys.remove [ pid_file; script; out ]
+
 let programs =
   group "programs"
     [
       test "run_program starts the program with no signal blocked"
         starts_unblocked;
+      test
+        "run_program kills and reaps a program whose wait a handler's \
+         exception cuts short"
+        abandons;
       test "system is the output of a command" (fun () ->
           equal string "hello" (system "echo hello"));
       test "system splits a command at runs of white space" (fun () ->

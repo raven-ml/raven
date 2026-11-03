@@ -112,14 +112,17 @@ let compile_files (prog, args) srcs =
   let rsp = Filename.temp_file "tolk" ".rsp" in
   let dir = Filename.temp_dir "tolk" "" in
   let input i = Filename.concat (Filename.concat dir (string_of_int i)) "-" in
+  (* A Clang killed mid-compile leaves its own temporary files beside an
+     input, so each directory is emptied of whatever it holds. *)
   let remove () =
     let rm f = if Sys.file_exists f then Sys.remove f in
-    List.iteri
-      (fun i _ ->
-        rm (input i);
-        rm (input i ^ ".o");
-        Sys.rmdir (Filename.dirname (input i)))
-      srcs;
+    let rm_dir d =
+      if Sys.file_exists d then begin
+        Array.iter (fun f -> rm (Filename.concat d f)) (Sys.readdir d);
+        Sys.rmdir d
+      end
+    in
+    List.iteri (fun i _ -> rm_dir (Filename.dirname (input i))) srcs;
     Sys.rmdir dir;
     List.iter rm [ out; err; rsp ]
   in

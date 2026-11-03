@@ -782,6 +782,62 @@ let create_process prog argv input output errors =
   if Sys.win32 then Unix.create_process prog argv input output errors
   else spawn prog argv [| input; output; errors |]
 
+(* The calling thread's signals, blocked but a fault's and restored, by the
+   stubs Worker spawns its domains with. *)
+external block : unit -> (int64[@unboxed])
+  = "tolk_worker_block_byte" "tolk_worker_block"
+[@@noalloc]
+
+external restore : (int64[@unboxed]) -> unit
+  = "tolk_worker_restore_byte" "tolk_worker_restore"
+
+external reraise : exn -> 'a = "%reraise"
+
+(* The program [pid] waited for. Signals stay blocked but in the wait, where
+   the thread has the caller's mask [outer]: a handler then runs only while
+   the program runs, and its exception abandons the program, which is killed
+   and reaped, signals blocked, before the exception goes on, so that it
+   writes nothing after the caller has moved on and holds none of the
+   caller's descriptors. Once the wait returns, [reaped] is set and signals
+   blocked before any poll point: a pid reaped is never signalled, though
+   Windows, which has no masks, can still run a handler there. *)
+let await outer pid =
+  let reaped = ref false in
+  let rec wait () =
+    match Unix.waitpid [] pid with
+    | _, status ->
+        reaped := true;
+        ignore (block ());
+        Some status
+    | exception Unix.Unix_error (EINTR, _, _) -> wait ()
+    | exception Unix.Unix_error (ECHILD, _, _) ->
+        reaped := true;
+        ignore (block ());
+        None
+  in
+  let rec reap () =
+    match Unix.waitpid [] pid with
+    | _ -> ()
+    | exception Unix.Unix_error (EINTR, _, _) -> reap ()
+    | exception Unix.Unix_error _ -> ()
+  in
+  match
+    restore outer;
+    wait ()
+  with
+  | status ->
+      restore outer;
+      status
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      ignore (block ());
+      if not !reaped then begin
+        (try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ());
+        reap ()
+      end;
+      restore outer;
+      Printexc.raise_with_backtrace e bt
+
 (* The program runs as a process of this one, with no shell between, waited for
    with the runtime released: [Sys.command] goes through the C library's
    [system], which macOS runs one at a time, so domains would wait for each
@@ -800,7 +856,7 @@ let run_program ?stdin ~stdout ~stderr prog args =
     opened := fd :: !opened;
     fd
   in
-  let started =
+  let start () =
     Fun.protect ~finally:(fun () -> List.iter Unix.close !opened) @@ fun () ->
     let input =
       match stdin with
@@ -818,13 +874,15 @@ let run_program ?stdin ~stdout ~stderr prog args =
     | exception Unix.Unix_error (e, _, _) ->
         Error (prog ^ ": " ^ Unix.error_message e)
   in
-  let rec wait pid =
-    match Unix.waitpid [] pid with
-    | _, status -> Some status
-    | exception Unix.Unix_error (EINTR, _, _) -> wait pid
-    | exception Unix.Unix_error (ECHILD, _, _) -> None
-  in
-  Result.map wait started
+  let outer = block () in
+  match start () with
+  | Ok pid -> Ok (await outer pid)
+  | Error _ as e ->
+      restore outer;
+      e
+  | exception e ->
+      restore outer;
+      reraise e
 
 let system ?input cmd =
   let start = Unix.gettimeofday () in

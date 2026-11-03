@@ -278,7 +278,12 @@ val run_program :
     emptied first, in order when they are the same file. The files can be
     removed while another process holds them, which on Windows a process started
     meanwhile does. It starts with no signal blocked, whatever the calling
-    thread blocks.
+    thread blocks. Outside Windows, the calling thread's signals are held
+    while the program starts and after it ends, and handled only while it is
+    waited for: a handler's exception there kills the program and waits for
+    it to end before the exception goes on. On Windows, which has no signal
+    masks, a handler can run while the program starts or once it has ended;
+    only one that runs in the wait kills it.
 
     It is [Error] naming [prog] with the reason if [prog] cannot start. Raises
     [Unix.Unix_error] if a file cannot be opened. *)

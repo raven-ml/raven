@@ -969,6 +969,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A host compile abandoned by an exception, as a test's time limit or
+  Ctrl-C raises, ends its Clang and removes its files before the exception
+  goes on, where Clang ran on and the cleanup raised `Fun.Finally_raised`
+  ("Directory not empty") in its place (`Helpers.run_program`).
 - A kernel that calls a function on an element of each point compiles when
   optimised: no axis a call's argument reads is upcast or padded, which made
   a vector pointer Clang rejects, or ran the call on a padded point

@@ -311,6 +311,67 @@ let batches =
                     ])));
     ]
 
+(* A compile abandoned
+
+   A stand-in for Clang: asked its version or what it runs, it states itself as
+   its compiler proper. Run as that, it records its process, leaves a file of its
+   own beside its first input, as Clang leaves its temporary object, signals
+   its parent and sleeps, so that the compile is abandoned while it runs. *)
+let stand_in ~pid_file =
+  Printf.sprintf
+    {|#!/bin/sh
+if [ "$1" != "-cc1" ]; then
+  echo "clang version 19.0.0" >&2
+  printf ' "%%s" "-cc1" "-o" "-" "-"\n' "$0" >&2
+  exit 0
+fi
+for a; do rsp=$a; done
+input=$(head -n 1 "${rsp#@}" | tr -d '"')
+echo $$ > %s
+: > "$(dirname "$input")/-.o-temporary"
+kill -USR1 $PPID
+exec sleep 30
+|}
+    (Filename.quote pid_file)
+
+let abandoned =
+  test "a compile abandoned by an exception leaves its Clang ended and no files"
+    (fun () ->
+      if Sys.win32 then skip ~reason:"a POSIX shell stands in for Clang" ();
+      let dir = Filename.temp_dir "stand_in" "" in
+      let pid_file = Filename.concat dir "pid"
+      and clang = Filename.concat dir "clang"
+      and tmp = Filename.concat dir "tmp" in
+      Out_channel.with_open_gen [ Open_wronly; Open_creat ] 0o755 clang
+        (fun oc -> output_string oc (stand_in ~pid_file));
+      Unix.mkdir tmp 0o700;
+      let saved = Filename.get_temp_dir_name () in
+      let handler = Sys.Signal_handle (fun _ -> raise Exit) in
+      let previous = Sys.signal Sys.sigusr1 handler in
+      Fun.protect
+        ~finally:(fun () ->
+          Sys.set_signal Sys.sigusr1 previous;
+          Filename.set_temp_dir_name saved)
+        (fun () ->
+          Filename.set_temp_dir_name tmp;
+          raises Exit (fun () ->
+              Setting.context
+                [ B (Setting.cc, clang); B (Setting.ccache, false) ]
+                (fun () ->
+                  Compiler.compile_all
+                    (Compiler_cpu.clang "x86_64,x86-64")
+                    [ increment ])));
+      let pid =
+        int_of_string
+          (String.trim (In_channel.with_open_bin pid_file In_channel.input_all))
+      in
+      raises_match
+        (function Unix.Unix_error (ESRCH, _, _) -> true | _ -> false)
+        (fun () -> Unix.kill pid 0);
+      equal (array string) [||] (Sys.readdir tmp);
+      List.iter Sys.remove [ pid_file; clang ];
+      List.iter Sys.rmdir [ tmp; dir ])
+
 (* tinygrad's tests *)
 
 let tinygrad =
@@ -691,6 +752,7 @@ let () =
        [
          objects;
          batches;
+         abandoned;
          tinygrad;
          execution;
          features;
