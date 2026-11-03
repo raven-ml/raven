@@ -161,14 +161,16 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Raven:** `lower_arith.ml` (`lift`, `store`, `int_unary`, `int_pow`,
   `int_binary`).
 - **Differs:** signed `Neg`, `Abs`, `Add`, `Sub`, `Mul`, `Fma` and integer
-  `Pow` compute on the unsigned bit pattern: `uint32` for widths below 32 bits
-  (C, Metal and CUDA promote them to `int`, whose products overflow), the
-  unsigned type of the width otherwise. tinygrad computes in the signed type,
-  whose overflow C leaves undefined, and so does its `Pow` where it multiplies
-  out a constant exponent (`uop/symbolic.py:16`, `simplify_pow`). An integer
-  `Pow` is tolk's `Pow` of the unsigned patterns, which squares over the
-  exponent's bits (`codegen/decomp/transcendental.py:267`, `xpow_int`), and a
-  negative exponent's 0, 1 or -1 is selected on the signed values.
+  `Pow` compute on the unsigned bit pattern: `uint32` for widths below 32
+  bits, the unsigned type of the width otherwise. tinygrad computes in the
+  signed type, whose overflow C leaves undefined, and so does its `Pow` where
+  it multiplies out a constant exponent (`uop/symbolic.py:16`,
+  `simplify_pow`). An integer `Pow` is tolk's `Pow` of the unsigned patterns,
+  which squares over the exponent's bits
+  (`codegen/decomp/transcendental.py:267`, `xpow_int`), and a negative
+  exponent's 0, 1 or -1 is selected on the signed values; tinygrad's `pow`
+  refuses a negative constant exponent of an integer
+  (`mixin/elementwise.py:563`).
 - **nx:** `prog.mli`, `binary`: integers wrap; `Pow` of a negative exponent is
   0, but 1 for a base of 1 and `±1` for a base of -1.
 - **Class:** exact.
