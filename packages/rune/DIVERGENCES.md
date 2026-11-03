@@ -100,8 +100,7 @@ The reference is JAX's `jax.lax` and `jax.vmap` at `jax-v0.12.0.1`
 rune lowers each nx kernel operation to tolk's UOps (`lower*.ml`). Where
 tinygrad's `Tensor` builds the same operation, the lowering builds tinygrad's
 decomposition if it computes what nx states. This section lists every place
-where it builds something else, or builds what tinygrad has no source for,
-except these, not yet recorded: the transforms (`lower_fft.ml`).
+where it builds something else, or builds what tinygrad has no source for.
 
 An entry is admitted for one of four reasons only:
 
@@ -1074,3 +1073,27 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   product is within its bound of the exact one` on the host and `Jit_gpu ›
   products › an MXFP4 product is within its bound of the exact one` on a GPU,
   each over `bfloat16` operands and scale bytes up to 255.
+
+### L10. Fourier transforms by prime factors
+
+- **Reference:** none.
+- **Raven:** `lower_fft.ml` (`twiddle`, `table`, `line`, `butterfly`,
+  `dense`, `bluestein`, `c2c`, `r2c`, `c2r`).
+- **No source:** a line of `n` points is `p`-point transforms of `n / p`
+  interleaved lines, `p` its least prime factor, then twiddles and the
+  shorter lines (Cooley and Tukey). A 2-point stage is a butterfly, a `p` up
+  to 250 a sum over the `p × p` twiddle table, and a larger `p` Bluestein's
+  convolution over the least power of two at least `2p - 1`. Each stage is
+  stored apart: one kernel per prime factor. A twiddle's parts are sines of
+  arguments at most `π/2`, from `4k = q n + s`, exact at whole quarter turns.
+  `r2c` transforms its points as complex numbers along the last axis first
+  and keeps bins 0 to `n/2`. `c2r` completes the bins by `conj X[n - k]`,
+  bin 0's and an even `n`'s bin `n/2`'s imaginary parts set to `+0.`, and
+  keeps the real parts. An infinite point makes NaN results where it enters.
+- **nx:** `nx_kernel.mli`, `direction`, `c2c`, `r2c`, `c2r`.
+- **Class:** stated bound: `lower_fft.mli`'s.
+- **Reason:** (b).
+- **Pinned by:** `Lower_fft › transforms › complex transforms hold their
+  bound`, `› real transforms hold their bound`, `› real inverse transforms
+  hold their bound`, which cover transforms of no point, odd and mixed
+  factors and a prime factor above 250.
