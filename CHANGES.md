@@ -926,6 +926,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   On an RTX 5000 Ada, gpt-oss-20b's 512-token prefill takes 0.45 s from 1.19,
   an MXFP4 product of 64 bfloat16 rows past L2 1.5 ms from 6.0; of float32
   rows 1.3 times slower, and on the host 2 to 5 times slower.
+- Compiling allocates 7 to 27% less on rune's compile bench, float64
+  `Nx.betaincinv`'s gradient 382 M words against 524 M: `Op.Set` holds its
+  operations in two words, and `Ops.graph_rewrite`, `Ops.toposort` and
+  `Ops.Nodes` key their nodes by id in int arrays. Outputs are unchanged.
 - A kernel's stores, calls and code in the target's language
   (`Op.Set.effectful`) run as often, and in the order, they are written: two
   loops merge (`Simplify.pm_simplify_ranges`) only where each runs as often

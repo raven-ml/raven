@@ -104,12 +104,8 @@ raven / llama.cpp b12048 Vulkan:
   object per kernel (`clang -c 0/k.c 1/k.c ...`), keeps per-kernel cache
   keys and Worker.map's balance, once each object is shown a function of its
   source alone; float64 sin/cos inline the full Payne–Hanek reduction (40-170
-  KB kernels); structural comparisons in the rewriter (~6% before patterns
-  tested their operations as a set): the polymorphic `List.mem` left in
-  ops.ml on operation lists (1549, 2208, 2220, 2231, 2319) and dtype lists
-  (1503, 1609, 1719, 2189, 2244), until a profile clears them; parallel
-  compile saturates at ~4 domains (a shard lock per node, domains spawned
-  per `Worker.map`); Metal builds run one at a time;
+  KB kernels); parallel compile saturates at ~4 domains (a shard lock per
+  node, domains spawned per `Worker.map`); Metal builds run one at a time;
   a 5 KB r_32_32 kernel, max |x| over `where (i >= j) x xᵀ` at 32x32,
   renders as 32-lane float selects of transposed loads that clang -O2
   takes over 2 min on

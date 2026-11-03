@@ -155,6 +155,37 @@ type bufferize_opts = {
   keep : keep;
 }
 
+(* Sets and tables of nodes keyed by their ids with open addressing in an int
+   array of [2^bits] slots: a lookup reads its node once and probes ints, and
+   growing reads no node, where a hash table of nodes reads every node it
+   rehashes. Multiplying an id by an odd constant and keeping the top bits
+   spreads ids that are close, as a graph's nodes are, over the whole array. *)
+module Ids = struct
+  let free = -1
+  let mix = 0x3C6EF372FE94F82B
+  let slot bits id = (id * mix) lsr (Sys.int_size - bits)
+
+  (* The slot holding [id], or the free slot where it goes. *)
+  let rec probe keys mask id i =
+    let k = Array.unsafe_get keys i in
+    if k = id || k = free then i else probe keys mask id ((i + 1) land mask)
+
+  let index keys bits id =
+    if bits = 0 then -1
+    else probe keys (Array.length keys - 1) id (slot bits id)
+
+  let held keys i = i >= 0 && Array.unsafe_get keys i <> free
+
+  (* The bits of the least array that holds [n] ids at most three quarters
+     full. *)
+  let bits_for n =
+    let rec go b = if 3 lsl b >= 4 * n then b else go (b + 1) in
+    go 3
+
+  (* Puts [id], absent, in [keys]; there is a free slot. *)
+  let add keys bits id = Array.unsafe_set keys (index keys bits id) id
+end
+
 type wmma_axis = (Axis_type.t * int list) * int
 
 type wmma = {
@@ -200,7 +231,8 @@ and memos = {
 and nodes = {
   order : t list;
   cardinal : int;
-  ids : (int, unit) Hashtbl.t option;
+  ids : int array;
+  bits : int;
 }
 
 and sint = Int of int | Sym of t
@@ -567,21 +599,23 @@ let dedup_nodes l = Helpers.dedup (module Key) l
 module Nodes = struct
   type t = nodes
 
+  (* A set of more than 8 nodes also holds their ids, in [Ids]' slots. *)
   let of_list order =
     let cardinal = List.length order in
-    let ids =
-      if cardinal <= 8 then None
-      else
-        let ids = Hashtbl.create cardinal in
-        List.iter (fun u -> Hashtbl.replace ids u.id ()) order;
-        Some ids
-    in
-    { order; cardinal; ids }
+    if cardinal <= 8 then { order; cardinal; ids = [||]; bits = 0 }
+    else
+      let bits = Ids.bits_for cardinal in
+      let ids = Array.make (1 lsl bits) Ids.free in
+      List.iter
+        (fun u ->
+          if not (Ids.held ids (Ids.index ids bits u.id)) then
+            Ids.add ids bits u.id)
+        order;
+      { order; cardinal; ids; bits }
 
   let mem u s =
-    match s.ids with
-    | Some ids -> Hashtbl.mem ids u.id
-    | None -> List.memq u s.order
+    if s.bits = 0 then List.memq u s.order
+    else Ids.held s.ids (Ids.index s.ids s.bits u.id)
 
   let to_list s = s.order
   let fold f s acc = List.fold_left (fun acc u -> f u acc) acc s.order
@@ -770,6 +804,91 @@ let pp_estimates ppf e = Format.pp_print_string ppf (repr_estimates e)
 
 type calls = Enter | Skip
 
+(* A node no graph holds. Making an array of more than 256 words filled with a
+   young value forces a minor collection, so the tables and stacks below fill
+   theirs with immediate values or with this node, made once at initialisation
+   and old by the time a walk needs such an array. *)
+let placeholder = node Op.Noop [] No_arg Dtype.Void (-2)
+
+(* A table from nodes to values for one walk or rewrite, in [Ids]' slots.
+   Nothing iterates it, so its order is no one's. [empty], which fills the free
+   slots, is an immediate value or [placeholder]. *)
+module Visit = struct
+  type node = t
+
+  type 'a t = {
+    mutable keys : int array;
+    mutable values : 'a array;
+    mutable count : int;
+    mutable bits : int;
+    empty : 'a;
+    valued : bool;
+  }
+
+  (* A table starts with no arrays, as most of a pass's tables hold few nodes
+     or none. A set keeps no values. *)
+  let create empty =
+    { keys = [||]; values = [||]; count = 0; bits = 0; empty; valued = true }
+
+  let set () =
+    {
+      keys = [||];
+      values = [||];
+      count = 0;
+      bits = 0;
+      empty = ();
+      valued = false;
+    }
+
+  let index t id = Ids.index t.keys t.bits id
+  let held t i = Ids.held t.keys i
+
+  (* Doubles the arrays. *)
+  let grow t =
+    let keys = t.keys and values = t.values in
+    let bits = if t.bits = 0 then 3 else t.bits + 1 in
+    let size = 1 lsl bits in
+    let nkeys = Array.make size Ids.free in
+    let nvalues = if t.valued then Array.make size t.empty else [||] in
+    for i = 0 to Array.length keys - 1 do
+      let k = Array.unsafe_get keys i in
+      if k <> Ids.free then begin
+        let j = Ids.probe nkeys (size - 1) k (Ids.slot bits k) in
+        Array.unsafe_set nkeys j k;
+        if t.valued then Array.unsafe_set nvalues j (Array.unsafe_get values i)
+      end
+    done;
+    t.keys <- nkeys;
+    t.values <- nvalues;
+    t.bits <- bits
+
+  let mem t (u : node) = held t (index t u.id)
+
+  (* The value at a held slot. *)
+  let value t i = if t.valued then Array.unsafe_get t.values i else t.empty
+
+  (* The value of [u], or [default] when it has none. *)
+  let find t (u : node) ~default =
+    let i = index t u.id in
+    if held t i then value t i else default
+
+  let replace t (u : node) x =
+    let i = index t u.id in
+    if held t i then (if t.valued then Array.unsafe_set t.values i x)
+    else begin
+      (* At most three quarters full. *)
+      let i =
+        if 4 * (t.count + 1) <= 3 * Array.length t.keys then i
+        else (
+          grow t;
+          index t u.id)
+      in
+      Array.unsafe_set t.keys i u.id;
+      if t.valued then Array.unsafe_set t.values i x;
+      t.count <- t.count + 1
+    end
+end
+
 (* A stack of entries, each a node, a stage and a second node, held in arrays
    that double as they fill: a walk pushes an entry per node it visits, and
    pushing allocates nothing. *)
@@ -783,27 +902,28 @@ module Work = struct
     mutable len : int;
   }
 
-  let create u s =
+  let create s =
     {
-      nodes = Array.make 16 u;
+      nodes = Array.make 16 placeholder;
       stages = Array.make 16 s;
-      others = Array.make 16 u;
+      others = Array.make 16 placeholder;
       len = 0;
     }
 
   let is_empty w = w.len = 0
   let length w = w.len
 
-  let grow w a =
-    let b = Array.make (2 * Array.length a) (Array.unsafe_get a 0) in
+  (* [fill] is [placeholder] or a stage, which is immediate. *)
+  let grow w a fill =
+    let b = Array.make (2 * Array.length a) fill in
     Array.blit a 0 b 0 w.len;
     b
 
   let push w u s o =
     if w.len = Array.length w.nodes then begin
-      w.nodes <- grow w w.nodes;
-      w.stages <- grow w w.stages;
-      w.others <- grow w w.others
+      w.nodes <- grow w w.nodes placeholder;
+      w.stages <- grow w w.stages s;
+      w.others <- grow w w.others placeholder
     end;
     Array.unsafe_set w.nodes w.len u;
     Array.unsafe_set w.stages w.len s;
@@ -821,8 +941,8 @@ end
    its sources are done and it is. A node pushed twice before it is done is
    finished at its first pop with the flag set. *)
 let toposort ?gate ~calls root =
-  let cache = Tbl.create 64 and order = ref [] in
-  let work = Work.create root false in
+  let cache = Visit.set () and order = ref [] in
+  let work = Work.create false in
   let rec push_srcs = function
     | [] -> ()
     | s :: rest ->
@@ -833,7 +953,7 @@ let toposort ?gate ~calls root =
   while not (Work.is_empty work) do
     let node = Work.node work and visited = Work.stage work in
     Work.drop work;
-    if not (Tbl.mem cache node) then
+    if not (Visit.mem cache node) then
       if not visited then
         begin if match gate with None -> true | Some g -> g node then begin
           Work.push work node true node;
@@ -843,14 +963,14 @@ let toposort ?gate ~calls root =
         end
         end
       else begin
-        Tbl.replace cache node ();
+        Visit.replace cache node ();
         order := node :: !order
       end
   done;
   List.rev !order
 
 let topovisit root f cache =
-  let work = Work.create root false in
+  let work = Work.create false in
   let rec push_srcs = function
     | [] -> ()
     | s :: rest ->
@@ -2930,22 +3050,30 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
     | Around_sources { before; after } -> (Some after, Some before)
   in
   let walk = pass = Once in
-  let replaced = Tbl.create 64 in
-  let bpm_cache = Tbl.create (if Option.is_some bpm then 64 else 1) in
+  (* What each node stands for once rewritten. In the fixed-point rewrite a
+     node on the stack and not yet rewritten stands for [placeholder]. *)
+  let replaced = Visit.create placeholder in
+  let bpm_cache = Visit.create None in
   let bpm_rewrite x =
-    match Tbl.find_opt bpm_cache x with
-    | Some r -> r
-    | None ->
-        let r = Pattern_matcher.rewrite (Option.get bpm) ctx x in
-        Tbl.replace bpm_cache x r;
-        r
+    let i = Visit.index bpm_cache x.id in
+    if Visit.held bpm_cache i then Visit.value bpm_cache i
+    else
+      let r = Pattern_matcher.rewrite (Option.get bpm) ctx x in
+      Visit.replace bpm_cache x r;
+      r
   in
   let pm_rewrite x =
     match pm with None -> None | Some pm -> Pattern_matcher.rewrite pm ctx x
   in
   let body_skipped n = n.op = Op.Call && calls = Skip in
   let rest_of n = if body_skipped n then drop 1 n.src else n.src in
-  let now x = Option.value (Tbl.find_opt replaced x) ~default:x in
+  let now x =
+    let r = Visit.find replaced x ~default:x in
+    if r == placeholder then x else r
+  in
+  let is_replaced x =
+    Visit.find replaced x ~default:placeholder != placeholder
+  in
   let rec unchanged = function
     | [] -> true
     | x :: rest -> now x == x && unchanged rest
@@ -2962,21 +3090,21 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
   if walk then begin
     (* A single pass: a node rewritten on the way down is not entered, and one
        rewritten on the way up is not rewritten again. *)
-    let work = Work.create root false in
+    let work = Work.create false in
     let rec push_srcs = function
       | [] -> ()
       | x :: rest ->
           push_srcs rest;
-          if not (Tbl.mem replaced x) then Work.push work x false x
+          if not (Visit.mem replaced x) then Work.push work x false x
     in
     Work.push work root false root;
     while not (Work.is_empty work) do
       let n = Work.node work and processed = Work.stage work in
       Work.drop work;
-      if not (Tbl.mem replaced n) then
+      if not (Visit.mem replaced n) then
         if not processed then
           begin match if Option.is_some bpm then bpm_rewrite n else None with
-          | Some r -> Tbl.replace replaced n r
+          | Some r -> Visit.replace replaced n r
           | None ->
               Work.push work n true n;
               push_srcs (rest_of n)
@@ -2986,9 +3114,9 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
           let new_n =
             match pm_rewrite new_n with Some r -> r | None -> new_n
           in
-          Tbl.replace replaced n new_n
+          Visit.replace replaced n new_n
     done;
-    Option.value (Tbl.find_opt replaced root) ~default:root
+    now root
   end
   else begin
     (* Each entry is a node, a stage and the node it currently stands for. Down:
@@ -2997,21 +3125,26 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
        node becomes whatever its rewrite became. An entry whose dependency is
        not done waits for it instead of spinning. *)
     let limit = Setting.value Setting.rewrite_stack_limit in
-    let work = Work.create root `Down in
-    let on_stack = Tbl.create 64 and waitlist = Tbl.create 16 in
+    let work = Work.create `Down in
+    let waitlist = Visit.create [] in
     let wait dep entry =
-      Tbl.replace waitlist dep
-        (entry :: Option.value (Tbl.find_opt waitlist dep) ~default:[])
+      Visit.replace waitlist dep (entry :: Visit.find waitlist dep ~default:[])
+    in
+    (* The entries waiting on a node, pushed in the order they began to wait:
+       the list holds the last first. *)
+    let rec resume = function
+      | [] -> ()
+      | (n, stage, new_n) :: earlier ->
+          resume earlier;
+          Work.push work n stage new_n
     in
     let finish n r =
-      Tbl.replace replaced n r;
-      match Tbl.find_opt waitlist n with
-      | Some waiting ->
-          Tbl.remove waitlist n;
-          List.iter
-            (fun (n, stage, new_n) -> Work.push work n stage new_n)
-            (List.rev waiting)
-      | None -> ()
+      Visit.replace replaced n r;
+      match Visit.find waitlist n ~default:[] with
+      | [] -> ()
+      | waiting ->
+          Visit.replace waitlist n [];
+          resume waiting
     in
     (* A node rewritten bottom-up to a fixed point; the set of the nodes it went
        through is made only when it moves. *)
@@ -3043,17 +3176,25 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
       | [] -> ()
       | x :: rest ->
           push_down rest;
-          if not (Tbl.mem on_stack x) then begin
+          if not (Visit.mem replaced x) then begin
             Work.push work x `Down x;
-            Tbl.replace on_stack x ()
+            Visit.replace replaced x placeholder
           end
     in
-    let rec pending = function
-      | [] -> None
-      | x :: rest -> if Tbl.mem replaced x then pending rest else Some x
+    (* One lookup of each source: the first not yet replaced, or whether the
+       replacements are the sources themselves. *)
+    let rec scan same = function
+      | [] -> if same then `Same else `Changed
+      | x :: rest ->
+          let i = Visit.index replaced x.id in
+          let r =
+            if Visit.held replaced i then Visit.value replaced i
+            else placeholder
+          in
+          if r == placeholder then `Wait x else scan (same && r == x) rest
     in
     Work.push work root `Down root;
-    Tbl.replace on_stack root ();
+    Visit.replace replaced root placeholder;
     while not (Work.is_empty work) do
       if Work.length work > limit then
         invalid_arg
@@ -3062,7 +3203,7 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
       and stage = Work.stage work
       and new_n = Work.other work in
       Work.drop work;
-      if not (Tbl.mem replaced n) then
+      if not (is_replaced n) then
         match stage with
         | `Down -> (
             match fixed_point n with
@@ -3071,26 +3212,24 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
                 Work.push work n `Rebuild new_n;
                 push_down (rest_of new_n))
         | `Rebuild -> (
-            match pending (rest_of new_n) with
-            | Some dep -> wait dep (n, `Rebuild, new_n)
-            | None -> (
-                let rebuilt = rebuild new_n in
+            match scan true (rest_of new_n) with
+            | `Wait dep -> wait dep (n, `Rebuild, new_n)
+            | (`Same | `Changed) as sources -> (
                 let next =
-                  if rebuilt == new_n then pm_rewrite new_n else Some rebuilt
+                  if sources = `Same then pm_rewrite new_n
+                  else Some (rebuild new_n)
                 in
                 match next with
                 | None -> finish n new_n
                 | Some next ->
                     Work.push work n `Link next;
                     Work.push work next `Down next))
-        | `Link -> (
-            match Tbl.find_opt replaced new_n with
-            | Some r -> finish n r
-            | None -> wait new_n (n, `Link, new_n))
+        | `Link ->
+            if is_replaced new_n then finish n (now new_n)
+            else wait new_n (n, `Link, new_n)
     done;
-    match Tbl.find_opt replaced root with
-    | Some r -> r
-    | None ->
+    if is_replaced root then now root
+    else
         invalid_arg
           "graph_rewrite does not terminate: a node's rewrite depends on itself"
   end
