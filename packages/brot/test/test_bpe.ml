@@ -513,13 +513,35 @@ let test_set_eviction () =
   done;
   List.iter (check 5) [ 0; 1; 0; 2; 1; 0; 2; 2; 0; 1 ]
 
-(* The front table: a small direct-mapped table probed before the two-way one,
-   filled by promoting whatever the back table answers. Every word of length up
-   to four over eight letters is more distinct pretokens than the front has
-   slots, so three passes in three orders exercise a promotion, a front hit, an
-   eviction by a colliding promotion and a re-promotion — and every answer must
-   still be the merges'. *)
-let test_front_promotion_and_eviction () =
+(* Two sets, each the other's neighbour: a miss stored into a full set moves
+   the set's older entry into the other set, and a key found there trades
+   places with its own set's older entry. Six words over four ways, in rounds
+   of three orders, read entries back from either set, just moved, traded and
+   evicted. Every answer must come out as the merges say. *)
+let test_neighbour_set () =
+  let uncached = collide 0 in
+  let cached = collide 4 in
+  let words = [| "abcd"; "bcda"; "cdab"; "dabc"; "aabb"; "bbaa" |] in
+  let expected = Array.map (fun w -> encode_ids uncached w) words in
+  let check round i =
+    equal
+      ~msg:(Printf.sprintf "round %d, %S" round words.(i))
+      (array int) expected.(i)
+      (encode_ids cached words.(i))
+  in
+  for round = 1 to 3 do
+    Array.iteri (fun i _ -> check round i) words;
+    for i = Array.length words - 1 downto 0 do
+      check round i
+    done;
+    List.iter (check round) [ 0; 3; 0; 5; 1; 1; 4; 2; 0; 5; 3; 2 ]
+  done
+
+(* Every word of length up to four over eight letters, 4680 pretokens, read
+   from a full-size table in three passes of three orders: stored, read back
+   from either way of their set or from the set beside it, moved there and
+   traded back — and every answer must still be the merges'. *)
+let test_table_read_back () =
   let uncached = collide 0 in
   let cached = collide 262144 in
   let words =
@@ -1246,8 +1268,10 @@ let () =
              test "the seed under ignore_merges" test_seed_ignore_merges;
              test "long and many-token pretokens" test_cache_long_and_wide;
              test "a set filled beyond two ways" test_set_eviction;
-             test "front promotion and eviction"
-               test_front_promotion_and_eviction;
+             test "entries moved to and traded back from the neighbour set"
+               test_neighbour_set;
+             test "thousands of pretokens read back in three orders"
+               test_table_read_back;
              test "small capacities on the parity corpora"
                test_cache_capacities_on_parity_corpus;
            ];

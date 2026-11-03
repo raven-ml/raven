@@ -96,12 +96,17 @@ let[@inline] key1 text n pos len =
    leaves the count as it was, so a working set the table holds, but whose
    entries collide, does not grow it. *)
 let initial_sets = 256
+
+(* The smallest string the runtime allocates as a large block: over 256 words
+   (Max_young_wosize), the most the minor heap takes. *)
+let large_bytes = 257 * 8
 let default_capacity = 262144
 
 type t = {
   front : Bytes.t;
   fmask : int;
   mutable table : Bytes.t;
+  mutable base : int;
   mutable mask : int;
   limit : int;
   mutable live : int;
@@ -112,10 +117,24 @@ let none =
     front = Bytes.empty;
     fmask = -1;
     table = Bytes.empty;
+    base = 0;
     mask = -1;
     limit = 0;
     live = 0;
   }
+
+(* A table of [sets] sets and the offset of its first one, on a 64-byte
+   boundary where the C kernels run, so that a probe reads one cache line. The
+   string is made longer than 256 words, which the runtime allocates as a large
+   block of the major heap from the start, and the collector moves no large
+   block, so the offset holds for the table's life. Were it ever moved, every
+   access is still a copy of eight bytes at an offset into the string: only the
+   alignment would be lost. *)
+let table_of sets =
+  let table =
+    Bytes.make (max ((sets + 1) * set_bytes) large_bytes) '\000'
+  in
+  (table, if Kernel.available then Kernel.cache_align table else 0)
 
 (* A product only carries upward, and the index is the low bits of
    [product lsr 24]: without the fold, keys that agree in their first five
@@ -127,7 +146,7 @@ let[@inline] hash_of k0 k1 =
   Int64.to_int (Int64.shift_right_logical (Int64.mul x 0xD6E8FEB86659FD93L) 24)
 
 (* The byte offsets of a hash's back set and front slot. *)
-let[@inline] set_at h mask = (h land mask) lsl 6
+let[@inline] set_at h mask base = ((h land mask) lsl 6) + base
 let[@inline] front_at h fmask = (h land fmask) lsl 5
 
 (* [entries] rounded up to a power of two, two per set; at least one set. *)
@@ -138,15 +157,18 @@ let sets_for entries =
   done;
   !sets
 
-let create ?(grow = true) capacity =
+let create ?(grow = true) ?(front = true) capacity =
   if capacity <= 0 then { none with live = 0 }
   else
     let limit = sets_for capacity in
     let sets = if grow then min limit initial_sets else limit in
+    let entries = if front then front_entries else 0 in
+    let table, base = table_of sets in
     {
-      front = Bytes.make (front_entries * entry_bytes) '\000';
-      fmask = front_entries - 1;
-      table = Bytes.make (sets * set_bytes) '\000';
+      front = Bytes.make (entries * entry_bytes) '\000';
+      fmask = entries - 1;
+      table;
+      base;
       mask = sets - 1;
       limit;
       live = 0;
@@ -164,28 +186,31 @@ let[@inline] store_at table set k0 k1 v0 v1 =
   bytes_set64u table (set + 8) k1;
   bytes_set64u table set k0
 
-(* Writes the entry into the front slot at [fslot], in [store_at]'s order. *)
+(* Writes the entry into the front slot at [fslot], in [store_at]'s order, if
+   there is a front table. *)
 let[@inline] promote t fslot k0 k1 v0 v1 =
-  let front = t.front in
-  bytes_set64u front (fslot + 16) v0;
-  bytes_set64u front (fslot + 24) v1;
-  bytes_set64u front (fslot + 8) k1;
-  bytes_set64u front fslot k0
+  if t.fmask >= 0 then begin
+    let front = t.front in
+    bytes_set64u front (fslot + 16) v0;
+    bytes_set64u front (fslot + 24) v1;
+    bytes_set64u front (fslot + 8) k1;
+    bytes_set64u front fslot k0
+  end
 
 (* The back table at twice its sets, every entry moved to its new set, the
    older way first so that each set keeps its order. *)
 let[@inline never] grow t =
   let old = t.table and sets = 2 * (t.mask + 1) in
-  let table = Bytes.make (sets * set_bytes) '\000' in
+  let table, base = table_of sets in
   let mask = sets - 1 in
   for way = 1 downto 0 do
     for set = 0 to t.mask do
-      let o = (set lsl 6) + (way * entry_bytes) in
+      let o = (set lsl 6) + t.base + (way * entry_bytes) in
       let k1 = bytes_get64u old (o + 8) in
       if k1 <> 0L then begin
         let k0 = bytes_get64u old o in
         store_at table
-          (set_at (hash_of k0 k1) mask)
+          (set_at (hash_of k0 k1) mask base)
           k0 k1
           (bytes_get64u old (o + 16))
           (bytes_get64u old (o + 24))
@@ -193,14 +218,65 @@ let[@inline never] grow t =
     done
   done;
   t.table <- table;
+  t.base <- base;
   t.mask <- mask
+
+(* The set beside [set], which takes the entries [set] evicts: the other set of
+   its 128 bytes, or [set] itself in a table of one set. *)
+let[@inline] neighbour set mask = if mask > 0 then set lxor set_bytes else set
+
+(* [store_at], the entry way 1 held moving on into the neighbour set as
+   [store_at] puts it there. Three keys of one set then no longer evict each
+   other on every occurrence: the third waits next door. Returns whether an
+   entry was dropped. *)
+let[@inline] insert_at table set mask k0 k1 v0 v1 =
+  let nset = neighbour set mask in
+  let w1 = bytes_get64u table (set + 40) in
+  if w1 = 0L || nset = set then begin
+    store_at table set k0 k1 v0 v1;
+    w1 <> 0L
+  end
+  else begin
+    let w0 = bytes_get64u table (set + 32) in
+    let w2 = bytes_get64u table (set + 48) in
+    let w3 = bytes_get64u table (set + 56) in
+    let dropped = bytes_get64u table (nset + 40) <> 0L in
+    store_at table set k0 k1 v0 v1;
+    store_at table nset w0 w1 w2 w3;
+    dropped
+  end
 
 (* Inlined, so that the value words reach the table unboxed. *)
 let[@inline] store t k0 k1 v0 v1 =
   if t.mask < t.limit - 1 && t.live > t.mask then grow t;
-  let set = set_at (hash_of k0 k1) t.mask in
-  if bytes_get64u t.table (set + 40) = 0L then t.live <- t.live + 1;
-  store_at t.table set k0 k1 v0 v1
+  let set = set_at (hash_of k0 k1) t.mask t.base in
+  if not (insert_at t.table set t.mask k0 k1 v0 v1) then t.live <- t.live + 1
+
+(* The way of the neighbour set of [set] that holds the key, or [-1]. *)
+let[@inline] neighbour_way table set mask k0 k1 =
+  let nset = neighbour set mask in
+  if nset = set then -1
+  else if
+    (bytes_get64u table nset : int64) = k0
+    && (bytes_get64u table (nset + 8) : int64) = k1
+  then nset
+  else if
+    (bytes_get64u table (nset + 32) : int64) = k0
+    && (bytes_get64u table (nset + 40) : int64) = k1
+  then nset + 32
+  else -1
+
+(* Hands the entry at [way] of the neighbour set back to [set], in trade for
+   the entry [set]'s way 1 held. *)
+let[@inline] trade table set way =
+  let k0 = bytes_get64u table way and k1 = bytes_get64u table (way + 8) in
+  let v0 = bytes_get64u table (way + 16) in
+  let v1 = bytes_get64u table (way + 24) in
+  bytes_set64u table (way + 16) (bytes_get64u table (set + 48));
+  bytes_set64u table (way + 24) (bytes_get64u table (set + 56));
+  bytes_set64u table (way + 8) (bytes_get64u table (set + 40));
+  bytes_set64u table way (bytes_get64u table (set + 32));
+  store_at table set k0 k1 v0 v1
 
 (* Value words: two 24-bit ids each, at bits 0 and 32, the id count in bits 24
    to 31 of the first. Built and read with [Int64] operations, so that they are
@@ -257,16 +333,17 @@ let encode t ~len_table (miss : encoder) ids ~opaque text ~pos ~len =
     let fslot = front_at h t.fmask in
     let front = t.front in
     if
-      (bytes_get64u front fslot : int64) = k0
+      t.fmask >= 0
+      && (bytes_get64u front fslot : int64) = k0
       && (bytes_get64u front (fslot + 8) : int64) = k1
     then
       add_lanes ids
         (bytes_get64u front (fslot + 16))
         (bytes_get64u front (fslot + 24))
     else begin
-      let set = set_at h t.mask in
+      let set = set_at h t.mask t.base in
       let table = t.table in
-      let way =
+      let home =
         if
           (bytes_get64u table set : int64) = k0
           && (bytes_get64u table (set + 8) : int64) = k1
@@ -277,9 +354,13 @@ let encode t ~len_table (miss : encoder) ids ~opaque text ~pos ~len =
         then set + 32
         else -1
       in
+      let way =
+        if home >= 0 then home else neighbour_way table set t.mask k0 k1
+      in
       if way >= 0 then begin
         let v0 = bytes_get64u table (way + 16) in
         let v1 = bytes_get64u table (way + 24) in
+        if home < 0 then trade table set way;
         promote t fslot k0 k1 v0 v1;
         add_lanes ids v0 v1
       end

@@ -119,14 +119,6 @@ external word64 : string -> int -> int64 = "%caml_string_get64u"
 
 let ones = 0x0101010101010101L
 let highs = 0x8080808080808080L
-let lows = 0x7F7F7F7F7F7F7F7FL
-
-(* The high bit of every zero byte of [w], and of no other byte. *)
-let[@inline] zero_marks w =
-  Int64.logand
-    (Int64.lognot (Int64.logor (Int64.add (Int64.logand w lows) lows) w))
-    highs
-
 let[@inline] broadcast byte = Int64.mul (Int64.of_int byte) ones
 
 (* A trie under construction: each node numbered as it is made, with its
@@ -243,34 +235,62 @@ let matcher patterns =
 
 let[@inline] is_anchor m c = Bytes.unsafe_get m.anchors (Char.code c) <> '\000'
 
+(* The high bit of each byte of [w] equal to the broadcast byte [b], and maybe
+   of bytes above one: whether it is zero says exactly whether [w] holds [b]. *)
+let[@inline] holds w b =
+  let x = Int64.logxor w b in
+  Int64.logand (Int64.sub x ones) (Int64.lognot x)
+
+(* The first window of 32 bytes, then of 8, from [i] that holds [b], or where
+   too few bytes remain for one. *)
+let rec skip_one text b i len =
+  if
+    i + 32 <= len
+    && Int64.logand
+         (Int64.logor
+            (Int64.logor
+               (holds (word64 text i) b)
+               (holds (word64 text (i + 8)) b))
+            (Int64.logor
+               (holds (word64 text (i + 16)) b)
+               (holds (word64 text (i + 24)) b)))
+         highs
+       = 0L
+  then skip_one text b (i + 32) len
+  else if i + 8 <= len && Int64.logand (holds (word64 text i) b) highs = 0L
+  then skip_one text b (i + 8) len
+  else i
+
+let[@inline] either w b0 b1 = Int64.logor (holds w b0) (holds w b1)
+
+(* [skip_one] for either of [b0] and [b1]. *)
+let rec skip_two text b0 b1 i len =
+  if
+    i + 16 <= len
+    && Int64.logand
+         (Int64.logor
+            (either (word64 text i) b0 b1)
+            (either (word64 text (i + 8)) b0 b1))
+         highs
+       = 0L
+  then skip_two text b0 b1 (i + 16) len
+  else if i + 8 <= len && Int64.logand (either (word64 text i) b0 b1) highs = 0L
+  then skip_two text b0 b1 (i + 8) len
+  else i
+
 (* [candidate m text ~pos ~len] is the first position at or after [pos] whose
    byte can stand at the anchor of a pattern of [m], or [len] if there is none.
-   The SWAR loops stop on the eight-byte window holding such a byte; the
-   bytewise loop pins it down, and covers the trailing window, which keeps
-   every load within [text] — the primitive is bounds-checked under the
-   bytecode runtime. *)
+   The SWAR loops stop on the window holding such a byte; the bytewise loop
+   pins it down, and covers the trailing window, which keeps every load within
+   [text] — the primitive is bounds-checked under the bytecode runtime. *)
 let candidate m text ~pos ~len =
-  let i = ref pos in
-  (match m.seek with
-  | Seek_one b ->
-      let scanning = ref true in
-      while !scanning && !i + 8 <= len do
-        if zero_marks (Int64.logxor (word64 text !i) b) = 0L then i := !i + 8
-        else scanning := false
-      done
-  | Seek_two (b0, b1) ->
-      let scanning = ref true in
-      while !scanning && !i + 8 <= len do
-        let w = word64 text !i in
-        if
-          Int64.logor
-            (zero_marks (Int64.logxor w b0))
-            (zero_marks (Int64.logxor w b1))
-          = 0L
-        then i := !i + 8
-        else scanning := false
-      done
-  | Seek_bytewise -> ());
+  let i =
+    ref
+      (match m.seek with
+      | Seek_one b -> skip_one text b pos len
+      | Seek_two (b0, b1) -> skip_two text b0 b1 pos len
+      | Seek_bytewise -> pos)
+  in
   while !i < len && not (is_anchor m (String.unsafe_get text !i)) do
     incr i
   done;

@@ -11,7 +11,7 @@
    prints its dump. Inputs cover every kernel exit: unclassified code points,
    malformed UTF-8 of every shape, pretokens at and past the 15-byte key limit,
    huge spans, more pretokens than a span chunk, every exit at the seams of
-   the 64-span stage, bytes without an id, [ignore_merges], caching off, and a merge
+   the stage, bytes without an id, [ignore_merges], caching off, and a merge
    whose result stands for other bytes than its entry's. The byte-level models
    run behind the GPT-2 walker and behind the cl100k and o200k ones, which have
    their own inputs: contractions in every case, digit groups, newlines inside
@@ -191,6 +191,28 @@ let adversarial =
     done;
     Buffer.contents buf
   in
+  (* Texts of pieces drawn from the shapes the batch walk classifies, each
+     class beyond ASCII and its overlong and malformed forms among them, long
+     enough to cross many 64-byte batches. *)
+  let pieces =
+    [|
+      "a"; "the"; "Ab"; " "; "  "; "\n"; "\t"; "\r\n"; "\x0b"; "'s"; "'S";
+      "'ll"; "'"; "1"; "42"; "123456"; "."; "!!"; "-"; "\x00"; "\x7f"; "\u{e9}";
+      "\u{416}"; "\u{65e5}\u{672c}"; "\u{1D400}"; "\u{663}"; "\u{BD}";
+      "\u{1D7CE}"; "\u{A0}"; "\u{85}"; "\u{1680}"; "\u{2009}"; "\u{2028}";
+      "\u{3000}"; "\u{200B}"; "e\u{301}"; "\u{301}"; "\u{201C}"; "\u{2014}";
+      "\u{1F600}"; "\u{378}"; "\u{E0001}"; "\u{10FFFF}"; "'\u{e9}"; " \u{e9}";
+      "\x80"; "\xBF"; "\xC3"; "\xE2\x80"; "\xF0\x9F\x98"; "\xC0\xAF";
+      "\xE0\x81\x81"; "\xF0\x80\x81\x81"; "\xE0\x80\xB1"; "\xF0\x80\x80\xB1";
+      "\xE0\x80\xA0"; "\xF0\x80\x80\xA0"; "\xE0\x80\x8A"; "\xE0\x80\xA7";
+      "\xED\xA0\x80"; "\xF4\x90\x80\x80"; "\xF5"; "\xFF";
+    |]
+    [@ocamlformat "disable"]
+  in
+  let random_pieces n =
+    String.concat ""
+      (List.init n (fun _ -> pieces.(rand_int (Array.length pieces))))
+  in
   (* Batch-alignment adversaries for the mask-scanner walker: the walk
      classifies 64-byte batches on a grid anchored at the range start, so each
      family plants its shape at every offset 0..80. The padding is short
@@ -231,11 +253,12 @@ let adversarial =
             Buffer.contents buf);
       ]
   in
-  (* Seam adversaries for the staged kernel: the entry loop stages 64 spans at
-     a time, so each family plants its event at span indices 250..262, across
-     the seam at 256 — an Encode hand-back, a Class hand-back (a code point per
-     index, first met there), identical adjacent pretokens (miss, store, hit
-     across the seam) and a plain stream whose length lands on the seam.
+  (* Seam adversaries for the staged kernel: the entry loop stages 256 spans
+     or a batch more at a time, so each family plants its event at span
+     indices 250..262, across the seam at 256 — an Encode hand-back, a Class
+     hand-back (a code point per index, first met there), identical adjacent
+     pretokens (miss, store, hit across the seam) and a plain stream whose
+     length lands on the seam.
      [ids_full_midchunk] outgrows the driver's 65536-id reserve inside one call,
      so Ids_full exits mid-stage, keeping the rest of the stage in the cursor
      for the call that resumes. *)
@@ -321,6 +344,8 @@ let adversarial =
       ("random_utf8_512k", random_utf8 524_288);
       ("random_bytes_short", random_bytes 300);
     ]
+  @ List.init 24 (fun i ->
+      (Printf.sprintf "random_pieces_%d" i, random_pieces (50 + rand_int 1500)))
   @ batch_alignments @ chunk_seams
 
 (* The parity corpora, whole and split into their documents. *)

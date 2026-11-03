@@ -1056,6 +1056,95 @@ let test_batch_ids_one_domain () =
         (rows (encode_batch_ids tokenizer documents))
         (rows (encode_batch_ids tokenizer ~exec:(Fixture.spawn 4) documents)))
 
+(* A batch encoded while another holds the calling domain's batch buffer — from
+   inside the other's executor, between its chunks — encodes into buffers of
+   its own: neither overwrites the ids of the other. The outer batch is large
+   enough for several chunks, so that its executor runs. *)
+let test_batch_ids_nested () =
+  with_pretrained "gpt2" (fun tokenizer ->
+      let sample = parity_documents "sample" in
+      let inner = parity_documents "edge_cases" in
+      let bytes docs = List.fold_left (fun n d -> n + String.length d) 0 docs in
+      let copies = 1 + (2_000_000 / max 1 (bytes sample)) in
+      let outer = List.concat (List.init copies (fun _ -> sample)) in
+      let inner_rows = ref [] and tasks = ref 0 in
+      let exec n task =
+        for i = 0 to n - 1 do
+          task i;
+          incr tasks;
+          inner_rows := rows (encode_batch_ids tokenizer inner) :: !inner_rows
+        done
+      in
+      let outer_rows = rows (encode_batch_ids tokenizer ~exec outer) in
+      greater ~msg:"chunks the executor ran" int ~than:1 !tasks;
+      equal ~msg:"the outer batch"
+        (list (array int))
+        (List.map (encode_ids tokenizer) outer)
+        outer_rows;
+      let expected = List.map (encode_ids tokenizer) inner in
+      List.iter
+        (equal ~msg:"an inner batch" (list (array int)) expected)
+        !inner_rows)
+
+(* An executor that returns while a task it started is still encoding: the
+   batch fails, and the buffer that task writes into must stay out of the
+   batches after. The straggler is held before its first document; the next
+   batch, on the calling domain, lets it write once it has read where its own
+   first document starts, and goes on only when the straggler is done. *)
+let test_batch_ids_straggler () =
+  with_pretrained "gpt2" (fun tokenizer ->
+      let caller = Domain.self () in
+      let inside = Atomic.make false and go = Atomic.make false in
+      let finished = Atomic.make false and armed = Atomic.make false in
+      let hook () =
+        if Domain.self () <> caller then begin
+          if not (Atomic.get go) then begin
+            Atomic.set inside true;
+            while not (Atomic.get go) do
+              Domain.cpu_relax ()
+            done
+          end
+        end
+        else if Atomic.compare_and_set armed true false then begin
+          Atomic.set go true;
+          while not (Atomic.get finished) do
+            Domain.cpu_relax ()
+          done
+        end
+      in
+      let straggler = ref None in
+      let exec _ task =
+        straggler :=
+          Some
+            (Domain.spawn (fun () ->
+                 task 0;
+                 Atomic.set finished true));
+        while not (Atomic.get inside) do
+          Domain.cpu_relax ()
+        done
+      in
+      let sample = parity_documents "sample" in
+      let big =
+        List.concat (List.init 40 (fun _ -> sample))
+        |> List.map (fun d -> String.concat " " (List.init 20 (fun _ -> d)))
+      in
+      let small = parity_documents "edge_cases" in
+      Fun.protect
+        ~finally:(fun () ->
+          Atomic.set Brot.batch_document_hook (fun () -> ());
+          Atomic.set go true;
+          Option.iter Domain.join !straggler)
+        (fun () ->
+          Atomic.set Brot.batch_document_hook hook;
+          raises_match ~msg:"the batch whose executor returned early"
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> encode_batch_ids tokenizer ~exec big);
+          Atomic.set armed true;
+          let later = rows (encode_batch_ids tokenizer small) in
+          equal ~msg:"the batch after" (list (array int))
+            (List.map (encode_ids tokenizer) small)
+            later))
+
 let test_batch_ids_empty () =
   with_pretrained "gpt2" (fun tokenizer ->
       let buffer, lengths = encode_batch_ids tokenizer [] in
@@ -1634,6 +1723,9 @@ let batch_tests =
       test_batch_ids_pads_to_the_longest;
     test "batch ids do not depend on the executor" test_batch_ids_one_domain;
     test "batch ids of an empty batch" test_batch_ids_empty;
+    test "a batch within another's executor" test_batch_ids_nested;
+    test "a batch after one whose executor left a task running"
+      test_batch_ids_straggler;
     test "batch ids under a post-processor that does not wrap"
       test_batch_ids_without_affixes;
     test "a cut document keeps its ids (gpt2)"

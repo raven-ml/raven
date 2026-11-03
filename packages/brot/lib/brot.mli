@@ -1443,6 +1443,11 @@ val encode_batch_ids :
     identifier is an index into the token table, which holds one string per
     token.
 
+    The ids are gathered in buffers, one per domain encoding the batch, before
+    they are copied into the result. [t] keeps them for the batches after,
+    at most [Domain.recommended_domain_count ()] buffers of at most 8 MB each,
+    and they are collected with [t].
+
     Optional parameters are as in {!encode_batch}. *)
 
 val decode : t -> ?skip_special_tokens:bool -> int array -> string
@@ -1744,6 +1749,11 @@ val cache_key : string -> int64 * int64
 val cache_hashes : int64 -> int64 -> int * int
 (** [cache_hashes k0 k1] is the hash a pretoken cache indexes the key words [k0]
     and [k1] by, as OCaml computes it and as the C kernels do. For tests. *)
+
+val batch_document_hook : (unit -> unit) Atomic.t
+(** [batch_document_hook] is called by a chunk of {!encode_batch_ids} before
+    each document it encodes into its ids buffer, once the chunk holds the
+    buffer and has read where the document starts in it. For tests. *)
 
 val run_chunks : ?exec:exec -> int array -> (int -> unit) -> unit
 (** [run_chunks ?exec sizes work] is [work c] for every chunk [c] of the

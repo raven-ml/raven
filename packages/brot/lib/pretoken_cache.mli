@@ -8,9 +8,12 @@
     {b Internal module.} A cache maps a pretoken of at most {!max_key_len} bytes
     to the at most four ids a model encodes it to, so that a pretoken seen
     before is not encoded again. A small direct-mapped front table of 4096
-    entries (128 KB) is probed first, then a two-way set-associative back
-    table; a back-table hit is promoted to the front, and a miss is stored into
-    the back table, evicting the older entry of its set.
+    entries (128 KB), when there is one, is probed first, then a two-way
+    set-associative back table, whose sets pair up as the two halves of 128
+    bytes: a key missing from its own set is looked for in the other one,
+    which then trades it back for the older entry of its own set. A hit is
+    promoted to the front, and a miss is stored into its set, whose older entry
+    moves on into the other set, evicting that set's older entry.
 
     An entry is 32 bytes of four native-endian words: the pretoken's first eight
     bytes in little-endian order, zero-padded; its next seven bytes, likewise,
@@ -25,26 +28,29 @@ type t = private {
   front : Bytes.t;
   fmask : int;
   mutable table : Bytes.t;
+  mutable base : int;
   mutable mask : int;
   limit : int;
   mutable live : int;
 }
-(** The type for caches. [front] holds [fmask + 1] entries and [table] holds
-    [mask + 1] sets of two, [live] of whose entries the OCaml side has filled;
-    a [mask] below zero is no cache. The back table grows to at most [limit]
-    sets. *)
+(** The type for caches. [front] holds [fmask + 1] entries, none when [fmask]
+    is below zero, and [table] holds [mask + 1] sets of two from [base], on a
+    64-byte boundary where the C kernels run, [live] of whose entries the OCaml
+    side has filled; a [mask] below zero is no cache. The back table grows to
+    at most [limit] sets. *)
 
 val none : t
 (** [none] is no cache: nothing is found in it or stored into it. *)
 
-val create : ?grow:bool -> int -> t
+val create : ?grow:bool -> ?front:bool -> int -> t
 (** [create capacity] is an empty cache of at most [capacity] back entries,
     rounded up to a power of two, or no cache when [capacity] is zero or less.
     With [grow] (default [true]) the back table starts at 512 entries (16 KB)
     and doubles once half its entries are live; without it
     the table is allocated at its full size, as the C kernels, which store
-    without growing it, need. The front table is allocated either way. A full
-    table takes 32 bytes per entry. *)
+    without growing it, need. With [front] (default [true]) the front table is
+    allocated; the C kernels, which prefetch the back sets of the spans they
+    walk ahead, have none. A full table takes 32 bytes per entry. *)
 
 val default_capacity : int
 (** [default_capacity] is the capacity models default to: 262144 entries,

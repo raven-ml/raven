@@ -771,9 +771,8 @@ let exact model word len =
 let kernel_tables model cache =
   {
     Kernel.lead = Pre_tokenizer.lead_class;
-    front = cache.Cache.front;
-    front_mask = cache.Cache.fmask;
     cache = cache.Cache.table;
+    cache_base = cache.Cache.base;
     cache_mask = cache.Cache.mask;
     byte_ids = model.byte_ids;
     merge_keys = model.merges.Merge_map.keys;
@@ -799,9 +798,8 @@ let sp_kernel_tables model cache : Kernel.sp option =
       Bytes.set scan 0xE2 (Char.chr 9);
       Some
         {
-          Kernel.front = cache.Cache.front;
-          front_mask = cache.Cache.fmask;
-          cache = cache.Cache.table;
+          Kernel.cache = cache.Cache.table;
+          cache_base = cache.Cache.base;
           cache_mask = cache.Cache.mask;
           merge_keys = model.merges.Merge_map.keys;
           merge_values = model.merges.Merge_map.values;
@@ -879,9 +877,10 @@ let whole_word_exceptions model =
   exceptions
 
 (* The kernels store into the back table without growing it, so a BPE cache is
-   allocated whole. *)
+   allocated whole, and they probe it without a front table, a stage of spans
+   ahead of time. *)
 let make_state model =
-  let cache = Cache.create ~grow:false model.cache_slots in
+  let cache = Cache.create ~grow:false ~front:false model.cache_slots in
   Cache.load_seeds cache model.seeds;
   {
     st_word = create_word 16;

@@ -77,6 +77,10 @@ type cut =
       (** Strings, through {!Pre_tokenizer.pre_tokenize}: the pretokens are not
           ranges of the text they were cut from. *)
 
+(* The ids buffers the batches of a tokenizer borrow, kept between batches and
+   collected with the tokenizer: [free] holds them, [kept] counts them. *)
+type batch_buffers = { free : Bpe.sink list Atomic.t; kept : int Atomic.t }
+
 type t = {
   algorithm : algorithm;
   normalizer : Normalizer.t option;
@@ -99,6 +103,7 @@ type t = {
   pad_id : int option;
   pad_type_id : int;
   unk_token : string option;
+  batch_buffers : batch_buffers;
 }
 
 let added_token ?(special = true) ?(single_word = false) ?(lstrip = false)
@@ -423,6 +428,7 @@ let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
     pad_id;
     pad_type_id = 0;
     unk_token;
+    batch_buffers = { free = Atomic.make []; kept = Atomic.make 0 };
   }
 
 (* Accessors *)
@@ -576,7 +582,9 @@ let is_slice text ~at piece =
 
 (* The buffers a document is encoded through, one set per domain and claimed for
    the duration of the document: the ids, and the bounds and marks of the spans
-   they came from. *)
+   they came from. [batch] is the ids buffer a batch's chunks append to on this
+   domain, borrowed from the tokenizer and held longer: by the batch whose
+   serial number is in [holder], 0 when free, until its result is copied out. *)
 type scratch = {
   mutable spans : Spans.t;
   mutable segments : Spans.t;
@@ -585,10 +593,19 @@ type scratch = {
   span_start : Ints.t;
   span_stop : Ints.t;
   marks : Ints.t;
+  mutable batch : Bpe.sink;
+  holder : int Atomic.t;
   busy : bool Atomic.t;
 }
 
 let span_chunk = 1024
+
+(* The [batch] of a scratch no batch holds, which nothing writes to. *)
+let no_batch =
+  {
+    Bpe.ba = Bigarray.Array1.create Bigarray.Int32 Bigarray.C_layout 0;
+    used = 0;
+  }
 
 let new_scratch () =
   {
@@ -599,6 +616,8 @@ let new_scratch () =
     span_start = Ints.create ();
     span_stop = Ints.create ();
     marks = Ints.create ();
+    batch = no_batch;
+    holder = Atomic.make 0;
     busy = Atomic.make false;
   }
 
@@ -1388,15 +1407,118 @@ let pieces_of t rows ~cut ~chunk =
     (Array.of_list (List.rev !texts), Array.of_list (List.rev !owners))
   end
 
+(* A batch's chunks append their ids to a buffer of their domain's, which the
+   batch borrows from the tokenizer and holds until its result is copied out: a
+   batch then allocates its ids once, in the result, and the collector, which
+   counts the bytes of every buffer against its pace, runs that much less. The
+   tokenizer keeps at most [Domain.recommended_domain_count ()] buffers between
+   batches, of at most [batch_keep] ids (8 MB) each, as many as caches of the
+   default size, and they go with it. *)
+let batch_keep = 1 lsl 21
+
+let max_buffers = Domain.recommended_domain_count ()
+let batch_serial = Atomic.make 0
+
+(* Called by a batch's chunk before each document it encodes into its ids
+   buffer. For tests. *)
+let batch_document_hook = Atomic.make (fun () -> ())
+
+let rec push list x =
+  let seen = Atomic.get list in
+  if not (Atomic.compare_and_set list seen (x :: seen)) then push list x
+
+(* The scratches whose buffers a batch holds, until the batch ends. *)
+type held = Holding of scratch list | Ended
+
+(* Adds [sc] to [held], unless the batch has ended: a chunk an executor left
+   running past the batch's end takes no buffer for it. *)
+let rec hold held sc =
+  match Atomic.get held with
+  | Ended -> false
+  | Holding scs as seen ->
+      Atomic.compare_and_set held seen (Holding (sc :: scs)) || hold held sc
+
+let rec borrow b =
+  match Atomic.get b.free with
+  | [] -> { Bpe.ba = create_ids 0; used = 0 }
+  | sink :: rest as seen ->
+      if Atomic.compare_and_set b.free seen rest then begin
+        Atomic.decr b.kept;
+        sink
+      end
+      else borrow b
+
+let give_back b sink =
+  if Bigarray.Array1.dim sink.Bpe.ba <= batch_keep then
+    if Atomic.fetch_and_add b.kept 1 < max_buffers then push b.free sink
+    else Atomic.decr b.kept
+
+(* The sink of a chunk of batch [call] needing [room] ids, encoded with [sc]:
+   the buffer [sc] holds for [call], borrowed from [b] if no other batch holds
+   [sc] and [call] has not ended, and otherwise one of the chunk's own. A
+   buffer without the room is left to the chunks that wrote it and replaced: by
+   one of the [share] of the batch a domain should take when the batch takes
+   [sc], by one twice its size after, up to [batch_keep] either way. A chunk's
+   ids are never moved for another's. *)
+let batch_sink b sc ~call ~held ~room ~share =
+  let owner = Atomic.get sc.holder in
+  let taken =
+    owner = 0
+    && Atomic.compare_and_set sc.holder 0 call
+    &&
+    if hold held sc then begin
+      let sink = borrow b in
+      sink.Bpe.used <- 0;
+      sc.batch <- sink;
+      true
+    end
+    else begin
+      Atomic.set sc.holder 0;
+      false
+    end
+  in
+  if taken || owner = call then begin
+    (* Read once: a batch ending meanwhile puts [no_batch] there, which has no
+       room, so a chunk never writes into it. *)
+    let sink = sc.batch in
+    let size = Bigarray.Array1.dim sink.Bpe.ba in
+    if size - sink.Bpe.used >= room then sink
+    else begin
+      let grown = min batch_keep (if taken then share else 2 * size) in
+      let sink = { Bpe.ba = create_ids (max room grown); used = 0 } in
+      sc.batch <- sink;
+      sink
+    end
+  end
+  else { Bpe.ba = create_ids room; used = 0 }
+
+(* Ends batch [call]: the scratches it holds are freed, and their buffers go
+   back to [b] when [give] holds — only once every chunk has returned, since a
+   chunk an executor left running would write into the buffer the next batch
+   borrows. Otherwise they are dropped, and the collector takes them once the
+   chunks writing them are done. *)
+let end_batch b ~call ~give held =
+  match Atomic.exchange held Ended with
+  | Ended -> ()
+  | Holding scs ->
+      List.iter
+        (fun sc ->
+          let sink = sc.batch in
+          sc.batch <- no_batch;
+          ignore (Atomic.compare_and_set sc.holder call 0 : bool);
+          if give then give_back b sink)
+        scs
+
 (* The throughput path: {!encode_ids} over a batch, with the ids of every
-   document in one buffer. A chunk of pieces is encoded into a buffer of its
-   own, so that a domain writes nothing another one reads, and the buffers are
-   copied into the result at offsets that are known only once every chunk has
-   been encoded — a row's length is the whole batch's business as soon as
-   padding is [`Batch_longest]. Affixes, truncation and padding are applied
-   during that copy, piece by piece: they move no ids the model produced.
-   The buffers are [ids] rather than [Ints.t]: they hold the bulk of a batch,
-   and outside the heap the collector neither scans nor sweeps them. *)
+   document in one buffer. A chunk of pieces is encoded into the batch buffer of
+   the domain encoding it ([batch_sink]), so that a domain writes nothing
+   another one reads, and the buffers are copied into the result at offsets
+   that are known only once every chunk has been encoded — a row's length is the
+   whole batch's business as soon as padding is [`Batch_longest]. Affixes,
+   truncation and padding are applied during that copy, piece by piece: they
+   move no ids the model produced. The buffers are [ids] rather than [Ints.t]:
+   they hold the bulk of a batch, and outside the heap the collector neither
+   scans nor sweeps them. *)
 let encode_batch_ids t ?(add_special_tokens = true)
     ?(match_special_tokens = true) ?padding ?truncation ?exec texts =
   let t = matching t ~match_special_tokens in
@@ -1424,61 +1546,87 @@ let encode_batch_ids t ?(add_special_tokens = true)
   let buffers = Array.make (Array.length chunks) (create_ids 0) in
   let chunk_of = Array.make npieces 0 in
   let start = Array.make npieces 0 and stop = Array.make npieces 0 in
-  run_chunks ?exec chunks (fun c ->
-      let chunk = chunks.(c) in
-      if wrapped then
-        (* The fused kernels write their ids into the chunk's buffer as int32
-           directly; what OCaml encodes lands in [sc.ids], the spill, moved into
-           place at document end. *)
-        with_scratch (fun sc ->
-            let sink =
-              { Bpe.ba = create_ids (max 64 (chunk.bytes / 3)); used = 0 }
-            in
-            for i = chunk.first to chunk.stop - 1 do
-              let first = sink.Bpe.used in
-              let (_ : Run.t option) =
-                encode_document t sc ~ids32:sink texts.(i) ~record:false
-              in
-              Bpe.flush_spill sink sc.ids;
-              chunk_of.(i) <- c;
-              start.(i) <- first;
-              stop.(i) <- sink.Bpe.used
-            done;
-            buffers.(c) <- sink.Bpe.ba)
-      else begin
-        (* The post-processor does more than wrap: a piece is then a whole
-           document, encoded the long way and truncated already, its ids moved
-           to the chunk's buffer once done. *)
-        let buffer = ref (create_ids (max 64 (chunk.bytes / 3))) in
-        let used = ref 0 in
-        let into = Ints.create () in
-        for i = chunk.first to chunk.stop - 1 do
-          let ids =
-            Encoding.ids
-              (encode_single t ~add_special_tokens ~truncation
-                 { text = texts.(i); pair = None })
+  let call = 1 + Atomic.fetch_and_add batch_serial 1 in
+  let held = Atomic.make (Holding []) in
+  (* The ids a domain should take of the batch, as [batch_sink] reserves room:
+     the batch's over the domains that can share it. *)
+  let share =
+    let width =
+      match exec with
+      | None -> 1
+      | Some _ -> min (Array.length chunks) (Domain.recommended_domain_count ())
+    in
+    let bytes = Array.fold_left (fun n c -> n + c.bytes) 0 chunks in
+    65536 + (bytes / 3 / max 1 width)
+  in
+  let end_batch ~give = end_batch t.batch_buffers ~call ~give held in
+  let work c =
+    let chunk = chunks.(c) in
+    if wrapped then
+      (* The fused kernels write their ids into the batch buffer as int32
+         directly; what OCaml encodes lands in [sc.ids], the spill, moved into
+         place at document end. The room asked for is what a kernel call
+         reserves and a third of the chunk's bytes, more than byte-level
+         models need on prose; a chunk needing more grows the buffer. *)
+      with_scratch (fun sc ->
+          let sink =
+            batch_sink t.batch_buffers sc ~call ~held ~share
+              ~room:(65536 + (chunk.bytes / 3))
           in
-          for k = 0 to Array.length ids - 1 do
-            Ints.add into (Array.unsafe_get ids k)
+          for i = chunk.first to chunk.stop - 1 do
+            let first = sink.Bpe.used in
+            (Atomic.get batch_document_hook) ();
+            let (_ : Run.t option) =
+              encode_document t sc ~ids32:sink texts.(i) ~record:false
+            in
+            Bpe.flush_spill sink sc.ids;
+            chunk_of.(i) <- c;
+            start.(i) <- first;
+            stop.(i) <- sink.Bpe.used
           done;
-          let n = Ints.length into in
-          let held = Bigarray.Array1.dim !buffer in
-          if !used + n > held then begin
-            let grown = create_ids (2 * max held (!used + n)) in
-            Bigarray.Array1.blit
-              (Bigarray.Array1.sub !buffer 0 !used)
-              (Bigarray.Array1.sub grown 0 !used);
-            buffer := grown
-          end;
-          Ints.blit_to_int32 into ~pos:0 ~len:n !buffer ~at:!used;
-          Ints.clear into;
-          chunk_of.(i) <- c;
-          start.(i) <- !used;
-          used := !used + n;
-          stop.(i) <- !used
+          buffers.(c) <- sink.Bpe.ba)
+    else begin
+      (* The post-processor does more than wrap: a piece is then a whole
+         document, encoded the long way and truncated already, its ids moved
+         to the chunk's buffer once done. *)
+      let buffer = ref (create_ids (max 64 (chunk.bytes / 3))) in
+      let used = ref 0 in
+      let into = Ints.create () in
+      for i = chunk.first to chunk.stop - 1 do
+        let ids =
+          Encoding.ids
+            (encode_single t ~add_special_tokens ~truncation
+               { text = texts.(i); pair = None })
+        in
+        for k = 0 to Array.length ids - 1 do
+          Ints.add into (Array.unsafe_get ids k)
         done;
-        buffers.(c) <- !buffer
-      end);
+        let n = Ints.length into in
+        let held = Bigarray.Array1.dim !buffer in
+        if !used + n > held then begin
+          let grown = create_ids (2 * max held (!used + n)) in
+          Bigarray.Array1.blit
+            (Bigarray.Array1.sub !buffer 0 !used)
+            (Bigarray.Array1.sub grown 0 !used);
+          buffer := grown
+        end;
+        Ints.blit_to_int32 into ~pos:0 ~len:n !buffer ~at:!used;
+        Ints.clear into;
+        chunk_of.(i) <- c;
+        start.(i) <- !used;
+        used := !used + n;
+        stop.(i) <- !used
+      done;
+      buffers.(c) <- !buffer
+    end
+  in
+  (match run_chunks ?exec chunks work with
+  | () -> ()
+  | exception e ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      end_batch ~give:false;
+      Printexc.raise_with_backtrace e backtrace);
+  Fun.protect ~finally:(fun () -> end_batch ~give:true) @@ fun () ->
   (* A row's body is its pieces' ids end to end; [place] is where each of them
      begins in it. *)
   let body = Array.make nrows 0 and place = Array.make npieces 0 in
@@ -1539,8 +1687,18 @@ let encode_batch_ids t ?(add_special_tokens = true)
       Bigarray.Array1.fill (Bigarray.Array1.sub result at len) pad_id
   in
   (* The copy runs on the calling domain, so that a batch calls its executor
-     once. A piece copies the part of itself that truncation keeps, as one blit;
-     the first piece of a row lays out the row around the body. *)
+     once. A piece copies the part of itself that truncation keeps; pieces that
+     follow each other in a buffer and in the result, as whole rows without
+     affixes do, copy as one blit. The first piece of a row lays out the row
+     around the body. *)
+  let run_src = ref result and run_at = ref 0 and run_to = ref 0 in
+  let run_len = ref 0 in
+  let flush () =
+    if !run_len > 0 then
+      Bigarray.Array1.blit
+        (Bigarray.Array1.sub !run_src !run_at !run_len)
+        (Bigarray.Array1.sub result !run_to !run_len)
+  in
   for i = 0 to npieces - 1 do
     let row = owner.(i) in
     let kept = min body.(row) budget in
@@ -1550,13 +1708,22 @@ let encode_batch_ids t ?(add_special_tokens = true)
     let base = offset.(row) + front + np in
     let lo = max place.(i) skip
     and hi = min (place.(i) + stop.(i) - start.(i)) (skip + kept) in
-    if lo < hi then
-      Bigarray.Array1.blit
-        (Bigarray.Array1.sub
-           buffers.(chunk_of.(i))
-           (start.(i) + lo - place.(i))
-           (hi - lo))
-        (Bigarray.Array1.sub result (base + lo - skip) (hi - lo));
+    if lo < hi then begin
+      let src = buffers.(chunk_of.(i)) in
+      let at = start.(i) + lo - place.(i) and dst = base + lo - skip in
+      if
+        src == !run_src
+        && at = !run_at + !run_len
+        && dst = !run_to + !run_len
+      then run_len := !run_len + (hi - lo)
+      else begin
+        flush ();
+        run_src := src;
+        run_at := at;
+        run_to := dst;
+        run_len := hi - lo
+      end
+    end;
     if i = 0 || owner.(i - 1) <> row then begin
       fill ~at:offset.(row) ~len:front;
       fill ~at:(base + kept + ns) ~len:(padded - front);
@@ -1564,6 +1731,7 @@ let encode_batch_ids t ?(add_special_tokens = true)
       write suffix ~at:(base + kept)
     end
   done;
+  flush ();
   (result, lengths)
 
 (* Decoding *)

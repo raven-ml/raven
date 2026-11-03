@@ -17,13 +17,12 @@ val available : bool
 
 type byte_level = {
   lead : Bytes.t;  (** {!Pre_tokenizer.lead_class}. *)
-  front : Bytes.t;
-      (** The state's front pretoken table, probed first; empty when caching is
-          off. *)
-  front_mask : int;
-      (** The front table's entry index mask, [-1] when caching is off. *)
   cache : Bytes.t;
-      (** The state's back pretoken table; empty when caching is off. *)
+      (** The state's pretoken table, which has no front table; empty when
+          caching is off. *)
+  cache_base : int;
+      (** The offset of the table's first set in [cache], which
+          {!cache_align} gave when the table was made. *)
   cache_mask : int;  (** The set index mask, [-1] when caching is off. *)
   byte_ids : int array;  (** The 256 ids of single bytes, [-1] for none. *)
   merge_keys : int array;
@@ -51,13 +50,10 @@ type byte_level = {
 (** {1:sp The fused SentencePiece kernel} *)
 
 type sp = {
-  front : Bytes.t;
-      (** The state's front pretoken table, probed first; empty when caching is
-          off. *)
-  front_mask : int;
-      (** The front table's entry index mask, [-1] when caching is off. *)
   cache : Bytes.t;
-      (** The state's back pretoken table; empty when caching is off. *)
+      (** The state's pretoken table, which has no front table; empty when
+          caching is off. *)
+  cache_base : int;  (** As in {!byte_level}. *)
   cache_mask : int;  (** The set index mask, [-1] when caching is off. *)
   merge_keys : int array;
       (** The merge map's open-addressing keys, [-1] empty. *)
@@ -95,8 +91,9 @@ type reason =
       (** Why {!byte_level_encode} returned; constructor order is the C [BROT_*]
           enum. [Done]: the range is exhausted. [Spans_full]: the span
           buffer has no room for the span at the resume position, or the call
-          has walked 1024 spans, after which it returns so that the runtime,
-          which cannot stop a domain inside a call, never waits long for one.
+          has walked about 1024 spans, after which it returns so that the
+          runtime, which cannot stop a domain inside a call, never waits long
+          for one.
           [Ids_full]: the ids buffer has no room for the span at the resume
           position. [Class]: the
           walker met a code point the Unicode table does not classify yet —
@@ -187,9 +184,10 @@ val byte_level_encode_ids32 :
 (** [byte_level_encode_ids32 text pos stop ids cursor unicode t] is
     {!byte_level_encode} without spans or marks: the same walk, probes, table
     stores and ids, stored as [int32] into an {!ids32} buffer, [Spans_full]
-    only after 1024 spans. On [Encode] the span at [{!resume}..{!unit_stop})] needs
-    OCaml and nothing was appended for it. Ids room is checked per span against
-    the buffer's length; every other contract is {!byte_level_encode}'s. *)
+    only after about 1024 spans. On [Encode] the span at
+    [{!resume}..{!unit_stop})] needs OCaml and nothing was appended for it. Ids
+    room is checked per span against the buffer's length; every other contract
+    is {!byte_level_encode}'s. *)
 
 val split_encode :
   string ->
@@ -251,6 +249,10 @@ val sp_encode_ids32 : string -> int -> int -> ids32 -> Bytes.t -> sp -> reason
     rather than an [Ints.buffer]: the same cuts, probes, table stores and exits,
     the ids stored as [int32]. Ids room is checked per unit against the buffer's
     length; every other contract is {!sp_encode}'s. *)
+
+val cache_align : Bytes.t -> int
+(** [cache_align b] is the offset into [b] of its first byte on a 64-byte
+    boundary, where a pretoken table in [b] starts its first set. *)
 
 (**/**)
 

@@ -14,9 +14,8 @@
 
     Tokenizations are cached per pretoken in a two-way set-associative table
     seeded with the whole vocabulary, so a word the vocabulary holds is answered
-    without merging. A small cache-resident front table, filled by promoting
-    whatever the main table answers, serves the most frequent pretokens without
-    touching the main table's memory.
+    without merging. A set's evicted entry moves to the set beside it, where a
+    miss looks before merging.
 
     A span longer than a cache key is first cut into SentencePiece word units —
     each opening at a ["▁"] that follows a non-["▁"] character, or at one of
@@ -69,12 +68,12 @@ val create :
       [end_of_word_suffix]. Defaults to [false].
     - [cache_capacity] is the number of entries in the pretoken cache, rounded
       up to a power of two and held two per set: a pretoken may sit in either
-      entry of its set, and a miss evicts the older of the two. Each entry costs
-      32 bytes and each state of the model (see {!with_state}) holds a table of
-      its own, allocated whole and fronted by a table of 4096 entries (128 KB)
-      that hits answer from without touching the main one. Defaults to
-      [262144] (8 MB). Set to [0] to disable caching, front table included.
-      Pretokens over 4096 bytes are never cached.
+      entry of its set or of the set beside it, and a miss evicts the older of
+      the two of its set into the set beside it, which drops its own older one.
+      Each entry costs 32 bytes and each state of the model (see {!with_state})
+      holds a table of its own, allocated whole. Defaults to [262144] (8 MB).
+      Set to [0] to disable caching. Pretokens over 4096 bytes are never
+      cached.
     - [dropout] is the probability of randomly skipping a merge during
       tokenization (BPE-dropout regularization). Defaults to [0.] (no dropout).
       A non-zero value disables the cache and [ignore_merges], both of which

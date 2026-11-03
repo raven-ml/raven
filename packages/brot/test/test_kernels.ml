@@ -54,8 +54,8 @@ let ids tok text = Brot.encode_ids tok ~add_special_tokens:false text
 let byte_ids text =
   Array.init (String.length text) (fun i -> Char.code text.[i])
 
-(* 1500 pretokens " a": crosses the 64-span stage and the 1024-span
-   buffer, every span a cache hit of one id. *)
+(* 1500 pretokens " a": crosses the stage and the 1024-span buffer, every span
+   a cache hit of one id. *)
 let test_chunk_boundary () =
   let tok = simple () in
   let text = String.concat "" (List.init 1500 (fun _ -> " a")) in
@@ -104,8 +104,8 @@ let test_long_pretoken_hand_back () =
     words.(610);
   equal ~msg:"the span after the hand-back" (option int) (Some 601) words.(621)
 
-(* Pretoken counts at and around the seams of the 64-span stage, exact ids
-   each. *)
+(* Pretoken counts at and around the seams of the stage, which holds 256 spans
+   and up to a batch more, exact ids each. *)
 let test_chunk_seam_lengths () =
   let tok = simple () in
   List.iter
@@ -292,6 +292,37 @@ let kernel_spans tok text =
 let pre_spans pre text =
   Array.of_list (List.map snd (Brot.Pre_tokenizer.pre_tokenize pre text))
 
+(* A long pretoken planted at every span index from 600 to 1400, across the
+   1024-span buffer of the recording path and the stage's seams, after three
+   shapes of short ones: the spans must be the pre-tokenizer's. A stage that
+   starts with no span room left harvests nothing. *)
+let test_long_pretoken_at_buffer_seams () =
+  let tok = Brot.bpe ~vocab:base_vocab ~merges:[] ~pre:(pre ()) () in
+  let long = " " ^ String.make 20 'q' in
+  let shapes =
+    [
+      ("plain", fun k -> String.concat "" (List.init k (fun _ -> " a")));
+      ( "every third longer",
+        fun k ->
+          String.concat ""
+            (List.init k (fun i -> if i mod 3 = 0 then " ab" else " a")) );
+      ( "every fifth beyond ASCII",
+        fun k ->
+          String.concat ""
+            (List.init k (fun i -> if i mod 5 = 0 then "\u{e9}" else " a")) );
+    ]
+  in
+  List.iter
+    (fun (name, shape) ->
+      for k = 600 to 1400 do
+        let text = shape k ^ long ^ shape 300 in
+        equal
+          ~msg:(Printf.sprintf "%s, long pretoken after %d" name k)
+          (array (pair int int))
+          (pre_spans (pre ()) text) (kernel_spans tok text)
+      done)
+    shapes
+
 (* Each family's shape at every offset 0..80, encoded by [tok] and cut by
    [reference]. *)
 let sweep ?(msg = "") tok reference families =
@@ -331,6 +362,25 @@ let test_batch_alignments () =
       ( "give-back before non-ASCII whitespace",
         fun off -> String.make off 'x' ^ "  \194\160 " ^ String.make 80 'y' );
       ("digits", fun off -> pad off ^ " " ^ String.make 20 '8' ^ "a9 " ^ pad 64);
+      ( "letters beyond ASCII across the edge",
+        fun off ->
+          pad off ^ " \195\169"
+          ^ String.concat "" (List.init 30 (fun _ -> "Ж"))
+          ^ "a日本" ^ pad 80 );
+      ( "white space beyond ASCII at the edge",
+        fun off ->
+          String.make off 'x'
+          ^ " \u{a0}y \u{3000}\u{3000}z\u{a0}\u{a0} 1\u{2028}"
+          ^ String.make 80 'y' );
+      ( "numbers and punctuation beyond ASCII",
+        fun off ->
+          pad off
+          ^ " \u{663}\u{664}\u{bd} \u{201c}x\u{201d} \u{2014}\u{2014}😀a"
+          ^ pad 80 );
+      ( "malformed bytes",
+        fun off ->
+          pad off ^ "a\x80b \xC3 c\xE2\x80d\xF0\x9F\x98 \xC0\xAF\xED\xA0\x80"
+          ^ pad 80 );
     ]
   in
   sweep tok (pre ()) families
@@ -841,6 +891,70 @@ let has_sub text sub =
   in
   go 0
 
+(* The batch walk against the scalar walker it stands for: drawn texts that mix
+   letters, numbers, white space and other characters of every length beyond
+   ASCII with ASCII runs, contractions, malformed bytes and digits, long enough
+   to cross several 64-byte batches, cut by the C kernel as the OCaml
+   pre-tokenizer cuts them. *)
+let walker_alphabet =
+  [
+    "a"; "the"; "Ab"; " "; "  "; "\n"; "\t"; "\r\n"; "'s"; "'ll"; "'"; "1";
+    "42"; "."; "!!"; "-"; "\195\169"; "Ж"; "ß"; "日本"; "\u{a0}"; "\u{85}";
+    "\u{3000}"; "\u{2028}"; "\u{663}"; "\u{bd}"; "\u{201c}"; "\u{201d}";
+    "\u{2014}"; "😀"; "e\u{301}"; "\x80"; "\xC3"; "\xE2\x80"; "\xF0\x9F";
+    "\xC0\xAF"; "\xED\xA0\x80";
+    (* Overlong forms of every ASCII class, of three bytes and of four: a
+       letter, a digit, a space, a newline, punctuation, an apostrophe. *)
+    "\xC1\x81"; "\xE0\x81\x81"; "\xF0\x80\x81\x81"; "\xE0\x80\xB1";
+    "\xF0\x80\x80\xB1"; "\xE0\x80\xA0"; "\xF0\x80\x80\xA0"; "\xE0\x80\x8A";
+    "\xF0\x80\x80\x8A"; "\xE0\x80\xAE"; "\xF0\x80\x80\xAE"; "\xE0\x80\xA7";
+    (* Letters and numbers of four bytes, code points no table classifies
+       before they are met, and bytes that never stand in UTF-8. *)
+    "\u{1D400}"; "\u{10400}"; "\u{1D7CE}"; "\u{10107}"; "\u{378}"; "\u{E0001}";
+    "\u{10FFFF}"; "\u{FFFE}"; "\xF5"; "\xF8"; "\xFE"; "\xFF";
+  ]
+[@@ocamlformat "disable"]
+
+let walker_text =
+  Gen.with_pp
+    (fun ppf s -> Format.fprintf ppf "%S" s)
+    (Gen.map (String.concat "")
+       (Gen.list ~size:(Gen.int_range 40 160) (Gen.of_list walker_alphabet)))
+
+let has_any text subs = List.exists (has_sub text) subs
+
+(* A white space character in an overlong form of four bytes, which the scalar
+   walker decodes as the space it stands for, inside a 64-byte batch. *)
+let test_overlong_white_space () =
+  let tok = Brot.bpe ~vocab:base_vocab ~merges:[] ~pre:(pre ()) () in
+  List.iter
+    (fun text ->
+      equal ~msg:(Printf.sprintf "%S" text)
+        (array (pair int int))
+        (pre_spans (pre ()) text) (kernel_spans tok text))
+    [
+      "abcdefghij\xF0\x80\x80\xA0" ^ String.make 60 'x';
+      "abcdefghij \xF0\x80\x80\xA0\xF0\x80\x80\x8A" ^ String.make 60 'x';
+      "abcdefghij\xE0\x80\xA0\xF0\x80\x80\xA0y" ^ String.make 60 'x';
+    ]
+
+let test_walker_law =
+  let tok = lazy (Brot.bpe ~vocab:base_vocab ~merges:[] ~pre:(pre ()) ()) in
+  prop ~count:300 "the batch walk cuts as the scalar walker" walker_text
+    (fun text ->
+      cover "white space beyond ASCII before a letter"
+        (has_any text [ "\u{a0}a"; "\u{3000}t"; "\u{2028}A" ]);
+      cover "a letter beyond ASCII after a space"
+        (has_any text [ " \195\169"; " Ж"; " 日" ]);
+      cover "malformed UTF-8" (not (String.is_valid_utf_8 text));
+      cover "an overlong white space character"
+        (has_any text [ "\xE0\x80\xA0"; "\xF0\x80\x80\xA0" ]);
+      cover "a text over two batches" (String.length text > 128);
+      equal ~msg:(Printf.sprintf "%S" text)
+        (array (pair int int))
+        (pre_spans (pre ()) text)
+        (kernel_spans (Lazy.force tok) text))
+
 let cover_law text =
   let words = String.split_on_char ' ' text in
   cover "a word over 15 bytes"
@@ -919,6 +1033,8 @@ let () =
              test "a long pretoken hands back between chunks"
                test_long_pretoken_hand_back;
              test "hand-backs at the chunk's edges" test_encode_at_chunk_edges;
+             test "a long pretoken at every span of the buffer's seams"
+               test_long_pretoken_at_buffer_seams;
              test "a class hand-back after an encode resume"
                test_class_after_encode_resume;
              test "maximal multi-id spans across chunks" test_many_ids_per_span;
@@ -927,6 +1043,9 @@ let () =
          group "batch walker"
            [
              test "every shape at every batch alignment" test_batch_alignments;
+             test "white space in an overlong form of four bytes"
+               test_overlong_white_space;
+             test_walker_law;
              test "every cl100k shape at every batch alignment"
                test_cl100k_alignments;
            ];

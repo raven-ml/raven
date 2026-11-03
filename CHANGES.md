@@ -2790,6 +2790,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `encode_batch_ids` with GPT-2's pattern takes 25% fewer instructions, 83%
+  fewer mispredicted branches and 60% fewer cache misses per byte of
+  OpenWebText, and SentencePiece models 31% fewer mispredictions: spans are
+  taken a 64-byte batch at a time, the pretoken cache is probed without a
+  branch, and a domain keeps one ids buffer from batch to batch.
 - `Encoding.offsets` give a byte of text that is no part of a character, such
   as a continuation byte with no lead byte before it, a span of its own; it
   took the span of the character before it, which spanned it too.

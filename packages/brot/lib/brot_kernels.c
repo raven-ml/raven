@@ -51,9 +51,8 @@ enum { BROT_DONE, BROT_SPANS_FULL, BROT_IDS_FULL, BROT_CLASS, BROT_ENCODE };
 /* Kernel.byte_level field order. */
 enum {
   BROT_BL_LEAD,
-  BROT_BL_FRONT,
-  BROT_BL_FRONT_MASK,
   BROT_BL_CACHE,
+  BROT_BL_CACHE_BASE,
   BROT_BL_CACHE_MASK,
   BROT_BL_BYTE_IDS,
   BROT_BL_MERGE_KEYS,
@@ -66,9 +65,8 @@ enum {
 
 /* Kernel.sp field order. */
 enum {
-  BROT_SP_FRONT,
-  BROT_SP_FRONT_MASK,
   BROT_SP_CACHE,
+  BROT_SP_CACHE_BASE,
   BROT_SP_CACHE_MASK,
   BROT_SP_MERGE_KEYS,
   BROT_SP_MERGE_VALUES,
@@ -150,6 +148,17 @@ static inline int clz64(uint64_t x) { return __builtin_clzll(x); }
 #else
 #define BROT_PREFETCH(p) ((void)(p))
 #define BROT_INLINE inline
+#endif
+
+/* Hides how a flag was computed from the optimizer, which otherwise turns a
+   select on it, or a test of flags it combines, back into a branch on each
+   comparison — and those are the comparisons whose outcome no predictor
+   learns. GCC/Clang only: elsewhere the code stays correct, only less sure
+   to be branch-free. */
+#if defined(__GNUC__) || defined(__clang__)
+#define BROT_OPAQUE(x) __asm__("" : "+r"(x))
+#else
+#define BROT_OPAQUE(x) ((void)0)
 #endif
 
 /* The walker — Pre_tokenizer.fill_byte_level and Char_class.at, line for
@@ -748,19 +757,20 @@ static intnat o200k_next_span(walker *w, intnat i, intnat digits,
 /* The mask scanner. Instead of walking span by span, each full 64-byte
    batch of the range is classified once into per-byte class bitmasks, the
    byte-level boundary rules are evaluated on all 64 positions at once as
-   u64 shift algebra, and the walk pops one "a span starts here" bit per
-   span. Bits the masks cannot decide are a bad zone that [next_span]
-   re-derives — the scalar walker above stays the ground truth and runs
-   the last partial batch outright, so no byte at or past [stop] is read;
-   the one byte of lookahead a whitespace split needs is read only below
-   [stop]. Bad zones are: non-ASCII bytes and both neighbours (their
-   category comes from the Unicode table, which can also be incomplete —
-   the scalar path raises the Class hand-back); a whitespace byte at the
-   batch edge whose lookahead is non-ASCII; an apostrophe whose bits are
-   already bad, plus the two suffix bytes its contraction could absorb (the
-   contraction is the one rule that reaches two bytes ahead); and an
-   apostrophe opening a span less than three bytes before the batch edge,
-   whose moved boundary the next batch could not see. */
+   u64 shift algebra, and the walk takes every "a span starts here" bit of
+   the batch at once. Bits the masks cannot decide are a bad zone that
+   [next_span] re-derives — the scalar walker above stays the ground truth
+   and runs the last partial batch outright, so no byte at or past [stop] is
+   read; the one byte of lookahead a whitespace split needs is read only
+   below [stop]. The GPT-2 masks classify the characters beyond ASCII by the
+   Unicode table and leave bad only the ones they cannot (see
+   [classify_uni]); the cl100k masks leave non-ASCII bytes bad, with their
+   neighbours. Other bad zones are: a whitespace character at the batch edge
+   whose lookahead is non-ASCII; an apostrophe whose bits are already bad,
+   plus the two suffix bytes its contraction could absorb (the contraction
+   is the one rule that reaches two bytes ahead); and an apostrophe opening a
+   span less than three bytes before the batch edge, whose moved boundary
+   the next batch could not see. */
 
 /* Class bitmasks of one 64-byte batch: bit k describes byte [scan + k]. */
 typedef struct {
@@ -836,31 +846,48 @@ static inline __m128i sse_le(__m128i x, int c)
   return _mm_cmpeq_epi8(_mm_min_epu8(x, _mm_set1_epi8((char)c)), x);
 }
 
+/* The 64 bits of four sixteen-lane results, lane i of [r[k]] at bit
+   16k + i. */
+static inline uint64_t sse_mask64(const __m128i r[4])
+{
+  return (uint64_t)(unsigned)_mm_movemask_epi8(r[0])
+         | (uint64_t)(unsigned)_mm_movemask_epi8(r[1]) << 16
+         | (uint64_t)(unsigned)_mm_movemask_epi8(r[2]) << 32
+         | (uint64_t)(unsigned)_mm_movemask_epi8(r[3]) << 48;
+}
+
+/* One class at a time over the four loads, so that only the loads and one
+   class's results are live: all classes at once spill to the stack. */
 static BROT_INLINE void batch_classify(const unsigned char *p,
                                         batch_classes *c, int newlines)
 {
+  __m128i v[4], r[4], sp[4];
   int k;
-  c->letter = c->digit = c->space = c->ws = c->hi = c->apo = c->nl = 0;
-  for (k = 0; k < 4; k++) {
-    __m128i v = _mm_loadu_si128((const __m128i *)(p + 16 * k));
-    __m128i lowered = _mm_or_si128(v, _mm_set1_epi8(0x20));
-    __m128i l = sse_le(_mm_sub_epi8(lowered, _mm_set1_epi8('a')), 25);
-    __m128i d = sse_le(_mm_sub_epi8(v, _mm_set1_epi8('0')), 9);
-    __m128i sp = _mm_cmpeq_epi8(v, _mm_set1_epi8(' '));
-    __m128i ws = _mm_or_si128(sp, sse_le(_mm_sub_epi8(v, _mm_set1_epi8(9)), 4));
-    __m128i ap = _mm_cmpeq_epi8(v, _mm_set1_epi8('\''));
-    int sh = 16 * k;
-    c->letter |= (uint64_t)(unsigned)_mm_movemask_epi8(l) << sh;
-    c->digit |= (uint64_t)(unsigned)_mm_movemask_epi8(d) << sh;
-    c->space |= (uint64_t)(unsigned)_mm_movemask_epi8(sp) << sh;
-    c->ws |= (uint64_t)(unsigned)_mm_movemask_epi8(ws) << sh;
-    c->hi |= (uint64_t)(unsigned)_mm_movemask_epi8(v) << sh;
-    c->apo |= (uint64_t)(unsigned)_mm_movemask_epi8(ap) << sh;
-    if (newlines) {
-      __m128i nl = _mm_or_si128(_mm_cmpeq_epi8(v, _mm_set1_epi8('\n')),
-                                _mm_cmpeq_epi8(v, _mm_set1_epi8('\r')));
-      c->nl |= (uint64_t)(unsigned)_mm_movemask_epi8(nl) << sh;
-    }
+  for (k = 0; k < 4; k++)
+    v[k] = _mm_loadu_si128((const __m128i *)(p + 16 * k));
+  for (k = 0; k < 4; k++)
+    r[k] = sse_le(_mm_sub_epi8(_mm_or_si128(v[k], _mm_set1_epi8(0x20)),
+                               _mm_set1_epi8('a')),
+                  25);
+  c->letter = sse_mask64(r);
+  for (k = 0; k < 4; k++)
+    r[k] = sse_le(_mm_sub_epi8(v[k], _mm_set1_epi8('0')), 9);
+  c->digit = sse_mask64(r);
+  for (k = 0; k < 4; k++) sp[k] = _mm_cmpeq_epi8(v[k], _mm_set1_epi8(' '));
+  c->space = sse_mask64(sp);
+  for (k = 0; k < 4; k++)
+    r[k] = _mm_or_si128(sp[k],
+                        sse_le(_mm_sub_epi8(v[k], _mm_set1_epi8(9)), 4));
+  c->ws = sse_mask64(r);
+  c->hi = sse_mask64(v);
+  for (k = 0; k < 4; k++) r[k] = _mm_cmpeq_epi8(v[k], _mm_set1_epi8('\''));
+  c->apo = sse_mask64(r);
+  c->nl = 0;
+  if (newlines) {
+    for (k = 0; k < 4; k++)
+      r[k] = _mm_or_si128(_mm_cmpeq_epi8(v[k], _mm_set1_epi8('\n')),
+                          _mm_cmpeq_epi8(v[k], _mm_set1_epi8('\r')));
+    c->nl = sse_mask64(r);
   }
 }
 
@@ -923,6 +950,52 @@ static BROT_INLINE void batch_classify(const unsigned char *p,
 
 #endif
 
+/* The classes of a batch's characters beyond ASCII, by [classify_uni]: the
+   bytes of its letters, numbers and white space, the first byte of each white
+   space character of two bytes and of three, and the bytes the masks leave
+   to the scalar walker. */
+typedef struct {
+  uint64_t letter, digit, ws, ws2, ws3, bad;
+} uni_classes;
+
+/* Each character opening at a byte of [hi] in the batch at [scan], decoded
+   and classified by [decode_class]: every byte of it takes its category, so
+   that the masks see a character where they see a byte. A character that
+   crosses the batch's end, a malformed one, one the Unicode table does not
+   hold yet, white space of four bytes, and a continuation byte no character
+   of the batch opens — a stray, or the tail of a character from the batch
+   before — are bad. The
+   loop takes one turn per character, and only batches beyond ASCII come
+   here. */
+static void classify_uni(walker *w, intnat scan, uint64_t hi, uni_classes *u)
+{
+  const unsigned char *s = w->s + scan;
+  uint64_t rest = hi;
+  u->letter = u->digit = u->ws = u->ws2 = u->ws3 = u->bad = 0;
+  while (rest) {
+    intnat k = ctz64(rest), d, len, cat;
+    uint64_t one = (uint64_t)1 << k, m, is_ws;
+    d = s[k] < 0xC0 ? -1 : decode_class(w, scan + k);
+    len = d & 7;
+    cat = (d >> 3) & 3;
+    /* White space of four bytes is only ever an overlong form, whose
+       give-back the masks have no lead mask for. */
+    if (d < 0 || len == 1 || k + len > 64 || (len == 4 && cat == CL_WS)) {
+      u->bad |= one;
+      rest &= rest - 1;
+      continue;
+    }
+    m = ((((uint64_t)1 << len) - 1) << k);
+    is_ws = (uint64_t)0 - (uint64_t)(cat == CL_WS);
+    u->letter |= m & ((uint64_t)0 - (uint64_t)(cat == CL_LETTER));
+    u->digit |= m & ((uint64_t)0 - (uint64_t)(cat == CL_NUM));
+    u->ws |= m & is_ws;
+    u->ws2 |= one & is_ws & ((uint64_t)0 - (uint64_t)(len == 2));
+    u->ws3 |= one & is_ws & ((uint64_t)0 - (uint64_t)(len == 3));
+    rest &= ~m;
+  }
+}
+
 /* The boundary masks of the batch at [scan]: bit k of [usable] is a
    trustworthy span start at [scan + k], bit k of [bad] sends byte
    [scan + k] to the scalar walker; the two never overlap. Requires
@@ -931,17 +1004,25 @@ static BROT_INLINE void batch_classify(const unsigned char *p,
    carries and bit 0 is trivially a start; later batches read the byte
    before the batch, which is inside the range, for the four one-step
    carries the rules need. */
-static void batch_masks(const walker *w, intnat anchor, intnat scan,
+static void batch_masks(walker *w, intnat anchor, intnat scan,
                         uint64_t *usable, uint64_t *bad_out)
 {
   const unsigned char *s = w->s;
   batch_classes c;
+  uni_classes u = {0, 0, 0, 0, 0, 0};
   uint64_t pl = 0, pd = 0, psp = 0, pws = 0, po = 0;
-  uint64_t other, cont_same, after_sp, nb, split_ok, pwsb, boundary, bad;
-  uint64_t apo_bad, cand;
+  uint64_t letter, digit, ws, other, cont_same, after_sp, nb, split_ok, pwsb;
+  uint64_t edge, boundary, bad, apo_bad, cand;
   batch_classify(s + scan, &c, 0);
-  other = ~(c.letter | c.digit | c.ws);
-  bad = c.hi | (c.hi << 1) | (c.hi >> 1);
+  if (c.hi != 0) classify_uni(w, scan, c.hi, &u);
+  letter = c.letter | u.letter;
+  digit = c.digit | u.digit;
+  ws = c.ws | u.ws;
+  other = ~(letter | digit | ws);
+  /* A bad character's neighbours take their boundaries from its class: the
+     byte after it, and the white space character before it whose give-back
+     looks at it, which opens up to three bytes before. */
+  bad = u.bad | (u.bad << 1) | (u.bad >> 1) | (u.bad >> 2) | (u.bad >> 3);
   if (scan > anchor) {
     unsigned b = s[scan - 1];
     if (b >= 0x80)
@@ -957,27 +1038,28 @@ static void batch_masks(const walker *w, intnat anchor, intnat scan,
   /* A span continues over its own category, [ ?] glues a space to what
      follows, and a whitespace run opens where no whitespace precedes or
      at its last character when what follows is not whitespace — the
-     [\s+(?!\S)] give-back. The apostrophe and the space sit in [other]
-     and [ws] exactly as [lead_class] folds them. */
-  cont_same = (c.letter & ((c.letter << 1) | pl))
-              | (c.digit & ((c.digit << 1) | pd))
+     [\s+(?!\S)] give-back, which looks past the whole character. The
+     apostrophe and the space sit in [other] and [ws] exactly as
+     [lead_class] folds them. */
+  cont_same = (letter & ((letter << 1) | pl)) | (digit & ((digit << 1) | pd))
               | (other & ((other << 1) | po));
   after_sp = (c.space << 1) | psp;
-  nb = ~c.ws & ~cont_same & ~after_sp;
-  split_ok = c.ws & (~c.ws >> 1);
-  if (c.ws >> 63) {
-    /* Bit 63's give-back needs the next byte; at the end of the range the
-       run runs out instead and keeps its last character. */
-    if (scan + 64 < w->stop) {
-      unsigned b = s[scan + 64];
-      if (b >= 0x80)
-        bad |= (uint64_t)1 << 63;
-      else if (!(b == ' ' || (unsigned)(b - 9) <= 4))
-        split_ok |= (uint64_t)1 << 63;
-    }
+  nb = ~ws & ~cont_same & ~after_sp;
+  split_ok = (c.ws & (~ws >> 1)) | (u.ws2 & (~ws >> 2)) | (u.ws3 & (~ws >> 3));
+  /* The white space character ending the batch needs the byte after it for
+     its give-back: a coin flip on natural text, so it is decided without a
+     branch. At the end of the range the run runs out instead and keeps its
+     last character. */
+  edge = (c.ws & ((uint64_t)1 << 63)) | (u.ws2 & ((uint64_t)1 << 62))
+         | (u.ws3 & ((uint64_t)1 << 61));
+  if (scan + 64 < w->stop) {
+    unsigned b = s[scan + 64];
+    uint64_t hi = b >= 0x80, sp = b == ' ' || (unsigned)(b - 9) <= 4;
+    bad |= ((uint64_t)0 - edge) & ((uint64_t)0 - hi); /* its bytes */
+    split_ok |= edge & ((hi | sp) - 1); /* an ASCII byte that is no space */
   }
-  pwsb = (c.ws << 1) | pws;
-  boundary = nb | (c.ws & (~pwsb | split_ok));
+  pwsb = (ws << 1) | pws;
+  boundary = nb | ((c.ws | u.ws2 | u.ws3) & (~pwsb | split_ok));
   /* Whether an apostrophe opens a span decides its contraction, so an
      apostrophe on bad bits hides the two bytes a contraction could
      absorb. On trusted bits, one that opens a span moves the boundary
@@ -1155,24 +1237,23 @@ static void cl100k_batch_masks(const walker *w, intnat anchor, intnat scan,
   *bad_out = bad;
 }
 
-/* The batch walk. [rem] holds the pop-ready boundary bits of the current
-   segment; a bad zone parks them and aims [scalar_until] at the next
-   trusted boundary (or the batch end), sending every span opening before
-   it through the scalar walker; scalar overruns keep the 64-byte grid. The
-   state lives for one kernel call — the masks are pure functions of the
-   bytes, so a resumed call rebuilds them from its own anchor. [digits] is
-   -1 for the GPT-2 walker, and otherwise the cl100k walker's longest group
-   of numbers, [marks] its flag. */
+/* The batch walk. Each call of [harvest] appends to a queue the ends of the
+   spans after the pending one's start [pos], a batch at a time: a clean batch
+   gives all its boundary bits at once, without a branch per span; a bad zone
+   sends every span opening before the next trusted boundary (or the batch
+   end) through the scalar walker. A scalar overrun keeps the 64-byte grid:
+   the batch it lands in is classified again, bits at or below [pos] dead.
+   The state lives for one kernel call — the masks are pure functions of the
+   bytes, so a resumed call rebuilds them from its own anchor. [digits] is -1
+   for the GPT-2 walker, and otherwise the cl100k walker's longest group of
+   numbers, [marks] its flag. */
 typedef struct {
   intnat digits;
   int marks;
-  intnat anchor;     /* the call's start position, carry-free by contract */
-  intnat scan;       /* base of the next batch to classify */
-  intnat mask_base;  /* base the rem/batch bits refer to */
-  uint64_t rem;      /* pop-ready boundary bits of the current segment */
-  uint64_t batch_usable;
-  uint64_t batch_bad;
-  intnat scalar_until; /* walk spans with the scalar walker below this */
+  intnat anchor; /* the call's start position, carry-free by contract */
+  intnat scan;   /* base of the next batch to classify */
+  intnat pos;    /* the pending span's start: the last end harvested */
+  int failed;    /* the scalar walker stopped at [pos] for a class */
 } mask_state;
 
 static void mask_init(mask_state *ms, intnat pos, intnat digits, int marks)
@@ -1181,89 +1262,230 @@ static void mask_init(mask_state *ms, intnat pos, intnat digits, int marks)
   ms->marks = marks;
   ms->anchor = pos;
   ms->scan = pos;
-  ms->mask_base = pos;
-  ms->rem = 0;
-  ms->batch_usable = 0;
-  ms->batch_bad = 0;
-  ms->scalar_until = pos;
+  ms->pos = pos;
+  ms->failed = 0;
 }
 
-/* Load the segment of usable bits in [from_bit, next bad run) into [rem];
-   a bad run parks the rest and aims [scalar_until] past it. A bit at the
-   pending span's own start opens that span rather than ending it, so it
-   never pops. */
-static void mask_load_segment(mask_state *ms, intnat pos, intnat from_bit)
+/* Byte j of entry b is the position of the j-th set bit of b. */
+static const uint64_t bit_pos[256] = {
+    0x0000000000000000ULL, 0x0000000000000000ULL, 0x0000000000000001ULL,
+    0x0000000000000100ULL, 0x0000000000000002ULL, 0x0000000000000200ULL,
+    0x0000000000000201ULL, 0x0000000000020100ULL, 0x0000000000000003ULL,
+    0x0000000000000300ULL, 0x0000000000000301ULL, 0x0000000000030100ULL,
+    0x0000000000000302ULL, 0x0000000000030200ULL, 0x0000000000030201ULL,
+    0x0000000003020100ULL, 0x0000000000000004ULL, 0x0000000000000400ULL,
+    0x0000000000000401ULL, 0x0000000000040100ULL, 0x0000000000000402ULL,
+    0x0000000000040200ULL, 0x0000000000040201ULL, 0x0000000004020100ULL,
+    0x0000000000000403ULL, 0x0000000000040300ULL, 0x0000000000040301ULL,
+    0x0000000004030100ULL, 0x0000000000040302ULL, 0x0000000004030200ULL,
+    0x0000000004030201ULL, 0x0000000403020100ULL, 0x0000000000000005ULL,
+    0x0000000000000500ULL, 0x0000000000000501ULL, 0x0000000000050100ULL,
+    0x0000000000000502ULL, 0x0000000000050200ULL, 0x0000000000050201ULL,
+    0x0000000005020100ULL, 0x0000000000000503ULL, 0x0000000000050300ULL,
+    0x0000000000050301ULL, 0x0000000005030100ULL, 0x0000000000050302ULL,
+    0x0000000005030200ULL, 0x0000000005030201ULL, 0x0000000503020100ULL,
+    0x0000000000000504ULL, 0x0000000000050400ULL, 0x0000000000050401ULL,
+    0x0000000005040100ULL, 0x0000000000050402ULL, 0x0000000005040200ULL,
+    0x0000000005040201ULL, 0x0000000504020100ULL, 0x0000000000050403ULL,
+    0x0000000005040300ULL, 0x0000000005040301ULL, 0x0000000504030100ULL,
+    0x0000000005040302ULL, 0x0000000504030200ULL, 0x0000000504030201ULL,
+    0x0000050403020100ULL, 0x0000000000000006ULL, 0x0000000000000600ULL,
+    0x0000000000000601ULL, 0x0000000000060100ULL, 0x0000000000000602ULL,
+    0x0000000000060200ULL, 0x0000000000060201ULL, 0x0000000006020100ULL,
+    0x0000000000000603ULL, 0x0000000000060300ULL, 0x0000000000060301ULL,
+    0x0000000006030100ULL, 0x0000000000060302ULL, 0x0000000006030200ULL,
+    0x0000000006030201ULL, 0x0000000603020100ULL, 0x0000000000000604ULL,
+    0x0000000000060400ULL, 0x0000000000060401ULL, 0x0000000006040100ULL,
+    0x0000000000060402ULL, 0x0000000006040200ULL, 0x0000000006040201ULL,
+    0x0000000604020100ULL, 0x0000000000060403ULL, 0x0000000006040300ULL,
+    0x0000000006040301ULL, 0x0000000604030100ULL, 0x0000000006040302ULL,
+    0x0000000604030200ULL, 0x0000000604030201ULL, 0x0000060403020100ULL,
+    0x0000000000000605ULL, 0x0000000000060500ULL, 0x0000000000060501ULL,
+    0x0000000006050100ULL, 0x0000000000060502ULL, 0x0000000006050200ULL,
+    0x0000000006050201ULL, 0x0000000605020100ULL, 0x0000000000060503ULL,
+    0x0000000006050300ULL, 0x0000000006050301ULL, 0x0000000605030100ULL,
+    0x0000000006050302ULL, 0x0000000605030200ULL, 0x0000000605030201ULL,
+    0x0000060503020100ULL, 0x0000000000060504ULL, 0x0000000006050400ULL,
+    0x0000000006050401ULL, 0x0000000605040100ULL, 0x0000000006050402ULL,
+    0x0000000605040200ULL, 0x0000000605040201ULL, 0x0000060504020100ULL,
+    0x0000000006050403ULL, 0x0000000605040300ULL, 0x0000000605040301ULL,
+    0x0000060504030100ULL, 0x0000000605040302ULL, 0x0000060504030200ULL,
+    0x0000060504030201ULL, 0x0006050403020100ULL, 0x0000000000000007ULL,
+    0x0000000000000700ULL, 0x0000000000000701ULL, 0x0000000000070100ULL,
+    0x0000000000000702ULL, 0x0000000000070200ULL, 0x0000000000070201ULL,
+    0x0000000007020100ULL, 0x0000000000000703ULL, 0x0000000000070300ULL,
+    0x0000000000070301ULL, 0x0000000007030100ULL, 0x0000000000070302ULL,
+    0x0000000007030200ULL, 0x0000000007030201ULL, 0x0000000703020100ULL,
+    0x0000000000000704ULL, 0x0000000000070400ULL, 0x0000000000070401ULL,
+    0x0000000007040100ULL, 0x0000000000070402ULL, 0x0000000007040200ULL,
+    0x0000000007040201ULL, 0x0000000704020100ULL, 0x0000000000070403ULL,
+    0x0000000007040300ULL, 0x0000000007040301ULL, 0x0000000704030100ULL,
+    0x0000000007040302ULL, 0x0000000704030200ULL, 0x0000000704030201ULL,
+    0x0000070403020100ULL, 0x0000000000000705ULL, 0x0000000000070500ULL,
+    0x0000000000070501ULL, 0x0000000007050100ULL, 0x0000000000070502ULL,
+    0x0000000007050200ULL, 0x0000000007050201ULL, 0x0000000705020100ULL,
+    0x0000000000070503ULL, 0x0000000007050300ULL, 0x0000000007050301ULL,
+    0x0000000705030100ULL, 0x0000000007050302ULL, 0x0000000705030200ULL,
+    0x0000000705030201ULL, 0x0000070503020100ULL, 0x0000000000070504ULL,
+    0x0000000007050400ULL, 0x0000000007050401ULL, 0x0000000705040100ULL,
+    0x0000000007050402ULL, 0x0000000705040200ULL, 0x0000000705040201ULL,
+    0x0000070504020100ULL, 0x0000000007050403ULL, 0x0000000705040300ULL,
+    0x0000000705040301ULL, 0x0000070504030100ULL, 0x0000000705040302ULL,
+    0x0000070504030200ULL, 0x0000070504030201ULL, 0x0007050403020100ULL,
+    0x0000000000000706ULL, 0x0000000000070600ULL, 0x0000000000070601ULL,
+    0x0000000007060100ULL, 0x0000000000070602ULL, 0x0000000007060200ULL,
+    0x0000000007060201ULL, 0x0000000706020100ULL, 0x0000000000070603ULL,
+    0x0000000007060300ULL, 0x0000000007060301ULL, 0x0000000706030100ULL,
+    0x0000000007060302ULL, 0x0000000706030200ULL, 0x0000000706030201ULL,
+    0x0000070603020100ULL, 0x0000000000070604ULL, 0x0000000007060400ULL,
+    0x0000000007060401ULL, 0x0000000706040100ULL, 0x0000000007060402ULL,
+    0x0000000706040200ULL, 0x0000000706040201ULL, 0x0000070604020100ULL,
+    0x0000000007060403ULL, 0x0000000706040300ULL, 0x0000000706040301ULL,
+    0x0000070604030100ULL, 0x0000000706040302ULL, 0x0000070604030200ULL,
+    0x0000070604030201ULL, 0x0007060403020100ULL, 0x0000000000070605ULL,
+    0x0000000007060500ULL, 0x0000000007060501ULL, 0x0000000706050100ULL,
+    0x0000000007060502ULL, 0x0000000706050200ULL, 0x0000000706050201ULL,
+    0x0000070605020100ULL, 0x0000000007060503ULL, 0x0000000706050300ULL,
+    0x0000000706050301ULL, 0x0000070605030100ULL, 0x0000000706050302ULL,
+    0x0000070605030200ULL, 0x0000070605030201ULL, 0x0007060503020100ULL,
+    0x0000000007060504ULL, 0x0000000706050400ULL, 0x0000000706050401ULL,
+    0x0000070605040100ULL, 0x0000000706050402ULL, 0x0000070605040200ULL,
+    0x0000070605040201ULL, 0x0007060504020100ULL, 0x0000000706050403ULL,
+    0x0000070605040300ULL, 0x0000070605040301ULL, 0x0007060504030100ULL,
+    0x0000070605040302ULL, 0x0007060504030200ULL, 0x0007060504030201ULL,
+    0x0706050403020100ULL
+};
+
+/* Appends base + k for every set bit k of [m] to [out], in order, and
+   returns their count: eight fixed steps of one byte each, every step
+   writing eight lanes at the count of the bits before it, so that the cost
+   does not depend on the bits. Writes up to seven lanes past the count. */
+static inline intnat flatten(uint64_t m, uint32_t base, uint32_t *out)
 {
-  uint64_t live = ~(uint64_t)0 << from_bit;
-  uint64_t seg_bad = ms->batch_bad & live;
-  if (seg_bad == 0) {
-    ms->rem = ms->batch_usable & live;
-    ms->batch_bad = 0;
-  } else {
-    intnat nb = ctz64(seg_bad);
-    uint64_t rest = ms->batch_usable & (~(uint64_t)0 << nb);
-    ms->rem = ms->batch_usable & live & (((uint64_t)1 << nb) - 1);
-    ms->scalar_until =
-        rest != 0 ? ms->mask_base + ctz64(rest) : ms->mask_base + 64;
+  uint64_t x = m - ((m >> 1) & 0x5555555555555555ULL);
+  uint64_t incl, excl;
+  int j;
+  x = (x & 0x3333333333333333ULL) + ((x >> 2) & 0x3333333333333333ULL);
+  x = (x + (x >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
+  incl = x * 0x0101010101010101ULL; /* byte j: the bits in bytes 0..j */
+  excl = incl << 8;
+  for (j = 0; j < 8; j++) {
+    uint64_t pos = bit_pos[(m >> (8 * j)) & 0xFF];
+    uint32_t *o = out + ((excl >> (8 * j)) & 0xFF);
+    uint32_t b = base + 8 * (uint32_t)j;
+#if defined(BROT_MASK_SSE2)
+    __m128i z = _mm_setzero_si128();
+    __m128i p16 = _mm_unpacklo_epi8(_mm_cvtsi64_si128((long long)pos), z);
+    __m128i add = _mm_set1_epi32((int)b);
+    _mm_storeu_si128((__m128i *)o,
+                     _mm_add_epi32(_mm_unpacklo_epi16(p16, z), add));
+    _mm_storeu_si128((__m128i *)(o + 4),
+                     _mm_add_epi32(_mm_unpackhi_epi16(p16, z), add));
+#elif defined(BROT_MASK_NEON)
+    uint16x8_t p16 = vmovl_u8(vcreate_u8(pos));
+    uint32x4_t add = vdupq_n_u32(b);
+    vst1q_u32(o, vaddq_u32(vmovl_u16(vget_low_u16(p16)), add));
+    vst1q_u32(o + 4, vaddq_u32(vmovl_u16(vget_high_u16(p16)), add));
+#else
+    int t;
+    for (t = 0; t < 8; t++) o[t] = b + (uint32_t)((pos >> (8 * t)) & 0xFF);
+#endif
   }
-  if (pos == ms->mask_base + from_bit)
-    ms->rem &= ~((uint64_t)1 << from_bit);
+  return (intnat)(incl >> 56);
 }
 
-/* [mask_next_span] once the segment is spent: the scalar walker over a bad
-   zone or the tail, or the next segment or batch. */
-static intnat mask_refill(mask_state *ms, walker *w, intnat i)
+/* The span opening at [i] by the scalar walker. */
+static inline intnat scalar_span(const mask_state *ms, walker *w, intnat i)
 {
+  return ms->digits < 0 ? next_span(w, i)
+                        : cl100k_next_span(w, i, ms->digits, ms->marks);
+}
+
+/* The lanes a [harvest] can write past its count: a batch's 64 boundaries, a
+   scalar overrun's end, and [flatten]'s seven lanes of slack. */
+#define HARVEST_LANES 72
+
+/* Appends to [q] from [qn] the ends of the spans after [ms->pos] that the
+   next batch holds — or the next span, over the tail no batch covers — and
+   returns the new count; [ms->pos] becomes the last of them. The scalar
+   walker stopping for a class sets [ms->failed] and appends nothing more. */
+static intnat harvest(mask_state *ms, walker *w, uint32_t *q, intnat qn)
+{
+  intnat pos = ms->pos, base, until, p;
+  uint64_t usable, bad, ulive, blive;
+  if (pos >= ms->scan + 64) ms->scan += 64 * ((pos - ms->scan) / 64);
+  base = ms->scan;
+  if (base + 64 > w->stop) { /* the tail, scalar to the end */
+    intnat e = scalar_span(ms, w, pos);
+    if (e < 0)
+      ms->failed = 1;
+    else {
+      q[qn++] = (uint32_t)e;
+      ms->pos = e;
+    }
+    return qn;
+  }
+  if (ms->digits < 0)
+    batch_masks(w, ms->anchor, base, &usable, &bad);
+  else
+    cl100k_batch_masks(w, ms->anchor, base, ms->digits, &usable, &bad);
+  /* A bit at the pending span's start opens it rather than ending it, and
+     bits below it lie in spans already walked; a bad bit at it stays live,
+     so that a bad zone starting there is walked. */
+  blive = pos >= base ? ~(uint64_t)0 << (pos - base) : ~(uint64_t)0;
+  ulive = blive << (pos >= base);
   for (;;) {
-    if (ms->rem != 0) {
-      intnat e = ms->mask_base + ctz64(ms->rem);
-      ms->rem &= ms->rem - 1;
-      return e;
+    uint64_t seg_bad = bad & blive, rest;
+    intnat fb;
+    if (seg_bad == 0) {
+      qn += flatten(usable & ulive, (uint32_t)base, q + qn);
+      break;
     }
-    if (i < ms->scalar_until)
-      return ms->digits < 0 ? next_span(w, i)
-                            : cl100k_next_span(w, i, ms->digits, ms->marks);
-    /* Continue with the current batch's next trusted segment after a
-       scalar gap; each batch is classified exactly once. */
-    if (ms->batch_bad != 0 && i < ms->mask_base + 64) {
-      mask_load_segment(ms, i, i - ms->mask_base);
-      continue;
+    fb = ctz64(seg_bad);
+    qn += flatten(usable & ulive & (((uint64_t)1 << fb) - 1), (uint32_t)base,
+                  q + qn);
+    p = qn > 0 && (intnat)q[qn - 1] > pos ? (intnat)q[qn - 1] : pos;
+    rest = usable & (~(uint64_t)0 << fb);
+    until = rest != 0 ? base + ctz64(rest) : base + 64;
+    while (p < until) {
+      intnat e = scalar_span(ms, w, p);
+      if (e < 0) {
+        ms->failed = 1;
+        ms->pos = p;
+        return qn;
+      }
+      q[qn++] = (uint32_t)e;
+      p = e;
     }
-    ms->batch_bad = 0;
-    while (ms->scan + 64 <= i) ms->scan += 64;
-    if (ms->scan + 64 > w->stop) {
-      ms->scalar_until = w->stop; /* partial tail: scalar to the end */
-      continue;
+    if (p >= base + 64) { /* an overrun: on to the batch [p] lies in */
+      ms->scan = base + 64 * ((p - base) / 64);
+      ms->pos = p;
+      return qn;
     }
-    if (ms->digits < 0)
-      batch_masks(w, ms->anchor, ms->scan, &ms->batch_usable, &ms->batch_bad);
-    else
-      cl100k_batch_masks(w, ms->anchor, ms->scan, ms->digits,
-                         &ms->batch_usable, &ms->batch_bad);
-    ms->mask_base = ms->scan;
-    ms->scan += 64;
-    mask_load_segment(ms, i, i > ms->mask_base ? i - ms->mask_base : 0);
+    blive = ~(uint64_t)0 << (p - base);
+    ulive = blive << 1;
+    pos = p;
   }
+  ms->scan = base + 64;
+  if (qn > 0 && (intnat)q[qn - 1] > ms->pos) ms->pos = (intnat)q[qn - 1];
+  return qn;
 }
 
-/* [next_span] through the masks: the end of the span opening at [i], or
-   -1 with [w->cp] set. [i] is the previous call's return (the pending
-   span's start), as the entry loop maintains. Popping a bit is the common
-   case and stays inline. */
-static inline intnat mask_next_span(mask_state *ms, walker *w, intnat i)
+/* Takes the walk back to the span start [pos] it passed: the batch [pos]
+   lies in is classified again, with the bits up to [pos] dead, as after an
+   overrun. */
+static void rewind_walk(mask_state *ms, intnat pos)
 {
-  if (ms->rem != 0) {
-    intnat e = ms->mask_base + ctz64(ms->rem);
-    ms->rem &= ms->rem - 1;
-    return e;
-  }
-  return mask_refill(ms, w, i);
+  if (ms->scan > pos) ms->scan = ms->anchor + 64 * ((pos - ms->anchor) / 64);
+  ms->pos = pos;
+  ms->failed = 0;
 }
 
-/* The cache probe — Pretoken_cache.key0/key1/hash_of, the direct-mapped front
-   table and the two-way layout of the 64-byte back set, bit for bit: keys are
-   built from little-endian loads and every word is stored native-endian, so
-   the table OCaml writes and the table written here are one format. A key
+/* The cache probe — Pretoken_cache.key0/key1/hash_of and the two-way layout
+   of the 64-byte back set, bit for bit; the kernels' tables have no front
+   table. Keys are built from little-endian loads and every word is stored
+   native-endian, so the table OCaml writes and the table written here are one
+   format. A key
    word is one eight-byte read masked to the bytes it keeps; a pretoken
    ending within eight bytes of the end of the text reads the last eight
    bytes shifted down, and a text shorter than eight bytes gathers bytes one
@@ -1302,24 +1524,13 @@ static inline uint64_t key_word1(const unsigned char *s, intnat n, intnat pos,
 
 /* Pretoken_cache.hash_of, with its fold of the key's high half into the low
    one: OCaml truncates the shifted hash to 63 bits; only 40 bits are set
-   after the shift, so the two agree. The back set and front slot byte
-   offsets are Pretoken_cache.set_at and front_at on this one hash. */
+   after the shift, so the two agree. The back set's byte offset is
+   Pretoken_cache.set_at on this one hash. */
 static inline uint64_t hash_of(uint64_t k0, uint64_t k1)
 {
   uint64_t x = k0 ^ (k1 * 0x9E3779B97F4A7C15ULL);
   x ^= x >> 32;
   return (x * 0xD6E8FEB86659FD93ULL) >> 24;
-}
-
-/* The hit test of Pretoken_cache.encode on the back table: way 0 then way 1.
-   Returns the byte offset of the way, or -1. */
-static inline intnat probe(const unsigned char *tbl, intnat set, uint64_t k0,
-                           uint64_t k1)
-{
-  if (load64(tbl + set) == k0 && load64(tbl + set + 8) == k1) return set;
-  if (load64(tbl + set + 32) == k0 && load64(tbl + set + 40) == k1)
-    return set + 32;
-  return -1;
 }
 
 /* Pretoken_cache.store_at, in the same order: way 0 shifts into way 1 and the
@@ -1338,15 +1549,23 @@ static void cache_store(unsigned char *tbl, intnat set, uint64_t k0,
   store64(tbl + set, k0);
 }
 
-/* Pretoken_cache.promote: a back-table hit is written into its front slot, in
-   cache_store's publish order. */
-static inline void front_store(unsigned char *front, intnat fslot, uint64_t k0,
-                               uint64_t k1, uint64_t v0, uint64_t v1)
+/* Pretoken_cache.neighbour: the set beside [set], which takes the entries
+   [set] evicts, or [set] itself in a table of one set. */
+static inline intnat neighbour(intnat set, intnat mask)
 {
-  store64(front + fslot + 16, v0);
-  store64(front + fslot + 24, v1);
-  store64(front + fslot + 8, k1);
-  store64(front + fslot, k0);
+  return mask > 0 ? set ^ 64 : set;
+}
+
+/* Pretoken_cache.insert_at: [cache_store], the entry way 1 held moving on into
+   the neighbour set as [cache_store] puts it there. */
+static void cache_insert(unsigned char *tbl, intnat set, intnat mask,
+                         uint64_t k0, uint64_t k1, uint64_t v0, uint64_t v1)
+{
+  intnat nset = neighbour(set, mask);
+  uint64_t w0 = load64(tbl + set + 32), w1 = load64(tbl + set + 40);
+  uint64_t w2 = load64(tbl + set + 48), w3 = load64(tbl + set + 56);
+  cache_store(tbl, set, k0, k1, v0, v1);
+  if (w1 != 0 && nset != set) cache_store(tbl, nset, w0, w1, w2, w3);
 }
 
 /* Pretoken_cache.add_lanes: a hit's four lanes are stored unconditionally, as
@@ -1484,13 +1703,14 @@ static int merge_short(const value *mkeys, const value *mvals, intnat mmask,
                    sym_prev, sym_next, out);
 }
 
-/* The staged probe, shared by both entries. A call walks up to [STAGE]
-   spans ahead, keying each one and prefetching its back set, then resolves
-   them in order: room checks, the front and back probes, the merge of a
-   miss and its store. Every probe and store happens in the reference's span
-   order, so the tables stay bit for bit the reference's; the walk only reads
-   the text. Sixty-four spans of resolving cover a miss to memory while the
-   walk itself runs as a tight loop.
+/* The staged probe, shared by both entries. A call walks [STAGE] spans or a
+   batch more ahead, keying each one and prefetching its set, then resolves
+   them in order: room checks, the probe of the set, which costs a branch only
+   on a miss, the neighbour set's, the merge of a miss and its store. Every
+   probe and store happens in the reference's span order, so the tables stay
+   bit for bit the reference's; the walk only reads the text. A stage of
+   resolving covers a miss to memory while the walk itself runs as a tight
+   loop, and costs the mispredicted exits of its loops once.
 
    The stage lives in the cursor, after its counts, so that an exit at a
    staged span keeps the spans staged after it: the call that resumes at the
@@ -1499,28 +1719,35 @@ static int merge_short(const value *mkeys, const value *mvals, intnat mmask,
    restarts it at every walk it begins (Kernel.restart), since a range of
    another text could start and stop at the same positions. */
 
-#define STAGE 64
+#define STAGE 256
+
+/* The spans a stage holds: the batch walk stops once it has [STAGE], and its
+   last batch can add 64 more and a scalar overrun's end. */
+#define STAGE_CAP (STAGE + HARVEST_LANES)
 
 /* The stages a call walks before it returns Spans_full: OCaml's runtime can
    stop a domain for a collection only between calls, and every other domain
-   waits for it, so a call ends after 1024 spans whatever room is left. */
-#define YIELD_STAGES 16
+   waits for it, so a call ends after 1024 spans or a few batches more,
+   whatever room is left. */
+#define YIELD_STAGES 4
 
 typedef struct {
-  intnat i, e;       /* the span */
-  intnat set, fslot; /* back set and front slot offsets; set is -1 uncached */
+  intnat i, e; /* the span */
+  intnat set;  /* its set's byte offset, or -1 without a cache */
   uint64_t k0, k1;
 } staged;
 
 typedef struct {
-  unsigned char *front, *cache;
-  intnat front_mask, cache_mask;
+  unsigned char *cache;
+  intnat cache_mask;
   const value *mkeys, *mvals, *len_tab;
   intnat mmask, len_n;
 } tables;
 
-/* The bytes of each key word that a length keeps. */
-static const uint64_t key_mask0[16] = {
+/* The bytes of each key word that a length keeps, and the top byte of the
+   second word: the length, and for 16, which stands for every length past
+   the key, a byte no entry has. */
+static const uint64_t key_mask0[17] = {
     0,
     0xFF,
     0xFFFF,
@@ -1529,8 +1756,8 @@ static const uint64_t key_mask0[16] = {
     0xFFFFFFFFFFULL,
     0xFFFFFFFFFFFFULL,
     0xFFFFFFFFFFFFFFULL,
-    ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL};
-static const uint64_t key_mask1[16] = {
+    ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL};
+static const uint64_t key_mask1[17] = {
     0, 0, 0, 0, 0, 0, 0, 0,
     0,
     0xFF,
@@ -1539,55 +1766,100 @@ static const uint64_t key_mask1[16] = {
     0xFFFFFFFF,
     0xFFFFFFFFFFULL,
     0xFFFFFFFFFFFFULL,
-    0xFFFFFFFFFFFFFFULL};
+    0xFFFFFFFFFFFFFFULL,
+    0};
+static const uint64_t key_top[17] = {
+    0,           1ULL << 56,  2ULL << 56,  3ULL << 56,  4ULL << 56,
+    5ULL << 56,  6ULL << 56,  7ULL << 56,  8ULL << 56,  9ULL << 56,
+    10ULL << 56, 11ULL << 56, 12ULL << 56, 13ULL << 56, 14ULL << 56,
+    15ULL << 56, 0xFFULL << 56};
 
-/* Stages the span [i, e): its key words, set and slot, and a prefetch of
-   the set. Away from the end of the text both key words are two loads
-   masked to the span; [key_word0] and [key_word1] cover the end. */
+/* Stages the span [i, e): its key words, set and a prefetch of the set. A
+   span over 15 bytes is keyed on its first 15 with a second word no entry
+   has, all ones where an entry's top byte holds a length of at most 15, so
+   that its probe misses without a branch of its own. Away from the end of
+   the text both key words are two loads masked to the span; [key_word0] and
+   [key_word1] cover the end. [set] is -1 when there is no cache. */
 static inline void stage(const tables *t, const unsigned char *s, intnat n,
                          staged *st, intnat i, intnat e)
 {
   intnat len = e - i;
+  intnat m = len < 15 ? len : 15;
+  uint64_t k0, k1, h;
   st->i = i;
   st->e = e;
-  st->set = -1;
-  if (len <= 15 && t->cache_mask >= 0) {
-    uint64_t k0, k1, h;
-    if (i + 16 <= n) {
-      k0 = load64le(s + i) & key_mask0[len];
-      k1 = (load64le(s + i + 8) & key_mask1[len]) | ((uint64_t)len << 56);
-    } else {
-      k0 = key_word0(s, n, i, len);
-      k1 = key_word1(s, n, i, len);
+  if (t->cache_mask < 0) {
+    st->set = -1;
+    return;
+  }
+  if (i + 16 <= n) {
+    k0 = load64le(s + i) & key_mask0[m];
+    k1 = (load64le(s + i + 8) & key_mask1[m]) | ((uint64_t)m << 56);
+  } else {
+    k0 = key_word0(s, n, i, m);
+    k1 = key_word1(s, n, i, m);
+  }
+  k1 |= (uint64_t)0 - (uint64_t)(len > 15);
+  h = hash_of(k0, k1);
+  st->k0 = k0;
+  st->k1 = k1;
+  st->set = (intnat)((h & (uint64_t)t->cache_mask) << 6);
+  BROT_PREFETCH(t->cache + st->set);
+}
+
+/* [stage] over the [nb] consecutive spans after [i] that end at [ends]. Away
+   from the end of the text, one test up front leaves each span's keying
+   without a branch. */
+static void stage_spans(const tables *t, const unsigned char *s, intnat n,
+                        staged *st, intnat i, const uint32_t *ends, intnat nb)
+{
+  intnat j;
+  if (t->cache_mask < 0 || nb == 0 || (intnat)ends[nb - 1] + 16 > n) {
+    for (j = 0; j < nb; j++) {
+      stage(t, s, n, &st[j], i, (intnat)ends[j]);
+      i = (intnat)ends[j];
     }
-    h = hash_of(k0, k1);
-    st->k0 = k0;
-    st->k1 = k1;
-    st->set = (intnat)((h & (uint64_t)t->cache_mask) << 6);
-    st->fslot = (intnat)((h & (uint64_t)t->front_mask) << 5);
-    BROT_PREFETCH(t->cache + st->set);
+    return;
+  }
+  for (j = 0; j < nb; j++) {
+    intnat e = (intnat)ends[j], len = e - i;
+    intnat m = len < 16 ? len : 16;
+    uint64_t k0 = load64le(s + i) & key_mask0[m];
+    uint64_t k1 = (load64le(s + i + 8) & key_mask1[m]) | key_top[m];
+    intnat set = (intnat)((hash_of(k0, k1) & (uint64_t)t->cache_mask) << 6);
+    BROT_PREFETCH(t->cache + set);
+    st[j].i = i;
+    st[j].e = e;
+    st[j].set = set;
+    st[j].k0 = k0;
+    st[j].k1 = k1;
+    i = e;
   }
 }
 
-/* The front then the back probe of a staged span, as Pretoken_cache.encode
-   reads them: a back hit is promoted into the front slot. Returns whether it
-   hit, with the value words in [v]. */
-static inline int lookup(const tables *t, const staged *st, uint64_t v[2])
+/* The probe of a staged span: both ways of its set, compared and selected
+   without a branch, so that whether a span hits, and in which way, costs no
+   misprediction. Returns whether it hit, with the hit way's value words in
+   [v]; on a miss [v] holds way 1's words, which the caller does not count. A
+   span the cache cannot hold has a key no entry has (see [stage]). */
+static inline int probe_set(const tables *t, const staged *st, uint64_t v[2])
 {
-  const unsigned char *f = t->front + st->fslot;
-  intnat way;
-  if (st->set < 0) return 0;
-  if (load64(f) == st->k0 && load64(f + 8) == st->k1) {
-    v[0] = load64(f + 16);
-    v[1] = load64(f + 24);
-    return 1;
-  }
-  way = probe(t->cache, st->set, st->k0, st->k1);
-  if (way < 0) return 0;
-  v[0] = load64(t->cache + way + 16);
-  v[1] = load64(t->cache + way + 24);
-  front_store(t->front, st->fslot, st->k0, st->k1, v[0], v[1]);
-  return 1;
+  const unsigned char *b = t->cache + st->set;
+  uint64_t k0 = st->k0, k1 = st->k1;
+  intnat m0, m1, hit;
+  const unsigned char *way;
+  /* In general registers: paired into vectors, the compares cost more. */
+  BROT_OPAQUE(k0);
+  BROT_OPAQUE(k1);
+  m0 = ((load64(b) ^ k0) | (load64(b + 8) ^ k1)) == 0;
+  m1 = ((load64(b + 32) ^ k0) | (load64(b + 40) ^ k1)) == 0;
+  BROT_OPAQUE(m0);
+  way = b + 48 - 32 * m0;
+  v[0] = load64(way);
+  v[1] = load64(way + 8);
+  hit = m0 | m1;
+  BROT_OPAQUE(hit);
+  return (int)hit;
 }
 
 /* Stores a merged miss of [m] ids when Pretoken_cache.encode would keep it:
@@ -1601,11 +1873,37 @@ static inline void remember(const tables *t, const staged *st,
   if (st->set < 0 || m > 4) return;
   for (k = 0; k < m; k++)
     if (ids[k] >= 1 << 24) return;
-  cache_store(t->cache, st->set, st->k0, st->k1,
-              (uint64_t)ids[0] | ((uint64_t)m << 24)
-                  | (m > 1 ? (uint64_t)ids[1] << 32 : 0),
-              (m > 2 ? (uint64_t)ids[2] : 0)
-                  | (m > 3 ? (uint64_t)ids[3] << 32 : 0));
+  cache_insert(t->cache, st->set, t->cache_mask, st->k0, st->k1,
+               (uint64_t)ids[0] | ((uint64_t)m << 24)
+                   | (m > 1 ? (uint64_t)ids[1] << 32 : 0),
+               (m > 2 ? (uint64_t)ids[2] : 0)
+                   | (m > 3 ? (uint64_t)ids[3] << 32 : 0));
+}
+
+/* Pretoken_cache.encode past a miss in the span's own set: the neighbour set,
+   where an entry the set evicted waits, and which hands a hit back to the set,
+   trading places with the entry the set's way 1 held. Returns whether it hit,
+   with the value words in [v]. */
+static int probe_neighbour(const tables *t, const staged *st, uint64_t v[2])
+{
+  unsigned char *tbl = t->cache;
+  intnat set = st->set, nset = neighbour(set, t->cache_mask), way;
+  if (nset == set) return 0;
+  if (load64(tbl + nset) == st->k0 && load64(tbl + nset + 8) == st->k1)
+    way = nset;
+  else if (load64(tbl + nset + 32) == st->k0
+           && load64(tbl + nset + 40) == st->k1)
+    way = nset + 32;
+  else
+    return 0;
+  v[0] = load64(tbl + way + 16);
+  v[1] = load64(tbl + way + 24);
+  store64(tbl + way + 16, load64(tbl + set + 48));
+  store64(tbl + way + 24, load64(tbl + set + 56));
+  store64(tbl + way + 8, load64(tbl + set + 40));
+  store64(tbl + way, load64(tbl + set + 32));
+  cache_store(tbl, set, st->k0, st->k1, v[0], v[1]);
+  return 1;
 }
 
 /* Bpe.whole_word_id on a staged span of at most 15 bytes, for the entries
@@ -1654,13 +1952,11 @@ static inline void emit_ids(value *ids, int32_t *ids32, int emit32, intnat at,
     for (k = 0; k < m; k++) ids[at + k] = Val_long((intnat)src[k]);
 }
 
-static void tables_of(tables *t, value vt, int front, int front_mask,
-                      int cache, int cache_mask, int mkeys, int mvals,
-                      int mmask, int len_tab)
+static void tables_of(tables *t, value vt, int cache, int cache_base,
+                      int cache_mask, int mkeys, int mvals, int mmask,
+                      int len_tab)
 {
-  t->front = Bytes_val(Field(vt, front));
-  t->front_mask = Long_val(Field(vt, front_mask));
-  t->cache = Bytes_val(Field(vt, cache));
+  t->cache = Bytes_val(Field(vt, cache)) + Long_val(Field(vt, cache_base));
   t->cache_mask = Long_val(Field(vt, cache_mask));
   /* Field lvalues are volatile for the runtime's sake; these arrays have one
      writer (the thread holding the state claim) and no GC point exists in a
@@ -1712,24 +2008,27 @@ byte_level_encode_impl(value text, value vpos, value vstop, value vspans,
   intnat resume;
   int reason;
   tables t;
+  int cached;
   walker w;
   mask_state ms;
+  uint32_t ends[STAGE + HARVEST_LANES];
   intnat stages = 0;
   staged *st = (staged *)(cur + CUR_STAGE);
   intnat nb = (intnat)load64(cur + CUR_STAGED);
   intnat k = (intnat)load64(cur + CUR_NEXT);
   const staged *back = NULL;
 
-  tables_of(&t, vt, BROT_BL_FRONT, BROT_BL_FRONT_MASK, BROT_BL_CACHE,
-            BROT_BL_CACHE_MASK, BROT_BL_MERGE_KEYS, BROT_BL_MERGE_VALUES,
-            BROT_BL_MERGE_MASK, BROT_BL_LEN_TABLE);
+  tables_of(&t, vt, BROT_BL_CACHE, BROT_BL_CACHE_BASE, BROT_BL_CACHE_MASK,
+            BROT_BL_MERGE_KEYS, BROT_BL_MERGE_VALUES, BROT_BL_MERGE_MASK,
+            BROT_BL_LEN_TABLE);
+  cached = t.cache_mask >= 0;
   w.s = s;
   w.stop = stop;
   w.lead = Bytes_val(Field(vt, BROT_BL_LEAD));
   w.uni = Bytes_val(vunicode);
   w.uni_len = (intnat)caml_string_length(vunicode);
   w.cp = 0;
-  if (nb <= STAGE && k < nb && st[k].i == i
+  if (nb <= STAGE_CAP && k < nb && st[k].i == i
       && (intnat)load64(cur + CUR_STAGE_STOP) == stop)
     i = st[nb - 1].e; /* the walk goes on after the stage */
   else
@@ -1740,20 +2039,34 @@ byte_level_encode_impl(value text, value vpos, value vstop, value vspans,
   for (;;) {
     int class_hit = 0, roomy;
     if (k == nb) {
-      intnat limit = STAGE;
+      intnat limit = STAGE_CAP;
       stages++;
       if (!emit32 && spans_cap - nspans < limit) limit = spans_cap - nspans;
       nb = k = 0;
-      while (nb < limit && i < stop) {
-        intnat e = o200k ? o200k_next_span(&w, i, digits, flag)
-                         : mask_next_span(&ms, &w, i);
-        if (e < 0) {
-          class_hit = 1;
-          break;
+      if (o200k)
+        while (nb < limit && nb < STAGE && i < stop) {
+          intnat e = o200k_next_span(&w, i, digits, flag);
+          if (e < 0) {
+            class_hit = 1;
+            break;
+          }
+          stage(&t, s, n, &st[nb], i, e);
+          nb++;
+          i = e;
         }
-        stage(&t, s, n, &st[nb], i, e);
-        nb++;
-        i = e;
+      else {
+        /* The walk harvests whole batches, so a stage can pass [STAGE]; past
+           [limit], which only a short spans buffer brings below it, the walk
+           is taken back; with no room at all it does not start. */
+        while (nb < STAGE && nb < limit && ms.pos < stop && !ms.failed)
+          nb = harvest(&ms, &w, ends, nb);
+        if (nb > limit) {
+          nb = limit;
+          rewind_walk(&ms, (intnat)ends[nb - 1]);
+        }
+        stage_spans(&t, s, n, st, i, ends, nb);
+        if (nb > 0) i = (intnat)ends[nb - 1];
+        class_hit = ms.failed;
       }
     }
     /* A short span needs at most 15 ids of room: when the stage's worth is
@@ -1762,17 +2075,25 @@ byte_level_encode_impl(value text, value vpos, value vstop, value vspans,
     for (; k < nb; k++) {
       const staged *p = &st[k];
       intnat len = p->e - p->i;
-      uint64_t v[2];
+      uint64_t v[2] = {0, 0};
+      int hit;
+      intnat count;
       if ((!roomy || len > 15) && ids_cap - nids < (len < 4 ? 4 : len)) {
         reason = BROT_IDS_FULL;
         resume = p->i;
         goto out;
       }
-      if (len > 15) {
+      /* A hit's lanes are stored whether or not it hit, and counted only when
+         it did: the one branch left is the miss. */
+      hit = cached && probe_set(&t, p, v);
+      count = emit32 ? emit_lanes32(ids32_base + nids, v[0], v[1])
+                     : emit_lanes(ids_base + nids, v[0], v[1]);
+      if (hit)
+        nids += count;
+      else if (len > 15) {
         back = p;
         goto hand_back;
-      }
-      if (lookup(&t, p, v))
+      } else if (cached && probe_neighbour(&t, p, v))
         nids += emit32 ? emit_lanes32(ids32_base + nids, v[0], v[1])
                        : emit_lanes(ids_base + nids, v[0], v[1]);
       else {
@@ -2149,6 +2470,7 @@ static BROT_INLINE value sp_encode_impl(value text, value vpos,
   intnat resume;
   int reason;
   tables t;
+  int cached;
   sp_walker u;
   intnat stages = 0;
   staged *st = (staged *)(cur + CUR_STAGE);
@@ -2156,10 +2478,11 @@ static BROT_INLINE value sp_encode_impl(value text, value vpos,
   intnat k = (intnat)load64(cur + CUR_NEXT);
   const staged *back = NULL;
 
-  tables_of(&t, vt, BROT_SP_FRONT, BROT_SP_FRONT_MASK, BROT_SP_CACHE,
-            BROT_SP_CACHE_MASK, BROT_SP_MERGE_KEYS, BROT_SP_MERGE_VALUES,
-            BROT_SP_MERGE_MASK, BROT_SP_LEN_TABLE);
-  if (nb <= STAGE && k < nb && st[k].i == i
+  tables_of(&t, vt, BROT_SP_CACHE, BROT_SP_CACHE_BASE, BROT_SP_CACHE_MASK,
+            BROT_SP_MERGE_KEYS, BROT_SP_MERGE_VALUES, BROT_SP_MERGE_MASK,
+            BROT_SP_LEN_TABLE);
+  cached = t.cache_mask >= 0;
+  if (nb <= STAGE_CAP && k < nb && st[k].i == i
       && (intnat)load64(cur + CUR_STAGE_STOP) == stop)
     i = st[nb - 1].e; /* the walk goes on after the stage */
   else
@@ -2184,7 +2507,9 @@ static BROT_INLINE value sp_encode_impl(value text, value vpos,
     for (; k < nb; k++) {
       const staged *p = &st[k];
       intnat len = p->e - p->i;
-      uint64_t v[2];
+      uint64_t v[2] = {0, 0};
+      int hit;
+      intnat count;
       if (len > 15) {
         back = p;
         goto hand_back;
@@ -2194,7 +2519,12 @@ static BROT_INLINE value sp_encode_impl(value text, value vpos,
         resume = p->i;
         goto out;
       }
-      if (lookup(&t, p, v))
+      hit = cached && probe_set(&t, p, v);
+      count = emit32 ? emit_lanes32(ids32_base + nids, v[0], v[1])
+                     : emit_lanes(ids_base + nids, v[0], v[1]);
+      if (hit)
+        nids += count;
+      else if (cached && probe_neighbour(&t, p, v))
         nids += emit32 ? emit_lanes32(ids32_base + nids, v[0], v[1])
                        : emit_lanes(ids_base + nids, v[0], v[1]);
       else {
@@ -2259,6 +2589,12 @@ CAMLprim value brot_sp_encode_ids32_byte(value *argv, int argn)
   (void)argn;
   return brot_sp_encode_ids32(argv[0], argv[1], argv[2], argv[3], argv[4],
                               argv[5]);
+}
+
+/* Kernel.cache_align. */
+CAMLprim value brot_cache_align(value b)
+{
+  return Val_long((intnat)((0 - (uintptr_t)Bytes_val(b)) & 63));
 }
 
 /* For tests. */

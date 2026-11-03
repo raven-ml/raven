@@ -15,35 +15,33 @@ let available = Sys.backend_type = Sys.Native && not Sys.big_endian
 
 type byte_level = {
   lead : Bytes.t; (* 0: BROT_BL_LEAD *)
-  front : Bytes.t; (* 1: BROT_BL_FRONT *)
-  front_mask : int; (* 2: BROT_BL_FRONT_MASK *)
-  cache : Bytes.t; (* 3: BROT_BL_CACHE *)
-  cache_mask : int; (* 4: BROT_BL_CACHE_MASK *)
-  byte_ids : int array; (* 5: BROT_BL_BYTE_IDS *)
-  merge_keys : int array; (* 6: BROT_BL_MERGE_KEYS *)
-  merge_values : int array; (* 7: BROT_BL_MERGE_VALUES *)
-  merge_mask : int; (* 8: BROT_BL_MERGE_MASK *)
-  len_table : int array; (* 9: BROT_BL_LEN_TABLE *)
-  words : Bytes.t; (* 10: BROT_BL_WORDS *)
-  words_mask : int; (* 11: BROT_BL_WORDS_MASK *)
+  cache : Bytes.t; (* 1: BROT_BL_CACHE *)
+  cache_base : int; (* 2: BROT_BL_CACHE_BASE *)
+  cache_mask : int; (* 3: BROT_BL_CACHE_MASK *)
+  byte_ids : int array; (* 4: BROT_BL_BYTE_IDS *)
+  merge_keys : int array; (* 5: BROT_BL_MERGE_KEYS *)
+  merge_values : int array; (* 6: BROT_BL_MERGE_VALUES *)
+  merge_mask : int; (* 7: BROT_BL_MERGE_MASK *)
+  len_table : int array; (* 8: BROT_BL_LEN_TABLE *)
+  words : Bytes.t; (* 9: BROT_BL_WORDS *)
+  words_mask : int; (* 10: BROT_BL_WORDS_MASK *)
 }
 
 type sp = {
-  front : Bytes.t; (* 0: BROT_SP_FRONT *)
-  front_mask : int; (* 1: BROT_SP_FRONT_MASK *)
-  cache : Bytes.t; (* 2: BROT_SP_CACHE *)
-  cache_mask : int; (* 3: BROT_SP_CACHE_MASK *)
-  merge_keys : int array; (* 4: BROT_SP_MERGE_KEYS *)
-  merge_values : int array; (* 5: BROT_SP_MERGE_VALUES *)
-  merge_mask : int; (* 6: BROT_SP_MERGE_MASK *)
-  len_table : int array; (* 7: BROT_SP_LEN_TABLE *)
-  ascii_ids : int array; (* 8: BROT_SP_ASCII_IDS *)
-  char_keys : int array; (* 9: BROT_SP_CHAR_KEYS *)
-  char_values : int array; (* 10: BROT_SP_CHAR_VALUES *)
-  char_mask : int; (* 11: BROT_SP_CHAR_MASK *)
-  scan : Bytes.t; (* 12: BROT_SP_SCAN *)
-  punct_safe : bool array; (* 13: BROT_SP_PUNCT_SAFE *)
-  fallback_ids : int array; (* 14: BROT_SP_FALLBACK_IDS *)
+  cache : Bytes.t; (* 0: BROT_SP_CACHE *)
+  cache_base : int; (* 1: BROT_SP_CACHE_BASE *)
+  cache_mask : int; (* 2: BROT_SP_CACHE_MASK *)
+  merge_keys : int array; (* 3: BROT_SP_MERGE_KEYS *)
+  merge_values : int array; (* 4: BROT_SP_MERGE_VALUES *)
+  merge_mask : int; (* 5: BROT_SP_MERGE_MASK *)
+  len_table : int array; (* 6: BROT_SP_LEN_TABLE *)
+  ascii_ids : int array; (* 7: BROT_SP_ASCII_IDS *)
+  char_keys : int array; (* 8: BROT_SP_CHAR_KEYS *)
+  char_values : int array; (* 9: BROT_SP_CHAR_VALUES *)
+  char_mask : int; (* 10: BROT_SP_CHAR_MASK *)
+  scan : Bytes.t; (* 11: BROT_SP_SCAN *)
+  punct_safe : bool array; (* 12: BROT_SP_PUNCT_SAFE *)
+  fallback_ids : int array; (* 13: BROT_SP_FALLBACK_IDS *)
 }
 
 type reason = Done | Spans_full | Ids_full | Class | Encode
@@ -52,9 +50,9 @@ type ids32 = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
 external get64u : Bytes.t -> int -> int64 = "%caml_bytes_get64u"
 external set64u : Bytes.t -> int -> int64 -> unit = "%caml_bytes_set64u"
 
-(* The counts, then the stage: 64 spans of 48 bytes ([STAGE] and [staged] in
-   the C). *)
-let cursor () = Bytes.make (64 + (64 * 48)) '\000'
+(* The counts, then the stage: 328 spans of 40 bytes ([STAGE_CAP] and [staged]
+   in the C). *)
+let cursor () = Bytes.make (64 + (328 * 40)) '\000'
 let restart cur = set64u cur 40 0L
 
 let set cur ~spans ~ids ~marks =
@@ -126,3 +124,4 @@ external sp_encode_ids32 :
 [@@noalloc]
 
 external cache_hash : int64 -> int64 -> int = "brot_cache_hash" [@@noalloc]
+external cache_align : Bytes.t -> int = "brot_cache_align" [@@noalloc]
