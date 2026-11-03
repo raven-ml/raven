@@ -495,14 +495,15 @@ static size_t heap_cycle_floor;
 
 /* The bytes of the last-level cache the host reports, at least
    HEAP_LLC_LEAST. On Linux, the largest of CPU 0's caches
-   (sysfs-devices-system-cpu, cache/indexN/size). On macOS, the L3
-   (hw.l3cachesize) where there is one, as on Intel Macs, else the
-   performance cores' L2 (hw.perflevel0.l2cachesize): 12 MiB on the M1
-   Max, whose 48 MB system cache macOS does not report. 8 MiB is below the
-   last level of every host rig is tested on, and stands for the hosts that
-   report none, Windows included, and for those that report less than they
-   have, as Apple's and Arm servers' system caches go unreported: a floor
-   below the caches errs toward warm results. */
+   (sysfs-devices-system-cpu, cache/indexN/size). On Windows, the largest
+   cache GetLogicalProcessorInformationEx reports (RelationCache). On macOS,
+   the L3 (hw.l3cachesize) where there is one, as on Intel Macs, else the
+   performance cores' L2 (hw.perflevel0.l2cachesize): 12 MiB on the M1 Max,
+   whose 48 MB system cache macOS does not report. 8 MiB is below the last
+   level of every host rig is tested on, and stands for the hosts that
+   report none and for those that report less than they have, as Apple's
+   and Arm servers' system caches go unreported: a floor below the caches
+   errs toward warm results. */
 #define HEAP_LLC_LEAST ((size_t)8 << 20)
 
 #if defined(__APPLE__)
@@ -540,6 +541,24 @@ static size_t heap_llc_bytes(void) {
     size_t bytes = (size_t)n << (unit == 'M' ? 20 : unit == 'K' ? 10 : 0);
     if (bytes > most) most = bytes;
   }
+#elif defined(_WIN32)
+  /* The caches' records: a first call sizes them, a second fills them. */
+  DWORD len = 0;
+  GetLogicalProcessorInformationEx(RelationCache, NULL, &len);
+  char *records = len > 0 ? malloc(len) : NULL;
+  if (records != NULL &&
+      GetLogicalProcessorInformationEx(
+          RelationCache, (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)records,
+          &len)) {
+    for (DWORD at = 0; at < len;) {
+      PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX r =
+          (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)(records + at);
+      if (r->Relationship == RelationCache && r->Cache.CacheSize > most)
+        most = r->Cache.CacheSize;
+      at += r->Size;
+    }
+  }
+  free(records);
 #endif
   return most > HEAP_LLC_LEAST ? most : HEAP_LLC_LEAST;
 }
