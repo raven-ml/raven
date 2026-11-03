@@ -375,6 +375,84 @@ let hypot_law (a, b) =
   let c : Complex.t = Nx.item [ 0 ] g in
   equal ~msg:"magnitude's grad" near (ux, -.uy) (c.re, c.im)
 
+(* Softmax and log-softmax shift each lane by its greatest element, on which
+   their values do not depend: their gradients agree with finite differences,
+   where that element ties with another too. *)
+(* Lane [l] of a matrix of shape [s] along [axis]: its elements' positions. *)
+let lane s axis l =
+  List.init s.(axis) (fun k ->
+      if axis = 0 then (k * s.(1)) + l else (l * s.(1)) + k)
+
+(* The position in lane [l] of its greatest [scale x], the first one. *)
+let greatest s axis scale xs l =
+  List.fold_left
+    (fun g i -> if scale *. xs.(i) > scale *. xs.(g) then i else g)
+    (List.hd (lane s axis l))
+    (lane s axis l)
+
+(* In half the cases, each lane's greatest element is copied to another of
+   its positions, so that it ties there. *)
+let normalised_gen =
+  let open Gen in
+  let pp ppf (log, axis, scale, s, _) =
+    Format.fprintf ppf "%s along %d, scale %g, [%d; %d]"
+      (if log then "log_softmax" else "softmax")
+      axis scale s.(0) s.(1)
+  in
+  with_pp pp
+    (let* tie = bool in
+     let* axis = int_range 0 1 in
+     let low a = if tie && a = axis then 2 else 1 in
+     let* m = int_range (low 0) 3 in
+     let* n = int_range (low 1) 4 in
+     let s = [| m; n |] in
+     let+ log = bool
+     and+ scale = of_list [ 1.; 0.25; -2.; 3. ]
+     and+ xs =
+       array ~size:(constant (m * n))
+         (frequency [ (1, of_list [ -1.; 0.5; 2. ]); (2, float_range (-3.) 3.) ])
+     in
+     let xs = Array.copy xs in
+     if tie then
+       for l = 0 to s.(1 - axis) - 1 do
+         let g = greatest s axis scale xs l in
+         let other = List.find (fun i -> i <> g) (lane s axis l) in
+         xs.(other) <- xs.(g)
+       done;
+     (log, axis, scale, s, xs))
+
+let normalised_law (log, axis, scale, s, xs) =
+  let f = if log then Nx.log_softmax else Nx.softmax in
+  let x = Nx.create f64 s xs in
+  let tied l =
+    let g = greatest s axis scale xs l in
+    List.exists
+      (fun i -> i <> g && scale *. xs.(i) = scale *. xs.(g))
+      (lane s axis l)
+  in
+  cover "a lane whose greatest element ties"
+    (List.exists tied (List.init s.(1 - axis) Fun.id));
+  cover "log_softmax" log;
+  let w = Nx.create f64 s (spread 0.7 (numel s)) in
+  let loss x = Nx.sum (Nx.mul w (f ~axes:[ axis ] ~scale x)) in
+  equal ~msg:"finite differences" (result unit string) (Ok ())
+    (Rune.check_grads T.tensor loss x)
+
+(* Compiled, their gradients are the eager ones. *)
+let test_normalised_jit () =
+  let x = Nx.create f64 [| 3; 4 |] (spread 0.2 12) in
+  let w = Nx.create f64 [| 3; 4 |] (spread 0.7 12) in
+  List.iter
+    (fun (name, f) ->
+      let loss x = Nx.sum (Nx.mul w (f x)) in
+      equal ~msg:name (array (float 1e-12))
+        (Nx.to_array (Rune.grad' loss x))
+        (Nx.to_array (Rune.grad' (Rune.jit' loss) x)))
+    [
+      ("softmax", Nx.softmax ~axes:[ 1 ] ~scale:0.7);
+      ("log_softmax", Nx.log_softmax ~axes:[ 0 ] ~scale:(-1.5));
+    ]
+
 (* The gradient of a real [f] of [z = x + iy] is [∂f/∂x - i ∂f/∂y], and a
    pullback applies [f'(z)] to its cotangent. *)
 let test_complex () =
@@ -1423,10 +1501,14 @@ let () =
          group "jacrev' is jacfwd' at ties and zeros" kink_props;
          group "finite gradients of composed functions" finite_cases;
          prop "hypot's gradient is (x / r, y / r)" hypot_gen hypot_law;
+         prop "softmax's and log_softmax's gradients" normalised_gen
+           normalised_law;
          group "conventions"
            [
              test "complex gradients" test_complex;
              test "kinks" test_kinks;
+             test "softmax's and log_softmax's compiled gradients"
+               test_normalised_jit;
              test "values alone at repeated values" test_repeated_values;
              prop "softplus's gradient is sigmoid" ~examples:softplus_specials
                softplus_points softplus_law;

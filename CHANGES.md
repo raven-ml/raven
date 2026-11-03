@@ -1725,6 +1725,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Under a differentiation, `Nx.softmax` and `Nx.log_softmax` pass no
+  derivative through the greatest element each lane is shifted by, whose
+  terms cancel. Values keep their bits; gradients change by rounding.
 - A value may lie as a sum of terms across devices: `Nx.Placement.partial`
   names a placement whose devices along some mesh axes each hold a term,
   and `Nx.Placement.closed` drops a placement's sum. `Nx.place` closes a

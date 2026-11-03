@@ -2725,9 +2725,26 @@ let softplus x =
       let below = E.(x < zero) in
       E.(log1p (exp (where below x (-x))) + where below zero x))
 
+(* [x]'s bits read as unsigned integers of its width and back: [x] itself,
+   which no differentiation tracks, since integers carry no derivative. Only
+   a traced [x] can be tracked; any other is returned as it is. *)
+let untracked (type s d) ~by (x : (float, s, d) t) : (float, s, d) t =
+  match x with
+  | Value.Array _ | Value.Shards _ | Value.Handle _ -> x
+  | Value.Traced _ -> (
+      let through u = Eval.bitcast ~by (dtype x) (Eval.bitcast ~by u x) in
+      match dtype x with
+      | Float64 -> through D.Uint64
+      | Float32 -> through D.Uint32
+      | Float16 | Bfloat16 -> through D.Uint16
+      | Float8_e4m3fn | Float8_e5m2 -> through D.Uint8
+      | Float4_e2m1fn -> through D.Uint4)
+
 (* [finish w shifted sum] of each [scale x - m] and its lane's sum of
    exponentials, [m] the lane's greatest [scale x], computed in [x]'s wide
-   format and rounded once. *)
+   format and rounded once. The result does not depend on [m], so the terms
+   [m]'s derivative adds cancel: [m] is taken of [x] {!untracked}, and its
+   tangent, a mask of the ties over every element, is never computed. *)
 let normalised (type s d) ~by
     (finish : 'w. (float, 'w) D.t -> (float, 'w) E.t -> (float, 'w) E.t -> (float, 'w) E.t)
     ?(axes = [ -1 ]) ?(scale = 1.) (x : (float, s, d) t) : (float, s, d) t =
@@ -2742,7 +2759,10 @@ let normalised (type s d) ~by
     in
     let lanes y = Eval.broadcast ~by s (kept ~by ~keepdims:true s axes y) in
     let m, () =
-      reduce_by ~by s axes [ Any x ] Value.[ Monoid (Max, 0, w) ] scaled
+      reduce_by ~by s axes
+        [ Any (untracked ~by x) ]
+        Value.[ Monoid (Max, 0, w) ]
+        scaled
     in
     let m = lanes m in
     let shifted = E.(scaled - operand 1 m) in

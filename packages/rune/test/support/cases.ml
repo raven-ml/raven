@@ -449,6 +449,10 @@ let real_cases =
     case ~shape:matrix "mean" (Nx.mean ~axes:[ 1 ]);
     case ~shape:matrix "var" (Nx.var ~axes:[ 1 ]);
     case ~shape:matrix "logsumexp" (Nx.logsumexp ~axes:[ 1 ]);
+    case ~shape:matrix ~values:spaced "softmax"
+      (Nx.softmax ~axes:[ 1 ] ~scale:0.7);
+    case ~shape:matrix ~values:spaced "log_softmax"
+      (Nx.log_softmax ~axes:[ 0 ] ~scale:(-1.5));
     case ~empty:false ~shape:full ~values:spaced "an arg reduction's extreme"
       (fun x ->
         let (y, _), () = reduce1 [ Arg (Max, 0, f64) ] x in

@@ -213,6 +213,15 @@ let jacobian_rows () =
     Thumper.bench "jacrev-64" (fun () -> synced (Rune.jacrev' chain x));
   ]
 
+(* Attention's backward pieces: the gradient of a softmax over 8 × 256 rows
+   of 256 scores. *)
+let attention_rows () =
+  let s = normal 12 [| 8; 256; 256 |] and w = normal 13 [| 8; 256; 256 |] in
+  [
+    Thumper.bench "softmax-grad-8x256x256" (fun () ->
+        synced (Rune.grad' (fun s -> Nx.sum (Nx.mul w (Nx.softmax s))) s));
+  ]
+
 (* Hmc: one leapfrog trajectory of 20 steps on a Gaussian over 16 floats, as a
    sampler runs it eagerly, each step taking the log density's gradient. *)
 let hmc_rows () =
@@ -1114,6 +1123,7 @@ let () =
          Thumper.group "MlpGrad" (mlp_rows ());
          Thumper.group "PerSampleGrads" (per_sample_rows ());
          Thumper.group "Jacobians" (jacobian_rows ());
+         Thumper.group "Attention" (attention_rows ());
          Thumper.group "Hmc" (hmc_rows ());
          Thumper.group "Custom" (custom_rows ());
          Thumper.group "JitLoops" (jit_loop_rows ());

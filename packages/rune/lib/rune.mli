@@ -232,7 +232,9 @@
     tangent along [x] where [y] is zero and along [y] where [x] is zero. A
     function nx composes of others takes these rules at its parts' kinks;
     [Nx.softplus], smooth, has its derivative [Nx.sigmoid] everywhere, [1/2]
-    at [0.].
+    at [0.]. [Nx.softmax] and [Nx.log_softmax] shift each lane by its
+    greatest element, on which their values do not depend, and pass no
+    tangent through it.
 
     {b Factorisations.} The tangents of [Nx.cholesky], [Nx.lu], [Nx.qr],
     [Nx.svd], [Nx.eigh] and [Nx.eig] are the derivatives of the factors nx
