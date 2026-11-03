@@ -146,8 +146,16 @@ val ids : ('v, 's, 'd) t -> 'd Nx.int64_t
     relative to [r]: the ids of two ragged arrays compare only when computed
     over their {!concat}.
 
-    Cost: {!rank}'s, and a few passes over a code per row, with no sort and
-    no further read on the host.
+    Cost: rows are told apart by their elements' keys ({!Nx.order_key}, the
+    narrowest as wide as the element) packed into 64-bit words. Where every
+    row holds at most 7 bytes of keys, a row is one word, its length folded
+    in where lengths differ, and one unsized {!Nx.unique} of the words
+    numbers the rows, with its reads. Otherwise a row is its length, where
+    lengths differ, and its words, in rounds of up to 64 bytes of keys: each
+    round numbers its rows' words with a sized {!Nx.unique}, and a row goes on
+    to the next while it has keys left and its group so far holds another
+    row. One read of the longest and shortest rows comes first, and one of the
+    rows left after each round but the last.
 
     Raises [Invalid_argument] if [r]'s values are complex. *)
 

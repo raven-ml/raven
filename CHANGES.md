@@ -1771,6 +1771,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_ragged.ids` packs each row's keys into 64-bit words and numbers the
+  words with `Nx.unique`, with no per-byte select and no flip: a row of at
+  most 7 bytes is one word, its length folded in where lengths differ. Ids
+  of short texts take half the instructions or fewer, and talon's group-by
+  on H2O's `id1` and `id3` 50% and 63% fewer.
 - `Nx.softmax` at float32 and float64 takes one exponential per element,
   where it took two: it stores `exp (scale x - m)`, sums it, and divides it
   in place. Values keep their bits; gradients change by rounding.

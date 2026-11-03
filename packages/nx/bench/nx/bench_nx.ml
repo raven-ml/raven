@@ -1540,6 +1540,21 @@ let texts n lo hi () =
 
 let take_texts (indices, r) = Nx_ragged.values (Nx_ragged.take ~indices r)
 
+(* 1M texts of [n] values as [f] prints them: 5 bytes of 100 values, as
+   H2O's [id1] key column holds, and 12 bytes of one length, as its [id3]. *)
+let codes f n () =
+  let rs = Random.State.make [| 13 |] in
+  Nx_ragged.of_strings
+    (Array.init 1_000_000 (fun _ -> f (1 + Random.State.int rs n)))
+
+(* 1M rows of one float64 of 100 values: rows of one 8-byte key. *)
+let floats () =
+  let rs = Random.State.make [| 13 |] in
+  let v = Array.init 1_000_000 (fun _ -> float (Random.State.int rs 100)) in
+  Nx_ragged.of_lengths
+    (Nx.ones D.Int64 [| 1_000_000 |])
+    (Nx.create D.Float64 [| 1_000_000 |] v)
+
 let ragged_rows =
   Thumper.group "ragged"
     [
@@ -1550,6 +1565,14 @@ let ragged_rows =
       Thumper.bench_with_setup "ids-text-64K-of-4-to-20B"
         ~setup:(texts 65536 4 20)
         (fun (_, r) -> Nx_ragged.ids r);
+      Thumper.bench_with_setup "ids-text-1M-of-5B-100-values"
+        ~setup:(codes (Printf.sprintf "id%03d") 100)
+        Nx_ragged.ids;
+      Thumper.bench_with_setup "ids-text-1M-of-12B-10K-values"
+        ~setup:(codes (Printf.sprintf "id%010d") 10_000)
+        Nx_ragged.ids;
+      Thumper.bench_with_setup "ids-f64-1M-rows-of-1" ~setup:floats
+        Nx_ragged.ids;
     ]
 
 let () =

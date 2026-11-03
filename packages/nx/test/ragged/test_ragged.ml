@@ -861,10 +861,162 @@ let identifying (E e) =
       (both Nx_ragged.rank model_ranks);
   ]
 
+(* Texts packed into words, drawn three ways over bytes that hold NUL and
+   invalid UTF-8, then with copies of some of them:
+   - short texts alone, of at most 7 bytes, which take one word each, of one
+     length or several;
+   - families of texts of one length that share a prefix of three bases of 150
+     bytes and differ in their last byte, cut around the words a text fills
+     (7, 8 and 9 bytes, multiples of 8) and around the rounds of 64 bytes,
+     so that rows split within the first, second and third round;
+   - texts of at most 64 bytes with one of exactly 64, the most one round
+     covers. *)
+let packed_texts =
+  let open Gen in
+  let byte = of_list [ '\000'; 'a'; 'b'; '\x80'; '\xff' ] in
+  let short =
+    let* one = bool in
+    let* l = int_range 0 7 in
+    let size = if one then constant l else int_range 0 7 in
+    array ~size:(int_range 2 8) (string_of ~size byte)
+  in
+  let families =
+    let* bases = list ~size:(constant 3) (string_of ~size:(constant 150) byte) in
+    let bases = Array.of_list bases in
+    let family =
+      let* base = map (Array.get bases) (int_range 0 2) in
+      let* cut =
+        of_list ~pp:Format.pp_print_int
+          [ 0; 1; 6; 7; 8; 15; 16; 23; 31; 32; 47; 63; 64; 65; 80; 127; 128; 140 ]
+      in
+      let+ tails =
+        list ~size:(int_range 1 3) (string_of ~size:(constant 1) byte)
+      in
+      List.map (fun t -> String.sub base 0 cut ^ t) tails
+    in
+    let+ fs = list ~size:(int_range 1 5) family in
+    Array.of_list (List.concat fs)
+  in
+  let upto_64 =
+    let+ texts =
+      array ~size:(int_range 0 6) (string_of ~size:(int_range 0 63) byte)
+    and+ full = string_of ~size:(constant 64) byte in
+    Array.append texts [| full |]
+  in
+  let* texts = frequency [ (2, short); (3, families); (1, upto_64) ] in
+  let n = Array.length texts in
+  let+ copies = list ~size:(int_range 0 3) (int_range 0 (n - 1)) in
+  Array.append texts (Array.of_list (List.map (Array.get texts) copies))
+
+(* [first_appearance xs] numbers [xs] in order of first appearance. *)
+let first_appearance (type a) (xs : a array) =
+  let seen = Hashtbl.create 16 in
+  Array.map
+    (fun x ->
+      match Hashtbl.find_opt seen x with
+      | Some id -> id
+      | None ->
+          let id = Int64.of_int (Hashtbl.length seen) in
+          Hashtbl.add seen x id;
+          id)
+    xs
+
+let text_ids =
+  prop "texts' ids number them in order of first appearance, as their ranks"
+    packed_texts (fun ss ->
+      let has p = Array.exists p ss in
+      let lengths p = has (fun s -> p (String.length s)) in
+      let pairs p =
+        let is = List.init (Array.length ss) Fun.id in
+        List.exists
+          (fun i -> List.exists (fun j -> i <> j && p ss.(i) ss.(j)) is)
+          is
+      in
+      cover "an empty text" (lengths (Int.equal 0));
+      cover "a text of 7 bytes" (lengths (Int.equal 7));
+      cover "a text of 8 bytes" (lengths (Int.equal 8));
+      cover "a text of 9 bytes" (lengths (Int.equal 9));
+      cover "a text of a multiple of 8 bytes past 8"
+        (lengths (fun l -> l > 8 && l mod 8 = 0));
+      cover "a text past 64 bytes" (lengths (fun l -> l > 64));
+      cover "two equal texts past 64 bytes"
+        (pairs (fun a b -> String.length a > 64 && String.equal a b));
+      cover "a text a proper prefix of another"
+        (pairs (fun a b ->
+             String.length a < String.length b
+             && String.starts_with ~prefix:a b));
+      cover "a NUL byte" (has (fun s -> String.contains s '\000'));
+      cover "invalid UTF-8" (has (fun s -> not (String.is_valid_utf_8 s)));
+      let longest =
+        Array.fold_left (fun m s -> Int.max m (String.length s)) 0 ss
+      in
+      let one_word = longest <= 7 in
+      cover "one word each, two equal rows" (one_word && pairs String.equal);
+      cover "one word each, two distinct rows"
+        (one_word && pairs (fun a b -> not (String.equal a b)));
+      cover "two rows or more, all of one length"
+        (Array.length ss >= 2
+        && Array.for_all (fun s -> String.length s = String.length ss.(0)) ss);
+      cover "a longest row of exactly 64 bytes" (longest = 64);
+      (* Rows of one length that agree on their first [k] bytes and differ
+         after them. *)
+      let split k =
+        pairs (fun a b ->
+            String.length a = String.length b
+            && String.length a > k
+            && String.sub a 0 k = String.sub b 0 k
+            && not (String.equal a b))
+      in
+      cover "rows split past 64 bytes" (split 64);
+      cover "rows split in the third round" (split 128);
+      let r = Nx_ragged.of_strings ss in
+      let ids = Nx.to_array (Nx_ragged.ids r) in
+      equal (array int64) (first_appearance ss) ids;
+      equal ~msg:"ranks numbered in order of first appearance" (array int64)
+        (first_appearance (Nx.to_array (Nx_ragged.rank r)))
+        ids)
+
+(* NaNs of each payload and sign, as order keys make them one key. *)
+let nan_ids =
+  test "NaNs of any payload are one key in a row" (fun () ->
+      let nans =
+        Nx.bitcast Nx.float64
+          (int64s
+             [|
+               0x7FF8000000000000L; 0xFFF8000000000001L; 0x7FF0000000000001L;
+             |])
+      in
+      let nan i = Nx.slice [ R (i, i + 1) ] nans in
+      let one = Nx.ones Nx.float64 [| 1 |] in
+      (* Rows of one key, of two, and of ten, past a round's 64 bytes. *)
+      let ten a b = List.init 9 (fun i -> nan (if i mod 2 = 0 then a else b)) in
+      let rows =
+        [
+          [ nan 0 ];
+          [ nan 1 ];
+          [ nan 2; one ];
+          [ nan 0; one ];
+          ten 1 2 @ [ one ];
+          ten 0 1 @ [ one ];
+          [ one ];
+        ]
+      in
+      let r =
+        Nx_ragged.of_lengths
+          (int64s
+             (Array.of_list
+                (List.map (fun r -> Int64.of_int (List.length r)) rows)))
+          (Nx.concatenate ~axis:0 (List.concat rows))
+      in
+      equal (array int64) [| 0L; 0L; 1L; 1L; 2L; 2L; 3L |]
+        (Nx.to_array (Nx_ragged.ids r)))
+
 let identities =
   group "ids and rank"
     (List.concat_map identifying elements
     @ [
+        text_ids;
+        nan_ids;
         test "cells of several elements compare element by element" (fun () ->
             let r =
               Nx_ragged.of_lengths
