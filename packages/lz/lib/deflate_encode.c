@@ -166,6 +166,14 @@ static const struct {
    cannot pay for setting up the matchfinder. */
 #define PASSTHROUGH(level) ((size_t)(55 - 4 * (level)))
 
+/* A whole input of at most SPARSE bytes empties only the matchfinder's
+   entries its parse reaches, fewer stores than emptying all of them:
+   128 KiB at level 1 and 192 KiB at the others, which a call on a short
+   input, or an encoder stepped over many short streams, would otherwise
+   write each time. */
+#define SPARSE 1024
+_Static_assert(SPARSE < WSIZE, "a sparse input never rebases");
+
 /* How far one parser item may move past its first byte: a lazy parser
    follows better matches one or two bytes on while 4 * length - log2
    (distance) grows by 3 or more, which is at most 345 steps, and then
@@ -318,6 +326,28 @@ _Static_assert(HC_HEADS % 32 == 0 && WSIZE % 32 == 0 && HT_ENTRIES % 32 == 0,
 
 static void mf_fill(mpos *t, size_t n) {
   for (size_t i = 0; i < n; i++) t[i] = NIL;
+}
+
+/* [hc_clear mf buf from end] sets to NIL the heads of the hashes of the
+   positions from [from] to 4 bytes before [end]. A parse that ends at
+   [end] hashes no other position ([hc_find], [hc_skip], [prime]), so it
+   reads and writes no other head. */
+static void hc_clear(struct hc *mf, const uint8_t *buf, size_t from,
+                     size_t end) {
+  for (size_t p = from; p + 4 <= end; p++) {
+    uint32_t s = le32(buf + p);
+    mf->h3[hash(s & 0xFFFFFF, H3_BITS)] = NIL;
+    mf->h4[hash(s, H4_BITS)] = NIL;
+  }
+}
+
+/* [ht_clear] is [hc_clear] for level 1's buckets. */
+static void ht_clear(struct ht *mf, const uint8_t *buf, size_t from,
+                     size_t end) {
+  for (size_t p = from; p + 4 <= end; p++) {
+    mpos *const bucket = mf->tab[hash(le32(buf + p), HT_BITS)];
+    bucket[0] = bucket[1] = NIL;
+  }
 }
 
 /* [rebase t s n generic] writes to [t] the [n] entries at [s] moved down
@@ -1339,21 +1369,31 @@ INLINE bool ends(struct lz_deflate_tables *e, size_t pos, size_t end,
   return split_now(&e->split, len);
 }
 
-/* The first parsed position's hashes. */
+/* [prime e buf end last] empties the matchfinder and takes the first
+   parsed position's hashes. With [last], the input ends at [end], and an
+   input of at most SPARSE bytes empties only the heads its parse can
+   reach. */
 static void prime(struct lz_deflate_tables *e, const uint8_t *buf,
-                  size_t end) {
+                  size_t end, bool last) {
   e->ready = true;
+  const bool sparse = last && end - e->pos <= SPARSE;
   if (e->parser == FASTEST) {
     struct ht *mf = e->mf;
-    mf_fill((mpos *)mf, HT_ENTRIES);
+    if (sparse)
+      ht_clear(mf, buf, e->pos, end);
+    else
+      mf_fill((mpos *)mf, HT_ENTRIES);
     mf->generic = e->generic;
   } else {
-    /* A walk reads only the links of inserted positions, and [encode] of
-       under WSIZE bytes inserts none from [end] on: those links are never
-       read. */
+    /* A walk reads only the links of inserted positions, and a parse of
+       an input under WSIZE bytes inserts none from [end] on: those links
+       are never read. */
     struct hc *mf = e->mf;
-    size_t links = !e->stream && end < WSIZE ? end : WSIZE;
-    mf_fill((mpos *)mf, HC_HEADS);
+    size_t links = last && end < WSIZE ? end : WSIZE;
+    if (sparse)
+      hc_clear(mf, buf, e->pos, end);
+    else
+      mf_fill((mpos *)mf, HC_HEADS);
     mf_fill(mf->next + WSIZE, links);
     mf->generic = e->generic;
   }
@@ -1697,7 +1737,7 @@ static int parse(struct lz_deflate_tables *e, const uint8_t *buf, size_t end,
                  bool last) {
   if (!e->ready) {
     if (!last && end - e->pos < LOOKAHEAD) return NEED_MORE;
-    prime(e, buf, end);
+    prime(e, buf, end, last);
   }
   switch (e->parser) {
   case FASTEST:

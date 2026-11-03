@@ -155,6 +155,7 @@ let encoders =
     ("deflate 1", None, Lz.Deflate.bound, Lz.Deflate.encode ~level:1);
     ("deflate 6", None, Lz.Deflate.bound, Lz.Deflate.encode ~level:6);
     ("deflate 9 of 2 MiB", deep, Lz.Deflate.bound, Lz.Deflate.encode ~level:9);
+    ("deflate 6 of 256 B", Some 256, Lz.Deflate.bound, Lz.Deflate.encode ~level:6);
     ("zstd 1", None, Lz.Zstd.bound, Lz.Zstd.encode ~level:1);
     ( "zstd 1 of 256 KiB",
       Some (256 lsl 10),
@@ -205,6 +206,17 @@ let encode_steps raw =
       in
       go 0)
 
+(* One deflate encoder over the corpus's first 256 bytes, a whole stream a
+   call, as a writer of many short streams keeps one. *)
+let encode_short raw =
+  Thumper.bench_with_setup "encode deflate 6 of 256 B with one encoder"
+    ~setup:(fun () ->
+      (Array1.sub (Lazy.force raw) 0 256, Lz.Deflate.encoder ~level:6 ()))
+    (fun (src, e) ->
+      match Lz.Encoder.step e ~last:true src ignore with
+      | Lz.Done _ -> ()
+      | More _ -> failwith "a stream of 256 bytes took two steps")
+
 let corpus (name, kind) =
   let raw = lazy (Lz_support.of_string (Lz_support.corpus kind size)) in
   let srcs =
@@ -220,7 +232,7 @@ let corpus (name, kind) =
     @ steps srcs
     @ [ flushed_steps name raw ]
     @ List.map (encode raw) encoders
-    @ [ encode_steps raw ])
+    @ [ encode_steps raw; encode_short raw ])
 
 let checksums =
   let sizes = [ ("4 KiB", 4 lsl 10); ("64 KiB", 64 lsl 10); ("8 MiB", 8 lsl 20) ] in

@@ -278,16 +278,43 @@ let quota =
               at_most int ~msg:"the rest is at most the quota" ~than:q last)
         formats)
 
+(* Two streams for one encoder: drawn, or half the time a stream of 64 bytes
+   to 1 KiB after a corpus of 2 to 64 KiB, whose positions fill the tables the
+   short stream then finds. *)
+let stream_pair =
+  let kind = Gen.of_list Lz_support.[ Text; Columns; Random ] in
+  let corpus lo hi =
+    Gen.map
+      (fun (k, n) -> Lz_support.Corpus (k, n))
+      (Gen.pair kind (Gen.int_range lo hi))
+  in
+  Gen.with_pp
+    (fun ppf (a, b) ->
+      Format.fprintf ppf "%a then %a" Lz_support.pp_recipe a
+        Lz_support.pp_recipe b)
+    (Gen.frequency
+       [
+         (1, Gen.pair (corpus (2 * kib) (64 * kib)) (corpus 64 kib));
+         (1, Gen.pair Lz_support.recipe Lz_support.recipe);
+       ])
+
 let streams =
-  prop "after Done, the next step begins a new stream"
-    (Gen.quad Lz_support.recipe Lz_support.recipe format level)
-    (fun (ra, rb, f, level) ->
+  prop "after Done, the next step begins a new stream, at every level"
+    (Gen.pair stream_pair format)
+    (fun ((ra, rb), f) ->
       let a = Lz_support.build ra and b = Lz_support.build rb in
-      let e = f.encoder ~level () in
-      ignore (steps ~e f ~level ~cuts:[] a);
-      equal string ~msg:"as a fresh encoder writes it"
-        (steps f ~level ~cuts:[] b)
-        (steps ~e f ~level ~cuts:[] b))
+      let nb = String.length b in
+      cover "a stream of 64 bytes to 1 KiB after a longer one"
+        (nb >= 64 && nb <= kib && String.length a > nb);
+      List.iter
+        (fun level ->
+          let e = f.encoder ~level () in
+          ignore (steps ~e f ~level ~cuts:[] a);
+          equal string
+            ~msg:(Printf.sprintf "level %d, as a fresh encoder writes it" level)
+            (steps f ~level ~cuts:[] b)
+            (steps ~e f ~level ~cuts:[] b))
+        levels)
 
 (* The bytes do not depend on the instruction set. *)
 
