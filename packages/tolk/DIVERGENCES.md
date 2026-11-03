@@ -5480,25 +5480,28 @@ fold wraps integers and holds its float bound`, hold.
   splits and runs, its loop bounded by a value loaded outside it`; the Search
   suite: `a search measures candidates whose estimates fit no int`.
 
-## D192. A call that stores to LOCAL memory orders its writes with barriers
+## D192. A call that accesses LOCAL memory is ordered by barriers
 
 - **tinygrad:** `codegen/__init__.py:228-247` (`_is_local_store`,
   `add_raw_barrier` and `add_war_barrier`), whose walks of an AFTER's
   dependencies and of a loop's body do not enter call bodies.
-- **tolk:** `Codegen.local_writes`, which `Codegen.add_raw_barrier` and
-  `Codegen.add_war_barrier` take.
+- **tolk:** `Codegen.local_writes` and `Codegen.reads`, which
+  `Codegen.add_raw_barrier` and `Codegen.add_war_barrier` take.
 - **Differs:** a call whose body, or a body that body calls, stores to LOCAL
-  memory writes each of its LOCAL arguments' buffers. A read of LOCAL memory
-  ordered after such a call waits at a workgroup barrier, and a loop that
-  makes such a call and loads one of those buffers ends each trip with one,
-  as for a store of the kernel's own. A body lowered alone orders only its
-  own accesses. tinygrad's kernel reads before other threads' calls have
-  written.
+  memory writes each of its LOCAL arguments' buffers, and one whose body
+  loads from LOCAL memory reads them. A read of LOCAL memory ordered after
+  such a writing call waits at a workgroup barrier, and a loop that writes a
+  LOCAL buffer and reads it, by a store and a load of its own or by such
+  calls, ends each trip with one. A body lowered alone orders only its own
+  accesses. tinygrad's kernel reads before other threads' calls have written,
+  and a trip writes before other threads' calls of the trip before have read.
 - **Reason:** (e): a thread that reads an element another warp's call
   writes reads it unwritten; without the barrier, one run in three on
   fudge's RTX 5000 read wrong values.
 - **Pinned by:** the Codegen suite: `calls in a kernel › a kernel reads
   what a call writes to local memory after a barrier`, `› a loop whose call
-  writes local memory the loop reads ends with a barrier` and `› threads
-  read what other warps' calls wrote to local memory, on CUDA` (skipped
+  writes local memory the loop reads ends with a barrier`, `› a loop whose
+  call reads local memory the loop writes ends with a barrier`, `› threads
+  read what other warps' calls wrote to local memory, on CUDA` and `› calls
+  read what other warps wrote to local memory, on CUDA` (both skipped
   without a CUDA GPU).

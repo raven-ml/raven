@@ -859,6 +859,36 @@ let pm_fuse_products =
 
 let is_local_store x = is Op.Store x && addrspace (nth x 0) = Some Dtype.Local
 
+let is_local_load x = is Op.Load x && addrspace (nth x 0) = Some Dtype.Local
+
+(* A call's body is lowered alone, so its barriers order only its own accesses:
+   to order those it makes through its LOCAL arguments against its caller's,
+   the caller counts the call as an access of each of them. *)
+let local_args x =
+  List.filter_map
+    (fun a ->
+      if addrspace a = Some Dtype.Local then Some (buf_uop a) else None)
+    (src_without_body x)
+
+let body_has f x =
+  is Op.Call x && List.exists f (toposort ~calls:Enter (Ops.body x))
+
+(* The LOCAL buffers [x] writes: a local store's, or a call's LOCAL arguments'
+   where its body, or a body that body calls, stores to LOCAL memory. *)
+let local_writes x =
+  if is_local_store x then [ buf_uop x ]
+  else if body_has is_local_store x then local_args x
+  else []
+
+(* The buffers [x] reads: a load's, or a call's LOCAL arguments' where its body
+   loads from LOCAL memory. *)
+let reads x =
+  if is Op.Load x then [ buf_uop (nth x 0) ]
+  else if body_has is_local_load x then local_args x
+  else []
+
+let writes_local x = local_writes x <> []
+
 let add_raw_barrier after =
   (* loads from a LOCAL buffer that depend (via AFTER) on stores to LOCAL memory
      need a workgroup barrier *)
@@ -870,7 +900,7 @@ let add_raw_barrier after =
         ~gate:(fun x -> not (is Op.Barrier x))
         (sink (srcs after))
     in
-    if not (List.exists is_local_store deps) then None
+    if not (List.exists writes_local deps) then None
     else Some (Ops.after (nth after 0) [ v Op.Barrier ~src:(srcs after) ])
 
 let add_war_barrier end_ =
@@ -890,23 +920,19 @@ let add_war_barrier end_ =
     (* only stores that are inside this loop body (not in the backward slice
        through AFTER chains from other loops) *)
     let store_bufs =
-      List.filter_map
+      List.concat_map
         (fun x ->
-          if
-            is_local_store x
-            && List.exists (fun r -> Nodes.mem r (ranges x)) rngs
-          then Some (buf_uop x)
-          else None)
+          if List.exists (fun r -> Nodes.mem r (ranges x)) rngs then
+            local_writes x
+          else [])
         sl
     in
     (* a load whose buffer matches a local store's buffer is necessarily a local
        load *)
-    if
-      not
-        (List.exists
-           (fun x -> is Op.Load x && List.memq (buf_uop (nth x 0)) store_bufs)
-           sl)
-    then None
+    let read_back x =
+      List.exists (fun b -> List.memq b store_bufs) (reads x)
+    in
+    if not (List.exists read_back sl) then None
     else Some (replace end_ ~src:(v Op.Barrier ~src:[ body ] :: srcs end_))
 
 let pm_implicit_barriers =

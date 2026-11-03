@@ -105,10 +105,15 @@ val to_program :
     packed for a launch. A call of a compiled program is refused. Each body is named
     after its call ({!Helpers.to_function_name}), a second body of one name in
     [ast] followed by [_1], and so on. The renderer writes such a body as a
-    function ({!Cstyle}). A body is a scope of its own: the program's loops, the
-    slots of its variables (after those of its parameters) and of the storage it
-    makes (after its own) do not depend on a body's, even where a node of the
-    body is one of the program's.
+    function ({!Cstyle}). A body that stores to LOCAL memory writes each of its
+    call's LOCAL arguments, and one that loads from LOCAL memory reads them:
+    workgroup barriers order these accesses against the program's, as they
+    order the program's own, a read of a written buffer waiting at one and a
+    loop that writes and reads a buffer ending each trip with one. A body
+    is a scope of its own: the program's loops, the slots of its variables
+    (after those of its parameters) and of the storage it makes (after its own)
+    do not depend on a body's, even where a node of the body is one of the
+    program's.
 
     [ast] is a kernel's sink. [to_program ast ren] and
     [compile (linearize ast ren) ren] are equal programs: [to_program] is the

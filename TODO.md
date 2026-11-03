@@ -192,12 +192,6 @@ raven / llama.cpp b12048 Vulkan:
   tinygrad does), 30 M words per special-function gradient; and
   `share_loops` (D137) retries `joinable` at every shared node when two
   stores cannot join, O(N²) in that case, which no program here reaches yet
-- a call body that stores to LOCAL memory gets no barrier before the
-  kernel reads it back: since tinygrad efb4cc8cb, `add_raw_barrier` does
-  not look into call bodies, and tolk follows. tinygrad 6b7b018da (its
-  HEAD on 2026-10-31) still walks an AFTER's dependencies without entering
-  calls (`codegen/__init__.py:230-235`), so upstream has no fix to port.
-  Nothing builds such a body yet; decide before one does
 - compile.thumper's fudge rows run 9-25% faster than c0682e939 does at
   equal load: find whether a regression landed unexplained before it or
   the baseline was recorded under other conditions

@@ -4206,6 +4206,84 @@ let volatile_call () =
   let c = int_param ~volatile:true ~name:"C" 0 1 in
   kernel "volatile_call" [ Ops.call ~name:"fence" fence [ first c ] ]
 
+(* [p[0] = q[0] + 1], [p] in local memory. *)
+let put =
+  let p = int_param ~addrspace:Local ~name:"p" 0 1
+  and q = int_param ~name:"q" 1 1 in
+  Ops.sink [ Ops.store (first p) Ops.O.(first q + i32 1) ]
+
+let threads = 64
+
+(* [c[t * 64 + l] = a[t * 64 + 63 - l] + 1] over 64 threads [l], for each of
+   [trips] trips [t] of a loop: each thread's call of [put] writes
+   [a[t * 64 + l] + 1] into its element of a local buffer, which a thread of
+   another warp reads back. *)
+let local_call ~trips () =
+  let n = threads in
+  let l = Ops.range ~axis_type:Local ~dtype:Int32 (Int n) [ 0 ] in
+  let t = loop trips 1 in
+  let shared = Shape.alloc ~slot:10 ~addrspace:Local [ Int n ] Int32 in
+  let c = int_param ~name:"C" 0 (trips * n)
+  and a = int_param ~name:"A" 1 (trips * n) in
+  let row = Ops.O.(t * i32 n) and last = i32 (n - 1) in
+  let shared = if trips > 1 then Ops.after shared [ t ] else shared in
+  let call = Ops.call ~name:"put" put [ at shared l; at a Ops.O.(row + l) ] in
+  let back = at (Ops.after shared [ call ]) Ops.O.(last - l) in
+  let st = Ops.store (at c Ops.O.(row + l)) back in
+  kernel "local_call" [ Ops.end_ (Ops.end_ st [ t ]) [ l ] ]
+
+(* [p[0] = q[0]], [q] in local memory. *)
+let get =
+  let p = int_param ~name:"p" 0 1
+  and q = int_param ~addrspace:Local ~name:"q" 1 1 in
+  Ops.sink [ Ops.store (first p) (first q) ]
+
+(* [local_call]'s values, the other way round: each trip stores [a[t * 64 + l]
+   + 1] into its thread's element of a local buffer, and each thread's call
+   of [get] reads back another warp's. *)
+let local_get ~trips () =
+  let n = threads in
+  let l = Ops.range ~axis_type:Local ~dtype:Int32 (Int n) [ 0 ] in
+  let t = loop trips 1 in
+  let shared = Shape.alloc ~slot:10 ~addrspace:Local [ Int n ] Int32 in
+  let c = int_param ~name:"C" 0 (trips * n)
+  and a = int_param ~name:"A" 1 (trips * n) in
+  let row = Ops.O.(t * i32 n) and last = i32 (n - 1) in
+  let shared = Ops.after shared [ t ] in
+  let put = Ops.store (at shared l) Ops.O.(at a (row + l) + i32 1) in
+  let back = at (Ops.after shared [ put ]) Ops.O.(last - l) in
+  let call = Ops.call ~name:"get" get [ at c Ops.O.(row + l); back ] in
+  kernel "local_get" [ Ops.end_ (Ops.end_ call [ t ]) [ l ] ]
+
+(* A barrier lies between the first of [instructions] that is [x] and the
+   first that is [y]. *)
+let barrier_between instructions x y =
+  let at f = Option.get (List.find_index f instructions) in
+  let call = at x and read = at y in
+  let barriers =
+    List.filteri
+      (fun i u -> i > call && i < read && is Barrier u)
+      instructions
+  in
+  at_least int ~msg:"barriers between the call and the read" ~than:1
+    (List.length barriers)
+
+(* The node that ends the loop of [k] lowered for HIP: its body, which a
+   barrier ends where the loop reads local memory it writes. *)
+let loop_body k =
+  let hip = renderer_for (target "AMD" "HIP" "gfx1100") in
+  let lin = Codegen.linearize k hip in
+  let ends = List.filter (is End) (Ops.toposort ~calls:Skip (Ops.nth lin 0)) in
+  let loop_end =
+    List.find
+      (fun e ->
+        List.exists (fun r -> Ops.axis_type r = Loop) (Ops.ended_ranges e))
+      ends
+  in
+  Ops.op (Ops.nth loop_end 0)
+
+let reads_local u = is Load u && in_space Local (Ops.nth u 0)
+
 (* [frexp] writes the exponent of 8, 4, through its pointer into [c[0]]; then
    [c[1] = c[0] + 1]. *)
 let call_out () =
@@ -4321,6 +4399,22 @@ let stacks =
       test "a one-lane stack read at a runtime index is its lane"
         (runs_on_host one_lane_stack [ (0, int_values [ 0; 0 ]) ] [ 42; 0 ]);
     ]
+
+(* [c[t * 64 + l] = a[t * 64 + 63 - l] + 1] on CUDA, as [k ~trips] computes
+   it. *)
+let reversed_on_cuda k =
+  let d, r = on_cuda () in
+  let trips = 2 in
+  let a = Array.init (trips * threads) Fun.id in
+  let expected =
+    Array.init (trips * threads) (fun i ->
+        let t = i / threads and l = i mod threads in
+        a.((t * threads) + threads - 1 - l) + 1)
+  in
+  let prg = compiled_for r (k ~trips ()) in
+  let inputs = [ (1, int_values (Array.to_list a)) ] in
+  equal (array Dtypes.value) (int_values (Array.to_list expected))
+    (List.assoc 0 (Run.on d prg inputs))
 
 let calls =
   group "calls in a kernel"
@@ -4459,6 +4553,25 @@ let calls =
           raises_match
             (Exn.invalid_arg ~sub:"needs a name")
             (fun () -> Codegen.to_program k (Lazy.force host)));
+      test "a kernel reads what a call writes to local memory after a barrier"
+        (fun () ->
+          let hip = renderer_for (target "AMD" "HIP" "gfx1100") in
+          let lin = Codegen.linearize (local_call ~trips:1 ()) hip in
+          barrier_between (Ops.src (Ops.nth lin 1)) (is Call) reads_local);
+      test
+        "a loop whose call writes local memory the loop reads ends with a \
+         barrier" (fun () ->
+          equal op Barrier (loop_body (local_call ~trips:2 ())));
+      test
+        "a loop whose call reads local memory the loop writes ends with a \
+         barrier" (fun () ->
+          equal op Barrier (loop_body (local_get ~trips:2 ())));
+      test
+        "threads read what other warps' calls wrote to local memory, on CUDA"
+        (fun () -> reversed_on_cuda local_call);
+      test
+        "calls read what other warps wrote to local memory, on CUDA"
+        (fun () -> reversed_on_cuda local_get);
       test "a volatile parameter of a body is volatile in its function"
         (fun () ->
           let prg = Codegen.to_program (volatile_call ()) (Lazy.force host) in

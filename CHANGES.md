@@ -940,6 +940,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   every host, where it took the C library's value, which glibc rounds one unit
   off for about one operand in two thousand; `c ** x` rewrites with `log2 c`
   correctly rounded.
+- `Codegen.to_program` and `Codegen.linearize` order a call's accesses to
+  LOCAL memory with workgroup barriers, as a kernel's own: a kernel read what a
+  call wrote, and a call read what the loop around it wrote, before other warps
+  had written it.
 - A kernel whose estimated operations fit no `int`, as over a loop bounded by
   an int64 value loaded from memory, compiles, runs split on the host, is
   searched and is reported at DEBUG=2: each raised `Invalid_argument`.
