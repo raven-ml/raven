@@ -810,11 +810,10 @@ let complex_cases =
         Nx.complex c128 ~re:(row 2 x) ~im:(row 3 x);
       ]
   in
-  let zz name f =
+  let zz ?(values = Uniform [ (0.3, 2.); (0.2, 1.); (0.3, 1.5); (-1., 1.) ])
+      name f =
     let g z = f (row 0 z) (row 1 z) in
-    case ~shape:(rows 4)
-      ~values:(Uniform [ (0.3, 2.); (0.2, 1.); (0.3, 1.5); (-1., 1.) ])
-      ~z:(pair, g) name
+    case ~shape:(rows 4) ~values ~z:(pair, g) name
       (fun x -> parts (g (pair x)))
   in
   [
@@ -846,8 +845,10 @@ let complex_cases =
     zz "complex pow" Nx.pow;
     zz "complex matmul" Nx.matmul;
     z "complex prod" (fun z -> Nx.prod z);
-    zz "complex where" (fun a b ->
-        Nx.where (Nx.less_s (Nx.real f64 a) 1.17) a b);
+    zz "complex where" ~values:(Spaced (-3., 0.5)) (fun a b ->
+        Nx.where
+          (Nx.less (Nx.real f64 a) (Nx.real f64 b))
+          (Nx.mul a b) (Nx.sin b));
     case ~shape:(rows 2)
       ~values:(Ties (0.2, 2.))
       "magnitude and angle"
