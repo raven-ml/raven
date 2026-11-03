@@ -434,8 +434,9 @@ let apply_rows =
    [streams], reads that many bytes. *)
 (* A contraction in [acc] of [operands] into a dst of [out], both [acc]
    by default, from [init] of [out] where given. *)
-let contract ?streams ?(init = false) ?operands ?out ~acc name ~sa ~sb
-    ~layout ~contracting ~flops =
+let contract ?streams ?(init = false) ?operands ?out
+    ?(batch : (int * int) iarray = [||]) ~acc name ~sa ~sb ~layout
+    ~contracting ~flops =
   let (D.Any ot) = Option.value operands ~default:acc in
   let (D.Any yt) = Option.value out ~default:acc in
   let bench (module K : Nx_kernel.S) =
@@ -445,7 +446,7 @@ let contract ?streams ?(init = false) ?operands ?out ~acc name ~sa ~sb
         let a, b = layout (A.Any (filled ot sa)) (A.Any (filled ot sb)) in
         let y =
           match
-            Nx_kernel.Shape.contract ~batch:[||] ~contracting ~segments:None
+            Nx_kernel.Shape.contract ~batch ~contracting ~segments:None
               (shape a, None) (shape b, None)
           with
           | Ok y -> y
@@ -457,8 +458,8 @@ let contract ?streams ?(init = false) ?operands ?out ~acc name ~sa ~sb
         (A.create Rig.host yt (Iarray.of_array y), init, a, b))
       (fun (dst, init, a, b) ->
         ok
-          (K.contract ~batch:[||] ~contracting ~segments:None ~acc ~dst
-             ~init a b))
+          (K.contract ~batch ~contracting ~segments:None ~acc ~dst ~init a
+             b))
   in
   let read = Option.to_list (Option.map (fun n -> F.Read n) streams) in
   { bench; work = F.Fma (acc, flops) :: read }
@@ -652,6 +653,35 @@ let contract_rows =
         ("bf16", D.Any D.Bfloat16, 1, 4096, 2880);
         ("bf16", D.Any D.Bfloat16, 4, 4096, 4096);
       ]
+  (* Decoding against [k × n] stored values or weights: a token's
+     attention output from 4096 values of 64 and its projection from 2880
+     to 4096, in float32 and in bfloat16 into bfloat16, and 4 rows through
+     a 4096 × 4096 weight. *)
+  @ List.map
+      (fun (name, D.Any d, m, n, k) ->
+        contract ~operands:(D.Any d) ~out:(D.Any d) ~acc:acc32
+          (Printf.sprintf "contract-%s-m%dx%dx%d-kn" name m n k)
+          ~sa:[| m; k |] ~sb:[| k; n |] ~layout:plain
+          ~contracting:[| (1, 0) |]
+          ~flops:(2 * m * n * k)
+          ~streams:(D.bits d / 8 * n * k))
+      [
+        ("f32", acc32, 1, 64, 4096);
+        ("bf16", D.Any D.Bfloat16, 1, 64, 4096);
+        ("f32", acc32, 1, 4096, 2880);
+        ("bf16", D.Any D.Bfloat16, 1, 4096, 2880);
+        ("f32", acc32, 4, 4096, 4096);
+        ("bf16", D.Any D.Bfloat16, 4, 4096, 4096);
+      ]
+  (* Attention's backward through a decoded token: 8 heads' products of a
+     depth of one, its 4096 keys' scores' gradients by its query's 64, the
+     floor moving the outputs' bytes. *)
+  @ [
+      contract ~acc:acc32 "contract-f32-8x4096x64x1" ~batch:[| (0, 0) |]
+        ~sa:[| 8; 1; 4096 |] ~sb:[| 8; 1; 64 |] ~layout:plain
+        ~contracting:[| (1, 1) |] ~flops:(2 * 8 * 4096 * 64)
+        ~streams:(4 * 8 * 4096 * 64);
+    ]
   (* One row against the weight stored as [k × n]. *)
   @ [
       contract ~acc:acc32 "contract-f32-m1x4096x4096-kn"
