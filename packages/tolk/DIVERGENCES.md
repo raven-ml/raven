@@ -2102,7 +2102,8 @@ Withdrawn: multi-device is out of scope, see README.
 - **tolk:** `Heuristic.lanes`, `Heuristic.rows`, `Heuristic.columns`,
   `Heuristic.sector_lanes`, `Heuristic.busy`, `Heuristic.in_flight`,
   `Heuristic.in_flight_held`, `Heuristic.stream_first`,
-  `Heuristic.upcast_max`, `Heuristic.summed`, `Heuristic.run`,
+  `Heuristic.upcast_max`, `Heuristic.summed`, `Heuristic.per_byte_first`,
+  `Heuristic.per_byte`, `Heuristic.run`,
   `Heuristic.reuse_ranges`, `Heuristic.reuse`, `Heuristic.stride`,
   `Heuristic.accesses`, `Heuristic.contraction`, `Heuristic.contracted`,
   `Heuristic.units`, `Heuristic.main_access`, `Heuristic.layout`,
@@ -2123,8 +2124,11 @@ Withdrawn: multi-device is out of scope, see README.
     equal reuse, the one laid out along a contracted range. A gathered
     operand reads every row: `R = 1`;
   - the order against the tensor cores: up to `R = 32`, a contraction that
-    sums at least 256 values an output, or a number not known, streams
-    before the cores are tried; a shorter sum tries a core first and streams
+    sums at least 256 values an output, or a number not known, and does at
+    most 64 multiply-adds per byte of the buffers `W` reads (the product of
+    its output and contracted ranges' sizes against each buffer's bytes
+    once), or a number not known, streams before the cores are tried; a
+    shorter sum, or more multiply-adds a byte, tries a core first and streams
     where none applies. Past `R = 32` a core takes it where one applies, and
     the other rules where none does;
   - the layout: `W`'s main access is the one with a range of unit stride
@@ -2193,6 +2197,33 @@ Withdrawn: multi-device is out of scope, see README.
     as decoded operands are: streamed without the upcast of their 8 heads the
     keys took 16.6 us against 13.9-14.6, and the float32 routed blocks hold
     their 16 rows in 20.6 ms against 28.6 ms in SIMD groups;
+  - the order by multiply-adds per byte, forced each way (kernel times under
+    `DEBUG=2`, 17 calls a run, load about 60): a core's tiles read a matrix
+    from memory at 137-167 GB/s where the streamed threads reach 465-512, so
+    a core wins where blocks of rows share a matrix the cache holds, or where
+    the arithmetic per byte binds the streamed threads. Under 64 a byte
+    streams faster: an MXFP4 matrix of 16384 by 16384 at 16 rows, 30 a byte,
+    0.69-0.71 ms against 0.88-1.06 on a core, at 32 rows, 60 a byte,
+    1.50-1.52 against 1.68; blocks of 16 rows each of its own bfloat16
+    matrix (`stream/routed-512-bf16`, 8 a byte) 10.2 against 33.2 ms;
+    gpt-oss-20b's experts with bfloat16 matrices at 128 and 256 tokens, 12
+    and 24 a byte, 4.9 and 7.7 ms a layer against 11.2 and 11.1. Past it the
+    cores: its MXFP4 experts at 224, 256 and 512 tokens, 66, 88 and 149 a
+    byte, 7.0, 2.6 and 3.7 ms a layer against 7.9, 9.9 and 17.5 streamed,
+    and bfloat16 experts at 1024 tokens, 72 a byte, 12.7 against 22.8. The
+    constant lies between 60 and 66; blocks sharing their matrices at 40 to
+    58 a byte stay streamed, 1.1 to 1.55 times slower than a core: the MXFP4
+    experts at 128 to 192 tokens (43-58 a byte, 5.0-6.6 ms against 4.1-4.3)
+    and bfloat16 ones at 512 (40 a byte, 12.8 against 11.6). What separates
+    them from the dense matrix at 60 is the device's cache, which the
+    renderer does not know. End to end, interleaved, three rounds, ranges
+    apart: kaun's `GptOss/prefill-512` 446-452 to 186-187 ms and
+    `GptOss/experts-at-prefill-512` 18.5-18.7 to 4.66-4.68 ms; unchanged
+    within noise, `GptOss/decode-step-Q8_0-cache-1024` (8.1-8.3 ms), kaun's
+    `Quant/cuda/*` rows and tolk's `stream/*` and `gpt_oss/*` rows. The rule
+    applies on AMD's and Metal's cores too, where the constant is not
+    measured: nonnormal's R9700 rows (`GptOss/experts-at-prefill-512`,
+    `GptOss/prefill-512`) and Metal's are pending;
   - the bound past `R = 32`: a streamed operand is read once a pass, where
     the other rules' tiles share loads among a workgroup's threads. Float32
     streamed loses from `R = 64` (2107-2171 against 1909-1987 us for a matrix
@@ -2212,7 +2243,11 @@ Withdrawn: multi-device is out of scope, see README.
     router from 6.7 to 3.7 us.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
   tinygrad's › applied_opts`, cases `matvec_*`, `vecmat_*`, `gpt_oss_*`,
-  `experts_down_*`, `routed_blocks_*`, `shared_keys_*`, `rows_m{4,12,32}_*`,
+  `experts_down_*`, `routed_blocks_*`, `routed_own_*`, `routed_shared_*`
+  (blocks sharing their experts' matrices, on a core),
+  `routed_at_bound_*` and `routed_past_bound_*` (63.9 a byte streamed, 71.0
+  on a core), `shared_keys_*`,
+  `rows_m{4,12,32}_*`,
   `q8_0_blocks_*`, `gguf_mxfp4_*`, `mxfp4_m12_*` and `rows_short_*` (a sum of
   64 on the cores),
   recorded from the equally patched tinygrad; `streaming › the streamed
@@ -2220,7 +2255,11 @@ Withdrawn: multi-device is out of scope, see README.
   group's load of an operand streamed along the reduce reads whole
   sectors`, `› the unroll
   is the largest divisor of its loop up to 8, 4 with reuse` and `› a
-  contraction streams up to a reuse of 32, before a tensor core`; `the
+  contraction streams up to a reuse of 32, before a tensor core` and `› a
+  recorded contraction streams before a tensor core up to 64 multiply-adds
+  per byte of its streamed operand` (rune's kernels of one token's products,
+  of blocks of their own matrices and of gpt-oss-20b's experts at a 512-token
+  prompt); `the
   hand-coded optimisations keep a kernel's writes › small kernels ›
   experts_down_metal` (a group inside another reduce); the Postrange suite's
   cases `double_sum_group`, `double_sum_group_twice` and
@@ -2564,15 +2603,22 @@ verification on the expand, as there.
   take, fits CUDA's N of 8 and not its M of 16, so its rows are the core's B.
   gpt-oss-20b's 512-token gate and up product on an RTX 5000 Ada takes 2.9 ms on
   the tensor cores, from 13.3 ms, and the down product 1.5 ms, from 6.9 ms; the
-  prefill takes 0.22 s, from 0.71 s. To re-measure on fudge: no fudge bench
-  row holds it.
-  Blocks of 16 rows now stream before the cores are tried (D89: 10.2 ms
-  against 33.2 ms on a core for the gate and up product on fudge), so the
-  rule takes blocks past 32 rows, which nx.quant does not make yet: to
-  re-measure on fudge once a workload does.
+  prefill takes 0.22 s, from 0.71 s.
+  Blocks of up to 32 rows stream before the cores unless they do more than
+  64 multiply-adds per byte of their matrices (D89): blocks each of its own
+  bfloat16 matrix stream, 10.2 ms against 33.2 on a core for the gate and up
+  product on fudge; gpt-oss-20b's blocks of 16 rows sharing 32 experts' MXFP4
+  matrices at a 512-token prompt, 149 a byte, take the cores, and kaun's
+  `GptOss/experts-at-prefill-512` runs 4.66-4.68 ms against 18.5-18.7
+  streamed, `GptOss/prefill-512` 186-187 ms against 446-452.
 - **Pinned by:** the Heuristic suite's cases `routed_tiles_{metal,cuda,amd}`
-  (the cores apply to a product in blocks of 64 rows), recorded from the
-  equally patched tinygrad; the Postrange suite's `tc_operands_swapped`
+  (the cores apply to a product in blocks of 64 rows) and
+  `routed_shared_{metal,cuda,amd}` (blocks of 16 rows sharing their
+  experts' matrices), recorded from the equally patched tinygrad, and its
+  `streaming › a recorded contraction streams before a tensor core up to 64
+  multiply-adds per byte of its streamed operand` over gpt-oss-20b's expert
+  kernels; on fudge, kaun's `GptOss/experts-at-prefill-512` and
+  `GptOss/prefill-512`; the Postrange suite's `tc_operands_swapped`
   (the second choice of a matmul makes its `in1` the core's A). On rune, the
   values on a GPU: missing (the old rune's `Rune.quant › gpus › CUDA › on
   CUDA, a prompt's routes in blocks are eager's` went with its rewrite).
@@ -4307,7 +4353,10 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   against 9.6-9.7, 1.3 times slower. One MoE layer at 512
   tokens runs 18.6-18.8 ms against 47.4-47.9; its inlined products are
   streamed (`Setting.mv`), and on the tensor cores, with streaming off, the
-  layer takes 4.5 ms against 79.5. The cost is the host's, whose tiles
+  layer takes 4.5 ms against 79.5; D89's order by multiply-adds per byte now
+  takes them to the cores (4.66-4.68 ms). The float32 rows' loss stands: no
+  core applies, and past a reuse of 32 the general rules decode in each
+  tile. The cost is the host's, whose tiles
   share 3 or 4 lanes of a digit or none, so an inlined decode runs about 4
   times a value per 16-row block and 10 to 15 times in a dense product: at
   a load of 67 to 76, MXFP4 products of 1024 by 1024 take 1.5-2.5 ms

@@ -1148,8 +1148,47 @@ let locals k =
    core and 14.6 to 15.3 us streamed. *)
 let summed = lanes * in_flight
 
-let early k (_, _, reuse) =
+(* A contraction streams before a tensor core when it does at most
+   [per_byte_first] multiply-adds per byte of the buffers its streamed operand
+   reads, the least memory it moves. Past it the streamed threads are bound by
+   their arithmetic, and a core's tiles, which read their matrix through the
+   cache when blocks of rows share it, run faster. On an RTX 5000 Ada an MXFP4
+   matrix of 16384 by 16384 multiplying 32 rows, 60 a byte, streams in 1.50 to
+   1.52 ms and takes 1.68 ms on a core; gpt-oss-20b's routed blocks of a
+   224-token prompt, 66 a byte, take 7.0 ms a layer on the cores and 7.9 ms
+   streamed, of a 512-token prompt, 149 a byte, 3.7 and 17.5 ms. *)
+let per_byte_first = 64
+
+(* The multiply-adds of [k]'s contraction and the bytes of the buffers its
+   operand [w] reads, when their sizes are known and each is a parameter. *)
+let per_byte k w =
+  let sizes =
+    List.map
+      (fun r -> known_size (shape_at k (index_of r (K.rngs k))))
+      (ranges_of k [ Global ] @ contracted k)
+  in
+  let buffers =
+    List.fold_left
+      (fun acc a -> if List.memq (nth a 0) acc then acc else nth a 0 :: acc)
+      [] (accesses w)
+  in
+  if
+    buffers = []
+    || List.exists (fun b -> op b <> Op.Param) buffers
+    || List.exists Option.is_none sizes
+  then None
+  else
+    let product =
+      List.fold_left (fun n s -> Bigint.mul n (Option.get s)) Bigint.one
+    in
+    let bytes b = Dtype.itemsize (dtype b) * max_numel b in
+    Some (product sizes, List.fold_left (fun n b -> n + bytes b) 0 buffers)
+
+let early k (w, _, reuse) =
   Bigint.(leq reuse (of_int stream_first))
+  && (match per_byte k w with
+     | Some (n, bytes) -> Bigint.leq n (Bigint.of_int (per_byte_first * bytes))
+     | None -> true)
   &&
   let n =
     List.fold_left

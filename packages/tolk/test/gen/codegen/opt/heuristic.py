@@ -186,6 +186,13 @@ KERNELS = {
     "routed_blocks": lambda: last(routed(8, 2, 64, 64, 4)),
     # the same at bfloat16 in blocks of 64 rows, tiles of a tensor core: the rows are the core's M, each block's matrix its B
     "routed_tiles": lambda: last(routed_bfloat16(4, 64, 64, 64, 4)),
+    # blocks of 16 rows over 256 values, as a prompt's routed products: 16 blocks sharing 2 experts' matrices do 227 multiply-adds
+    # per byte of them and take a tensor core, 4 blocks each of its own expert do 28 and stream
+    "routed_shared": lambda: last(routed_bfloat16(16, 16, 64, 256, 2)),
+    "routed_own": lambda: last(routed_bfloat16(4, 16, 64, 256, 4)),
+    # either side of the bound: 9 blocks over 4 experts do 63.9 multiply-adds a byte and stream, 10 blocks do 71.0 and take a core
+    "routed_at_bound": lambda: last(routed_bfloat16(9, 16, 64, 256, 4)),
+    "routed_past_bound": lambda: last(routed_bfloat16(10, 16, 64, 256, 4)),
     # a bfloat16 product of a value another kernel stores: attention's heads, merged, then projected
     "projection_of_stored": lambda: last((empty(4, 64, 16, dtype=dtypes.bfloat16).float() @ empty(4, 16, 16, dtype=dtypes.bfloat16).float())
                                          .cast(dtypes.bfloat16).permute(1, 0, 2).reshape(64, 64).float()

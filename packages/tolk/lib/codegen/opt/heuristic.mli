@@ -18,8 +18,12 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     [k] itself is left as it is. The first of these that applies decides:
 
     - {b streaming}, below, when the reuse of the streamed operand is at most
-      32 and the contraction sums at least 256 values an output, or a number
-      of them not known;
+      32, the contraction sums at least 256 values an output, or a number of
+      them not known, and it does at most 64 multiply-adds per byte of the
+      buffers the streamed operand reads: the product of its output and
+      contracted axes' sizes, against the bytes of each buffer once, or a
+      number not known, as when a size is symbolic or the operand reads a
+      buffer that is not a parameter;
     - {b tensor cores}, when the setting {!Setting.use_tc} is positive and [k]
       reduces over one axis, or {!Setting.tc_opt} admits more: the first of the
       three candidate axes on which a tensor core applies ({!Opt.Tc}), then

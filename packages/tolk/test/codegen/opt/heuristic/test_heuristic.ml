@@ -503,8 +503,10 @@ let unrolls_in_flight =
 
 (* A contraction of little reuse streams, the quantised matrices of a block
    range of unit stride among them, before a tensor core up to a reuse of 32
-   when it sums 256 values or more; past that reuse, or with a shorter sum,
-   the core takes it. *)
+   when it sums 256 values or more and does at most 64 multiply-adds per byte
+   of its streamed operand's buffers; past that reuse, with a shorter sum, or
+   with blocks of rows that share their matrices past 64 a byte, the core
+   takes it. *)
 let applies =
   let expect = [
     ("q8_0_blocks_cuda", true); ("gguf_mxfp4_cuda", true);
@@ -513,11 +515,70 @@ let applies =
     ("rows_m12_cuda", true); ("rows_m32_cuda", true);
     ("rows_m32_amd", true); ("shared_keys_cuda", true);
     ("routed_tiles_cuda", false); ("rows_short_cuda", false);
+    ("routed_own_cuda", true); ("routed_shared_cuda", false);
+    ("routed_at_bound_cuda", true); ("routed_past_bound_cuda", false);
   ] in
   cases "a contraction streams up to a reuse of 32, before a tensor core"
     ~id:fst expect (fun (name, streamed) ->
       let _, _, o = List.find (fun (c, _, _) -> c.name = name) gpu_cases in
       equal Testable.bool streamed (streams o))
+
+(* Kernels rune compiles for CUDA, recorded without optimisations: products of
+   one token by a Q8_0, an MXFP4 and a bfloat16 matrix, a prompt's blocks of 16
+   rows each multiplying a bfloat16 matrix of its own, and gpt-oss-20b's gate
+   and up and down products of a 512-token prompt, 158 blocks of 16 rows
+   sharing 32 experts' MXFP4 matrices. The decode products and the blocks of
+   their own do at most 8 multiply-adds per byte of the matrix and stream; the
+   shared experts do 149 and take a tensor core. *)
+let recorded_kernels =
+  let graph path =
+    let file = Filename.concat (Filename.dirname Sys.executable_name) path in
+    Graph.of_string (In_channel.with_open_bin file In_channel.input_all)
+  in
+  let stream name = "../../../../bench/stream/" ^ name ^ ".graph" in
+  [
+    ("q8_0-1", stream "q8_0-1.0", true);
+    ("mxfp4-1", stream "mxfp4-1.1", true);
+    ("dense-bf16-1", stream "dense-bf16-1.0", true);
+    ("routed-512-bf16", stream "routed-512-bf16.0", true);
+    ("prefill_gate_up", "prefill_gate_up.graph", false);
+    ("prefill_down", "prefill_down.graph", false);
+  ]
+  |> List.map (fun (name, path, streamed) -> (name, lazy (graph path), streamed))
+
+(* The scheduler that the optimisations of [k] start from, after the lowering
+   before them, as a search is handed it. *)
+let handed k ren =
+  let k =
+    match Ops.arg k with
+    | Ops.Kernel info ->
+        Ops.replace k ~arg:(Kernel { info with opts_to_apply = None; beam = 1 })
+    | _ -> k
+  in
+  let handed = ref None in
+  let search _ s =
+    handed := Some (K.copy s);
+    s
+  in
+  ignore (Codegen.full_rewrite_to_sink ~beam:search k ren);
+  Option.get !handed
+
+let recorded_order =
+  cases
+    "a recorded contraction streams before a tensor core up to 64 \
+     multiply-adds per byte of its streamed operand"
+    ~id:(fun (name, _, _) -> name)
+    recorded_kernels
+    (fun (_, k, streamed) ->
+      let o =
+        Heuristic.hand_coded_optimizations
+          (handed (Lazy.force k) (renderer "cuda"))
+      in
+      let cored =
+        List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts o)
+      in
+      equal Testable.bool streamed (streams o);
+      equal Testable.bool (not streamed) cored)
 
 (* The host's budget *)
 
@@ -810,7 +871,13 @@ let () =
          leaves_its_argument;
          keeps_kernel_writes;
          group "streaming"
-           [ loads_once_a_tile; coalesces; unrolls_in_flight; applies ];
+           [
+             loads_once_a_tile;
+             coalesces;
+             unrolls_in_flight;
+             applies;
+             recorded_order;
+           ];
          group "the host's budget"
            [ held_cases; budget; more_registers; doubles ];
        ])

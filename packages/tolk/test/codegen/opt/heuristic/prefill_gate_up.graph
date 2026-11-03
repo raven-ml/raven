@@ -1,0 +1,125 @@
+0 Ops.CONST dtypes.weakint [] 14561280
+1 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=0, dtype=dtypes.bf16, device="CUDA")
+2 Ops.CONST dtypes.weakint [] 2880
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 3)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.CONST dtypes.weakint [] 2528
+9 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 1)
+10 Ops.CONST dtypes.weakint [] 5760
+11 Ops.MUL dtypes.weakint [9, 10]
+12 Ops.ADD dtypes.weakint [7, 11]
+13 Ops.INDEX dtypes.bf16 [1, 12]
+14 Ops.PARAM dtypes.i64 [8] ParamArg(slot=1, dtype=dtypes.i64, vmin_vmax=(-1, 2047), device="CUDA")
+15 Ops.INDEX dtypes.i64 [14, 9]
+16 Ops.BITCAST dtypes.u64 [15] dtypes.u64
+17 Ops.CONST dtypes.weakint [] 2048
+18 Ops.CMPLT dtypes.bool [16, 17]
+19 Ops.CONST dtypes.weakint [] 1474560
+20 Ops.PARAM dtypes.bf16 [19] ParamArg(slot=2, dtype=dtypes.bf16, device="CUDA")
+21 Ops.CONST dtypes.weakint [] 0
+22 Ops.WHERE dtypes.i64 [18, 15, 21]
+23 Ops.CAST dtypes.weakint [22] dtypes.weakint
+24 Ops.CONST dtypes.weakint [] 4
+25 Ops.DIV dtypes.weakint [23, 24]
+26 Ops.MUL dtypes.weakint [25, 2]
+27 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+28 Ops.ADD dtypes.weakint [26, 27]
+29 Ops.INDEX dtypes.bf16 [20, 28]
+30 Ops.CONST dtypes.weakfloat [] 0.0
+31 Ops.WHERE dtypes.bf16 [18, 29, 30]
+32 Ops.CAST dtypes.f32 [31] dtypes.f32
+33 Ops.CONST dtypes.weakint [] 265420800
+34 Ops.PARAM dtypes.u8 [33] ParamArg(slot=3, dtype=dtypes.u8, device="CUDA")
+35 Ops.CONST dtypes.weakint [] 158
+36 Ops.PARAM dtypes.i64 [35] ParamArg(slot=4, dtype=dtypes.i64, vmin_vmax=(0, 31), device="CUDA")
+37 Ops.CONST dtypes.weakint [] 16
+38 Ops.DIV dtypes.weakint [9, 37]
+39 Ops.INDEX dtypes.i64 [36, 38]
+40 Ops.CAST dtypes.weakint [39] dtypes.weakint
+41 Ops.CONST dtypes.weakint [] 8294400
+42 Ops.MUL dtypes.weakint [40, 41]
+43 Ops.CONST dtypes.weakint [] 1440
+44 Ops.MUL dtypes.weakint [7, 43]
+45 Ops.ADD dtypes.weakint [42, 44]
+46 Ops.DIV dtypes.weakint [27, 4]
+47 Ops.ADD dtypes.weakint [45, 46]
+48 Ops.INDEX dtypes.u8 [34, 47]
+49 Ops.MOD dtypes.weakint [27, 4]
+50 Ops.CONST dtypes.weakint [] 1
+51 Ops.ADD dtypes.weakint [49, 50]
+52 Ops.CAST dtypes.u8 [51] dtypes.u8
+53 Ops.MUL dtypes.u8 [52, 24]
+54 Ops.CONST dtypes.weakint [] -4
+55 Ops.ADD dtypes.u8 [53, 54]
+56 Ops.SHR dtypes.u8 [48, 55]
+57 Ops.CAST dtypes.u32 [56] dtypes.u32
+58 Ops.CONST dtypes.weakint [] 7
+59 Ops.AND dtypes.u32 [57, 58]
+60 Ops.SHR dtypes.u32 [59, 50]
+61 Ops.CMPEQ dtypes.bool [60, 21]
+62 Ops.AND dtypes.u32 [57, 50]
+63 Ops.CAST dtypes.f32 [62] dtypes.f32
+64 Ops.CONST dtypes.weakfloat [] 0.5
+65 Ops.MUL dtypes.f32 [63, 64]
+66 Ops.CONST dtypes.weakint [] 126
+67 Ops.ADD dtypes.u32 [60, 66]
+68 Ops.CONST dtypes.weakint [] 23
+69 Ops.SHL dtypes.u32 [67, 68]
+70 Ops.CONST dtypes.weakint [] 22
+71 Ops.SHL dtypes.u32 [62, 70]
+72 Ops.OR dtypes.u32 [69, 71]
+73 Ops.BITCAST dtypes.f32 [72] dtypes.f32
+74 Ops.WHERE dtypes.f32 [61, 65, 73]
+75 Ops.BITCAST dtypes.u32 [74] dtypes.u32
+76 Ops.CONST dtypes.weakint [] 15
+77 Ops.AND dtypes.u32 [57, 76]
+78 Ops.CONST dtypes.weakint [] 3
+79 Ops.SHR dtypes.u32 [77, 78]
+80 Ops.AND dtypes.u32 [79, 50]
+81 Ops.CONST dtypes.weakint [] 31
+82 Ops.SHL dtypes.u32 [80, 81]
+83 Ops.OR dtypes.u32 [75, 82]
+84 Ops.BITCAST dtypes.f32 [83] dtypes.f32
+85 Ops.CONST dtypes.weakint [] 16588800
+86 Ops.PARAM dtypes.u8 [85] ParamArg(slot=5, dtype=dtypes.u8, device="CUDA")
+87 Ops.CONST dtypes.weakint [] 518400
+88 Ops.MUL dtypes.weakint [40, 87]
+89 Ops.CONST dtypes.weakint [] 90
+90 Ops.MUL dtypes.weakint [7, 89]
+91 Ops.ADD dtypes.weakint [88, 90]
+92 Ops.CONST dtypes.weakint [] 32
+93 Ops.DIV dtypes.weakint [27, 92]
+94 Ops.ADD dtypes.weakint [91, 93]
+95 Ops.INDEX dtypes.u8 [86, 94]
+96 Ops.CAST dtypes.u32 [95] dtypes.u32
+97 Ops.CONST dtypes.weakint [] 255
+98 Ops.CMPEQ dtypes.bool [96, 97]
+99 Ops.CONST dtypes.weakfloat [] nan
+100 Ops.CMPEQ dtypes.bool [96, 21]
+101 Ops.CONST dtypes.weakint [] 4194304
+102 Ops.SHL dtypes.u32 [96, 68]
+103 Ops.WHERE dtypes.u32 [100, 101, 102]
+104 Ops.BITCAST dtypes.f32 [103] dtypes.f32
+105 Ops.WHERE dtypes.f32 [98, 99, 104]
+106 Ops.MUL dtypes.f32 [84, 105]
+107 Ops.CAST dtypes.bf16 [106] dtypes.bf16
+108 Ops.CAST dtypes.f32 [107] dtypes.f32
+109 Ops.MUL dtypes.f32 [32, 108]
+110 Ops.REDUCE dtypes.f32 [109, 27] (Ops.ADD, 0)
+111 Ops.ADD dtypes.f32 [110, 30]
+112 Ops.CAST dtypes.bf16 [111] dtypes.bf16
+113 Ops.CAST dtypes.f32 [112] dtypes.f32
+114 Ops.CONST dtypes.weakint [] 184320
+115 Ops.PARAM dtypes.bf16 [114] ParamArg(slot=6, dtype=dtypes.bf16, device="CUDA")
+116 Ops.MUL dtypes.weakint [40, 10]
+117 Ops.ADD dtypes.weakint [7, 116]
+118 Ops.INDEX dtypes.bf16 [115, 117]
+119 Ops.CAST dtypes.f32 [118] dtypes.f32
+120 Ops.ADD dtypes.f32 [113, 119]
+121 Ops.CAST dtypes.bf16 [120] dtypes.bf16
+122 Ops.STORE dtypes.void [13, 121]
+123 Ops.END dtypes.void [122, 9, 3, 6]
+124 Ops.SINK dtypes.void [123] KernelInfo()
