@@ -445,26 +445,28 @@ let aperture_inputs () =
   in
   (stamp, Nx.create f64 [| 3 |] [| 0.; 0.; 0.5 |])
 
+let aperture_grad stamp p = Rune.value_and_grad' (flux stamp) p
+
+(* The aperture's gradient compiled and called once, with its inputs. *)
+let compiled_grad () =
+  let f =
+    Rune.jit
+      Nx.Ptree.(
+        Observation.ptree () @-> tensor @-> returns (pair tensor tensor))
+      aperture_grad
+  in
+  let s, p = aperture_inputs () in
+  ignore (Sys.opaque_identity (f s p));
+  (f, s, p)
+
 let aperture_rows () =
-  let grad stamp p = Rune.value_and_grad' (flux stamp) p in
   Thumper.group "aperture-104"
     [
       Thumper.bench_with_setup ~setup:aperture_inputs "eager" (fun (s, p) ->
           timed (fun () -> flux s p));
       Thumper.bench_with_setup ~setup:aperture_inputs "eager-grad"
-        (fun (s, p) -> timed (fun () -> grad s p));
-      Thumper.bench_with_setup
-        ~setup:(fun () ->
-          let f =
-            Rune.jit
-              Nx.Ptree.(
-                Observation.ptree () @-> tensor @-> returns (pair tensor tensor))
-              grad
-          in
-          let s, p = aperture_inputs () in
-          ignore (Sys.opaque_identity (f s p));
-          (f, s, p))
-        "compiled-grad"
+        (fun (s, p) -> timed (fun () -> aperture_grad s p));
+      Thumper.bench_with_setup ~setup:compiled_grad "compiled-grad"
         (fun (f, s, p) -> timed (fun () -> f s p));
     ]
 
@@ -675,8 +677,59 @@ let suite () =
 
 let config = Thumper.Config.(default |> deadline 60.)
 
+(* Cold compiles: each sample runs this executable again as [--cold id] over
+   an empty disk cache, so a sample is a fresh process's first call of the
+   case, traced, lowered and compiled by tolk and the C compiler on one
+   domain. A warm process cannot hold this cost: tolk's caches serve a program
+   after its first compile. *)
+let cold_cases =
+  [ ("aperture-104/compiled-grad", fun () -> ignore (compiled_grad ())) ]
+
+let rec remove path =
+  if Sys.is_directory path then (
+    Array.iter (fun f -> remove (Filename.concat path f)) (Sys.readdir path);
+    Sys.rmdir path)
+  else Sys.remove path
+
+(* One sample: a fresh process's first call of [id] over an empty disk
+   cache. *)
+let cold id () =
+  let dir = Filename.temp_dir "bench-ymir-compile" "" in
+  Fun.protect ~finally:(fun () -> remove dir) @@ fun () ->
+  let exe = Sys.executable_name in
+  let env =
+    Array.append
+      [| "CACHEDB=" ^ Filename.concat dir "cache.db"; "PARALLEL=1" |]
+      (Unix.environment ())
+  in
+  let null = Unix.openfile Filename.null [ Unix.O_WRONLY ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close null) @@ fun () ->
+  let pid =
+    Unix.create_process_env exe [| exe; "--cold"; id |] env Unix.stdin null
+      Unix.stderr
+  in
+  match snd (Unix.waitpid [] pid) with
+  | Unix.WEXITED 0 -> ()
+  | _ -> failwith ("bench_ymir: the first call of " ^ id ^ " failed")
+
+let compile argv =
+  Thumper.run "compile" ~argv
+    ~config:
+      Thumper.Config.(
+        default |> samples 3 |> warmup 0. |> deadline 300.
+        |> metrics [ Thumper.Metric.wall_time ])
+    ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
+    (List.map (fun (id, _) -> Thumper.bench id (cold id)) cold_cases)
+
 let () =
   match Array.to_list Sys.argv with
+  | [ _; "--cold"; id ] -> (
+      match List.assoc_opt id cold_cases with
+      | Some f -> f ()
+      | None ->
+          prerr_endline ("bench_ymir: no case " ^ id);
+          exit 2)
+  | exe :: "compile" :: rest -> exit (compile (Array.of_list (exe :: rest)))
   | [ _; "--warm" ] ->
       (* Each case once, in as few calls as a trial takes: what the setups
          compile lands in tolk's disk cache, which a measurement then reads. *)

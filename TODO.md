@@ -87,8 +87,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   0.37-0.39 s under load against 0.22 s on the old stack):
   `create_linear_with_vars` on a hit spends ~10 ms on the key digest and
   ~24 ms in other passes; the engine assembles 4 programs in 28-57 ms
-- ymir's aperture gradient has no cold-compile row (22-28 -> 14-15 CPU-s
-  with loop fusion, 5e509c7f1): add it to contrib ymir's bench
 - long programs: the incomplete beta (~11,400 ops) compiles in 3 s, 10-20 s
   per derivative, past 10 min for three; a 1,000-term slice-tree sum is one
   kernel clang -O2 takes over 8 min on. Past 400 KB of C Clang compiles

@@ -1,10 +1,11 @@
 (executable
  (name bench_ymir)
- (libraries ymir ymir.fits ymir.spk rune nx nx.ragged thumper))
+ (libraries ymir ymir.fits ymir.spk rune nx nx.ragged thumper unix))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`, or run the
 ; built exe directly. [--warm] fills tolk's disk cache with what the cases
-; compile, so the compiled rows compile nothing while measured.
+; compile, so the compiled rows compile nothing while measured; [compile]
+; times the cold compiles, each in a fresh process over an empty cache.
 
 (rule
  (alias bench)
@@ -18,4 +19,5 @@
  (action
   (progn
    (run %{exe:bench_ymir.exe} --warm)
-   (run %{exe:bench_ymir.exe}))))
+   (run %{exe:bench_ymir.exe})
+   (run %{exe:bench_ymir.exe} compile))))
