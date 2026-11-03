@@ -985,6 +985,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   order (`Codegen.full_rewrite_to_sink`): a contraction's bits no longer
   change with its unroll. On Ada, whose cores truncate, the error stays
   within `Nx.contract`'s bound, at half of it on adversarial rows.
+- A later process's first call of a compiled function that tolk's disk cache
+  holds allocates 41-49% fewer words and takes about half the time
+  (`Graph.of_string`, `Shape.kernel_params`, `Tolk_engine.link`).
 - Lowering a kernel raises `Invalid_argument`, naming it, where a barrier or
   a tensor core runs in a loop whose trips may differ between a workgroup's
   threads (`Uniform.check`), which hung the GPU or read unwritten memory.

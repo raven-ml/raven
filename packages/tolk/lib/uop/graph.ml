@@ -90,19 +90,30 @@ let rec print index = function
 
 (* Parsing *)
 
-type cursor = { text : string; mutable pos : int }
+(* A cursor over [text] from [pos] up to [stop], one line of a graph: lines are
+   read in place, without copying them out of the text. *)
+type cursor = { text : string; mutable pos : int; stop : int }
 
-let peek c = if c.pos < String.length c.text then Some c.text.[c.pos] else None
+(* The character at the cursor, or ['\000'] past its end: the format writes
+   none ([quote] escapes it), so no value reads it as its own. *)
+let peek c = if c.pos < c.stop then String.unsafe_get c.text c.pos else '\000'
 let advance c = c.pos <- c.pos + 1
-let rest c = String.sub c.text c.pos (String.length c.text - c.pos)
+
+(* Whether the text at the cursor starts with [s]. *)
+let at c s =
+  let n = String.length s in
+  let rec same i =
+    i >= n || (String.unsafe_get c.text (c.pos + i) = s.[i] && same (i + 1))
+  in
+  c.pos + n <= c.stop && same 0
 
 let expect c s =
-  if String.starts_with ~prefix:s (rest c) then c.pos <- c.pos + String.length s
+  if at c s then c.pos <- c.pos + String.length s
   else fail "expected %S at column %d" s (c.pos + 1)
 
 let take_while c ok =
   let start = c.pos in
-  while match peek c with Some ch -> ok ch | None -> false do
+  while c.pos < c.stop && ok (String.unsafe_get c.text c.pos) do
     advance c
   done;
   String.sub c.text start (c.pos - start)
@@ -111,20 +122,31 @@ let is_ident = function
   | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true
   | _ -> false
 
+(* The natural number written at the cursor in decimal. *)
+let natural c =
+  let start = c.pos and n = ref 0 in
+  while c.pos < c.stop && match peek c with '0' .. '9' -> true | _ -> false do
+    n := (!n * 10) + Char.code (peek c) - Char.code '0';
+    advance c
+  done;
+  if c.pos = start || c.pos - start > 18 then
+    fail "expected a number at column %d" (start + 1);
+  !n
+
 let string c =
   expect c "\"";
   let b = Buffer.create 16 in
   let rec loop () =
+    if c.pos >= c.stop then fail "unterminated string";
     match peek c with
-    | None -> fail "unterminated string"
-    | Some '"' -> advance c
-    | Some '\\' ->
+    | '"' -> advance c
+    | '\\' ->
         advance c;
         (match peek c with
-        | Some (('"' | '\\') as ch) -> Buffer.add_char b ch
-        | Some 'n' -> Buffer.add_char b '\n'
-        | Some 't' -> Buffer.add_char b '\t'
-        | Some 'x' when c.pos + 2 < String.length c.text -> (
+        | ('"' | '\\') as ch -> Buffer.add_char b ch
+        | 'n' -> Buffer.add_char b '\n'
+        | 't' -> Buffer.add_char b '\t'
+        | 'x' when c.pos + 2 < c.stop -> (
             let hex = String.sub c.text (c.pos + 1) 2 in
             match int_of_string_opt ("0x" ^ hex) with
             | Some n ->
@@ -134,7 +156,7 @@ let string c =
         | _ -> fail "bad escape at column %d" (c.pos + 1));
         advance c;
         loop ()
-    | Some ch ->
+    | ch ->
         Buffer.add_char b ch;
         advance c;
         loop ()
@@ -144,7 +166,7 @@ let string c =
 
 let number c =
   let sign =
-    if peek c = Some '-' then (
+    if peek c = '-' then (
       advance c;
       "-")
     else ""
@@ -173,51 +195,51 @@ let number c =
 (* [items c item] reads the items of a parenthesised list, after its opening
    parenthesis, up to and including its closing one. *)
 let rec items c item =
-  if peek c = Some ')' then (
+  if peek c = ')' then (
     advance c;
     [])
   else
     let x = item c in
     match peek c with
-    | Some ')' ->
+    | ')' ->
         advance c;
         [ x ]
-    | Some ',' ->
+    | ',' ->
         advance c;
-        if peek c = Some ' ' then advance c;
+        if peek c = ' ' then advance c;
         x :: items c item
     | _ -> fail "expected ',' or ')' at column %d" (c.pos + 1)
 
 let rec parse nodes c =
   match peek c with
-  | Some '"' -> Str (string c)
-  | Some '%' ->
+  | '"' -> Str (string c)
+  | '%' ->
       advance c;
-      Node (nodes (int_of_string (take_while c is_ident)))
-  | Some '(' ->
+      Node (nodes (natural c))
+  | '(' ->
       advance c;
       Tuple (items c (parse nodes))
-  | Some ('-' | '0' .. '9') -> number c
-  | Some 'b' when String.starts_with ~prefix:"b\"" (rest c) ->
+  | '-' | '0' .. '9' -> number c
+  | 'b' when at c "b\"" ->
       advance c;
       Bytes (string c)
-  | Some ('a' .. 'z' | 'A' .. 'Z') -> (
+  | 'a' .. 'z' | 'A' .. 'Z' -> (
       let id = take_while c is_ident in
       match (id, peek c) with
       | "None", _ -> None_
       | "True", _ -> Bool true
       | "False", _ -> Bool false
       | "Invalid", _ -> Invalid
-      | "nan", Some '(' ->
+      | "nan", '(' ->
           advance c;
           let bits = take_while c is_ident in
           expect c ")";
           Float (Int64.float_of_bits (Int64.of_string bits))
       | ("inf" | "nan"), _ -> Float (float_of_string id)
-      | _, Some '.' ->
+      | _, '.' ->
           advance c;
           Name (id, take_while c is_ident)
-      | _, Some '(' ->
+      | _, '(' ->
           advance c;
           let field c =
             let k = take_while c is_ident in
@@ -772,35 +794,37 @@ let to_string sink =
   List.iter line order;
   Buffer.contents b
 
-let node_line nodes i text =
-  let c = { text; pos = 0 } in
+let node_line nodes i c =
   let word codec =
-    let w = take_while c (fun ch -> ch <> ' ') in
+    let v = codec.read (parse nodes c) in
     expect c " ";
-    codec.read (parse nodes { text = w; pos = 0 })
+    v
   in
-  let index = word int in
+  let index = natural c in
+  expect c " ";
   if index <> i then fail "index %d is not the line's position %d" index i;
   let o = word op in
   let written = word dtype in
   expect c "[";
-  let src =
-    match take_while c (fun ch -> ch <> ']') with
-    | "" -> []
-    | s ->
-        List.map
-          (fun i -> nodes (int_of_string (String.trim i)))
-          (String.split_on_char ',' s)
+  let rec srcs () =
+    let s = nodes (natural c) in
+    match peek c with
+    | ']' -> [ s ]
+    | ',' ->
+        advance c;
+        if peek c = ' ' then advance c;
+        s :: srcs ()
+    | _ -> fail "expected ',' or ']' at column %d" (c.pos + 1)
   in
+  let src = if peek c = ']' then [] else srcs () in
   expect c "]";
   let arg =
-    if c.pos < String.length text then (
+    if c.pos < c.stop then (
       expect c " ";
       arg_of o (parse nodes c))
     else No_arg
   in
-  if c.pos <> String.length text then
-    fail "unexpected text at column %d" (c.pos + 1);
+  if c.pos <> c.stop then fail "unexpected text at column %d" (c.pos + 1);
   let u = Ops.v ~src ~arg o in
   let text dt = Format.asprintf "%a" Dtype.pp dt in
   if not (Dtype.equal (Ops.dtype u) written) then
@@ -809,11 +833,22 @@ let node_line nodes i text =
       (text written);
   u
 
-let of_string text =
-  let lines = String.split_on_char '\n' text in
-  let lines =
-    match List.rev lines with "" :: rest -> List.rev rest | _ -> lines
+(* The cursors over the lines of [text], each without its newline; a last
+   newline ends the last line. *)
+let lines text =
+  let n = String.length text in
+  let rec from pos acc =
+    if pos >= n then List.rev acc
+    else
+      let stop =
+        match String.index_from_opt text pos '\n' with Some e -> e | None -> n
+      in
+      from (stop + 1) ({ text; pos; stop } :: acc)
   in
+  from 0 []
+
+let of_string text =
+  let lines = lines text in
   if lines = [] then failwith "the graph has no node";
   let nodes = Array.make (List.length lines) None in
   let node_at i j =
@@ -821,8 +856,8 @@ let of_string text =
     else fail "node %d is not an earlier line" j
   in
   List.iteri
-    (fun i text ->
-      match node_line (node_at i) i text with
+    (fun i c ->
+      match node_line (node_at i) i c with
       | u -> nodes.(i) <- Some u
       | exception (Failure e | Invalid_argument e) -> fail "node %d: %s" i e)
     lines;

@@ -875,12 +875,13 @@ let in_order fn =
       storage
 
 (* The key of a schedule, in memory and, with the setting scache at 2 or more,
-   on disk: the function's with its placeholders ([in_order]), every setting
-   and variable that shapes what compilation makes ([Setting.shaping]), and the
-   digest of this library's sources, of which a schedule is a function. *)
-let schedule_key ~by_storage fn =
+   on disk: [fn_key], the key of the function with its placeholders
+   ([in_order]), every setting and variable that shapes what compilation makes
+   ([Setting.shaping]), and the digest of this library's sources, of which a
+   schedule is a function. *)
+let schedule_key ~by_storage fn_key =
   String.concat "\n"
-    ([ Source_digest.digest; key fn; string_of_bool by_storage ]
+    ([ Source_digest.digest; fn_key; string_of_bool by_storage ]
     @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
 
 let lower_sink_to_linear ~by_storage call =
@@ -892,8 +893,24 @@ let lower_sink_to_linear ~by_storage call =
       let start = Unix.gettimeofday () in
       let placed = in_order fn in
       let place g = substitute ~calls:Enter ~pass:Once g placed in
+      (* [fn] with its placeholders is keyed without being built: a hit
+         builds no graph but the schedule it reads. A placeholder keeps its
+         node's sources, so where a placed node reaches another, such as a
+         range whose bound reads a range, [key_with], which would place that
+         one too, is not the key of the placed graph: it is built. *)
+      let placeholder = Tbl.create 64 in
+      List.iter (fun (u, p) -> Tbl.replace placeholder u (arg p)) placed;
+      let reaches_placed (u, _) =
+        List.exists
+          (fun s -> s != u && Tbl.mem placeholder s)
+          (toposort ~calls:Enter u)
+      in
+      let fn_key =
+        if List.exists reaches_placed placed then key (place fn)
+        else key_with ~arg:(Tbl.find_opt placeholder) fn
+      in
       let cache_key =
-        Digest.BLAKE256.string (schedule_key ~by_storage (place fn))
+        Digest.BLAKE256.string (schedule_key ~by_storage fn_key)
       in
       (* Whether neither memory nor disk had the schedule. *)
       let made = ref false in

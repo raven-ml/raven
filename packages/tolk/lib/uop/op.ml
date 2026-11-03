@@ -237,8 +237,15 @@ let name o = snd (info o)
 let equal (o : t) o' = o = o'
 let compare o o' = Int.compare (to_int o) (to_int o')
 
+(* Each operation by its name, looked up by hashing: a graph read back names
+   an operation at each of its nodes. *)
+let by_name =
+  let t = Hashtbl.create 128 in
+  List.iter (fun o -> Hashtbl.replace t (name o) o) ops;
+  t
+
 let of_string s =
-  match List.find_opt (fun o -> String.equal (name o) s) ops with
+  match Hashtbl.find_opt by_name s with
   | Some o -> Ok o
   | None -> Error (Printf.sprintf "%S is not an operation" s)
 

@@ -730,8 +730,17 @@ let const dt (c : [< const ]) : const =
 
 (* Names and defaults *)
 
-let of_name s =
-  List.find_map (fun (dt, ns) -> if List.mem s ns then Some dt else None) names
+(* Each name's data type, looked up by hashing: a graph read back names a data
+   type at each of its nodes. *)
+let by_name =
+  let t = Hashtbl.create 64 in
+  List.iter
+    (fun (dt, ns) ->
+      List.iter (fun n -> if not (Hashtbl.mem t n) then Hashtbl.add t n dt) ns)
+    names;
+  t
+
+let of_name s = Hashtbl.find_opt by_name s
 
 (* The data type a setting names, of the kind [is_kind] accepts. *)
 let setting_dtype setting ~kind is_kind =

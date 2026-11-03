@@ -560,6 +560,17 @@ let kernel_of prg =
   | Ops.Kernel k -> k
   | _ -> invalid_arg "Tolk_engine: a program of no kernel"
 
+(* The binary of a compiled program, its last source. A launch reads the binary
+   and the kernel's name alone, so a program read back from disk is not digested
+   for the profile key {!Device.Tiny_elf.of_program} gives. *)
+let binary prg =
+  match Ops.src prg with
+  | [ _; _; _; b ] -> (
+      match Ops.arg b with
+      | Ops.Bytes lib -> lib
+      | _ -> invalid_arg "Tolk_engine: a program of no binary")
+  | _ -> invalid_arg "Tolk_engine: a program of no binary"
+
 let image b dev binary =
   match Hashtbl.find_opt b.image_of (dev, binary) with
   | Some i -> i
@@ -653,14 +664,14 @@ let note_start b (l : located) =
    program runs on its device's host. *)
 let launch b call prg d =
   let info = program_info prg and k = kernel_of prg in
-  let elf = Device.Tiny_elf.of_program prg in
+  let kname = Ops.function_name k in
   let kind = (target d).device in
   if kind <> info.target.device then
     fail b.fn "%s runs no %s program" (Rig.name d) info.target.device;
   let host = kind = "CPU" in
   let on = if host then Rig.host_of d else d in
   let dev = device_index b on in
-  let image = image b dev elf.lib in
+  let image = image b dev (binary prg) in
   let slot_of p = match Ops.arg p with Ops.Param p -> p.slot | _ -> -1 in
   (* Its parameters, in slot order, the order the program takes them, as
      parameters or packed into its bytes: a pointer to each buffer and each
@@ -762,12 +773,12 @@ let launch b call prg d =
     let e = Realize.estimate_uop call in
     { Ops.ops = passed e.ops; lds = passed e.lds; mem = passed e.mem }
   in
-  b.kernels <- { device = on; name = elf.name; call; estimates } :: b.kernels;
+  b.kernels <- { device = on; name = kname; call; estimates } :: b.kernels;
   add_part b p
     (Launch
        {
          image;
-         name = elf.name;
+         name = kname;
          params =
            { bytes = Bytes.to_string params; holes = Iarray.of_list !holes };
          refs = Iarray.of_list refs;

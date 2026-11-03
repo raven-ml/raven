@@ -3507,9 +3507,11 @@ let kernel_params prg =
   match (op prg, arg prg, src prg) with
   | Op.Program, Program info, _ :: linear :: _ ->
       let slot u = (param_arg_of u).slot in
+      (* The linear holds each of the program's instructions: its parameters
+         are told by their operation before the lookup. *)
       let params =
         List.filter
-          (fun u -> List.exists (Ops.equal u) info.params)
+          (fun u -> op u = Op.Param && List.memq u info.params)
           (src linear)
       in
       let taken = List.map slot params in
