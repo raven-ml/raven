@@ -43,7 +43,8 @@ val valid_name : string -> bool
 val add_npy : out_file -> string -> string -> Storage.bytes -> unit
 (** [add_npy a name header data] writes the npy stream [header] then [data] as
     [a]'s entry [name] and [.npy], compressed if that shrinks its first 64 KiB.
-    [name] must pass {!valid_name} and must not be in [a]. *)
+    [name] must pass {!valid_name} and must not be in [a]. Once it raises, [a]
+    takes no more entries. *)
 
 val close_out : out_file -> unit
 (** [close_out a] writes [a]'s central directory, and leaves [a]'s descriptor

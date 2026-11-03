@@ -6,8 +6,8 @@
 (* nx's per-call costs above the array layer, each row what a user calls: an
    operation on one-element host values, its kernel called as nx calls it and
    directly, a decode step's cache update, a view, creations, an operation
-   over two devices, reading a value's shape, placing, and operations beside
-   and under interpretations.
+   over two devices, reading a value's shape, placing, operations beside and
+   under interpretations, and an npz save.
 
    Each row builds its inputs in its setup, in the worker that times it, so
    that a worker holds one row's inputs. *)
@@ -1625,6 +1625,21 @@ let sdpa_rows =
         (attend Nx.float32);
     ]
 
+(* An npz save of 1024 one-element arrays, each entry deflated: a save's cost
+   per entry, which an archive of many small arrays pays for each. *)
+let npz () =
+  let one = Nx.P (Nx.create D.Float32 [| 1 |] [| 1. |]) in
+  ( Filename.temp_file "bench_nx" ".npz",
+    Nx_io.Archive.of_list (List.init 1024 (fun i -> (string_of_int i, one))) )
+
+let io_rows =
+  Thumper.group "io"
+    [
+      Thumper.bench_with_setup "save-npz-1024-one-element-entries" ~setup:npz
+        ~teardown:(fun (path, _) -> Sys.remove path)
+        (fun (path, a) -> Nx_io.save_npz path a);
+    ]
+
 let () =
   exit
   @@ Thumper.run "nx"
@@ -1649,4 +1664,5 @@ let () =
          quant_rows;
          ragged_rows;
          sdpa_rows;
+         io_rows;
        ]

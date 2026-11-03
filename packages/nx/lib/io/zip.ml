@@ -61,10 +61,13 @@ type entry = {
    the offset of its data in [file]. *)
 type in_file = { file : Rig.Buffer.t; entries : (entry * int) list }
 
+(* One deflate encoder writes every entry's stream: after a stream ends it
+   begins the next with the tables it has. *)
 type out_file = {
   fd : Unix.file_descr;
   mutable offset : int;
   mutable entries_rev : entry list;
+  deflate : Lz.Encoder.t Lazy.t;
 }
 
 let safe_name name =
@@ -469,7 +472,10 @@ let write_string archive s =
   Save.string archive.fd s;
   add_offset archive (String.length s)
 
-let open_out fd = { fd; offset = 0; entries_rev = [] }
+let open_out fd =
+  { fd; offset = 0; entries_rev = []; deflate = lazy (Lz.Deflate.encoder ()) }
+
+(* The encoder's quota: one step takes a sample whole and ends its stream. *)
 let sample_size = 64 * 1024
 
 (* Copies the first [n] bytes of [s], an npy header, to [b]. *)
@@ -498,17 +504,27 @@ let prefix header (data : bytes) n =
    made of them, or deflated while they are written. *)
 type writing = Stored | Deflated of bytes | Deflating
 
-(* An entry is deflated when deflate shrinks its first 64 KiB: when their
-   stream fits a destination one byte shorter. Where those are the whole entry,
-   their stream is the entry's, which spares encoding them again. *)
-let writing header (data : bytes) =
+(* An entry is deflated when deflate shrinks its first 64 KiB. Where those are
+   the whole entry, their stream is the entry's, which spares encoding them
+   again. *)
+let writing archive header (data : bytes) =
   let size = String.length header + Array1.dim data in
   let n = Int.min sample_size size in
-  let shorter = Array1.create int8_unsigned c_layout (Int.max 0 (n - 1)) in
-  match Lz.Deflate.encode (prefix header data n) shorter with
-  | None -> Stored
-  | Some k when n = size -> Deflated (Array1.sub shorter 0 k)
-  | Some _ -> Deflating
+  let w = ref Stored in
+  let sample run =
+    let k = Array1.dim run in
+    if k >= n then ()
+    else if n < size then w := Deflating
+    else begin
+      let b = Array1.create int8_unsigned c_layout k in
+      Array1.blit run b;
+      w := Deflated b
+    end
+  in
+  let e = Lazy.force archive.deflate in
+  match Lz.Encoder.step e ~last:true (prefix header data n) sample with
+  | Lz.Done _ -> !w
+  | Lz.More _ -> invalid_arg "Zip.writing: a sample past the encoder's quota"
 
 (* Writes [header] and [data] to the archive as [w] says. Returns their CRC-32
    and their size as written. *)
@@ -526,7 +542,7 @@ let write_entry archive w header (data : bytes) =
   | Deflating ->
       (* The header and the data are two steps of one stream, whose runs are
          written as they come. *)
-      let e = Lz.Deflate.encoder () in
+      let e = Lazy.force archive.deflate in
       let written = ref 0 in
       let out run =
         Save.bytes archive.fd run;
@@ -553,7 +569,7 @@ let made_by = 0x031e
 
 let add_npy archive name header (data : bytes) =
   let filename = name ^ npy_suffix in
-  let w = writing header data in
+  let w = writing archive header data in
   let method_ =
     match w with Stored -> stored | Deflated _ | Deflating -> deflated
   in

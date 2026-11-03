@@ -1965,6 +1965,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.save_npz` saves an archive of many small arrays faster: 4096
+  one-element arrays take 0.72 of the instructions.
 - Add `Nx_kernel.Prog.ranges`, the program of a program's ranges over a
   box of its leaves, sound under wrap-around. nx.cpu's attention takes a
   mask's ranges over each block of a unit's rows, and skips, or reads
