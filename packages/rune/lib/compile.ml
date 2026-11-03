@@ -181,13 +181,14 @@ let storage ~device ~phase (type v s) (dt : (v, s) D.t) l =
     (b, viewed dt flat (within dt l))
 
 (* [store dt o u] is the buffer [o] once the node [u] of a value of [dt] is
-   stored into it, packed for a sub-byte [dt]. *)
+   stored into it, packed for a sub-byte [dt]. A value not packed is stored
+   through a view of [o] of its own shape, so that its kernel has a range for
+   each of its axes, and the optimisations see which operand repeats along
+   which: a range over all of them splits again only where an index takes a
+   remainder, so [h i d, h j d -> h i j] would run [h] and [i] as one. *)
 let store dt o u =
-  let v =
-    if packed dt then pack dt u
-    else Shape.reshape u (ints [ Shape.max_numel u ])
-  in
-  Ops.after o [ Ops.store o v ]
+  if packed dt then Ops.after o [ Ops.store o (pack dt u) ]
+  else Ops.after o [ Ops.store (Shape.reshape o (Shape.shape u)) u ]
 
 (* [read_back dt shape s] is the node of the value of [dt] and [shape] that the
    storage [s] holds in C order, as {!store} stored it. *)

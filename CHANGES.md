@@ -368,6 +368,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` stores a result through a view of its own shape, so its kernel
+  keeps each of the result's axes: attention's scores and every batched
+  contraction keep their batch axis apart from the rows, and the scores of
+  8 heads at 2048 positions run 1.3 times faster on an RTX 5000 Ada.
 - A compiled `Rows` segmented contraction, such as `Nx_quant.apply_experts`
   and `Nx.matmul_segments`, groups its rows itself. With fewer than 4 rows
   an expert, each row streams its own expert's matrix, with no routing.

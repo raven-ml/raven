@@ -5210,10 +5210,51 @@ let law_update_scan u =
   in
   equal (outcome_t (list bits_t)) (Value eager) jitted
 
+(* Batch axes
+
+   A result keeps the axes of its shape in its kernel, each its own range, so
+   that the optimisations see which operand repeats along which: attention's
+   scores keep their heads beside the queries, and a batched product its batch
+   beside the rows. Unoptimised, a kernel is named by its outputs' sizes, then
+   its reduce's. *)
+let batch_axes (pattern, sa, sb, expected) =
+  let module D = (val Nx.devices [ Nx_support.memory 1 ]) in
+  let a = Nx.place D.on (Nx.ones f32 sa)
+  and b = Nx.place D.on (Nx.ones f32 sb) in
+  let p = Nx.Pattern.v pattern in
+  let f =
+    Rune.jit
+      T.(tensor @-> tensor @-> returns tensor)
+      (fun a b -> Nx.contract f32 p a b)
+  in
+  Tolk.Setting.context [ B (Tolk.Setting.noopt, true) ] (fun () ->
+      ignore (Nx.to_array (f a b));
+      let _, events =
+        Rig.Profile.take (fun () -> ignore (Nx.to_array (f a b)))
+      in
+      let names =
+        List.concat_map
+          (function
+            | Rig.Profile.Work { name; _ } when name <> "copies" ->
+                String.split_on_char ',' name
+            | _ -> [])
+          events
+      in
+      equal (list string) [ expected ] names)
+
 let () =
   exit
     (run "rune jit"
        [
+         Windtrap.cases "a contraction's kernel keeps its batch axis"
+           ~id:(fun (pattern, _, _, _) -> pattern)
+           [
+             ("h i d, h j d -> h i j | d", [| 8; 16; 4 |], [| 8; 16; 4 |],
+              "r_8_16_16_4");
+             ("b m k, b k n -> b m n | k", [| 4; 8; 4 |], [| 4; 4; 8 |],
+              "r_4_8_8_4");
+           ]
+           batch_axes;
          group "classes"
            [
              prop "jit gives eager's bits for exact functions" cases law;

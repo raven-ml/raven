@@ -1343,6 +1343,26 @@ let gpu_rows g =
               in
               fun () -> ignore (synced2 (f p x y)));
         };
+      (* Attention's scores of 8 heads of 64 at 2048 positions in float32,
+         [h i d, h j d -> h i j]: its kernel keeps the heads apart from the
+         queries, along which the keys repeat. *)
+      on_gpu g "scores-float32-8x2048x64"
+        {
+          at =
+            (fun at ->
+              let draw i =
+                Nx.place at
+                  (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 [| 8; 2048; 64 |])
+              in
+              let q = draw 70 and k = draw 71 in
+              let p = Nx.Pattern.v "h i d, h j d -> h i j | d" in
+              let f =
+                Rune.jit
+                  Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                  (fun q k -> Nx.contract f32 p q k)
+              in
+              fun () -> ignore (synced (f q k)));
+        };
       on_gpu g "kv-append-4096" (kv_append ~donated:true);
       on_gpu g "kv-append-4096-copied" (kv_append ~donated:false);
     ]
