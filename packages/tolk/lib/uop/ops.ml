@@ -2295,8 +2295,8 @@ let pop_const ?(op = Op.Add) u : t * Dtype.const =
 
    [sin], [log2], [exp2] and a float [pow] are computed on integers and rounded
    once, so that a folded constant is the same on every host: C libraries
-   differ in the last place, glibc's [log2], [exp2] and [pow] for about one
-   operand in two thousand. *)
+   differ in the last place, and glibc's [log2], [exp2] and [pow] round some
+   operands one unit off. *)
 
 (* [n * 2^e] rounded to the nearest float, ties to even, for [n >= 0]: a
    subnormal below the least normal, an infinity past the greatest float. *)

@@ -938,7 +938,7 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 - `Ops.exec_alu` folds `Log2`, `Exp2` and a float `Pow` correctly rounded on
   every host, where it took the C library's value, which glibc rounds one unit
-  off for about one operand in two thousand; `c ** x` rewrites with `log2 c`
+  off for about one operand in 320 to 1,250; `c ** x` rewrites with `log2 c`
   correctly rounded.
 - `Codegen.to_program` and `Codegen.linearize` order a call's accesses to
   LOCAL memory with workgroup barriers, as a kernel's own: a kernel read what a

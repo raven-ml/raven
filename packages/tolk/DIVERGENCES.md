@@ -3851,9 +3851,11 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   exactly. Each result is correctly rounded on every host, where tinygrad's is
   the C library's: on an M1 Mac about 3% of drawn float64 sines are one unit
   off (`sin 2.5`, `sin 4.0`), glibc's about 0.1% (`sin 0.259`), and mingw-w64's
-  reduces by x87's 66-bit pi; glibc's `log2`, `pow` and `pow (2, x)` are one
-  unit off for about one operand in two thousand (`log2 0.86`, `2^-0.338`,
-  `5.4 ** 0.8`). A NaN operand of the sine gives `Dtype.nan`.
+  reduces by x87's 66-bit pi; glibc 2.41's `log2` is one unit off for about
+  one operand in 320 of [0.5, 2), its `pow (2, x)` for one in 1,250 of
+  [-1, 1), and its `pow` for one in 1,100 of [0.5, 8) to powers in [-2, 2)
+  (200,000 uniform draws each; `log2 0.86`, `2^-0.338`, `5.4 ** 0.8`). A NaN
+  operand of the sine gives `Dtype.nan`.
 - **Reason:** for the sine, (b). rune's `sin` and `cos` are `SIN` nodes
   (rune's `Lower_real.sin_`), which fold through `exec_alu`, and a fold must
   not depend on the host: on Windows `sin 1e300` folded to `0.979`, of the
