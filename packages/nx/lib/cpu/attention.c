@@ -37,10 +37,13 @@
    the units, the threads and the extents other than the keys' and their
    dimensions change no bit.
 
-   A mask whose output 0 reads no lead index, head or score is classified
-   once per tile of rows and block, at lead index 0 and head 0 (classes):
-   a block it hides or shows whole is skipped or read without running it
-   for each unit.
+   Each unit classes its blocks first by the ranges of the mask's output
+   0 over its box of pairs (Classes): a block the mask hides from every
+   pair of the unit is skipped, one it shows to every pair is read without
+   running the mask. A mask that reads no lead index, head or score is
+   classed once a call per tile of rows and block, by its ranges, then
+   where they leave the block mixed by running it at lead index 0 and
+   head 0 (shared).
 
    Bound (nx_cpu.mli), to first order in u, the accumulator's unit
    roundoff (2^-24 or 2^-53), barring overflow and underflow, for a row of
@@ -111,9 +114,8 @@ typedef struct {
    take a gemv of each row. Both add in chain order. */
 #define CHAIN_ROWS 12
 
-/* A block's class for every row of a tile under a mask that reads no lead
-   or head (summary): its program's output 0 false at every pair, true at
-   every pair, or both. */
+/* A block's class for a unit's rows (Classes): its mask false at every
+   pair, true at every pair, or either. */
 enum { HIDDEN, SHOWN, MIXED };
 
 typedef struct {
@@ -135,10 +137,14 @@ typedef struct {
   int mask, score;
   /* Keys and values read in place. */
   int k_in, v_in;
-  /* Classes of a tile's blocks (enum above), where every lead and head's
-     visibility is one, else NULL. */
-  const uint8_t *cls;
+  /* The ranges of the mask's output 0 bound over the tiles' loop
+     (Classes), else NULL, every block then mixed. */
+  nx_cpu_prog *ranges;
+  nx_cpu_places rpl;
   int64_t blocks;
+  /* Classes of a tile's blocks where every lead index and head's are one
+     (shared), else NULL. */
+  uint8_t *cls;
   int64_t kd, vd; /* the keys' and values' steps along their dimension */
   nx_cpu_gemv gemv;
   nx_cpu_kernel pv;
@@ -276,6 +282,26 @@ static void row_scores(const float *q, int r, const float *k, int64_t ks,
 #define ROW_SCORES 0
 #endif
 
+/* The ranges of unit [u]'s first [nb] blocks into [lo] and [hi], its
+   mask's least and greatest over each block's pairs: every block mixed
+   where the ranges cannot run. */
+static void ranges_of(const att *c, uint8_t *lo, uint8_t *hi, int64_t u,
+                      int64_t nb) {
+  int64_t p = u * c->blocks;
+  memset(lo, 0, (size_t)nb);
+  memset(hi, 1, (size_t)nb);
+  nx_cpu_prog_terms(c->ranges, &c->rpl, 0, p, 1, nb, nb, 1, lo);
+  nx_cpu_prog_terms(c->ranges, &c->rpl, 1, p, 1, nb, nb, 1, hi);
+  if (nx_cpu_prog_failed(c->ranges)) {
+    memset(lo, 0, (size_t)nb);
+    memset(hi, 1, (size_t)nb);
+  }
+}
+
+static int class_of(uint8_t lo, uint8_t hi) {
+  return lo ? SHOWN : hi ? MIXED : HIDDEN;
+}
+
 /* The units, in each accumulator (attention_body.h). */
 #define T float
 #define DT NX_FLOAT32
@@ -301,26 +327,33 @@ static void row_scores(const float *q, int r, const float *k, int64_t ks,
 #define F(name) name##_f64
 #include "attention_body.h"
 
-/* The summary's classes of tiles [lo, hi), from the program at lead index
-   and head 0. */
-static void classes(int64_t lo, int64_t hi, int worker, void *ctx) {
+/* The shared classes of tiles [lo, hi): a tile's ranges, those of unit
+   [t], at lead index 0 and head 0, then the mask at every pair of a block
+   they leave mixed. */
+static void shared(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   att *c = ctx;
   uint8_t vis[ROWS * KEYS];
-  uint8_t *cls = (uint8_t *)c->cls;
+  uint8_t *ends = c->ranges != NULL ? nx_cpu_take(2 * c->blocks) : NULL;
   for (int64_t t = lo; t < hi; t++) {
     int64_t i0 = t * c->tr;
     int nt = (int)(c->tq - i0 < c->tr ? c->tq - i0 : c->tr);
+    if (ends != NULL) ranges_of(c, ends, ends + c->blocks, t, c->blocks);
     for (int64_t k = 0; k < c->blocks; k++) {
-      int64_t j0 = k * KEYS;
-      int nk = (int)(c->tk - j0 < KEYS ? c->tk - j0 : KEYS);
-      nx_cpu_prog_terms(c->prog, &c->pl, 0, i0 * c->tk + j0, 1, nk, c->tk, nt,
-                        vis);
-      int n = 0;
-      for (int j = 0; j < nt * nk; j++) n += vis[j] != 0;
-      cls[t * c->blocks + k] = n == 0 ? HIDDEN : n == nt * nk ? SHOWN : MIXED;
+      int cls = ends != NULL ? class_of(ends[k], ends[c->blocks + k]) : MIXED;
+      if (cls == MIXED) {
+        int64_t j0 = k * KEYS;
+        int nk = (int)(c->tk - j0 < KEYS ? c->tk - j0 : KEYS);
+        nx_cpu_prog_terms(c->prog, &c->pl, 0, i0 * c->tk + j0, 1, nk, c->tk,
+                          nt, vis);
+        int n = 0;
+        for (int j = 0; j < nt * nk; j++) n += vis[j] != 0;
+        cls = n == 0 ? HIDDEN : n == nt * nk ? SHOWN : MIXED;
+      }
+      c->cls[t * c->blocks + k] = (uint8_t)cls;
     }
   }
+  if (ends != NULL) nx_cpu_give(ends);
 }
 
 /* Whether the program's output 0 reads no lead index or head: no score,
@@ -370,10 +403,50 @@ static int is_default(value vp, int o) {
          Byte_u(Field(d, NX_CONST_BITS), 0) != 0;
 }
 
+/* [g] bound to the [n] operands [ins] over a loop of [r] axes of extents
+   [shape], with its places in [pl] (cpu.h, Places), [st] holding n + 2
+   rows and [first] n + 1 entries: NX_OK, or nx_cpu_prog_bind's error. */
+static int bind_over(nx_cpu_prog *g, const nx_array *ins, int n, int r,
+                     const int64_t *shape, nx_cpu_places *pl,
+                     int64_t (*st)[NX_MAX_RANK], int64_t *first) {
+  int index, e = nx_cpu_prog_bind(g, ins, r, shape, &index);
+  if (e) return e;
+  /* The virtual operand, C-contiguous, and the operands, coalesced; the
+     index steps as the virtual operand. */
+  int64_t past = 1;
+  for (int i = r - 1; i >= 0; i--) {
+    pl->ext[i] = shape[i];
+    st[0][i] = past;
+    past *= shape[i];
+    for (int k = 0; k < n; k++) st[1 + k][i] = ins[k].dim[r + i];
+  }
+  pl->rank = nx_coalesce_dims(1 + n, r, pl->ext, st);
+  memcpy(pl->vs, st[0], sizeof(int64_t) * (size_t)pl->rank);
+  memcpy(st[1 + n], st[0], sizeof(int64_t) * (size_t)pl->rank);
+  for (int k = 0; k < n; k++) first[k] = ins[k].offset;
+  first[n] = 0;
+  pl->n = n + index;
+  pl->step = st + 1;
+  pl->first = first;
+  return NX_OK;
+}
+
+/* An operand of [dt] holding the one element at [base] at every index of
+   [r] axes of extents [shape]. */
+static nx_array everywhere(const void *base, int dt, int r,
+                           const int64_t *shape) {
+  nx_array x = {.base = (uint8_t *)base,
+                .dtype = dt,
+                .bits = nx_dtype_row_of(dt).bits,
+                .rank = r};
+  for (int i = 0; i < r; i++) x.dim[i] = shape[i];
+  return x;
+}
+
 /* The program [g] bound to the loads at [a], [nl] of them, over the pairs'
    loop of [c]: its operand 0 a stand-in, every element of which the
-   kernel's tiles give (nx_cpu_prog_tile); and [c]'s places of the loads
-   (cpu.h, Places), [st] holding nl + 3 rows, [first] nl + 2 entries. */
+   kernel's tiles give (nx_cpu_prog_tile); and [c]'s places of the loads,
+   [st] holding nl + 3 rows, [first] nl + 2 entries. */
 static int bind(att *c, nx_cpu_prog *g, const nx_array *a, int nl,
                 nx_array *ins, int64_t (*st)[NX_MAX_RANK], int64_t *first) {
   static const double zero = 0;
@@ -383,54 +456,262 @@ static int bind(att *c, nx_cpu_prog *g, const nx_array *a, int nl,
   shape[r - 3] = c->hq;
   shape[r - 2] = c->tq;
   shape[r - 1] = c->tk;
-  ins[0] = (nx_array){.base = (uint8_t *)&zero,
-                      .dtype = c->acc,
-                      .bits = c->acc == NX_FLOAT64 ? 64 : 32,
-                      .rank = r};
-  for (int i = 0; i < r; i++) {
-    ins[0].dim[i] = shape[i];
-    ins[0].dim[r + i] = 0;
-  }
+  ins[0] = everywhere(&zero, c->acc, r, shape);
   for (int k = 0; k < nl; k++) ins[1 + k] = a[k];
-  int index, e = nx_cpu_prog_bind(g, ins, r, shape, &index);
-  if (e) return e;
-  /* The virtual operand, C-contiguous, the stand-in and the loads,
-     coalesced; the index steps as the virtual operand. */
-  int64_t past = 1;
-  for (int i = r - 1; i >= 0; i--) {
-    c->pl.ext[i] = shape[i];
-    st[0][i] = past;
-    past *= shape[i];
-    for (int k = 0; k <= nl; k++) st[1 + k][i] = ins[k].dim[r + i];
+  return bind_over(g, ins, nl + 1, r, shape, &c->pl, st, first);
+}
+
+/* Classes
+
+   A unit reads the pairs of a box: its lead index, its group's heads
+   [h0, h0 + nh), its rows [i0, i0 + nt) and, block by block, the keys
+   [j0, j0 + 64). The ranges of the mask's output 0 over a block's box
+   (Prog.ranges) are its least and greatest value there: where the least
+   is true the mask shows every pair of the block, and the block is read
+   without it; where the greatest is false it hides every pair, and the
+   block is skipped. The unit hides keys past the length and keys of a
+   table entry out of range itself; the box holds keys past the length,
+   which only widens it.
+
+   The ranges run over the tiles' loop [lead…; groups; tiles; blocks], a
+   group being one unit's heads, hk · chunks of them, so that unit u's
+   blocks are its positions u · blocks on. Each coordinate's bounds are a
+   table along its axis. Each load the ranges read has its least and
+   greatest element over each box in two tables of its dtype, along the
+   axes where it steps: one pass over its elements, once a call. A load of
+   fewer bits than a byte stands at its dtype's ends.
+
+   A mask whose output 0 reads no lead index, head or score (shared_mask)
+   has one class per tile and block for every unit, the ranges' where they
+   decide it, else from the mask at every pair of the tile's rows at lead
+   index 0 and head 0 (shared): a mask the ranges cannot follow, as one
+   computed through floats, is then run once a call.
+
+   Example: a causal mask k <= q + (len - tq), len = tq, over a unit of
+   rows [64, 128) and the block of keys [192, 256) has its least,
+   255 <= 64, and its greatest, 192 <= 127, false: hidden. */
+
+/* The box of position [i] of the tiles' loop along its axis [a] in the
+   pairs' loop: [*from, *from + *n). */
+static void box_along(const att *c, int a, int64_t i, int64_t *from,
+                      int64_t *n) {
+  int r = c->rank;
+  if (a < r - 3) {
+    *from = i;
+    *n = 1;
+  } else if (a == r - 3) {
+    int64_t ch = i % c->chunks;
+    *from = i / c->chunks * c->g + ch * c->hg;
+    *n = c->g - ch * c->hg < c->hg ? c->g - ch * c->hg : c->hg;
+  } else if (a == r - 2) {
+    *from = i * c->tr;
+    *n = c->tq - *from < c->tr ? c->tq - *from : c->tr;
+  } else {
+    *from = i * KEYS;
+    *n = c->tk - *from < KEYS ? c->tk - *from : KEYS;
   }
-  c->pl.rank = nx_coalesce_dims(2 + nl, r, c->pl.ext, st);
-  memcpy(c->pl.vs, st[0], sizeof(int64_t) * (size_t)c->pl.rank);
-  memcpy(st[2 + nl], st[0], sizeof(int64_t) * (size_t)c->pl.rank);
-  for (int k = 0; k <= nl; k++) first[k] = ins[k].offset;
-  first[nl + 1] = 0;
-  c->pl.n = nl + 1 + index;
-  c->pl.step = st + 1;
-  c->pl.first = first;
-  return NX_OK;
+}
+
+/* A load's table: its least and greatest elements over each box, at
+   [lo] and [hi], [n] of [w] bytes each, C-contiguous over the extents
+   [ext], 1 where the load does not step. Each starts on 8 bytes. */
+typedef struct {
+  const att *c;
+  const nx_array *x;
+  int w;
+  int64_t n, ext[NX_MAX_RANK];
+  uint8_t *lo, *hi;
+} table;
+
+/* Rows of a box staged at once. */
+#define STAGED 16
+
+static int64_t aligned8(int64_t b) { return (b + 7) / 8 * 8; }
+
+/* The least and greatest of the [n] elements of the integer or boolean
+   dtype [dt] at [v] into [lo] and [hi], with theirs unless [first]. A
+   boolean's byte is true where it is not 0, which its least and greatest
+   byte keep. */
+#define EXTREMES(T)                                         \
+  {                                                         \
+    const T *e = (const T *)v;                              \
+    T a = first ? e[0] : *(T *)lo, b = first ? e[0] : *(T *)hi; \
+    for (int64_t j = 0; j < n; j++) {                       \
+      a = e[j] < a ? e[j] : a;                              \
+      b = e[j] > b ? e[j] : b;                              \
+    }                                                       \
+    *(T *)lo = a;                                           \
+    *(T *)hi = b;                                           \
+    return;                                                 \
+  }
+
+static void extremes(int dt, const uint8_t *v, int64_t n, int first,
+                     uint8_t *lo, uint8_t *hi) {
+  switch (dt) {
+    case NX_INT64: EXTREMES(int64_t)
+    case NX_UINT64: EXTREMES(uint64_t)
+    case NX_INT32: EXTREMES(int32_t)
+    case NX_UINT32: EXTREMES(uint32_t)
+    case NX_INT16: EXTREMES(int16_t)
+    case NX_UINT16: EXTREMES(uint16_t)
+    case NX_INT8: EXTREMES(int8_t)
+    default: EXTREMES(uint8_t)
+  }
+}
+
+#undef EXTREMES
+
+static void fill(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const table *t = ctx;
+  const att *c = t->c;
+  const nx_array *x = t->x;
+  int r = c->rank;
+  _Alignas(64) uint8_t v[STAGED * KEYS * 8];
+  for (int64_t e = lo; e < hi; e++) {
+    int64_t from[NX_MAX_RANK], n[NX_MAX_RANK], rest = e, at = x->offset;
+    for (int a = r - 1; a >= 0; a--) {
+      from[a] = 0;
+      n[a] = 1;
+      if (step(x, a) != 0 && x->dim[a] > 1)
+        box_along(c, a, rest % t->ext[a], &from[a], &n[a]);
+      rest /= t->ext[a];
+      at += from[a] * step(x, a);
+    }
+    int64_t nk = n[r - 1];
+    int first = 1;
+    for (int64_t h = 0; h < n[r - 3]; h++)
+      for (int64_t i = 0; i < n[r - 2]; i += STAGED, first = 0) {
+        int64_t m = n[r - 2] - i < STAGED ? n[r - 2] - i : STAGED;
+        nx_cpu_stage_as(x, at + h * step(x, r - 3) + i * step(x, r - 2),
+                        step(x, r - 1), step(x, r - 2), nk, m, x->dtype, v,
+                        nk);
+        extremes(x->dtype, v, m * nk, first, t->lo + e * t->w,
+                 t->hi + e * t->w);
+      }
+  }
+}
+
+/* The ranges [g] bound over the tiles' loop of [c], with the loads at
+   [a], [nl] of them, read into tables in memory it takes: answers that
+   memory, to free after the call's work, or NULL where host memory runs
+   out, [g] then unbound. */
+static void *bind_ranges(att *c, nx_cpu_prog *g, const nx_array *a, int nl) {
+  static const int64_t zero[2] = {0, 0};
+  /* int4's ends, then those of uint4 and bit, in a byte's low bits. */
+  static const uint8_t ends[2][2] = {{0x88, 0x77}, {0x00, 0xFF}};
+  int r = c->rank, n = 2 * (nl + 1) + 2 * r;
+  int64_t shape[NX_MAX_RANK];
+  memcpy(shape, c->ext, sizeof(int64_t) * (size_t)(r - 3));
+  shape[r - 3] = c->hk * c->chunks;
+  shape[r - 2] = c->tiles;
+  shape[r - 1] = c->blocks;
+  uint8_t *reads = calloc((size_t)n, 1), axes[NX_MAX_RANK];
+  table *t = calloc((size_t)nl + 1, sizeof(table));
+  if (reads == NULL || t == NULL) {
+    free(reads);
+    free(t);
+    return NULL;
+  }
+  nx_cpu_prog_reads(g, 0, reads, axes);
+  nx_cpu_prog_reads(g, 1, reads, axes);
+  /* The memory: the operands, their places, the coordinates' bounds, then
+     each read load's two tables. */
+  int64_t coords = 0, bytes = 0;
+  for (int i = 0; i < r; i++) coords += 2 * shape[i];
+  for (int k = 0; k < nl; k++) {
+    const nx_array *x = &a[k];
+    nx_dtype_row row = nx_dtype_row_of(x->dtype);
+    if (!(reads[2 * k + 2] || reads[2 * k + 3]) || row.bits < 8 ||
+        row.kind == NX_KIND_FLOAT || row.kind == NX_KIND_COMPLEX)
+      continue;
+    t[k] = (table){.c = c, .x = x, .w = row.bits / 8, .n = 1};
+    for (int i = 0; i < r; i++) {
+      t[k].ext[i] = step(x, i) != 0 && x->dim[i] > 1 ? shape[i] : 1;
+      t[k].n *= t[k].ext[i];
+    }
+    bytes += 2 * aligned8(t[k].n * t[k].w);
+  }
+  size_t size = (size_t)n * sizeof(nx_array) +
+                (size_t)(n + 2) * NX_MAX_RANK * sizeof(int64_t) +
+                (size_t)(n + 1 + coords) * sizeof(int64_t) + (size_t)bytes;
+  uint8_t *mem = malloc(size);
+  free(reads);
+  if (mem == NULL) {
+    free(t);
+    return NULL;
+  }
+  nx_array *ins = (nx_array *)mem;
+  int64_t(*st)[NX_MAX_RANK] = (int64_t(*)[NX_MAX_RANK])(ins + n);
+  int64_t *first = (int64_t *)(st + n + 2), *coord = first + n + 1;
+  uint8_t *tables = (uint8_t *)(coord + coords);
+  /* The scores' bounds, of the accumulator's dtype, which the ranges never
+     read, then each load's. */
+  ins[0] = ins[1] = everywhere(zero, c->acc, r, shape);
+  for (int k = 0; k < nl; k++) {
+    nx_array *lo = &ins[2 * k + 2], *hi = lo + 1;
+    int dt = a[k].dtype, sub = nx_dtype_row_of(dt).bits < 8;
+    if (t[k].x == NULL) {
+      const uint8_t *e = ends[dt != NX_INT4];
+      *lo = everywhere(sub ? (const void *)e : zero, dt, r, shape);
+      *hi = everywhere(sub ? (const void *)(e + 1) : zero, dt, r, shape);
+      continue;
+    }
+    t[k].lo = tables;
+    t[k].hi = tables + aligned8(t[k].n * t[k].w);
+    tables += 2 * aligned8(t[k].n * t[k].w);
+    *lo = everywhere(t[k].lo, dt, r, shape);
+    *hi = everywhere(t[k].hi, dt, r, shape);
+    for (int64_t s = 1, i = r - 1; i >= 0; i--) {
+      lo->dim[r + i] = hi->dim[r + i] = t[k].ext[i] > 1 ? s : 0;
+      s *= t[k].ext[i];
+    }
+    double b = nx_cpu_bytes(&a[k]);
+    nx_cpu_job(t[k].n, (int64_t)b, NX_CPU_STRIDED_COST * b, fill, &t[k]);
+  }
+  free(t);
+  /* The coordinates' bounds: a lead index its own, a group's heads, a
+     tile's rows and a block's keys. */
+  for (int i = 0; i < r; i++) {
+    nx_array *lo = &ins[2 * (nl + 1) + 2 * i], *hi = lo + 1;
+    for (int64_t j = 0; j < shape[i]; j++) {
+      int64_t from, m;
+      box_along(c, i, j, &from, &m);
+      coord[j] = from;
+      coord[shape[i] + j] = from + m - 1;
+    }
+    *lo = everywhere(coord, NX_INT64, r, shape);
+    *hi = everywhere(coord + shape[i], NX_INT64, r, shape);
+    lo->dim[r + i] = hi->dim[r + i] = 1;
+    coord += 2 * shape[i];
+  }
+  if (bind_over(g, ins, n, r, shape, &c->rpl, st, first)) {
+    free(mem);
+    return NULL;
+  }
+  return mem;
 }
 
 /* The external */
 
-/* What a call holds on the C heap: the program's copy and the tables of
-   its loads. A custom block owns them, so that a raise of the door leaves
-   them to its finalizer. */
+/* What a call holds on the C heap: the copies of the program and of its
+   ranges, and the tables of its loads. A custom block owns them, so that
+   a raise of the door leaves them to its finalizer. */
 typedef struct {
-  nx_cpu_prog *g;
+  nx_cpu_prog *g, *ranges;
   void *tables;
 } held;
 
 static void release(value owner) {
   held *h = Data_custom_val(owner);
   nx_cpu_prog_free(h->g);
+  nx_cpu_prog_free(h->ranges);
   free(h->tables);
   h->g = NULL;
+  h->ranges = NULL;
   h->tables = NULL;
 }
+
 
 static struct custom_operations held_ops = {
     "nx.cpu.attention",         release,
@@ -536,11 +817,12 @@ static value finish(value owner, int n, nx_array *a, int e, int failed) {
   return Val_int(e);
 }
 
-value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
-                       value vlengths, value vq, value vkv, value vloads) {
-  CAMLparam5(vp, vscale, vo, vlse, vlengths);
-  CAMLxparam3(vq, vkv, vloads);
-  CAMLlocal1(owner);
+value nx_cpu_attention(value vp, value vranges, value vscale, value vo,
+                       value vlse, value vlengths, value vq, value vkv,
+                       value vloads) {
+  CAMLparam5(vp, vranges, vscale, vo, vlse);
+  CAMLxparam4(vlengths, vq, vkv, vloads);
+  CAMLlocal2(owner, vr);
   /* q is float16, bfloat16, float32 or float64, the accumulator, lse's
      dtype, float32 or float64 and not narrower. */
   int dt = nx_array_dtype(vq), acc = nx_array_dtype(vlse);
@@ -570,7 +852,7 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
      program's loads and the places' tables. */
   int n = 5 + paged + lengths + nl;
   owner = caml_alloc_custom(&held_ops, sizeof(held), 0, 1);
-  *(held *)Data_custom_val(owner) = (held){NULL, NULL};
+  *(held *)Data_custom_val(owner) = (held){NULL, NULL, NULL};
   held *h = Data_custom_val(owner);
   nx_cpu_prog *g = NULL;
   if (c.mask || c.score) {
@@ -599,6 +881,18 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
       CAMLreturn(Val_int(NX_SHAPE));
     }
   }
+  /* The mask's ranges, where it has them. */
+  nx_cpu_prog *rg = NULL;
+  if (c.mask && Is_block(vranges)) {
+    vr = Field(vranges, 0);
+    rg = nx_cpu_prog_copy(&vr);
+    if (rg == NULL) {
+      release(owner);
+      caml_raise_out_of_memory();
+    }
+    ((held *)Data_custom_val(owner))->ranges = rg;
+  }
+
   size_t tables = (size_t)n * sizeof(nx_array) +
                   (size_t)(nl + 1) * sizeof(nx_array) +
                   (size_t)(nl + 3) * NX_MAX_RANK * sizeof(int64_t) +
@@ -659,32 +953,41 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
   c.tiles = (c.tq + c.tr - 1) / c.tr;
   int64_t units = leads * c.hk * c.chunks * c.tiles;
   atomic_init(&c.failed, 0);
-  /* A mask that every lead index and head share is classified once per
-     tile and block; an allocation that fails leaves every block to be
-     evaluated. */
-  uint8_t *cls = NULL;
+  /* Its cost: each pair's products at the core's speed, the operands'
+     bytes moved once, and each unit's classes of its blocks. */
   c.blocks = (c.tk + KEYS - 1) / KEYS;
-  if (g != NULL && c.mask && units > c.tiles && c.blocks > 0 &&
-      shared_mask(&c, g, loads, nl))
-    cls = malloc((size_t)(c.tiles * c.blocks));
-  /* Its cost: each pair's products at the core's speed, and the operands'
-     bytes moved once. */
   double pairs = (double)rows * (double)c.tk;
   double cost = 2 * pairs * (double)(c.dk + c.dv) / nx_cpu_core_speed(acc);
   double bytes = 0;
   for (int i = 0; i < n; i++) bytes += nx_cpu_bytes(&a[i]);
   cost += NX_CPU_STRIDED_COST * bytes;
+  int classed = rg != NULL && c.blocks > 0 &&
+                nx_cpu_prog_ins(rg) == 2 * (nl + 1) + 2 * r &&
+                nx_cpu_prog_outs(rg) == 2 &&
+                nx_cpu_prog_out(rg, 0) == NX_BOOL &&
+                nx_cpu_prog_out(rg, 1) == NX_BOOL;
+  if (classed)
+    cost += 2 * (double)units * (double)c.blocks * nx_cpu_prog_cost(rg);
+  /* A mask every lead index and head share is classed once per tile and
+     block, at most its pairs at one lead index and head run. */
+  int share = g != NULL && c.mask && units > c.tiles && c.blocks > 0 &&
+              shared_mask(&c, g, loads, nl);
+  double pairs1 = (double)c.tq * (double)c.tk;
+  if (share) cost += pairs1 * nx_cpu_prog_cost(g);
   int released = nx_cpu_release(cost);
-  if (cls != NULL) {
-    c.cls = cls;
-    double pairs1 = (double)c.tq * (double)c.tk;
-    nx_cpu_job(c.tiles, (int64_t)pairs1, pairs1 * nx_cpu_prog_cost(g),
-               classes, &c);
-  }
+  /* Ranges whose tables cannot be held leave every block mixed, and a
+     shared table that cannot be held leaves each unit its ranges. */
+  void *classes = classed ? bind_ranges(&c, rg, loads, nl) : NULL;
+  c.ranges = classes != NULL ? rg : NULL;
+  c.cls = share ? malloc((size_t)(c.tiles * c.blocks)) : NULL;
+  if (c.cls != NULL)
+    nx_cpu_job(c.tiles, (int64_t)pairs1, pairs1 * nx_cpu_prog_cost(g), shared,
+               &c);
   nx_cpu_job(units, (int64_t)bytes, cost,
              acc == NX_FLOAT64 ? body_f64 : body_f32, &c);
   nx_cpu_reacquire(released);
-  free(cls);
+  free(classes);
+  free(c.cls);
   int failed = atomic_load(&c.failed) || (g != NULL && nx_cpu_prog_failed(g));
   CAMLreturn(finish(owner, n, a, NX_OK, failed));
 }
@@ -692,5 +995,5 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
 value nx_cpu_attention_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_attention(argv[0], argv[1], argv[2], argv[3], argv[4],
-                          argv[5], argv[6], argv[7]);
+                          argv[5], argv[6], argv[7], argv[8]);
 }

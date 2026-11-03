@@ -1383,6 +1383,512 @@ let floats =
         [ 0.; -0.; 1.; -1.5; 448.; 1e30; -1e-40; Float.nan; infinity; neg_infinity ];
     ]
 
+(* Ranges *)
+
+(* An integer or boolean element as its value in an int64, unsigned ones
+   zero-extended and compared unsigned, booleans 0 or 1. *)
+let unsigned (D.Any dt) = D.is D.Unsigned dt
+
+let value (D.Any dt) e =
+  match (D.kind dt, D.bits dt) with
+  | Boolean, _ -> if e.[0] = '\000' then 0L else 1L
+  | Signed, 4 -> Int64.of_int (((Char.code e.[0] land 15) lxor 8) - 8)
+  | Unsigned, 4 -> Int64.of_int (Char.code e.[0] land 15)
+  | Signed, 8 -> Int64.of_int (String.get_int8 e 0)
+  | Unsigned, 8 -> Int64.of_int (String.get_uint8 e 0)
+  | Signed, 16 -> Int64.of_int (String.get_int16_ne e 0)
+  | Unsigned, 16 -> Int64.of_int (String.get_uint16_ne e 0)
+  | Signed, 32 -> Int64.of_int32 (String.get_int32_ne e 0)
+  | Unsigned, 32 ->
+      Int64.logand (Int64.of_int32 (String.get_int32_ne e 0)) 0xFFFF_FFFFL
+  | (Signed | Unsigned), _ -> String.get_int64_ne e 0
+  | (Float | Complex), _ -> invalid_arg "value"
+
+let order d a b =
+  if unsigned d then Int64.unsigned_compare a b else Int64.compare a b
+
+(* The element of [d] of value [x], within its range. *)
+let element_of (D.Any dt) x =
+  let f : type v s. (v, s) D.t -> string = function
+    | D.Int64 -> P.bits D.Int64 x
+    | D.Uint64 -> P.bits D.Uint64 x
+    | D.Int32 -> P.bits D.Int32 (Int64.to_int32 x)
+    | D.Uint32 -> P.bits D.Uint32 (Int64.to_int32 x)
+    | D.Int16 -> P.bits D.Int16 (Int64.to_int x)
+    | D.Uint16 -> P.bits D.Uint16 (Int64.to_int x)
+    | D.Int8 -> P.bits D.Int8 (Int64.to_int x)
+    | D.Uint8 -> P.bits D.Uint8 (Int64.to_int x)
+    | D.Int4 -> P.bits D.Int4 (Int64.to_int x)
+    | D.Uint4 -> P.bits D.Uint4 (Int64.to_int x)
+    | D.Bool -> String.make 1 (Char.chr (Int64.to_int x land 255))
+    | D.Bit -> P.bits D.Bit (x <> 0L)
+    | D.Float32 -> P.bits D.Float32 (Int64.to_float x)
+    | dt -> invalid_arg (D.name dt)
+  in
+  f dt
+
+(* [d]'s least and greatest values. *)
+let extremes (D.Any dt as d) =
+  match (D.kind dt, D.bits dt) with
+  | Boolean, _ -> (0L, 1L)
+  | Unsigned, 64 -> (0L, -1L)
+  | Unsigned, w -> (0L, Int64.pred (Int64.shift_left 1L w))
+  | Signed, w ->
+      let m = Int64.shift_left 1L (w - 1) in
+      (Int64.neg m, Int64.pred m)
+  | (Float | Complex), _ -> invalid_arg (name d)
+
+let ints =
+  D.
+    [
+      Any Int8; Any Uint8; Any Int16; Any Uint16; Any Int32; Any Uint32;
+      Any Int64; Any Uint64; Any Int4; Any Uint4;
+    ]
+
+let i64 = D.Any D.Int64
+let boolean = D.Any D.Bool
+let bit = D.Any D.Bit
+let booleans = [ boolean; bit ]
+let is_bool (D.Any dt) = D.is D.Boolean dt
+
+(* A value of [d]: small, at or beside an end, or anywhere; a bool's byte
+   any byte, true where it is not 0. *)
+let draw_value d =
+  let open Gen in
+  if same d boolean then of_list [ 0L; 0L; 1L; 1L; 2L; 128L; 255L ]
+  else
+    let lo, hi = extremes d in
+    let clamp x =
+      if order d x lo < 0 then lo else if order d x hi > 0 then hi else x
+    in
+    frequency
+      [
+        (3, map (fun x -> clamp (Int64.of_int x)) (int_range (-4) 4));
+        (2, of_list [ lo; Int64.succ lo; Int64.pred hi; hi ]);
+        ( 1,
+          if unsigned d && hi = -1L then int64
+          else if unsigned d then int64_range 0L hi
+          else int64_range lo hi );
+      ]
+
+(* The integer dtype of [d]'s width and the other signedness. *)
+let flipped (D.Any dt) =
+  match dt with
+  | D.Int64 -> D.Any D.Uint64
+  | D.Uint64 -> D.Any D.Int64
+  | D.Int32 -> D.Any D.Uint32
+  | D.Uint32 -> D.Any D.Int32
+  | D.Int16 -> D.Any D.Uint16
+  | D.Uint16 -> D.Any D.Int16
+  | D.Int8 -> D.Any D.Uint8
+  | D.Uint8 -> D.Any D.Int8
+  | D.Int4 -> D.Any D.Uint4
+  | D.Uint4 -> D.Any D.Int4
+  | dt -> invalid_arg (D.name dt)
+
+(* A pair program's tree, each node of the dtype its maker gives it, over
+   operand 0 of float32 and the loads [loads], whose operand [k + 1] is
+   [loads.(k)]. *)
+type tree =
+  | Leaf of P.node * D.any
+  | T1 of P.op1 * D.any * tree
+  | T2 of P.op2 * tree * tree
+  | T3 of P.op3 * tree * tree * tree
+
+let rec dtype_of_tree = function
+  | Leaf (_, d) | T1 (_, d, _) -> d
+  | T2 (Compare _, _, _) -> boolean
+  | T2 (Binary _, x, _) -> dtype_of_tree x
+  | T3 (_, _, x, _) -> dtype_of_tree x
+
+let const d x = Leaf (P.Const (d, element_of d x), d)
+
+(* A leaf of [d]: a coordinate, a constant, or a load, each cast to [d]
+   where it is of another dtype. *)
+let leaf loads (D.Any dt as d) =
+  let open Gen in
+  let cast l = if same (dtype_of_tree l) d then l else T1 (Cast, d, l) in
+  let load k = Leaf (P.In (k + 1), loads.(k)) in
+  if D.is D.Float dt then constant (Leaf (P.In 0, f32))
+  else
+    let* pick = int_range 0 3 in
+    match pick with
+    | 0 ->
+        let+ c = int_range 0 2 in
+        cast (Leaf (P.Coord c, i64))
+    | 1 -> map (const d) (draw_value d)
+    | _ ->
+        let+ k = int_range 0 (Array.length loads - 1) in
+        cast (load k)
+
+let rec tree loads depth (D.Any dt as d) =
+  let open Gen in
+  let at = tree loads (depth - 1) in
+  let leaf () = leaf loads d in
+  if depth <= 0 then leaf ()
+  else
+    match D.kind dt with
+    | Boolean ->
+        (* A comparison's bool, cast where [d] is bit. *)
+        let as_d t = if same d boolean then t else T1 (Cast, d, t) in
+        let* k = int_range 0 7 in
+        if k = 0 then leaf ()
+        else if k <= 3 then
+          let* x = of_list ~pp:pp_dtype ((i64 :: i64 :: ints) @ booleans) in
+          let* c = of_list P.[ Less; Less_equal; Equal; Not_equal ] in
+          let+ a = at x and+ b = at x in
+          as_d (T2 (Compare c, a, b))
+        else if k = 4 then
+          let* b = of_list P.[ And; Or; Xor ] in
+          let+ x = at d and+ y = at d in
+          T2 (Binary b, x, y)
+        else if k = 5 then
+          let* x = of_list ~pp:pp_dtype (ints @ booleans) in
+          let+ a = at x in
+          T1 (Cast, d, a)
+        else if k = 6 then
+          let+ a = at f32 and+ b = at f32 in
+          as_d (T2 (Compare Less, a, b))
+        else
+          let+ c = at d and+ x = at d and+ y = at d in
+          T3 (Where, c, x, y)
+    | Float ->
+        let* k = int_range 0 2 in
+        if k = 0 then constant (Leaf (P.In 0, f32))
+        else if k = 1 then
+          let* x = of_list ~pp:pp_dtype ints in
+          let+ a = at x in
+          T1 (Cast, d, a)
+        else
+          let+ a = at d and+ b = at d in
+          T2 (Binary Add, a, b)
+    | Signed | Unsigned ->
+        let* k = int_range 0 14 in
+        let neg = if unsigned d then 3L else -3L in
+        if k <= 1 then leaf ()
+        else if k <= 4 then
+          let* b = of_list P.[ Add; Sub; Mul; Maximum; Minimum ] in
+          let+ x = at d and+ y = at d in
+          T2 (Binary b, x, y)
+        else if k = 5 then
+          let* m = map Int64.of_int (int_range (-5) (-1)) in
+          let m = if unsigned d then Int64.neg m else m in
+          let+ x = at d in
+          T2 (Binary Mul, x, const d m)
+        else if k = 6 then
+          let* b = of_list P.[ Idiv; Mod ] in
+          let* by =
+            frequency
+              [
+                (1, at d);
+                (1, constant (const d neg));
+                (1, constant (const d 4L));
+              ]
+          in
+          let+ x = at d in
+          T2 (Binary b, x, by)
+        else if k = 7 then
+          let* u = of_list P.[ Neg; Abs; Sign; Recip ] in
+          let+ x = at d in
+          T1 (Unary u, d, x)
+        else if k <= 9 then
+          let* x = of_list ~pp:pp_dtype (booleans @ ints) in
+          let+ a = at x in
+          T1 (Cast, d, a)
+        else if k = 10 then
+          let+ a = at f32 in
+          T1 (Cast, d, a)
+        else if k = 11 then
+          let+ c = at boolean and+ x = at d and+ y = at d in
+          T3 (Where, c, x, y)
+        else if k = 12 then
+          let+ x = at d and+ y = at d and+ z = at d in
+          T3 (Fma, x, y, z)
+        else if k = 13 then
+          let* b = of_list P.[ And; Xor; Pow ] in
+          let+ x = at d and+ y = at d in
+          T2 (Binary b, x, y)
+        else
+          let byte = D.bits dt = 8 in
+          let* s = of_list ~pp:pp_dtype (flipped d :: (if byte then [ boolean ] else [])) in
+          let+ x = at s in
+          T1 (Bitcast, d, x)
+    | Complex -> leaf ()
+
+(* A case: the loads' dtypes, the program's nodes, the box's extents and
+   coordinates' offsets, and each load's elements. *)
+type ranged_case = {
+  loads : D.any array;
+  nodes : P.node array;
+  shape : int array;
+  offsets : int64 array;
+  values : int64 array array;
+}
+
+let lower t =
+  let nodes = ref [] and count = ref 0 in
+  let add n =
+    nodes := n :: !nodes;
+    incr count;
+    !count - 1
+  in
+  let rec go = function
+    | Leaf (n, _) -> add n
+    | T1 (k, d, x) ->
+        let x = go x in
+        add (P.Op1 (k, d, x))
+    | T2 (k, x, y) ->
+        let x = go x in
+        let y = go y in
+        add (P.Op2 (k, x, y))
+    | T3 (k, x, y, z) ->
+        let x = go x in
+        let y = go y in
+        let z = go z in
+        add (P.Op3 (k, x, y, z))
+  in
+  ignore (go t : int);
+  Array.of_list (List.rev !nodes)
+
+let ins c = Array.append [| f32 |] c.loads
+
+(* The program of every integer and boolean node of [c] as an output. *)
+let all_ranged c =
+  let p =
+    P.v ~ins:(Iarray.of_array (ins c)) (Iarray.of_array c.nodes)
+      ~outs:[| 0 |]
+  in
+  let outs =
+    List.filter
+      (fun i ->
+        let (D.Any dt) = P.dtype p i in
+        not (D.is D.Float dt || D.is D.Complex dt))
+      (List.init (Array.length c.nodes) Fun.id)
+  in
+  P.v ~ins:p.ins p.nodes ~outs:(Iarray.of_list outs)
+
+let pp_ranged ppf c =
+  let p = all_ranged c in
+  Format.fprintf ppf "loads [%s]@ shape %a@ offsets [%s]@ %a"
+    (String.concat "; " (Array.to_list (Array.map name c.loads)))
+    Elements.pp_ints c.shape
+    (String.concat "; " (Array.to_list (Array.map Int64.to_string c.offsets)))
+    pp_prog p;
+  Array.iteri
+    (fun k v ->
+      Format.fprintf ppf "@ load %d [%s]" k
+        (String.concat "; " (Array.to_list (Array.map Int64.to_string v))))
+    c.values
+
+(* Offsets that put the coordinates near the ends of each width. *)
+let offsets =
+  Gen.of_list
+    [ 0L; 0L; 5L; 125L; 254L; 32765L; 65533L; 0x7FFF_FFFDL; 0xFFFF_FFFDL;
+      0x7FFF_FFFF_FFFF_FFF0L ]
+
+let ranged_cases =
+  let open Gen in
+  with_pp pp_ranged
+    (let* loads =
+       array ~size:(int_range 1 3) (of_list ~pp:pp_dtype (booleans @ ints))
+     in
+     let* out = of_list ~pp:pp_dtype (booleans @ booleans @ ints) in
+     let* t = tree loads 3 out in
+     let* shape = array ~size:(constant 3) (int_range 1 4) in
+     let* offsets = array ~size:(constant 3) offsets in
+     let n = Array.fold_left ( * ) 1 shape in
+     let values d =
+       frequency
+         [
+           (1, map (Array.make n) (draw_value d));
+           (3, array ~size:(constant n) (draw_value d));
+         ]
+     in
+     let rec each = function
+       | [] -> constant []
+       | d :: rest ->
+           let* v = values d in
+           let+ vs = each rest in
+           v :: vs
+     in
+     let+ values = each (Array.to_list loads) in
+     {
+       loads;
+       nodes = lower t;
+       shape;
+       offsets;
+       values = Array.of_list values;
+     })
+
+
+let elements1 d x = Elements.of_elements d [| 1 |] [| element_of d x |]
+
+(* Every integer and boolean node of a drawn program lies, at every index of
+   the box, within its range over the box: the least and greatest of each
+   load and coordinate there. *)
+let law_ranges c =
+  let p = all_ranged c in
+  let n = Array.fold_left ( * ) 1 c.shape in
+  let loads =
+    Array.append
+      [| Elements.of_elements f32 c.shape (Array.make n (element_of f32 1L)) |]
+      (Array.mapi
+         (fun k d ->
+           Elements.of_elements d c.shape
+             (Array.map (element_of d) c.values.(k)))
+         c.loads)
+  in
+  let shift : P.node -> ex option = function
+    | Coord a when c.offsets.(a) <> 0L ->
+        Some (Ex P.E.(coord a + const D.Int64 c.offsets.(a)))
+    | _ -> None
+  in
+  let shifted = P.subst ~ins:p.ins (fun n -> Option.map any (shift n)) p in
+  let values =
+    match compute ~shape:c.shape shifted loads with
+    | Ok v -> v
+    | Error a -> failf "the program refused: %a" Nx_array_support.pp_answer a
+  in
+  let bounds =
+    Array.concat
+      [
+        [| elements1 f32 0L; elements1 f32 0L |];
+        Array.concat
+          (List.mapi
+             (fun k d ->
+               let v = c.values.(k) in
+               let pick f = Array.fold_left (fun a x -> if f (order d x a) then x else a) v.(0) v in
+               let least = pick (fun o -> o < 0) and most = pick (fun o -> o > 0) in
+               [| elements1 d least; elements1 d most |])
+             (Array.to_list c.loads));
+        Array.concat
+          (List.init 3 (fun a ->
+               let lo = c.offsets.(a) in
+               let hi = Int64.add lo (Int64.of_int (c.shape.(a) - 1)) in
+               [| elements1 i64 lo; elements1 i64 hi |]));
+      ]
+  in
+  let q = P.ranges ~axes:3 p in
+  (* It holds as v states. *)
+  ignore (P.v ~ins:q.ins q.nodes ~outs:q.outs : P.t);
+  let r =
+    match compute ~shape:[| 1 |] q bounds with
+    | Ok r -> r
+    | Error a -> failf "the ranges refused: %a" Nx_array_support.pp_answer a
+  in
+  let outs = Iarray.to_array p.outs in
+  let at = Hashtbl.create 16 in
+  Array.iteri (fun o i -> Hashtbl.replace at i o) outs;
+  let vals i = Array.map (value (P.dtype p i)) values.(Hashtbl.find at i) in
+  let range i =
+    let o = Hashtbl.find at i in
+    let d = P.dtype p i in
+    (value d r.(2 * o).(0), value d r.((2 * o) + 1).(0))
+  in
+  let ranged i = Hashtbl.mem at i in
+  Array.iter
+    (fun i ->
+      let d = P.dtype p i in
+      let lo, hi = range i in
+      Array.iteri
+        (fun j x ->
+          if order d x lo < 0 || order d x hi > 0 then
+            failf "node %d (%s) is %Ld at index %d, outside [%Ld, %Ld]" i
+              (name d) x j lo hi)
+        (vals i))
+    outs;
+  (* What the case reaches. *)
+  let all f a = Array.for_all f a and exists f a = Array.exists f a in
+  let node i = Iarray.get p.nodes i in
+  let bools =
+    List.filter (fun i -> is_bool (P.dtype p i)) (Array.to_list outs)
+  in
+  cover "a boolean true at every index by its range"
+    (List.exists (fun i -> fst (range i) = 1L) bools);
+  cover "a boolean false at every index by its range"
+    (List.exists (fun i -> snd (range i) = 0L) bools);
+  cover "a boolean unknown by its range"
+    (List.exists (fun i -> range i = (0L, 1L)) bools);
+  let fits d x =
+    let lo, hi = extremes d in
+    order d x lo >= 0 && order d x hi <= 0
+  in
+  let narrow (D.Any dt) = D.bits dt <= 16 in
+  let wraps i =
+    match node i with
+    | Op2 (Binary ((Add | Sub | Mul) as b), x, y)
+      when narrow (P.dtype p i) && ranged x ->
+        let f =
+          match b with Add -> Int64.add | Sub -> Int64.sub | _ -> Int64.mul
+        in
+        let d = P.dtype p i in
+        let xs = vals x and ys = vals y in
+        exists (fun j -> not (fits d (f xs.(j) ys.(j)))) (Array.init n Fun.id)
+    | _ -> false
+  in
+  cover "an addition, subtraction or product that wraps in the box"
+    (exists wraps outs);
+  (* Whether [v], an element of [s], is outside [d]'s range. *)
+  let outside s d v =
+    let lo, hi = extremes d in
+    if (not (unsigned s)) && v < 0L then unsigned d || v < lo
+    else if unsigned s && v < 0L then hi <> -1L || not (unsigned d)
+    else (not (hi = -1L && unsigned d)) && v > hi
+  in
+  let cast_unfit i =
+    match node i with
+    | Op1 (Cast, d, x)
+      when ranged x && not (is_bool (P.dtype p x) || is_bool d) ->
+        exists (outside (P.dtype p x) d) (vals x)
+    | _ -> false
+  in
+  cover "a cast whose operand does not fit its dtype" (exists cast_unfit outs);
+  let negative_multiplier i =
+    match node i with
+    | Op2 (Binary Mul, x, y) when ranged x && not (unsigned (P.dtype p i)) ->
+        let neg k = all (fun v -> v < 0L) (vals k) in
+        let varies k = exists (fun v -> v <> (vals k).(0)) (vals k) in
+        (neg x && varies y) || (neg y && varies x)
+    | _ -> false
+  in
+  cover "a negative multiplier of a range" (exists negative_multiplier outs);
+  let unknown_where i =
+    match node i with
+    | Op3 (Where, c, _, _) when ranged i -> range c = (0L, 1L)
+    | _ -> false
+  in
+  cover "a where on an unknown condition" (exists unknown_where outs);
+  let from_float i =
+    match node i with
+    | Op1 (_, _, x) | Op2 (_, x, _) -> P.dtype p x = f32
+    | _ -> false
+  in
+  cover "an integer or boolean computed from a float" (exists from_float outs)
+
+(* A cast into bit over a coordinate's bounds [lo, hi]: [Cast Bit] of the
+   coordinate, and of it with [true]. The range is that of [x <> 0] over
+   [lo, hi], of bit's dtype. *)
+let bit_casts =
+  [ ("zero", (0L, 0L), ("\000", "\000")); ("apart from zero", (1L, 3L), ("\001", "\001"));
+    ("across zero", (0L, 2L), ("\000", "\001")) ]
+
+let test_bit_cast (_, (lo, hi), (want_lo, want_hi)) =
+  let bit = D.Any D.Bit in
+  let p =
+    P.v ~ins:[||]
+      [| P.Coord 0; Op1 (Cast, bit, 0); Const (bit, P.bits D.Bit true);
+         Op2 (Binary And, 1, 2) |]
+      ~outs:[| 3 |]
+  in
+  let q = P.ranges ~axes:1 p in
+  let q = P.v ~ins:q.ins q.nodes ~outs:q.outs in
+  let bounds = [| elements1 i64 lo; elements1 i64 hi |] in
+  match compute ~shape:[| 1 |] q bounds with
+  | Ok r ->
+      equal ~msg:"least" (array string) [| want_lo |] r.(0);
+      equal ~msg:"greatest" (array string) [| want_hi |] r.(1)
+  | Error a -> failf "the ranges refused: %a" Nx_array_support.pp_answer a
+
 let tests =
   [
     group "domains"
@@ -1444,6 +1950,13 @@ let tests =
         prop "subst with outs is the outputs of p it selects" selecting
           law_subst_outs;
         test "subst refuses what does not fit" test_subst_refuses;
+      ];
+    group "ranges"
+      [
+        prop ~count:400 "every node lies within its range over the box"
+          ranged_cases law_ranges;
+        cases "a cast into bit has bit's range" ~id:(fun (n, _, _) -> n)
+          bit_casts test_bit_cast;
       ];
   ]
 

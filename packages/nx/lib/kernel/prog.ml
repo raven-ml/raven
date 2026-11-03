@@ -854,3 +854,341 @@ let subst ?outs ~ins f p =
       r
   in
   lowered l (Iarray.map go picked)
+
+(* Ranges *)
+
+(* A node's range in the program [ranges] builds: the nodes of its least and
+   greatest values, or [Unranged] for a float or complex node, whose
+   ranges no rule follows. *)
+type range = Unranged | Range of int * int
+
+let ranged (D.Any dt) =
+  match D.kind dt with
+  | Signed | Unsigned | Boolean -> true
+  | Float | Complex -> false
+
+let is_signed (D.Any dt) = D.is D.Signed dt
+let width (D.Any dt) = D.bits dt
+
+(* The node of the integer or boolean constant [x] of [dt], within its
+   range; an unsigned 32-bit one's bits from [x]'s low half. *)
+let int_bits (D.Any dt) (x : int64) =
+  let b : type v s. (v, s) D.t -> string =
+   fun dt ->
+    match dt with
+    | Int64 -> bits dt x
+    | Uint64 -> bits dt x
+    | Int32 -> bits dt (Int64.to_int32 x)
+    | Uint32 -> bits dt (Int64.to_int32 x)
+    | Int16 -> bits dt (Int64.to_int x)
+    | Uint16 -> bits dt (Int64.to_int x)
+    | Int8 -> bits dt (Int64.to_int x)
+    | Uint8 -> bits dt (Int64.to_int x)
+    | Int4 -> bits dt (Int64.to_int x)
+    | Uint4 -> bits dt (Int64.to_int x)
+    | Bool -> bits dt (x <> 0L)
+    | Bit -> bits dt (x <> 0L)
+    | Float64 | Float32 | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2
+    | Float4_e2m1fn | Complex128 | Complex64 ->
+        invalid_arg "Nx_kernel.Prog.ranges: a float constant"
+  in
+  Const (D.Any dt, b dt)
+
+let extreme (D.Any dt) ~high =
+  Const (D.Any dt, bits dt (if high then D.max_value dt else D.min_value dt))
+
+(* The bounds a cast from the integer dtype [s] to the integer dtype [t]
+   must check, as values of [s]: [t]'s least where it is above [s]'s, and
+   its greatest where it is below [s]'s. *)
+let cast_checks s t =
+  let ws = width s and wt = width t in
+  let smax w = Int64.pred (Int64.shift_left 1L (w - 1)) in
+  let umax w = Int64.pred (Int64.shift_left 1L w) in
+  match (is_signed s, is_signed t) with
+  | true, true when wt < ws ->
+      (Some (Int64.neg (Int64.shift_left 1L (wt - 1))), Some (smax wt))
+  | true, true -> (None, None)
+  | true, false -> (Some 0L, if wt < ws then Some (umax wt) else None)
+  | false, false -> (None, if wt < ws then Some (umax wt) else None)
+  | false, true -> (None, if wt <= ws then Some (smax wt) else None)
+
+(* Each node's range follows from its operands' by its kind's rule, over
+   the values of its dtype as its kind computes them:
+
+     a + b, a - b, a · b   the ends' sums, differences, the corners'
+                           products; the whole range where one may wrap
+     a / b, a mod b        where b's range holds no 0: the corners'
+                           quotients, a remainder within b's magnitude
+     -a, |a|, sign a       the ends', the whole range at a signed least
+     max, min, and, or     the ends' (on booleans and is min, or max)
+     comparisons           true at every pair where the ranges are apart,
+                           false where they cannot meet
+     cast                  the ends' where the range fits the dtype, and
+                           to bool, true where 0 is outside it
+     where c a b           a's, b's, or their union where c is unknown
+     any other kind        its value where each operand's range is one
+                           value, the whole range otherwise
+
+   A float or complex node has no range, and an integer or boolean node
+   computed from one, as a comparison of floats, has its dtype's whole
+   range. *)
+let ranges ~axes ?outs p =
+  let fn = "Nx_kernel.Prog.ranges" in
+  if axes < 0 || axes > Nx_array.Layout.max_rank then
+    invalid_arg (strf "%s: %d axes" fn axes);
+  let picked =
+    match outs with
+    | None -> p.outs
+    | Some outs ->
+        let n = Iarray.length p.outs in
+        if Iarray.length outs = 0 then invalid_arg (fn ^ ": no output");
+        let pick o =
+          if o < 0 || o >= n then invalid_arg (strf "%s: no output %d" fn o);
+          Iarray.get p.outs o
+        in
+        Iarray.map pick outs
+  in
+  let nin = Iarray.length p.ins in
+  let ins =
+    Iarray.init
+      ((2 * nin) + (2 * axes))
+      (fun k -> if k < 2 * nin then Iarray.get p.ins (k / 2) else D.Any D.Int64)
+  in
+  let n = Iarray.length p.nodes in
+  let l = lowering fn ~ins (4 * n) in
+  let node nd = add l nd in
+  let op1 k dt a = node (Op1 (k, dt, a)) in
+  let bin k a b = node (Op2 (Binary k, a, b)) in
+  let cmp k a b = node (Op2 (Compare k, a, b)) in
+  let where c a b = node (Op3 (Where, c, a, b)) in
+  let int dt x = node (int_bits dt x) in
+  let truth x = int (D.Any D.Bool) (if x then 1L else 0L) in
+  let conj a b = bin And a b and disj a b = bin Or a b in
+  let negation a = cmp Equal a (truth false) in
+  let low dt = node (extreme dt ~high:false) in
+  let high dt = node (extreme dt ~high:true) in
+  let top dt = if ranged dt then Range (low dt, high dt) else Unranged in
+  let guard dt ok (a, b) = Range (where ok a (low dt), where ok b (high dt)) in
+  let exact (a, b) = cmp Equal a b in
+  (* Whether [s], [x] + [y] or [x] - [y] wrapped, did not wrap. *)
+  let added dt x y s =
+    if is_signed dt then cmp Equal (cmp Less y (int dt 0L)) (cmp Less s x)
+    else cmp Less_equal x s
+  in
+  let subtracted dt x y s =
+    if is_signed dt then cmp Equal (cmp Less y (int dt 0L)) (cmp Less x s)
+    else cmp Less_equal y x
+  in
+  (* Whether [s], [x] · [y] wrapped, did not wrap: then [s / x] is [y],
+     since a wrap moves the product by more than [|x|]; but a signed least
+     value by [-1] gives itself. *)
+  let multiplied dt x y s =
+    let back = cmp Equal (bin Idiv s x) y in
+    let fits =
+      if not (is_signed dt) then back
+      else
+        let least = conj (cmp Equal x (int dt (-1L))) (cmp Equal y (low dt)) in
+        conj back (negation least)
+    in
+    disj (cmp Equal x (int dt 0L)) fits
+  in
+  let least4 a b c d = bin Minimum (bin Minimum a b) (bin Minimum c d) in
+  let most4 a b c d = bin Maximum (bin Maximum a b) (bin Maximum c d) in
+  (* The corners of [k] over [a, b] and [c, d]: their least and greatest. *)
+  let corners k (a, b) (c, d) =
+    let ac = bin k a c and ad = bin k a d in
+    let bc = bin k b c and bd = bin k b d in
+    ((ac, ad, bc, bd), (least4 ac ad bc bd, most4 ac ad bc bd))
+  in
+  let product dt x y =
+    let (ac, ad, bc, bd), ends = corners Mul x y in
+    let (a, b), (c, d) = (x, y) in
+    let ok =
+      conj
+        (conj (multiplied dt a c ac) (multiplied dt a d ad))
+        (conj (multiplied dt b c bc) (multiplied dt b d bd))
+    in
+    (ok, ends)
+  in
+  let sum dt (a, b) (c, d) =
+    let lo = bin Add a c and hi = bin Add b d in
+    (conj (added dt a c lo) (added dt b d hi), (lo, hi))
+  in
+  (* [k] at the least values, where every operand's range is one value. *)
+  let fallback dt nd rs =
+    if not (ranged dt) then Unranged
+    else if List.exists (fun r -> r = Unranged) rs then top dt
+    else
+      let ends =
+        List.map
+          (function Range (a, b) -> (a, b) | Unranged -> assert false)
+          rs
+      in
+      let ok =
+        List.fold_left (fun ok e -> conj ok (exact e)) (truth true) ends
+      in
+      let lo = List.map fst ends in
+      let v =
+        match (nd, lo) with
+        | Op1 (k, dt, _), [ a ] -> op1 k dt a
+        | Op2 (k, _, _), [ a; b ] -> node (Op2 (k, a, b))
+        | Op3 (k, _, _, _), [ a; b; c ] -> node (Op3 (k, a, b, c))
+        | _ -> assert false
+      in
+      guard dt ok (v, v)
+  in
+  let r = Array.make n None in
+  let rec go i =
+    match r.(i) with
+    | Some x -> x
+    | None ->
+        let x = rule i (Iarray.get p.nodes i) in
+        r.(i) <- Some x;
+        x
+  and rule i nd =
+    let dt = dtype_of p i in
+    match nd with
+    | In k ->
+        if ranged dt then Range (node (In (2 * k)), node (In ((2 * k) + 1)))
+        else Unranged
+    | Coord a ->
+        if a >= axes then invalid_arg (strf "%s: node %d reads axis %d" fn i a);
+        let k = (2 * nin) + (2 * a) in
+        Range (node (In k), node (In (k + 1)))
+    | Const _ ->
+        if ranged dt then
+          let c = node nd in
+          Range (c, c)
+        else Unranged
+    | Op1 (k, _, x) -> unary dt nd k x
+    | Op2 (Compare k, x, y) -> compare dt nd k x y
+    | Op2 (Binary k, x, y) -> binary dt nd k x y
+    | Op3 (Where, c, x, y) -> (
+        match (go c, go x, go y) with
+        | Range (cl, ch), Range (xl, xh), Range (yl, yh) ->
+            let lo = where cl xl (where ch (bin Minimum xl yl) yl) in
+            let hi = where cl xh (where ch (bin Maximum xh yh) yh) in
+            Range (lo, hi)
+        | _ -> top dt)
+    | Op3 (Fma, x, y, z) -> (
+        match (go x, go y, go z) with
+        | Range (a, b), Range (c, d), Range (e, f) ->
+            let mok, ends = product dt (a, b) (c, d) in
+            let sok, ends = sum dt ends (e, f) in
+            guard dt (conj mok sok) ends
+        | _ -> top dt)
+  and unary dt nd k x =
+    let sx = dtype_of p x in
+    match (k, go x) with
+    | _, Unranged -> top dt
+    | Copy, r -> r
+    | Cast, Range (a, b) ->
+        if not (ranged dt) then Unranged
+        else if D.(let (Any t) = dt in is Boolean t) then
+          if D.(let (Any s) = sx in is Boolean s) then
+            Range (op1 Cast dt a, op1 Cast dt b)
+          else
+            let z = int sx 0L in
+            let apart = disj (cmp Less z a) (cmp Less b z) in
+            let zero = conj (cmp Equal a z) (cmp Equal b z) in
+            (* Both ends are bool's: a cast gives them bit's. *)
+            Range (op1 Cast dt apart, op1 Cast dt (negation zero))
+        else if D.(let (Any s) = sx in is Boolean s) then
+          Range (op1 Cast dt a, op1 Cast dt b)
+        else
+          let ends = (op1 Cast dt a, op1 Cast dt b) in
+          let ok =
+            match cast_checks sx dt with
+            | None, None -> None
+            | Some lo, None -> Some (cmp Less_equal (int sx lo) a)
+            | None, Some hi -> Some (cmp Less_equal b (int sx hi))
+            | Some lo, Some hi ->
+                Some
+                  (conj (cmp Less_equal (int sx lo) a)
+                     (cmp Less_equal b (int sx hi)))
+          in
+          (match ok with
+          | None -> Range (fst ends, snd ends)
+          | Some ok -> guard dt ok ends)
+    | Unary Neg, Range (a, b) when is_signed dt ->
+        guard dt (negation (cmp Equal a (low dt))) (op1 k dt b, op1 k dt a)
+    | Unary Abs, Range (a, b) when is_signed dt ->
+        let z = int dt 0L in
+        let neg x = op1 (Unary Neg) dt x in
+        let lo = bin Maximum (bin Maximum a (neg b)) z in
+        guard dt (negation (cmp Equal a (low dt))) (lo, bin Maximum (neg a) b)
+    | Unary (Abs | Floor | Ceil | Round | Trunc), r -> r
+    | Unary Sign, Range (a, b) -> Range (op1 k dt a, op1 k dt b)
+    | Bitcast, _ when D.(let (Any s) = sx in is Boolean s) ->
+        (* A boolean's byte is any byte, true where it is not 0. *)
+        top dt
+    | (Unary _ | Bitcast), r -> fallback dt nd [ r ]
+  and compare dt nd k x y =
+    match (go x, go y) with
+    | Range (a, b), Range (c, d) -> (
+        let lt = cmp Less and le = cmp Less_equal in
+        let equal () =
+          conj (conj (exact (a, b)) (exact (c, d))) (cmp Equal a c)
+        in
+        match k with
+        | Less -> Range (lt b c, lt a d)
+        | Less_equal -> Range (le b c, le a d)
+        | Equal -> Range (equal (), conj (le a d) (le c b))
+        | Not_equal -> Range (disj (lt b c) (lt d a), negation (equal ())))
+    | rx, ry -> fallback dt nd [ rx; ry ]
+  and binary dt nd k x y =
+    match (k, go x, go y) with
+    | _, Unranged, _ | _, _, Unranged -> top dt
+    | Add, Range (a, b), Range (c, d) ->
+        let ok, ends = sum dt (a, b) (c, d) in
+        guard dt ok ends
+    | Sub, Range (a, b), Range (c, d) ->
+        let lo = bin Sub a d and hi = bin Sub b c in
+        guard dt (conj (subtracted dt a d lo) (subtracted dt b c hi)) (lo, hi)
+    | Mul, Range (a, b), Range (c, d) ->
+        let ok, ends = product dt (a, b) (c, d) in
+        guard dt ok ends
+    | Idiv, Range (a, b), Range (c, d) ->
+        let z = int dt 0L in
+        if is_signed dt then
+          let apart = disj (cmp Less z c) (cmp Less d z) in
+          let m1 = int dt (-1L) in
+          let least =
+            conj (cmp Equal a (low dt))
+              (conj (cmp Less_equal c m1) (cmp Less_equal m1 d))
+          in
+          let _, ends = corners Idiv (a, b) (c, d) in
+          guard dt (conj apart (negation least)) ends
+        else guard dt (cmp Less z c) (bin Idiv a d, bin Idiv b c)
+    | Mod, Range (a, b), Range (c, d) ->
+        let z = int dt 0L and one = int dt 1L in
+        if is_signed dt then
+          let apart = disj (cmp Less z c) (cmp Less d z) in
+          let neg x = op1 (Unary Neg) dt x in
+          let m = bin Maximum (bin Sub d one) (neg (bin Add c one)) in
+          let lo = where (cmp Less_equal z a) z (bin Maximum a (neg m)) in
+          let hi = where (cmp Less_equal b z) z (bin Minimum b m) in
+          guard dt apart (lo, hi)
+        else guard dt (cmp Less z c) (z, bin Minimum b (bin Sub d one))
+    | (Maximum | Minimum), Range (a, b), Range (c, d) ->
+        Range (bin k a c, bin k b d)
+    | (And | Or), Range (a, b), Range (c, d)
+      when D.(let (Any t) = dt in is Boolean t) ->
+        Range (bin k a c, bin k b d)
+    | _, rx, ry -> fallback dt nd [ rx; ry ]
+  in
+  let out o =
+    match go o with
+    | Range (a, b) -> (a, b)
+    | Unranged ->
+        invalid_arg (strf "%s: node %d is a float or complex output" fn o)
+  in
+  let pairs = Iarray.map out picked in
+  let outs =
+    Iarray.init
+      (2 * Iarray.length pairs)
+      (fun k ->
+        let a, b = Iarray.get pairs (k / 2) in
+        if k mod 2 = 0 then a else b)
+  in
+  lowered l outs

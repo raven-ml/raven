@@ -368,17 +368,34 @@
     kernel reads: its output 0 for a block before its keys are read, its
     output 1 on the block's scores. A program whose output 0 is the
     constant [true], or whose output 1 is its operand 0, runs no node for
-    it. Where output 0 reads neither the score, nor a coordinate of the
-    lead axes or the heads, nor a load that steps along one, it runs first
-    at lead index 0 and head 0 alone, and a block whose pairs it shows all
-    or hides all is read, or skipped, without running it again.
+    it. The rows of a lead index's key head go in {e units}: [h]
+    consecutive query heads of its group, [h] the lesser of the group's
+    size and 64, and [⌊64 / h⌋] consecutive rows of each. Before a unit
+    reads its blocks, it runs the ranges of output 0
+    ({!Nx_kernel.Prog.ranges}) over each block's box: the unit's lead
+    index, heads and rows, the block's 64 keys, and each load's least and
+    greatest element over them, a load of fewer than 8 bits taking its
+    dtype's ends. A block whose ranges hide every pair is skipped, and one
+    whose ranges show every pair is read without running output 0. Where
+    output 0 reads neither the score, nor a coordinate of the lead axes or
+    the heads, nor a load that steps along one, and there are more units
+    than the rows of one query head fill, as with several lead indices or
+    key heads, or a group of more than 64 heads, the classes are taken
+    once a call, at lead index 0 and head 0: the ranges first, then output
+    0 at every pair of a block they leave mixed, which is read, or skipped,
+    without running it again where it shows or hides all its pairs.
 
     Keys and values of the accumulator's dtype whose dimension steps one
     element are read in place, keys only in float32 and for fewer than 12
     rows of a key head; others are copied into the accumulator by blocks.
     Each thread holds at most [w (128 dk + 192 dv + 8192) + 12288] bytes of
-    host memory for the call, [w] the accumulator's bytes, and the call at
-    most [tq ⌈tk / 64⌉] bytes where a mask is shared so.
+    host memory for the call, [w] the accumulator's bytes, and
+    [2 ⌈tk / 64⌉] more where output 0 is not constant; the call at most
+    [tq ⌈tk / 64⌉] bytes where output 0 is shared so. The call then holds
+    the ranges' bounds: for each load they read, two elements per lead
+    index, unit and block along the axes the load steps on, and 16 bytes
+    per index of each lead axis, per unit's heads, per unit's rows and per
+    block.
 
     For a row that reads [t] keys in [n = ⌈t / 64⌉] blocks, barring
     overflow and underflow, to first order in the accumulator's unit

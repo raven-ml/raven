@@ -548,6 +548,7 @@ let with_target t f =
 
 external attention_c :
   Nx_kernel.Prog.t ->
+  Nx_kernel.Prog.t option ->
   float ->
   ('w, 'r) Nx_array.t ->
   (float, 'c) Nx_array.t ->
@@ -558,5 +559,27 @@ external attention_c :
   Nx_array.any array ->
   Nx_array.answer = "nx_cpu_attention_byte" "nx_cpu_attention"
 
+(* The ranges of the mask, output 0, over a box of pairs of [q]'s loop, by
+   which the kernel skips the blocks it hides (attention.c, Classes): none
+   for a constant mask, nor for a program the kernel refuses, of an output
+   0 of another dtype or a coordinate past the loop. *)
+let rec reads_past (p : Nx_kernel.Prog.t) rank i =
+  i < Iarray.length p.nodes
+  && ((match Iarray.get p.nodes i with Coord a -> a >= rank | _ -> false)
+     || reads_past p rank (i + 1))
+
+let mask_ranges (p : Nx_kernel.Prog.t) q =
+  let o = Iarray.get p.outs 0 in
+  match Iarray.get p.nodes o with
+  | Const _ -> None
+  | _ ->
+      let rank = Nx_array.Layout.rank (Nx_array.layout q) in
+      if
+        Iarray.length p.outs <> 2
+        || reads_past p rank 0
+        || Nx_kernel.Prog.dtype p o <> Nx_array.Dtype.Any Bool
+      then None
+      else Some (Nx_kernel.Prog.ranges ~axes:rank ~outs:[| 0 |] p)
+
 let attention p ~scale ~o ~lse ?lengths q kv loads =
-  attention_c p scale o lse lengths q kv loads
+  attention_c p (mask_ranges p q) scale o lse lengths q kv loads

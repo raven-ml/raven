@@ -1940,6 +1940,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- Add `Nx_kernel.Prog.ranges`, the program of a program's ranges over a
+  box of its leaves, sound under wrap-around. nx.cpu's attention takes a
+  mask's ranges over each block of a unit's rows, and skips, or reads
+  without the mask, blocks of masks reading heads, captures or lengths:
+  a window per head at 2048 keys takes 0.36 of the instructions.
 - **Breaking:** `Nx.attention` takes `~acc`, float32 or float64 and not
   narrower than `q`, in which its scores, weights, `score` and `lse`
   compute, and accepts a float64 `q`, whose results and derivatives then

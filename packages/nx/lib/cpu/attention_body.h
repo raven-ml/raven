@@ -21,6 +21,7 @@ typedef struct {
   T *vf;        /* KEYS × dv */
   T m[ROWS], l[ROWS];
   uint8_t *vis; /* ROWS × KEYS, row r's at r·nk */
+  uint8_t *lo, *hi; /* blocks each: the mask's least and greatest */
   uint8_t sees[ROWS], hides[ROWS], picks[ROWS];
   uint8_t bad[KEYS]; /* a value not finite */
   run runs[KEYS];
@@ -29,8 +30,9 @@ typedef struct {
 static int64_t F(scratch_bytes)(const att *c) {
   int64_t f = ROWS * c->dk + 2 * ROWS * KEYS + 2 * ROWS * c->dv +
               KEYS * c->dk + KEYS * c->dv;
+  int64_t classes = c->ranges != NULL ? 2 * c->blocks : 0;
   return (int64_t)sizeof(F(scratch)) + (int64_t)sizeof(T) * f + ROWS * KEYS +
-         10 * 64;
+         classes + 10 * 64;
 }
 
 static void F(lay_out)(const att *c, F(scratch) *x) {
@@ -47,6 +49,8 @@ static void F(lay_out)(const att *c, F(scratch) *x) {
   TAKE(vf, KEYS * c->dv);
 #undef TAKE
   x->vis = p;
+  x->lo = p + ROWS * KEYS;
+  x->hi = x->lo + c->blocks;
 }
 
 /* Whether any of the [n] elements at [x] is not finite. */
@@ -185,9 +189,16 @@ static void F(unit)(att *c, F(scratch) *x, int64_t u) {
   memset(x->acc, 0, sizeof(T) * (size_t)(rows * dv));
   uint8_t present[KEYS];
   int64_t len = length_of(c, b);
+  /* Classes (attention.c): the shared table's, else the unit's ranges',
+     else mixed. */
+  int ranged = c->cls == NULL && c->ranges != NULL && len > 0;
+  if (ranged) ranges_of(c, x->lo, x->hi, u, (len + KEYS - 1) / KEYS);
   for (int64_t j0 = 0; j0 < len; j0 += KEYS) {
     int nk = (int)(len - j0 < KEYS ? len - j0 : KEYS);
-    int cls = c->cls != NULL ? c->cls[tile * c->blocks + j0 / KEYS] : MIXED;
+    int64_t k = j0 / KEYS;
+    int cls = c->cls != NULL ? c->cls[tile * c->blocks + k]
+              : ranged       ? class_of(x->lo[k], x->hi[k])
+                             : MIXED;
     if (cls == HIDDEN) continue;
     int mask = c->mask && cls == MIXED;
     int nr = runs_of(c, x->runs, b, kh, j0, nk, present);

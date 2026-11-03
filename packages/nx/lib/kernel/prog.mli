@@ -617,3 +617,44 @@ val subst :
     Raises [Invalid_argument] if an [e] is not of its node's dtype, as
     {!of_exprs} does for the expressions over [ins], or if [outs] is empty
     or names no output of [p]. *)
+
+(** {1:ranges Ranges}
+
+    For kernel libraries that skip work a program's output rules out, as
+    attention's tiles of pairs that its mask hides ({!Nx_kernel.S.attention}).
+
+    A {e box} bounds a program's leaves: a least and a greatest value for
+    each operand's elements and for each coordinate. Over a box, a
+    program's {e range} of an output is a least and a greatest value in
+    its dtype's order ({!section-domains}) such that, at every index whose
+    leaves lie within the box, the output lies between them. Where a
+    boolean output's range is [true] to [true], the output holds at every
+    such index, and where it is [false] to [false], at none. A range may
+    hold values that no index gives: over a box of two coordinates or
+    more, [Equal] of a coordinate with itself has the range [false] to
+    [true].
+
+    Ranges follow integer and boolean kinds. Each accounts for wrapping:
+    where a kind may wrap within the box, as an [Add] whose greatest sum
+    passes its dtype's greatest value, or a [Cast] of a range that does not
+    fit the dtype it stores into, the range is the dtype's whole range. A
+    float or complex node has no range, so an integer or boolean node
+    computed from one, as a comparison of floats, has its dtype's whole
+    range. *)
+
+val ranges : axes:int -> ?outs:int iarray -> t -> t
+(** [ranges ~axes ?outs p] is the program of [p]'s ranges over a box, of
+    [p]'s outputs, or with [outs] of the outputs at those indices, each of
+    an integer or boolean dtype. For [n] the count of [p]'s operands, its
+    operands [2i] and [2i + 1] are the least and greatest elements of
+    [p]'s operand [i], of its dtype, and [2n + 2a] and [2n + 2a + 1] the
+    least and greatest coordinate along axis [a], of [int64], for [a]
+    below [axes]. Its outputs [2k] and [2k + 1] are the least and greatest
+    value of the [k]th output picked. No node reads a float or complex
+    operand's bounds.
+
+    Raises [Invalid_argument] if [axes] is negative or past
+    {!Nx_array.Layout.max_rank}, if a picked output reads, through its
+    nodes, the coordinate of an axis [axes] or past, if a picked output is
+    of a float or complex dtype, or if [outs] is empty or names no output
+    of [p]. *)

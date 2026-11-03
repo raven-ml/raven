@@ -84,8 +84,23 @@ let log_dd x = two_sum (Float.log x.hi) (x.lo /. x.hi)
 (* A case *)
 
 (* [Striped] hides keys [64, 128) and every key of rows [1 mod 3]: whole
-   blocks and whole rows. *)
-type mask = Unmasked | Causal | Window | Striped | Captured of bool array
+   blocks and whole rows. [Head_window w] is causal within [w.(h)] keys of
+   the row at head [h], from a captured [[hq; 1; 1]] of int32;
+   [Documents (dq, dk)] shows a key to a row of the same document, from
+   captured ids of the rows and of the keys; [Spans (wide, a, b)] shows
+   row [i] the keys [[a.(i), b.(i))], captured as [[tq; 1]] of int16, or
+   of uint8 unless [wide]; and [Limit l] shows head [h] the keys up to
+   [l.(h)], captured as [[hq; 1; 1]] of int4, for at most 8 keys. *)
+type mask =
+  | Unmasked
+  | Causal
+  | Window
+  | Striped
+  | Captured of bool array
+  | Head_window of int array
+  | Documents of int array * int array
+  | Spans of bool * int array * int array
+  | Limit of int array
 type score = Identity | Alibi of float array | Bias of float array
 
 type case = {
@@ -123,7 +138,11 @@ let pp_case ppf c =
     | Causal -> "causal"
     | Window -> "window"
     | Striped -> "striped"
-    | Captured _ -> "captured")
+    | Captured _ -> "captured"
+    | Head_window _ -> "a window per head"
+    | Documents _ -> "documents"
+    | Spans _ -> "spans"
+    | Limit _ -> "a limit per head")
     (match c.score with
     | Identity -> "identity"
     | Alibi _ -> "alibi"
@@ -136,6 +155,16 @@ let pp_case ppf c =
   floats "q" c.q;
   floats "k" c.k;
   floats "v" c.v;
+  (match c.mask with
+  | Head_window w -> Format.fprintf ppf "@ windows %a" ints w
+  | Documents (dq, dk) ->
+      Format.fprintf ppf "@ row documents %a@ key documents %a" ints dq ints dk
+  | Spans (wide, a, b) ->
+      Format.fprintf ppf "@ spans%s from %a@ to %a"
+        (if wide then " of int16" else "")
+        ints a ints b
+  | Limit l -> Format.fprintf ppf "@ limits %a" ints l
+  | Unmasked | Causal | Window | Striped | Captured _ -> ());
   match c.score with
   | Identity -> ()
   | Alibi xs -> floats "slopes" xs
@@ -144,6 +173,25 @@ let pp_case ppf c =
 let element =
   Gen.frequency
     [ (8, Gen.float_range (-2.) 2.); (1, Gen.constant 0.); (1, Gen.constant (-0.)) ]
+
+(* Documents of [tq] rows and [tk] keys, in order or not: ids of up to 4
+   documents, or of 2 for keys of several blocks. *)
+let documents tq tk =
+  let open Gen in
+  let* sorted = bool in
+  let n = if tk > 64 then 1 else 3 in
+  let ids k = map (if sorted then fun a -> Array.sort compare a; a else Fun.id)
+      (array ~size:(constant k) (int_range 0 n)) in
+  let+ dq = ids tq and+ dk = ids tk in
+  Documents (dq, dk)
+
+(* Spans of keys for [tq] rows over [tk] keys. *)
+let spans tq tk =
+  let open Gen in
+  let* wide = if tk > 254 then constant true else bool in
+  let span = pair (int_range 0 tk) (int_range 0 (tk + 1)) in
+  let+ ss = array ~size:(constant tq) span in
+  Spans (wide, Array.map fst ss, Array.map (fun (a, b) -> max a b) ss)
 
 (* A case of the extents [lead], [hk], [groups], [tq], [tk], [dk] and [dv]
    draw. *)
@@ -164,14 +212,27 @@ let sized ~lead ~hk ~groups ~tq ~tk ~dk ~dv =
   in
   let* scale = of_list [ None; Some 0.7; Some (-1.5) ] in
   let hq = hk * groups in
+  let limit =
+    if tk > 8 then []
+    else
+      let limits = array ~size:(constant hq) (int_range 0 7) in
+      [ (1, map (fun l -> Limit l) limits) ]
+  in
   let* mask =
     frequency
-      [
+    @@ limit
+    @ [
         (1, constant Unmasked);
         (1, constant Causal);
         (1, constant Window);
         (1, constant Striped);
         (1, map (fun m -> Captured m) (array ~size:(constant (hq * tq * tk)) bool));
+        ( 1,
+          map
+            (fun w -> Head_window w)
+            (array ~size:(constant hq) (int_range 0 (tq + 2))) );
+        (1, documents tq tk);
+        (1, spans tq tk);
       ]
   in
   let* score =
@@ -271,6 +332,10 @@ let visible c b h i j =
   | Window -> causal && i < j + 2
   | Striped -> j / 64 mod 2 = 0 && i mod 3 <> 1
   | Captured m -> m.((((h * c.tq) + i) * c.tk) + j)
+  | Head_window w -> causal && i - j < w.(h)
+  | Documents (dq, dk) -> dq.(i) = dk.(j)
+  | Spans (_, a, b) -> a.(i) <= j && j < b.(i)
+  | Limit l -> j <= l.(h)
 
 (* [s] rewritten by [c]'s score. ALiBi's product is exact: a slope is a
    float32 and [i - j] a small integer. *)
@@ -409,6 +474,27 @@ let mask_of c : (Nx.host Nx.pair -> Nx.host Nx.bool_t) option =
               (equal_s (mod_s (div_s p.k 64L) 2L) 0L)
               (not_equal_s (mod_s p.q 3L) 1L)))
   | Captured m -> Some (fun _ -> Nx.create Nx.bool [| hq c; c.tq; c.tk |] m)
+  | Head_window w ->
+      let w = Nx.create Nx.int32 [| hq c; 1; 1 |] (Array.map Int32.of_int w) in
+      Some
+        (fun p ->
+          Nx.(logical_and (causal p) (less (cast int32 (sub p.q p.k)) w)))
+  | Documents (dq, dk) ->
+      let dq = Nx.create Nx.int16 [| c.tq; 1 |] dq in
+      let dk = Nx.create Nx.int16 [| 1; c.tk |] dk in
+      Some (fun _ -> Nx.equal dq dk)
+  | Spans (wide, a, b) ->
+      let span (type e) (dt : (int, e) Nx.dtype) =
+        let a = Nx.create dt [| c.tq; 1 |] a in
+        let b = Nx.create dt [| c.tq; 1 |] b in
+        fun (p : _ Nx.pair) ->
+          let k = Nx.cast dt p.k in
+          Nx.(logical_and (less_equal a k) (less k b))
+      in
+      Some (if wide then span Nx.int16 else span Nx.uint8)
+  | Limit l ->
+      let l = Nx.create Nx.int4 [| hq c; 1; 1 |] l in
+      Some (fun p -> Nx.less_equal (Nx.cast Nx.int4 p.k) l)
 
 (* [c]'s score in the accumulator [acc]. *)
 let score_of (type a) (acc : (float, a) D.t) c :
@@ -504,6 +590,11 @@ let law_dense dt u tiny ac c =
   cover "unmasked" (c.mask = Unmasked);
   cover "a window" (c.mask = Window);
   cover "a captured mask" (match c.mask with Captured _ -> true | _ -> false);
+  cover "a window per head"
+    (match c.mask with Head_window _ -> true | _ -> false);
+  cover "documents" (match c.mask with Documents _ -> true | _ -> false);
+  cover "spans" (match c.mask with Spans _ -> true | _ -> false);
+  cover "a limit per head" (match c.mask with Limit _ -> true | _ -> false);
   cover "alibi" (c.score <> Identity);
   cover "lengths" (c.lengths <> None);
   cover "grouped heads" (c.groups > 1);
@@ -550,6 +641,12 @@ let law_long dt u tiny ac c =
   cover "a group past a unit" (c.groups > 64);
   cover "whole blocks and rows hidden" (c.mask = Striped && c.tk > 64);
   cover "lengths within a block" (c.lengths <> None && c.tk > 64);
+  cover "a window per head of a group"
+    (match c.mask with Head_window _ -> c.groups > 1 | _ -> false);
+  cover "documents over several blocks"
+    (match c.mask with Documents _ -> c.tk > 64 | _ -> false);
+  cover "spans over several blocks"
+    (match c.mask with Spans _ -> c.tk > 64 | _ -> false);
   ignore (dense dt u tiny ac c : reached)
 
 let law_tied dt u tiny ac c =
@@ -614,7 +711,11 @@ let paged_of ~pages ~page ~max_pages cases =
   let+ mask =
     frequency
       [
-        (2, constant (match c.mask with Captured _ -> Causal | m -> m));
+        ( 2,
+          constant
+            (match c.mask with
+            | Captured _ | Documents _ | Spans _ | Limit _ -> Causal
+            | m -> m) );
         (1, map (fun m -> Captured m) (array ~size:(constant (hq c * c.tq * tk)) bool));
       ]
   in
@@ -948,14 +1049,41 @@ let same ~msg (o, lse) (o', lse') =
   equal ~msg:(msg ^ ": o") same_bits o o';
   equal ~msg:(msg ^ ": lse") same_bits lse lse'
 
+(* Masks whose blocks nx.cpu classes from captures: a window per head,
+   and documents of 50 rows and of 100 keys, which every lead index and
+   head share, classed once a call; and a causal mask through float32,
+   which reads the lengths here, so that each unit runs it at the blocks
+   its ranges leave mixed. *)
+let windows8 =
+  Nx.create Nx.int32 [| 8; 1; 1 |]
+    (Array.init 8 (fun h -> Int32.of_int ((h * 20) + 1)))
+
+let head_window p =
+  Nx.(logical_and (causal p) (less (cast int32 (sub p.q p.k)) windows8))
+
+let documents _ =
+  let ids n per =
+    Nx.create Nx.int16 [| n |] (Array.init n (fun i -> i / per))
+  in
+  Nx.equal (Nx.reshape [| 150; 1 |] (ids 150 50)) (ids 300 100)
+
+let float_causal (p : _ Nx.pair) =
+  let seen = Nx.add p.q (Nx.sub_s p.len (Int64.of_int p.tq)) in
+  Nx.(less_equal (cast float32 p.k) (cast float32 seen))
+
 let test_threads_targets dt () =
   let q, k, v = big dt () in
-  let want = bits_of (call q k v) in
-  same ~msg:"one thread" want (bits_of (Nx_cpu.one_thread (fun () -> call q k v)));
   List.iter
-    (fun t ->
-      same ~msg:t want (bits_of (Nx_cpu.with_target t (fun () -> call q k v))))
-    Nx_cpu.targets
+    (fun (name, mask) ->
+      let call () = call ~mask q k v in
+      let want = bits_of (call ()) in
+      let msg m = name ^ ", " ^ m in
+      same ~msg:(msg "one thread") want (bits_of (Nx_cpu.one_thread call));
+      List.iter
+        (fun t -> same ~msg:(msg t) want (bits_of (Nx_cpu.with_target t call)))
+        Nx_cpu.targets)
+    [ ("causal", Nx.causal); ("a window per head", head_window);
+      ("documents", documents); ("causal through floats", float_causal) ]
 
 (* Strided, transposed and broadcast operands against contiguous ones. *)
 let test_layouts dt () =
@@ -1004,13 +1132,13 @@ let () =
        [
          group "dense"
            [
-             prop "float32 by its definition" case (law_dense D.Float32 u32 0x1p-149 in32);
-             prop "float16 by its definition" case (law_dense D.Float16 0x1p-11 0x1p-24 in32);
-             prop "bfloat16 by its definition" case (law_dense D.Bfloat16 0x1p-8 0x1p-133 in32);
-             prop "float64 by its definition" case (law_dense D.Float64 u64 0x1p-1074 in64);
-             prop "float32 in float64 by its definition" case (law_dense D.Float32 u32 0x1p-149 in64);
-             prop "float16 in float64 by its definition" case (law_dense D.Float16 0x1p-11 0x1p-24 in64);
-             prop "bfloat16 in float64 by its definition" case (law_dense D.Bfloat16 0x1p-8 0x1p-133 in64);
+             prop ~count:400 "float32 by its definition" case (law_dense D.Float32 u32 0x1p-149 in32);
+             prop ~count:400 "float16 by its definition" case (law_dense D.Float16 0x1p-11 0x1p-24 in32);
+             prop ~count:400 "bfloat16 by its definition" case (law_dense D.Bfloat16 0x1p-8 0x1p-133 in32);
+             prop ~count:400 "float64 by its definition" case (law_dense D.Float64 u64 0x1p-1074 in64);
+             prop ~count:400 "float32 in float64 by its definition" case (law_dense D.Float32 u32 0x1p-149 in64);
+             prop ~count:400 "float16 in float64 by its definition" case (law_dense D.Float16 0x1p-11 0x1p-24 in64);
+             prop ~count:400 "bfloat16 in float64 by its definition" case (law_dense D.Bfloat16 0x1p-8 0x1p-133 in64);
              prop "float32, non-finite and hidden values"
                (Gen.with_pp pp_case unusual) (law_unusual D.Float32 u32 0x1p-149 in32);
              prop "float16, non-finite and hidden values"
@@ -1027,11 +1155,11 @@ let () =
            ];
          group "several blocks"
            [
-             prop ~count:150 "float32 by its definition" long
+             prop ~count:300 "float32 by its definition" long
                (law_long D.Float32 u32 0x1p-149 in32);
-             prop ~count:60 "bfloat16 by its definition" long
+             prop ~count:240 "bfloat16 by its definition" long
                (law_long D.Bfloat16 0x1p-8 0x1p-133 in32);
-             prop ~count:150 "float64 by its definition" long
+             prop ~count:300 "float64 by its definition" long
                (law_long D.Float64 u64 0x1p-1074 in64);
              prop ~count:150 "float32, non-finite and hidden values"
                (Gen.with_pp pp_case (unusual_of long))
