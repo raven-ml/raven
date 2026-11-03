@@ -2446,6 +2446,12 @@ let copy_to_device u d =
 let unique = Atomic.make 0
 let unique_num () = Atomic.fetch_and_add unique 1
 
+let rec take_unique n =
+  if n = max_int then invalid_arg "Ops.take_unique: no number is greater";
+  let next = Atomic.get unique in
+  if next <= n && not (Atomic.compare_and_set unique next (n + 1)) then
+    take_unique n
+
 let param_arg ?vmin_vmax ?name
     ?(addrspace = Dtype.Global) ?device ?(volatile = false)
     ?(bind_on_realize = false) ?bound ?(phase = 0) ?(align = 16) ~slot dtype =

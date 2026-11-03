@@ -25,10 +25,27 @@
   (names spawn_stubs)))
 
 (tests
- (names test_golden test_graph test_interpreter test_kernel_graphs test_tensors)
- (modules test_golden test_graph test_interpreter test_kernel_graphs test_tensors)
+ (names test_golden test_interpreter test_kernel_graphs test_tensors)
+ (modules test_golden test_interpreter test_kernel_graphs test_tensors)
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
   (glob_files *.golden)
   ../schedule/schedule/chained_functions.golden))
+
+; The cache's directory is read when the program starts, so CACHEDB is set
+; here, to a directory of the sandbox, for the graphs the suite keeps on disk.
+
+(test
+ (name test_graph)
+ (modules test_graph)
+ (package tolk)
+ (libraries windtrap tolk tolk_test)
+ (deps
+  (sandbox always)
+  (glob_files *.golden))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{test}))))

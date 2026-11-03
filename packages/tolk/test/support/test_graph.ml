@@ -215,6 +215,170 @@ let numbers =
         ~than:(List.fold_left max (next + slot) axis_id)
         (Ops.unique_num ()))
 
+
+(* Damage *)
+
+(* Damage to a graph's text or to its entry on disk, at a place given as a
+   fraction of the text's length or of the number of places of its kind: a
+   byte flipped, the text cut short, one of its numbers or one of its slots
+   replaced by a huge number, such as one past every integer. *)
+type damage =
+  | Flip of float * int
+  | Cut of float
+  | Huge_number of float * string
+  | Huge_slot of float * string
+
+let pp_damage ppf = function
+  | Flip (at, bits) -> Format.fprintf ppf "Flip (%g, 0x%02x)" at bits
+  | Cut at -> Format.fprintf ppf "Cut %g" at
+  | Huge_number (at, n) -> Format.fprintf ppf "Huge_number (%g, %s)" at n
+  | Huge_slot (at, n) -> Format.fprintf ppf "Huge_slot (%g, %s)" at n
+
+let huge =
+  [
+    string_of_int max_int;
+    string_of_int (1 lsl 40);
+    "1000000000000000000";
+    "18446744073709551616";
+    "1000000000000000000000000000000";
+  ]
+
+let damage =
+  let open Gen in
+  let at = float_range 0. 1. in
+  with_pp pp_damage
+    (one_of
+       [
+         map (fun (a, b) -> Flip (a, b)) (pair at (int_range 1 255));
+         map (fun a -> Cut a) at;
+         map (fun (a, n) -> Huge_number (a, n)) (pair at (of_list huge));
+         map (fun (a, n) -> Huge_slot (a, n)) (pair at (of_list huge));
+       ])
+
+let nth_of n at = min (n - 1) (int_of_float (at *. float_of_int n))
+
+(* The places [(start, stop)] of the matches of [ok] in [s]: its runs of
+   characters [ok] holds for. *)
+let runs ok s =
+  let n = String.length s in
+  let rec from i acc =
+    if i >= n then List.rev acc
+    else if not (ok s.[i]) then from (i + 1) acc
+    else
+      let j = ref i in
+      while !j < n && ok s.[!j] do incr j done;
+      from !j ((i, !j) :: acc)
+  in
+  from 0 []
+
+let replace s (start, stop) by =
+  String.sub s 0 start ^ by ^ String.sub s stop (String.length s - stop)
+
+(* The numbers written after "slot=" in [s]. *)
+let slots s =
+  List.filter
+    (fun (start, _) -> start >= 5 && String.sub s (start - 5) 5 = "slot=")
+    (runs (function '0' .. '9' | '-' -> true | _ -> false) s)
+
+(* [s] with [d] done to it; [None] if [s] has no place of [d]'s kind. *)
+let damaged d s =
+  let n = String.length s in
+  let place places at by =
+    match places with
+    | [] -> None
+    | ps -> Some (replace s (List.nth ps (nth_of (List.length ps) at)) by)
+  in
+  match d with
+  | Flip (at, bits) ->
+      let i = nth_of n at in
+      Some
+        (replace s (i, i + 1)
+           (String.make 1 (Char.chr (Char.code s.[i] lxor bits))))
+  | Cut at -> Some (String.sub s 0 (nth_of n at))
+  | Huge_number (at, by) ->
+      place (runs (function '0' .. '9' -> true | _ -> false) s) at by
+  | Huge_slot (at, by) -> place (slots s) at by
+
+let classify_damage = function
+  | Flip _ -> cover "a byte flipped" true
+  | Cut _ -> cover "cut short" true
+  | Huge_number _ -> cover "a huge number" true
+  | Huge_slot _ -> cover "a huge slot" true
+
+(* The graphs damaged: every kind but the long chain, and a buffer indexed
+   by a range, whose slot and axis are numbers the reading takes. *)
+let damageable =
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 2; 1 ] in
+  ("an indexed buffer", Ops.sink [ Ops.index buffer [ r ] ])
+  :: List.filter (fun (k, _) -> k <> "a chain of 100000 nodes") kinds
+
+(* A damaged graph, drawn with the damage: a slot is damaged in a graph that
+   has one. *)
+let case =
+  let open Gen in
+  let named = with_pp (fun ppf (k, _) -> Format.pp_print_string ppf k) in
+  let slotted =
+    List.filter (fun (_, u) -> slots (Graph.to_string u) <> []) damageable
+  in
+  let* d = damage in
+  let+ g =
+    named
+      (of_list (match d with Huge_slot _ -> slotted | _ -> damageable))
+  in
+  (g, d)
+
+(* Reading damaged text fails, or reads a graph, without hanging: a huge slot
+   is taken at once, and one past every number handed out leaves none. *)
+let damaged_text =
+  prop ~timeout:20. "damaged text reads or fails, at once"
+    case
+    (fun ((_, u), d) ->
+      match damaged d (Graph.to_string u) with
+      | None -> reject ()
+      | Some text -> (
+          classify_damage d;
+          match Graph.of_string text with
+          | _ -> (
+              match d with
+              | Huge_slot (_, n) -> (
+                  match int_of_string_opt n with
+                  | Some n -> greater Windtrap.int ~than:n (Ops.unique_num ())
+                  | None -> ())
+              | _ -> ())
+          | exception Failure _ -> ()))
+
+(* A graph whose entry on disk is damaged reads back as itself, or is made
+   anew. The lengths of an entry damaged in its value's numbers are stated
+   anew, so that they do not show it. *)
+let damaged_entry =
+  let count = ref 0 in
+  prop ~timeout:20. "a damaged entry reads back as its graph, or misses"
+    case
+    (fun ((_, u), d) ->
+      if Sys.getenv_opt "CACHEDB" = None then
+        skip ~reason:"CACHEDB is unset" ();
+      incr count;
+      let table = Printf.sprintf "test_graph_damage_%d" !count in
+      let cached make =
+        Graph.cached ~table ~key:"k" ~valid:(fun _ -> true) make
+      in
+      ignore (cached (fun () -> u));
+      let entry = List.hd (Disk_cache.entries ~table Helpers.cachedb) in
+      let e = In_channel.with_open_bin entry In_channel.input_all in
+      let or_reject = function Some s -> s | None -> reject () in
+      let e' =
+        match d with
+        | Flip _ | Cut _ -> or_reject (damaged d e)
+        | Huge_number _ | Huge_slot _ ->
+            Disk_cache.restated (fun v -> or_reject (damaged d v)) e
+      in
+      classify_damage d;
+      Out_channel.with_open_bin entry (fun oc -> output_string oc e');
+      let made = Ops.sink [] in
+      match cached (fun () -> made) with
+      | g, true -> equal node ~msg:"read back" u g
+      | g, false -> equal node ~msg:"made anew" made g)
+
 let errors =
   group "reading"
     [
@@ -247,4 +411,15 @@ let errors =
             "0 Ops.CONST dtypes.weakint [] 1 2\n");
     ]
 
-let () = exit (run "Graph" [ goldens; round_trip; text; numbers; errors ])
+let () =
+  exit
+    (run "Graph"
+       [
+         goldens;
+         round_trip;
+         text;
+         numbers;
+         damaged_text;
+         damaged_entry;
+         errors;
+       ])

@@ -298,9 +298,12 @@ let beam_search ~link ~time ?allow_test_size amt s =
        ]
       @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
   in
+  (* A damaged entry is searched again, as one never kept. *)
   let cached =
     if Setting.value Setting.ignore_beam_cache then None
-    else Helpers.Diskcache.get ~table:"beam_search" key
+    else
+      try Helpers.Diskcache.get ~table:"beam_search" key
+      with Failure _ -> None
   in
   match cached with
   | Some opts ->

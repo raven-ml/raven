@@ -97,15 +97,36 @@ let damage ?table cachedb f =
 
 let truncated e = String.sub e 0 (String.length e / 2)
 
-(* An entry is "<key length> <value length>\n<key><value>". *)
+(* An entry is "<key length> <value length> <digest>\n<key><value>", the digest
+   of the key and the value. *)
 let header e = String.index e '\n' + 1
 
+let parts e =
+  let h = header e in
+  let k = int_of_string (List.hd (String.split_on_char ' ' e)) in
+  (String.sub e h k, String.sub e (h + k) (String.length e - h - k))
+
+let entry key value =
+  Printf.sprintf "%d %d %s\n%s%s" (String.length key) (String.length value)
+    (Digest.to_hex (Digest.string (key ^ value)))
+    key value
+
 let not_a_graph e =
-  let n = String.length e in
-  let last = String.rindex_from e (n - 2) '\n' in
-  String.sub e 0 (last + 1) ^ String.make (n - last - 1) ' '
+  let key, v = parts e in
+  let n = String.length v in
+  let last = String.rindex_from v (n - 2) '\n' in
+  entry key (String.sub v 0 (last + 1) ^ String.make (n - last - 1) ' ')
+
+let restated f e =
+  let key, v = parts e in
+  match String.split_on_char ' ' (String.sub e 0 (header e - 1)) with
+  | _ :: _ :: rest ->
+      let v = f v in
+      let lengths = [ String.length key; String.length v ] in
+      String.concat " " (List.map string_of_int lengths @ rest)
+      ^ "\n" ^ key ^ v
+  | _ -> invalid_arg "Disk_cache.restated: not an entry"
 
 let of_another_build e =
-  let h = header e in
-  String.sub e 0 h ^ String.make 32 '0'
-  ^ String.sub e (h + 32) (String.length e - h - 32)
+  let key, v = parts e in
+  entry (String.make 32 '0' ^ String.sub key 32 (String.length key - 32)) v

@@ -837,6 +837,12 @@ val needs_storage : t -> bool
 val unique_num : unit -> int
 (** [unique_num ()] is a slot number no other call returns. *)
 
+val take_unique : int -> unit
+(** [take_unique n] makes every number {!unique_num} returns afterwards greater
+    than [n], up to [max_int], past which no number is left.
+
+    Raises [Invalid_argument] if [n] is [max_int]. *)
+
 val new_buffer : ?slot:int -> ?phase:int -> device -> int -> Dtype.t -> t
 (** [new_buffer ~slot ~phase d size dt] is a {!Op.Buffer} of [size] elements of
     [dt] on [d], in [slot] (default {!unique_num}), whose first element lies

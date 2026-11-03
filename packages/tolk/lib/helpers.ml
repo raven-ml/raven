@@ -308,7 +308,7 @@ let cachedb =
 module Diskcache = struct
   (* Bump whenever what an entry means changes without its key changing: the old
      entries would otherwise answer a different question. *)
-  let version = 2
+  let version = 3
   let digest s = Digest.to_hex (Digest.string s)
   let is_hex c = is_digit c || (c >= 'a' && c <= 'f')
 
@@ -405,20 +405,26 @@ module Diskcache = struct
 
   let enabled () = Setting.value Setting.cachelevel >= 1
 
-  (* An entry is the lengths of its key and value, a newline, the key and the
-     value. Keeping the key tells a digest collision from a hit, and the lengths
-     tell a damaged entry from a whole one. *)
+  (* An entry is the lengths of its key and value, the digest of the key and
+     the value, a newline, the key and the value. Keeping the key tells a digest
+     collision from a hit, the lengths tell a truncated entry from a whole one,
+     and the digest a damaged one: a byte changed on disk would otherwise read
+     as another value, such as a program with another constant or a binary with
+     another instruction. *)
   let encode key value =
-    Printf.sprintf "%d %d\n%s%s" (String.length key) (String.length value) key
-      value
+    Printf.sprintf "%d %d %s\n%s%s" (String.length key) (String.length value)
+      (digest (key ^ value)) key value
 
   let decode path key contents =
     match
-      Scanf.sscanf_opt contents "%u %u\n%n" (fun klen vlen start ->
-          (klen, vlen, start))
+      Scanf.sscanf_opt contents "%u %u %32[0-9a-f]\n%n"
+        (fun klen vlen sum start -> (klen, vlen, sum, start))
     with
-    | Some (klen, vlen, start) when start + klen + vlen = String.length contents
-      ->
+    | Some (klen, vlen, sum, start)
+      when let rest = String.length contents - start in
+           klen >= 0 && klen <= rest
+           && vlen = rest - klen
+           && Digest.to_hex (Digest.substring contents start rest) = sum ->
         if String.sub contents start klen <> key then None
         else Some (String.sub contents (start + klen) vlen)
     | _ -> failwith (path ^ ": malformed cache entry")

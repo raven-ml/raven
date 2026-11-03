@@ -880,9 +880,8 @@ let of_string text =
         | _ -> m)
       (-1) nodes
   in
-  while Ops.unique_num () <= taken do
-    ()
-  done;
+  if taken = max_int then fail "slot or axis %d leaves no number" taken;
+  Ops.take_unique taken;
   Option.get nodes.(Array.length nodes - 1)
 
 (* Disk *)

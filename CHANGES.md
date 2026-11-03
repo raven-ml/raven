@@ -974,6 +974,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- An entry of the disk cache damaged on disk, cut short or with a byte
+  changed, reads as a miss (`Helpers.Diskcache` keeps a digest of each
+  entry, and `Search.beam_search` searches again), where a changed byte could
+  serve another program, binary or search; a
+  graph holding a huge slot reads at once (`Graph.of_string`, which hung
+  counting up to it), and one of `max_int` fails (`Ops.take_unique`).
+
 - A device's copies and kernels share one arena in every schedule, where
   copies had one of their own in a schedule linked `Linked`: on one device
   a copy lane ordered nothing more and held its own peak. Where a memory

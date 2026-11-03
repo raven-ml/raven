@@ -919,6 +919,25 @@ let cache_devices =
           equal opts first (searched untimed b)
       | calls -> failf "%d calls, not 2" (List.length calls))
 
+(* A search whose entry is damaged on disk measures again, as one never kept,
+   and keeps what it finds. *)
+let cache_damaged =
+  test "a search whose entry is damaged measures again" (fun () ->
+      let cached timing =
+        K.applied_opts
+          (search
+             ~settings:[ B (Setting.cachelevel, 1) ]
+             ~timing 2
+             (scheduled "sum_rows" "clang"))
+      in
+      let first = cached (fst (recording (golden_time ~failing:false))) in
+      Disk_cache.damage ~table:"beam_search" Helpers.cachedb
+        Disk_cache.truncated;
+      let timing, calls = recording (golden_time ~failing:false) in
+      equal opts ~msg:"found again" first (cached timing);
+      greater int ~msg:"measured again" ~than:0 (List.length (calls ()));
+      equal opts ~msg:"kept again" first (cached untimed))
+
 (* A search kept under one value of a setting that shapes compilation is not
    used under another. *)
 let cache_settings =
@@ -1269,6 +1288,7 @@ let () =
          width;
          cache;
          cache_devices;
+         cache_damaged;
          cache_settings;
          cache_declared;
          cache_variables;

@@ -21,8 +21,9 @@ val of_string : string -> Ops.t
     Raises [Failure] naming the node, by its line's position, and what is wrong
     with it if [text] is empty, a line does not read, an index is not its line's
     position, a source or a node in an argument is not an earlier line, an
-    argument does not fit its operation, or a node's written data type is not
-    the one its operation, sources and argument derive. *)
+    argument does not fit its operation, a node's written data type is not the
+    one its operation, sources and argument derive, or a slot or a number of
+    a range's axes is [max_int], which leaves no greater number. *)
 
 (** {1:disk Disk} *)
 

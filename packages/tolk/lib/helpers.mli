@@ -174,7 +174,9 @@ val cachedb : string
 
     A table maps strings to strings across runs and processes. Entries are
     written atomically, so a reader sees a complete entry or none, and the last
-    writer of a key wins. Tables are versioned with the library: entries written
+    writer of a key wins. An entry holds the digest of its key and value, so
+    one damaged on disk, cut short or with a byte changed, does not read as
+    another value. Tables are versioned with the library: entries written
     by a library whose cached data meant something else are not seen. Tables and
     keys are any strings; entries stay within {!cachedb} whatever they hold. The
     cache is disabled while {!Setting.cachelevel} is not positive.
@@ -203,7 +205,7 @@ module Diskcache : sig
   (** [get ~table key] is the value of [key] in [table], if any. It is [None]
       while the cache is disabled.
 
-      Raises [Failure] if the entry exists but is malformed. *)
+      Raises [Failure] if the entry exists but is malformed or damaged. *)
 
   val put : table:string -> string -> string -> unit
   (** [put ~table key value] binds [key] to [value] in [table]. It does nothing

@@ -51,6 +51,11 @@ val not_a_graph : string -> string
 (** [not_a_graph e] is the entry [e] whole, its value's last line blanked, so
     that it does not read as a graph. *)
 
+val restated : (string -> string) -> string -> string
+(** [restated f e] is the entry [e] with its value replaced by [f] of it and
+    the value's length stated anew, the rest of [e] kept: damage that the
+    entry's lengths do not show. *)
+
 val of_another_build : string -> string
 (** [of_another_build e] is the entry [e] whole, its key's first 32 characters,
     the digest of the library's sources, replaced. *)

@@ -277,7 +277,9 @@ stamps nothing (D146).
   and `Diskcache.clear`.
 - **Differs:** keys and values are strings, which callers encode. Each entry
   is a file under `CACHEDB`, a directory, written aside and renamed into
-  place; tables are versioned by tolk's own version. Entries belong to a
+  place, holding the digest of its key and value: an entry damaged on disk
+  raises instead of reading as another value, and a graph's reader makes it
+  anew. Tables are versioned by tolk's own version. Entries belong to a
   generation, an empty file named by a count and a unique name; a clear
   makes one past the newest, which empties every table at one step, then
   removes the old files. tinygrad's clear (`helpers.py:411-414`) drops the tables one by one,
@@ -289,7 +291,9 @@ stamps nothing (D146).
   arbitrary values: a cache returning any type would be `Marshal`, which
   crashes when a rebuilt program reads a value of a changed type. Without an
   SQLite transaction, writing aside and renaming is what keeps an entry whole
-  when a writer crashes or races another. Without SQLite's drop, a clear
+  when a writer crashes or races another. A file's contents carry no check
+  of their own, and a byte changed in a program or a binary would run as
+  another kernel. Without SQLite's drop, a clear
   that removes files one by one orders against no call, and a generation per
   table would cost what one costs while promising less.
 - **Pinned by:** `Tolk.Helpers › Diskcache › get reads back any key and
@@ -298,7 +302,8 @@ stamps nothing (D146).
   clear`, `› a put and a get in another process come before or after a
   clear` and `Tolk.Helpers › Diskcache on two domains › behaves as a table
   of entries, whatever the order of the calls`, which run with `CACHEDB`
-  set, as dune runs them.
+  set, as dune runs them, and `Graph › a damaged entry reads back as its
+  graph, or misses`.
 
 ## D9. Narrow float conversions are IEEE conversions
 
