@@ -14,7 +14,7 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index f4535a4f7..020f66325 100644
+index f4535a4f7..887fbbfcf 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,19 +2,19 @@ from dataclasses import replace, dataclass, field
@@ -49,10 +49,21 @@ index f4535a4f7..020f66325 100644
  from tinygrad.device import TinyELF
  from tinygrad.uop.ops import _broadcast_shape, identity_element
  from tinygrad.schedule.rangeify import BufferizeOpts
-@@ -98,14 +98,27 @@ def broadcast_and_devec_wmma(b:UOp):
+@@ -98,44 +98,193 @@ def broadcast_and_devec_wmma(b:UOp):
      src.append(b.replace(src=tuple([x.index(*idx) for x in src_expanded])))
    return UOp.stack(*src).reshape(b.shape)
  
+-pm_wmma_add = PatternMatcher([
+-  (UPat(Ops.WMMA, name="wmma") + UPat.var("add"),
+-   lambda add, wmma: UOp(wmma.op, src=(wmma.src[0], wmma.src[1], wmma.src[2]+add), arg=wmma.arg)),
+-  # push permute/reshape to the other side of the add
+-  (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"), UPat()), name="permute") + UPat.var("add"),
+-    lambda wmma,permute,add: (wmma + add.permute(argsort(permute.marg))).permute(permute.marg)),
+-  (UPat(Ops.PERMUTE, src=(UPat(Ops.RESHAPE, src=(UPat(Ops.WMMA, name="wmma"), UPat()), name="reshape"), UPat()), name="permute") + UPat.var("add"),
+-    lambda wmma,reshape,permute,add: (wmma + add.permute(argsort(permute.marg)).reshape(wmma.shape)).reshape(reshape.shape).permute(permute.marg)),
+-])
+-
+-pm_expand_broadcast = pm_wmma_add+PatternMatcher([
 +# a sum's identity is the zero accumulator a WMMA starts from: the running sum replaces it, so no addition of +0.0 stays in the loop
 +def wmma_accumulate(wmma:UOp, add:UOp) -> UOp:
 +  acc = wmma.src[2]
@@ -60,28 +71,37 @@ index f4535a4f7..020f66325 100644
 +  zero = bool(lanes) and all(s.op is Ops.CONST and s.arg == 0 for s in lanes)
 +  return UOp(wmma.op, src=(wmma.src[0], wmma.src[1], add if zero else acc+add), arg=wmma.arg)
 +
-+# the addend broadcast to the permute's shape, then in the order before it: an addend of fewer axes, such as the scalar
-+# initial value of a sum a WMMA computes in one step, broadcasts before its axes can move
-+def unpermuted(permute:UOp, add:UOp) -> UOp|None:
-+  if _broadcast_shape(permute.shape, add.shape) != permute.shape: return None
-+  return add.expand(permute.shape).permute(argsort(permute.marg))
++# a running sum add added to a core's value x, which the expander leaves behind reshapes and permutes of the core's lanes, enters
++# the core as its accumulator: m(w) + add = m(w'), w' the core of accumulator c + m^-1(add)
++def into_core(x:UOp, add:UOp) -> UOp|None:
++  if x.op is Ops.WMMA: return wmma_accumulate(x, add)
++  if x.op is Ops.RESHAPE: return None if (c:=into_core(x.src[0], add.reshape(x.src[0].shape))) is None else c.reshape(x.shape)
++  if x.op is Ops.PERMUTE: return None if (c:=into_core(x.src[0], add.permute(argsort(x.marg)))) is None else c.permute(x.marg)
++  return None
 +
- pm_wmma_add = PatternMatcher([
--  (UPat(Ops.WMMA, name="wmma") + UPat.var("add"),
--   lambda add, wmma: UOp(wmma.op, src=(wmma.src[0], wmma.src[1], wmma.src[2]+add), arg=wmma.arg)),
-+  (UPat(Ops.WMMA, name="wmma") + UPat.var("add"), wmma_accumulate),
-   # push permute/reshape to the other side of the add
-   (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"), UPat()), name="permute") + UPat.var("add"),
--    lambda wmma,permute,add: (wmma + add.permute(argsort(permute.marg))).permute(permute.marg)),
-+    lambda wmma,permute,add: None if (a:=unpermuted(permute, add)) is None else (wmma + a).permute(permute.marg)),
-   (UPat(Ops.PERMUTE, src=(UPat(Ops.RESHAPE, src=(UPat(Ops.WMMA, name="wmma"), UPat()), name="reshape"), UPat()), name="permute") + UPat.var("add"),
--    lambda wmma,reshape,permute,add: (wmma + add.permute(argsort(permute.marg)).reshape(wmma.shape)).reshape(reshape.shape).permute(permute.marg)),
-+    lambda wmma,reshape,permute,add: None if (a:=unpermuted(permute, add)) is None else
-+      (wmma + a.reshape(wmma.shape)).reshape(reshape.shape).permute(permute.marg)),
- ])
- 
- pm_expand_broadcast = pm_wmma_add+PatternMatcher([
-@@ -113,29 +126,152 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
++# x at position k of its axis a, kept at size 1, computed by a core of that position alone: a core's batch axes are independent
++# cores. None unless a reaches a batch axis of a core whole through x's reshapes and permutes
++def core_at(x:UOp, a:int, k:int) -> UOp|None:
++  if x.max_shape[a] == 1: return x
++  def one(s, i): return tuple(1 if j == i else d for j,d in enumerate(s))
++  if x.op is Ops.WMMA:
++    if a >= (nb:=len(x.shape)-1): return None
++    def pick(s:UOp) -> UOp:
++      j = a - (nb - (len(s.shape)-1))
++      if j < 0 or s.shape[j] == 1: return s
++      return s.permute((j,)+tuple(i for i in range(len(s.shape)) if i != j)).index(k).reshape(one(s.shape, j))
++    return x.replace(src=tuple(pick(s) for s in x.src))
++  if x.op is Ops.RESHAPE:
++    out, inp = x.max_shape, x.src[0].max_shape
++    for i,d in enumerate(inp):
++      if d == out[a] and prod(inp[:i]) == prod(out[:a]):
++        return None if (c:=core_at(x.src[0], i, k)) is None else c.reshape(one(x.shape, a))
++    return None
++  if x.op is Ops.PERMUTE: return None if (c:=core_at(x.src[0], x.marg[a], k)) is None else c.permute(x.marg)
++  return None
++
++pm_expand_broadcast = PatternMatcher([
+   (UPat(GroupOp.Binary|GroupOp.Ternary|{Ops.STORE}, name="x"), expand_broadcast),
    (UPat(Ops.WMMA, name="b"), broadcast_and_devec_wmma),
  ])
  
@@ -237,7 +257,7 @@ index f4535a4f7..020f66325 100644
    # INDEX without src is nothing (TODO: this should be in mop_cleanup)
    (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),
    # unpack WMMA
-@@ -172,25 +308,79 @@ def merge_reduce_ends(sink:UOp):
+@@ -172,28 +321,95 @@ def merge_reduce_ends(sink:UOp):
      if len(ends) <= 1: continue
      by_ctx: dict[frozenset[UOp], list[UOp]] = {}
      for e in ends: by_ctx.setdefault(frozenset(e.ranges), []).append(e)
@@ -309,21 +329,39 @@ index f4535a4f7..020f66325 100644
 +  fused = fuses(ren, r, inp)
    vals = [inp.index(*idx) for idx in itertools.product(*[range(inp.max_shape[a]) for a in range(horizontal)])] if horizontal else [inp]
 -  ret = functools.reduce(lambda x,y: x.alu(op, y), vals)
-+  ret = functools.reduce(lambda x,y: x.alu(op, y).replace(arg="fusable") if fused else x.alu(op, y), vals)
-   if len(r.src) == 1: return ret
+-  if len(r.src) == 1: return ret
 -  acc = UOp.alloc_like(r, next(ctx), AddrSpace.REG)
++  ret = functools.reduce(lambda x,y: x.alu(op, y).replace(arg="fusable") if fused else x.alu(op, y), vals)
++  # a sum of cores' values: each core's term, the running sum entering each core as its accumulator, in order
++  def term(idx) -> UOp|None:
++    t: UOp|None = inp
++    for a,k in enumerate(idx): t = None if t is None else core_at(t, a, k)
++    return None if t is None else t.reshape(inp.shape[horizontal:])
++  terms = [term(idx) for idx in itertools.product(*[range(inp.max_shape[a]) for a in range(horizontal)])] if op is Ops.ADD else [None]
++  def fold_cores(acc:UOp|None, ts) -> UOp|None:
++    for t in ts:
++      if acc is None or _broadcast_shape(t.shape, acc.shape) != t.shape: return None
++      acc = into_core(t, acc.expand(t.shape))
++    return acc
++  cores = None if any(t is None for t in terms) else terms
++  if len(r.src) == 1: return (fold_cores(cores[0], cores[1:]) if cores is not None and horizontal else None) or ret
 +  acc = UOp.alloc_like(r, next(slots), AddrSpace.REG)
    input_ranges = tuple(x for x in inp.ranges if x not in r.src[1:])
    acc_init = acc.after(*input_ranges).store(UOp.const(identity_element(op, r.dtype)))
    acc_initted = acc.after(acc_init, *r.src[1:])
 -  acc_out = acc_initted.store(acc_initted.alu(op, ret)).end(*r.src[1:])
-+  update = acc_initted.alu(op, ret)
-+  if horizontal == 0 and fused: update = update.replace(arg="fusable")
++  if cores is None or (update:=fold_cores(acc_initted, cores)) is None:
++    update = acc_initted.alu(op, ret)
++    if horizontal == 0 and fused: update = update.replace(arg="fusable")
 +  acc_out = acc_initted.store(update).end(*r.src[1:])
    return acc.after(acc_out)
  
- pm_reduce_local = pm_wmma_add+PatternMatcher([
-@@ -251,6 +441,38 @@ pm_implicit_barriers = PatternMatcher([
+-pm_reduce_local = pm_wmma_add+PatternMatcher([
++pm_reduce_local = PatternMatcher([
+   # fix group for reduce
+   (UPat(Ops.REDUCE, name="x"), fix_group_for_reduce),
+   # remove reduces
+@@ -251,6 +467,38 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
@@ -362,7 +400,7 @@ index f4535a4f7..020f66325 100644
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if DEBUG >= 5: print(render_uir(ast))
    if SPEC: type_verify(ast, spec_tensor)
-@@ -288,7 +510,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -288,7 +536,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -371,7 +409,7 @@ index f4535a4f7..020f66325 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -301,7 +523,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -301,7 +549,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
@@ -380,7 +418,7 @@ index f4535a4f7..020f66325 100644
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -326,11 +548,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -326,11 +574,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -395,7 +433,7 @@ index f4535a4f7..020f66325 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -345,11 +569,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -345,11 +595,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -409,7 +447,7 @@ index f4535a4f7..020f66325 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -443,9 +668,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -443,9 +694,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -434,7 +472,7 @@ index f4535a4f7..020f66325 100644
  
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp|None:
    if getattr(type(ctx), "asm") is Renderer.asm: return None
-@@ -493,7 +732,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
+@@ -493,7 +758,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
      full_sink = full_rewrite_to_sink(ast, renderer, optimize=not ast.arg.optimized)
      prog_info = ProgramInfo.from_sink(full_sink, renderer.target)
      if (isinstance(renderer, ISARenderer) or renderer.packed_args) and full_sink.arg.estimates is None:

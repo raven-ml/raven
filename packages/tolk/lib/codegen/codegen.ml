@@ -189,60 +189,75 @@ let wmma_accumulate wmma add =
   let acc = if is_zero then add else O.(acc + add) in
   v Op.Wmma ~arg:(arg wmma) ~src:[ nth wmma 0; nth wmma 1; acc ]
 
-let pm_wmma_add =
-  let wmma = Upat.op Op.Wmma ~name:"wmma" in
-  let plus p = Upat.add p (Upat.var "add") in
-  let permute_of p = Upat.op Op.Permute ~src:[ p; Upat.wild ] ~name:"permute" in
-  let order m =
-    match marg (m "permute") with Permute o -> o | _ -> assert false
-  in
-  (* The addend, broadcast to the permute's shape and moved to the order before
-     it, if it broadcasts there. An addend of fewer axes, such as the scalar
-     initial value of a sum that a tensor core computes in one step, broadcasts
-     before its axes can move. *)
-  let unpermuted m =
-    let s = shape (m "permute") and add = m "add" in
-    if equal_shape (broadcast_shape [ s; shape add ]) s then
-      Some (permute (expand add s) (Helpers.argsort (order m)))
-    else None
-  in
-  pm
-    (fun () -> [
-      rule (plus wmma) (fun m -> Some (wmma_accumulate (m "wmma") (m "add")));
-      (* push permute/reshape to the other side of the add *)
-      rule
-        (plus (permute_of wmma))
-        (fun m ->
-          Option.map
-            (fun add -> permute O.(m "wmma" + add) (order m))
-            (unpermuted m));
-      rule
-        (plus
-           (permute_of
-              (Upat.op Op.Reshape ~src:[ wmma; Upat.wild ] ~name:"reshape")))
-        (fun m ->
-          let w = m "wmma" in
-          Option.map
-            (fun add ->
-              let sum = O.(w + reshape add (shape w)) in
-              permute (reshape sum (shape (m "reshape"))) (order m))
-            (unpermuted m));
-    ])
+(* A running sum [add] added to a core's value [x], which the expander leaves
+   behind reshapes and permutes of the core's lanes, enters the core as its
+   accumulator: [m w + add = m w'], [w'] the core of accumulator
+   [c + m^-1 add]. *)
+let rec into_core x add =
+  match op x with
+  | Op.Wmma -> Some (wmma_accumulate x add)
+  | Op.Reshape ->
+      let s = nth x 0 in
+      into_core s (reshape add (shape s))
+      |> Option.map (fun c -> reshape c (shape x))
+  | Op.Permute ->
+      let o = match marg x with Permute o -> o | _ -> assert false in
+      into_core (nth x 0) (permute add (Helpers.argsort o))
+      |> Option.map (fun c -> permute c o)
+  | _ -> None
+
+(* [x] at position [k] of its axis [a], kept at size 1, computed by a core of
+   that position alone: a core's batch axes are independent cores, so taking
+   one position of the core's sources takes that core. [None] unless [a]
+   reaches a batch axis of a core whole through [x]'s reshapes and permutes. *)
+let rec core_at x a k =
+  let one s i = List.mapi (fun j d -> if j = i then Int 1 else d) s in
+  if List.nth (max_shape x) a = 1 then Some x
+  else
+    match op x with
+    | Op.Wmma ->
+        let nb = ndim x - 1 in
+        let pick s =
+          let j = a - (nb - (ndim s - 1)) in
+          if j < 0 || Sint.equal (List.nth (shape s) j) (Int 1) then s
+          else
+            reshape
+              (index (permute s (j :: others [ j ] (ndim s))) [ int k ])
+              (one (shape s) j)
+        in
+        if a >= nb then None
+        else Some (replace x ~src:(List.map pick (src x)))
+    | Op.Reshape -> (
+        (* The source's axis of [a]'s size after as many elements as [a]. *)
+        let s = nth x 0 and out = max_shape x in
+        let below l i =
+          List.fold_left ( * ) 1 (List.filteri (fun j _ -> j < i) l)
+        in
+        let at i d =
+          d = List.nth out a && below (max_shape s) i = below out a
+        in
+        match List.find_index Fun.id (List.mapi at (max_shape s)) with
+        | Some i ->
+            core_at s i k |> Option.map (fun c -> reshape c (one (shape x) a))
+        | None -> None)
+    | Op.Permute ->
+        let o = match marg x with Permute o -> o | _ -> assert false in
+        core_at (nth x 0) (List.nth o a) k |> Option.map (fun c -> permute c o)
+    | _ -> None
 
 let pm_expand_broadcast =
-  pm_wmma_add
-  ++ pm
-       (fun () -> [
-         rule
-           (Upat.v
-              ~op:
-                (Op.Set.union Op.Set.binary
-                   (Op.Set.union Op.Set.ternary (ops [ Op.Store ])))
-              ~name:"x" ())
-           (fun m -> expand_broadcast (m "x"));
-         rule (Upat.op Op.Wmma ~name:"b") (fun m ->
-             broadcast_and_devec_wmma (m "b"));
-       ])
+  pm
+    (fun () -> [
+      rule
+        (Upat.v
+           ~op:
+             (Op.Set.union Op.Set.binary
+                (Op.Set.union Op.Set.ternary (ops [ Op.Store ])))
+           ~name:"x" ())
+        (fun m -> expand_broadcast (m "x"));
+      rule (Upat.op Op.Wmma ~name:"b") (fun m ->
+          broadcast_and_devec_wmma (m "b"));
+    ])
 
 (* The scalar every lane of [x] holds, if [x] expands one. *)
 let splat x =
@@ -728,7 +743,37 @@ let lower_reduce (slots, ren) r =
       | v0 :: vals -> List.fold_left add v0 vals
       | [] -> assert false
   in
-  if rngs = [] then Some ret
+  (* A sum of cores' values adds each core's term in order, the running sum
+     entering each core as its accumulator. *)
+  let rest = List.filteri (fun a _ -> a >= num_axes) (shape inp) in
+  let term idx =
+    List.fold_left
+      (fun t (a, k) -> Option.bind t (fun t -> core_at t a k))
+      (Some inp)
+      (List.mapi (fun a k -> (a, k)) idx)
+    |> Option.map (fun t -> reshape t rest)
+  in
+  let into acc idx =
+    Option.bind acc (fun acc ->
+        Option.bind (term idx) (fun t ->
+            if equal_shape (broadcast_shape [ rest; shape acc ]) rest then
+              into_core t (expand acc rest)
+            else None))
+  in
+  let folded acc =
+    if not (Op.equal op Op.Add) then None
+    else
+      let sizes = List.filteri (fun a _ -> a < num_axes) (max_shape inp) in
+      match product sizes with
+      | [] -> None
+      | i0 :: is -> (
+          match acc with
+          | Some acc -> List.fold_left into (Some acc) (i0 :: is)
+          | None -> List.fold_left into (term i0) is)
+  in
+  if rngs = [] then
+    if num_axes = 0 then Some ret
+    else Some (Option.value (folded None) ~default:ret)
   else
     let acc = alloc_like ~slot:(slots ()) ~addrspace:Dtype.Reg r in
     let input_ranges =
@@ -739,23 +784,26 @@ let lower_reduce (slots, ren) r =
     in
     let acc_initted = after acc (acc_init :: rngs) in
     let update =
-      if num_axes = 0 then add acc_initted ret else alu acc_initted op [ ret ]
+      match folded (Some acc_initted) with
+      | Some u -> u
+      | None ->
+          if num_axes = 0 then add acc_initted ret
+          else alu acc_initted op [ ret ]
     in
     Some (after acc [ end_ (store acc_initted update) rngs ])
 
 let pm_reduce_local =
-  lift pm_wmma_add
-  ++ pm
-       (fun () -> [
-         (* fix group for reduce *)
-         rule (Upat.op Op.Reduce ~name:"x") (fun m ->
-             fix_group_for_reduce (m "x"));
-         (* remove reduces *)
-         rule_ctx (Upat.op Op.Reduce ~name:"r") (fun ctx m ->
-             lower_reduce ctx (m "r"));
-         rule (Upat.op Op.Sink ~name:"sink") (fun m ->
-             merge_reduce_ends (m "sink"));
-       ])
+  pm
+    (fun () -> [
+      (* fix group for reduce *)
+      rule (Upat.op Op.Reduce ~name:"x") (fun m ->
+          fix_group_for_reduce (m "x"));
+      (* remove reduces *)
+      rule_ctx (Upat.op Op.Reduce ~name:"r") (fun ctx m ->
+          lower_reduce ctx (m "r"));
+      rule (Upat.op Op.Sink ~name:"sink") (fun m ->
+          merge_reduce_ends (m "sink"));
+    ])
   ++ lift Symbolic.pm_clean_up_group_sink
 
 (* Loads and local buffers *)

@@ -969,6 +969,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A tensor core accumulates a contraction's running sum whatever its lanes'
+  arrangement, and the cores of a K axis unrolled past the core chain in K
+  order (`Codegen.full_rewrite_to_sink`): a contraction's bits no longer
+  change with its unroll. On Ada, whose cores truncate, the error stays
+  within `Nx.contract`'s bound, at half of it on adversarial rows.
 - Lowering a kernel raises `Invalid_argument`, naming it, where a barrier or
   a tensor core runs in a loop whose trips may differ between a workgroup's
   threads (`Uniform.check`), which hung the GPU or read unwritten memory.

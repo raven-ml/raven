@@ -729,7 +729,8 @@ scope, see README.
     renders.
   - **Tensor-core accumulators.** tinygrad: `codegen/__init__.py:101-103`
     (`pm_wmma_add`, which adds the running sum to a WMMA's accumulator
-    operand). tolk: `Codegen.wmma_accumulate`. A WMMA built for a sum starts
+    operand). tolk: `Codegen.wmma_accumulate`, which the fold at the reduce
+    calls (D260). A WMMA built for a sum starts
     from a zero accumulator, and the running sum used to be added to it,
     `+0. + acc`, which only the float `x + 0` fold removed: with that fold kept to `-0.`, every tensor-core
     loop added `+0.` to each accumulator element on every iteration. The
@@ -5318,32 +5319,12 @@ the walk of `Rangeify.fix_store_hazard`.
   value of no device lives on each device whose kernels read it`; rune's
   `Rune.jit over several devices › values computed from constants`.
 
-## D181. A tensor core's addend broadcasts before it moves past a permute
+## D181. Withdrawn
 
-- **tinygrad:** `codegen/__init__.py:105-108` (`pm_wmma_add`: the sum of a
-  permuted WMMA, or of a permuted reshape of one, and an addend moves the
-  addend through the inverse permute, which takes the permute's axes).
-- **tolk:** `Codegen.pm_wmma_add`; `test/gen/tinygrad.patch`, which gives
-  tinygrad's rules the same broadcast before the goldens are generated.
-- **Differs:** the addend is first broadcast to the permute's shape, and the
-  rules leave a sum whose addend does not broadcast there. Before
-  `expand_broadcast` runs an addend may have fewer axes: a product that one
-  step of a core sums, with no loop left to accumulate it, reaches the rules
-  as a permute of the core plus the scalar the sum ends with, and tinygrad
-  raises (`IndexError: dim=1 out of range [-1, 0]`). At the pin, tinygrad
-  raises so on a float16 product of 16 by 16 summed into float32 plus `1.0` on
-  CUDA sm_89, with or without its splits after the core; 32 by 32 compiles.
-- **Reason:** (b). rune's contraction lowering (`Lower_reduce.close`) adds
-  `+0.` or the initial value to every float sum's result, a scalar, which D24
-  keeps. rune widens float16 and bfloat16 operands to float32 on their bits
-  today, which no core takes; once it converts them by tolk's casts, from the
-  change that lands after this entry, its products reach CUDA's cores through
-  D29, and a 16 by 16 by 16 product raised in lowering and was evaluated.
-- **Pinned by:** the Codegen suite, `stages › … › matmul_{half,bf16}_tile_*`
-  (a widened 16 by 16 product plus `0.`, on every target), and `tensor cores
-  on CUDA`: a product of one tile, one of 256 by 16 by 256, which the splits
-  after the core reshape, and the law over 1 to 4 tiles a side, of float16 and
-  bfloat16, equal to the exact product on fudge's RTX 5000 Ada.
+A tensor core's addend was broadcast before tinygrad's rules moved it past a
+permute, where a one-step core's sum plus its scalar initial value raised. No
+rule moves an addend: tolk folds a core's running sum where it builds the sum,
+and an initial value is added after it (D260).
 
 ## D182. A copy stored into a run of storage lands in place
 
@@ -6738,6 +6719,42 @@ the walk of `Rangeify.fix_store_hazard`.
   optimisations chosen are tinygrad's`; rune's compile bench row
   `products/vecmat-bf16`, whose fudge baseline the scheduled re-record
   records.
+
+## D260. A tensor core accumulates its running sum at the reduce
+
+- **tinygrad:** `codegen/__init__.py:101-109` (`pm_wmma_add`: an add of a
+  WMMA, of a permute of one, or of a permute of a reshape of one, folds the
+  addend into the core's accumulator) and its use in `pm_expand_broadcast`
+  (`:111`) and `pm_reduce_local` (`:196`).
+- **tolk:** `Codegen.lower_reduce`, with `Codegen.into_core` and
+  `Codegen.core_at`; `test/gen/tinygrad.patch`, which gives tinygrad's
+  `lower_reduce` the same fold before the goldens are generated.
+- **Differs:** the reduce that builds a sum of cores' values feeds its
+  running sum to each core as its accumulator, `D = A B + C`, through any
+  chain of reshapes and permutes the expander leaves around the core, and
+  chains the cores of a K axis unrolled past the core in K order:
+  `wmma(a1, b1, wmma(a0, b0, acc))`. Only the running sum enters a core: an
+  add after the sum, as rune's initial value, stays an add. tinygrad folds
+  any addend by pattern, in three forms of four: a core behind a reshape
+  alone adds the core's value to the sum, so whether a core accumulates
+  depended on its lanes' shape, its upcasts and its unroll, and an unrolled
+  K summed its cores apart before adding them.
+- **Reason:** (d) and (e)'s bits: a core's sum is one sequence of the core's
+  steps at any split, so a contraction's bits no longer change with its
+  opts' unroll or with shared-memory staging, which moves only operands. On
+  Ada's cores, which truncate (Khattak and Mikaitis, arXiv 2512.07004v4,
+  §4.1.2), the fold is D29's measured error: 0.497 of `Nx.contract`'s bound
+  on rune's adversarial rows at `K = 2880` and `2048`, against 0.013 to
+  0.028 unfolded; both within the bound. A core accumulating two steps a
+  trip (K unrolled by 2) beat the same kernel unfolded by 1.06 to 1.14 on
+  bfloat16 products of 512 by 512 by 2880, 512 by 4096 by 2880 and 2048
+  cubed (paired medians on fudge's RTX 5000 Ada, staged as the
+  shared-memory staging design runs them).
+- **Pinned by:** the Codegen suite, `tensor cores on CUDA › a product summed
+  in float32 has the same bits whether the core takes one or two steps of K
+  a trip` (fails unfolded), and `stages › … › matmul_{half,half_big,
+  half_tile,bf16_tile,tc}_{cuda,hip}` and `matmul_tc_unroll_metal`; the
+  cstyle and renderer goldens of each core.
 
 ## D265. No axis a call or custom code reads runs as lanes or takes padding
 

@@ -2279,8 +2279,8 @@ let accumulators =
    contraction. On CUDA a tensor core of [dt] computes it in tiles of 16 by 16
    by 16; a product of one tile sums in one step of the core. *)
 
-let widened_product ?opts_to_apply dt (m, k, n) =
-  let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 dt
+let widened_product ?opts_to_apply ?(out = fun dt -> dt) dt (m, k, n) =
+  let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 (out dt)
   and a = Shape.param ~shape:[ Ops.Int (m * k) ] 1 dt
   and b = Shape.param ~shape:[ Ops.Int (k * n) ] 2 dt in
   let open Ops.O in
@@ -2292,7 +2292,8 @@ let widened_product ?opts_to_apply dt (m, k, n) =
     Ops.reduce (at a ((i * int k) + r) * at b ((r * int n) + j)) Add [ r ]
   in
   let store =
-    Ops.store (Ops.index c [ (i * int n) + j ]) (Ops.cast (sum + float 0.) dt)
+    Ops.store (Ops.index c [ (i * int n) + j ])
+      (Ops.cast (sum + float 0.) (out dt))
   in
   Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ()) [ Ops.end_ store [ i; j ] ]
 
@@ -2441,6 +2442,48 @@ let mixed_on_cuda (m, k, n) =
   equal (array Dtypes.value) exact
     (List.assoc 0 (Run.on d prg [ (1, values a); (2, values b) ]))
 
+(* [core] and an unroll by 2 of the K axis it leaves, which sums two steps of
+   the core in each trip of the loop. *)
+let unrolled ast r =
+  let s = Postrange.Scheduler.v ast r in
+  match Postrange.Scheduler.apply_opt s (List.hd core) with
+  | Ok [ _; _; k ] ->
+      let axis =
+        Option.get (List.find_index (( == ) k) (Postrange.Scheduler.rngs s))
+      in
+      core @ [ Opt.Split { axis; amount = 2; target = Upcast; top = false } ]
+  | _ -> failwith "no tensor core"
+
+(* Floats of magnitudes from [2^-8] to [2^8]: the sums of their products
+   round, so that a sum's order shows in its bits. *)
+let fractions seed size =
+  let st = Random.State.make [| seed |] in
+  Array.init size (fun _ ->
+      let f = Float.of_int (Random.State.int st 2048 - 1024) /. 1024. in
+      `Float (Float.ldexp f (Random.State.int st 17 - 8)))
+
+let sum_bits (dt, tk, seed) =
+  let d, r = on_cuda () in
+  let m, k, n = (32, 32 * tk, 32) in
+  let a = fractions seed (m * k) and b = fractions (seed + 1) (k * n) in
+  let run opts_to_apply =
+    let ast = widened_product ~opts_to_apply ~out:(fun _ -> Float32) dt in
+    let prg = compiled_for r (ast (m, k, n)) in
+    List.assoc 0 (Run.on d prg [ (1, a); (2, b) ])
+  in
+  cover "the K axis unrolled into one step" (tk = 1);
+  cover "a loop of unrolled steps" (tk > 1);
+  let opts = unrolled (widened_product dt (m, k, n)) r in
+  equal (array Dtypes.value) (run core) (run opts)
+
+let sums_gen =
+  Gen.with_pp
+    (fun ppf (dt, tk, seed) ->
+      Format.fprintf ppf "%a K = %d, seed %d" Dtype.pp dt (32 * tk) seed)
+    (Gen.triple
+       (Gen.of_list [ Dtype.Float16; Dtype.Bfloat16 ])
+       (Gen.int_range 1 4) (Gen.int_range 0 1_000_000))
+
 let tensor_cores_on_cuda =
   group "tensor cores on CUDA"
     [
@@ -2463,6 +2506,11 @@ let tensor_cores_on_cuda =
         "a float16 or bfloat16 product of 1 to 4 tiles a side, summed in \
          float32 from 0, is the exact product"
         products_gen covered;
+      prop ~count:12
+        ~examples:[ (Dtype.Bfloat16, 1, 7); (Dtype.Float16, 3, 11) ]
+        "a product summed in float32 has the same bits whether the core \
+         takes one or two steps of K a trip"
+        sums_gen sum_bits;
     ]
 
 (* Tensor cores written by hand
