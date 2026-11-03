@@ -844,11 +844,11 @@ scope, see README.
   compiler's contraction fuses any `a*b + c` of an expression. `Nx.fma`
   (RFC 0015's D3) states a `Mulacc` whose compiled bits must be eager's, so its
   fold rounds once too, and `Nx.ewma`, built on it, compiles. Fusing a sum's
-  products is (d): the sofo sketch's kernel `r_128_128_3_4_25_4` runs 1.74 ms
-  with its sums fused, against 3.19 ms unfused and 1.79 ms under Clang's
-  contraction (one E-core of an Intel Core Ultra 5 235, the same harness).
-  sofo is outside the repository and no fudge bench row times the kernel: to
-  re-measure on fudge.
+  products is (d), on fudge (medians of 11, two interleaved runs each, fused
+  then unfused): rune's `Jit/matmul-64` takes 7.3 and 4.9 us against 49 and
+  46 us, and the tolk bench's `lorenz/r_128_16_3_4_4_3_3_400_400/heuristic`,
+  a kernel of lorenz_simple's step, 0.79 and 0.63 ms against 1.47 and 1.84
+  ms.
 - **Pinned by:** `Tolk.Compiler_cpu › execution on the host › a product
   and a sum round twice, never fused` (`(1 + 2^-12)^2 - (1 + 2^-11)` is 0,
   where a fused multiply-add gives `2^-24`); `Tolk.Compiler_metal ›
@@ -1591,14 +1591,16 @@ Withdrawn: multi-device is out of scope, see README.
   start and the collections it joins.
 - **Reason:** (d): a later process's first compiled call of a model. With
   binaries alone on disk, a warm process schedules and lowers every kernel
-  again: on gpt-oss's tiny random checkpoint on Metal (the Mac), 0.64 s of
-  scheduling and 2.08 s of lowering of a 3.16 s first call. To re-measure on
-  fudge. Its fudge rows: the tolk bench's `*/warm` rows, which read a
-  schedule and its programs back against the stages they replace, rune's
-  `WarmStart/chain-100`, and rune's compile bench's `warm/` rows, a fresh
-  process's first call with the disk cache warm. In one timed run on
-  fudge, read on 14 domains, the 40 programs of `warm/model/schools-start`
-  took 161 ms of its 328 ms first call, and 14 ms of 96 ms on one.
+  again. On fudge at `PARALLEL=1`, rune's compile bench rows
+  `warm/model/schools-start` and `warm/linalg/eigh-8x8`, a fresh process's
+  first call over the disk cache an earlier one filled, take 101 and 98 ms,
+  and 70 and 69 ms, against 263 and 274 ms, and 221 and 200 ms with binaries
+  alone kept and schedules in memory (`SCACHE=1`) (medians of 3, two
+  interleaved runs each). In one timed run on fudge, read on 14 domains, the
+  40 programs of `warm/model/schools-start` took 161 ms of its 328 ms first
+  call, and 14 ms of 96 ms on one. Its other fudge rows: the tolk bench's
+  `*/warm` rows, which time reading a schedule and its programs back against
+  the stages they replace, and rune's `WarmStart/chain-100`.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `programs are
   kept › a program is made again under another value of ›` each setting,
   `programs are kept on disk › a program made by one process is read back by
@@ -1809,18 +1811,15 @@ does the same.
   (`Lower_real.reduced`), since the cancellation in `a - q pi/2` hides that
   bound from interval arithmetic. The host's renderer has no sine, so `xsin`
   reduces what remains. Without this entry every compiled normal draw built
-  the Payne-Hanek reduction for angles below `2 pi`. On kimchi's x86 E-cores
-  (`taskset -c 6-13`), drawing `2^20` samples with `Rune.jit` (median of 31
-  calls, the key's uniforms included) took 29.8 ms in float32 and 113.9 ms in
-  float64, and takes 12.8 ms and 18.9 ms with this entry and the draw's fused
-  uniforms; the first call of a draw of 1000, compiling included, took about
-  200 ms and 420 ms, and takes 115 ms and 85 ms. The sine of `2^20` values
-  read from a buffer took 62 ms in float32 and 202 ms in float64, its first
-  call about 370 ms and 1200 ms, and takes 22.7 ms and 79 ms, its first call
-  180 ms and 510 ms; the cosine likewise. To re-measure on fudge: rune's
-  `Jit/sin-bounded-float32-64K` row, a sine of angles a `tanh` bounds, read
-  net of `Jit/tanh-float32-64K`, is slower there than `Jit/sin-float32-64K`,
-  so no fudge row shows the gain. The 8-bit half of the
+  the Payne-Hanek reduction for angles below `2 pi`. On fudge, with float
+  operations unbounded and `xsin` choosing at run time as tinygrad's do
+  (two interleaved runs each, with the entry then without), rune's
+  `Jit/normal-float32-1M`, `2^20` draws, takes 2.8 and 2.6 ms against 4.3
+  and 4.1 ms (medians of 11), and the compile bench's first calls of a draw
+  of 1024, `rng/normal-f32` and `rng/normal-f64`, take 0.75 and 0.30 s, and
+  1.15 and 0.44 s, against 0.78 and 0.59 s, and 2.10 and 0.90 s (medians of
+  3). `Jit/sin-bounded-float32-64K`, a sine of angles a `tanh` bounds, shows
+  no difference beyond its ranges. The 8-bit half of the
   bounds (a float without infinities is unbounded) has no rune consumer
   since rune stores the 8-bit floats as `uint8` (D62).
 - **Pinned by:** the Ops suite (`test/uop/ops`): `bounds › bounds hold every
@@ -1932,9 +1931,11 @@ unrolled reduce`).
   to 479; symo's tutorial step on kimchi took 962 ms and 161 ms. The cost is
   memory: attention keeps its exponentials, one more buffer the size of the
   scores (tokens by tokens by heads) while the call runs, at every length;
-  at 2048 tokens 1.10 GB and 2.17 GB were allocated. To re-measure on fudge:
-  no fudge bench row times it (kaun's `GptOss/prefill-512` times it on
-  nonnormal; fudge's row holds its allocated words alone).
+  at 2048 tokens 1.10 GB and 2.17 GB were allocated. On fudge's RTX 5000 Ada
+  (gpt-oss's bench, `kaun/examples/06-gpt-oss/bench`, medians of 11, two
+  interleaved runs each, with the rule then without), `GptOss/prefill-512`
+  takes 185 ms against 228 ms in both runs, and
+  `GptOss/decode-step-cache-1024` 10.2 ms against 14.1 and 14.2 ms.
 - **Pinned by:** the Rangeify suite's `swiglu_down`, `attention`,
   `exp_dead_axis` (a kept exponential of a row expanded to a matrix is
   stored as the row), `exp_cheap_consumer` (a value that reads a kept
@@ -2020,9 +2021,12 @@ cubins. As tinygrad's `renderer/cstyle.py:426`,
   split by hand into 32 blocks on kimchi's 8 E-cores (`taskset -c 6-13`, best
   of 30), took 6.17 ms and 0.77 ms (r_256_8_4_4_32_4), 3.38 and 0.42
   (r_32_32_4_4_128_16), 0.28 and 0.04 (r_256_3_3_100_4) and 17.8 and 2.83
-  (r_128_64_3_4_400_100_4). To re-measure on fudge; the tolk bench's `lorenz`
-  rows run lorenz_simple's host kernels through the engine there (unverified
-  that their loops split). tinygrad deleted its CPU threading (`OptOps.THREAD`)
+  (r_128_64_3_4_400_100_4). On fudge, against one block (medians of 11, two
+  interleaved runs each), the tolk bench's
+  `lorenz/r_128_16_3_4_4_3_3_400_400/heuristic` takes 0.79 and 0.63 ms
+  against 5.85 and 6.04 ms, and rune's `Jit/sin-float32-64K` 82 and 74 us
+  against 360 and 356 us, `Jit/normal-float32-1M` 2.8 and 2.6 ms against
+  16.9 ms. tinygrad deleted its CPU threading (`OptOps.THREAD`)
   at 4197f7423, before the pin.
 - **Pinned by:** the Codegen suite: `host programs in blocks › a host program
   splits the loop each store's address reads`, `› a split loop's estimates
@@ -2331,12 +2335,9 @@ Withdrawn: multi-device is out of scope, see README.
   variables that the schedule reads, where it listed every variable of the
   run.
 - **Reason:** (c): rig's program takes words and holes (D146), which a link
-  resolves once. And (d): symo's tutorial step on the CPU (outside the
-  repository) runs 2,273 host launches, mostly inside the ranges of its
-  staged scans. Resolving a launch on each run cost about 5 us on an M1 Max,
-  for kernels of 0.3 to 40 us: a jitted scan of 256 small steps (1,024
-  launches) took 5.13 ms and took 0.27 ms resolved at link. To re-measure on
-  fudge, where rune's `JitLoops/*-replay` rows replay compiled scans.
+  resolves once. Speed is not a reason: tinygrad's resolution on each run
+  has no path through rig's program to time against, so no fudge row can
+  show what resolving at link saves.
 - **Pinned by:** the Tolk_engine suite (`test/engine/tolk_engine`): `link and
   run › a linked scan carries its storage across runs on each run's
   parameters`, `› a scan runs its body once per trip, carrying in place`, `› a
@@ -2443,12 +2444,12 @@ host's accumulators in its vector registers.
   the slices it took 28.0 s and 218M words, and 16.4 s and 73M words with
   the operation sets. A condition built before a long chain of selections
   still makes each search walk the chain below it, which the gate
-  spares when the branches read memory: the jitted training step of a model
-  of 2031 kernels spent 3 s of its 10 s schedule in the search. To
-  re-measure on fudge. rune's `Jit/jit-run-chain` times warm runs and cannot
-  catch it; rune's compile bench row `shaped-4k`, a cold compile of 4k
-  operations in regions of selections, is the nearest fudge row (unverified
-  that it catches the square).
+  spares when the branches read memory. On fudge, with each node's boolean
+  set and whole slice kept as tinygrad keeps them, the load gate kept, rune's
+  compile bench row `special/betainc-chain-f32` compiles in 2.99 and 2.70 s
+  against 8.05 and 7.75 s (medians of 3, two interleaved runs each);
+  `shaped-4k` and `trig/sin-nested-8` show no difference beyond their
+  ranges.
 - **Pinned by:** rune's compile bench row `special/betainc-chain-f32`; the
   Symbolic suite (`test/uop/symbolic`): `symbolic › selections › a condition
   over a load of several elements is not folded in the branches`, `› a
@@ -2514,7 +2515,12 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
   In GPT-2 124M's float16 step (`kaun/examples/04-gpt2`) on an M1 Max's Metal,
   five kernels each reduced all 148 gradients again: the scale and its
   counters, and the embedding updates, about 14 ms a step. Stored, one kernel
-  reduces them. To re-measure on fudge: no fudge bench row holds it.
+  reduces them. On fudge's RTX 5000 Ada, rune's
+  `Cuda/finite-selects-148-float16`, the check of 148 float16 gradients
+  selecting each, takes 295 and 302 us against 5.0 ms in both runs (medians
+  of 11, two interleaved runs each). On the host, vega's `Loss_scale/step/1024`, whose
+  check of one large gradient splits its reduction, shows no difference
+  beyond its ranges.
 - **Pinned by:** the Rangeify suite's `sum_all_broadcast` and
   `finite_checks` rows of `kernel_counts.golden` and their kernel goldens,
   and its `reduce_expand_child` and `preserve_multistage_reduce` rows; the
@@ -2543,8 +2549,11 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
 - **Reason:** (d): the kernel of D100's `finite`. Grouped on its first
   reduction, each of its 16 threads ran the other 147 whole. In GPT-2
   124M's float16 step on an M1 Max's Metal the kernel took 3.1 ms and takes
-  0.77 ms; 200 checks of float16 vectors, from 3.6 ms to 0.90 ms. To
-  re-measure on fudge: no fudge bench row holds it.
+  0.77 ms; 200 checks of float16 vectors, from 3.6 ms to 0.90 ms. On fudge's
+  RTX 5000 Ada, rune's `Cuda/finite-of-148-float16`, the check of 148
+  float16 gradients of 256 to 2048 values, takes 174 and 165 us against 1.45
+  ms in both runs with the group on the first reduction alone (medians of
+  11, two interleaved runs each).
 - **Pinned by:** the Postrange suite's cases `sibling_sums_group` (a
   reduction the amount does not divide stays out), `ten_sums_group` (eight
   of ten buffers fit) and `single_kernel_softmax_group` (the sum that reads
@@ -2609,8 +2618,10 @@ verification on the expand, as there.
   values of `bfloat16`: twice the bytes, and a `float32` load, which no CUDA
   tensor core multiplies. Stored narrow, the output projection of a 512-token
   prefill on an RTX 5000 Ada runs on the tensor cores in 0.30 ms where it took
-  2.34 ms, and the scores in 0.29 ms where they took 0.87 ms. To re-measure
-  on fudge: no fudge bench row holds it.
+  2.34 ms, and the scores in 0.29 ms where they took 0.87 ms. On fudge,
+  gpt-oss's bench row `GptOss/prefill-512` takes 185 ms against 955 and
+  958 ms with each stage stored at its committed type (medians of 11, two
+  interleaved runs each).
 - **Pinned by:** the Heuristic suite's `projection_of_stored` kernel, whose
   golden reads the stored attention output as `bfloat16`, and its cases
   `projection_of_stored_{metal,cuda,amd}` (the tensor cores apply), recorded
@@ -2695,8 +2706,10 @@ verification on the expand, as there.
   router went from 37.1 us to 6.8 us, the key and value projections from
   22.1 us to 9.4 us, the gate and up product from 113.9 us to 73.1 us (54%
   to 84% of the bandwidth), and the step's kernels from 11.94 ms to 9.73 ms.
-  The 512-token prefill keeps its kernels and its 0.71 s. To re-measure on
-  fudge: no fudge bench row holds it.
+  The 512-token prefill keeps its kernels and its 0.71 s. On fudge,
+  gpt-oss's bench row `GptOss/decode-step-cache-1024` takes 10.2 ms against
+  11.3 and 11.2 ms without the rule (medians of 11, two interleaved runs
+  each).
 - **Pinned by:** the Rangeify suite's `normed_vecmat` (a normalised vector
   read by a product), `normed_vecmats` (by two products, stored once) and
   `normed_matmul` (a normalised matrix, inlined) rows of
@@ -2896,9 +2909,13 @@ encodes its barriers (D146).
 - **Reason:** (d): a beam search of lorenz_simple's step (`Rune.jit ~beam`)
   on AMD. The candidates past the cap are the largest unrolls, the slowest to
   compile, and compiling them took 154 s of a search, 30 s once they were
-  dropped before compiling. To re-measure on fudge: no fudge bench row times
-  a whole search; the tolk bench's `search/linearize/*` rows time the
-  linearization each candidate pays.
+  dropped before compiling. On fudge, the tolk bench's
+  `search/beam/r_128_16_3_4_4_3_3_400_400`, a whole search of lorenz's kernel
+  on the host whose candidates Clang compiles uncached, over rounds a timing
+  of their optimisations fixes, whose last rounds drop candidates past the
+  cap, takes 0.47 to 0.59 s in five of six runs and 1.26 s in one under load
+  (medians of 11, interleaved runs), against 0.71 to 1.58 s in seven when
+  each candidate compiles before the cap drops it.
 - **Pinned by:** `Tolk.Search › BEAM_PADTO=1 ... › a candidate of
   BEAM_UOPS_MAX instructions or more is not compiled`; `Tolk.Codegen ›
   linearize and compile › compile completes linearize into the program
@@ -3011,8 +3028,11 @@ AMD's packet layouts were nx.amd.packet's. tolk encodes no packet (D146).
   byte loads: gpt-oss-20b's gate and up product of 512 tokens on an M1
   Max's Metal took 42.6 ms and takes 36.4 ms, as fast as a gather of the
   decoded matrices. Within one kernel, the bitcast hid the clamp's bounds
-  from the check. Measured on the Mac; to re-measure on fudge, where kaun's
-  decode bench row `Quant/cuda/routed-product-512-tokens` has no baseline.
+  from the check. On fudge's RTX 5000 Ada, gpt-oss's bench row
+  `GptOss/experts-at-prefill-512`, one layer's routed MXFP4 experts at 512
+  tokens, takes 4.55 and 4.60 ms against 5.61 ms in both runs without the
+  stored bounds, and `GptOss/prefill-512` 185 ms against 198 and 199 ms
+  (medians of 11, two interleaved runs each).
 - **Pinned by:** the Rangeify suite's `index_stored_zero_fill` gather, whose
   `_kernels` golden reads the stored indices with bounds `(0, 7)` and keeps
   no check; the Ops suite's `› bounds › bounds hold every value a bitcast
@@ -3345,7 +3365,10 @@ driver signals its own (D146).
   104 grid in its radius, which 28 operations broadcast, was one kernel of 28
   loops, each computing the whole cell, and took 647-672 ms compiled against
   93-171 ms eagerly on an M1 Max under load 11-15; one loop takes 30-31 ms.
-  Measured on the Mac; to re-measure on fudge, where no bench row holds it.
+  On fudge, rune's `Jit/grad-broadcast-radius-float64-104x104`, the gradient
+  in a radius that 28 operations broadcast over a grid, takes 215 and 224 us
+  as one loop against 383 and 358 us as 28 (medians of 11, two interleaved
+  runs each).
 - **Pinned by:** for stores, the Rangeify suite (`test/schedule/rangeify`):
   `get_kernel_graph › outputs that share a computation` (every test, `slices
   of one product through two views run as two kernels`, `slices that also
@@ -3550,9 +3573,15 @@ driver signals its own (D146).
   lanes stay apart, where each is computed once. With D188, the
   host's products of a checkpoint's codes run 1.7-3.6 times as fast for one
   token's routed product and 2.4-3.3 times for a dense one, on an M1 Max
-  (alternated under load). These were measured on kimchi and the Mac; to
-  re-measure on fudge, where kaun's `Quant/host/*` rows hold baselines with
-  the rule and none without.
+  (alternated under load). On fudge (medians of 11, two interleaved runs
+  each), kaun's `Quant/host/mxfp4-product-1-token` takes 0.91 and 0.84 ms
+  against 5.03 and 4.53 ms with a load filling one lane, and 6.20 and 5.62 ms
+  with every lane apart; `Quant/host/routed-product-1-tokens` 5.0 and 4.1 ms
+  against 15.3 and 21.0 ms, and 38.6 and 27.2 ms. Every lane apart, rune's
+  `Jit/sin-float32-64K` takes 806 and 139 us against 82 and 74 us, the tolk
+  bench's `lorenz/r_128_16_3_4_4_3_3_400_400/heuristic` 3.2 and 1.8 ms
+  against 0.79 and 0.63 ms, and the compile bench's `trig/sin-nested-8` 1.98
+  and 1.91 s against 0.74 and 0.46 s (medians of 3).
   A matmul's upcast products read their loads, or
   the lanes of a loaded vector, in each lane's multiply-add
   (`clang_matmul_upcasted*`). They computed a vector product of their shared
@@ -4549,9 +4578,8 @@ fold wraps integers and holds its float bound`, hold.
   of a sample of those kernels (265 of 604, Clang 18 for the host): it stays
   on wherever it is correct.
 
-  (d), the loop vectorizer, measured on fudge loaded, to re-measure quiet:
-  rune's test_special timed out at 60 s on Ubuntu CI compiling float64
-  `betainccinv`'s gradients. Each is one scalar loop
+  (d), the loop vectorizer: rune's test_special timed out at 60 s on Ubuntu
+  CI compiling float64 `betainccinv`'s gradients. Each is one scalar loop
   kernel, `E_1021`, of 1.3 MB of C; the loop vectorizer weighs every width
   against the whole body, and its time grows faster than the body (about
   n^2.4 on 4-lane kernels). On fudge at load 40-55, Clang 19.1.7 took 19.7 s
@@ -4580,8 +4608,9 @@ fold wraps integers and holds its float bound`, hold.
   `Tolk.Compiler_cpu › features › a loop over a count it takes is packed
   into vectors iff its source is at most 400000 bytes long:` (rows 400000 and
   400001 among them); rune's compile bench `special/betainccinv-grad-f32`, the float32
-  gradient of test_special (914 KB, Clang 11.0 s against 4.4 s loaded), its
-  baseline on fudge pending a quiet run.
+  gradient of test_special (914 KB), whose first call takes 3.88 and 4.48 s
+  on fudge against 6.57 and 6.66 s with the loop vectorizer (medians of 3,
+  two interleaved runs each).
 
 ## D168. The renderer finds a program's callees by a scan of its instructions
 
@@ -4842,7 +4871,7 @@ fold wraps integers and holds its float bound`, hold.
   Skipping the core in place of its splits is slower on each: 26 to 36 us, 2025
   us, 365 us. Thresholds of 64 and 128 choose as 100 does on every kernel of the
   step. Metal and AMD take the same rule; the kernels it changes there are to
-  re-measure (AMD on nonnormal).
+  measure on a Mac's GPU and on nonnormal's R9700, which fudge lacks.
 - **Pinned by:** `Tolk.Heuristic`'s cases, on CUDA: `matmul_half_1024` (every
   split applies), `matmul_half_512` (both upcasts), `matmul_half_256` (the
   upcast of M alone), `attention_values` (none) and `matmul_half_variable` (a
