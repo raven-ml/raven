@@ -1520,8 +1520,19 @@ let core_threads =
     let* e = int_range 0 20 in
     int_range (1 lsl e) ((1 lsl (e + 1)) - 1))
 
+(* A kernel, half of the draws one whose count of workgroups is not known,
+   which few kernels have. *)
 let case_and_floor =
-  Gen.pair (Gen.int_range 0 (Array.length core_kernels - 1)) core_threads
+  let symbolic i =
+    match workgroups (fst (snd core_kernels.(i))) with
+    | Sym _ -> true
+    | Int _ -> false
+  in
+  let known, unknown =
+    List.partition (fun i -> not (symbolic i))
+      (List.init (Array.length core_kernels) Fun.id)
+  in
+  Gen.pair (Gen.one_of [ Gen.of_list known; Gen.of_list unknown ]) core_threads
 
 (* The floor governs a core whose operands are not staged; a staged core
    takes its own tile. *)
