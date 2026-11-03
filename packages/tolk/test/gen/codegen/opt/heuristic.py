@@ -256,9 +256,9 @@ def mxfp4(n, k, dtype):
     return (values.reshape(n, k // 32, 32) * scales.reshape(n, k // 32, 1)).reshape(n, k).cast(dtype)
 
 
-def decoded_rows(rows, dtype):
-    """`rows` rows of `dtype` by an MXFP4 matrix of 16384 by 16384 decoded to `dtype`, each operand widened to float32."""
-    x, w = empty(rows, 16384, dtype=dtype), mxfp4(16384, 16384, dtype)
+def decoded_rows(rows, dtype, n=16384, k=16384):
+    """`rows` rows of `dtype` by an MXFP4 matrix of n by k decoded to `dtype`, each operand widened to float32."""
+    x, w = empty(rows, k, dtype=dtype), mxfp4(n, k, dtype)
     return last((x.float() @ w.float().T).cast(dtype))
 
 
@@ -267,6 +267,9 @@ def decoded_rows(rows, dtype):
 DECODED = {f"decoded_rows_{rows}_{name}": (lambda rows=rows, dtype=dtype: decoded_rows(rows, dtype))
            for rows in [1, 2, 12, 16, 17, 32, 64, 128, 256, 512]
            for name, dtype in [("bfloat16", dtypes.bfloat16), ("half", dtypes.half), ("float", dtypes.float)]}
+# the same at 32 by 128, small enough for the suite to evaluate: rows padded into passes (17, 19) and float32 rows streamed past 32
+DECODED.update({f"decoded_small_{rows}_{name}": (lambda rows=rows, dtype=dtype: decoded_rows(rows, dtype, 32, 128))
+                for rows, name, dtype in [(17, "bfloat16", dtypes.bfloat16), (19, "half", dtypes.half), (64, "float", dtypes.float)]})
 
 CASES = []
 

@@ -1180,6 +1180,9 @@ codegen/opt/heuristic/decoded_rows_512_half.golden
 codegen/opt/heuristic/decoded_rows_64_bfloat16.golden
 codegen/opt/heuristic/decoded_rows_64_float.golden
 codegen/opt/heuristic/decoded_rows_64_half.golden
+codegen/opt/heuristic/decoded_small_17_bfloat16.golden
+codegen/opt/heuristic/decoded_small_19_half.golden
+codegen/opt/heuristic/decoded_small_64_float.golden
 codegen/opt/heuristic/exp_double.golden
 codegen/opt/heuristic/exp_double_avx2.golden
 codegen/opt/heuristic/exp_double_cpu.golden

@@ -1316,10 +1316,13 @@ let hand_coded_with ~core_threads k =
   let s = streams k in
   let stream s = stream (K.copy k) s in
   let early = match s with Some s when early k s -> stream s | _ -> None in
+  (* Past [stream_first] a decoded operand streams too: the other rules share
+     only their upcast of 4 rows, and decode each value in every other tile,
+     16 times at 64 rows. *)
   let late () =
     match s with
-    | Some ((_, _, reuse) as s) when Bigint.(leq reuse (of_int stream_first))
-      ->
+    | Some ((w, _, reuse) as s)
+      when Bigint.(leq reuse (of_int stream_first)) || decoded w ->
         stream s
     | _ -> None
   in

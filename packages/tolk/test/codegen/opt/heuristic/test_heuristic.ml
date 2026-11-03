@@ -1215,7 +1215,7 @@ let decode_bound =
   prop
     "a GPU kernel decodes a value R rows read at one index at most \
      ceil(R / 16) times its core's copies"
-    ~count:0 ~max_discard:(List.length rows) ~examples:rows (Gen.of_list rows)
+    ~count:0 ~examples:rows (Gen.of_list rows)
     (fun ((rows, dtype), (gpu, ren)) ->
       let s =
         K.v
@@ -1228,9 +1228,9 @@ let decode_bound =
         List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts o)
       in
       let copies = fragment_copies o in
-      assume (cored || streams o);
       cover "a tensor core" cored;
       cover "streamed" (streams o);
+      cover "streamed past 32 rows" (streams o && rows > 32);
       cover "rows padded"
         (List.exists (function Opt.Padto _ -> true | _ -> false)
            (K.applied_opts o));
@@ -1241,6 +1241,48 @@ let decode_bound =
              (Format.pp_print_list Opt.pp) (K.applied_opts o))
         ~than:((rows + 15) / 16 * copies)
         (loading o * copies))
+
+(* Rows padded into passes and float32 rows streamed compute what the kernel
+   computes: small decoded products, which the suite evaluates, on each GPU
+   renderer but on a tensor core, whose product it cannot evaluate. *)
+let decoded_writes =
+  let rows =
+    List.concat_map
+      (fun name -> List.map (fun g -> (name, g)) gpus)
+      [
+        "decoded_small_17_bfloat16";
+        "decoded_small_19_half";
+        "decoded_small_64_float";
+      ]
+  in
+  cases "a decoded product's optimisations keep its writes"
+    ~id:(fun (name, (gpu, _)) -> name ^ " on " ^ gpu)
+    rows
+    (fun (name, (_, ren)) ->
+      let ren = Lazy.force ren in
+      let s = K.v (kernel name) ren in
+      K.convert_loop_to_global s;
+      let applied = K.applied_opts (Heuristic.hand_coded_optimizations s) in
+      let padded =
+        List.exists (function Opt.Padto _ -> true | _ -> false) applied
+      in
+      (* 17 and 19 rows take 2 passes of 9 and 10, padded *)
+      if name <> "decoded_small_64_float" then
+        equal Testable.bool ~msg:"rows padded" true padded;
+      let o =
+        Setting.context
+          [ Setting.B (Setting.no_color, true) ]
+          (fun () ->
+            Postrange.apply_opts ~hand_coded:Heuristic.hand_coded_optimizations
+              (kernel name) ren)
+      in
+      let cored =
+        List.exists
+          (fun u -> Ops.op u = Op.Wmma)
+          (Ops.toposort ~calls:Skip o)
+      in
+      if not cored then
+        equal (list Kernel_opts.write) (writes (kernel name)) (writes o))
 
 let () =
   exit
@@ -1262,4 +1304,5 @@ let () =
            [ held_cases; budget; more_registers; doubles ];
          group "the tensor core's floor" [ floored; monotone ];
          decode_bound;
+         decoded_writes;
        ])

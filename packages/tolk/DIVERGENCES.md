@@ -2291,7 +2291,8 @@ Withdrawn: multi-device is out of scope, see README.
     of 16384 by 4096) to `R = 1024` (a 1024-cube product, 1054 against 398
     us). Narrower operands streamed faster than tiled to `R = 256` in a model
     of the kernel on tinygrad at the pin, on matrices past L2, which no tolk
-    row confirms: they take the other rules past 32 until one does;
+    row confirms: they take the other rules past 32 until one does. A
+    decoded operand streams at any reuse (D230);
   - unchanged: `stream/dense-bf16-1`, `stream/mxfp4-1`, `stream/decode-head`,
     `stream/q8_0-64`, kaun's `mxfp4-product-1-token` and
     `routed-product-1-tokens`;
@@ -4471,9 +4472,11 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   tokens runs 18.6-18.8 ms against 47.4-47.9; its inlined products are
   streamed (`Setting.mv`), and on the tensor cores, with streaming off, the
   layer takes 4.5 ms against 79.5; D89's order by multiply-adds per byte now
-  takes them to the cores (4.66-4.68 ms). The float32 rows' loss stands: no
-  core applies, and past a reuse of 32 the general rules decode in each
-  tile. The cost is the host's, whose tiles
+  takes them to the cores (4.66-4.68 ms). Of float32 rows, which no core
+  takes on CUDA, the general rules shared only their upcast of 4 rows and
+  decoded each value 16 times at 64 rows; streamed past a reuse of 32
+  (D230), 64 rows take 4.98-6.68 ms, under the stored decode's 9.6. The
+  cost is the host's, whose tiles
   share 3 or 4 lanes of a digit or none, so an inlined decode runs about 4
   times a value per 16-row block and 10 to 15 times in a dense product: at
   a load of 67 to 76, MXFP4 products of 1024 by 1024 take 1.5-2.5 ms
@@ -6139,7 +6142,8 @@ fold wraps integers and holds its float bound`, hold.
   `:111-137` (the upcasts of output axes by 3 or 4); it streams nothing
   (D89), and states no bound on how often a kernel computes a value its
   outputs share.
-- **tolk:** `Heuristic.stream`'s upcast of the reuse ranges;
+- **tolk:** `Heuristic.stream`'s upcast of the reuse ranges and
+  `Heuristic.hand_coded_with`'s late stream of a decoded operand;
   `test/gen/tinygrad.patch`, which gives tinygrad the same.
 - **Differs:** rangeify inlines a decoded value that rows read at one index
   as one copy (D163), so the codegen owes the sharing that count assumes:
@@ -6154,16 +6158,25 @@ fold wraps integers and holds its float bound`, hold.
   to 16, as before. The streamed layout upcasts such an axis of `f` outputs into
   `ceil(f / 16)` passes of as many outputs, padding the axis where they do
   not divide it, where it took the largest divisor of `f` up to 16: 17 rows
-  take 2 passes of 9, padded to 18, where they took 17 of 1. The host is
-  exempt: its tiles share 3 or 4 lanes (D163's Reason).
+  take 2 passes of 9, padded to 18, where they took 17 of 1. Past a reuse
+  of 32, where no core applies, a decoded operand streams, where it took
+  the other rules, which share only their upcast of 4 rows: 64 float32 rows
+  decoded each value 16 times, and take 4. The host is exempt: its tiles
+  share 3 or 4 lanes (D163's Reason).
 - **Reason:** (d): MXFP4 products of 16384 by 16384 on fudge's RTX 5000 Ada
   (kaun's `Quant/cuda/mxfp4-product-of-16384-*`, three interleaved rounds
   under the timing lock, GPU shared with other jobs): 17 bfloat16 rows
-  4.58-11.91 ms to 1.07-3.28 ms; 12, 16, 32, 64, 128 and 256 bfloat16 rows
-  and 64 float32 rows unchanged within noise. nonnormal's R9700 rows are
-  pending.
+  4.58-11.91 ms to 1.07-3.28 ms; 64 float32 rows, streamed, 14.8-20.0 ms to
+  4.98-6.68 ms (12.5-12.9 in quieter rounds before), past the stored
+  decode's 9.6; 12, 16, 32, 64, 128 and 256 bfloat16 rows unchanged within
+  noise. Larger float32 counts are not benched. nonnormal's R9700 rows are
+  pending, among them 64 float32 rows, where a model of its decode cost
+  puts 4 decodes a value at about 43 ms against 31 stored.
 - **Pinned by:** the Heuristic suite's `a GPU kernel decodes a value R rows
   read at one index at most ceil(R / 16) times its core's copies`, over
   decoded products of 1 to 512 rows of bfloat16, half and float32 on the
   CUDA, RDNA3, RDNA4, CDNA and Metal renderers, from the equally patched
-  tinygrad; kaun's `Quant/cuda/mxfp4-product-of-16384-17-bfloat16-tokens`.
+  tinygrad, and its `a decoded product's optimisations keep its writes`
+  (17 and 19 rows padded, 64 float32 rows streamed, evaluated); kaun's
+  `Quant/cuda/mxfp4-product-of-16384-17-bfloat16-tokens` and
+  `-64-float32-tokens`.

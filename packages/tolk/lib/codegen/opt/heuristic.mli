@@ -46,7 +46,8 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       With {!Setting.tc_min_globals}, [M] is upcast and [N] split locally
       whatever the workgroups, and [N] is upcast only while that many
       workgroups remain;
-    - {b streaming}, when the reuse is at most 32;
+    - {b streaming}, when the reuse is at most 32, or the streamed operand is
+      decoded, whatever its reuse;
     - {b grouping}: when the upcastable axes hold at most 2048 elements, the
       first of the first three reduce axes that splits by 16 into local threads
       from the top; nothing more is applied then.
@@ -87,14 +88,19 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     core's floor, 32768 threads is [sm_89]'s bound, fixed for every target.
 
     {b Decodes.} On a GPU, an operand decoded from integers, one whose value
-    converts integers it reads into floats, that [R] outputs along an axis it
-    does not read read at one index, as every row of a product reads its
-    matrix, is decoded at most [ceil (R / 16)] times a value when the kernel
-    streams or takes a tensor core: a thread's upcast or a core's [M] with its
-    upcast holds up to 16 of the outputs, and each pass over the others decodes
-    it again. A core whose fragment holds each value of the operand in several
-    lanes ({!Tc.fragment}), as RDNA3's holds its [B] in two, decodes it that
-    many times more. The host is exempt: its tiles share 3 or 4 lanes.
+    converts integers it reads into floats, that reads every output axis but
+    one, along which its [R] outputs read it at one index, as every row of a
+    product reads its matrix, is decoded at most [ceil (R / 16)] times a
+    value when the kernel streams or takes a tensor core whose upcast of
+    those rows applies, as it does wherever the streamed layout applies: a
+    thread's upcast or a core's rows with their upcast hold up to 16 of the
+    outputs, and each pass over the others decodes it again. The other rules
+    share only their upcast of 4 rows, so a decoded operand streams past a
+    reuse of 32. A core whose floor refuses the upcast decodes it once a tile
+    of its rows: [ceil (R / 8)] times on a core of 8 rows, as Metal's. A core
+    whose fragment holds each value of the operand in several lanes
+    ({!Tc.fragment}), as RDNA3's holds its [B] in two, decodes it that many
+    times more. The host is exempt: its tiles share 3 or 4 lanes.
 
     Otherwise, in order:
 

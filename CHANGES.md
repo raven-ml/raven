@@ -943,6 +943,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On a GPU, `Heuristic` streams a decoded operand past 32 rows where no
+  tensor core applies, where the other rules decoded each value once every
+  4 rows: an MXFP4 product of 64 float32 rows runs 3 times faster on an RTX
+  5000 Ada, faster than storing the decoded matrix.
 - On a GPU, `Heuristic` decodes a value that `R` rows read at one index at
   most `ceil(R / 16)` times where it streams, padding the rows where 16
   divides them unevenly: an MXFP4 product of 17 bfloat16 rows runs 3 to 4
