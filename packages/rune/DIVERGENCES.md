@@ -526,13 +526,15 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 ### R4. Arg-reductions match bits
 
-- **Reference:** `mixin/op.py:886` (`argmax`), `:913` (`argmin`).
+- **Reference:** `mixin/op.py:886` (`argmax`), `:913` (`argmin`), `:821`
+  (`cummax`), `:839` (`cummin`).
 - **Raven:** `lower_reduce.ml` (`same`, `position`, `changes`).
 - **Differs:** the extreme is R3's; its position is that of the first term
   with its bits, or with a NaN where it is a NaN. tinygrad's equality with the
-  maximum never holds for a NaN and holds for both zeros. A running arg, which
-  tinygrad has no source for, is at each position the last one up to it where
-  the running extreme changes its bits.
+  maximum never holds for a NaN and holds for both zeros. A running arg is at
+  each position the last one up to it where the running extreme changes its
+  bits, the first term with them; tinygrad's `cummax` gives the last term up
+  to it equal to the running maximum, by the same equality.
 - **nx:** `nx_kernel.mli`, `Arg`: the first NaN, else the first extreme term.
 - **Class:** exact.
 - **Reason:** (b).
