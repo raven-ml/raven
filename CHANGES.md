@@ -1771,6 +1771,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_kernel.Prog.E.cast` into an expression's own dtype is that
+  expression, so a program holds no Cast that computes nothing: a kind
+  cast into its own dtype is one node, which a kernel library may run as
+  its kind alone.
 - `Nx.unique` without `~size`, on keys of few values, ranks the values by
   their first keys and numbers the keys from those ranks, in four passes over
   the keys where it took thirteen. Grouping a million int32 keys of 100

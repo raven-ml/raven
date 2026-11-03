@@ -2075,11 +2075,8 @@ let matmul_by ~by a b = Contraction.matmul ~by a b
 (* Operand [k] of a map, the load of [x]. *)
 let operand k x = E.input k (dtype x)
 
-(* [x] rounded once to [dt]: itself at [dt]. *)
-let at (type v s w r) (dt : (v, s) D.t) (x : (w, r) E.t) : (v, s) E.t =
-  match D.equal_witness (E.dtype x) dt with
-  | Some Type.Equal -> x
-  | None -> E.cast dt x
+(* [x] rounded once to [dt]: itself at [dt], as {!E.cast} gives it. *)
+let at dt x = E.cast dt x
 
 (* The map [out] over [xs] broadcast together, its one result of [dt]: its
    operand [k] reads [xs]' element [k]. One pass over the operands. *)

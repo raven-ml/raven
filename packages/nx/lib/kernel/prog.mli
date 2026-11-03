@@ -461,7 +461,8 @@ module E : sig
       Each function makes the node of the kind it names: [sqrt x] is
       [op1 (Unary Sqrt) (dtype x) x], [rem x y] is [binary Mod x y],
       [less x y] is [compare Less x y], [cast dt x] is [op1 Cast dt x] and
-      [where c x y] is [op3 Where c x y]. *)
+      [where c x y] is [op3 Where c x y]; but [cast dt x] is [x] itself
+      where [dt] is {!dtype}[ x], a cast that computes nothing. *)
 
   val neg : ('v, 's) t -> ('v, 's) t
   val recip : ('v, 's) t -> ('v, 's) t

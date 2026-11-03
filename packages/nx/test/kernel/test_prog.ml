@@ -1247,6 +1247,7 @@ let test_exprs_kind_functions () =
   same "logxor" (P.E.any (P.E.logxor w w)) (P.E.any (P.E.binary Xor w w));
   same "copy" (P.E.any (P.E.copy x)) (P.E.any (P.E.op1 Copy D.Float32 x));
   same "cast" (P.E.any (P.E.cast D.Int8 x)) (P.E.any (P.E.op1 Cast D.Int8 x));
+  same "cast into its own dtype" (P.E.any (P.E.cast D.Float32 x)) (P.E.any x);
   same "bitcast" (P.E.any (P.E.bitcast D.Int32 x)) (P.E.any (P.E.op1 Bitcast D.Int32 x));
   same "where" (P.E.any (P.E.where c x y)) (P.E.any (P.E.op3 Where c x y));
   same "fma" (P.E.any (P.E.fma x y x)) (P.E.any (P.E.op3 Fma x y x))

@@ -520,7 +520,13 @@ module E = struct
   let less x y = compare Less x y
   let less_equal x y = compare Less_equal x y
   let copy x = make1 Copy (dtype x) x
-  let cast dt x = make1 Cast dt x
+  (* A cast into its operand's own dtype is the operand: Cast computes
+     nothing there, and a node fewer lets a library run a kind alone
+     (single). *)
+  let cast (type v s w r) (dt : (w, r) D.t) (x : (v, s) t) : (w, r) t =
+    match D.equal_witness (dtype x) dt with
+    | Some Type.Equal -> x
+    | None -> make1 Cast dt x
   let bitcast dt x = op1 Bitcast dt x
   let where c x y = make3 Where (dtype x) c x y
   let fma x y z = op3 Fma x y z
