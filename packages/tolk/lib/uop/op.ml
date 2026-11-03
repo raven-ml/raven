@@ -159,81 +159,80 @@ let ops =
     Reduce;
   ]
 
-(* [info o] is the position of [o] in the declaration order and its name. *)
-let info = function
-  | Special -> (0, "SPECIAL")
-  | Buffer -> (1, "BUFFER")
-  | Alloc -> (2, "ALLOC")
-  | Noop -> (3, "NOOP")
-  | Param -> (4, "PARAM")
-  | Refparam -> (5, "REFPARAM")
-  | Call -> (6, "CALL")
-  | Program -> (7, "PROGRAM")
-  | Linear -> (8, "LINEAR")
-  | Source -> (9, "SOURCE")
-  | Binary -> (10, "BINARY")
-  | Sink -> (11, "SINK")
-  | After -> (12, "AFTER")
-  | Stack -> (13, "STACK")
-  | Getaddr -> (14, "GETADDR")
-  | Index -> (15, "INDEX")
-  | Shrink -> (16, "SHRINK")
-  | Load -> (17, "LOAD")
-  | Store -> (18, "STORE")
-  | Wmma -> (19, "WMMA")
-  | Cast -> (20, "CAST")
-  | Bitcast -> (21, "BITCAST")
-  | Exp2 -> (22, "EXP2")
-  | Log2 -> (23, "LOG2")
-  | Sin -> (24, "SIN")
-  | Sqrt -> (25, "SQRT")
-  | Recip -> (26, "RECIP")
-  | Neg -> (27, "NEG")
-  | Trunc -> (28, "TRUNC")
-  | Add -> (29, "ADD")
-  | Mul -> (30, "MUL")
-  | Shl -> (31, "SHL")
-  | Shr -> (32, "SHR")
-  | Truncdiv -> (33, "TRUNCDIV")
-  | Max -> (34, "MAX")
-  | Truncmod -> (35, "TRUNCMOD")
-  | Cmplt -> (36, "CMPLT")
-  | Cmpne -> (37, "CMPNE")
-  | Cmpeq -> (38, "CMPEQ")
-  | Xor -> (39, "XOR")
-  | Or -> (40, "OR")
-  | And -> (41, "AND")
-  | Threefry -> (42, "THREEFRY")
-  | Sub -> (43, "SUB")
-  | Fdiv -> (44, "FDIV")
-  | Pow -> (45, "POW")
-  | Div -> (46, "DIV")
-  | Mod -> (47, "MOD")
-  | Where -> (48, "WHERE")
-  | Mulacc -> (49, "MULACC")
-  | Barrier -> (50, "BARRIER")
-  | Range -> (51, "RANGE")
-  | If -> (52, "IF")
-  | End -> (53, "END")
-  | Endif -> (54, "ENDIF")
-  | Backedge -> (55, "BACKEDGE")
-  | Const -> (56, "CONST")
-  | Custom -> (57, "CUSTOM")
-  | Customi -> (58, "CUSTOMI")
-  | Ins -> (59, "INS")
-  | Contiguous_backward -> (60, "CONTIGUOUS_BACKWARD")
-  | Detach -> (61, "DETACH")
-  | Stage -> (62, "STAGE")
-  | Copy -> (63, "COPY")
-  | Custom_function -> (64, "CUSTOM_FUNCTION")
-  | Reshape -> (65, "RESHAPE")
-  | Permute -> (66, "PERMUTE")
-  | Expand -> (67, "EXPAND")
-  | Pad -> (68, "PAD")
-  | Reduce -> (69, "REDUCE")
+let name = function
+  | Special -> "SPECIAL"
+  | Buffer -> "BUFFER"
+  | Alloc -> "ALLOC"
+  | Noop -> "NOOP"
+  | Param -> "PARAM"
+  | Refparam -> "REFPARAM"
+  | Call -> "CALL"
+  | Program -> "PROGRAM"
+  | Linear -> "LINEAR"
+  | Source -> "SOURCE"
+  | Binary -> "BINARY"
+  | Sink -> "SINK"
+  | After -> "AFTER"
+  | Stack -> "STACK"
+  | Getaddr -> "GETADDR"
+  | Index -> "INDEX"
+  | Shrink -> "SHRINK"
+  | Load -> "LOAD"
+  | Store -> "STORE"
+  | Wmma -> "WMMA"
+  | Cast -> "CAST"
+  | Bitcast -> "BITCAST"
+  | Exp2 -> "EXP2"
+  | Log2 -> "LOG2"
+  | Sin -> "SIN"
+  | Sqrt -> "SQRT"
+  | Recip -> "RECIP"
+  | Neg -> "NEG"
+  | Trunc -> "TRUNC"
+  | Add -> "ADD"
+  | Mul -> "MUL"
+  | Shl -> "SHL"
+  | Shr -> "SHR"
+  | Truncdiv -> "TRUNCDIV"
+  | Max -> "MAX"
+  | Truncmod -> "TRUNCMOD"
+  | Cmplt -> "CMPLT"
+  | Cmpne -> "CMPNE"
+  | Cmpeq -> "CMPEQ"
+  | Xor -> "XOR"
+  | Or -> "OR"
+  | And -> "AND"
+  | Threefry -> "THREEFRY"
+  | Sub -> "SUB"
+  | Fdiv -> "FDIV"
+  | Pow -> "POW"
+  | Div -> "DIV"
+  | Mod -> "MOD"
+  | Where -> "WHERE"
+  | Mulacc -> "MULACC"
+  | Barrier -> "BARRIER"
+  | Range -> "RANGE"
+  | If -> "IF"
+  | End -> "END"
+  | Endif -> "ENDIF"
+  | Backedge -> "BACKEDGE"
+  | Const -> "CONST"
+  | Custom -> "CUSTOM"
+  | Customi -> "CUSTOMI"
+  | Ins -> "INS"
+  | Contiguous_backward -> "CONTIGUOUS_BACKWARD"
+  | Detach -> "DETACH"
+  | Stage -> "STAGE"
+  | Copy -> "COPY"
+  | Custom_function -> "CUSTOM_FUNCTION"
+  | Reshape -> "RESHAPE"
+  | Permute -> "PERMUTE"
+  | Expand -> "EXPAND"
+  | Pad -> "PAD"
+  | Reduce -> "REDUCE"
 
-let to_int o = fst (info o)
-let name o = snd (info o)
+external to_int : t -> int = "%identity"
+
 let equal (o : t) o' = o = o'
 let compare o o' = Int.compare (to_int o) (to_int o')
 

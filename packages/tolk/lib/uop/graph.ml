@@ -779,13 +779,20 @@ let to_string sink =
   let index, order = toposort sink in
   let index = Ops.Tbl.find index in
   let b = Buffer.create 4096 in
+  let int i = Buffer.add_string b (string_of_int i) in
   let line u =
-    let srcs = List.map (fun v -> string_of_int (index v)) (Ops.src u) in
-    Buffer.add_string b
-      (strf "%d %s %s [%s]" (index u)
-         (print index (op.write (Ops.op u)))
-         (print index (dtype.write (Ops.dtype u)))
-         (String.concat ", " srcs));
+    int (index u);
+    Buffer.add_char b ' ';
+    Buffer.add_string b (print index (op.write (Ops.op u)));
+    Buffer.add_char b ' ';
+    Buffer.add_string b (print index (dtype.write (Ops.dtype u)));
+    Buffer.add_string b " [";
+    List.iteri
+      (fun i v ->
+        if i > 0 then Buffer.add_string b ", ";
+        int (index v))
+      (Ops.src u);
+    Buffer.add_char b ']';
     Option.iter
       (fun v -> Buffer.add_string b (" " ^ print index v))
       (arg_value (Ops.arg u));

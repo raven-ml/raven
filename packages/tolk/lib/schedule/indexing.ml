@@ -118,19 +118,22 @@ let broadcast_rngs x s rngs =
            else [ r ])
          rngs)
 
+(* The operations whose sources hold no data, and those whose first alone
+   does. *)
+let no_data = Op.Set.union Op.Set.defines (ops Op.[ Range; Special ])
+
+let first_data =
+  Op.Set.union Op.Set.movement
+    (ops Op.[ Index; Stage; Reduce; After; End; Backedge; Copy ])
+
 (* The sources that hold data, as opposed to shapes, bounds and ranges. *)
 let data_srcs u =
   let op = op u and src = src u in
   let first = match src with s :: _ -> [ s ] | [] -> [] in
-  if Op.Set.mem op (Op.Set.union Op.Set.defines (ops Op.[ Range; Special ]))
-  then []
+  if Op.Set.mem op no_data then []
   else if op = Op.Index && is_gather_src src then src
   else if is_group u then (* every store is data *) src
-  else if
-    Op.Set.mem op
-      (Op.Set.union Op.Set.movement
-         (ops Op.[ Index; Stage; Reduce; After; End; Backedge; Copy ]))
-  then first
+  else if Op.Set.mem op first_data then first
   else src
 
 (* [s], a source of an indexed node read at [src_rngs] if [indexed]: storage
@@ -570,8 +573,8 @@ let merge_consumer_rngs rctx x consumer_rngs =
    third: where [b] reads [c] and [d] reads [a], the groups {a, b} and {c, d}
    would each run before and after the other. *)
 
-let computed u =
-  Op.Set.mem (op u) (Op.Set.union Op.Set.elementwise (ops [ Op.Reduce ]))
+let computing = Op.Set.union Op.Set.elementwise (ops [ Op.Reduce ])
+let computed u = Op.Set.mem (op u) computing
 
 (* Whether [s] computes [u] in its own kernel, as its value or a node that is
    neither stored nor always contiguous. *)
@@ -904,8 +907,7 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
       let out_rngs =
         if
           (not (List.is_empty !ending))
-          && Op.Set.mem (op x)
-               (Op.Set.union Op.Set.elementwise (ops [ Op.Reduce ]))
+          && computed x
         then begin
           ending := [];
           (* A value of no axes that computes a reduction is stored too, as one

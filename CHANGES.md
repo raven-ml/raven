@@ -1017,6 +1017,8 @@ word comes from its lock and from samples the dashboard saw arrive.
   each decoded it again: 10 and 64 rows by an MXFP4 matrix of 1024 by 1024
   run 1.5x and 1.2-1.35x faster on one core of AVX2, a prompt's routed
   experts 1.3x (`Heuristic.hand_coded_optimizations`).
+- Compiling float64 `Nx.betaincinv`'s gradient allocates 221 M words
+  against 234 M and runs 10% fewer instructions, with unchanged output.
 - On a GPU, a call or custom code runs once for each point of the axes its
   sources read: an axis it does not read takes no threads, which ran it once
   in each (`Postrange.Scheduler.unread_by_opaque`). `n[0] += 1` beside a

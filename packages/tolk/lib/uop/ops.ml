@@ -552,7 +552,7 @@ let rec slot sh hash op src arg i =
     &&
     match Weak.get sh.nodes i with
     | Some u ->
-        Op.equal u.op op && List.equal ( == ) u.src src && equal_arg u.arg arg
+        u.op = op && List.equal ( == ) u.src src && equal_arg u.arg arg
     | None -> false
   then i
   else slot sh hash op src arg ((i + 1) land ((1 lsl sh.log_size) - 1))
@@ -940,12 +940,12 @@ module Pool = struct
         c.a
     | Nil -> Array.make (1 lsl b) Ids.free
 
-  (* [ints n] filled with [Ids.free], by a loop: [Array.fill] checks each entry
-     as it would a pointer's. *)
-  let free_ints n =
+  (* [ints n] with its even entries [Ids.free], by a loop: [Array.fill] checks
+     each entry as it would a pointer's. *)
+  let free_pairs n =
     let a = ints n in
-    for i = 0 to Array.length a - 1 do
-      Array.unsafe_set a i Ids.free
+    for i = 0 to (Array.length a / 2) - 1 do
+      Array.unsafe_set a (2 * i) Ids.free
     done;
     a
 
@@ -988,7 +988,7 @@ module Local = struct
     let nodes = Pool.nodes (8 * width) in
     let rows = Array.length nodes / width in
     {
-      slots = Pool.free_ints 16;
+      slots = Pool.free_pairs 16;
       bits = 3;
       count = 0;
       rows;
@@ -1006,13 +1006,16 @@ module Local = struct
 
   let pair t id = probe t.slots ((1 lsl t.bits) - 1) id (Ids.slot t.bits id)
 
-  (* The number of [u], [Ids.free] if it has none: a free pair's number. *)
-  let find t (u : node) = Array.unsafe_get t.slots ((2 * pair t u.id) + 1)
+  (* The number of [u], [Ids.free] if it has none. *)
+  let find t (u : node) =
+    let i = pair t u.id in
+    if Array.unsafe_get t.slots (2 * i) = Ids.free then Ids.free
+    else Array.unsafe_get t.slots ((2 * i) + 1)
 
   (* Doubles the pairs. *)
   let grow_slots t =
     let bits = t.bits + 1 in
-    let slots = Pool.free_ints (2 lsl bits) and mask = (1 lsl bits) - 1 in
+    let slots = Pool.free_pairs (2 lsl bits) and mask = (1 lsl bits) - 1 in
     for i = 0 to (1 lsl t.bits) - 1 do
       let id = Array.unsafe_get t.slots (2 * i) in
       if id <> Ids.free then begin
@@ -1045,8 +1048,8 @@ module Local = struct
      [unset] nodes and [Ids.free] ints. *)
   let add t (u : node) =
     let i = pair t u.id in
-    let l = Array.unsafe_get t.slots ((2 * i) + 1) in
-    if l <> Ids.free then l
+    if Array.unsafe_get t.slots (2 * i) <> Ids.free then
+      Array.unsafe_get t.slots ((2 * i) + 1)
     else begin
       let l = t.count in
       (* At most three quarters full. *)
@@ -1257,15 +1260,21 @@ let rec split_uop u sep =
   if Op.equal u.op sep then List.concat_map (fun s -> split_uop s sep) u.src
   else [ u ]
 
+(* Equal arguments or types, which most ties have, compare without the
+   arguments' reprs or the types' order. *)
 let compare_structure u0 u1 =
+  let args u0 u1 =
+    if u0.arg == u1.arg then 0 else String.compare (arg_repr u0) (arg_repr u1)
+  in
+  let dtypes (d0 : Dtype.t) d1 = if d0 = d1 then 0 else Dtype.compare d0 d1 in
   let rec cmp u0 u1 =
     if u0 == u1 then 0
     else
-      match Op.compare u0.op u1.op with
+      match Int.compare (Op.to_int u0.op) (Op.to_int u1.op) with
       | 0 -> (
-          match String.compare (arg_repr u0) (arg_repr u1) with
+          match args u0 u1 with
           | 0 -> (
-              match Dtype.compare u0.dtype u1.dtype with
+              match dtypes u0.dtype u1.dtype with
               | 0 -> srcs u0.src u1.src
               | c -> c)
           | c -> c)
@@ -3252,11 +3261,12 @@ module Upat = struct
 
   (* Whether [u] itself fits [p], sources aside. *)
   let fits p u =
-    let n_src = List.length u.src in
     (match p.dtypes with Some dts -> Dtype.mem u.dtype dts | None -> true)
     && (match p.p_arg with Some a -> arg_matches a u.arg | None -> true)
-    && n_src >= p.required_len
-    && not (p.strict_length && n_src <> p.required_len)
+    && ((p.required_len = 0 && not p.strict_length)
+       ||
+       let c = List.compare_length_with u.src p.required_len in
+       if p.strict_length then c = 0 else c >= 0)
 
   exception No_match
 
@@ -3520,9 +3530,11 @@ module Pattern_matcher = struct
     | Upat.Empty -> invalid_argf "the pattern names no %s" name
     | Bound (n, u, rest) -> if String.equal n name then u else lookup rest name
 
+  let no_names = lookup Upat.Empty
+
   let rec has_op o = function
     | [] -> false
-    | s :: srcs -> Op.equal s.op o || has_op o srcs
+    | s :: srcs -> s.op = o || has_op o srcs
 
   (* Whether [u] has a source of each operation in [ops]. *)
   let rec has_sources ops u =
@@ -3532,16 +3544,18 @@ module Pattern_matcher = struct
 
   (* The first of [r.fn]'s results on the namings of [u], in order. A unique
      pattern names [u] only once it matches, names aside, so a failed match
-     allocates nothing. *)
+     allocates nothing, nor does a nameless one. *)
   let rec first_alternative r ctx u = function
     | [] -> None
     | p :: rest -> (
         if not (Upat.test p u) then first_alternative r ctx u rest
         else
-          match if p.Upat.nameless then Upat.Empty else Upat.bind p u Empty with
+          match
+            if p.Upat.nameless then no_names else lookup (Upat.bind p u Empty)
+          with
           | exception Upat.No_match -> first_alternative r ctx u rest
-          | store -> (
-              match r.fn ctx (lookup store) with
+          | names -> (
+              match r.fn ctx names with
               | Some _ as x -> x
               | None -> first_alternative r ctx u rest))
 

@@ -246,6 +246,8 @@ let body_name body =
   | String s -> s
   | _ -> invalid_arg "a call body without its name"
 
+let associative = Op.Set.of_list Op.[ Add; Mul; Xor; Or; And ]
+
 let base_rewrite =
   let r = rule_ctx in
   let str p s = r p (fun _ _ -> Some s) in
@@ -384,7 +386,6 @@ let base_rewrite =
                ctx.%{nth x 2}));
       r (Upat.v ~op:Op.Set.alu ~name:"x" ()) (fun ctx m ->
           let x = m "x" in
-          let assoc = Op.Set.of_list Op.[ Add; Mul; Xor; Or; And ] in
           (* C groups a chain from the left, so only the first operand drops
              its parentheses: [(a*b)*c] is [a*b*c], and [a*(b*c)], which a
              float rounds and overflows differently, keeps them. *)
@@ -392,7 +393,7 @@ let base_rewrite =
             if
               i = 0
               && is (op x) v
-              && Op.Set.mem (op x) assoc
+              && Op.Set.mem (op x) associative
               && not (Tbl.mem ctx.narrowed v)
             then Helpers.strip_parens ctx.%{v}
             else ctx.%{v}

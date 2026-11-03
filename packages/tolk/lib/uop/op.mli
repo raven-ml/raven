@@ -150,7 +150,7 @@ val equal : t -> t -> bool
 val compare : t -> t -> int
 (** [compare o0 o1] orders [o0] and [o1] by their declaration order in {!t}. *)
 
-val to_int : t -> int
+external to_int : t -> int = "%identity"
 (** [to_int o] is the position of [o] in the declaration order of {!t}, counting
     from [0]. *)
 
