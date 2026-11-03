@@ -30,13 +30,13 @@ let uncompiled =
 
 (* Kernels and calls *)
 
-let buffer ?(device = "CPU") ?(dtype = Dtype.Float32) slot n =
-  Shape.param ~shape:[ Int n ] ~device slot dtype
+let buffer ?(dtype = Dtype.Float32) slot n =
+  Shape.param ~shape:[ Int n ] slot dtype
 
 (* The kernel that stores [f] of each element of slot [src] (default [1]) into
    slot 0. *)
-let map_kernel ?(name = "map") ?(beam = 0) ?(n = 4) ?device ?(src = 1) f =
-  let out = buffer ?device 0 n and inp = buffer ?device src n in
+let map_kernel ?(name = "map") ?(beam = 0) ?(n = 4) ?(src = 1) f =
+  let out = buffer 0 n and inp = buffer src n in
   let i = Ops.range (Int n) [ 0 ] in
   let store = Ops.store (Ops.index out [ i ]) (f (Ops.index inp [ i ])) in
   Ops.sink ~kernel:(Ops.kernel_info ~name ~beam ()) [ Ops.end_ store [ i ] ]
@@ -375,17 +375,12 @@ let compiling =
           let fresh = float_of_int (Ops.unique_num ()) in
           let call d =
             let scale x = Ops.mul x (Ops.float ~dtype:Float32 fresh) in
-            let kernel = map_kernel ~device:d scale in
+            let kernel = map_kernel scale in
             Ops.call kernel [ storage ~device:d 4; storage ~device:d 4 ]
           in
           let devices c =
             List.sort_uniq String.compare
-              (List.filter_map
-                 (fun u ->
-                   match Ops.arg u with
-                   | Ops.Param { device = Some d; _ } -> Some d
-                   | _ -> None)
-                 (Ops.toposort ~calls:Enter (body_of c)))
+              (List.filter_map Ops.device (List.tl (Ops.src c)))
           in
           let before = Codegen.programs () in
           let l =
@@ -398,11 +393,10 @@ let compiling =
       test "collects each kernel's name and key, made or kept, on its domain"
         (fun () ->
           let fresh = float_of_int (Ops.unique_num ()) in
-          let kernel d =
-            let scale x = Ops.mul x (Ops.float ~dtype:Float32 fresh) in
-            map_kernel ~device:d scale
+          let kernel =
+            map_kernel (fun x -> Ops.mul x (Ops.float ~dtype:Float32 fresh))
           in
-          let sinks = [ kernel "CPU:1"; kernel "CPU:2" ] in
+          let sinks = [ kernel; kernel ] in
           let call k d =
             Ops.call k [ storage ~device:d 4; storage ~device:d 4 ]
           in

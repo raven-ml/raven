@@ -608,9 +608,9 @@ let beam_search =
    value of its own into 16 floats. *)
 let fresh = Atomic.make 1000
 
-let fresh_kernel ?opts_to_apply ?device () =
+let fresh_kernel ?opts_to_apply () =
   let value = Float.of_int (Atomic.fetch_and_add fresh 1) in
-  let out = Shape.param ~shape:[ Int 16 ] ?device 0 Float32 in
+  let out = Shape.param ~shape:[ Int 16 ] 0 Float32 in
   let r = Ops.range (Int 16) [ 0 ] in
   let store =
     Ops.store (Ops.index out [ r ]) (Ops.float ~dtype:Float32 value)
@@ -750,46 +750,6 @@ let separates setting () =
   ignore (Codegen.to_program k r);
   ignore (Setting.context [ setting ] (fun () -> Codegen.to_program k r));
   equal int ~msg:"compilations" 2 (Atomic.get compiled)
-
-(* One kernel for two devices of one target, its parameter naming each, the
-   first [first]: the program made for the first serves the second. *)
-let serves_devices first () =
-  let compiled, r = counting () in
-  let k = fresh_kernel ~device:first () in
-  let on device =
-    let param u =
-      match Ops.arg u with
-      | Ops.Param ({ device = Some _; _ } as p) ->
-          Some
-            (u, Ops.replace u ~arg:(Ops.Param { p with device = Some device }))
-      | _ -> None
-    in
-    Ops.substitute ~calls:Enter ~pass:Once k
-      (List.filter_map param (Ops.toposort ~calls:Enter k))
-  in
-  let before = Codegen.programs () in
-  let p = Codegen.to_program k r in
-  let k' = on "CPU:1" in
-  equal string ~msg:"one key" (Codegen.program_key k r)
-    (Codegen.program_key k' r);
-  let again = Codegen.to_program k' r in
-  equal int ~msg:"compilations" 1 (Atomic.get compiled);
-  equal int ~msg:"programs made" 1 (Codegen.programs () - before);
-  let devices prg =
-    List.filter_map
-      (fun u ->
-        match Ops.arg u with
-        | Ops.Param { device = Some d; _ } ->
-            Some (Format.asprintf "%a" Ops.pp_device d)
-        | _ -> None)
-      (Ops.toposort ~calls:Enter prg)
-  in
-  equal ~msg:"the first program names the first kernel's device"
-    (list string) (devices k) (List.sort_uniq compare (devices p));
-  equal ~msg:"the program names the kernel's device" (list string)
-    (devices k') (List.sort_uniq compare (devices again));
-  same_graph ~msg:"the first kernel's program is kept" p
-    (Codegen.to_program k r)
 
 (* The source of the program [prg]. *)
 let source prg =
@@ -967,11 +927,7 @@ let caching =
         separates_compilers_without_ccache;
       test "a program for one target is not returned for another"
         separates_targets;
-      test "a program for one device serves another of its target"
-        (serves_devices "CPU:0");
       test "two renderers of one target make one program" serves_renderers;
-      test "a program for the target's own device serves another of its target"
-        (serves_devices "CPU");
       test
         "kernels share a key where they render one source, as a sum of \
          ranges in either order does"
@@ -1034,24 +990,9 @@ let kept = renderer_for ~compiler:(bytes_in "test_codegen_bytes") clang_target
 let printed ?(kernel = add_kernel) ren () =
   print_string (Graph.to_string (Codegen.to_program (Lazy.force kernel) ren))
 
-(* [k] with each parameter naming [device]. *)
-let on_device device k =
-  let param u =
-    match Ops.arg u with
-    | Ops.Param p when Ops.op u = Op.Param ->
-        Some (u, Ops.replace u ~arg:(Ops.Param { p with device = Some device }))
-    | _ -> None
-  in
-  Ops.substitute ~calls:Enter ~pass:Once k
-    (List.filter_map param (Ops.toposort ~calls:Enter k))
-
-let add_on d = lazy (on_device d (Lazy.force add_kernel))
-
 let parts =
   [
     ("program", printed kept);
-    ("on CPU:1", printed ~kernel:(add_on "CPU:1") kept);
-    ("on CPU:2", printed ~kernel:(add_on "CPU:2") kept);
     ("uncached", printed clang);
     ( "read",
       fun () ->
@@ -1078,19 +1019,6 @@ let reads_back () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made db);
   equal outcome ~msg:"read back" (the_program ()) (read_from_disk db)
-
-(* A program another process made for a kernel on another device is read back
-   with its parameters on this kernel's device. *)
-let reads_back_on_its_device () =
-  let db = Disk_cache.fresh () in
-  let on d =
-    Graph.to_string (Codegen.to_program (Lazy.force (add_on d)) kept)
-  in
-  equal outcome ~msg:"made on CPU:1" (Ok (on "CPU:1"))
-    (made ~part:"on CPU:1" db);
-  equal outcome ~msg:"read back on CPU:2" (Ok (on "CPU:2"))
-    (read_from_disk ~part:"on CPU:2" db);
-  contains ~sub:"CPU:2" (on "CPU:2")
 
 (* A program made anew is kept beside the first; the binary of its source may be
    read back. *)
@@ -1212,8 +1140,6 @@ let on_disk =
       test "a program made by one process is read back by the next" reads_back;
       test "read reads back a program and its binary, and is none without"
         read_reads_back;
-      test "a program read back names the devices of the kernel asking"
-        reads_back_on_its_device;
       group "a program made under one setting is not read back under another"
         (List.map
            (fun (name, value) -> test name (misses_on [ (name, value) ]))

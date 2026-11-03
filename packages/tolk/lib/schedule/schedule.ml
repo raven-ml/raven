@@ -189,7 +189,12 @@ let copy_call ~slot s =
   let arg = param_arg ~slot ~device ~phase ~align (dtype buf) in
   let dst = v Op.Alloc ~src:[ size_src (Some n) ] ~arg:(Param arg) in
   let r = range (Int n) [ 0 ] in
-  let into = Shape.param_like dst 0 and from = Shape.param_like buf 1 in
+  (* The kernel's parameters name no device: its call's arguments do. *)
+  let param u slot =
+    let align, phase = Shape.storage_phase u in
+    Shape.param ?shape:(shape_opt u) ~phase ~align slot (dtype u)
+  in
+  let into = param dst 0 and from = param buf 1 in
   let body =
     sink ~kernel:(kernel_info ())
       [ end_ (store (index into [ r ]) (index from [ r ])) [ r ] ]
@@ -956,16 +961,15 @@ let pm_schedule =
 
 (* Copies *)
 
-let assert_all_same_devices ast =
+(* A kernel's parameters name no device: its call's arguments do. *)
+let assert_all_same_devices call =
   let devices =
     List.fold_left
       (fun acc x ->
-        match (op x, device x) with
-        | Op.Param, Some d when not (List.exists (String.equal d) acc) ->
-            acc @ [ d ]
-        | _ -> acc)
-      []
-      (toposort ~calls:Skip ast)
+        match device x with
+        | Some d when not (List.exists (String.equal d) acc) -> acc @ [ d ]
+        | Some _ | None -> acc)
+      [] (List.tl (src call))
   in
   if List.length devices >= 2 then
     invalid_arg
@@ -975,7 +979,8 @@ let assert_all_same_devices ast =
             pp_device)
          devices)
 
-(* A kernel that copies between devices, or to or from a disk, is a copy. *)
+(* A kernel whose arguments [dst] and [src] lie on two devices, or [dst] on a
+   disk, is a copy. *)
 let is_copy dst src =
   (not (Option.equal String.equal (device dst) (device src))) || on_disk dst
 
@@ -997,7 +1002,8 @@ let copy_runs call dst src ~n ~d ~s =
   let args = Array.of_list (List.tl (Ops.src call)) in
   let flat p = ndim args.((param_of p).slot) = 1 in
   let whole p start = start = 0 && max_numel p = n in
-  if not (is_copy dst src) then None
+  let arg p = args.((param_of p).slot) in
+  if not (is_copy (arg dst) (arg src)) then None
   else if not ((whole dst d || flat dst) && (whole src s || flat src)) then
     None
   else
@@ -1073,10 +1079,10 @@ let pm_copy_from_store =
           | _ -> None);
       (* Any other kernel stays on one device. *)
       rule
-        (Upat.op Op.Call ~allow_any_len:true
-           ~src:[ Upat.op Op.Sink ~name:"ast" ])
+        (Upat.op Op.Call ~name:"call" ~allow_any_len:true
+           ~src:[ Upat.op Op.Sink ])
         (fun m ->
-          assert_all_same_devices (m "ast");
+          assert_all_same_devices (m "call");
           None);
     ])
 

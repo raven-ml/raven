@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 128
-2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
 3 Ops.PARAM dtypes.i32 [0] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 8), name="block_lo", addrspace=AddrSpace.ALU)
 4 Ops.PARAM dtypes.i32 [0] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 8), name="block_hi", addrspace=AddrSpace.ALU)
 5 Ops.SUB dtypes.i32 [4, 3]
@@ -14,8 +14,8 @@
 12 Ops.CAST dtypes.i32 [11] dtypes.i32
 13 Ops.SHRINK dtypes.f32 [2, 10, 12]
 14 Ops.CONST dtypes.weakint [] 3200
-15 Ops.PARAM dtypes.f32 [14] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
-16 Ops.PARAM dtypes.i32 [11] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+15 Ops.PARAM dtypes.f32 [14] ParamArg(slot=2, dtype=dtypes.f32)
+16 Ops.PARAM dtypes.i32 [11] ParamArg(slot=1, dtype=dtypes.i32)
 17 Ops.CONST dtypes.weakint [] 0
 18 Ops.CAST dtypes.i32 [17] dtypes.i32
 19 Ops.SHRINK dtypes.i32 [16, 18, 12]
@@ -110,7 +110,7 @@
 108 Ops.BITCAST dtypes.u64 [107] dtypes.u64
 109 Ops.INDEX dtypes.u64 [108, 18]
 110 Ops.LOAD dtypes.u64 [109]
-111 Ops.REFPARAM dtypes.f32 [1, 110] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+111 Ops.REFPARAM dtypes.f32 [1, 110] ParamArg(slot=0, dtype=dtypes.f32)
 112 Ops.BITCAST dtypes.i32 [107] dtypes.i32
 113 Ops.CONST dtypes.weakint [] 6
 114 Ops.CAST dtypes.i32 [113] dtypes.i32
@@ -127,10 +127,10 @@
 125 Ops.SHRINK dtypes.f32 [111, 124, 12]
 126 Ops.INDEX dtypes.u64 [108, 9]
 127 Ops.LOAD dtypes.u64 [126]
-128 Ops.REFPARAM dtypes.f32 [14, 127] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+128 Ops.REFPARAM dtypes.f32 [14, 127] ParamArg(slot=2, dtype=dtypes.f32)
 129 Ops.INDEX dtypes.u64 [108, 50]
 130 Ops.LOAD dtypes.u64 [129]
-131 Ops.REFPARAM dtypes.i32 [11, 130] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+131 Ops.REFPARAM dtypes.i32 [11, 130] ParamArg(slot=1, dtype=dtypes.i32)
 132 Ops.SHRINK dtypes.i32 [131, 18, 12]
 133 Ops.LOAD dtypes.i32 [132]
 134 Ops.INDEX dtypes.i32 [133, 18]

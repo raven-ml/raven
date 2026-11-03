@@ -1,12 +1,12 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 17
-2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+2 Ops.PARAM dtypes.i32 [1] ParamArg(slot=0, dtype=dtypes.i32)
 3 Ops.RANGE dtypes.weakint [1] (AxisType.WEAK, 1)
 4 Ops.INDEX dtypes.i32 [2, 3]
 5 Ops.CONST dtypes.weakfloat [] 1.0
 6 Ops.CONST dtypes.weakint [] 289
-7 Ops.PARAM dtypes.f32 [6] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+7 Ops.PARAM dtypes.f32 [6] ParamArg(slot=1, dtype=dtypes.f32)
 8 Ops.RANGE dtypes.weakint [1] (AxisType.WEAK, 0)
 9 Ops.MUL dtypes.weakint [8, 1]
 10 Ops.ADD dtypes.weakint [9, 3]
@@ -18,7 +18,7 @@
 16 Ops.WHERE dtypes.weakint [13, 14, 15]
 17 Ops.CAST dtypes.i32 [16] dtypes.i32
 18 Ops.STORE dtypes.void [4, 17]
-19 Ops.PARAM dtypes.i32 [1] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+19 Ops.PARAM dtypes.i32 [1] ParamArg(slot=2, dtype=dtypes.i32)
 20 Ops.INDEX dtypes.i32 [19, 3]
 21 Ops.CONST dtypes.weakint [] 2
 22 Ops.WHERE dtypes.weakint [13, 21, 15]

@@ -393,9 +393,9 @@ val key_with : arg:(t -> arg option) -> t -> string
 (** [key_with ~arg u] is the {!key} of the graph [u] would be with each node
     [n] for which [arg n] is [Some a] taking the argument [a], computed without
     building that graph. Each such [a] must be an argument [n]'s operation
-    takes and keep [n]'s data type, as a parameter's device does: the key is
-    not that of a graph whose types it would change. [arg] is called once on
-    each node of [u]. *)
+    takes and keep [n]'s data type, as a storage parameter's slot does: the
+    key is not that of a graph whose types it would change. [arg] is called
+    once on each node of [u]. *)
 
 module Tbl : Hashtbl.S with type key = t
 (** Hash tables keyed by nodes. *)

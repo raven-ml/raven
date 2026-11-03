@@ -1966,6 +1966,22 @@ index d7f19cd30..7d7a8d49f 100644
 +    if not any(u.op is Ops.STAGE for u in ast.backward_slice) and not threads_fixed(ast):
        k = hand_coded_optimizations(k)
    return k.get_optimized_ast(name_override=ast.arg.name if ast.arg is not None and ast.arg.name != "test" else None)
+diff --git a/tinygrad/codegen/opt/search.py b/tinygrad/codegen/opt/search.py
+index af2199821..901f0054c 100644
+--- a/tinygrad/codegen/opt/search.py
++++ b/tinygrad/codegen/opt/search.py
+@@ -59,9 +59,8 @@ def _try_compile(x:tuple[int,Scheduler]) -> tuple[int, tuple[UOp, float]|None]:
+   ret = None
+   try:
+     st = time.perf_counter()
+-    ast, dev = x[1].copy().get_optimized_ast(name_override="test"), x[1].ren.target.device
+-    prg = to_program(ast.substitute({p: p.replace(arg=replace(p.arg, device=dev)) for p in ast.toposort()
+-                                     if p.op is Ops.PARAM and p.addrspace is not AddrSpace.ALU}), x[1].ren)
++    # a kernel's parameters name no device: its call's arguments do
++    prg = to_program(x[1].copy().get_optimized_ast(name_override="test"), x[1].ren)
+     et = time.perf_counter() - st
+     uops = prg.src[1].src
+     if len(uops) >= (uops_max:=getenv("BEAM_UOPS_MAX", 3000)) > 0:
 diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
 index b68c1d948..ef78caa51 100644
 --- a/tinygrad/codegen/simplify.py
@@ -2161,7 +2177,7 @@ index 625b9e65f..e8ef83627 100644
  
  def _to_np_dtype(dtype:DType) -> type|None:
 diff --git a/tinygrad/engine/realize.py b/tinygrad/engine/realize.py
-index adc1b3d0f..ae3628058 100644
+index adc1b3d0f..d4edc6bb8 100644
 --- a/tinygrad/engine/realize.py
 +++ b/tinygrad/engine/realize.py
 @@ -18,9 +18,21 @@ def get_call_kernel_args(call:UOp, prg:UOp, devs:tuple[str, ...]) -> list[UOp]:
@@ -2196,6 +2212,15 @@ index adc1b3d0f..ae3628058 100644
                   prg_bufs[p.arg.slot].get_buf(device) for p in ast.kernel_params]
      except KeyError as e: raise RuntimeError(f"unbound Variable {e}") from None
      ets.append(rt(*args, global_size=global_sz, local_size=local_sz, wait=ctx.wait, timeout=ctx.timeout))
+@@ -232,7 +245,7 @@ def _get_call_to_compile(c:UOp) -> tuple[UOp, Renderer]|None:
+   # a PROGRAM with a ProgramInfo and a BINARY is already compiled
+   if (ast.op is Ops.SINK and isinstance(ast.arg, KernelInfo)) or \
+      (ast.op is Ops.PROGRAM and not (isinstance(ast.arg, ProgramInfo) and ast.src[-1].op is Ops.BINARY)):
+-    return ast, Device[to_tuple(c.device)[0]]._select_renderer(HCQ_RUNTIME_DEV if isinstance(c.arg.aux, HCQInfo) else DEV)
++    return ast, Device[to_tuple(get_call_arg_uops(c)[0].device)[0]]._select_renderer(HCQ_RUNTIME_DEV if isinstance(c.arg.aux, HCQInfo) else DEV)
+   return None
+ 
+ def lower_and_compile(linear:UOp, verbose=True) -> UOp:
 diff --git a/tinygrad/helpers.py b/tinygrad/helpers.py
 index 761f59c11..bf523239d 100644
 --- a/tinygrad/helpers.py
@@ -2662,7 +2687,7 @@ index 6eec3e198..a07980e42 100644
    smem_prefix_for_cast: bool = False
    barrier = '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");' + '__builtin_amdgcn_s_barrier();' + \
 diff --git a/tinygrad/schedule/__init__.py b/tinygrad/schedule/__init__.py
-index 7ead5c9c6..f3d07464a 100644
+index 7ead5c9c6..fbd544e06 100644
 --- a/tinygrad/schedule/__init__.py
 +++ b/tinygrad/schedule/__init__.py
 @@ -2,7 +2,7 @@ import time, inspect
@@ -2696,7 +2721,7 @@ index 7ead5c9c6..f3d07464a 100644
  
  def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
    kernels, remaining = partition(after.src[1:], lambda s: s.op in {Ops.CALL, Ops.END})
-@@ -28,40 +32,139 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
+@@ -28,40 +32,141 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
      raise AssertionError(f"AFTER source should be CALL, END, STORE, or AFTER, not {invalid[0].op}")
    return tuple(kernels), tuple(deps)
  
@@ -2708,7 +2733,9 @@ index 7ead5c9c6..f3d07464a 100644
 +  if not isinstance(buf.device, str): raise RuntimeError("a copied buffer state needs a device")
 +  dst = UOp(Ops.ALLOC, src=(UOp.const(buf.max_numel()),), arg=ParamArg(slot, buf.dtype, device=buf.device))
 +  r = UOp.range(buf.max_numel(), 0)
-+  body = dst.param_like(0).index(r).store(buf.param_like(1).index(r)).end(r).sink(arg=KernelInfo())
++  # the kernel's parameters name no device: its call's arguments do
++  into, frm = UOp.param(0, dst.dtype, dst._shape), UOp.param(1, buf.dtype, buf._shape)
++  body = into.index(r).store(frm.index(r)).end(r).sink(arg=KernelInfo())
 +  return dst.after(body.call(dst, s))
 +
 +# d, a source of a kernel, reading c where it reads the state s, along the path _states follows
@@ -2856,7 +2883,7 @@ index 7ead5c9c6..f3d07464a 100644
  
    with cpu_profile(TracingKey("linearize schedule")):
      queue: deque[UOp] = deque(k for k,v in in_degree.items() if v == 0)
-@@ -78,6 +181,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
+@@ -78,6 +183,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
      if any(in_degree.values()): raise RuntimeError("cycle detected in assign graph")
    return UOp(Ops.LINEAR, src=tuple(linearized))
  
@@ -2865,7 +2892,34 @@ index 7ead5c9c6..f3d07464a 100644
  from tinygrad.schedule.memory import memory_plan_rewrite
  from tinygrad.engine.realize import capturing, pm_flatten_linear
  from tinygrad.schedule.prepare import prepare_rangeify
-@@ -191,6 +296,7 @@ class CallifyCtx:
+@@ -150,12 +257,14 @@ pm_schedule = PatternMatcher([
+   (UPat(Ops.CALL, name="call"), lower_sink_to_linear),
+ ])
+ 
+-def assert_all_same_devices(ast:UOp):
+-  devices = dedup([x.device for x in ast.toposort() if x.op is Ops.PARAM and x.device is not None])
++# a kernel's parameters name no device: its call's arguments do
++def assert_all_same_devices(call:UOp):
++  devices = dedup([x.device for x in call.src[1:] if x.device is not None])
+   if len(devices) >= 2: raise RuntimeError(f"all buffers must be on the same device: {devices}")
+ 
+ def copy_kernel_to_store(call:UOp, dst:UOp, src:UOp, r:UOp|None=None):
+-  if dst.device == src.device and not dst.on_disk(): return None
++  d, s = call.src[1+dst.arg.slot], call.src[1+src.arg.slot]
++  if d.device == s.device and not d.on_disk(): return None
+   return call.replace(src=(dst.store(src),) + call.src[1:])
+ 
+ def simplify_copy_kernel(call:UOp, ast:UOp, dst:UOp, src:UOp):
+@@ -180,7 +289,7 @@ pm_copy_from_store = PatternMatcher([
+                 name="call", allow_any_len=True), copy_kernel_to_store),
+ 
+   # if it wasn't copy, it currently can't be cross device
+-  (UPat(Ops.CALL, src=(UPat(Ops.SINK, name="ast"),), allow_any_len=True), assert_all_same_devices),
++  (UPat(Ops.CALL, src=(UPat(Ops.SINK),), allow_any_len=True, name="call"), assert_all_same_devices),
+ ])
+ 
+ # **** callify: transform a tensor graph into a CALL UOp such that all state is properly scoped
+@@ -191,6 +300,7 @@ class CallifyCtx:
    allocs: dict[UOp, UOp] = field(default_factory=dict)
    views: set[UOp] = field(default_factory=set)
    stores: list[UOp] = field(default_factory=list)
@@ -2873,7 +2927,7 @@ index 7ead5c9c6..f3d07464a 100644
  
  def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
    """MOPS(BUFFER) → SHRINK when movement ops collapse to a contiguous range."""
-@@ -204,6 +310,9 @@ def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
+@@ -204,6 +314,9 @@ def contiguous_mops_to_view(ctx:CallifyCtx|None, c:UOp, src:UOp):
      return None if view is None else view.unshard(unshard.arg, unshard.src[1:])
  
    if buf.op is not Ops.BUFFER or (cv := src.contiguous_view()) is None or cv[0].op is not Ops.BUFFER: return None
@@ -2883,7 +2937,7 @@ index 7ead5c9c6..f3d07464a 100644
    buf, offset = cv
    view = buf[offset:offset + src.max_numel() * src.element_size() // buf.element_size()].bitcast(src.dtype)
    if ctx is not None: ctx.views.add(view)
-@@ -258,8 +367,15 @@ def transform_to_call(big_sink:UOp) -> UOp:
+@@ -258,8 +371,15 @@ def transform_to_call(big_sink:UOp) -> UOp:
    if VIZ: graph_rewrite(big_sink, PatternMatcher([]), name="View Graph")
    if SPEC: type_verify(big_sink, spec_tensor)
  
@@ -3368,7 +3422,7 @@ index 9a24394a6..159972ddf 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 8238ec207..0f68dfde2 100644
+index 8238ec207..259725566 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,13 +1,13 @@
@@ -3644,7 +3698,7 @@ index 8238ec207..0f68dfde2 100644
 -  param = UOp.param(slot, buf.dtype, buf.max_numel(), addrspace=buf.addrspace, device=buf.device)
 +  # the kernel reads the storage's values within their bounds
 +  bounds = buf.arg.vmin_vmax if isinstance(buf.arg, ParamArg) else None
-+  param = UOp.param(slot, buf.dtype, buf.max_numel(), vmin_vmax=bounds, addrspace=buf.addrspace, device=buf.device)
++  param = UOp.param(slot, buf.dtype, buf.max_numel(), vmin_vmax=bounds, addrspace=buf.addrspace)
    ret = param.reshape(buf.max_shape)
    # if the buffer has symbolic shape, shrink the max-sized view to the actual shape
    if buf.max_shape != buf.shape: ret = ret.shrink(tuple((0, s) for s in buf.shape))
@@ -4153,10 +4207,20 @@ index f0a41c9b5..bb865dfe0 100644
 +  else: return None
 +  return sorted(out)
 diff --git a/tinygrad/uop/spec.py b/tinygrad/uop/spec.py
-index c359a697f..bea525e32 100644
+index c359a697f..1b9fad6d6 100644
 --- a/tinygrad/uop/spec.py
 +++ b/tinygrad/uop/spec.py
-@@ -225,13 +225,10 @@ spec_program = PatternMatcher([
+@@ -213,6 +213,9 @@ spec_program = PatternMatcher([
+   # movement ops are not allowed in programs
+   (UPat(GroupOp.Movement), lambda: False),
+ 
++  # a program's parameters name no device: its call's arguments do
++  (UPat(Ops.PARAM, name="x"), lambda x: False if x.arg.device is not None else None),
++
+   # REG/LOCAL buffer
+   (UPat((Ops.BUFFER, Ops.ALLOC), src=(p_size,), name="x"), lambda x: isinstance(x.arg, ParamArg) and x.addrspace in (AddrSpace.REG, AddrSpace.LOCAL)),
+ 
+@@ -225,13 +228,10 @@ spec_program = PatternMatcher([
  
    # SPECIAL is int32 after index lowering
    (UPat(Ops.SPECIAL, src=(UPat(dtype=dtypes.int32),), name="s"), lambda s: isinstance(s.arg, str)),
@@ -4173,7 +4237,7 @@ index c359a697f..bea525e32 100644
  ])+spec_shared
  
  # these are intermediate ops. everything should be deleted from here
-@@ -247,17 +244,22 @@ spec_full = PatternMatcher([
+@@ -247,17 +247,22 @@ spec_full = PatternMatcher([
  
    # all loads/stores
    (UPat((Ops.LOAD, Ops.STORE)), lambda: True),
@@ -4198,7 +4262,7 @@ index c359a697f..bea525e32 100644
    # linear for more kernels (TODO: we should enter non sink calls)
    #(UPat(Ops.LINEAR), lambda: True),
    # PARAM is caller-provided storage (or a Variable in the ALU addrspace), ALLOC is call-local storage
-@@ -271,8 +273,13 @@ spec_kernel_graph = PatternMatcher([
+@@ -271,8 +276,13 @@ spec_kernel_graph = PatternMatcher([
    # mstack/mselect
    (UPat(Ops.MSTACK, name="x"), lambda x: all(isinstance(s.device, str) for s in x.src) or (all_same(x.src) and x.src[0].device is None)),
    (UPat(Ops.MSELECT, name="x"), lambda x: isinstance(x.src[0].device, tuple) and x.arg < len(x.src[0].device)),

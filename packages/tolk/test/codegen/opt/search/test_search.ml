@@ -680,22 +680,26 @@ let rounds_law =
       cover "a round that progressed" (rounds > 0);
       cover "a timed round that stopped" (fastest r (rounds + 1) <> None))
 
+(* A candidate's program names no device: its call's storage names the
+   renderer's device, which [link] places. *)
 let storage_placed =
-  test "a candidate's storage is placed on its renderer's device" (fun () ->
-      let timing, calls = recording (golden_time ~failing:false) in
-      ignore (search ~timing 1 (scheduled "sum_rows" "metal"));
-      let placed prg =
+  test "a candidate's call names its renderer's device on its storage"
+    (fun () ->
+      let named = ref [] in
+      let link call =
         List.iter
           (fun u ->
-            match (Ops.op u, Ops.arg u) with
-            | Op.Param, Param p when p.addrspace <> Dtype.Alu ->
-                is_true ~msg:"on METAL" (p.device = Some "METAL")
+            match Ops.arg u with
+            | Param p when Ops.op u = Op.Param && p.addrspace <> Dtype.Alu ->
+                named := p.device :: !named
             | _ -> ())
-          (match Ops.arg prg with
-          | Program info -> info.params
-          | _ -> failf "%a is no program" Ops.pp prg)
+          (List.tl (Ops.src call));
+        Ops.body call
       in
-      List.iter (fun c -> placed c.prg) (calls ()))
+      let timing = (link, golden_time ~failing:false) in
+      ignore (search ~timing 1 (scheduled "sum_rows" "clang"));
+      greater int ~than:0 (List.length !named);
+      List.iter (equal (option string) (Some "CPU")) !named)
 
 (* The launch each candidate of [kernel] is measured with, under a measurement
    that times them alike, so that the search ends after its first round. *)
@@ -888,6 +892,32 @@ let cache =
       let timing, calls = recording (golden_time ~failing:false) in
       equal opts first (K.applied_opts (cached ~ignore:true timing));
       is_true ~msg:"measured again" (calls () <> []))
+
+(* One expression stored on two devices of one target is one kernel, so the
+   search of the second device's finds the first's in the cache. *)
+let cache_devices =
+  test "a search kept for one device serves another of its target" (fun () ->
+      let on slot d =
+        let x = Ops.new_buffer ~slot d 64 Float32 in
+        let out = Ops.new_buffer ~slot:(slot + 2) d 64 Float32 in
+        Ops.after out [ Ops.store out Ops.O.(x * x + float 1.) ]
+      in
+      let linear, _ =
+        Schedule.create_linear_with_vars
+          (Ops.sink [ on 0 "CPU:0"; on 1 "CPU:1" ])
+      in
+      let searched timing call =
+        let k = K.v (Ops.body call) (renderer "clang") in
+        K.convert_loop_to_global k;
+        K.applied_opts
+          (search ~settings:[ B (Setting.cachelevel, 1) ] ~timing 2 k)
+      in
+      match Ops.src linear with
+      | [ a; b ] ->
+          let timing, _ = recording (golden_time ~failing:false) in
+          let first = searched timing a in
+          equal opts first (searched untimed b)
+      | calls -> failf "%d calls, not 2" (List.length calls))
 
 (* A search kept under one value of a setting that shapes compilation is not
    used under another. *)
@@ -1238,6 +1268,7 @@ let () =
          test_size;
          width;
          cache;
+         cache_devices;
          cache_settings;
          cache_declared;
          cache_variables;

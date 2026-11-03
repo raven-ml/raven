@@ -1,9 +1,9 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 10
-1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, vmin_vmax=(1, 2147483647), device="CPU")
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, vmin_vmax=(1, 2147483647))
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
 3 Ops.INDEX dtypes.i32 [1, 2]
-4 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+4 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 5 Ops.INDEX dtypes.i32 [4, 2]
 6 Ops.CONST dtypes.weakint [] 1
 7 Ops.MAX dtypes.i32 [5, 6]
@@ -14,7 +14,7 @@
 12 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
 13 Ops.CALL dtypes.void [10, 11, 12] CallInfo()
 14 Ops.CONST dtypes.weakint [] 12
-15 Ops.PARAM dtypes.i32 [14] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+15 Ops.PARAM dtypes.i32 [14] ParamArg(slot=0, dtype=dtypes.i32)
 16 Ops.RANGE dtypes.weakint [14] (AxisType.WEAK, 0)
 17 Ops.INDEX dtypes.i32 [15, 16]
 18 Ops.CMPLT dtypes.bool [16, 6]
@@ -28,7 +28,7 @@
 26 Ops.CONST dtypes.bool [] Invalid
 27 Ops.WHERE dtypes.weakint [23, 25, 26]
 28 Ops.INDEX dtypes.i32 [4, 27]
-29 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(1, 2147483647), device="CPU")
+29 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(1, 2147483647))
 30 Ops.INDEX dtypes.i32 [29, 27]
 31 Ops.WHERE dtypes.i32 [23, 30, 6]
 32 Ops.TRUNCDIV dtypes.i32 [28, 31]
@@ -37,6 +37,8 @@
 35 Ops.STORE dtypes.void [17, 34]
 36 Ops.END dtypes.void [35, 16]
 37 Ops.SINK dtypes.void [36] KernelInfo()
-38 Ops.CALL dtypes.void [37, 15, 4, 11] CallInfo()
-39 Ops.LINEAR dtypes.void [13, 38]
+38 Ops.PARAM dtypes.i32 [14] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+39 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+40 Ops.CALL dtypes.void [37, 38, 39, 11] CallInfo()
+41 Ops.LINEAR dtypes.void [13, 40]
 

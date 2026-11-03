@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 128
-2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
 3 Ops.CONST dtypes.weakint [] 8
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.SPECIAL dtypes.i32 [4] "gidx0"
@@ -37,11 +37,11 @@
 35 Ops.ADD dtypes.i32 [32, 34]
 36 Ops.CAST dtypes.i32 [14] dtypes.i32
 37 Ops.SHRINK dtypes.f32 [31, 35, 36]
-38 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+38 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
 39 Ops.INDEX dtypes.f32 [38, 33]
 40 Ops.LOAD dtypes.f32 [39]
 41 Ops.CONST dtypes.weakint [] 16384
-42 Ops.PARAM dtypes.f32 [41] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+42 Ops.PARAM dtypes.f32 [41] ParamArg(slot=2, dtype=dtypes.f32)
 43 Ops.CONST dtypes.weakint [] 7
 44 Ops.CAST dtypes.i32 [43] dtypes.i32
 45 Ops.SHL dtypes.i32 [33, 44]
@@ -93,7 +93,7 @@
 91 Ops.BITCAST dtypes.u64 [90] dtypes.u64
 92 Ops.INDEX dtypes.u64 [91, 18]
 93 Ops.LOAD dtypes.u64 [92]
-94 Ops.REFPARAM dtypes.f32 [1, 93] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+94 Ops.REFPARAM dtypes.f32 [1, 93] ParamArg(slot=0, dtype=dtypes.f32)
 95 Ops.INDEX dtypes.f32 [94, 10]
 96 Ops.BUFFER dtypes.f32 [14] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
 97 Ops.AFTER dtypes.f32 [96, 5, 9]
@@ -108,12 +108,12 @@
 106 Ops.SHRINK dtypes.f32 [105, 35, 36]
 107 Ops.INDEX dtypes.u64 [91, 22]
 108 Ops.LOAD dtypes.u64 [107]
-109 Ops.REFPARAM dtypes.f32 [1, 108] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+109 Ops.REFPARAM dtypes.f32 [1, 108] ParamArg(slot=1, dtype=dtypes.f32)
 110 Ops.INDEX dtypes.f32 [109, 33]
 111 Ops.LOAD dtypes.f32 [110]
 112 Ops.INDEX dtypes.u64 [91, 36]
 113 Ops.LOAD dtypes.u64 [112]
-114 Ops.REFPARAM dtypes.f32 [41, 113] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+114 Ops.REFPARAM dtypes.f32 [41, 113] ParamArg(slot=2, dtype=dtypes.f32)
 115 Ops.INDEX dtypes.f32 [114, 46]
 116 Ops.LOAD dtypes.f32 [115]
 117 Ops.MUL dtypes.f32 [111, 116]

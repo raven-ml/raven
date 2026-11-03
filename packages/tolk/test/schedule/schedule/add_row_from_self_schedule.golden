@@ -1,6 +1,6 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 6
-1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 3
 3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
 4 Ops.CONST dtypes.weakint [] 2
@@ -8,7 +8,7 @@
 6 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 1)
 7 Ops.ADD dtypes.weakint [5, 6]
 8 Ops.INDEX dtypes.i32 [1, 7]
-9 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+9 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 10 Ops.INDEX dtypes.i32 [9, 7]
 11 Ops.INDEX dtypes.i32 [9, 6]
 12 Ops.ADD dtypes.i32 [10, 11]
@@ -16,10 +16,11 @@
 14 Ops.END dtypes.void [13, 3, 6]
 15 Ops.SINK dtypes.void [14] KernelInfo()
 16 Ops.ALLOC dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
-17 Ops.CALL dtypes.void [15, 16, 1] CallInfo()
-18 Ops.STORE dtypes.void [8, 10]
-19 Ops.END dtypes.void [18, 3, 6]
-20 Ops.SINK dtypes.void [19] KernelInfo()
-21 Ops.CALL dtypes.void [20, 1, 16] CallInfo()
-22 Ops.LINEAR dtypes.void [17, 21]
+17 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+18 Ops.CALL dtypes.void [15, 16, 17] CallInfo()
+19 Ops.STORE dtypes.void [8, 10]
+20 Ops.END dtypes.void [19, 3, 6]
+21 Ops.SINK dtypes.void [20] KernelInfo()
+22 Ops.CALL dtypes.void [21, 17, 16] CallInfo()
+23 Ops.LINEAR dtypes.void [18, 22]
 

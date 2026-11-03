@@ -974,6 +974,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A kernel's parameters name no device: the device is its call's
+  arguments', so one expression on several devices of a target is one
+  kernel, one program and one beam search, in memory and on disk
+  (`Codegen.program_key`, `Search.beam_search`). `Spec.program` refuses a
+  parameter that names a device.
 - A tensor core's operands are staged through shared memory
   (`Stage.operands`): the workgroup copies each tile 16 bytes a thread into a
   swizzled layout, in two stages with `cp.async` on CUDA from sm_80, and a

@@ -11,7 +11,7 @@ let param slot = Shape.param ~device:cpu ~shape:[ Int 4 ] slot Int32
 let kernel f =
   let r = Ops.range ~axis_type:Loop (Int 4) [ 0 ] in
   let at slot =
-    Ops.index (Shape.param ~device:cpu ~shape:[ Int 4 ] slot Int32) [ r ]
+    Ops.index (Shape.param ~shape:[ Int 4 ] slot Int32) [ r ]
   in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"k" ())

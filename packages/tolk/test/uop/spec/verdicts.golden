@@ -124,10 +124,10 @@ a backedge of a bounded range	None	None	None	None	None
 a backedge of a value	True	True	True	True	None
 a parameter	True	True	True	True	True
 a scalar parameter	True	True	True	True	True
-a named parameter on a device	True	True	True	True	True
+a named parameter on a device	True	True	False	True	True
 a variable	True	True	False	True	True
 an int32 variable	True	True	True	True	True
-a variable on a device	True	False	True	False	True
+a variable on a device	True	False	False	False	True
 a bound variable	True	True	True	True	True
 a local buffer	True	True	True	True	True
 a register buffer	True	True	True	True	True

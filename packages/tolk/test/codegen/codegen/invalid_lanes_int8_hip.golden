@@ -1,6 +1,6 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 1
-1 Ops.PARAM dtypes.i8 [0] ParamArg(slot=0, dtype=dtypes.i8, device="CPU")
+1 Ops.PARAM dtypes.i8 [0] ParamArg(slot=0, dtype=dtypes.i8)
 2 Ops.CONST dtypes.weakint [] 0
 3 Ops.CAST dtypes.i32 [2] dtypes.i32
 4 Ops.INDEX dtypes.i8 [1, 3]

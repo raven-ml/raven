@@ -1,9 +1,9 @@
 0 Ops.CONST dtypes.weakint [] 16384
-1 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=0, dtype=dtypes.bf16, device="CUDA")
+1 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=0, dtype=dtypes.bf16)
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 2)
 3 Ops.INDEX dtypes.bf16 [1, 2]
 4 Ops.CONST dtypes.weakint [] 8192
-5 Ops.PARAM dtypes.bf16 [4] ParamArg(slot=1, dtype=dtypes.bf16, device="CUDA")
+5 Ops.PARAM dtypes.bf16 [4] ParamArg(slot=1, dtype=dtypes.bf16)
 6 Ops.CONST dtypes.weakint [] 256
 7 Ops.RANGE dtypes.weakint [6] (AxisType.WEAK, 0)
 8 Ops.CONST dtypes.weakint [] 32
@@ -13,7 +13,7 @@
 12 Ops.INDEX dtypes.bf16 [5, 11]
 13 Ops.CAST dtypes.f32 [12] dtypes.f32
 14 Ops.CONST dtypes.weakint [] 142606336
-15 Ops.PARAM dtypes.u8 [14] ParamArg(slot=2, dtype=dtypes.u8, device="CUDA")
+15 Ops.PARAM dtypes.u8 [14] ParamArg(slot=2, dtype=dtypes.u8)
 16 Ops.CONST dtypes.weakint [] 34
 17 Ops.MUL dtypes.weakint [7, 16]
 18 Ops.ADD dtypes.weakint [17, 10]

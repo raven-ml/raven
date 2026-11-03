@@ -40,13 +40,13 @@
 38 Ops.BITCAST dtypes.u64 [37] dtypes.u64
 39 Ops.INDEX dtypes.u64 [38, 5]
 40 Ops.LOAD dtypes.u64 [39]
-41 Ops.REFPARAM dtypes.i32 [0, 40] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+41 Ops.REFPARAM dtypes.i32 [0, 40] ParamArg(slot=0, dtype=dtypes.i32)
 42 Ops.SHRINK dtypes.i32 [41, 5, 9]
 43 Ops.CONST dtypes.weakint [] 1
 44 Ops.CAST dtypes.i32 [43] dtypes.i32
 45 Ops.INDEX dtypes.u64 [38, 44]
 46 Ops.LOAD dtypes.u64 [45]
-47 Ops.REFPARAM dtypes.i32 [0, 46] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+47 Ops.REFPARAM dtypes.i32 [0, 46] ParamArg(slot=1, dtype=dtypes.i32)
 48 Ops.SHRINK dtypes.i32 [47, 5, 9]
 49 Ops.LOAD dtypes.i32 [48]
 50 Ops.ADD dtypes.i32 [49, 44]
@@ -55,10 +55,9 @@
 53 Ops.LINEAR dtypes.void [36, 37, 43, 44, 38, 45, 46, 0, 47, 4, 5, 9, 48, 49, 39, 40, 41, 42, 50, 51, 52]
 54 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void E_4(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+1));\n  int4 val1 = (*((int4*)((((int*)(val0))+0))));\n  unsigned long val2 = (*(((unsigned long*)(args_16))+0));\n  *((int4*)((((int*)(val2))+0))) = (val1+1);\n}\n"
 55 Ops.BINARY dtypes.u8 [] b"typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void E_4(unsigned char* restrict args_16) {\n  unsigned long val0 = (*(((unsigned long*)(args_16))+1));\n  int4 val1 = (*((int4*)((((int*)(val0))+0))));\n  unsigned long val2 = (*(((unsigned long*)(args_16))+0));\n  *((int4*)((((int*)(val2))+0))) = (val1+1);\n}\n"
-56 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
-57 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
-58 Ops.PROGRAM dtypes.void [52, 53, 54, 55] ProgramInfo(params=(%56, %57), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
-59 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=4, dtype=dtypes.i32, device="CPU")
-60 Ops.CALL dtypes.void [58, 59, 32] CallInfo()
-61 Ops.LINEAR dtypes.void [35, 60]
+56 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
+57 Ops.PROGRAM dtypes.void [52, 53, 54, 55] ProgramInfo(params=(%27, %56), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+58 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=4, dtype=dtypes.i32, device="CPU")
+59 Ops.CALL dtypes.void [57, 58, 32] CallInfo()
+60 Ops.LINEAR dtypes.void [35, 59]
 

@@ -2453,7 +2453,7 @@ let named rigs name =
    of [rigs] that its renderer's target is, on the slots of the first one
    timed, compiled on [parallel] domains, or as many as the [PARALLEL] setting
    gives. Devices of one target run one program alike, so any of them times
-   it, whatever devices the kernel's parameters name. *)
+   it. *)
 let search rigs ~parallel width k =
   report "searched a kernel at width %d" width;
   let target = (Tolk.Postrange.Scheduler.ren k).target in

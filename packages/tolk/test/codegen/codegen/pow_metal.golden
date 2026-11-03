@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
-2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
 3 Ops.CONST dtypes.weakint [] 4
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.SPECIAL dtypes.i32 [4] "lidx0"
@@ -9,7 +9,7 @@
 7 Ops.CAST dtypes.i32 [6] dtypes.i32
 8 Ops.SHL dtypes.i32 [5, 7]
 9 Ops.SHRINK dtypes.f32 [2, 8, 4]
-10 Ops.PARAM dtypes.f32 [1] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+10 Ops.PARAM dtypes.f32 [1] ParamArg(slot=2, dtype=dtypes.f32)
 11 Ops.SHRINK dtypes.f32 [10, 8, 4]
 12 Ops.LOAD dtypes.f32 [11]
 13 Ops.CONST dtypes.weakint [] 0
@@ -20,7 +20,7 @@
 18 Ops.CMPEQ dtypes.bool [15, 17]
 19 Ops.CONST dtypes.weakfloat [] 1.0
 20 Ops.CAST dtypes.f32 [19] dtypes.f32
-21 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+21 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
 22 Ops.SHRINK dtypes.f32 [21, 8, 4]
 23 Ops.LOAD dtypes.f32 [22]
 24 Ops.INDEX dtypes.f32 [23, 14]
@@ -138,18 +138,18 @@
 136 Ops.BITCAST dtypes.u64 [135] dtypes.u64
 137 Ops.INDEX dtypes.u64 [136, 14]
 138 Ops.LOAD dtypes.u64 [137]
-139 Ops.REFPARAM dtypes.f32 [1, 138] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+139 Ops.REFPARAM dtypes.f32 [1, 138] ParamArg(slot=0, dtype=dtypes.f32)
 140 Ops.SHRINK dtypes.f32 [139, 8, 4]
 141 Ops.INDEX dtypes.u64 [136, 7]
 142 Ops.LOAD dtypes.u64 [141]
-143 Ops.REFPARAM dtypes.f32 [1, 142] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+143 Ops.REFPARAM dtypes.f32 [1, 142] ParamArg(slot=2, dtype=dtypes.f32)
 144 Ops.SHRINK dtypes.f32 [143, 8, 4]
 145 Ops.LOAD dtypes.f32 [144]
 146 Ops.INDEX dtypes.f32 [145, 14]
 147 Ops.CMPEQ dtypes.bool [146, 17]
 148 Ops.INDEX dtypes.u64 [136, 34]
 149 Ops.LOAD dtypes.u64 [148]
-150 Ops.REFPARAM dtypes.f32 [1, 149] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+150 Ops.REFPARAM dtypes.f32 [1, 149] ParamArg(slot=1, dtype=dtypes.f32)
 151 Ops.SHRINK dtypes.f32 [150, 8, 4]
 152 Ops.LOAD dtypes.f32 [151]
 153 Ops.INDEX dtypes.f32 [152, 14]

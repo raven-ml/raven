@@ -20,8 +20,8 @@
 18 Ops.PARAM dtypes.i32 [11] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(1, 8), addrspace=AddrSpace.ALU)
 19 Ops.CALL dtypes.void [16, 17, 18] CallInfo()
 20 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
-21 Ops.INDEX dtypes.i32 [17, 20]
-22 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+21 Ops.INDEX dtypes.i32 [1, 20]
+22 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 23 Ops.INDEX dtypes.i32 [22, 20]
 24 Ops.CONST dtypes.weakint [] 1
 25 Ops.ADD dtypes.i32 [23, 24]

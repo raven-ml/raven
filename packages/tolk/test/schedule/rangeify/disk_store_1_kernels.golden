@@ -1,14 +1,16 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8, device="DISK:/tmp/tolk-rangeify")
-2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
-3 Ops.INDEX dtypes.u8 [1, 2]
-4 Ops.PARAM dtypes.u8 [0] ParamArg(slot=1, dtype=dtypes.u8, device="CPU")
-5 Ops.INDEX dtypes.u8 [4, 2]
-6 Ops.STORE dtypes.void [3, 5]
-7 Ops.END dtypes.void [6, 2]
-8 Ops.SINK dtypes.void [7] KernelInfo()
-9 Ops.CALL dtypes.void [8, 1, 4] CallInfo()
-10 Ops.AFTER dtypes.u8 [1, 9]
-11 Ops.SINK dtypes.void [10]
+2 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8)
+3 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+4 Ops.INDEX dtypes.u8 [2, 3]
+5 Ops.PARAM dtypes.u8 [0] ParamArg(slot=1, dtype=dtypes.u8)
+6 Ops.INDEX dtypes.u8 [5, 3]
+7 Ops.STORE dtypes.void [4, 6]
+8 Ops.END dtypes.void [7, 3]
+9 Ops.SINK dtypes.void [8] KernelInfo()
+10 Ops.PARAM dtypes.u8 [0] ParamArg(slot=1, dtype=dtypes.u8, device="CPU")
+11 Ops.CALL dtypes.void [9, 1, 10] CallInfo()
+12 Ops.AFTER dtypes.u8 [1, 11]
+13 Ops.SINK dtypes.void [12]
 

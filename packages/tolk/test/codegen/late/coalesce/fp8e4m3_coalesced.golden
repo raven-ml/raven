@@ -1,17 +1,17 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
-2 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=0, dtype=dtypes.fp8e4m3, device="CPU")
+2 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=0, dtype=dtypes.fp8e4m3)
 3 Ops.CONST dtypes.weakint [] 4
 4 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 0)
 5 Ops.MUL dtypes.weakint [4, 3]
 6 Ops.SHRINK dtypes.fp8e4m3 [2, 5, 3]
-7 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=1, dtype=dtypes.fp8e4m3, device="CPU")
+7 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=1, dtype=dtypes.fp8e4m3)
 8 Ops.SHRINK dtypes.fp8e4m3 [7, 5, 3]
 9 Ops.LOAD dtypes.fp8e4m3 [8]
 10 Ops.CONST dtypes.weakint [] 0
 11 Ops.INDEX dtypes.fp8e4m3 [9, 10]
-12 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=2, dtype=dtypes.fp8e4m3, device="CPU")
+12 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=2, dtype=dtypes.fp8e4m3)
 13 Ops.SHRINK dtypes.fp8e4m3 [12, 5, 3]
 14 Ops.LOAD dtypes.fp8e4m3 [13]
 15 Ops.INDEX dtypes.fp8e4m3 [14, 10]

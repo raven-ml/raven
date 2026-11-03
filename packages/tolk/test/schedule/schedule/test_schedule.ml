@@ -1477,12 +1477,7 @@ let call_devices linear =
   List.map
     (fun call ->
       List.sort_uniq String.compare
-        (List.filter_map
-           (fun u ->
-             match Ops.arg u with
-             | Param { device = Some d; _ } -> Some d
-             | _ -> None)
-           (Ops.toposort ~calls:Skip (Ops.body call))))
+        (List.filter_map Ops.device (List.tl (Ops.src call))))
     (Ops.src linear)
 
 (* On one device, the table is stored once and read by the sums; on two, each
@@ -1578,6 +1573,19 @@ let variables =
           | [ a; b ] -> equal uop ~msg:"the kernels" a b
           | ks -> failf "%d kernels of two scalars, not 2" (List.length ks));
       test "a kernel on buffers of two devices is refused" several_devices;
+      test "one expression on two devices of a target is one kernel" (fun () ->
+          let on slot d =
+            let x = Ops.new_buffer ~slot d 4 Float32 in
+            let out = Ops.new_buffer ~slot:(slot + 2) d 4 Float32 in
+            Ops.after out [ Ops.store out Ops.O.((x * x) + float 1.) ]
+          in
+          let linear, _ =
+            Schedule.create_linear_with_vars
+              (Ops.sink [ on 0 "CPU:0"; on 1 "CPU:1" ])
+          in
+          match Ops.src linear with
+          | [ a; b ] -> equal uop ~msg:"the kernels" (Ops.body a) (Ops.body b)
+          | calls -> failf "%d calls, not 2" (List.length calls));
       test
         "a stored value of no device lives on each device whose kernels read \
          it"

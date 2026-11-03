@@ -1,10 +1,10 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 17
-1 Ops.PARAM dtypes.bool [0] ParamArg(slot=0, dtype=dtypes.bool, device="CPU")
+1 Ops.PARAM dtypes.bool [0] ParamArg(slot=0, dtype=dtypes.bool)
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 1)
 3 Ops.INDEX dtypes.bool [1, 2]
 4 Ops.CONST dtypes.weakint [] 324
-5 Ops.PARAM dtypes.bool [4] ParamArg(slot=1, dtype=dtypes.bool, device="CPU")
+5 Ops.PARAM dtypes.bool [4] ParamArg(slot=1, dtype=dtypes.bool)
 6 Ops.CONST dtypes.weakint [] 18
 7 Ops.MUL dtypes.weakint [2, 6]
 8 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)

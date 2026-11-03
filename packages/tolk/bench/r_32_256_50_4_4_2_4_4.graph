@@ -1,5 +1,5 @@
 0 Ops.CONST dtypes.weakint [] 13107200
-1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 256
 3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 3)
 4 Ops.CONST dtypes.weakint [] 400
@@ -12,7 +12,7 @@
 11 Ops.MUL dtypes.weakint [9, 10]
 12 Ops.ADD dtypes.weakint [7, 11]
 13 Ops.INDEX dtypes.f32 [1, 12]
-14 Ops.PARAM dtypes.f32 [10] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+14 Ops.PARAM dtypes.f32 [10] ParamArg(slot=1, dtype=dtypes.f32)
 15 Ops.INDEX dtypes.f32 [14, 7]
 16 Ops.CONST dtypes.weakfloat [] 0.0
 17 Ops.CMPLT dtypes.bool [15, 16]
@@ -25,7 +25,7 @@
 24 Ops.CONST dtypes.weakint [] 3
 25 Ops.CMPLT dtypes.bool [23, 24]
 26 Ops.CONST dtypes.weakint [] 98304
-27 Ops.PARAM dtypes.f32 [26] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+27 Ops.PARAM dtypes.f32 [26] ParamArg(slot=2, dtype=dtypes.f32)
 28 Ops.MUL dtypes.weakint [3, 24]
 29 Ops.ADD dtypes.weakint [28, 23]
 30 Ops.CONST dtypes.weakint [] 768
@@ -39,7 +39,7 @@
 38 Ops.WHERE dtypes.f32 [25, 16, 37]
 39 Ops.WHERE dtypes.f32 [25, 36, 38]
 40 Ops.CONST dtypes.weakint [] 1600
-41 Ops.PARAM dtypes.f32 [40] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+41 Ops.PARAM dtypes.f32 [40] ParamArg(slot=3, dtype=dtypes.f32)
 42 Ops.MUL dtypes.weakint [23, 4]
 43 Ops.ADD dtypes.weakint [42, 6]
 44 Ops.INDEX dtypes.f32 [41, 43]
@@ -48,7 +48,7 @@
 47 Ops.ADD dtypes.f32 [46, 16]
 48 Ops.RANGE dtypes.weakint [22] (AxisType.WEAK, 1)
 49 Ops.CMPLT dtypes.bool [48, 24]
-50 Ops.PARAM dtypes.f32 [30] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+50 Ops.PARAM dtypes.f32 [30] ParamArg(slot=4, dtype=dtypes.f32)
 51 Ops.ADD dtypes.weakint [28, 48]
 52 Ops.WHERE dtypes.weakint [49, 51, 33]
 53 Ops.INDEX dtypes.f32 [50, 52]
@@ -58,7 +58,7 @@
 57 Ops.WHERE dtypes.f32 [49, 16, 56]
 58 Ops.WHERE dtypes.f32 [49, 54, 57]
 59 Ops.CONST dtypes.weakint [] 204800
-60 Ops.PARAM dtypes.f32 [59] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
+60 Ops.PARAM dtypes.f32 [59] ParamArg(slot=5, dtype=dtypes.f32)
 61 Ops.MUL dtypes.weakint [48, 4]
 62 Ops.ADD dtypes.weakint [61, 6]
 63 Ops.MUL dtypes.weakint [9, 40]

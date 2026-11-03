@@ -91,7 +91,9 @@ val get_kernel_graph : Ops.t -> Ops.t
      }
      {- each store or end whose ranges are all closed becomes a call to a
         kernel of its own: each state of storage it reads or writes becomes a
-        parameter, numbered from [0] in the order the kernel reaches them, its
+        parameter that names no device, the kernel running on its call's
+        arguments' devices, numbered from [0] in the order the kernel reaches
+        them, its
         ranges are renumbered from [0], and the call's arguments are those
         states, a state read through a join ({!Ops.is_join}) being the state
         under it, after what the join waits for. An end of a call over {!Ops.Axis_type.Loop}

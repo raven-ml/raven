@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 64
-2 Ops.PARAM dtypes.i8 [1] ParamArg(slot=0, dtype=dtypes.i8, device="CPU")
+2 Ops.PARAM dtypes.i8 [1] ParamArg(slot=0, dtype=dtypes.i8)
 3 Ops.CONST dtypes.weakint [] 16
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.SPECIAL dtypes.i32 [4] "lidx0"
@@ -9,10 +9,10 @@
 7 Ops.CAST dtypes.i32 [6] dtypes.i32
 8 Ops.SHL dtypes.i32 [5, 7]
 9 Ops.INDEX dtypes.i8 [2, 8]
-10 Ops.PARAM dtypes.i8 [1] ParamArg(slot=1, dtype=dtypes.i8, device="CPU")
+10 Ops.PARAM dtypes.i8 [1] ParamArg(slot=1, dtype=dtypes.i8)
 11 Ops.INDEX dtypes.i8 [10, 8]
 12 Ops.LOAD dtypes.i8 [11]
-13 Ops.PARAM dtypes.i8 [1] ParamArg(slot=2, dtype=dtypes.i8, device="CPU")
+13 Ops.PARAM dtypes.i8 [1] ParamArg(slot=2, dtype=dtypes.i8)
 14 Ops.INDEX dtypes.i8 [13, 8]
 15 Ops.LOAD dtypes.i8 [14]
 16 Ops.ADD dtypes.i8 [12, 15]

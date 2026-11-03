@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 4096
-2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=0, dtype=dtypes.f16, device="CPU")
+2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=0, dtype=dtypes.f16)
 3 Ops.CONST dtypes.weakint [] 32
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.SPECIAL dtypes.i32 [4] "lidx0"
@@ -61,14 +61,14 @@
 59 Ops.AFTER dtypes.f32 [26, 33, 37, 41, 45, 47, 51, 53, 57, 58]
 60 Ops.INDEX dtypes.f32 [59, 29]
 61 Ops.LOAD dtypes.f32 [60]
-62 Ops.PARAM dtypes.f16 [1] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
+62 Ops.PARAM dtypes.f16 [1] ParamArg(slot=1, dtype=dtypes.f16)
 63 Ops.SHL dtypes.i32 [58, 7]
 64 Ops.ADD dtypes.i32 [16, 63]
 65 Ops.CAST dtypes.i32 [25] dtypes.i32
 66 Ops.SHRINK dtypes.f16 [62, 64, 65]
 67 Ops.LOAD dtypes.f16 [66]
 68 Ops.INDEX dtypes.f16 [67, 29]
-69 Ops.PARAM dtypes.f16 [1] ParamArg(slot=2, dtype=dtypes.f16, device="CPU")
+69 Ops.PARAM dtypes.f16 [1] ParamArg(slot=2, dtype=dtypes.f16)
 70 Ops.SHL dtypes.i32 [58, 14]
 71 Ops.ADD dtypes.i32 [22, 70]
 72 Ops.INDEX dtypes.f16 [69, 71]

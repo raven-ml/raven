@@ -1,29 +1,30 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
-2 Ops.CONST dtypes.weakint [] 2
-3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
-4 Ops.MUL dtypes.weakint [3, 2]
-5 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
-6 Ops.ADD dtypes.weakint [4, 5]
-7 Ops.INDEX dtypes.i32 [1, 6]
-8 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
-9 Ops.INDEX dtypes.i32 [8, 6]
-10 Ops.STORE dtypes.void [7, 9]
-11 Ops.END dtypes.void [10, 3, 5]
-12 Ops.SINK dtypes.void [11] KernelInfo()
-13 Ops.ALLOC dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
-14 Ops.CONST dtypes.weakint [] -2
-15 Ops.MUL dtypes.weakint [3, 14]
-16 Ops.ADD dtypes.weakint [15, 5]
-17 Ops.ADD dtypes.weakint [16, 2]
-18 Ops.INDEX dtypes.i32 [8, 17]
-19 Ops.STORE dtypes.void [7, 18]
-20 Ops.END dtypes.void [19, 3, 5]
-21 Ops.SINK dtypes.void [20] KernelInfo()
-22 Ops.CALL dtypes.void [21, 13, 1] CallInfo()
-23 Ops.AFTER dtypes.i32 [13, 22]
-24 Ops.CALL dtypes.void [12, 1, 23] CallInfo()
-25 Ops.AFTER dtypes.i32 [1, 24]
-26 Ops.SINK dtypes.void [25]
+2 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 0)
+5 Ops.MUL dtypes.weakint [4, 3]
+6 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 1)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.INDEX dtypes.i32 [2, 7]
+9 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
+10 Ops.INDEX dtypes.i32 [9, 7]
+11 Ops.STORE dtypes.void [8, 10]
+12 Ops.END dtypes.void [11, 4, 6]
+13 Ops.SINK dtypes.void [12] KernelInfo()
+14 Ops.ALLOC dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+15 Ops.CONST dtypes.weakint [] -2
+16 Ops.MUL dtypes.weakint [4, 15]
+17 Ops.ADD dtypes.weakint [16, 6]
+18 Ops.ADD dtypes.weakint [17, 3]
+19 Ops.INDEX dtypes.i32 [9, 18]
+20 Ops.STORE dtypes.void [8, 19]
+21 Ops.END dtypes.void [20, 4, 6]
+22 Ops.SINK dtypes.void [21] KernelInfo()
+23 Ops.CALL dtypes.void [22, 14, 1] CallInfo()
+24 Ops.AFTER dtypes.i32 [14, 23]
+25 Ops.CALL dtypes.void [13, 1, 24] CallInfo()
+26 Ops.AFTER dtypes.i32 [1, 25]
+27 Ops.SINK dtypes.void [26]
 

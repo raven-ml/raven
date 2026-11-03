@@ -63,8 +63,9 @@ val lower_and_compile :
     each call that is a kernel ({!Op.Sink} with {!Ops.type-kernel_info}),
     outside the bodies of the calls, replaced by its compiled program
     ({!Codegen.to_program}), for the renderer
-    {!Device.renderer} picks for the target [targets d] of the call's device [d]
-    (its first, on several).
+    {!Device.renderer} picks for the target [targets d] of the device [d] of
+    the call's first storage argument ({!get_call_arg_uops}): a kernel's
+    parameters name no device.
 
     The kernels of one program key ({!Codegen.program_key}) take one program,
     compiled once: a key whose program this process has made or the disk
@@ -75,9 +76,10 @@ val lower_and_compile :
     would disturb, so they are then compiled in order. [search] is
     {!Codegen.to_program}'s [beam].
 
-    Raises as {!Codegen.to_program} does, [Invalid_argument] if
-    {!Device.renderer} finds no renderer for a target, and [Failure] if the
-    renderer's compiler's library is missing. *)
+    Raises as {!Codegen.to_program} does, [Invalid_argument] if a kernel's
+    first storage argument names no device or {!Device.renderer} finds no
+    renderer for a target, and [Failure] if the renderer's compiler's library
+    is missing. *)
 
 type kernel = {
   name : string;  (** Its name, as optimisation named it. *)

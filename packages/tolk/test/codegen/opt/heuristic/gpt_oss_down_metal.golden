@@ -1,6 +1,6 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 2880
-1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 720
 3 Ops.RANGE dtypes.weakint [2] (AxisType.GLOBAL, 2)
 4 Ops.CONST dtypes.weakint [] 4
@@ -10,7 +10,7 @@
 8 Ops.INDEX dtypes.f32 [1, 7]
 9 Ops.CONST dtypes.weakfloat [] 0.0
 10 Ops.CONST dtypes.weakint [] 11520
-11 Ops.PARAM dtypes.f32 [10] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+11 Ops.PARAM dtypes.f32 [10] ParamArg(slot=1, dtype=dtypes.f32)
 12 Ops.CONST dtypes.weakint [] 9
 13 Ops.RANGE dtypes.weakint [12] (AxisType.WEAK, 0, 0)
 14 Ops.CONST dtypes.weakint [] 5
@@ -30,9 +30,9 @@
 28 Ops.ADD dtypes.weakint [25, 27]
 29 Ops.INDEX dtypes.f32 [11, 28]
 30 Ops.CONST dtypes.weakint [] 512
-31 Ops.PARAM dtypes.f32 [30] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+31 Ops.PARAM dtypes.f32 [30] ParamArg(slot=2, dtype=dtypes.f32)
 32 Ops.CONST dtypes.weakint [] 16588800
-33 Ops.PARAM dtypes.u8 [32] ParamArg(slot=3, dtype=dtypes.u8, device="CPU")
+33 Ops.PARAM dtypes.u8 [32] ParamArg(slot=3, dtype=dtypes.u8)
 34 Ops.CONST dtypes.weakint [] 4147200
 35 Ops.MUL dtypes.weakint [26, 34]
 36 Ops.CONST dtypes.weakint [] 1440
@@ -45,7 +45,7 @@
 43 Ops.ADD dtypes.weakint [42, 24]
 44 Ops.INDEX dtypes.f32 [31, 43]
 45 Ops.CONST dtypes.weakint [] 1036800
-46 Ops.PARAM dtypes.f32 [45] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+46 Ops.PARAM dtypes.f32 [45] ParamArg(slot=4, dtype=dtypes.f32)
 47 Ops.CONST dtypes.weakint [] 259200
 48 Ops.MUL dtypes.weakint [26, 47]
 49 Ops.CONST dtypes.weakint [] 90
@@ -60,7 +60,7 @@
 58 Ops.REDUCE dtypes.f32 [57, 13, 16, 20, 24] (Ops.ADD, 0)
 59 Ops.CMPLT dtypes.bool [9, 58]
 60 Ops.WHERE dtypes.f32 [59, 58, 9]
-61 Ops.PARAM dtypes.f32 [4] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
+61 Ops.PARAM dtypes.f32 [4] ParamArg(slot=5, dtype=dtypes.f32)
 62 Ops.INDEX dtypes.f32 [61, 26]
 63 Ops.MUL dtypes.f32 [60, 62]
 64 Ops.REDUCE dtypes.f32 [63, 26] (Ops.ADD, 0)

@@ -1,16 +1,16 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 1024
-1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 1)
 3 Ops.INDEX dtypes.f32 [1, 2]
 4 Ops.CONST dtypes.weakint [] 4194304
-5 Ops.PARAM dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+5 Ops.PARAM dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32)
 6 Ops.CONST dtypes.weakint [] 4096
 7 Ops.MUL dtypes.weakint [2, 6]
 8 Ops.RANGE dtypes.weakint [6] (AxisType.WEAK, 0)
 9 Ops.ADD dtypes.weakint [7, 8]
 10 Ops.INDEX dtypes.f32 [5, 9]
-11 Ops.PARAM dtypes.f32 [6] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+11 Ops.PARAM dtypes.f32 [6] ParamArg(slot=2, dtype=dtypes.f32)
 12 Ops.INDEX dtypes.f32 [11, 8]
 13 Ops.MUL dtypes.f32 [10, 12]
 14 Ops.REDUCE dtypes.f32 [13, 8] (Ops.ADD, 0)

@@ -1,6 +1,6 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 1
-1 Ops.PARAM dtypes.i8 [0] ParamArg(slot=0, dtype=dtypes.i8, device="CPU")
+1 Ops.PARAM dtypes.i8 [0] ParamArg(slot=0, dtype=dtypes.i8)
 2 Ops.CONST dtypes.weakint [] 0
 3 Ops.CAST dtypes.i32 [2] dtypes.i32
 4 Ops.INDEX dtypes.i8 [1, 3]
@@ -12,7 +12,7 @@
 10 Ops.BITCAST dtypes.u64 [9] dtypes.u64
 11 Ops.INDEX dtypes.u64 [10, 3]
 12 Ops.LOAD dtypes.u64 [11]
-13 Ops.REFPARAM dtypes.i8 [0, 12] ParamArg(slot=0, dtype=dtypes.i8, device="CPU")
+13 Ops.REFPARAM dtypes.i8 [0, 12] ParamArg(slot=0, dtype=dtypes.i8)
 14 Ops.INDEX dtypes.i8 [13, 3]
 15 Ops.STORE dtypes.void [14, 5]
 16 Ops.SINK dtypes.void [15] KernelInfo(name="r_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(lds=1, mem=1), optimized=True)

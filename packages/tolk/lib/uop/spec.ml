@@ -446,6 +446,9 @@ let program : t =
   Pattern_matcher.append
     (Pattern_matcher.fold
        (fun () -> [
+         (* A program's parameters name no device: its call's arguments do. *)
+         decide (pat [ Op.Param ] ~name:"x") "x" (fun x ->
+             if Option.is_some (param_of x).device then Some false else None);
          (* A bare constant appears only under the cast stating its width, or
             as a define's size. *)
          decide

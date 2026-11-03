@@ -942,7 +942,7 @@ let debuf slot buf =
   in
   let param =
     Shape.param ~shape:[ Int (max_numel buf) ] ?vmin_vmax
-      ?addrspace:(addrspace buf) ?device:(device buf) ~phase ~align slot
+      ?addrspace:(addrspace buf) ~phase ~align slot
       (dtype buf)
   in
   let ret = reshape param (List.map (fun n -> Int n) (max_shape buf)) in

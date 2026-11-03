@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
-2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=0, dtype=dtypes.f16, device="CPU")
+2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=0, dtype=dtypes.f16)
 3 Ops.CONST dtypes.weakint [] 2
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
@@ -9,13 +9,13 @@
 7 Ops.CONST dtypes.weakint [] 4
 8 Ops.CAST dtypes.i32 [7] dtypes.i32
 9 Ops.SHRINK dtypes.f16 [2, 6, 8]
-10 Ops.PARAM dtypes.f16 [1] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
+10 Ops.PARAM dtypes.f16 [1] ParamArg(slot=1, dtype=dtypes.f16)
 11 Ops.SHRINK dtypes.f16 [10, 6, 8]
 12 Ops.LOAD dtypes.f16 [11]
 13 Ops.CONST dtypes.weakint [] 0
 14 Ops.CAST dtypes.i32 [13] dtypes.i32
 15 Ops.INDEX dtypes.f16 [12, 14]
-16 Ops.PARAM dtypes.f16 [1] ParamArg(slot=2, dtype=dtypes.f16, device="CPU")
+16 Ops.PARAM dtypes.f16 [1] ParamArg(slot=2, dtype=dtypes.f16)
 17 Ops.SHRINK dtypes.f16 [16, 6, 8]
 18 Ops.LOAD dtypes.f16 [17]
 19 Ops.INDEX dtypes.f16 [18, 14]
@@ -42,9 +42,9 @@
 40 Ops.AFTER dtypes.void [0, 39]
 41 Ops.END dtypes.void [40, 5]
 42 Ops.SINK dtypes.void [41] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-43 Ops.PARAM dtypes.u16 [1] ParamArg(slot=0, dtype=dtypes.u16, device="CPU")
+43 Ops.PARAM dtypes.u16 [1] ParamArg(slot=0, dtype=dtypes.u16)
 44 Ops.SHRINK dtypes.u16 [43, 6, 8]
-45 Ops.PARAM dtypes.u16 [1] ParamArg(slot=1, dtype=dtypes.u16, device="CPU")
+45 Ops.PARAM dtypes.u16 [1] ParamArg(slot=1, dtype=dtypes.u16)
 46 Ops.ADD dtypes.i32 [6, 13]
 47 Ops.INDEX dtypes.u16 [45, 46]
 48 Ops.LOAD dtypes.u16 [47]
@@ -64,7 +64,7 @@
 62 Ops.STACK dtypes.f32 [49, 53, 57, 61]
 63 Ops.CAST dtypes.f32 [62] dtypes.f32
 64 Ops.INDEX dtypes.f32 [63, 14]
-65 Ops.PARAM dtypes.u16 [1] ParamArg(slot=2, dtype=dtypes.u16, device="CPU")
+65 Ops.PARAM dtypes.u16 [1] ParamArg(slot=2, dtype=dtypes.u16)
 66 Ops.INDEX dtypes.u16 [65, 46]
 67 Ops.LOAD dtypes.u16 [66]
 68 Ops.CUSTOM dtypes.f32 [67] ("f2f f16 f32 True", dtypes.f32)

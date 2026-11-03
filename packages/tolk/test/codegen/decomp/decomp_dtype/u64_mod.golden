@@ -1,16 +1,16 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
-2 Ops.PARAM dtypes.u64 [1] ParamArg(slot=0, dtype=dtypes.u64, device="CPU")
+2 Ops.PARAM dtypes.u64 [1] ParamArg(slot=0, dtype=dtypes.u64)
 3 Ops.CONST dtypes.weakint [] 2
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
 6 Ops.SHL dtypes.i32 [5, 3]
 7 Ops.INDEX dtypes.u64 [2, 6]
-8 Ops.PARAM dtypes.u64 [1] ParamArg(slot=1, dtype=dtypes.u64, device="CPU")
+8 Ops.PARAM dtypes.u64 [1] ParamArg(slot=1, dtype=dtypes.u64)
 9 Ops.INDEX dtypes.u64 [8, 6]
 10 Ops.LOAD dtypes.u64 [9]
-11 Ops.PARAM dtypes.u64 [1] ParamArg(slot=2, dtype=dtypes.u64, device="CPU")
+11 Ops.PARAM dtypes.u64 [1] ParamArg(slot=2, dtype=dtypes.u64)
 12 Ops.INDEX dtypes.u64 [11, 6]
 13 Ops.LOAD dtypes.u64 [12]
 14 Ops.TRUNCMOD dtypes.u64 [10, 13]
@@ -45,7 +45,7 @@
 43 Ops.END dtypes.void [42, 5]
 44 Ops.SINK dtypes.void [43] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 45 Ops.CONST dtypes.weakint [] 16
-46 Ops.PARAM dtypes.u32 [45] ParamArg(slot=0, dtype=dtypes.u32, device="CPU")
+46 Ops.PARAM dtypes.u32 [45] ParamArg(slot=0, dtype=dtypes.u32)
 47 Ops.MUL dtypes.i32 [6, 3]
 48 Ops.CONST dtypes.weakint [] 0
 49 Ops.ADD dtypes.i32 [47, 48]
@@ -66,7 +66,7 @@
 64 Ops.SHR dtypes.u32 [60, 63]
 65 Ops.OR dtypes.u32 [59, 64]
 66 Ops.WHERE dtypes.u32 [55, 59, 65]
-67 Ops.PARAM dtypes.u32 [45] ParamArg(slot=2, dtype=dtypes.u32, device="CPU")
+67 Ops.PARAM dtypes.u32 [45] ParamArg(slot=2, dtype=dtypes.u32)
 68 Ops.ADD dtypes.i32 [47, 16]
 69 Ops.INDEX dtypes.u32 [67, 68]
 70 Ops.LOAD dtypes.u32 [69]
@@ -77,7 +77,7 @@
 75 Ops.CAST dtypes.u32 [74] dtypes.u32
 76 Ops.CMPLT dtypes.bool [75, 52]
 77 Ops.CMPEQ dtypes.bool [76, 54]
-78 Ops.PARAM dtypes.u32 [45] ParamArg(slot=1, dtype=dtypes.u32, device="CPU")
+78 Ops.PARAM dtypes.u32 [45] ParamArg(slot=1, dtype=dtypes.u32)
 79 Ops.INDEX dtypes.u32 [78, 68]
 80 Ops.LOAD dtypes.u32 [79]
 81 Ops.AND dtypes.u32 [75, 57]

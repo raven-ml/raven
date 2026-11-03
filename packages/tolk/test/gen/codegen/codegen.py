@@ -418,7 +418,7 @@ def invalid_lanes():
     """rune's fold of a float32 [2; 1] with output size [1; 1], kernel [1; 2], stride [1; 1], dilation [1; 2] and
     padding [(0, 0); (1, 1)]: every window lies in the padding, so each lane of the unrolled reduce reads Invalid, and
     the lanes stay a stack whose loads each fold to 0."""
-    out, x = UOp.param(0, dtypes.float, 1, device="CPU"), UOp.param(1, dtypes.float, 2, device="CPU")
+    out, x = UOp.param(0, dtypes.float, 1), UOp.param(1, dtypes.float, 2)
     r1, r0 = UOp.range(4, 1, AxisType.WEAK), UOp.range(2, 0, AxisType.WEAK)
     j = r1 * 3 + 1
     value = ((r1 < 3) & ((r0 < 1) & (j % 5 < 1))).where(x.index((r1 < 3).where(j // 5, UOp.const(Invalid))), 0.0)
@@ -430,7 +430,7 @@ def invalid_lanes_int8():
     """rune's fold of an int8 [2; 1] with output size [1], kernel [2], dilation [2] and padding [(1, 1)], summed in
     uint: every window lies in the padding, so each lane of the unrolled sum reads Invalid, as the float32 fold's
     lanes do."""
-    out, x = UOp.param(0, dtypes.char, 1, device="CPU"), UOp.param(1, dtypes.char, 2, device="CPU")
+    out, x = UOp.param(0, dtypes.char, 1), UOp.param(1, dtypes.char, 2)
     r = UOp.range(4, 0, AxisType.WEAK)
     j = r * 3 + 1
     value = ((r < 3) & (j % 5 < 1)).where(x.index((r < 3).where(j // 5, UOp.const(Invalid))), UOp.const(0))

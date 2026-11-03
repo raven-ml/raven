@@ -1,20 +1,20 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
-2 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=0, dtype=dtypes.fp8e4m3, device="CPU")
+2 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=0, dtype=dtypes.fp8e4m3)
 3 Ops.CONST dtypes.weakint [] 4
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
 6 Ops.CONST dtypes.weakint [] 2
 7 Ops.SHL dtypes.i32 [5, 6]
 8 Ops.SHRINK dtypes.fp8e4m3 [2, 7, 4]
-9 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=1, dtype=dtypes.fp8e4m3, device="CPU")
+9 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=1, dtype=dtypes.fp8e4m3)
 10 Ops.SHRINK dtypes.fp8e4m3 [9, 7, 4]
 11 Ops.LOAD dtypes.fp8e4m3 [10]
 12 Ops.CONST dtypes.weakint [] 0
 13 Ops.CAST dtypes.i32 [12] dtypes.i32
 14 Ops.INDEX dtypes.fp8e4m3 [11, 13]
-15 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=2, dtype=dtypes.fp8e4m3, device="CPU")
+15 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=2, dtype=dtypes.fp8e4m3)
 16 Ops.SHRINK dtypes.fp8e4m3 [15, 7, 4]
 17 Ops.LOAD dtypes.fp8e4m3 [16]
 18 Ops.INDEX dtypes.fp8e4m3 [17, 13]
@@ -38,10 +38,10 @@
 36 Ops.AFTER dtypes.void [0, 35]
 37 Ops.END dtypes.void [36, 5]
 38 Ops.SINK dtypes.void [37] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-39 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, device="CPU")
+39 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8)
 40 Ops.ADD dtypes.i32 [7, 12]
 41 Ops.INDEX dtypes.u8 [39, 40]
-42 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8, device="CPU")
+42 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8)
 43 Ops.INDEX dtypes.u8 [42, 40]
 44 Ops.LOAD dtypes.u8 [43]
 45 Ops.CUSTOM dtypes.f32 [44] ("f2f fp8e4m3 f32 True", dtypes.f32)
@@ -61,7 +61,7 @@
 59 Ops.CAST dtypes.f32 [58] dtypes.f32
 60 Ops.INDEX dtypes.f32 [59, 13]
 61 Ops.CAST dtypes.f32 [60] dtypes.f32
-62 Ops.PARAM dtypes.u8 [1] ParamArg(slot=2, dtype=dtypes.u8, device="CPU")
+62 Ops.PARAM dtypes.u8 [1] ParamArg(slot=2, dtype=dtypes.u8)
 63 Ops.INDEX dtypes.u8 [62, 40]
 64 Ops.LOAD dtypes.u8 [63]
 65 Ops.CUSTOM dtypes.f32 [64] ("f2f fp8e4m3 f32 True", dtypes.f32)

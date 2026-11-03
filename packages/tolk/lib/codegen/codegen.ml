@@ -1779,19 +1779,13 @@ let compiled compile_source prg (ren : Renderer.t) =
 
 let compile prg ren = compiled Renderer.Compiler.compile prg ren
 
-(* A kernel's parameters' devices, by slot in the order a walk finds them, and
-   the key of the kernel with each parameter that names a device naming
-   [device], its target's: the program's source names no device, and a link
-   binds it to its call's buffers, so one program, its parameters' devices
-   renamed ([rename]), serves every device of the target (D170). A kernel on
-   the target's first device, named as the target is, is its own key. They
-   are kept with the kernel while it lives, since a kernel asks for its
+(* A kernel's key, read from [kernel], the kernel the program is made from: a
+   kernel's parameters name no device, so kernels on every device of a target
+   are one kernel and one program, which a link binds to its call's buffers.
+   They are kept with the kernel while it lives, since a kernel asks for its
    program several times; [key] holds its last key and the [suffix] that key
-   ends with. [kernel] is the kernel the key reads and the program is made
-   from. *)
+   ends with. *)
 type params = {
-  devices : (int * device) list;
-  device : device;
   free : string;
   key : (string * string) option Atomic.t;
   kernel : Ops.t;
@@ -1807,7 +1801,7 @@ end)
 let kernels = Kernels.create 64
 let kernels_lock = Mutex.create ()
 
-let params_on device ast =
+let params_of ast =
   (* The schedule's symbolic rules order the operands of a commutative index
      operation by its ranges' numbers in the whole graph, before each kernel
      renumbers its own. Ordered again by the kernel's numbers, kernels that
@@ -1817,35 +1811,18 @@ let params_on device ast =
     graph_rewrite ~calls:Skip ~pass:Once ~ctx:() ast
       (After_sources Shape.commutative)
   in
-  let devices = ref [] in
-  let named u =
-    match arg u with
-    | Param ({ slot; device = Some d; _ } as p) ->
-        devices := (slot, d) :: !devices;
-        if String.equal d device then None
-        else Some (Param { p with device = Some device })
-    | _ -> None
-  in
-  let free = key_with ~arg:named ast in
-  {
-    devices = List.rev !devices;
-    device;
-    free;
-    key = Atomic.make None;
-    kernel = ast;
-  }
+  { free = key ast; key = Atomic.make None; kernel = ast }
 
-let params ast (ren : Renderer.t) =
-  let device = ren.target.device in
+let params ast =
   match Mutex.protect kernels_lock (fun () -> Kernels.find_opt kernels ast) with
-  | Some p when String.equal p.device device -> p
-  | Some _ | None ->
-      let p = params_on device ast in
+  | Some p -> p
+  | None ->
+      let p = params_of ast in
       Mutex.protect kernels_lock (fun () -> Kernels.replace kernels ast p);
       p
 
-(* The key of a program, in memory and on disk: the kernel with its
-   parameters on its target's device, the renderer and its target, the table
+(* The key of a program, in memory and on disk: the kernel, the renderer and
+   its target, the table
    of its compiler's binaries, which names the compiler and its options, every
    setting and variable that shapes what compilation makes
    ([Setting.shaping]), and the digest of this library's sources, of which a
@@ -1880,7 +1857,7 @@ let keyed p ren =
       Atomic.set p.key (Some (text, key));
       key
 
-let program_key ast ren = keyed (params ast ren) ren
+let program_key ast ren = keyed (params ast) ren
 
 (* A program is kept on disk up to its source, only while its compiler's
    binaries are, under a table that names the compiler: its binary is the
@@ -1901,23 +1878,23 @@ let programs () = Atomic.get programs_made
    no binary kept on disk. *)
 exception Unkept
 
-(* A program up to its source, made or read back from disk, and whether it
-   was read. [only_read] raises [Unkept] where it would render. *)
+(* A program up to its source, made or read back from disk. [only_read]
+   raises [Unkept] where it would render. *)
 let rendered_program ?beam ~only_read ~key ~kernel ast (ren : Renderer.t) =
   let render () =
     if only_read then raise_notrace Unkept;
     let prg = linearized ?beam ast ren in
     Option.get (do_render ren prg (nth prg 1))
   in
-  if not (kept kernel ren) then (render (), false)
-  else Graph.cached ~table:"to_program" ~key ~valid:rendered render
+  if not (kept kernel ren) then render ()
+  else fst (Graph.cached ~table:"to_program" ~key ~valid:rendered render)
 
 (* A program read back is compiled as a made one is, so it shows its source
    from DEBUG 4 and its instructions from 7. [only_read] makes the program
    from what the disk keeps alone, and raises [Unkept] for want of it, before
    it shows anything. *)
 let made_program ?beam ~only_read ~key ~kernel ast (ren : Renderer.t) =
-  let prg, read = rendered_program ?beam ~only_read ~key ~kernel ast ren in
+  let prg = rendered_program ?beam ~only_read ~key ~kernel ast ren in
   let compile =
     if not only_read then Renderer.Compiler.compile_cached
     else
@@ -1928,84 +1905,32 @@ let made_program ?beam ~only_read ~key ~kernel ast (ren : Renderer.t) =
   in
   let prg = Option.get (do_compile (ren, compile) prg (nth prg 2)) in
   Atomic.incr programs_made;
-  (prg, read)
-
-(* [prg] with each parameter that names a device naming the one [devices]
-   gives its slot, if any: those of its graph and those its information
-   lists, which a substitution of the graph does not reach. *)
-let rename devices prg =
-  let table = Hashtbl.create 8 in
-  List.iter (fun (slot, d) -> Hashtbl.replace table slot d) devices;
-  let moved u =
-    match arg u with
-    | Param ({ slot; device = Some d; _ } as p) -> (
-        match Hashtbl.find_opt table slot with
-        | Some d' when not (String.equal d d') ->
-            Some (u, replace u ~arg:(Param { p with device = Some d' }))
-        | Some _ | None -> None)
-    | _ -> None
-  in
-  match List.filter_map moved (toposort ~calls:Enter prg) with
-  | [] -> prg
-  | subs -> (
-      let renamed = substitute ~calls:Enter ~pass:Once prg subs in
-      let param u = match moved u with Some (_, u') -> u' | None -> u in
-      match arg renamed with
-      | Program info ->
-          let params = List.map param info.params in
-          replace renamed ~arg:(Program { info with params })
-      | _ -> renamed)
-
-(* A kept program: [prg] as made or read, and [named], it renamed to the
-   [devices] of the kernel that made it. *)
-type made = { devices : (int * device) list; named : Ops.t; prg : Ops.t }
-
-let same_devices =
-  List.equal (fun (s, d) (s', d') -> s = s' && String.equal d d')
-
-(* A program made here from [ast] names [ast]'s devices, slot by slot, so it
-   needs no renaming; one read back names the devices of the kernel that
-   made it in another process. *)
-let made_of ?beam ~only_read ~key ~kernel (p : params) ast ren =
-  let prg, read = made_program ?beam ~only_read ~key ~kernel ast ren in
-  let named = if read then rename p.devices prg else prg in
-  { devices = p.devices; named; prg }
+  prg
 
 (* Each kernel's program is made once: a domain that asks for one being made
    waits for it rather than making it again. *)
-let to_program_cache = (Helpers.Memo.create () : made Helpers.Memo.t)
-
-let served (p : params) m =
-  if same_devices p.devices m.devices then m.named else rename p.devices m.prg
+let to_program_cache = (Helpers.Memo.create () : Ops.t Helpers.Memo.t)
 
 let to_program ?beam ast ren =
   let kernel = kernel_of ast in
-  let p = params ast ren in
+  let p = params ast in
   let key = keyed p ren in
-  served p
-    (Helpers.Memo.get to_program_cache key (fun () ->
-         made_of ?beam ~only_read:false ~key ~kernel p p.kernel ren))
+  Helpers.Memo.get to_program_cache key (fun () ->
+      made_program ?beam ~only_read:false ~key ~kernel p.kernel ren)
 
 let read ast ren =
   let kernel = kernel_of ast in
-  let p = params ast ren in
+  let p = params ast in
   let key = keyed p ren in
   match
     Helpers.Memo.try_get to_program_cache key (fun () ->
-        made_of ~only_read:true ~key ~kernel p p.kernel ren)
+        made_program ~only_read:true ~key ~kernel p.kernel ren)
   with
-  | m -> Option.map (served p) m
+  | m -> m
   | exception Unkept -> None
 
 (* A kernel's program up to its source, to be compiled. *)
-type pending = {
-  ren : Renderer.t;
-  params : params;
-  key : string;
-  prg : Ops.t;
-  read : bool;
-  source : string;
-}
+type pending = { ren : Renderer.t; key : string; prg : Ops.t; source : string }
 
 let to_programs ?beam kernels =
   let seen = Hashtbl.create 64 in
@@ -2016,13 +1941,11 @@ let to_programs ?beam kernels =
     fresh
   in
   let render (ast, (ren : Renderer.t)) =
-    let kernel = kernel_of ast and params = params ast ren in
-    let key = keyed params ren in
-    let prg, read =
-      rendered_program ?beam ~only_read:false ~key ~kernel ast ren
-    in
+    let kernel = kernel_of ast in
+    let key = keyed (params ast) ren in
+    let prg = rendered_program ?beam ~only_read:false ~key ~kernel ast ren in
     let source = compiled_source ren prg (nth prg 2) in
-    { ren; params; key; prg; read; source }
+    { ren; key; prg; source }
   in
   let kernels = List.filter fresh kernels in
   (* A beam search times its candidates, which concurrent compiles would
@@ -2061,8 +1984,7 @@ let to_programs ?beam kernels =
     let made () =
       let prg = with_binary k.ren k.prg lib in
       Atomic.incr programs_made;
-      let named = if k.read then rename k.params.devices prg else prg in
-      { devices = k.params.devices; named; prg }
+      prg
     in
     ignore (Helpers.Memo.get to_program_cache k.key made)
   in

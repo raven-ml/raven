@@ -129,17 +129,19 @@ val to_program :
     pipeline that keeps what it makes, {!linearize} and {!compile} the one that
     keeps nothing.
 
-    Programs are kept: a second call with an [ast] equal to the first's but
-    for which device each parameter that names one names, a renderer of the
-    same name and target whose compiler has the same name of its toolchain and
-    options ({!Renderer.Compiler.cachekey}), if any, and the same values of the
-    settings and variables that shape what compilation makes
-    ({!Setting.shaping}) returns the program the first made, each parameter
-    naming the device [ast]'s parameter of its slot names. Its source and
-    binary are the first's, and name no device. [to_program] may be
-    called from several domains at once, and makes each program once: a call
-    that asks for a program another domain is making waits for it. A call that
-    raises keeps nothing, and the next call makes the program anew.
+    A kernel's parameters name no device ({!Spec.program}): a program runs on
+    the devices of its call's arguments, so one program serves every device of
+    its target.
+
+    Programs are kept: a second call with an [ast] equal to the first's, a
+    renderer of the same name and target whose compiler has the same name of
+    its toolchain and options ({!Renderer.Compiler.cachekey}), if any, and the
+    same values of the settings and variables that shape what compilation
+    makes ({!Setting.shaping}) returns the program the first made.
+    [to_program] may be called from several domains at once, and makes each
+    program once: a call that asks for a program another domain is making
+    waits for it. A call that raises keeps nothing, and the next call makes the
+    program anew.
 
     Programs are also kept on disk ({!Helpers.Diskcache}, table ["to_program"]),
     for later processes, up to their source: a program is read back under the

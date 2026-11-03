@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 256
-2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
 3 Ops.CONST dtypes.weakint [] 32
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.SPECIAL dtypes.i32 [4] "lidx0"
@@ -50,14 +50,14 @@
 48 Ops.RANGE dtypes.i32 [21] (AxisType.WEAK, 0)
 49 Ops.AFTER dtypes.f32 [38, 45, 47, 48]
 50 Ops.INDEX dtypes.f32 [49, 41]
-51 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+51 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
 52 Ops.SHL dtypes.i32 [48, 16]
 53 Ops.ADD dtypes.i32 [29, 52]
 54 Ops.ADD dtypes.i32 [53, 34]
 55 Ops.ADD dtypes.i32 [26, 54]
 56 Ops.SHRINK dtypes.f32 [51, 55, 21]
 57 Ops.LOAD dtypes.f32 [56]
-58 Ops.PARAM dtypes.f32 [1] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+58 Ops.PARAM dtypes.f32 [1] ParamArg(slot=2, dtype=dtypes.f32)
 59 Ops.SHL dtypes.i32 [48, 24]
 60 Ops.ADD dtypes.i32 [19, 59]
 61 Ops.ADD dtypes.i32 [60, 35]
@@ -88,7 +88,7 @@
 86 Ops.BITCAST dtypes.u64 [85] dtypes.u64
 87 Ops.INDEX dtypes.u64 [86, 41]
 88 Ops.LOAD dtypes.u64 [87]
-89 Ops.REFPARAM dtypes.f32 [1, 88] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+89 Ops.REFPARAM dtypes.f32 [1, 88] ParamArg(slot=0, dtype=dtypes.f32)
 90 Ops.SHRINK dtypes.f32 [89, 36, 21]
 91 Ops.BUFFER dtypes.f32 [20] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
 92 Ops.AFTER dtypes.f32 [91, 5, 22, 30]
@@ -100,12 +100,12 @@
 98 Ops.INDEX dtypes.f32 [97, 41]
 99 Ops.INDEX dtypes.u64 [86, 13]
 100 Ops.LOAD dtypes.u64 [99]
-101 Ops.REFPARAM dtypes.f32 [1, 100] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+101 Ops.REFPARAM dtypes.f32 [1, 100] ParamArg(slot=1, dtype=dtypes.f32)
 102 Ops.SHRINK dtypes.f32 [101, 55, 21]
 103 Ops.LOAD dtypes.f32 [102]
 104 Ops.INDEX dtypes.u64 [86, 21]
 105 Ops.LOAD dtypes.u64 [104]
-106 Ops.REFPARAM dtypes.f32 [1, 105] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+106 Ops.REFPARAM dtypes.f32 [1, 105] ParamArg(slot=2, dtype=dtypes.f32)
 107 Ops.SHRINK dtypes.f32 [106, 61, 21]
 108 Ops.LOAD dtypes.f32 [107]
 109 Ops.LOAD dtypes.f32 [98]

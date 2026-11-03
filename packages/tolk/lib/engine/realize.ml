@@ -114,7 +114,14 @@ let get_call_to_compile targets c =
   let ast = body c in
   match (op ast, arg ast) with
   | Op.Sink, Kernel _ ->
-      let t = targets (List.hd (devices c)) in
+      (* A kernel's parameters name no device: it runs on its call's first
+         storage argument's, as the engine launches it. *)
+      let d =
+        match Option.bind (List.nth_opt (get_call_arg_uops c) 0) device with
+        | Some d -> d
+        | None -> invalid_arg "a kernel's first storage needs a device"
+      in
+      let t = targets d in
       Some (ast, Result.fold ~ok:Fun.id ~error:invalid_arg (Device.renderer t))
   | _ -> None
 
@@ -152,14 +159,14 @@ let lower_and_compile ?search ~targets linear =
         else Option.map (fun a -> (c, a)) (get_call_to_compile targets c))
       (toposort ~calls:Skip linear)
   in
-  (* Kernels of one program key take one program: those that differ only in
-     their parameters' devices. A program made or kept on disk is read on the
+  (* Kernels of one program key take one program, whatever devices their
+     calls' arguments lie on. A program made or kept on disk is read on the
      calling domain: a read took 0.4 to 0.5 ms on fudge, less than a domain's
      start and the collections it then joins, so a schedule whose programs are
      all made or kept spawns no domain. *)
   Codegen.to_programs ?beam:search (List.map snd calls);
   let compile (ast, ren) = Codegen.to_program ?beam:search ast ren in
-  (* Each kernel now finds its program kept, its parameters on its devices. *)
+  (* Each kernel now finds its program kept. *)
   substitute ~calls:Skip ~pass:Fixed_point linear
     (List.map
        (fun (c, ((ast, ren) as a)) ->

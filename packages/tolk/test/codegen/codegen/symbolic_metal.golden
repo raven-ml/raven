@@ -1,11 +1,11 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 64
-1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.STACK dtypes.void []
 3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(1, 64), name="n", addrspace=AddrSpace.ALU)
 4 Ops.SPECIAL dtypes.i32 [3] "gidx0"
 5 Ops.INDEX dtypes.f32 [1, 4]
-6 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+6 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 7 Ops.INDEX dtypes.f32 [6, 4]
 8 Ops.LOAD dtypes.f32 [7]
 9 Ops.CONST dtypes.weakfloat [] 2.0
@@ -23,7 +23,7 @@
 21 Ops.CAST dtypes.i32 [20] dtypes.i32
 22 Ops.INDEX dtypes.u64 [19, 21]
 23 Ops.LOAD dtypes.u64 [22]
-24 Ops.REFPARAM dtypes.f32 [0, 23] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+24 Ops.REFPARAM dtypes.f32 [0, 23] ParamArg(slot=0, dtype=dtypes.f32)
 25 Ops.BITCAST dtypes.i32 [18] dtypes.i32
 26 Ops.CONST dtypes.weakint [] 4
 27 Ops.CAST dtypes.i32 [26] dtypes.i32
@@ -35,7 +35,7 @@
 33 Ops.CAST dtypes.i32 [32] dtypes.i32
 34 Ops.INDEX dtypes.u64 [19, 33]
 35 Ops.LOAD dtypes.u64 [34]
-36 Ops.REFPARAM dtypes.f32 [0, 35] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+36 Ops.REFPARAM dtypes.f32 [0, 35] ParamArg(slot=1, dtype=dtypes.f32)
 37 Ops.INDEX dtypes.f32 [36, 30]
 38 Ops.LOAD dtypes.f32 [37]
 39 Ops.MUL dtypes.f32 [38, 10]

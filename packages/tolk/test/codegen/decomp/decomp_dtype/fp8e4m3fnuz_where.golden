@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
-2 Ops.PARAM dtypes.fp8e4m3fnuz [1] ParamArg(slot=0, dtype=dtypes.fp8e4m3fnuz, device="CPU")
+2 Ops.PARAM dtypes.fp8e4m3fnuz [1] ParamArg(slot=0, dtype=dtypes.fp8e4m3fnuz)
 3 Ops.CONST dtypes.weakint [] 2
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
@@ -9,16 +9,16 @@
 7 Ops.CONST dtypes.weakint [] 4
 8 Ops.CAST dtypes.i32 [7] dtypes.i32
 9 Ops.SHRINK dtypes.fp8e4m3fnuz [2, 6, 8]
-10 Ops.PARAM dtypes.bool [1] ParamArg(slot=1, dtype=dtypes.bool, device="CPU")
+10 Ops.PARAM dtypes.bool [1] ParamArg(slot=1, dtype=dtypes.bool)
 11 Ops.INDEX dtypes.bool [10, 6]
 12 Ops.LOAD dtypes.bool [11]
-13 Ops.PARAM dtypes.fp8e4m3fnuz [1] ParamArg(slot=2, dtype=dtypes.fp8e4m3fnuz, device="CPU")
+13 Ops.PARAM dtypes.fp8e4m3fnuz [1] ParamArg(slot=2, dtype=dtypes.fp8e4m3fnuz)
 14 Ops.SHRINK dtypes.fp8e4m3fnuz [13, 6, 8]
 15 Ops.LOAD dtypes.fp8e4m3fnuz [14]
 16 Ops.CONST dtypes.weakint [] 0
 17 Ops.CAST dtypes.i32 [16] dtypes.i32
 18 Ops.INDEX dtypes.fp8e4m3fnuz [15, 17]
-19 Ops.PARAM dtypes.fp8e4m3fnuz [1] ParamArg(slot=3, dtype=dtypes.fp8e4m3fnuz, device="CPU")
+19 Ops.PARAM dtypes.fp8e4m3fnuz [1] ParamArg(slot=3, dtype=dtypes.fp8e4m3fnuz)
 20 Ops.SHRINK dtypes.fp8e4m3fnuz [19, 6, 8]
 21 Ops.LOAD dtypes.fp8e4m3fnuz [20]
 22 Ops.INDEX dtypes.fp8e4m3fnuz [21, 17]
@@ -50,13 +50,13 @@
 48 Ops.AFTER dtypes.void [0, 47]
 49 Ops.END dtypes.void [48, 5]
 50 Ops.SINK dtypes.void [49] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-51 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, device="CPU")
+51 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8)
 52 Ops.SHRINK dtypes.u8 [51, 6, 8]
-53 Ops.PARAM dtypes.u8 [1] ParamArg(slot=2, dtype=dtypes.u8, device="CPU")
+53 Ops.PARAM dtypes.u8 [1] ParamArg(slot=2, dtype=dtypes.u8)
 54 Ops.SHRINK dtypes.u8 [53, 6, 8]
 55 Ops.LOAD dtypes.u8 [54]
 56 Ops.INDEX dtypes.u8 [55, 17]
-57 Ops.PARAM dtypes.u8 [1] ParamArg(slot=3, dtype=dtypes.u8, device="CPU")
+57 Ops.PARAM dtypes.u8 [1] ParamArg(slot=3, dtype=dtypes.u8)
 58 Ops.SHRINK dtypes.u8 [57, 6, 8]
 59 Ops.LOAD dtypes.u8 [58]
 60 Ops.INDEX dtypes.u8 [59, 17]

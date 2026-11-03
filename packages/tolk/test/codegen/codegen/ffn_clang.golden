@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 128
-2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
 3 Ops.PARAM dtypes.i32 [0] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 8), name="block_lo", addrspace=AddrSpace.ALU)
 4 Ops.PARAM dtypes.i32 [0] ParamArg(slot=5, dtype=dtypes.i32, vmin_vmax=(0, 8), name="block_hi", addrspace=AddrSpace.ALU)
 5 Ops.SUB dtypes.i32 [4, 3]
@@ -85,13 +85,13 @@
 83 Ops.INDEX dtypes.f32 [82, 16]
 84 Ops.LOAD dtypes.f32 [83]
 85 Ops.CONST dtypes.weakint [] 64
-86 Ops.PARAM dtypes.f32 [85] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+86 Ops.PARAM dtypes.f32 [85] ParamArg(slot=1, dtype=dtypes.f32)
 87 Ops.SHL dtypes.i32 [81, 26]
 88 Ops.SHRINK dtypes.f32 [86, 87, 9]
 89 Ops.LOAD dtypes.f32 [88]
 90 Ops.INDEX dtypes.f32 [89, 30]
 91 Ops.CONST dtypes.weakint [] 8192
-92 Ops.PARAM dtypes.f32 [91] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+92 Ops.PARAM dtypes.f32 [91] ParamArg(slot=2, dtype=dtypes.f32)
 93 Ops.SHL dtypes.i32 [81, 52]
 94 Ops.ADD dtypes.i32 [93, 10]
 95 Ops.CONST dtypes.weakint [] 384
@@ -394,7 +394,7 @@
 392 Ops.AFTER dtypes.f32 [358, 361, 363, 365, 367, 369, 371, 373, 375, 377, 379, 381, 383, 385, 387, 389, 391, 81]
 393 Ops.INDEX dtypes.f32 [392, 16]
 394 Ops.LOAD dtypes.f32 [393]
-395 Ops.PARAM dtypes.f32 [91] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+395 Ops.PARAM dtypes.f32 [91] ParamArg(slot=3, dtype=dtypes.f32)
 396 Ops.SHRINK dtypes.f32 [395, 97, 9]
 397 Ops.LOAD dtypes.f32 [396]
 398 Ops.INDEX dtypes.f32 [397, 16]
@@ -1463,7 +1463,7 @@
 1461 Ops.BITCAST dtypes.u64 [1460] dtypes.u64
 1462 Ops.INDEX dtypes.u64 [1461, 16]
 1463 Ops.LOAD dtypes.u64 [1462]
-1464 Ops.REFPARAM dtypes.f32 [1, 1463] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+1464 Ops.REFPARAM dtypes.f32 [1, 1463] ParamArg(slot=0, dtype=dtypes.f32)
 1465 Ops.BITCAST dtypes.i32 [1460] dtypes.i32
 1466 Ops.INDEX dtypes.i32 [1465, 48]
 1467 Ops.LOAD dtypes.i32 [1466]
@@ -1515,14 +1515,14 @@
 1513 Ops.LOAD dtypes.f32 [1512]
 1514 Ops.INDEX dtypes.u64 [1461, 22]
 1515 Ops.LOAD dtypes.u64 [1514]
-1516 Ops.REFPARAM dtypes.f32 [85, 1515] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+1516 Ops.REFPARAM dtypes.f32 [85, 1515] ParamArg(slot=1, dtype=dtypes.f32)
 1517 Ops.SHL dtypes.i32 [1510, 26]
 1518 Ops.SHRINK dtypes.f32 [1516, 1517, 9]
 1519 Ops.LOAD dtypes.f32 [1518]
 1520 Ops.INDEX dtypes.f32 [1519, 30]
 1521 Ops.INDEX dtypes.u64 [1461, 26]
 1522 Ops.LOAD dtypes.u64 [1521]
-1523 Ops.REFPARAM dtypes.f32 [91, 1522] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+1523 Ops.REFPARAM dtypes.f32 [91, 1522] ParamArg(slot=2, dtype=dtypes.f32)
 1524 Ops.SHL dtypes.i32 [1510, 52]
 1525 Ops.ADD dtypes.i32 [1524, 1473]
 1526 Ops.ADD dtypes.i32 [1525, 96]
@@ -1804,7 +1804,7 @@
 1802 Ops.LOAD dtypes.f32 [1801]
 1803 Ops.INDEX dtypes.u64 [1461, 30]
 1804 Ops.LOAD dtypes.u64 [1803]
-1805 Ops.REFPARAM dtypes.f32 [91, 1804] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+1805 Ops.REFPARAM dtypes.f32 [91, 1804] ParamArg(slot=3, dtype=dtypes.f32)
 1806 Ops.SHRINK dtypes.f32 [1805, 1526, 9]
 1807 Ops.LOAD dtypes.f32 [1806]
 1808 Ops.INDEX dtypes.f32 [1807, 16]

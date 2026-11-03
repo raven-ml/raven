@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 16
-1 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8, device="CPU")
-2 Ops.PARAM dtypes.u8 [0] ParamArg(slot=1, dtype=dtypes.u8, device="DISK:/tmp/tolk-schedule")
+1 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8)
+2 Ops.PARAM dtypes.u8 [0] ParamArg(slot=1, dtype=dtypes.u8)
 3 Ops.STORE dtypes.void [1, 2]
 4 Ops.BUFFER dtypes.u8 [0] ParamArg(slot=2, dtype=dtypes.u8, device="CPU")
 5 Ops.CONST dtypes.weakint [] 64
@@ -11,14 +11,13 @@
 9 Ops.CALL dtypes.void [3, 4, 8] CallInfo()
 10 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
 11 Ops.INDEX dtypes.u8 [1, 10]
-12 Ops.PARAM dtypes.u8 [0] ParamArg(slot=1, dtype=dtypes.u8, device="CPU")
-13 Ops.INDEX dtypes.u8 [12, 10]
-14 Ops.CONST dtypes.weakint [] 1
-15 Ops.ADD dtypes.u8 [13, 14]
-16 Ops.STORE dtypes.void [11, 15]
-17 Ops.END dtypes.void [16, 10]
-18 Ops.SINK dtypes.void [17] KernelInfo()
-19 Ops.BUFFER dtypes.u8 [0] ParamArg(slot=4, dtype=dtypes.u8, device="CPU")
-20 Ops.CALL dtypes.void [18, 19, 4] CallInfo()
-21 Ops.LINEAR dtypes.void [9, 20]
+12 Ops.INDEX dtypes.u8 [2, 10]
+13 Ops.CONST dtypes.weakint [] 1
+14 Ops.ADD dtypes.u8 [12, 13]
+15 Ops.STORE dtypes.void [11, 14]
+16 Ops.END dtypes.void [15, 10]
+17 Ops.SINK dtypes.void [16] KernelInfo()
+18 Ops.BUFFER dtypes.u8 [0] ParamArg(slot=4, dtype=dtypes.u8, device="CPU")
+19 Ops.CALL dtypes.void [17, 18, 4] CallInfo()
+20 Ops.LINEAR dtypes.void [9, 19]
 

@@ -1,16 +1,16 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
-2 Ops.PARAM dtypes.u64 [1] ParamArg(slot=0, dtype=dtypes.u64, device="CPU")
+2 Ops.PARAM dtypes.u64 [1] ParamArg(slot=0, dtype=dtypes.u64)
 3 Ops.CONST dtypes.weakint [] 2
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
 6 Ops.SHL dtypes.i32 [5, 3]
 7 Ops.INDEX dtypes.u64 [2, 6]
-8 Ops.PARAM dtypes.u64 [1] ParamArg(slot=1, dtype=dtypes.u64, device="CPU")
+8 Ops.PARAM dtypes.u64 [1] ParamArg(slot=1, dtype=dtypes.u64)
 9 Ops.INDEX dtypes.u64 [8, 6]
 10 Ops.LOAD dtypes.u64 [9]
-11 Ops.PARAM dtypes.u64 [1] ParamArg(slot=2, dtype=dtypes.u64, device="CPU")
+11 Ops.PARAM dtypes.u64 [1] ParamArg(slot=2, dtype=dtypes.u64)
 12 Ops.INDEX dtypes.u64 [11, 6]
 13 Ops.LOAD dtypes.u64 [12]
 14 Ops.CMPLT dtypes.bool [10, 13]
@@ -49,16 +49,16 @@
 47 Ops.END dtypes.void [46, 5]
 48 Ops.SINK dtypes.void [47] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 49 Ops.CONST dtypes.weakint [] 16
-50 Ops.PARAM dtypes.u32 [49] ParamArg(slot=0, dtype=dtypes.u32, device="CPU")
+50 Ops.PARAM dtypes.u32 [49] ParamArg(slot=0, dtype=dtypes.u32)
 51 Ops.MUL dtypes.i32 [6, 3]
 52 Ops.CONST dtypes.weakint [] 0
 53 Ops.ADD dtypes.i32 [51, 52]
 54 Ops.INDEX dtypes.u32 [50, 53]
-55 Ops.PARAM dtypes.u32 [49] ParamArg(slot=1, dtype=dtypes.u32, device="CPU")
+55 Ops.PARAM dtypes.u32 [49] ParamArg(slot=1, dtype=dtypes.u32)
 56 Ops.ADD dtypes.i32 [51, 17]
 57 Ops.INDEX dtypes.u32 [55, 56]
 58 Ops.LOAD dtypes.u32 [57]
-59 Ops.PARAM dtypes.u32 [49] ParamArg(slot=2, dtype=dtypes.u32, device="CPU")
+59 Ops.PARAM dtypes.u32 [49] ParamArg(slot=2, dtype=dtypes.u32)
 60 Ops.INDEX dtypes.u32 [59, 56]
 61 Ops.LOAD dtypes.u32 [60]
 62 Ops.CMPLT dtypes.bool [58, 61]

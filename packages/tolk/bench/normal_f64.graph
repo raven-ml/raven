@@ -1,5 +1,5 @@
 0 Ops.CONST dtypes.weakint [] 1024
-1 Ops.PARAM dtypes.f64 [0] ParamArg(slot=0, dtype=dtypes.f64, device="CPU")
+1 Ops.PARAM dtypes.f64 [0] ParamArg(slot=0, dtype=dtypes.f64)
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
 3 Ops.INDEX dtypes.f64 [1, 2]
 4 Ops.CAST dtypes.i64 [2] dtypes.i64
@@ -15,7 +15,7 @@
 14 Ops.CONST dtypes.weakint [] 32
 15 Ops.SHR dtypes.u64 [13, 14]
 16 Ops.CAST dtypes.u32 [15] dtypes.u32
-17 Ops.PARAM dtypes.i32 [11] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+17 Ops.PARAM dtypes.i32 [11] ParamArg(slot=1, dtype=dtypes.i32)
 18 Ops.INDEX dtypes.i32 [17, 8]
 19 Ops.BITCAST dtypes.u32 [18] dtypes.u32
 20 Ops.CAST dtypes.u64 [19] dtypes.u64

@@ -131,14 +131,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   for AMD through amdgpu (L2 plus MALL) or NV over PCI
 - Metal's packed kernel arguments (8869adcc8, af8961676) have not run on
   Metal hardware; check `rig_metal.mli`'s contract against them on a Mac
-- kernel parameters that name no device, the device a fact of the call's
-  arguments, would rewrite D170 and delete `params_on`'s substitution,
-  `rename`, `served`, `same_devices` and search's `on_device` (about -60
-  lines, unverified). Audit the readers first: the device enters at
-  `rangeify.ml:887-896`, public `codegen.mli:118-125` changes, the beam cache
-  key includes parameter devices (`search.ml:335-346`) and is re-keyed, and
-  rune's reads and hash-consing are unchecked
-  (_plans/tolk-campaign/device-sink/adjudication.md §1)
 - one lane for `Linked` schedules too (D41): rig orders one device's work on
   one timeline, so a copies' lane buys overlap only across devices. Decide
   on a GPU beside a memory device whose value moves into the GPU mid-chain,

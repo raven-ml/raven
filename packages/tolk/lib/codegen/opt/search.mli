@@ -76,9 +76,11 @@ val beam_search :
     [k]'s kernel is the sink that {!Postrange.apply_opts} optimises.
 
     [link call] is the call [call] ({!Op.Call}) of a compiled program of [k]'s
-    kernel made ready to run on the device of [k]'s renderer. Its arguments hold
-    storage parameters in their slots and constant values for positional scalar
-    parameters; an unused slot before the last argument holds a byte. Each
+    kernel made ready to run on a device of [k]'s renderer's target. Its
+    arguments hold storage parameters in their slots, each naming the target's
+    device ({!Helpers.Target.t}), which [link] places on a device of the
+    target, and constant values for positional scalar parameters; an unused
+    slot before the last argument holds a byte. Each
     scalar of [k]'s kernel ({!Shape.val-variables}) is sampled at the middle of
     its bounds, [(vmin + vmax) / 2] rounded down. Launch sizes are evaluated
     with these samples, and the kernel keeps its parameters.
@@ -91,8 +93,8 @@ val beam_search :
     a compilation nor a run: a candidate whose compilation or run hangs hangs
     the search, one more reason to run it offline.
 
-    A kernel is compiled for [k]'s renderer named ["test"], with its storage
-    placed on the renderer's device. It is first linearized
+    A kernel is compiled for [k]'s renderer named ["test"]. It is first
+    linearized
     ({!Codegen.linearize}) and dropped if it has {!Setting.beam_uops_max}
     instructions or more, unless that is [0] or less. It is then completed
     ({!Codegen.compile}), its binary read from or kept in its compiler's disk

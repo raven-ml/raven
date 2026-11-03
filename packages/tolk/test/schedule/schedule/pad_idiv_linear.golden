@@ -1,6 +1,6 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 12
-1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
 3 Ops.INDEX dtypes.i32 [1, 2]
 4 Ops.CONST dtypes.weakint [] 1
@@ -11,13 +11,13 @@
 9 Ops.CMPLT dtypes.bool [2, 8]
 10 Ops.AND dtypes.bool [7, 9]
 11 Ops.CONST dtypes.weakint [] 10
-12 Ops.PARAM dtypes.i32 [11] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+12 Ops.PARAM dtypes.i32 [11] ParamArg(slot=1, dtype=dtypes.i32)
 13 Ops.CONST dtypes.weakint [] -1
 14 Ops.ADD dtypes.weakint [2, 13]
 15 Ops.CONST dtypes.bool [] Invalid
 16 Ops.WHERE dtypes.weakint [10, 14, 15]
 17 Ops.INDEX dtypes.i32 [12, 16]
-18 Ops.PARAM dtypes.i32 [11] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+18 Ops.PARAM dtypes.i32 [11] ParamArg(slot=2, dtype=dtypes.i32)
 19 Ops.INDEX dtypes.i32 [18, 16]
 20 Ops.WHERE dtypes.i32 [10, 19, 4]
 21 Ops.TRUNCDIV dtypes.i32 [17, 20]

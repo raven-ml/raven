@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 2049
-2 Ops.PARAM dtypes.i64 [1] ParamArg(slot=0, dtype=dtypes.i64, device="CPU")
+2 Ops.PARAM dtypes.i64 [1] ParamArg(slot=0, dtype=dtypes.i64)
 3 Ops.CONST dtypes.weakint [] 683
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.SPECIAL dtypes.i32 [4] "gidx0"
@@ -14,7 +14,7 @@
 12 Ops.AND dtypes.i32 [8, 11]
 13 Ops.CAST dtypes.i64 [12] dtypes.i64
 14 Ops.CONST dtypes.weakint [] 1
-15 Ops.PARAM dtypes.u32 [14] ParamArg(slot=1, dtype=dtypes.u32, device="CPU")
+15 Ops.PARAM dtypes.u32 [14] ParamArg(slot=1, dtype=dtypes.u32)
 16 Ops.CONST dtypes.weakint [] 0
 17 Ops.CAST dtypes.i32 [16] dtypes.i32
 18 Ops.INDEX dtypes.u32 [15, 17]
@@ -41,7 +41,7 @@
 39 Ops.ADD dtypes.i64 [38, 20]
 40 Ops.CAST dtypes.i64 [16] dtypes.i64
 41 Ops.WHERE dtypes.i64 [36, 39, 40]
-42 Ops.PARAM dtypes.u32 [14] ParamArg(slot=2, dtype=dtypes.u32, device="CPU")
+42 Ops.PARAM dtypes.u32 [14] ParamArg(slot=2, dtype=dtypes.u32)
 43 Ops.INDEX dtypes.u32 [42, 17]
 44 Ops.CAST dtypes.u32 [16] dtypes.u32
 45 Ops.CONST dtypes.weakint [] 681
@@ -58,11 +58,11 @@
 56 Ops.BITCAST dtypes.u64 [55] dtypes.u64
 57 Ops.INDEX dtypes.u64 [56, 17]
 58 Ops.LOAD dtypes.u64 [57]
-59 Ops.REFPARAM dtypes.i64 [1, 58] ParamArg(slot=0, dtype=dtypes.i64, device="CPU")
+59 Ops.REFPARAM dtypes.i64 [1, 58] ParamArg(slot=0, dtype=dtypes.i64)
 60 Ops.INDEX dtypes.i64 [59, 8]
 61 Ops.INDEX dtypes.u64 [56, 23]
 62 Ops.LOAD dtypes.u64 [61]
-63 Ops.REFPARAM dtypes.u32 [14, 62] ParamArg(slot=1, dtype=dtypes.u32, device="CPU")
+63 Ops.REFPARAM dtypes.u32 [14, 62] ParamArg(slot=1, dtype=dtypes.u32)
 64 Ops.INDEX dtypes.u32 [63, 17]
 65 Ops.LOAD dtypes.u32 [64]
 66 Ops.CAST dtypes.i64 [65] dtypes.i64
@@ -76,7 +76,7 @@
 74 Ops.WHERE dtypes.i64 [36, 73, 40]
 75 Ops.INDEX dtypes.u64 [56, 31]
 76 Ops.LOAD dtypes.u64 [75]
-77 Ops.REFPARAM dtypes.u32 [14, 76] ParamArg(slot=2, dtype=dtypes.u32, device="CPU")
+77 Ops.REFPARAM dtypes.u32 [14, 76] ParamArg(slot=2, dtype=dtypes.u32)
 78 Ops.INDEX dtypes.u32 [77, 17]
 79 Ops.LOAD dtypes.u32 [78, 44, 47]
 80 Ops.CAST dtypes.i64 [79] dtypes.i64

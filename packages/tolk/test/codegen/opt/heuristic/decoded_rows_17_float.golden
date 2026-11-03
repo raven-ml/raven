@@ -1,6 +1,6 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 278528
-1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 17
 3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
 4 Ops.CONST dtypes.weakint [] 16384
@@ -8,7 +8,7 @@
 6 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 2)
 7 Ops.ADD dtypes.weakint [5, 6]
 8 Ops.INDEX dtypes.f32 [1, 7]
-9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
 10 Ops.CONST dtypes.weakint [] 8192
 11 Ops.RANGE dtypes.weakint [10] (AxisType.WEAK, 0, 0)
 12 Ops.CONST dtypes.weakint [] 2
@@ -20,7 +20,7 @@
 18 Ops.CONST dtypes.weakint [] 1
 19 Ops.CMPLT dtypes.bool [14, 18]
 20 Ops.CONST dtypes.weakint [] 134217728
-21 Ops.PARAM dtypes.u8 [20] ParamArg(slot=2, dtype=dtypes.u8, device="CPU")
+21 Ops.PARAM dtypes.u8 [20] ParamArg(slot=2, dtype=dtypes.u8)
 22 Ops.MUL dtypes.weakint [6, 10]
 23 Ops.ADD dtypes.weakint [22, 11]
 24 Ops.INDEX dtypes.u8 [21, 23]
@@ -55,7 +55,7 @@
 53 Ops.OR dtypes.u32 [49, 52]
 54 Ops.BITCAST dtypes.f32 [53] dtypes.f32
 55 Ops.CONST dtypes.weakint [] 8388608
-56 Ops.PARAM dtypes.u8 [55] ParamArg(slot=3, dtype=dtypes.u8, device="CPU")
+56 Ops.PARAM dtypes.u8 [55] ParamArg(slot=3, dtype=dtypes.u8)
 57 Ops.CONST dtypes.weakint [] 512
 58 Ops.MUL dtypes.weakint [6, 57]
 59 Ops.CONST dtypes.weakint [] 16

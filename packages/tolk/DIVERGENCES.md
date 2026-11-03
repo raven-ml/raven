@@ -4926,31 +4926,48 @@ fold wraps integers and holds its float bound`, hold.
   `search/actions/*` rows on fudge, which time making a search's candidates,
   and its `*/codegen` rows.
 
-## D170. A program serves every device of its target
+## D170. A kernel's parameters name no device
 
-- **tinygrad:** `codegen/__init__.py:513` (`to_program_key`): the key is
-  `ast.key`, whose `PARAM`s carry their buffer's device
-  (`schedule/rangeify.py:284`, `debuf`), so each device makes its own
-  program of one kernel.
-- **tolk:** `Codegen.program_key` (`Codegen.params`) and
-  `Codegen.to_program` (`Codegen.rename`); `Realize.lower_and_compile`
-  compiles one kernel of each key, as tinygrad's does
-  (`engine/realize.py:244`).
-- **Differs:** the key of a program is its kernel with each parameter that
-  names a device naming its target's (`CPU`, `CUDA`), so a kernel on the
-  target's first device is its own key. A kernel for one device takes the
-  program made for another of its target, in memory and on disk, its
-  parameters renamed to the kernel's devices: its source and binary name no
-  device, and a link binds the program to its call's buffers and launches it
-  on its call's devices.
+- **tinygrad:** `schedule/rangeify.py:284` (`debuf`) gives each kernel
+  parameter its buffer's device, and `codegen/__init__.py:513`
+  (`to_program_key`) keys a program by `ast.key`, so each device makes its
+  own program of one kernel. Copy detection and the check that a kernel spans
+  one device read the kernel's parameters (`schedule/__init__.py:153-168`),
+  the renderer is picked from the call's device, which a call takes from its
+  body (`engine/realize.py:236`), and the search names its parameters'
+  device itself (`codegen/opt/search.py:62-63`).
+- **tolk:** `Rangeify.debuf`; `Schedule.is_copy`, `copy_runs`,
+  `assert_all_same_devices` and `copy_call`; `Codegen.program_key`
+  (`Codegen.params`); `Realize.get_call_to_compile`; `Search.timed_call`;
+  `Spec.program`.
+- **Differs:** a kernel's parameters name no device: the device is its
+  call's arguments', where a kernel launches (`engine/realize.py:160`
+  launches there too). Kernels of one expression on several devices of one
+  target are one node, one key and one program, in memory and on disk. Copy
+  detection and the one-device check read the call's arguments, the renderer
+  is the target's of the call's first storage argument, where the engine
+  launches the kernel, and `Spec.program` refuses a
+  parameter that names a device. A search's timed call names its target's
+  device, and its caller places it on a device of the target (rune's
+  `search`). `test/gen/tinygrad.patch` drops `debuf`'s device and the copy
+  kernel's (`_copy_state`), reads copies and the one-device check from
+  `call.src[1 + slot]`, takes the renderer from
+  `get_call_arg_uops(c)[0]`, compiles a search's candidates without naming a
+  device, and refuses a device in `spec_program`.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Compile.make`, `Pieces.split`) lower each device's operations on that
   device, so a program over `n` memory devices of one host makes `n` copies
   of each kernel. With the devices in the key, a data-parallel step's first
   call over 16 memory devices took 0.92 s on fudge, 52 ms per device past
-  the first; with them erased, 0.24 s.
-- **Pinned by:** `Tolk.Codegen › programs are kept › a program for one device
-  serves another of its target`; rune's `Rune.jit over several devices`.
+  the first; with one program per target, 0.24 s. A device kept in the
+  kernel and erased for the key held one fact in two places, kept equal by
+  renaming each program to its call's devices.
+- **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › one
+  expression on two devices of a target is one kernel`, `… › a kernel on
+  buffers of two devices is refused` and `copies into runs`; `Tolk.Search ›
+  a search kept for one device serves another of its target`; `Tolk.Spec ›
+  program › parameters`; rune's `Rune.jit over several devices`, `searches`
+  among them.
 
 
 ## D171. Withdrawn
@@ -6018,7 +6035,7 @@ and an initial value is added after it (D260).
   from 0 after the symbolic rules ran over the whole graph, "so that kernel
   deduping works"); `codegen/__init__.py:513-518` (`to_program_key`, which
   keys a program by its kernel's `ast.key`).
-- **tolk:** `Codegen.params_on`, which `Codegen.program_key`,
+- **tolk:** `Codegen.params`, which `Codegen.program_key`,
   `Codegen.to_program` and `Codegen.read` read.
 - **Differs:** codegen orders the operands of each commutative index
   operation of a kernel by the kernel's own range numbers, as the symbolic

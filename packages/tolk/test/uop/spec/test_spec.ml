@@ -360,9 +360,31 @@ let arguments =
             (judge Spec.kernel_graph (call_on_rows ~align:4 5)));
     ]
 
+(* A program's parameters name no device: its call's arguments do. *)
+
+let storage ?device () = Shape.param ~shape:[ Int 16 ] ?device 0 Float32
+
+let parameters =
+  group "program › parameters"
+    [
+      test "accepts storage that names no device" (fun () ->
+          equal verdict (Some true) (judge Spec.program (storage ())));
+      test "refuses storage that names a device" (fun () ->
+          let named = storage ~device:"CPU" () in
+          equal verdict (Some false) (judge Spec.program named);
+          not_equal (option string) None
+            (failure ~calls:Skip Spec.program (Ops.sink [ named ])));
+    ]
+
 let () =
   exit
     (run "Tolk.Spec"
        [
-         verdicts; bounds; type_verify; construction; loops; arguments;
+         verdicts;
+         bounds;
+         type_verify;
+         construction;
+         loops;
+         arguments;
+         parameters;
        ])

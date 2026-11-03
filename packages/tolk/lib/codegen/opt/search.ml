@@ -80,17 +80,20 @@ let test_size ~allow_test_size ~value prg =
       (replace prg ~arg:(Program { info with global_size; local_size }), factor)
   | _ -> (prg, 1.)
 
-(* A candidate is timed through its call: storage keeps its slots, each
+(* A candidate is timed through its call: storage keeps its slots, named by
+   the target's device, which [link] places on a device of the target, each
    positional scalar is passed its sample, and each variable is passed itself,
    which [time] binds. *)
 let timed_call ~value prg =
   let info = match arg prg with Program p -> p | _ -> assert false in
+  let device = info.target.device in
   let arguments =
     List.filter_map
       (fun u ->
         match arg u with
         | Param p when op u = Op.Param ->
-            if p.addrspace <> Dtype.Alu then Some (p.slot, u)
+            if p.addrspace <> Dtype.Alu then
+              Some (p.slot, replace u ~arg:(Param { p with device = Some device }))
             else if p.name = None then
               Some
                 (p.slot, const ~dtype:(dtype u) (`Int (Bigint.of_int (value u))))
@@ -103,8 +106,7 @@ let timed_call ~value prg =
     match List.assoc_opt slot arguments with
     | Some u -> u
     | None ->
-        param ~shape:[ Int 1 ] ~device:info.target.device slot
-          Dtype.Uint8
+        param ~shape:[ Int 1 ] ~device slot Dtype.Uint8
   in
   call prg (List.init n argument)
 
@@ -122,21 +124,9 @@ let time_program ~time ~early_stop ~factor ~vars ?(cnt = 3) linked =
    program and compile time. *)
 let try_compile (ren : Renderer.t) k =
   let st = Unix.gettimeofday () in
-  let on_device p =
-    match arg p with
-    | Param a when op p = Op.Param && addrspace p <> Some Dtype.Alu ->
-        let device = ren.target.device in
-        [ (p, replace p ~arg:(Param { a with device = Some device })) ]
-    | _ -> []
-  in
   match
     let ast = K.get_optimized_ast ~name_override:"test" (K.copy k) in
-    let lin =
-      Codegen.linearize
-        (substitute ~calls:Skip ~pass:Fixed_point ast
-           (List.concat_map on_device (toposort ~calls:Skip ast)))
-        ren
-    in
+    let lin = Codegen.linearize ast ren in
     let uops = List.length (src (nth lin 1)) in
     let uops_max = setting Setting.beam_uops_max in
     if uops_max > 0 && uops >= uops_max then (

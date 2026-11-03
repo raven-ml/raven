@@ -1,5 +1,5 @@
 0 Ops.CONST dtypes.weakint [] 2
-1 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8, device="CUDA")
+1 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8)
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
 3 Ops.INDEX dtypes.u8 [1, 2]
 4 Ops.CONST dtypes.weakint [] 1

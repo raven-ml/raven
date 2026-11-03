@@ -64,8 +64,9 @@ val program : t
 (** [program] is {!shared} as programs restrict it: every width is stated, so a
     constant appears only under the cast that types it and nothing else is weak;
     there is no movement but a shrink of storage by a constant length, no global
-    buffer and no {!Ops.invalid}. It adds conditionals ({!Op.If}, {!Op.Endif})
-    and lowered, [int32] {!Op.Special}s. *)
+    buffer, no parameter that names a device, since a program runs on the
+    devices of its call's arguments, and no {!Ops.invalid}. It adds
+    conditionals ({!Op.If}, {!Op.Endif}) and lowered, [int32] {!Op.Special}s. *)
 
 val full : t
 (** [full] is the rules of the forms between stages (ends of loops over any

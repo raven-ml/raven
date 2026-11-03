@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 288
-2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
 3 Ops.CONST dtypes.weakint [] 6
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.SPECIAL dtypes.i32 [4] "gidx0"
@@ -22,7 +22,7 @@
 20 Ops.ADD dtypes.i32 [15, 19]
 21 Ops.SHRINK dtypes.f32 [2, 20, 13]
 22 Ops.CONST dtypes.weakint [] 225
-23 Ops.PARAM dtypes.f32 [22] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+23 Ops.PARAM dtypes.f32 [22] ParamArg(slot=1, dtype=dtypes.f32)
 24 Ops.CONST dtypes.weakint [] 45
 25 Ops.CAST dtypes.i32 [24] dtypes.i32
 26 Ops.MUL dtypes.i32 [5, 25]

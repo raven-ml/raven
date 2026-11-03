@@ -1,5 +1,5 @@
 0 Ops.CONST dtypes.weakint [] 16384
-1 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=0, dtype=dtypes.bf16, device="CUDA")
+1 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=0, dtype=dtypes.bf16)
 2 Ops.CONST dtypes.weakint [] 512
 3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
 4 Ops.CONST dtypes.weakint [] 32
@@ -9,14 +9,14 @@
 8 Ops.INDEX dtypes.bf16 [1, 7]
 9 Ops.CONST dtypes.weakint [] 2139095040
 10 Ops.CONST dtypes.weakint [] 1474560
-11 Ops.PARAM dtypes.bf16 [10] ParamArg(slot=1, dtype=dtypes.bf16, device="CUDA")
+11 Ops.PARAM dtypes.bf16 [10] ParamArg(slot=1, dtype=dtypes.bf16)
 12 Ops.CONST dtypes.weakint [] 2880
 13 Ops.MUL dtypes.weakint [3, 12]
 14 Ops.RANGE dtypes.weakint [12] (AxisType.WEAK, 0)
 15 Ops.ADD dtypes.weakint [13, 14]
 16 Ops.INDEX dtypes.bf16 [11, 15]
 17 Ops.CAST dtypes.f32 [16] dtypes.f32
-18 Ops.PARAM dtypes.f32 [2] ParamArg(slot=2, dtype=dtypes.f32, device="CUDA")
+18 Ops.PARAM dtypes.f32 [2] ParamArg(slot=2, dtype=dtypes.f32)
 19 Ops.INDEX dtypes.f32 [18, 3]
 20 Ops.FDIV dtypes.f32 [17, 19]
 21 Ops.BITCAST dtypes.u32 [20] dtypes.u32
@@ -37,7 +37,7 @@
 36 Ops.CAST dtypes.u16 [35] dtypes.u16
 37 Ops.BITCAST dtypes.bf16 [36] dtypes.bf16
 38 Ops.CAST dtypes.f32 [37] dtypes.f32
-39 Ops.PARAM dtypes.bf16 [12] ParamArg(slot=3, dtype=dtypes.bf16, device="CUDA")
+39 Ops.PARAM dtypes.bf16 [12] ParamArg(slot=3, dtype=dtypes.bf16)
 40 Ops.INDEX dtypes.bf16 [39, 14]
 41 Ops.CAST dtypes.f32 [40] dtypes.f32
 42 Ops.MUL dtypes.f32 [38, 41]
@@ -55,7 +55,7 @@
 54 Ops.BITCAST dtypes.bf16 [53] dtypes.bf16
 55 Ops.CAST dtypes.f32 [54] dtypes.f32
 56 Ops.CONST dtypes.weakint [] 92160
-57 Ops.PARAM dtypes.bf16 [56] ParamArg(slot=4, dtype=dtypes.bf16, device="CUDA")
+57 Ops.PARAM dtypes.bf16 [56] ParamArg(slot=4, dtype=dtypes.bf16)
 58 Ops.MUL dtypes.weakint [14, 4]
 59 Ops.ADD dtypes.weakint [58, 6]
 60 Ops.INDEX dtypes.bf16 [57, 59]
@@ -77,7 +77,7 @@
 76 Ops.CAST dtypes.u16 [75] dtypes.u16
 77 Ops.BITCAST dtypes.bf16 [76] dtypes.bf16
 78 Ops.CAST dtypes.f32 [77] dtypes.f32
-79 Ops.PARAM dtypes.bf16 [4] ParamArg(slot=5, dtype=dtypes.bf16, device="CUDA")
+79 Ops.PARAM dtypes.bf16 [4] ParamArg(slot=5, dtype=dtypes.bf16)
 80 Ops.INDEX dtypes.bf16 [79, 6]
 81 Ops.CAST dtypes.f32 [80] dtypes.f32
 82 Ops.ADD dtypes.f32 [78, 81]
