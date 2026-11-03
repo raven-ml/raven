@@ -923,12 +923,19 @@ let settled () =
   done;
   Rig.allocated Rig.host
 
+(* The most bytes a host buffer of [n] bytes counts: its own, up to 112
+   more where it starts on 128 bytes, and on Windows, where one of 64 KiB
+   starts on a page of 4 KiB, that page less 16 more. *)
+let host_bytes n =
+  n + if Sys.win32 && n >= 64 * 1024 then 4096 - 16 else 112
+
 (* At every float dtype a softmax holds, after the call and before any
    collection, the result alone of its operand's size, with and without
    [~where]: the bytes the host holds more than settled, its cache included,
    count every buffer the call took. Lanes of 4096, so that each lane's
-   greatest element and sum, held too, are a page between them. One
-   uncounted run comes first. *)
+   greatest element and sum, held too, are under a page between them, and a
+   page is less than any other array of the operand's size, 8 KiB at
+   float4. One uncounted run comes first. *)
 let test_softmax_memory () =
   List.iter
     (fun (D.Any dt) ->
@@ -956,7 +963,7 @@ let test_softmax_memory () =
                   (Printf.sprintf "bytes held above the settled ones, %s%s"
                      (D.name dt)
                      (if where = None then "" else ", under where"))
-                int ~than:(result + 4096) grew;
+                int ~than:(host_bytes result + 4096) grew;
               equal (array int) [| 4; 4096 |] (Nx.shape y))
             [ None; Some where ]
       | _ -> ())
