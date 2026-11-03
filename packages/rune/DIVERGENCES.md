@@ -105,13 +105,18 @@ except these, not yet recorded: the complex kinds (`lower_complex.ml`), the
 transforms (`lower_fft.ml`), `eigh`, logsumexp and moments, `expm1` and
 `log1p`, and scaled contractions.
 
-An entry is admitted for one of three reasons only:
+An entry is admitted for one of four reasons only:
 
 - **(a) an OCaml constraint;**
 - **(b) nx's stated meaning:** the operation's contract in `Nx_kernel`
   (`packages/nx/lib/kernel/nx_kernel.mli`, `prog.mli`), which nx's eager
   kernels compute;
-- **(c) the engine's contract:** rig's submission protocol.
+- **(c) the engine's contract:** rig's submission protocol;
+- **(d) measured speed:** of a named raven workload, pinned by a bench row on
+  fudge whose baseline would catch the regression.
+
+A part of an entry whose reason is missing says "Reason: none" until it is
+measured, withdrawn or redesigned.
 
 Each entry also gives the reference (tinygrad `f1d8f0f0def4`, the commit
 tolk follows, its files under `tinygrad/`; or none), nx's meaning, the
@@ -571,7 +576,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Differs:** an assembly places each piece at its region and selects it with
   `where` over the pieces before it, floats as their bits; empty pieces are
   dropped first. The reference's sum turns a `-0.` into `+0.` and quiets a
-  signalling NaN. An assembly whose selections exceed 16 times eager's work is
+  signalling NaN. An assembly whose selections exceed 16 times eager's work
+  (`p N > 16 (N + m)`, `p` pieces of `m` elements in all over `N`) is
   refused, and the program runs uncompiled. In a program over several
   devices an assembly is storage of its own (`compile.ml`, `assembled`):
   pieces that hold each element once are each stored into their region;
@@ -581,11 +587,13 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `nx_kernel.mli`, `assemble`: the last piece holding each index, or
   the fill, bits copied.
 - **Class:** exact.
-- **Reason:** (b).
+- **Reason:** (b). The refusal and the stores over several devices: none. The
+  refusal's bound is a cost model's, not timed (`lower_index.ml`, Work); the
+  stores were measured by peak memory alone. Each needs a bench row.
 - **Pinned by:** `Lower_index › folds and assemblies › an assembly gives
-  eager's bits`, `Lower_index › work bounds › a scatter and an assembly past
-  16 times eager's work are refused`, `Jit_devices › assemblies give eager's
-  bits`.
+  eager's bits`, `Lower_index › work bounds › a scatter past 16 times eager's
+  work computes, an assembly past it is refused`, `Jit_devices › assemblies
+  give eager's bits › *`.
 
 ### I3. Gather by an index
 
@@ -608,7 +616,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reference:** `mixin/op.py:1100` (`_pre_scatter`), `:1150`
   (`scatter_reduce` sum: the masked updates summed, then `x` added), `:1191`
   (`scatter` through `_masked_merge`, one `where` per update along the axis).
-- **Raven:** `lower_index.ml` (`scatter`, `summed`).
+- **Raven:** `lower_index.ml` (`scatter`, `summed`, `looped`, `walk`).
 - **Differs:** each element meets each update along the axis in a mask.
   - A position no update reaches is `x`'s element, selected on the mask of
     reached positions; the reference adds `x` to a sum of zeros there, which
@@ -620,16 +628,27 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
     reduction. The reference's chain of one `where` per update grows the graph
     with the updates.
   - `Max`, `Min`: R3's extreme of `x` and the updates that reach it.
-  - A scatter whose mask exceeds 16 times eager's work is refused, and the
-    program runs uncompiled.
+  - Past 16 times eager's work (`n k > 16 (n + k)`, `n` positions and `k`
+    updates along the axis), or where the destination's storage holds `x`
+    already, as a loop's carry or a donated argument does, the scatter
+    updates that storage in place in a kernel of its own (`looped`, `walk`):
+    each thread takes a run of positions and walks the updates in C order,
+    combining each that lands in its run, for `runs k + n` work. The
+    reference has no such kernel.
 - **nx:** `nx_kernel.mli`, `scatter`: `into` where no update lands, bits
   unchanged.
 - **Class:** exact; rounded sum for float `Add`.
-- **Reason:** (b).
+- **Reason:** (b); the kernel that walks the updates (d), by
+  `Jit/take-grad-1024-of-4096x64` (an embedding's gradient, past the bound)
+  and `Jit/scatter-16-rows-into-donated-4096x64`,
+  `Jit/scatter-1024-rows-into-donated-4096x64` (a donated table) in
+  `rune.thumper`. Where it starts, the bound of 16: none, a cost model's.
 - **Pinned by:** `Lower_index › gathers and scatters › a scatter by Set, Max
   or Min gives eager's bits`, `› a scatter by Add wraps integers and holds its
-  float bound`; `Lower_index › work bounds › a scatter and an assembly past 16
-  times eager's work are refused`.
+  float bound`, `› a scatter by Set, Max or Min past 16 times eager's work
+  gives eager's bits`, `› a scatter by Add past 16 times eager's work holds
+  its bound`; `Lower_index › work bounds › a scatter past 16 times eager's
+  work computes, an assembly past it is refused`.
 
 ### I6. Fold
 
