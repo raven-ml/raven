@@ -388,6 +388,17 @@ type float_dtype = F : (float, 's) D.t -> float_dtype
 
 let float_dtypes = [ F D.Float16; F D.Bfloat16; F D.Float32; F D.Float64 ]
 
+(* An element of a float dtype, NaN, -0. or an infinity, each of the three often
+   enough that every run draws it: among [element]'s specials, NaN is too rare. *)
+let cast_element dt =
+  Gen.frequency
+    [
+      (3, element dt);
+      (1, Gen.constant Float.nan);
+      (1, Gen.constant (-0.));
+      (1, Gen.of_list [ Float.infinity; Float.neg_infinity ]);
+    ]
+
 (* One law per pair of the four float dtypes, over drawn elements: NaN, -0., the
    infinities and, from a wider dtype, finite values past the narrower's
    range. *)
@@ -405,7 +416,7 @@ let float_casts =
                 Format.pp_print_seq
                   ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
                   (D.pp_value src) ppf (Array.to_seq vs))
-              (Gen.array ~size:(Gen.int_range 1 8) (element src))
+              (Gen.array ~size:(Gen.int_range 1 8) (cast_element src))
           in
           prop
             (D.name src ^ " to " ^ D.name dst)
