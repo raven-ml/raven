@@ -259,9 +259,9 @@ QAXPY(quads_axpy_s8, SDOT, int8_t)
 QAXPY(quads_axpy_u8, UDOT, uint8_t)
 #endif
 
-/* Lane order's dots and axpys: 16 lanes are 4 vectors of float32, 8 of
-   float64; 4 rows of float32 or 2 of float64 hold 16 accumulators and b's
-   vectors. A vector's lanes' tree: lane i takes lane i + 2 (float32's),
+/* Lane order's dots and tiles, and the axpy: 16 lanes are 4 vectors of
+   float32, 8 of float64; a dot's 4 rows of float32 or 2 of float64 hold
+   16 accumulators and b's vectors. A vector's lanes' tree: lane i takes lane i + 2 (float32's),
    then lane 0 lane 1. */
 static inline float sum4_f32(float32x4_t v) {
   return vpadds_f32(vadd_f32(vget_low_f32(v), vget_high_f32(v)));
@@ -279,7 +279,8 @@ DOT(dot2_f32, float, 4, 4, 2, fmaf)
 DOT(dot4_f32, float, 4, 4, 4, fmaf)
 DOTS(dot_f32, float, 4, dot4_f32, dot2_f32, dot1_f32)
 AXPY(axpy_f32, float, 4, fmaf)
-TILE(tile_f32, float, 4, fmaf)
+TILE_FEW(few_f32, float, fmaf)
+LANE_TILES(tile_f32, float, 4, few_f32)
 GEMV(gemv_f32, float, 4, fmaf)
 #undef VT
 #undef LOAD
@@ -299,7 +300,8 @@ DOT(dot1_f64, double, 2, 8, 1, fma)
 DOT(dot2_f64, double, 2, 8, 2, fma)
 DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
 AXPY(axpy_f64, double, 2, fma)
-TILE(tile_f64, double, 2, fma)
+TILE_FEW(few_f64, double, fma)
+LANE_TILES(tile_f64, double, 2, few_f64)
 GEMV(gemv_f64, double, 2, fma)
 
 /* The rows of a block of a, and those up to which a product streams b

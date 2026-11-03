@@ -1771,6 +1771,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On nx.cpu, few rows by a `[k × n]` operand sum in registers and products of
+  depth one write each output once, bits unchanged: a float32 token by 4096
+  values of 64 takes 0.07 of the instructions, an outer product 0.54.
 - On nx.cpu, a kind whose operands all repeat one element along a row
   computes the row's value once, and Where and Fma read any such operand
   once: `Nx.where c t 0` with `t` broadcast along the last axis ran a scalar

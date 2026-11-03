@@ -453,9 +453,9 @@ QDOT(quads_dot_u8, WIDEN_U, 4, MADD)
 QAXPY(quads_axpy_s8, S, int8_t)
 QAXPY(quads_axpy_u8, U, uint8_t)
 
-/* Lane order's dots and axpys: 16 lanes are 2 vectors of float32, 4 of
-   float64; 4 rows of float32 or 2 of float64 hold 8 accumulators and b's
-   vectors. A vector's lanes' tree: lane i takes lane i + 4 (float32's),
+/* Lane order's dots and tiles, and the axpy: 16 lanes are 2 vectors of
+   float32, 4 of float64; a dot's 4 rows of float32 or 2 of float64 hold
+   8 accumulators and b's vectors. A vector's lanes' tree: lane i takes lane i + 4 (float32's),
    then i + 2, then lane 0 lane 1. */
 static inline float sum8_f32(__m256 v) {
   __m128 x = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
@@ -480,7 +480,10 @@ DOT(dot2_f32, float, 8, 2, 2, fmaf)
 DOT(dot4_f32, float, 8, 2, 4, fmaf)
 DOTS(dot_f32, float, 4, dot4_f32, dot2_f32, dot1_f32)
 AXPY(axpy_f32, float, 8, fmaf)
-TILE_PAIRS(tile8_f32, float, 8, fmaf)
+RT_COLUMNS(tile8_r1_f32, float, 8, 1, 8, 4)
+RT_COLUMNS(tile8_r2_f32, float, 8, 2, 4, 2)
+RT_COLUMNS(tile8_r3_f32, float, 8, 3, 2, 1)
+RT_COLUMNS(tile8_r4_f32, float, 8, 4, 2, 1)
 GEMV(gemv_f32, float, 8, fmaf)
 #undef VT
 #undef LOAD
@@ -500,7 +503,10 @@ DOT(dot1_f64, double, 4, 4, 1, fma)
 DOT(dot2_f64, double, 4, 4, 2, fma)
 DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
 AXPY(axpy_f64, double, 4, fma)
-TILE_PAIRS(tile4_f64, double, 4, fma)
+RT_COLUMNS(tile4_r1_f64, double, 4, 1, 8, 4)
+RT_COLUMNS(tile4_r2_f64, double, 4, 2, 4, 2)
+RT_COLUMNS(tile4_r3_f64, double, 4, 3, 2, 1)
+RT_COLUMNS(tile4_r4_f64, double, 4, 4, 2, 1)
 GEMV(gemv_f64, double, 4, fma)
 #undef VT
 #undef LOAD
@@ -520,7 +526,7 @@ GEMV(gemv_f64, double, 4, fma)
 #define BCAST _mm_set1_ps
 #define ADD _mm_add_ps
 #define FMA(c, a, b) _mm_fmadd_ps(a, b, c)
-TILE_PAIRS(tile4_f32, float, 4, fmaf)
+RT_COLUMNS(tile4_f32, float, 4, 1, 2, 4)
 #undef VT
 #undef LOAD
 #undef STORE
@@ -533,18 +539,34 @@ TILE_PAIRS(tile4_f32, float, 4, fmaf)
 #define BCAST _mm_set1_pd
 #define ADD _mm_add_pd
 #define FMA(c, a, b) _mm_fmadd_pd(a, b, c)
-TILE_PAIRS(tile2_f64, double, 2, fma)
+RT_COLUMNS(tile2_f64, double, 2, 1, 2, 4)
+
+/* Fewer columns than a 256-bit vector holds: each row on 128-bit
+   vectors from their width, one column at a time below. */
+TILE_FEW(few_f32, float, fmaf)
+TILE_FEW(few_f64, double, fma)
+#define NARROW(name, T, W, wide, few)                                     \
+  static void name(const void *va, int64_t lda, int64_t a_k, int64_t r,  \
+                   const void *b, int64_t b_k, int64_t k, int64_t c,     \
+                   void *vy, int64_t ldy) {                              \
+    const T *a = va;                                                     \
+    T *y = vy;                                                           \
+    if (c < W) {                                                         \
+      few(va, lda, a_k, r, b, b_k, k, c, vy, ldy);                       \
+      return;                                                            \
+    }                                                                    \
+    for (int64_t i = 0; i < r; i++)                                      \
+      wide(a + i * lda, lda, a_k, b, b_k, k, c, y + i * ldy, ldy);       \
+  }
+NARROW(narrow_f32, float, 4, tile4_f32, few_f32)
+NARROW(narrow_f64, double, 2, tile2_f64, few_f64)
 
 /* cpu.h's lane tile of [c] columns: 256-bit vectors from a vector's
    columns, 128-bit ones below. */
-#define LANE_TILE(name, W, wide, narrow)                                  \
-  static void name(const void *a, int64_t a_k, const void *b, int64_t b_k, \
-                   int64_t k, int64_t c, void *y) {                       \
-    if (c >= W) wide(a, a_k, b, b_k, k, c, y);                            \
-    else narrow(a, a_k, b, b_k, k, c, y);                                 \
-  }
-LANE_TILE(tile_f32, 8, tile8_f32, tile4_f32)
-LANE_TILE(tile_f64, 4, tile4_f64, tile2_f64)
+TILE(tile_f32, float, 8, tile8_r1_f32, tile8_r2_f32, tile8_r3_f32,
+     tile8_r4_f32, narrow_f32)
+TILE(tile_f64, double, 4, tile4_r1_f64, tile4_r2_f64, tile4_r3_f64,
+     tile4_r4_f64, narrow_f64)
 
 /* cpu.h's float4 stage, 8 codes a vector: each code's magnitude, its low
    three bits, by VPERMPS from the 8 magnitudes, its sign bit moved to

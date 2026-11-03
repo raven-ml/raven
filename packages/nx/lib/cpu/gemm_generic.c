@@ -5,9 +5,9 @@
 
 /* The portable contraction kernels.
 
-   A microkernel of 4 × 4 outputs and lane order's dot and axpy, each
-   product fused into its addition by C's fma, which rounds once: the same
-   bits as the vector kernels' fused instructions. The integers'
+   A microkernel of 4 × 4 outputs, lane order's dot and tile, and the
+   axpy, each product fused into its addition by C's fma, which rounds
+   once: the same bits as the vector kernels' fused instructions. The integers'
    microkernels multiply and add modulo their width, as unsigned numbers,
    which gives a signed accumulator's bits too. A target's own kernels
    replace these where it has them. */
@@ -67,35 +67,36 @@
 
 /* Adds each of [r] rows' element of [a], [lda] apart, times each of the
    [n] elements of [b] into the row's accumulators at [y], [ldy] apart,
-   having prefetched [next]. */
+   from them or from +0 as [from] says (cpu.h's axpy). */
 #define AXPY(name, T, FMA)                                                  \
-  static void name(const void *va, int64_t lda, int r, const void *vb,      \
-                   int64_t n, void *vy, int64_t ldy, const void *next) {    \
+  static void name(const void *va, int64_t lda, int64_t r, const void *vb,  \
+                   int64_t n, void *vy, int64_t ldy, nx_cpu_from from) {    \
     const T *a = va, *b = vb;                                               \
-    for (int64_t q = 0; q < n * (int64_t)sizeof(T); q += 64)                \
-      __builtin_prefetch((const char *)next + q);                           \
-    for (int i = 0; i < r; i++) {                                           \
+    for (int64_t i = 0; i < r; i++) {                                       \
       T x = a[i * lda], *y = (T *)vy + i * ldy;                             \
-      for (int64_t j = 0; j < n; j++) y[j] = FMA(x, b[j], y[j]);            \
+      for (int64_t j = 0; j < n; j++)                                       \
+        y[j] = FMA(x, b[j], from == NX_CPU_FROM_ZERO ? 0 : y[j]);           \
     }                                                                       \
   }
 
-/* Sets y[j], for each of the [c] columns of b, to lane order's sum of
-   the block of [k] products of a's row and the column (cpu.h's lane
-   tile). */
+/* Sets y[i·ldy + j], for each of [r] rows of a and [c] columns of b,
+   to lane order's sum of the block of [k] products of the row and the
+   column (cpu.h's lane tile). */
 #define TILE(name, T, FMA)                                                  \
-  static void name(const void *va, int64_t a_k, const void *vb,             \
-                   int64_t b_k, int64_t k, int64_t c, void *vy) {           \
+  static void name(const void *va, int64_t lda, int64_t a_k, int64_t r,     \
+                   const void *vb, int64_t b_k, int64_t k, int64_t c,       \
+                   void *vy, int64_t ldy) {                                 \
     const T *a = va, *b = vb;                                               \
     T *y = vy;                                                              \
-    for (int64_t j = 0; j < c; j++) {                                       \
-      T s[NX_CPU_LANES] = {0};                                              \
-      for (int64_t t = 0; t < k; t++)                                       \
-        s[t % NX_CPU_LANES] =                                               \
-            FMA(a[t * a_k], b[t * b_k + j], s[t % NX_CPU_LANES]);           \
-      NX_CPU_LANE_TREE(q, r, s[q] = s[q] + s[r]);                           \
-      y[j] = s[0];                                                          \
-    }                                                                       \
+    for (int64_t i = 0; i < r; i++)                                         \
+      for (int64_t j = 0; j < c; j++) {                                     \
+        T s[NX_CPU_LANES] = {0};                                            \
+        for (int64_t t = 0; t < k; t++)                                     \
+          s[t % NX_CPU_LANES] = FMA(a[i * lda + t * a_k], b[t * b_k + j],   \
+                                    s[t % NX_CPU_LANES]);                   \
+        NX_CPU_LANE_TREE(q, u, s[q] = s[q] + s[u]);                         \
+        y[i * ldy + j] = s[0];                                              \
+      }                                                                     \
   }
 
 /* Adds into each of the [m] elements of [y] the [k] products of a's

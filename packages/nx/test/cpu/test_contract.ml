@@ -1733,7 +1733,8 @@ let test_offsets_in_dst (b : Support.backend) () =
    makes two runs, and the product loops over the outer one. Where
    [by_rows], b is a window of rows [c0, c0 + n) of a [cols × k] array
    read transposed, adjacent along k as a weight or attention's keys are,
-   with few rows of a drawn often. *)
+   with few rows of a drawn often. Otherwise few rows, which lane tiles
+   take, and a depth of one, which axpys take, are drawn often too. *)
 type guard_case = {
   f64 : bool;
   heads : int;
@@ -1766,13 +1767,17 @@ let guard_cases =
      let side = if after then Support.After else Support.Before in
      let* m =
        if by_rows then frequency [ (2, int_range 1 4); (1, int_range 5 72) ]
-       else frequency [ (1, int_range 1 32); (2, int_range 33 72) ]
+       else
+         frequency
+           [ (1, int_range 1 4); (1, int_range 1 32); (2, int_range 33 72) ]
      in
      let* k =
        if by_rows then
          frequency
            [ (2, int_range 1 140); (1, map (fun s -> 16 * s) (int_range 1 8)) ]
-       else frequency [ (2, int_range 1 140); (1, int_range 1 9) ]
+       else
+         frequency
+           [ (2, int_range 1 140); (1, int_range 1 9); (1, constant 1) ]
      in
      let* tiles = int_range 0 2 in
      let* edge =
@@ -1887,6 +1892,13 @@ let law_guards (b : Support.backend) g =
     (tiles && g.k > 4 && g.k mod 4 <> 0);
   cover "tiles, b's window ending at the page"
     (tiles && g.side = Support.After && g.c0 + g.n = g.cols);
+  cover "b by columns, fewer rows than a tile takes"
+    ((not g.by_rows) && g.m < 4);
+  cover "b by columns, few rows, its window ending at the page"
+    ((not g.by_rows) && g.m <= 4 && g.side = Support.After
+    && g.c0 + g.n = g.cols);
+  cover "a depth of one, rows and columns past 4"
+    (g.k = 1 && g.m > 4 && g.n > 4);
   if g.f64 then guarded_product b D.Float64 g
   else guarded_product b D.Float32 g
 
@@ -2021,6 +2033,150 @@ let edge_examples =
         ])
     [ (f32, f32); (f32, D.Any D.Bfloat16); (f32, D.Any D.Float16); (f64, f64) ]
 
+(* Few rows against b stored [k × n], adjacent along its columns, as a
+   weight stored [in × out] or attention's values are, in lane order: in
+   float32 through b in place, b's rows overlapping a column apart or
+   read backwards, its columns stepped or read backwards, which a stage
+   takes, and a stored transposed; at each other float dtype each
+   accumulator holds through b in place. One to four rows and, over
+   depths of 128 products per output and more, five to nine; columns
+   fewer than a vector of either width, a vector, and edges of two;
+   depths of 1, either side of a step of lanes and of a block, and three
+   blocks. *)
+let by_columns_examples =
+  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
+  let plain = Elements.plain 2 in
+  let f32_layouts =
+    [
+      (swap 2, plain); (plain, { plain with windowed = Some (1, 1) });
+      (plain, { plain with reversed = Some 0 });
+      (plain, { plain with stepped = true });
+      (plain, { plain with reversed = Some 1 });
+    ]
+  in
+  let dtypes =
+    [ (f32, f32); (f32, D.Any D.Bfloat16); (f32, D.Any D.Float16);
+      (f32, D.Any D.Float8_e4m3fn); (f64, f64); (f64, f32) ]
+  in
+  let variants =
+    List.map (fun (acc, dt) -> (acc, dt, plain, plain)) dtypes
+    @ List.map (fun (va, vb) -> (f32, f32, va, vb)) f32_layouts
+  in
+  List.concat_map
+    (fun (acc, dt, va, vb) ->
+      List.map
+        (fun (m, n, k) ->
+          let init = if (m + n + k) mod 3 = 0 then Some plain else None in
+          make ~acc ~out:acc ([||], [| m |], [| n |], [| k |]) (dt, va)
+            (dt, vb) init (m + n + k))
+        [
+          (1, 3, 17); (1, 4, 33); (1, 8, 16); (1, 9, 15); (1, 16, 1024);
+          (1, 23, 1025); (1, 37, 2049); (1, 64, 3100); (2, 17, 1);
+          (2, 40, 1023); (3, 37, 64); (3, 21, 1030); (4, 33, 31);
+          (4, 45, 2100); (5, 5, 3300); (6, 5, 3900); (9, 5, 6000);
+        ])
+    variants
+
+(* Products of a depth of one in chain order, as attention's backward
+   through a decoded token makes them: R written along its columns, or
+   along its rows where the product is transposed; a, b or both stored
+   transposed, b's columns stepped, a batch, init; float32, bfloat16 into
+   float32, float64. *)
+let depth_one_examples =
+  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
+  let plain = Elements.plain 2 in
+  let layouts =
+    [
+      (plain, plain); (swap 2, plain); (plain, swap 2); (swap 2, swap 2);
+      (plain, { plain with stepped = true });
+    ]
+  in
+  let products =
+    List.concat_map
+      (fun (acc, dt) ->
+        List.concat_map
+          (fun (m, n) ->
+            List.map
+              (fun (va, vb) ->
+                let init = if (m + n) mod 2 = 0 then Some plain else None in
+                make ~acc ~out:acc ([||], [| m |], [| n |], [| 1 |]) (dt, va)
+                  (dt, vb) init (m + n))
+              layouts)
+          [ (5, 13); (13, 5); (37, 64); (64, 37); (100, 9); (8, 8); (2, 300) ])
+      [ (f32, f32); (f32, D.Any D.Bfloat16); (f64, f64) ]
+  in
+  let batched init =
+    let v = Elements.plain 3 in
+    make ~acc:f32 ~out:f32 ([| 3 |], [| 37 |], [| 20 |], [| 1 |]) (f32, v)
+      (f32, v)
+      (if init then Some v else None)
+      7
+  in
+  products @ [ batched false; batched true ]
+
+(* A product of a depth of one has the bits of the same product into a
+   fresh dst whatever dst's layout: its rows adjacent, which the axpys
+   take transposed, or neither axis adjacent, which chain order takes. *)
+type depth_one = {
+  d_acc : D.any;
+  d_m : int;
+  d_n : int;
+  d_init : bool;
+  d_rows : bool;
+  d_seed : int;
+}
+
+let pp_depth_one ppf d =
+  Format.fprintf ppf "%a %d × %d%s, dst %s, seed %d" pp_dtype d.d_acc d.d_m
+    d.d_n
+    (if d.d_init then " with init" else "")
+    (if d.d_rows then "rows adjacent" else "stepped both ways")
+    d.d_seed
+
+let depth_one_draws =
+  let open Gen in
+  with_pp pp_depth_one
+    (let* d_acc = of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ] in
+     let* d_m = int_range 1 70 and+ d_n = int_range 1 70 in
+     let* d_init = bool and+ d_rows = bool in
+     let+ d_seed = int in
+     { d_acc; d_m; d_n; d_init; d_rows; d_seed })
+
+let law_depth_one_dst (b : Support.backend) d =
+  let plain = Elements.plain 2 in
+  let c =
+    make ~acc:d.d_acc ~out:d.d_acc
+      ([||], [| d.d_m |], [| d.d_n |], [| 1 |])
+      (d.d_acc, plain) (d.d_acc, plain)
+      (if d.d_init then Some plain else None)
+      d.d_seed
+  in
+  let chain = order c = Chain in
+  cover "chain order, rows adjacent" (chain && d.d_rows);
+  cover "chain order, stepped both ways" (chain && not d.d_rows);
+  cover "lane order" (not chain);
+  let (D.Any dt) = d.d_acc in
+  let m = d.d_m and n = d.d_n in
+  let move mv x = Option.get (A.move mv x) in
+  let dst =
+    if d.d_rows then
+      move (M.Permute [| 1; 0 |]) (A.create b.device dt [| n; m |])
+    else
+      let step e = { M.start = 1; count = e; step = 2 } in
+      move
+        (M.Slice (Iarray.of_array [| step m; step n |]))
+        (A.create b.device dt [| (2 * m) + 1; (2 * n) + 1 |])
+  in
+  match
+    ( run b c,
+      contract b.kernels c ~dst:(A.Any dst) (on b c.a) (on b c.b)
+        (Option.map (on b) c.init) )
+  with
+  | Some y, A.Done ->
+      equal (list string) []
+        (differ_bits c.acc ~other:"into the view" y (host (A.Any dst)))
+  | _ -> failf "nx.cpu declined a float contraction"
+
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
@@ -2030,9 +2186,12 @@ let cpu (b : Support.backend) =
       prop
         ~examples:
           (examples @ large_examples @ order_edges @ unroll_examples
-         @ few_rows_examples @ edge_examples)
+         @ few_rows_examples @ edge_examples @ by_columns_examples
+         @ depth_one_examples)
         "each output adds its products in the order nx_cpu.mli states"
         computed (run (law_order b));
+      prop "a product of a depth of one has the same bits into any dst"
+        depth_one_draws (run (law_depth_one_dst b));
       prop ~count:16 ~examples:deep_examples
         "a contraction on the job's threads has one thread's bits" deep_cases
         (run (law_threads b));

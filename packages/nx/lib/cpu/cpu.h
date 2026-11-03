@@ -175,21 +175,23 @@ typedef void (*nx_cpu_dot)(const void *a, int64_t lda, int r, const void *b,
 
 /* An axpy adds, for each of [r] rows, the element of [a] at a + i·lda·w
    times each of the [n] contiguous elements of [b] into row i's [n]
-   contiguous accumulators at y + i·ldy·w, each fused. It prefetches the
-   [n] elements at [next], the b of a later call. */
-typedef void (*nx_cpu_axpy)(const void *a, int64_t lda, int r, const void *b,
-                            int64_t n, void *y, int64_t ldy,
-                            const void *next);
+   contiguous accumulators at y + i·ldy·w, each fused, to the start
+   [from] names: a product of a depth of one in chain order. */
+typedef void (*nx_cpu_axpy)(const void *a, int64_t lda, int64_t r,
+                            const void *b, int64_t n, void *y, int64_t ldy,
+                            nx_cpu_from from);
 
-/* A lane tile sets y[j], for each of the [c] columns of b at [b], c at
-   most NX_CPU_LANES, row t at b + t·b_k·w, to lane order's sum of one
-   block of [k] products, k at most NX_CPU_LANE_BLOCK, of a's row, its
-   element t at a + t·a_k·w, and the column: term t into lane t modulo
-   NX_CPU_LANES, fused, the lanes summed by their tree (gemm.c). It reads
-   no column past c. */
-typedef void (*nx_cpu_lane_tile)(const void *a, int64_t a_k, const void *b,
-                                 int64_t b_k, int64_t k, int64_t c,
-                                 void *y);
+/* A lane tile sets y[i·ldy + j], for each of [r] rows of a, row i's
+   element t at a + (i·lda + t·a_k)·w, and each of the [c] contiguous
+   columns of b, row t at b + t·b_k·w, to lane order's sum of one block
+   of [k] products, k at most NX_CPU_LANE_BLOCK, of the row and the
+   column: term t into lane t modulo NX_CPU_LANES, fused, the lanes
+   summed by their tree (gemm.c). It reads no column past c, and may
+   prefetch the rows of b it reads later. */
+typedef void (*nx_cpu_lane_tile)(const void *a, int64_t lda, int64_t a_k,
+                                 int64_t r, const void *b, int64_t b_k,
+                                 int64_t k, int64_t c, void *y,
+                                 int64_t ldy);
 
 /* A gemv adds into each of the [m] contiguous accumulators y[i] the [k]
    products of a's element at a + (i + p·lda)·w and x's [p]th, in
@@ -322,8 +324,9 @@ extern int64_t nx_cpu_llc;
 typedef struct {
   const char *name;
   /* gemm[acc] contracts in acc in chain order; its kernel is NULL where
-     the target has none. dot[acc], axpy[acc] and tile[acc] are lane
-     order's; gemv[dt] serves the factorisations' leaves (linalg.c).
+     the target has none. dot[acc] and tile[acc] are lane order's,
+     axpy[acc] chain order's of a depth of one; gemv[dt] serves the
+     factorisations' leaves (linalg.c).
      quads[d] contracts operands of the 8-bit dtype d into 32 bits in
      chain order, each element of a and b a 32-bit word of four of d along
      k, each product of words the sum of their four products
