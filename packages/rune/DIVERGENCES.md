@@ -315,7 +315,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   20 `cosh` and `|sinh|` are `2^(|x| log2 e - 1)`, which overflows only with
   the result, and `|tanh|` is 1.
 - **nx:** `prog.mli`, Results, `Sinh`, `Cosh`, `Tanh`.
-- **Class:** ulp bound: `sinh` 21, `cosh` 10, `tanh` 18.
+- **Class:** ulp bound: `sinh` 23, `cosh` 10, `tanh` 18.
 - **Reason:** (b).
 - **Pinned by:** `Lower_real › transcendental › sinh within 23 ulps at float32,
   23 at float64`, `› cosh within 10 ulps at float32, 10 at float64`, `› tanh
@@ -387,9 +387,10 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   The product's error, exact from an fma, is kept, and the two parts are
   exponentiated as A7's. A negative base takes the sign of an odd integral
   exponent and is NaN for a fractional one, and the special values are C99
-  F.9.4.4's.
+  F.9.4.4's: `pow 1 nan` is 1, where tinygrad's `xpow`
+  (`codegen/decomp/transcendental.py:257`) gives NaN.
 - **nx:** `prog.mli`, `Pow` and Results.
-- **Class:** ulp bound: `9 + 6 |y log2 |x||`.
+- **Class:** ulp bound: 9.
 - **Reason:** (b).
 - **Pinned by:** `Lower_real › transcendental › pow within 2 ulps at float32, 2
   at float64`.
