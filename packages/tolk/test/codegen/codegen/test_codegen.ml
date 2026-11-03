@@ -771,6 +771,52 @@ let serves_devices first () =
   same_graph ~msg:"the first kernel's program is kept" p
     (Codegen.to_program k r)
 
+(* The source of the program [prg]. *)
+let source prg =
+  List.find_map
+    (fun u ->
+      match (Ops.op u, Ops.arg u) with
+      | Source, String text -> Some text
+      | _ -> None)
+    (Ops.toposort ~calls:Enter prg)
+  |> require_some
+
+(* Kernels that read a buffer at [r0 + r1], at [r1 + r0], or at [r0 + 2 r1]
+   that one does not, and add a fresh constant. Two kernels share a key only
+   where they render one source: the two orders of the commutative sum share
+   both, and one program, made once; the other index differs in both. *)
+let serves_commuted_index () =
+  let compiled, r = counting () in
+  let value = Float.of_int (Atomic.fetch_and_add fresh 1) in
+  let kernel index =
+    let out = Shape.param ~shape:[ Int 16 ] 0 Float32 in
+    let x = Shape.param ~shape:[ Int 16 ] 1 Float32 in
+    let r0 = Ops.range (Int 4) [ 0 ] and r1 = Ops.range (Int 4) [ 1 ] in
+    let read =
+      Ops.add (Ops.index x [ index r0 r1 ]) (Ops.float ~dtype:Float32 value)
+    in
+    let store =
+      Ops.store (Ops.index out [ Ops.O.((r0 * int 4) + r1) ]) read
+    in
+    Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ store [ r0; r1 ] ]
+  in
+  let k = kernel Ops.add and k' = kernel (fun r0 r1 -> Ops.add r1 r0) in
+  let other = kernel (fun r0 r1 -> Ops.O.(r0 + (r1 * int 2))) in
+  let _, fresh_r = counting () in
+  let rendered k =
+    source (Codegen.compile (Codegen.linearize k fresh_r) fresh_r)
+  in
+  let key k = Codegen.program_key k r in
+  equal string ~msg:"one source for both orders" (rendered k) (rendered k');
+  equal string ~msg:"one key for both orders" (key k) (key k');
+  not_equal string ~msg:"another source for another index" (rendered k)
+    (rendered other);
+  not_equal string ~msg:"another key for another index" (key k) (key other);
+  let p = Codegen.to_program k r and p' = Codegen.to_program k' r in
+  equal string ~msg:"the kept program's source" (rendered k') (source p');
+  equal string ~msg:"one program" (source p) (source p');
+  equal int ~msg:"compilations" 1 (Atomic.get compiled)
+
 let target_of p =
   match Ops.arg p with
   | Program { target; _ } -> target.renderer
@@ -905,6 +951,10 @@ let caching =
         (serves_devices "CPU:0");
       test "a program for the target's own device serves another of its target"
         (serves_devices "CPU");
+      test
+        "kernels share a key where they render one source, as a sum of \
+         ranges in either order does"
+        serves_commuted_index;
       test "a failed compilation is not kept: the next call compiles anew"
         makes_anew_after_a_failure;
     ]

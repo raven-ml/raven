@@ -510,13 +510,19 @@ let pads =
 
 let view_witness = option (pair uop int)
 
+(* A view's offset as a constant, which every case but a bound start's is. *)
+let at_constant = function
+  | Some (b, Ops.Int n) -> Some (b, n)
+  | Some (_, Ops.Sym _) -> failf "a symbolic offset"
+  | None -> None
+
 let contiguous_views =
   let b = flat 32 in
   let x = Shape.reshape b (ints [ 4; 8 ]) in
   let bytes = Ops.bitcast b Uint8 in
   let case name expected u =
     test name (fun () ->
-        equal view_witness expected (Prepare.contiguous_view u))
+        equal view_witness expected (at_constant (Prepare.contiguous_view u)))
   in
   group "contiguous_view"
     [
@@ -546,6 +552,24 @@ let contiguous_views =
         (Shape.shrink x [ Some (Int 1, Int 2); Some (Int 3, Int 4) ]);
       case "an empty view is no view" None
         (Shape.shrink x [ Some (Int 2, Int 2); None ]);
+      test "rows from a bound start start at its rows" (fun () ->
+          let s =
+            Ops.variable "s" (`Int (Bigint.of_int 0)) (`Int (Bigint.of_int 2))
+          in
+          let start = Shape.bind s (`Int (Bigint.of_int 1)) in
+          let rows =
+            Shape.shrink x
+              [ Some (Ops.Sym start, Ops.Sym Ops.O.(start + int 2)); None ]
+          in
+          match Prepare.contiguous_view rows with
+          | Some (b', offset) ->
+              equal uop ~msg:"the storage" b b';
+              equal bool ~msg:"the offset, the start's rows" true
+                (Ops.equal_sint offset (Shape.ssimplify Ops.O.(start * int 8)))
+          | None -> failf "no view");
+      (let r = Ops.range (Int 2) [ 0 ] in
+       case "rows from a range's start are no view" None
+         (Shape.shrink x [ Some (Ops.Sym r, Ops.Sym Ops.O.(r + int 2)); None ]));
       (let ints = Shape.param ~device:cpu ~shape:[ Int 8 ] 1 Int32 in
        let ordered =
          Ops.after ints
@@ -636,7 +660,7 @@ let viewed (shape, ms) =
   let run =
     Option.map (fun off -> (flat (size shape), off)) (is_run memory elements)
   in
-  (Prepare.contiguous_view u, run)
+  (at_constant (Prepare.contiguous_view u), run)
 
 let found_is_a_run chain =
   match viewed chain with

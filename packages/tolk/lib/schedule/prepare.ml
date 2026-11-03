@@ -400,8 +400,11 @@ let pm_stop_at_effects =
 
 (* The index of [u]'s elements rewritten through its movements ends at the node
    they are read from; the elements are a run of that node when its flat index
-   is the range plus a constant. A bitcast's run is also a run of its source
-   when it starts and ends on whole elements of the source. *)
+   is the range plus a constant. Where the index reads bound variables, whose
+   values a call knows, the elements are a run when they are one at those
+   values, from the index at the run's first element, which reads them. A
+   bitcast's run is also a run of its source when it starts and ends on whole
+   elements of the source, at a constant offset. *)
 let rec contiguous_view u =
   let numel = numel u in
   let rng = range numel [ 0 ] in
@@ -424,15 +427,27 @@ let rec contiguous_view u =
           (int 0) idxs
           (strides_for_shape (shape b))
       in
-      match ssimplify (sub flat rng) with
+      (* Checked at the call's values only: a movement adds a bound variable to
+         its index only as an offset, under constant strides and div/mod, so a
+         run at one value is a run at all. A variable meeting a range in a
+         div/mod of non-constant size would need the check at every value. *)
+      let bound = List.filter is_bound_var (toposort ~calls:Skip flat) in
+      let value v = (v, int (Dtype.Value.to_int (snd (unbind v)))) in
+      let valued =
+        substitute ~calls:Skip ~pass:Once flat (List.map value bound)
+      in
+      match ssimplify (sub valued rng) with
       | Sym _ -> None
-      | Int offset when op b <> Op.Bitcast -> Some (b, offset)
+      | Int _ when bound <> [] ->
+          let first = substitute ~calls:Skip ~pass:Once flat [ (rng, int 0) ] in
+          if op b = Op.Bitcast then None else Some (b, ssimplify first)
+      | Int offset when op b <> Op.Bitcast -> Some (b, Int offset)
       | Int offset ->
           let osz = element_size b and isz = element_size (nth b 0) in
           if
             offset * osz mod isz <> 0
             || Sint.truth Sint.(numel * Int osz % Int isz <> Int 0)
-          then Some (b, offset)
+          then Some (b, Int offset)
           else
             let first = Int (offset * osz / isz) in
             let last = Sint.((Int offset + numel) * Int osz // Int isz) in
@@ -447,7 +462,8 @@ let rec storage_run u =
   ||
   match op u with
   | Op.Shrink | Op.Reshape ->
-      storage_run (nth u 0) && Option.is_some (contiguous_view u)
+      storage_run (nth u 0)
+      && (match contiguous_view u with Some (_, Int _) -> true | _ -> false)
   | _ -> false
 
 (* Copies always cross devices, and read a whole buffer: SDMA engines cannot

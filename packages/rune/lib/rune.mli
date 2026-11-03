@@ -1434,8 +1434,8 @@ val jit :
     creation at the cut placement or {!Nx.argmax} along an axis no device
     cuts does, its launch on each device passes the window's start, so that
     its program is every device's. A fold, scan, gather or scatter over a cut
-    axis that reads positions, as {!Nx.argmax} along it does, makes a kernel
-    per device. *)
+    axis passes so its tile's start, and the start of each device's part of
+    the result it gathers, so that its programs are every device's too. *)
 
 (** {2:search Search}
 

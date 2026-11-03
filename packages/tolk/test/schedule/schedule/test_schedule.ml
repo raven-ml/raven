@@ -1235,6 +1235,34 @@ let views =
           equal values
             (Tensors.eval ~buffers bytes)
             (Tensors.eval ~buffers view));
+      test
+        "stores into runs of a buffer at a bound start store into views of \
+         one alignment, whatever the start"
+        (fun () ->
+          let buffer = Ops.new_buffer ~slot:6 cpu 16 Float32 in
+          let value = Ops.new_buffer ~slot:2 cpu 8 Float32 in
+          let at first =
+            let s =
+              Ops.variable "s" (`Int (Bigint.of_int 0)) (`Int (Bigint.of_int 8))
+            in
+            let start = Shape.bind s (`Int (Bigint.of_int first)) in
+            let run =
+              Shape.shrink buffer
+                [ Some (Ops.Sym start, Ops.Sym Ops.O.(start + int 8)) ]
+            in
+            let viewed =
+              require_some
+                (Schedule.contiguous_mops_to_view (Ops.store run value) run)
+            in
+            equal bool ~msg:"the store stays" true (Ops.op viewed = Store);
+            let view = Ops.nth viewed 0 in
+            through_buffer view;
+            Shape.storage_phase view
+          in
+          equal (pair int int) ~msg:"known to a float, 4 bytes in" (4, 0)
+            (at 1);
+          equal (pair int int) ~msg:"known to a float, 12 bytes in" (4, 0)
+            (at 3));
       test "a store into contiguous rows of a buffer stores into a view of them"
         (fun () ->
           let value = Ops.new_buffer ~slot:2 cpu 32 Float32 in
@@ -1430,6 +1458,30 @@ let deviceless_stage () =
     [ [ "CPU" ]; [ "CPU" ]; [ "CPU:1" ]; [ "CPU:1" ] ]
     (calls [ "CPU"; "CPU:1" ])
 
+(* Kernels each storing windows of four floats of a buffer, each window
+   starting at a variable [a] or [b] of [0, 12] bound to a value: [b] at 5,
+   [a] at 1 plus [b] at 2, and [a] at 3 plus [b] at 5. The schedule meets [b]
+   at 5 before [a] at 3. *)
+let windows_at () =
+  let x = Ops.new_buffer ~slot:0 cpu 16 Float32 in
+  let at name value =
+    let v =
+      Ops.variable name (`Int (Bigint.of_int 0)) (`Int (Bigint.of_int 12))
+    in
+    let start = Shape.bind v (`Int (Bigint.of_int value)) in
+    Shape.shrink x [ Some (Ops.Sym start, Ops.Sym Ops.O.(start + int 4)) ]
+  in
+  let stored slot value =
+    let out = Ops.new_buffer ~slot cpu 4 Float32 in
+    Ops.after out [ Ops.store out value ]
+  in
+  Ops.sink
+    [
+      stored 1 (at "b" 5);
+      stored 2 (Ops.add (at "a" 1) (at "b" 2));
+      stored 3 (Ops.add (at "a" 3) (at "b" 5));
+    ]
+
 let variables =
   group "create_linear_with_vars › rules"
     [
@@ -1462,6 +1514,27 @@ let variables =
             (list (pair string int))
             [ ("v", 4) ]
             (snd (Schedule.create_linear_with_vars (rebound 4))));
+      test
+        "kernels that read two names bound to several values alike are one \
+         program, whatever order the schedule met the values in"
+        (fun () ->
+          let linear, _ = Schedule.create_linear_with_vars (windows_at ()) in
+          let scalars k =
+            List.filter
+              (fun u -> Ops.op u = Param && Ops.addrspace u = Some Dtype.Alu)
+              (Ops.toposort ~calls:Skip k)
+          in
+          let kernels =
+            List.filter_map
+              (fun n ->
+                if Ops.op n = Call && Ops.op (Ops.nth n 0) = Sink then
+                  Some (Ops.nth n 0)
+                else None)
+              (Ops.toposort ~calls:Skip linear)
+          in
+          match List.filter (fun k -> List.length (scalars k) = 2) kernels with
+          | [ a; b ] -> equal uop ~msg:"the kernels" a b
+          | ks -> failf "%d kernels of two scalars, not 2" (List.length ks));
       test "a kernel on buffers of two devices is refused" several_devices;
       test
         "a stored value of no device lives on each device whose kernels read \

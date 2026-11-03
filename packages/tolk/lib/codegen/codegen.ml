@@ -1690,12 +1690,14 @@ let compile prg ren = compiled Renderer.Compiler.compile prg ren
    the target's first device, named as the target is, is its own key. They
    are kept with the kernel while it lives, since a kernel asks for its
    program several times; [key] holds its last key and the [suffix] that key
-   ends with. *)
+   ends with. [kernel] is the kernel the key reads and the program is made
+   from. *)
 type params = {
   devices : (int * device) list;
   device : device;
   free : string;
   key : (string * string) option Atomic.t;
+  kernel : Ops.t;
 }
 
 module Kernels = Ephemeron.K1.Make (struct
@@ -1709,6 +1711,15 @@ let kernels = Kernels.create 64
 let kernels_lock = Mutex.create ()
 
 let params_on device ast =
+  (* The schedule's symbolic rules order the operands of a commutative index
+     operation by its ranges' numbers in the whole graph, before each kernel
+     renumbers its own. Ordered again by the kernel's numbers, kernels that
+     differ in that order alone are one kernel, keyed and made alike: the key
+     reads the kernel the program is made from, so one key is one source. *)
+  let ast =
+    graph_rewrite ~calls:Skip ~pass:Once ~ctx:() ast
+      (After_sources Shape.commutative)
+  in
   let devices = ref [] in
   let named u =
     match arg u with
@@ -1719,7 +1730,13 @@ let params_on device ast =
     | _ -> None
   in
   let free = key_with ~arg:named ast in
-  { devices = List.rev !devices; device; free; key = Atomic.make None }
+  {
+    devices = List.rev !devices;
+    device;
+    free;
+    key = Atomic.make None;
+    kernel = ast;
+  }
 
 let params ast (ren : Renderer.t) =
   let device = ren.target.device in
@@ -1870,7 +1887,7 @@ let to_program ?beam ast ren =
   let key = keyed p ren in
   served p
     (Helpers.Memo.get to_program_cache key (fun () ->
-         made_of ?beam ~only_read:false ~key ~kernel p ast ren))
+         made_of ?beam ~only_read:false ~key ~kernel p p.kernel ren))
 
 let read ast ren =
   let kernel = kernel_of ast in
@@ -1878,7 +1895,7 @@ let read ast ren =
   let key = keyed p ren in
   match
     Helpers.Memo.try_get to_program_cache key (fun () ->
-        made_of ~only_read:true ~key ~kernel p ast ren)
+        made_of ~only_read:true ~key ~kernel p p.kernel ren)
   with
   | m -> Option.map (served p) m
   | exception Unkept -> None

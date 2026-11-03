@@ -902,9 +902,14 @@ let moved u d =
    two overlap, as {!Lower_index.assemble} states. Each store reads one piece,
    which its last reader frees, and a piece copied from another device is
    copied into its region; a select chain would read every piece in one
-   kernel, each live beside the result until then. A store into a region of
-   the buffer that is a run of its elements stores into a view of it, so
-   pieces of one shape are one program wherever they lie. *)
+   kernel, each live beside the result until then. A copy into a region of the
+   buffer that is a run of its elements lands in place. Every other store
+   starts its region, along each axis it does not cover, at a multiple of the
+   step at which the pieces of its shape start, a variable bound to that
+   multiple: each device's call passes its own, as a move's window's start
+   ({!moving}), so pieces of one shape are one program wherever they lie, and
+   their kernel knows of a start what all of theirs share, its alignment
+   included. *)
 
 (* A region's box along an axis: its first index, its extent, whether it runs
    backwards, and the size of its step. *)
@@ -945,6 +950,57 @@ let tiles s (rs : A.Move.range iarray list) =
 let holds ((rs : A.Move.range iarray), _) =
   Iarray.for_all (fun (r : A.Move.range) -> r.count > 0) rs
 
+(* Whether the boxes [b] of a value of shape [s] are a run of its elements:
+   one element along each axis before some axis, all of each after it. *)
+let run s b =
+  let n = Array.length s in
+  let extent k =
+    let _, e, _, _ = b.(k) in
+    e
+  in
+  let rec whole k = k = n || (extent k = s.(k) && whole (k + 1)) in
+  let rec ones k =
+    k = n || if extent k = 1 then ones (k + 1) else whole (k + 1)
+  in
+  ones 0
+
+let rec gcd a b = if b = 0 then a else gcd b (a mod b)
+
+(* The step of the starts of [boxes] along each axis, among those of [b]'s
+   extents: the greatest divisor of them all, [0] where all start at [0]. *)
+let steps boxes b =
+  let extents b = Array.map (fun (_, n, _, _) -> n) b in
+  let alike = List.filter (fun c -> extents c = extents b) boxes in
+  let first i c =
+    let f, _, _, _ = c.(i) in
+    f
+  in
+  Array.mapi
+    (fun i _ -> List.fold_left (fun g c -> gcd g (first i c)) 0 alike)
+    b
+
+(* The bounds of the boxes [b] of a value of shape [s] along each axis: [first]
+   to [first + n] where they cover the axis or [fixed], else [k step] to
+   [k step + n] for the start's [step] ({!steps}) and a variable [k], named by
+   the axis, the step and its bound, bound to [first / step]. *)
+let region ~fixed ~step s b =
+  let axis i (first, n, _, _) =
+    if fixed || n = s.(i) || step.(i) = 0 then
+      Some (Ops.Int first, Ops.Int (first + n))
+    else
+      let last = (s.(i) - n) / step.(i) in
+      let k =
+        Ops.variable
+          (Printf.sprintf "region%d_%d_%d" i step.(i) last)
+          (Tolk.Dtype.Value.of_int 0)
+          (Tolk.Dtype.Value.of_int last)
+      in
+      let k = Shape.bind k (Tolk.Dtype.Value.of_int (first / step.(i))) in
+      let start = Ops.O.(k * int step.(i)) in
+      Some (Ops.Sym start, Ops.Sym Ops.O.(start + int n))
+  in
+  List.mapi axis (Array.to_list b)
+
 (* [assembled ~device dt fill shape pieces] is the node of the assembly of
    [dt] and [shape] of [pieces], each a region and its node, its storage on
    [device], and that storage once filled. *)
@@ -954,15 +1010,18 @@ let assembled ~device (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
   let pieces = List.filter holds pieces in
   let buf = Ops.new_buffer device (numel s * parts dt) (tdtype dt) in
   let whole u = Shape.reshape u dims in
+  let boxes (rs : A.Move.range iarray) = Array.map box (Iarray.to_array rs) in
+  let all = List.map (fun (rs, _) -> boxes rs) pieces in
   (* Each piece stored into its box of [state]'s storage: itself where its
      steps are of one, reversed along the axes it runs backwards, else the box
      as [state] holds it with the piece selected over it. *)
   let store state ((rs : A.Move.range iarray), u) =
-    let boxes = Array.map box (Iarray.to_array rs) in
+    let boxes = boxes rs in
+    let copied = Ops.op (unshaped u) = Tolk.Op.Copy in
     let bounds =
-      List.map
-        (fun (first, n, _, _) -> Some (Ops.Int first, Ops.Int (first + n)))
-        (Array.to_list boxes)
+      region
+        ~fixed:(copied && dense boxes && run s boxes)
+        ~step:(steps all boxes) s boxes
       @ if parts dt = 2 then [ None ] else []
     in
     let value =

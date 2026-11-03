@@ -368,6 +368,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` over values cut along an axis that a fold, a scan, a gather or a
+  scatter reads (`Nx.sum`, `Nx.cumsum`, `Nx.take_along_axis`, `Nx.cummax`'s
+  derivatives) compiles as many programs whatever the number of devices: each
+  device stored its part of the closed result at its own offset, a program per
+  offset or alignment. `Nx.take_along_axis` over 8 memory devices made 22
+  programs, and makes 10.
 - A compiled call over several devices runs as one program, its storage
   planned into an arena per device made for the call: on a GPU it holds at
   most what the plan places at once, where it held every value it computed
@@ -439,10 +445,7 @@ All notable changes to this project will be documented in this file.
   device cuts): each device made kernels of its own. A fold, scan, gather or
   scatter over a cut axis passes each tile's start so too (`Nx.argmax` and
   `Nx.take_along_axis` along it, the positions of `Nx.cummax`'s derivative),
-  so each device's own partial kernels are one program. `Nx.argmax` along a
-  cut axis and `Nx.scatter` over one, of `Add` or into a value cut along it,
-  compile programs that do not grow with the devices; a sum, a scan or a
-  gather over a cut axis still closes its partials by programs that do.
+  so each device's own partial kernels are one program.
 - Under `Rune.vmap` over values cut along the mapped axis, `Rune.lane_index`'s
   indices lie where the lanes' rows lie, cut as they are; they were whole on
   every device.
@@ -933,6 +936,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Prepare.contiguous_view` gives its offset as an `Ops.sint`, of bound
+  variables where a run starts at them, and a store into such a run stores
+  into a view of it (`Schedule.contiguous_mops_to_view`). Kernels that differ
+  only in the order the schedule met their bound variables, or in the order of
+  a commutative index operation's operands, are one program
+  (`Codegen.program_key`).
 - A schedule linked `Per_run` runs as one rig program, its storage made before
   the run's first call: each image loads once per device, and a GPU no longer
   holds every buffer of a run while its work is pending. `Jit.jit_lower` takes

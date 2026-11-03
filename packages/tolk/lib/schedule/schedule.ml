@@ -455,17 +455,21 @@ let pm_post_sched_cache =
 
 (* A kernel's scalar parameters that its scope binds to values, such as a loop's
    trip, stay parameters: each takes a slot of the kernel past its arguments,
-   in the order of its slot in the scope, and the call passes the value there.
-   The kernel's program then depends on neither the value nor the loop it comes
-   from, and a launch computes the value from the loop's ranges. *)
+   in the order the kernel's body reaches them, and the call passes the value
+   there. The kernel's program then depends on neither the value, nor the loop
+   it comes from, nor the order the scope met it, and a launch computes the
+   value from the loop's ranges. *)
 let pass_values values call =
   let args = src_without_body call in
   let held =
     List.filter
       (fun v ->
+        op v = Op.Param
+        && addrspace v = Some Dtype.Alu
+        &&
         let p = param_of v in
         p.name = None && List.mem_assoc p.slot values)
-      (variables (body call))
+      (toposort ~calls:Skip (body call))
   in
   let n = List.length args in
   let slot j v = replace v ~arg:(Param { (param_of v) with slot = n + j }) in
@@ -831,12 +835,18 @@ let view_of ctx c src =
     in
     if op buf <> Op.Buffer || reads_target () then None
     else
+      (* A store's run may start at bound variables, which its call knows: its
+         kernel then knows the start modulo what they move it by. *)
+      let at = function
+        | Int _ -> true
+        | Sym _ -> op c = Op.Store
+      in
       match Prepare.contiguous_view src with
-      | Some (buf, offset) when op buf = Op.Buffer ->
+      | Some (buf, offset) when op buf = Op.Buffer && at offset ->
           let n = max_numel src * element_size src / element_size buf in
           let view =
             bitcast
-              (shrink buf [ Some (Int offset, Int (offset + n)) ])
+              (shrink buf [ Some (offset, Sint.(offset + Int n)) ])
               (dtype src)
           in
           Option.iter (fun ctx -> Tbl.replace ctx.views view ()) ctx;

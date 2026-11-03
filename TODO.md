@@ -192,22 +192,9 @@ raven / llama.cpp b12048 Vulkan:
   moves a chunk between every pair of devices: time it against tinygrad's
   ring and hierarchical allreduce on a machine with several GPUs, and if
   it is slower, write those in nx's partition
-- sharded jit: some operations still make programs per device, so their
-  compile cost grows with the device count. Program keys at 2/4/8 devices:
-  sum 4/7/9 (the running fold's per-device steps), take_along_axis 7/14/22
-  (programs gathering the slots' bits), cumsum 5/7/8 (around the totals'
-  scan), cummax's tangent 16/15/17 and gradient 14/13/15. argmax and
-  scatter are constant and sit in test_jit_devices' `uniform` list; move
-  each op there as its closing or assembly becomes one program per device
 
 ## nx
 
-- sharded jit: nx's partials write each tile's start as a constant
-  (`Partial.renumber`, `shift`), so argmax along a cut axis, scan
-  positions, and gather, scatter or sum over a cut axis still make a
-  kernel per device; pass the start as a bound variable, as maps do since
-  b6dfbb6b5. An evaluated split program builds an arange the length of
-  the whole axis on every device
 - the attention family: `Attention`, `Attention_tangent` and
   `Attention_cotangent` with nx.cpu's forward and cotangent kernels, in
   place of `Nx.attention`'s composition, which stores three float32

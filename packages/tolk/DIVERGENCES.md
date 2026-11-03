@@ -4935,9 +4935,11 @@ fold wraps integers and holds its float bound`, hold.
   slot past its arguments, and its call passes the bound variable there, as a
   loop's call passes its trip (D140). The name is not among the schedule's
   variables, and the engine reads each bound variable apart, so each launch
-  computes with its call's value, unless a run binds the name. Kernels that
-  differ in that value alone are one program. A name bound to one value is
-  read by name, as tinygrad reads it.
+  computes with its call's value, unless a run binds the name. A kernel
+  takes such parameters in the order its body reaches them, so kernels that
+  differ in their values alone, or in the order the schedule met those
+  values, are one program. A name bound to one value is read by name, as
+  tinygrad reads it.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Pieces.split`, `Compile.moving`) bind each device's window start, of a
   move or of a loop's coordinates, to a variable named by its bound, so that
@@ -4945,8 +4947,10 @@ fold wraps integers and holds its float bound`, hold.
   takes as many programs over 2 to 16 memory devices.
 - **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › two
   variables of one name bound to two values are passed by the calls that read
-  them` and `› loops of calls › loops whose calls read one name at two values
-  each pass their own`; `Tolk_engine › link and run › one program launched
+  them`, `› kernels that read two names bound to several values alike are
+  one program, whatever order the schedule met the values in` and `› loops
+  of calls › loops whose calls read one name at two values each pass their
+  own`; `Tolk_engine › link and run › one program launched
   on several devices computes each device's window at its start` and `›
   kernels whose sizes are one name of two values run each its own`, and the
   same on each GPU; rune's `Rune.jit over
@@ -5173,20 +5177,35 @@ fold wraps integers and holds its float bound`, hold.
   into a buffer's state after earlier stores keeps indexing it, since a view
   of the buffer would not be ordered after them, and so does a store whose
   value reads the buffer, which the kernel split stages by the buffer's
-  identity.
+  identity. A run may start at bound variables, whose values its call knows
+  (`Prepare.contiguous_view` checks the run at those values): a store into
+  it stores into a view at that start, whose kernel knows the start modulo
+  what the variables move it by (D54), so stores of one shape at starts of
+  other alignments are one program too. A copy or a stage of a view still
+  needs a constant start.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Compile.assembled`) hold an assembly as a buffer filled by a store per
   piece, each device's own piece at its device's offset. Indexed at the
   offset, a data-parallel step over 2, 4, 8 and 16 memory devices made 19,
   31, 55 and 103 programs; through views, 11 each, and 11, 13, 13 and 13
   once rune reads a closing's own slot from storage of its own, against
-  rune's promise that they do not grow with the devices (D170).
-- **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores of one
-  shape into two runs of a buffer share a kernel`, `› a store into contiguous
-  rows of a buffer stores into a view of them`, `› a store into rows of a
-  buffer after a store has no view`, `› a store into rows of a buffer of a
-  value that reads it has no view` and `› a store into columns of storage
-  has no view`; rune's `Rune.jit over several devices › programs`.
+  rune's promise that they do not grow with the devices (D170). A view at a
+  constant start keeps that start's alignment, and a closing's parts lie
+  at starts of several: a sum over an axis cut across 2, 4, 8 and 16 memory
+  devices, its 2 + n wide result's parts stored at their starts, made 4, 7, 9
+  and 9 programs, and 4, 7, 7 and 7 with each device's own part stored at a
+  bound start. Indexing the whole buffer at that start instead held 3.02 MB
+  per device in fully sharded training over two devices, against the 2.29 MB
+  its bound allows and views keep.
+- **Pinned by:** `Tolk.Schedule › contiguous_mops_to_view › stores into runs
+  of a buffer at a bound start store into views of one alignment, whatever
+  the start`, `› stores of one shape into two runs of a buffer share a
+  kernel`, `› a store into contiguous rows of a buffer stores into a view of
+  them`, `› a store into rows of a buffer after a store has no view`, `› a
+  store into rows of a buffer of a value that reads it has no view` and `› a
+  store into columns of storage has no view`; rune's `Rune.jit over several
+  devices › programs` and `› maps over a cut axis › partials give eager's
+  bits, their programs do not grow`, and `rune jit › fully sharded`.
 
 ## D185. A ready kernel that only frees runs before one that also makes storage
 
@@ -5670,3 +5689,36 @@ fold wraps integers and holds its float bound`, hold.
   `programs are kept › to_programs makes each kernel's program, compiled in
   at most a list per domain` and `› to_programs on one domain compiles every
   source in one call`; rune's compile bench rows above.
+
+## D197. A program key orders commutative index operands by the kernel's ranges
+
+- **tinygrad:** `uop/symbolic.py:235-237` (commutative flipping, which
+  orders the two operands of a commutative index operation by `tuplize`,
+  a range's number among it); `schedule/rangeify.py:318-329`
+  (`pm_renumber_range` in `split_store`, which renumbers a kernel's ranges
+  from 0 after the symbolic rules ran over the whole graph, "so that kernel
+  deduping works"); `codegen/__init__.py:513-518` (`to_program_key`, which
+  keys a program by its kernel's `ast.key`).
+- **tolk:** `Codegen.params_on`, which `Codegen.program_key`,
+  `Codegen.to_program` and `Codegen.read` read.
+- **Differs:** codegen orders the operands of each commutative index
+  operation of a kernel by the kernel's own range numbers, as the symbolic
+  rules order them, then keys that kernel and makes its program from it.
+  Two kernels whose ranges the whole graph numbered in different orders,
+  and which so differ only in that order, are one kernel there: one key,
+  one source, one program, which computes either. The key cannot map two
+  sources to one binary: it reads the very kernel the source is rendered
+  from, so kernels of one key render one source, and the disk cache keeps a
+  binary by its source. The schedule's kernel itself is tinygrad's.
+- **Reason:** (b): rune's compiled programs over several devices
+  (`Pieces.split`) put every device's kernels in one graph, where one device's
+  scan of its tile numbered its ranges in the other order: a cumulative sum
+  over an axis cut across 2, 4, 8 and 16 memory devices made 5, 7, 8 and 7
+  programs, and makes 5, 7, 7 and 7, against rune's promise that they do not
+  grow with the devices (D170).
+- **Pinned by:** the Codegen suite: `programs are kept › kernels share a
+  key where they render one source, as a sum of ranges in either order
+  does`, which compares the rendered sources and keys of both orders and of
+  another index; rune's
+  `Rune.jit over several devices › maps over a cut axis › partials give
+  eager's bits, their programs do not grow`.

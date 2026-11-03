@@ -88,13 +88,15 @@ val prepare_rangeify : Ops.t -> Ops.t
     parameter: a storage parameter's size, a scalar's shape, or the data type.
 *)
 
-val contiguous_view : Ops.t -> (Ops.t * int) option
+val contiguous_view : Ops.t -> (Ops.t * Ops.sint) option
 (** [contiguous_view u] is [Some (b, offset)] if the elements of [u], in
     row-major order, are the elements of [b] from [offset] on, in order, where
     [u] is [b] viewed through movements and bitcasts that neither reorder nor
     skip elements. [b] is the node the view reads, simplified: storage, storage
     ordered after effects, a constant, a computed value, or a bitcast whose view
     does not start and end on whole elements of its source. [offset] counts
-    elements of [b]'s type. It is [None] otherwise: when the movements reorder,
-    skip, repeat or pad elements, when [u] is empty, and when its size is
-    symbolic. *)
+    elements of [b]'s type: a constant, or, where [u] views [b] without a
+    bitcast, an expression of constants and bound variables. It is [None]
+    otherwise: when the movements reorder, skip, repeat or pad elements, when
+    the offset reads a range or an unbound variable, when [u] is empty, and when
+    its size is symbolic. *)

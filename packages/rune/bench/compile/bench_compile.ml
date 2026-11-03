@@ -367,9 +367,8 @@ let data_parallel () =
 (* A fold, a running maximum's positions, a gather and an [Add] scatter over
    an axis of 64 rows cut across 16 memory devices of one set. Each computes
    by partials, each device over its tile, whose start each device's call
-   binds: each device's own partial kernels are the first device's
-   programs. The gather's and the sums' closings still make programs that
-   grow with the devices. *)
+   binds, as it binds the start where a device stores its part of a closing:
+   each device's kernels are the first device's programs. *)
 let partials () =
   let devices =
     List.init 16 (fun i ->

@@ -1532,28 +1532,29 @@ let mapped_programs n =
 
 (* Partials over a cut axis
 
-   A fold, a scan, a gather or an [Add] scatter over an axis cut across devices
+   A fold, a scan, a gather or a scatter over an axis cut across devices
    computes by partials, each device over its tile of the axis, and gives
    eager's placement and bits. Each device's positions in the whole axis are
-   its tile's start, which each device's call binds: an argmax along the axis
-   and a scatter over it, of [Add] or into a value cut along it, make programs
-   that do not grow over 2, 4 and 8 memory devices ({!flat}). Each cut is
-   even, so each device's tiles have one shape; the other axis's width depends
-   on [n], so that no two counts share a program. The elements are small
-   integers, so that every sum is exact in any order. *)
+   its tile's start, and each device stores its part of a closing into the
+   whole at its part's start, both of which each device's call binds: every
+   such operation makes programs that do not grow over 2, 4 and 8 memory
+   devices ({!flat}). Each cut is even, so each device's tiles have one shape;
+   the other axis's width depends on [n], so that no two counts share a
+   program. A tile holds six rows: their bytes are a whole number of 16-byte
+   runs, so that every device's piece of the operand lies at one alignment,
+   and they are no count of devices, so that a tile's scan is never the
+   program of the scan of the tiles' totals. The elements are small integers,
+   so that every sum is exact in any order. *)
 
 let positions ~seed ~bound shape =
   let n = Array.fold_left ( * ) 1 shape in
   Nx.create Nx.int64 shape
     (Array.init n (fun i -> Int64.of_int (((seed * 7) + (i * 5)) mod bound)))
 
-(* The operations whose programs do not grow with the devices. *)
-let uniform = [ "argmax"; "scatter ~combine:Add"; "scatter" ]
-
 (* Each operation's programs over [n] devices ({!keys}), in order. *)
 let partial_programs n =
   let module S = (val Nx.devices (Array.to_list (Array.sub sixteen 0 n))) in
-  let rows = 4 * n and width = 2 + n in
+  let rows = 6 * n and width = 2 + n in
   let cut = Nx.Placement.split ~axis:0 S.v and on = Nx.Placement.on S.v in
   let x = Nx.place cut (integers [| rows; width |]) in
   let along = Nx.place on (positions ~seed:1 ~bound:rows [| 3; width |]) in
@@ -1746,14 +1747,14 @@ let () =
                  let counts = List.map mapped_programs [ 2; 4; 8; 16 ] in
                  flat "per-device" (List.map fst counts);
                  flat "accumulated" (List.map snd counts));
-             test "partials give eager's bits, argmax's and scatters' programs"
+             test "partials give eager's bits, their programs do not grow"
                (fun () ->
                  let counts = List.map partial_programs [ 2; 4; 8 ] in
                  List.iter
-                   (fun name ->
+                   (fun (name, _) ->
                      flat ~ns:[ 2; 4; 8 ] name
                        (List.map (List.assoc name) counts))
-                   uniform);
+                   (List.hd counts));
            ];
          group "each device runs its own kernels"
            [
