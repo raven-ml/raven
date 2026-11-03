@@ -1966,28 +1966,17 @@ unrolled reduce`).
   compiled, a product is eager's › the largest scales` went with its
   rewrite).
 
-## D78. The CUDA device's kernels compile to a cubin
+## D78. Withdrawn
 
-- **tinygrad:** `renderer/cstyle.py:426` (`CUDARenderer`'s compiler, which
-  makes PTX when the device is `CUDA` and a cubin otherwise).
-- **tolk:** `Cstyle.cuda`'s compiler.
-- **Differs:** the CUDA device's kernels compile to a cubin, as the NV
-  device's do. NVRTC is given the GPU's architecture either way, so PTX
-  bought no portability: a GPU newer than NVRTC is refused at compile time
-  in both forms. The cubin's code is that of NVRTC's assembler rather than
-  the driver's. PTX that a disk cache kept from before still loads, since
-  the driver takes either form.
-- **Reason:** (d): the first load of a process's CUDA kernels. The driver
-  translates PTX at every load, and only its
-  own cache, bounded in size and per user, saves that work between
-  processes. On an RTX 5000 Ada (driver 615, CUDA 13.4), loading 200
-  kernels of 48 unrolled sines each took 137 ms a kernel with the driver's
-  cache cold, 0.23 ms warm, and 0.09 ms as cubins, whose compile costs what
-  the PTX's does (about 350 ms a kernel) and whose bytes are half the PTX's
-  (98 KB against 209 KB). No fudge bench row times a load of tolk's kernels
-  yet; to re-measure on fudge.
-- **Pinned by:** the Cstyle suite: `CUDA's binaries › the CUDA device's
-  kernels compile to a cubin` (slow, skipped without NVRTC).
+The CUDA device's kernels compiled to a cubin, so that a process's first
+load would not wait for the driver to translate PTX. On fudge (RTX 5000 Ada),
+rune's compile bench row `cuda/sin-nested-8`, a fresh process's first call
+of eight nested float64 sines over a driver cache of its own, took 455 and
+517 ms with cubins and 390 and 340 ms with PTX (medians of 3, interleaved
+runs), and `warm/cuda/sin-nested-8`, the same call over a disk cache an
+earlier process filled, 340 and 329 ms against 218 and 178 ms: no gain from
+cubins. As tinygrad's `renderer/cstyle.py:426`,
+`Cstyle.cuda` compiles PTX for the CUDA device and a cubin for the NV device.
 
 ## D80. A host program runs its output loop in blocks on the host's cores
 

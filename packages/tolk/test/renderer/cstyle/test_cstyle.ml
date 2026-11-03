@@ -531,10 +531,12 @@ let compilation =
 
 (* CUDA's binaries *)
 
-let compiles_to_a_cubin () =
-  let cuda = cuda () in
-  match Renderer.Compiler.compile cuda.compiler (source_of_case "cuda_add") with
-  | binary -> starts_with ~prefix:"\x7fELF" binary
+(* [check] of the binary [ren] compiles cuda_add to. *)
+let compiled ren check =
+  match
+    Renderer.Compiler.compile ren.Renderer.compiler (source_of_case "cuda_add")
+  with
+  | binary -> check binary
   | exception Renderer.Compiler.Compile_error why when lacks_toolchain why ->
       skip ~reason:why ()
 
@@ -542,7 +544,14 @@ let cuda_binaries =
   group "CUDA's binaries"
     [
       slow
-      @@ test "the CUDA device's kernels compile to a cubin" compiles_to_a_cubin;
+      @@ test "the CUDA device's kernels compile to PTX" (fun () ->
+          compiled (cuda ()) (fun ptx ->
+              in_order ~subs:[ ".target sm_89"; ".entry" ] ptx));
+      slow
+      @@ test "the NV device's kernels compile to a cubin" (fun () ->
+          compiled
+            (renderer_for (target "NV" "CUDA" "sm_89"))
+            (starts_with ~prefix:"\x7fELF"));
     ]
 
 (* bfloat16 truncation on Metal *)

@@ -1748,9 +1748,6 @@ word comes from its lock and from samples the dashboard saw arrive.
   compiler made was served.
 - `DEBUG` 4 and 7 print the source and instructions of a program read back
   from the disk cache, as of one compiled; they printed nothing.
-- The CUDA device's kernels compile to cubins, which the driver loads as they
-  are: a process no longer waits for the driver to translate PTX (137 ms a
-  kernel on an RTX 5000 Ada when its cache is cold).
 - A program kept on disk or in memory is made again under another value of
   `DMC`, `ALLOW_HALF8` or, within a process, `TUPLE_ORDER`, and a schedule
   under another value of any setting that shapes it: a cached one made under
