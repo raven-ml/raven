@@ -95,12 +95,13 @@ raven / llama.cpp b12048 Vulkan:
   on the old stack): `create_linear_with_vars` on a hit spends ~10 ms on the
   key digest and ~24 ms in other passes; the engine assembles 4 programs in
   28-57 ms
-- compile time and launch counts: NUTS on eight_schools lowers to 464
-  kernels, 187 of them scalar, 27 CPU-s cold to compile against 2 CPU-s to
-  run; a NUTS program takes 9-14 s to build, a
-  ymir aperture gradient 98 s cold; loop bodies store each carry and row in
-  its own kernel (drawing-scan-256: 6 per trip against 2). Multi-output
-  fusion of loop bodies
+- loop fusion's rows (5e509c7f1, 7c2af9d96: NUTS on CUDA 1,305 -> 498
+  launches a transition, warm step 2.4 -> 1.4-1.9 ms; host schedule
+  entries 368 -> 162; aperture gradient cold 22-28 -> 14-15 CPU-s) have no
+  bench rows: add a CUDA NUTS row of the hand-written density, a cold
+  compile row, the shared-scalar edge and the large host carries.
+  Scheduling outside the merge is superlinear on ~4,000 one-element
+  outputs (words 2.7-3.4x per doubling)
 - long programs: the incomplete beta (~11,400 ops) compiles in 3 s, 10-20 s
   per derivative, past 10 min for three; a 1,000-term slice-tree sum is one
   kernel clang -O2 takes over 8 min on. Past 400 KB of C Clang compiles
