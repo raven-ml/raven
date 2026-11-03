@@ -303,6 +303,43 @@ let law_paths (b : Support.backend) c =
   cover "hash table" (not (direct c));
   agrees b c
 
+(* Rows of [w] words that a multiply and xor-shift step would hash alike
+   under every seed: flipping a word's top bit changed that step's output by
+   [d = 2^63 lxor 2^31] whatever the input, and the next word cancels [d].
+   Row [f] flips word [i]'s top bit where bit [i] of [f] is set. Under nx.cpu's
+   hash they leave distinct states. *)
+let chain_rows (w, base, rows) =
+  let top = Int64.min_int in
+  let d = Int64.logor top 0x8000_0000L in
+  List.init rows (fun f ->
+      Array.init w (fun i ->
+          let flip j = j >= 0 && j < w - 1 && (f lsr j) land 1 = 1 in
+          let prev = if flip (i - 1) then d else 0L in
+          let own = if flip i then top else 0L in
+          Int64.logxor base.(i) (Int64.logxor prev own)))
+
+let chains =
+  let open Gen in
+  with_pp
+    (fun ppf ((w, _, rows), seed) ->
+      Format.fprintf ppf "%d rows of %d words, seed %Ld" rows w seed)
+    (let* w = int_range 2 20 in
+     let* base = array ~size:(constant w) int64 in
+     let* seed = int64 in
+     let rows = Int.min 64 (1 lsl (w - 1)) in
+     constant ((w, base, rows), seed))
+
+let law_chain ((_, _, rows) as c, seed) =
+  let states =
+    Fun.protect
+      ~finally:(fun () -> Nx_cpu.unique_seed suite_seed)
+      (fun () ->
+        Nx_cpu.unique_seed seed;
+        List.map Nx_cpu.unique_state (chain_rows c))
+  in
+  equal ~msg:"distinct states" int rows
+    (List.length (List.sort_uniq Int64.compare states))
+
 (* The numbering under another seed has the same bits. *)
 let law_seeds (b : Support.backend) (c, seed) =
   let other =
@@ -359,6 +396,7 @@ let cpu (b : Support.backend) =
         (run (law_paths b));
       prop "the same bits under any seed" (Gen.pair cases Gen.int64)
         (run (law_seeds b));
+      prop "rows that cancel a word's difference hash apart" chains law_chain;
       prop ~count:8 ~examples:large "one thread and the pool give the same bits"
         threaded
         (run (law_threads b));
