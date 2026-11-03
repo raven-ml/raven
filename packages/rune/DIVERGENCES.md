@@ -732,28 +732,57 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 - **Reference:** `mixin/op.py:773` (`cat`: each piece zero-padded to the whole,
   the pieces summed).
-- **Raven:** `lower_index.ml` (`assemble`, `placed`, `joined`).
+- **Raven:** `lower_index.ml` (`assemble`, `placed`, `joined`, `crowded`);
+  `compile.ml` (`issue`, `assembled`).
 - **Differs:** an assembly places each piece at its region and selects it with
   `where` over the pieces before it, floats as their bits; empty pieces are
   dropped first. The reference's sum turns a `-0.` into `+0.` and quiets a
-  signalling NaN. An assembly whose selections exceed 16 times eager's work
-  (`p N > 16 (N + m)`, `p` pieces of `m` elements in all over `N`) is
-  refused, and the program runs uncompiled. In a program over several
-  devices an assembly is storage of its own (`compile.ml`, `assembled`):
-  pieces that hold each element once are each stored into their region;
-  otherwise the fill is stored over it, then each piece in order, a region by
-  steps as its box with the piece selected over what the box held. Each store
-  reads one piece, where a selection reads all of them in one kernel.
+  signalling NaN. In a program on one device that runs on the host, an
+  assembly whose selections exceed 16 times eager's work (`p N > 16 (N +
+  m)`, `p` pieces of `m` elements in all over `N`) is declined, and the
+  program runs uncompiled. On another device, as a GPU, which has no eager
+  kernels to run it, the selections compile whatever the work, as the
+  reference sums any number of pieces. In a program over several devices an
+  assembly is storage of its own (`compile.ml`, `assembled`): pieces that hold each element once
+  are each stored into their region; otherwise the fill is stored over it,
+  then each piece in order, a region by steps as its box with the piece
+  selected over what the box held. Each store reads one piece, where a
+  selection reads all of them in one kernel.
 - **nx:** `nx_kernel.mli`, `assemble`: the last piece holding each index, or
   the fill, bits copied.
 - **Class:** exact.
-- **Reason:** (b). The refusal and the stores over several devices: none. The
-  refusal's bound is an untimed cost model's (`lower_index.ml`, Work); the
-  stores were measured by peak memory alone. Each needs a bench row.
+- **Reason:** (b).
+  - The decline on the host: none until a baseline of
+    `Jit/stack-64-sines-of-64` in `rune.thumper`, 64 rows of 64 sines
+    stacked, is recorded; then (d) by it. On fudge, three interleaved runs
+    each, the row takes 52 to 87 µs evaluated against 0.83 to 4.2 ms
+    compiled, since the selections compute every row's sines at each
+    element.
+  - The bound of 16 itself: none. It counts selections alone, and timing
+    places the crossing elsewhere. In a probe on fudge (medians of 11, two
+    interleaved runs), a compiled stack of copied rows of 64, past the bound,
+    took 10.7 µs at 33 rows against 17.6 evaluated and 306 µs at 256 against
+    301 to 379 in the quieter run, and a stack of 32 rows of sines, below the
+    bound, 334 to 706 µs compiled against 44 to 68 µs evaluated. Placing the
+    decline needs a cost model of the selected work, a design not yet made.
+  - The stores over several devices: none. They keep a fully sharded step
+    within the bound `rune.mli` states (Fully sharded training): the most a
+    step holds above its state, over 2, 4 and 8 devices at `d = 512`, is
+    2,231,040, 1,774,080 and 1,544,320 bytes, against 3,082,240, 2,590,720
+    and 2,346,880 with one selecting kernel per device and bounds of
+    2,293,760, 1,802,240 and 1,556,480. No admitted reason covers memory,
+    and they cost speed: `Jit/devices/dp-step-16` takes 4.9 to 6.2 ms
+    against 1.19 to 1.22 ms with the selection, and
+    `Jit/devices/fsdp-backward-8` 20.9 to 24.9 ms against 14.3 to 25.7 ms
+    (three interleaved runs each). Trading the memory against that time
+    needs a design.
 - **Pinned by:** `Lower_index › folds and assemblies › an assembly gives
-  eager's bits`, `Lower_index › work bounds › a scatter past 16 times eager's
-  work computes, an assembly past it is refused`, `Jit_devices › assemblies
-  give eager's bits › *`.
+  eager's bits`, `Lower_index › work bounds › a scatter or an assembly past
+  16 times eager's work gives eager's bits`, `Jit › jit › a stack of 33 rows
+  on the host is evaluated`, `Jit_gpu › assemblies › an assembly past 16
+  times eager's work compiles to eager's bits`,
+  `Jit_devices › assemblies give eager's bits › *`, `Jit › fully sharded ›
+  *`.
 
 ### I3. Gather by an index
 
@@ -808,8 +837,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   or Min gives eager's bits`, `› a scatter by Add wraps integers and holds its
   float bound`, `› a scatter by Set, Max or Min past 16 times eager's work
   gives eager's bits`, `› a scatter by Add past 16 times eager's work holds
-  its bound`; `Lower_index › work bounds › a scatter past 16 times eager's
-  work computes, an assembly past it is refused`.
+  its bound`; `Lower_index › work bounds › a scatter or an assembly past 16
+  times eager's work gives eager's bits`.
 
 ### I6. Fold
 

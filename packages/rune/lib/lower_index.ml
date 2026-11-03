@@ -17,14 +17,19 @@ let unlowered what =
    against eager's [n + k], and an assembly selects each of its [p] pieces at
    every element, [p·N] against eager's [N + m] for pieces of [m] elements in
    all. Past [work_bound] times eager's work, a scatter combines in a loop of
-   its own (below), and an assembly is refused: the jit then evaluates its
-   program uncompiled. The bound is a cost model's, not yet timed: below it
-   the extra work is a few comparisons and selects per unit on elements the
+   its own (below), and an assembly is [crowded]: the jit evaluates its
+   program uncompiled where the host can. The bound is a cost model's: below
+   it the extra work is a few comparisons and selects per unit on elements the
    kernel holds, which the model takes as about what moving each element
-   through memory costs a host core, and as hidden on a GPU.
-   Past it the work outgrows what compiling the rest of the program saves: an
-   embedding's gradient, 512 updates over 50000 rows, would make 2.6e7
-   comparisons per feature against eager's 5e4. *)
+   through memory costs a host core, and as hidden on a GPU. Past it the work
+   outgrows what compiling the rest of the program saves: an embedding's
+   gradient, 512 updates over 50000 rows, would make 2.6e7 comparisons per
+   feature against eager's 5e4. Timed on a host core, the model places
+   neither crossing: a looped scatter is faster from 2 updates into 1024
+   elements and from 8 rows into 4096, and a compiled stack of copied rows
+   is as fast as evaluating it past the bound, while one of rows that
+   compute, which the selections compute again at every element, is ten
+   times slower below it. *)
 let work_bound = 16
 
 let extents u = List.init (Shape.ndim u) (Bits.extent u)
@@ -526,6 +531,15 @@ let words (type v s) (dt : (v, s) D.t) (x : v) =
     let h = String.length b / 2 in
     [ word (String.sub b 0 h); word (String.sub b h h) ]
 
+(* The elements a region keeps. *)
+let size ranges =
+  Iarray.fold_left (fun m (r : Nx_array.Move.range) -> m * r.count) 1 ranges
+
+let crowded shape regions =
+  let sizes = List.filter (fun n -> n > 0) (List.map size regions) in
+  let p = List.length sizes and total = numel (Iarray.to_list shape) in
+  p * total > work_bound * (total + List.fold_left ( + ) 0 sizes)
+
 (* A float assembles as its bits. Where a float constant fill meets a padded
    piece in an Ops.where, tolk quiets a signalling NaN constant before it
    renders the kernel: a float64 fill of bits 0x7ff0000000000001 beside a
@@ -534,14 +548,7 @@ let words (type v s) (dt : (v, s) D.t) (x : v) =
 let assemble (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
   let d = D.Any dt in
   let s = Iarray.to_list shape in
-  let count (r : Nx_array.Move.range) = r.count in
-  let size (ranges, _) = Iarray.fold_left (fun m r -> m * count r) 1 ranges in
-  let pieces = List.filter (fun piece -> size piece > 0) pieces in
-  let p = List.length pieces and total = numel s in
-  let m = List.fold_left (fun m piece -> m + size piece) 0 pieces in
-  if p * total > work_bound * (total + m) then
-    unlowered
-      (Printf.sprintf "an Assemble of %d pieces into %d elements" p total);
+  let pieces = List.filter (fun (ranges, _) -> size ranges > 0) pieces in
   let tdt = Arith.dtype d in
   let floats = Dtype.is_float tdt in
   let start =

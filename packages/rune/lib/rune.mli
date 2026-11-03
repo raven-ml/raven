@@ -1774,6 +1774,10 @@ val jit :
     - the tangents of a {!custom_vjp}'s results, which a {!jvp} of it makes and
       which then raise as eagerly;
     - an operation the compiler does not lower;
+    - on a device that runs on the host ({!Rig.runs_on_host}), an assembly
+      whose selections would make more than 16 times the work of nx's kernel,
+      as {!Nx.stack} of 33 rows or more does: compiled, every element would
+      select among all the pieces;
     - a check whose flags lie on another set than the program's first argument,
       or else its first result, which raises at a wait on that set;
     - no value, or an argument or a result with an element on a device other

@@ -386,6 +386,10 @@ All notable changes to this project will be documented in this file.
   projection.
 - `Rune.jit` compiles `Nx.unique ~size`, its numbering lowered to sorts and
   scatters, and `Rune.vmap` maps it, each lane's keys led by the lane.
+- `Rune.jit` on a GPU, or on any set with a device whose work does not run
+  on the host, compiles an assembly of many pieces, such as `Nx.stack` of
+  33 or more rows: its program was declined for nx to evaluate, and such a
+  set, which has no eager kernels, raised.
 - A compiled `Contracting` segmented contraction, such as a grouped
   product's weight gradient, keeps each group's bits whatever the other
   groups' counts, as `Nx_kernel.S.contract` promises: a group's terms were

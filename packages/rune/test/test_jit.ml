@@ -332,6 +332,26 @@ let law_rshift (Shift_case (dt, n, seed)) =
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal ~msg:"jit" int64s expected (ints y)
 
+(* A stack of 33 rows on the host, past the bound on an assembly's
+   selections, is evaluated, giving eager's bits; one of 32 compiles. *)
+let test_stack_evaluated () =
+  let row i =
+    Nx.create Nx.float32 [| 4 |]
+      (Array.init 4 (fun j ->
+           if i = 3 && j = 1 then -0. else sin (Float.of_int ((i * 4) + j))))
+  in
+  let bits x = Nx.to_array (Nx.bitcast Nx.int32 x) in
+  let stack rows =
+    let before = Rune.evaluations () in
+    let f = Rune.jit Nx.Ptree.(list tensor @-> returns tensor) Nx.stack in
+    let y = f rows in
+    equal ~msg:"bits" (Testable.array Testable.int32)
+      (bits (Nx.stack rows)) (bits y);
+    Rune.evaluations () - before
+  in
+  equal ~msg:"32 rows compiled" int 0 (stack (List.init 32 row));
+  equal ~msg:"33 rows evaluated" int 1 (stack (List.init 33 row))
+
 (* [square (c * y)] at each integer width where [c * c] wraps to 0, [c] being
    2^(bits / 2) or the greatest power of two, the least signed value: every
    square is 0, the value eager gives, on each call. *)
@@ -5272,6 +5292,8 @@ let () =
              prop "a key argument draws eager's values, one program per shape"
                (Gen.pair Gen.int Gen.int) law_key_argument;
              test "captures are read as they were traced" test_captures;
+             test "a stack of 33 rows on the host is evaluated"
+               test_stack_evaluated;
              prop ~count:24 ~examples:sliced_examples
                "a scatter at a slice of a capture sliced again gives eager's \
                 values"

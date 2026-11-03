@@ -1484,13 +1484,6 @@ let sorts =
 
 (* Work bounds *)
 
-let refused what f =
-  let prefix = "Rune.Lower.op: " ^ what in
-  raises_match
-    (function
-      | Invalid_argument m -> String.starts_with ~prefix m | _ -> false)
-    (fun () -> Lowered.run f)
-
 (* An assembly of [p] pieces of one element into 64. *)
 let spots p () =
   let piece i =
@@ -1518,8 +1511,7 @@ let line_by combine n k () =
 
 let work_bounds =
   test
-    "a scatter past 16 times eager's work computes, an assembly past it is \
-     refused"
+    "a scatter or an assembly past 16 times eager's work gives eager's bits"
     (fun () ->
       (* [32·32 = 16 (32 + 32) < 33·33], [21·64 <= 16 (64 + 21) < 22·64]. *)
       List.iter
@@ -1529,7 +1521,7 @@ let work_bounds =
           same_bits D.Float32 (line_by c 99 1000))
         [ K.Set; Add; Max; Min ];
       same_bits D.Float32 (spots 21);
-      refused "an Assemble" (spots 22))
+      same_bits D.Float32 (spots 22))
 
 let () =
   exit

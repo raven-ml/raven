@@ -247,6 +247,9 @@ type state = {
       (** Whether the program is a split one ({!Pieces}), each of its values
           on one device of its own, so that each operation computes on its
           values' device and a placement onto another device copies. *)
+  evaluates : bool;
+      (** Whether each device of the program runs on the host, which can then
+          evaluate it where the compiler declines it. *)
   mutable captures : (value * Ops.t) list;
   mutable bound : (Ops.t * Rig.Buffer.t) list;
   uploads : (value * A.any) list ref;
@@ -1136,6 +1139,14 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
               Ops.Tbl.replace st.dsts (unshaped y)
                 { buf; filled; into = filled; reads = List.map snd pieces };
             [| y |]
+        (* Past the bound on its selections, an assembly is declined where
+           the host can evaluate the program, which is faster where its
+           pieces compute: the selections compute every piece at each
+           element. A GPU has no eager kernels, so it selects. *)
+        | Assemble { shape; pieces; _ }
+          when st.evaluates && Lower_index.crowded shape (List.map fst pieces)
+          ->
+            decline "an Assemble past 16 times eager's work"
         | _ -> (
             let ys =
               match Lower.op ?dst ~device ~host read op with
@@ -2206,12 +2217,13 @@ and inline_over st cs (q : Program.t) operands =
 let lowerings_made = Domain.DLS.new_key (fun () -> ref 0)
 let lowerings () = !(Domain.DLS.get lowerings_made)
 
-(* [lower ~rig p forms ~layouts ~phases ~donated] is [p] over arguments of
-   [forms], each laid out over its run as [layouts] says, its run at [phases],
-   the arguments [donated] says lending their storage where a result may take
-   it. *)
-let lower ~rig ~split ~uploads (p : Program.t) (forms : form array) ~layouts
+(* [lower ~rigs p forms ~layouts ~phases ~donated] is [p] over arguments of
+   [forms] on the devices [rigs], the first its own, each laid out over its
+   run as [layouts] says, its run at [phases], the arguments [donated] says
+   lending their storage where a result may take it. *)
+let lower ~rigs ~split ~uploads (p : Program.t) (forms : form array) ~layouts
     ~phases ~donated =
+  let rig = List.hd rigs in
   incr (Domain.DLS.get lowerings_made);
   let st =
     {
@@ -2219,6 +2231,7 @@ let lower ~rig ~split ~uploads (p : Program.t) (forms : form array) ~layouts
       device = Rig.name rig;
       issued = issued p forms;
       split;
+      evaluates = List.for_all Rig.runs_on_host rigs;
       captures = [];
       bound = [];
       uploads;
@@ -2757,7 +2770,7 @@ let variant t layouts phases donated settings =
                    && Array.for_all2 Bool.equal d donated ->
                 lowered
             | _ ->
-                lower ~rig:t.rig ~split:(Option.is_some t.split)
+                lower ~rigs:t.rigs ~split:(Option.is_some t.split)
                   ~uploads:t.uploads t.program t.forms ~layouts ~phases ~donated
           in
           (* A declined variant is kept; another failure, as an interrupted
@@ -2828,8 +2841,8 @@ let make ~name ?beam ?parallel ?first p forms =
     let rig = List.hd rigs in
     let uploads = ref [] in
     let lower (layouts, phases, donated) =
-      lower ~rig ~split:(Option.is_some split) ~uploads p forms ~layouts ~phases
-        ~donated
+      lower ~rigs ~split:(Option.is_some split) ~uploads p forms ~layouts
+        ~phases ~donated
     in
     let contiguous =
       ( Array.map

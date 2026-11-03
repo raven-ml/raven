@@ -30,8 +30,7 @@
     {b Work.} The work of a scatter and of an assembly grows with their updates
     or pieces and exceeds that of nx's kernels. Where it would be more than 16
     times the kernel's, a scatter combines its updates in a loop of its own
-    instead, within that bound ({!scatter}), and an assembly raises
-    [Invalid_argument] ({!assemble}). *)
+    instead, within that bound ({!scatter}), and an assembly is {!crowded}. *)
 
 open Tolk
 
@@ -102,6 +101,12 @@ val fold :
 
     Raises [Invalid_argument] for a boolean [d]. *)
 
+val crowded : int iarray -> Nx_array.Move.range iarray list -> bool
+(** [crowded shape regions] is whether an assembly into [shape] of pieces at
+    [regions] makes more than 16 times the work of nx's kernel ({!assemble}):
+    [p N > 16 (N + m)] for the [p] pieces that hold an element, [m] elements
+    in all, into [N] elements. *)
+
 val assemble :
   ('v, 's) Nx_array.Dtype.t ->
   'v ->
@@ -113,10 +118,7 @@ val assemble :
     of the last piece whose region holds the index, or [fill] where none does.
     Each piece selects its elements over the earlier ones, making [p N] selects
     for [p] pieces of [m] elements in all into [N] elements. nx's kernel stores
-    [N + m].
-
-    Raises [Invalid_argument] where [p N > 16 (N + m)], counting only the pieces
-    that hold an element. *)
+    [N + m]. *)
 
 val sort :
   Nx_array.Dtype.any ->

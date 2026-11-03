@@ -3,14 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Rune.jit on this machine's first GPU: a scatter past its work bound gives
-   the host's eager values, a cast between float32 and a 16-bit float gives
-   eager's bits at every code and tie, a product of narrow floats or of MXFP4
-   weights holds its bound, a call's check raises at the next wait, so the
-   call returns while its work runs, a key split there has the host's words,
-   and a program over the GPU and a memory device, devices of two targets,
-   compiles to eager's values with replicas equal bit for bit, and a running
-   operation of a prefix is the prefix of its result. It skips
+(* Rune.jit on this machine's first GPU: a scatter or an assembly past its
+   work bound gives the host's eager values, a cast between float32 and a
+   16-bit float gives eager's bits at every code and tie, a product of narrow
+   floats or of MXFP4 weights holds its bound, a call's check raises at the
+   next wait, so the call returns while its work runs, a key split there has
+   the host's words, and a program over the GPU and a memory device, devices
+   of two targets, compiles to eager's values with replicas equal bit for bit,
+   and a running operation of a prefix is the prefix of its result. It skips
    without a GPU, or without the compiler the GPU's kernels need. *)
 
 open Windtrap
@@ -90,6 +90,24 @@ let prefixes (Prefixes.Case { dt; _ } as c) =
   let d, s = on_gpu () in
   if Nx.Dtype.equal dt Nx.float64 then assume (has_float64 d);
   Prefixes.law s c
+
+(* An assembly past 16 times eager's work, a stack of 64 rows of 64, compiles
+   on the GPU, which has no eager kernels to evaluate it, to the host's eager
+   bits. *)
+let test_stack () =
+  let _, (module S) = on_gpu () in
+  let row i =
+    Nx.create Nx.float32 [| 64 |]
+      (Array.init 64 (fun j ->
+           if i = 5 && j = 7 then -0. else sin (Float.of_int ((i * 64) + j))))
+  in
+  let rows = List.init 64 row in
+  let bits x = Nx.to_array (Nx.bitcast Nx.int32 (Nx.place Nx.Host.on x)) in
+  let f = Rune.jit Nx.Ptree.(list tensor @-> returns tensor) Nx.stack in
+  let before = Rune.evaluations () in
+  let y = f (List.map (Nx.place S.on) rows) in
+  equal ~msg:"compiled" Testable.int 0 (Rune.evaluations () - before);
+  equal (Testable.array Testable.int32) (bits (Nx.stack rows)) (bits y)
 
 exception Big of int array * float
 
@@ -842,6 +860,12 @@ let () =
                "a running operation's prefix is the prefix of its result"
                (Gen.with_pp Prefixes.pp Prefixes.gen)
                prefixes;
+           ];
+         group "assemblies"
+           [
+             test "an assembly past 16 times eager's work compiles to eager's \
+                   bits"
+               test_stack;
            ];
          group "16-bit casts"
            [
