@@ -124,6 +124,62 @@ let pp ppf tc =
     Dtype.pp tc.dtype_in Dtype.pp tc.dtype_out pp_fragment tc.frag_a pp_fragment
     tc.frag_b pp_fragment tc.frag_c
 
+type operand = A | B
+type chain = { k_bits : int list; same_lines : bool }
+
+let chain x y operand =
+  let f = match operand with A -> y.frag_a | B -> y.frag_b in
+  (* The dimension of x's accumulator the operand keeps, and the one that
+     becomes y's K. *)
+  let kept, moved = match operand with A -> ('m', 'n') | B -> ('n', 'm') in
+  let size d tc = List.length (of_dims (String.make 1 d) (axis_coords tc)) in
+  let ks = Array.make (size moved x) (-1) in
+  (* A lane bit of the accumulator is the operand's at the same place: a kept
+     bit itself, a moved bit a K bit. *)
+  let lane c o =
+    match o with
+    | K j when dim c = moved ->
+        ks.(index c) <- j;
+        true
+    | _ -> dim c = kept && equal_bit c o
+  in
+  (* An element bit stays an element bit: a kept bit itself, a moved bit a K
+     bit not yet taken, first those whose own index is free, then the rest in
+     order of index. *)
+  let free j = List.mem (K j) f.elements && not (Array.mem j ks) in
+  let element c =
+    if dim c = kept then List.mem c f.elements
+    else
+      match List.find_opt free (index c :: List.init (size 'k' y) Fun.id) with
+      | Some j ->
+          ks.(index c) <- j;
+          true
+      | None -> false
+  in
+  let fits =
+    threads x = threads y
+    && size kept x = size kept y
+    && size moved x <= size 'k' y
+  in
+  if not (fits && List.for_all2 lane x.frag_c.lanes f.lanes) then None
+  else
+    let own c = dim c = moved && free (index c) in
+    let first, rest = List.partition own x.frag_c.elements in
+    if not (List.for_all element (first @ rest)) then None
+    else
+      let line c0 c1 =
+        if dim c0 = kept || dim c1 = kept then equal_bit c0 c1 else true
+      in
+      let kept_elements tc =
+        List.sort compare
+          (List.filter (fun b -> dim b = kept) tc.frag_c.elements)
+      in
+      let same_lines =
+        List.for_all2 line x.frag_c.lanes y.frag_c.lanes
+        && kept_elements x = kept_elements y
+      in
+      Some { k_bits = Array.to_list ks; same_lines }
+
 let rec log2 n = if n <= 1 then 0 else 1 + log2 (n / 2)
 let ks n = List.init (log2 n) (fun i -> K i)
 

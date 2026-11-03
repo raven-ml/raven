@@ -1186,6 +1186,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   most `ceil(R / 16)` times where it streams, padding the rows where 16
   divides them unevenly: an MXFP4 product of 17 bfloat16 rows runs 3 to 4
   times faster on an RTX 5000 Ada.
+- `Tc.chain` says whether a product's accumulator is the next product's
+  operand without leaving its lanes, the permutation of `K` that takes, and
+  whether both accumulators hold the same lines in each lane, as a fused
+  attention kernel needs.
 - A kernel with two copies ended over the same loops, or over upcast loops,
   one reading what the other stored, lowers with each copy in a loop of its
   own, where `Codegen.to_program` raised "a node's rewrite depends on

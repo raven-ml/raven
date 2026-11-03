@@ -280,6 +280,153 @@ let laws =
             (Tc.equal tc0 tc1));
     ]
 
+(* Chaining *)
+
+let operand_name = function Tc.A -> "A" | Tc.B -> "B"
+
+let chain_t =
+  Testable.make
+    ~pp:(fun ppf (c : Tc.chain) ->
+      Format.fprintf ppf "{ k_bits = [%s]; same_lines = %b }"
+        (String.concat "; " (List.map string_of_int c.k_bits))
+        c.same_lines)
+    ~equal:( = )
+
+let chains k_bits = Some { Tc.k_bits; same_lines = true }
+
+(* Each core chained into itself, the attention kernel's case: CUDA's
+   accumulator is A, two of its column tiles one A; Metal's either operand;
+   RDNA 4's B, with K's bits 2 and 3 swapped; RDNA 3's neither. *)
+let chain_cases =
+  [
+    ("cuda_sm80[1]", Tc.A, chains [ 0; 1; 2 ]);
+    ("cuda_sm80[1]", Tc.B, None);
+    ("cuda_sm75[0]", Tc.A, chains [ 0; 1; 2 ]);
+    ("cuda_sm80[5]", Tc.A, chains [ 2; 0; 1 ]);
+    ("cuda_sm89[6]", Tc.A, chains [ 0; 2; 3 ]);
+    ("metal[0]", Tc.A, chains [ 0; 1; 2 ]);
+    ("metal[0]", Tc.B, chains [ 0; 1; 2 ]);
+    ("amd_rdna4[2]", Tc.A, None);
+    ("amd_rdna4[2]", Tc.B, chains [ 0; 1; 3; 2 ]);
+    ("amd_rdna3[2]", Tc.A, None);
+    ("amd_rdna3[2]", Tc.B, None);
+    ("amd_cdna3[3]", Tc.A, None);
+    ("amd_cdna3[3]", Tc.B, chains [ 0; 1; 2; 3 ]);
+  ]
+
+(* The coordinates' bits [k_bits] of [k], gathered from bit [0]. *)
+let gather k_bits k =
+  List.fold_left
+    (fun (acc, i) j -> (acc lor (((k lsr j) land 1) lsl i), i + 1))
+    (0, 0) k_bits
+  |> fst
+
+(* [reads_own x y op k_bits] is [true] iff each element of [y]'s operand [op]
+   is an element of [x]'s accumulator in the same lane, at the coordinates
+   [k_bits] maps its [K] to: the coordinates say it, apart from the bits. *)
+let reads_own x y op k_bits =
+  let fa, fb, _ = Tc.frag_coords y and _, _, xc = Tc.frag_coords x in
+  let operand = match op with Tc.A -> fa | Tc.B -> fb in
+  let own lane (r, col) =
+    let want =
+      match op with
+      | Tc.A -> (r, gather k_bits col)
+      | Tc.B -> (gather k_bits r, col)
+    in
+    Array.mem want xc.(lane)
+  in
+  Array.for_all Fun.id
+    (Array.mapi (fun lane elements -> Array.for_all (own lane) elements) operand)
+
+(* Whether each lane of [x]'s and [y]'s accumulators holds the same lines of
+   the dimension [op] keeps. *)
+let same_lines x y op =
+  let _, _, xc = Tc.frag_coords x and _, _, yc = Tc.frag_coords y in
+  let line (r, col) = if op = Tc.A then r else col in
+  let lines coords =
+    Array.map
+      (fun elements ->
+        List.sort_uniq compare (Array.to_list (Array.map line elements)))
+      coords
+  in
+  lines xc = lines yc
+
+let rec log2 n = if n <= 1 then 0 else 1 + log2 (n / 2)
+
+(* Every injective map of [m] bits into the bits [avail], as the list of each
+   bit's image. *)
+let rec injections m avail =
+  if m = 0 then [ [] ]
+  else
+    List.concat_map
+      (fun j ->
+        List.map
+          (fun rest -> j :: rest)
+          (injections (m - 1) (List.filter (( <> ) j) avail)))
+      avail
+
+(* Whether some permutation of [K] makes [x]'s accumulator [y]'s operand [op]
+   in place, found by trying every map of the moved bits. *)
+let chainable x y op =
+  let nx, mx, _ = Tc.dims x and ny, my, ky = Tc.dims y in
+  let kept_x, kept_y, moved = match op with Tc.A -> (mx, my, nx) | Tc.B -> (nx, ny, mx) in
+  Tc.threads x = Tc.threads y
+  && kept_x = kept_y && moved <= ky
+  && List.exists (reads_own x y op)
+       (injections (log2 moved) (List.init (log2 ky) Fun.id))
+
+(* Every pair of cores of a target, and each operand. *)
+let pairs cores =
+  List.concat_map
+    (fun x ->
+      List.concat_map (fun y -> [ (x, y, Tc.A); (x, y, Tc.B) ]) cores)
+    cores
+
+(* A core whose B takes C's elements with M1 in its own place: M0 must go
+   past it. *)
+let crossed =
+  let fragment lanes elements = { Tc.lanes; elements } in
+  Tc.v ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
+    ~frag_a:(fragment Tc.[ M 0; K 0 ] Tc.[ K 1; K 2; M 1; M 2 ])
+    ~frag_b:(fragment Tc.[ N 0; K 0 ] Tc.[ K 1; K 2 ])
+    ~frag_c:(fragment Tc.[ N 0; M 2 ] Tc.[ M 0; M 1 ])
+
+let chaining =
+  group "chain"
+    [
+      cases "a core's accumulator as its own operand"
+        ~id:(fun (name, op, _) -> name ^ " as " ^ operand_name op)
+        chain_cases
+        (fun (name, op, expected) ->
+          let tc = core_of_cell name in
+          equal (option chain_t) expected (Tc.chain tc tc op));
+      test "an element bit keeps its own index before another takes it"
+        (fun () ->
+          equal (option chain_t)
+            (Some { Tc.k_bits = [ 2; 1; 0 ]; same_lines = true })
+            (Tc.chain crossed crossed Tc.B));
+      cases
+        "an accumulator chains iff some permutation of K reads it in place, \
+         and the chain reads it so"
+        ~id:(fun (target, _) -> target)
+        targets
+        (fun (_, cores) ->
+          List.iter
+            (fun (x, y, op) ->
+              let msg =
+                Format.asprintf "%a into %a as %s" Tc.pp x Tc.pp y
+                  (operand_name op)
+              in
+              match Tc.chain x y op with
+              | None -> equal ~msg bool false (chainable x y op)
+              | Some c ->
+                  equal ~msg bool true (reads_own x y op c.k_bits);
+                  equal ~msg int (List.length c.k_bits)
+                    (List.length (List.sort_uniq compare c.k_bits));
+                  equal ~msg bool (same_lines x y op) c.same_lines)
+            (pairs cores));
+    ]
+
 (* Construction *)
 
 let metal = List.hd Tc.metal
@@ -323,4 +470,6 @@ let construction =
     ]
 
 let () =
-  exit (run "Tolk.Tc" [ bits; listed; described; laws; equality; construction ])
+  exit
+    (run "Tolk.Tc"
+       [ bits; listed; described; laws; chaining; equality; construction ])

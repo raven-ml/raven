@@ -108,6 +108,46 @@ val pp : Format.formatter -> t -> unit
     [TensorCore(dtype_in=dtypes.f16, dtype_out=dtypes.f32, frag_a=(('k1',
      'm0', ...), ('k0',)), frag_b=..., frag_c=...)]. *)
 
+(** {1:chaining Chaining}
+
+    A product's accumulator can be the next product's operand in registers
+    when each element the operand needs is one its own lane holds, as an
+    attention kernel takes the scores' accumulator as the weights of the
+    values' product. As operand [A], the accumulator's rows stay the next
+    product's rows and its columns become [K]; as [B], its columns stay and
+    its rows become [K]. The dimension that stays is the kept dimension. *)
+
+(** The type for operands of a product. *)
+type operand =
+  | A  (** The left operand, of [M] rows and [K] columns. *)
+  | B  (** The right operand, of [K] rows and [N] columns. *)
+
+type chain = {
+  k_bits : int list;
+      (** Bit [i] of the accumulator's dimension that becomes [K] is bit
+          [List.nth k_bits i] of the next product's [K]. *)
+  same_lines : bool;
+      (** Whether each lane of the two products' accumulators holds the same
+          lines of the kept dimension. A value per line computed in the first
+          accumulator's lanes, such as a row's maximum, then scales the second
+          accumulator in place. *)
+}
+(** The type for how an accumulator becomes an operand. *)
+
+val chain : t -> t -> operand -> chain option
+(** [chain x y op] is how [x]'s accumulator is [y]'s operand [op] with every
+    element in the lane that holds it, if it can be. [y]'s other operand must
+    read [K] permuted as [k_bits] says. The bits of [y]'s [K] that [k_bits]
+    does not name are element bits of [op] numbering accumulators of [x]; the
+    elements whose bits there read [e] come from accumulator [e]. A bit
+    keeps its own index where [op]'s elements leave it free. The elements
+    stay of [x]'s [dtype_out], and a program converts them to [y]'s
+    [dtype_in].
+
+    It is [None] if [x] and [y] differ in threads, their kept dimensions
+    differ in size, [x]'s other dimension is larger than [y]'s [K], or some
+    lane of [op] needs an element another lane of [x]'s accumulator holds. *)
+
 (** {1:targets Targets}
 
     The tensor cores of each target, one per tile shape and pair of types. *)
