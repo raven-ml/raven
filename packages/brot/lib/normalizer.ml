@@ -90,24 +90,38 @@ external set_word : Bytes.t -> int -> int64 -> unit = "%caml_bytes_set64u"
 let ones = 0x0101010101010101L
 let highs = 0x8080808080808080L
 
+(* Nonzero iff a byte of [w] is zero: the high bit of the lowest zero byte is
+   set, and a borrow out of it can set those above. *)
+let[@inline] zero_marks w =
+  Int64.logand (Int64.logand (Int64.sub w ones) (Int64.lognot w)) highs
+
 (* [true] iff a byte of [w] is zero. *)
-let[@inline] has_zero w =
-  Int64.logand (Int64.logand (Int64.sub w ones) (Int64.lognot w)) highs <> 0L
+let[@inline] has_zero w = zero_marks w <> 0L
 
 let lows = 0x7F7F7F7F7F7F7F7FL
 
-(* The number of zero bytes of [w]: the high bit of every zero byte and no other
-   is set, then those bits are summed into the top byte. *)
-let[@inline] zero_bytes w =
-  let marks =
-    Int64.logand
-      (Int64.lognot (Int64.logor (Int64.add (Int64.logand w lows) lows) w))
-      highs
+(* The zero bytes of [w], each as a 1 in the low bit of its byte and no other
+   bit set: exact, unlike [has_zero]'s marks, which a borrow can spread above a
+   zero byte. *)
+let[@inline] zero_bits w =
+  Int64.shift_right_logical
+    (Int64.logand
+       (Int64.lognot (Int64.logor (Int64.add (Int64.logand w lows) lows) w))
+       highs)
+    7
+
+let byte_lanes = 0x00FF00FF00FF00FFL
+
+(* The sum of the eight bytes of [w]: paired into 16-bit lanes, whose sum fits
+   the top one. *)
+let[@inline] lane_sum w =
+  let pairs =
+    Int64.add
+      (Int64.logand w byte_lanes)
+      (Int64.logand (Int64.shift_right_logical w 8) byte_lanes)
   in
   Int64.to_int
-    (Int64.shift_right_logical
-       (Int64.mul (Int64.shift_right_logical marks 7) ones)
-       56)
+    (Int64.shift_right_logical (Int64.mul pairs 0x0001000100010001L) 48)
 
 let rec has_non_ascii_from s i =
   let len = String.length s in
@@ -129,14 +143,21 @@ let needs_lowering s =
   in
   loop 0
 
-(* The number of bytes [c] in [s]. *)
+(* The number of bytes [c] in [s]. Each byte of [lanes] counts the matches in
+   its lane over at most 255 words, so it never carries into the next, and the
+   lanes are summed once per such run. *)
 let count_byte s c =
   let len = String.length s in
   let pattern = Int64.mul (Int64.of_int (Char.code c)) ones in
   let count = ref 0 and i = ref 0 in
   while !i + 8 <= len do
-    count := !count + zero_bytes (Int64.logxor (word s !i) pattern);
-    i := !i + 8
+    let stop = if len - !i < 255 * 8 then len else !i + (255 * 8) in
+    let lanes = ref 0L in
+    while !i + 8 <= stop do
+      lanes := Int64.add !lanes (zero_bits (Int64.logxor (word s !i) pattern));
+      i := !i + 8
+    done;
+    count := !count + lane_sum !lanes
   done;
   while !i < len do
     if String.unsafe_get s !i = c then incr count;
@@ -149,6 +170,17 @@ let index_byte s c pos =
   let len = String.length s in
   let pattern = Int64.mul (Int64.of_int (Char.code c)) ones in
   let i = ref pos and found = ref (-1) in
+  (* Two words a test up to the pair that holds [c], which the word loop below
+     pins down. *)
+  while
+    !i + 16 <= len
+    && Int64.logor
+         (zero_marks (Int64.logxor (word s !i) pattern))
+         (zero_marks (Int64.logxor (word s (!i + 8)) pattern))
+       = 0L
+  do
+    i := !i + 16
+  done;
   while !found < 0 && !i + 8 <= len do
     if has_zero (Int64.logxor (word s !i) pattern) then begin
       while String.unsafe_get s !i <> c do
@@ -1185,70 +1217,79 @@ let replace_literal ~pattern ~replacement s ~matches o =
   loop 0 0 matches;
   text o
 
-(* The index of the lowest byte of [marks] whose high bit is set, in the byte
-   order of a little-endian load: isolated and shifted down, the bit stands at
-   [8 * j], so multiplying by the byte ramp 7, 6, ..., 0 lifts [j] into the top
+(* The lowest set bit of [marks], which stands at [8 * j + 7] when [j] is the
+   first byte whose high bit is set, in the byte order of a little-endian
+   load. *)
+let[@inline] lowest marks = Int64.logand marks (Int64.neg marks)
+
+(* [j] for the bit [lowest] isolates, or 0 when there is none: shifted down to
+   [8 * j], the bit times the byte ramp 7, 6, ..., 0 lifts [j] into the top
    byte. *)
-let[@inline] first_marked marks =
-  let low = Int64.logand marks (Int64.neg marks) in
+let[@inline] byte_index low =
   Int64.to_int
     (Int64.shift_right_logical
        (Int64.mul (Int64.shift_right_logical low 7) 0x0001020304050607L)
        56)
 
-(* [replacement] written at [p] in an output of [size] bytes, as a word when it
-   is [short] and the output has room for one; returns where it ends. *)
-let[@inline] put bytes p ~size ~short replacement replacement_word =
-  let rlen = String.length replacement in
-  if short && p + 8 <= size then set_word bytes p replacement_word
-  else Bytes.blit_string replacement 0 bytes p rlen;
-  p + rlen
+(* The word loop of [replace_byte]: from the start of [s] and output byte
+   [o.len], eight input bytes at a time while the output has sixteen bytes of
+   room; it leaves [o.len] past what it wrote and returns the input byte it
+   stopped at. [replacement] is the [rlen] bytes of the replacement as a
+   little-endian word. A word is stored whole, the replacement is stored over
+   it from its first match, and the input resumes past that match. A word
+   without one stores the replacement past its end, where the next store
+   lands, so with [m] 1 for a word holding a match and 0 for one without, the
+   step is arithmetic and has no branch to mispredict. Nothing here calls out,
+   so nothing is spilled around a call. *)
+let replace_words s ~pattern ~replacement ~rlen ~size o =
+  let len = String.length s in
+  let bytes = o.bytes and i = ref 0 and p = ref o.len in
+  while !i + 8 <= len && !p + 16 <= size do
+    let w = word s !i in
+    set_word bytes !p w;
+    let x = Int64.logxor w pattern in
+    let low = lowest (zero_marks x) in
+    let m =
+      Int64.to_int
+        (Int64.shift_right_logical (Int64.logor low (Int64.neg low)) 63)
+    in
+    let j = byte_index low + ((1 - m) lsl 3) in
+    set_word bytes (!p + j) replacement;
+    i := !i + j + m;
+    p := !p + j + (m * rlen)
+  done;
+  o.len <- !p;
+  !i
 
 (* A one-byte pattern, untracked, in one pass into an output of the exact size
-   [matches] give. Eight bytes are copied at a time: a word is stored whole,
-   and where it holds the pattern the output resumes after its first match,
-   with the replacement, overwriting the rest. Stores stay within the output,
-   and the tail goes a byte at a time. *)
+   [matches] give. The words go through [replace_words] when the replacement
+   fits one, and the rest, the last sixteen bytes of output among them, a byte
+   at a time, as does all of a big-endian machine, whose loads put the first
+   byte highest. *)
 let replace_byte ~byte ~replacement s ~matches o =
   let len = String.length s and rlen = String.length replacement in
   let size = o.len + len + (matches * (rlen - 1)) in
   ensure o (size - o.len);
-  let bytes = o.bytes and p = ref o.len and i = ref 0 in
-  let pattern = Int64.mul (Int64.of_int (Char.code byte)) ones in
-  (* A replacement of up to eight bytes is one store where the output has room
-     for a word. *)
-  let short = rlen <= 8 in
-  let replacement_word =
-    let b = Bytes.make 8 '\000' in
-    Bytes.blit_string replacement 0 b 0 (min rlen 8);
-    Bytes.get_int64_ne b 0
+  let start =
+    if rlen > 8 || Sys.big_endian then 0
+    else
+      let pattern = Int64.mul (Int64.of_int (Char.code byte)) ones in
+      let b = Bytes.make 8 '\000' in
+      Bytes.blit_string replacement 0 b 0 rlen;
+      replace_words s ~pattern ~replacement:(Bytes.get_int64_le b 0) ~rlen ~size
+        o
   in
-  if not Sys.big_endian then
-    while !i + 8 <= len && !p + 8 <= size do
-      let w = word s !i in
-      set_word bytes !p w;
-      let x = Int64.logxor w pattern in
-      let marks =
-        Int64.logand (Int64.logand (Int64.sub x ones) (Int64.lognot x)) highs
-      in
-      if marks = 0L then begin
-        i := !i + 8;
-        p := !p + 8
-      end
-      else begin
-        let j = first_marked marks in
-        p := put bytes (!p + j) ~size ~short replacement replacement_word;
-        i := !i + j + 1
-      end
-    done;
-  while !i < len do
-    let c = String.unsafe_get s !i in
+  let bytes = o.bytes and p = ref o.len in
+  for i = start to len - 1 do
+    let c = String.unsafe_get s i in
     if c <> byte then begin
       Bytes.unsafe_set bytes !p c;
       incr p
     end
-    else p := put bytes !p ~size ~short replacement replacement_word;
-    incr i
+    else begin
+      Bytes.blit_string replacement 0 bytes !p rlen;
+      p := !p + rlen
+    end
   done;
   o.len <- !p;
   text o
