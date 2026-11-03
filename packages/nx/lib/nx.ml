@@ -103,6 +103,11 @@ module Placement = struct
 
   let split ~axis s = Devices.split ~by:"Nx.Placement.split" ~axis s
   let mesh m cuts = Devices.mesh ~by:"Nx.Placement.mesh" m cuts
+
+  let partial m sums cuts =
+    Devices.mesh ~by:"Nx.Placement.partial" ~sums m cuts
+
+  let closed = Devices.closed
   let devices = Devices.set
   let equal = Devices.equal
 
@@ -508,7 +513,14 @@ let item i x =
       (Array.of_list i) r (D.name (dtype x)) pp_shape s;
   let index = Array.make r 0 in
   item_index by s index 0 i;
-  match readable ~by (Eval.read_through x) with
+  let live = readable ~by (Eval.read_through x) in
+  (* A sum's element is its terms' sum: the sum closes where it lies, as a
+     read closes it, and the element is read from the closed value. *)
+  let live =
+    let p = Prim.placement live in
+    if Devices.partial p then Eval.place ~by (Devices.closed p) live else live
+  in
+  match live with
   | Value.Array { a; _ } when Rig.reaches Rig.host (Nx_array.device a) ->
       Nx_array.get a (Iarray.of_array index)
   | (Value.Array _ | Value.Shards _ | Value.Handle _) as live ->
@@ -2038,16 +2050,16 @@ let logcumsumexp ?axis x =
 
 (* Contraction *)
 
-let contract ?sizes ?acc ?init dt p a b =
+let contract ?sizes ?acc ?init ?sum dt p a b =
   let acc = Option.map (fun dt -> D.Any dt) acc in
-  Contraction.contract ~by:"Nx.contract" ?sizes ?acc ?init dt p a b
+  Contraction.contract ~by:"Nx.contract" ?sum ?sizes ?acc ?init dt p a b
 
-let einsum ?sizes ?acc p xs =
+let einsum ?sizes ?acc ?sum p xs =
   let acc = Option.map (fun dt -> D.Any dt) acc in
-  Contraction.einsum ~by:"Nx.einsum" ?sizes ?acc p xs
+  Contraction.einsum ~by:"Nx.einsum" ?sum ?sizes ?acc p xs
 
+let matmul ?sum a b = Contraction.matmul ~by:"Nx.matmul" ?sum a b
 let matmul_by ~by a b = Contraction.matmul ~by a b
-let matmul a b = matmul_by ~by:"Nx.matmul" a b
 
 (* Compositions *)
 
@@ -2968,8 +2980,9 @@ let eyes ~by ~k p dt s = leaf ~by p dt s (ones_where_k dt ~k s)
    interpretation that computes it now. *)
 let eye_by ~by ?m ?(k = 0) p dt n =
   let m = Option.value m ~default:n in
-  if Grid.is_cut (Devices.grid p) || Devices.bare p then
-    eyes ~by ~k p dt [| n; m |]
+  if Grid.is_cut (Devices.grid p) || Grid.is_partial (Devices.grid p)
+     || Devices.bare p
+  then eyes ~by ~k p dt [| n; m |]
   else begin
     (* The shape is checked first, so that a refused one allocates nothing. *)
     ignore (contiguous ~by [| n; m |]);
@@ -2992,17 +3005,17 @@ let diag ?(k = 0) v =
       on_diagonal ~by (dtype v) n n k v
   | _ -> invalid_argf "%s: %a is neither a vector nor a matrix" by pp_value v
 
-let dot a b = Contraction.dot ~by:"Nx.dot" a b
+let dot ?sum a b = Contraction.dot ~by:"Nx.dot" ?sum a b
 
-let vdot_by ~by a b =
+let vdot_by ~by ?sum a b =
   if numel a <> numel b then
     invalid_argf "%s: %a and %a differ in their number of elements" by pp_value
       a pp_value b;
   let flat x = Eval.reshape ~by [| numel x |] x in
-  Contraction.contract ~by (dtype a) (Pattern.v "k, k -> | k")
+  Contraction.contract ~by ?sum (dtype a) (Pattern.v "k, k -> | k")
     (conjugate_by ~by (flat a)) (flat b)
 
-let vdot a b = vdot_by ~by:"Nx.vdot" a b
+let vdot ?sum a b = vdot_by ~by:"Nx.vdot" ?sum a b
 
 (* [a × b] along [axis]: component [i] is [a(i+1) b(i+2) - a(i+2) b(i+1)],
    indices mod 3, one map over the six components broadcast back to three.
@@ -3061,7 +3074,7 @@ let cross (type v s d) ?(axis = -1) (a : (v, s, d) t) (b : (v, s, d) t) :
 
 (* Familiar products *)
 
-let tensordot ?axes:(pairs = ([ -2; -1 ], [ 0; 1 ])) a b =
+let tensordot ?axes:(pairs = ([ -2; -1 ], [ 0; 1 ])) ?sum a b =
   let by = "Nx.tensordot" in
   let la, lb = pairs in
   if List.length la <> List.length lb then
@@ -3074,18 +3087,18 @@ let tensordot ?axes:(pairs = ([ -2; -1 ], [ 0; 1 ])) a b =
         invalid_argf "%s: axis %d of %a and axis %d of %a differ" by i
           pp_value a j pp_value b)
     la lb;
-  Contraction.along ~by ~batch:[||]
+  Contraction.along ~by ?sum ~batch:[||]
     ~contracting:(Iarray.of_list (List.combine la lb))
     a b
 
-let inner a b =
+let inner ?sum a b =
   let by = "Nx.inner" in
   if ndim a = 0 || ndim b = 0 then mul_by ~by a b
   else begin
     if dim (-1) a <> dim (-1) b then
       invalid_argf "%s: the last axes of %a and %a differ" by pp_value a
         pp_value b;
-    Contraction.along ~by ~batch:[||]
+    Contraction.along ~by ?sum ~batch:[||]
       ~contracting:[| (ndim a - 1, ndim b - 1) |]
       a b
   end
@@ -3099,7 +3112,7 @@ let outer a b =
 (* Both operands moved to their axis last, their other axes broadcast, then
    one contraction batched over those: [conjugate a] first, after every
    refusal, since its map consumes [a]. *)
-let vecdot ?axis:(along = -1) a b =
+let vecdot ?axis:(along = -1) ?sum a b =
   let by = "Nx.vecdot" in
   let ia = axis ~by a along and ib = axis ~by b along in
   let k = dim ia a in
@@ -3115,7 +3128,7 @@ let vecdot ?axis:(along = -1) a b =
   let l = Array.length lead in
   let full = Array.append lead [| k |] in
   let last x i = Eval.broadcast ~by full (moveaxis_by ~by i (-1) x) in
-  Contraction.along ~by
+  Contraction.along ~by ?sum
     ~batch:(Iarray.init l (fun i -> (i, i)))
     ~contracting:[| (l, l) |]
     (last (conjugate_by ~by a) ia)
@@ -5852,7 +5865,8 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
   in
   let s =
     Eval.reshape ~by f
-      (Contraction.contract ~by ~sizes:groups D.Float32 scores (read q) k)
+      (Contraction.contract ~by ~sizes:groups D.Float32 scores
+         (read q) k)
   in
   let loads =
     Value.Plain s
@@ -6490,7 +6504,8 @@ module Ptree = struct
      fun p a b ->
       same_shape ~by p a b;
       List.iter2
-        (fun u w -> acc := binary ~by (Binary Add) !acc (vdot_by ~by u w))
+        (fun u w ->
+          acc := binary ~by (Binary Add) !acc (vdot_by ~by u w))
         (components ~by dt (read a))
         (components ~by dt (read b));
       a
@@ -6908,6 +6923,7 @@ module Prim = struct
         a_scale : 'd scale option;
         b_scale : 'd scale option;
         segments : 'd index Nx_kernel.segments option;
+        sum : bool;
       }
         -> ('v, 's, 'd) Value.t t
     | Fft : ('d, 'r) fft -> 'r t

@@ -110,7 +110,7 @@ let repeats (type v s d) (e : Partition.engine) (x : (v, s, d) t) a =
 let rec partition : type r. Partition.engine -> by:string -> r prim -> r =
  fun e ~by op ->
   match op with
-  | Place (p, x) -> Partition.place e ~by p x
+  | Place (p, x) -> Partial.place e ~by p x
   | Check _ -> invalid_arg "Eval.partition: a check"
   | _ -> partitioned e ~by (Prim.route ~by op) op
 
@@ -609,7 +609,7 @@ let apply ~by prog dt x =
       let v, () = eval ~by (map_of prog dt x) in
       v
 
-let contract ~by ~batch ~contracting ~acc dt a b init =
+let contract ~by ?(sum = false) ~batch ~contracting ~acc dt a b init =
   let fast =
     if quiet () then Exec.contract ~by ~batch ~contracting ~acc dt a b init
     else None
@@ -617,20 +617,23 @@ let contract ~by ~batch ~contracting ~acc dt a b init =
   match fast with
   | Some y -> y
   | None ->
-      eval ~by
-        (Contract
-           {
-             batch;
-             contracting;
-             acc;
-             out = dt;
-             a;
-             b;
-             init;
-             a_scale = None;
-             b_scale = None;
-             segments = None;
-           })
+      let op =
+        Contract
+          {
+            batch;
+            contracting;
+            acc;
+            out = dt;
+            a;
+            b;
+            init;
+            a_scale = None;
+            b_scale = None;
+            segments = None;
+            sum;
+          }
+      in
+      eval ~by op
 
 let place ~by p x =
   match x with

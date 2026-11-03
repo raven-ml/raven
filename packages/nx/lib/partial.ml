@@ -1125,6 +1125,35 @@ let fences (type d) eng ~by k (here : d Devices.placement) w (q : M.range)
   in
   backwards eng ~by last (tail - 1) (q.count + 1) least
 
+(* A contraction's partials closed where no sum is asked for: each device's
+   [partial j None] in the accumulator [ad], added in C order of the tiles'
+   first indices, then [init] as it holds it, rounded once into [out]. A
+   segmented contraction's output without products sums to [+0] in every
+   slot and takes [init] alone, as on one device. *)
+let closed_sum (type v s d) eng ~by route ~operand ~folded ~of_folded ~segments
+    shape (out : (v, s) D.t) (ad : (_, _) D.t) (init : (v, s, d) Value.t option)
+    partial : (v, s, d) Value.t =
+  let cl =
+    closing ~by route ~operand ~axes:(Array.to_list folded)
+      ~extent:(Array.get of_folded) shape
+  in
+  let s = stack eng ~by cl ad shape (fun j -> partial j None) in
+  match init with
+  | None -> reduced eng ~by cl shape out (Monoid (Sum, 0, out)) s
+  | Some i ->
+      let total = E.input 0 ad and initial = E.cast ad (E.input 1 out) in
+      let e =
+        match segments with
+        | None -> E.(total + initial)
+        | Some _ ->
+            E.(where (total = const ad (D.zero ad)) initial (total + initial))
+      in
+      let with_init k here w y =
+        let i = Value.Any (view eng ~by k w i) in
+        List.hd (map eng ~by here [ y; i ] [ E.any (E.cast out e) ])
+      in
+      reduced eng ~by cl shape ~then_:with_init out (Monoid (Sum, 0, ad)) s
+
 let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
     ~contracting ~acc ~segments (out : (v, s) D.t) (a : (a, b, d) Value.t)
     (b : (c, e, d) Value.t) (init : (v, s, d) Value.t option)
@@ -1150,10 +1179,6 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
         invalid_arg "Partial.contract: groups of a contracting pair"
   in
   let tiles = tiles ~by route ~operand of_folded folded in
-  let cl =
-    closing ~by route ~operand ~axes:(Array.to_list folded)
-      ~extent:(Array.get of_folded) shape
-  in
   (* Operand [i] on device [j], its factors' ranges [r]. *)
   let read (type w q) j i r (x : (w, q, d) Value.t) =
     let w = reads rule i (Prim.shape x) (resw j) (Array.get r) in
@@ -1230,38 +1255,46 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
            a_scale = Option.map (scale j first a r) a_scale;
            b_scale = Option.map (scale j b_at b r) b_scale;
            segments = groups j r;
+           sum = false;
          })
   in
   (* A device's partial: its tile's pieces in C order, the first from no
      [init] and each other from the sum of those before it. A piece of
      [Rows]' groups gives no products to a row of another group, which so
      keeps the sum before it, bit for bit. *)
-  let partial j =
+  let partial j init =
     match tile_pieces runs tiles.(j) with
     | r :: rs ->
         let from s r = piece j (Some s) r in
-        List.fold_left from (piece j None r) rs
+        List.fold_left from (piece j init r) rs
     | [] -> invalid_arg "Partial.contract: a tile of no piece"
   in
-  let s = stack eng ~by cl ad shape partial in
-  match init with
-  | None -> reduced eng ~by cl shape out (Monoid (Sum, 0, out)) s
-  | Some i ->
-      (* The sums in the accumulator, then [init] as it holds it, rounded
-         once. A segmented contraction's output without products sums to
-         [+0] in every slot and takes [init] alone, as on one device. *)
-      let total = E.input 0 ad and initial = E.cast ad (E.input 1 out) in
-      let e =
-        match segments with
-        | None -> E.(total + initial)
+  if not (Devices.partial p) then
+    closed_sum eng ~by route ~operand ~folded ~of_folded ~segments shape out
+      ad init partial
+  else
+    (* Each device's term, its window of the result: its partial, from
+       [init] where its term is its group's first, else from the identity, so
+       that [init] joins the sum once. *)
+    let g = Devices.grid p in
+    let term j =
+      let from =
+        match init with
+        | None -> None
+        | Some i when Grid.term g j = 0 ->
+            let i = Value.Any (view eng ~by ks.(j) (resw j) i) in
+            Some (Prim.expect ad (cast eng ~by acc i))
         | Some _ ->
-            E.(where (total = const ad (D.zero ad)) initial (total + initial))
+            Some (Partition.identity eng ~by (here j) ad (counts (resw j)))
       in
-      let with_init k here w y =
-        let i = Value.Any (view eng ~by k w i) in
-        List.hd (map eng ~by here [ y; i ] [ E.any (E.cast out e) ])
-      in
-      reduced eng ~by cl shape ~then_:with_init out (Monoid (Sum, 0, ad)) s
+      partial j from
+    in
+    (* Each term rounds once from the accumulator into the result's dtype. *)
+    let rounded j =
+      Prim.expect out (cast eng ~by (D.Any out) (Value.Any (term j)))
+    in
+    let holds j = not (Route.empty (resw j)) in
+    eng.assemble p shape out (values eng ~by p shape ~holds rounded)
 
 (* Gathers *)
 
@@ -1381,6 +1414,82 @@ let summed (type v s d) eng ~by (route : unit Route.t) rule unique axis
   let s = Value.Any (stack eng ~by cl c shape own) in
   Prim.expect dt (List.hd (closed eng ~by cl shape [ D.Any dt ] [ s ] added))
 
+(* Sums *)
+
+(* [x], a sum, closed at [p], which is no sum. Each device of a group adds
+   the terms of its part, as a fold's slots add: [p] itself where [p] cuts an
+   axis over the grid axes [x] sums over alone, a reduce-scatter; else its
+   window of [x]'s placement closed, cut along the first axis it keeps whole
+   that holds a term per device of a group, which each device then gathers,
+   an all-reduce, then placed at [p]. *)
+let close (type v s d e) eng ~by (p : e Devices.placement)
+    (x : (v, s, d) Value.t) : (v, s, e) Value.t =
+  let at = Prim.placement x and shape = Prim.shape x and dt = Prim.dtype x in
+  let g = Devices.grid at and set = Devices.set at in
+  let unsum g axis =
+    match Grid.unsum g ~axis with
+    | Ok u -> Devices.v ~by set u
+    | Error e -> invalid_argf "%s: Partial.close: %s" by e
+  in
+  let whole = Devices.closed at in
+  let e = Grid.extents g in
+  let n = Array.fold_left (fun n a -> n * e.(a)) 1 (Grid.sums g) in
+  let free a = not (Array.exists (fun (b, _) -> a = b) (Grid.cuts g)) in
+  let scatters (a, _) =
+    if free a && Devices.equal (unsum g a) p then Some p else None
+  in
+  let result, parts =
+    match Array.find_map scatters (Grid.cuts (Devices.grid p)) with
+    | Some p -> (p, p)
+    | None -> (
+        let holds a = free a && shape.(a) >= n in
+        match List.find_opt holds (List.init (Array.length shape) Fun.id) with
+        | Some a -> (whole, unsum g a)
+        | None -> (whole, whole))
+  in
+  let stacked = unsum (Grid.map_axes (( + ) 1) g) 0 in
+  let c = { result; stacked; parts; held = [ n ] } in
+  let y =
+    if numel shape = 0 then
+      eng.Partition.assemble result shape dt
+        (Array.make (Grid.count (Devices.grid result)) None)
+    else
+      let ks = Grid.devices g in
+      let term j = eng.Partition.piece x j (Devices.one set ks.(j)) in
+      let s = Value.Any (stack eng ~by c dt shape term) in
+      let added _ here _ taken = running c taken (combined eng ~by here Sum) in
+      Prim.expect dt (List.hd (closed eng ~by c shape [ D.Any dt ] [ s ] added))
+  in
+  Partition.place eng ~by p y
+
+(* [x], which is no sum, at the sum [p]: on each device whose term is the
+   first of its group its window, on every other the identity. *)
+let spread_terms (type v s d e) eng ~by (p : e Devices.placement)
+    (x : (v, s, d) Value.t) : (v, s, e) Value.t =
+  let shape = Prim.shape x and dt = Prim.dtype x in
+  Prim.summable ~by dt;
+  let y = Partition.place eng ~by (Devices.closed p) x in
+  let g = Devices.grid p and set = Devices.set p in
+  let ks = Grid.devices g in
+  let term j =
+    let here = Devices.one set ks.(j) and w = Devices.window ~by p shape j in
+    if Route.empty w then None
+    else if Grid.term g j = 0 then Some (eng.Partition.piece y j here)
+    else Some (Partition.identity eng ~by here dt (counts w))
+  in
+  eng.assemble p shape dt (Array.init (Array.length ks) term)
+
+let place eng ~by p x =
+  let at = Prim.placement x in
+  if Devices.equal at p then Partition.place eng ~by p x
+  else if Devices.partial p then
+    let x =
+      if Devices.partial at then close eng ~by (Devices.closed at) x else x
+    in
+    spread_terms eng ~by p x
+  else if Devices.partial at then close eng ~by p x
+  else Partition.place eng ~by p x
+
 let run (type r) eng ~by route (op : r Value.prim) : r =
   let rule = Prim.rule op in
   match op with
@@ -1408,6 +1517,7 @@ let run (type r) eng ~by route (op : r Value.prim) : r =
         a_scale;
         b_scale;
         segments = (None | Some (Rows _)) as segments;
+        sum = _;
       } ->
       contract eng ~by route rule ~batch ~contracting ~acc ~segments out a b
         init

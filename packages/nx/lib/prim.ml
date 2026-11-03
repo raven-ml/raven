@@ -1443,7 +1443,10 @@ let rule : type r. r prim -> Route.rule =
   | Bitcast (dt, x) -> bitcast_rule dt x
   | Place _ | Check _ -> Elementwise
 
-let uncut p = not (Grid.is_cut (Devices.grid p))
+(* Whether [p] holds the whole value on each of its devices. *)
+let uncut p =
+  let g = Devices.grid p in
+  not (Grid.is_cut g || Grid.is_partial g)
 
 (* The host's placement, where an operation of no operands lies unless it is
    a map that names its own. *)
@@ -1464,6 +1467,177 @@ let join acc q =
 (* Where [op]'s operands lie together. *)
 let together op = fold (fun () acc x -> join acc (placement x)) () Unseen op
 
+(* Sums *)
+
+(* Whether a cast from [a] to [b] keeps a sum's terms each its own value,
+   rounded: between floats, or between complex numbers. *)
+let float_cast (D.Any a) (D.Any b) =
+  match (D.kind a, D.kind b) with
+  | D.Float, D.Float | D.Complex, D.Complex -> true
+  | (D.Float | D.Complex | D.Signed | D.Unsigned | D.Boolean), _ -> false
+
+(* Whether each node of [prog] reads, linearly, an operand [summed] names: a
+   node of [In] such an operand; [Add], [Sub], [Neg], [Copy] and a [Cast]
+   between floats or between complex numbers of such nodes,
+   [Mul] of one by a node that reads none, [Fdiv] of one by such a node, and
+   [Where] of such nodes by a condition that reads none. [None] where a node
+   reads one otherwise. *)
+let linear (prog : P.t) (summed : int -> bool) : bool array option =
+  let nodes = prog.nodes in
+  let n = Iarray.length nodes in
+  let d = Array.make n false in
+  let rec from i =
+    if i = n then Some d
+    else
+      let ok =
+        match Iarray.get nodes i with
+        | P.In k ->
+            d.(i) <- summed k;
+            true
+        | Coord _ | Const _ -> true
+        | Op1 ((Copy | Unary Neg), _, j) ->
+            d.(i) <- d.(j);
+            true
+        | Op1 (Cast, D.Any c, j) when float_cast (P.dtype prog j) (D.Any c) ->
+            d.(i) <- d.(j);
+            true
+        | Op1 (_, _, j) -> not d.(j)
+        | Op2 (Binary (Add | Sub), j, k) ->
+            d.(i) <- d.(j) || d.(k);
+            true
+        | Op2 (Binary Mul, j, k) ->
+            d.(i) <- d.(j) || d.(k);
+            not (d.(j) && d.(k))
+        | Op2 (Binary Fdiv, j, k) ->
+            d.(i) <- d.(j);
+            not d.(k)
+        | Op2 (_, j, k) -> not (d.(j) || d.(k))
+        | Op3 (Where, c, j, k) ->
+            d.(i) <- d.(j) || d.(k);
+            not d.(c)
+        | Op3 (_, j, k, l) -> not (d.(j) || d.(k) || d.(l))
+      in
+      if ok then from (i + 1) else None
+  in
+  from 0
+
+(* [prog] as a device that holds no group's first term runs it: each
+   operand of an [Add] or a [Sub] that reads no sum beside one that does is
+   the additive identity, [-0] for an addend and [+0] for a subtrahend, and
+   so is each case of a [Where] and each output that reads none, as an
+   addend. *)
+let joined (prog : P.t) summed =
+  match linear prog summed with
+  | None -> invalid_arg "Prim.joined: a program not linear in its sums"
+  | Some d ->
+      let nodes = ref ([] : P.node list) and count = ref 0 in
+      let push node =
+        nodes := List.cons node !nodes;
+        incr count;
+        !count - 1
+      in
+      let identity ~negative i =
+        let (D.Any dt) = P.dtype prog i in
+        let zero = push (P.Const (D.Any dt, P.bits dt (D.zero dt))) in
+        match D.kind dt with
+        | (D.Float | D.Complex) when negative ->
+            push (P.Op1 (Unary Neg, D.Any dt, zero))
+        | D.Float | D.Complex | D.Signed | D.Unsigned | D.Boolean -> zero
+      in
+      let m = Array.make (Iarray.length prog.nodes) 0 in
+      Iarray.iteri
+        (fun i (node : P.node) ->
+          m.(i) <-
+            (match node with
+            | In _ | Coord _ | Const _ -> push node
+            | Op1 (k, dt, j) -> push (Op1 (k, dt, m.(j)))
+            | Op2 ((Binary ((Add | Sub) as b) as k), j, l) when d.(j) <> d.(l)
+              ->
+                let j' = if d.(j) then m.(j) else identity ~negative:true j in
+                let l' =
+                  if d.(l) then m.(l)
+                  else identity ~negative:(b = P.Add) l
+                in
+                push (Op2 (k, j', l'))
+            | Op2 (k, j, l) -> push (Op2 (k, m.(j), m.(l)))
+            | Op3 (Where, c, j, l) when d.(j) <> d.(l) ->
+                let case j = if d.(j) then m.(j) else identity ~negative:true j in
+                push (Op3 (Where, m.(c), case j, case l))
+            | Op3 (k, j, l, o) -> push (Op3 (k, m.(j), m.(l), m.(o)))))
+        prog.nodes;
+      let outs =
+        Iarray.map
+          (fun o -> if d.(o) then m.(o) else identity ~negative:true o)
+          prog.outs
+      in
+      P.v ~ins:prog.ins (Iarray.of_list (List.rev !nodes)) ~outs
+
+(* Whether a load of [loads] is padded and reads a sum. *)
+let padded_sum (loads : 'd load iarray) summed =
+  let found = ref false in
+  Iarray.iteri
+    (fun i (l : 'd load) ->
+      match l with Padded _ when summed i -> found := true | _ -> ())
+    loads;
+  !found
+
+let keeps prog loads summed : Route.terms =
+  if padded_sum loads summed || Option.is_none (linear prog summed) then
+    Closes
+  else Keeps
+
+let terms (type r) (op : r prim) summed : Route.terms =
+  match op with
+  | Map { prog; loads; _ } -> keeps prog loads summed
+  | Reduce { prog; loads; reductions = [ Monoid (Sum, _, _) ]; _ } ->
+      keeps prog loads summed
+  | Gather _ -> if summed 0 then Closes else Keeps
+  | Copy _ | Move _ -> Keeps
+  | Contract c ->
+      (* Linear in [a] or in [b], which come first; [init], the scales and
+         the offsets follow. A sum operand keeps its sum; cut contracting
+         pairs make one only where [sum] asks for it. *)
+      let n = fold (fun () n _ -> n + 1) () 0 op in
+      let rec rest i = i >= n || ((not (summed i)) && rest (i + 1)) in
+      if (summed 0 && summed 1) || not (rest 2) then Closes
+      else if c.sum || summed 0 || summed 1 then Sums
+      else Closes
+  | Reduce _ | Scan _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _
+  | Assemble _ | Bitcast _ | Place _ | Check _ ->
+      Closes
+
+let summable (type v s) ~by (dt : (v, s) D.t) =
+  let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
+  match D.kind dt with
+  | D.Float | D.Complex -> ()
+  | (D.Signed | D.Unsigned) when D.equal c dt -> ()
+  | D.Signed | D.Unsigned | D.Boolean ->
+      invalid_argf
+        "%s: a %s value is no sum: a sum is of floats, complex numbers or \
+         integers of 8 bits or more"
+        by (D.name dt)
+
+(* Raises unless each result [op] makes at the sum [route]'s result may be
+   one: a contraction's, a map's, a creation's included. *)
+let summed_results (type r) ~by (op : r prim) (route : unit Route.t) =
+  let rec outs : type d r. (d, r) outs -> unit = function
+    | [] -> ()
+    | dt :: rest ->
+        summable ~by dt;
+        outs rest
+  in
+  if Devices.partial route.result then
+    match op with
+    | Contract { out; _ } -> summable ~by out
+    | Map m -> outs m.outs
+    | _ -> ()
+
+let off_first (type r) (op : r prim) summed : r prim =
+  match op with
+  | Map m -> Map { m with prog = joined m.prog summed }
+  | Reduce r -> Reduce { r with prog = joined r.prog summed }
+  | _ -> op
+
 (* [op]'s route over its operands ({!Route.route}). Where every operand lies
    at one placement that cuts no axis, all are read there and the results lie
    there whatever the rule, so neither [op]'s rule nor its operands' shapes
@@ -1473,7 +1647,9 @@ let route_of (type r) ~by (op : r prim) : unit Route.t =
   match together op with
   | Unseen ->
       let result = match op with Map { at = Some p; _ } -> p | _ -> host in
-      { Route.operands = [||]; result; compute = Windows }
+      let r = { Route.operands = [||]; result; compute = Windows } in
+      summed_results ~by op r;
+      r
   | One p when uncut p ->
       let n = fold (fun () n _ -> n + 1) () 0 op in
       { Route.operands = Array.make n p; result = p; compute = Windows }
@@ -1489,7 +1665,16 @@ let route_of (type r) ~by (op : r prim) : unit Route.t =
       let positions : int list =
         match op with Gather _ | Scatter _ -> [ 0 ] | _ -> []
       in
-      Route.route ~by ~positions (rule op) ps shapes
+      let summed i = Devices.partial ps.(i) in
+      let terms =
+        match op with
+        | Contract _ -> terms op summed
+        | _ ->
+            if Array.exists Devices.partial ps then terms op summed else Closes
+      in
+      let r = Route.route ~by ~positions ~terms (rule op) ps shapes in
+      summed_results ~by op r;
+      r
 
 let rec make_outs : type d r.
     ('a 'b 'c. int -> ('a, 'b, 'c) form -> ('a, 'b, 'c) t) ->

@@ -217,6 +217,7 @@ and _ prim =
       a_scale : 'd scale option;
       b_scale : 'd scale option;
       segments : 'd index Nx_kernel.segments option;
+      sum : bool;
     }
       -> ('v, 's, 'd) t prim
   | Fft : ('d, 'r) fft -> 'r prim

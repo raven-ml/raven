@@ -161,7 +161,7 @@ let operand x = (D.name (Prim.dtype x), Prim.shape x)
 
 (* [pl] applied to [a] and [b]: each reshaped to its names, contracted, and
    moved into the result's layout. *)
-let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
+let run (type v s a b c e d) ~by ?sum ?acc ?init (dt : (v, s) D.t) pl
     (a : (a, b, d) Value.t) (b : (c, e, d) Value.t) : (v, s, d) Value.t =
   if D.is D.Boolean dt then invalid_argf "%s: the result's dtype is bool" by;
   let acc =
@@ -179,14 +179,14 @@ let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
   in
   let batch = pl.batch and contracting = pl.contracting in
   let y =
-    Eval.contract ~by ~batch ~contracting ~acc dt
+    Eval.contract ~by ?sum ~batch ~contracting ~acc dt
       (Eval.reshape ~by pl.a a) (Eval.reshape ~by pl.b b) init
   in
   let y = if identity pl.order then y else permute ~by pl.order y in
   Eval.reshape ~by pl.shape y
 
-let contract ~by ?(sizes = []) ?acc ?init dt p a b =
-  run ~by ?acc ?init dt (plan ~by ~sizes p (operand a) (operand b)) a b
+let contract ~by ?sum ?(sizes = []) ?acc ?init dt p a b =
+  run ~by ?sum ?acc ?init dt (plan ~by ~sizes p (operand a) (operand b)) a b
 
 (* [a] and [b], of shapes [sa] and [sb], for a message. *)
 let both a b sa sb =
@@ -202,7 +202,7 @@ let both a b sa sb =
    drops, and no operand is broadcast. A 1-d [a] has no row and a 1-d [b] no
    column. The plan is read off the shapes: the kernel's axes are the batch
    axes, a's free axes and row, then b's free axes and column. *)
-let matmul ~by a b =
+let matmul ~by ?sum a b =
   let sa = Prim.shape a and sb = Prim.shape b in
   let ra = Array.length sa and rb = Array.length sb in
   let both () = both a b sa sb in
@@ -292,13 +292,13 @@ let matmul ~by a b =
       shape;
     }
   in
-  run ~by (Prim.dtype a) pl a b
+  run ~by ?sum (Prim.dtype a) pl a b
 
 (* [a] and [b] contracted along the axis pairs [batch] and [contracting],
    the result's axes the kernel's own: the batch axes, then [a]'s others,
    then [b]'s, each in its operand's order. The plan moves no operand and no
    result. *)
-let along ~by ~batch ~contracting a b =
+let along ~by ?sum ~batch ~contracting a b =
   let sa = Prim.shape a and sb = Prim.shape b in
   let taken s pairs side =
     let t = Array.make (Array.length s) false in
@@ -327,10 +327,10 @@ let along ~by ~batch ~contracting a b =
       shape;
     }
   in
-  run ~by (Prim.dtype a) pl a b
+  run ~by ?sum (Prim.dtype a) pl a b
 
 (* [a]'s last axis against [b]'s only axis or its second to last. *)
-let dot ~by a b =
+let dot ~by ?sum a b =
   let sa = Prim.shape a and sb = Prim.shape b in
   let ra = Array.length sa and rb = Array.length sb in
   if ra = 0 || rb = 0 then
@@ -339,7 +339,7 @@ let dot ~by a b =
   if sa.(ra - 1) <> sb.(kb) then
     invalid_argf "%s: summed extents %d and %d differ; %s" by sa.(ra - 1)
       sb.(kb) (both a b sa sb);
-  along ~by ~batch:[||] ~contracting:[| (ra - 1, kb) |] a b
+  along ~by ?sum ~batch:[||] ~contracting:[| (ra - 1, kb) |] a b
 
 (* Several operands *)
 
@@ -436,16 +436,16 @@ let order ~ext ~result ops =
 
 (* Two parts' contraction into [into], of names [names] and shape [shape]:
    the names both hold and [names] lacks are summed, in [w]. *)
-let pair (type x y d) ~by ~ext w (into : (x, y) D.t) names shape (na, l) (nb, r)
-    : (x, y, d) Value.t =
+let pair (type x y d) ~by ?sum ~ext w (into : (x, y) D.t) names shape
+    (na, l) (nb, r) : (x, y, d) Value.t =
   match (l, r) with
   | Value.Any a, Value.Any b ->
-      run ~by ~acc:(D.Any w) into (lower ~ext na nb names shape) a b
+      run ~by ?sum ~acc:(D.Any w) into (lower ~ext na nb names shape) a b
 
 (* The einsum of the operands of names [ns], [leaf i] the [i]th, into the
    result's names [nr] and [shape], through the tree of fewest
    multiply-adds. *)
-let tree (type v s d) ~by ~ext p w (dt : (v, s) D.t) ns nr shape
+let tree (type v s d) ~by ?sum ~ext p w (dt : (v, s) D.t) ns nr shape
     (leaf : int -> int list * d Value.any) : (v, s, d) Value.t =
   let n = Array.length ns in
   let split = order ~ext ~result:nr ns in
@@ -474,7 +474,7 @@ let tree (type v s d) ~by ~ext p w (dt : (v, s) D.t) ns nr shape
       (names, Value.Any (pair ~by ~ext w w names shape l r))
   in
   let t = split.(full) in
-  pair ~by ~ext w dt nr shape (value t) (value (full lxor t))
+  pair ~by ?sum ~ext w dt nr shape (value t) (value (full lxor t))
 
 (* Within one operand *)
 
@@ -513,14 +513,18 @@ let diagonals ~by ~ext ns x =
 
 (* [x], of names [na], summed in [w] over the names [lone]: one reduction
    whose program casts each element to [w]. Its names are [na]'s others. *)
-let summed (type w q d) ~by (w : (w, q) D.t) na lone (x : (_, _, d) Value.t) :
-    (w, q, d) Value.t =
+let summed (type v s w q d) ~by (w : (w, q) D.t) na lone
+    (x : (v, s, d) Value.t) : (w, q, d) Value.t =
   let module P = Nx_kernel.Prog in
   let places = List.init (List.length na) Fun.id in
   let axes = List.filter (fun i -> mem (List.nth na i) lone) places in
   let dx = Prim.dtype x in
   let prog =
-    P.of_exprs ~ins:[| D.Any dx |] [| P.E.any (P.E.cast w (P.E.input 0 dx)) |]
+    match D.equal_witness dx w with
+    | Some Type.Equal -> Prim.identity dx
+    | None ->
+        P.of_exprs ~ins:[| D.Any dx |]
+          [| P.E.any (P.E.cast w (P.E.input 0 dx)) |]
   in
   let layout = Nx_array.Layout.contiguous (Iarray.of_array (Prim.shape x)) in
   fst
@@ -547,7 +551,7 @@ let arranged ~by na nr shape x =
   let x = if identity order then x else permute ~by order x in
   Eval.reshape ~by shape x
 
-let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
+let einsum (type v s d) ~by ?sum ?(sizes = []) ?acc (p : Pattern.t)
     (xs : (v, s, d) Value.t list) : (v, s, d) Value.t =
   let k = List.length p.operands and n = List.length xs in
   if k > max_operands then
@@ -602,8 +606,8 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
     if lone.(0) = [] then
       Eval.eval ~by (Value.Copy (arranged ~by (names 0) nr shape x))
     else arranged ~by (names 0) nr shape (rounded ~by dt (summed_alone 0 x))
-  else if n = 2 then pair ~by ~ext w dt nr shape (leaf 0) (leaf 1)
-  else tree ~by ~ext p w dt (Array.init n names) nr shape leaf
+  else if n = 2 then pair ~by ?sum ~ext w dt nr shape (leaf 0) (leaf 1)
+  else tree ~by ?sum ~ext p w dt (Array.init n names) nr shape leaf
 
 (* Chains *)
 

@@ -2421,7 +2421,7 @@ type binary = Mem4.d Nx.float32_t -> Mem4.d Nx.float32_t -> Mem4.d Nx.float32_t
 let binaries : (string * binary) list =
   [
     ("add", Nx.add);
-    ("matmul", Nx.matmul);
+    ("matmul", fun a b -> Nx.matmul a b);
     ( "a sum along 0 beside y",
       fun x y -> Nx.add (Nx.sum ~axes:[ 0 ] ~keepdims:true x) y );
     ("x transposed by y", fun x y -> Nx.mul (Nx.transpose x) y);
@@ -2491,6 +2491,7 @@ let by_groups wo x y =
          a_scale = None;
          b_scale = None;
          segments = Some (Rows { offsets; a_axis = 0; b_axis = 0 });
+         sum = false;
        })
 
 let along_groups = function

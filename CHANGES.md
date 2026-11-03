@@ -1717,6 +1717,24 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A value may lie as a sum of terms across devices: `Nx.Placement.partial`
+  names a placement whose devices along some mesh axes each hold a term,
+  and `Nx.Placement.closed` drops a placement's sum. `Nx.place` closes a
+  sum, by a reduce-scatter onto a placement that cuts an axis over the
+  summed axes, by an all-reduce elsewhere, and a read closes it too,
+  `Nx.item` included. Placing or making a value at a sum puts it on the
+  first device of each group and `-0` on the others.
+- A product over an axis cut across devices given `~sum:true` keeps the
+  devices' terms and moves nothing: `Nx.contract`, `Nx.matmul`, `Nx.dot`,
+  `Nx.vdot`, `Nx.inner`, `Nx.tensordot`, `Nx.vecdot`, `Nx.einsum`,
+  `Nx_quant.apply` and `Nx_quant.apply_experts`. Each term rounds into the
+  result's dtype. Without it a product closes in its accumulator, as before.
+- An operation linear in a sum keeps it one: `Nx.add` and `Nx.sub` with a
+  sum or a whole value, which joins on each group's first device, `Nx.neg`,
+  `Nx.mul` and `Nx.div` by a whole value, `Nx.where` by a whole condition,
+  `Nx.cast` between floats, `Nx.sum` and float `Nx.mean` along uncut axes,
+  movements, `Nx.copy` and `Nx.take`. Any other raises, naming the
+  `Nx.place` that closes the sum.
 - On x86-64, nx.cpu's float32 and float64 contractions in chain order run
   their tiles of 6 rows four steps of k an iteration: 1.78 instructions per
   vector FMA where they ran 2.14. On one thread a 2048³ float32 `Nx.matmul`

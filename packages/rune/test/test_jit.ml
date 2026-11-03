@@ -4491,6 +4491,7 @@ let segmented_of (type s d) c (x : (float, s, d) Nx.t) w offsets =
          a_scale = None;
          b_scale = None;
          segments = Some segments;
+         sum = false;
        })
 
 let operands (type s) (dt : (float, s) Nx.dtype) c =

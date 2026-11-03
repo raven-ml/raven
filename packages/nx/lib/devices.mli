@@ -95,13 +95,18 @@ val split : by:string -> axis:int -> 'd t -> 'd placement
     Raises [Invalid_argument] naming [by] if [axis] is negative or not below
     {!Nx_array.Layout.max_rank}. *)
 
-val mesh : by:string -> 'd mesh -> (int * string list) list -> 'd placement
-(** [mesh ~by m cuts] cuts each axis [a] of [(a, names)] over the mesh axes
-    [names], major first, into windows as {!Grid.window} balances them; a mesh
-    axis no cut names holds copies. Raises
-    [Invalid_argument] naming [by] for a name [m] lacks, an axis or a name in
-    two cuts, or an axis that is negative or not below
-    {!Nx_array.Layout.max_rank}. *)
+val mesh :
+  by:string ->
+  ?sums:string list ->
+  'd mesh ->
+  (int * string list) list ->
+  'd placement
+(** [mesh ~by ~sums m cuts] cuts each axis [a] of [(a, names)] over the mesh
+    axes [names], major first, into windows as {!Grid.window} balances them,
+    the value a sum over the mesh axes [sums] (default none); a mesh axis
+    neither names holds copies. Raises [Invalid_argument] naming [by] for a
+    name [m] lacks, an axis or a name in two cuts or in a cut and [sums], or
+    an axis that is negative or not below {!Nx_array.Layout.max_rank}. *)
 
 val v : by:string -> 'd t -> Grid.t -> 'd placement
 (** [v ~by s g] is [g] over [s]: [one s k] when [g] is device [k] alone, and
@@ -132,8 +137,16 @@ val window :
 
 val uncut : ?axis:int -> 'd placement -> 'd placement
 (** [uncut ~axis p] is [p] with [axis] whole on each of its devices, so that
-    the grid axes that cut it hold copies; without [axis], every axis. It is
-    [p] itself if [p] cuts none of them. *)
+    the grid axes that cut it hold copies; without [axis], every axis, and
+    the value no sum ({!closed}). It is [p] itself if [p] cuts none of them
+    and, without [axis], is not partial. *)
+
+val closed : 'd placement -> 'd placement
+(** [closed p] is [p] where the value is no sum ({!Grid.closed}): [p] itself
+    if [p] is not partial. *)
+
+val partial : 'd placement -> bool
+(** [partial p] is [true] iff a value at [p] is a sum ({!Grid.is_partial}). *)
 
 val shift_axes : by:string -> 'd placement -> int -> 'd placement
 (** [shift_axes ~by p n] is the placement of a value whose axis [a + n] is

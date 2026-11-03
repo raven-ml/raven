@@ -841,6 +841,7 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
                a_scale = x_scale;
                b_scale = y_scale;
                segments;
+               sum = false;
              })
       in
       (* A contraction's result is its own memory in C order, its axes reordered
@@ -1064,6 +1065,7 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
         b_scale;
         segments;
         out = _;
+        sum = _;
       } ->
       first (fun w ->
           Option.iter (fun i -> if env.lin i then env.give i (held w)) init;

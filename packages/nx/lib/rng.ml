@@ -265,7 +265,7 @@ let read_at ~by p w =
    key, its position in [s], and [params], each stretched to the draw's
    shape. A draw at [at] reads its key there; with no load it is a creation
    at [at]. *)
-let draw ~by ?(params = [||]) ?at source dt s prog =
+let drawn ~by ~params ?at source dt s prog =
   let batch = source_batch source in
   let shape = Array.append batch s in
   Prim.check_shape ~by (Iarray.of_array shape);
@@ -288,6 +288,15 @@ let draw ~by ?(params = [||]) ?at source dt s prog =
       let w = Eval.broadcast ~by shape w in
       let w = match at with None -> w | Some p -> read_at ~by p w in
       map dispatched ~by shape prog dt (Array.append [| Value.Any w |] params)
+
+(* A draw made at a sum is the draw made where the sum lies closed, placed
+   there: on each group's first device. *)
+let draw ~by ?(params = [||]) ?at source dt s prog =
+  match at with
+  | Some p when Devices.partial p ->
+      let at = Devices.closed p in
+      Eval.place ~by p (drawn ~by ~params ~at source dt s prog)
+  | Some _ | None -> drawn ~by ~params ?at source dt s prog
 
 (* Parameter [i] of a draw, of dtype [dt], as a node of its program. *)
 let operand i dt = E.input (first_param + i) dt

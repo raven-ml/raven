@@ -812,6 +812,7 @@ let errors =
            a_scale = Some (Value s);
            b_scale = None;
            segments = None;
+           sum = false;
          })
   in
   [

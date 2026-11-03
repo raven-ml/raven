@@ -506,7 +506,8 @@ let stored ~wide ws w =
    that holds it, from which a unit axis of the other drops. It sums in the
    order, and gives the bits, of [x] by the decoded weight transposed:
    nx.cpu numbers the products of several contracted axes as of one. *)
-let scaled ~by ~wide x ws (Stored { elements; inner; scales; blocks }) =
+let scaled ?(sum = false) ~by ~wide x ws
+    (Stored { elements; inner; scales; blocks }) =
   let xs = Nx.shape x in
   let wr = Array.length ws and xr = Array.length xs in
   let p = List.length inner in
@@ -557,6 +558,7 @@ let scaled ~by ~wide x ws (Stored { elements; inner; scales; blocks }) =
            a_scale = None;
            b_scale;
            segments = None;
+           sum;
          })
   in
   (* The kernel's axes are the batch axes, x's free axes and row, then w's
@@ -569,7 +571,7 @@ let scaled ~by ~wide x ws (Stored { elements; inner; scales; blocks }) =
   if kernel = result then y
   else Nx.transpose ~axes:(List.map (index kernel) result) y
 
-let apply w x =
+let apply ?sum w x =
   let ws = shape w in
   check_input ws (Nx.shape x);
   let wide = wide x in
@@ -577,7 +579,7 @@ let apply w x =
   (* An MXFP4 weight read where it lies names its scales as the contraction
      reads them; any other has its cut along [k] checked before it is read. *)
   (match w with Mxfp4 _ when not wide -> () | _ -> check_k by w);
-  scaled ~by ~wide x ws (stored ~wide ws w)
+  scaled ?sum ~by ~wide x ws (stored ~wide ws w)
 
 (* Quantising. Q8_0 as ggml's quantize_row_q8_0_ref stores a block of 32
    float32 values [v]: [d = amax / 127] for the block's greatest magnitude
@@ -670,7 +672,8 @@ let check_experts ws ids xs =
    over every row, in the whole's order. A weight cut along its experts is
    computed by each device for the rows of its own experts, [+0] in the
    others, and one cut along [k] by each device for every row over its
-   window of [k]: the devices' sums close by partials. *)
+   window of [k]: the devices' sums close by partials, or stay the devices'
+   terms with [sum]. *)
 
 (* The positions sorted by id, the permutation that sorts them, their count
    and the ids' shape. *)
@@ -732,7 +735,8 @@ let slots r e =
    matrices [b], [[| g; n; k |]], scaled by [scale], cut by [offsets], summed
    at float64 for a float64 [x], else at float32, and rounded once to [x]'s
    dtype. *)
-let segmented (type b) r (x : (float, b, _) Nx.t) b scale offsets =
+let segmented (type b) ?(sum = false) r (x : (float, b, _) Nx.t) b scale
+    offsets =
   let ws = Nx.shape b in
   let n = ws.(1) and k = ws.(2) in
   (* Each position's row of [x], whose leading axes broadcast to the ids'. *)
@@ -762,6 +766,7 @@ let segmented (type b) r (x : (float, b, _) Nx.t) b scale offsets =
            a_scale = None;
            b_scale = scale;
            segments = Some (Rows { offsets; a_axis = 0; b_axis = 0 });
+           sum;
          })
   in
   let back = Nx.argsort r.order in
@@ -790,25 +795,25 @@ let experts_cut w =
    a group per slot. A segmented contraction's association does not depend
    on its offsets (Nx_kernel.S.contract), so a row's bits depend on the
    shapes, its row and its expert. *)
-let experts ~ids w x =
+let experts ?sum ~ids w x =
   let r = route ids and e = (shape w).(0) in
   match w with
   | Mxfp4 { codes; scales } when not (wide x) ->
       let b = Nx.reshape (shape w) (Nx.bitcast Nx.float4_e2m1fn codes) in
-      segmented r x b (Some (Nx.Prim.Exponent scales)) (by_expert r e)
-  | _ when experts_cut w -> segmented r x (values w) None (by_expert r e)
+      segmented ?sum r x b (Some (Nx.Prim.Exponent scales)) (by_expert r e)
+  | _ when experts_cut w -> segmented ?sum r x (values w) None (by_expert r e)
   | _ ->
       let named, offsets = slots r e in
-      segmented r x (values (take ~axis:0 named w)) None offsets
+      segmented ?sum r x (values (take ~axis:0 named w)) None offsets
 
-let apply_experts ~ids w x =
+let apply_experts ?sum ~ids w x =
   check_experts (shape w) (Nx.shape ids) (Nx.shape x);
   (* An MXFP4 weight summed at float32 is read where it lies and names its
      scales as the contraction reads them; any other decodes the blocks the
      positions name, none for no position. *)
   let in_place = match w with Mxfp4 _ -> not (wide x) | _ -> false in
   if (not in_place) && some ids then check_k "Nx_quant.apply_experts" w;
-  experts ~ids w x
+  experts ?sum ~ids w x
 
 (* Structure *)
 

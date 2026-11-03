@@ -269,8 +269,19 @@ let op ?dst ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
   | Scan { layout; axis; prog; reduction = r; loads; carry } ->
       scan node layout axis prog r loads carry
   | Contract
-      { batch; contracting; acc; out; a; b; init; a_scale; b_scale; segments }
-    ->
+      {
+        batch;
+        contracting;
+        acc;
+        out;
+        a;
+        b;
+        init;
+        a_scale;
+        b_scale;
+        segments;
+        sum = _;
+      } ->
       let scale : _ P.scale -> Reduce.scale = function
         | Exponent c -> Exponent (node c)
         | Value v -> Value (D.Any (Nx.dtype v), node v)

@@ -24,7 +24,9 @@
     scatter's [Add] along a cut axis, the parts of the result they close
     into, and a gather's or a scatter's positions are the only bytes an
     operation moves between devices ({!section-reductions},
-    {!section-routing}). *)
+    {!section-routing}). A contraction asked for its sum moves nothing: its
+    result is the devices' terms, which {!place} closes
+    ({!section-contraction}). *)
 
 (** {1:values Values}
 
@@ -148,8 +150,9 @@ val unpack : ('v, 's) dtype -> 'd packed -> ('v, 's, 'd) t
     A value lies on a device set, a module minted by {!val-devices} whose
     brand ['d] keeps its values apart from other sets'. {!Placement} says
     where a value lies within its set, and {!place} moves a value between
-    sets, and between placements of one. The host is a set like any other,
-    {!Host}.
+    sets, and between placements of one. A value may also lie as a sum of
+    terms across devices ({!Placement.partial}), which {!place} closes. The
+    host is a set like any other, {!Host}.
 
     A brand names one set. A set's module unpacked twice names its brand
     twice, one type under two names, and two mints of one device list are
@@ -212,13 +215,36 @@ module Placement : sig
       cuts, or an axis that is negative or not below
       {!Nx_array.Layout.max_rank}. *)
 
+  val partial : 'd Mesh.t -> string list -> (int * string list) list -> 'd t
+  (** [partial m sums cuts] is [mesh m cuts] with the value a {e sum} over
+      the mesh axes [sums]. Each device holds a {e term}, a value of the
+      whole's shape of which it holds the window [cuts] gives it, and the
+      value is the sum of the terms of its {e group}, the devices that
+      differ only along [sums]. A group's terms are numbered in row-major
+      order over [sums] in the order it lists them, the first major; term
+      [0] is its {e first}. A product asked for its sum lists the mesh axes
+      that cut its summed axis as the cut lists them. A value
+      at such a placement is {e partial}. {!place} closes it, and a
+      contraction asked for its sum over a summed axis cut across devices
+      gives one ({!section-contraction}). [partial m [] cuts] is
+      [mesh m cuts].
+
+      Raises [Invalid_argument] as {!mesh} does, and for a name in [sums]
+      twice or in a cut too. *)
+
+  val closed : 'd t -> 'd t
+  (** [closed p] is [p] where the value is no sum: each device holds the
+      window [p] gives it of the value itself. It is [p] itself if [p] is
+      not partial, so [place (closed (placement x)) x] closes [x] where it
+      lies, and is [x] on any other placement. *)
+
   val devices : 'd t -> 'd devices
   (** [devices p] is [p]'s set. *)
 
   val equal : 'd t -> 'e t -> bool
   (** [equal p q] is [true] iff [p] and [q] are of one set and every device
-      holds the same window of a value at [p] and at [q], whatever their
-      brands. *)
+      holds the same window, and the same term of a partial value, at [p]
+      and at [q], whatever their brands. *)
 
   val same : 'd t -> 'e t -> ('d, 'e) Type.eq option
   (** [same p q] is [Some Equal] iff [p] and [q] are of one set, whatever
@@ -226,13 +252,13 @@ module Placement : sig
 
   val uncut : 'd t -> 'd t
   (** [uncut p] is [p] with every axis whole on each of its devices, each
-      mesh axis that cut one holding copies. It is [p] itself if [p] cuts no
-      axis. *)
+      mesh axis that cut one holding copies, and the value no sum. It is [p]
+      itself if [p] cuts no axis and is not partial. *)
 
   val pp : Format.formatter -> 'd t -> unit
   (** [pp] formats a placement on one device as the device's name, others as
-      [on [CUDA:0; CUDA:1]], [split ~axis:0 [CUDA:0; CUDA:1]] or a mesh's
-      extents and cuts. *)
+      [on [CUDA:0; CUDA:1]], [split ~axis:0 [CUDA:0; CUDA:1]],
+      [partial [CUDA:0; CUDA:1]] or a mesh's extents, sums and cuts. *)
 
   (**/**)
 
@@ -320,8 +346,9 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     along which a scatter's [Add] reads its positions and updates. One along
     a scan's axis stays in it, and so does one along the axis a scatter
     writes at positions, each device writing the updates that land in its
-    window. An operand whole on every device
-    is read by a view of each device's window.
+    window. A product asked for its sum leaves the result a sum over the
+    devices that cut the axis instead ({!section-contraction}). An operand
+    whole on every device is read by a view of each device's window.
 
     On a set whose devices are of several architectures ({!Rig.arch}), such
     as a GPU beside a memory device under a compiler, each step that computes
@@ -349,6 +376,29 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
     v}
 
+    An operation linear in its partial operands ({!Placement.partial}),
+    sums over the same groups, keeps them sums, each device computing on
+    its terms: {!add}, {!sub} and {!where} by a condition that is no sum, a
+    value that is none joining on each group's first device, [-0] or [+0]
+    standing in for it elsewhere; {!neg}; {!mul} and a float {!div} by a
+    value that is none; a cast between floats or between complex numbers;
+    {!sum} and a float {!mean} along uncut axes; movements, {!copy} and
+    {!take}; and the products ({!section-contraction}). A value made at a
+    sum holds its elements on each group's first device. Any other
+    operation raises, naming the {!place} that closes the operand:
+
+    {v
+    Nx.exp: operand 0 lies at partial [CUDA:0; CUDA:1], a sum the operation
+    does not keep; Nx.place (Placement.on s) x
+    v}
+
+    Closing a kept result equals closing first within the roundings each
+    term passes, but where a term overflows that the sum would not, where
+    terms that are zeros of both signs are negated or scaled, which may
+    change a zero's sign, and where terms are scaled by an infinity or
+    divided by zero, which may give a NaN where closing first gives an
+    infinity.
+
     Where neither order reads a gather's or a scatter's positions where
     they lie, the result lies where the other operands put it, and the
     positions move to where its devices read them before they compute.
@@ -369,7 +419,30 @@ val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
     [x]'s set; elsewhere it returns as {!Rig.Buffer.submit_copy} returns
     for its copies.
 
-    Raises [Invalid_argument] if [p] cuts an axis [x] does not have,
+    A partial [x] placed where it is no sum {e closes}: each element is its
+    group's terms added in their order, from the first, by one addition of
+    [x]'s dtype per term after it, on whichever device adds it, so it is
+    the same on every run. Where [p] is [placement x] with its summed mesh
+    axes cutting, in their order, an axis [placement x] does not cut, each
+    device adds its own window, receiving that window of each other term
+    of its group, a {e reduce-scatter}; it equals the closing at
+    {!Placement.closed}[ (placement x)] placed at [p], bit for bit.
+    Elsewhere [x] closes at {!Placement.closed}[ (placement x)], each
+    device of a group adding a part of its window and receiving the
+    others', an {e all-reduce}, then moves to [p]. A float or complex sum
+    of [t] terms is within [γ(t - 1, u) Σ|term|] of its terms' exact sum,
+    [γ(n, u) = n u / (1 - n u)] and [u] the dtype's unit roundoff, part by
+    part for a complex one, and an integer sum wraps as one addition does.
+    Every addition is the kernels' [Add]: the set needs kernels.
+
+    A value that is no sum placed at a partial [p] holds its window on the
+    first device of each group, and the additive identity, [-0] for floats
+    and complex parts, [0] for integers, on every other, so that closing it
+    gives its bits. A partial [x] placed at another partial [p] closes, then
+    is placed so.
+
+    Raises [Invalid_argument] if [p] cuts an axis [x] does not have, or is
+    partial and [x]'s dtype is a boolean, [bit], [int4] or [uint4],
     {!Rig.Lost} for a lost device, and a failed check as a wait does. *)
 
 val placement : ('v, 's, 'd) t -> 'd Placement.t
@@ -377,7 +450,7 @@ val placement : ('v, 's, 'd) t -> 'd Placement.t
 
 val beside : ('v, 's, 'd) t -> 'd Placement.t
 (** [beside x] is {!Placement.uncut}[ (placement x)], whole on each device
-    [x] lies on. A value of another shape made there combines with [x]. At
+    [x] lies on, and no sum. A value of another shape made there combines with [x]. At
     [placement x] such a value is cut along its own axes, which need not line
     up with [x]'s. For [x] of shape [[4; 3]] split along axis [0],
     [arange_at (placement x) float32 0 3 1] is split along its only axis,
@@ -716,7 +789,8 @@ val of_bigarray :
     A read gives a value's elements to OCaml. It works at every brand: it is a
     {{!section-waiting}wait} on the value's set, which may raise a failed
     check, then copies the value's elements to the host and leaves every
-    placement as it was. A read reaches no interpretation.
+    placement as it was. A partial value's elements are its terms' sums, so
+    a read closes it as {!place} does. A read reaches no interpretation.
 
     Each raises [Invalid_argument] naming itself for a dead value, and for a
     traced one, as [Nx.item: the value is traced by Rune.jit], or as
@@ -2357,12 +2431,33 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     complex one may differ from it within the bound {!contract} states, and
     is the same on every run for a given placement and set of devices:
     float32 [[1e7; -1e7; 0.1; 0]] by ones gives [0.] on one nx.cpu device
-    and [0.1] cut two ways along its summed axis. *)
+    and [0.1] cut two ways along its summed axis.
+
+    A product ({!contract}, {!einsum}, {!matmul}, {!dot}, {!vdot},
+    {!tensordot}, {!inner}, {!vecdot}, [Nx_quant.apply] and
+    [Nx_quant.apply_experts]) given [~sum:true] keeps the sum its cut
+    summed axes make, where its terms lie, and moves nothing
+    ({!Placement.partial}): each device contracts its windows' products
+    into the accumulator, the first of its group's from [init] and the
+    others from [-0], so that [init] joins once, and rounds that term once
+    into the result's dtype. The terms are numbered in C order of the
+    windows' first indices. {!place} closes the sum later, after the
+    linear work a model does on it, as a tensor-parallel layer closes once
+    after its residual add ({!section-routing}). A product whose summed
+    axes no device cuts is the same with [~sum:true] as without. Closed, a
+    sum of [t] terms is within {!contract}'s bound plus [γ(t, u) Σ|term|],
+    [u] the result dtype's unit roundoff: each term rounds once into the
+    dtype, then [t - 1] additions do (Higham, {e Accuracy and Stability of
+    Numerical Algorithms}, §4.2 and Lemma 3.3). Where the dtype is the
+    accumulator's, the terms round nothing, the bound is
+    [γ(t - 1, u) Σ|term|], and a sum without [init] closes to the bits of
+    the product without [~sum:true]. *)
 
 val contract :
   ?sizes:(string * int) list ->
   ?acc:('w, 'q) dtype ->
   ?init:('v, 's, 'd) t ->
+  ?sum:bool ->
   ('v, 's) dtype ->
   Pattern.t ->
   ('a, 'b, 'd) t ->
@@ -2380,7 +2475,9 @@ val contract :
     of the order a pattern lists its names. Barring overflow and underflow,
     before rounding it is within [γ(K + 1, 2u) (|init| + Σ|a||b|)] of the
     exact sum of its [K] products, wherever its operands lie, where
-    [γ(n, v) = n v / (1 - n v)] and [u] is [acc]'s unit roundoff.
+    [γ(n, v) = n v / (1 - n v)] and [u] is [acc]'s unit roundoff. With
+    [~sum:true] (default [false]) over cut summed names, it is the devices'
+    terms, which close within the bound {!section-contraction} adds.
 
     A donated [init] receives the result in its memory where {!donate} lets
     the consumer write there and the result's names are the batch names, then
@@ -2402,6 +2499,7 @@ val contract :
 val einsum :
   ?sizes:(string * int) list ->
   ?acc:('w, 'q) dtype ->
+  ?sum:bool ->
   Pattern.t ->
   ('v, 's, 'd) t list ->
   ('v, 's, 'd) t
@@ -2452,7 +2550,7 @@ val einsum :
     twice, or its size is negative; or [acc] is a boolean, a float narrower
     than [float32] or than the operands, or of another kind than theirs. *)
 
-val matmul : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+val matmul : ?sum:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [matmul a b] is the matrix product over the last two axes, leading axes
     broadcast, at [a]'s dtype and accumulated as {!contract} does by default. A
     1-d [a] is a row and a 1-d [b] a column, and their unit axis is dropped from
@@ -2461,7 +2559,7 @@ val matmul : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Raises [Invalid_argument] if an operand is 0-d, the inner extents differ,
     the leading axes do not broadcast, or the dtype is a boolean. *)
 
-val dot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+val dot : ?sum:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [dot a b] is the sum of the products of [a]'s last axis with [b]'s only
     axis, for a 1-d [b], or its second to last otherwise. The result's axes
     are [a]'s others, then [b]'s: two vectors give their 0-d inner product,
@@ -2471,7 +2569,7 @@ val dot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Raises [Invalid_argument] if an operand is 0-d, the summed extents differ,
     or the dtype is a boolean. *)
 
-val vdot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+val vdot : ?sum:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [vdot a b] is the 0-d sum of the products of [conjugate a] and [b], both
     flattened, accumulated as {!matmul}.
 
@@ -2568,6 +2666,7 @@ val conv_transpose :
 
 val tensordot :
   ?axes:int list * int list ->
+  ?sum:bool ->
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t
@@ -2580,7 +2679,7 @@ val tensordot :
     Raises [Invalid_argument] if [la] and [lb] differ in length, an axis is
     not one of its operand's or repeats, or paired extents differ. *)
 
-val inner : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+val inner : ?sum:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [inner a b] is the sum of the products of [a]'s last axis with [b]'s
     last axis; the result's axes are [a]'s others, then [b]'s. A 0-d operand
     gives {!mul}[ a b]. It accumulates as {!matmul}.
@@ -2591,7 +2690,12 @@ val outer : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [outer a b] is of shape [[|numel a; numel b|]], its element [(i, j)] the
     product of [a]'s [i]th element and [b]'s [j]th, in C order. *)
 
-val vecdot : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+val vecdot :
+  ?axis:int ->
+  ?sum:bool ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
 (** [vecdot ~axis a b] is the sum of the products of [conjugate a] and [b]
     along each operand's axis [axis] (default [-1]); their other axes
     broadcast to the result's shape. It accumulates as {!matmul}.
@@ -5364,6 +5468,9 @@ module Prim : sig
         a_scale : 'd scale option;
         b_scale : 'd scale option;
         segments : (int64, Dtype.int64_elt, 'd) nx Nx_kernel.segments option;
+        sum : bool;
+            (** Whether the result is the sum the devices' terms make
+                ({!section-contraction}). *)
       }
         -> ('v, 's, 'd) nx t
         (** The contraction of [a] with [b] by the pairs [batch] and
@@ -5371,7 +5478,9 @@ module Prim : sig
             scale's, each group of [segments] as {!Nx_kernel.type-segments}
             states, computed in [acc] and rounded once to [out]
             ({!Nx_kernel.S.contract}): its result C-contiguous, of the shape
-            {!Nx_kernel.Shape.contract} gives. *)
+            {!Nx_kernel.Shape.contract} gives. Over contracting pairs cut
+            across devices, it closes as {!contract} does, or with [sum]
+            it is the devices' terms, each rounded once into [out]. *)
     | Fft : ('d, 'r) fft -> 'r t
         (** A Fourier transform ({!Nx_kernel.S.c2c} and its siblings). *)
     | Linalg : ('d, 'r) linalg -> 'r t

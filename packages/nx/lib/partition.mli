@@ -100,6 +100,20 @@ type engine = {
           elements where [ps.(j)] is [None]. *)
 }
 
+val identity :
+  engine ->
+  by:string ->
+  'd Devices.placement ->
+  ('v, 's) Value.dtype ->
+  int array ->
+  ('v, 's, 'd) Value.t
+(** [identity e ~by here dt s] is the value of [dt] and shape [s] at the
+    one-device placement [here] whose every element is the additive
+    identity, [-0] for a float and a complex number's parts, [0] for an
+    integer, computed by {!engine}'s [run] of a map of no loads. A device
+    that holds no group's first term of a sum holds it in place of a value
+    that is none ({!Grid.sums}). *)
+
 (** {1:replicas Replicas}
 
     On a set whose devices are of several architectures ({!Rig.arch}), the
@@ -157,7 +171,10 @@ val windows :
     ({!Route.window}), at its own placement where [op] creates its
     values, its first result into its piece of [into], a value at the
     route's result, where it is given, or copies it as
-    {!section-replicas} says.
+    {!section-replicas} says. Where the results are a sum, a device that
+    holds no group's first term computes {!Prim.off_first} of the
+    operation, and a contraction's [init] that is no sum is {!identity}
+    there.
 
     Raises what [e]'s steps raise, and [Invalid_argument] as an internal
     fault for a route that computes by partials. *)
@@ -195,4 +212,6 @@ val place :
     [gather] from the box each distinct window of [x]'s shares with [w],
     viewed from a piece on that device where one holds the box's window.
 
-    Raises [Invalid_argument] naming [by] if [p] cuts an axis [x] lacks. *)
+    Raises [Invalid_argument] naming [by] if [p] cuts an axis [x] lacks,
+    and as an internal fault for a sum [x] placed at another placement than
+    its own, which {!Partial.place} closes. *)

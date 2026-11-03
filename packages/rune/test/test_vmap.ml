@@ -488,6 +488,7 @@ let contract c x =
          a_scale;
          b_scale;
          segments;
+         sum = false;
        })
 
 let contractions =

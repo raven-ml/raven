@@ -1466,6 +1466,7 @@ let contraction_op ?(abs = false) c ~acc dt a b init =
       a_scale = Option.map (scale_of ~abs) c.sa;
       b_scale = Option.map (scale_of ~abs) c.sb;
       segments = Option.map (fun _ -> segments_of c) c.seg;
+      sum = false;
     }
 
 let contract_results (type v s) (dt : (v, s) D.t) c =
@@ -1972,6 +1973,7 @@ let int16_contraction () =
            a_scale = None;
            b_scale = None;
            segments = None;
+           sum = false;
          })
   in
   equal (array int) (Nx.to_array (op ())) (Lowered.run op)
@@ -1996,6 +1998,7 @@ let no_products (type v s) (dt : (v, s) D.t) acc raws () =
            a_scale = None;
            b_scale = None;
            segments = None;
+           sum = false;
          })
   in
   same_bits dt (Nx.to_array init) (Nx.to_array (op ()));
@@ -2036,6 +2039,7 @@ let int_scaled () =
            a_scale = None;
            b_scale = Some (P.Exponent codes);
            segments = None;
+           sum = false;
          })
   in
   raises_match
@@ -2115,6 +2119,7 @@ let work ?(scaled = false) form ~n ~k ~j g =
                a_scale = None;
                b_scale;
                segments;
+               sum = false;
              }))
   in
   (* [W] of shape [s], its last axis of [k]. *)

@@ -276,6 +276,7 @@ let refusals =
                   a_scale = None;
                   b_scale = None;
                   segments = None;
+                  sum = false;
                 })));
     case "a map's load of another shape than its loop" "test: load 1 has shape"
       (fun { d } ->

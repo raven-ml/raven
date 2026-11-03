@@ -1585,6 +1585,7 @@ module Scaled = struct
         a_scale = scale p A_scale c.a;
         b_scale = scale p B_scale c.b;
         segments;
+        sum = false;
       }
 
   (* The index [r] of the segmented axis is in group [e] of the offsets [o],

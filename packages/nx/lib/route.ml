@@ -19,6 +19,7 @@ type axis =
 type rule = Elementwise | Axes of axis array array
 
 type compute = Windows | Partials
+type terms = Closes | Keeps | Sums
 
 type 'd t = {
   operands : 'd Devices.placement array;
@@ -281,6 +282,19 @@ let results u =
     (fun g (a, _) -> if is_factor a then Grid.uncut g ~axis:a else g)
     u (Grid.cuts u)
 
+(* The union [u] without its factors' cuts, where the operation [terms]
+   sums them: the grid axes that cut a factor sum the results. *)
+let summed_results terms u =
+  match terms with
+  | Closes | Keeps -> results u
+  | Sums ->
+      Array.fold_left
+        (fun g (a, _) -> if is_factor a then Grid.sum g ~axis:a else g)
+        u (Grid.cuts u)
+
+(* The grid of [g]'s groups and terms alone: every cut undone. *)
+let sums g = uncut_all (Array.map fst (Grid.cuts g)) g
+
 (* Whether [g]'s devices are among [g']'s. *)
 let among g g' =
   let ks = Grid.devices g' in
@@ -292,8 +306,9 @@ let among g g' =
    alone on one device beside one whole on every device, and their
    {!Grid.union} otherwise. *)
 let join u l =
-  if (not (Grid.is_cut l)) && among u l then Some u
-  else if (not (Grid.is_cut u)) && among l u then Some l
+  let whole g = not (Grid.is_cut g || Grid.is_partial g) in
+  if whole l && among u l then Some u
+  else if whole u && among l u then Some l
   else Grid.union u l
 
 (* Whether an operand of shape [s] at [p] holds, on each device of the grid
@@ -319,7 +334,8 @@ let holds p s q =
 (* Whether [p] is the whole on every device of its set. *)
 let everywhere p =
   let g = Devices.grid p in
-  (not (Grid.is_cut g)) && Grid.count g = Devices.count (Devices.set p)
+  (not (Grid.is_cut g || Grid.is_partial g))
+  && Grid.count g = Devices.count (Devices.set p)
 
 let gathers r i p s =
   let q = Devices.grid r.operands.(i) in
@@ -337,7 +353,9 @@ let name = function
   | i -> "x" ^ string_of_int i
 
 let pp_list pp ppf l =
-  Format.fprintf ppf "[ %a ]"
+  if l = [] then Format.pp_print_string ppf "[]"
+  else
+    Format.fprintf ppf "[ %a ]"
     (Format.pp_print_list
        ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
        pp)
@@ -351,8 +369,9 @@ let pp_list pp ppf l =
 let pp_call ~by set ppf q =
   let mesh_axis g = Printf.sprintf "%S" ("g" ^ string_of_int g) in
   let split a = Devices.grid (Devices.split ~by ~axis:a set) in
+  let partial = Grid.is_partial q in
   match (Grid.one q, Grid.cuts q) with
-  | _, [||] when Grid.count q = Devices.count set ->
+  | _, [||] when Grid.count q = Devices.count set && not partial ->
       Format.pp_print_string ppf "Placement.on s"
   | Some k, _ ->
       Format.fprintf ppf "Placement.device s %s" (Rig.name (Devices.rig set k))
@@ -363,29 +382,51 @@ let pp_call ~by set ppf q =
         List.mapi (fun g e -> (g, e)) (Array.to_list (Grid.extents q))
       in
       let cut (a, _) = (a, Array.to_list (Grid.over q a)) in
-      Format.fprintf ppf "Placement.mesh (Mesh.v s %a) %a"
+      let names l = pp_list Format.pp_print_string ppf (List.map mesh_axis l) in
+      if partial then Format.pp_print_string ppf "Placement.partial"
+      else Format.pp_print_string ppf "Placement.mesh";
+      Format.fprintf ppf " (Mesh.v s %a) "
         (pp_list (fun ppf (g, e) ->
              Format.fprintf ppf "(%s, %d)" (mesh_axis g) e))
-        axes
-        (pp_list (fun ppf (a, over) ->
-             Format.fprintf ppf "(%d, %a)" a
-               (pp_list Format.pp_print_string)
-               (List.map mesh_axis over)))
+        axes;
+      if partial then begin
+        names (Array.to_list (Grid.sums q));
+        Format.pp_print_string ppf " "
+      end;
+      pp_list
+        (fun ppf (a, over) ->
+          Format.fprintf ppf "(%d, %a)" a
+            (pp_list Format.pp_print_string)
+            (List.map mesh_axis over))
+        ppf
         (List.map cut (Array.to_list cuts))
 
 (* Raises: operand [i], at [p], is read at the union [u] moved back to its
    axes, of shape [s], over [set]. The remedy places it there. *)
 let refuse ~by rule set i p s u =
   let q = backward rule i s u in
+  (* An operand that is no sum is read where the union lies closed. *)
+  let q = if Devices.partial p then q else Grid.closed q in
   invalid_argf "%s: operand %d lies at %a and is read at %a; Nx.place (%a) %s"
     by i Devices.pp_placement p Devices.pp_placement (Devices.v ~by set q)
     (pp_call ~by set) q (name i)
+
+(* Raises: operand [i] lies at [p], a sum the operation does not keep. The
+   remedy closes it where it lies. *)
+let unkept ~by i p =
+  let set = Devices.set p in
+  invalid_argf
+    "%s: operand %d lies at %a, a sum the operation does not keep; Nx.place \
+     (%a) %s"
+    by i Devices.pp_placement p (pp_call ~by set)
+    (Grid.closed (Devices.grid p))
+    (name i)
 
 (* Routes *)
 
 (* The route of operands joined in [order], or the refusal of the first
    operand it cannot read where it lies. *)
-let attempt ~by rule ps shapes order =
+let attempt ~by ~terms rule ps shapes order =
   let set = Devices.set ps.(0) in
   let other i = Devices.number (Devices.set ps.(i)) <> Devices.number set in
   let lifted i = forward rule i shapes.(i) (Devices.grid ps.(i)) in
@@ -402,11 +443,17 @@ let attempt ~by rule ps shapes order =
   let u = aligned rule shapes u in
   (* A folded axis of no element is read whole: no device folds a term. *)
   let u = if folds_empty rule shapes then results u else u in
+  (* An operand that is no sum is read where the union lies without its sum:
+     the devices then add it to the first term of each group alone. *)
   let read i p =
     let q = backward rule i shapes.(i) u in
+    let q = if Devices.partial p then q else Grid.closed q in
+    (* A sum's terms are read only as the terms of the same groups. *)
+    let terms () = Grid.equal (sums (Devices.grid p)) (sums q) in
     if other i then None
     else if Grid.equal (Devices.grid p) q then Some p
-    else if holds p shapes.(i) q then Some (Devices.v ~by set q)
+    else if holds p shapes.(i) q && ((not (Devices.partial p)) || terms ())
+    then Some (Devices.v ~by set q)
     else None
   in
   let reads = Array.mapi read ps in
@@ -418,7 +465,7 @@ let attempt ~by rule ps shapes order =
       (* The results lie at an operand's own placement where it is theirs,
          so that operations chained over one placement keep it
          physically. *)
-      let r = results u in
+      let r = summed_results terms u in
       let result =
         let own p = Grid.equal (Devices.grid p) r in
         match Array.find_opt own ps with
@@ -434,7 +481,8 @@ let attempt ~by rule ps shapes order =
    too, the positions not whole on every device of the set join as if they
    were, so that the union is the values' alone and each device reads the
    positions it needs, which then move there. *)
-let general ~by ~positions rule ps shapes =
+let general ~by ~positions ~terms rule ps shapes =
+  let attempt = attempt ~terms in
   let all = List.init (Array.length ps) Fun.id in
   match attempt ~by rule ps shapes all with
   | Ok r -> r
@@ -463,12 +511,35 @@ let general ~by ~positions rule ps shapes =
               | Ok r -> r
               | Error refused -> refused ()))
 
-let route ~by ?(positions = []) rule ps shapes =
+(* Raises unless [terms] keeps each partial operand of [ps] and they are
+   sums over the same groups. *)
+let summed ~by terms ps =
+  let partial = List.filter (fun i -> Devices.partial ps.(i))
+      (List.init (Array.length ps) Fun.id) in
+  match (terms, partial) with
+  | _, [] -> ()
+  | Closes, i :: _ -> unkept ~by i ps.(i)
+  | (Keeps | Sums), i :: rest ->
+      let g = sums (Devices.grid ps.(i)) in
+      List.iter
+        (fun j ->
+          if not (Grid.equal g (sums (Devices.grid ps.(j)))) then
+            invalid_argf
+              "%s: operand %d lies at %a, a sum over other groups than \
+               operand %d's; Nx.place (%a) %s"
+              by j Devices.pp_placement ps.(j) i
+              (pp_call ~by (Devices.set ps.(j)))
+              (Grid.closed (Devices.grid ps.(j)))
+              (name j))
+        rest
+
+let route ~by ?(positions = []) ?(terms = Closes) rule ps shapes =
   for i = 0 to Array.length ps - 1 do
     match Grid.window (Devices.grid ps.(i)) shapes.(i) 0 with
     | Ok _ -> ()
     | Error e -> invalid_argf "%s: %s" by e
   done;
+  summed ~by terms ps;
   (* Operands at one placement are read there, and the results lie there,
      where it cuts no axis or the operation is elementwise: each device reads
      its window of each and computes its window of the results. *)
@@ -477,4 +548,12 @@ let route ~by ?(positions = []) rule ps shapes =
   let elementwise = match rule with Elementwise -> true | Axes _ -> false in
   if alone && (elementwise || not (Grid.is_cut (Devices.grid p))) then
     { operands = Array.make (Array.length ps) p; result = p; compute = Windows }
-  else general ~by ~positions rule ps shapes
+  else
+    let r = general ~by ~positions ~terms rule ps shapes in
+    (* A fold over a cut axis closes its partials, which a sum's terms are
+       not; a contraction's are terms of its own. *)
+    (match (r.compute, terms) with
+    | Partials, Sums | Windows, _ -> ()
+    | Partials, (Closes | Keeps) ->
+        Array.iteri (fun i p -> if Devices.partial p then unkept ~by i p) ps);
+    r

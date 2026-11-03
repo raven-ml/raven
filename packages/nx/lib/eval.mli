@@ -167,6 +167,7 @@ val apply :
 
 val contract :
   by:string ->
+  ?sum:bool ->
   batch:(int * int) iarray ->
   contracting:(int * int) iarray ->
   acc:Nx_array.Dtype.any ->
@@ -175,9 +176,11 @@ val contract :
   ('c, 'e, 'd) t ->
   ('v, 's, 'd) t option ->
   ('v, 's, 'd) t
-(** [contract ~by ~batch ~contracting ~acc dt a b init] is {!eval} of the
-    contraction [Contract] of [a] and [b] from [init] into [dt]. With no
-    live [Extent], it is {!Exec.contract} where that answers. *)
+(** [contract ~by ~sum ~batch ~contracting ~acc dt a b init] is {!eval} of
+    the contraction [Contract] of [a] and [b] from [init] into [dt], the sum
+    of the devices' terms where [sum] (default [false]) and its contracting
+    pairs are cut. With no live [Extent], it is {!Exec.contract} where that
+    answers. *)
 
 val place :
   by:string -> 'e Devices.placement -> ('v, 's, 'd) t -> ('v, 's, 'e) t

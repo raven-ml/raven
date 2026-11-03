@@ -30,7 +30,7 @@ let positions n = Array.init n Fun.id
 let whole_grid n =
   if n = 1 then Grid.device 0
   else
-    match Grid.v ~devices:(positions n) ~extents:[| n |] ~cuts:[||] with
+    match Grid.v ~devices:(positions n) ~extents:[| n |] ~cuts:[||] ~sums:[||] with
     | Ok g -> g
     | Error e -> invalid_arg e
 
@@ -142,18 +142,21 @@ let split ~by ~axis s =
   if n = 1 then s.ones.(0)
   else
     match
-      Grid.v ~devices:(positions n) ~extents:[| n |] ~cuts:[| (axis, [| 0 |]) |]
+      Grid.v ~devices:(positions n) ~extents:[| n |]
+        ~cuts:[| (axis, [| 0 |]) |]
+        ~sums:[||]
     with
     | Ok g -> normal s g
     | Error e -> invalid_argf "%s: %s" by e
 
-let mesh ~by m cuts =
+let mesh ~by ?(sums = []) m cuts =
   let s = m.mesh_set in
   let axis_of name =
     match Array.find_index (String.equal name) m.names with
     | Some g -> g
     | None -> invalid_argf "%s: the mesh has no axis %S" by name
   in
+  let sums = Array.of_list (List.map axis_of sums) in
   let cuts =
     Array.of_list
       (List.map
@@ -162,7 +165,7 @@ let mesh ~by m cuts =
            (axis, Array.of_list (List.map axis_of names)))
          cuts)
   in
-  match Grid.v ~devices:(positions (count s)) ~extents:m.extents ~cuts with
+  match Grid.v ~devices:(positions (count s)) ~extents:m.extents ~cuts ~sums with
   | Ok g -> normal s g
   | Error e -> invalid_argf "%s: %s" by e
 
@@ -181,17 +184,22 @@ let window ~by p shape i =
   | Error e -> invalid_argf "%s: %s" by e
 
 let uncut ?axis p =
-  if not (Grid.is_cut p.grid) then p
-  else
-    let cuts = Grid.cuts p.grid in
-    match axis with
-    | None ->
+  match axis with
+  | None ->
+      if not (Grid.is_cut p.grid || Grid.is_partial p.grid) then p
+      else
         let whole g (axis, _) = Grid.uncut g ~axis in
-        normal p.set (Array.fold_left whole p.grid cuts)
-    | Some axis ->
-        if Array.exists (fun (a, _) -> a = axis) cuts then
-          normal p.set (Grid.uncut p.grid ~axis)
-        else p
+        normal p.set
+          (Array.fold_left whole (Grid.closed p.grid) (Grid.cuts p.grid))
+  | Some axis ->
+      if Array.exists (fun (a, _) -> a = axis) (Grid.cuts p.grid) then
+        normal p.set (Grid.uncut p.grid ~axis)
+      else p
+
+let closed p =
+  if Grid.is_partial p.grid then normal p.set (Grid.closed p.grid) else p
+
+let partial p = Grid.is_partial p.grid
 
 let pp_placement ppf p =
   Grid.pp

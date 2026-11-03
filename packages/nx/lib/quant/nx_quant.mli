@@ -24,14 +24,16 @@
     {!apply}'s and {!apply_experts}' results are within {!Nx.contract}'s bound,
     the same on every run for a given placement. Cut along [n] or a leading
     axis, each device decodes its own rows. Cut along a stack's experts,
-    {!apply_experts} sums each device's experts' rows, and the devices' sums
-    close by partials where the result would lie with the experts whole. A
-    row then has the bits it has with the experts whole, on kernels whose
+    {!apply_experts} sums each device's experts' rows, and the devices'
+    sums close where the result would lie with the experts whole. A row
+    then has the bits it has with the experts whole, on kernels whose
     segmented order does not depend on the count of experts, as nx.cpu's.
     Cut along [k] over [t] devices, a weight of [b] blocks along [k] is cut
-    at its blocks' boundaries where [t] divides [b]: each device decodes its
-    own blocks, {!dequant}'s result is cut along [k] as the parts are, and
-    {!apply} and {!apply_experts} sum the devices' partial products. Their
+    at its blocks' boundaries where [t] divides [b]: each device decodes
+    its own blocks, {!dequant}'s result is cut along [k] as the parts are,
+    and {!apply} and {!apply_experts} sum the devices' partial products,
+    which close. With [~sum:true], both keep the sum where its terms lie,
+    as {!Nx.matmul} does ({!Nx.section-contraction}). Their
     product of an [Mxfp4] or [Q8_0] weight read where it lies reads the
     bytes where they lie, at either cut, each device decoding its own blocks
     as it sums them. Any other cut along [k] splits a block, which each
@@ -190,7 +192,7 @@ val dequant : (float, 'b) Nx.dtype -> 'd t -> (float, 'b, 'd) Nx.t
     once at its subtraction. A block whose float16 scale is infinite or NaN
     gives infinite or NaN values. *)
 
-val apply : 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
+val apply : ?sum:bool -> 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [apply w x] is [w] applied to [x] as a linear map from [k] inputs to [n]
     outputs, summed at [acc], [float64] for a float64 [x] and [float32]
     otherwise, which holds each value of [w] exactly, and rounded once to
@@ -224,7 +226,11 @@ val apply : 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
     axis is not [k], or if the batch axes do not broadcast. *)
 
 val apply_experts :
-  ids:'d Nx.int64_t -> 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
+  ?sum:bool ->
+  ids:'d Nx.int64_t ->
+  'd t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [apply_experts ~ids w x] is each row of [x] through the expert its id
     names: at each position [p] of [ids], the product {!apply} defines of
     [w]'s matrix [ids.{p}] with [p]'s row of [x], or zeros where [ids.{p}]

@@ -1404,7 +1404,349 @@ let held =
         test_onto_host_waits;
     ]
 
+(* Sums *)
+
+let by = "test_place"
+let line = Nx.Mesh.v Mem.v [ ("x", 4) ]
+let grid = Nx.Mesh.v Mem.v [ ("a", 2); ("b", 2) ]
+
+(* The partial placements of Mem, the number of terms of a group, and the
+   term each device holds: the terms of a group in row-major order over the
+   summed mesh axes, device [d] at [(d / 2, d mod 2)] over [a] and [b]. *)
+type sum = Line | Both | Over_a of int | Over_b
+
+let pp_sum ppf = function
+  | Line -> Format.pp_print_string ppf "line"
+  | Both -> Format.pp_print_string ppf "a and b"
+  | Over_a c -> Format.fprintf ppf "a, %d cut over b" c
+  | Over_b -> Format.pp_print_string ppf "b"
+
+let sum_at = function
+  | Line -> Nx.Placement.partial line [ "x" ] []
+  | Both -> Nx.Placement.partial grid [ "a"; "b" ] []
+  | Over_a c -> Nx.Placement.partial grid [ "a" ] [ (c, [ "b" ]) ]
+  | Over_b -> Nx.Placement.partial grid [ "b" ] []
+
+let terms = function Line | Both -> 4 | Over_a _ | Over_b -> 2
+
+let term_of w d =
+  match w with Line | Both -> d | Over_a _ -> d / 2 | Over_b -> d mod 2
+
+(* The placement each device of a group reduces its own window at: one axis
+   cut over the summed mesh axes alone, every other cut kept. *)
+let scatter_at w a =
+  match w with
+  | Line -> Nx.Placement.split ~axis:a Mem.v
+  | Both -> Nx.Placement.mesh grid [ (a, [ "a"; "b" ]) ]
+  | Over_a c -> Nx.Placement.mesh grid [ (a, [ "a" ]); (c, [ "b" ]) ]
+  | Over_b -> Nx.Placement.mesh grid [ (a, [ "b" ]) ]
+
+(* A dtype a sum may have, its addition as one of its kernels' [Add],
+   equality of bits, any two NaNs alike, and whether an element is a NaN or
+   holds a negative zero. *)
+type summable =
+  | K : {
+      dt : ('v, 's) A.Dtype.t;
+      add : 'v -> 'v -> 'v;
+      same : 'v -> 'v -> bool;
+      nan : 'v -> bool;
+      negative_zero : 'v -> bool;
+      zero : 'v;  (** A negative zero where the dtype has one. *)
+      specials : 'v list;
+    }
+      -> summable
+
+let r32 x = Int32.float_of_bits (Int32.bits_of_float x)
+
+let same_float a b =
+  (Float.is_nan a && Float.is_nan b)
+  || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
+
+let neg_zero x = x = 0. && Float.sign_bit x
+let floats = [ -0.; 0.; 1.; -1.; Float.nan; Float.infinity; Float.neg_infinity ]
+
+let kinds =
+  [
+    K
+      {
+        dt = A.Dtype.Float32;
+        add = (fun a b -> r32 (a +. b));
+        same = same_float;
+        nan = Float.is_nan;
+        negative_zero = neg_zero;
+        zero = -0.;
+        specials = floats;
+      };
+    K
+      {
+        dt = A.Dtype.Float64;
+        add = ( +. );
+        same = same_float;
+        nan = Float.is_nan;
+        negative_zero = neg_zero;
+        zero = -0.;
+        specials = floats;
+      };
+    K
+      {
+        (* Computed in float32, then rounded once into bfloat16. *)
+        dt = A.Dtype.Bfloat16;
+        add = (fun a b -> A.Dtype.of_float A.Dtype.Bfloat16 (r32 (a +. b)));
+        same = same_float;
+        nan = Float.is_nan;
+        negative_zero = neg_zero;
+        zero = -0.;
+        specials = floats;
+      };
+    K
+      {
+        dt = A.Dtype.Float16;
+        add = (fun a b -> A.Dtype.of_float A.Dtype.Float16 (r32 (a +. b)));
+        same = same_float;
+        nan = Float.is_nan;
+        negative_zero = neg_zero;
+        zero = -0.;
+        specials = floats;
+      };
+    K
+      {
+        dt = A.Dtype.Complex64;
+        add =
+          (fun a b ->
+            { Complex.re = r32 (a.re +. b.re); im = r32 (a.im +. b.im) });
+        same = (fun a b -> same_float a.re b.re && same_float a.im b.im);
+        nan = (fun z -> Float.is_nan z.re || Float.is_nan z.im);
+        negative_zero = (fun z -> neg_zero z.re || neg_zero z.im);
+        zero = { Complex.re = -0.; im = -0. };
+        specials =
+          List.concat_map
+            (fun re -> List.map (fun im -> { Complex.re; im }) floats)
+            floats;
+      };
+    K
+      {
+        dt = A.Dtype.Int8;
+        add = (fun a b -> ((a + b + 128) land 255) - 128);
+        same = Int.equal;
+        nan = (fun _ -> false);
+        negative_zero = (fun _ -> false);
+        zero = 0;
+        specials = [ 0; 1; -1; 127; -128 ];
+      };
+  ]
+
+let pp_kind ppf (K k) = Format.pp_print_string ppf (A.Dtype.name k.dt)
+
+(* Values of [dt] at shape [s], from drawn bytes: every value of the format,
+   NaNs, signed zeros and infinities among them. *)
+let drawn (type v s) (dt : (v, s) A.Dtype.t) s : v array Gen.t =
+  let open Gen in
+  let n = Array.fold_left ( * ) 1 s in
+  let+ data = string_of ~size:(constant (A.Dtype.bytes dt n)) char in
+  A.to_array
+    (A.v dt
+       (A.Layout.contiguous (Iarray.of_array s))
+       (Rig.Buffer.of_string (if data = "" then "\000" else data)))
+
+let sum_shape =
+  Gen.array ~size:(Gen.int_range 1 3)
+    (Gen.frequency
+       [ (1, Gen.constant 0); (1, Gen.constant 1); (4, Gen.int_range 2 5) ])
+
+type summed =
+  | Summed : {
+      kind : summable;
+      dt : ('v, 's) A.Dtype.t;
+      add : 'v -> 'v -> 'v;
+      same : 'v -> 'v -> bool;
+      nan : 'v -> bool;
+      negative_zero : 'v -> bool;
+      w : sum;
+      shape : int array;
+      terms : 'v array array;
+    }
+      -> summed
+
+let summed_case =
+  let open Gen in
+  let* shape = sum_shape in
+  let rank = Array.length shape in
+  let* w =
+    of_list ~pp:pp_sum
+      ([ Line; Both; Over_b ] @ List.init rank (fun c -> Over_a c))
+  in
+  let* (K k as kind) = of_list ~pp:pp_kind kinds in
+  let t = terms w and n = Array.fold_left ( * ) 1 shape in
+  (* Each element's terms: drawn bits, values that break sums, or every
+     term a negative zero. *)
+  let one = frequency [ (1, of_list k.specials); (1, map (fun a -> a.(0)) (drawn k.dt [| 1 |])) ] in
+  let column =
+    frequency
+      [ (1, constant (Array.make t k.zero)); (5, array ~size:(constant t) one) ]
+  in
+  let+ columns = array ~size:(constant n) column in
+  let terms = Array.init t (fun j -> Array.map (fun c -> c.(j)) columns) in
+  Summed
+    {
+      kind;
+      dt = k.dt;
+      add = k.add;
+      same = k.same;
+      nan = k.nan;
+      negative_zero = k.negative_zero;
+      w;
+      shape;
+      terms;
+    }
+
+let pp_summed ppf (Summed c) =
+  Format.fprintf ppf "%a [%s] over %a" pp_kind c.kind
+    (String.concat "; " (Array.to_list (Array.map string_of_int c.shape)))
+    pp_sum c.w
+
+let summed_case = Gen.with_pp pp_summed summed_case
+
+(* The value at the partial [at w] whose term [k] is [terms.(k)]. *)
+let partial_value (type v s) w (dt : (v, s) A.Dtype.t) shape
+    (terms : v array array) =
+  let p = sum_at w in
+  let pieces = Nx.Prim.pieces p shape in
+  let array j =
+    let here, win = pieces.(j) in
+    let whole =
+      Nx.Repr.of_array Nx.Host.v
+        (A.of_array dt (Iarray.of_array shape) terms.(term_of w j))
+    in
+    let piece = Nx.Prim.eval ~by (Move (Slice (Iarray.of_array win), whole)) in
+    require_some (Nx.Repr.array (Nx.place here piece))
+  in
+  Nx.Repr.of_shards p (Iarray.init (Array.length pieces) array)
+
+(* The terms added in their order, from the first. *)
+let folded add terms =
+  Array.mapi
+    (fun i x ->
+      let acc = ref x in
+      for k = 1 to Array.length terms - 1 do
+        acc := add !acc terms.(k).(i)
+      done;
+      !acc)
+    terms.(0)
+
+let same_elements same a b =
+  equal int ~msg:"elements" (Array.length a) (Array.length b);
+  Array.iteri
+    (fun i x ->
+      if not (same x b.(i)) then failf "element %d differs from its sum" i)
+    a
+
+let law_closes (Summed c) =
+  let sums = folded c.add c.terms in
+  cover "a NaN sum" (Array.exists c.nan sums);
+  cover "a negative zero sum" (Array.exists c.negative_zero sums);
+  cover "no element" (Array.mem 0 c.shape);
+  cover "a cut beside the sum" (match c.w with Over_a _ -> true | _ -> false);
+  let x = partial_value c.w c.dt c.shape c.terms in
+  same_elements c.same sums (Nx.to_array x)
+
+let law_scatters (Summed c) =
+  let r = Array.length c.shape in
+  let free a = match c.w with Over_a c -> a <> c | _ -> true in
+  let axes = List.filter free (List.init r Fun.id) in
+  assume (axes <> []);
+  let a = List.hd (List.rev axes) in
+  cover "uneven windows" (c.shape.(a) mod terms c.w <> 0);
+  cover "an empty window" (c.shape.(a) < terms c.w);
+  let x = partial_value c.w c.dt c.shape c.terms in
+  let p = scatter_at c.w a in
+  let scattered = Nx.place p x in
+  let reduced = Nx.place p (Nx.place (Nx.Placement.closed (sum_at c.w)) x) in
+  equal (placement ()) ~msg:"where it lies" p (Nx.placement scattered);
+  let shards x = Iarray.to_array (Nx.Repr.shards x) in
+  Array.iter2
+    (fun a b -> same_elements c.same (A.to_array a) (A.to_array b))
+    (shards reduced) (shards scattered)
+
+let law_spreads (Summed c) =
+  let xs = c.terms.(0) in
+  let x =
+    Nx.Repr.of_array Nx.Host.v (A.of_array c.dt (Iarray.of_array c.shape) xs)
+  in
+  cover "a negative zero" (Array.exists c.negative_zero xs);
+  cover "a NaN" (Array.exists c.nan xs);
+  let y = Nx.place (sum_at c.w) x in
+  equal (placement ()) ~msg:"where it lies" (sum_at c.w) (Nx.placement y);
+  same_elements c.same c.terms.(0) (Nx.to_array y)
+
+(* [Nx.item] of a sum is its element closed: each index's terms added. *)
+let law_item_of_a_sum (Summed c) =
+  let x = partial_value c.w c.dt c.shape c.terms in
+  let sums = folded c.add c.terms in
+  Array.iteri
+    (fun i e ->
+      let index = unravel c.shape i in
+      if not (c.same e (Nx.item (Array.to_list index) x)) then
+        failf "element %d: item reads another value than its terms' sum" i)
+    sums
+
+let names = String.concat "; " (List.map Rig.name (Nx.rigs Mem.v))
+let pp_at p = Format.asprintf "%a" Nx.Placement.pp p
+
+let test_sum_placements () =
+  let p = sum_at Line in
+  equal (placement ()) ~msg:"one sum over a line or the whole mesh" p
+    (sum_at Both);
+  not_equal (placement ())
+    ~msg:"the summed axes taken as listed: b then a numbers the terms \
+          otherwise"
+    (sum_at Both)
+    (Nx.Placement.partial grid [ "b"; "a" ] []);
+  not_equal (placement ()) ~msg:"a sum is not the value whole" Mem.on p;
+  not_equal (placement ()) ~msg:"sums over two mesh axes" (sum_at Over_b)
+    (Nx.Placement.partial grid [ "a" ] []);
+  equal (placement ()) ~msg:"closed" Mem.on (Nx.Placement.closed p);
+  equal (placement ()) ~msg:"closed keeps the cut"
+    (Nx.Placement.mesh grid [ (0, [ "b" ]) ])
+    (Nx.Placement.closed (sum_at (Over_a 0)));
+  equal (placement ()) ~msg:"uncut" Mem.on (Nx.Placement.uncut p);
+  equal (placement ()) ~msg:"no sum" (Nx.Placement.mesh grid [])
+    (Nx.Placement.partial grid [] []);
+  equal string ~msg:"printed" ("partial [" ^ names ^ "]") (pp_at p);
+  equal string ~msg:"printed over a mesh"
+    ("mesh 2x2 [" ^ names ^ "] ~partial:0 ~axis:1/1")
+    (pp_at (sum_at (Over_a 1)));
+  let x = Nx.place p (Nx.ones Nx.float32 [| 3 |]) in
+  equal (placement ()) ~msg:"beside a sum" Mem.on (Nx.beside x)
+
+let test_sum_refusals () =
+  let x = Nx.place (sum_at Line) (Nx.ones Nx.float32 [| 3 |]) in
+  raises
+    (Invalid_argument
+       ("Nx.exp: operand 0 lies at partial [" ^ names
+      ^ "], a sum the operation does not keep; Nx.place (Placement.on s) x"))
+    (fun () -> Nx.exp x);
+  invalid ~by:"Nx.place" (fun () ->
+      Nx.place (sum_at Line) (Nx.ones Nx.int4 [| 3 |]));
+  invalid ~by:"Nx.place" (fun () ->
+      Nx.place (sum_at Line) (Nx.ones Nx.bool [| 3 |]));
+  invalid ~by:"Nx.Placement.partial" (fun () ->
+      Nx.Placement.partial grid [ "a" ] [ (0, [ "a" ]) ])
+
+let sums =
+  group "sums"
+    [
+      prop "reading a partial value adds its terms in their order"
+        summed_case law_closes;
+      prop "a reduce-scatter equals the all-reduce then placed, bit for bit, NaNs alike"
+        summed_case law_scatters;
+      prop "a value placed partial closes to its bits" summed_case law_spreads;
+      prop "item reads a sum's element, its terms added" summed_case
+        law_item_of_a_sum;
+      test "partial placements" test_sum_placements;
+      test "what no sum holds raises" test_sum_refusals;
+    ]
+
 let () =
   exit
     (run "nx place"
-       [ laws; items; reshapes; units; sharing; refusals; leading; held ])
+       [ laws; items; reshapes; units; sharing; refusals; leading; held; sums ])

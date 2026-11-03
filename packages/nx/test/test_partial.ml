@@ -2404,6 +2404,7 @@ let contracted (type v s w q d) acc (out : (w, q) D.t) batch contracting
          a_scale = None;
          b_scale = None;
          segments = None;
+         sum = false;
        })
 
 (* One kernel library's sets of memory devices: one, three and four, and a

@@ -4,11 +4,15 @@
   ---------------------------------------------------------------------------*)
 
 (* A cut names the value's axis and the grid axes over which it is cut, major
-   first. A [Grid] is in normal form: at least two devices, extents of at least
-   2, no two adjacent grid axes that could merge, and only cuts that name a grid
-   axis, sorted by value axis. *)
+   first. The grid axes over which the value is a sum are a cut of the axis
+   [terms], below every value axis: each device's tile along it is the number
+   of the term it holds. A [Grid] is in normal form: at least two devices,
+   extents of at least 2, no two adjacent grid axes that could merge, and only
+   cuts that name a grid axis, sorted by value axis, the sums first. *)
 
 type cut = { axis : int; over : int list }
+
+let terms = -1
 
 type t =
   | One of int
@@ -70,14 +74,15 @@ let rec normal devices extents cuts =
 
 let distinct l = List.length (List.sort_uniq Int.compare l) = List.length l
 
-let v ~devices ~extents ~cuts =
+let v ~devices ~extents ~cuts ~sums =
   let devices = Array.to_list devices and extents = Array.to_list extents in
   let cuts =
     Array.to_list
       (Array.map (fun (axis, over) -> (axis, Array.to_list over)) cuts)
   in
+  let sums = Array.to_list sums in
   let rank = List.length extents in
-  let axes = List.map fst cuts and over = List.concat_map snd cuts in
+  let axes = List.map fst cuts and over = sums @ List.concat_map snd cuts in
   if List.exists (fun e -> e < 1) extents then Error "an extent is not positive"
   else if List.fold_left ( * ) 1 extents <> List.length devices then
     Error "the extents do not multiply to the number of devices"
@@ -88,9 +93,10 @@ let v ~devices ~extents ~cuts =
   else if List.exists (fun g -> g < 0 || g >= rank) over then
     Error "a cut names a grid axis out of range"
   else
+    let sums = { axis = terms; over = sums } in
     Ok
       (normal devices extents
-         (List.map (fun (axis, over) -> { axis; over }) cuts))
+         (sums :: List.map (fun (axis, over) -> { axis; over }) cuts))
 
 let devices = function One k -> [| k |] | Grid g -> Array.of_list g.devices
 let count = function One _ -> 1 | Grid g -> List.length g.devices
@@ -108,12 +114,24 @@ let position g k =
 let tiles extents c =
   List.fold_left (fun n g -> n * List.nth extents g) 1 c.over
 
-let is_cut = function One _ -> false | Grid { cuts; _ } -> cuts <> []
+let rec has_cut = function
+  | [] -> false
+  | c :: rest -> c.axis <> terms || has_cut rest
+
+let is_cut = function One _ -> false | Grid { cuts; _ } -> has_cut cuts
+
+let is_partial = function
+  | One _ -> false
+  | Grid { cuts; _ } -> List.exists (fun c -> c.axis = terms) cuts
 
 let cuts = function
   | One _ -> [||]
   | Grid { extents; cuts; _ } ->
-      Array.of_list (List.map (fun c -> (c.axis, tiles extents c)) cuts)
+      Array.of_list
+        (List.filter_map
+           (fun c ->
+             if c.axis = terms then None else Some (c.axis, tiles extents c))
+           cuts)
 
 (* For each cut, the axis, its tile count and the tile the [i]th device
    holds. *)
@@ -150,6 +168,12 @@ let tile n t j =
     step = 1;
   }
 
+let term g i =
+  check_position g i;
+  match List.find_opt (fun (axis, _, _) -> axis = terms) (tile_index g i) with
+  | Some (_, _, j) -> j
+  | None -> 0
+
 let window g shape i =
   check_position g i;
   let rank = Array.length shape in
@@ -158,6 +182,7 @@ let window g shape i =
   in
   let rec cut = function
     | [] -> Ok w
+    | (axis, _, _) :: rest when axis = terms -> cut rest
     | (axis, t, j) :: rest ->
         if axis >= rank then
           Error
@@ -172,7 +197,8 @@ let window g shape i =
 let map_axes f = function
   | One _ as g -> g
   | Grid g ->
-      let cuts = List.map (fun c -> { c with axis = f c.axis }) g.cuts in
+      let renumber c = if c.axis = terms then c else { c with axis = f c.axis } in
+      let cuts = List.map renumber g.cuts in
       Grid
         { g with cuts = List.sort (fun a b -> Int.compare a.axis b.axis) cuts }
 
@@ -181,6 +207,41 @@ let uncut g ~axis =
   | One _ -> g
   | Grid { devices; extents; cuts } ->
       normal devices extents (List.filter (fun c -> c.axis <> axis) cuts)
+
+let closed g = uncut g ~axis:terms
+
+(* [g] with the grid axes [over] added after its sums, so that the terms
+   are numbered as the tiles of the cut [over] undoes: in C order of their
+   windows' first indices. *)
+let summing devices extents cuts over =
+  let sums, rest = List.partition (fun c -> c.axis = terms) cuts in
+  let held = List.concat_map (fun c -> c.over) sums in
+  let over = held @ over in
+  normal devices extents ({ axis = terms; over } :: rest)
+
+let sum g ~axis =
+  match g with
+  | One _ -> g
+  | Grid { devices; extents; cuts } -> (
+      match List.find_opt (fun c -> c.axis = axis) cuts with
+      | None -> g
+      | Some c ->
+          summing devices extents
+            (List.filter (fun c -> c.axis <> axis) cuts)
+            c.over)
+
+let unsum g ~axis =
+  match g with
+  | One _ -> Ok g
+  | Grid { devices; extents; cuts } -> (
+      if List.exists (fun c -> c.axis = axis) cuts then
+        Error (Printf.sprintf "axis %d is cut already" axis)
+      else
+        match List.find_opt (fun c -> c.axis = terms) cuts with
+        | None -> Ok g
+        | Some s ->
+            let rest = List.filter (fun c -> c.axis <> terms) cuts in
+            Ok (normal devices extents ({ s with axis } :: rest)))
 
 (* The running products of [extents]: [2; 3; 2] gives [2; 6; 12]. *)
 let products extents =
@@ -303,6 +364,8 @@ let equal g g' =
                 | None -> false)
               d)
 
+let sums g = over g terms
+
 let pp pp_device ppf g =
   let list ppf ds =
     Format.pp_print_list
@@ -313,6 +376,9 @@ let pp pp_device ppf g =
   | One k -> pp_device ppf k
   | Grid { devices; extents = [ _ ]; cuts = [] } ->
       Format.fprintf ppf "on [%a]" list devices
+  | Grid { devices; extents = [ _ ]; cuts = [ { axis; _ } ] } when axis = terms
+    ->
+      Format.fprintf ppf "partial [%a]" list devices
   | Grid { devices; extents = [ _ ]; cuts = [ { axis; _ } ] } ->
       Format.fprintf ppf "split ~axis:%d [%a]" axis list devices
   | Grid { devices; extents; cuts } ->
@@ -323,5 +389,8 @@ let pp pp_device ppf g =
       in
       Format.fprintf ppf "mesh %a [%a]" (ints "x") extents list devices;
       List.iter
-        (fun c -> Format.fprintf ppf " ~axis:%d/%a" c.axis (ints ",") c.over)
+        (fun c ->
+          if c.axis = terms then
+            Format.fprintf ppf " ~partial:%a" (ints ",") c.over
+          else Format.fprintf ppf " ~axis:%d/%a" c.axis (ints ",") c.over)
         cuts

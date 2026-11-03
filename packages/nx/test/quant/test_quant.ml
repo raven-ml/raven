@@ -2172,6 +2172,35 @@ let structure =
           equal bool true (List.for_all2 ( == ) (parts w) (parts w')));
     ]
 
+(* Asked for their sum, [apply] and [apply_experts] over a weight cut along
+   [k], or the experts, keep it; closed, it has the bits of the product
+   closed by default at float32, whose terms round nothing. *)
+let test_asked_sums () =
+  let sum = Nx.Placement.partial (Nx.Mesh.v Mem.v [ ("x", 4) ]) [ "x" ] [] in
+  let check ~msg closed asked =
+    equal (placement ()) ~msg:(msg ^ ": where") sum (Nx.placement asked);
+    let asked = Nx.place (Nx.Placement.closed sum) asked in
+    equal ~msg (array int64) (bits closed) (bits asked)
+  in
+  List.iter
+    (fun format ->
+      (* Four blocks of every format's along [k], one per device. *)
+      let w = random_weight ~format [| 12; 1024 |] in
+      let wp = Nx_quant.place (Mem.split ~axis:1) w in
+      let x = Nx.place Mem.on (random_floats [| 3; 1024 |]) in
+      check ~msg:("apply, " ^ format_name format) (Nx_quant.apply wp x)
+        (Nx_quant.apply ~sum:true wp x))
+    formats;
+  List.iter
+    (fun format ->
+      let w, ids, x = experts_of format in
+      let wp = Nx_quant.place (Mem.split ~axis:0) w in
+      let on v = Nx.place Mem.on v in
+      check ~msg:("apply_experts, " ^ format_name format)
+        (Nx_quant.apply_experts ~ids:(on ids) wp (on x))
+        (Nx_quant.apply_experts ~sum:true ~ids:(on ids) wp (on x)))
+    formats
+
 let () =
   exit
     (run "nx quant"
@@ -2185,4 +2214,6 @@ let () =
          placements;
          expert_products;
          structure;
+         group "sums"
+           [ test "a product asked for its sum keeps it" test_asked_sums ];
        ])

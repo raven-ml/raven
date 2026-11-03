@@ -40,7 +40,8 @@
   test_partial
   test_partition
   test_windows
-  test_stack)
+  test_stack
+  test_sums)
  (modules
   test_devices
   test_values
@@ -80,7 +81,8 @@
   test_partial
   test_partition
   test_windows
-  test_stack)
+  test_stack
+  test_sums)
  (libraries
   nx
   nx_array

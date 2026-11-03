@@ -7,12 +7,18 @@
 
     A grid is one device, or distinct devices in row-major order over the grid's
     extents, with, for each cut axis of a value, the grid axes that cut it,
-    major first. A grid axis that no cut names holds copies. Devices are
-    positions in a set. A grid is kept in normal form, in which extents are at
-    least 2, adjacent grid axes merge when no cut names either or one cut
-    names both in order, and a grid of one device is that device. So two
-    grids that give each device the same window are equal. A grid is
-    immutable, and any domain reads it.
+    major first, and the grid axes over which the value is a {e sum}. A grid
+    axis that neither names holds copies. Along summed grid axes, each device
+    holds a {e term}: a value of the whole's shape, cut as the grid cuts it,
+    and the value is the sum of the terms of each {e group}, the devices that
+    differ only along the summed axes. The terms of a group are numbered in
+    row-major order over the summed axes in the order the grid lists them,
+    the first major.
+    Devices are positions in a set. A grid is kept in normal form, in which
+    extents are at least 2, adjacent grid axes merge when neither is named or
+    one cut, or the sums, names both in order, and a grid of one device is
+    that device. So two grids that give each device the same window and the
+    same term are equal. A grid is immutable, and any domain reads it.
 
     Nothing of the engine lies below this module; {!Devices} lays a grid
     over a set's devices. *)
@@ -26,13 +32,15 @@ val v :
   devices:int array ->
   extents:int array ->
   cuts:(int * int array) array ->
+  sums:int array ->
   (t, string) result
-(** [v ~devices ~extents ~cuts] is the grid over [devices], in row-major order
-    over [extents], each [(axis, over)] of [cuts] cutting the value's [axis]
-    over the grid axes [over], major first. It is [Error] unless the extents are
-    positive and multiply to the number of devices, the devices are distinct and
-    not negative, and the cut axes and the grid axes they name are distinct and
-    in range. *)
+(** [v ~devices ~extents ~cuts ~sums] is the grid over [devices], in row-major
+    order over [extents], each [(axis, over)] of [cuts] cutting the value's
+    [axis] over the grid axes [over], major first, the value a sum over the
+    grid axes [sums], listed major first. It is [Error] unless the extents are positive and
+    multiply to the number of devices, the devices are distinct and not
+    negative, and the cut axes and the grid axes the cuts and [sums] name are
+    distinct and in range. *)
 
 val devices : t -> int array
 (** [devices g] is a fresh array of [g]'s devices in row-major order. *)
@@ -52,6 +60,20 @@ val cuts : t -> (int * int) array
 
 val is_cut : t -> bool
 (** [is_cut g] is [cuts g <> [||]]. It allocates nothing. *)
+
+val is_partial : t -> bool
+(** [is_partial g] is [sums g <> [||]]. *)
+
+val sums : t -> int array
+(** [sums g] is a fresh array of the grid axes over which [g]'s value is a
+    sum, major first, numbered as {!extents} orders them: [[||]] where it is
+    not partial. *)
+
+val term : t -> int -> int
+(** [term g i] is the number of the term the [i]th device of [devices g]
+    holds within its group: [0] where [g] is not partial.
+
+    Raises [Invalid_argument] if [i] is not a position of [devices g]. *)
 
 val window : t -> int array -> int -> (Nx_array.Move.range array, string) result
 (** [window g shape i] is the window of a value of [shape] that the [i]th device
@@ -74,6 +96,23 @@ val uncut : t -> axis:int -> t
 (** [uncut g ~axis] is [g] with the value's [axis] whole on every device: the
     grid axes that cut it hold copies. If [g] does not cut [axis], it is a
     grid {!equal} to [g]. *)
+
+val closed : t -> t
+(** [closed g] is [g] where the value is no sum: the grid axes it summed over
+    hold copies. If [g] is not partial, it is a grid {!equal} to [g]. *)
+
+val sum : t -> axis:int -> t
+(** [sum g ~axis] is [g] with the value's [axis] whole on every device and
+    the grid axes that cut it summed after any [g] sums already, its terms
+    numbered as the tiles of [axis] were: [g] for a value that a contraction
+    over [axis] made. If [g] does not cut [axis], it is a grid {!equal} to
+    [g]. *)
+
+val unsum : t -> axis:int -> (t, string) result
+(** [unsum g ~axis] is [g] with the value's [axis] cut over the grid axes
+    [g] sums over, in their order, and no sum: each device holds tile
+    {!term}[ g i] of [axis]. It is a grid {!equal} to [g] where [g] is not
+    partial, and [Error] where [g] cuts [axis]. *)
 
 val cut_like :
   t -> like:t -> axes:int list -> axis:int -> (t, string) result
@@ -112,6 +151,7 @@ val equal : t -> t -> bool
 
 val pp : (Format.formatter -> int -> unit) -> Format.formatter -> t -> unit
 (** [pp pp_device] formats one device as [pp_device] does, a grid of one axis as
-    [on [d0; d1]] or [split ~axis:a [d0; d1]], and any other as
-    [mesh E1xE2 [d0; …]] followed by [~axis:a/g1,g2] for each cut axis and the
-    grid axes that cut it. *)
+    [on [d0; d1]], [split ~axis:a [d0; d1]] or [partial [d0; d1]], and any
+    other as [mesh E1xE2 [d0; …]] followed by [~partial:g1,g2] for the grid
+    axes it sums over and [~axis:a/g1,g2] for each cut axis and the grid axes
+    that cut it. *)

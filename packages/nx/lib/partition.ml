@@ -117,10 +117,14 @@ let sources_by set ks one =
     done;
   src
 
+(* Two devices of [g] hold one value where they hold one window of one term. *)
+let alike g i j = Grid.term g i = Grid.term g j
+
 let sources ~by p shape =
-  let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
+  let g = Devices.grid p in
+  let set = Devices.set p and ks = Grid.devices g in
   let w j = Devices.window ~by p shape j in
-  sources_by set ks (fun i j -> same (w i) (w j))
+  sources_by set ks (fun i j -> same (w i) (w j) && alike g i j)
 
 let copy e here x = e.bring here [ (x, Array.map Route.full (Prim.shape x)) ]
 
@@ -144,6 +148,25 @@ let read_of (type v s d) e ~by (x : (v, s, d) Value.t) shape k w :
 
 let read e ~by x k w = read_of e ~by x (Prim.shape x) k w
 
+(* Sums *)
+
+let identity (type v s d) e ~by (here : d Devices.placement)
+    (dt : (v, s) Value.dtype) shape : (v, s, d) Value.t =
+  let module D = Nx_array.Dtype in
+  let module E = Nx_kernel.Prog.E in
+  let zero = E.const dt (D.zero dt) in
+  let x =
+    match D.kind dt with
+    | D.Float | D.Complex -> E.neg zero
+    | D.Signed | D.Unsigned | D.Boolean -> zero
+  in
+  let layout = L.contiguous (Iarray.of_array shape) in
+  let prog = Nx_kernel.Prog.of_exprs ~ins:[||] [| E.any x |] in
+  fst
+    (e.run ~by ~origin:Prim.no_origin here [| layout |]
+       (Value.Map
+          { layout; prog; outs = Value.[ dt ]; loads = [||]; at = Some here }))
+
 (* Windows *)
 
 let is_local (route : unit Route.t) op =
@@ -165,6 +188,20 @@ let at_device : type r. unit Devices.placement -> r Value.prim -> r Value.prim
 let shape_at layouts i =
   let l = if i < Array.length layouts then layouts.(i) else layouts.(0) in
   Iarray.to_array (L.shape l)
+
+(* [op] as the device [here], which holds no group's first term of its
+   sum, computes it ({!Prim.off_first}): a contraction's [init] that is no
+   sum joins on the first device alone, the others starting from the
+   identity. *)
+let off_first : type r.
+    engine -> by:string -> unit Devices.placement -> r Value.prim ->
+    (int -> bool) -> r Value.prim =
+ fun e ~by here op summed ->
+  match op with
+  | Value.Contract ({ init = Some i; _ } as c) when not (summed 2) ->
+      let zero = identity e ~by here (Prim.dtype i) (Prim.shape i) in
+      Value.Contract { c with init = Some zero }
+  | _ -> Prim.off_first op summed
 
 let windows : type r d.
     engine ->
@@ -215,6 +252,21 @@ let windows : type r d.
         in
         let ws = Array.map windows layouts in
         let holds j (w : M.range array array) = not (Route.empty w.(j)) in
+        (* A device that holds no group's first term of a sum adds no
+           whole operand ({!Prim.off_first}). *)
+        let g = Devices.grid p in
+        let summed =
+          if not (Grid.is_partial g) then None
+          else
+            let (Prim.Operands xs) = Prim.operands op in
+            let ps =
+              Array.of_list
+                (List.map
+                   (fun (Value.Any x) -> Devices.partial (Prim.placement x))
+                   xs)
+            in
+            Some (fun i -> ps.(i))
+        in
         let computes j = j = 0 || Array.exists (holds j) ws in
         let local j =
           let k = devices.(j) and w = ws.(0).(j) in
@@ -224,6 +276,11 @@ let windows : type r d.
           in
           let here = Devices.one set k in
           let op, origin = Prim.local (Prim.mapi view op) w in
+          let op =
+            match summed with
+            | Some summed when Grid.term g j <> 0 -> off_first e ~by here op summed
+            | Some _ | None -> op
+          in
           let contiguous w = L.contiguous (Route.extents w.(j)) in
           let layouts = Array.map contiguous ws in
           let into =
@@ -233,7 +290,8 @@ let windows : type r d.
         in
         let src =
           sources_by set devices (fun i j ->
-              Array.for_all (fun w -> same w.(i) w.(j)) ws)
+              Array.for_all (fun w -> same w.(i) w.(j)) ws
+              && alike (Devices.grid p) i j)
         in
         let rs =
           Array.mapi
@@ -311,6 +369,7 @@ type ('v, 's, 'd) held = {
 
 let held (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) held =
   let at = Prim.placement x and shape = Prim.shape x in
+  if Devices.partial at then invalid_arg "Partition.held: a sum's terms";
   let n = Grid.count (Devices.grid at) in
   let src = Array.init n (fun i -> Devices.window ~by at shape i) in
   { x; src; pieces = Array.make n x }
@@ -324,6 +383,10 @@ let take eng h here w =
 let place (type v s d e) eng ~by (p : e Devices.placement)
     (x : (v, s, d) Value.t) : (v, s, e) Value.t =
   let at = Prim.placement x and shape = Prim.shape x and dt = Prim.dtype x in
+  (* A device's piece of a sum is its own term: moving it elsewhere would
+     read one term as the value. *)
+  if Devices.partial at && not (Devices.equal at p) then
+    invalid_arg "Partition.place: a sum placed elsewhere, which closes";
   let ks = Grid.devices (Devices.grid at) in
   let n = Array.length ks in
   if Devices.equal at p then begin

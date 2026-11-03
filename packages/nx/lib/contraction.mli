@@ -5,12 +5,15 @@
 
 (** Contractions: two-operand patterns and matrix products lowered to one
     {!Value.Contract} between movements, and patterns of more operands to a
-    tree of them. Each function raises [Invalid_argument] naming [by] as
+    tree of them. With [sum], a contraction over cut summed axes is the
+    devices' terms ({!Eval.contract}); a tree's and a chain's inner
+    products close. Each function raises [Invalid_argument] naming [by] as
     [Nx.contract], [Nx.einsum], [Nx.matmul] and [Nx.dot] state. This module
     lies above {!Pattern}, {!Donate} and {!Eval}. *)
 
 val contract :
   by:string ->
+  ?sum:bool ->
   ?sizes:(string * int) list ->
   ?acc:Nx_array.Dtype.any ->
   ?init:('v, 's, 'd) Value.t ->
@@ -22,12 +25,14 @@ val contract :
 
 val matmul :
   by:string ->
+  ?sum:bool ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t
 
 val along :
   by:string ->
+  ?sum:bool ->
   batch:(int * int) iarray ->
   contracting:(int * int) iarray ->
   ('v, 's, 'd) Value.t ->
@@ -41,12 +46,14 @@ val along :
 
 val dot :
   by:string ->
+  ?sum:bool ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t
 
 val einsum :
   by:string ->
+  ?sum:bool ->
   ?sizes:(string * int) list ->
   ?acc:Nx_array.Dtype.any ->
   Pattern.t ->

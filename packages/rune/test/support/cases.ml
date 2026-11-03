@@ -332,6 +332,7 @@ let contract_of x ~a ~b ~batch ~contracting ?a_scale ?b_scale ?segments () =
          a_scale;
          b_scale;
          segments;
+         sum = false;
        })
 
 let offsets = Nx.create Nx.int64 [| 3 |] [| 0L; 1L; 4L |]

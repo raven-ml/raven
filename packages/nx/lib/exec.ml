@@ -655,7 +655,7 @@ let value : type v s d e.
       invalid_arg "Exec.value: a donated value is placed as its consumer"
   | Value.Array { at; a; _ } when Grid.count (Devices.grid p) = 1 ->
       to_one at a p
-  | Value.Array _ | Value.Shards _ -> Partition.place eager ~by p x
+  | Value.Array _ | Value.Shards _ -> Partial.place eager ~by p x
 
 let place : type v s d e.
     by:string -> e Devices.placement -> (v, s, d) Value.t -> (v, s, e) Value.t

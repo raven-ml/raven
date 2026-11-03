@@ -15,7 +15,8 @@
     of its window of the results. Each device computes a {e partial}, the
     fold of the terms its operands' windows hold, and the partials
     {e close}: they move between devices and combine into the results at
-    the route's result. Every step is an operation on one device, one
+    the route's result, but a contraction's asked for its sum
+    ({!section-sums}). Every step is an operation on one device, one
     computed by windows ({!Partition.windows}) or one move
     ({!Partition.place}), each on the engine the caller gives, so a fold is
     a partition. A partial, a part or a window of the results that devices
@@ -191,6 +192,16 @@
     at most [K], as each tile holding terms holds a product. A term passing
     [k] additions is within [γ(2k)] of itself (Higham, Lemma 3.1).
 
+    A contraction asked for its sum ([sum], {!Value.Contract}) does not
+    close: each device's partial, from [init] on the device whose term is
+    its group's first ({!Grid.term}) and from {!Partition.identity} on the
+    others where there is an [init], so that [init] joins the sum once, is
+    its term, rounded once into the result's dtype ({!section-sums}). Its
+    terms are numbered as the tiles of its folded axes, in C order of their
+    first indices ({!Grid.sum}). Rounded into a dtype of unit roundoff [v],
+    each term errs by [v] more, and a closing of [t] terms adds them there,
+    [t - 1] additions: [γ(t, v) Σ|term|] more (Higham, §4.2 and Lemma 3.3).
+
     {1:scans Scans}
 
     A [Scan] closes per group of its results' devices that hold one window
@@ -267,6 +278,34 @@
     included; a NaN stays a NaN whose sign and payload this module does
     not state.
 
+    {1:sums Sums}
+
+    A value at a partial placement ({!Grid.sums}) is a {e sum}: each
+    device holds a term, its window of a value of the whole's shape, and
+    the value is the sum of its group's terms. Its terms are values of its
+    dtype, a float, a complex or an integer that is its own carrier, and add
+    as its own additions do ({!Prim.summable}). {!place} closes a sum
+    at a placement that is none as a reduction closes: its terms are the
+    slots, stacked in term order along one leading axis cut over the summed
+    grid axes, and each device of a group computes its part piece by piece,
+    the left fold of the slots in term order by one map of [Add] of the
+    dtype, from the first term and from no [+0]. Each element so has the same
+    bits whichever device adds it, but a NaN's sign and payload. Where the
+    target cuts one axis over the summed grid axes alone, a
+    {e reduce-scatter}, it is the parts: each device computes its own
+    window. Otherwise the parts cut, over the summed grid axes, the first
+    axis that the placement closed ({!Grid.closed}) keeps whole and that
+    holds an element per term of a group, or are that placement where no
+    axis does; each device of it gathers its window from the parts, an
+    {e all-reduce}, and the result moves to the target ({!Partition.place}).
+
+    A value that is no sum placed at a sum holds, on each device whose term
+    is the first of its group, its window placed at the sum's placement
+    closed, and on every other device a map of no loads of the additive
+    identity, [-0] for a float and a complex number's parts and [0] for an
+    integer, so that closing it gives its bits, NaNs as a class. A sum placed
+    at another sum closes first.
+
     {1:memory Memory}
 
     A device's {e partials} are its slots: one in the carrier, for an [Arg]
@@ -275,11 +314,13 @@
     beside the operands, the larger of its partials and the results, its
     part of the results and, at a time, at most [C] bytes of one piece's
     slots and [m] of the piece's results, of at most [C / s] bytes each:
-    [m = 1] for a [Sum], [Prod], [Max], [Min] or [Logsumexp], a gather and
-    a contraction without [init], [m = 2] for an [Arg], [Moments], a
-    contraction with [init] and a scatter's [Add], which finish a piece by
-    a second map. A piece holds more than [C] only where the slots of one
-    element do, or where a part of a dtype narrower than a byte on a device
+    [m = 1] for a [Sum], [Prod], [Max], [Min] or [Logsumexp], a gather, a
+    contraction without [init] and a sum's closing, whose slots are the
+    sum's terms, [m = 2] for an [Arg], [Moments], a contraction with [init]
+    and a scatter's [Add], which finish a piece by a second map. A
+    contraction asked for its sum holds its term, beside its operands, and
+    one piece's sum at a time. A piece holds more than [C] only where the
+    slots of one element do, or where a part of a dtype narrower than a byte on a device
     whose memory the host does not address is one piece. Its partials go
     before the result's windows are gathered. So a float32 sum whose result
     of [r] bytes is whole on [N] devices, each holding a slot of [r] bytes,
@@ -300,7 +341,10 @@
     and no part of its positions. A [Scatter] into a cut target moves
     nothing; an [Add] of cut updates moves its slots as a [Reduce] of one
     reduction does, and no part of its positions or updates. No part of an
-    operand moves.
+    operand moves. A contraction asked for its sum moves nothing. A sum's
+    closing moves its terms as a [Reduce] of one reduction moves its slots,
+    every device's term holding terms; a reduce-scatter gathers no part, so
+    each device receives [(N - 1) / N] of its window of the sum.
 
     A [Reduce] of [k] reductions runs [k] loops over each device's loads,
     [Moments] two over its terms, laid out once where they are not a load.
@@ -316,6 +360,18 @@
     casting the result. A [Gather] runs on each
     device one map shifting its positions where its tile starts past [0],
     one gather and one bitcast, and one bitcast over the results. *)
+
+val place :
+  Partition.engine ->
+  by:string ->
+  'e Devices.placement ->
+  ('v, 's, 'd) Value.t ->
+  ('v, 's, 'e) Value.t
+(** [place e ~by p x] is {!Partition.place}[ e ~by p x] where neither [x]'s
+    placement nor [p] is a sum, as {!section-sums} states otherwise.
+
+    Raises what {!Partition.place} raises, and [Invalid_argument] naming
+    [by] for a sum [p] of a dtype no sum has. *)
 
 val run : Partition.engine -> by:string -> unit Route.t -> 'r Value.prim -> 'r
 (** [run e ~by route op] is [op], its operands lying where [route], its

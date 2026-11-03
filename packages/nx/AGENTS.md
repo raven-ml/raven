@@ -25,7 +25,9 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
   outside. nx's docs name rune's functions only as examples.
 - An operation computes where its operands lie and moves none of them.
   `Nx.place` moves a value; a mismatch raises naming the `place` to write.
-  A fold over a cut axis moves only its partials.
+  A fold over a cut axis moves only its partials; a product asked for its
+  sum (`~sum:true`) leaves one that `Nx.place` closes, and an operation not
+  linear in a sum raises.
 - A set's kernels are fixed when `Nx.devices` mints it: nx.cpu for
   host-run devices, else none unless `~kernels` names a library. On a set
   without kernels a creation is made on the host and placed; every other

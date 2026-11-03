@@ -21,7 +21,8 @@
     compute by partials ({!Partial}), where every operand that holds that
     axis is cut alike along it; an axis of its blocks is cut alike in tiles
     that divide both extents. Grid axes that cut a reduced axis hold copies
-    of the results. A scatter along a cut axis computes by partials too.
+    of the results, or, for a contraction that asks for its sum, sum them
+    ({!type-terms}). A scatter along a cut axis computes by partials too.
 
     The cuts join in operand order. The first operand gives its cuts, and
     each next one adds its own where they join the union so far
@@ -216,6 +217,24 @@ type compute =
           device its own window from the updates whose positions fall in it
           ({!Partial}). *)
 
+(** The type for what an operation makes of operands that are sums
+    ({!Grid.sums}). *)
+type terms =
+  | Closes
+      (** It raises for a partial operand, naming the [Nx.place] that closes
+          it where it lies. *)
+  | Keeps
+      (** It is linear in its partial operands, which are sums over the
+          same groups: its results are sums over those groups, each device
+          computing them from its terms. An operand that is no sum is read
+          at the union without its sum. Where the devices would compute by
+          partials, a partial operand raises as for [Closes]. *)
+  | Sums
+      (** A contraction that asks for its sum, or whose [a] or [b] is one:
+          as [Keeps], but the grid axes that cut an axis it reduces leave
+          the results a sum over them too, in place of copies, each device
+          computing its term from its tiles ({!Partial}). *)
+
 type 'd t = {
   operands : 'd Devices.placement array;
       (** Where each operand is read, in the operation's operand order: its
@@ -230,14 +249,16 @@ type 'd t = {
 val route :
   by:string ->
   ?positions:int list ->
+  ?terms:terms ->
   rule ->
   'd Devices.placement array ->
   int array array ->
   'd t
-(** [route ~by ~positions r ps shapes] routes an operation of rule [r]
-    over operands at [ps] of [shapes], as the module's preamble states, the
-    operands numbered in [positions] (default none) holding positions the
-    others are read at. [ps] and [shapes] are of one positive length, and
+(** [route ~by ~positions ~terms r ps shapes] routes an operation of rule
+    [r] over operands at [ps] of [shapes], as the module's preamble states,
+    the operands numbered in [positions] (default none) holding positions
+    the others are read at, and its partial operands as [terms] (default
+    [Closes]) says. [ps] and [shapes] are of one positive length, and
     [r] names each axis of each operand. Operands all at one placement are
     read there and their results lie there, where it cuts no axis or [r] is
     [Elementwise]. A route reads an operand at a placement other than its
@@ -249,8 +270,10 @@ val route :
     its own.
 
     Raises [Invalid_argument] naming [by] if an operand's placement cuts an
-    axis its shape lacks ({!Grid.window}), and with the preamble's message
-    where an operand cannot be read where it lies. *)
+    axis its shape lacks ({!Grid.window}), with the preamble's message
+    where an operand cannot be read where it lies, and naming the
+    [Nx.place] that closes a partial operand where [terms] does not keep it
+    or where two partial operands are sums over other groups. *)
 
 val gathers : 'd t -> int -> 'e Devices.placement -> int array -> bool
 (** [gathers r i p s] is [true] iff [r] reads its operand [i], at [p] of

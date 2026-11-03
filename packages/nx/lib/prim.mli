@@ -267,6 +267,34 @@ val layouts : by:string -> 'r prim -> Nx_array.Layout.t array
     one included, and where a map of no loads names a placement that cuts an
     axis its shape lacks ({!Devices.window}). *)
 
+val terms : 'r prim -> (int -> bool) -> Route.terms
+(** [terms op summed] is what [op] makes of its operands that [summed] names
+    by their position in {!val-operands}, as sums ({!Route.terms}): [Keeps]
+    for a map, and a reduction of one [Sum], whose programs are linear in
+    them, and whose padded loads read none; for a gather whose positions are
+    no sum; for a copy and a movement. A program is linear in an operand
+    where each node that reads it is [Add], [Sub], [Neg] or [Copy] of nodes
+    that are, [Mul] of one by a node that is not, [Fdiv] of one by a node
+    that is not, or [Where] of nodes that are by a condition that is not.
+    [Sums] for a contraction whose [a] or [b] alone is a sum, or neither
+    where it asks for its sum ([sum]). [Closes] for any other. *)
+
+val summable : by:string -> ('v, 's) dtype -> unit
+(** [summable ~by dt] raises [Invalid_argument] naming [by] unless a value
+    of [dt] may be a sum: a float, a complex, or an integer that is its own
+    carrier ({!Nx_kernel.carrier}), of 8 bits or more. Its terms are values
+    of [dt] that add as its own additions do. *)
+
+val off_first : 'r prim -> (int -> bool) -> 'r prim
+(** [off_first op summed] is [op], whose {!terms} for [summed] is [Keeps], as
+    a device that holds no group's first term computes it: each operand of
+    an [Add] or a [Sub] of its programs that reads no sum beside one that
+    does replaced by the additive identity, [-0] for an addend, [+0] for a
+    subtrahend, [0] for an integer, and each case of a [Where] and each
+    output that reads no sum replaced so as an addend. A whole operand so joins the sum once, on its
+    group's first device. It is [op] for an operation other than a map or a
+    reduction. *)
+
 (** The type for what an operation's rule decides. *)
 type routed = {
   route : unit Route.t option;
@@ -285,7 +313,9 @@ val route : by:string -> 'r prim -> routed
     no operands lies where its map names, else on the host, each device of
     that placement computing its window of the results.
 
-    Raises as {!val-layouts} does, then as {!Route.route} does. *)
+    Raises as {!val-layouts} does, then as {!Route.route} does, and where
+    a result at a sum, a map's, a creation's or a contraction's, is of a
+    dtype not {!summable}. *)
 
 val results_at :
   unit Devices.placement ->
