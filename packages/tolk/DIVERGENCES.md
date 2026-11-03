@@ -1070,10 +1070,11 @@ per trip of each submission under it (D146).
   multiplied by `2pi/2^64` in two floats (D126). The remainder is within an
   ulp of the exact one in float32 and float64, `6381956970095103 * 2^797`,
   the float64 nearest a multiple of `pi/2`, included.
-- **Reason:** (b): rune's `sin` and `cos` reduce by `pi/2` with this
-  reduction beyond `2^12` in float32 and `2^22` in float64, where their exact
-  Cody-Waite parts stop (RFC 0012), and tolk's own `xsin` uses it beyond its
-  switch-over; both must give nx's sine there. Selecting the table's words
+- **Reason:** (b): rune's `cos` and `tan` reduce by `pi/2` with this
+  reduction from 30 in magnitude, in float32 and float64, and with
+  Cody-Waite's below (`Lower_real.reduce`, `trig_switch`); its `sin` is
+  tolk's `Sin`, whose `xsin` uses it beyond its switch-over, 30 by default.
+  Both must give nx's sine and cosine there. Selecting the table's words
   by bits is (d), compile time: every compiled sine or cosine of an
   unbounded angle builds the reduction, and a kernel's compile time grows
   with its nodes. Selected as tinygrad's `_take` does, over this 40-word
