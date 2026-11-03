@@ -60,18 +60,23 @@
  (locks %{workspace_root}/gpu)
  (libraries nx nx_quant rig rig.gpus rune rune_support tolk tolk.engine windtrap))
 
-; nx's special functions' derivatives, against goldens gen/special_grad.py
-; writes from correctly rounded references.
-
 (test
  (name test_program)
  (modules test_program)
  (libraries nx rune windtrap))
 
+; nx's special functions' derivatives, against goldens gen/special_grad.py
+; writes from correctly rounded references. Each compiled case spends its time
+; in tolk and Clang on one core, so the suite runs its tests in four workers:
+; cold on fudge, 64 s at one, 35 s at four. The tests share no fixture and
+; change no process state.
+
 (test
  (name test_special)
  (modules special test_special)
  (libraries nx rune windtrap)
+ (action
+  (run %{test} -j 4))
  (deps
   (glob_files golden/special_grad/*.golden)))
 
