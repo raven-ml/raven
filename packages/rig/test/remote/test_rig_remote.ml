@@ -458,6 +458,9 @@ let hosts () =
   with_job @@ fun j agents ->
   let h = List.hd (Rig_remote.hosts j) and a = List.hd agents in
   equal string (Rig.arch Rig.host) (Rig.arch h);
+  equal ~msg:"cache" (option int)
+    (Rig.cache_bytes Rig.host)
+    (Rig.cache_bytes h);
   equal bool true (Rig.equal h (Rig.host_of h));
   equal (list bool) [ false; false ]
     [ Rig.reaches h Rig.host; Rig.reaches Rig.host h ];
@@ -488,6 +491,7 @@ let devices () =
   let d0 = List.nth ds 0 and d1 = List.nth ds 1 in
   equal ~msg:"arch" string (Rig.arch l0) (Rig.arch d0);
   equal ~msg:"budget" int (Rig.budget l0) (Rig.budget d0);
+  equal ~msg:"cache" (option int) (Rig.cache_bytes l0) (Rig.cache_bytes d0);
   equal ~msg:"computes" bool true (Rig.computes d0);
   equal ~msg:"reaches" bool (Rig.reaches l0 l1) (Rig.reaches d0 d1);
   List.iter (fun d -> equal bool true (Rig.equal h (Rig.host_of d))) ds;

@@ -80,6 +80,11 @@ external c_waits_in_queue : c -> bool = "caml_rig_waits_in_queue"
 external release_list : unit -> int = "caml_rig_release_list"
 external c_release : c -> int = "caml_rig_device_release" [@@noalloc]
 external host_arch : unit -> string = "caml_rig_arch"
+external c_host_cache : unit -> int = "caml_rig_host_cache_bytes"
+
+(* The bytes of the host's largest cache, as the system states it
+   ([rig_heap.c]). *)
+let host_cache_bytes () = match c_host_cache () with 0 -> None | n -> Some n
 
 (* [c_next i] is the least index from [i] on of a published device, 0 for
    none. *)
@@ -148,8 +153,8 @@ module Strings = Tbl.Make (String)
 let no_waits = { Rig_edge.stores = false; hosts = false }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
-    ~completion ~waits ~hang_ms ~maps_host ~alignment ~host_addresses ~word
-    ~word_region ~key ~memory_device ~fault ~capability ~budget ~opened =
+    ~completion ~waits ~hang_ms ~maps_host ~alignment ~cache_bytes
+    ~host_addresses ~word ~word_region ~key ~memory_device ~fault ~capability ~budget ~opened =
   let live =
     {
       c;
@@ -190,6 +195,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~bus ~queues ~copy_engine
     arch;
     maps_host;
     alignment;
+    cache_bytes;
     host_addresses;
     key;
     memory_device;
@@ -218,7 +224,8 @@ let host =
     make_device ~index:0 ~name:"CPU" ~machine:Here ~kind:Host
       ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~bus:None ~queues
       ~copy_engine:None ~completion:Rig_edge.Host ~waits:no_waits ~hang_ms:None
-      ~maps_host:false ~alignment:malloc_alignment ~host_addresses:false
+      ~maps_host:false ~alignment:malloc_alignment
+      ~cache_bytes:(host_cache_bytes ()) ~host_addresses:false
       ~word:(Nativeint.to_int (c_slot_word 0))
       ~word_region:None ~key:(-1)
       ~memory_device:false
@@ -1160,6 +1167,13 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       "Rig.open_: %s's regions start on multiples of %d, expected a power of \
        two"
       name f.alignment;
+  Option.iter
+    (fun n ->
+      if n < 1 then
+        invalid_argf
+          "Rig.open_: %s's last-level cache is %d bytes, expected at least 1"
+          name n)
+    f.cache_bytes;
   let queues = Array.of_list f.queues in
   Option.iter
     (fun i ->
@@ -1183,7 +1197,8 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~c ~arch:f.arch ~bus:f.bus ~queues ~copy_engine:f.copy_engine
       ~completion:f.completion
       ~waits:f.waits ~hang_ms:f.hang_ms ~maps_host:f.maps_host
-      ~alignment:f.alignment ~host_addresses:f.host_addresses ~word
+      ~alignment:f.alignment ~cache_bytes:f.cache_bytes
+      ~host_addresses:f.host_addresses ~word
       ~word_region:(Some (Region { m; h; rid; r = Some f.word }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:[%extension_constructor D.Fault]
@@ -1254,7 +1269,8 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
             ~kind:(Io { m = (module I); h })
             ~c ~arch:"" ~bus:None ~queues:[||] ~copy_engine:None
             ~completion:Rig_edge.Host ~waits:no_waits ~hang_ms:None
-            ~maps_host:false ~alignment:1 ~host_addresses:false ~word:0
+            ~maps_host:false ~alignment:1 ~cache_bytes:None
+            ~host_addresses:false ~word:0
             ~word_region:None ~key ~memory_device:false
             ~fault:[%extension_constructor I.Fault] ~capability:None ~budget
             ~opened

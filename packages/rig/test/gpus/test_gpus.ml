@@ -5,6 +5,8 @@
 
 open Windtrap
 
+let strf = Printf.sprintf
+
 (* Each path, in the preference order the .mli states: its name, the names
    its opener gives its GPUs, and its listing, as bus addresses or a count
    where its GPUs have none. *)
@@ -82,6 +84,52 @@ let opens () =
       Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
       equal string ~msg:"the device of the first GPU that opens" name
         (Rig.name d)
+
+(* Each path's devices, opened and closed in turn: by bus, the device's name
+   and its last-level cache. *)
+let caches () =
+  List.concat_map
+    (fun (p : Rig_gpus.path) ->
+      match p.gpus () with
+      | Error _ -> []
+      | Ok gpus ->
+          List.filter_map
+            (fun (g : Rig_gpus.gpu) ->
+              match (g.bus, g.open_ ()) with
+              | _, Error _ -> None
+              | None, Ok d ->
+                  Rig.close d;
+                  None
+              | Some bus, Ok d ->
+                  let c = Rig.cache_bytes d in
+                  Rig.close d;
+                  Some (bus, (Rig.name d, c)))
+            gpus)
+    (Rig_gpus.paths ())
+
+(* The devices that two paths open of one GPU state its one cache. *)
+let same_cache () =
+  let stated = caches () in
+  let on bus =
+    List.filter_map (fun (b, x) -> if b = bus then Some x else None) stated
+  in
+  let shared =
+    List.filter
+      (fun bus -> List.length (on bus) > 1)
+      (List.sort_uniq compare (List.map fst stated))
+  in
+  if shared = [] then skip ~reason:"no GPU here that two paths open" ()
+  else
+    List.iter
+      (fun bus ->
+        match on bus with
+        | [] -> ()
+        | (first, c) :: rest ->
+            List.iter
+              (fun (name, c') ->
+                equal ~msg:(strf "%s and %s" first name) (option int) c c')
+              rest)
+      shared
 
 (* One launch, the same bytes *)
 
@@ -184,6 +232,8 @@ let () =
                order;
              test "first opens the first GPU that opens, or names each refusal"
                opens;
+             test "the devices of one GPU state its last-level cache"
+               same_cache;
            ];
          group ~timeout:120. "launches"
            [

@@ -239,6 +239,7 @@ let account_named name : Wire.account =
     arch = "";
     budget = 0;
     alignment = 1;
+    cache_bytes = None;
     reaches = [];
     reached_by = [];
   }

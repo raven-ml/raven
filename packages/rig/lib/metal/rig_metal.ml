@@ -390,6 +390,8 @@ let open_ ~word i =
           maps_host = true;
           host_addresses = true;
           alignment = region_align;
+          (* No public API of Metal states the GPU's caches. *)
+          cache_bytes = None;
           capability = Rig_metal_abi.declare cap;
           word;
           bus = None;

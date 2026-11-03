@@ -138,6 +138,7 @@ let attribute_pci_domain_id = 50
 let attribute_can_use_64_bit_stream_mem_ops = 122
 let attribute_host_register_supported = 99
 let attribute_kernel_exec_timeout = 17
+let attribute_l2_cache_size = 38
 
 (* The most parameter bytes of a kernel CUDA launches: 32,764 on Volta
    (compute capability 7.0) and later, 4,096 below. NVIDIA, "CUDA 12.1
@@ -646,16 +647,17 @@ let open_ ~word i =
         get (a attribute_compute_capability_minor),
         get (a attribute_host_register_supported),
         get (a attribute_kernel_exec_timeout),
+        get (a attribute_l2_cache_size),
         get (total_memory d) )
     with
     | exception Fault why -> Error why
-    | 0, _, _, _, _, _, _ ->
+    | 0, _, _, _, _, _, _, _ ->
         Error
           (strf "the GPU lacks 64-bit stream memory operations under %s"
              (driver ()))
-    | _, 0, _, _, _, _, _ ->
+    | _, 0, _, _, _, _, _, _ ->
         Error (strf "the GPU lacks unified addressing under %s" (driver ()))
-    | _, _, major, minor, registers, watchdog, budget -> (
+    | _, _, major, minor, registers, watchdog, l2, budget -> (
         let held = g.held.(i) in
         let opened = ref (-1) in
         (* An exception after the claim gives it back, stopping the device if
@@ -714,6 +716,7 @@ let open_ ~word i =
                     maps_host = registers <> 0;
                     host_addresses = false;
                     alignment = allocation_alignment;
+                    cache_bytes = (if l2 > 0 then Some l2 else None);
                     capability = Rig_cuda_abi.declare cap;
                     word;
                     bus = List.nth_opt g.buses i;

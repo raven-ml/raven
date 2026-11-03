@@ -227,6 +227,7 @@ type 'm path = {
   vaspace : int;
   gpu : gpu;
   budget : int;
+  cache_bytes : int option;
   doorbell : int;
   flush : int option;
   alloc : Rig_edge.memory -> int -> 'm memory option;
@@ -556,6 +557,7 @@ type 'm dev = {
   self : int;
   arch : string;
   budget : int;
+  cache_bytes : int option;
   hang_ms : int option;
   maps_host : bool;
   key : 'm Type.Id.t;
@@ -632,6 +634,7 @@ let facts (T d) =
     maps_host = d.maps_host;
     host_addresses = false;
     alignment = region_alignment;
+    cache_bytes = d.cache_bytes;
     capability = Abi.declare d.capability;
     word = R d.word;
     bus = d.bus;
@@ -1269,6 +1272,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
         self;
         arch = arch_of g.sm_version;
         budget = p.budget;
+        cache_bytes = p.cache_bytes;
         hang_ms = p.hang_ms;
         maps_host = Option.is_some p.map_host;
         key = p.key;

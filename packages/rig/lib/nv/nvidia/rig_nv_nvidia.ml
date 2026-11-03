@@ -73,6 +73,7 @@ type gpu = {
   flush : int option; (* a word of a page of its BAR, mapped for the process *)
   facts : Rig_nv.gpu;
   budget : int;
+  cache_bytes : int option;
   hang_ms : int option; (* [None] while the RM's watchdog bounds its work *)
   clock : int; (* its timer's reader, for the process *)
   index : int; (* its number, in bus order *)
@@ -707,8 +708,8 @@ let gr_info c subdevice =
 
 let why = function Rig_nv.Lacking why | Refused why -> why
 
-(* The frame buffer's fact [index], in bytes. *)
-let fb_info c subdevice index =
+(* The frame buffer's fact [index], as the RM states it. *)
+let fb_fact c subdevice index =
   let (module R : D.RELEASE) = c.Rm.layouts in
   let module G = R.Fb_get_info in
   let module F = D.Fb_info in
@@ -721,8 +722,17 @@ let fb_info c subdevice index =
   in
   set p (elt F.index) index;
   let* () = Rm.control c subdevice D.nv2080_ctrl_cmd_fb_get_info_v2 p in
-  (* The RM reports the frame buffer's facts in KiB. *)
-  Ok (get p (elt F.data) * 1024)
+  Ok (get p (elt F.data))
+
+(* The frame buffer's size [index], in bytes: the RM states sizes in KiB. *)
+let fb_info c subdevice index =
+  Result.map (fun kib -> kib * 1024) (fb_fact c subdevice index)
+
+(* The L2 cache's bytes, which the RM states in bytes, 0 for a GPU without
+   one (ctrl2080fb.h, NV2080_CTRL_FB_INFO_INDEX_L2CACHE_SIZE). *)
+let l2_bytes c subdevice =
+  let* n = fb_fact c subdevice D.nv2080_ctrl_fb_info_index_l2cache_size in
+  Ok (if n > 0 then Some n else None)
 
 (* The path's hang bound: [None] while the RM's watchdog runs on the GPU and
    ends work that holds it too long. It does not run on a GPU without a
@@ -874,6 +884,7 @@ let make_gpu c um ~dev ~index ~others bus =
       | _ -> Error "reading the graphics engine's facts"
     in
     let* budget = fb_info c subdevice D.nv2080_ctrl_fb_info_index_heap_size in
+    let* cache_bytes = l2_bytes c subdevice in
     let* hang_ms = hang_bound c subdevice in
     let module Gi = D.Gid_info in
     let gid = params Gi.sizeof in
@@ -919,6 +930,7 @@ let make_gpu c um ~dev ~index ~others bus =
             warps_per_sm = warps;
           };
         budget;
+        cache_bytes;
         hang_ms;
         clock = clock c.ctl Rm.control_request c.root subdevice;
         index;
@@ -1011,6 +1023,7 @@ let path g =
     vaspace = g.vaspace;
     gpu = g.facts;
     budget = g.budget;
+    cache_bytes = g.cache_bytes;
     doorbell = g.doorbell + doorbell_at;
     flush = g.flush;
     alloc = alloc g;

@@ -134,6 +134,7 @@ type 'm path = {
   mec : int;
   wgps : int array array;
   budget : int;
+  cache_bytes : int option;
   alloc : Rig_edge.memory -> int -> 'm memory option;
   map_host : (int -> int -> 'm memory option) option;
   reaches : int -> bool;
@@ -421,6 +422,7 @@ type t = {
   waves : int;
   hdp : int option;
   budget : int;
+  cache_bytes : int option;
   hang_ms : int option;
   waits64 : bool; (* its queues run 64-bit waits *)
   maps_host : bool;
@@ -820,6 +822,7 @@ let facts g =
     maps_host = g.maps_host;
     host_addresses = false;
     alignment = region_alignment;
+    cache_bytes = g.cache_bytes;
     capability = Abi.declare g.capability;
     word = g.word;
     bus = g.bus;
@@ -1377,6 +1380,7 @@ let make (type m) ~word (p : m path) =
         waves = p.waves;
         hdp = p.hdp;
         budget = p.budget;
+        cache_bytes = p.cache_bytes;
         hang_ms = p.hang_ms;
         waits64;
         maps_host = Option.is_some ops.map_host;

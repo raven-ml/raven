@@ -116,6 +116,11 @@ val gpu : t -> Rig_nv.rm -> subdevice:int -> (Rig_nv.gpu, string) result
 (** [gpu g rm ~subdevice] is the GPU's classes, by its family, and its counts,
     from the RM's static graphics information. *)
 
+val cache_bytes : t -> Rig_nv.rm -> subdevice:int -> (int option, string) result
+(** [cache_bytes g rm ~subdevice] is [Some n] with [n] the bytes of the GPU's L2
+    cache, from the RM's static memory-system configuration, or [None] if it
+    states [0]. *)
+
 (** {1:events Events} *)
 
 val check : t -> string option

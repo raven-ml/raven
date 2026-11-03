@@ -493,17 +493,11 @@ value caml_rig_let_go_count(value unit) {
 /* Half the host's last-level cache, which [caml_rig_heap_init] reads once. */
 static size_t heap_cycle_floor;
 
-/* The bytes of the last-level cache the host reports, at least
-   HEAP_LLC_LEAST. On Linux, the largest of CPU 0's caches
-   (sysfs-devices-system-cpu, cache/indexN/size). On Windows, the largest
-   cache GetLogicalProcessorInformationEx reports (RelationCache). On macOS,
-   the L3 (hw.l3cachesize) where there is one, as on Intel Macs, else the
-   performance cores' L2 (hw.perflevel0.l2cachesize): 12 MiB on the M1 Max,
-   whose 48 MB system cache macOS does not report. 8 MiB is below the last
-   level of every host rig is tested on, and stands for the hosts that
-   report none and for those that report less than they have, as Apple's
-   and Arm servers' system caches go unreported: a floor below the caches
-   errs toward warm results. */
+/* The bytes of the host's last-level cache for pacing, at least
+   HEAP_LLC_LEAST. 8 MiB is below the last level of every host rig is tested
+   on, and stands for the hosts that report none and for those that report
+   less than they have, as Apple's and Arm servers' system caches go
+   unreported: a floor below the caches errs toward warm results. */
 #define HEAP_LLC_LEAST ((size_t)8 << 20)
 
 #if defined(__APPLE__)
@@ -521,7 +515,15 @@ static size_t sysctl_bytes(const char *name) {
 }
 #endif
 
-static size_t heap_llc_bytes(void) {
+/* The bytes of the largest cache of the host's processor as the system
+   states it, or 0 where it states none. On Linux, the largest of CPU 0's
+   caches (sysfs-devices-system-cpu, cache/indexN/size). On Windows, the
+   largest cache GetLogicalProcessorInformationEx reports (RelationCache). On
+   macOS, the L3 (hw.l3cachesize) where there is one, as on Intel Macs, else
+   the performance cores' L2 (hw.perflevel0.l2cachesize): 12 MiB on the M1
+   Max, whose 48 MB system cache macOS does not report. [Rig.cache_bytes]
+   of the host and of a memory device is this value. */
+static size_t host_cache_bytes(void) {
   size_t most = 0;
 #if defined(__APPLE__)
   most = sysctl_bytes("hw.l3cachesize");
@@ -560,7 +562,17 @@ static size_t heap_llc_bytes(void) {
   }
   free(records);
 #endif
+  return most;
+}
+
+static size_t heap_llc_bytes(void) {
+  size_t most = host_cache_bytes();
   return most > HEAP_LLC_LEAST ? most : HEAP_LLC_LEAST;
+}
+
+value caml_rig_host_cache_bytes(value v_unit) {
+  (void)v_unit;
+  return Val_long((intnat)host_cache_bytes());
 }
 
 /* The memory a major cycle is due after: [caml_custom_get_max_major], the

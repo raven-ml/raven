@@ -89,6 +89,7 @@ let facts d =
     maps_host = false;
     host_addresses = false;
     alignment = d.account.alignment;
+    cache_bytes = d.account.cache_bytes;
     capability = Rig_remote_abi.declare d.capability;
     word = d.word;
     bus = None;

@@ -129,6 +129,7 @@ let nv2080_ctrl_fb_info_index_heap_size = 9
 let nv2080_ctrl_fb_info_index_bar1_size = 5
 let nv2080_ctrl_fb_info_index_total_ram_size = 8
 let nv2080_ctrl_fb_info_index_heap_free = 0x16
+let nv2080_ctrl_fb_info_index_l2cache_size = 0x1b
 let nv2080_ctrl_cmd_perf_get_gpumon_perfmon_util_samples_v2 = 0x20802096
 let nv2080_ctrl_gpumon_sample_type_perfmon_util = 2
 let nv2080_ctrl_perf_gpumon_sample_count_perfmon_util = 0x48

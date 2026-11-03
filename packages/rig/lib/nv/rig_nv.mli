@@ -101,6 +101,7 @@ val capability : t -> Rig_nv_abi.Gpu.t
       | [maps_host] | [true] iff the path maps host memory. |
       | [host_addresses] | [false]: the host does not address [Device] memory. |
       | [alignment] | [4096]: each path allocates whole pages of 4 KiB. |
+      | [cache_bytes] | The path's {!field-cache_bytes}. |
       | [capability] | {!val-capability} ({!Rig_nv_abi.declare}). |
       | [word] | The word [make] was given, mapped through the path. |
       | [bus] | The path's {!field-bus}. |
@@ -541,6 +542,9 @@ type 'm path = {
   vaspace : int;  (** The virtual address space the device's channels use. *)
   gpu : gpu;  (** The GPU's classes and counts. *)
   budget : int;  (** The GPU's memory its work may allocate, in bytes. *)
+  cache_bytes : int option;
+      (** [Some n] with [n] the bytes of the GPU's L2 cache, its last level,
+          as the RM states it, or [None] where the RM states none. *)
   doorbell : int;
       (** The host address of the 4-byte register into which the device
           stores a channel's work submit token to wake the channel

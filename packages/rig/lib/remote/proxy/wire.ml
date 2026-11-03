@@ -17,7 +17,7 @@ let err_malformed = "a malformed handshake"
 (* Constants *)
 
 let magic = "rig-job\n"
-let version = 9
+let version = 10
 let min_key = 16
 let max_key = 4096
 let nonce_bytes = 32
@@ -296,6 +296,7 @@ type account = {
   arch : string;
   budget : int;
   alignment : int;
+  cache_bytes : int option;
   reaches : int list;
   reached_by : int list;
 }

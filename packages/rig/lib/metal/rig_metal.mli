@@ -153,6 +153,7 @@ val capability : t -> Rig_metal_abi.t
       | [maps_host]      | [true]                                         |
       | [host_addresses] | [true]                                         |
       | [alignment]      | [256] ({!section-memory})                      |
+      | [cache_bytes]    | [None]: no API of Metal states it              |
       | [capability]     | {!Rig_metal_abi.t} ({!val-capability})         |
       | [word]           | The word [make] was given, which no work reads |
       | [bus]            | [None]                                         |

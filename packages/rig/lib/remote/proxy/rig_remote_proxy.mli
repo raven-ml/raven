@@ -73,6 +73,7 @@ val capability : t -> Rig_remote_abi.t
       | [hang_ms]        | [None]                                            |
       | [maps_host]      | [false]                                           |
       | [host_addresses] | [false]                                           |
+      | [cache_bytes]    | The agent's device's [Rig.cache_bytes]            |
       | [capability]     | {!capability} ({!Rig_remote_abi.declare})         |
       | [word]           | The word [make] was given                         |
       | [bus]            | [None]                                            |

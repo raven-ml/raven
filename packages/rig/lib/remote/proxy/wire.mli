@@ -22,8 +22,8 @@
     job's key over both ends' nonces, the dialing end first:
 
     {v
-     accepting: "rig-job\n", version 9 (u32), 0, its nonce (32 bytes)
-                or "rig-job\n", version 9 (u32), 1 and why
+     accepting: "rig-job\n", version 10 (u32), 0, its nonce (32 bytes)
+                or "rig-job\n", version 10 (u32), 1 and why
      dialing:   its nonce (32 bytes), its process, the accepting end's
                 process, its proof (32 bytes)
      accepting: 0 and its proof (32 bytes)
@@ -100,7 +100,7 @@
 (** {1:handshakes Handshakes} *)
 
 val version : int
-(** [version] is the protocol's version, the handshake's: 9. Ends at other
+(** [version] is the protocol's version, the handshake's: 10. Ends at other
     versions refuse each other. *)
 
 val min_key : int
@@ -166,6 +166,9 @@ type account = {
   arch : string;  (** Its [Rig.arch] there. *)
   budget : int;  (** Its [Rig.budget] there when it opened. *)
   alignment : int;  (** Its [Rig.alignment] there. *)
+  cache_bytes : int option;
+      (** Its [Rig.cache_bytes] there, which crosses as a u64, [0] for
+          [None]. *)
   reaches : int list;
       (** The smaller ids of devices whose own memory it reaches there
           ([Rig.reaches]). *)

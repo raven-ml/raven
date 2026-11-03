@@ -22,6 +22,7 @@ let code_of : Rig_edge.entry_answer -> int option = function
   | Absent | No_memory _ -> None
 
 let watchdog = 17 (* CU_DEVICE_ATTRIBUTE_KERNEL_EXEC_TIMEOUT *)
+let l2_cache_size = 38 (* CU_DEVICE_ATTRIBUTE_L2_CACHE_SIZE *)
 let second = 1_000_000_000
 let address r = Option.get (C.locate r).address
 let host r = Option.get (C.locate r).host
@@ -204,7 +205,7 @@ let opening =
 (* Facts *)
 
 let facts () =
-  S.with_ @@ fun { g; _ } ->
+  S.with_ @@ fun { g; d; _ } ->
   let f = C.facts g in
   equal int ~msg:"length of the arch" 5 (String.length f.arch);
   starts_with ~prefix:"sm_" f.arch;
@@ -227,6 +228,9 @@ let facts () =
     (List.map runs f.queues);
   equal (option int) ~msg:"the copy engine" (Some 1) f.copy_engine;
   equal int ~msg:"alignment" 256 f.alignment;
+  equal (option int) ~msg:"the L2's bytes, as CUDA states them"
+    (Some (S.attribute l2_cache_size))
+    (Rig.cache_bytes d);
   equal bool ~msg:"completion is the store" true (f.completion = Store);
   equal (list bool) ~msg:"waits on stores, hosts" [ true; true ]
     [ f.waits.stores; f.waits.hosts ];

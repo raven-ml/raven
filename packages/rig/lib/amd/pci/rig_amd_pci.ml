@@ -335,6 +335,9 @@ let path g h fn ~index : Memory.region Amd.path =
     mec = Boot.mec g;
     wgps = Boot.wgps g;
     budget = Boot.budget g;
+    (* The discovery table's GC info states the L2 from version 1.2 and its
+       MALL info the MALL per memory controller; the path reads neither. *)
+    cache_bytes = None;
     alloc = (fun kind n -> guard (fun () -> alloc mem kind n));
     (* A GPU taken physically would keep writing the process's pages after its
        death: it maps no host memory. *)

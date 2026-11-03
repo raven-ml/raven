@@ -230,6 +230,8 @@ let facts (module G : Gpu) () =
     equal (option bool) ~msg:"Device memory's host address" (Some true)
       (host Device);
   equal int ~msg:"Rig.alignment" f.alignment (Rig.alignment t.d);
+  Option.iter (fun n -> greater int ~msg:"cache_bytes" ~than:0 n) f.cache_bytes;
+  equal (option int) ~msg:"Rig.cache_bytes" f.cache_bytes (Rig.cache_bytes t.d);
   (* Every region of every kind and size starts on the stated alignment, at its
      address and its host address. *)
   let starts memory n =

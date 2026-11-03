@@ -242,6 +242,20 @@ val alignment : t -> int
     hold for those sizes only. For a device of another machine, it is that
     machine's device's. *)
 
+val cache_bytes : t -> int option
+(** [cache_bytes d] is [Some n] with [n] the bytes of [d]'s last-level cache,
+    the cache farthest from its compute units through which its work's memory
+    accesses pass, as [d]'s driver states it at open ({!Rig_edge.type-facts}),
+    and [None] where its driver does not know it. A memory-side cache behind
+    that one, such as AMD's Infinity Cache behind its L2, counts with it: [n]
+    is their sum. It is a fact of the physical part: two devices of one
+    {!arch} may state different sizes, so it suits what runs, such as sizing
+    a buffer whose reads evict the caches before a timed run. For {!host} and
+    a {!memory_device}, it is the largest cache of the host's processor as
+    the system states it, [None] where it states none; for an io device,
+    [None]; for a device of another machine, that machine's device's. A
+    driver's module states what its devices give. *)
+
 val capability : t -> 'a Type.Id.t -> 'a option
 (** [capability d k] is the record that [d]'s driver declares under [k]
     ({!Rig_edge.type-capability}), filled when [d] opened, or [None] if it
@@ -480,7 +494,8 @@ val signaled : t -> int
     thread holds, since the thread's count of its locks does not say which
     they are. A function that takes no lock may be called from a callback at
     any point, and never raises it: {!name}, {!equal}, {!pp}, {!arch},
-    {!computes}, {!runs_on_host}, {!alignment}, {!capability},
+    {!computes}, {!runs_on_host}, {!alignment}, {!cache_bytes},
+    {!capability},
     {!host_of}, {!reaches}, {!submitted}, {!lost}, {!failure},
     {!budget}, {!allocated}, {!Point.device}, {!Point.value},
     {!Point.reached}, {!Point.pp}, the properties and low-level values of

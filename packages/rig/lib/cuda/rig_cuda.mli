@@ -158,6 +158,7 @@ val capability : t -> Rig_cuda_abi.t
       | [maps_host]      | [CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED]    |
       | [host_addresses] | [false]                                          |
       | [alignment]      | [256], as CUDA aligns every allocation           |
+      | [cache_bytes]    | [CU_DEVICE_ATTRIBUTE_L2_CACHE_SIZE], [None] if 0 |
       | [capability]     | {!Rig_cuda_abi.t} ({!val-capability})            |
       | [word]           | The word [make] was given, registered            |
       | [bus]            | [cuDeviceGetPCIBusId], in lowercase              |

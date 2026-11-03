@@ -41,7 +41,18 @@ let test_host () =
   equal bool true (Rig.computes Rig.host);
   equal bool true (Rig.runs_on_host Rig.host);
   equal bool true (Rig.reaches Rig.host Rig.host);
-  equal device Rig.host (Rig.host_of Rig.host)
+  equal device Rig.host (Rig.host_of Rig.host);
+  (* macOS states the caches, and Linux in sysfs where the firmware describes
+     them. *)
+  let sysfs = "/sys/devices/system/cpu" in
+  let states =
+    Sys.os_type = "Unix"
+    && ((not (Sys.file_exists sysfs))
+       || Sys.file_exists (sysfs ^ "/cpu0/cache/index0/size"))
+  in
+  match Rig.cache_bytes Rig.host with
+  | Some n -> greater int ~msg:"the host's cache" ~than:0 n
+  | None -> if states then fail "the host states no cache"
 
 (* What a driver's device reaches follows its facts: the host reaches its memory
    where the host addresses its regions, whatever its queues, and it reaches the
@@ -344,6 +355,30 @@ let test_alignment_refused () =
           Rig.open_ (P.opener name p));
       equal ~msg:"stopped" bool true (List.mem "stop" (P.log p)))
     [ 0; -16; 24; 48 ]
+
+(* A device states the last-level cache its driver states, a memory device
+   the host's, and an io device none. *)
+let test_cache_bytes () =
+  let d = memory "open:cache-memory" in
+  let p, _ = P.open_ ~cache_bytes:(48 lsl 20) "open:cache-polled" in
+  let q, _ = P.open_ "open:cache-none" in
+  let io = open_store "open:cache-io" in
+  equal ~msg:"the stated values" (list (option int))
+    [ Rig.cache_bytes Rig.host; Some (48 lsl 20); None; None ]
+    (List.map Rig.cache_bytes [ d; p; q; io ])
+
+(* A cache of fewer than 1 byte refuses the open, and the driver's device is
+   stopped. *)
+let test_cache_refused () =
+  List.iteri
+    (fun i n ->
+      let p = P.make ~cache_bytes:n () in
+      let name = Printf.sprintf "open:cache-%d" i in
+      raises_match ~msg:(Printf.sprintf "cache_bytes %d" n)
+        (Exn.invalid_arg ~sub:"last-level cache") (fun () ->
+          Rig.open_ (P.opener name p));
+      equal ~msg:"stopped" bool true (List.mem "stop" (P.log p)))
+    [ 0; -1; min_int ]
 
 (* A region off the device's alignment goes back to the driver and faults the
    device: Polled's start on a page, never on 2^60. *)
@@ -1471,6 +1506,9 @@ let tests =
         test_alignment_refused;
       test "a region off its device's alignment faults the device"
         test_misaligned;
+      test "a device states its driver's last-level cache" test_cache_bytes;
+      test "a last-level cache below 1 byte refuses the open"
+        test_cache_refused;
       test "an edge that names no C state or driver refuses the open"
         test_edge_refused;
       test "the host states its facts" test_host;

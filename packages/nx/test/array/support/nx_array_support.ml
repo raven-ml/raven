@@ -164,6 +164,7 @@ module Driver = struct
       host_addresses = true;
       (* [alloc] rounds each region's start up to 64 bytes. *)
       alignment = 64;
+      cache_bytes = None;
       capability = Capability (capability_key, ());
       word = { at = late_word d.self; raw = 0 };
       edge = d.self;

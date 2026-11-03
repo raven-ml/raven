@@ -132,6 +132,7 @@ let ampere_dma_copy_b = 0xc7b5
 let blackwell_dma_copy_b = 0xcab5
 let nv2080_ctrl_cmd_internal_static_kgr_get_info = 0x20800a2a
 let nv2080_ctrl_cmd_internal_static_kgr_get_context_buffers_info = 0x20800a32
+let nv2080_ctrl_cmd_internal_memsys_get_static_config = 0x20800a1c
 let nv2080_ctrl_cmd_gpu_promote_ctx = 0x2080012b
 let nv2080_ctrl_cmd_fifo_get_device_info_table = 0x20801112
 let nv90f1_ctrl_cmd_vaspace_copy_server_reserved_pdes = 0x90f10106
@@ -427,6 +428,11 @@ end
 module Internal_gr_info = struct
   let sizeof = 8
   let data = (4, 4)
+end
+
+module Memsys_static_config = struct
+  let sizeof = 40
+  let l2_cache_size = (8, 8)
 end
 
 module Context_buffers_info = struct

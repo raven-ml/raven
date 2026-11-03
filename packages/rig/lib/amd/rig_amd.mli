@@ -242,6 +242,10 @@ val capability : t -> Rig_amd_abi.Capability.t
        memory;}
     {- [alignment], [4096], since both paths allocate whole 4 KiB pages of
        the GPU, at addresses that start on one;}
+    {- [cache_bytes], the path's [cache_bytes]: the L2's and the MALL's
+       bytes as the kernel driver states them on the amdgpu path, [None]
+       where it states no L2, and [None] on the PCI path, which reads
+       neither;}
     {- [capability], {!capability}, declared with
        {!Rig_amd_abi.declare};}
     {- [word], the device's timeline word, as {b Word.} below states;}
@@ -491,6 +495,9 @@ type 'm path = {
           engines numbered across dies. A die whose processors the path cannot
           read has every processor of its arrays set. *)
   budget : int;  (** The bytes of the GPU's own memory. *)
+  cache_bytes : int option;
+      (** [Some n] with [n] the bytes of the GPU's L2 and its MALL (Infinity
+          Cache) together, or [None] if the path does not know the L2's. *)
   alloc : Rig_edge.memory -> int -> 'm memory option;
       (** [alloc k n] is [n] new bytes of memory [k]:
           {ul

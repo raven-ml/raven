@@ -23,6 +23,7 @@ let answer : type a. a Wire.request -> (a, string) result = function
             arch = "echo";
             budget = 0;
             alignment = 16;
+            cache_bytes = None;
             reaches = [];
             reached_by = [];
           };

@@ -175,10 +175,20 @@ let kfd_nap fd events ms gpu after =
 
 (* The render node *)
 
-(* [device_info drm] is the GPU's clock in kHz and its active compute units, 16
-   masks engine-major as cu_bitmap lays them out. *)
-external device_info : int -> int * int array
+(* [device_info drm] is the GPU's clock in kHz, its active compute units, 16
+   masks engine-major as cu_bitmap lays them out, its L2 in KiB and its MALL
+   in bytes. *)
+external device_info : int -> int * int array * int * int
   = "caml_rig_amd_amdgpu_device_info"
+
+(* The bytes of the last-level cache: the L2 and the MALL (Infinity Cache)
+   behind it, from AMDGPU_INFO_DEV_INFO, which states the L2 in KiB and the
+   MALL in bytes (amdgpu_kms.c sets them from gc_gl2c_per_gpu and mall_size,
+   which kfd_crat.c reports as KiB and divides by 1024). The kernel states
+   the L2 from the GC info of the discovery table from version 1.2 on, and 0
+   for an older table or kernel, which leaves the sum unknown. *)
+let cache_bytes ~l2_kib ~mall =
+  if l2_kib > 0 then Some ((l2_kib * 1024) + mall) else None
 
 (* [stable_pstate drm] holds the GPU in its stable power state with a new
    context, until the process closes [drm]. *)
@@ -228,6 +238,7 @@ type gpu = {
   clock_khz : int;
   clock : int; (* its clock's reader, for the process *)
   cus : int array; (* its active compute units, as cu_bitmap lays them out *)
+  cache_bytes : int option;
   mutable doorbells : (int64 * int) option; (* the page: offset, address *)
   mutable events_mapped : bool;
   mutable stable : bool;
@@ -709,7 +720,7 @@ let acquire fd ~root ~gpus ~bus (node : Topology.node) =
         if version < runtime_from then Ok ()
         else ok acquiring (fun () -> runtime_enable fd)
       in
-      let* clock_khz, cus =
+      let* clock_khz, cus, l2_kib, mall =
         ok "reading the GPU's facts" (fun () -> device_info drm)
       in
       let links =
@@ -735,6 +746,7 @@ let acquire fd ~root ~gpus ~bus (node : Topology.node) =
           clock = clock fd node.gpu_id;
           clock_khz;
           cus;
+          cache_bytes = cache_bytes ~l2_kib ~mall;
           doorbells = None;
           events_mapped = false;
           stable = false;
@@ -1113,6 +1125,7 @@ let path d ~gpus ~index : mem Amd.path =
       wgps_of g.node.gpu ~arrays:g.node.arrays ~per_array:g.node.cu_per_array
         g.cus;
     budget = g.node.budget;
+    cache_bytes = g.cache_bytes;
     alloc = alloc fd g;
     map_host = Some (map_host fd g);
     reaches =

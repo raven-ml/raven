@@ -40,6 +40,7 @@ module Polled : sig
     ?peers:bool ->
     ?maps_host:bool ->
     ?alignment:int ->
+    ?cache_bytes:int ->
     ?budget:int ->
     ?memory:int ->
     ?window:int ->
@@ -73,7 +74,8 @@ module Polled : sig
       Without [peers] (defaults to [true]) it maps no memory of another device,
       and without [maps_host] (defaults to [true]) no host memory. Its facts
       state [alignment] (defaults to [4096]), and its regions start on a
-      page, which may break a larger [alignment]. Its budget is
+      page, which may break a larger [alignment]. They state [cache_bytes]
+      (defaults to none) as given, unchecked. Its budget is
       [budget] (defaults to 1 GiB); it holds at most [memory] bytes of [Device]
       memory and [window] bytes of [Mapped] memory (default to [max_int]);
       [Pinned] memory is unbounded. Its word advances as [completion] says
@@ -123,6 +125,7 @@ module Polled : sig
     ?peers:bool ->
     ?maps_host:bool ->
     ?alignment:int ->
+    ?cache_bytes:int ->
     ?budget:int ->
     ?memory:int ->
     ?window:int ->

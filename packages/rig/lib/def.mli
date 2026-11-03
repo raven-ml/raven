@@ -139,6 +139,7 @@ type device = {
   bus : string option;  (** {!Rig.bus}. *)
   maps_host : bool;  (** Whether it maps host memory. *)
   alignment : int;  (** {!Rig.alignment}. *)
+  cache_bytes : int option;  (** {!Rig.cache_bytes}. *)
   host_addresses : bool;  (** Whether the host addresses all its regions. *)
   key : int;
       (** The uid of its driver's key or its io library's region key, [-1]

@@ -1035,6 +1035,23 @@ let gpu g (rm : Rig_nv.rm) ~subdevice =
         }
   | _ -> assert false (* five indices asked *)
 
+(* The memory system *)
+
+(* The L2's bytes, from the RM's static memory-system configuration: another
+   internal command, which NVIDIA's kernel RM sends the GSP to learn the L2's
+   size (kern_mem_sys.c, kmemsysInitStaticConfig_KERNEL), answered here on
+   the caller's client as the graphics information is. *)
+let cache_bytes g (rm : Rig_nv.rm) ~subdevice =
+  let module M = Defs.Memsys_static_config in
+  let p = Rig_nv.params M.sizeof in
+  let* () =
+    Result.map_error why
+      (control g ~client:rm.client subdevice
+         Defs.nv2080_ctrl_cmd_internal_memsys_get_static_config (Some p))
+  in
+  let n = Rig_nv.get p M.l2_cache_size in
+  Ok (if n > 0 then Some n else None)
+
 (* The golden context *)
 
 (* The golden channel: 32 entries, its USERD 0x100 into its page, of the

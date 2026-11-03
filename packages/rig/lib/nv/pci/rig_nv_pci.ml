@@ -335,6 +335,7 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
   let* rm = Gsp.rm gsp ~locate:(locate g) in
   let* device, subdevice, vaspace = Gsp.objects rm in
   let* gpu = Gsp.gpu gsp rm ~subdevice in
+  let* cache_bytes = Gsp.cache_bytes gsp rm ~subdevice in
   (* The flush word's page lives with the GPU's memory until the stop, which
      gives back its addresses, as a device that fails to make does at once. A
      GPU whose BAR has no room for it opens without Mapped memory. *)
@@ -360,6 +361,7 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
         vaspace;
         gpu;
         budget = Page_table.main_pool tables;
+        cache_bytes;
         doorbell = Window.address c.regs + doorbell_at;
         clock = Registers (Window.address c.regs);
         flush;

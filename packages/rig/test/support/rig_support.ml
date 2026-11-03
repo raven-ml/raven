@@ -195,6 +195,7 @@ module Driver = struct
     peers : bool;
     maps_host : bool;
     alignment : int;
+    cache_bytes : int option;
     budget : int;
     limits : kind -> int;
     may_block : bool;
@@ -294,6 +295,7 @@ module Driver = struct
       maps_host = d.maps_host;
       host_addresses = d.host_visible && not d.transport;
       alignment = d.alignment;
+      cache_bytes = d.cache_bytes;
       capability = d.capability;
       word =
         {
@@ -597,7 +599,7 @@ module Polled = struct
 
   let make ?(capacity = 1024) ?grows ?(copies = true)
       ?(host_visible = true) ?(addresses = true) ?(transport = false)
-      ?(peers = true) ?(maps_host = true) ?(alignment = 4096)
+      ?(peers = true) ?(maps_host = true) ?(alignment = 4096) ?cache_bytes
       ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
       ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
       ?(answer = `Stopped) ?(runs = `When_slept) ?(lag = 1) ?hang_ms
@@ -620,6 +622,7 @@ module Polled = struct
         peers;
         maps_host;
         alignment;
+        cache_bytes;
         budget;
         limits;
         may_block;
@@ -673,12 +676,14 @@ module Polled = struct
     }
 
   let open_ ?capacity ?grows ?copies ?host_visible ?addresses
-      ?transport ?peers ?maps_host ?alignment ?budget ?memory ?window ?may_block
-      ?completion ?waits_on ?answer ?runs ?lag ?hang_ms ?bus name =
+      ?transport ?peers ?maps_host ?alignment ?cache_bytes ?budget ?memory
+      ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms ?bus
+      name =
     let p =
       make ?capacity ?grows ?copies ?host_visible ?addresses
-        ?transport ?peers ?maps_host ?alignment ?budget ?memory ?window
-        ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms ?bus ()
+        ?transport ?peers ?maps_host ?alignment ?cache_bytes ?budget ?memory
+        ?window ?may_block ?completion ?waits_on ?answer ?runs ?lag ?hang_ms
+        ?bus ()
     in
     match Rig.open_ (opener name p) with
     | Ok d -> (d, p)

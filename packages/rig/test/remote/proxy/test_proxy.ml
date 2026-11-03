@@ -50,6 +50,9 @@ let driver_facts () =
   equal string "mem3" f.arch;
   equal int ((1 lsl 30) + 3) f.budget;
   equal ~msg:"the account's alignment" int (16 lsl 3) f.alignment;
+  equal ~msg:"the account's cache" (option int)
+    (Some ((1 lsl 20) + 3))
+    f.cache_bytes;
   equal ~msg:"no bus" (option string) None f.bus;
   equal ~msg:"no DMA to another machine's memory" (result pass string)
     (Error "memory of another machine: its agent describes it there")

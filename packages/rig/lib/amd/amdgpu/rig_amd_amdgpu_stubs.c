@@ -351,8 +351,9 @@ value caml_rig_amd_amdgpu_wait(value v_kfd, value v_ids, value v_ms,
 
 /* The render node */
 
-/* The GPU's clock in kHz and its active compute units, 16 masks
-   engine-major as cu_bitmap lays them out: [(clock, cus)]. */
+/* The GPU's clock in kHz, its active compute units, 16 masks engine-major
+   as cu_bitmap lays them out, its L2 in KiB and its MALL in bytes, each 0
+   where the kernel states none: [(clock, cus, l2, mall)]. */
 value caml_rig_amd_amdgpu_device_info(value v_drm) {
   CAMLparam0();
   CAMLlocal2(t, cus);
@@ -366,9 +367,11 @@ value caml_rig_amd_amdgpu_device_info(value v_drm) {
   cus = caml_alloc_tuple(n);
   for (int i = 0; i < n; i++)
     Store_field(cus, i, Val_long(d.cu_bitmap[i / 4][i % 4]));
-  t = caml_alloc_tuple(2);
+  t = caml_alloc_tuple(4);
   Store_field(t, 0, Val_long((long)d.gpu_counter_freq));
   Store_field(t, 1, cus);
+  Store_field(t, 2, Val_long((long)d.gl2c_cache_size));
+  Store_field(t, 3, Val_long((long)d.mall_size));
   CAMLreturn(t);
 }
 

@@ -54,6 +54,7 @@ let add_account b (a : Wire.account) =
   add_string b a.arch;
   add_u64 b a.budget;
   add_u64 b a.alignment;
+  add_u64 b (Option.value a.cache_bytes ~default:0);
   add_list b add_u64 a.reaches;
   add_list b add_u64 a.reached_by
 
@@ -124,9 +125,10 @@ let account r : Wire.account =
   let arch = string r in
   let budget = u64 r in
   let alignment = u64 r in
+  let cache_bytes = match u64 r with 0 -> None | n -> Some n in
   let reaches = list r u64 in
   let reached_by = list r u64 in
-  { id; name; arch; budget; alignment; reaches; reached_by }
+  { id; name; arch; budget; alignment; cache_bytes; reaches; reached_by }
 
 (* Requests and answers *)
 
