@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.11"
+# requires-python = "==3.12.*"
 # dependencies = ["mpmath==1.3.0"]
 # ///
 """Generate the goldens of tolk from tinygrad.
@@ -19,6 +19,10 @@ canonical). It also removes `spec_hcq` from `uop/spec.py`, which tolk does
 not port (see the README).
 Moving TINYGRAD means re-applying it. MODULE, such as `dtype` or `uop/op`,
 limits the run to those generators; by default all run.
+
+The script pins CPython 3.12, whose `struct` packs a float beyond float32's
+range as an infinity, which tinygrad's `bitcast` inherits; 3.13.16 raises
+`OverflowError` there, so the goldens would depend on the interpreter.
 
 Without --check, the goldens and the manifest are written, goldens that a
 generator no longer declares are removed, and each change is listed: review

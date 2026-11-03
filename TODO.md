@@ -149,10 +149,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - BEAM times kernels with loaded-bound loops (0816952da) on buffers of
   unspecified contents, so the trip counts it times are arbitrary: give
   search the inputs' values, or a stated trip count to time with
-- `generate.py` rewrites `dtype/bitcasts.golden` in some trees on fudge:
-  the bitcast of 1e39 raises OverflowError where the golden holds inf.
-  Find which Python or numpy the generator's environment resolves and pin
-  it, so `--check` gives one answer everywhere
 - Metal's packed kernel arguments (8869adcc8, af8961676) have not run on
   Metal hardware; check `rig_metal.mli`'s contract against them on a Mac
 - kernel parameters that name no device, the device a fact of the call's
