@@ -161,6 +161,11 @@ raven / llama.cpp b12048 Vulkan:
   refuses too. Decide what such loops lower to before one reaches users
 - decode's values kernel takes 23.6 us against 12 us in the formula form: a
   core reduce split, or `decoded` covering float widening
+- device facts (762ad1c31): `core_threads = 16384` and `stream_threads =
+  32768` are fudge's (sm_89, 100 SMs); a small part (an RTX 4060-class
+  sm_89) may lose 1.4-2x by the model: a row owed there, and values for
+  nonnormal's R9700 and Metal. `Rig.cache_bytes` has not run on hardware
+  for AMD through amdgpu (L2 plus MALL) or NV over PCI
 - Metal's packed kernel arguments (8869adcc8, af8961676) have not run on
   Metal hardware; check `rig_metal.mli`'s contract against them on a Mac
 - kernel parameters that name no device, the device a fact of the call's
