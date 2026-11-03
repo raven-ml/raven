@@ -69,8 +69,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - AMD machine code without comgr (_plans/amd-isa/design-reviewed.md): an
   assembly renderer and assembler, gfx12 first, the default once its gate
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML
-- divergences: tolk's entries are audited against tinygrad HEAD; rune's
-  DIVERGENCES.md is not audited yet
 - compile speed: float64 sin/cos inline the full Payne–Hanek reduction
   (40-170 KB kernels); Metal builds run one at a time
 - gpt-oss bf16 prefill-12's first call is ~70 ms slower in wall time
