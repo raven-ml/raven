@@ -1771,6 +1771,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On nx.cpu, a fused map of several kinds takes fewer instructions, and
+  one written over a donated operand reads it in place instead of copying
+  it first. Over 32 Mi float32, `exp (x - m)` by a broadcast `m` takes
+  0.94 of the instructions, `e / s` written over `e` 0.60. NaN payloads may
+  differ, as `Nx_kernel.Prog` allows.
 - `Nx_kernel.Prog.E.cast` into an expression's own dtype is that
   expression, so a program holds no Cast that computes nothing: a kind
   cast into its own dtype is one node, which a kernel library may run as

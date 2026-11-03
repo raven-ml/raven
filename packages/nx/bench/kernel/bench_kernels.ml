@@ -323,8 +323,12 @@ let map ?work name (p : Nx_kernel.Prog.t) n =
 
 (* Maps of several nodes: six float32 nodes over one load, a program the
    interpreter runs block by block in L1; a Mul by a constant, a repeated
-   element to its row; and a bfloat16 Add then Mul by a constant, which
-   decodes and encodes a narrow float. *)
+   element to its row; a bfloat16 Add then Mul by a constant, which
+   decodes and encodes a narrow float; a masked score, a Where of a mask
+   broadcast over 4 heads of 512x512 between a scaled load and -inf; and
+   a softmax's quotient, each 1024-element row of a load by its row's
+   element, written over the load as a donated one is, cast into its own
+   dtype or scaled. *)
 let map_rows =
   let module P = Nx_kernel.Prog in
   let m = mib and f = D.Any f32 in
@@ -359,11 +363,69 @@ let map_rows =
       |]
       ~outs:[| 4 |]
   in
+  let b = D.Any D.Bool in
+  let masked =
+    P.v ~ins:[| f; b |]
+      [|
+        P.In 0;
+        In 1;
+        Const (f, P.bits f32 0.125);
+        Op2 (Binary Mul, 0, 2);
+        Const (f, P.bits f32 Float.neg_infinity);
+        Op3 (Where, 1, 3, 4);
+      |]
+      ~outs:[| 5 |]
+  in
+  let quotient =
+    P.v ~ins:[| f; f |]
+      [| P.In 0; In 1; Op2 (Binary Fdiv, 0, 1); Op1 (Cast, f, 2) |]
+      ~outs:[| 3 |]
+  in
+  let scaled =
+    P.v ~ins:[| f; f |]
+      [|
+        P.In 0;
+        In 1;
+        Op2 (Binary Fdiv, 0, 1);
+        Const (f, P.bits f32 1.);
+        Op2 (Binary Mul, 2, 3);
+      |]
+      ~outs:[| 4 |]
+  in
+  let broadcast dt from s =
+    Option.get (A.move (M.Broadcast (Iarray.of_array s)) (filled dt from))
+  in
   [
     map ~work:(stream 1 4 4 m) "map-6-f32-1M" six m;
     map ~work:(stream 1 4 4 m) "map-scale-f32-1M" scale m;
     map ~work:(stream 2 2 2 m) "map-add-scale-bf16-1M" add_scale m;
+    apply ~work:(stream 1 4 4 m) "map-masked-f32-4x512x512" (fun () ->
+        let s = [| 4; 512; 512 |] in
+        ( masked,
+          [| A.Any (A.create Rig.host f32 (Iarray.of_array s)) |],
+          [|
+            Nx_kernel.Plain (filled f32 s);
+            Plain (broadcast D.Bool [| 512; 512 |] s);
+          |] ));
   ]
+  @ List.map
+      (fun (name, p) ->
+        (* The rows' elements are ones, so that the load keeps its values. *)
+        apply ~work:(stream 1 4 4 m) name (fun () ->
+            let s = [| 1024; 1024 |] in
+            let e = filled f32 s in
+            let ones =
+              A.of_array f32 (Iarray.of_array [| 1024; 1 |])
+                (Array.make 1024 1.)
+            in
+            let ones =
+              Option.get (A.move (M.Broadcast (Iarray.of_array s)) ones)
+            in
+            (p, [| A.Any e |], [| Nx_kernel.Plain e; Plain ones |])))
+      [
+        ("map-quotient-into-load-f32-1M", quotient);
+        ("map-scaled-quotient-into-load-f32-1M", scaled);
+      ]
 
 let apply_rows =
   let m = mib in

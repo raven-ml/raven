@@ -544,6 +544,86 @@ let law_in_place (b : Support.backend) (Pair (x, y), seed) =
         K.map p ~dsts:[| A.Any dst |] Nx_kernel.[| Plain x; Plain y |])
   end
 
+(* A drawn program of several nodes whose first output, its last node cast
+   to its loads' dtype, is written over one of its loads, as a donated
+   operand's is: the bits it gives into fresh destinations, any NaN for a
+   NaN. A second output may follow: a kind of that load, read after the
+   first output is written, or the load itself as an output, as it is, as
+   a Copy, a Cast into its own dtype or a Bitcast. *)
+let law_map_over_load (b : Support.backend) (Pair (x, y), seed) =
+  let module K = (val b.kernels) in
+  let st = Random.State.make [| seed |] in
+  let shape = L.shape (A.layout x) in
+  let (D.Any d as dt) = D.Any (A.dtype x) in
+  let ops =
+    if Random.State.bool st then [| A.Any (on b x); A.Any (on b y) |]
+    else [| A.Any (on b x) |]
+  in
+  let ins = Array.map (fun _ -> dt) ops in
+  let p, _ = program st ins ~room:16 ~rank:(Iarray.length shape) in
+  let n = Iarray.length p.nodes in
+  let k = Random.State.int st (Array.length ops) in
+  let pick l = List.nth l (Random.State.int st (List.length l)) in
+  let later =
+    List.filter (fun u -> P.accepts1 (Unary u) d d) (List.map fst unaries)
+  in
+  let same = List.filter (fun (D.Any e) -> D.bits e = D.bits d) D.all in
+  let second =
+    match Random.State.int st 6 with
+    | 0 | 1 when later <> [] -> `Reread [ P.Op1 (Unary (pick later), dt, k) ]
+    | 0 | 1 | 2 -> `None
+    | 3 -> `Output []
+    | 4 ->
+        let move = if Random.State.bool st then P.Copy else Cast in
+        `Output [ P.Op1 (move, dt, k) ]
+    | _ -> `Output [ P.Op1 (Bitcast, pick same, k) ]
+  in
+  let extra, outs =
+    match second with
+    | `None -> ([], [| n |])
+    | `Reread e -> (e, [| n; n + 1 |])
+    | `Output [] -> ([], [| n; k |])
+    | `Output e -> (e, [| n; n + 1 |])
+  in
+  let q =
+    P.v ~ins:(Iarray.of_array ins)
+      (Iarray.of_list
+         (Iarray.to_list p.nodes @ (P.Op1 (Cast, dt, n - 1) :: extra)))
+      ~outs:(Iarray.of_array outs)
+  in
+  let fresh () =
+    Array.map
+      (fun o ->
+        let (D.Any e) = P.dtype q o in
+        A.Any (A.create b.device e shape))
+      outs
+  in
+  let loads ops = Array.map (fun (A.Any x) -> Nx_kernel.Plain x) ops in
+  let want = fresh () in
+  let answered = K.map q ~dsts:want (loads ops) in
+  let over = A.Any (on b (A.copy (host (A.expect d ops.(k))))) in
+  let got = fresh () in
+  got.(0) <- over;
+  let ops' = Array.copy ops in
+  ops'.(k) <- over;
+  let msg = describe q in
+  equal ~msg answer answered (K.map q ~dsts:got (loads ops'));
+  if answered = A.Done then begin
+    cover "computed" true;
+    cover "the load read after the output is written"
+      (match second with `Reread _ -> true | _ -> false);
+    cover "the load an output"
+      (match second with `Output _ -> true | _ -> false);
+    cover "several nodes" (n > Array.length ops + 1);
+    Array.iteri
+      (fun i (A.Any w) ->
+        let (A.Any g) = got.(i) in
+        equal ~msg:(strf "output %d of %s" i msg)
+          (same_values (P.dtype q outs.(i)))
+          (bits_of (host w)) (bits_of (host g)))
+      want
+  end
+
 (* Operands outlive the call *)
 
 (* While another domain collects and compacts, copies of arrays no other value
@@ -1146,6 +1226,11 @@ let laws (b : Support.backend) =
         (run (fun ((Pair (x, _), _) as c) ->
              covers (Case x);
              law_in_place b c));
+      prop "a map of several nodes may write over a load it reads"
+        (Gen.pair (Gen.frequency [ (9, pairs); (1, large_pairs) ]) Gen.int)
+        (run (fun ((Pair (x, _), _) as c) ->
+             covers (Case x);
+             law_map_over_load b c));
       prop "a result in a box of indices is computed from the operands' box"
         box_cases (run (law_box b));
       test "operands outlive a released call"

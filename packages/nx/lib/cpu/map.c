@@ -10,22 +10,32 @@
    buffer, C-contiguous over the loop's shape, whose position at an index
    is that index's place in C order, from which each coordinate is
    divided out. The loop is walked in blocks. Per block, plane by
-   plane, each node runs in order over values held in slots of an arena on
-   the stack, through rows.c's rows, as apply.c's kinds do:
+   plane, the nodes that compute run in order over values held in slots of
+   an arena on the stack, through rows.c's rows, as apply.c's kinds do.
+   Each node that runs writes its value's view, where the plane's rows of
+   it lie, into the arena, and a node reads its operands' views there:
 
    - a load held in its own dtype whose rows are contiguous is read in
      place;
    - a load held in its own dtype whose rows step by no element, as a
      broadcast's, is read in place with a step of 0, as a constant is:
      one element for the plane, or one for each row;
-   - a load identical to an output is staged, since a node may write the
-     output first, and so is any other load: into its slot;
+   - a load identical to an output, as a donated operand is, is read in
+     place where each node that reads it runs before the first node that
+     writes an output in place, or is that node and a plain kind, whose
+     rows read each element before they write it; a load that is an
+     output, or whose Copy, Cast or Bitcast is, is read last by the
+     plane's stores, after every node, so it never is. Else it is staged,
+     and so is any other load: into its slot;
    - a constant is read in place with a step of 0;
    - a coordinate fills its slot from the index's positions;
    - a kind whose operands each repeat one element along every row, as a
      constant, a broadcast load or such a value does, computes one element
      a row, held in its slot with a step of 0, and so does a coordinate
      that holds along every row;
+   - a kind whose operands and result each lie in one run of the plane's
+     elements, or repeat one element for the plane, computes in one call
+     of its row;
    - Copy, a Cast into the operand's own dtype and a Bitcast between byte
      wide dtypes read their operand's value, a Bitcast between sub-byte
      ones its codes;
@@ -70,8 +80,8 @@
    blocks, up to SLOT bytes a slot; one that holds more gets LEAST
    elements of its widest carrier a slot. The arena is on the stack up to
    ARENA bytes, past them from the heap: at a carrier of one byte, up to
-   1040 values stay on the stack. After the slots, a bit for each node
-   says whether a plane holds its value one element a row. */
+   1040 values stay on the stack. After the slots, the view of each node's
+   value in the plane, which take their bytes of ARENA first. */
 #define HELD 256
 #define TEMPS 4
 #define LEAST 16
@@ -80,7 +90,9 @@
 /* The most bytes a slot holds. Slots of half apply.c's NX_CPU_SLOT ran
    faster on both machines: on the M1 Max map-add-f32-1M took 23.6 us in 8
    KiB slots, 33.5 in 16 and 27.6 in 4; on kimchi map-6-f32-1M 52.2 us in 8
-   KiB, 57.3 in 16. */
+   KiB, 57.3 in 16. Larger slots evict the slots later nodes read again:
+   in a simulated 48 KiB L1, map-6-f32-1M in 16 KiB slots took 3% fewer
+   instructions and missed on 57% more writes. */
 #define SLOT (8 * 1024)
 
 /* The bytes of the cache line a slot starts on. */
@@ -108,6 +120,8 @@ static int width(int dt) { return nx_cpu_width(dt); }
 typedef struct {
   int tag, kind, dt;
   int x[3];   /* operand nodes */
+  int y[3];   /* the nodes whose values they are, no alias */
+  int64_t yw[3]; /* their held dtypes' widths */
   int arity;  /* of the kinds of one to three operands; 0 otherwise */
   int slot;   /* its slot, or -1 for a value read elsewhere */
   int alias;  /* the node whose value it is, itself no alias, or -1 */
@@ -117,8 +131,12 @@ typedef struct {
   int c, h;   /* its carrier and the dtype it is held in */
   int wc, wh; /* their widths */
   int direct; /* In: its load, held in its own dtype and identical to no
-                 output, is read in place where its rows step by one
-                 element or none */
+                 output it could be written before read, is read in place
+                 where its rows step by one element or none */
+  int plain;  /* a kind other than Cast whose operands and result are held
+                 in their carriers, or a Where: it reads its operands' views
+                 as they are */
+  int next;   /* the node a plane runs after it, or -1 */
   void *f;    /* a kind's row */
   uint8_t bits[16]; /* Const: its element, held */
 } step;
@@ -133,12 +151,20 @@ typedef struct {
   int64_t extent[NX_MAX_RANK], inner[NX_MAX_RANK];
   const step *s;
   const int32_t *outs;
+  int first; /* the first node a plane runs, or -1 */
   int nheld; /* the values held at once: their slots come first */
   int temps; /* TEMPS where a node casts or is not of its carrier, else 0 */
   int w;     /* the bytes of the widest carrier a block holds */
-  int64_t flags; /* the bytes of a plane's flags, a bit a node, after its
+  int64_t views; /* the bytes of a plane's views, one a node, after its
                     slots in the arena */
 } prog;
+
+/* A value of a plane: row r's element i at p + r·s1 + i·s0·w bytes, w its
+   held dtype's width. Its rows step by one element or none. */
+typedef struct {
+  uint8_t *p;
+  int64_t s0, s1;
+} view;
 
 /* A plane of a block: [n1] rows of [n0] elements, operand k's first at
    position at[k], stepping s0[k] along a row and s1[k] across rows; and
@@ -152,17 +178,8 @@ typedef struct {
   int64_t bytes;
   int term; /* an output, or -1 */
   uint8_t *terms;
-  uint64_t *flat; /* a bit for each node: its value one element a row */
+  view *v; /* each node's value, written by the node that computes it */
 } plane;
-
-static int is_flat(const plane *f, int i) {
-  return f->flat[i / 64] >> (i % 64) & 1;
-}
-
-static void set_flat(const plane *f, int i, int flat) {
-  uint64_t bit = (uint64_t)1 << (i % 64);
-  f->flat[i / 64] = flat ? f->flat[i / 64] | bit : f->flat[i / 64] & ~bit;
-}
 
 static uint8_t *slot(const plane *f, int k) { return f->arena + k * f->bytes; }
 
@@ -170,13 +187,6 @@ static uint8_t *slot(const plane *f, int k) { return f->arena + k * f->bytes; }
 static uint8_t *temp(const prog *j, const plane *f, int k) {
   return slot(f, j->nheld + k);
 }
-
-/* A value of a plane: row r's element i at p + r·s1 + i·s0·w bytes, w its
-   held dtype's width. */
-typedef struct {
-  uint8_t *p;
-  int64_t s0, s1;
-} view;
 
 /* [n] elements of [dt] at [d], each its carrier's element at [s] brought to
    [dt]: int4 sign-extended from its low bits, uint4 masked, float4 rounded
@@ -218,16 +228,18 @@ static void sub_bitcast(int xt, int dt, const uint8_t *x, uint8_t *codes,
    element or none, which the rows read as they are. Staging a row that
    repeats one element took nx_copy_box about 16 instructions an element
    on fudge, a fifth of eager attention's forward at 512. A load identical
-   to an output is not: a node may write the output before another reads
-   the load. */
+   to an output is only where its last reader runs before the first node
+   that writes an output in place, or is that node and a plain kind
+   (plan). */
 static int in_place(const step *s, const plane *p) {
-  return s->direct && (p->s0[s->k] == 1 || p->s0[s->k] == 0);
+  return s->direct && (uint64_t)p->s0[s->k] <= 1;
 }
 
 /* Where node [i], a node with a slot, computes its value in plane [f]: its
    output's destination or buffer where it is written in place there, else
    its slot. */
-static view home(const prog *j, const plane *f, int i) {
+static inline __attribute__((always_inline)) view home(const prog *j,
+                                                      const plane *f, int i) {
   const step *s = &j->s[i];
   int64_t w = s->wh;
   int o = s->out;
@@ -237,18 +249,11 @@ static view home(const prog *j, const plane *f, int i) {
   return (view){slot(f, s->slot), 1, f->n0 * w};
 }
 
-/* Node [i]'s value in plane [f]. */
+/* Node [i]'s value in plane [f], once the node whose value it is has
+   run. */
 static view value_of(const prog *j, const plane *f, int i) {
   const step *s = &j->s[i];
-  if (s->alias >= 0) s = &j->s[i = s->alias];
-  if (s->tag == NX_NODE_CONST) return (view){(uint8_t *)s->bits, 0, 0};
-  if (s->tag == NX_NODE_IN && in_place(s, f)) {
-    int64_t w = s->wh;
-    int64_t s1 = f->n1 == 1 ? 0 : f->s1[s->k] * w;
-    return (view){j->a[s->k].base + f->at[s->k] * w, f->s0[s->k], s1};
-  }
-  if (is_flat(f, i)) return (view){slot(f, s->slot), 0, s->wh};
-  return home(j, f, i);
+  return f->v[s->alias >= 0 ? s->alias : i];
 }
 
 /* [v], of the dtype [dt], with contiguous rows: itself, or each row's
@@ -267,7 +272,7 @@ static view runs(view v, int dt, const plane *p, uint8_t *t) {
    it is held as codes. */
 static view wide_of(const prog *j, const plane *f, int i, int o) {
   const step *x = &j->s[j->s[i].x[o]];
-  view v = value_of(j, f, j->s[i].x[o]);
+  view v = f->v[j->s[i].y[o]];
   if (x->h == x->c) return v;
   uint8_t *t = temp(j, f, o);
   nx_cpu_run decode = nx_cpu_convert(x->dt, x->c);
@@ -378,20 +383,91 @@ static void kind_row(const step *s, int64_t n, uint8_t *y, uint8_t *const *x,
   else ((nx_cpu_row3)s->f)(n, y, 1, x[0], st[0], x[1], st[1], x[2], st[2]);
 }
 
-/* Runs node [i] over plane [f] into its slot. Inlined into planes, its
-   one caller: a call a node and a block cost about 1% of a softmax over
-   rows of 2048 on fudge. */
-static inline __attribute__((always_inline)) void run(const prog *j,
-                                                     const plane *f, int i) {
+/* Whether the views [v] of [n] operands, their elements [w] bytes wide,
+   and [o], of [wo] bytes, each lie in one run of the plane's n0·n1
+   elements or repeat one element for the plane: a row of n0·n1 elements
+   computes the plane. */
+static int one_run(const view *v, const int64_t *w, int n, view o,
+                   int64_t wo, int64_t n0) {
+  if (o.s1 != n0 * wo) return 0;
+  for (int k = 0; k < n; k++)
+    if (v[k].s1 != v[k].s0 * n0 * w[k]) return 0;
+  return 1;
+}
+
+/* The plain kind [s] over [n] elements into [d], its operands [x], [y]
+   and [z] stepping [sx], [sy] and [sz] elements, those past its arity
+   ignored. */
+static inline __attribute__((always_inline)) void plain_row(
+    const step *s, int64_t n, uint8_t *d, const uint8_t *x, int64_t sx,
+    const uint8_t *y, int64_t sy, const uint8_t *z, int64_t sz) {
+  if (s->arity == 1) ((nx_cpu_row1)s->f)(n, d, 1, x, sx);
+  else if (s->arity == 2) ((nx_cpu_row2)s->f)(n, d, 1, x, sx, y, sy);
+  else ((nx_cpu_row3)s->f)(n, d, 1, x, sx, y, sy, z, sz);
+}
+
+/* Runs the plain kind [i] over plane [f]: one element a row into its slot
+   where its operands each repeat one element along every row and it is
+   written in place nowhere; else the plane in one call of its row where
+   its operands and home each lie in one run of the plane's elements or
+   repeat one for the plane, as every value of a plane of one row does;
+   else row by row. The common node of a map's planes, it reads its
+   operands' views and calls its row, no more: on fudge, finding each
+   operand's view anew for each node cost about 500 instructions a node
+   and a block of 2048 float32, and a fused map more than its kinds as
+   single-op maps. An operand past the kind's arity is its first. */
+static inline __attribute__((always_inline)) void plain(const prog *j,
+                                                       const plane *f,
+                                                       int i) {
+  const step *s = &j->s[i];
+  const view x = f->v[s->y[0]], y = f->v[s->y[1]], z = f->v[s->y[2]];
+  int64_t n0 = f->n0, n1 = f->n1, w = s->wh;
+  if (s->out < 0 && n0 > 1 && (x.s0 | y.s0 | z.s0) == 0) {
+    uint8_t *d = slot(f, s->slot);
+    plain_row(s, n1, d, x.p, x.s1 / s->yw[0], y.p, y.s1 / s->yw[1], z.p,
+              z.s1 / s->yw[2]);
+    f->v[i] = (view){d, 0, w};
+    return;
+  }
+  view t = s->out < 0 ? (view){slot(f, s->slot), 1, n0 * w} : home(j, f, i);
+  f->v[i] = t;
+  if (n1 == 1 || (t.s1 == n0 * w && x.s1 == x.s0 * n0 * s->yw[0] &&
+                  y.s1 == y.s0 * n0 * s->yw[1] &&
+                  z.s1 == z.s0 * n0 * s->yw[2])) {
+    plain_row(s, n0 * n1, t.p, x.p, x.s0, y.p, y.s0, z.p, z.s0);
+    return;
+  }
+  /* Row by row, a loop for each arity: the arity's test and the unread
+     operands' rows cost a tenth of the loop's instructions. */
+  uint8_t *d = t.p;
+  const uint8_t *xp = x.p, *yp = y.p, *zp = z.p;
+  if (s->arity == 1)
+    for (int64_t r = 0; r < n1; r++, d += t.s1, xp += x.s1)
+      ((nx_cpu_row1)s->f)(n0, d, 1, xp, x.s0);
+  else if (s->arity == 2)
+    for (int64_t r = 0; r < n1; r++, d += t.s1, xp += x.s1, yp += y.s1)
+      ((nx_cpu_row2)s->f)(n0, d, 1, xp, x.s0, yp, y.s0);
+  else
+    for (int64_t r = 0; r < n1;
+         r++, d += t.s1, xp += x.s1, yp += y.s1, zp += z.s1)
+      ((nx_cpu_row3)s->f)(n0, d, 1, xp, x.s0, yp, y.s0, zp, z.s0);
+}
+
+/* Runs node [i], a node with a slot, over plane [f], but a load read in
+   place (run): into its slot, or for a kind its home, and writes its
+   value's view. Out of line: planes inlines the common nodes alone (run),
+   and its smaller loop took fewer instructions a node. */
+static __attribute__((noinline)) void run_any(const prog *j, const plane *f,
+                                              int i) {
   const step *s = &j->s[i];
   const plane *p = f;
   int64_t n0 = p->n0, n1 = p->n1;
   int dt = s->dt, c = s->c, h = s->h;
   uint8_t *d = slot(f, s->slot);
-  set_flat(f, i, 0);
+  view whole = {d, 1, n0 * s->wh};
   if (s->tag == NX_NODE_IN) {
-    if (in_place(s, p)) return;
     const nx_array *a = &j->a[s->k];
+    f->v[i] = whole;
     if (h != a->dtype) {
       nx_cpu_block b;
       one(p, s->k, &b);
@@ -412,18 +488,20 @@ static inline __attribute__((always_inline)) void run(const prog *j,
       for (int64_t r = 0; r < n1; r++)
         ((int64_t *)d)[r] =
             (p->at[k] + r * p->s1[k]) / j->inner[a] % j->extent[a];
-      set_flat(f, i, 1);
+      f->v[i] = (view){d, 0, s->wh};
       return;
     }
     coords(j, p, a, (int64_t *)d);
+    f->v[i] = whole;
     return;
   }
   if (s->tag == NX_NODE_OP1 && s->kind == NX_OP1_BITCAST) {
     int xt = j->s[s->x[0]].dt;
-    view v = runs(value_of(j, f, s->x[0]), held(xt), p, temp(j, f, 1));
+    view v = runs(f->v[s->y[0]], held(xt), p, temp(j, f, 1));
     for (int64_t r = 0; r < n1; r++)
       sub_bitcast(xt, dt, v.p + r * v.s1, temp(j, f, 0), d + r * n0 * s->wh,
                   n0);
+    f->v[i] = whole;
     return;
   }
   view t = home(j, f, i);
@@ -438,6 +516,7 @@ static inline __attribute__((always_inline)) void run(const prog *j,
     if (h == dt) {
       for (int64_t r = 0; r < n1; r++)
         convert(v.p + r * v.s1, t.p + r * t.s1, n0);
+      f->v[i] = t;
       return;
     }
     for (int64_t r = 0; r < n1; r++)
@@ -446,33 +525,39 @@ static inline __attribute__((always_inline)) void run(const prog *j,
       nx_cpu_convert(dt, NX_FLOAT32)(t2, d, n0 * n1);
     else
       round_held(dt, t2, d, NULL, n0 * n1);
+    f->v[i] = whole;
     return;
   }
-  /* Where selects held values; a kind computes in its operands' carrier,
-     in place where the result is held in its carrier. A kind whose
-     operands each repeat one element along every row computes one element
-     a row, into its slot, unless it is written in place: its operands'
-     elements step from row to row. */
-  int where = s->tag == NX_NODE_OP3 && s->kind == NX_OP3_WHERE;
+  /* A kind computes in its operands' carrier, in place where the result
+     is held in its carrier (plain): this one decodes an operand, or brings
+     its result to its dtype. A kind whose operands each repeat one element
+     along every row computes one element a row, into its slot, unless it
+     is written in place: its operands' elements step from row to row. */
   view v[3];
+  int64_t we[3];
   int flat = s->out < 0 && n0 > 1;
   for (int o = 0; o < s->arity; o++) {
-    v[o] = where ? value_of(j, f, s->x[o]) : wide_of(j, f, i, o);
+    v[o] = wide_of(j, f, i, o);
+    we[o] = j->s[s->x[o]].wc;
     flat = flat && v[o].s0 == 0;
   }
-  int64_t w = where ? s->wh : s->wc;
-  uint8_t *t3 = where || dt == c ? NULL : temp(j, f, 3);
-  view o = where || h == c ? t : (view){t3, 1, n0 * w};
+  int64_t w = s->wc;
+  uint8_t *t3 = dt == c ? NULL : temp(j, f, 3);
+  view o = h == c ? t : (view){t3, 1, n0 * w};
   uint8_t *x[3] = {NULL, NULL, NULL};
   int64_t st[3] = {0, 0, 0};
   if (flat) {
     for (int k = 0; k < s->arity; k++) {
-      const step *e = &j->s[s->x[k]];
       x[k] = v[k].p;
-      st[k] = v[k].s1 / (where ? e->wh : e->wc);
+      st[k] = v[k].s1 / we[k];
     }
     kind_row(s, n1, o.p, x, st);
-    set_flat(f, i, 1);
+  } else if (n1 == 1 || one_run(v, we, s->arity, o, w, n0)) {
+    for (int k = 0; k < s->arity; k++) {
+      x[k] = v[k].p;
+      st[k] = v[k].s0;
+    }
+    kind_row(s, n0 * n1, o.p, x, st);
   } else
     for (int64_t r = 0; r < n1; r++) {
       for (int k = 0; k < s->arity; k++) {
@@ -481,7 +566,7 @@ static inline __attribute__((always_inline)) void run(const prog *j,
       }
       kind_row(s, n0, o.p + r * o.s1, x, st);
     }
-  if (where) return;
+  f->v[i] = flat ? (view){t.p, 0, s->wh} : t;
   /* A kind's result in its carrier: encoded where its dtype is held as
      codes, else brought to the dtype in its slot. */
   int64_t m = flat ? n1 : n0, rows = flat ? 1 : n1;
@@ -493,15 +578,34 @@ static inline __attribute__((always_inline)) void run(const prog *j,
     round_held(dt, d, d, t3, m * rows);
 }
 
+/* Runs node [i] over plane [f], as run_any does: a plain kind, a
+   constant and a load read in place here, inlined into planes, its one
+   caller. A call a node and a block cost about 1% of a softmax over rows
+   of 2048 on fudge. */
+static inline __attribute__((always_inline)) void run(const prog *j,
+                                                     const plane *f, int i) {
+  const step *s = &j->s[i];
+  if (s->plain) plain(j, f, i);
+  else if (s->tag == NX_NODE_CONST) f->v[i] = (view){(uint8_t *)s->bits, 0, 0};
+  else if (s->tag == NX_NODE_IN && in_place(s, f)) {
+    int64_t w = s->wh;
+    f->v[i] = (view){j->a[s->k].base + f->at[s->k] * w, f->s0[s->k],
+                     f->s1[s->k] * w};
+  } else
+    run_any(j, f, i);
+}
+
 /* Stores output [o]'s value of plane [f] into its destination, inlined
    as run is. */
 static inline __attribute__((always_inline)) void store(const prog *j,
                                                        const plane *f,
                                                        int o) {
   const plane *p = f;
-  const nx_array *a = &j->a[o];
-  int dt = a->dtype, h = held(dt), i = j->outs[o];
+  int i = j->outs[o];
   int x = j->s[i].alias >= 0 ? j->s[i].alias : i;
+  if (f->term < 0 && j->s[x].out == o && p->s0[o] == 1) return;
+  const nx_array *a = &j->a[o];
+  int dt = a->dtype, h = held(dt);
   if (f->term >= 0) {
     /* The value's rows, as its view steps them, a constant's or a
        repeated load's included, into the terms'. */
@@ -515,7 +619,6 @@ static inline __attribute__((always_inline)) void store(const prog *j,
                 8 * (int)w);
     return;
   }
-  if (j->s[x].out == o && p->s0[o] == 1) return;
   view v = value_of(j, f, i);
   if (h == dt) {
     int64_t w = width(dt);
@@ -590,30 +693,33 @@ typedef struct {
    or output [term] into [terms] where it is one. [t] holds two tables of
    the operands, which each plane's first positions and steps along a row
    are written into. */
-static void planes(const block_tables *b, const prog *j, int term,
-                   uint8_t *terms, int64_t *t) {
+static inline __attribute__((always_inline)) void planes(
+    const block_tables *b, const prog *j, int term, uint8_t *terms,
+    int64_t *t) {
   /* The arena, as long as the block needs, on a cache line, its slots and
-     then its flags: on the stack up to ARENA bytes, else from the heap. */
-  int64_t bytes = (b->n0 * b->n1 * j->w + LINE - 1) / LINE * LINE;
+     then its views: on the stack up to ARENA bytes, else from the heap. */
+  int64_t bytes = (b->n0 * b->n1 * j->w + LINE - 1) & -(int64_t)LINE;
   int64_t slots = (j->nheld + j->temps) * bytes;
-  int64_t size = slots + j->flags + LINE;
+  int64_t size = slots + j->views + LINE;
   uint8_t stack[size <= ARENA + LINE ? size : 1];
   uint8_t *room = size <= ARENA + LINE ? stack : arena_take(j->heap);
   if (room == NULL) return;
   int64_t *at = t, *s0 = t + j->n;
   uint8_t *arena = room + (LINE - (uintptr_t)room % LINE) % LINE;
-  /* Each node's flag is written by run before any node reads it. */
-  uint64_t *flat = (uint64_t *)(arena + slots);
-  plane f = {b->n0, b->n1, at, b->s0, b->s1, arena, bytes, term, terms, flat};
+  /* Each node's view is written by run before any node reads it. */
+  view *v = (view *)(arena + slots);
+  plane f = {b->n0, b->n1, b->at, b->s0, b->s1, arena, bytes, term, terms, v};
   /* A row of one element steps nowhere: every operand's is contiguous. */
   if (b->n0 == 1) {
     for (int k = 0; k < j->n; k++) s0[k] = 1;
     f.s0 = s0;
   }
   for (int64_t q = 0; q < b->n2; q++) {
-    for (int k = 0; k < j->n; k++) at[k] = b->at[k] + q * b->s2[k];
-    for (int i = 0; i < j->nnodes; i++)
-      if (j->s[i].slot >= 0) run(j, &f, i);
+    if (q > 0) {
+      for (int k = 0; k < j->n; k++) at[k] = b->at[k] + q * b->s2[k];
+      f.at = at;
+    }
+    for (int i = j->first; i >= 0; i = j->s[i].next) run(j, &f, i);
     for (int o = 0; o < j->nouts; o++) store(j, &f, o);
   }
   if (room != stack) arena_give(j->heap, room);
@@ -702,7 +808,8 @@ static int decode(step *s, int nn, int nouts, const int32_t *outs, int rank,
     t->h = held(t->dt);
     t->wc = width(t->c);
     t->wh = width(t->h);
-    t->direct = 0;
+    t->direct = t->plain = 0;
+    t->next = -1;
     int a = t->x[0];
     switch (t->tag) {
       case NX_NODE_IN: t->k = nouts + a; break;
@@ -854,6 +961,46 @@ static int widest(const step *s, int nn) {
   return w;
 }
 
+/* Plans the run of the decoded steps [s], of [nn] nodes, over the
+   operands [a], into [j]: the nodes a plane runs, in order, those with a
+   slot and the constants, whose views it writes; each node's operands as
+   the nodes whose values they are; the kinds that read their operands'
+   views as they are; and the loads read in place. A load identical to an
+   output, a donated operand, is read in place only where its last reader
+   runs before the first node that writes an output in place, or is that
+   node and such a kind, whose rows read each element before they write
+   it; an output's last reader is the plane's stores, after every node.
+   Otherwise it is copied into its slot first. */
+static void plan(prog *j, step *s, int nn, const nx_array *a) {
+  int writes = nn;
+  j->first = -1;
+  for (int i = nn - 1; i >= 0; i--) {
+    step *t = &s[i];
+    for (int o = 0; o < 3 && t->arity > 0; o++) {
+      int x = t->x[o < t->arity ? o : 0];
+      t->y[o] = s[x].alias >= 0 ? s[x].alias : x;
+      t->yw[o] = s[t->y[o]].wh;
+    }
+    int decoded = 0;
+    for (int o = 0; o < t->arity; o++)
+      decoded = decoded || s[t->x[o]].h != s[t->x[o]].c;
+    int where = t->tag == NX_NODE_OP3 && t->kind == NX_OP3_WHERE;
+    t->plain = t->f != NULL &&
+               (where || (!decoded && t->h == t->c && t->dt == t->c));
+    if (t->out >= 0) writes = i;
+    if (t->slot >= 0 || t->tag == NX_NODE_CONST) {
+      t->next = j->first;
+      j->first = i;
+    }
+  }
+  for (int i = 0; i < nn; i++) {
+    step *t = &s[i];
+    if (t->tag != NX_NODE_IN || a[t->k].dtype != t->h) continue;
+    int at_writer = writes < nn && t->last == writes && s[writes].plain;
+    t->direct = !a[t->k].alias || t->last < writes || at_writer;
+  }
+}
+
 /* Decodes the program copied into the steps [s], of [nn] nodes and outputs
    [outs], into [j] over the [n] operands [a], its outputs first and of the
    loop's shape, the index after them where a coordinate reads it, its
@@ -867,24 +1014,23 @@ static int setup(prog *j, step *s, int nn, int nouts, const int32_t *outs,
   *j = (prog){.a = a, .n = n, .nouts = nouts, .nnodes = nn, .index = -1,
               .heap = heap, .tabs = tabs, .s = s, .outs = outs,
               .nheld = slots, .temps = temps(s, nn), .w = widest(s, nn),
-              .flags = (nn + 63) / 64 * 8};
-  for (int i = 0; i < nn; i++)
-    if (s[i].tag == NX_NODE_IN)
-      s[i].direct = !a[s[i].k].alias && a[s[i].k].dtype == s[i].h;
+              .views = nn * (int64_t)sizeof(view)};
+  plan(j, s, nn, a);
   if (index) {
     a[n] = index_of(&a[0], j->extent, j->inner);
     j->index = j->n++;
   }
   tabs->bytes = TABLES * j->n * (int64_t)sizeof(int64_t);
   /* A program of constants alone holds nothing in the arena: its blocks
-     take SLOT bytes, as one of few slots does. */
+     take SLOT bytes, as one of few slots does. The views take their bytes
+     of ARENA first. */
   int held = slots + j->temps;
-  int64_t bytes = held > 0 ? ARENA / held / LINE * LINE : SLOT;
+  int64_t bytes = held > 0 ? (ARENA - j->views) / held / LINE * LINE : SLOT;
   if (bytes > SLOT) bytes = SLOT;
   if (bytes < LEAST * j->w) bytes = LEAST * j->w;
-  /* A block's arena takes at most its slots of [bytes] and its flags, on
+  /* A block's arena takes at most its slots of [bytes] and its views, on
      a cache line. */
-  heap->bytes = held * ((bytes + LINE - 1) / LINE * LINE) + j->flags + LINE;
+  heap->bytes = held * ((bytes + LINE - 1) / LINE * LINE) + j->views + LINE;
   *most = bytes / j->w;
   return NX_OK;
 }
