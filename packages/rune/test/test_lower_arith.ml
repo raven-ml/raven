@@ -100,7 +100,11 @@ let format_specials ~e ~m =
   List.concat_map (fun x -> [ x; logor x sign ]) mags
 
 (* Values at a narrow format's rounding ties and its saturation: 1 between two
-   codes, a subnormal tie, the greatest finite and past it. *)
+   codes, a subnormal tie, the greatest finite and past it. A float64 operand
+   holds each with the floats one ulp each side ([around]): the float32 nearest
+   [1 + 2^-8 + 2^-52] is bfloat16's tie [1 + 2^-8], so a cast through it
+   rounding to nearest would round twice, to [1.] where the value is
+   [1.0078125]. *)
 let ties =
   let p = Float.ldexp 1. in
   List.concat_map

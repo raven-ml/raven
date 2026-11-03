@@ -991,9 +991,7 @@ word comes from its lock and from samples the dashboard saw arrive.
   `Codegen.compile`), and its binary is kept in its compiler's disk cache,
   which `CACHESIZE` bounds.
 - An operation on an emulated narrow float rounds its result only at the
-  store, and a cast of a float64 or a 32- or 64-bit integer to a narrow float
-  without native arithmetic goes through a float32 rounded to nearest. On a
-  target without the type, such a cast still rounds once.
+  store.
 - Compiling a long program allocates about 30% less: float64
   `Nx.betainccinv`'s gradient, one kernel of 42k instructions, 424 M words
   against 608 M. `Renderer.Estimates.of_uops`, `Linearizer.linearize`,

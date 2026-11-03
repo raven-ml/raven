@@ -1594,15 +1594,35 @@ Withdrawn: multi-device is out of scope, see README.
   `shaping ›` tests; and the `Compiler_cpu` suite's `without Clang › an
   object cached by the default compiler is not served under CC`.
 
-## D64. Withdrawn
+## D64. A cast to a narrow float through a float32 rounds once
 
-A renderer without arithmetic on a narrow float cast a source more precise than
-a float32 to it through a float32 rounded to odd, so that the cast rounded once.
-rune hands tolk only a float32 to cast to a narrow float, which it rounds to odd
-itself when its source is more precise (`Lower_arith.store_real`), so no raven
-cast reached the rule. The cast rule of `Cstyle.create_non_native_float_pats`
-casts through a float32 rounded to nearest, as `renderer/cstyle.py:100-101`
-does.
+- **tinygrad:** `renderer/cstyle.py:100-101` (`create_non_native_float_pats`,
+  which casts a source of any type but float32 to a float32, then to the
+  narrow float).
+- **tolk:** the cast rule of `Cstyle.create_non_native_float_pats`, with
+  `Decomp_dtype.narrow` (D9's).
+- **Differs:** a renderer without arithmetic on a narrow float, Clang's on
+  bfloat16 and HIP's on bfloat16 and the 8-bit floats, casts to it through a
+  float32. A source more precise than a float32 (a float64, or an integer of
+  32 or 64 bits) reaches the float32 rounded to odd, as an emulated cast's
+  does (D9), so that the cast rounds once, from the exact value, as the folder
+  (`Dtype.truncate`) does. tinygrad rounds to the float32 to nearest, then
+  again: on the host, the bfloat16 of the double `1 + 2^-8 + 2^-52` is `1.0`
+  there, where its correctly rounded value is `1.0078125`, and of the int64
+  `2^40 + 2^32 + 1` is `2^40` where it is `2^40 + 2^33`. No golden holds such
+  a cast.
+- **Reason:** (e). A cast is IEEE's conversion, one rounding, in the IR's own
+  types; the second rounding gives the wrong neighbour where the float32 lands
+  on a tie of the narrow float. rune hands tolk only a float32 to cast to a
+  narrow float, rounding a more precise source to odd itself
+  (`Lower_arith.store_real`, `Lower_arith.float_odd`), so no raven call site
+  reaches the rule.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `casts to
+  bfloat16 › an integer or a double rounds once on the host`, for int64,
+  int32, uint32, uint64 and float64 sources, among them doubles just past a
+  tie, one of them subnormal. On rune, which rounds itself: `Lower_arith ›
+  casts give eager's values`, whose float64 operands include the doubles one
+  unit each side of the bfloat16 tie `1 + 2^-8`.
 
 ## D65. Withdrawn
 
