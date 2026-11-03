@@ -594,7 +594,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   the fill, bits copied.
 - **Class:** exact.
 - **Reason:** (b). The refusal and the stores over several devices: none. The
-  refusal's bound is a cost model's, not timed (`lower_index.ml`, Work); the
+  refusal's bound is an untimed cost model's (`lower_index.ml`, Work); the
   stores were measured by peak memory alone. Each needs a bench row.
 - **Pinned by:** `Lower_index › folds and assemblies › an assembly gives
   eager's bits`, `Lower_index › work bounds › a scatter past 16 times eager's
@@ -644,11 +644,12 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `nx_kernel.mli`, `scatter`: `into` where no update lands, bits
   unchanged.
 - **Class:** exact; rounded sum for float `Add`.
-- **Reason:** (b); the kernel that walks the updates (d), by
-  `Jit/take-grad-1024-of-4096x64` (an embedding's gradient, past the bound)
-  and `Jit/scatter-16-rows-into-donated-4096x64`,
+- **Reason:** (b); the kernel that walks the updates past the bound (d), by
+  `Jit/take-grad-1024-of-4096x64` (an embedding's gradient) and
   `Jit/scatter-1024-rows-into-donated-4096x64` (a donated table) in
-  `rune.thumper`. Where it starts, the bound of 16: none, a cost model's.
+  `rune.thumper`. Below the bound, into a carry's or a donated argument's
+  storage: none, since no row's baseline was recorded with the kernel there.
+  The bound of 16 itself: none, a cost model's.
 - **Pinned by:** `Lower_index › gathers and scatters › a scatter by Set, Max
   or Min gives eager's bits`, `› a scatter by Add wraps integers and holds its
   float bound`, `› a scatter by Set, Max or Min past 16 times eager's work
