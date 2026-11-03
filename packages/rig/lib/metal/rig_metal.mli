@@ -227,18 +227,22 @@ val capability : t -> Rig_metal_abi.t
     multiple of 16 bytes, as threadgroup memory [0]
     ([setThreadgroupMemoryLength:atIndex:]), unless it is [0]; and its grid
     ([dispatchThreadgroups:threadsPerThreadgroup:]). The function reads its
-    parameters as a [constant] structure at [[[buffer(0)]]], and each ref's 8
-    bytes as a device pointer, the GPU address of the ref's buffer plus the
-    offset.
+    parameters' bytes at [[[buffer(0)]]], in the [constant] or the [device]
+    address space, and each ref's 8 bytes as the GPU address of the ref's
+    buffer plus the offset. Parameters of up to 4 KB lie where
+    [setBytes:length:atIndex:] copies them, at an alignment Apple does not
+    document.
 
     The Metal Feature Set Tables bound a buffer's contents by its length
     alone, so the device's [maxBufferLength] bounds a launch's parameters.
-    The launches take the arena's bytes in turn, each on 256 bytes, the
-    largest constant buffer offset alignment, and the bytes of a command
-    buffer's launches come back once its work completes. [rig_metal_room]
-    returns [RIG_LATER] for parts whose parameters the arena holds only once
-    earlier work completes, and [RIG_GROW] for parts whose parameters exceed
-    the empty arena. The growth ({!val-grow}) makes an arena of the least
+    The launches take the arena's bytes in turn, each at an offset that is a
+    multiple of 256 bytes, the largest constant buffer offset alignment.
+    Metal places the arena, a buffer of at least 64 KiB, at a page
+    ({!section-memory}), so parameters past 4 KB start on 256 bytes. The
+    bytes of a command buffer's launches come back once its work completes.
+    [rig_metal_room] returns [RIG_LATER] for parts whose parameters the arena
+    holds only once earlier work completes, and [RIG_GROW] for parts whose
+    parameters exceed the empty arena. The growth ({!val-grow}) makes an arena of the least
     power of two of bytes, at least 64 KiB and at most [maxBufferLength],
     that holds twice them, and the next submission takes it; the command
     buffers that use the old one keep it until their work completes. A
