@@ -886,18 +886,14 @@ value caml_rig_heap_init(value v_kept_from) {
   return Val_unit;
 }
 
-/* Buffers from this size pace major cycles by the program's memory
-   ([heap_cycle_bytes]); smaller ones pace the collector as any bigarray
-   does, so that dead small buffers bring minor collections. */
-#define HEAP_PACED_FROM ((size_t)64 << 10)
-
-/* The [n] bytes at [data], allocated from [base], as a [char] bigarray. */
+/* The [n] bytes at [data], allocated from [base], as a [char] bigarray,
+   which paces major cycles by the program's memory ([heap_cycle_bytes]),
+   whatever its size. A buffer small enough for the minor heap paces minor
+   collections by the same bound: the runtime takes one bound for both. */
 static value heap_bigarray(void *base, void *data, size_t n) {
   size_t f = heap_footprint(n);
-  value ba = n < HEAP_PACED_FROM
-                 ? caml_alloc_custom_mem(&heap_ops, HEAP_BLOCK_BYTES, f)
-                 : caml_alloc_custom(&heap_ops, HEAP_BLOCK_BYTES, f,
-                                     heap_cycle_bytes());
+  value ba =
+      caml_alloc_custom(&heap_ops, HEAP_BLOCK_BYTES, f, heap_cycle_bytes());
   struct caml_ba_array *b = Caml_ba_array_val(ba);
   b->data = data;
   b->num_dims = 1;

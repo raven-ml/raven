@@ -793,15 +793,19 @@ val failure : unit -> string option
     program that keeps every buffer reachable and frees none runs out of
     memory however large its budget.
     {ul
-    {- A dropped host buffer of 64 KiB or more holds its memory until a
-       major cycle of the collector frees it. A cycle comes once the bytes
-       of such buffers that reached the major heap since the last one reach
-       [custom_major_ratio] / 150 ({!Gc.control}) of the program's memory,
-       the allocating domain's major heap and the host buffers live at the
-       last cycle, or half the host's last-level cache if that is more, and
-       at least 4 MiB. Above both floors, that amount is proportional to
+    {- A dropped host buffer holds its memory until a collection frees it:
+       a minor one for a buffer the minor heap still holds, one of at most
+       [custom_minor_max_size] bytes ({!Gc.control}), and a major cycle
+       otherwise. A cycle comes once the bytes of host buffers, of any size,
+       that reached the major heap since the last one reach
+       [custom_major_ratio] / 150 of the program's memory, the allocating
+       domain's major heap and the host buffers live at the last cycle, or
+       half the host's last-level cache if that is more, and at least 4 MiB.
+       Above both floors, that amount is proportional to
        [custom_major_ratio], so raising the ratio holds more dropped memory
-       between cycles and runs fewer of them.}
+       between cycles and runs fewer of them. The bytes of buffers the minor
+       heap holds bring a minor collection once they reach the same
+       amount.}
     {- The host keeps collected buffers of 64 KiB or more for reuse. It keeps
        up to 32 MiB of them, and beyond that only while the bytes of its kept
        and live buffers together stay within the peak of its live buffers

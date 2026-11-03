@@ -953,6 +953,57 @@ let test_paced_host () =
   let rate = cycles_per_mib 256 in
   at_most ~msg:"cycles per MiB" float_exact ~than:(margin /. 4.) rate
 
+(* Small dropped host buffers that reach the major heap pace cycles as large
+   ones do: at most once per 4 MiB, whatever [custom_major_ratio] says of the
+   heap. 32 rounds of 64 buffers of 8 KiB, each round held across a minor
+   collection that promotes it, drop 16 MiB, so at most 4 cycles and half
+   again as margin. At a ratio of 1, the heap's own pace, a cycle per 1/150
+   of its bytes, would bring a cycle per few buffers. *)
+let test_paced_host_small () =
+  let was = (Gc.get ()).custom_major_ratio in
+  Gc.set { (Gc.get ()) with custom_major_ratio = 1 };
+  let cycles =
+    Fun.protect
+      ~finally:(fun () ->
+        Gc.set { (Gc.get ()) with custom_major_ratio = was })
+      (fun () ->
+        Gc.full_major ();
+        let before = (Gc.quick_stat ()).major_collections in
+        for _ = 1 to 32 do
+          let held = Array.init 64 (fun _ -> B.create Rig.host (8 * kib)) in
+          Gc.minor ();
+          ignore (Sys.opaque_identity held)
+        done;
+        (Gc.quick_stat ()).major_collections - before)
+  in
+  at_most ~msg:"cycles over 16 MiB of 8 KiB buffers" float_exact
+    ~than:(margin *. 4.) (Float.of_int cycles)
+
+(* A larger minor heap leaves the major pace as it was: dropped buffers of a
+   MiB, which never live in the minor heap, bring cycles at a minor heap of
+   64 MiB, past half the last-level cache, as often as at the default, give
+   or take half again. A bound raised to the minor heap would bring them
+   several times less often. *)
+let test_paced_minor_heap () =
+  let cycles () =
+    Gc.full_major ();
+    let before = (Gc.quick_stat ()).major_collections in
+    for _ = 1 to 256 do
+      ignore (Sys.opaque_identity (B.create Rig.host (kib * kib)))
+    done;
+    Float.of_int ((Gc.quick_stat ()).major_collections - before)
+  in
+  let usual = cycles () in
+  let was = (Gc.get ()).minor_heap_size in
+  Gc.set { (Gc.get ()) with minor_heap_size = 8 * kib * kib };
+  let raised =
+    Fun.protect
+      ~finally:(fun () -> Gc.set { (Gc.get ()) with minor_heap_size = was })
+      cycles
+  in
+  at_least ~msg:"cycles over 256 MiB at a minor heap of 64 MiB" float_exact
+    ~than:(usual /. margin) raised
+
 (* A refused allocation leaves the pace as it was: its bytes were never a
    buffer's, so they count in no bound, and dropped buffers bring cycles after
    it as often as before it. *)
@@ -1535,6 +1586,10 @@ let tests =
           "at a small heap, dropped host buffers bring a cycle per 4 MiB at \
            most"
           test_paced_host;
+        test "small dropped host buffers bring a cycle per 4 MiB at most"
+          test_paced_host_small;
+        test "a larger minor heap leaves the major pace as it was"
+          test_paced_minor_heap;
         test "a refused host allocation leaves the collector's pace as it was"
           test_paced_refused;
         test "live host buffers raise the bound as heap bytes do"
