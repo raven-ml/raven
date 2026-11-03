@@ -571,7 +571,7 @@ let streams_no_call =
              if Ops.axis_type r = Ops.Axis_type.Upcast then
                Some (Ops.range_str r)
              else None)
-           (K.read_by_calls o)))
+           (K.read_by_opaque o)))
 
 (* A target's bound of multiply-adds per byte: 64 on every renderer, sm_89's
    measured crossover, which the others take until they measure their own. *)

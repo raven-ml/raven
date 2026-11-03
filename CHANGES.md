@@ -969,6 +969,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Code in the target's language (`Op.Custom`) is kept scalar and unpadded as
+  a call is: an upcast of an axis it reads rendered it with a vector Clang
+  rejects, and a pad ran it on the padded point, once more on the first
+  element (`Postrange.Scheduler.read_by_opaque`).
 - A range of a typed integer, such as `Int32`, is split, padded and given
   threads as one of the weak integer: the heuristic raised ("16 does not
   divide 16") where a split read the range's bound, a cast constant, as no
@@ -985,6 +989,7 @@ word comes from its lock and from samples the dashboard saw arrive.
   off: a host kernel that an optimization makes invalid raises
   `Compile_error` naming the kernel instead of compiling into wrong values.
   Compiles take about 1-2% more instructions.
+  (`Postrange.Scheduler.read_by_opaque`).
 - Compiling float64 `Nx.betaincinv`'s gradient allocates 238 M words
   against 365 M and runs 17% fewer instructions, with unchanged output.
 - On the host, `Heuristic` upcasts a reduce kernel's outputs however few

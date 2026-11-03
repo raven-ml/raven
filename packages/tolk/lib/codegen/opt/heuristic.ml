@@ -1468,8 +1468,8 @@ let early k (w, _, reuse) =
   match n with Some n -> Bigint.(geq n (of_int summed)) | None -> true
 
 (* The streamed operand of [k]'s contraction, on a renderer with local
-   indices and shared memory. A kernel where a range's bound or a call's
-   argument reads an axis is not streamed: the layouts upcast output axes by
+   indices and shared memory. A kernel where a range's bound, a call or custom
+   code reads an axis is not streamed: the layouts upcast output axes by
    their accesses. *)
 let streams k =
   let ren = K.ren k in
@@ -1477,7 +1477,7 @@ let streams k =
     ren.has_local && ren.has_shared
     && Setting.value Setting.mv
     && List.is_empty (K.read_by_bounds k)
-    && List.is_empty (K.read_by_calls k)
+    && List.is_empty (K.read_by_opaque k)
   then streamed k
   else None
 

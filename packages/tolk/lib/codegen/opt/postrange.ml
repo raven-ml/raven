@@ -58,7 +58,7 @@ module Scheduler = struct
     reduce_ranges : Ops.t list;
     rngs : Ops.t list;
     read_by_bounds : Ops.t list;
-    read_by_calls : Ops.t list;
+    read_by_opaque : Ops.t list;
     mutable full_shape : sint list option;
   }
 
@@ -155,13 +155,13 @@ module Scheduler = struct
           else acc)
         [] slice
     in
-    (* The ranges a call's arguments read, as [i] in [f(&x[i])]: a call takes
-       one pointer or value for each argument, so none of them can become
-       lanes or take padding. *)
-    let read_by_calls =
+    (* The ranges the sources of a call or of custom code read, as [i] in
+       [f(&x[i])]: each takes one pointer or value for each source, so none of
+       them can become lanes or take padding. *)
+    let read_by_opaque =
       List.fold_left
         (fun acc u ->
-          if op u = Op.Call then
+          if op u = Op.Call || op u = Op.Custom then
             List.fold_left
               (fun acc a ->
                 Nodes.fold
@@ -178,7 +178,7 @@ module Scheduler = struct
       reduce_ranges = red;
       rngs;
       read_by_bounds;
-      read_by_calls;
+      read_by_opaque;
       full_shape = None;
     }
 
@@ -196,7 +196,7 @@ module Scheduler = struct
   let reduce_ranges k = (view k).reduce_ranges
   let rngs k = (view k).rngs
   let read_by_bounds k = (view k).read_by_bounds
-  let read_by_calls k = (view k).read_by_calls
+  let read_by_opaque k = (view k).read_by_opaque
 
   let shape_len k = List.length (rngs k)
   let full_shape k =
@@ -235,7 +235,7 @@ module Scheduler = struct
         let r = List.nth rngs i in
         Option.is_some (known_size (List.nth shape i))
         && (not (List.memq r (read_by_bounds k)))
-        && not (List.memq r (read_by_calls k)))
+        && not (List.memq r (read_by_opaque k)))
       (axes_of ~reduce k (split_targets Upcast))
 
   let group_for_reduces k =
@@ -486,8 +486,8 @@ module Scheduler = struct
               (not (List.memq rng (read_by_bounds k)))
               (strf "a loop's bound reads axis %d" axis);
             check
-              (not (List.memq rng (read_by_calls k)))
-              (strf "a call's argument reads axis %d" axis);
+              (not (List.memq rng (read_by_opaque k)))
+              (strf "a call or custom code reads axis %d" axis);
             if is_reduce then
               check Bigint.(leq amt (of_int 32)) "don't unroll more than 32"
             else check Bigint.(leq amt (of_int 16)) "don't upcast more than 16"
@@ -533,8 +533,8 @@ module Scheduler = struct
             (List.is_empty (read_by_bounds k))
             "tensor cores need loops whose bounds read no axis";
           check
-            (List.is_empty (read_by_calls k))
-            "tensor cores need calls whose arguments read no axis";
+            (List.is_empty (read_by_opaque k))
+            "tensor cores need calls and custom code that read no axis";
           check (axis >= 0) "tensor core opts must have an axis";
           check
             (-1 <= tc_select && tc_select < List.length k.ren.tensor_cores)
@@ -552,10 +552,11 @@ module Scheduler = struct
           let rng = axis_rng axis in
           check (amount > 1) (strf "padto arg is a multiple > 1, not %d" amount);
           check (is_literal (nth rng 0)) "only pad const axes";
-          (* a padded point would run the call on an argument of no element *)
+          (* a padded point would run the call or the code on a source of no
+             element *)
           check
-            (not (List.memq rng (read_by_calls k)))
-            (strf "a call's argument reads axis %d" axis);
+            (not (List.memq rng (read_by_opaque k)))
+            (strf "a call or custom code reads axis %d" axis);
           check
             (not (List.mem (axis_type rng) [ Axis_type.Upcast; Warp ]))
             "cannot pad upcasted or warp";

@@ -5245,6 +5245,20 @@ let group_custom () =
         [ r ];
     ]
 
+(* [C[r] += 1] in the target's language, beside [D[r] = 1], over 16 [r] in a
+   kernel the heuristic optimises. *)
+let optimised_custom () =
+  let r = Ops.range (Int 16) [ 0 ] in
+  let c = int_param ~name:"C" 0 16 and d = int_param ~name:"D" 1 16 in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"optimised_custom" ())
+    [
+      Ops.end_
+        (Ops.group
+           [ code "{0}[0] += 1;" [ at c r ]; Ops.store (at d r) (i32 1) ])
+        [ r ];
+    ]
+
 (* The sum over [r] of [C[r] += 1] where [r = 2]: the sum picks one step, but
    the increment runs at each. *)
 let collapse_custom () =
@@ -5426,6 +5440,10 @@ let effects =
            [ [ 1; 1; 0; 0; 0; 0; 0; 0 ] ]);
       test "code in the target's language beside a store runs at each step"
         (writes group_custom [] [ [ 1; 1; 1; 1 ]; [ 1; 1; 1; 1 ] ]);
+      test "code in the target's language in an optimised kernel runs at each \
+            step"
+        (writes optimised_custom []
+           [ List.init 16 (fun _ -> 1); List.init 16 (fun _ -> 1) ]);
       test "code in the target's language in a collapsed sum runs at each step"
         (writes collapse_custom [] [ [ 1; 1; 1; 1 ]; [ 1 ] ]);
       test "code in the target's language keeps its range's steps"

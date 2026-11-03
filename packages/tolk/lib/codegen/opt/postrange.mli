@@ -81,17 +81,18 @@ module Scheduler : sig
       reads, as [i] in a loop [j < x[i]]. A loop has one count of trips, so
       none of them can become a thread's lanes. *)
 
-  val read_by_calls : t -> Ops.t list
-  (** [read_by_calls k] is the ranges that an argument of one of [k]'s calls
-      ({!Ops.call}) reads, as [i] in [f(&x[i])]. A call takes one pointer or
-      value for each argument, so none of them can become a thread's lanes,
-      and a padded point would call on an argument of no element, so none of
-      them can be padded. *)
+  val read_by_opaque : t -> Ops.t list
+  (** [read_by_opaque k] is the ranges that a source of one of [k]'s opaque
+      operations reads: an argument of a call ({!Ops.call}) or a source of code
+      in the target's language ({!Op.Custom}), as [i] in [f(&x[i])]. Each takes
+      one pointer or value for each source, so none of them can become a
+      thread's lanes, and a padded point would run the operation on a source
+      of no element, so none of them can be padded. *)
 
   val upcastable_dims : ?reduce:bool -> t -> int list
   (** [upcastable_dims ~reduce k] is the positions of [k]'s global, local and
       weak axes of a known size that no range's bound reads
-      ({!read_by_bounds}) and no call's argument reads ({!read_by_calls}), that
+      ({!read_by_bounds}) and no opaque operation reads ({!read_by_opaque}), that
       are reduce axes if [reduce] is [true] and are not if it is [false]
       (default). *)
 
@@ -151,12 +152,12 @@ module Scheduler : sig
       cannot come from its axis's role, or exceeds what the renderer allows (32
       lanes of a reduce axis or 16 of another, locals only with local indices,
       the workgroup's shared memory), an upcast of an axis a range's bound
-      reads ({!read_by_bounds}) or a call's argument reads ({!read_by_calls}),
+      reads ({!read_by_bounds}) or an opaque operation reads ({!read_by_opaque}),
       a local split of a reduce axis where a range's bound reads an axis or
       whose reduction runs inside an unrolled reduce axis, a pad's axis is not
-      of a constant size, would more than quadruple, or is read by a call's
-      argument, or no tensor core fits, as none does a kernel where a range's
-      bound or a call's argument reads an axis. Raises
+      of a constant size, would more than quadruple, or is read by an opaque
+      operation, or no tensor core fits, as none does a kernel where a range's
+      bound or an opaque operation reads an axis. Raises
       [Invalid_argument] if the shared memory a split needs depends on a
       symbolic size and cannot be decided. *)
 
