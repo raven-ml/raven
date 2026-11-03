@@ -357,7 +357,29 @@ let rec run m params u =
             let written =
               Option.value (Ops.Tbl.find_opt loops u) ~default:[]
             in
-            let carried a = List.memq (Ops.storage_base a) written in
+            (* The state an argument names: through movements and joins. *)
+            let rec state a =
+              match Ops.op a with
+              | After when Ops.is_join a -> state (Ops.nth a 0)
+              | After | Buffer | Param | Alloc -> a
+              | _ -> ( match Ops.src a with x :: _ -> state x | [] -> a)
+            in
+            let rec before o s =
+              s != o && Ops.op s = After && (Ops.nth s 0 == o || before o (state (Ops.nth s 0)))
+            in
+            let args = Ops.src_without_body c in
+            (* A carry: an argument of storage the loop writes, in the latest
+               state of it the call is given; an older state is read as it
+               was. *)
+            let carried a =
+              List.memq (Ops.storage_base a) written
+              && not
+                   (List.exists
+                      (fun b ->
+                        Ops.storage_base b == Ops.storage_base a
+                        && before (state a) (state b))
+                      args)
+            in
             for k = 0 to count r - 1 do
               call
                 (fun a -> if carried a then reread m (value a) else value a)

@@ -3017,6 +3017,10 @@ let writes =
    summed. The schedule writes what the tensors compute. *)
 
 type statement = {
+  kind : [ `Store | `Call | `Loop ];
+      (* A store of the value, or a precompiled call given the target's state
+         and the states read, which adds them into it, once or on each of two
+         trips of a loop. *)
   target : int;
   half : bool; (* Into the first half, of an even size, once written. *)
   reads : (int * int * [ `Plain | `Flip | `Sum | `Stage | `Join of int ]) list;
@@ -3038,10 +3042,14 @@ let gen_program =
     (b, back, how)
   in
   let gen_statement =
+    let* kind =
+      frequency
+        [ (3, constant `Store); (1, constant `Call); (1, constant `Loop) ]
+    in
     let* target = int_range 0 2 in
     let* half = bool in
     let+ reads = list ~size:(int_range 1 3) gen_read in
-    { target; half; reads }
+    { kind; target; half; reads }
   in
   let* n = int_range 1 5 in
   let+ statements = list ~size:(int_range 1 5) gen_statement in
@@ -3055,7 +3063,9 @@ let pp_program ppf (n, statements) =
   Format.fprintf ppf "%d elements:" n;
   List.iter
     (fun s ->
-      Format.fprintf ppf "@ %d%s := %s;" s.target
+      Format.fprintf ppf "@ %s%d%s := %s;"
+        (match s.kind with `Store -> "" | `Call -> "call " | `Loop -> "loop ")
+        s.target
         (if s.half then "[half]" else "")
         (String.concat " + "
            (List.map
@@ -3063,13 +3073,25 @@ let pp_program ppf (n, statements) =
               s.reads)))
     statements
 
-(* The program's outputs, and whether it reads an older state, through a
-   join or not. *)
+(* The program's outputs, whether it reads an older state, through a join or
+   not, and whether a call or a loop is given its target's state twice. *)
 let program (n, statements) =
   let bufs = Array.init 3 (fun i -> f32 ~n (i + 1)) in
   (* Each buffer's states, newest first. *)
   let states = Array.map (fun b -> [ b ]) bufs in
-  let old = ref false and joined = ref false in
+  let old = ref false and joined = ref false and aliased = ref false in
+  let loops = ref 0 in
+  let p i = Shape.param ~shape:[ Int n ] ~device:cpu i Float32 in
+  (* A precompiled call adding its parameters past 0, halved, into its
+     parameter 0. *)
+  let adds cur args =
+    let ps = List.mapi (fun i _ -> p (i + 1)) args in
+    let v =
+      List.fold_left (fun acc u -> Ops.O.(acc + (u * fl 0.5))) (p 0) ps
+    in
+    if List.memq cur args then aliased := true;
+    Ops.call ~precompile:true (Ops.sink [ Ops.store (p 0) v ]) (cur :: args)
+  in
   let state b back =
     let l = states.(b) in
     if back > 0 && List.length l > back then old := true;
@@ -3091,36 +3113,53 @@ let program (n, statements) =
         end
         else s
   in
-  List.iter
-    (fun st ->
+  (* Each statement adds a constant of its own, so that no two store one
+     value, which would leave storage in one state where the program names
+     two. *)
+  List.iteri
+    (fun i st ->
       let cur = List.hd states.(st.target) in
       let value =
         List.fold_left
           (fun acc r -> Ops.O.(acc + read r))
-          (fl 1.) st.reads
+          (fl (Float.of_int (i + 1))) st.reads
+      in
+      let states_read =
+        List.map (fun (b, back, _) -> state b back) st.reads
       in
       let next =
         (* Into a buffer as given, a half would be a view of it (D184), which
            Kernel_graphs does not run. *)
-        if st.half && n mod 2 = 0 && Ops.op cur = After then
+        if st.kind = `Call then Ops.after cur [ adds cur states_read ]
+        else if st.kind = `Loop then begin
+          (* Each loop its own range. *)
+          incr loops;
+          let r = Ops.range ~axis_type:Loop (Int 2) [ 900 + !loops ] in
+          Ops.after cur [ Ops.end_ (adds cur states_read) [ r ] ]
+        end
+        else if st.half && n mod 2 = 0 && Ops.op cur = After then
           let h u = Shape.shrink u [ Some (Int 0, Int (n / 2)) ] in
           Ops.after cur [ Ops.store (h cur) (h value) ]
         else assign cur value
       in
       states.(st.target) <- next :: states.(st.target))
     statements;
-  (Array.to_list (Array.map List.hd states), !old, !joined)
+  let kinds = List.map (fun st -> st.kind) statements in
+  (Array.to_list (Array.map List.hd states), !old, !joined, !aliased, kinds)
 
 let values_law =
   prop "a schedule writes what its tensors compute"
     (Gen.with_pp pp_program gen_program)
     (fun p ->
-      let outputs, old, joined = program p in
+      let outputs, old, joined, aliased, kinds = program p in
       let _, made =
         copies_while (fun () -> ignore (keeps_values outputs))
       in
       cover "an older state read" old;
       cover "a join read" joined;
+      cover "a call" (List.mem `Call kinds);
+      cover "a loop of a call" (List.mem `Loop kinds);
+      cover "a call given its target's state twice" aliased;
       cover "a copy" (made > 0);
       cover "no copy" (made = 0))
 
@@ -3232,6 +3271,405 @@ let copy_iff_cycle =
       equal bool ~msg:"a copy" cycle (allocs <> []);
       keeps kg)
 
+(* Repros
+
+   The programs that decided the relation, each through its tensors: its
+   values are its tensors', and its schedule makes the copies given, or the
+   program raises. A count other than the relation's own reading of a
+   program is the kernel split's: a sum or a stage is a kernel of its own,
+   which reads its source before any overwrite, and a custom kernel's body is
+   rangeified, where a stage keeps it right. *)
+
+module O = Ops.O
+
+let slots = Atomic.make 100
+let fresh_slot () = Atomic.fetch_and_add slots 1
+let pf ?(n = 4) slot = Shape.param ~shape:[ Int n ] ~device:cpu slot Float32
+let numel u = Shape.max_numel u
+let flat u = Shape.reshape u [ Int (numel u) ]
+
+(* [v] stored into a buffer of its own. *)
+let out v =
+  let b = Ops.new_buffer ~slot:(fresh_slot ()) cpu (numel v) (Ops.dtype v) in
+  Ops.after b [ Ops.store (Shape.reshape b (Shape.shape v)) v ]
+
+(* [v] stored into a run of [x]'s state. *)
+let into x lo hi v =
+  Ops.after x [ Ops.store (Shape.shrink x [ Some (Int lo, Int hi) ]) v ]
+
+let span lo hi u = Shape.shrink u [ Some (Int lo, Int hi) ]
+let flip u = Shape.flip u [ 0 ]
+let summed u = Shape.expand (Shape.reshape (Shape.rop (flat u) Add [ 0 ]) [ Int 1 ]) [ Int (numel u) ]
+let padded u = span 0 (numel u) (Shape.pad u [ Some (Int 1, Int 0) ])
+let rows u = Shape.reshape u [ Int 2; Int 2 ]
+let k c = fl c
+
+(* [a] at the elements [idx] holds, clamped into [a]: a gather. *)
+let gather a idx =
+  let n = numel a in
+  let i = Ops.cast idx Int32 in
+  let i =
+    Ops.maximum (Ops.minimum i (Ops.int ~dtype:Int32 (n - 1))) (Ops.int ~dtype:Int32 0)
+  in
+  Ops.index a [ Ops.cast i Weak_int ]
+
+(* A precompiled call storing [f] of its parameters past 0 into its parameter
+   0, given [dst] there and [args] after. *)
+let calls ?(n = 4) dst args f =
+  let ps = List.mapi (fun i _ -> pf ~n (i + 1)) args in
+  Ops.after dst
+    [ Ops.call ~precompile:true (Ops.sink [ Ops.store (pf ~n 0) (f ps) ]) (dst :: args) ]
+
+let two () = (f32 1, f32 2)
+let three_bufs () = (f32 1, f32 2, f32 3)
+
+type expect = Copies of int | Raises of string
+
+let c_ n name f = (name, Copies n, f)
+
+let repros =
+  let c n name f = (name, Copies n, f) in
+  [
+    (* A stale read fused beside its overwrite, waiting for it. *)
+    c 1 "t1 repro" (fun () ->
+        let a = f32 1 in let b = doubled a in let a1 = assign a O.(a + k 1.) in
+        [ out O.(b + Ops.contiguous O.(a1 * three)); a1 ]);
+    c 1 "t1 flip" (fun () ->
+        let a = f32 1 in let b = doubled (flip a) in let a1 = assign a O.(a + k 1.) in
+        [ out O.(b + Ops.contiguous O.(a1 * three)); a1 ]);
+    c 1 "t1 pad" (fun () ->
+        let a = f32 1 in let b = doubled (padded a) in let a1 = assign a O.(a + k 1.) in
+        [ out O.(b + Ops.contiguous O.(a1 * three)); a1 ]);
+    c 1 "t1 gather" (fun () ->
+        let a = f32 1 and i = f32 2 in let b = doubled (gather a i) in
+        let a1 = assign a O.(a + k 1.) in
+        [ out O.(b + Ops.contiguous O.(a1 * three)); a1 ]);
+    c 1 "t1 chain" (fun () ->
+        let a = f32 1 in let b = doubled a in let a1 = assign a O.(a + k 1.) in
+        let a2 = assign a1 O.(a1 * k 10.) in
+        [ out O.(b + Ops.contiguous O.(a2 * three)); a2 ]);
+    c 0 "t1 reduce" (fun () ->
+        let a = f32 1 in let b = summed a in let a1 = assign a O.(a + k 1.) in
+        [ out O.(b + Ops.contiguous O.(a1 * three)); a1 ]);
+    c 1 "t1 beside" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(a + k 1.) in [ out O.(doubled a + a1); a1 ]);
+    c 2 "t1 twobufs" (fun () ->
+        let a, cc = two () in let b = O.(doubled a + cc) in
+        let a1 = assign a O.(a + k 1.) in let c1 = assign cc O.(cc + a1) in
+        [ out O.(b + Ops.contiguous O.(c1 * three)); a1; c1 ]);
+    c 1 "t2 view_read" (fun () ->
+        let a = f32 1 in let b = doubled (Shape.permute (rows a) [ 1; 0 ]) in
+        let a1 = assign a O.(a + k 1.) in
+        [ out O.(b + Ops.contiguous O.(rows a1 * three)); a1 ]);
+    (* Into a written state, which a store indexes whole (D184). *)
+    c 1 "t2 view_assign" (fun () ->
+        let a = f32 1 and v = f32 ~n:2 2 in let a0 = assign a O.(a + k 1.) in
+        let b = doubled a0 in let a1 = into a0 0 2 v in
+        [ out O.(b + Ops.contiguous O.(a1 * three)); a1 ]);
+    c 1 "t2 gated" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(a * k 10.) in
+        let m = Ops.contiguous O.(a1 > k 15.) in
+        [ out O.(Ops.where m a (k 0.) + a1); a1 ]);
+    c 1 "t2 gather_index_waits" (fun () ->
+        let a = f32 1 in let a1 = assign a (flip a) in
+        let idx = Ops.contiguous O.(a1 - k 1.) in
+        [ out O.(gather a idx + a1); a1 ]);
+    c 1 "t2 gather_index_waits_fused" (fun () ->
+        let a = f32 1 in let a1 = assign a (flip a) in
+        [ out (gather a O.(a1 - k 1.)); a1 ]);
+    c 1 "t11 bitcast_old" (fun () ->
+        let x = Ops.new_buffer ~slot:1 cpu 4 Int32 in
+        let old = Ops.cast (Ops.bitcast x Uint32) Int32 in
+        let x1 = assign x O.(x + Ops.int ~dtype:Int32 1) in
+        [ out O.(old + Ops.contiguous O.(x1 * Ops.int ~dtype:Int32 3)); x1 ]);
+    c 1 "t11 reduce_view_old" (fun () ->
+        let x = f32 1 in let x1 = assign x (doubled x) in
+        [ out O.(Shape.rop (rows x) Add [ 1 ] + Ops.contiguous (span 0 2 x1)); x1 ]);
+    (* Calls and precompiled readers. *)
+    c 1 "t2 function_reader" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(a + k 1.) in
+        let na = Ops.contiguous O.(a1 * k 1.) in
+        [ calls (f32 9) [ a; na ] (function [ x; y ] -> O.(x + (y * three)) | _ -> assert false); a1 ]);
+    c 0 "t12 precompiled_then_new" (fun () ->
+        let a = f32 1 in let o = calls (f32 9) [ a ] (function [ x ] -> doubled x | _ -> assert false) in
+        let a1 = assign a O.(a + k 1.) in
+        [ out O.(o + Ops.contiguous O.(a1 * three)); a1 ]);
+    c 1 "B6, B8: a call reading x as it was beside x assigned" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(a + k 1.) in
+        [ calls (f32 9) [ a; a1 ] (function [ x; y ] -> O.(x + (y * three)) | _ -> assert false); a1 ]);
+    (* A destination waiting for the write. *)
+    c 1 "t15 dst_state_waits" (fun () ->
+        let a, cc = two () in let stale = O.(a + k 10.) in
+        let a1 = assign a (doubled a) in let c1 = assign cc O.(a1 + k 0.) in
+        [ a1; assign c1 stale ]);
+    c 1 "t15 dst_state_waits_partial" (fun () ->
+        let a, cc = two () in let stale = O.(span 2 4 a + k 10.) in
+        let a1 = assign a (doubled a) in let c1 = assign cc O.(a1 + k 0.) in
+        [ a1; into c1 0 2 stale ]);
+    (* One kernel reading two or three states. *)
+    c 2 "B2 states 0, 1 and 2" (fun () ->
+        let a = f32 1 in let s0 = O.(a * k 1.) in let a1 = assign a O.(a + k 1.) in
+        let s1 = O.(a1 * k 1.) in let a2 = assign a1 O.(a1 * k 10.) in
+        [ out O.(s0 + s1 + a2); a2 ]);
+    c 0 "B3 a sum beside" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(a + k 1.) in [ out O.(summed a + a1); a1 ]);
+    c 1 "B4 a product summed" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(a + k 1.) in
+        [ out (summed O.(doubled a * a1)); a1 ]);
+    c 1 "B5 a flip beside" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(a * k 10.) in [ out O.(flip a + a1); a1 ]);
+    c 1 "t3 pad_old" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(a + k 1.) in
+        [ out O.(padded a + Ops.contiguous O.(a1 * three)); a1 ]);
+    c 0 "t3 sum_old" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(a + k 1.) in
+        [ out O.(summed a + Ops.contiguous O.(a1 * three)); a1 ]);
+    c 1 "t3 old_beside_new_sum" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(a + k 1.) in [ out (summed O.(a * a1)); a1 ]);
+    c 1 "t3 matmul_old_new" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(a + k 1.) in
+        let x = Shape.expand (Shape.reshape (rows a) [ Int 2; Int 2; Int 1 ]) [ Int 2; Int 2; Int 2 ]
+        and y = Shape.expand (Shape.reshape (rows a1) [ Int 1; Int 2; Int 2 ]) [ Int 2; Int 2; Int 2 ] in
+        [ out (Shape.rop O.(x * y) Add [ 1 ]); a1 ]);
+    c 1 "t3 assign_from_old_elsewhere" (fun () ->
+        let a = f32 1 in let a1 = assign a (doubled a) in [ assign a1 O.(flip a + a1) ]);
+    c 1 "t5 g2d_contig" (fun () ->
+        let a = f32 1 in let a1 = assign a (flip a) in
+        let idx = Ops.contiguous O.(a1 - k 1.) in
+        [ out O.(gather a idx + a1); a1 ]);
+    c 1 "t6 a transpose beside" (fun () ->
+        let a = f32 1 in let a1 = assign a O.(flip a + k 1.) in
+        [ out O.(Shape.permute (rows a) [ 1; 0 ] + rows a1); a1 ]);
+    (* Swaps, rotations, crossed reads. *)
+    c 1 "S1 swap" (fun () ->
+        let a, b = two () in [ assign a O.(b * k 1.); assign b O.(a * k 1.) ]);
+    c 0 "S2 swap through stages" (fun () ->
+        let a, b = two () in let na = Ops.contiguous O.(b * k 1.) and nb = Ops.contiguous O.(a * k 1.) in
+        [ assign a na; assign b nb ]);
+    c 1 "S3 swap through a view" (fun () ->
+        let a, b = two () in [ assign a b; assign b (flat (rows a)) ]);
+    c 0 "S4 a = b, then b = a" (fun () ->
+        let a, b = two () in let a1 = assign a b in [ a1; assign b a1 ]);
+    c 1 "S5 swap through a value" (fun () ->
+        let a, b = two () in let t = O.(a * k 1.) in [ assign a b; assign b t ]);
+    c 0 "S6 swap through a stage" (fun () ->
+        let a, b = two () in let t = Ops.contiguous O.(a * k 1.) in [ assign a b; assign b t ]);
+    c 1 "S7 crossed, each reading both" (fun () ->
+        let a, b = two () in [ assign a O.(b + a); assign b O.(a - b) ]);
+    c 0 "S8 halves swapped through values" (fun () ->
+        let x = f32 1 in let lo = O.(span 0 2 x * k 1.) and hi = O.(span 2 4 x * k 1.) in
+        let x1 = into x 0 2 hi in [ into x1 2 4 lo ]);
+    c 0 "S10 a flip in place" (fun () -> let x = f32 1 in [ assign x (flip x) ]);
+    c 1 "R1 rotation" (fun () ->
+        let a, b, cc = three_bufs () in
+        [ assign a O.(b * k 1.); assign b O.(cc * k 1.); assign cc O.(a * k 1.) ]);
+    c 0 "R2 rotation through stages" (fun () ->
+        let a, b, cc = three_bufs () in
+        let na = Ops.contiguous O.(b * k 1.) and nb = Ops.contiguous O.(cc * k 1.)
+        and nc = Ops.contiguous O.(a * k 1.) in
+        [ assign a na; assign b nb; assign cc nc ]);
+    c 1 "R3 rotation through one value" (fun () ->
+        let a, b, cc = three_bufs () in let t = O.(a * k 1.) in
+        [ assign a b; assign b cc; assign cc t ]);
+    c 0 "R4 a chain" (fun () ->
+        let a, b, cc = three_bufs () in [ assign a O.(b * k 1.); assign b O.(cc * k 1.) ]);
+    c 1 "C1 t13 crossed" (fun () ->
+        let a, b, cc = three_bufs () in let sa = O.(a + k 0.) and sb = O.(b + k 0.) in
+        let a1 = assign a (doubled a) in let c1 = assign cc O.(a1 + sb) in
+        let b1 = assign b O.(b * three) in
+        [ a1; b1; c1; out O.(sa + b1) ]);
+    c 0 "C2 t13 crossed through stages" (fun () ->
+        let a, b, cc = three_bufs () in
+        let sa = Ops.contiguous O.(a + k 0.) and sb = Ops.contiguous O.(b + k 0.) in
+        let a1 = assign a (doubled a) in let c1 = assign cc O.(a1 + sb) in
+        let b1 = assign b O.(b * three) in
+        [ a1; b1; c1; out O.(sa + b1) ]);
+    (* Joins. *)
+    c 0 "t7 a join beside the state it joins" (fun () ->
+        let x, y = two () in let y1 = assign y (doubled y) in
+        [ out (Ops.after x [ y1 ]); out O.(x + y1); y1 ]);
+    c 0 "t9 a join read" (fun () ->
+        let x, y = two () in let y1 = assign y (doubled y) in
+        [ out O.(Ops.after x [ y1 ] + k 1.); out O.(x + y1) ]);
+    c 0 "J2 a join over an assigned state" (fun () ->
+        let x, y = two () in let x1 = assign x O.(x + k 1.) in let y1 = assign y (doubled y) in
+        [ out O.(Ops.after x1 [ y1 ] + k 0.); y1 ]);
+    c 0 "J3 a join, its dependency's writer reading x" (fun () ->
+        let x, y = two () in let y1 = assign y O.(doubled y + x) in
+        [ out (Ops.after x [ y1 ]); out O.(x + y1) ]);
+    c 0 "joinflip c2: a store over x of x joined, at its element" (fun () ->
+        let x, y = two () in let y1 = assign y (doubled y) in
+        [ assign x O.((Ops.after x [ y1 ] * k 2.) + k 1.); y1 ]);
+    c 0 "joinflip c1: a store over x of x joined, flipped" (fun () ->
+        let x, y = two () in let y1 = assign y (doubled y) in
+        [ assign x (flip (Ops.after x [ y1 ])); y1 ]);
+    c 0 "joinflip c3: x joined and x flipped" (fun () ->
+        let x, y = two () in let y1 = assign y (doubled y) in
+        [ assign x O.(Ops.after x [ y1 ] + flip x); y1 ]);
+    c 0 "s6 a join after a state on another device" (fun () ->
+        let x = f32 1 and y = Ops.new_buffer ~slot:2 "CPU:1" 4 Float32 in
+        let y1 = assign y (doubled y) and x1 = assign x O.(x + k 1.) in
+        [ out O.(Ops.after x1 [ y1 ] + k 0.); y1 ]);
+    c 1 "s6 nested joins over an old state" (fun () ->
+        let x, y, z = three_bufs () in let x1 = assign x O.(x + k 1.) in
+        let y1 = assign y O.(y + x1) in let z1 = assign z O.(z + y1) in
+        [ out O.(Ops.after (Ops.after x [ y1 ]) [ z1 ] * k 1.); x1; y1; z1 ]);
+    c 0 "s6 a join read, then its state overwritten" (fun () ->
+        let x, y = two () in let y1 = assign y (doubled y) in
+        let x1 = assign x O.(x + k 1.) in let w = O.(Ops.after x1 [ y1 ] * three) in
+        [ out w; assign x1 O.((x1 * k 0.) + k 9.); y1 ]);
+    c 0 "s2 a join staged" (fun () ->
+        let x, y = two () in let y1 = assign y (doubled y) and x1 = assign x O.(x + k 1.) in
+        [ out O.(Ops.contiguous (Ops.after x1 [ y1 ]) + k 0.); y1 ]);
+    c 1 "s2 a join over an old state, staged" (fun () ->
+        let x, y = two () in let x1 = assign x O.(x + k 1.) in let y1 = assign y O.(y + x1) in
+        [ out O.(Ops.contiguous (Ops.after x [ y1 ]) * k 1.); x1; y1 ]);
+    (* Disjoint partial overwrites. *)
+    c 1 "t14 todo" (fun () ->
+        let x = f32 ~n:1 1 and y = f32 ~n:1 2 in let xe = O.(x + k 10.) in
+        let x1 = assign x (doubled x) in let y1 = assign y O.(y + x1) in
+        [ x1; y1; out O.(y1 + xe) ]);
+    c 1 "t14 disjoint" (fun () ->
+        let x = f32 1 and y = f32 ~n:2 2 in let x0 = assign x O.(x + k 1.) in
+        let stale = O.(span 2 4 x0 + k 10.) in
+        let x1 = into x0 0 2 (f32 ~n:2 3) in let y1 = assign y O.(y + span 0 2 x1) in
+        [ x1; y1; out O.(y1 + stale) ]);
+    (* Views of written buffers. *)
+    c 0 "V5 a stage of a run read after its buffer's overwrite" (fun () ->
+        let x = f32 1 in let lo = Ops.contiguous (span 0 2 x) in
+        let x1 = assign x O.((x * k 0.) + k 7.) in
+        [ out O.(lo + span 0 2 (Ops.contiguous O.(x1 * k 1.))); x1 ]);
+    c 0 "S9 halves swapped through stages" (fun () ->
+        let x = f32 1 in let lo = Ops.contiguous (span 0 2 x) and hi = Ops.contiguous (span 2 4 x) in
+        let x1 = into x 0 2 hi in [ into x1 2 4 lo ]);
+    (* In-kernel: at the element written, no stage; elsewhere, a stage. *)
+    c 0 "a := a * 2 + 1" (fun () -> let a = f32 1 in [ assign a O.((a * k 2.) + k 1.) ]);
+    c 0 "an SGD step" (fun () ->
+        let w, g = two () in [ assign w O.(w - (g * k 0.1)) ]);
+    c 0 "an Adam step" (fun () ->
+        let w, m, v = three_bufs () and g = f32 4 in
+        let m1 = assign m O.((m * k 0.9) + (g * k 0.1)) in
+        let v1 = assign v O.((v * k 0.999) + (g * g * k 0.001)) in
+        [ m1; v1; assign w O.(w - (m1 * k 0.001 / (Ops.sqrt v1 + k 1e-8))) ]);
+    c 0 "a[i] := sum over j of a[i] * w[j]" (fun () ->
+        let a, w = two () in
+        let prod = O.(Shape.expand (Shape.reshape a [ Int 4; Int 1 ]) [ Int 4; Int 4 ]
+                      * Shape.expand (Shape.reshape w [ Int 1; Int 4 ]) [ Int 4; Int 4 ]) in
+        [ assign a (Shape.rop prod Add [ 1 ]) ]);
+    c 0 "elsewhere: a flip" (fun () -> let a = f32 1 in [ assign a O.(flip a + k 1.) ]);
+    c 0 "elsewhere: a roll" (fun () ->
+        let a = f32 1 in [ assign a (flat (Shape.permute (rows a) [ 1; 0 ])) ]);
+    c 0 "elsewhere: a + a's sum" (fun () -> let a = f32 1 in [ assign a O.(a + summed a) ]);
+    c 0 "elsewhere: a gather of a" (fun () ->
+        let a, i = two () in [ assign a (gather a i) ]);
+    (* Grouping. *)
+    c 1 "group3" (fun () ->
+        let a, b, cc = three_bufs () in let b1 = assign b (doubled a) in
+        [ assign b1 (doubled cc); assign cc (doubled a) ]);
+    (* Two writes over one state. *)
+    ("F1 two assigns over one state", Raises "two writes over one state",
+     fun () -> let a = f32 1 in [ assign a (doubled a); assign a O.(a + k 10.) ]);
+    ("F3 a kernel reading two writes over one state", Raises "two writes over one state",
+     fun () -> let a = f32 1 in [ out O.(assign a (doubled a) + assign a O.(a + k 10.)) ]);
+    ("F4 an assign over the old state's view", Raises "two writes over one state",
+     fun () -> let a = f32 1 in
+       [ assign a (doubled a); Ops.after a [ Ops.store (rows a) (Shape.reshape (f32 2) [ Int 2; Int 2 ]) ] ]);
+  ]
+
+(* s7: an after of [a] listing a call that writes it and [y] once doubled:
+   a write that also waits. *)
+let mixed_after read_old =
+  let a, b = two () and y = f32 3 in
+  let c = calls a [ b ] (function [ x ] -> O.(x + k 1.) | _ -> assert false) in
+  let c = Ops.nth c 1 in
+  let y1 = assign y (doubled y) in
+  let am = Ops.after a [ c; y1 ] in
+  [ out (if read_old then O.(am + y) else O.(am + k 0.)); y1 ]
+
+let mixed =
+  [
+    c_ 0 "s7 an after of a call and a join, read" (fun () -> mixed_after false);
+    c_ 1 "s7 an after of a call and a join, read beside y as it was" (fun () ->
+        mixed_after true);
+  ]
+
+(* s2: a custom kernel given views of one buffer of eight floats,
+   [o.(r) := i.(at r)] for its [n] elements, writes what reading [i] before any
+   write gives, as [expected] gives it of the buffer's values. Views start on
+   a 16-byte boundary, as a kernel's parameters lie. *)
+let kernel_views ~n ~at ~args expected () =
+  let kernel = function
+    | [ o; i ] ->
+        let r = Ops.range (Int n) [ 0 ] in
+        Ops.sink
+          [ Ops.end_ (Ops.store (Ops.index o [ r ]) (Ops.index (flat i) [ at r ])) [ r ] ]
+    | _ -> assert false
+  in
+  let a = f32 ~n:8 1 in
+  let o = List.hd (Shape.custom_kernel (args a) kernel) in
+  let big = Ops.sink [ Ops.after a [ Ops.nth o 1 ] ] in
+  let buffers = filled big in
+  let x = List.assoc 1 buffers in
+  let linear, _ = copies_while (fun () -> unplanned big) in
+  let want = expected x in
+  equal (list write)
+    (List.filter
+       (fun (_, i, v) -> v <> x.(i))
+       (List.mapi (fun i v -> (1, i, v)) (Array.to_list want)))
+    (List.filter
+       (fun (s, i, v) -> s = 1 && v <> x.(i))
+       (Kernel_graphs.linear_writes ~buffers linear))
+
+(* A back edge around a call copying [x] into itself, element by element, given
+   [x] at both arguments: each trip reads [x] as the trip starts, through a copy
+   made in the loop. *)
+let backedge_aliases () =
+  let r = Ops.range ~axis_type:Loop (Int 4) [ 7 ] in
+  let flag = Ops.new_buffer ~slot:9 cpu 1 Bool in
+  let e = Ops.backedge (copies ~into:x ~from:x) ~loop:r ~cond:flag in
+  let made = Schedule.copies () in
+  let linear = Schedule.create_schedule (Ops.sink [ Ops.after x [ e ] ]) in
+  equal int ~msg:"copies" 1 (Schedule.copies () - made);
+  match Ops.src linear with
+  | [ b ] ->
+      equal (list string) ~msg:"a back edge of a linear" [ "BACKEDGE"; "LINEAR" ]
+        (ops_of [ b; Ops.nth b 0 ]);
+      equal int ~msg:"of the copy and the call" 2
+        (List.length (Ops.src (Ops.nth b 0)))
+  | entries -> failf "%d entries" (List.length entries)
+
+let view_rows =
+  [
+    test "s2: a custom kernel writes a[0:4] := flip a[0:4], a view written"
+      (kernel_views ~n:4 ~at:(fun r -> Ops.O.(int 3 - r))
+         ~args:(fun a -> [ span 0 4 a; a ])
+         (fun x -> Array.init 8 (fun i -> if i < 4 then x.(3 - i) else x.(i))));
+    test "s2: a custom kernel writes a := a[4:8] tiled and flipped, a view read"
+      (kernel_views ~n:8 ~at:(fun r -> Ops.O.(int 3 - (r % int 4)))
+         ~args:(fun a -> [ a; span 4 8 a ])
+         (fun x -> Array.init 8 (fun i -> x.(4 + 3 - (i mod 4)))));
+    test "s2: a custom kernel writes a[0:4] := a[4:8], disjoint views"
+      (kernel_views ~n:4 ~at:(fun r -> r)
+         ~args:(fun a -> [ span 0 4 a; span 4 8 a ])
+         (fun x -> Array.init 8 (fun i -> if i < 4 then x.(4 + i) else x.(i))));
+  ]
+
+let repro (name, expect, outputs) =
+  test name (fun () ->
+      match expect with
+      | Copies n -> equal int ~msg:"copies" n (copied (outputs ()))
+      | Raises sub ->
+          raises_match (Exn.invalid_arg ~sub) (fun () -> ignore (copied (outputs ()))))
+
+let repro_tests =
+  group "create_linear_with_vars › repros"
+    (List.map repro (repros @ mixed)
+    @ view_rows
+    @ [
+        test "a back edge of a call given a state twice copies it each trip"
+          backedge_aliases;
+      ])
+
 let () =
   exit
     (run "Tolk.Schedule"
@@ -3261,4 +3699,5 @@ let () =
          writes;
          group "create_linear_with_vars › laws" [ values_law ];
          group "create_schedule › laws" [ copy_iff_cycle ];
+         repro_tests;
        ])

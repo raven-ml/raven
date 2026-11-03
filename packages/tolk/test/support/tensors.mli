@@ -32,8 +32,9 @@
     the call's [k]th argument, reshaped to the parameter's shape. An
     {!Tolk.Op.End} of a call over a range runs the call once for each of the
     range's values, each trip reading the storage the loop writes, that of the
-    {!Tolk.Op.After}s that list it, as the trips before left it. Each node runs
-    once. *)
+    {!Tolk.Op.After}s that list it, as the trips before left it, where the
+    call is given the latest state of it, and an older state as it was. Each
+    node runs once. *)
 
 open Tolk
 
