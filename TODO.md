@@ -117,6 +117,15 @@ raven / llama.cpp b12048 Vulkan:
   since `Heuristic.stream` (0.28-0.34 s against 0.35-0.47 s, fudge CUDA)
   though its kernels take 22 ms less GPU time; warm calls are unchanged.
   Unmeasured guess: larger cached programs take longer to load
+- the host after D163's decode count (4dab9494e): inlined decoded
+  products lose on the host (dense MXFP4 1024² 3-5x slower, a 256-wide MoE
+  layer at 512 tokens 60-67 against 30-36 ms, fudge under load), because
+  the host's codegen shares a decode over 4 rows, not 16; the scheduler
+  stays target-free, so the fix is the host's tile sharing more rows, or a
+  measured case for a target's exchange rate in rangeify
+- dune's watch server goes stale on files a rebase or checkout rewrites
+  (reported missing, or the old version built): records in
+  `_plans/dune-stale-watch/` from five trees on 2026-11-02
 - `Heuristic.stream` declines a product whose operand reads a reduce
   (routing ids from outside the jit); no recorded kernel carries one yet,
   so the general path's cost there is unmeasured. Its unroll law passes
