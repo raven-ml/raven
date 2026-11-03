@@ -321,8 +321,9 @@ let cuda_renderer =
   | r -> Some (Renderer.with_compiler (Renderer.Compiler.v Fun.id) r)
   | exception Failure _ -> None
 
-(* The scheduler of a lorenz kernel that a search is handed. *)
-let handed cuda_renderer text =
+(* The scheduler of a lorenz kernel that a search is handed. A kernel that
+   reaches no search never calls the hook, and fails here by name. *)
+let handed cuda_renderer kernel text =
   let k = Graph.of_string text in
   let k =
     match Ops.arg k with
@@ -336,10 +337,12 @@ let handed cuda_renderer text =
     s
   in
   ignore (Codegen.full_rewrite_to_sink ~beam:search k cuda_renderer);
-  Option.get !handed
+  match !handed with
+  | Some s -> s
+  | None -> failwith ("bench: no search is handed " ^ kernel)
 
-let candidates cuda_renderer text =
-  Search.get_kernel_actions (handed cuda_renderer text)
+let candidates cuda_renderer kernel text =
+  Search.get_kernel_actions (handed cuda_renderer kernel text)
   |> List.filteri (fun i _ -> i < linearized)
   |> List.map (fun (_, c) ->
       Postrange.Scheduler.get_optimized_ast ~name_override:"test" c)
@@ -354,7 +357,7 @@ let linearize_candidates cuda_renderer =
     (List.map
        (fun (kernel, text) ->
          Thumper.bench_with_setup
-           ~setup:(fun () -> candidates cuda_renderer text)
+           ~setup:(fun () -> candidates cuda_renderer kernel text)
            kernel
            (List.map (fun ast -> Codegen.linearize ast cuda_renderer)))
        Lorenz.all)
@@ -365,7 +368,7 @@ let kernel_actions cuda_renderer =
     (List.map
        (fun (kernel, text) ->
          Thumper.bench_with_setup
-           ~setup:(fun () -> handed cuda_renderer text)
+           ~setup:(fun () -> handed cuda_renderer kernel text)
            kernel
            (fun s -> Search.get_kernel_actions s))
        Lorenz.all)
@@ -397,7 +400,8 @@ let searches =
     ~metrics:[ Thumper.Metric.wall_time ]
     [
       Thumper.bench_with_setup
-        ~setup:(fun () -> handed host_renderer (List.assoc searched Lorenz.all))
+        ~setup:(fun () ->
+          handed host_renderer searched (List.assoc searched Lorenz.all))
         searched
         (fun s ->
           Setting.context

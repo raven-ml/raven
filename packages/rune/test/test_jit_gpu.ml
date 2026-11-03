@@ -730,7 +730,8 @@ let sums_product ast ren =
 
 (* The scheduler of [k]'s sink after the passes that precede optimisation,
    with the optimisations [k]'s program applied, through the hook a search
-   takes. *)
+   takes. A kernel that reaches no search never calls the hook, and fails
+   here by name. *)
 let optimised (k : Tolk.Realize.kernel) =
   let chosen = ref None in
   let replay _ s =
@@ -750,7 +751,9 @@ let optimised (k : Tolk.Realize.kernel) =
     | _ -> failf "%a is not a kernel" Tolk.Ops.pp ast
   in
   ignore (Tolk.Codegen.full_rewrite_to_sink ~beam:replay ast ren);
-  Option.get !chosen
+  match !chosen with
+  | Some s -> s
+  | None -> failf "%s: no search was handed the kernel to replay" k.name
 
 (* Each expert's [outputs; inputs] matrix of random MXFP4 codes, at scales of
    one, on the GPU. *)
