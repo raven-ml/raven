@@ -2872,15 +2872,25 @@ encodes its barriers (D146).
   (`Setting.beam_padto` to `Setting.beam_estimate`) and `Search.beam_search`'s
   key.
 - **Differs:** a table also names everything besides the source that
-  determines a binary: for Clang, the digest of its version and
-  installation (`clang --version`), of the command of its compiler proper
-  that compiles a short and a long source, as `clang -###` states it with
-  the IR verifier on (D275: the processor and features `native` resolves
-  to, every option), and of the length between them (D167), with
+  determines a binary: for Clang, the digest of what `clang -###` states it
+  runs for a source, its version and installation first, of the command of
+  its compiler proper that compiles a short and a long source, with the IR
+  verifier on (D275: the processor and features `native` resolves to, every
+  option), and of the length between them (D167), with
   `-ffile-compilation-dir=.` keeping the
   working directory out; for MTLCompiler, NVRTC and comgr, the build of macOS
   or the library's file, size and modification time, and the options, PTX or
-  cubin included. The table is the compiler's identity whatever `CCACHE`
+  cubin included. Clang runs once per process to state its command: the
+  options depend on the LLVM release it states (D167), and a process asks
+  first for those of the release the last process found, a hint kept in the
+  disk cache's table `clang_llvm` while `CCACHE` holds, and again when Clang
+  states another. The
+  hint picks options only, and the table digests what Clang states for
+  them, so a stale hint costs a second run and never an object of another
+  compiler. A key on the binary's path, size and modification time alone,
+  ccache's default `compiler_check`, would miss the processor `native`
+  resolves to, Clang's configuration files and the environment its driver
+  reads. The table is the compiler's identity whatever `CCACHE`
   holds: the keys of programs and searches take it, and `CCACHE`, read when a
   binary or a program is compiled, decides only whether the disk keeps it. A
   program is kept on disk under its compiler's table. The beam search's key
@@ -4790,16 +4800,18 @@ fold wraps integers and holds its float bound`, hold.
 - **tinygrad:** `runtime/support/compiler_cpu.py:21` (`ClangCompiler.compile`,
   Clang's arguments at `-O2`, which runs LLVM's SLP and loop vectorizers).
 - **tolk:** `Compiler_cpu.llvm_major` (the LLVM version a Clang's `-###`
-  statement names), `Compiler_cpu.long_source`, and `Compiler_cpu.clang` (its
-  `args`, which adds `-fno-slp-vectorize` when it is 18 or 19 and `-fno-vectorize`
-  for a source past `long_source`, and its `table`, which names both
-  statements and the length).
+  statement names), `Compiler_cpu.long_source`,
+  `Compiler_cpu.compile_args`, which adds `-fno-slp-vectorize` when it is 18
+  or 19, `Compiler_cpu.without_loop_vectorizer`, and `Compiler_cpu.clang`
+  (its `table`, which names both commands and the length).
 - **Differs:** a Clang that states LLVM 18 or 19 compiles every kernel with
   `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer back on.
-  Every Clang compiles a source of more than 400 000 bytes with
-  `-fno-vectorize`, after `-O2`. Otherwise every Clang, Apple's included,
+  Every Clang compiles a source of more than 400 000 bytes without the loop
+  vectorizer: its compiler proper runs without `-vectorize-loops`, as the
+  driver runs it under `-fno-vectorize` (Clang 18.1.8 and 19.1.7 state the
+  same command but for that flag). Otherwise every Clang, Apple's included,
   compiles with the arguments tinygrad passes. The table of objects names
-  what Clang states it runs for either length, and the length (D113).
+  the command for either length, and the length (D113).
 - **Reason:** (b): rune's packed suite, `a compiled call computes eager's
   values › a uint4 sort along the last axis of every other row and column,
   flipped` (now `rune jit › classes › a uint4 sort along the last axis of

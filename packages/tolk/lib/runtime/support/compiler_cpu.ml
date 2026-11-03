@@ -106,6 +106,13 @@ let cc1 stated =
   | Some (prog, args) -> Ok (prog, kept args)
   | None -> Error stated
 
+(* The command of the compiler proper for a source of more than [long_source]
+   bytes: [command] without the loop vectorizer, which Clang's driver turns on
+   with [-vectorize-loops] at [-O2] and leaves out under [-fno-vectorize], and
+   nothing else. *)
+let without_loop_vectorizer (prog, args) =
+  (prog, List.filter (( <> ) "-vectorize-loops") args)
+
 (* Several sources compiled by one run of Clang's compiler proper, each from a
    file of its own, as Clang's driver would compile it alone: the driver runs
    the compiler proper in its own process for one source, and starts one
@@ -171,9 +178,6 @@ let compile_files (prog, args) srcs =
   | Ok None -> fail (prog ^ ": its exit status is lost")
   | Error why -> fail why
 
-(* What a Clang states about itself: its version and installation. *)
-let version prog = statement prog [ "--version" ]
-
 (* The major version of LLVM that a statement names, as in "Ubuntu clang
    version 18.1.3". Apple's Clang numbers its own releases, so its statement
    names none. *)
@@ -195,6 +199,54 @@ let llvm_major stated =
         else j
       in
       int_of_string_opt (String.sub stated first (last first - first))
+
+(* The LLVM release of each Clang, as the last process that asked it found it:
+   a hint, kept on disk while {!Setting.ccache} holds, from which a process
+   picks the arguments it asks Clang to state, so that a Clang of the hinted
+   release is run once. *)
+let hint_table = "clang_llvm"
+
+let hinted cc =
+  if not (Setting.value Setting.ccache) then None
+  else
+    match Helpers.Diskcache.get ~table:hint_table cc with
+    | Some l -> int_of_string_opt l
+    | None | (exception (Failure _ | Sys_error _)) -> None
+
+let hint cc llvm =
+  let l = Option.fold ~none:"" ~some:string_of_int llvm in
+  if Setting.value Setting.ccache then
+    try Helpers.Diskcache.put ~table:hint_table cc l with Sys_error _ -> ()
+
+(* What [cc] states it runs for [args ~llvm], where [llvm] is the release of
+   LLVM it names in that statement: Clang states its version and installation
+   before its commands. [args] is first asked for the hinted release; a
+   statement that names another, as after an upgrade, is asked again for the
+   one it names, which is then hinted. Clang is asked at most three times: a
+   Clang that starts once and not again names no release the second time. The
+   hint picks arguments only: what Clang states for them is what runs, and
+   what a table digests. *)
+let own_statement =
+  let lock = Mutex.create () and stated = Hashtbl.create 4 in
+  fun cc args ->
+    Mutex.protect lock @@ fun () ->
+    let key = (cc, args ~llvm:None) in
+    match Hashtbl.find_opt stated key with
+    | Some s -> s
+    | None ->
+        let hinted = hinted cc in
+        let rec settle llvm tries =
+          let s = statement cc (args ~llvm) in
+          let named = llvm_major s in
+          if named = llvm then (
+            if llvm <> hinted then hint cc llvm;
+            s)
+          else if tries = 0 then s
+          else settle named (tries - 1)
+        in
+        let s = settle hinted 2 in
+        Hashtbl.replace stated key s;
+        s
 
 (* LLVM's loop vectorizer weighs each width it could pack a loop's iterations
    into against the whole body, and its time grows faster than the body: the
@@ -298,6 +350,40 @@ let fixed ~llvm (machine, flags) =
 
 let flags ~version arch = fixed ~llvm:(llvm_major version) (selection arch)
 
+(* -fno-math-errno is required for __builtin_sqrt to become an instruction
+   instead of a function call. -ffp-contract=off keeps each product and sum its
+   own rounding, as the graph states them. -ffile-compilation-dir=. keeps the
+   working directory out of the object, and out of what Clang states.
+
+   The straight-line vectorizers of LLVM 18 and 19 narrow the integer lanes
+   they pack and can then cast a lane to a type of the wrong width, which is
+   invalid IR. For four clamped gather indices on a processor with AVX-512,
+   LLVM 18 wrote [sext <4 x i32> to <4 x i16>], on which instruction selection
+   crashed. For four lanes of a binary search on a processor with AVX2, LLVM 19
+   wrote [trunc <4 x i8> to <4 x i32>], which a Clang without its IR verifier
+   compiles into wrong values: rune's routed rows read garbage row numbers, and
+   with it ([cc1]) the compile fails. Under LLVM 18 and 19 only, that
+   vectorizer is off, so that other Clangs compile as before. The flags follow
+   -O2, which would turn the vectorizers back on. *)
+let compile_args selected ~llvm =
+  let slp =
+    match llvm with Some (18 | 19) -> [ "-fno-slp-vectorize" ] | _ -> []
+  in
+  [
+    "-c";
+    "-x";
+    "c";
+    "-O2";
+    "-fPIC";
+    "-ffreestanding";
+    "-fno-math-errno";
+    "-ffp-contract=off";
+    "-nostdlib";
+    "-fno-ident";
+    "-ffile-compilation-dir=.";
+  ]
+  @ fixed ~llvm selected @ slp @ [ "-"; "-o"; "-" ]
+
 (* The vector registers of what Clang compiles [arch] for. Its statement names
    the processor alone, as [-target-cpu x86-64-v3], and the processor's features
    only for [native]; the macros the preprocessor defines name them for every
@@ -320,7 +406,10 @@ let registers =
         let r : Renderer.registers option =
           match fst selected with
           | "x86_64" ->
-              let flags = fixed ~llvm:(llvm_major (version cc)) selected in
+              let llvm =
+                llvm_major (own_statement cc (compile_args selected))
+              in
+              let flags = fixed ~llvm selected in
               let macros =
                 match
                   run cc ([ "-dM"; "-E"; "-x"; "c" ] @ flags @ [ "-" ]) ""
@@ -344,67 +433,28 @@ let registers =
         Hashtbl.replace known (cc, arch) r;
         r
 
-(* -fno-math-errno is required for __builtin_sqrt to become an instruction
-   instead of a function call. -ffp-contract=off keeps each product and sum its
-   own rounding, as the graph states them. -ffile-compilation-dir=. keeps the
-   working directory out of the object, and out of what Clang states. *)
 let clang arch =
   let cc = Setting.value Setting.cc in
   let selected = selection arch in
-  let base =
-    [
-      "-c";
-      "-x";
-      "c";
-      "-O2";
-      "-fPIC";
-      "-ffreestanding";
-      "-fno-math-errno";
-      "-ffp-contract=off";
-      "-nostdlib";
-      "-fno-ident";
-      "-ffile-compilation-dir=.";
-    ]
+  (* What Clang states it runs for a source, asked once per process. *)
+  let stated () = own_statement cc (compile_args selected) in
+  let command ~long =
+    let short = cc1 (stated ()) in
+    if long then Result.map without_loop_vectorizer short else short
   in
-  let io = [ "-"; "-o"; "-" ] in
-  (* The straight-line vectorizers of LLVM 18 and 19 narrow the integer lanes
-     they pack and can then cast a lane to a type of the wrong width, which is
-     invalid IR. For four clamped gather indices on a processor with AVX-512,
-     LLVM 18 wrote [sext <4 x i32> to <4 x i16>], on which instruction
-     selection crashed. For four lanes of a binary search on a processor with
-     AVX2, LLVM 19 wrote [trunc <4 x i8> to <4 x i32>], which a Clang without
-     its IR verifier compiles into wrong values: rune's routed rows read
-     garbage row numbers, and with it ([cc1]) the compile fails. Under LLVM 18
-     and 19 only, that vectorizer is off,
-     so that other Clangs compile as before. The flags follow -O2, which would
-     turn the vectorizers back on. The statement is memoized: asking for the
-     arguments again costs a lookup. *)
-  let args ~long =
-    let llvm = llvm_major (version cc) in
-    let slp =
-      match llvm with
-      | Some (18 | 19) -> [ "-fno-slp-vectorize" ]
-      | _ -> []
-    in
-    base
-    @ fixed ~llvm selected
-    @ slp
-    @ (if long then [ "-fno-vectorize" ] else [])
-    @ io
-  in
-  let command ~long = cc1 (statement cc (args ~long)) in
   (* An object is a function of its source, of the Clang and of the command its
-     length selects, so the table names the Clang's version, both commands, or
-     why Clang states none, and the length. *)
+     length selects, so the table names what Clang states, its version and
+     installation among it, both commands, or why Clang states none, and the
+     length. *)
   let table () =
     let named = function
       | Ok (prog, args) -> String.concat "\n" (prog :: args)
       | Error stated -> stated
     in
-    let stated =
+    let identity =
       String.concat "\n"
         [
-          version cc;
+          stated ();
           named (command ~long:false);
           named (command ~long:true);
           string_of_int long_source;
@@ -412,7 +462,7 @@ let clang arch =
     in
     Printf.sprintf "compile_%s_obj_%s_%s" cc
       (String.map (function ',' -> '_' | c -> c) arch)
-      (Digest.to_hex (Digest.string stated))
+      (Digest.to_hex (Digest.string identity))
   in
   (* Sources of each length class compile in one run, with that class's
      arguments; their objects come back in the sources' order. *)

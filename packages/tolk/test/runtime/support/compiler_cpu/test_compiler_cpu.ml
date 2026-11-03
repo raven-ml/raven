@@ -735,7 +735,14 @@ let host_table () =
     (Option.get
        (Compiler.cachekey (Compiler_cpu.clang (host_machine ^ ",native"))))
 
-let parts = [ ("table", host_table) ]
+(* Hints the release of LLVM that [TOLK_TEST_HINT] names for the Clang [CC]
+   runs, as a process that found it would. *)
+let hint () =
+  Helpers.Diskcache.put ~table:"clang_llvm"
+    (Setting.value Setting.cc)
+    (Sys.getenv "TOLK_TEST_HINT")
+
+let parts = [ ("table", host_table); ("hint", hint) ]
 
 (* [table_in ()] is the table a process names, from a directory of its own. *)
 let table_in () =
@@ -771,6 +778,30 @@ let cache =
       test "the table does not depend on the working directory" (fun () ->
           let a = table_in () in
           equal Disk_cache.outcome a (table_in ()));
+      test "the table does not depend on the release a process is hinted"
+        (fun () ->
+          let cachedb = Disk_cache.fresh () in
+          let first = Disk_cache.child ~cachedb "table" in
+          List.iter
+            (fun release ->
+              (match
+                 Disk_cache.child ~env:[ ("TOLK_TEST_HINT", release) ] ~cachedb
+                   "hint"
+               with
+              | Ok _ -> ()
+              | Error err -> failf "the hint was not kept: %s" err);
+              equal Disk_cache.outcome ~msg:release first
+                (Disk_cache.child ~cachedb "table"))
+            [ "17"; "18"; "19"; "20"; ""; "not a release" ]);
+      test "with ccache off, no release is hinted" (fun () ->
+          let cachedb = Disk_cache.fresh () in
+          (match
+             Disk_cache.child ~env:[ ("CCACHE", "0") ] ~cachedb "table"
+           with
+          | Ok _ -> ()
+          | Error err -> failf "the table was not named: %s" err);
+          equal (list string) []
+            (Disk_cache.entries ~table:"clang_llvm" cachedb));
       test "the table is named with ccache off" (fun () ->
           let table () =
             Compiler.cachekey (Compiler_cpu.clang "arm64,native")

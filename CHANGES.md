@@ -974,6 +974,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A process runs Clang once to learn its command (`Compiler_cpu.clang`),
+  where it ran it three times: the options for its LLVM release come from
+  the release the last process found (the disk cache's table `clang_llvm`),
+  and a long source's command is the short one without `-vectorize-loops`.
+  A later process's first call on the CPU takes about 30 ms less.
+
 - An entry of the disk cache damaged on disk, cut short or with a byte
   changed, reads as a miss (`Helpers.Diskcache` keeps a digest of each
   entry, and `Search.beam_search` searches again), where a changed byte could

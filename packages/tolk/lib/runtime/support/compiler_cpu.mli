@@ -45,7 +45,9 @@ val clang : string -> Renderer.Compiler.t
 
     Clang's compiler proper runs as Clang states it runs for these options
     ([clang -###]), its [-cc1] command, with LLVM's IR verifier on, which a
-    release Clang turns off: code that an optimization makes invalid raises
+    release Clang turns off, and for a source of more than 400 000 bytes
+    without [-vectorize-loops], as Clang's driver runs it under
+    [-fno-vectorize]: code that an optimization makes invalid raises
     {!Renderer.Compiler.Compile_error} with Clang's diagnostic, which names the
     function, where it would compile into wrong values or crash Clang. Several
     sources ({!Renderer.Compiler.compile_all}) compile in one run of it, each
@@ -55,14 +57,19 @@ val clang : string -> Renderer.Compiler.t
     Objects do not depend on the working directory. With {!Setting.ccache}, they
     are cached in the table [compile_C_obj_A_D], where [C] is the Clang run, [A]
     is [arch] with its commas replaced by underscores, and [D] the digest of
-    that Clang's version and installation ([clang --version]), of the command
-    of its compiler proper that compiles a source of at most and of more than
-    400 000 bytes, and of that length: the command names the processor and
-    features it compiles for and every option, or is replaced by why Clang
-    rejects them or does not run. An object is read back only for its source,
-    compiled by the same Clang with the same options.
-    Clang is asked once per process for its version and for each set of
-    options, when the table or a compile first needs it.
+    what that Clang states it runs for these options, which starts with its
+    version and installation, of the commands of its compiler proper that
+    compile a source of at most and of more than 400 000 bytes, and of that
+    length: the commands name the processor and features they compile for and
+    every option, or are replaced by why Clang rejects them or does not run. An
+    object is read back only for its source, compiled by the same Clang with the
+    same options.
+
+    The options depend on the release of LLVM that Clang states. Clang is asked
+    once per process, when the table or a compile first needs it, for the
+    options of the release it stated to the last process, which the
+    {!Helpers.Diskcache} keeps in the table [clang_llvm] while
+    {!Setting.ccache} holds, and asked again if it states another release.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
     Clang's diagnostics if Clang rejects the source or does not run, and
     {!Renderer.Compiler.disassemble} prints what [objdump -d] prints
