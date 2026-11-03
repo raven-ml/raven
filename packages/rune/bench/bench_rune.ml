@@ -500,6 +500,7 @@ let jit_rows () =
   let exponents = between f32 47 (-3.) 3. [| 65536 |] in
   let scaled = between f32 49 (-1.) 1. [| 100; 400 |] in
   let long_rows = between f64 53 (-1.) 1. [| 100; 50500 |] in
+  let short_rows = between f32 57 (-1.) 1. [| 4096; 32 |] in
   let wide = between f64 50 0. 1. [| 1_000_000 |] in
   let radius = host (Nx.full f64 [| 1 |] 0.7) in
   let experts_ids = positions 64 32 |> Nx.reshape [| 16; 4 |] in
@@ -680,6 +681,11 @@ let jit_rows () =
     warm "cumsum-float64-100x50500"
       (fun () -> Rune.jit' (fun x -> Nx.cumsum ~axis:1 x))
       (fun f -> synced (f long_rows));
+    (* Running sums along rows of 32 terms: two chunks of 16, then a window
+       over their last terms. *)
+    warm "cumsum-float32-4096x32"
+      (fun () -> Rune.jit' (fun x -> Nx.cumsum ~axis:1 x))
+      (fun f -> synced (f short_rows));
     (* Powers of bases in [[0.01, 30)] to exponents in [[-3, 3)]. *)
     warm "pow-float32-64K"
       (fun () -> Rune.jit (pair_fn ()) Nx.pow)
