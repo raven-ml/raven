@@ -943,6 +943,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Renderer.t.per_byte_first` holds a target's bound of multiply-adds per
+  byte up to which a contraction streams before a tensor core is tried, where
+  `Heuristic` held one constant: 64 on every target, sm_89's measured
+  crossover, until another target's is placed.
 - On a GPU, `Heuristic` streams a decoded operand past 32 rows where no
   tensor core applies, where the other rules decoded each value once every
   4 rows: an MXFP4 product of 64 float32 rows runs 3 times faster on an RTX

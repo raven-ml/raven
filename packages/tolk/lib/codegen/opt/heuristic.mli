@@ -19,8 +19,9 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
 
     - {b streaming}, below, when the reuse of the streamed operand is at most
       32, the contraction sums at least 256 values an output, or a number of
-      them not known, and it does at most 64 multiply-adds per byte of the
-      buffers the streamed operand reads: the product of its output and
+      them not known, and it does at most the renderer's
+      {!Renderer.t.per_byte_first} multiply-adds per byte of the buffers the
+      streamed operand reads: the product of its output and
       contracted axes' sizes, against the bytes of each buffer once, or a
       number not known, as when a size is symbolic or the operand reads a
       buffer that is not a parameter;

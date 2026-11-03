@@ -536,6 +536,45 @@ let applies =
       let _, _, o = List.find (fun (c, _, _) -> c.name = name) gpu_cases in
       equal Testable.bool streamed (streams o))
 
+(* A target's bound of multiply-adds per byte: 64 on every renderer, sm_89's
+   measured crossover, which the others take until they measure their own. *)
+let per_byte_bounds =
+  cases "each renderer streams before a core up to 64 multiply-adds a byte"
+    ~id:fst renderers (fun (_, ren) ->
+      equal int 64 ren.Renderer.per_byte_first)
+
+(* The order reads the renderer's bound: blocks of 16 rows over 4 experts'
+   matrices do 63.94 multiply-adds a byte of their codes, scales and owners
+   at 9 blocks and 71.03 at 10, and stream where the bound is at least
+   that. *)
+let per_byte_order =
+  let row =
+    List.find
+      (fun cell -> cell "renderer" = "cuda")
+      (Golden.rows "renderers.golden")
+  in
+  let at bound =
+    Kernel_opts.renderer_of_row (fun column ->
+        if column = "per_byte_first" then string_of_int bound else row column)
+  in
+  let rows =
+    List.concat_map
+      (fun bound ->
+        [
+          ("routed_at_bound", 63.94, bound);
+          ("routed_past_bound", 71.03, bound);
+        ])
+      [ 63; 64; 71; 72 ]
+  in
+  cases "a contraction streams before a core up to the renderer's bound a byte"
+    ~id:(fun (name, _, bound) -> Printf.sprintf "%s at %d" name bound)
+    rows
+    (fun (name, per_byte, bound) ->
+      let s = K.v (kernel name) (at bound) in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      equal Testable.bool (per_byte <= Float.of_int bound) (streams o))
+
 (* Runs of rows
 
    Rows that read an operand only through their quotient by [d], as blocks of
@@ -1297,6 +1336,8 @@ let () =
              coalesces;
              unrolls_in_flight;
              applies;
+             per_byte_bounds;
+             per_byte_order;
              recorded_order;
            ];
          warps_within_runs;

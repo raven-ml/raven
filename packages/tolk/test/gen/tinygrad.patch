@@ -1036,10 +1036,10 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..52b8fbde7 100644
+index ec97cac6f..ead15e0d6 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -1,9 +1,273 @@
+@@ -1,9 +1,272 @@
 -import itertools
 +import itertools, math
  from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
@@ -1229,9 +1229,8 @@ index ec97cac6f..52b8fbde7 100644
 +  if (g:=next((g for g in globals_of(k) if any(g is t for t in us)), None)) is not None: return ("columns", g)
 +  return None
 +# before the tensor cores, a contraction streams when it sums at least LANES*IN_FLIGHT values an output, between the sums measured: a
-+# sum of 64 ran faster on a core, a sum of 1024 streamed; and when it does at most STREAM_PER_BYTE multiply-adds per byte of the
++# sum of 64 ran faster on a core, a sum of 1024 streamed; and when it does at most the renderer's per_byte_first multiply-adds per byte of the
 +# buffers its streamed operand reads, between those measured: 60 streamed faster, 66 ran faster on a core
-+STREAM_PER_BYTE = 64
 +def per_byte(k:Scheduler, w:UOp) -> float|None:
 +  n = prod(k.full_shape[k.rngs.index(x)] for x in globals_of(k) + contracted(k))
 +  bufs = [a.src[0] for a in accesses(w)]
@@ -1239,7 +1238,7 @@ index ec97cac6f..52b8fbde7 100644
 +  return n / sum(b.dtype.itemsize * b.src[0].arg for b in dict.fromkeys(bufs))
 +def early(k:Scheduler, w:UOp, r:int) -> bool:
 +  n = prod(k.full_shape[k.rngs.index(x)] for x in contracted(k))
-+  return r <= STREAM_FIRST and (not isinstance(n, int) or n >= LANES*IN_FLIGHT) and ((i:=per_byte(k, w)) is None or i <= STREAM_PER_BYTE)
++  return r <= STREAM_FIRST and (not isinstance(n, int) or n >= LANES*IN_FLIGHT) and ((i:=per_byte(k, w)) is None or i <= k.ren.per_byte_first)
 +def streamed(k:Scheduler):
 +  # a kernel where a loop's bound reads an axis is not streamed: the layouts upcast output axes by their accesses
 +  if not (k.ren.has_local and k.ren.has_shared and getenv("MV",1) != 0) or k.read_by_bounds or (c:=contraction(k)) is None: return None
@@ -1315,7 +1314,7 @@ index ec97cac6f..52b8fbde7 100644
  
  def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # first try the tensor cores
-@@ -24,23 +288,56 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,23 +287,56 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
@@ -1377,7 +1376,7 @@ index ec97cac6f..52b8fbde7 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +354,21 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,25 +353,21 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1418,7 +1417,7 @@ index ec97cac6f..52b8fbde7 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,25 +403,47 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,25 +402,47 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1476,7 +1475,7 @@ index ec97cac6f..52b8fbde7 100644
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -139,18 +454,36 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -139,18 +453,36 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # if last reduce dim is small(ish), loop unroll the reduce
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:
@@ -1979,10 +1978,10 @@ index 34d111b14..80db84b3d 100644
    def cumsum(self, axis:int=0) -> Self:
      """
 diff --git a/tinygrad/renderer/__init__.py b/tinygrad/renderer/__init__.py
-index 7fb5ccac2..489f4fc09 100644
+index 7fb5ccac2..8847cd221 100644
 --- a/tinygrad/renderer/__init__.py
 +++ b/tinygrad/renderer/__init__.py
-@@ -67,6 +67,11 @@ class Renderer:
+@@ -67,12 +67,20 @@ class Renderer:
    inline_prefix: str|None = None
    # TODO: make this generic with a list of supported types
    supports_float4: bool = True
@@ -1994,6 +1993,15 @@ index 7fb5ccac2..489f4fc09 100644
    has_local: bool = True
    has_shared: bool = True
    # NOTE: these two should be in (x,y,z) order to match the max_sizes argument in get_grouped_dims
+   global_max: tuple[int, ...]|None = (0x8FFFFFFF,) * (3) # TODO: Ops.SPECIAL int32 indexes right now
+   local_max: tuple[int, ...]|None = (0x8FFFFFFF,) * (3) # TODO: Ops.SPECIAL int32 indexes right now
+   global_prod_max: tuple[int, ...]|None = None
++  # the multiply-adds per byte of a contraction's streamed operand up to which it streams before the tensor cores: a crossover of the
++  # target's achieved rates, sm_89's 64 measured on an RTX 5000 Ada, taken by every target until its own is measured
++  per_byte_first: int = 64
+   shared_max: int = 32768
+   tensor_cores: list[TensorCore] = []
+   extra_matcher: PatternMatcher|None = None
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
 index 6eec3e198..24376d2e2 100644
 --- a/tinygrad/renderer/cstyle.py

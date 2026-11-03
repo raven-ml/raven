@@ -112,8 +112,15 @@ let renderer_of_row cell =
           { Renderer.count = int_of_string count; bytes = int_of_string bytes }
     | _ -> None
   in
+  let per_byte_first =
+    match cell "per_byte_first" with
+    | exception Invalid_argument _ -> None
+    | "" -> None
+    | n -> Some (int_of_string n)
+  in
   Renderer.v
     ~registers:(fun () -> registers)
+    ?per_byte_first
     ~has_local:(bool_of_cell (cell "has_local"))
     ~has_shared:(bool_of_cell (cell "has_shared"))
     ~shared_max:(int_of_string (cell "shared_max"))

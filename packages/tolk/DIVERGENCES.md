@@ -2148,7 +2148,7 @@ Withdrawn: multi-device is out of scope, see README.
 - **tolk:** `Heuristic.lanes`, `Heuristic.rows`, `Heuristic.columns`,
   `Heuristic.sector_lanes`, `Heuristic.stream_threads`, `Heuristic.in_flight`,
   `Heuristic.in_flight_held`, `Heuristic.stream_first`,
-  `Heuristic.upcast_max`, `Heuristic.summed`, `Heuristic.per_byte_first`,
+  `Heuristic.upcast_max`, `Heuristic.summed`, `Renderer.t.per_byte_first`,
   `Heuristic.per_byte`, `Heuristic.run`,
   `Heuristic.reuse_ranges`, `Heuristic.reuse`, `Heuristic.stride`,
   `Heuristic.accesses`, `Heuristic.contraction`, `Heuristic.contracted`,
@@ -2217,7 +2217,22 @@ Withdrawn: multi-device is out of scope, see README.
     `core_threads` each move the order of a sum. They are fixed per target,
     never read from a device: a value read from the part would give two
     parts of one target different bits, and the program key names the
-    target alone (D170).
+    target alone (D170). `per_byte_first` is a field of the renderer, since
+    a second target measured another crossover: nonnormal's R9700 (gfx1201)
+    streams gpt-oss-20b's routed blocks at 149 a byte faster than its cores
+    (gate and up 20.6-22.1 against 26.7-28.0 ms a layer, down 10.2-11.1
+    against 13.6-14.4, the gather stored as the model stores it, under every
+    routing measured) where sm_89's cores win 4-6x at the same intensity.
+    Every target keeps 64 until its own crossover is placed: gfx1201's lies
+    above 149, and the rows that place it (routed blocks at 1024 and 2048
+    tokens, 298 and 597 a byte, both paths forced) are pending on
+    nonnormal. Routing does not order the two paths: across eight routings
+    no kernel moves by more than 5% on AMD or 10% on CUDA, and a path chosen
+    by data would make a row's bits depend on other rows' routes. A gather
+    fused into the streamed product, as when its rows are an input, costs
+    1.3x on CUDA (the streamed gate and up product 12.3-13.9 against
+    9.4-10.8 ms), its rows gathered again in each of 1440 workgroups, which
+    the order does not weigh: an open cost.
 - **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`) on CUDA, and
   nx.quant's products (`Nx_quant.apply`, `Nx.map_segments` over it)
   compiled by rune. A contraction of little reuse reads its streamed operand
@@ -2321,7 +2336,9 @@ Withdrawn: multi-device is out of scope, see README.
   recorded contraction streams before a tensor core up to 64 multiply-adds
   per byte of its streamed operand` (rune's kernels of one token's products,
   of blocks of their own matrices and of gpt-oss-20b's experts at a 512-token
-  prompt); `the
+  prompt), `› each renderer streams before a core up to 64 multiply-adds a
+  byte` (the renderers' fields, from the equally patched tinygrad) and `› a
+  contraction streams before a core up to the renderer's bound a byte`; `the
   hand-coded optimisations keep a kernel's writes › small kernels ›
   experts_down_metal` (a group inside another reduce); the Postrange suite's
   cases `double_sum_group`, `double_sum_group_twice` and

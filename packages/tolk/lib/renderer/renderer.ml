@@ -275,6 +275,7 @@ type t = {
   global_prod_max : int list option;
   shared_max : int;
   tensor_cores : Tc.t list;
+  per_byte_first : int;
   extra_matcher : (unit, Ops.t) Pattern_matcher.t;
   packed_args : bool;
   code_for_op : (Op.t * (string list -> Dtype.t -> string)) list;
@@ -290,6 +291,7 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     ?(registers = fun () -> None) ?(vector_alu = false) ?(has_local = true)
     ?(has_shared = true) ?(global_max = int32_max) ?(local_max = int32_max)
     ?global_prod_max ?(shared_max = 32768) ?(tensor_cores = [])
+    ?(per_byte_first = 64)
     ?(extra_matcher = Pattern_matcher.v (fun () -> [])) ?(packed_args = false)
     ?(code_for_op = [])
     ?(native = fun _ -> true)
@@ -309,6 +311,7 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     global_prod_max;
     shared_max;
     tensor_cores;
+    per_byte_first;
     extra_matcher;
     packed_args;
     code_for_op;

@@ -1229,16 +1229,18 @@ let locals k =
    core and 14.6 to 15.3 us streamed. *)
 let summed = lanes * in_flight
 
-(* A contraction streams before a tensor core when it does at most
-   [per_byte_first] multiply-adds per byte of the buffers its streamed operand
-   reads, the least memory it moves. Past it the streamed threads are bound by
-   their arithmetic, and a core's tiles, which read their matrix through the
-   cache when blocks of rows share it, run faster. On an RTX 5000 Ada an MXFP4
-   matrix of 16384 by 16384 multiplying 32 rows, 60 a byte, streams in 1.50 to
-   1.52 ms and takes 1.68 ms on a core; gpt-oss-20b's routed blocks of a
-   224-token prompt, 66 a byte, take 7.0 ms a layer on the cores and 7.9 ms
-   streamed, of a 512-token prompt, 149 a byte, 3.7 and 17.5 ms. *)
-let per_byte_first = 64
+(* A contraction streams before a tensor core when it does at most the
+   renderer's [per_byte_first] multiply-adds per byte of the buffers its
+   streamed operand reads, the least memory it moves. Past it the streamed
+   threads are bound by their arithmetic, and a core's tiles, which read their
+   matrix through the cache when blocks of rows share it, run faster. On an
+   RTX 5000 Ada an MXFP4 matrix of 16384 by 16384 multiplying 32 rows, 60 a
+   byte, streams in 1.50 to 1.52 ms and takes 1.68 ms on a core; gpt-oss-20b's
+   routed blocks of a 224-token prompt, 66 a byte, take 7.0 ms a layer on the
+   cores and 7.9 ms streamed, of a 512-token prompt, 149 a byte, 3.7 and
+   17.5 ms. Every target takes sm_89's 64 until its own is measured: an
+   R9700's (gfx1201) lies above 149, where it streams those blocks faster
+   than its cores, and is not yet placed. *)
 
 (* The multiply-adds of [k]'s contraction and the bytes of the buffers its
    operand [w] reads, when their sizes are known and each is a parameter. *)
@@ -1268,7 +1270,8 @@ let per_byte k w =
 let early k (w, _, reuse) =
   Bigint.(leq reuse (of_int stream_first))
   && (match per_byte k w with
-     | Some (n, bytes) -> Bigint.leq n (Bigint.of_int (per_byte_first * bytes))
+     | Some (n, bytes) ->
+         Bigint.leq n (Bigint.of_int ((K.ren k).per_byte_first * bytes))
      | None -> true)
   &&
   let n =
