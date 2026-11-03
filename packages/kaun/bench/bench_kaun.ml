@@ -165,14 +165,9 @@ let () =
      without sinks: its output, and its gradient in the queries. *)
   let heads () = Nx.Rng.normal Nx.float32 [| 8; 256; 64 |] in
   let aq = heads () and ak = heads () and av = heads () in
-  let causal =
-    Nx.less_equal
-      (Nx.reshape [| 1; 256 |] (Nx.arange Nx.int32 0 256 1))
-      (Nx.reshape [| 256; 1 |] (Nx.arange Nx.int32 0 256 1))
-  in
   let sinks = Nx.Rng.normal Nx.float32 [| 8; 1 |] in
   let attend ?sinks q =
-    Kaun.Attention.scaled_dot_product_attention ~mask:causal ?sinks q ak av
+    Kaun.Attention.scaled_dot_product_attention ~mask:Nx.causal ?sinks q ak av
   in
   let attend_grad ?sinks q = Rune.grad' (fun q -> Nx.sum (attend ?sinks q)) q in
 

@@ -147,8 +147,9 @@ let attention cfg layer b cache index x =
   let v = split ~head_dim b.attn.v x in
   let k, v, cache = Attention.Cache.extend index cache k v in
   let y =
-    Attention.attend ~mask:(Cache_index.mask index) ~scale:cfg.attention_scale
-      ~sinks:b.sinks q k v
+    Attention.attend
+      ~mask:(Cache_index.visible index)
+      ~scale:cfg.attention_scale ~sinks:b.sinks q k v
   in
   (merge b.attn.out y, cache)
 

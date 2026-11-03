@@ -91,7 +91,7 @@ let loss_fn x tgt m =
   let h =
     Nx.add x
       (Attention.apply ~head_dim:(dim / 2)
-         ~mask:(Attention.causal_mask ~seq (Nx.placement x))
+         ~mask:Nx.causal
          m.attn (Layer_norm.apply m.ln x))
   in
   Loss.softmax_cross_entropy_sparse (Linear.apply m.head h) tgt
@@ -203,9 +203,7 @@ let test_made_at_the_placement () =
   equal ~msg:"Batch_norm.Stats.var" placement cut (at_of stats.var);
   let kv = Two.split ~axis:1 in
   let c = Attention.Cache.make ~slots:4 ~kv_heads:2 ~head_dim:2 Nx.float32 kv in
-  equal ~msg:"Cache.keys" placement kv (at_of c.keys);
-  let mask = Attention.causal_mask ~seq:3 Two.on in
-  equal ~msg:"causal_mask" placement Two.on (at_of mask)
+  equal ~msg:"Cache.keys" placement kv (at_of c.keys)
 
 let test_moved_whole () =
   let cut = Two.split ~axis:0 in

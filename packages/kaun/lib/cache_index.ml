@@ -273,14 +273,19 @@ let lanes ~row table =
 
 (* Masks *)
 
-(* [keys] broadcasts against [batch; seq; 1]: the position each key holds. *)
-let sees ?window ~keys pos =
-  let query = Nx.reshape [| Nx.dim 0 pos; Nx.dim 1 pos; 1 |] pos in
+(* Whether a query at [query] sees a key at [keys]: at or before it, and under
+   [window] among its last [window]. Elementwise, so it also runs over an
+   attention's pairs ({!visible}). *)
+let within ?window ~keys query =
   let causal = Nx.less_equal keys query in
   match window with
   | None -> causal
   | Some w ->
       Nx.logical_and causal (Nx.greater keys (Nx.sub_s query (Int64.of_int w)))
+
+(* [keys] broadcasts against [batch; seq; 1]: the position each key holds. *)
+let sees ?window ~keys pos =
+  within ?window ~keys (Nx.reshape [| Nx.dim 0 pos; Nx.dim 1 pos; 1 |] pos)
 
 (* The columns [0, context) as [1; context], whole on each device of [like]'s
    placement. *)
@@ -373,6 +378,35 @@ let mask index =
       let context = context index in
       let keys = stands ~every:index.every (column ~like:pos ~context) in
       sees ?window ~keys:(Nx.reshape [| 1; 1; context |] keys) pos
+
+(* [mask] over an attention's pairs, [batch; heads; seq; context]. A program
+   reads the pair's query and arrays of [batch; 1; seq; 1], read at its lane
+   and token, and the columns' positions, [1; 1; 1; context], whose extent
+   checks the keys' width; nothing of [batch; seq; context] is stored. *)
+let visible index =
+  let pos = pos index and window = index.window in
+  let rows t = Nx.reshape [| Nx.dim 0 t; 1; Nx.dim 1 t; 1 |] t in
+  let columns ~context keys = Nx.reshape [| 1; 1; 1; context |] keys in
+  match (index.columns, index.tokens, index.draft) with
+  | None, (Whole _ | Packed _), _ when index.every = 1 ->
+      (* A token's sequence is the run of tokens from where it starts, column
+         [i - p] for token [i] at position [p], to itself: past itself for
+         padding. Within a run, positions differ as columns do. *)
+      let start = rows (start pos) in
+      let context = seq index in
+      let keys = columns ~context (column ~like:pos ~context) in
+      fun (p : _ Nx.pair) ->
+        Nx.logical_and (Nx.less_equal start keys) (within ?window ~keys p.q)
+  | None, _, None ->
+      let query = rows pos and context = context index in
+      let keys =
+        columns ~context (stands ~every:index.every (column ~like:pos ~context))
+      in
+      fun _ -> within ?window ~keys query
+  | _ ->
+      let m = mask index in
+      let m = Nx.reshape [| Nx.dim 0 m; 1; Nx.dim 1 m; Nx.dim 2 m |] m in
+      fun _ -> m
 
 (* Pools *)
 

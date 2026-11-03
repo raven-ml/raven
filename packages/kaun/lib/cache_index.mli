@@ -14,10 +14,11 @@
     one call ({!draft}) and several sequences packed in one lane ({!packed}) are
     all values of an index, and a layer is the same for each. A model passes the
     index it was given to every layer and never looks inside; a layer calls
-    {!extend} on each of its pools and attends under {!mask}. A layer that keeps
-    one entry per block of positions reads its pools through {!val-every}, and
-    one that attends to a few columns per token through {!select}. {!walk} is an
-    index's structure, which a compiled step's signature names.
+    {!extend} on each of its pools and attends under {!visible}, or weighs
+    them under {!mask}. A layer that keeps one entry per block of positions
+    reads its pools through {!val-every}, and one that attends to a few
+    columns per token through {!select}. {!walk} is an index's structure,
+    which a compiled step's signature names.
 
     For a reader coming from serving systems: the table is a block table whose
     blocks hold one position each, and the slot a token stores at, the one its
@@ -327,6 +328,17 @@ val mask : 'd t -> 'd Nx.bool_t
     [seq] columns are the call's tokens, seen as {!draft} says. A padded token
     sees none. Under a selection it has shape [[| batch; seq; k |]] and says
     which of its chosen columns each token sees. *)
+
+val visible : 'd t -> 'd Nx.pair -> 'd Nx.bool_t
+(** [visible index] is {!mask} as the mask of {!Nx.attention} over
+    [[| batch; heads; seq; context |]], [k] in place of [context] under a
+    selection: at a pair it holds where [mask index] holds at the pair's
+    lane, token and column, whatever the heads. {!Attention.cached} attends
+    under it. Without a selection or a {!draft} it reads the pair's
+    coordinates, the tokens' positions and the columns', so no array of
+    [[| batch; seq; context |]] is stored; with one it reads [mask index].
+    Either way the attention raises unless its keys are [context] wide, [k]
+    under a selection, as {!extend}'s [seen] are. *)
 
 (** {1:structure Structure} *)
 

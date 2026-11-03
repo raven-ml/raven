@@ -18,8 +18,8 @@
     {!apply} and {!cached}, and both head counts are read from the projection
     widths: [heads] is the query width over [head_dim] and [kv_heads] the key
     width over [head_dim]. When [kv_heads] is smaller, each key-value head
-    serves [heads / kv_heads] query heads (grouped-query attention); the keys
-    broadcast over the group, so none is repeated.
+    serves [heads / kv_heads] query heads (grouped-query attention), which read
+    it where it lies, so none is repeated.
 
     {!scaled_dot_product_attention} is the pure core, with no parameters and no
     head bookkeeping. Use it directly for cross-attention, externally projected
@@ -68,7 +68,7 @@ val init : key:'d Nx.Rng.key -> embed_dim:int -> ('d Nx.float32_t, 'd) t
 
 val apply :
   head_dim:int ->
-  ?mask:(bool, Nx.bool_elt, 'd) Nx.t ->
+  ?mask:('d Nx.pair -> 'd Nx.bool_t) ->
   ?rope:'d Rope.t ->
   ?sum:bool ->
   ((float, 'b, 'd) Nx.t, 'd) t ->
@@ -78,10 +78,18 @@ val apply :
 
     - [head_dim], the feature width of one head. It must divide the projection
       widths.
-    - [mask], which keys each query may see, of shape [[| seq; seq |]] or
-      [[| batch; seq; seq |]]: weights are computed only where it is [true]. The
-      layer inserts the head axes. A query that sees no key yields the output
-      projection of zero. Without a mask every token sees every token.
+    - [mask], which keys each query may see: the mask of {!Nx.attention} over
+      [[| batch; heads; seq; seq |]], [batch] the product of [x]'s batch
+      axes. Under {!Nx.causal} token [i] sees tokens [j <= i]. A boolean
+      array [b] shared by the lanes, of shape [[| seq; seq |]], is the mask
+      [fun _ -> b]; one per lane, [[| batch; seq; seq |]], takes a heads axis,
+      [fun _ -> Nx.reshape [| batch; 1; seq; seq |] b], since a mask's arrays
+      align on the right. A mask of padding [valid], of shape
+      [[| batch; seq |]] and [true] at real tokens, is
+      [fun p -> Nx.logical_and (Nx.causal p) valid'] for
+      [valid' = Nx.reshape [| batch; 1; 1; seq |] valid]. A query that sees
+      no key yields the output projection of zero. Without a mask every token
+      sees every token.
     - [rope], a rotary schedule: the query and key heads are rotated at
       positions [0] to [seq - 1] before the scores.
     - [sum], for the output projection as {!Linear.apply} takes it: a
@@ -91,22 +99,14 @@ val apply :
 
     [x]'s last axis must have size [embed_dim] and its second-to-last axis is
     the sequence; earlier axes are batch axes, folded into one for [mask]. The
-    result has [x]'s shape. Differentiable through Rune.
+    result has [x]'s shape and is computed as {!attend} computes it.
+    Differentiable through Rune.
 
-    Raises [Invalid_argument] if [x] has fewer than 2 axes, [x]'s last axis does
-    not have size [embed_dim], [head_dim] does not divide the projection widths,
-    [kv_heads] does not divide [heads], or [mask] has another shape. *)
-
-val causal_mask :
-  seq:int -> ?valid:'d Nx.bool_t -> 'd Nx.Placement.t -> 'd Nx.bool_t
-(** [causal_mask ~seq at] is the mask of shape [[| seq; seq |]], whole on each
-    device of [at], under which query [i] sees keys [j <= i]: a mask made from a
-    length alone takes its placement. With [valid], of shape [[| batch; seq |]]
-    and [true] at real tokens, the result has shape [[| batch; seq; seq |]] and
-    hides padded keys as well.
-
-    Raises [Invalid_argument] if [seq] is not positive or [valid] has another
-    shape. *)
+    Raises [Invalid_argument] if [x]'s dtype is a float8 or float4 format, [x]
+    has fewer than 2 axes, [x]'s last axis does not have size [embed_dim],
+    [head_dim] does not divide the projection widths, [kv_heads] does not
+    divide [heads], or [mask]'s results or captures do not broadcast to
+    [[| batch; heads; seq; seq |]]. *)
 
 (** {1:cache Decoding with a key-value cache}
 
@@ -218,7 +218,7 @@ val cached :
     is as {!apply} takes it.
 
     The layer extends each leaf with {!Cache_index.extend} and attends once over
-    what that returns, under {!Cache_index.mask}. On a whole index the tokens
+    what that returns, under {!Cache_index.visible}. On a whole index the tokens
     attend over themselves and [cache] is returned as it is, at the cost of
     {!apply}: a model's whole-sequence forward pass is this function over
     {!Cache_index.whole}. Otherwise each leaf costs one scatter of the call's
@@ -227,15 +227,16 @@ val cached :
     pools' memory, the step's cost does not depend on the size of the cache.
     Differentiable through Rune.
 
-    Raises [Invalid_argument] if [x] does not have shape
-    [[| batch; seq; embed_dim |]] with the index's batch and seq, [head_dim]
-    does not divide the projection widths, [kv_heads] does not divide [heads],
-    or the cache does not have shape [[| _; kv_heads; head_dim |]]. *)
+    Raises [Invalid_argument] if [x]'s dtype is a float8 or float4 format, [x]
+    does not have shape [[| batch; seq; embed_dim |]] with the index's batch
+    and seq, [head_dim] does not divide the projection widths, [kv_heads] does
+    not divide [heads], or the cache does not have shape
+    [[| _; kv_heads; head_dim |]]. *)
 
 (** {1:pieces The pieces of a layer}
 
     {!apply} and {!cached} are compositions of three functions with
-    {!Rope.apply}, {!Cache.extend} and {!Cache_index.mask}. A model whose
+    {!Rope.apply}, {!Cache.extend} and {!Cache_index.visible}. A model whose
     attention differs (sinks, another score scale, a normalisation of queries
     and keys, its own cache record) composes them itself. This is {!cached}:
 
@@ -246,7 +247,7 @@ val cached :
       let k = Rope.apply rope ~pos (Attention.split ~head_dim p.k x) in
       let v = Attention.split ~head_dim p.v x in
       let k, v, cache = Attention.Cache.extend index cache k v in
-      let mask = Cache_index.mask index in
+      let mask = Cache_index.visible index in
       (Attention.merge p.out (Attention.attend ~mask q k v), cache)
     ]}
 
@@ -268,7 +269,7 @@ val split :
     not positive or does not divide [l]'s output width. *)
 
 val attend :
-  ?mask:(bool, Nx.bool_elt, 'd) Nx.t ->
+  ?mask:('d Nx.pair -> 'd Nx.bool_t) ->
   ?scale:float ->
   ?sinks:(float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t ->
@@ -281,19 +282,26 @@ val attend :
     has shape [[| batch; heads; n; dv |]]. [kv_heads] divides [heads], and
     key-value head [h] serves query heads [h * groups] to
     [h * groups + groups - 1], where [groups] is [heads / kv_heads]. No key is
-    repeated: the queries gain a group axis the keys broadcast over. With:
+    repeated. With:
 
-    - [mask], of shape [[| n; m |]] or [[| batch; n; m |]], shared by the heads.
+    - [mask], the mask of {!Nx.attention} over [[| batch; heads; n; m |]],
+      such as {!Nx.causal} or {!Cache_index.visible}. A boolean array [b] of
+      shape [[| n; m |]] is [fun _ -> b]; one of [[| batch; n; m |]], such
+      as {!Cache_index.mask}, takes a heads axis,
+      [fun _ -> Nx.reshape [| batch; 1; n; m |] b], since a mask's arrays
+      align on the right.
     - [scale], as for {!scaled_dot_product_attention}.
     - [sinks], of shape [[| heads |]]: one attention-sink logit per query head,
-      as for {!scaled_dot_product_attention}, which is given them reshaped to
-      [[| kv_heads; groups; 1 |]].
+      as for {!scaled_dot_product_attention}.
 
-    It is {!scaled_dot_product_attention} over the grouped shapes and inherits
-    its totality and its float32 island.
+    It is {!Nx.attention} of [q] over [k] and [v], with sinks as
+    {!scaled_dot_product_attention} adds them, and shares that function's
+    dtypes, precision and totality.
 
-    Raises [Invalid_argument] if a shape is not as above or [kv_heads] does not
-    divide [heads]. *)
+    Raises [Invalid_argument] if [q]'s dtype is a float8 or float4 format, a
+    shape is not as above, [kv_heads] does not divide [heads], [d] is [0]
+    without [scale], or [mask]'s results or captures do not broadcast to
+    [[| batch; heads; n; m |]]. *)
 
 val merge :
   ?sum:bool ->
@@ -311,7 +319,7 @@ val merge :
 (** {1:core The attention core} *)
 
 val scaled_dot_product_attention :
-  ?mask:(bool, Nx.bool_elt, 'd) Nx.t ->
+  ?mask:('d Nx.pair -> 'd Nx.bool_t) ->
   ?scale:float ->
   ?sinks:(float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t ->
@@ -327,13 +335,24 @@ val scaled_dot_product_attention :
     [q] has shape [[| ...; n; d |]], [k] shape [[| ...; m; d |]] and [v] shape
     [[| ...; m; dv |]]; the result has shape [[| ...; n; dv |]]. Leading axes
     are batch axes and broadcast, so stacked attention heads are just a batch
-    axis. Differentiable through Rune.
+    axis. It is {!Nx.attention} over the broadcast batch axes, the last of them
+    its heads: the result's precision, its error bound and what a value at a
+    hidden key does are that function's. Differentiable through Rune.
 
-    [mask], when given, must broadcast to [[| ...; n; m |]]: weights are
-    computed only where it is [true], and are exactly [0] where it is [false]
-    (masked scores are set to negative infinity before the softmax). The
-    function is total: a query row whose mask hides every key has zero weights,
-    so its output is zero over finite values, and its gradients are zero.
+    [q], [k] and [v] are float16, bfloat16, float32 or float64; cast a
+    narrower float first. The scores, their softmax and the sinks compute in
+    {!Nx.attention}'s accumulator, float64 for float64 inputs and float32
+    otherwise, and the result rounds to [q]'s dtype: once, and with [sinks]
+    once more.
+
+    [mask], when given, says which keys each query sees, as {!Nx.attention}'s
+    [mask]: Nx code over the coordinates of one query-key pair, whose results
+    and captured arrays broadcast to [[| ...; n; m |]]. A boolean array [b]
+    of that shape is the mask [fun _ -> b]; a mask computed from the
+    coordinates, such as {!Nx.causal}, stores no array of that shape. Weights
+    are exactly [0] at hidden keys. The function is total: a query row whose
+    mask hides every key has zero weights, so its output is zero, and its
+    gradients are zero.
 
     [sinks], when given, are attention sinks (Xiao et al., 2023, as gpt-oss uses
     them): learned logits that take part of a query's weight and carry no value.
@@ -343,23 +362,18 @@ val scaled_dot_product_attention :
     [[| heads; 1 |]]. A query's sink joins its softmax as one more key whose
     value is zero: the scores and the sink are normalised together, the sink is
     a raw logit that [scale] does not multiply, and it has no column in the
-    weights, which then sum to less than [1]. A query whose mask hides every key
-    puts all its weight on its sink: its output and its gradients are zero.
-    Differentiable through Rune in [sinks].
+    weights, which then sum to less than [1]. So the result is the attention
+    without sinks times [sigmoid (lse - sink)], [lse] the row's log-sum-exp of
+    its visible scores, multiplied in the accumulator. A query whose mask hides
+    every key puts all its weight on its sink: its output and its gradients are
+    zero. Differentiable through Rune in [sinks].
 
-    Without [scale] and [sinks] the computation is exactly the one above.
-
-    For narrow inputs (float16, bfloat16, float8, float4) the scores, masking,
-    sinks and softmax are computed in a float32 island: [q], [k] and [sinks] are
-    upcast, the probabilities are cast back to the input dtype, and the value
-    matmul runs at the input dtype. Float32 and float64 inputs use their own
-    dtype throughout, exactly as if the island were absent. {!apply} and
-    {!cached} inherit this contract.
-
-    Raises [Invalid_argument] if [q], [k] or [v] has fewer than 2 axes, [q] and
-    [k] differ in their last axis, [k] and [v] differ in their second-to-last
-    axis, or [sinks] does not broadcast to the scores without their last axis.
-*)
+    Raises [Invalid_argument] if [q]'s dtype is a float8 or float4 format,
+    [q], [k] or [v] has fewer than 2 axes, [q] and [k] differ in their last
+    axis, [k] and [v] differ in their second-to-last axis, the batch axes
+    do not broadcast, [d] is [0] without [scale], [sinks] does not broadcast to
+    the scores without their last axis, or [mask]'s results or captures do not
+    broadcast to [[| ...; n; m |]]. *)
 
 (** {1:structure Structure} *)
 

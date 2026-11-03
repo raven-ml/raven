@@ -37,6 +37,16 @@ let paths s x =
        x [])
 
 let grads_ok = function Ok () -> () | Error m -> fail m
+let f64 t = Nx.cast Nx.float64 t
+
+(* A mask that reads a boolean array at each pair. *)
+let captured m (_ : Nx.host Nx.pair) = m
+
+(* Query [i] sees keys [j <= i], as an array of [n] rows and [m] columns. *)
+let lower ~n ~m =
+  Nx.less_equal
+    (Nx.reshape [| 1; m |] (Nx.arange Nx.int32 0 m 1))
+    (Nx.reshape [| n; 1 |] (Nx.arange Nx.int32 0 n 1))
 let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
 
 let values_are ?msg ~tol expected t =
@@ -87,7 +97,7 @@ let test_core_mask_zeroes_weights () =
   let v = Nx.create Nx.float32 [| 2; 1 |] [| 1.; 100. |] in
   let mask = Nx.create Nx.bool [| 1; 2 |] [| true; false |] in
   values_are ~msg:"masked keys get zero weight" ~tol:0.0 [| 1.0 |]
-    (Attention.scaled_dot_product_attention ~mask q k v)
+    (Attention.scaled_dot_product_attention ~mask:(captured mask) q k v)
 
 let test_core_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
@@ -115,7 +125,9 @@ let test_core_masked_gradients () =
   in
   let mask = Nx.create Nx.bool [| 2; 2 |] [| true; false; true; true |] in
   let loss { Qkv64.q; k; v } =
-    let y = Attention.scaled_dot_product_attention ~mask q k v in
+    let y =
+      Attention.scaled_dot_product_attention ~mask:(captured mask) q k v
+    in
     Nx.sum (Nx.mul y y)
   in
   grads_ok (Rune.check_grads qkv64 loss p)
@@ -144,7 +156,39 @@ let test_core_rejects_bad_shapes () =
       Attention.scaled_dot_product_attention
         (t [| 1; 2 |])
         (t [| 2; 2 |])
-        (t [| 3; 2 |]))
+        (t [| 3; 2 |]));
+  raises
+    (Invalid_argument
+       "Attention.scaled_dot_product_attention: the batch axes of q [2; 1; 2], \
+        k [3; 4; 2] and v [3; 4; 2] do not broadcast") (fun () ->
+      Attention.scaled_dot_product_attention
+        (t [| 2; 1; 2 |])
+        (t [| 3; 4; 2 |])
+        (t [| 3; 4; 2 |]));
+  raises
+    (Invalid_argument
+       "Attention.scaled_dot_product_attention: q and k of no feature need a \
+        scale") (fun () ->
+      Attention.scaled_dot_product_attention
+        (t [| 1; 0 |])
+        (t [| 2; 0 |])
+        (t [| 2; 2 |]))
+
+let test_core_dtypes () =
+  let t dt = Nx.zeros dt [| 1; 2 |] in
+  raises
+    (Invalid_argument
+       "Attention.scaled_dot_product_attention: float4_e2m1fn is not float16, \
+        bfloat16, float32 or float64") (fun () ->
+      let x = t Nx.float4_e2m1fn in
+      Attention.scaled_dot_product_attention x x x);
+  raises
+    (Invalid_argument
+       "Attention.attend: float8_e4m3fn is not float16, bfloat16, float32 or \
+        float64")
+    (fun () ->
+      let x = Nx.zeros Nx.float8_e4m3fn [| 1; 1; 1; 2 |] in
+      Attention.attend x x x)
 
 (* Attention is total: a query that sees no key yields zero. *)
 
@@ -157,7 +201,9 @@ let test_core_is_total () =
     Nx.create Nx.bool [| 2; 4 |]
       [| false; false; false; false; true; false; true; true |]
   in
-  let out = Attention.scaled_dot_product_attention ~mask q k v in
+  let out =
+    Attention.scaled_dot_product_attention ~mask:(captured mask) q k v
+  in
   values_are ~msg:"a query that sees no key yields zero" ~tol:0.0
     (Array.make 5 0.0) (Nx.slice [ I 0 ] out);
   is_true ~msg:"its neighbour is finite and not zero"
@@ -178,7 +224,9 @@ let test_core_empty_row_gradients () =
     Nx.create Nx.bool [| 2; 3 |] [| false; false; false; true; false; true |]
   in
   let loss { Qkv64.q; k; v } =
-    let y = Attention.scaled_dot_product_attention ~mask q k v in
+    let y =
+      Attention.scaled_dot_product_attention ~mask:(captured mask) q k v
+    in
     Nx.sum (Nx.mul y y)
   in
   let g = Rune.grad qkv64 loss p in
@@ -263,10 +311,11 @@ let test_sinks_are_an_appended_column () =
   in
   same ~msg:"under a mask"
     (sink_reference ~mask ~sinks q k v)
-    (Attention.scaled_dot_product_attention ~mask ~sinks q k v);
+    (Attention.scaled_dot_product_attention ~mask:(captured mask) ~sinks q k v);
   same ~msg:"the scale does not multiply the sinks"
     (sink_reference ~mask ~scale:1.3 ~sinks q k v)
-    (Attention.scaled_dot_product_attention ~mask ~scale:1.3 ~sinks q k v);
+    (Attention.scaled_dot_product_attention ~mask:(captured mask) ~scale:1.3
+       ~sinks q k v);
   let per_query = Nx.Rng.normal Nx.float32 [| 2; 4; 3 |] in
   let by_head h =
     Attention.scaled_dot_product_attention
@@ -300,7 +349,7 @@ let test_sinks_keep_attention_total () =
     Nx.create Nx.bool [| 2; 3 |] [| false; false; false; true; false; true |]
   in
   let attend { Qkvs64.q; k; v; sinks } =
-    Attention.scaled_dot_product_attention ~mask ~sinks q k v
+    Attention.scaled_dot_product_attention ~mask:(captured mask) ~sinks q k v
   in
   let first_query t = flat_of (Nx.slice [ A; I 0 ] t) in
   equal ~msg:"a query that sees no key yields zero" (array float_exact)
@@ -350,7 +399,8 @@ let test_sinks_compiled () =
     Nx.less (Nx.Rng.normal Nx.float32 [| 3; 5 |]) (Nx.scalar Nx.float32 0.5)
   in
   let f q =
-    Attention.scaled_dot_product_attention ~mask ~scale:0.7 ~sinks q k v
+    Attention.scaled_dot_product_attention ~mask:(captured mask) ~scale:0.7
+      ~sinks q k v
   in
   same ~msg:"compiled = eager" (f q) (Rune.jit' f q)
 
@@ -365,6 +415,291 @@ let test_sinks_reject_bad_shapes () =
         (t [| 4; 2; 2 |])
         (t [| 4; 2; 2 |])
         (t [| 4; 2; 2 |]))
+
+(* The core against its definition in float64, within the bound nx.mli states
+   for Nx.attention, over drawn dtypes, grouped heads, masks, scales and sinks.
+   Inputs are drawn in [-1, 1], rounded to the dtype, and the reference reads
+   the rounded values. *)
+
+type drawn_mask = Unmasked | Causal | Drawn
+
+type case = {
+  dtype : int;  (** float32, bfloat16, float16 or float64 *)
+  batch : int;
+  hk : int;
+  groups : int;
+  n : int;
+  m : int;
+  d : int;
+  dv : int;
+  mask : drawn_mask;
+  sinks : bool;
+  scale : float option;
+  seed : float;
+}
+
+let dtype_names = [| "float32"; "bfloat16"; "float16"; "float64" |]
+
+let pp_case ppf c =
+  Format.fprintf ppf
+    "%s batch %d hk %d groups %d n %d m %d d %d dv %d mask %s sinks %b scale \
+     %s seed %g"
+    dtype_names.(c.dtype) c.batch c.hk c.groups c.n c.m c.d c.dv
+    (match c.mask with
+    | Unmasked -> "none"
+    | Causal -> "causal"
+    | Drawn -> "drawn")
+    c.sinks
+    (match c.scale with Some s -> string_of_float s | None -> "default")
+    c.seed
+
+let case_gen =
+  let open Gen in
+  let* dtype = int_range 0 3 in
+  let* batch = frequency [ (1, constant 0); (8, int_range 1 2) ] in
+  let* hk = frequency [ (1, constant 0); (6, int_range 1 2) ] in
+  let* groups = int_range 1 3 in
+  let* n = frequency [ (1, constant 0); (6, int_range 1 5) ] in
+  let* m = frequency [ (1, constant 0); (6, int_range 1 7) ] in
+  let* scale = frequency [ (2, constant None); (1, constant (Some 2.5)) ] in
+  (* Keys of no feature need a scale, and give a row uniform weights. *)
+  let* d =
+    match scale with
+    | None -> int_range 1 4
+    | Some _ -> frequency [ (1, constant 0); (3, int_range 1 4) ]
+  in
+  let* dv = frequency [ (1, constant 0); (6, int_range 1 3) ] in
+  let* mask = of_list [ Unmasked; Causal; Drawn ] in
+  let* sinks = bool in
+  let+ seed = float_range 0. 10. in
+  { dtype; batch; hk; groups; n; m; d; dv; mask; sinks; scale; seed }
+
+let numel = Array.fold_left ( * ) 1
+
+let drawn c offset shape =
+  Nx.create Nx.float32 shape
+    (Array.init (numel shape) (fun i ->
+         Float.sin ((Float.of_int i *. 2.3) +. c.seed +. offset)))
+
+let u32 = 0x1p-24
+let gamma n u = Float.of_int n *. u /. (1. -. (Float.of_int n *. u))
+
+(* nx.mli's bound for a row of [tk] keys, [a] its greatest [|scale| Σ |q k|]
+   over its visible keys: [lse]'s, [η + ε], and the factor
+   [e^w - 1 + γ(tk + 1, 2u) e^w] of [M] in [o]'s. [ε] is nx.cpu's,
+   [(13 n + 9 + 5 ln tk) u + u |lse|] for [n] blocks of 64 keys. *)
+let row_bound ~dk ~tk ~a ~lse =
+  let u = u32 in
+  let eta =
+    ((((1. +. u) ** 2.) *. (1. +. gamma (dk + 1) (2. *. u))) -. 1.) *. a
+  in
+  let ln = Float.log (Float.of_int (max 1 tk)) in
+  let n = Float.of_int ((tk + 63) / 64) in
+  let eps = ((((13. *. n) +. 9. +. (5. *. ln)) *. u) +. (u *. Float.abs lse)) in
+  let w =
+    ((1. +. u) *. ((2. *. eta) +. eps)) +. (((2. *. a) +. ln +. 5.) *. u)
+  in
+  (eta +. eps, Float.expm1 w +. (gamma (tk + 1) (2. *. u) *. Float.exp w))
+
+(* One row's visible keys as [(j, score, |scale| Σ |q k|)], from the arrays
+   [q] and [k] of a row and of its keys, [d] wide. *)
+let scores ~scale ~d ~q ~k ~qi ~kj keys =
+  List.map
+    (fun j ->
+      let s = ref 0. and a = ref 0. in
+      for e = 0 to d - 1 do
+        let x = q.((qi * d) + e) *. k.(((kj + j) * d) + e) in
+        s := !s +. x;
+        a := !a +. Float.abs x
+      done;
+      (j, scale *. !s, Float.abs scale *. !a))
+    keys
+
+(* The core's result for [c] within the bound of its definition, by [attend]
+   over grouped heads and by [scaled_dot_product_attention] over repeated
+   ones; under a causal mask, a last row decoded alone is within the bound of
+   its prefill. [uq] is the dtype's unit roundoff, also [v]'s, for the
+   weights the value product may round, and [tiny] half its subnormal
+   spacing: the bound bars underflow, and a result of that size rounds to
+   it. Below float16's [2^-14] a weight may lose [2^-25 |v|]. *)
+(* [c]'s queries, keys, values and sinks rounded to [dt], its mask and which
+   keys a lane's row sees under it. *)
+let inputs (type b) c (dt : (float, b) Nx.dtype) =
+  let heads = c.hk * c.groups in
+  let b = c.batch and n = c.n and m = c.m and d = c.d and dv = c.dv in
+  let round x = Nx.cast dt x in
+  let q = round (drawn c 1. [| b; heads; n; d |]) in
+  let k = round (drawn c 2. [| b; c.hk; m; d |]) in
+  let v = round (drawn c 3. [| b; c.hk; m; dv |]) in
+  let sinks = round (Nx.mul_s (drawn c 4. [| heads |]) 2.) in
+  let shown = Nx.less_s (drawn c 5. [| b; 1; n; m |]) 0.4 in
+  let shown_a = Nx.to_array shown in
+  let mask, sees =
+    match c.mask with
+    | Unmasked -> (None, fun _ _ _ -> true)
+    | Causal -> (Some Nx.causal, fun _ i j -> j <= i + (m - n))
+    | Drawn ->
+        ( Some (captured shown),
+          fun bi i j -> shown_a.((((bi * n) + i) * m) + j) )
+  in
+  (q, k, v, (if c.sinks then Some sinks else None), mask, sees)
+
+let check_case (type b) c (dt : (float, b) Nx.dtype) ~uq ~tiny ~tiny_weight =
+  let heads = c.hk * c.groups in
+  let b = c.batch and n = c.n and m = c.m and d = c.d and dv = c.dv in
+  let q, k, v, sinks, mask, sees = inputs c dt in
+  let scale =
+    Option.value c.scale ~default:(1. /. Float.sqrt (Float.of_int d))
+  in
+  let read t = Nx.to_array (f64 t) in
+  let qa = read q and ka = read k and va = read v in
+  let sa = Option.map read sinks in
+  (* The reference and each element's tolerance, [b; heads; n; dv]. *)
+  let expected = Array.make (b * heads * n * dv) 0. in
+  let tol = Array.make (b * heads * n * dv) 0. in
+  let empty = ref false in
+  for bi = 0 to b - 1 do
+    for h = 0 to heads - 1 do
+      let kj = ((bi * c.hk) + (h / c.groups)) * m in
+      for i = 0 to n - 1 do
+        let qi = (((bi * heads) + h) * n) + i in
+        let keys = List.filter (sees bi i) (List.init m Fun.id) in
+        if keys = [] then empty := true;
+        let at = scores ~scale ~d ~q:qa ~k:ka ~qi ~kj keys in
+        let top =
+          List.fold_left
+            (fun t (_, s, _) -> Float.max t s)
+            Float.neg_infinity at
+        in
+        let sum =
+          List.fold_left (fun t (_, s, _) -> t +. exp (s -. top)) 0. at
+        in
+        let lse = top +. log sum in
+        let a = List.fold_left (fun t (_, _, a) -> Float.max t a) 0. at in
+        let lse_tol, factor = row_bound ~dk:d ~tk:m ~a ~lse in
+        for e = 0 to dv - 1 do
+          let value j = va.(((kj + j) * dv) + e) in
+          let o = ref 0. and mabs = ref 0. and lost = ref 0. in
+          List.iter
+            (fun (j, s, _) ->
+              let p = exp (s -. lse) in
+              o := !o +. (p *. value j);
+              mabs := !mabs +. (p *. Float.abs (value j));
+              if p < tiny_weight then
+                lost := !lost +. (0x1p-25 *. Float.abs (value j)))
+            at;
+          let o_tol =
+            (uq *. Float.abs !o)
+            +. ((1. +. uq) *. factor *. !mabs)
+            +. (uq *. !mabs) +. !lost +. tiny
+          in
+          let x = (qi * dv) + e in
+          match (at, sa) with
+          | [], _ -> ()
+          | _, None ->
+              expected.(x) <- !o;
+              tol.(x) <- o_tol
+          | _, Some sa ->
+              (* The definition: one softmax over the keys and the sink, whose
+                 column is dropped. *)
+              let sink = sa.(h) in
+              let top' = Float.max top sink in
+              let sum' = (sum *. exp (top -. top')) +. exp (sink -. top') in
+              let o' =
+                List.fold_left
+                  (fun t (j, s, _) -> t +. (exp (s -. top') /. sum' *. value j))
+                  0. at
+              in
+              expected.(x) <- o';
+              (* [o · sigmoid (lse - sink)]: [lse]'s error and the
+                 subtraction's rounding move the sigmoid by at most
+                 themselves relatively, the sigmoid adds 3 ulps, [6u], and
+                 the product rounds in float32, then to the dtype. *)
+              let kept = 1. /. (1. +. exp (sink -. lse)) in
+              let moved = lse_tol +. (u32 *. Float.abs (lse -. sink)) in
+              tol.(x) <-
+                (kept *. o_tol)
+                +. (Float.abs !o *. kept *. (moved +. (6. *. u32)))
+                +. ((u32 +. uq) *. Float.abs o') +. tiny
+        done
+      done
+    done
+  done;
+  (* First order: the products of two errors stay below [4 uq] of the sum. *)
+  let tol = Array.map (fun t -> t *. (1. +. (4. *. uq))) tol in
+  let within ~msg ?(row = fun i -> i) got =
+    Array.iteri
+      (fun i y ->
+        let r = row i in
+        at_most ~msg float_exact ~than:tol.(r) (Float.abs (y -. expected.(r))))
+      (read got)
+  in
+  cover "grouped heads" (c.groups > 1 && heads > 0);
+  cover "sinks" c.sinks;
+  cover "a row that sees no key" !empty;
+  cover "keys of no feature" (d = 0 && dv > 0);
+  cover "zero-size" (b = 0 || heads = 0 || n = 0 || m = 0 || dv = 0);
+  let attend q = Attention.attend ?mask ?scale:c.scale ?sinks q k v in
+  within ~msg:"attend" (attend q);
+  let groups = Array.init heads (fun h -> Int64.of_int (h / c.groups)) in
+  let repeat t = Nx.take ~axis:1 (Nx.create Nx.int64 [| heads |] groups) t in
+  within ~msg:"scaled_dot_product_attention"
+    (Attention.scaled_dot_product_attention ?mask ?scale:c.scale
+       ?sinks:(Option.map (Nx.reshape [| heads; 1 |]) sinks)
+       q (repeat k) (repeat v));
+  if c.mask = Causal && n > 0 then
+    (* Element [r] of the decoded row is element [bh, n - 1, e] of the
+       prefill, whose definition it is held to. *)
+    within ~msg:"a last row decoded alone"
+      ~row:(fun r -> ((((r / dv) * n) + n - 1) * dv) + (r mod dv))
+      (attend (Nx.slice [ A; A; R (n - 1, n) ] q))
+
+(* At float64 the core is Nx.attention in float64, and its sinks
+   [o · sigmoid (lse - σ)] in float64, bit for bit: nx's laws hold that
+   operation to its bound. *)
+let check_float64 c =
+  let q, k, v, sinks, mask, _ = inputs c Nx.float64 in
+  let o, lse =
+    Nx.attention ?scale:c.scale ?mask ~acc:Nx.float64 ~kv:(Nx.Dense { k; v }) q
+  in
+  let expected =
+    match sinks with
+    | None -> o
+    | Some s ->
+        let kept = Nx.sigmoid (Nx.sub lse (Nx.reshape [| Nx.dim 0 s; 1 |] s)) in
+        Nx.mul o (Nx.unsqueeze ~axes:[ -1 ] kept)
+  in
+  let bits t = Array.map Int64.bits_of_float (Nx.to_array t) in
+  equal ~msg:"attend at float64" (array int64) (bits expected)
+    (bits (Attention.attend ?mask ?scale:c.scale ?sinks q k v))
+
+let law_core c =
+  match c.dtype with
+  | 0 -> check_case c Nx.float32 ~uq:u32 ~tiny:0x1p-150 ~tiny_weight:0.
+  | 1 -> check_case c Nx.bfloat16 ~uq:0x1p-8 ~tiny:0x1p-134 ~tiny_weight:0.
+  | 2 -> check_case c Nx.float16 ~uq:0x1p-11 ~tiny:0x1p-25 ~tiny_weight:0x1p-14
+  | _ -> check_float64 c
+
+(* Gradients through grouped heads, a causal mask and sinks. *)
+let test_attend_gradients () =
+  let f s seed =
+    Nx.create Nx.float64 s
+      (Array.init (numel s) (fun i ->
+           Float.sin ((Float.of_int i *. 2.3) +. seed)))
+  in
+  let p =
+    {
+      Qkvs64.q = f [| 1; 4; 3; 2 |] 1.;
+      k = f [| 1; 2; 4; 2 |] 2.;
+      v = f [| 1; 2; 4; 3 |] 3.;
+      sinks = f [| 4 |] 4.;
+    }
+  in
+  let loss { Qkvs64.q; k; v; sinks } =
+    let y = Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q k v in
+    Nx.sum (Nx.mul y y)
+  in
+  grads_ok (Rune.check_grads qkvs64 loss p)
 
 (* Multi-head self-attention layer *)
 
@@ -397,8 +732,6 @@ let test_names () =
   equal ~msg:"without biases" (list string)
     [ "q.w"; "k.w"; "v.w"; "out.w" ]
     (paths no_bias)
-
-let causal seq = Attention.causal_mask ~seq Nx.Host.on
 
 let test_apply_shapes () =
   Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
@@ -444,7 +777,7 @@ let test_causal_first_position_is_itself () =
      output is its own value row, whatever the rest of the sequence. *)
   let p = identity_params 2 in
   let x = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; -3.; 4.; 5.; -6. |] in
-  let y = Nx.to_array (Attention.apply ~head_dim:2 ~mask:(causal 3) p x) in
+  let y = Nx.to_array (Attention.apply ~head_dim:2 ~mask:Nx.causal p x) in
   equal ~msg:"row 0 is x's row 0"
     (array (float 1e-6))
     [| 1.; 2. |] (Array.sub y 0 2)
@@ -457,7 +790,7 @@ let test_causal_ignores_the_future () =
   let x1 = Nx.create Nx.float32 [| 4; 8 |] base in
   let x2 = Nx.create Nx.float32 [| 4; 8 |] changed in
   let at ?mask x = Nx.to_array (Attention.apply ~head_dim:4 ?mask p x) in
-  let y1 = at ~mask:(causal 4) x1 and y2 = at ~mask:(causal 4) x2 in
+  let y1 = at ~mask:Nx.causal x1 and y2 = at ~mask:Nx.causal x2 in
   equal ~msg:"changing the last position leaves earlier outputs unchanged"
     (array (float 1e-6))
     (Array.sub y1 0 24) (Array.sub y2 0 24);
@@ -496,16 +829,13 @@ let test_padding_mask_hides_padded_keys () =
   let valid =
     Nx.create Nx.bool [| 2; 3 |] [| false; true; true; true; true; true |]
   in
-  let mask = Attention.causal_mask ~seq:3 ~valid Nx.Host.on in
-  shape_is ~msg:"one mask per row" [| 2; 3; 3 |] mask;
-  equal ~msg:"padded keys hidden" (array bool)
-    [| false; false; false; false; true; false; false; true; true |]
-    (Array.sub (Nx.to_array mask) 0 9);
+  let valid = Nx.reshape [| 2; 1; 1; 3 |] valid in
+  let mask p = Nx.logical_and (Nx.causal p) valid in
   let y = Nx.to_array (Attention.apply ~head_dim:2 ~mask p x) in
   is_true ~msg:"every output is finite" (Array.for_all Float.is_finite y);
   (* The real tokens of the padded row see exactly what they would alone. *)
   let alone =
-    Attention.apply ~head_dim:2 ~mask:(causal 2) p
+    Attention.apply ~head_dim:2 ~mask:Nx.causal p
       (Nx.slice [ R (0, 1); R (1, 3) ] x)
   in
   equal ~msg:"real tokens ignore the padding"
@@ -532,7 +862,7 @@ let test_grouped_equals_repeated () =
   Nx.Rng.with_key (Nx.Rng.key 28) @@ fun () ->
   let grouped, repeated = grouped_pair Nx.float32 in
   let x = Nx.Rng.normal Nx.float32 [| 2; 5; 8 |] in
-  let at p = Nx.to_array (Attention.apply ~head_dim:2 ~mask:(causal 5) p x) in
+  let at p = Nx.to_array (Attention.apply ~head_dim:2 ~mask:Nx.causal p x) in
   equal ~msg:"2 key-value heads serving 4 query heads"
     (array (float 1e-5))
     (at repeated) (at grouped)
@@ -546,15 +876,15 @@ let test_gradients () =
     Nx.sum (Nx.mul y y)
   in
   grads_ok (Rune.check_grads attention64 (loss ?mask:None ?rope:None) p);
-  grads_ok (Rune.check_grads attention64 (loss ~mask:(causal 3)) p);
+  grads_ok (Rune.check_grads attention64 (loss ~mask:Nx.causal) p);
   let rope = Rope.make ~head_dim:2 ~context:64 () in
-  grads_ok (Rune.check_grads attention64 (loss ~mask:(causal 3) ~rope) p);
+  grads_ok (Rune.check_grads attention64 (loss ~mask:Nx.causal ~rope) p);
   let grouped, _ = grouped_pair Nx.float64 in
   let x = Nx.Rng.normal Nx.float64 [| 2; 3; 8 |] in
   grads_ok
     (Rune.check_grads attention64
        (fun p ->
-         let y = Attention.apply ~head_dim:2 ~mask:(causal 3) p x in
+         let y = Attention.apply ~head_dim:2 ~mask:Nx.causal p x in
          Nx.sum (Nx.mul y y))
        grouped)
 
@@ -593,7 +923,7 @@ let test_cached_prefill_matches_apply () =
   let x = Nx.Rng.normal Nx.float32 [| 2; 5; 8 |] in
   let y, _ = call p (cache 12) (Cache_index.rows ~context:6 [| 5; 5 |]) x in
   close ~msg:"a whole prompt through the cache = causal apply"
-    (Attention.apply ~head_dim ~mask:(causal 5) ~rope p x)
+    (Attention.apply ~head_dim ~mask:Nx.causal ~rope p x)
     y
 
 (* A whole index reads and keeps nothing: the layer is causal [apply] and the
@@ -605,7 +935,7 @@ let test_cached_whole () =
   let c = cache 0 in
   let y, c' = call p c (Cache_index.whole ~batch:2 ~seq:5 ()) x in
   close ~msg:"causal apply"
-    (Attention.apply ~head_dim ~mask:(causal 5) ~rope p x)
+    (Attention.apply ~head_dim ~mask:Nx.causal ~rope p x)
     y;
   is_true ~msg:"the cache holds the tensors it was given"
     (c.Attention.Cache.keys == c'.Attention.Cache.keys
@@ -616,7 +946,7 @@ let test_cached_whole () =
   is_true ~msg:"padding produces no nan"
     (Array.for_all Float.is_finite (flat y));
   close ~msg:"a padded row attends as it does alone"
-    (Attention.apply ~head_dim ~mask:(causal 3) ~rope p
+    (Attention.apply ~head_dim ~mask:Nx.causal ~rope p
        (Nx.slice [ R (0, 1); R (2, 5) ] x))
     (Nx.slice [ R (0, 1); R (2, 5) ] y)
 
@@ -631,7 +961,7 @@ let test_cached_window () =
            let i = t / 6 and j = t mod 6 in
            j <= i && j > i - 3))
   in
-  let expected = Attention.apply ~head_dim ~mask:band ~rope p x in
+  let expected = Attention.apply ~head_dim ~mask:(captured band) ~rope p x in
   let windowed c index x =
     Attention.cached ~head_dim ~rope p c (Cache_index.window 3 index) x
   in
@@ -1350,7 +1680,7 @@ let test_cached_chunking_is_invariant () =
   Nx.Rng.with_key (Nx.Rng.key 21) @@ fun () ->
   let p = layer Nx.float32 in
   let x = Nx.Rng.normal Nx.float32 [| 1; 7; 8 |] in
-  let whole = Attention.apply ~head_dim ~mask:(causal 7) ~rope p x in
+  let whole = Attention.apply ~head_dim ~mask:Nx.causal ~rope p x in
   let slots = [| Array.init 8 Fun.id |] in
   let feed chunks =
     let _, ys, _ =
@@ -1462,7 +1792,7 @@ let test_cached_shared_prefix () =
     in
     Nx.slice
       [ A; R (3, 4) ]
-      (Attention.apply ~head_dim ~mask:(causal 4) ~rope p x)
+      (Attention.apply ~head_dim ~mask:Nx.causal ~rope p x)
   in
   close ~msg:"row 0" (alone 0) (Nx.slice [ R (0, 1) ] shared);
   close ~msg:"row 1" (alone 1) (Nx.slice [ R (1, 2) ] shared);
@@ -1682,7 +2012,7 @@ let test_cached_step_jits_once () =
     (flat eager) (flat jitted);
   equal ~msg:"all four steps share one trace" int 1 !traces;
   close ~msg:"and both are causal attention over the prompt"
-    (Attention.apply ~head_dim ~mask:(causal 4) ~rope p x)
+    (Attention.apply ~head_dim ~mask:Nx.causal ~rope p x)
     jitted
 
 (* A compiled step keys its programs on the index's reports: another window
@@ -2282,6 +2612,74 @@ let test_packed_compiled () =
     [ [| [| 2; 4 |]; [| 6 |] |]; [| [| 1; 1; 3 |]; [| 3; 2 |] |] ];
   equal ~msg:"two packings, one compiled trace and two eager runs" int 3 !traces
 
+(* [visible] is [mask] read at each pair: attention under either gives the same
+   bits, over each kind of index. Keys and values are drawn over the mask's
+   columns. *)
+let test_visible_is_mask () =
+  Nx.Rng.with_key (Nx.Rng.key 48) @@ fun () ->
+  let rows = Cache_index.rows ~every:[ 2 ] ~context:6 [| 4; 2 |] in
+  let whole = Cache_index.whole ~lens:[| 3; 5 |] ~batch:2 ~seq:5 () in
+  let packed = Cache_index.packed ~seq:6 [| [| 2; 3 |]; [| 6 |] |] in
+  let draft =
+    Cache_index.draft
+      ~slots:(int64s [| 1; 3 |] [| 19; 18; 17 |])
+      ~sees:(tree_sees [| -1; 0; 0 |])
+      (index_at ~pos:[| [| 2; 3; 3 |] |] ~slots:[| draft_table |])
+  in
+  let selected =
+    Cache_index.select
+      (int64s [| 1; 2; 3 |] [| 1; 3; 0; 4; 2; 0 |])
+      (index_at ~pos:[| [| 2; 4 |] |] ~slots:[| [| 3; 0; 4; -1; 2; 1 |] |])
+  in
+  let agrees (name, index) =
+    let batch = Cache_index.batch index and seq = Cache_index.seq index in
+    let m = Cache_index.mask index in
+    let columns = Nx.dim 2 m in
+    let m = Nx.reshape [| batch; 1; seq; columns |] m in
+    let q = Nx.Rng.normal Nx.float32 [| batch; 4; seq; 2 |] in
+    let k = Nx.Rng.normal Nx.float32 [| batch; 2; columns; 2 |] in
+    let v = Nx.Rng.normal Nx.float32 [| batch; 2; columns; 3 |] in
+    equal ~msg:name (array float_exact)
+      (flat (Attention.attend ~mask:(captured m) q k v))
+      (flat (Attention.attend ~mask:(Cache_index.visible index) q k v))
+  in
+  List.iter agrees
+    [
+      ("rows", rows);
+      ("rows under a window", Cache_index.window 2 rows);
+      ("rows in blocks", Cache_index.every 2 rows);
+      ( "blocks under a window",
+        Cache_index.window 3 (Cache_index.every 2 rows) );
+      ("a padded whole index", whole);
+      ("a whole index under a window", Cache_index.window 2 whole);
+      ("a whole index in blocks", Cache_index.every 2 whole);
+      ("a packed index", packed);
+      ("a packed index under a window", Cache_index.window 2 packed);
+      ("an advanced index", Cache_index.advance (Cache_index.window 2 rows));
+      ("a draft", draft);
+      ("a selection", selected);
+    ]
+
+(* Keys of another width than the index's context raise, through [visible]
+   as through [mask]. *)
+let test_visible_checks_the_keys () =
+  let q = Nx.zeros Nx.float32 [| 1; 2; 3; 2 |] in
+  let k = Nx.zeros Nx.float32 [| 1; 2; 7; 2 |] in
+  List.iter
+    (fun (name, index, message) ->
+      raises ~msg:name (Invalid_argument message) (fun () ->
+          Attention.attend ~mask:(Cache_index.visible index) q k k))
+    [
+      ( "rows",
+        index_at ~pos:[| [| 0; 1; 2 |] |] ~slots:[| Array.init 6 Fun.id |],
+        "Nx.attention: a mask of shape [1; 1; 3; 6] does not broadcast to [1; \
+         2; 3; 7]" );
+      ( "a whole index",
+        Cache_index.whole ~batch:1 ~seq:3 (),
+        "Nx.attention: a mask of shape [1; 1; 3; 3] does not broadcast to [1; \
+         2; 3; 7]" );
+    ]
+
 (* The pieces of a layer *)
 
 let composed ?scale ?sinks p c index x =
@@ -2290,7 +2688,7 @@ let composed ?scale ?sinks p c index x =
   let k = Rope.apply rope ~pos (Attention.split ~head_dim p.k x) in
   let v = Attention.split ~head_dim p.v x in
   let k, v, c = Attention.Cache.extend index c k v in
-  let mask = Cache_index.mask index in
+  let mask = Cache_index.visible index in
   (Attention.merge p.out (Attention.attend ~mask ?scale ?sinks q k v), c)
 
 let test_pieces_compose_cached () =
@@ -2323,7 +2721,7 @@ let test_attend_sinks_per_query_head () =
   let k = Nx.Rng.normal Nx.float32 [| 2; 2; 5; 2 |] in
   let v = Nx.Rng.normal Nx.float32 [| 2; 2; 5; 2 |] in
   let sinks = Nx.create Nx.float32 [| 4 |] [| -1.5; 0.25; 2.0; 0.75 |] in
-  let mask = causal 5 in
+  let mask = lower ~n:5 ~m:5 in
   (* Key-value head [h] repeated for query heads [2 h] and [2 h + 1]. *)
   let repeat t =
     Nx.take ~axis:1 (Nx.create Nx.int64 [| 4 |] [| 0L; 0L; 1L; 1L |]) t
@@ -2334,9 +2732,9 @@ let test_attend_sinks_per_query_head () =
       q (repeat k) (repeat v)
   in
   same ~msg:"2 key-value heads serving 4 query heads" direct
-    (Attention.attend ~mask ~scale:0.8 ~sinks q k v);
+    (Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q k v);
   same ~msg:"one key-value head per query head" direct
-    (Attention.attend ~mask ~scale:0.8 ~sinks q (repeat k) (repeat v))
+    (Attention.attend ~mask:Nx.causal ~scale:0.8 ~sinks q (repeat k) (repeat v))
 
 let test_composed_sinks_chunking () =
   Nx.Rng.with_key (Nx.Rng.key 45) @@ fun () ->
@@ -2481,8 +2879,11 @@ let test_rejects_bad_geometry () =
       Attention.apply ~head_dim:3 p (Nx.zeros Nx.float32 [| 2; 4 |]));
   raises
     (Invalid_argument
-       "Attention.apply: mask must have shape [2; 2] or [1; 2; 2]") (fun () ->
-      Attention.apply ~head_dim:2 ~mask:(causal 3) p
+       "Nx.attention: a mask of shape [3; 3] does not broadcast to [1; 2; 2; \
+        2]") (fun () ->
+      Attention.apply ~head_dim:2
+        ~mask:(captured (Nx.ones Nx.bool [| 3; 3 |]))
+        p
         (Nx.zeros Nx.float32 [| 2; 4 |]));
   raises
     (Invalid_argument
@@ -2511,6 +2912,8 @@ let () =
              test "masked gradients agree with finite differences"
                test_core_masked_gradients;
              test "mismatched shapes are rejected" test_core_rejects_bad_shapes;
+             test "float8 and float4 inputs are rejected"
+               test_core_dtypes;
              test "a query that sees no key yields zero" test_core_is_total;
              test "a query that sees no key has zero gradients"
                test_core_empty_row_gradients;
@@ -2530,6 +2933,10 @@ let () =
                test_sinks_compiled;
              test "sinks that do not broadcast are rejected"
                test_sinks_reject_bad_shapes;
+             prop ~count:200 "within nx.mli's bound of the definition"
+               (Gen.with_pp pp_case case_gen) law_core;
+             test "gradients through grouped heads and sinks"
+               test_attend_gradients;
            ];
          group "multi-head self-attention"
            [
@@ -2557,6 +2964,9 @@ let () =
            [
              test "a whole prompt matches causal apply"
                test_cached_prefill_matches_apply;
+             test "visible is the mask read at each pair" test_visible_is_mask;
+             test "visible checks the keys' width"
+               test_visible_checks_the_keys;
              test "a whole index is causal apply and keeps nothing"
                test_cached_whole;
              test "a window bounds what a token sees" test_cached_window;

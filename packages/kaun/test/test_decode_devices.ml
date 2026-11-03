@@ -261,7 +261,7 @@ let test_bfloat16 () =
     (fun i w -> gap := Float.max !gap (Float.abs (w -. four.(i))))
     one;
   expect (Printf.sprintf "largest gap %h" !gap) @@ __POS_OF__ {|
-    largest gap 0x1.8p-5
+    largest gap 0x1.4p-4
   |}
 
 (* One row projection at bfloat16: [x] of ones against a column of
@@ -310,33 +310,21 @@ let within ~msg ~tol want got =
           got.(i) w)
     want
 
-(* Attention with [q] and [k] cut along their [d] features: the scores'
-   product closes, so the result is one device's within its roundings. Each
-   score is within [γ(d + 1, 2u) d scale] of the exact one on either side
-   (nx.mli's {!Nx.contract}), [δ] apart; the weights then move by a factor
-   within [e^(2δ)], at most [4δ] of their sum of one; the softmax rounds
-   each weight within [(m + 11) u] on either side; and the value product of
-   [m] terms within [γ(m + 1, 2u)] on either side, [|v| <= 1]. *)
-let law_attention (d, m, seed) =
-  cover "d of 4" (d = 4);
-  cover "d of 8" (d = 8);
-  let n = 3 in
-  let q = values seed [| 2; n; d |] and k = values (seed + 1) [| 2; m; d |] in
-  let v = values (seed + 2) [| 2; m; 4 |] in
-  let one = Attention.scaled_dot_product_attention q k v in
+(* Attention reads each query and key whole: with [q] and [k] cut along their
+   [d] features it raises, at the call, naming the placement that reads them
+   whole. *)
+let test_attention_refuses_a_cut () =
+  let q = values 0 [| 2; 3; 8 |] and k = values 1 [| 2; 5; 8 |] in
+  let v = values 2 [| 2; 5; 4 |] in
   let cut = Four.split ~axis:2 in
-  let four =
-    Attention.scaled_dot_product_attention (Nx.place cut q) (Nx.place cut k)
-      (Nx.place Four.on v)
-  in
-  let fd = Float.of_int d and fm = Float.of_int m in
-  let delta = 2. *. gamma (2. *. (fd +. 1.)) *. fd /. sqrt fd in
-  let tol =
-    (4. *. delta)
-    +. (2. *. (fm +. 11.) *. u32)
-    +. (2. *. gamma (2. *. (fm +. 1.)))
-  in
-  within ~msg:"attention" ~tol one four
+  raises
+    (Invalid_argument
+       "Nx.attention: operand 0 lies at split ~axis:2 [kaun-tp-0; kaun-tp-1; \
+        kaun-tp-2; kaun-tp-3] and is read at on [kaun-tp-0; kaun-tp-1; \
+        kaun-tp-2; kaun-tp-3]; Nx.place (Placement.on s) x")
+    (fun () ->
+      Attention.scaled_dot_product_attention (Nx.place cut q) (Nx.place cut k)
+        (Nx.place Four.on v))
 
 (* A convolution with [x] and the filters cut along their input channels:
    the product closes, so the result is one device's within twice the
@@ -364,11 +352,6 @@ let law_conv (c, seed) =
   let tol = (2. *. gamma (2. *. (k +. 1.)) *. k) +. (2. *. u32 *. (k +. 1.)) in
   within ~msg:"conv" ~tol one four
 
-let cut_gen =
-  Gen.pair
-    (Gen.map (fun b -> if b then 4 else 8) Gen.bool)
-    (Gen.pair (Gen.int_range 1 9) (Gen.int_range 0 1_000_000))
-
 let () =
   exit
     (run "kaun decode over devices"
@@ -383,9 +366,7 @@ let () =
            ];
          group "a cut contracting axis"
            [
-             prop "attention gives one device's result within its roundings"
-               cut_gen
-               (fun (d, (m, seed)) -> law_attention (d, m, seed));
+             test "attention reads q and k whole" test_attention_refuses_a_cut;
              prop "a convolution gives one device's result within its roundings"
                (Gen.pair
                   (Gen.map (fun b -> if b then 4 else 8) Gen.bool)

@@ -2440,6 +2440,20 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- **Breaking:** `Kaun.Attention`'s attention is `Nx.attention`, one
+  operation whose nx.cpu kernel stores no score matrix. The `?mask` of
+  `scaled_dot_product_attention`, `attend` and `apply` is `Nx.attention`'s,
+  Nx code over a pair's coordinates: `Nx.causal`; an `[n; m]` array `b` is
+  `fun _ -> b`, and a `[batch; n; m]` one, `Cache_index.mask`'s included,
+  `fun _ -> Nx.reshape [| batch; 1; n; m |] b`, as masks align on the right;
+  `causal_mask` is removed. It computes in float64 for float64 inputs and in
+  float32 otherwise; the float8 and float4 formats, and `q` and `k` cut
+  along their features, raise. Sinks scale the result by
+  `sigmoid (lse - sink)`.
+- `Kaun.Cache_index.visible` is `Cache_index.mask` as `Nx.attention`'s mask.
+  `Attention.cached` attends under it, and outside drafts and selections
+  stores no `[batch; seq; context]` mask.
+
 - `Kaun.Attention.scaled_dot_product_attention` under a mask without sinks
   takes `Nx.softmax ~where`, with no derivative through each query's
   greatest score: its gradient takes 3-7.5% fewer instructions, its forward

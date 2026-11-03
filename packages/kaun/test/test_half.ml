@@ -141,7 +141,8 @@ let test_attention_score_island (type b) name (dt : (float, b) Nx.dtype) ~tol ()
     =
   ignore name;
   (* Score magnitudes near 8 * 100 * 100 = 80000 overflow float16 (max 65504):
-     without the float32 island the softmax would be nan. *)
+     attention computes them in its float32 accumulator, so the softmax stays
+     finite. *)
   let big n = Array.init n (fun i -> if i mod 3 = 0 then -100.0 else 100.0) in
   let q = mat f32 2 8 (big 16) and k = mat f32 2 8 (big 16) in
   let v = mat f32 2 4 (grid 8) in
@@ -154,7 +155,7 @@ let test_attention_score_island (type b) name (dt : (float, b) Nx.dtype) ~tol ()
     (Nx.item [] (Nx.all (Nx.isfinite actual)));
   close ~tol expected actual
 
-(* Sinks enter the float32 island with the scores. *)
+(* Sinks combine with the scores in attention's float32 accumulator. *)
 let test_attention_sinks_half (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   ignore name;
   let q = Nx.reshape [| 2; 1; 8 |] (mat f32 2 8 (grid 16)) in
@@ -185,7 +186,7 @@ let test_attention_apply_half () =
     }
   in
   let x = mat f32 3 dim (grid 12) in
-  let mask = Attention.causal_mask ~seq:3 Nx.Host.on in
+  let mask = Nx.causal in
   let expected = Attention.apply ~head_dim:2 ~mask p x in
   let actual =
     Attention.apply ~head_dim:2 ~mask
