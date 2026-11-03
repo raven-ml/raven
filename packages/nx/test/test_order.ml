@@ -446,10 +446,16 @@ let unique_case =
        ])
 
 (* The number of values the rows of [x] can take, the product of its columns'
-   spans of order keys, or [max_int] past it. *)
-let values_taken x =
+   spans of the words Nx.unique numbers, or [max_int] past it: the bits of
+   [int64] and [uint64] keys, the order keys of others. *)
+let values_taken (type v s) (x : (v, s, Nx.host) Nx.t) =
   let n = Nx.dim 0 x in
-  let k = Nx.order_key Nx.uint64 x in
+  let k : (int64, Nx.uint64_elt, Nx.host) Nx.t =
+    match Nx.dtype x with
+    | D.Int64 -> Nx.bitcast Nx.uint64 x
+    | D.Uint64 -> x
+    | _ -> Nx.order_key Nx.uint64 x
+  in
   let k = if Nx.ndim x = 1 then Nx.reshape [| n; 1 |] k else k in
   if n = 0 then 0
   else

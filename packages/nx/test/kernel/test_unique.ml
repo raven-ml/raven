@@ -13,10 +13,16 @@ open Windtrap
 open Elements
 module Support = Nx_kernels_support
 
+(* nx.cpu's hash under a seed fixed for the suite, so that keys drawn to share
+   their hash do. *)
+let suite_seed = 0x5EED_0F_0A11L
+let () = Nx_cpu.unique_seed suite_seed
+
 (* How keys are drawn: from a few values, so that keys repeat; each word at
-   random; equal in their low 40 bits, differing in a few high ones, so that
-   their hashes' low bits agree; or within 8 of a base, a small span. *)
-type draw = Tied | Spread | High | Narrow
+   random; rows of two words [[|a; c lxor state a|]] that all hash alike,
+   their [a] among 64 values, so that their tags agree and a probe passes
+   every key before it; or within 8 of a base, a small span. *)
+type draw = Tied | Spread | Collide | Narrow
 
 type case = { keys : A.any; m : int; draw : draw; views : string list }
 
@@ -26,7 +32,7 @@ let pp_case ppf c =
     (match c.draw with
     | Tied -> "tied"
     | Spread -> "spread"
-    | High -> "high bits"
+    | Collide -> "one hash"
     | Narrow -> "narrow")
     (String.concat ", " c.views)
 
@@ -37,16 +43,27 @@ let word rs pool draw =
   | Spread -> Random.State.bits64 rs
   | Tied ->
       if Random.State.int rs 4 = 0 then Random.State.bits64 rs else pick ()
-  | High ->
-      Int64.logor
-        (Int64.logand (pick ()) 0xFF_FFFF_FFFFL)
-        (Int64.shift_left (Int64.of_int (Random.State.int rs 6)) 40)
+  | Collide -> Int64.add pool.(0) (Int64.of_int (Random.State.int rs 64))
   | Narrow -> Int64.add pool.(0) (Int64.of_int (Random.State.int rs 8))
+
+(* The second word of a colliding row led by [a]. *)
+let collide = 0x0123_4567_89AB_CDEFL
+let partner a = Int64.logxor collide (Nx_cpu.unique_state [| a |])
 
 let drawn draw s v seed =
   let rs = Random.State.make [| seed |] in
   let pool = Array.init 3 (fun _ -> Random.State.bits64 rs) in
-  int64s s v (fun () -> word rs pool draw)
+  match draw with
+  | Collide ->
+      (* Plain rows of two words, drawn in order: each leader, then its
+         partner. *)
+      let last = ref 0L and lead = ref true in
+      int64s s v (fun () ->
+          let w = if !lead then word rs pool draw else partner !last in
+          last := w;
+          lead := not !lead;
+          w)
+  | Tied | Spread | Narrow -> int64s s v (fun () -> word rs pool draw)
 
 let shape_gen =
   let open Gen in
@@ -61,7 +78,17 @@ let shape_gen =
 
 let case_gen ?(shapes = shape_gen) () =
   let open Gen in
+  let* draw =
+    frequency
+      [
+        (3, constant Tied);
+        (1, constant Spread);
+        (1, constant Collide);
+        (1, constant Narrow);
+      ]
+  in
   let* s = shapes in
+  let s = if draw = Collide then [| s.(0); 2 |] else s in
   let* m =
     frequency
       [
@@ -72,15 +99,7 @@ let case_gen ?(shapes = shape_gen) () =
   in
   let* bc = frequency [ (5, constant []); (1, constant [ 0 ]) ] in
   let* v = view_of ~broadcast:bc 2 in
-  let* draw =
-    frequency
-      [
-        (3, constant Tied);
-        (1, constant Spread);
-        (1, constant High);
-        (1, constant Narrow);
-      ]
-  in
+  let v = if draw = Collide then plain 2 else v in
   let+ seed = int in
   { keys = drawn draw s v seed; m; draw; views = view_names v }
 
@@ -100,7 +119,8 @@ let examples =
     example Tied [| 7; 2 |] ~view:{ (plain 2) with broadcast = [ 0 ] };
     example Spread [| 9; 1 |] ~m:4;
     example Spread [| 9; 3 |] ~m:12 ~view:{ (plain 2) with perm = [| 1; 0 |] };
-    example High [| 30; 1 |];
+    example Collide [| 30; 2 |];
+    example Collide [| 2000; 2 |] ~m:5;
     example Narrow [| 30; 2 |] ~view:{ (plain 2) with reversed = Some 0 };
   ]
 
@@ -170,7 +190,17 @@ let law_reference (b : Support.backend) c =
   cover "every row its own key" (k = s.(0) && s.(0) > 1);
   cover "first and counts cut" (c.m < k);
   cover "first and counts past the keys" (c.m > k);
-  cover "keys equal in their low bits" (c.draw = High && k > 1);
+  cover "keys of one hash" (c.draw = Collide && k > 1);
+  if c.draw = Collide then begin
+    (* The rows leave the hash one state: they collide. *)
+    let w = positions c.keys in
+    let states =
+      List.sort_uniq Int64.compare
+        (List.init s.(0) (fun i ->
+             Nx_cpu.unique_state [| w.(2 * i); w.((2 * i) + 1) |]))
+    in
+    equal ~msg:"states" int (Int.min 1 s.(0)) (List.length states)
+  end;
   agrees b c
 
 (* Refusals *)
@@ -235,13 +265,14 @@ let large =
     example Tied [| 60_000; 2 |] ~m:5;
     example Spread [| 60_000; 1 |];
     example Spread [| 50_000; 5 |] ~m:100;
-    example High [| 50_000; 1 |];
+    example Collide [| 50_000; 2 |] ~m:2;
     example Narrow [| 70_000; 3 |] ~view:{ (plain 2) with perm = [| 1; 0 |] };
   ]
 
-(* Keys of at most 4 words whose columns' spans multiply to at most twice the
-   rows and 1024 more take a direct table. *)
-let direct c =
+(* Keys of at most 4 words whose columns' spans multiply to at most twice
+   [rows] and 1024 more, and 2^20, take a direct table, [rows] the rows of a
+   block: all of them on one thread. *)
+let direct ?rows c =
   let s = shape_of c.keys in
   let n = s.(0) and w = s.(1) in
   let words = positions c.keys in
@@ -254,7 +285,8 @@ let direct c =
     done;
     Int64.sub !hi !lo
   in
-  let limit = Int64.of_int ((2 * n) + 1024) in
+  let rows = Option.value rows ~default:n in
+  let limit = Int64.of_int (Int.min (1 lsl 20) ((2 * rows) + 1024)) in
   let rec values j acc =
     if j = w then true
     else
@@ -271,6 +303,23 @@ let law_paths (b : Support.backend) c =
   cover "hash table" (not (direct c));
   agrees b c
 
+(* The numbering under another seed has the same bits. *)
+let law_seeds (b : Support.backend) (c, seed) =
+  let other =
+    Fun.protect
+      ~finally:(fun () -> Nx_cpu.unique_seed suite_seed)
+      (fun () ->
+        Nx_cpu.unique_seed seed;
+        unique_on b c)
+  in
+  match (other, unique_on b c) with
+  | Some (i, f, n, k), Some (i', f', n', k') ->
+      equal ~msg:"ids" (array int64) i' i;
+      equal ~msg:"first" (array int64) f' f;
+      equal ~msg:"counts" (array int64) n' n;
+      equal ~msg:"count" int64 k' k
+  | _ -> failf "%s declined a numbering" b.name
+
 let law_large (b : Support.backend) c =
   let _, keys = expected c in
   let k = Array.length keys in
@@ -278,9 +327,12 @@ let law_large (b : Support.backend) c =
   cover "about a key a row" (2 * k > (shape_of c.keys).(0));
   agrees b c
 
+(* On the pool a block has from 16,384 rows to all of them: the cases a
+   direct table numbers whatever the blocks, and those it numbers on none. *)
 let law_threads (b : Support.backend) c =
-  cover "direct table" (direct c);
-  cover "hash table" (not (direct c));
+  cover "direct table on any blocks" (direct ~rows:16_384 c);
+  cover "hash table on any blocks" (not (direct c));
+  cover "keys of one hash" (c.draw = Collide);
   match (Nx_cpu.one_thread (fun () -> unique_on b c), unique_on b c) with
   | Some (i1, f1, c1, k1), Some (i, f, c', k) ->
       equal ~msg:"ids" (array int64) i1 i;
@@ -305,6 +357,8 @@ let cpu (b : Support.backend) =
     [
       prop ~examples "numbers by a direct table or a hash table" cases
         (run (law_paths b));
+      prop "the same bits under any seed" (Gen.pair cases Gen.int64)
+        (run (law_seeds b));
       prop ~count:8 ~examples:large "one thread and the pool give the same bits"
         threaded
         (run (law_threads b));
