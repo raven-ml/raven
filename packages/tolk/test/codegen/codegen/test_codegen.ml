@@ -2391,6 +2391,89 @@ let tensor_cores_on_cuda =
         products_gen covered;
     ]
 
+(* Tensor cores written by hand
+
+   A kernel of [warps] warps, a [Local] range of warps and a [Warp] range of
+   32 lanes, computes one product of CUDA's 8 x 16 x 16 bfloat16 tensor core a
+   warp: each thread loads the elements of its fragments of A and B
+   ({!Tc.frag_coords}), laid out by thread, and stores its four elements of
+   the product. With [words], it loads each two elements as one 32-bit word
+   and bitcasts its words to bfloat16. *)
+
+let bf16_core =
+  List.find
+    (fun (tc : Tc.t) ->
+      Dtype.equal tc.dtype_in Bfloat16 && Tc.dims tc = (8, 16, 16))
+    Tc.cuda_sm80
+
+let by_hand ~warps ~words =
+  let w = Ops.range ~axis_type:Local (Int warps) [ 0 ]
+  and lane = Ops.range ~axis_type:Warp (Int 32) [ 1 ] in
+  let at n e = Ops.O.((((w * int 32) + lane) * int n) + int e) in
+  let load p i = Ops.load (Ops.index p [ i ]) [] in
+  let fragment slot n =
+    let p = Shape.param ~shape:[ Int (warps * 32 * n) ] slot Bfloat16 in
+    if words then
+      let p = Ops.bitcast p Uint32 in
+      Ops.bitcast
+        (Shape.stack (List.init (n / 2) (fun i -> load p (at (n / 2) i))))
+        Bfloat16
+    else Shape.stack (List.init n (fun e -> load p (at n e)))
+  in
+  let zero = Ops.float ~dtype:Float32 0. in
+  let d =
+    Ops.wmma (fragment 1 8) (fragment 2 4)
+      ~acc:(Shape.stack [ zero; zero; zero; zero ])
+      ~dims:(8, 16, 16) ~threads:32
+  in
+  let out = Shape.param ~shape:[ Int (warps * 32 * 4) ] 0 Float32 in
+  let store e =
+    Ops.store (Ops.index out [ at 4 e ])
+      (Ops.index d [ Ops.int ~dtype:Int32 e ])
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[] ())
+    [ Ops.end_ (Ops.group (List.init 4 store)) [ w; lane ] ]
+
+(* Warp [k]'s A, 16 by 16, and B, 16 by 8, of integers from -2 to 2, laid out
+   as its threads' fragments, and the product's elements as they hold them. *)
+let by_hand_on_cuda (warps, words) =
+  let d, r = on_cuda () in
+  let fa, fb, fc = Tc.frag_coords bf16_core in
+  let a = Array.init warps (fun k -> small_integers (2 * k) 256)
+  and b = Array.init warps (fun k -> small_integers ((2 * k) + 1) 128) in
+  let laid frag n x =
+    Array.init (warps * 32 * n) (fun i ->
+        let k = i / (32 * n) and lane = i / n mod 32 and e = i mod n in
+        let row, col = frag.(lane).(e) in
+        `Float (Float.of_int (x k row col)))
+  in
+  let a_at k row col = a.(k).((row * 16) + col)
+  and b_at k row col = b.(k).((row * 8) + col) in
+  let product k row col =
+    let s = ref 0 in
+    for q = 0 to 15 do
+      s := !s + (a_at k row q * b_at k q col)
+    done;
+    !s
+  in
+  let prg = compiled_for r (by_hand ~warps ~words) in
+  equal (array Dtypes.value) (laid fc 4 product)
+    (List.assoc 0
+       (Run.on d prg [ (1, laid fa 8 a_at); (2, laid fb 4 b_at) ]))
+
+let tensor_cores_by_hand =
+  group "tensor cores written by hand"
+    [
+      cases
+        "a warp per product, lanes a warp range, gives each warp's exact \
+         product"
+        ~id:(fun (warps, words) ->
+          Printf.sprintf "%d warps%s" warps (if words then ", words" else ""))
+        [ (1, false); (4, false) ]
+        by_hand_on_cuda;
+    ]
+
 (* Reductions over a variable size
 
    A kernel reduces [x], of [hi] floats, over a range whose size is a variable
@@ -5088,6 +5171,7 @@ let () =
          whole_graphs;
          accumulators;
          tensor_cores_on_cuda;
+         tensor_cores_by_hand;
          variable_sizes;
          multiply_adds;
          shared_ranges;

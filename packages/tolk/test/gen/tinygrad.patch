@@ -991,6 +991,23 @@ index 70841c562..b6e75fb6d 100644
    # Check NaN last: comparisons of its reciprocal are not reliable on every backend.
    return d.ne(d).where(r.const_like(math.nan), r)
  
+diff --git a/tinygrad/codegen/gpudims.py b/tinygrad/codegen/gpudims.py
+index 48f88612f..441546e62 100644
+--- a/tinygrad/codegen/gpudims.py
++++ b/tinygrad/codegen/gpudims.py
+@@ -60,6 +60,12 @@ def group_gpudims(ctx:Renderer, s:UOp):
+   global_shape = tuple(ssimplify(all_ranges[r].src[0]) for r in global_dims)
+   local_shape = tuple(ssimplify(all_ranges[r].src[0]) for r in local_dims)
+ 
++  # a tensor core's lanes are numbered as the hardware numbers a warp's threads, which only a warp of its threads on the first thread axis gives
++  warp = local_shape[0] if local_dims and all_ranges[local_dims[0]].axis_type is AxisType.WARP and isinstance(local_shape[0], int) else 0
++  for u in s_topo:
++    if u.op is Ops.WMMA and u.arg[2] > 1 and warp != u.arg[2]:
++      raise RuntimeError(f"a tensor core of {u.arg[2]} threads needs a warp range of {u.arg[2]} threads")
++
+   # define indexes for GPU-like execution
+   # if we got a WARP, set the local_max to it so it does not fold with other dims
+   local_max = (local_shape[0],)+ctx.local_max[1:] if ctx.local_max is not None and local_dims and \
 diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
 index 65fb29491..1c0647e58 100644
 --- a/tinygrad/codegen/late/coalesce.py

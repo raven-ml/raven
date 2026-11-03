@@ -149,6 +149,28 @@ let rec grouped_dims ?(reverse = false) prefix dims max_sizes =
         simplify (if i = 0 then q else O.(q % node d)))
       (List.combine sizes (suffix_prods sizes))
 
+(* A tensor core's lanes are numbered as the hardware numbers a warp's
+   threads, which only a warp of its threads on the first thread axis gives:
+   threads of other ranges are numbered as those ranges are split and laid on
+   the axes, and the product would read other lanes' elements. *)
+let check_lanes s_topo locals local_shape =
+  let warp =
+    match (locals, local_shape) with
+    | l :: _, Int n :: _ when axis_type l = Axis_type.Warp -> n
+    | _ -> 0
+  in
+  List.iter
+    (fun u ->
+      match arg u with
+      | Wmma { threads; _ }
+        when op u = Op.Wmma && threads > 1 && warp <> threads ->
+          invalid_arg
+            (Printf.sprintf
+               "a tensor core of %d threads needs a warp range of %d threads"
+               threads threads)
+      | _ -> ())
+    s_topo
+
 let group_gpudims (r : Renderer.t) s =
   let s_topo = toposort ~calls:Skip s in
   match arg s with
@@ -188,6 +210,7 @@ let group_gpudims (r : Renderer.t) s =
           in
           let global_shape = shape global_dims
           and local_shape = shape local_dims in
+          check_lanes s_topo (List.map range local_dims) local_shape;
           (* A warp keeps its own axis, so no other dim folds into it. *)
           let local_max =
             match (local_dims, local_shape, r.local_max) with

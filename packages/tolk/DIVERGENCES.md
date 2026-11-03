@@ -6197,3 +6197,29 @@ fold wraps integers and holds its float bound`, hold.
   (17 and 19 rows padded, 64 float32 rows streamed, evaluated); kaun's
   `Quant/cuda/mxfp4-product-of-16384-17-bfloat16-tokens` and
   `-64-float32-tokens`.
+
+## D235. A tensor core's lanes are a warp of its threads
+
+- **tinygrad:** `codegen/gpudims.py:44-97` (`group_gpudims`), which lays a
+  kernel's warp and local ranges on the thread axes whatever its tensor cores
+  need, and `codegen/simplify.py:68-77` (`mark_range_mod` and
+  `pm_split_ranges`), which split a local range, never a warp (`:70`), by
+  its divisions, the most significant part taking the first thread axis;
+  `test/gen/tinygrad.patch`'s `group_gpudims` raises as tolk does.
+- **tolk:** `Gpudims.group_gpudims`, through `check_lanes`.
+- **Differs:** a kernel holding a tensor core of more than one thread raises
+  `Invalid_argument` unless its first thread axis is a warp range of that many
+  threads. A product's fragments are laid out by the hardware's lane, the
+  thread's index within its warp, so the kernel's own lane index must be it,
+  which only a warp range on the first axis gives. tinygrad's optimiser makes
+  that range; a kernel written by hand may number its lanes with a local
+  range instead. tinygrad then computes another product: a local range of 128
+  threads read as `t // 32` and `t % 32` splits into those two parts, and the
+  warp's index takes `threadIdx.x`, so the hardware's lane is not `t % 32` and
+  each lane reads another lane's elements.
+- **Reason:** (e).
+- **Pinned by:** `Tolk.Gpudims › group_gpudims › a tensor core's lanes › are
+  refused from other ranges` and `› are a warp of its threads on the first
+  thread axis`; on CUDA, `Tolk.Codegen › tensor cores written by hand › a
+  warp per product, lanes a warp range, gives each warp's exact product`,
+  whose four warps each compute their own product.

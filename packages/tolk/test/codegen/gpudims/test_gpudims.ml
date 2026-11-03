@@ -504,9 +504,74 @@ let range_to_special =
             ]);
     ]
 
+(* A product on CUDA's 8 x 16 x 16 tensor core of 32 threads, each thread
+   storing its four elements of it, by threads of the sizes and types
+   [threads]: [lane] is the thread's lane as the kernel computes it, the
+   first range's index modulo 32, so that thread [t] of the launch is the lane
+   it computes only if a warp of 32 threads takes the first hardware axis. *)
+let product_by threads =
+  let ranges =
+    List.mapi (fun k (axis_type, n) -> range ~axis_type (Int n) k) threads
+  in
+  let lane = Ops.O.(List.hd ranges % int 32) in
+  let elements slot dt n =
+    let at e = Ops.O.((lane * int n) + int e) in
+    let p = Shape.param ~shape:[ Int (32 * n) ] slot dt in
+    Shape.stack (List.init n (fun e -> Ops.load (Ops.index p [ at e ]) []))
+  in
+  let zero = Ops.float ~dtype:Float32 0. in
+  let d =
+    Ops.wmma (elements 1 Bfloat16 8) (elements 2 Bfloat16 4)
+      ~acc:(Shape.stack [ zero; zero; zero; zero ])
+      ~dims:(8, 16, 16) ~threads:32
+  in
+  let out = Shape.param ~shape:[ Int 128 ] 0 Float32 in
+  let store e =
+    Ops.store
+      (Ops.index out [ Ops.O.((lane * int 4) + int e) ])
+      (Ops.index d [ Ops.int ~dtype:Int32 e ])
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.group (List.init 4 store)) ranges ]
+
+let threads_name threads =
+  String.concat " and "
+    (List.map
+       (fun (t, n) -> Printf.sprintf "%s%d" (Ops.Axis_type.letter t) n)
+       threads)
+
+let tensor_core_lanes =
+  group "a tensor core's lanes"
+    [
+      cases "are a warp of its threads on the first thread axis"
+        ~id:threads_name
+        [
+          [ (Ops.Axis_type.Warp, 32) ];
+          [ (Warp, 32); (Local, 4) ];
+          [ (Warp, 32); (Global, 8) ];
+        ]
+        (fun threads ->
+          is_some
+            (Gpudims.group_gpudims (renderer ()) (product_by threads)));
+      cases "are refused from other ranges" ~id:threads_name
+        [
+          [ (Ops.Axis_type.Local, 32) ];
+          [ (Local, 128) ];
+          [ (Global, 32) ];
+          [ (Warp, 16); (Local, 2) ];
+          [ (Warp, 64) ];
+        ]
+        (fun threads ->
+          raises_match
+            (Exn.invalid_arg ~sub:"tensor core")
+            (fun () ->
+              Gpudims.group_gpudims (renderer ()) (product_by threads)));
+    ]
+
 let group_gpudims =
   group "group_gpudims"
-    (group_gpudims_graphs @ [ declines; failures; symbolic_warp ])
+    (group_gpudims_graphs
+    @ [ declines; failures; symbolic_warp; tensor_core_lanes ])
 
 let () =
   exit (run "Tolk.Gpudims" [ grouped_dims; group_gpudims; range_to_special ])

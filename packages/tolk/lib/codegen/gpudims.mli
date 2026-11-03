@@ -55,8 +55,16 @@ val group_gpudims : Renderer.t -> Ops.t -> Ops.t option
     is [None] if [sink] carries no kernel information, has hardware indices
     already, or has no global or local loop.
 
-    Raises [Invalid_argument] if {!grouped_dims} does, or if the index of a
-    store to mask has more than one index. *)
+    A tensor core ({!Op.Wmma}) computes on its lanes as the hardware numbers
+    a warp's threads, so a kernel holding one of more than one thread must
+    have a warp of exactly its threads, which takes the first thread axis
+    whole. A kernel without global or local loops is not checked, and is
+    [None] as above.
+
+    Raises [Invalid_argument] if {!grouped_dims} does, if the index of a store
+    to mask has more than one index, or if [sink] has a global or local loop,
+    holds a tensor core of more than one thread, and its first thread loop is
+    not a warp of as many threads. *)
 
 val pm_group_gpudims : (Renderer.t, Ops.t) Ops.Pattern_matcher.t
 (** [pm_group_gpudims] applies {!group_gpudims} to sinks. It is to run once

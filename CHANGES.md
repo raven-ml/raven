@@ -955,6 +955,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   most `ceil(R / 16)` times where it streams, padding the rows where 16
   divides them unevenly: an MXFP4 product of 17 bfloat16 rows runs 3 to 4
   times faster on an RTX 5000 Ada.
+- A kernel holding a tensor core raises `Invalid_argument` in
+  `Gpudims.group_gpudims`, and so in `Codegen.to_program`, unless its first
+  thread loop is a warp of the core's threads. A kernel that numbered its
+  lanes with a local loop computed a product from other lanes' elements.
 - A loop bounded by a loaded value, as `j < x[i]`, compiles and runs, where
   it failed at `Spec`, the C compiler or launch: no axis its bound reads is
   upcast (`Postrange.Scheduler.read_by_bounds`, `Ops.known_at_launch`).
