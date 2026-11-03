@@ -180,7 +180,11 @@ val apply_opts :
     [ast]'s argument asks for, or else searches with [beam] if given, or else,
     unless the setting {!Setting.noopt} is set, [ast] already had optimisations
     applied, or it buffers values ({!Op.Stage}), applies [hand_coded]. A kernel
-    [ast] already optimised ([optimized]) is returned as it is.
+    one of whose loops, or of the loops of a body it calls, has a bound that
+    loads from memory ({!Ops.bound_loads}) is not searched: its time depends on
+    what memory holds, which a search's samples do not, so it takes
+    [hand_coded] as without [beam]. A kernel [ast] already
+    optimised ([optimized]) is returned as it is.
 
     Raises [Invalid_argument] if an optimisation asked for does not apply, with
     the reason {!Scheduler.apply_opt} gives. *)

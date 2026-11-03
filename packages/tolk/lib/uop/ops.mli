@@ -529,10 +529,17 @@ val axis_type : t -> Axis_type.t
 
     Raises [Invalid_argument] if [r] is not a range. *)
 
+val bound_loads : t -> bool
+(** [bound_loads r] is [true] iff the range [r] has a bound that, its ordering
+    after effects ({!Op.After}) aside, reads memory, as [j < x[i]]: how many
+    trips the loop runs is what memory holds.
+
+    Raises [Invalid_argument] if [r] is not a range. *)
+
 val known_at_launch : t -> bool
 (** [known_at_launch r] is [true] iff the range [r] has a bound that, its
-    ordering after effects ({!Op.After}) aside, reads no range and no memory,
-    as [j < n] for a variable [n] and unlike [j < x[i]] or [j < i + 1]: a
+    ordering after effects ({!Op.After}) aside, reads no range and no memory
+    ({!bound_loads}), as [j < n] for a variable [n] and unlike [j < x[i]] or [j < i + 1]: a
     launch computes it from the run's variables alone, before the kernel runs,
     as it does a count of workgroups or of blocks.
 

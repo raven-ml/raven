@@ -6432,3 +6432,29 @@ the walk of `Rangeify.fix_store_hazard`.
   their statements, constants included; the `Tolk.Prepare` suite:
   `prepare_rangeify › earliest rewrites › two equal stores into one storage
   are two states`.
+
+## D255. A kernel whose loop's bound loads from memory is not searched
+
+- **tinygrad:** `codegen/opt/postrange.py:245-250` (`apply_opts`), which
+  searches every kernel under BEAM, timing it on `args_from_ast`'s new
+  buffers (`:235-237`), their contents unspecified, and each variable at the
+  middle of its bounds.
+- **tolk:** `Postrange.apply_opts` (`bound_by_memory`), `Ops.bound_loads`.
+- **Differs:** a kernel with a loop bounded by a load, as `j < x[i]` (D220),
+  takes the heuristic's optimisations when a search is asked for, as
+  without one. tinygrad refuses such loops; under the generator's patch it
+  would search them.
+- **Reason:** (e), following D220: the trips such a loop runs are what
+  memory holds, which no sample the search makes knows. On unspecified
+  bytes a search timed up to 2^31 - 1 trips a thread for an `int32` bound,
+  each candidate for minutes or more, and measured whatever the memory's
+  last user left; it then keeps its choice in the disk cache keyed by the
+  kernel alone. A call's own values are not the search's: it runs while
+  the program compiles, and its choice serves every later call. Timing on
+  zero bytes gives a stated count, but usually no trips, so the search
+  would rank candidates by the kernel without its loop and keep that
+  ranking as measured. No stated count fits every bound: the middle of an
+  `int64` bound clamped at 0 is 2^62.
+- **Pinned by:** `Tolk.Search on the host`: `a kernel whose loop's bound
+  loads from memory is not searched, and takes the heuristic's
+  optimisations`.

@@ -1012,7 +1012,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   lanes with a local loop computed a product from other lanes' elements.
 - A loop bounded by a loaded value, as `j < x[i]`, compiles and runs, where
   it failed at `Spec`, the C compiler or launch: no axis its bound reads is
-  upcast (`Postrange.Scheduler.read_by_bounds`, `Ops.known_at_launch`).
+  upcast (`Postrange.Scheduler.read_by_bounds`, `Ops.known_at_launch`). Its
+  kernel takes the heuristic's optimisations under a beam search, whose
+  samples cannot know its trips (`Postrange.apply_opts`, `Ops.bound_loads`).
 - A beam search times each sample from a clean, cold cache:
   `Tolk_engine.scrub` makes a buffer of twice each timed device's last-level
   cache (`Rig.cache_bytes`), which `Tolk_engine.time ~scrub` reads before each

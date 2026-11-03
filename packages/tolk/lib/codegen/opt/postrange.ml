@@ -881,6 +881,14 @@ module Scheduler = struct
            (kernel_info ~name ~applied_opts:k.applied_opts ~optimized:true ()))
 end
 
+(* Whether a loop of [ast], or of a body it calls, runs as many trips as
+   memory holds, as [j < x[i]]: its time depends on data a search does not
+   have. *)
+let bound_by_memory ast =
+  List.exists
+    (fun u -> op u = Op.Range && bound_loads u)
+    (toposort ~calls:Enter ast)
+
 let apply_opts ?beam ~hand_coded ast ren =
   let info = match arg ast with Kernel i -> Some i | _ -> None in
   if Option.exists (fun (i : kernel_info) -> i.optimized) info then ast
@@ -897,7 +905,7 @@ let apply_opts ?beam ~hand_coded ast ren =
           in
           List.iter apply opts;
           k
-      | _, Some search -> search k
+      | _, Some search when not (bound_by_memory ast) -> search k
       | _
         when (not (Setting.value Setting.noopt))
              && match info with Some i -> i.applied_opts = [] | None -> true ->

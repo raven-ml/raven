@@ -109,11 +109,55 @@ let scalar_arguments =
             (Run.values Float32 (Option.get slots.(0))))
         [ -7; -1 ])
 
+(* [out[r, i]] sums [j] over [j < x[i]]: a loop whose trips are what the
+   storage of [x] holds. Its [rows] axis reads no bound, so a search would have
+   candidates that upcast it. *)
+let loaded_trips ?beam () =
+  let rows = 4 and width = 64 in
+  let x = Shape.placeholder ~slot:1 [ width ] Uint8
+  and out = Shape.placeholder ~slot:0 [ rows * width ] Float32 in
+  let r = Ops.range (Int rows) [ 0 ] and i = Ops.range (Int width) [ 1 ] in
+  let bound = Ops.cast (Ops.load (Ops.index x [ i ]) []) Int32 in
+  let j = Ops.range ~dtype:Int32 (Sym bound) [ 2 ] in
+  let sum = Ops.reduce (Ops.cast j Float32) Op.Add [ j ] in
+  let at = Ops.index out [ Ops.O.((r * Ops.int width) + i) ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"loaded_trips" ?beam ())
+    [ Ops.end_ (Ops.store at sum) [ r; i ] ]
+
+let opt_names prg = List.map (Format.asprintf "%a" Opt.pp) (applied_opts prg)
+
+let memory_bound =
+  test
+    "a kernel whose loop's bound loads from memory is not searched, and takes \
+     the heuristic's optimisations"
+    (fun () ->
+      let measured = ref 0 in
+      let link call = Tolk_engine.link_call ~devices call in
+      let time ~vars:_ _ =
+        incr measured;
+        1.
+      in
+      let searched =
+        Setting.context
+          [ B (Setting.ignore_beam_cache, true) ]
+          (fun () ->
+            Codegen.to_program
+              ~beam:(Search.beam_search ~link ~time)
+              (loaded_trips ~beam:2 ()) host)
+      in
+      equal int ~msg:"programs timed" 0 !measured;
+      let hand = opt_names (Codegen.to_program (loaded_trips ()) host) in
+      greater int ~msg:"the heuristic's optimisations" ~than:0
+        (List.length hand);
+      equal (list string) hand (opt_names searched))
+
 let () =
   exit
     (Windtrap.run "Tolk.Search on the host"
        [
          scalar_arguments;
+         memory_bound;
          slow
          @@ cases
               "a searched kernel computes what its unoptimised kernel computes"

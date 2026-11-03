@@ -2048,13 +2048,19 @@ let is_join u =
 let rec without_after u =
   if u.op = Op.After then without_after (first u.op u.src) else u
 
+let bound_loads r =
+  ignore (range_arg r);
+  match r.src with
+  | [ bound ] ->
+      op_in_backward_slice_with_self ~calls:Skip (without_after bound)
+        [ Op.Load ]
+  | _ -> false
+
 let known_at_launch r =
   ignore (range_arg r);
   match r.src with
   | [ bound ] ->
-      let bound = without_after bound in
-      Nodes.cardinal (ranges bound) = 0
-      && not (op_in_backward_slice_with_self ~calls:Skip bound [ Op.Load ])
+      Nodes.cardinal (ranges (without_after bound)) = 0 && not (bound_loads r)
   | _ -> false
 
 let barrier u rest = v Op.Barrier ~src:(u :: rest)

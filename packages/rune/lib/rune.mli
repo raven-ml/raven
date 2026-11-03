@@ -1442,7 +1442,10 @@ val jit :
     A [beam] above [0] searches each kernel of a program, and of the programs
     derived from it, for the optimisations that run it fastest, keeping the
     [beam] fastest candidates of each round and timing them on its device, which
-    makes the first call of a variant much longer; [0] searches none. [parallel]
+    makes the first call of a variant much longer; [0] searches none. A kernel
+    with a loop whose trip count is read from memory is not searched, since its
+    time depends on the values it reads, and takes the default optimisations.
+    [parallel]
     compiles the candidates on at most that many domains, and on one where it is
     below [2]. An explicit [beam] stands for the [BEAM] and [JITBEAM] settings,
     and [parallel] for the [PARALLEL] setting, which decide otherwise: a change
