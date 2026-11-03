@@ -923,12 +923,89 @@ let held ?upcast ?unroll k (file : Renderer.registers) =
       total + lanes_registers held (dtype u))
     0 members
 
-(* Whether [k]'s hottest loop holds its accumulators within the budget once
-   [upcast] and [unroll] are applied; always off the host. *)
+(* A conversion computes as one vector the lanes upcast of every axis its value
+   reads, and the C compiler's vectorizer packs that vector from the lanes of
+   the values it converts. Where those are loads gathered from apart its time
+   grows much faster than the lanes: gpt-oss's key and value projection, a
+   product with a bfloat16 matrix of 512 columns whose lanes convert 4 rows of
+   its unrolled sum by the output lanes, compiles in 0.03 s at 32 lanes, 0.15 s
+   at 64 and 0.9 s at 128. So on the host a conversion takes at most
+   [converted_lanes]. Its lanes are those holding distinct values: [n] lanes
+   of an axis read as a quotient by [d] hold [n / gcd n d], as a block of rows
+   reads its expert once, and a reduce's lanes are summed before it. *)
+let converted_lanes = 64
+
+(* The most lanes a conversion of [k] computes at once once [upcast] and
+   [unroll] are applied. *)
+let conversion_lanes ?upcast ?unroll k =
+  let lanes axis r =
+    let size () = Bigint.to_int (size_at k axis) in
+    match (upcast, unroll) with
+    | Some (a, n), _ when a = axis -> n
+    | _, Some (a, n) when a = axis -> if n = 0 then size () else n
+    | _ -> if axis_type r = Upcast then size () else 1
+  in
+  let upcasts =
+    List.filter_map
+      (fun (axis, r) ->
+        let n = lanes axis r in
+        if n > 1 then Some (r, n) else None)
+      (List.mapi (fun axis r -> (axis, r)) (K.rngs k))
+  in
+  let merge a b =
+    List.fold_left
+      (fun acc (r, n) ->
+        match List.assq_opt r acc with
+        | Some m when m >= n -> acc
+        | _ -> (r, n) :: List.remove_assq r acc)
+      a b
+  in
+  (* The lanes of each upcast axis along which [u]'s value differs. *)
+  let known = Tbl.create 64 in
+  let rec spread u =
+    match Tbl.find_opt known u with
+    | Some s -> s
+    | None ->
+        let s =
+          match List.assq_opt u upcasts with
+          | Some n -> [ (u, n) ]
+          | None when op u = Op.Reduce ->
+              List.filter
+                (fun (r, _) -> not (List.memq r (List.tl (src u))))
+                (spread (nth u 0))
+          | None -> (
+              let s =
+                List.fold_left (fun acc x -> merge acc (spread x)) [] (src u)
+              in
+              let divisor =
+                if op u = Op.Div && op (nth u 1) = Op.Const then
+                  known_size (Sym (nth u 1))
+                else None
+              in
+              match divisor with
+              | Some d ->
+                  List.map (fun (r, n) -> (r, n / gcd_with n (Bigint.abs d))) s
+              | None -> s)
+        in
+        Tbl.replace known u s;
+        s
+  in
+  List.fold_left
+    (fun most u ->
+      if op u <> Op.Cast then most
+      else max most (List.fold_left (fun n (_, l) -> n * l) 1 (spread u)))
+    1
+    (toposort ~calls:Skip (K.ast k))
+
+(* Whether [k] stays within the host's budget once [upcast] and [unroll] are
+   applied: its hottest loop holds its accumulators within half the registers,
+   and a conversion takes at most [converted_lanes]; always off the host. *)
 let fits ?upcast ?unroll k =
   match registers k with
   | None -> true
-  | Some file -> held ?upcast ?unroll k file <= file.count / held_share
+  | Some file ->
+      held ?upcast ?unroll k file <= file.count / held_share
+      && conversion_lanes ?upcast ?unroll k <= converted_lanes
 
 (* On the host, the first output upcast of a reduce kernel takes the axis its
    stores write at unit stride to a host vector of the accumulators' type
@@ -1063,6 +1140,15 @@ let upcast_contiguous k =
       in
       largest (pow2 1)
 
+(* A GPU's outputs are its threads: it upcasts while 1024 of them remain. On
+   the host the upcasts are bounded by the budget alone. A launch runs its
+   output loop in blocks on the host's cores (Codegen), and an upcast divides
+   that loop, yet the lanes it takes share a load that each block would
+   repeat: on all cores of fudge, 64 sums of 2^15 bfloat16 values took
+   0.17-0.19 ms in 2 blocks of 32 lanes and 0.65-1.6 ms in 16 blocks of 4,
+   the sums of 64 columns over 2^17 rows 2.6-3.5 ms in 4 blocks of 16 lanes
+   and 5.4-9.1 ms in 16 of 4, and 8 products of 2^20 values 1.04-1.25 ms in
+   2 blocks of 4 lanes and 1.18-1.32 ms in 8 blocks of none. *)
 let enough_work k =
   Sint.resolve Sint.(prod_at k (K.upcastable_dims k) >= Int 1024)
 
@@ -1070,10 +1156,10 @@ let enough_work k =
    host, after the contiguous axis, while the accumulators fit. The axes its
    loop upcast, each with its amount, latest first. *)
 let upcast_more k =
-  if budgeted k && enough_work k then upcast_contiguous k;
+  if budgeted k then upcast_contiguous k;
   let rec loop upcasted =
     let upcasted_axis = List.map fst upcasted in
-    if enough_work k && (budgeted k || holds Sint.(K.upcast_size k < Int 32))
+    if budgeted k || (enough_work k && holds Sint.(K.upcast_size k < Int 32))
     then begin
       let choice ~fill axis upcast_amount =
         (* if we haven't upcasted it, it mods, and buffer has stride 0 on axis

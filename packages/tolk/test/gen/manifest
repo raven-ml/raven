@@ -1126,6 +1126,9 @@ codegen/opt/heuristic/cases.golden
 codegen/opt/heuristic/cast_to_double.golden
 codegen/opt/heuristic/cast_to_double_avx2.golden
 codegen/opt/heuristic/cast_to_double_cpu.golden
+codegen/opt/heuristic/column_sums.golden
+codegen/opt/heuristic/column_sums_avx2.golden
+codegen/opt/heuristic/column_sums_cpu.golden
 codegen/opt/heuristic/compare.golden
 codegen/opt/heuristic/compare_avx2.golden
 codegen/opt/heuristic/compare_cpu.golden
@@ -1323,6 +1326,9 @@ codegen/opt/heuristic/matvec_avx2.golden
 codegen/opt/heuristic/matvec_cpu.golden
 codegen/opt/heuristic/matvec_cuda.golden
 codegen/opt/heuristic/matvec_metal.golden
+codegen/opt/heuristic/matvec_tall.golden
+codegen/opt/heuristic/matvec_tall_avx2.golden
+codegen/opt/heuristic/matvec_tall_cpu.golden
 codegen/opt/heuristic/max_rows.golden
 codegen/opt/heuristic/max_rows_amd.golden
 codegen/opt/heuristic/max_rows_avx2.golden
@@ -1589,6 +1595,9 @@ codegen/opt/heuristic/vecmat_decoded_avx2.golden
 codegen/opt/heuristic/vecmat_decoded_cpu.golden
 codegen/opt/heuristic/vecmat_decoded_cuda.golden
 codegen/opt/heuristic/vecmat_decoded_metal.golden
+codegen/opt/heuristic/vecmat_long.golden
+codegen/opt/heuristic/vecmat_long_avx2.golden
+codegen/opt/heuristic/vecmat_long_cpu.golden
 codegen/opt/heuristic/vecmat_metal.golden
 codegen/opt/heuristic/vecmat_metal_mv_0.golden
 codegen/opt/heuristic/vecmat_normed.golden

@@ -971,6 +971,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 - Compiling float64 `Nx.betaincinv`'s gradient allocates 238 M words
   against 365 M and runs 17% fewer instructions, with unchanged output.
+- On the host, `Heuristic` upcasts a reduce kernel's outputs however few
+  remain, where 1024 elements gated every upcast, and keeps each conversion
+  within 64 lanes: gpt-oss's bfloat16 key and value projection runs 17x
+  faster on a core, lorenz's step kernel 1.9x, and `conv_half` compiles in
+  0.06 s where Clang took 6.5 s.
 - A host operation that reads a broadcast or a permutation of a computed
   vector's lanes stays a vector, its operand put together by a shuffle
   (`Codegen.do_devectorize`): it and every operation after it went lane by

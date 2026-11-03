@@ -717,8 +717,9 @@ let raising_keeps_nothing () =
   | Some q -> same_graph p q
   | None -> fail "the made program is not returned"
 
-(* The heuristic unrolls a sum of 64 rows of 64 by 4, and NOOPT keeps it from
-   it; the kernel is renamed so that no other test compiles it. *)
+(* The heuristic upcasts a sum of 64 rows of 64 by 4 rows and unrolls it by 4,
+   and NOOPT keeps it from both; the kernel is renamed so that no other test
+   compiles it. *)
 let separates_settings () =
   let sum = kernel_of "sum_clang" in
   let k = Ops.replace sum ~arg:(Kernel (Ops.kernel_info ~name:"settings" ())) in
@@ -729,10 +730,8 @@ let separates_settings () =
       (fun () -> Codegen.to_program k clang)
   in
   let applied p = (kernel_info (Ops.nth p 0)).applied_opts in
-  let unroll4 =
-    Opt.Split { axis = 1; amount = 4; target = Upcast; top = false }
-  in
-  equal (list Kernel_opts.opt) ~msg:"with the heuristic" [ unroll4 ]
+  let up axis = Opt.Split { axis; amount = 4; target = Upcast; top = false } in
+  equal (list Kernel_opts.opt) ~msg:"with the heuristic" [ up 0; up 2 ]
     (applied optimised);
   equal (list Kernel_opts.opt) ~msg:"under NOOPT" [] (applied unoptimised)
 

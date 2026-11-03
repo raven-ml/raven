@@ -1,124 +1,401 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f16 [0] ParamArg(slot=0, dtype=dtypes.f16, device="CPU")
-2 Ops.CAST dtypes.i32 [0] dtypes.i32
-3 Ops.RANGE dtypes.i32 [2] (AxisType.WEAK, 1)
-4 Ops.INDEX dtypes.f16 [1, 3]
-5 Ops.CONST dtypes.weakint [] 32
-6 Ops.PARAM dtypes.f16 [5] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
-7 Ops.CONST dtypes.weakint [] 3
-8 Ops.SHL dtypes.i32 [3, 7]
-9 Ops.CONST dtypes.weakint [] 8
-10 Ops.CAST dtypes.i32 [9] dtypes.i32
-11 Ops.SHRINK dtypes.f16 [6, 8, 10]
-12 Ops.LOAD dtypes.f16 [11]
-13 Ops.CONST dtypes.weakint [] 0
-14 Ops.CAST dtypes.i32 [13] dtypes.i32
-15 Ops.INDEX dtypes.f16 [12, 14]
-16 Ops.CAST dtypes.f32 [15] dtypes.f32
-17 Ops.CONST dtypes.weakint [] 1
-18 Ops.CAST dtypes.i32 [17] dtypes.i32
-19 Ops.INDEX dtypes.f16 [12, 18]
-20 Ops.CAST dtypes.f32 [19] dtypes.f32
-21 Ops.ADD dtypes.f32 [16, 20]
-22 Ops.CONST dtypes.weakint [] 2
-23 Ops.CAST dtypes.i32 [22] dtypes.i32
-24 Ops.INDEX dtypes.f16 [12, 23]
-25 Ops.CAST dtypes.f32 [24] dtypes.f32
-26 Ops.ADD dtypes.f32 [21, 25]
-27 Ops.CAST dtypes.i32 [7] dtypes.i32
-28 Ops.INDEX dtypes.f16 [12, 27]
-29 Ops.CAST dtypes.f32 [28] dtypes.f32
-30 Ops.ADD dtypes.f32 [26, 29]
-31 Ops.INDEX dtypes.f16 [12, 2]
-32 Ops.CAST dtypes.f32 [31] dtypes.f32
-33 Ops.ADD dtypes.f32 [30, 32]
-34 Ops.CONST dtypes.weakint [] 5
-35 Ops.CAST dtypes.i32 [34] dtypes.i32
-36 Ops.INDEX dtypes.f16 [12, 35]
-37 Ops.CAST dtypes.f32 [36] dtypes.f32
-38 Ops.ADD dtypes.f32 [33, 37]
-39 Ops.CONST dtypes.weakint [] 6
-40 Ops.CAST dtypes.i32 [39] dtypes.i32
-41 Ops.INDEX dtypes.f16 [12, 40]
-42 Ops.CAST dtypes.f32 [41] dtypes.f32
-43 Ops.ADD dtypes.f32 [38, 42]
-44 Ops.CONST dtypes.weakint [] 7
-45 Ops.CAST dtypes.i32 [44] dtypes.i32
-46 Ops.INDEX dtypes.f16 [12, 45]
-47 Ops.CAST dtypes.f32 [46] dtypes.f32
-48 Ops.ADD dtypes.f32 [43, 47]
-49 Ops.CAST dtypes.f16 [48] dtypes.f16
-50 Ops.STORE dtypes.void [4, 49]
-51 Ops.END dtypes.void [50, 3]
-52 Ops.SINK dtypes.void [51] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), optimized=True)
-53 Ops.PARAM dtypes.u16 [0] ParamArg(slot=0, dtype=dtypes.u16, device="CPU")
-54 Ops.INDEX dtypes.u16 [53, 3]
-55 Ops.PARAM dtypes.u16 [5] ParamArg(slot=1, dtype=dtypes.u16, device="CPU")
-56 Ops.ADD dtypes.i32 [8, 13]
-57 Ops.INDEX dtypes.u16 [55, 56]
-58 Ops.LOAD dtypes.u16 [57]
-59 Ops.CUSTOM dtypes.f32 [58] ("f2f f16 f32 True", dtypes.f32)
-60 Ops.ADD dtypes.i32 [8, 17]
-61 Ops.INDEX dtypes.u16 [55, 60]
-62 Ops.LOAD dtypes.u16 [61]
-63 Ops.CUSTOM dtypes.f32 [62] ("f2f f16 f32 True", dtypes.f32)
-64 Ops.ADD dtypes.i32 [8, 22]
-65 Ops.INDEX dtypes.u16 [55, 64]
-66 Ops.LOAD dtypes.u16 [65]
-67 Ops.CUSTOM dtypes.f32 [66] ("f2f f16 f32 True", dtypes.f32)
-68 Ops.ADD dtypes.i32 [8, 7]
-69 Ops.INDEX dtypes.u16 [55, 68]
-70 Ops.LOAD dtypes.u16 [69]
-71 Ops.CUSTOM dtypes.f32 [70] ("f2f f16 f32 True", dtypes.f32)
-72 Ops.ADD dtypes.i32 [8, 0]
-73 Ops.INDEX dtypes.u16 [55, 72]
-74 Ops.LOAD dtypes.u16 [73]
-75 Ops.CUSTOM dtypes.f32 [74] ("f2f f16 f32 True", dtypes.f32)
-76 Ops.ADD dtypes.i32 [8, 34]
-77 Ops.INDEX dtypes.u16 [55, 76]
-78 Ops.LOAD dtypes.u16 [77]
-79 Ops.CUSTOM dtypes.f32 [78] ("f2f f16 f32 True", dtypes.f32)
-80 Ops.ADD dtypes.i32 [8, 39]
-81 Ops.INDEX dtypes.u16 [55, 80]
-82 Ops.LOAD dtypes.u16 [81]
-83 Ops.CUSTOM dtypes.f32 [82] ("f2f f16 f32 True", dtypes.f32)
-84 Ops.ADD dtypes.i32 [8, 44]
-85 Ops.INDEX dtypes.u16 [55, 84]
-86 Ops.LOAD dtypes.u16 [85]
-87 Ops.CUSTOM dtypes.f32 [86] ("f2f f16 f32 True", dtypes.f32)
-88 Ops.STACK dtypes.f32 [59, 63, 67, 71, 75, 79, 83, 87]
-89 Ops.CAST dtypes.f32 [88] dtypes.f32
-90 Ops.INDEX dtypes.f32 [89, 14]
-91 Ops.CAST dtypes.f32 [90] dtypes.f32
-92 Ops.INDEX dtypes.f32 [89, 18]
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.CAST dtypes.i32 [0] dtypes.i32
+5 Ops.SHRINK dtypes.f16 [1, 3, 4]
+6 Ops.CONST dtypes.weakint [] 32
+7 Ops.PARAM dtypes.f16 [6] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
+8 Ops.CONST dtypes.weakint [] 8
+9 Ops.CAST dtypes.i32 [8] dtypes.i32
+10 Ops.SHRINK dtypes.f16 [7, 3, 9]
+11 Ops.LOAD dtypes.f16 [10]
+12 Ops.INDEX dtypes.f16 [11, 3]
+13 Ops.CAST dtypes.f32 [12] dtypes.f32
+14 Ops.CONST dtypes.weakint [] 1
+15 Ops.CAST dtypes.i32 [14] dtypes.i32
+16 Ops.INDEX dtypes.f16 [11, 15]
+17 Ops.CAST dtypes.f32 [16] dtypes.f32
+18 Ops.ADD dtypes.f32 [13, 17]
+19 Ops.CONST dtypes.weakint [] 2
+20 Ops.CAST dtypes.i32 [19] dtypes.i32
+21 Ops.INDEX dtypes.f16 [11, 20]
+22 Ops.CAST dtypes.f32 [21] dtypes.f32
+23 Ops.ADD dtypes.f32 [18, 22]
+24 Ops.CONST dtypes.weakint [] 3
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.INDEX dtypes.f16 [11, 25]
+27 Ops.CAST dtypes.f32 [26] dtypes.f32
+28 Ops.ADD dtypes.f32 [23, 27]
+29 Ops.INDEX dtypes.f16 [11, 4]
+30 Ops.CAST dtypes.f32 [29] dtypes.f32
+31 Ops.ADD dtypes.f32 [28, 30]
+32 Ops.CONST dtypes.weakint [] 5
+33 Ops.CAST dtypes.i32 [32] dtypes.i32
+34 Ops.INDEX dtypes.f16 [11, 33]
+35 Ops.CAST dtypes.f32 [34] dtypes.f32
+36 Ops.ADD dtypes.f32 [31, 35]
+37 Ops.CONST dtypes.weakint [] 6
+38 Ops.CAST dtypes.i32 [37] dtypes.i32
+39 Ops.INDEX dtypes.f16 [11, 38]
+40 Ops.CAST dtypes.f32 [39] dtypes.f32
+41 Ops.ADD dtypes.f32 [36, 40]
+42 Ops.CONST dtypes.weakint [] 7
+43 Ops.CAST dtypes.i32 [42] dtypes.i32
+44 Ops.INDEX dtypes.f16 [11, 43]
+45 Ops.CAST dtypes.f32 [44] dtypes.f32
+46 Ops.ADD dtypes.f32 [41, 45]
+47 Ops.CAST dtypes.f16 [46] dtypes.f16
+48 Ops.SHRINK dtypes.f16 [7, 9, 9]
+49 Ops.LOAD dtypes.f16 [48]
+50 Ops.INDEX dtypes.f16 [49, 3]
+51 Ops.CAST dtypes.f32 [50] dtypes.f32
+52 Ops.INDEX dtypes.f16 [49, 15]
+53 Ops.CAST dtypes.f32 [52] dtypes.f32
+54 Ops.ADD dtypes.f32 [51, 53]
+55 Ops.INDEX dtypes.f16 [49, 20]
+56 Ops.CAST dtypes.f32 [55] dtypes.f32
+57 Ops.ADD dtypes.f32 [54, 56]
+58 Ops.INDEX dtypes.f16 [49, 25]
+59 Ops.CAST dtypes.f32 [58] dtypes.f32
+60 Ops.ADD dtypes.f32 [57, 59]
+61 Ops.INDEX dtypes.f16 [49, 4]
+62 Ops.CAST dtypes.f32 [61] dtypes.f32
+63 Ops.ADD dtypes.f32 [60, 62]
+64 Ops.INDEX dtypes.f16 [49, 33]
+65 Ops.CAST dtypes.f32 [64] dtypes.f32
+66 Ops.ADD dtypes.f32 [63, 65]
+67 Ops.INDEX dtypes.f16 [49, 38]
+68 Ops.CAST dtypes.f32 [67] dtypes.f32
+69 Ops.ADD dtypes.f32 [66, 68]
+70 Ops.INDEX dtypes.f16 [49, 43]
+71 Ops.CAST dtypes.f32 [70] dtypes.f32
+72 Ops.ADD dtypes.f32 [69, 71]
+73 Ops.CAST dtypes.f16 [72] dtypes.f16
+74 Ops.CONST dtypes.weakint [] 16
+75 Ops.CAST dtypes.i32 [74] dtypes.i32
+76 Ops.SHRINK dtypes.f16 [7, 75, 9]
+77 Ops.LOAD dtypes.f16 [76]
+78 Ops.INDEX dtypes.f16 [77, 3]
+79 Ops.CAST dtypes.f32 [78] dtypes.f32
+80 Ops.INDEX dtypes.f16 [77, 15]
+81 Ops.CAST dtypes.f32 [80] dtypes.f32
+82 Ops.ADD dtypes.f32 [79, 81]
+83 Ops.INDEX dtypes.f16 [77, 20]
+84 Ops.CAST dtypes.f32 [83] dtypes.f32
+85 Ops.ADD dtypes.f32 [82, 84]
+86 Ops.INDEX dtypes.f16 [77, 25]
+87 Ops.CAST dtypes.f32 [86] dtypes.f32
+88 Ops.ADD dtypes.f32 [85, 87]
+89 Ops.INDEX dtypes.f16 [77, 4]
+90 Ops.CAST dtypes.f32 [89] dtypes.f32
+91 Ops.ADD dtypes.f32 [88, 90]
+92 Ops.INDEX dtypes.f16 [77, 33]
 93 Ops.CAST dtypes.f32 [92] dtypes.f32
 94 Ops.ADD dtypes.f32 [91, 93]
-95 Ops.INDEX dtypes.f32 [89, 23]
+95 Ops.INDEX dtypes.f16 [77, 38]
 96 Ops.CAST dtypes.f32 [95] dtypes.f32
 97 Ops.ADD dtypes.f32 [94, 96]
-98 Ops.INDEX dtypes.f32 [89, 27]
+98 Ops.INDEX dtypes.f16 [77, 43]
 99 Ops.CAST dtypes.f32 [98] dtypes.f32
 100 Ops.ADD dtypes.f32 [97, 99]
-101 Ops.INDEX dtypes.f32 [89, 2]
-102 Ops.CAST dtypes.f32 [101] dtypes.f32
-103 Ops.ADD dtypes.f32 [100, 102]
-104 Ops.INDEX dtypes.f32 [89, 35]
-105 Ops.CAST dtypes.f32 [104] dtypes.f32
-106 Ops.ADD dtypes.f32 [103, 105]
-107 Ops.INDEX dtypes.f32 [89, 40]
-108 Ops.CAST dtypes.f32 [107] dtypes.f32
-109 Ops.ADD dtypes.f32 [106, 108]
-110 Ops.INDEX dtypes.f32 [89, 45]
-111 Ops.CAST dtypes.f32 [110] dtypes.f32
-112 Ops.ADD dtypes.f32 [109, 111]
-113 Ops.BITCAST dtypes.u32 [112] dtypes.u32
-114 Ops.CUSTOM dtypes.u16 [113] ("f2f f32 f16 True", dtypes.u16)
-115 Ops.CUSTOM dtypes.f32 [114] ("f2f f16 f32 True", dtypes.f32)
-116 Ops.BITCAST dtypes.u32 [115] dtypes.u32
-117 Ops.CUSTOM dtypes.u16 [116] ("f2f f32 f16 True", dtypes.u16)
-118 Ops.STORE dtypes.void [54, 117]
-119 Ops.END dtypes.void [118, 3]
-120 Ops.SINK dtypes.void [119] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), optimized=True)
-121 Ops.SINK dtypes.void [52, 120]
+101 Ops.CAST dtypes.f16 [100] dtypes.f16
+102 Ops.CONST dtypes.weakint [] 24
+103 Ops.CAST dtypes.i32 [102] dtypes.i32
+104 Ops.SHRINK dtypes.f16 [7, 103, 9]
+105 Ops.LOAD dtypes.f16 [104]
+106 Ops.INDEX dtypes.f16 [105, 3]
+107 Ops.CAST dtypes.f32 [106] dtypes.f32
+108 Ops.INDEX dtypes.f16 [105, 15]
+109 Ops.CAST dtypes.f32 [108] dtypes.f32
+110 Ops.ADD dtypes.f32 [107, 109]
+111 Ops.INDEX dtypes.f16 [105, 20]
+112 Ops.CAST dtypes.f32 [111] dtypes.f32
+113 Ops.ADD dtypes.f32 [110, 112]
+114 Ops.INDEX dtypes.f16 [105, 25]
+115 Ops.CAST dtypes.f32 [114] dtypes.f32
+116 Ops.ADD dtypes.f32 [113, 115]
+117 Ops.INDEX dtypes.f16 [105, 4]
+118 Ops.CAST dtypes.f32 [117] dtypes.f32
+119 Ops.ADD dtypes.f32 [116, 118]
+120 Ops.INDEX dtypes.f16 [105, 33]
+121 Ops.CAST dtypes.f32 [120] dtypes.f32
+122 Ops.ADD dtypes.f32 [119, 121]
+123 Ops.INDEX dtypes.f16 [105, 38]
+124 Ops.CAST dtypes.f32 [123] dtypes.f32
+125 Ops.ADD dtypes.f32 [122, 124]
+126 Ops.INDEX dtypes.f16 [105, 43]
+127 Ops.CAST dtypes.f32 [126] dtypes.f32
+128 Ops.ADD dtypes.f32 [125, 127]
+129 Ops.CAST dtypes.f16 [128] dtypes.f16
+130 Ops.STACK dtypes.f16 [47, 73, 101, 129]
+131 Ops.STORE dtypes.void [5, 130]
+132 Ops.SINK dtypes.void [131, 131, 131, 131] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST))), optimized=True)
+133 Ops.STACK dtypes.void []
+134 Ops.PARAM dtypes.u16 [0] ParamArg(slot=0, dtype=dtypes.u16, device="CPU")
+135 Ops.ADD dtypes.i32 [3, 2]
+136 Ops.INDEX dtypes.u16 [134, 135]
+137 Ops.PARAM dtypes.u16 [6] ParamArg(slot=1, dtype=dtypes.u16, device="CPU")
+138 Ops.INDEX dtypes.u16 [137, 135]
+139 Ops.LOAD dtypes.u16 [138]
+140 Ops.CUSTOM dtypes.f32 [139] ("f2f f16 f32 True", dtypes.f32)
+141 Ops.ADD dtypes.i32 [3, 14]
+142 Ops.INDEX dtypes.u16 [137, 141]
+143 Ops.LOAD dtypes.u16 [142]
+144 Ops.CUSTOM dtypes.f32 [143] ("f2f f16 f32 True", dtypes.f32)
+145 Ops.ADD dtypes.i32 [3, 19]
+146 Ops.INDEX dtypes.u16 [137, 145]
+147 Ops.LOAD dtypes.u16 [146]
+148 Ops.CUSTOM dtypes.f32 [147] ("f2f f16 f32 True", dtypes.f32)
+149 Ops.ADD dtypes.i32 [3, 24]
+150 Ops.INDEX dtypes.u16 [137, 149]
+151 Ops.LOAD dtypes.u16 [150]
+152 Ops.CUSTOM dtypes.f32 [151] ("f2f f16 f32 True", dtypes.f32)
+153 Ops.ADD dtypes.i32 [3, 0]
+154 Ops.INDEX dtypes.u16 [137, 153]
+155 Ops.LOAD dtypes.u16 [154]
+156 Ops.CUSTOM dtypes.f32 [155] ("f2f f16 f32 True", dtypes.f32)
+157 Ops.ADD dtypes.i32 [3, 32]
+158 Ops.INDEX dtypes.u16 [137, 157]
+159 Ops.LOAD dtypes.u16 [158]
+160 Ops.CUSTOM dtypes.f32 [159] ("f2f f16 f32 True", dtypes.f32)
+161 Ops.ADD dtypes.i32 [3, 37]
+162 Ops.INDEX dtypes.u16 [137, 161]
+163 Ops.LOAD dtypes.u16 [162]
+164 Ops.CUSTOM dtypes.f32 [163] ("f2f f16 f32 True", dtypes.f32)
+165 Ops.ADD dtypes.i32 [3, 42]
+166 Ops.INDEX dtypes.u16 [137, 165]
+167 Ops.LOAD dtypes.u16 [166]
+168 Ops.CUSTOM dtypes.f32 [167] ("f2f f16 f32 True", dtypes.f32)
+169 Ops.STACK dtypes.f32 [140, 144, 148, 152, 156, 160, 164, 168]
+170 Ops.CAST dtypes.f32 [169] dtypes.f32
+171 Ops.INDEX dtypes.f32 [170, 3]
+172 Ops.CAST dtypes.f32 [171] dtypes.f32
+173 Ops.INDEX dtypes.f32 [170, 15]
+174 Ops.CAST dtypes.f32 [173] dtypes.f32
+175 Ops.ADD dtypes.f32 [172, 174]
+176 Ops.INDEX dtypes.f32 [170, 20]
+177 Ops.CAST dtypes.f32 [176] dtypes.f32
+178 Ops.ADD dtypes.f32 [175, 177]
+179 Ops.INDEX dtypes.f32 [170, 25]
+180 Ops.CAST dtypes.f32 [179] dtypes.f32
+181 Ops.ADD dtypes.f32 [178, 180]
+182 Ops.INDEX dtypes.f32 [170, 4]
+183 Ops.CAST dtypes.f32 [182] dtypes.f32
+184 Ops.ADD dtypes.f32 [181, 183]
+185 Ops.INDEX dtypes.f32 [170, 33]
+186 Ops.CAST dtypes.f32 [185] dtypes.f32
+187 Ops.ADD dtypes.f32 [184, 186]
+188 Ops.INDEX dtypes.f32 [170, 38]
+189 Ops.CAST dtypes.f32 [188] dtypes.f32
+190 Ops.ADD dtypes.f32 [187, 189]
+191 Ops.INDEX dtypes.f32 [170, 43]
+192 Ops.CAST dtypes.f32 [191] dtypes.f32
+193 Ops.ADD dtypes.f32 [190, 192]
+194 Ops.BITCAST dtypes.u32 [193] dtypes.u32
+195 Ops.CUSTOM dtypes.u16 [194] ("f2f f32 f16 True", dtypes.u16)
+196 Ops.CUSTOM dtypes.f32 [195] ("f2f f16 f32 True", dtypes.f32)
+197 Ops.CAST dtypes.f32 [196] dtypes.f32
+198 Ops.BITCAST dtypes.u32 [197] dtypes.u32
+199 Ops.CUSTOM dtypes.u16 [198] ("f2f f32 f16 True", dtypes.u16)
+200 Ops.STORE dtypes.void [136, 199]
+201 Ops.INDEX dtypes.u16 [134, 141]
+202 Ops.ADD dtypes.i32 [9, 2]
+203 Ops.INDEX dtypes.u16 [137, 202]
+204 Ops.LOAD dtypes.u16 [203]
+205 Ops.CUSTOM dtypes.f32 [204] ("f2f f16 f32 True", dtypes.f32)
+206 Ops.ADD dtypes.i32 [9, 14]
+207 Ops.INDEX dtypes.u16 [137, 206]
+208 Ops.LOAD dtypes.u16 [207]
+209 Ops.CUSTOM dtypes.f32 [208] ("f2f f16 f32 True", dtypes.f32)
+210 Ops.ADD dtypes.i32 [9, 19]
+211 Ops.INDEX dtypes.u16 [137, 210]
+212 Ops.LOAD dtypes.u16 [211]
+213 Ops.CUSTOM dtypes.f32 [212] ("f2f f16 f32 True", dtypes.f32)
+214 Ops.ADD dtypes.i32 [9, 24]
+215 Ops.INDEX dtypes.u16 [137, 214]
+216 Ops.LOAD dtypes.u16 [215]
+217 Ops.CUSTOM dtypes.f32 [216] ("f2f f16 f32 True", dtypes.f32)
+218 Ops.ADD dtypes.i32 [9, 0]
+219 Ops.INDEX dtypes.u16 [137, 218]
+220 Ops.LOAD dtypes.u16 [219]
+221 Ops.CUSTOM dtypes.f32 [220] ("f2f f16 f32 True", dtypes.f32)
+222 Ops.ADD dtypes.i32 [9, 32]
+223 Ops.INDEX dtypes.u16 [137, 222]
+224 Ops.LOAD dtypes.u16 [223]
+225 Ops.CUSTOM dtypes.f32 [224] ("f2f f16 f32 True", dtypes.f32)
+226 Ops.ADD dtypes.i32 [9, 37]
+227 Ops.INDEX dtypes.u16 [137, 226]
+228 Ops.LOAD dtypes.u16 [227]
+229 Ops.CUSTOM dtypes.f32 [228] ("f2f f16 f32 True", dtypes.f32)
+230 Ops.ADD dtypes.i32 [9, 42]
+231 Ops.INDEX dtypes.u16 [137, 230]
+232 Ops.LOAD dtypes.u16 [231]
+233 Ops.CUSTOM dtypes.f32 [232] ("f2f f16 f32 True", dtypes.f32)
+234 Ops.STACK dtypes.f32 [205, 209, 213, 217, 221, 225, 229, 233]
+235 Ops.CAST dtypes.f32 [234] dtypes.f32
+236 Ops.INDEX dtypes.f32 [235, 3]
+237 Ops.CAST dtypes.f32 [236] dtypes.f32
+238 Ops.INDEX dtypes.f32 [235, 15]
+239 Ops.CAST dtypes.f32 [238] dtypes.f32
+240 Ops.ADD dtypes.f32 [237, 239]
+241 Ops.INDEX dtypes.f32 [235, 20]
+242 Ops.CAST dtypes.f32 [241] dtypes.f32
+243 Ops.ADD dtypes.f32 [240, 242]
+244 Ops.INDEX dtypes.f32 [235, 25]
+245 Ops.CAST dtypes.f32 [244] dtypes.f32
+246 Ops.ADD dtypes.f32 [243, 245]
+247 Ops.INDEX dtypes.f32 [235, 4]
+248 Ops.CAST dtypes.f32 [247] dtypes.f32
+249 Ops.ADD dtypes.f32 [246, 248]
+250 Ops.INDEX dtypes.f32 [235, 33]
+251 Ops.CAST dtypes.f32 [250] dtypes.f32
+252 Ops.ADD dtypes.f32 [249, 251]
+253 Ops.INDEX dtypes.f32 [235, 38]
+254 Ops.CAST dtypes.f32 [253] dtypes.f32
+255 Ops.ADD dtypes.f32 [252, 254]
+256 Ops.INDEX dtypes.f32 [235, 43]
+257 Ops.CAST dtypes.f32 [256] dtypes.f32
+258 Ops.ADD dtypes.f32 [255, 257]
+259 Ops.BITCAST dtypes.u32 [258] dtypes.u32
+260 Ops.CUSTOM dtypes.u16 [259] ("f2f f32 f16 True", dtypes.u16)
+261 Ops.CUSTOM dtypes.f32 [260] ("f2f f16 f32 True", dtypes.f32)
+262 Ops.CAST dtypes.f32 [261] dtypes.f32
+263 Ops.BITCAST dtypes.u32 [262] dtypes.u32
+264 Ops.CUSTOM dtypes.u16 [263] ("f2f f32 f16 True", dtypes.u16)
+265 Ops.STORE dtypes.void [201, 264]
+266 Ops.INDEX dtypes.u16 [134, 145]
+267 Ops.ADD dtypes.i32 [75, 2]
+268 Ops.INDEX dtypes.u16 [137, 267]
+269 Ops.LOAD dtypes.u16 [268]
+270 Ops.CUSTOM dtypes.f32 [269] ("f2f f16 f32 True", dtypes.f32)
+271 Ops.ADD dtypes.i32 [75, 14]
+272 Ops.INDEX dtypes.u16 [137, 271]
+273 Ops.LOAD dtypes.u16 [272]
+274 Ops.CUSTOM dtypes.f32 [273] ("f2f f16 f32 True", dtypes.f32)
+275 Ops.ADD dtypes.i32 [75, 19]
+276 Ops.INDEX dtypes.u16 [137, 275]
+277 Ops.LOAD dtypes.u16 [276]
+278 Ops.CUSTOM dtypes.f32 [277] ("f2f f16 f32 True", dtypes.f32)
+279 Ops.ADD dtypes.i32 [75, 24]
+280 Ops.INDEX dtypes.u16 [137, 279]
+281 Ops.LOAD dtypes.u16 [280]
+282 Ops.CUSTOM dtypes.f32 [281] ("f2f f16 f32 True", dtypes.f32)
+283 Ops.ADD dtypes.i32 [75, 0]
+284 Ops.INDEX dtypes.u16 [137, 283]
+285 Ops.LOAD dtypes.u16 [284]
+286 Ops.CUSTOM dtypes.f32 [285] ("f2f f16 f32 True", dtypes.f32)
+287 Ops.ADD dtypes.i32 [75, 32]
+288 Ops.INDEX dtypes.u16 [137, 287]
+289 Ops.LOAD dtypes.u16 [288]
+290 Ops.CUSTOM dtypes.f32 [289] ("f2f f16 f32 True", dtypes.f32)
+291 Ops.ADD dtypes.i32 [75, 37]
+292 Ops.INDEX dtypes.u16 [137, 291]
+293 Ops.LOAD dtypes.u16 [292]
+294 Ops.CUSTOM dtypes.f32 [293] ("f2f f16 f32 True", dtypes.f32)
+295 Ops.ADD dtypes.i32 [75, 42]
+296 Ops.INDEX dtypes.u16 [137, 295]
+297 Ops.LOAD dtypes.u16 [296]
+298 Ops.CUSTOM dtypes.f32 [297] ("f2f f16 f32 True", dtypes.f32)
+299 Ops.STACK dtypes.f32 [270, 274, 278, 282, 286, 290, 294, 298]
+300 Ops.CAST dtypes.f32 [299] dtypes.f32
+301 Ops.INDEX dtypes.f32 [300, 3]
+302 Ops.CAST dtypes.f32 [301] dtypes.f32
+303 Ops.INDEX dtypes.f32 [300, 15]
+304 Ops.CAST dtypes.f32 [303] dtypes.f32
+305 Ops.ADD dtypes.f32 [302, 304]
+306 Ops.INDEX dtypes.f32 [300, 20]
+307 Ops.CAST dtypes.f32 [306] dtypes.f32
+308 Ops.ADD dtypes.f32 [305, 307]
+309 Ops.INDEX dtypes.f32 [300, 25]
+310 Ops.CAST dtypes.f32 [309] dtypes.f32
+311 Ops.ADD dtypes.f32 [308, 310]
+312 Ops.INDEX dtypes.f32 [300, 4]
+313 Ops.CAST dtypes.f32 [312] dtypes.f32
+314 Ops.ADD dtypes.f32 [311, 313]
+315 Ops.INDEX dtypes.f32 [300, 33]
+316 Ops.CAST dtypes.f32 [315] dtypes.f32
+317 Ops.ADD dtypes.f32 [314, 316]
+318 Ops.INDEX dtypes.f32 [300, 38]
+319 Ops.CAST dtypes.f32 [318] dtypes.f32
+320 Ops.ADD dtypes.f32 [317, 319]
+321 Ops.INDEX dtypes.f32 [300, 43]
+322 Ops.CAST dtypes.f32 [321] dtypes.f32
+323 Ops.ADD dtypes.f32 [320, 322]
+324 Ops.BITCAST dtypes.u32 [323] dtypes.u32
+325 Ops.CUSTOM dtypes.u16 [324] ("f2f f32 f16 True", dtypes.u16)
+326 Ops.CUSTOM dtypes.f32 [325] ("f2f f16 f32 True", dtypes.f32)
+327 Ops.CAST dtypes.f32 [326] dtypes.f32
+328 Ops.BITCAST dtypes.u32 [327] dtypes.u32
+329 Ops.CUSTOM dtypes.u16 [328] ("f2f f32 f16 True", dtypes.u16)
+330 Ops.STORE dtypes.void [266, 329]
+331 Ops.INDEX dtypes.u16 [134, 149]
+332 Ops.ADD dtypes.i32 [103, 2]
+333 Ops.INDEX dtypes.u16 [137, 332]
+334 Ops.LOAD dtypes.u16 [333]
+335 Ops.CUSTOM dtypes.f32 [334] ("f2f f16 f32 True", dtypes.f32)
+336 Ops.ADD dtypes.i32 [103, 14]
+337 Ops.INDEX dtypes.u16 [137, 336]
+338 Ops.LOAD dtypes.u16 [337]
+339 Ops.CUSTOM dtypes.f32 [338] ("f2f f16 f32 True", dtypes.f32)
+340 Ops.ADD dtypes.i32 [103, 19]
+341 Ops.INDEX dtypes.u16 [137, 340]
+342 Ops.LOAD dtypes.u16 [341]
+343 Ops.CUSTOM dtypes.f32 [342] ("f2f f16 f32 True", dtypes.f32)
+344 Ops.ADD dtypes.i32 [103, 24]
+345 Ops.INDEX dtypes.u16 [137, 344]
+346 Ops.LOAD dtypes.u16 [345]
+347 Ops.CUSTOM dtypes.f32 [346] ("f2f f16 f32 True", dtypes.f32)
+348 Ops.ADD dtypes.i32 [103, 0]
+349 Ops.INDEX dtypes.u16 [137, 348]
+350 Ops.LOAD dtypes.u16 [349]
+351 Ops.CUSTOM dtypes.f32 [350] ("f2f f16 f32 True", dtypes.f32)
+352 Ops.ADD dtypes.i32 [103, 32]
+353 Ops.INDEX dtypes.u16 [137, 352]
+354 Ops.LOAD dtypes.u16 [353]
+355 Ops.CUSTOM dtypes.f32 [354] ("f2f f16 f32 True", dtypes.f32)
+356 Ops.ADD dtypes.i32 [103, 37]
+357 Ops.INDEX dtypes.u16 [137, 356]
+358 Ops.LOAD dtypes.u16 [357]
+359 Ops.CUSTOM dtypes.f32 [358] ("f2f f16 f32 True", dtypes.f32)
+360 Ops.ADD dtypes.i32 [103, 42]
+361 Ops.INDEX dtypes.u16 [137, 360]
+362 Ops.LOAD dtypes.u16 [361]
+363 Ops.CUSTOM dtypes.f32 [362] ("f2f f16 f32 True", dtypes.f32)
+364 Ops.STACK dtypes.f32 [335, 339, 343, 347, 351, 355, 359, 363]
+365 Ops.CAST dtypes.f32 [364] dtypes.f32
+366 Ops.INDEX dtypes.f32 [365, 3]
+367 Ops.CAST dtypes.f32 [366] dtypes.f32
+368 Ops.INDEX dtypes.f32 [365, 15]
+369 Ops.CAST dtypes.f32 [368] dtypes.f32
+370 Ops.ADD dtypes.f32 [367, 369]
+371 Ops.INDEX dtypes.f32 [365, 20]
+372 Ops.CAST dtypes.f32 [371] dtypes.f32
+373 Ops.ADD dtypes.f32 [370, 372]
+374 Ops.INDEX dtypes.f32 [365, 25]
+375 Ops.CAST dtypes.f32 [374] dtypes.f32
+376 Ops.ADD dtypes.f32 [373, 375]
+377 Ops.INDEX dtypes.f32 [365, 4]
+378 Ops.CAST dtypes.f32 [377] dtypes.f32
+379 Ops.ADD dtypes.f32 [376, 378]
+380 Ops.INDEX dtypes.f32 [365, 33]
+381 Ops.CAST dtypes.f32 [380] dtypes.f32
+382 Ops.ADD dtypes.f32 [379, 381]
+383 Ops.INDEX dtypes.f32 [365, 38]
+384 Ops.CAST dtypes.f32 [383] dtypes.f32
+385 Ops.ADD dtypes.f32 [382, 384]
+386 Ops.INDEX dtypes.f32 [365, 43]
+387 Ops.CAST dtypes.f32 [386] dtypes.f32
+388 Ops.ADD dtypes.f32 [385, 387]
+389 Ops.BITCAST dtypes.u32 [388] dtypes.u32
+390 Ops.CUSTOM dtypes.u16 [389] ("f2f f32 f16 True", dtypes.u16)
+391 Ops.CUSTOM dtypes.f32 [390] ("f2f f16 f32 True", dtypes.f32)
+392 Ops.CAST dtypes.f32 [391] dtypes.f32
+393 Ops.BITCAST dtypes.u32 [392] dtypes.u32
+394 Ops.CUSTOM dtypes.u16 [393] ("f2f f32 f16 True", dtypes.u16)
+395 Ops.STORE dtypes.void [331, 394]
+396 Ops.AFTER dtypes.void [133, 200, 265, 330, 395]
+397 Ops.SINK dtypes.void [396, 396, 396, 396] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST))), optimized=True)
+398 Ops.SINK dtypes.void [132, 397]
 

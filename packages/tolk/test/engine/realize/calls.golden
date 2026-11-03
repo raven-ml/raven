@@ -1,7 +1,7 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 program	call	var_vals	bufs	args	outs	ins	name	ops	lds	mem
 add	0	-	%1 %2 %3	%1 %2 %3	0	1 2	E_16	16	192	192
-sum	0	-	%1 %2	%1 %2 0 4	0	1	r_4_8	28	144	144
+sum	0	-	%1 %2	%1 %2	0	1	r_4_8	28	144	144
 two_outputs	0	-	%1 %2	%1 %2	0	1	E_16	16	128	128
 two_outputs	1	-	%1 %2	%1 %2	0	1	E_16	16	128	128
 assign	0	-	%1	%1	0	0	E_16	16	128	128

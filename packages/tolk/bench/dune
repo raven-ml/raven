@@ -48,9 +48,11 @@
 ; decides: the Heuristic suite's matmul, conv, conv_half, tangent_products,
 ; paired_products and max_rows, matmul_f64 its matmul over doubles,
 ; sin_nested_8 eight nested float64 sines over 1024 elements, as rune compiles
-; them, select_zero a float32 selection of zero over 4M elements, and
+; them, select_zero a float32 selection of zero over 4M elements,
 ; normal_f64 rune's float64 normal sampler of 1024 values (its compile bench's
-; rng/normal-f64).
+; rng/normal-f64), and the Heuristic suite's gpt_oss_kv and vecmat_1000,
+; products of 512 and 1000 outputs, which take lanes, and matvec_tall, 8
+; products of 2^20 values, whose lanes leave its launch 2 blocks.
 
 (rule
  (target host_kernels.ml)
@@ -65,7 +67,10 @@
    ../test/codegen/opt/heuristic/max_rows.golden
    sin_nested_8.graph
    select_zero.graph
-   normal_f64.graph))
+   normal_f64.graph
+   ../test/codegen/opt/heuristic/gpt_oss_kv.golden
+   ../test/codegen/opt/heuristic/vecmat_1000.golden
+   ../test/codegen/opt/heuristic/matvec_tall.golden))
  (action
   (with-stdout-to
    %{target}

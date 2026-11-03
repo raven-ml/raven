@@ -103,13 +103,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - whether memory-bound host kernels take lanes at all: no upcast ran 4-7%
   faster than 64-byte lanes in two of seven loaded fudge runs of a 4M
   float32 select-zero; decide on the scheduled quiet re-record
-- host output upcasts: tinygrad's 1024-output floor gates every host
-  output upcast. Lifting it gives 1.2-6x on 22 of 23 recorded host kernels
-  (`r_32_3_2_4_3_400` 47.0 -> 24.9 us on a P-core, beam 23.4; gpt_oss_kv
-  1888 -> 304 us; vecmat_1000 2688 -> 808 us) but raises Clang time
-  sharply (gpt_oss_kv 22-34 ms -> 0.9-1.1 s, qkv 0.26 -> 1.5 s) and may lose
-  1.2x on an 8-output matvec at K = 1M across all cores (estimated): a
-  floor counted in D80's split-loop iterations, with both costs measured
 - `Nx_quant.apply_experts` of gpt-oss's gate and up projection at 512
   tokens takes 26.4-27.6 ms on fudge's CUDA against 3.14-3.23 ms through
   `Nx.map_segments`' blocks: one route row per thread group, so no decoded

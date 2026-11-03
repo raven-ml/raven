@@ -5519,12 +5519,12 @@ the walk of `Rangeify.fix_store_hazard`.
   (`Heuristic.held_registers` states which) take at most half the
   registers. The upcasts after the masked and shared ones (D92) and the
   unroll take the budget in place of tinygrad's lane counts:
-  - the first output upcast, while 1024 elements are left, takes the axis
-    the stores write at unit stride, when every access that reads it reads it
-    at unit stride, to a host vector of the accumulators' type (D188), the
-    largest power of two that divides it and fits;
+  - the first output upcast takes the axis the stores write at unit
+    stride, when every access that reads it reads it at unit stride, to a
+    host vector of the accumulators' type (D188), the largest power of two
+    that divides it and fits;
   - the upcasts by 3 or 4 follow while they fit, without tinygrad's 32
-    lanes, while 1024 elements are left as tinygrad's do;
+    lanes and 1024 elements (D240);
   - when none is left, an output axis not yet upcast is upcast by 2 if it
     fits and some access that indexes a serial reduce axis does not index it
     (the fill; among such axes, tinygrad's order: fewest accesses indexing
@@ -6638,3 +6638,78 @@ the walk of `Rangeify.fix_store_hazard`.
 - **Pinned by:** the Ops suite: `Pattern_matcher › a part of a pattern that
   names nothing gives one naming`; rune's
   `compile/special/betaincinv-grad-f64` row, once recorded on fudge.
+## D240. The host's output upcasts take no floor of elements
+
+- **tinygrad:** `codegen/opt/heuristic.py:114` (`hand_coded_optimizations`'
+  upcasts of output axes while the upcastable axes hold 1024 elements).
+- **tolk:** `Heuristic.enough_work` and `Heuristic.upcast_more`;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the
+  goldens are recorded.
+- **Differs:** on the host (a renderer that knows its vector registers,
+  D186), the contiguous upcast and the upcasts by 3, 4 or 2 apply however
+  few elements the upcastable axes hold, bounded by the register budget
+  (D186) and the conversions' lanes (D241) alone. Other devices, and a host
+  renderer that knows no registers, keep tinygrad's 1024 elements: on a GPU
+  the outputs are its threads.
+- **Reason:** (d): rune's host products of few outputs over long sums,
+  gpt-oss's decode projections and lorenz_simple's step. On the host an
+  upcast takes lanes that share a load and run independent chains, where a
+  launch's blocks (D80) would each repeat the load. A floor counted in the
+  split loop's iterations, at least 16 or the blocks the work fills, was
+  slower than none on every kernel it bound (fudge, loaded, both orders, all
+  cores): 64 sums of 2^15 bfloat16 values took 0.17-0.19 ms with none and
+  0.65-1.6 ms with it, the sums of 64 columns over 2^17 rows 2.6-3.5 ms and
+  5.4-9.1 ms, 8 products of 2^20 values 1.04-1.25 ms in 2 blocks against
+  1.18-1.32 in 8. Against the 1024 floor, one P-core (`taskset -c 5`):
+  gpt_oss_kv 1508-2293 µs to 89-98, lorenz's `r_32_3_2_4_3_400` 48-50 µs
+  to 25.6-26.2, `rows_m4` 8.3-8.5 µs to 3.0-3.1, `attention_values`
+  1356-2118 µs to 277-283; all cores, the column sums 17.9-20.3 ms to
+  3.1-3.4, the bfloat16 sums 0.95-1.8 ms to 0.10-0.17, the 8 products
+  2.26-3.02 ms to 2.28-2.89. Measured under load only: whether a
+  memory-bound product of few outputs loses its blocks on a quiet host is
+  for the scheduled quiet re-record. The compiler's own passes do more work
+  on the larger programs: the tolk bench's `linearize`, `render` and `warm`
+  rows of its recorded programs allocate 1.3-2.9 times the words,
+  `gpt_oss_decode/codegen` 1.7 times, `cumsum`'s rows 0.6-0.7 times.
+- **Pinned by:** the Heuristic suite's `the host's lanes › on AVX2 a
+  recorded host kernel of few outputs takes its lanes` and `the
+  optimisations chosen are tinygrad's › … › the optimised kernel`, the
+  `cpu` and `avx2` cases, among them `matvec_tall`, `vecmat_long` and
+  `column_sums`, recorded from the equally patched tinygrad; the tolk
+  bench's `host/gpt_oss_kv/heuristic`, `host/vecmat_1000/heuristic`,
+  `host/matvec_tall/heuristic` and `lorenz/r_32_3_2_4_3_400/heuristic`,
+  whose fudge baselines the scheduled re-record records.
+
+## D241. A host conversion takes at most 64 lanes
+
+- **tinygrad:** `codegen/opt/heuristic.py:111-150` (the upcasts while
+  fewer than 32 lanes and the unroll while fewer than 64, counting every
+  lane of the kernel).
+- **tolk:** `Heuristic.converted_lanes`, `Heuristic.conversion_lanes` and
+  `Heuristic.fits`; `test/gen/tinygrad.patch`, which gives tinygrad the
+  same before the goldens are recorded.
+- **Differs:** on the host, the upcasts after the masked and shared ones
+  and the unroll (D186) apply only while each conversion (`CAST`) computes
+  at most 64 lanes: of the upcast axes its value reads, the lanes holding
+  distinct values, `n / gcd n d` of `n` lanes read as a quotient by `d`,
+  and none of a reduce's closed axes, whose lanes it sums first.
+- **Reason:** (d): Clang's straight-line vectorizer, which packs a
+  conversion's vector from the lanes it converts, takes time much faster
+  than linear in them where they are loads gathered from apart: 98% of
+  gpt_oss_kv's 0.9-1.2 s at 128 lanes is that pass (`-ftime-report`), 0.15
+  s at 64 and 0.03 s at 32. Against the unbounded lanes, Clang's CPU on
+  fudge: `conv_half` 6.5-6.6 s to 52-66 ms (its run time tied),
+  `matmul_half` 137-144 ms to 29-32, `gpt_oss_qkv` 174-178 ms to 28-37; and
+  the run time of the narrower vectors, one P-core: `matmul_half` 351-352
+  µs to 123-124, `batched_matmul_half` 177-215 to 61-63, `gpt_oss_qkv`
+  6.4-20.5 ms to 3.2-7.2 (loaded). gpt_oss_kv takes 32 output lanes and no
+  unroll, 89-98 µs, where 32 by 4 took 332-336 and 16 by 4 338-344. The
+  routed products read their block's expert as a row's quotient and keep
+  their unroll by 8, which ran 1.35 times as fast as by 2.
+- **Pinned by:** the Heuristic suite's `the host's lanes › on AVX2 a
+  recorded host kernel's conversions take their lanes` and `› on the host a
+  conversion computes at most 64 lanes`, over every recorded kernel and
+  lorenz_simple's on four register files, and the host cases of `the
+  optimisations chosen are tinygrad's`; rune's compile bench row
+  `products/vecmat-bf16`, whose fudge baseline the scheduled re-record
+  records.

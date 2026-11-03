@@ -1093,10 +1093,10 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..c6e8172ac 100644
+index ec97cac6f..1115046cc 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -1,9 +1,278 @@
+@@ -1,9 +1,304 @@
 -import itertools
 +import itertools, math
  from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
@@ -1182,8 +1182,34 @@ index ec97cac6f..c6e8172ac 100644
 +    per = min(max(1, regs[1] // computed_bytes(u.dtype)), packed)
 +    total += (held + per - 1) // per
 +  return total
++# a conversion computes as one vector the lanes upcast of every axis its value reads, which clang's vectorizer packs from the lanes of
++# the values it converts: where they are loads gathered from apart its time grows much faster than the lanes. so on the host a
++# conversion takes at most CONVERTED_LANES. its lanes are those holding distinct values: n lanes of an axis read as a quotient by d
++# hold n // gcd(n, d), as a block of rows reads its expert once, and a reduce's lanes are summed before it
++CONVERTED_LANES = 64
++def conversion_lanes(k:Scheduler, upcast:tuple[int, int]|None=None, unroll:tuple[int, int]|None=None) -> int:
++  def lanes(a, r):
++    if upcast is not None and upcast[0] == a: return upcast[1]
++    if unroll is not None and unroll[0] == a: return k.full_shape[a] if unroll[1] == 0 else unroll[1]
++    return k.full_shape[a] if r.axis_type is AxisType.UPCAST else 1
++  ups = {r: n for a, r in enumerate(k.rngs) if (n:=lanes(a, r)) > 1}
++  known: dict[UOp, dict[UOp, int]] = {}
++  # the lanes of each upcast axis along which u's value differs
++  def spread(u:UOp) -> dict[UOp, int]:
++    if u in known: return known[u]
++    if u in ups: s = {u: ups[u]}
++    elif u.op is Ops.REDUCE: s = {r: n for r, n in spread(u.src[0]).items() if r not in u.src[1:]}
++    else:
++      s = {}
++      for x in u.src:
++        for r, n in spread(x).items(): s[r] = max(s.get(r, 1), n)
++      if u.op is Ops.DIV and u.src[1].op is Ops.CONST: s = {r: n // math.gcd(n, u.src[1].arg) for r, n in s.items()}
++    known[u] = s
++    return s
++  return max([prod(spread(u).values()) for u in k.ast.toposort() if u.op is Ops.CAST] + [1])
 +def host_fits(k:Scheduler, upcast:tuple[int, int]|None=None, unroll:tuple[int, int]|None=None) -> bool:
-+  return (regs:=host_registers(k)) is None or held_registers(k, regs, upcast, unroll) <= regs[0] // HELD_SHARE
++  return (regs:=host_registers(k)) is None or \
++    (held_registers(k, regs, upcast, unroll) <= regs[0] // HELD_SHARE and conversion_lanes(k, upcast, unroll) <= CONVERTED_LANES)
 +
 +# on the host the first output upcast of a reduce kernel takes the axis its stores write at unit stride to a host vector of the
 +# accumulators' lanes, HOST_VECTOR_BYTES, the largest power of two that divides it and fits: as the target's vector width splits a
@@ -1377,7 +1403,7 @@ index ec97cac6f..c6e8172ac 100644
  
  def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # first try the tensor cores
-@@ -24,23 +293,63 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,23 +319,63 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
@@ -1446,7 +1472,7 @@ index ec97cac6f..c6e8172ac 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +366,21 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,25 +392,21 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1487,7 +1513,7 @@ index ec97cac6f..c6e8172ac 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,47 +415,105 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,47 +441,106 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1508,9 +1534,10 @@ index ec97cac6f..c6e8172ac 100644
 +  # them in compile time: it takes no upcast after its masked axes
 +  host_elementwise = k.ren.target.device == "CPU" and not k.reduceops
 +  if host_elementwise: upcast_vectors(k)
-+  # on the host the upcasts take the contiguous axis first and continue while the accumulators fit, whatever the lanes
-+  def enough_work(): return resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) >= 1024)
-+  if host and not host_elementwise and enough_work(): upcast_contiguous(k, host_registers(k))
++  # on the host the upcasts take the contiguous axis first and continue while the accumulators fit, whatever the lanes and however
++  # few the elements
++  def enough_work(): return host or resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) >= 1024)
++  if host and not host_elementwise: upcast_contiguous(k, host_registers(k))
    upcasted_axis: set[int] = set()
 -  while resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) >= 1024) and (k.upcast_size() < 32):
 +  upcasted: list[tuple[int, int]] = []
@@ -1609,7 +1636,7 @@ index ec97cac6f..c6e8172ac 100644
      k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
  
    # **** local groups ****
-@@ -176,7 +539,7 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -176,7 +566,7 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
        to_local: list[tuple[int, int]] = []
        for _, axis in sorted(local_axis_ranking, key=lambda x: (-x[0], -x[1])):
          local_size = prod(sz for _, sz in to_local)

@@ -441,6 +441,16 @@ let partials () =
   in
   compile f x
 
+(* A product of 2880 float32 values by a bfloat16 matrix of 2880 by 512,
+   widened to float32, as gpt-oss-20b projects its keys and values at a decode
+   step: one kernel whose conversion's lanes, from loads gathered across the
+   matrix's rows, set Clang's work. *)
+let vecmat_bf16 () =
+  let w = Nx.cast Nx.bfloat16 (Nx.Rng.uniform Nx.float32 [| 2880; 512 |]) in
+  let w = Nx.place Nx.Host.on w in
+  let x = Nx.place Nx.Host.on (Nx.Rng.uniform Nx.float32 [| 1; 2880 |]) in
+  compile (fun x -> Nx.matmul x (Nx.cast Nx.float32 w)) x
+
 (* Eight nested float64 sines of 1024 values on CUDA's first GPU: one kernel of
    some thousand lines, whose binary the GPU's driver loads. *)
 let cuda_sines () =
@@ -481,6 +491,7 @@ let cases =
     ("special/betaincinv-grad-f64", betaincinv_grad);
     ("special/gammaincinv-grad-f64", gammaincinv_grad);
     ("wide/sum-1e6", wide_sum);
+    ("products/vecmat-bf16", vecmat_bf16);
     ("devices/dp-step-16", data_parallel);
     ("devices/partials-16", partials);
     ("cuda/sin-nested-8", cuda_sines);

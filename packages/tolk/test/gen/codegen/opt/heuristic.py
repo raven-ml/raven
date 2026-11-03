@@ -281,6 +281,20 @@ DECODED = {f"decoded_rows_{rows}_{name}": (lambda rows=rows, dtype=dtype: decode
 DECODED.update({f"decoded_small_{rows}_{name}": (lambda rows=rows, dtype=dtype: decoded_rows(rows, dtype, 32, 128))
                 for rows, name, dtype in [(17, "bfloat16", dtypes.bfloat16), (19, "half", dtypes.half), (64, "float", dtypes.float)]})
 
+# Reductions of few outputs over long sums on the host, whose launch runs its output loop in blocks on the host's cores: 8
+# products of 2^20 values, 64 of 2^15 widened from bfloat16, and the sums of 64 columns over 2^17 rows, each one kernel as rune
+# lowers it rather than a sum split in two
+def whole(f):
+    with Context(SPLIT_REDUCEOP=0): return last(f())
+
+
+HOST_SPLITS = {
+    "matvec_tall": lambda: whole(lambda: empty(8, 1 << 20) @ empty(1 << 20, 1)),
+    "vecmat_long": lambda: whole(lambda: empty(1, 32768) @ empty(32768, 64, dtype=dtypes.bfloat16).float()),
+    "column_sums": lambda: whole(lambda: empty(131072, 64).sum(0)),
+}
+KERNELS.update(HOST_SPLITS)
+
 CASES = []
 
 
@@ -289,7 +303,7 @@ def case(kernel, renderer, suffix="", **context):
 
 
 for kernel in KERNELS:
-    for renderer in ["cpu", "avx2"] if kernel in HOST_KERNELS else ["cpu", "avx2", "metal", "cuda", "amd"]:
+    for renderer in ["cpu", "avx2"] if kernel in HOST_KERNELS or kernel in HOST_SPLITS else ["cpu", "avx2", "metal", "cuda", "amd"]:
         case(kernel, renderer)
 for renderer in ["metal", "cuda", "amd"]:
     case("matmul_half", renderer, "_no_tc", TC=0)

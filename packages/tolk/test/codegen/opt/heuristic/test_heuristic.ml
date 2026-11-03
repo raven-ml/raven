@@ -1106,6 +1106,121 @@ let blocks =
         (fun name -> equal int 16 (lane_outputs (recorded name)));
     ]
 
+(* The host's lanes *)
+
+(* The kernel information of [k] lowered for the host with [file]'s
+   registers. *)
+let lowered k file =
+  match Ops.arg (Codegen.full_rewrite_to_sink k (host file)) with
+  | Ops.Kernel info -> info
+  | _ -> failf "a lowered kernel has no kernel information"
+
+(* The iterations of the loop a launch of [info]'s kernel splits into blocks: 1
+   when it splits none. *)
+let split_iterations (info : Ops.kernel_info) =
+  match info.split with
+  | None -> Some 1
+  | Some { iterations = Int n; _ } -> Some n
+  | Some _ -> None
+
+(* Recorded kernels of few outputs on AVX2's file, with the iterations of the
+   loop their launch splits into blocks and their output lanes, as the rules
+   state them: however few outputs remain, an upcast takes what the budget
+   holds. 8 products of 2^20 values take 4 lanes, by 4 of 8 that some access
+   does not index, and leave 2 iterations; 64 sums of 2^15 bfloat16 values
+   32, 16 at unit stride and one 2 that fills them; the sums of 64 columns
+   over 2^17 rows 16, a host vector of floats; 32 sums of 32, 4 lanes.
+   gpt-oss's key and value projection takes 32 lanes of its 512 outputs and
+   no unroll: 4 unrolled rows would take its conversion to 128 lanes, past
+   64. *)
+let lane_cases =
+  cases "on AVX2 a recorded host kernel of few outputs takes its lanes"
+    ~id:(fun (name, _, _) -> name)
+    [
+      ("matvec_tall", 2, 4);
+      ("vecmat_long", 2, 32);
+      ("column_sums", 4, 16);
+      ("sum_rows", 8, 4);
+      ("gpt_oss_kv", 16, 32);
+      ("vecmat_1000", 125, 8);
+    ]
+    (fun (name, iterations, lanes) ->
+      let avx2 = (16, 32) in
+      equal (option int) ~msg:"iterations" (Some iterations)
+        (split_iterations (lowered (kernel name) avx2));
+      equal int ~msg:"lanes" lanes
+        (output_lanes (optimized (kernel name) avx2)))
+
+(* The most lanes a conversion of [s] computes at once: for each upcast axis
+   its value reads, the lanes holding distinct values, [n / gcd n d] of [n]
+   read as a quotient by [d], and none of a reduce's closed axes, whose lanes
+   are summed before it. *)
+let conversion_lanes s =
+  let rec gcd a b = if b = 0 then a else gcd b (a mod b) in
+  let upcast =
+    List.filter_map
+      (fun r -> if is_upcast r then Some (r, Bigint.to_int (size r)) else None)
+      (K.rngs s)
+  in
+  let rec spread u =
+    match List.assq_opt u upcast with
+    | Some n -> [ (u, n) ]
+    | None when Ops.op u = Op.Reduce ->
+        let closed = List.tl (Ops.src u) in
+        List.filter
+          (fun (r, _) -> not (List.memq r closed))
+          (spread (Ops.nth u 0))
+    | None ->
+        let lanes =
+          List.fold_left
+            (fun acc x ->
+              List.fold_left
+                (fun acc (r, n) ->
+                  match List.assq_opt r acc with
+                  | Some m when m >= n -> acc
+                  | _ -> (r, n) :: List.remove_assq r acc)
+                acc (spread x))
+            [] (Ops.src u)
+        in
+        if Ops.op u = Op.Div && Ops.op (Ops.nth u 1) = Op.Const then
+          let distinct n =
+            match Ops.vmax (Ops.nth u 1) with
+            | `Int d ->
+                n / gcd n (Bigint.to_int Bigint.(rem (abs d) (of_int n)))
+            | _ -> n
+          in
+          List.map (fun (r, n) -> (r, distinct n)) lanes
+        else lanes
+  in
+  List.fold_left
+    (fun most u ->
+      if Ops.op u <> Op.Cast then most
+      else max most (List.fold_left (fun n (_, l) -> n * l) 1 (spread u)))
+    1
+    (Ops.toposort ~calls:Skip (K.ast s))
+
+(* Recorded kernels on AVX2's file, with their conversions' most lanes as the
+   rule states them. A product of halves converts the product of 16 columns
+   by 4 rows, and its sum is not unrolled, which would take 256 lanes.
+   gpt-oss's key and value projection converts its 32 output lanes. A
+   prompt's routed MXFP4 tiles convert 4 columns of codes by 8 bytes of 2
+   codes each, and its 4 rows read their block's expert only as a quotient,
+   which counts none: the sum keeps its unroll by 8. *)
+let conversion_cases =
+  cases "on AVX2 a recorded host kernel's conversions take their lanes"
+    ~id:fst
+    [ ("matmul_half", 64); ("gpt_oss_kv", 32); ("routed_tiles", 64) ]
+    (fun (name, lanes) ->
+      equal int lanes (conversion_lanes (optimized (kernel name) (16, 32))))
+
+let conversions_bounded =
+  cases "on the host a conversion computes at most 64 lanes"
+    ~id:(fun (name, _, file) -> name ^ " " ^ file_id file)
+    budget_rows
+    (fun (name, k, file) ->
+      at_most ~msg:name int ~than:64
+        (conversion_lanes (optimized (Lazy.force k) file)))
+
 (* The tensor core's floor *)
 
 (* A renderer of CDNA's cores, whose workgroup is 64 threads. *)
@@ -1450,6 +1565,8 @@ let () =
          warps_within_runs;
          group "the host's budget"
            [ held_cases; budget; more_registers; doubles ];
+         group "the host's lanes"
+           [ lane_cases; conversion_cases; conversions_bounded ];
          group "the tensor core's floor" [ floored ];
          decode_bound;
          decoded_writes;

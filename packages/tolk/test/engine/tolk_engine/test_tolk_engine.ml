@@ -362,10 +362,11 @@ let on_the_host =
 
 (* Host programs in blocks
 
-   A kernel of [m] sums, out[i] = sum_j a[i k + j] b[j] for [k] terms. Each sum
-   is summed in one block, in the same order whatever the blocks. *)
+   A kernel of [m] sums, out[i] = sum_j a[i k + j] b[j] for [k] terms, with
+   the optimisations [opts] or the heuristic's. Each sum is summed in one
+   block, in the same order whatever the blocks. *)
 
-let sums ?(name = "sums") m k =
+let sums ?(name = "sums") ?opts m k =
   let buffer slot n = Shape.placeholder ~slot [ n ] Float32 in
   let a = buffer 1 (m * k) and b = buffer 2 k in
   let i = Ops.range (Int m) [ 0 ] in
@@ -374,7 +375,7 @@ let sums ?(name = "sums") m k =
     let open Ops.O in
     Ops.index a [ (i * Ops.int k) + j ] * Ops.index b [ j ]
   in
-  Ops.sink ~kernel:(Ops.kernel_info ~name ())
+  Ops.sink ~kernel:(Ops.kernel_info ~name ?opts_to_apply:opts ())
     [
       Ops.end_
         (Ops.store
@@ -387,12 +388,13 @@ let sums ?(name = "sums") m k =
 let scattered n =
   floats (Array.init n (fun x -> Float.sin (Float.of_int x) *. 1e3))
 
-(* The bits of [sums m k] on scattered values, launched on the host in [blocks]
-   blocks: its parameters are the addresses of out, a and b, then the bounds of
-   its whole loop, [0] and [m], two int32s, and a call runs the iterations its
-   threads number. *)
+(* The bits of [sums m k] on scattered values, unoptimised so that its loop
+   runs [m] iterations, launched on the host in [blocks] blocks: its
+   parameters are the addresses of out, a and b, then the bounds of its whole
+   loop, [0] and [m], two int32s, and a call runs the iterations its threads
+   number. *)
 let sums_in ~blocks m k =
-  let prg = Codegen.to_program (sums m k) (Lazy.force clang) in
+  let prg = Codegen.to_program (sums ~opts:[] m k) (Lazy.force clang) in
   let elf = Device.Tiny_elf.of_program prg in
   let image = Result.get_ok (Rig.Image.load host elf.lib) in
   let fn = require_some (Rig.Image.resolve image elf.name) in
