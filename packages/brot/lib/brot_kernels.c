@@ -3,15 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The fused kernels: the byte-level one — the GPT-2 byte-level walker, the
-   pretoken cache probe and the short byte-level BPE merge over a range of
-   text, one call per chunk of spans — and the SentencePiece one at the end
-   of this file, which cuts ▁/punctuation word units and feeds them through
-   the same probe and merge machinery. Everything rare is handed back to
-   OCaml with a resume position: an unclassified code point, a pretoken over
-   15 bytes, a byte or character without a vocabulary id, a model whose
-   misses may not be merged here, and a merge whose result stands for other
-   bytes than its entry's. The OCaml implementations in pre_tokenizer.ml,
+/* The fused kernels: the byte-level one — the GPT-2, cl100k or o200k
+   walker, the pretoken cache probe, ignore_merges' whole-word lookup and the
+   short byte-level BPE merge over a range of text, one call per chunk of
+   spans — and the SentencePiece one at the end of this file, which cuts
+   ▁/punctuation word units and feeds them through the same probe and merge
+   machinery. Everything rare is handed back to OCaml with a resume position:
+   an unclassified code point, a pretoken over 15 bytes, a byte or character
+   without a vocabulary id, and a merge result or whole word that stands for
+   other bytes than its entry's. The OCaml implementations in pre_tokenizer.ml,
    char_class.ml, bpe.ml and pretoken_cache.ml are the reference; every
    function here mirrors
    one there by name, and the native-vs-bytecode dump differential holds the
@@ -60,7 +60,8 @@ enum {
   BROT_BL_MERGE_VALUES,
   BROT_BL_MERGE_MASK,
   BROT_BL_LEN_TABLE,
-  BROT_BL_MERGE
+  BROT_BL_WORDS,
+  BROT_BL_WORDS_MASK
 };
 
 /* Kernel.sp field order. */
@@ -128,8 +129,15 @@ static inline int ctz64(uint64_t x)
   _BitScanForward64(&i, x);
   return (int)i;
 }
+static inline int clz64(uint64_t x)
+{
+  unsigned long i;
+  _BitScanReverse64(&i, x);
+  return 63 - (int)i;
+}
 #else
 static inline int ctz64(uint64_t x) { return __builtin_ctzll(x); }
+static inline int clz64(uint64_t x) { return __builtin_clzll(x); }
 #endif
 
 /* The prefetch is advisory: GCC/Clang emit it, other compilers drop it.
@@ -762,6 +770,7 @@ typedef struct {
   uint64_t ws;     /* 0x09..0x0D and 0x20 */
   uint64_t hi;     /* >= 0x80 */
   uint64_t apo;    /* 0x27 */
+  uint64_t nl;     /* 0x0A and 0x0D, when asked for */
 } batch_classes;
 
 #ifdef BROT_MASK_NEON
@@ -790,9 +799,10 @@ static inline uint64_t movemask64(uint8x16_t a0, uint8x16_t a1, uint8x16_t a2,
   return vgetq_lane_u64(vreinterpretq_u64_u8(a0), 0);
 }
 
-static void batch_classify(const unsigned char *p, batch_classes *c)
+static BROT_INLINE void batch_classify(const unsigned char *p,
+                                        batch_classes *c, int newlines)
 {
-  uint8x16_t l[4], d[4], sp[4], ws[4], hi[4], ap[4];
+  uint8x16_t l[4], d[4], sp[4], ws[4], hi[4], ap[4], nl[4];
   int k;
   for (k = 0; k < 4; k++) {
     uint8x16_t v = vld1q_u8(p + 16 * k);
@@ -804,6 +814,8 @@ static void batch_classify(const unsigned char *p, batch_classes *c)
         vorrq_u8(sp[k], vcleq_u8(vsubq_u8(v, vdupq_n_u8(9)), vdupq_n_u8(4)));
     hi[k] = vcgeq_u8(v, vdupq_n_u8(0x80));
     ap[k] = vceqq_u8(v, vdupq_n_u8('\''));
+    nl[k] = vorrq_u8(vceqq_u8(v, vdupq_n_u8('\n')),
+                     vceqq_u8(v, vdupq_n_u8('\r')));
   }
   c->letter = movemask64(l[0], l[1], l[2], l[3]);
   c->digit = movemask64(d[0], d[1], d[2], d[3]);
@@ -811,6 +823,7 @@ static void batch_classify(const unsigned char *p, batch_classes *c)
   c->ws = movemask64(ws[0], ws[1], ws[2], ws[3]);
   c->hi = movemask64(hi[0], hi[1], hi[2], hi[3]);
   c->apo = movemask64(ap[0], ap[1], ap[2], ap[3]);
+  c->nl = newlines ? movemask64(nl[0], nl[1], nl[2], nl[3]) : 0;
 }
 
 #elif defined(BROT_MASK_SSE2)
@@ -823,10 +836,11 @@ static inline __m128i sse_le(__m128i x, int c)
   return _mm_cmpeq_epi8(_mm_min_epu8(x, _mm_set1_epi8((char)c)), x);
 }
 
-static void batch_classify(const unsigned char *p, batch_classes *c)
+static BROT_INLINE void batch_classify(const unsigned char *p,
+                                        batch_classes *c, int newlines)
 {
   int k;
-  c->letter = c->digit = c->space = c->ws = c->hi = c->apo = 0;
+  c->letter = c->digit = c->space = c->ws = c->hi = c->apo = c->nl = 0;
   for (k = 0; k < 4; k++) {
     __m128i v = _mm_loadu_si128((const __m128i *)(p + 16 * k));
     __m128i lowered = _mm_or_si128(v, _mm_set1_epi8(0x20));
@@ -842,6 +856,11 @@ static void batch_classify(const unsigned char *p, batch_classes *c)
     c->ws |= (uint64_t)(unsigned)_mm_movemask_epi8(ws) << sh;
     c->hi |= (uint64_t)(unsigned)_mm_movemask_epi8(v) << sh;
     c->apo |= (uint64_t)(unsigned)_mm_movemask_epi8(ap) << sh;
+    if (newlines) {
+      __m128i nl = _mm_or_si128(_mm_cmpeq_epi8(v, _mm_set1_epi8('\n')),
+                                _mm_cmpeq_epi8(v, _mm_set1_epi8('\r')));
+      c->nl |= (uint64_t)(unsigned)_mm_movemask_epi8(nl) << sh;
+    }
   }
 }
 
@@ -872,10 +891,11 @@ static inline uint64_t swar_le(uint64_t ascii7, uint64_t c)
   return ((c * BROT_LO | BROT_HI) - ascii7) & BROT_HI;
 }
 
-static void batch_classify(const unsigned char *p, batch_classes *c)
+static BROT_INLINE void batch_classify(const unsigned char *p,
+                                        batch_classes *c, int newlines)
 {
   int j;
-  c->letter = c->digit = c->space = c->ws = c->hi = c->apo = 0;
+  c->letter = c->digit = c->space = c->ws = c->hi = c->apo = c->nl = 0;
   for (j = 0; j < 8; j++) {
     uint64_t v = load64(p + 8 * j);
     uint64_t hi = v & BROT_HI;
@@ -893,6 +913,11 @@ static void batch_classify(const unsigned char *p, batch_classes *c)
     c->ws |= swar_pack(ws) << sh;
     c->hi |= swar_pack(hi) << sh;
     c->apo |= swar_pack(apo) << sh;
+    if (newlines)
+      c->nl |= swar_pack(((swar_ge(ascii, '\n') & swar_le(ascii, '\n'))
+                          | (swar_ge(ascii, '\r') & swar_le(ascii, '\r')))
+                         & ~hi)
+               << sh;
   }
 }
 
@@ -914,7 +939,7 @@ static void batch_masks(const walker *w, intnat anchor, intnat scan,
   uint64_t pl = 0, pd = 0, psp = 0, pws = 0, po = 0;
   uint64_t other, cont_same, after_sp, nb, split_ok, pwsb, boundary, bad;
   uint64_t apo_bad, cand;
-  batch_classify(s + scan, &c);
+  batch_classify(s + scan, &c, 0);
   other = ~(c.letter | c.digit | c.ws);
   bad = c.hi | (c.hi << 1) | (c.hi >> 1);
   if (scan > anchor) {
@@ -987,24 +1012,173 @@ static void batch_masks(const walker *w, intnat anchor, intnat scan,
   *bad_out = bad;
 }
 
+/* The cl100k boundary masks: [batch_masks] for [cl100k_next_span], on the
+   same contract. On ASCII the pattern's alternatives come down to where a
+   span starts:
+
+   - a letter after anything but a letter, an "other" byte opening a span
+     (which a word takes as its prefix) and a white space byte that is no
+     newline (which always opens a span when a letter follows);
+   - an "other" byte after anything but an "other" byte or a space, which
+     [ ?[^\s\p{L}\p{N}]+] glues to the punctuation;
+   - a digit opening its run, and every [digits]th digit after;
+   - in a white space run, its first byte, unless it is a newline right after
+     punctuation, which [[\r\n]*] takes along with the newlines after it,
+     and then the first byte after those newlines; the byte after the run's
+     last newline, the end of [\s*[\r\n]+]; and the run's last byte when it
+     is no newline, which [\s+(?!\S)] gives back;
+   - the byte after a contraction that an apostrophe opening a span starts.
+
+   Bad zones: non-ASCII bytes, the byte before and the two after (a
+   character's class reaches the start of the byte after it, and through an
+   "other" byte that opens a span, the byte after that); digit and white
+   space runs that a non-ASCII byte or the previous batch could extend
+   (their starts depend on the whole run); the white space run at the batch
+   edge unless the next byte ends it; an apostrophe's contraction on bad
+   bits; and an apostrophe opening a span less than three bytes before the
+   batch edge. */
+static void cl100k_batch_masks(const walker *w, intnat anchor, intnat scan,
+                               intnat digits, uint64_t *usable,
+                               uint64_t *bad_out)
+{
+  const unsigned char *s = w->s;
+  batch_classes c;
+  uint64_t pl = 0, pd = 0, pw = 0, pm = 0, psp = 0, pnl = 0, po = 0;
+  uint64_t ph = 0, p2h = 0, po_start = 0;
+  uint64_t other, m, o_start, l_start, d_start, w_start, starts, bad;
+  uint64_t absorbed, seeds, cand, gb, grown;
+  int next = 0; /* the byte after the batch: 0 none, 1 white space, 2 not
+                   white space, 3 non-ASCII */
+  batch_classify(s + scan, &c, 1);
+  other = ~(c.letter | c.digit | c.ws | c.hi);
+  m = c.ws & ~c.nl;
+  if (scan > anchor) {
+    unsigned b = s[scan - 1], b2 = s[scan - 2];
+    if (b >= 0x80)
+      ph = 1;
+    else {
+      pl = (unsigned)((b | 0x20) - 'a') <= 25;
+      pd = (unsigned)(b - '0') <= 9;
+      psp = b == ' ';
+      pnl = b == '\n' || b == '\r';
+      pw = psp | ((unsigned)(b - 9) <= 4);
+      pm = pw & !pnl;
+      po = !(pl | pd | pw);
+    }
+    /* The "other" byte before the batch opens a span unless an "other"
+       byte or a space precedes it. */
+    if (b2 >= 0x80)
+      p2h = 1;
+    else if (po)
+      po_start = (unsigned)((b2 | 0x20) - 'a') <= 25
+                 || (unsigned)(b2 - '0') <= 9 || (unsigned)(b2 - 9) <= 4;
+  }
+  if (scan + 64 < w->stop) {
+    unsigned b = s[scan + 64];
+    next = b >= 0x80                            ? 3
+           : b == ' ' || (unsigned)(b - 9) <= 4 ? 1
+                                                : 2;
+  }
+  bad = c.hi | (c.hi >> 1) | (c.hi << 1) | ph | (c.hi << 2) | (ph << 1) | p2h;
+
+  o_start = other & ~((other << 1) | po) & ~((c.space << 1) | psp);
+  l_start = c.letter & ~((c.letter << 1) | pl) & ~((o_start << 1) | po_start)
+            & ~((m << 1) | pm);
+
+  /* Digit groups: each start [digits] digits after the last one. A run the
+     previous batch or a non-ASCII digit could have opened earlier is bad. */
+  d_start = c.digit & ~((c.digit << 1) | pd);
+  if (digits <= 1)
+    d_start = c.digit;
+  else if (digits < 64 && (c.digit & (c.digit << 1)) != 0) {
+    uint64_t g = c.digit, cur = d_start;
+    intnat t;
+    for (t = 1; t < digits; t++) g &= c.digit << t;
+    while ((cur = (cur << digits) & g) != 0) d_start |= cur;
+  }
+  seeds = c.digit & ((c.hi << 1) | ph | pd);
+  bad |= seeds | (((c.digit + seeds) ^ c.digit ^ seeds) & c.digit);
+
+  /* White space. A carry chain from each seed through the run of [x] it
+     sits in fills that run upward: [(x + seeds) ^ x ^ seeds] is the carry
+     into each bit. */
+  seeds = c.nl & ~((c.ws << 1) | pw) & ((other << 1) | po);
+  absorbed = seeds | (((c.nl + seeds) ^ c.nl ^ seeds) & c.nl);
+  w_start = (c.ws & ~((c.ws << 1) | pw) & ~seeds) | (m & (absorbed << 1));
+  gb = m & ~(c.ws >> 1) & ~((uint64_t)1 << 63);
+  if (c.ws >> 63) {
+    uint64_t tail = ~(uint64_t)0 << (64 - (~c.ws ? clz64(~c.ws) : 64));
+    if (next == 1 || next == 3)
+      bad |= tail;
+    else if (next == 2)
+      gb |= m & ((uint64_t)1 << 63);
+  }
+  seeds = c.ws & ((c.hi << 1) | ph | pw);
+  bad |= seeds | (((c.ws + seeds) ^ c.ws ^ seeds) & c.ws);
+  /* After a newline, a byte opens a span when no newline follows in its
+     run: when the run of non-newline white space it opens ends at a byte
+     that is not white space. */
+  cand = m & ((c.nl << 1) | pnl);
+  while (cand) {
+    intnat q = ctz64(cand);
+    uint64_t rest = ~m & (~(uint64_t)0 << q);
+    intnat f = rest ? ctz64(rest) : 64;
+    cand &= cand - 1;
+    if (f == 64 || !((c.nl >> f) & 1)) w_start |= (uint64_t)1 << q;
+    if (f < 64 && ((c.hi >> f) & 1)) bad |= (uint64_t)1 << q;
+  }
+  w_start |= gb;
+  starts = l_start | d_start | o_start | w_start;
+
+  /* Contractions, as in [batch_masks], reaching three bytes on. */
+  grown = c.apo & bad;
+  bad |= (grown << 1) | (grown << 2) | (grown << 3);
+  cand = c.apo & o_start & ~bad;
+  while (cand) {
+    intnat i = ctz64(cand);
+    intnat c1, c2, k = 0;
+    cand &= cand - 1;
+    if (i >= 61) {
+      bad |= ~(uint64_t)0 << i;
+      break;
+    }
+    c1 = ascii_lower(s[scan + i + 1]);
+    c2 = ascii_lower(s[scan + i + 2]);
+    if (c1 == 's' || c1 == 't' || c1 == 'm' || c1 == 'd')
+      k = 2;
+    else if ((c1 == 'r' && c2 == 'e') || (c1 == 'v' && c2 == 'e')
+             || (c1 == 'l' && c2 == 'l'))
+      k = 3;
+    if (k) starts |= (uint64_t)1 << (i + k);
+  }
+  *usable = starts & ~bad;
+  *bad_out = bad;
+}
+
 /* The batch walk. [rem] holds the pop-ready boundary bits of the current
    segment; a bad zone parks them and aims [scalar_until] at the next
    trusted boundary (or the batch end), sending every span opening before
-   it through [next_span]; scalar overruns keep the 64-byte grid. The state
-   lives for one kernel call — the masks are pure functions of the bytes,
-   so a resumed call rebuilds them from its own anchor. */
+   it through the scalar walker; scalar overruns keep the 64-byte grid. The
+   state lives for one kernel call — the masks are pure functions of the
+   bytes, so a resumed call rebuilds them from its own anchor. [digits] is
+   -1 for the GPT-2 walker, and otherwise the cl100k walker's longest group
+   of numbers, [marks] its flag. */
 typedef struct {
+  intnat digits;
+  int marks;
   intnat anchor;     /* the call's start position, carry-free by contract */
   intnat scan;       /* base of the next batch to classify */
   intnat mask_base;  /* base the rem/batch bits refer to */
   uint64_t rem;      /* pop-ready boundary bits of the current segment */
   uint64_t batch_usable;
   uint64_t batch_bad;
-  intnat scalar_until; /* walk spans via next_span while below this */
+  intnat scalar_until; /* walk spans with the scalar walker below this */
 } mask_state;
 
-static void mask_init(mask_state *ms, intnat pos)
+static void mask_init(mask_state *ms, intnat pos, intnat digits, int marks)
 {
+  ms->digits = digits;
+  ms->marks = marks;
   ms->anchor = pos;
   ms->scan = pos;
   ms->mask_base = pos;
@@ -1046,7 +1220,9 @@ static intnat mask_refill(mask_state *ms, walker *w, intnat i)
       ms->rem &= ms->rem - 1;
       return e;
     }
-    if (i < ms->scalar_until) return next_span(w, i);
+    if (i < ms->scalar_until)
+      return ms->digits < 0 ? next_span(w, i)
+                            : cl100k_next_span(w, i, ms->digits, ms->marks);
     /* Continue with the current batch's next trusted segment after a
        scalar gap; each batch is classified exactly once. */
     if (ms->batch_bad != 0 && i < ms->mask_base + 64) {
@@ -1059,7 +1235,11 @@ static intnat mask_refill(mask_state *ms, walker *w, intnat i)
       ms->scalar_until = w->stop; /* partial tail: scalar to the end */
       continue;
     }
-    batch_masks(w, ms->anchor, ms->scan, &ms->batch_usable, &ms->batch_bad);
+    if (ms->digits < 0)
+      batch_masks(w, ms->anchor, ms->scan, &ms->batch_usable, &ms->batch_bad);
+    else
+      cl100k_batch_masks(w, ms->anchor, ms->scan, ms->digits,
+                         &ms->batch_usable, &ms->batch_bad);
     ms->mask_base = ms->scan;
     ms->scan += 64;
     mask_load_segment(ms, i, i > ms->mask_base ? i - ms->mask_base : 0);
@@ -1248,7 +1428,8 @@ static int merge_run(const value *mkeys, const value *mvals, intnat mmask,
   rank[n - 1] = RANK_NONE;
   for (;;) {
     intnat best = RANK_NONE, bp = -1, gone, next, prev;
-    for (k = 0; k < n; k++)
+    /* The live symbols, in order: the first is never merged away. */
+    for (k = 0; k >= 0; k = sym_next[k])
       if (rank[k] < best) {
         best = rank[k];
         bp = k;
@@ -1427,6 +1608,41 @@ static inline void remember(const tables *t, const staged *st,
                   | (m > 3 ? (uint64_t)ids[3] << 32 : 0));
 }
 
+/* Bpe.whole_word_id on a staged span of at most 15 bytes, for the entries
+   whose merge does not give them back: its id in the whole-word table
+   [words], an open-addressing table of [words_mask + 1] 24-byte slots, each
+   such an entry's two key words, as Pretoken_cache keys them, and its id,
+   probed linearly from the slot its hash gives; an empty slot has a zero
+   second word, which no key has. Any other entry merges to itself.
+   Returns the id, -1 for no entry, or -2 when the entry's id stands for
+   other bytes than len_table gives it, which only OCaml records. */
+static intnat whole_word(const unsigned char *words, intnat words_mask,
+                         const tables *t, const unsigned char *s, intnat n,
+                         const staged *st, intnat len)
+{
+  uint64_t k0, k1;
+  intnat at;
+  if (st->set >= 0) {
+    k0 = st->k0;
+    k1 = st->k1;
+  } else {
+    k0 = key_word0(s, n, st->i, len);
+    k1 = key_word1(s, n, st->i, len);
+  }
+  at = (intnat)(hash_of(k0, k1) & (uint64_t)words_mask);
+  for (;;) {
+    const unsigned char *slot = words + 24 * at;
+    uint64_t q1 = load64(slot + 8);
+    if (q1 == 0) return -1;
+    if (q1 == k1 && load64(slot) == k0) {
+      intnat id = (intnat)load64(slot + 16);
+      if (id >= t->len_n || Long_val(t->len_tab[id]) != len) return -2;
+      return id;
+    }
+    at = (at + 1) & words_mask;
+  }
+}
+
 /* Appends [m] merged ids to the sink. */
 static inline void emit_ids(value *ids, int32_t *ids32, int emit32, intnat at,
                             const int32_t *src, int m)
@@ -1464,9 +1680,9 @@ static void tables_of(tables *t, value vt, int front, int front_mask,
    span and its mark recorded, or the int32 Bigarray of
    Kernel.byte_level_encode_ids32, with neither, a hand-back span then
    carried by the cursor alone. [split] selects the walker: the GPT-2 mask
-   scanner, or the scalar cl100k or o200k walker under the parameters
-   [vwalker] packs as Kernel.split_encode documents. Both are compile-time
-   constants in each wrapper. */
+   scanner, or the cl100k mask scanner or the scalar o200k walker under the
+   parameters [vwalker] packs as Kernel.split_encode documents. Both are
+   compile-time constants in each wrapper. */
 static BROT_INLINE value
 byte_level_encode_impl(value text, value vpos, value vstop, value vspans,
                        value vids, value vmarks, value vcursor, value vunicode,
@@ -1484,7 +1700,8 @@ byte_level_encode_impl(value text, value vpos, value vstop, value vspans,
   value *marks_base = emit32 ? NULL : (value *)&Field(vmarks, 0);
   unsigned char *cur = Bytes_val(vcursor);
   const value *byte_ids = (const value *)&Field(Field(vt, BROT_BL_BYTE_IDS), 0);
-  int can_merge = Bool_val(Field(vt, BROT_BL_MERGE));
+  const unsigned char *words = Bytes_val(Field(vt, BROT_BL_WORDS));
+  intnat words_mask = Long_val(Field(vt, BROT_BL_WORDS_MASK));
   intnat nspans = emit32 ? 0 : (intnat)load64(cur + CUR_SPANS);
   intnat nids = (intnat)load64(cur + CUR_IDS);
   intnat nmarks = emit32 ? 0 : (intnat)load64(cur + CUR_MARKS);
@@ -1518,7 +1735,7 @@ byte_level_encode_impl(value text, value vpos, value vstop, value vspans,
   else
     nb = k = 0;
   store64(cur + CUR_STAGE_STOP, (uint64_t)stop);
-  if (!split) mask_init(&ms, i);
+  if (!o200k) mask_init(&ms, i, split ? digits : -1, flag);
 
   for (;;) {
     int class_hit = 0, roomy;
@@ -1528,9 +1745,8 @@ byte_level_encode_impl(value text, value vpos, value vstop, value vspans,
       if (!emit32 && spans_cap - nspans < limit) limit = spans_cap - nspans;
       nb = k = 0;
       while (nb < limit && i < stop) {
-        intnat e = !split  ? mask_next_span(&ms, &w, i)
-                   : o200k ? o200k_next_span(&w, i, digits, flag)
-                           : cl100k_next_span(&w, i, digits, flag);
+        intnat e = o200k ? o200k_next_span(&w, i, digits, flag)
+                         : mask_next_span(&ms, &w, i);
         if (e < 0) {
           class_hit = 1;
           break;
@@ -1561,10 +1777,18 @@ byte_level_encode_impl(value text, value vpos, value vstop, value vspans,
                        : emit_lanes(ids_base + nids, v[0], v[1]);
       else {
         int32_t ids15[15];
-        int m = can_merge ? merge_short(t.mkeys, t.mvals, t.mmask, byte_ids,
-                                        t.len_tab, t.len_n, s, p->i, len,
-                                        ids15)
-                          : -1;
+        intnat word = words_mask < 0 ? -1
+                                     : whole_word(words, words_mask, &t, s, n,
+                                                  p, len);
+        int m;
+        if (word >= 0) {
+          ids15[0] = (int32_t)word;
+          m = 1;
+        } else
+          m = word == -2 ? -1
+                         : merge_short(t.mkeys, t.mvals, t.mmask, byte_ids,
+                                       t.len_tab, t.len_n, s, p->i, len,
+                                       ids15);
         if (m < 0) {
           back = p;
           goto hand_back;

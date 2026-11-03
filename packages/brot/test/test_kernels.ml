@@ -186,16 +186,35 @@ let test_cache_off () =
   let text = String.concat "" (List.init 600 (fun _ -> " a")) in
   equal ~msg:"ids" (array int) (Array.make 600 space_a) (ids tok text)
 
-(* Under ignore_merges the kernel may not merge: misses hand back, the
-   whole-word lookup answers for vocabulary words and the merges for the
-   rest. *)
+(* Under ignore_merges a pretoken that is a vocabulary entry is that entry,
+   whether the merges build something else ("abc") or build it ("ab"), and the
+   others merge. The pretokens miss the cache, are looked up whole and stored,
+   then hit; a cache of one set evicts them, so they miss again; and with no
+   cache every one is looked up whole. *)
 let test_ignore_merges () =
-  let tok = simple ~ignore_merges:true () in
-  let text = String.concat "" (List.init 100 (fun _ -> " a")) in
-  equal ~msg:"ids" (array int) (Array.make 100 space_a) (ids tok text);
-  equal ~msg:"a word not in the vocabulary still merges" (array int)
-    [| space_a; Char.code 'b' |]
-    (ids tok " ab")
+  let vocab =
+    base_vocab
+    @ [ ("\196\160a", 256); ("ab", 257); ("abc", 258); ("\196\160abc", 259) ]
+  in
+  let merges = [ ("\196\160", "a"); ("a", "b") ] in
+  let make ?cache_capacity ignore_merges =
+    Brot.bpe ~vocab ~merges ~pre:(pre ()) ?cache_capacity ~ignore_merges ()
+  in
+  let text =
+    "abc\nab" ^ String.concat "" (List.init 50 (fun _ -> " abc abcd ab"))
+  in
+  let expect =
+    Array.concat
+      ([| 258; 10; 257 |]
+      :: List.init 50 (fun _ -> [| 259; 256; 98; 99; 100; 256; 98 |]))
+  in
+  equal ~msg:"merged without ignore_merges" (array int)
+    [| 257; 99; 256; 98; 99 |]
+    (ids (make false) "abc abc");
+  List.iter
+    (fun (name, cache_capacity) ->
+      equal ~msg:name (array int) expect (ids (make ?cache_capacity true) text))
+    [ ("cached", None); ("evicted", Some 2); ("no cache", Some 0) ]
 
 (* Dropout rules the kernel out at selection; at probability one every merge is
    skipped, deterministically. *)
@@ -250,6 +269,45 @@ let test_class_hand_back () =
     [| space_a; 194; 160; 206; 177; 217; 160; space_a |]
     (ids tok text)
 
+(* The spans [tok] encodes [text] in, read back through offsets and word ids. *)
+let kernel_spans tok text =
+  let e = Brot.encode tok ~add_special_tokens:false text in
+  let offsets = Brot.Encoding.offsets e in
+  let words = Brot.Encoding.word_ids e in
+  let n = Array.length offsets in
+  let spans = ref [] in
+  let i = ref 0 in
+  while !i < n do
+    let w = words.(!i) in
+    let start = fst offsets.(!i) in
+    let j = ref !i in
+    while !j + 1 < n && words.(!j + 1) = w do
+      incr j
+    done;
+    spans := (start, snd offsets.(!j)) :: !spans;
+    i := !j + 1
+  done;
+  Array.of_list (List.rev !spans)
+
+let pre_spans pre text =
+  Array.of_list (List.map snd (Brot.Pre_tokenizer.pre_tokenize pre text))
+
+(* Each family's shape at every offset 0..80, encoded by [tok] and cut by
+   [reference]. *)
+let sweep ?(msg = "") tok reference families =
+  List.iter
+    (fun (name, shape) ->
+      for off = 0 to 80 do
+        let text = shape off in
+        equal
+          ~msg:(Printf.sprintf "%s%s at offset %d" msg name off)
+          (array (pair int int))
+          (pre_spans reference text) (kernel_spans tok text)
+      done)
+    families
+
+let pad n = String.init n (fun i -> "ab ".[i mod 3])
+
 (* The mask-scanner walker classifies 64-byte batches on a grid anchored at the
    range start. Each shape that can cross a batch edge — letter runs, a span of
    exactly 64 bytes, non-ASCII bad zones, contractions, whitespace give-backs
@@ -262,30 +320,6 @@ let test_class_hand_back () =
    its long-run padding to exercise that re-anchor path. *)
 let test_batch_alignments () =
   let tok = Brot.bpe ~vocab:base_vocab ~merges:[] ~pre:(pre ()) () in
-  let pre = pre () in
-  let reference text =
-    Array.of_list (List.map snd (Brot.Pre_tokenizer.pre_tokenize pre text))
-  in
-  let kernel_spans text =
-    let e = Brot.encode tok ~add_special_tokens:false text in
-    let offsets = Brot.Encoding.offsets e in
-    let words = Brot.Encoding.word_ids e in
-    let n = Array.length offsets in
-    let spans = ref [] in
-    let i = ref 0 in
-    while !i < n do
-      let w = words.(!i) in
-      let start = fst offsets.(!i) in
-      let j = ref !i in
-      while !j + 1 < n && words.(!j + 1) = w do
-        incr j
-      done;
-      spans := (start, snd offsets.(!j)) :: !spans;
-      i := !j + 1
-    done;
-    Array.of_list (List.rev !spans)
-  in
-  let pad n = String.init n (fun i -> "ab ".[i mod 3]) in
   let families =
     [
       ("letters across the edge", fun off -> pad off ^ " " ^ String.make 70 'y');
@@ -299,16 +333,82 @@ let test_batch_alignments () =
       ("digits", fun off -> pad off ^ " " ^ String.make 20 '8' ^ "a9 " ^ pad 64);
     ]
   in
+  sweep tok (pre ()) families
+
+(* The cl100k pattern, as Llama 3's tokenizer file spells it, and its variants
+   with numbers one at a time and with the combining marks as letters. *)
+let cl100k =
+  {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
+
+let cl100k_single_digits =
+  {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
+
+let cl100k_marks =
+  {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
+
+let cl100k_patterns =
+  [
+    ("cl100k", cl100k);
+    ("single digits", cl100k_single_digits);
+    ("marks", cl100k_marks);
+  ]
+
+(* The pipeline a cl100k split serves: the split, then the byte-level encoding
+   of its pieces. *)
+let pre_split pattern =
+  Brot.Pre_tokenizer.sequence
+    [
+      Brot.Pre_tokenizer.split_regex ~pattern ~behavior:`Isolated ();
+      Brot.Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:false ();
+    ]
+
+(* A pattern in a group is not recognised, so the regular expression engine cuts
+   it rather than the walker. *)
+let regex_split pattern =
+  Brot.Pre_tokenizer.split_regex ~pattern:("(?:" ^ pattern ^ ")")
+    ~behavior:`Isolated ()
+
+(* The cl100k walker's batches, as the GPT-2 one's above, held to the regular
+   expression: every rule the boundary masks evaluate on ASCII, each white space
+   rule (a newline after punctuation, a newline then spaces, the run's last
+   newline, a give-back), each prefix a word takes, digit groups, case-blind
+   contractions, a run of white space crossing the batch edge, and non-ASCII
+   characters that extend a digit or white space run, among them one that
+   carries spaces after a newline on to more newlines, or close punctuation
+   before newlines. *)
+let test_cl100k_alignments () =
+  let families =
+    [
+      ("letters across the edge", fun off -> pad off ^ " " ^ String.make 70 'y');
+      ("non-ASCII", fun off -> pad off ^ "\195\169" ^ pad 80);
+      ( "contractions",
+        fun off -> pad off ^ "'ll THEY'VE o'x 'S's ''d x 'Re" ^ pad 80 );
+      ( "newline runs",
+        fun off -> pad off ^ " \n \n  x\n\n\ty\r\n  z " ^ pad 80 );
+      ( "newlines after punctuation",
+        fun off -> pad off ^ "!!\n\n x?\n \n!\r\n\t." ^ pad 80 );
+      ("prefixes", fun off -> pad off ^ "\ta ?b  !c\t!d .e ..f\x0Bg" ^ pad 80);
+      ( "digits",
+        fun off -> pad off ^ " " ^ String.make 20 '8' ^ "a9 1234 12" ^ pad 64 );
+      ( "white space across the edge",
+        fun off -> pad off ^ "      \n     \n  y \t \n\t z" ^ pad 80 );
+      ( "non-ASCII digits and white space",
+        fun off ->
+          pad off ^ "\217\16312345 \227\128\130\n\n  x\194\160\n y \194\160 !"
+          ^ pad 80 );
+      ( "give-back before non-ASCII white space",
+        fun off -> String.make off 'x' ^ "  \194\160 " ^ String.make 80 'y' );
+      ( "spaces after a newline, then non-ASCII white space and newlines",
+        fun off -> pad off ^ "  \n  \194\160\n\n\n x" ^ pad 80 );
+    ]
+  in
   List.iter
-    (fun (name, shape) ->
-      for off = 0 to 80 do
-        let text = shape off in
-        equal
-          ~msg:(Printf.sprintf "%s at offset %d" name off)
-          (array (pair int int))
-          (reference text) (kernel_spans text)
-      done)
-    families
+    (fun (name, pattern) ->
+      let tok =
+        Brot.bpe ~vocab:base_vocab ~merges:[] ~pre:(pre_split pattern) ()
+      in
+      sweep ~msg:(name ^ ": ") tok (regex_split pattern) families)
+    cl100k_patterns
 
 (* The SentencePiece kernel: models with no pre-tokenizer hand the whole
    document to the model as one span, and the sub-cut walker owns any span past
@@ -711,11 +811,28 @@ let law_alphabet =
   ]
 [@@ocamlformat "disable"]
 
-let law_text =
+let text_of ~size alphabet =
   Gen.with_pp
     (fun ppf s -> Format.fprintf ppf "%S" s)
     (Gen.map (String.concat "")
-       (Gen.list ~size:(Gen.int_range 0 40) (Gen.of_list law_alphabet)))
+       (Gen.list ~size:(Gen.int_range 0 size) (Gen.of_list alphabet)))
+
+let law_text = text_of ~size:40 law_alphabet
+
+(* The cl100k pattern's own cases on top: contractions in any case, digit
+   groups, every white space rule, punctuation before newlines, the prefixes a
+   word takes, and characters beyond ASCII that join digits, white space and
+   punctuation; texts long enough to cross several 64-byte batches. *)
+let cl100k_alphabet =
+  law_alphabet
+  @ [
+      "'S"; "'LL"; "'Re"; "'VE"; "'D"; "''"; "12"; "1234567"; "\r\n"; " \n ";
+      "  \n"; "\n\n  "; "\t?"; "?!"; ".\n\n"; "\x0B"; "\u{a0}"; "\u{2019}";
+      "\u{663}"; "\u{3002}"; "\u{3000}"; "a\u{301}";
+    ]
+[@@ocamlformat "disable"]
+
+let cl100k_text = text_of ~size:80 cl100k_alphabet
 
 let has_sub text sub =
   let n = String.length sub in
@@ -737,8 +854,36 @@ let cover_law text =
   cover "white space other than a space"
     (String.exists (fun c -> c = '\n' || c = '\t') text)
 
+(* Llama 3, Qwen 2.5 and Phi-4 merge the byte-level spelling of each piece of
+   their cl100k pattern, cut by the regular expression engine; under
+   ignore_merges a piece that is itself in the vocabulary is that entry. Qwen
+   2.5 takes numbers one at a time and composes its text to NFC first. *)
+let cl100k_reference ?(pattern = cl100k) ?(normalize = Fun.id) ~ignore_merges r
+    =
+  let pre = regex_split pattern in
+  fun text ->
+    Brot.Pre_tokenizer.pre_tokenize pre (normalize text)
+    |> List.concat_map (fun (piece, _) ->
+        let symbols =
+          List.init (String.length piece) (fun i ->
+              byte_alphabet.(Char.code piece.[i]))
+        in
+        match Hashtbl.find_opt r.vocab (String.concat "" symbols) with
+        | Some id when ignore_merges -> [ id ]
+        | _ ->
+            List.filter (Hashtbl.mem r.vocab) symbols
+            |> merge_all r |> List.map (id_of r))
+    |> Array.of_list
+
+let cover_cl100k text =
+  cover "a contraction in upper case" (has_sub text "'S" || has_sub text "'LL");
+  cover "a group of three digits" (has_sub text "1234567");
+  cover "a newline then spaces" (has_sub text "\n ");
+  cover "punctuation before a newline" (has_sub text ".\n");
+  cover "a text over two batches" (String.length text > 128)
+
 (* The tokenizer and the reference are read once, on the first case. *)
-let law name make =
+let law ?(text = law_text) ?(cover = cover_law) name make =
   let loaded =
     lazy
       (Fixture.with_tokenizer_file name (fun path ->
@@ -748,11 +893,11 @@ let law name make =
   in
   prop ~count:300
     (Printf.sprintf "%s encodes as the reference merge" name)
-    law_text
+    text
     (fun text ->
       let tok, reference = Lazy.force loaded in
       let expect = reference text in
-      cover_law text;
+      cover text;
       equal ~msg:(Printf.sprintf "%S alone" text) (array int) expect
         (ids tok text);
       match batch_rows tok [ text; text ] None with
@@ -780,7 +925,11 @@ let () =
              test "a span larger than the ids buffer" test_huge_span;
            ];
          group "batch walker"
-           [ test "every shape at every batch alignment" test_batch_alignments ];
+           [
+             test "every shape at every batch alignment" test_batch_alignments;
+             test "every cl100k shape at every batch alignment"
+               test_cl100k_alignments;
+           ];
          group "selection and refusals"
            [
              test "caching off" test_cache_off;
@@ -811,6 +960,16 @@ let () =
            [
              law "gpt2" gpt2_reference;
              law "mistral" mistral_reference;
+             law ~text:cl100k_text ~cover:cover_cl100k "llama3"
+               (cl100k_reference ~ignore_merges:true);
+             law ~text:cl100k_text ~cover:cover_cl100k "qwen2_5"
+               (cl100k_reference ~pattern:cl100k_single_digits
+                  ~normalize:(Brot.Normalizer.apply Brot.Normalizer.nfc)
+                  ~ignore_merges:false);
+             (* Phi-4 keeps its split's matches rather than isolating them, a
+                pipeline the kernel walkers do not take. *)
+             law ~text:cl100k_text ~cover:cover_cl100k "phi4"
+               (cl100k_reference ~ignore_merges:false);
            ];
          group "batch sink"
            [

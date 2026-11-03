@@ -24,7 +24,8 @@ type byte_level = {
   merge_values : int array; (* 7: BROT_BL_MERGE_VALUES *)
   merge_mask : int; (* 8: BROT_BL_MERGE_MASK *)
   len_table : int array; (* 9: BROT_BL_LEN_TABLE *)
-  merge : bool; (* 10: BROT_BL_MERGE *)
+  words : Bytes.t; (* 10: BROT_BL_WORDS *)
+  words_mask : int; (* 11: BROT_BL_WORDS_MASK *)
 }
 
 type sp = {

@@ -259,6 +259,12 @@ type t = {
      what serialization and decoding speak. *)
   byte_level : bool;
   source_vocab : vocab;
+  (* Under [ignore_merges], when the fused kernel encodes, the short entries of
+     [source_vocab] whose merge does not give the entry back, as the kernel
+     looks a miss up before merging it ([Kernel.byte_level]'s [words]); empty
+     and [-1] otherwise. *)
+  words : Bytes.t;
+  words_mask : int;
   byte_ids : int array;
   (* How many bytes of a pretoken each id accounts for. *)
   len_table : int array;
@@ -759,9 +765,9 @@ let exact model word len =
   done;
   !ok && !total = len
 
-(* The tables the C kernel reads, in the field order it pins. A miss may be
-   merged in C unless [ignore_merges] asks for the whole-word lookup, which
-   needs [source_vocab]; dropout rules the kernel out at selection instead. *)
+(* The tables the C kernel reads, in the field order it pins. Under
+   [ignore_merges] a miss is looked up whole in [words] before it is merged;
+   dropout rules the kernel out at selection instead. *)
 let kernel_tables model cache =
   {
     Kernel.lead = Pre_tokenizer.lead_class;
@@ -774,7 +780,8 @@ let kernel_tables model cache =
     merge_values = model.merges.Merge_map.values;
     merge_mask = model.merges.Merge_map.mask;
     len_table = model.len_table;
-    merge = not model.ignore_merges;
+    words = model.words;
+    words_mask = model.words_mask;
   }
 
 (* The tables the SentencePiece kernel reads, in the field order it pins; [None]
@@ -848,6 +855,28 @@ let build_seeds model =
       end)
     model.source_vocab;
   Buffer.to_bytes buf
+
+(* The short entries whose merge does not give the entry itself back: under
+   [ignore_merges] the only pretokens the whole-word lookup answers otherwise
+   than the merge, and so all the kernel looks up before merging a miss. A key
+   is taken with the id [Hashtbl.find] gives it. *)
+let whole_word_exceptions model =
+  let st = private_state model in
+  let exceptions = Hashtbl.create 1024 in
+  Hashtbl.iter
+    (fun text id ->
+      let len = String.length text in
+      if
+        len >= 1 && len <= Cache.max_key_len
+        && Hashtbl.find model.source_vocab text = id
+      then begin
+        run_merge model st text 0 len;
+        let word = st.st_word in
+        if not (word.size = 1 && Array.unsafe_get word.sym_c 0 = id) then
+          Hashtbl.replace exceptions text id
+      end)
+    model.source_vocab;
+  exceptions
 
 (* The kernels store into the back table without growing it, so a BPE cache is
    allocated whole. *)
@@ -1194,7 +1223,7 @@ let packed_walker : Pre_tokenizer.walker -> int = function
    misses, and everything it refuses comes back here with a resume position — an
    unclassified code point is classified and the call re-entered, a full ids
    buffer is grown, and an [Encode] span (over 15 bytes, a byte without an id,
-   [ignore_merges], a merge result [emit_word] would record) goes through
+   a merge result or whole-word id [emit_word] would record) goes through
    [encode_into], which owns the miss reference. The contract is
    {!Pre_tokenizer.fill}'s: [stop] once the range is exhausted, otherwise the
    start of the first span that did not fit, and a call that appends nothing and
@@ -1395,6 +1424,36 @@ let build_len_table ~source ~byte_level ~prefix ~suffix ~byte_fallback
       byte_fallback_ids;
   table
 
+(* [Kernel.byte_level]'s whole-word table of the entries [words]: two slots an
+   entry, so a probe for a word that is not there meets a free slot within a
+   few; no table at all for no entry. *)
+let words_table words =
+  let count = Hashtbl.length words in
+  if count = 0 then (Bytes.empty, -1)
+  else begin
+    let slots = ref 1 in
+    while !slots < 2 * count do
+      slots := 2 * !slots
+    done;
+    let mask = !slots - 1 in
+    let table = Bytes.make (24 * !slots) '\000' in
+    Hashtbl.iter
+      (fun text id ->
+        let k0, k1 = Cache.key_words text in
+        let at = ref (Cache.hash k0 k1 land mask) in
+        let used at =
+          not (Int64.equal (Bytes.get_int64_ne table ((24 * at) + 8)) 0L)
+        in
+        while used !at do
+          at := (!at + 1) land mask
+        done;
+        Bytes.set_int64_ne table (24 * !at) k0;
+        Bytes.set_int64_ne table ((24 * !at) + 8) k1;
+        Bytes.set_int64_ne table ((24 * !at) + 16) (Int64.of_int id))
+      words;
+    (table, mask)
+  end
+
 let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
     ?dropout ?unk_token ?continuing_subword_prefix ?end_of_word_suffix
     ?(fuse_unk = false) ?(byte_fallback = false) ?(ignore_merges = false) () : t
@@ -1511,6 +1570,8 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
       sp_cut;
       byte_level;
       source_vocab;
+      words = Bytes.empty;
+      words_mask = -1;
       byte_ids;
       len_table =
         build_len_table ~source ~byte_level ~prefix ~suffix ~byte_fallback
@@ -1526,6 +1587,12 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
            1 + String.length prefix + String.length suffix
          else 1);
     }
+  in
+  let model =
+    if ignore_merges && fused model then
+      let words, words_mask = words_table (whole_word_exceptions model) in
+      { model with words; words_mask }
+    else model
   in
   (* A vocabulary entry carries the affixes its position gave it — [low</w>],
      [##ing] — and no pretoken ever looks like that, so seeding an affixed model

@@ -31,7 +31,16 @@ type byte_level = {
   merge_values : int array;  (** Packed [(rank lsl 21) lor new_id]. *)
   merge_mask : int;  (** The merge map's slot index mask. *)
   len_table : int array;  (** The bytes each id accounts for. *)
-  merge : bool;  (** Whether a miss may be merged in C. *)
+  words : Bytes.t;
+      (** The whole-word table of [ignore_merges]: for each vocabulary entry of
+          1 to 15 bytes, in its source form, whose merge does not give the entry
+          itself back, a 24-byte slot of its two {!Pretoken_cache.key_words}
+          and its id, all native-endian, at the first free slot from
+          [Pretoken_cache.hash k0 k1 land words_mask] on, wrapping; a free slot
+          is zero. A miss is looked up here before it is merged. Empty without
+          [ignore_merges] or without such an entry. *)
+  words_mask : int;
+      (** The whole-word table's slot index mask, [-1] when it is empty. *)
 }
 (** Tables of the fused byte-level kernel: a walker over raw bytes — the GPT-2
     one, or the cl100k or o200k one, by the entry called — the pretoken cache
@@ -93,8 +102,8 @@ type reason =
           walker met a code point the Unicode table does not classify yet —
           classify {!code_point} and call again. [Encode]: the span the resume
           position opens was appended to the spans but needs OCaml — over 15
-          bytes, a byte without an id, a model whose misses C may not merge, or
-          a merge whose result stands for other bytes than its entry's. *)
+          bytes, a byte without an id, or a merge result or whole-word id that
+          stands for other bytes than its entry's. *)
 
 (** {1:cursor The cursor} *)
 

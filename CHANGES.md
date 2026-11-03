@@ -2634,6 +2634,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Encoding new text takes fewer instructions behind the cl100k pattern and
+  under `ignore_merges`: 41% fewer for Llama 3, 25% for Mistral NeMo, 24% for
+  gpt-oss and 10% for Qwen 2.5 on a first pass over OpenWebText. The cl100k
+  walker tests text 64 bytes at a time, as the GPT-2 one does, and a pretoken
+  the cache misses is looked up whole and merged in C.
 - **Breaking:** `encode_batch*` run on the calling domain unless given
   `~exec` (`Brot.exec`), which replaces `?domains`: placement is the program's,
   and brot no longer spawns domains whose signals it cannot mask.
