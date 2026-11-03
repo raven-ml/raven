@@ -1589,22 +1589,7 @@ let cuda_lang =
       :: (Dtype.Fp8e5m2, "__nv_fp8_e5m2")
       :: cstyle.type_map;
     bitcast = strf "tg_bitcast<%s>((%s)(%s))";
-    string_rewrite =
-      Pattern_matcher.append
-        (Pattern_matcher.fold
-           (fun () -> [
-             rule_ctx (Upat.op ~name:"x" Op.Bitcast) (fun ctx m ->
-                 let x = m "x" and l = ctx.lang in
-                 if is_ptr (addrspace x) then None
-                 else
-                   let s = nth x 0 in
-                   Some
-                     (l.bitcast
-                        (render_scalar l (dtype x))
-                        (render_scalar l (dtype s))
-                        ctx.%{s}));
-           ]))
-        base_rewrite;
+    string_rewrite = base_rewrite;
   }
 
 let cuda_extra_matcher =

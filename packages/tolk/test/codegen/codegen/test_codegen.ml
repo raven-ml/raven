@@ -2462,6 +2462,50 @@ let by_hand_on_cuda (warps, words) =
     (List.assoc 0
        (Run.on d prg [ (1, laid fa 8 a_at); (2, laid fb 4 b_at) ]))
 
+(* [D[i] = bitcast uint16 (lane i of the bitcast of four words to eight
+   bfloat16)]: the lanes of a bitcast are the words' halves, the low half
+   first. *)
+let halves () =
+  let w = Shape.param ~shape:[ Int 4 ] 1 Uint32 in
+  let d = Shape.param ~shape:[ Int 8 ] 0 Uint16 in
+  let lanes =
+    Ops.bitcast
+      (Shape.stack
+         (List.init 4 (fun i ->
+              Ops.load (Ops.index w [ Ops.int ~dtype:Int32 i ]) [])))
+      Bfloat16
+  in
+  let store e =
+    Ops.store (Ops.index d [ Ops.int ~dtype:Int32 e ])
+      (Ops.bitcast (Ops.index lanes [ Ops.int ~dtype:Int32 e ]) Uint16)
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ~opts_to_apply:[] ()) (List.init 8 store)
+
+let words_values l =
+  Array.of_list (List.map (fun n -> `Int (Bigint.of_int n)) l)
+
+let halves_of words =
+  Array.of_list
+    (List.concat_map
+       (fun w -> [ w land 0xffff; w lsr 16 ])
+       (Array.to_list words))
+
+let words_gen =
+  Gen.array ~size:(Gen.constant 4)
+    (Gen.frequency
+       [
+         (3, Gen.int_range 0 0xffff_ffff);
+         (* Quiet and signalling NaNs, infinities, a subnormal and -0. *)
+         ( 1,
+           Gen.of_list [ 0x7fc0_ffc1; 0xff80_7f80; 0x8000_0001; 0x7fbf_ffbf ]
+         );
+       ])
+
+let bitcast_halves run words =
+  equal (array Dtypes.value)
+    (words_values (Array.to_list (halves_of words)))
+    (List.assoc 0 (run (Array.to_list words)))
+
 let tensor_cores_by_hand =
   group "tensor cores written by hand"
     [
@@ -2470,8 +2514,29 @@ let tensor_cores_by_hand =
          product"
         ~id:(fun (warps, words) ->
           Printf.sprintf "%d warps%s" warps (if words then ", words" else ""))
-        [ (1, false); (4, false) ]
+        [ (1, false); (4, false); (1, true); (4, true) ]
         by_hand_on_cuda;
+      test "a tensor core's operand bitcast from words lowers for CUDA"
+        (fun () ->
+          let r = renderer_for (target "CUDA" "CUDA" "sm_89") in
+          let prg = Codegen.to_program (by_hand ~warps:1 ~words:true) r in
+          let wmmas = List.filter (is Wmma) (Ops.src (Ops.nth prg 1)) in
+          equal ~msg:"tensor cores" int 1 (List.length wmmas));
+      prop "a bitcast of words to bfloat16 lanes takes each word's low half \
+            first, on the host"
+        words_gen
+        (bitcast_halves (fun words ->
+             Run.on_host
+               (Codegen.to_program (halves ()) (Lazy.force host))
+               [ (1, words_values words) ]));
+      prop ~count:20 "a bitcast of words to bfloat16 lanes takes each word's \
+            low half first, on CUDA"
+        words_gen
+        (bitcast_halves (fun words ->
+             let d, r = on_cuda () in
+             Run.on d
+               (compiled_for r (halves ()))
+               [ (1, words_values words) ]));
     ]
 
 (* Reductions over a variable size

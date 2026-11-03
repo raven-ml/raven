@@ -6223,3 +6223,29 @@ fold wraps integers and holds its float bound`, hold.
   thread axis`; on CUDA, `Tolk.Codegen › tensor cores written by hand › a
   warp per product, lanes a warp range, gives each warp's exact product`,
   whose four warps each compute their own product.
+
+## D236. A bitcast that changes a vector's lane count stays whole
+
+- **tinygrad:** `codegen/__init__.py:125-134` (`do_stack_wmma`), which
+  replaces a tensor core's operand by the stack of its lanes, and
+  `uop/movement.py:16-18` (`mop_cleanup`), which folds that stack back to the
+  operand, so that a bitcast operand that changes the lane count, such as
+  four words read as eight bfloat16, rewrites forever ("infinite loop in
+  graph_rewrite"); `renderer/cstyle.py:451` (CUDA's `string_rewrite`), which
+  renders a bitcast with its scalar types, so that a bitcast of a vector does
+  not compile ("no suitable conversion function from uint4 to uint");
+  `test/gen/tinygrad.patch` gives tinygrad tolk's rules.
+- **tolk:** `Codegen.do_stack_wmma`, which keeps such a bitcast whole;
+  `Cstyle`'s base rewrite renders a bitcast with each side's vector type on
+  CUDA, which has no rule of its own.
+- **Differs:** a tensor core takes such a bitcast as the vector it is, and
+  CUDA renders it `tg_bitcast<nv_bfloat168>((uint4)(...))`. A scalar bitcast
+  renders as before. tinygrad computes no product on these kernels; tolk
+  computes the right one.
+- **Reason:** (e).
+- **Pinned by:** `Tolk.Codegen › tensor cores written by hand › a tensor
+  core's operand bitcast from words lowers for CUDA`, which needs no GPU; on
+  CUDA, `› a warp per product, lanes a warp range, gives each warp's exact
+  product`, whose rows with words read each fragment as words bitcast to
+  bfloat16, and `› a bitcast of words to bfloat16 lanes takes each word's low
+  half first, on CUDA`, and on the host.

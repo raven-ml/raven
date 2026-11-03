@@ -955,6 +955,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   most `ceil(R / 16)` times where it streams, padding the rows where 16
   divides them unevenly: an MXFP4 product of 17 bfloat16 rows runs 3 to 4
   times faster on an RTX 5000 Ada.
+- A tensor core takes an operand bitcast from words of another width, such as
+  four `Uint32` read as eight `Bfloat16`, where lowering never ended; CUDA
+  renders a bitcast of a vector with vector types, where the source did not
+  compile.
 - A kernel holding a tensor core raises `Invalid_argument` in
   `Gpudims.group_gpudims`, and so in `Codegen.to_program`, unless its first
   thread loop is a warp of the core's threads. A kernel that numbered its

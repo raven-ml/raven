@@ -432,12 +432,19 @@ let address_lanes e =
   let e' = go e in
   if e' == e then None else Some e'
 
+let is_shape_changing_bitcast u =
+  is Op.Bitcast u && not (List.equal Sint.equal (shape u) (shape (nth u 0)))
+
+(* A tensor core reads each operand as the stack of its lanes. A bitcast that
+   changes the lane count stays whole: no lane of it is a lane of its source,
+   so its stack of lanes is only itself again. *)
 let do_stack_wmma u =
-  if List.for_all (fun x -> is Op.Stack x || is Op.Wmma x) (src u) then None
+  let whole x = is Op.Stack x || is_shape_changing_bitcast x in
+  if List.for_all (fun x -> whole x || is Op.Wmma x) (src u) then None
   else begin
     assert (ndim u = 1);
     let unpack b =
-      if is Op.Stack b then b
+      if whole b then b
       else
         stack
           (List.map (index_ints b)
@@ -712,9 +719,6 @@ let pm_reduce_local =
   ++ lift Symbolic.pm_clean_up_group_sink
 
 (* Loads and local buffers *)
-
-let is_shape_changing_bitcast u =
-  is Op.Bitcast u && not (List.equal Sint.equal (shape u) (shape (nth u 0)))
 
 let maybe_load u =
   match addrspace u with
