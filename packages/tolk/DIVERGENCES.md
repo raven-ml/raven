@@ -4191,7 +4191,16 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   storage holds, raise `Invalid_argument` naming the storage, and so does a call
   whose body does not show its writes given one state twice. A partial
   overwrite of elements a kernel does not read copies too, at a kernel and
-  the state's size in storage.
+  the state's size in storage. The relation costs allocation in every
+  schedule, cycle or not: an edge list, 7 words an edge, beside the order's
+  own children, and tables of the kernels met and of the joins' waits.
+  Measured in exact words on fudge, `matmul/schedule` allocates 780 words
+  where it allocated 613, and `gpt_oss_decode/schedule` about a third more
+  (15.4 thousand against 11.6); the `*/kernel_graph` rows are unchanged
+  within 1%. Cheaper shapes were tried and kept: the order runs first and
+  the cut's parent tables are built only where it finds a cycle, and a
+  state is resolved without allocating; with parent and child tables built
+  for every graph, `matmul/schedule` allocated 909 words.
 - **Reason:** (e). tinygrad raises on valid graphs (the swap, the stale read
   beside its overwrite), and computes wrong values where it orders silently:
   a call given one buffer twice, and the join cases of D202. rune's jit
