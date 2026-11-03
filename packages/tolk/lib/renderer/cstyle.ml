@@ -1050,9 +1050,7 @@ let vector_mask ctx x w n =
    make unsigned: the mask is read as signed chars, so that it widens to -1. *)
 let byte_mask ctx x s =
   if is_mask x && Tbl.find ctx.masks x = 1 then
-    strf "__builtin_bit_cast(%s, %s)"
-      (vector_type ctx Dtype.Int8 (max_numel x))
-      s
+    strf "((%s)(%s))" (vector_type ctx Dtype.Int8 (max_numel x)) s
   else s
 
 let mask_logic op a b =
@@ -1142,6 +1140,19 @@ let clang_vectors =
                 in
                 let b = if is_mask x then as_mask ctx b w n else ctx.%{b} in
                 Some (strf "(%s?%s:%s)" (as_mask ctx c w n) a b));
+        (* A cast between vectors reinterprets their bits, as a bitcast does,
+           and Clang compiles it as one instruction: a long chain of
+           [__builtin_bit_cast]s, each a copy through memory, takes its
+           scalar replacement of aggregates a time that grows faster than
+           the chain. *)
+        r (Upat.op ~name:"x" Op.Bitcast) (fun ctx m ->
+            let x = m "x" in
+            let s = nth x 0 in
+            if not (vector x && vector s) then None
+            else
+              Some
+                (strf "((%s)((%s)(%s)))" (render_type ctx.lang x)
+                   (render_type ctx.lang s) ctx.%{s}));
         (* conversions *)
         r
           (vec ~op:(Op.Set.of_list [ Op.Cast ]) ())

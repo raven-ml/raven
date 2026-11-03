@@ -5604,3 +5604,32 @@ fold wraps integers and holds its float bound`, hold.
   `Jit/cumsum-float64-100x50500`, `Jit/cumsum-scaled-float32-100x400`,
   `Jit/cumsum-neg-log-uniform-8x1024`, `Cuda/cumsum-float32-100x400`,
   `Cuda/cumsum-float32-8x1024` and `Cuda/cumsum-float32-100x50500`.
+
+## D195. Clang reinterprets a vector's bits by a vector cast
+
+- **tinygrad:** `renderer/cstyle.py:43` (`base_rewrite`'s `BITCAST`,
+  `__builtin_bit_cast(T, (S)(x))` for every value).
+- **tolk:** `Cstyle.clang_vectors`'s bitcast rule and `Cstyle.byte_mask`;
+  `test/gen/tinygrad.patch`, which gives tinygrad's `clang_vectors` the same
+  (`_vector_bitcast`, `_byte_mask`) before the goldens are recorded.
+- **Differs:** on Clang, a bitcast between vectors, the host's lanes of
+  D141, is the C cast `((T)((S)(x)))`, which reinterprets the bits of a
+  vector of one size as another's, and a mask of one-byte lanes is read as
+  signed chars by that cast. A bitcast with a scalar side stays
+  `__builtin_bit_cast`. Each lane holds the same bits either way: Clang
+  writes `__builtin_bit_cast` of a vector as a store and a load of a
+  temporary, and the cast as one `bitcast` instruction. Of the 339 kernels
+  of rune's compile bench, the 61 with a vector bitcast compile to the same
+  object but two, whose vectors of 3 lanes Clang pads to 4 in memory: the
+  temporary copies the padding lane, and their instructions differ in order
+  and by up to 7 of 4520.
+- **Reason:** (d): rune's compile bench row `special/betaincinv-grad-f64`.
+  Its one kernel, 1.0 MB of C with 2495 vector bitcasts, spent 5.2 of
+  Clang's 6.2 s of CPU in scalar replacement of aggregates, removing the
+  temporaries, and 0.08 s with casts. Clang took 6.8-11.9 s against
+  2.7-4.8 s for the same object (fudge, loaded, three interleaved pairs).
+- **Pinned by:** the Cstyle suite's `sources › by default ›
+  clang_vector_bitcast` and `› clang_vector_byte_mask`, from the patched
+  tinygrad, and every host golden with a vector bitcast; rune's compile
+  bench row `special/betaincinv-grad-f64`, whose fudge baseline the
+  scheduled re-record records.

@@ -1901,7 +1901,7 @@ index 7fb5ccac2..489f4fc09 100644
    has_shared: bool = True
    # NOTE: these two should be in (x,y,z) order to match the max_sizes argument in get_grouped_dims
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 6eec3e198..8f2b25e0c 100644
+index 6eec3e198..24376d2e2 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -2043,7 +2043,7 @@ index 6eec3e198..8f2b25e0c 100644
  
      # NOTE: this relies on bufs dict preserving order
      return (name, kernel, list(bufs.values()))
-@@ -284,7 +324,106 @@ class CStyleLanguage(Renderer):
+@@ -284,7 +324,112 @@ class CStyleLanguage(Renderer):
                '\n'.join(inlines[b][1]) + "\n}" for b in bodies]
      return self.render_kernel(*self._render(uops), uops+[u for b in inlines for u in b.src], prefix or None)
  
@@ -2086,7 +2086,7 @@ index 6eec3e198..8f2b25e0c 100644
 +# C gives a comparison of one-byte lanes as plain chars, which a target may make unsigned: the mask is read as signed chars, so
 +# that it widens to -1
 +def _byte_mask(ctx, x:UOp, s:str) -> str:
-+  return f"__builtin_bit_cast({_vector_type(ctx, dtypes.int8, x.max_numel())}, {s})" if _is_mask(x) and ctx.masks[x] == 1 else s
++  return f"(({_vector_type(ctx, dtypes.int8, x.max_numel())})({s}))" if _is_mask(x) and ctx.masks[x] == 1 else s
 +def _vector_compare(ctx, x:UOp):
 +  if not _vector(x) or x.src[0].dtype == dtypes.bool or ctx.masks[x] != 1: return None
 +  return _byte_mask(ctx, x, ctx.code_for_op[x.op](*[ctx[u] for u in x.src], x.dtype))
@@ -2104,6 +2104,10 @@ index 6eec3e198..8f2b25e0c 100644
 +  sa = (_as_mask(ctx, a, w, n) if _is_mask(x) else ctx[a]) if _vector(a) or _vector(b) else arm(a)
 +  sb = _as_mask(ctx, b, w, n) if _is_mask(x) else ctx[b]
 +  return f"({_as_mask(ctx, c, w, n)}?{sa}:{sb})"
++# a cast between vectors reinterprets their bits as a bitcast does, in one instruction where __builtin_bit_cast copies through memory
++def _vector_bitcast(ctx, x:UOp):
++  if not (_vector(x) and _vector(x.src[0])): return None
++  return f"(({ctx.render_type(x)})(({ctx.render_type(x.src[0])})({ctx[x.src[0]]})))"
 +def _vector_cast(ctx, x:UOp):
 +  if not _vector(x): return None
 +  s = x.src[0]
@@ -2123,6 +2127,8 @@ index 6eec3e198..8f2b25e0c 100644
 +  (UPat((Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ), name="x"), _vector_compare),
 +  # a selection reads its condition at its arms' width
 +  (UPat(Ops.WHERE, src=(UPat.var("c"), UPat.var("a"), UPat.var("b")), name="x"), _vector_where),
++  # reinterpretations
++  (UPat(Ops.BITCAST, name="x"), _vector_bitcast),
 +  # conversions
 +  (UPat(Ops.CAST, name="x"), _vector_cast),
 +  # builtins take vectors
@@ -2150,7 +2156,7 @@ index 6eec3e198..8f2b25e0c 100644
    float4 = "(float4)"
    float4_style = ('{', '}')
    gep_arr_threshold = 0
-@@ -301,7 +440,8 @@ class ClangRenderer(CStyleLanguage):
+@@ -301,7 +446,8 @@ class ClangRenderer(CStyleLanguage):
    code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.RECIP]}),
                   Ops.SQRT: lambda x,dtype: f"__builtin_sqrt({x})" if dtype == dtypes.float64 else f"__builtin_sqrtf({x})",
                   Ops.TRUNC: lambda x,dtype: f"__builtin_trunc({x})" if dtype == dtypes.float64 else f"__builtin_truncf({x})",
@@ -2160,7 +2166,7 @@ index 6eec3e198..8f2b25e0c 100644
  
    # LLVM legalizes double => half cast on systems that don't support it natively (like x86 cpus without AVX512-FP16) into a compiler-rt libcall.
    extra_matcher = PatternMatcher([(UPat.var("x", dtypes.float64).cast(dtypes.float16), lambda x: x.cast(dtypes.float32).cast(dtypes.float16))]) \
-@@ -313,7 +453,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -313,7 +459,15 @@ class ClangRenderer(CStyleLanguage):
      vec = self._render_dtype(dt, count, AddrSpace.REG)
      return f"typedef {self.render_dtype(dt)} {vec} __attribute__((aligned({alignment}),ext_vector_type({count})));"
  
@@ -2177,7 +2183,7 @@ index 6eec3e198..8f2b25e0c 100644
    def _render_body(self, function_name, kernel, bufs, uops, pref=None) -> str: return super().render_kernel(function_name, kernel, bufs, uops, pref)
    def _render_entry(self, function_name:str, bufs:list[tuple[str,tuple[UOp,bool]]]) -> str: return ""
  
-@@ -328,6 +476,16 @@ class ClangRenderer(CStyleLanguage):
+@@ -328,6 +482,16 @@ class ClangRenderer(CStyleLanguage):
      super().__init__(target)
      from tinygrad.runtime.support.compiler_cpu import ClangCompiler
      self.compiler = ClangCompiler(target.arch.split(","))
@@ -2194,7 +2200,7 @@ index 6eec3e198..8f2b25e0c 100644
  
  class OpenCLRenderer(CStyleLanguage):
    # language options
-@@ -337,6 +495,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -337,6 +501,7 @@ class OpenCLRenderer(CStyleLanguage):
    smem_prefix = "__local "
    barrier = "barrier(CLK_LOCAL_MEM_FENCE);"
    float4 = "(float4)"
@@ -2202,7 +2208,7 @@ index 6eec3e198..8f2b25e0c 100644
    code_for_workitem = {"g": lambda x: f"get_group_id({x})", "l": lambda x: f"get_local_id({x})"}
    type_map = {**CStyleLanguage.type_map, dtypes.i8: "char", dtypes.u8: "uchar", dtypes.u32: "uint", dtypes.u16: "ushort",
                dtypes.u64: "ulong", dtypes.bf16: "ushort"}
-@@ -364,6 +523,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -364,6 +529,7 @@ class OpenCLRenderer(CStyleLanguage):
                                        (d != dtypes.double or "cl_khr_fp64" in self.target.arch) and d not in dtypes.fp8s}
  
  class MetalRenderer(CStyleLanguage):
@@ -2210,7 +2216,7 @@ index 6eec3e198..8f2b25e0c 100644
    def __init__(self, target:Target):
      super().__init__(target)
      from tinygrad.runtime.ops_metal import MetalCompiler
-@@ -415,6 +575,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
+@@ -415,6 +581,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
  _nms = list("xyzwabcdefghijkl") + [f'v{i}' for i in range(16, 32)]
  
  class CUDARenderer(CStyleLanguage):
@@ -2218,7 +2224,7 @@ index 6eec3e198..8f2b25e0c 100644
    global_max = (2147483647, 65535, 65535)
    local_max = (1024, 1024, 64)
    shared_max = 49152
-@@ -441,7 +602,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -441,7 +608,8 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
@@ -2228,7 +2234,7 @@ index 6eec3e198..8f2b25e0c 100644
    type_map = {**CStyleLanguage.type_map, dtypes.u32: "uint", dtypes.bf16: "nv_bfloat16",
                dtypes.fp8e4m3: "__nv_fp8_e4m3", dtypes.fp8e5m2: "__nv_fp8_e5m2"}
    extra_matcher = pm_narrow_uint + create_non_native_float_pats(dtypes.fp8s, casting=False) + PatternMatcher([
-@@ -521,8 +683,9 @@ class HIPRenderer(CStyleLanguage):
+@@ -521,8 +689,9 @@ class HIPRenderer(CStyleLanguage):
      if amd_fp8s(target.arch):
        self.extra_matcher += tc.pm_wmma_fp8(dtypes.uint64 if self.is_cdna(target.arch) else dtypes.uint32)
        self.string_rewrite = PatternMatcher([
@@ -2240,7 +2246,7 @@ index 6eec3e198..8f2b25e0c 100644
            f" {fp8_index(x.dtype)})"),
          (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
            lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
-@@ -538,7 +701,8 @@ class HIPRenderer(CStyleLanguage):
+@@ -538,7 +707,8 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),

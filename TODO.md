@@ -125,10 +125,7 @@ raven / llama.cpp b12048 Vulkan:
   the symbolic passes before decomposition the largest. Rewrite tables are
   now keyed by node id (382 M words on rune's `special/betaincinv-grad-f64`
   compile row); left in tolk: table cache misses (~20% of its samples),
-  interning (~10%) and matching. Clang's SROA is superlinear in vector
-  `__builtin_bit_cast` (tinygrad renders them too): 4.2 of that row's 7.2
-  s of Clang; rendering them as vector casts gives the same object in 2.8
-  s, a divergence to admit with that row
+  interning (~10%) and matching
 - whether memory-bound host kernels take lanes at all: no upcast ran 4-7%
   faster than 64-byte lanes in two of seven loaded fudge runs of a 4M
   float32 select-zero; decide on the scheduled quiet re-record

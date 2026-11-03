@@ -927,6 +927,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Cstyle.clang` writes a bitcast between vectors as a vector cast, one
+  instruction to Clang: rune's float64 `betaincinv` gradient takes 2.7-4.8 s
+  of Clang from 6.8-11.9 s, to the same object.
 - `Shape.cumalu` scans chunks of 16, and their last elements the same way,
   so a running operation's work is linear in its axis: compiled float64
   `Nx.cumsum` over 100 × 50500 takes 8-36 ms against 45-65, over 100 × 400 50
