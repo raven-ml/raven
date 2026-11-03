@@ -5457,3 +5457,22 @@ fold wraps integers and holds its float bound`, hold.
   with AVX-512's half arithmetic on` (`x86_64,sapphirerapids`,
   `x86_64,x86-64-v4,avx512fp16`), which crashes Clang 18 without the flags;
   rune's two tests above, under Clang 18 on an x86 host with avx512fp16.
+
+## D191. A loop bounded by a load outside any range counts its greatest trips
+
+- **tinygrad:** `renderer/__init__.py:47-51` (`Estimates.from_uops`'s range
+  multiplier), which counts a bound that reads no range as the bound
+  itself.
+- **tolk:** `Renderer.Estimates.of_uops`.
+- **Differs:** a bound that reads a load and no range, as `j < x[0]`,
+  counts at its greatest value, as one that reads a range does; tinygrad's
+  count then reads the load. Every consumer evaluates a count from the run's
+  variables alone, before the kernel reads memory: the search's compute
+  filter, the DEBUG=2 report, and a host launch's blocks (D80). On a count
+  that reads a load, tinygrad's `sym_infer` raises, and so did tolk's
+  `Shape.sym_compile`.
+- **Reason:** (c): a host launch takes its blocks from the count (D80),
+  when it is linked, before the kernel reads memory.
+- **Pinned by:** the Renderer suite: `estimates of hand-written kernels ›
+  counts a range bounded by a value loaded outside any range at its greatest
+  trips`.

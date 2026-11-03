@@ -58,11 +58,12 @@ module Estimates : sig
       indices around it. A range with no trip count, a loop, counts as one
       iteration, a trip count that depends on a hardware index is taken at
       index [0], and one that depends on another range, as a triangular loop's
-      does, at its greatest value. [ops] and each parameter's part of [mem] are
-      simplified; [lds] is not. With [ignore_indexing] (default [false]), the
-      operations that compute the indices of {!Op.Index} and {!Op.Shrink}
-      nodes, up to the {!Op.End} or {!Op.Backedge} of any loop they read, are
-      not counted.
+      does, or on a value loaded from memory, at its greatest value: a count
+      reads no value but the run's variables. [ops] and each parameter's part
+      of [mem] are simplified; [lds] is not. With [ignore_indexing] (default
+      [false]), the operations that compute the indices of {!Op.Index} and
+      {!Op.Shrink} nodes, up to the {!Op.End} or {!Op.Backedge} of any loop
+      they read, are not counted.
 
       The counts are exact: an integer count that does not fit an [int], as of
       a loop bounded by a value loaded from memory, is a node of constants,

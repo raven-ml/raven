@@ -123,6 +123,24 @@ let a_loaded_bound_counts_exactly () =
         (Bigint.to_string Bigint.(mul (of_int 3) (pred (shift_left one 63))))
         (Bigint.to_string (Shape.to_z u))
 
+(* [j < x[0]] inside [i < 3], [x] of int64: a bound that reads memory and no
+   range counts its greatest value too, 2^63 - 1. [i] opens first, as in the
+   kernel's order, though [j]'s bound does not read it. *)
+let a_bound_loaded_outside_ranges_counts_its_greatest () =
+  let x = buffer ~dtype:Dtype.Int64 1 3 and i = range 3 in
+  let bound = Ops.cast (load x (Ops.int 0)) Dtype.Weak_int in
+  let j = Ops.range (Sym bound) [ 1 ] in
+  let body = Ops.O.(f32 1. + Ops.cast j Dtype.Float32) in
+  let kernel = Ops.end_ body [ j; i ] in
+  let inner = List.filter (fun u -> u != i) (Ops.toposort ~calls:Skip kernel) in
+  let e = Renderer.Estimates.of_uops (i :: inner) in
+  match e.ops with
+  | Int n -> failf "%d operations, where 3 * (2^63 - 1) are" n
+  | Sym u ->
+      equal string
+        (Bigint.to_string Bigint.(mul (of_int 3) (pred (shift_left one 63))))
+        (Bigint.to_string (Shape.to_z u))
+
 (* [j < x[i]] inside [i < 2^31], [x] of int32: its trips, 2^31 times [x]'s
    greatest value, fit an [int], and the bytes its store writes, four times as
    many, beside the 4 bytes its bound loads on each of [i]'s, do not. *)
@@ -289,6 +307,9 @@ let estimates_of_uops =
         a_triangular_loop_counts_its_greatest_trips;
       test "counts a range bounded by a loaded value exactly, past an int"
         a_loaded_bound_counts_exactly;
+      test "counts a range bounded by a value loaded outside any range at its \
+            greatest trips"
+        a_bound_loaded_outside_ranges_counts_its_greatest;
       test "counts bytes past an int where the trips fit one"
         a_count_past_an_int_after_its_ranges;
       test "counts a loop without trip count as one iteration"

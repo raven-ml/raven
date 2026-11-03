@@ -940,6 +940,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   every host, where it took the C library's value, which glibc rounds one unit
   off for about one operand in two thousand; `c ** x` rewrites with `log2 c`
   correctly rounded.
+- `Renderer.Estimates.of_uops` counts a loop bounded by a value loaded outside
+  any range at its type's greatest trips, as one bounded by a value loaded in
+  a range: its count read the load, which no search or host launch could
+  evaluate.
 - `Compiler_cpu.clang` compiles for x86_64 without AVX10.1 and AVX-512's half
   arithmetic under a Clang of LLVM 18, which crashed on float16 casts for such
   processors, as Ubuntu 24.04's did with `native`. `Compiler_cpu.flags` states
