@@ -87,9 +87,8 @@ raven / llama.cpp b12048 Vulkan:
 - AMD machine code without comgr (_plans/amd-isa/design-reviewed.md): an
   assembly renderer and assembler, gfx12 first, the default once its gate
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML
-- divergences: tolk's entries were audited against tinygrad HEAD
-  (2026-10-31); left: entries marked "Reason: none" decided once the port
-  reaches HEAD. rune's DIVERGENCES.md is not audited yet
+- divergences: tolk's entries are audited against tinygrad HEAD; rune's
+  DIVERGENCES.md is not audited yet
 - compile speed: one Clang process per kernel (~30 ms each; one per program
   saves ~20%). Hypothesis, to time first: on fudge, each Clang run's wall
   time against its source's bytes, on a model-size schedule; if the process

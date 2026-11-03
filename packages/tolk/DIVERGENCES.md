@@ -348,10 +348,16 @@ stamps nothing (D146).
   folds, gives `0x3f81` (1.0078125). Repro on the CPU with
   `EMULATED_DTYPES=bfloat16`: `Tensor([1 + 2**-8 + 2**-40],
   dtype=dtypes.float64).cast(dtypes.bfloat16).bitcast(dtypes.uint16)`
-  gives `0x3f80`. The 8-bit facets
-  have no consumer: rune hands tolk no 8-bit float, since it stores each as
-  `Uint8` and converts it itself (rune's `Lower_arith.dtype`), and no other
-  raven code names one.
+  gives `0x3f80`. The 8-bit facets: (e). rune hands tolk no 8-bit float,
+  since it stores each as `Uint8` and converts it itself (rune's
+  `Lower_arith.dtype`), but without them an emulated 8-bit float flushes its
+  subnormals both ways, where tinygrad's own folder (`dtype.py:258-263`,
+  `float_to_fp8`) rounds to them: on the CPU with
+  `EMULATED_DTYPES=fp8e4m3,fp8e5m2`, `Tensor([2**-9]).contiguous().cast(
+  dtypes.fp8e4m3).bitcast(dtypes.uint8)` gives `0x00` where the folder gives
+  `0x01`, e5m2's `2**-16` likewise, and the code `0x01` widens to `0.0`; and a
+  double rounds twice, through a float32: the float64 `1 + 2**-4 + 2**-40`
+  becomes e4m3 `0x38` (1.0) where the folder gives `0x39` (1.125).
 - **Pinned by:** `Tolk.Dtype › truncate › truncation.golden` (the
   near-tie rows, stated in code), `Tolk.Dtype › truncate › bfloat16 rounds
   once, to the nearest, ties to even` and `Tolk.Dtype › truncate › an
@@ -364,7 +370,12 @@ stamps nothing (D146).
   f2f narrows a quiet NaN to a quiet NaN` and `› an emulated cast of a quiet
   float32 or double NaN is a quiet NaN`, which state the rule;
   `Tolk.Decomp_dtype › goldens`, which are tinygrad's
-  graphs with `f2f` replaced by these conversions.
+  graphs with `f2f` replaced by these conversions. The 8-bit facets' values:
+  the e4m3, e5m2 and fnuz cases of `Tolk.Decomp_dtype › narrow float
+  conversions are IEEE conversions › an emulated narrow float keeps its
+  subnormals, both ways`, and `Tolk.Decomp_dtype › emulated narrow floats ›
+  an emulated cast of doubles near every <format> tie rounds once` for each
+  8-bit format.
 
 ## D10. Withdrawn
 
