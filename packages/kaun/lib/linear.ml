@@ -32,6 +32,6 @@ let make ?(w_init = Init.glorot_uniform) ?(bias_init = Init.zeros)
 
 let init ~key ~inputs ~outputs = make ~key ~inputs ~outputs Nx.float32
 
-let apply p x =
-  let y = Nx.matmul x p.w in
+let apply ?sum p x =
+  let y = Nx.matmul ?sum x p.w in
   match p.b with None -> y | Some b -> Nx.add y b

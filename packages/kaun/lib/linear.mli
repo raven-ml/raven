@@ -84,11 +84,21 @@ val init :
 (** {1:applying Applying} *)
 
 val apply :
-  ((float, 'b, 'd) Nx.t, 'd) t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
-(** [apply p x] is [x @ p.w + p.b] (the shift is omitted when [p.b] is [None]).
-    [x]'s last axis must have size [inputs]; leading axes are treated as batch
-    axes, so the result has [x]'s shape with the last axis replaced by
-    [outputs]. Differentiable through Rune.
+  ?sum:bool ->
+  ((float, 'b, 'd) Nx.t, 'd) t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
+(** [apply p x] is [x @ p.w + p.b] (the shift is omitted when [p.b] is
+    [None]). [x]'s last axis must have size [inputs]; leading axes are
+    treated as batch axes, so the result has [x]'s shape with the last axis
+    replaced by [outputs]. Differentiable through Rune.
+
+    With [~sum:true], where devices cut the summed axis, [x]'s last or
+    [p.w]'s first, the result is the sum of the devices' terms, the shift
+    added once, for the caller to close with {!Nx.place}
+    ({!Nx.Placement.partial}); without it, the product closes where it
+    lies. Where no device cuts that axis, the result is the same either
+    way.
 
     Raises [Invalid_argument] if [x]'s last axis does not have size [inputs]. *)
 

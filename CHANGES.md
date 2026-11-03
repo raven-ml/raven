@@ -2086,6 +2086,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun.Linear.apply`, `Kaun.Attention.apply`, `Kaun.Attention.cached` and
+  `Kaun.Attention.merge` take `~sum`: a row-parallel output projection
+  keeps the devices' terms, and the caller closes them once after the
+  residual add.
+- `Kaun.Dropout.apply` of a sum (`Nx.Placement.partial`) keeps it, its
+  mask drawn whole on each device.
 - Kaun's argument errors write each float as the shortest decimal that reads
   back, the same text on every system: `got -1000000` where they wrote
   `got -1e+06`, or `-1e+006` under Windows.

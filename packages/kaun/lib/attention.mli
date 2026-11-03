@@ -70,6 +70,7 @@ val apply :
   head_dim:int ->
   ?mask:(bool, Nx.bool_elt, 'd) Nx.t ->
   ?rope:'d Rope.t ->
+  ?sum:bool ->
   ((float, 'b, 'd) Nx.t, 'd) t ->
   (float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t
@@ -83,6 +84,10 @@ val apply :
       projection of zero. Without a mask every token sees every token.
     - [rope], a rotary schedule: the query and key heads are rotated at
       positions [0] to [seq - 1] before the scores.
+    - [sum], for the output projection as {!Linear.apply} takes it: a
+      tensor-parallel layer whose output projection is cut along its inputs
+      keeps the devices' terms and closes them once, after its residual
+      add.
 
     [x]'s last axis must have size [embed_dim] and its second-to-last axis is
     the sequence; earlier axes are batch axes, folded into one for [mask]. The
@@ -193,6 +198,7 @@ end
 val cached :
   head_dim:int ->
   ?rope:'d Rope.t ->
+  ?sum:bool ->
   ((float, 'b, 'd) Nx.t, 'd) t ->
   ((float, 'b, 'd) Nx.t, 'd) Cache.t ->
   'd Cache_index.t ->
@@ -208,7 +214,8 @@ val cached :
     the draft tokens it sees: a prompt fed whole, in chunks, or token by token
     gives the same outputs up to floating-point reassociation. With [rope],
     queries and keys are rotated at the index's positions before the keys are
-    stored. A padded token's output is the output projection of zero.
+    stored. A padded token's output is the output projection of zero. [sum]
+    is as {!apply} takes it.
 
     The layer extends each leaf with {!Cache_index.extend} and attends once over
     what that returns, under {!Cache_index.mask}. On a whole index the tokens
@@ -289,12 +296,14 @@ val attend :
     divide [heads]. *)
 
 val merge :
+  ?sum:bool ->
   ((float, 'b, 'd) Nx.t, 'd) Linear.t ->
   (float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t
 (** [merge l y] concatenates the heads of [y], of shape
-    [[| batch; heads; seq; d |]], and projects them through [l]: shape
-    [[| batch; seq; embed |]]. It undoes {!split}.
+    [[| batch; heads; seq; d |]], and projects them through [l], with [sum]
+    as {!Linear.apply} takes it: shape [[| batch; seq; embed |]]. It undoes
+    {!split}.
 
     Raises [Invalid_argument] if [y] does not have four axes or [heads * d] is
     not [l]'s input width. *)

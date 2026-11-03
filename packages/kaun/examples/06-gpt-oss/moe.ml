@@ -47,12 +47,15 @@ let activation ~limit h =
   Nx.mul (Nx.mul gate (Nx.sigmoid (Nx.mul_s gate 1.702))) (Nx.add_s linear 1.0)
 
 (* [linear w b e x] is the projection [w] and bias [b] of each block's expert
-   [e], [[| g |]], applied to the block's rows [x], [[| g; c; inputs |]]. *)
+   [e], [[| g |]], applied to the block's rows [x], [[| g; c; inputs |]]. A
+   weight cut along its inputs gives the sum of the devices' terms
+   ({!Nx.Placement.partial}), which the top-k combine keeps and the block
+   closes once. *)
 let linear w b e x =
   let y =
     match w with
-    | Quant w -> Nx_quant.apply (Nx_quant.take ~axis:0 e w) x
-    | Float w -> Nx.matmul x (Nx.take ~axis:0 e w)
+    | Quant w -> Nx_quant.apply ~sum:true (Nx_quant.take ~axis:0 e w) x
+    | Float w -> Nx.matmul ~sum:true x (Nx.take ~axis:0 e w)
   in
   Nx.add y (Nx.unsqueeze ~axes:[ 1 ] (Nx.take ~axis:0 e b))
 

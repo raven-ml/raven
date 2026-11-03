@@ -101,19 +101,25 @@ let make ~key cfg =
 (* Forward passes: one fold over the blocks, which threads the caches along the
    index. *)
 
+(* A projection cut along its inputs asks for its sum, the devices' terms
+   ({!Nx.Placement.partial}): the residual add keeps it, and one [close]
+   after it closes the sublayer. Where no device cuts a projection's
+   inputs, both are the identity. *)
+let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x
+
 let block cfg b cache index x =
   let eps = cfg.norm_eps in
   let a, cache =
-    Attention.cached ~head_dim:cfg.head_dim ~rope:cfg.rope b.attn cache index
-      (Rms_norm.apply ~eps b.attn_norm x)
+    Attention.cached ~head_dim:cfg.head_dim ~rope:cfg.rope ~sum:true b.attn
+      cache index (Rms_norm.apply ~eps b.attn_norm x)
   in
-  let x = Nx.add x a in
+  let x = close (Nx.add x a) in
   let h = Rms_norm.apply ~eps b.ffn_norm x in
   let mlp =
-    Linear.apply b.down
+    Linear.apply ~sum:true b.down
       (Nx.mul (Fn.silu (Linear.apply b.gate h)) (Linear.apply b.up h))
   in
-  (Nx.add x mlp, cache)
+  (close (Nx.add x mlp), cache)
 
 (* The pools, made where the kv-heads role places them. *)
 let cache ~placement cfg ~slots dtype =

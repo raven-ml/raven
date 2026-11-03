@@ -14,7 +14,10 @@ let apply ~rate ~training ?key x =
     let keep = 1.0 -. rate in
     (* At float32 whatever [x]'s dtype, so the mask for a key does not depend on
        the input's precision. *)
-    let p = Nx.full_at (Nx.placement x) Nx.float32 (Nx.shape x) keep in
+    (* Where [x] lies, but whole where it is a sum: the mask scales each
+       term alike, so the product stays a sum. *)
+    let at = Nx.Placement.closed (Nx.placement x) in
+    let p = Nx.full_at at Nx.float32 (Nx.shape x) keep in
     let bits = Nx.Rng.bernoulli ?key p in
     let mask = Nx.cast (Nx.dtype x) bits in
     (* Inverted dropout: scale the survivors by 1/keep at training time so the

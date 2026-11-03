@@ -42,6 +42,10 @@ val apply :
     mask selects at [x]'s dtype and is a constant of differentiation, so
     gradients flow to [x] through the surviving elements only.
 
+    The mask lies where [x] does, whole where [x] is a sum
+    ({!Nx.Placement.partial}): scaling each term alike, dropout keeps a sum
+    one.
+
     With [training = false] (or [rate = 0.]), the result is [x], unchanged.
 
     {b Under jit.} A compiled step passes its dropout key as an input, as

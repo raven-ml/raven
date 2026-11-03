@@ -104,18 +104,22 @@ let drop dropout i x =
 
 let head_dim cfg = cfg.n_embd / cfg.n_head
 
+(* A projection cut along its inputs asks for its sum, the devices' terms
+   ({!Nx.Placement.partial}): the residual add keeps it, and one [close]
+   after it closes the sublayer. Where no device cuts a projection's
+   inputs, both are the identity. *)
+let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x
+
 let block cfg ?dropout b cache index x =
   let eps = cfg.layer_norm_eps in
   let a, cache =
-    Attention.cached ~head_dim:(head_dim cfg) b.attn cache index
+    Attention.cached ~head_dim:(head_dim cfg) ~sum:true b.attn cache index
       (Layer_norm.apply ~eps b.ln1 x)
   in
-  let x = Nx.add x (drop dropout 0 a) in
-  ( Nx.add x
-      (drop dropout 1
-         (Linear.apply b.proj
-            (Fn.gelu_approx (Linear.apply b.fc (Layer_norm.apply ~eps b.ln2 x))))),
-    cache )
+  let x = close (Nx.add x (drop dropout 0 a)) in
+  let h = Fn.gelu_approx (Linear.apply b.fc (Layer_norm.apply ~eps b.ln2 x)) in
+  let mlp = Linear.apply ~sum:true b.proj h in
+  (close (Nx.add x (drop dropout 1 mlp)), cache)
 
 let embed p ids pos =
   Nx.add (Embedding.apply p.wte ids) (Embedding.apply p.wpe pos)

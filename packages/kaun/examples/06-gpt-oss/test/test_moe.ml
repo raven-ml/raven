@@ -3,10 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The mixture of experts at gpt-oss's expert-parallel placement: experts
-   split along their expert axis over four memory devices give the bits the
-   experts give on one device, float and MXFP4, since each block's take of
-   its expert has a gather's bits wherever the experts lie. *)
+(* The mixture of experts over four memory devices. At gpt-oss's
+   expert-parallel placement, experts split along their expert axis give the
+   bits the experts give on one device, float and MXFP4, since each block's
+   take of its expert has a gather's bits wherever the experts lie, and a
+   compiled step closes no sum. Row parallel, each expert cut along its
+   features, the down projection's output is a sum that one closing after
+   the top-k combine closes, eagerly and compiled. *)
 
 open Windtrap
 
@@ -84,6 +87,130 @@ let test_split weight () =
   equal ~msg:"the bits" (array int32) (bits host) (bits y);
   equal ~msg:"whole on each device" placement S.on (Nx.placement y)
 
+(* Row parallelism: [gate_up] cut along its outputs and [down] along its
+   inputs, the hidden features, each device holding a quarter of each
+   expert. [down]'s product is a sum of the devices' terms, which the top-k
+   combine keeps, and one closing after it gives the experts' output. *)
+let rows (p : (_, Nx.host) Moe.t) =
+  (* A packed weight cut along its inputs splits its one block of scales:
+     they lie whole on each device, which reads its codes where they lie. *)
+  let weight axis = function
+    | Moe.Float w -> Moe.Float (Nx.place (S.split ~axis) w)
+    | Moe.Quant (Nx_quant.Mxfp4 { codes; scales }) when axis = 2 ->
+        Moe.Quant
+          (Nx_quant.mxfp4 ~scales:(Nx.place S.on scales)
+             (Nx.place (S.split ~axis) codes))
+    | Moe.Quant w -> Moe.Quant (Nx_quant.place (S.split ~axis) w)
+  in
+  let quant = match p.gate_up with Moe.Quant _ -> true | Moe.Float _ -> false in
+  {
+    Moe.gate_up = weight (if quant then 1 else 2) p.gate_up;
+    gate_up_bias = Nx.place (S.split ~axis:1) p.gate_up_bias;
+    down = weight (if quant then 2 else 1) p.down;
+    down_bias = Nx.place S.on p.down_bias;
+  }
+
+let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x
+
+(* The lines of [f]'s compiled program at [x] that close a sum: place a
+   value that lies partial. *)
+let places f x =
+  let program = Rune.program Nx.Ptree.tensor Nx.Ptree.tensor f x in
+  let lines =
+    String.split_on_char '\n' (Format.asprintf "%a" Rune.pp_program program)
+  in
+  let has sub l =
+    let k = String.length sub and n = String.length l in
+    let rec go i = i + k <= n && (String.sub l i k = sub || go (i + 1)) in
+    go 0
+  in
+  List.filter (fun l -> has "= Place (" l && has "partial" l) lines
+
+(* The largest gap between [want] and [got], each element, for a baseline:
+   the devices reassociate float32 sums one device sums otherwise. *)
+let gap want got =
+  let want = Nx.to_array want and got = Nx.to_array got in
+  let g = ref 0. in
+  Array.iteri (fun i w -> g := Float.max !g (Float.abs (w -. got.(i)))) want;
+  !g
+
+let test_rows weight baseline () =
+  let p = params weight in
+  let ids =
+    Nx.create Nx.int64 [| 5; 4 |]
+      [| 0L; 3L; 1L; 2L; 3L; 1L; 0L; 2L; 2L; 3L; 0L; 1L; 1L; 0L; 3L; 2L;
+         2L; 0L; 1L; 3L |]
+  in
+  let weights = floats [| 5; 4 |] 9 and x = floats [| 5; width |] 7 in
+  let host = Moe.apply ~limit p (ids, weights) x in
+  let on v = Nx.place S.on v in
+  let p = rows p and ids = on ids and weights = on weights in
+  let f x = Moe.apply ~limit p (ids, weights) x in
+  let y = f (on x) in
+  not_equal placement ~msg:"the experts' output is a sum" S.on
+    (Nx.placement y);
+  let eager = gap host (close y) in
+  let step x = close (f x) in
+  let compiled = gap host (Rune.jit' step (on x)) in
+  expect (Printf.sprintf "eager %g, compiled %g" eager compiled) baseline;
+  equal ~msg:"one closing, after the combine" int 1
+    (List.length (places step (on x)))
+
+(* At bfloat16, row parallel: each device's term of [down]'s product rounds
+   into bfloat16, the combine keeps the sum at bfloat16 and the closing adds
+   the four terms there. The largest gap from one device's output, a
+   baseline. *)
+let test_rows_bf16 () =
+  let bf x = Nx.cast Nx.bfloat16 x in
+  let p = params float_weight in
+  let weight = function
+    | Moe.Float w -> Moe.Float (bf w)
+    | Moe.Quant _ -> assert false
+  in
+  let p =
+    {
+      Moe.gate_up = weight p.gate_up;
+      gate_up_bias = bf p.gate_up_bias;
+      down = weight p.down;
+      down_bias = bf p.down_bias;
+    }
+  in
+  let ids =
+    Nx.create Nx.int64 [| 5; 4 |]
+      [| 0L; 3L; 1L; 2L; 3L; 1L; 0L; 2L; 2L; 3L; 0L; 1L; 1L; 0L; 3L; 2L;
+         2L; 0L; 1L; 3L |]
+  in
+  let weights = bf (floats [| 5; 4 |] 9) and x = bf (floats [| 5; width |] 7) in
+  let host = Moe.apply ~limit p (ids, weights) x in
+  let on v = Nx.place S.on v in
+  let p = rows p and ids = on ids and weights = on weights in
+  let step x = close (Moe.apply ~limit p (ids, weights) x) in
+  expect (Printf.sprintf "largest gap %g" (gap host (step (on x))))
+  @@ __POS_OF__ {|
+    largest gap 0.0078125
+  |};
+  equal ~msg:"one closing, compiled" int 1 (List.length (places step (on x)))
+
+(* Expert parallelism compiled: each block's take gathers its expert where
+   the experts lie, so no product is a sum and the step places nothing. *)
+let test_split_compiled weight baseline () =
+  let p = params weight in
+  let ids =
+    Nx.create Nx.int64 [| 5; 4 |]
+      [| 0L; 3L; 1L; 2L; 3L; 1L; 0L; 2L; 2L; 3L; 0L; 1L; 1L; 0L; 3L; 2L;
+         2L; 0L; 1L; 3L |]
+  in
+  let weights = floats [| 5; 4 |] 9 and x = floats [| 5; width |] 7 in
+  let host = Moe.apply ~limit p (ids, weights) x in
+  let on v = Nx.place S.on v in
+  let p = place (Gpt_oss.expert_parallel S.v) p in
+  let ids = on ids and weights = on weights in
+  let step x = close (Moe.apply ~limit p (ids, weights) x) in
+  expect
+    (Printf.sprintf "compiled %g" (gap host (Rune.jit' step (on x))))
+    baseline;
+  equal ~msg:"no closing" (list string) [] (places step (on x))
+
 let () =
   exit
     (run "gpt-oss mixture of experts"
@@ -94,5 +221,29 @@ let () =
                (test_split float_weight);
              test "MXFP4 experts split give the bits of one device"
                (test_split mxfp4_weight);
+           ];
+         group "expert parallelism, compiled"
+           [
+             test "float experts split compile, with no sum to close"
+               (test_split_compiled float_weight @@ __POS_OF__ {|
+                 compiled 1.78814e-07
+               |});
+             test "MXFP4 experts split compile, with no sum to close"
+               (test_split_compiled mxfp4_weight @@ __POS_OF__ {|
+                 compiled 0.000976562
+               |});
+           ];
+         group "row parallelism"
+           [
+             test "float experts cut along their features close once"
+               (test_rows float_weight @@ __POS_OF__ {|
+                 eager 1.19209e-07, compiled 1.19209e-07
+               |});
+             test "MXFP4 experts cut along their features close once"
+               (test_rows mxfp4_weight @@ __POS_OF__ {|
+                 eager 0.00195312, compiled 0.000976562
+               |});
+             test "bfloat16 experts cut along their features close once"
+               test_rows_bf16;
            ];
        ])

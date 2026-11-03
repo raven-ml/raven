@@ -154,16 +154,21 @@ let attention cfg layer b cache index x =
 
 (* Forward passes *)
 
+(* [x] closed where it lies: the experts' output, cut along their features,
+   is a sum the block asked for (Moe), which a norm reads whole. On one
+   device it is [x]. *)
+let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x
+
 let block cfg layer b cache index x =
   let eps = cfg.norm_eps in
   let a, cache =
     attention cfg layer b cache index (Rms_norm.apply ~eps b.attn_norm x)
   in
-  let x = Nx.add x a in
+  let x = close (Nx.add x a) in
   let h = Rms_norm.apply ~eps b.ffn_norm x in
   let routing = Moe.route ~k:cfg.experts_per_token (Linear.apply b.router h) in
   let experts = Moe.apply ~limit:cfg.swiglu_limit b.moe routing h in
-  (Nx.add x experts, cache)
+  (close (Nx.add x experts), cache)
 
 (* The pools, made where the kv-heads role places them. *)
 let cache ~placement cfg ~slots dtype =

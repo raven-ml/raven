@@ -234,10 +234,10 @@ let attend ?mask ?scale ?sinks q k v =
   in
   Nx.reshape [| batch; heads; n; Nx.dim 3 v |] out
 
-let merge l y =
+let merge ?sum l y =
   match Nx.shape y with
   | [| batch; heads; seq; d |] ->
-      Linear.apply l
+      Linear.apply ?sum l
         (Nx.reshape [| batch; seq; heads * d |] (Nx.swapaxes 1 2 y))
   | _ -> invalid_arg "Attention.merge: y must have shape [batch; heads; seq; d]"
 
@@ -262,7 +262,7 @@ let causal_mask ~seq ?valid at =
         (Nx.reshape [| 1; seq; seq |] tri)
         (Nx.reshape [| batch; 1; seq |] valid)
 
-let apply ~head_dim ?mask ?rope p x =
+let apply ~head_dim ?mask ?rope ?sum p x =
   let shape = Nx.shape x in
   let rank = Array.length shape in
   if rank < 2 then
@@ -291,7 +291,7 @@ let apply ~head_dim ?mask ?rope p x =
         let pos = Nx.reshape [| 1; seq |] (Nx.arange_at at Nx.int64 0 seq 1) in
         (Rope.apply t ~pos q, Rope.apply t ~pos k)
   in
-  Nx.reshape shape (merge p.out (attend ?mask q k v))
+  Nx.reshape shape (merge ?sum p.out (attend ?mask q k v))
 
 (* Key-value cache *)
 
@@ -327,7 +327,7 @@ end
 
 (* Cached attention *)
 
-let cached ~head_dim ?rope p cache index x =
+let cached ~head_dim ?rope ?sum p cache index x =
   let batch = Cache_index.batch index and seq = Cache_index.seq index in
   let embed = (Nx.shape p.q.Linear.w).(0) in
   if Nx.shape x <> [| batch; seq; embed |] then
@@ -354,4 +354,4 @@ let cached ~head_dim ?rope p cache index x =
         (Rope.apply t ~pos q, Rope.apply t ~pos k)
   in
   let k, v, cache = Cache.extend index cache k v in
-  (merge p.out (attend ~mask:(Cache_index.mask index) q k v), cache)
+  (merge ?sum p.out (attend ~mask:(Cache_index.mask index) q k v), cache)

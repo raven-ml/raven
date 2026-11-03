@@ -337,6 +337,35 @@ let test_dropout_train_statistics () =
   is_true ~msg:"inverted scaling preserves the mean"
     (Float.abs (mean -. 1.0) < 0.05)
 
+(* A sum over four memory devices, a product over a cut axis asked for as
+   one: dropout scales each term by one mask, whole on each device, so it
+   keeps the sum, which closes to dropout of the closed value under one
+   key. The terms are integers and the mask scales by two, so the two agree
+   exactly. *)
+module Four =
+  (val Nx.devices
+         (List.init 4 (fun k ->
+              Result.get_ok
+                (Rig.memory_device (Printf.sprintf "kaun-dropout-%d" k)))))
+
+let test_dropout_of_a_sum () =
+  let a =
+    Nx.place (Four.split ~axis:1)
+      (Nx.reshape [| 2; 8 |] (Nx.arange Nx.float32 0 16 1))
+  and b = Nx.place (Four.split ~axis:0) (Nx.ones Nx.float32 [| 8; 3 |]) in
+  let y = Nx.matmul ~sum:true a b in
+  let closed x = Nx.place (Nx.Placement.closed (Nx.placement x)) x in
+  let key = Nx.Rng.key 5 in
+  let key = Nx.place Four.on (Nx.Rng.to_tensor key) |> Nx.Rng.of_tensor in
+  let d = Dropout.apply ~rate:0.5 ~training:true ~key y in
+  let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal in
+  let sum = Nx.Placement.partial (Nx.Mesh.v Four.v [ ("x", 4) ]) [ "x" ] [] in
+  equal ~msg:"the product, a sum" placement sum (Nx.placement y);
+  equal ~msg:"a sum" placement sum (Nx.placement d);
+  equal ~msg:"dropout of the closed value" (array float_exact)
+    (Nx.to_array (Dropout.apply ~rate:0.5 ~training:true ~key (closed y)))
+    (Nx.to_array d)
+
 let test_dropout_validates_rate () =
   let x = vec [| 1.0 |] in
   let is_invalid = function Invalid_argument _ -> true | _ -> false in
@@ -606,6 +635,7 @@ let tests =
         test "training keeps about 1 - rate with inverted scaling"
           test_dropout_train_statistics;
         test "invalid rates raise" test_dropout_validates_rate;
+        test "a sum stays a sum" test_dropout_of_a_sum;
         test "fixed seed gives a deterministic mask"
           test_dropout_deterministic_under_seed;
         test "keyed masks are pure functions of the key"
