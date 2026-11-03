@@ -303,7 +303,7 @@ let beam_search ~link ~time ?allow_test_size amt s =
     if Setting.value Setting.ignore_beam_cache then None
     else
       try Helpers.Diskcache.get ~table:"beam_search" key
-      with Failure _ -> None
+      with Failure _ | Sys_error _ -> None
   in
   match cached with
   | Some opts ->

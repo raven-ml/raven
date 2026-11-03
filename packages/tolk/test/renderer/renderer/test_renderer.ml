@@ -666,6 +666,20 @@ let a_damaged_entry_is_compiled_anew () =
   equal int ~msg:"runs of the toolchain" 1 t.runs;
   equal (option string) ~msg:"replaced" (Some "lib:a") (get table "a")
 
+(* An entry the process may not read, as in a cache another user shares, is
+   compiled anew and replaced. *)
+let an_unreadable_entry_is_compiled_anew () =
+  if Sys.win32 then skip ~reason:"no file mode forbids reading" ();
+  if Unix.geteuid () = 0 then skip ~reason:"root reads any file" ();
+  let c, table, t = cached () in
+  Helpers.Diskcache.put ~table "a" "held";
+  List.iter
+    (fun e -> Unix.chmod e 0)
+    (Disk_cache.entries ~table Helpers.cachedb);
+  equal string "lib:a" (Renderer.Compiler.compile_cached c "a");
+  equal int ~msg:"runs of the toolchain" 1 t.runs;
+  equal (option string) ~msg:"replaced" (Some "lib:a") (get table "a")
+
 let without_ccache () =
   let c, table, t = cached () in
   ccache_off (fun () ->
@@ -914,6 +928,8 @@ let compilers =
         a_cached_binary_wins;
       test "compile_cached compiles a damaged entry anew and replaces it"
         a_damaged_entry_is_compiled_anew;
+      test "compile_cached compiles an unreadable entry anew and replaces it"
+        an_unreadable_entry_is_compiled_anew;
       test "compile_cached compiles every time with ccache off" without_ccache;
       test "ccache is read when compiling" ccache_is_read_when_compiling;
       test "compile_cached compiles every time with the disk cache disabled"

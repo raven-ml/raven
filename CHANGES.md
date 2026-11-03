@@ -980,6 +980,11 @@ word comes from its lock and from samples the dashboard saw arrive.
   and a long source's command is the short one without `-vectorize-loops`.
   A later process's first call on the CPU takes about 30 ms less.
 
+- An entry of the disk cache that the process may not read, as in a cache
+  another user shares, is a miss for programs, schedules, binaries and
+  searches (`Graph.cached`, `Renderer.Compiler.kept`, `Search.beam_search`),
+  where it raised `Sys_error`.
+
 - An entry of the disk cache damaged on disk, cut short or with a byte
   changed, reads as a miss (`Helpers.Diskcache` keeps a digest of each
   entry, and `Search.beam_search` searches again), where a changed byte could

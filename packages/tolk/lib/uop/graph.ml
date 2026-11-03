@@ -895,7 +895,7 @@ let cached ~table ~key ~valid make =
   let kept =
     match Helpers.Diskcache.get ~table key with
     | Some text -> read text
-    | None | (exception Failure _) -> None
+    | None | (exception (Failure _ | Sys_error _)) -> None
   in
   match kept with
   | Some g -> (g, true)

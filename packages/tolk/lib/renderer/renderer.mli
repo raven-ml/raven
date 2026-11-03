@@ -134,7 +134,7 @@ module Compiler : sig
   val kept : t -> string -> string option
   (** [kept c src] is the binary of [src] held in [c]'s disk cache table while
       {!Setting.ccache} holds, if any: what {!compile_cached} returns without
-      compiling. An entry that does not read is none.
+      compiling. An entry that does not read, or cannot be read, is none.
 
       Raises what {!cachekey} raises. *)
 
@@ -142,7 +142,7 @@ module Compiler : sig
   (** [compile_cached c src] is the binary of [src] held in [c]'s disk cache
       table, or else [compile c src] ({!compile}), which is then kept there,
       while {!Setting.ccache} holds; otherwise it is [compile c src]. An entry
-      that does not read is compiled anew and replaced.
+      that does not read, or cannot be read, is compiled anew and replaced.
 
       Raises {!Compile_error} as {!compile}, what {!cachekey} raises, and
       [Invalid_argument] naming [src] if it must be compiled under

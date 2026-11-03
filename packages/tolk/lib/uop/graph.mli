@@ -36,6 +36,7 @@ val cached :
 (** [cached ~table ~key ~valid make] is the graph that the {!Helpers.Diskcache}
     holds for [key] in [table], and [true], if its entry reads as a graph that
     [valid] accepts; otherwise it is [make ()], which replaces the entry, and
-    [false]. An entry that does not read is made anew, as one that is missing.
+    [false]. An entry that does not read, or cannot be read, is made anew, as
+    one that is missing.
 
     Raises [Sys_error] if the entry cannot be written. *)

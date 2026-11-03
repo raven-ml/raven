@@ -148,7 +148,8 @@ val beam_search :
     links and times nothing, and applies the optimisations kept beyond as many
     as [k] has to a copy of [k]. A kept result is what an earlier search
     measured fastest: another search may measure otherwise. A key whose entry
-    is damaged on disk is searched again, as one never kept.
+    is damaged on disk, or cannot be read, is searched again, as one never
+    kept.
 
     When the setting {!Setting.debug} is [2] or more, the progress of the search
     is printed on standard output, and {!Setting.beam_debug} prints more.

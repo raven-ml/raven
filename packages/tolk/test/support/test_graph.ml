@@ -379,6 +379,26 @@ let damaged_entry =
       | g, true -> equal node ~msg:"read back" u g
       | g, false -> equal node ~msg:"made anew" made g)
 
+(* A graph whose entry the process may not read, as in a cache another user
+   shares, is made anew. *)
+let unreadable_entry =
+  test "an entry that cannot be read misses" (fun () ->
+      if Sys.getenv_opt "CACHEDB" = None then
+        skip ~reason:"CACHEDB is unset" ();
+      if Sys.win32 then skip ~reason:"no file mode forbids reading" ();
+      if Unix.geteuid () = 0 then skip ~reason:"root reads any file" ();
+      let table = "test_graph_unreadable" in
+      let cached make =
+        Graph.cached ~table ~key:"k" ~valid:(fun _ -> true) make
+      in
+      ignore (cached (fun () -> x));
+      List.iter
+        (fun e -> Unix.chmod e 0)
+        (Disk_cache.entries ~table Helpers.cachedb);
+      let made = Ops.sink [] in
+      match cached (fun () -> made) with
+      | g, read -> equal (pair node bool) (made, false) (g, read))
+
 let errors =
   group "reading"
     [
@@ -421,5 +441,6 @@ let () =
          numbers;
          damaged_text;
          damaged_entry;
+         unreadable_entry;
          errors;
        ])

@@ -197,13 +197,13 @@ module Compiler = struct
   let disassemble c lib = c.disassemble lib
 
   (* Binaries are kept in the table the compiler's key names while the setting
-     ccache holds. An entry that does not read, as a damaged one, is compiled
-     anew and replaced. *)
+     ccache holds. An entry that does not read, as a damaged one, or that
+     cannot be read, is compiled anew and replaced. *)
   let table c = if Setting.value Setting.ccache then cachekey c else None
 
   let kept c src =
     let read table =
-      try Helpers.Diskcache.get ~table src with Failure _ -> None
+      try Helpers.Diskcache.get ~table src with Failure _ | Sys_error _ -> None
     in
     Option.bind (table c) read
 
