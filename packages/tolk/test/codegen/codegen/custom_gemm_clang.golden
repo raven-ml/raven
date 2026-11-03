@@ -22,7 +22,7 @@
 20 Ops.AFTER dtypes.f32 [1, 19]
 21 Ops.INDEX dtypes.f32 [20, 15]
 22 Ops.AFTER dtypes.i32 [12, 14]
-23 Ops.RANGE dtypes.i32 [22] (AxisType.WEAK, 2)
+23 Ops.RANGE dtypes.i32 [22] (AxisType.LOOP, 2)
 24 Ops.AFTER dtypes.f32 [20, 23]
 25 Ops.INDEX dtypes.f32 [24, 15]
 26 Ops.LOAD dtypes.f32 [25]
@@ -71,7 +71,7 @@
 69 Ops.AFTER dtypes.f32 [50, 68]
 70 Ops.INDEX dtypes.f32 [69, 66]
 71 Ops.AFTER dtypes.i32 [12, 65]
-72 Ops.RANGE dtypes.i32 [71] (AxisType.WEAK, 2)
+72 Ops.RANGE dtypes.i32 [71] (AxisType.LOOP, 2)
 73 Ops.AFTER dtypes.f32 [69, 72]
 74 Ops.INDEX dtypes.f32 [73, 66]
 75 Ops.LOAD dtypes.f32 [74]

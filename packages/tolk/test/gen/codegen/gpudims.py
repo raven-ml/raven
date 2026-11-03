@@ -271,6 +271,14 @@ def group_gpudims_masks_a_store_by_its_missing_locals():
 
 
 @graph
+def group_gpudims_masks_a_store_by_its_missing_global():
+    g, l = rng(32, 0, AxisType.GLOBAL), rng(8, 1, AxisType.LOCAL)
+    buf = UOp.param(0, dtypes.float, 8)
+    loaded = UOp.param(1, dtypes.float, 256).index(g * 8 + l).load()
+    return rewritten(buf.index(l).store(loaded).end(g, l).sink(arg=KernelInfo()))
+
+
+@graph
 def group_gpudims_keeps_a_loop():
     g, r = rng(16, 0, AxisType.GLOBAL), rng(8, 1, AxisType.LOOP)
     loaded = UOp.param(1, dtypes.float, 128).index(g * 8 + r).load()

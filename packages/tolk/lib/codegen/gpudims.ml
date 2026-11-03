@@ -250,8 +250,12 @@ let group_gpudims (r : Renderer.t) s =
           let axes = global_dims @ local_dims in
           List.iter
             (fun x ->
-              (* A global store that does not use every thread index is masked
-                 to the threads whose unused indices are 0. *)
+              (* A global store whose index does not use every workgroup and
+                 thread index is masked to the threads whose unused indices
+                 are 0. One that no range holds runs once, and one that a
+                 range holds writes one cell from each of its points: a
+                 repeat would read another's write, as [n[0] = n[0] + 1]
+                 beside a store over workgroups does. *)
               (if op x = Op.Store then
                  let idx = nth x 0 in
                  match src idx with
@@ -261,7 +265,7 @@ let group_gpudims (r : Renderer.t) s =
                          (fun id ->
                            let rng = range id in
                            if Nodes.mem rng (ranges idx) then None else Some rng)
-                         local_dims
+                         axes
                      in
                      match missing with
                      | [] -> ()

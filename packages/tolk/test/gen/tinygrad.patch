@@ -1203,7 +1203,7 @@ index 70841c562..b6e75fb6d 100644
    return d.ne(d).where(r.const_like(math.nan), r)
  
 diff --git a/tinygrad/codegen/gpudims.py b/tinygrad/codegen/gpudims.py
-index 48f88612f..441546e62 100644
+index 48f88612f..10d74c422 100644
 --- a/tinygrad/codegen/gpudims.py
 +++ b/tinygrad/codegen/gpudims.py
 @@ -60,6 +60,12 @@ def group_gpudims(ctx:Renderer, s:UOp):
@@ -1219,6 +1219,18 @@ index 48f88612f..441546e62 100644
    # define indexes for GPU-like execution
    # if we got a WARP, set the local_max to it so it does not fold with other dims
    local_max = (local_shape[0],)+ctx.local_max[1:] if ctx.local_max is not None and local_dims and \
+@@ -73,9 +79,9 @@ def group_gpudims(ctx:Renderer, s:UOp):
+   # apply to multiple ranges
+   subs, masks = {}, {}
+   for r in s_topo:
+-    # look for local INDEXes that are not used in the GLOBAL store, then add them as an INVALID
++    # look for global and local INDEXes that are not used in the GLOBAL store, then add them as an INVALID: the store runs once
+     if r.op is Ops.STORE and len((idx := r.src[0]).src) and idx.src[0].addrspace == AddrSpace.GLOBAL:
+-      missing_locals = [all_ranges[rng] for rng in local_dims if all_ranges[rng] not in idx.ranges]
++      missing_locals = [all_ranges[rng] for rng in global_dims+local_dims if all_ranges[rng] not in idx.ranges]
+       if len(missing_locals):
+         assert len(idx.src) == 2, "index has 2 sources"
+         mask: UOp = UOp.uprod(*[x.eq(0) for x in missing_locals])
 diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
 index 65fb29491..6766d5d4d 100644
 --- a/tinygrad/codegen/late/coalesce.py

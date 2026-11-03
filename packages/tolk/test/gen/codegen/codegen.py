@@ -558,14 +558,14 @@ def custom_eye(C):
 
 
 def custom_sum(B, A):
-    i = UOp.range(A.shape[0], 0, axis_type=AxisType.WEAK)
+    i = UOp.range(A.shape[0], 0, axis_type=AxisType.LOOP)
     B = B[0].set(0.0)
     B = B[0].set(B.after(i)[0] + A[i], end=i)
     return B.sink(arg=KernelInfo(name=f"custom_sum_{A.shape[0]}", opts_to_apply=()))
 
 
 def custom_gemm(C, A, B):
-    i, j, k = UOp.range(C.shape[0], 0), UOp.range(C.shape[1], 1), UOp.range(A.shape[1], 2, axis_type=AxisType.WEAK)
+    i, j, k = UOp.range(C.shape[0], 0), UOp.range(C.shape[1], 1), UOp.range(A.shape[1], 2, axis_type=AxisType.LOOP)
     C = C[i, j].set(0.0)
     prog = C[i, j].store(C.after(k)[i, j] + A[i, k] * B[k, j]).end(k).end(i, j)
     return prog.sink(arg=KernelInfo(name=f"custom_gemm_{C.shape[0]}_{C.shape[1]}_{A.shape[1]}", opts_to_apply=()))

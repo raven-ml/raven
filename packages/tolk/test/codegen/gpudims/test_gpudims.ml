@@ -359,6 +359,13 @@ let group_gpudims_graphs =
         missing_locals [ 8 ]);
     rewrites "group_gpudims_masks_a_store_by_its_missing_locals" (fun () ->
         missing_locals [ 8; 4 ]);
+    rewrites "group_gpudims_masks_a_store_by_its_missing_global" (fun () ->
+        let g = global (Int 32) 0 and l = local (Int 8) 1 in
+        let loaded =
+          Ops.load (Ops.index (buffer ~slot:1 256) [ (g * int 8) + l ]) []
+        in
+        Ops.sink ~kernel:(Ops.kernel_info ())
+          [ Ops.end_ (Ops.store (Ops.index (buffer 8) [ l ]) loaded) [ g; l ] ]);
     rewrites "group_gpudims_keeps_a_loop" (fun () ->
         let g = global (Int 16) 0 and r = range ~axis_type:Loop (Int 8) 1 in
         let loaded =

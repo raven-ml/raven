@@ -49,11 +49,13 @@ val group_gpudims : Renderer.t -> Ops.t -> Ops.t option
     [r]'s bounds. Global loops take the order of their identities; a warp
     takes the first thread axis, then local loops follow in the order of their
     identities. A warp keeps its own thread axis. A store to global memory
-    whose index does not use every thread index is masked to the threads whose
-    unused indices are [0]. Every loop is replaced at once, so a hardware index
-    that is the same node as a loop, of one identity, type and size, stays. It
-    is [None] if [sink] carries no kernel information, has hardware indices
-    already, or has no global or local loop.
+    whose index, its validity included, does not use every workgroup and
+    thread index is masked to the threads whose unused indices are [0], so it
+    runs once for each point of the indices it uses. Every loop is replaced at
+    once, so a hardware index that is the same node as a loop, of one
+    identity, type and size, stays. It is [None] if [sink] carries no kernel
+    information, has hardware indices already, or has no global or local
+    loop.
 
     A tensor core ({!Op.Wmma}) computes on its lanes as the hardware numbers
     a warp's threads, so a kernel holding one of more than one thread must

@@ -48,7 +48,11 @@ module Axis_type : sig
     | Global  (** Across the workgroups of a launch. *)
     | Local  (** Across the threads of a workgroup. *)
     | Warp  (** Across the threads of a warp. *)
-    | Weak  (** A loop not yet assigned to hardware. *)
+    | Weak
+        (** A loop not yet assigned to hardware. Its trips may run at once and
+            in any order, as threads or lanes, so no trip reads a cell of
+            global memory that another writes, and trips that write one such
+            cell write one value. A {!Loop} runs them in turn. *)
     | Loop  (** A serial loop. *)
     | Upcast  (** Unrolled into vector lanes of a thread. *)
     | Placeholder  (** Stands for an axis while it is built. *)

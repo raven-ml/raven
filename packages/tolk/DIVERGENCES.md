@@ -7185,9 +7185,9 @@ and an initial value is added after it (D260).
   it to one thread of each such axis, as a global store is, would keep the
   threads only where no other thread reads what it writes, and drop what it
   writes to a thread's own registers in the others.
-- **Pinned by:** the Codegen suite: `calls and custom code on CUDA › one
-  beside stores across threads runs once`, `› one beside a sum runs once`
-  (a call and code, counting atomically; they skip without a GPU). The
+- **Pinned by:** the Codegen suite: `calls, custom code and stores on CUDA ›
+  one beside stores across threads runs once`, `› one beside a sum runs
+  once` (a call and code, counting atomically; they skip without a GPU). The
   Postrange suite: `axes a call or custom code reads ›
   unread_by_opaque is the axes its sources do not read`, `›
   convert_loop_to_global gives workgroups only to an axis its sources read`,
@@ -7444,3 +7444,27 @@ and an initial value is added after it (D260).
   gated by too); the goldens `uniform_gate_reduce`, `uniform_gate_store`
   and `varying_gate_reduce`; rune's `rows in blocks give eager's integers and
   hold their bound`; the bench rows above.
+
+## D315. A global store is masked by the workgroup indices it does not use
+
+- **tinygrad:** `codegen/gpudims.py:76-82` (`group_gpudims`), which masks a
+  global store to the threads whose local indices its index misses are 0,
+  and runs it in every workgroup.
+- **tolk:** `Gpudims.group_gpudims`; `test/gen/tinygrad.patch`, which gives
+  tinygrad the same mask.
+- **Differs:** a store to global memory whose index, its validity included,
+  does not use a workgroup index is masked to the workgroups whose unused
+  indices are 0, as it is to such threads. tinygrad runs it in every
+  workgroup.
+- **Reason:** (e): `n[0] = n[0] + 1`, which no range holds, beside `out[i] =
+  a[i] + 1` over 2^20 `i` on CUDA, runs in each of the 8192 workgroups the
+  heuristic makes, and a workgroup that starts after another's write reads
+  it: `n` counts 10 to 13 for 1. A store that a range holds and whose index
+  does not read it writes one cell from each of the range's points, which
+  run in no order (`Ops.Axis_type.Weak`), so one of them suffices.
+- **Pinned by:** the Codegen suite: `calls, custom code and stores on CUDA ›
+  a plain store beside stores across workgroups runs once`, `› a store
+  whose folded index is bound to a loop runs once a step`, its storage read
+  through an `After` of the loop (D280), `› a store valid at one point
+  runs there` (they skip without a GPU). The Gpudims suite:
+  `group_gpudims_masks_a_store_by_its_missing_global.golden`.

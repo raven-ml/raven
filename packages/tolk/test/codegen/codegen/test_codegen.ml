@@ -6427,12 +6427,13 @@ let effects =
             [ expected ] ());
     ]
 
-(* Calls and custom code on CUDA
+(* Calls, custom code and stores on CUDA
 
    A GPU runs a kernel in every thread, each at its point of the kernel's
    thread axes. A call, or code in the target's language, runs once for each
-   point of the axes its sources read, so it must not be repeated across the
-   threads of an axis it does not read. *)
+   point of the axes its sources read, and a store once for each point of the
+   ranges that hold it, so neither must be repeated across the threads of an
+   axis it does not read. *)
 
 (* [n[0] += 1], atomic so that each run counts whatever threads run it at
    once: by code, or by a call of a body of that code. *)
@@ -6468,6 +6469,62 @@ let counted_beside_sum o () =
     ~kernel:(Ops.kernel_info ~name:"counted_beside_sum" ())
     [ Ops.store (first out) (Ops.reduce (at a r) Op.Add [ r ]); counted o n ]
 
+(* [out[i] = a[i] + 1] over [rows] [i], beside the plain store [n[0] = n[0] +
+   1], which no range holds: it runs once. [rows] makes more workgroups than
+   the GPU holds at once, so that a repeated store reads another's write. *)
+let rows = 1 lsl 20
+
+let stored_beside_rows () =
+  let out = int_param ~name:"out" 0 rows
+  and a = int_param ~name:"A" 1 rows
+  and n = int_param ~name:"n" 2 1 in
+  let i = Ops.range (Int rows) [ 0 ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"stored_beside_rows" ())
+    [
+      Ops.end_ (Ops.store (at out i) Ops.O.(at a i + i32 1)) [ i ];
+      Ops.store (first n) Ops.O.(first n + i32 1);
+    ]
+
+(* [out[i] = a[i] + 1] and, where [i = 5], [n[0] = 7] over [rows] [i]: the
+   index of [n] is valid where [i = 5], so it reads [i], and that point writes
+   it. *)
+let gated_beside_rows () =
+  let out = int_param ~name:"out" 0 rows
+  and a = int_param ~name:"A" 1 rows
+  and n = int_param ~name:"n" 2 1 in
+  let i = Ops.range (Int rows) [ 0 ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"gated_beside_rows" ())
+    [
+      Ops.end_
+        (Ops.group
+           [
+             Ops.store (at out i) Ops.O.(at a i + i32 1);
+             Ops.store
+               (at n (Shape.valid (Ops.int 0) (Ops.eq i (Ops.int 5))))
+               (i32 7);
+           ])
+        [ i ];
+    ]
+
+(* [out[i] = a[i] + 1] over [rows] [i], beside [n[r // 8] = n[r // 8] + 1]
+   over a loop of 8 [r]: the index folds to [n[0]], which stays bound to [r]
+   through its storage, so the store runs once a step, in one thread. *)
+let pinned_beside_rows () =
+  let out = int_param ~name:"out" 0 rows
+  and a = int_param ~name:"A" 1 rows
+  and n = int_param ~name:"n" 2 1 in
+  let i = Ops.range (Int rows) [ 0 ] in
+  let r = Ops.range ~axis_type:Loop (Int 8) [ 1 ] in
+  let cell = at n Ops.O.(r // Ops.int 8) in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"pinned_beside_rows" ())
+    [
+      Ops.end_ (Ops.store (at out i) Ops.O.(at a i + i32 1)) [ i ];
+      Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ];
+    ]
+
 (* The contents of slots 0 and 2 after one run of [k] on CUDA, optimised by
    the heuristic, slot 1 holding [a]. *)
 let counted_on_cuda k a =
@@ -6478,7 +6535,7 @@ let counted_on_cuda k a =
 
 let counted_once =
   let opaque_id o = Format.asprintf "%a" Op.pp o in
-  group "calls and custom code on CUDA"
+  group "calls, custom code and stores on CUDA"
     [
       cases "one beside stores across threads runs once" ~id:opaque_id
         [ Op.Call; Op.Custom ] (fun o ->
@@ -6494,6 +6551,35 @@ let counted_once =
             (list (array Dtypes.value))
             [ int_values [ List.fold_left ( + ) 0 a ]; int_values [ 1 ] ]
             (counted_on_cuda (counted_beside_sum o) a));
+      test "a plain store beside stores across workgroups runs once"
+        (fun () ->
+          let a = List.init rows Fun.id in
+          match counted_on_cuda stored_beside_rows a with
+          | [ out; n ] ->
+              equal (array Dtypes.value) ~msg:"n" (int_values [ 1 ]) n;
+              equal (array Dtypes.value) ~msg:"out"
+                (int_values (List.map succ a))
+                out
+          | _ -> assert false);
+      test "a store whose folded index is bound to a loop runs once a step"
+        (fun () ->
+          let a = List.init rows Fun.id in
+          match counted_on_cuda pinned_beside_rows a with
+          | [ out; n ] ->
+              equal (array Dtypes.value) ~msg:"n" (int_values [ 8 ]) n;
+              equal (array Dtypes.value) ~msg:"out"
+                (int_values (List.map succ a))
+                out
+          | _ -> assert false);
+      test "a store valid at one point runs there" (fun () ->
+          let a = List.init rows Fun.id in
+          match counted_on_cuda gated_beside_rows a with
+          | [ out; n ] ->
+              equal (array Dtypes.value) ~msg:"n" (int_values [ 7 ]) n;
+              equal (array Dtypes.value) ~msg:"out"
+                (int_values (List.map succ a))
+                out
+          | _ -> assert false);
     ]
 
 let () =

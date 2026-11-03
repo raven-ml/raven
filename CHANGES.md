@@ -985,6 +985,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A store to global memory whose index uses no workgroup index runs in one
+  workgroup (`Gpudims.group_gpudims`). `n[0] = n[0] + 1` beside a store
+  over 2^20 elements on CUDA ran in each of 8192 workgroups and counted
+  10. `Ops.Axis_type.Weak` states that a range's trips may run at once.
 - An axis that an expression in the target's language (`Op.Customi`) reads
   takes no lanes or padding, as one a call reads: an upcast rendered the
   expression with a vector, which `__builtin_popcount({0})` cannot take
