@@ -628,6 +628,44 @@ let test_compiled () =
         (Sys.time () -. start))
     [ ("a loop over a capture", slow); ("a loop over constants", constant) ]
 
+(* A branch after the first carries the results in the previous branch's
+   storage, so a result costs each branch at most the kernel that computes it,
+   none to carry it from the branch before: switches of [k] branches, each
+   returning a value of [a] and in the second one a value of [b], each value
+   one elementwise kernel, differ by at most one kernel a branch. *)
+let test_branch_storage () =
+  let a = vec [| 1.; 2.; 3.; 4. |] and b = vec [| 5.; 6.; 7.; 8. |] in
+  let i = Nx.scalar Nx.int32 0l in
+  let first j = Nx.add_s a (Float.of_int j) in
+  let second j = Nx.mul_s b (Float.of_int (j + 2)) in
+  let kernels s f =
+    let (), ks =
+      Tolk.Realize.kernels (fun () ->
+          ignore (Rune.jit T.(tensor @-> returns s) f i))
+    in
+    List.length ks
+  in
+  let one k =
+    kernels T.tensor (fun i ->
+        Rune.switch T.tensor i (List.init k (fun j () -> first j)))
+  in
+  let two k =
+    kernels
+      T.(pair tensor tensor)
+      (fun i ->
+        Rune.switch
+          T.(pair tensor tensor)
+          i
+          (List.init k (fun j () -> (first j, second j))))
+  in
+  List.iter
+    (fun k ->
+      at_most int
+        ~msg:(Printf.sprintf "branch %d" (k + 1))
+        ~than:1
+        (two (k + 1) - two k - (one (k + 1) - one k)))
+    [ 1; 2; 3 ]
+
 let () =
   exit
     (run "rune switch"
@@ -651,4 +689,6 @@ let () =
          test "stated cases" test_stated;
          test "the documented examples" test_examples;
          test "a switch compiles under jit" test_compiled;
+         test "a later branch carries in the earlier's storage"
+           test_branch_storage;
        ])

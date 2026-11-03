@@ -1721,7 +1721,9 @@ val jit :
     rows, where its dtype has 8 bits or more, the scatter is not an [Add] of a
     float narrower than 32 bits, neither its positions nor its updates read the
     carry, and the carry's next value reads no carry whose next value reads it
-    in turn. Otherwise each step writes the whole carry. Where the rows
+    in turn, a value the step holds in storage of its own, such as a nested
+    loop's or switch's result, counting as reading none.
+    Otherwise each step writes the whole carry. Where the rows
     of an array do not lie a multiple of 16 bytes apart, the step reads them
     from a copy whose rows do. A check in a step fails as the call's check does
     ({!section-checks}), with the first failure of the first step that fails, as
@@ -1733,7 +1735,8 @@ val jit :
     Under reverse mode that loop runs from the last step, reading and writing
     its rows through copies in reverse order. A {!switch} compiles as one loop
     per branch of at most one trip, which runs where the index names its branch,
-    so a branch not taken computes nothing. A {!remat}, a {!custom_jvp}, a
+    so a branch not taken computes nothing, each loop updating the results in
+    the storage of the one before. A {!remat}, a {!custom_jvp}, a
     {!custom_vjp} and a {!custom_transpose} compile as their function's
     operations, the program's own. So does a {!root}'s solve, and its derivative
     compiles as its linear solve's operations, each application of the operator

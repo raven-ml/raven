@@ -374,6 +374,9 @@ All notable changes to this project will be documented in this file.
   device stored its part of the closed result at its own offset, a program per
   offset or alignment. `Nx.take_along_axis` over 8 memory devices made 22
   programs, and makes 10.
+- Compiled loops copy less: a nested loop's or switch's result is stored
+  into its carry once, cycle or not, and a switch's branches share their
+  results' buffers. `Norn.Nuts.step` on eight schools: 330 kernels, from 364.
 - A compiled call over several devices runs as one program, its storage
   planned into an arena per device made for the call: on a GPU it holds at
   most what the plan places at once, where it held every value it computed

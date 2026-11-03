@@ -1851,6 +1851,315 @@ let test_iterate_in_step () =
        (Nx.stack [ folded (Nx.get [ 0 ] lanes); folded (Nx.get [ 1 ] lanes) ]))
     (bits (Rune.vmap' scanned lanes))
 
+(* Carries in storage *)
+
+(* How a step computes a carry's next value from the carry [c], its partner
+   [o] of the same dtype and shape, and the step's boolean [p], through
+   movements and selections alone, which a compiled call computes exactly at
+   every dtype. A nested loop's or branch's result reads [o], so that two
+   carries whose next values each read the other form a cycle through it. *)
+type next =
+  | Partner  (** [o]. *)
+  | Flipped  (** [c] reversed: the carry read elsewhere than its own index. *)
+  | Flipped_partner  (** [o] reversed. *)
+  | Scanned of int
+      (** A scan of [k] rows from [c], its step [where m o (flip d)] for a row
+          [m] of a fixed mask. *)
+  | Iterated of int
+      (** An iterate of [t] steps from [c], each [where m o (flip d)]. *)
+  | Branched  (** [cond p (fun () -> o) (fun () -> flip c)]. *)
+  | Scattered  (** [c] with its first row set to [o]'s last. *)
+
+let pp_next ppf = function
+  | Partner -> Format.pp_print_string ppf "partner"
+  | Flipped -> Format.pp_print_string ppf "flipped"
+  | Flipped_partner -> Format.pp_print_string ppf "flipped partner"
+  | Scanned k -> Format.fprintf ppf "scan of %d rows" k
+  | Iterated t -> Format.fprintf ppf "iterate of %d steps" t
+  | Branched -> Format.pp_print_string ppf "cond"
+  | Scattered -> Format.pp_print_string ppf "scatter"
+
+let reads_partner = function Flipped -> false | _ -> true
+
+(* A pair of carries of one dtype and shape, their nexts and first values. *)
+type pair =
+  | Pair : {
+      dt : ('v, 's) Nx.dtype;
+      s : int array;
+      nexts : next * next;
+      firsts : Operand.t * Operand.t;  (** Two lanes of each. *)
+    }
+      -> pair
+
+let pair_gen =
+  let open Gen in
+  let* s = of_list [ [| 1 |]; [| 3 |]; [| 2; 3 |]; [| 0 |]; [| 5; 1 |] ] in
+  let next =
+    of_list
+      [
+        Partner;
+        Flipped;
+        Flipped_partner;
+        Scanned 0;
+        Scanned 2;
+        Iterated 0;
+        Iterated 2;
+        Branched;
+        Scattered;
+      ]
+  in
+  (* A scatter whose carry is read nowhere else takes the carry's storage. *)
+  let* nexts =
+    frequency [ (3, pair next next); (1, constant (Scattered, Flipped)) ]
+  in
+  (* A scatter needs a row to set. *)
+  let rowed n = if n = Scattered && s.(0) = 0 then Flipped_partner else n in
+  let nexts = (rowed (fst nexts), rowed (snd nexts)) in
+  let lanes = Array.append [| 2 |] s in
+  let* firsts = pair (Operand.draw lanes) (Operand.draw lanes) in
+  let+ (D.Any dt) = of_list D.all in
+  Pair { dt; s; nexts; firsts }
+
+let pp_pair ppf (Pair c) =
+  let a, b = c.nexts in
+  Format.fprintf ppf "%a %a: %a, %a" Nx.pp_dtype c.dt Operand.pp_shape c.s
+    pp_next a pp_next b
+
+(* Two pairs over [n] steps of a scan, or of an iterate that counts them,
+   mapped over two lanes or not. *)
+type carries = {
+  pairs : pair * pair;
+  n : int;
+  iterate : bool;
+  lanes : bool;
+  ps : bool array;  (** Each step's boolean, a lane's after the other's. *)
+}
+
+let carries_gen =
+  let open Gen in
+  (let* pairs = pair pair_gen pair_gen in
+   let* n = frequency [ (1, constant 0); (1, constant 1); (2, constant 3) ] in
+   let* iterate = bool and+ lanes = bool in
+   let+ ps = array ~size:(constant (2 * n)) bool in
+   { pairs; n; iterate; lanes; ps })
+  |> with_pp (fun ppf c ->
+      Format.fprintf ppf "%d steps of a%s%s, %a; %a" c.n
+        (if c.iterate then "n iterate" else " scan")
+        (if c.lanes then " over two lanes" else "")
+        pp_pair (fst c.pairs) pp_pair (snd c.pairs))
+
+let mask s = Nx.init Nx.bool s (fun i -> Array.fold_left ( + ) 0 i mod 2 = 0)
+
+let next_of (type v s) next p (c : (v, s, Nx.host) Nx.t) o =
+  let s = Nx.shape c in
+  let flip x = Nx.flip ~axes:[ 0 ] x in
+  match next with
+  | Partner -> o
+  | Flipped -> flip c
+  | Flipped_partner -> flip o
+  | Scanned k ->
+      fst
+        (Rune.scan T.tensor T.tensor T.unit
+           (fun d m -> (Nx.where m o (flip d), ()))
+           ~init:c
+           (mask (Array.append [| k |] s)))
+  | Iterated t ->
+      let m = mask s in
+      fst
+        (Rune.iterate
+           T.(pair tensor tensor)
+           ~max:(t + 1)
+           ~until:(fun (_, i) -> Nx.greater_equal_s i (Int32.of_int t))
+           (fun (d, i) -> (Nx.where m o (flip d), Nx.add_s i 1l))
+           (c, Nx.scalar Nx.int32 0l))
+  | Branched -> Rune.cond T.tensor p (fun () -> o) (fun () -> flip c)
+  | Scattered ->
+      let row = Array.append [| 1 |] (Array.sub s 1 (Array.length s - 1)) in
+      Nx.scatter ~axis:0 (Nx.zeros Nx.int64 row)
+        (Nx.slice [ Nx.R (s.(0) - 1, s.(0)) ] o)
+        c
+
+let quad () = T.(pair (pair tensor tensor) (pair tensor tensor))
+
+let covers_pair (Pair c) =
+  let a, b = c.nexts in
+  let through what k =
+    let one n m = k n && reads_partner m in
+    cover ("a cycle through " ^ what) (one a b || one b a)
+  in
+  through "a nested scan" (function Scanned k -> k > 0 | _ -> false);
+  through "a nested iterate" (function Iterated t -> t > 0 | _ -> false);
+  through "a cond" (( = ) Branched);
+  through "a scatter" (( = ) Scattered);
+  cover "a scatter that takes its carry's storage"
+    ((a = Scattered && b = Flipped) || (b = Scattered && a = Flipped));
+  cover "a carry read elsewhere" (a = Flipped || b = Flipped);
+  cover "a zero-size carry" (Operand.numel c.s = 0)
+
+(* The loop of [c] over two pairs, compiled against eager. *)
+let agree (type v s w r) c
+    ((dx : (v, s) Nx.dtype), sx, x_nexts, fx)
+    ((dy : (w, r) Nx.dtype), sy, y_nexts, fy) =
+  let na, nb = x_nexts and nc, ne = y_nexts in
+  let step p ((a, b), (d, e)) =
+    ((next_of na p a b, next_of nb p b a), (next_of nc p d e, next_of ne p e d))
+  in
+  let n = c.n in
+  let run (init, (ps, q)) =
+    if not c.iterate then
+      Rune.scan (quad ()) T.tensor T.tensor
+        (fun cr p ->
+          let cr = step p cr in
+          (cr, fst (fst cr)))
+        ~init ps
+    else
+      let cr, _ =
+        Rune.iterate
+          T.(pair (quad ()) tensor)
+          ~max:n
+          ~until:(fun (_, i) -> Nx.greater_equal_s i (Int32.of_int n))
+          (fun (cr, i) ->
+            let even = Nx.equal_s (Nx.mod_s i 2l) 0l in
+            (step (Nx.where q (Nx.logical_not even) even) cr, Nx.add_s i 1l))
+          (init, Nx.scalar Nx.int32 0l)
+      in
+      (cr, fst (fst cr))
+  in
+  let sg =
+    T.(pair (quad ()) (pair tensor tensor) @-> returns (pair (quad ()) tensor))
+  in
+  let made dt s k = Operand.make dt (Array.append [| 2 |] s) k in
+  let ab = (made dx sx (fst fx), made dx sx (snd fx)) in
+  let de = (made dy sy (fst fy), made dy sy (snd fy)) in
+  let lanes = Nx.create Nx.bool [| 2; n |] c.ps in
+  let qs = Nx.create Nx.bool [| 2 |] [| false; true |] in
+  let lane l =
+    let g x = Nx.get [ l ] x in
+    let (a, b), (d, e) = (ab, de) in
+    (((g a, g b), (g d, g e)), (g lanes, g qs))
+  in
+  let all (((a, b), (d, e)), ys) =
+    [ codes a; codes b; codes d; codes e; codes ys ]
+  in
+  let stacked (((a, b), (d, e)), ys) (((a', b'), (d', e')), ys') =
+    let s u v = Nx.stack [ u; v ] in
+    (((s a a', s b b'), (s d d', s e e')), s ys ys')
+  in
+  let expected, got =
+    if not c.lanes then
+      ( outcome (fun () -> all (run (lane 0))),
+        compiled ~rows:n (fun () ->
+            outcome (fun () -> all (Rune.jit sg run (lane 0)))) )
+    else
+      ( outcome (fun () -> all (stacked (run (lane 0)) (run (lane 1)))),
+        compiled ~rows:n (fun () ->
+            outcome (fun () ->
+                all (Rune.jit sg (Rune.vmap sg run) ((ab, de), (lanes, qs))))) )
+  in
+  equal (outcome_t (Testable.list codes_t)) expected got
+
+(* Compiled, two pairs of carries whose next values read each other, through
+   nested loops, branches and scatters, give eager's bits at every dtype,
+   under a map too, whose lanes take different branches. *)
+let law_carries c =
+  let (Pair x) = fst c.pairs in
+  let (Pair y) = snd c.pairs in
+  covers_pair (fst c.pairs);
+  covers_pair (snd c.pairs);
+  let branched (Pair p) = fst p.nexts = Branched || snd p.nexts = Branched in
+  let branches = branched (fst c.pairs) || branched (snd c.pairs) in
+  let ps = Array.sub c.ps 0 c.n and ps' = Array.sub c.ps c.n c.n in
+  let both a = Array.mem true a && Array.mem false a in
+  cover "both branches taken"
+    (branches && if c.iterate then c.n >= 2 else both ps);
+  cover "lanes taking different branches"
+    (branches && c.lanes && c.n > 0 && (c.iterate || ps <> ps'));
+  cover "two dtypes"
+    (Format.asprintf "%a" Nx.pp_dtype x.dt
+    <> Format.asprintf "%a" Nx.pp_dtype y.dt);
+  cover "an iterate" c.iterate;
+  agree c (x.dt, x.s, x.nexts, x.firsts) (y.dt, y.s, y.nexts, y.firsts)
+
+
+
+(* The kernels a call of [f] compiles. *)
+let kernels f = List.length (snd (Tolk.Realize.kernels f))
+
+let sig3 r = T.(tensor @-> tensor @-> tensor @-> returns r)
+
+(* A carry whose next value is a nested loop's or a branch's result is stored
+   from that result's storage, so a cycle through the result, the nested
+   construct reading the carry [b] whose next value reads [a], costs no copy:
+   the call compiles as many kernels as when the construct reads a capture
+   [z] instead. *)
+let test_cycle_storage () =
+  let a = v [| 1.; 2.; 3.; 4. |] and b = v [| 5.; 6.; 7.; 8. |] in
+  let z = v [| -1.; -2.; -3.; -4. |] in
+  let ps = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
+  let mask = Nx.create Nx.bool [| 4 |] [| true; false; false; true |] in
+  let flip x = Nx.flip x in
+  let nested =
+    [
+      ( "a scan",
+        fun _ c o ->
+          fst
+            (Rune.scan T.tensor T.tensor T.unit
+               (fun d m -> (Nx.where m o (flip d), ()))
+               ~init:c
+               (Nx.stack [ mask; Nx.logical_not mask ])) );
+      ( "an iterate",
+        fun _ c o ->
+          fst
+            (Rune.iterate
+               T.(pair tensor tensor)
+               ~max:3
+               ~until:(fun (_, i) -> Nx.greater_equal_s i 2l)
+               (fun (d, i) -> (Nx.add d o, Nx.add_s i 1l))
+               (c, Nx.scalar Nx.int32 0l)) );
+      ( "a cond",
+        fun p c o ->
+          Rune.cond T.tensor p (fun () -> Nx.add c o) (fun () -> flip c) );
+    ]
+  in
+  List.iter
+    (fun (what, inner) ->
+      let compiled reads =
+        let f a b z =
+          fst
+            (Rune.scan
+               T.(pair tensor tensor)
+               T.tensor T.unit
+               (fun (a, b) p -> ((inner p a (reads b z), a), ()))
+               ~init:(a, b) ps)
+        in
+        kernels (fun () ->
+            ignore
+              (Rune.jit (sig3 T.(pair tensor tensor)) f a b z))
+      in
+      equal ~msg:what int (compiled (fun _ z -> z)) (compiled (fun b _ -> b)))
+    nested
+
+(* A next carry that reads the carry elsewhere than its own index, a key
+   split from the carried key, is stored from the split, which the step's draw
+   reads too: its trip computes the split, the draw's output row and the
+   carry's store, and the call adds the carry's first store, the copy of rows
+   that lie 4 bytes apart and the outputs' copy out of rows 16 bytes apart. *)
+let test_split_key () =
+  let step k x =
+    let ks = Nx.Rng.split k in
+    Nx.Rng.with_key ks.(1) (fun () ->
+        (ks.(0), Nx.add x (Nx.Rng.uniform f32 [||])))
+  in
+  let f k xs = snd (Rune.scan Nx.Rng.ptree T.tensor T.tensor step ~init:k xs) in
+  let xs = v [| 1.; -1.; 1. |] in
+  let n =
+    kernels (fun () ->
+        ignore
+          (Rune.jit T.(Nx.Rng.ptree @-> tensor @-> returns tensor) f
+             (Nx.Rng.key 3) xs))
+  in
+  at_most int ~than:6 n
+
 (* Memory *)
 
 (* The bytes [keep] holds after a run, beyond those an uncounted run left; what
@@ -1961,6 +2270,12 @@ let () =
              test "nested scans of one row or more" test_nested_compiled;
              test ~timeout:60. "scans in a chain each run once" test_chained;
              test "carries in a cycle" test_cycle;
+             prop "carries through nested loops, branches and scatters"
+               carries_gen law_carries;
+             test "a cycle through a nested result costs no copy"
+               test_cycle_storage;
+             test "a next key split from the carry is stored once"
+               test_split_key;
              test "rows computed from constants" test_constant_rows;
              test "constant and empty outputs" test_constant_outputs;
              test "a take at constant indices" test_constant_take;

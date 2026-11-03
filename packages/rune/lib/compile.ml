@@ -1206,10 +1206,13 @@ let identity st form =
    stacked output, row [n - 1 - i] where the scan is reversed, rows lying 16 bytes of memory apart, as the body's vector
    accesses require. Each carry, and each sum of the step's additions, is one
    buffer that each trip updates in place, once every kernel that reads it
-   ran, as the schedule orders them: a next carry that reads the carry
-   elsewhere than at its own index is computed into storage of its own first,
-   and so is, each trip, the latest of carries whose next values read each
-   other in a cycle, such as two carries that swap.
+   ran, as the schedule orders them; the schedule computes a next carry that
+   reads the carry elsewhere than at its own index into storage of its own
+   first. So is, each trip, the latest of carries whose next values read each
+   other in a cycle, such as two carries that swap, unless its next value lies
+   in storage already, as a nested loop's result does, which the carry's store
+   then reads alone. A switch's loops carry the results in the first branch's
+   storage, each in place.
 
    An iterate lowers as a loop of at most [max] trips: its stop at the initial
    carry is computed before the loop, and each trip computes the step, then the
@@ -1226,37 +1229,28 @@ let identity st form =
    and a loop carries it where its trip reads it or checks, so an iterate stops
    at the program's first failure. *)
 
-(* How a node reads a value it reads: at each element's own index only
-   (through elementwise operations, casts and bitcasts of one width, reshapes
-   and contiguous markers), or otherwise. *)
-type how = Own | Other
-
-let keeps_index u =
-  let sized v =
-    not (List.exists (Tolk.Dtype.equal (Ops.dtype v)) Tolk.Dtype.weaks)
-  in
-  match Ops.op u with
-  | Tolk.Op.Cast | Tolk.Op.Bitcast ->
-      let v = Ops.nth u 0 in
-      sized u && sized v && Ops.element_size u = Ops.element_size v
-  | Tolk.Op.Reshape | Tolk.Op.Stage -> true
-  | o -> Tolk.Op.Set.mem o Tolk.Op.Set.elementwise
-
-(* [reads views u] is how [u] reads each value [views] holds: [(j, how)] for
-   each [views.(j) = Some v] that [u] reads, by increasing [j]. The partial
-   application walks each node once for all the values: a loop asks it of each
-   next value about each carried one, and a walk per carried value would walk
-   the step once for each. *)
-let reads views =
+(* [reads ~stored views u] is the [j] of each [views.(j) = Some v] that [u]
+   reads, increasing. Where [stored] holds, a value in storage, an [After] of a
+   buffer such as a nested loop's result, reads nothing: whoever reads [u]
+   reads that storage, which was computed before. The partial application
+   walks each node once for all the values: a loop asks it of each next value
+   about each carried one, and a walk per carried value would walk the step
+   once for each. *)
+let reads ~stored views =
   let index = Ops.Tbl.create 16 in
   Array.iteri (fun j -> Option.iter (fun v -> Ops.Tbl.replace index v j)) views;
   let rec merge a b =
     match (a, b) with
     | [], l | l, [] -> l
-    | ((i, h) as x) :: a', ((j, g) as y) :: b' ->
-        if i < j then x :: merge a' b
-        else if j < i then y :: merge a b'
-        else (i, if h = Other || g = Other then Other else Own) :: merge a' b'
+    | i :: a', j :: b' ->
+        if i < j then i :: merge a' b
+        else if j < i then j :: merge a b'
+        else i :: merge a' b'
+  in
+  let in_storage u =
+    stored
+    && Ops.op u = Tolk.Op.After
+    && Ops.op (Ops.nth u 0) = Tolk.Op.Buffer
   in
   let memo = Ops.Tbl.create 64 in
   let rec go u =
@@ -1265,12 +1259,10 @@ let reads views =
     | None ->
         let r =
           match Ops.Tbl.find_opt index u with
-          | Some j -> [ (j, Own) ]
+          | Some j -> [ j ]
+          | None when in_storage u -> []
           | None ->
-              let r =
-                List.fold_left (fun acc s -> merge acc (go s)) [] (Ops.src u)
-              in
-              if keeps_index u then r else List.map (fun (j, _) -> (j, Other)) r
+              List.fold_left (fun acc s -> merge acc (go s)) [] (Ops.src u)
         in
         Ops.Tbl.add memo u r;
         r
@@ -1514,9 +1506,9 @@ and construct st cs env c base =
 
 (* A switch: one loop per branch, of at most one trip, under a flag that holds
    where the index names the branch and no check of the program has failed.
-   Each loop carries the results and sums the one before left, so the taken
-   branch's reach the end. A branch reads the captures as its call's
-   parameters, so an untaken one computes nothing. An index
+   Each loop carries the results and sums the one before left, in that loop's
+   storage, so the taken branch's reach the end. A branch reads the captures
+   as its call's parameters, so an untaken one computes nothing. An index
    outside the branches is a check, made before any branch's. *)
 and switch st cs env c (s : Program.switch) =
   let forms = Program.forms c in
@@ -1554,7 +1546,7 @@ and switch st cs env c (s : Program.switch) =
         zeros f.dtype (shape_of f))
   in
   let sums = starts st env forms ~at:nr s.seeds in
-  let branch carried k =
+  let branch (carried, into) k =
     let b = s.branches.(k) in
     let fed = List.nth feeds k in
     let taken =
@@ -1586,17 +1578,19 @@ and switch st cs env c (s : Program.switch) =
       Array.iteri (fun m j -> sums.(j) <- out.(base + m)) fed;
       (Array.concat [ Array.sub out 0 nr; sums; [| no |] ], [||])
     in
-    let carried, _ =
-      repeat st cs ~n:1 ~reverse:false ~hoist:false
+    let carried, _, storage =
+      repeat ~into st cs ~n:1 ~reverse:false ~hoist:false
         ~stop:(Some (nr + ns))
         ~bound:(Loops.pick read caps)
         (Array.append carried [| taken |])
         [||] trip
     in
-    Array.sub carried 0 (nr + ns)
+    (Array.sub carried 0 (nr + ns), Array.sub storage 0 (nr + ns))
   in
-  let finals =
-    List.fold_left branch (Array.append results sums) (List.init nb Fun.id)
+  let finals, _ =
+    List.fold_left branch
+      (Array.append results sums, [||])
+      (List.init nb Fun.id)
   in
   Array.map (result env c) finals
 
@@ -1674,7 +1668,7 @@ and loop st cs env c =
             | None -> [||]
             | Some t -> [| int32 0; Ops.lt (int32 0) t |]
           in
-          let carried, ys =
+          let carried, ys, _ =
             repeat st cs ~n
               ~reverse:(reverse && Option.is_none t)
               ~hoist:true
@@ -1765,7 +1759,7 @@ and loop st cs env c =
             in
             (Array.concat [ carry; sums; count; [| go |] ], Array.sub out nc ny)
           in
-          let carried, ys =
+          let carried, ys, _ =
             repeat st cs ~n:max ~reverse:false ~hoist:true
               ~stop:(Some (nc + ns + Array.length count))
               ~bound:[||]
@@ -1841,8 +1835,9 @@ and outputs st cs ~reach env args =
   program st cs env;
   Array.map (fun (V y) -> node st env y) env.p.outputs
 
-(* [repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip] is the values
-   [n] trips of [trip] reach from [inits], and the outputs each trip stacks,
+(* [repeat ~into st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip] is the
+   values [n] trips of [trip] reach from [inits], the outputs each trip
+   stacks, and the storage of each value, its buffer and the value there,
    computed on the program's device: [trip checks carried rows] maps the
    carried values and a row of each of [xs], stacked inputs of [n] rows, then
    each of [bound], to the next carried values and a trip's outputs, making its
@@ -1854,8 +1849,12 @@ and outputs st cs ~reach env args =
    value of [bound] is a parameter of the call, so that the trip's work on it
    stays there too. The checks are carried too, and become the loop's in
    [cs]. Where [stop] is [Some k], the carried value [k] is one boolean,
-   whether to run on, which the engine reads before each trip. *)
-and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
+   whether to run on, which the engine reads before each trip. Where
+   [into.(i)] is [Some (b, u)], [inits.(i)] is [u]'s value, held in the
+   buffer [b], which the loop then updates in place: storage nothing else
+   reads. *)
+and repeat ?(into = [||]) st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip
+    =
   let device = st.device in
   let count = ref 0 in
   let next () =
@@ -1886,21 +1885,25 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
      device. *)
   let device_of u = Option.value (Ops.device u) ~default:device in
   (* Each carried value: its buffer, holding its first value, the argument that
-     stores it there, and its parameter's view. *)
-  let carry u =
+     stores it there, and its parameter's view. A value [into] gives storage
+     for is carried in that storage, in place. *)
+  let carry ?into u =
     if empty u then None
     else
       let slot = next () and k = Shape.max_numel u in
       let device = device_of u in
-      let b = Ops.new_buffer device k (Ops.dtype u) in
       let p =
         hold slot
           (Tolk.Shape.param ~shape:[ Ops.Int k ] ~device (unique ())
              (Ops.dtype u))
       in
-      let first =
-        let view = Shape.reshape b (Shape.shape u) in
-        Ops.after b [ Ops.store view (on_device u) ]
+      let b, first =
+        match into with
+        | Some held -> held
+        | None ->
+            let b = Ops.new_buffer device k (Ops.dtype u) in
+            let view = Shape.reshape b (Shape.shape u) in
+            (b, Ops.after b [ Ops.store view (on_device u) ])
       in
       pass slot first;
       Some (b, first, Shape.reshape p (Shape.shape u))
@@ -1908,7 +1911,13 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
   let view_of inits carried i =
     match carried.(i) with Some (_, _, v) -> v | None -> blank inits.(i)
   in
-  let carried = Array.map carry inits in
+  let carried =
+    Array.mapi
+      (fun i u ->
+        let into = if i < Array.length into then into.(i) else None in
+        carry ?into u)
+      inits
+  in
   (* Each trip reads its row of each stacked input, from a copy whose rows are
      16 bytes apart where the input's are not. *)
   let rows =
@@ -1969,7 +1978,7 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
   let made = List.rev inner.made in
   (* The flag is carried where the trip reads it or checks. *)
   let flag =
-    let read = reads [| Some before |] in
+    let read = reads ~stored:false [| Some before |] in
     let reads_it u = read u <> [] in
     let unread =
       not (Array.exists reads_it nexts || Array.exists reads_it ys)
@@ -2001,10 +2010,11 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
   let view = view_of inits carried in
   let k = Array.length inits in
   (* A carried value whose next value reads another's in a cycle is copied,
-     each trip, into storage of its own first. *)
-  let read =
-    reads (Array.mapi (fun i c -> Option.map (fun _ -> view i) c) carried)
-  in
+     each trip, into storage of its own first. A next value read from storage,
+     such as a nested loop's result, is that copy already: the carry's store
+     reads only the storage. *)
+  let views = Array.mapi (fun i c -> Option.map (fun _ -> view i) c) carried in
+  let read = reads ~stored:true views in
   let edges = Array.make k [] and copied = Array.make k false in
   let seen = Array.make k false in
   let rec reaches j i =
@@ -2017,11 +2027,7 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
   in
   for i = 0 to k - 1 do
     Array.fill seen 0 k false;
-    let others =
-      List.filter_map
-        (fun (j, _) -> if j <> i then Some j else None)
-        (read nexts.(i))
-    in
+    let others = List.filter (( <> ) i) (read nexts.(i)) in
     if List.exists (fun j -> reaches j i) others then copied.(i) <- true
     else edges.(i) <- others
   done;
@@ -2029,13 +2035,15 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
      where the scatter's storage is a fill of the carry's ({!may_take}), its
      positions and updates do not read the carry, and the carry is copied for
      no cycle: the scatter then writes its updates there, and the trip stores
-     nothing more. *)
+     nothing more. Whether its positions and updates read the carry counts
+     their reads through storage too. *)
   let taken = ref [] in
+  let read_all = lazy (reads ~stored:false views) in
   let takes i p v =
     match Ops.Tbl.find_opt st.dsts (unshaped v) with
     | Some d ->
         let p = unshaped p in
-        let reads_it u = List.mem_assoc i (read u) in
+        let reads_it u = List.mem i (Lazy.force read_all u) in
         if
           unshaped d.into == p
           && (not copied.(i))
@@ -2070,8 +2078,6 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
                 let w = Shape.reshape w (Shape.shape u) in
                 Ops.after w [ Ops.store w v ]
               end
-              else if List.assoc_opt i (read v) = Some Other then
-                Ops.contiguous v
               else v
             in
             stores := Ops.store p v :: !stores;
@@ -2138,7 +2144,12 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
   if Option.is_some flag then
     cs.failed <- Ops.maximum cs.failed finals.(ncarried);
   check_finals cs made (Array.sub finals (ncarried + 1) (k - ncarried - 1));
-  (Array.sub finals 0 ncarried, Array.map (fun f -> f e) ys)
+  let storage i =
+    Option.map (fun (b, _, _) -> (b, Ops.after b [ e ])) carried.(i)
+  in
+  ( Array.sub finals 0 ncarried,
+    Array.map (fun f -> f e) ys,
+    Array.init ncarried storage )
 
 (* [q], a program threading its totals, over [args]: its totals run from the
    sums of [c]'s results, each from its seed or the identity, which their
