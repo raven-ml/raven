@@ -7,13 +7,15 @@
    split on <|endoftext|>. Not on any alias; run it by hand:
 
    bench_owt.exe TOKENIZER.json CORPUS.txt [-domains N] [-repeat N] [-bytes N]
+     [-no-checksum]
 
    [-bytes N] reads the documents that end within the corpus's first N bytes.
    With [-domains 1] the calling domain encodes; with more, each run spawns
    domains for the call. Either way a run reuses the encoder states, pretoken
    caches included, that the runs before it left in the tokenizer.
    [-repeat 0] stops before encoding: the baseline that, subtracted from a
-   one-run count of instructions, leaves the run's.
+   one-run count of instructions, leaves the run's; [-no-checksum] then keeps
+   the sum and hash of the ids out of that count.
 
    Before timing, one pre-tokenization pass counts the pretokens — the
    denominator of ns/pretoken — and the ones over 15 bytes, which are the spans
@@ -78,15 +80,20 @@ let () =
   let domains = ref 1 in
   let repeat = ref 3 in
   let limit = ref 0 in
+  let checksum = ref true in
   let anon = ref [] in
   Arg.parse
     [
       ("-domains", Arg.Set_int domains, "N domains to encode on (default: 1)");
       ("-repeat", Arg.Set_int repeat, "N timed runs (default: 3)");
       ("-bytes", Arg.Set_int limit, "N read the corpus's first N bytes");
+      ( "-no-checksum",
+        Arg.Clear checksum,
+        " skip the sum and hash of each run's ids" );
     ]
     (fun a -> anon := a :: !anon)
-    "bench_owt TOKENIZER.json CORPUS.txt [-domains N] [-repeat N] [-bytes N]";
+    "bench_owt TOKENIZER.json CORPUS.txt [-domains N] [-repeat N] [-bytes N] \
+     [-no-checksum]";
   let tokenizer_path, corpus_path =
     match List.rev !anon with
     | [ t; c ] -> (t, c)
@@ -146,16 +153,18 @@ let () =
        over each value [v], modulo 2^62, and allocates nothing. *)
     let sum = ref 0 and hash = ref 0 in
     let mix v = hash := ((!hash * 1000003) + v + 1) land ((1 lsl 62) - 1) in
-    for i = 0 to Bigarray.Array1.dim ids - 1 do
-      let id = Int32.to_int (Bigarray.Array1.unsafe_get ids i) in
-      sum := !sum + id;
-      mix id
-    done;
-    Array.iter mix lengths;
-    Printf.printf "run %d: %.2f s, %.1f MB/s, %d ids, sum %d, hash %d%s\n%!"
-      run dt
+    if !checksum then begin
+      for i = 0 to Bigarray.Array1.dim ids - 1 do
+        let id = Int32.to_int (Bigarray.Array1.unsafe_get ids i) in
+        sum := !sum + id;
+        mix id
+      done;
+      Array.iter mix lengths
+    end;
+    Printf.printf "run %d: %.2f s, %.1f MB/s, %d ids%s%s\n%!" run dt
       (float_of_int bytes /. 1e6 /. dt)
-      (Bigarray.Array1.dim ids) !sum !hash
+      (Bigarray.Array1.dim ids)
+      (if !checksum then Printf.sprintf ", sum %d, hash %d" !sum !hash else "")
       (if pretokens > 0 then
          Printf.sprintf ", %.1f ns/pretoken"
            (dt *. 1e9 /. float_of_int pretokens)
