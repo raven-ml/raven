@@ -82,7 +82,7 @@ typedef struct {
 
 /* Rows from which a unit's products run on the chain kernel's tiles; fewer
    take a gemv of each row. Both add in chain order. */
-#define CHAIN_ROWS 6
+#define CHAIN_ROWS 12
 
 /* A block's class for every row of a tile under a mask that reads no lead
    or head (summary): its program's output 0 false at every pair, true at
@@ -260,37 +260,59 @@ static void values_of(const att *c, scratch *x, int n) {
   }
 }
 
-/* One row's scores against [n] keys at [k], key i's elements at k + i·ks,
-   each added in increasing dimension from +0, each fused, as the chain
-   kernel adds them: on x86-64 eight keys a gather of one dimension. */
+/* The scores of [r] rows at [q], row i's dk elements at q + i·dk, against
+   [n] keys at [k], key j's elements at k + j·ks, into [s], row i's at
+   s + i·KEYS, each added in increasing dimension from +0, each fused, as
+   the chain kernel adds them: on x86-64 eight keys a gather of one
+   dimension, which four rows share. */
 #if defined(__AVX2__) && defined(__FMA__)
 #define ROW_SCORES 1
-static void row_scores(const float *q, const float *k, int64_t ks, int n,
-                       int64_t dk, float *s) {
+#define GATHER(d) _mm256_i32gather_ps(kj + (d), idx, 4)
+#define ROWS4(R)                                                        \
+  static void scores##R(const float *q, int64_t dk, const float *kj,    \
+                        __m256i idx, float *s) {                        \
+    __m256 a[4];                                                        \
+    for (int i = 0; i < R; i++) a[i] = _mm256_setzero_ps();             \
+    _Pragma("GCC unroll 4") for (int64_t d = 0; d < dk; d++) {          \
+      __m256 x = GATHER(d);                                             \
+      _Pragma("GCC unroll 4") for (int i = 0; i < R; i++) a[i] =        \
+          _mm256_fmadd_ps(_mm256_set1_ps(q[i * dk + d]), x, a[i]);      \
+    }                                                                   \
+    for (int i = 0; i < R; i++) _mm256_storeu_ps(s + i * KEYS, a[i]);   \
+  }
+ROWS4(1)
+ROWS4(2)
+ROWS4(3)
+ROWS4(4)
+
+static void row_scores(const float *q, int r, const float *k, int64_t ks,
+                       int n, int64_t dk, float *s) {
   int j = 0;
   if (ks <= INT32_MAX / 8) {
     __m256i idx = _mm256_mullo_epi32(_mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7),
                                      _mm256_set1_epi32((int32_t)ks));
     for (; j + 8 <= n; j += 8) {
       const float *kj = k + j * ks;
-      __m256 a = _mm256_setzero_ps();
-      for (int64_t d = 0; d < dk; d++)
-        a = _mm256_fmadd_ps(_mm256_set1_ps(q[d]),
-                            _mm256_i32gather_ps(kj + d, idx, 4), a);
-      _mm256_storeu_ps(s + j, a);
+      int i = 0;
+      for (; i + 4 <= r; i += 4) scores4(q + i * dk, dk, kj, idx, s + i * KEYS + j);
+      if (r - i == 3) scores3(q + i * dk, dk, kj, idx, s + i * KEYS + j);
+      else if (r - i == 2) scores2(q + i * dk, dk, kj, idx, s + i * KEYS + j);
+      else if (r - i == 1) scores1(q + i * dk, dk, kj, idx, s + i * KEYS + j);
     }
   }
-  for (; j < n; j++) {
-    float a = 0;
-    for (int64_t d = 0; d < dk; d++) a = fmaf(q[d], k[j * ks + d], a);
-    s[j] = a;
-  }
+  for (; j < n; j++)
+    for (int i = 0; i < r; i++) {
+      float a = 0;
+      for (int64_t d = 0; d < dk; d++)
+        a = fmaf(q[i * dk + d], k[j * ks + d], a);
+      s[i * KEYS + j] = a;
+    }
 }
 #else
 #define ROW_SCORES 0
-static void row_scores(const float *q, const float *k, int64_t ks, int n,
-                       int64_t dk, float *s) {
-  (void)q, (void)k, (void)ks, (void)n, (void)dk, (void)s;
+static void row_scores(const float *q, int r, const float *k, int64_t ks,
+                       int n, int64_t dk, float *s) {
+  (void)q, (void)r, (void)k, (void)ks, (void)n, (void)dk, (void)s;
 }
 #endif
 
@@ -465,9 +487,7 @@ static void unit(att *c, scratch *x, int64_t u) {
           k = x->kt;
           ks = dk;
         }
-        for (int i = 0; i < rows; i++)
-          if (x->sees[i])
-            row_scores(x->q + i * dk, k, ks, v->n, dk, x->s + i * KEYS + v->j);
+        row_scores(x->q, rows, k, ks, v->n, dk, x->s + v->j);
         continue;
       }
       nx_cpu_stage_as(&c->a[K], v->ka, v->kk, c->kd, v->n, dk, NX_FLOAT32,

@@ -339,8 +339,9 @@
     at lead index 0 and head 0 alone, and a block whose pairs it shows all
     or hides all is read, or skipped, without running it again.
 
-    Float32 values whose dimension steps one element are read in place;
-    keys, and other values, are copied into float32 by blocks. Each thread
+    Float32 keys and values whose dimension steps one element are read in
+    place, keys only for fewer than 12 rows of a key head; others are
+    copied into float32 by blocks. Each thread
     holds at most [4 (128 dk + 192 dv + 8192) + 12288] bytes of host memory
     for the call, and the call at most [tq ⌈tk / 64⌉] bytes where a mask
     is shared so.
