@@ -2405,9 +2405,52 @@ let bfloat16_vectors_on_cuda =
         ~id:(Printf.sprintf "%d lanes") [ 2; 4 ] sum_on_cuda;
     ]
 
+(* [c = Σ_r a.(i, r) * float32 b.(r, j)] for a float32 [a] and a bfloat16 [b],
+   as attention's values multiply float32 weights by bfloat16 values: a
+   bfloat16 core would round [a], which the program does not round, so no core
+   takes it. *)
+let mixed_product (m, k, n) =
+  let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int (m * k) ] 1 Float32
+  and b = Shape.param ~shape:[ Ops.Int (k * n) ] 2 Bfloat16 in
+  let open Ops.O in
+  let i = Ops.range (Int m) [ 0 ]
+  and j = Ops.range (Int n) [ 1 ]
+  and r = Ops.range (Int k) [ 2 ] in
+  let x = Ops.index a [ (i * int k) + r ]
+  and y = Ops.cast (Ops.index b [ (r * int n) + j ]) Float32 in
+  let sum = Ops.reduce (x * y) Add [ r ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index c [ (i * int n) + j ]) sum) [ i; j ] ]
+
+let mixed_on_cuda (m, k, n) =
+  let d, r = on_cuda () in
+  let a = small_integers 3 (m * k) and b = small_integers 4 (k * n) in
+  let exact =
+    Array.init (m * n) (fun e ->
+        let i = e / n and j = e mod n in
+        let s = ref 0 in
+        for q = 0 to k - 1 do
+          s := !s + (a.((i * k) + q) * b.((q * n) + j))
+        done;
+        `Float (Float.of_int !s))
+  in
+  let values x = Array.map (fun v -> `Float (Float.of_int v)) x in
+  let prg = compiled_for r (mixed_product (m, k, n)) in
+  let wmmas = List.filter (is Wmma) (Ops.src (Ops.nth prg 1)) in
+  equal ~msg:"tensor cores" int 0 (List.length wmmas);
+  equal (array Dtypes.value) exact
+    (List.assoc 0 (Run.on d prg [ (1, values a); (2, values b) ]))
+
 let tensor_cores_on_cuda =
   group "tensor cores on CUDA"
     [
+      cases
+        "a float32 operand by a widened bfloat16 takes no core, and is the \
+         exact product"
+        ~id:(fun (m, k, n) -> Printf.sprintf "[%d; %d] by [%d; %d]" m k k n)
+        [ (16, 16, 16); (64, 64, 64) ]
+        mixed_on_cuda;
       cases "a product of one tile is the exact product"
         ~id:(Format.asprintf "%a" Dtype.pp) [ Dtype.Float16; Dtype.Bfloat16 ]
         (fun dt ->

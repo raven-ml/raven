@@ -994,7 +994,14 @@ scope, see README.
   Ada at `K = 2880`, the core errs by `2868u`, inside even `γ(K + 1, u)`,
   about `2881.5u`. A core shown to exceed the bound is disabled. A core with
   a narrow output still takes no widened operand, since its sum rounds to the
-  narrow type. rune never gives tolk an 8-bit float (rune's
+  narrow type. A `float32` operand that is not such a cast takes no core, and
+  tolk never narrows one by a cast of its own: a `bfloat16` core would round
+  a value the program did not round, outside `Nx.contract`'s bound for
+  `float32`'s `u`. Attention's values, `float32` weights by `bfloat16` values,
+  so run without a core; they are bound by reading the weights (at 2048 slots
+  of 8 heads, 128 MiB, 233 us at fudge's 576 GB/s), not by arithmetic. A
+  program that wants the core rounds its operand itself, and this rule then
+  applies. rune never gives tolk an 8-bit float (rune's
   `Lower_arith.dtype` stores each as `Uint8`), so no contraction of rune's
   reaches an 8-bit core. Cores are tried in the renderer's order, so Metal,
   whose `float32` core comes first, keeps it. tinygrad never builds the
@@ -1021,7 +1028,9 @@ scope, see README.
   *`. Each checks `Nx.contract`'s bound, `γ(K + 1, 2u) Σ|a||b|` for
   `float32`'s `u`, with the result's rounding to its dtype. They pin the
   bound only: whether a core was taken is not observable through rune's
-  interface.
+  interface. The Codegen suite's `tensor cores on CUDA › a float32 operand by
+  a widened bfloat16 takes no core, and is the exact product` pins the
+  refusal.
 
 ## D30. Withdrawn
 
