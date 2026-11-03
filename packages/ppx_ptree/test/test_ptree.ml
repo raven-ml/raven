@@ -586,6 +586,24 @@ let test_aliases () =
   all_on S.on ~msg:"each alias is a fixed array"
     (placements (P.v Aliases.walk) y)
 
+(* A tuple walks its components at their positions, as Nx.Ptree.triple does. *)
+
+module Triple = struct
+  type ('a, 'd) t = 'a * 'a option * 'a list [@@deriving ptree]
+end
+
+let triples =
+  Gen.triple floats (Gen.option floats)
+    (Gen.list ~size:(Gen.int_range 0 2) floats)
+
+let law_triple ((_, b, l) as x) =
+  cover "no option" (Option.is_none b);
+  cover "an empty list" (List.is_empty l);
+  agree ~msg:"triple"
+    P.(triple tensor (option tensor) (list tensor))
+    (P.instantiate (module Triple))
+    x
+
 (* t: integers and cases, no array. *)
 
 module Config = struct
@@ -757,6 +775,7 @@ let () =
                test_block_cast;
              cases "variants" ~id:fst weights test_weight;
              prop "a recursive type nested at another argument" trees law_tree;
+             prop "a 3-tuple walks as Nx.Ptree.triple does" triples law_triple;
              test "a state nested over a model with Walk.under" test_train;
              test "the guide's block" test_guide;
            ];

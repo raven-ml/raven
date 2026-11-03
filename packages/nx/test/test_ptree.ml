@@ -216,6 +216,22 @@ let walks =
           equal ~msg:"pair, list" (list string)
             [ "0: a leaf"; "1: length 2"; "1.0: a leaf"; "1.1: a leaf" ]
             (words P.(pair tensor (list tensor)) (x, [ x; x ]));
+          equal ~msg:"triple" (list string)
+            [
+              "0: a leaf";
+              "1: length 2";
+              "1.0: a leaf";
+              "1.1: a leaf";
+              "2: None";
+            ]
+            (words
+               P.(triple tensor (list tensor) (option tensor))
+               (x, [ x; x ], None));
+          equal ~msg:"quad" (list string)
+            [ "0: a leaf"; "2: Some"; "2: a leaf"; "3: a leaf" ]
+            (words
+               P.(quad tensor unit (option tensor) tensor)
+               (x, (), Some x, x));
           equal ~msg:"empty list" (list string) [ "the root: length 0" ]
             (words P.(list tensor) []);
           equal ~msg:"option" (list string) [ "the root: None" ]
@@ -264,6 +280,71 @@ let walks =
           let q = P.Path.add (Index 7) p in
           equal ~msg:"add" bool true
             (P.Path.segments q = segs @ [ P.Path.Index 7 ]));
+    ]
+
+(* Tuples *)
+
+(* A tuple's component: a description and a value of it. *)
+type component = C : ('a, host) P.t * 'a -> component
+
+let pp_component ppf (C (s, x)) = Format.fprintf ppf "[%a]" (pp_visits s) x
+
+let components =
+  let open Gen in
+  one_of
+    [
+      map (fun x -> C (P.tensor, x)) floats;
+      constant (C (P.unit, ()));
+      map (fun x -> C (P.(option tensor), x)) (option floats);
+      map (fun l -> C (P.(list tensor), l)) (list ~size:(int_range 0 2) floats);
+    ]
+  |> Gen.with_pp pp_component
+
+let tuples = Gen.quad components components components components
+let arrayless (C (s, x)) = List.is_empty (fst (P.flatten s x))
+
+(* [under i k] is [k]'s visits, each path after [Index i]. *)
+let under i (C (s, x)) =
+  let at p = P.Path.v (P.Path.Index i :: P.Path.segments p) in
+  List.map
+    (function
+      | P.Leaf p -> P.Leaf (at p) | P.Report (p, r) -> P.Report (at p, r))
+    (P.visits s x)
+
+let cover_arrayless ks =
+  List.iteri
+    (fun i k -> cover (Printf.sprintf "no array at %d" i) (arrayless k))
+    ks
+
+let tuple_laws =
+  group "tuples"
+    [
+      prop "a tuple's visits are its components' after their positions" tuples
+        (fun ((k0, k1, k2, k3) as ks) ->
+          cover_arrayless [ k0; k1; k2; k3 ];
+          let expected ks = List.concat (List.mapi under ks) in
+          match ks with
+          | C (a, x), C (b, y), C (c, z), C (d, w) ->
+              equal ~msg:"triple" (list visit)
+                (expected [ k0; k1; k2 ])
+                (P.visits P.(triple a b c) (x, y, z));
+              equal ~msg:"quad" (list visit)
+                (expected [ k0; k1; k2; k3 ])
+                (P.visits P.(quad a b c d) (x, y, z, w)));
+      prop "rebuild of a tuple's own arrays is the tuple" tuples
+        (fun ((k0, k1, k2, k3) as ks) ->
+          cover_arrayless [ k0; k1; k2; k3 ];
+          let same s v =
+            let xs, k = P.flatten s v in
+            let xs', k' = P.flatten s (P.rebuild s ~like:v xs) in
+            equal ~msg:"skeleton" (option string) None
+              (P.Skeleton.diff ~this:"rebuilt" k' ~that:"in the value" k);
+            equal ~msg:"arrays" leaves xs xs'
+          in
+          match ks with
+          | C (a, x), C (b, y), C (c, z), C (d, w) ->
+              same P.(triple a b c) (x, y, z);
+              same P.(quad a b c d) (x, y, z, w));
     ]
 
 (* Laws *)
@@ -422,7 +503,12 @@ let messages =
           equal ~msg:"dtype" string
             "Nx.Ptree.map2: the root: float32 in the first value, int32 in the \
              second"
-            (map2 packed (Nx.P x) (Nx.P (i32 [| 1l |]))));
+            (map2 packed (Nx.P x) (Nx.P (i32 [| 1l |])));
+          equal ~msg:"triple" string
+            "Nx.Ptree.map2: 2: Some in the first value, None in the second"
+            (map2
+               P.(triple tensor tensor (option tensor))
+               (x, x, Some x) (x, x, None)));
       test "map2 applies nothing to values that differ" (fun () ->
           let calls = ref 0 in
           invalid ~by:"Nx.Ptree.map2" (fun () ->
@@ -1246,6 +1332,7 @@ let () =
     (run "nx ptree"
        [
          walks;
+         tuple_laws;
          laws;
          messages;
          payloads;
