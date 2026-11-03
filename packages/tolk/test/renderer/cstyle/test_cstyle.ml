@@ -544,9 +544,8 @@ let cuda_binaries =
   group "CUDA's binaries"
     [
       slow
-      @@ test "the CUDA device's kernels compile to PTX" (fun () ->
-          compiled (cuda ()) (fun ptx ->
-              in_order ~subs:[ ".target sm_89"; ".entry" ] ptx));
+      @@ test "the CUDA device's kernels compile to a cubin" (fun () ->
+          compiled (cuda ()) (starts_with ~prefix:"\x7fELF"));
       slow
       @@ test "the NV device's kernels compile to a cubin" (fun () ->
           compiled

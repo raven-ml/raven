@@ -1848,11 +1848,13 @@ let cuda_renderer ~sync (target : Helpers.Target.t) =
     && ((not (Dtype.mem dt Dtype.fp8_ocp)) || ver >= 89)
     && not (Dtype.mem dt Dtype.fp8_fnuz)
   in
-  (* PTX for the CUDA device, whose driver translates it at load; a cubin for
-     the NV device, which loads its binaries itself. *)
+  (* A cubin on every device: the disk cache keeps the GPU's code, which the
+     driver loads as it is, where it would translate PTX at each load and keep
+     its work only in a cache of its own. NVRTC is given the device's
+     architecture either way, and refuses one it does not know in either
+     form. *)
   let compiler =
-    Compiler_cuda.nvrtc
-      ~ptx:(String.equal target.device "CUDA")
+    Compiler_cuda.nvrtc ~ptx:false
       ~cache_key:(String.lowercase_ascii target.device)
       arch
   in

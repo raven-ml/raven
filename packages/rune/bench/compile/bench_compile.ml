@@ -524,9 +524,10 @@ let rec remove path =
     Sys.rmdir path)
   else Sys.remove path
 
-(* A fresh process's first call of [id] over the disk cache in [dir], and over a
-   cache of the GPU driver's binaries there too, as a kernel never loaded before
-   is, with the variables [env] set. *)
+(* A fresh process's first call of [id] over the disk cache in [dir], with the
+   variables [env] set. The GPU driver's own cache of the code it translates is
+   off, so that a warm call's binaries come from the disk cache alone, as they
+   do where the driver's cache misses. *)
 let first_call ~env dir id =
   let exe = Sys.executable_name in
   let env =
@@ -534,7 +535,7 @@ let first_call ~env dir id =
       [
         [|
           "CACHEDB=" ^ Filename.concat dir "cache.db";
-          "CUDA_CACHE_PATH=" ^ Filename.concat dir "driver";
+          "CUDA_CACHE_DISABLE=1";
         |];
         env;
         Unix.environment ();

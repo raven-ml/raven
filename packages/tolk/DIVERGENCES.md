@@ -2010,6 +2010,7 @@ runs), and `warm/cuda/sin-nested-8`, the same call over a disk cache an
 earlier process filled, 340 and 329 ms against 218 and 178 ms: no gain from
 cubins. As tinygrad's `renderer/cstyle.py:426`,
 `Cstyle.cuda` compiles PTX for the CUDA device and a cubin for the NV device.
+D320 compiles a cubin again, measured with the driver's cache missing.
 
 ## D80. A host program runs its output loop in blocks on the host's cores
 
@@ -3854,7 +3855,13 @@ merged into D137, which holds the loops that consumers of one domain share.
   copies directly, and time the submissions where the driver can. A host
   program's entry is rig's (D28). Storage the schedule makes is the
   program's, or an input each run makes where it is linked per run (D173),
-  and storage a caller binds is an input of each run.
+  and storage a caller binds is an input of each run. Each linked program
+  loads its own images (`Rig.Image.load`), where `CUDADevice.function`
+  (`runtime/ops_cuda.py:114-115`) loads a binary once per device and
+  process: two programs that run one kernel load its binary twice, since
+  `Rig.Image.load` loads each call's binary again, so that each image's
+  module variables are its own, and a program shares an image among its
+  own launches alone (`Tolk_engine.link`).
 - **Reason:** (c). rig owns each GPU's queues: two runtimes cannot share a
   GPU, and memory belongs to the runtime that made it.
 - **Pinned by:** the Tolk_engine suite: `link and run › recorded`, `GPUs`
@@ -7219,3 +7226,42 @@ and an initial value is added after it (D260).
   `Quant/cuda/routed-product-512-tokens`, whose fudge baselines (the first
   recorded before D300, the second not yet recorded) wait for the
   scheduled re-record.
+
+## D320. The CUDA device's kernels compile to a cubin
+
+- **tinygrad:** `renderer/cstyle.py:426` (`CUDARenderer.__init__`), which
+  gives `NVRTCCompiler` `ptx=True` for the device `CUDA`;
+  `runtime/support/compiler_cuda.py:59` (`NVRTCCompiler.compile`), which
+  then returns PTX; `runtime/ops_cuda.py:114-115` (`CUDADevice.function`),
+  whose `cuModuleLoadData` translates it for the GPU.
+- **tolk:** `Cstyle.cuda`, which makes `Compiler_cuda.nvrtc ~ptx:false` for
+  every device.
+- **Differs:** NVRTC compiles the CUDA device's kernels to a cubin of the
+  device's architecture, as it does the NV device's, and the disk cache
+  keeps the cubin. The driver loads it as it is, where it would translate
+  PTX at each load and keep its work only in its own cache, which a later
+  process may miss: the cache is bounded and per user, keyed by the driver,
+  and off under `CUDA_CACHE_DISABLE`. NVRTC is given the device's
+  architecture in either form, and the disk cache keys binaries by it, so a
+  binary is only loaded on a GPU of that architecture; one NVRTC does not
+  know is refused in both. The GPU's code is that of NVRTC's assembler
+  rather than the driver's, which differ where their versions do; PTX's
+  semantics and `--fmad=false` fix the values either way.
+- **Reason:** (d): a later process's first call, every binary read back
+  from the disk cache and the driver's cache missing, on fudge's RTX 5000
+  Ada: a two-layer gpt-oss-20b at its own widths (vocabulary 4096), its
+  12-token prefill, 710-1050 ms with PTX against 58-131 ms with cubins (3
+  interleaved runs each), the driver translating 43 kernels; rune's
+  `cuda/sin-nested-8` kernel loads in 40.7 ms as PTX and 0.19 ms as a
+  cubin. With the driver's cache warm,
+  the prefill's 74 loads take 6.3 ms of CUDA's time as PTX and 4.2 ms as
+  cubins, and its call allocates 6.97 M words against 6.95 M. A cold
+  compile of `cuda/sin-nested-8`, interleaved, takes 293-408 ms with PTX
+  and 255-299 ms with cubins (medians of 5: 345 and 294 ms): the cubins
+  D78 found slower, in whole calls timed under load, were not.
+- **Pinned by:** the Cstyle suite's `CUDA's binaries › the CUDA device's
+  kernels compile to a cubin`; rune's compile bench rows
+  `cuda/sin-nested-8` and `warm/cuda/sin-nested-8`, whose processes run
+  with the driver's cache off, and where PTX adds the driver's 40 ms;
+  their wall-clock baselines are missing until fudge's scheduled
+  recording of every suite.

@@ -974,6 +974,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- The CUDA device's kernels compile to cubins (`Cstyle.cuda`), which the disk
+  cache keeps and the driver loads as they are: a later process no longer
+  waits for the driver to translate PTX where its own cache misses (a
+  two-layer gpt-oss-20b prefill's first call, 713 ms to 94 ms on an RTX 5000
+  Ada).
+
 - A process runs Clang once to learn its command (`Compiler_cpu.clang`),
   where it ran it three times: the options for its LLVM release come from
   the release the last process found (the disk cache's table `clang_llvm`),
