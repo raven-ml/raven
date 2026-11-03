@@ -985,6 +985,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- An axis that an expression in the target's language (`Op.Customi`) reads
+  takes no lanes or padding, as one a call reads: an upcast rendered the
+  expression with a vector, which `__builtin_popcount({0})` cannot take
+  (`Postrange.Scheduler.read_by_opaque`).
 - A reduce whose result a gate the same for a whole workgroup selects or
   stores runs its loop only where the gate holds (`Codegen`, through
   `Uniform.varying`): a routed product's blocks of padding skip their
@@ -1106,12 +1110,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 - A kernel that calls a function on an element of each point compiles when
   optimised: no axis a call's argument reads is upcast or padded, which made
   a vector pointer Clang rejects, or ran the call on a padded point
-  (`Postrange.Scheduler.read_by_calls`).
+  (`Postrange.Scheduler.read_by_opaque`).
 - `Compiler_cpu.clang` runs LLVM's IR verifier, which a release Clang turns
   off: a host kernel that an optimization makes invalid raises
   `Compile_error` naming the kernel instead of compiling into wrong values.
   Compiles take about 1-2% more instructions.
-  (`Postrange.Scheduler.read_by_opaque`).
 - Compiling float64 `Nx.betaincinv`'s gradient allocates 238 M words
   against 365 M and runs 17% fewer instructions, with unchanged output.
 - On the host, `Heuristic` upcasts a reduce kernel's outputs however few

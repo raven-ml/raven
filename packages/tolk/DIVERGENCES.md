@@ -7093,12 +7093,15 @@ and an initial value is added after it (D260).
   `apply_opt`; `Heuristic.streams`; `test/gen/tinygrad.patch`, which gives
   tinygrad the same rules.
 - **Differs:** an axis that a source of a call or of code in the target's
-  language (`Op.Custom`) reads, as `i` in `f(&x[i])`, `f(i)` or
-  `{0}[0] += 1;` on `&C[i]`, is not upcastable, and an upcast or a pad of it
-  is refused, as is a tensor core in such a kernel; the heuristic streams no
-  contraction there. tinygrad upcasts such an axis and renders the call or
-  the code with a vector where it takes one pointer or value, which C
-  compilers reject, and pads it with the call or the code run on every
+  language, a statement (`Op.Custom`) or an expression (`Op.Customi`),
+  reads, as `i` in `f(&x[i])`, `f(i)`, `{0}[0] += 1;` on `&C[i]` or
+  `__builtin_popcount({0})` on `x[i]`, is not upcastable, and an upcast or a
+  pad of it is refused, as is a tensor core in such a kernel; the heuristic
+  streams no contraction there. An expression is not an effect
+  (`Op.Set.effectful`), so it keeps threads on the axes it does not read
+  (D271 does not apply to it). tinygrad upcasts such an axis and renders the
+  call or the code with a vector where it takes one pointer or value, which
+  C compilers reject, and pads it with the call or the code run on every
   padded point.
 - **Reason:** (e): `test_call_loop_pad`'s kernel, `C[i] += A[i]` by a call
   over three `i` padded to four, computes `[2, 2, 3, 0]` for `[1, 2, 3,
@@ -7107,16 +7110,21 @@ and an initial value is added after it (D260).
   (`test_group_keeps_custom`) writes it, over three `i` padded to four,
   increments `C[0]` twice, its padded point reading the first element.
   Under the heuristic, `test_call_loop_mini`'s kernel and that code's over
-  16 `i` fail at the C compiler. Each takes one pointer or value for each
-  source; one per lane, gated on its point, would keep the upcast, for a
-  kernel no raven library builds yet.
+  16 `i` fail at the C compiler, as does `out[i] = __builtin_popcount(x[i])`
+  as an expression over 16 `i` upcast by 4 (Clang: "passing 'int4' to
+  parameter of incompatible type 'unsigned int'"). An expression's text
+  states no lanes: the target's builtins take one value. Each takes one
+  pointer or value for each source; one per lane, gated on its point, would
+  keep the upcast, for a kernel no raven library builds yet.
 - **Pinned by:** the Codegen suite: `calls in a kernel › a call in an
   optimised kernel runs once per element`, `effects run as often as written
   › code in the target's language in an optimised kernel runs at each
   step`. The Postrange suite: `axes a call or custom code reads`, each case
-  a call and code, the axes it lists, upcastable and not, an upcast and a
-  pad refused on such an axis and applied on another, a local split
-  applied, and a tensor core refused. The Heuristic suite: `streaming › a
+  a call, a statement and an expression, the axes it lists, upcastable and
+  not, an upcast and a pad refused on such an axis and applied on another, a
+  local split applied, and a tensor core refused; `› an expression's unread
+  axes take threads`, `› a tensor core is refused where an expression reads
+  an axis`. The Heuristic suite: `streaming › a
   kernel whose call reads its output axes is not streamed`.
 
 ## D270. A range of a typed integer splits and pads as a weak one
@@ -7168,7 +7176,8 @@ and an initial value is added after it (D260).
   tensor core, whose warp is threads along axes no call reads, is refused in
   a kernel with a call or custom code, and the heuristic streams no
   contraction there. tinygrad gives such an axis threads, and every thread
-  runs the call or the code.
+  runs the call or the code. An expression in the target's language
+  (`Op.Customi`) has no effect, and every thread may compute it.
 - **Reason:** (e): `n[0] += 1` by a call or by code, beside `out[i] = a[i] +
   1` over 64 `i` on CUDA, runs in each of the 16 threads the heuristic
   gives `i`, and beside a sum over 4096 `r` in each of the 16 threads of the

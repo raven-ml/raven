@@ -159,9 +159,14 @@ module Scheduler = struct
     in
     (* The calls and custom code, and the ranges the sources of each read, as
        [i] in [f(&x[i])]: each takes one pointer or value for each source, so
-       none of them can become lanes or take padding. Every thread runs each,
-       so a range one of them does not read cannot take threads. *)
-    let opaque = List.filter (fun u -> op u = Op.Call || op u = Op.Custom) slice in
+       none of them can become lanes or take padding, nor can those of an
+       expression in the target's language. Every thread runs a call or a
+       statement, so a range one of them does not read cannot take threads; an
+       expression has no effect, and every thread may compute it. *)
+    let opaque =
+      List.filter (fun u -> op u = Op.Call || op u = Op.Custom) slice
+    in
+    let expressions = List.filter (fun u -> op u = Op.Customi) slice in
     let reads u =
       List.fold_left
         (fun acc a ->
@@ -174,7 +179,7 @@ module Scheduler = struct
     let read_by_opaque =
       List.fold_left
         (List.fold_left (fun acc r -> if List.memq r acc then acc else r :: acc))
-        [] read
+        [] (read @ List.map reads expressions)
     in
     let unread_by_opaque =
       List.filter
@@ -558,6 +563,9 @@ module Scheduler = struct
           check
             (List.is_empty (opaque k))
             "tensor cores need a kernel without calls or custom code";
+          check
+            (List.is_empty (read_by_opaque k))
+            "tensor cores need custom expressions that read no axis";
           check (axis >= 0) "tensor core opts must have an axis";
           check
             (-1 <= tc_select && tc_select < List.length k.ren.tensor_cores)

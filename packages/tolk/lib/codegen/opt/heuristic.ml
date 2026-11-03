@@ -1604,7 +1604,8 @@ let early k (w, _, reuse) =
    indices and shared memory. A kernel where a range's bound reads an axis is
    not streamed: the layouts upcast output axes by their accesses. Nor is one
    with a call or custom code, which reads the output axes the layouts upcast
-   or runs once in each of the threads they make. *)
+   or runs once in each of the threads they make, nor one where an expression
+   in the target's language reads an axis. *)
 let streams k =
   let ren = K.ren k in
   if
@@ -1612,6 +1613,7 @@ let streams k =
     && Setting.value Setting.mv
     && List.is_empty (K.read_by_bounds k)
     && List.is_empty (K.opaque k)
+    && List.is_empty (K.read_by_opaque k)
   then streamed k
   else None
 

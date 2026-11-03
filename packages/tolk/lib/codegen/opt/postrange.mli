@@ -89,9 +89,11 @@ module Scheduler : sig
 
   val read_by_opaque : t -> Ops.t list
   (** [read_by_opaque k] is the ranges that a source of one of [k]'s {!opaque}
-      operations reads, as [i] in [f(&x[i])]. None of them can become a
-      thread's lanes, which would pass the operation a vector, and none can be
-      padded, which would run it on a source of no element. *)
+      operations, or of one of its expressions in the target's language
+      ({!Op.Customi}), reads, as [i] in [f(&x[i])] or [popcount(x[i])]. Each
+      takes one pointer or value for each source, so none of them can become
+      a thread's lanes, which would pass it a vector, and none can be padded,
+      which would run it on a source of no element. *)
 
   val unread_by_opaque : t -> Ops.t list
   (** [unread_by_opaque k] is [k]'s ranges that the sources of one of its
@@ -170,7 +172,8 @@ module Scheduler : sig
       whose reduction runs inside an unrolled reduce axis, a pad's axis is not
       of a constant size, would more than quadruple, or is read by an opaque
       operation, or no tensor core fits, as none does a kernel where a range's
-      bound reads an axis or one with an opaque operation. Raises
+      bound reads an axis, one with an opaque operation, or one where an
+      expression in the target's language reads an axis. Raises
       [Invalid_argument] if the shared memory a split needs depends on a
       symbolic size and cannot be decided. *)
 

@@ -462,12 +462,15 @@ let range_types =
 
 (* Axes a call or custom code reads
 
-   A call, or code in the target's language, takes one pointer or value for
-   each source and runs once for each point of the axes they read, so such an
-   axis cannot become a thread's lanes, nor take padding. *)
+   A call, or code in the target's language, a statement or an expression,
+   takes one pointer or value for each source, so an axis they read cannot
+   become a thread's lanes, nor take padding. A call or a statement runs once
+   for each point of the axes they read, so an axis they do not read cannot
+   take threads; an expression has no effect, and every thread may compute
+   it. *)
 
-(* An opaque operation of kind [o] on [&x[r]]: [f(&x[r])], or the code
-   [{0}[0] = 1;]. *)
+(* An opaque operation of kind [o] on [&x[r]]: [f(&x[r])], the code
+   [{0}[0] = 1;], or [z[0] = {0}[0]] of the expression [{0}[0]]. *)
 let opaque o x r =
   match o with
   | Op.Call ->
@@ -477,12 +480,22 @@ let opaque o x r =
           [ Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.int ~dtype:Int32 1) ]
       in
       Ops.call ~name:"f" f [ Ops.index x [ r ] ]
+  | Op.Customi ->
+      let z = Shape.param ~shape:[ Int 1 ] 12 Int32 in
+      Ops.store
+        (Ops.index z [ Ops.int 0 ])
+        (Ops.v Customi
+           ~src:[ Ops.index x [ r ] ]
+           ~arg:(Code { code = "{0}[0]"; dtype = Int32 }))
   | _ ->
       Ops.v Custom
         ~src:[ Ops.index x [ r ] ]
         ~arg:(Code { code = "{0}[0] = 1;"; dtype = Void })
 
-let opaques = [ Op.Call; Op.Custom ]
+let opaques = [ Op.Call; Op.Custom; Op.Customi ]
+
+(* The opaque operations that run as effects: an expression has none. *)
+let effects = [ Op.Call; Op.Custom ]
 let opaque_id o = Format.asprintf "%a" Op.pp o
 
 (* [o] on [&x[i]] and [out[i * 8 + n] = n], for four [i] and eight [n]. *)
@@ -508,6 +521,7 @@ let refused axis = Error (Printf.sprintf "a call or custom code reads axis %d" a
 
 let called_axes =
   let opaque_cases name f = cases name ~id:opaque_id opaques f in
+  let effect_cases name f = cases name ~id:opaque_id effects f in
   group "axes a call or custom code reads"
     [
       opaque_cases "read_by_opaque is the axes its sources read" (fun o ->
@@ -559,12 +573,12 @@ let called_axes =
           let k = K.v ast (renderer "cuda") in
           is_ok ~pp:Format.pp_print_string
             (K.apply_opt k (split (position i k) 2 Local)));
-      opaque_cases "unread_by_opaque is the axes its sources do not read"
+      effect_cases "unread_by_opaque is the axes its sources do not read"
         (fun o ->
           let _, n, ast = called_rows o in
           equal (list Uops.uop) [ n ]
             (K.unread_by_opaque (K.v ast (renderer "cuda"))));
-      opaque_cases
+      effect_cases
         "convert_loop_to_global gives workgroups only to an axis its sources \
          read" (fun o ->
           let _, _, ast = called_rows o in
@@ -572,7 +586,7 @@ let called_axes =
           K.convert_loop_to_global k;
           equal string "[AxisType.GLOBAL, AxisType.WEAK]"
             (repr_list Ops.Axis_type.pp (K.axis_types k)));
-      opaque_cases "apply_opt refuses a local split of an axis its sources do not \
+      effect_cases "apply_opt refuses a local split of an axis its sources do not \
                     read" (fun o ->
           let _, n, ast = called_rows o in
           let k = K.v ast (renderer "cuda") in
@@ -581,7 +595,7 @@ let called_axes =
             (Error (Printf.sprintf "a call or custom code does not read axis %d"
                       (position n k)))
             (K.apply_opt k (split (position n k) 2 Local)));
-      opaque_cases "a group is refused over a reduce axis its sources do not read"
+      effect_cases "a group is refused over a reduce axis its sources do not read"
         (fun o ->
           let k = K.v (kernel "sum_rows_64") (renderer "cuda") in
           let group k =
@@ -594,7 +608,7 @@ let called_axes =
             (result (list Uops.uop) string)
             (Error (Printf.sprintf "a call or custom code does not read axis %d" axis))
             (group (K.v (with_opaque o k) (renderer "cuda"))));
-      opaque_cases "a tensor core is refused in a kernel with one" (fun o ->
+      effect_cases "a tensor core is refused in a kernel with one" (fun o ->
           let k = K.v (kernel "tc_metal_0") (renderer "metal") in
           is_ok ~pp:Format.pp_print_string (K.apply_opt (K.copy k) tc);
           let refused o' =
@@ -608,6 +622,33 @@ let called_axes =
           let y = Shape.param ~shape:[ Int 1 ] 11 Int32 in
           let ast = K.ast k in
           refused (Ops.replace ast ~src:(Ops.src ast @ [ opaque o y (Ops.int 0) ])));
+      test "an expression's unread axes take threads" (fun () ->
+          let _, n, ast = called_rows Op.Customi in
+          let k = K.v ast (renderer "cuda") in
+          equal (list Uops.uop) [] (K.unread_by_opaque k);
+          is_ok ~pp:Format.pp_print_string
+            (K.apply_opt (K.copy k) (split (position n k) 2 Local));
+          K.convert_loop_to_global k;
+          equal string "[AxisType.GLOBAL, AxisType.GLOBAL]"
+            (repr_list Ops.Axis_type.pp (K.axis_types k)));
+      test "a tensor core is refused where an expression reads an axis"
+        (fun () ->
+          let k = K.v (kernel "tc_metal_0") (renderer "metal") in
+          equal
+            (result (list Uops.uop) string)
+            (Error "tensor cores need custom expressions that read no axis")
+            (K.apply_opt
+               (K.v (with_opaque Op.Customi k) (renderer "metal"))
+               tc);
+          let y = Shape.param ~shape:[ Int 1 ] 11 Int32 in
+          let ast = K.ast k in
+          is_ok ~pp:Format.pp_print_string
+            (K.apply_opt
+               (K.v
+                  (Ops.replace ast
+                     ~src:(Ops.src ast @ [ opaque Op.Customi y (Ops.int 0) ]))
+                  (renderer "metal"))
+               tc));
     ]
 
 (* Splitting *)
