@@ -9,9 +9,6 @@ val normal_like : ('a, 'b, 'd) Nx.t -> 'd Nx.Rng.key -> int array -> ('a, 'b, 'd
 (** [normal_like x k shape] is standard normal draws of [shape] at [x]'s dtype,
     or zeros if [x] is not a float tensor. *)
 
-val at : 'd Nx.Rng.key -> 'd Nx.Placement.t
-(** [at k] is where a draw from [k] lies: whole on each device [k] lies on. *)
-
 val normal : 'd Nx.Rng.key -> (float, 'b) Nx.dtype -> int array -> (float, 'b, 'd) Nx.t
 val uniform : 'd Nx.Rng.key -> (float, 'b) Nx.dtype -> int array -> (float, 'b, 'd) Nx.t
 
@@ -20,4 +17,4 @@ val exponential :
 
 val gumbel : 'd Nx.Rng.key -> (float, 'b) Nx.dtype -> int array -> (float, 'b, 'd) Nx.t
 (** [normal k dt shape] and the others are {!Nx.Rng}'s draws from [k], at
-    [at k]. *)
+    {!Nx.Rng.placement}[ k]. *)

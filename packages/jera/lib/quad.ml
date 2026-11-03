@@ -971,7 +971,7 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
   let at = Nx.beside box.lo in
   let shift =
     Nx.bitcast Nx.uint32
-      (Nx.Rng.bits_at (Nx.beside (Nx.Rng.to_tensor key)) ~key [| shifts; d |])
+      (Nx.Rng.bits_at (Nx.Rng.placement key) ~key [| shifts; d |])
   in
   (* The integrand's sum over chunk [j]'s points under each shift, of shape
      [[shifts] @ lanes]. *)

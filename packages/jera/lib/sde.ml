@@ -42,8 +42,8 @@ module Brownian = struct
     {
       key;
       shape = Array.copy shape;
-      t0 = Nx.scalar_at (Nx.beside (Nx.Rng.to_tensor key)) dtype t0;
-      t1 = Nx.scalar_at (Nx.beside (Nx.Rng.to_tensor key)) dtype t1;
+      t0 = Nx.scalar_at (Nx.Rng.placement key) dtype t0;
+      t1 = Nx.scalar_at (Nx.Rng.placement key) dtype t1;
       depth;
     }
 
@@ -63,7 +63,7 @@ module Brownian = struct
   (* Two standard normal draws of node [id], a pure function of the key. *)
   let draws w id =
     let k = Nx.Rng.fold_in_tensor w.key id in
-    let dtype = Nx.dtype w.t0 and at = Nx.beside w.t0 in
+    let dtype = Nx.dtype w.t0 and at = Nx.Rng.placement k in
     ( Nx.Rng.normal_at at ~key:(Nx.Rng.fold_in k 0) dtype w.shape,
       Nx.Rng.normal_at at ~key:(Nx.Rng.fold_in k 1) dtype w.shape )
 

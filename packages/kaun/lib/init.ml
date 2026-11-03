@@ -24,11 +24,8 @@ let check_non_negative what value =
 
 (* Constant *)
 
-(* A key's placement, where its draws lie: a key is whole on each device. *)
-let at key = Nx.placement (Nx.Rng.to_tensor key)
-
 let constant value key ~fan_in:_ ~fan_out:_ dtype shape =
-  Nx.full_at (at key) dtype shape value
+  Nx.full_at (Nx.Rng.placement key) dtype shape value
 
 let zeros key ~fan_in ~fan_out dtype shape =
   constant 0.0 key ~fan_in ~fan_out dtype shape
@@ -41,12 +38,12 @@ let ones key ~fan_in ~fan_out dtype shape =
 let uniform ~scale =
   check_non_negative "scale" scale;
   fun key ~fan_in:_ ~fan_out:_ dtype shape ->
-    Nx.mul_s (Nx.Rng.uniform_at (at key) ~key dtype shape) scale
+    Nx.mul_s (Nx.Rng.uniform_at (Nx.Rng.placement key) ~key dtype shape) scale
 
 let normal ~stddev =
   check_non_negative "stddev" stddev;
   fun key ~fan_in:_ ~fan_out:_ dtype shape ->
-    Nx.mul_s (Nx.Rng.normal_at (at key) ~key dtype shape) stddev
+    Nx.mul_s (Nx.Rng.normal_at (Nx.Rng.placement key) ~key dtype shape) stddev
 
 (* Variance scaling — the general scheme behind glorot/he/lecun. *)
 
@@ -68,17 +65,19 @@ let variance_scaling ~scale ~mode ~distribution =
     let variance = scale /. n in
     match distribution with
     | `Normal ->
-        Nx.mul_s (Nx.Rng.normal_at (at key) ~key dtype shape) (sqrt variance)
+        Nx.mul_s
+          (Nx.Rng.normal_at (Nx.Rng.placement key) ~key dtype shape)
+          (sqrt variance)
     | `Truncated_normal ->
         (* Rescale so the truncated samples reach the target variance. *)
         let stddev = sqrt variance /. truncated_stddev in
-        let bound v = Nx.full_at (at key) dtype shape v in
+        let bound v = Nx.full_at (Nx.Rng.placement key) dtype shape v in
         Nx.mul_s
           (Nx.Rng.truncated_normal ~key (bound (-2.0)) (bound 2.0))
           stddev
     | `Uniform ->
         let limit = sqrt (3.0 *. variance) in
-        let u = Nx.Rng.uniform_at (at key) ~key dtype shape in
+        let u = Nx.Rng.uniform_at (Nx.Rng.placement key) ~key dtype shape in
         Nx.sub_s (Nx.mul_s u (2.0 *. limit)) limit
 
 (* Named families. Eta-expanded so each exports as a polymorphic value. *)

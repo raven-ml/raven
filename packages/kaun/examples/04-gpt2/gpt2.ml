@@ -64,7 +64,7 @@ end
 (* Every initializer is zeros, so [key] only says where the model lies. *)
 let make ~key cfg =
   let zeros = Init.zeros in
-  let at = Nx.placement (Nx.Rng.to_tensor key) in
+  let at = Nx.Rng.placement key in
   let linear ~inputs ~outputs =
     Linear.make ~w_init:zeros ~bias_init:zeros ~key ~inputs ~outputs Nx.float32
   in
