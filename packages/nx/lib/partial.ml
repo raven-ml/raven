@@ -1367,25 +1367,39 @@ let scatter (type v s d) eng ~by (route : unit Route.t) rule combine unique axis
   let holds j = not (Route.empty (w j)) in
   eng.assemble p shape (Prim.dtype into) (values eng ~by p shape ~holds own)
 
-(* An [Add] of updates cut along its axis: device [j] adds its tile of
+(* A scatter of updates cut along its axis: device [j] writes its tile of
    them, at the positions moved to its window's start, into its window,
-   in the carrier: the first tile into [into]'s, every other into [-0],
-   which adds nothing. The slots close by one map adding them in tile
-   order, with no [+0] added, and the result rounds once. *)
-let summed (type v s d) eng ~by (route : unit Route.t) rule unique axis
-    (idx : d Value.index) (updates : (v, s, d) Value.t)
-    (into : (v, s, d) Value.t) : (v, s, d) Value.t =
+   and the tiles' slots close in tile order. Two updates of one target
+   differ only along the axis, so the later tile holds the later in C
+   order.
+   - [Add], in the carrier: the first tile into [into]'s window, every
+     other into [-0], which adds nothing; the slots close by one map adding
+     them, with no [+0] added, and the result rounds once.
+   - [Max] and [Min]: every tile into [into]'s window, which the monoid's
+     idempotence keeps; the slots close by the monoid, whose order puts
+     [-0] below [+0], so its result has the bits a sequence of the updates
+     gives, a NaN for a NaN.
+   - [Set]: every tile into [into]'s window, beside a flag of the targets
+     it wrote; a later tile's flagged target replaces the earlier's, so a
+     target keeps its last tile's last update. *)
+let summed (type v s d) eng ~by (route : unit Route.t) rule
+    (combine : Nx_kernel.combine) unique axis (idx : d Value.index)
+    (updates : (v, s, d) Value.t) (into : (v, s, d) Value.t) :
+    (v, s, d) Value.t =
   let p = route.result in
   let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
   let shape = Prim.shape into and su = Prim.shape updates in
   let dt = Prim.dtype into in
-  let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
   let tiles = tiles ~by route ~operand:1 su [| axis |] in
   let cl =
     closing ~by route ~operand:1 ~axes:[ axis ] ~extent:(fun _ -> su.(axis))
       shape
   in
-  let own j =
+  (* Device [j]'s scatter of its tile, [f] of its tile's start, its
+     here, its positions and its operands read there. *)
+  let own (type a b) j
+      (f : int -> d Devices.placement -> d Value.index -> (v, s, d) Value.t ->
+        (v, s, d) Value.t -> (a, b, d) Value.t) : (a, b, d) Value.t =
     let w = Devices.window ~by p shape j and t = tiles.(j).(0) in
     let here = Devices.one set ks.(j) in
     let read i x =
@@ -1393,26 +1407,79 @@ let summed (type v s d) eng ~by (route : unit Route.t) rule unique axis
     in
     let i = Value.Any (read 0 idx) in
     let i = shift eng ~by E.( - ) w.(axis).start shape.(axis) i in
-    let idx = Prim.expect D.Int64 i in
-    let start =
-      if t.start = 0 then E.any (E.cast c (E.input 0 dt))
-      else E.any (E.neg (E.const c (D.zero c)))
-    in
-    let target = map eng ~by here [ Value.Any (read 2 into) ] [ start ] in
-    let into = Prim.expect c (List.hd target) in
-    let updates = cast eng ~by (D.Any c) (Value.Any (read 1 updates)) in
-    let updates = Prim.expect c updates in
-    (* The target is fresh: the updates add into its memory. *)
-    at eng ~by ~into:(Value.Any into) here
-      (Value.Scatter { combine = Add; unique; axis; idx; updates; into })
+    f t.start here (Prim.expect D.Int64 i) (read 1 updates) (read 2 into)
   in
-  (* A piece's slots added, then rounded into the dtype. *)
-  let added _ here _ taken =
-    let total = running cl taken (combined eng ~by here Sum) in
-    [ cast eng ~by (D.Any dt) (List.hd total) ]
+  let scatter here c ?into:fresh idx updates into =
+    at eng ~by ?into:fresh here
+      (Value.Scatter { combine = c; unique; axis; idx; updates; into })
   in
-  let s = Value.Any (stack eng ~by cl c shape own) in
-  Prim.expect dt (List.hd (closed eng ~by cl shape [ D.Any dt ] [ s ] added))
+  let close stacks dts f =
+    closed eng ~by cl shape dts stacks (fun _ here _ taken ->
+        f here taken)
+  in
+  match combine with
+  | Add ->
+      let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
+      let tile j =
+        own j (fun start here idx updates into ->
+            let first =
+              if start = 0 then E.any (E.cast c (E.input 0 dt))
+              else E.any (E.neg (E.const c (D.zero c)))
+            in
+            let target = map eng ~by here [ Value.Any into ] [ first ] in
+            let into = Prim.expect c (List.hd target) in
+            let updates = cast eng ~by (D.Any c) (Value.Any updates) in
+            let updates = Prim.expect c updates in
+            (* The target is fresh: the updates add into its memory. *)
+            scatter here Add ~into:(Value.Any into) idx updates into)
+      in
+      let s = Value.Any (stack eng ~by cl c shape tile) in
+      Prim.expect dt
+        (List.hd
+           (close [ s ] [ D.Any dt ] (fun here taken ->
+                let total = running cl taken (combined eng ~by here Sum) in
+                [ cast eng ~by (D.Any dt) (List.hd total) ])))
+  | Max | Min ->
+      let m : Nx_kernel.monoid = if combine = Max then Max else Min in
+      let tile j =
+        own j (fun _ here idx updates into ->
+            scatter here combine idx updates into)
+      in
+      let s = Value.Any (stack eng ~by cl dt shape tile) in
+      Prim.expect dt
+        (List.hd
+           (close [ s ] [ D.Any dt ] (fun here taken ->
+                running cl taken (combined eng ~by here m))))
+  | Set ->
+      let tile j =
+        own j (fun _ here idx updates into ->
+            scatter here Set idx updates into)
+      in
+      (* The targets a tile wrote: [true] scattered over [false]. *)
+      let wrote j =
+        own j (fun _ here idx updates into ->
+            let constant v x =
+              Prim.expect D.Bool
+                (List.hd
+                   (map eng ~by here [ Value.Any x ] [ E.any (E.const D.Bool v) ]))
+            in
+            scatter here Set idx (constant true updates) (constant false into))
+      in
+      let v = Value.Any (stack eng ~by cl dt shape tile)
+      and w = Value.Any (stack eng ~by cl D.Bool shape wrote) in
+      let later here acc slot =
+        match (acc, slot) with
+        | [ a; fa ], [ b; fb ] ->
+            let x = E.input 0 dt and y = E.input 2 dt in
+            let f = E.input 1 D.Bool and g = E.input 3 D.Bool in
+            map eng ~by here [ a; fa; b; fb ]
+              [ E.any (E.where g y x); E.any E.(f || g) ]
+        | _ -> invalid_arg "Partial.summed: a value and its flag each"
+      in
+      Prim.expect dt
+        (List.hd
+           (close [ v; w ] [ D.Any dt ] (fun here taken ->
+                [ List.hd (running cl taken (later here)) ])))
 
 (* Sums *)
 
@@ -1495,11 +1562,11 @@ let run (type r) eng ~by route (op : r Value.prim) : r =
   match op with
   | Value.Gather { axis; idx; x } -> gather eng ~by route rule axis idx x
   | Value.Scatter { combine; unique; axis; idx; updates; into } ->
-      (* An [Add]'s updates are read cut along the axis only where the
-         route sums them. *)
+      (* The updates are read cut along the axis only where the route
+         closes their tiles by partials. *)
       let cuts = Grid.cuts (Devices.grid route.operands.(1)) in
       if Array.exists (fun (a, _) -> a = axis) cuts then
-        summed eng ~by route rule unique axis idx updates into
+        summed eng ~by route rule combine unique axis idx updates into
       else scatter eng ~by route rule combine unique axis idx updates into
   | Value.Reduce { layout; axes; prog; reductions; loads } ->
       reduce eng ~by route rule layout axes prog reductions loads

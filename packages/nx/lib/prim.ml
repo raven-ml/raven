@@ -1404,14 +1404,14 @@ let rule : type r. r prim -> Route.rule =
         else Whole
       in
       Axes [| reading [||] (rank idx); Array.init (rank x) source |]
-  | Scatter { combine; axis; idx; updates; into; _ } ->
+  | Scatter { axis; idx; updates; into; _ } ->
       (* [into]'s axis is the results', which take the updates at
          positions: cut, each device writes those in its window
-         ({!Partial}). An [Add]'s positions and updates cut along it sum
-         each device's updates into the results ({!Partial}), whose
+         ({!Partial}). Positions and updates cut along it close each
+         device's partial results by the combine ({!Partial}), whose
          stack, of one more axis than [into], passes no greatest rank;
-         any other reads them whole along it. *)
-      let summed = combine = Nx_kernel.Add && rank into < L.max_rank in
+         at that rank they are read whole along it. *)
+      let summed = rank into < L.max_rank in
       let along = if summed then Route.Reduced axis else Whole in
       let read r =
         Array.init r (fun a -> if a = axis then along else Route.Becomes a)

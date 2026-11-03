@@ -72,14 +72,15 @@ type axis =
   | Whole
       (** Read whole on each device: an axis the operation acts along, as a
           [Moments] or [Logsumexp] scan's, a sort's, a transform's, a
-          scatter's axis of its positions and updates but an [Add]'s, one
+          scatter's axis of its positions and updates into a target of the
+          greatest rank, one
           a padded load pads, crops or windows, and one an assembly joins
           or pads along. *)
   | Reduced of int
       (** Gone from the results: a reduction's axes, a contraction's
-          contracting pairs, a gather's source axis, an [Add] scatter's
-          axis of its positions and updates, and [b]'s axis of [Rows]'
-          groups ({!Nx_kernel.type-segments}), but one a padded load
+          contracting pairs, a gather's source axis, a scatter's axis of
+          its positions and updates into a target below the greatest rank,
+          and [b]'s axis of [Rows]' groups ({!Nx_kernel.type-segments}), but one a padded load
           of the reduction pads, crops or windows, which is [Whole] for every
           load. The axes of [Reduced f] for one factor [f] range over one
           index: a reduction's axis [a] is [Reduced a] in each load, a

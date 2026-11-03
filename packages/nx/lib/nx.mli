@@ -22,7 +22,7 @@
     {!place} to write ({!section-routing}). Between devices an operation
     moves only bytes that no placement of its operands could have put where
     they are needed: the partial results of a reduction, a contraction, a
-    scan, a gather or a scatter's [Add] along a cut axis, and the parts of
+    scan, a gather or a scatter along a cut axis, and the parts of
     the result they close into, which exist only once it computes; a
     gather's or a scatter's positions, whose need depends on their values;
     and, on a set of devices of several architectures, each window that
@@ -346,7 +346,7 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     or a contraction sums makes the devices compute by partials where every
     operand holding the axis is cut alike, and cuts nothing in the result;
     so does one of the axis a gather reads at positions, and one of the axis
-    along which a scatter's [Add] reads its positions and updates. One along
+    along which a scatter reads its positions and updates. One along
     a scan's axis stays in it, and so does one along the axis a scatter
     writes at positions, each device writing the updates that land in its
     window. A product asked for its sum leaves the result a sum over the
@@ -1320,14 +1320,18 @@ val scatter :
     write there. Where [x] is cut along [axis], each device writes the
     updates whose positions fall in its window, reading [p] and [u] whole
     along [axis] ({!section-routing}): each element takes its updates in
-    their order on one device. Where an [Add]'s [p] and [u] are cut along
-    [axis], but for an [x] of {!Nx_array.Layout.max_rank} axes, which reads
-    them whole there, each device adds the updates it holds into its
-    window of [x], and the devices sum these partial results, moving them
-    as a {!sum} over a cut axis does and never [u]: each tile of [u]
-    holding updates sends a partial of each device's window of [x],
-    whatever the size of [u]. An integer result is exact. For finite
-    operands, barring overflow, a float or complex element is within
+    their order on one device. Where [p] and [u] are cut along [axis], but
+    for an [x] of {!Nx_array.Layout.max_rank} axes, which reads them whole
+    there, each device combines the updates it holds into its window of
+    [x], and these partial results close by [combine] in the order of the
+    tiles of [u], moving as a {!sum}'s over a cut axis do and never [u]:
+    each tile of [u] holding updates sends a partial of each device's
+    window of [x], whatever the size of [u]. Two updates of one element
+    differ only along [axis], so the later tile holds the later in C
+    order. [Set] keeps the last, from the last tile holding one, and
+    [Max] and [Min] the bits one device gives, a NaN where one of them is.
+    An [Add]'s integer result is exact. For finite operands, barring
+    overflow, an [Add]'s float or complex element is within
     [γ(k + t) (|x| + Σ|u|)] of the exact sum before a narrow float's
     rounding, [k] its updates and [t] the tiles of [u] holding updates. An
     element no update lands on keeps its value; a NaN stays a NaN, its sign
@@ -3810,13 +3814,12 @@ val reduce_segments :
     a row that belongs to no segment the id [-1]. It is
     [scatter ~combine:c ~axis:0] of [x]'s rows into [segments] rows of the
     identity, lying as [x] does with its rows whole on each device, so its
-    sums have {!scatter}'s bits. [Add] over [ids] or [x] split along the
-    rows sums each device's rows by partials, as {!scatter}'s [Add] does.
-    [Max], [Min] and [Set] read the rows whole on each device: [x] cut along
-    them raises [Invalid_argument] naming the {!place} that puts its rows
-    whole and keeps its other cuts. [ids] that lie elsewhere than the
-    devices read them move there, as a scatter's positions do
-    ({!section-routing}).
+    sums have {!scatter}'s bits. Over [ids] or [x] split along the rows,
+    each device folds its rows, then closes the devices' partial results
+    in row order, as {!scatter} does: [Add] sums, [Max] and [Min] give the
+    bits of one device, and [Set] keeps the last row. [ids] that lie
+    elsewhere than the devices read them move there, as a scatter's
+    positions do ({!section-routing}).
 
     {[
     let ids = Nx.create Nx.int64 [| 5 |] [| 0L; 2L; 0L; -1L; 2L |]
@@ -3831,7 +3834,7 @@ val reduce_segments :
 
     Raises [Invalid_argument] if [segments] is negative, [x] is 0-d, [ids] is
     not 1-d with one id per row of [x], [c] is [Add] and [x] is boolean, or
-    [ids] or [x] lies where it cannot be read, as above. *)
+    [ids] or [x] lies where it cannot be read ({!section-routing}). *)
 
 val reduce_ranges :
   combine ->

@@ -145,7 +145,6 @@ let law (c, at) =
   let got = remedied ~by:c.by ~candidates at run in
   cover "a refusal followed" (!calls > 1);
   cover "computed where placed" (!calls = 1);
-  cover "reduce_segments refused" (c.by = "Nx.reduce_segments" && !calls > 1);
   cover "reduce_ranges refused" (c.by = "Nx.reduce_ranges" && !calls > 1);
   equal_elements Nx_array.Dtype.Float64 host got
 

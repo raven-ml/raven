@@ -1223,29 +1223,29 @@ let law_scattered (Scase (k, s, data, w, a, c, at, us, p, u)) =
   in
   equal (array string) expected actual
 
-(* Updates cut along the scattered axis raise: a device's window takes
-   updates from every device. The refusal names the [Nx.place] that puts
-   them whole on each device, which then computes. Positions cut so move
-   whole to every device. *)
+(* A [Set] of updates cut along the scattered axis: a target two tiles
+   write keeps the later tile's update, the last in C order. Into a target
+   cut along that axis, the updates are read whole, and positions cut so
+   move whole to every device. *)
 let test_scatter_cut_updates () =
   let x = Nx.zeros D.Float32 [| 8 |] in
-  let u = Nx.arange D.Float32 1 5 1 in
+  let u = Nx.arange D.Float32 1 9 1 in
   let host =
-    Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 [| 4 |] [| 7L; 0L; 3L; 4L |])
+    Nx.Repr.of_array Nx.Host.v
+      (A.of_array D.Int64 [| 8 |] [| 7L; 0L; 3L; 4L; 0L; 4L; 9L; 3L |])
   in
   let split v = Nx.place (Set4.split ~axis:0) v in
-  let scatter p u = Nx.scatter ~axis:0 p u (split x) in
-  let refusal =
-    Invalid_argument
-      "Nx.scatter: operand 1 lies at split ~axis:0 [m0; m1; m2; m3] and is \
-       read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) y"
-  in
-  raises refusal (fun () -> scatter (split host) (split u));
-  raises refusal (fun () -> scatter (Nx.place Set4.on host) (split u));
+  let on v = Nx.place Set4.on v in
   let expected = bytes (Nx.scatter ~axis:0 host u x) in
-  equal (array int) expected
-    (bytes (scatter (Nx.place Set4.on host) (Nx.place Set4.on u)));
-  equal (array int) expected (bytes (scatter (split host) (Nx.place Set4.on u)))
+  List.iter
+    (fun (p, u, x) ->
+      equal (array int) expected (bytes (Nx.scatter ~axis:0 p u x)))
+    [
+      (split host, split u, on x);
+      (on host, split u, on x);
+      (on host, on u, split x);
+      (split host, on u, split x);
+    ]
 
 (* Scatters of cut updates *)
 
@@ -1301,6 +1301,7 @@ let summed_kinds =
 type sumcase =
   | Sumcase :
       ('v, 's) reduced
+      * Nx.combine
       * int array
       * 'v array
       * summed
@@ -1311,10 +1312,11 @@ type sumcase =
       * 'v array
       -> sumcase
 
-let pp_sumcase ppf (Sumcase (k, s, data, w, whole, a, us, p, u)) =
+let pp_sumcase ppf (Sumcase (k, c, s, data, w, whole, a, us, p, u)) =
   let show f l = String.concat "; " (Array.to_list (Array.map f l)) in
-  Format.fprintf ppf "%s %a [%s] at %a, add along %d %a [%s]%s of [%s]"
-    (D.name k.rdtype) pp_ints s (show k.rshow data) pp_summed w a pp_ints us
+  Format.fprintf ppf "%s %a [%s] at %a, %s along %d %a [%s]%s of [%s]"
+    (D.name k.rdtype) pp_ints s (show k.rshow data) pp_summed w
+    (combine_name c) a pp_ints us
     (show Int64.to_string p)
     (if whole then " whole" else "")
     (show k.rshow u)
@@ -1345,16 +1347,18 @@ let summed_case =
      in
      let* p = array ~size:(constant n) position in
      let* (Reduced k) = of_list summed_kinds in
+     let* c = of_list [ Nx.Add; Set; Max; Min ] in
      let value = of_list k.rvalues in
      let* data = array ~size:(constant (Array.fold_left ( * ) 1 s)) value in
      let+ u = array ~size:(constant n) value in
-     Sumcase (k, s, data, w, whole, a, us, p, u))
+     Sumcase (k, c, s, data, w, whole, a, us, p, u))
 
-(* A scatter's [Add] of updates split along the scattered axis, beside
-   positions split alike or whole on every device, sums each device's
-   updates into the target where it lies, whole or cut, and gives the
-   values it gives on one device. *)
-let law_summed (Sumcase (k, s, data, w, whole, a, us, p, u)) =
+(* A scatter of updates split along the scattered axis, beside positions
+   split alike or whole on every device, combines each device's updates
+   into the target where it lies, whole or cut, and gives the values it
+   gives on one device: a sum, an extreme, a NaN where one is, or a
+   target's last update, a NaN's bits shown alike. *)
+let law_summed (Sumcase (k, c, s, data, w, whole, a, us, p, u)) =
   let devices = match w with On3 -> 3 | On4 | Beside _ -> 4 in
   let tiles = match w with Beside _ -> 2 | On3 | On4 -> devices in
   let e = s.(a) and m = us.(a) in
@@ -1382,6 +1386,28 @@ let law_summed (Sumcase (k, s, data, w, whole, a, us, p, u)) =
   List.iter
     (fun c -> cover c (kind = c))
     [ "a float"; "a complex number"; "an integer" ];
+  List.iter
+    (fun c' ->
+      cover
+        ("updates in several tiles " ^ combine_name c')
+        (c = c' && m >= tiles && Array.length p > 0))
+    [ Nx.Add; Set; Max; Min ];
+  (* Update [i]'s target, off the axis and at its position, and its tile. *)
+  let stride =
+    Array.fold_left ( * ) 1 (Array.sub us (a + 1) (Array.length us - a - 1))
+  in
+  let chunk = (m + tiles - 1) / Int.max 1 tiles in
+  let target i = (i / (stride * Int.max 1 m), i mod stride, p.(i)) in
+  let tile i = i / stride mod Int.max 1 m / Int.max 1 chunk in
+  let updates = List.init (Array.length p) Fun.id in
+  cover "a target two tiles set"
+    (c = Nx.Set
+    && List.exists
+         (fun i ->
+           let (_, _, q) as t = target i in
+           inside q
+           && List.exists (fun j -> target j = t && tile j <> tile i) updates)
+         updates);
   let x = A.of_array k.rdtype (Iarray.of_array s) data in
   let x = Nx.Repr.of_array Nx.Host.v x in
   let u =
@@ -1390,7 +1416,7 @@ let law_summed (Sumcase (k, s, data, w, whole, a, us, p, u)) =
   let p =
     Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 (Iarray.of_array us) p)
   in
-  let scatter p u x = Nx.scatter ~combine:Add ~axis:a p u x in
+  let scatter p u x = Nx.scatter ~combine:c ~axis:a p u x in
   let shown y = Array.map k.rshow (elements y) in
   let expected = shown (scatter p u x) in
   let run (type d) (q : d Nx.Placement.t) (r : d Nx.Placement.t) =
@@ -3488,11 +3514,10 @@ let placed =
          gives its bits on one device"
         scattered_case law_scattered;
       prop ~count:1000
-        "a scatter's addition of updates split along its axis sums them into \
-         the target where it lies, as on one device"
+        "a scatter of updates split along its axis combines them into the \
+         target where it lies, as on one device"
         summed_case law_summed;
-      test "a scatter of cut updates raises, naming the fix; cut positions \
-            move"
+      test "a Set of cut updates keeps each target's last; cut positions move"
         test_scatter_cut_updates;
     ]
 

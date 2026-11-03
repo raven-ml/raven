@@ -1766,11 +1766,15 @@ word comes from its lock and from samples the dashboard saw arrive.
   `Nx.reduce_ranges`, `Nx.map_segments`, and `Nx_quant.dequant`, `apply`,
   `apply_experts`, `take` and `quantize_q8_0`, whose weight's parts are `w`.
   `Nx.Prim.composite` declares a function's arguments so.
-- `Nx.reduce_segments` computes `Add` over `ids` or `x` split along the
-  rows, summing each device's rows by partials; it raised for every
-  combine, naming an operand the caller never made. `Max`, `Min` and `Set`
-  over `x`'s rows cut raise, naming the `Nx.place` of `x`. `ids` split
-  beside `x` cut along its columns move where the rows are read.
+- `Nx.scatter` with positions and updates cut along its axis computes
+  `Set`, `Max` and `Min` by partials, as `Add`: each device combines the
+  updates it holds, and the partial results close in tile order, `Set`
+  keeping the last update in C order and `Max` and `Min` the bits of one
+  device. They raised, naming the `Nx.place` that puts the updates whole.
+- `Nx.reduce_segments` computes over `ids` or `x` split along the rows for
+  every combine, folding each device's rows by partials; it raised for every
+  combine, naming an operand the caller never made. `ids` split beside `x`
+  cut along its columns move where the rows are read.
 - `Nx.reduce_ranges` with `lo` or `hi` cut over the devices that cut `x`'s
   columns raises naming `x` or the bound and the `Nx.place` that reads it
   beside the other, where it named an internal operand.

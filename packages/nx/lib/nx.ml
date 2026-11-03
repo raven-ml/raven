@@ -4932,9 +4932,8 @@ let rows_whole ~by x =
       (Route.pp_call ~by (Devices.set q))
       (Devices.grid q)
 
-(* [Add] is a scatter's [Add], which sums the rows of each device by partials
-   where [ids] and [x] are split along them. [Max], [Min] and [Set] are
-   scatters that read their updates whole along the positions. *)
+(* A scatter of [x]'s rows, which folds the rows of each device and closes
+   them by partials where [ids] and [x] are split along them. *)
 let reduce_segments c ~segments ids x =
   let by = "Nx.reduce_segments" in
   Eval.composite ~by [ ("ids", Any ids); ("x", Any x) ] @@ fun () ->

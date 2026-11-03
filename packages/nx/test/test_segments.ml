@@ -236,12 +236,10 @@ let cut_segments =
      let+ ids = int64s n (-1) (k + 1) in
      (r, k, ids, ids_rows, x_cut))
 
-(* [Add] is a scatter's [Add], which sums rows cut along the positions by
-   partials: it gives the host's bits, its rows whole on each device and
-   its columns cut as [x]'s. [Max], [Min] and [Set] read the rows whole:
-   [x] split along them raises, naming the [place] that puts them whole,
-   and [ids] split moves where the rows are read. Placed so, each gives the
-   host's bits. *)
+(* Each combine is a scatter's, which folds rows cut along the positions
+   on each device and closes the devices' partial results by partials: it
+   gives the host's bits, its rows whole on each device and its columns cut
+   as [x]'s. [ids] split move where the rows are read. *)
 let law_cut_segments (Rows (dt, c, _, x), k, ids, ids_rows, x_cut) =
   let px = match x_cut with None -> S2.on | Some axis -> S2.split ~axis in
   let pi = if ids_rows then S2.split ~axis:0 else S2.on in
@@ -250,39 +248,26 @@ let law_cut_segments (Rows (dt, c, _, x), k, ids, ids_rows, x_cut) =
   cover "Add with its rows cut" (c = Nx.Add && rows_cut && n > 0);
   cover "Add with x's rows cut in uneven windows"
     (c = Nx.Add && x_cut = Some 0 && n mod 2 = 1);
-  cover "Add with ids split beside x whole" (c = Nx.Add && ids_rows && x_cut = None);
+  cover "Add with ids split beside x whole"
+    (c = Nx.Add && ids_rows && x_cut = None);
   cover "Add with ids split beside x's columns cut"
     (c = Nx.Add && ids_rows && x_cut = Some 1);
-  cover "Max, Min or Set with its rows cut" (c <> Nx.Add && rows_cut);
+  cover "Max, Min or Set with x's rows cut"
+    (c <> Nx.Add && x_cut = Some 0 && n > 1 && k > 0);
   cover "a cut of the columns alone" ((not ids_rows) && x_cut = Some 1);
   let host = Nx.to_array (Nx.reduce_segments c ~segments:k ids x) in
   let whole = Nx.Placement.(with_leading_axis (without_leading_axis px)) in
-  let run pi px =
-    let y = Nx.reduce_segments c ~segments:k (Nx.place pi ids) (Nx.place px x) in
-    equal_elements dt host (Nx.to_array y);
-    equal ~msg:"where it lies" (placement ()) whole (Nx.placement y)
-  in
-  let refused name p =
-    raises
-      (Invalid_argument
-         (Format.asprintf
-            "Nx.reduce_segments: %s lies at %a and is read at %a; Nx.place \
-             (Placement.on s) %s"
-            name Nx.Placement.pp p Nx.Placement.pp S2.on name))
-  in
-  if x_cut = Some 0 && c <> Nx.Add && n > 0 && k > 0 then (
-    refused "x" px (fun () ->
-        Nx.reduce_segments c ~segments:k (Nx.place pi ids) (Nx.place px x));
-    run pi whole)
-  else run pi px
+  let y = Nx.reduce_segments c ~segments:k (Nx.place pi ids) (Nx.place px x) in
+  equal_elements dt host (Nx.to_array y);
+  equal ~msg:"where it lies" (placement ()) whole (Nx.placement y)
 
 let segments =
   group "reduce_segments"
     [
       prop "each segment folds its rows in order" segmented law_segments;
       prop
-        "over devices, Add sums rows split along the positions, and the \
-         others raise naming the place that puts them whole"
+        "over devices, each combine folds rows split along the positions as \
+         one device does"
         cut_segments law_cut_segments;
       test "the doc's sums and maxima" test_segment_doc;
       test "narrow floats sum at float32" test_segment_narrow;
