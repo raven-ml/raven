@@ -8,3 +8,8 @@
  (wrapped false)
  (modules reference)
  (libraries talon))
+
+(library
+ (name talon_held)
+ (modules talon_held)
+ (libraries windtrap talon nx nx.array rig))

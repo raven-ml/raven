@@ -30,12 +30,21 @@ val reading :
     Raises [Invalid_argument] starting with [by] if nx cannot read [x], as a
     traced [x]. *)
 
-val adopt :
-  ('v, 's, Bigarray.c_layout) Bigarray.Array1.t -> ('v, 's, Nx.host) Nx.t
-(** [adopt a] is the host value over [a]'s memory, which the caller gives up: it
-    must not read, write or keep [a] afterwards ({!Nx.Repr.unsafe_of_array}).
+val fresh : ('v, 's) Nx.dtype -> int -> ('v, 's) Nx_array.t
+(** [fresh dt n] is a host vector of [n] uninitialized elements of [dt]
+    ({!Nx_array.host}). *)
 
-    Raises [Invalid_argument] if no dtype stores [a]'s kind. *)
+val fill :
+  ('v, 's) Nx_array.t ->
+  (('v, 's, Bigarray.c_layout) Bigarray.Array1.t -> 'a) ->
+  'a
+(** [fill a f] is [f b], [b] the elements of the vector [a] as its dtype's
+    Bigarray kind, under a write claim ({!Nx_array.write}). *)
+
+val value : ('v, 's) Nx_array.t -> ('v, 's, Nx.host) Nx.t
+(** [value a] is the host value over [a]'s memory, which the caller gives up:
+    it must not read, write or keep [a] afterwards
+    ({!Nx.Repr.unsafe_of_array}). *)
 
 val utf_8 :
   by:string -> ?mask:Nx.host Nx.bit_t -> bytes -> (int * string) option

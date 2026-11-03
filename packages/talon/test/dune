@@ -129,3 +129,9 @@
  (modules test_jit)
  (package talon)
  (libraries windtrap talon nx rune))
+
+(test
+ (name test_memory)
+ (modules test_memory)
+ (package talon)
+ (libraries windtrap talon talon_gen talon_held))

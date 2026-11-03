@@ -199,9 +199,9 @@ let rec usable f (p : Source.Pred.t) =
 
 (* Sources *)
 
-let decode bytes m g i leaf name ty =
+let decode ~scratch bytes m g i leaf name ty =
   let layout : Column.layout =
-    match Chunk.read bytes m ~row_group:g i leaf ty with
+    match Chunk.read ~scratch bytes m ~row_group:g i leaf ty with
     | Fixed { valid; values } -> Fixed { validity = valid; values }
     | Varsize { valid; offsets; data } ->
         Varsize { validity = valid; offsets; child = Column.of_tensor data }
@@ -211,9 +211,28 @@ let decode bytes m g i leaf name ty =
   | Error (row, why) ->
       Meta.fail ~row_group:g "column %S: row %d: %s" name row why
 
-(* [part ?file b m leaves g columns] is the row group [g] of [b] as one batch of
-   [columns], each a name, the index of its leaf and its type. *)
-let part ?file b m leaves g columns : Source.part =
+(* [with_scratch shared f] is [f s] for [s] the scratch that the reads of one
+   source share ({!Chunk.type-scratch}), taken from [shared], or one of its
+   own if another part, on another domain, holds it. [s] goes back to [shared]
+   however [f] ends, so that a failed read leaves it for the next. *)
+let with_scratch shared f =
+  let s =
+    match Atomic.exchange shared None with
+    | Some s -> s
+    | None -> Chunk.scratch ()
+  in
+  match f s with
+  | r ->
+      Atomic.set shared (Some s);
+      r
+  | exception e ->
+      Atomic.set shared (Some s);
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
+(* [part ?file shared b m leaves g columns] is the row group [g] of [b] as one
+   batch of [columns], each a name, the index of its leaf and its type, decoded
+   with the scratch [shared]. *)
+let part ?file shared b m leaves g columns : Source.part =
   let open_ () =
     let read = ref false in
     let next () =
@@ -221,8 +240,9 @@ let part ?file b m leaves g columns : Source.part =
       else begin
         read := true;
         with_bytes ?file b @@ fun bytes ->
+        with_scratch shared @@ fun scratch ->
         let column (name, i, ty) =
-          (name, decode bytes m g i leaves.(i) name ty)
+          (name, decode ~scratch bytes m g i leaves.(i) name ty)
         in
         Some
           (Talon.v ~rows:m.Meta.row_groups.(g).rows (List.map column columns))
@@ -232,9 +252,9 @@ let part ?file b m leaves g columns : Source.part =
   in
   { rows = Some m.Meta.row_groups.(g).rows; open_ }
 
-(* [parts ?file types b r] are the parts of [b] for the request [r], whose
-   columns read as [types] say. *)
-let parts ?file types b (r : Source.request) =
+(* [parts ?file shared types b r] are the parts of [b] for the request [r],
+   whose columns read as [types] say, decoded with the scratch [shared]. *)
+let parts ?file shared types b (r : Source.request) =
   with_bytes ?file b @@ fun bytes ->
   let m, leaves = open_ bytes in
   let leaf name =
@@ -262,7 +282,7 @@ let parts ?file types b (r : Source.request) =
   in
   let kept g (rg : Meta.row_group) =
     if List.for_all (passes (stats g) rg.rows) r.filters then
-      Some (part ?file b m leaves g columns)
+      Some (part ?file shared b m leaves g columns)
     else None
   in
   List.filter_map Fun.id (Array.to_list (Array.mapi kept m.row_groups))
@@ -288,7 +308,9 @@ let make fn ?file ?rows f b =
   in
   let types = Array.to_list (Array.map (declared fn) f) in
   let pushdown p = if usable f p then Source.Inexact else Unsupported in
-  Source.v ~name ~schema:(Schema.v types) ?rows ~pushdown (parts ?file types b)
+  let shared = Atomic.make None in
+  Source.v ~name ~schema:(Schema.v types) ?rows ~pushdown
+    (parts ?file shared types b)
 
 let source f b = make "source" f b
 

@@ -1354,6 +1354,61 @@ let files =
           equal text "int64 [2; 3]" (printed (run_ok q)));
     ]
 
+(* Memory *)
+
+(* [with_ratio r f] is [f ()] with the collector's [custom_major_ratio] at
+   [r]. *)
+let with_ratio r f =
+  let was = (Gc.get ()).custom_major_ratio in
+  Gc.set { (Gc.get ()) with custom_major_ratio = r };
+  Fun.protect f ~finally:(fun () ->
+      Gc.set { (Gc.get ()) with custom_major_ratio = was })
+
+(* 2^14 rows of 8 bytes in one slice, one batch: a text column of 128 KiB of
+   bytes and 128 KiB of offsets. *)
+let texts =
+  let rows = 1 lsl 14 in
+  let s = "s\n" ^ String.concat "" (List.init rows (fun _ -> "abcdefgh\n")) in
+  let f = Csv.format [ ("s", any Type.binary) ] in
+  fun () -> column (Error.get_ok (read ~slice_length:(String.length s) f s)) "s"
+
+let texts_bytes = (8 lsl 14) + (8 * ((1 lsl 14) + 1))
+
+let memory =
+  group "memory"
+    [
+      (* A text column is host memory: the host holds its bytes and offsets
+         while it is live, and has them back once it is collected. *)
+      test "a text column is the host's memory while it is live" (fun () ->
+          Talon_held.check texts);
+      (* Dropped columns pace the collector as rig's host buffers do: a
+         major cycle at most once per 4 MiB of buffers of 64 KiB or more,
+         whatever [custom_major_ratio] says of the heap. A decode makes its
+         column's bytes and offsets in such buffers, so at a ratio of 1,
+         which paces a bigarray of Bigarray's own at a cycle each, 64 decodes
+         bring at most a cycle per 4 MiB of them more than at the default
+         ratio, and two under way at either end. The cycles they bring at
+         either ratio are the heap's own, paced by its allocations. *)
+      test "dropped columns pace the collector by the program's memory"
+        (fun () ->
+          let decodes = 64 in
+          let cycles r =
+            with_ratio r @@ fun () ->
+            ignore (texts ());
+            Gc.full_major ();
+            let before = (Gc.quick_stat ()).major_collections in
+            for _ = 1 to decodes do
+              ignore (Sys.opaque_identity (texts ()))
+            done;
+            (Gc.quick_stat ()).major_collections - before
+          in
+          let usual = cycles (Gc.get ()).custom_major_ratio in
+          let made = decodes * texts_bytes in
+          at_most ~msg:"major cycles at a ratio of 1" int
+            ~than:(usual + (made / (4 lsl 20)) + 2)
+            (cycles 1));
+    ]
+
 let () =
   exit
     (run "talon.csv"
@@ -1370,4 +1425,5 @@ let () =
          writing;
          sources;
          files;
+         memory;
        ])

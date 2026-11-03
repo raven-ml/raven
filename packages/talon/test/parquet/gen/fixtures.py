@@ -273,6 +273,24 @@ def generate():
     write("int96.parquet", t.select(["ts_ns"]), use_deprecated_int96_timestamps=True)
     write("bad_encoding.parquet", t.select(["i32"]), use_dictionary=False, compression="none")
     bad_encoding()
+    # The types in one row group each, so that a column is one chunk's arrays:
+    # dictionary pages, plain pages with decimals as integers, int96.
+    one = dict(row_group_size=ROWS)
+    write("one_group.parquet", t, compression="snappy", **one)
+    write(
+        "one_group_plain.parquet", t, use_dictionary=False, compression="none",
+        store_decimal_as_integer=True, **one,
+    )
+    write("one_group_int96.parquet", t.select(["ts_ns"]), use_deprecated_int96_timestamps=True, **one)
+    # One row group of 2^16 int64s, 97 values, a tenth null: a dictionary page,
+    # indices and validity, each of whose decoded arrays of the 2^16 rows is
+    # large enough to pace the collector by rig's law, in a small file.
+    n = 1 << 16
+    xs = pa.array([None if i % 10 == 3 else i % 97 for i in range(n)], pa.int64())
+    write(
+        "nulls_dict.parquet", pa.table({"x": xs}), compression="zstd",
+        row_group_size=n, write_batch_size=n, data_page_size=1 << 20,
+    )
     bits = bits_table()
     # Odd row groups and pages that start inside a byte of the validity.
     small = dict(row_group_size=731, write_batch_size=13, data_page_size=16)

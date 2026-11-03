@@ -296,9 +296,10 @@ let rows ty ~null ~add ~data =
   { add; finish }
 
 let uint8_of_string s =
-  let a = Bigarray.(Array1.create int8_unsigned c_layout (String.length s)) in
-  String.iteri (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c)) s;
-  Strings.adopt a
+  let a = Strings.fresh Nx.uint8 (String.length s) in
+  Strings.fill a (fun b ->
+      String.iteri (fun i c -> Bigarray.Array1.unsafe_set b i (Char.code c)) s);
+  Strings.value a
 
 let bytes_builder ty raw =
   let check = check ty and bytes = Buffer.create 256 and offsets = buf 0L in

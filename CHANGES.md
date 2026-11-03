@@ -3045,6 +3045,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Reading Parquet runs a sixth of the major collections it ran (309 to 54 on
+  decision-support q06 at scale factor 1): columns, and the arrays of
+  `Talon_csv` text columns, text kernels, `Column.parse` and `Column.print`,
+  are host arrays that pace the collector by the program's memory, where a
+  bigarray paced it by the OCaml heap alone. A Parquet source reuses its
+  decompression buffer across reads.
 - `Expr.is_in` over at most eight texts compares the rows' bytes with each
   text instead of coding the column, which sorted it: decision-support
   queries 12 and 19 take less than half the instructions. Parquet reads

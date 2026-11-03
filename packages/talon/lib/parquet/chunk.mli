@@ -18,8 +18,10 @@
     bit-packed in the file, decode straight into bits: the validity and the
     values of a [bool] column.
 
-    Pages decompress with [Lz]'s [decode], straight from the mapped file into a
-    buffer reused across the chunk's pages, and a page with a CRC is checked
+    The arrays that become a column's values are host arrays
+    ({!Nx_array.host}), filled in place. Pages decompress with [Lz]'s
+    [decode], straight from the mapped file into a buffer that a read reuses
+    across its chunks ({!type-scratch}), and a page with a CRC is checked
     against it first. The RLE and bit-packing hybrid, [PLAIN] booleans, the
     delta encodings, [PLAIN] byte arrays, the gather of dictionary-encoded byte
     strings and the spread run in C ([talon_parquet_stubs.c]). Fixed-width
@@ -63,7 +65,16 @@ val check : Meta.file -> row_group:int -> int -> Leaf.t -> unit
     and its footer, or if its codec is refused: LZO, Brotli, Hadoop's LZ4, or a
     value Parquet does not define. *)
 
+type scratch
+(** The type for the buffers a read reuses across chunks: the page it
+    decompresses and the lengths of delta-encoded byte strings. One chunk
+    uses it at a time. *)
+
+val scratch : unit -> scratch
+(** [scratch ()] is empty buffers, which grow as chunks need. *)
+
 val read :
+  scratch:scratch ->
   Meta.bigbytes ->
   Meta.file ->
   row_group:int ->
@@ -71,9 +82,10 @@ val read :
   Leaf.t ->
   Talon.Type.any ->
   t
-(** [read b m ~row_group i l t] decodes the chunk [i] of the row group
+(** [read ~scratch b m ~row_group i l t] decodes the chunk [i] of the row group
     [row_group] of the file [b], whose metadata are [m], as the leaf [l] read as
-    [t]. The chunk has passed {!check}, and [Leaf.reads_as l t] holds.
+    [t], with the buffers [scratch]. The chunk has passed {!check}, and
+    [Leaf.reads_as l t] holds.
 
     Raises {!Meta.Error}, with the row group and the bytes of the page that
     failed, if a page header does not decode or overruns the chunk, a page fails

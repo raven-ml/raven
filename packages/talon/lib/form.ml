@@ -795,14 +795,16 @@ let rows r valid read =
       Strings.reading ~by m Bigarray.int8_unsigned @@ fun m ->
       scan o b (fun i -> (A1.unsafe_get m (i lsr 3) lsr (i land 7)) land 1 = 0)
 
-(* [fixed kind zero r valid read] is the array that [read] fills at each row
-   [rows] reads, [zero] under a null. *)
-let fixed kind zero r valid read =
-  let a = A1.create kind Bigarray.c_layout (Nx_ragged.length r) in
-  A1.fill a zero;
-  match rows r valid (fun b pos len i -> read b pos len a i) with
-  | Some e -> Error e
-  | None -> Ok (Strings.adopt a)
+(* [fixed dt zero r valid read] is the array of [dt] that [read] fills at each
+   row [rows] reads, [zero] under a null. *)
+let fixed dt zero r valid read =
+  let a = Strings.fresh dt (Nx_ragged.length r) in
+  let failed =
+    Strings.fill a @@ fun b ->
+    A1.fill b zero;
+    rows r valid (fun v pos len i -> read v pos len b i)
+  in
+  match failed with Some e -> Error e | None -> Ok (Strings.value a)
 
 let text_rows c =
   match (Column.type_ c, Column.data c) with
@@ -815,19 +817,19 @@ let parse (Type.Any ty as any) c =
   let column d = Column.with_data any d c in
   let cast dt x = column (Fixed (P (Nx.cast dt x))) in
   let keep x = column (Fixed (P x)) in
-  let ints read = fixed Bigarray.int64 0L r valid read in
+  let ints read = fixed Nx.int64 0L r valid read in
   let of_int read =
     ints (fun b pos len a i ->
         A1.unsafe_set a i (Int64.of_int (read b pos len)))
   in
-  let floats read = fixed Bigarray.float64 0. r valid read in
+  let floats read = fixed Nx.float64 0. r valid read in
   let small dt ~min ~max = Result.map (cast dt) (of_int (int ~min ~max)) in
   match ty with
   | Bool ->
       let read b pos len a i =
         A1.unsafe_set a i (Bool.to_int (bool b pos len))
       in
-      Result.map (cast Nx.bit) (fixed Bigarray.int8_unsigned 0 r valid read)
+      Result.map (cast Nx.bit) (fixed Nx.uint8 0 r valid read)
   | Int8 -> small Nx.int8 ~min:(-0x80) ~max:0x7F
   | Int16 -> small Nx.int16 ~min:(-0x8000) ~max:0x7FFF
   | Int32 -> small Nx.int32 ~min:(-0x8000_0000) ~max:0x7FFF_FFFF
@@ -868,7 +870,7 @@ let parse_with fmt (Type.Any ty as any) c =
     Column.with_data any (Fixed x) c
   in
   Result.map column
-    (fixed Bigarray.int64 0L (text_rows c) valid (directed fmt any))
+    (fixed Nx.int64 0L (text_rows c) valid (directed fmt any))
 
 (* Formats *)
 
@@ -1044,16 +1046,15 @@ let print c =
         (match valid with Some v when not v.(i) -> () | _ -> write b i);
         offsets.(i + 1) <- Int64.of_int (Buffer.length b)
       done;
-      let values =
-        A1.create Bigarray.int8_unsigned Bigarray.c_layout (Buffer.length b)
-      in
-      String.iteri
-        (fun i ch -> A1.unsafe_set values i (Char.code ch))
-        (Buffer.contents b);
+      let values = Strings.fresh Nx.uint8 (Buffer.length b) in
+      Strings.fill values (fun v ->
+          String.iteri
+            (fun i ch -> A1.unsafe_set v i (Char.code ch))
+            (Buffer.contents b));
       let r =
         Nx_ragged.v
           ~offsets:(Nx.create Nx.int64 [| n + 1 |] offsets)
-          (Strings.adopt values)
+          (Strings.value values)
       in
       Column.with_data (Any Type.string) (Bytes r) c
   | _ -> err "Column.print: %a is not a type that Column.parse reads" Type.pp ty

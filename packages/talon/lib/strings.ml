@@ -40,6 +40,21 @@ let reading ~by x k f =
         array_bytes a k f)
   with Invalid_argument m when not !entered -> invalid_arg (by ^ ": " ^ m)
 
+(* Host arrays
+
+   The arrays a kernel makes are host arrays of nx.array ({!Nx_array.host}):
+   rig's host memory, which paces the collector by the program's memory and is
+   reused once collected. A kernel fills them under write claims and gives
+   them to the values it returns, with no copy. *)
+
+let fresh dt n = Nx_array.host dt [| n |]
+let fill a f = Nx_array.write a (fun g -> f (Bigarray.array1_of_genarray g))
+let value a = Nx.Repr.unsafe_of_array Nx.Host.v a
+
+(* [peek a f] is [f b], [b] the elements of the host vector [a], under a
+   read claim. *)
+let peek a f = Nx_array.read a (fun g -> f (Bigarray.array1_of_genarray g))
+
 (* Host bytes *)
 
 (* [host ~by ?mask r f] is [f o v m] for [o] the offsets of [r], [v] its bytes
@@ -101,16 +116,6 @@ let utf_8 ~by ?mask r =
 
 (* Scalar values *)
 
-(* [Nx.of_bigarray] copies; a bigarray that talon fills and gives up becomes the
-   value's own memory instead, so that no column pays a second pass. *)
-let adopt (type v s) (a : (v, s, Bigarray.c_layout) A.t) : (v, s, Nx.host) Nx.t
-    =
-  match Nx.Dtype.of_bigarray_kind (A.kind a) with
-  | Some dt ->
-      let b = Bigarray.genarray_of_array1 a in
-      Nx.Repr.unsafe_of_array Nx.Host.v (Nx_array.of_bigarray dt b)
-  | None -> invalid_arg "Strings.adopt: no dtype stores the bigarray's kind"
-
 (* [blit src lo dst at len] copies the bytes [lo, lo + len) of [src] to [dst]
    from [at]. A loop: [A.blit] of [A.sub]s allocates two proxies per row. *)
 let blit (src : buf) lo (dst : buf) at len =
@@ -134,39 +139,44 @@ let rec skip (v : buf) i stop k =
   if i >= stop || (k = 0 && starts_scalar v i) then i
   else skip v (i + 1) stop (if starts_scalar v i then k - 1 else k)
 
-(* [cumulative n f] is the [n + 1] offsets of rows of sizes [f 0] to [f (n -
-   1)]. *)
-let cumulative n f =
-  let o = A.create Bigarray.int64 Bigarray.c_layout (n + 1) in
-  A.unsafe_set o 0 0L;
-  for i = 0 to n - 1 do
-    A.unsafe_set o (i + 1) (Int64.add (A.unsafe_get o i) (Int64.of_int (f i)))
-  done;
-  o
-
 let last (o : int64s) = Int64.to_int (A.unsafe_get o (A.dim o - 1))
+
+(* [cumulative n f] is the host array of the [n + 1] offsets of rows of sizes
+   [f 0] to [f (n - 1)], and the last. *)
+let cumulative n f =
+  let a = fresh Nx.int64 (n + 1) in
+  let total =
+    fill a @@ fun (o : int64s) ->
+    A.unsafe_set o 0 0L;
+    for i = 0 to n - 1 do
+      A.unsafe_set o (i + 1) (Int64.add (A.unsafe_get o i) (Int64.of_int (f i)))
+    done;
+    last o
+  in
+  (a, total)
 
 (* [ranges ~by r lo hi] is the bytes [\[lo.(i), hi.(i))] of each row [i] of
    [r]. *)
 let ranges ~by r lo hi =
   let n = Nx_ragged.length r in
-  let offsets = cumulative n (fun i -> hi.(i) - lo.(i)) in
-  let bytes =
-    A.create Bigarray.int8_unsigned Bigarray.c_layout (last offsets)
-  in
-  reading ~by (Nx_ragged.values r) Bigarray.int8_unsigned (fun (v : buf) ->
-      for i = 0 to n - 1 do
-        let at = Int64.to_int (A.unsafe_get offsets i) in
-        blit v lo.(i) bytes at (hi.(i) - lo.(i))
-      done);
-  Nx_ragged.v ~offsets:(adopt offsets) (adopt bytes)
+  let offsets, size = cumulative n (fun i -> hi.(i) - lo.(i)) in
+  let bytes = fresh Nx.uint8 size in
+  (fill bytes @@ fun (b : buf) ->
+   peek offsets @@ fun (o : int64s) ->
+   reading ~by (Nx_ragged.values r) Bigarray.int8_unsigned @@ fun (v : buf) ->
+   for i = 0 to n - 1 do
+     let at = Int64.to_int (A.unsafe_get o i) in
+     blit v lo.(i) b at (hi.(i) - lo.(i))
+   done);
+  Nx_ragged.v ~offsets:(value offsets) (value bytes)
 
 let length ~by ?mask r =
-  let ns = A.create Bigarray.int64 Bigarray.c_layout (Nx_ragged.length r) in
-  A.fill ns 0L;
-  rows ~by ?mask r (fun i v first stop ->
-      A.unsafe_set ns i (Int64.of_int (count v first stop)));
-  adopt ns
+  let a = fresh Nx.int64 (Nx_ragged.length r) in
+  (fill a @@ fun (ns : int64s) ->
+   A.fill ns 0L;
+   rows ~by ?mask r (fun i v first stop ->
+       A.unsafe_set ns i (Int64.of_int (count v first stop))));
+  value a
 
 let slice ~by ?mask ~offset ~length r =
   let n = Nx_ragged.length r in
@@ -282,28 +292,28 @@ let concat ~by ?mask ~length:n sep parts =
       !s
     end
   in
-  let offsets = cumulative n size in
-  let bytes =
-    A.create Bigarray.int8_unsigned Bigarray.c_layout (last offsets)
-  in
-  for i = 0 to n - 1 do
-    if held i then begin
-      let at = ref (Int64.to_int (A.unsafe_get offsets i)) in
-      for j = 0 to k - 1 do
-        if j > 0 then begin
-          for q = 0 to m - 1 do
-            A.unsafe_set bytes (!at + q) (Char.code (String.unsafe_get sep q))
-          done;
-          at := !at + m
-        end;
-        let lo = first j i in
-        let len = stop j i - lo in
-        blit vs.(j) lo bytes !at len;
-        at := !at + len
-      done
-    end
-  done;
-  Nx_ragged.v ~offsets:(adopt offsets) (adopt bytes)
+  let offsets, total = cumulative n size in
+  let bytes = fresh Nx.uint8 total in
+  (fill bytes @@ fun (b : buf) ->
+   peek offsets @@ fun (o : int64s) ->
+   for i = 0 to n - 1 do
+     if held i then begin
+       let at = ref (Int64.to_int (A.unsafe_get o i)) in
+       for j = 0 to k - 1 do
+         if j > 0 then begin
+           for q = 0 to m - 1 do
+             A.unsafe_set b (!at + q) (Char.code (String.unsafe_get sep q))
+           done;
+           at := !at + m
+         end;
+         let lo = first j i in
+         let len = stop j i - lo in
+         blit vs.(j) lo b !at len;
+         at := !at + len
+       done
+     end
+   done);
+  Nx_ragged.v ~offsets:(value offsets) (value bytes)
 
 type pattern =
   | Literal of string
@@ -328,8 +338,7 @@ external find :
 
 let matches ~by ?mask p r =
   let n = Nx_ragged.length r in
-  let hits = A.create Bigarray.int8_unsigned Bigarray.c_layout ((n + 7) / 8) in
-  A.fill hits 0;
+  let a = fresh Nx.uint8 ((n + 7) / 8) in
   let rec pieces v i stop = function
     | [] -> true
     | s :: ss ->
@@ -345,14 +354,16 @@ let matches ~by ?mask p r =
         j >= first && at v j s
     | Pieces ss -> pieces v first stop ss
   in
-  let hit i =
-    A.unsafe_set hits (i lsr 3)
-      (A.unsafe_get hits (i lsr 3) lor (1 lsl (i land 7)))
-  in
-  rows ~by ?mask r (fun i v first stop -> if matches v first stop then hit i);
+  (fill a @@ fun (hits : buf) ->
+   A.fill hits 0;
+   let hit i =
+     A.unsafe_set hits (i lsr 3)
+       (A.unsafe_get hits (i lsr 3) lor (1 lsl (i land 7)))
+   in
+   rows ~by ?mask r (fun i v first stop -> if matches v first stop then hit i));
   Nx.slice
     [ Nx.R (0, n) ]
-    (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (adopt hits)))
+    (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (value a)))
 
 (* Literals
 
@@ -374,30 +385,29 @@ let split ~by ?mask sep r =
       let k = occurrences v first stop sep in
       matches.(i) <- k;
       kept.(i) <- stop - first - (k * m));
-  let lists = cumulative n (fun i -> matches.(i) + 1) in
-  let pieces = A.create Bigarray.int64 Bigarray.c_layout (last lists + 1) in
-  let bytes =
-    A.create Bigarray.int8_unsigned Bigarray.c_layout
-      (Array.fold_left ( + ) 0 kept)
-  in
-  A.unsafe_set pieces 0 0L;
-  let piece = ref 0 and at = ref 0 in
-  let emit v lo hi =
-    blit v lo bytes !at (hi - lo);
-    at := !at + hi - lo;
-    incr piece;
-    A.unsafe_set pieces !piece (Int64.of_int !at)
-  in
-  rows ~by ?mask r (fun _ v first stop ->
-      let rec go i =
-        match find v i stop sep with
-        | -1 -> emit v i stop
-        | j ->
-            emit v i j;
-            go (j + m)
-      in
-      go first);
-  (adopt lists, Nx_ragged.v ~offsets:(adopt pieces) (adopt bytes))
+  let lists, total = cumulative n (fun i -> matches.(i) + 1) in
+  let pieces = fresh Nx.int64 (total + 1) in
+  let bytes = fresh Nx.uint8 (Array.fold_left ( + ) 0 kept) in
+  (fill pieces @@ fun (p : int64s) ->
+   fill bytes @@ fun (b : buf) ->
+   A.unsafe_set p 0 0L;
+   let piece = ref 0 and at = ref 0 in
+   let emit v lo hi =
+     blit v lo b !at (hi - lo);
+     at := !at + hi - lo;
+     incr piece;
+     A.unsafe_set p !piece (Int64.of_int !at)
+   in
+   rows ~by ?mask r (fun _ v first stop ->
+       let rec go i =
+         match find v i stop sep with
+         | -1 -> emit v i stop
+         | j ->
+             emit v i j;
+             go (j + m)
+       in
+       go first));
+  (value lists, Nx_ragged.v ~offsets:(value pieces) (value bytes))
 
 let replace ~by ?mask ~sub ~into r =
   let n = Nx_ragged.length r
@@ -405,30 +415,30 @@ let replace ~by ?mask ~sub ~into r =
   let sizes = Array.make n 0 in
   rows ~by ?mask r (fun i v first stop ->
       sizes.(i) <- stop - first + (grow * occurrences v first stop sub));
-  let offsets = cumulative n (Array.get sizes) in
-  let bytes =
-    A.create Bigarray.int8_unsigned Bigarray.c_layout (last offsets)
-  in
-  let put = ref 0 in
-  let copy v lo hi =
-    blit v lo bytes !put (hi - lo);
-    put := !put + hi - lo
-  in
-  rows ~by ?mask r (fun i v first stop ->
-      put := Int64.to_int (A.unsafe_get offsets i);
-      let rec go j =
-        match find v j stop sub with
-        | -1 -> copy v j stop
-        | h ->
-            copy v j h;
-            String.iteri
-              (fun k c -> A.unsafe_set bytes (!put + k) (Char.code c))
-              into;
-            put := !put + String.length into;
-            go (h + String.length sub)
-      in
-      go first);
-  Nx_ragged.v ~offsets:(adopt offsets) (adopt bytes)
+  let offsets, total = cumulative n (Array.get sizes) in
+  let bytes = fresh Nx.uint8 total in
+  (fill bytes @@ fun (b : buf) ->
+   peek offsets @@ fun (o : int64s) ->
+   let put = ref 0 in
+   let copy v lo hi =
+     blit v lo b !put (hi - lo);
+     put := !put + hi - lo
+   in
+   rows ~by ?mask r (fun i v first stop ->
+       put := Int64.to_int (A.unsafe_get o i);
+       let rec go j =
+         match find v j stop sub with
+         | -1 -> copy v j stop
+         | h ->
+             copy v j h;
+             String.iteri
+               (fun k c -> A.unsafe_set b (!put + k) (Char.code c))
+               into;
+             put := !put + String.length into;
+             go (h + String.length sub)
+       in
+       go first));
+  Nx_ragged.v ~offsets:(value offsets) (value bytes)
 
 (* [compare_rows v o n s signs] writes to [signs] -1, 0 or 1 where each of the
    [n] rows of [v], cut by [o], orders before, as or after [s]. *)
@@ -448,6 +458,7 @@ let compare ~by r one =
         String.init (stop - first) (fun k ->
             Char.unsafe_chr (A.unsafe_get v (first + k))));
   let n = Nx_ragged.length r in
-  let signs = A.create Bigarray.int8_signed Bigarray.c_layout n in
-  host ~by r (fun o v _ -> compare_rows v o n !s signs);
-  adopt signs
+  let a = fresh Nx.int8 n in
+  (fill a @@ fun signs ->
+   host ~by r (fun o v _ -> compare_rows v o n !s signs));
+  value a

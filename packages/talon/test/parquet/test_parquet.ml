@@ -1326,7 +1326,123 @@ let decoding =
         types.parquet a b: the file has no column "a b"
         |})
 
+(* Memory *)
+
+(* nulls_dict.parquet's column [x]: 2^16 int64s in one row group, a tenth of
+   them null, in a dictionary of 97 values. *)
+let nulls_rows = 1 lsl 16
+
+(* Reads of one source, which keeps the buffer its pages decompress into. *)
+let read_nulls =
+  let s = P.source (sniff "nulls_dict.parquet") (buffer "nulls_dict.parquet") in
+  fun () ->
+    Query.of_source s
+    |> Query.run
+    |> Result.map (fun t -> Talon.column t "x")
+    |> Error.get_ok
+
+(* [with_ratio r f] is [f ()] with the collector's [custom_major_ratio] at
+   [r]. *)
+let with_ratio r f =
+  let was = (Gc.get ()).custom_major_ratio in
+  Gc.set { (Gc.get ()) with custom_major_ratio = r };
+  Fun.protect f ~finally:(fun () ->
+      Gc.set { (Gc.get ()) with custom_major_ratio = was })
+
+(* The decoder's shapes: every column of the types fixture in one row group,
+   with dictionary pages and with plain pages, its decimals read both ways,
+   its text read as categoricals, int96 timestamps, and a file of no row. *)
+let shapes =
+  let columns =
+    [
+      "bool"; "i8"; "i16"; "i32"; "i64"; "u8"; "u16"; "u32"; "u64"; "f16";
+      "f32"; "f64"; "date"; "clock_ms"; "clock_us"; "clock_ns"; "ts_ms";
+      "ts_us_utc"; "ts_us_paris"; "ts_ns"; "string"; "binary"; "fsb"; "uuid";
+      "all_null"; "no_null"; "req_i32"; "req_string";
+    ]
+  in
+  let texts = Array.init 40 (fun i -> Printf.sprintf "v%d\xc3\xa9\n\"" i) in
+  let typed =
+    [
+      ("d9", Some (any Type.float64)); ("d9", Some (any Type.int64));
+      ("d18", Some (any Type.float64)); ("d18", Some (any Type.int64));
+      ("string", Some (any (Type.categorical texts)));
+      ( "req_string",
+        Some (any (Type.categorical (Array.init 7 (Printf.sprintf "r%d")))) );
+    ]
+  in
+  let file name =
+    List.map (fun c -> (name, c, None)) columns
+    @ List.map (fun (c, ty) -> (name, c, ty)) typed
+  in
+  file "one_group.parquet" @ file "one_group_plain.parquet"
+  @ [
+      ("one_group_int96.parquet", "ts_ns", None);
+      ("empty.parquet", "i64", None);
+      ("empty.parquet", "string", None);
+    ]
+
+let memory =
+  group "Memory"
+    [
+      (* A column is host memory: the host holds its arrays' bytes while it
+         is live, and has them back once it is collected. Each case is a
+         shape of the decoder, in one row group so that the column is that
+         chunk's arrays: validity bits and the spread of values and offsets
+         under nulls, dictionary indices gathered as values and as byte
+         strings, plain byte strings, booleans, int96 timestamps, decimals as
+         unscaled integers and as floats, categoricals, and no row. *)
+      cases "a column is the host's memory while it is live" shapes
+        ~id:(fun (file, column, ty) ->
+          Printf.sprintf "%s %s%s" file column
+            (match ty with
+            | None -> ""
+            | Some (Type.Any t) -> Format.asprintf " as %a" Type.pp t))
+        (fun (file, column, ty) ->
+          let f = sniff file in
+          let f =
+            if file = "one_group_int96.parquet" then f
+            else
+              f
+              |> P.with_type "d9" (any Type.float64)
+              |> P.with_type "d18" (any Type.float64)
+          in
+          let f =
+            match ty with Some ty -> P.with_type column ty f | None -> f
+          in
+          let b = buffer file in
+          Talon_held.check (fun () ->
+              Error.get_ok (read_from f b column)));
+      (* Dropped columns pace the collector as rig's host buffers do: a
+         major cycle at most once per 4 MiB of buffers of 64 KiB or more,
+         whatever [custom_major_ratio] says of the heap. A read of the column
+         of nulls and a dictionary makes four arrays of its 2^16 rows of 8
+         bytes in such buffers, the table of values, the indices, the
+         gathered values and the spread ones, and its validity, of 8 KiB,
+         dies young; it decompresses into a buffer its source keeps. So at a
+         ratio of 1, which paces a bigarray of Bigarray's own at a cycle
+         each, 64 reads bring at most a cycle per 4 MiB of those arrays, and
+         two under way at either end. *)
+      test "dropped columns pace the collector by the program's memory"
+        (fun () ->
+          let reads = 64 in
+          let cycles =
+            with_ratio 1 @@ fun () ->
+            ignore (read_nulls ());
+            Gc.full_major ();
+            let before = (Gc.quick_stat ()).major_collections in
+            for _ = 1 to reads do
+              ignore (Sys.opaque_identity (read_nulls ()))
+            done;
+            (Gc.quick_stat ()).major_collections - before
+          in
+          let made = reads * 4 * 8 * nulls_rows in
+          at_most ~msg:"major cycles at a ratio of 1" int
+            ~than:((made / (4 lsl 20)) + 2)
+            cycles);
+    ]
+
 let () =
   exit
     (run "talon.parquet"
-       [ agreement; sniffing; formats; synthesized; sources; decoding ])
+       [ agreement; sniffing; formats; synthesized; sources; decoding; memory ])

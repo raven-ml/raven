@@ -180,39 +180,28 @@ let is_null nulls s r j =
   let len = Scan.len s r j in
   len = 0 || is_token (Scan.bytes s) (Scan.pos s r j) len nulls
 
-(* [tensor a] is the host value over [a]'s memory, which the decoder filled and
-   gives up: [Nx.of_bigarray] would copy it. *)
-let tensor (type v s) (a : (v, s, Bigarray.c_layout) Bigarray.Array1.t) :
-    (v, s, Nx.host) Nx.t =
-  match Nx.Dtype.of_bigarray_kind (Bigarray.Array1.kind a) with
-  | Some dt ->
-      let b = Bigarray.genarray_of_array1 a in
-      Nx.Repr.unsafe_of_array Nx.Host.v (Nx_array.of_bigarray dt b)
-  | None -> invalid_arg "Talon_csv.tensor: no dtype stores the bigarray's kind"
-
 (* A binary column has no value to check, so [of_layout] cannot fail. Its
-   validity is the bits of [length] rows in the bytes [validity]. *)
+   validity is the bits of its rows in the bytes [validity]. *)
 let binary ?validity offsets data =
-  let length = A1.dim offsets - 1 in
+  let length = Nx.numel offsets - 1 in
   let bits v =
-    Nx.slice
-      [ Nx.R (0, length) ]
-      (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (tensor v)))
+    Nx.slice [ Nx.R (0, length) ] (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit v))
   in
   let validity = Option.map bits validity in
   Result.get_ok
     (Column.of_layout (Type.Any Type.binary)
-       (Varsize
-          {
-            validity;
-            offsets = tensor offsets;
-            child = Column.of_tensor (tensor data);
-          }))
+       (Varsize { validity; offsets; child = Column.of_tensor data }))
 
 let no_texts =
-  binary
-    (A1.init Bigarray.int64 Bigarray.c_layout 1 (Fun.const 0L))
-    (A1.create Bigarray.int8_unsigned Bigarray.c_layout 0)
+  binary (Nx.create Nx.int64 [| 1 |] [| 0L |]) (Nx.create Nx.uint8 [| 0 |] [||])
+
+(* A text column's arrays are host arrays ({!Nx_array.host}): rig's host
+   memory, which paces the collector by the program's memory and is reused
+   once collected. They are filled under write claims and become the column's
+   values with no copy. *)
+let host dt n = Nx_array.host dt [| n |]
+let write a f = Nx_array.write a (fun g -> f (Bigarray.array1_of_genarray g))
+let value a = Nx.Repr.unsafe_of_array Nx.Host.v a
 
 (* [texts ~quote ~nulls s j ~first ~rows] is the binary column of field [j] of
    the records [first] to [first + rows - 1] of [s]'s batch, its doubled quotes
@@ -223,48 +212,62 @@ let texts ~quote ~nulls s j ~first ~rows =
   for r = first to first + rows - 1 do
     total := !total + Scan.len s r j
   done;
-  let data = A1.create Bigarray.int8_unsigned Bigarray.c_layout !total in
-  let offsets = A1.create Bigarray.int64 Bigarray.c_layout (rows + 1) in
-  A1.unsafe_set offsets 0 0L;
-  let validity = ref None and o = ref 0 in
-  (* The validity's bytes are made at the first null. *)
-  let null i =
-    let v =
-      match !validity with
-      | Some v -> v
-      | None ->
-          let v =
-            A1.create Bigarray.int8_unsigned Bigarray.c_layout ((rows + 7) / 8)
-          in
-          A1.fill v 0xFF;
-          validity := Some v;
-          v
+  let data = host Nx.uint8 !total and offsets = host Nx.int64 (rows + 1) in
+  let validity = ref None in
+  let used =
+    write data @@ fun data ->
+    write offsets @@ fun offsets ->
+    A1.unsafe_set offsets 0 0L;
+    let o = ref 0 in
+    (* [row i] copies the field of row [i] unless [null], and ends it. *)
+    let row ~null i =
+      if not null then begin
+        let r = first + i in
+        let pos = Scan.pos s r j and len = Scan.len s r j in
+        let quoted = Scan.quoted s r j in
+        let k = ref pos in
+        while !k < pos + len do
+          let c = Bytes.unsafe_get b !k in
+          A1.unsafe_set data !o (Char.code c);
+          incr o;
+          k := if quoted && c = quote then !k + 2 else !k + 1
+        done
+      end;
+      A1.unsafe_set offsets (i + 1) (Int64.of_int !o)
     in
-    A1.unsafe_set v (i / 8) (A1.unsafe_get v (i / 8) land lnot (1 lsl (i mod 8)))
+    (* The validity's bytes are made at the first null, and the rows from it
+       are read under their claim. *)
+    let masked i0 =
+      let a = host Nx.uint8 ((rows + 7) / 8) in
+      validity := Some a;
+      write a @@ fun v ->
+      A1.fill v 0xFF;
+      for i = i0 to rows - 1 do
+        let null = is_null nulls s (first + i) j in
+        if null then
+          A1.unsafe_set v (i / 8)
+            (A1.unsafe_get v (i / 8) land lnot (1 lsl (i mod 8)));
+        row ~null i
+      done;
+      (* The bits past the last row, which the fill set, are cleared. *)
+      if rows mod 8 <> 0 then
+        let last = rows / 8 in
+        A1.unsafe_set v last
+          (A1.unsafe_get v last land ((1 lsl (rows mod 8)) - 1))
+    in
+    let rec unmasked i =
+      if i < rows then
+        if is_null nulls s (first + i) j then masked i
+        else begin
+          row ~null:false i;
+          unmasked (i + 1)
+        end
+    in
+    unmasked 0;
+    !o
   in
-  for i = 0 to rows - 1 do
-    let r = first + i in
-    if is_null nulls s r j then null i
-    else begin
-      let pos = Scan.pos s r j and len = Scan.len s r j in
-      let quoted = Scan.quoted s r j in
-      let k = ref pos in
-      while !k < pos + len do
-        let c = Bytes.unsafe_get b !k in
-        A1.unsafe_set data !o (Char.code c);
-        incr o;
-        k := if quoted && c = quote then !k + 2 else !k + 1
-      done
-    end;
-    A1.unsafe_set offsets (i + 1) (Int64.of_int !o)
-  done;
-  (* The bits past the last row, which the fill set, are cleared. *)
-  (match !validity with
-  | Some v when rows mod 8 <> 0 ->
-      let last = rows / 8 in
-      A1.unsafe_set v last (A1.unsafe_get v last land ((1 lsl (rows mod 8)) - 1))
-  | _ -> ());
-  binary ?validity:!validity offsets (A1.sub data 0 !o)
+  let validity = Option.map value !validity in
+  binary ?validity (value offsets) (Nx.slice [ Nx.R (0, used) ] (value data))
 
 (* Sniffing
 
