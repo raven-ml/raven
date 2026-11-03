@@ -195,18 +195,24 @@ module Compiler = struct
   (* Binaries are kept in the table the compiler's key names while the setting
      ccache holds. An entry that does not read, as a damaged one, is compiled
      anew and replaced. *)
-  let compile_cached c src =
-    let table = if Setting.value Setting.ccache then cachekey c else None in
-    let kept table =
+  let table c = if Setting.value Setting.ccache then cachekey c else None
+
+  let kept c src =
+    let read table =
       try Helpers.Diskcache.get ~table src with Failure _ -> None
     in
-    match Option.bind table kept with
+    Option.bind (table c) read
+
+  let compile_cached c src =
+    match kept c src with
     | Some lib -> lib
     | None ->
         if Setting.value Setting.assert_compile then
           invalid_arg ("tried to compile with ASSERT_COMPILE set\n" ^ src);
         let lib = c.compile src in
-        Option.iter (fun table -> Helpers.Diskcache.put ~table src lib) table;
+        Option.iter
+          (fun table -> Helpers.Diskcache.put ~table src lib)
+          (table c);
         lib
 end
 

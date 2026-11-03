@@ -113,6 +113,13 @@ module Compiler : sig
 
       Raises {!Compile_error} if [c] rejects [src]. *)
 
+  val kept : t -> string -> string option
+  (** [kept c src] is the binary of [src] held in [c]'s disk cache table while
+      {!Setting.ccache} holds, if any: what {!compile_cached} returns without
+      compiling. An entry that does not read is none.
+
+      Raises what {!cachekey} raises. *)
+
   val compile_cached : t -> string -> string
   (** [compile_cached c src] is the binary of [src] held in [c]'s disk cache
       table, or else [compile c src] ({!compile}), which is then kept there,

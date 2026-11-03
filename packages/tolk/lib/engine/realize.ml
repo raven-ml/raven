@@ -153,16 +153,19 @@ let lower_and_compile ?search ~targets linear =
       (toposort ~calls:Skip linear)
   in
   (* One kernel of each program key, as kernels of one key take one program:
-     those that differ only in their parameters' devices (D170). Only the
-     kernels without a program are compiled, so a schedule whose programs are
-     all made spawns no domain. *)
+     those that differ only in their parameters' devices (D170). A program
+     made or kept on disk is read here: a read took 0.4 to 0.5 ms on fudge,
+     less than a domain's start and the collections it then joins. One that
+     another domain is making goes to the map, where [to_program] waits for
+     it. Only the others are compiled, so a schedule whose programs are all
+     made or kept spawns no domain. *)
   let seen = Hashtbl.create 64 in
   let first (_, (ast, ren)) =
     let key = Codegen.program_key ast ren in
     if Hashtbl.mem seen key then None
     else begin
       Hashtbl.replace seen key ();
-      match Codegen.made ast ren with Some _ -> None | None -> Some (ast, ren)
+      match Codegen.read ast ren with Some _ -> None | None -> Some (ast, ren)
     end
   in
   let missing = List.filter_map first calls in

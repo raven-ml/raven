@@ -924,6 +924,14 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A later process's first call of a compiled function reads the programs
+  tolk's disk cache keeps on the calling domain, and spawns domains only for
+  the programs it must compile. `Codegen.read`, which replaces `Codegen.made`,
+  reads one back without compiling; `Renderer.Compiler.kept` is the binary a
+  compiler's table holds; `Helpers.Memo.try_get` replaces `Memo.find`. On
+  fudge under load, gpt-oss-20b's 12-token prefill's first call on CUDA took
+  0.37-0.39 s against 0.79-0.88 s, and rune's eight-schools sampler's 0.09-0.12
+  s of CPU against 0.20-0.23 s.
 - `Ops.key` digests a string or bytes argument without writing its literal,
   so keying a compiled program, as `Device.Tiny_elf.of_program` does, no longer
   quotes its source and binary: rune's cold compiles allocate up to 23% fewer

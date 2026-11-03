@@ -661,10 +661,10 @@ let raising_keeps_nothing () =
   let k = fresh_kernel () in
   raises ~msg:"first call" (Renderer.Compiler.Compile_error "first") (fun () ->
       ignore (Codegen.to_program k r));
-  is_none ~msg:"after the raise" (Codegen.made k r);
+  is_none ~msg:"after the raise" (Codegen.read k r);
   let p = Codegen.to_program k r in
   equal int ~msg:"compilations" 2 (Atomic.get compiled);
-  match Codegen.made k r with
+  match Codegen.read k r with
   | Some q -> same_graph p q
   | None -> fail "the made program is not returned"
 
@@ -789,10 +789,10 @@ let makes_anew_after_a_failure () =
   ignore (Codegen.to_program k r);
   equal int ~msg:"compilations" 2 (Atomic.get calls)
 
-(* [made] waits for no program being made: a compiler that starts compiling,
-   then holds the compilation, and with it the program's entry, until [made]
+(* [read] waits for no program being made: a compiler that starts compiling,
+   then holds the compilation, and with it the program's entry, until [read]
    has answered. *)
-let made_waits_for_none () =
+let read_waits_for_none () =
   let started = Atomic.make false and answered = Atomic.make false in
   let compiler =
     Renderer.Compiler.v (fun src ->
@@ -807,25 +807,28 @@ let made_waits_for_none () =
   while not (Atomic.get started) do
     Domain.cpu_relax ()
   done;
-  is_none ~msg:"while it is made" (Codegen.made k r);
+  is_none ~msg:"while it is made" (Codegen.read k r);
   Atomic.set answered true;
   let p = Domain.join making in
-  match Codegen.made k r with
+  match Codegen.read k r with
   | Some q -> same_graph p q
   | None -> fail "the made program is not returned"
 
 let caching =
   group "programs are kept"
     [
-      test "made is no program before to_program, then its program" (fun () ->
-          let _, r = counting () in
+      test "read is no program before to_program, then its program" (fun () ->
+          let compiled, r = counting () in
           let k = fresh_kernel () in
-          is_none ~msg:"before" (Codegen.made k r);
+          is_none ~msg:"before" (Codegen.read k r);
+          equal int ~msg:"compilations before" 0 (Atomic.get compiled);
           let p = Codegen.to_program k r in
-          match Codegen.made k r with
-          | Some q -> same_graph p q
+          match Codegen.read k r with
+          | Some q ->
+              same_graph p q;
+              equal int ~msg:"compilations" 1 (Atomic.get compiled)
           | None -> fail "the made program is not returned");
-      test "made waits for no program being made" made_waits_for_none;
+      test "read waits for no program being made" read_waits_for_none;
       test "a second call with an equal kernel compiles nothing"
         keeps_its_programs;
       test "calls from several domains at once make one program, compiled once"
@@ -942,6 +945,11 @@ let parts =
     ("on CPU:1", printed ~kernel:(add_on "CPU:1") kept);
     ("on CPU:2", printed ~kernel:(add_on "CPU:2") kept);
     ("uncached", printed clang);
+    ( "read",
+      fun () ->
+        match Codegen.read (Lazy.force add_kernel) kept with
+        | Some prg -> print_string (Graph.to_string prg)
+        | None -> print_string "none" );
     ( "other compiler",
       printed
         (renderer_for ~compiler:(bytes_in "test_codegen_other") clang_target) );
@@ -1026,6 +1034,23 @@ let ignores_other_builds () =
   equal outcome ~msg:"made again" (the_program ()) (made db);
   equal (list string) ~msg:"replaced" kept (programs ())
 
+(* [read] reads a program another process made with its binary, compiling
+   nothing, and is none without either, keeping nothing. *)
+let read_reads_back () =
+  let db = Disk_cache.fresh () in
+  equal outcome ~msg:"nothing kept" (Ok "none")
+    (read_from_disk ~part:"read" db);
+  equal (list string) ~msg:"kept nothing" []
+    (Disk_cache.entries ~table:"to_program" db);
+  equal outcome ~msg:"made" (the_program ()) (made db);
+  equal outcome ~msg:"read back" (the_program ())
+    (read_from_disk ~part:"read" db);
+  List.iter Sys.remove (Disk_cache.entries ~table:"test_codegen_bytes" db);
+  equal outcome ~msg:"binaries removed" (Ok "none")
+    (read_from_disk ~part:"read" db);
+  equal (list string) ~msg:"compiled no binary" []
+    (Disk_cache.entries ~table:"test_codegen_bytes" db)
+
 let keeps_no_uncached () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made ~part:"uncached" db);
@@ -1077,6 +1102,8 @@ let on_disk =
   group "programs are kept on disk"
     [
       test "a program made by one process is read back by the next" reads_back;
+      test "read reads back a program and its binary, and is none without"
+        read_reads_back;
       test "a program read back names the devices of the kernel asking"
         reads_back_on_its_device;
       group "a program made under one setting is not read back under another"

@@ -721,7 +721,8 @@ end
 
 module Memo = struct
   (* An entry's lock is held while its value is made, so that a domain that
-     asks for it meanwhile waits; [value] is read without the lock by [find]. *)
+     asks for it meanwhile waits; [value] is read without the lock by
+     [try_get]. *)
   type 'a entry = { lock : Mutex.t; value : 'a option Atomic.t }
   type 'a t = { lock : Mutex.t; entries : (string, 'a entry) Hashtbl.t }
 
@@ -736,19 +737,26 @@ module Memo = struct
             Hashtbl.replace t.entries key e;
             e)
 
-  let get t key make =
-    let (e : 'a entry) = entry t key in
-    Mutex.protect e.lock (fun () ->
-        match Atomic.get e.value with
-        | Some v -> v
-        | None ->
-            let v = make () in
-            Atomic.set e.value (Some v);
-            v)
+  let made (e : 'a entry) make =
+    match Atomic.get e.value with
+    | Some v -> v
+    | None ->
+        let v = make () in
+        Atomic.set e.value (Some v);
+        v
 
-  let find (t : 'a t) key =
-    Mutex.protect t.lock (fun () -> Hashtbl.find_opt t.entries key)
-    |> Option.fold ~none:None ~some:(fun (e : 'a entry) -> Atomic.get e.value)
+  let get t key make =
+    let e = entry t key in
+    Mutex.protect e.lock (fun () -> made e make)
+
+  let try_get t key make =
+    let e = entry t key in
+    match Atomic.get e.value with
+    | Some v -> Some v
+    | None ->
+        if not (Mutex.try_lock e.lock) then None
+        else Fun.protect ~finally:(fun () -> Mutex.unlock e.lock) (fun () ->
+            Some (made e make))
 end
 
 (* Programs *)

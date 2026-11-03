@@ -1,6 +1,7 @@
-; rune's cold compiles. Not attached to runtest: run it with `dune build
-; @bench`, or run the built exe from its directory under _build/default.
-; Every sample compiles cold, so no warm pass.
+; rune's cold compiles, and first calls over a warm disk cache. Not attached
+; to runtest: run it with `dune build @bench`, or run the built exe from its
+; directory under _build/default. Each sample is a fresh process, so no warm
+; pass.
 
 (executable
  (name bench_compile)

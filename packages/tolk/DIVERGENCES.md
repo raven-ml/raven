@@ -1578,18 +1578,26 @@ Withdrawn: multi-device is out of scope, see README.
   unless `NO_COLOR` is set: a kept program does not depend on the display of
   the process that made it. A program read back shows its source and
   instructions at `DEBUG` 4 and 7, as a compiled one does.
+  `lower_and_compile` reads the programs the disk keeps on the calling
+  domain (`Codegen.read`), and hands only the others to `Worker.map`, where
+  a tinygrad worker reads its compile cache: a read took 0.4 to 0.5 ms on
+  fudge (eight schools, gpt-oss's 12-token prefill), less than a domain's
+  start and the collections it joins.
 - **Reason:** (d): a later process's first compiled call of a model. With
   binaries alone on disk, a warm process schedules and lowers every kernel
   again: on gpt-oss's tiny random checkpoint on Metal (the Mac), 0.64 s of
   scheduling and 2.08 s of lowering of a 3.16 s first call. To re-measure on
   fudge. Its fudge rows: the tolk bench's `*/warm` rows, which read a
-  schedule and its programs back against the stages they replace, and rune's
-  `WarmStart/chain-100`; no fudge row times a fresh process's first call
-  with the disk cache warm.
+  schedule and its programs back against the stages they replace, rune's
+  `WarmStart/chain-100`, and rune's compile bench's `warm/` rows, a fresh
+  process's first call with the disk cache warm. In one timed run on
+  fudge, read on 14 domains, the 40 programs of `warm/model/schools-start`
+  took 161 ms of its 328 ms first call, and 14 ms of 96 ms on one.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `programs are
   kept › a program is made again under another value of ›` each setting,
   `programs are kept on disk › a program made by one process is read back by
-  the next`, `› a program made under one setting is not read back under another
+  the next`, `› read reads back a program and its binary, and is none
+  without`, `› a program made under one setting is not read back under another
   ›` each setting, `› a damaged entry is made anew, and replaced ›
   truncated` and `› holding no program`, `› an entry of another build of the
   library is not read back`, and `› processes making one program at once all
@@ -1604,7 +1612,10 @@ Withdrawn: multi-device is out of scope, see README.
   `› cache › storage numbered in another counter state is the same body`;
   the `Helpers` suite's
   `shaping ›` tests; and the `Compiler_cpu` suite's `without Clang › an
-  object cached by the default compiler is not served under CC`.
+  object cached by the default compiler is not served under CC`; the
+  `Codegen` suite's `programs are kept › read waits for no program being
+  made`, and the `Realize` suite's `lower_and_compile in parallel › reads
+  the programs the disk keeps without spawning a domain`.
 
 ## D64. A cast to a narrow float through a float32 rounds once
 

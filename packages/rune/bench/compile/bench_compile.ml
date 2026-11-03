@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Cold compiles.
+(* Cold compiles, and first calls over a warm disk cache.
 
    Each sample runs this executable again as [--cold case] over an empty disk
    cache, so a sample is a fresh process's whole first call of a compiled
@@ -14,8 +14,14 @@
    library's stores of its intermediates or the number of devices a program
    spans decide.
 
-   [--cold ID] runs one case's first call and prints its milliseconds: run it
-   with [CACHEDB] at an empty path and [PARALLEL=1]. *)
+   A [warm/] case's sample is a later process's first call: the case's setup
+   compiles it into a disk cache, which each sample's process reads its
+   schedules and programs back from, on as many domains as tolk's default
+   [PARALLEL] gives.
+
+   [--cold ID] runs one case's first call and prints its milliseconds over
+   the disk cache [CACHEDB]: a cold sample runs it at an empty path and
+   [PARALLEL=1], a warm one over its setup's cache. *)
 
 
 let f64 = Nx.float64
@@ -427,23 +433,29 @@ let cases =
     ("devices/partials-16", partials);
   ]
 
+(* The cases timed again over a warm disk cache: a model's first steps,
+   whose schedule reads 40 programs back, and a scan that reads 112. *)
+let warm_cases = [ "model/schools-start"; "scan/checks-48" ]
+
 let rec remove path =
   if Sys.is_directory path then (
     Array.iter (fun f -> remove (Filename.concat path f)) (Sys.readdir path);
     Sys.rmdir path)
   else Sys.remove path
 
-(* One sample: a fresh process compiling [id] over an empty disk cache. *)
-let cold id () =
+(* A fresh process's first call of [id] over the disk cache in [dir], with the
+   variables [env] set. *)
+let first_call ~env dir id =
   let exe = Sys.executable_name in
-  let dir = Filename.temp_dir "bench-compile" "" in
   let env =
-    Array.append
-      [| "CACHEDB=" ^ Filename.concat dir "cache.db"; "PARALLEL=1" |]
-      (Unix.environment ())
+    Array.concat
+      [
+        [| "CACHEDB=" ^ Filename.concat dir "cache.db" |];
+        env;
+        Unix.environment ();
+      ]
   in
   let status =
-    Fun.protect ~finally:(fun () -> remove dir) @@ fun () ->
     let null = Unix.openfile Filename.null [ Unix.O_WRONLY ] 0 in
     Fun.protect ~finally:(fun () -> Unix.close null) @@ fun () ->
     let pid =
@@ -454,7 +466,26 @@ let cold id () =
   in
   match status with
   | Unix.WEXITED 0 -> ()
-  | _ -> failwith ("bench_compile: the cold compile of " ^ id ^ " failed")
+  | _ -> failwith ("bench_compile: the first call of " ^ id ^ " failed")
+
+let temp_dir () = Filename.temp_dir "bench-compile" ""
+
+(* One sample: a fresh process compiling [id] over an empty disk cache. *)
+let cold id () =
+  let dir = temp_dir () in
+  Fun.protect ~finally:(fun () -> remove dir) @@ fun () ->
+  first_call ~env:[| "PARALLEL=1" |] dir id
+
+(* A case whose samples read [id]'s programs back from the disk cache its
+   setup fills. *)
+let warm id =
+  Thumper.bench_with_setup ("warm/" ^ id)
+    ~setup:(fun () ->
+      let dir = temp_dir () in
+      first_call ~env:[||] dir id;
+      dir)
+    ~teardown:remove
+    (fun dir -> first_call ~env:[||] dir id)
 
 let config =
   Thumper.Config.(
@@ -475,5 +506,6 @@ let () =
   | _ ->
       Thumper.run "compile" ~config
         ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-        (List.map (fun (id, _) -> Thumper.bench id (cold id)) cases)
+        (List.map (fun (id, _) -> Thumper.bench id (cold id)) cases
+        @ List.map warm warm_cases)
       |> exit

@@ -17,6 +17,8 @@ let rec reserve wanted =
   else reserve wanted
 
 let release k = ignore (Atomic.fetch_and_add spawned (-k))
+let spawns_made = Atomic.make 0
+let spawns () = Atomic.get spawns_made
 
 (* Signals
 
@@ -58,6 +60,7 @@ let settle outer wanted work body =
     if k > 0 then
       match Domain.spawn guarded with
       | d ->
+          Atomic.incr spawns_made;
           domains := d :: !domains;
           spawn (k - 1)
       | exception Failure _ -> release k

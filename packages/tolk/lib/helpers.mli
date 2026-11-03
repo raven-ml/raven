@@ -297,7 +297,7 @@ module Memo : sig
       by another domain waits for it, so [make] runs once per key. A [make]
       that raises leaves [key] without a value, and the next call makes it. *)
 
-  val find : 'a t -> string -> 'a option
-  (** [find t key] is the value of [key] in [t], if it has one. It does not
-      wait for a value being made. *)
+  val try_get : 'a t -> string -> (unit -> 'a) -> 'a option
+  (** [try_get t key make] is [Some (get t key make)], except that it is [None]
+      and waits for nothing when another domain is making [key]'s value. *)
 end

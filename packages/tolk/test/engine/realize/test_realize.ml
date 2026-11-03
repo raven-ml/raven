@@ -427,7 +427,7 @@ let compiling =
           (* Each kernel's optimisations are those its kept program applied. *)
           List.iter
             (fun (k : Realize.kernel) ->
-              match Codegen.made k.ast k.renderer with
+              match Codegen.read k.ast k.renderer with
               | None -> failf "%s has no program" k.name
               | Some prg -> (
                   match Ops.arg (Ops.nth prg 0) with
@@ -524,9 +524,33 @@ let distinct_kernels =
       map_kernel ~name:(Printf.sprintf "p%d" i) (fun x ->
           Ops.add x (Ops.float ~dtype:Float32 (float_of_int (100 + i)))))
 
+(* A child lowers the calls of [distinct_kernels] on up to 4 domains over the
+   disk cache, and prints how many domains it spawned. *)
+let lowers_distinct () =
+  let calls =
+    List.map (fun k -> Ops.call k [ storage 4; storage 4 ]) distinct_kernels
+  in
+  let before = Worker.spawns () in
+  ignore (Realize.lower_and_compile ~targets (linear calls));
+  print_int (Worker.spawns () - before)
+
+let parts = [ ("lowers distinct", lowers_distinct) ]
+
+let spawned db =
+  match
+    Disk_cache.child ~env:[ ("PARALLEL", "4") ] ~cachedb:db "lowers distinct"
+  with
+  | Ok out -> int_of_string out
+  | Error err -> failf "the child failed: %s" err
+
 let parallel =
   group "lower_and_compile in parallel"
     [
+      test "reads the programs the disk keeps without spawning a domain"
+        (fun () ->
+          let db = Disk_cache.fresh () in
+          greater int ~msg:"compiling" ~than:0 (spawned db);
+          equal int ~msg:"reading back" 0 (spawned db));
       test "compiles each kernel into the program it compiles into alone"
         (fun () ->
           let calls =
@@ -546,6 +570,7 @@ let parallel =
     ]
 
 let () =
+  Disk_cache.play parts;
   exit
     (run "Realize"
        [

@@ -159,15 +159,21 @@ val program_key : Ops.t -> Renderer.t -> string
     kernels of one key take one program. *)
 
 val programs : unit -> int
-(** [programs ()] is the number of programs {!to_program} has made in this
-    process, from their kernels or read back from disk. A call that finds its
-    program kept in memory makes none, and one that raises makes none. *)
+(** [programs ()] is the number of programs {!to_program} and {!read} have
+    made in this process, from their kernels or read back from disk. A call
+    that finds its program kept in memory makes none, and one that raises or
+    reads none makes none. *)
 
-val made : Ops.t -> Renderer.t -> Ops.t option
-(** [made ast ren] is the program {!to_program} has made of [ast] for [ren] in
-    this process, kept in memory under the same key, if it has, its
-    parameters naming [ast]'s devices as {!to_program}'s do. It makes
-    nothing, reads nothing from disk and waits for no program being made. *)
+val read : Ops.t -> Renderer.t -> Ops.t option
+(** [read ast ren] is the program {!to_program} returns for [ast] and [ren] when
+    it can do so without rendering or compiling: the program this process has
+    made under the same key, or else one kept on disk whose binary its
+    compiler's table keeps too, which [read] then keeps as {!to_program}
+    would. It is [None] otherwise, and then renders, compiles, shows and keeps
+    nothing. It waits for no program being made: one another domain is making
+    is [None].
+
+    Raises [Invalid_argument] as {!to_program} does before rendering. *)
 
 val pack_args : Ops.t -> Ops.t list -> Ops.t
 (** [pack_args sink params] is the lowered kernel [sink] reading its

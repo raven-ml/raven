@@ -57,3 +57,9 @@ val iter : ('a -> 'b) -> ('a -> 'b -> unit) -> 'a list -> unit
 
     [f] may run on several domains at once, and at once with [g], and must be
     safe to. *)
+
+(**/**)
+
+val spawns : unit -> int
+(** [spawns ()] is the number of domains {!map} and {!iter} have spawned in
+    this process. For the suites. *)

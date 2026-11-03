@@ -119,13 +119,8 @@ raven / llama.cpp b12048 Vulkan:
   so the general path's cost there is unmeasured. Its unroll law passes
   vacuously where no contracted loop is left
 - first call of a cached program (gpt-oss on CUDA: 0.44 s against 0.22 s
-  on the old stack): `Worker.map` spawns up to PARALLEL−1 domains when
-  every program is a disk-cache hit, and their GC stop-the-world costs
-  ~600 ms (prefill) and ~200 ms (step) summed over domains (PARALLEL=1 cut
-  jit_lower from 258 to 72 ms of CPU): spawn only for programs that need a
-  compile; `to_program` reads and parses a cached program in 3-7 ms per
-  kernel; `create_linear_with_vars` on a hit spends ~10 ms on the key
-  digest and ~24 ms in other passes; the engine assembles 4 programs in
+  on the old stack): `create_linear_with_vars` on a hit spends ~10 ms on the
+  key digest and ~24 ms in other passes; the engine assembles 4 programs in
   28-57 ms
 - compile time and launch counts: NUTS on eight_schools lowers to 464
   kernels, 187 of them scalar, 27 CPU-s cold to compile against 2 CPU-s to

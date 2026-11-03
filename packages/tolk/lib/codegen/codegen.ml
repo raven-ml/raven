@@ -1591,14 +1591,17 @@ let host_entry ~arch prg source =
         name body;
     ]
 
+let text source = match arg source with String s -> s | _ -> assert false
+
+(* The text [ren]'s compiler compiles for [prg]'s rendered [source]. *)
+let compiled_text (ren : Renderer.t) prg source =
+  if ren.target.device = "CPU" then
+    host_entry ~arch:ren.target.arch prg (text source)
+  else text source
+
 let do_compile ((ren : Renderer.t), compile) prg source =
-  let source = match arg source with String s -> s | _ -> assert false in
-  if setting Setting.debug >= 4 then print_endline source;
-  let source =
-    if ren.target.device = "CPU" then host_entry ~arch:ren.target.arch prg source
-    else source
-  in
-  let lib = compile ren.compiler source in
+  if setting Setting.debug >= 4 then print_endline (text source);
+  let lib = compile ren.compiler (compiled_text ren prg source) in
   if setting Setting.debug >= 7 then
     Renderer.Compiler.disassemble ren.compiler lib;
   Some (replace prg ~src:(src prg @ [ v Op.Binary ~arg:(Bytes lib) ]))
@@ -1772,10 +1775,17 @@ let rendered prg = op prg = Op.Program && List.length (src prg) = 3
 let programs_made = Atomic.make 0
 let programs () = Atomic.get programs_made
 
+(* Raised by a making that only reads ([only_read]) and finds no program or
+   no binary kept on disk. *)
+exception Unkept
+
 (* A program read back is compiled as a made one is, so it shows its source
-   from DEBUG 4 and its instructions from 7. *)
-let made_program ?beam ~key ~kernel ast (ren : Renderer.t) =
+   from DEBUG 4 and its instructions from 7. [only_read] makes the program
+   from what the disk keeps alone, and raises [Unkept] for want of it, before
+   it shows anything. *)
+let made_program ?beam ~only_read ~key ~kernel ast (ren : Renderer.t) =
   let render () =
+    if only_read then raise_notrace Unkept;
     let prg = linearized ?beam ast ren in
     Option.get (do_render ren prg (nth prg 1))
   in
@@ -1783,10 +1793,15 @@ let made_program ?beam ~key ~kernel ast (ren : Renderer.t) =
     if not (kept kernel ren) then (render (), false)
     else Graph.cached ~table:"to_program" ~key ~valid:rendered render
   in
-  let prg =
-    Option.get
-      (do_compile (ren, Renderer.Compiler.compile_cached) prg (nth prg 2))
+  let compile =
+    if not only_read then Renderer.Compiler.compile_cached
+    else
+      let source = compiled_text ren prg (nth prg 2) in
+      match Renderer.Compiler.kept ren.compiler source with
+      | Some lib -> fun _ _ -> lib
+      | None -> raise_notrace Unkept
   in
+  let prg = Option.get (do_compile (ren, compile) prg (nth prg 2)) in
   Atomic.incr programs_made;
   (prg, read)
 
@@ -1826,14 +1841,13 @@ let same_devices =
 (* A program made here from [ast] names [ast]'s devices, slot by slot, so it
    needs no renaming; one read back names the devices of the kernel that
    made it in another process. *)
-let made_of ?beam ~key ~kernel (p : params) ast ren =
-  let prg, read = made_program ?beam ~key ~kernel ast ren in
+let made_of ?beam ~only_read ~key ~kernel (p : params) ast ren =
+  let prg, read = made_program ?beam ~only_read ~key ~kernel ast ren in
   let named = if read then rename p.devices prg else prg in
   { devices = p.devices; named; prg }
 
 (* Each kernel's program is made once: a domain that asks for one being made
-   waits for it rather than making it again. [made] reads a made program
-   without waiting. *)
+   waits for it rather than making it again. *)
 let to_program_cache = (Helpers.Memo.create () : made Helpers.Memo.t)
 
 let served (p : params) m =
@@ -1845,8 +1859,15 @@ let to_program ?beam ast ren =
   let key = keyed p ren in
   served p
     (Helpers.Memo.get to_program_cache key (fun () ->
-         made_of ?beam ~key ~kernel p ast ren))
+         made_of ?beam ~only_read:false ~key ~kernel p ast ren))
 
-let made ast ren =
+let read ast ren =
+  let kernel = kernel_of ast in
   let p = params ast ren in
-  Option.map (served p) (Helpers.Memo.find to_program_cache (keyed p ren))
+  let key = keyed p ren in
+  match
+    Helpers.Memo.try_get to_program_cache key (fun () ->
+        made_of ~only_read:true ~key ~kernel p ast ren)
+  with
+  | m -> Option.map (served p) m
+  | exception Unkept -> None
