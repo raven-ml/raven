@@ -640,7 +640,9 @@ module Minimize : sig
       method's rate varies from step to step, so {!bfgs} and {!lbfgs} also need
       the gradient's bound to meet [tol]: [|σ ∇f| / (μ √n)] times each
       component's scale [σ] at the answer, with [μ] the least curvature [yᵀs /
-      |s / σ|²] their accepted steps [s] measured, and no bound before one did.
+      |s / σ|²] their accepted steps [s] measured, each with the scale at its
+      step brought to the largest component of [σ], and no bound before one
+      did.
       It is the distance in [tol]'s scaled norm where [f]'s curvature near the
       minimum is at least [μ], an estimate since the steps sample the curvature
       only along their path. Their error is also at most [|δ|] plus this bound,

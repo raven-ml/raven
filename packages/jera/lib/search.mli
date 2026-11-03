@@ -189,8 +189,8 @@ val least :
   (float, 'q, 'd) Nx.t
 (** [least tol mu ~x ~x' y] is [mu] lowered, per lane, to the curvature
     [yᵀd / |d / σ|²] of the move [d] from [x] to [x'] that changed the gradient
-    by [y], [σ] [tol]'s scale at the move's larger end, where that curvature is
-    positive; NaN [mu] is none yet. *)
+    by [y], [σ] [tol]'s scale at the move's larger end over its largest
+    component, where that curvature is positive; NaN [mu] is none yet. *)
 
 type ('q, 'd) limit
 (** What a lane at the floats' limit converges with: its error with the newest
@@ -210,8 +210,9 @@ val judge :
     lane converges at [s.x + delta] where its error meets [tol] there. The error
     is [error q ~x:s.x ~f delta] with [q] the {!contraction}; with [mu], the
     least curvature a quasi-Newton method's steps measured, at least the
-    gradient's bound [b = |σ g| / (mu √n)] times each component's scale [σ] at
-    [s.x + delta], [g] the gradient [f] holds, and at most [|delta| + b]; and
+    gradient's bound [b = |σ g| / (m mu √n)] times each component's scale at
+    [s.x + delta], [m] that scale's largest component and [σ] the scale over
+    [m], [g] the gradient [f] holds, and at most [|delta| + b]; and
     with [resolution], at least it, per component. A lane whose [map], the step
     the method takes, cannot move its estimate, one within a unit in the last
     place of every component or, where [resolution] alone fails [tol], of the

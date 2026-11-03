@@ -499,18 +499,32 @@ let still x step =
    measured, [yᵀd / |d / σ|²], which is at least the least one. Each component
    carries [|σ g| / (μ √n)] of its scale at the answer, whose root mean square
    is that bound: zero where the gradient is, or before any step measured a
-   curvature. *)
+   curvature.
+
+   The scale enters as its shape [σ̂ = σ / m], [m] its largest component,
+   and the bound is [|σ̂ g| / (μ̂ m)] with [μ̂ = μ / m²] measured in [x / σ̂]:
+   at a minimum of 10⁻²⁸⁹ under [Tol.ulps 4], [σ] is about 10⁻³⁰⁴ and both
+   [σ g] and [μ] are below the floats' range, where they would round the
+   bound to 0. The magnitude [m] is the scale's at the answer, as the bound
+   states. *)
 let gradient_bound ~scale ~mu g =
-  let size = norm (Nx.mul g scale) in
+  let m = largest scale in
+  let size = norm (Nx.mul g (Nx.div scale m)) in
   let n = Float.of_int (width g) in
-  let b = Nx.div_s (Nx.div size mu) (Float.sqrt n) in
+  let b =
+    Nx.div_s
+      (Nx.div (Nx.div size mu) (Nx.reshape (lanes scale) m))
+      (Float.sqrt n)
+  in
   let none = Nx.logical_or (Nx.isnan mu) (Nx.equal_s size 0.) in
   Nx.mul scale (column (Nx.where none (Nx.zeros_like b) b))
 
-(* [(σ y)ᵀ ŵ / |w|] with [w = d / σ] and [ŵ] its direction, whose terms
-   neither underflow nor overflow. *)
+(* [(σ y)ᵀ ŵ / |w|] with [w = d / σ] and [ŵ] its direction, [σ] the scale's
+   shape at the move's larger end, whose terms neither underflow nor
+   overflow. *)
 let least tol mu ~x ~x' y =
   let sigma = floored tol (Nx.maximum (Nx.abs x) (Nx.abs x')) in
+  let sigma = Nx.div sigma (largest sigma) in
   let w = Nx.div (Nx.sub x' x) sigma in
   let size = norm w in
   let c = Nx.div (dot (Nx.mul sigma y) (Nx.div w (column size))) size in

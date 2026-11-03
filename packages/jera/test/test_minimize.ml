@@ -997,15 +997,20 @@ let start_at z d r =
   else z +. (d *. r)
 
 (* [Σ dᵢ (xᵢ − cᵢ)² / 2] with curvatures [d] in [e^±3] and [c] of
-   {!magnitude}s, from {!start_at} [c] within 1 in each component, and a tolerance
-   of [k] ulps: its minimum is [c], exactly. *)
+   {!magnitude}s times [2^e], from {!start_at} [c] within [2^e] in each
+   component, and a tolerance of [k] ulps: its minimum is [c], exactly. *)
 let quadratics =
   let open Gen in
   (let* n = int_range 2 6 in
    (* Half the draws have every component normal: a zero or subnormal one is
       below the resolution of any tolerance in ulps, and only these can
-      converge. *)
+      converge. Half of those are scaled by [2^e] below 10⁻¹⁵⁶, where [tol]'s
+      scale squared is below the floats' range. *)
    let* all_normal = bool in
+   let* e =
+     if all_normal then one_of [ constant 0; int_range (-1015) (-520) ]
+     else constant 0
+   in
    let+ d = list ~size:(constant n) (float_range (-3.) 3.)
    and+ c =
      list ~size:(constant n)
@@ -1014,13 +1019,59 @@ let quadratics =
    and+ offsets = list ~size:(constant n) (float_range (-1.) 1.)
    and+ k = float_range 4. 64. in
    let c =
-     Array.of_list (List.map2 (fun c s -> if s then c else -.c) c signs)
+     Array.of_list
+       (List.map2 (fun c s -> Float.ldexp (if s then c else -.c) e) c signs)
    in
-   let x0 = Array.mapi (fun i o -> start_at c.(i) o 1.) (Array.of_list offsets) in
+   let x0 =
+     Array.mapi
+       (fun i o -> start_at c.(i) o (Float.ldexp 1. e))
+       (Array.of_list offsets)
+   in
    (vec (Array.of_list (List.map exp d)), (vec c, (vec x0, k))))
   |> with_pp (fun ppf (d, (c, (x0, k))) ->
       Format.fprintf ppf "d = %a@ c = %a@ x0 = %a@ k = %g" Nx.pp d Nx.pp c
         Nx.pp x0 k)
+
+(* The quadratics' law, on one problem of {!quadratics}: each quasi-Newton
+   method's answer, where it converged, is within its bound. In [tol]'s scaled
+   coordinates the curvatures are [dᵢ σᵢ²], [σᵢ] proportional to [|cᵢ|] near
+   the answer, and every curvature a step measures is a Rayleigh quotient, at
+   least the least: the gradient's bound puts [x] within [κ] of [tol], [κ] the
+   ratio of the largest curvature to the least, and the answer [x + δ] one
+   [tol] and its rounding further. A zero at 0 or below the normal floats is
+   met exactly or not at all. Each method's name, and whether it converged. *)
+let within_its_bound (d, (c, (x0, k))) =
+  let kappa =
+    let logs =
+      List.filter_map
+        (fun (d, c) ->
+          if Float.abs c < Float.min_float then None
+          else Some (log d +. (2. *. log (Float.abs c))))
+        (List.combine
+           (Array.to_list (Oracle.floats d))
+           (Array.to_list (Oracle.floats c)))
+    in
+    match logs with
+    | [] -> 1.
+    | l -> exp (List.fold_left Float.max Float.neg_infinity l
+                -. List.fold_left Float.min Float.infinity l)
+  in
+  let f x = Nx.mul_s (Nx.sum (Nx.mul d (Nx.square (Nx.sub x c)))) 0.5 in
+  List.map
+    (fun (name, m) ->
+      let s = Minimize.solve one m ~tol:(Tol.ulps k) ~budget:500 f x0 in
+      let converged = is Converged s in
+      (if converged then
+         let x = Solution.best s in
+         at_most float_exact ~msg:name
+           ~than:(kappa +. 1. +. (1. /. k))
+           (Oracle.ulps ~k ~y:x (Nx.abs (Nx.sub x c))));
+      (name, converged))
+    [
+      ("lbfgs 1", Minimize.lbfgs ~memory:1 ~linear:Linear.dense);
+      ("lbfgs 3", Minimize.lbfgs ~memory:3 ~linear:Linear.dense);
+      ("bfgs", Minimize.bfgs ~linear:Linear.dense);
+    ]
 
 (* The ulps of [p]'s smaller parameter that the fit of [a e^(b t)] at [p] is
    fixed to: [κ |p|∞ / |p|min], [κ] the condition of the Jacobian, whose
@@ -1042,47 +1093,26 @@ let resolution_ulps p =
 
 let law_tests =
   [
-    prop ~count:25 "a quasi-Newton answer on a quadratic is within its bound"
+    prop ~count:60 "a quasi-Newton answer on a quadratic is within its bound"
       quadratics
-      (fun (d, (c, (x0, k))) ->
-        (* In [tol]'s scaled coordinates the curvatures are [dᵢ σᵢ²], [σᵢ]
-           proportional to [|cᵢ|] near the answer, and every curvature a step
-           measures is a Rayleigh quotient, at least the least: the gradient's
-           bound puts [x] within [κ] of [tol], [κ] the ratio of the largest
-           curvature to the least, and the answer [x + δ] one [tol] and its
-           rounding further. A zero at 0 or below the normal floats is met
-           exactly or not at all. *)
+      (fun ((_, (c, _)) as q) ->
         kinds c;
-        let kappa =
-          let logs =
-            List.filter_map
-              (fun (d, c) ->
-                if Float.abs c < Float.min_float then None
-                else Some (log d +. (2. *. log (Float.abs c))))
-              (List.combine
-                 (Array.to_list (Oracle.floats d))
-                 (Array.to_list (Oracle.floats c)))
-          in
-          match logs with
-          | [] -> 1.
-          | l -> exp (List.fold_left Float.max Float.neg_infinity l
-                      -. List.fold_left Float.min Float.infinity l)
-        in
-        let f x = Nx.mul_s (Nx.sum (Nx.mul d (Nx.square (Nx.sub x c)))) 0.5 in
+        cover "a minimum whose scale's square underflows"
+          (Array.for_all
+             (fun v -> v <> 0. && Float.abs v < 1e-156)
+             (Oracle.floats c));
         List.iter
-          (fun (name, m) ->
-            let s = Minimize.solve one m ~tol:(Tol.ulps k) ~budget:500 f x0 in
-            cover (name ^ " converges") (is Converged s);
-            if is Converged s then
-              let x = Solution.best s in
-              at_most float_exact ~msg:name
-                ~than:(kappa +. 1. +. (1. /. k))
-                (Oracle.ulps ~k ~y:x (Nx.abs (Nx.sub x c))))
-          [
-            ("lbfgs 1", Minimize.lbfgs ~memory:1 ~linear:Linear.dense);
-            ("lbfgs 3", Minimize.lbfgs ~memory:3 ~linear:Linear.dense);
-            ("bfgs", Minimize.bfgs ~linear:Linear.dense);
-          ]);
+          (fun (name, converged) -> cover (name ^ " converges") converged)
+          (within_its_bound q));
+    test "a quasi-Newton answer whose scale's square underflows is within its \
+          bound" (fun () ->
+        (* Squares of [tol]'s scale at this minimum are below the floats'
+           range, as are the gradient's products with it. *)
+        ignore
+          (within_its_bound
+             ( vec [| 8.417159381161952; 0.5884126868560854 |],
+               ( vec [| -5.1306710016229703e-290; -1.0261342003245941e-289 |],
+                 (vec [| 1.; 0.021989514425253542 |], 4.) ) )));
     prop "a converged solve's error meets tol at its estimate" limited
       (fun ((a, b), (k, ((p, noise), amp))) ->
         (* Under a tolerance below an ulp, a search whose last steps contract

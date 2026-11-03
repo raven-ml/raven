@@ -723,6 +723,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.bfgs` and `lbfgs` no longer converge past `tol` at a minimum
+  whose tolerance scale squared is below the floats' range: the gradient's
+  bound rounded to 0 there, and L-BFGS converged 12 times `tol` from a
+  minimum near 1e-289 under `Tol.ulps 4`.
 - `Minimize.solve` under a tolerance finer than the floats resolve ends a lane
   `Stalled` near the minimum instead of `Budget_spent`: Newton and Newton–CG
   stepped between floats for up to 31 000 evaluations. Newton's search now
