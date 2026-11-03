@@ -58,7 +58,9 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       from the top; nothing more is applied then.
 
     {b Streaming} applies on a renderer with local indices and shared memory,
-    when {!Setting.mv} is on, to a sum over [k]'s first reduce of a product of
+    when {!Setting.mv} is on, to a kernel where no range's bound reads an axis
+    and that has no call or custom code ({!Postrange.Scheduler.opaque}), to a
+    sum over [k]'s first reduce of a product of
     two computations of accesses with no reduce. Each element of an operand
     feeds as many outputs as its reuse: the product of the sizes of the global
     axes it does not read, times [d] for each it reads only as its quotient by
@@ -127,7 +129,9 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     - if nothing is upcast, the last upcastable axis is upcast by 4 when 4
       divides it;
     - for a renderer with local indices, global and weak axes of a constant size
-      become local: up to three axes, those some access does not index first,
+      that every call and custom code reads
+      ({!Postrange.Scheduler.unread_by_opaque}) become local: up to three
+      axes, those some access does not index first,
       split by the first of 32 (axis [0] only), 16, 8, 4, 3 and 2 that divides
       them while the workgroup stays within 128 threads, or 32 when blocked.
 

@@ -559,15 +559,55 @@ let called_axes =
           let k = K.v ast (renderer "cuda") in
           is_ok ~pp:Format.pp_print_string
             (K.apply_opt k (split (position i k) 2 Local)));
-      opaque_cases "a tensor core is refused where its sources read an axis"
+      opaque_cases "unread_by_opaque is the axes its sources do not read"
         (fun o ->
-          let k = K.v (kernel "tc_metal_0") (renderer "metal") in
-          is_ok ~pp:Format.pp_print_string (K.apply_opt (K.copy k) tc);
-          let called = K.v (with_opaque o k) (renderer "metal") in
+          let _, n, ast = called_rows o in
+          equal (list Uops.uop) [ n ]
+            (K.unread_by_opaque (K.v ast (renderer "cuda"))));
+      opaque_cases
+        "convert_loop_to_global gives workgroups only to an axis its sources \
+         read" (fun o ->
+          let _, _, ast = called_rows o in
+          let k = K.v ast (renderer "cuda") in
+          K.convert_loop_to_global k;
+          equal string "[AxisType.GLOBAL, AxisType.WEAK]"
+            (repr_list Ops.Axis_type.pp (K.axis_types k)));
+      opaque_cases "apply_opt refuses a local split of an axis its sources do not \
+                    read" (fun o ->
+          let _, n, ast = called_rows o in
+          let k = K.v ast (renderer "cuda") in
           equal
             (result (list Uops.uop) string)
-            (Error "tensor cores need calls and custom code that read no axis")
-            (K.apply_opt called tc));
+            (Error (Printf.sprintf "a call or custom code does not read axis %d"
+                      (position n k)))
+            (K.apply_opt k (split (position n k) 2 Local)));
+      opaque_cases "a group is refused over a reduce axis its sources do not read"
+        (fun o ->
+          let k = K.v (kernel "sum_rows_64") (renderer "cuda") in
+          let group k =
+            let axis = List.hd (K.axes_of ~reduce:true k []) in
+            K.apply_opt k (split axis 4 Local)
+          in
+          is_ok ~pp:Format.pp_print_string (group (K.copy k));
+          let axis = List.hd (K.axes_of ~reduce:true k []) in
+          equal
+            (result (list Uops.uop) string)
+            (Error (Printf.sprintf "a call or custom code does not read axis %d" axis))
+            (group (K.v (with_opaque o k) (renderer "cuda"))));
+      opaque_cases "a tensor core is refused in a kernel with one" (fun o ->
+          let k = K.v (kernel "tc_metal_0") (renderer "metal") in
+          is_ok ~pp:Format.pp_print_string (K.apply_opt (K.copy k) tc);
+          let refused o' =
+            equal
+              (result (list Uops.uop) string)
+              (Error "tensor cores need a kernel without calls or custom code")
+              (K.apply_opt (K.v o' (renderer "metal")) tc)
+          in
+          refused (with_opaque o k);
+          (* one that reads no axis *)
+          let y = Shape.param ~shape:[ Int 1 ] 11 Int32 in
+          let ast = K.ast k in
+          refused (Ops.replace ast ~src:(Ops.src ast @ [ opaque o y (Ops.int 0) ])));
     ]
 
 (* Splitting *)

@@ -556,6 +556,39 @@ let with_call k =
   let call = Ops.end_ (Ops.call ~name:"f" f args) outputs in
   Ops.replace ast ~src:(Ops.src ast @ [ call ])
 
+(* [out[i] = a[i] + 1] over 64 [i], beside a call of [f(&y[0])], which reads
+   no axis. *)
+let rows_beside_call () =
+  let out = Shape.param ~shape:[ Ops.Int 64 ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int 64 ] 1 Float32
+  and y = Shape.param ~shape:[ Ops.Int 1 ] 2 Int32 in
+  let p = Shape.param ~shape:[ Ops.Int 1 ] 0 Int32 in
+  let f =
+    Ops.sink [ Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.int ~dtype:Int32 1) ]
+  in
+  let i = Ops.range (Int 64) [ 0 ] in
+  let v = Ops.O.(Ops.index a [ i ] + Ops.float 1.) in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.end_ (Ops.store (Ops.index out [ i ]) v) [ i ];
+      Ops.call ~name:"f" f [ Ops.index y [ Ops.int 0 ] ];
+    ]
+
+(* Every thread runs a call, so the heuristic gives threads to no axis it
+   does not read. *)
+let no_threads_beside_call =
+  test "a kernel whose call reads no axis takes no threads" (fun () ->
+      let s = K.v (rows_beside_call ()) (renderer "cuda") in
+      K.convert_loop_to_global s;
+      let o = Heuristic.hand_coded_optimizations s in
+      equal (list Testable.string) []
+        (List.filter_map
+           (fun r ->
+             if List.mem (Ops.axis_type r) Ops.Axis_type.[ Global; Local; Warp ]
+             then Some (Ops.range_str r)
+             else None)
+           (K.rngs o)))
+
 (* A contraction the heuristic would stream, beside a call that reads its
    output axes, is optimised without a lane of any axis the call reads. *)
 let streams_no_call =
@@ -1627,6 +1660,7 @@ let () =
              recorded_order;
              streams_no_call;
            ];
+         no_threads_beside_call;
          warps_within_runs;
          group "the host's budget"
            [ held_cases; budget; more_registers; doubles ];

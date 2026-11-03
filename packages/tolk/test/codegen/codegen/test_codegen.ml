@@ -5483,6 +5483,75 @@ let effects =
             [ expected ] ());
     ]
 
+(* Calls and custom code on CUDA
+
+   A GPU runs a kernel in every thread, each at its point of the kernel's
+   thread axes. A call, or code in the target's language, runs once for each
+   point of the axes its sources read, so it must not be repeated across the
+   threads of an axis it does not read. *)
+
+(* [n[0] += 1], atomic so that each run counts whatever threads run it at
+   once: by code, or by a call of a body of that code. *)
+let counted o n =
+  let incr n = code "atomicAdd({0}, 1);" [ first n ] in
+  match o with
+  | Op.Call ->
+      let p = int_param ~name:"p" 0 1 in
+      Ops.call ~name:"incr" (Ops.sink [ incr p ]) [ first n ]
+  | _ -> incr n
+
+(* [out[i] = a[i] + 1] over 64 [i], beside [n[0] += 1] ({!counted}). *)
+let counted_beside_rows o () =
+  let out = int_param ~name:"out" 0 64
+  and a = int_param ~name:"A" 1 64
+  and n = int_param ~name:"n" 2 1 in
+  let i = Ops.range (Int 64) [ 0 ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"counted_beside_rows" ())
+    [
+      Ops.end_ (Ops.store (at out i) Ops.O.(at a i + i32 1)) [ i ];
+      counted o n;
+    ]
+
+(* [out[0] = sum over r of a[r]] over 4096 [r], beside [n[0] += 1]
+   ({!counted}). *)
+let counted_beside_sum o () =
+  let out = int_param ~name:"out" 0 1
+  and a = int_param ~name:"A" 1 4096
+  and n = int_param ~name:"n" 2 1 in
+  let r = Ops.range (Int 4096) [ 0 ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"counted_beside_sum" ())
+    [ Ops.store (first out) (Ops.reduce (at a r) Op.Add [ r ]); counted o n ]
+
+(* The contents of slots 0 and 2 after one run of [k] on CUDA, optimised by
+   the heuristic, slot 1 holding [a]. *)
+let counted_on_cuda k a =
+  let d, r = on_cuda () in
+  let prg = compiled_for r (k ()) in
+  let out = Run.on d prg [ (1, int_values a) ] in
+  [ List.assoc 0 out; List.assoc 2 out ]
+
+let counted_once =
+  let opaque_id o = Format.asprintf "%a" Op.pp o in
+  group "calls and custom code on CUDA"
+    [
+      cases "one beside stores across threads runs once" ~id:opaque_id
+        [ Op.Call; Op.Custom ] (fun o ->
+          let a = List.init 64 Fun.id in
+          equal
+            (list (array Dtypes.value))
+            [ int_values (List.map succ a); int_values [ 1 ] ]
+            (counted_on_cuda (counted_beside_rows o) a));
+      cases "one beside a sum runs once" ~id:opaque_id [ Op.Call; Op.Custom ]
+        (fun o ->
+          let a = List.init 4096 (fun x -> x mod 7) in
+          equal
+            (list (array Dtypes.value))
+            [ int_values [ List.fold_left ( + ) 0 a ]; int_values [ 1 ] ]
+            (counted_on_cuda (counted_beside_sum o) a));
+    ]
+
 let () =
   Disk_cache.play (("breaking graph", lowers_a_breaking_graph) :: parts);
   exit
@@ -5497,6 +5566,7 @@ let () =
          tensor_cores_on_cuda;
          tensor_cores_by_hand;
          bfloat16_vectors_on_cuda;
+         counted_once;
          variable_sizes;
          multiply_adds;
          shared_ranges;

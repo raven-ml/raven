@@ -1358,14 +1358,15 @@ let block k upcasted =
    contraction's. *)
 let workgroup_threads = 128
 
-(* prioritize making expand axes local *)
+(* prioritize making expand axes local, of those every call and custom code
+   reads *)
 let locals ~threads k =
   let ranking =
     List.filter_map
       (fun axis ->
         let r = List.nth (K.rngs k) axis in
-        if is_literal (nth r 0) then
-          Some (List.exists (fun b -> not (indexes r b)) (K.bufs k), axis)
+        if is_literal (nth r 0) && not (List.memq r (K.unread_by_opaque k))
+        then Some (List.exists (fun b -> not (indexes r b)) (K.bufs k), axis)
         else None)
       (K.axes_of ~reduce:false k [ Global; Weak ])
   in
@@ -1468,16 +1469,17 @@ let early k (w, _, reuse) =
   match n with Some n -> Bigint.(geq n (of_int summed)) | None -> true
 
 (* The streamed operand of [k]'s contraction, on a renderer with local
-   indices and shared memory. A kernel where a range's bound, a call or custom
-   code reads an axis is not streamed: the layouts upcast output axes by
-   their accesses. *)
+   indices and shared memory. A kernel where a range's bound reads an axis is
+   not streamed: the layouts upcast output axes by their accesses. Nor is one
+   with a call or custom code, which reads the output axes the layouts upcast
+   or runs once in each of the threads they make. *)
 let streams k =
   let ren = K.ren k in
   if
     ren.has_local && ren.has_shared
     && Setting.value Setting.mv
     && List.is_empty (K.read_by_bounds k)
-    && List.is_empty (K.read_by_opaque k)
+    && List.is_empty (K.opaque k)
   then streamed k
   else None
 

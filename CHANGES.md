@@ -969,6 +969,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On a GPU, a call or custom code runs once for each point of the axes its
+  sources read: an axis it does not read takes no threads, which ran it once
+  in each (`Postrange.Scheduler.unread_by_opaque`). `n[0] += 1` beside a
+  store over 64 elements counted 16.
 - Code in the target's language (`Op.Custom`) is kept scalar and unpadded as
   a call is: an upcast of an axis it reads rendered it with a vector Clang
   rejects, and a pad ran it on the padded point, once more on the first

@@ -1093,7 +1093,7 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..2f75f443e 100644
+index ec97cac6f..10d0946b2 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
 @@ -1,9 +1,304 @@
@@ -1330,7 +1330,7 @@ index ec97cac6f..2f75f443e 100644
 +  return r <= STREAM_FIRST and (not isinstance(n, int) or n >= LANES*IN_FLIGHT) and ((i:=per_byte(k, w)) is None or i <= k.ren.per_byte_first)
 +def streamed(k:Scheduler):
 +  # a kernel where a loop's bound reads an axis is not streamed: the layouts upcast output axes by their accesses
-+  if not (k.ren.has_local and k.ren.has_shared and getenv("MV",1) != 0) or k.read_by_bounds or k.read_by_opaque or (c:=contraction(k)) is None: return None
++  if not (k.ren.has_local and k.ren.has_shared and getenv("MV",1) != 0) or k.read_by_bounds or k.opaque or (c:=contraction(k)) is None: return None
 +  a, b = c[0].src
 +  def rows_first(o): return (l:=layout(k, o)) is not None and l[0] == "rows"
 +  ra, rb = reuse(k, a), reuse(k, b)
@@ -1636,13 +1636,14 @@ index ec97cac6f..2f75f443e 100644
      k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
  
    # **** local groups ****
-@@ -172,11 +562,12 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -172,11 +562,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      else:
        # prioritize making expand axes local
        local_axis_ranking = [(any(k.rngs[axis] not in b.src[1].get_idx().backward_slice for b in k.bufs), axis) \
 -                              for axis in k.axes_of(AxisType.GLOBAL, AxisType.WEAK, reduce=False) if k.rngs[axis].src[0].op is Ops.CONST]
 +                              for axis in k.axes_of(AxisType.GLOBAL, AxisType.WEAK, reduce=False)
-+                              if (b:=k.rngs[axis].src[0]).op is Ops.CONST or (b.op is Ops.CAST and b.src[0].op is Ops.CONST)]
++                              if ((b:=k.rngs[axis].src[0]).op is Ops.CONST or (b.op is Ops.CAST and b.src[0].op is Ops.CONST))
++                              and k.rngs[axis] not in k.unread_by_opaque]
        to_local: list[tuple[int, int]] = []
        for _, axis in sorted(local_axis_ranking, key=lambda x: (-x[0], -x[1])):
          local_size = prod(sz for _, sz in to_local)
@@ -1652,7 +1653,7 @@ index ec97cac6f..2f75f443e 100644
        deleted_shape = 0
        for axis, local_sz in sorted(to_local[:3]):
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
-index d7f19cd30..d1d9aeba1 100644
+index d7f19cd30..e57f897e6 100644
 --- a/tinygrad/codegen/opt/postrange.py
 +++ b/tinygrad/codegen/opt/postrange.py
 @@ -14,6 +14,15 @@ from tinygrad.renderer import Renderer
@@ -1671,16 +1672,22 @@ index d7f19cd30..d1d9aeba1 100644
  class Scheduler:
    def __init__(self, ast:UOp, ren:Renderer):
      self.ast, self.ren = graph_rewrite(ast, pm_flatten_range), ren
-@@ -52,7 +61,7 @@ class Scheduler:
+@@ -52,11 +61,12 @@ class Scheduler:
    def convert_loop_to_global(self) -> None:
      if not self.ren.has_local: return
      red = self.reduce_ranges
 -    rngs = [r for s in self.ast.src if s.op is Ops.END for r in s.src[1:] if r.axis_type is AxisType.WEAK and r not in red]
+-    # exclude any output ranges from global that don't appear in all BUFFERIZE
 +    rngs = [r for s in self.ast.src if s.op is Ops.END for r in s.src[1:] if r.axis_type is AxisType.WEAK and r not in red and known_at_launch(r)]
-     # exclude any output ranges from global that don't appear in all BUFFERIZE
++    # exclude any output ranges from global that don't appear in all BUFFERIZE, or that a call or custom code does not read: every thread would run it
      for x in self.ast.backward_slice:
        if x.op is Ops.STAGE:
-@@ -81,8 +90,19 @@ class Scheduler:
+         rngs = [r for r in rngs if r in x.ranges]
++    rngs = [r for r in rngs if r not in self.unread_by_opaque]
+     self.ast = self.ast.substitute({r:r.replace(arg=(AxisType.GLOBAL,)+r.axis_id) for r in self.rngs if r in rngs})
+ 
+   def colors(self) -> list[str]: return [axis_colors[t] for t in self.axis_types]
+@@ -81,8 +91,28 @@ class Scheduler:
  
    def upcast_size(self): return prod(self.full_shape[a] for a in self.axes_of(AxisType.UPCAST))
  
@@ -1688,11 +1695,20 @@ index d7f19cd30..d1d9aeba1 100644
 +  @property
 +  def read_by_bounds(self) -> set[UOp]: return {r for u in self.ast.toposort() if u.op is Ops.RANGE and u.src for r in u.src[0].ranges}
 +
-+  # the ranges the sources of a call or of custom code read: each takes one pointer or value for each source, so none of them can become lanes or
-+  # take padding
++  # the calls and custom code: each runs once for each point of the ranges its sources read, and takes one pointer or value for each source
 +  @property
-+  def read_by_opaque(self) -> set[UOp]:
-+    return {r for u in self.ast.toposort() if u.op in (Ops.CALL, Ops.CUSTOM) for s in (u.src[1:] if u.op is Ops.CALL else u.src) for r in s.ranges}
++  def opaque(self) -> list[UOp]: return [u for u in self.ast.toposort() if u.op in (Ops.CALL, Ops.CUSTOM)]
++  def _reads(self, u:UOp) -> set[UOp]: return {r for s in (u.src[1:] if u.op is Ops.CALL else u.src) for r in s.ranges}
++
++  # the ranges the sources of a call or of custom code read: none of them can become lanes or take padding
++  @property
++  def read_by_opaque(self) -> set[UOp]: return {r for u in self.opaque for r in self._reads(u)}
++
++  # the ranges the sources of a call or of custom code do not read: every thread runs it, so none of them can take threads
++  @property
++  def unread_by_opaque(self) -> set[UOp]:
++    reads = [self._reads(u) for u in self.opaque]
++    return {r for r in self.ast.toposort() if r.op is Ops.RANGE and any(r not in rs for rs in reads)}
 +
    def upcastable_dims(self, reduce:bool|None=False) -> list[int]:
 -    return [i for i in self.axes_of(*split_targets[AxisType.UPCAST], reduce=reduce) if isinstance(self.full_shape[i], int)]
@@ -1701,7 +1717,15 @@ index d7f19cd30..d1d9aeba1 100644
  
    def apply_opt(self, opt:Opt, append_opt:bool=True):
      if opt.op is OptOps.TC: rng = UOp(Ops.NOOP)
-@@ -101,21 +121,30 @@ class Scheduler:
+@@ -96,26 +126,37 @@ class Scheduler:
+       amt, new_type, top = (*cast(tuple, opt.arg), False)[0:3]
+       check(type(amt) is int and (amt == 0 or amt > 1) and isinstance(new_type, AxisType) and new_type in split_targets and isinstance(top, bool),
+             f"invalid split arg {opt.arg}")
+-      if new_type is AxisType.LOCAL: check(self.ren.has_local, "locals needed for opt")
++      if new_type is AxisType.LOCAL:
++        check(self.ren.has_local, "locals needed for opt")
++        check(rng not in self.unread_by_opaque, f"a call or custom code does not read axis {opt.axis}")
+ 
        if amt == 0: amt = int(rng.vmax+1)
        is_reduce = rng in self.reduce_ranges
        if new_type is AxisType.UPCAST:
@@ -1735,11 +1759,11 @@ index d7f19cd30..d1d9aeba1 100644
      elif opt.op is OptOps.TC:
        check(len(self.applied_opts) == 0, "tensor core opts must be first") # TODO: remove the need for this by having warps
 +      check(not self.read_by_bounds, "tensor cores need loops whose bounds read no axis")
-+      check(not self.read_by_opaque, "tensor cores need calls and custom code that read no axis")
++      check(not self.opaque, "tensor cores need a kernel without calls or custom code")
        check(opt.axis is not None and opt.axis >= 0, "tensor core opts must have an axis")
        check(opt.arg is not None and isinstance(opt.arg, tuple) and len(opt.arg) == 3, "tensor core opts must have valid arg")
        check(-1 <= (tc_select:=cast(tuple, opt.arg)[0]) < len(self.ren.tensor_cores), "tensor core opts must have valid tc_select")
-@@ -126,7 +155,9 @@ class Scheduler:
+@@ -126,7 +167,9 @@ class Scheduler:
        check(ret is not None, "no tensor core available")
      elif opt.op is OptOps.PADTO:
        check(type(opt.arg) is int and opt.arg > 1, f"padto arg is a multiple > 1, not {opt.arg}")
@@ -1750,7 +1774,7 @@ index d7f19cd30..d1d9aeba1 100644
        # TODO: upcasted is only wrong for a range pinned in WMMA tc_upcast_axes
        check(rng.axis_type not in {AxisType.UPCAST, AxisType.WARP}, "cannot pad upcasted or warp")
        new_sz = round_up(int(rng.vmax+1), cast(int, opt.arg))
-@@ -139,6 +170,11 @@ class Scheduler:
+@@ -139,6 +182,11 @@ class Scheduler:
        for r in self.reduceops:
          if rng in r.src[1:]:
            replaces[r] = r.replace(src=(valid.where(r.src[0], UOp.const(identity_element(r.arg[0], r.dtype), r.dtype)),)+r.src[1:])
@@ -1762,7 +1786,7 @@ index d7f19cd30..d1d9aeba1 100644
        self.ast = self.ast.substitute(replaces, f"padto {rng.axis_id} {opt.arg}")
        ret = replaced_rng
      elif opt.op is OptOps.SWAP:
-@@ -154,6 +190,39 @@ class Scheduler:
+@@ -154,6 +202,39 @@ class Scheduler:
      if append_opt: self.applied_opts.append(opt)
      return ret
  
@@ -1802,7 +1826,7 @@ index d7f19cd30..d1d9aeba1 100644
    def _apply_tc_opt(self, use_tensor_cores:int, axis:int, tc_select:int, opt_level:int) -> None|list[UOp]:
      if not (reduceops := self.reduceops): raise KernelOptError("no reduce ops for TensorCore")
      reduceop = reduceops[0]
-@@ -163,21 +232,28 @@ class Scheduler:
+@@ -163,21 +244,28 @@ class Scheduler:
        in0, in1 = mul.src
        for tc in self.ren.tensor_cores if tc_select == -1 else [self.ren.tensor_cores[tc_select]]:
          if self.ren.target.device in ("CUDA", "NV") and tc.dtype_in == dtypes.float and not ALLOW_TF32: continue
@@ -1843,7 +1867,7 @@ index d7f19cd30..d1d9aeba1 100644
            check(not any(r in self.reduce_ranges for r in axes[:2]), "tensor core N and M can't be contracted")
  
            # do optimizations and save the ranges
-@@ -200,7 +276,11 @@ class Scheduler:
+@@ -200,7 +288,11 @@ class Scheduler:
              reduceop = get_single_element([x for x in self.reduceops if axes[2] in x.src[1:]])
              gate, mul = (r0.src[0], r0.src[1]) if (r0:=reduceop.src[0]).op is Ops.WHERE else (None, r0)
              if mul.op is Ops.CAST: mul = mul.src[0]

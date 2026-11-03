@@ -6807,6 +6807,44 @@ the walk of `Rangeify.fix_store_hazard`.
   Simplify suite: `pm_split_ranges › a range of a typed integer splits as a
   weak one`.
 
+## D271. No axis a call or custom code does not read takes threads
+
+- **tinygrad:** `codegen/opt/postrange.py:52-59` (`convert_loop_to_global`),
+  which makes global every output range that each `STAGE` reads, `99`
+  (`apply_opt`), which splits any axis into threads, and `117-126`, which
+  takes a tensor core in a kernel with a `CALL` or a `CUSTOM`;
+  `codegen/opt/heuristic.py:174-175`, which ranks such axes for threads;
+  `codegen/gpudims.py:76-81`, which masks only a global store, to the
+  threads whose local indices it misses are 0.
+- **tolk:** `Postrange.Scheduler.opaque`, `unread_by_opaque`,
+  `convert_loop_to_global` and `apply_opt`; `Heuristic.streams` and the
+  heuristic's local splits; `test/gen/tinygrad.patch`, which gives tinygrad
+  the same rules.
+- **Differs:** an axis that the sources of some call or custom code do not
+  read stays a loop: it is not made global, a local split of it (a group,
+  for a reduce axis) is refused, and the heuristic gives it no threads. A
+  tensor core, whose warp is threads along axes no call reads, is refused in
+  a kernel with a call or custom code, and the heuristic streams no
+  contraction there. tinygrad gives such an axis threads, and every thread
+  runs the call or the code.
+- **Reason:** (e): `n[0] += 1` by a call or by code, beside `out[i] = a[i] +
+  1` over 64 `i` on CUDA, runs in each of the 16 threads the heuristic
+  gives `i`, and beside a sum over 4096 `r` in each of the 16 threads of the
+  group it makes: `n` counts 16 for 1. A call can write anything, so masking
+  it to one thread of each such axis, as a global store is, would keep the
+  threads only where no other thread reads what it writes, and drop what it
+  writes to a thread's own registers in the others.
+- **Pinned by:** the Codegen suite: `calls and custom code on CUDA › one
+  beside stores across threads runs once`, `› one beside a sum runs once`
+  (a call and code, counting atomically; they skip without a GPU). The
+  Postrange suite: `axes a call or custom code reads ›
+  unread_by_opaque is the axes its sources do not read`, `›
+  convert_loop_to_global gives workgroups only to an axis its sources read`,
+  `› apply_opt refuses a local split of an axis its sources do not read`,
+  `› a group is refused over a reduce axis its sources do not read`, `› a
+  tensor core is refused in a kernel with one`. The Heuristic suite: `a
+  kernel whose call reads no axis takes no threads`, on CUDA's renderer.
+
 ## D275. Clang compiles with LLVM's IR verifier on
 
 - **tinygrad:** `runtime/support/compiler_cpu.py:21`

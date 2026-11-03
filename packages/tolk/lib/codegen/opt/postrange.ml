@@ -58,7 +58,9 @@ module Scheduler = struct
     reduce_ranges : Ops.t list;
     rngs : Ops.t list;
     read_by_bounds : Ops.t list;
+    opaque : Ops.t list;
     read_by_opaque : Ops.t list;
+    unread_by_opaque : Ops.t list;
     mutable full_shape : sint list option;
   }
 
@@ -155,21 +157,29 @@ module Scheduler = struct
           else acc)
         [] slice
     in
-    (* The ranges the sources of a call or of custom code read, as [i] in
-       [f(&x[i])]: each takes one pointer or value for each source, so none of
-       them can become lanes or take padding. *)
+    (* The calls and custom code, and the ranges the sources of each read, as
+       [i] in [f(&x[i])]: each takes one pointer or value for each source, so
+       none of them can become lanes or take padding. Every thread runs each,
+       so a range one of them does not read cannot take threads. *)
+    let opaque = List.filter (fun u -> op u = Op.Call || op u = Op.Custom) slice in
+    let reads u =
+      List.fold_left
+        (fun acc a ->
+          Nodes.fold
+            (fun r acc -> if List.memq r acc then acc else r :: acc)
+            (ranges a) acc)
+        [] (src_without_body u)
+    in
+    let read = List.map reads opaque in
     let read_by_opaque =
       List.fold_left
-        (fun acc u ->
-          if op u = Op.Call || op u = Op.Custom then
-            List.fold_left
-              (fun acc a ->
-                Nodes.fold
-                  (fun r acc -> if List.memq r acc then acc else r :: acc)
-                  (ranges a) acc)
-              acc (src_without_body u)
-          else acc)
-        [] slice
+        (List.fold_left (fun acc r -> if List.memq r acc then acc else r :: acc))
+        [] read
+    in
+    let unread_by_opaque =
+      List.filter
+        (fun r -> op r = Op.Range && List.exists (fun rs -> not (List.memq r rs)) read)
+        slice
     in
     {
       of_ast = ast;
@@ -178,7 +188,9 @@ module Scheduler = struct
       reduce_ranges = red;
       rngs;
       read_by_bounds;
+      opaque;
       read_by_opaque;
+      unread_by_opaque;
       full_shape = None;
     }
 
@@ -196,7 +208,9 @@ module Scheduler = struct
   let reduce_ranges k = (view k).reduce_ranges
   let rngs k = (view k).rngs
   let read_by_bounds k = (view k).read_by_bounds
+  let opaque k = (view k).opaque
   let read_by_opaque k = (view k).read_by_opaque
+  let unread_by_opaque k = (view k).unread_by_opaque
 
   let shape_len k = List.length (rngs k)
   let full_shape k =
@@ -353,11 +367,15 @@ module Scheduler = struct
           (src k.ast)
       in
       (* exclude any output ranges from global that don't appear in all
-         BUFFERIZE *)
+         BUFFERIZE, or that a call or custom code does not read: every thread
+         would run it *)
       let globalizable =
         List.fold_left
           (fun ret x -> List.filter (fun r -> mem_ranges r x) ret)
           weak (of_op k Op.Stage)
+      in
+      let globalizable =
+        List.filter (fun r -> not (List.memq r (unread_by_opaque k))) globalizable
       in
       let global r =
         (r, replace r ~arg:(Range { axis_type = Global; axis_id = axis_id r }))
@@ -478,7 +496,12 @@ module Scheduler = struct
           check
             (amount = 0 || amount > 1)
             (strf "a split takes 0 or more than 1, not %d" amount);
-          if target = Local then check k.ren.has_local "locals needed for opt";
+          if target = Local then begin
+            check k.ren.has_local "locals needed for opt";
+            check
+              (not (List.memq rng (unread_by_opaque k)))
+              (strf "a call or custom code does not read axis %d" axis)
+          end;
           let amt = if amount = 0 then size rng else Bigint.of_int amount in
           let is_reduce = List.memq rng (reduce_ranges k) in
           if target = Upcast then begin
@@ -533,8 +556,8 @@ module Scheduler = struct
             (List.is_empty (read_by_bounds k))
             "tensor cores need loops whose bounds read no axis";
           check
-            (List.is_empty (read_by_opaque k))
-            "tensor cores need calls and custom code that read no axis";
+            (List.is_empty (opaque k))
+            "tensor cores need a kernel without calls or custom code";
           check (axis >= 0) "tensor core opts must have an axis";
           check
             (-1 <= tc_select && tc_select < List.length k.ren.tensor_cores)

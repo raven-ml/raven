@@ -81,13 +81,23 @@ module Scheduler : sig
       reads, as [i] in a loop [j < x[i]]. A loop has one count of trips, so
       none of them can become a thread's lanes. *)
 
+  val opaque : t -> Ops.t list
+  (** [opaque k] is [k]'s opaque operations, but those of the bodies it calls:
+      its calls ({!Ops.call}) and its code in the target's language
+      ({!Op.Custom}). Each runs once for each point of the ranges its sources
+      read, and takes one pointer or value for each source. *)
+
   val read_by_opaque : t -> Ops.t list
-  (** [read_by_opaque k] is the ranges that a source of one of [k]'s opaque
-      operations reads: an argument of a call ({!Ops.call}) or a source of code
-      in the target's language ({!Op.Custom}), as [i] in [f(&x[i])]. Each takes
-      one pointer or value for each source, so none of them can become a
-      thread's lanes, and a padded point would run the operation on a source
-      of no element, so none of them can be padded. *)
+  (** [read_by_opaque k] is the ranges that a source of one of [k]'s {!opaque}
+      operations reads, as [i] in [f(&x[i])]. None of them can become a
+      thread's lanes, which would pass the operation a vector, and none can be
+      padded, which would run it on a source of no element. *)
+
+  val unread_by_opaque : t -> Ops.t list
+  (** [unread_by_opaque k] is [k]'s ranges that the sources of one of its
+      {!opaque} operations do not read, as [j] for [f(&x[i])] beside a loop
+      over [j]. Every thread of a launch runs each such operation, so none of
+      them can take threads, which would run it once in each. *)
 
   val upcastable_dims : ?reduce:bool -> t -> int list
   (** [upcastable_dims ~reduce k] is the positions of [k]'s global, local and
@@ -120,7 +130,8 @@ module Scheduler : sig
   (** [convert_loop_to_global k] makes global each weak range that an end of
       [k]'s sink closes and no reduction does, whose bound a launch computes
       ({!Ops.known_at_launch}), that every buffered value ({!Op.Stage}) runs
-      inside, if [k]'s renderer has local indices. *)
+      inside and every opaque operation reads ({!unread_by_opaque}), if [k]'s
+      renderer has local indices. *)
 
   val shift_to :
     ?top:bool ->
@@ -153,11 +164,13 @@ module Scheduler : sig
       lanes of a reduce axis or 16 of another, locals only with local indices,
       the workgroup's shared memory), an upcast of an axis a range's bound
       reads ({!read_by_bounds}) or an opaque operation reads ({!read_by_opaque}),
-      a local split of a reduce axis where a range's bound reads an axis or
+      a local split of an axis an opaque operation does not read
+      ({!unread_by_opaque}), a local split of a reduce axis where a range's
+      bound reads an axis or
       whose reduction runs inside an unrolled reduce axis, a pad's axis is not
       of a constant size, would more than quadruple, or is read by an opaque
       operation, or no tensor core fits, as none does a kernel where a range's
-      bound or an opaque operation reads an axis. Raises
+      bound reads an axis or one with an opaque operation. Raises
       [Invalid_argument] if the shared memory a split needs depends on a
       symbolic size and cannot be decided. *)
 
