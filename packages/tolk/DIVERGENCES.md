@@ -3239,39 +3239,18 @@ other cores. `Search.beam_search` times each candidate as its compilation ends
 - **Pinned by:** the `Divandmod` suite: `values › each rewrite of a random
   division of vectors keeps each lane's value`.
 
-## D134. A widening cast of an unsigned mask or shift widens its operands
+## D134. Withdrawn
 
-- **tinygrad:** `uop/symbolic.py:322-325` (cast/long folding), which keeps a
-  cast of `x & y` or `x >> k` as it is.
-- **tolk:** `Shape.symbolic` (its cast rules);
-  `test/gen/tinygrad.patch`, which gives tinygrad the same rule before the
-  goldens are generated.
-- **Differs:** a cast of an unsigned `x land y`, or `x lsr k` with `k` within
-  `[0, width of x)` by its bounds, to a wider unsigned type is the operation on
-  the widened operands, `cast x land cast y` or `cast x lsr cast k`. A zero
-  extension commutes with both, so every value is kept. A signed operand, a
-  shift that may reach the operand's width, and a cast to a narrower or a float
-  type keep the cast where it is.
-- **Reason:** (d). rune computes a uint4 at a byte and unpacks it where it
-  reads it, a shift and a mask of the byte, so nx.quant's compiled MXFP4
-  product, whose codes are uint4, masked each nibble as a byte and widened it
-  to decode it at uint32. Clang vectorises that worse on arm64: the host's
-  4096 x 4096 one-token product kernel took 40 ms where the same kernel
-  unpacking at uint32 takes 21.6 ms. kaun's decode bench times the products a
-  user calls (`Quant/host/*`). Measured on arm64 and kimchi; to re-measure on
-  fudge, where `Quant/host/*` holds baselines with the rule and none without.
-- **Cost:** on x86, for codes of one value. The routed one-token product's
-  kernel, the only one the rule changes in its program, is faster with it on
-  random codes, as real weights hold, on arm64 and on x86 (kimchi, clang 19,
-  2.1% on six cores), and the routed 64-token product runs at 0.978 of its
-  time before the rule. On codes of one value the kernel takes 4.4% longer
-  with the rule on six x86 cores and 2-6% longer on one, where the M1 still
-  runs it faster. kaun's decode bench times random codes.
-- **Pinned by:** the Symbolic suite (`test/uop/symbolic`): `symbolic › casts ›
-  a widening cast of an unsigned mask masks the widened operand` and
-  the four tests after it. On rune: missing (the old rune's `lower_index ›
-  quantised products › a product unpacks its codes at the width it decodes
-  them in` went with its rewrite).
+A widening cast of an unsigned `x land y`, or `x lsr k` with `k` within
+the operand's width, was the operation on the widened operands, so that
+nx.quant's host MXFP4 products unpacked their uint4 codes at uint32, which
+Clang vectorises better on arm64. On fudge, kaun's decode bench rows show no
+gain beyond their ranges (medians of 11, two interleaved runs each, with the
+rule then without): `Quant/host/mxfp4-product-1-token` 0.91 and 0.84 ms
+against 0.68 and 0.88 ms, `Quant/host/routed-product-1-tokens` 5.01 and
+4.07 ms against 3.85 and 5.28 ms, `Quant/host/routed-product-64-tokens` 130
+and 122 ms against 114 and 145 ms. As tinygrad's `uop/symbolic.py:322-325`,
+`Shape.symbolic` keeps such a cast where it is.
 
 ## D135. Withdrawn
 
