@@ -101,8 +101,8 @@ rune lowers each nx kernel operation to tolk's UOps (`lower*.ml`). Where
 tinygrad's `Tensor` builds the same operation, the lowering builds tinygrad's
 decomposition if it computes what nx states. This section lists every place
 where it builds something else, or builds what tinygrad has no source for,
-except these, not yet recorded: the transforms (`lower_fft.ml`), `eigh`,
-logsumexp and moments, and scaled contractions.
+except these, not yet recorded: the transforms (`lower_fft.ml`), `eigh` and
+scaled contractions.
 
 An entry is admitted for one of four reasons only:
 
@@ -671,6 +671,64 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   `Lower_reduce › cases › a complex product is refused`, `› a complex running
   product is refused`, `› a complex128 running maximum is refused`,
   `Lower_index › sorts › sorts give eager's values and positions`.
+
+### R7. Logsumexp in the carrier, its scan by the network
+
+- **Reference:** `mixin/op.py:653` (`logsumexp`: `c` the maximum where finite
+  and 0 elsewhere, `log Σ exp (x - c) + c`), `:853` (`logcumsumexp`).
+- **Raven:** `lower_reduce.ml` (`logsumexp`, `shift`, `lse_terms`,
+  `lse_combine`, `network`, `reduce`, `scan`).
+- **Differs:**
+  - A reduction builds tinygrad's composition, with R3's maximum, A7's `exp`,
+    A24's `log` and R1's and R2's sum. It computes in the carrier and rounds
+    once into the destination. tinygrad shifts, exponentiates and takes the
+    `log` of a narrow float at its own dtype, around a `float32` sum.
+  - A scan combines states of a maximum and a sum of `exp (x - c)` by the
+    odd/even network, each combination rescaling both sums to the combined
+    maximum: `O(n)` work in `2 log₂ n` kernels. tinygrad sums, at each
+    position, the `exp`s of the whole axis against the running maximum,
+    masked past the position by the dtype's least value, `-∞` where it has
+    one: `n²` work, and a sum over the axis whose association tolk chooses
+    from the axis's extent, so that a prefix's results can differ from the
+    whole axis's.
+- **nx:** `nx_kernel.mli`, `Logsumexp`: `-∞` for no term or terms all `-∞`,
+  `+∞` with a `+∞` term and no NaN; `carrier`; Scans: a result is a function
+  of the terms up to it, bit for bit, and the odd/even network.
+- **Class:** stated bound: `lower_reduce.mli`'s `Logsumexp` rows.
+- **Reason:** (b).
+- **Pinned by:** `Lower_reduce › logsumexp, moments and arg › a logsumexp
+  holds its bound`, `› a running logsumexp holds its bound`, which cover
+  slices of `-∞` alone, NaN and infinite terms and narrow destinations. No
+  test holds the prefix property.
+
+### R8. Moments by corrected two passes, their scan by the network
+
+- **Reference:** `mixin/op.py:519` (`mean`), `:546` (`var` with
+  `correction=0`, the population variance: `Σ (x - mean)² / n`).
+- **Raven:** `lower_reduce.ml` (`moments`, `moments_combine`, `network`,
+  `reduce`, `scan`).
+- **Differs:**
+  - A reduction's variance is `(Σ d² - Σ d (Σ d / n)) / n`, `d = x - mean`
+    (Chan, Golub and LeVeque's corrected two-pass algorithm), `+0.` where
+    rounding makes it negative and `Σ d²` where that is `+∞`. tinygrad
+    divides `Σ d²` by `n`. Its quotients are A15's. It computes in the
+    carrier and rounds once into each destination; tinygrad squares a narrow
+    float's deviations at its own dtype.
+  - A scan has no source: states of a mean, a sum of squared deviations and
+    a count, of the terms less the slice's first term (0 where not finite),
+    combined by Chan, Golub and LeVeque's (1.5b), the mean weighted, over the
+    odd/even network. The variance is the sum over the count, NaN where the
+    mean is not finite.
+- **nx:** `nx_kernel.mli`, `Moments`: the population mean and variance, NaN
+  for no term or a NaN term, the variance NaN with an infinite term and
+  never negative; `carrier`; Scans.
+- **Class:** stated bound: `lower_reduce.mli`'s `Moments` rows.
+- **Reason:** (b) for the carrier and the scan. The correction term: none.
+  nx leaves the algorithm to each library; `nx_cpu.mli` (Logsumexp and
+  Moments) states the same one for the eager kernel.
+- **Pinned by:** `Lower_reduce › logsumexp, moments and arg › moments hold
+  their bounds`, `› running moments hold their bounds`, `Lower_reduce › cases
+  › a running variance that overflows is +∞`.
 
 ### I2. Pieces are selected as their bits
 
