@@ -67,6 +67,9 @@ type sp = {
   punct_safe : bool array;
       (** Whether a unit may end between a previous byte and a slot's byte, at
           [(slot lsl 8) lor prev] — [Bpe.sp_cut]'s table. *)
+  fallback_ids : int array;
+      (** The 256 byte fallback ids a character without a piece is spelled
+          with, [-1] for none and everywhere without byte fallback. *)
 }
 (** Tables of the fused SentencePiece kernel: the ▁/punctuation unit walker over
     normalized bytes, the pretoken cache probe and the character-level short
@@ -81,8 +84,12 @@ type reason =
   | Class
   | Encode
       (** Why {!byte_level_encode} returned; constructor order is the C [BROT_*]
-          enum. [Done]: the range is exhausted. [Spans_full], [Ids_full]: a
-          buffer has no room for the span at the resume position. [Class]: the
+          enum. [Done]: the range is exhausted. [Spans_full]: the span
+          buffer has no room for the span at the resume position, or the call
+          has walked 1024 spans, after which it returns so that the runtime,
+          which cannot stop a domain inside a call, never waits long for one.
+          [Ids_full]: the ids buffer has no room for the span at the resume
+          position. [Class]: the
           walker met a code point the Unicode table does not classify yet —
           classify {!code_point} and call again. [Encode]: the span the resume
           position opens was appended to the spans but needs OCaml — over 15
@@ -92,10 +99,18 @@ type reason =
 (** {1:cursor The cursor} *)
 
 val cursor : unit -> Bytes.t
-(** [cursor ()] is a fresh kernel cursor: 40 bytes the kernel reads its input
+(** [cursor ()] is a fresh kernel cursor: the bytes the kernel reads its input
     counts from and writes its results to, at the byte offsets [0] span count,
     [8] id count, [16] mark count, [24] resume position and [32] code point
-    (only after [Class]). *)
+    after [Class] or {!unit_stop} after [Encode], then the spans the kernel has
+    walked ahead of their probes. A call that resumes on the range the last
+    one left at the next of those spans resolves them before walking on. *)
+
+val restart : Bytes.t -> unit
+(** [restart cur] drops the spans [cur] holds walked ahead, so that the next
+    call walks its range from the start. A driver restarts its cursor before
+    every walk it begins: a range of another text can start and stop at the
+    positions the last one left. *)
 
 val set : Bytes.t -> spans:int -> ids:int -> marks:int -> unit
 (** [set cur ~spans ~ids ~marks] writes the counts a call starts from. *)
@@ -117,9 +132,10 @@ val code_point : Bytes.t -> int
 (** [code_point cur] is the code point needing a class, after [Class]. *)
 
 val unit_stop : Bytes.t -> int
-(** [unit_stop cur] is the end of the unit that needs OCaml, after
-    {!sp_encode}'s [Encode]; its start is {!resume}. Shares the cursor word
-    {!code_point} reads — only one of the two entries writes it. *)
+(** [unit_stop cur] is the end of the unit or span that needs OCaml, after an
+    [Encode] from {!sp_encode} or an ids32 entry; its start is {!resume}.
+    Shares its cursor word with {!code_point}: a [Class] exit writes the one,
+    an [Encode] exit the other. *)
 
 (** {1:entry The entry} *)
 
@@ -149,7 +165,8 @@ val byte_level_encode :
     as [spans] has room for spans; ids room is checked per span. Reads [text] in
     [\[pos..stop)], except the cache key words, whose masked reads stay within
     the whole of [text] exactly as the OCaml key builder's do. Allocates
-    nothing, raises nothing, holds nothing across calls. *)
+    nothing, raises nothing, and holds nothing across calls but what [cursor]
+    keeps (see {!cursor}). *)
 
 type ids32 = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
 (** The type for the batch id sink of the ids32 entries: token ids are written
@@ -157,21 +174,13 @@ type ids32 = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
     write them. *)
 
 val byte_level_encode_ids32 :
-  string ->
-  int ->
-  int ->
-  Bytes.t ->
-  ids32 ->
-  int array ->
-  Bytes.t ->
-  Bytes.t ->
-  byte_level ->
-  reason
-(** [byte_level_encode_ids32] is {!byte_level_encode} with the ids sink an
-    {!ids32} buffer rather than an [Ints.buffer]: the same walk, probes, table
-    stores and exits, the ids stored as [int32]. Ids room is checked per span
-    against the buffer's length; every other contract is {!byte_level_encode}'s.
-*)
+  string -> int -> int -> ids32 -> Bytes.t -> Bytes.t -> byte_level -> reason
+(** [byte_level_encode_ids32 text pos stop ids cursor unicode t] is
+    {!byte_level_encode} without spans or marks: the same walk, probes, table
+    stores and ids, stored as [int32] into an {!ids32} buffer, [Spans_full]
+    only after 1024 spans. On [Encode] the span at [{!resume}..{!unit_stop})] needs
+    OCaml and nothing was appended for it. Ids room is checked per span against
+    the buffer's length; every other contract is {!byte_level_encode}'s. *)
 
 val split_encode :
   string ->
@@ -199,16 +208,14 @@ val split_encode_ids32 :
   string ->
   int ->
   int ->
-  Bytes.t ->
   ids32 ->
-  int array ->
   Bytes.t ->
   Bytes.t ->
   byte_level ->
   int ->
   reason
-(** [split_encode_ids32] is {!split_encode} with the ids sink an {!ids32}
-    buffer, as {!byte_level_encode_ids32} is {!byte_level_encode}. *)
+(** [split_encode_ids32] is {!split_encode} without spans or marks, as
+    {!byte_level_encode_ids32} is {!byte_level_encode}. *)
 
 val sp_encode : string -> int -> int -> int array -> Bytes.t -> sp -> reason
 (** [sp_encode text pos stop ids cursor t] cuts [text.\[pos..stop)] at
@@ -216,12 +223,13 @@ val sp_encode : string -> int -> int -> int array -> Bytes.t -> sp -> reason
     is not itself ["▁"] and before each vocabulary-safe punctuation byte,
     exactly as [Bpe.encode_into]'s walker does — and appends each unit's token
     ids to [ids] from the id count [cursor] holds, probing the pretoken cache
-    and short-merging misses character by character. Returns [Done], [Ids_full]
-    or [Encode] only; on [Encode] the unit at [{!resume}..{!unit_stop})] needs
-    OCaml — over 15 bytes, or holding a character without a direct piece or a
-    merge result [Bpe.emit_word] would record — and nothing was appended for it.
-    No span or mark buffers are involved: the caller records the whole stretch
-    as one span, as the OCaml walker's caller does.
+    and short-merging misses character by character. Never returns [Class],
+    and [Spans_full] only after 1024 units; on [Encode] the unit at
+    [{!resume}..{!unit_stop})] needs OCaml — over 15 bytes, or holding a
+    character with neither a piece nor a byte fallback for each of its bytes,
+    or a merge result [Bpe.emit_word] would record — and nothing was appended
+    for it. No span or mark buffers are involved: the caller records the whole
+    stretch as one span, as the OCaml walker's caller does.
 
     Unchecked, native only: the caller validates
     [0 <= pos <= stop <= String.length text] and that the id count in [cursor]

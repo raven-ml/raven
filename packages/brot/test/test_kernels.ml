@@ -8,13 +8,14 @@
    reference, so every expectation here is checked against both; the dump
    differential separately holds the two identical on adversarial input. Each
    byte-level case drives one hand-back or refusal: a document crossing the span
-   chunk, hand-backs at the staged chunk's seams, maximal multi-id spans,
-   caching off, [ignore_merges], dropout (kernel not selected), pretokens past
-   the 15-byte key, bytes without an id, and a merge whose result stands for
-   other bytes than its entry's. The SentencePiece cases at the end drive the
-   unit walker's: units past the key, characters without a piece, the resume
-   look-behind at a ▁ run, punctuation adjacency, byte-fallback caching, a
-   stream outgrowing one call's ids reserve, and the len_table refusal. *)
+   chunk, hand-backs at the stage's seams, maximal multi-id spans, caching off,
+   [ignore_merges], dropout (kernel not selected), pretokens past the 15-byte
+   key, bytes without an id, and a merge whose result stands for other bytes
+   than its entry's. The SentencePiece cases drive the unit walker's: units
+   past the key, characters without a piece, the resume look-behind at a ▁
+   run, punctuation adjacency, byte-fallback caching, a stream outgrowing one
+   call's ids reserve, and the len_table refusal. Laws then hold both kernels
+   to a reference merge on drawn text. *)
 
 open Windtrap
 
@@ -53,7 +54,7 @@ let ids tok text = Brot.encode_ids tok ~add_special_tokens:false text
 let byte_ids text =
   Array.init (String.length text) (fun i -> Char.code text.[i])
 
-(* 1500 pretokens " a": crosses the 256-span staged chunk and the 1024-span
+(* 1500 pretokens " a": crosses the 64-span stage and the 1024-span
    buffer, every span a cache hit of one id. *)
 let test_chunk_boundary () =
   let tok = simple () in
@@ -103,7 +104,8 @@ let test_long_pretoken_hand_back () =
     words.(610);
   equal ~msg:"the span after the hand-back" (option int) (Some 601) words.(621)
 
-(* Pretoken counts at and around the 256-span chunk seam, exact ids each. *)
+(* Pretoken counts at and around the seams of the 64-span stage, exact ids
+   each. *)
 let test_chunk_seam_lengths () =
   let tok = simple () in
   List.iter
@@ -112,11 +114,12 @@ let test_chunk_seam_lengths () =
       equal
         ~msg:(Printf.sprintf "%d pretokens" count)
         (array int) (Array.make count space_a) (ids tok text))
-    [ 1; 255; 256; 257; 258; 511; 512; 513 ]
+    [ 1; 63; 64; 65; 127; 128; 129; 255; 256; 257; 258; 511; 512; 513 ]
 
-(* An [Encode] hand-back at the first and at the last span of a staged chunk:
-   the exit parks the chunk and the re-entry after [encode_into] continues it
-   mid-stage. *)
+(* An [Encode] hand-back at the first and at the last span of a stage: the
+   long span is staged with the rest, the exit keeps the spans staged after it
+   in the cursor, and the re-entry after [encode_into] resolves them before
+   walking on. *)
 let test_encode_at_chunk_edges () =
   let tok = simple () in
   let long = String.make 20 'b' in
@@ -135,11 +138,10 @@ let test_encode_at_chunk_edges () =
       equal
         ~msg:(Printf.sprintf "hand-back at span %d" k)
         (array int) expect (ids tok text))
-    [ 0; 254; 255; 256; 257 ]
+    [ 0; 62; 63; 64; 65; 254; 255; 256; 257 ]
 
-(* A class hand-back right after an [Encode] resume: the chunk that was parked
-   by the hand-back drains, and the next harvest meets a code point classified
-   on demand. *)
+(* A class hand-back right after an [Encode] resume: the walk that re-enters
+   after the hand-back meets a code point classified on demand. *)
 let test_class_after_encode_resume () =
   let tok = simple () in
   let buf = Buffer.create 1024 in
@@ -550,6 +552,217 @@ let test_sp_batch_sink_spill_order () =
   in
   check_batch tok docs
 
+(* Laws against a reference BPE: drawn text encodes to what the merge rules
+   give when applied the simplest way — repeatedly merge the leftmost
+   occurrence of the adjacent pair of lowest rank — over GPT-2's pretokens
+   and over Mistral's whole ▁-marked text. The reference reads the vocabulary
+   and merges from the tokenizer file and cuts GPT-2's pretokens with its
+   regular expression, so it shares neither the walkers, the unit cut, the
+   cache nor the merge loops with the library. The single-text and batch
+   paths each run against it. *)
+
+let json_member name = function
+  | Jsont.Object (members, _) -> (
+      match Jsont.Json.find_mem name members with
+      | Some (_, v) -> v
+      | None -> failf "no member %s" name)
+  | _ -> failf "%s: not an object" name
+
+type reference = {
+  vocab : (string, int) Hashtbl.t;
+  ranks : (string * string, int) Hashtbl.t;
+}
+
+let reference_of path =
+  let text = Fixture.read path in
+  let json =
+    match Jsont_bytesrw.decode_string Jsont.json text with
+    | Ok json -> json
+    | Error e -> failf "%s: %s" path e
+  in
+  let model = json_member "model" json in
+  let vocab = Hashtbl.create 65536 in
+  (match json_member "vocab" model with
+  | Jsont.Object (members, _) ->
+      List.iter
+        (fun ((name, _), v) ->
+          match v with
+          | Jsont.Number (id, _) -> Hashtbl.replace vocab name (int_of_float id)
+          | _ -> failf "vocab %s: not a number" name)
+        members
+  | _ -> failf "vocab: not an object");
+  let ranks = Hashtbl.create 65536 in
+  (match json_member "merges" model with
+  | Jsont.Array (merges, _) ->
+      List.iteri
+        (fun rank m ->
+          let pair =
+            match m with
+            | Jsont.String (m, _) -> (
+                match String.index_opt m ' ' with
+                | Some i ->
+                    ( String.sub m 0 i,
+                      String.sub m (i + 1) (String.length m - i - 1) )
+                | None -> failf "merge %S" m)
+            | Jsont.Array ([ Jsont.String (a, _); Jsont.String (b, _) ], _) ->
+                (a, b)
+            | _ -> failf "merge %d" rank
+          in
+          if not (Hashtbl.mem ranks pair) then Hashtbl.add ranks pair rank)
+        merges
+  | _ -> failf "merges: not an array");
+  { vocab; ranks }
+
+let rec merge_all r symbols =
+  let best = ref None in
+  let rec scan i = function
+    | a :: (b :: _ as rest) ->
+        (match (Hashtbl.find_opt r.ranks (a, b), !best) with
+        | Some rank, Some (best_rank, _) when rank >= best_rank -> ()
+        | Some rank, _ -> best := Some (rank, i)
+        | None, _ -> ());
+        scan (i + 1) rest
+    | _ -> ()
+  in
+  scan 0 symbols;
+  match !best with
+  | None -> symbols
+  | Some (_, at) ->
+      let rec join i = function
+        | a :: b :: rest when i = at -> (a ^ b) :: rest
+        | a :: rest -> a :: join (i + 1) rest
+        | [] -> []
+      in
+      merge_all r (join 0 symbols)
+
+let chars s =
+  let rec go i acc =
+    if i >= String.length s then List.rev acc
+    else
+      let n = Uchar.utf_decode_length (String.get_utf_8_uchar s i) in
+      go (i + n) (String.sub s i n :: acc)
+  in
+  go 0 []
+
+let id_of r symbol =
+  match Hashtbl.find_opt r.vocab symbol with
+  | Some id -> id
+  | None -> failf "no id for %S" symbol
+
+(* GPT-2 merges the byte-level spelling of each pretoken of its pattern. *)
+let gpt2_pattern =
+  {|'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+|}
+
+let gpt2_reference r =
+  let pre =
+    Brot.Pre_tokenizer.split_regex ~pattern:gpt2_pattern ~behavior:`Isolated ()
+  in
+  fun text ->
+    Brot.Pre_tokenizer.pre_tokenize pre text
+    |> List.concat_map (fun (piece, _) ->
+        List.init (String.length piece) (fun i ->
+            byte_alphabet.(Char.code piece.[i]))
+        |> List.filter (Hashtbl.mem r.vocab)
+        |> merge_all r |> List.map (id_of r))
+    |> Array.of_list
+
+(* Mistral marks spaces with ▁, prepends one to a text that does not open
+   with it, and merges the whole text from its characters. A character
+   without a piece is spelled by its bytes' fallback tokens when there is
+   one for each, and is otherwise held back as the unknown token, which a
+   run of such characters shares and which goes out at the next piece or at
+   the end: a fallback spelling between overtakes it. *)
+let mistral_reference r text =
+  let marked = String.concat sp_mark (String.split_on_char ' ' text) in
+  let marked =
+    if String.starts_with ~prefix:sp_mark marked then marked
+    else sp_mark ^ marked
+  in
+  let rec init pending = function
+    | [] -> if pending then [ "<unk>" ] else []
+    | c :: rest when Hashtbl.mem r.vocab c ->
+        (if pending then [ "<unk>"; c ] else [ c ]) @ init false rest
+    | c :: rest ->
+        let bytes =
+          List.init (String.length c) (fun i ->
+              Printf.sprintf "<0x%02X>" (Char.code c.[i]))
+        in
+        if List.for_all (Hashtbl.mem r.vocab) bytes then
+          bytes @ init pending rest
+        else init true rest
+  in
+  if text = "" then [||]
+  else
+    init false (chars marked)
+    |> merge_all r |> List.map (id_of r) |> Array.of_list
+
+(* Words of every length up to past the 15-byte key, repeated characters,
+   contractions, digits, the punctuation SentencePiece cuts at, every kind
+   of white space, letters beyond ASCII, characters no trimmed vocabulary
+   holds, and ▁ itself. *)
+let law_alphabet =
+  [
+    "the"; "and"; "of"; "tokenizer"; "information"; "internationalization";
+    "Hello"; "WORLD"; "aaaaaaaaaaaaaaaaaaaaaaaa"; "!!!!!!!!"; "don't";
+    "it's"; "we'll"; "they're"; "I'm"; "'"; "1"; "2024"; "3.14159265358979";
+    "."; ","; "\""; ")"; ";"; ":"; "!"; "?"; "("; "-"; "..."; " "; " ";
+    " "; "  "; "\n"; "\n\n"; "\t"; " \r\n"; "café"; "naïve"; "Ж"; "Привет";
+    "日本語"; "😀"; "e\u{0301}"; "ß"; "\u{2581}"; "\u{2581}\u{2581}";
+  ]
+[@@ocamlformat "disable"]
+
+let law_text =
+  Gen.with_pp
+    (fun ppf s -> Format.fprintf ppf "%S" s)
+    (Gen.map (String.concat "")
+       (Gen.list ~size:(Gen.int_range 0 40) (Gen.of_list law_alphabet)))
+
+let has_sub text sub =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length text && (String.sub text i n = sub || go (i + 1))
+  in
+  go 0
+
+let cover_law text =
+  let words = String.split_on_char ' ' text in
+  cover "a word over 15 bytes"
+    (List.exists (fun w -> String.length w > 15) words);
+  cover "a run of one character" (has_sub text "aaaaaaaa");
+  cover "a contraction" (has_sub text "'s" || has_sub text "'ll");
+  cover "a character beyond ASCII" (String.exists (fun c -> c >= '\x80') text);
+  cover "a character no piece holds" (has_sub text "😀");
+  cover "a ▁ in the text" (has_sub text sp_mark);
+  cover "a split punctuation byte" (has_sub text "." || has_sub text "?");
+  cover "white space other than a space"
+    (String.exists (fun c -> c = '\n' || c = '\t') text)
+
+(* The tokenizer and the reference are read once, on the first case. *)
+let law name make =
+  let loaded =
+    lazy
+      (Fixture.with_tokenizer_file name (fun path ->
+           match Brot.from_file path with
+           | Ok tok -> (tok, make (reference_of path))
+           | Error e -> failf "%s: %s" path e))
+  in
+  prop ~count:300
+    (Printf.sprintf "%s encodes as the reference merge" name)
+    law_text
+    (fun text ->
+      let tok, reference = Lazy.force loaded in
+      let expect = reference text in
+      cover_law text;
+      equal ~msg:(Printf.sprintf "%S alone" text) (array int) expect
+        (ids tok text);
+      match batch_rows tok [ text; text ] 1 with
+      | [ a; b ] ->
+          equal ~msg:(Printf.sprintf "%S in a batch" text) (array int) expect a;
+          equal
+            ~msg:(Printf.sprintf "%S again in a batch" text)
+            (array int) expect b
+      | _ -> failf "two rows expected")
+
 let () =
   exit
     (run "brot kernels"
@@ -593,6 +806,11 @@ let () =
                test_sp_len_table_disagreement;
              test "caching off" test_sp_cache_off;
              test "dropout leaves the sub-cut off" test_sp_dropout_not_selected;
+           ];
+         group "laws"
+           [
+             law "gpt2" gpt2_reference;
+             law "mistral" mistral_reference;
            ];
          group "batch sink"
            [

@@ -810,6 +810,9 @@ let sp_kernel_tables model cache : Kernel.sp option =
           char_mask = model.chars.multi.Merge_map.mask;
           scan;
           punct_safe = cut.punct_safe;
+          fallback_ids =
+            (if model.byte_fallback then model.byte_fallback_ids
+             else Array.make 256 (-1));
         }
   | _ -> None
 
@@ -1111,9 +1114,11 @@ let encode_sp_kernel model st t ids ~opaque text ~pos ~len =
           encode_unit_into model st ids ~opaque text ~pos:resume
             ~len:(finish - resume);
           go finish
-      | Kernel.Spans_full | Kernel.Class -> assert false
+      | Kernel.Spans_full -> go resume
+      | Kernel.Class -> assert false
     end
   in
+  Kernel.restart cur;
   go pos
 
 let encode_into model st ids ~opaque text ~pos ~len =
@@ -1178,9 +1183,11 @@ let encode_sp_kernel_ids32 model st t sink spill ~opaque text ~pos ~len =
           encode_unit_into model st spill ~opaque text ~pos:resume
             ~len:(finish - resume);
           go finish
-      | Kernel.Spans_full | Kernel.Class -> assert false
+      | Kernel.Spans_full -> go resume
+      | Kernel.Class -> assert false
     end
   in
+  Kernel.restart cur;
   go pos
 
 let encode_into_ids32 model st sink spill ~opaque text ~pos ~len =
@@ -1255,15 +1262,14 @@ let encode_walk model st ~walker ids ~opaque ~marks spans text ~pos ~stop =
           go finish
     end
   in
+  Kernel.restart cur;
   go pos
 
-(* [encode_walk] on the sink: the kernel appends int32 ids at [sink.used] and an
-   [Encode] span goes through [encode_into] into the spill, its mark placed
-   where the flush at the top of the next call will put its ids. Only the batch
-   driver walks this way, with [record:false], so the marks are written and
-   never read — the protocol stays the one the kernel pins. *)
-let encode_walk_ids32 model st ~walker sink spill ~opaque ~marks spans text ~pos
-    ~stop =
+(* [encode_walk] on the sink, for the batch driver, which records nothing: the
+   kernel appends int32 ids at [sink.used] and walks without spans or marks, and
+   an [Encode] span goes through [encode_into] into the spill, which the flush
+   at the top of the next call puts in place. Returns [stop]. *)
+let encode_walk_ids32 model st ~walker sink spill ~opaque text ~pos ~stop =
   if pos < 0 || stop < pos || stop > String.length text || stop > 0xFFFF_FFFF
   then invalid_arg err_range;
   let cur = st.st_cursor and t = st.st_kernel in
@@ -1272,25 +1278,20 @@ let encode_walk_ids32 model st ~walker sink spill ~opaque ~marks spans text ~pos
     else begin
       flush_spill sink spill;
       sink_reserve sink (max 4096 (min (stop - p) 65536));
-      Ints.reserve marks (Spans.capacity spans - Spans.count spans);
-      Kernel.set cur ~spans:(Spans.count spans) ~ids:sink.used
-        ~marks:(Ints.length marks);
+      Kernel.set cur ~spans:0 ~ids:sink.used ~marks:0;
       let unicode = Char_class.unicode_table () in
       let r =
         match (walker : Pre_tokenizer.walker) with
         | Gpt2 ->
-            Kernel.byte_level_encode_ids32 text p stop (Spans.buffer spans)
-              sink.ba (Ints.buffer marks) cur unicode t
+            Kernel.byte_level_encode_ids32 text p stop sink.ba cur unicode t
         | (Cl100k _ | O200k _) as walker ->
-            Kernel.split_encode_ids32 text p stop (Spans.buffer spans) sink.ba
-              (Ints.buffer marks) cur unicode t (packed_walker walker)
+            Kernel.split_encode_ids32 text p stop sink.ba cur unicode t
+              (packed_walker walker)
       in
-      Spans.set_count spans (Kernel.spans cur);
       sink.used <- Kernel.ids cur;
-      Ints.set_length marks (Kernel.marks cur);
       let resume = Kernel.resume cur in
       match r with
-      | Kernel.Done | Kernel.Spans_full -> resume
+      | Kernel.Done -> resume
       | Kernel.Ids_full ->
           if resume = p then sink_reserve sink (2 * Bigarray.Array1.dim sink.ba);
           go resume
@@ -1298,14 +1299,14 @@ let encode_walk_ids32 model st ~walker sink spill ~opaque ~marks spans text ~pos
           ignore (Char_class.category (Kernel.code_point cur) : int);
           go resume
       | Kernel.Encode ->
-          let k = Spans.count spans - 1 in
-          let start = Spans.start spans k and finish = Spans.stop spans k in
-          encode_into model st spill ~opaque text ~pos:start
-            ~len:(finish - start);
-          Ints.add marks (sink.used + Ints.length spill);
+          let finish = Kernel.unit_stop cur in
+          encode_into model st spill ~opaque text ~pos:resume
+            ~len:(finish - resume);
           go finish
+      | Kernel.Spans_full -> go resume
     end
   in
+  Kernel.restart cur;
   go pos
 
 let len_table model = model.len_table

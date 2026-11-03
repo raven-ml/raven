@@ -36,6 +36,11 @@
     && (defined(__GNUC__) || defined(__clang__))
 #define BROT_MASK_NEON 1
 #include <arm_neon.h>
+#elif defined(__x86_64__) || defined(_M_X64)
+/* SSE2 is part of x86-64 itself: every compiler for it has the intrinsics
+   and every CPU runs them. */
+#define BROT_MASK_SSE2 1
+#include <emmintrin.h>
 #endif
 
 /* ABI pins, mirrored in kernel.ml — change neither without the other. */
@@ -73,12 +78,14 @@ enum {
   BROT_SP_CHAR_VALUES,
   BROT_SP_CHAR_MASK,
   BROT_SP_SCAN,
-  BROT_SP_PUNCT_SAFE
+  BROT_SP_PUNCT_SAFE,
+  BROT_SP_FALLBACK_IDS
 };
 
 /* Kernel.cursor byte offsets. */
 enum { CUR_SPANS = 0, CUR_IDS = 8, CUR_MARKS = 16, CUR_RESUME = 24,
-       CUR_CP = 32 };
+       CUR_CP = 32, CUR_STAGED = 40, CUR_NEXT = 48, CUR_STAGE_STOP = 56,
+       CUR_STAGE = 64 };
 
 /* Pre_tokenizer.lead_class values: the four Char_class categories, then the
    space, the apostrophe and the two shapes of non-ASCII byte. */
@@ -125,11 +132,16 @@ static inline int ctz64(uint64_t x)
 static inline int ctz64(uint64_t x) { return __builtin_ctzll(x); }
 #endif
 
-/* The prefetch is advisory: GCC/Clang emit it, other compilers drop it. */
+/* The prefetch is advisory: GCC/Clang emit it, other compilers drop it.
+   So is the forced inlining that gives each entry its own copy of a body
+   specialized on its constant flags, and keeps the unit walk in the entry's
+   loop. */
 #if defined(__GNUC__) || defined(__clang__)
 #define BROT_PREFETCH(p) __builtin_prefetch(p)
+#define BROT_INLINE __attribute__((always_inline)) inline
 #else
 #define BROT_PREFETCH(p) ((void)(p))
+#define BROT_INLINE inline
 #endif
 
 /* The walker — Pre_tokenizer.fill_byte_level and Char_class.at, line for
@@ -801,6 +813,38 @@ static void batch_classify(const unsigned char *p, batch_classes *c)
   c->apo = movemask64(ap[0], ap[1], ap[2], ap[3]);
 }
 
+#elif defined(BROT_MASK_SSE2)
+
+/* Sixteen bytes at a time: an unsigned range test is a saturating minimum
+   that leaves a byte unchanged, and pmovmskb gathers one bit per byte. */
+
+static inline __m128i sse_le(__m128i x, int c)
+{
+  return _mm_cmpeq_epi8(_mm_min_epu8(x, _mm_set1_epi8((char)c)), x);
+}
+
+static void batch_classify(const unsigned char *p, batch_classes *c)
+{
+  int k;
+  c->letter = c->digit = c->space = c->ws = c->hi = c->apo = 0;
+  for (k = 0; k < 4; k++) {
+    __m128i v = _mm_loadu_si128((const __m128i *)(p + 16 * k));
+    __m128i lowered = _mm_or_si128(v, _mm_set1_epi8(0x20));
+    __m128i l = sse_le(_mm_sub_epi8(lowered, _mm_set1_epi8('a')), 25);
+    __m128i d = sse_le(_mm_sub_epi8(v, _mm_set1_epi8('0')), 9);
+    __m128i sp = _mm_cmpeq_epi8(v, _mm_set1_epi8(' '));
+    __m128i ws = _mm_or_si128(sp, sse_le(_mm_sub_epi8(v, _mm_set1_epi8(9)), 4));
+    __m128i ap = _mm_cmpeq_epi8(v, _mm_set1_epi8('\''));
+    int sh = 16 * k;
+    c->letter |= (uint64_t)(unsigned)_mm_movemask_epi8(l) << sh;
+    c->digit |= (uint64_t)(unsigned)_mm_movemask_epi8(d) << sh;
+    c->space |= (uint64_t)(unsigned)_mm_movemask_epi8(sp) << sh;
+    c->ws |= (uint64_t)(unsigned)_mm_movemask_epi8(ws) << sh;
+    c->hi |= (uint64_t)(unsigned)_mm_movemask_epi8(v) << sh;
+    c->apo |= (uint64_t)(unsigned)_mm_movemask_epi8(ap) << sh;
+  }
+}
+
 #else
 
 /* The SWAR batch classifier: the same masks, eight bytes at a time. Each
@@ -946,11 +990,9 @@ static void batch_masks(const walker *w, intnat anchor, intnat scan,
 /* The batch walk. [rem] holds the pop-ready boundary bits of the current
    segment; a bad zone parks them and aims [scalar_until] at the next
    trusted boundary (or the batch end), sending every span opening before
-   it through [next_span]; the batch after the current one is classified
-   eagerly so its chain retires under the pops; scalar overruns keep the
-   64-byte grid, so that precompute survives them. The state lives for one
-   kernel call — the masks are pure functions of the bytes, so a resumed
-   call rebuilds them from its own anchor. */
+   it through [next_span]; scalar overruns keep the 64-byte grid. The state
+   lives for one kernel call — the masks are pure functions of the bytes,
+   so a resumed call rebuilds them from its own anchor. */
 typedef struct {
   intnat anchor;     /* the call's start position, carry-free by contract */
   intnat scan;       /* base of the next batch to classify */
@@ -959,9 +1001,6 @@ typedef struct {
   uint64_t batch_usable;
   uint64_t batch_bad;
   intnat scalar_until; /* walk spans via next_span while below this */
-  intnat pre_base;     /* base of the precomputed batch, -1 for none */
-  uint64_t pre_usable;
-  uint64_t pre_bad;
 } mask_state;
 
 static void mask_init(mask_state *ms, intnat pos)
@@ -973,9 +1012,6 @@ static void mask_init(mask_state *ms, intnat pos)
   ms->batch_usable = 0;
   ms->batch_bad = 0;
   ms->scalar_until = pos;
-  ms->pre_base = -1;
-  ms->pre_usable = 0;
-  ms->pre_bad = 0;
 }
 
 /* Load the segment of usable bits in [from_bit, next bad run) into [rem];
@@ -1000,13 +1036,11 @@ static void mask_load_segment(mask_state *ms, intnat pos, intnat from_bit)
     ms->rem &= ~((uint64_t)1 << from_bit);
 }
 
-/* [next_span] through the masks: the end of the span opening at [i], or
-   -1 with [w->cp] set. [i] is the previous call's return (the pending
-   span's start), as the entry loop maintains. */
-static intnat mask_next_span(mask_state *ms, walker *w, intnat i)
+/* [mask_next_span] once the segment is spent: the scalar walker over a bad
+   zone or the tail, or the next segment or batch. */
+static intnat mask_refill(mask_state *ms, walker *w, intnat i)
 {
   for (;;) {
-    uint64_t usable, bad;
     if (ms->rem != 0) {
       intnat e = ms->mask_base + ctz64(ms->rem);
       ms->rem &= ms->rem - 1;
@@ -1025,22 +1059,25 @@ static intnat mask_next_span(mask_state *ms, walker *w, intnat i)
       ms->scalar_until = w->stop; /* partial tail: scalar to the end */
       continue;
     }
-    if (ms->pre_base == ms->scan) {
-      usable = ms->pre_usable;
-      bad = ms->pre_bad;
-    } else
-      batch_masks(w, ms->anchor, ms->scan, &usable, &bad);
+    batch_masks(w, ms->anchor, ms->scan, &ms->batch_usable, &ms->batch_bad);
     ms->mask_base = ms->scan;
     ms->scan += 64;
-    ms->batch_usable = usable;
-    ms->batch_bad = bad;
-    if (ms->scan + 64 <= w->stop) {
-      batch_masks(w, ms->anchor, ms->scan, &ms->pre_usable, &ms->pre_bad);
-      ms->pre_base = ms->scan;
-    } else
-      ms->pre_base = -1;
     mask_load_segment(ms, i, i > ms->mask_base ? i - ms->mask_base : 0);
   }
+}
+
+/* [next_span] through the masks: the end of the span opening at [i], or
+   -1 with [w->cp] set. [i] is the previous call's return (the pending
+   span's start), as the entry loop maintains. Popping a bit is the common
+   case and stays inline. */
+static inline intnat mask_next_span(mask_state *ms, walker *w, intnat i)
+{
+  if (ms->rem != 0) {
+    intnat e = ms->mask_base + ctz64(ms->rem);
+    ms->rem &= ms->rem - 1;
+    return e;
+  }
+  return mask_refill(ms, w, i);
 }
 
 /* The cache probe — Pretoken_cache.key0/key1/hash_of, the direct-mapped front
@@ -1142,13 +1179,20 @@ static inline intnat emit_lanes(value *lane, uint64_t v0, uint64_t v1)
 }
 
 /* The same four lanes as raw int32 stores, for the batch sink. Lane values
-   are 24-bit, so the narrowing is exact. */
+   are 24-bit, so the narrowing is exact. A value word holds its two lanes
+   at bits 0 and 32, where a little-endian int32 pair has them, so masking
+   off the count makes each word one store. */
 static inline intnat emit_lanes32(int32_t *lane, uint64_t v0, uint64_t v1)
 {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+  store64(lane, v0 & 0x00FFFFFF00FFFFFFULL);
+  store64(lane + 2, v1 & 0x00FFFFFF00FFFFFFULL);
+#else
   lane[0] = (int32_t)(v0 & 0xFFFFFF);
   lane[1] = (int32_t)((v0 >> 32) & 0xFFFFFF);
   lane[2] = (int32_t)(v1 & 0xFFFFFF);
   lane[3] = (int32_t)((v1 >> 32) & 0xFFFFFF);
+#endif
   return (intnat)((v0 >> 24) & 0xFF);
 }
 
@@ -1257,218 +1301,328 @@ static int merge_short(const value *mkeys, const value *mvals, intnat mmask,
                    sym_prev, sym_next, out);
 }
 
-/* The entry's body. The caller validates the range and the cursor counts
-   once; ids room is checked here per span, a hit storing its four lanes
-   unconditionally as Ints.add4 does. [emit32] selects the ids sink — the
-   int array of Kernel.byte_level_encode or the int32 Bigarray of
-   Kernel.byte_level_encode_ids32 — and is a compile-time constant in each
-   wrapper, so its branches cost nothing. So is [split], which selects the
-   walker: the GPT-2 mask scanner, or the scalar cl100k or o200k walker
-   under the parameters [vwalker] packs as Kernel.split_encode documents. */
-static value byte_level_encode_impl(value text, value vpos, value vstop,
-                                    value vspans, value vids, value vmarks,
-                                    value vcursor, value vunicode, value vt,
-                                    value vwalker, int emit32, int split)
+/* The staged probe, shared by both entries. A call walks up to [STAGE]
+   spans ahead, keying each one and prefetching its back set, then resolves
+   them in order: room checks, the front and back probes, the merge of a
+   miss and its store. Every probe and store happens in the reference's span
+   order, so the tables stay bit for bit the reference's; the walk only reads
+   the text. Sixty-four spans of resolving cover a miss to memory while the
+   walk itself runs as a tight loop.
+
+   The stage lives in the cursor, after its counts, so that an exit at a
+   staged span keeps the spans staged after it: the call that resumes at the
+   next of them, on the same range, resolves them before walking on from
+   the last. Any other call starts a stage of its own; the driver also
+   restarts it at every walk it begins (Kernel.restart), since a range of
+   another text could start and stop at the same positions. */
+
+#define STAGE 64
+
+/* The stages a call walks before it returns Spans_full: OCaml's runtime can
+   stop a domain for a collection only between calls, and every other domain
+   waits for it, so a call ends after 1024 spans whatever room is left. */
+#define YIELD_STAGES 16
+
+typedef struct {
+  intnat i, e;       /* the span */
+  intnat set, fslot; /* back set and front slot offsets; set is -1 uncached */
+  uint64_t k0, k1;
+} staged;
+
+typedef struct {
+  unsigned char *front, *cache;
+  intnat front_mask, cache_mask;
+  const value *mkeys, *mvals, *len_tab;
+  intnat mmask, len_n;
+} tables;
+
+/* The bytes of each key word that a length keeps. */
+static const uint64_t key_mask0[16] = {
+    0,
+    0xFF,
+    0xFFFF,
+    0xFFFFFF,
+    0xFFFFFFFF,
+    0xFFFFFFFFFFULL,
+    0xFFFFFFFFFFFFULL,
+    0xFFFFFFFFFFFFFFULL,
+    ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL, ~0ULL};
+static const uint64_t key_mask1[16] = {
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0,
+    0xFF,
+    0xFFFF,
+    0xFFFFFF,
+    0xFFFFFFFF,
+    0xFFFFFFFFFFULL,
+    0xFFFFFFFFFFFFULL,
+    0xFFFFFFFFFFFFFFULL};
+
+/* Stages the span [i, e): its key words, set and slot, and a prefetch of
+   the set. Away from the end of the text both key words are two loads
+   masked to the span; [key_word0] and [key_word1] cover the end. */
+static inline void stage(const tables *t, const unsigned char *s, intnat n,
+                         staged *st, intnat i, intnat e)
 {
-  const unsigned char *s = (const unsigned char *)String_val(text);
-  intnat n = (intnat)caml_string_length(text);
-  intnat stop = Long_val(vstop);
-  unsigned char *spans = Bytes_val(vspans);
-  intnat spans_cap = (intnat)(caml_string_length(vspans) / 8);
+  intnat len = e - i;
+  st->i = i;
+  st->e = e;
+  st->set = -1;
+  if (len <= 15 && t->cache_mask >= 0) {
+    uint64_t k0, k1, h;
+    if (i + 16 <= n) {
+      k0 = load64le(s + i) & key_mask0[len];
+      k1 = (load64le(s + i + 8) & key_mask1[len]) | ((uint64_t)len << 56);
+    } else {
+      k0 = key_word0(s, n, i, len);
+      k1 = key_word1(s, n, i, len);
+    }
+    h = hash_of(k0, k1);
+    st->k0 = k0;
+    st->k1 = k1;
+    st->set = (intnat)((h & (uint64_t)t->cache_mask) << 6);
+    st->fslot = (intnat)((h & (uint64_t)t->front_mask) << 5);
+    BROT_PREFETCH(t->cache + st->set);
+  }
+}
+
+/* The front then the back probe of a staged span, as Pretoken_cache.encode
+   reads them: a back hit is promoted into the front slot. Returns whether it
+   hit, with the value words in [v]. */
+static inline int lookup(const tables *t, const staged *st, uint64_t v[2])
+{
+  const unsigned char *f = t->front + st->fslot;
+  intnat way;
+  if (st->set < 0) return 0;
+  if (load64(f) == st->k0 && load64(f + 8) == st->k1) {
+    v[0] = load64(f + 16);
+    v[1] = load64(f + 24);
+    return 1;
+  }
+  way = probe(t->cache, st->set, st->k0, st->k1);
+  if (way < 0) return 0;
+  v[0] = load64(t->cache + way + 16);
+  v[1] = load64(t->cache + way + 24);
+  front_store(t->front, st->fslot, st->k0, st->k1, v[0], v[1]);
+  return 1;
+}
+
+/* Stores a merged miss of [m] ids when Pretoken_cache.encode would keep it:
+   at most four, each within 24 bits. Pretoken_cache.value_lo/value_hi: two
+   24-bit lanes per word, the count in bits 24..31 of the first, absent lanes
+   zero. */
+static inline void remember(const tables *t, const staged *st,
+                            const int32_t *ids, int m)
+{
+  int k;
+  if (st->set < 0 || m > 4) return;
+  for (k = 0; k < m; k++)
+    if (ids[k] >= 1 << 24) return;
+  cache_store(t->cache, st->set, st->k0, st->k1,
+              (uint64_t)ids[0] | ((uint64_t)m << 24)
+                  | (m > 1 ? (uint64_t)ids[1] << 32 : 0),
+              (m > 2 ? (uint64_t)ids[2] : 0)
+                  | (m > 3 ? (uint64_t)ids[3] << 32 : 0));
+}
+
+/* Appends [m] merged ids to the sink. */
+static inline void emit_ids(value *ids, int32_t *ids32, int emit32, intnat at,
+                            const int32_t *src, int m)
+{
+  int k;
+  if (emit32)
+    for (k = 0; k < m; k++) ids32[at + k] = src[k];
+  else
+    for (k = 0; k < m; k++) ids[at + k] = Val_long((intnat)src[k]);
+}
+
+static void tables_of(tables *t, value vt, int front, int front_mask,
+                      int cache, int cache_mask, int mkeys, int mvals,
+                      int mmask, int len_tab)
+{
+  t->front = Bytes_val(Field(vt, front));
+  t->front_mask = Long_val(Field(vt, front_mask));
+  t->cache = Bytes_val(Field(vt, cache));
+  t->cache_mask = Long_val(Field(vt, cache_mask));
   /* Field lvalues are volatile for the runtime's sake; these arrays have one
      writer (the thread holding the state claim) and no GC point exists in a
      call, so the qualifier is cast away and the compiler may keep loads in
      registers. */
+  t->mkeys = (const value *)&Field(Field(vt, mkeys), 0);
+  t->mvals = (const value *)&Field(Field(vt, mvals), 0);
+  t->mmask = Long_val(Field(vt, mmask));
+  t->len_tab = (const value *)&Field(Field(vt, len_tab), 0);
+  t->len_n = (intnat)Wosize_val(Field(vt, len_tab));
+}
+
+/* The byte-level entry's body. The caller validates the range and the
+   cursor counts once; ids room is checked here per span, a hit storing its
+   four lanes unconditionally as Ints.add4 does. [emit32] selects the sink
+   and the protocol: the int array of Kernel.byte_level_encode, with every
+   span and its mark recorded, or the int32 Bigarray of
+   Kernel.byte_level_encode_ids32, with neither, a hand-back span then
+   carried by the cursor alone. [split] selects the walker: the GPT-2 mask
+   scanner, or the scalar cl100k or o200k walker under the parameters
+   [vwalker] packs as Kernel.split_encode documents. Both are compile-time
+   constants in each wrapper. */
+static BROT_INLINE value
+byte_level_encode_impl(value text, value vpos, value vstop, value vspans,
+                       value vids, value vmarks, value vcursor, value vunicode,
+                       value vt, value vwalker, int emit32, int split)
+{
+  const unsigned char *s = (const unsigned char *)String_val(text);
+  intnat n = (intnat)caml_string_length(text);
+  intnat stop = Long_val(vstop);
+  unsigned char *spans = emit32 ? NULL : Bytes_val(vspans);
+  intnat spans_cap = emit32 ? 0 : (intnat)(caml_string_length(vspans) / 8);
   value *ids_base = emit32 ? NULL : (value *)&Field(vids, 0);
   int32_t *ids32_base = emit32 ? (int32_t *)Caml_ba_data_val(vids) : NULL;
   intnat ids_cap = emit32 ? Caml_ba_array_val(vids)->dim[0]
                           : (intnat)Wosize_val(vids);
-  value *marks_base = (value *)&Field(vmarks, 0);
+  value *marks_base = emit32 ? NULL : (value *)&Field(vmarks, 0);
   unsigned char *cur = Bytes_val(vcursor);
-
-  const unsigned char *lead = Bytes_val(Field(vt, BROT_BL_LEAD));
-  unsigned char *front = Bytes_val(Field(vt, BROT_BL_FRONT));
-  intnat front_mask = Long_val(Field(vt, BROT_BL_FRONT_MASK));
-  unsigned char *cache = Bytes_val(Field(vt, BROT_BL_CACHE));
-  intnat cache_mask = Long_val(Field(vt, BROT_BL_CACHE_MASK));
   const value *byte_ids = (const value *)&Field(Field(vt, BROT_BL_BYTE_IDS), 0);
-  const value *mkeys = (const value *)&Field(Field(vt, BROT_BL_MERGE_KEYS), 0);
-  const value *mvals =
-      (const value *)&Field(Field(vt, BROT_BL_MERGE_VALUES), 0);
-  intnat mmask = Long_val(Field(vt, BROT_BL_MERGE_MASK));
-  const value *len_tab =
-      (const value *)&Field(Field(vt, BROT_BL_LEN_TABLE), 0);
-  intnat len_n = (intnat)Wosize_val(Field(vt, BROT_BL_LEN_TABLE));
   int can_merge = Bool_val(Field(vt, BROT_BL_MERGE));
-
-  intnat nspans = (intnat)load64(cur + CUR_SPANS);
+  intnat nspans = emit32 ? 0 : (intnat)load64(cur + CUR_SPANS);
   intnat nids = (intnat)load64(cur + CUR_IDS);
-  intnat nmarks = (intnat)load64(cur + CUR_MARKS);
-
-  walker w;
-  mask_state ms;
+  intnat nmarks = emit32 ? 0 : (intnat)load64(cur + CUR_MARKS);
   intnat i = Long_val(vpos);
-  intnat resume;
-  int reason;
   intnat digits = split ? Long_val(vwalker) >> 2 : 0;
   int o200k = split ? (int)((Long_val(vwalker) >> 1) & 1) : 0;
   int flag = split ? (int)(Long_val(vwalker) & 1) : 0;
+  intnat resume;
+  int reason;
+  tables t;
+  walker w;
+  mask_state ms;
+  intnat stages = 0;
+  staged *st = (staged *)(cur + CUR_STAGE);
+  intnat nb = (intnat)load64(cur + CUR_STAGED);
+  intnat k = (intnat)load64(cur + CUR_NEXT);
+  const staged *back = NULL;
 
+  tables_of(&t, vt, BROT_BL_FRONT, BROT_BL_FRONT_MASK, BROT_BL_CACHE,
+            BROT_BL_CACHE_MASK, BROT_BL_MERGE_KEYS, BROT_BL_MERGE_VALUES,
+            BROT_BL_MERGE_MASK, BROT_BL_LEN_TABLE);
   w.s = s;
   w.stop = stop;
-  w.lead = lead;
+  w.lead = Bytes_val(Field(vt, BROT_BL_LEAD));
   w.uni = Bytes_val(vunicode);
   w.uni_len = (intnat)caml_string_length(vunicode);
   w.cp = 0;
+  if (nb <= STAGE && k < nb && st[k].i == i
+      && (intnat)load64(cur + CUR_STAGE_STOP) == stop)
+    i = st[nb - 1].e; /* the walk goes on after the stage */
+  else
+    nb = k = 0;
+  store64(cur + CUR_STAGE_STOP, (uint64_t)stop);
   if (!split) mask_init(&ms, i);
 
-  /* The loop is software-pipelined over the cache line: span k's walk, keys
-     and set are computed and the set's line prefetched one iteration ahead,
-     so the walk of span k+1 runs while span k's line is in flight; span k's
-     probes, merge and stores — and its room checks, in the reference's order —
-     resolve after that walk. The front table too is probed at resolve
-     time, never ahead, so every probe sees every earlier span's stores
-     and the tables stay bit for bit the reference's. The observable exit
-     states are the reference's exactly: a span whose resolve exits
-     discards the span walked after it,
-     which the reference would never have walked, and a walked span's Class
-     hand-back is reported only once every span before it has resolved and
-     the span room it would need has been checked. */
-  {
-    int have = 0;
-    intnat p_i = 0, p_e = 0, p_len = 0, p_set = -1, p_fslot = 0;
-    uint64_t p_k0 = 0, p_k1 = 0;
-    for (;;) {
-      intnat e = -1, len = 0, set = -1, fslot = 0;
-      uint64_t k0 = 0, k1 = 0;
-      int walked = 0;
-      if (i < stop) {
-        e = !split  ? mask_next_span(&ms, &w, i)
-            : o200k ? o200k_next_span(&w, i, digits, flag)
-                    : cl100k_next_span(&w, i, digits, flag);
-        walked = 1;
-        if (e >= 0) {
-          len = e - i;
-          if (len <= 15 && cache_mask >= 0) {
-            uint64_t hh;
-            k0 = key_word0(s, n, i, len);
-            k1 = key_word1(s, n, i, len);
-            hh = hash_of(k0, k1);
-            set = (intnat)((hh & (uint64_t)cache_mask) << 6);
-            fslot = (intnat)((hh & (uint64_t)front_mask) << 5);
-            BROT_PREFETCH(cache + set);
-          }
+  for (;;) {
+    int class_hit = 0, roomy;
+    if (k == nb) {
+      intnat limit = STAGE;
+      stages++;
+      if (!emit32 && spans_cap - nspans < limit) limit = spans_cap - nspans;
+      nb = k = 0;
+      while (nb < limit && i < stop) {
+        intnat e = !split  ? mask_next_span(&ms, &w, i)
+                   : o200k ? o200k_next_span(&w, i, digits, flag)
+                           : cl100k_next_span(&w, i, digits, flag);
+        if (e < 0) {
+          class_hit = 1;
+          break;
         }
+        stage(&t, s, n, &st[nb], i, e);
+        nb++;
+        i = e;
       }
-      if (have) {
-        have = 0;
-        if (nspans == spans_cap) {
-          reason = BROT_SPANS_FULL;
-          resume = p_i;
-          goto out;
+    }
+    /* A short span needs at most 15 ids of room: when the stage's worth is
+       there, only a long span's room is checked. */
+    roomy = ids_cap - nids >= 15 * (nb - k);
+    for (; k < nb; k++) {
+      const staged *p = &st[k];
+      intnat len = p->e - p->i;
+      uint64_t v[2];
+      if ((!roomy || len > 15) && ids_cap - nids < (len < 4 ? 4 : len)) {
+        reason = BROT_IDS_FULL;
+        resume = p->i;
+        goto out;
+      }
+      if (len > 15) {
+        back = p;
+        goto hand_back;
+      }
+      if (lookup(&t, p, v))
+        nids += emit32 ? emit_lanes32(ids32_base + nids, v[0], v[1])
+                       : emit_lanes(ids_base + nids, v[0], v[1]);
+      else {
+        int32_t ids15[15];
+        int m = can_merge ? merge_short(t.mkeys, t.mvals, t.mmask, byte_ids,
+                                        t.len_tab, t.len_n, s, p->i, len,
+                                        ids15)
+                          : -1;
+        if (m < 0) {
+          back = p;
+          goto hand_back;
         }
-        if (ids_cap - nids < (p_len < 4 ? 4 : p_len)) {
-          reason = BROT_IDS_FULL;
-          resume = p_i;
-          goto out;
-        }
-        if (p_len > 15) goto hand_back;
-        if (p_set >= 0) {
-          if (load64(front + p_fslot) == p_k0
-              && load64(front + p_fslot + 8) == p_k1) {
-            uint64_t v0 = load64(front + p_fslot + 16);
-            uint64_t v1 = load64(front + p_fslot + 24);
-            nids += emit32 ? emit_lanes32(ids32_base + nids, v0, v1)
-                           : emit_lanes(ids_base + nids, v0, v1);
-            goto emitted;
-          }
-          intnat way = probe(cache, p_set, p_k0, p_k1);
-          if (way >= 0) {
-            uint64_t v0 = load64(cache + way + 16);
-            uint64_t v1 = load64(cache + way + 24);
-            front_store(front, p_fslot, p_k0, p_k1, v0, v1);
-            nids += emit32 ? emit_lanes32(ids32_base + nids, v0, v1)
-                           : emit_lanes(ids_base + nids, v0, v1);
-            goto emitted;
-          }
-        }
-        if (!can_merge) goto hand_back;
-        {
-          int32_t ids15[15];
-          int k;
-          int m = merge_short(mkeys, mvals, mmask, byte_ids, len_tab, len_n,
-                              s, p_i, p_len, ids15);
-          if (m < 0) goto hand_back;
-          if (emit32)
-            for (k = 0; k < m; k++) ids32_base[nids + k] = ids15[k];
-          else
-            for (k = 0; k < m; k++)
-              ids_base[nids + k] = Val_long((intnat)ids15[k]);
-          nids += m;
-          if (p_set >= 0 && m <= 4) {
-            int fits = 1;
-            for (k = 0; k < m; k++)
-              if (ids15[k] >= 1 << 24) fits = 0;
-            if (fits) {
-              /* Pretoken_cache.value_lo/value_hi: two 24-bit lanes per
-                 word, the count in bits 24..31 of the first, absent lanes
-                 zero. */
-              uint64_t v0 = (uint64_t)ids15[0] | ((uint64_t)m << 24)
-                            | (m > 1 ? (uint64_t)ids15[1] << 32 : 0);
-              uint64_t v1 = (m > 2 ? (uint64_t)ids15[2] : 0)
-                            | (m > 3 ? (uint64_t)ids15[3] << 32 : 0);
-              cache_store(cache, p_set, p_k0, p_k1, v0, v1);
-            }
-          }
-          goto emitted;
-        }
-      emitted:
+        emit_ids(ids_base, ids32_base, emit32, nids, ids15, m);
+        nids += m;
+        remember(&t, p, ids15, m);
+      }
+      if (!emit32) {
         /* Spans.write's word: the start in the low 32 bits, the stop in the
            high; the mark is the id count after the span. */
-        store64(spans + 8 * nspans, ((uint64_t)p_e << 32) | (uint64_t)p_i);
-        marks_base[nmarks] = Val_long(nids);
+        store64(spans + 8 * nspans, ((uint64_t)p->e << 32) | (uint64_t)p->i);
+        marks_base[nmarks++] = Val_long(nids);
         nspans++;
-        nmarks++;
       }
-      if (!walked) { /* i = stop and every span resolved */
-        reason = BROT_DONE;
-        resume = i;
-        goto out;
-      }
-      if (e < 0) {
-        if (nspans == spans_cap) {
-          reason = BROT_SPANS_FULL;
-          resume = i;
-          goto out;
-        }
-        store64(cur + CUR_CP, (uint64_t)w.cp);
-        reason = BROT_CLASS;
-        resume = i;
-        goto out;
-      }
-      p_i = i;
-      p_e = e;
-      p_len = len;
-      p_k0 = k0;
-      p_k1 = k1;
-      p_set = set;
-      p_fslot = fslot;
-      have = 1;
-      i = e;
     }
-  hand_back:
-    /* The span is written and published but its ids and mark are not: the
-       driver encodes it in OCaml, appends its mark and resumes after it. */
-    store64(spans + 8 * nspans, ((uint64_t)p_e << 32) | (uint64_t)p_i);
-    nspans++;
-    reason = BROT_ENCODE;
-    resume = p_i;
+    if (!emit32 && nspans == spans_cap && (class_hit || i < stop)) {
+      reason = BROT_SPANS_FULL;
+      resume = i;
+      goto out;
+    }
+    if (class_hit) {
+      store64(cur + CUR_CP, (uint64_t)w.cp);
+      reason = BROT_CLASS;
+      resume = i;
+      goto out;
+    }
+    if (i >= stop) {
+      reason = BROT_DONE;
+      resume = i;
+      goto out;
+    }
+    if (stages == YIELD_STAGES) {
+      reason = BROT_SPANS_FULL;
+      resume = i;
+      goto out;
+    }
   }
+hand_back:
+  /* The span needs OCaml. Recording, it is written and published but its
+     ids and mark are not: the driver encodes it, appends its mark and
+     resumes after it. Otherwise its end rides in the cursor. */
+  if (emit32)
+    store64(cur + CUR_CP, (uint64_t)back->e);
+  else {
+    store64(spans + 8 * nspans, ((uint64_t)back->e << 32) | (uint64_t)back->i);
+    nspans++;
+  }
+  reason = BROT_ENCODE;
+  resume = back->i;
+  k++;
 out:
-  store64(cur + CUR_SPANS, (uint64_t)nspans);
+  if (!emit32) {
+    store64(cur + CUR_SPANS, (uint64_t)nspans);
+    store64(cur + CUR_MARKS, (uint64_t)nmarks);
+  }
   store64(cur + CUR_IDS, (uint64_t)nids);
-  store64(cur + CUR_MARKS, (uint64_t)nmarks);
   store64(cur + CUR_RESUME, (uint64_t)resume);
+  store64(cur + CUR_STAGED, (uint64_t)nb);
+  store64(cur + CUR_NEXT, (uint64_t)k);
   return Val_int(reason);
 }
 
@@ -1488,12 +1642,11 @@ CAMLprim value brot_byte_level_encode_byte(value *argv, int argn)
 }
 
 CAMLprim value brot_byte_level_encode_ids32(value text, value vpos,
-                                            value vstop, value vspans,
-                                            value vids, value vmarks,
+                                            value vstop, value vids,
                                             value vcursor, value vunicode,
                                             value vt)
 {
-  return byte_level_encode_impl(text, vpos, vstop, vspans, vids, vmarks,
+  return byte_level_encode_impl(text, vpos, vstop, Val_unit, vids, Val_unit,
                                 vcursor, vunicode, vt, Val_long(0), 1, 0);
 }
 
@@ -1501,8 +1654,7 @@ CAMLprim value brot_byte_level_encode_ids32_byte(value *argv, int argn)
 {
   (void)argn;
   return brot_byte_level_encode_ids32(argv[0], argv[1], argv[2], argv[3],
-                                      argv[4], argv[5], argv[6], argv[7],
-                                      argv[8]);
+                                      argv[4], argv[5], argv[6]);
 }
 
 CAMLprim value brot_split_encode(value text, value vpos, value vstop,
@@ -1522,12 +1674,11 @@ CAMLprim value brot_split_encode_byte(value *argv, int argn)
 }
 
 CAMLprim value brot_split_encode_ids32(value text, value vpos, value vstop,
-                                        value vspans, value vids,
-                                        value vmarks, value vcursor,
+                                        value vids, value vcursor,
                                         value vunicode, value vt,
                                         value vwalker)
 {
-  return byte_level_encode_impl(text, vpos, vstop, vspans, vids, vmarks,
+  return byte_level_encode_impl(text, vpos, vstop, Val_unit, vids, Val_unit,
                                 vcursor, vunicode, vt, vwalker, 1, 1);
 }
 
@@ -1535,15 +1686,14 @@ CAMLprim value brot_split_encode_ids32_byte(value *argv, int argn)
 {
   (void)argn;
   return brot_split_encode_ids32(argv[0], argv[1], argv[2], argv[3], argv[4],
-                                  argv[5], argv[6], argv[7], argv[8],
-                                  argv[9]);
+                                  argv[5], argv[6], argv[7]);
 }
 
 /* The fused SentencePiece kernel: Bpe.encode_into's unit walker, the same
-   cache probe, and the short merge initialized per character rather than per
-   byte. No Unicode classes come into it — the only boundary candidates are
-   the three ▁ bytes and the eight punctuation split bytes — so the walk
-   never fails and only Done, Ids_full and Encode are returned. An Encode
+   staged probe, and the short merge initialized per character rather than
+   per byte. No Unicode classes come into it — the only boundary candidates
+   are the three ▁ bytes and the eight punctuation split bytes — so the walk
+   never fails and Class is never returned. An Encode
    hand-back carries the unit through the cursor alone: its start in
    CUR_RESUME, its end in the word Class code points use, and no span or
    mark buffer is touched — the caller records the whole stretch as one
@@ -1553,40 +1703,120 @@ CAMLprim value brot_split_encode_ids32_byte(value *argv, int argn)
    split byte, this for the 0xE2 lead of ▁. */
 #define SP_SCAN_MARK 9
 
-/* Bpe.encode_into's unit cut, line for line: the end of the unit opening at
-   [u]. [anchor] is the position this call's walk began at — the stretch
-   start or a unit boundary by the resume contract — standing in for the
-   walker's [pos] in the ▁-run look-behind guard. The change is
-   unobservable: within [anchor, anchor+3) the look-behind window always
-   covers the boundary's opening byte, which is an 0xE2 lead or an ASCII
-   punct byte, never a mark continuation, so the guard resolves as the
-   walker's would. */
-static intnat sp_next_unit(const unsigned char *s, intnat stop, intnat anchor,
-                           const unsigned char *scan, const value *safe,
-                           intnat u)
+/* The unit walk finds its boundary candidates 64 bytes at a time: a bit per
+   byte that the scan table can open something at, then the rules of
+   Bpe.encode_into's cut on the candidates alone. The vector paths test the
+   bytes Bpe.sp_split_bytes and ▁'s lead can be, a superset of the bytes the
+   scan table marks (a slot can be dropped), so every candidate is checked
+   against the table; the last partial block reads the table directly and
+   no byte at or past [stop] is read. */
+
+#if defined(BROT_MASK_NEON)
+static uint64_t sp_block(const unsigned char *p)
 {
-  intnat p = u;
-  while (p < stop) {
-    intnat k = scan[s[p]];
-    if (k == 0) {
-      p++;
-      continue;
-    }
-    if (k == SP_SCAN_MARK) {
-      if (p + 3 <= stop && s[p + 1] == 0x96 && s[p + 2] == 0x81) {
-        if (p > u
-            && !(p >= anchor + 3 && s[p - 3] == 0xE2 && s[p - 2] == 0x96
-                 && s[p - 1] == 0x81))
-          return p;
-        p += 3;
-      } else
-        p++;
-    } else {
-      if (p > u && Bool_val(safe[((k - 1) << 8) | s[p - 1]])) return p;
-      p++;
-    }
+  static const uint8_t opens[9] = {0xE2, '.', ',', '"', ')', ';', ':', '!', '?'};
+  uint8x16_t m[4];
+  int k, j;
+  for (k = 0; k < 4; k++) {
+    uint8x16_t v = vld1q_u8(p + 16 * k);
+    uint8x16_t a = vceqq_u8(v, vdupq_n_u8(opens[0]));
+    for (j = 1; j < 9; j++) a = vorrq_u8(a, vceqq_u8(v, vdupq_n_u8(opens[j])));
+    m[k] = a;
   }
-  return stop;
+  return movemask64(m[0], m[1], m[2], m[3]);
+}
+#elif defined(BROT_MASK_SSE2)
+static uint64_t sp_block(const unsigned char *p)
+{
+  static const char opens[9] = {'\xE2', '.', ',', '"', ')', ';', ':', '!', '?'};
+  uint64_t m = 0;
+  int k, j;
+  for (k = 0; k < 4; k++) {
+    __m128i v = _mm_loadu_si128((const __m128i *)(p + 16 * k));
+    __m128i a = _mm_cmpeq_epi8(v, _mm_set1_epi8(opens[0]));
+    for (j = 1; j < 9; j++)
+      a = _mm_or_si128(a, _mm_cmpeq_epi8(v, _mm_set1_epi8(opens[j])));
+    m |= (uint64_t)(unsigned)_mm_movemask_epi8(a) << (16 * k);
+  }
+  return m;
+}
+#endif
+
+/* The candidates among the [count] bytes at [p], from the scan table. */
+static uint64_t sp_block_scalar(const unsigned char *p, intnat count,
+                                const unsigned char *scan)
+{
+  uint64_t m = 0;
+  intnat k;
+  for (k = 0; k < count; k++) m |= (uint64_t)(scan[p[k]] != 0) << k;
+  return m;
+}
+
+typedef struct {
+  const unsigned char *s;
+  intnat stop;
+  intnat anchor; /* where the call began: the stretch start or a boundary */
+  const unsigned char *scan;
+  const value *safe;
+  intnat base;   /* the block the candidates are relative to */
+  uint64_t cand; /* its candidates not yet passed */
+} sp_walker;
+
+static void sp_load(sp_walker *u)
+{
+  intnat left = u->stop - u->base;
+#if defined(BROT_MASK_NEON) || defined(BROT_MASK_SSE2)
+  if (left >= 64) {
+    u->cand = sp_block(u->s + u->base);
+    return;
+  }
+#endif
+  u->cand = sp_block_scalar(u->s + u->base, left < 64 ? left : 64, u->scan);
+}
+
+static void sp_init(sp_walker *u, const unsigned char *s, intnat stop,
+                    intnat anchor, const unsigned char *scan,
+                    const value *safe)
+{
+  u->s = s;
+  u->stop = stop;
+  u->anchor = anchor;
+  u->scan = scan;
+  u->safe = safe;
+  u->base = anchor;
+  sp_load(u);
+}
+
+/* Bpe.encode_into's unit cut: the end of the unit opening at [b], which is
+   the previous call's return. A ▁ ends the unit unless it extends a ▁ run;
+   a split byte ends it after a byte the vocabulary never joins it to. The
+   run test reads back to [anchor], which stands in for the walker's [pos]:
+   within [anchor, anchor + 3) the look-behind window always covers the
+   boundary's opening byte, an 0xE2 lead or an ASCII punctuation byte, never
+   a mark continuation, so the guard resolves as the walker's would. */
+static BROT_INLINE intnat sp_next(sp_walker *u, intnat b)
+{
+  const unsigned char *s = u->s;
+  for (;;) {
+    while (u->cand != 0) {
+      intnat p = u->base + ctz64(u->cand);
+      intnat k;
+      if (p > b) {
+        k = u->scan[s[p]];
+        if (k == SP_SCAN_MARK) {
+          if (p + 3 <= u->stop && s[p + 1] == 0x96 && s[p + 2] == 0x81
+              && !(p >= u->anchor + 3 && s[p - 3] == 0xE2 && s[p - 2] == 0x96
+                   && s[p - 1] == 0x81))
+            return p;
+        } else if (k != 0 && Bool_val(u->safe[((k - 1) << 8) | s[p - 1]]))
+          return p;
+      }
+      u->cand &= u->cand - 1;
+    }
+    u->base += 64;
+    if (u->base >= u->stop) return u->stop;
+    sp_load(u);
+  }
 }
 
 /* Bpe.utf8_byte_len. */
@@ -1613,18 +1843,18 @@ static inline intnat pack_char_key(const unsigned char *p, intnat blen)
 }
 
 /* The short merge over a unit — Bpe.init_word_fast restricted to characters
-   with a direct piece, then the shared merge run. Returns the id count, or
-   -1 when the unit must go back to OCaml: a character without a piece (unk,
-   fuse and byte-fallback semantics stay there, a truncated character packs
-   no whole character's key and lands here too), or the merge-run refusal.
-   The character map is probed with merge_find: the two maps share the
-   Merge_map layout. */
-static int sp_merge_short(const value *mkeys, const value *mvals, intnat mmask,
-                          const value *ascii_ids, const value *ckeys,
-                          const value *cvals, intnat cmask,
-                          const value *len_tab, intnat len_n,
-                          const unsigned char *s, intnat pos, intnat len,
-                          int32_t out[15])
+   with a direct piece or a byte fallback for each of their bytes, then the
+   shared merge run. Returns the id count, or -1 when the unit must go back
+   to OCaml: a character with neither (the unknown token's semantics stay
+   there; a truncated character packs no whole character's key and lands
+   on its fallback or here too), or the merge-run refusal. A fallback symbol
+   accounts for its one byte, so it never trips that refusal. The character
+   map is probed with merge_find: the two maps share the Merge_map
+   layout. */
+static int sp_merge_short(const tables *t, const value *ascii_ids,
+                          const value *ckeys, const value *cvals, intnat cmask,
+                          const value *fallback_ids, const unsigned char *s,
+                          intnat pos, intnat len, int32_t out[15])
 {
   intnat sym_c[15], sym_len[15], sym_prev[15], sym_next[15];
   intnat n = 0, k = 0;
@@ -1638,173 +1868,145 @@ static int sp_merge_short(const value *mkeys, const value *mvals, intnat mmask,
       if (blen > len - k) blen = len - k;
       id = merge_find(ckeys, cvals, cmask, pack_char_key(s + pos + k, blen));
     }
-    if (id < 0) return -1;
-    sym_c[n] = id;
-    sym_len[n] = blen;
-    sym_prev[n] = n - 1;
-    sym_next[n] = n + 1;
-    n++;
+    if (id >= 0) {
+      sym_c[n] = id;
+      sym_len[n] = blen;
+      n++;
+    } else {
+      intnat j;
+      for (j = 0; j < blen; j++)
+        if (Long_val(fallback_ids[s[pos + k + j]]) < 0) return -1;
+      for (j = 0; j < blen; j++) {
+        sym_c[n] = Long_val(fallback_ids[s[pos + k + j]]);
+        sym_len[n] = 1;
+        n++;
+      }
+    }
     k += blen;
   }
-  sym_next[n - 1] = -1;
-  return merge_run(mkeys, mvals, mmask, len_tab, len_n, n, sym_c, sym_len,
-                   sym_prev, sym_next, out);
+  for (k = 0; k < n; k++) {
+    sym_prev[k] = k - 1;
+    sym_next[k] = k + 1 < n ? k + 1 : -1;
+  }
+  return merge_run(t->mkeys, t->mvals, t->mmask, t->len_tab, t->len_n, n,
+                   sym_c, sym_len, sym_prev, sym_next, out);
 }
 
-/* The entry's body. The caller validates the range and the cursor's id
-   count once; ids room is checked here per unit, a hit storing its four
-   lanes unconditionally as Ints.add4 does. [emit32] selects the ids sink as
-   in the byte-level body. The loop is software-pipelined exactly
-   as the byte-level entry's: unit k+1 is walked, keyed and its set
-   prefetched while unit k's line is in flight; unit k's probes, merge and
-   stores resolve after that walk, so every probe sees every earlier unit's
-   stores and the tables stay bit for bit the reference's. An exit at unit
-   k's resolve discards the unit walked after it, which the reference would
-   never have walked. */
-static value sp_encode_impl(value text, value vpos, value vstop, value vids,
-                            value vcursor, value vt, int emit32)
+/* The SentencePiece entry's body. The caller validates the range and the
+   cursor's id count once; ids room is checked here per unit, a hit storing
+   its four lanes unconditionally as Ints.add4 does. [emit32] selects the
+   ids sink as in the byte-level body, and units are staged as spans are
+   there. */
+static BROT_INLINE value sp_encode_impl(value text, value vpos,
+                                            value vstop, value vids,
+                                            value vcursor, value vt,
+                                            int emit32)
 {
   const unsigned char *s = (const unsigned char *)String_val(text);
   intnat n = (intnat)caml_string_length(text);
   intnat stop = Long_val(vstop);
-  /* One writer, no GC point: the volatile qualifier is cast away as in the
-     byte-level entry. */
   value *ids_base = emit32 ? NULL : (value *)&Field(vids, 0);
   int32_t *ids32_base = emit32 ? (int32_t *)Caml_ba_data_val(vids) : NULL;
   intnat ids_cap = emit32 ? Caml_ba_array_val(vids)->dim[0]
                           : (intnat)Wosize_val(vids);
   unsigned char *cur = Bytes_val(vcursor);
-
-  unsigned char *front = Bytes_val(Field(vt, BROT_SP_FRONT));
-  intnat front_mask = Long_val(Field(vt, BROT_SP_FRONT_MASK));
-  unsigned char *cache = Bytes_val(Field(vt, BROT_SP_CACHE));
-  intnat cache_mask = Long_val(Field(vt, BROT_SP_CACHE_MASK));
-  const value *mkeys = (const value *)&Field(Field(vt, BROT_SP_MERGE_KEYS), 0);
-  const value *mvals =
-      (const value *)&Field(Field(vt, BROT_SP_MERGE_VALUES), 0);
-  intnat mmask = Long_val(Field(vt, BROT_SP_MERGE_MASK));
-  const value *len_tab =
-      (const value *)&Field(Field(vt, BROT_SP_LEN_TABLE), 0);
-  intnat len_n = (intnat)Wosize_val(Field(vt, BROT_SP_LEN_TABLE));
   const value *ascii_ids =
       (const value *)&Field(Field(vt, BROT_SP_ASCII_IDS), 0);
   const value *ckeys = (const value *)&Field(Field(vt, BROT_SP_CHAR_KEYS), 0);
   const value *cvals =
       (const value *)&Field(Field(vt, BROT_SP_CHAR_VALUES), 0);
   intnat cmask = Long_val(Field(vt, BROT_SP_CHAR_MASK));
-  const unsigned char *scan = Bytes_val(Field(vt, BROT_SP_SCAN));
-  const value *safe = (const value *)&Field(Field(vt, BROT_SP_PUNCT_SAFE), 0);
-
+  const value *fallback_ids =
+      (const value *)&Field(Field(vt, BROT_SP_FALLBACK_IDS), 0);
   intnat nids = (intnat)load64(cur + CUR_IDS);
-  intnat anchor = Long_val(vpos);
-  intnat i = anchor;
+  intnat i = Long_val(vpos);
   intnat resume;
   int reason;
+  tables t;
+  sp_walker u;
+  intnat stages = 0;
+  staged *st = (staged *)(cur + CUR_STAGE);
+  intnat nb = (intnat)load64(cur + CUR_STAGED);
+  intnat k = (intnat)load64(cur + CUR_NEXT);
+  const staged *back = NULL;
 
-  {
-    int have = 0;
-    intnat p_i = 0, p_e = 0, p_len = 0, p_set = -1, p_fslot = 0;
-    uint64_t p_k0 = 0, p_k1 = 0;
-    for (;;) {
-      intnat e = -1, len = 0, set = -1, fslot = 0;
-      uint64_t k0 = 0, k1 = 0;
-      int walked = 0;
-      if (i < stop) {
-        e = sp_next_unit(s, stop, anchor, scan, safe, i);
-        walked = 1;
-        len = e - i;
-        if (len <= 15 && cache_mask >= 0) {
-          uint64_t hh;
-          k0 = key_word0(s, n, i, len);
-          k1 = key_word1(s, n, i, len);
-          hh = hash_of(k0, k1);
-          set = (intnat)((hh & (uint64_t)cache_mask) << 6);
-          fslot = (intnat)((hh & (uint64_t)front_mask) << 5);
-          BROT_PREFETCH(cache + set);
-        }
+  tables_of(&t, vt, BROT_SP_FRONT, BROT_SP_FRONT_MASK, BROT_SP_CACHE,
+            BROT_SP_CACHE_MASK, BROT_SP_MERGE_KEYS, BROT_SP_MERGE_VALUES,
+            BROT_SP_MERGE_MASK, BROT_SP_LEN_TABLE);
+  if (nb <= STAGE && k < nb && st[k].i == i
+      && (intnat)load64(cur + CUR_STAGE_STOP) == stop)
+    i = st[nb - 1].e; /* the walk goes on after the stage */
+  else
+    nb = k = 0;
+  store64(cur + CUR_STAGE_STOP, (uint64_t)stop);
+  sp_init(&u, s, stop, i, Bytes_val(Field(vt, BROT_SP_SCAN)),
+          (const value *)&Field(Field(vt, BROT_SP_PUNCT_SAFE), 0));
+
+  for (;;) {
+    int roomy;
+    if (k == nb) {
+      stages++;
+      nb = k = 0;
+      while (nb < STAGE && i < stop) {
+        intnat e = sp_next(&u, i);
+        stage(&t, s, n, &st[nb], i, e);
+        nb++;
+        i = e;
       }
-      if (have) {
-        have = 0;
-        if (p_len > 15) goto hand_back;
-        if (ids_cap - nids < (p_len < 4 ? 4 : p_len)) {
-          reason = BROT_IDS_FULL;
-          resume = p_i;
-          goto out;
-        }
-        if (p_set >= 0) {
-          if (load64(front + p_fslot) == p_k0
-              && load64(front + p_fslot + 8) == p_k1) {
-            uint64_t v0 = load64(front + p_fslot + 16);
-            uint64_t v1 = load64(front + p_fslot + 24);
-            nids += emit32 ? emit_lanes32(ids32_base + nids, v0, v1)
-                           : emit_lanes(ids_base + nids, v0, v1);
-            goto emitted;
-          }
-          intnat way = probe(cache, p_set, p_k0, p_k1);
-          if (way >= 0) {
-            uint64_t v0 = load64(cache + way + 16);
-            uint64_t v1 = load64(cache + way + 24);
-            front_store(front, p_fslot, p_k0, p_k1, v0, v1);
-            nids += emit32 ? emit_lanes32(ids32_base + nids, v0, v1)
-                           : emit_lanes(ids_base + nids, v0, v1);
-            goto emitted;
-          }
-        }
-        {
-          int32_t ids15[15];
-          int k;
-          int m = sp_merge_short(mkeys, mvals, mmask, ascii_ids, ckeys, cvals,
-                                 cmask, len_tab, len_n, s, p_i, p_len, ids15);
-          if (m < 0) goto hand_back;
-          if (emit32)
-            for (k = 0; k < m; k++) ids32_base[nids + k] = ids15[k];
-          else
-            for (k = 0; k < m; k++)
-              ids_base[nids + k] = Val_long((intnat)ids15[k]);
-          nids += m;
-          if (p_set >= 0 && m <= 4) {
-            int fits = 1;
-            for (k = 0; k < m; k++)
-              if (ids15[k] >= 1 << 24) fits = 0;
-            if (fits) {
-              /* Pretoken_cache.value_lo/value_hi: two 24-bit lanes per
-                 word, the count in bits 24..31 of the first, absent lanes
-                 zero. */
-              uint64_t v0 = (uint64_t)ids15[0] | ((uint64_t)m << 24)
-                            | (m > 1 ? (uint64_t)ids15[1] << 32 : 0);
-              uint64_t v1 = (m > 2 ? (uint64_t)ids15[2] : 0)
-                            | (m > 3 ? (uint64_t)ids15[3] << 32 : 0);
-              cache_store(cache, p_set, p_k0, p_k1, v0, v1);
-            }
-          }
-        }
-      emitted:;
+    }
+    roomy = ids_cap - nids >= 15 * (nb - k); /* as in the byte-level entry */
+    for (; k < nb; k++) {
+      const staged *p = &st[k];
+      intnat len = p->e - p->i;
+      uint64_t v[2];
+      if (len > 15) {
+        back = p;
+        goto hand_back;
       }
-      if (!walked) { /* i = stop and every unit resolved */
-        reason = BROT_DONE;
-        resume = i;
+      if (!roomy && ids_cap - nids < (len < 4 ? 4 : len)) {
+        reason = BROT_IDS_FULL;
+        resume = p->i;
         goto out;
       }
-      p_i = i;
-      p_e = e;
-      p_len = len;
-      p_k0 = k0;
-      p_k1 = k1;
-      p_set = set;
-      p_fslot = fslot;
-      have = 1;
-      i = e;
+      if (lookup(&t, p, v))
+        nids += emit32 ? emit_lanes32(ids32_base + nids, v[0], v[1])
+                       : emit_lanes(ids_base + nids, v[0], v[1]);
+      else {
+        int32_t ids15[15];
+        int m = sp_merge_short(&t, ascii_ids, ckeys, cvals, cmask,
+                               fallback_ids, s, p->i, len, ids15);
+        if (m < 0) {
+          back = p;
+          goto hand_back;
+        }
+        emit_ids(ids_base, ids32_base, emit32, nids, ids15, m);
+        nids += m;
+        remember(&t, p, ids15, m);
+      }
     }
-  hand_back:
-    /* Nothing was appended for the unit: the driver encodes
-       [p_i, p_e) in OCaml and resumes at its end. */
-    store64(cur + CUR_CP, (uint64_t)p_e);
-    reason = BROT_ENCODE;
-    resume = p_i;
+    if (i >= stop) {
+      reason = BROT_DONE;
+      resume = i;
+      goto out;
+    }
+    if (stages == YIELD_STAGES) {
+      reason = BROT_SPANS_FULL;
+      resume = i;
+      goto out;
+    }
   }
+hand_back:
+  /* Nothing was appended for the unit: the driver encodes it in OCaml and
+     resumes at its end. */
+  store64(cur + CUR_CP, (uint64_t)back->e);
+  reason = BROT_ENCODE;
+  resume = back->i;
+  k++;
 out:
   store64(cur + CUR_IDS, (uint64_t)nids);
   store64(cur + CUR_RESUME, (uint64_t)resume);
+  store64(cur + CUR_STAGED, (uint64_t)nb);
+  store64(cur + CUR_NEXT, (uint64_t)k);
   return Val_int(reason);
 }
 

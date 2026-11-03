@@ -2405,6 +2405,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Byte-level BPE (GPT-2 and the cl100k and o200k pipelines) and SentencePiece
+  BPE encode with a fifth to a quarter fewer instructions: the fused kernels walk
+  64 pretokens ahead of their cache probes, test text sixteen bytes at a time on
+  x86-64, and spell a character without a piece through byte fallback in C.
 - On a big-endian machine brot encodes through its OCaml code: the C
   kernels' walkers read native words as little-endian and cut text wrong
   there.

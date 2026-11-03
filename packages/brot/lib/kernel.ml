@@ -42,6 +42,7 @@ type sp = {
   char_mask : int; (* 11: BROT_SP_CHAR_MASK *)
   scan : Bytes.t; (* 12: BROT_SP_SCAN *)
   punct_safe : bool array; (* 13: BROT_SP_PUNCT_SAFE *)
+  fallback_ids : int array; (* 14: BROT_SP_FALLBACK_IDS *)
 }
 
 type reason = Done | Spans_full | Ids_full | Class | Encode
@@ -50,7 +51,10 @@ type ids32 = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
 external get64u : Bytes.t -> int -> int64 = "%caml_bytes_get64u"
 external set64u : Bytes.t -> int -> int64 -> unit = "%caml_bytes_set64u"
 
-let cursor () = Bytes.make 40 '\000'
+(* The counts, then the stage: 64 spans of 48 bytes ([STAGE] and [staged] in
+   the C). *)
+let cursor () = Bytes.make (64 + (64 * 48)) '\000'
+let restart cur = set64u cur 40 0L
 
 let set cur ~spans ~ids ~marks =
   set64u cur 0 (Int64.of_int spans);
@@ -85,16 +89,8 @@ external sp_encode :
 [@@noalloc]
 
 external byte_level_encode_ids32 :
-  string ->
-  int ->
-  int ->
-  Bytes.t ->
-  ids32 ->
-  int array ->
-  Bytes.t ->
-  Bytes.t ->
-  byte_level ->
-  reason = "brot_byte_level_encode_ids32_byte" "brot_byte_level_encode_ids32"
+  string -> int -> int -> ids32 -> Bytes.t -> Bytes.t -> byte_level -> reason
+  = "brot_byte_level_encode_ids32_byte" "brot_byte_level_encode_ids32"
 [@@noalloc]
 
 external split_encode :
@@ -115,9 +111,7 @@ external split_encode_ids32 :
   string ->
   int ->
   int ->
-  Bytes.t ->
   ids32 ->
-  int array ->
   Bytes.t ->
   Bytes.t ->
   byte_level ->

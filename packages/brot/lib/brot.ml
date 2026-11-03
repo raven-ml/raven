@@ -209,11 +209,18 @@ let with_span_encoder t ?ids32 f =
       Bpe.with_state m (fun st ->
           match ids32 with
           | Some sink ->
-              f
-                (Bpe.encode_into_ids32 m st sink)
-                (Option.map
-                   (fun walker -> Bpe.encode_walk_ids32 m st ~walker sink)
-                   t.fused)
+              (* The walking encoder exists for a fused model alone: an
+                 unfused one allocates no closure for it per document. *)
+              let walk =
+                match t.fused with
+                | None -> None
+                | Some walker ->
+                    Some
+                      (fun spill ~opaque ~marks:_ _ text ~pos ~stop ->
+                        Bpe.encode_walk_ids32 m st ~walker sink spill ~opaque
+                          text ~pos ~stop)
+              in
+              f (Bpe.encode_into_ids32 m st sink) walk
           | None ->
               f (Bpe.encode_into m st)
                 (Option.map

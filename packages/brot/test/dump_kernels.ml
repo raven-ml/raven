@@ -10,8 +10,8 @@
    first differing line, unless the two are byte-identical; without it, it
    prints its dump. Inputs cover every kernel exit: unclassified code points,
    malformed UTF-8 of every shape, pretokens at and past the 15-byte key limit,
-   huge spans, more pretokens than a span chunk, every exit at the staged
-   chunk's seams, bytes without an id, [ignore_merges], caching off, and a merge
+   huge spans, more pretokens than a span chunk, every exit at the seams of
+   the 64-span stage, bytes without an id, [ignore_merges], caching off, and a merge
    whose result stands for other bytes than its entry's. The byte-level models
    run behind the GPT-2 walker and behind the cl100k and o200k ones, which have
    their own inputs: contractions in every case, digit groups, newlines inside
@@ -230,13 +230,14 @@ let adversarial =
             Buffer.contents buf);
       ]
   in
-  (* Chunk-seam adversaries for the two-phase kernel: the entry loop stages 256
-     spans per chunk, so each family plants its event at span indices 250..262 —
-     an Encode hand-back, a Class hand-back (a code point per index, first met
-     there), identical adjacent pretokens (miss, store, hit across the harvest
-     seam) and a plain stream whose length lands on the seam.
+  (* Seam adversaries for the staged kernel: the entry loop stages 64 spans at
+     a time, so each family plants its event at span indices 250..262, across
+     the seam at 256 — an Encode hand-back, a Class hand-back (a code point per
+     index, first met there), identical adjacent pretokens (miss, store, hit
+     across the seam) and a plain stream whose length lands on the seam.
      [ids_full_midchunk] outgrows the driver's 65536-id reserve inside one call,
-     so Ids_full parks and resumes a chunk mid-stage. *)
+     so Ids_full exits mid-stage, keeping the rest of the stage in the cursor
+     for the call that resumes. *)
   let chunk_seams =
     let spans k = String.concat "" (List.init k (fun _ -> " a")) in
     let fam name shape =

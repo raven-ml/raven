@@ -199,16 +199,15 @@ val encode_walk_ids32 :
   sink ->
   Ints.t ->
   opaque:Ints.t ->
-  marks:Ints.t ->
-  Spans.t ->
   string ->
   pos:int ->
   stop:int ->
   int
-(** [encode_walk_ids32 t st ~walker sink spill ~opaque ~marks spans text ~pos
-     ~stop] is {!encode_walk} with the kernel's ids written to [sink] and every
-    hand-back's to [spill], under {!sink}'s flush rule. Only meaningful when
-    {!fused}, like {!encode_walk}. *)
+(** [encode_walk_ids32 t st ~walker sink spill ~opaque text ~pos ~stop] is
+    {!encode_walk} recording no spans or marks, with the kernel's ids written to
+    [sink] and every hand-back's to [spill], under {!sink}'s flush rule. It
+    walks the whole range and returns [stop]. Only meaningful when {!fused},
+    like {!encode_walk}. *)
 
 val token_table : t -> string array
 (** [token_table t] maps an id to its token string. Owned by [t]; do not mutate.
