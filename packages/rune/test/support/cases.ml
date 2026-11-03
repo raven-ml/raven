@@ -48,14 +48,18 @@ type case = {
   shape : int array Gen.t;
   values : values;
   f : f64_t -> f64_t;
+  smooth : f64_t -> bool;
+      (** Whether [f] is smooth within a step of central differences of the
+          value, where [values] does not make it so. *)
   z : ((f64_t -> c128_t) * (c128_t -> c128_t)) option;
       (** A complex function, and the complex value it reads from [f]'s operand,
           where [f] is it on the parts. *)
 }
 
 let case ?(empty = true) ?(values = Uniform [ (-2., 2.) ])
-    ?(shape = Gen.(map (fun n -> [| n |]) (int_range 0 5))) ?z name f =
-  { name; empty; shape; values; f; z }
+    ?(shape = Gen.(map (fun n -> [| n |]) (int_range 0 5)))
+    ?(smooth = Fun.const true) ?z name f =
+  { name; empty; shape; values; f; smooth; z }
 
 let rows k = Gen.(map (fun n -> [| k; n |]) (int_range 0 4))
 
@@ -276,6 +280,19 @@ let wide_reduce reduction x =
             loads = wide_loads x;
           }))
 
+(* Whether the program's values along [x]'s columns lie [1e-2] apart or more.
+   Spaced operands do not keep them apart, and a max of two closer values has a
+   kink a central difference of step [1e-6] may cross: each of the twenty
+   partial derivatives is at most [1 + Σ |x_k|], about 100, so that a step moves
+   a value by at most [2e-3]. *)
+let wide_apart x =
+  let v = Nx.to_array (wide_map x) in
+  Array.sort Float.compare v;
+  let rec go k =
+    k >= Array.length v || (v.(k) -. v.(k - 1) >= 1e-2 && go (k + 1))
+  in
+  go 1
+
 (* Two sums of a program's two outputs, the second's first. *)
 let sums x =
   let prog =
@@ -434,7 +451,7 @@ let real_cases =
     case ~empty:false
       ~shape:Gen.(map (fun n -> [| wide; n + 1 |]) (int_range 0 3))
       ~values:(Spaced (-3., 0.1))
-      "a max over twenty operands"
+      ~smooth:wide_apart "a max over twenty operands"
       (wide_reduce (Monoid (Max, 0, f64)));
     case ~shape:matrix "sum" (Nx.sum ~axes:[ 1 ]);
     case ~shape:matrix "sum and its tangent in one loop" (fun x -> Nx.sum x);

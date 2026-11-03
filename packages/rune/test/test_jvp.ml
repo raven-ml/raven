@@ -65,6 +65,7 @@ let law c (s, xs, ts) =
   cover "a shape of several elements" (numel s > 1);
   cover_values c xs;
   let x = Nx.create f64 s xs and t = Nx.create f64 s ts in
+  assume (c.smooth x);
   let y, dy = Rune.jvp' c.f x t in
   equal ~msg:"primal" bits_t (bits (c.f x)) (bits y);
   equal ~msg:"tangent's shape" (array int) (Nx.shape y) (Nx.shape dy);
@@ -79,6 +80,7 @@ let second_law c (s, xs, ts) =
   cover "a shape of several elements" (numel s > 1);
   cover_values c xs;
   let x = Nx.create f64 s xs and t = Nx.create f64 s ts in
+  assume (c.smooth x);
   let u = Nx.create f64 s (spread (Array.fold_left ( +. ) 0.5 ts) (numel s)) in
   let along_u x = snd (Rune.jvp' c.f x u) in
   let _, d2 = Rune.jvp' along_u x t in
