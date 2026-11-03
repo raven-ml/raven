@@ -131,11 +131,13 @@ let keys c lead =
         draw c 3. (Array.append lead [| c.hk; c.tk; c.dv |]) )
   | Some p -> (draw c 2. [| 3; c.hk; p; c.dk |], draw c 3. [| 3; c.hk; p; c.dv |])
 
-(* The sum of the bounds nx.mli states for two computations of [c], one
-   within the kernel's [ε] and one within a compiled log-sum-exp's, both
-   generous to first order: values lie in [[-1, 1]], so a score is at most
-   [a = |scale| dk] plus ALiBi's slopes times [tq + tk], [b], and [η] at
-   most [(2 dk + 4) u a + 2u b]. *)
+(* The sum of the bounds nx.mli states for two computations of [c], to
+   first order: one with nx.cpu's [ε], [(13n + 9 + 5 ln tk) u + u |lse|]
+   and its exp of 5u, and one with rune.mli's compiled [Nx.logsumexp],
+   [(1.37 (tk - 1) + 2E + 1 + 3 ln tk) u + u |lse|] for [E = 9] ulps, and
+   its exp of 9 ulps, 19u, in [w]. Values lie in [[-1, 1]], so a score is
+   at most [a = |scale| dk] plus ALiBi's slopes times [tq + tk], [b], and
+   [η] at most [(2 dk + 4) u a + 2u b]. *)
 let tolerances c lse =
   let scale = 1. /. Float.sqrt (Float.of_int c.dk) in
   let a = scale *. Float.of_int c.dk in
@@ -147,12 +149,14 @@ let tolerances c lse =
     ((Float.of_int ((13 * n) + 9) +. (5. *. ln)) *. u) +. (u *. Float.abs lse)
   in
   let compiled =
-    ((Float.of_int ((2 * c.tk) + 20) +. (10. *. ln)) *. u)
+    (((1.37 *. Float.of_int (c.tk - 1)) +. 19. +. (3. *. ln)) *. u)
     +. (u *. Float.abs lse)
   in
-  let w eps = (2. *. eta) +. eps +. (((2. *. b) +. ln +. 5.) *. u) in
+  let w ~exp eps = (2. *. eta) +. eps +. (((2. *. b) +. ln +. exp) *. u) in
   let gamma = Float.of_int (c.tk + 1) *. 2. *. u in
-  ((2. *. eta) +. kernel +. compiled, w kernel +. w compiled +. (2. *. gamma))
+  (* Each [o], at most 1, rounds once into float32: [u |o|] each. *)
+  ( (2. *. eta) +. kernel +. compiled,
+    w ~exp:5. kernel +. w ~exp:19. compiled +. (2. *. gamma) +. (2. *. u) )
 
 let law_jit c =
   cover "paged" (c.page <> None);
@@ -192,6 +196,30 @@ let law_vmap c =
   let lane q = fst (call c ~lead:[||] q k v) in
   let each = Nx.stack ~axis:0 [ lane (Nx.get [ 0 ] q); lane (Nx.get [ 1 ] q) ] in
   equal ~msg:"o" (array int64) (bits each) (bits (Rune.vmap' lane q))
+
+(* Lanes of pools of their own over one query: vmap reads them as one pool
+   of every lane's pages, each lane's table entries renumbered into it and
+   one out of range, -1 or past the pages, kept out of range. *)
+let law_vmap_pools c =
+  let page = Option.value c.page ~default:2 in
+  let blocks = Array.length c.table / 2 in
+  let table = Array.copy c.table in
+  table.(0) <- -1;
+  table.(blocks - 1) <- 3;
+  let c = { c with page = Some page; tk = page * blocks; table; lengths = None } in
+  cover "an entry out of range in a lane's table"
+    (Array.exists (fun e -> e < 0 || e >= 3) (Array.sub c.table 0 blocks));
+  let pools = draw c 2. [| 2; 3; c.hk; page; c.dk + c.dv |] in
+  let q = draw c 1. [| hq c; c.tq; c.dk |] in
+  let lane pool =
+    let k = Nx.slice [ A; A; A; R (0, c.dk) ] pool in
+    let v = Nx.slice [ A; A; A; R (c.dk, c.dk + c.dv) ] pool in
+    fst (call c ~lead:[||] q k v)
+  in
+  let each =
+    Nx.stack ~axis:0 [ lane (Nx.get [ 0 ] pools); lane (Nx.get [ 1 ] pools) ]
+  in
+  equal ~msg:"o" (array int64) (bits each) (bits (Rune.vmap' lane pools))
 
 (* [<w, f'(q) t>] against central differences of step [h]: within 1e-2 of
    the derivative's magnitude, which the step's truncation and float32's
@@ -250,6 +278,8 @@ let () =
            (Gen.with_pp pp_case case) law_jit;
          prop ~count:60 "vmap is each lane, bit for bit"
            (Gen.with_pp pp_case case) law_vmap;
+         prop ~count:60 "vmap over lanes' own pools is each lane, bit for bit"
+           (Gen.with_pp pp_case case) law_vmap_pools;
          prop ~count:60 "jvp by central differences"
            (Gen.with_pp pp_case case) law_jvp;
          test "gradients by central differences" test_grad;

@@ -44,8 +44,9 @@
 
    Bound (nx_cpu.mli), to first order in u = 2^-24, barring overflow and
    underflow, for a row of t keys in n blocks, scores s within [-b, b], m
-   the final maximum; exp and log within 2 ulps, so exp's relative error is
-   at most 5u (2 ulps of the correctly rounded value, 2.5 of the exact):
+   the final maximum; exp within 2 ulps, so its relative error is at most
+   5u (2 ulps of the correctly rounded value, 2.5 of the exact), and log
+   within 1 ulp, 3u:
    1. Exponents. p_j = exp (s_j - m_k) and α_i = exp (m_(i-1) - m_i) each
       round their difference once, u times its size. A key's weight in l
       and acc is p_j times the α of each later block, whose differences
@@ -57,8 +58,8 @@
       into l (u); each later block multiplies l by α (exp 5u, product u)
       and adds into it (u): 7u. So l is within (7n + 9) u + u ln t
       relative.
-   3. lse = m + log l: log errs by 4u |log l| <= 4u ln t, the addition by
-      u |lse|: (7n + 9 + 5 ln t) u + u |lse|.
+   3. lse = m + log l: log errs by 3u |log l| <= 3u ln t, the addition by
+      u |lse|: (7n + 9 + 4 ln t) u + u |lse|.
    4. o's weights, p_j Π α / l: the exponents' 2bu, p_j's exp (5u), each
       later block's α (exp 5u, acc's product u), l's (7n + 9) u + u ln t
       and the division's u: a relative (13n + 9 + 2b + ln t) u. The sums

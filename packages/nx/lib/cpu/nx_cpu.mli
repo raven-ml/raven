@@ -348,11 +348,12 @@
 
     For a row that reads [t] keys in [n = ⌈t / 64⌉] blocks, barring
     overflow and underflow, to first order in float32's unit roundoff [u],
-    [lse] is within [(7 n + 9 + 5 ln t) u + u |lse|] of the exact
+    [lse] is within [(7 n + 9 + 4 ln t) u + u |lse|] of the exact
     log-sum-exp of the row's computed scores, and each weight [o] applies
     within a relative [(13 n + 9 + 2b + ln t) u] of its exact one, [b]
-    bounding the visible scores' magnitudes, {!Nx_kernel.Prog.Exp} and
-    {!Nx_kernel.Prog.Log} being within 2 ulps: attention.c derives both.
+    bounding the visible scores' magnitudes, {!Nx_kernel.Prog.Exp} being
+    within 2 ulps and {!Nx_kernel.Prog.Log} within 1: attention.c derives
+    both.
     The bound {!Nx.attention} reads as its [ε], which covers both, is
     [(13 n + 9 + 5 ln t) u + u |lse|]. The value product takes the weights
     in float32. *)

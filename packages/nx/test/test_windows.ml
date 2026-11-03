@@ -963,7 +963,10 @@ let law_attention_keys c =
       if l = Float.neg_infinity || l' = Float.neg_infinity then
         equal ~msg:"an empty row's lse" float_exact l l'
       else begin
-        let one = e l and cut = (3. *. e l) +. e4 l +. rest in
+        (* A part's [|lse_j|] is at most [a + ln tk], its scores within
+           [[-a, a]]. *)
+        let part = e (a +. ln) in
+        let one = e l and cut = (3. *. Float.max part (e l)) +. e4 l +. rest in
         at_most ~msg:"lse" float_exact
           ~than:((3. *. eta) +. one +. cut) (Float.abs (l -. l'));
         let w eta eps = (2. *. eta) +. eps +. rest in
@@ -973,8 +976,10 @@ let law_attention_keys c =
           *. vmax
         in
         for d = 0 to dv - 1 do
-          at_most ~msg:"o" float_exact ~than:tol
-            (Float.abs (o.((i * dv) + d) -. o'.((i * dv) + d)))
+          let x = o.((i * dv) + d) and x' = o'.((i * dv) + d) in
+          (* Each rounds once into float32: [u |o|]. *)
+          let tol = tol +. (u *. (Float.abs x +. Float.abs x')) in
+          at_most ~msg:"o" float_exact ~than:tol (Float.abs (x -. x'))
         done
       end)
     lse
