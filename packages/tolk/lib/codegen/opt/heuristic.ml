@@ -88,11 +88,14 @@ let decoded_product k =
       | _ -> false)
   | None -> false
 
-(* The fewest workgroups that keep every compute unit of a large GPU busy. A
-   workgroup runs on one unit, so a kernel of fewer workgroups than the units
-   leaves some idle. The renderer does not know a device's count: an RTX 5000
-   Ada has 100 streaming multiprocessors, a Radeon R9700 64 compute units. *)
-let min_workgroups = 100
+(* The threads a kernel keeps once a tensor core's splits apply: a split
+   applies only while [core_threads / Tc.threads tc] workgroups remain, each
+   holding the core's threads. Fewer leave the memory and the L2 short of loads
+   in flight (latency times throughput); more refuse reuse. The value moves the
+   order of a sum, so it is the bound of a target's parts, never read from a
+   device: measured on sm_89's RTX 5000 Ada, and taken by every target until
+   one measures another. *)
+let core_threads = 16384
 
 let rec gcd a b = if b = 0 then a else gcd b (a mod b)
 
@@ -157,7 +160,7 @@ let within_run k m rest u =
   | _ -> u
 
 (* first try the tensor cores *)
-let tensor_cores k =
+let tensor_cores ~core_threads k =
   let use_tc = setting Setting.use_tc in
   let tc_opt = setting Setting.tc_opt in
   let tc_select = setting Setting.tc_select in
@@ -216,12 +219,17 @@ let tensor_cores k =
                 0 core_upcasts Opt.Upcast
             end
             else begin
-              (* attempt to upcast M, N, local N. Each gives a warp more of the
-                 outputs and the kernel fewer workgroups, which pays only while
-                 every compute unit keeps one: CUDA's core makes a product of 64
+              (* attempt to upcast M, N, local N. Each gives a workgroup more of
+                 the outputs and the kernel fewer workgroups, which pays only
+                 while the kernel keeps [core_threads] threads: the core's
+                 warp axis is its threads. CUDA's core makes a product of 64
                  by 64 outputs over 1024 32 workgroups of a warp, which its
                  upcasts would leave one, three times slower. *)
-              let keep = leaves ~default:true min_workgroups in
+              let threads = prod_at tk (K.axes_of tk [ Warp ]) in
+              let floor =
+                match threads with Int n -> core_threads / n | Sym _ -> 0
+              in
+              let keep = leaves ~default:true floor in
               upcast_m ~keep;
               upcast ~keep 0 core_upcasts Opt.Upcast;
               upcast ~keep 0 [ 4; 2 ] Opt.Local
@@ -252,9 +260,10 @@ let tensor_cores k =
      lanes   k ->                         lanes   n ->
      t0 t1 .. t31 t0 t1 .. t31 ...        t0 t1 .. t31   (2 columns each)
      a row's [lanes] threads read it      the reduce splits into threads
-     in turn, [rows] rows a workgroup     until [busy] threads run; with
-     or a thread, unrolled by up to       few outputs a workgroup takes as
-     [in_flight]                          few as [sector_lanes] across
+     in turn, [rows] rows a workgroup     until [stream_threads] threads
+     or a thread, unrolled by up to       run; with few outputs a workgroup
+     [in_flight]                          takes as few as [sector_lanes]
+                                          across
 
    and its reuse ranges are upcast, so that a thread holds the outputs that
    share each element it loads. *)
@@ -274,8 +283,9 @@ let columns = 2
    bfloat16 columns read a 32-byte sector, memory's unit of transfer. *)
 let sector_lanes = 8
 
-(* The threads that keep a GPU's memory busy. *)
-let busy = 32768
+(* The threads the columns layout runs: as many loads in flight as keep memory
+   busy. The same standing as [core_threads]. *)
+let stream_threads = 32768
 
 (* The loads of its row a thread keeps in flight, at most, and with rows held,
    each of which multiplies them. More is slower: an MXFP4 matrix of 16384 by
@@ -543,7 +553,7 @@ let stream k (w, x, reuse) =
     let first = List.hd (contracted k) in
     let wanted =
       match prod_at k (K.upcastable_dims k) with
-      | Int n -> pow2_above (busy * columns / max n 1)
+      | Int n -> pow2_above (stream_threads * columns / max n 1)
       | Sym _ -> 1
     in
     (* A workgroup holds [lanes * lanes] threads. Few outputs take fewer of
@@ -1281,7 +1291,7 @@ let general k =
   end;
   k
 
-let hand_coded_optimizations k =
+let hand_coded_with ~core_threads k =
   let s = streams k in
   let stream s = stream (K.copy k) s in
   let early = match s with Some s when early k s -> stream s | _ -> None in
@@ -1295,8 +1305,10 @@ let hand_coded_optimizations k =
   match early with
   | Some k -> k
   | None -> (
-      match tensor_cores k with
+      match tensor_cores ~core_threads k with
       | Some tk -> tk
       | None -> ( match late () with Some k -> k | None -> general k))
+
+let hand_coded_optimizations k = hand_coded_with ~core_threads k
 
 let held_registers k file = held k file

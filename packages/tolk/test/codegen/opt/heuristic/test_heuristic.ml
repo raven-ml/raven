@@ -961,6 +961,161 @@ let doubles =
         (Heuristic.held_registers s (registers file))
         (Heuristic.held_registers d (registers file)))
 
+(* The tensor core's floor *)
+
+(* A renderer of CDNA's cores, whose workgroup is 64 threads. *)
+let cdna =
+  let cell = function
+    | "device" -> "AMD"
+    | "arch" -> "gfx942"
+    | "has_local" | "has_shared" -> "True"
+    | "shared_max" -> "65536"
+    | "tensor_cores" -> string_of_int (List.length (Tc.amd "gfx942"))
+    | _ -> ""
+  in
+  lazy (Kernel_opts.renderer_of_row cell)
+
+(* The kernels of the default process that take a tensor core, as the
+   heuristic receives them, on their renderer and on CDNA's, with the core it
+   applies. *)
+let core_kernels =
+  let received k ren =
+    let s = K.v k ren in
+    K.convert_loop_to_global s;
+    match K.applied_opts (Heuristic.hand_coded_optimizations s) with
+    | (Opt.Tc _ as tc) :: _ -> Some (s, tc)
+    | _ -> None
+  in
+  let own =
+    List.filter_map
+      (fun (c, k, _) ->
+        Option.map
+          (fun r -> (c.name, r))
+          (received (K.ast k) (renderer c.renderer)))
+      gpu_cases
+  in
+  let names =
+    List.sort_uniq String.compare
+      (List.map (fun (c, _, _) -> c.kernel) gpu_cases)
+  in
+  let on_cdna =
+    List.filter_map
+      (fun name ->
+        Option.map
+          (fun r -> (name ^ "_cdna", r))
+          (received (kernel name) (Lazy.force cdna)))
+      names
+  in
+  Array.of_list (own @ on_cdna)
+
+let product s types =
+  Shape.Sint.prod (List.map (List.nth (K.full_shape s)) (K.axes_of s types))
+
+let workgroups s = product s [ Global ]
+
+let threads_of s =
+  match product s [ Warp ] with
+  | Int n -> n
+  | Sym _ -> failf "a core's threads are not known"
+
+let index_of_range r rngs =
+  let rec go i = function
+    | [] -> failf "the range is not an axis of the kernel"
+    | x :: _ when x == r -> i
+    | _ :: rest -> go (i + 1) rest
+  in
+  go 0 rngs
+
+(* The threads of the core [tc] that [s] takes. *)
+let core_threads_of s tc =
+  let s = K.copy s in
+  match K.apply_opt s tc with
+  | Ok _ -> threads_of s
+  | Error e -> failf "the core does not apply: %s" e
+
+(* The splits the interface states after the core [tc] of [s]: upcasts of
+   its M and N axes by the first of 5, 4, 3 and 2 that divides them, then a
+   local split of N by 4 or 2, each applied only while it leaves at least
+   [core_threads / t] workgroups, [t] the core's threads, or an unknown
+   count. M's upcast, where it applies, takes the amount the heuristic gives
+   it in [opts], which keeps a warp within a run of rows. *)
+let stated ~core_threads s tc opts =
+  let s = K.copy s in
+  let rngs =
+    match K.apply_opt s tc with
+    | Ok r -> Array.of_list r
+    | Error e -> failf "the core does not apply: %s" e
+  in
+  let floor = core_threads / threads_of s in
+  let step i sizes target =
+    let divides n =
+      Option.is_some (Shape.divides (Ops.nth rngs.(i) 0) (Bigint.of_int n))
+    in
+    match List.find_opt divides sizes with
+    | Some n
+      when Shape.Sint.resolve ~default:true
+             Shape.Sint.(workgroups s >= Int n * Int floor) -> (
+        let axis = index_of_range rngs.(i) (K.rngs s) in
+        let amount =
+          match opts with
+          | _ :: Opt.Split { axis = a; amount; target = Opt.Upcast; _ } :: _
+            when i = 1 && a = axis ->
+              amount
+          | _ -> n
+        in
+        let split = Opt.Split { axis; amount; target; top = false } in
+        match K.apply_opt s split with
+        | Ok (r :: _) -> rngs.(i) <- r
+        | Ok [] | Error _ -> failf "%a does not apply" Opt.pp split)
+    | _ -> ()
+  in
+  step 1 [ 5; 4; 3; 2 ] Opt.Upcast;
+  step 0 [ 5; 4; 3; 2 ] Opt.Upcast;
+  step 0 [ 4; 2 ] Opt.Local;
+  K.applied_opts s
+
+(* A floor of [2^e] to [2^(e+1) - 1] threads, [e] up to 20: every power of
+   two as often. *)
+let core_threads =
+  Gen.(
+    let* e = int_range 0 20 in
+    int_range (1 lsl e) ((1 lsl (e + 1)) - 1))
+
+let case_and_floor =
+  Gen.pair (Gen.int_range 0 (Array.length core_kernels - 1)) core_threads
+
+let floored =
+  prop
+    "the splits after a tensor core are those that leave its floor of \
+     workgroups"
+    case_and_floor
+    (fun (i, core_threads) ->
+      let name, (s, tc) = core_kernels.(i) in
+      let o = Heuristic.hand_coded_with ~core_threads s in
+      let expected = stated ~core_threads s tc (K.applied_opts o) in
+      cover "every split applies" (List.length expected = 4);
+      cover "no split applies" (List.length expected = 1);
+      cover "some splits apply"
+        (List.length expected = 2 || List.length expected = 3);
+      cover "a count not known"
+        (match workgroups s with Sym _ -> true | Int _ -> false);
+      cover "a core of 64 threads" (core_threads_of s tc = 64);
+      equal ~msg:name (list Kernel_opts.opt) expected (K.applied_opts o))
+
+let monotone =
+  prop "a larger floor after a tensor core never leaves fewer workgroups"
+    Gen.(
+      triple
+        (int_range 0 (Array.length core_kernels - 1))
+        core_threads core_threads)
+    (fun (i, a, b) ->
+      let lo = min a b and hi = max a b in
+      let _, (s, _) = core_kernels.(i) in
+      let left n = workgroups (Heuristic.hand_coded_with ~core_threads:n s) in
+      match (left lo, left hi) with
+      | Int l, Int h -> at_most int ~than:h l
+      | _ -> ())
+
 let () =
   exit
     (Windtrap.run "Tolk.Heuristic"
@@ -979,4 +1134,5 @@ let () =
          warps_within_runs;
          group "the host's budget"
            [ held_cases; budget; more_registers; doubles ];
+         group "the tensor core's floor" [ floored; monotone ];
        ])

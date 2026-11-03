@@ -634,6 +634,24 @@ let keeps_its_programs () =
   same_graph p again;
   equal int ~msg:"compilations" 1 (Atomic.get compiled)
 
+(* Two renderers of one target made apart, as each device of a target makes
+   its own: one key, and the program made with one serves the other. *)
+let serves_renderers () =
+  let compiled = Atomic.make 0 in
+  let compiler =
+    Renderer.Compiler.v (fun src ->
+        Atomic.incr compiled;
+        src)
+  in
+  let r = renderer_for ~compiler clang_target in
+  let r' = renderer_for ~compiler clang_target in
+  let k = fresh_kernel () in
+  equal string ~msg:"one key" (Codegen.program_key k r)
+    (Codegen.program_key k r');
+  let p = Codegen.to_program k r in
+  same_graph p (Codegen.to_program k r');
+  equal int ~msg:"compilations" 1 (Atomic.get compiled)
+
 let compiles_once_across_domains () =
   let compiled, r = counting () in
   let k = fresh_kernel () in
@@ -949,6 +967,7 @@ let caching =
         separates_targets;
       test "a program for one device serves another of its target"
         (serves_devices "CPU:0");
+      test "two renderers of one target make one program" serves_renderers;
       test "a program for the target's own device serves another of its target"
         (serves_devices "CPU");
       test

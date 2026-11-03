@@ -12,7 +12,15 @@
     memory it offers, the operations and data types it has natively, its tensor
     cores, the rewrites it needs last, how a linearized kernel is written as
     source, and the compiler that turns that source into a binary. Each target
-    builds its renderer with {!v}. *)
+    builds its renderer with {!v}.
+
+    A renderer holds only facts its target fixes, never those of a device's
+    physical part, such as its compute units or cache bytes: every device of
+    a target runs one program of a kernel, which computes the same bits on
+    each. A program is kept under its renderer's name and target
+    ({!Codegen.program_key}), so renderers of one name and target must make
+    the same programs, and a renderer made with other facts takes another
+    name. *)
 
 (** {1:storage Storage} *)
 

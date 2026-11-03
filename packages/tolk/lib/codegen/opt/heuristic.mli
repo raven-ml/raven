@@ -29,11 +29,15 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       three candidate axes on which a tensor core applies ({!Opt.Tc}), then
       upcasts of its [M] and [N] axes and a local split of [N], by the first
       of 5, 4, 3 and 2 (4 and 2 for the local) that divides them. Each split
-      applies only when it leaves at least 100 workgroups, the fewest that
-      keep every compute unit of a large GPU busy, or when the count is not
-      known: a split gives each workgroup more of the outputs and the kernel
-      fewer workgroups, which leaves compute units idle once they are fewer
-      than the units. Where the operands read [M] only as its quotient by
+      applies only when it leaves at least [16384 / t] workgroups, [t] the
+      threads of the core, a workgroup's, or when the count is not known. A
+      split gives each workgroup more of the outputs and the kernel fewer
+      workgroups: an upcast leaves fewer threads to keep loads in flight, and
+      the local split fewer workgroups to share among the compute units. The
+      floor moves the order of a sum, so it is one for every device of a
+      target, never read from a device: 16384 threads is the bound of
+      [sm_89]'s parts, which every target takes.
+      Where the operands read [M] only as its quotient by
       [d], as blocks of [d] rows read their expert's matrix, and the core's
       tile times [M]'s upcast does not divide [d], [M] is upcast instead by
       the first of 5, 4, 3 and 2 that divides it and whose warp, the tile
@@ -76,7 +80,8 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     the least power of two of local threads that makes 32768 threads, at most
     32, or the largest that divides it; with few outputs fewer threads take
     the global axis, down to 8, and more the reduce. It does not apply when
-    more than 32768 outputs are left after the upcast.
+    more than 32768 outputs are left after the upcast. Like the tensor
+    core's floor, 32768 threads is [sm_89]'s bound, fixed for every target.
 
     Otherwise, in order:
 
@@ -138,3 +143,10 @@ val held_registers : Postrange.Scheduler.t -> Renderer.registers -> int
     reduce's loop holds nothing more; a reduce unrolled whole holds each
     unrolled lane while another reduce of the loop still loops, and nothing once
     none does. A kernel without a reduce holds nothing. *)
+
+(**/**)
+
+val hand_coded_with :
+  core_threads:int -> Postrange.Scheduler.t -> Postrange.Scheduler.t
+(** [hand_coded_with ~core_threads k] is {!hand_coded_optimizations} with the
+    tensor core's floor of 16384 threads made [core_threads]. *)

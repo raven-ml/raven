@@ -943,6 +943,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- After a tensor core, `Heuristic` upcasts and splits only while 16384 threads'
+  workgroups remain, where it kept 100 workgroups: a decode step's keys and a
+  prefill's key projection on an RTX 5000 Ada run 1.15-2.2x faster. The floor
+  and the columns layout's 32768 threads are fixed per target, never read
+  from a device, so every device of a target runs one program.
 - `Schedule.create_linear_with_vars` runs kernel calls that can run in
   either order as one call: in a loop's body when their domains match, at the
   top level when each computes one element. NUTS on eight schools on CUDA

@@ -1036,7 +1036,7 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..9d544ae37 100644
+index ec97cac6f..e208376ab 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
 @@ -1,9 +1,263 @@
@@ -1052,9 +1052,9 @@ index ec97cac6f..9d544ae37 100644
 +from tinygrad.codegen.decomp.dtype import emulates
 +
 +HOST_VECTOR_BYTES, HOST_ILP, SPLIT_LANES = 64, 5, 16
-+# the fewest workgroups that keep every compute unit of a large GPU busy, whose count the renderer does not know: an RTX
-+# 5000 Ada's 100 SMs
-+MIN_WORKGROUPS = 100
++# the threads a kernel keeps once a tensor core's splits apply: a split applies only while CORE_THREADS // the core's threads workgroups
++# remain. fewer leave memory short of loads in flight, more refuse reuse. sm_89's bound, measured on an RTX 5000 Ada
++CORE_THREADS = 16384
 +
 +# on the host a kernel's lanes are counted in its target's vector registers: a register holds bytes // e lanes of a type that computes
 +# in e bytes, and c computes a type narrower than 4 bytes as an int or a float. a host renderer that does not know its registers keeps
@@ -1171,9 +1171,9 @@ index ec97cac6f..9d544ae37 100644
 +# times d for each it reads only as r // d), is streamed: each element loaded once for its R outputs, adjacent threads reading
 +# adjacent elements, each thread keeping several loads in flight. A unit-stride reduce range gives a row LANES threads that read it in
 +# turn, ROWS rows to a workgroup (or to a thread with reuse), unrolled by up to IN_FLIGHT (IN_FLIGHT_HELD with rows held); a
-+# unit-stride output range gives LANES threads adjacent outputs, COLUMNS of them each, and splits the reduce until BUSY threads run.
++# unit-stride output range gives LANES threads adjacent outputs, COLUMNS of them each, and splits the reduce until STREAM_THREADS threads run.
 +# The reuse ranges are upcast by the largest divisor of R up to UPCAST_MAX. Reuse up to STREAM_FIRST streams before tensor cores
-+LANES, ROWS, COLUMNS, BUSY, IN_FLIGHT, IN_FLIGHT_HELD, SECTOR_LANES, STREAM_FIRST, UPCAST_MAX = 32, 4, 2, 32768, 8, 4, 8, 32, 16
++LANES, ROWS, COLUMNS, STREAM_THREADS, IN_FLIGHT, IN_FLIGHT_HELD, SECTOR_LANES, STREAM_FIRST, UPCAST_MAX = 32, 4, 2, 32768, 8, 4, 8, 32, 16
 +def accesses(u:UOp) -> list[UOp]:
 +  s = u.toposort()
 +  return [] if any(x.op is Ops.REDUCE for x in s) else [x for x in s if x.op is Ops.INDEX]
@@ -1292,7 +1292,7 @@ index ec97cac6f..9d544ae37 100644
 +  first = contracted(k)[0]
 +  wanted = 1
 +  if isinstance(outputs:=prod(k.full_shape[i] for i in k.upcastable_dims()), int):
-+    while wanted < BUSY*COLUMNS//max(outputs, 1): wanted *= 2
++    while wanted < STREAM_THREADS*COLUMNS//max(outputs, 1): wanted *= 2
 +  # few outputs take fewer of a workgroup's threads each, down to SECTOR_LANES, so that more workgroups split them
 +  across = max(SECTOR_LANES, LANES*LANES//max(wanted, LANES))
 +  if wanted <= 1 or not divisible(g, across*COLUMNS): return None
@@ -1305,7 +1305,7 @@ index ec97cac6f..9d544ae37 100644
  
  def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # first try the tensor cores
-@@ -24,23 +278,55 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,23 +278,56 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
@@ -1354,8 +1354,9 @@ index ec97cac6f..9d544ae37 100644
          if ((size:=next(filter(lambda sz: rngs[0].src[0].divides(sz) is not None, [5,4,3,2]), None)) is not None and
              resolve(prod(tk.full_shape[i] for i in tk.axes_of(AxisType.GLOBAL)) >= size*TC_MIN_GLOBALS.value, False)): split(0, size, AxisType.UPCAST)
 -      else: # attempt to upcast M, N, local N
-+      else: # attempt to upcast M, N, local N, each only while it leaves MIN_WORKGROUPS
-+        def leaves(size): return resolve(prod(tk.full_shape[i] for i in tk.axes_of(AxisType.GLOBAL)) >= size*MIN_WORKGROUPS, True)
++      else: # attempt to upcast M, N, local N, each only while it leaves CORE_THREADS // the core's threads workgroups
++        floor = CORE_THREADS // threads if isinstance(threads:=prod(tk.full_shape[i] for i in tk.axes_of(AxisType.WARP)), int) else 0
++        def leaves(size): return resolve(prod(tk.full_shape[i] for i in tk.axes_of(AxisType.GLOBAL)) >= size*floor, True)
          for i in [1,0]:
 -          if (size:=next(filter(lambda sz: rngs[i].src[0].divides(sz) is not None, [5,4,3,2]), None)) is not None: split(i, size, AxisType.UPCAST)
 -        if (size:=next(filter(lambda sz: rngs[0].src[0].divides(sz) is not None, [4,2]), None)) is not None: split(0, size, AxisType.LOCAL)
@@ -1366,7 +1367,7 @@ index ec97cac6f..9d544ae37 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +343,20 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,25 +344,20 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1406,7 +1407,7 @@ index ec97cac6f..9d544ae37 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,25 +391,47 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,25 +392,47 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1464,7 +1465,7 @@ index ec97cac6f..9d544ae37 100644
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -139,18 +442,36 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -139,18 +443,36 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # if last reduce dim is small(ish), loop unroll the reduce
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:

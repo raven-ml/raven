@@ -85,9 +85,12 @@
    (run %{exe:embed.exe} %{graphs}))))
 
 ; The stream kernels are kernel graphs of products as rune compiles them for
-; CUDA, without optimisations, each weight past the RTX 5000 Ada's 72 MB of L2
-; but the decode step's keys: a row's kernels are [row.i], run in the order of
-; [i].
+; CUDA, without optimisations, each weight past the RTX 5000 Ada's 64 MiB of L2
+; but the decode step's keys, key and value projection and router: a row's
+; kernels are [row.i], run in the order of [i]. decode-kv and decode-router are
+; the Heuristic suite's gpt_oss_kv and gpt_oss_router kernels on CUDA, and
+; key-projection a prefill's key projection of 512 tokens by 512 over 2880, as
+; the Heuristic suite's attention_values reads its bfloat16 operands.
 
 (rule
  (target stream_kernels.ml)

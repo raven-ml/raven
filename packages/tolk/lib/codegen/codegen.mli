@@ -179,7 +179,9 @@ val program_key : Ops.t -> Renderer.t -> string
     program of the kernel's sink [ast] for [ren], in memory and on disk: two
     kernels of one key take one program. Kernels that differ only in the order
     of a commutative index operation's operands have one key, and one program
-    made from either, with one source. *)
+    made from either, with one source. The key names [ren] by its name, target
+    and compiler, and no device: renderers that agree in those make one
+    program ({!Renderer}). *)
 
 val programs : unit -> int
 (** [programs ()] is the number of programs {!to_program} and {!read} have

@@ -2146,7 +2146,7 @@ Withdrawn: multi-device is out of scope, see README.
   split of a reduce axis whose reduction runs inside a weak range that a
   reduction closes, a serial reduce).
 - **tolk:** `Heuristic.lanes`, `Heuristic.rows`, `Heuristic.columns`,
-  `Heuristic.sector_lanes`, `Heuristic.busy`, `Heuristic.in_flight`,
+  `Heuristic.sector_lanes`, `Heuristic.stream_threads`, `Heuristic.in_flight`,
   `Heuristic.in_flight_held`, `Heuristic.stream_first`,
   `Heuristic.upcast_max`, `Heuristic.summed`, `Heuristic.per_byte_first`,
   `Heuristic.per_byte`, `Heuristic.run`,
@@ -2194,11 +2194,15 @@ Withdrawn: multi-device is out of scope, see README.
     other rules. `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW` and `MV_ROWS_PER_THREAD`
     are gone;
   - few outputs (D110's part): when the outputs are too few for the columns
-    layout to run 32768 threads, a workgroup of 1024 threads takes fewer
-    threads across them, down to 8, and more along the reduce, so that more
-    workgroups share the outputs. 8 threads of 2 bfloat16 columns read a
-    32-byte sector. `busy` is a device's size the renderer does not know,
-    unpinned on fudge (TODO's device-count item);
+    layout to run `stream_threads`, 32768 threads, a workgroup of 1024
+    threads takes fewer threads across them, down to 8, and more along the
+    reduce, so that more workgroups share the outputs. 8 threads of 2
+    bfloat16 columns read a 32-byte sector. 32768 is the bound of sm_89's
+    parts, as D175's floor is: at 16384, from the L2, the decode step's key
+    and value projection (`gpt_oss_kv`, 2880 to 512, `stream/decode-kv`) is
+    1.16x slower, its query projection (`gpt_oss_qkv`) 1.10x and `vecmat`
+    1.52x, and from memory equal; 65536 changes the layout's shape, 8
+    threads across, and `vecmat` is 3.5x slower;
   - a group inside a reduce: a reduce axis whose reduction runs inside a
     serial reduce, a weak range that a reduction closes, splits into local
     threads, each iteration of the outer reduce storing and reading the shared
@@ -2207,14 +2211,20 @@ Withdrawn: multi-device is out of scope, see README.
     buffer. tinygrad, which checks only for a weak range, refuses that one too
     for the weak quotient that the unroll's split leaves its reduction; the
     lanes of a tensor core's K, which the core contracts and no reduction
-    closes, take a group in both.
+    closes, take a group in both;
+  - the constants: `lanes`, `in_flight`, `in_flight_held`,
+    `stream_threads`, `stream_first`, `summed`, `per_byte_first` and D175's
+    `core_threads` each move the order of a sum. They are fixed per target,
+    never read from a device: a value read from the part would give two
+    parts of one target different bits, and the program key names the
+    target alone (D170).
 - **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`) on CUDA, and
   nx.quant's products (`Nx_quant.apply`, `Nx.map_segments` over it)
   compiled by rune. A contraction of little reuse reads its streamed operand
   from memory more than it multiplies: tinygrad's layout puts 8 threads on a
   row whatever the matrix, finds no layout for a reuse past 1, and reads only
   the first reduce range for lanes, which a quantised block's values are not.
-  Measured on fudge's RTX 5000 Ada (576 GB/s, 72 MB of L2), the rule against
+  Measured on fudge's RTX 5000 Ada (576 GB/s, 64 MiB of L2), the rule against
   the layouts before it (D89's matrix-vector layout and D92), interleaved,
   ranges of three runs:
   - lanes by stride: tolk's bench `stream/q8_0-1`, Q8_0 16384 by 8192 at one
@@ -2260,9 +2270,14 @@ Withdrawn: multi-device is out of scope, see README.
     constant lies between 60 and 66; blocks sharing their matrices at 40 to
     58 a byte stay streamed, 1.1 to 1.55 times slower than a core: the MXFP4
     experts at 128 to 192 tokens (43-58 a byte, 5.0-6.6 ms against 4.1-4.3)
-    and bfloat16 ones at 512 (40 a byte, 12.8 against 11.6). What separates
-    them from the dense matrix at 60 is the device's cache, which the
-    renderer does not know. End to end, interleaved, three rounds, ranges
+    and bfloat16 ones at 512 (40 a byte, 12.8 against 11.6). The constant is a
+    crossover of achieved rates: at 60 a byte the streamed threads reach 18%
+    of the GPU's peak arithmetic and a core's tiles 15% of its bandwidth.
+    What separates the shared blocks from the dense matrix at 60 is how
+    much of the blocks' matrices the cache holds, and sm_89's parts hold
+    from 12 MB to 96 MB: no bound of the target tells 8.8 MB working sets
+    from 142 MB ones, so the 40-58 a byte band, 1.1-1.55x slower on fudge,
+    is the cost of one program per target. End to end, interleaved, three rounds, ranges
     apart: kaun's `GptOss/prefill-512` 446-452 to 186-187 ms and
     `GptOss/experts-at-prefill-512` 18.5-18.7 to 4.66-4.68 ms; unchanged
     within noise, `GptOss/decode-step-Q8_0-cache-1024` (8.1-8.3 ms), kaun's
@@ -2663,7 +2678,9 @@ verification on the expand, as there.
   product on fudge; gpt-oss-20b's blocks of 16 rows sharing 32 experts' MXFP4
   matrices at a 512-token prompt, 149 a byte, take the cores, and kaun's
   `GptOss/experts-at-prefill-512` runs 4.66-4.68 ms against 18.5-18.7
-  streamed, `GptOss/prefill-512` 186-187 ms against 446-452.
+  streamed, `GptOss/prefill-512` 186-187 ms against 446-452. Blocks sharing
+  their matrices at 40 to 58 a byte stay streamed, up to 1.55x slower than a
+  core on fudge: D89's band, the cost of one program per target.
 - **Pinned by:** the Heuristic suite's cases `routed_tiles_{metal,cuda,amd}`
   (the cores apply to a product in blocks of 64 rows) and
   `routed_shared_{metal,cuda,amd}` (blocks of 16 rows sharing their
@@ -4918,44 +4935,76 @@ fold wraps integers and holds its float bound`, hold.
   it calls, as device functions`, `› a Metal kernel defines the functions it
   calls` and `› a call of a compiled program is refused`.
 
-## D175. A split after a tensor core leaves a workgroup for each compute unit
+## D175. The splits after a tensor core keep the target's threads in flight
 
 - **tinygrad:** `codegen/opt/heuristic.py:40-43` (`hand_coded_optimizations`,
   without `TC_MIN_GLOBALS`: after the core, M and N are upcast and N split
   into local threads, by the first size that divides them, whatever the
   workgroups left; the same at `6b7b018da`).
-- **tolk:** `Heuristic.min_workgroups` and `Heuristic.tensor_cores`;
+- **tolk:** `Heuristic.core_threads` and `Heuristic.tensor_cores`;
   `test/gen/tinygrad.patch`, which gives tinygrad's heuristic the same rule
   before the goldens are generated.
-- **Differs:** each of the three splits applies only when the kernel's
-  workgroups, the product of its global axes, are at least 100 after it, or
-  when that product is not known. A workgroup runs on one compute unit, and
-  a split gives a workgroup more outputs and the kernel fewer workgroups,
-  which leaves units idle once they are fewer than the units. The renderer
-  does not know a device's units: 100 is an RTX 5000 Ada's. Under
+- **Differs:** each of the three splits applies only while the kernel keeps
+  at least `core_threads / Tc.threads` workgroups after it, the product of
+  its global axes, or when that product is not known: 16384 threads, 512
+  workgroups of a CUDA, RDNA or Metal core of 32 threads and 256 of a CDNA
+  core of 64. An upcast leaves fewer threads to keep memory and the L2 busy
+  (concurrency is latency times throughput, Volkov, UCB/EECS-2016-143 §3.1);
+  the local split keeps the threads and leaves fewer workgroups to share
+  among the compute units, so it takes the same floor. 16384 is the bound
+  of sm_89's parts, and every target takes it until one measures another;
+  then `core_threads` becomes a field of `Renderer.t` set per target. Under
   `TC_MIN_GLOBALS` the splits are tinygrad's.
-- **Reason:** (d): gpt-oss-20b on fudge's RTX 5000 Ada, its products at bfloat16
-  widened by a cast (D29), as rune widens them from the change that lands after
-  this entry; before it rune reaches no tensor core on these kernels, and the
-  bench rows time the kernels it makes after it. A decode step's attention
-  values, 64 by 64 outputs summed over 1024 slots, take 32 workgroups from the
-  core and one after tinygrad's splits: 68.9 us, 23.6 us without them. A
-  prefill's router, 512 tokens by 32 experts over 2880, goes from 8 workgroups
-  and 343 us a layer to 128 and 130 us (978 and 285 us on the bench row's
-  values), and a key projection, 512 by 512, from 32 workgroups and 164 us to
-  128 and 145 us. The decode step goes from 12.8 to 11.4 ms; the prefill of 512
-  tokens from 769 to 763 ms, the 5.6 ms those two kernels save over 24 layers.
-  Skipping the core in place of its splits is slower on each: 26 to 36 us, 2025
-  us, 365 us. Thresholds of 64 and 128 choose as 100 does on every kernel of the
-  step. Metal and AMD take the same rule; the kernels it changes there are to
-  measure on a Mac's GPU and on nonnormal's R9700, which fudge lacks.
-- **Pinned by:** `Tolk.Heuristic`'s cases, on CUDA: `matmul_half_1024` (every
-  split applies), `matmul_half_512` (both upcasts), `matmul_half_256` (the
-  upcast of M alone), `attention_values` (none) and `matmul_half_variable` (a
-  variable counts the workgroups: every split), with the goldens from tinygrad
-  with D175 applied by its generator; the tolk bench's
-  `gpt_oss/gpt_oss_decode_values` and `gpt_oss/gpt_oss_prefill_router` rows on
-  fudge, which run those kernels of gpt-oss as rune compiles them.
+- **Reason:** (d): gpt-oss-20b on fudge's RTX 5000 Ada, its products at
+  bfloat16 widened by a cast (D29). GPU time, three interleaved rounds under
+  the timing lock, warm and from a clean, cold cache:
+  - against 100 workgroups (4096 threads on these kernels), us: the decode
+    step's keys (`stream/decode-keys`) 5.37-5.86 to 4.15 warm and 9.03 to
+    6.10 cold; a prefill's key projection, 512 by 512 over 2880
+    (`stream/key-projection`), 132.8-132.9 to 114.8 and 250.9-251.0 to
+    115.7; `matmul_half_512` 19.0-19.3 to 17.3 and 33.7-34.7 to 17.3;
+    `matmul_half_256` 6.10 both warm, 8.06 to 6.10 cold; `matmul_half_1024`
+    44.2-44.7 to 40.8-41.0 warm, 62.5-66.5 and 62.5-65.7 cold;
+    `stream/dense-bf16-64`'s core kernel 472-487 and 483-485 warm, 469-483
+    and 479-481 cold; the attention values, `stream/decode-kv` and
+    `stream/decode-router` keep their programs. End to end, wall time,
+    kaun's `GptOss/decode-step-Q8_0-cache-1024` 7.98-8.02 and 7.96-7.99 ms,
+    124,448 words a call each, and `GptOss/prefill-512` 185.0-185.9 and
+    183.0-184.0 ms;
+  - past 16384 threads the splits lose reuse: at 65536 `dense-bf16-64`'s
+    third kernel is 1.42x slower and `matmul_half_1024` 1.97x, so fudge's
+    window is (4096, 16384]. The lower edge shows from the L2 as well as
+    from memory, so it moves with SMs times clock and with bandwidth; the
+    RTX 4090 and L40 lie within 4x of fudge by both (the Ada whitepaper's
+    tables);
+  - the local split as tinygrad's, unfloored: a decode step's attention
+    values 1.19x slower, the key projection 1.34x warm and 1.6-1.7x cold,
+    the routed products 1.14x, for 1-4% elsewhere. Its cost follows the
+    warps on the busiest SM, a function of the part's units: 512 is the
+    smallest floor that refuses every harmful case of fudge's rows;
+  - kept from before: a decode step's attention values, 64 by 64 outputs
+    over 1024 slots, take 32 workgroups and 23.6 us where tinygrad's splits
+    leave one and 68.9 us; a prefill's router, 512 tokens by 32 experts over
+    2880, 128 workgroups where tinygrad's leave 8.
+  The band where the bound is wrong: on parts the size of an RTX 4060 (24
+  SMs, 272 GB/s) the model puts the window at about (1000, 3900] threads,
+  where 16384 may cost 1.4-2x. Unmeasured; a row on a small part is owed.
+  The floor moves the order of a sum (97-98% of the key projection's and
+  `matmul_half_512`'s outputs differ from 100 workgroups', by at most 1.2e-5
+  on values of 3.5), so it is fixed per target: a floor read from the part
+  would give two parts of one target different bits (D89's constants).
+  Metal and AMD take the same value; theirs are to measure on a Mac's GPU
+  and on nonnormal's R9700, which fudge lacks.
+- **Pinned by:** `Tolk.Heuristic`'s cases, on CUDA: `matmul_half_1024`,
+  `matmul_half_512`, `matmul_half_256`, `attention_values` and
+  `matmul_half_variable` (a variable counts the workgroups), with the
+  goldens from tinygrad with D175 applied by its generator; its `the tensor
+  core's floor › the splits after a tensor core are those that leave its
+  floor of workgroups` and `› a larger floor after a tensor core never
+  leaves fewer workgroups`, over every recorded core kernel, CDNA's
+  included; the tolk bench's `stream/decode-keys`, `stream/dense-bf16-64`,
+  `stream/key-projection`, `gpt_oss/gpt_oss_decode_values` and
+  `gpt_oss/gpt_oss_prefill_router` rows on fudge.
 
 ## D176. A folded selection or negation keeps a NaN's bits
 
@@ -5346,7 +5395,9 @@ fold wraps integers and holds its float bound`, hold.
     registers of 4: a partial unroll holds nothing, a whole one its lanes
     while another reduce of the loop still loops.
   Other devices, and a host renderer that knows no registers (riscv64's),
-  upcast and unroll as tinygrad does.
+  upcast and unroll as tinygrad does. The register file is the compile target's,
+  which the compiler's cache key holds, so a program follows the
+  instruction set it is compiled for and no fact of the part it runs on.
 - **Reason:** (d): lorenz_simple's step (sofo-raven) and the host's
   contractions. Each accumulator carried around a loop is a dependency chain:
   Intel's optimization manual (248966-051, §15.15.1, Rule 31; Golden Cove's FMA
