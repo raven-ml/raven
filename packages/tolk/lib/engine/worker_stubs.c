@@ -31,6 +31,8 @@ static pthread_once_t built = PTHREAD_ONCE_INIT;
 
 static void build_all(void)
 {
+  /* The faults rig's threads leave unblocked too (rig_edge_stubs.c); tolk
+     does not depend on rig, so the list is not shared. */
   static const int faults[] = {SIGSEGV, SIGBUS,  SIGFPE, SIGILL,
                                SIGTRAP, SIGABRT, SIGSYS};
   sigfillset(&all);
