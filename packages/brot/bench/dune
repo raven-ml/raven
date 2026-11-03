@@ -3,7 +3,7 @@
 (executable
  (name bench_brot)
  (modules bench_brot)
- (libraries brot thumper unix))
+ (libraries brot jsont jsont.bytesrw thumper unix))
 
 ; Throughput over a large corpus, run by hand (see bench_owt.ml); not on any
 ; alias.

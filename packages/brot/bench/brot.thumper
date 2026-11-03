@@ -6,6 +6,7 @@
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed under load 35.0 on 14 cores
 # forced: blessed BERT-base/Encode/batch_ids_32 GPT-2/Encode/batch_ids_32 LLaMA/Encode/batch_ids_32 Llama-3/Encode/batch_ids_32 Mistral/Encode/batch_ids_32 T5-base/Encode/batch_ids_32 under load 65.7 on 14 cores
+# forced: blessed Llama-3/Encode/ids_long_cold under load 62.1 on 14 cores
 
 BERT-base/Decode/long	alloc_words	exact	4687665
 BERT-base/Encode/batch_32	alloc_words	exact	127210
@@ -29,6 +30,8 @@ Llama-3/Decode/long	alloc_words	exact	208550
 Llama-3/Encode/batch_32	alloc_words	exact	108266
 Llama-3/Encode/batch_ids_32	alloc_words	exact	5673
 Llama-3/Encode/ids_long	alloc_words	exact	27414
+Llama-3/Encode/ids_long_cold	alloc_words	exact	27365
+Llama-3/Encode/ids_long_cold	wall_time	batch=1	n=20	7.652e-04	5.676e-04 5.697e-04 5.784e-04 5.785e-04 5.871e-04 6.002e-04 6.134e-04 6.243e-04 7.425e-04 7.597e-04 7.707e-04 7.774e-04 8.563e-04 8.748e-04 8.760e-04 8.852e-04 8.953e-04 1.058e-03 1.103e-03 3.303e-03
 Llama-3/Encode/single_long	alloc_words	exact	154140
 Llama-3/Encode/single_short	alloc_words	exact	3376
 Mistral/Decode/long	alloc_words	exact	830037

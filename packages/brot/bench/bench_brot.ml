@@ -59,6 +59,44 @@ let spawn d n task =
   pull ();
   List.iter Domain.join others
 
+(* [tokenizer], a BPE one read from [name], rebuilt with no pretoken cache. Its
+   merges are read from the file, which the tokenizer does not expose. *)
+let uncached name tokenizer =
+  let json =
+    match Jsont_bytesrw.decode_string Jsont.json (Fixtures.read_file name) with
+    | Ok json -> json
+    | Error e -> failwith e
+  in
+  let mem key = function
+    | Jsont.Object (members, _) -> (
+        match List.find_opt (fun ((k, _), _) -> k = key) members with
+        | Some (_, v) -> v
+        | None -> failwith ("no member " ^ key))
+    | _ -> failwith ("no object around " ^ key)
+  in
+  let model = mem "model" json in
+  let merges =
+    match mem "merges" model with
+    | Jsont.Array (merges, _) ->
+        List.map
+          (function
+            | Jsont.String (m, _) -> (
+                match String.index_opt m ' ' with
+                | Some i ->
+                    ( String.sub m 0 i,
+                      String.sub m (i + 1) (String.length m - i - 1) )
+                | None -> failwith m)
+            | _ -> failwith "a merge that is not a string")
+          merges
+    | _ -> failwith "no merges"
+  in
+  let ignore_merges =
+    match mem "ignore_merges" model with Jsont.Bool (b, _) -> b | _ -> false
+  in
+  bpe ?normalizer:(normalizer tokenizer) ?pre:(pre_tokenizer tokenizer)
+    ?post:(post_processor tokenizer) ~added_tokens:(added_tokens tokenizer)
+    ~vocab:(vocab tokenizer) ~merges ~ignore_merges ~cache_capacity:0 ()
+
 let make_suite ?(extra = []) ~label ~tokenizer () =
   let open Fixtures in
   let decode_input =
@@ -209,8 +247,19 @@ let all_benchmarks =
   let llama =
     make_suite ~label:"LLaMA" ~tokenizer:(load_tokenizer "llama.json") ()
   in
+  (* Llama 3 without a pretoken cache: every pretoken of every call takes the
+     path each new pretoken of a first encode takes, the whole-word lookup of
+     ignore_merges then the merge, which the cached rows reach only once. *)
   let llama3 =
-    make_suite ~label:"Llama-3" ~tokenizer:(load_tokenizer "llama3.json") ()
+    let tokenizer = load_tokenizer "llama3.json" in
+    let cold = uncached "llama3.json" tokenizer in
+    make_suite ~label:"Llama-3" ~tokenizer
+      ~extra:
+        [
+          Thumper.bench "Encode/ids_long_cold" (fun () ->
+              encode_ids cold long_text);
+        ]
+      ()
   in
   (* Unigram behind SentencePiece's Precompiled normalizer. *)
   let t5 =
