@@ -1979,7 +1979,7 @@ let next_of (type v s) next p (c : (v, s, Nx.host) Nx.t) o =
         (Nx.slice [ Nx.R (s.(0) - 1, s.(0)) ] o)
         c
 
-let quad () = T.(pair (pair tensor tensor) (pair tensor tensor))
+let two_pairs () = T.(pair (pair tensor tensor) (pair tensor tensor))
 
 let covers_pair (Pair c) =
   let a, b = c.nexts in
@@ -2007,7 +2007,7 @@ let agree (type v s w r) c
   let n = c.n in
   let run (init, (ps, q)) =
     if not c.iterate then
-      Rune.scan (quad ()) T.tensor T.tensor
+      Rune.scan (two_pairs ()) T.tensor T.tensor
         (fun cr p ->
           let cr = step p cr in
           (cr, fst (fst cr)))
@@ -2015,7 +2015,7 @@ let agree (type v s w r) c
     else
       let cr, _ =
         Rune.iterate
-          T.(pair (quad ()) tensor)
+          T.(pair (two_pairs ()) tensor)
           ~max:n
           ~until:(fun (_, i) -> Nx.greater_equal_s i (Int32.of_int n))
           (fun (cr, i) ->
@@ -2026,7 +2026,9 @@ let agree (type v s w r) c
       (cr, fst (fst cr))
   in
   let sg =
-    T.(pair (quad ()) (pair tensor tensor) @-> returns (pair (quad ()) tensor))
+    T.(
+      pair (two_pairs ()) (pair tensor tensor)
+      @-> returns (pair (two_pairs ()) tensor))
   in
   let made dt s k = Operand.make dt (Array.append [| 2 |] s) k in
   let ab = (made dx sx (fst fx), made dx sx (snd fx)) in

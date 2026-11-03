@@ -4184,7 +4184,7 @@ let product ((a00, a01), (a10, a11)) ((b00, b01), (b10, b11)) =
   ( (add (mul b00 a00) (mul b01 a10), add (mul b00 a01) (mul b01 a11)),
     (add (mul b10 a00) (mul b11 a10), add (mul b10 a01) (mul b11 a11)) )
 
-let quad = T.(pair (pair tensor tensor) (pair tensor tensor))
+let two_pairs = T.(pair (pair tensor tensor) (pair tensor tensor))
 
 (* The extents a circuit treats apart: none, one, a power of two, one either
    side of it, and past 64. *)
@@ -4249,12 +4249,13 @@ let law_scan (Scan_case (s, axis, xs)) =
   let x = ((m.(0), m.(1 mod k)), (m.(2 mod k), m.(3 mod k))) in
   let f ((a, b), (c, d)) =
     let x = ((a, Nx.add_s b 1l), (Nx.add_s c 2l, Nx.add_s d 3l)) in
-    Nx.associative_scan ~axis quad product x
+    Nx.associative_scan ~axis two_pairs product x
   in
   let leaves ((a, b), (c, d)) = List.map codes [ a; b; c; d ] in
   let eager = outcome (fun () -> leaves (f x)) in
   let jitted =
-    compiled (fun () -> leaves (Rune.jit T.(quad @-> returns quad) f x))
+    compiled (fun () ->
+        leaves (Rune.jit T.(two_pairs @-> returns two_pairs) f x))
   in
   equal (outcome_t (Testable.list codes_t)) eager jitted
 
