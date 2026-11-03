@@ -85,8 +85,13 @@ raven / llama.cpp b12048 Vulkan:
   stays target-free, so the fix is the host's tile sharing more rows, or a
   measured case for a target's exchange rate in rangeify
 - dune's watch server goes stale on files a rebase or checkout rewrites
-  (reported missing, or the old version built): records in
-  `_plans/dune-stale-watch/` from five trees on 2026-11-02
+  (reported missing, or the old version built): dune keys a directory's
+  listing on the directory's stat and keeps it across server restarts, so
+  a listing read while git rewrote the directory stays until the
+  directory's mtime changes; creating and removing a file in it clears it
+  (touching the files does not). Records in `_plans/dune-stale-watch/`
+  (tolk-scan-aligned-20261103T150140.txt has the cause). Report upstream
+  with a reproduction
 - `Heuristic.stream` declines a product whose operand reads a reduce
   (routing ids from outside the jit); no recorded kernel carries one yet,
   so the general path's cost there is unmeasured. Its unroll law passes
