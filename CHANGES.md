@@ -969,6 +969,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A range of a typed integer, such as `Int32`, is split, padded and given
+  threads as one of the weak integer: the heuristic raised ("16 does not
+  divide 16") where a split read the range's bound, a cast constant, as no
+  constant (`Ops.is_literal`, `Shape.divides`).
 - A host compile abandoned by an exception, as a test's time limit or
   Ctrl-C raises, ends its Clang and removes its files before the exception
   goes on, where Clang ran on and the cleanup raised `Fun.Finally_raised`

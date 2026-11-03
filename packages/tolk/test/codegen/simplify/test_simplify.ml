@@ -193,6 +193,16 @@ let splitting =
                (List.map
                   (fun r -> (Ops.axis_id r, size r))
                   (ranges (split (modulo (r 8) 2))))));
+      cases "a range of a typed integer splits as a weak one"
+        ~id:(Format.asprintf "%a" Dtype.pp)
+        Dtype.[ Int32; Int64; Uint32 ]
+        (fun dt ->
+          let r = Ops.range ~dtype:dt (Int 8) [ 0 ] in
+          let u =
+            kernel
+              [ Ops.end_ (store_at r Ops.O.(r % Ops.int 2)) [ r ] ]
+          in
+          equal (list int) [ 2; 4 ] (split_sizes u));
       test "a range taken modulo a number that does not divide its size stays"
         (fun () -> equal (list int) [ 7 ] (split_sizes (modulo (r 7) 3)));
       test "a remainder by a constant that is not an integer leaves the range"

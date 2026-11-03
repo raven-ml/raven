@@ -26,7 +26,7 @@ let try_split ?(top = false) k axis amount target =
    is. *)
 let known_size = function
   | Int n -> Some (Bigint.of_int n)
-  | Sym u when op u = Op.Const -> (
+  | Sym u when is_literal u -> (
       match value u with `Int n -> Some n | _ -> None)
   | Sym _ -> None
 
@@ -1364,7 +1364,7 @@ let locals ~threads k =
     List.filter_map
       (fun axis ->
         let r = List.nth (K.rngs k) axis in
-        if op (nth r 0) = Op.Const then
+        if is_literal (nth r 0) then
           Some (List.exists (fun b -> not (indexes r b)) (K.bufs k), axis)
         else None)
       (K.axes_of ~reduce:false k [ Global; Weak ])

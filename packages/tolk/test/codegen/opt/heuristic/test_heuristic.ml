@@ -1037,6 +1037,33 @@ let doubles =
         (Heuristic.held_registers s (registers file))
         (Heuristic.held_registers d (registers file)))
 
+(* [out[16i + j] = a[16i + j] + 1] over 64 [i] and 16 [j] of type [dt]. *)
+let incremented dt =
+  let out = Shape.param ~shape:[ Ops.Int 1024 ] 0 Float32
+  and a = Shape.param ~shape:[ Ops.Int 1024 ] 1 Float32 in
+  let i = Ops.range ~dtype:dt (Int 64) [ 0 ]
+  and j = Ops.range ~dtype:dt (Int 16) [ 1 ] in
+  let at x = Ops.index x [ Ops.O.((i * Ops.int ~dtype:dt 16) + j) ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (at out) Ops.O.(at a + Ops.float 1.)) [ i; j ] ]
+
+(* A range's integer type is how its index is computed: the heuristic splits a
+   range of each type as it does one of the weak type, into lanes on the host
+   and into threads and lanes on a GPU. *)
+let range_types =
+  cases "a range of a typed integer is split as one of the weak integer"
+    ~id:(fun (ren, dt) -> Format.asprintf "%a on %s" Dtype.pp dt ren)
+    (List.concat_map
+       (fun ren -> List.map (fun dt -> (ren, dt)) Dtype.[ Int32; Int64; Uint32 ])
+       [ "cpu"; "cuda" ])
+    (fun (ren, dt) ->
+      let opts dt =
+        let s = K.v (incremented dt) (renderer ren) in
+        K.convert_loop_to_global s;
+        K.applied_opts (Heuristic.hand_coded_optimizations s)
+      in
+      equal (list Kernel_opts.opt) (opts Weak_int) (opts dt))
+
 (* Tensor cores' warp tiles *)
 
 (* The accumulators a lane of a tensor core holds at most once its splits
@@ -1608,4 +1635,5 @@ let () =
          group "the tensor core's floor" [ floored ];
          decode_bound;
          decoded_writes;
+         range_types;
        ])

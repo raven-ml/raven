@@ -438,6 +438,28 @@ let bounded_loops =
             (K.apply_opt bounded tc));
     ]
 
+(* A range's integer type *)
+
+(* [out[i] = i] over 3 [i] of type [dt]. *)
+let typed_rows dt =
+  let i = Ops.range ~dtype:dt (Int 3) [ 0 ] in
+  let out = Shape.param ~shape:[ Int 4 ] 0 Int32 in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.cast i Int32)) [ i ] ]
+
+let range_types =
+  cases "apply_opt pads a range of a typed integer as a weak one"
+    ~id:(Format.asprintf "%a" Dtype.pp)
+    Dtype.[ Int32; Int64; Uint32 ]
+    (fun dt ->
+      let k = K.v (typed_rows dt) (renderer "cpu") in
+      is_ok ~pp:Format.pp_print_string
+        (K.apply_opt k (Opt.Padto { axis = 0; amount = 4 }));
+      equal (list (option int)) [ Some 4 ]
+        (List.map
+           (function Ops.Int n -> Some n | Sym _ -> None)
+           (K.full_shape k)))
+
 (* Axes a call reads
 
    A call takes one pointer or value for each argument and runs once for each
@@ -895,6 +917,7 @@ let () =
          colors;
          schedulers;
          bounded_loops;
+         range_types;
          called_axes;
          queries;
          shifts;

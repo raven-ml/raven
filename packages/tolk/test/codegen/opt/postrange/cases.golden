@@ -194,7 +194,7 @@ upcasts_beyond_host_integers	huge_upcasts	metal	()		ok
 flatten_keeps_a_closed_extent	closed_extent	cpu	()		ok	
 nested_end_globals	nested_end	metal	()		ok	
 launched_upcast	launched	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)		ok	
-split_int32_axis	int32_axis	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)		KernelOptError	0
+split_int32_axis	int32_axis	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)		ok	
 padto_reduction_bound	bounded_reduction	amd	(Opt(op=OptOps.PADTO, axis=0, arg=8),)		ok	
 upcast_both_roles	sum_rows_64	cpu	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)))		ok	
 group_beside_unrolled_reduce	sum_rows_64	tiny_shared	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(32, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.LOCAL)))		ok	

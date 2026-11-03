@@ -6771,6 +6771,36 @@ the walk of `Rangeify.fix_store_hazard`.
   and a tensor core refused. The Heuristic suite: `streaming › a kernel
   whose call reads its output axes is not streamed`.
 
+## D270. A range of a typed integer splits and pads as a weak one
+
+- **tinygrad:** `uop/ops.py:1021-1028` (`divides`), which divides a `CONST`
+  and no `CAST` of one, though `val` (`uop/ops.py:245-250`) reads a cast
+  constant as one constant; `codegen/opt/postrange.py:129`, which pads only
+  a range whose bound is a `CONST`; `codegen/opt/heuristic.py:174-175`, which
+  gives threads only to such ranges; `codegen/simplify.py:68-71`
+  (`mark_range_mod`), which splits only such ranges.
+- **tolk:** `Ops.is_literal`; `Shape.divides`; `Postrange.Scheduler.apply_opt`;
+  `Heuristic.hand_coded_optimizations`; `Simplify.pm_split_ranges`;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same reading.
+- **Differs:** a constant of a type other than the weak ones is a cast of
+  one, as a range of `Int32` has for its bound. tolk reads it as a constant
+  wherever these read a range's bound, so such a range is split, padded,
+  given threads and split by a remainder as a range of the weak integer is.
+  tinygrad refuses every split of it.
+- **Reason:** (e): tinygrad's heuristic raises on a kernel whose ranges are
+  of `Int32`, `out[16i + j] = a[16i + j] + 1` over 64 `i` and 16 `j`: its
+  checks read the bound through the cast and pass a split that `apply_opt`
+  then refuses ("16 can't divide" the bound 16 on the host, "4 can't divide"
+  it on CUDA), so the kernel does not compile. It computes no wrong value: the
+  failure is a valid kernel refused, which no setting avoids but disabling the
+  heuristic.
+- **Pinned by:** the Heuristic suite: `a range of a typed integer is split
+  as one of the weak integer` (`Int32`, `Int64` and `Uint32`, on the host
+  and on CUDA). The Postrange suite: `apply_opt pads a range of a typed integer as
+  a weak one`, and the golden case `split_int32_axis`, which applies. The
+  Simplify suite: `pm_split_ranges › a range of a typed integer splits as a
+  weak one`.
+
 ## D275. Clang compiles with LLVM's IR verifier on
 
 - **tinygrad:** `runtime/support/compiler_cpu.py:21`

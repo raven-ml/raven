@@ -1059,9 +1059,12 @@ let divisibility =
           equal (option uop)
             (Some (Ops.float 2.))
             (Shape.divides (Ops.float 4.) (Bigint.of_int 2)));
-      test "a typed constant is a cast, whose divisors are not known" (fun () ->
-          is_none (Shape.divides (Ops.int ~dtype:Int32 8) (Bigint.of_int 2));
-          equal z Bigint.one (Ops.const_factor (Ops.int ~dtype:Int32 8)));
+      test "divides divides a typed constant, a cast of one, as its value"
+        (fun () ->
+          equal (option uop)
+            (Some (Ops.int ~dtype:Int32 4))
+            (Shape.divides (Ops.int ~dtype:Int32 8) (Bigint.of_int 2));
+          is_none (Shape.divides (Ops.int ~dtype:Int32 8) (Bigint.of_int 3)));
       test "pop_const splits off a constant operand" (fun () ->
           let e = Ops.O.(x + int 3) in
           equal (pair uop const) (x, i 3) (Ops.pop_const e);

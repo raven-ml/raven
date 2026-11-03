@@ -1620,6 +1620,9 @@ let value u : Dtype.const =
   | Op.Cast, _, [ { op = Op.Const; arg = Const c; _ } ] -> c
   | op, _, _ -> invalid_argf "%s is not a constant" (Op.name op)
 
+let is_literal u =
+  u.op = Op.Const || (u.op = Op.Cast && (List.hd u.src).op = Op.Const)
+
 let is_invalid u = is_const_invalid u
 
 let ccast u dt =

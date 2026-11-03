@@ -1825,6 +1825,7 @@ codegen/opt/postrange/sibling_sums.golden
 codegen/opt/postrange/sibling_sums_group.golden
 codegen/opt/postrange/single_kernel_softmax.golden
 codegen/opt/postrange/single_kernel_softmax_group.golden
+codegen/opt/postrange/split_int32_axis.golden
 codegen/opt/postrange/split_last_axis.golden
 codegen/opt/postrange/stage_outside_an_output.golden
 codegen/opt/postrange/stage_outside_an_output_globals.golden

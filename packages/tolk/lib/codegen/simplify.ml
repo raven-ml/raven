@@ -204,7 +204,7 @@ let mark_range_mod ctx r c =
   | `Int n
     when (not (Tbl.mem ctx r))
          && axis_type r <> Axis_type.Warp
-         && op (nth r 0) = Op.Const
+         && is_literal (nth r 0)
          && Option.is_some (divides (nth r 0) n) ->
       Tbl.replace ctx r c
   | _ -> ()

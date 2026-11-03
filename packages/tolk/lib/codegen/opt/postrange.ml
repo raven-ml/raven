@@ -40,7 +40,7 @@ let sint_of_z n = if Bigint.fits_int n then Int (Bigint.to_int n) else Sym (z n)
    is. *)
 let known_size = function
   | Int n -> Some (Bigint.of_int n)
-  | Sym u when op u = Op.Const -> (
+  | Sym u when is_literal u -> (
       match value u with `Int n -> Some n | _ -> None)
   | Sym _ -> None
 
@@ -551,7 +551,7 @@ module Scheduler = struct
       | Padto { axis; amount } ->
           let rng = axis_rng axis in
           check (amount > 1) (strf "padto arg is a multiple > 1, not %d" amount);
-          check (op (nth rng 0) = Op.Const) "only pad const axes";
+          check (is_literal (nth rng 0)) "only pad const axes";
           (* a padded point would run the call on an argument of no element *)
           check
             (not (List.memq rng (read_by_calls k)))

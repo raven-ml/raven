@@ -652,6 +652,11 @@ val value : t -> Dtype.const
 
     Raises [Invalid_argument] if [c] is neither a constant nor a cast of one. *)
 
+val is_literal : t -> bool
+(** [is_literal u] is [true] iff [u] is a constant or a cast of one, whose value
+    {!value} reads. A constant of a type other than the weak ones is a cast of
+    one: [int ~dtype:Int32 16] is a cast of the weak [16]. *)
+
 val is_invalid : t -> bool
 (** [is_invalid u] is [true] iff [u] is the constant [`Invalid]. *)
 

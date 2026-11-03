@@ -248,8 +248,6 @@ let pm_expand_broadcast =
 let splat x =
   if is Op.Expand x && shape (nth x 0) = [] then Some (nth x 0) else None
 
-let constant l = is Op.Const l || (is Op.Cast l && is Op.Const (nth l 0))
-
 (* The lanes [x] holds in the flat order of its shape, if it is a view of values
    that move into a vector as a literal, memory or registers do: constants,
    loads of memory, lanes of vectors and elementwise operations, whose lanes are
@@ -259,7 +257,7 @@ let rec lanes_of x =
   let known = function Int _ -> true | Sym _ -> false in
   let memory l = is Op.Load l && addrspace (nth l 0) <> Some Dtype.Reg in
   if shape x = [] then
-    if constant x || memory x || is Op.Index x then Some [ x ] else None
+    if is_literal x || memory x || is Op.Index x then Some [ x ] else None
   else if is Op.Reshape x then lanes_of (nth x 0)
   else if is Op.Stack x then
     let lanes = List.map lanes_of (src x) in
@@ -852,7 +850,7 @@ let product_operands p =
   let lane_of x k =
     let e = elements x in
     if
-      is Op.Stack e && constant k
+      is Op.Stack e && is_literal k
       && List.for_all (fun l -> shape l = []) (src e)
     then nth e (Dtype.Value.to_int (vmax k))
     else index x [ k ]

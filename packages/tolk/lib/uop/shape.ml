@@ -1058,8 +1058,8 @@ let rec divides u (n : Bigint.t) =
   if Bigint.equal n Bigint.one then Some u
   else
     match op u with
-    | Op.Const ->
-        let x = as_value (value u) and n = `Int n in
+    | _ when is_literal u ->
+        let x = as_value (Dtype.const (dtype u) (value u)) and n = `Int n in
         if Value.(x % n = of_int 0) then
           Some (const_like u (Value.(x // n) :> Dtype.const))
         else None

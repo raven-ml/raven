@@ -1093,7 +1093,7 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..900b790fe 100644
+index ec97cac6f..95272fbad 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
 @@ -1,9 +1,304 @@
@@ -1636,7 +1636,13 @@ index ec97cac6f..900b790fe 100644
      k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
  
    # **** local groups ****
-@@ -176,7 +566,7 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -172,11 +562,12 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+     else:
+       # prioritize making expand axes local
+       local_axis_ranking = [(any(k.rngs[axis] not in b.src[1].get_idx().backward_slice for b in k.bufs), axis) \
+-                              for axis in k.axes_of(AxisType.GLOBAL, AxisType.WEAK, reduce=False) if k.rngs[axis].src[0].op is Ops.CONST]
++                              for axis in k.axes_of(AxisType.GLOBAL, AxisType.WEAK, reduce=False)
++                              if (b:=k.rngs[axis].src[0]).op is Ops.CONST or (b.op is Ops.CAST and b.src[0].op is Ops.CONST)]
        to_local: list[tuple[int, int]] = []
        for _, axis in sorted(local_axis_ranking, key=lambda x: (-x[0], -x[1])):
          local_size = prod(sz for _, sz in to_local)
@@ -1646,7 +1652,7 @@ index ec97cac6f..900b790fe 100644
        deleted_shape = 0
        for axis, local_sz in sorted(to_local[:3]):
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
-index d7f19cd30..e0c31f1ab 100644
+index d7f19cd30..61be9259f 100644
 --- a/tinygrad/codegen/opt/postrange.py
 +++ b/tinygrad/codegen/opt/postrange.py
 @@ -14,6 +14,15 @@ from tinygrad.renderer import Renderer
@@ -1731,10 +1737,12 @@ index d7f19cd30..e0c31f1ab 100644
        check(opt.axis is not None and opt.axis >= 0, "tensor core opts must have an axis")
        check(opt.arg is not None and isinstance(opt.arg, tuple) and len(opt.arg) == 3, "tensor core opts must have valid arg")
        check(-1 <= (tc_select:=cast(tuple, opt.arg)[0]) < len(self.ren.tensor_cores), "tensor core opts must have valid tc_select")
-@@ -127,6 +154,8 @@ class Scheduler:
+@@ -126,7 +153,9 @@ class Scheduler:
+       check(ret is not None, "no tensor core available")
      elif opt.op is OptOps.PADTO:
        check(type(opt.arg) is int and opt.arg > 1, f"padto arg is a multiple > 1, not {opt.arg}")
-       check(rng.src[0].op is Ops.CONST, "only pad const axes")
+-      check(rng.src[0].op is Ops.CONST, "only pad const axes")
++      check(rng.src[0].op is Ops.CONST or (rng.src[0].op is Ops.CAST and rng.src[0].src[0].op is Ops.CONST), "only pad const axes")
 +      # a padded point would run the call on an argument of no element
 +      check(rng not in self.read_by_calls, f"a call's argument reads axis {opt.axis}")
        # TODO: upcasted is only wrong for a range pinned in WMMA tc_upcast_axes
@@ -1847,7 +1855,7 @@ index d7f19cd30..e0c31f1ab 100644
  
              # get upcast axes for the tensor cores
 diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
-index b68c1d948..f8d490b81 100644
+index b68c1d948..ef78caa51 100644
 --- a/tinygrad/codegen/simplify.py
 +++ b/tinygrad/codegen/simplify.py
 @@ -1,9 +1,9 @@
@@ -1862,6 +1870,15 @@ index b68c1d948..f8d490b81 100644
  
  def flatten_range(r:UOp) -> UOp|None:
    off = range_start[r.op]
+@@ -68,7 +68,7 @@ pm_simplify_ranges = PatternMatcher([
+ def mark_range_mod(ctx:dict[UOp, UOp|None], r:UOp, c:UOp) -> None:
+   # ranges that aren't looped over can't be split
+   if r not in ctx and r.axis_type not in {AxisType.WARP, AxisType.DEVICE} \
+-    and r.src[0].op is Ops.CONST and r.src[0].divides(c.val) is not None: ctx[r] = c
++    and ((b:=r.src[0]).op is Ops.CONST or (b.op is Ops.CAST and b.src[0].op is Ops.CONST)) and b.divides(c.val) is not None: ctx[r] = c
+ 
+ pm_split_ranges = PatternMatcher([
+   (UPat(Ops.RANGE, name="r")%UPat.cvar("c"), mark_range_mod),
 @@ -80,6 +80,12 @@ pm_split_ranges = PatternMatcher([
  
  def no_range(u:UOp) -> bool: return not u.op_in_backward_slice_with_self(Ops.RANGE)
@@ -3642,7 +3659,7 @@ index 8238ec207..0f68dfde2 100644
  
    # bufferize -> store
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index f0a41c9b5..8a39622fb 100644
+index f0a41c9b5..bb865dfe0 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -3705,7 +3722,17 @@ index f0a41c9b5..8a39622fb 100644
    def is_bound_var(self) -> bool:
      # a bound Variable is a Variable with the val payload set
      return self.is_variable and self.arg.val is not None
-@@ -1051,8 +1075,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1020,7 +1044,8 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+     return 1
+   def divides(self, v:int) -> UOp|None:
+     if v==1: return self
+-    if self.op is Ops.CONST: return self.const_like(self.val//v) if self.val%v == 0 else None
++    # a casted const is one const: a range of a typed integer has one as its bound
++    if self.op is Ops.CONST or (self.op is Ops.CAST and self.src[0].op is Ops.CONST): return self.const_like(self.val//v) if self.val%v == 0 else None
+     if self.op is Ops.ADD: return d0+d1 if (d0:=self.src[0].divides(v)) is not None and (d1:=self.src[1].divides(v)) is not None else None
+     if self.op is Ops.MUL:
+       if (d0:=self.src[0].divides(v)) is not None: return d0 * self.src[1]
+@@ -1051,8 +1076,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
    def vmax(self) -> PyConst: return self._min_max[1]
    @functools.cached_property
    def _min_max(self) -> tuple[PyConst, PyConst]:
@@ -3738,7 +3765,7 @@ index f0a41c9b5..8a39622fb 100644
        if self.op is Ops.ADD: return wrapped(self.dtype, s0_vmin+s1_vmin, s0_vmax+s1_vmax)
        if self.op is Ops.SUB: return wrapped(self.dtype, s0_vmin-s1_vmax, s0_vmax-s1_vmin)
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax and (s0_vmin >= 0 or s1_vmax >= 0):
-@@ -1091,32 +1138,56 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1091,32 +1139,56 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
      if self.op is Ops.WHERE:
@@ -3808,7 +3835,7 @@ index f0a41c9b5..8a39622fb 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1150,9 +1221,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1150,9 +1222,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
  
    @staticmethod
    def alloc(shape:tuple[sint, ...], dtype:DType, slot:int|None=None, addrspace=AddrSpace.GLOBAL, device=None, axis:int|None=None,
@@ -3820,7 +3847,7 @@ index f0a41c9b5..8a39622fb 100644
                             addrspace=addrspace, device=device, spec=spec, bind_on_realize=bind_on_realize, name=name))
      return ret.reshape(()) if not shape else ret.view_as(shape, axis)
    def alloc_like(self, slot:int|None=None, addrspace=AddrSpace.GLOBAL): return UOp.alloc(self.max_shard_shape, self.dtype, slot, addrspace)
-@@ -1263,7 +1334,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1263,7 +1335,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
      placeholders = [s.replace(arg=replace(s.arg, slot=i, val=None)) if s.is_variable else UOp.placeholder_like(s, slot=i)
                      for i,s in enumerate(srcs)]
      kernel = fxn(*placeholders).call(*srcs, grad_fxn=grad_fxn)
@@ -3831,7 +3858,7 @@ index f0a41c9b5..8a39622fb 100644
  
    @functools.cached_property
    def kernel_params(self) -> tuple[UOp, ...]:
-@@ -1300,6 +1373,8 @@ class KernelInfo:
+@@ -1300,6 +1374,8 @@ class KernelInfo:
    beam: int = 0
    optimized: bool = False       # the AST has been through the optimizer, skip re-optimization
    kernel: bool = True           # launched by the runtime, not called from another kernel
@@ -3840,7 +3867,7 @@ index f0a41c9b5..8a39622fb 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1326,6 +1401,7 @@ class ProgramInfo:
+@@ -1326,6 +1402,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -3848,7 +3875,7 @@ index f0a41c9b5..8a39622fb 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM: _params.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1363,22 +1439,99 @@ class CallInfo:
+@@ -1363,22 +1440,99 @@ class CallInfo:
  
  # ******** ops in python ********
  
@@ -3953,7 +3980,7 @@ index f0a41c9b5..8a39622fb 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.TRUNCMOD: cmod, Ops.TRUNCDIV: cdiv, Ops.DIV: floordiv, Ops.MOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1389,6 +1542,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
+@@ -1389,6 +1543,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
@@ -3964,7 +3991,7 @@ index f0a41c9b5..8a39622fb 100644
    return truncate_fxn(alu) if (truncate_fxn:=truncate.get(dtype)) is not None else alu
  
  # ***** pattern matcher *****
-@@ -1887,3 +2044,34 @@ sint = int|UOp
+@@ -1887,3 +2045,34 @@ sint = int|UOp
  Variable = UOp
  
  ConstLike = ConstType|Variable|tuple[ConstType, ...]
