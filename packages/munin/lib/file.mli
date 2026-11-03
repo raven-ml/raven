@@ -70,6 +70,10 @@ val lock : Unix.file_descr -> [ `Exclusive | `Shared ] -> unit
 
 val unlock : Unix.file_descr -> unit
 
+val with_lock : string -> [ `Exclusive | `Shared ] -> (unit -> 'a) -> 'a
+(** [with_lock path k f] is [f ()], run holding a lock of kind [k] on the file
+    [path], which it creates if it does not exist. It waits for the lock. *)
+
 val take_writer : Unix.file_descr -> bool
 (** [take_writer fd] takes the writer's lock on the log [fd], waiting out
     readers' probes, and is [false] if a writer holds it

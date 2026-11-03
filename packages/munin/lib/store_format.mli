@@ -37,6 +37,7 @@
   artifacts/<name>/aliases/<alias>  the version <alias> names
   blobs/blake2b-256/<hex>           the content of versions
   lock                              orders collection after publication
+  deletions                         orders deletions of runs
 v}
 
     A file of the layout that does not exist holds nothing, such as no tags
@@ -282,6 +283,11 @@ v}
     Deleting a run takes its lock in the same way, and removes the run
     only while it holds the lock: it renames the log to [.deleted] in the
     run's directory, which ends the run for readers and writers at once.
+    A deletion holds an exclusive lock on [deletions] while it takes the
+    run's lock and renames the log, so that deletions take runs' locks one
+    at a time: a run's lock that a deletion finds held is a writer's, and
+    refuses it. A deletion that waited for another finds no log, and the
+    run does not exist.
     It then lets the lock go, renames the directory to a [.]-named entry of
     [runs/] and removes that. Where the system refuses the rename, as
     Windows does while another program holds a file in the directory open,

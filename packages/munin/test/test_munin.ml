@@ -1927,23 +1927,35 @@ let annotate tag store id =
   if tag then Store.add_tags store id [ "t" ]
   else Store.set_notes store id (Some "n")
 
+(* [ended_run ()] is the id of a new finished run of the race's store, its log
+   written from the format's text. A session's start and finish sync, and each
+   program runs 50 times, every candidate of a shrink included: with synced
+   starts a failure on Windows shrank for 509 s, where windtrap enforces no
+   timeout. *)
+let ended_run =
+  let next = Atomic.make 0 in
+  fun () ->
+    let runs = Filename.concat (Store.root (Lazy.force race_store)) "runs" in
+    mkdir_p runs;
+    let id = Printf.sprintf "race-%d" (Atomic.fetch_and_add next 1) in
+    let dir = Filename.concat runs id in
+    Unix.mkdir dir 0o755;
+    write_file
+      (Filename.concat dir "events.jsonl")
+      (start_line ^ "\n" ^ {|{"type":"end","time":2.0,"status":"finished"}|}
+     ^ "\n");
+    id
+
 let domain_tests =
   group "domains"
     [
-      (* Shrinking runs each candidate program 50 times, and a candidate that
-         misses the race runs all 50: on Windows, whose starts sync slowly, a
-         failure once shrank for 420 s. The timeout bounds it, and the report
-         then gives the counterexample found so far. *)
-      stateful ~timeout:120. ~count:6 ~domains:2
+      stateful ~count:10 ~domains:2
         "a deletion and annotations on two domains leave the run whole or gone"
         [
           command "start"
             (Gen.unit @-> makes run_w)
             (fun () -> ref true)
-            (fun () ->
-              let s = start (Lazy.force race_store) in
-              Session.finish s;
-              Session.id s);
+            ended_run;
           command "delete" (run_w ^-> returns bool)
             (fun r ->
               let was = !r in

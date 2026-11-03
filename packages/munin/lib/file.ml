@@ -236,6 +236,18 @@ let unlock fd =
   try ignore (lock_stub fd 2 false)
   with Unix.Unix_error (e, _, _) -> error "unlock" e
 
+let with_lock path k f =
+  let fd =
+    try
+      Unix.openfile path
+        [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_CLOEXEC; Unix.O_SHARE_DELETE ]
+        0o666
+    with Unix.Unix_error (e, _, _) -> error path e
+  in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  lock fd k;
+  f ()
+
 (* A refused exclusive lock is a writer's or a reader's probe. A shared lock
    tells them apart: readers' shared locks grant it, a writer's exclusive lock
    refuses it. A probe holds its lock for two system calls, so the loop ends at

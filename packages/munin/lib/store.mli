@@ -104,8 +104,13 @@ val delete_run : t -> string -> unit
     another program holds one open on Windows, does not raise: {!gc}
     removes what is left.
 
-    Raises [Failure] if another writer holds the run's lock, or the run is
-    [`Silent] ({!Run.status}). *)
+    Deletions of one store wait for each other while they take runs' locks.
+    Of two deletions of one run at once, one deletes it and the other then
+    finds no run.
+
+    Raises [Failure] if another writer holds the run's lock, if the run is
+    [`Silent] ({!Run.status}), or if it does not exist, as when another
+    deletion removed it. *)
 
 (** {1:artifacts Artifacts} *)
 

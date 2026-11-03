@@ -204,18 +204,7 @@ let tree ?dst src =
 
 let with_lock root kind f =
   File.mkdirs root;
-  let path = lock_path root in
-  let fd =
-    try
-      Unix.openfile path
-        [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_CLOEXEC; Unix.O_SHARE_DELETE ]
-        0o666
-    with Unix.Unix_error (e, _, _) ->
-      raise (Sys_error (path ^ ": " ^ Unix.error_message e))
-  in
-  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-  File.lock fd kind;
-  f ()
+  File.with_lock (lock_path root) kind f
 
 let publish ~root ~run ~step ~metadata ~name path =
   with_lock root `Shared @@ fun () ->

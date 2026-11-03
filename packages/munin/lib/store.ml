@@ -37,6 +37,7 @@ let open_ ?root () =
 
 let root s = s.root
 let runs_dir s = Filename.concat s.root "runs"
+let deletions s = Filename.concat s.root "deletions"
 let run_dir s id = Filename.concat (runs_dir s) id
 
 (* Runs *)
@@ -71,10 +72,9 @@ let run s id =
     | Error `Not_a_run -> None
     | Error (`Unreadable why) -> failwith (Printf.sprintf "run %s: %s" id why)
 
-let existing s id =
-  match run s id with
-  | Some r -> r
-  | None -> failwith (Printf.sprintf "no run %s in %s" id s.root)
+let no_run s id = failwith (Printf.sprintf "no run %s in %s" id s.root)
+
+let existing s id = match run s id with Some r -> r | None -> no_run s id
 
 let check_tag t =
   if not (File.is_tag t) then
@@ -144,27 +144,32 @@ let delete_run s id =
           as killed, then delete it"
          id);
   let log = Listing.log r.dir in
-  (* Read-write, for an exclusive lock on NFS, as Session's log. A user who may
-     write the run's directory and not its log, as in a group-shared store,
-     opens it read-only: a local flock ignores the open mode, and NFS's
-     emulation then refuses the lock, which raises. *)
-  let fd =
-    let open_ flags =
-      Unix.openfile log (Unix.O_CLOEXEC :: Unix.O_SHARE_DELETE :: flags) 0
-    in
-    try open_ [ Unix.O_RDWR ] with
-    | Unix.Unix_error (Unix.EACCES, _, _) -> (
-        try open_ [ Unix.O_RDONLY ]
-        with Unix.Unix_error (e, _, _) ->
-          raise (Sys_error (log ^ ": " ^ Unix.error_message e)))
-    | Unix.Unix_error (e, _, _) ->
-        raise (Sys_error (log ^ ": " ^ Unix.error_message e))
-  in
-  (* Renaming the log to its mark under the lock ends the run at once for
-     readers and writers, so that none meets half a run. The directory goes
-     once the lock is let go: Windows renames no directory while a file in it
-     is open, and the lock is such a file. *)
-  (Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  (* Deletions take a run's lock one at a time, under the store's [deletions]
+     lock, so that a run's lock held meanwhile is a writer's: a deletion that
+     came second waits, then finds the log gone. *)
+  (File.with_lock (deletions s) `Exclusive @@ fun () ->
+   (* Read-write, for an exclusive lock on NFS, as Session's log. A user who
+      may write the run's directory and not its log, as in a group-shared
+      store, opens it read-only: a local flock ignores the open mode, and NFS's
+      emulation then refuses the lock, which raises. *)
+   let fd =
+     let open_ flags =
+       Unix.openfile log (Unix.O_CLOEXEC :: Unix.O_SHARE_DELETE :: flags) 0
+     in
+     try open_ [ Unix.O_RDWR ] with
+     | Unix.Unix_error (Unix.ENOENT, _, _) -> no_run s id
+     | Unix.Unix_error (Unix.EACCES, _, _) -> (
+         try open_ [ Unix.O_RDONLY ]
+         with Unix.Unix_error (e, _, _) ->
+           raise (Sys_error (log ^ ": " ^ Unix.error_message e)))
+     | Unix.Unix_error (e, _, _) ->
+         raise (Sys_error (log ^ ": " ^ Unix.error_message e))
+   in
+   (* Renaming the log to its mark under the lock ends the run at once for
+      readers and writers, so that none meets half a run. The directory goes
+      once the lock is let go: Windows renames no directory while a file in it
+      is open, and the lock is such a file. *)
+   Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
    if not (File.take_writer fd) then
      failwith (Printf.sprintf "run %s is being written" id);
    try Unix.rename log (Listing.mark r.dir)
