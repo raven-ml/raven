@@ -193,6 +193,9 @@ KERNELS = {
     # either side of the bound: 9 blocks over 4 experts do 63.9 multiply-adds a byte and stream, 10 blocks do 71.0 and take a core
     "routed_at_bound": lambda: last(routed_bfloat16(9, 16, 64, 256, 4)),
     "routed_past_bound": lambda: last(routed_bfloat16(10, 16, 64, 256, 4)),
+    # 1280 rows in blocks of 16 to 128 over 4 experts, on a core: the core's M upcast keeps a warp's rows in one block where one of
+    # its candidates does, 2 rows of tiles at 32 and 4 at 64 and 128 where 5 divides the tiles, and takes 5 at 16
+    **{f"routed_run_{c}": (lambda c=c: last(routed_bfloat16(1280 // c, c, 64, 256, 4))) for c in [16, 32, 64, 128]},
     # a bfloat16 product of a value another kernel stores: attention's heads, merged, then projected
     "projection_of_stored": lambda: last((empty(4, 64, 16, dtype=dtypes.bfloat16).float() @ empty(4, 16, 16, dtype=dtypes.bfloat16).float())
                                          .cast(dtypes.bfloat16).permute(1, 0, 2).reshape(64, 64).float()

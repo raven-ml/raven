@@ -536,6 +536,91 @@ let applies =
       let _, _, o = List.find (fun (c, _, _) -> c.name = name) gpu_cases in
       equal Testable.bool streamed (streams o))
 
+(* Runs of rows
+
+   Rows that read an operand only through their quotient by [d], as blocks of
+   [d] rows read their expert's matrix at [owner[r / d]], read one value of it
+   a run. A tensor core's warp whose rows cross runs loads each run's value,
+   so where an upcast of the core's rows (its M range) keeps a warp within a
+   run, the rows of a warp, the core's tile times the upcast, divide [d]. *)
+
+(* [d] if [o] reads the range [r] only as its quotient by [d], 1 otherwise. *)
+let run o r =
+  let readers =
+    List.filter
+      (fun u -> List.memq r (Ops.src u))
+      (Ops.Nodes.to_list (Ops.backward_slice_with_self ~calls:Skip o))
+  in
+  let divisor u =
+    if Ops.op u = Op.Div && Ops.op (Ops.nth u 1) = Op.Const then
+      match Ops.value (Ops.nth u 1) with
+      | `Int d -> Some (Bigint.to_int d)
+      | _ -> None
+    else None
+  in
+  match List.map divisor readers with
+  | Some d :: rest when List.for_all (( = ) (Some d)) rest -> d
+  | _ -> 1
+
+let core_upcasts = [ 2; 3; 4; 5 ]
+
+let warps_within_runs =
+  let cored =
+    List.filter_map
+      (fun (c, k, o) ->
+        List.find_map
+          (function Opt.Tc _ as t -> Some (c, k, o, t) | _ -> None)
+          (K.applied_opts o))
+      gpu_cases
+  in
+  cases
+    "a core's warp holds rows of one run where an upcast of the core's rows \
+     keeps it in one"
+    ~id:(fun (c, _, _, _) -> c.name)
+    cored
+    (fun (_, k, o, t) ->
+      (* The core alone, and its M range: what is left of [m] past the tile. *)
+      let tk = K.copy k in
+      let rest =
+        match K.apply_opt tk t with
+        | Ok (_ :: m :: _) -> m
+        | Ok _ -> failf "the core has no M range"
+        | Error e -> failf "the core does not apply again: %s" e
+      in
+      let m =
+        List.find_opt (fun r -> Ops.axis_id r = Ops.axis_id rest) (K.rngs k)
+      in
+      (* A core over the whole of M leaves it no range to upcast, and one that
+         padded M no exact tile. *)
+      match (m, List.find_index (( == ) rest) (K.rngs tk)) with
+      | Some m, Some axis when Bigint.(equal (rem (size m) (size rest)) zero) ->
+          let tile = Bigint.to_int (Bigint.div (size m) (size rest)) in
+          (* The upcast of M the optimisations apply after the core, if any. *)
+          let after = List.tl (List.drop_while (( <> ) t) (K.applied_opts o)) in
+          let upcast =
+            match after with
+            | Opt.Split { axis = a; amount; target = Opt.Upcast; _ } :: _
+              when a = axis ->
+                amount
+            | _ -> 1
+          in
+          (* The rows that read one value of every operand that reads [m]
+             only as a quotient. *)
+          let rec gcd a b = if b = 0 then a else gcd b (a mod b) in
+          let d =
+            match operands k with
+            | Some (a, b) ->
+                List.fold_left gcd 0
+                  (List.filter (fun d -> d > 1) [ run a m; run b m ])
+            | None -> 0
+          in
+          let divides v = Bigint.(equal (rem (size rest) (of_int v)) zero) in
+          let keeps v = d mod (tile * v) = 0 && divides v in
+          if d > 1 && List.exists keeps core_upcasts then
+            equal int ~msg:"rows of a warp past a run" 0
+              (d mod (tile * upcast))
+      | _ -> ())
+
 (* Kernels rune compiles for CUDA, recorded without optimisations: products of
    one token by a Q8_0, an MXFP4 and a bfloat16 matrix, a prompt's blocks of 16
    rows each multiplying a bfloat16 matrix of its own, and gpt-oss-20b's gate
@@ -891,6 +976,7 @@ let () =
              applies;
              recorded_order;
            ];
+         warps_within_runs;
          group "the host's budget"
            [ held_cases; budget; more_registers; doubles ];
        ])

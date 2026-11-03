@@ -94,6 +94,68 @@ let decoded_product k =
    Ada has 100 streaming multiprocessors, a Radeon R9700 64 compute units. *)
 let min_workgroups = 100
 
+let rec gcd a b = if b = 0 then a else gcd b (a mod b)
+
+(* The run of [o] along the range [r]: [d] if [o] reads [r] only as [r / d], 1
+   otherwise. *)
+let run o r =
+  let readers =
+    List.filter
+      (fun u -> List.memq r (src u))
+      (Nodes.to_list (backward_slice_with_self ~calls:Skip o))
+  in
+  let divisor u =
+    if op u = Op.Div && op (nth u 1) = Op.Const then
+      known_size (Sym (nth u 1))
+    else None
+  in
+  match List.map divisor readers with
+  | Some d :: rest when List.for_all (Option.equal Bigint.equal (Some d)) rest
+    ->
+      d
+  | _ -> Bigint.one
+
+(* The rows of the range [m] that read one value of an operand of [k]'s
+   product: the gcd of the runs of the operands that read [m] only as
+   [m / d], as a block's rows read their owner's matrix at [owner[r / c]], or
+   1 where none does. *)
+let owner_run k m =
+  match K.reduceop k with
+  | None -> 1
+  | Some red ->
+      let strip u = if op u = Op.Cast then nth u 0 else u in
+      let p = strip (nth red 0) in
+      let p = if op p = Op.Where then strip (nth p 1) else p in
+      let add g o =
+        let d = run o m in
+        if Bigint.(gt d one) then gcd g (Bigint.to_int d) else g
+      in
+      if op p <> Op.Mul then 1 else max 1 (List.fold_left add 0 (src p))
+
+(* The upcasts a tensor core's rows and columns try, the first that divides
+   its range taken. *)
+let core_upcasts = [ 5; 4; 3; 2 ]
+
+(* The core's M upcast [u] of [k]'s range [m], which the core split into
+   [rest] and its tile: [u], or where a warp of [u] tiles would cross runs of
+   rows ({!owner_run}), the first of {!core_upcasts} dividing [rest] that keeps
+   a warp within one run, if one does. A warp whose rows cross runs loads a
+   tile of each run's value: over blocks of 64 rows each multiplying its
+   expert's matrix, an upcast of 5 makes warps of 80 rows across two blocks,
+   and 4 warps of 64 within one. *)
+let within_run k m rest u =
+  match (known_size (Sym (nth m 0)), known_size (Sym (nth rest 0))) with
+  (* The tile is exact where the core did not pad M. *)
+  | Some a, Some b when Bigint.(gt b zero && equal (rem a b) zero) ->
+      let tile = Bigint.(to_int (div a b)) and owned = owner_run k m in
+      let fits v = owned mod (tile * v) = 0 in
+      let divides v = Option.is_some (first_dividing rest [ v ]) in
+      if fits u then u
+      else
+        Option.value ~default:u
+          (List.find_opt (fun v -> fits v && divides v) core_upcasts)
+  | _ -> u
+
 (* first try the tensor cores *)
 let tensor_cores k =
   let use_tc = setting Setting.use_tc in
@@ -130,14 +192,28 @@ let tensor_cores k =
                 Sint.(prod_at tk (K.axes_of tk [ Global ]) >= Int size * Int n)
             in
             let always _ = true in
+            (* M's upcast, kept within a run of rows that read one value of
+               an operand. *)
+            let upcast_m ~keep =
+              match first_dividing rngs.(1) core_upcasts with
+              | Some size when keep size ->
+                  let same r = axis_id r = axis_id rngs.(1) in
+                  let size =
+                    match List.find_opt same (K.rngs k) with
+                    | Some m -> within_run k m rngs.(1) size
+                    | None -> size
+                  in
+                  split 1 size Opt.Upcast
+              | _ -> ()
+            in
             if min_globals <> 0 then begin
               (* attempt to upcast M, local N, upcast N, skipping upcast N if
                  we'd end up with too few globals *)
-              upcast ~keep:always 1 [ 5; 4; 3; 2 ] Opt.Upcast;
+              upcast_m ~keep:always;
               upcast ~keep:always 0 [ 4; 2 ] Opt.Local;
               upcast
                 ~keep:(leaves ~default:false min_globals)
-                0 [ 5; 4; 3; 2 ] Opt.Upcast
+                0 core_upcasts Opt.Upcast
             end
             else begin
               (* attempt to upcast M, N, local N. Each gives a warp more of the
@@ -146,8 +222,8 @@ let tensor_cores k =
                  by 64 outputs over 1024 32 workgroups of a warp, which its
                  upcasts would leave one, three times slower. *)
               let keep = leaves ~default:true min_workgroups in
-              upcast ~keep 1 [ 5; 4; 3; 2 ] Opt.Upcast;
-              upcast ~keep 0 [ 5; 4; 3; 2 ] Opt.Upcast;
+              upcast_m ~keep;
+              upcast ~keep 0 core_upcasts Opt.Upcast;
               upcast ~keep 0 [ 4; 2 ] Opt.Local
             end;
             Some tk)
@@ -236,27 +312,6 @@ let rec divisor_at_most r n =
 let pow2_above n =
   let rec go p = if p >= n then p else go (2 * p) in
   go 1
-
-let rec gcd a b = if b = 0 then a else gcd b (a mod b)
-
-(* The run of [o] along the range [r]: [d] if [o] reads [r] only as [r / d], 1
-   otherwise. *)
-let run o r =
-  let readers =
-    List.filter
-      (fun u -> List.memq r (src u))
-      (Nodes.to_list (backward_slice_with_self ~calls:Skip o))
-  in
-  let divisor u =
-    if op u = Op.Div && op (nth u 1) = Op.Const then
-      known_size (Sym (nth u 1))
-    else None
-  in
-  match List.map divisor readers with
-  | Some d :: rest when List.for_all (Option.equal Bigint.equal (Some d)) rest
-    ->
-      d
-  | _ -> Bigint.one
 
 (* The reuse of [o] along each output range of [k]: [(g, f)] for each range
    [g] that [f > 1] outputs share an element of [o] along, or [None] if the

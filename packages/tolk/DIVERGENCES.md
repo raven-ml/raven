@@ -5746,3 +5746,38 @@ fold wraps integers and holds its float bound`, hold.
   another index; rune's
   `Rune.jit over several devices › maps over a cut axis › partials give
   eager's bits, their programs do not grow`.
+
+## D200. A tensor core's row upcast keeps a warp within a run of rows
+
+- **tinygrad:** `codegen/opt/heuristic.py:29-43` (`hand_coded_optimizations`,
+  whose tensor core upcasts the core's M range by the first of 5, 4, 3 and
+  2 that divides it).
+- **tolk:** `Heuristic.tensor_cores`, through `Heuristic.within_run` and
+  `Heuristic.owner_run`; `test/gen/tinygrad.patch`, which gives tinygrad the
+  same.
+- **Differs:** where the operands of the core's product read its M range
+  only as its quotient by `d`, as blocks of `d` rows read their expert's
+  matrix at `owner[r / d]`, and the first candidate dividing M would make a
+  warp of tiles cross a run of `d` rows, M takes the first candidate
+  dividing it whose warp, the core's tile times the upcast, divides `d`.
+  Where none does, the operands read M otherwise, or the core padded M,
+  tinygrad's candidate stands, and where tinygrad takes none, none. The
+  rule takes M alone: rows routed onto the core's N cross runs as before.
+- **Reason:** (d): a warp whose rows cross runs loads a tile of each run's
+  matrix. gpt-oss-20b's experts layer of MXFP4 matrices at bfloat16 on
+  fudge's RTX 5000 Ada, its rows in blocks of `c` of one expert (tile 16,
+  three interleaved rounds, ranges apart): at 2048 tokens and `c = 64` an
+  upcast of 5, warps of 80 rows over two blocks, takes 19.25-19.73 ms a layer
+  against 10.62-10.85 ms at 4; at 512 tokens and `c = 32` 6.60-6.64 ms at 5
+  against 4.44-4.52 ms at 2; at 128 tokens and `c = 64` 4.96-5.01 ms against
+  3.21-3.24 ms. At `c = 16` no candidate keeps a warp of 16-row tiles within
+  a block, so tinygrad's candidate stands: there its upcasts of 2 and 4 over
+  two to four blocks were 1.2 to 1.4 times faster than none; an upcast of 5
+  over blocks of 16 is not measured. rune lowers no routed product in blocks past 16 rows yet; its
+  blocked lowering of 64 rows is the consumer, and its rows the pins.
+- **Pinned by:** the Heuristic suite: the `routed_run_16`, `routed_run_32`,
+  `routed_run_64` and `routed_run_128` cases on each renderer, from the
+  equally patched tinygrad, and `a core's warp holds rows of one run where an
+  upcast of the core's rows keeps it in one`; on fudge, once rune lowers
+  routed products in blocks of 64, gpt-oss-20b's experts rows at 128, 512
+  and 2048 tokens.

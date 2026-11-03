@@ -939,6 +939,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On a tensor core, `Heuristic.hand_coded_optimizations` keeps a warp's rows
+  within a run of rows that read one value of an operand, as blocks of rows
+  read their expert's matrix, where an upcast of the core's rows does: at
+  blocks of 64 rows it upcasts them by 4 where it took 5, whose warps crossed
+  two blocks.
 - `Rangeify.get_kernel_graph` inlines the positions a one-hot gather compares
   with, read in a product's sum past 181 values: they were stored, so that
   each row multiplied every expert's matrix. `Nx_quant.apply_experts`,

@@ -33,7 +33,12 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       keep every compute unit of a large GPU busy, or when the count is not
       known: a split gives each workgroup more of the outputs and the kernel
       fewer workgroups, which leaves compute units idle once they are fewer
-      than the units.
+      than the units. Where the operands read [M] only as its quotient by
+      [d], as blocks of [d] rows read their expert's matrix, and the core's
+      tile times [M]'s upcast does not divide [d], [M] is upcast instead by
+      the first of 5, 4, 3 and 2 that divides it and whose warp, the tile
+      times the upcast, divides [d], if one does: a warp whose rows cross
+      blocks loads each block's matrix.
       With {!Setting.tc_min_globals}, [M] is upcast and [N] split locally
       whatever the workgroups, and [N] is upcast only while that many
       workgroups remain;
