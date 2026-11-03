@@ -148,9 +148,14 @@ raven / llama.cpp b12048 Vulkan:
   MB, 42k instructions) then spends, loaded, 3-4.5 s in Clang and 3.5-5.5 s
   in tolk (424 M words): about 40 passes, each linear in the program's size
   and under 0.4 s and 40 M words, rangeify's cleanups, `run_rangeify` and
-  the symbolic passes before decomposition the largest. What is left is the
-  rewrite engine's cost per node (its tables, rebuilds and keys) and Clang;
-  test_special runs 80-85 s on fudge loaded, 317-340 s on Ubuntu CI
+  the symbolic passes before decomposition the largest. Rewrite tables are
+  now keyed by node id (382 M words on rune's `special/betaincinv-grad-f64`
+  compile row); left in tolk: table cache misses (~20% of its samples),
+  interning (~10%) and matching. Clang's SROA is superlinear in vector
+  `__builtin_bit_cast` (tinygrad renders them too): 4.2 of that row's 7.2
+  s of Clang; rendering them as vector casts gives the same object in 2.8
+  s, a divergence to admit with that row. test_special (scalar kernels,
+  `-j 4` since 28b0f48ec) is to re-time on CI
 - whether memory-bound host kernels take lanes at all: no upcast ran 4-7%
   faster than 64-byte lanes in two of seven loaded fudge runs of a 4M
   float32 select-zero; decide on the scheduled quiet re-record
