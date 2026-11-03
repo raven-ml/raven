@@ -2051,6 +2051,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A take of whole rows, as `Nx.take ~axis:0` of a matrix, copies each row
+  in place of a call a row: rows of 8 to 64 bytes, the windows that
+  `Nx_ragged.ids` and `Nx_ragged.rank` pack text into, cost a few loads and
+  stores each. Talon's H2O group-by q01 at 1e6 rows takes 164 instructions
+  a row where it took 229, and q10 1,365 where it took 1,559.
 - `Nx.reduce_segments` and `Nx.scatter` of integers by `Add`, `Max` or
   `Min` into few targets fold each thread's share of the updates into
   targets of its own, in place of sorting them by target: 1M int64 sums

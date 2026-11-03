@@ -316,6 +316,14 @@ let gather_examples =
     (* A row take: positions broadcast along the rows. *)
     gather_example (D.Any D.Int16) ~xs:[| 5; 3 |] ~axis:0 ~n:4 ~broadcast:[ 1 ]
       [| 4L; 0L; 2L; 4L |];
+    (* Row takes of rows of 8 and 16 bytes, positions outside the axis
+       among them. *)
+    gather_example (D.Any D.Uint8) ~xs:[| 10; 8 |] ~axis:0 ~n:6
+      ~broadcast:[ 1 ]
+      [| 3L; -1L; 9L; 10L; Int64.max_int; 0L |];
+    gather_example (D.Any D.Float64) ~xs:[| 7; 2 |] ~axis:0 ~n:5
+      ~broadcast:[ 1 ]
+      [| 6L; 7L; 0L; -3L; 2L |];
   ]
 
 let scatter_examples =

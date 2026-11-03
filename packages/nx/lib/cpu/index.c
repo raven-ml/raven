@@ -145,10 +145,49 @@ GATHER_ROW(gather_4, uint32_t)
 GATHER_ROW(gather_8, uint64_t)
 GATHER_ROW(gather_16, u128)
 
+/* Copies the [n] bytes of a row at [s] to [d]: a row of a few words in
+   loads and stores of its own size, others by memcpy. */
+static inline void copy_row(uint8_t *d, const uint8_t *s, int64_t n) {
+  switch (n) {
+    case 4: memcpy(d, s, 4); return;
+    case 8: memcpy(d, s, 8); return;
+    case 16: memcpy(d, s, 16); return;
+    case 32: memcpy(d, s, 32); return;
+    case 64: memcpy(d, s, 64); return;
+    default: memcpy(d, s, (size_t)n);
+  }
+}
+
+/* A block of a row take, whose positions step 0 along its rows of
+   contiguous elements in the destination and the source: a copy a row.
+   A short row's copy is a few loads and stores, where a call a row and
+   its memcpy cost several times them: ragged rows packed into words take
+   windows of 8 to 64 bytes. */
+static void take_rows(const nx_cpu_block *b, const gather *g) {
+  const nx_array *a = g->a;
+  const int64_t *idx = (const int64_t *)a[1].base;
+  int64_t w = g->w, n = b->n0 * w, sa = g->sa * w;
+  for (int64_t q = 0; q < b->n2; q++) {
+    int64_t pd = b->at[0] + q * b->s2[0], pi = b->at[1] + q * b->s2[1];
+    int64_t px = b->at[2] + q * b->s2[2];
+    for (int64_t j = 0; j < b->n1;
+         j++, pd += b->s1[0], pi += b->s1[1], px += b->s1[2]) {
+      uint64_t p = (uint64_t)idx[pi];
+      uint8_t *d = a[0].base + pd * w;
+      if (p < g->dim) copy_row(d, a[2].base + px * w + (int64_t)p * sa, n);
+      else memset(d, 0, (size_t)n);
+    }
+  }
+}
+
 static void gather_block(const nx_cpu_block *b, void *ctx) {
   const gather *g = ctx;
   const nx_array *a = g->a;
   const int64_t *idx = (const int64_t *)a[1].base;
+  if (g->w > 0 && b->s0[1] == 0 && b->s0[0] == 1 && b->s0[2] == 1) {
+    take_rows(b, g);
+    return;
+  }
   for (int64_t q = 0; q < b->n2; q++)
     for (int64_t j = 0; j < b->n1; j++) {
       int64_t pd = b->at[0] + q * b->s2[0] + j * b->s1[0];

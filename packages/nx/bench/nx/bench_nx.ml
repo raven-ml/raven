@@ -843,6 +843,14 @@ let segments_1m () =
   let ids = Nx.place Nx.Host.on (Nx.cast D.Int64 ids) in
   (ids, Nx.copy ids)
 
+(* 1M windows of 8 bytes at positions drawn once from a fixed key, as a
+   ragged row's bytes are packed into a word. *)
+let windows_1m () =
+  let n = 1 lsl 20 in
+  let at = Nx.Rng.randint ~key:(Nx.Rng.key 14) ~high:n [| n |] in
+  let bytes = on_host (Nx.zeros D.Uint8 [| n + 7 |]) in
+  (on_host (Nx.cast D.Int64 at), Nx.sliding_window ~window:8 bytes)
+
 (* A cache of 8 heads, 4096 positions and 64 features, 8 MiB, one
    position's row and the position. *)
 let set_8m () =
@@ -944,6 +952,8 @@ let index_rows =
       Thumper.bench_with_setup "segment-sum-i64-1M-into-100"
         ~setup:segments_1m (fun (ids, x) ->
           Nx.reduce_segments Add ~segments:100 ids x);
+      Thumper.bench_with_setup "take-windows-8B-1M" ~setup:windows_1m
+        (fun (at, w) -> Nx.take ~axis:0 at w);
       Thumper.bench_with_setup "set-row-8M" ~setup:set_8m
         (fun (cache, row, pos) -> Nx.set Nx.[ A; A; D (pos, 1); A ] row cache);
       Thumper.bench_with_setup "set-held-3-axes-4K-of-32K" ~setup:set_held
