@@ -849,6 +849,28 @@ let test_contract_nans () =
     (Nx.P (Nx.matmul (Nx.place Set1.on a) (Nx.place Set1.on b)))
     (Nx.P (Nx.matmul (Nx.place rows a) (Nx.place cols b)))
 
+(* Attention over query heads and rows cut across devices: each device's
+   window offsets its mask's and score's row coordinates and reads the keys
+   whole, as on one device. *)
+let test_attention () =
+  let draw seed s =
+    Nx.create Nx.float32 s
+      (Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 0.37) +. seed)))
+  in
+  let attend at_q at_kv =
+    let slopes = Nx.place at_kv (draw 4. [| 4; 1; 1 |]) in
+    let score p s = Nx.(Infix.(s - (cast float32 (p.q - p.k) * slopes))) in
+    let k = Nx.place at_kv (draw 2. [| 2; 90; 8 |]) in
+    let v = Nx.place at_kv (draw 3. [| 2; 90; 4 |]) in
+    Nx.attention ~mask:Nx.causal ~score ~kv:(Nx.Dense { k; v })
+      (Nx.place at_q (draw 1. [| 4; 70; 8 |]))
+  in
+  let o, lse = attend Set1.on Set1.on in
+  let cut = Nx.Placement.mesh mesh4 [ (0, [ "b" ]); (1, [ "a" ]) ] in
+  let o', lse' = attend cut (Nx.Placement.mesh mesh4 []) in
+  same 0 (Nx.P o) (Nx.P o');
+  same 1 (Nx.P lse) (Nx.P lse')
+
 let () =
   exit
     (run "nx windows"
@@ -860,6 +882,7 @@ let () =
                 gives its result on one device"
                case law;
              test "a transform over cut NaNs of both signs" test_fft_nans;
+             test "attention over cut heads and rows" test_attention;
              test "a contraction over cut NaNs of both signs"
                test_contract_nans;
            ];

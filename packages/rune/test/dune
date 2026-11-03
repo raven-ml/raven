@@ -18,7 +18,8 @@
   test_custom
   test_probe
   test_callback
-  test_sums)
+  test_sums
+  test_attention)
  (modules
   compose
   test_jit
@@ -37,7 +38,8 @@
   test_custom
   test_probe
   test_callback
-  test_sums)
+  test_sums
+  test_attention)
  (libraries
   nx
   nx_array

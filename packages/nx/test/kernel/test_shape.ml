@@ -565,6 +565,47 @@ let test_float_carrier (Nx_kernel.Any_float dt) =
   let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
   equal string (carrier_name (D.Any dt)) (D.name c)
 
+(* Attention *)
+
+let test_attention () =
+  let both = function
+    | Ok (o, lse) -> Ok [ Array.to_list o; Array.to_list lse ]
+    | Error _ -> misfit
+  in
+  let a ?lengths ?(loads = [||]) q kv =
+    both (Shape.attention q kv ~lengths loads)
+  in
+  let fits ~msg want got = equal ~msg shapes_t (Ok want) got in
+  let refuses ~msg got = equal ~msg shapes_t misfit got in
+  let dense k v : _ Nx_kernel.kv = Dense { k; v } in
+  let q = [| 2; 4; 3; 5 |] in
+  fits ~msg:"dense, grouped heads" [ [ 2; 4; 3; 6 ]; [ 2; 4; 3 ] ]
+    (a q (dense [| 2; 2; 7; 5 |] [| 2; 2; 7; 6 |]));
+  fits ~msg:"lengths and a load" [ [ 2; 4; 3; 6 ]; [ 2; 4; 3 ] ]
+    (a ~lengths:[| 2 |] ~loads:[| [| 2; 4; 3; 7 |] |] q
+       (dense [| 2; 2; 7; 5 |] [| 2; 2; 7; 6 |]));
+  fits ~msg:"paged" [ [ 2; 4; 3; 6 ]; [ 2; 4; 3 ] ]
+    (a ~loads:[| [| 2; 4; 3; 12 |] |] q
+       (Paged { k = [| 5; 1; 4; 5 |]; v = [| 5; 1; 4; 6 |]; table = [| 2; 3 |] }));
+  fits ~msg:"no heads" [ [ 0; 3; 6 ]; [ 0; 3 ] ]
+    (a [| 0; 3; 5 |] (dense [| 0; 7; 5 |] [| 0; 7; 6 |]));
+  refuses ~msg:"two axes" (a [| 3; 5 |] (dense [| 7; 5 |] [| 7; 6 |]));
+  refuses ~msg:"heads that do not divide"
+    (a q (dense [| 2; 3; 7; 5 |] [| 2; 3; 7; 6 |]));
+  refuses ~msg:"keys of another dimension"
+    (a q (dense [| 2; 2; 7; 4 |] [| 2; 2; 7; 6 |]));
+  refuses ~msg:"values of other keys"
+    (a q (dense [| 2; 2; 7; 5 |] [| 2; 2; 8; 6 |]));
+  refuses ~msg:"lengths of another shape"
+    (a ~lengths:[| 3 |] q (dense [| 2; 2; 7; 5 |] [| 2; 2; 7; 6 |]));
+  refuses ~msg:"a load of another shape"
+    (a ~loads:[| [| 2; 4; 3; 6 |] |] q
+       (dense [| 2; 2; 7; 5 |] [| 2; 2; 7; 6 |]));
+  refuses ~msg:"a table of another rank"
+    (a q (Paged { k = [| 5; 1; 4; 5 |]; v = [| 5; 1; 4; 6 |]; table = [| 3 |] }));
+  refuses ~msg:"pools of other pages"
+    (a q (Paged { k = [| 5; 1; 4; 5 |]; v = [| 4; 1; 4; 6 |]; table = [| 2; 3 |] }))
+
 (* Gathers, scatters and sorts *)
 
 let test_index_refuses () =
@@ -995,6 +1036,8 @@ let tests =
           linalg_case law_linalg;
         test "full_precision states the routines' dtypes" test_full_precision;
       ];
+    group "attention"
+      [ test "states o's and lse's shapes and refuses others" test_attention ];
     group "libraries"
       [
         test "name names the kernels" (fun () ->
