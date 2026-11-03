@@ -85,12 +85,14 @@ let one_if c u = where c (num u 1) (num u 0)
 
 (* Narrow floats
 
-   float16, bfloat16, the float8 dtypes and float4_e2m1fn compute in float32.
-   float16 and bfloat16 convert by tolk's casts, which every target renders
-   exactly when widening and, when narrowing, rounds once to nearest with ties
-   to even; a NaN stays a NaN, as nx's NaN rule allows. tolk sees the 8- and
-   4-bit floats as bytes: a code decodes exactly, and a result encodes once as
-   [Dtype.of_float] stores, by integer formulas on float32's bits. *)
+   float16, bfloat16, the float8 dtypes and float4_e2m1fn compute in float32,
+   but for a negation and an absolute value of float16 and bfloat16, which act
+   on their own bits ([held16]). float16 and bfloat16 convert by tolk's casts,
+   which every target renders exactly when widening and, when narrowing,
+   rounds once to nearest with ties to even; a NaN stays a NaN, as nx's NaN
+   rule allows. tolk sees the 8- and 4-bit floats as bytes: a code decodes
+   exactly, and a result encodes once as [Dtype.of_float] stores, by integer
+   formulas on float32's bits. *)
 
 let narrow (D.Any dt) =
   match dt with
@@ -547,6 +549,13 @@ let bitcast_parts ~src:(D.Any s as src) (D.Any dt as d) xs =
 
 let widen d x = if narrow d then decode d x else x
 
+(* float16 and bfloat16 are held in their own types, so a negation and an
+   absolute value, which act on the sign bit alone, act on theirs: a NaN keeps
+   its bits, where through float32 a folded conversion of a signalling NaN
+   constant would quiet it. *)
+let held16 (D.Any dt) =
+  match dt with D.Float16 | D.Bfloat16 -> true | _ -> false
+
 let narrowed d f xs =
   let y = f (List.map (widen d) xs) in
   if narrow d then encode d y else y
@@ -556,6 +565,7 @@ let op1 (k : P.op1) ~src:(D.Any s as src) dt xs =
   | Copy -> xs
   | Cast -> cast_parts ~src dt xs
   | Bitcast -> bitcast_parts ~src dt xs
+  | Unary ((Neg | Abs) as u) when held16 src -> [ Lower_real.unary u (one xs) ]
   | Unary u -> (
       match D.kind s with
       | Float -> [ narrowed src (fun xs -> Lower_real.unary u (one xs)) xs ]

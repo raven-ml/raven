@@ -368,6 +368,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled negation or absolute value of a `float16` or `bfloat16` constant
+  keeps a signalling NaN's bits, as nx's sign operations do: it went through
+  a float32 conversion that the compiler folded, which quieted it.
 - A sum's cotangent (`Nx.Placement.partial`) lies whole, where the sum
   lies with no sum, and a contribution that is a sum, as a product of a sum
   gives, closes where the transpose gives it. Gradients through

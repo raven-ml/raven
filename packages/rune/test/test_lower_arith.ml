@@ -1077,6 +1077,91 @@ let bool_bytes () =
   let x = Nx.create D.Uint8 [| 4 |] [| 0; 1; 2; 255 |] in
   equal (array int) [| 0; 1; 2; 255 |] (Nx.to_array (compiled f x))
 
+(* Folded NaNs
+
+   A selection between constants, and a negation or an absolute value of one,
+   fold in the compiler and keep a NaN's bits as nx's moves and sign operations
+   do (Nx_array.Dtype, Stores): a selection is the NaN it picks, a signalling
+   one staying signalling, and a negation or an absolute value sets its sign
+   alone. *)
+
+(* The NaNs of an IEEE format of [e] exponent and [m] fraction bits: two
+   signalling and a quiet one, with payloads, of both signs. *)
+let nan_codes ~e ~m =
+  let open Int64 in
+  let exps = shift_left (sub (shift_left 1L e) 1L) m in
+  let quiet = shift_left 1L (m - 1) and sign = shift_left 1L (e + m) in
+  let mags =
+    [
+      logor exps 1L;
+      logor exps (shift_left 5L (m - 4));
+      logor exps (logor quiet 3L);
+    ]
+  in
+  List.concat_map (fun c -> [ c; logor c sign ]) mags
+
+(* Rows over each NaN [c] of [d]: a selection of [c] by a constant condition
+   and by a folded comparison, its negation and its absolute value, with the
+   bits each gives. *)
+let nan_rows d ~e ~m =
+  let w = bytes d in
+  let sign = Int64.shift_left 1L (e + m) in
+  let bias = Int64.pred (Int64.shift_left 1L (e - 1)) in
+  let one add = add (K.Const (d, le w (Int64.shift_left bias m))) in
+  let int add n = add (K.Const (D.Any D.Int32, le 4 (Int64.of_int n))) in
+  let truth add = add (K.Const (D.Any D.Bool, "\001")) in
+  let row c =
+    let nan add = add (K.Const (d, le w c)) in
+    let less add = add (K.Op2 (Compare Less, int add 2, int add 1)) in
+    [
+      ( Printf.sprintf "where true %Lx" c,
+        (fun add -> add (K.Op3 (Where, truth add, nan add, one add))),
+        c );
+      ( Printf.sprintf "where (2 < 1) %Lx" c,
+        (fun add -> add (K.Op3 (Where, less add, one add, nan add))),
+        c );
+      ( Printf.sprintf "neg %Lx" c,
+        (fun add -> add (K.Op1 (Unary Neg, d, nan add))),
+        Int64.logxor c sign );
+      ( Printf.sprintf "abs %Lx" c,
+        (fun add -> add (K.Op1 (Unary Abs, d, nan add))),
+        Int64.logand c (Int64.lognot sign) );
+    ]
+  in
+  List.concat_map row (nan_codes ~e ~m)
+
+let folded_nans =
+  cases
+    "a folded selection keeps a NaN's bits, and a negation or an absolute \
+     value sets only its sign"
+    ~id:(fun (d, _, _) -> name d)
+    D.
+      [
+        (Any Float64, 11, 52);
+        (Any Float32, 8, 23);
+        (Any Float16, 5, 10);
+        (Any Bfloat16, 8, 7);
+      ]
+    (fun (d, e, m) ->
+      let rows = nan_rows d ~e ~m in
+      let p =
+        select ~ins:[| d |]
+          (List.map (fun (_, node, _) add -> raw64 add d (node add)) rows)
+      in
+      let s = [| List.length rows; 1 |] in
+      let got =
+        match values d [ [ String.make (bytes d) '\000' ] ] with
+        | Vs [ x ] -> compiled (fun x -> map_rows p s D.Uint64 [ x ]) x
+        | Vs _ -> invalid_arg "folded_nans: one operand"
+      in
+      let got =
+        Array.map (fun v -> code (K.bits D.Uint64 v)) (Nx.to_array got)
+      in
+      let show (label, _, _) c = Printf.sprintf "%s: %Lx" label c in
+      equal (list string)
+        (List.map (fun ((_, _, want) as r) -> show r want) rows)
+        (List.mapi (fun i r -> show r got.(i)) rows))
+
 let shapes =
   group "shapes and views"
     [
@@ -1111,5 +1196,6 @@ let () =
          bounded_casts;
          into_complex128;
          bitcast;
+         folded_nans;
          shapes;
        ])

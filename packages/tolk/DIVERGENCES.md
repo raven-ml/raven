@@ -4898,8 +4898,11 @@ fold wraps integers and holds its float bound`, hold.
   every sign and payload of `half`, `bfloat16`, `float` and `double`; and
   `Tolk.Symbolic › symbolic_simple › constants › a folded selection keeps a
   signalling NaN's bits, and a negation flips only its sign`. On rune:
-  missing; rune's `Lower_arith` suite brings it, with a compiled `where` whose
-  folded branch is a signalling NaN constant.
+  `Lower_arith › a folded selection keeps a NaN's bits, and a negation or an
+  absolute value sets only its sign`, compiled selections by a constant and by
+  a folded comparison between a NaN constant and 1, and its negations and
+  absolute values, over signalling and quiet NaNs of both signs of `float16`,
+  `bfloat16`, `float32` and `float64`.
 
 ## D177. A name bound to several values is passed by each call that reads it
 
