@@ -1771,6 +1771,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.unique` without `~size`, on keys of few values, ranks the values by
+  their first keys and numbers the keys from those ranks, in four passes over
+  the keys where it took thirteen. Grouping a million int32 keys of 100
+  values takes 57% fewer instructions and 70% fewer cache bytes, and
+  talon's group-by on H2O's `id4` and `id6` about 40% fewer instructions.
 - `Nx_ragged.ids` packs each row's keys into 64-bit words and numbers the
   words with `Nx.unique`, with no per-byte select and no flip: a row of at
   most 7 bytes is one word, its length folded in where lengths differ. Ids

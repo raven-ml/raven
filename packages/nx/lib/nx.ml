@@ -4143,74 +4143,70 @@ let dense ~by keys =
       Some (bitcast D.Int64 numbers, r)
   | _ -> None
 
-(* Groups keys either of two ways, then numbers them alike: [flags] marks each
-   group's first key in input order, a cumulative sum of the flags ranks the
-   groups by first appearance, and [ids] gives each key its group.
+(* Groups the keys of [r] values, at most the keys ({!dense}), numbered
+   [slot]: each value's first key is the least position a scatter puts at
+   its number, [n] where none does. The values ranked by their first keys,
+   those of no key last, are the groups in order of first appearance: the
+   ranks, scattered at the values, give every key its group, and the first
+   keys in rank order are the groups' first keys, [n] past the count. No sort
+   of the keys, and every random access is into the [r] numbers but the
+   ranking's sort of [r] first keys. *)
+let numbered ~by at i slot r =
+  let n = Prim.dim slot 0 in
+  let least =
+    scattered ~by Min slot i (fill ~by at D.Int64 [| r |] (Int64.of_int n))
+  in
+  let order = positions_of ~by least in
+  let ranks =
+    scattered ~by ~unique:true Set order
+      (arange_by ~by at D.Int64 0 r 1)
+      (fill ~by at D.Int64 [| r |] 0L)
+  in
+  let ids = take_axis ~by 0 slot ranks in
+  let ones = Eval.broadcast ~by [| n |] (fill ~by at D.Int64 [||] 1L) in
+  let counts = scattered ~by Add ids ones (fill ~by at D.Int64 [| r |] 0L) in
+  let filled =
+    elementwise ~by D.Int64 [ Any least ]
+      E.(where (operand 0 least < i64 n) (i64 1) (i64 0))
+  in
+  let count = reduce ~by Sum [| 0 |] filled in
+  let l = length ~by count in
+  {
+    ids;
+    first = fit ~by l (Int64.of_int n) (take_axis ~by 0 order least);
+    counts = fit ~by l 0L counts;
+    count;
+  }
 
-   Keys of [r] values, at most the keys ({!dense}): each value's first key is
-   the least position a scatter puts at its number; a key is its group's first
-   where it is its value's; and the ranks of the first keys, scattered at their
-   numbers, give every key its group. No sort, and every random access is into
-   the [r] numbers.
-
-   Other keys: one stable sort of the keys; then, in sorted order, a flag where
-   a key's order key differs from its predecessor's, the start of its run by a
+(* Groups the keys by one stable sort, then in sorted order a flag where a
+   key's order key differs from its predecessor's, the start of its run by a
    cumulative maximum, and the run's first position in the input, which the
-   stable sort put at the run's start. Scattered to input order, the flags rank
-   the groups, and each run's rank, gathered at its first position, numbers its
-   keys.
-
-   Every array has [n] entries, padded by construction, until the count cuts
-   them. *)
-let unique ?size keys =
-  let by = "Nx.unique" in
-  let keys = Donate.read ~by keys in
-  keyed ~by keys;
-  sized ~by size;
+   stable sort put at the run's start. Scattered to input order, the flags
+   mark each group's first key and their cumulative sum ranks the groups by
+   first appearance; each run's rank, gathered at its first position,
+   numbers its keys. Every array has [n] entries, padded by construction,
+   until the count, or [size], cuts them. *)
+let sorted_groups ~by ?size at i keys =
   let n = Prim.dim keys 0 in
-  (* Its counters lie where [keys] lies, whole on each of its devices. *)
-  let at = beside keys in
-  let i = arange_by ~by at D.Int64 0 n 1 in
   let zeros = fill ~by at D.Int64 [| n |] 0L in
   let less_one x = elementwise ~by D.Int64 [ Any x ] E.(operand 0 x - i64 1) in
-  let dense = if size = None && n > 0 then dense ~by keys else None in
-  let flags, rank, ids =
-    match dense with
-    | Some (slot, r) ->
-        let firsts = fill ~by at D.Int64 [| r |] (Int64.of_int n) in
-        let first = take_axis ~by 0 slot (scattered ~by Min slot i firsts) in
-        let flags =
-          elementwise ~by D.Int64 [ Any first; Any i ]
-            E.(where (operand 0 first = operand 1 i) (i64 1) (i64 0))
-        in
-        let rank = scan_along ~by Sum 0 flags in
-        let opened =
-          elementwise ~by D.Int64 [ Any flags; Any slot ]
-            E.(where (operand 0 flags = i64 1) (operand 1 slot) (i64 (-1)))
-        in
-        let groups = fill ~by at D.Int64 [| r |] 0L in
-        let groups = scattered ~by Set opened (less_one rank) groups in
-        (flags, rank, take_axis ~by 0 slot groups)
-    | None ->
-        let p = rows_order ~by keys in
-        let k = take_axis ~by 0 p (keys64 ~by ~merge:false keys) in
-        let before = take_axis ~by 0 (less_one i) k in
-        let differs = comparison ~by (Compare Not_equal) k before in
-        let differs =
-          if ndim keys = 1 then differs else truth ~by Max ~axes:[ 1 ] differs
-        in
-        let fresh =
-          elementwise ~by D.Int64 [ Any i; Any differs ]
-            E.(
-              where (operand 0 i = i64 0 || operand 1 differs) (i64 1) (i64 0))
-        in
-        let start = scan_along ~by Max 0 (binary ~by (Binary Mul) fresh i) in
-        let from = take_axis ~by 0 start p in
-        let flags = scattered ~by ~unique:true Set p fresh zeros in
-        let rank = scan_along ~by Sum 0 flags in
-        let of_sorted = less_one (take_axis ~by 0 from rank) in
-        (flags, rank, scattered ~by ~unique:true Set p of_sorted zeros)
+  let p = rows_order ~by keys in
+  let k = take_axis ~by 0 p (keys64 ~by ~merge:false keys) in
+  let before = take_axis ~by 0 (less_one i) k in
+  let differs = comparison ~by (Compare Not_equal) k before in
+  let differs =
+    if ndim keys = 1 then differs else truth ~by Max ~axes:[ 1 ] differs
   in
+  let fresh =
+    elementwise ~by D.Int64 [ Any i; Any differs ]
+      E.(where (operand 0 i = i64 0 || operand 1 differs) (i64 1) (i64 0))
+  in
+  let start = scan_along ~by Max 0 (binary ~by (Binary Mul) fresh i) in
+  let from = take_axis ~by 0 start p in
+  let flags = scattered ~by ~unique:true Set p fresh zeros in
+  let rank = scan_along ~by Sum 0 flags in
+  let of_sorted = less_one (take_axis ~by 0 from rank) in
+  let ids = scattered ~by ~unique:true Set p of_sorted zeros in
   let target =
     elementwise ~by D.Int64 [ Any flags; Any rank ]
       E.(where (operand 0 flags = i64 1) (operand 1 rank - i64 1) (i64 (-1)))
@@ -4227,6 +4223,20 @@ let unique ?size keys =
     counts = fit ~by l 0L counts;
     count;
   }
+
+let unique ?size keys =
+  let by = "Nx.unique" in
+  let keys = Donate.read ~by keys in
+  keyed ~by keys;
+  sized ~by size;
+  let n = Prim.dim keys 0 in
+  (* Its counters lie where [keys] lies, whole on each of its devices. *)
+  let at = beside keys in
+  let i = arange_by ~by at D.Int64 0 n 1 in
+  let dense = if size = None && n > 0 then dense ~by keys else None in
+  match dense with
+  | Some (slot, r) -> numbered ~by at i slot r
+  | None -> sorted_groups ~by ?size at i keys
 
 (* Each index's run starts at the sum of the counts before it; a scatter of the
    indices at their starts, a cumulative maximum along the result, and [n] past
