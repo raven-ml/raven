@@ -12,6 +12,8 @@ Gpt2/decode-step-at-128-width-256	alloc_words	exact	18261
 Gpt2/decode-step-at-128-width-4096	alloc_words	exact	18261
 Gpt2/decode-step-cache-1024	alloc_words	exact	18261
 Gpt2/decode-step-cache-256	alloc_words	exact	18261
+Parallel/mixture-of-experts-row-parallel-over-4-memory-devices	alloc_words	batch=8	n=20	8.895e+03	8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.895e+03 8.900e+03 8.900e+03 8.911e+03 8.916e+03 8.916e+03
+Parallel/tensor-parallel-feed-forward-over-4-memory-devices	alloc_words	exact	6570
 Quant/cuda/mxfp4-product-of-16384-12-bfloat16-tokens	wall_time	batch=16	n=20	6.556e-04	6.278e-04 6.290e-04 6.409e-04 6.420e-04 6.446e-04 6.459e-04 6.506e-04 6.535e-04 6.550e-04 6.556e-04 6.556e-04 6.601e-04 6.639e-04 6.662e-04 6.751e-04 6.791e-04 6.914e-04 6.929e-04 7.641e-04 9.242e-04
 Quant/cuda/mxfp4-product-of-16384-128-bfloat16-tokens	wall_time	batch=2	n=20	1.806e-03	1.788e-03 1.797e-03 1.800e-03 1.800e-03 1.800e-03 1.801e-03 1.801e-03 1.802e-03 1.806e-03 1.806e-03 1.807e-03 1.808e-03 1.809e-03 1.815e-03 1.816e-03 1.819e-03 1.823e-03 1.825e-03 3.379e-03 4.542e-03
 Quant/cuda/mxfp4-product-of-16384-64-bfloat16-tokens	wall_time	batch=4	n=20	1.505e-03	1.498e-03 1.501e-03 1.501e-03 1.502e-03 1.502e-03 1.502e-03 1.504e-03 1.504e-03 1.504e-03 1.505e-03 1.505e-03 1.506e-03 1.508e-03 1.515e-03 1.521e-03 1.610e-03 1.620e-03 1.653e-03 2.822e-03 2.993e-03

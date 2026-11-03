@@ -425,6 +425,92 @@ let quant () =
   in
   (("host", host) :: metal ()) @ gpu
 
+(* A tensor-parallel feed-forward over four memory devices, compiled: the
+   gate and up projections cut along their outputs, the down projection
+   along its inputs and asked for the devices' terms, closed once after the
+   residual add, at width 2880 and 720 hidden features for 8 tokens. Its
+   allocation counts the closing's steps as the step runs them. *)
+let parallel =
+  let dim = 2880 and hidden = 2880 / 4 and tokens = 8 in
+  let setup () =
+    let module D =
+      (val Nx.devices
+             (List.init 4 (fun k ->
+                  get_ok
+                    (Rig.memory_device (Printf.sprintf "kaun-bench-tp-%d" k)))))
+    in
+    let linear at inputs outputs =
+      let w = own at (Nx.full Nx.float32 [| inputs; outputs |] (1. /. 64.)) in
+      { Linear.w; b = None }
+    in
+    let gate = linear (D.split ~axis:1) dim hidden
+    and up = linear (D.split ~axis:1) dim hidden
+    and down = linear (D.split ~axis:0) hidden dim in
+    let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x in
+    let step x =
+      let h = Nx.mul (Fn.silu (Linear.apply gate x)) (Linear.apply up x) in
+      close (Nx.add x (Linear.apply ~sum:true down h))
+    in
+    let f = Rune.jit' step in
+    let x = own D.on (Nx.full Nx.float32 [| tokens; dim |] 0.5) in
+    ignore (lowered "tensor-parallel feed-forward" (fun () -> f x));
+    fun () -> Nx.sync (f x)
+  in
+  [ { name = "tensor-parallel feed-forward over 4 memory devices"; setup } ]
+
+(* A mixture-of-experts layer as gpt-oss's, top 2 of 4 experts at width 256
+   for 4 tokens, row parallel over four memory devices: each expert's first
+   projection cut along its outputs and its second along its inputs, asked
+   for the devices' terms, which the top-2 combine keeps and one closing
+   after the residual add closes. Closing each expert's rows instead moves
+   two rows a token. Compiled; its allocation counts the closing's steps as
+   the step runs them. In its first few hundred calls rig's buffer cache
+   misses until finalisers return its buffers, so its words follow the
+   collection's timing and its baseline is sampled. *)
+let experts_layer =
+  let experts = 4 and per_token = 2 and width = 256 and tokens = 4 in
+  let setup () =
+    let module D =
+      (val Nx.devices
+             (List.init 4 (fun k ->
+                  get_ok
+                    (Rig.memory_device (Printf.sprintf "kaun-bench-moe-%d" k)))))
+    in
+    let weight at s = own at (Nx.full Nx.float32 s (1. /. 64.)) in
+    let first = weight (D.split ~axis:2) [| experts; width; 2 * width |]
+    and second = weight (D.split ~axis:1) [| experts; 2 * width; width |] in
+    let ids =
+      own D.on
+        (Nx.init Nx.int64 [| tokens; per_token |] (fun i ->
+             Int64.of_int (((i.(0) * 3) + (i.(1) * 2)) mod experts)))
+    and gates = own D.on (Nx.full Nx.float32 [| tokens; per_token |] 0.5) in
+    let expert owners rows =
+      let h = Nx.matmul rows (Nx.take ~axis:0 owners first) in
+      Nx.matmul ~sum:true (Fn.silu h) (Nx.take ~axis:0 owners second)
+    in
+    let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x in
+    let step x =
+      let y =
+        Nx.map_segments ~segments:experts ids expert
+          (Nx.unsqueeze ~axes:[ -2 ] x)
+      in
+      let combined =
+        Nx.sum ~axes:[ -2 ] (Nx.mul y (Nx.unsqueeze ~axes:[ -1 ] gates))
+      in
+      close (Nx.add x combined)
+    in
+    let f = Rune.jit' step in
+    let x = own D.on (Nx.full Nx.float32 [| tokens; width |] 0.5) in
+    ignore (lowered "mixture of experts" (fun () -> f x));
+    fun () -> Nx.sync (f x)
+  in
+  [
+    {
+      name = "mixture of experts, row parallel over 4 memory devices";
+      setup;
+    };
+  ]
+
 (* A GPU case times its calls only. A dropped GPU result returns to rig's cache
    once a major cycle finalises it, so whether a call's result takes cached
    memory or new memory from the driver, and the words that cost, follows the
@@ -438,7 +524,9 @@ let bench c =
 let () =
   match Array.to_list Sys.argv with
   | [ _; "--warm" ] ->
-      List.iter (fun c -> c.setup () ()) (gpt2 @ List.concat_map snd (quant ()))
+      List.iter
+        (fun c -> c.setup () ())
+        (gpt2 @ parallel @ experts_layer @ List.concat_map snd (quant ()))
   | [ _; "--cuda" ] ->
       exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
   | [ _; "--amd" ] ->
@@ -453,6 +541,7 @@ let () =
         ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
         [
           Thumper.group "Gpt2" (List.map bench gpt2);
+          Thumper.group "Parallel" (List.map bench (parallel @ experts_layer));
           Thumper.group "Quant"
             (List.map
                (fun (name, cases) ->
