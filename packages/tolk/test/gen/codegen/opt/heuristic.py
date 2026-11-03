@@ -92,6 +92,16 @@ def routed_bfloat16(blocks, rows, n, k, experts):
     return empty(blocks * rows, 1, k, dtype=dtypes.bfloat16).float() @ w.float().transpose(1, 2)
 
 
+def routed_by_argmax(rows, n, k, experts):
+    """Each of `rows` rows multiplied by the [n, k] matrix of its expert, which the kernel finds as the argmax over the experts of a
+    score of the row's position and the expert's: a reduction an operand reads that runs in none of the contraction's ranges."""
+    position = Tensor.arange(rows, dtype=dtypes.int).reshape(rows, 1)
+    scores = (position * 7 + Tensor.arange(experts, dtype=dtypes.int).reshape(1, experts) * 3) % 11
+    owner = scores.argmax(1).maximum(0).minimum(experts - 1).cast(dtypes.weakint)
+    w = Tensor(empty(experts, n * k).uop.index(owner.uop)).reshape(rows, n, k)
+    return empty(rows, 1, k) @ w.transpose(1, 2)
+
+
 def q8_0(n, k):
     """An [n, k] matrix of Q8_0 blocks: each block of 32 values is 34 bytes, a float16 scale, then 32 signed codes."""
     blocks = empty(n, k // 32, 34, dtype=dtypes.uint8)
@@ -203,6 +213,8 @@ KERNELS = {
     # either side of the bound: 9 blocks over 4 experts do 63.9 multiply-adds a byte and stream, 10 blocks do 71.0 and take a core
     "routed_at_bound": lambda: last(routed_bfloat16(9, 16, 64, 256, 4)),
     "routed_past_bound": lambda: last(routed_bfloat16(10, 16, 64, 256, 4)),
+    # routed rows whose experts the kernel finds by an argmax over the experts, as a router computed in the same program would
+    "routed_by_argmax": lambda: last(routed_by_argmax(16, 64, 256, 8)),
     # 1280 rows in blocks of 16 to 128 over 4 experts, on a core: the core's M upcast keeps a warp's rows in one block where one of
     # its candidates does, 2 rows of tiles at 32 and 4 at 64 and 128 where 5 divides the tiles, and takes 5 at 16
     **{f"routed_run_{c}": (lambda c=c: last(routed_bfloat16(1280 // c, c, 64, 256, 4))) for c in [16, 32, 64, 128]},

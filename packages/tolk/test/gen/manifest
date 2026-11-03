@@ -1407,6 +1407,12 @@ codegen/opt/heuristic/routed_blocks_avx2.golden
 codegen/opt/heuristic/routed_blocks_cpu.golden
 codegen/opt/heuristic/routed_blocks_cuda.golden
 codegen/opt/heuristic/routed_blocks_metal.golden
+codegen/opt/heuristic/routed_by_argmax.golden
+codegen/opt/heuristic/routed_by_argmax_amd.golden
+codegen/opt/heuristic/routed_by_argmax_avx2.golden
+codegen/opt/heuristic/routed_by_argmax_cpu.golden
+codegen/opt/heuristic/routed_by_argmax_cuda.golden
+codegen/opt/heuristic/routed_by_argmax_metal.golden
 codegen/opt/heuristic/routed_own.golden
 codegen/opt/heuristic/routed_own_amd.golden
 codegen/opt/heuristic/routed_own_avx2.golden

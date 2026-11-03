@@ -1276,7 +1276,7 @@ diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.
 index ec97cac6f..54e3caec0 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -1,9 +1,317 @@
+@@ -1,9 +1,321 @@
 -import itertools
 +import itertools, math
  from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
@@ -1445,9 +1445,10 @@ index ec97cac6f..54e3caec0 100644
 +LANES, ROWS, COLUMNS, STREAM_THREADS, IN_FLIGHT, IN_FLIGHT_HELD, SECTOR_LANES, STREAM_FIRST, UPCAST_MAX = 32, 4, 2, 32768, 8, 4, 8, 32, 16
 +# the bytes of the widest load a GPU renderer merges a thread's adjacent values into, and of a line of a GPU's first-level cache
 +VECTOR_BYTES, LINE_BYTES = 16, 128
-+def accesses(u:UOp) -> list[UOp]:
-+  s = u.toposort()
-+  return [] if any(x.op is Ops.REDUCE for x in s) else [x for x in s if x.op is Ops.INDEX]
++# the accesses u computes from, outside the reductions it reads
++def accesses(u:UOp) -> list[UOp]: return [x for x in u.toposort(gate=lambda x: x.op is not Ops.REDUCE) if x.op is Ops.INDEX]
++# whether u reads a reduction that runs in a range of over: a sum over over would compute it again at each trip
++def reduces_in(over:list[UOp], u:UOp) -> bool: return any(x.op is Ops.REDUCE and any(c in x.ranges for c in over) for x in u.toposort())
 +def pow2_dividing(r:UOp, cap:int) -> int:
 +  while cap > 1 and r.src[0].divides(cap) is None: cap //= 2
 +  return max(cap, 1)
@@ -1471,11 +1472,14 @@ index ec97cac6f..54e3caec0 100644
 +    if t is r: return 1
 +    if t.op is Ops.MUL and t.src[0] is r and t.src[1].op is Ops.CONST: return t.src[1].arg
 +  return None
-+# the contraction: the first reduction, when it sums a product of two computations of accesses with no reduce, with the ranges it closes
++# the contraction: the first reduction that sums a product of two computations of accesses, neither reading a reduction that runs in
++# a range the sum closes, with the ranges it closes. A reduction an operand reads, such as a row's expert, comes before it
 +def contraction(k:Scheduler) -> tuple[UOp, list[UOp]]|None:
-+  if (r:=k.reduceop) is None or r.arg[0] is not Ops.ADD or r.src[0].op is not Ops.MUL: return None
-+  if not accesses(r.src[0].src[0]) or not accesses(r.src[0].src[1]): return None
-+  return r.src[0], [x for x in reduces_of(k) if any(x is s for s in r.src[1:])]
++  for r in k.reduceops:
++    if r.arg[0] is not Ops.ADD or r.src[0].op is not Ops.MUL: continue
++    over = [x for x in reduces_of(k) if any(x is s for s in r.src[1:])]
++    if all(accesses(o) and not reduces_in(over, o) for o in r.src[0].src): return r.src[0], over
++  return None
 +def contracted(k:Scheduler) -> list[UOp]: return [] if (c:=contraction(k)) is None else c[1]
 +# the main access of w is the one with a range of unit stride whose terms span the most bytes along the contracted ranges: its codes or
 +# values, beside the scales and tables a decoding reads
@@ -1596,7 +1600,7 @@ index ec97cac6f..54e3caec0 100644
  
  def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # first try the tensor cores
-@@ -24,23 +332,63 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,23 +336,63 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
@@ -1665,7 +1669,7 @@ index ec97cac6f..54e3caec0 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +405,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,25 +409,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1709,7 +1713,7 @@ index ec97cac6f..54e3caec0 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,47 +457,106 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,47 +461,106 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1782,7 +1786,7 @@ index ec97cac6f..54e3caec0 100644
 +  # the threads the axes leave a workgroup once doubled
 +  def pow2(n, cap): return 1 if not isinstance(n, int) else cap if cap <= 1 or n % cap == 0 else pow2(n, cap // 2)
 +  def threads(): return prod(pow2(k.full_shape[axis], 2 * LANES) // 2 for axis, _ in upcasted)
-+  if k.ren.has_local and contraction(k) is not None and k.reduceop.dtype.itemsize <= 4 and [a for _, a in upcasted] == [4, 4] and \
++  if k.ren.has_local and (c:=contraction(k)) is not None and c[0].dtype.itemsize <= 4 and [a for _, a in upcasted] == [4, 4] and \
 +     all(reused(axis) and k.full_shape[axis] % 2 == 0 for axis, _ in upcasted) and threads() >= LANES:
 +    for axis, _ in upcasted: k.apply_opt(Opt(OptOps.SPLIT, axis, (2, AxisType.UPCAST)))
 +    if (axes:=k.upcastable_dims(reduce=True)) and k.full_shape[axes[-1]] % 4 == 0:
@@ -1832,7 +1836,7 @@ index ec97cac6f..54e3caec0 100644
      k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
  
    # **** local groups ****
-@@ -172,11 +578,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -172,11 +582,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      else:
        # prioritize making expand axes local
        local_axis_ranking = [(any(k.rngs[axis] not in b.src[1].get_idx().backward_slice for b in k.bufs), axis) \

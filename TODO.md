@@ -76,10 +76,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   (touching the files does not). Records in `_plans/dune-stale-watch/`
   (tolk-scan-aligned-20261103T150140.txt has the cause). Report upstream
   with a reproduction
-- `Heuristic.stream` declines a product whose operand reads a reduce
-  (routing ids from outside the jit); no recorded kernel carries one yet,
-  so the general path's cost there is unmeasured. Its unroll law passes
-  vacuously where no contracted loop is left
 - long programs: the incomplete beta (~11,400 ops) compiles in 3 s, 10-20 s
   per derivative, past 10 min for three; a 1,000-term slice-tree sum is one
   kernel clang -O2 takes over 8 min on. Past 400 KB of C Clang compiles

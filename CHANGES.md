@@ -990,6 +990,11 @@ word comes from its lock and from samples the dashboard saw arrive.
   `Uniform.varying`): a routed product's blocks of padding skip their
   products, and a 2048-cubed bfloat16 product with 5 of its 16 blocks off
   runs in 83 µs against 120 on an RTX 5000 Ada.
+- A product streams its matrix where an argmax in the same kernel finds
+  each row's expert (`Heuristic.hand_coded_optimizations`); the general
+  rules took it before: 16 bfloat16 rows over gpt-oss-20b's experts run 2.5
+  times faster on CUDA.
+
 - The CUDA device's kernels compile to cubins (`Cstyle.cuda`), which the disk
   cache keeps and the driver loads as they are: a later process no longer
   waits for the driver to translate PTX where its own cache misses (a

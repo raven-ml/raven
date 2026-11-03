@@ -222,20 +222,43 @@ let gpu_cases =
 let ranges_at k ~reduce types =
   List.map (List.nth (K.rngs k)) (K.axes_of ~reduce k types)
 
+(* The accesses [o] computes from, outside the reduces it reads. *)
 let accesses o =
   List.filter
     (fun u -> Ops.op u = Op.Index)
-    (Ops.Nodes.to_list (Ops.backward_slice_with_self ~calls:Skip o))
+    (Ops.toposort ~calls:Skip ~gate:(fun u -> Ops.op u <> Op.Reduce) o)
 
 let buffers o = List.map (fun a -> Ops.nth a 0) (accesses o)
 
-(* The operands of the product [k]'s first reduce sums, if it sums one. *)
+(* [k]'s contraction: the first of its reduces that sums a product of two
+   computations of accesses, neither reading a reduce that runs in a range
+   the sum closes. *)
+let contraction k =
+  let reads_reduce_in r o =
+    List.exists
+      (fun u ->
+        Ops.op u = Op.Reduce
+        && List.exists
+             (fun c -> Ops.Nodes.mem c (Ops.ranges u))
+             (List.tl (Ops.src r)))
+      (Ops.toposort ~calls:Skip o)
+  in
+  List.find_opt
+    (fun r ->
+      (match Ops.arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
+      && Ops.op (Ops.nth r 0) = Op.Mul
+      && List.for_all
+           (fun o -> accesses o <> [] && not (reads_reduce_in r o))
+           (Ops.src (Ops.nth r 0)))
+    (K.reduceops k)
+
+(* The operands of [k]'s contraction. *)
 let operands k =
-  match K.reduceop k with
-  | Some r when Ops.op (Ops.nth r 0) = Op.Mul ->
+  Option.map
+    (fun r ->
       let m = Ops.nth r 0 in
-      Some (Ops.nth m 0, Ops.nth m 1)
-  | _ -> None
+      (Ops.nth m 0, Ops.nth m 1))
+    (contraction k)
 
 (* The outputs that share each element of [o] along the axes of [k] of a role
    in [types]: an axis [o] does not read counts its size, one it reads only
@@ -366,13 +389,13 @@ let loads_once_a_tile =
         (reuse o [ Global; Local ] w'))
 
 (* The value of the index [i] with the ranges of [at] at their values and
-   every other range and value it reads at 0. *)
+   every other range and value it reads, loaded or reduced, at 0. *)
 let value_at i at =
   let zero = Ops.const (`Int Bigint.zero) in
   let others =
     List.filter_map
       (fun u ->
-        if Ops.op u = Op.Index then Some (u, zero)
+        if Ops.op u = Op.Index || Ops.op u = Op.Reduce then Some (u, zero)
         else if Ops.op u = Op.Range && not (List.mem_assq u at) then
           Some (u, zero)
         else None)
@@ -474,8 +497,11 @@ let coalesces =
    lanes times the loop they leave, whose stride in the main access is theirs
    times their count, or the loop itself where nothing is unrolled. *)
 let unrolls_in_flight =
-  cases "the unroll is the largest divisor of its loop up to 8, 4 with reuse"
-    ~id streamed_cases (fun (_, k, o, (_, r, w')) ->
+  prop "the unroll is the largest divisor of its loop up to 8, 4 with reuse"
+    (Gen.with_pp
+       (fun ppf c -> Format.pp_print_string ppf (id c))
+       (Gen.of_list streamed_cases))
+    (fun (_, k, o, (_, r, w')) ->
       let cap = if Bigint.(equal r one) then 8 else 4 in
       let ids = List.map Ops.axis_id (K.rngs k) in
       let a =
@@ -491,7 +517,7 @@ let unrolls_in_flight =
           (ranges_at o ~reduce:true [ Upcast ])
       in
       let contracted =
-        match K.reduceop o with Some r -> List.tl (Ops.src r) | None -> []
+        match contraction o with Some r -> List.tl (Ops.src r) | None -> []
       in
       let loops =
         List.filter_map
@@ -501,6 +527,11 @@ let unrolls_in_flight =
             else None)
           (ranges_at o ~reduce:true [ Weak; Loop ])
       in
+      (* Where the lanes take the reduce whole, nothing is left to unroll: a
+         loop left behind the unroll is what the law weighs. *)
+      cover "a contracted loop is left" (loops <> []);
+      cover "a loop left beside an unroll"
+        (loops <> [] && unrolled <> []);
       match unrolled with
       | [] -> (
           match List.sort (fun (s, _) (t, _) -> Bigint.compare s t) loops with
@@ -790,11 +821,13 @@ let warps_within_runs =
 
 (* Kernels rune compiles for CUDA, recorded without optimisations: products of
    one token by a Q8_0, an MXFP4 and a bfloat16 matrix, a prompt's blocks of 16
-   rows each multiplying a bfloat16 matrix of its own, and gpt-oss-20b's gate
-   and up and down products of a 512-token prompt, 158 blocks of 16 rows
-   sharing 32 experts' MXFP4 matrices. The decode products and the blocks of
-   their own do at most 8 multiply-adds per byte of the matrix and stream; the
-   shared experts do 149 and take a tensor core. *)
+   rows each multiplying a bfloat16 matrix of its own, 16 rows each
+   multiplying the bfloat16 matrix of the expert that an argmax in the kernel
+   finds, and gpt-oss-20b's gate and up and down products of a 512-token
+   prompt, 158 blocks of 16 rows sharing 32 experts' MXFP4 matrices. The
+   decode products, the blocks of their own and the argmax's rows do at most 8
+   multiply-adds per byte of the matrix and stream; the shared experts do 149
+   and take a tensor core. *)
 let recorded_kernels =
   let graph path =
     let file = Filename.concat (Filename.dirname Sys.executable_name) path in
@@ -806,6 +839,7 @@ let recorded_kernels =
     ("mxfp4-1", stream "mxfp4-1.1", true);
     ("dense-bf16-1", stream "dense-bf16-1.0", true);
     ("routed-512-bf16", stream "routed-512-bf16.0", true);
+    ("routed-argmax-16-bf16", stream "routed-argmax-16-bf16.0", true);
     ("prefill_gate_up", "prefill_gate_up.graph", false);
     ("prefill_down", "prefill_down.graph", false);
   ]
@@ -1591,7 +1625,11 @@ let is_code a = Ops.dtype (Ops.nth a 0) = Dtype.Uint8
 (* The loads of the codes of [o]'s decoded operand, its largest buffer of
    bytes. *)
 let code_loads o =
-  let loads = List.filter is_code (accesses (K.ast o)) in
+  let loads =
+    List.filter
+      (fun u -> Ops.op u = Op.Index && is_code u)
+      (Ops.toposort ~calls:Skip (K.ast o))
+  in
   let bytes a = Shape.max_numel (Ops.nth a 0) in
   let most = List.fold_left (fun n a -> max n (bytes a)) 0 loads in
   List.filter (fun a -> bytes a = most) loads

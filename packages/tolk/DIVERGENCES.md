@@ -2183,7 +2183,8 @@ Withdrawn: multi-device is out of scope, see README.
   `Heuristic.upcast_max`, `Heuristic.summed`, `Renderer.t.per_byte_first`,
   `Heuristic.per_byte`, `Heuristic.run`,
   `Heuristic.reuse_ranges`, `Heuristic.reuse`, `Heuristic.stride`,
-  `Heuristic.accesses`, `Heuristic.contraction`, `Heuristic.contracted`,
+  `Heuristic.accesses`, `Heuristic.reduces_in`, `Heuristic.contraction`,
+  `Heuristic.contracted`,
   `Heuristic.units`, `Heuristic.main_access`, `Heuristic.layout`,
   `Heuristic.streamed`, `Heuristic.early`, `Heuristic.stream`,
   `Heuristic.streams` and their order in
@@ -2191,11 +2192,14 @@ Withdrawn: multi-device is out of scope, see README.
   of a group inside a reduce; `test/gen/tinygrad.patch`, which gives tinygrad
   the same before the goldens are recorded.
 - **Differs:**
-  - the contraction: a sum over the kernel's first reduction of a product of
-    two computations of accesses with no reduce, on a renderer with local
-    indices and shared memory; `MV=0` turns it off. An operand may read its
-    loads through conversions (`CAST`, `BITCAST`), decode codes and scale a
-    vector (D81's part);
+  - the contraction: the kernel's first reduction that sums a product of
+    two computations of accesses, neither reading a reduction that runs in
+    a range the sum closes, on a renderer with local indices and shared memory;
+    `MV=0` turns it off. An operand may read its loads through conversions
+    (`CAST`, `BITCAST`), decode codes and scale a vector (D81's part), and
+    read a reduction of the outputs alone, which comes before the sum: a
+    row's expert that an argmax over the experts finds is computed once a
+    row;
   - the streamed operand: an operand's reuse `R` is the product of the sizes
     of the global axes it does not read, times `d` for each it reads only as
     its quotient by `d`. The operand of least `R` is streamed, `W`; of two of
@@ -2340,6 +2344,16 @@ Withdrawn: multi-device is out of scope, see README.
     of the kernel on tinygrad at the pin, on matrices past L2, which no tolk
     row confirms: they take the other rules past 32 until one does. A
     decoded operand streams at any reuse (D230);
+  - a routed product whose rows' experts an argmax in the kernel finds,
+    gpt-oss-20b's shapes of 32 experts' `[2880; 2880]` matrices
+    (`stream/routed-argmax-16-bf16`), the general rules against streamed,
+    GPU time of a call, three interleaved processes each: bfloat16 at 1
+    row 138-142 to 35-51 us, 16 rows 1.235-1.251 to 0.502-0.519 ms (the
+    matrices read at 91% of the bandwidth), 64 rows 3.10-3.18 to 1.99-2.01
+    ms; float32 at 16 rows 2.74-2.77 to 1.00-1.01 ms. Such a kernel arises
+    only where the reduction reads no storage, a function of positions: one
+    that reads a buffer, as a router's top-k over its logits, is stored
+    (`remove_bufferize`), and its product reads the ids;
   - unchanged: `stream/dense-bf16-1`, `stream/mxfp4-1`, `stream/decode-head`,
     `stream/q8_0-64`, kaun's `mxfp4-product-1-token` and
     `routed-product-1-tokens`;
@@ -2357,19 +2371,20 @@ Withdrawn: multi-device is out of scope, see README.
   `routed_at_bound_*` and `routed_past_bound_*` (63.9 a byte streamed, 71.0
   on a core), `shared_keys_*`,
   `rows_m{4,12,32}_*`,
-  `q8_0_blocks_*`, `gguf_mxfp4_*`, `mxfp4_m12_*` and `rows_short_*` (a sum of
-  64 on the cores),
+  `q8_0_blocks_*`, `gguf_mxfp4_*`, `mxfp4_m12_*`, `rows_short_*` (a sum of
+  64 on the cores) and `routed_by_argmax_*` (rows whose experts an argmax in
+  the kernel finds, streamed),
   recorded from the equally patched tinygrad; `streaming › the streamed
   operand's reuse outside a thread is its reuse over its tile`, `› a SIMD
   group's load of an operand streamed along the reduce reads whole
   sectors`, `› the unroll
-  is the largest divisor of its loop up to 8, 4 with reuse` and `› a
-  contraction streams up to a reuse of 32, before a tensor core` and `› a
+  is the largest divisor of its loop up to 8, 4 with reuse` (covering a
+  contracted loop left beside an unroll), `› a contraction streams up to a reuse of 32, before a tensor core` and `› a
   recorded contraction streams before a tensor core up to 64 multiply-adds
   per byte of its streamed operand` (rune's kernels of one token's products,
-  of blocks of their own matrices and of gpt-oss-20b's experts at a 512-token
-  prompt), `› each renderer streams before a core up to 64 multiply-adds a
-  byte` (the renderers' fields, from the equally patched tinygrad) and `› a
+  of blocks of their own matrices, of rows routed by an argmax in the kernel
+  and of gpt-oss-20b's experts at a 512-token prompt), `› each renderer
+  streams before a core up to 64 multiply-adds a byte` (the renderers' fields, from the equally patched tinygrad) and `› a
   contraction streams before a core up to the renderer's bound a byte`; `the
   hand-coded optimisations keep a kernel's writes › small kernels ›
   experts_down_metal` (a group inside another reduce); the Postrange suite's

@@ -95,7 +95,10 @@
 ; kernels are [row.i], run in the order of [i]. decode-kv and decode-router are
 ; the Heuristic suite's gpt_oss_kv and gpt_oss_router kernels on CUDA, and
 ; key-projection a prefill's key projection of 512 tokens by 512 over 2880, as
-; the Heuristic suite's attention_values reads its bfloat16 operands.
+; the Heuristic suite's attention_values reads its bfloat16 operands, and
+; routed-argmax-16-bf16 16 rows each multiplying the [2880; 2880] bfloat16
+; matrix of one of 32 experts, which an argmax over a score of the row's and
+; the expert's positions in the kernel finds.
 
 (rule
  (target stream_kernels.ml)

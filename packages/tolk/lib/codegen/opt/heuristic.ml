@@ -522,29 +522,44 @@ let stride r i =
       else None)
     (split_uop i Op.Add)
 
-(* The accesses [u] computes from, when it computes with no reduce. *)
+(* The accesses [u] computes from, outside the reductions it reads. *)
 let accesses u =
-  let slice = Nodes.to_list (backward_slice_with_self ~calls:Skip u) in
-  if List.exists (fun x -> op x = Op.Reduce) slice then []
-  else List.filter (fun x -> op x = Op.Index) slice
+  List.filter
+    (fun x -> op x = Op.Index)
+    (toposort ~calls:Skip ~gate:(fun x -> op x <> Op.Reduce) u)
 
-(* [k]'s contraction: its first reduction, when it sums a product of two
-   computations of accesses with no reduce, and the ranges it closes in the
-   order of [k]'s axes. *)
+(* Whether [u] reads a reduction that runs in a range of [over]: a sum over
+   [over] would compute it again at each of its trips. A reduction that runs
+   in none is a value of the outputs alone, as a row's expert that a
+   reduction over the experts finds. *)
+let reduces_in over u =
+  List.exists
+    (fun x ->
+      op x = Op.Reduce && List.exists (fun c -> Nodes.mem c (ranges x)) over)
+    (Nodes.to_list (backward_slice_with_self ~calls:Skip u))
+
+(* [k]'s contraction: its first reduction that sums a product of two
+   computations of accesses, neither reading a reduction that runs in a
+   range the sum closes, and the ranges it closes in the order of [k]'s axes. A
+   reduction an operand reads, such as a row's expert, comes before it. *)
 let contraction k =
-  match K.reduceop k with
-  | Some r
-    when (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
-         && op (nth r 0) = Op.Mul ->
-      let m = nth r 0 in
-      if accesses (nth m 0) = [] || accesses (nth m 1) = [] then None
+  let sums_product r =
+    (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
+    && op (nth r 0) = Op.Mul
+  in
+  List.find_map
+    (fun r ->
+      if not (sums_product r) then None
       else
-        Some
-          ( m,
-            List.filter
-              (fun u -> List.memq u (List.tl (src r)))
-              (ranges_of ~reduce:true k [ Weak ]) )
-  | _ -> None
+        let m = nth r 0 in
+        let over =
+          List.filter
+            (fun u -> List.memq u (List.tl (src r)))
+            (ranges_of ~reduce:true k [ Weak ])
+        in
+        let operand o = accesses o <> [] && not (reduces_in over o) in
+        if operand (nth m 0) && operand (nth m 1) then Some (m, over) else None)
+    (K.reduceops k)
 
 let contracted k =
   match contraction k with Some (_, over) -> over | None -> []
@@ -1451,14 +1466,13 @@ let block k upcasted =
   (* 64 accumulators of 8 bytes and their operands would pass a thread's
      registers. *)
   let narrow =
-    match K.reduceop k with
-    | Some r -> Dtype.itemsize (dtype r) <= 4
+    match contraction k with
+    | Some (m, _) -> Dtype.itemsize (dtype m) <= 4
     | None -> false
   in
   match List.rev upcasted with
   | [ (_, 4); (_, 4) ] as axes
     when (K.ren k).has_local
-         && Option.is_some (contraction k)
          && narrow
          && List.for_all reused axes && List.for_all doubles axes
          && threads axes >= lanes ->
