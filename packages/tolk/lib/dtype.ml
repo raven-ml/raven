@@ -824,22 +824,66 @@ let promo_lattice = function
   | Float32 -> [ Float64 ]
   | Float64 | Void -> []
 
-(* Each data type with every data type it promotes to, itself included. *)
+(* Data types by their order of declaration, from 0. *)
+let index = function
+  | Void -> 0
+  | Weak_int -> 1
+  | Bool -> 2
+  | Int8 -> 3
+  | Uint8 -> 4
+  | Int16 -> 5
+  | Uint16 -> 6
+  | Int32 -> 7
+  | Uint32 -> 8
+  | Int64 -> 9
+  | Uint64 -> 10
+  | Weak_float -> 11
+  | Fp8e4m3 -> 12
+  | Fp8e5m2 -> 13
+  | Fp8e4m3fnuz -> 14
+  | Fp8e5m2fnuz -> 15
+  | Float16 -> 16
+  | Bfloat16 -> 17
+  | Float32 -> 18
+  | Float64 -> 19
+
+let count = 20
+
+(* Each data type's sorted list of the data types it promotes to, itself
+   included, by {!index}; [Void]'s is empty. *)
 let recursive_parents =
   let rec parents dt = dt :: List.concat_map parents (promo_lattice dt) in
-  List.map (fun dt -> (dt, List.sort_uniq compare (parents dt))) (weaks @ all)
+  let table = Array.make count [] in
+  List.iter
+    (fun dt -> table.(index dt) <- List.sort_uniq compare (parents dt))
+    (weaks @ all);
+  table
 
 let parents dt =
-  match List.assq_opt dt recursive_parents with
-  | Some ps -> ps
-  | None -> invalid_arg "void does not promote"
+  if dt = Void then invalid_arg "void does not promote"
+  else recursive_parents.(index dt)
+
+let least_upper_of dt dts =
+  let common p = List.for_all (fun dt -> List.memq p (parents dt)) dts in
+  (* [parents dt] is sorted, and the top of the lattice is common. *)
+  List.find common (parents dt)
+
+(* The least upper bound of each pair of data types other than [Void], at
+   [index a * count + index b]. Most promotions are of two operands. *)
+let pairs =
+  let table = Array.make (count * count) Void in
+  List.iter
+    (fun a ->
+      List.iter
+        (fun b -> table.((index a * count) + index b) <- least_upper_of a [ b ])
+        (weaks @ all))
+    (weaks @ all);
+  table
 
 let least_upper = function
   | [] -> invalid_arg "no data type to promote"
-  | dt :: dts ->
-      let common p = List.for_all (fun dt -> List.memq p (parents dt)) dts in
-      (* [parents dt] is sorted, and the top of the lattice is common. *)
-      List.find common (parents dt)
+  | [ a; b ] when a <> Void && b <> Void -> pairs.((index a * count) + index b)
+  | dt :: dts -> least_upper_of dt dts
 
 let least_upper_float dt =
   if dt = Weak_int then Weak_float

@@ -6615,3 +6615,26 @@ the walk of `Rangeify.fix_store_hazard`.
   rows on fudge, their baselines pending the scheduled re-record. A sum in 8
   bytes is not blocked: 64 accumulators of 8 bytes and their operands would
   pass a thread's 255 registers.
+
+## D221. A part of a pattern that names nothing gives one naming
+
+- **tinygrad:** `uop/ops.py:1496-1511` (`UPat.match`, which extends its
+  result with a store for each ordering of each source pattern, so a store
+  comes back once for each way a part that names nothing matches).
+- **tolk:** `Ops.Upat.first`, `Ops.Upat.alternatives` and so
+  `Ops.Upat.match_` and `Ops.Pattern_matcher.rewrite`.
+- **Differs:** ways of matching that differ only within a part of the
+  pattern that names nothing give one naming, where tinygrad gives the same
+  store once for each. A rule's function is called once for that naming,
+  where tinygrad calls it again after it declines. A rule's result is the
+  same when its function's result depends only on the naming.
+- **Reason:** (d): constant folding's rules, repeated over every source of
+  an operation whose sources may each be a constant or a stack of them,
+  enumerated orderings that named nothing through continuations. Testing
+  such a part once cut rune's `compile/special/betaincinv-grad-f64` row from
+  261 M to 235 M words, counted at the process's exit at `s=64M`. The row's
+  baseline on fudge is pending a quiet run, and the compile bench records
+  time alone.
+- **Pinned by:** the Ops suite: `Pattern_matcher › a part of a pattern that
+  names nothing gives one naming`; rune's
+  `compile/special/betaincinv-grad-f64` row, once recorded on fudge.

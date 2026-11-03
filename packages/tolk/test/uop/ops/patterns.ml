@@ -469,6 +469,49 @@ let matchers =
                 ])
           in
           equal (option uop) (Some (Ops.int 1)) (rewrite m a));
+      test "a rule is given each naming in turn until one gives a result"
+        (fun () ->
+          let seen = ref [] in
+          let m =
+            Pm.v (fun () ->
+                [
+                  Pm.rule
+                    P.(P.var "x" + P.cvar "c")
+                    (fun m ->
+                      seen := (m "x", m "c") :: !seen;
+                      None);
+                  Pm.rule
+                    P.(P.var "x" + P.cvar "c")
+                    (fun m -> if m "c" == c2 then Some (m "x") else None);
+                ])
+          in
+          equal (option uop) (Some c3) (rewrite m (add c2 c3));
+          equal (list (pair uop uop)) [ (c2, c3); (c3, c2) ] (List.rev !seen));
+      test "a part of a pattern that names nothing gives one naming"
+        (fun () ->
+          let p = P.(var "x" + (const (`Float 1.) * wild)) in
+          let u = add a Ops.O.(c1 * c1) in
+          equal int 1 (List.length (P.match_ p u));
+          let calls = ref 0 in
+          let m =
+            Pm.v (fun () ->
+                [
+                  Pm.rule
+                    (P.sink
+                       [
+                         P.broadcast P.(var "x" + var "y");
+                         P.(const (`Float 1.) * wild);
+                       ])
+                    (fun _ ->
+                      incr calls;
+                      None);
+                ])
+          in
+          let b = var "b" 0 10 in
+          equal (option uop) None
+            (rewrite m
+               (Ops.sink [ Ops.v ~src:[ add a b ] Op.Stack; Ops.O.(c1 * c1) ]));
+          equal int 2 !calls);
       test "a fold's rule declines by returning nothing" (fun () ->
           let m =
             Pm.fold (fun () ->
@@ -763,6 +806,35 @@ let rewriting =
           equal (list string)
             [ "Ops.ADD bpm"; "1 bpm"; "1 pm"; "2 bpm"; "2 pm"; "Ops.ADD pm" ]
             (recorded log));
+      test "a rewrite after one an exception ended rewrites as a fresh domain"
+        (fun () ->
+          let raising =
+            Pm.v (fun () ->
+                [
+                  Pm.rule (P.op ~arg:(Const (`Float 3.)) Op.Const) (fun _ ->
+                      raise Exit);
+                  Pm.rule (P.op ~arg:(Const (`Float 1.)) Op.Const) (fun _ ->
+                      Some (fvar "one"));
+                ])
+          in
+          let wide = Ops.sink (List.init 64 (fun k -> fconst (Float.of_int k))) in
+          let u =
+            Ops.sink
+              ((Ops.int 0 :: List.init 64 (fun k -> fconst (Float.of_int k +. 0.5)))
+              @ [ Ops.O.(c1 + c2) ])
+          in
+          let rewrite () =
+            Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+              (Around_sources { before = simple_pm; after = simple_pm })
+          in
+          let expected = Domain.join (Domain.spawn rewrite) in
+          raises Exit (fun () ->
+              Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() wide
+                (After_sources raising));
+          raises Exit (fun () ->
+              Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:() wide
+                (After_sources raising));
+          equal uop expected (rewrite ()));
       test "the work list is bounded by REWRITE_STACK_LIMIT" (fun () ->
           equal string "REWRITE_STACK_LIMIT"
             (Setting.key Setting.rewrite_stack_limit);

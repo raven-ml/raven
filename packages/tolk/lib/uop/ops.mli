@@ -1190,8 +1190,12 @@ module Upat : sig
       reads as the pattern it builds. *)
 
   val match_ : t -> node -> (string * node) list list
-  (** [match_ p u] is the naming of each way [p] matches [u]; [[]] if it does
-      not. *)
+  (** [match_ p u] is the naming of each way [p] matches [u], in order: the
+      alternatives of {!any} in turn, the orderings of a commutative operation's
+      operands in the order of their permutations, the first operand varying
+      slowest, and each source's namings before the next source's; [[]] if [p]
+      does not match. Ways that differ only within a part of [p] that names
+      nothing give one naming. *)
 end
 
 (** Pattern matchers.
@@ -1250,7 +1254,8 @@ module Pattern_matcher : sig
 
   val rewrite : ('ctx, 'r) t -> 'ctx -> node -> 'r option
   (** [rewrite m ctx u] is the result of the first rule of [m] that matches [u]
-      and does not decline, trying each naming of each pattern in turn. *)
+      and does not decline, trying the namings of each pattern in
+      {!Upat.match_}'s order. *)
 end
 
 (** {1:rewrite Rewriting} *)

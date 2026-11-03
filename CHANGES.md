@@ -969,6 +969,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Compiling float64 `Nx.betaincinv`'s gradient allocates 238 M words
+  against 365 M and runs 17% fewer instructions, with unchanged output.
 - A host operation that reads a broadcast or a permutation of a computed
   vector's lanes stays a vector, its operand put together by a shuffle
   (`Codegen.do_devectorize`): it and every operation after it went lane by

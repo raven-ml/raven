@@ -463,6 +463,18 @@ let identity =
           Gc.full_major ();
           is_false ~msg:"a range" (Weak.check cell 0);
           is_false ~msg:"an end" (Weak.check cell 1));
+      test "a node built again after its first was collected is one node"
+        (fun () ->
+          let node k =
+            Ops.v ~arg:(String (Printf.sprintf "again %d" k)) Op.Noop
+          in
+          let[@inline never] build () = ignore (List.init 1000 node) in
+          build ();
+          Gc.full_major ();
+          Gc.full_major ();
+          let first = List.init 1000 node in
+          let again = List.init 1000 node in
+          equal uops first again);
       test "arguments that differ in one field are different nodes" (fun () ->
           let est ops lds mem : Ops.estimates =
             { ops = Int ops; lds = Int lds; mem = Int mem }

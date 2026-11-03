@@ -209,8 +209,7 @@ type t = {
 
 (* Properties computed on first use. Each is a function of the node, so
    domains racing to fill one write the same value; the fields are atomic so
-   that a reader that sees a value sees it whole. They are a record of their
-   own so that the probe a lookup builds ({!v}) shares one empty record. *)
+   that a reader that sees a value sees it whole. *)
 and memos = {
   mutable shape_memo : sint list option option; [@atomic]
   mutable ranges_memo : nodes option; [@atomic]
@@ -396,35 +395,45 @@ let hash_arg (a : arg) =
 
 (* Hash-consing *)
 
-module Interned = struct
-  type nonrec t = t
-
-  let equal u0 u1 =
-    Op.equal u0.op u1.op
-    && List.equal ( == ) u0.src u1.src
-    && equal_arg u0.arg u1.arg
-
-  let hash u =
-    List.fold_left
-      (fun h s -> (h * 31) + s.id)
-      (Hashtbl.hash ((Op.to_int u.op * 31) + hash_arg u.arg))
-      u.src
-end
-
-module Table = Stdlib.Weak.Make (Interned)
+(* A node's hash from its parts, computed once per lookup: the low bits pick its
+   slot and the high bits its shard, so both are mixed. *)
+let node_hash op src arg =
+  let rec fold h = function
+    | [] -> h
+    | s :: rest -> fold ((h * 31) + s.id) rest
+  in
+  let h = fold ((Op.to_int op * 31) + hash_arg arg) src * 0x4F1BBCDCBFA53E0B in
+  (h lxor (h lsr 29)) land max_int
 
 (* The table is split in shards, each behind its own lock, so that domains
-   building nodes rarely wait for each other. Each shard starts at the least
-   size and grows with its nodes, so that a program that builds none keeps no
-   table in the heap every major collection marks.
+   building nodes rarely wait for each other. A shard is open addressing over
+   [2^bits] slots, each the hash of a node, [-1] if never used, and the node,
+   held weakly so that the table keeps no node alive. A lookup compares hashes
+   and reads only the nodes whose hash is its own. A slot whose node was
+   collected stays used until the shard is rebuilt, keeping its live nodes,
+   once half its slots are used. A shard starts at the least size, so that a
+   program that builds no node keeps no table in the heap every major
+   collection marks. *)
+type shard = {
+  mutable hashes : int array;
+  mutable nodes : t Weak.t;
+  mutable log_size : int;
+  mutable used : int;
+  lock : Mutex.t;
+}
 
-   A shard picks its buckets by the node's hash modulo their number, so the
-   shard is picked by a mix of the hash. Picked by the hash's low bits, a
-   shard's nodes would share those bits and fill only the buckets they select:
-   at an even number of buckets that is at most half of them, and a weak table
-   grows only when more than half of its buckets overflow, so the shard would
-   stop growing and every lookup would scan a bucket of thousands of nodes. *)
-let shards = Array.init 64 (fun _ -> (Table.create 0, Mutex.create ()))
+let shard_bits = 6
+
+let shards =
+  Array.init (1 lsl shard_bits) (fun _ ->
+      {
+        hashes = Array.make 8 (-1);
+        nodes = Weak.create 8;
+        log_size = 3;
+        used = 0;
+        lock = Mutex.create ();
+      })
+
 let next_id = Atomic.make 0
 
 let memos () =
@@ -444,10 +453,6 @@ let memos () =
   }
 
 let node op src arg dtype id = { op; src; arg; dtype; id; memos = memos () }
-
-(* The memos of every probe, which no one reads or fills: a probe only looks its
-   node up. *)
-let probe_memos = memos ()
 
 (* Data types *)
 
@@ -537,31 +542,91 @@ let dtype_of op src arg =
 
 external reraise : exn -> 'a = "%reraise"
 
-(* The node [probe] stands for, found in [table] or added to it. *)
-let intern table probe =
-  match Table.find_opt table probe with
+(* The slot of the node of [hash] and parts [op], [src] and [arg] in [sh], or
+   the unused slot where it goes. *)
+let rec slot sh hash op src arg i =
+  let h = Array.unsafe_get sh.hashes i in
+  if h = -1 then i
+  else if
+    h = hash
+    &&
+    match Weak.get sh.nodes i with
+    | Some u ->
+        Op.equal u.op op && List.equal ( == ) u.src src && equal_arg u.arg arg
+    | None -> false
+  then i
+  else slot sh hash op src arg ((i + 1) land ((1 lsl sh.log_size) - 1))
+
+(* Rebuilds [sh] with its live nodes, at most a quarter full. A node moves
+   with [Weak.get] and [Weak.set]: [Weak.blit] scans both arrays whole during a
+   phase of the major collection, which would make a rebuild quadratic. *)
+let rebuild sh =
+  let size = 1 lsl sh.log_size in
+  let live = ref 0 in
+  for i = 0 to size - 1 do
+    if Weak.check sh.nodes i then incr live
+  done;
+  let bits = ref 3 in
+  while 1 lsl !bits < 4 * !live do
+    incr bits
+  done;
+  let bits = !bits in
+  let hashes = Array.make (1 lsl bits) (-1)
+  and nodes = Weak.create (1 lsl bits) in
+  let mask = (1 lsl bits) - 1 and moved = ref 0 in
+  for i = 0 to size - 1 do
+    match Weak.get sh.nodes i with
+    | None -> ()
+    | Some _ as node ->
+        incr moved;
+        let h = Array.unsafe_get sh.hashes i in
+        let j = ref (h land mask) in
+        while Array.unsafe_get hashes !j <> -1 do
+          j := (!j + 1) land mask
+        done;
+        Array.unsafe_set hashes !j h;
+        Weak.set nodes !j node
+  done;
+  sh.hashes <- hashes;
+  sh.nodes <- nodes;
+  sh.log_size <- bits;
+  sh.used <- !moved
+
+(* The node of [op], [src] and [arg], found in [sh] or added to it. A node
+   found may be collected before it is read again, and is then made anew in
+   its slot. *)
+let intern sh hash op src arg =
+  let i = slot sh hash op src arg (hash land ((1 lsl sh.log_size) - 1)) in
+  let unused = Array.unsafe_get sh.hashes i = -1 in
+  match if unused then None else Weak.get sh.nodes i with
   | Some u -> u
   | None ->
-      let { op; src; arg; _ } = probe in
       let dtype = dtype_of op src arg in
       let u = node op src arg dtype (Atomic.fetch_and_add next_id 1) in
-      Table.add table u;
+      let some = Some u in
+      Array.unsafe_set sh.hashes i hash;
+      Weak.set sh.nodes i some;
+      if unused then begin
+        sh.used <- sh.used + 1;
+        if 2 * sh.used > 1 lsl sh.log_size then rebuild sh
+      end;
       u
 
 let v ?(src = []) ?(arg = No_arg) op =
-  let probe = { op; src; arg; dtype = Dtype.Void; id = -1; memos = probe_memos } in
-  let table, lock = shards.(Hashtbl.hash (Interned.hash probe) land 63) in
+  let hash = node_hash op src arg in
+  let sh = shards.(hash lsr (Sys.int_size - 1 - shard_bits)) in
   (* Written as [Mutex.protect] is, without its closure: nothing runs between
      the lock and the handler, so an exception raised in the section, as a
      timeout's or Ctrl-C's is at a poll, releases the lock. The shard stays
-     whole: at each poll of [Weak.Make]'s add, every slot holds its hash. *)
-  Mutex.lock lock;
-  match intern table probe with
+     whole: a slot takes its hash and its node with no poll between, and a
+     rebuilt shard replaces the old one only once whole. *)
+  Mutex.lock sh.lock;
+  match intern sh hash op src arg with
   | u ->
-      Mutex.unlock lock;
+      Mutex.unlock sh.lock;
       u
   | exception e ->
-      Mutex.unlock lock;
+      Mutex.unlock sh.lock;
       reraise e
 
 let op u = u.op
@@ -804,191 +869,322 @@ let pp_estimates ppf e = Format.pp_print_string ppf (repr_estimates e)
 
 type calls = Enter | Skip
 
-(* A node no graph holds. Making an array of more than 256 words filled with a
-   young value forces a minor collection, so the tables and stacks below fill
-   theirs with immediate values or with this node, made once at initialisation
-   and old by the time a walk needs such an array. *)
+(* Nodes no graph holds. Making an array of more than 256 words filled with a
+   young value forces a minor collection, so the arrays below are filled with
+   immediate values or with these nodes, made once at initialisation and old by
+   the time a walk needs such an array. [unset] stands for an entry not yet
+   set. *)
 let placeholder = node Op.Noop [] No_arg Dtype.Void (-2)
+let unset = node Op.Noop [] No_arg Dtype.Void (-3)
 
-(* A table from nodes to values for one walk or rewrite, in [Ids]' slots.
-   Nothing iterates it, so its order is no one's. [empty], which fills the free
-   slots, is an immediate value or [placeholder]. *)
-module Visit = struct
-  type node = t
+(* The arrays of walks, which each domain keeps for its later walks, by size: a
+   pass over a program of 50,000 nodes fills arrays of 2^16 words, which the
+   major heap would otherwise allocate, mark and sweep anew for each of the
+   dozens of passes over the program. Arrays have a power of two of entries.
+   The domain holds its pool weakly: the passes of a compile follow each other
+   within a few major collections and reuse the arrays, and once tolk is idle
+   the next collection frees them unmarked. Arrays of nodes come back filled
+   with [unset], which a walk's new rows start as; arrays of ints come back as
+   they were left. A walk that an exception ends gives its arrays back too. *)
+module Pool = struct
+  (* A stack of arrays. A cell is made before it is linked, so that nothing
+     allocates, and no other thread of the domain runs, between reading a
+     stack and writing it. *)
+  type 'a stack = Nil | Cell of { a : 'a; mutable next : 'a stack }
 
-  type 'a t = {
-    mutable keys : int array;
-    mutable values : 'a array;
-    mutable count : int;
-    mutable bits : int;
-    empty : 'a;
-    valued : bool;
+  (* The stacks by size, past [Max_young_wosize] entries so that the major heap
+     holds them from the start: a weak pointer to a young block is cleared at
+     the next minor collection, and a pool that lasted until then would not
+     follow the passes. *)
+  let length = 257
+
+  type held = {
+    ints : int array stack array Weak.t;
+    nodes : t array stack array Weak.t;
   }
 
-  (* A table starts with no arrays, as most of a pass's tables hold few nodes
-     or none. A set keeps no values. *)
-  let create empty =
-    { keys = [||]; values = [||]; count = 0; bits = 0; empty; valued = true }
+  let held =
+    Domain.DLS.new_key (fun () ->
+        { ints = Weak.create 1; nodes = Weak.create 1 })
 
-  let set () =
-    {
-      keys = [||];
-      values = [||];
-      count = 0;
-      bits = 0;
-      empty = ();
-      valued = false;
-    }
+  (* The domain's stacks in [w], made anew once collected. Threads of the domain
+     that both find them collected each make them, and one is kept. *)
+  let stacks w =
+    match Weak.get w 0 with
+    | Some p -> p
+    | None ->
+        let p = Array.make length Nil in
+        Weak.set w 0 (Some p);
+        p
 
-  let index t id = Ids.index t.keys t.bits id
-  let held t i = Ids.held t.keys i
+  (* The bits of the least power of two at least [n]. *)
+  let bits n =
+    let rec go b = if 1 lsl b >= n then b else go (b + 1) in
+    go 0
 
-  (* Doubles the arrays. *)
-  let grow t =
-    let keys = t.keys and values = t.values in
-    let bits = if t.bits = 0 then 3 else t.bits + 1 in
-    let size = 1 lsl bits in
-    let nkeys = Array.make size Ids.free in
-    let nvalues = if t.valued then Array.make size t.empty else [||] in
-    for i = 0 to Array.length keys - 1 do
-      let k = Array.unsafe_get keys i in
-      if k <> Ids.free then begin
-        let j = Ids.probe nkeys (size - 1) k (Ids.slot bits k) in
-        Array.unsafe_set nkeys j k;
-        if t.valued then Array.unsafe_set nvalues j (Array.unsafe_get values i)
-      end
+  let give stacks a =
+    let b = bits (Array.length a) in
+    let cell = Cell { a; next = Nil } in
+    match cell with
+    | Cell c ->
+        c.next <- stacks.(b);
+        stacks.(b) <- cell
+    | Nil -> ()
+
+  (* An array of at least [n] entries. *)
+  let ints n =
+    let p = stacks (Domain.DLS.get held).ints and b = bits n in
+    match p.(b) with
+    | Cell c ->
+        p.(b) <- c.next;
+        c.a
+    | Nil -> Array.make (1 lsl b) Ids.free
+
+  (* [ints n] filled with [Ids.free], by a loop: [Array.fill] checks each entry
+     as it would a pointer's. *)
+  let free_ints n =
+    let a = ints n in
+    for i = 0 to Array.length a - 1 do
+      Array.unsafe_set a i Ids.free
     done;
-    t.keys <- nkeys;
-    t.values <- nvalues;
-    t.bits <- bits
+    a
 
-  let mem t (u : node) = held t (index t u.id)
+  let nodes n =
+    let p = stacks (Domain.DLS.get held).nodes and b = bits n in
+    match p.(b) with
+    | Cell c ->
+        p.(b) <- c.next;
+        c.a
+    | Nil -> Array.make (1 lsl b) unset
 
-  (* The value at a held slot. *)
-  let value t i = if t.valued then Array.unsafe_get t.values i else t.empty
+  let give_ints a = give (stacks (Domain.DLS.get held).ints) a
 
-  (* The value of [u], or [default] when it has none. *)
-  let find t (u : node) ~default =
-    let i = index t u.id in
-    if held t i then value t i else default
-
-  let replace t (u : node) x =
-    let i = index t u.id in
-    if held t i then (if t.valued then Array.unsafe_set t.values i x)
-    else begin
-      (* At most three quarters full. *)
-      let i =
-        if 4 * (t.count + 1) <= 3 * Array.length t.keys then i
-        else (
-          grow t;
-          index t u.id)
-      in
-      Array.unsafe_set t.keys i u.id;
-      if t.valued then Array.unsafe_set t.values i x;
-      t.count <- t.count + 1
-    end
+  (* Gives [a] back, of which the first [used] entries may be set. *)
+  let give_nodes a used =
+    Array.fill a 0 used unset;
+    give (stacks (Domain.DLS.get held).nodes) a
 end
 
-(* A stack of entries, each a node, a stage and a second node, held in arrays
-   that double as they fill: a walk pushes an entry per node it visits, and
-   pushing allocates nothing. *)
-module Work = struct
+(* The nodes a walk meets, numbered in the order it meets them, so that what it
+   keeps for a node lies in a row of plain arrays and its stack holds numbers.
+   A row is the node and [width - 1] more nodes in [nodes], and [iwidth] ints in
+   [ints]. A node's number is found by its id in [Ids]' slots, each a pair of
+   ints, the id and the number, so that a lookup reads one line. *)
+module Local = struct
   type node = t
 
-  type 's t = {
+  type t = {
+    mutable slots : int array;
+    mutable bits : int;
+    mutable count : int;
+    mutable rows : int;
     mutable nodes : node array;
-    mutable stages : 's array;
-    mutable others : node array;
-    mutable len : int;
+    mutable ints : int array;
+    width : int;
+    iwidth : int;
   }
 
-  let create s =
+  let create ~width ~iwidth =
+    let nodes = Pool.nodes (8 * width) in
+    let rows = Array.length nodes / width in
     {
-      nodes = Array.make 16 placeholder;
-      stages = Array.make 16 s;
-      others = Array.make 16 placeholder;
-      len = 0;
+      slots = Pool.free_ints 16;
+      bits = 3;
+      count = 0;
+      rows;
+      nodes;
+      ints = (if iwidth = 0 then [||] else Pool.ints (rows * iwidth));
+      width;
+      iwidth;
     }
 
-  let is_empty w = w.len = 0
-  let length w = w.len
+  (* The pair holding [id], or the free pair where it goes. *)
+  let rec probe slots mask id i =
+    let k = Array.unsafe_get slots (2 * i) in
+    if k = id || k = Ids.free then i
+    else probe slots mask id ((i + 1) land mask)
 
-  (* [fill] is [placeholder] or a stage, which is immediate. *)
-  let grow w a fill =
-    let b = Array.make (2 * Array.length a) fill in
-    Array.blit a 0 b 0 w.len;
-    b
+  let pair t id = probe t.slots ((1 lsl t.bits) - 1) id (Ids.slot t.bits id)
 
-  let push w u s o =
-    if w.len = Array.length w.nodes then begin
-      w.nodes <- grow w w.nodes placeholder;
-      w.stages <- grow w w.stages s;
-      w.others <- grow w w.others placeholder
+  (* The number of [u], [Ids.free] if it has none: a free pair's number. *)
+  let find t (u : node) = Array.unsafe_get t.slots ((2 * pair t u.id) + 1)
+
+  (* Doubles the pairs. *)
+  let grow_slots t =
+    let bits = t.bits + 1 in
+    let slots = Pool.free_ints (2 lsl bits) and mask = (1 lsl bits) - 1 in
+    for i = 0 to (1 lsl t.bits) - 1 do
+      let id = Array.unsafe_get t.slots (2 * i) in
+      if id <> Ids.free then begin
+        let j = probe slots mask id (Ids.slot bits id) in
+        Array.unsafe_set slots (2 * j) id;
+        Array.unsafe_set slots
+          ((2 * j) + 1)
+          (Array.unsafe_get t.slots ((2 * i) + 1))
+      end
+    done;
+    Pool.give_ints t.slots;
+    t.slots <- slots;
+    t.bits <- bits
+
+  (* Doubles the rows. *)
+  let grow_rows t =
+    let nodes = Pool.nodes (2 * Array.length t.nodes) in
+    Array.blit t.nodes 0 nodes 0 (t.count * t.width);
+    Pool.give_nodes t.nodes (t.count * t.width);
+    t.nodes <- nodes;
+    t.rows <- Array.length nodes / t.width;
+    if t.iwidth > 0 then begin
+      let ints = Pool.ints (t.rows * t.iwidth) in
+      Array.blit t.ints 0 ints 0 (t.count * t.iwidth);
+      Pool.give_ints t.ints;
+      t.ints <- ints
+    end
+
+  (* The number of [u], which it is given if it has none. A new row holds [u],
+     [unset] nodes and [Ids.free] ints. *)
+  let add t (u : node) =
+    let i = pair t u.id in
+    let l = Array.unsafe_get t.slots ((2 * i) + 1) in
+    if l <> Ids.free then l
+    else begin
+      let l = t.count in
+      (* At most three quarters full. *)
+      let i =
+        if 4 * (l + 1) <= 3 lsl t.bits then i
+        else (
+          grow_slots t;
+          pair t u.id)
+      in
+      Array.unsafe_set t.slots (2 * i) u.id;
+      Array.unsafe_set t.slots ((2 * i) + 1) l;
+      if l = t.rows then grow_rows t;
+      Array.unsafe_set t.nodes (l * t.width) u;
+      for k = l * t.iwidth to ((l + 1) * t.iwidth) - 1 do
+        Array.unsafe_set t.ints k Ids.free
+      done;
+      t.count <- l + 1;
+      l
+    end
+
+  let node t l = Array.unsafe_get t.nodes (l * t.width)
+  let get t l k = Array.unsafe_get t.nodes ((l * t.width) + k)
+  let set t l k x = Array.unsafe_set t.nodes ((l * t.width) + k) x
+  let iget t l k = Array.unsafe_get t.ints ((l * t.iwidth) + k)
+  let iset t l k x = Array.unsafe_set t.ints ((l * t.iwidth) + k) x
+
+  let release t =
+    Pool.give_ints t.slots;
+    Pool.give_nodes t.nodes (t.count * t.width);
+    if t.iwidth > 0 then Pool.give_ints t.ints
+end
+
+(* A stack of entries of four ints, which pushing allocates nothing for. *)
+module Work = struct
+  type t = { mutable a : int array; mutable len : int }
+
+  let create () = { a = Pool.ints 64; len = 0 }
+  let is_empty s = s.len = 0
+  let length s = s.len / 4
+
+  let push s w x y z =
+    if s.len = Array.length s.a then begin
+      let a = Pool.ints (2 * s.len) in
+      Array.blit s.a 0 a 0 s.len;
+      Pool.give_ints s.a;
+      s.a <- a
     end;
-    Array.unsafe_set w.nodes w.len u;
-    Array.unsafe_set w.stages w.len s;
-    Array.unsafe_set w.others w.len o;
-    w.len <- w.len + 1
+    let a = s.a and i = s.len in
+    Array.unsafe_set a i w;
+    Array.unsafe_set a (i + 1) x;
+    Array.unsafe_set a (i + 2) y;
+    Array.unsafe_set a (i + 3) z;
+    s.len <- i + 4
 
-  (* The top entry's parts, and its removal. *)
-  let node w = Array.unsafe_get w.nodes (w.len - 1)
-  let stage w = Array.unsafe_get w.stages (w.len - 1)
-  let other w = Array.unsafe_get w.others (w.len - 1)
-  let drop w = w.len <- w.len - 1
+  (* Part [k] of entry [e], counted from the bottom, and of the top entry. *)
+  let get s e k = Array.unsafe_get s.a ((4 * e) + k)
+  let set s e k x = Array.unsafe_set s.a ((4 * e) + k) x
+  let top s k = Array.unsafe_get s.a (s.len - 4 + k)
+  let drop s = s.len <- s.len - 4
+  let release s = Pool.give_ints s.a
 end
 
 (* Each node is pushed with a flag: unset, its sources are pushed after it; set,
    its sources are done and it is. A node pushed twice before it is done is
-   finished at its first pop with the flag set. *)
+   finished at its first pop with the flag set. A row's int is set once its node
+   is done. *)
 let toposort ?gate ~calls root =
-  let cache = Visit.set () and order = ref [] in
-  let work = Work.create false in
+  let seen = Local.create ~width:1 ~iwidth:1 and work = Work.create () in
+  let order = ref [] in
   let rec push_srcs = function
     | [] -> ()
     | s :: rest ->
         push_srcs rest;
-        Work.push work s false s
+        Work.push work (Local.add seen s) 0 0 0
   in
-  Work.push work root false root;
-  while not (Work.is_empty work) do
-    let node = Work.node work and visited = Work.stage work in
-    Work.drop work;
-    if not (Visit.mem cache node) then
-      if not visited then
-        begin if match gate with None -> true | Some g -> g node then begin
-          Work.push work node true node;
-          push_srcs
-            (if calls = Skip && node.op = Op.Call then drop 1 node.src
-             else node.src)
+  let walk () =
+    Work.push work (Local.add seen root) 0 0 0;
+    while not (Work.is_empty work) do
+      let l = Work.top work 0 and visited = Work.top work 1 in
+      Work.drop work;
+      if Local.iget seen l 0 = Ids.free then begin
+        let node = Local.node seen l in
+        if visited = 0 then begin
+          if match gate with None -> true | Some g -> g node then begin
+            Work.push work l 1 0 0;
+            push_srcs
+              (if calls = Skip && node.op = Op.Call then drop 1 node.src
+               else node.src)
+          end
         end
+        else begin
+          Local.iset seen l 0 1;
+          order := node :: !order
         end
-      else begin
-        Visit.replace cache node ();
-        order := node :: !order
       end
-  done;
-  List.rev !order
+    done
+  in
+  match walk () with
+  | () ->
+      Local.release seen;
+      Work.release work;
+      List.rev !order
+  | exception e ->
+      Local.release seen;
+      Work.release work;
+      reraise e
 
 let topovisit root f cache =
-  let work = Work.create false in
+  let seen = Local.create ~width:1 ~iwidth:0 and work = Work.create () in
   let rec push_srcs = function
     | [] -> ()
     | s :: rest ->
         push_srcs rest;
-        Work.push work s false s
+        Work.push work (Local.add seen s) 0 0 0
   in
-  Work.push work root false root;
-  while not (Work.is_empty work) do
-    let node = Work.node work and visited = Work.stage work in
-    Work.drop work;
-    if not (Tbl.mem cache node) then
-      if not visited then begin
-        Work.push work node true node;
-        push_srcs node.src
-      end
-      else Tbl.replace cache node (f node)
-  done;
-  Tbl.find cache root
+  let walk () =
+    Work.push work (Local.add seen root) 0 0 0;
+    while not (Work.is_empty work) do
+      let l = Work.top work 0 and visited = Work.top work 1 in
+      Work.drop work;
+      let node = Local.node seen l in
+      if not (Tbl.mem cache node) then
+        if visited = 0 then begin
+          Work.push work l 1 0 0;
+          push_srcs node.src
+        end
+        else Tbl.replace cache node (f node)
+    done
+  in
+  match walk () with
+  | () ->
+      Local.release seen;
+      Work.release work;
+      Tbl.find cache root
+  | exception e ->
+      Local.release seen;
+      Work.release work;
+      reraise e
 
 (* A recursive property is filled bottom-up over the nodes that lack it, so a
    deep graph never recurses deeply. *)
@@ -2825,6 +3021,7 @@ module Upat = struct
         (* Variables are memoised by their arguments: equal variables are one
            pattern, so their operands in any order are one ordering. *)
     unique : bool;  (* At most one naming of any node. *)
+    nameless : bool;  (* Names no node: a match is a test. *)
   }
 
   and in_src = Fixed of t list | Perm of t list | Each of t
@@ -2897,12 +3094,18 @@ module Upat = struct
       cached;
       unique =
         (not is_any)
+        && (match p_src with
+           | None -> true
+           | Some (Tuples [ tuple ]) -> List.for_all (fun q -> q.unique) tuple
+           | Some (Repeat q) -> q.unique
+           | Some (Tuples _) -> false);
+      nameless =
+        Option.is_none name
         &&
-        match p_src with
+        match in_src with
         | None -> true
-        | Some (Tuples [ tuple ]) -> List.for_all (fun q -> q.unique) tuple
-        | Some (Repeat q) -> q.unique
-        | Some (Tuples _) -> false;
+        | Some (Fixed l | Perm l) -> List.for_all (fun q -> q.nameless) l
+        | Some (Each q) -> q.nameless;
     }
 
   let only ~src ~perm ~each =
@@ -3066,19 +3269,55 @@ module Upat = struct
   let named_in p u store =
     match p.p_name with None -> store | Some n -> bound_in n u store store
 
+  (* Whether [p] matches [u], names aside. With no names, the sources match
+     independently: [p] matches if each source has a pattern that matches it.
+     A pattern that names nodes may still fail to bind its names. *)
+  let rec test p (u : node) =
+    if p.is_any then
+      match p.p_src with
+      | Some (Tuples [ choices ]) -> test_any choices u
+      | _ -> false
+    else
+      (match p.ops with Some ops -> Op.Set.mem u.op ops | None -> true)
+      && fits p u
+      &&
+      match p.p_src with
+      | None -> true
+      | Some (Tuples tuples) -> test_tuples tuples u.src
+      | Some (Repeat q) -> test_each q u.src
+
+  and test_any choices u =
+    match choices with [] -> false | p :: rest -> test p u || test_any rest u
+
+  and test_tuples tuples srcs =
+    match tuples with
+    | [] -> false
+    | tuple :: rest -> test_sources tuple srcs || test_tuples rest srcs
+
+  and test_sources pats srcs =
+    match (pats, srcs) with
+    | p :: pats, u :: srcs -> test p u && test_sources pats srcs
+    | _ -> true
+
+  and test_each q srcs =
+    match srcs with [] -> true | u :: srcs -> test q u && test_each q srcs
+
   (* A unique pattern names a node in at most one way, which [bind] finds
-     without continuations: a match costs only the names it binds. *)
+     without continuations: a match costs only the names it binds. A nameless
+     pattern, unique or not, is a test there. *)
   let rec bind p (u : node) store =
-    match p.ops with
-    | Some ops when not (Op.Set.mem u.op ops) -> raise_notrace No_match
-    | _ when not (fits p u) -> raise_notrace No_match
-    | _ -> (
-        let store = named_in p u store in
-        match p.p_src with
-        | None -> store
-        | Some (Tuples [ tuple ]) -> bind_sources tuple u.src store
-        | Some (Repeat q) -> bind_each q u.src store
-        | Some (Tuples _) -> assert false)
+    if p.nameless then if test p u then store else raise_notrace No_match
+    else
+      match p.ops with
+      | Some ops when not (Op.Set.mem u.op ops) -> raise_notrace No_match
+      | _ when not (fits p u) -> raise_notrace No_match
+      | _ -> (
+          let store = named_in p u store in
+          match p.p_src with
+          | None -> store
+          | Some (Tuples [ tuple ]) -> bind_sources tuple u.src store
+          | Some (Repeat q) -> bind_each q u.src store
+          | Some (Tuples _) -> assert false)
 
   and bind_sources pats srcs store =
     match (pats, srcs) with
@@ -3090,11 +3329,56 @@ module Upat = struct
     | [] -> store
     | u :: srcs -> bind_each q srcs (bind q u store)
 
+  (* Patterns that each name a node in at most one way, whose namings, in order,
+     are [p]'s namings in the order {!first} enumerates them, at most [limit]
+     patterns; [None] past it, or when a pattern that repeats over every source
+     has several namings, whose number is the number of sources. A nameless
+     pattern is one test, as in {!first}. *)
+  let alternatives ~limit p =
+    let exception Too_many in
+    let check l = if List.length l > limit then raise_notrace Too_many else l in
+    let rec alts p =
+      if p.unique || p.nameless then [ p ]
+      else if p.is_any then
+        match p.p_src with
+        | Some (Tuples [ choices ]) -> check (List.concat_map alts choices)
+        | _ -> []
+      else
+        match p.p_src with
+        | Some (Tuples tuples) ->
+            check
+              (List.concat_map
+                 (fun tuple ->
+                   List.map
+                     (fun tuple ->
+                       {
+                         p with
+                         p_src = Some (Tuples [ tuple ]);
+                         unique = true;
+                       })
+                     (product tuple))
+                 tuples)
+        | Some (Repeat q) when q.nameless -> [ { p with unique = true } ]
+        | Some (Repeat _) | None -> raise_notrace Too_many
+    (* Each choice of an alternative per pattern, the first pattern's choices
+       outermost. *)
+    and product = function
+      | [] -> [ [] ]
+      | p :: rest ->
+          let rests = product rest in
+          check
+            (List.concat_map
+               (fun a -> List.map (fun r -> a :: r) rests)
+               (alts p))
+    in
+    match alts p with l -> Some l | exception Too_many -> None
+
   (* Matching enumerates each naming of [u] by [p] in order, each extending
      [store], and is the first result [k] gives one: alternatives and orderings
-     in turn, and each source's namings before the next source's. *)
+     in turn, and each source's namings before the next source's. A pattern
+     that names nothing gives one naming however many ways it matches. *)
   let rec first p (u : node) store k =
-    if p.unique then
+    if p.unique || p.nameless then
       match bind p u store with store -> k store | exception No_match -> None
     else if p.is_any then
       match p.p_src with
@@ -3162,13 +3446,18 @@ module Upat = struct
 end
 
 module Pattern_matcher = struct
+  (* A rule's pattern, and the unique patterns it enumerates when they are few,
+     each matched without continuations. *)
   type ('ctx, 'r) rule = {
     pattern : Upat.t;
+    alternatives : Upat.t list option;
     fn : 'ctx -> (string -> t) -> 'r option;
   }
 
-  let rule pattern f = { pattern; fn = (fun _ m -> f m) }
-  let rule_ctx pattern fn = { pattern; fn }
+  let rule_ctx pattern fn =
+    { pattern; alternatives = Upat.alternatives ~limit:16 pattern; fn }
+
+  let rule pattern f = rule_ctx pattern (fun _ m -> f m)
 
   (* A matcher is a list of parts, each with its rules indexed by operation and
      its own way of declining, so that appending shares the parts. *)
@@ -3238,12 +3527,26 @@ module Pattern_matcher = struct
     | [] -> true
     | o :: ops -> has_op o u.src && has_sources ops u
 
+  (* The first of [r.fn]'s results on the namings of [u], in order. A unique
+     pattern names [u] only once it matches, names aside, so a failed match
+     allocates nothing. *)
+  let rec first_alternative r ctx u = function
+    | [] -> None
+    | p :: rest -> (
+        if not (Upat.test p u) then first_alternative r ctx u rest
+        else
+          match if p.Upat.nameless then Upat.Empty else Upat.bind p u Empty with
+          | exception Upat.No_match -> first_alternative r ctx u rest
+          | store -> (
+              match r.fn ctx (lookup store) with
+              | Some _ as x -> x
+              | None -> first_alternative r ctx u rest))
+
   let applied r ctx u =
-    if r.pattern.unique then
-      match Upat.bind r.pattern u Empty with
-      | store -> r.fn ctx (lookup store)
-      | exception Upat.No_match -> None
-    else Upat.first r.pattern u Empty (fun store -> r.fn ctx (lookup store))
+    match r.alternatives with
+    | Some alternatives -> first_alternative r ctx u alternatives
+    | None ->
+        Upat.first r.pattern u Empty (fun store -> r.fn ctx (lookup store))
 
   let rec first_rule p ctx u = function
     | [] -> None
@@ -3283,6 +3586,7 @@ type 'ctx rules =
 
 let graph_rewrite ~calls ~pass ~ctx root rules =
   let exception Gate of t in
+  let exception Blocked in
   let pm, bpm =
     match rules with
     | After_sources m -> (Some m, None)
@@ -3290,16 +3594,28 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
     | Around_sources { before; after } -> (Some after, Some before)
   in
   let walk = pass = Once in
-  (* What each node stands for once rewritten. In the fixed-point rewrite a
-     node on the stack and not yet rewritten stands for [placeholder]. *)
-  let replaced = Visit.create placeholder in
-  let bpm_cache = Visit.create None in
-  let bpm_rewrite x =
-    let i = Visit.index bpm_cache x.id in
-    if Visit.held bpm_cache i then Visit.value bpm_cache i
+  (* A row per node met: the node; what it stands for once rewritten, [unset]
+     before it is pushed and, in the fixed-point rewrite, [placeholder] while it
+     is on the stack; its rewrite before the sources, [unset] before one is
+     tried and [placeholder] when none applies; and, in the fixed-point
+     rewrite, the first and last entries waiting for it. *)
+  let rows = Local.create ~width:3 ~iwidth:2 in
+  let replaced l = Local.get rows l 1 in
+  let is_replaced l =
+    let r = replaced l in
+    r != unset && r != placeholder
+  in
+  let bpm_rewrite l =
+    let r = Local.get rows l 2 in
+    if r != unset then r
     else
-      let r = Pattern_matcher.rewrite (Option.get bpm) ctx x in
-      Visit.replace bpm_cache x r;
+      let x = Local.node rows l in
+      let r =
+        match Pattern_matcher.rewrite (Option.get bpm) ctx x with
+        | Some r -> r
+        | None -> placeholder
+      in
+      Local.set rows l 2 r;
       r
   in
   let pm_rewrite x =
@@ -3307,95 +3623,107 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
   in
   let body_skipped n = n.op = Op.Call && calls = Skip in
   let rest_of n = if body_skipped n then drop 1 n.src else n.src in
-  let now x =
-    let r = Visit.find replaced x ~default:x in
-    if r == placeholder then x else r
+  let rebuilt n srcs =
+    let src = if body_skipped n then List.hd n.src :: srcs else srcs in
+    v n.op ~src ~arg:n.arg
   in
-  let is_replaced x =
-    Visit.find replaced x ~default:placeholder != placeholder
+  let work = Work.create () in
+  let waits = Work.create () in
+  let release () =
+    Local.release rows;
+    Work.release work;
+    Work.release waits
   in
-  let rec unchanged = function
-    | [] -> true
-    | x :: rest -> now x == x && unchanged rest
-  in
-  let rebuild n =
-    if unchanged (rest_of n) then n
-    else
-      let src =
-        if body_skipped n then List.hd n.src :: List.map now (drop 1 n.src)
-        else List.map now n.src
-      in
-      v n.op ~src ~arg:n.arg
-  in
-  if walk then begin
+  let once () =
     (* A single pass: a node rewritten on the way down is not entered, and one
        rewritten on the way up is not rewritten again. *)
-    let work = Work.create false in
+    let now x =
+      let l = Local.find rows x in
+      if l = Ids.free || not (is_replaced l) then x else replaced l
+    in
+    (* [srcs] with each source replaced by what it stands for, [srcs] itself
+       when each stands for itself. *)
+    let rec sources srcs =
+      match srcs with
+      | [] -> srcs
+      | x :: rest ->
+          let r = now x and rest' = sources rest in
+          if r == x && rest' == rest then srcs else r :: rest'
+    in
     let rec push_srcs = function
       | [] -> ()
       | x :: rest ->
           push_srcs rest;
-          if not (Visit.mem replaced x) then Work.push work x false x
+          let l = Local.add rows x in
+          if replaced l == unset then Work.push work l 0 0 0
     in
-    Work.push work root false root;
+    Work.push work (Local.add rows root) 0 0 0;
     while not (Work.is_empty work) do
-      let n = Work.node work and processed = Work.stage work in
+      let l = Work.top work 0 and processed = Work.top work 1 in
       Work.drop work;
-      if not (Visit.mem replaced n) then
-        if not processed then
-          begin match if Option.is_some bpm then bpm_rewrite n else None with
-          | Some r -> Visit.replace replaced n r
-          | None ->
-              Work.push work n true n;
-              push_srcs (rest_of n)
+      if replaced l == unset then begin
+        let n = Local.node rows l in
+        if processed = 0 then begin
+          let r = if Option.is_some bpm then bpm_rewrite l else placeholder in
+          if r != placeholder then Local.set rows l 1 r
+          else begin
+            Work.push work l 1 0 0;
+            push_srcs (rest_of n)
           end
+        end
         else
-          let new_n = rebuild n in
+          let rest = rest_of n in
+          let srcs = sources rest in
+          let new_n = if srcs == rest then n else rebuilt n srcs in
           let new_n =
             match pm_rewrite new_n with Some r -> r | None -> new_n
           in
-          Visit.replace replaced n new_n
+          Local.set rows l 1 new_n
+      end
     done;
     now root
-  end
-  else begin
-    (* Each entry is a node, a stage and the node it currently stands for. Down:
-       rewrite bottom-up to a fixed point and push the sources. Rebuild: once
-       the sources are done, rebuild on them and rewrite top-down. Link: the
-       node becomes whatever its rewrite became. An entry whose dependency is
-       not done waits for it instead of spinning. *)
+  in
+  let fixed_point () =
+    (* Each entry is a node's number, a stage and the number of the node it
+       currently stands for. Down: rewrite bottom-up to a fixed point and push
+       the sources. Rebuild: once the sources are done, rebuild on them and
+       rewrite top-down. Link: the node becomes whatever its rewrite became. An
+       entry whose dependency is not done waits for it instead of spinning. *)
+    let down = 0 and rebuild = 1 and link = 2 in
     let limit = Setting.value Setting.rewrite_stack_limit in
-    let work = Work.create `Down in
-    let waitlist = Visit.create [] in
-    let wait dep entry =
-      Visit.replace waitlist dep (entry :: Visit.find waitlist dep ~default:[])
+    (* An entry waits in [waits], chained from its dependency's row in the
+       order the entries began to wait, by the entries' last ints. *)
+    let wait d l stage other =
+      let e = Work.length waits in
+      Work.push waits l stage other Ids.free;
+      let last = Local.iget rows d 1 in
+      if last = Ids.free then Local.iset rows d 0 e
+      else Work.set waits last 3 e;
+      Local.iset rows d 1 e
     in
-    (* The entries waiting on a node, pushed in the order they began to wait:
-       the list holds the last first. *)
-    let rec resume = function
-      | [] -> ()
-      | (n, stage, new_n) :: earlier ->
-          resume earlier;
-          Work.push work n stage new_n
-    in
-    let finish n r =
-      Visit.replace replaced n r;
-      match Visit.find waitlist n ~default:[] with
-      | [] -> ()
-      | waiting ->
-          Visit.replace waitlist n [];
-          resume waiting
+    let finish l r =
+      Local.set rows l 1 r;
+      let e = ref (Local.iget rows l 0) in
+      if !e <> Ids.free then begin
+        Local.iset rows l 0 Ids.free;
+        Local.iset rows l 1 Ids.free;
+        while !e <> Ids.free do
+          Work.push work (Work.get waits !e 0) (Work.get waits !e 1)
+            (Work.get waits !e 2) 0;
+          e := Work.get waits !e 3
+        done
+      end
     in
     (* A node rewritten bottom-up to a fixed point; the set of the nodes it went
        through is made only when it moves. *)
-    let fixed_point n =
+    let fixed_point l n =
       match bpm with
       | None -> n
       | Some _ -> (
-          match bpm_rewrite n with
-          | None -> n
+          match bpm_rewrite l with
           | exception Bottom_up_gate -> raise_notrace (Gate n)
-          | Some next ->
+          | next when next == placeholder -> n
+          | next ->
               let seen = Tbl.create 4 in
               Tbl.replace seen n ();
               let rec loop current =
@@ -3404,9 +3732,9 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
                     "graph_rewrite does not terminate: a bottom-up rewrite \
                      cycles";
                 Tbl.replace seen current ();
-                match bpm_rewrite current with
-                | Some next -> loop next
-                | None -> current
+                match bpm_rewrite (Local.add rows current) with
+                | next when next == placeholder -> current
+                | next -> loop next
                 | exception Bottom_up_gate -> raise_notrace (Gate current)
               in
               loop next)
@@ -3416,63 +3744,81 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
       | [] -> ()
       | x :: rest ->
           push_down rest;
-          if not (Visit.mem replaced x) then begin
-            Work.push work x `Down x;
-            Visit.replace replaced x placeholder
+          let d = Local.add rows x in
+          if replaced d == unset then begin
+            Work.push work d down d 0;
+            Local.set rows d 1 placeholder
           end
     in
-    (* One lookup of each source: the first not yet replaced, or whether the
-       replacements are the sources themselves. *)
-    let rec scan same = function
-      | [] -> if same then `Same else `Changed
+    (* [srcs] with each source replaced by its rewrite, [srcs] itself when each
+       is its own. Raises [Blocked], with the first source not yet rewritten in
+       [blocker]. *)
+    let blocker = ref Ids.free in
+    let rec sources srcs =
+      match srcs with
+      | [] -> srcs
       | x :: rest ->
-          let i = Visit.index replaced x.id in
-          let r =
-            if Visit.held replaced i then Visit.value replaced i
-            else placeholder
-          in
-          if r == placeholder then `Wait x else scan (same && r == x) rest
+          let d = Local.add rows x in
+          if not (is_replaced d) then begin
+            blocker := d;
+            raise_notrace Blocked
+          end;
+          let r = replaced d and rest' = sources rest in
+          if r == x && rest' == rest then srcs else r :: rest'
     in
-    Work.push work root `Down root;
-    Visit.replace replaced root placeholder;
+    let root_l = Local.add rows root in
+    Work.push work root_l down root_l 0;
+    Local.set rows root_l 1 placeholder;
     while not (Work.is_empty work) do
       if Work.length work > limit then
         invalid_arg
           "graph_rewrite does not terminate: its work list is too long";
-      let n = Work.node work
-      and stage = Work.stage work
-      and new_n = Work.other work in
+      let l = Work.top work 0
+      and stage = Work.top work 1
+      and other = Work.top work 2 in
       Work.drop work;
-      if not (is_replaced n) then
-        match stage with
-        | `Down -> (
-            match fixed_point n with
-            | exception Gate gated -> finish n gated
-            | new_n ->
-                Work.push work n `Rebuild new_n;
-                push_down (rest_of new_n))
-        | `Rebuild -> (
-            match scan true (rest_of new_n) with
-            | `Wait dep -> wait dep (n, `Rebuild, new_n)
-            | (`Same | `Changed) as sources -> (
-                let next =
-                  if sources = `Same then pm_rewrite new_n
-                  else Some (rebuild new_n)
-                in
-                match next with
-                | None -> finish n new_n
-                | Some next ->
-                    Work.push work n `Link next;
-                    Work.push work next `Down next))
-        | `Link ->
-            if is_replaced new_n then finish n (now new_n)
-            else wait new_n (n, `Link, new_n)
+      if not (is_replaced l) then
+        if stage = down then begin
+          let n = Local.node rows l in
+          match fixed_point l n with
+          | exception Gate gated -> finish l gated
+          | new_n ->
+              let nl = if new_n == n then l else Local.add rows new_n in
+              Work.push work l rebuild nl 0;
+              push_down (rest_of new_n)
+        end
+        else if stage = rebuild then begin
+          let new_n = Local.node rows other in
+          let rest = rest_of new_n in
+          match sources rest with
+          | exception Blocked -> wait !blocker l rebuild other
+          | srcs -> (
+              let next =
+                if srcs == rest then pm_rewrite new_n
+                else Some (rebuilt new_n srcs)
+              in
+              match next with
+              | None -> finish l new_n
+              | Some next ->
+                  let nl = Local.add rows next in
+                  Work.push work l link nl 0;
+                  Work.push work nl down nl 0)
+        end
+        else if is_replaced other then finish l (replaced other)
+        else wait other l link other
     done;
-    if is_replaced root then now root
+    if is_replaced root_l then replaced root_l
     else
-        invalid_arg
-          "graph_rewrite does not terminate: a node's rewrite depends on itself"
-  end
+      invalid_arg
+        "graph_rewrite does not terminate: a node's rewrite depends on itself"
+  in
+  match if walk then once () else fixed_point () with
+  | r ->
+      release ();
+      r
+  | exception e ->
+      release ();
+      reraise e
 
 let pm_substitute : (t Tbl.t, t) Pattern_matcher.t =
   Pattern_matcher.(
