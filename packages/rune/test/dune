@@ -17,7 +17,8 @@
   test_vmap
   test_custom
   test_probe
-  test_callback)
+  test_callback
+  test_sums)
  (modules
   compose
   test_jit
@@ -35,7 +36,8 @@
   test_vmap
   test_custom
   test_probe
-  test_callback)
+  test_callback
+  test_sums)
  (libraries
   nx
   nx_array

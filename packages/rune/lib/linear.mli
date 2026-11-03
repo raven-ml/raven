@@ -74,18 +74,28 @@ type ct = {
 }
 (** The type for cotangents. *)
 
+val ct_placement : ('v, 's, 'd) Nx.t -> 'd Nx.Placement.t
+(** [ct_placement x] is where a cotangent of [x] lies: [x]'s placement, but
+    no sum ({!Nx.Placement.closed}) where [x] is one. *)
+
+val ct_zeros : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
+(** [ct_zeros x] is the zero cotangent of [x], at {!ct_placement}[ x]. *)
+
 val transpose : t -> Program.value option array -> ct option array
 (** [transpose l cts] is the cotangent of each tangent parameter of [l], given
     [cts], the cotangent of each output of the linearized function. [None] in
     [cts] stands for zero, and [None] in the result for a parameter that
     receives no contribution. Each cotangent must have its output's dtype and
     shape. Every cotangent the transpose computes is placed at its variable's
-    placement before it is transposed or returned, a broadcast's once summed
-    over the axes it repeats, so each of the result lies at its parameter's. Two
+    {!ct_placement} before it is transposed or returned, a broadcast's once
+    summed over the axes it repeats, so each of the result lies at its
+    parameter's, whole where the parameter is a sum. A contribution that is
+    a sum, as a contraction's over a cut axis, closes where it lies when it
+    is given. Two
     contributions cut along different axes, or on two sets, are placed there
     before they are added, a broadcast's too; a whole one is added where a cut
-    one lies. A value a transpose makes beside a cotangent lies at the placement
-    of the operand it stands for, as the zeros a gather's transpose scatters
+    one lies. A value a transpose makes beside a cotangent lies at the
+    {!ct_placement} of the operand it stands for, as the zeros a gather's transpose scatters
     into do, or else whole on each device of the cotangent, as the zeros an
     assembly's transpose puts over an overlapped region do.
 

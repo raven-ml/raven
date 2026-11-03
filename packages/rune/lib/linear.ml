@@ -155,6 +155,16 @@ let sum a b =
 
 let is_cut p = not (Nx.Placement.equal (Nx.Placement.uncut p) p)
 
+(* Where a cotangent of [x] lies: at [x]'s placement, whole where [x] is a
+   sum, whose cotangent each device's term reads alike. *)
+let ct_placement x = Nx.Placement.closed (Nx.placement x)
+
+(* Whether [p] is a sum's. *)
+let is_sum p = not (Nx.Placement.equal p (Nx.Placement.closed p))
+
+(* The cotangent of [x] that is zero. *)
+let ct_zeros x = Nx.zeros_at (ct_placement x) (Nx.dtype x) (Nx.shape x)
+
 (* Whether two contributions are cut apart or lie on two sets, so that each is
    placed at its primal's before they are added. *)
 let apart a c =
@@ -176,8 +186,8 @@ let primal_at ps n = if Array.length ps = 0 then None else ps.(n)
 let at_primal ~name primal c =
   match (primal, c.v) with
   | Some (V x), V w
-    when not (Nx.Placement.equal (Nx.placement x) (Nx.placement w)) ->
-      held (V (Prim.eval ~by:name (Place (Nx.placement x, w))))
+    when not (Nx.Placement.equal (ct_placement x) (Nx.placement w)) ->
+      held (V (Prim.eval ~by:name (Place (ct_placement x, w))))
   | _ -> c
 
 (* Variable [n]'s cotangent in [acc] at its primal's placement. *)
@@ -495,7 +505,7 @@ let gather_rule env ~axis idx x (V w) =
   | V r ->
       let idx = rebrand r (env.const idx) in
       let ct = rebrand r (with_dtype (Nx.dtype x) w) in
-      let into = rebrand r (Nx.zeros_like x) in
+      let into = rebrand r (ct_zeros x) in
       let y = scatter ~by:env.name Add ~unique:false ~axis idx ct into in
       env.give x (fresh (V y))
 
@@ -506,7 +516,7 @@ let scatter_rule env (combine : Nx_kernel.combine) ~unique ~axis idx updates
       let by = env.name in
       let idx = rebrand r (env.const idx) in
       let ct = rebrand r (with_dtype (Nx.dtype into) w) in
-      let zeros x = rebrand r (Nx.zeros_like x) in
+      let zeros x = rebrand r (ct_zeros x) in
       match combine with
       | Add ->
           if env.lin updates then
@@ -595,7 +605,7 @@ let unbroadcast env x ~lead ~axes w =
   let rec lifted p k =
     if k = 0 then p else lifted (Nx.Placement.with_leading_axis p) (k - 1)
   in
-  let p = lifted (Nx.placement x) lead in
+  let p = lifted (ct_placement x) lead in
   let cut = is_cut p in
   let here = Nx.Placement.equal (Nx.placement summed) p in
   let y =
@@ -649,7 +659,7 @@ let move_rule env (mv : Move.t) x (V w) =
         let lead = Array.length b - Array.length s in
         let repeats a = b.(a) <> 1 && (a < lead || s.(a - lead) = 1) in
         let axes = List.filter repeats (List.init (Array.length b) Fun.id) in
-        let px = Nx.placement x in
+        let px = ct_placement x in
         if (not (is_cut px)) && Nx.Placement.equal (Nx.placement w) px then
           (* Whole where the operand is whole, as on one device: so is the
              sum. *)
@@ -1216,8 +1226,17 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
   let primal = ref [||] in
   let give x c =
     let n = var x in
+    (* A contribution that is a sum, as a product's over a cut axis, closes
+       where it lies: no cotangent is a sum. *)
+    let c =
+      let (V w) = c.v in
+      let p = Nx.placement w in
+      if is_sum p then
+        fresh (V (Prim.eval ~by:name (Place (Nx.Placement.closed p, w))))
+      else c
+    in
     let (V w) = c.v in
-    if not (Nx.Placement.equal (Nx.placement x) (Nx.placement w)) then
+    if not (Nx.Placement.equal (ct_placement x) (Nx.placement w)) then
       primal := mark !primal ~slots:(Array.length acc) n x;
     acc.(n) <-
       Some

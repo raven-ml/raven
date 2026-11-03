@@ -45,23 +45,34 @@ let first a = a.(0)
 let path_name p =
   if Ptree.Path.segments p = [] then "the root" else Ptree.Path.to_string p
 
-(* Leaves [xs] and [ys], of paths and values, alike in their placements. *)
-let rec placed_alike name ~this ~that xs ys =
+(* What a structure stands for beside its array's: a tangent lies at its
+   array's placement, a cotangent at {!Linear.ct_placement}, whole where its
+   array is a sum. *)
+type stands = Tangent | Cotangent
+
+(* Leaves [xs] and [ys], of paths and values, alike in their placements as
+   [stands] places them. *)
+let rec placed_alike stands name ~this ~that xs ys =
+  let at x =
+    match stands with
+    | Tangent -> Nx.placement x
+    | Cotangent -> Nx.Placement.closed (Nx.placement x)
+  in
   match (xs, ys) with
   | (p, V a) :: xs, (_, V b) :: ys ->
-      if not (Nx.Placement.equal (Nx.placement a) (Nx.placement b)) then
+      if not (Nx.Placement.equal (at a) (at b)) then
         invalid_argf "%s: %s: at %s %s, at %s %s" name (path_name p)
           (Format.asprintf "%a" Nx.Placement.pp (Nx.placement a))
           this
           (Format.asprintf "%a" Nx.Placement.pp (Nx.placement b))
           that;
-      placed_alike name ~this ~that xs ys
+      placed_alike stands name ~this ~that xs ys
   | _ -> ()
 
 (* [x] and [y] of structure [s] alike: the same visits, and at each path the
    same dtype and shape, as [this] and [that] name them, and the same placement
-   where [placed]. *)
-let same_leaves ?(placed = false) name s ~this x ~that y =
+   where [placed] says what one stands for beside the other. *)
+let same_leaves ?placed name s ~this x ~that y =
   let _, k = Ptree.flatten s x and _, k' = Ptree.flatten s y in
   Option.iter
     (fun msg -> invalid_argf "%s: %s" name msg)
@@ -85,7 +96,7 @@ let same_leaves ?(placed = false) name s ~this x ~that y =
           (Format.asprintf "%a" pp_shape (Nx.shape b))
           that)
     xs ys;
-  if placed then placed_alike name ~this ~that xs ys
+  Option.iter (fun stands -> placed_alike stands name ~this ~that xs ys) placed
 
 (* The carry a step returned against the one it received. *)
 let same_carry name s ~received returned =
@@ -97,7 +108,7 @@ let same_carry name s ~received returned =
 let tangible x = Nx.Dtype.(is Float (Nx.dtype x) || is Complex (Nx.dtype x))
 
 let jvp_named name p q f params tangents =
-  same_leaves ~placed:true name p ~this:"in the parameters" params
+  same_leaves ~placed:Tangent name p ~this:"in the parameters" params
     ~that:"in the tangents" tangents;
   if not (Ptree.fold p (fun _ x acc -> acc || tangible x) params false) then
     invalid_argf "%s: the parameters hold no real or complex tensor" name;
@@ -126,7 +137,7 @@ let jvp p q f params tangents = jvp_named "Rune.jvp" p q f params tangents
 (* A cotangent at [x]'s type, memory of its own. *)
 let gradient x (c : Linear.ct option) =
   match c with
-  | None -> Nx.zeros_like x
+  | None -> Linear.ct_zeros x
   | Some { v; fresh } ->
       let g = like x v in
       if fresh then g else Nx.copy g
@@ -168,7 +179,7 @@ let vjp_named name p q f params =
   in
   let y = rebuild q ~like ys in
   let back cts =
-    same_leaves ~placed:true name q ~this:"in the result" y
+    same_leaves ~placed:Cotangent name q ~this:"in the result" y
       ~that:"in the cotangents" cts;
     pullback
       (Array.map
@@ -191,7 +202,7 @@ let linearize_named name p q f params =
   in
   let y = rebuild q ~like:(Option.get !like) ys in
   let apply tangents =
-    same_leaves ~placed:true name p ~this:"in the parameters" params
+    same_leaves ~placed:Tangent name p ~this:"in the parameters" params
       ~that:"in the tangents" tangents;
     let ts =
       Array.of_list
@@ -226,7 +237,7 @@ let linear_transpose_named name p q f params =
   in
   let like = Option.get !shapes in
   fun cts ->
-    same_leaves ~placed:true name q ~this:"in the result" like
+    same_leaves ~placed:Cotangent name q ~this:"in the result" like
       ~that:"in the cotangents" cts;
     let gs =
       Linear.transpose l
@@ -262,7 +273,8 @@ let value_and_grad_aux_named name p x f params =
   objective name y;
   let aux = rebuild x ~like:aux (Array.sub ys 1 (Array.length ys - 1)) in
   let cts = Array.make (Array.length ys) None in
-  cts.(0) <- Some (V (Nx.ones_like y));
+  cts.(0) <-
+    Some (V (Nx.ones_at (Linear.ct_placement y) (Nx.dtype y) (Nx.shape y)));
   (y, pullback cts, aux)
 
 let value_and_grad_named name p f params =
@@ -345,7 +357,7 @@ let custom_jvp p q rule args =
         like := Some y;
         let tangent ts =
           let dy = map (rebuild p ~like:x ts) in
-          same_leaves ~placed:true name q ~this:"in the tangent map's result" dy
+          same_leaves ~placed:Tangent name q ~this:"in the tangent map's result" dy
             ~that:"in the result" y;
           values q dy
         in
@@ -363,7 +375,7 @@ let custom_vjp p q rule args =
         like := Some y;
         let pullback cts =
           let g = pb (rebuild q ~like:y cts) in
-          same_leaves ~placed:true name p ~this:"in the pullback's result" g
+          same_leaves ~placed:Cotangent name p ~this:"in the pullback's result" g
             ~that:"in the arguments" x;
           values p g
         in
@@ -383,7 +395,7 @@ let custom_transpose p q f ~transpose args =
           let g = transpose (rebuild q ~like:y cts) in
           let this = "in the transpose's result"
           and that = "in the arguments" in
-          same_leaves ~placed:true name p ~this g ~that x;
+          same_leaves ~placed:Cotangent name p ~this g ~that x;
           values p g
         in
         (values q y, transposed))

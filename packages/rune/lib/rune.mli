@@ -201,16 +201,21 @@
 
     {b Placement.} Every tangent and cotangent lies at its array's placement, so
     the transposed operations of a forward pass nx routes are routed too
-    ({!Nx.section-routing}), and a gradient lies where its parameter does. A
+    ({!Nx.section-routing}), and a gradient lies where its parameter does,
+    but a sum's cotangent ({!Nx.Placement.partial}), which lies there no sum
+    ({!Nx.Placement.closed}): each device's term reads it alike. A
     contribution an operation's transpose puts elsewhere is placed there: one
-    cut where its array is whole is gathered, and one whole where its array is
-    cut is read by each device's window. A broadcast's cotangent is first
-    summed over the axes the broadcast repeats, by partials where they are cut,
-    so the gradient of a bias added to a batch cut across devices moves no
-    activation. So [grad' (fun x -> Nx.sum (Nx.mul x w)) x], where [x] is whole
+    cut where its array is whole is gathered, one whole where its array is
+    cut is read by each device's window, and one that is a sum, as a
+    product of a sum and a cotangent gives, closes where it lies. A
+    broadcast's cotangent is first summed over the axes the broadcast
+    repeats, by partials where they are cut, so the gradient of a bias added
+    to a batch cut across devices moves no activation. So
+    [grad' (fun x -> Nx.sum (Nx.mul x w)) x], where [x] is whole
     on each device of a set and [w] is cut along axis 0 across them, lies whole
-    on each device, its products' windows gathered. A tangent or cotangent
-    given at another placement than its array's raises. *)
+    on each device, its products' windows gathered. A tangent given at
+    another placement than its array's raises, and so does a cotangent
+    given at another than its array's closed ({!Nx.Placement.closed}). *)
 
 (** {2:kinks Kinks and factorisations}
 
@@ -1386,7 +1391,8 @@ val jit :
     each ({!Nx.Placement.on}) or each whole on one of them, computes each
     operation as eager computation does ({!Nx.section-routing}): every device
     computes its windows of the results from its windows of the operands, in
-    kernels of its own, a fold over a cut axis closes to a whole value, and a
+    kernels of its own, a fold over a cut axis closes to a whole value, as a
+    contraction does unless asked for its sum ({!Nx.section-contraction}), and a
     window moves from one device to another only where eager computation moves
     it. Each value's placement is eager's, uneven windows included, and a device
     whose windows of an operation's results are all empty computes nothing for
@@ -1612,7 +1618,12 @@ val jit :
     [D = max 0 (2⌈log₂ n⌉ - 1)], [B = (n + 1) u M] for [M] the mean of the
     terms' magnitudes. {!Nx.logcumsumexp}'s bound needs [n] exact in the
     accumulator, and {!Nx.var}'s [V] precedes its [ddof] scale, which rounds
-    once more. A complex sum adds each part as a real one. A sum, product or
+    once more. A product asked for its sum ([~sum:true],
+    {!Nx.section-contraction}) rounds each of its [t] terms into its dtype,
+    and its closing adds them there: closed, it is within the contraction's
+    bound plus [γ(t, v) Σ|term|], [v] the dtype's unit roundoff, as eager
+    computation's is.
+    A complex sum adds each part as a real one. A sum, product or
     extreme with a NaN term is NaN. Terms all [-0.] sum to [+0.], or to [-0.] in
     a scatter and {!Nx.combine_patches}. Special values are eager's, and a
     variance is never negative.

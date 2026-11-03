@@ -363,6 +363,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A sum's cotangent (`Nx.Placement.partial`) lies whole, where the sum
+  lies with no sum, and a contribution that is a sum, as a product of a sum
+  gives, closes where the transpose gives it. Gradients through
+  tensor-parallel products so lie where their parameters do.
 - `Rune.Probe.collect` raises `Out_of_memory`, `Stack_overflow` and
   `Sys.Break` again where it returned them as an `Error`, which a caller could
   drop.
