@@ -104,6 +104,13 @@ let core_threads = 16384
    thread's 255 registers and ran fastest; 192 ran slower and 256 spill. *)
 let accumulators = 160
 
+(* The fewest workgroups a local split of a tensor core's [N] leaves. The split
+   keeps the threads and packs a workgroup's warps onto one compute unit,
+   which balances the units coarser: on an RTX 5000 Ada's 100 SMs a split
+   that left 512 workgroups ran as fast as one that left 256, and 128 or 144
+   lost up to 1.34 times. Fitted to sm_89's parts, as [core_threads] is. *)
+let local_workgroups = 256
+
 (* The outputs a lane of [k] holds: the product of the sizes of the upcast axes
    its stored addresses read. A tensor core's upcasts of its reduce do not
    count: they hold the operands of one step. *)
@@ -261,7 +268,15 @@ let tensor_cores ~core_threads k =
                 && holds Sint.(lane_outputs tk * Int size <= Int accumulators)
               in
               upcast ~keep:fits 0 [ 2 ] Opt.Upcast;
-              upcast ~keep 0 [ 4; 2 ] Opt.Local
+              (* N's local split, by the largest of 4 and 2 that divides it
+                 and leaves [local_workgroups]. *)
+              let local size =
+                Option.is_some (first_dividing rngs.(0) [ size ])
+                && leaves ~default:true local_workgroups size
+              in
+              Option.iter
+                (fun size -> split 0 size Opt.Local)
+                (List.find_opt local [ 4; 2 ])
             end;
             Some tk)
       [ 0; 1; 2 ]

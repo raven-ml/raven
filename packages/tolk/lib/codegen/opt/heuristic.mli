@@ -30,16 +30,18 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       three candidate axes on which a tensor core applies ({!Opt.Tc}), then
       upcasts of its [M] and [N] axes by the first of 5, 4, 3 and 2 that divides
       them, an upcast of [N] by 2 more while a lane of the core then holds at
-      most 160 outputs, and a local split of [N] by the first of 4 and 2 that
-      divides it. Each split applies only when it leaves at least [16384 / t]
-      workgroups, [t] the threads of the core, a workgroup's, or when the count
-      is not known. A split gives each workgroup more of the outputs and the
-      kernel fewer workgroups: an upcast leaves fewer threads to keep loads in
-      flight, and the local split fewer workgroups to share among the compute
-      units. A larger tile loads fewer operands for each step of the core, until
-      its outputs fill a thread's registers. The floor moves the order of a sum,
-      so it is one for every device of a target, never read from a device: 16384
-      threads is the bound of [sm_89]'s parts, which every target takes.
+      most 160 outputs, and a local split of [N] by the largest of 4 and 2 that
+      divides it and leaves at least 256 workgroups. Each upcast applies only
+      when it leaves at least [16384 / t] workgroups, [t] the threads of the
+      core, a workgroup's, and each split when the count is not known. A split
+      gives each workgroup more of the outputs and the kernel fewer workgroups:
+      an upcast leaves fewer threads to keep loads in flight, and the local
+      split, which keeps the threads, fewer workgroups to share among the
+      compute units. A larger tile loads fewer operands for each step of the
+      core, until its outputs fill a thread's registers. The floors move the
+      order of a sum, so they are one for every device of a target, never read
+      from a device: 16384 threads and 256 workgroups are the bounds of
+      [sm_89]'s parts, which every target takes.
       Where the operands read [M] only as its quotient by
       [d], as blocks of [d] rows read their expert's matrix, and the core's
       tile times [M]'s upcast does not divide [d], [M] is upcast instead by

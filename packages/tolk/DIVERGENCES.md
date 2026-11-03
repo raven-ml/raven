@@ -5031,17 +5031,19 @@ the walk of `Rangeify.fix_store_hazard`.
   without `TC_MIN_GLOBALS`: after the core, M and N are upcast and N split
   into local threads, by the first size that divides them, whatever the
   workgroups left; the same at `6b7b018da`).
-- **tolk:** `Heuristic.core_threads` and `Heuristic.tensor_cores`;
-  `test/gen/tinygrad.patch`, which gives tinygrad's heuristic the same rule
-  before the goldens are generated.
-- **Differs:** each of the three splits applies only while the kernel keeps
-  at least `core_threads / Tc.threads` workgroups after it, the product of
-  its global axes, or when that product is not known: 16384 threads, 512
-  workgroups of a CUDA, RDNA or Metal core of 32 threads and 256 of a CDNA
-  core of 64. An upcast leaves fewer threads to keep memory and the L2 busy
-  (concurrency is latency times throughput, Volkov, UCB/EECS-2016-143 §3.1);
-  the local split keeps the threads and leaves fewer workgroups to share
-  among the compute units, so it takes the same floor. 16384 is the bound
+- **tolk:** `Heuristic.core_threads`, `Heuristic.local_workgroups` and
+  `Heuristic.tensor_cores`; `test/gen/tinygrad.patch`, which gives tinygrad's
+  heuristic the same rule before the goldens are generated.
+- **Differs:** each upcast applies only while the kernel keeps at least
+  `core_threads / Tc.threads` workgroups after it, the product of its global
+  axes, or when that product is not known: 16384 threads, 512 workgroups of a
+  CUDA, RDNA or Metal core of 32 threads and 256 of a CDNA core of 64. An
+  upcast leaves fewer threads to keep memory and the L2 busy (concurrency is
+  latency times throughput, Volkov, UCB/EECS-2016-143 §3.1). The local split
+  keeps the threads and leaves fewer workgroups to share among the compute
+  units, so threads do not govern it: it takes the largest of 4 and 2 that
+  divides N and leaves at least `local_workgroups` = 256 workgroups, or an
+  unknown count, where tinygrad takes the first that divides. 16384 is the bound
   of sm_89's parts, and every target takes it until one measures another;
   then `core_threads` becomes a field of `Renderer.t` set per target. Under
   `TC_MIN_GLOBALS` the splits are tinygrad's.
@@ -5067,11 +5069,25 @@ the walk of `Rangeify.fix_store_hazard`.
     from memory, so it moves with SMs times clock and with bandwidth; the
     RTX 4090 and L40 lie within 4x of fudge by both (the Ada whitepaper's
     tables);
-  - the local split as tinygrad's, unfloored: a decode step's attention
-    values 1.19x slower, the key projection 1.34x warm and 1.6-1.7x cold,
-    the routed products 1.14x, for 1-4% elsewhere. Its cost follows the
-    warps on the busiest SM, a function of the part's units: 512 is the
-    smallest floor that refuses every harmful case of fudge's rows;
+  - the local split as tinygrad's, unfloored: a decode step's attention values
+    1.19x slower, the key projection 1.34x warm and 1.6-1.7x cold, the routed
+    products 1.14x, for 1-4% elsewhere. Its cost follows the warps on the
+    busiest SM, a function of the part's units: a split is harmless where it
+    does not raise them, `ceil(W / (L U)) L <= ceil(W / U)` for `W` one-warp
+    workgroups, a split `L` and `U` units, which needs `U`, a fact of the
+    part. 256 workgroups with the fall back to 2 is the floor fudge's rows
+    admit (between 1.44 and 2.56 times its 100 SMs): it takes a split by 2
+    where 512 refused every split, on fudge, three interleaved rounds, against
+    512 with D211: the key projection 88-115 to 78-96 us (its bench row 89.1
+    to 73.0 us at best), the output projection 186-195 to 169-186 us,
+    `matmul_half_512` 17.4 to 16.3 us at best, the decode step's keys
+    unchanged, the prefill 167.5-181.1 to 168.3-169.0 ms; the local split by 4
+    to 128 workgroups that cost the key projection 1.34x stays refused. At
+    2048 cubed the floor of 512 left one warp a workgroup, and 256 takes a
+    split by 4 (195-219 to 199-203 us). On parts of 24 to 142 SMs the floor
+    is a fit, not the test: unmeasured. Cores staged through shared memory
+    will replace this floor, the upcasts' and D211's split with the staged
+    tile's rule of `core_threads / stages`;
   - kept from before: a decode step's attention values, 64 by 64 outputs
     over 1024 slots, take 32 workgroups and 23.6 us where tinygrad's splits
     leave one and 68.9 us; a prefill's router, 512 tokens by 32 experts over
@@ -5090,9 +5106,9 @@ the walk of `Rangeify.fix_store_hazard`.
   `matmul_half_variable` (a variable counts the workgroups), with the
   goldens from tinygrad with D175 applied by its generator; its `the tensor
   core's floor › the splits after a tensor core are those that leave its
-  floor of workgroups` and `› a larger floor after a tensor core never
-  leaves fewer workgroups`, over every recorded core kernel, CDNA's
-  included; the tolk bench's `stream/decode-keys`, `stream/dense-bf16-64`
+  floor of workgroups`, over every recorded core kernel, CDNA's included,
+  with the local split's floor of 256 workgroups; the `routed_run` cases of
+  D200 on CUDA and Metal, whose local split by 2 the floor of 256 admits; the tolk bench's `stream/decode-keys`, `stream/dense-bf16-64`
   and `stream/key-projection` rows on fudge.
 
 ## D176. A folded selection or negation keeps a NaN's bits

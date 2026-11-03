@@ -1009,6 +1009,9 @@ let accumulators = 160
 let uses_core c =
   List.exists (function Opt.Tc { use_tc = 1; _ } -> true | _ -> false) c.opts
 
+(* The fewest workgroups a local split after a tensor core leaves. *)
+let local_workgroups = 256
+
 (* The outputs a lane of [o] holds: the product of the sizes of its upcast
    axes that a stored address reads. *)
 let lane_outputs_of o =
@@ -1148,8 +1151,8 @@ let core_threads_of s tc =
    its M and N axes by the first of 5, 4, 3 and 2 that divides them, and of N
    by 2 while a lane then holds at most 160 outputs, each applied only while
    it leaves at least [core_threads / t] workgroups, [t] the core's threads,
-   or an unknown count, then a local split of N by 4 or 2 under the same
-   floor. M's
+   or an unknown count; then a local split of N by the largest of 4 and 2
+   that divides it and leaves 256 workgroups, or an unknown count. M's
    upcast, where it applies, takes the amount the heuristic gives it in
    [opts], which keeps a warp within a run of rows. *)
 let stated ~core_threads s tc opts =
@@ -1164,13 +1167,15 @@ let stated ~core_threads s tc opts =
     Shape.Sint.resolve ~default:true
       Shape.Sint.(workgroups s >= Int n * Int floor)
   in
-  let step ?(keep = fun n -> leaves floor n) i sizes target =
+  let step ?(keep = fun n -> leaves floor n) ?(first = true) i sizes target =
     let divides n =
       Option.is_some (Shape.divides (Ops.nth rngs.(i) 0) (Bigint.of_int n))
     in
     let chosen =
-      Option.bind (List.find_opt divides sizes) (fun n ->
-          if keep n then Some n else None)
+      if first then
+        Option.bind (List.find_opt divides sizes) (fun n ->
+            if keep n then Some n else None)
+      else List.find_opt (fun n -> divides n && keep n) sizes
     in
     match chosen with
     | Some n -> (
@@ -1193,7 +1198,7 @@ let stated ~core_threads s tc opts =
   step
     ~keep:(fun n -> leaves floor n && lane_outputs_of s * n <= accumulators)
     0 [ 2 ] Opt.Upcast;
-  step 0 [ 4; 2 ] Opt.Local;
+  step ~keep:(leaves local_workgroups) ~first:false 0 [ 4; 2 ] Opt.Local;
   K.applied_opts s
 
 (* A floor of [2^e] to [2^(e+1) - 1] threads, [e] up to 20: every power of
@@ -1223,20 +1228,6 @@ let floored =
         (match workgroups s with Sym _ -> true | Int _ -> false);
       cover "a core of 64 threads" (core_threads_of s tc = 64);
       equal ~msg:name (list Kernel_opts.opt) expected (K.applied_opts o))
-
-let monotone =
-  prop "a larger floor after a tensor core never leaves fewer workgroups"
-    Gen.(
-      triple
-        (int_range 0 (Array.length core_kernels - 1))
-        core_threads core_threads)
-    (fun (i, a, b) ->
-      let lo = min a b and hi = max a b in
-      let _, (s, _) = core_kernels.(i) in
-      let left n = workgroups (Heuristic.hand_coded_with ~core_threads:n s) in
-      match (left lo, left hi) with
-      | Int l, Int h -> at_most int ~than:h l
-      | _ -> ())
 
 (* The decode bound *)
 
@@ -1427,7 +1418,7 @@ let () =
          warps_within_runs;
          group "the host's budget"
            [ held_cases; budget; more_registers; doubles ];
-         group "the tensor core's floor" [ floored; monotone ];
+         group "the tensor core's floor" [ floored ];
          decode_bound;
          decoded_writes;
        ])
