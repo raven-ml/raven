@@ -605,12 +605,6 @@ let earliest_rewrites =
          rule
            (Upat.op Op.Store ~src:[ var "dest"; var "src" ])
            (fun m -> materialize_cross_device_src (m "dest") (m "src"));
-         (* Two stores of the same value to the same place are one. *)
-         rule
-           (Upat.after
-              (Upat.after ~name:"a1" (var "buf") [ buf_store_src ])
-              [ Upat.store (var "a1") [ var "src" ] ])
-           (fun m -> Some (m "a1"));
          (* A store of a storage's own contents into itself. *)
          rule
            (Upat.after (var "buf")

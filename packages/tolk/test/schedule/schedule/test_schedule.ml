@@ -2561,6 +2561,7 @@ let merged_calls =
 let f32 ?(n = 4) slot = Ops.new_buffer ~slot cpu n Float32
 let assign x v = Ops.after x [ Ops.store x v ]
 let fl = Ops.float
+let doubled u = Ops.O.(u * fl 2.)
 
 (* The program [outputs] writes what its tensors compute. *)
 let keeps_values outputs =
@@ -2821,7 +2822,6 @@ let aliased =
    source before any overwrite: no copy. *)
 
 let three = fl 3.
-let doubled u = Ops.O.(u * fl 2.)
 
 (* [name], the program [outputs] and the copies its schedule makes. *)
 let ordered_case (name, copies, outputs) =
@@ -2996,9 +2996,23 @@ let loop_after_storage () =
   let seen = assign (f32 2) Ops.O.(x1 * fl 3.) in
   equal int ~msg:"copies" 0 (copied [ Ops.after x [ e ]; seen ])
 
+(* [x] stored [y] doubled twice: two states of one value. A loop of two trips
+   adding its argument 1 into its argument 0, given the second state at 0 and
+   the first at 1, reads the first as it was: each trip adds [2y]. *)
+let loop_equal_states () =
+  let x = f32 1 and y = f32 2 in
+  let x1 = assign x (doubled y) in
+  let x2 = assign x1 (doubled y) in
+  let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
+  let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 0 + p4 1) ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body [ x2; x1 ]) [ r ] in
+  ignore (keeps_values [ Ops.after x2 [ e ] ])
+
 let writes =
   group "create_linear_with_vars › writes"
     [
+      test "a loop given two states of one value reads the older as it was"
+        loop_equal_states;
       test "two calls writing one state are refused" fork_of_calls;
       test "a loop after its storage writes over the state it is given"
         loop_after_storage;
@@ -3012,9 +3026,10 @@ let writes =
 (* Laws
 
    Programs drawn over three buffers of one size: each statement stores into a
-   buffer, whole or a half of it, a value read from the buffers' current
-   states, their older states, joins of them, stages of them, flipped or
-   summed. The schedule writes what the tensors compute. *)
+   buffer, whole or a half of it, a constant plus a value read from the
+   buffers' current states, their older states, joins of them, stages of
+   them, flipped or summed, or repeats the statement before it. The schedule
+   writes what the tensors compute. *)
 
 type statement = {
   kind : [ `Store | `Call | `Loop ];
@@ -3023,6 +3038,7 @@ type statement = {
          trips of a loop. *)
   target : int;
   half : bool; (* Into the first half, of an even size, once written. *)
+  constant : int;
   reads : (int * int * [ `Plain | `Flip | `Sum | `Stage | `Join of int ]) list;
       (* Each read: a buffer, how many states back, and how. *)
 }
@@ -3048,12 +3064,22 @@ let gen_program =
     in
     let* target = int_range 0 2 in
     let* half = bool in
+    let* constant = int_range 1 2 in
     let+ reads = list ~size:(int_range 1 3) gen_read in
-    { kind; target; half; reads }
+    { kind; target; half; constant; reads }
   in
   let* n = int_range 1 5 in
-  let+ statements = list ~size:(int_range 1 5) gen_statement in
-  (n, statements)
+  let* first = gen_statement in
+  (* [None] repeats the statement before. *)
+  let+ rest =
+    list ~size:(int_range 0 4)
+      (frequency [ (3, map Option.some gen_statement); (1, constant None) ])
+  in
+  let repeat (prev, acc) s =
+    let s = Option.value s ~default:prev in
+    (s, s :: acc)
+  in
+  (n, List.rev (snd (List.fold_left repeat (first, [ first ]) rest)))
 
 let pp_program ppf (n, statements) =
   let how = function
@@ -3063,10 +3089,11 @@ let pp_program ppf (n, statements) =
   Format.fprintf ppf "%d elements:" n;
   List.iter
     (fun s ->
-      Format.fprintf ppf "@ %s%d%s := %s;"
+      Format.fprintf ppf "@ %s%d%s := %d + %s;"
         (match s.kind with `Store -> "" | `Call -> "call " | `Loop -> "loop ")
         s.target
         (if s.half then "[half]" else "")
+        s.constant
         (String.concat " + "
            (List.map
               (fun (b, back, h) -> Printf.sprintf "%d@-%d%s" b back (how h))
@@ -3074,12 +3101,14 @@ let pp_program ppf (n, statements) =
     statements
 
 (* The program's outputs, whether it reads an older state, through a join or
-   not, and whether a call or a loop is given its target's state twice. *)
+   not, whether a call or a loop is given its target's state twice, and whether
+   a store stores the value the store before it stored into its storage. *)
 let program (n, statements) =
   let bufs = Array.init 3 (fun i -> f32 ~n (i + 1)) in
   (* Each buffer's states, newest first. *)
   let states = Array.map (fun b -> [ b ]) bufs in
   let old = ref false and joined = ref false and aliased = ref false in
+  let again = ref false in
   let loops = ref 0 in
   let p i = Shape.param ~shape:[ Int n ] ~device:cpu i Float32 in
   (* A precompiled call adding its parameters past 0, halved, into its
@@ -3113,16 +3142,13 @@ let program (n, statements) =
         end
         else s
   in
-  (* Each statement adds a constant of its own, so that no two store one
-     value, which would leave storage in one state where the program names
-     two. *)
-  List.iteri
-    (fun i st ->
+  List.iter
+    (fun st ->
       let cur = List.hd states.(st.target) in
       let value =
         List.fold_left
           (fun acc r -> Ops.O.(acc + read r))
-          (fl (Float.of_int (i + 1))) st.reads
+          (fl (Float.of_int st.constant)) st.reads
       in
       let states_read =
         List.map (fun (b, back, _) -> state b back) st.reads
@@ -3140,18 +3166,29 @@ let program (n, statements) =
         else if st.half && n mod 2 = 0 && Ops.op cur = After then
           let h u = Shape.shrink u [ Some (Int 0, Int (n / 2)) ] in
           Ops.after cur [ Ops.store (h cur) (h value) ]
-        else assign cur value
+        else begin
+          (match Ops.src cur with
+          | [ _; s ] when Ops.op cur = After && Ops.op s = Store ->
+              if Ops.nth s 1 == value then again := true
+          | _ -> ());
+          assign cur value
+        end
       in
       states.(st.target) <- next :: states.(st.target))
     statements;
   let kinds = List.map (fun st -> st.kind) statements in
-  (Array.to_list (Array.map List.hd states), !old, !joined, !aliased, kinds)
+  ( Array.to_list (Array.map List.hd states),
+    !old,
+    !joined,
+    !aliased,
+    !again,
+    kinds )
 
 let values_law =
   prop "a schedule writes what its tensors compute"
     (Gen.with_pp pp_program gen_program)
     (fun p ->
-      let outputs, old, joined, aliased, kinds = program p in
+      let outputs, old, joined, aliased, again, kinds = program p in
       let _, made =
         copies_while (fun () -> ignore (keeps_values outputs))
       in
@@ -3160,6 +3197,7 @@ let values_law =
       cover "a call" (List.mem `Call kinds);
       cover "a loop of a call" (List.mem `Loop kinds);
       cover "a call given its target's state twice" aliased;
+      cover "two stores of one value into one storage" again;
       cover "a copy" (made > 0);
       cover "no copy" (made = 0))
 

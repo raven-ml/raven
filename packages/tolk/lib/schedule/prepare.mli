@@ -71,9 +71,10 @@ val prepare_rangeify : Ops.t -> Ops.t
           any other stores its source into new storage on its device;
         - a store of a reshape into a reshape of the same shape stores the
           sources; a store across devices first materialises its value on its
-          own device; the second of two equal stores into the same storage is dropped, and
-          so is a store of a storage's contents into itself; a store into a
-          bitcast of storage stores the value bitcast to the storage's type;
+          own device; a store of a storage's contents into itself is
+          dropped, while a store of the value the store before it stored
+          stays, a state of its own; a store into a bitcast of storage stores
+          the value bitcast to the storage's type;
         - a bitcast between types of different sizes is shifts and masks on
           unsigned integers, except on a disk;
         - a reduction of an empty axis to a non-empty result is the operation's

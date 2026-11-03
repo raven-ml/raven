@@ -6374,3 +6374,34 @@ the walk of `Rangeify.fix_store_hazard`.
   `read_join_of_assigned` and `read_join_of_overwritten`, whose recorded
   schedules and linears and whose values (`create_linear_with_vars ›
   values`) are tinygrad's, patched.
+
+## D250. Two stores of one value into one storage are two states
+
+- **tinygrad:** `schedule/prepare.py:228-229` (`earliest_rewrites`, "remove
+  two STOREs that store the same thing to the same place", for
+  `TestSchedule.test_dedup_assign`), which rewrites `a1.after(a1.store(v))`,
+  where `a1` is `buf.after(buf.store(v))`, to `a1`: the program's second state
+  becomes its first. A loop of a call that writes the second state and reads
+  the first then takes one state at both arguments, and its schedule passes
+  the call the storage at both, so the loop would read what each trip left
+  (tinygrad renders no loop of a call, and runs none). Without the rule, the
+  loop runs after the second store and before the overwrite of the first, a
+  cycle, which tinygrad refuses ("cycle detected in assign graph",
+  `schedule/__init__.py:78`). `test/gen/tinygrad.patch` removes the rule.
+- **tolk:** `Prepare.earliest_rewrites`, which has no such rule.
+- **Differs:** a store of the value the store before it stored into its
+  storage runs, and the state it makes is a state of its own, after the one
+  it overwrites. A call or a loop given both states reads each as the program
+  names it. The cost is a kernel for each repeated store: the program of
+  `test_dedup_assign` runs two stores where tinygrad runs one.
+- **Reason:** (e). With the two states one, the loop above is given one state
+  at the argument it writes and at one it reads, and reads at the second, as
+  such a loop does (D160), the state each trip leaves, where the program reads
+  the first state as it was: tolk computed `[24, -8, 48, 16]` for `[18, -6,
+  36, 12]`.
+- **Pinned by:** the `Tolk.Schedule` suite: `create_linear_with_vars › writes
+  › a loop given two states of one value reads the older as it was`, and `›
+  laws › a schedule writes what its tensors compute`, whose programs repeat
+  their statements, constants included; the `Tolk.Prepare` suite:
+  `prepare_rangeify › earliest rewrites › two equal stores into one storage
+  are two states`.

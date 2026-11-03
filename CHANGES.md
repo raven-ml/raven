@@ -945,6 +945,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Two stores of one value into one storage are two states, each a kernel: a
+  loop given both, writing the later, reads the earlier as it was, where it
+  read what each trip left (`Schedule.create_linear_with_vars`).
 - A store reading its destination is staged only where its kernel reads other
   elements than it writes, or writes one element twice: `p := p - lr * g` is
   one kernel beside other readers of `p` (`Rangeify.get_kernel_graph`).

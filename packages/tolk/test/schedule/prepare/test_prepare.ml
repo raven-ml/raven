@@ -964,12 +964,11 @@ let earliest =
             (List.filter_map
                (fun n -> if Ops.op n = Alloc then Ops.device n else None)
                (Ops.toposort ~calls:Enter u)));
-      test "the second of two equal stores into one storage is dropped"
-        (fun () ->
+      test "two equal stores into one storage are two states" (fun () ->
           let v = input 1 in
           let first = Ops.after out [ Ops.store out v ] in
-          equal uop (Ops.sink [ first ])
-            (prepare (Ops.sink [ Ops.after first [ Ops.store first v ] ])));
+          let second = Ops.sink [ Ops.after first [ Ops.store first v ] ] in
+          equal uop second (prepare second));
       test "a store into a bitcast of storage stores the value bitcast"
         (fun () ->
           let v = Shape.param ~device:cpu ~shape:[ Int 16 ] 1 Int32 in
