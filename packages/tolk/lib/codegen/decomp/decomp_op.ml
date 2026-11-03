@@ -59,7 +59,7 @@ let rec fast_idiv' ~dont_cast r x d =
         | None -> (
             match widen (dtype x) with
             | Some next
-              when List.mem next (Renderer.supported_dtypes r)
+              when Dtype.mem next (Renderer.supported_dtypes r)
                    && Bigint.leq Bigint.(m * vmax) (dmax next) ->
                 Some (cast O.((cast x next * z_const m) lsr int s) (dtype x))
             | _ -> None)
@@ -106,7 +106,7 @@ let sign_differs a b = O.(a < int 0 <> (b < int 0))
 let at_width reading x c =
   let dt = dtype x in
   match value c with
-  | `Int z when List.mem dt Dtype.weaks -> Some z
+  | `Int z when Dtype.mem dt Dtype.weaks -> Some z
   | `Int z -> (
       match (Dtype.truncate dt (`Int z), reading) with
       | `Int w, `Product when Bigint.sign w < 0 ->
@@ -120,7 +120,7 @@ let at_width reading x c =
    is 3, so that the rules read the sign and value of the divisor compiled
    code divides by. Any other [d] is itself. *)
 let divisor a d =
-  if op d <> Op.Const || not (List.mem (dtype d) Dtype.weaks) then d
+  if op d <> Op.Const || not (Dtype.mem (dtype d) Dtype.weaks) then d
   else
     match (at_width `Quotient a d, value d) with
     | Some w, `Int z when not (Bigint.equal w z) -> const_like d (`Int w)

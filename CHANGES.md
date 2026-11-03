@@ -927,6 +927,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Kernel code generation runs about 2-3% faster: tolk tests membership in a
+  list of data types with the new `Dtype.mem`, which compares them as
+  integers, where `List.mem` called the runtime's generic comparison.
 - A later process's first call of a compiled function reads the programs
   tolk's disk cache keeps on the calling domain, and spawns domains only for
   the programs it must compile. `Codegen.read`, which replaces `Codegen.made`,

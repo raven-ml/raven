@@ -162,7 +162,7 @@ let shared : t =
           let a = m "a" and x = m "x" and c = m "c" in
           Some
             (matches_dtype c (dtype a)
-            || List.mem (dtype c) Dtype.[ Uint32; Weak_int ]
+            || Dtype.mem (dtype c) Dtype.[ Uint32; Weak_int ]
             || is_invalid (base x)));
       decide
         (pat [ Op.Truncdiv; Op.Truncmod; Op.Div; Op.Mod ] ~name:"x")
@@ -397,7 +397,7 @@ let tensor : t =
              | Reduce { op; _ } ->
                  Op.Set.mem op Op.Set.reduce
                  && List.for_all
-                      (fun y -> List.mem (dtype y) Dtype.[ Weak_int; Int32 ])
+                      (fun y -> Dtype.mem (dtype y) Dtype.[ Weak_int; Int32 ])
                       (List.tl (src x))
              | _ -> false);
          check

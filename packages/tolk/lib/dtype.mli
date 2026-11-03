@@ -295,6 +295,9 @@ val weaks : t list
 val all : t list
 (** [all] is every data type a program stores: [floats @ ints @ [Bool]]. *)
 
+val mem : t -> t list -> bool
+(** [mem dt dts] is [true] iff [dt] is in [dts]. *)
+
 (** {2:literals Literals} *)
 
 val of_const : [< const ] -> t

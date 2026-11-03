@@ -367,7 +367,7 @@ let vector_dtypes (ren : Renderer.t) =
 let do_devectorize vectors b =
   let s = shape b in
   let invalid x = is_invalid (base x) in
-  let on_vectors x = List.mem (dtype x) vectors in
+  let on_vectors x = Dtype.mem (dtype x) vectors in
   let lanes x =
     Option.is_some (splat x)
     || (on_vectors x && Option.is_some (in_order (Helpers.prod (int_shape s)) x))
@@ -658,7 +658,7 @@ let fuses (ren : Renderer.t) r x =
   Op.equal op Op.Add
   && is Op.Mul (base x)
   && List.mem_assoc Op.Mulacc ren.code_for_op
-  && List.exists (Dtype.equal dt) Dtype.[ Float32; Float64 ]
+  && Dtype.mem dt Dtype.[ Float32; Float64 ]
   && ren.native dt
 
 let fusable = String "fusable"

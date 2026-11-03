@@ -490,7 +490,7 @@ let pm_narrow_uint =
     ])
 
 let create_non_native_float_pats ?(casting = true) dts =
-  let in_dts u = List.exists (Dtype.equal (dtype u)) dts in
+  let in_dts u = Dtype.mem (dtype u) dts in
   let x = Upat.var ~dtype:dts "x" and y = Upat.var ~dtype:dts "y" in
   Pattern_matcher.v
     (fun () -> [
@@ -844,7 +844,7 @@ let render_uops l uops =
      its type, so that each operation rounds or wraps as the kernel says *)
   let narrowed u =
     Op.Set.mem (op u) Op.Set.alu
-    && List.mem (dtype u) l.promoted
+    && Dtype.mem (dtype u) l.promoted
     && max_numel u = 1
     &&
     match Tbl.find_opt user u with
@@ -1240,7 +1240,7 @@ let clang_lang =
    of. *)
 let float_zero zeros u =
   is Op.Cast u
-  && List.mem (dtype u) zeros
+  && Dtype.mem (dtype u) zeros
   &&
   match src u with
   | [ c ] when is Op.Const c -> (
@@ -1332,7 +1332,7 @@ let clang (target : Helpers.Target.t) =
     ((not (Dtype.equal dt Dtype.Bfloat16))
     || String.starts_with ~prefix:"x86" arch
     || String.starts_with ~prefix:"arm" arch)
-    && not (List.mem dt Dtype.fp8s)
+    && not (Dtype.mem dt Dtype.fp8s)
   in
   (* LLVM's x86 backend has no bfloat16 instructions short of AVX512-BF16, and
      legalises a bfloat16 value it only moves (a selection, a merge of a gated
@@ -1520,7 +1520,7 @@ let metal (target : Helpers.Target.t) =
   let from f = match family with Some n -> n >= f | None -> false in
   let native dt =
     ((not (Dtype.equal dt Dtype.Bfloat16)) || from 6)
-    && not (List.mem dt (Dtype.Float64 :: Dtype.fp8s))
+    && not (Dtype.mem dt (Dtype.Float64 :: Dtype.fp8s))
   in
   Renderer.v ~name:"MetalRenderer"
     ~tensor_cores:(if from 7 then Tc.metal else [])
@@ -1677,9 +1677,9 @@ let cuda_wmma l (name, (n, m, k), dtype_in, dtype_out, upcast_sizes) =
 let cuda_kernel ?(prefix = []) l ~name kernel bufs uops =
   let used = uops_to_dtypes uops in
   let uses p = List.exists (fun (dt, _) -> p dt) used in
-  let is_fp8 dt = List.mem dt Dtype.fp8s in
+  let is_fp8 dt = Dtype.mem dt Dtype.fp8s in
   let vector (dt, count) =
-    (List.mem count [ 4; 8 ] && List.mem dt [ Dtype.Float16; Dtype.Bfloat16 ])
+    (List.mem count [ 4; 8 ] && Dtype.mem dt [ Dtype.Float16; Dtype.Bfloat16 ])
     || (List.mem count [ 2; 4; 8; 16 ] && is_fp8 dt)
   in
   let defines =
@@ -1712,8 +1712,8 @@ let cuda (target : Helpers.Target.t) =
   let native dt =
     ((not (Dtype.equal dt Dtype.Float16)) || ver >= 53)
     && ((not (Dtype.equal dt Dtype.Bfloat16)) || ver >= 80)
-    && ((not (List.mem dt Dtype.fp8_ocp)) || ver >= 89)
-    && not (List.mem dt Dtype.fp8_fnuz)
+    && ((not (Dtype.mem dt Dtype.fp8_ocp)) || ver >= 89)
+    && not (Dtype.mem dt Dtype.fp8_fnuz)
   in
   (* A cubin on every device: the driver loads it as it is, where it would
      translate PTX to the same architecture at every load. NVRTC is given the
@@ -1962,7 +1962,7 @@ let hip_wmma arch tensor_cores type_map (name, (n, m, k), dtype_in, dtype_out, _
 let hip_kernel arch tensor_cores ?(prefix = []) l ~name kernel bufs uops =
   let used = uops_to_dtypes uops in
   let uses p = List.exists (fun (dt, _) -> p dt) used in
-  let is_fp8 dt = List.mem dt Dtype.fp8s in
+  let is_fp8 dt = Dtype.mem dt Dtype.fp8s in
   let const_cast u = is Op.Cast u && is Op.Const (nth u 0) in
   let non_finite u =
     match cval (nth u 0) with `Float v -> not (Float.is_finite v) | _ -> false
@@ -1987,7 +1987,7 @@ let hip_kernel arch tensor_cores ?(prefix = []) l ~name kernel bufs uops =
   in
   let ocml (o, dt) =
     match List.assoc_opt o ocml_ops with
-    | Some (n, attr) when List.mem dt Dtype.[ Float16; Float32; Float64 ] ->
+    | Some (n, attr) when Dtype.mem dt Dtype.[ Float16; Float32; Float64 ] ->
         Some
           ( strf "__ocml_%s_f%d" n (Dtype.bitsize dt),
             render_dtype l dt,
@@ -2066,7 +2066,7 @@ let hip (target : Helpers.Target.t) =
   let arch = target.arch in
   let tensor_cores = Tc.amd arch and lang = hip_lang arch in
   let native dt =
-    (not (List.mem dt Dtype.fp8s)) || List.mem dt (amd_fp8s arch)
+    (not (Dtype.mem dt Dtype.fp8s)) || Dtype.mem dt (amd_fp8s arch)
   in
   (* the global limit is only really needed on gfx12, though gfx11 reports the
      same *)

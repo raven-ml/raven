@@ -196,11 +196,11 @@ let memory_coalescing sink (r : Renderer.t) =
         in
         let lengths =
           match width with
-          | Some bytes when List.mem dt (Dtype.Float64 :: merged) ->
+          | Some bytes when Dtype.mem dt (Dtype.Float64 :: merged) ->
               let rec halves l = if l < 2 then [ 1 ] else l :: halves (l / 2) in
               halves (bytes / size)
           | _ ->
-              (if List.mem dt merged && r.supports_float4 then
+              (if Dtype.mem dt merged && r.supports_float4 then
                  if dt = Dtype.Float16 && Setting.value Setting.allow_half8 then
                    [ 8; 4; 2 ]
                  else [ 4; 2 ]

@@ -29,10 +29,10 @@ let not_in what dt =
 
 let not_float = not_in "a float16, float32 or float64"
 let not_int = not_in "an int16, int32 or int64"
-let check_width d = if not (List.mem (dtype d) widths) then not_float (dtype d)
+let check_width d = if not (Dtype.mem (dtype d) widths) then not_float (dtype d)
 
 let check d =
-  if not (List.mem (dtype d) transcendental_dtypes) then
+  if not (Dtype.mem (dtype d) transcendental_dtypes) then
     not_in "a float32 or float64" (dtype d)
 
 let int_of_width : Dtype.t -> Dtype.t = function
@@ -59,7 +59,7 @@ let lazy_map_numbers x ~inf ~neg_inf ~nan ratio =
 let mantissa_bits dt = snd (Dtype.finfo dt)
 
 let exponent_bias dt =
-  let fnuz = List.mem dt Dtype.fp8_fnuz in
+  let fnuz = Dtype.mem dt Dtype.fp8_fnuz in
   (1 lsl (fst (Dtype.finfo dt) - 1)) - if fnuz then 0 else 1
 
 let exponent_mask dt = (1 lsl fst (Dtype.finfo dt)) - 1
@@ -602,7 +602,7 @@ let xpow base exponent =
 (* Square and multiply over the exponent's bits, in the unsigned type of the
    width of [dt], each product masked so that it wraps instead of growing. *)
 let xpow_int base exponent dt =
-  if not (List.mem dt Dtype.ints) then None
+  if not (Dtype.mem dt Dtype.ints) then None
   else
     let udt =
       match dt with
@@ -617,7 +617,7 @@ let xpow_int base exponent dt =
     let wrap u = O.(u land mask) in
     let edt = dtype exponent in
     let lo, hi =
-      if List.mem edt Dtype.ints && overflows exponent edt then
+      if Dtype.mem edt Dtype.ints && overflows exponent edt then
         (Dtype.min edt, Dtype.max edt)
       else (vmin exponent, vmax exponent)
     in
@@ -645,7 +645,9 @@ let xpow_int base exponent dt =
 
 let patterns ~force ops =
   let other_floats =
-    List.filter (fun dt -> not (List.mem dt transcendental_dtypes)) Dtype.floats
+    List.filter
+      (fun dt -> not (Dtype.mem dt transcendental_dtypes))
+      Dtype.floats
   in
   let lowered op = force || not (Op.Set.mem op ops) in
   let d = Upat.var "d" in

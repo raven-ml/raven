@@ -873,7 +873,7 @@ let parallel_operations operations =
 (* The types [k] reads, writes or computes, but addresses'. *)
 let value_dtypes k operations =
   List.filter
-    (fun dt -> not (List.mem dt Dtype.weaks))
+    (fun dt -> not (Dtype.mem dt Dtype.weaks))
     (List.map (fun b -> dtype (nth b 0)) (K.bufs k) @ List.map dtype operations)
 
 (* The last output axis that a power of two of lanes divides is upcast by the

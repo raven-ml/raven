@@ -71,7 +71,8 @@ let forward_call_outputs sink =
 let rec walk_mop u =
   if
     Op.Set.mem (op u) Op.Set.movement
-    || List.mem (op u) Op.[ Index; Bitcast ]
+    || op u = Op.Index
+    || op u = Op.Bitcast
   then walk_mop (nth u 0)
   else if op u = Op.After then
     let b = walk_mop (nth u 0) in

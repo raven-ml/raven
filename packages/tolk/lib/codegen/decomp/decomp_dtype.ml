@@ -24,7 +24,7 @@ let l2i_dt : Dtype.t -> Dtype.t = function
   | Uint64 -> Uint32
   | dt -> invalid_arg (Format.asprintf "%a is not a long" Dtype.pp dt)
 
-let is_long dt = List.mem dt longs
+let is_long dt = Dtype.mem dt longs
 
 let unpack32 v =
   let u = bitcast v uint in
@@ -61,7 +61,7 @@ let rec l2i op dt uops =
       let x = List.hd uops in
       let lo = cast x (l2i_dt dt) in
       let zero = const_like lo (`Int Bigint.zero) in
-      if Dtype.equal (dtype x) Bool || List.mem (dtype x) Dtype.uints then
+      if Dtype.equal (dtype x) Bool || Dtype.mem (dtype x) Dtype.uints then
         words lo zero
       else
         words lo
@@ -408,7 +408,7 @@ let narrow x to_ =
   if
     not
       (Dtype.equal to_ Float32
-      && List.mem src Dtype.[ Float64; Int32; Uint32; Int64; Uint64 ])
+      && Dtype.mem src Dtype.[ Float64; Int32; Uint32; Int64; Uint64 ])
   then cast x to_
   else
     let y = cast x Float32 in
@@ -430,7 +430,7 @@ let narrow x to_ =
     bitcast O.(truncated lor cast (or_top (back <> x)) Uint32) Float32
 
 let rec f2f ?(sat = true) v fr to_ =
-  let is_narrow dt = List.mem dt Dtype.(Float16 :: Bfloat16 :: fp8s) in
+  let is_narrow dt = Dtype.mem dt Dtype.(Float16 :: Bfloat16 :: fp8s) in
   if
     not
       ((Dtype.equal fr Float32 && is_narrow to_)
@@ -463,7 +463,7 @@ let rec f2f ?(sat = true) v fr to_ =
         where (eq nosign (int 0)) (int 0) scaled
     in
     let finite = where (eq exp (int 0)) subnormal norm in
-    if List.mem fr Dtype.fp8_fnuz then
+    if Dtype.mem fr Dtype.fp8_fnuz then
       let fnuz_nan = O.((sign <> int 0) land eq nosign (int 0)) in
       let qnan = int ((((1 lsl te) - 1) lsl tm) lor (1 lsl (tm - 1))) in
       bitcast (where fnuz_nan qnan O.(sign lor finite)) to_
@@ -484,15 +484,17 @@ let rec f2f ?(sat = true) v fr to_ =
        without one. An 8-bit float saturates below it. *)
     let top =
       if Dtype.equal to_ Fp8e4m3 then int 0x7f
-      else if List.mem to_ Dtype.fp8_fnuz then int 0x80
+      else if Dtype.mem to_ Dtype.fp8_fnuz then int 0x80
       else exp_ones
     in
     let inf = int (((1 lsl fe) - 1) lsl fm) in
-    let limit = if sat && List.mem to_ Dtype.fp8s then O.(top - int 1) else top in
+    let limit =
+      if sat && Dtype.mem to_ Dtype.fp8s then O.(top - int 1) else top
+    in
     let norm = minimum O.(rne nosign dropped - unbias) limit in
     (* A NaN is the format's quiet NaN, of its sign. *)
     let nan =
-      let low = if List.mem to_ Dtype.fp8s then ones tm else bit (tm - 1) in
+      let low = if Dtype.mem to_ Dtype.fp8s then ones tm else bit (tm - 1) in
       O.(top lor low)
     in
     (* Below [to_]'s least exponent, the significand shifted right by [k] and
@@ -516,7 +518,7 @@ let rec f2f ?(sat = true) v fr to_ =
         where underflow sub norm
     in
     let code =
-      if List.mem to_ Dtype.fp8_fnuz then
+      if Dtype.mem to_ Dtype.fp8_fnuz then
         (* An fnuz format has one NaN, the code of negative zero, and no
            negative zero. *)
         where O.(inf <= nosign) top
@@ -732,7 +734,7 @@ let pm_float_decomp = Lazy.force pm_float_decomp
 let emulable = Dtype.(fp8s @ [ Bfloat16; Float16; Int64; Uint64 ])
 
 let computes r =
-  let among l dt = List.exists (Dtype.equal dt) l in
+  let among l dt = Dtype.mem dt l in
   let supported = Renderer.supported_dtypes r in
   List.filter (fun dt -> among supported dt || among emulable dt) Dtype.all
 
@@ -746,7 +748,7 @@ let emulates r =
   (* Unsigned 64-bit integers are emulated with signed ones. *)
   fun dt ->
     let dt = if Dtype.equal dt Uint64 then Dtype.Int64 else dt in
-    List.mem dt named || not (List.mem dt supported)
+    Dtype.mem dt named || not (Dtype.mem dt supported)
 
 type ctx = { mutable found : Dtype.t list; renderer : Renderer.t }
 
@@ -759,7 +761,7 @@ let do_dtype_decomps ctx sink =
         let to_ = if Dtype.equal fr Int64 then Dtype.Int32 else Float32 in
         if Setting.value Setting.debug >= 2 then
           Format.eprintf "emulating %a as %a@." Dtype.pp fr Dtype.pp to_;
-        if List.mem fr Dtype.floats then
+        if Dtype.mem fr Dtype.floats then
           graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(fr, to_) sink
             (Before_sources pm_float_decomp)
         else
@@ -781,7 +783,7 @@ let pm_dtype_decomps =
           let dt =
             match dtype (m "x") with Uint64 -> Dtype.Int64 | dt -> dt
           in
-          if not (List.mem dt ctx.found) then ctx.found <- dt :: ctx.found;
+          if not (Dtype.mem dt ctx.found) then ctx.found <- dt :: ctx.found;
           None);
       rule_ctx (Upat.op Op.Sink ~name:"sink") (fun ctx m ->
           Some (do_dtype_decomps ctx (m "sink")));

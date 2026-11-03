@@ -1441,7 +1441,7 @@ let broadcasted x y =
   let promote t =
     let b = base t in
     if is_invalid b then t
-    else if List.mem t.dtype Dtype.weaks && b.op = Op.Const then
+    else if Dtype.mem t.dtype Dtype.weaks && b.op = Op.Const then
       let dt = Dtype.weak out in
       if Dtype.equal t.dtype dt then t else remint t dt
     else cast t out
@@ -1540,7 +1540,7 @@ let unbounded dt : Dtype.value * Dtype.value =
 let at_width dt ((lo, hi) as b : Dtype.value * Dtype.value) =
   match (lo, hi) with
   | `Int _, `Int _
-    when List.mem dt Dtype.ints
+    when Dtype.mem dt Dtype.ints
          && Value.(lo < Dtype.min dt || Dtype.max dt < hi) ->
       if Value.(lo = hi) then
         let v = Dtype.truncate dt lo in
@@ -1577,8 +1577,8 @@ and operand_bounds u s =
   let operands =
     if Op.Set.mem u.op Op.Set.comparison then promo_dtype u.src else u.dtype
   in
-  if Dtype.equal s.dtype Dtype.Weak_float && List.mem operands Dtype.floats then
-    rounded operands (min_max s)
+  if Dtype.equal s.dtype Dtype.Weak_float && Dtype.mem operands Dtype.floats
+  then rounded operands (min_max s)
   else at_width operands (min_max s)
 
 and compute_min_max u : Dtype.value * Dtype.value =
@@ -1631,12 +1631,11 @@ and compute_min_max u : Dtype.value * Dtype.value =
       | Op.Pad, _ ->
           let lo, hi = bounds (src0 ()) in
           (Value.min lo (`Int Bigint.zero), Value.max hi (`Int Bigint.zero))
-      | op, _
-        when Op.Set.mem op Op.Set.movement
-             || List.mem op
-                  Op.[ Index; Stage; After; Detach; Copy; Contiguous_backward ]
-        ->
+      | ( Op.Index | Op.Stage | Op.After | Op.Detach | Op.Copy
+        | Op.Contiguous_backward ),
+        _ ->
           bounds (src0 ())
+      | op, _ when Op.Set.mem op Op.Set.movement -> bounds (src0 ())
       | Op.Trunc, _ ->
           let trunc = function `Float x -> `Float (Float.trunc x) | v -> v in
           let lo, hi = bounds (src0 ()) in
@@ -1657,7 +1656,7 @@ and compute_min_max u : Dtype.value * Dtype.value =
    reading an index of [0, n) as unsigned, as a bounds check does. *)
 and bitcast_bounds x dt =
   let lo, hi = min_max x in
-  let integer t = List.mem t Dtype.ints in
+  let integer t = Dtype.mem t Dtype.ints in
   if
     integer x.dtype && integer dt
     && Dtype.itemsize x.dtype = Dtype.itemsize dt
@@ -1692,7 +1691,7 @@ and float_bounds op dt (s0_min, s0_max) (s1_min, s1_max) =
   in
   match
     ( op,
-      List.mem dt Dtype.weaks,
+      Dtype.mem dt Dtype.weaks,
       List.map finite [ s0_min; s0_max; s1_min; s1_max ] )
   with
   | (Op.Add | Op.Sub | Op.Mul), false, [ Some a; Some b; Some c; Some d ] ->
@@ -1749,7 +1748,7 @@ and cast_bounds src dt (lo, hi) =
     if Value.(Dtype.min dt <= lo && hi <= Dtype.max dt) then Some (lo, hi)
     else None
   else if
-    List.mem dt clamped_types
+    Dtype.mem dt clamped_types
     && Value.( <= ) lo (Dtype.max dt)
     && Value.( <= ) (Dtype.min dt) hi
   then Some (Value.max (Dtype.min dt) lo, Value.min hi (Dtype.max dt))
@@ -1862,7 +1861,7 @@ let stored_bounds u dt =
   else None
 
 let exact dt vs =
-  (not (List.mem dt Dtype.ints))
+  (not (Dtype.mem dt Dtype.ints))
   || List.for_all (fun v -> Value.(Dtype.min dt <= v && v <= Dtype.max dt)) vs
 
 (* Shapes *)
@@ -2112,7 +2111,7 @@ let on_disk u =
   | Some d -> String.starts_with ~prefix:"DISK" d
   | None -> false
 
-let is_virtual u = Option.is_none (device u) || List.mem u.dtype Dtype.weaks
+let is_virtual u = Option.is_none (device u) || Dtype.mem u.dtype Dtype.weaks
 
 let rec addrspace u =
   memoized ~calls:Enter
@@ -2131,8 +2130,7 @@ and compute_addrspace u =
       addrspace (first u.op u.src)
   | op, _ when Op.Set.mem op Op.Set.movement -> addrspace (first u.op u.src)
   | op, _
-    when List.mem op Op.[ Stack; Wmma ]
-         || Op.Set.mem op Op.Set.elementwise -> (
+    when op = Op.Stack || op = Op.Wmma || Op.Set.mem op Op.Set.elementwise -> (
       match List.filter_map addrspace u.src with
       | a :: rest when List.for_all (( = ) a) rest -> Some a
       | _ -> None)
@@ -2151,7 +2149,9 @@ let rec has_buffer_identity ?(after_ok = false) u =
    not once each. *)
 let storage_base u =
   let strips n =
-    Op.Set.mem n.op Op.Set.movement || List.mem n.op Op.[ Detach; Bitcast; After ]
+    match n.op with
+    | Op.Detach | Op.Bitcast | Op.After -> true
+    | op -> Op.Set.mem op Op.Set.movement
   in
   let rec walk path n =
     match n.memos.storage_base_memo with
@@ -2170,7 +2170,7 @@ let needs_storage u =
 (* Data types *)
 
 let bitcast x dt =
-  if List.mem x.dtype Dtype.weaks || List.mem dt Dtype.weaks then
+  if Dtype.mem x.dtype Dtype.weaks || Dtype.mem dt Dtype.weaks then
     invalid_argf "a bitcast needs committed types, not %s to %s"
       (repr_dtype x.dtype) (repr_dtype dt);
   if Dtype.equal x.dtype dt then x else v Op.Bitcast ~src:[ x ] ~arg:(Dtype dt)
@@ -2181,12 +2181,12 @@ let commit_dtype ?default_int x =
   else Dtype.strong x.dtype
 
 let element_size x =
-  if List.mem x.dtype Dtype.weaks then
+  if Dtype.mem x.dtype Dtype.weaks then
     invalid_argf "a %s has no size" (repr_dtype x.dtype);
   Dtype.itemsize x.dtype
 
 let contiguous x =
-  if List.mem x.dtype Dtype.weaks then x
+  if Dtype.mem x.dtype Dtype.weaks then x
   else if x.op = Op.Stage || Option.is_none (device x) || has_buffer_identity x
   then x
   else v Op.Stage ~src:[ x ]
@@ -2208,7 +2208,7 @@ let size_src = function None -> v Op.Stack | Some n -> int n
 let copy_to_device u d =
   if is_disk_device d then
     invalid_arg "cannot copy to a disk; store into a disk buffer instead";
-  if List.mem u.dtype Dtype.weaks then
+  if Dtype.mem u.dtype Dtype.weaks then
     invalid_argf "cannot store a weak %s" (repr_dtype u.dtype);
   v Op.Copy ~src:[ u ] ~arg:(Device d)
 
@@ -2243,7 +2243,7 @@ let param_arg ?vmin_vmax ?name
   }
 
 let weak_storage dt =
-  if List.mem dt Dtype.weaks then
+  if Dtype.mem dt Dtype.weaks then
     invalid_argf "a %s cannot be stored" (repr_dtype dt)
 
 let new_buffer ?slot ?phase d size dt =
@@ -2733,7 +2733,7 @@ let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
   let truncate (x : Dtype.value) : Dtype.const =
     if
       truncate_output
-      && not (Dtype.equal dt Dtype.Void || List.mem dt Dtype.weaks)
+      && not (Dtype.equal dt Dtype.Void || Dtype.mem dt Dtype.weaks)
     then (Dtype.truncate dt x :> Dtype.const)
     else (x :> Dtype.const)
   in
@@ -2769,7 +2769,7 @@ let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
              so that a large exponent folds in its bits' count of steps *)
           | Op.Pow, [ ((`Int _ | `Bool _) as b); ((`Int _ | `Bool _) as e) ]
             when truncate_output
-                 && List.mem dt Dtype.ints
+                 && Dtype.mem dt Dtype.ints
                  && Bigint.geq (Value.to_z e) Bigint.zero ->
               `Int
                 (pow_wrapped (Value.to_z b) (Value.to_z e)
@@ -3023,14 +3023,10 @@ module Upat = struct
   (* The nodes a match names, the latest first. *)
   type store = Empty | Bound of string * node * store
 
-  let rec mem_dtype dt = function
-    | [] -> false
-    | d :: rest -> Dtype.equal dt d || mem_dtype dt rest
-
   (* Whether [u] itself fits [p], sources aside. *)
   let fits p u =
     let n_src = List.length u.src in
-    (match p.dtypes with Some dts -> mem_dtype u.dtype dts | None -> true)
+    (match p.dtypes with Some dts -> Dtype.mem u.dtype dts | None -> true)
     && (match p.p_arg with Some a -> arg_matches a u.arg | None -> true)
     && n_src >= p.required_len
     && not (p.strict_length && n_src <> p.required_len)

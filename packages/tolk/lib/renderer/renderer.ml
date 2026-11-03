@@ -286,7 +286,7 @@ let emulated () =
 
 (* double can't be bitcast to anything without long support *)
 let supported_dtypes r =
-  let no_double = List.exists (Dtype.equal Dtype.Int64) (emulated ()) in
+  let no_double = Dtype.mem Dtype.Int64 (emulated ()) in
   List.filter
     (fun dt -> r.native dt && not (no_double && Dtype.equal dt Dtype.Float64))
     Dtype.all

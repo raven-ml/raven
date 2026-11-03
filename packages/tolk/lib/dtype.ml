@@ -269,6 +269,10 @@ let ints = uints @ sints
 let weaks = [ Weak_int; Weak_float ]
 let all = floats @ ints @ [ Bool ]
 
+(* [List.mem] would compare through the runtime's generic structural equality,
+   a C call per element; data types compare as integers. *)
+let rec mem dt = function [] -> false | d :: l -> equal dt d || mem dt l
+
 let is_float = function
   | Weak_float | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz | Float16
   | Bfloat16 | Float32 | Float64 ->
@@ -716,7 +720,7 @@ let const dt (c : [< const ]) : const =
   | #value as v ->
       if is_float dt then `Float (truncate_float dt (float_value dt v))
       else if is_bool dt then `Bool (Value.to_bool v)
-      else if List.mem dt ints then (
+      else if mem dt ints then (
         match v with
         | `Float x when Float.is_nan x -> `Int Bigint.zero
         | `Float x when not (Float.is_finite x) ->
@@ -738,11 +742,11 @@ let setting_dtype setting ~kind is_kind =
 
 let default_float () =
   setting_dtype Setting.default_float ~kind:"a float of known width" (fun dt ->
-      List.mem dt floats)
+      mem dt floats)
 
 let default_int () =
   setting_dtype Setting.default_int ~kind:"an integer of known width" (fun dt ->
-      List.mem dt ints)
+      mem dt ints)
 
 let of_string s =
   match String.lowercase_ascii s with
@@ -765,7 +769,7 @@ let commit_int ?default_int:first lo hi =
     && (Bigint.lt lo (int_min Int64) || Bigint.gt lo (int_max Uint64))
   then invalid_arg (strf "%s does not fit any integer" (Bigint.to_string lo));
   let first = match first with Some dt -> dt | None -> default_int () in
-  if not (List.mem first ints) then
+  if not (mem first ints) then
     invalid_arg (Format.asprintf "%a is not an integer of known width" pp first);
   let holds dt = Bigint.leq (int_min dt) lo && Bigint.leq hi (int_max dt) in
   Option.value
@@ -848,11 +852,11 @@ let can_lossless_cast d0 d1 =
     is_int d0
     && Value.( <= ) (min d1) (min d0)
     && Value.( <= ) (max d0) (max d1)
-  else if not (List.mem d1 floats) then false
+  else if not (mem d1 floats) then false
   else
     let e1, m1 = finfo d1 in
-    if is_int d0 then bitsize d0 - Bool.to_int (List.mem d0 sints) <= m1 + 1
-    else if not (List.mem d0 floats) then false
+    if is_int d0 then bitsize d0 - Bool.to_int (mem d0 sints) <= m1 + 1
+    else if not (mem d0 floats) then false
     else
       let e0, m0 = finfo d0 in
       e0 <= e1 && m0 <= m1 && (e0, m0) <> (e1, m1)

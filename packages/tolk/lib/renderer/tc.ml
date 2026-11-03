@@ -255,7 +255,8 @@ let pm_wmma_fp8 word =
           (fun m ->
             match src (m "x") with
             | [ a; b; acc ]
-              when List.mem (Ops.dtype a) Dtype.fp8s && Shape.max_numel a = 8 ->
+              when Dtype.mem (Ops.dtype a) Dtype.fp8s && Shape.max_numel a = 8
+              ->
                 let words u = bitcast u word in
                 Some (replace (m "x") ~src:[ words a; words b; acc ])
             | _ -> None);

@@ -420,7 +420,7 @@ let remove_bufferize ~reads src buf idx =
   if
     not
       (List.for_all
-         (fun x -> List.mem (op x) Op.[ Range; Const ])
+         (fun x -> op x = Op.Range || op x = Op.Const)
          (List.tl (Ops.src buf)))
   then invalid_arg "a stage's ranges are ranges or constants";
   (* A user's materialisation is never removed. *)
@@ -720,8 +720,8 @@ let widens x =
   &&
   let s = Ops.dtype (nth x 0) and d = Ops.dtype x in
   (not (Dtype.equal s Dtype.Bool))
-  && (not (List.exists (Dtype.equal s) Dtype.weaks))
-  && (not (List.exists (Dtype.equal d) Dtype.weaks))
+  && (not (Dtype.mem s Dtype.weaks))
+  && (not (Dtype.mem d Dtype.weaks))
   && Dtype.itemsize s < Dtype.itemsize d
   && Dtype.can_lossless_cast s d
 

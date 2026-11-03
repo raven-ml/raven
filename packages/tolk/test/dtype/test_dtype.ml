@@ -197,6 +197,11 @@ let data_types =
           if Dtype.equal a b then equal int (Dtype.hash a) (Dtype.hash b));
       prop "equal is structural equality" often_equal (fun (a, b) ->
           equal bool (a = b) (Dtype.equal a b));
+      prop "mem is list membership"
+        (Gen.pair every (Gen.list every))
+        (fun (dt, dts) ->
+          cover "member" (List.mem dt dts);
+          equal bool (List.mem dt dts) (Dtype.mem dt dts));
       Golden.cases "finfo.golden" (fun cell ->
           equal (pair int int)
             (int_of_string (cell "exponent"), int_of_string (cell "mantissa"))

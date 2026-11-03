@@ -8,7 +8,7 @@
 open Ops
 open Shape
 
-let is_weak dt = List.mem dt Dtype.weaks
+let is_weak dt = Dtype.mem dt Dtype.weaks
 let weak u = is_weak (dtype u)
 let is_const u = op u = Op.Const
 let committed u = commit_dtype ~default_int:Dtype.Int32 u
@@ -72,7 +72,7 @@ let cast_weak_srcs c u =
        at 64 bits, unsigned only where its bounds pass a signed integer's. *)
     let dt =
       if Dtype.is_int (dtype c) && Dtype.is_float dt then
-        if List.exists (Dtype.equal Dtype.Uint64) widths then Dtype.Uint64
+        if Dtype.mem Dtype.Uint64 widths then Dtype.Uint64
         else Dtype.Int64
       else dt
     in

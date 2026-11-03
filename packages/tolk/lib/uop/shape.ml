@@ -63,7 +63,7 @@ let ssimplify u : sint =
 let ssimplify_sint = function Int n -> Int n | Sym u -> ssimplify u
 
 let eval u ~kinds ~what =
-  if not (List.exists (Dtype.equal (dtype u)) kinds) then
+  if not (Dtype.mem (dtype u) kinds) then
     invalid_argf "a %s is not %s" (repr_dtype (dtype u)) what;
   let s = simplify u in
   let lo, hi = min_max s in
@@ -1281,7 +1281,7 @@ module V = Dtype.Value
 
 (* Weak constants *)
 
-let is_weak dt = List.mem dt Dtype.weaks
+let is_weak dt = Dtype.mem dt Dtype.weaks
 let weak u = is_weak (dtype u)
 let is_const u = op u = Op.Const
 let unchanged src u = List.equal ( == ) src (Ops.src u)
@@ -1793,7 +1793,7 @@ let fold_const_alu a =
         Dtype.const (dtype s) v
     | Op.Cast, (#Dtype.value as v) -> (at (dtype s) v :> Dtype.const)
     | Op.Const, (`Int _ as v)
-      when Dtype.equal (dtype s) Dtype.Weak_int && List.mem operands Dtype.ints
+      when Dtype.equal (dtype s) Dtype.Weak_int && Dtype.mem operands Dtype.ints
       ->
         (at operands v :> Dtype.const)
     | _, c -> c
@@ -1823,8 +1823,8 @@ let fold_const_alu a =
    it, as on int32 (x * 65536) * 65536 is x * 0, not x * 2^32. *)
 let wrap_folded f c1 c2 =
   let dt = dtype f and c = alu c1 (op f) [ c2 ] in
-  let weak u = op u = Op.Const && List.mem (dtype u) Dtype.weaks in
-  if not (List.mem dt Dtype.ints && weak c1 && weak c2) then c
+  let weak u = op u = Op.Const && Dtype.mem (dtype u) Dtype.weaks in
+  if not (Dtype.mem dt Dtype.ints && weak c1 && weak c2) then c
   else
     match (value c1, value c2) with
     | (`Int _ as v1), (`Int _ as v2) -> (
@@ -1841,7 +1841,7 @@ let wrap_folded f c1 c2 =
    overflow to be undefined, refuses the fold. Unsigned operations wrap. *)
 let fits x (v : Dtype.value) =
   let dt = dtype x in
-  (not (List.mem dt Dtype.sints))
+  (not (Dtype.mem dt Dtype.sints))
   ||
   match v with
   | `Int _ -> V.(Dtype.min dt <= v && v <= Dtype.max dt)
@@ -2081,7 +2081,7 @@ let rec broadcast_const u =
 (* folding a strong dtype WHERE to a weak const branch keeps the strong dtype *)
 let fold_const_where gate c0 c1 w =
   let ret = if V.to_bool (num gate) then c0 else c1 in
-  let weak u = List.mem (dtype u) Dtype.weaks in
+  let weak u = Dtype.mem (dtype u) Dtype.weaks in
   if is_const ret && weak ret && not (weak w) then ccast ret (dtype w) else ret
 
 let boolean = [ Dtype.Bool ]
@@ -2247,9 +2247,9 @@ let symbolic_simple =
               let a = m "a" in
               let dt = promo_dtype (src a) in
               let commit s =
-                if List.mem (dtype s) Dtype.weaks then ccast s dt else s
+                if Dtype.mem (dtype s) Dtype.weaks then ccast s dt else s
               in
-              if List.mem dt Dtype.weaks then None
+              if Dtype.mem dt Dtype.weaks then None
               else Some (replace a ~src:(List.map commit (src a))));
         ]
         (* Two stage ALU folding; sums, products and maxima for integers: in
@@ -2258,7 +2258,7 @@ let symbolic_simple =
         @ List.map
             (fun o ->
               let dtype =
-                if List.mem o Op.[ Add; Mul; Max ] then Some int_or_bool
+                if o = Op.Add || o = Op.Mul || o = Op.Max then Some int_or_bool
                 else None
               in
               let x = Upat.var ?dtype "x" in
@@ -2272,7 +2272,7 @@ let symbolic_simple =
                      on uint8, max(1, -3) is 253, so its weak constants fold at
                      its width *)
                   let at_width c =
-                    if o = Op.Max && List.mem (Ops.dtype c) Dtype.weaks then
+                    if o = Op.Max && Dtype.mem (Ops.dtype c) Dtype.weaks then
                       ccast c (Ops.dtype f)
                     else c
                   in
@@ -2718,7 +2718,7 @@ let symbolic =
                let lo = fst (operand_bounds mx x) in
                if V.(lo < snd (operand_bounds mx (m "y"))) then None
                (* the operand kept is committed to the maximum's type *)
-               else if List.mem (dtype x) Dtype.weaks then
+               else if Dtype.mem (dtype x) Dtype.weaks then
                  Some (ccast x (dtype mx))
                else Some x);
            (* (x//c1)//c2 -> x//(c1*c2) for c2>0, where c1*c2 does not wrap *)
@@ -2762,7 +2762,7 @@ let symbolic =
              (fun m ->
                let x = m "x" and y = m "y" and c1 = m "c1" in
                if is_const y then None
-               else if List.mem (dtype x) int_like || V.(num c1 = of_int (-1))
+               else if Dtype.mem (dtype x) int_like || V.(num c1 = of_int (-1))
                then Some O.(x * y * c1)
                else None);
            (* Rules from symbolic *)
@@ -2794,7 +2794,7 @@ let symbolic =
                let x = m "x" and c = m "c" in
                let dt = promo_dtype (src (m "cmp")) in
                let c_at_width =
-                 if List.mem dt Dtype.ints then Dtype.truncate dt (num c)
+                 if Dtype.mem dt Dtype.ints then Dtype.truncate dt (num c)
                  else num c
                in
                if V.(c_at_width <> Dtype.min dt) && exact dt V.[ -vmin x ] then
