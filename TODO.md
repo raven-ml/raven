@@ -79,9 +79,7 @@ raven / llama.cpp b12048 Vulkan:
 - compile speed: float64 sin/cos inline the full Payne–Hanek reduction
   (40-170 KB kernels); parallel compile saturates at ~4 domains (a shard
   lock per node, domains spawned per `Worker.map`); Metal builds run one at
-  a time; a 5 KB r_32_32 kernel, max |x| over `where (i >= j) x xᵀ` at 32x32,
-  renders as 32-lane float selects of transposed loads that clang -O2
-  takes over 2 min on
+  a time
 - gpt-oss bf16 prefill-12's first call is ~70 ms slower in wall time
   since `Heuristic.stream` (0.28-0.34 s against 0.35-0.47 s, fudge CUDA)
   though its kernels take 22 ms less GPU time; warm calls are unchanged.
