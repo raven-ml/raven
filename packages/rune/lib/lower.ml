@@ -293,9 +293,8 @@ let op ?dst ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
       let segments : Ops.t Nx_kernel.segments option =
         match segments with
         | None -> None
-        | Some (Rows r) -> Some (Rows { r with offsets = node r.offsets })
-        | Some (Contracting c) ->
-            Some (Contracting { c with offsets = node c.offsets })
+        | Some (Rows r) -> Some (Rows { r with ids = node r.ids })
+        | Some (Contracting c) -> Some (Contracting { c with ids = node c.ids })
       in
       [|
         Reduce.contract ~batch ~contracting ~segments ~acc ~out:(D.Any out)

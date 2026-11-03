@@ -1447,7 +1447,8 @@ module Scaled = struct
   (* [a], [[batch; m; k]], by [b], [[batch; g; k; n]], the batch axis where
      [batch] gives its extent and [g] for [Rows] alone, from [init], summed
      in float64 or float32 and rounded into float16 where [half], [init]
-     too. Offsets have the shape [[batch; g + 1]]. *)
+     too. Ids have the shape [[batch; m]] for [Rows], [[batch; k]] for
+     [Contracting]. *)
   type case = {
     batch : int option;
     m : int;
@@ -1481,8 +1482,9 @@ module Scaled = struct
           vs
 
   let pp_case ppf c =
-    let offsets ppf os =
-      pp_shape ppf (Array.map Int64.to_int os)
+    let ids ppf os =
+      Format.fprintf ppf "[%s]"
+        (String.concat "; " (Array.to_list (Array.map Int64.to_string os)))
     in
     Format.fprintf ppf "@[<v>%s%s, g %d@,a %a@,b %a@,init %s@,%s@]"
       (if c.f64 then "float64" else "float32")
@@ -1493,8 +1495,8 @@ module Scaled = struct
       | Some xs -> Format.asprintf "%a" pp_floats xs)
       (match c.segs with
       | None -> "unsegmented"
-      | Some (Rows os) -> Format.asprintf "rows %a" offsets os
-      | Some (Contracting os) -> Format.asprintf "contracting %a" offsets os)
+      | Some (Rows os) -> Format.asprintf "rows %a" ids os
+      | Some (Contracting os) -> Format.asprintf "contracting %a" ids os)
 
   let swapped s =
     let s = Array.copy s and r = Array.length s in
@@ -1512,13 +1514,16 @@ module Scaled = struct
     let groups = match c.segs with Some (Contracting _) -> [ c.g ] | _ -> [] in
     Array.of_list (groups @ lead c @ [ c.m; c.n ])
 
-  let offsets_shape c = Array.of_list (lead c @ [ c.g + 1 ])
+  (* The segmented axis's extent: [m] for [Rows], [k] for [Contracting]. *)
+  let segmented c = match c.segs with Some (Rows _) -> c.m | _ -> c.k
+
+  let ids_shape c = Array.of_list (lead c @ [ segmented c ])
 
   (* Values *)
 
   (* Where each operand lies: [put role x] places the host value [x], stored
      as made, for [role]. *)
-  type role = A | B | A_scale | B_scale | Offsets | Init
+  type role = A | B | A_scale | B_scale | Ids | Init
   type 'e put = {
     put : 'v 's. role -> ('v, 's, Nx.host) Nx.t -> ('v, 's, 'e) Nx.t;
   }
@@ -1558,14 +1563,13 @@ module Scaled = struct
     let batch : (int * int) iarray = if nb = 1 then [| (0, 0) |] else [||] in
     let bk = match c.segs with Some (Rows _) -> nb + 1 | _ -> nb in
     let contracting : (int * int) iarray = [| (nb + 1, bk) |] in
-    let offsets os = p.put Offsets (Nx.create Nx.int64 (offsets_shape c) os) in
+    let ids os = p.put Ids (Nx.create Nx.int64 (ids_shape c) os) in
     let segments : _ Nx_kernel.segments option =
       match c.segs with
       | None -> None
-      | Some (Rows os) ->
-          Some (Rows { offsets = offsets os; a_axis = nb; b_axis = nb })
+      | Some (Rows os) -> Some (Rows { ids = ids os; a_axis = nb; b_axis = nb })
       | Some (Contracting os) ->
-          Some (Contracting { offsets = offsets os; pair = 0 })
+          Some (Contracting { ids = ids os; groups = c.g; pair = 0 })
     in
     let init =
       Option.map
@@ -1588,16 +1592,13 @@ module Scaled = struct
         sum = false;
       }
 
-  (* The index [r] of the segmented axis is in group [e] of the offsets [o],
-     as Nx_kernel.segments states. *)
-  let group_of (o : int64 array) r =
-    let g = Array.length o - 1 and r = Int64.of_int r in
-    let rec find e =
-      if e < 0 then None
-      else if o.(e) <= r then Some e
-      else find (e - 1)
-    in
-    if g > 0 && o.(0) <= r && r < o.(g) then find (g - 1) else None
+  (* The index [r] of the segmented axis is in group [ids.(r)] where that
+     lies in [\[0, g)], as Nx_kernel.segments states. *)
+  let group_of g (ids : int64 array) r =
+    let e = ids.(r) in
+    if Int64.compare e 0L >= 0 && Int64.compare e (Int64.of_int g) < 0 then
+      Some (Int64.to_int e)
+    else None
 
   (* Each element of [s]'s view at float64, times its scale block's scale
      rounded once into the accumulator, float64 where [f64], in C order of
@@ -1644,10 +1645,10 @@ module Scaled = struct
      magnitudes. *)
   let reference c init =
     let a = scaled ~f64:c.f64 A c.a and b = scaled ~f64:c.f64 B c.b in
-    let nb = Option.value c.batch ~default:1 and w = c.g + 1 in
+    let nb = Option.value c.batch ~default:1 and w = segmented c in
     let gb = match c.segs with Some (Rows _) -> c.g | _ -> 1 in
     let groups = match c.segs with Some (Contracting _) -> c.g | _ -> 1 in
-    let offsets bi =
+    let ids bi =
       match c.segs with
       | Some (Rows os | Contracting os) -> Array.sub os (bi * w) w
       | None -> [||]
@@ -1671,12 +1672,12 @@ module Scaled = struct
       (match c.segs with
       | None -> for t = 0 to c.k - 1 do term ~e:0 t done
       | Some (Rows _) -> (
-          match group_of (offsets bi) i with
+          match group_of c.g (ids bi) i with
           | Some e -> for t = 0 to c.k - 1 do term ~e t done
           | None -> ())
       | Some (Contracting _) ->
           for t = 0 to c.k - 1 do
-            if group_of (offsets bi) t = Some e then term ~e:0 t
+            if group_of c.g (ids bi) t = Some e then term ~e:0 t
           done);
       want.(o) <- !hi +. !lo;
       mag.(o) <- !m
@@ -1815,31 +1816,45 @@ module Scaled = struct
     let+ cs = array ~size:(constant (numel sv)) code in
     { dt = F4; view; swap = true; xs; scale = Some (sv, Codes cs) }
 
-  (* The offsets of each batch index, [g + 1] of them over an axis of [len]:
-     increasing half the time, any values from [-1] to [len + 1] else. *)
-  let offsets ~batch ~g len =
+  (* An id of [g] groups: in [\[-1, g\]] mostly, the one past the groups
+     and the one below them included, else far out of range. *)
+  let id g =
+    let open Gen in
+    frequency
+      [
+        (12, map Int64.of_int (int_range (-1) g));
+        ( 1,
+          of_list [ Int64.min_int; Int64.max_int; -2L; Int64.of_int (g + 1) ] );
+      ]
+
+  (* The ids of each batch index over an axis of [len]: unsorted mostly,
+     sorted, or all of one group. *)
+  let ids ~batch ~g len =
     let open Gen in
     let row =
-      let* sorted = bool in
-      let+ o = array ~size:(constant (g + 1)) (int_range (-1) (len + 1)) in
-      if sorted then Array.sort compare o;
-      Array.to_list (Array.map Int64.of_int o)
+      let* mode =
+        frequency
+          [ (4, constant `Any); (1, constant `Sorted); (1, constant `One) ]
+      in
+      match mode with
+      | `One ->
+          let+ e = int_range 0 (max 0 (g - 1)) in
+          List.init len (fun _ -> Int64.of_int e)
+      | `Sorted | `Any ->
+          let+ xs = array ~size:(constant len) (id g) in
+          if mode = `Sorted then Array.sort Int64.compare xs;
+          Array.to_list xs
     in
     let+ rows = list ~size:(constant (max 1 batch)) row in
     let rows = if batch = 0 then [] else rows in
     Array.of_list (List.concat rows)
 
   (* [c] with a NaN in [a] at index 0 of the contracted axis, which
-     [Contracting]'s groups leave out: one group from 1, the others empty. *)
+     [Contracting]'s groups leave out: group 0 from 1, the others empty. *)
   let planted c =
     match c.segs with
     | Some (Contracting os) when c.k > 1 && c.g > 0 ->
-        let w = c.g + 1 in
-        let os =
-          Array.mapi
-            (fun i _ -> if i mod w = 0 then 1L else Int64.of_int c.k)
-            os
-        in
+        let os = Array.mapi (fun i _ -> if i mod c.k = 0 then -1L else 0L) os in
         (* [k]'s index is the last of the view, before the last stored. *)
         let inner = if c.a.swap then c.m else 1 in
         let xs =
@@ -1882,9 +1897,8 @@ module Scaled = struct
     let* segs =
       match kind with
       | `None -> constant None
-      | `Rows -> map (fun o -> Some (Rows o)) (offsets ~batch:nb ~g m)
-      | `Contracting ->
-          map (fun o -> Some (Contracting o)) (offsets ~batch:nb ~g k)
+      | `Rows -> map (fun o -> Some (Rows o)) (ids ~batch:nb ~g m)
+      | `Contracting -> map (fun o -> Some (Contracting o)) (ids ~batch:nb ~g k)
     in
     let* plant = frequency [ (1, constant false); (2, constant true) ] in
     let* half = bool in
@@ -1912,8 +1926,8 @@ module Scaled = struct
     Array.iteri (fun i x -> flat := (!flat * shape.(i)) + x) idx;
     s.xs.(!flat)
 
-  let offsets_at c os b =
-    let w = c.g + 1 in
+  let ids_at c os b =
+    let w = segmented c in
     Array.sub os (b * w) w
 
   let batches c =
@@ -1929,12 +1943,44 @@ module Scaled = struct
         c.n > 0
         && List.exists
              (fun bt ->
-               let o = offsets_at c os (Option.value ~default:0 bt) in
-               List.exists (fun r -> group_of o r = None) (range c.m))
+               let o = ids_at c os (Option.value ~default:0 bt) in
+               List.exists (fun r -> group_of c.g o r = None) (range c.m))
              (batches c)
     | _ -> false
 
   let nan_at s bt idx = Float.is_nan (value_at s (with_batch bt idx))
+
+  (* Whether some batch index's ids satisfy [p], given [g]. *)
+  let some_ids c p =
+    match c.segs with
+    | Some (Rows os | Contracting os) ->
+        List.exists
+          (fun bt -> p (ids_at c os (Option.value ~default:0 bt)))
+          (batches c)
+    | None -> false
+
+  let unsorted c =
+    some_ids c (fun o ->
+        List.exists
+          (fun r -> Int64.compare o.(r) o.(r + 1) > 0)
+          (range (max 0 (Array.length o - 1))))
+
+  let out_of_range c =
+    some_ids c (fun o ->
+        List.exists (fun r -> group_of c.g o r = None) (range (Array.length o)))
+
+  let extreme c =
+    some_ids c (Array.exists (fun e -> e = Int64.min_int || e = Int64.max_int))
+
+  let empty_group c =
+    some_ids c (fun o ->
+        List.exists
+          (fun e ->
+            not
+              (List.exists
+                 (fun r -> group_of c.g o r = Some e)
+                 (range (Array.length o))))
+          (range c.g))
 
   (* Whether a NaN of [a] or [b] lies at an index of the contracted axis in
      no group. *)
@@ -1943,10 +1989,10 @@ module Scaled = struct
     | Some (Contracting os) ->
         List.exists
           (fun bt ->
-            let o = offsets_at c os (Option.value ~default:0 bt) in
+            let o = ids_at c os (Option.value ~default:0 bt) in
             List.exists
               (fun r ->
-                group_of o r = None
+                group_of c.g o r = None
                 && (List.exists (fun i -> nan_at c.a bt [ i; r ]) (range c.m)
                    || List.exists (fun j -> nan_at c.b bt [ r; j ]) (range c.n)
                    ))
@@ -1972,6 +2018,10 @@ module Scaled = struct
     cover "groups of the contracted axis"
       (match c.segs with Some (Contracting _) -> c.g > 0 | _ -> false);
     cover "scaled and segmented" (scaled && c.segs <> None);
+    cover "unsorted ids" (unsorted c);
+    cover "an id out of range" (out_of_range c);
+    cover "an id at int64's extremes" (extreme c);
+    cover "a group of no index" (empty_group c);
     cover "a row in no group" (row_alone c);
     cover "a result rounded into float16" c.half;
     cover "an init cast into the accumulator" (c.half && c.init <> None);
@@ -2042,8 +2092,10 @@ module Scaled = struct
      alone and rounded into float16 from [init], and a NaN outside every
      group of the contracted axis. *)
   let examples =
-    let rows = Rows [| 1L; 2L; 2L; 3L |] in
-    let groups = Contracting [| 0L; 4L; 4L |] in
+    let rows = Rows [| 2L; Int64.min_int; 0L; Int64.max_int |] in
+    let groups =
+      Contracting (Array.init 32 (fun i -> if i < 4 then 0L else -1L))
+    in
     [
       mx ~m:1 ~k:4160 ~n:2 ~per:1 ();
       mx ~segs:rows ~g:3 ~m:4 ~k:32 ~n:2 ~per:1 ();
@@ -2065,12 +2117,12 @@ module Scaled = struct
   let placements =
     let b_cut q = function
       | B | B_scale -> Some q
-      | A | A_scale | Offsets | Init -> None
+      | A | A_scale | Ids | Init -> None
     in
     let a_cut ?(scale = true) q = function
       | A -> Some q
       | A_scale when scale -> Some q
-      | A_scale | B | B_scale | Offsets | Init -> None
+      | A_scale | B | B_scale | Ids | Init -> None
     in
     group "placements"
       [
@@ -2095,22 +2147,24 @@ module Scaled = struct
             let y = placed S2.on (a_cut (S2.split ~axis:0)) c in
             equal bool ~msg:"the result's rows are cut" true
               (Nx.Placement.equal (S2.split ~axis:0) y));
-        (* Segments are computed uncut: their rows are read whole. *)
-        test "segmented rows cut over devices raise" (fun () ->
-            let segs = Rows [| 0L; 3L; 3L; 6L |] in
+        (* A row's ids are cut with it: each device computes its rows. *)
+        test "segmented rows cut over devices with their ids give exact sums"
+          (fun () ->
+            let segs = Rows [| 2L; 0L; -1L; 2L; 1L; 7L |] in
             let c = mx ~segs ~g:3 ~m:6 ~k:32 ~n:4 ~per:2 () in
-            raises
-              (Invalid_argument
-                 "t: operand 0 lies at split ~axis:0 [m0; m1] and is read at \
-                  on [m0; m1]; Nx.place (Placement.on s) x")
-              (fun () ->
-                placed S2.on (a_cut ~scale:false (S2.split ~axis:0)) c));
+            let where = function
+              | A | Ids -> Some (S2.split ~axis:0)
+              | A_scale | B | B_scale | Init -> None
+            in
+            let y = placed S2.on where c in
+            equal bool ~msg:"the result's rows are cut" true
+              (Nx.Placement.equal (S2.split ~axis:0) y));
       ]
 
   (* An output of no products is [init] as the accumulator holds it, rounded
      into the result, bit for bit: at [k = 0], in a row of no group of
-     [Rows], and in [Contracting]'s slice of a group its offsets leave
-     empty, by batch index, decreasing or past the axis. Each output's init
+     [Rows], and in [Contracting]'s slice of a group its ids leave empty,
+     by batch index, unsorted or out of range. Each output's init
      differs from its neighbours': zeros of both signs, NaNs, infinities and
      numbers. Outputs with products are not compared. *)
   let no_products =
@@ -2137,19 +2191,18 @@ module Scaled = struct
     in
     (* Whether output [i], in C order of the result, has no products. *)
     let alone c i =
-      let mn = c.m * c.n and w = c.g + 1 in
+      let mn = c.m * c.n in
       let batches = Option.value c.batch ~default:1 in
-      let offsets os bi = Array.sub os (bi * w) w in
       c.k = 0
       ||
       match c.segs with
       | None -> false
       | Some (Rows os) ->
-          group_of (offsets os (i / mn)) (i / c.n mod c.m) = None
+          group_of c.g (ids_at c os (i / mn)) (i / c.n mod c.m) = None
       | Some (Contracting os) ->
           let e = i / (batches * mn) and bi = i / mn mod batches in
-          let o = offsets os bi in
-          let mine r = group_of o r = Some e in
+          let o = ids_at c os bi in
+          let mine r = group_of c.g o r = Some e in
           not (List.exists mine (List.init c.k Fun.id))
     in
     (* Widening to float64 keeps every float32 and float16 apart, NaNs'
@@ -2180,35 +2233,33 @@ module Scaled = struct
         ("k = 0, into float16", c ~half:true ~m:2 ~k:0 ());
         ("k = 0, batched", c ~batch:2 ~m:2 ~k:0 ());
         ( "k = 0, rows by groups",
-          c ~segs:(Rows [| 0L; 1L; 2L |]) ~g:2 ~m:2 ~k:0 () );
-        ( "k = 0, groups of k",
-          c ~segs:(Contracting [| 0L; 0L; 0L |]) ~g:2 ~m:2 ~k:0 () );
+          c ~segs:(Rows [| 0L; 1L |]) ~g:2 ~m:2 ~k:0 () );
+        ("k = 0, groups of k", c ~segs:(Contracting [||]) ~g:2 ~m:2 ~k:0 ());
         ( "k = 0, groups of k into float16",
-          c ~half:true ~segs:(Contracting [| 0L; 1L; 0L |]) ~g:2 ~m:2 ~k:0 ()
-        );
+          c ~half:true ~segs:(Contracting [||]) ~g:2 ~m:2 ~k:0 () );
         ( "rows in no group",
-          c ~segs:(Rows [| 1L; 2L; 2L |]) ~g:2 ~m:3 ~k:4 () );
+          c ~segs:(Rows [| -1L; 0L; 5L |]) ~g:2 ~m:3 ~k:4 () );
         ( "rows in no group by batch index",
-          c ~batch:2
-            ~segs:(Rows [| 0L; 1L; 1L; 1L; 1L; 2L |])
-            ~g:2 ~m:2 ~k:4 () );
+          c ~batch:2 ~segs:(Rows [| 0L; -1L; 7L; 1L |]) ~g:2 ~m:2 ~k:4 () );
         ( "rows in no group into float16",
-          c ~half:true ~segs:(Rows [| 1L; 2L; 2L |]) ~g:2 ~m:3 ~k:4 () );
+          c ~half:true ~segs:(Rows [| -1L; 0L; 2L |]) ~g:2 ~m:3 ~k:4 () );
         ( "an empty group of k",
-          c ~segs:(Contracting [| 0L; 0L; 4L |]) ~g:2 ~m:2 ~k:4 () );
+          c ~segs:(Contracting [| 1L; 1L; 1L; 1L |]) ~g:2 ~m:2 ~k:4 () );
         ( "an empty group of k by batch index",
           c ~batch:2
-            ~segs:(Contracting [| 0L; 0L; 4L; 0L; 4L; 4L |])
+            ~segs:(Contracting [| 1L; 1L; 1L; 1L; 0L; 0L; 0L; 0L |])
             ~g:2 ~m:2 ~k:4 () );
-        ( "an empty group of decreasing offsets",
-          c ~segs:(Contracting [| 0L; 3L; 1L; 4L |]) ~g:3 ~m:2 ~k:4 () );
-        ( "an empty group of offsets past the axis",
-          c ~segs:(Contracting [| -1L; 5L; 5L |]) ~g:2 ~m:2 ~k:4 () );
+        ( "an empty group among unsorted ids",
+          c ~segs:(Contracting [| 2L; 0L; 2L; 0L |]) ~g:3 ~m:2 ~k:4 () );
+        ( "an empty group among ids out of range",
+          c
+            ~segs:(Contracting [| -1L; 5L; Int64.max_int; 0L |])
+            ~g:2 ~m:2 ~k:4 () );
         ( "an empty group of k into float16",
-          c ~half:true ~segs:(Contracting [| 0L; 3L; 1L; 4L |]) ~g:3 ~m:2
+          c ~half:true ~segs:(Contracting [| 2L; 0L; 2L; 0L |]) ~g:3 ~m:2
             ~k:4 () );
-        ( "rows in no group of decreasing offsets",
-          c ~segs:(Rows [| 0L; 3L; 1L |]) ~g:2 ~m:3 ~k:4 () );
+        ( "rows in no group among unsorted ids",
+          c ~segs:(Rows [| 1L; Int64.min_int; 0L |]) ~g:2 ~m:3 ~k:4 () );
       ]
     in
     (* [b] split along its groups over two devices, the rest whole on
@@ -2217,7 +2268,7 @@ module Scaled = struct
       let nb = List.length (lead c) in
       let at = function
         | B -> S2.split ~axis:nb
-        | A | A_scale | B_scale | Offsets | Init -> S2.on
+        | A | A_scale | B_scale | Ids | Init -> S2.on
       in
       half_or_not { put = (fun role x -> Nx.place (at role) x) } named
     in
@@ -2235,14 +2286,14 @@ module Scaled = struct
       ]
 
   (* Contractions cut along [k]: [a] [[m; k]] and [b], stored [[…; n; k]],
-     along their last stored axis, the offsets and [init] on every device,
+     along their last stored axis, the ids and [init] on every device,
      and the scales too unless [scales] cuts [b]'s as its weight. *)
   let partials =
     let k_cut ?(b = 1) ?(scales = false) (module S : Nx.Devices) = function
       | A -> Some (S.split ~axis:1)
       | B -> Some (S.split ~axis:b)
       | B_scale when scales -> Some (S.split ~axis:b)
-      | A_scale | B_scale | Offsets | Init -> None
+      | A_scale | B_scale | Ids | Init -> None
     in
     let along ?b ?scales (module S : Nx.Devices) c =
       ignore (placed S.on (k_cut ?b ?scales (module S)) c)
@@ -2277,7 +2328,9 @@ module Scaled = struct
             along ~scales:true (module S2) (mx ~m:2 ~k:8256 ~n:2 ~per:1 ()));
         (* [Contracting] reads its contracting pairs whole. *)
         test "groups of a cut contracted axis raise" (fun () ->
-            let segs = Contracting [| 0L; 40L; 96L |] in
+            let segs =
+              Contracting (Array.init 96 (fun i -> if i < 40 then 0L else 1L))
+            in
             raises
               (Invalid_argument
                  "t: operand 0 lies at split ~axis:1 [m0; m1] and is read at \
@@ -2286,12 +2339,12 @@ module Scaled = struct
                 along (module S2) (mx ~segs ~g:2 ~m:2 ~k:96 ~n:2 ~per:1 ())));
         test "rows by groups over a cut contracted axis give one device's bits"
           (fun () ->
-            let segs = Rows [| 0L; 1L; 4L |] in
+            let segs = Rows [| 0L; 1L; 1L; 1L |] in
             along ~b:2 (module S2) (mx ~segs ~g:2 ~m:4 ~k:64 ~n:2 ~per:2 ()));
         test
           "rows by groups over a cut inside the scale's blocks give one \
            device's bits" (fun () ->
-            let segs = Rows [| 0L; 1L; 4L |] in
+            let segs = Rows [| 0L; 1L; 1L; 1L |] in
             along ~b:2 (module S4) (mx ~segs ~g:2 ~m:4 ~k:96 ~n:2 ~per:2 ()));
       ]
 
@@ -2302,17 +2355,6 @@ module Scaled = struct
   (* Rows by up to seven groups. *)
   let grouped =
     Gen.with_pp pp_case (drawn ~groups:(Gen.int_range 0 7) [ `Rows ])
-
-  (* Whether some batch index's offsets decrease. *)
-  let decreasing c =
-    match c.segs with
-    | Some (Rows os) ->
-        List.exists
-          (fun bt ->
-            let o = offsets_at c os (Option.value ~default:0 bt) in
-            List.exists (fun e -> o.(e + 1) < o.(e)) (range c.g))
-          (batches c)
-    | _ -> false
 
   (* Whether [b]'s scale, beside [b] split along its groups over [t]
      devices, is cut alike: one scale per group, or blocks of groups in
@@ -2326,14 +2368,14 @@ module Scaled = struct
 
   (* [b] split along its groups over two devices and over three, its scale
      too where it follows the cut and whole on each device otherwise, [a],
-     the offsets and [init] whole on each: one device's bits, with the
+     the ids and [init] whole on each: one device's bits, with the
      results whole on each device, or, from [init], within the bound of the
      exact sum. *)
   let grouped_law c =
     let nb = List.length (lead c) in
     let negative_zero x = Int64.bits_of_float x = Int64.min_int in
     cover "a row in no group" (row_alone c);
-    cover "offsets that decrease" (decreasing c);
+    cover "unsorted ids" (unsorted c);
     cover "fewer groups than devices" (c.g > 0 && c.g < 3);
     cover "more groups than devices" (c.g > 3);
     cover "a NaN in a" (Array.exists Float.is_nan c.a.xs);
@@ -2353,7 +2395,7 @@ module Scaled = struct
         let where = function
           | B -> Some (S.split ~axis:nb)
           | B_scale when alike -> Some (S.split ~axis:nb)
-          | A | A_scale | B_scale | Offsets | Init -> None
+          | A | A_scale | B_scale | Ids | Init -> None
         in
         match c.init with
         | None ->

@@ -185,8 +185,8 @@ let call : type r.
           Option.map
             (fun (g : _ Nx_kernel.segments) : _ Nx_kernel.segments ->
               match g with
-              | Rows r -> Rows { r with offsets = one r.offsets }
-              | Contracting r -> Contracting { r with offsets = one r.offsets })
+              | Rows r -> Rows { r with ids = one r.ids }
+              | Contracting r -> Contracting { r with ids = one r.ids })
             segments
         in
         K.contract ~batch ~contracting ~segments ~acc ~dst:(one r)

@@ -240,29 +240,27 @@ val apply_experts :
 
     The positions in range are summed in one contraction, each row with
     the matrix its id names, at the dtype {!apply} sums in, within
-    {!Nx.contract}'s bound; a position out of range has no products. An
-    [Mxfp4] weight summed at float32 is read where it lies, each block
-    decoded as it is summed. Any other is decoded at float32
-    as {!dequant} does, [min p e] matrices for [p] positions: the experts the
-    ids in range name, each once, and zeros for the matrices left over. Cut
-    along its experts, every expert is decoded, each device its own. A row's
-    bits are a function of the shapes, the placements, its row and its
+    {!Nx.contract}'s bound; a position out of range has no products. The
+    weight is read as {!apply} reads it: where it lies, each block decoded
+    as it is summed, but for a weight {!apply} decodes at float32 first, of
+    which it decodes, for [p] positions with [0 < p < e], ids whole on each
+    device and experts not cut, [p] matrices, each position's id's, a
+    position out of range decoding the first. A
+    row's bits are a function of the shapes, the placements, its row and its
     expert: they do not depend on the other positions' experts, and may
     differ from {!apply}'s. Cut along [k], each device sums its window of
     [k] for every row and the devices' sums close by partials, as
-    {!Nx.contract}'s do, where the result would lie with [k] whole. Routing
-    the positions sorts [ids], which reads them whole, and gathers [x]'s
-    rows where they lie ({!Nx.take}): [ids] cut across devices raise,
-    naming [ids] and the placement that puts them whole on each device
-    ({!Nx.section-routing}). [x]'s leading axes
-    are flattened where that keeps where they lie: at most one has more
+    {!Nx.contract}'s do, where the result would lie with [k] whole. [ids]
+    and [x]'s rows may be cut along the positions together, into windows of
+    one extent, beside a weight whole on each device: each device computes
+    its own positions. [x]'s leading axes are broadcast to [ids]'
+    and flattened where that keeps where they lie: at most one has more
     than one index, or only the first such is cut, into windows of one
     extent. Cut otherwise, along a later such axis or into windows of
-    unequal extents, [x] is gathered along each such axis in turn, from
-    the longest, which holds each position's row times the extents of the
-    others. The sum needs
-    kernels that compute a segmented contraction, block-scaled for [Mxfp4],
-    as nx.cpu's do.
+    unequal extents, [x] is gathered along each such axis in turn, from the
+    longest, which holds each position's row times the extents of the
+    others. The sum needs kernels that compute a segmented contraction,
+    block-scaled where {!apply}'s is, as nx.cpu's do.
 
     Raises [Invalid_argument] if the sum lies on a set whose kernels decline
     it, if [w] is not 3-d, if [x] does not have one axis more than [ids], if

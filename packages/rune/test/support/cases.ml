@@ -352,7 +352,8 @@ let contract_of x ~a ~b ~batch ~contracting ?a_scale ?b_scale ?segments () =
          sum = false;
        })
 
-let offsets = Nx.create Nx.int64 [| 3 |] [| 0L; 1L; 4L |]
+(* Ids of four indices in two groups, unsorted, one index in none. *)
+let ids = Nx.create Nx.int64 [| 4 |] [| 1L; 0L; -1L; 1L |]
 
 let contract_cases =
   let twenty = Gen.constant [| 20 |] in
@@ -369,12 +370,12 @@ let contract_cases =
     c "a contraction segmented by rows" (fun x ->
         contract_of x ~a:[| 4; 2 |] ~b:[| 2; 2; 3 |] ~batch:[||]
           ~contracting:[| (1, 1) |]
-          ~segments:(Rows { offsets; a_axis = 0; b_axis = 0 })
+          ~segments:(Rows { ids; a_axis = 0; b_axis = 0 })
           ());
     c "a contraction segmented along its pair" (fun x ->
         contract_of x ~a:[| 4; 2 |] ~b:[| 4; 3 |] ~batch:[||]
           ~contracting:[| (0, 0) |]
-          ~segments:(Contracting { offsets; pair = 0 })
+          ~segments:(Contracting { ids; groups = 2; pair = 0 })
           ());
     c "a batched contraction of transposed operands" (fun x ->
         contract_of x ~a:[| 2; 3; 2 |] ~b:[| 2; 2 |]

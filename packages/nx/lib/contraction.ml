@@ -294,6 +294,29 @@ let matmul ~by ?sum a b =
   in
   run ~by ?sum (Prim.dtype a) pl a b
 
+(* [a]'s rows, [[| p; k |]], each by the matrix of [b], [[| e; k; n |]], its
+   id in [ids], [[| p |]], names: one [Rows] contraction, accumulated as
+   {!matmul}'s. *)
+let rows ~by ?(sum = false) ids a b =
+  let dt = Prim.dtype a in
+  if D.is D.Boolean dt then invalid_argf "%s: the result's dtype is bool" by;
+  let acc = accumulator ~by dt (D.Any dt) (D.Any (Prim.dtype b)) in
+  Eval.eval ~by
+    (Value.Contract
+       {
+         batch = [||];
+         contracting = [| (1, 1) |];
+         acc;
+         out = dt;
+         a;
+         b;
+         init = None;
+         a_scale = None;
+         b_scale = None;
+         segments = Some (Rows { ids; a_axis = 0; b_axis = 0 });
+         sum;
+       })
+
 (* [a] and [b] contracted along the axis pairs [batch] and [contracting],
    the result's axes the kernel's own: the batch axes, then [a]'s others,
    then [b]'s, each in its operand's order. The plan moves no operand and no

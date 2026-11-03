@@ -181,50 +181,53 @@ let test_contract_scales () =
   refuses ~msg:"a negative extent" (mm ~sa:[| -4; 2 |] a b)
 
 (* Rows drops b's group axis from the result; Contracting puts the group axis
-   first; offsets have the batch extents, then one more than the groups. *)
+   first; ids have the batch extents, then the cut axis's. *)
 let test_contract_segments () =
   let contract ?(batch : _ iarray = [||])
       ?(contracting : _ iarray = [| (1, 1) |]) segments a b =
     Shape.contract ~batch ~contracting ~segments:(Some segments) (a, None)
       (b, None)
   in
-  let rows ?(a_axis = 0) ?(b_axis = 0) offsets =
-    Nx_kernel.Rows { offsets; a_axis; b_axis }
+  let rows ?(a_axis = 0) ?(b_axis = 0) ids =
+    Nx_kernel.Rows { ids; a_axis; b_axis }
   in
   let a = [| 10; 8 |] and b = [| 3; 8; 6 |] in
-  fits ~msg:"rows" [ 10; 6 ] (contract (rows [| 4 |]) a b);
+  fits ~msg:"rows" [ 10; 6 ] (contract (rows [| 10 |]) a b);
   fits ~msg:"rows of no group" [ 10; 6 ]
-    (contract (rows [| 1 |]) a [| 0; 8; 6 |]);
-  refuses ~msg:"offsets of another extent" (contract (rows [| 3 |]) a b);
-  refuses ~msg:"offsets of another rank" (contract (rows [| 4; 1 |]) a b);
-  refuses ~msg:"no offsets" (contract (rows [||]) a b);
-  refuses ~msg:"an a_axis in a pair" (contract (rows ~a_axis:1 [| 4 |]) a b);
-  refuses ~msg:"a b_axis in a pair" (contract (rows ~b_axis:1 [| 9 |]) a b);
-  refuses ~msg:"an a_axis past a's rank" (contract (rows ~a_axis:2 [| 4 |]) a b);
-  refuses ~msg:"a negative b_axis" (contract (rows ~b_axis:(-1) [| 4 |]) a b);
+    (contract (rows [| 10 |]) a [| 0; 8; 6 |]);
+  refuses ~msg:"ids of another extent" (contract (rows [| 3 |]) a b);
+  refuses ~msg:"ids of another rank" (contract (rows [| 10; 1 |]) a b);
+  refuses ~msg:"no ids" (contract (rows [||]) a b);
+  refuses ~msg:"an a_axis in a pair" (contract (rows ~a_axis:1 [| 8 |]) a b);
+  refuses ~msg:"a b_axis in a pair" (contract (rows ~b_axis:1 [| 10 |]) a b);
+  refuses ~msg:"an a_axis past a's rank"
+    (contract (rows ~a_axis:2 [| 10 |]) a b);
+  refuses ~msg:"a negative b_axis" (contract (rows ~b_axis:(-1) [| 10 |]) a b);
   let a2 = [| 2; 10; 8 |] and b2 = [| 2; 3; 8; 6 |] in
-  let batched offsets =
+  let batched ids =
     contract ~batch:[| (0, 0) |] ~contracting:[| (2, 2) |]
-      (rows ~a_axis:1 ~b_axis:1 offsets) a2 b2
+      (rows ~a_axis:1 ~b_axis:1 ids) a2 b2
   in
-  fits ~msg:"rows per batch" [ 2; 10; 6 ] (batched [| 2; 4 |]);
-  refuses ~msg:"offsets without the batch" (batched [| 4 |]);
-  refuses ~msg:"offsets of another batch" (batched [| 3; 4 |]);
-  let k offsets pair =
+  fits ~msg:"rows per batch" [ 2; 10; 6 ] (batched [| 2; 10 |]);
+  refuses ~msg:"ids without the batch" (batched [| 10 |]);
+  refuses ~msg:"ids of another batch" (batched [| 3; 10 |]);
+  let k ?(groups = 4) ids pair =
     contract ~contracting:[| (1, 0) |]
-      (Nx_kernel.Contracting { offsets; pair })
+      (Nx_kernel.Contracting { ids; groups; pair })
       [| 4; 8 |] [| 8; 6 |]
   in
-  fits ~msg:"contracting" [ 4; 4; 6 ] (k [| 5 |] 0);
-  fits ~msg:"contracting into no group" [ 0; 4; 6 ] (k [| 1 |] 0);
-  refuses ~msg:"no offsets" (k [| 0 |] 0);
-  refuses ~msg:"offsets of another rank" (k [| 2; 5 |] 0);
-  refuses ~msg:"a pair past the contracting ones" (k [| 5 |] 1);
-  refuses ~msg:"a negative pair" (k [| 5 |] (-1));
+  fits ~msg:"contracting" [ 4; 4; 6 ] (k [| 8 |] 0);
+  fits ~msg:"contracting into no group" [ 0; 4; 6 ] (k ~groups:0 [| 8 |] 0);
+  refuses ~msg:"no ids" (k [||] 0);
+  refuses ~msg:"ids of another extent" (k [| 4 |] 0);
+  refuses ~msg:"ids of another rank" (k [| 2; 8 |] 0);
+  refuses ~msg:"negative groups" (k ~groups:(-1) [| 8 |] 0);
+  refuses ~msg:"a pair past the contracting ones" (k [| 8 |] 1);
+  refuses ~msg:"a negative pair" (k [| 8 |] (-1));
   let ones = Array.make (L.max_rank - 1) 1 in
   let deep b =
     contract ~contracting:[| (0, 0) |]
-      (Nx_kernel.Contracting { offsets = [| 2 |]; pair = 0 })
+      (Nx_kernel.Contracting { ids = [| 1 |]; groups = 1; pair = 0 })
       ones b
   in
   fits ~msg:"a result of the most rank"
@@ -984,7 +987,7 @@ let tests =
           "refuses a scale of another rank, or extents that do not divide"
           test_contract_scales;
         test
-          "shapes segments' results and refuses their offsets of other \
+          "shapes segments' results and refuses their ids of other \
            shapes or axes in pairs"
           test_contract_segments;
         test "admits every shape it derives by max_numel" test_admits;

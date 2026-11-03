@@ -161,23 +161,19 @@
     the result rounds once into its dtype. A segmented contraction cut
     along a pair never computes so, nor one of [Contracting] groups.
 
-    A piece of groups [lo] to [hi - 1] of [Rows]' offsets [o], [g + 1] of
-    them, is bounded by fences [lo] to [hi] of [F e], the least of
-    [max o.(0) o.(i)] for [i] from [e] to [g], which its device computes
-    from the offsets it holds whole. Group [e] of
-    {!Nx_kernel.type-segments} is the rows [r] with
-    [F e <= r < F (e + 1)], so each group of the piece is the whole's,
-    whatever the offsets, and offsets that do not decrease are their own
-    [F]. A device multiplies the rows of its groups. Every other row has
-    no products there and holds [+0], or the sum before it in a later
-    piece. An output's slots so hold its sum on its group's device and
-    [+0] on the others, and a sum from [+0] is never [-0]. Without
-    [init] the closing adds exact zeros, and each output has the bits it
-    has with [b]'s groups whole on each device, NaNs and infinities
-    included, where the kernels' association does not depend on the count
-    of [b]'s groups, as nx.cpu's ({!Nx_cpu}). With [init], an output whose
-    slots sum to zero takes [init] alone, so that one without products
-    keeps [init]'s bits.
+    A piece of groups [lo] to [hi - 1] of [Rows]' groups takes the ids of
+    its rows less [lo], so that group [e] of the piece is group [lo + e] of
+    the whole and an id outside the piece's groups falls in none of them
+    ({!Nx_kernel.type-segments}). A device multiplies the rows of its
+    groups. Every other row has no products there and holds [+0], or the
+    sum before it in a later piece. An output's slots so hold its sum on
+    its group's device and [+0] on the others, and a sum from [+0] is never
+    [-0]. Without [init] the closing adds exact zeros, and each output has
+    the bits it has with [b]'s groups whole on each device, NaNs and
+    infinities included, where the kernels' association does not depend on
+    the count of [b]'s groups, as nx.cpu's ({!Nx_cpu}). With [init], an
+    output whose slots sum to zero takes [init] alone, so that one without
+    products keeps [init]'s bits.
 
     An integer contraction has the bits it has on one device. A float or
     complex one is within

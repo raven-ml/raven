@@ -4393,14 +4393,15 @@ let law_strided_sort xs =
 (* Segmented contractions
 
    Elements are multiples of [1/2] up to [2] in magnitude, which every float
-   dtype holds, so that every partial sum of a contraction of up to 40 terms
+   dtype holds, so that every partial sum of a contraction of up to 140 terms
    is exact in its float32 or float64 accumulator: a compiled result and
    eager's then round one exact value, and agree but for a zero's sign, which
    a segmented contraction leaves open. A [Rows] contraction multiplies x[n;
    k] by W[g; j; k], a [Contracting] one x[n; k] by y[n; j] into [g; k; j],
-   their [n] indices grouped by offsets that may fall outside the axis, as
-   {!Nx_kernel.type-segments} allows: a pair of 24 indices or more in 3 or 4
-   groups is computed in blocks. *)
+   their [n] indices grouped by ids that may fall outside the groups, as
+   {!Nx_kernel.type-segments} allows: [Rows] of 4 rows a group or more is
+   computed in blocks of 64 rows, and a pair of 24 indices or more in 3 or 4
+   groups in blocks. *)
 
 type segmented = {
   sdt : Nx.Dtype.any;
@@ -4409,7 +4410,7 @@ type segmented = {
   k : int;
   j : int;
   g : int;
-  offsets : int64 array;
+  ids : int64 array;
   xs : float array;
   ws : float array;
 }
@@ -4426,38 +4427,68 @@ let segmented_dts =
       Any Nx.float4_e2m1fn;
     ]
 
+(* Ids of [n] indices in [g] groups: drawn around the groups, int64's
+   extremes included; all of one group; or the first [b] of group [0], [b]
+   a block's 64 rows or past it, the others drawn. *)
+let segment_ids mode ~n ~g =
+  let open Gen in
+  let entry =
+    frequency
+      [
+        (8, map Int64.of_int (int_range (-1) g));
+        (1, of_list [ Int64.min_int; Int64.max_int ]);
+      ]
+  in
+  let+ ids = array ~size:(constant n) entry in
+  match mode with
+  | `Drawn -> ids
+  | `One -> Array.make n 0L
+  | `Block b ->
+      Array.mapi
+        (fun r id -> if r < b then 0L else if id = 0L then 1L else id)
+        ids
+
 let segmented_cases ?(dts = segmented_dts) () =
   let open Gen in
   let half = map (fun i -> Float.of_int i /. 2.) (int_range (-4) 4) in
   let elements n = array ~size:(constant n) half in
   let* sdt = of_list dts and+ rows = bool in
-  let* n = frequency [ (1, int_range 0 3); (3, int_range 24 40) ] in
-  let* g = frequency [ (1, constant 1); (3, int_range 2 4) ] in
-  let* k = int_range 1 3 and+ j = int_range 1 3 in
-  let entry =
+  let* mode =
     frequency
       [
-        (8, map Int64.of_int (int_range (-2) (n + 2)));
-        (1, of_list [ Int64.min_int; Int64.max_int ]);
+        (3, constant `Drawn);
+        (1, constant `One);
+        (3, constant (`Block 64));
+        (3, map (fun b -> `Block b) (int_range 65 100));
       ]
   in
-  let* offsets = array ~size:(constant (g + 1)) entry in
+  let* n =
+    match mode with
+    | `Block b -> int_range b 140
+    | `Drawn | `One ->
+        frequency
+          [ (1, int_range 0 3); (3, int_range 24 40); (2, int_range 60 140) ]
+  in
+  let* g = frequency [ (1, constant 1); (3, int_range 2 4) ] in
+  let* k = int_range 1 3 and+ j = int_range 1 3 in
+  let* ids = segment_ids mode ~n ~g in
   let* xs = elements (n * k) in
   let+ ws = elements (if rows then g * j * k else n * j) in
-  { sdt; rows; n; k; j; g; offsets; xs; ws }
+  { sdt; rows; n; k; j; g; ids; xs; ws }
 
 let pp_segmented ppf c =
   let (Nx.Dtype.Any d) = c.sdt in
-  Format.fprintf ppf "%a %s n %d k %d j %d g %d offsets [%s]" Nx.pp_dtype d
+  Format.fprintf ppf "%a %s n %d k %d j %d g %d ids [%s]" Nx.pp_dtype d
     (if c.rows then "rows" else "contracting")
     c.n c.k c.j c.g
-    (String.concat "; " (Array.to_list (Array.map Int64.to_string c.offsets)))
+    (String.concat "; " (Array.to_list (Array.map Int64.to_string c.ids)))
 
 let segmented_cases ?dts () =
   Gen.with_pp pp_segmented (segmented_cases ?dts ())
 
-(* A pair of 30 indices in blocks, its group [1] empty and its first two
-   indices in none; rows of one group; and no index. *)
+(* A pair of 30 indices in blocks, its group [1] empty and two indices in
+   none; 70 rows of one group, in blocks, its count past a block's; 64 rows
+   of a group, a block exactly, and 6 of another; and no index. *)
 let segmented_examples dt =
   let half n = Array.init n (fun i -> Float.of_int ((i mod 7) - 3) /. 2.) in
   let blocked =
@@ -4468,7 +4499,9 @@ let segmented_examples dt =
       k = 2;
       j = 3;
       g = 3;
-      offsets = [| 2L; 9L; 9L; 30L |];
+      ids =
+        Array.init 30 (fun r ->
+            if r < 2 then -1L else if r mod 2 = 0 then 2L else 0L);
       xs = half 60;
       ws = half 90;
     }
@@ -4477,22 +4510,27 @@ let segmented_examples dt =
     {
       blocked with
       rows = true;
+      n = 70;
       g = 1;
-      offsets = [| 0L; 30L |];
+      ids = Array.make 70 0L;
+      xs = half 140;
       ws = half 6;
     }
   in
-  [ blocked; one; { one with n = 0; xs = [||] } ]
+  let block =
+    {
+      one with
+      g = 2;
+      ids = Array.init 70 (fun r -> if r < 64 then 0L else 1L);
+      ws = half 12;
+    }
+  in
+  [ blocked; one; block; { one with n = 0; ids = [||]; xs = [||] } ]
 
 (* The group of each index, by {!Nx_kernel.type-segments}' rule. *)
 let group_of c r =
-  let o = c.offsets and r = Int64.of_int r in
-  let below e =
-    Array.for_all (fun x -> r < x) (Array.sub o (e + 1) (c.g - e))
-  in
-  List.find_opt
-    (fun e -> Int64.max o.(0) o.(e) <= r && below e)
-    (List.init c.g Fun.id)
+  let id = c.ids.(r) in
+  if id >= 0L && id < Int64.of_int c.g then Some (Int64.to_int id) else None
 
 let cover_segmented c =
   let counts = Array.make c.g 0 in
@@ -4500,17 +4538,20 @@ let cover_segmented c =
   List.iter (fun r -> Option.iter add (group_of c r)) (List.init c.n Fun.id);
   let held = Array.fold_left ( + ) 0 counts in
   cover "rows" c.rows;
+  cover "rows in blocks" (c.rows && c.n >= 4 * c.g);
+  cover "a group past a block's rows" (Array.exists (fun k -> k > 64) counts);
+  cover "a group of a block's rows exactly" (Array.exists (( = ) 64) counts);
   cover "a contracting pair in blocks" ((not c.rows) && c.n >= 24 && c.g >= 3);
   cover "one group" (c.g = 1);
   cover "an empty group" (Array.exists (( = ) 0) counts);
   cover "an index in no group" (held < c.n);
   cover "no index" (c.n = 0)
 
-(* [segmented_of c] is the contraction of [c] on [x], [w] and the offsets. *)
-let segmented_of (type s d) c (x : (float, s, d) Nx.t) w offsets =
+(* [segmented_of c] is the contraction of [c] on [x], [w] and the ids. *)
+let segmented_of (type s d) c (x : (float, s, d) Nx.t) w ids =
   let segments : _ Nx_kernel.segments =
-    if c.rows then Rows { offsets; a_axis = 0; b_axis = 0 }
-    else Contracting { offsets; pair = 0 }
+    if c.rows then Rows { ids; a_axis = 0; b_axis = 0 }
+    else Contracting { ids; groups = c.g; pair = 0 }
   in
   let acc : Nx.Dtype.any =
     match Nx.dtype x with
@@ -4540,7 +4581,7 @@ let operands (type s) (dt : (float, s) Nx.dtype) c =
   let x = Nx.create dt [| c.n; c.k |] c.xs in
   let ws = if c.rows then [| c.g; c.j; c.k |] else [| c.n; c.j |] in
   let w = Nx.create dt ws c.ws in
-  (x, w, Nx.create Nx.int64 [| c.g + 1 |] c.offsets)
+  (x, w, Nx.create Nx.int64 [| c.n |] c.ids)
 
 (* [x]'s values as float64, zeros as [+0]. *)
 let as_floats x =
@@ -4554,6 +4595,35 @@ let same msg u v = equal ~msg (array float_exact) (as_floats u) (as_floats v)
 let jitted f =
   match compiled f with Value v -> v | Raised e -> fail ("raised " ^ e)
 
+(* [c]'s exact result, group by group, rounded once into [dt]. *)
+let segmented_reference (type s) (dt : (float, s) Nx.dtype) c =
+  let x r q = c.xs.((r * c.k) + q) in
+  let shape, value =
+    if c.rows then
+      ( [| c.n; c.j |],
+        fun i ->
+          let r = i.(0) and jq = i.(1) in
+          match group_of c r with
+          | None -> 0.
+          | Some e ->
+              let s = ref 0. in
+              for q = 0 to c.k - 1 do
+                s := !s +. (x r q *. c.ws.((((e * c.j) + jq) * c.k) + q))
+              done;
+              !s )
+    else
+      ( [| c.g; c.k; c.j |],
+        fun i ->
+          let e = i.(0) and q = i.(1) and jq = i.(2) in
+          let s = ref 0. in
+          for r = 0 to c.n - 1 do
+            if group_of c r = Some e then
+              s := !s +. (x r q *. c.ws.((r * c.j) + jq))
+          done;
+          !s )
+  in
+  Nx.cast dt (Nx.init f64 shape value)
+
 let law_segmented c =
   cover_segmented c;
   let (Nx.Dtype.Any dt) = c.sdt in
@@ -4561,7 +4631,9 @@ let law_segmented c =
   | Float ->
       let x, w, o = operands dt c in
       let f x w o = segmented_of c x w o in
-      same "jit" (f x w o) (jitted (fun () -> Rune.jit (triple_fn ()) f x w o))
+      let eager = f x w o in
+      same "eager" (segmented_reference dt c) eager;
+      same "jit" eager (jitted (fun () -> Rune.jit (triple_fn ()) f x w o))
   | _ -> assert false
 
 (* The gradients of [<c, y>], [c] of [y]'s shape, by both operands: jit of
@@ -4591,10 +4663,11 @@ let law_segmented_grad c =
 
    The weight gradient of a [Rows] product of [x[n; k]] by [w[g; j; k]] is a
    [Contracting] contraction: group [e]'s slice is the sum of [ct_r ⊗ x_r] over
-   its rows [r] alone. Its bits are a function of the shapes and of the group's
-   own rows ({!Nx_kernel.section-contraction}), so they stay whatever the other
-   groups hold. Two layouts keep group [target]'s rows and draw apart the rows
-   before the first group and the other groups' counts. *)
+   its rows [r] alone, in their order. Its bits are a function of the shapes
+   and of the group's own rows ({!Nx_kernel.section-contraction}), so they
+   stay whatever the other groups hold and wherever the group's rows lie. Two
+   layouts keep group [target]'s rows, in order, and draw apart their
+   positions and the other indices' ids. *)
 
 type group_grad = {
   gn : int;
@@ -4602,16 +4675,16 @@ type group_grad = {
   gk : int;
   gj : int;
   target : int;
-  layouts : (int * int array) * (int * int array);
+  m : int;
+  layouts : (int * int * int64 array) * (int * int * int64 array);
   rows : float array;
 }
 
 let pp_group_grad ppf c =
-  let ints a = String.concat " " (Array.to_list (Array.map string_of_int a)) in
-  let (sa, ca), (sb, cb) = c.layouts in
+  let (sa, da, _), (sb, db, _) = c.layouts in
   Format.fprintf ppf
-    "n %d g %d k %d j %d, group %d of %d rows; from %d [%s]; from %d [%s]" c.gn
-    c.gg c.gk c.gj c.target ca.(c.target) sa (ints ca) sb (ints cb)
+    "n %d g %d k %d j %d, group %d of %d rows; from %d by %d; from %d by %d"
+    c.gn c.gg c.gk c.gj c.target c.m sa da sb db
 
 (* A [float32] of wide magnitude, so that a sum's association shows in its
    bits. *)
@@ -4646,6 +4719,8 @@ let group_shapes =
       (fun s -> (1, s))
       ([ (256, 256, 2, 2); (96, 128, 2, 2) ] @ one_block_shapes)
 
+(* A layout: group [target]'s [m] rows from [start], [step] apart, and the
+   other indices' ids drawn among the other groups and none. *)
 let group_grads =
   let open Gen in
   let* gn, gg, gk, gj =
@@ -4655,15 +4730,6 @@ let group_grads =
   let near =
     let* s = of_list sizes and+ q = int_range 1 3 and+ d = int_range (-1) 1 in
     constant (min gn (max 0 ((q * s) + d)))
-  in
-  let count =
-    frequency
-      [
-        (2, constant 0);
-        (2, constant 1);
-        (6, near);
-        (3, int_range 0 (gn / gg * 2));
-      ]
   in
   let several = int_range (gn / 4) (gn / 2) in
   let* target = int_range 0 (gg - 1) in
@@ -4677,26 +4743,29 @@ let group_grads =
         (4, int_range (gn - 1) gn);
       ]
   in
+  let other =
+    let+ id = int_range (-1) (gg - 1) in
+    Int64.of_int (if id = target then gg else id)
+  in
   let layout =
-    let* start = frequency [ (2, constant 0); (1, int_range 1 gn) ] in
-    let+ drawn = array ~size:(constant gg) count in
-    let left = ref (gn - m) in
-    let take c =
-      let c = min c !left in
-      left := !left - c;
-      c
-    in
-    let start = take start in
-    (start, Array.mapi (fun e c -> if e = target then m else take c) drawn)
+    let* step = int_range 1 3 in
+    let step = if m * step > gn then 1 else step in
+    let* start = int_range 0 (gn - (max 1 m * step) + step - 1) in
+    let+ ids = array ~size:(constant gn) other in
+    let ids = Array.copy ids in
+    for i = 0 to m - 1 do
+      ids.(start + (i * step)) <- Int64.of_int target
+    done;
+    (start, step, ids)
   in
   let* a = layout and+ b = layout in
   let+ rows = array ~size:(constant (m * (gk + gj))) wide_value in
-  { gn; gg; gk; gj; target; layouts = (a, b); rows }
+  { gn; gg; gk; gj; target; m; layouts = (a, b); rows }
 
 let group_grads = Gen.with_pp pp_group_grad group_grads
 
 (* [w]'s gradient of [<ct, y>] for [y] the [Rows] product of [x] and [w]. *)
-let rows_weight_grad x ct w offsets =
+let rows_weight_grad x ct w ids =
   let rows w =
     Nx.Prim.eval ~by:"test"
       (Contract
@@ -4710,7 +4779,7 @@ let rows_weight_grad x ct w offsets =
            init = None;
            a_scale = None;
            b_scale = None;
-           segments = Some (Rows { offsets; a_axis = 0; b_axis = 0 });
+           segments = Some (Rows { ids; a_axis = 0; b_axis = 0 });
            sum = false;
          })
   in
@@ -4721,33 +4790,31 @@ let jit_rows_weight_grad =
     T.(tensor @-> tensor @-> tensor @-> tensor @-> returns tensor)
     rows_weight_grad
 
-(* The first row of group [target] in a layout. *)
-let group_first c (start, counts) =
-  start + Array.fold_left ( + ) 0 (Array.sub counts 0 c.target)
-
-(* A layout's [x], [ct] and offsets: group [target]'s rows hold [c.rows], each
-   row's [x] then its [ct], and the others a value of their index. *)
-let group_operands c ((start, counts) as layout) =
-  let first = group_first c layout and m = counts.(c.target) in
+(* A layout's [x], [ct] and ids: group [target]'s [i]th row holds [c.rows]'s
+   [i]th, its [x] then its [ct], and the others a value of their index. *)
+let group_operands c (start, step, ids) =
   let value at i =
     let r = i.(0) and q = at + i.(1) in
-    if r >= first && r < first + m then
-      c.rows.(((r - first) * (c.gk + c.gj)) + q)
+    let d = r - start in
+    if d >= 0 && d mod step = 0 && d / step < c.m then
+      c.rows.(((d / step) * (c.gk + c.gj)) + q)
     else Float.of_int ((((r * 7) + q) mod 11) - 5) /. 4.
   in
   let x = Nx.init f32 [| c.gn; c.gk |] (value 0) in
   let ct = Nx.init f32 [| c.gn; c.gj |] (value c.gk) in
-  let offsets = Array.make (c.gg + 1) (Int64.of_int start) in
-  Array.iteri
-    (fun e n -> offsets.(e + 1) <- Int64.add offsets.(e) (Int64.of_int n))
-    counts;
-  (x, ct, Nx.create Nx.int64 [| c.gg + 1 |] offsets)
+  (x, ct, Nx.create Nx.int64 [| c.gn |] ids)
 
 let law_group_grad c =
-  let la, lb = c.layouts in
-  let m = (snd la).(c.target) in
+  let (sa, da, ia), (sb, db, ib) = c.layouts in
+  let m = c.m in
   let sizes = block_sizes c.gn c.gg in
-  let before (_, counts) = Array.sub counts 0 c.target in
+  let count ids e =
+    Array.fold_left (fun k x -> if x = e then k + 1 else k) 0 ids
+  in
+  let others ids =
+    List.init c.gg (fun e ->
+        if e = c.target then -1 else count ids (Int64.of_int e))
+  in
   cover "an empty group" (m = 0);
   cover "a group of one row" (m = 1);
   cover "a group of a block size's multiple, or one off it"
@@ -4760,9 +4827,10 @@ let law_group_grad c =
   cover "fewer than two indices a group" (c.gn < 2 * c.gg);
   cover "more indices than groups, one block a group"
     (List.mem (c.gn, c.gg, c.gk, c.gj) one_block_shapes);
-  cover "the group's rows moved" (group_first c la <> group_first c lb);
-  cover "an empty group before it" (Array.exists (( = ) 0) (before la));
-  cover "a one-row group before it" (Array.exists (( = ) 1) (before la));
+  cover "the group's rows moved" (sa <> sb || da <> db);
+  cover "the group's rows apart" (m > 1 && (da > 1 || db > 1));
+  cover "the other groups' counts differ" (others ia <> others ib);
+  let la, lb = c.layouts in
   let w = Nx.zeros f32 [| c.gg; c.gj; c.gk |] in
   let slice layout =
     let x, ct, o = group_operands c layout in

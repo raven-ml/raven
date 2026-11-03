@@ -134,7 +134,7 @@ val operands : 'r prim -> operands
 (** [operands op] is [op]'s operands in order: a map's or a reduction's loads;
     a scan's loads then its carry; a gather's [idx] then [x]; a scatter's
     [idx], [updates] then [into]; a contraction's [a], [b], then each it has of
-    [init], [a_scale], [b_scale] and [segments]' offsets; an assembly's pieces;
+    [init], [a_scale], [b_scale] and [segments]' ids; an assembly's pieces;
     a triangular solve's [a] then [b]; [Check]'s [ok] then its data; the one
     operand of the others. Every position below is one in this order. *)
 
@@ -182,14 +182,15 @@ val rule : 'r prim -> Route.rule
     loop of no load has the rule of one load of its shape: each device of its
     placement computes its window of the loop. A contraction's scale is read
     at its operand's windows where a cut keeps its blocks whole, and whole
-    elsewhere. [Rows]' axis of [a] and its offsets are read whole, and [b]'s
-    axis of its groups is reduced, a factor after the pairs that no axis of
-    [a] shares, whose fences the offsets hold ({!Partial}). A gather's axis
-    of [x] is reduced, each device gathering from its window of it, where
-    [x] has fewer than {!Nx_array.Layout.max_rank} axes, a [complex128] one
-    fewer, since its partials stack along a new axis; it is read whole
-    otherwise. Its positions are read at the results' windows. A
-    [Contracting] contraction is read whole along its contracting pairs. An
+    elsewhere. [Rows]' ids follow [a]'s segmented axis, and [b]'s axis of
+    its groups is reduced, a factor after the pairs that no axis of [a]
+    shares, a tile's groups numbered from its first ({!Partial}). A gather's
+    axis of [x] is reduced, each device gathering from its window of it,
+    where [x] has fewer than {!Nx_array.Layout.max_rank} axes, a
+    [complex128] one fewer, since its partials stack along a new axis; it is
+    read whole otherwise. Its positions are read at the results' windows. A
+    [Contracting] contraction is read whole along its contracting pairs, its
+    ids along their segmented axis. An
     assembly's axis becomes the result's where every piece's region covers
     all of it in order, and is read whole elsewhere. *)
 

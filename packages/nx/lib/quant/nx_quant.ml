@@ -639,153 +639,16 @@ let check_experts ws ids xs =
     (Array.sub xs 0 l)
 
 (* An expert product is one contraction whose rows are segmented by expert:
-   the ids, flattened, are sorted stably, [x]'s rows gathered in their order,
-   and each row multiplies the matrix of [b] its group names, so that an id
-   out of range falls in no group and its row has no products, [+0]. The
-   result's rows are gathered back to the ids' order. A weight split along
-   [n], the result's free columns, is computed by each device for its columns
-   over every row, in the whole's order. A weight cut along its experts is
-   computed by each device for the rows of its own experts, [+0] in the
-   others, and one cut along [k] by each device for every row over its
-   window of [k]: the devices' sums close by partials, or stay the devices'
-   terms with [sum]. *)
-
-(* The positions sorted by id, the permutation that sorts them, their count
-   and the ids' shape. *)
-type 'd routed = {
-  sorted : 'd Nx.int64_t;
-  order : 'd Nx.int64_t;
-  p : int;
-  lead : int array;
-}
-
-let route ids =
-  let lead = Nx.shape ids in
-  let p = Array.fold_left ( * ) 1 lead in
-  let sorted, order = Nx.sort (Nx.reshape [| p |] ids) in
-  { sorted; order; p; lead }
-
-(* Group [g] of the experts [[| e; n; k |]] is expert [g]'s rows: the ids
-   below [g] counted. *)
-let by_expert r e =
-  let at = Nx.beside r.sorted in
-  Nx.searchsorted ~side:`Left r.sorted (Nx.arange_at at Nx.int64 0 (e + 1) 1)
-
-(* The experts the sorted ids name, in range, each once: [min p e] slots, slot
-   [j] the [j]-th distinct id, and [e], which gathers zero bytes, where fewer
-   ids are distinct. Group [j] is slot [j]'s rows: offset [j] is the position
-   of the [j]-th distinct id's first row, or that past the ids below [e]
-   where there is none, so that the ids out of range fall in no group. The
-   slots' count, from the shapes alone, and an id's slot, its rank among the
-   distinct ids, do not depend on the other ids. *)
-let slots r e =
-  let s = min r.p e in
-  let sorted = r.sorted in
-  let previous =
-    Nx.slice [ Nx.R (0, r.p) ] (Nx.pad [| (1, 0) |] (-1L) sorted)
-  in
-  let first =
-    Nx.logical_and
-      (Nx.not_equal sorted previous)
-      (Nx.logical_and (Nx.greater_equal_s sorted 0L)
-         (Nx.less_s sorted (Int64.of_int e)))
-  in
-  let rank = Nx.cumsum (Nx.cast Nx.int64 first) in
-  let here = Nx.beside rank in
-  let at =
-    Nx.searchsorted ~side:`Left rank (Nx.arange_at here Nx.int64 1 (s + 2) 1)
-  in
-  let past = Nx.scalar_like sorted (Int64.of_int e) in
-  let below = Nx.searchsorted ~side:`Left sorted past in
-  let offsets = Nx.minimum at below in
-  let starts = Nx.slice [ Nx.R (0, s) ] at in
-  let ids =
-    Nx.where
-      (Nx.less_s starts (Int64.of_int r.p))
-      (Nx.take starts sorted) past
-  in
-  (ids, offsets)
-
-(* Whether flattening [x]'s leading axes [xs] keeps where they lie. A
-   reshape drops axes of one index and keeps a cut of the axis the others
-   merge into, the first of more than one index, where its windows have one
-   extent, so each holds whole rows of the merged axis: [[| 4; 3; k |]] cut
-   along its first axis over two devices, not over three, nor along its
-   second. *)
-let flat_keeps x xs =
-  let pieces = Nx.Prim.pieces (Nx.placement x) (Nx.shape x) in
-  let counts i =
-    Array.map (fun (_, (w : Nx_array.Move.range array)) -> w.(i).count) pieces
-  in
-  let one_extent c = Array.for_all (Int.equal c.(0)) c in
-  let axes = List.init (Array.length xs) Fun.id in
-  match List.filter (fun i -> xs.(i) > 1) axes with
-  | [] | [ _ ] -> true
-  | first :: rest ->
-      List.for_all (fun i -> Array.for_all (Int.equal xs.(i)) (counts i)) rest
-      && one_extent (counts first)
-
-(* [x]'s rows, [[| p; k |]], at the flat positions [source], [[| p |]], over
-   its leading axes [xs]. Where flattening those axes keeps where they lie,
-   one gather from [x] flattened. Else a gather along each leading axis of
-   more than one index reads [x] where it lies, and closes by partials
-   where it reads a cut axis: first along the longest, holding [p] rows
-   times the extents of the others. *)
-let rows_at x xs source =
-  let l = Array.length xs and k = Nx.dim (-1) x in
-  let m = Array.fold_left ( * ) 1 xs and p = Nx.dim 0 source in
-  if flat_keeps x xs then Nx.take ~axis:0 source (Nx.reshape [| m; k |] x)
-  else
-    let at = Array.of_list (Nx.unravel_index source xs) in
-    let longest = ref 0 in
-    Array.iteri (fun i d -> if d > xs.(!longest) then longest := i) xs;
-    let a = !longest in
-    let one = Array.init (l + 1) (fun i -> if i = a then p else 1) in
-    let rows = ref (Nx.take ~axis:a at.(a) x) in
-    for i = 0 to l - 1 do
-      if i <> a && xs.(i) > 1 then
-        rows := Nx.take_along_axis ~axis:i (Nx.reshape one at.(i)) !rows
-    done;
-    Nx.reshape [| p; k |] !rows
-
-(* [segmented r x b scale offsets] is the product of [x]'s rows with the
-   matrices [b], [[| g; n; k |]], scaled by [scale], cut by [offsets], summed
-   at float64 for a float64 [x], else at float32, and rounded once to [x]'s
-   dtype. *)
-let segmented (type b) ?(sum = false) r (x : (float, b, _) Nx.t) b scale
-    offsets =
-  let ws = Nx.shape b in
-  let n = ws.(1) in
-  (* Each position's row of [x], whose leading axes broadcast to the ids'. *)
-  let xs = Array.sub (Nx.shape x) 0 (Array.length r.lead) in
-  let m = Array.fold_left ( * ) 1 xs in
-  let here = Nx.beside x in
-  let positions = Nx.reshape xs (Nx.arange_at here Nx.int64 0 m 1) in
-  let source = Nx.reshape [| r.p |] (Nx.broadcast_to r.lead positions) in
-  let rows = rows_at x xs (Nx.take r.order source) in
-  let acc : Nx.Dtype.any =
-    if wide x then Any Nx.float64 else Any Nx.float32
-  in
-  let batch = Iarray.of_list [] and contracting = Iarray.of_list [ (1, 2) ] in
-  let y =
-    Nx.Prim.eval ~by:"Nx_quant.apply_experts"
-      (Contract
-         {
-           batch;
-           contracting;
-           acc;
-           out = Nx.dtype x;
-           a = rows;
-           b;
-           init = None;
-           a_scale = None;
-           b_scale = scale;
-           segments = Some (Rows { offsets; a_axis = 0; b_axis = 0 });
-           sum;
-         })
-  in
-  let back = Nx.argsort r.order in
-  Nx.reshape (Array.append r.lead [| n |]) (Nx.take ~axis:0 back y)
+   each position's row of [x] multiplies the matrix of the weight its id
+   names, an id out of range naming none, so that its row has no products,
+   [+0]. The kernels group the rows. A weight split along [n], the result's
+   free columns, is computed by each device for its columns over every row,
+   in the whole's order. A weight cut along its experts is computed by each
+   device for the rows of its own experts, [+0] in the others, and one cut
+   along [k] by each device for every row over its window of [k]: the
+   devices' sums close by partials, or stay the devices' terms with [sum].
+   Positions cut across devices, with [x]'s rows, are computed by each device
+   for its own. *)
 
 (* Whether a part of [w] is cut along its first axis, a stack's experts: its
    placement is not that axis made whole. *)
@@ -801,25 +664,81 @@ let experts_cut w =
   | Q6_K { blocks } ->
       cut blocks
 
-(* An MXFP4 weight summed at float32 enters as its codes read as float4 values
-   and its scales as their blocks' exponents, each element exact at float32,
-   read where it lies, a group per expert. Any other weight, and one summed at
-   float64, where a value past float32's range would be finite, enters as its
-   values at float32: cut along its experts, all of them, each device
-   decoding its own, a group per expert; else the experts the ids name alone,
-   a group per slot. A segmented contraction's association does not depend
-   on its offsets (Nx_kernel.S.contract), so a row's bits depend on the
-   shapes, its row and its expert. *)
-let experts ?sum ~ids w x =
-  let r = route ids and e = (shape w).(0) in
+(* Whether [t] lies whole on each of its devices. *)
+let whole t =
+  let s = Nx.shape t in
+  Array.for_all
+    (fun (_, (w : Nx_array.Move.range array)) ->
+      Array.for_all2 (fun (r : Nx_array.Move.range) d -> r.count = d) w s)
+    (Nx.Prim.pieces (Nx.placement t) s)
+
+(* Whether {!stored} decodes [w] at float32 before the product. *)
+let decoded ~wide w =
   match w with
-  | Mxfp4 { codes; scales } when not (wide x) ->
-      let b = Nx.reshape (shape w) (Nx.bitcast Nx.float4_e2m1fn codes) in
-      segmented ?sum r x b (Some (Nx.Prim.Exponent scales)) (by_expert r e)
-  | _ when experts_cut w -> segmented ?sum r x (values w) None (by_expert r e)
-  | _ ->
-      let named, offsets = slots r e in
-      segmented ?sum r x (values (take ~axis:0 named w)) None offsets
+  | Mxfp4 _ -> wide
+  | Q8_0 _ | Q6_K _ -> false
+  | Mxfp4_blocks _ | Q4_K _ -> true
+
+(* The weight enters as {!apply} reads it ({!stored}), the experts the groups
+   of the rows segmented by [ids]. One {!stored} decodes at float32 first
+   holds, for fewer positions [p] than experts, the matrix each position's id
+   names, [p] of them, position [i] its own group, so that a decode step
+   decodes the experts it reads alone, where the ids lie whole on each
+   device; cut along its experts, every device decodes its own. A segmented
+   contraction's association does not depend on its ids
+   (Nx_kernel.S.contract), so a row's bits depend on the shapes, its row and
+   its expert. *)
+let experts ?(sum = false) ~ids w x =
+  let wide = wide x in
+  let lead = Nx.shape ids in
+  let p = Array.fold_left ( * ) 1 lead in
+  let ids = Nx.reshape [| p |] ids in
+  let e = (shape w).(0) in
+  let w, ids =
+    if decoded ~wide w && 0 < p && p < e && whole ids && not (experts_cut w)
+    then
+      let inside =
+        Nx.logical_and (Nx.greater_equal_s ids 0L)
+          (Nx.less_s ids (Int64.of_int e))
+      in
+      let at = Nx.where inside ids (Nx.zeros_like ids) in
+      let own = Nx.arange_at (Nx.beside ids) Nx.int64 0 p 1 in
+      (take ~axis:0 at w, Nx.where inside own (Nx.full_like ids (-1L)))
+    else (w, ids)
+  in
+  let ws = shape w in
+  let (Stored { elements; inner; scales; blocks }) = stored ~wide ws w in
+  let g = ws.(0) and n = ws.(1) in
+  let rows = Nx.Prim.position_rows lead x in
+  let a = Nx.reshape (Array.of_list (p :: inner)) rows in
+  let b = Nx.reshape (Array.of_list (g :: n :: inner)) elements in
+  let s = Array.of_list (g :: n :: blocks) in
+  let b_scale : _ Nx.Prim.scale option =
+    match scales with
+    | Some (Exponent c) -> Some (Exponent (Nx.reshape s c))
+    | Some (Value v) -> Some (Value (Nx.reshape s v))
+    | None -> None
+  in
+  let q = List.length inner in
+  let contracting = Iarray.of_list (List.init q (fun i -> (1 + i, 2 + i))) in
+  let y =
+    Nx.Prim.eval ~by:"Nx_quant.apply_experts"
+      (Contract
+         {
+           batch = Iarray.of_list [];
+           contracting;
+           acc = (if wide then Nx.Dtype.Any Nx.float64 else Any Nx.float32);
+           out = Nx.dtype x;
+           a;
+           b;
+           init = None;
+           a_scale = None;
+           b_scale;
+           segments = Some (Rows { ids; a_axis = 0; b_axis = 0 });
+           sum;
+         })
+  in
+  Nx.reshape (Array.append lead [| n |]) y
 
 let apply_experts ?sum ~ids w x =
   check_experts (shape w) (Nx.shape ids) (Nx.shape x);

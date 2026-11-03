@@ -1359,17 +1359,25 @@ let decodes =
      in
      (f, f64, e, n, ids))
 
-(* A product decodes [min p e] matrices at float32 for [p] positions and [e]
-   experts, whatever the ids; an MXFP4 weight summed at float32 decodes
-   none. The
-   positions of [2 n] rows less those of [n] are the decoding's alone. *)
+(* A product reads the stack of [e] experts as {!Nx_quant.apply} reads a
+   weight, whatever the ids: an MXFP4 weight summed at float32 and a Q8_0
+   one where they lie, decoding none; a Q6_K one by its unpacked quants,
+   fewer positions than decoding the stack; any other decoded: for fewer
+   positions [p] than experts, the [p] matrices the ids name, else all [e],
+   the ids whole on the one device.
+   The positions of [2 n] rows less those of [n] are the decoding's
+   alone. *)
 let decodes_law (f, f64, e, n, ids) =
   let p = Array.length ids in
   let k = block_values f in
-  let in_place = f = Mxfp4 && not f64 in
-  cover "an MXFP4 weight read where it lies" in_place;
-  cover "fewer positions than experts" ((not in_place) && p < e);
-  cover "more positions than experts" ((not in_place) && p > e);
+  let in_place = (f = Mxfp4 && not f64) || f = Q8_0 in
+  cover "an MXFP4 weight read where it lies" (f = Mxfp4 && not f64);
+  cover "a Q8_0 weight read where it lies" (f = Q8_0);
+  cover "a Q6_K weight unpacked" (f = Q6_K);
+  cover "a decoded weight, fewer positions than experts"
+    ((not in_place) && f <> Q6_K && p < e);
+  cover "a decoded weight, more positions than experts"
+    ((not in_place) && f <> Q6_K && p > e);
   let named = List.sort_uniq compare (Array.to_list ids) in
   cover "a repeated id" (List.length named < p);
   let on t = Nx.place Counted_one.on t in
@@ -1394,9 +1402,13 @@ let decodes_law (f, f64, e, n, ids) =
     C.positions ()
   in
   let per = one (2 * n) - one n and got = counted (2 * n) - counted n in
-  let want = if in_place then 0 else min p e in
-  equal ~msg:"matrices decoded" (pair int int) (want, 0)
-    (got / per, got mod per)
+  if in_place then equal ~msg:"the positions of n rows" int 0 got
+  else if f = Q6_K then
+    less ~msg:"the positions of n rows" int ~than:(e * per) got
+  else
+    equal ~msg:"matrices decoded" (pair int int)
+      ((if 0 < p && p < e then p else e), 0)
+      (got / per, got mod per)
 
 (* Experts *)
 
@@ -1508,6 +1520,11 @@ let experts_law (_, w, ids, X { at; x }) =
   cover "ids at both bounds" (e >= 2 && names 0 && names (e - 1));
   cover "one position" (Array.length id = 1);
   cover "no position" (Array.length id = 0);
+  cover "every id a distinct expert"
+    (Array.length id >= 2
+    && Array.for_all inside id
+    && List.length (List.sort_uniq compare (Array.to_list id))
+       = Array.length id);
   cover "one row for every position" (Array.length id >= 2 && Nx.dim 0 x = 1);
   let y = Nx_quant.apply_experts ~ids w x in
   equal ~msg:"dtype" string (D.name (Nx.dtype x)) (D.name (Nx.dtype y));
@@ -1605,6 +1622,43 @@ let test_more_named () =
   in
   equal ~msg:"every row but the fifth" (array int64) (kept 4) (kept 5)
 
+(* 150 positions over three experts, expert 0 named by more than 64 and
+   expert 2 by none, positions out of range among them, rows holding NaN,
+   infinities and [-0.]: within the bound, zeros out of range, at every
+   format and the float dtypes of a model's activations. *)
+let test_crowded (f, F d) =
+  let w = random_weight ~format:f [| 3; 4; 2 * block_values f |] in
+  let p = 150 and _, _, k = dims w in
+  let ids =
+    Nx.create Nx.int64 [| p |]
+      (Array.init p (fun i ->
+           if i mod 13 = 0 then -1L
+           else if i mod 17 = 0 then 7L
+           else if i mod 3 = 0 then 1L
+           else 0L))
+  in
+  let xs = Nx.to_array (random_floats [| p; k |]) in
+  let special = [| Float.nan; Float.infinity; Float.neg_infinity; -0. |] in
+  let x =
+    Nx.init Nx.float32 [| p; k |] (fun i ->
+        if i.(1) = 0 && i.(0) mod 29 = 5 then special.(i.(0) / 29 mod 4)
+        else xs.((i.(0) * k) + i.(1)))
+  in
+  let x = Nx.cast d.dtype x in
+  let y = Nx_quant.apply_experts ~ids w x in
+  routed_rows ~at:(F d) w ids x (flat64 y)
+
+let crowded =
+  List.concat_map
+    (fun f ->
+      List.filter_map
+        (fun (F d as fd) ->
+          match D.name d.dtype with
+          | "float32" | "bfloat16" | "float16" | "float64" -> Some (f, fd)
+          | _ -> None)
+        fdts)
+    formats
+
 let expert_products =
   group "experts"
     [
@@ -1614,6 +1668,12 @@ let expert_products =
         rerouted_law;
       test "a row keeps its bits when more positions name its expert"
         test_more_named;
+      cases
+        "an expert of more than 64 positions beside an expert of none is \
+         within the bound, at every format and float dtype"
+        ~id:(fun (f, F d) ->
+          Format.asprintf "%a, %s" pp_format f (D.name d.dtype))
+        crowded test_crowded;
       prop ~count:300
         "apply_experts is the routed product within the error of a float32 \
          sum at every format and dtype, and zeros for ids out of range"
@@ -1686,8 +1746,10 @@ let cut_experts =
    [scales_whole], and [ids] and [x] where [routed] puts them: its values at
    float64, its bits, where it lies and the placement [c] gives with every
    axis whole. *)
-let experts_at ?(routed = On_each) ?(scales_whole = false) c w ids x =
+let experts_at ?(routed = On_each) ?(scales_whole = false) ?(w_whole = false)
+    c w ids x =
   let at (module S : Nx.Devices) p =
+    let p = if w_whole then S.on else p in
     let rows t =
       Nx.place (if Nx.ndim t > 0 then S.split ~axis:0 else S.on) t
     in
@@ -1720,10 +1782,12 @@ let experts_at ?(routed = On_each) ?(scales_whole = false) c w ids x =
 (* A weight at any placement, with ids and input whole, split along their
    first axis, or the input cut along [k] as the weight is, gives rows within
    their bound, the same on every run, where each operation reads its
-   operands where they lie. Routing the positions sorts the ids, which reads
-   them whole, and gathers the input's rows where they lie: ids split with
-   elements raise. Cut along its experts, a weight gives the bits it gives
-   whole. Cut along its experts or along [k], its product lies whole on every
+   operands where they lie. Ids and input split along their positions give
+   each device its own rows, with the bits they have whole where the weight
+   is not cut along [k], unless the weight is cut along its experts: the
+   ids are then read whole, which raises. Cut along its experts, a weight
+   gives the bits it gives whole. Cut along its experts or along [k], its
+   product lies whole on every
    device. Cut along [k] over [t] devices, a weight of [b] blocks computes by
    partials where [t] divides [b], and an MXFP4 weight read where it lies, its
    scales whole on every device, where [t] divides its [k / 2] bytes; any
@@ -1753,7 +1817,6 @@ let cut_experts_law (c, routed, scales_whole, (_, w, ids, X { at; x })) =
   cover "a weight cut along n over a mesh" (c = Mesh_n);
   cover "a weight cut along n beside ids and input whole"
     (along_n && not split);
-  let numel t = Array.fold_left ( * ) 1 (Nx.shape t) in
   let values = Array.fold_left ( * ) 1 (Nx_quant.shape w) > 0 in
   let wide = match Nx.dtype x with D.Float64 -> true | _ -> false in
   let in_place = mxfp4 && not wide in
@@ -1762,8 +1825,7 @@ let cut_experts_law (c, routed, scales_whole, (_, w, ids, X { at; x })) =
      lies where [t] divides [b], and an MXFP4 one whose scales lie whole,
      read in place or of one block, where [t] divides its [k / 2] bytes of
      codes. Any other weight with values splits a block where the product
-     reads it, once in place, as the [min p e] matrices it gathers decoded,
-     none for no position, and raises. *)
+     reads it, as {!Nx_quant.apply} does, and raises. *)
   let along_k, t =
     match c with
     | Split { axis = 2; over } -> (true, over)
@@ -1773,8 +1835,7 @@ let cut_experts_law (c, routed, scales_whole, (_, w, ids, X { at; x })) =
     blocks mod t = 0
     || (mxfp4 && scales_whole && k / 2 mod t = 0 && (in_place || blocks = 1))
   in
-  let summed = in_place || numel ids > 0 in
-  let raises = along_k && values && summed && not kept in
+  let raises = along_k && values && not kept in
   cover "a weight cut along k whose tiles divide the blocks"
     (along_k && values && blocks mod t = 0);
   cover "an MXFP4 weight cut along k at its blocks"
@@ -1787,23 +1848,59 @@ let cut_experts_law (c, routed, scales_whole, (_, w, ids, X { at; x })) =
   cover "a weight cut along k beside an input cut alike"
     (along_k && values && kept && routed = Cut_along_k);
   cover "a weight cut along k that raises" raises;
-  let routing_whole = split && numel ids > 0 in
   let run () = experts_at ~routed ~scales_whole c w ids x in
-  let computes (got, b, lies, uncut) =
+  let computes run (got, b, lies, uncut) =
     routed_rows ~at w ids x got;
     let _, b', _, _ = run () in
     equal ~msg:"a second run" (array int64) b b';
-    if along_experts || along_k then
+    if (along_experts || along_k) && not split then
       equal ~msg:"where the result lies" string uncut lies;
-    if along_experts then
+    if along_experts || (split && not along_k) then
       equal ~msg:"the whole weight's bits" (array int64)
         (product_bits (Nx_quant.apply_experts ~ids w x))
         b
   in
-  (* The ids are routed before the weight is read. *)
-  if routing_whole then read_whole ~name:"ids" run
+  (* The ids and the input split along their positions beside a weight
+     whole on each device: each device computes its own rows, the whole's
+     bits. Ids of several axes, or an input row shared by every position,
+     cut into windows of unequal extents do not flatten where they lie and
+     may be read whole, which raises naming the operand, as may a weight cut
+     over the devices that split the positions, which meet in no tile. *)
+  let over = match c with Split { over; _ } -> over | Mesh_n -> 4 in
+  let flat =
+    (Nx.ndim ids = 1 || Nx.dim 0 ids mod over = 0)
+    && (Nx.dim 0 x = Nx.dim 0 ids || Nx.dim 0 x mod over = 0)
+  in
+  let some = Array.fold_left ( * ) 1 (Nx.shape ids) > 0 in
+  cover "ids of several axes split" (split && Nx.ndim ids > 1 && flat);
+  cover "ids and input split, flattened where they lie" (split && some && flat);
+  let refused = function
+    | Invalid_argument m as e ->
+        Exn.invalid_arg ~sub:" lies at " e
+        && List.exists
+             (fun n -> String.ends_with ~suffix:("(Placement.on s) " ^ n) m)
+             [ "ids"; "x"; "w" ]
+    | _ -> false
+  in
+  let tolerant run =
+    match run () with
+    | got -> computes run got
+    | exception e when refused e -> ()
+  in
+  if split then begin
+    let whole () = experts_at ~routed ~w_whole:true c w ids x in
+    if flat then begin
+      let got, b, _, _ = whole () in
+      routed_rows ~at w ids x got;
+      equal ~msg:"the whole's bits, the weight whole" (array int64)
+        (product_bits (Nx_quant.apply_experts ~ids w x))
+        b
+    end
+    else tolerant whole;
+    if not raises then tolerant run
+  end
   else if raises then read_whole run
-  else computes (run ())
+  else computes run (run ())
 
 (* [apply_experts] of {!experts_of}'s case of 3072 inputs, 96 blocks of 32
    values and 12 of 256, with its weight at [p], the ids whole on each device

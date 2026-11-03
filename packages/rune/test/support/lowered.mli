@@ -18,3 +18,6 @@ val work : (unit -> ('v, 's, 'd) Nx.t) -> int * int
     ({!Tolk.Realize.estimate_uop}), summed over its calls.
 
     Raises [Invalid_argument] if the schedule runs calls in a loop. *)
+
+val kernels : (unit -> ('v, 's, 'd) Nx.t) -> int
+(** [kernels f] is the number of kernels of {!run}'s schedule for [f]. *)

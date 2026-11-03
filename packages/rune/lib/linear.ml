@@ -733,7 +733,7 @@ let assemble_rule (type v s) env (dtype : (v, s) D.t) shape pieces (V w) =
    [y[B, I, J] = Σ_K a[B, I, K] b[B, K, J]] is linear in each operand: the
    cotangent of one is the contraction of the other with [y]'s, its axes moved
    back to the operand's. A segmented contraction's transposes are segmented by
-   the same offsets: [a]'s of [Rows] by rows, [b]'s by contracting each group's
+   the same ids: [a]'s of [Rows] by rows, [b]'s by contracting each group's
    rows, and each of [Contracting]'s by rows of the groups' axis. *)
 
 (* [y] whose axis [r] is the operand's axis [order.(r)], in the operand's
@@ -820,10 +820,10 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
   let ct_batch i = lead + i and ct_a m = lead + nb + m in
   let ct_b m = lead + nb + na + m in
   let batch_a = List.map fst batch and batch_b = List.map snd batch in
-  let offsets =
+  let ids =
     match segments with
-    | Some (Nx_kernel.Rows r) -> [ V (env.const r.offsets) ]
-    | Some (Contracting r) -> [ V (env.const r.offsets) ]
+    | Some (Nx_kernel.Rows r) -> [ V (env.const r.ids) ]
+    | Some (Contracting r) -> [ V (env.const r.ids) ]
     | None -> []
   in
   if env.lin a && env.lin b then
@@ -831,12 +831,12 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
   let other = if env.lin a then V (env.const b) else V (env.const a) in
   match
     reference
-      ((w :: other :: offsets) @ scale_values env a_scale
+      ((w :: other :: ids) @ scale_values env a_scale
      @ scale_values env b_scale)
   with
   | V r ->
       let by = env.name in
-      let offsets o = rebrand r (env.const o) in
+      let ids o = rebrand r (env.const o) in
       let contract ~batch ~contracting ~segments x x_scale y y_scale out =
         Prim.eval ~by
           (Contract
@@ -892,7 +892,7 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
               Some
                 (Nx_kernel.Rows
                    {
-                     offsets = offsets s.offsets;
+                     ids = ids s.ids;
                      a_axis = ct_a (position s.a_axis a_free);
                      b_axis = s.b_axis;
                    })
@@ -908,7 +908,7 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
               Some
                 (Nx_kernel.Rows
                    {
-                     offsets = offsets s.offsets;
+                     ids = ids s.ids;
                      a_axis = snd (List.nth con s.pair);
                      b_axis = 0;
                    })
@@ -933,7 +933,8 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
               ( Some
                   (Nx_kernel.Contracting
                      {
-                       offsets = offsets s.offsets;
+                       ids = ids s.ids;
+                       groups = Nx.dim s.b_axis b;
                        pair = position s.a_axis a_free;
                      }),
                 [ s.b_axis ] )
@@ -941,7 +942,7 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
               ( Some
                   (Nx_kernel.Rows
                      {
-                       offsets = offsets s.offsets;
+                       ids = ids s.ids;
                        a_axis = fst (List.nth con s.pair);
                        b_axis = 0;
                      }),

@@ -33,9 +33,8 @@ let position p k =
 
 (* The window of operand [i], of [shape], that a device reads by [rule]: the
    window its window [w] of the results reads ({!Route.window}), but [tile f]
-   along an axis of the folded factor [f]. An axis of blocks of [f], or of
-   its fences, is whole: its reader takes the blocks a tile spans, or the
-   fences that bound it. *)
+   along an axis of the folded factor [f]. An axis of blocks of [f] is
+   whole: its reader takes the blocks a tile spans. *)
 let reads rule i shape (w : M.range array) tile =
   match (rule : Route.rule) with
   | Elementwise -> w
@@ -167,14 +166,6 @@ let slice (type v s d) eng ~by axis start count (x : (v, s, d) Value.t) :
     r.(axis) <- { M.start; count; step = 1 };
     on eng ~by x (Value.Move (Slice (Iarray.of_array r), x))
   end
-
-(* Elements [start] down to [start - count + 1] of [x] along [axis], in that
-   order. *)
-let backwards (type v s d) eng ~by axis start count (x : (v, s, d) Value.t) :
-    (v, s, d) Value.t =
-  let r = Array.map Route.full (Prim.shape x) in
-  r.(axis) <- { M.start; count; step = -1 };
-  on eng ~by x (Value.Move (Slice (Iarray.of_array r), x))
 
 (* [x] of [shape], its axes of extent 1 stretched. *)
 let spread (type v s d) eng ~by shape (x : (v, s, d) Value.t) :
@@ -1233,48 +1224,17 @@ let scan (type d a) eng ~by (route : unit Route.t) rule layout axis prog
 
 (* Contractions *)
 
-(* The fences of a device's tile [q] of [Rows]' groups, from the offsets
-   [o], [g + 1] along their last axis, in the window [w] the device [k]
-   holds whole along it, at [here]: fences [q.start] to [q.start + q.count]
-   of [F e], the least of [max o.(0) o.(i)] for [i] from [e] to [g].
-   {!Nx_kernel.type-segments} puts index [r] in group [e] where
-   [max o.(0) o.(e) <= r] and [r] is below each of [o.(e + 1)] to
-   [o.(g)]: that is [F e <= r < F (e + 1)], so the tile's groups are the
-   whole's, whatever the offsets, and offsets that do not decrease are
-   their own [F]. One scan of [Min] over [o.(g)] down to [o.(q.start)]
-   gives them. *)
-let fences (type d) eng ~by k (here : d Devices.placement) w (q : M.range)
-    (o : d Value.index) : d Value.index =
-  let last = Array.length w - 1 in
-  let tail = (Prim.shape o).(last) - q.start in
-  let along r =
-    let w = Array.copy w in
-    w.(last) <- r;
-    view eng ~by k w o
-  in
-  let down =
-    backwards eng ~by last (tail - 1) tail
-      (along { M.start = q.start; count = tail; step = 1 })
-  in
-  let first =
-    spread eng ~by (Prim.shape down)
-      (along { M.start = 0; count = 1; step = 1 })
-  in
-  let ins : D.any iarray = [| D.Any D.Int64; D.Any D.Int64 |] in
-  let term = E.maximum (E.input 0 D.Int64) (E.input 1 D.Int64) in
-  let least =
-    at eng ~by here
-      (Value.Scan
-         {
-           layout = L.contiguous (Iarray.of_array (Prim.shape down));
-           axis = last;
-           prog = P.of_exprs ~ins [| E.any term |];
-           reduction = Monoid (Min, 0, D.Int64);
-           loads = [| Plain down; Plain first |];
-           carry = None;
-         })
-  in
-  backwards eng ~by last (tail - 1) (q.count + 1) least
+(* The ids of a device's tile of [Rows]' groups from [start], its window
+   [ids] of the whole's: group [e] of the tile is group [start + e] of the
+   whole, so its ids are the whole's less [start], an id outside the tile
+   then outside [\[0, count)] ({!Nx_kernel.type-segments}). *)
+let local_ids (type d) eng ~by (here : d Devices.placement) start
+    (ids : d Value.index) : d Value.index =
+  if start = 0 then ids
+  else
+    let s = E.const D.Int64 (Int64.of_int start) in
+    let e = E.any E.(input 0 D.Int64 - s) in
+    Prim.expect D.Int64 (List.hd (map eng ~by here [ Value.Any ids ] [ e ]))
 
 (* A contraction's partials closed where no sum is asked for: each device's
    [partial j None] in the accumulator [ad], added in C order of the tiles'
@@ -1374,18 +1334,18 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
       | Some (Rows { b_axis; _ }) -> [| run b b_axis b_scale |]
       | Some (Contracting _) | None -> [||])
   in
-  (* The groups of a piece [r] on device [j]: [Rows] bounded by the fences
-     of its range of them. *)
+  (* The groups of a piece [r] on device [j]: [Rows]' ids of its rows,
+     numbered from its range of the groups. *)
   let groups j r =
     match segments with
     | None -> None
     | Some (Rows g) ->
         let i = b_at + Bool.to_int (Option.is_some b_scale) in
-        let o = g.offsets in
-        let w = reads rule i (Prim.shape o) (resw j) (Array.get r) in
+        let w = reads rule i (Prim.shape g.ids) (resw j) (Array.get r) in
         let q = r.(Array.length pairs) in
-        let offsets = fences eng ~by ks.(j) (here j) w q o in
-        Some (Nx_kernel.Rows { g with offsets })
+        let ids = view eng ~by ks.(j) w g.ids in
+        let ids = local_ids eng ~by (here j) q.start ids in
+        Some (Nx_kernel.Rows { g with ids })
     | Some (Contracting _) ->
         invalid_arg "Partial.contract: groups of a contracting pair"
   in

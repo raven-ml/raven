@@ -6,7 +6,7 @@
     as the axes it reduces, are its {e attributes}. A kernel takes its
     attributes, then its destinations, then its operands, but for a scan's
     optional carry, which comes first, and a segmented contraction's
-    offsets, which come with its segments.
+    ids, which come with its segments.
 
     A {e kernel library} is a module of kernels that compute on the memory
     of some devices. A {e case} is an operation at some dtypes, attributes
@@ -283,27 +283,23 @@ type scale =
     at an index is the array's times its scale block's scale. *)
 type operand = { array : Nx_array.any; scale : scale option }
 
-(** The type for a contraction cut into groups by [offsets]: an [int64]
-    array for {!S.contract}, its shape for {!Shape.contract}. [offsets] has
-    the batch extents, then [g + 1] entries. At each batch index, with [o]
-    its entries, group [e < g] holds the segmented axis's indices [r] with
-    [max o.(0) o.(e) <= r] and [r] below each of [o.(e + 1)] to [o.(g)], so
-    that no two groups share an index, whatever the offsets; the other
-    indices are in no group. Offsets may take any values, decreasing,
-    negative or past the axis. *)
+(** The type for a contraction cut into groups by [ids], an [int64] array for
+    {!S.contract} (its shape for {!Shape.contract}) of the batch extents then
+    the segmented axis's. At each batch index, the segmented axis's index [r]
+    is in group [ids.{r}] where that lies in [\[0, g)], and in no group
+    otherwise. *)
 type 'i segments =
-  | Rows of { offsets : 'i; a_axis : int; b_axis : int }
-      (** [a]'s free axis [a_axis] is segmented; [b]'s free axis [b_axis] has
-          extent [g] and leaves the result. Index [r] along [a_axis]
-          multiplies [b]'s group [e] of [r], its index [e] along [b_axis].
-          An output whose index along [a_axis] is in no group has no
-          products. *)
-  | Contracting of { offsets : 'i; pair : int }
-      (** Contracting pair [pair] is segmented on both sides. The result
-          gains a leading axis of [g], slice [e] summing group [e]'s indices
-          alone. Its products are numbered from its group's first, and the
-          pair's extent is the group's count; an empty group has no
-          products. *)
+  | Rows of { ids : 'i; a_axis : int; b_axis : int }
+      (** [a]'s free axis [a_axis] is segmented; [b]'s free axis [b_axis], of
+          extent [g], leaves the result. Index [r] along [a_axis] multiplies
+          [b]'s index [ids.{r}] along [b_axis]; an output whose index along
+          [a_axis] is in no group has no products. *)
+  | Contracting of { ids : 'i; groups : int; pair : int }
+      (** Contracting pair [pair] is segmented on both sides into [groups]
+          groups, [g]. The result gains a leading axis of [groups], slice [e]
+          summing group [e]'s indices alone, its products numbered by their
+          order among the group's indices from [0], its extent the group's
+          count; a group of no index has no products. *)
 
 (** {1:fft Fourier transforms} *)
 
@@ -471,9 +467,9 @@ module Shape : sig
       order. [Rows] drops [b]'s [b_axis]; [Contracting] puts the groups'
       axis first. It is an [Error] unless each pair names an axis of [a] and
       an axis of [b] of one extent, no axis is in two pairs, each scale fits
-      its operand ({!type-scale}) and the segments' offsets have the shape
-      {!type-segments} states, with [a_axis] and [b_axis] free axes and
-      [pair] a contracting pair. *)
+      its operand ({!type-scale}) and the segments' ids have the shape
+      {!type-segments} states, with [a_axis] and [b_axis] free axes, [pair]
+      a contracting pair and [groups] at least [0]. *)
 
   (** {1:fft Fourier transforms} *)
 
@@ -737,7 +733,7 @@ module type S = sig
       A float or complex contraction's association, which fixes its bits,
       is its library's choice, from the dtypes, the device model and the
       call's extents, as a blocking chosen by the problem's size. A
-      segmented call's offsets never enter it, so an output's bits do not
+      segmented call's ids never enter it, so an output's bits do not
       depend on which groups the other indices are in. A box of [dst]'s
       indices computed alone, or a part of the contracted extent, keeps the
       bound {!section-bounds} states; its bits may differ from the whole

@@ -3983,6 +3983,33 @@ val map_segments :
     as raised, and the operations [f] makes are named by the functions it
     calls. *)
 
+val matmul_segments :
+  ?sum:bool -> 'd int64_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [matmul_segments ids x w] is each position's row of [x] times the matrix
+    of [w] its id names: at each position [p] of [ids], [p]'s row of [x]
+    times [w]'s matrix [ids.{p}], or zeros where [ids.{p}] is not in
+    [\[0, e)], whatever that row holds. [w] is [[| e; k; n |]], each matrix
+    laid out as {!matmul}'s [b] (a packed weight, rows of [k] values, is
+    [Nx_quant.apply_experts]' [[| e; n; k |]]), [ids] [[| s… |]] and [x]
+    [[| s'…; k |]], [s'…] broadcasting to [s…]; the result is [[| s…; n |]].
+    It accumulates as {!matmul} does, in one contraction whose rows are
+    grouped by id, and a row's bits are a function of the shapes, the
+    placements, its row and its matrix: they do not depend on the other
+    positions' ids. [ids] and [x]'s rows may be cut along the positions
+    together, into windows of one extent, each device computing its own;
+    [w] cut along its matrices
+    gives each device's rows of its own matrices, which close by partials,
+    or stay the devices' terms with [~sum:true] ({!section-contraction}).
+
+    {[
+    (* ids : [| tokens; 4 |], x : [| tokens; 1; k |], w : [| e; k; n |] *)
+    let y = Nx.matmul_segments ids x w (* [| tokens; 4; n |] *)
+    ]}
+
+    Raises [Invalid_argument] if [w] is not 3-d, [x] does not have one axis
+    more than [ids] or its leading axes do not broadcast to [ids]', [x]'s
+    last axis is not [k], or the dtype is a boolean. *)
+
 (** {1:structures Structures}
 
     A structure is an OCaml type whose values hold arrays: a model's parameters,
@@ -5672,7 +5699,7 @@ module Prim : sig
       carry; a gather's [idx] then [x]; a scatter's [idx], [updates] then
       [into]; an assembly's pieces; a contraction's [a], [b], then those it
       has of [init], [a_scale]'s array, [b_scale]'s and [segments]'
-      offsets; a triangular solve's [a] then [b]; [Check]'s [ok] then its
+      ids; a triangular solve's [a] then [b]; [Check]'s [ok] then its
       data; the one operand of the others. *)
 
   val iteri : ('v 's 'd. int -> ('v, 's, 'd) nx -> unit) -> 'r t -> unit
@@ -6024,6 +6051,16 @@ module Prim : sig
       [o.start] of the loop's rank: [op] over the window of its loop's shape
       that starts at [o.start]. It is [op] where [o.start] is [[||]], and an
       operation other than a loop is itself. *)
+
+  val position_rows : int array -> ('v, 's, 'd) nx -> ('v, 's, 'd) nx
+  (** [position_rows lead x] is each position's row of [x], [[| p; k |]], for
+      positions of shape [lead], [p] their count, [x] [[| s'…; k |]] with
+      [s'…] broadcasting to [lead]: {!matmul_segments}' rows. [x]'s leading
+      axes are broadcast and flattened where that keeps where they lie: at
+      most one has more than one index, or only the first such is cut, into
+      windows of one extent. Cut otherwise, [x] is gathered along each such
+      axis in turn, from the longest, which holds each position's row times
+      the extents of the others. *)
 
   val pieces :
     'd Placement.t ->

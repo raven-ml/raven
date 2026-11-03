@@ -139,9 +139,9 @@ and rune), raven / llama.cpp b12048 Vulkan:
   ways
 - a float32 routed product on CUDA, which no core takes, runs at 7.4% of
   the RTX 5000's SIMT float32 peak: 17.4-17.9 ms at 512 tokens streamed in
-  blocks of 16 rows (kaun `Quant/cuda/routed-product-512-tokens`), 54-55
-  ms under the general rules in blocks of 64, the size rune's lowering is
-  to take. One token's gathered products stream at 74-93% of DRAM and
+  blocks of 16 rows (kaun `Quant/cuda/routed-product-512-tokens`), 68-69
+  ms under the general rules in blocks of 64, which rune's lowering takes
+  from 4 rows an expert. One token's gathered products stream at 74-93% of DRAM and
   bfloat16 blocks of 64 take the cores; what is left is tolk's no-core
   layout past 32 rows (the GPU contraction rules' 8 x 8 outputs a thread),
   on that row

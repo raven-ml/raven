@@ -66,8 +66,8 @@ type scale =
 type operand = { array : Nx_array.any; scale : scale option }
 
 type 'i segments =
-  | Rows of { offsets : 'i; a_axis : int; b_axis : int }
-  | Contracting of { offsets : 'i; pair : int }
+  | Rows of { ids : 'i; a_axis : int; b_axis : int }
+  | Contracting of { ids : 'i; groups : int; pair : int }
 
 type combine = Set | Add | Max | Min
 
@@ -313,15 +313,14 @@ module Shape = struct
         errorf "a scale of shape %a for %s of shape %a" pp s name pp x
     | Some _ | None -> Ok ()
 
-  (* [Some g] if offsets of shape [o] have [a]'s batch extents, then [g + 1]
-     entries. *)
-  let groups batch a o =
+  (* Whether ids of shape [o] have [a]'s batch extents, then [n]. *)
+  let fits batch a o n =
     let nb = Iarray.length batch in
-    let fit = ref (Array.length o = nb + 1) in
+    let fit = ref (Array.length o = nb + 1 && o.(nb) = n) in
     for k = 0 to nb - 1 do
       if !fit && o.(k) <> a.(fst (Iarray.get batch k)) then fit := false
     done;
-    if !fit && o.(nb) >= 1 then Some (o.(nb) - 1) else None
+    !fit
 
   let check_free name side r batch contracting ax =
     if ax < 0 || ax >= r then errorf "no axis %d of %s to segment" ax name
@@ -332,20 +331,18 @@ module Shape = struct
   (* The groups' count of [segments], checked against the pairs. *)
   let check_segments ~batch ~contracting a b = function
     | None -> Ok 0
-    | Some (Rows { offsets; a_axis; b_axis }) -> (
+    | Some (Rows { ids; a_axis; b_axis }) ->
         let* () = check_free "a" fst (Array.length a) batch contracting a_axis in
         let* () = check_free "b" snd (Array.length b) batch contracting b_axis in
-        match groups batch a offsets with
-        | Some g when g = b.(b_axis) -> Ok g
-        | _ ->
-            errorf "offsets of shape %a for %d groups" pp offsets b.(b_axis))
-    | Some (Contracting { offsets; pair }) -> (
+        if fits batch a ids a.(a_axis) then Ok b.(b_axis)
+        else errorf "ids of shape %a" pp ids
+    | Some (Contracting { ids; groups; pair }) ->
         if pair < 0 || pair >= Iarray.length contracting then
           errorf "no contracting pair %d to segment" pair
-        else
-          match groups batch a offsets with
-          | Some g -> Ok g
-          | None -> errorf "offsets of shape %a" pp offsets)
+        else if groups < 0 then errorf "%d groups" groups
+        else if fits batch a ids a.(fst (Iarray.get contracting pair)) then
+          Ok groups
+        else errorf "ids of shape %a" pp ids
 
   let check_pairs ~batch ~contracting a b =
     let ra = Array.length a and rb = Array.length b in

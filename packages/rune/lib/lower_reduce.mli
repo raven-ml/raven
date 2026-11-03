@@ -153,7 +153,7 @@ val contract :
 (** [contract ~batch ~contracting ~segments ~acc ~out a b init] is the
     contraction of [a] with [b] by the pairs [batch] and [contracting], as
     {!Nx_kernel.S.contract} states. [init], where present, must be a value of
-    [out]. Each group of [segments], a node of [int64] offsets, is as
+    [out]. Each group of [segments], by a node of [int64] ids, is as
     {!Nx_kernel.type-segments} states. An output without products is [init] in
     [acc], rounded to [out], or [+0].
 
@@ -162,20 +162,31 @@ val contract :
     indices alone. The other indices add exact zeros, which can change only a
     zero result's sign.
 
-    A [Rows] contraction contracts each of its [n] rows with its own group's
-    slice of [b] alone, which it loads at the row's group: the products of the
-    contraction of one slice, and work in [n g + g²] to find each row's group.
+    A [Rows] contraction of [n] rows over [g] groups contracts each row with
+    its own group's slice of [b] alone. Where [n < 4 g], each row loads its
+    slice at its id, the products of the contraction of one slice, in one
+    kernel. Otherwise it routes the rows by counting, in work [n g] and
+    [S ⌈log2 (n + 1)⌉], into [S = B c] slots of blocks of [c] rows of one
+    group, [B = m + ⌊(n - m) / c⌋] for [m = min n g], [c] 64 from 16 rows a
+    group on average and below it the most up to 16, a power of two, with
+    [2 (c - 1) g < n], or per row where that is 1: each block loads its
+    group's slice, the rows enter at their slots, and each row reads its
+    slot's stored output. A row's sum runs over the
+    contracted extent in the kernel's order whatever its slot, and the form
+    is chosen from [n] and [g], so a row's bits are a function of the
+    shapes, its row and its group's slice; with [b]'s groups cut over
+    devices, [g] is each device's, so the order follows the count of
+    groups.
 
     A [Contracting] contraction of [g] groups over a pair of [n] indices
-    cuts each group into blocks of [c] indices from its first: at most [B]
-    blocks, [B c] products for each index of the other axes into [B]
-    partial results stored apart, and [g ⌈n / c⌉] loads of them, each group
-    summing its own blocks from its first. [c] is [⌈n / g⌉] or [⌈√(n - g)⌉],
-    with [B = g + ⌊(n - g) / c⌋], where that takes fewer products and sums
-    than [g n]. Otherwise [c] is [n] and each group takes one block, its sum:
-    [g n] products, none stored apart. A group's bits so do not depend on the
-    other groups' counts. Finding the groups takes work in [n g], and the
-    blocks' bounds in [g B].
+    routes the indices as [Rows] does and cuts each group into blocks of [c]
+    indices from its first: at most [B] blocks, [B c] products for each
+    index of the other axes into [B] partial results stored apart, and
+    [g ⌈n / c⌉] loads of them, each group summing its own blocks from its
+    first. [c] is [⌈n / g⌉] or [⌈√(n - g)⌉], with [B = g + ⌊(n - g) / c⌋],
+    where that takes fewer products and sums than [g n]. Otherwise [c] is
+    [n] and each group takes one block: [g n] products. A group's bits so do
+    not depend on the other groups' counts.
 
     Raises [Invalid_argument] for a scale with an [acc] other than [float32]
     or [float64]. *)

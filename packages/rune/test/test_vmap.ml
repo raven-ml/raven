@@ -404,7 +404,7 @@ type contraction = {
   a : role;
   b : role;
   init : role option;
-  offsets : role;
+  ids : role;
   a_scale : role option;
   b_scale : role option;
 }
@@ -414,11 +414,11 @@ let contraction =
   let role = of_list [ Lane; Constant ] in
   let* m = int_range 0 3 and+ k = int_range 0 3 and+ n = int_range 0 3 in
   let* g = int_range 0 2 and+ segs = of_list [ `None; `Rows; `Contracting ] in
-  let* a = role and+ b = role and+ offsets = role in
+  let* a = role and+ b = role and+ ids = role in
   let+ init = option role
   and+ a_scale = option role
   and+ b_scale = option role in
-  { m; k; n; g; segs; a; b; init; offsets; a_scale; b_scale }
+  { m; k; n; g; segs; a; b; init; ids; a_scale; b_scale }
 
 let pp_contraction ppf c =
   let opt ppf = function
@@ -426,13 +426,13 @@ let pp_contraction ppf c =
     | Some r -> pp_role ppf r
   in
   Format.fprintf ppf
-    "m %d k %d n %d g %d %s, a %a b %a init %a offsets %a scales %a %a" c.m c.k
+    "m %d k %d n %d g %d %s, a %a b %a init %a ids %a scales %a %a" c.m c.k
     c.n c.g
     (match c.segs with
     | `None -> "unsegmented"
     | `Rows -> "rows"
     | `Contracting -> "contracting")
-    pp_role c.a pp_role c.b opt c.init pp_role c.offsets opt c.a_scale opt
+    pp_role c.a pp_role c.b opt c.init pp_role c.ids opt c.a_scale opt
     c.b_scale
 
 (* The contraction over a lane's values [x] of [width c] elements: each operand
@@ -448,7 +448,8 @@ let shapes c =
     | _ -> [| c.m; c.n |]
   in
   let sb = match c.segs with `Rows -> [| 1; 1; c.n |] | _ -> [| 1; c.n |] in
-  (a, b, r, [| c.g + 1 |], [| c.m; 1 |], sb)
+  let ids = match c.segs with `Contracting -> c.k | _ -> c.m in
+  (a, b, r, [| ids |], [| c.m; 1 |], sb)
 
 let width c =
   let a, b, r, o, sa, sb = shapes c in
@@ -472,18 +473,22 @@ let contract c x =
       role
   in
   let a_scale = scale c.a_scale ssa and b_scale = scale c.b_scale ssb in
-  let offsets () =
-    let o = operand c.offsets so in
-    Nx.cast Nx.int64
-      (Nx.mod_
-         (Nx.floor (Nx.abs (Nx.where (Nx.isfinite o) o (Nx.zeros_like o))))
-         (Nx.scalar_like o 4.))
+  (* Ids from [-1] to [2], of groups and of none. *)
+  let ids () =
+    let o = operand c.ids so in
+    Nx.sub_s
+      (Nx.cast Nx.int64
+         (Nx.mod_
+            (Nx.floor (Nx.abs (Nx.where (Nx.isfinite o) o (Nx.zeros_like o))))
+            (Nx.scalar_like o 4.)))
+      1L
   in
   let segments : _ Nx_kernel.segments option =
     match c.segs with
     | `None -> None
-    | `Rows -> Some (Rows { offsets = offsets (); a_axis = 0; b_axis = 0 })
-    | `Contracting -> Some (Contracting { offsets = offsets (); pair = 0 })
+    | `Rows -> Some (Rows { ids = ids (); a_axis = 0; b_axis = 0 })
+    | `Contracting ->
+        Some (Contracting { ids = ids (); groups = c.g; pair = 0 })
   in
   let contracting : (int * int) iarray =
     match c.segs with `Rows -> [| (1, 1) |] | _ -> [| (1, 0) |]

@@ -5472,6 +5472,99 @@ let map_segments ~segments ids f x =
         map_segments_of ~by ~segments ids f x)
   else map_segments_of ~by ~segments ids f x
 
+(* Whether flattening [x]'s leading axes [xs] keeps where they lie. A
+   reshape drops axes of one index and keeps a cut of the axis the others
+   merge into, the first of more than one index, where its windows have one
+   extent, so each holds whole rows of the merged axis: [[| 4; 3; k |]] cut
+   along its first axis over two devices, not over three, nor along its
+   second. *)
+let flat_keeps x xs =
+  let p = placement x and s = shape x in
+  let windows =
+    Array.init
+      (Array.length (Grid.devices (Devices.grid p)))
+      (fun j -> Devices.window ~by:"Nx.matmul_segments" p s j)
+  in
+  let counts i =
+    Array.map (fun (w : Nx_array.Move.range array) -> w.(i).count) windows
+  in
+  let one_extent c = Array.for_all (Int.equal c.(0)) c in
+  let axes = List.init (Array.length xs) Fun.id in
+  match List.filter (fun i -> xs.(i) > 1) axes with
+  | [] | [ _ ] -> true
+  | first :: rest ->
+      List.for_all (fun i -> Array.for_all (Int.equal xs.(i)) (counts i)) rest
+      && one_extent (counts first)
+
+(* [x]'s rows, [[| p; k |]], at the flat positions [source], [[| p |]], over
+   its leading axes [xs]. Where flattening those axes keeps where they lie,
+   one gather from [x] flattened. Else a gather along each leading axis of
+   more than one index reads [x] where it lies, and closes by partials
+   where it reads a cut axis: first along the longest, holding [p] rows
+   times the extents of the others. *)
+let rows_at x xs source =
+  let l = Array.length xs and k = dim (-1) x in
+  let m = Array.fold_left ( * ) 1 xs and p = dim 0 source in
+  if flat_keeps x xs then take ~axis:0 source (reshape [| m; k |] x)
+  else
+    let at = Array.of_list (unravel_index source xs) in
+    let longest = ref 0 in
+    Array.iteri (fun i d -> if d > xs.(!longest) then longest := i) xs;
+    let a = !longest in
+    let one = Array.init (l + 1) (fun i -> if i = a then p else 1) in
+    let rows = ref (take ~axis:a at.(a) x) in
+    for i = 0 to l - 1 do
+      if i <> a && xs.(i) > 1 then
+        rows := take_along_axis ~axis:i (reshape one at.(i)) !rows
+    done;
+    reshape [| p; k |] !rows
+
+(* Each position's row of [x], [[| p; k |]], for ids of shape [lead]: [x]'s
+   leading axes broadcast to [lead] and flattened where that keeps where they
+   lie, else gathered ({!rows_at}). *)
+let position_rows lead x =
+  let k = dim (-1) x and p = Array.fold_left ( * ) 1 lead in
+  let wide = broadcast_to (Array.append lead [| k |]) x in
+  if flat_keeps wide lead then reshape [| p; k |] wide
+  else
+    let xs = Array.sub (shape x) 0 (Array.length lead) in
+    let m = Array.fold_left ( * ) 1 xs in
+    let positions = reshape xs (arange_at (beside x) D.Int64 0 m 1) in
+    rows_at x xs (reshape [| p |] (broadcast_to lead positions))
+
+let matmul_segments_of ~by ?sum ids x w =
+  let s = shape ids and xs = shape x and ws = shape w in
+  let ns = Array.length s in
+  if Array.length ws <> 3 then
+    invalid_argf "%s: the weight %a is not [e; k; n]" by pp_value w;
+  if
+    Array.length xs <> ns + 1
+    || not (Array.for_all2 (fun d e -> d = e || d = 1) (Array.sub xs 0 ns) s)
+  then
+    invalid_argf "%s: %a is not a row of k for each id of %a" by pp_value x
+      pp_value ids;
+  let k = ws.(1) in
+  if xs.(ns) <> k then
+    invalid_argf "%s: x's last axis is %d, the weight's inputs are %d" by
+      xs.(ns) k;
+  let p = numel ids in
+  let y =
+    Contraction.rows ~by ?sum
+      (Eval.reshape ~by [| p |] ids)
+      (position_rows s x) w
+  in
+  Eval.reshape ~by (Array.append s [| ws.(2) |]) y
+
+let matmul_segments ?sum ids x w =
+  let by = "Nx.matmul_segments" in
+  let ids = Donate.read ~by ids in
+  let x = Donate.read ~by x and w = Donate.read ~by w in
+  if Eval.apart ids x || Eval.apart x w then
+    Eval.composite ~by
+      [ Arg ("ids", ids); Arg ("x", x); Arg ("w", w) ]
+      (fun () -> matmul_segments_of ~by ?sum ids x w)
+  else matmul_segments_of ~by ?sum ids x w
+
 (* Convolution *)
 
 (* The arguments of a convolution of [x] by [w], [[o; k…; c / groups]],
@@ -7042,6 +7135,8 @@ module Prim = struct
 
   let partition = Eval.partition
   let offset = Prim.offset
+
+  let position_rows = position_rows
 
   let pieces p shape =
     let set = Devices.set p in

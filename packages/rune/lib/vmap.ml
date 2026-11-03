@@ -446,7 +446,7 @@ let linalg (type d r) i n (l : (d, r) Prim.linalg) : (d, r) Prim.linalg =
 (* A contraction maps the lane axis as JAX's dot_general does: a batch pair in
    front where both operands have lanes, and otherwise a free axis of the one
    that has them, moved to the front of the result. A scale has its operand's
-   lanes; segments' offsets with lanes make the lane axis a batch pair, as their
+   lanes; segments' ids with lanes make the lane axis a batch pair, as their
    extents lead with the batch's. A contraction whose lanes are its [init]'s
    alone maps [a]'s. *)
 let contract (type v s d) i n ~by (op : (v, s, d) Nx.t Prim.t) () =
@@ -463,15 +463,14 @@ let contract (type v s d) i n ~by (op : (v, s, d) Nx.t Prim.t) () =
         | Some (Value x) when on -> Some (Prim.Value (b x))
         | s -> s
       in
-      let offsets =
+      let ids =
         match c.segments with
-        | Some (Rows { offsets; _ } | Contracting { offsets; _ }) ->
-            owned i offsets
+        | Some (Rows { ids; _ } | Contracting { ids; _ }) -> owned i ids
         | None -> false
       in
       let on_a = owned i c.a || scaled c.a_scale in
       let on_b = owned i c.b || scaled c.b_scale in
-      let both = (on_a && on_b) || offsets in
+      let both = (on_a && on_b) || ids in
       let on_a = both || on_a || not on_b and on_b = both || on_b in
       let da = Bool.to_int on_a and db = Bool.to_int on_b in
       let pairs = Iarray.map (fun (x, y) -> (x + da, y + db)) in
@@ -484,19 +483,18 @@ let contract (type v s d) i n ~by (op : (v, s, d) Nx.t Prim.t) () =
         else if on_a then groups + nb
         else groups + nb + (Nx.ndim c.a - nb - nc)
       in
-      let offsets o = if both then b o else o in
+      let ids o = if both then b o else o in
       let segments =
         Option.map
           (function
             | Nx_kernel.Rows r ->
                 Nx_kernel.Rows
                   {
-                    offsets = offsets r.offsets;
+                    ids = ids r.ids;
                     a_axis = r.a_axis + da;
                     b_axis = r.b_axis + db;
                   }
-            | Contracting r ->
-                Contracting { r with offsets = offsets r.offsets })
+            | Contracting r -> Contracting { r with ids = ids r.ids })
           c.segments
       in
       let to_lane x = if p = 0 then x else Nx.moveaxis 0 p x in

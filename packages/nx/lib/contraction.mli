@@ -30,6 +30,18 @@ val matmul :
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t
 
+val rows :
+  by:string ->
+  ?sum:bool ->
+  'd Value.index ->
+  ('v, 's, 'd) Value.t ->
+  ('v, 's, 'd) Value.t ->
+  ('v, 's, 'd) Value.t
+(** [rows ~by ids a b] is each row of [a], [[| p; k |]], times the matrix of
+    [b], [[| e; k; n |]], that its id in [ids], [[| p |]], names, in one
+    [Rows] segmented contraction ({!Nx_kernel.type-segments}), at [a]'s
+    dtype and accumulated as {!matmul} does: [[| p; n |]]. *)
+
 val along :
   by:string ->
   ?sum:bool ->

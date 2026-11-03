@@ -193,3 +193,10 @@ let work (type v s d) (f : unit -> (v, s, d) Nx.t) =
       let e = Realize.estimate_uop call in
       (ops + count e.ops, lds + count e.lds))
     (0, 0) (Ops.src compiled)
+
+let kernels (type v s d) (f : unit -> (v, s, d) Nx.t) =
+  let _, u, dt, _, n = lowered ~direct:true f in
+  let o = Ops.new_buffer cpu (max 1 n) (L.dtype (D.Any dt)) in
+  let compiled, _ = compiled u o (max 1 n) in
+  List.length
+    (List.filter (fun c -> Op.equal (Ops.op c) Op.Call) (Ops.src compiled))

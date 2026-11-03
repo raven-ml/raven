@@ -62,11 +62,15 @@ let mulacc a b c = Ops.alu a Op.Mulacc [ b; c ]
 (* Indexed loads
 
    A load reads the operand's elements, flattened, at each element's offset:
-   its own index's along the other axes, its position's along [axis]. A
-   position outside the axis is read at [0], so that every read is in bounds,
-   and selected as zero. *)
+   its own index's along the other axes, its position's along [axis]. The
+   position enters the offset clamped into the axis by [max] and [min], so
+   that the compiler bounds it and folds its term out of the divisions a
+   view of [u] puts on the offset, as a narrow dtype's bytes do, keeping the
+   other axes' strides: a per-row product then streams its operand. A
+   position outside the axis, unless [clamped] says none is, is selected as
+   zero. *)
 
-let take u axis p =
+let take ?(clamped = false) u axis p =
   let extents u = List.init (Shape.ndim u) (extent u) in
   let numel s = List.fold_left ( * ) 1 s in
   let int u n = Shape.const_like u (`Int (Bigint.of_int n)) in
@@ -81,7 +85,8 @@ let take u axis p =
       Ops.lt (Ops.bitcast p Uint64)
         (Shape.const_like ~dtype:Uint64 p (`Int (Bigint.of_int n)))
     in
-    let at = Ops.cast (Ops.where inside p (int p 0)) Weak_int in
+    let at = Ops.minimum (Ops.maximum p (int p 0)) (int p (n - 1)) in
+    let at = Ops.cast at Weak_int in
     let stride d = numel (List.filteri (fun i _ -> i > d) s) in
     (* [laid d] is the arange of [t]'s axis [d] laid along it. *)
     let laid d =
@@ -102,4 +107,4 @@ let take u axis p =
         (List.init (List.length s - 1) succ)
     in
     let read = Ops.index (Shape.reshape u [ Ops.Int (numel s) ]) [ offset ] in
-    Ops.where inside read (int read 0)
+    if clamped then read else Ops.where inside read (int read 0)

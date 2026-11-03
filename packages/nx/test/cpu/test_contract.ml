@@ -1044,12 +1044,13 @@ let test_scale_misfits (b : Support.backend) () =
 
 (* Segments
 
-   A contraction cut into groups by offsets (Nx_kernel.segments): [Rows]
-   cuts a free axis of a, each row taking b's group along a free axis of
-   b; [Contracting] cuts a contracting pair, each group's window summed
-   alone into its slice of a leading axis. Each is checked against
-   unsegmented contractions of views, one a row or a group, whose bits
-   nx.cpu states: a group sums as the call of its extents does. *)
+   A contraction cut into groups by ids (Nx_kernel.segments): [Rows] cuts
+   a free axis of a, each row taking the index of b its id names along a
+   free axis of b; [Contracting] cuts a contracting pair, each group's
+   indices summed alone, in index order, into its slice of a leading
+   axis. Each is checked against unsegmented contractions, one a row or a
+   group's indices gathered, whose bits nx.cpu states: a group sums as the
+   call of its extents does. *)
 
 (* What a segmented contraction cuts: a's free axis and b's, or a
    contracting pair. *)
@@ -1057,20 +1058,21 @@ type cut = Cut_rows of { a_axis : int; b_axis : int } | Cut_pair of int
 
 (* A segmented contraction: [sg]'s order, pairs, dtypes and operands, its
    init of the segmented result's shape; [g] groups cut as [cut] says by
-   the offsets [offs], [g + 1] for each batch element in C order, read
-   through a stepped view where [stepped]; its operands' scales. [min_int]
-   and [max_int] among [offs] stand for int64's (wide). *)
+   the ids [ids], one for each index of the cut axis for each batch
+   element in C order, read through a stepped view where [stepped]; its
+   operands' scales. [min_int] and [max_int] among [ids] stand for
+   int64's (wide). *)
 type seg = {
   sg : case;
   cut : cut;
   g : int;
-  offs : int array array;
+  ids : int array array;
   stepped : bool;
   sa : spec option;
   sb : spec option;
 }
 
-(* The int64 offset [x] stands for. *)
+(* The int64 id [x] stands for. *)
 let wide x =
   if x = min_int then Int64.min_int
   else if x = max_int then Int64.max_int
@@ -1083,14 +1085,14 @@ let pp_seg ppf s =
     | Cut_pair p -> Format.fprintf ppf "contracting pair %d" p
   in
   let sep ppf () = Format.pp_print_string ppf " " in
-  let offs ppf o =
+  let ids ppf o =
     Format.fprintf ppf "[%s]"
       (String.concat "; " (Array.to_list (Array.map (fun x -> Int64.to_string (wide x)) o)))
   in
-  Format.fprintf ppf "%a@ %a, %d groups, offsets %a%s" pp_scaled
+  Format.fprintf ppf "%a@ %a, %d groups, ids %a%s" pp_scaled
     (s.sg, s.sa, s.sb) cut s.cut s.g
-    (Format.pp_print_list ~pp_sep:sep offs)
-    (Array.to_list s.offs)
+    (Format.pp_print_list ~pp_sep:sep ids)
+    (Array.to_list s.ids)
     (if s.stepped then " stepped" else "")
 
 (* The batch extents: a's along the batch pairs. *)
@@ -1103,21 +1105,22 @@ let cut_extent s =
   | Cut_rows { a_axis; _ } -> a.(a_axis)
   | Cut_pair p -> a.(fst s.sg.contracting.(p))
 
-let segments_of s offsets : _ Nx_kernel.segments =
+let segments_of s ids : _ Nx_kernel.segments =
   match s.cut with
-  | Cut_rows { a_axis; b_axis } -> Rows { offsets; a_axis; b_axis }
-  | Cut_pair pair -> Contracting { offsets; pair }
+  | Cut_rows { a_axis; b_axis } -> Rows { ids; a_axis; b_axis }
+  | Cut_pair pair -> Contracting { ids; groups = s.g; pair }
 
-(* [s]'s offsets, int64 of the batch extents then [g + 1]: where
+(* [s]'s ids, int64 of the batch extents then the cut axis's: where
    [stepped], every other element of an array twice as long along its
    last axis. *)
-let offsets_of s =
-  let shape = Array.append (batch_extents s.sg) [| s.g + 1 |] in
-  let xs = Array.concat (Array.to_list s.offs) in
+let ids_of s =
+  let w = cut_extent s in
+  let shape = Array.append (batch_extents s.sg) [| w |] in
+  let xs = Array.concat (Array.to_list s.ids) in
   if not s.stepped then
     A.of_array D.Int64 (Iarray.of_array shape) (Array.map wide xs)
   else
-    let r = Array.length shape and w = s.g + 1 in
+    let r = Array.length shape in
     let made = Array.mapi (fun i e -> if i = r - 1 then 2 * e else e) shape in
     let at q = if q mod 2 = 0 then 999L else wide xs.((q / (2 * w) * w) + (q mod (2 * w) / 2)) in
     let x =
@@ -1131,7 +1134,7 @@ let offsets_of s =
 
 let seg_shape s =
   let c = s.sg in
-  let o = Array.append (batch_extents c) [| s.g + 1 |] in
+  let o = Array.append (batch_extents c) [| cut_extent s |] in
   match
     Nx_kernel.Shape.contract ~batch:(Iarray.of_array c.batch)
       ~contracting:(Iarray.of_array c.contracting)
@@ -1141,21 +1144,26 @@ let seg_shape s =
   | Ok y -> y
   | Error e -> failf "the segments do not fit: %s" e
 
-(* The group of index [r] under the offsets [o] of [g] groups: the
-   largest [e < g] with [o.(e) <= r] when [o.(0) <= r < o.(g)], the groups
-   Nx_kernel.segments states by another rule. *)
-let group_of o g r =
-  if g = 0 || r < o.(0) || r >= o.(g) then None
-  else
-    let e = ref (g - 1) in
-    while o.(!e) > r do
-      decr e
-    done;
-    Some !e
+(* The group of index [r] under the ids [o] of [g] groups. *)
+let group_of o g r = if o.(r) >= 0 && o.(r) < g then Some o.(r) else None
 
-(* The indices of the cut axis in group [e] under [o]. *)
+(* The indices of the cut axis in group [e] under [o], in order. *)
 let members s o e =
   List.filter (fun r -> group_of o s.g r = Some e) (List.init (cut_extent s) Fun.id)
+
+(* [x]'s indices [rs] along [axis], C-contiguous. *)
+let gathered (A.Any x as a) axis rs =
+  let s = shape_of a and rs = Array.of_list rs in
+  let xs = A.to_array x in
+  let m = Array.length rs and n = s.(axis) in
+  let inner = total (Array.sub s (axis + 1) (Array.length s - axis - 1)) in
+  let s' = Array.copy s in
+  s'.(axis) <- m;
+  let at q =
+    let i = q mod inner and p = q / inner mod m and o = q / (inner * m) in
+    xs.((((o * n) + rs.(p)) * inner) + i)
+  in
+  A.Any (A.of_array (A.dtype x) (Iarray.of_array s') (Array.init (total s') at))
 
 (* [x] cut along each axis [i] of [cuts] to [count] indices from
    [start]. *)
@@ -1270,51 +1278,60 @@ let seg_reference (b : Support.backend) s sa sb =
           reshaped x (Array.sub sh 1 (Array.length sh - 1))
         in
         for e = 0 to s.g - 1 do
-          let lo, count =
-            match members s o e with [] -> (0, 0) | r :: _ as l -> (r, List.length l)
-          in
+          let m = members s o e in
           call (lift e dst)
-            (restrict a ((ia, lo, count) :: along fst beta))
-            (restrict b' ((ib, lo, count) :: along snd beta))
+            (gathered (restrict a (along fst beta)) ia m)
+            (gathered (restrict b' (along snd beta)) ib m)
             (Option.map (lift e) c.init)
         done
   in
-  List.iteri (fun q beta -> row beta s.offs.(q)) (indices (batch_extents c));
+  List.iteri (fun q beta -> row beta s.ids.(q)) (indices (batch_extents c));
   dst
 
-(* Offsets of [g] groups along [n] indices, from [r]: a partition of the
-   axis; increasing within it; every index in one group; or any values
-   from -2 to [n + 2] and int64's extremes, unordered. *)
-let draw_offsets r g n =
-  let sorted () =
-    let o = Array.init (g + 1) (fun _ -> Random.State.int r (n + 1)) in
-    Array.sort compare o;
-    o
-  in
+(* Ids of [g] groups for [n] indices, from [r]: each in a group, in any
+   order, as a router gives; in a group and sorted; every index in one
+   group; or any values from -2 to [g + 2] and int64's extremes. *)
+let draw_ids r g n =
+  let some () = if g = 0 then -1 else Random.State.int r g in
   match Random.State.int r 4 with
-  | 0 ->
-      let o = sorted () in
-      o.(0) <- 0;
-      o.(g) <- n;
+  | 0 -> Array.init n (fun _ -> some ())
+  | 1 ->
+      let o = Array.init n (fun _ -> some ()) in
+      Array.sort compare o;
       o
-  | 1 -> sorted ()
   | 2 ->
-      let e = Random.State.int r (max g 1) in
-      Array.init (g + 1) (fun i -> if i <= e then 0 else n)
+      let e = some () in
+      Array.make n e
   | _ ->
       let any _ =
-        match Random.State.int r (n + 7) with
-        | x when x = n + 5 -> min_int
-        | x when x = n + 6 -> max_int
+        match Random.State.int r (g + 7) with
+        | x when x = g + 5 -> min_int
+        | x when x = g + 6 -> max_int
         | x -> x - 2
       in
-      Array.init (g + 1) any
+      Array.init n any
+
+(* The ids of offsets [o] of [g] groups for [n] indices: [r] is in the
+   largest group [e < g] with [o.(e) <= r] when [o.(0) <= r < o.(g)], in
+   none otherwise, -1. *)
+let of_offsets n o =
+  let g = Array.length o - 1 in
+  let group r =
+    if g = 0 || r < o.(0) || r >= o.(g) then -1
+    else
+      let e = ref (g - 1) in
+      while o.(!e) > r do
+        decr e
+      done;
+      !e
+  in
+  Array.init n group
 
 (* The segmented contraction of the extents [e] as [make] makes it, cut by
    [cut], positions among [e]'s rows and columns or its contracted axes,
    with an init of the segmented result's shape through [vi]. *)
 let seg_make ~acc ~out ((batch, _, _, con) as e) (da, va) (db, vb) vi
-    ~cut ~g ?(stepped = false) offs seed =
+    ~cut ~g ?(stepped = false) ids seed =
   let c = make ~acc ~out e (da, va) (db, vb) None seed in
   let nb = Array.length batch and nk = Array.length con in
   let ia = Elements.inverse va.perm and ib = Elements.inverse vb.perm in
@@ -1323,7 +1340,7 @@ let seg_make ~acc ~out ((batch, _, _, con) as e) (da, va) (db, vb) vi
     | `Rows (ri, ci) -> Cut_rows { a_axis = ia.(nb + ri); b_axis = ib.(nb + nk + ci) }
     | `Pair p -> Cut_pair p
   in
-  let s = { sg = c; cut; g; offs; stepped; sa = None; sb = None } in
+  let s = { sg = c; cut; g; ids; stepped; sa = None; sb = None } in
   match vi with
   | None -> s
   | Some vi ->
@@ -1335,7 +1352,7 @@ let seg_make ~acc ~out ((batch, _, _, con) as e) (da, va) (db, vb) vi
 
 (* Draws: rows or a pair cut into up to 6 groups along up to 40 indices,
    or a pair of 4090 to 4200 products, over a batch of up to two axes
-   whose elements draw their own offsets, of float accs mostly, with
+   whose elements draw their own ids, of float accs mostly, with
    scales where acc is a float. *)
 let seg_draws =
   let open Gen in
@@ -1383,11 +1400,11 @@ let seg_draws =
      let* with_init = bool and+ stepped = bool and+ seed = int and+ oseed = int in
      let r = Random.State.make [| oseed |] in
      let along = match cut with `Rows (ri, _) -> rows.(ri) | `Pair p -> con.(p) in
-     let offs = Array.init (total batch) (fun _ -> draw_offsets r g along) in
+     let ids = Array.init (total batch) (fun _ -> draw_ids r g along) in
      let s =
        seg_make ~acc ~out e (da, va) (db, vb)
          (if with_init then Some vi else None)
-         ~cut ~g ~stepped offs seed
+         ~cut ~g ~stepped ids seed
      in
      if not float then constant s
      else
@@ -1405,7 +1422,7 @@ let codes_of extents seed =
 
 (* Experts: [t] bfloat16 tokens of [k] by float4 weights [g; n; k] of [g]
    experts, stored along k, scaled in blocks of 32 along it as MXFP4's
-   are, the tokens cut into the experts' groups by [o]. *)
+   are, each token in the expert its id in [o] names. *)
 let experts ?(acc = D.Any D.Float32) t g n k o =
   let a = operand (D.Any D.Bfloat16) [| t; k |] (Elements.plain 2) 7 in
   let b = operand (D.Any D.Float4_e2m1fn) [| g; n; k |] (Elements.plain 3) 8 in
@@ -1413,12 +1430,12 @@ let experts ?(acc = D.Any D.Float32) t g n k o =
     { batch = [||]; contracting = [| (1, 2) |]; acc; a; b; init = None;
       out = acc; views = [] }
   in
-  { sg = c; cut = Cut_rows { a_axis = 0; b_axis = 0 }; g; offs = [| o |];
+  { sg = c; cut = Cut_rows { a_axis = 0; b_axis = 0 }; g; ids = [| o |];
     stepped = false; sa = None; sb = codes_of [| g; n; k / 32 |] 9 }
 
 (* [m] bfloat16 rows of [k] by float4 [k; n] stored along k, scaled in
-   blocks of 32 along it, k cut into windows by [o]. *)
-let windows ?(acc = D.Any D.Float32) m n k o =
+   blocks of 32 along it, k cut into [g] groups by the ids [o]. *)
+let windows ?(acc = D.Any D.Float32) m n k g o =
   let a = operand (D.Any D.Bfloat16) [| m; k |] (Elements.plain 2) 3 in
   let along = { (Elements.plain 2) with stored = [| 1; 0 |] } in
   let b = operand (D.Any D.Float4_e2m1fn) [| k; n |] along 4 in
@@ -1426,17 +1443,23 @@ let windows ?(acc = D.Any D.Float32) m n k o =
     { batch = [||]; contracting = [| (1, 0) |]; acc; a; b; init = None;
       out = acc; views = [] }
   in
-  { sg = c; cut = Cut_pair 0; g = Array.length o - 1; offs = [| o |];
+  { sg = c; cut = Cut_pair 0; g; ids = [| o |];
     stepped = false; sa = None; sb = codes_of [| k / 32; n |] 5 }
 
 (* Cases each cover names, in both orders and accs, with the MXFP4 weights
    of experts and windows of k either side of nx's block, within and on
-   the scales' blocks. *)
+   the scales' blocks; groups given by offsets are ids of runs. *)
 let seg_examples =
   let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
   let ex ?(acc = f32) ?out ?(da = acc) ?(db = acc) ?(view = false)
-      ?(init = false) ?stepped ?sa ?sb ~cut ~g e offs =
-    let (batch, _, _, _) = e in
+      ?(init = false) ?stepped ?sa ?sb ?ids ~cut ~g e offs =
+    let (batch, rows, _, con) = e in
+    let along =
+      match cut with `Rows (ri, _) -> rows.(ri) | `Pair p -> con.(p)
+    in
+    let ids =
+      match ids with Some ids -> ids | None -> Array.map (of_offsets along) offs
+    in
     let nb = Array.length batch in
     let ra, rb, ry = ranks e in
     let ry = match cut with `Rows _ -> ry - 1 | `Pair _ -> ry + 1 in
@@ -1454,7 +1477,7 @@ let seg_examples =
     let s =
       seg_make ~acc ~out e (da, v ra) (db, v rb)
         (if init then Some (v ~batch:0 ry) else None)
-        ~cut ~g ?stepped offs 11
+        ~cut ~g ?stepped ids 11
     in
     let blocks x d = Array.map (fun e -> if e mod d = 0 then e / d else e) (shape_of x) in
     let spec x = function
@@ -1504,16 +1527,37 @@ let seg_examples =
       ([||], [| 2 |], [| 2 |], [| 5 |]) [| [| 5 |] |];
     ex ~cut:(`Pair 0) ~g:3 ([||], [| 2 |], [| 3 |], [| 6 |])
       [| [| 1; max_int; 3; max_int |] |];
+    (* Unsorted ids through views, rows apart and pairs apart, scaled. *)
+    ex ~acc:f64 ~view:true ~stepped:true ~sa:3 ~cut:(`Rows (0, 0)) ~g:3
+      ([| 2 |], [| 9 |], [| 3; 2 |], [| 5; 3 |]) [||]
+      ~ids:
+        [| [| 2; 0; -1; 1; 2; 0; 5; 1; 1 |]; [| 0; 0; 0; 0; 0; 0; 0; 0; 0 |] |];
+    ex ~acc:f64 ~init:true ~view:true ~sa:3 ~sb:3 ~cut:(`Pair 1) ~g:2
+      ([| 3 |], [| 2 |], [| 2; 2 |], [| 3; 30 |]) [||]
+      ~ids:
+        (Array.init 3 (fun q ->
+             Array.init 30 (fun r ->
+                 if r mod 11 = 0 then -3 else (r * (q + 1)) mod 3)));
     ex ~acc:(D.Any D.Int32) ~da:(D.Any D.Int8) ~init:true ~cut:(`Pair 0) ~g:3
       ([||], [| 3 |], [| 2 |], [| 9 |])
       [| [| 0; 4; 4; 9 |] |];
-    experts 37 5 9 1056 [| 0; 7; 7; 20; 36; 37 |];
-    experts ~acc:f64 60 4 6 64 [| 0; 3; 43; 43; 50 |];
-    experts 1 4 300 4096 [| 0; 0; 1; 1; 1 |];
-    windows 3 5 4160 [| 0; 16; 1040; 4100; 4160 |];
-    windows ~acc:f64 3 5 4160 [| 0; 32; 1056; 4128; 4160 |];
-    windows 2 4 4160 [| 0; 16; 1040; 4100; 4160 |];
-    windows ~acc:f64 2 4 4160 [| 0; 32; 1056; 4128; 4160 |];
+    experts 37 5 9 1056 (of_offsets 37 [| 0; 7; 7; 20; 36; 37 |]);
+    experts ~acc:f64 60 4 6 64 (of_offsets 60 [| 0; 3; 43; 43; 50 |]);
+    experts 1 4 300 4096 [| 1 |];
+    (* A router's ids: token t's experts (7 t + 8 j) mod 5, unsorted. *)
+    experts 40 5 9 1056
+      (Array.init 40 (fun i -> ((7 * (i / 4)) + (8 * (i mod 4))) mod 5));
+    experts ~acc:f64 24 3 6 64
+      (Array.init 24 (fun i -> [| 2; -1; 0; 3; 1; 2 |].(i mod 6)));
+    windows 3 5 4160 4 (of_offsets 4160 [| 0; 16; 1040; 4100; 4160 |]);
+    windows ~acc:f64 3 5 4160 4 (of_offsets 4160 [| 0; 32; 1056; 4128; 4160 |]);
+    windows 2 4 4160 4 (of_offsets 4160 [| 0; 16; 1040; 4100; 4160 |]);
+    windows ~acc:f64 2 4 4160 4 (of_offsets 4160 [| 0; 32; 1056; 4128; 4160 |]);
+    (* Groups interleaved index by index, past nx's block of 4096
+       products and within the scales' blocks of 32. *)
+    windows 3 5 4160 3 (Array.init 4160 (fun r -> (r * 5) mod 3));
+    windows ~acc:f64 2 4 4160 2
+      (Array.init 4160 (fun r -> if r mod 7 = 0 then -1 else r mod 2));
   ]
 
 let seg_covers s =
@@ -1525,24 +1569,35 @@ let seg_covers s =
   cover "float64" (c.acc = D.Any D.Float64);
   cover "a complex accumulator" (is_complex c.acc);
   cover "an integer accumulator" (is_integer c.acc);
-  let some f = Array.exists f s.offs in
+  let some f = Array.exists f s.ids in
   let groups o f = List.exists (fun e -> f e (members s o e)) (List.init s.g Fun.id) in
   cover "no group" (s.g = 0);
   cover "an empty group" (some (fun o -> groups o (fun _ m -> m = [])));
   cover "a group of one" (some (fun o -> groups o (fun _ m -> List.length m = 1)));
   cover "every index in one group"
     (n > 1 && some (fun o -> groups o (fun _ m -> List.length m = n)));
-  cover "offsets at the axis's bounds" (s.g > 0 && some (fun o -> o.(0) = 0 && o.(s.g) = n));
-  cover "indices before the first group" (n > 0 && some (fun o -> o.(0) > 0));
-  cover "indices past the last group" (some (fun o -> o.(s.g) < n && o.(s.g) > 0));
-  cover "offsets that decrease"
-    (some (fun o -> Array.exists Fun.id (Array.init s.g (fun e -> o.(e + 1) < o.(e)))));
-  cover "offsets outside the axis" (some (Array.exists (fun x -> x < 0 || x > n)));
-  cover "offsets at int64's extremes"
+  let inside o r = o.(r) >= 0 && o.(r) < s.g in
+  cover "ids out of order"
+    (some (fun o ->
+         List.exists
+           (fun r -> inside o r && inside o (r + 1) && o.(r + 1) < o.(r))
+           (List.init (max 0 (n - 1)) Fun.id)));
+  cover "a group of indices apart"
+    (some (fun o ->
+         groups o (fun _ m ->
+             match m with
+             | [] -> false
+             | lo :: _ ->
+                 List.nth m (List.length m - 1) - lo >= List.length m)));
+  cover "an index in no group"
+    (some (fun o -> Array.exists (fun x -> x < 0 || x >= s.g) o));
+  cover "negative ids" (some (Array.exists (fun x -> x < 0)));
+  cover "ids past the groups" (some (Array.exists (fun x -> x >= s.g)));
+  cover "ids at int64's extremes"
     (some (Array.exists (fun x -> x = min_int || x = max_int)));
-  cover "offsets differing across the batch"
-    (Array.exists (fun o -> o <> s.offs.(0)) s.offs);
-  cover "stepped offsets" s.stepped;
+  cover "ids differing across the batch"
+    (Array.exists (fun o -> o <> s.ids.(0)) s.ids);
+  cover "stepped ids" s.stepped;
   cover "an init" (c.init <> None);
   cover "a result of another dtype" (c.out <> c.acc);
   cover "an operand through a view" (c.views <> []);
@@ -1551,12 +1606,17 @@ let seg_covers s =
     | A.Any x -> D.Any (A.dtype x) = D.Any D.Float4_e2m1fn
   in
   cover "a block-scaled float4 operand" (s.sb <> None && float4 c.b);
-  let starts f = some (fun o -> groups o (fun _ m -> match m with [] -> false | lo :: _ -> f lo (List.length m))) in
-  cover "a group past a tile of 16 rows" (rows && starts (fun lo k -> lo mod 16 <> 0 && k > 16));
-  cover "a window across nx's block of 4096 products"
-    ((not rows) && starts (fun lo k -> lo < 4096 && lo + k > 4096));
-  cover "a window across lane order's block of 1024"
-    ((not rows) && starts (fun lo k -> lo < 1024 && lo + k > 1024));
+  let starts f =
+    some (fun o ->
+        groups o (fun _ m ->
+            match m with [] -> false | lo :: _ -> f lo (List.length m)))
+  in
+  cover "a group of more than a tile of 16 rows"
+    (rows && starts (fun _ k -> k > 16));
+  cover "a group of more than nx's block of 4096 products"
+    ((not rows) && starts (fun _ k -> k > 4096));
+  cover "a group of more than lane order's block of 1024"
+    ((not rows) && starts (fun _ k -> k > 1024));
   let ratio = match s.sb with
     | Some sp when not rows -> (
         let ib = snd c.contracting.(match s.cut with Cut_pair p -> p | _ -> 0) in
@@ -1564,8 +1624,16 @@ let seg_covers s =
         if d = 0 then 1 else e / d)
     | _ -> 1
   in
-  cover "a window from within a scale's block"
+  let apart =
+    some (fun o ->
+        groups o (fun _ m ->
+            match m with
+            | [] -> false
+            | lo :: _ -> List.nth m (List.length m - 1) - lo >= List.length m))
+  in
+  cover "a group from within a scale's block"
     (ratio > 1 && starts (fun lo _ -> lo mod ratio <> 0));
+  cover "a group apart across a scale's blocks" (ratio > 1 && apart);
   let row_ratio = match (s.sa, s.cut) with
     | Some sp, Cut_rows { a_axis; _ } ->
         let d = sp.extents.(a_axis) in
@@ -1574,7 +1642,19 @@ let seg_covers s =
   in
   cover "a group of rows from within a scale's block"
     (row_ratio > 1 && starts (fun lo _ -> lo mod row_ratio <> 0));
-  cover "windows on a scale's blocks" (ratio >= 32 && starts (fun lo _ -> lo > 0 && lo mod ratio = 0));
+  cover "a group of rows apart across a scale's blocks"
+    (row_ratio > 1 && apart);
+  cover "groups on a scale's blocks"
+    (ratio >= 32 && starts (fun lo _ -> lo > 0 && lo mod ratio = 0));
+  let group_ratio = match (s.sb, s.cut) with
+    | Some sp, Cut_rows { b_axis; _ } ->
+        let d = sp.extents.(b_axis) in
+        if d = 0 then 1 else (shape_of c.b).(b_axis) / d
+    | _ -> 1
+  in
+  cover "rows, b's scale block holding several groups" (group_ratio > 1);
+  cover "rows, b scaled, batched"
+    (rows && s.sb <> None && c.batch <> [||]);
   let float = not (is_integer c.acc) and chain = seg_order s = Chain in
   cover "a float call in chain order" (float && chain);
   cover "a float call in lane order" (float && not chain);
@@ -1582,36 +1662,83 @@ let seg_covers s =
   cover "a group of 4 rows or fewer in a call in chain order"
     (rows && float && chain && some (fun o -> groups o few))
 
-(* Each output of a segmented contraction adds its group's products in the
-   order nx.cpu chooses for the whole call (seg_reference). *)
-let law_segments (b : Support.backend) s =
-  seg_covers s;
+(* [s]'s result as nx.cpu computes it, on the host. *)
+let seg_run (b : Support.backend) s sa sb =
   let c = s.sg in
-  let sa = Option.map scale_of s.sa and sb = Option.map scale_of s.sb in
   let (D.Any out) = c.out in
   let dst = A.create b.device out (Iarray.of_array (seg_shape s)) in
   let module K = (val b.kernels) in
   let init = Option.map (fun i -> A.expect out (on b i)) c.init in
-  let offsets = A.expect D.Int64 (on b (A.Any (offsets_of s))) in
+  let ids = A.expect D.Int64 (on b (A.Any (ids_of s))) in
   let sa' = Option.map (scale_on b) sa and sb' = Option.map (scale_on b) sb in
   match
     K.contract ~batch:(Iarray.of_array c.batch)
       ~contracting:(Iarray.of_array c.contracting)
-      ~segments:(Some (segments_of s offsets)) ~acc:c.acc ~dst ~init
+      ~segments:(Some (segments_of s ids)) ~acc:c.acc ~dst ~init
       { array = on b c.a; scale = sa' }
       { array = on b c.b; scale = sb' }
   with
-  | A.Done ->
-      equal (list string) []
-        (differ_bits c.acc ~other:"expected" (host (A.Any dst))
-           (seg_reference b s sa sb))
+  | A.Done -> host (A.Any dst)
   | r -> failf "a segmented contraction answered %a" Nx_array_support.pp_answer r
 
+(* Each output of a segmented contraction adds its group's products in the
+   order nx.cpu chooses for the whole call (seg_reference). *)
+let law_segments (b : Support.backend) s =
+  seg_covers s;
+  let sa = Option.map scale_of s.sa and sb = Option.map scale_of s.sb in
+  equal (list string) []
+    (differ_bits s.sg.acc ~other:"expected" (seg_run b s sa sb)
+       (seg_reference b s sa sb))
+
+(* A group's outputs keep their bits whatever the other indices' ids
+   (Nx_kernel.S.contract): [s] against [s] with every index outside group
+   [e], that of the cut axis's first index or 0, given another id, never
+   [e]. [Rows]' group is its rows, [Contracting]'s its slice. *)
+let law_others (b : Support.backend) s =
+  let c = s.sg and nb = Array.length s.sg.batch in
+  let e =
+    match s.ids.(0) with
+    | [||] -> 0
+    | o -> if o.(0) >= 0 && o.(0) < s.g then o.(0) else 0
+  in
+  let r = Random.State.make [| s.g; cut_extent s; Array.length s.ids |] in
+  let other x =
+    if x = e then x
+    else
+      match Random.State.int r (s.g + 4) - 2 with y when y = e -> -1 | y -> y
+  in
+  let s' = { s with ids = Array.map (Array.map other) s.ids } in
+  cover "the kept group has indices"
+    (Array.exists (fun o -> members s o e <> []) s.ids);
+  cover "another index's id redrawn" (s'.ids <> s.ids);
+  let sa = Option.map scale_of s.sa and sb = Option.map scale_of s.sb in
+  let y = seg_run b s sa sb and y' = seg_run b s' sa sb in
+  let at shift beta = List.init nb (fun k -> (k + shift, beta.(k), 1)) in
+  let kept beta o =
+    match s.cut with
+    | Cut_rows { a_axis; _ } ->
+        let fa = free fst c (Array.length (shape_of c.a)) in
+        let ya = nb + before fa a_axis in
+        List.map (fun r -> (ya, r, 1) :: at 0 beta) (members s o e)
+    | Cut_pair _ -> if e < s.g then [ (0, e, 1) :: at 1 beta ] else []
+  in
+  let cuts =
+    List.concat
+      (List.mapi
+         (fun q beta -> kept beta s.ids.(q))
+         (indices (batch_extents c)))
+  in
+  equal (list string) []
+    (List.concat_map
+       (fun cut ->
+         differ_bits c.acc ~other:"redrawn" (restrict y cut) (restrict y' cut))
+       cuts)
+
 (* nx.cpu answers Shape_mismatch for segments that do not fit, and writes
-   nothing: offsets of another shape than the batch extents then [g + 1],
-   a cut axis in a pair or past its operand's rank, a pair past the pairs,
-   a result of another shape than the segmented one. No offsets' values
-   are refused: any values name their groups. *)
+   nothing: ids of another shape than the batch extents then the cut
+   axis's, a cut axis in a pair or past its operand's rank, a pair past
+   the pairs, groups below 0, a result of another shape than the segmented
+   one. No ids' values are refused: any values name their groups. *)
 let test_segment_misfits (b : Support.backend) () =
   let module K = (val b.kernels) in
   let arr s =
@@ -1619,7 +1746,7 @@ let test_segment_misfits (b : Support.backend) () =
     let x = A.of_array D.Float32 (Iarray.of_array s) ones in
     A.expect D.Float32 (on b (A.Any x))
   in
-  let offs s =
+  let ids s =
     A.expect D.Int64
       (on b
          (A.Any
@@ -1636,51 +1763,66 @@ let test_segment_misfits (b : Support.backend) () =
     equal ~msg:(msg ^ ": untouched") (array float_exact) before
       (A.to_array (to64 (host (A.Any dst))))
   in
-  let rows ?(a_axis = 0) ?(b_axis = 1) offsets =
-    Nx_kernel.Rows { offsets; a_axis; b_axis }
+  let rows ?(a_axis = 0) ?(b_axis = 1) ids =
+    Nx_kernel.Rows { ids; a_axis; b_axis }
   in
-  let pair ?(pair = 0) offsets = Nx_kernel.Contracting { offsets; pair } in
+  let pair ?(pair = 0) ?(groups = 2) ids =
+    Nx_kernel.Contracting { ids; groups; pair }
+  in
   (* [2; 4] by [4; 3; 3] cut along b's axis 1 into 3 groups: [2; 3]. *)
   let a = arr [| 2; 4 |] and b3 = arr [| 4; 3; 3 |] and y = arr [| 2; 3 |] in
-  refused ~msg:"offsets of rank 2" (rows (offs [| 1; 4 |])) y a b3;
-  refused ~msg:"3 offsets for 3 groups" (rows (offs [| 3 |])) y a b3;
-  refused ~msg:"a's axis in a pair" (rows ~a_axis:1 (offs [| 4 |])) y a b3;
-  refused ~msg:"a's axis past its rank" (rows ~a_axis:2 (offs [| 4 |])) y a b3;
-  refused ~msg:"a's axis -1" (rows ~a_axis:(-1) (offs [| 4 |])) y a b3;
-  refused ~msg:"b's axis in a pair" (rows ~b_axis:0 (offs [| 4 |])) y a b3;
-  refused ~msg:"b's axis past its rank" (rows ~b_axis:3 (offs [| 4 |])) y a b3;
-  refused ~msg:"a result keeping b's cut axis" (rows (offs [| 4 |]))
+  refused ~msg:"ids of rank 2" (rows (ids [| 1; 2 |])) y a b3;
+  refused ~msg:"3 ids for 2 rows" (rows (ids [| 3 |])) y a b3;
+  refused ~msg:"a's axis in a pair" (rows ~a_axis:1 (ids [| 4 |])) y a b3;
+  refused ~msg:"a's axis past its rank" (rows ~a_axis:2 (ids [| 2 |])) y a b3;
+  refused ~msg:"a's axis -1" (rows ~a_axis:(-1) (ids [| 2 |])) y a b3;
+  refused ~msg:"b's axis in a pair" (rows ~b_axis:0 (ids [| 2 |])) y a b3;
+  refused ~msg:"b's axis past its rank" (rows ~b_axis:3 (ids [| 2 |])) y a b3;
+  refused ~msg:"a result keeping b's cut axis" (rows (ids [| 2 |]))
     (arr [| 2; 3; 3 |]) a b3;
   (* [2; 4] by [4; 3] cut along the pair into 2 groups: [2; 2; 3]. *)
   let b2 = arr [| 4; 3 |] in
-  refused ~msg:"no offset" (pair (offs [| 0 |])) (arr [| 0; 2; 3 |]) a b2;
-  refused ~msg:"a pair past the pairs" (pair ~pair:1 (offs [| 3 |]))
+  refused ~msg:"ids of the rows' extent" (pair (ids [| 2 |]))
     (arr [| 2; 2; 3 |]) a b2;
-  refused ~msg:"pair -1" (pair ~pair:(-1) (offs [| 3 |])) (arr [| 2; 2; 3 |]) a b2;
-  refused ~msg:"a result without the groups' axis" (pair (offs [| 3 |])) y a b2;
-  refused ~msg:"a groups' axis of 3 for 2 groups" (pair (offs [| 3 |]))
+  refused ~msg:"no ids" (pair (ids [||])) (arr [| 2; 2; 3 |]) a b2;
+  refused ~msg:"a pair past the pairs" (pair ~pair:1 (ids [| 4 |]))
+    (arr [| 2; 2; 3 |]) a b2;
+  refused ~msg:"pair -1" (pair ~pair:(-1) (ids [| 4 |]))
+    (arr [| 2; 2; 3 |]) a b2;
+  refused ~msg:"-1 groups" (pair ~groups:(-1) (ids [| 4 |]))
+    (arr [| 0; 2; 3 |]) a b2;
+  refused ~msg:"a result without the groups' axis" (pair (ids [| 4 |])) y a b2;
+  refused ~msg:"a groups' axis of 3 for 2 groups" (pair (ids [| 4 |]))
     (arr [| 3; 2; 3 |]) a b2;
   (* [2; 2; 4] by [2; 4; 3] over a batch of 2: [2; 2; 2; 3]. *)
   let batch : _ iarray = [| (0, 0) |] and contracting : _ iarray = [| (2, 1) |] in
-  refused ~msg:"offsets without the batch's extents" ~batch ~contracting
-    (pair (offs [| 3 |])) (arr [| 2; 2; 2; 3 |]) (arr [| 2; 2; 4 |]) (arr [| 2; 4; 3 |]);
-  refused ~msg:"offsets of another batch extent" ~batch ~contracting
-    (pair (offs [| 3; 3 |])) (arr [| 2; 2; 2; 3 |]) (arr [| 2; 2; 4 |]) (arr [| 2; 4; 3 |])
+  refused ~msg:"ids without the batch's extents" ~batch ~contracting
+    (pair (ids [| 4 |]))
+    (arr [| 2; 2; 2; 3 |])
+    (arr [| 2; 2; 4 |])
+    (arr [| 2; 4; 3 |]);
+  refused ~msg:"ids of another batch extent" ~batch ~contracting
+    (pair (ids [| 3; 4 |]))
+    (arr [| 2; 2; 2; 3 |])
+    (arr [| 2; 2; 4 |])
+    (arr [| 2; 4; 3 |])
 
 (* A row of [Rows] in no group has no products: [init] as [acc] holds it,
-   rounded into [dst], or [+0]. A [4; 2] by [1; 2] of zeros, cut by
-   [1; 3]: rows 0 and 3 in no group, rows 1 and 2 adding zeros to init. *)
+   rounded into [dst], or [+0]. A [4; 2] by [1; 2] of zeros, cut by the
+   ids [-1; 0; 0; 1]: rows 0 and 3 in no group, rows 1 and 2 adding zeros
+   to init. *)
 let test_rows_in_none (b : Support.backend) () =
   let module K = (val b.kernels) in
   let run (type s) (dt : (float, s) D.t) acc init =
     let arr s xs = A.expect dt (on b (A.Any (A.of_array dt s xs))) in
     let dst = arr [| 4 |] (Array.make 4 7.) in
-    let offsets =
-      A.expect D.Int64 (on b (A.Any (A.of_array D.Int64 [| 2 |] [| 1L; 3L |])))
+    let ids =
+      A.expect D.Int64
+        (on b (A.Any (A.of_array D.Int64 [| 4 |] [| -1L; 0L; 0L; 1L |])))
     in
     (match
        K.contract ~batch:[||] ~contracting:[| (1, 1) |]
-         ~segments:(Some (Nx_kernel.Rows { offsets; a_axis = 0; b_axis = 0 }))
+         ~segments:(Some (Nx_kernel.Rows { ids; a_axis = 0; b_axis = 0 }))
          ~acc ~dst ~init:(Option.map (arr [| 4 |]) init)
          (plain (arr [| 4; 2 |] (Array.make 8 0.)))
          (plain (arr [| 1; 2 |] [| 0.; 0. |]))
@@ -1700,16 +1842,16 @@ let test_rows_in_none (b : Support.backend) () =
   equal ~msg:"no init" (array float_exact) (Array.make 4 0.)
     (run D.Float32 (D.Any D.Float32) None)
 
-(* nx.cpu reads the offsets whole before any write, so they may be [dst]
+(* nx.cpu reads the ids whole before any write, so they may be [dst]
    itself: a [3; 2] by [2; 2] cut by dst's [0; 1; 2], row 0 in group 0,
    row 1 in group 1, row 2 in none. *)
-let test_offsets_in_dst (b : Support.backend) () =
+let test_ids_in_dst (b : Support.backend) () =
   let module K = (val b.kernels) in
   let arr s xs = A.expect D.Int64 (on b (A.Any (A.of_array D.Int64 s xs))) in
   let dst = arr [| 3 |] [| 0L; 1L; 2L |] in
   (match
      K.contract ~batch:[||] ~contracting:[| (1, 1) |]
-       ~segments:(Some (Nx_kernel.Rows { offsets = dst; a_axis = 0; b_axis = 0 }))
+       ~segments:(Some (Nx_kernel.Rows { ids = dst; a_axis = 0; b_axis = 0 }))
        ~acc:(D.Any D.Int64) ~dst ~init:None
        (plain (arr [| 3; 2 |] [| 1L; 2L; 3L; 4L; 5L; 6L |]))
        (plain (arr [| 2; 2 |] [| 10L; 20L; 100L; 200L |]))
@@ -2217,12 +2359,14 @@ let cpu (b : Support.backend) =
         "each output of a segmented contraction adds its products in the \
          whole call's order"
         seg_draws (run (law_segments b));
+      prop "a group's outputs keep their bits whatever the other indices' ids"
+        seg_draws (run (law_others b));
       test "refuses segments that do not fit" (fun () ->
           b.around (test_segment_misfits b));
       test "a row in no group is init as acc holds it, or +0" (fun () ->
           b.around (test_rows_in_none b));
-      test "reads the offsets before writing dst, which may be them" (fun () ->
-          b.around (test_offsets_in_dst b));
+      test "reads the ids before writing dst, which may be them" (fun () ->
+          b.around (test_ids_in_dst b));
       prop ~count:500
         "reads and writes no byte past its operands and dst, whatever pages lie \
          beside them"

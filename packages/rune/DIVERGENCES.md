@@ -818,22 +818,26 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   `mixin/op.py:1064`, is a one-hot `where` summed over the axis, which
   `codegen/simplify.py:122` (`pm_reduce_load_collapse`, under
   `pm_load_collapse`, `:157`) rewrites into a load at the index.
-- **Raven:** `lower_reduce.ml` (`rows`, `blocked`, `group_sums`,
+- **Raven:** `lower_reduce.ml` (`route`, `rows`, `blocked`,
   `block_size`), `lower_bits.ml` (`take`).
-- **Differs:** a `Rows` row reads `b` at its group's index as a sum over the
-  groups of `b`'s bits where the index is the group's, `0` elsewhere, which
-  tolk collapses into a load through the operand's decode and scale; the
-  group is found once per row and clamped into `[0, g - 1]`. A row reads its
+- **Differs:** every read is a load at its index by `take`, never a one-hot
+  sum. A `Rows` contraction of `n` rows over `g` groups below `4 g` rows
+  reads `b` at each row's id, clamped into `[0, g - 1]`. From `4 g` rows
+  it routes the rows by counting (a one-hot of the ids, its running sum,
+  each group's count and the scan of its blocks, each slot's row by a binary
+  search of its group's running count) into blocks of rows of one group, 64
+  from 16 rows a group, fewer below with their padding under half the rows:
+  a block reads its group's slice, its rows at their slots, a slot of none
+  reading `0`, and each row reads its slot's stored output. A row reads its
   own group's slice alone, its bits exact, a NaN's payload and `-0.`
-  included. Without the collapse it costs `g` loads per element and stays
-  correct. A `Contracting` pair cuts each group into blocks of `c` indices
-  from its first, each position a load at its index, a position past its
-  group's last reading `0`; each block sums into a partial result stored
-  apart, and each group sums its own blocks' over the `⌈n / c⌉` places a
-  group can take, its `i`th block at place `i`, `+0.` past its last. Where
-  blocks take no fewer products and sums than `g n`, each group takes one
-  block of `n` indices, whose sum is the group's. Either way a group's sum
-  is split by its own count, never by the other groups'.
+  included. A `Contracting` pair is routed alike and cuts each group into
+  blocks of `c` indices from its first, each position a load at its index,
+  a position past its group's last reading `0`; each block sums into a
+  partial result stored apart, and each group sums its own blocks' over the
+  `⌈n / c⌉` places a group can take, its `i`th block at place `i`, `+0.`
+  past its last. Where blocks take no fewer products and sums than `g n`,
+  `c` is `n`, one block a group. Either way a group's sum is split by its
+  own count, never by the other groups'.
 - **nx:** `nx_kernel.mli`, `segments` and `contract`: each group's products
   alone; an output without products is its `init`.
 - **Class:** exact for the `Rows` read and on integers; a rounded sum on
@@ -842,9 +846,12 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b).
 - **Pinned by:** `Lower_reduce › contractions › segmented contractions give
   eager's integers and hold their bound`, `› contracting pairs in blocks give
-  eager's integers and hold their bound`, `Lower_reduce › work › a Rows
-  contraction's work is one slice's at 8 and 32 groups`, `› a scaled float4
-  Rows contraction's work is one slice's`, `› a Contracting contraction of 8
+  eager's integers and hold their bound`, `› rows in blocks give eager's
+  integers and hold their bound`, `Lower_reduce › work › a Rows
+  contraction's work is one slice's at 128 and 256 groups`, `› a scaled
+  float4 Rows contraction's work is one slice's`, `› a Rows contraction of
+  8 rows a group works as 1.5 times its rows'`, `› a Rows contraction in
+  blocks works as its slots' at 8 groups`, `› a Contracting contraction of 8
   groups works in blocks`, `Jit › classes › a segmented contraction gives
   eager's values`, `› a segmented contraction's gradients give eager's
   values`, `› a group's weight gradient keeps its bits whatever the other

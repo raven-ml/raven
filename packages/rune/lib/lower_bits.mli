@@ -72,9 +72,11 @@ val mulacc : Ops.t -> Ops.t -> Ops.t -> Ops.t
 
 (** {1:loads Indexed loads} *)
 
-val take : Ops.t -> int -> Ops.t -> Ops.t
+val take : ?clamped:bool -> Ops.t -> int -> Ops.t -> Ops.t
 (** [take u axis p] is [u] read at the [int64] positions [p] along [axis].
     [p] has [u]'s rank and, off [axis], extents at most [u]'s. The result has
     [p]'s shape: at each index, [u]'s element at that index with [axis] set
     to [p]'s element there. Each element is one indexed load of [u]'s bits,
-    or zero bits where the position lies outside the axis. *)
+    or zero bits where the position lies outside the axis. With
+    [~clamped:true] (default [false]) every position must lie in the axis,
+    and no load is guarded. *)

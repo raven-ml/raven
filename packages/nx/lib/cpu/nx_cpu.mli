@@ -117,8 +117,11 @@
     columns and depth as above, [Rows]' columns those of one index along
     [b_axis], [Contracting]'s depth the pair's whole extent; each output
     adds its group's products in that order. A segmented contraction
-    reads the offsets whole before any write, so they may be [dst]
-    itself. *)
+    reads the ids whole before any write, so they may be [dst] itself. It
+    groups the indices by counting and copies what the ids cut into
+    scratch, group after group: [Rows]' rows of [a] and [init], whose
+    results it copies back, or both operands along [Contracting]'s pair.
+    Each group computes as an unsegmented call of its indices alone. *)
 
 (** {2:contraction_bound Bound}
 

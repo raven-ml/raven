@@ -556,26 +556,20 @@ let mxfp4 name m =
   { bench; work = [ F.Fma (acc, 2 * m * n * k); F.Read (n * k / 2) ] }
 
 (* [t] float32 tokens, each routed to 8 of [g] MXFP4 experts' weights of
-   [n × k] stored as [mxfp4]'s: the [8t] routed rows, sorted by expert,
-   cut into the experts' groups by Rows segments. Token [i]'s experts are
-   [(5i + 4j) mod g] for [j] below 8, fixed so the groups' sizes are. *)
+   [n × k] stored as [mxfp4]'s: the [8t] rows in token order, each cut
+   into its expert's group by Rows segments' ids, as a router gives them.
+   Token [i]'s experts are [(5i + 4j) mod g] for [j] below 8, fixed so the
+   groups' sizes are. *)
 let mxfp4_experts name t g =
   let acc = D.Any D.Float32 and contracting : _ iarray = [| (1, 2) |] in
   let n = 1024 and k = 4096 and m = 8 * t in
   let bench (module K : Nx_kernel.S) =
     row name
       (fun () ->
-        let counts = Array.make g 0 in
-        for i = 0 to t - 1 do
-          for j = 0 to 7 do
-            let e = ((5 * i) + (4 * j)) mod g in
-            counts.(e) <- counts.(e) + 1
-          done
-        done;
-        let offsets = Array.make (g + 1) 0L in
-        Array.iteri
-          (fun e c -> offsets.(e + 1) <- Int64.add offsets.(e) (Int64.of_int c))
-          counts;
+        let ids =
+          Array.init m (fun r ->
+              Int64.of_int (((5 * (r / 8)) + (4 * (r mod 8))) mod g))
+        in
         let codes =
           A.of_array D.Uint8 [| g; n; k / 32 |]
             (Array.init (g * n * k / 32) (fun i -> 120 + (i mod 15)))
@@ -587,8 +581,8 @@ let mxfp4_experts name t g =
           { array = A.Any (filled D.Float4_e2m1fn [| g; n; k |]);
             scale = Some (Exponent codes) }
         in
-        let offsets = A.of_array D.Int64 [| g + 1 |] offsets in
-        let segments = Some (Nx_kernel.Rows { offsets; a_axis = 0; b_axis = 0 }) in
+        let ids = A.of_array D.Int64 [| m |] ids in
+        let segments = Some (Nx_kernel.Rows { ids; a_axis = 0; b_axis = 0 }) in
         (A.create Rig.host D.Float32 [| m; n |], a, b, segments))
       (fun (dst, a, b, segments) ->
         ok

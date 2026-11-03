@@ -2491,11 +2491,11 @@ let law_forms (k, wx, wy) =
   cover "a cut result" (cut_result eager)
 
 (* Rows of [x], [[4; 4]], each by the matrix of [y], [[4; 4; 4]], that its
-   group names, the offsets at [wo]: [[0; 1; 1; 3; 4]] put row 0 in group
-   0, no row in group 1, rows 1 and 2 in group 2 and row 3 in group 3. *)
+   group names, the ids at [wo]: [[0; 2; 2; 3]] put row 0 in group 0, no
+   row in group 1, rows 1 and 2 in group 2 and row 3 in group 3. *)
 let by_groups wo x y =
-  let offsets =
-    Nx.place (at wo) (Nx.create Nx.int64 [| 5 |] [| 0L; 1L; 1L; 3L; 4L |])
+  let ids =
+    Nx.place (at wo) (Nx.create Nx.int64 [| 4 |] [| 0L; 2L; 2L; 3L |])
   in
   Nx.Prim.eval ~by:"test.by_groups"
     (Contract
@@ -2509,7 +2509,7 @@ let by_groups wo x y =
          init = None;
          a_scale = None;
          b_scale = None;
-         segments = Some (Rows { offsets; a_axis = 0; b_axis = 0 });
+         segments = Some (Rows { ids; a_axis = 0; b_axis = 0 });
          sum = false;
        })
 
@@ -2525,7 +2525,7 @@ let law_by_groups (wo, wx, wy) =
   in
   let eager = agrees (by_groups wo) x y in
   cover "a refusal" (Result.is_error eager);
-  cover "offsets cut" (wo <> On);
+  cover "ids cut" (wo <> On);
   cover "b cut along its groups, computed"
     (along_groups wy && Result.is_ok eager);
   cover "a cut result" (cut_result eager)
@@ -2548,7 +2548,7 @@ let forms =
          and a refusal is the same message"
         (Gen.with_pp
            (fun ppf (wo, wx, wy) ->
-             Format.fprintf ppf "offsets at %a, a at %a, b at %a" pp_where wo
+             Format.fprintf ppf "ids at %a, a at %a, b at %a" pp_where wo
                pp_where wx pp_where wy)
            Gen.(
              triple

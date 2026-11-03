@@ -934,6 +934,298 @@ let maps =
       test "f keeps the names of the functions it calls" test_map_callback;
     ]
 
+(* matmul_segments: each position's row by the matrix its id names, against
+   that product computed in OCaml. Entries are small integers, whose sums
+   every float dtype holds exactly, or, at int8, ones that wrap: the result
+   compares bit for bit. *)
+
+type mdt = F32 | F64 | F16 | Bf16 | I8
+
+let mdt_name = function
+  | F32 -> "float32"
+  | F64 -> "float64"
+  | F16 -> "float16"
+  | Bf16 -> "bfloat16"
+  | I8 -> "int8"
+
+(* A case: [w] [[e; n; k]] read transposed to [[e; k; n]] where [w_t], else
+   stored [[e; k; n]]; [x]'s leading axes each [s]'s or [1], flipped along
+   its last axis where [x_flip]; NaN rows at positions out of range where
+   [x] is not broadcast. *)
+type mcase = {
+  dt : mdt;
+  s : int array;
+  ids : int64 array;
+  lead : int array;
+  k : int;
+  e : int;
+  n : int;
+  xs : float array;
+  ws : float array;
+  w_t : bool;
+  x_flip : bool;
+}
+
+let pp_mcase ppf c =
+  Format.fprintf ppf "%s, ids %a [%s], x lead %a k %d%s, w e %d n %d%s"
+    (mdt_name c.dt) pp_ints c.s
+    (String.concat "; " (Array.to_list (Array.map Int64.to_string c.ids)))
+    pp_ints c.lead c.k
+    (if c.x_flip then " flipped" else "")
+    c.e c.n
+    (if c.w_t then " transposed" else "")
+
+let inside c i =
+  Int64.compare i 0L >= 0 && Int64.compare i (Int64.of_int c.e) < 0
+
+let mcase =
+  let open Gen in
+  let* dt = of_list [ F32; F64; F16; Bf16; I8 ] in
+  let* e = frequency [ (1, constant 0); (6, int_range 1 4) ] in
+  let* k = of_list [ 0; 1; 2; 3; 5 ] in
+  let* n = of_list [ 0; 1; 2; 3 ] in
+  let* many = frequency [ (6, constant false); (1, constant true) ] in
+  let* s =
+    if many then map (fun p -> [| p |]) (int_range 65 130)
+    else
+      let* r = int_range 1 2 in
+      map Array.of_list (list ~size:(constant r) (int_range 0 4))
+  in
+  let p = numel s in
+  let id =
+    frequency
+      [
+        (10, map Int64.of_int (int_range 0 (max 0 (e - 1))));
+        (2, of_list [ -1L; Int64.of_int e ]);
+        (1, of_list [ Int64.min_int; Int64.max_int; -2L ]);
+      ]
+  in
+  let* one = frequency [ (4, constant false); (1, constant true) ] in
+  let* ids = array ~size:(constant p) id in
+  let ids = if one && p > 0 then Array.make p ids.(0) else ids in
+  let* lead =
+    let+ keep = list ~size:(constant (Array.length s)) bool in
+    Array.of_list (List.mapi (fun i k -> if k then s.(i) else 1) keep)
+  in
+  let lo, hi = if dt = I8 then (-100, 100) else (-4, 4) in
+  let entries m =
+    map (Array.map Float.of_int) (array ~size:(constant m) (int_range lo hi))
+  in
+  let* xs = entries (numel lead * k) in
+  let* ws = entries (e * k * n) in
+  let+ w_t = bool and+ x_flip = bool in
+  let c = { dt; s; ids; lead; k; e; n; xs; ws; w_t; x_flip } in
+  (* A row out of range holds NaN, which it never reaches the result. *)
+  if dt <> I8 && lead = s then
+    let xs =
+      Array.mapi (fun j v -> if inside c ids.(j / k) then v else Float.nan) xs
+    in
+    { c with xs }
+  else c
+
+(* [x] and [w] of a case, at float64, as their views lay them out. *)
+let x_of c =
+  let x = Nx.create Nx.float64 (Array.append c.lead [| c.k |]) c.xs in
+  if c.x_flip then Nx.flip ~axes:[ -1 ] x else x
+
+let w_of c =
+  if c.w_t then
+    Nx.matrix_transpose (Nx.create Nx.float64 [| c.e; c.n; c.k |] c.ws)
+  else Nx.create Nx.float64 [| c.e; c.k; c.n |] c.ws
+
+(* Where a case's operands lie: [put role x] places the host value [x]. *)
+type mrole = Mx | Mids | Mw
+
+type 'e mput = {
+  put : 'v 's. mrole -> ('v, 's, Nx.host) Nx.t -> ('v, 's, 'e) Nx.t;
+}
+
+let on_host = { put = (fun _ x -> x) }
+
+(* The result at float64, the operands cast to the case's dtype, then laid
+   out as the case's views, where [p] puts them. *)
+let matmul_at (type e) ?sum (p : e mput) c =
+  let go (type v s) (d : (v, s) Nx.dtype) =
+    let x =
+      Nx.cast d (Nx.create Nx.float64 (Array.append c.lead [| c.k |]) c.xs)
+    in
+    let x = p.put Mx x in
+    let x = if c.x_flip then Nx.flip ~axes:[ -1 ] x else x in
+    let w =
+      if c.w_t then
+        Nx.matrix_transpose
+          (p.put Mw (Nx.cast d (Nx.create Nx.float64 [| c.e; c.n; c.k |] c.ws)))
+      else p.put Mw (Nx.cast d (Nx.create Nx.float64 [| c.e; c.k; c.n |] c.ws))
+    in
+    let ids = p.put Mids (Nx.create Nx.int64 c.s c.ids) in
+    let y = Nx.matmul_segments ?sum ids x w in
+    (* The devices' terms close where the result lies uncut. *)
+    let y = Nx.place (Nx.Placement.uncut (Nx.placement y)) y in
+    Nx.to_array (Nx.cast Nx.float64 y)
+  in
+  match c.dt with
+  | F32 -> go Nx.float32
+  | F64 -> go Nx.float64
+  | F16 -> go Nx.float16
+  | Bf16 -> go Nx.bfloat16
+  | I8 -> go Nx.int8
+
+(* Each position's row by its matrix, exact, wrapped at int8. *)
+let matmul_reference c =
+  let x = Nx.to_array (x_of c) and w = Nx.to_array (w_of c) in
+  let p = numel c.s and r = Array.length c.s in
+  let row q =
+    let at = ref 0 and rest = ref q in
+    let coord = Array.make r 0 in
+    for a = r - 1 downto 0 do
+      coord.(a) <- !rest mod c.s.(a);
+      rest := !rest / c.s.(a)
+    done;
+    for a = 0 to r - 1 do
+      at := (!at * c.lead.(a)) + if c.lead.(a) = 1 then 0 else coord.(a)
+    done;
+    !at
+  in
+  Array.init (p * c.n) (fun o ->
+      let q = o / c.n and j = o mod c.n in
+      let id = c.ids.(q) in
+      if not (inside c id) then 0.
+      else
+        let id = Int64.to_int id and sum = ref 0. in
+        for t = 0 to c.k - 1 do
+          sum :=
+            !sum +. (x.((row q * c.k) + t) *. w.((((id * c.k) + t) * c.n) + j))
+        done;
+        if c.dt = I8 then Float.of_int (wrap8 (Float.to_int !sum) 0) else !sum)
+
+let law_matmul c =
+  cover "a position out of range"
+    (Array.exists (fun i -> not (inside c i)) c.ids);
+  cover "an id at int64's extremes"
+    (Array.exists (fun i -> i = Int64.min_int || i = Int64.max_int) c.ids);
+  cover "a NaN row out of range" (Array.exists Float.is_nan c.xs);
+  cover "a shared row" (c.lead <> c.s && numel c.s > 1);
+  cover "no position" (numel c.s = 0);
+  cover "no matrix" (c.e = 0);
+  cover "a strided weight" c.w_t;
+  cover "int8 that wraps" (c.dt = I8 && c.k > 1);
+  cover "a matrix of more than 64 rows"
+    (Array.exists
+       (fun i ->
+         inside c i
+         && Array.fold_left (fun m j -> if j = i then m + 1 else m) 0 c.ids
+            > 64)
+       c.ids);
+  let y = matmul_at on_host c in
+  equal (array float_exact) (matmul_reference c) y
+
+(* A row's bits do not depend on the other positions' ids: float32 rows of
+   random values, each position's id kept or redrawn. *)
+let test_matmul_bits () =
+  let rng = Random.State.make [| 7 |] in
+  let e = 3 and k = 200 and n = 3 and p = 40 in
+  let rand m = Array.init m (fun _ -> Random.State.float rng 2. -. 1.) in
+  let x = Nx.create Nx.float32 [| p; k |] (rand (p * k)) in
+  let w = Nx.create Nx.float32 [| e; k; n |] (rand (e * k * n)) in
+  let ids () =
+    Array.init p (fun _ -> Int64.of_int (Random.State.int rng (e + 1)))
+  in
+  let bits y = Array.map Int32.bits_of_float (Nx.to_array y) in
+  for _ = 1 to 10 do
+    let a = ids () and b = ids () in
+    let keep = Array.init p (fun q -> q mod 3 = 0) in
+    let b = Array.mapi (fun q v -> if keep.(q) then a.(q) else v) b in
+    let ya = bits (Nx.matmul_segments (Nx.create Nx.int64 [| p |] a) x w)
+    and yb = bits (Nx.matmul_segments (Nx.create Nx.int64 [| p |] b) x w) in
+    let kept y = Array.mapi (fun o v -> if keep.(o / n) then v else 0l) y in
+    equal (array int32) (kept ya) (kept yb)
+  done
+
+(* Over two devices: [w] cut along its matrices, closed or kept as the
+   devices' terms with [~sum:true] and then placed whole; the ids and [x]'s
+   rows cut together. Each is the whole's result. *)
+let test_matmul_cut () =
+  let c =
+    {
+      dt = F32;
+      s = [| 6 |];
+      ids = [| 3L; 0L; -1L; 1L; 3L; 2L |];
+      lead = [| 6 |];
+      k = 4;
+      e = 4;
+      n = 2;
+      xs = Array.init 24 (fun i -> Float.of_int ((i mod 7) - 3));
+      ws = Array.init 32 (fun i -> Float.of_int ((i mod 5) - 2));
+      w_t = false;
+      x_flip = false;
+    }
+  in
+  let want = matmul_reference c in
+  let at wx wi ww =
+    {
+      put =
+        (fun role x ->
+          let cut = match role with Mx -> wx | Mids -> wi | Mw -> ww in
+          Nx.place (if cut then S2.split ~axis:0 else S2.on) x);
+    }
+  in
+  equal ~msg:"w cut along its matrices" (array float_exact) want
+    (matmul_at (at false false true) c);
+  equal ~msg:"w cut along its matrices, summed" (array float_exact) want
+    (matmul_at ~sum:true (at false false true) c);
+  equal ~msg:"ids and rows cut" (array float_exact) want
+    (matmul_at (at true true false) c);
+  (* Two axes of ids, four positions of two ids each cut in windows of 2,
+     one row of [x] for each position's ids: flattened where they lie. In
+     windows of 3 and 2, the ids' flattening reads them whole, which
+     raises. *)
+  let two s n =
+    {
+      c with
+      s = [| s; 2 |];
+      ids =
+        Array.init (2 * s) (fun i ->
+            [| 3L; 0L; -1L; 1L; 2L; Int64.max_int |].(i mod 6));
+      lead = [| s; 1 |];
+      xs = Array.init (s * n) (fun i -> Float.of_int ((i mod 7) - 3));
+    }
+  in
+  let c = two 4 4 in
+  equal ~msg:"two axes of ids and rows cut" (array float_exact)
+    (matmul_reference c)
+    (matmul_at (at true true false) c);
+  invalid ~by:"Nx.matmul_segments" (fun () ->
+      ignore (matmul_at (at true true false) (two 5 4)))
+
+let test_matmul_errors () =
+  let by = "Nx.matmul_segments" in
+  let ids = Nx.zeros Nx.int64 [| 3 |] in
+  let x = Nx.zeros Nx.float32 [| 3; 2 |]
+  and w = Nx.zeros Nx.float32 [| 2; 2; 4 |] in
+  invalid ~by (fun () ->
+      Nx.matmul_segments ids x (Nx.zeros Nx.float32 [| 2; 4 |]));
+  invalid ~by (fun () ->
+      Nx.matmul_segments ids (Nx.zeros Nx.float32 [| 2 |]) w);
+  invalid ~by (fun () ->
+      Nx.matmul_segments ids (Nx.zeros Nx.float32 [| 2; 2 |]) w);
+  invalid ~by (fun () ->
+      Nx.matmul_segments ids (Nx.zeros Nx.float32 [| 3; 3 |]) w);
+  invalid ~by (fun () ->
+      Nx.matmul_segments ids
+        (Nx.zeros Nx.bool [| 3; 2 |])
+        (Nx.zeros Nx.bool [| 2; 2; 4 |]))
+
+let matmuls =
+  group "matmul_segments"
+    [
+      prop ~count:300 "each position's row by the matrix its id names, exact"
+        (Gen.with_pp pp_mcase mcase) law_matmul;
+      test "a row's bits do not depend on the other positions' ids"
+        test_matmul_bits;
+      test "cuts over devices give the whole's result" test_matmul_cut;
+      test "misuse raises" test_matmul_errors;
+    ]
+
 (* A donated operand that another operation consumed is dead: each function
    names itself, the one the user called, whatever it computes through. *)
 let dead () =
@@ -955,4 +1247,4 @@ let test_dead_names () =
 
 let names = group "errors" [ test "a dead operand names the function called" test_dead_names ]
 
-let () = exit (run "nx segments" [ segments; ranges; maps; names ])
+let () = exit (run "nx segments" [ segments; ranges; maps; matmuls; names ])

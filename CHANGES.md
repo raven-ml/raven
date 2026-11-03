@@ -368,6 +368,22 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Rows` segmented contraction, such as `Nx_quant.apply_experts`
+  and `Nx.matmul_segments`, groups its rows itself. With fewer than 4 rows
+  an expert, each row streams its own expert's matrix, with no routing.
+  With more, it routes them by counting into blocks of one expert, each
+  block reading its expert's matrix once: 64 rows from 16 rows an expert,
+  on a tensor core where one takes them; below that the most rows up to 16,
+  a power of two, whose padding stays under half the rows, so that the
+  host, whose padding rows cost as much as real ones, computes under one
+  and a half times the rows. On fudge's RTX 5000 Ada, gpt-oss-20b's experts
+  at a 512-token prefill take 3.69-3.82 ms, from 4.63-4.72 through
+  `Nx.map_segments`, the 512-token prefill 171-172 ms from 183-184, and one
+  token's routed MXFP4 product 59-67 us from 66-79. The cost, until tolk
+  lays such products out without a core: a float32 routed product, which
+  no tensor core takes, in blocks of 64 rather than streamed in blocks of
+  16, 24-25 ms from 16-17 for 512 tokens of gpt-oss's MXFP4 gate and up
+  projection.
 - `Rune.jit` compiles `Nx.unique ~size`, its numbering lowered to sorts and
   scatters, and `Rune.vmap` maps it, each lane's keys led by the lane.
 - A compiled `Contracting` segmented contraction, such as a grouped
@@ -1884,6 +1900,20 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.matmul_segments ids x w` multiplies each position's row of `x` by the
+  matrix of `w`, `[| e; k; n |]`, its id names, zeros where the id is out of
+  range, in one contraction whose rows the kernels group by id: a
+  mixture of experts' float projection, with gradients in both operands.
+- **Breaking:** the kernel contract's segmented contraction takes a group id
+  per index, `Nx_kernel.Rows { ids; a_axis; b_axis }` and
+  `Contracting { ids; groups; pair }`, where it took sorted offsets. Unsorted
+  ids, and ids out of range, need no sort; ids cut with the rows they name
+  are computed where they lie. nx.cpu groups the rows by counting.
+- `Nx_quant.apply_experts` is one segmented contraction, with no sort and no
+  gather of the rows in or out, and reads Q8_0 and Q6_K weights where they
+  lie at float32, as `Nx_quant.apply` does, where it decoded them at
+  float32 first. `ids` and `x` cut along the positions are computed where
+  they lie, where they raised.
 - **Breaking:** `Nx.attention` is one operation, `Nx.Prim.Attention`;
   nx.cpu runs it by blocks of keys and a hidden value no longer reaches
   `o`, which `Rune.jit` and rune's derivatives still make NaN.
