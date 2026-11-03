@@ -11,8 +11,7 @@ val play : (string * (unit -> unit)) list -> unit
     Raises [Failure] if [TOLK_TEST_ROLE] names no part of [parts]. *)
 
 val fresh : unit -> string
-(** [fresh ()] is a cache directory no child has used, under the working
-    directory. *)
+(** [fresh ()] is an empty cache directory, removed when the test ends. *)
 
 type child
 (** The type for children started and not yet finished. *)

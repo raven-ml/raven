@@ -10,11 +10,7 @@ let play parts =
           exit 0
       | None -> failwith ("unknown part " ^ part))
 
-let caches = ref 0
-
-let fresh () =
-  incr caches;
-  Filename.concat (Sys.getcwd ()) (Printf.sprintf "disk_cache_%d" !caches)
+let fresh () = Windtrap.temp_dir ~prefix:"disk_cache" ()
 
 type child = int * string * string
 
@@ -30,8 +26,8 @@ let start ?(env = []) ~cachedb part =
       (List.map (fun (k, v) -> k ^ "=" ^ v) set
       @ List.filter unchanged (Array.to_list (Unix.environment ())))
   in
-  let out = Filename.temp_file part ".out"
-  and err = Filename.temp_file part ".err" in
+  let out = Windtrap.temp_file ~suffix:".out" ()
+  and err = Windtrap.temp_file ~suffix:".err" () in
   let fd file = Unix.openfile file [ Unix.O_WRONLY ] 0 in
   let out_fd = fd out and err_fd = fd err in
   let pid =
