@@ -140,6 +140,14 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - LLVM 20+ and Apple Clang keep the straight-line vectorizer that D167
   turns off under LLVM 18 and 19: run the reduced kernel of 73455ffe7
   through them (the Mac's Homebrew LLVM) and extend D167 if they miscompile
+- CUDA programs load PTX: a gpt-oss first call makes 74 module loads for
+  43 distinct kernels, about 6 ms; cubins load in half the time (0.6
+  against 1.0-1.5 ms per 37), and programs reload binaries they share.
+  `cuMemHostRegister` took 79 ms in the probe process: find whether it
+  falls in a first call
+- the host's routed decode (D92): dense at 64 rows runs 1.4x slower than
+  the stored decode (12.05 against 8.5 ms on a P-core); register files of
+  32 (NEON, AVX-512) take 16 rows, unmeasured
 
 ## rune, kaun, vega
 
