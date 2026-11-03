@@ -1036,10 +1036,10 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..e208376ab 100644
+index ec97cac6f..4f613dc4a 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -1,9 +1,263 @@
+@@ -1,9 +1,264 @@
 -import itertools
 +import itertools, math
  from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
@@ -1241,7 +1241,8 @@ index ec97cac6f..e208376ab 100644
 +  n = prod(k.full_shape[k.rngs.index(x)] for x in contracted(k))
 +  return r <= STREAM_FIRST and (not isinstance(n, int) or n >= LANES*IN_FLIGHT) and ((i:=per_byte(k, w)) is None or i <= STREAM_PER_BYTE)
 +def streamed(k:Scheduler):
-+  if not (k.ren.has_local and k.ren.has_shared and getenv("MV",1) != 0) or (c:=contraction(k)) is None: return None
++  # a kernel where a loop's bound reads an axis is not streamed: the layouts upcast output axes by their accesses
++  if not (k.ren.has_local and k.ren.has_shared and getenv("MV",1) != 0) or k.read_by_bounds or (c:=contraction(k)) is None: return None
 +  a, b = c[0].src
 +  def rows_first(o): return (l:=layout(k, o)) is not None and l[0] == "rows"
 +  ra, rb = reuse(k, a), reuse(k, b)
@@ -1305,7 +1306,7 @@ index ec97cac6f..e208376ab 100644
  
  def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # first try the tensor cores
-@@ -24,23 +278,56 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,23 +279,56 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
@@ -1367,7 +1368,7 @@ index ec97cac6f..e208376ab 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +344,20 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,25 +345,20 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1407,7 +1408,7 @@ index ec97cac6f..e208376ab 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,25 +392,47 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,25 +393,47 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1465,7 +1466,7 @@ index ec97cac6f..e208376ab 100644
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -139,18 +443,36 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -139,18 +444,36 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # if last reduce dim is small(ish), loop unroll the reduce
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:
@@ -1509,23 +1510,59 @@ index ec97cac6f..e208376ab 100644
  
    # **** local groups ****
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
-index d7f19cd30..9ab370acb 100644
+index d7f19cd30..dad07ba4c 100644
 --- a/tinygrad/codegen/opt/postrange.py
 +++ b/tinygrad/codegen/opt/postrange.py
-@@ -14,6 +14,8 @@ from tinygrad.renderer import Renderer
+@@ -14,6 +14,15 @@ from tinygrad.renderer import Renderer
  split_targets = {AxisType.UPCAST: (AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK),
                   AxisType.LOCAL: (AxisType.GLOBAL, AxisType.WEAK)}
  
 +def _union(us:list[UOp], vs:list[UOp]) -> list[UOp]: return us + [v for v in vs if v not in us]
 +
++# a range whose bound, its AFTERs aside, reads no range and no memory: a launch computes it from the run's variables alone
++def known_at_launch(r:UOp) -> bool:
++  if len(r.src) != 1: return False
++  b = r.src[0]
++  while b.op is Ops.AFTER: b = b.src[0]
++  return not b.ranges and not any(u.op is Ops.LOAD for u in b.toposort())
++
  class Scheduler:
    def __init__(self, ast:UOp, ren:Renderer):
      self.ast, self.ren = graph_rewrite(ast, pm_flatten_range), ren
-@@ -103,17 +105,20 @@ class Scheduler:
+@@ -52,7 +61,7 @@ class Scheduler:
+   def convert_loop_to_global(self) -> None:
+     if not self.ren.has_local: return
+     red = self.reduce_ranges
+-    rngs = [r for s in self.ast.src if s.op is Ops.END for r in s.src[1:] if r.axis_type is AxisType.WEAK and r not in red]
++    rngs = [r for s in self.ast.src if s.op is Ops.END for r in s.src[1:] if r.axis_type is AxisType.WEAK and r not in red and known_at_launch(r)]
+     # exclude any output ranges from global that don't appear in all BUFFERIZE
+     for x in self.ast.backward_slice:
+       if x.op is Ops.STAGE:
+@@ -81,8 +90,13 @@ class Scheduler:
+ 
+   def upcast_size(self): return prod(self.full_shape[a] for a in self.axes_of(AxisType.UPCAST))
+ 
++  # the ranges a loop's bound reads: a loop has one count of trips, so none of them can become lanes
++  @property
++  def read_by_bounds(self) -> set[UOp]: return {r for u in self.ast.toposort() if u.op is Ops.RANGE and u.src for r in u.src[0].ranges}
++
+   def upcastable_dims(self, reduce:bool|None=False) -> list[int]:
+-    return [i for i in self.axes_of(*split_targets[AxisType.UPCAST], reduce=reduce) if isinstance(self.full_shape[i], int)]
++    return [i for i in self.axes_of(*split_targets[AxisType.UPCAST], reduce=reduce)
++            if isinstance(self.full_shape[i], int) and self.rngs[i] not in self.read_by_bounds]
+ 
+   def apply_opt(self, opt:Opt, append_opt:bool=True):
+     if opt.op is OptOps.TC: rng = UOp(Ops.NOOP)
+@@ -101,21 +115,28 @@ class Scheduler:
+       if amt == 0: amt = int(rng.vmax+1)
+       is_reduce = rng in self.reduce_ranges
        if new_type is AxisType.UPCAST:
++        check(rng not in self.read_by_bounds, f"a loop's bound reads axis {opt.axis}")
          if is_reduce: check(amt <= 32, "don't unroll more than 32")
          else: check(self.ren.target.device == "DSP" or amt <= 16, "don't upcast more than 16")
 +      groups = new_type is AxisType.LOCAL and is_reduce
++      # a group's threads meet at barriers, which threads running a loop of a different count of trips would not all reach
++      if groups: check(not self.read_by_bounds, "groups need loops whose bounds read no axis")
 +      grouped = _union(self._grouped_reduces(), self._closers(rng)) if groups else self._grouped_reduces()
        # prevents METAL compiler hangs
 -      if self.reduceop is not None and ((new_type is AxisType.LOCAL and is_reduce) or self.group_for_reduces):
@@ -1548,8 +1585,11 @@ index d7f19cd30..9ab370acb 100644
 +      for r in shared: self.shift_to(r, amt, new_type, top=top, input_new_rng=ret[1])
      elif opt.op is OptOps.TC:
        check(len(self.applied_opts) == 0, "tensor core opts must be first") # TODO: remove the need for this by having warps
++      check(not self.read_by_bounds, "tensor cores need loops whose bounds read no axis")
        check(opt.axis is not None and opt.axis >= 0, "tensor core opts must have an axis")
-@@ -139,6 +144,11 @@ class Scheduler:
+       check(opt.arg is not None and isinstance(opt.arg, tuple) and len(opt.arg) == 3, "tensor core opts must have valid arg")
+       check(-1 <= (tc_select:=cast(tuple, opt.arg)[0]) < len(self.ren.tensor_cores), "tensor core opts must have valid tc_select")
+@@ -139,6 +160,11 @@ class Scheduler:
        for r in self.reduceops:
          if rng in r.src[1:]:
            replaces[r] = r.replace(src=(valid.where(r.src[0], UOp.const(identity_element(r.arg[0], r.dtype), r.dtype)),)+r.src[1:])
@@ -1561,7 +1601,7 @@ index d7f19cd30..9ab370acb 100644
        self.ast = self.ast.substitute(replaces, f"padto {rng.axis_id} {opt.arg}")
        ret = replaced_rng
      elif opt.op is OptOps.SWAP:
-@@ -154,6 +164,39 @@ class Scheduler:
+@@ -154,6 +180,39 @@ class Scheduler:
      if append_opt: self.applied_opts.append(opt)
      return ret
  
@@ -1601,7 +1641,7 @@ index d7f19cd30..9ab370acb 100644
    def _apply_tc_opt(self, use_tensor_cores:int, axis:int, tc_select:int, opt_level:int) -> None|list[UOp]:
      if not (reduceops := self.reduceops): raise KernelOptError("no reduce ops for TensorCore")
      reduceop = reduceops[0]
-@@ -163,21 +206,28 @@ class Scheduler:
+@@ -163,21 +222,28 @@ class Scheduler:
        in0, in1 = mul.src
        for tc in self.ren.tensor_cores if tc_select == -1 else [self.ren.tensor_cores[tc_select]]:
          if self.ren.target.device in ("CUDA", "NV") and tc.dtype_in == dtypes.float and not ALLOW_TF32: continue
@@ -1641,7 +1681,7 @@ index d7f19cd30..9ab370acb 100644
            check(not any(r in self.reduce_ranges for r in axes[:2]), "tensor core N and M can't be contracted")
  
            # do optimizations and save the ranges
-@@ -200,7 +250,11 @@ class Scheduler:
+@@ -200,7 +266,11 @@ class Scheduler:
              reduceop = get_single_element([x for x in self.reduceops if axes[2] in x.src[1:]])
              gate, mul = (r0.src[0], r0.src[1]) if (r0:=reduceop.src[0]).op is Ops.WHERE else (None, r0)
              if mul.op is Ops.CAST: mul = mul.src[0]
@@ -3464,24 +3504,27 @@ index f0a41c9b5..9e2d0e149 100644
  
  # ***** pattern matcher *****
 diff --git a/tinygrad/uop/spec.py b/tinygrad/uop/spec.py
-index c359a697f..3b0b25a08 100644
+index c359a697f..bea525e32 100644
 --- a/tinygrad/uop/spec.py
 +++ b/tinygrad/uop/spec.py
-@@ -227,13 +227,6 @@ spec_program = PatternMatcher([
+@@ -225,13 +225,10 @@ spec_program = PatternMatcher([
+ 
+   # SPECIAL is int32 after index lowering
    (UPat(Ops.SPECIAL, src=(UPat(dtype=dtypes.int32),), name="s"), lambda s: isinstance(s.arg, str)),
- ])+spec_shared
+-])+spec_shared
  
 -spec_hcq = PatternMatcher([
 -  (UPat(Ops.GETADDR, dtypes.uint64, name="x",
 -        src=(UPat(GroupOp.Defines|{Ops.SHRINK, Ops.BITCAST, Ops.MSTACK, Ops.MSELECT, Ops.LINEAR}).or_after(),)),
 -   lambda x: is_device(x.arg)),
 -  (UPat(Ops.PROGRAM, dtypes.void, src=(UPat((Ops.BUFFER, Ops.PARAM)).or_after(),)), lambda: True),
--])+spec_shared
--
++  # the linearizer orders a loop bounded by a scalar LOAD after the range or loop end before it; it orders no load
++  (UPat(Ops.AFTER, src=(UPat(Ops.LOAD),), allow_any_len=True, name="x"),
++   lambda x: x.src[0].shape == () and all(d.op in (Ops.RANGE, Ops.END, Ops.BACKEDGE) for d in x.src[1:])),
+ ])+spec_shared
+ 
  # these are intermediate ops. everything should be deleted from here
- spec_full = PatternMatcher([
-   (UPat(Ops.REWRITE_ERROR, dtypes.void, name="x"), lambda x: isinstance(x.arg, str)),
-@@ -247,17 +240,22 @@ spec_full = PatternMatcher([
+@@ -247,17 +244,22 @@ spec_full = PatternMatcher([
  
    # all loads/stores
    (UPat((Ops.LOAD, Ops.STORE)), lambda: True),
@@ -3506,7 +3549,7 @@ index c359a697f..3b0b25a08 100644
    # linear for more kernels (TODO: we should enter non sink calls)
    #(UPat(Ops.LINEAR), lambda: True),
    # PARAM is caller-provided storage (or a Variable in the ALU addrspace), ALLOC is call-local storage
-@@ -271,8 +269,13 @@ spec_kernel_graph = PatternMatcher([
+@@ -271,8 +273,13 @@ spec_kernel_graph = PatternMatcher([
    # mstack/mselect
    (UPat(Ops.MSTACK, name="x"), lambda x: all(isinstance(s.device, str) for s in x.src) or (all_same(x.src) and x.src[0].device is None)),
    (UPat(Ops.MSELECT, name="x"), lambda x: isinstance(x.src[0].device, tuple) and x.arg < len(x.src[0].device)),

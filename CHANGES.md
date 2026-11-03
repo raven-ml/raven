@@ -943,6 +943,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A loop bounded by a loaded value, as `j < x[i]`, compiles and runs, where
+  it failed at `Spec`, the C compiler or launch: no axis its bound reads is
+  upcast (`Postrange.Scheduler.read_by_bounds`, `Ops.known_at_launch`).
 - A beam search times each sample from a clean, cold cache:
   `Tolk_engine.scrub` makes a buffer of twice each timed device's last-level
   cache (`Rig.cache_bytes`), which `Tolk_engine.time ~scrub` reads before each

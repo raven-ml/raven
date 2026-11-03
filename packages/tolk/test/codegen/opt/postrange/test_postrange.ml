@@ -342,6 +342,102 @@ let schedulers =
           equal Uops.uop ast (K.ast k));
     ]
 
+(* Loops bounded by an axis
+
+   A loop runs one count of trips, so an axis its bound reads cannot become a
+   thread's lanes, where each lane would count its own. *)
+
+(* [out[i * 8 + n] = j * j] over [j < x[i]], for four [i] and eight [n]. *)
+let bounded_rows () =
+  let i = Ops.range (Int 4) [ 0 ] and n = Ops.range (Int 8) [ 1 ] in
+  let x = Shape.param ~shape:[ Int 4 ] 1 Int32
+  and out = Shape.param ~shape:[ Int 32 ] 0 Int32 in
+  let count = Ops.load (Ops.index x [ i ]) [] in
+  let j = Ops.range ~axis_type:Loop ~dtype:Int32 (Sym count) [ 2 ] in
+  let at = Ops.index out [ Ops.O.((i * Ops.int 8) + n) ] in
+  let st = Ops.end_ (Ops.store at Ops.O.(j * j)) [ j ] in
+  (i, n, Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ st [ i; n ] ])
+
+let position r k =
+  match List.find_index (fun u -> u == r) (K.rngs k) with
+  | Some i -> i
+  | None -> failf "%s is not an axis" (Ops.range_str r)
+
+(* [ast] with a loop beside its stores, over [j < x[r]] for its first axis
+   [r], storing [j] at [r]. *)
+let with_bounded_loop k =
+  let ast = K.ast k in
+  let r = List.hd (K.rngs k) in
+  let x = Shape.param ~shape:[ Int 4096 ] 10 Int32
+  and y = Shape.param ~shape:[ Int 4096 ] 11 Int32 in
+  let count = Ops.load (Ops.index x [ r ]) [] in
+  let j = Ops.range ~axis_type:Loop ~dtype:Int32 (Sym count) [ 99 ] in
+  let loop =
+    Ops.end_ (Ops.end_ (Ops.store (Ops.index y [ r ]) j) [ j ]) [ r ]
+  in
+  Ops.replace ast ~src:(Ops.src ast @ [ loop ])
+
+let tc = Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 }
+
+let bounded_loops =
+  group "loops bounded by an axis"
+    [
+      test "read_by_bounds is the axes a loop's bound reads" (fun () ->
+          let i, _, ast = bounded_rows () in
+          equal (list Uops.uop) [ i ]
+            (K.read_by_bounds (K.v ast (renderer "cpu"))));
+      test "upcastable_dims leaves out an axis a loop's bound reads" (fun () ->
+          let i, n, ast = bounded_rows () in
+          let k = K.v ast (renderer "cpu") in
+          equal (list int) [ position n k ]
+            (List.filter
+               (fun a -> a = position i k || a = position n k)
+               (K.upcastable_dims k)));
+      test
+        "apply_opt refuses an upcast of an axis a loop's bound reads, leaving \
+         the kernel as it was" (fun () ->
+          let i, _, ast = bounded_rows () in
+          let k = K.v ast (renderer "cpu") in
+          let before = K.ast k in
+          equal
+            (result (list Uops.uop) string)
+            (Error "a loop's bound reads axis 0")
+            (K.apply_opt k (split (position i k) 4 Upcast));
+          equal Uops.uop before (K.ast k);
+          equal (list Kernel_opts.opt) [] (K.applied_opts k));
+      test "apply_opt upcasts an axis no loop's bound reads" (fun () ->
+          let _, n, ast = bounded_rows () in
+          let k = K.v ast (renderer "cpu") in
+          is_ok ~pp:Format.pp_print_string
+            (K.apply_opt k (split (position n k) 4 Upcast)));
+      test "apply_opt splits an axis a loop's bound reads into threads"
+        (fun () ->
+          let i, _, ast = bounded_rows () in
+          let k = K.v ast (renderer "cuda") in
+          is_ok ~pp:Format.pp_print_string
+            (K.apply_opt k (split (position i k) 2 Local)));
+      test "a group is refused where a loop's bound reads an axis" (fun () ->
+          let k = K.v (kernel "sum_rows_64") (renderer "cuda") in
+          let group k =
+            let axis = List.hd (K.axes_of ~reduce:true k []) in
+            K.apply_opt k (split axis 4 Local)
+          in
+          is_ok ~pp:Format.pp_print_string (group (K.copy k));
+          equal
+            (result (list Uops.uop) string)
+            (Error "groups need loops whose bounds read no axis")
+            (group (K.v (with_bounded_loop k) (renderer "cuda"))));
+      test "a tensor core is refused where a loop's bound reads an axis"
+        (fun () ->
+          let k = K.v (kernel "tc_metal_0") (renderer "metal") in
+          is_ok ~pp:Format.pp_print_string (K.apply_opt (K.copy k) tc);
+          let bounded = K.v (with_bounded_loop k) (renderer "metal") in
+          equal
+            (result (list Uops.uop) string)
+            (Error "tensor cores need loops whose bounds read no axis")
+            (K.apply_opt bounded tc));
+    ]
+
 (* Splitting *)
 
 let shifts =
@@ -687,6 +783,7 @@ let queries =
       query "reduceops" uops K.reduceops;
       query "reduce axes" ints (fun k -> K.axes_of ~reduce:true k []);
       query "upcastable_dims" ints (fun k -> K.upcastable_dims k);
+      query "read_by_bounds" uops K.read_by_bounds;
       query "upcast axes" ints (fun k -> K.axes_of k [ Upcast ]);
     ]
 
@@ -699,6 +796,7 @@ let () =
          axes;
          colors;
          schedulers;
+         bounded_loops;
          queries;
          shifts;
          split_targets;

@@ -1266,10 +1266,15 @@ let early k (w, _, reuse) =
   match n with Some n -> Bigint.(geq n (of_int summed)) | None -> true
 
 (* The streamed operand of [k]'s contraction, on a renderer with local
-   indices and shared memory. *)
+   indices and shared memory. A kernel where a range's bound reads an axis is
+   not streamed: the layouts upcast output axes by their accesses. *)
 let streams k =
   let ren = K.ren k in
-  if ren.has_local && ren.has_shared && Setting.value Setting.mv then streamed k
+  if
+    ren.has_local && ren.has_shared
+    && Setting.value Setting.mv
+    && List.is_empty (K.read_by_bounds k)
+  then streamed k
   else None
 
 (* The rules for a kernel that is not streamed and takes no tensor core. *)

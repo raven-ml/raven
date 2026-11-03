@@ -155,7 +155,9 @@ a staged value after a store	True	True	True	True	None
 an instruction after a store	True	True	True	True	None
 an after after a store	True	True	True	True	True
 a constant after a store	True	True	False	True	None
-a load after a store	None	None	None	True	None
+a load after a store	None	None	False	True	None
+an int32 load after a range	None	None	True	True	None
+a range bounded by a load after a range	True	True	True	True	True
 custom code	True	True	True	True	None
 inline custom code	True	True	True	True	None
 a void custom statement	True	True	True	True	None

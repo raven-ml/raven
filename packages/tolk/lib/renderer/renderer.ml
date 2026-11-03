@@ -121,12 +121,8 @@ module Estimates = struct
               (* a bound that reads other ranges or memory counts its greatest
                  value: a count reads the run's variables alone *)
               let bound = Shape.simplify (without_after (nth u 0)) in
-              let loads =
-                List.exists (is Op.Load) (toposort ~calls:Skip bound)
-              in
               let n =
-                if Nodes.cardinal (ranges bound) = 0 && not loads then
-                  ssimplify bound
+                if known_at_launch u then ssimplify bound
                 else X.of_value (vmax bound)
               in
               mults := without_specials X.(!mults * n)

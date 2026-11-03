@@ -57,6 +57,7 @@ module Scheduler = struct
     reduceops : Ops.t list;
     reduce_ranges : Ops.t list;
     rngs : Ops.t list;
+    read_by_bounds : Ops.t list;
     mutable full_shape : sint list option;
   }
 
@@ -141,12 +142,25 @@ module Scheduler = struct
           | c -> c)
         (List.filter axis slice)
     in
+    (* The ranges a loop's bound reads, as [i] in [j < x[i]]: a loop has one
+       count of trips, so none of them can become lanes. *)
+    let read_by_bounds =
+      List.fold_left
+        (fun acc u ->
+          if op u = Op.Range && src u <> [] then
+            Nodes.fold
+              (fun r acc -> if List.memq r acc then acc else r :: acc)
+              (ranges (nth u 0)) acc
+          else acc)
+        [] slice
+    in
     {
       of_ast = ast;
       slice;
       reduceops;
       reduce_ranges = red;
       rngs;
+      read_by_bounds;
       full_shape = None;
     }
 
@@ -163,6 +177,7 @@ module Scheduler = struct
   let reduceops k = (view k).reduceops
   let reduce_ranges k = (view k).reduce_ranges
   let rngs k = (view k).rngs
+  let read_by_bounds k = (view k).read_by_bounds
 
   let shape_len k = List.length (rngs k)
   let full_shape k =
@@ -195,8 +210,11 @@ module Scheduler = struct
 
   let upcastable_dims ?(reduce = false) k =
     let shape = full_shape k in
+    let rngs = rngs k in
     List.filter
-      (fun i -> Option.is_some (known_size (List.nth shape i)))
+      (fun i ->
+        Option.is_some (known_size (List.nth shape i))
+        && not (List.memq (List.nth rngs i) (read_by_bounds k)))
       (axes_of ~reduce k (split_targets Upcast))
 
   let group_for_reduces k =
@@ -305,7 +323,10 @@ module Scheduler = struct
           (fun s ->
             if op s = Op.End then
               List.filter
-                (fun r -> axis_type r = Weak && not (List.memq r red))
+                (fun r ->
+                  axis_type r = Weak
+                  && (not (List.memq r red))
+                  && known_at_launch r)
                 (List.tl (src s))
             else [])
           (src k.ast)
@@ -439,11 +460,21 @@ module Scheduler = struct
           if target = Local then check k.ren.has_local "locals needed for opt";
           let amt = if amount = 0 then size rng else Bigint.of_int amount in
           let is_reduce = List.memq rng (reduce_ranges k) in
-          if target = Upcast then
+          if target = Upcast then begin
+            check
+              (not (List.memq rng (read_by_bounds k)))
+              (strf "a loop's bound reads axis %d" axis);
             if is_reduce then
               check Bigint.(leq amt (of_int 32)) "don't unroll more than 32"
-            else check Bigint.(leq amt (of_int 16)) "don't upcast more than 16";
+            else check Bigint.(leq amt (of_int 16)) "don't upcast more than 16"
+          end;
           let groups = target = Local && is_reduce in
+          (* A group's threads meet at barriers, which threads running a loop
+             of a different count of trips would not all reach. *)
+          if groups then
+            check
+              (List.is_empty (read_by_bounds k))
+              "groups need loops whose bounds read no axis";
           let grouped = grouped_reduces k in
           let grouped =
             if groups then union grouped (closers k rng) else grouped
@@ -474,6 +505,9 @@ module Scheduler = struct
           [ replaced; new_rng ]
       | Tc { axis; tc_select; tc_opt; use_tc } -> (
           check (k.applied_opts = []) "tensor core opts must be first";
+          check
+            (List.is_empty (read_by_bounds k))
+            "tensor cores need loops whose bounds read no axis";
           check (axis >= 0) "tensor core opts must have an axis";
           check
             (-1 <= tc_select && tc_select < List.length k.ren.tensor_cores)

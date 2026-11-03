@@ -76,10 +76,16 @@ module Scheduler : sig
   (** [upcast_size k] is the product of the sizes of [k]'s
       {!Ops.Axis_type.Upcast} axes. *)
 
+  val read_by_bounds : t -> Ops.t list
+  (** [read_by_bounds k] is the ranges that the bound of one of [k]'s ranges
+      reads, as [i] in a loop [j < x[i]]. A loop has one count of trips, so
+      none of them can become a thread's lanes. *)
+
   val upcastable_dims : ?reduce:bool -> t -> int list
   (** [upcastable_dims ~reduce k] is the positions of [k]'s global, local and
-      weak axes of a known size, that are reduce axes if [reduce] is [true] and
-      are not if it is [false] (default). *)
+      weak axes of a known size that no range's bound reads
+      ({!read_by_bounds}), that are reduce axes if [reduce] is [true] and are
+      not if it is [false] (default). *)
 
   val group_for_reduces : t -> int
   (** [group_for_reduces k] is the number of [k]'s reduce axes that are warp or
@@ -103,8 +109,9 @@ module Scheduler : sig
 
   val convert_loop_to_global : t -> unit
   (** [convert_loop_to_global k] makes global each weak range that an end of
-      [k]'s sink closes and no reduction does, that every buffered value
-      ({!Op.Stage}) runs inside, if [k]'s renderer has local indices. *)
+      [k]'s sink closes and no reduction does, whose bound a launch computes
+      ({!Ops.known_at_launch}), that every buffered value ({!Op.Stage}) runs
+      inside, if [k]'s renderer has local indices. *)
 
   val shift_to :
     ?top:bool ->
@@ -135,9 +142,12 @@ module Scheduler : sig
       split. It does not apply when its axis is out of range, a split's target
       cannot come from its axis's role, or exceeds what the renderer allows (32
       lanes of a reduce axis or 16 of another, locals only with local indices,
-      the workgroup's shared memory), a local split of a reduce axis whose
-      reduction runs inside an unrolled reduce axis, a pad's axis is not of a
-      constant size or would more than quadruple, or no tensor core fits. Raises
+      the workgroup's shared memory), an upcast of an axis a range's bound
+      reads ({!read_by_bounds}), a local split of a reduce axis where a
+      range's bound reads an axis or whose reduction runs inside an unrolled
+      reduce axis, a pad's axis is not of a
+      constant size or would more than quadruple, or no tensor core fits, as
+      none does a kernel where a range's bound reads an axis. Raises
       [Invalid_argument] if the shared memory a split needs depends on a
       symbolic size and cannot be decided. *)
 

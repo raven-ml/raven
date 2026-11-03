@@ -148,10 +148,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   bfloat16 blocks of 64 take the cores; what is left is tolk's no-core
   layout past 32 rows (the GPU contraction rules' 8 x 8 outputs a thread),
   on that row
-- loops bounded by a loaded value fail Spec: upcasting an axis that an
-  inner loop's loaded bound reads makes a vector bound (`Lidx1 < long16`),
-  and a bare loaded bound makes an AFTER of a LOAD, which tinygrad's spec
-  refuses too. Decide what such loops lower to before one reaches users
 - device facts (762ad1c31): `core_threads = 16384` and `stream_threads =
   32768` are fudge's (sm_89, 100 SMs); a small part (an RTX 4060-class
   sm_89) may lose 1.4-2x by the model: a row owed there, and values for

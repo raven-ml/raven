@@ -3021,68 +3021,295 @@ let named_as_bounds =
 
 (* Host programs in blocks: estimates past an int *)
 
-(* [out[i] = j^2] for each [j < x[i]] in turn, or [j < x[0]] if not [own],
-   over four [i], [x] of int64: its estimated operations count [j] up to
-   2^63 - 1 times on each [i], which fits no int. *)
-let counts_to_loaded ~own =
-  let x = Shape.placeholder ~slot:1 [ 4 ] Int64
+(* Loops bounded by a loaded value *)
+
+(* How a loop over [j] is bounded at row [i]: by the loaded [x], of int64
+   clamped at 0, whose estimated operations count [j] up to 2^63 - 1 times on
+   each [i], which fits no int; by the loaded [x] of int32 itself; or by
+   [i + 1]. *)
+type count = Clamped | Bare | Rows
+
+type loop = {
+  count : count;
+  own : bool;  (** Whether row [i] loads [x[i]], or [x[0]]. *)
+  sum : bool;  (** Whether [out[i]] sums [j^2], or is the last [j^2]. *)
+  axis_type : Ops.Axis_type.t;  (** The loop's role. *)
+}
+
+let loop = { count = Clamped; own = true; sum = false; axis_type = Loop }
+let x_dtype l = if l.count = Bare then Dtype.Int32 else Int64
+
+(* [out[i]] over the trips [j] of [l] at four rows [i], on [d], [opts], if
+   given, being the kernel's optimizations. *)
+let counts_to_loaded ?(d = "CPU") ?opts l =
+  let x = Shape.placeholder ~slot:1 [ 4 ] (x_dtype l)
   and out = Shape.placeholder ~slot:0 [ 4 ] Float32 in
   let i = Ops.range (Int 4) [ 0 ] in
-  let count = Ops.load (Ops.index x [ (if own then i else Ops.int 0) ]) [] in
-  let bound =
-    Ops.cast (Ops.alu count Op.Max [ Ops.int ~dtype:Int64 0 ]) Weak_int
+  let count () =
+    Ops.load (Ops.index x [ (if l.own then i else Ops.int 0) ]) []
   in
-  let j = Ops.range ~axis_type:Loop (Sym bound) [ 1 ] in
+  let range dtype bound = Ops.range ~axis_type:l.axis_type ?dtype bound [ 1 ] in
+  let j =
+    match l.count with
+    | Bare -> range (Some Int32) (Sym (count ()))
+    | Rows -> range None (Sym Ops.O.(i + Ops.int 1))
+    | Clamped ->
+        let clamped = Ops.alu (count ()) Op.Max [ Ops.int ~dtype:Int64 0 ] in
+        range None (Sym (Ops.cast clamped Weak_int))
+  in
   let jf = Ops.cast j Float32 in
-  let st = Ops.end_ (Ops.store (Ops.index out [ i ]) Ops.O.(jf * jf)) [ j ] in
+  let at = Ops.index out [ i ] in
+  let st =
+    if l.sum then Ops.store at (Ops.reduce Ops.O.(jf * jf) Op.Add [ j ])
+    else Ops.end_ (Ops.store at Ops.O.(jf * jf)) [ j ]
+  in
   let kernel =
     Ops.sink
-      ~kernel:(Ops.kernel_info ~name:"counts_to_loaded" ())
+      ~kernel:(Ops.kernel_info ~name:"counts_to_loaded" ?opts_to_apply:opts ())
       [ Ops.end_ st [ i ] ]
   in
-  let y = Ops.new_buffer "CPU" 4 Float32
-  and xs = Ops.new_buffer "CPU" 4 Int64 in
+  let y = Ops.new_buffer d 4 Float32 and xs = Ops.new_buffer d 4 (x_dtype l) in
   (y, xs, Ops.call kernel [ y; xs ])
 
 let loaded_counts = [| 3; 0; 1; 2 |]
 
-(* What a run of [counts_to_loaded] writes, its loop whole, which the host
-   splits. *)
-let counted ~own =
-  let y, xs, call = counts_to_loaded ~own in
-  let compiled =
-    unoptimized (fun () -> compile (Ops.v Op.Linear ~src:[ call ]))
-  in
-  let out = Run.buffer host Float32 (floats [| 0.; 0.; 0.; 0. |])
+let upcast_rows =
+  [ Opt.Split { axis = 0; amount = 4; target = Upcast; top = false } ]
+
+(* What a run of [counts_to_loaded] on [d] of [devices] writes. *)
+let counted ?(devices = devices) ?(d = "CPU") ?opts l () =
+  let y, xs, call = counts_to_loaded ~d ?opts l in
+  let compiled = compile ~devices (Ops.v Op.Linear ~src:[ call ]) in
+  let out = Run.buffer (devices d) Float32 (floats [| 0.; 0.; 0.; 0. |])
   and counts =
-    Run.buffer host Int64
+    Run.buffer (devices d) (x_dtype l)
       (Array.map (fun n -> `Int (Bigint.of_int n)) loaded_counts)
   in
   let s = Engine.link ~devices ~bound:[ (y, out); (xs, counts) ] compiled in
   Engine.run s [||];
   Run.values Float32 out
 
-let counted_floats ~own =
-  let last n = if n = 0 then 0. else Float.of_int ((n - 1) * (n - 1)) in
-  let counts = if own then loaded_counts else Array.make 4 loaded_counts.(0) in
-  floats (Array.map last counts)
+(* What [counted l] is: at each row, the last [j^2] or their sum, over the
+   [n] trips [j < n]. *)
+let counted_floats l =
+  let trips i =
+    match l.count with
+    | Rows -> i + 1
+    | Clamped | Bare -> loaded_counts.(if l.own then i else 0)
+  in
+  let value i =
+    let n = max 0 (trips i) in
+    if l.sum then (n - 1) * n * ((2 * n) - 1) / 6
+    else if n = 0 then 0
+    else (n - 1) * (n - 1)
+  in
+  floats (Array.init 4 (fun i -> Float.of_int (value i)))
+
+let counted_name l =
+  let row = if l.own then "each row's" else "the first row's" in
+  let bound =
+    match l.count with
+    | Clamped -> row ^ " clamped count"
+    | Bare -> row ^ " bare count"
+    | Rows -> "its row"
+  in
+  Printf.sprintf "a %s %s bounded by %s"
+    (if l.axis_type = Loop then "serial" else "weak")
+    (if l.sum then "sum" else "loop")
+    bound
+
+(* [out[j] = j^2] for each [j < x[0]], a weak loop of no row, on [d]: the
+   only loop of its kernel, its trips are no launch's count of threads or
+   blocks. *)
+let writes_loaded_trips ?(devices = devices) ?(d = "CPU") ~optimized () =
+  let x = Shape.placeholder ~slot:1 [ 4 ] Int32
+  and out = Shape.placeholder ~slot:0 [ 4 ] Float32 in
+  let count = Ops.load (Ops.index x [ Ops.int 0 ]) [] in
+  let j = Ops.range ~dtype:Int32 (Sym count) [ 0 ] in
+  let jf = Ops.cast j Float32 in
+  let kernel =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"loaded_trips" ())
+      [ Ops.end_ (Ops.store (Ops.index out [ j ]) Ops.O.(jf * jf)) [ j ] ]
+  in
+  let y = Ops.new_buffer d 4 Float32 and xs = Ops.new_buffer d 4 Int32 in
+  let run () =
+    compile ~devices (Ops.v Op.Linear ~src:[ Ops.call kernel [ y; xs ] ])
+  in
+  let compiled = if optimized then run () else unoptimized run in
+  let out = Run.buffer (devices d) Float32 (floats [| 0.; 0.; 0.; 0. |])
+  and counts =
+    Run.buffer (devices d) Int32
+      (Array.map (fun n -> `Int (Bigint.of_int n)) loaded_counts)
+  in
+  let s = Engine.link ~devices ~bound:[ (y, out); (xs, counts) ] compiled in
+  Engine.run s [||];
+  equal values (floats [| 0.; 1.; 4.; 0. |]) (Run.values Float32 out)
+
+(* At each of four rows [i], a loop writes [i * 10 + k] at [out[i]] for each
+   [k < 2], then the sum of [j] over [j < x[i]] is added to it: the sum's loop,
+   of a loaded bound, is ordered after the first loop. *)
+let follows_a_loop ?(devices = devices) ?(d = "CPU") () =
+  let x = Shape.placeholder ~slot:1 [ 4 ] Int32
+  and out = Shape.placeholder ~slot:0 [ 4 ] Int32 in
+  let i = Ops.range (Int 4) [ 0 ] in
+  let k = Ops.range ~axis_type:Loop ~dtype:Int32 (Int 2) [ 1 ] in
+  let at = Ops.index out [ i ] in
+  let first =
+    let row = Ops.O.(Ops.cast i Int32 * Ops.int ~dtype:Int32 10) in
+    Ops.end_ (Ops.store at Ops.O.(row + k)) [ k ]
+  in
+  let count = Ops.load (Ops.index x [ i ]) [] in
+  let j = Ops.range ~axis_type:Loop ~dtype:Int32 (Sym count) [ 2 ] in
+  let at' = Ops.index (Ops.after out [ first ]) [ i ] in
+  let second =
+    Ops.store at' Ops.O.(Ops.load at' [] + Ops.reduce j Op.Add [ j ])
+  in
+  let kernel =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"follows_a_loop" ())
+      [ Ops.end_ second [ i ] ]
+  in
+  let y = Ops.new_buffer d 4 Int32 and xs = Ops.new_buffer d 4 Int32 in
+  let compiled =
+    compile ~devices (Ops.v Op.Linear ~src:[ Ops.call kernel [ y; xs ] ])
+  in
+  let ints a = Array.map (fun n -> `Int (Bigint.of_int n)) a in
+  let out = Run.buffer (devices d) Int32 (ints [| 0; 0; 0; 0 |])
+  and counts = Run.buffer (devices d) Int32 (ints loaded_counts) in
+  let s = Engine.link ~devices ~bound:[ (y, out); (xs, counts) ] compiled in
+  Engine.run s [||];
+  let sum n = n * (n - 1) / 2 in
+  equal values
+    (ints (Array.mapi (fun i n -> (i * 10) + 1 + sum n) loaded_counts))
+    (Run.values Int32 out)
+
+(* [out[i]] the sum of [a[j * 64 + i] * b[j]] over [j < x[i]], for 64 rows
+   [i] and at most 4 trips, a product of two operands summed over a loop
+   bounded by a load, which the heuristic optimizes on [d]. [a] runs along
+   the rows, which a streamed product would upcast. *)
+let sums_loaded_products ?(devices = devices) ?(d = "CPU") () =
+  let rows = 64 in
+  let x = Shape.placeholder ~slot:1 [ rows ] Int32
+  and a = Shape.placeholder ~slot:2 [ 4 * rows ] Float32
+  and b = Shape.placeholder ~slot:3 [ 4 ] Float32
+  and out = Shape.placeholder ~slot:0 [ rows ] Float32 in
+  let i = Ops.range (Int rows) [ 0 ] in
+  let count = Ops.load (Ops.index x [ i ]) [] in
+  let j = Ops.range (Sym (Ops.cast count Weak_int)) [ 1 ] in
+  let ai = Ops.load (Ops.index a [ Ops.O.((j * Ops.int rows) + i) ]) []
+  and bj = Ops.load (Ops.index b [ j ]) [] in
+  let sum = Ops.reduce Ops.O.(ai * bj) Op.Add [ j ] in
+  let kernel =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"sums_loaded_products" ())
+      [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
+  in
+  let buffer n dt = Ops.new_buffer d n dt in
+  let y = buffer rows Float32 and xs = buffer rows Int32 in
+  let az = buffer (4 * rows) Float32 and bz = buffer 4 Float32 in
+  let compiled =
+    compile ~devices
+      (Ops.v Op.Linear ~src:[ Ops.call kernel [ y; xs; az; bz ] ])
+  in
+  let counts = Array.init rows (fun i -> i mod 5)
+  and av = Array.init (4 * rows) Float.of_int
+  and bv = Array.init 4 (fun j -> Float.of_int (j + 1)) in
+  let run_buffer dt vs = Run.buffer (devices d) dt vs in
+  let out = run_buffer Float32 (floats (Array.make rows 0.)) in
+  let ints = Array.map (fun n -> `Int (Bigint.of_int n)) in
+  let bound =
+    [
+      (y, out);
+      (xs, run_buffer Int32 (ints counts));
+      (az, run_buffer Float32 (floats av));
+      (bz, run_buffer Float32 (floats bv));
+    ]
+  in
+  let s = Engine.link ~devices ~bound compiled in
+  Engine.run s [||];
+  let expected i =
+    let total = ref 0. in
+    for j = 0 to counts.(i) - 1 do
+      total := !total +. (av.((j * rows) + i) *. bv.(j))
+    done;
+    !total
+  in
+  equal values (floats (Array.init rows expected)) (Run.values Float32 out)
+
+(* Loops bounded by a loaded value or by their row, unoptimized, as the
+   heuristic optimizes them, and with their rows upcast: a loop has one count
+   of trips, so rows whose counts differ cannot be one thread's lanes, and
+   their upcast is refused. *)
+let loaded_bounds ?(devices = devices) ?(d = "CPU") () =
+  let one l how =
+    let name = counted_name l ^ ", " ^ how in
+    let counted ?opts () = counted ~devices ~d ?opts l () in
+    match how with
+    | "unoptimized" ->
+        test name (fun () ->
+            equal values (counted_floats l) (unoptimized counted))
+    | "optimized" ->
+        test name (fun () -> equal values (counted_floats l) (counted ()))
+    | _ when l.own || l.count = Rows ->
+        test (name ^ ", refused") (fun () ->
+            raises (Invalid_argument "a loop's bound reads axis 0") (fun () ->
+                counted ~opts:upcast_rows ()))
+    | _ ->
+        test name (fun () ->
+            equal values (counted_floats l) (counted ~opts:upcast_rows ()))
+  in
+  let loops =
+    List.concat_map
+      (fun axis_type ->
+        List.map
+          (fun (count, own, sum) -> { count; own; sum; axis_type })
+          [
+            (Clamped, true, false);
+            (Clamped, false, false);
+            (Bare, true, false);
+            (Bare, false, false);
+            (Clamped, true, true);
+            (Bare, false, true);
+            (Rows, true, false);
+            (Rows, true, true);
+          ])
+      [ Ops.Axis_type.Loop; Weak ]
+  in
+  List.concat_map
+    (fun l -> List.map (one l) [ "unoptimized"; "optimized"; "upcast" ])
+    loops
+  @ List.map
+      (fun optimized ->
+        test
+          ("a weak loop of no row bounded by a loaded count, "
+          ^ if optimized then "optimized" else "unoptimized")
+          (writes_loaded_trips ~devices ~d ~optimized))
+      [ false; true ]
+  @ [
+      test "a loop bounded by a loaded count follows a loop"
+        (follows_a_loop ~devices ~d);
+      test "a sum of products over a loop bounded by a loaded count"
+        (sums_loaded_products ~devices ~d);
+    ]
 
 let estimates_past_an_int =
   group "a kernel whose estimates fit no int"
     [
       test "splits and runs" (fun () ->
-          equal values (counted_floats ~own:true) (counted ~own:true));
+          equal values (counted_floats loop) (unoptimized (counted loop)));
       test "splits and runs, its loop bounded by a value loaded outside it"
         (fun () ->
-          equal values (counted_floats ~own:false) (counted ~own:false));
+          let l = { loop with own = false } in
+          equal values (counted_floats l) (unoptimized (counted l)));
       test "prints a timed line at DEBUG=2" (fun () ->
           ignore (output ());
           let written =
             Setting.context
               [ B (Setting.debug, 2) ]
-              (fun () -> counted ~own:true)
+              (fun () -> unoptimized (counted loop))
           in
-          equal values (counted_floats ~own:true) written;
+          equal values (counted_floats loop) written;
           match reported () with
           | [ words ] -> mem string ~msg:"timed" "GFLOPS" words
           | lines -> failf "%d lines, not one" (List.length lines));
@@ -3132,6 +3359,8 @@ let on_a_gpu (kind, _) =
   group kind
     [
       group "custom kernels with variables" (custom_kernel_scalars ~devices ());
+      group "loops bounded by a loaded value"
+        (loaded_bounds ~devices ~d:"CPU:1" ());
       test "kernels whose sizes are one name of two values run each its own"
         (sizes_from_calls ~devices);
       test "kernels whose sizes are one name of two values report at DEBUG=2"
@@ -3207,6 +3436,7 @@ let () =
          timing;
          named_as_bounds;
          estimates_past_an_int;
+         group "loops bounded by a loaded value" (loaded_bounds ());
          words;
          group "GPUs" (List.map on_a_gpu gpus);
        ])

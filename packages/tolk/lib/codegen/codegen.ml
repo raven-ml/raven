@@ -988,7 +988,8 @@ let int_vmax u = match vmax u with `Int z -> Bigint.to_int z | _ -> 0
 
 (* A host program's launch runs blocks of one loop on the host's cores at once
    (rig's host code). A loop qualifies when it is an output loop no optimisation
-   claimed (Weak), as those a GPU makes global are, and every store to memory
+   claimed (Weak), whose bound the launch computes, as those a GPU makes global
+   are, and every store to memory
    reads it in its address: the scheduler lets no index of such a loop read what
    another writes, so its blocks are independent, and a block computes exactly
    what the whole loop would for its indices. A serial loop (Loop), whose
@@ -1021,7 +1022,7 @@ let split_blocks sink =
   let qualifies r =
     is Op.Range r
     && axis_type r = Axis_type.Weak
-    && Nodes.cardinal (ranges (nth r 0)) = 0
+    && known_at_launch r
     && int_vmax (nth r 0) >= 2
     && List.for_all (addressed r) stores
   in

@@ -6050,3 +6050,49 @@ fold wraps integers and holds its float bound`, hold.
   the cache cold is the timing above: on a GPU other processes share, a
   warm sample is not reliably warm, so no test times it. A bench row of a searched program would flap with the
   search's pick, as the rounds above do, so none holds it.
+
+## D220. A loop's bound may be loaded, and no axis it reads runs as lanes or launches
+
+- **tinygrad:** `uop/spec.py:103-104` and `205-228` (`spec_shared`, an
+  AFTER of a scalar ALU, and `spec_program`, neither of a LOAD), which
+  `codegen/__init__.py:370-375` checks under `SPEC`, 1 by default; `codegen/late/linearizer.py:83-86`
+  (`pm_add_control_flow`, which wraps a nested loop's bound in an AFTER of
+  the range or loop end it follows); `codegen/opt/postrange.py:52-60`
+  (`convert_loop_to_global`), `84-85` (`upcastable_dims`) and `87-125`
+  (`apply_opt`).
+- **tolk:** `Spec.program`; `Postrange.Scheduler.read_by_bounds`,
+  `upcastable_dims`, `apply_opt` and `convert_loop_to_global`;
+  `Ops.known_at_launch`, which `Codegen.split_blocks` (D80) and
+  `Renderer.Estimates.of_uops` (D191) read; `Heuristic.streams`; `test/gen/tinygrad.patch`, which gives tinygrad the
+  same rules.
+- **Differs:** a loop bounded by a load, as `j < x[i]`, compiles: a
+  program's Spec accepts an AFTER of a scalar LOAD whose dependencies are
+  ranges and loop ends, the linearizer's edges, where tinygrad refuses it;
+  a graph's Spec still refuses one, and an AFTER of a load and a store
+  stays refused, since neither orders the load. An
+  axis that a range's bound reads, through a load or not (`j < i + 1`), is
+  not upcastable, and an upcast of it is refused, where tinygrad makes the
+  bound a vector that C compilers reject: a loop has one count of trips
+  per thread. A group and a tensor core are refused on a kernel where a
+  range's bound reads an axis, since a group's barriers need every thread
+  of the workgroup to run the same trips, and the heuristic streams no
+  contraction there. A weak range whose bound reads a range or memory is
+  neither made global nor split into host blocks, where tinygrad makes it
+  global: a launch computes its counts before the kernel reads memory. The
+  estimates (D191) take the same test of a bound.
+- **Reason:** (c): tolk's own interface builds such a loop, since
+  `Ops.range` takes any bound and `Shape.shrink` any size, a loaded one
+  included, and a graph that interface accepts must compute, where
+  without this one with a loaded or row-dependent bound fails at Spec, at
+  the C compiler or at launch.
+- **Pinned by:** the Tolk_engine suite: `loops bounded by a loaded value`,
+  on the host and each GPU present (CUDA and NV on fudge): serial and weak
+  loops and sums bounded by each row's or the first row's clamped or bare
+  count, or by their row, unoptimized, optimized and upcast (refused where
+  the bound reads the row), a weak loop of no row, a loaded bound after a
+  sibling loop, and a sum of products along the rows, which the heuristic
+  would stream. The Ops suite: `ranges › a launch knows a bound of
+  constants and variables, ...`. The Postrange suite: `loops bounded by an
+  axis`, and `axes.golden`'s `padto_reduction_bound` from the patched tinygrad. The
+  Spec suite: `verdicts.golden`'s `an int32 load after a range`, `a range
+  bounded by a load after a range` and `a load after a store`.

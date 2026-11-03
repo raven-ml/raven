@@ -483,6 +483,20 @@ let program : t =
               ~name:"s")
            "s"
            (fun s -> match arg s with String _ -> true | _ -> false);
+         (* The linearizer orders a loop bounded by a scalar load after the
+            range or loop end before it by an after of the load. It orders no
+            load: one that must read after a store reads through an after of
+            its buffer. *)
+         check
+           (pat [ Op.After ] ~allow_any_len:true
+              ~src:[ Upat.v ~op:(ops [ Op.Load ]) () ]
+              ~name:"a")
+           "a"
+           (fun a ->
+             shape_opt (nth a 0) = Some []
+             && List.for_all
+                  (fun d -> List.mem (op d) [ Op.Range; Op.End; Op.Backedge ])
+                  (List.tl (src a)));
        ]))
     shared
 

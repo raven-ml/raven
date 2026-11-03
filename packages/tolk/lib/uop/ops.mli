@@ -529,6 +529,15 @@ val axis_type : t -> Axis_type.t
 
     Raises [Invalid_argument] if [r] is not a range. *)
 
+val known_at_launch : t -> bool
+(** [known_at_launch r] is [true] iff the range [r] has a bound that, its
+    ordering after effects ({!Op.After}) aside, reads no range and no memory,
+    as [j < n] for a variable [n] and unlike [j < x[i]] or [j < i + 1]: a
+    launch computes it from the run's variables alone, before the kernel runs,
+    as it does a count of workgroups or of blocks.
+
+    Raises [Invalid_argument] if [r] is not a range. *)
+
 val compare_range_arg : t -> t -> int
 (** [compare_range_arg r0 r1] orders the ranges [r0] and [r1] by argument: axis
     type ({!Axis_type.compare}), then identity, lexicographically, a prefix

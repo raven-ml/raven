@@ -1284,6 +1284,30 @@ let ranges =
           equal int 2 (Ops.Nodes.cardinal (Ops.ranges r1));
           equal uops [ r0; r1 ]
             (Ops.Nodes.fold (fun u acc -> u :: acc) (Ops.ranges r1) []));
+      test
+        "a launch knows a bound of constants and variables, ordered after \
+         effects or not, and not one that reads a range or memory" (fun () ->
+          let i = Ops.range (Int 4) [ 0 ] in
+          let x = Shape.param ~shape:[ Int 4 ] 0 Int32 in
+          let one = Ops.int ~dtype:Int32 1 in
+          let loop = Ops.end_ (Ops.store (Ops.index x [ i ]) one) [ i ] in
+          let bounded b = Ops.range (Sym b) [ 1 ] in
+          List.iter
+            (fun (msg, b, known) ->
+              equal ~msg bool known (Ops.known_at_launch (bounded b)))
+            [
+              ("a variable", var "n" 0 8, true);
+              ("a variable after a loop", Ops.after (var "n" 0 8) [ loop ], true);
+              ("a range", Ops.O.(i + int 1), false);
+              ("a range ordered after", Ops.after (Ops.int 4) [ i ], true);
+              ( "a load",
+                Ops.cast (Ops.load (Ops.index x [ Ops.int 0 ]) []) Weak_int,
+                false );
+            ];
+          equal bool true (Ops.known_at_launch i);
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Ops.known_at_launch (Ops.int 4)));
       test "a range runs inside itself" (fun () ->
           let r = Ops.range (Int 10) [ 0 ] in
           equal uops [ r ] (list_ranges r));

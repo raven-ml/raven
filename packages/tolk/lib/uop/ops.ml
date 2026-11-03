@@ -2042,6 +2042,15 @@ let is_group u =
 let rec without_after u =
   if u.op = Op.After then without_after (first u.op u.src) else u
 
+let known_at_launch r =
+  ignore (range_arg r);
+  match r.src with
+  | [ bound ] ->
+      let bound = without_after bound in
+      Nodes.cardinal (ranges bound) = 0
+      && not (op_in_backward_slice_with_self ~calls:Skip bound [ Op.Load ])
+  | _ -> false
+
 let barrier u rest = v Op.Barrier ~src:(u :: rest)
 
 let ins ?src ?dtype u i =
