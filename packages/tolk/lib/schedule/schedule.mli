@@ -97,6 +97,20 @@ val create_linear_with_vars :
     + a kernel that only copies a buffer between devices, or to or from a disk,
       becomes a call of a store, between views of its arguments where it
       copies a run of one into a run of the other;
+    + kernel calls that can run in either order run as one call: two kernels
+      that reduce nothing, whose storage lies on one device, whose stores
+      end over ranges of the same constant sizes and kinds by position, and
+      neither
+      of which reads or writes storage the other writes, a view counting as
+      its buffer. A call joins the first call of its group, the earliest
+      that starts after every call it conflicts with, and after the first
+      use of each storage it takes that is neither given to the schedule nor
+      of one element; in a loop's body, where storage lives for the whole
+      loop, that last condition does not apply, and at the top level only
+      calls of one element join. An argument several calls pass is passed
+      once, so the merged kernel computes what they share once. With
+      {!Setting.max_kernel_buffers} at [n] above [0], a merged call passes
+      at most [n] buffers. The merged kernel is optimised as one;
     + unless [capturing] (default [false]), the schedule's buffers are placed in
       arenas ({!Memory.memory_plan_rewrite}), except those the call's arguments
       name or view, whose contents outlive the schedule. A jit capturing the schedule
@@ -112,3 +126,10 @@ val create_linear_with_vars :
 
     Raises [Invalid_argument] if a kernel that is not a copy accesses buffers on several devices,
     or as {!create_schedule} does. *)
+
+(**/**)
+
+val merge_calls : held:Ops.t list -> Ops.t -> Ops.t
+(** [merge_calls ~held linear] is the schedule [linear] with the calls that
+    can run as one merged, as {!create_linear_with_vars} merges them, [held]
+    being the storage the schedule is given. *)

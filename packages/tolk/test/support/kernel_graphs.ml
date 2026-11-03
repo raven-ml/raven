@@ -41,6 +41,10 @@ let kernel_writes ~vars ~params:enclosing values_of call =
     | None, Param { bound = Some v; _ } -> (buffers, (k, v) :: params)
     | None, Param { name = Some n; _ } when List.mem_assoc n vars ->
         (buffers, (k, List.assoc n vars) :: params)
+    | None, _ when Ops.op a <> Param -> (
+        match Shape.ssimplify a with
+        | Int n -> (buffers, (k, Dtype.Value.of_int n) :: params)
+        | Sym _ -> fail "a call's argument is a %a of no value" Op.pp (Ops.op a))
     | None, _ ->
         fail "a call's argument is a %a, not storage on one device" Op.pp
           (Ops.op a)
@@ -140,5 +144,24 @@ let linear_writes ?(vars = []) ?(params = []) ?(buffers = []) linear =
         | true, _, _ -> ())
       (kernel_writes ~vars ~params values_of call)
   in
-  List.iter run (Ops.src linear);
+  (* A loop runs its body once a trip, its range replaced by the trip. *)
+  let rec entry trips u =
+    match Ops.op u with
+    | End ->
+        let body = Ops.nth u 0 in
+        let entries =
+          if Ops.op body = Linear then Ops.src body else [ body ]
+        in
+        let rec loop trips = function
+          | [] -> List.iter (entry trips) entries
+          | r :: rest ->
+              let n = Bigint.to_int (Shape.to_z (Ops.nth r 0)) in
+              for k = 0 to n - 1 do
+                loop ((r, Ops.int k) :: trips) rest
+              done
+        in
+        loop trips (List.tl (Ops.src u))
+    | _ -> run (Ops.substitute ~calls:Skip ~pass:Fixed_point u trips)
+  in
+  List.iter (entry []) (Ops.src linear);
   sorted_writes written

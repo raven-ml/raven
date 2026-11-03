@@ -939,6 +939,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Schedule.create_linear_with_vars` runs kernel calls that can run in
+  either order as one call: in a loop's body when their domains match, at the
+  top level when each computes one element. NUTS on eight schools on CUDA
+  launches 498 kernels a transition where it launched 1,305, its step 1.4 ms
+  from 2.4.
 - `Rangeify.get_kernel_graph` stores once a value of no range that several
   kernels compute past 360 nodes of work done again, and computes it in each
   under that: ymir's aperture gradient compiles cold in 23-26 CPU-s from

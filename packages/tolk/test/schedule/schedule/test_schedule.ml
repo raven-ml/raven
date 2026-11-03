@@ -2048,6 +2048,459 @@ let runs =
                  Shape.shrink (Ops.bitcast g Int32) [ Some (Int 2, Int 4); None ])));
     ]
 
+(* Calls that run as one
+
+   Kernel calls of one device and domain, with no reduction, that neither
+   touches what the other writes, run as one call: in a loop's body whatever
+   their domain, at the top level when they compute one element. A call moves up
+   to its group's first call only past calls it does not conflict with. *)
+
+(* The one element of a buffer of [dt] on [device]. *)
+let element ?(device = cpu) ?(dt = Dtype.Float32) () =
+  Shape.reshape (Ops.new_buffer device 1 dt) []
+
+(* The store of [v] into [o], as a program writes it. *)
+let into o v = Ops.after o [ Ops.store o v ]
+
+(* The calls of [big]'s schedule, unplanned. *)
+let calls_of big = Ops.src (unplanned big)
+
+(* The calls in the body of [big]'s one loop. *)
+let calls_in_loop big =
+  match calls_of big with
+  | [ e ] when Ops.op e = End -> Ops.src (Ops.nth e 0)
+  | entries -> failf "%d entries, not one loop" (List.length entries)
+
+(* A scan of three trips whose body stores [stores], each a parameter slot of
+   [size] floats and the value stored into it, made of the parameters by
+   [value]: [p k] is parameter [k]. Each slot is a buffer of its own. *)
+let looped ?(size = 4) ?(sizes = []) stores =
+  let size_of k = Option.value (List.assoc_opt k sizes) ~default:size in
+  let p k = Shape.param ~shape:[ Int (size_of k) ] ~device:cpu k Float32 in
+  let slots =
+    List.sort_uniq compare
+      (List.concat_map (fun (k, reads, _) -> k :: reads) stores)
+  in
+  let body =
+    Ops.sink (List.map (fun (k, _, value) -> Ops.store (p k) (value p)) stores)
+  in
+  let bufs =
+    List.map (fun k -> (k, Ops.new_buffer cpu (size_of k) Float32)) slots
+  in
+  let n = 1 + List.fold_left max 0 slots in
+  let args =
+    List.init n (fun k ->
+        match List.assoc_opt k bufs with
+        | Some b -> b
+        | None -> Ops.new_buffer cpu 1 Float32)
+  in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body args) [ r ] in
+  Ops.sink
+    (List.map (fun (k, _, _) -> Ops.after (List.nth args k) [ e ]) stores)
+
+(* [two_chains n] is [n] outputs of one element in two chains: output [j] reads
+   output [j - 2]. Each output joins the one before it, which it does not read,
+   and waits for the pair before. *)
+let two_chains n =
+  let x = element () in
+  let rec go j prev prev' acc =
+    if j = n then Ops.sink (List.rev acc)
+    else
+      let o = into (element ()) Ops.O.(prev + float 1.) in
+      go (j + 1) prev' o (o :: acc)
+  in
+  go 0 x x []
+
+(* [words f] is the words [f ()] allocates. *)
+let words f =
+  let before = Gc.minor_words () in
+  ignore (Sys.opaque_identity (f ()));
+  Gc.minor_words () -. before
+
+(* [add_one ~read ~write] is the call of a kernel of one element that stores
+   one more than the element of [read] into [write]. *)
+let add_one =
+  let kernel =
+    lazy
+      (let x = element () and o = element () in
+       match calls_of (Ops.sink [ into o Ops.O.(x + float 1.) ]) with
+       | [ call ] ->
+           let slot_of b =
+             let rec go i = function
+               | [] -> failf "no argument"
+               | a :: rest ->
+                   if Ops.storage_base a == b then i else go (i + 1) rest
+             in
+             go 0 (Ops.src_without_body call)
+           in
+           (call, slot_of (Ops.storage_base o), slot_of (Ops.storage_base x))
+       | calls -> failf "%d calls" (List.length calls))
+  in
+  fun ~read ~write ->
+    let call, written, read_slot = Lazy.force kernel in
+    let args = Array.make 2 read in
+    args.(written) <- write;
+    args.(read_slot) <- read;
+    Ops.replace call ~src:(Ops.body call :: Array.to_list args)
+
+(* [chained_calls n] is a schedule of [n] calls, as {!two_chains} schedules them
+   unmerged: call [j] adds one to the element call [j - 2] writes. *)
+let chained_calls n =
+  let bufs = Array.init (n + 2) (fun _ -> Ops.new_buffer cpu 1 Float32) in
+  Ops.v Op.Linear
+    ~src:(List.init n (fun j -> add_one ~read:bufs.(j) ~write:bufs.(j + 2)))
+
+(* A program of outputs of one type and shape: each output [j] stores [x + 2],
+   [x * 2] or [max x 2] of its own input or, where its source names one, of an
+   earlier output, which it then waits for. *)
+type outputs = {
+  dt : Dtype.t;
+  shape : int list;
+  steps : (int option * int) list;  (** the earlier output read, the op *)
+}
+
+let outputs_gen =
+  let open Gen in
+  let step j =
+    pair
+      (if j = 0 then constant None
+       else
+         frequency
+           [ (2, constant None); (1, map Option.some (int_range 0 (j - 1))) ])
+      (int_range 0 2)
+  in
+  let steps n =
+    let rec go j acc =
+      if j = n then map List.rev acc
+      else go (j + 1) (bind acc (fun acc -> map (fun s -> s :: acc) (step j)))
+    in
+    go 0 (constant [])
+  in
+  let dts = [ Dtype.Float32; Float64; Int32; Int64; Uint8; Int8 ] in
+  map
+    (fun ((dt, shape), steps) -> { dt; shape; steps })
+    (pair
+       (pair (of_list dts)
+          (frequency
+             [
+               (6, constant []);
+               (1, constant [ 1 ]);
+               (1, constant [ 0 ]);
+               (1, constant [ 3 ]);
+             ]))
+       (bind (int_range 1 6) steps))
+
+let outputs_sink o =
+  let n = List.fold_left ( * ) 1 o.shape in
+  let shaped b = Shape.reshape b (List.map (fun d -> Ops.Int d) o.shape) in
+  let two = Ops.const ~dtype:o.dt (`Int (Bigint.of_int 2)) in
+  let apply k x =
+    match k with
+    | 0 -> Ops.add x two
+    | 1 -> Ops.mul x two
+    | _ -> Ops.maximum x two
+  in
+  let made =
+    List.fold_left
+      (fun made (r, k) ->
+        let x =
+          match r with
+          | Some j -> List.nth made j
+          | None -> shaped (Ops.new_buffer cpu n o.dt)
+        in
+        let out = shaped (Ops.new_buffer cpu n o.dt) in
+        made @ [ into out (apply k x) ])
+      [] o.steps
+  in
+  Ops.sink made
+
+(* The stores of each call of [linear]. *)
+let stores_of call =
+  List.length
+    (List.filter
+       (fun u -> Ops.op u = Store)
+       (Ops.toposort ~calls:Skip (Ops.body call)))
+
+let merges_keep_values o =
+  let big = outputs_sink o in
+  let calls = calls_of big in
+  let joined = List.map stores_of calls in
+  cover "two calls run as one" (List.mem 2 joined);
+  cover "three or more calls run as one" (List.exists (fun k -> k >= 3) joined);
+  cover "a call waits for another"
+    (List.exists (fun (r, _) -> r <> None) o.steps);
+  cover "outputs of several elements" (List.fold_left ( * ) 1 o.shape > 1);
+  let buffers = filled big in
+  let vars = [] in
+  equal
+    (list (triple int int Dtypes.value))
+    (Tensors.writes ~buffers big)
+    (Kernel_graphs.linear_writes ~vars ~buffers (unplanned big))
+
+(* A loop of three trips whose body stores into slots [0] to [n - 1] in turn,
+   [n] the steps: step [j] stores [x + 2], [x * 2] or [max x 2] into slot [j],
+   [x] the sum of the slots it reads of its slot's size (its own slot if
+   none), each read after the step that stores it when that step is earlier,
+   plus, when it reads the trip, the scalar argument [2r + 1]. *)
+type loop_program = {
+  sizes : int list;  (** each slot's elements *)
+  loop_steps : (int list * int * bool) list;
+      (** the slots read, the op, whether it reads the trip *)
+}
+
+let loop_gen =
+  let open Gen in
+  let size = frequency [ (4, constant 4); (1, constant 2) ] in
+  bind (int_range 2 4) (fun m ->
+      let step =
+        triple
+          (list ~size:(int_range 0 2) (int_range 0 (m - 1)))
+          (int_range 0 2)
+          (frequency [ (2, constant false); (1, constant true) ])
+      in
+      map
+        (fun (sizes, loop_steps) -> { sizes; loop_steps })
+        (pair
+           (list ~size:(constant m) size)
+           (list ~size:(int_range 1 m) step)))
+
+let loop_sink prog =
+  let m = List.length prog.sizes in
+  let size k = List.nth prog.sizes k in
+  let p k = Shape.param ~shape:[ Int (size k) ] ~device:cpu k Float32 in
+  let trip = Shape.param ~addrspace:Alu m Int32 in
+  let two = Ops.float 2. in
+  let apply k x =
+    match k with
+    | 0 -> Ops.add x two
+    | 1 -> Ops.mul x two
+    | _ -> Ops.maximum x two
+  in
+  let stores =
+    List.fold_left
+      (fun stores (reads, k, trips) ->
+        let j = List.length stores in
+        let read i =
+          if i < j then Ops.after (p i) [ List.nth stores i ] else p i
+        in
+        let reads = List.filter (fun i -> size i = size j) reads in
+        let x =
+          match List.map read reads with
+          | [] -> p j
+          | r :: rs -> List.fold_left Ops.add r rs
+        in
+        let x =
+          if not trips then x
+          else
+            Ops.add x
+              (Shape.expand
+                 (Shape.reshape (Ops.cast trip Float32) [ Int 1 ])
+                 [ Int (size j) ])
+        in
+        stores @ [ Ops.store (p j) (apply k x) ])
+      [] prog.loop_steps
+  in
+  let bufs = List.init m (fun k -> Ops.new_buffer cpu (size k) Float32) in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let args = bufs @ [ Ops.O.((r * int 2) + int 1) ] in
+  let e = Ops.end_ (Ops.call ~precompile:true (Ops.sink stores) args) [ r ] in
+  Ops.sink (List.mapi (fun j _ -> Ops.after (List.nth bufs j) [ e ]) stores)
+
+let loop_merges_keep_values prog =
+  let big = loop_sink prog in
+  let n = List.length prog.loop_steps in
+  cover "calls in the loop run as one"
+    (List.length (calls_in_loop big) < n);
+  cover "a step overwrites a slot an earlier step reads"
+    (List.exists
+       (fun (j, (reads, _, _)) ->
+         List.exists (fun i -> i > j && i < n) reads)
+       (List.mapi (fun j s -> (j, s)) prog.loop_steps));
+  cover "a step reads the trip"
+    (List.exists (fun (_, _, t) -> t) prog.loop_steps);
+  cover "slots of two sizes"
+    (List.exists (fun s -> s <> List.hd prog.sizes) prog.sizes);
+  computes big
+
+let merged_calls =
+  group "create_linear_with_vars › merged calls"
+    [
+      test "independent calls of one domain in a loop run as one" (fun () ->
+          let big =
+            looped
+              [
+                (0, [ 0 ], fun p -> Ops.O.(p 0 * float 2.));
+                (1, [ 1 ], fun p -> Ops.exp2 (p 1));
+              ]
+          in
+          equal int 1 (List.length (calls_in_loop big)));
+      test "calls of one element at the top level run as one" (fun () ->
+          let x = element () and y = element () in
+          let o = element () and o' = element () in
+          let big =
+            Ops.sink
+              [ into o Ops.O.(x * float 2.); into o' Ops.O.(y + float 1.) ]
+          in
+          equal int 1 (List.length (calls_of big)));
+      test "calls of many elements at the top level run apart" (fun () ->
+          let buf () = Ops.new_buffer cpu 4 Float32 in
+          let x = buf () and y = buf () and o = buf () and o' = buf () in
+          let big =
+            Ops.sink
+              [ into o Ops.O.(x * float 2.); into o' Ops.O.(y + float 1.) ]
+          in
+          equal int 2 (List.length (calls_of big)));
+      test "a call that reads what another writes runs apart" (fun () ->
+          let x = element () and o = element () and o' = element () in
+          let first = into o Ops.O.(x * float 2.) in
+          let big = Ops.sink [ first; into o' Ops.O.(first + float 1.) ] in
+          equal int 2 (List.length (calls_of big)));
+      test "a call that overwrites what another reads runs apart" (fun () ->
+          let big =
+            looped
+              [
+                (0, [ 0; 1 ], fun p -> Ops.O.(p 0 + p 1));
+                (1, [ 1 ], fun p -> Ops.O.(p 1 * float 2.));
+              ]
+          in
+          equal int 2 (List.length (calls_in_loop big)));
+      test "calls that write two runs of one buffer run apart" (fun () ->
+          let x = element () and y = element () in
+          let o = Ops.new_buffer cpu 2 Float32 in
+          let at i =
+            Shape.reshape (Shape.shrink o [ Some (Int i, Int (i + 1)) ]) []
+          in
+          let big =
+            Ops.sink
+              [
+                into (at 0) Ops.O.(x * float 2.);
+                into (at 1) Ops.O.(y + float 1.);
+              ]
+          in
+          equal int 2 (List.length (calls_of big)));
+      test "a call with a reduction runs alone" (fun () ->
+          let big =
+            looped
+              ~sizes:[ (2, 16) ]
+              [
+                ( 0,
+                  [ 2 ],
+                  fun p ->
+                    Shape.reshape
+                      (Shape.rop
+                         (Shape.reshape (p 2) [ Int 4; Int 4 ])
+                         Add [ 1 ])
+                      [ Int 4 ] );
+                (1, [ 1 ], fun p -> Ops.O.(p 1 * float 2.));
+              ]
+          in
+          equal int 2 (List.length (calls_in_loop big)));
+      test "calls on two devices run apart" (fun () ->
+          let on device = element ~device () in
+          let big =
+            Ops.sink
+              [
+                into (on "CPU") Ops.O.(on "CPU" * float 2.);
+                into (on "CPU:1") Ops.O.(on "CPU:1" + float 1.);
+              ]
+          in
+          equal int 2 (List.length (calls_of big)));
+      (* [b] reads what [a] writes and [d] what [b] writes; [c] is independent:
+         it joins [a], and [d] cannot. *)
+      test "a call moves up only past calls it does not conflict with"
+        (fun () ->
+          let x = element () and y = element () in
+          let o k =
+            List.nth [ element (); element (); element (); element () ] k
+          in
+          let a = into (o 0) Ops.O.(x * float 2.) in
+          let b = into (o 1) Ops.O.(a + float 1.) in
+          let c = into (o 2) Ops.O.(y * float 3.) in
+          let d = into (o 3) Ops.O.(b * float 4.) in
+          let calls = calls_of (Ops.sink [ a; b; c; d ]) in
+          let stores call =
+            List.length
+              (List.filter
+                 (fun u -> Ops.op u = Store)
+                 (Ops.toposort ~calls:Skip (Ops.body call)))
+          in
+          equal (list int) [ 2; 1; 1 ] (List.map stores calls));
+      test "calls that would pass more buffers than a kernel may run apart"
+        (fun () ->
+          let big () =
+            let x = element () and y = element () in
+            let o = element () and o' = element () in
+            Ops.sink
+              [ into o Ops.O.(x * float 2.); into o' Ops.O.(y + float 1.) ]
+          in
+          let calls limit =
+            Setting.context
+              [ Setting.B (Setting.max_kernel_buffers, limit) ]
+              (fun () -> List.length (calls_of (big ())))
+          in
+          equal int ~msg:"three" 2 (calls 3);
+          equal int ~msg:"four" 1 (calls 4));
+      test "a schedule of pairs of calls runs each pair as one" (fun () ->
+          equal int 50 (List.length (calls_of (two_chains 100))));
+      (* Work linear in the length is [a * n + b] with [b >= 0], so twice the
+         length costs at most twice the work, and a tenth for tables that double
+         their capacity at different lengths. *)
+      test "the merge's work on a long schedule is linear in its length"
+        (fun () ->
+          let work n =
+            let linear = chained_calls n in
+            words (fun () -> Schedule.merge_calls ~held:[] linear)
+          in
+          let short = work 1000 and long = work 2000 in
+          equal int ~msg:"pairs" 500
+            (List.length
+               (Ops.src (Schedule.merge_calls ~held:[] (chained_calls 1000))));
+          less float_exact ~than:(2.2 *. short) long);
+      prop "outputs run as one write what their tensors compute, bit for bit"
+        outputs_gen merges_keep_values;
+      prop "calls of a loop run as one write what their tensors compute"
+        loop_gen loop_merges_keep_values;
+      test
+        "a call of one element moves up only where no storage of many \
+         elements starts living earlier" (fun () ->
+          let buf n = Ops.new_buffer cpu n Float32 in
+          let x = buf 1 and o = buf 1 and y = buf 1 in
+          let calls t ~held =
+            let linear =
+              Ops.v Op.Linear
+                ~src:[ add_one ~read:x ~write:o; add_one ~read:y ~write:t ]
+            in
+            List.length
+              (Ops.src (Schedule.merge_calls ~held:([ x; o; y ] @ held) linear))
+          in
+          let big = buf 4 in
+          equal int ~msg:"storage of many elements" 2 (calls big ~held:[]);
+          equal int ~msg:"given storage of many elements" 1
+            (calls big ~held:[ big ]);
+          equal int ~msg:"storage of one element" 1 (calls (buf 1) ~held:[]));
+      test "calls that read one buffer read one parameter and share its work"
+        (fun () ->
+          let x = element () and o = element () and o' = element () in
+          let big =
+            Ops.sink
+              [
+                into o Ops.O.(Ops.exp2 x * float 2.);
+                into o' Ops.O.(Ops.exp2 x + float 1.);
+              ]
+          in
+          match calls_of big with
+          | [ call ] ->
+              let nodes = Ops.toposort ~calls:Skip (Ops.body call) in
+              let count o =
+                List.length (List.filter (fun u -> Ops.op u = o) nodes)
+              in
+              equal int ~msg:"arguments" 3
+                (List.length (Ops.src_without_body call));
+              equal int ~msg:"exponentials" 1 (count Exp2)
+          | calls -> failf "%d calls" (List.length calls));
+    ]
+
 let () =
   exit
     (run "Tolk.Schedule"
@@ -2068,5 +2521,6 @@ let () =
          runs;
          variables;
          loops;
+         merged_calls;
          on_disk;
        ])

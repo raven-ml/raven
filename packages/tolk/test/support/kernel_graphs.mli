@@ -47,7 +47,9 @@ val linear_writes :
 (** [linear_writes ~vars ~params ~buffers linear] is what running the calls of
     the schedule [linear], an {!Tolk.Op.Linear}, in order leaves in the storage
     it is given, as {!writes} states it: each kernel reads its arguments'
-    storage as the calls before it left it.
+    storage as the calls before it left it. An {!Tolk.Op.End} of calls runs
+    them once for each value of its ranges, from [0], each range replaced by
+    its value, and a scalar argument that is then constant passes its value.
 
     Raises [Invalid_argument] if a call is not of a kernel, or as {!writes}
     does. *)

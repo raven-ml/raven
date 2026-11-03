@@ -1485,7 +1485,8 @@ kernel at NVRTC, Metal and the host compute it. `Spec.program` is
   keeps its own end`; and the `Tolk_engine` suite
   (`test/engine/tolk_engine`): `link and run › a scan runs its body
   once per trip, carrying in place`, against the unrolled loop on the
-  host. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of calls ›
+  host, and `› a scan's merged calls carry in place as its calls apart do`
+  (D199), on the host and each GPU present. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of calls ›
   accepts a loop of a call over a loop range`, `› refuses a loop of a call
   over a range of any other kind` and `› refuses a weak sum of a weak integer
   variable`; its
@@ -3325,7 +3326,8 @@ driver signals its own (D146).
   each would take. A group's stores take one set of loops, so their shared
   nodes are indexed alike and computed once, and they end as one end over a
   group of the stores, which the kernel split makes one kernel writing them
-  all. Outputs that share only loads stay apart.
+  all. Outputs that share only loads stay apart; finished calls of one
+  domain may still share a launch (D199).
 
   Reductions: a reduction whose output is indexed by the same ranges as an
   earlier one's in the walk, and that reduces axes of the same sizes, takes
@@ -5839,6 +5841,76 @@ fold wraps integers and holds its float bound`, hold.
   staged`, `› a value stored into a broadcast of its destination is staged`
   and `› a value whose destination another store reads is staged`), each
   against the values its tensors write; the norn bench's `nuts/schools/4`.
+
+## D199. Independent calls of one domain run as one call where no lifetime grows past one element
+
+- **tinygrad:** `schedule/__init__.py:71-74` (`create_schedule`, one call
+  per kernel of the kernel graph, in the linear as scheduled) and
+  `schedule/rangeify.py:321-336` (`split_store`, one kernel per store or
+  end).
+- **tolk:** `Schedule.merge_calls`, `Schedule.merge_linear`,
+  `Schedule.member`, `Schedule.merged` and `Schedule.storage_taken`, which
+  `Schedule.create_linear_with_vars` runs after `pm_copy_from_store`, after
+  the schedule cache.
+- **Differs:** in a schedule, two kernel calls run as one call when each is
+  a kernel of the default kind that reduces nothing and ends its stores over
+  its ranges, all their storage lies on one device, their domains are the
+  same ranges by position (constant sizes and kinds), neither reads or
+  writes storage the other writes (storage compared by `Ops.storage_base`,
+  so two views of one buffer conflict), the later moves up to the group's
+  first call only past calls it does not conflict with, and the merged call
+  passes at most `MAX_KERNEL_BUFFERS` buffers when that is set. A call moves
+  earlier only where every storage whose life that starts earlier is storage
+  the schedule is given, holds one element, or lives for the whole loop
+  around both: in a loop's body every buffer already lives for the whole
+  loop (a loop counts as one entry, D41, and `Tolk_engine` makes storage per
+  run, D173), so calls join freely; at the top level, only calls of one element
+  join, since the order of calls of many elements is the schedule's, chosen
+  for the storage they make (RFC 0005's bound). Arguments that are one node
+  are passed once, storage first, so loads and arithmetic the members share
+  are one node of the merged kernel. Each call is weighed once, in order,
+  against the open groups of its device and domain, the earliest that
+  starts past the last call it conflicts with and past the first use of any
+  storage whose life may not start earlier: the merge is linear in the
+  calls. The decision reads devices only to compare them, after the cache,
+  so the schedule kept stays free of device names.
+
+  The merged kernel takes one set of optimisations for the union of its
+  members. On the host, two independent `[1024; 1024]` float32 carries in a
+  scan lose one member's 16-lane upcast, the `sqrt` member's `E_65536_16`
+  becoming the union's `E_131072_8`: measured at 2-3% a call when the merge
+  was designed, and 36.7-37.1 ms against 36.8-37.3 ms on this tree (best of
+  5 × 20 calls, two interleaved rounds); the same program on CUDA gained
+  10-25%. A mode that merges by target is not taken; the heuristic's choice
+  for a union is the host lane budget's question.
+- **Reason:** (d). On CUDA a launch costs about 1.3-2 µs, so a trip's
+  kernels are its cost: NUTS on eight schools, its density written by hand,
+  4 chains, on fudge's RTX 5000, launches 498 kernels a transition against
+  1,305 and takes 1.36-1.88 ms a warm step against 2.36-2.46 ms, compiling
+  131 programs against 155, with the same bits (three interleaved rounds,
+  each run under the timing and GPU locks, load 4 to 12; with D198 and
+  D163's rule across kernels). On the host a launch costs about 20 ns: the
+  model-language program's schedule holds 162 entries against 368 (top
+  level 78 against 134, main body 69 against 189, cascade 6 against 17)
+  and compiles 114 programs against 147, its cold first call 3.8-4.0 CPU-s
+  either way since Clang runs once per domain (D196), its warm step
+  unchanged; ymir's aperture gradient compiles cold in 13.7-15.1 CPU-s
+  against 22.1-28.3, 180 programs against 196, with the same bits. Pinned
+  by norn's `nuts/schools/4` on the host; a CUDA row of the hand-written
+  density is pending.
+- **Pinned by:** the Schedule suite (`test/schedule/schedule`):
+  `create_linear_with_vars › merged calls` (every test: independent calls in
+  a loop and of one element at the top level run as one, calls of many
+  elements at the top level, a reader of another's output, an overwriter of
+  what another reads, two runs of one buffer, a reduction and two devices
+  run apart, a call moves up only past calls it does not conflict with, the
+  buffer limit, shared arguments and work, pairs of calls, the merge's
+  linear work, the lifetime of storage of many elements, and the laws that
+  outputs run as one write what their tensors compute, bit for bit, and that
+  calls of a loop run as one, reading and overwriting one another's slots
+  and the trip, write what their tensors compute); the Tolk_engine suite
+  (`test/engine/tolk_engine`): `link and run › a scan's merged calls carry
+  in place as its calls apart do`, and the same on each GPU present.
 
 ## D200. A tensor core's row upcast keeps a warp within a run of rows
 

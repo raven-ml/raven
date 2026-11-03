@@ -977,6 +977,323 @@ let transform_to_call big_sink =
   in
   call ~precompile:true ret (List.rev ctx.replacements)
 
+(* Calls that run as one
+
+   Two kernel calls of a schedule run as one when neither touches what the other
+   writes, so either order gives the same values: one kernel then computes both,
+   and the work they share once. A call moves up to the first member of its
+   group only past entries it does not conflict with, and only where that grows
+   no storage's lifetime past what the scope allows: in a loop's body, every
+   storage lives for the whole loop, so calls join freely; at the top level,
+   only storage the schedule is given or storage of one element may start living
+   earlier.
+
+   k1 (a) ; k2 (b <- a) ; k3 (c) k3 joins k1: it touches neither a nor b k1+k3 ;
+   k2 k2 reads what k1 writes: apart *)
+
+(* The storage an entry takes, without the values it is passed. *)
+let storage_taken e =
+  List.filter (fun b -> addrspace b <> Some Dtype.Alu) (Memory.taken e)
+
+(* A kernel call that can run with others: its device, its domain (the ranges
+   its stores end, by position), the stores of its body, and the storage it
+   writes. *)
+type member = {
+  device : string;
+  domain : (Axis_type.t * t) list;
+  ranges : t list;
+  stores : t list;
+  writes : t list;
+}
+
+module Domain = Hashtbl.Make (struct
+  type t = string * (Axis_type.t * Ops.t) list
+
+  let equal (d, a) (e, b) =
+    String.equal d e
+    && List.equal (fun (x, u) (y, w) -> Axis_type.equal x y && u == w) a b
+
+  let hash (d, a) = Hashtbl.hash (d, List.map (fun (x, u) -> (x, Ops.hash u)) a)
+end)
+
+(* The member that the kernel call [si] is, if it is a kernel of the default
+   kind whose body ends its stores over ranges of constant sizes and reduces
+   nothing, and all of whose storage lies on one device. A size a call passes
+   is a parameter whose slot the merge renumbers, so two such sizes cannot be
+   compared before it. *)
+let member si =
+  let kernel = kernel_info () in
+  match (op si, src si) with
+  | Op.Call, b :: args when op b = Op.Sink -> (
+      let plain = match arg b with Kernel k -> k = kernel | _ -> false in
+      let root = match src b with [ r ] -> Some r | _ -> None in
+      match root with
+      | Some r when plain -> (
+          let body, ranges =
+            if op r = Op.End then (nth r 0, List.tl (src r)) else (r, [])
+          in
+          let stores =
+            if is_group body then List.tl (src body)
+            else if op body = Op.Store then [ body ]
+            else []
+          in
+          let nodes = toposort ~calls:Skip b in
+          let ranged u = op u = Op.Range && not (List.memq u ranges) in
+          let args = Array.of_list args in
+          let written st =
+            match arg (buf_uop (nth st 0)) with
+            | Param p when p.slot >= 0 && p.slot < Array.length args ->
+                Some (storage_base args.(p.slot))
+            | _ -> None
+          in
+          let writes = List.filter_map written stores in
+          let storage = storage_taken si in
+          let devices =
+            List.sort_uniq String.compare (List.filter_map device storage)
+          in
+          if
+            stores = []
+            || List.exists (fun st -> op st <> Op.Store) stores
+            || List.compare_lengths writes stores <> 0
+            || List.exists
+                 (fun r -> op r <> Op.Range || op (nth r 0) <> Op.Const)
+                 ranges
+            || List.exists (fun u -> op u = Op.Reduce || ranged u) nodes
+            || List.exists (fun b -> Option.is_none (device b)) storage
+          then None
+          else
+            match devices with
+            | [ device ] ->
+                let domain =
+                  List.map (fun r -> (axis_type r, nth r 0)) ranges
+                in
+                Some { device; domain; ranges; stores; writes }
+            | _ -> None)
+      | _ -> None)
+  | _ -> None
+
+(* The calls [calls], each with its member, as one call: arguments that are one
+   node are passed once, storage first, so that loads of them in several members
+   are one node, and each member's ranges are the first's. *)
+let merged calls =
+  let storage = Ordered.create () and values = Ordered.create () in
+  List.iter
+    (fun (si, _) ->
+      List.iter
+        (fun a ->
+          let table =
+            if addrspace a = Some Dtype.Alu then values else storage
+          in
+          if Ordered.find_opt table a = None then Ordered.replace table a ())
+        (List.tl (src si)))
+    calls;
+  let storage = List.map fst (Ordered.bindings storage)
+  and values = List.map fst (Ordered.bindings values) in
+  let args = storage @ values in
+  let slots = Tbl.create 16 in
+  List.iteri (fun i a -> Tbl.replace slots a i) args;
+  let slot_of a = Tbl.find slots a in
+  let first = snd (List.hd calls) in
+  let rebuilt (si, m) =
+    let own = Array.of_list (List.tl (src si)) in
+    let params =
+      List.filter_map
+        (fun v ->
+          match arg v with
+          | Param p
+            when op v = Op.Param
+                 && p.name = None && p.slot >= 0
+                 && p.slot < Array.length own ->
+              Some
+                ( v,
+                  replace v ~arg:(Param { p with slot = slot_of own.(p.slot) })
+                )
+          | _ -> None)
+        (toposort ~calls:Skip (body si))
+    in
+    let ranges = List.combine m.ranges first.ranges in
+    let subs = List.filter (fun (x, y) -> x != y) (params @ ranges) in
+    List.map (fun st -> substitute ~calls:Skip ~pass:Once st subs) m.stores
+  in
+  let stores = List.concat_map rebuilt calls in
+  let root =
+    if first.ranges = [] then stores else [ end_ (group stores) first.ranges ]
+  in
+  call (sink ~kernel:(kernel_info ()) root) args
+
+(* A group of calls: the position of its first, its members, last first, the
+   storage they are passed, and whether it still takes calls. *)
+type group = {
+  first : int;
+  mutable members : (t * member) list;
+  passed : unit Tbl.t;
+  mutable open_ : bool;
+}
+
+(* The groups of one device and domain, in the order of their first calls, each
+   with the next that may be open past it. *)
+type groups = { gs : group Dynarray.t; next : int Dynarray.t }
+
+(* The first open group of [k] from the [j]th, skipping closed ones once. *)
+let rec open_from k j =
+  if j >= Dynarray.length k.gs then j
+  else if (Dynarray.get k.gs j).open_ then j
+  else begin
+    let n = open_from k (Dynarray.get k.next j) in
+    Dynarray.set k.next j n;
+    n
+  end
+
+(* The first group of [k] whose first call is at [bound] or after. *)
+let at_or_after k bound =
+  let rec go lo hi =
+    if lo >= hi then lo
+    else
+      let mid = (lo + hi) / 2 in
+      if (Dynarray.get k.gs mid).first < bound then go (mid + 1) hi
+      else go lo mid
+  in
+  go 0 (Dynarray.length k.gs)
+
+(* The entries of [linear] with the calls that can run as one merged, and the
+   loops' bodies too. [held] is the storage the schedule is given, which
+   outlives it; [free] is whether every storage lives for the whole scope, as in
+   a loop's body. Each entry is weighed once, in order: it joins the earliest
+   open group of its device and domain that starts past the last entry it
+   conflicts with and past the first use of any storage whose life may not start
+   earlier, the positions being those after the merges. *)
+let rec merge_linear ~held ~free linear =
+  let entries =
+    Array.of_list
+      (List.map
+         (fun e ->
+           match op e with
+           | (Op.End | Op.Backedge) when op (nth e 0) = Op.Linear ->
+               let body = merge_linear ~held ~free:true (nth e 0) in
+               replace e ~src:(body :: List.tl (src e))
+           | _ -> e)
+         (src linear))
+  in
+  let n = Array.length entries in
+  let limit = Setting.value Setting.max_kernel_buffers in
+  let last_write = Tbl.create 64
+  and last_read = Tbl.create 64
+  and first_use = Tbl.create 64 in
+  let at tbl b = Option.value (Tbl.find_opt tbl b) ~default:(-1) in
+  let groups = Domain.create 16 in
+  let opened = Array.make n None and joined = Array.make n false in
+  let fits g si =
+    limit = 0
+    ||
+    let fresh =
+      List.sort_uniq Ops.compare
+        (List.filter
+           (fun a -> addrspace a <> Some Dtype.Alu && not (Tbl.mem g.passed a))
+           (List.tl (src si)))
+    in
+    Tbl.length g.passed + List.length fresh <= limit
+  in
+  let join g si m =
+    g.members <- (si, m) :: g.members;
+    List.iter
+      (fun a -> if addrspace a <> Some Dtype.Alu then Tbl.replace g.passed a ())
+      (List.tl (src si))
+  in
+  for i = 0 to n - 1 do
+    let e = entries.(i) in
+    let taken = storage_taken e in
+    let kernel = member e in
+    let writes = match kernel with Some m -> m.writes | None -> taken in
+    (* At the top level, only calls of one element join: the storage of a call
+       of many elements would live longer. *)
+    let m =
+      match kernel with
+      | Some m when free || m.ranges = [] -> Some m
+      | _ -> None
+    in
+    let conflict =
+      List.fold_left
+        (fun c b ->
+          let c = max c (at last_write b) in
+          if List.memq b writes then max c (at last_read b) else c)
+        (-1) taken
+    in
+    let bound =
+      List.fold_left
+        (fun lo b ->
+          if free || Tbl.mem held b || Shape.max_numel b = 1 then lo
+          else max lo (Option.value (Tbl.find_opt first_use b) ~default:i))
+        (conflict + 1) taken
+    in
+    let pos =
+      match m with
+      | None -> i
+      | Some m -> (
+          let key = (m.device, m.domain) in
+          let k =
+            match Domain.find_opt groups key with
+            | Some k -> k
+            | None ->
+                let k =
+                  { gs = Dynarray.create (); next = Dynarray.create () }
+                in
+                Domain.replace groups key k;
+                k
+          in
+          let rec pick j =
+            let j = open_from k j in
+            if j >= Dynarray.length k.gs then None
+            else
+              let g = Dynarray.get k.gs j in
+              if fits g e then Some g
+              else begin
+                g.open_ <- false;
+                pick (j + 1)
+              end
+          in
+          match pick (at_or_after k bound) with
+          | Some g ->
+              join g e m;
+              joined.(i) <- true;
+              g.first
+          | None ->
+              let g =
+                { first = i; members = []; passed = Tbl.create 8; open_ = true }
+              in
+              join g e m;
+              Dynarray.add_last k.gs g;
+              Dynarray.add_last k.next (Dynarray.length k.gs);
+              opened.(i) <- Some g;
+              i)
+    in
+    List.iter
+      (fun b ->
+        Tbl.replace last_read b (max pos (at last_read b));
+        if not (Tbl.mem first_use b) then Tbl.replace first_use b pos;
+        if List.memq b writes then
+          Tbl.replace last_write b (max pos (at last_write b)))
+      taken
+  done;
+  let out =
+    List.filter_map
+      (fun i ->
+        if joined.(i) then None
+        else
+          match opened.(i) with
+          | Some g when List.compare_length_with g.members 1 > 0 ->
+              Some (merged (List.rev g.members))
+          | _ -> Some entries.(i))
+      (List.init n Fun.id)
+  in
+  replace linear ~src:out
+
+(* The calls of [linear] that can run as one merged, at its top level and in its
+   loops, [held] the storage the schedule is given. *)
+let merge_calls ~held linear =
+  let tbl = Tbl.create 16 in
+  List.iter (fun b -> Tbl.replace tbl b ()) held;
+  merge_linear ~held:tbl ~free:false linear
+
 (* Schedules *)
 
 let create_linear_with_vars ?(capturing = false) ?(by_storage = false) big_sink
@@ -997,6 +1314,15 @@ let create_linear_with_vars ?(capturing = false) ?(by_storage = false) big_sink
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() linear
       (After_sources pm_copy_from_store)
   in
+  (* The storage the call is given, passed or viewed, outlives it. *)
+  let held_bufs =
+    List.filter_map
+      (fun a ->
+        let b = storage_base a in
+        if op b = Op.Buffer then Some b else None)
+      (List.tl (src linear_call))
+  in
+  let linear = merge_calls ~held:held_bufs linear in
   let used_vars =
     List.concat_map
       (fun si ->
@@ -1021,13 +1347,4 @@ let create_linear_with_vars ?(capturing = false) ?(by_storage = false) big_sink
       (List.tl (src big_sink))
   in
   if capturing then (linear, var_vals)
-  else
-    (* The storage the call is given, passed or viewed, outlives it. *)
-    let held_bufs =
-      List.filter_map
-        (fun a ->
-          let b = storage_base a in
-          if op b = Op.Buffer then Some b else None)
-        (List.tl (src linear_call))
-    in
-    (Memory.memory_plan_rewrite ~held_bufs linear, var_vals)
+  else (Memory.memory_plan_rewrite ~held_bufs linear, var_vals)

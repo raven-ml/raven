@@ -2085,13 +2085,24 @@ let law_carries c =
 (* The kernels a call of [f] compiles. *)
 let kernels f = List.length (snd (Tolk.Realize.kernels f))
 
+(* The stores of the kernels a call of [f] compiles: a copy is one more, whether
+   or not its kernel runs as one with another. *)
+let stores f =
+  let count (k : Tolk.Realize.kernel) =
+    List.length
+      (List.filter
+         (fun u -> Tolk.Ops.op u = Tolk.Op.Store)
+         (Tolk.Ops.toposort ~calls:Skip k.ast))
+  in
+  List.fold_left (fun n k -> n + count k) 0 (snd (Tolk.Realize.kernels f))
+
 let sig3 r = T.(tensor @-> tensor @-> tensor @-> returns r)
 
 (* A carry whose next value is a nested loop's or a branch's result is stored
    from that result's storage, so a cycle through the result, the nested
    construct reading the carry [b] whose next value reads [a], costs no copy:
-   the call compiles as many kernels as when the construct reads a capture
-   [z] instead. *)
+   the call's kernels store as many values as when the construct reads a
+   capture [z] instead. *)
 let test_cycle_storage () =
   let a = v [| 1.; 2.; 3.; 4. |] and b = v [| 5.; 6.; 7.; 8. |] in
   let z = v [| -1.; -2.; -3.; -4. |] in
@@ -2132,9 +2143,8 @@ let test_cycle_storage () =
                (fun (a, b) p -> ((inner p a (reads b z), a), ()))
                ~init:(a, b) ps)
         in
-        kernels (fun () ->
-            ignore
-              (Rune.jit (sig3 T.(pair tensor tensor)) f a b z))
+        stores (fun () ->
+            ignore (Rune.jit (sig3 T.(pair tensor tensor)) f a b z))
       in
       equal ~msg:what int (compiled (fun _ z -> z)) (compiled (fun b _ -> b)))
     nested

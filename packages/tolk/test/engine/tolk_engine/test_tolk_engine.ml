@@ -955,6 +955,61 @@ let scans_with_a_carry () =
   equal values ~msg:"the carry" (floats carry) (Run.values Float32 c_buffer);
   equal values ~msg:"the rows" (floats y) (Run.values Float32 ys_buffer)
 
+(* Carries of a scan of five trips on [d], each of 64 floats updated in place by
+   its function of [updates] from its initial values: the number of calls in the
+   scan's body, and each carry's bits after the run. *)
+let carried ?(devices = devices) d updates =
+  let k = 64 and n = 5 in
+  let p slot = Shape.param ~shape:[ Int k ] ~device:d slot Float32 in
+  let cs = List.map (fun _ -> Ops.new_buffer d k Float32) updates in
+  let body =
+    Ops.sink (List.mapi (fun i (f, _) -> Ops.store (p i) (f (p i))) updates)
+  in
+  let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
+  let e = Ops.end_ (Ops.call ~precompile:true body cs) [ r ] in
+  let linear, _ =
+    Schedule.create_linear_with_vars
+      (Ops.sink (List.map (fun c -> Ops.after c [ e ]) cs))
+  in
+  let calls =
+    match Ops.src linear with
+    | [ l ] when Ops.op l = End -> List.length (Ops.src (Ops.nth l 0))
+    | entries -> failf "%d entries, not one loop" (List.length entries)
+  in
+  let bufs =
+    List.map2
+      (fun c (_, init) ->
+        (c, Run.buffer (devices d) Float32 (floats (Array.init k init))))
+      cs updates
+  in
+  let s = Engine.link ~devices ~bound:bufs (compile ~devices linear) in
+  Engine.run s [||];
+  let bits b =
+    Array.map
+      (function `Float x -> Int64.bits_of_float x | _ -> fail "a float")
+      (Run.values Float32 b)
+  in
+  (calls, List.map (fun (_, b) -> bits b) bufs)
+
+(* Two independent carries of one domain run as one call each trip, and leave
+   the bits each leaves run as a scan of its own. *)
+let carries_merged ?(devices = devices) d () =
+  let scaled =
+    ( (fun c -> Ops.O.((c * float 1.5) + float 0.25)),
+      fun j -> Float.of_int j /. 7. )
+  and decayed =
+    ( (fun c -> Ops.O.(Ops.exp2 (c * float (-0.5)) * float 0.75)),
+      fun j -> Float.of_int (j - 30) /. 3. )
+  in
+  let calls, merged = carried ~devices d [ scaled; decayed ] in
+  equal int ~msg:"calls a trip" 1 calls;
+  let apart =
+    List.concat_map
+      (fun u -> snd (carried ~devices d [ u ]))
+      [ scaled; decayed ]
+  in
+  equal (list (array int64)) ~msg:"bits" apart merged
+
 (* A copy of 16 floats of the host stored into rows 2 and 3 of an 8 by 8 grid
    on a memory device writes those rows, and leaves the others as they were. *)
 let copies_into_rows () =
@@ -1863,6 +1918,8 @@ let schedules =
       test "a range around a call runs it once per trip" runs_once_per_trip;
       test "a scan runs its body once per trip, carrying in place"
         scans_with_a_carry;
+      test "a scan's merged calls carry in place as its calls apart do"
+        (carries_merged "CPU");
       test "a copy stored into rows of a buffer writes them alone"
         copies_into_rows;
       replays_a_scan;
@@ -3066,6 +3123,8 @@ let on_a_gpu (kind, _) =
       test "a call's scalar arguments of mixed widths reach its kernel"
         (reads_mixed_scalars ~devices "CPU:1");
       reads_trips_under_a_back_edge ~devices "CPU:1";
+      test "a scan's merged calls carry in place as its calls apart do"
+        (carries_merged ~devices "CPU:1");
       test "a loop's move copies the rows its trips name"
         (copies_moving_rows ~devices "CPU:1" "CPU");
       test "a loop's move into storage made at link moves with its trips"
