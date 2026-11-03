@@ -205,8 +205,7 @@ and rune), raven / llama.cpp b12048 Vulkan:
   a run's 16 GiB), and bless `Talon_csv/read-mixed` on the Mac
 - talon perf on fudge (c51b4b858, 14 threads, load 5-71, DuckDB 1.5.6,
   Polars 1.44.2), geomean vs the faster engine: decision support SF1
-  11.7x, SF10 22.0x, H2O 1e7 group-by 7.9x, join 7.1x. talon's group-by
-  runs on about one core (94% of a CPU) where the engines use all 14;
+  11.7x, SF10 22.0x, H2O 1e7 group-by 7.9x, join 7.1x.
   SF10 q13 peaks at 14.45 GiB. Logs: ~/wt/tmp/talon-baselines on fudge
 - talon 1.0 plan (_plans/talon/product/plan.md, on the Mac): windows and
   ewm, as-of and interval joins, interval sets and folds, zoned time,
