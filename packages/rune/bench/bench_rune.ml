@@ -480,6 +480,9 @@ let jit_rows () =
   let x = x64 () and a = one () and b = one () in
   let xs = floats n and ps = positions n n and g = floats n in
   let into = floats 1024 and us = floats 16 and qs = positions 16 1024 in
+  let stacked =
+    List.init 64 (fun i -> between f32 (100 + i) (-1.) 1. [| 64 |])
+  in
   let zs = host (Nx.cast Nx.complex64 xs) in
   let m = Nx.reshape [| 64; 64 |] xs in
   let pm = between f32 36 (-1.) 1. [| 64; 64 |] in
@@ -551,6 +554,15 @@ let jit_rows () =
       (fun (step, w) ->
         w := step (Nx.donate !w) g;
         synced !w);
+    (* 64 rows of 64, each a sine, stacked: past the bound on an assembly's
+       selections the program is evaluated, where a compiled selection
+       computes every row's sines at each element. *)
+    warm "stack-64-sines-of-64"
+      (fun () ->
+        Rune.jit
+          Nx.Ptree.(list tensor @-> returns tensor)
+          (fun xs -> Nx.stack (List.map Nx.sin xs)))
+      (fun f -> synced (f stacked));
     warm "gather-4096"
       (fun () -> Rune.jit (pair_fn ()) (fun p x -> Nx.take p x))
       (fun f -> synced (f ps xs));
