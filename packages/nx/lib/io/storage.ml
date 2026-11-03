@@ -111,5 +111,5 @@ let with_bytes ~by x f =
   let x = if Sys.big_endian then Fail.renamed ~by byteswap x else x in
   Fail.reading ~by (Nx.Repr.read x) @@ fun a ->
   let a = if L.is_contiguous (A.layout a) then a else A.copy a in
-  A.read Bigarray.int8_unsigned (as_bytes a) (fun g ->
+  A.read (as_bytes a) (fun g ->
       f (Bigarray.array1_of_genarray g))

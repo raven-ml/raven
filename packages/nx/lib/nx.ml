@@ -482,11 +482,20 @@ end
 
 let to_array x = Nx_array.to_array (read ~by:"Nx.to_array" x)
 
+(* A fresh host copy of [x]'s elements, given up to a bigarray of [k], which
+   [x]'s type fixes: the bytes stay rig's host memory, which paces the
+   collector by the program's memory. *)
 let to_bigarray k x =
   let by = "Nx.to_bigarray" in
   let r = Prim.rank x in
   if r > 16 then invalid_argf "%s: rank %d, above Bigarray's 16" by r;
-  Nx_array.bigarray k (Nx_array.copy (read ~by x))
+  let a = Nx_array.copy (read ~by x) in
+  let flat = Rig.Buffer.export (Nx_array.buffer a) k in
+  let g = Bigarray.genarray_of_array1 flat in
+  if r = 1 then g
+  else
+    let s = Nx_array.Layout.shape (Nx_array.layout a) in
+    Bigarray.reshape g (Iarray.to_array s)
 
 (* Fills [index] from axis [a] on with the positions [ps], each counted from
    the end of its axis of [s] where negative. Raises as {!item} states. *)

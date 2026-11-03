@@ -423,7 +423,7 @@ let access_rows =
           let v = Option.get (A.move (M.Window [| w 2; w 3 |]) a) in
           Option.get (A.move (M.Permute [| 0; 1; 4; 5; 2; 3 |]) v))
         A.copy;
-      row "bigarray-f32-1M" (fun () -> host 1.5) (A.bigarray Bigarray.float32);
+      row "bigarray-f32-1M" (fun () -> host 1.5) A.bigarray;
       row "of_bigarray-f32-1M"
         (fun () ->
           Bigarray.genarray_of_array1

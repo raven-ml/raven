@@ -731,7 +731,7 @@ let to_array x = equal (values f32) ones (A.to_array x)
 
 let read x =
   equal (values f32) ones
-    (A.read Bigarray.float32 x (fun g ->
+    (A.read x (fun g ->
          Array.init 4 (fun i -> Bigarray.Genarray.get g [| i |])))
 
 let submit x =

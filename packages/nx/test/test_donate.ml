@@ -715,7 +715,7 @@ let test_cut_in_place () =
 let test_read_in_place () =
   let read c =
     Nx.Repr.read c (fun a ->
-        Nx_array.read Bigarray.float32 a (fun b ->
+        Nx_array.read a (fun b ->
             ignore (Bigarray.Genarray.get b [| 5; 0 |])));
     c
   in

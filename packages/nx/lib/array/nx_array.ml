@@ -207,6 +207,7 @@ let alloc ?memory d dtype layout =
   { dtype; layout; buffer }
 
 let create ?memory d dtype s = alloc ?memory d dtype (Layout.contiguous s)
+let host dtype s = create Rig.host dtype s
 
 (* Movements and bitcasts *)
 
@@ -797,11 +798,15 @@ let bigarray_max_rank = 16
 (* The bytes of [a], a C-contiguous array of elements of [k]'s width. *)
 let bigarray_bytes k a =
   let l = a.layout and w = Bigarray.kind_size_in_bytes k in
-  Buffer.view a.buffer ~first:(Layout.offset l * w) ~length:(Layout.numel l * w)
+  let first = Layout.offset l * w and length = Layout.numel l * w in
+  if first = 0 && length = Buffer.length a.buffer then a.buffer
+  else Buffer.view a.buffer ~first ~length
 
+(* A vector's bigarray is the flat one, with no reshape to allocate. *)
 let of_flat a flat =
-  Bigarray.reshape (Bigarray.genarray_of_array1 flat)
-    (Iarray.to_array (Layout.shape a.layout))
+  let g = Bigarray.genarray_of_array1 flat in
+  if Layout.rank a.layout = 1 then g
+  else Bigarray.reshape g (Iarray.to_array (Layout.shape a.layout))
 
 (* Raises naming [fn] unless a bigarray of [l]'s shape lies over the bytes of
    an array laid out by [l]: C-contiguous, of at most Bigarray's axes. *)
@@ -812,30 +817,69 @@ let bigarray_fits fn l =
     invalid_argf "%s: %d axes, a bigarray has at most %d" fn (Layout.rank l)
       bigarray_max_rank
 
-let bigarray k a =
+(* The kind [a]'s dtype stores, which its type fixes, or a raise naming [fn]
+   for a dtype Bigarray has no kind for. *)
+let kind (type v s) fn (a : (v, s) t) : (v, s) Bigarray.kind =
+  match Dtype.to_bigarray_kind a.dtype with
+  | Some k -> k
+  | None -> invalid_argf "%s: %a has no Bigarray kind" fn Dtype.pp a.dtype
+
+let bigarray a =
   let fn = "Nx_array.bigarray" in
   live fn a.buffer;
   bigarray_fits fn a.layout;
+  let k = kind fn a in
   let d = device a in
   if not (Rig.equal d Rig.host) then
     invalid_argf "%s: the array is on %a, and a bigarray needs Rig.host's memory"
       fn Rig.pp d;
   of_flat a (Buffer.export (bigarray_bytes k a) k)
 
-(* Under the door's read claim, which names this function in a refusal, rig's
-   read waits and passes the bytes. An array with no element has no byte to
-   address, so it reads wherever its memory lies, as rig's read does. *)
-let read k a f =
+(* [read] and [write] take the door's claims as [door] does, inline, so that a
+   call allocates no closure or cell for its result; a refusal names the
+   function. Under the claims, rig's read or write waits and passes the bytes.
+   An array with no element has no byte to address, so it is passed wherever
+   its memory lies, as rig's read does. *)
+
+let read a f =
   let fn = "Nx_array.read" in
-  let l = a.layout in
-  bigarray_fits fn l;
-  let result = ref None in
-  reading fn a (fun () ->
-      if Layout.numel l > 0 && host_address a.buffer < 0 then
-        refused fn Off_host [ Any a ];
-      let pass flat = f (of_flat a flat) in
-      result := Some (Buffer.read (bigarray_bytes k a) k pass));
-  Option.get !result
+  bigarray_fits fn a.layout;
+  let k = kind fn a in
+  let operands = [| Any a |] in
+  match admit [||] operands with
+  | Done -> (
+      match
+        if Layout.numel a.layout > 0 && host_address a.buffer < 0 then
+          refused fn Off_host [ Any a ];
+        Buffer.read (bigarray_bytes k a) k (fun flat -> f (of_flat a flat))
+      with
+      | r ->
+          release [||] operands;
+          r
+      | exception e ->
+          release [||] operands;
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+  | refusal -> refused fn refusal [ Any a ]
+
+let write a f =
+  let fn = "Nx_array.write" in
+  bigarray_fits fn a.layout;
+  let k = kind fn a in
+  let operands = [| Any a |] in
+  match admit operands [||] with
+  | Done -> (
+      match
+        if Layout.numel a.layout > 0 && host_address a.buffer < 0 then
+          refused fn Off_host [ Any a ];
+        Buffer.write (bigarray_bytes k a) k (fun flat -> f (of_flat a flat))
+      with
+      | r ->
+          release operands [||];
+          r
+      | exception e ->
+          release operands [||];
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+  | refusal -> refused fn refusal [ Any a ]
 
 let of_bigarray dt g =
   let dims = Bigarray.Genarray.dims g in

@@ -1759,6 +1759,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_array.host` makes a host array of a dtype and shape, and
+  `Nx_array.write`, the mirror of `Nx_array.read`, fills one under a write
+  claim. `Nx_array.read`, `Nx_array.bigarray` and `Nx_array.write` take the
+  Bigarray kind from the array's dtype, which fixes it, and no longer take one.
 - On nx.cpu, a product of fewer columns than rows, as attention's `p · v`
   and `pᵀ · do`, writes its tiles in place, where it copied each through a
   buffer.

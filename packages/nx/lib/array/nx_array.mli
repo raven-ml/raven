@@ -92,6 +92,12 @@ val create :
     {!Rig.Buffer.create} raises and, for a sub-byte array, what
     {!Rig.Buffer.submit_fill} raises. *)
 
+val host : ('v, 's) Dtype.t -> int iarray -> ('v, 's) t
+(** [host dt s] is {!create}[ Rig.host dt s]: a fresh C-contiguous array of
+    shape [s] in the host's memory, which {!write} fills.
+
+    Raises [Invalid_argument] as {!create} does. *)
+
 val dtype : ('v, 's) t -> ('v, 's) Dtype.t
 (** [dtype a] is [a]'s dtype. *)
 
@@ -234,18 +240,18 @@ val borrow : Rig.t -> ('v, 's) t -> ('v, 's) t option
 
 (** {1:bigarrays Bigarrays}
 
-    {!bigarray}, {!read} and {!of_bigarray} share bytes with the value they
-    take, without a copy. {!bigarray} and {!read} raise [Invalid_argument]
-    unless the array [a] they take is C-contiguous ({!Layout.is_contiguous})
-    and of rank at most 16, the most axes a Bigarray has, and if [a]'s buffer
-    is dead or its memory is held exclusive. They raise {!Rig.Lost} as
+    {!bigarray}, {!read}, {!write} and {!of_bigarray} share bytes with the
+    value they take, without a copy. The bigarray that {!bigarray}, {!read}
+    and {!write} give is of the kind [a]'s dtype stores
+    ({!Dtype.to_bigarray_kind}), which its type fixes. They raise
+    [Invalid_argument] unless the array [a] they take is C-contiguous
+    ({!Layout.is_contiguous}) and of rank at most 16, the most axes a Bigarray
+    has, if [a]'s dtype has no Bigarray kind, and if [a]'s buffer is dead or
+    its memory is held exclusive. They raise {!Rig.Lost} as
     {!Rig.Buffer.wait} does. *)
 
-val bigarray :
-  ('v, 's) Bigarray.kind ->
-  ('v, 's) t ->
-  ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t
-(** [bigarray k a] is a bigarray of [a]'s shape over [a]'s own bytes. Writes
+val bigarray : ('v, 's) t -> ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t
+(** [bigarray a] is a bigarray of [a]'s shape over [a]'s own bytes. Writes
     through it write [a], and are allowed only if [a]'s memory admits them
     ({!Rig.Buffer.val-access}). It waits once for the work on [a]'s memory, and
     from then on that memory is never held exclusive again
@@ -262,11 +268,8 @@ val bigarray :
     on {!Rig.host}. *)
 
 val read :
-  ('v, 's) Bigarray.kind ->
-  ('v, 's) t ->
-  (('v, 's, Bigarray.c_layout) Bigarray.Genarray.t -> 'a) ->
-  'a
-(** [read k a f] is [f b], where [b] is a bigarray of [a]'s shape over [a]'s own
+  ('v, 's) t -> (('v, 's, Bigarray.c_layout) Bigarray.Genarray.t -> 'a) -> 'a
+(** [read a f] is [f b], where [b] is a bigarray of [a]'s shape over [a]'s own
     bytes; an [a] with no element gives an empty [b], whatever its memory. It
     claims [a]'s memory for reading, waits for the device work a read must
     follow ({!Rig.Buffer.wait}), and ends the claim when [f] returns or raises.
@@ -281,6 +284,25 @@ val read :
 
     Raises [Invalid_argument] naming [Nx_array.read], and if [a] has an
     element and the host does not address its memory. *)
+
+val write :
+  ('v, 's) t -> (('v, 's, Bigarray.c_layout) Bigarray.Genarray.t -> 'a) -> 'a
+(** [write a f] is [f b], where [b] is a bigarray of [a]'s shape over [a]'s own
+    bytes: what [f] stores through [b] is [a]'s elements. An [a] with no
+    element gives an empty [b], whatever its memory. It claims [a]'s memory for
+    writing, waits for the device work a write must follow
+    ({!Rig.Buffer.wait}), and ends the claim when [f] returns or raises, as
+    {!read} does.
+
+    [f] must not keep [b] after it returns, since a donation or
+    {!Rig.Buffer.free} can then give the memory to another array. The program
+    must order [b] against work another domain submits while [f] runs.
+
+    Stores through [b] are Bigarray's, as {!bigarray} says.
+
+    Raises [Invalid_argument] naming [Nx_array.write], and if [a]'s memory
+    admits no write ({!Rig.Buffer.val-access}), and if [a] has an element and
+    the host does not address its memory. *)
 
 val of_bigarray :
   ('v, 's) Dtype.t ->

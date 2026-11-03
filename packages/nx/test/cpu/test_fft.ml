@@ -680,8 +680,8 @@ let test_past_caches () =
 (* The first of [n] complex64 points where [y] and [z] differ in their
    bits, if any. *)
 let differs n y z =
-  A.read Bigarray.complex32 y @@ fun y ->
-  A.read Bigarray.complex32 z @@ fun z ->
+  A.read y @@ fun y ->
+  A.read z @@ fun z ->
   let y = Bigarray.reshape_1 y n and z = Bigarray.reshape_1 z n in
   let same (a : Complex.t) (b : Complex.t) =
     Int64.bits_of_float a.re = Int64.bits_of_float b.re

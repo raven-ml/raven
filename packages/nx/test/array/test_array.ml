@@ -527,7 +527,7 @@ let test_io_refuses () =
   fails (fun () -> A.set a [| 0 |] 0.);
   fails (fun () -> A.to_array a);
   raises_match (Exn.invalid_arg ~sub:"Nx_array.bigarray") (fun () ->
-      A.bigarray Bigarray.float32 a)
+      A.bigarray a)
 
 let test_dead_access () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
@@ -562,13 +562,13 @@ let test_exclusive () =
       fails "to_array" (fun () -> A.to_array a);
       fails "copy" (fun () -> A.copy a);
       fails "to_device" (fun () -> A.to_device Rig.host a);
-      fails "bigarray" (fun () -> A.bigarray Bigarray.float32 a))
+      fails "bigarray" (fun () -> A.bigarray a))
 
 let test_dead_bigarray () =
   let a = A.to_device (S.io_device ()) (floats32 [| 2 |] [| 1.; 2. |]) in
   kill (A.buffer a);
   raises_match (Exn.invalid_arg ~sub:"dead") (fun () ->
-      A.bigarray Bigarray.float32 a)
+      A.bigarray a)
 
 let test_dead_empty () =
   let b = B.create Rig.host 16 in
@@ -1594,13 +1594,13 @@ let test_to_device_io_views () =
 
 let test_bigarray () =
   let a = floats32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
-  let g = A.bigarray Bigarray.float32 a in
+  let g = A.bigarray a in
   equal ints [| 2; 3 |] (Bigarray.Genarray.dims g);
   Bigarray.Genarray.set g [| 1; 2 |] 9.;
   equal (values f32) [| 9. |] [| A.get a [| 1; 2 |] |];
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) a) in
   raises_match (Exn.invalid_arg ~sub:"not C-contiguous") (fun () ->
-      A.bigarray Bigarray.float32 t);
+      A.bigarray t);
   let row =
     Option.get
       (A.move
@@ -1611,7 +1611,7 @@ let test_bigarray () =
             |])
          a)
   in
-  let g = A.bigarray Bigarray.float32 row in
+  let g = A.bigarray row in
   equal float_exact 9. (Bigarray.Genarray.get g [| 0; 2 |]);
   equal bool false (unclaimed (A.buffer a))
 
@@ -1630,21 +1630,25 @@ let kind : type v s. (v, s) D.t -> (v, s) Bigarray.kind option = function
   | D.Complex64 -> Some Bigarray.complex32
   | _ -> None
 
-(* [bigarray] of a host array holds its elements if the array is C-contiguous
-   and of rank at most 16, and raises naming itself otherwise. *)
+(* [bigarray] of a host array holds its elements if the array is C-contiguous,
+   of rank at most 16 and of a dtype Bigarray has a kind for, and raises
+   naming itself otherwise. *)
 let law_bigarray (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
    fun a ->
     let l = A.layout a in
     match kind (A.dtype a) with
-    | None -> ()
-    | Some k when not (L.is_contiguous l && L.rank l <= 16) ->
+    | None ->
+        cover "no kind" true;
+        raises_match (Exn.invalid_arg ~sub:"Nx_array.bigarray") (fun () ->
+            A.bigarray a)
+    | Some _ when not (L.is_contiguous l && L.rank l <= 16) ->
         cover "raises" true;
         raises_match (Exn.invalid_arg ~sub:"Nx_array.bigarray") (fun () ->
-            A.bigarray k a)
-    | Some k ->
+            A.bigarray a)
+    | Some _ ->
         cover "a bigarray" true;
-        let g = A.bigarray k a in
+        let g = A.bigarray a in
         let s = Iarray.to_array (L.shape l) in
         equal ints s (Bigarray.Genarray.dims g);
         equal
@@ -1665,10 +1669,10 @@ let test_of_bigarray_misaligned () =
 let test_bigarray_rank () =
   let a = A.create Rig.host D.Uint8 (Iarray.init 16 (Fun.const 1)) in
   equal ints (Array.make 16 1)
-    (Bigarray.Genarray.dims (A.bigarray Bigarray.int8_unsigned a));
+    (Bigarray.Genarray.dims (A.bigarray a));
   let a = A.create Rig.host D.Uint8 (Iarray.init 17 (Fun.const 1)) in
   raises_match (Exn.invalid_arg ~sub:"at most 16") (fun () ->
-      A.bigarray Bigarray.int8_unsigned a)
+      A.bigarray a)
 
 (* [bigarray] waits for the work on its array's memory: a Late device's store
    into a host array it borrowed, pending until a wait sleeps on the device. A
@@ -1678,7 +1682,7 @@ let test_wait_bigarray () =
   let a = A.create Rig.host f32 [| 16384 |] in
   pending (Option.get (A.borrow d a)) [| 3.; 4. |];
   equal ~msg:"pending" bool true (Rig.signaled d < Rig.submitted d);
-  let g = A.bigarray Bigarray.float32 a in
+  let g = A.bigarray a in
   equal (values f32) [| 3.; 4. |]
     (Array.init 2 (fun i -> Bigarray.Genarray.get g [| i |]))
 
@@ -1703,8 +1707,8 @@ let read_fails ?msg substring f =
     f
 
 (* [read] passes a bigarray of a C-contiguous array's shape holding its
-   elements, on the host and on a memory device, and refuses a strided one. It
-   leaves no claim. *)
+   elements, on the host and on a memory device, and refuses a strided one and
+   a dtype Bigarray has no kind for. It leaves no claim. *)
 let law_read (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
    fun a ->
@@ -1715,18 +1719,21 @@ let law_read (Case (a, m)) =
     cover "an offset" (contiguous && L.offset l > 0);
     cover "no element" (L.numel l = 0);
     (match kind (A.dtype a) with
-    | None -> ()
-    | Some k when contiguous ->
+    | None ->
+        cover "no kind" true;
+        read_fails (if contiguous then "Bigarray kind" else "contiguous")
+          (fun () -> A.read a ignore)
+    | Some _ when contiguous ->
         let s = Iarray.to_array (L.shape l) in
         let elements g =
           Array.of_list (List.map (Bigarray.Genarray.get g) (indices s))
         in
         let dims, xs =
-          A.read k a (fun g -> (Bigarray.Genarray.dims g, elements g))
+          A.read a (fun g -> (Bigarray.Genarray.dims g, elements g))
         in
         equal ints s dims;
         equal (values (A.dtype a)) (A.to_array a) xs
-    | Some k -> read_fails "contiguous" (fun () -> A.read k a ignore));
+    | Some _ -> read_fails "contiguous" (fun () -> A.read a ignore));
     equal ~msg:"released" bool true (unclaimed (A.buffer a))
   in
   let a =
@@ -1743,40 +1750,110 @@ let law_read (Case (a, m)) =
          (L.v ~offset:(L.offset l + 1) ~strides:[| 1 |] [| n - 1 |])
          (A.buffer a))
 
+(* [write] passes a bigarray of a C-contiguous array's shape over its own
+   bytes: it reads the array's elements, and what it stores is the array's
+   elements afterwards. Here it stores them in reverse. It refuses a strided
+   array and a dtype Bigarray has no kind for, and leaves no claim. *)
+let law_write (Case (a, m)) =
+  let check : type v s. (v, s) A.t -> unit =
+   fun a ->
+    let l = A.layout a in
+    let contiguous = L.is_contiguous l in
+    cover "contiguous" contiguous;
+    cover "strided" (not contiguous);
+    cover "no element" (L.numel l = 0);
+    let fails sub =
+      raises_match
+        (fun e ->
+          Exn.invalid_arg ~sub:"Nx_array.write" e && Exn.invalid_arg ~sub e)
+        (fun () -> A.write a ignore)
+    in
+    (match kind (A.dtype a) with
+    | None ->
+        cover "no kind" true;
+        if contiguous then fails "Bigarray kind"
+    | Some _ when contiguous ->
+        let s = Iarray.to_array (L.shape l) in
+        let idxs = Array.of_list (indices s) in
+        let n = Array.length idxs in
+        let before = A.to_array a in
+        let seen =
+          A.write a (fun g ->
+              let xs = Array.map (Bigarray.Genarray.get g) idxs in
+              Array.iteri
+                (fun k i -> Bigarray.Genarray.set g i xs.(n - 1 - k))
+                idxs;
+              (Bigarray.Genarray.dims g, xs))
+        in
+        equal ints s (fst seen);
+        equal ~msg:"read through the bigarray" (values (A.dtype a)) before
+          (snd seen);
+        equal ~msg:"stored through the bigarray" (values (A.dtype a))
+          (Array.init n (fun k -> before.(n - 1 - k)))
+          (A.to_array a)
+    | Some _ -> fails "contiguous");
+    equal ~msg:"released" bool true (unclaimed (A.buffer a))
+  in
+  check
+    (match Option.bind m (fun m -> A.move m a) with Some b -> b | None -> a)
+
+(* A write claims the memory while [f] runs and ends the claim when it returns
+   or raises. *)
+let test_write_claim () =
+  let a = floats32 [| 2 |] [| 1.; 2. |] in
+  let inside = A.write a (fun _ -> unclaimed (A.buffer a)) in
+  equal ~msg:"claimed while f runs" bool false inside;
+  equal ~msg:"released" bool true (unclaimed (A.buffer a));
+  raises Raised (fun () -> A.write a (fun _ -> raise Raised));
+  equal ~msg:"released after a raise" bool true (unclaimed (A.buffer a))
+
+(* [host] makes a C-contiguous array of the shape on the host, which [write]
+   fills. *)
+let test_host () =
+  let a = A.host D.Int64 [| 2; 3 |] in
+  equal ~msg:"on the host" bool true (Rig.equal (A.device a) Rig.host);
+  equal ~msg:"its shape" iints
+    (Iarray.of_array [| 2; 3 |])
+    (L.shape (A.layout a));
+  A.write a (fun g ->
+      Bigarray.Genarray.fill g 0L;
+      Bigarray.Genarray.set g [| 1; 2 |] 7L);
+  equal (array int64) [| 0L; 0L; 0L; 0L; 0L; 7L |] (A.to_array a)
+
 (* The claim holds while [f] runs and ends when it returns or raises, leaving
    the memory to later donations. *)
 let test_read_claim () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
-  let inside = A.read Bigarray.float32 a (fun _ -> unclaimed (A.buffer a)) in
+  let inside = A.read a (fun _ -> unclaimed (A.buffer a)) in
   equal ~msg:"claimed while f runs" bool false inside;
   equal ~msg:"released" bool true (unclaimed (A.buffer a));
-  raises Raised (fun () -> A.read Bigarray.float32 a (fun _ -> raise Raised));
+  raises Raised (fun () -> A.read a (fun _ -> raise Raised));
   equal ~msg:"released after a raise" bool true (unclaimed (A.buffer a))
 
 let test_read_refuses () =
   let off = A.to_device (S.io_device ()) (floats32 [| 2 |] [| 1.; 2. |]) in
   read_fails ~msg:"off the host" "host" (fun () ->
-      A.read Bigarray.float32 off ignore);
+      A.read off ignore);
   let dead = floats32 [| 2 |] [| 1.; 2. |] in
   kill (A.buffer dead);
   read_fails ~msg:"dead" "consumed by the test" (fun () ->
-      A.read Bigarray.float32 dead ignore);
+      A.read dead ignore);
   let held = floats32 [| 2 |] [| 1.; 2. |] in
   Rig.Claim.with_ ~read:[]
     ~donate:[ A.buffer held ]
     (fun _ ->
       read_fails ~msg:"held exclusive" "exclusive" (fun () ->
-          A.read Bigarray.float32 held ignore));
+          A.read held ignore));
   let a = A.create Rig.host D.Uint8 (Iarray.init 16 (Fun.const 1)) in
   equal ~msg:"16 axes" ints (Array.make 16 1)
-    (A.read Bigarray.int8_unsigned a Bigarray.Genarray.dims);
+    (A.read a Bigarray.Genarray.dims);
   let a = A.create Rig.host D.Uint8 (Iarray.init 17 (Fun.const 1)) in
   read_fails ~msg:"17 axes" "17" (fun () ->
-      A.read Bigarray.int8_unsigned a ignore)
+      A.read a ignore)
 
 (* An array with no element reads as an empty bigarray, whatever its memory. *)
 let test_read_empty () =
-  let dims a = A.read Bigarray.float32 a Bigarray.Genarray.dims in
+  let dims a = A.read a Bigarray.Genarray.dims in
   equal ~msg:"on the host" ints [| 2; 0 |]
     (dims (A.create Rig.host f32 [| 2; 0 |]));
   equal ~msg:"off the host" ints [| 0 |]
@@ -1787,14 +1864,14 @@ let test_wait_read () =
   let a = on_late d [| 0.; 0. |] in
   pending a [| 3.; 4. |];
   equal (values f32) [| 3.; 4. |]
-    (A.read Bigarray.float32 a (fun g ->
+    (A.read a (fun g ->
          Array.init 2 (fun i -> Bigarray.Genarray.get g [| i |])));
   no_claim a
 
 (* A lost device's array raises Lost at the claim, before [f] runs. *)
 let test_read_lost () =
   let ran = ref false in
-  let read a = A.read Bigarray.float32 a (fun _ -> ran := true) in
+  let read a = A.read a (fun _ -> ran := true) in
   let d, l = late () in
   let x = on_late d [| 1.; 2. |] in
   pending x [| 3.; 4. |];
@@ -1956,6 +2033,15 @@ let tests =
           test_read_empty;
         test "read waits for the work on its array" test_wait_read;
         test "read raises Lost for a lost device's array" test_read_lost;
+      ];
+    group "write"
+      [
+        prop ~count:300
+          "write passes a C-contiguous host array's bytes to store into" case
+          law_write;
+        test "write claims the memory while its function runs"
+          test_write_claim;
+        test "host makes a C-contiguous host array" test_host;
       ];
   ]
 
