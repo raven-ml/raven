@@ -2358,21 +2358,36 @@ val softplus : (float, 's, 'd) t -> (float, 's, 'd) t
     and float64. *)
 
 val softmax :
-  ?axes:int list -> ?scale:float -> (float, 's, 'd) t -> (float, 's, 'd) t
-(** [softmax ~axes ~scale x] is [exp (scale x) / Σ exp (scale x)] along
-    [axes], [[-1]] by default; [scale] defaults to [1.]. The exponents are
-    shifted by the greatest [scale x] of each lane, so none overflows. A
+  ?axes:int list ->
+  ?scale:float ->
+  ?where:'d bool_t ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [softmax ~axes ~scale ~where x] is [exp (scale x) / Σ exp (scale x)]
+    along [axes], [[-1]] by default; [scale] defaults to [1.]. The exponents
+    are shifted by the greatest [scale x] of each lane, so none overflows. A
     lane holding a NaN, or whose greatest [scale x] is infinite, is NaN.
 
+    [where], broadcast to [x]'s shape, selects the elements each lane holds,
+    all of them by default: an element outside it takes no part in the lane's
+    greatest element or its sum, whatever its value, NaN included, and is
+    [0.], in a lane holding a NaN too. A lane that holds none is [0.]
+    throughout.
+
     Raises [Invalid_argument] naming itself for an axis outside [x]'s rank
-    or repeated. *)
+    or repeated, or a [where] that does not broadcast to [x]'s shape. *)
 
 val log_softmax :
-  ?axes:int list -> ?scale:float -> (float, 's, 'd) t -> (float, 's, 'd) t
-(** [log_softmax ~axes ~scale x] is the logarithm of {!softmax}, computed as
-    [(scale x - m) - log Σ exp (scale x - m)] for the lane's greatest [m]:
-    an entry far below [m] keeps its digits where [log (softmax x)] would be
-    [-∞]. As {!softmax} otherwise. *)
+  ?axes:int list ->
+  ?scale:float ->
+  ?where:'d bool_t ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [log_softmax ~axes ~scale ~where x] is the logarithm of {!softmax},
+    computed as [(scale x - m) - log Σ exp (scale x - m)] for the lane's
+    greatest [m]: an entry far below [m] keeps its digits where
+    [log (softmax x)] would be [-∞]. An element outside [where] is [-∞]. As
+    {!softmax} otherwise. *)
 
 val rms_norm :
   ?axes:int list -> ?eps:float -> (float, 's, 'd) t -> (float, 's, 'd) t

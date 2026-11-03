@@ -800,6 +800,81 @@ let law_softmax (type s) (dt : (float, s) D.t) u tiny (s, xs, scale) =
         lane)
     (lanes s)
 
+(* Under [~where], each lane is the softmax of the elements it holds, by
+   its definition over those alone; an element it does not hold is exactly
+   [+0.] (log_softmax: [-∞]) whatever its value, NaN included, in a lane
+   holding a NaN too, and a lane holding none is all [+0.] ([-∞]). A NaN
+   held makes its lane's held elements NaN. *)
+let where_case =
+  let open Gen in
+  let* r = int_range 1 4 in
+  let* n = frequency [ (4, int_range 1 8); (1, of_list [ 1025; 2048 ]) ] in
+  let total = r * n in
+  (* Per lane: none held, all held, or each element drawn. *)
+  let* kinds = array ~size:(constant r) (int_range 0 3) in
+  let* bits = array ~size:(constant total) bool in
+  let held = Array.init total (fun i ->
+    match kinds.(i / n) with 0 -> false | 1 -> true | _ -> bits.(i)) in
+  let* xs = values_within 60. total in
+  let* nans = array ~size:(constant total) (frequency [ (1, constant true); (12, constant false) ]) in
+  let xs = Array.mapi (fun i x -> if nans.(i) then Float.nan else x) xs in
+  let+ scale = of_list [ 1.; -0.5; 3. ] in
+  ([| r; n |], xs, held, scale)
+
+let law_where (type s) (dt : (float, s) D.t) u tiny (s, xs, held, scale) =
+  let xs = Array.map (D.of_float dt) xs in
+  let x = value dt s xs in
+  let where = Nx.create Nx.bool s held in
+  let sm = Nx.to_array (Nx.softmax ~scale ~where x)
+  and lsm = Nx.to_array (Nx.log_softmax ~scale ~where x) in
+  let n = s.(1) in
+  List.iter
+    (fun lane ->
+      let mine = List.filter (fun i -> held.(i)) (Array.to_list lane) in
+      let nan_held = List.exists (fun i -> Float.is_nan xs.(i)) mine in
+      cover "a lane holding none" (mine = []);
+      cover "a lane holding some" (mine <> [] && List.length mine < n);
+      cover "a NaN outside where"
+        (Array.exists (fun i -> (not held.(i)) && Float.is_nan xs.(i)) lane);
+      cover "a NaN held" nan_held;
+      Array.iter
+        (fun i ->
+          if not held.(i) then begin
+            if not (same sm.(i) 0.) then
+              failf "softmax at %d outside where: %h" i sm.(i);
+            if not (same lsm.(i) neg_infinity) then
+              failf "log_softmax at %d outside where: %h" i lsm.(i)
+          end
+          else if nan_held then begin
+            if not (Float.is_nan sm.(i) && Float.is_nan lsm.(i)) then
+              failf "at %d in a lane holding a NaN: %h, %h" i sm.(i) lsm.(i)
+          end)
+        lane;
+      if mine <> [] && not nan_held then begin
+        let mine = Array.of_list mine in
+        let lane_xs = Array.map (fun i -> xs.(i)) mine in
+        let p, lp = lane_softmax scale lane_xs in
+        let big =
+          Array.fold_left (fun b x -> Float.max b (Float.abs (scale *. x))) 0. lane_xs
+        in
+        let tol = (Float.of_int (n + 4) +. (2. *. big)) *. u in
+        Array.iteri
+          (fun j i ->
+            if Float.abs (sm.(i) -. p.(j)) > (tol *. p.(j)) +. (4. *. tiny) then
+              failf "softmax at %d: %h, by definition %h" i sm.(i) p.(j);
+            if Float.abs (lsm.(i) -. lp.(j)) > tol *. (Float.abs lp.(j) +. 1.) then
+              failf "log_softmax at %d: %h, by definition %h" i lsm.(i) lp.(j))
+          mine
+      end)
+    (lanes s)
+
+(* Every other element of each row of 16 of [x], but of every third row,
+   which holds none. *)
+let some_held x =
+  let r = Nx.dim 0 x in
+  Nx.create Nx.bool [| r; 16 |]
+    (Array.init (r * 16) (fun i -> i / 16 mod 3 <> 2 && i mod 2 = 0))
+
 (* Along [axes], softmax is the softmax of [x] with [axes] moved last and
    flattened: the lane is every element the axes reach. *)
 let test_axes () =
@@ -823,7 +898,20 @@ let test_softmax_cases () =
     (Nx.shape (Nx.softmax (Nx.zeros Nx.float32 [| 0; 3 |])));
   invalid ~by:"Nx.softmax" (fun () -> Nx.softmax ~axes:[ 2 ] (f64 [| 1. |]));
   invalid ~by:"Nx.log_softmax" (fun () ->
-      Nx.log_softmax ~axes:[ 0; 0 ] (f64 [| 1. |]))
+      Nx.log_softmax ~axes:[ 0; 0 ] (f64 [| 1. |]));
+  let m = Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let rows = Nx.create Nx.bool [| 2; 1 |] [| true; false |]
+  and cols = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
+  equal same_bits
+    (Array.append (Array.sub (Nx.to_array (Nx.softmax m)) 0 3) [| 0.; 0.; 0. |])
+    (Nx.to_array (Nx.softmax ~where:rows m));
+  let p = Nx.to_array (Nx.softmax (f64 [| 1.; 3. |])) in
+  let x = Nx.create Nx.float64 [| 2; 3 |] [| 1.; 9.; 3.; 4.; nan; 6. |] in
+  equal same_bits
+    [| p.(0); 0.; p.(1); p.(0); 0.; p.(1) |]
+    (Nx.to_array (Nx.softmax ~where:cols x));
+  invalid ~by:"Nx.softmax" (fun () ->
+      Nx.softmax ~where:(Nx.create Nx.bool [| 2 |] [| true; false |]) m)
 
 (* The bytes the host holds after four rounds of collection, each of which
    returns to it what it collected. *)
@@ -836,31 +924,41 @@ let settled () =
   Rig.allocated Rig.host
 
 (* At every float dtype a softmax holds, after the call and before any
-   collection, the result alone of its operand's size: the bytes the host
-   holds more than settled, its cache included, count every buffer the call
-   took. Lanes of 4096, so that each lane's greatest element and sum, held
-   too, are a page between them. One uncounted run comes first. *)
+   collection, the result alone of its operand's size, with and without
+   [~where]: the bytes the host holds more than settled, its cache included,
+   count every buffer the call took. Lanes of 4096, so that each lane's
+   greatest element and sum, held too, are a page between them. One
+   uncounted run comes first. *)
 let test_softmax_memory () =
   List.iter
     (fun (D.Any dt) ->
       match D.kind dt with
       | D.Float ->
           let x = Nx.cast dt (Nx.Rng.normal ~key:(Nx.Rng.key 5) Nx.float32 [| 4; 4096 |]) in
-          Nx.sync x;
-          let call () =
-            let y = Nx.softmax x in
-            Nx.sync y;
-            y
+          let where =
+            Nx.create Nx.bool [| 1; 4096 |] (Array.init 4096 (fun i -> i mod 3 <> 0))
           in
-          ignore (call ());
-          let before = settled () in
-          let y = call () in
-          let grew = Rig.allocated Rig.host - before in
-          let result = D.bytes dt (4 * 4096) in
-          less
-            ~msg:(Printf.sprintf "bytes held above the settled ones, %s" (D.name dt))
-            int ~than:(result + 4096) grew;
-          equal (array int) [| 4; 4096 |] (Nx.shape y)
+          Nx.sync x;
+          List.iter
+            (fun where ->
+              let call () =
+                let y = Nx.softmax ?where x in
+                Nx.sync y;
+                y
+              in
+              ignore (call ());
+              let before = settled () in
+              let y = call () in
+              let grew = Rig.allocated Rig.host - before in
+              let result = D.bytes dt (4 * 4096) in
+              less
+                ~msg:
+                  (Printf.sprintf "bytes held above the settled ones, %s%s"
+                     (D.name dt)
+                     (if where = None then "" else ", under where"))
+                int ~than:(result + 4096) grew;
+              equal (array int) [| 4; 4096 |] (Nx.shape y))
+            [ None; Some where ]
       | _ -> ())
     D.all
 
@@ -1104,6 +1202,16 @@ let () =
                test_softmax_memory;
              narrow "softmax" (fun x -> Nx.softmax (in_rows x));
              narrow "log_softmax" (fun x -> Nx.log_softmax (in_rows x));
+             prop "float64 under where by its definition" where_case
+               (law_where D.Float64 0x1p-52 0x1p-1074);
+             prop "float32 under where by its definition" where_case
+               (law_where D.Float32 0x1p-23 0x1p-149);
+             narrow "softmax under where" (fun x ->
+                 let x = in_rows x in
+                 Nx.softmax ~where:(some_held x) x);
+             narrow "log_softmax under where" (fun x ->
+                 let x = in_rows x in
+                 Nx.log_softmax ~where:(some_held x) x);
            ];
          group "rms_norm"
            [

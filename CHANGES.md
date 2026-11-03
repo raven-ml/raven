@@ -1771,6 +1771,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx.softmax` and `Nx.log_softmax` take `~where`, as JAX's
+  do: a lane holds the elements the mask selects; one outside it is exactly
+  `0.` (`-∞`), whatever its value, and a lane holding none is all `0.`
+  (`-∞`). A partial application that gives every other optional argument,
+  as `Nx.softmax ~axes:[ 1 ] ~scale:1.` in a list beside `Nx.sigmoid`,
+  needs its array named: `fun x -> Nx.softmax ~axes:[ 1 ] ~scale:1. x`.
 - On nx.cpu, a fused map of several kinds takes fewer instructions, and
   one written over a donated operand reads it in place instead of copying
   it first. Over 32 Mi float32, `exp (x - m)` by a broadcast `m` takes

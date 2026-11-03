@@ -438,20 +438,135 @@ let normalised_law (log, axis, scale, s, xs) =
   equal ~msg:"finite differences" (result unit string) (Ok ())
     (Rune.check_grads T.tensor loss x)
 
+(* Under [~where], their gradients agree with finite differences, and are
+   exactly zero at each element outside it, a lane holding none
+   included. *)
+let where_gen =
+  let open Gen in
+  let pp ppf (log, axis, _, s, _, _) =
+    Format.fprintf ppf "%s along %d, [%d; %d]"
+      (if log then "log_softmax" else "softmax")
+      axis s.(0) s.(1)
+  in
+  with_pp pp
+    (let* m = int_range 1 3 in
+     let* n = int_range 1 4 in
+     let+ log = bool
+     and+ axis = int_range 0 1
+     and+ scale = of_list [ 1.; -2. ]
+     and+ held = array ~size:(constant (m * n)) (frequency [ (2, constant true); (1, constant false) ])
+     and+ xs = array ~size:(constant (m * n)) (float_range (-3.) 3.) in
+     (log, axis, scale, [| m; n |], held, xs))
+
+type normaliser = {
+  f :
+    'r 'd.
+    ?axes:int list ->
+    ?scale:float ->
+    ?where:'d Nx.bool_t ->
+    (float, 'r, 'd) Nx.t ->
+    (float, 'r, 'd) Nx.t;
+}
+
+let normaliser log =
+  if log then { f = Nx.log_softmax } else { f = Nx.softmax }
+
+let where_loss n ~axis ~scale where w x =
+  Nx.sum
+    (Nx.where where
+       (Nx.mul w (n.f ~axes:[ axis ] ~scale ~where x))
+       (Nx.zeros_like x))
+
+let where_law (log, axis, scale, s, held, xs) =
+  let f = normaliser log in
+  let x = Nx.create f64 s xs and where = Nx.create Nx.bool s held in
+  let none l = List.for_all (fun i -> not held.(i)) (lane s axis l) in
+  cover "a lane holding none" (List.exists none (List.init s.(1 - axis) Fun.id));
+  cover "an element outside where" (Array.exists not held);
+  (* log_softmax is -inf outside where: the loss reads only the held. *)
+  let w =
+    Nx.create f64 s
+      (Array.mapi (fun i v -> if held.(i) then v else 0.) (spread 0.7 (numel s)))
+  in
+  let loss = where_loss f ~axis ~scale where w in
+  equal ~msg:"finite differences" (result unit string) (Ok ())
+    (Rune.check_grads T.tensor loss x);
+  let g = Nx.to_array (Rune.grad' loss x) in
+  Array.iteri
+    (fun i h ->
+      if not h then
+        equal ~msg:"outside where" float_exact 0. (Float.abs g.(i)))
+    held
+
+(* At float32, whose masked operand is stored as at float64, and at the
+   narrow floats, whose path reads the mask in each pass, the gradient is
+   float64's of the rounded operands within [16 u] of the largest of its
+   elements plus one, [u] the dtype's unit roundoff: the forward pass rounds
+   once, the backward pass a few times more, and [p (w - Σ p w)] cancels
+   terms of [w]'s size. It is exactly zero outside the mask. *)
+let where_narrow_law (type r) (dt : (float, r) D.t) u
+    (log, axis, scale, s, held, xs) =
+  let f = normaliser log in
+  let where = Nx.create Nx.bool s held in
+  let x = Nx.cast dt (Nx.create f64 s xs) in
+  let w =
+    Nx.cast dt
+      (Nx.create f64 s
+         (Array.mapi (fun i v -> if held.(i) then v else 0.) (spread 0.7 (numel s))))
+  in
+  let g = Nx.to_array (Nx.cast f64 (Rune.grad' (where_loss f ~axis ~scale where w) x)) in
+  let wide =
+    Nx.to_array
+      (Rune.grad' (where_loss f ~axis ~scale where (Nx.cast f64 w)) (Nx.cast f64 x))
+  in
+  let top = Array.fold_left (fun m v -> Float.max m (Float.abs v)) 0. wide in
+  let tol = 16. *. u *. (top +. 1.) in
+  Array.iteri
+    (fun i h ->
+      if not h then equal ~msg:"outside where" float_exact 0. (Float.abs g.(i))
+      else if Float.abs (g.(i) -. wide.(i)) > tol then
+        failf "%s at %d: %h, float64's %h" (D.name dt) i g.(i) wide.(i))
+    held
+
 (* Compiled, their gradients are the eager ones. *)
 let test_normalised_jit () =
   let x = Nx.create f64 [| 3; 4 |] (spread 0.2 12) in
   let w = Nx.create f64 [| 3; 4 |] (spread 0.7 12) in
+  let where =
+    Nx.create Nx.bool [| 3; 4 |] (Array.init 12 (fun i -> i mod 3 <> 0 && i < 8))
+  in
   List.iter
-    (fun (name, f) ->
-      let loss x = Nx.sum (Nx.mul w (f x)) in
+    (fun (name, loss) ->
       equal ~msg:name (array (float 1e-12))
         (Nx.to_array (Rune.grad' loss x))
         (Nx.to_array (Rune.grad' (Rune.jit' loss) x)))
     [
-      ("softmax", Nx.softmax ~axes:[ 1 ] ~scale:0.7);
-      ("log_softmax", Nx.log_softmax ~axes:[ 0 ] ~scale:(-1.5));
+      ("softmax", fun x -> Nx.sum (Nx.mul w (Nx.softmax ~axes:[ 1 ] ~scale:0.7 x)));
+      ( "log_softmax",
+        fun x -> Nx.sum (Nx.mul w (Nx.log_softmax ~axes:[ 0 ] ~scale:(-1.5) x)) );
+      ( "softmax under where",
+        where_loss (normaliser false) ~axis:1 ~scale:1. where w );
+      ( "log_softmax under where",
+        where_loss (normaliser true) ~axis:0 ~scale:(-1.5) where w );
     ]
+
+(* Mapped over a batch with a mask the map does not batch, their gradients
+   are each example's. *)
+let test_normalised_vmap () =
+  let xs = Nx.create f64 [| 3; 3; 4 |] (spread 0.4 36) in
+  let w = Nx.create f64 [| 3; 4 |] (spread 0.7 12) in
+  let where =
+    Nx.create Nx.bool [| 3; 4 |] (Array.init 12 (fun i -> i mod 3 <> 0 && i < 8))
+  in
+  List.iter
+    (fun (name, f, axis) ->
+      let grad x = Rune.grad' (where_loss f ~axis ~scale:0.5 where w) x in
+      let each =
+        Nx.stack (List.init 3 (fun b -> grad (Nx.slice [ I b ] xs)))
+      in
+      equal ~msg:name (array (float 1e-12)) (Nx.to_array each)
+        (Nx.to_array (Rune.vmap' grad xs)))
+    [ ("softmax", normaliser false, 1); ("log_softmax", normaliser true, 0) ]
 
 (* The gradient of a real [f] of [z = x + iy] is [∂f/∂x - i ∂f/∂y], and a
    pullback applies [f'(z)] to its cotangent. *)
@@ -1503,12 +1618,22 @@ let () =
          prop "hypot's gradient is (x / r, y / r)" hypot_gen hypot_law;
          prop "softmax's and log_softmax's gradients" normalised_gen
            normalised_law;
+         prop "softmax's and log_softmax's gradients under where" where_gen
+           where_law;
+         prop "under where at float32, as float64's" where_gen
+           (where_narrow_law Nx.float32 0x1p-24);
+         prop "under where at float16, as float64's" where_gen
+           (where_narrow_law Nx.float16 0x1p-11);
+         prop "under where at bfloat16, as float64's" where_gen
+           (where_narrow_law Nx.bfloat16 0x1p-8);
          group "conventions"
            [
              test "complex gradients" test_complex;
              test "kinks" test_kinks;
              test "softmax's and log_softmax's compiled gradients"
                test_normalised_jit;
+             test "softmax's and log_softmax's mapped gradients"
+               test_normalised_vmap;
              test "values alone at repeated values" test_repeated_values;
              prop "softplus's gradient is sigmoid" ~examples:softplus_specials
                softplus_points softplus_law;
