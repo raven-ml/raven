@@ -3842,6 +3842,7 @@ schedule/schedule/variable_unused_schedule.golden
 setting/env.golden
 setting/settings.golden
 support/matmul.golden
+support/programs/adam_mlp.golden
 support/programs/attention.golden
 support/programs/conv.golden
 support/programs/cumsum.golden

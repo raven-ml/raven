@@ -4,12 +4,12 @@ scheduled on the CPU.
 
 The benchmarks name their cases after these files and keep baselines for
 them, so their programs are recorded here, apart from the prepare suite's
-cases, which hold the same ten programs today and change with that suite.
+cases, which hold ten of these programs today and change with that suite.
 """
 
 from golden import graph
 from tinygrad import Tensor, Variable, dtypes, nn
-from tinygrad.helpers import DEV
+from tinygrad.helpers import DEV, Context
 from tinygrad.llm.model import ExpertGating, TransformerBlock, TransformerConfig
 import tinygrad.schedule
 
@@ -56,6 +56,21 @@ def gpt_oss_block(tokens, start_pos):
     return block(empty(1, tokens, config.dim), start_pos)[0]
 
 
+def adam_mlp():
+    """Forward, backward and an Adam step of a two-layer MLP, in one realize:
+    each parameter and each of the optimizer's moments is read and written in
+    place. The parameters and the optimizer's state are buffers, as a model's
+    are after its first step."""
+    with Context(TRAINING=1):
+        l1, l2 = nn.Linear(16, 32), nn.Linear(32, 4)
+        params = nn.state.get_parameters([l1, l2])
+        for t in params: t.replace(empty(*t.shape, dtype=t.dtype))
+        opt = nn.optim.Adam(params, lr=1e-3)
+        for t in nn.state.get_parameters(opt): t.replace(empty(*t.shape, dtype=t.dtype))
+        (l2(l1(empty(8, 16)).relu()) - empty(8, 4)).square().mean().backward()
+        return tuple(opt.schedule_step())
+
+
 PROGRAMS = {
     "matmul": lambda: empty(4, 8) @ empty(8, 3),
     "softmax": lambda: empty(4, 8).softmax(-1),
@@ -67,6 +82,7 @@ PROGRAMS = {
     "split_sum": lambda: empty(65536).sum(),
     "gpt_oss_prefill": lambda: gpt_oss_block(8, 0),
     "gpt_oss_decode": lambda: gpt_oss_block(1, Variable("start_pos", 0, 15).bind(7)),
+    "adam_mlp": adam_mlp,
 }
 
 
