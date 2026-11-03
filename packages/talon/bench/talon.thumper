@@ -6,9 +6,14 @@
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed under load 19.6 on 14 cores
 # forced: blessed Talon/Join/customer_lookup Talon/Nulls/group-sum Talon/Nulls/join-left under load 38.9 on 14 cores
+# forced: blessed Talon/Group/text-100-1M Talon/Group/int32-100-1M under load 24.1 on 14 cores
 
 Talon/Filter/high_value	alloc_words	exact	14586
 Talon/Group/category_region	alloc_words	exact	9201
+Talon/Group/int32-100-1M	alloc_words	exact	4834
+Talon/Group/int32-100-1M	wall_time	batch=1	n=20	1.052e-02	5.293e-03 6.531e-03 7.049e-03 7.669e-03 8.039e-03 8.779e-03 9.180e-03 9.524e-03 9.948e-03 1.047e-02 1.058e-02 1.084e-02 1.113e-02 1.125e-02 1.256e-02 1.413e-02 1.475e-02 1.483e-02 1.539e-02 1.677e-02
+Talon/Group/text-100-1M	alloc_words	exact	11470
+Talon/Group/text-100-1M	wall_time	batch=1	n=20	1.844e-02	1.383e-02 1.477e-02 1.543e-02 1.613e-02 1.677e-02 1.717e-02 1.759e-02 1.766e-02 1.794e-02 1.837e-02 1.852e-02 1.912e-02 2.092e-02 2.102e-02 2.133e-02 2.346e-02 2.386e-02 2.447e-02 2.939e-02 3.148e-02
 Talon/Join/customer_lookup	alloc_words	exact	25751
 Talon/Join/customer_lookup	wall_time	batch=1	n=20	7.039e-03	4.747e-03 4.775e-03 4.824e-03 4.975e-03 6.219e-03 6.254e-03 6.267e-03 6.546e-03 6.876e-03 7.024e-03 7.054e-03 7.297e-03 8.402e-03 8.715e-03 8.988e-03 9.073e-03 1.082e-02 1.091e-02 1.399e-02 2.261e-02
 Talon/Nulls/concat-3	alloc_words	exact	1065

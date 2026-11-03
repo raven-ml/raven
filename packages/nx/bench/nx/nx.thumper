@@ -17,6 +17,8 @@
 # forced: blessed attention/prefill-f32-8x1024x64-causal attention/prefill-bf16-8x1024x64-causal attention/decode-f32-64x8x4096x64 under load 44.2 on 14 cores
 # forced: blessed order/unique-i32-1M-1000 order/unique-i64-1M-wide ragged/ids-text-64K-of-4-to-20B ragged/ids-text-1M-of-5B-100-values ragged/ids-text-1M-of-12B-10K-values ragged/ids-f64-1M-rows-of-1 under load 37.5 on 14 cores
 # forced: blessed attention/prefill-f64-8x1024x64-causal under load 32.0 on 14 cores
+# forced: blessed index/segment-sum-i64-1M-into-100 index/take-windows-8B-1M under load 24.1 on 14 cores
+# forced: blessed ragged/ids-text-64K-of-4-to-20B ragged/ids-text-1M-of-5B-100-values ragged/ids-text-1M-of-12B-10K-values under load 33.8 on 14 cores
 
 attention/decode-f32-64x8x4096x64	alloc_words	exact	899
 attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.364e-03	9.401e-04 9.802e-04 9.986e-04 9.990e-04 1.039e-03 1.198e-03 1.219e-03 1.260e-03 1.295e-03 1.346e-03 1.383e-03 1.600e-03 1.727e-03 2.126e-03 2.527e-03 3.246e-03 3.993e-03 3.993e-03 5.491e-03 1.163e-02
@@ -187,11 +189,15 @@ index/embedding-grad-bf16-zipf	alloc_words	exact	402
 index/embedding-grad-f32-uniform	alloc_words	exact	402
 index/embedding-grad-f32-zipf	alloc_words	exact	402
 index/scatter-add-64K-into-1K	alloc_words	exact	97
+index/segment-sum-i64-1M-into-100	alloc_words	exact	255
+index/segment-sum-i64-1M-into-100	wall_time	batch=16	n=20	4.244e-04	1.168e-04 1.192e-04 1.462e-04 1.649e-04 1.954e-04 2.871e-04 3.279e-04 3.958e-04 4.091e-04 4.138e-04 4.350e-04 4.380e-04 4.946e-04 6.251e-04 7.187e-04 8.237e-04 8.841e-04 9.539e-04 1.152e-03 1.728e-03
 index/set-held-3-axes-4K-of-32K	alloc_words	exact	1378
 index/set-row-8M	alloc_words	exact	595
 index/take-along-grad-bf16-1M-by-3	alloc_words	exact	402
 index/take-along-grad-bf16-256K-by-64	alloc_words	exact	402
 index/take-rows-1K-of-8K	alloc_words	exact	172
+index/take-windows-8B-1M	alloc_words	exact	175
+index/take-windows-8B-1M	wall_time	batch=4	n=20	1.048e-03	5.963e-04 6.858e-04 8.453e-04 8.531e-04 9.255e-04 9.437e-04 9.481e-04 9.907e-04 1.039e-03 1.041e-03 1.056e-03 1.086e-03 1.163e-03 1.185e-03 1.204e-03 1.273e-03 1.349e-03 1.402e-03 2.210e-03 2.486e-03
 interp/add-1-100-beside-extent-on-another-domain	alloc_words	exact	9900
 interp/add-1-100-eager	alloc_words	exact	5000
 interp/add-1-100-fiber-beside-extent	alloc_words	exact	9900
@@ -241,12 +247,12 @@ quant/q8_0-gemv-4096	alloc_words	exact	888
 quant/q8_0-gemv-4096-f64	alloc_words	exact	888
 ragged/ids-f64-1M-rows-of-1	alloc_words	exact	3930
 ragged/ids-f64-1M-rows-of-1	wall_time	batch=1	n=20	1.043e-02	7.468e-03 7.762e-03 8.622e-03 8.786e-03 8.926e-03 8.926e-03 9.269e-03 9.526e-03 1.003e-02 1.026e-02 1.059e-02 1.148e-02 1.152e-02 1.156e-02 1.249e-02 1.300e-02 1.407e-02 1.487e-02 1.488e-02 2.195e-02
-ragged/ids-text-1M-of-12B-10K-values	alloc_words	exact	4171
-ragged/ids-text-1M-of-12B-10K-values	wall_time	batch=1	n=20	2.944e-02	1.863e-02 1.955e-02 2.132e-02 2.565e-02 2.586e-02 2.743e-02 2.791e-02 2.815e-02 2.842e-02 2.915e-02 2.974e-02 3.017e-02 3.050e-02 3.093e-02 3.100e-02 3.215e-02 3.332e-02 3.539e-02 3.871e-02 4.186e-02
-ragged/ids-text-1M-of-5B-100-values	alloc_words	exact	3616
-ragged/ids-text-1M-of-5B-100-values	wall_time	batch=1	n=20	1.004e-02	7.595e-03 7.667e-03 7.695e-03 8.042e-03 8.131e-03 8.824e-03 9.071e-03 9.222e-03 9.365e-03 9.991e-03 1.009e-02 1.038e-02 1.056e-02 1.075e-02 1.185e-02 1.192e-02 1.441e-02 1.479e-02 1.505e-02 2.199e-02
-ragged/ids-text-64K-of-4-to-20B	alloc_words	exact	4575
-ragged/ids-text-64K-of-4-to-20B	wall_time	batch=1	n=20	1.283e-02	6.449e-03 6.589e-03 6.877e-03 8.128e-03 8.355e-03 9.346e-03 1.044e-02 1.165e-02 1.174e-02 1.263e-02 1.304e-02 1.309e-02 1.360e-02 1.369e-02 1.412e-02 1.605e-02 1.759e-02 1.869e-02 3.647e-02 3.980e-02
+ragged/ids-text-1M-of-12B-10K-values	alloc_words	exact	3846
+ragged/ids-text-1M-of-12B-10K-values	wall_time	batch=1	n=20	1.282e-02	9.205e-03 1.140e-02 1.158e-02 1.186e-02 1.206e-02 1.226e-02 1.231e-02 1.238e-02 1.254e-02 1.269e-02 1.294e-02 1.302e-02 1.329e-02 1.352e-02 1.422e-02 1.467e-02 1.476e-02 1.504e-02 1.566e-02 1.594e-02
+ragged/ids-text-1M-of-5B-100-values	alloc_words	exact	3318
+ragged/ids-text-1M-of-5B-100-values	wall_time	batch=1	n=20	3.371e-03	2.268e-03 2.271e-03 2.607e-03 2.686e-03 2.715e-03 2.838e-03 3.075e-03 3.084e-03 3.184e-03 3.238e-03 3.503e-03 3.519e-03 3.686e-03 3.720e-03 3.742e-03 4.263e-03 4.416e-03 4.506e-03 4.710e-03 4.913e-03
+ragged/ids-text-64K-of-4-to-20B	alloc_words	exact	4427
+ragged/ids-text-64K-of-4-to-20B	wall_time	batch=1	n=20	4.908e-03	3.856e-03 4.091e-03 4.225e-03 4.423e-03 4.477e-03 4.571e-03 4.590e-03 4.747e-03 4.753e-03 4.790e-03 5.025e-03 5.120e-03 5.237e-03 5.426e-03 5.758e-03 5.801e-03 6.261e-03 6.544e-03 6.772e-03 7.442e-03
 ragged/take-text-1K-of-512-to-1536B	alloc_words	exact	2661
 ragged/take-text-64K-of-4-to-20B	alloc_words	exact	2661
 rng/bernoulli-f32-1Kx1K	alloc_words	exact	1220
