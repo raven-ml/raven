@@ -123,3 +123,5 @@ external sp_encode_ids32 :
   string -> int -> int -> ids32 -> Bytes.t -> sp -> reason
   = "brot_sp_encode_ids32_byte" "brot_sp_encode_ids32"
 [@@noalloc]
+
+external cache_hash : int64 -> int64 -> int = "brot_cache_hash" [@@noalloc]

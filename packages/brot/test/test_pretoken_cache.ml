@@ -53,10 +53,38 @@ let spread =
       in
       at_least ~msg:"distinct sets of eight keys" int ~than:6 distinct)
 
+(* The C kernels probe and store into the tables OCaml fills, so they must hash
+   a key as OCaml does: for the key words of every pretoken a cache holds, and
+   for any pair of words, whatever their top bits and length tag. *)
+let hash_agree (k0, k1) =
+  let ocaml, c = Brot.cache_hashes k0 k1 in
+  equal ~msg:(Printf.sprintf "hash of %Lx %Lx" k0 k1) int ocaml c
+
+let pretoken_hashes =
+  prop ~count:2000 "C hashes a pretoken's key as OCaml does"
+    (Gen.bind (Gen.int_range 1 15) bytes)
+    (fun key ->
+      cover "a key of one word" (String.length key <= 8);
+      cover "a key of two words" (String.length key > 8);
+      hash_agree (Brot.cache_key key))
+
+let word_hashes =
+  prop ~count:2000 "C hashes any two words as OCaml does"
+    (Gen.pair Gen.int64
+       (Gen.one_of
+          [
+            Gen.int64;
+            Gen.map
+              (fun len -> Int64.shift_left (Int64.of_int len) 56)
+              (Gen.int_range 0 255);
+          ]))
+    hash_agree
+
 let () =
   exit
     (run "Pretoken cache"
        [
          group "index"
            [ test "the ▁th words take a set each" test_marked_words; spread ];
+         group "C and OCaml" [ pretoken_hashes; word_hashes ];
        ])

@@ -2036,3 +2036,12 @@ CAMLprim value brot_sp_encode_ids32_byte(value *argv, int argn)
   return brot_sp_encode_ids32(argv[0], argv[1], argv[2], argv[3], argv[4],
                               argv[5]);
 }
+
+/* For tests. */
+
+/* Kernel.cache_hash: hash_of on two key words. */
+CAMLprim value brot_cache_hash(value k0, value k1)
+{
+  return Val_long(
+      (intnat)hash_of((uint64_t)Int64_val(k0), (uint64_t)Int64_val(k1)));
+}

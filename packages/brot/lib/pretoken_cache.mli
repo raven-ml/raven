@@ -70,6 +70,14 @@ val cached : t -> len_table:int array -> encoder -> encoder
 (** [cached t ~len_table miss] is [encode t ~len_table miss], or [miss] when [t]
     is no cache, as one closure. *)
 
+val key_words : string -> int64 * int64
+(** [key_words key] is the two words the pretoken [key] of 1 to {!max_key_len}
+    bytes is keyed by. *)
+
+val hash : int64 -> int64 -> int
+(** [hash k0 k1] is the hash the key words [k0] and [k1] are indexed by: the
+    back set is its low bits, and so is the front slot. *)
+
 val set_index : string -> sets:int -> int
 (** [set_index key ~sets] is the back set, among [sets], a power of two, that
     the pretoken [key] of 1 to {!max_key_len} bytes is stored in. *)

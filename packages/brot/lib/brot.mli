@@ -1674,3 +1674,11 @@ val hold_cache : t -> (unit -> 'a) -> 'a
 val cache_set : string -> sets:int -> int
 (** [cache_set key ~sets] is the back set, among [sets], a power of two, that a
     pretoken cache stores the pretoken [key] of 1 to 15 bytes in. For tests. *)
+
+val cache_key : string -> int64 * int64
+(** [cache_key key] is the two key words a pretoken cache keys the pretoken
+    [key] of 1 to 15 bytes by. For tests. *)
+
+val cache_hashes : int64 -> int64 -> int * int
+(** [cache_hashes k0 k1] is the hash a pretoken cache indexes the key words [k0]
+    and [k1] by, as OCaml computes it and as the C kernels do. For tests. *)

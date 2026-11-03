@@ -2156,3 +2156,6 @@ let hold_cache t f =
   | Alg_bpe _ | Alg_wordlevel _ | Alg_chars _ -> f ()
 
 let cache_set = Pretoken_cache.set_index
+
+let cache_key = Pretoken_cache.key_words
+let cache_hashes k0 k1 = (Pretoken_cache.hash k0 k1, Kernel.cache_hash k0 k1)

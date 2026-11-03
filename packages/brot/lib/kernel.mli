@@ -242,3 +242,9 @@ val sp_encode_ids32 : string -> int -> int -> ids32 -> Bytes.t -> sp -> reason
     rather than an [Ints.buffer]: the same cuts, probes, table stores and exits,
     the ids stored as [int32]. Ids room is checked per unit against the buffer's
     length; every other contract is {!sp_encode}'s. *)
+
+(**/**)
+
+val cache_hash : int64 -> int64 -> int
+(** [cache_hash k0 k1] is the kernels' hash of the key words [k0] and [k1],
+    which must be [Pretoken_cache.hash]'s. For tests. *)

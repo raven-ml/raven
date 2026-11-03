@@ -303,9 +303,15 @@ let cached t ~len_table miss : encoder =
 
 (* Seeds *)
 
-let set_index key ~sets =
+let key_words key =
   let n = String.length key in
-  hash_of (key0 key n 0 n) (key1 key n 0 n) land (sets - 1)
+  (key0 key n 0 n, key1 key n 0 n)
+
+let hash = hash_of
+
+let set_index key ~sets =
+  let k0, k1 = key_words key in
+  hash_of k0 k1 land (sets - 1)
 
 let seed buf text ids count =
   let len = String.length text in
