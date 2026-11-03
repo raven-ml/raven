@@ -939,6 +939,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A store whose value reads its destination only at the element it writes,
+  as a loop's carry `c := c * 2 + exp2 c` does, runs as one kernel where a
+  sum or more than three buffers in the value made it a kernel and a copy:
+  NUTS on eight schools runs 10 kernels a doubling where it ran 17.
 - On a tensor core, `Heuristic.hand_coded_optimizations` keeps a warp's rows
   within a run of rows that read one value of an operand, as blocks of rows
   read their expert's matrix, where an upcast of the core's rows does: at

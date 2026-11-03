@@ -69,7 +69,12 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
     closes it. A node is stored whole when it is a {!Op.Store}, a source
     of a call to a kernel given as code that is not storage, a gathered source
     that is not storage, or a value stored into a destination it reads
-    through no other buffer's state ({!Op.After}).
+    through no other buffer's state ({!Op.After}), unless the destination
+    views its storage through no expand, the value reads the
+    destination's storage only through the destination itself and
+    elementwise operations, a bitcast only between types of one size, and no
+    other store or call reaches that storage but through a later state: each
+    element is then loaded before it is overwritten.
 
     The graph is then rewritten from the bottom up:
 

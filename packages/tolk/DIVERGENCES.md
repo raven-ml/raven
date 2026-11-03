@@ -5747,6 +5747,48 @@ fold wraps integers and holds its float bound`, hold.
   `Rune.jit over several devices › maps over a cut axis › partials give
   eager's bits, their programs do not grow`.
 
+## D198. A store that reads only its own element is not staged
+
+- **tinygrad:** `schedule/indexing.py:31-34` (`realize_store_after_src`,
+  which stores the value of every store whose value reaches its
+  destination's buffer: "you don't usually have to do this for assign unless
+  there's a WAR hazard like TestAssign.test_assign_double_diamond_reduce").
+- **tolk:** `Indexing.reads_own_element`, `Indexing.keeps_elements` and
+  `Indexing.readers`, which `Indexing.realize_store_after_src` asks.
+- **Differs:** a store into a view of its storage that expands nothing,
+  whose value reaches that storage only through the destination itself and
+  elementwise operations, a bitcast only between types of one size, keeps
+  its value unstaged when no other store or call reaches that storage but
+  through a later state (`After`). Each element is then loaded by the value
+  that stores it, a data dependency of the store, so the kernel loads it
+  before it overwrites it, with no order relied on; no other kernel reads
+  the old state, so there is no write after read to break. Through an
+  expand, two elements of the destination are one of the storage, and one
+  would load what another stored. tinygrad stages the value, and
+  `remove_bufferize` inlines the stage back unless it stays stored for its
+  own reasons (more than three buffers, a reduction reading one, D163's
+  copies): then a kernel computes the value into a stage and another copies
+  it into the destination. A value read at another element, through a
+  movement or a reduction, or read by another store, is staged as tinygrad
+  stages it.
+- **Reason:** (d). rune's carries, which a loop's trip updates in place:
+  NUTS on eight schools (`norn` bench `nuts/schools/4`), whose doubling
+  cascade's trip ran 17 kernels and runs 10, its main body's 189 and 182,
+  and whose cold compile makes 145 programs against 147, with the same bits
+  (fudge, counted). The bench row's wall-clock baseline is pending the
+  scheduled re-record.
+- **Pinned by:** the Rangeify suite (`test/schedule/rangeify`):
+  `get_kernel_graph › stores that read their destination` (`a value that
+  reads its destination at the element written is one kernel`, `› a value
+  of five storages that reads its destination at the element written is one
+  kernel`, `› a value that reads a slice of its destination at the element
+  written is one kernel`, `› a value that reads its destination through a
+  bitcast of one size is one kernel`, `› a value that reads its destination
+  at another element is staged`, `› a value that reduces its destination is
+  staged`, `› a value stored into a broadcast of its destination is staged`
+  and `› a value whose destination another store reads is staged`), each
+  against the values its tensors write; the norn bench's `nuts/schools/4`.
+
 ## D200. A tensor core's row upcast keeps a warp within a run of rows
 
 - **tinygrad:** `codegen/opt/heuristic.py:29-43` (`hand_coded_optimizations`,

@@ -724,6 +724,102 @@ let shared =
           writes sink);
     ]
 
+(* Stores that read their destination
+
+   A store whose value reads its destination only at the element it writes,
+   through the destination itself and elementwise operations, runs as one
+   kernel when no other store reads the destination: each element is loaded
+   before it is overwritten. Read at another element or in a reduction, or
+   read by another store, the value is staged. A sum in the value reading a
+   storage keeps the stage stored, so that the stage is seen in the kernel
+   counts. *)
+
+let own = Shape.reshape out (ints [ 4; 4 ])
+
+let reduced =
+  Shape.reshape
+    (Shape.rop (input ~shape:[ 4; 4; 4 ] 1) Add [ 2 ])
+    (ints [ 4; 4 ])
+
+let self_reads =
+  group "get_kernel_graph › stores that read their destination"
+    [
+      test
+        "a value that reads its destination at the element written is one \
+         kernel" (fun () ->
+          let sink = stores Ops.O.((own * float 2.) + Ops.exp2 own + reduced) in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      test
+        "a value of five storages that reads its destination at the element \
+         written is one kernel" (fun () ->
+          let others = sum_of (List.map input [ 1; 2; 3; 4 ]) in
+          let sink = stores Ops.O.(own + others) in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      test "a value that reads its destination at another element is staged"
+        (fun () ->
+          let sink = stores Ops.O.(Shape.permute own [ 1; 0 ] + reduced) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      (* Three kernels: the broadcast row sums, the stage and its store. *)
+      test "a value that reduces its destination is staged" (fun () ->
+          let sums = Shape.reshape (Shape.rop own Add [ 1 ]) (ints [ 4; 1 ]) in
+          let sink =
+            stores Ops.O.(own + Shape.expand sums (ints [ 4; 4 ]) + reduced)
+          in
+          equal int 3 (kernels_of sink);
+          writes sink);
+      test
+        "a value that reads a slice of its destination at the element written \
+         is one kernel" (fun () ->
+          let rows u = Shape.shrink u [ Some (Ops.Int 0, Ops.Int 2); None ] in
+          let dest = rows own in
+          let sink =
+            Ops.sink
+              [ Ops.after out [ Ops.store dest Ops.O.(dest + rows reduced) ] ]
+          in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      test
+        "a value that reads its destination through a bitcast of one size is \
+         one kernel" (fun () ->
+          let bits = Ops.bitcast own Int32 in
+          let sink =
+            stores Ops.O.(Ops.bitcast (bits lsr Ops.bitcast reduced Int32) Float32)
+          in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      (* Through the expand, the four rows of [dest] are one element each of
+         [row], and each stores the same sum: an element loaded after another
+         row stored it would add the column's sum again. *)
+      test "a value stored into a broadcast of its destination is staged"
+        (fun () ->
+          let row = Shape.param ~device:cpu ~shape:[ Int 4 ] 5 Float32 in
+          let wide u = Shape.expand u (ints [ 4; 4 ]) in
+          let dest = wide (Shape.reshape row (ints [ 1; 4 ])) in
+          let sums = wide (Shape.rop (input 1) Add [ 0 ]) in
+          let sink =
+            Ops.sink [ Ops.after row [ Ops.store dest Ops.O.(dest + sums) ] ]
+          in
+          writes sink);
+      test "a value whose destination another store reads is staged" (fun () ->
+          let sink =
+            Ops.sink
+              [
+                Ops.after out [ Ops.store own Ops.O.(own + reduced) ];
+                Ops.after out2
+                  [
+                    Ops.store
+                      (Shape.reshape out2 (ints [ 4; 4 ]))
+                      Ops.O.(own * float 3.);
+                  ];
+              ]
+          in
+          equal int 3 (kernels_of sink);
+          writes sink);
+    ]
+
 (* Reductions that share a domain
 
    Reductions whose outputs a kernel indexes alike and that reduce axes of the
@@ -1701,6 +1797,7 @@ let () =
          spec;
          rules;
          shared;
+         self_reads;
          siblings;
          loops;
          states;
