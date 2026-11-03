@@ -6249,3 +6249,27 @@ fold wraps integers and holds its float bound`, hold.
   product`, whose rows with words read each fragment as words bitcast to
   bfloat16, and `› a bitcast of words to bfloat16 lanes takes each word's low
   half first, on CUDA`, and on the host.
+
+## D237. Ends of one range that reach each other are not merged
+
+- **tinygrad:** `codegen/__init__.py:163-181` (`merge_reduce_ends`), which
+  merges the ends that close the same ranges in one context. When one end
+  reads what another stored, as a copy of a tile reads, through the scores,
+  what the copy before it staged, the merged end contains the end it
+  replaces, and the substitution stalls ("graph_rewrite stalled: unresolved
+  rewrite dependencies"). Ends over upcast ranges alone close no range once
+  they are expanded, so any two such copies of one context meet this;
+  `test/gen/tinygrad.patch` gives tinygrad tolk's rule.
+- **tolk:** `Codegen.merge_reduce_ends`.
+- **Differs:** ends of one context that reach each other go apart, each a
+  loop of its own: the later one takes cloned ranges, as an end of another
+  context does, and every other end that closes one of those ranges, along
+  other ranges too, stands aside while its ranges are renamed, so the loop
+  it reads runs once. Ends that do not reach each other merge as before.
+  tinygrad computes no value on these kernels; tolk computes the right one.
+- **Reason:** (e).
+- **Pinned by:** `Tolk.Codegen › effects run as often as written › a copy
+  reads the copy ended before it`, over upcast and loop ranges, apart and
+  shared, and `› a copy that reads an end of its range along another range
+  runs that end once`, whose second end takes cloned ranges as D137 gives
+  them, which tinygrad does not (its linearizer then refuses the kernel).

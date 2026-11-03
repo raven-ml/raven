@@ -14,7 +14,7 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index f4535a4f7..ecbed5647 100644
+index f4535a4f7..3fab2e4b1 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,19 +2,19 @@ from dataclasses import replace, dataclass, field
@@ -237,7 +237,30 @@ index f4535a4f7..ecbed5647 100644
    # INDEX without src is nothing (TODO: this should be in mop_cleanup)
    (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),
    # unpack WMMA
-@@ -180,17 +316,58 @@ def merge_reduce_ends(sink:UOp):
+@@ -172,25 +308,79 @@ def merge_reduce_ends(sink:UOp):
+     if len(ends) <= 1: continue
+     by_ctx: dict[frozenset[UOp], list[UOp]] = {}
+     for e in ends: by_ctx.setdefault(frozenset(e.ranges), []).append(e)
+-    for i, group in enumerate(by_ctx.values()):
++    # ENDs of one context merge unless one reaches another: a copy that reads what another copy of the same range stored runs after
++    # it, in a loop of its own, and merged it would contain itself
++    groups: list[list[UOp]] = []
++    for ctx_ends in by_ctx.values():
++      layers: list[list[UOp]] = []
++      for e in ctx_ends:
++        if (l:=next((l for l in layers if not any(x in e.backward_slice or e in x.backward_slice for x in l)), None)) is None: layers.append([e])
++        else: l.append(e)
++      groups += layers
++    for i, group in enumerate(groups):
+       tr = r if i == 0 else tuple(rr.replace(arg=(rr.axis_type, next_axis + j, *rr.axis_id[1:])) for j, rr in enumerate(r))
+       if i > 0: next_axis += len(r)
+-      mapped = [e.substitute(dict(zip(r, tr))) if i > 0 else e for e in group]
++      # a clone renames the ranges of its own loop only: the other ENDs that close any of r, along other ranges too, stand aside as
++      # holes while it is renamed. an END inside its loop closes none of r
++      others = [x for x in sink.backward_slice if x.op is Ops.END and x not in group and any(rr in x.src[1:] for rr in r)]
++      holes = {x: UOp(Ops.NOOP, arg=("hole", j)) for j, x in enumerate(others)}
++      mapped = [e.substitute({**holes, **dict(zip(r, tr))}).substitute({h: x for x, h in holes.items()}) if i > 0 else e for e in group]
+       merged = mapped[0] if len(mapped) == 1 else UOp.group(*(e.src[0] for e in mapped)).end(*tr)
        for e in group: subs[e] = merged
    return sink.substitute(subs) if subs else None
  
@@ -300,7 +323,7 @@ index f4535a4f7..ecbed5647 100644
    return acc.after(acc_out)
  
  pm_reduce_local = pm_wmma_add+PatternMatcher([
-@@ -251,6 +428,38 @@ pm_implicit_barriers = PatternMatcher([
+@@ -251,6 +441,38 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
@@ -339,7 +362,7 @@ index f4535a4f7..ecbed5647 100644
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if DEBUG >= 5: print(render_uir(ast))
    if SPEC: type_verify(ast, spec_tensor)
-@@ -288,7 +497,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -288,7 +510,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -348,7 +371,7 @@ index f4535a4f7..ecbed5647 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -301,7 +510,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -301,7 +523,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
@@ -357,7 +380,7 @@ index f4535a4f7..ecbed5647 100644
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -326,11 +535,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -326,11 +548,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -372,7 +395,7 @@ index f4535a4f7..ecbed5647 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -345,11 +556,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -345,11 +569,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -386,7 +409,7 @@ index f4535a4f7..ecbed5647 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -443,9 +655,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -443,9 +668,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -411,7 +434,7 @@ index f4535a4f7..ecbed5647 100644
  
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp|None:
    if getattr(type(ctx), "asm") is Renderer.asm: return None
-@@ -493,7 +719,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
+@@ -493,7 +732,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
      full_sink = full_rewrite_to_sink(ast, renderer, optimize=not ast.arg.optimized)
      prog_info = ProgramInfo.from_sink(full_sink, renderer.target)
      if (isinstance(renderer, ISARenderer) or renderer.packed_args) and full_sink.arg.estimates is None:

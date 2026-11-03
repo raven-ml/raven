@@ -5159,6 +5159,59 @@ let coalesced_stores =
       [ 10; 1; 2; 3 ] );
   ]
 
+(* [D[4j + e] = 2 * A[4j + e]] for [j < 2], through two copies of registers,
+   each ended over a range of [axis_type]: the first copies [A]'s row into
+   [r1], the second doubles [r1] into [r2], reading what the first stored.
+   Upcast ends close no range once expanded; loop ends close one range each,
+   the same one when [shared]. *)
+let chained_copies (axis_type, shared) () =
+  let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
+  let reg slot = Shape.placeholder ~slot ~addrspace:Reg [ 4 ] Int32 in
+  let r1 = reg 2 and r2 = reg 3 in
+  let j = effect_loop 2 0 in
+  let range axis = Ops.range ~axis_type (Int 4) [ axis ] in
+  let u1 = range 1 in
+  let u2 = if shared then u1 else range 2 in
+  let open Ops.O in
+  let row u = (j * int 4) + u in
+  let copy =
+    Ops.end_ (Ops.store (at r1 u1) (Ops.load (at a (row u1)) [])) [ u1 ]
+  in
+  let r1 = Ops.after r1 [ copy ] in
+  let doubled =
+    Ops.end_
+      (Ops.store (at r2 u2) (Ops.load (at r1 u2) [] * i32 2))
+      [ u2 ]
+  in
+  let r2 = Ops.after r2 [ doubled ] in
+  let out e = Ops.store (at d (row (int e))) (Ops.load (at r2 (int e)) []) in
+  effect_kernel [ Ops.end_ (Ops.group (List.init 4 out)) [ j ] ]
+
+(* [D[l] = A[2l] + A[2l + 1]] for [l < 4], through registers [r] that a first
+   copy fills over [l] and [m], counting its steps in [C[0]], and a second
+   copy reads over [l] alone: the second end closes a range the first closes
+   along another. The first copy runs once, so [C[0]] counts to 8. *)
+let crossed_ends () =
+  let d = int_param ~name:"D" 0 4 and a = int_param ~name:"A" 1 8 in
+  let c = int_param ~name:"C" 2 1 in
+  let r = Shape.placeholder ~slot:3 ~addrspace:Reg [ 8 ] Int32 in
+  let l = effect_loop 4 0 and m = effect_loop 2 1 in
+  let open Ops.O in
+  let cell = first (Ops.after c [ m ]) in
+  let copy =
+    Ops.end_
+      (Ops.group
+         [
+           Ops.store (at r ((l * int 2) + m))
+             (Ops.load (at a ((l * int 2) + m)) []);
+           Ops.store cell (cell + i32 1);
+         ])
+      [ l; m ]
+  in
+  let r = Ops.after r [ copy ] in
+  let pair k = Ops.load (at r ((l * int 2) + int k)) [] in
+  effect_kernel [ Ops.end_ (Ops.store (at d l) (pair 0 + pair 1)) [ l ] ]
+
 let effects =
   group "effects run as often as written"
     [
@@ -5215,6 +5268,27 @@ let effects =
             (List.hd (effects_of shrink_call [] [ 0 ])));
       test "a call in a collapsed sum runs at each step"
         (writes collapse_call [] [ [ 1; 2; 2; 3 ]; [ 1 ] ]);
+      cases "a copy reads the copy ended before it"
+        ~id:(fun (axis_type, shared) ->
+          Printf.sprintf "%s range%s"
+            (Ops.Axis_type.letter axis_type)
+            (if shared then ", shared" else "s"))
+        [
+          (Ops.Axis_type.Upcast, false);
+          (Upcast, true);
+          (Loop, false);
+          (Loop, true);
+        ]
+        (fun c ->
+          writes (chained_copies c)
+            [ (1, int_values [ 1; 2; 3; 4; 5; 6; 7; 8 ]) ]
+            [ [ 2; 4; 6; 8; 10; 12; 14; 16 ] ]
+            ());
+      test "a copy that reads an end of its range along another range runs \
+            that end once"
+        (writes crossed_ends
+           [ (1, int_values [ 1; 2; 3; 4; 5; 6; 7; 8 ]) ]
+           [ [ 3; 7; 11; 15 ]; [ 1; 2; 3; 4; 5; 6; 7; 8 ]; [ 8 ] ]);
       cases "a store whose value waits on a store is not merged with it"
         ~id:(fun (name, _, _) -> name)
         coalesced_stores

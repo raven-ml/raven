@@ -620,22 +620,60 @@ let merge_reduce_ends sink =
       incr next_axis;
       replace rr ~arg:(Range { axis_type = axis_type rr; axis_id })
   in
+  (* Ends of one context merge unless one reaches another: a copy that reads
+     what another copy of the same range stored runs after it, in a loop of
+     its own, and merged it would contain itself. *)
+  let slices = Tbl.create 8 in
+  let reaches e x =
+    let s =
+      match Tbl.find_opt slices e with
+      | Some s -> s
+      | None ->
+          let s = backward_slice ~calls:Skip e in
+          Tbl.replace slices e s;
+          s
+    in
+    x != e && Nodes.mem x s
+  in
+  let apart e l = List.for_all (fun x -> not (reaches e x || reaches x e)) l in
+  let layers ends =
+    let rec place e = function
+      | [] -> [ [ e ] ]
+      | l :: ls -> if apart e l then (l @ [ e ]) :: ls else l :: place e ls
+    in
+    List.fold_left (fun ls e -> place e ls) [] ends
+  in
+  (* A clone renames the ranges of its own loop only: the other ends that close
+     any of [r], along other ranges too, stand aside as holes while it is
+     renamed. An end inside its loop closes none of [r]. *)
+  let all_ends = List.filter (is Op.End) slice in
+  let renamed ends r tr e =
+    let closes x = List.exists (fun rr -> List.memq rr (srcs x)) r in
+    let others =
+      List.filter (fun x -> closes x && not (List.memq x ends)) all_ends
+    in
+    let holes =
+      List.mapi
+        (fun i x -> (x, range ~axis_type:Placeholder (Int 1) [ -1; i ]))
+        others
+    in
+    let sub e pairs = substitute ~calls:Skip ~pass:Fixed_point e pairs in
+    sub
+      (sub e (holes @ List.combine r tr))
+      (List.map (fun (x, h) -> (h, x)) holes)
+  in
   List.iter
     (fun (r, ends) ->
       let by_ctx =
         List.fold_left (fun acc e -> add_to (ranges e) same_nodes e acc) [] ends
       in
       List.iter
-        (fun (_, ends) ->
+        (fun ends ->
           let tr = List.map clone r in
           List.iter (fun rr -> Tbl.replace claimed rr ()) tr;
           let mapped =
             if List.equal ( == ) r tr then ends
-            else
-              List.map
-                (fun e ->
-                  substitute ~calls:Skip ~pass:Fixed_point e (List.combine r tr))
-                ends
+            else List.map (renamed ends r tr) ends
           in
           match mapped with
           | [ e ] when e == List.hd ends -> ()
@@ -646,7 +684,7 @@ let merge_reduce_ends sink =
                 | _ -> end_ (group (List.map (fun e -> nth e 0) mapped)) tr
               in
               List.iter (fun e -> subs := (e, merged) :: !subs) ends)
-        by_ctx)
+        (List.concat_map (fun (_, ends) -> layers ends) by_ctx))
     range_to_ends;
   match !subs with
   | [] -> None

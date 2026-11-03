@@ -955,6 +955,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   most `ceil(R / 16)` times where it streams, padding the rows where 16
   divides them unevenly: an MXFP4 product of 17 bfloat16 rows runs 3 to 4
   times faster on an RTX 5000 Ada.
+- A kernel with two copies ended over the same loops, or over upcast loops,
+  one reading what the other stored, lowers with each copy in a loop of its
+  own, where `Codegen.to_program` raised "a node's rewrite depends on
+  itself".
 - A tensor core takes an operand bitcast from words of another width, such as
   four `Uint32` read as eight `Bfloat16`, where lowering never ended; CUDA
   renders a bitcast of a vector with vector types, where the source did not
