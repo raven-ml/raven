@@ -4545,6 +4545,214 @@ let law_segmented_grad c =
   same "grad of jit, x" gx hx;
   same "grad of jit, w" gw hw
 
+(* A group's weight gradient
+
+   The weight gradient of a [Rows] product of [x[n; k]] by [w[g; j; k]] is a
+   [Contracting] contraction: group [e]'s slice is the sum of [ct_r ⊗ x_r] over
+   its rows [r] alone. Its bits are a function of the shapes and of the group's
+   own rows ({!Nx_kernel.section-contraction}), so they stay whatever the other
+   groups hold. Two layouts keep group [target]'s rows and draw apart the rows
+   before the first group and the other groups' counts. *)
+
+type group_grad = {
+  gn : int;
+  gg : int;
+  gk : int;
+  gj : int;
+  target : int;
+  layouts : (int * int array) * (int * int array);
+  rows : float array;
+}
+
+let pp_group_grad ppf c =
+  let ints a = String.concat " " (Array.to_list (Array.map string_of_int a)) in
+  let (sa, ca), (sb, cb) = c.layouts in
+  Format.fprintf ppf
+    "n %d g %d k %d j %d, group %d of %d rows; from %d [%s]; from %d [%s]" c.gn
+    c.gg c.gk c.gj c.target ca.(c.target) sa (ints ca) sb (ints cb)
+
+(* A [float32] of wide magnitude, so that a sum's association shows in its
+   bits. *)
+let wide_value =
+  let open Gen in
+  let+ m = int_range 0x800000 0xffffff
+  and+ e = int_range (-36) (-12)
+  and+ neg = bool in
+  let v = Float.ldexp (Float.of_int m) e in
+  if neg then -.v else v
+
+(* The block sizes below [n] that a [Contracting] lowering of [n] indices in
+   [g] groups chooses between (Rune.Lower_reduce.contract), which draws reach
+   counts near. *)
+let block_sizes n g =
+  if n <= g then []
+  else
+    let root = Float.to_int (Float.ceil (Float.sqrt (Float.of_int (n - g)))) in
+    [ (n + g - 1) / g; max 1 root ]
+
+(* Shapes of many indices a group, which blocks pay for, and of few. *)
+let blocked_shapes = [ (128, 8, 3, 2); (2048, 32, 4, 4) ]
+
+(* Shapes of more indices than groups that blocks don't pay for: no block size
+   takes fewer products and sums than [g n], so each group takes one block of
+   [n] indices. *)
+let one_block_shapes = [ (64, 1, 2, 2); (12, 2, 3, 2) ]
+
+let group_shapes =
+  List.map (fun s -> (3, s)) blocked_shapes
+  @ List.map
+      (fun s -> (1, s))
+      ([ (256, 256, 2, 2); (96, 128, 2, 2) ] @ one_block_shapes)
+
+let group_grads =
+  let open Gen in
+  let* gn, gg, gk, gj =
+    frequency (List.map (fun (w, s) -> (w, constant s)) group_shapes)
+  in
+  let sizes = match block_sizes gn gg with [] -> [ gn ] | s -> s in
+  let near =
+    let* s = of_list sizes and+ q = int_range 1 3 and+ d = int_range (-1) 1 in
+    constant (min gn (max 0 ((q * s) + d)))
+  in
+  let count =
+    frequency
+      [
+        (2, constant 0);
+        (2, constant 1);
+        (6, near);
+        (3, int_range 0 (gn / gg * 2));
+      ]
+  in
+  let several = int_range (gn / 4) (gn / 2) in
+  let* target = int_range 0 (gg - 1) in
+  let* m =
+    frequency
+      [
+        (3, constant 0);
+        (3, constant 1);
+        (4, near);
+        (4, several);
+        (4, int_range (gn - 1) gn);
+      ]
+  in
+  let layout =
+    let* start = frequency [ (2, constant 0); (1, int_range 1 gn) ] in
+    let+ drawn = array ~size:(constant gg) count in
+    let left = ref (gn - m) in
+    let take c =
+      let c = min c !left in
+      left := !left - c;
+      c
+    in
+    let start = take start in
+    (start, Array.mapi (fun e c -> if e = target then m else take c) drawn)
+  in
+  let* a = layout and+ b = layout in
+  let+ rows = array ~size:(constant (m * (gk + gj))) wide_value in
+  { gn; gg; gk; gj; target; layouts = (a, b); rows }
+
+let group_grads = Gen.with_pp pp_group_grad group_grads
+
+(* [w]'s gradient of [<ct, y>] for [y] the [Rows] product of [x] and [w]. *)
+let rows_weight_grad x ct w offsets =
+  let rows w =
+    Nx.Prim.eval ~by:"test"
+      (Contract
+         {
+           batch = Iarray.of_list [];
+           contracting = Iarray.of_list [ (1, 2) ];
+           acc = Any f32;
+           out = f32;
+           a = x;
+           b = w;
+           init = None;
+           a_scale = None;
+           b_scale = None;
+           segments = Some (Rows { offsets; a_axis = 0; b_axis = 0 });
+           sum = false;
+         })
+  in
+  Rune.grad' (fun w -> Nx.sum (Nx.mul ct (rows w))) w
+
+let jit_rows_weight_grad =
+  Rune.jit
+    T.(tensor @-> tensor @-> tensor @-> tensor @-> returns tensor)
+    rows_weight_grad
+
+(* The first row of group [target] in a layout. *)
+let group_first c (start, counts) =
+  start + Array.fold_left ( + ) 0 (Array.sub counts 0 c.target)
+
+(* A layout's [x], [ct] and offsets: group [target]'s rows hold [c.rows], each
+   row's [x] then its [ct], and the others a value of their index. *)
+let group_operands c ((start, counts) as layout) =
+  let first = group_first c layout and m = counts.(c.target) in
+  let value at i =
+    let r = i.(0) and q = at + i.(1) in
+    if r >= first && r < first + m then
+      c.rows.(((r - first) * (c.gk + c.gj)) + q)
+    else Float.of_int ((((r * 7) + q) mod 11) - 5) /. 4.
+  in
+  let x = Nx.init f32 [| c.gn; c.gk |] (value 0) in
+  let ct = Nx.init f32 [| c.gn; c.gj |] (value c.gk) in
+  let offsets = Array.make (c.gg + 1) (Int64.of_int start) in
+  Array.iteri
+    (fun e n -> offsets.(e + 1) <- Int64.add offsets.(e) (Int64.of_int n))
+    counts;
+  (x, ct, Nx.create Nx.int64 [| c.gg + 1 |] offsets)
+
+let law_group_grad c =
+  let la, lb = c.layouts in
+  let m = (snd la).(c.target) in
+  let sizes = block_sizes c.gn c.gg in
+  let before (_, counts) = Array.sub counts 0 c.target in
+  cover "an empty group" (m = 0);
+  cover "a group of one row" (m = 1);
+  cover "a group of a block size's multiple, or one off it"
+    (m > 1 && List.exists (fun s -> List.mem (m mod s) [ 0; 1; s - 1 ]) sizes);
+  cover "a group of several blocks"
+    (sizes <> [] && List.for_all (fun s -> m > 2 * s) sizes);
+  cover "a group taking every block place"
+    (List.mem (c.gn, c.gg, c.gk, c.gj) blocked_shapes
+    && List.for_all (fun s -> (m + s - 1) / s = (c.gn + s - 1) / s) sizes);
+  cover "fewer than two indices a group" (c.gn < 2 * c.gg);
+  cover "more indices than groups, one block a group"
+    (List.mem (c.gn, c.gg, c.gk, c.gj) one_block_shapes);
+  cover "the group's rows moved" (group_first c la <> group_first c lb);
+  cover "an empty group before it" (Array.exists (( = ) 0) (before la));
+  cover "a one-row group before it" (Array.exists (( = ) 1) (before la));
+  let w = Nx.zeros f32 [| c.gg; c.gj; c.gk |] in
+  let slice layout =
+    let x, ct, o = group_operands c layout in
+    let dw = jitted (fun () -> jit_rows_weight_grad x ct w o) in
+    Nx.slice [ Nx.I c.target ] dw
+  in
+  let a = slice la in
+  equal ~msg:"the group's bits" bits_t (bits a) (bits (slice lb));
+  (* Within [Nx.contract]'s bound of the group's [float64] sum, the rounding
+     into [float32] included. *)
+  let u = Float.ldexp 1. (-24) in
+  let gamma k =
+    let k = Float.of_int k in
+    2. *. k *. u /. (1. -. (2. *. k *. u))
+  in
+  let row r q = c.rows.((r * (c.gk + c.gj)) + q) in
+  let got = Nx.to_array a in
+  for jq = 0 to c.gj - 1 do
+    for kq = 0 to c.gk - 1 do
+      let exact = ref 0. and size = ref 0. in
+      for r = 0 to m - 1 do
+        let p = row r (c.gk + jq) *. row r kq in
+        exact := !exact +. p;
+        size := !size +. Float.abs p
+      done;
+      let err = Float.abs (got.((jq * c.gk) + kq) -. !exact) in
+      at_most
+        ~msg:(Printf.sprintf "output [%d; %d]'s error" jq kq)
+        float_exact ~than:(gamma (m + 2) *. !size) err
+    done
+  done
+
 (* Experts: an MXFP4 stack of [e] experts of [n] outputs over 32 inputs,
    scale byte 127, applied to [t] tokens of [top] ids each, drawn from [-1]
    to [e], so that some fall outside the experts. Values are exact in each
@@ -4794,6 +5002,10 @@ let () =
                "a segmented contraction's gradients give eager's values"
                (segmented_cases ~dts:[ Nx.Dtype.Any f64 ] ())
                law_segmented_grad;
+             prop ~count:96
+               "a group's weight gradient keeps its bits whatever the other \
+                groups' counts"
+               group_grads law_group_grad;
              prop ~count:16 ~examples:experts_examples
                "experts applied give eager's values" experts_cases law_experts;
              prop ~count:20 ~examples:bitcast_examples

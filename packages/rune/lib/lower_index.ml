@@ -62,42 +62,10 @@ let negative_zero u =
   let w = 8 * Dtype.itemsize (Ops.dtype u) in
   Ops.eq b (Shape.const_like b (`Int (Bigint.shift_left Bigint.one (w - 1))))
 
-(* Gathers
-
-   A gather is tolk's index of the operand's elements, flattened, at each
-   element's offset: its own index's along the other axes, its position's along
-   [axis]. A position outside the axis is read at [0], so that every read is in
-   bounds, and selected as zero. *)
-
-let take u axis p =
-  let s = extents u and t = extents p in
-  let n = List.nth s axis in
-  if n = 0 || numel t = 0 then zeros (Ops.dtype u) t
-  else
-    let inside =
-      Ops.lt (Ops.bitcast p Uint64)
-        (Shape.const_like ~dtype:Uint64 p (`Int (Bigint.of_int n)))
-    in
-    let at = Ops.cast (Ops.where inside p (int p 0)) Weak_int in
-    let stride d = numel (List.filteri (fun i _ -> i > d) s) in
-    let term d =
-      let v =
-        if d = axis then at
-        else laid t d (Shape.arange ~dtype:Weak_int (List.nth t d))
-      in
-      match stride d with 1 -> v | k -> Ops.mul v (Ops.int k)
-    in
-    let offset =
-      List.fold_left
-        (fun o d -> Ops.add o (term d))
-        (term 0)
-        (List.init (List.length s - 1) succ)
-    in
-    let read = Ops.index (Shape.reshape u [ Ops.Int (numel s) ]) [ offset ] in
-    Ops.where inside read (int read 0)
+(* Gathers *)
 
 let gather d ~axis idx x =
-  Arith.of_parts d (List.map (fun u -> take u axis idx) (Arith.parts d x))
+  Arith.of_parts d (List.map (fun u -> Bits.take u axis idx) (Arith.parts d x))
 
 (* Scatters
 
@@ -732,13 +700,13 @@ let sort d ~axis ~descending ~k x =
       | [] -> assert false
       | least :: rest ->
           List.fold_left
-            (fun p h -> take p axis (ranked axis (take h axis p)))
+            (fun p h -> Bits.take p axis (ranked axis (Bits.take h axis p)))
             (ranked axis least) rest
   in
   let values =
     if n <= 1 || numel s = 0 then x
     else
-      let gathered u = take u axis positions in
+      let gathered u = Bits.take u axis positions in
       Arith.of_parts d (List.map gathered (Arith.parts d x))
   in
   match k with

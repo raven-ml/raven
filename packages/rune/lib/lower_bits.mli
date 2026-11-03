@@ -3,17 +3,18 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Bit-level operations on tolk float nodes, and the integer types of a node's
-    width.
+(** Bit-level operations on tolk float nodes, the integer types of a node's
+    width, and indexed loads.
 
     A {e float node} is a node of [Float16], [Bfloat16], [Float32] or [Float64].
-    The module reads and sets a float node's sign, tests for and makes NaNs, and
+    The module reads and sets a float node's sign, tests for and makes NaNs,
     builds the target's fused multiply-add, where the {e target} is the device a
-    lowered program is rendered for. It reads a node's bits as the unsigned
-    integer of its width ({!bits}). On those bits a sign, a NaN's payload and
-    its {e quiet bit}, the fraction's top bit, are kept on every target, also
-    where the target's float operations would change them. Each function on
-    nodes keeps its operand's shape. *)
+    lowered program is rendered for, and loads a node's elements at computed
+    positions ({!take}). It reads a node's bits as the unsigned integer of its
+    width ({!bits}). On those bits a sign, a NaN's payload and its {e quiet
+    bit}, the fraction's top bit, are kept on every target, also where the
+    target's float operations would change them. Each function on nodes but
+    {!take} keeps its operand's shape. *)
 
 open Tolk
 
@@ -68,3 +69,12 @@ val mulacc : Ops.t -> Ops.t -> Ops.t -> Ops.t
 (** [mulacc a b c] is [a * b + c] of three floats of one type, rounded once by
     the target's fused multiply-add. With a NaN operand, the result's sign and
     payload are what that fused multiply-add gives. *)
+
+(** {1:loads Indexed loads} *)
+
+val take : Ops.t -> int -> Ops.t -> Ops.t
+(** [take u axis p] is [u] read at the [int64] positions [p] along [axis].
+    [p] has [u]'s rank and, off [axis], extents at most [u]'s. The result has
+    [p]'s shape: at each index, [u]'s element at that index with [axis] set
+    to [p]'s element there. Each element is one indexed load of [u]'s bits,
+    or zero bits where the position lies outside the axis. *)

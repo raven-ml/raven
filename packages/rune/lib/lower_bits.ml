@@ -58,3 +58,48 @@ let nan x =
 (* Fused multiply-add *)
 
 let mulacc a b c = Ops.alu a Op.Mulacc [ b; c ]
+
+(* Indexed loads
+
+   A load reads the operand's elements, flattened, at each element's offset:
+   its own index's along the other axes, its position's along [axis]. A
+   position outside the axis is read at [0], so that every read is in bounds,
+   and selected as zero. *)
+
+let take u axis p =
+  let extents u = List.init (Shape.ndim u) (extent u) in
+  let numel s = List.fold_left ( * ) 1 s in
+  let int u n = Shape.const_like u (`Int (Bigint.of_int n)) in
+  let dims s = List.map (fun n -> Ops.Int n) s in
+  let s = extents u and t = extents p in
+  let n = List.nth s axis in
+  if n = 0 || numel t = 0 then
+    let z = Ops.const ~dtype:(Ops.dtype u) (`Int Bigint.zero) in
+    Shape.expand (Shape.reshape z (List.map (fun _ -> Ops.Int 1) t)) (dims t)
+  else
+    let inside =
+      Ops.lt (Ops.bitcast p Uint64)
+        (Shape.const_like ~dtype:Uint64 p (`Int (Bigint.of_int n)))
+    in
+    let at = Ops.cast (Ops.where inside p (int p 0)) Weak_int in
+    let stride d = numel (List.filteri (fun i _ -> i > d) s) in
+    (* [laid d] is the arange of [t]'s axis [d] laid along it. *)
+    let laid d =
+      let e = List.nth t d in
+      let along = List.mapi (fun i x -> if i = d then x else 1) t in
+      Shape.expand
+        (Shape.reshape (Shape.arange ~dtype:Weak_int e) (dims along))
+        (dims t)
+    in
+    let term d =
+      let v = if d = axis then at else laid d in
+      match stride d with 1 -> v | k -> Ops.mul v (Ops.int k)
+    in
+    let offset =
+      List.fold_left
+        (fun o d -> Ops.add o (term d))
+        (term 0)
+        (List.init (List.length s - 1) succ)
+    in
+    let read = Ops.index (Shape.reshape u [ Ops.Int (numel s) ]) [ offset ] in
+    Ops.where inside read (int read 0)

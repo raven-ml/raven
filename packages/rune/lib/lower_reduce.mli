@@ -167,14 +167,15 @@ val contract :
     contraction of one slice, and work in [n g + g²] to find each row's group.
 
     A [Contracting] contraction of [g] groups over a pair of [n] indices
-    computes each group's output over the pair's whole extent, [n] products
-    each, [g n] for each index of the other axes. Where it takes fewer, it
-    cuts each group into blocks of [c] indices instead, [c] one of
-    [⌈n / g⌉] and [⌈√(n - g)⌉]: at most [B = g + ⌊(n - g) / c⌋] blocks,
-    [B c] products for each index of the other axes into [B] partial
-    results stored apart, and [g B] sums of them, each group's of its own
-    blocks. Finding the groups takes work in [n g], and the blocks' bounds
-    in [g B].
+    cuts each group into blocks of [c] indices from its first: at most [B]
+    blocks, [B c] products for each index of the other axes into [B]
+    partial results stored apart, and [g ⌈n / c⌉] loads of them, each group
+    summing its own blocks from its first. [c] is [⌈n / g⌉] or [⌈√(n - g)⌉],
+    with [B = g + ⌊(n - g) / c⌋], where that takes fewer products and sums
+    than [g n]. Otherwise [c] is [n] and each group takes one block, its sum:
+    [g n] products, none stored apart. A group's bits so do not depend on the
+    other groups' counts. Finding the groups takes work in [n g], and the
+    blocks' bounds in [g B].
 
     Raises [Invalid_argument] for a scale with an [acc] other than [float32]
     or [float64]. *)

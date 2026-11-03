@@ -368,6 +368,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Contracting` segmented contraction, such as a grouped
+  product's weight gradient, keeps each group's bits whatever the other
+  groups' counts, as `Nx_kernel.S.contract` promises: a group's terms were
+  summed at their positions among all groups'.
 - `Rune.jit` over values cut along an axis that a fold, a scan, a gather or a
   scatter reads (`Nx.sum`, `Nx.cumsum`, `Nx.take_along_axis`, `Nx.cummax`'s
   derivatives) compiles as many programs whatever the number of devices: each
