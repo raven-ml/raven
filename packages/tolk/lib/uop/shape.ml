@@ -2351,7 +2351,11 @@ let symbolic_simple =
                 V.(cv > zero && cv < `Float Float.infinity)
                 && Dtype.is_float (dtype (m "x"))
               then
-                Some (exp2 O.(m "x" * float (Float.log2 (V.to_float cv))))
+                let log2c =
+                  exec_alu ~truncate_output:false Op.Log2 Float64
+                    [ (cv :> Dtype.const) ]
+                in
+                Some (exp2 O.(m "x" * float (V.to_float (as_value log2c))))
               else None);
           (* unpack a uint64 packed from two uint32 (threefry) *)
           rule

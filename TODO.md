@@ -199,10 +199,6 @@ raven / llama.cpp b12048 Vulkan:
   tinygrad does), 30 M words per special-function gradient; and
   `share_loops` (D137) retries `joinable` at every shared node when two
   stores cannot join, O(N²) in that case, which no program here reaches yet
-- folds of `Log2`, `Exp2` and `Pow` use the host's C library, so a folded
-  constant can differ between macOS and Linux; D150 made the sine fold
-  correctly rounded for that reason. Do the same for these, or state why a
-  host's value is acceptable
 - a call body that stores to LOCAL memory gets no barrier before the
   kernel reads it back: since tinygrad efb4cc8cb, `add_raw_barrier` does
   not look into call bodies, and tolk follows. tinygrad 6b7b018da (its

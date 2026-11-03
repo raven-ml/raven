@@ -933,6 +933,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   they wait for their domains, or a domain's own, once every domain has ended.
   They raised `Fun.Finally_raised` and kept the domains from later calls.
 
+- `Ops.exec_alu` folds `Log2`, `Exp2` and a float `Pow` correctly rounded on
+  every host, where it took the C library's value, which glibc rounds one unit
+  off for about one operand in two thousand; `c ** x` rewrites with `log2 c`
+  correctly rounded.
 - `Compiler_cpu.clang` compiles for x86_64 without AVX10.1 and AVX-512's half
   arithmetic under a Clang of LLVM 18, which crashed on float16 casts for such
   processors, as Ubuntu 24.04's did with `native`. `Compiler_cpu.flags` states

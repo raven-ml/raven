@@ -3796,31 +3796,53 @@ cast to. tinygrad no longer supports Windows: `ClangRenderer`
 of `CStyleLanguage` (`:131-132`) on every system, as `Cstyle.clang_lang`
 does. A Windows host's code is compiled for Windows' convention by D178.
 
-## D150. The folder's sine is correctly rounded
+## D150. The folder's sine, logarithm and powers are correctly rounded
 
-- **tinygrad:** `uop/ops.py:1379` (`python_alu`'s `SIN`, `math.sin`, the C
-  library's).
-- **tolk:** `Ops.sine`, which `python_alu` calls; `test/gen/tinygrad.patch`,
-  which gives tinygrad's `python_alu` a correctly rounded sine (`cr_sin`,
-  mpmath's, at a precision doubled until it rounds to one double) before the
-  goldens are generated.
-- **Differs:** `exec_alu` computes a sine on integers: the argument is
-  reduced exactly by pi/2, held to 1200 bits, and the sine or cosine of the
-  remainder is summed in fixed point to 192 bits, then rounded once. The
-  result is correctly rounded on every host, where tinygrad's is the C
-  library's: on an M1 Mac about 3% of drawn float64 sines are one unit off
-  (`sin 2.5`, `sin 4.0`), glibc's about 0.1% (`sin 0.259`), and mingw-w64's
-  reduces by x87's 66-bit pi. A NaN operand gives `Dtype.nan`.
-- **Reason:** (b). rune's `sin` and `cos` are `SIN` nodes
-  (rune's `Lower_real.sin_`), which fold through `exec_alu`, and a
-  fold must not depend on the host: on Windows `sin 1e300` folded to
-  `0.979`, of the wrong sign.
-- **Pinned by:** `Tolk.Ops › exec_alu › exec_alu_values.golden`, whose `SIN`
-  rows include `1e300`, `3.4e38`, pi, floats near multiples of pi and floats
-  whose sine glibc rounds to the wrong neighbour, compared exactly, and which
-  fail with the C library's sine on macOS, glibc and Windows; `Tolk.Symbolic ›
-  tinygrad › tests.golden › TestWeakConstFolding.test_float_unaries`, which
-  folds `sin 4.0`.
+- **tinygrad:** `uop/ops.py:1366-1379` (`python_alu`'s `SIN`, `math.sin`;
+  `LOG2`, `math.log2`; `EXP2`, `safe_exp2`'s `2 ** x`; `POW`, `safe_pow`'s
+  `pow`: the C library's), and `uop/symbolic.py:201` (`c ** x` as
+  `exp2 (x * math.log2 c)`).
+- **tolk:** `Ops.sine`, `Ops.py_log2`, `Ops.py_exp2` and `Ops.py_pow`, which
+  `python_alu` calls, and the `c ** x` rule of `Shape.symbolic_simple`, which
+  takes `log2 c` from `Ops.exec_alu`; `test/gen/tinygrad.patch`, which gives
+  tinygrad's `python_alu` a correctly rounded sine, logarithm and powers
+  (`cr_sin`, `cr_log2`, `safe_exp2`, `safe_pow`: mpmath's, at a precision
+  doubled until it rounds to one double, a power that is a fraction exact) and
+  its `c ** x` rule `cr_log2`, before the goldens are generated.
+- **Differs:** `exec_alu` computes each on integers and rounds once. A sine's
+  argument is reduced exactly by pi/2, held to 1200 bits, and the sine or
+  cosine of the remainder is summed in fixed point to 192 bits. A logarithm,
+  a power of two and a power are summed in fixed point (`atanh` and `exp`
+  series) with a bound on their error, at 64 bits, then 128, 256, ..., until
+  both ends of the bound round to one double; a power of two `2^(e y)` and a
+  power that a double or a midpoint between two can equal are computed
+  exactly. Each result is correctly rounded on every host, where tinygrad's is
+  the C library's: on an M1 Mac about 3% of drawn float64 sines are one unit
+  off (`sin 2.5`, `sin 4.0`), glibc's about 0.1% (`sin 0.259`), and mingw-w64's
+  reduces by x87's 66-bit pi; glibc's `log2`, `pow` and `pow (2, x)` are one
+  unit off for about one operand in two thousand (`log2 0.86`, `2^-0.338`,
+  `5.4 ** 0.8`). A NaN operand of the sine gives `Dtype.nan`.
+- **Reason:** for the sine, (b). rune's `sin` and `cos` are `SIN` nodes
+  (rune's `Lower_real.sin_`), which fold through `exec_alu`, and a fold must
+  not depend on the host: on Windows `sin 1e300` folded to `0.979`, of the
+  wrong sign. For the logarithm and the powers, (e): `exec_alu` computes its
+  operation exactly and rounds once, and a C library's value one unit off is
+  the wrong value, which also differs between hosts. rune's `exp`, `log` and
+  their kin compose `EXP2` and `LOG2` nodes (rune's `Lower_real`), within one
+  unit of the correctly rounded result either way.
+- **Pinned by:** `Tolk.Ops › exec_alu › exec_alu_values.golden`, compared
+  exactly: its `SIN` rows include `1e300`, `3.4e38`, pi, floats near multiples
+  of pi and floats whose sine glibc rounds to the wrong neighbour, which fail
+  with the C library's sine on macOS, glibc and Windows; its float64 `LOG2`,
+  `EXP2` and `POW` rows include operands whose results glibc rounds to the
+  wrong neighbour, which fail with glibc's, logarithms near 1, of subnormals
+  and of an integer past the greatest double, powers of two that round to a
+  subnormal or to 0, powers with exponents near `2^60`, and exact powers, one
+  of them halfway between two doubles (`68718952449 ** 1.5`, `262143^3`);
+  `Tolk.Symbolic › tinygrad › tests.golden ›
+  TestWeakConstFolding.test_float_unaries`, which folds `sin 4.0`; and
+  `Tolk.Symbolic › symbolic_simple › powers › c ** x multiplies x by log2 c
+  correctly rounded`, at `c = 0.86`.
 
 ## D151. An x86 kernel declares that it uses 512-bit vectors
 

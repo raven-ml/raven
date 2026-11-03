@@ -124,6 +124,19 @@ def alu_rows():
     # sines that glibc rounds to the wrong neighbour (macOS: 2.5 and 4.0)
     for x in [0.259, 1.622, 3.226, 8.85]:
         row(Ops.SIN, dtypes.double, (x,))
+    # logarithms, powers of two and powers that glibc rounds to the wrong
+    # neighbour; logarithms near 1, of subnormals and of an integer past the
+    # greatest float; powers of two that round to a subnormal, to 0 and to the
+    # greatest float; powers whose exponent is large, which need the logarithm
+    # to more bits, and powers that are exact
+    for x in [0.86, 0.898, 1.022, 1.0000000000000002, 0.9999999999999999, 1e-310, 2.5e-308, 1e308, 2**1030 + 1]:
+        row(Ops.LOG2, dtypes.double, (x,))
+    for x in [-0.338, 1.523, 4.419, -1074.5, -1075.5, -1022.3, 1023.9999999999999, 1e-300, -1e-300]:
+        row(Ops.EXP2, dtypes.double, (x,))
+    for pair in [(5.2, 9.6), (5.4, 0.8), (15.0, 3.5), (1.0000000000000002, 2.0**60), (0.9999999999999999, -2.0**61),
+                 (-3.7, 5.0), (10.0, -320.5), (0.1, 3.0), (134217727.0, 2.0), (68718952449.0, 1.5), (6.25, 1.5),
+                 (4.0, 0.25), (2.0, -1074.5), (0.5, 1e-300)]:
+        row(Ops.POW, dtypes.double, pair)
     # a float operation on integer operands, as a weak integer constant folds
     for op in FLOAT_UNARY_OPS:
         for x in (0, 1, 4, 8, -3, 7): row(op, dtypes.float, (x,))

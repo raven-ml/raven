@@ -2291,6 +2291,229 @@ let pop_const ?(op = Op.Add) u : t * Dtype.const =
 
 (* Evaluation *)
 
+(* Correctly rounded folds
+
+   [sin], [log2], [exp2] and a float [pow] are computed on integers and rounded
+   once, so that a folded constant is the same on every host: C libraries
+   differ in the last place, glibc's [log2], [exp2] and [pow] for about one
+   operand in two thousand. *)
+
+(* [n * 2^e] rounded to the nearest float, ties to even, for [n >= 0]: a
+   subnormal below the least normal, an infinity past the greatest float. *)
+let round_scaled n e =
+  let top = Bigint.numbits n - 1 + e in
+  if Bigint.sign n = 0 || top < -1076 then 0.
+  else if top > 1024 then Float.infinity
+  else
+    (* [q] is the exponent of the float's last place, [drop] the bits of [n]
+       below it. *)
+    let q = Int.max (top - 52) (-1074) in
+    let drop = q - e in
+    let m =
+      if drop <= 0 then Bigint.shift_left n (-drop)
+      else
+        let m = Bigint.shift_right n drop in
+        let rest = Bigint.(n - shift_left m drop) in
+        let half = Bigint.shift_left Bigint.one (drop - 1) in
+        let c = Bigint.compare rest half in
+        if c > 0 || (c = 0 && Bigint.(logand m one = one)) then Bigint.succ m
+        else m
+    in
+    Float.ldexp (Bigint.to_float m) q
+
+let round_signed n e =
+  if Bigint.sign n < 0 then -.round_scaled (Bigint.neg n) e
+  else round_scaled n e
+
+(* [ziv f] is the float that the bounds of [f w] round to, for the first [w] of
+   64, 128, 256, ... at which both round to one float. [f w] is [(n, err, e)],
+   a value within [err * 2^e] of [n * 2^e], where [err] shrinks against [n] as
+   [w] grows. It ends where the value is neither a float nor halfway between
+   two, true of every value it is given here: a logarithm, a power of two and a
+   power that are not exact are irrational. The bounds compare by their bits,
+   so that [-0.] and [0.] differ. *)
+let rec ziv ?(w = 64) f =
+  let n, err, e = f w in
+  let lo = round_signed Bigint.(n - err) e
+  and hi = round_signed Bigint.(n + err) e in
+  if Int64.equal (Int64.bits_of_float lo) (Int64.bits_of_float hi) then lo
+  else ziv ~w:(2 * w) f
+
+(* [atanh_fixed num den w] is [atanh (num / den) * 2^w] for [0 <= num / den <=
+   1/3], truncated, and a bound on its error in units: the sum of [s^(2k+1) /
+   (2k+1)], each power truncated from the last. A power's error stays below
+   [1 / (1 - s^2)], under 2 units, a term's below 3, and the terms dropped
+   once a power is 0 sum below 3. *)
+let atanh_fixed num den w =
+  let num2 = Bigint.(num * num) and den2 = Bigint.(den * den) in
+  let rec sum acc t k =
+    if Bigint.sign t = 0 then (acc, (3 * k) + 3)
+    else
+      let odd = (2 * k) + 1 in
+      let acc = Bigint.(acc + div t (of_int odd)) in
+      sum acc Bigint.(div (t * num2) den2) (k + 1)
+  in
+  sum Bigint.zero Bigint.(div (shift_left num w) den) 0
+
+(* atanh (1/3) = ln 2 / 2, and its error *)
+let half_ln2 w = atanh_fixed Bigint.one (Bigint.of_int 3) w
+
+(* [log2_fixed m e w] is [log2 (m * 2^e)], [m > 0], as [ziv] takes it, at [w]
+   bits after the point: [m * 2^e] is [r * 2^k] with [r] in [[1/sqrt 2, sqrt
+   2)], and [log2 r] is [atanh s / atanh (1/3)] for [s = (r - 1) / (r + 1)],
+   [|s| < 0.172]. The quotient's error is below 3 units of each operand's error
+   and 1 of its truncation. *)
+let log2_fixed m e w =
+  let nb = Bigint.numbits m in
+  (* [m / 2^(nb - 1)], in [[1, 2)], is past sqrt 2 where [m^2 >= 2^(2 nb - 1)]:
+     then [r] is half of it. *)
+  let up = Bigint.(geq (m * m) (shift_left one (Int.pred (Int.add nb nb)))) in
+  let k = if up then nb else nb - 1 in
+  let base = Bigint.shift_left Bigint.one k in
+  let d = Bigint.(m - base) and s = Bigint.(m + base) in
+  let a, a_err = atanh_fixed (Bigint.abs d) s w in
+  let b, b_err = half_ln2 w in
+  let q = Bigint.(div (shift_left a w) b) in
+  let q = if Bigint.sign d < 0 then Bigint.neg q else q in
+  ( Bigint.(shift_left (of_int (Int.add e k)) w + q),
+    Bigint.of_int ((3 * (a_err + b_err)) + 2),
+    -w )
+
+(* [exp2_fixed z z_err w] is [2^(z * 2^-w)] as [ziv] takes it, where [z] is
+   within [z_err] units of the exponent: [2^k * e^t] for [k] the floor of the
+   exponent and [t] its fraction times ln 2, [0 <= t < 0.7], by its series,
+   each term truncated from the last. With [t]'s error [t_err], a term's error
+   stays below [t_err + 3] and the terms dropped sum below [2 (t_err + 3)]; an
+   exponent's error of one unit moves the result, below [2^(k+1)], by under 2
+   units. [k] saturates at [+-2000], where the power rounds to an infinity or
+   0 as it does past them. *)
+let exp2_fixed z z_err w =
+  let k = Bigint.shift_right z w in
+  let frac = Bigint.(z - shift_left k w) in
+  let h, h_err = half_ln2 w in
+  let t = Bigint.(shift_right (frac * shift_left h 1) w) in
+  let t_err = (2 * h_err) + 1 in
+  let one = Bigint.shift_left Bigint.one w in
+  let rec series acc term n =
+    let next = n + 1 in
+    let term = Bigint.(div (shift_right (term * t) w) (of_int next)) in
+    if Bigint.sign term = 0 then (acc, n)
+    else series Bigint.(acc + term) term (n + 1)
+  in
+  let sum, terms = series one one 0 in
+  let k = Bigint.(to_int (max (of_int (-2000)) (min (of_int 2000) k))) in
+  let series_err = ((terms + 3) * (t_err + 3)) + 1 in
+  let err = Bigint.(of_int series_err + shift_left z_err 1) in
+  (sum, err, k - w)
+
+(* [x], a finite nonzero float, as [(m, e)] with [x = m * 2^e] *)
+let mantissa x =
+  let f, e = Float.frexp x in
+  (Bigint.of_float (Float.ldexp f 53), e - 53)
+
+(* [log2 x] for [x > 0], of an integer past the greatest float from its value,
+   as for any other operand from the float nearest it. *)
+let py_log2 (x : Dtype.value) =
+  match x with
+  | `Float f when not (Float.is_finite f) -> f
+  | _ ->
+      let f = Value.to_float x in
+      let m, e = if Float.is_finite f then mantissa f else (Value.to_z x, 0) in
+      if Bigint.popcount m = 1 then Float.of_int (e + Bigint.numbits m - 1)
+      else ziv (log2_fixed m e)
+
+let py_exp2 (x : Dtype.value) : Dtype.value =
+  match x with
+  | (`Bool _ | `Int _) when Bigint.geq (Value.to_z x) Bigint.zero ->
+      `Int (Bigint.shift_left Bigint.one (Value.to_int x))
+  | _ ->
+      let f = Value.to_float x in
+      (* past these, 2^x rounds to an infinity or to 0 *)
+      if not (Float.is_finite f) then `Float (Float.pow 2. f)
+      else if f > 1024. then `Float Float.infinity
+      else if f < -1076. then `Float 0.
+      else if Float.is_integer f then `Float (Float.ldexp 1. (Float.to_int f))
+      else
+        let m, e = mantissa f in
+        (* [x * 2^w], exact where [x] has no bits below [2^-w], else floored *)
+        let fixed w =
+          let s = e + w in
+          if s >= 0 then exp2_fixed (Bigint.shift_left m s) Bigint.zero w
+          else exp2_fixed (Bigint.shift_right m (-s)) Bigint.one w
+        in
+        `Float (ziv fixed)
+
+(* The integer whose [q]th power is [n >= 0], if there is one. *)
+let iroot n q =
+  let rec search lo hi =
+    if Bigint.geq lo hi then lo
+    else
+      let mid = Bigint.(shift_right (lo + hi) 1) in
+      if Bigint.lt (Bigint.pow mid q) n then search (Bigint.succ mid) hi
+      else search lo mid
+  in
+  let top = Bigint.shift_left Bigint.one ((Bigint.numbits n / q) + 1) in
+  let r = search Bigint.zero top in
+  if Bigint.equal (Bigint.pow r q) n then Some r else None
+
+(* [x] as [(m, e)], [x = m * 2^e] with [m] odd, for a finite [x <> 0]. *)
+let odd_mantissa x =
+  let m, e = mantissa x in
+  let z = Bigint.trailing_zeros m in
+  (Bigint.shift_right m z, e + z)
+
+(* [|x|^y] for finite [x <> 0] and [y <> 0], where [x < 0] only with an integer
+   [y]. With [|x| = mx * 2^ex] and [y = a / 2^tb], [mx] and [a] odd or [tb] 0:
+
+   - a power of two, [mx = 1], is [2^(ex y)], exact where [ex y] is an
+     integer;
+   - [ziv] ends unless the power is halfway between two floats, an odd integer
+     of 54 bits times a power of two: so a power [r^a * 2^(ex y)] for
+     [mx = r^(2^tb)], [a > 0] and [r^a] below [2^54] is computed exactly. Any
+     other power is a float, or no float and no midpoint, or irrational;
+   - [ziv] computes it as [2^(y log2 |x|)], the logarithm to [log2 |y|] more
+     bits. Where the exponent is past 1100 in magnitude, the power is an
+     infinity or 0. *)
+let float_pow fx fy =
+  let mx, ex = odd_mantissa (Float.abs fx) in
+  let my, ey = odd_mantissa (Float.abs fy) in
+  let a = if fy < 0. then Bigint.neg my else my in
+  let a = Bigint.shift_left a (Int.max 0 ey) in
+  let tb = Int.max 0 (-ey) in
+  let ex_a = Bigint.(of_int ex * a) in
+  let exact_root () =
+    let nb = Bigint.numbits mx and cap = 54 lsl tb in
+    if
+      tb > 6 || Bigint.sign a <= 0 || ex mod (1 lsl tb) <> 0
+      || Bigint.(geq (of_int (Int.pred nb) * a) (of_int cap))
+    then None
+    else Option.map (fun r -> (r, Bigint.to_int a)) (iroot mx (1 lsl tb))
+  in
+  if Bigint.equal mx Bigint.one && Bigint.trailing_zeros ex_a >= tb then
+    let k = Bigint.shift_right ex_a tb in
+    if Bigint.gt k (Bigint.of_int 1023) then Float.infinity
+    else if Bigint.lt k (Bigint.of_int (-1076)) then 0.
+    else Float.ldexp 1. (Bigint.to_int k)
+  else
+    match exact_root () with
+    | Some (r, a) -> round_scaled (Bigint.pow r a) (a * (ex asr tb))
+    | None ->
+        let w0 = 64 in
+        let l, l_err, _ = log2_fixed mx ex w0 in
+        (* past 1100 in magnitude by a lower bound, the exponent saturates *)
+        let low = Bigint.(abs l - l_err) in
+        let bound = Bigint.shift_left (Bigint.of_int 1100) (w0 + tb) in
+        if Bigint.gt Bigint.(low * abs a) bound then
+          if Bigint.sign l = Bigint.sign a then Float.infinity else 0.
+        else
+          let grow = Int.max 0 (Bigint.numbits a - tb) in
+          ziv (fun w ->
+              let wl = w + grow in
+              let l, l_err, _ = log2_fixed mx ex wl in
+              let z = Bigint.(shift_right (l * a) tb) in
+              let z_err = Bigint.(shift_right (abs a * l_err) tb + of_int 2) in
+              exp2_fixed z z_err wl)
+
 let py_pow (x : Dtype.value) (y : Dtype.value) : Dtype.value =
   match (x, y) with
   | (`Bool _ | `Int _), (`Bool _ | `Int _) ->
@@ -2303,15 +2526,19 @@ let py_pow (x : Dtype.value) (y : Dtype.value) : Dtype.value =
   | _ ->
       let fx = Value.to_float x and fy = Value.to_float y in
       (* C's pow is Python's, except that a zero to a negative power raises in
-         Python, which the folding catches as an infinity. *)
+         Python, which the folding catches as an infinity. Where an operand is
+         a zero, an infinity or a NaN, and for a negative [x] to a power that is
+         not an integer, C's pow gives the value IEEE states. *)
       if Float.equal fx 0. && fy < 0. then `Float Float.infinity
-      else `Float (Float.pow fx fy)
-
-let py_exp2 (x : Dtype.value) : Dtype.value =
-  match x with
-  | (`Bool _ | `Int _) when Bigint.geq (Value.to_z x) Bigint.zero ->
-      `Int (Bigint.shift_left Bigint.one (Value.to_int x))
-  | _ -> `Float (Float.pow 2. (Value.to_float x))
+      else if
+        Float.equal fx 0. || Float.equal fy 0.
+        || (not (Float.is_finite fx && Float.is_finite fy))
+        || (fx < 0. && not (Float.is_integer fy))
+      then `Float (Float.pow fx fy)
+      else
+        let p = float_pow fx fy in
+        let odd = fx < 0. && not (Float.is_integer (fy /. 2.)) in
+        `Float (if odd then -.p else p)
 
 (* pi/2 rounded to [half_pi_bits] bits after the point. Its error times the
    greatest quotient of a float by pi/2, about 2^1024, is far below the smallest
@@ -2324,18 +2551,6 @@ let half_pi =
      b6aecc4bcfd8de89885d34c6fdad617feb96de80d6fdbdc70d7f6b5133f4b5d3e4\
      822f8963fcc9250cca3d9c8b67b8400f97142c77e0b31b4906c38aba734d22c7f5\
      1fa499ebf06caba47b9475b2c38c5e6ac410b"
-
-(* [n * 2^-p] rounded to the nearest float, ties to even, for a positive [n]
-   whose value is a normal float. The bits below the 64 kept are folded into the
-   last kept one, so that rounding them once is rounding [n]. *)
-let float_of_fixed n p =
-  let drop = Int.max 0 (Bigint.numbits n - 64) in
-  let top = Bigint.shift_right n drop in
-  let sticky =
-    if Bigint.equal (Bigint.shift_left top drop) n then top
-    else Bigint.logor top Bigint.one
-  in
-  Float.ldexp (Bigint.to_float sticky) (drop - p)
 
 (* The bits [sine] keeps of a reduced argument. *)
 let sine_precision = 192
@@ -2375,7 +2590,7 @@ let sine x =
        sign of [rem]. *)
     let quadrant = Bigint.to_int (Bigint.logand k (Bigint.of_int 3)) in
     let y =
-      float_of_fixed (if quadrant land 1 = 0 then sin_r () else cos_r ()) p
+      round_scaled (if quadrant land 1 = 0 then sin_r () else cos_r ()) (-p)
     in
     let negative =
       quadrant >= 2 <> (quadrant land 1 = 0 && Bigint.sign rem < 0)
@@ -2415,8 +2630,7 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
   match op with
   | Op.Log2 ->
       unary (fun x ->
-          if Value.( < ) (`Int Bigint.zero) x then
-            `Float (Float.log2 (Value.to_float x))
+          if Value.( < ) (`Int Bigint.zero) x then `Float (py_log2 x)
           else if Value.( = ) x (`Int Bigint.zero) then `Float Float.neg_infinity
           else `Float Dtype.nan)
   | Op.Exp2 -> unary py_exp2

@@ -9,30 +9,10 @@ let str pp x = Format.asprintf "%a" pp x
 
 (* exec_alu *)
 
-(* The goldens hold correctly rounded values, and tolk computes these
-   operations with the host's C library, which can be one unit from them:
-   glibc's pow, which exp2 calls as [pow 2. x], is for about one x in a
-   thousand. A result agrees within one. The sine is tolk's own, correctly
-   rounded, and agrees exactly. *)
-let host_libm = Op.[ Log2; Exp2; Pow ]
-
-let within_ulp =
-  let near a b =
-    Float.equal a b
-    || Float.equal (Float.succ a) b
-    || Float.equal (Float.pred a) b
-  in
-  Testable.make ~pp:(Testable.pp const) ~equal:(fun c0 c1 ->
-      match (c0, c1) with
-      | `Float a, `Float b -> near a b
-      | _ -> Testable.equal const c0 c1)
-
 let alu_row cell =
   let o = op_of_cell (cell "op") and dt = dtype_of_cell (cell "dtype") in
   let args = consts_of_cell (cell "operands") in
-  let w = if List.exists (Op.equal o) host_libm then within_ulp else const in
-  expect w const_of_cell (cell "result") (fun () ->
-      Ops.exec_alu o dt args)
+  expect const const_of_cell (cell "result") (fun () -> Ops.exec_alu o dt args)
 
 let alu dt o args = Ops.exec_alu o dt args
 let exact dt o args = Ops.exec_alu ~truncate_output:false o dt args

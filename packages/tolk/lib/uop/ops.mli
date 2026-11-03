@@ -590,16 +590,19 @@ val exec_alu :
     [-1]. Out-of-domain values follow IEEE: [log2 0.] is [-inf], [sqrt] of a
     negative is NaN, [1. /. 0.] is an infinity of the operand's sign, [sin] of
     an infinity is NaN, and an overflowing [exp2] or [pow] is the infinity IEEE
-    gives. The NaN of an operation none of whose operands is NaN is
-    {!Dtype.nan}, whatever the host gives. {!Op.Fdiv} is IEEE division: a zero
-    divisor gives an infinity of the quotient's sign, and [0. /. 0.] is NaN.
-    {!Op.Trunc} of a float is IEEE's, a float of its operand's sign:
-    [trunc (-0.5)] is [-0.]. {!Op.Max} is [y] if [x < y] and [x] otherwise, as
-    compiled code computes it, so a NaN wins only as the first operand. A binary
-    operation on [`Invalid] is [`Invalid]. {!Op.Where} is the branch it picks,
-    [`Invalid] included; its condition must not be [`Invalid]. {!Op.Where} and
-    {!Op.Neg} convert nothing: truncated, a float NaN they give is
-    {!Dtype.val-const} of [dt], which keeps the operand's sign, flipped by
+    gives. A float [log2], [exp2] and [pow] are correctly rounded to a double,
+    ties to even, and [sin] is but where rounding it needs more than 192 bits
+    past its argument's reduction; each is the same on every host. The NaN of
+    an operation none of whose operands is NaN is {!Dtype.nan}, whatever the
+    host gives. {!Op.Fdiv} is
+    IEEE division: a zero divisor gives an infinity of the quotient's sign, and
+    [0. /. 0.] is NaN. {!Op.Trunc} of a float is IEEE's, a float of its
+    operand's sign: [trunc (-0.5)] is [-0.]. {!Op.Max} is [y] if [x < y] and
+    [x] otherwise, as compiled code computes it, so a NaN wins only as the first
+    operand. A binary operation on [`Invalid] is [`Invalid]. {!Op.Where} is the
+    branch it picks, [`Invalid] included; its condition must not be [`Invalid].
+    {!Op.Where} and {!Op.Neg} convert nothing: truncated, a float NaN they give
+    is {!Dtype.val-const} of [dt], which keeps the operand's sign, flipped by
     {!Op.Neg}, and its payload, a signalling NaN staying one, in a float of 16
     bits or more.
 

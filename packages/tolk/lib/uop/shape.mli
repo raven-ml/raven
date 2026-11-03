@@ -605,9 +605,9 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
       integer, [0] or at least [1] in magnitude, is a product of powers of [x],
       its reciprocal and its square root, a float half-integer power being [+0.]
       at [-0.] and [+inf] at [-inf]; [c ** x] is [1] of the power's type if
-      [c = 1], and [exp2 (x * log2 c)] for positive finite [c]; a 64-bit
-      integer packed from two 32-bit halves and unpacked again is the half
-      read;
+      [c = 1], and [exp2 (x * log2 c)] for positive finite [c], [log2 c]
+      correctly rounded ({!Ops.exec_alu}); a 64-bit integer packed from two
+      32-bit halves and unpacked again is the half read;
     - {b selections}: a selection between equal values is that value, and a
       selection by a constant is the branch it picks, keeping the selection's
       type;

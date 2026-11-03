@@ -564,7 +564,15 @@ let powers =
           let n = Shape.param 5 Dtype.Int32 in
           folds_to
             (Ops.pow (Ops.float 3.) n)
-            (Ops.exp2 Ops.O.(Ops.cast n Weak_float * float (Float.log2 3.))));
+            (Ops.exp2 Ops.O.(Ops.cast n Weak_float * float 1.584962500721156)));
+      (* log2 0.86 correctly rounded, which glibc's log2 gives one unit away,
+         as -0.2175914350726268. *)
+      test "c ** x multiplies x by log2 c correctly rounded" (fun () ->
+          let n = Shape.param 5 Dtype.Int32 in
+          folds_to
+            (Ops.pow (Ops.float 0.86) n)
+            (Ops.exp2
+               Ops.O.(Ops.cast n Weak_float * float (-0.21759143507262677))));
       test "an integer x ** c stays a power for a negative c" (fun () ->
           let p = symbolic (Ops.alu x Op.Pow [ Ops.int ~dtype:Int32 (-2) ]) in
           equal string "POW" (Op.name (Ops.op p));
