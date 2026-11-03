@@ -1034,6 +1034,16 @@ let divisible_by_32 k axis =
   | Ops.Int n -> n mod 32 = 0
   | _ -> false
 
+(* Whether a store of [k] writes the axis [axis] at unit stride. *)
+let stored_at_unit_stride k axis =
+  let r = List.nth (K.rngs k) axis in
+  List.exists
+    (fun u ->
+      Ops.op u = Op.Store
+      && List.memq r
+           (Ops.split_uop (Ops.get_idx (Ops.nth (Ops.nth u 0) 1)) Op.Add))
+    (Ops.toposort ~calls:Skip (K.ast k))
+
 let doubles =
   let rows =
     List.concat_map
@@ -1053,6 +1063,7 @@ let doubles =
             match first_upcast s with
             | Some (axis, 16)
               when floats && divisible_by_32 input axis
+                   && stored_at_unit_stride input axis
                    && Heuristic.held_registers s (registers file)
                       = fst file / 2 ->
                 Some (name, k, file, s)
@@ -1607,6 +1618,120 @@ let decode_bound =
         ~than:((rows + 15) / 16 * copies)
         (loading o * copies))
 
+(* On the host, the rows of a decoded product share one decode of each value:
+   as many as divide [R], at most 16, and keep their accumulators within the
+   budget, one register a row, since the rows' stores lie apart. *)
+let rec largest_dividing n at_most =
+  if n mod at_most = 0 then at_most else largest_dividing n (at_most - 1)
+
+let host_decodes rows file =
+  rows / largest_dividing rows (min 16 (fst file / 2))
+
+(* The times [o] decodes each code on the host: the product of its output
+   loops absent from a load's index. *)
+let host_loading o =
+  List.fold_left
+    (fun n a ->
+      max n
+        (List.fold_left
+           (fun t r ->
+             if Ops.Nodes.mem r (Ops.ranges a) then t
+             else t * Bigint.to_int (size r))
+           1
+           (ranges_at o ~reduce:false [ Global; Weak; Loop ])))
+    0 (code_loads o)
+
+let host_decoded file (rows, dtype) =
+  optimized (kernel (Printf.sprintf "decoded_rows_%d_%s" rows dtype)) file
+
+let host_decode_cases =
+  let rows =
+    List.concat_map
+      (fun file -> List.map (fun r -> (r, file)) decoded_rows)
+      files
+  in
+  cases "on the host the rows of a decoded product share its decodes"
+    ~id:(fun ((rows, dtype), file) ->
+      Printf.sprintf "%d %s on %s" rows dtype (file_id file))
+    rows
+    (fun (r, file) ->
+      let o = host_decoded file r in
+      equal
+        ~msg:
+          (Format.asprintf "%a" (Format.pp_print_list Opt.pp)
+             (K.applied_opts o))
+        int
+        (host_decodes (fst r) file)
+        (host_loading o))
+
+(* A host that knows no registers shares a decode over at most 4 rows. *)
+let unbudgeted_decodes =
+  let host_row =
+    List.find
+      (fun cell -> cell "renderer" = "cpu")
+      (Golden.rows "renderers.golden")
+  in
+  let ren =
+    Kernel_opts.renderer_of_row (fun column ->
+        if column = "registers" then "" else host_row column)
+  in
+  cases "on a host that knows no registers the rows share at most 4 decodes"
+    ~id:(fun (rows, dtype) -> Printf.sprintf "%d %s" rows dtype)
+    decoded_rows
+    (fun (rows, dtype) ->
+      let s =
+        K.v (kernel (Printf.sprintf "decoded_rows_%d_%s" rows dtype)) ren
+      in
+      K.convert_loop_to_global s;
+      equal int
+        (rows / largest_dividing rows 4)
+        (host_loading (Heuristic.hand_coded_optimizations s)))
+
+(* Blocks of [d] rows that read their expert's matrix as [r / d]: the rows
+   axis, the kernel's first, takes the largest amount up to 16 that divides
+   [d] and fits, one register a row. *)
+let routed_rows =
+  let rows =
+    List.concat_map
+      (fun d -> List.map (fun file -> (d, file)) files)
+      [ 16; 32; 64; 128 ]
+  in
+  cases "on the host blocks of rows that read one matrix share its decodes"
+    ~id:(fun (d, file) -> Printf.sprintf "blocks of %d on %s" d (file_id file))
+    rows
+    (fun (d, file) ->
+      let o = optimized (kernel (Printf.sprintf "routed_run_%d" d)) file in
+      let a = largest_dividing d (min 16 (fst file / 2)) in
+      equal
+        (option Kernel_opts.opt)
+        (Some
+           (Opt.Split { axis = 0; amount = a; target = Opt.Upcast; top = false }))
+        (List.nth_opt (K.applied_opts o) 0))
+
+(* A file of no fewer registers, each no narrower, decodes a value no more
+   times. *)
+let host_decodes_monotone =
+  let wider (c0, b0) (c1, b1) = c0 <= c1 && b0 <= b1 && (c0, b0) <> (c1, b1) in
+  let pairs =
+    List.concat_map
+      (fun f ->
+        List.filter_map
+          (fun g -> if wider f g then Some (f, g) else None)
+          files)
+      files
+  in
+  let rows =
+    List.concat_map (fun r -> List.map (fun p -> (r, p)) pairs) decoded_rows
+  in
+  prop "on the host a larger register file decodes a value no more times"
+    ~count:0 ~examples:rows (Gen.of_list rows)
+    (fun (r, (small, large)) ->
+      let fewer = host_loading (host_decoded large r)
+      and more = host_loading (host_decoded small r) in
+      cover "fewer decodes" (fewer < more);
+      cover "as many" (fewer = more);
+      at_most int ~than:more fewer)
+
 (* Rows padded into passes and float32 rows streamed compute what the kernel
    computes: small decoded products, which the suite evaluates, on each GPU
    renderer but on a tensor core, whose product it cannot evaluate. *)
@@ -1677,6 +1802,13 @@ let () =
            [ lane_cases; conversion_cases; conversions_bounded ];
          group "the tensor core's floor" [ floored ];
          decode_bound;
+         group "the host's decodes"
+           [
+             host_decode_cases;
+             unbudgeted_decodes;
+             routed_rows;
+             host_decodes_monotone;
+           ];
          decoded_writes;
          range_types;
        ])

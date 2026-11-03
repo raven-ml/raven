@@ -54,6 +54,7 @@ Jit/donated-step-4096	wall_time	batch=4096	n=20	1.504e-06	1.486e-06 1.491e-06 1.
 Jit/eigh-float32-64x8x8	alloc_words	exact	860
 Jit/eigh-float32-64x8x8	wall_time	batch=64	n=20	1.206e-04	1.153e-04 1.153e-04 1.153e-04 1.153e-04 1.154e-04 1.156e-04 1.158e-04 1.158e-04 1.173e-04 1.176e-04 1.236e-04 1.237e-04 1.237e-04 1.237e-04 1.237e-04 1.239e-04 1.240e-04 1.247e-04 1.247e-04 1.259e-04
 Jit/experts-mxfp4-16x4of32-256	alloc_words	exact	822
+Jit/experts-mxfp4-512x4of32-256	alloc_words	exact	822
 Jit/fft-4096	alloc_words	exact	697
 Jit/fft-4096	wall_time	batch=64	n=20	9.532e-05	8.130e-05 8.142e-05 8.190e-05 8.211e-05 8.223e-05 8.229e-05 8.262e-05 8.301e-05 8.828e-05 8.855e-05 1.021e-04 1.022e-04 1.025e-04 1.036e-04 1.037e-04 1.037e-04 1.039e-04 1.039e-04 1.062e-04 1.101e-04
 Jit/gather-4096	alloc_words	exact	819

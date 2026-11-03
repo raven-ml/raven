@@ -65,12 +65,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML
 - compile speed: float64 sin/cos inline the full Payne–Hanek reduction
   (40-170 KB kernels); Metal builds run one at a time
-- the host after D163's decode count (4dab9494e): inlined decoded
-  products lose on the host (dense MXFP4 1024² 3-5x slower, a 256-wide MoE
-  layer at 512 tokens 60-67 against 30-36 ms, fudge under load), because
-  the host's codegen shares a decode over 4 rows, not 16; the scheduler
-  stays target-free, so the fix is the host's tile sharing more rows, or a
-  measured case for a target's exchange rate in rangeify
 - dune's watch server goes stale on files a rebase or checkout rewrites
   (reported missing, or the old version built): dune keys a directory's
   listing on the directory's stat and keeps it across server restarts, so

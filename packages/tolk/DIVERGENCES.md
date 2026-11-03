@@ -2397,37 +2397,57 @@ Withdrawn: multi-device is out of scope, see README.
 The host's upcast lanes stayed within 32; merged into D186, which counts the
 host's accumulators in its vector registers.
 
-## D92. On the host, a decoded operand shared by a run of an output axis is decoded once a run
+## D92. On the host, a decoded operand's rows share its decodes as the registers allow
 
 - **tinygrad:** `codegen/opt/heuristic.py:111-137` (`hand_coded_optimizations`'
   upcasts of output axes, which find reuse only on an axis that some access
   does not read, and take 3 or 4 values of it).
-- **tolk:** `Heuristic.run_cap`, `Heuristic.run`, `Heuristic.decoded`,
-  `Heuristic.upcast_runs` and its place in `Heuristic.general`;
-  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
-  are recorded.
+- **tolk:** `Heuristic.share_decodes`, `Heuristic.unbudgeted_rows`,
+  `Heuristic.run`, `Heuristic.decoded` and `share_decodes`' place in
+  `Heuristic.general`; `test/gen/tinygrad.patch`, which gives tinygrad the
+  same before the goldens are recorded.
 - **Differs:** on the host (`target.device = "CPU"`), before the other
-  rules, an output axis that an operand of the summed product of the
-  contraction (D89) reads only as `r / d` is upcast by the largest amount up
-  to 4 that divides both `d` and the axis, when that operand is decoded: its
-  value converts integers it reads into floats, by a cast or a bitcast,
-  outside any access's address. The axis's lanes then share the operand's
-  value. With several such axes, each is upcast. On a GPU a streamed
-  contraction takes the run as a term of the operand's reuse (D89),
-  whatever the operand's type; one that does not stream takes no run.
-- **Reason:** (d): `Nx.map_segments` over `Nx_quant.apply` on a prompt, on
-  the host, which sorts positions by expert into blocks of 16 rows that read
-  their block's matrix, `owner[row / 16]`: every row decoded the matrix's
-  MXFP4 codes and scales again, the row axis reaching the matrix through the
-  gather. On fudge, kaun's `Quant/host/routed-product-64-tokens` takes
-  195-226 ms a call upcast by 4 (`r_88_1920_4_3_180_2_8`); without it its
-  product kernel (`r_352_1920_3_180_2_8`) alone takes 6.0-6.9 s.
+  rules, each output axis along which `f > 1` outputs read each value of a
+  decoded operand of the summed product of the contraction (D89) at one
+  index, `f` the axis's size where the operand does not read it and `d`
+  where it reads it only as `r / d`, is upcast, later axes first, by the
+  largest amount up to 16 that divides the axis and one such operand's `f`
+  and keeps the kernel within the host's budget (D186's registers and D241's
+  conversions). An operand is decoded when its value converts integers it
+  reads into floats, by a cast or a bitcast, outside any access's address.
+  The axis's lanes then share one decode of each value. A host renderer
+  that does not know its registers takes at most 4. On a GPU a streamed contraction takes the
+  same reuse as a term of the operand's reuse (D89), whatever the operand's
+  type; one that does not stream takes no run.
+- **Reason:** (d): a product with a decoded matrix decodes each value once
+  for each tile of the rows that read it, and on the host, where D163
+  inlines the decode into the product, tinygrad's 4 rows decoded a value 16
+  times at 64 rows. Upcast first and bounded by the budget, the rows take 8
+  on a file of 16 registers (one register a row: their stores lie apart),
+  and the columns' upcast of 4 still fits beside them: BLIS's fusing factor,
+  "as large ... as possible, given the constraints of the floating-point
+  datatype and the size of the architecture's register set" (Van Zee and
+  van de Geijn, TOMS, §4.3). On fudge's AVX2, one P-core, interleaved, the
+  kernels of kaun's `Quant/host/mxfp4-product-of-1024-{10,64}-bfloat16-tokens`
+  took 4.29 and 18.6 ms with 4 rows and take 2.90 and 15.1 ms; float32
+  rows 3.46 and 16.3 ms, now 2.27 and 12.05 ms, against 2.6 and 8.5 ms for the decode
+  stored and the 4-row product; rune's `Jit/experts-mxfp4-512x4of32-256`
+  64.3-64.7 ms, now 48-53 ms. Past the budget, 16 rows by 4 columns took
+  13.7 and 54-56 ms at 64 rows and 512 tokens, 8 rows by 8 columns 13.3 and
+  54-58, 16 rows by 2 columns 14.6 and 65. Files of 32 registers (NEON,
+  AVX-512) take 16 rows unmeasured. Before D163's dropped digit,
+  `Nx.map_segments` over `Nx_quant.apply` on a prompt took 195-226 ms with
+  blocks of 16 rows upcast by 4 against 6.0-6.9 s without.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, cases `routed_blocks_cpu` and
-  `routed_tiles_cpu`, recorded from the equally patched tinygrad, and `the
-  hand-coded optimisations keep a kernel's writes › large kernels ›
-  routed_blocks_*` (slow); on fudge, kaun's `Quant/host/routed-product-*`
-  rows.
+  tinygrad's › applied_opts`, cases `routed_*_cpu` and `routed_*_avx2`,
+  recorded from the equally patched tinygrad; `the host's decodes`: the
+  decodes of products of 1 to 512 rows on four register files and on a host
+  without registers, blocks of 16 to 128 rows on four files, and a larger
+  file decoding no more times; `the hand-coded optimisations keep a
+  kernel's writes › large kernels › routed_blocks_*` (slow); on fudge,
+  kaun's `Quant/host/mxfp4-product-of-1024-*` and
+  `Quant/host/routed-product-64-tokens`, and rune's
+  `Jit/experts-mxfp4-512x4of32-256`.
 
 ## D93. The where-closure rule leaves loads alone, and its slice queries walk no more than they need
 
@@ -4415,10 +4435,10 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   is never split. Reduction ranges keep their count:
   the MXFP4 scales' `k // 32` counts 32. Rangeify counts without the target:
   what a tile shares is the codegen's, and a target that shares fewer lanes
-  computes the value again more often than counted, as the host does
-  (Reason).
+  computes the value again more often than counted.
   On a GPU the codegen owes that sharing, and states it: D230's bound of
-  `ceil(R / 16)` decodes a value.
+  `ceil(R / 16)` decodes a value. On the host it shares a decode over as
+  many rows as its registers hold (D92).
 
   A sum over one range that selects one trip, where an index equals the
   range, as a routed product's rows select their expert's matrix, counts
@@ -4576,15 +4596,11 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   takes them to the cores (4.66-4.68 ms). Of float32 rows, which no core
   takes on CUDA, the general rules shared only their upcast of 4 rows and
   decoded each value 16 times at 64 rows; streamed past a reuse of 32
-  (D230), 64 rows take 4.98-6.68 ms, under the stored decode's 9.6. The
-  cost is the host's, whose tiles
-  share 3 or 4 lanes of a digit or none, so an inlined decode runs about 4
-  times a value per 16-row block and 10 to 15 times in a dense product: at
-  a load of 67 to 76, MXFP4 products of 1024 by 1024 take 1.5-2.5 ms
-  against 0.28-0.48 ms at 10 rows and 5.9-11.1 ms against 1.5-2.3 ms at 64
-  (ranges overlapping), and a MoE layer 256 wide at 512 tokens 60-67 ms
-  against 30-36 ms (apart in two rounds). Deciding for the host needs the
-  target's operations per byte, which the scheduler does not take.
+  (D230), 64 rows take 4.98-6.68 ms, under the stored decode's 9.6. On
+  the host, whose tiles then shared 4 rows of a digit, an inlined decode ran
+  about 4 times a value per 16-row block and 10 to 16 times in a dense
+  product, and lost to the stored decode; its tile now shares the rows its
+  registers hold (D92), with the scheduler kept target-free.
   Across kernels, (d) too: ymir's aperture gradient (`aperture-104/
   compiled-grad`) computes the transform of the aperture's centre, a value
   of no range of about 3,000 nodes, in 18 kernels. Stored where its copies
@@ -5542,7 +5558,8 @@ and an initial value is added after it (D260).
     registers of 4: a partial unroll holds nothing, a whole one its lanes
     while another reduce of the loop still loops.
   Other devices, and a host renderer that knows no registers (riscv64's),
-  upcast and unroll as tinygrad does. The register file is the compile target's,
+  upcast and unroll as tinygrad does, after D92's rows of a decoded operand,
+  at most 4. The register file is the compile target's,
   which the compiler's cache key holds, so a program follows the
   instruction set it is compiled for and no fact of the part it runs on.
 - **Reason:** (d): lorenz_simple's step (sofo-raven) and the host's
@@ -6300,8 +6317,8 @@ and an initial value is added after it (D260).
   take 2 passes of 9, padded to 18, where they took 17 of 1. Past a reuse
   of 32, where no core applies, a decoded operand streams, where it took
   the other rules, which share only their upcast of 4 rows: 64 float32 rows
-  decoded each value 16 times, and take 4. The host is exempt: its tiles
-  share 3 or 4 lanes (D163's Reason).
+  decoded each value 16 times, and take 4. The host shares its decodes as
+  its registers allow (D92).
 - **Reason:** (d): MXFP4 products of 16384 by 16384 on fudge's RTX 5000 Ada
   (kaun's `Quant/cuda/mxfp4-product-of-16384-*`, three interleaved rounds
   under the timing lock, GPU shared with other jobs): 17 bfloat16 rows

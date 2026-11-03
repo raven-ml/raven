@@ -120,7 +120,19 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     of its rows: [ceil (R / 8)] times on a core of 8 rows, as Metal's. A core
     whose fragment holds each value of the operand in several lanes
     ({!Tc.fragment}), as RDNA3's holds its [B] in two, decodes it that many
-    times more. The host is exempt: its tiles share 3 or 4 lanes.
+    times more.
+
+    On the host, which streams nothing, a decoded operand's rows share its
+    decodes before the other rules apply. Along an output axis, [f] outputs
+    read each value of a decoded operand at one index: the axis's size where
+    the operand does not read it, [d] where it reads it only as its quotient
+    by [d]. Each such axis, later axes first, is upcast by the largest amount
+    up to 16 that divides the axis and one such operand's [f], and keeps the
+    kernel within the host's budget below (its accumulators and its
+    conversions). Where the rows' stores lie apart, each row's accumulators
+    take registers of their own: a file of 16 registers shares a decode over
+    at most 8 rows, one of 32 over 16. A host that does not know its
+    registers takes at most 4.
 
     Otherwise, in order:
 

@@ -1514,7 +1514,7 @@ index ec97cac6f..10d0946b2 100644
        return tk
  
    # make a copy so it does not mutate the input
-@@ -57,25 +392,21 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -57,25 +392,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1541,21 +1541,24 @@ index ec97cac6f..10d0946b2 100644
 +  # their upcast of 4 rows and decode each value in every other tile
 +  if st is not None and (st[2] <= STREAM_FIRST or decoded(st[0])) and (sk:=stream(k.copy(), *st)) is not None: return sk
 +
-+  # on the host, which streams no contraction, an operand decoded from integer codes that reads an output axis only as r // d is
-+  # decoded once for a run's lanes: the axis is upcast by the largest amount up to RUN_CAP that divides d and the axis
-+  RUN_CAP = 4
-+  if k.ren.target.device == "CPU" and (c:=contraction(k)) is not None:
-+    to_upcast = []
-+    for axis in k.upcastable_dims():
++  # on the host, which streams no contraction, an operand decoded from integer codes is decoded again for each use a tile's lanes do
++  # not share: an output axis along which f outputs read each of its values at one index (the axis's size when it does not read the
++  # axis, d when it reads it only as r // d) is upcast first, later axes first, by the largest amount up to UPCAST_MAX that divides the
++  # axis and one such operand's f and fits the budget, or up to UNBUDGETED_ROWS on a host that does not know its registers
++  UNBUDGETED_ROWS = 4
++  if k.ren.target.device == "CPU" and (c:=contraction(k)) is not None and (operands:=[o for o in c[0].src if decoded(o)]):
++    cap = UPCAST_MAX if host_registers(k) is not None else UNBUDGETED_ROWS
++    for axis in k.upcastable_dims()[::-1]:
 +      if not isinstance(n:=k.full_shape[axis], int): continue
-+      a = max([next((a for a in range(RUN_CAP, 1, -1) if run(o, k.rngs[axis]) % a == 0 and n % a == 0), 1) for o in c[0].src if decoded(o)],
-+              default=1)
-+      if a > 1: to_upcast.append((axis, a))
-+    for axis, a in to_upcast[::-1]: k.apply_opt(Opt(OptOps.SPLIT, axis, (a, AxisType.UPCAST)))
++      r = k.rngs[axis]
++      fs = [run(o, r) if r in o.ranges else n for o in operands]
++      if (a:=next((a for a in range(cap, 1, -1) if n % a == 0 and any(f % a == 0 for f in fs) and host_fits(k, upcast=(axis, a))),
++                  None)) is not None:
++        k.apply_opt(Opt(OptOps.SPLIT, axis, (a, AxisType.UPCAST)))
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,47 +441,106 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,47 +444,106 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1678,7 +1681,7 @@ index ec97cac6f..10d0946b2 100644
      k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
  
    # **** local groups ****
-@@ -172,11 +562,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -172,11 +565,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      else:
        # prioritize making expand axes local
        local_axis_ranking = [(any(k.rngs[axis] not in b.src[1].get_idx().backward_slice for b in k.bufs), axis) \

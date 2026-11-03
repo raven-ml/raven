@@ -1,45 +1,45 @@
 # tinygrad f1d8f0f0def436ee45b3907fc12e30bb1a17d387
 0 Ops.CONST dtypes.weakint [] 16384
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
-2 Ops.CONST dtypes.weakint [] 64
+2 Ops.CONST dtypes.weakint [] 32
 3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
-4 Ops.CONST dtypes.weakint [] 4
+4 Ops.CONST dtypes.weakint [] 8
 5 Ops.MUL dtypes.weakint [3, 4]
 6 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 3)
 7 Ops.ADD dtypes.weakint [5, 6]
-8 Ops.MUL dtypes.weakint [7, 2]
-9 Ops.CONST dtypes.weakint [] 16
-10 Ops.RANGE dtypes.weakint [9] (AxisType.WEAK, 2)
-11 Ops.MUL dtypes.weakint [10, 4]
-12 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 4)
-13 Ops.ADD dtypes.weakint [11, 12]
-14 Ops.ADD dtypes.weakint [8, 13]
-15 Ops.INDEX dtypes.f32 [1, 14]
-16 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=1, dtype=dtypes.bf16, device="CPU")
-17 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 0, 0)
-18 Ops.CONST dtypes.weakint [] 8
-19 Ops.MUL dtypes.weakint [17, 18]
-20 Ops.RANGE dtypes.weakint [18] (AxisType.UPCAST, 6)
-21 Ops.ADD dtypes.weakint [19, 20]
-22 Ops.CONST dtypes.weakint [] 2
-23 Ops.MUL dtypes.weakint [21, 22]
-24 Ops.CONST dtypes.weakint [] 1
-25 Ops.RANGE dtypes.weakint [24] (AxisType.WEAK, 0, 1)
-26 Ops.MUL dtypes.weakint [25, 22]
-27 Ops.RANGE dtypes.weakint [22] (AxisType.UPCAST, 5)
-28 Ops.ADD dtypes.weakint [26, 27]
-29 Ops.ADD dtypes.weakint [23, 28]
-30 Ops.ADD dtypes.weakint [29, 8]
-31 Ops.INDEX dtypes.bf16 [16, 30]
-32 Ops.CAST dtypes.f32 [31] dtypes.f32
-33 Ops.CMPLT dtypes.bool [28, 24]
-34 Ops.CONST dtypes.weakint [] 8192
-35 Ops.PARAM dtypes.u8 [34] ParamArg(slot=2, dtype=dtypes.u8, device="CPU")
-36 Ops.CONST dtypes.weakint [] 32
-37 Ops.MUL dtypes.weakint [13, 36]
-38 Ops.ADD dtypes.weakint [37, 21]
-39 Ops.PARAM dtypes.i32 [4] ParamArg(slot=3, dtype=dtypes.i32, device="CPU")
-40 Ops.DIV dtypes.weakint [7, 2]
+8 Ops.CONST dtypes.weakint [] 64
+9 Ops.MUL dtypes.weakint [7, 8]
+10 Ops.CONST dtypes.weakint [] 16
+11 Ops.RANGE dtypes.weakint [10] (AxisType.WEAK, 2)
+12 Ops.CONST dtypes.weakint [] 4
+13 Ops.MUL dtypes.weakint [11, 12]
+14 Ops.RANGE dtypes.weakint [12] (AxisType.UPCAST, 4)
+15 Ops.ADD dtypes.weakint [13, 14]
+16 Ops.ADD dtypes.weakint [9, 15]
+17 Ops.INDEX dtypes.f32 [1, 16]
+18 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=1, dtype=dtypes.bf16, device="CPU")
+19 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 0, 0)
+20 Ops.MUL dtypes.weakint [19, 12]
+21 Ops.RANGE dtypes.weakint [12] (AxisType.UPCAST, 6)
+22 Ops.ADD dtypes.weakint [20, 21]
+23 Ops.CONST dtypes.weakint [] 2
+24 Ops.MUL dtypes.weakint [22, 23]
+25 Ops.CONST dtypes.weakint [] 1
+26 Ops.RANGE dtypes.weakint [25] (AxisType.WEAK, 0, 1)
+27 Ops.MUL dtypes.weakint [26, 23]
+28 Ops.RANGE dtypes.weakint [23] (AxisType.UPCAST, 5)
+29 Ops.ADD dtypes.weakint [27, 28]
+30 Ops.ADD dtypes.weakint [24, 29]
+31 Ops.ADD dtypes.weakint [30, 9]
+32 Ops.INDEX dtypes.bf16 [18, 31]
+33 Ops.CAST dtypes.f32 [32] dtypes.f32
+34 Ops.CMPLT dtypes.bool [29, 25]
+35 Ops.CONST dtypes.weakint [] 8192
+36 Ops.PARAM dtypes.u8 [35] ParamArg(slot=2, dtype=dtypes.u8, device="CPU")
+37 Ops.MUL dtypes.weakint [15, 2]
+38 Ops.ADD dtypes.weakint [37, 22]
+39 Ops.PARAM dtypes.i32 [12] ParamArg(slot=3, dtype=dtypes.i32, device="CPU")
+40 Ops.DIV dtypes.weakint [7, 8]
 41 Ops.INDEX dtypes.i32 [39, 40]
 42 Ops.CONST dtypes.weakint [] 0
 43 Ops.MAX dtypes.i32 [41, 42]
@@ -52,16 +52,16 @@
 50 Ops.CONST dtypes.weakint [] 2048
 51 Ops.MUL dtypes.weakint [49, 50]
 52 Ops.ADD dtypes.weakint [38, 51]
-53 Ops.INDEX dtypes.u8 [35, 52]
+53 Ops.INDEX dtypes.u8 [36, 52]
 54 Ops.CONST dtypes.weakint [] 15
 55 Ops.AND dtypes.u8 [53, 54]
-56 Ops.SHR dtypes.u8 [53, 4]
-57 Ops.WHERE dtypes.u8 [33, 55, 56]
+56 Ops.SHR dtypes.u8 [53, 12]
+57 Ops.WHERE dtypes.u8 [34, 55, 56]
 58 Ops.CAST dtypes.bf16 [57] dtypes.bf16
 59 Ops.CONST dtypes.weakint [] 512
 60 Ops.PARAM dtypes.bf16 [59] ParamArg(slot=4, dtype=dtypes.bf16, device="CPU")
-61 Ops.MUL dtypes.weakint [13, 22]
-62 Ops.DIV dtypes.weakint [21, 9]
+61 Ops.MUL dtypes.weakint [15, 23]
+62 Ops.DIV dtypes.weakint [22, 10]
 63 Ops.ADD dtypes.weakint [61, 62]
 64 Ops.CONST dtypes.weakint [] 128
 65 Ops.MUL dtypes.weakint [49, 64]
@@ -69,9 +69,9 @@
 67 Ops.INDEX dtypes.bf16 [60, 66]
 68 Ops.MUL dtypes.bf16 [58, 67]
 69 Ops.CAST dtypes.f32 [68] dtypes.f32
-70 Ops.MUL dtypes.f32 [32, 69]
-71 Ops.REDUCE dtypes.f32 [70, 17, 20, 25, 27] (Ops.ADD, 0)
-72 Ops.STORE dtypes.void [15, 71]
-73 Ops.END dtypes.void [72, 3, 6, 10, 12]
-74 Ops.SINK dtypes.void [73] KernelInfo(name="r_64_16_4_4_4_2_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=5, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=4, arg=(8, AxisType.UPCAST))), optimized=True)
+70 Ops.MUL dtypes.f32 [33, 69]
+71 Ops.REDUCE dtypes.f32 [70, 19, 21, 26, 28] (Ops.ADD, 0)
+72 Ops.STORE dtypes.void [17, 71]
+73 Ops.END dtypes.void [72, 3, 6, 11, 14]
+74 Ops.SINK dtypes.void [73] KernelInfo(name="r_32_16_8_4_8_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=5, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=4, arg=(4, AxisType.UPCAST))), optimized=True)
 

@@ -291,6 +291,19 @@ let between dt k lo hi shape =
        (Nx.mul_s (Nx.Rng.uniform ~key:(Nx.Rng.key k) dt shape) (hi -. lo))
        lo)
 
+(* An MXFP4 weight of [shape], its last axis the inputs: codes drawn
+   uniformly, every block's scale 1. *)
+let mxfp4 shape =
+  let n = Array.length shape in
+  let codes = Array.copy shape and scales = Array.copy shape in
+  codes.(n - 1) <- shape.(n - 1) / 2;
+  scales.(n - 1) <- shape.(n - 1) / 32;
+  Nx_quant.mxfp4
+    ~scales:(host (Nx.full Nx.uint8 scales 127))
+    (host
+       (Nx.cast Nx.uint8
+          (Nx.mul_s (between f32 51 0. 1. codes) 255.)))
+
 (* A two-layer perceptron's loss over a batch of 32 rows of 64 inputs, 128
    hidden units and 10 outputs (rune's workload). *)
 let small_mlp = Nx.Ptree.(pair (pair tensor tensor) (pair tensor tensor))
@@ -508,6 +521,8 @@ let jit_rows () =
   let radius = host (Nx.full f64 [| 1 |] 0.7) in
   let experts_ids = positions 64 32 |> Nx.reshape [| 16; 4 |] in
   let experts_x = between f32 52 (-1.) 1. [| 16; 1; 256 |] in
+  let prompt_ids = positions 2048 32 |> Nx.reshape [| 512; 4 |] in
+  let prompt_x = between f32 53 (-1.) 1. [| 512; 1; 256 |] in
   [
     warm "add-1-hit"
       (fun () -> Rune.jit (pair_fn ()) Nx.add)
@@ -601,15 +616,16 @@ let jit_rows () =
        expert's matrix alone. *)
     warm "experts-mxfp4-16x4of32-256"
       (fun () ->
-        let w =
-          Nx_quant.mxfp4
-            ~scales:(host (Nx.full Nx.uint8 [| 32; 256; 8 |] 127))
-            (host
-               (Nx.cast Nx.uint8
-                  (Nx.mul_s (between f32 51 0. 1. [| 32; 256; 128 |]) 255.)))
-        in
+        let w = mxfp4 [| 32; 256; 256 |] in
         Rune.jit (pair_fn ()) (fun ids x -> Nx_quant.apply_experts ~ids w x))
       (fun f -> synced (f experts_ids experts_x));
+    (* The same experts for a prompt of 512 tokens: the rows of a block that
+       share an expert read each of its decoded values. *)
+    warm "experts-mxfp4-512x4of32-256"
+      (fun () ->
+        let w = mxfp4 [| 32; 256; 256 |] in
+        Rune.jit (pair_fn ()) (fun ids x -> Nx_quant.apply_experts ~ids w x))
+      (fun f -> synced (f prompt_ids prompt_x));
     (* The gradient of 8 sines through a remat, compiled: the backward pass
        stores the remat's computed argument and computes the sines again. A
        longer chain takes too long to compile. *)

@@ -995,6 +995,11 @@ word comes from its lock and from samples the dashboard saw arrive.
   that holds workgroup or register storage, a barrier, a tensor core or
   custom code, which it split into threads its buffers were not sized for,
   giving wrong values; the optimisations such a kernel lists still apply.
+- On the host, a product with a decoded matrix (MXFP4, Q8_0) shares each
+  decode over as many rows as the registers hold, up to 16, where 4 rows
+  each decoded it again: 10 and 64 rows by an MXFP4 matrix of 1024 by 1024
+  run 1.5x and 1.2-1.35x faster on one core of AVX2, a prompt's routed
+  experts 1.3x (`Heuristic.hand_coded_optimizations`).
 - On a GPU, a call or custom code runs once for each point of the axes its
   sources read: an axis it does not read takes no threads, which ran it once
   in each (`Postrange.Scheduler.unread_by_opaque`). `n[0] += 1` beside a

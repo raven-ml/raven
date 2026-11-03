@@ -753,51 +753,6 @@ let stream k (w, x, reuse) =
   | Some (`Columns g) -> columns_layout g
   | None -> None
 
-(* Runs on the host
-
-   On the host, which streams no contraction, an operand decoded from integer
-   codes that reads an output axis only as its quotient by [d], a run of [d]
-   rows, is still decoded once for the run's lanes: the axis is upcast by the
-   largest amount up to [run_cap] that divides both [d] and the axis. A
-   prompt's routed MXFP4 product in blocks of 16 rows decodes its block's
-   matrix once for 4 of its rows. *)
-
-(* The most values a run's upcast takes: the largest of upcast_more's
-   amounts. *)
-let run_cap = 4
-
-let upcast_runs k =
-  match contraction k with
-  | None -> ()
-  | Some (m, _) ->
-      let operands = List.filter decoded (src m) in
-      let amount axis =
-        let r = List.nth (K.rngs k) axis in
-        match known_size (shape_at k axis) with
-        | None -> 1
-        | Some n ->
-            List.fold_left
-              (fun a o ->
-                let d = run o r in
-                let rec within a =
-                  if a <= 1 then 1
-                  else if
-                    Bigint.(equal (rem d (of_int a)) zero)
-                    && Bigint.(equal (rem n (of_int a)) zero)
-                  then a
-                  else within (a - 1)
-                in
-                max a (within run_cap))
-              1 operands
-      in
-      (* later axes first, as an upcast of a whole axis removes it *)
-      List.iter
-        (fun axis ->
-          match amount axis with
-          | a when a > 1 -> ignore (split k axis a Opt.Upcast)
-          | _ -> ())
-        (List.rev (K.upcastable_dims k))
-
 (* are we grouping? (requires local shape support) *)
 let group k =
   if
@@ -1599,11 +1554,63 @@ let streams k =
   then streamed k
   else None
 
+(* Decodes on the host
+
+   On the host, which streams no contraction, an operand decoded from integer
+   codes is decoded again for each of its uses that a tile's lanes do not
+   share. Along an output axis that it does not read, or reads only as its
+   quotient by [d], [f] outputs read each of its values at one index: every
+   row of a product reads its matrix, a block of [d] rows its expert's. That
+   axis is upcast first, by the largest amount up to [upcast_max] that
+   divides the axis and one such operand's [f] and keeps the kernel within the
+   budget, so the tile's rows share one decode of each value (BLIS's fusing
+   factor: as many uses of a value loaded into registers as the register set
+   holds). On AVX2, 64 rows by an MXFP4 matrix of 1024 by 1024 take 8 rows,
+   their stores apart, and 4 columns beside them, and decode each value 8
+   times, where 4 rows decoded it 16; a prompt's routed product in blocks of
+   16 rows decodes its block's matrix twice. A host that does not know its
+   registers takes at most [unbudgeted_rows], upcast_more's largest
+   amount. *)
+let unbudgeted_rows = 4
+
+let share_decodes k =
+  match contraction k with
+  | None -> ()
+  | Some (m, _) ->
+      let operands = List.filter decoded (src m) in
+      let cap = if budgeted k then upcast_max else unbudgeted_rows in
+      (* The outputs along [axis], of [n], that read one value of [o]. *)
+      let shared axis n o =
+        let r = List.nth (K.rngs k) axis in
+        if Nodes.mem r (ranges o) then run o r else n
+      in
+      let share axis =
+        match known_size (shape_at k axis) with
+        | None -> ()
+        | Some n -> (
+            let divides f a = Bigint.(equal (rem f (of_int a)) zero) in
+            let shares a =
+              divides n a
+              && List.exists (fun o -> divides (shared axis n o) a) operands
+            in
+            let rec amount a =
+              if a < 2 then None
+              else if shares a && fits ~upcast:(axis, a) k then Some a
+              else amount (a - 1)
+            in
+            match amount cap with
+            | Some a -> ignore (split k axis a Opt.Upcast)
+            | None -> ())
+      in
+      (* later axes first, as an upcast of a whole axis removes it *)
+      if operands <> [] then
+        List.iter share (List.rev (K.upcastable_dims k))
+
 (* The rules for a kernel that is not streamed and takes no tensor core. *)
 let general k =
   (* make a copy so it does not mutate the input *)
   let k = K.copy k in
-  if on_host k then upcast_runs k;
+  if on_host k then share_decodes k;
   group k;
   (* no more opt if we are grouping *)
   if K.group_for_reduces k = 0 then begin
