@@ -1026,7 +1026,20 @@ let rows_loop x =
   in
   table
 
+(* Two carries of [1024; 1024] floats, each updated by its own sines over 8
+   trips. *)
+let two = Nx.Ptree.(pair tensor tensor)
+
+let two_carries ab =
+  let step (a, b) _ =
+    let a = Nx.add_s (Nx.mul_s (Nx.sin a) 0.5) 0.25 in
+    let b = Nx.add_s (Nx.mul_s (Nx.cos b) 0.5) 0.125 in
+    ((a, b), ())
+  in
+  fst (Rune.scan two t Nx.Ptree.unit step ~init:ab (Nx.zeros f32 [| 8; 1 |]))
+
 let jit_loop_rows () =
+  let carried = (normal 19 [| 1024; 1024 |], normal 20 [| 1024; 1024 |]) in
   let state k = normal k [| 64 |] in
   let s = { lx = state 13; ly = state 14; lz = state 15 } in
   let a = between f32 42 0.5 4.5 [| 1024 |] in
@@ -1061,6 +1074,11 @@ let jit_loop_rows () =
       (Printf.sprintf "vmap-newton-%d-lanes-replay" lanes)
       (fun () -> Rune.jit' (Rune.vmap' lane_newton))
       (fun g -> synced (g lanes_a));
+    (* Two independent carries of one domain, each trip's update one kernel:
+       the loop's body runs them as one, under one set of lanes for both. *)
+    warm "scan-two-carries-1024x1024-8-trips"
+      (fun () -> Rune.jit Nx.Ptree.(two @-> returns two) two_carries)
+      (fun g -> synced_all two (g carried));
   ]
 
 (* TrainStep: one compiled training step of a perceptron 784 -> 256 -> 128 ->
@@ -1226,6 +1244,15 @@ let cumsum_at dt shape =
         fun () -> ignore (synced (f x)));
   }
 
+(* [x + s] and [y * s] for [s] made of [p] by 184 steps [s * s - 0.5], two
+   operations each. *)
+let shared_scalar p x y =
+  let s = ref p in
+  for _ = 1 to 184 do
+    s := Nx.sub_s (Nx.mul !s !s) 0.5
+  done;
+  (Nx.add x !s, Nx.mul y !s)
+
 let gpu_rows g =
   if not (opens g) then []
   else
@@ -1280,6 +1307,23 @@ let gpu_rows g =
               let s = Nx.Ptree.(list tensor) in
               let f = Rune.jit Nx.Ptree.(s @-> returns s) selected in
               fun () -> ignore (synced_all s (f gs)));
+        };
+      (* A float32 scalar of 368 operations read by two kernels of other
+         domains: just past the budget past which a scalar several kernels
+         compute is stored once, by a kernel of its own, and read. *)
+      on_gpu g "shared-scalar-368-ops-read-by-two"
+        {
+          at =
+            (fun at ->
+              let p = Nx.place at (Nx.scalar f32 0.3) in
+              let x = Nx.place at (Nx.linspace f32 0. 1. 1024) in
+              let y = Nx.place at (Nx.linspace f32 0. 1. 512) in
+              let f =
+                Rune.jit
+                  Nx.Ptree.(t @-> t @-> t @-> returns (pair t t))
+                  shared_scalar
+              in
+              fun () -> ignore (synced2 (f p x y)));
         };
       on_gpu g "kv-append-4096" (kv_append ~donated:true);
       on_gpu g "kv-append-4096-copied" (kv_append ~donated:false);

@@ -66,6 +66,79 @@ let nuts_step chains =
   Thumper.bench_with_setup ~setup (Printf.sprintf "schools/%d" chains)
     (fun (step, k, s) -> step k s)
 
+(* Eight schools as a hand-written log density of a [chains; 10] position (mu,
+   log tau and theta's standard coordinates), placed at [at]: no site computes
+   eagerly, so a GPU set's init and step both compute under [jit]. *)
+let schools_density at =
+  let place x = Nx.place at (Nx.reshape [| 1; 8 |] x) in
+  let y = place y and sigma = place sigma in
+  fun x ->
+    let mu = Nx.slice [ Nx.A; Nx.R (0, 1) ] x in
+    let s = Nx.slice [ Nx.A; Nx.R (1, 2) ] x in
+    let z = Nx.slice [ Nx.A; Nx.R (2, 10) ] x in
+    let tau = Nx.exp s in
+    let sq a = Nx.mul a a in
+    let lmu = Nx.mul_s (sq (Nx.div_s mu 5.)) (-0.5) in
+    let ltau = Nx.sub s (Nx.log (Nx.add_s (sq (Nx.div_s tau 5.)) 1.)) in
+    let lz = Nx.mul_s (Nx.sum ~axes:[ 1 ] ~keepdims:true (sq z)) (-0.5) in
+    let theta = Nx.add mu (Nx.mul tau z) in
+    let ly =
+      Nx.mul_s
+        (Nx.sum ~axes:[ 1 ] ~keepdims:true (sq (Nx.div (Nx.sub y theta) sigma)))
+        (-0.5)
+    in
+    Nx.reshape [| -1 |] (Nx.add (Nx.add lmu ltau) (Nx.add lz ly))
+
+(* A NUTS transition of {!schools_density} at [at], compiled, from one state of
+   4 chains with one key, which waits for what it computes. A GPU launches the
+   kernels of the transition's loops on every trip, about 500 a transition. *)
+let schools_nuts at =
+  let u = Nx.Ptree.tensor in
+  let lp = schools_density at in
+  let uniform = Nx.Rng.uniform ~key:(Nx.Rng.key 1) Nx.float64 [| 4; 10 |] in
+  let start = Nx.place at (Nx.sub_s (Nx.mul_s uniform 4.) 2.) in
+  let sp = Norn.Nuts.ptree u in
+  let init = Rune.jit Nx.Ptree.(u @-> returns sp) (Norn.Nuts.init u lp) in
+  let step =
+    Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp) (Norn.Nuts.step u lp)
+  in
+  let s = init start in
+  let k = Nx.Rng.place at (Nx.Rng.key 2) in
+  fun () -> Nx.Ptree.fold sp (fun _ x () -> Nx.sync x) (step k s) ()
+
+(* Whether CUDA's first GPU opens, asked of a fresh process: a GPU's driver
+   must not be initialized before the fork that isolates a case. *)
+let cuda_opens () =
+  let exe = Sys.executable_name in
+  let pid =
+    Unix.create_process exe [| exe; "--cuda" |] Unix.stdin Unix.stdout
+      Unix.stderr
+  in
+  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
+
+(* A call made at a placement of any set. *)
+type call = { at : 'd. 'd Nx.Placement.t -> unit -> unit }
+
+(* [c]'s call at CUDA's first GPU. *)
+let on_cuda c =
+  match Rig.open_ (Rig_cuda.gpu 0) with
+  | Error e -> failwith e
+  | Ok gpu ->
+      let module D = (val Nx.devices [ gpu ] : Nx.Devices) in
+      c.at D.on
+
+let nuts = { at = schools_nuts }
+
+(* A NUTS transition of {!schools_density} on CUDA's first GPU, opened and
+   compiled in the worker, from one state with one key. *)
+let cuda_nuts_step =
+  let setup () =
+    let step = on_cuda nuts in
+    step ();
+    step
+  in
+  Thumper.bench_with_setup ~setup "schools-density-cuda/4" (fun step -> step ())
+
 (* An HMC transition, compiled, from one state with one key. The default length
    and step size take one or two leapfrog steps. *)
 let hmc_step chains =
@@ -341,16 +414,75 @@ let posteriordb =
       Thumper.bench_with_setup ~setup p.name (fun (grad, c) -> grad c))
     (Posteriordb.all "../test/model/support/posteriordb.golden")
 
-let () =
+(* Cold compiles: each sample runs this executable again as [--cold id] over
+   an empty disk cache, so a sample is a fresh process's first NUTS transition
+   of {!schools_density}, its init and step traced, lowered and compiled by
+   tolk and the kernel compiler on one domain. A warm process cannot hold this
+   cost: tolk's caches serve a program after its first compile. The [cuda/]
+   case runs on CUDA's first GPU and is left out without one. *)
+let cold_cases =
+  [
+    ("nuts/schools-density-4", fun () -> schools_nuts Nx.Host.on ());
+    ("cuda/nuts/schools-density-4", fun () -> on_cuda nuts ());
+  ]
+
+let rec remove path =
+  if Sys.is_directory path then (
+    Array.iter (fun f -> remove (Filename.concat path f)) (Sys.readdir path);
+    Sys.rmdir path)
+  else Sys.remove path
+
+(* One sample: a fresh process's first call of [id] over an empty disk cache
+   and an empty cache of the GPU driver's binaries. *)
+let cold id () =
+  let dir = Filename.temp_dir "bench-norn-compile" "" in
+  Fun.protect ~finally:(fun () -> remove dir) @@ fun () ->
+  let exe = Sys.executable_name in
+  let env =
+    Array.append
+      [|
+        "CACHEDB=" ^ Filename.concat dir "cache.db";
+        "CUDA_CACHE_PATH=" ^ Filename.concat dir "driver";
+        "PARALLEL=1";
+      |]
+      (Unix.environment ())
+  in
+  let null = Unix.openfile Filename.null [ Unix.O_WRONLY ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close null) @@ fun () ->
+  let pid =
+    Unix.create_process_env exe [| exe; "--cold"; id |] env Unix.stdin null
+      Unix.stderr
+  in
+  match snd (Unix.waitpid [] pid) with
+  | Unix.WEXITED 0 -> ()
+  | _ -> failwith ("bench_norn: the first call of " ^ id ^ " failed")
+
+let compile argv =
+  let cuda = cuda_opens () in
+  let runs id = cuda || not (String.starts_with ~prefix:"cuda/" id) in
+  Thumper.run "compile" ~argv
+    ~config:
+      Thumper.Config.(
+        default |> samples 3 |> warmup 0. |> deadline 300.
+        |> metrics [ Thumper.Metric.wall_time ])
+    ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
+    (List.filter_map
+       (fun (id, _) ->
+         if runs id then Some (Thumper.bench id (cold id)) else None)
+       cold_cases)
+
+let run () =
+  let cuda = if cuda_opens () then [ cuda_nuts_step ] else [] in
   Thumper.run "norn"
     [
       Thumper.group "nuts"
-        [
+        ([
           nuts_step 4;
           nuts_step 64;
           eager_schools eager_nuts;
           eager_gp eager_nuts;
-        ];
+        ]
+        @ cuda);
       Thumper.group "hmc"
         [
           hmc_step 4;
@@ -370,4 +502,19 @@ let () =
       Thumper.group "diag" [ rhat ];
       Thumper.group "posteriordb" posteriordb;
     ]
-  |> exit
+
+let () =
+  match Array.to_list Sys.argv with
+  | [ _; "--cuda" ] ->
+      exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
+  | [ _; "--cold"; id ] -> (
+      match List.assoc_opt id cold_cases with
+      | Some f ->
+          let t0 = Unix.gettimeofday () in
+          f ();
+          Printf.printf "%.3f\n" ((Unix.gettimeofday () -. t0) *. 1000.)
+      | None ->
+          prerr_endline ("bench_norn: no case " ^ id);
+          exit 2)
+  | exe :: "compile" :: rest -> exit (compile (Array.of_list (exe :: rest)))
+  | _ -> exit (run ())
