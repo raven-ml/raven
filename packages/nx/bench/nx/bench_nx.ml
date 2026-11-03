@@ -1575,6 +1575,32 @@ let ragged_rows =
         Nx_ragged.ids;
     ]
 
+(* Nx.attention as a model calls it: a causal prefill of 8 heads of 1024
+   queries and keys of 64 features, in float32 and bfloat16, and a decode step
+   of 64 query heads over 8 key heads of 4096 cached keys. *)
+let attend ?mask (q, k, v) =
+  let o, lse = Nx.attention ?mask ~kv:(Dense { k; v }) q in
+  (Nx.Repr.array o, Nx.Repr.array lse)
+
+let heads dt hq hk tq tk () =
+  ( matrix dt [| 1; hq; tq; 64 |],
+    matrix dt [| 1; hk; tk; 64 |],
+    matrix dt [| 1; hk; tk; 64 |] )
+
+let sdpa_rows =
+  Thumper.group "attention"
+    [
+      Thumper.bench_with_setup "prefill-f32-8x1024x64-causal"
+        ~setup:(heads D.Float32 8 8 1024 1024)
+        (attend ~mask:Nx.causal);
+      Thumper.bench_with_setup "prefill-bf16-8x1024x64-causal"
+        ~setup:(heads D.Bfloat16 8 8 1024 1024)
+        (attend ~mask:Nx.causal);
+      Thumper.bench_with_setup "decode-f32-64x8x4096x64"
+        ~setup:(heads D.Float32 64 8 1 4096)
+        attend;
+    ]
+
 let () =
   exit
   @@ Thumper.run "nx"
@@ -1598,4 +1624,5 @@ let () =
          fft_rows;
          quant_rows;
          ragged_rows;
+         sdpa_rows;
        ]

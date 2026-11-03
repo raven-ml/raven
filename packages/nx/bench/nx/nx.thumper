@@ -12,7 +12,14 @@
 # forced: blessed frontend/rshift-i32-1M quant/q4_k-gemv-4096 quant/q6_k-gemv-4096 under load 28.9 on 14 cores
 # forced: blessed elementwise/add-f32-8x512x512-lanes under load 64.7 on 14 cores
 # forced: blessed order/unique-i32-1M-1000 order/unique-i64-1M-wide ragged/ids-text-64K-of-4-to-20B under load 54.0 on 14 cores
+# forced: blessed attention/prefill-f32-8x1024x64-causal attention/prefill-bf16-8x1024x64-causal attention/decode-f32-64x8x4096x64 under load 18.5 on 14 cores
 
+attention/decode-f32-64x8x4096x64	alloc_words	exact	2904
+attention/decode-f32-64x8x4096x64	wall_time	batch=1	n=20	1.003e-03	3.957e-04 4.019e-04 4.089e-04 4.327e-04 5.669e-04 7.275e-04 8.048e-04 8.105e-04 8.332e-04 9.605e-04 1.045e-03 1.285e-03 1.419e-03 1.473e-03 1.709e-03 2.222e-03 4.759e-03 1.010e-02 1.157e-02 1.190e-02
+attention/prefill-bf16-8x1024x64-causal	alloc_words	exact	3432
+attention/prefill-bf16-8x1024x64-causal	wall_time	batch=1	n=20	2.119e-02	1.271e-02 1.399e-02 1.445e-02 1.479e-02 1.495e-02 1.591e-02 1.786e-02 1.828e-02 1.952e-02 2.022e-02 2.216e-02 2.351e-02 2.505e-02 2.564e-02 2.622e-02 2.748e-02 2.910e-02 3.283e-02 3.379e-02 3.538e-02
+attention/prefill-f32-8x1024x64-causal	alloc_words	exact	3432
+attention/prefill-f32-8x1024x64-causal	wall_time	batch=1	n=20	2.175e-02	1.271e-02 1.586e-02 1.708e-02 1.854e-02 1.950e-02 1.971e-02 1.985e-02 2.011e-02 2.076e-02 2.164e-02 2.186e-02 2.273e-02 2.281e-02 2.293e-02 2.307e-02 2.967e-02 3.341e-02 3.407e-02 4.177e-02 4.697e-02
 constant/chain-1000	alloc_words	exact	94146
 contract/contract-i32-m128x4096x4096	alloc_words	exact	342
 contract/contract-i8-i32-1024	alloc_words	exact	342
