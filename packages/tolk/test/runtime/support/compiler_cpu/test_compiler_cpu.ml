@@ -641,6 +641,23 @@ let invalid_ir =
                  contains ~sub:"E_16_2_4" msg);
        ]
 
+(* Compile time *)
+
+(* rune's host kernel of 1024 lanes gathered from 32 loaded rows: LLVM's
+   interleaved load combine took Clang 19 274 s of 293 on it for apple-m1. *)
+let compile_time =
+  group "compile time"
+    [
+      test ~timeout:60.
+        "an arm64 kernel of 1024 lanes gathered from 32 rows compiles within \
+         a minute" (fun () ->
+          let src =
+            In_channel.with_open_bin "gathered_lanes.c" In_channel.input_all
+          in
+          let lib = ccache_off (fun () -> compile "arm64,apple-m1" src) in
+          is_relocatable_elf64 ~machine:(elf_machine "arm64") lib);
+    ]
+
 (* Without Clang: CC is read once, when the first compile runs, so these tests
    run in a process of their own, where CC names a program that does not
    exist. *)
@@ -825,6 +842,7 @@ let () =
          architectures;
          errors;
          invalid_ir;
+         compile_time;
          without_clang;
          disassembly_;
          cache;

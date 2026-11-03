@@ -4802,21 +4802,23 @@ fold wraps integers and holds its float bound`, hold.
   narrowing rounds; rune's `rune jit › classes › a selection of a minimum
   against its constant is exact`, at `float16` and `bfloat16` too.
 
-## D167. Clang of LLVM 18 or 19 compiles without its straight-line vectorizer, and a long source without its loop vectorizer
+## D167. Clang of LLVM 18 or 19 compiles without its straight-line vectorizer, a long source without its loop vectorizer, and arm64 without the interleaved load combine
 
 - **tinygrad:** `runtime/support/compiler_cpu.py:21` (`ClangCompiler.compile`,
   Clang's arguments at `-O2`, which runs LLVM's SLP and loop vectorizers).
 - **tolk:** `Compiler_cpu.llvm_major` (the LLVM version a Clang's `-###`
   statement names), `Compiler_cpu.long_source`,
   `Compiler_cpu.compile_args`, which adds `-fno-slp-vectorize` when it is 18
-  or 19, `Compiler_cpu.without_loop_vectorizer`, and `Compiler_cpu.clang`
+  or 19 and `-mllvm -disable-interleaved-load-combine` for arm64,
+  `Compiler_cpu.without_loop_vectorizer`, and `Compiler_cpu.clang`
   (its `table`, which names both commands and the length).
 - **Differs:** a Clang that states LLVM 18 or 19 compiles every kernel with
   `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer back on.
   Every Clang compiles a source of more than 400 000 bytes without the loop
   vectorizer: its compiler proper runs without `-vectorize-loops`, as the
   driver runs it under `-fno-vectorize` (Clang 18.1.8 and 19.1.7 state the
-  same command but for that flag). Otherwise every Clang, Apple's included,
+  same command but for that flag). Every Clang compiles for arm64 without
+  LLVM's interleaved load combine. Otherwise every Clang, Apple's included,
   compiles with the arguments tinygrad passes. The table of objects names
   the command for either length, and the length (D113).
 - **Reason:** (b): rune's packed suite, `a compiled call computes eager's
@@ -4885,6 +4887,23 @@ fold wraps integers and holds its float bound`, hold.
   flag saves (5.5 s), but the renderer would write it before each loop of a
   source tinygrad writes without it, and the goldens with it, while the flag
   leaves every source as it is and the table keys the objects.
+
+  (b), the interleaved load combine: rune's `Lower_reduce › work › a
+  Contracting contraction of 8 groups works in blocks` timed out at 60 s on
+  macOS CI (Apple Clang 17, LLVM 19) after D240's upcasts, where it had
+  taken 2.3-5.7 s, and ran 60-164 s. Its kernel `r_23_4_16_4_16` upcasts its
+  outputs by 16 and 4 and unrolls its 16 rows, each row loaded at an
+  index read from memory: each iteration multiplies two vectors of 1024
+  lanes put together by shuffles of 32 loaded rows. Clang 19.1.7 for
+  `apple-m1` took 293 s on it, 274 s of them in `InterleavedLoadCombinePass`
+  (`-ftime-report`), an AArch64 pass that looks for loads that shuffles put
+  together into interleaved vectors, to read them with one `ldN`; without it
+  8 s, against 5.1 s for `x86-64-v3`, which has no such pass. The kernel
+  unrolled by 4 instead (256 lanes) took 6.2 s and 0.27 s. Of the 1241
+  distinct kernels the rest of that suite compiles, rendered on fudge and
+  compiled for `apple-m1`, the objects are the same byte for byte without
+  the pass, and their compiles take the same time (40.7 s and 40.8 s in
+  all).
 - **Pinned by:** `Tolk.Compiler_cpu › features › four clamped gathers compile
   for AVX-512 on` (`x86_64,x86-64-v4`, `x86_64,skylake-avx512`,
   `x86_64,znver4`), which compiles the indices of `r_3_2` and fails under
@@ -4898,7 +4917,11 @@ fold wraps integers and holds its float bound`, hold.
   400001 among them); rune's compile bench `special/betainccinv-grad-f32`, the float32
   gradient of test_special (914 KB), whose first call takes 3.88 and 4.48 s
   on fudge against 6.57 and 6.66 s with the loop vectorizer (medians of 3,
-  two interleaved runs each).
+  two interleaved runs each). The interleaved load combine: `Tolk.Compiler_cpu
+  › compile time › an arm64 kernel of 1024 lanes gathered from 32 rows
+  compiles within a minute`, over that kernel's source, which times out at
+  60 s on fudge with the pass and compiles in 5.4 s without it; rune's
+  `Lower_reduce` test above, on macOS CI.
 
 ## D168. The renderer finds a program's callees by a scan of its instructions
 

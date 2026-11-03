@@ -979,6 +979,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   waits for the driver to translate PTX where its own cache misses (a
   two-layer gpt-oss-20b prefill's first call, 713 ms to 94 ms on an RTX 5000
   Ada).
+- On arm64, `Compiler_cpu.clang` compiles without LLVM's interleaved load
+  combine, whose time grows much faster than the lanes a kernel gathers
+  from loads: rune's contraction of 8 groups of data-chosen rows took Clang
+  minutes on a Mac and timed out, and now compiles in seconds.
 
 - A process runs Clang once to learn its command (`Compiler_cpu.clang`),
   where it ran it three times: the options for its LLVM release come from

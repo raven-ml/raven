@@ -364,10 +364,22 @@ let flags ~version arch = fixed ~llvm:(llvm_major version) (selection arch)
    compiles into wrong values: rune's routed rows read garbage row numbers, and
    with it ([cc1]) the compile fails. Under LLVM 18 and 19 only, that
    vectorizer is off, so that other Clangs compile as before. The flags follow
-   -O2, which would turn the vectorizers back on. *)
+   -O2, which would turn the vectorizers back on.
+
+   On arm64, LLVM's interleaved load combine looks for loads that shuffles put
+   together into an interleaved vector, to read them with one ldN, and its time
+   grows much faster than the lanes it meets: rune's contraction of 8 groups of
+   data-chosen rows, whose host kernel computes 1024 lanes gathered from 32
+   loaded rows, took Clang 19 for apple-m1 293 s, 274 s of them in that pass,
+   and 8 s without it. Every Clang compiles arm64 without it. *)
 let compile_args selected ~llvm =
   let slp =
     match llvm with Some (18 | 19) -> [ "-fno-slp-vectorize" ] | _ -> []
+  in
+  let ldn =
+    match selected with
+    | "arm64", _ -> [ "-mllvm"; "-disable-interleaved-load-combine" ]
+    | _ -> []
   in
   [
     "-c";
@@ -382,7 +394,7 @@ let compile_args selected ~llvm =
     "-fno-ident";
     "-ffile-compilation-dir=.";
   ]
-  @ fixed ~llvm selected @ slp @ [ "-"; "-o"; "-" ]
+  @ fixed ~llvm selected @ slp @ ldn @ [ "-"; "-o"; "-" ]
 
 (* The vector registers of what Clang compiles [arch] for. Its statement names
    the processor alone, as [-target-cpu x86-64-v3], and the processor's features

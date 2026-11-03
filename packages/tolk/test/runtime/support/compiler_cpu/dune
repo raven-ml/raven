@@ -12,7 +12,8 @@
   (sandbox always)
   (glob_files *.golden)
   clang_slp
-  vectorized_search.c)
+  vectorized_search.c
+  gathered_lanes.c)
  (action
   (setenv
    CACHEDB
