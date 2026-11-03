@@ -662,9 +662,13 @@ static int64_t numbered(numbering *u, int64_t bytes, double cost) {
   if (ok && u->blocks == 1) {
     const groups *g = &u->g[0];
     k = g->k;
+    /* An output of no elements may have no memory, and memcpy takes no null
+       pointer even for no bytes. */
     int64_t kept = k < u->m ? k : u->m;
-    memcpy(u->first_out, g->first, (size_t)kept * sizeof *g->first);
-    memcpy(u->counts_out, g->count, (size_t)kept * sizeof *g->count);
+    if (kept > 0) {
+      memcpy(u->first_out, g->first, (size_t)kept * sizeof *g->first);
+      memcpy(u->counts_out, g->count, (size_t)kept * sizeof *g->count);
+    }
   } else if (ok)
     k = merged(u, bytes, cost);
   freed(u, u->g == NULL ? 0 : tables);
