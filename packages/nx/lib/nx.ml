@@ -4199,8 +4199,10 @@ let unique ?size keys =
           counts = scattered ~by Add g.ids ones zeros;
         }
       else
+        (* A copy, so that the [guess n] entries are not kept alive. *)
         let cut x =
-          sliced ~by [| { Nx_array.Move.start = 0; count = l; step = 1 } |] x
+          let r = { Nx_array.Move.start = 0; count = l; step = 1 } in
+          copy_by ~by (sliced ~by [| r |] x)
         in
         { g with first = cut g.first; counts = cut g.counts }
 
