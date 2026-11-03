@@ -1759,6 +1759,8 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_ragged.of_strings` fills its offsets and bytes in place, where it
+  copied them from bigarrays the OCaml heap alone paced the collector by.
 - `Nx_array.host` makes a host array of a dtype and shape, and
   `Nx_array.write`, the mirror of `Nx_array.read`, fills one under a write
   claim. `Nx_array.read`, `Nx_array.bigarray` and `Nx_array.write` take the

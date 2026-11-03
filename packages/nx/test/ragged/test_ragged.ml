@@ -968,6 +968,43 @@ let no_reads =
           ignore (Nx_ragged.map Nx.neg l);
           ignore (Nx_ragged.quantile [| 0.5 |] g)))
 
+(* Memory *)
+
+(* [with_ratio r f] is [f ()] with the collector's [custom_major_ratio] at
+   [r]. *)
+let with_ratio r f =
+  let was = (Gc.get ()).custom_major_ratio in
+  Gc.set { (Gc.get ()) with custom_major_ratio = r };
+  Fun.protect f ~finally:(fun () ->
+      Gc.set { (Gc.get ()) with custom_major_ratio = was })
+
+(* [of_strings] makes its offsets and bytes in host buffers, which pace the
+   collector by the program's memory: a major cycle at most once per 4 MiB
+   of buffers of 64 KiB or more, whatever [custom_major_ratio] says of the
+   heap. At a ratio of 1, which paces a bigarray of Bigarray's own at a cycle
+   each, 64 calls over 2^14 strings of 8 bytes, 256 KiB of offsets and bytes
+   each, bring at most a cycle per 4 MiB of them more than at the default
+   ratio, and two under way at either end. *)
+let memory =
+  test "of_strings paces the collector by the program's memory" (fun () ->
+      let n = 1 lsl 14 and calls = 64 in
+      let ss = Array.make n "12345678" in
+      let cycles r =
+        with_ratio r @@ fun () ->
+        ignore (Nx_ragged.of_strings ss);
+        Gc.full_major ();
+        let before = (Gc.quick_stat ()).major_collections in
+        for _ = 1 to calls do
+          ignore (Sys.opaque_identity (Nx_ragged.of_strings ss))
+        done;
+        (Gc.quick_stat ()).major_collections - before
+      in
+      let usual = cycles (Gc.get ()).custom_major_ratio in
+      let made = calls * ((8 * n) + (8 * (n + 1))) in
+      at_most ~msg:"major cycles at a ratio of 1" int
+        ~than:(usual + (made / (4 lsl 20)) + 2)
+        (cycles 1))
+
 let () =
   exit
     (run "nx ragged"
@@ -980,4 +1017,5 @@ let () =
          identities;
          sets;
          group "reads" [ reads; no_reads ];
+         memory;
        ])

@@ -119,26 +119,34 @@ let of_ids ~segments ids x =
     values = Nx.take ~axis:0 (Nx.argsort ids) x;
   }
 
+(* The offsets and bytes are host arrays ({!Nx_array.host}), filled under
+   write claims, which become the values with no copy. *)
 let of_strings ss =
   let n = Array.length ss in
-  let offsets = Bigarray.(Array1.create int64 c_layout (n + 1)) in
-  offsets.{0} <- 0L;
-  for i = 0 to n - 1 do
-    offsets.{i + 1} <-
-      Int64.add offsets.{i} (Int64.of_int (String.length ss.(i)))
-  done;
-  let bytes =
-    Bigarray.(Array1.create int8_unsigned c_layout (Int64.to_int offsets.{n}))
+  let offsets = Nx_array.host Nx.int64 [| n + 1 |] in
+  let total =
+    Nx_array.write offsets @@ fun o ->
+    let o = Bigarray.array1_of_genarray o in
+    o.{0} <- 0L;
+    for i = 0 to n - 1 do
+      o.{i + 1} <- Int64.add o.{i} (Int64.of_int (String.length ss.(i)))
+    done;
+    Int64.to_int o.{n}
   in
-  for i = 0 to n - 1 do
-    let s = ss.(i) and o = Int64.to_int offsets.{i} in
-    for k = 0 to String.length s - 1 do
-      Bigarray.Array1.unsafe_set bytes (o + k)
-        (Char.code (String.unsafe_get s k))
-    done
-  done;
-  let host a = Nx.of_bigarray (Bigarray.genarray_of_array1 a) in
-  { offsets = host offsets; values = host bytes }
+  let values = Nx_array.host Nx.uint8 [| total |] in
+  (Nx_array.write values @@ fun b ->
+   let b = Bigarray.array1_of_genarray b in
+   let at = ref 0 in
+   for i = 0 to n - 1 do
+     let s = ss.(i) in
+     for k = 0 to String.length s - 1 do
+       Bigarray.Array1.unsafe_set b (!at + k)
+         (Char.code (String.unsafe_get s k))
+     done;
+     at := !at + String.length s
+   done);
+  let value a = Nx.Repr.unsafe_of_array Nx.Host.v a in
+  { offsets = value offsets; values = value values }
 
 (* Observing *)
 
