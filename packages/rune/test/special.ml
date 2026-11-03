@@ -210,3 +210,117 @@ let check_values ~bound file got =
 let check ~bound file f =
   check_values ~bound file (fun ~f32 rows ->
       if f32 then eval Nx.float32 f rows else eval Nx.float64 f rows)
+
+(* Functions *)
+
+type u = { u : 'b. (float, 'b, Nx.host) Nx.t -> (float, 'b, Nx.host) Nx.t }
+
+type b = {
+  b :
+    'b.
+    (float, 'b, Nx.host) Nx.t ->
+    (float, 'b, Nx.host) Nx.t ->
+    (float, 'b, Nx.host) Nx.t;
+}
+
+type c = {
+  c :
+    'b.
+    (float, 'b, Nx.host) Nx.t ->
+    (float, 'b, Nx.host) Nx.t ->
+    (float, 'b, Nx.host) Nx.t ->
+    (float, 'b, Nx.host) Nx.t;
+}
+
+let everywhere b _ = b
+
+let by_sign ~positive ~negative args =
+  if args.(0) < 0. then negative else positive
+
+(* [log_ulps k f] is [2k (1 + |log f|) + 4], an inverse's forward bound. *)
+let log_ulps k f =
+  (2. *. Float.of_int k *. (1. +. Float.abs (Stdlib.log (Float.abs f)))) +. 4.
+
+(* Derivatives
+
+   Each derivative is held to golden/special_grad/ (written by
+   gen/special_grad.py) eagerly and compiled, at the budgets rune's derivatives
+   of special functions promise: first derivatives within 16 times the
+   function's bound, second derivatives within [2^-40] relative at float64 and
+   [2^-16] at float32. *)
+
+let grad_golden name = "golden/special_grad/" ^ name ^ ".golden"
+
+(* Partials
+
+   A function's partials share most of their program, and an incomplete beta's
+   or gamma's takes seconds to compile, most of it Clang's. So the gradient in
+   every argument is compiled once per dtype and run once, at the points of
+   every partial's golden together, and each partial reads its own values.
+   Functions that nx computes from one tail compile together, and so does a
+   quantile's gradient with its second derivative: each pair's program holds
+   that tail once. Eagerly each partial is taken alone.
+
+   A program compiles once in each process that reads it, so a suite that
+   reads one runs in one worker: in more, each would compile it again. *)
+
+type g = {
+  g : 'b. (float, 'b, Nx.host) Nx.t array -> (float, 'b, Nx.host) Nx.t array;
+}
+
+(* A compiled gradient's partials, by name: [golden name ~f32 rows] is the
+   partial [name] at the rows of its golden, at the dtype [~f32] names, and
+   [edge name ~f32] at the extra arguments the gradient ran at. *)
+type joint = {
+  golden : string -> f32:bool -> row list -> float array;
+  edge : string -> f32:bool -> float array;
+}
+
+(* [joint ~edge names g] runs [g] once per dtype, at the rows of every golden of
+   [names] and then at the arguments [edge]; the [i]th array [g] returns is the
+   partial named by the [i]th of [names]. *)
+let joint ?(edge = [||]) names { g } =
+  let at (type b) (dt : (float, b) Nx.dtype) short =
+    lazy
+      (let rows = List.map (fun name -> rows (grad_golden name) short) names in
+       let edge =
+         Array.to_list
+           (Array.map
+              (fun args ->
+                { args; value = Float.nan; overflow = false; scale = Float.nan })
+              edge)
+       in
+       let got = Array.map read (g (args dt (List.concat (rows @ [ edge ])))) in
+       let (_, golden), parts =
+         List.fold_left_map
+           (fun (i, start) r ->
+             let n = List.length r in
+             ((i + 1, start + n), Array.sub got.(i) start n))
+           (0, 0) rows
+       in
+       let at_edge i = Array.sub got.(i) golden (List.length edge) in
+       List.mapi
+         (fun i (name, part) -> (name, (part, at_edge i)))
+         (List.combine names parts))
+  in
+  let f32 = at Nx.float32 "f32" and f64 = at Nx.float64 "f64" in
+  let get name single =
+    List.assoc name (Lazy.force (if single then f32 else f64))
+  in
+  {
+    golden = (fun name ~f32 _ -> fst (get name f32));
+    edge = (fun name ~f32 -> snd (get name f32));
+  }
+
+(* [partial name ~bound ~eager compiled] is the partial [name] held eagerly and
+   as [compiled] reads it, at both dtypes. *)
+let partial name ~bound ~eager compiled =
+  group name
+    [
+      group "eagerly" (check ~bound (grad_golden name) eager);
+      group "compiled" (check_values ~bound (grad_golden name) compiled);
+    ]
+
+(* In [a], [2^-40 (1 + |log f|)] relative at float64 and [2^-16 (1 + |log f|)]
+   at float32, the scale holding [1 + |log f|]. *)
+let in_a _ = Relative_scaled (0x1p-40, 0x1p-16)

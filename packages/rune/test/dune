@@ -66,17 +66,17 @@
  (libraries nx rune windtrap))
 
 ; nx's special functions' derivatives, against goldens gen/special_grad.py
-; writes from correctly rounded references. Each compiled case spends its time
-; in tolk and Clang on one core, so the suite runs its tests in four workers:
-; cold on fudge, 64 s at one, 35 s at four. The tests share no fixture and
-; change no process state.
+; writes from correctly rounded references. Their time is compiling long
+; programs in tolk and Clang, and the partials of one function read one
+; program, which compiles once per process. So the functions are cut in three
+; suites of about equal time, each run in one process, which dune runs at
+; once on every system: windtrap's workers would compile a program once in
+; each worker that reads it, and run in one process on Windows.
 
-(test
- (name test_special)
- (modules special test_special)
+(tests
+ (names test_special test_special_gamma test_special_beta_inverse)
+ (modules special test_special test_special_gamma test_special_beta_inverse)
  (libraries nx rune windtrap)
- (action
-  (run %{test} -j 4))
  (deps
   (glob_files golden/special_grad/*.golden)))
 
