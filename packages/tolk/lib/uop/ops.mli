@@ -698,7 +698,19 @@ val backedge : t -> loop:t -> cond:t -> t
     run no trip. *)
 
 val after : t -> t list -> t
-(** [after u deps] is [u] ordered after [deps], or [u] if [deps] is empty. *)
+(** [after u deps] is [u] ordered after [deps], or [u] if [deps] is empty.
+
+    Outside a kernel, an {!Op.After} of storage names a state of it. One whose
+    [deps] list calls, loops of calls or stores is the state those effects
+    leave the storage in, after the state [u] names: they write it. One whose
+    [deps] are all {!Op.After}s is a join ({!is_join}): it names no state of
+    its own, holds the value of the state [u] names, and is read once the
+    states [deps] name are reached. *)
+
+val is_join : t -> bool
+(** [is_join u] is [true] iff [u] is an {!Op.After} whose dependencies are all
+    {!Op.After}s: a join, which orders a read of its first source after them
+    and writes nothing. *)
 
 val without_after : t -> t
 (** [without_after u] is [u] without its {!Op.After}s. *)

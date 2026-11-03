@@ -35,9 +35,9 @@ let programs =
     "assign";
     "assign_bitcast";
     "assign_double_diamond";
-    "assign_reads_behind_other_after";
     "assign_flipped_from_self";
     "assign_permuted_self";
+    "assign_reads_behind_other_after";
     "attention";
     "cat";
     "chained_functions";
@@ -61,6 +61,8 @@ let programs =
     "matmul";
     "precompiled_function";
     "precompiled_scalar";
+    "read_join_of_assigned";
+    "read_join_of_overwritten";
     "read_overwritten_through";
     "read_then_overwrite";
     "reduce_multiple_paths";
@@ -88,10 +90,10 @@ let kernel_graphs =
     "add_row_from_self_kernels";
     "assign_bitcast_kernels";
     "assign_double_diamond_kernels";
-    "assign_reads_behind_other_after_kernels";
     "assign_flipped_from_self_kernels";
     "assign_kernels";
     "assign_permuted_self_kernels";
+    "assign_reads_behind_other_after_kernels";
     "attention_kernels";
     "cat_kernels";
     "chained_functions_kernels";
@@ -119,6 +121,8 @@ let kernel_graphs =
     "precompiled_function_kernels_1";
     "precompiled_scalar_kernels";
     "precompiled_scalar_kernels_1";
+    "read_join_of_assigned_kernels";
+    "read_join_of_overwritten_kernels";
     "read_overwritten_through_kernels";
     "read_then_overwrite_kernels";
     "reduce_multiple_paths_kernels";
@@ -2530,6 +2534,111 @@ let merged_calls =
           | calls -> failf "%d calls" (List.length calls));
     ]
 
+(* Hazards
+
+   Programs that read storage in one state and write it in another within one
+   realize. Each writes what its tensors compute, read as the program states
+   them (Tensors): a read of storage, through a join too, reads the state it
+   names, whatever writes over that state later. Buffers hold four floats
+   unless given another size. *)
+
+let f32 ?(n = 4) slot = Ops.new_buffer ~slot cpu n Float32
+let assign x v = Ops.after x [ Ops.store x v ]
+let fl = Ops.float
+
+(* The program [outputs] writes what its tensors compute. *)
+let keeps_values outputs =
+  let big = Ops.sink outputs in
+  let buffers = filled big in
+  let slots = List.map (fun (_, (p : Ops.param_arg)) -> p.slot) (given big) in
+  let into_given = List.filter (fun (s, _, _) -> List.mem s slots) in
+  let linear =
+    with_settings ~debug:0 ~scache:0 (fun () -> unplanned big)
+  in
+  equal (list write)
+    (Tensors.writes ~buffers big)
+    (into_given (Kernel_graphs.linear_writes ~buffers linear));
+  linear
+
+(* [y] doubled, and [x] joined after it: [x] as it was, read once [y] is
+   written. *)
+let joined x y =
+  let y1 = assign y Ops.O.(y * fl 2.) in
+  (y1, Ops.after x [ y1 ])
+
+(* A reader of a join waits for the writer of the state it holds: [x] is
+   written by a kernel that waits for a chain of three, and [v] reads [x],
+   joined after [y]'s write. *)
+let join_waits_for_writer () =
+  let x = f32 1 and y = f32 2 and t = f32 3 in
+  let q =
+    List.fold_left
+      (fun q _ ->
+        Ops.contiguous
+          Ops.O.(Shape.expand (Shape.reshape (Shape.rop q Add [ 0 ]) [ Int 1 ]) [ Int 4 ] * fl 0.5))
+      t [ 1; 2; 3 ]
+  in
+  let x1 = assign x Ops.O.(x + q) in
+  let y1, xo = joined x1 y in
+  ignore (keeps_values [ assign (f32 4) Ops.O.(xo * fl 2.); y1 ])
+
+(* A reader of a join of [x] as it was waits for what the join waits for,
+   whose writer reads [x] after an overwrite: it reads [x] as it was. *)
+let join_over_overwritten () =
+  let x = f32 1 and y = f32 2 in
+  let x1 = assign x Ops.O.(x + fl 1.) in
+  let y1 = assign y Ops.O.(y + x1) in
+  let xo = Ops.after x [ y1 ] in
+  ignore (keeps_values [ assign (f32 3) Ops.O.(xo * fl 2.); x1; y1 ])
+
+(* A write over a join is a write over the state it holds: a kernel reading
+   that state runs before it. *)
+let write_over_join () =
+  let x = f32 1 and y = f32 2 in
+  let y1, xo = joined x y in
+  let z = Ops.contiguous Ops.O.(y1 * fl 3.) in
+  let r = assign (f32 3) Ops.O.(x + z) in
+  ignore (keeps_values [ r; assign xo Ops.O.(xo + fl 5.) ])
+
+(* Two joins over one state are no two writes over it. *)
+let two_joins () =
+  let x = f32 1 and y = f32 2 and z = f32 3 in
+  let y1, x1 = joined x y in
+  let z1, x2 = joined x z in
+  ignore (keeps_values [ assign (f32 4) Ops.O.(x1 + x2); y1; z1 ])
+
+(* A store into [x] of a value read from [x] joined after [y]'s write, at the
+   element it writes, takes [x] once. *)
+let join_one_parameter () =
+  let x = f32 1 and y = f32 2 in
+  let y1, xo = joined x y in
+  let linear = keeps_values [ assign x Ops.O.((xo * fl 2.) + fl 1.); y1 ] in
+  let into_x =
+    List.filter
+      (fun c -> List.exists (fun a -> Ops.buf_uop a == x) (Ops.src_without_body c))
+      (Ops.src linear)
+  in
+  equal (list int) ~msg:"the kernel storing into x takes it once" [ 1 ]
+    (List.map
+       (fun c ->
+         List.length
+           (List.filter (fun a -> Ops.buf_uop a == x) (Ops.src_without_body c)))
+       into_x)
+
+let joins =
+  group "create_linear_with_vars › joins"
+    [
+      test "a reader of a join waits for the writer of the state it holds"
+        join_waits_for_writer;
+      test "a reader of a join of an overwritten state reads it as it was"
+        join_over_overwritten;
+      test "a write over a join runs after the readers of the state it holds"
+        write_over_join;
+      test "two joins over one state are no two writes" two_joins;
+      test "a store reading its destination through a join takes it once"
+        join_one_parameter;
+    ]
+
 let () =
   exit
     (run "Tolk.Schedule"
@@ -2552,4 +2661,5 @@ let () =
          loops;
          merged_calls;
          on_disk;
+         joins;
        ])

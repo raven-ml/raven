@@ -31,6 +31,8 @@ assign_double_diamond_kernels	-
 assign_reads_behind_other_after_kernels	-
 read_then_overwrite_kernels	-
 read_overwritten_through_kernels	-
+read_join_of_assigned_kernels	-
+read_join_of_overwritten_kernels	-
 setitem_kernels	-
 assign_bitcast_kernels	-
 clone_kernels	-

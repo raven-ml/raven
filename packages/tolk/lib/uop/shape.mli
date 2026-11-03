@@ -695,8 +695,8 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       least {!Dtype.Int32} by a divisor that can be [-1], which have no value
       there; a cast of [x + c] to a signed integer is the cast of [x] plus [c];
     - {b ordering}: an {!Op.After} waits only on effects
-      ({!Op.Set.effectful}), ranges, ends, backedges, linear programs and
-      stages, on a reduction's
+      ({!Op.Set.effectful}), ranges, ends, backedges, linear programs,
+      stages and {!Op.After}s of global storage, on a reduction's
       source with the reduction's ranges ended, and on the sources of any other
       node it names; an {!Op.After} or {!Op.End} of nothing is its value, and
       an {!Op.End} drops the ranges that became constants;

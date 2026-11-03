@@ -182,6 +182,25 @@ def read_overwritten_through():
     return b + (a * 3).contiguous()
 
 
+def read_join_of_assigned():
+    # a value reads x, assigned after a chain of three kernels, through a join after y's assign
+    x, y, t = empty(4).contiguous(), empty(4).contiguous(), empty(4).contiguous()
+    y.assign(y * 2)
+    q = t
+    for _ in range(3): q = (q.sum().reshape(1).expand(4) * 0.5).contiguous()
+    x.assign(x + q)
+    return Tensor(x.uop.after(y.uop)) * 2, y
+
+
+def read_join_of_overwritten():
+    # a value reads x as it was through a join after y's assign, which reads x once assigned
+    x, y = empty(4).contiguous(), empty(4).contiguous()
+    x0 = x.uop
+    x.assign(x + 1)
+    y.assign(y + x)
+    return Tensor(x0.after(y.uop)) * 2, x, y
+
+
 def setitem():
     t = empty(8, 8).contiguous()
     t[2:4] = 1.0
@@ -260,6 +279,8 @@ PROGRAMS = {
     "assign_reads_behind_other_after": assign_reads_behind_other_after,
     "read_then_overwrite": read_then_overwrite,
     "read_overwritten_through": read_overwritten_through,
+    "read_join_of_assigned": read_join_of_assigned,
+    "read_join_of_overwritten": read_join_of_overwritten,
     "setitem": setitem,
     "assign_bitcast": lambda: empty(4, dtype=dtypes.uint32).contiguous().bitcast(dtypes.float).assign(empty(4) + 1),
     "clone": lambda: empty(4).clone(),

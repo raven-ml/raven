@@ -6153,6 +6153,7 @@ fold wraps integers and holds its float bound`, hold.
   axis`, and `axes.golden`'s `padto_reduction_bound` from the patched tinygrad. The
   Spec suite: `verdicts.golden`'s `an int32 load after a range`, `a range
   bounded by a load after a range` and `a load after a store`.
+
 ## D230. A GPU kernel decodes a value R rows read at most ceil(R / 16) times
 
 - **tinygrad:** `codegen/opt/heuristic.py:9-44` (the tensor cores) and
@@ -6274,3 +6275,43 @@ fold wraps integers and holds its float bound`, hold.
   shared, and `› a copy that reads an end of its range along another range
   runs that end once`, whose second end takes cloned ranges as D137 gives
   them, which tinygrad does not (its linearizer then refuses the kernel).
+
+## D202. A join keeps its dependencies, and holds the state under it
+
+- **tinygrad:** `uop/symbolic.py:333-336` (`symbolic`'s ordering rule):
+  an `AFTER` keeps among its dependencies only effects, ranges, ends, back
+  edges, linears and stages, and replaces any other by its sources, an
+  `AFTER` included. `x.after(y')`, where `y'` is `y` once assigned, becomes
+  `x` after `y`'s kernel, which `create_schedule` (`schedule/__init__.py:
+  31-78`) reads as a state of `x` that `y`'s kernel writes. The rule came
+  with `AFTER` itself, for a kernel's register initialisation (`b8a9cce78`,
+  `d1e2c393f`), and no commit states a reason for the graph of kernels.
+- **tolk:** `Shape.symbolic`'s ordering rule; `Ops.is_join`;
+  `Schedule.value_state`, `Schedule.swap` and the waits of
+  `Schedule.schedule`; `Rangeify.unjoin` and `Rangeify.handle_after`;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same rules.
+- **Differs:** an `AFTER` of global storage stays among an `AFTER`'s
+  dependencies. An `AFTER` whose dependencies are all `AFTER`s is a join:
+  it names no state of its own. A source read through joins reads the
+  state under them, and its reader waits for that state's writers and for
+  what each join waits for; a write over a join is a write over that
+  state; the copy of a read through a join goes under the join, which keeps
+  its waits; a kernel's parameter for storage read through a join is the
+  state's, its call's argument waiting for the join's dependencies. Afters
+  of registers and local memory still flatten, so no kernel's source
+  changes: the goldens of every module regenerate unchanged.
+- **Reason:** (e). Flattened, a reader of `x` once assigned, joined after
+  `y`'s assign, did not wait for `x`'s assign and read `x` before it; a
+  reader of `x` as it was, joined after a kernel that reads `x` once
+  assigned, was not copied and read `x` after the assign. Both gave wrong
+  values, and a kernel storing into `x` a value read through a join of `x`
+  raised, as did one reading two joins over one state.
+- **Pinned by:** the `Tolk.Schedule` suite: `create_linear_with_vars ›
+  joins › a reader of a join waits for the writer of the state it holds`,
+  `› a reader of a join of an overwritten state reads it as it was`, `› a
+  write over a join runs after the readers of the state it holds`, `› two
+  joins over one state are no two writes` and `› a store reading its
+  destination through a join takes it once`; and the programs
+  `read_join_of_assigned` and `read_join_of_overwritten`, whose recorded
+  schedules and linears and whose values (`create_linear_with_vars ›
+  values`) are tinygrad's, patched.

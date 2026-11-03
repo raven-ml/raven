@@ -873,6 +873,8 @@ let pm_add_buffers =
 type local_ctx = {
   map : t Tbl.t;
   mutable order : t list; (* The keys of [map], last first. *)
+  joined : t list Tbl.t;
+      (* What the joins the kernel reads storage through wait for, by storage. *)
   ranges : (Axis_type.t * int list, unit) Hashtbl.t;
   mutable range_order : (Axis_type.t * int list) list; (* last first *)
 }
@@ -908,13 +910,27 @@ let debuf slot buf =
   then ret
   else shrink ret (List.map (fun s -> Some (Int 0, s)) (shape buf))
 
-(* A group of stores is no state of a buffer. *)
+(* The state under the joins [u] reads through, and what they wait for. *)
+let unjoin u =
+  let rec go deps u =
+    if is_join u then go (List.rev_append (List.tl (src u)) deps) (nth u 0)
+    else (u, List.rev deps)
+  in
+  go [] u
+
+(* A group of stores is no state of a buffer. A join is none either: the
+   kernel reads the state under it, and its call's argument waits for what the
+   join waits for. *)
 let handle_after ctx after =
   if addrspace after = Some Dtype.Local || is_group after then None
   else
-    let buf = buf_uop after in
+    let state, deps = unjoin after in
+    let buf = buf_uop state in
     (* Bottom up, so it is added once. *)
-    add_arg ctx buf after;
+    add_arg ctx buf state;
+    if deps <> [] then
+      Tbl.replace ctx.joined buf
+        (Option.value (Tbl.find_opt ctx.joined buf) ~default:[] @ deps);
     Some buf
 
 let add_range ctx r =
@@ -948,7 +964,7 @@ let check_buf_states x =
   let read_from = Tbl.create 8 in
   List.iter
     (fun idx ->
-      let buf = buf_uop idx and state = nth idx 0 in
+      let buf = buf_uop idx and state = fst (unjoin (nth idx 0)) in
       if Op.Set.mem (op buf) Op.Set.defines then
         match Tbl.find_opt read_from buf with
         | Some s when s != state ->
@@ -1000,6 +1016,7 @@ let split_store x =
       {
         map = Tbl.create 8;
         order = [];
+        joined = Tbl.create 8;
         ranges = Hashtbl.create 8;
         range_order = [];
       }
@@ -1025,7 +1042,15 @@ let split_store x =
     in
     (* Buffers can be on different devices here: the schedule compiles such
        kernels to copies. *)
-    let args = List.map (Tbl.find lctx.map) bufs in
+    let args =
+      List.map
+        (fun b ->
+          let a = Tbl.find lctx.map b in
+          match Tbl.find_opt lctx.joined b with
+          | Some deps -> after a (dedup_nodes deps)
+          | None -> a)
+        bufs
+    in
     Some (call (sink ~kernel:(kernel_info ()) [ ret ]) args)
 
 let split_kernels =

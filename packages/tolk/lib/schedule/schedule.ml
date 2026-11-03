@@ -37,14 +37,24 @@ let rec unwrap_src s =
   | (Op.After | Op.Buffer | Op.Alloc | Op.Param), _ | _, [] -> s
   | _, x :: _ -> unwrap_src x
 
-(* A buffer's state is an after or the storage. *)
-let states s =
-  let s = unwrap_src s in
-  match op s with
-  | Op.After | Op.Buffer | Op.Alloc | Op.Param -> [ s ]
-  | o ->
-      invalid_arg
-        (Format.asprintf "a kernel's input is a buffer state, not %a" Op.pp o)
+(* A buffer's state is an after or the storage. A join is none: read through
+   joins, a source reads the state under them, with the joins' dependencies,
+   which its reader waits for. *)
+let value_state s =
+  let rec go deps s =
+    let s = unwrap_src s in
+    if is_join s then go (List.rev_append (List.tl (src s)) deps) (nth s 0)
+    else
+      match op s with
+      | Op.After | Op.Buffer | Op.Alloc | Op.Param -> (s, List.rev deps)
+      | o ->
+          invalid_arg
+            (Format.asprintf "a kernel's input is a buffer state, not %a" Op.pp
+               o)
+  in
+  go [] s
+
+let states s = [ fst (value_state s) ]
 
 (* A scalar argument of a precompiled call is no state: a weak integer
    expression of the loops around the call, which its body's scalar parameter
@@ -120,6 +130,7 @@ let copy_state ~slot s =
    path to the state is the one {!states} follows. *)
 let rec swap s c d =
   if d == s then c
+  else if is_join d then replace d ~src:(swap s c (nth d 0) :: List.tl (src d))
   else
     match (op d, src d) with
     | (Op.After | Op.Buffer | Op.Alloc | Op.Param), _ | _, [] -> d
@@ -314,7 +325,9 @@ let linearize ~by_storage ~children sched_sink in_degree =
     (* The storage the kernels write. *)
     let written = Tbl.create 16 in
     List.iter
-      (fun u -> if op u = Op.After then Tbl.replace written (buf_uop u) ())
+      (fun u ->
+        if op u = Op.After && not (is_join u) then
+          Tbl.replace written (buf_uop u) ())
       (toposort ~calls:Skip ~gate:gate_kernel_sink sched_sink);
     storage_order ~written ~children in_degree
 
@@ -330,11 +343,24 @@ let rec schedule ~by_storage ~copies sched_sink =
   (* Each superseded state, with the afters that write it and their new kernels,
      and each read of a state; both last first. *)
   let writes = Tbl.create 64 and reads = ref [] in
+  (* The kernels a reader of [x] waits for: the writers of the state it reads,
+     and what each join on the way to it waits for. *)
+  let waited = Tbl.create 64 in
+  let rec waits x =
+    match Tbl.find_opt waited x with
+    | Some w -> w
+    | None ->
+        let st, deps = value_state x in
+        let own = if op st = Op.After then fst (split_after st) else [] in
+        let w = dedup_nodes (own @ List.concat_map waits deps) in
+        Tbl.replace waited x w;
+        w
+  in
   List.iter
     (fun u ->
-      if op u = Op.After then begin
+      if op u = Op.After && not (is_join u) then begin
         let kernels, after_deps = split_after u in
-        let prev_state = unwrap_src (nth u 0) in
+        let prev_state = fst (value_state (nth u 0)) in
         let prev_kernels =
           if op prev_state = Op.After then fst (split_after prev_state) else []
         in
@@ -368,11 +394,8 @@ let rec schedule ~by_storage ~copies sched_sink =
                 !reads;
             (* Read after write: a kernel runs after the kernels that produced
                the states it reads or joins. *)
-            List.iter
-              (fun st ->
-                if op st = Op.After then
-                  List.iter (fun t -> add_child t k) (fst (split_after st)))
-              (read_states @ List.concat_map states after_deps))
+            List.iter (fun t -> add_child t k)
+              (List.concat_map waits (kernel_deps @ after_deps)))
           kernels
       end)
     (toposort ~calls:Skip ~gate:gate_kernel_sink sched_sink);

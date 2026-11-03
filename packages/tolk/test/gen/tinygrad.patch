@@ -2419,7 +2419,7 @@ index 6eec3e198..78afe4e78 100644
    smem_prefix_for_cast: bool = False
    barrier = '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");' + '__builtin_amdgcn_s_barrier();' + \
 diff --git a/tinygrad/schedule/__init__.py b/tinygrad/schedule/__init__.py
-index 7ead5c9c6..376c0ca10 100644
+index 7ead5c9c6..124d40ac3 100644
 --- a/tinygrad/schedule/__init__.py
 +++ b/tinygrad/schedule/__init__.py
 @@ -2,7 +2,7 @@ import time, inspect
@@ -2431,7 +2431,29 @@ index 7ead5c9c6..376c0ca10 100644
  from tinygrad.uop.spec import type_verify, spec_tensor
  from tinygrad.helpers import DEBUG, cpu_profile, TracingKey, SPEC, SCACHE, BASEDIR, partition, dedup, all_int, VIZ
  from tinygrad.helpers import diskcache_get, diskcache_put, colored
-@@ -28,13 +28,44 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
+@@ -14,12 +14,16 @@ def _unwrap_src(s: UOp) -> UOp:
+   while len(s.src) and s.op not in GroupOp.Defines|{Ops.AFTER, Ops.MSELECT, Ops.MSTACK}: s = s.src[0]
+   return s
+ 
+-# a buffer state is a define or an AFTER. MSELECT/MSTACK join per-device states
+-def _states(s: UOp) -> list[UOp]:
+-  s = _unwrap_src(s)
+-  if s.op in {Ops.MSELECT, Ops.MSTACK}: return [st for ss in s.src for st in _states(ss)]
++# a buffer state is a define or an AFTER. MSELECT/MSTACK join per-device states. a join is none: read through joins, a
++# source reads the state under them, with the joins' dependencies, which its reader waits for
++def _value_states(s: UOp) -> list[tuple[UOp, tuple[UOp, ...]]]:
++  s, deps = _unwrap_src(s), ()
++  while s.is_join: s, deps = _unwrap_src(s.src[0]), deps+s.src[1:]
++  if s.op in {Ops.MSELECT, Ops.MSTACK}: return [(st, deps+d) for ss in s.src for st, d in _value_states(ss)]
+   assert s.op in GroupOp.Defines|{Ops.AFTER}, f"input to kernel must resolve to a buffer state, not {s.op}"
+-  return [s]
++  return [(s, deps)]
++
++def _states(s: UOp) -> list[UOp]: return [st for st, _ in _value_states(s)]
+ 
+ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
+   kernels, remaining = partition(after.src[1:], lambda s: s.op in {Ops.CALL, Ops.END})
+@@ -28,17 +32,56 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
      raise AssertionError(f"AFTER source should be CALL, END, STORE, or AFTER, not {invalid[0].op}")
    return tuple(kernels), tuple(deps)
  
@@ -2449,6 +2471,7 @@ index 7ead5c9c6..376c0ca10 100644
 +# d, a source of a kernel, reading c where it reads the state s, along the path _states follows
 +def _swap(s:UOp, c:UOp, d:UOp) -> UOp:
 +  if d is s: return c
++  if d.is_join: return d.replace(src=(_swap(s, c, d.src[0]),)+d.src[1:])
 +  if d.op in {Ops.AFTER, Ops.BUFFER, Ops.ALLOC, Ops.PARAM} or not len(d.src): return d
 +  if d.op in {Ops.MSELECT, Ops.MSTACK}: return d.replace(src=tuple(_swap(s, c, x) for x in d.src))
 +  return d.replace(src=(_swap(s, c, d.src[0]),)+d.src[1:])
@@ -2474,10 +2497,37 @@ index 7ead5c9c6..376c0ca10 100644
      writes: dict[UOp, list[tuple[UOp, tuple[UOp, ...]]]] = {}  # superseded state -> (AFTER, new kernels)
      reads: list[tuple[UOp, UOp, UOp]] = []  # (reader AFTER, reader kernel, buffer state read)
 +    hazards: list[tuple[UOp, UOp]] = []  # (reader kernel, buffer state read) whose overwrite it waits for
++    waits_memo: dict[UOp, tuple[UOp, ...]] = {}
++    def waits(x:UOp) -> tuple[UOp, ...]:
++      # the kernels a reader of x waits for: the writers of the state it reads, and what each join on the way waits for
++      if x not in waits_memo:
++        waits_memo[x] = tuple(dedup([t for st, deps in _value_states(x) for t in (_split_after(st)[0] if st.op is Ops.AFTER else ())
++                                     + tuple(t for d in deps for t in waits(d))]))
++      return waits_memo[x]
      for u in sched_sink.toposort(gate_kernel_sink):
-       if u.op is not Ops.AFTER: continue
+-      if u.op is not Ops.AFTER: continue
++      if u.op is not Ops.AFTER or u.is_join: continue
        kernels, after_deps = _split_after(u)
-@@ -59,9 +90,16 @@ def create_schedule(sched_sink:UOp) -> UOp:
+-      prev_state = _unwrap_src(u.src[0])
++      prev_state = _states(u.src[0])[0]
+       prev_kernels = set(_split_after(prev_state)[0]) if prev_state.op is Ops.AFTER else set()
+       writes.setdefault(prev_state, []).append((u, tuple(k for k in kernels if k not in prev_kernels)))
+       for k in kernels:
+@@ -48,20 +91,25 @@ def create_schedule(sched_sink:UOp) -> UOp:
+         read_states = [st for s in kernel_deps for st in _states(s)]
+         reads += [(u, k, st) for st in read_states]
+         # RAW deps: a kernel runs after the kernels that produced the states it reads or joins
+-        for st in read_states + [st for s in after_deps for st in _states(s)]:
+-          if st.op is Ops.AFTER:
+-            for t in _split_after(st)[0]:
+-              children.setdefault(t, []).append(k)
+-              in_degree[k] += 1
++        for t in [t for s in kernel_deps+after_deps for t in waits(s)]:
++          children.setdefault(t, []).append(k)
++          in_degree[k] += 1
+     # WAR deps: a kernel reading buffer state S must run before another write that supersedes S. an AFTER only
+     # supersedes its immediate prior state; join members already present in that prior state are ordering deps, not writes
+     for u, k, s in reads:
        for a, write_kernels in writes.get(s, []):
          if a is u: continue
          for t in write_kernels:
@@ -2497,7 +2547,7 @@ index 7ead5c9c6..376c0ca10 100644
  
    with cpu_profile(TracingKey("linearize schedule")):
      queue: deque[UOp] = deque(k for k,v in in_degree.items() if v == 0)
-@@ -78,6 +116,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
+@@ -78,6 +126,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
      if any(in_degree.values()): raise RuntimeError("cycle detected in assign graph")
    return UOp(Ops.LINEAR, src=tuple(linearized))
  
@@ -2959,7 +3009,7 @@ index 9a24394a6..7f206714e 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 8238ec207..66dc81ab1 100644
+index 8238ec207..2c6856344 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,13 +1,13 @@
@@ -3180,7 +3230,20 @@ index 8238ec207..66dc81ab1 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -281,14 +426,17 @@ def add_buf(ctx:LocalAddBufferContext, buf:UOp):
+@@ -275,29 +420,42 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+ class LocalAddBufferContext:
+   map:dict = field(default_factory=dict)
+   ranges:dict = field(default_factory=dict)
++  joined:dict = field(default_factory=dict)  # what the joins the kernel reads storage through wait for, by storage
++
++# the state under the joins u reads through, and what they wait for
++def _unjoin(u:UOp) -> tuple[UOp, tuple[UOp, ...]]:
++  deps: tuple[UOp, ...] = ()
++  while u.is_join: u, deps = u.src[0], deps+u.src[1:]
++  return u, deps
+ 
+ def add_buf(ctx:LocalAddBufferContext, buf:UOp):
+   if buf not in ctx.map: ctx.map[buf] = buf
    raise BottomUpGate
  
  def debuf(slot:int, buf:UOp):
@@ -3195,12 +3258,34 @@ index 8238ec207..66dc81ab1 100644
  
  def handle_after(ctx:LocalAddBufferContext, after:UOp):
 -  if after.addrspace == AddrSpace.LOCAL: return None
+-  buf = after.buf_uop
 +  # a group of stores, an AFTER of an empty STACK, is no state of a buffer
 +  if after.addrspace == AddrSpace.LOCAL or (after.src[0].op is Ops.STACK and not after.src[0].src): return None
-   buf = after.buf_uop
++  # a join is no state either: the kernel reads the state under it, and its call's argument waits for what the join waits for
++  state, deps = _unjoin(after)
++  buf = state.buf_uop
    # NOTE: this is bottom up, so we only add it once
-   if buf not in ctx.map: ctx.map[buf] = after
-@@ -335,6 +483,86 @@ split_kernels = PatternMatcher([
+-  if buf not in ctx.map: ctx.map[buf] = after
++  if buf not in ctx.map: ctx.map[buf] = state
++  if deps: ctx.joined[buf] = ctx.joined.get(buf, ())+deps
+   return buf
+ 
+ def check_buf_states(x:UOp):
+   idxs = [s for s in x.toposort(gate=lambda x: x.op is not Ops.AFTER) if s.op is Ops.INDEX]
+   read_from: dict[UOp, UOp] = {}
+-  if any((buf:=idx.buf_uop).op in GroupOp.Defines and read_from.setdefault(buf, state:=idx.src[0]) is not state for idx in idxs):
++  if any((buf:=idx.buf_uop).op in GroupOp.Defines and read_from.setdefault(buf, state:=_unjoin(idx.src[0])[0]) is not state for idx in idxs):
+     raise RuntimeError(f"cycle detected while indexing {buf}")
+ 
+ to_define_global = PatternMatcher([
+@@ -329,12 +487,92 @@ def split_store(x:UOp) -> UOp|None:
+   ret = graph_rewrite(ret, pm_renumber_range, ctx={a:i for i,a in enumerate(lctx.ranges)}, walk=True)
+ 
+   # create the Kernel. NOTE: buffers can be on different devices here now, they are compiled to SDMA copies later by schedule
+-  return ret.sink(arg=KernelInfo()).call(*lctx.map.values())
++  return ret.sink(arg=KernelInfo()).call(*[a.after(*dedup(lctx.joined[b])) if b in lctx.joined else a for b, a in lctx.map.items()])
+ 
+ split_kernels = PatternMatcher([
    (UPat((Ops.STORE, Ops.END), name="x"), split_store),
  ])
  
@@ -3287,7 +3372,7 @@ index 8238ec207..66dc81ab1 100644
  @rewrite_group(new_ctx=False)
  def get_kernel_graph(tsink:UOp) -> UOp:
    # convert movement ops to ranges
-@@ -342,10 +570,12 @@ def get_kernel_graph(tsink:UOp) -> UOp:
+@@ -342,10 +580,12 @@ def get_kernel_graph(tsink:UOp) -> UOp:
  
    # cleanups for speed and runability
    tsink = graph_rewrite(tsink,
@@ -3303,7 +3388,7 @@ index 8238ec207..66dc81ab1 100644
  
    # bufferize -> store
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index f0a41c9b5..9e2d0e149 100644
+index f0a41c9b5..23d8aeb1c 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -3355,7 +3440,18 @@ index f0a41c9b5..9e2d0e149 100644
  def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
  
  def range_str(u:UOp, color=False) -> str:
-@@ -1051,8 +1071,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -978,6 +998,10 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+     # a Variable is a scalar ALU PARAM that carries a value range
+     return self.op is Ops.PARAM and self.arg.vmin_vmax is not None and self.arg.addrspace is AddrSpace.ALU and self._shape == ()
+   @property
++  def is_join(self) -> bool:
++    # an AFTER whose dependencies are all AFTERs names no state of its own: it holds its first source's value, read after them
++    return self.op is Ops.AFTER and len(self.src) > 1 and all(s.op is Ops.AFTER for s in self.src[1:])
++  @property
+   def is_bound_var(self) -> bool:
+     # a bound Variable is a Variable with the val payload set
+     return self.is_variable and self.arg.val is not None
+@@ -1051,8 +1075,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
    def vmax(self) -> PyConst: return self._min_max[1]
    @functools.cached_property
    def _min_max(self) -> tuple[PyConst, PyConst]:
@@ -3388,7 +3484,7 @@ index f0a41c9b5..9e2d0e149 100644
        if self.op is Ops.ADD: return wrapped(self.dtype, s0_vmin+s1_vmin, s0_vmax+s1_vmax)
        if self.op is Ops.SUB: return wrapped(self.dtype, s0_vmin-s1_vmax, s0_vmax-s1_vmin)
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax and (s0_vmin >= 0 or s1_vmax >= 0):
-@@ -1091,32 +1134,56 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1091,32 +1138,56 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
      if self.op is Ops.WHERE:
@@ -3458,7 +3554,7 @@ index f0a41c9b5..9e2d0e149 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1150,9 +1217,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1150,9 +1221,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
  
    @staticmethod
    def alloc(shape:tuple[sint, ...], dtype:DType, slot:int|None=None, addrspace=AddrSpace.GLOBAL, device=None, axis:int|None=None,
@@ -3470,7 +3566,7 @@ index f0a41c9b5..9e2d0e149 100644
                             addrspace=addrspace, device=device, spec=spec, bind_on_realize=bind_on_realize, name=name))
      return ret.reshape(()) if not shape else ret.view_as(shape, axis)
    def alloc_like(self, slot:int|None=None, addrspace=AddrSpace.GLOBAL): return UOp.alloc(self.max_shard_shape, self.dtype, slot, addrspace)
-@@ -1300,6 +1367,8 @@ class KernelInfo:
+@@ -1300,6 +1371,8 @@ class KernelInfo:
    beam: int = 0
    optimized: bool = False       # the AST has been through the optimizer, skip re-optimization
    kernel: bool = True           # launched by the runtime, not called from another kernel
@@ -3479,7 +3575,7 @@ index f0a41c9b5..9e2d0e149 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1326,6 +1395,7 @@ class ProgramInfo:
+@@ -1326,6 +1399,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -3487,7 +3583,7 @@ index f0a41c9b5..9e2d0e149 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM: _params.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1363,22 +1433,99 @@ class CallInfo:
+@@ -1363,22 +1437,99 @@ class CallInfo:
  
  # ******** ops in python ********
  
@@ -3592,7 +3688,7 @@ index f0a41c9b5..9e2d0e149 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.TRUNCMOD: cmod, Ops.TRUNCDIV: cdiv, Ops.DIV: floordiv, Ops.MOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1389,6 +1536,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
+@@ -1389,6 +1540,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
@@ -3666,7 +3762,7 @@ index c359a697f..bea525e32 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index c99bf3c34..38062dfe7 100644
+index c99bf3c34..e455de578 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -3677,7 +3773,7 @@ index c99bf3c34..38062dfe7 100644
 -from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype, identity_element
 -from tinygrad.dtype import PyConst, ConstFloat, dtypes, can_lossless_cast, Invalid, bitcast, truncate
 +from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype, exact, identity_element, cr_log2
-+from tinygrad.dtype import PyConst, ConstFloat, dtypes, can_lossless_cast, Invalid, exact_bitcast, truncate
++from tinygrad.dtype import AddrSpace, PyConst, ConstFloat, dtypes, can_lossless_cast, Invalid, exact_bitcast, truncate
  from tinygrad.helpers import partition, all_same, prod, flatten, IMAGE, dedup, ceildiv
  from tinygrad.uop.divandmod import div_and_mod_symbolic
  from tinygrad.uop.movement import mop_cleanup
@@ -3924,7 +4020,16 @@ index c99bf3c34..38062dfe7 100644
    # canonicalize a simplex with positive coefficients > 0. NOTE: not x < 1 means x > 0
    ((UPat.var("x", dtypes.weakint)<1).logical_not(), lambda x: (newx<1).logical_not() if (newx:=canonicalize_simplex(x)) is not None else None),
    # a range mod its own upper bound is just the range
-@@ -336,6 +395,8 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -330,12 +389,16 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+     and not (u.op is Ops.SHR and u.src[1].vmax >= 32)
+     and not (u.op in (Ops.MOD, Ops.TRUNCMOD) and u.src[0].vmin <= dtypes.int.min and u.src[1].vmin <= -1 <= u.src[1].vmax) else None),
+   ((UPat.var("x", dtypes.weakint) + UPat.cvar("c")).cast(dtypes.sints, name="cast"), lambda x,c,cast:x.cast(cast.dtype)+cast.const_like(c.val)),
+-  # an AFTER waits only on effects and the ops listed here, a REDUCE dep keeps its body ended by its ranges, any other dep is replaced by its srcs
++  # an AFTER waits only on effects and the ops listed here, a REDUCE dep keeps its body ended by its ranges, any other dep is replaced by its srcs.
++  # an AFTER of global storage it waits on stays: read through a join, it holds a state whose writers its reader waits for
+   (UPat(Ops.AFTER, name="x"), lambda x: x.replace(src=(x.src[0],)+
+     tuple(dedup(flatten([(y,) if y.op in GroupOp.Effect|{Ops.RANGE, Ops.END, Ops.BACKEDGE, Ops.LINEAR, Ops.STAGE}
++                        or (y.op is Ops.AFTER and y.addrspace == AddrSpace.GLOBAL)
                          else (UOp(Ops.NOOP).after(y.src[0]).end(*y.src[1:]),) if y.op is Ops.REDUCE else y.src for y in x.src[1:]]))))),
    # after/end with 1 src is just src[0]
    (UPat((Ops.AFTER, Ops.END), src=(UPat.var("s"),)), lambda s: s),
@@ -3933,7 +4038,7 @@ index c99bf3c34..38062dfe7 100644
    # the rules above key on bare CONSTs, so a redundantly committed const has to be uncast in the same fixpoint
  ])+div_and_mod_symbolic+pm_uncast_const
  
-@@ -399,8 +460,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
+@@ -399,8 +462,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
  
  # ******** phase 3 is the complete symbolic ********
  
@@ -3944,7 +4049,7 @@ index c99bf3c34..38062dfe7 100644
    # max(x*m) = max(x)*m needs x*m monotone in x, and an unsigned multiply wraps
    if r.arg[0] is Ops.MAX and dtypes.is_unsigned(r.dtype): return None
    inside, outside = [], []
-@@ -409,7 +471,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
+@@ -409,7 +473,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
      if m not in r.src[1:] and all(r not in m_parents for r in r.src[1:]) and (r.arg[0] != Ops.MAX or m.vmin >= 0): outside.append(m)
      else: inside.append(m)
    if len(outside) == 0: return None
@@ -3960,7 +4065,7 @@ index c99bf3c34..38062dfe7 100644
  
  def drop_and_clauses(cond:UOp, x:UOp, i:UOp) -> UOp|None:
    keep, drop = partition(cond.split_uop(Ops.AND), lambda c: any(r in x.ranges for r in c.ranges))
-@@ -432,10 +501,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
+@@ -432,10 +503,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
    return UOp.const(True).uprod(*keep).where(ret_idx, ret_idx.const_like(0))
  
  # where after gated load becomes alt value, TODO: this is sort of duplicated with rules in devectorizer
@@ -3976,7 +4081,7 @@ index c99bf3c34..38062dfe7 100644
  ])
  
  def gated_given_valid(cond:UOp, x:UOp, i:UOp) -> UOp|None:
-@@ -475,9 +546,6 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -475,9 +548,6 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),

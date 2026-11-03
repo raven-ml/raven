@@ -31,6 +31,8 @@ assign_double_diamond	-
 assign_reads_behind_other_after	-
 read_then_overwrite	-
 read_overwritten_through	-
+read_join_of_assigned	-
+read_join_of_overwritten	-
 setitem	-
 assign_bitcast	-
 clone	-

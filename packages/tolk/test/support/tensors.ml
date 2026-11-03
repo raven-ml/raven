@@ -326,7 +326,9 @@ let rec run m params u =
         | _ -> fail "a store has a destination and a value")
     | After, _ ->
         List.iter (fun s -> ignore (value s)) (List.tl src);
-        reread m (value (List.hd src))
+        (* A join holds the value of the state under it. *)
+        if Ops.is_join u then value (List.hd src)
+        else reread m (value (List.hd src))
     | Sink, _ ->
         List.iter (fun s -> ignore (value s)) src;
         none

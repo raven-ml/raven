@@ -2913,16 +2913,21 @@ let symbolic =
                let c = m "cast" in
                Some O.(cast (m "x") (dtype c) + const_like c (value (m "c"))));
            (* an AFTER waits only on effects and the ops listed here, any
-              other dep is replaced by its srcs *)
+              other dep is replaced by its srcs. An AFTER of global storage
+              it waits on stays: read through a join, it holds a state whose
+              writers its reader waits for. *)
            rule (Upat.op Op.After ~name:"x") (fun m ->
                let x = m "x" in
                let effects =
                  Op.Set.union Op.Set.effectful
                    (ops [ Op.Range; Op.End; Op.Backedge; Op.Linear; Op.Stage ])
                in
+               let state y =
+                 op y = Op.After && addrspace y = Some Dtype.Global
+               in
                (* a reduction waited on is its source, with its ranges ended *)
                let deps y =
-                 if Op.Set.mem (op y) effects then [ y ]
+                 if Op.Set.mem (op y) effects || state y then [ y ]
                  else if op y = Op.Reduce then
                    [ end_ (after (v Op.Noop) [ nth y 0 ]) (List.tl (src y)) ]
                  else src y

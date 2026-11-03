@@ -943,6 +943,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A read through a join (`Ops.is_join`, an `Ops.after` whose dependencies
+  are all `After`s) reads the state under it and waits for that state's
+  writers: `x` read through `x.after y` after an assign of `x` no longer
+  reads `x` before the assign, and `x` as it was is copied before an
+  overwrite a join waits for (`Schedule.create_linear_with_vars`).
 - `Renderer.t.per_byte_first` holds a target's bound of multiply-adds per
   byte up to which a contraction streams before a tensor core is tried, where
   `Heuristic` held one constant: 64 on every target, sm_89's measured

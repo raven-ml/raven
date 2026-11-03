@@ -2039,6 +2039,12 @@ let is_group u =
   | Op.After, s :: _ -> s.op = Op.Stack && s.src = []
   | _ -> false
 
+let is_join u =
+  match (u.op, u.src) with
+  | Op.After, _ :: (_ :: _ as deps) ->
+      List.for_all (fun d -> d.op = Op.After) deps
+  | _ -> false
+
 let rec without_after u =
   if u.op = Op.After then without_after (first u.op u.src) else u
 

@@ -3732,6 +3732,14 @@ schedule/schedule/precompiled_scalar_kernels_1.golden
 schedule/schedule/precompiled_scalar_linear.golden
 schedule/schedule/precompiled_scalar_schedule.golden
 schedule/schedule/precompiled_scalar_schedule_1.golden
+schedule/schedule/read_join_of_assigned.golden
+schedule/schedule/read_join_of_assigned_kernels.golden
+schedule/schedule/read_join_of_assigned_linear.golden
+schedule/schedule/read_join_of_assigned_schedule.golden
+schedule/schedule/read_join_of_overwritten.golden
+schedule/schedule/read_join_of_overwritten_kernels.golden
+schedule/schedule/read_join_of_overwritten_linear.golden
+schedule/schedule/read_join_of_overwritten_schedule.golden
 schedule/schedule/read_overwritten_through.golden
 schedule/schedule/read_overwritten_through_kernels.golden
 schedule/schedule/read_overwritten_through_linear.golden
