@@ -71,9 +71,10 @@ val apply :
     [x]'s leading axes followed by the number of experts per token. The result
     has [x]'s shape.
 
-    Tokens are grouped by expert with {!Nx.map_segments}, so each expert's
-    weights are read once per block of its tokens. Packed weights are gathered
-    by expert with {!Nx_quant.take} and multiplied with {!Nx_quant.apply}, which
-    decodes them inside the product under [Rune.jit] and holds each block's
-    expert decoded eagerly. Float weights are gathered for each block, a copy of
-    its expert. *)
+    Each projection is one product whose rows the kernels group by expert,
+    so that, with several tokens an expert, each expert's weights are read
+    once per block of its tokens, and with few, as at a decode step, once
+    per token:
+    {!Nx_quant.apply_experts} for packed weights, which decodes them inside
+    the product under [Rune.jit], and {!Nx.matmul_segments} for float ones.
+    The activation between them runs in token order. *)

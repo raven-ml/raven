@@ -4,12 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 (* The mixture of experts over four memory devices. At gpt-oss's
-   expert-parallel placement, experts split along their expert axis give the
-   bits the experts give on one device, float and MXFP4, since each block's
-   take of its expert has a gather's bits wherever the experts lie, and a
-   compiled step closes no sum. Row parallel, each expert cut along its
-   features, the down projection's output is a sum that one closing after
-   the top-k combine closes, eagerly and compiled. *)
+   expert-parallel placement, experts split along their expert axis, each
+   device computes its own experts' rows and [+0] in the others': the gate
+   and up projection closes before the activation, adding exact zeros, and
+   the down projection's output is a sum that one closing after the top-k
+   combine closes, within float32's reassociation of the combine's terms of
+   the experts on one device, float and MXFP4. Row parallel, each expert cut
+   along its features, the down projection's output is a sum that one
+   closing after the top-k combine closes, eagerly and compiled. *)
 
 open Windtrap
 
@@ -66,12 +68,22 @@ let place placement (p : (_, Nx.host) Moe.t) =
     down_bias = Nx.place at p.down_bias;
   }
 
-let bits t = Nx.to_array (Nx.bitcast Nx.int32 t)
-
 let placement =
   Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
-let test_split weight () =
+(* The largest gap between [want] and [got], each element, for a baseline:
+   the devices reassociate float32 sums one device sums otherwise. Baselines
+   print it with [%h], exact and the same on every system: the C library's
+   [%g] writes 1.19209e-007 under mingw-w64. *)
+let gap want got =
+  let want = Nx.to_array want and got = Nx.to_array got in
+  let g = ref 0. in
+  Array.iteri (fun i w -> g := Float.max !g (Float.abs (w -. got.(i)))) want;
+  !g
+
+let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x
+
+let test_split weight baseline () =
   let p = params weight in
   let ids =
     Nx.create Nx.int64 [| 5; 2 |]
@@ -82,9 +94,10 @@ let test_split weight () =
   let parallel = Gpt_oss.expert_parallel S.v in
   let whole v = Nx.place (parallel Gpt_oss.Whole ~axis:0) v in
   let y =
-    Moe.apply ~limit (place parallel p) (whole ids, whole weights) (whole x)
+    close
+      (Moe.apply ~limit (place parallel p) (whole ids, whole weights) (whole x))
   in
-  equal ~msg:"the bits" (array int32) (bits host) (bits y);
+  expect (Printf.sprintf "largest gap %h" (gap host y)) baseline;
   equal ~msg:"whole on each device" placement S.on (Nx.placement y)
 
 (* Row parallelism: [gate_up] cut along its outputs and [down] along its
@@ -110,8 +123,6 @@ let rows (p : (_, Nx.host) Moe.t) =
     down_bias = Nx.place S.on p.down_bias;
   }
 
-let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x
-
 (* The lines of [f]'s compiled program at [x] that close a sum: place a
    value that lies partial. *)
 let places f x =
@@ -125,16 +136,6 @@ let places f x =
     go 0
   in
   List.filter (fun l -> has "= Place (" l && has "partial" l) lines
-
-(* The largest gap between [want] and [got], each element, for a baseline:
-   the devices reassociate float32 sums one device sums otherwise. Baselines
-   print it with [%h], exact and the same on every system: the C library's
-   [%g] writes 1.19209e-007 under mingw-w64. *)
-let gap want got =
-  let want = Nx.to_array want and got = Nx.to_array got in
-  let g = ref 0. in
-  Array.iteri (fun i w -> g := Float.max !g (Float.abs (w -. got.(i)))) want;
-  !g
 
 let test_rows weight baseline () =
   let p = params weight in
@@ -193,8 +194,9 @@ let test_rows_bf16 () =
   |};
   equal ~msg:"one closing, compiled" int 1 (List.length (places step (on x)))
 
-(* Expert parallelism compiled: each block's take gathers its expert where
-   the experts lie, so no product is a sum and the step places nothing. *)
+(* Expert parallelism compiled: each device computes its experts' rows, so
+   the down projection's product is a sum, which the step closes once, after
+   the combine. *)
 let test_split_compiled weight baseline () =
   let p = params weight in
   let ids =
@@ -211,7 +213,8 @@ let test_split_compiled weight baseline () =
   expect
     (Printf.sprintf "compiled %h" (gap host (Rune.jit' step (on x))))
     baseline;
-  equal ~msg:"no closing" (list string) [] (places step (on x))
+  equal ~msg:"one closing, after the combine" int 1
+    (List.length (places step (on x)))
 
 let () =
   exit
@@ -219,20 +222,24 @@ let () =
        [
          group "expert parallelism"
            [
-             test "float experts split give the bits of one device"
-               (test_split float_weight);
-             test "MXFP4 experts split give the bits of one device"
-               (test_split mxfp4_weight);
+             test "float experts split are one device's, reassociated"
+               (test_split float_weight @@ __POS_OF__ {|
+                 largest gap 0x1p-24
+               |});
+             test "MXFP4 experts split are one device's, reassociated"
+               (test_split mxfp4_weight @@ __POS_OF__ {|
+                 largest gap 0x1p-11
+               |});
            ];
          group "expert parallelism, compiled"
            [
-             test "float experts split compile, with no sum to close"
+             test "float experts split compile, closing once"
                (test_split_compiled float_weight @@ __POS_OF__ {|
-                 compiled 0x1.8p-23
+                 compiled 0x1p-23
                |});
-             test "MXFP4 experts split compile, with no sum to close"
+             test "MXFP4 experts split compile, closing once"
                (test_split_compiled mxfp4_weight @@ __POS_OF__ {|
-                 compiled 0x1p-10
+                 compiled 0x1.8p-9
                |});
            ];
          group "row parallelism"
@@ -243,7 +250,7 @@ let () =
                |});
              test "MXFP4 experts cut along their features close once"
                (test_rows mxfp4_weight @@ __POS_OF__ {|
-                 eager 0x1p-9, compiled 0x1p-10
+                 eager 0x1.8p-9, compiled 0x1p-9
                |});
              test "bfloat16 experts cut along their features close once"
                test_rows_bf16;

@@ -237,11 +237,7 @@ let routed ~run ~tokens at =
         Int64.of_int (((i.(0) * 7) + (i.(1) * 8)) mod experts))
   in
   let x = Nx.full Nx.float32 [| tokens; 1; inputs |] 0.5 in
-  let product ids x =
-    Nx.map_segments ~segments:experts ids
-      (fun owners rows -> Nx_quant.apply (Nx_quant.take ~axis:0 owners w) rows)
-      x
-  in
+  let product ids x = Nx_quant.apply_experts ~ids w x in
   let f =
     match run with
     | Eager -> product

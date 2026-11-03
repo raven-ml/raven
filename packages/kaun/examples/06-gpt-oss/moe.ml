@@ -46,27 +46,23 @@ let activation ~limit h =
   let linear = Nx.clamp ~min:(-.limit) ~max:limit (feature 1) in
   Nx.mul (Nx.mul gate (Nx.sigmoid (Nx.mul_s gate 1.702))) (Nx.add_s linear 1.0)
 
-(* [linear w b e x] is the projection [w] and bias [b] of each block's expert
-   [e], [[| g |]], applied to the block's rows [x], [[| g; c; inputs |]]. A
-   weight cut along its inputs gives the sum of the devices' terms
-   ({!Nx.Placement.partial}), which the top-k combine keeps and the block
-   closes once. *)
-let linear w b e x =
+(* [linear ~sum w b ids x] is the projection [w] and bias [b] of each
+   position's expert, its id in [ids], [[| s… |]], applied to its row of
+   [x], [[| s'…; inputs |]]: one product whose rows the kernels group by
+   expert. A weight cut along its inputs or its experts gives, with [sum],
+   the sum of the devices' terms ({!Nx.Placement.partial}). *)
+let linear ~sum w b ids x =
   let y =
     match w with
-    | Quant w -> Nx_quant.apply ~sum:true (Nx_quant.take ~axis:0 e w) x
-    | Float w -> Nx.matmul ~sum:true x (Nx.take ~axis:0 e w)
+    | Quant w -> Nx_quant.apply_experts ~sum ~ids w x
+    | Float w -> Nx.matmul_segments ~sum ids x w
   in
-  Nx.add y (Nx.unsqueeze ~axes:[ 1 ] (Nx.take ~axis:0 e b))
+  Nx.add y (Nx.take ~axis:0 ids b)
 
-let expert ~limit p e x =
-  linear p.down p.down_bias e
-    (activation ~limit (linear p.gate_up p.gate_up_bias e x))
-
+(* The activation reads [gate_up]'s product closed; [down]'s stays a sum,
+   which the top-k combine keeps and closes once. *)
 let apply ~limit p (ids, weights) x =
-  let experts = Nx.dim 0 p.down_bias in
-  let y =
-    Nx.map_segments ~segments:experts ids (expert ~limit p)
-      (Nx.unsqueeze ~axes:[ -2 ] x)
-  in
+  let x = Nx.unsqueeze ~axes:[ -2 ] x in
+  let h = linear ~sum:false p.gate_up p.gate_up_bias ids x in
+  let y = linear ~sum:true p.down p.down_bias ids (activation ~limit h) in
   Nx.sum ~axes:[ -2 ] (Nx.mul y (Nx.unsqueeze ~axes:[ -1 ] weights))

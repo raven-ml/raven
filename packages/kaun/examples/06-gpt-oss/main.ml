@@ -10,8 +10,7 @@
    {!Layer_loop.greedy} compiled: each layer kind is compiled once per call
    shape and the host calls it once per layer, so the whole prompt goes through
    in one call. Over several devices it runs expert-parallel: each device holds
-   an equal share of the experts, and the mixture takes each block's expert
-   from the device that holds it.
+   an equal share of the experts and multiplies the rows routed to them.
 
    With [--prompt TEXT] the text becomes the user's turn of a harmony
    conversation, [--system TEXT] its instructions and [--reasoning EFFORT] how
