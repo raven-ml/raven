@@ -114,9 +114,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   float8_e4m3fn kernel at 36 masked lanes is 829 KB of C and 1.9-2.2 s in
   Clang (0.07 s at 12 lanes; seed s1:a9af9f06d362c663 of test_iterate's
   "lanes stop apart")
-- rune test_jit "fully sharded training of four layers over eight devices"
-  hung once for 600 s under runtest past its 60 s limit; it passes alone
-  (6 runs): find why windtrap's kill did not end it and what it waited on
 - `Nx_quant.apply_experts` of gpt-oss's gate and up projection at 512
   tokens takes 26.4-27.6 ms on fudge's CUDA against 3.14-3.23 ms through
   `Nx.map_segments`' blocks: one route row per thread group, so no decoded
