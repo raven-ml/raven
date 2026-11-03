@@ -101,8 +101,8 @@ rune lowers each nx kernel operation to tolk's UOps (`lower*.ml`). Where
 tinygrad's `Tensor` builds the same operation, the lowering builds tinygrad's
 decomposition if it computes what nx states. This section lists every place
 where it builds something else, or builds what tinygrad has no source for,
-except these, not yet recorded: the transforms (`lower_fft.ml`), `eigh` and
-scaled contractions.
+except these, not yet recorded: the transforms (`lower_fft.ml`) and scaled
+contractions.
 
 An entry is admitted for one of four reasons only:
 
@@ -1012,3 +1012,30 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   eager's values`, `› a segmented contraction's gradients give eager's
   values`, `› a group's weight gradient keeps its bits whatever the other
   groups' counts`, `› experts applied give eager's values`.
+
+### L8. Eigenvalues by two-sided Jacobi rotations
+
+- **Reference:** none.
+- **Raven:** `lower_linalg.ml` (`eigh`, `tangents`, `rotations`, `rotate`,
+  `rounds`, `norm_roundoff`, `diagonal_within`, `order`).
+- **No source:** the symmetric matrix the lower triangle names, the upper one
+  never read, divided by the power of two of its largest magnitude, which
+  the eigenvalues take back. A round rotates the pairs of a round-robin
+  pairing, rows and columns, each by the angle that zeroes its off-diagonal
+  element; an element within `u ‖a‖_F` takes none. It runs `⌈p ⌈log₂ n⌉ /
+  10⌉` sweeps of `n - 1` rounds (`n` for an odd `n`), `p` the dtype's
+  precision, one round a step of a tolk loop, and `v` accumulates the
+  rotations. The eigenvalues are the diagonal in a stable ascending order,
+  `v`'s columns in the same order. A matrix whose read triangle holds NaN or
+  an infinity, or whose off-diagonal norm after the sweeps exceeds
+  `16 n u ‖a‖_F`, is NaN in every result. A complex matrix is refused, and
+  the program runs uncompiled.
+- **nx:** `nx_kernel.mli`, `eigh`: ascending eigenvalues, orthonormal `v`,
+  the lower triangle and the diagonal's real parts alone read, NaN as for
+  `svd`.
+- **Class:** stated bound: `Eigh`'s.
+- **Reason:** (b). The refusal: none.
+- **Pinned by:** `Lower_linalg › eigh › v diag w vᵀ reconstructs a`, whose
+  upper triangle is garbage, `› NaN in the lower triangle is NaN`, `› norms
+  past the dtype's range, and subnormals`; `Lower_linalg › Nx's values alone
+  compiled are eager's`.
