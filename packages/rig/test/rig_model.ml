@@ -2640,14 +2640,17 @@ let commands ~two ~fork =
             Atomic.set c.used true;
             Atomic.set c.sk None))
   in
-  (* A major collection marks the whole heap, and on two domains stops both: it
-     costs most of a program's time, so one draw in four collects. It collects
-     every value dropped before it, and the drain after it releases the holds
-     of the submissions among them: on one domain, memory such a submission
-     held donates again. *)
+  (* A major collection marks the whole heap: it costs most of a program's
+     time, so one draw in four collects. It collects every value dropped
+     before it, and the drain after it releases the holds of the submissions
+     among them: on one domain, memory such a submission held donates again.
+     On two domains it stops both, and on a loaded machine each of its stops
+     waits for a domain the system has descheduled. Its [pre] keeps it to
+     the prefix, which runs on one domain: a command with a [pre] is drawn
+     only there (Windtrap.stateful). *)
   let collects = Gen.int_range 0 3 in
   let collect =
-    command "collect"
+    command "collect" ~pre:(fun _ _ -> true)
       (collects @-> world ^-> returns unit)
       (fun k w -> if k = 0 && not w.two then undrop w)
       (fun k _ ->
