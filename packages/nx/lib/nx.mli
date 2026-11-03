@@ -2804,16 +2804,17 @@ val attention :
   ?scale:float ->
   ?lengths:'d int64_t ->
   ?mask:('d pair -> 'd bool_t) ->
-  ?score:('d pair -> 'd float32_t -> 'd float32_t) ->
+  ?score:('d pair -> (float, 'a, 'd) t -> (float, 'a, 'd) t) ->
+  acc:(float, 'a) dtype ->
   kv:('v, 's, 'd) kv ->
   ('v, 's, 'd) t ->
-  ('v, 's, 'd) t * 'd float32_t
-(** [attention ~kv q] is [(o, lse)] for [q] [[lead…; hq; tq; dk]], [hk]
+  ('v, 's, 'd) t * (float, 'a, 'd) t
+(** [attention ~acc ~kv q] is [(o, lse)] for [q] [[lead…; hq; tq; dk]], [hk]
     dividing [hq] (zero heads divide zero), query head [h] reading key head
     [h / (hq / hk)]. [o], [[lead…; hq; tq; dv]], is the softmax over each
     row's visible keys of [scale · q kᵀ] (default [1 / √dk]), rewritten by
     [score], times [v], in [q]'s dtype; [lse], [[lead…; hq; tq]], is the
-    row's log-sum-exp in float32. A pair is visible where [mask] holds, its
+    row's log-sum-exp in [acc]. A pair is visible where [mask] holds, its
     key is before its lead index's entry of [lengths] ([[lead…]], default
     [tk]), and a paged key's table entry is in [\[0, pages)]. A row with no
     visible key, or only [-∞] scores, gives [o = 0] and [lse = -∞].
@@ -2824,9 +2825,9 @@ val attention :
     never read. nx.cpu never lets a value at a key hidden from a row reach
     its [o], a NaN or an infinity included. Other interpretations may make
     the row's [o] NaN for a NaN or an infinity at a hidden key within its
-    length, as [Rune.jit] and rune's derivatives do. The weights are float32, and a visible key
-    whose weight underflows to zero still counts: a NaN in its value makes
-    the row's [o] NaN. A sum of zeros is [+0].
+    length, as [Rune.jit] and rune's derivatives do. The weights are in
+    [acc], and a visible key whose weight underflows to zero still counts:
+    a NaN in its value makes the row's [o] NaN. A sum of zeros is [+0].
 
     [mask] and [score] are plain [Nx] code over 0-d values, applied once to
     stand-ins and kept as programs that run at each pair. Their results, and
@@ -2839,14 +2840,17 @@ val attention :
     let window p = Nx.(logical_and (causal p) (less p.q (add_s p.k 128L)))
     let alibi slopes p s = Nx.(Infix.(s - cast float32 (p.q - p.k) * slopes))
     (* slopes [hq; 1; 1] *)
-    let o, lse = Nx.attention ~mask:window ~score:(alibi slopes) ~kv q
+    let o, lse =
+      Nx.attention ~mask:window ~score:(alibi slopes) ~acc:Nx.float32 ~kv q
     ]}
 
-    [q]'s dtype is float16, bfloat16 or float32. Scores, their maxima and
-    sums, and [lse] compute in float32, and [o] rounds once to [q]'s dtype.
+    [q]'s dtype is float16, bfloat16, float32 or float64, and [acc] is
+    float32 or float64, not narrower than [q]'s dtype. Scores, their maxima
+    and sums, the weights and [lse] compute in [acc], and [o] rounds once to
+    [q]'s dtype.
 
     The bound below holds at a row with a visible key, for finite [q], [k]
-    and [v], barring overflow and underflow. Let [u] be float32's unit
+    and [v], barring overflow and underflow. Let [u] be [acc]'s unit
     roundoff and [u{_q}] that of [q]'s dtype. Let [η] bound the error of
     each of the row's visible scores, as [score] rewrites them, and [b]
     bound their magnitudes. Each element of [o] is within
@@ -2868,7 +2872,7 @@ val attention :
     way.
 
     Over keys cut across devices into [n] parts, a page table's pages for
-    [Paged], each device computes [(o, lse)] over its part in float32 as one
+    [Paged], each device computes [(o, lse)] over its part in [acc] as one
     device does, its mask and score reading the pair's coordinates in the
     whole; [lse] is the parts' log-sum-exp, a [Logsumexp] of [n] terms, and
     [o] the sum over the parts in their order of each one's [o] times
@@ -2885,7 +2889,8 @@ val attention :
     in place; nx.cpu stores no array of [[lead…; hq; tq; tk]]. An
     interpretation receives it whole.
 
-    Raises [Invalid_argument] if [q]'s dtype is another, [q] has fewer than
+    Raises [Invalid_argument] if [q]'s dtype is another, [acc] is not
+    float32 or float64 or is narrower than [q]'s dtype, [q] has fewer than
     three axes, extents disagree, [hk] does not divide [hq], [lengths] is not
     of shape [[lead…]], [dk] is [0] without [scale], or a result or capture
     of [mask] or [score] does not broadcast to [[lead…; hq; tq; tk]]. *)
@@ -5663,20 +5668,22 @@ module Prim : sig
     | Attention : {
         prog : Nx_kernel.Prog.t;
         scale : float;
+        acc : (float, 'a) dtype;
+            (** The scores', weights' and [lse]'s dtype. *)
         out : ('w, 'r) dtype;
-            (** [o]'s dtype: float32 or [q]'s. *)
+            (** [o]'s dtype: [acc] or [q]'s. *)
         q : ('v, 's, 'd) nx;
         kv : ('v, 's, 'd) kv;
         lengths : (int64, Dtype.int64_elt, 'd) nx option;
         loads : 'd any iarray;
       }
-        -> (('w, 'r, 'd) nx * (float, Dtype.float32_elt, 'd) nx) t
-        (** {!attention} of [q] over [kv], bounded by [lengths], at [scale],
-            its mask and score the pair program [prog] over its [loads],
-            each of shape [[lead…; hq; tq; tk]], as
+        -> (('w, 'r, 'd) nx * (float, 'a, 'd) nx) t
+        (** {!attention} of [q] over [kv] in [acc], bounded by [lengths], at
+            [scale], its mask and score the pair program [prog] over its
+            [loads], each of shape [[lead…; hq; tq; tk]], as
             {!Nx_kernel.S.attention} states: [o], C-contiguous of
             [[lead…; hq; tq; dv]] in [out], and [lse], of
-            [[lead…; hq; tq]] in float32. *)
+            [[lead…; hq; tq]] in [acc]. *)
 
   type operands = Operands : 'd any list -> operands
 

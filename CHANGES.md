@@ -1931,6 +1931,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx.attention` takes `~acc`, float32 or float64 and not
+  narrower than `q`, in which its scores, weights, `score` and `lse`
+  compute, and accepts a float64 `q`, whose results and derivatives then
+  hold float64's bound. `Nx.Prim.Attention` gains `acc`.
 - `Nx.matmul_segments ids x w` multiplies each position's row of `x` by the
   matrix of `w`, `[| e; k; n |]`, its id names, zeros where the id is out of
   range, in one contraction whose rows the kernels group by id: a

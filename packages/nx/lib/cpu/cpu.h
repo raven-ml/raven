@@ -969,12 +969,12 @@ void nx_cpu_prog_terms(const nx_cpu_prog *j, const nx_cpu_places *pl,
 
 /* nx_cpu_prog_terms of [n1] rows of [n0] terms, the first at the virtual
    position [p], stepping 1 along a row and [s1] across rows, its load [k],
-   a float32 load, read from [x] in place of its array: row r's element i
-   at x + r·xs1 + i. A kernel computes such a load itself, tile by tile, as
-   attention's scores (attention.c). */
+   a float32 or float64 load, read from [x] in place of its array: row r's
+   element i at element r·xs1 + i of x. A kernel computes such a load
+   itself, tile by tile, as attention's scores (attention.c). */
 void nx_cpu_prog_tile(const nx_cpu_prog *j, const nx_cpu_places *pl, int o,
                       int64_t p, int64_t n0, int64_t s1, int64_t n1,
-                      uint8_t *out, int k, const float *x, int64_t xs1);
+                      uint8_t *out, int k, const void *x, int64_t xs1);
 
 /* Marks in [loads], of a byte a load, and [axes], of NX_MAX_RANK bytes,
    the loads and the coordinates output [o] of [j] reads, through any of

@@ -888,7 +888,7 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
 (* Attention *)
 
 (* Attention over keys cut across devices: each device of the result
-   computes [(o, lse)] over its tile of the keys, [o] in float32, as one
+   computes [(o, lse)] over its tile of the keys, [o] in [acc], as one
    device does (its operands' windows, its program's coordinates offset to its
    rows and keys, its lengths less its first key); [lse] closes as the
    [Logsumexp] of the parts, and [o] as the sum of each part's [o] times
@@ -907,10 +907,10 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
    η doubled and ε = 3 ε_max + ε_n + (2b + ln tk + 5) u, which bounds lse
    too. The fused sum over n parts adds n roundings to the parts' chains:
    γ(tk + n + 1, 2u). *)
-let attention_parts (type v s w q d) eng ~by (route : unit Route.t) rule prog
-    scale (out : (w, q) D.t) (q : (v, s, d) Value.t) (kv : (v, s, d) Value.kv)
-    (lengths : d Value.index option) (loads : d Value.any iarray) :
-    (w, q, d) Value.t * (float, D.float32_elt, d) Value.t =
+let attention_parts (type v s w q a d) eng ~by (route : unit Route.t) rule
+    prog scale (acc : (float, a) D.t) (out : (w, q) D.t) (q : (v, s, d) Value.t)
+    (kv : (v, s, d) Value.kv) (lengths : d Value.index option)
+    (loads : d Value.any iarray) : (w, q, d) Value.t * (float, a, d) Value.t =
   let r = Prim.rank q in
   let lead = r - 3 in
   let p = route.result in
@@ -973,18 +973,16 @@ let attention_parts (type v s w q d) eng ~by (route : unit Route.t) rule prog
     start.(r - 1) <- first;
     let origin = { Prim.start; extents = [||] } in
     at eng ~by ~origin h
-      (Value.Attention
-         { prog; scale; out = D.Float32; q; kv; lengths; loads })
+      (Value.Attention { prog; scale; acc; out = acc; q; kv; lengths; loads })
   in
   let parts = Array.init (Array.length ks) (fun j -> lazy (part j)) in
   let o j = fst (Lazy.force parts.(j)) and l j = snd (Lazy.force parts.(j)) in
   let lse =
-    reduced eng ~by cl ls D.Float32 (Logsumexp (0, D.Float32))
-      (stack eng ~by cl D.Float32 ls l)
+    reduced eng ~by cl ls acc (Logsumexp (0, acc)) (stack eng ~by cl acc ls l)
   in
-  let os_ = stack eng ~by co D.Float32 os o in
+  let os_ = stack eng ~by co acc os o in
   let ls_ =
-    stack eng ~by co D.Float32 os (fun j ->
+    stack eng ~by co acc os (fun j ->
         let x = l j in
         let s = Prim.shape (o j) in
         spread eng ~by s
@@ -1000,23 +998,23 @@ let attention_parts (type v s w q d) eng ~by (route : unit Route.t) rule prog
     let weight =
       E.(
         where
-          (input 2 D.Float32 = const D.Float32 Float.neg_infinity)
-          (const D.Float32 0.)
-          (exp (input 1 D.Float32 - input 2 D.Float32)))
+          (input 2 acc = const acc Float.neg_infinity)
+          (const acc 0.)
+          (exp (input 1 acc - input 2 acc)))
     in
-    let step acc i =
+    let step running i =
       match taken.slot i with
       | [ oj; lj ] ->
           let ins = [ oj; lj; Value.Any total ] in
           let ins, prior =
-            match acc with
-            | Some a -> (ins @ [ a ], E.input 3 D.Float32)
-            | None -> (ins, E.const D.Float32 0.)
+            match running with
+            | Some a -> (ins @ [ a ], E.input 3 acc)
+            | None -> (ins, E.const acc 0.)
           in
           Some
             (List.hd
                (map eng ~by here ins
-                  [ E.any (E.fma weight (E.input 0 D.Float32) prior) ]))
+                  [ E.any (E.fma weight (E.input 0 acc) prior) ]))
       | _ -> invalid_arg "Partial.attention: a part's o and lse"
     in
     match List.fold_left step None (slots co) with
@@ -1032,8 +1030,8 @@ let attention : type r.
     Partition.engine -> by:string -> unit Route.t -> Route.rule -> r Value.prim -> r =
  fun eng ~by route rule op ->
   match op with
-  | Value.Attention { prog; scale; out; q; kv; lengths; loads } ->
-      attention_parts eng ~by route rule prog scale out q kv lengths loads
+  | Value.Attention { prog; scale; acc; out; q; kv; lengths; loads } ->
+      attention_parts eng ~by route rule prog scale acc out q kv lengths loads
   | _ -> invalid_arg "Partial.attention: not attention"
 
 (* Scans *)

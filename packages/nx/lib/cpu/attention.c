@@ -42,11 +42,12 @@
    a block it hides or shows whole is skipped or read without running it
    for each unit.
 
-   Bound (nx_cpu.mli), to first order in u = 2^-24, barring overflow and
-   underflow, for a row of t keys in n blocks, scores s within [-b, b], m
-   the final maximum; exp within 2 ulps, so its relative error is at most
-   5u (2 ulps of the correctly rounded value, 2.5 of the exact), and log
-   within 1 ulp, 3u:
+   Bound (nx_cpu.mli), to first order in u, the accumulator's unit
+   roundoff (2^-24 or 2^-53), barring overflow and underflow, for a row of
+   t keys in n blocks, scores s within [-b, b], m the final maximum; exp
+   within 2 ulps, so its relative error is at most 5u (2 ulps of the
+   correctly rounded value, 2.5 of the exact), and log within 1 ulp in
+   float32 and 2 in float64, λu with λ 3 or 5:
    1. Exponents. p_j = exp (s_j - m_k) and α_i = exp (m_(i-1) - m_i) each
       round their difference once, u times its size. A key's weight in l
       and acc is p_j times the α of each later block, whose differences
@@ -58,20 +59,22 @@
       into l (u); each later block multiplies l by α (exp 5u, product u)
       and adds into it (u): 7u. So l is within (7n + 9) u + u ln t
       relative.
-   3. lse = m + log l: log errs by 3u |log l| <= 3u ln t, the addition by
-      u |lse|: (7n + 9 + 4 ln t) u + u |lse|.
+   3. lse = m + log l: log errs by λu |log l| <= λu ln t, the addition by
+      u |lse|: (7n + 9 + (λ + 1) ln t) u + u |lse|.
    4. o's weights, p_j Π α / l: the exponents' 2bu, p_j's exp (5u), each
       later block's α (exp 5u, acc's product u), l's (7n + 9) u + u ln t
       and the division's u: a relative (13n + 9 + 2b + ln t) u. The sums
       of products add γ(t + 1, 2u) M as nx.mli's chain does.
-   The ε nx.mli reads covers 3 and 4 there: (13n + 9 + 5 ln t) u + u |lse|.
+   The ε nx.mli reads covers 3 and 4 there:
+   (13n + 9 + (λ + 2) ln t) u + u |lse|.
 
    At the end o = acc / l, rounded once to o's dtype, and lse = m + log l;
    a row of l = 0 has o = +0 and lse = -inf. Scores, weights, sums and
-   accumulators are float32; float16 and bfloat16 operands are widened on
-   load. Float32 values whose dimension steps one element are read in
-   place; keys are staged transposed, or for few rows read in place where
-   float32 of unit steps. */
+   accumulators are in the accumulator, lse's dtype, float32 or float64;
+   narrower operands are widened on load. Values of the accumulator's dtype
+   whose dimension steps one element are read in place; keys are staged
+   transposed, or for few rows of float32 read in place where of unit
+   steps. Each accumulator's units are attention_body.h's. */
 
 #include <math.h>
 #include <stdatomic.h>
@@ -99,7 +102,7 @@ enum { O, LSE, Q, K, V };
    key at position ka + i·kk of the keys' array. */
 typedef struct {
   int j, n;
-  const float *v;
+  const void *v;
   int64_t vs;
   int64_t ka, kk, va, vk;
 } run;
@@ -120,8 +123,9 @@ typedef struct {
   int64_t ext[NX_MAX_RANK];
   int64_t hq, hk, g, tq, tk, dk, dv;
   int64_t pages, page, max_pages;
-  int dt, odt, w; /* q's dtype, o's and its element's bytes */
-  float scale;
+  int dt, acc, odt, w; /* q's dtype, the accumulator's, o's and its
+                          element's bytes */
+  double scale;
   /* Units: heads of a group and rows of a head each holds. */
   int64_t hg, tr, chunks, tiles;
   /* The program, where an output is not the default: [mask] where output 0
@@ -166,60 +170,14 @@ static int64_t length_of(const att *c, int64_t b) {
   return l < 0 ? 0 : l > c->tk ? c->tk : l;
 }
 
-/* A worker's scratch, by unit. */
-typedef struct {
-  float *q;     /* ROWS × dk */
-  float *s;     /* ROWS × KEYS: scores, then weights */
-  float *t;     /* ROWS × KEYS: a score program's output */
-  float *acc;   /* ROWS × dv */
-  float *save;  /* ROWS × dv: rows the block leaves as they were */
-  float *kt;    /* dk × KEYS: the keys transposed */
-  float *vf;    /* KEYS × dv */
-  float m[ROWS], l[ROWS];
-  uint8_t *vis; /* ROWS × KEYS, row r's at r·nk */
-  uint8_t sees[ROWS], hides[ROWS], picks[ROWS];
-  uint8_t bad[KEYS]; /* a value not finite */
-  run runs[KEYS];
-} scratch;
-
-static int64_t scratch_bytes(const att *c) {
-  int64_t f = ROWS * c->dk + 2 * ROWS * KEYS + 2 * ROWS * c->dv +
-              KEYS * c->dk + KEYS * c->dv;
-  return (int64_t)sizeof(scratch) + 4 * f + ROWS * KEYS + 10 * 64;
-}
-
 static uint8_t *align64(uint8_t *p) {
   return p + (64 - (uintptr_t)p % 64) % 64;
 }
 
-static void lay_out(const att *c, scratch *x) {
-  uint8_t *p = align64((uint8_t *)(x + 1));
-#define TAKE(f, n)                         \
-  x->f = (void *)p;                        \
-  p = align64(p + (int64_t)(n) * sizeof(float));
-  TAKE(q, ROWS * c->dk);
-  TAKE(s, ROWS * KEYS);
-  TAKE(t, ROWS * KEYS);
-  TAKE(acc, ROWS * c->dv);
-  TAKE(save, ROWS * c->dv);
-  TAKE(kt, KEYS * c->dk);
-  TAKE(vf, KEYS * c->dv);
-#undef TAKE
-  x->vis = p;
-}
-
-/* Whether any of the [n] float32 at [x] is not finite. */
-static int any_bad(const float *x, int64_t n) {
-  const uint32_t *b = (const uint32_t *)x;
-  uint32_t e = 0x7f800000u, any = 0;
-  for (int64_t i = 0; i < n; i++) any |= (b[i] & e) == e;
-  return any != 0;
-}
-
 /* The block of [nk] keys from [j0] of lead index [b] and key head [kh] as
-   runs into x->runs, each key's presence into [present]: a key whose page
+   runs into [runs], each key's presence into [present]: a key whose page
    table entry is out of range is absent. Answers the runs' count. */
-static int runs_of(const att *c, scratch *x, int64_t b, int64_t kh,
+static int runs_of(const att *c, run *runs, int64_t b, int64_t kh,
                    int64_t j0, int nk, uint8_t *present) {
   const nx_array *k = &c->a[K], *v = &c->a[V];
   int n = 0;
@@ -230,7 +188,7 @@ static int runs_of(const att *c, scratch *x, int64_t b, int64_t kh,
                  j0 * step(k, r - 2);
     int64_t va = lead_at(v, c->lead, c->ext, b) + kh * step(v, r - 3) +
                  j0 * step(v, r - 2);
-    run *u = &x->runs[n++];
+    run *u = &runs[n++];
     u->j = 0;
     u->n = nk;
     u->ka = ka;
@@ -253,7 +211,7 @@ static int runs_of(const att *c, scratch *x, int64_t b, int64_t kh,
                    at * step(k, 2);
       int64_t va = v->offset + e * step(v, 0) + kh * step(v, 1) +
                    at * step(v, 2);
-      run *u = &x->runs[n++];
+      run *u = &runs[n++];
       u->j = j;
       u->n = m;
       u->ka = ka;
@@ -264,24 +222,6 @@ static int runs_of(const att *c, scratch *x, int64_t b, int64_t kh,
     j += m;
   }
   return n;
-}
-
-/* The values of the runs [x->runs], [n] of them: in place, or staged into
-   vf at their place in the block. */
-static void values_of(const att *c, scratch *x, int n) {
-  const nx_array *v = &c->a[V];
-  for (int g = 0; g < n; g++) {
-    run *u = &x->runs[g];
-    if (c->v_in) {
-      u->v = (const float *)v->base + u->va;
-      u->vs = u->vk;
-    } else {
-      nx_cpu_stage_as(v, u->va, c->vd, u->vk, c->dv, u->n, NX_FLOAT32,
-                      (uint8_t *)(x->vf + u->j * c->dv), c->dv);
-      u->v = x->vf + u->j * c->dv;
-      u->vs = c->dv;
-    }
-  }
 }
 
 /* The scores of [r] rows at [q], row i's dk elements at q + i·dk, against
@@ -336,299 +276,30 @@ static void row_scores(const float *q, int r, const float *k, int64_t ks,
 #define ROW_SCORES 0
 #endif
 
-/* Row r's update by its block's [nk] scores at [s], hidden ones -inf:
-   its maximum, its weights into [s] and its sum, and its accumulator
-   rescaled. A block whose visible scores are all -inf gives weights 0
-   and leaves the state as it was. */
-typedef float v8f __attribute__((vector_size(32)));
-typedef int32_t v8i __attribute__((vector_size(32)));
+/* The units, in each accumulator (attention_body.h). */
+#define T float
+#define DT NX_FLOAT32
+#define WORD uint32_t
+#define SWORD int32_t
+#define EXPONENT 0x7f800000u
+#define EXP nx_exp_f32
+#define LOG nx_log_f32
+#define FMA fmaf
+#define ROWWISE ROW_SCORES
+#define F(name) name##_f32
+#include "attention_body.h"
 
-static inline v8f load8(const float *p) {
-  v8f v;
-  memcpy(&v, p, sizeof v);
-  return v;
-}
-
-/* The greatest of [m] and the [n] scores at [s], a NaN where one is. */
-static float greatest(const float *s, int n, float m) {
-  v8f m8 = {m, m, m, m, m, m, m, m};
-  v8i nan = {0, 0, 0, 0, 0, 0, 0, 0};
-  int j = 0;
-  for (; j + 8 <= n; j += 8) {
-    v8f y = load8(s + j);
-    v8i gt = y > m8;
-    m8 = (v8f)(((v8i)y & gt) | ((v8i)m8 & ~gt));
-    nan |= y != y;
-  }
-  float mx = m;
-  int any = 0;
-  for (int i = 0; i < 8; i++) {
-    mx = m8[i] > mx ? m8[i] : mx;
-    any |= nan[i];
-  }
-  for (; j < n; j++) {
-    mx = s[j] > mx ? s[j] : mx;
-    any |= s[j] != s[j];
-  }
-  return any ? NAN : mx;
-}
-
-/* The [n] weights at [s] summed term j into lane j mod 8, the lanes then
-   summed by halves: one order on every target. */
-static float lanes_sum(const float *s, int n) {
-  v8f l8 = {0, 0, 0, 0, 0, 0, 0, 0};
-  int j = 0;
-  for (; j + 8 <= n; j += 8) l8 += load8(s + j);
-  float lane[8];
-  memcpy(lane, &l8, sizeof lane);
-  for (; j < n; j++) lane[j % 8] += s[j];
-  for (int h = 4; h > 0; h /= 2)
-    for (int i = 0; i < h; i++) lane[i] += lane[i + h];
-  return lane[0];
-}
-
-static void update(const att *c, scratch *x, int r, int nk) {
-  float *s = x->s + r * KEYS;
-  float m = x->m[r], mx = greatest(s, nk, m);
-  if (mx == -INFINITY) {
-    memset(s, 0, sizeof(float) * (size_t)nk);
-    return;
-  }
-  float alpha = nx_exp_f32(m - mx);
-  for (int j = 0; j < nk; j++) s[j] = nx_exp_f32(s[j] - mx);
-  x->l[r] = x->l[r] * alpha + lanes_sum(s, nk);
-  x->m[r] = mx;
-  if (alpha != 1.f) {
-    float *acc = x->acc + r * c->dv;
-    for (int64_t e = 0; e < c->dv; e++) acc[e] *= alpha;
-  }
-}
-
-/* Row r's products of its visible pairs alone, as the kernel adds them:
-   in increasing key, each fused into its sum. */
-static void picked(const att *c, scratch *x, int r, int nr, int nk) {
-  float *acc = x->acc + r * c->dv;
-  const float *p = x->s + r * KEYS;
-  const uint8_t *vis = x->vis + r * nk;
-  for (int u = 0; u < nr; u++) {
-    const run *g = &x->runs[u];
-    for (int i = 0; i < g->n; i++) {
-      if (!vis[g->j + i]) continue;
-      float pj = p[g->j + i];
-      const float *v = g->v + i * g->vs;
-      for (int64_t e = 0; e < c->dv; e++) acc[e] = fmaf(pj, v[e], acc[e]);
-    }
-  }
-}
-
-/* The unit [u]. */
-static void unit(att *c, scratch *x, int64_t u) {
-  int64_t tile = u % c->tiles, chunk = u / c->tiles % c->chunks;
-  int64_t kh = u / c->tiles / c->chunks % c->hk;
-  int64_t b = u / c->tiles / c->chunks / c->hk;
-  int64_t h0 = kh * c->g + chunk * c->hg, i0 = tile * c->tr;
-  int nh = (int)(c->g - chunk * c->hg < c->hg ? c->g - chunk * c->hg : c->hg);
-  int nt = (int)(c->tq - i0 < c->tr ? c->tq - i0 : c->tr);
-  int rows = nh * nt, r = c->rank;
-  int64_t dk = c->dk, dv = c->dv;
-  const nx_array *q = &c->a[Q];
-  /* The rows, head by head, staged into float32. */
-  int64_t qa = lead_at(q, c->lead, c->ext, b) + i0 * step(q, r - 2);
-  for (int hh = 0; hh < nh; hh++)
-    nx_cpu_stage_as(q, qa + (h0 + hh) * step(q, r - 3), step(q, r - 1),
-                    step(q, r - 2), dk, nt, NX_FLOAT32,
-                    (uint8_t *)(x->q + hh * nt * dk), dk);
-  for (int i = 0; i < rows; i++) {
-    x->m[i] = -INFINITY;
-    x->l[i] = 0;
-  }
-  memset(x->acc, 0, sizeof(float) * (size_t)(rows * dv));
-  uint8_t present[KEYS];
-  int64_t len = length_of(c, b);
-  for (int64_t j0 = 0; j0 < len; j0 += KEYS) {
-    int nk = (int)(len - j0 < KEYS ? len - j0 : KEYS);
-    int cls = c->cls != NULL ? c->cls[tile * c->blocks + j0 / KEYS] : MIXED;
-    if (cls == HIDDEN) continue;
-    int mask = c->mask && cls == MIXED;
-    int nr = runs_of(c, x, b, kh, j0, nk, present);
-    if (nr == 0) continue;
-    int all = 1;
-    for (int j = 0; j < nk; j++) all &= present[j];
-    /* Visibility: the mask program's output 0, head by head, of keys the
-       kernel reads. */
-    if (mask) {
-      for (int hh = 0; hh < nh; hh++) {
-        int64_t p = (((b * c->hq + h0 + hh) * c->tq + i0) * c->tk) + j0;
-        nx_cpu_prog_terms(c->prog, &c->pl, 0, p, 1, nk, c->tk, nt,
-                          x->vis + hh * nt * nk);
-      }
-      if (!all)
-        for (int i = 0; i < rows; i++)
-          for (int j = 0; j < nk; j++) x->vis[i * nk + j] &= present[j];
-    } else if (!all)
-      for (int i = 0; i < rows; i++)
-        memcpy(x->vis + i * nk, present, (size_t)nk);
-    int any = 0, hidden = 0;
-    if (mask || !all)
-      for (int i = 0; i < rows; i++) {
-        const uint8_t *vi = x->vis + i * nk;
-        int n = 0;
-        for (int j = 0; j < nk; j++) n += vi[j] != 0;
-        x->sees[i] = n > 0;
-        x->hides[i] = n > 0 && n < nk;
-        any |= n > 0;
-        hidden |= x->hides[i];
-      }
-    else {
-      memset(x->sees, 1, (size_t)rows);
-      memset(x->hides, 0, (size_t)rows);
-      any = 1;
-    }
-    if (!any) continue;
-    /* Scores of the rows that see a key; an absent key's, 0 until the
-       mask hides it. */
-    if (!all || dk == 0)
-      for (int i = 0; i < rows; i++)
-        memset(x->s + i * KEYS, 0, sizeof(float) * (size_t)nk);
-    /* Each score adds its products in increasing dimension from +0, each
-       fused: on the chain kernel's tiles over the keys staged transposed,
-       or, for few rows, each row against the keys in rows. */
-    for (int g = 0; dk > 0 && g < nr; g++) {
-      const run *v = &x->runs[g];
-#if ROW_SCORES
-      if (rows < CHAIN_ROWS) {
-        const float *k;
-        int64_t ks;
-        if (c->k_in) {
-          k = (const float *)c->a[K].base + v->ka;
-          ks = v->kk;
-        } else {
-          nx_cpu_stage_as(&c->a[K], v->ka, c->kd, v->kk, dk, v->n, NX_FLOAT32,
-                          (uint8_t *)x->kt, dk);
-          k = x->kt;
-          ks = dk;
-        }
-        row_scores(x->q, rows, k, ks, v->n, dk, x->s + v->j);
-        continue;
-      }
-#endif
-      nx_cpu_stage_as(&c->a[K], v->ka, v->kk, c->kd, v->n, dk, NX_FLOAT32,
-                      (uint8_t *)(x->kt + v->j), KEYS);
-      if (rows >= CHAIN_ROWS)
-        for (int j = 0; j < v->n; j += c->nr) {
-          int n = v->n - j < c->nr ? v->n - j : c->nr;
-          c->pv(rows, n, dk, x->q, dk, 1, x->kt + v->j + j, KEYS,
-                x->s + v->j + j, KEYS, NX_CPU_FROM_ZERO);
-        }
-      else
-        for (int i = 0; i < rows; i++) {
-          if (!x->sees[i]) continue;
-          float *y = x->s + i * KEYS + v->j;
-          memset(y, 0, sizeof(float) * (size_t)v->n);
-          c->gemv(v->n, dk, x->kt + v->j, KEYS, x->q + i * dk, y);
-        }
-    }
-    for (int i = 0; i < rows; i++) {
-      float *s = x->s + i * KEYS;
-      for (int j = 0; j < nk; j++) s[j] *= c->scale;
-    }
-    /* The score program's output 1 over the scores, head by head. */
-    if (c->score)
-      for (int hh = 0; hh < nh; hh++) {
-        int64_t p = (((b * c->hq + h0 + hh) * c->tq + i0) * c->tk) + j0;
-        float *s = x->s + hh * nt * KEYS;
-        nx_cpu_prog_tile(c->prog, &c->pl, 1, p, nk, c->tk, nt,
-                         (uint8_t *)x->t, 0, s, KEYS);
-        for (int i = 0; i < nt; i++)
-          if (x->sees[hh * nt + i])
-            memcpy(s + i * KEYS, x->t + i * nk, sizeof(float) * (size_t)nk);
-      }
-    values_of(c, x, nr);
-    if (mask || !all)
-      for (int i = 0; i < rows; i++) {
-        if (!x->hides[i]) continue;
-        float *s = x->s + i * KEYS;
-        const uint8_t *vi = x->vis + i * nk;
-        for (int j = 0; j < nk; j++) s[j] = vi[j] ? s[j] : -INFINITY;
-      }
-    /* A value not finite at a key hidden from a row sends the row's
-       products through its visible pairs alone. */
-    int picking = 0;
-    if (hidden) {
-      for (int j = 0; j < nk; j++) x->bad[j] = 0;
-      for (int g = 0; g < nr; g++) {
-        const run *v = &x->runs[g];
-        for (int j = 0; j < v->n; j++)
-          x->bad[v->j + j] = (uint8_t)any_bad(v->v + j * v->vs, dv);
-      }
-      for (int i = 0; i < rows; i++) {
-        x->picks[i] = 0;
-        if (!x->hides[i]) continue;
-        const uint8_t *vi = x->vis + i * nk;
-        for (int j = 0; j < nk; j++) x->picks[i] |= !vi[j] && x->bad[j];
-        picking |= x->picks[i];
-      }
-    }
-    for (int i = 0; i < rows; i++) {
-      if (x->sees[i]) update(c, x, i, nk);
-      else memset(x->s + i * KEYS, 0, sizeof(float) * (size_t)nk);
-    }
-    if (rows < CHAIN_ROWS) {
-      for (int i = 0; i < rows; i++) {
-        if (!x->sees[i]) continue;
-        if (picking && x->picks[i]) {
-          picked(c, x, i, nr, nk);
-          continue;
-        }
-        for (int g = 0; g < nr; g++) {
-          const run *v = &x->runs[g];
-          c->gemv(dv, v->n, v->v, v->vs, x->s + i * KEYS + v->j,
-                  x->acc + i * dv);
-        }
-      }
-      continue;
-    }
-    /* Rows the products must leave as they are: those that see no key,
-       and those whose visible pairs are added apart. */
-    for (int i = 0; i < rows; i++)
-      if (!x->sees[i] || (picking && x->picks[i]))
-        memcpy(x->save + i * dv, x->acc + i * dv, sizeof(float) * (size_t)dv);
-    for (int64_t e = 0; e < dv; e += c->nr) {
-      int n = (int)(dv - e < c->nr ? dv - e : c->nr);
-      for (int g = 0; g < nr; g++) {
-        const run *v = &x->runs[g];
-        c->pv(rows, n, v->n, x->s + v->j, KEYS, 1, v->v + e, v->vs,
-              x->acc + e, dv, NX_CPU_FROM_TILE);
-      }
-    }
-    for (int i = 0; i < rows; i++) {
-      int pick = picking && x->picks[i];
-      if (!x->sees[i] || pick)
-        memcpy(x->acc + i * dv, x->save + i * dv, sizeof(float) * (size_t)dv);
-      if (pick) picked(c, x, i, nr, nk);
-    }
-  }
-  /* o = acc / l, rounded once to q's dtype, and lse. */
-  nx_cpu_run store = nx_cpu_convert(NX_FLOAT32, c->odt);
-  const nx_array *o = &c->a[O], *lse = &c->a[LSE];
-  for (int hh = 0; hh < nh; hh++)
-    for (int i = 0; i < nt; i++) {
-      int row = hh * nt + i;
-      int64_t at = ((b * c->hq + h0 + hh) * c->tq + i0 + i);
-      float *acc = x->acc + row * dv;
-      float l = x->l[row], m = x->m[row];
-      float y;
-      if (l == 0) {
-        memset(acc, 0, sizeof(float) * (size_t)dv);
-        y = -INFINITY;
-      } else {
-        for (int64_t e = 0; e < dv; e++) acc[e] = acc[e] / l;
-        y = m == INFINITY ? m : m + nx_log_f32(l);
-      }
-      store(acc, o->base + (o->offset + at * dv) * c->w, dv);
-      ((float *)lse->base)[lse->offset + at] = y;
-    }
-}
+#define T double
+#define DT NX_FLOAT64
+#define WORD uint64_t
+#define SWORD int64_t
+#define EXPONENT 0x7ff0000000000000u
+#define EXP nx_exp_f64
+#define LOG nx_log_f64
+#define FMA fma
+#define ROWWISE 0
+#define F(name) name##_f64
+#include "attention_body.h"
 
 /* The summary's classes of tiles [lo, hi), from the program at lead index
    and head 0. */
@@ -671,29 +342,16 @@ static int shared_mask(const att *c, const nx_cpu_prog *g,
   return shared;
 }
 
-static void body(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
-  att *c = ctx;
-  uint8_t *mem = nx_cpu_take(scratch_bytes(c));
-  if (mem == NULL) {
-    atomic_store(&c->failed, 1);
-    return;
-  }
-  scratch *x = (scratch *)align64(mem);
-  lay_out(c, x);
-  for (int64_t u = lo; u < hi; u++) unit(c, x, u);
-  nx_cpu_give(mem);
-}
-
-/* The chain order kernel that reads a in place and n columns of b in
-   place: the table's, its other's, or the base table's. */
-static const nx_cpu_micro *pv_kernel(void) {
-  const nx_cpu_gemm *g = &nx_cpu_table->gemm[NX_FLOAT32];
+/* The chain order kernel of the accumulator [acc] that reads a in place
+   and n columns of b in place: the table's, its other's, or the base
+   table's. */
+static const nx_cpu_micro *pv_kernel(int acc) {
+  const nx_cpu_gemm *g = &nx_cpu_table->gemm[acc];
   for (int i = 0; i < 2 && g != NULL; i++, g = g->other)
     if (g->kernel.f != NULL && g->kernel.a == NX_CPU_A_ELEMENTS &&
         g->kernel.b == NX_CPU_B_COLUMNS && g->enter == NULL)
       return &g->kernel;
-  return &nx_cpu_base.gemm[NX_FLOAT32].kernel;
+  return &nx_cpu_base.gemm[acc].kernel;
 }
 
 /* Programs */
@@ -718,7 +376,7 @@ static int is_default(value vp, int o) {
    (cpu.h, Places), [st] holding nl + 3 rows, [first] nl + 2 entries. */
 static int bind(att *c, nx_cpu_prog *g, const nx_array *a, int nl,
                 nx_array *ins, int64_t (*st)[NX_MAX_RANK], int64_t *first) {
-  static const float zero = 0;
+  static const double zero = 0;
   int r = c->rank;
   int64_t shape[NX_MAX_RANK];
   memcpy(shape, c->ext, sizeof(int64_t) * (size_t)(r - 3));
@@ -726,8 +384,8 @@ static int bind(att *c, nx_cpu_prog *g, const nx_array *a, int nl,
   shape[r - 2] = c->tq;
   shape[r - 1] = c->tk;
   ins[0] = (nx_array){.base = (uint8_t *)&zero,
-                      .dtype = NX_FLOAT32,
-                      .bits = 32,
+                      .dtype = c->acc,
+                      .bits = c->acc == NX_FLOAT64 ? 64 : 32,
                       .rank = r};
   for (int i = 0; i < r; i++) {
     ins[0].dim[i] = shape[i];
@@ -783,7 +441,7 @@ static struct custom_operations held_ops = {
 /* The door's operands from the roots of the call. */
 typedef struct {
   const value *vo, *vlse, *vq, *vkv, *vlengths, *vloads;
-  int dt, odt, paged, lengths;
+  int dt, acc, odt, paged, lengths;
   const nx_cpu_prog *g;
 } operands;
 
@@ -791,7 +449,7 @@ static int operand(void *ctx, int k, nx_operand *in) {
   const operands *o = ctx;
   int at = 5 + o->paged;
   if (k == O) *in = (nx_operand){*o->vo, o->odt, 1};
-  else if (k == LSE) *in = (nx_operand){*o->vlse, NX_FLOAT32, 1};
+  else if (k == LSE) *in = (nx_operand){*o->vlse, o->acc, 1};
   else if (k == Q) *in = (nx_operand){*o->vq, o->dt, 0};
   else if (k == K || k == V)
     *in = (nx_operand){Field(*o->vkv, k - K), o->dt, 0};
@@ -883,8 +541,14 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
   CAMLparam5(vp, vscale, vo, vlse, vlengths);
   CAMLxparam3(vq, vkv, vloads);
   CAMLlocal1(owner);
-  int dt = nx_array_dtype(vq);
-  if (dt != NX_FLOAT16 && dt != NX_BFLOAT16 && dt != NX_FLOAT32)
+  /* q is float16, bfloat16, float32 or float64, the accumulator, lse's
+     dtype, float32 or float64 and not narrower. */
+  int dt = nx_array_dtype(vq), acc = nx_array_dtype(vlse);
+  if (dt != NX_FLOAT16 && dt != NX_BFLOAT16 && dt != NX_FLOAT32 &&
+      dt != NX_FLOAT64)
+    CAMLreturn(Val_int(NX_DTYPE));
+  if ((acc != NX_FLOAT32 && acc != NX_FLOAT64) ||
+      (dt == NX_FLOAT64 && acc != NX_FLOAT64))
     CAMLreturn(Val_int(NX_DTYPE));
   int nl = (int)Wosize_val(vloads);
   int paged = Tag_val(vkv) == 1, lengths = Is_block(vlengths);
@@ -894,12 +558,13 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
   att c = {0};
   c.mask = !is_default(vp, 0);
   c.score = !is_default(vp, 1);
-  c.scale = (float)Double_val(vscale);
+  c.scale = Double_val(vscale);
   c.dt = dt;
-  /* o is float32 or q's dtype. */
+  c.acc = acc;
+  /* o is the accumulator's dtype or q's. */
   c.odt = nx_array_dtype(vo);
-  if (c.odt != NX_FLOAT32 && c.odt != dt) CAMLreturn(Val_int(NX_DTYPE));
-  c.w = c.odt == NX_FLOAT32 ? 4 : 2;
+  if (c.odt != acc && c.odt != dt) CAMLreturn(Val_int(NX_DTYPE));
+  c.w = nx_cpu_width(c.odt);
   /* What the call holds, owned by a custom block: the program's copy, the
      descriptors of more operands than the stack's table holds, the
      program's loads and the places' tables. */
@@ -912,9 +577,8 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
     g = nx_cpu_prog_copy(&vp);
     if (g == NULL) caml_raise_out_of_memory();
     h->g = g;
-    if (nx_cpu_prog_in(g, 0) != NX_FLOAT32 ||
-        nx_cpu_prog_out(g, 0) != NX_BOOL ||
-        nx_cpu_prog_out(g, 1) != NX_FLOAT32) {
+    if (nx_cpu_prog_in(g, 0) != acc || nx_cpu_prog_out(g, 0) != NX_BOOL ||
+        nx_cpu_prog_out(g, 1) != acc) {
       release(owner);
       CAMLreturn(Val_int(NX_DTYPE));
     }
@@ -948,8 +612,8 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
   nx_array *a = (nx_array *)mem, *ins = a + n;
   int64_t(*st)[NX_MAX_RANK] = (int64_t(*)[NX_MAX_RANK])(ins + nl + 1);
   int64_t *first = (int64_t *)(st + nl + 3);
-  operands ops = {&vo, &vlse, &vq, &vkv, &vlengths, &vloads,
-                  dt,  c.odt, paged, lengths, g};
+  operands ops = {&vo, &vlse, &vq, &vkv,   &vlengths, &vloads,
+                  dt,  acc,   c.odt, paged, lengths,   g};
   int e = nx_read_each(n, operand, &ops, a);
   if (e) {
     release(owner);
@@ -980,12 +644,12 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
     CAMLreturn(finish(owner, n, a, e < 0 ? NX_OK : e, e < 0));
   c.prog = g;
   int r = c.rank;
-  c.k_in = dt == NX_FLOAT32 && step(&a[K], paged ? 3 : r - 1) == 1;
-  c.v_in = dt == NX_FLOAT32 && step(&a[V], paged ? 3 : r - 1) == 1;
+  c.k_in = dt == acc && step(&a[K], paged ? 3 : r - 1) == 1;
+  c.v_in = dt == acc && step(&a[V], paged ? 3 : r - 1) == 1;
   c.kd = step(&a[K], paged ? 3 : r - 1);
   c.vd = step(&a[V], paged ? 3 : r - 1);
-  c.gemv = nx_cpu_table->gemv[NX_FLOAT32];
-  const nx_cpu_micro *mk = pv_kernel();
+  c.gemv = nx_cpu_table->gemv[acc];
+  const nx_cpu_micro *mk = pv_kernel(acc);
   c.pv = mk->f;
   c.nr = mk->nr;
   /* Units of at most ROWS rows: a group's heads, then rows of each. */
@@ -1006,7 +670,7 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
   /* Its cost: each pair's products at the core's speed, and the operands'
      bytes moved once. */
   double pairs = (double)rows * (double)c.tk;
-  double cost = 2 * pairs * (double)(c.dk + c.dv) / nx_cpu_core_speed(NX_FLOAT32);
+  double cost = 2 * pairs * (double)(c.dk + c.dv) / nx_cpu_core_speed(acc);
   double bytes = 0;
   for (int i = 0; i < n; i++) bytes += nx_cpu_bytes(&a[i]);
   cost += NX_CPU_STRIDED_COST * bytes;
@@ -1017,7 +681,8 @@ value nx_cpu_attention(value vp, value vscale, value vo, value vlse,
     nx_cpu_job(c.tiles, (int64_t)pairs1, pairs1 * nx_cpu_prog_cost(g),
                classes, &c);
   }
-  nx_cpu_job(units, (int64_t)bytes, cost, body, &c);
+  nx_cpu_job(units, (int64_t)bytes, cost,
+             acc == NX_FLOAT64 ? body_f64 : body_f32, &c);
   nx_cpu_reacquire(released);
   free(cls);
   int failed = atomic_load(&c.failed) || (g != NULL && nx_cpu_prog_failed(g));

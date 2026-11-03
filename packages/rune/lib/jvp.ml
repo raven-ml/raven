@@ -2434,7 +2434,7 @@ and attention : type r.
           let o, lse =
             Attention.compose
               { eval = (fun op -> Prim.eval ~by op) }
-              ~prog:a.prog ~scale:a.scale ~out:a.out (seeded a.q) kv
+              ~prog:a.prog ~scale:a.scale ~acc:a.acc ~out:a.out (seeded a.q) kv
               (Option.map seeded a.lengths) loads
           in
           let back y =

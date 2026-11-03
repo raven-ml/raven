@@ -83,9 +83,10 @@ let paged_read e (positions : 'd Nx.int64_t) (pool : ('v, 's, 'd) Nx.t) =
   in
   e.eval (Gather { axis = r; idx; x })
 
-let compose (type v s w r d) e ~prog ~scale ~(out : (w, r) D.t)
-    (q : (v, s, d) Nx.t) (kv : (v, s, d) Nx.kv) (lengths : d Nx.int64_t option)
-    (loads : d Prim.any iarray) : (w, r, d) Nx.t * d Nx.float32_t =
+let compose (type v s w r a d) e ~prog ~scale ~(acc : (float, a) D.t)
+    ~(out : (w, r) D.t) (q : (v, s, d) Nx.t) (kv : (v, s, d) Nx.kv)
+    (lengths : d Nx.int64_t option) (loads : d Prim.any iarray) :
+    (w, r, d) Nx.t * (float, a, d) Nx.t =
   let r = Nx.ndim q in
   let l = r - 3 in
   let lead = Array.sub (Nx.shape q) 0 l in
@@ -125,8 +126,8 @@ let compose (type v s w r d) e ~prog ~scale ~(out : (w, r) D.t)
          {
            batch;
            contracting = ia [| (l + 3, l + 2) |];
-           acc = D.Any D.Float32;
-           out = D.Float32;
+           acc = D.Any acc;
+           out = acc;
            a = grouped q;
            b = k;
            init = None;
@@ -144,7 +145,7 @@ let compose (type v s w r d) e ~prog ~scale ~(out : (w, r) D.t)
         | P.In 0 ->
             Some
               (E.any
-                 E.(input 0 D.Float32 * const D.Float32 scale))
+                 E.(input 0 acc * const acc scale))
         | _ -> None)
       prog
   in
@@ -154,7 +155,7 @@ let compose (type v s w r d) e ~prog ~scale ~(out : (w, r) D.t)
          {
            layout = contiguous f;
            prog = pair;
-           outs = Prim.[ D.Bool; D.Float32 ];
+           outs = Prim.[ D.Bool; acc ];
            loads =
              ia
                (Array.append [| Prim.Plain s |]
@@ -173,7 +174,7 @@ let compose (type v s w r d) e ~prog ~scale ~(out : (w, r) D.t)
   let key = r - 1 in
   let at = 2 + Option.fold ~none:0 ~some:(fun _ -> 1) lengths in
   let m =
-    map e D.Float32 f
+    map e acc f
       ([ Prim.Any visible; Prim.Any score ] @ extra)
       E.(
         let seen = input 0 D.Bool in
@@ -187,7 +188,7 @@ let compose (type v s w r d) e ~prog ~scale ~(out : (w, r) D.t)
           | Some _ -> seen && i64 0 <= input at D.Int64
           | None -> seen
         in
-        where seen (input 1 D.Float32) (const D.Float32 Float.neg_infinity))
+        where seen (input 1 acc) (const acc Float.neg_infinity))
   in
   let lse, () =
     e.eval
@@ -195,8 +196,8 @@ let compose (type v s w r d) e ~prog ~scale ~(out : (w, r) D.t)
          {
            layout = contiguous f;
            axes = ia [| r - 1 |];
-           prog = P.of_exprs ~ins:(ia [| D.Any D.Float32 |]) [| E.any (E.input 0 D.Float32) |];
-           reductions = Prim.[ Logsumexp (0, D.Float32) ];
+           prog = P.of_exprs ~ins:(ia [| D.Any acc |]) [| E.any (E.input 0 acc) |];
+           reductions = Prim.[ Logsumexp (0, acc) ];
            loads = ia [| Prim.Plain m |];
          })
   in
@@ -204,13 +205,13 @@ let compose (type v s w r d) e ~prog ~scale ~(out : (w, r) D.t)
      weights and [o] are zero, whatever its values hold. *)
   let row = spread e ~ones:1 f lse in
   let p =
-    map e D.Float32 f [ Prim.Any m; Prim.Any row ]
+    map e acc f [ Prim.Any m; Prim.Any row ]
       E.(
-        let row = input 1 D.Float32 in
+        let row = input 1 acc in
         where
-          (row = const D.Float32 Float.neg_infinity)
-          (const D.Float32 0.)
-          (exp (input 0 D.Float32 - row)))
+          (row = const acc Float.neg_infinity)
+          (const acc 0.)
+          (exp (input 0 acc - row)))
   in
   let o =
     e.eval
@@ -218,7 +219,7 @@ let compose (type v s w r d) e ~prog ~scale ~(out : (w, r) D.t)
          {
            batch;
            contracting = ia [| (l + 3, l + 1) |];
-           acc = D.Any D.Float32;
+           acc = D.Any acc;
            out;
            a = grouped p;
            b = v;
@@ -235,7 +236,7 @@ let compose (type v s w r d) e ~prog ~scale ~(out : (w, r) D.t)
     map e out os [ Prim.Any o; Prim.Any (spread e ~ones:1 os lse) ]
       E.(
         where
-          (input 1 D.Float32 = const D.Float32 Float.neg_infinity)
+          (input 1 acc = const acc Float.neg_infinity)
           (const out (D.zero out)) (input 0 out))
   in
   (o, lse)

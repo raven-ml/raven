@@ -350,14 +350,15 @@ val full_precision : ('v, 's) Nx_array.Dtype.t -> bool
     Attention reads query rows [q] [[lead…; hq; tq; dk]] against keys and
     values of [hk] key heads, [hk] dividing [hq], query head [h] reading key
     head [h / (hq / hk)]. Its loop is [[lead…; hq; tq; tk]], a {e pair} at
-    each index: a query row and a key. A pair's {e score} is [s × q·k],
-    [s] the scale rounded to [float32] and [q·k] the sum of the row's and
-    the key's products, each element widened to [float32], in an
-    association its library states. A program over the pair computes two
-    outputs from its operand [0], the score, and its loads, operands [1]
-    on, each of the loop's shape: output [0], a [bool], which reads no
-    score, and output [1], a [float32]. Its [Coord] nodes read the loop's axes: [rank - 2] the query
-    row, [rank - 1] the key.
+    each index: a query row and a key. It computes in an {e accumulator},
+    [float32] or [float64]. A pair's {e score} is [s × q·k], [s] the scale
+    rounded to the accumulator and [q·k] the sum of the row's and the key's
+    products, each element widened to the accumulator, in an association
+    its library states. A program over the pair computes two outputs from
+    its operand [0], the score, and its loads, operands [1] on, each of the
+    loop's shape: output [0], a [bool], which reads no score, and output
+    [1], in the accumulator. Its [Coord] nodes read the loop's axes:
+    [rank - 2] the query row, [rank - 1] the key.
 
     A pair is {e visible} where its key is before its lead index's length,
     [tk] without lengths, where a paged key's table entry is in \[[0],
@@ -875,7 +876,7 @@ module type S = sig
     Prog.t ->
     scale:float ->
     o:('w, 'r) a ->
-    lse:(float, Nx_array.Dtype.float32_elt) a ->
+    lse:(float, 'c) a ->
     ?lengths:index ->
     ('v, 's) a ->
     (('v, 's) a, index) kv ->
@@ -883,13 +884,14 @@ module type S = sig
     answer
   (** [attention p ~scale ~o ~lse ?lengths q kv loads] stores the attention
       of [q]'s rows over [kv] ({!section-attention}), [p] the pair's
-      program over its loads [loads], into [o], of [float32] or [q]'s
-      dtype, and [lse] in [float32]. [lengths], [[lead…]], bounds each lead index's keys. The
-      scores, their maxima and sums, the weights and [lse] compute in
-      [float32], and each element of [o] rounds once into [o]'s dtype.
-      [q], [k] and [v] are
-      of one dtype, [float16], [bfloat16] or [float32], [p]'s operand [0]
-      and output [1] are [float32] and its output [0] [bool]: it answers
+      program over its loads [loads], into [o], of [lse]'s dtype or [q]'s,
+      and [lse], whose dtype, [float32] or [float64], is the accumulator.
+      [lengths], [[lead…]], bounds each lead index's keys. The scores, their
+      maxima and sums, the weights and [lse] compute in the accumulator,
+      and each element of [o] rounds once into [o]'s dtype. [q], [k] and
+      [v] are of one dtype, [float16], [bfloat16], [float32] or [float64],
+      no wider than the accumulator, [p]'s operand [0] and output [1] are
+      in the accumulator and its output [0] [bool]: it answers
       [Wrong_dtype] otherwise, and [Shape_mismatch] for an output [0] that
       reads operand [0]. Each library states its association and its
       bounds. *)

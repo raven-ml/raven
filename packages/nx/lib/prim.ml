@@ -2202,25 +2202,35 @@ let linalg_results : type d r.
    or a numbering, one that every result of another operation shares, none
    for a check.
    Raises naming [by] where [op]'s operands break the rule. *)
-(* Attention's rule: [q], [k] and [v] of one float dtype it takes, the
-   program's operands the score in float32 then the loads' dtypes, its
-   outputs a bool then a float32 and its coordinates along the loop's axes;
+(* Attention's rule: [q], [k] and [v] of one float dtype it takes, an
+   accumulator [acc] of float32 or float64 not narrower than theirs, the
+   program's operands the score in [acc] then the loads' dtypes, its
+   outputs a bool then [acc] and its coordinates along the loop's axes;
    its results' shapes. *)
-let attention_shapes (type v s d) ~by (prog : P.t) (q : (v, s, d) t)
-    (kv : (v, s, d) kv) (lengths : d index option) (loads : d any iarray) =
+let attention_shapes (type v s a d) ~by (prog : P.t) (acc : (float, a) D.t)
+    (q : (v, s, d) t) (kv : (v, s, d) kv) (lengths : d index option)
+    (loads : d any iarray) =
   (match dtype q with
-  | D.Float16 | D.Bfloat16 | D.Float32 -> ()
+  | D.Float16 | D.Bfloat16 | D.Float32 | D.Float64 -> ()
   | dt ->
-      invalid_argf "%s: attention of %s, not float16, bfloat16 or float32" by
+      invalid_argf
+        "%s: attention of %s, not float16, bfloat16, float32 or float64" by
         (D.name dt));
+  (match acc with
+  | D.Float32 | D.Float64 when D.bits acc >= D.bits (dtype q) -> ()
+  | _ ->
+      invalid_argf
+        "%s: attention's accumulator is float32 or float64, no narrower \
+         than the query: %s for a query of %s"
+        by (D.name acc) (D.name (dtype q)));
   let n = Iarray.length loads in
   if Iarray.length prog.ins <> n + 1 then
     invalid_argf "%s: a pair's program of %d operands over a score and %d loads"
       by (Iarray.length prog.ins) n;
   let (D.Any score) = Iarray.get prog.ins 0 in
-  if not (same_dtype score D.Float32) then
-    invalid_argf "%s: a pair's program reads its score as %s, not float32" by
-      (D.name score);
+  if not (same_dtype score acc) then
+    invalid_argf "%s: a pair's program reads its score as %s, not %s" by
+      (D.name score) (D.name acc);
   Iarray.iteri
     (fun i (Any x) ->
       let (D.Any want) = Iarray.get prog.ins (i + 1) in
@@ -2231,11 +2241,11 @@ let attention_shapes (type v s d) ~by (prog : P.t) (q : (v, s, d) t)
   let outs = Iarray.length prog.outs in
   let out k = P.dtype prog (Iarray.get prog.outs k) in
   (match if outs = 2 then Some (out 0, out 1) else None with
-  | Some (D.Any D.Bool, D.Any D.Float32) -> ()
+  | Some (D.Any D.Bool, D.Any s) when same_dtype s acc -> ()
   | _ ->
       invalid_argf
-        "%s: a pair's program gives a bool and a float32, not %d outputs of %s"
-        by outs
+        "%s: a pair's program gives a bool and a %s, not %d outputs of %s" by
+        (D.name acc) outs
         (String.concat ", "
            (List.init outs (fun k ->
                 let (D.Any dt) = out k in
@@ -2334,11 +2344,11 @@ let layouts : type r. by:string -> r prim -> L.t array =
               (shape x) pp_shape s)
         (data_any data);
       [||]
-  | Attention { prog; out; q; kv; lengths; loads; _ } ->
-      if not (same_dtype out D.Float32 || same_dtype out (dtype q)) then
-        invalid_argf "%s: attention's o of %s, not float32 or %s" by
-          (D.name out) (D.name (dtype q));
-      let o, lse = attention_shapes ~by prog q kv lengths loads in
+  | Attention { prog; acc; out; q; kv; lengths; loads; _ } ->
+      if not (same_dtype out acc || same_dtype out (dtype q)) then
+        invalid_argf "%s: attention's o of %s, not %s or %s" by (D.name out)
+          (D.name acc) (D.name (dtype q));
+      let o, lse = attention_shapes ~by prog acc q kv lengths loads in
       [| contiguous o; contiguous lse |]
 
 type routed = { route : unit Route.t option; layouts : L.t array }
@@ -2389,9 +2399,9 @@ let results_at : type r.
   | Bitcast (dt, _) -> m 0 (of_layout dt layouts.(0) p)
   | Place (p, x) -> m 0 (of_layout (dtype x) layouts.(0) p)
   | Check _ -> ()
-  | Attention { out; _ } ->
+  | Attention { acc; out; _ } ->
       let o = m 0 (of_layout out layouts.(0) p) in
-      (o, m 1 (of_layout D.Float32 layouts.(1) p))
+      (o, m 1 (of_layout acc layouts.(1) p))
 
 (* Where [op]'s results lie, by its route: the operands' placement where they
    lie at one that cuts no axis, as {!route_of} decides there, without

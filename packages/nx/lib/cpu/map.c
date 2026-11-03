@@ -1360,7 +1360,7 @@ static void terms_of(const nx_cpu_prog *g, const nx_cpu_places *pl, int o,
                         b1};
       /* A piece of a tile's rows reads the tile from its own first. */
       view v = own_v;
-      if (own >= 0) v.p += r * own_v.s1 + i * (int64_t)sizeof(float);
+      if (own >= 0) v.p += r * own_v.s1 + i * width(g->ins[own - nouts]);
       planes(&x, j, o, out + (r * n0 + i) * w, t + 4 * n, own, v);
     }
   if (t != local) arena_give(j->tabs, t);
@@ -1374,9 +1374,9 @@ void nx_cpu_prog_terms(const nx_cpu_prog *g, const nx_cpu_places *pl,
 
 void nx_cpu_prog_tile(const nx_cpu_prog *g, const nx_cpu_places *pl, int o,
                       int64_t p, int64_t n0, int64_t s1, int64_t n1,
-                      uint8_t *out, int k, const float *x, int64_t xs1) {
+                      uint8_t *out, int k, const void *x, int64_t xs1) {
   terms_of(g, pl, o, p, 1, n0, s1, n1, out, g->nouts + k,
-           (view){(uint8_t *)x, 1, xs1 * (int64_t)sizeof(float)});
+           (view){(uint8_t *)x, 1, xs1 * width(g->ins[k])});
 }
 
 /* Whether a node of the steps [s], of [nn] nodes, reads a coordinate,

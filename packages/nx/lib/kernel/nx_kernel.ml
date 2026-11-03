@@ -664,7 +664,7 @@ module type S = sig
     Prog.t ->
     scale:float ->
     o:('w, 'r) a ->
-    lse:(float, Nx_array.Dtype.float32_elt) a ->
+    lse:(float, 'c) a ->
     ?lengths:index ->
     ('v, 's) a ->
     (('v, 's) a, index) kv ->

@@ -5790,7 +5790,8 @@ let record (type r) st i ~by (op : r Value.prim) : r =
 (* [mask] and [score] applied to stand-ins at [at]: the recording, and each
    one's cell, captures and shape. A result that no stand-in reaches is a
    capture. *)
-let recorded (type d) ~(at : d Devices.placement) ~tq ?mask ?score () =
+let recorded (type a d) ~(at : d Devices.placement) ~(acc : (float, a) D.t)
+    ~tq ?mask ?score () =
   let st = { cells = []; count = 0; captures = 0 } in
   let stand_in i dt leaf =
     let layout = Nx_array.Layout.contiguous [||] in
@@ -5811,7 +5812,7 @@ let recorded (type d) ~(at : d Devices.placement) ~tq ?mask ?score () =
             tq;
           }
         in
-        let s = stand_in i D.Float32 Score in
+        let s = stand_in i acc Score in
         (i, Option.map (fun f -> f p) mask, Option.map (fun f -> f p s) score))
   in
   let result y =
@@ -5824,11 +5825,12 @@ let recorded (type d) ~(at : d Devices.placement) ~tq ?mask ?score () =
   (st, Option.map result m, Option.map result s)
 
 (* The pair program over the loop [[lead…; hq; tq; tk]] ({!Nx_kernel}'s
-   attention): operand 0 the scaled score, then the captures [captures],
-   each a number and a dtype, then, at [length] where given, the rows'
-   lengths; output 0 [mask]'s cell, or [true], output 1 [score]'s cell, or
-   the score. A pair's length reads that operand, or the constant [tk]. *)
-let pair_program ~rank ~tk ?length st ~mask ~score captures =
+   attention): operand 0 the scaled score in [acc], then the captures
+   [captures], each a number and a dtype, then, at [length] where given, the
+   rows' lengths; output 0 [mask]'s cell, or [true], output 1 [score]'s
+   cell, or the score. A pair's length reads that operand, or the constant
+   [tk]. *)
+let pair_program ~acc ~rank ~tk ?length st ~mask ~score captures =
   let nodes = ref [] and count = ref 0 in
   let add (n : P.node) =
     nodes := n :: !nodes;
@@ -5881,7 +5883,7 @@ let pair_program ~rank ~tk ?length st ~mask ~score captures =
   in
   let out = match score with None -> score_in | Some c -> node c in
   let ins =
-    (D.Any D.Float32 :: List.map snd captures)
+    (acc :: List.map snd captures)
     @ match length with Some _ -> [ D.Any D.Int64 ] | None -> []
   in
   let nodes = Iarray.of_list (List.rev !nodes) in
@@ -5906,13 +5908,22 @@ let reads_length st cells =
   in
   List.exists reads cells
 
-let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
-    (q : (v, s, d) t) : (v, s, d) t * d float32_t =
+let attention (type v s a d) ?scale ?lengths ?mask ?score
+    ~(acc : (float, a) D.t) ~(kv : (v, s, d) kv) (q : (v, s, d) t) :
+    (v, s, d) t * (float, a, d) t =
   let by = "Nx.attention" in
   (match dtype q with
-  | D.Float16 | D.Bfloat16 | D.Float32 -> ()
+  | D.Float16 | D.Bfloat16 | D.Float32 | D.Float64 -> ()
   | dt ->
-      invalid_argf "%s: %s is not float16, bfloat16 or float32" by (D.name dt));
+      invalid_argf "%s: %s is not float16, bfloat16, float32 or float64" by
+        (D.name dt));
+  (match acc with
+  | D.Float32 | D.Float64 when D.bits acc >= D.bits (dtype q) -> ()
+  | _ ->
+      invalid_argf
+        "%s: an accumulator is float32 or float64, no narrower than the \
+         query: %s for a query of %s"
+        by (D.name acc) (D.name (dtype q)));
   let r = ndim q in
   if r < 3 then
     invalid_argf "%s: the query %a has fewer than three axes" by pp_value q;
@@ -5960,7 +5971,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     | None -> 1. /. Float.sqrt (Float.of_int dk)
   in
   let at = beside q in
-  let st, mask, score = recorded ~at ~tq ?mask ?score () in
+  let st, mask, score = recorded ~at ~acc ~tq ?mask ?score () in
   let captures =
     List.filter_map Fun.id [ mask; score ]
     |> List.concat_map (fun (_, cs, _) -> cs)
@@ -5990,7 +6001,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     | Some _ | None -> None
   in
   let prog =
-    pair_program ~rank:r ~tk
+    pair_program ~acc:(D.Any acc) ~rank:r ~tk
       ?length:(Option.map (fun _ -> 1 + List.length captures) length)
       st ~mask:(Option.map cell mask) ~score:(Option.map cell score)
       (List.map (fun (Captured (c, x)) -> (c, D.Any (dtype x))) captures)
@@ -6023,7 +6034,16 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
   in
   Eval.eval ~by
     (Value.Attention
-       { prog; scale; out = dtype q; q; kv; lengths; loads = Iarray.of_list loads })
+       {
+         prog;
+         scale;
+         acc;
+         out = dtype q;
+         q;
+         kv;
+         lengths;
+         loads = Iarray.of_list loads;
+       })
 
 (* Fourier transforms *)
 
@@ -7070,13 +7090,14 @@ module Prim = struct
     | Attention : {
         prog : Nx_kernel.Prog.t;
         scale : float;
+        acc : (float, 'a) dtype;
         out : ('w, 'r) dtype;
         q : ('v, 's, 'd) Value.t;
         kv : ('v, 's, 'd) kv;
         lengths : 'd index option;
         loads : 'd any iarray;
       }
-        -> (('w, 'r, 'd) Value.t * (float, Dtype.float32_elt, 'd) Value.t) t
+        -> (('w, 'r, 'd) Value.t * (float, 'a, 'd) Value.t) t
 
   type operands = Prim.operands = Operands : 'd any list -> operands
 

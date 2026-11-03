@@ -333,16 +333,17 @@
 (** {1:attention Attention}
 
     [attention] computes every case of [q], [k] and [v] of float16,
-    bfloat16 or float32. It refuses with [Shape_mismatch] what
+    bfloat16, float32 or float64 in an accumulator, [lse]'s dtype, of
+    float32 or float64 and not narrower. It refuses with [Shape_mismatch] what
     {!Nx_kernel.Shape.attention} answers [Error] for and destinations of
     other shapes. Each query row reads its keys in {e blocks} of 64 from
     key 0, up to its lead index's length, and keeps a maximum [m], a sum
     [l] and an accumulator [a] of [dv] elements, from [-∞], [+0] and [+0].
     For each block in which the row has a visible pair:
     - each pair's score is the sum of the [dk] products of the row's and
-      the key's elements in float32, added in increasing dimension from
-      [+0], each fused into its sum, times the scale rounded to float32,
-      rewritten by the program's output 1;
+      the key's elements in the accumulator, added in increasing
+      dimension from [+0], each fused into its sum, times the scale
+      rounded to the accumulator, rewritten by the program's output 1;
     - [m'] is the greatest of [m] and the block's visible scores, a NaN
       where one is. Where it is [-∞], the block's weights are [0] and the
       state is left as it was; otherwise each weight is
@@ -355,7 +356,8 @@
       pair's weight [0] included; where a value of the block hidden from
       the row is a NaN or an infinity, over its visible pairs alone.
     A block in which the row has no visible pair leaves its state as it
-    was. At the end, [o = a / l] in float32, rounded once to [o]'s dtype,
+    was. At the end, [o = a / l] in the accumulator, rounded once to [o]'s
+    dtype,
     and [lse = m + log l], [+∞] where [m] is; a row of [l = 0] has
     [o = +0] and [lse = -∞]. [exp] and [log] are {!Nx_kernel.Prog.Exp}'s
     and {!Nx_kernel.Prog.Log}'s. So a value at a pair hidden from a row,
@@ -371,24 +373,24 @@
     at lead index 0 and head 0 alone, and a block whose pairs it shows all
     or hides all is read, or skipped, without running it again.
 
-    Float32 keys and values whose dimension steps one element are read in
-    place, keys only for fewer than 12 rows of a key head; others are
-    copied into float32 by blocks. Each thread
-    holds at most [4 (128 dk + 192 dv + 8192) + 12288] bytes of host memory
-    for the call, and the call at most [tq ⌈tk / 64⌉] bytes where a mask
-    is shared so.
+    Keys and values of the accumulator's dtype whose dimension steps one
+    element are read in place, keys only in float32 and for fewer than 12
+    rows of a key head; others are copied into the accumulator by blocks.
+    Each thread holds at most [w (128 dk + 192 dv + 8192) + 12288] bytes of
+    host memory for the call, [w] the accumulator's bytes, and the call at
+    most [tq ⌈tk / 64⌉] bytes where a mask is shared so.
 
     For a row that reads [t] keys in [n = ⌈t / 64⌉] blocks, barring
-    overflow and underflow, to first order in float32's unit roundoff [u],
-    [lse] is within [(7 n + 9 + 4 ln t) u + u |lse|] of the exact
-    log-sum-exp of the row's computed scores, and each weight [o] applies
-    within a relative [(13 n + 9 + 2b + ln t) u] of its exact one, [b]
-    bounding the visible scores' magnitudes, {!Nx_kernel.Prog.Exp} being
-    within 2 ulps and {!Nx_kernel.Prog.Log} within 1: attention.c derives
-    both.
+    overflow and underflow, to first order in the accumulator's unit
+    roundoff [u], [lse] is within [(7 n + 9 + (λ + 1) ln t) u + u |lse|] of
+    the exact log-sum-exp of the row's computed scores, and each weight [o]
+    applies within a relative [(13 n + 9 + 2b + ln t) u] of its exact one,
+    [b] bounding the visible scores' magnitudes, {!Nx_kernel.Prog.Exp}
+    being within 2 ulps and {!Nx_kernel.Prog.Log} within 1 in float32 and
+    2 in float64, [λ] being [3] and [5]: attention.c derives both.
     The bound {!Nx.attention} reads as its [ε], which covers both, is
-    [(13 n + 9 + 5 ln t) u + u |lse|]. The value product takes the weights
-    in float32. *)
+    [(13 n + 9 + (λ + 2) ln t) u + u |lse|]. The value product takes the
+    weights in the accumulator. *)
 
 (** {1:matrices Matrices}
 

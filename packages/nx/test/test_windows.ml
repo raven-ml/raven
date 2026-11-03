@@ -851,18 +851,18 @@ let test_contract_nans () =
 
 (* Attention over query heads and rows cut across devices: each device's
    window offsets its mask's and score's row coordinates and reads the keys
-   whole, as on one device. *)
-let test_attention () =
+   whole, as on one device. In float32 and in float64. *)
+let test_attention dt () =
   let draw seed s =
-    Nx.create Nx.float32 s
+    Nx.create dt s
       (Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 0.37) +. seed)))
   in
   let attend at_q at_kv =
     let slopes = Nx.place at_kv (draw 4. [| 4; 1; 1 |]) in
-    let score p s = Nx.(Infix.(s - (cast float32 (p.q - p.k) * slopes))) in
+    let score p s = Nx.(Infix.(s - (cast dt (p.q - p.k) * slopes))) in
     let k = Nx.place at_kv (draw 2. [| 2; 90; 8 |]) in
     let v = Nx.place at_kv (draw 3. [| 2; 90; 4 |]) in
-    Nx.attention ~mask:Nx.causal ~score ~kv:(Nx.Dense { k; v })
+    Nx.attention ~mask:Nx.causal ~score ~acc:dt ~kv:(Nx.Dense { k; v })
       (Nx.place at_q (draw 1. [| 4; 70; 8 |]))
   in
   let o, lse = attend Set1.on Set1.on in
@@ -879,7 +879,8 @@ let test_attention () =
    magnitude and rows read up to 600 keys, so the bounds' [b], [ln tk] and
    blocks' terms are far from negligible. [a] is the greatest
    [|scale| Σ |q k|], which bounds [b], [η = (2 dk + 4) u a], [e] nx.cpu's
-   [ε] over [tk] keys and [e4] its [Logsumexp] bound of 4 terms. *)
+   [ε] over [tk] keys and [e4] its [Logsumexp] bound of 4 terms, [u] the
+   accumulator's, float32 or float64, as the operands are. *)
 type split = { seed : float; mag : float; devices : int; paged : bool; tk : int }
 
 let split_case =
@@ -895,17 +896,19 @@ let pp_split ppf c =
   Format.fprintf ppf "seed %g mag %g devices %d paged %b tk %d" c.seed c.mag
     c.devices c.paged c.tk
 
-let law_attention_keys c =
+let law_attention_keys (type s) (dt : (float, s) Nx.dtype) c =
   cover "paged" c.paged;
   cover "dense" (not c.paged);
   cover "four devices" (c.devices = 4);
   cover "large scores" (c.mag > 1.);
   let draw seed s =
-    Nx.create Nx.float32 s
+    Nx.create dt s
       (Array.init (numel s) (fun k ->
            c.mag *. Float.sin ((Float.of_int k *. 0.37) +. seed +. c.seed)))
   in
-  let u = 0x1p-24 and dk = 8 in
+  (* [u], and the factor of [ln tk] in nx.cpu's [ε]. *)
+  let u, lnf = match dt with Float64 -> (0x1p-53, 7.) | _ -> (0x1p-24, 5.) in
+  let dk = 8 in
   let page = 25 in
   let tk = if c.paged then 8 * page else c.tk in
   let qx = draw 1. [| 2; 4; 6; dk |] in
@@ -923,7 +926,7 @@ let law_attention_keys c =
   let eta = Float.of_int ((2 * dk) + 4) *. u *. a in
   let ln = Float.log (Float.of_int tk) in
   let e lse =
-    (Float.of_int ((13 * ((tk + 63) / 64)) + 9) +. (5. *. ln)) *. u
+    (Float.of_int ((13 * ((tk + 63) / 64)) + 9) +. (lnf *. ln)) *. u
     +. (u *. Float.abs lse)
   in
   let e4 lse = ((4. +. 5. +. (6. *. Float.log 4.)) *. u) +. (u *. Float.abs lse) in
@@ -947,7 +950,7 @@ let law_attention_keys c =
           }
       else Nx.Dense { k = Nx.place keys (Option.get kx); v = Nx.place keys (Option.get vx) }
     in
-    Nx.attention ~lengths:(Nx.place on lengths) ~mask ~kv q
+    Nx.attention ~lengths:(Nx.place on lengths) ~mask ~acc:dt ~kv q
   in
   let arrays (o, lse) = (Nx.to_array o, Nx.to_array lse) in
   let o, lse = arrays (attend Set1.on Set1.on) in
@@ -977,7 +980,7 @@ let law_attention_keys c =
         in
         for d = 0 to dv - 1 do
           let x = o.((i * dv) + d) and x' = o'.((i * dv) + d) in
-          (* Each rounds once into float32: [u |o|]. *)
+          (* Each rounds once into [dt]: [u |o|]. *)
           let tol = tol +. (u *. (Float.abs x +. Float.abs x')) in
           at_most ~msg:"o" float_exact ~than:tol (Float.abs (x -. x'))
         done
@@ -995,9 +998,18 @@ let () =
                 gives its result on one device"
                case law;
              test "a transform over cut NaNs of both signs" test_fft_nans;
-             test "attention over cut heads and rows" test_attention;
-             prop ~count:24 "attention over cut keys within its bounds"
-               (Gen.with_pp pp_split split_case) law_attention_keys;
+             test "attention over cut heads and rows, float32"
+               (test_attention Nx.float32);
+             test "attention over cut heads and rows, float64"
+               (test_attention Nx.float64);
+             prop ~count:24
+               "attention over cut keys within its bounds, float32"
+               (Gen.with_pp pp_split split_case)
+               (law_attention_keys Nx.float32);
+             prop ~count:24
+               "attention over cut keys within its bounds, float64"
+               (Gen.with_pp pp_split split_case)
+               (law_attention_keys Nx.float64);
              test "a contraction over cut NaNs of both signs"
                test_contract_nans;
            ];

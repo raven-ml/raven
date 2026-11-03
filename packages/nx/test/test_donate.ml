@@ -2507,14 +2507,14 @@ let attention =
           let kv =
             Nx.Dense { k = d 1 (x [| 1; 3; 2 |]); v = d 2 (x [| 1; 3; 2 |]) }
           in
-          shown (Nx.attention ~kv q));
+          shown (Nx.attention ~acc:Nx.float32 ~kv q));
       c "attention" 4 (fun d ->
           let q = d 0 (x [| 1; 2; 2 |]) in
           let kv =
             Nx.Dense { k = d 1 (x [| 1; 3; 2 |]); v = d 2 (x [| 1; 3; 2 |]) }
           in
           let lengths = d 3 (ints ~s:[||] [| 2 |]) in
-          shown (Nx.attention ~lengths ~mask:Nx.causal ~kv q));
+          shown (Nx.attention ~lengths ~mask:Nx.causal ~acc:Nx.float32 ~kv q));
       c "attention" 4 (fun d ->
           let q = d 0 (x [| 1; 2; 2 |]) in
           let kv =
@@ -2525,7 +2525,7 @@ let attention =
                 table = d 3 (ints [| 1; 0 |]);
               }
           in
-          shown (Nx.attention ~kv q));
+          shown (Nx.attention ~acc:Nx.float32 ~kv q));
       c ~consumes:true "causal" 3 (fun d -> show (Nx.causal (pair d)));
     ]
 
@@ -2539,7 +2539,7 @@ let test_captured () =
     let kv =
       Nx.Dense { k = data f32 [| 1; 3; 2 |]; v = data f32 [| 1; 3; 2 |] }
     in
-    let o, lse = Nx.attention ~score ~kv q in
+    let o, lse = Nx.attention ~score ~acc:Nx.float32 ~kv q in
     showl [ o; lse ]
   in
   let returned bias _ _ = bias and added bias _ s = Nx.add s bias in
