@@ -2821,9 +2821,10 @@ val attention :
     A hidden pair's score never changes [o] or [lse], and a table entry
     outside [\[0, pages)] reads no page. A finite value at a hidden key never
     changes [o]: its weight is exactly zero. Values past a row's length are
-    never read. Whether a NaN or an infinity at a key hidden from a row but
-    within its length makes that row's [o] NaN is the kernel library's to
-    state: nx.cpu's never does. The weights are float32, and a visible key
+    never read. nx.cpu never lets a value at a key hidden from a row reach
+    its [o], a NaN or an infinity included. Other interpretations may make
+    the row's [o] NaN for a NaN or an infinity at a hidden key within its
+    length, as [Rune.jit] and rune's derivatives do. The weights are float32, and a visible key
     whose weight underflows to zero still counts: a NaN in its value makes
     the row's [o] NaN. A sum of zeros is [+0].
 
@@ -2855,7 +2856,10 @@ val attention :
     [Σ p |v|] over the row's visible keys at their exact weights [p], at
     most its greatest [|v|], [ε] is the bound the kernels' library states
     for attention's [lse] of [tk] keys, and [γ] is as {!contract} defines
-    it.
+    it. For float16 and bfloat16, the value product may take each weight
+    rounded once to [v]'s dtype: the bound then adds [u{_v} M], [u{_v}]
+    [v]'s unit roundoff, and for float16 at most [2{^-25} |v|] for each
+    visible key whose weight is below [2{^-14}].
     Without [score], [η] is [((1 + u)² (1 + γ(dk + 1, 2u)) - 1) a], about
     [(2dk + 4) u a], and [b] is at most [a], where [a] is the greatest
     [|scale| Σ |q k|] of a visible key. The bound holds where a set's
@@ -2870,10 +2874,10 @@ val attention :
     [o] the sum over the parts in their order of each one's [o] times
     [exp (lse_part - lse)], each product fused, rounded once to [q]'s
     dtype. Its bits depend on the placement alone. The bound above then
-    holds with [η] doubled, [ε] twice the greatest part's plus the
-    library's bound for a [Logsumexp] of [n] terms, and
-    [γ(tk + n + 1, 2u)] in place of [γ(tk + 1, 2u)]. A paged call's loads
-    are read whole.
+    holds with [η] doubled, [ε] three times the greatest part's plus the
+    library's bound for a [Logsumexp] of [n] terms plus
+    [(2b + ln tk + 5) u], and [γ(tk + n + 1, 2u)] in place of
+    [γ(tk + 1, 2u)]. A paged call's loads are read whole.
 
     It is one operation, {!Prim.Attention}, whose [mask] and [score] are
     one program of two outputs over a pair. The set's kernel library

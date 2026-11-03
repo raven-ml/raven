@@ -181,12 +181,12 @@ let score_error c h i j ~a s =
       +. (u *. Float.abs s)
   | Bias _ -> (dot *. (1. +. u)) +. (u *. Float.abs s)
 
-(* nx.cpu's bound on attention's [lse] of a row of [t] keys whose result is
-   [r], nx.mli's [ε]: [(6 n + 14 + 10 ln t) u + u |r|] for [n] blocks of 64
+(* nx.cpu's bound for attention, nx.mli's [ε], of a row of [t] keys whose
+   [lse] is [r]: [(13 n + 9 + 5 ln t) u + u |r|] for [n] blocks of 64
    keys. *)
 let logsumexp_bound t r =
   let n = (t + 63) / 64 in
-  ((Float.of_int ((6 * n) + 14) +. (10. *. Float.log (Float.of_int t))) *. u32)
+  ((Float.of_int ((13 * n) + 9) +. (5. *. Float.log (Float.of_int t))) *. u32)
   +. (u32 *. Float.abs r)
 
 (* The definition *)
@@ -830,8 +830,7 @@ let test_threads_targets () =
       same ~msg:t want (bits_of (Nx_cpu.with_target t (fun () -> call q k v))))
     Nx_cpu.targets
 
-(* Strided, transposed and broadcast operands, and float16 keys and values
-   staged, against contiguous ones. *)
+(* Strided, transposed and broadcast operands against contiguous ones. *)
 let test_layouts () =
   let q, k, v = big () in
   let want = bits_of (call q k v) in

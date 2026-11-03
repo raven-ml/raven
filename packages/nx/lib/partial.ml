@@ -904,6 +904,18 @@ let reduce (type d r) eng ~by (route : unit Route.t) rule layout axes prog
    [exp (lse_part - lse)], in C order of the parts, each product fused,
    rounded once to the call's [out]: [+0] where [lse] is [-∞]. A paged call's
    factor is its table's pages, of [page] keys each. *)
+(* The bound nx.mli states, to first order. Part j's lse_j is within
+   η + ε_j of its exact log-sum-exp, and the weight each of its keys takes
+   in o_j within a relative w_j = 2η + ε_j + (2b + ln tk + 5) u (nx.mli's
+   form). The parts' Logsumexp adds ε_n to the greatest error among them:
+   lse within η + ε_max + ε_n. A key's weight in the whole is its weight in
+   o_j times exp (lse_j - lse): that factor's exponent errs by
+   (η + ε_j) + (η + ε_max + ε_n) and its rounding u |lse_j - lse|, at most
+   (2b + ln tk) u, and exp adds 5u. In all,
+   4η + 2ε_j + ε_max + ε_n + 2 (2b + ln tk + 5) u, at most nx.mli's w with
+   η doubled and ε = 3 ε_max + ε_n + (2b + ln tk + 5) u, which bounds lse
+   too. The fused sum over n parts adds n roundings to the parts' chains:
+   γ(tk + n + 1, 2u). *)
 let attention_parts (type v s w q d) eng ~by (route : unit Route.t) rule prog
     scale (out : (w, q) D.t) (q : (v, s, d) Value.t) (kv : (v, s, d) Value.kv)
     (lengths : d Value.index option) (loads : d Value.any iarray) :

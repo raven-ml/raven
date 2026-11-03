@@ -1625,6 +1625,13 @@ val jit :
     and its closing adds them there: closed, it is within the contraction's
     bound plus [γ(t, v) Σ|term|], [v] the dtype's unit roundoff, as eager
     computation's is.
+
+    {b Attention.} {!Nx.attention} compiles, and differentiates, as two
+    contractions, a map of its mask and score, a log-sum-exp and a map of
+    its weights, each within its row above, so its results hold
+    {!Nx.attention}'s bound with those rows' constants. A NaN or an infinity
+    in a value at a key hidden from a row within its length makes that
+    row's [o] a NaN there, where nx.cpu's eager result is finite.
     A complex sum adds each part as a real one. A sum, product or
     extreme with a NaN term is NaN. Terms all [-0.] sum to [+0.], or to [-0.] in
     a scatter and {!Nx.combine_patches}. Special values are eager's, and a

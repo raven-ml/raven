@@ -42,7 +42,30 @@
    a block it hides or shows whole is skipped or read without running it
    for each unit.
 
-   At the end o = acc / l, rounded once to q's dtype, and lse = m + log l;
+   Bound (nx_cpu.mli), to first order in u = 2^-24, barring overflow and
+   underflow, for a row of t keys in n blocks, scores s within [-b, b], m
+   the final maximum; exp and log within 2 ulps, so exp's relative error is
+   at most 5u (2 ulps of the correctly rounded value, 2.5 of the exact):
+   1. Exponents. p_j = exp (s_j - m_k) and α_i = exp (m_(i-1) - m_i) each
+      round their difference once, u times its size. A key's weight in l
+      and acc is p_j times the α of each later block, whose differences
+      telescope to m - s_j, as m only rises: at most u (m - s_j) <= 2bu in
+      all, and, weighted by the weights, at most u ln t (Σ w x <= ln t for
+      w proportional to e^-x, x >= 0, one x 0).
+   2. l. A key's term passes p_j's exp (5u), its block's sum (at most 7
+      additions in its lane and 3 in the lanes' tree, 10u) and the addition
+      into l (u); each later block multiplies l by α (exp 5u, product u)
+      and adds into it (u): 7u. So l is within (7n + 9) u + u ln t
+      relative.
+   3. lse = m + log l: log errs by 4u |log l| <= 4u ln t, the addition by
+      u |lse|: (7n + 9 + 5 ln t) u + u |lse|.
+   4. o's weights, p_j Π α / l: the exponents' 2bu, p_j's exp (5u), each
+      later block's α (exp 5u, acc's product u), l's (7n + 9) u + u ln t
+      and the division's u: a relative (13n + 9 + 2b + ln t) u. The sums
+      of products add γ(t + 1, 2u) M as nx.mli's chain does.
+   The ε nx.mli reads covers 3 and 4 there: (13n + 9 + 5 ln t) u + u |lse|.
+
+   At the end o = acc / l, rounded once to o's dtype, and lse = m + log l;
    a row of l = 0 has o = +0 and lse = -inf. Scores, weights, sums and
    accumulators are float32; float16 and bfloat16 operands are widened on
    load. Float32 values whose dimension steps one element are read in
@@ -310,10 +333,6 @@ static void row_scores(const float *q, int r, const float *k, int64_t ks,
 }
 #else
 #define ROW_SCORES 0
-static void row_scores(const float *q, int r, const float *k, int64_t ks,
-                       int n, int64_t dk, float *s) {
-  (void)q, (void)r, (void)k, (void)ks, (void)n, (void)dk, (void)s;
-}
 #endif
 
 /* Row r's update by its block's [nk] scores at [s], hidden ones -inf:
@@ -475,7 +494,8 @@ static void unit(att *c, scratch *x, int64_t u) {
        or, for few rows, each row against the keys in rows. */
     for (int g = 0; dk > 0 && g < nr; g++) {
       const run *v = &x->runs[g];
-      if (rows < CHAIN_ROWS && ROW_SCORES) {
+#if ROW_SCORES
+      if (rows < CHAIN_ROWS) {
         const float *k;
         int64_t ks;
         if (c->k_in) {
@@ -490,6 +510,7 @@ static void unit(att *c, scratch *x, int64_t u) {
         row_scores(x->q, rows, k, ks, v->n, dk, x->s + v->j);
         continue;
       }
+#endif
       nx_cpu_stage_as(&c->a[K], v->ka, v->kk, c->kd, v->n, dk, NX_FLOAT32,
                       (uint8_t *)(x->kt + v->j), KEYS);
       if (rows >= CHAIN_ROWS)
