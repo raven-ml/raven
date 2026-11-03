@@ -233,6 +233,17 @@ let call : type r.
         in
         K.assemble ~fill ~dst:(one r) pieces
     | Value.Copy x -> map1 (module K) Copy ~dst:(one r) (one x)
+    | Value.Attention { prog; scale; q; kv; lengths; loads } ->
+        let o, lse = r in
+        let kv : _ Nx_kernel.kv =
+          match kv with
+          | Dense { k; v } -> Dense { k = one k; v = one v }
+          | Paged { k; v; table } ->
+              Paged { k = one k; v = one v; table = one table }
+        in
+        let loads = Array.map (fun (Value.Any x) -> A.Any (one x)) (Iarray.to_array loads) in
+        K.attention prog ~scale ~o:(one o) ~lse:(one lse)
+          ?lengths:(Option.map one lengths) (one q) kv loads
     | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
         invalid_arg "Exec.call: an operation no kernel computes"
   in
@@ -606,7 +617,7 @@ let windows : type r d.
       created ~by p layouts op
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fold _ | Value.Fft _ | Value.Linalg _
-  | Value.Assemble _ | Value.Contract _ | Value.Copy _ ->
+  | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Attention _ ->
       (* Fresh results on the route's one device, computed there by its
          kernels over the operands, which lie there. *)
       let r = Prim.results_at p layouts (fun k f -> alloc ?into k f) op in

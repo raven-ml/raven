@@ -1116,6 +1116,12 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
       let (Prim.Operands xs) = Prim.operands op in
       if List.exists (fun (Prim.Any x) -> env.lin x) xs then
         nonlinear env "a factorisation"
+  (* Rune's other interpretations compose attention ({!Attention}): a
+     linear program never holds it. *)
+  | Attention _ ->
+      let (Prim.Operands xs) = Prim.operands op in
+      if List.exists (fun (Prim.Any x) -> env.lin x) xs then
+        nonlinear env "attention"
   | Copy x -> first (fun w -> if env.lin x then env.give x (held w))
   | Move (mv, x) -> first (fun w -> if env.lin x then move_rule env mv x w)
   | Bitcast (dt, x) ->

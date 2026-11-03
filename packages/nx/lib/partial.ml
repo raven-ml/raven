@@ -1594,5 +1594,5 @@ let run (type r) eng ~by route (op : r Value.prim) : r =
   | Value.Scan { carry = Some _; _ }
   | Value.Map _ | Value.Sort _ | Value.Fft _ | Value.Linalg _ | Value.Fold _
   | Value.Assemble _ | Value.Copy _ | Value.Move _ | Value.Bitcast _
-  | Value.Place _ | Value.Check _ ->
+  | Value.Place _ | Value.Check _ | Value.Attention _ ->
       invalid_arg "Partial.run: an operation no route computes by partials"

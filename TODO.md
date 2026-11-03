@@ -193,13 +193,9 @@ and rune), raven / llama.cpp b12048 Vulkan:
 
 ## nx
 
-- the attention family: `Attention`, `Attention_tangent` and
-  `Attention_cotangent` with nx.cpu's forward and cotangent kernels, in
-  place of `Nx.attention`'s composition, which stores three float32
-  `[lead…; hq; tq; tk]` arrays a call and gives an interpreter only its
-  contractions, maps and reduction. Kernels keep hidden values out of
-  `o`: a partial tile with a non-finite value takes the selecting path.
-  First add and record `attention/host-*` on the composition, and
+- the attention family: `Attention_tangent` and
+  `Attention_cotangent` with nx.cpu's cotangent kernels.
+  First add and record
   `gpu/*/attention-4096-causal` under `Rune.jit`; the family lands only if its kernels beat it by 2x on each,
   forward and cotangent
 - nx.cpu's thread splits follow the call prices (179ea5cc5, 82e42b78d) and

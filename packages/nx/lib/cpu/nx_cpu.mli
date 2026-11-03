@@ -298,6 +298,59 @@
       [e(n/2) + 8] in place of [e(n)]: its lines compute through complex
       ones of [n/2] points. *)
 
+(** {1:attention Attention}
+
+    [attention] computes every case of [q], [k] and [v] of float16,
+    bfloat16 or float32. It refuses with [Shape_mismatch] what
+    {!Nx_kernel.Shape.attention} answers [Error] for and destinations of
+    other shapes. Each query row reads its keys in {e blocks} of 64 from
+    key 0, up to its lead index's length, and keeps a maximum [m], a sum
+    [l] and an accumulator [a] of [dv] elements, from [-∞], [+0] and [+0].
+    For each block in which the row has a visible pair:
+    - each pair's score is the sum of the [dk] products of the row's and
+      the key's elements in float32, added in increasing dimension from
+      [+0], each fused into its sum, times the scale rounded to float32,
+      rewritten by the program's output 1;
+    - [m'] is the greatest of [m] and the block's visible scores, a NaN
+      where one is. Where it is [-∞], the block's weights are [0] and the
+      state is left as it was; otherwise each weight is
+      [exp (x - m')], [0] at a hidden pair, [l] becomes [α l + s] with
+      [α = exp (m - m')] and [s] the block's weights summed term [j] into
+      lane [j mod 8], lanes [i] and [i + 4], then [i + 2], then [i + 1]
+      added, and [a] becomes [α a], unchanged where [α] is [1];
+    - [a] then adds each weight times its key's value, in increasing key,
+      each product fused into its sum, over the block's keys, a hidden
+      pair's weight [0] included; where a value of the block hidden from
+      the row is a NaN or an infinity, over its visible pairs alone.
+    A block in which the row has no visible pair leaves its state as it
+    was. At the end, [o = a / l] in float32, rounded once to [q]'s dtype,
+    and [lse = m + log l], [+∞] where [m] is; a row of [l = 0] has
+    [o = +0] and [lse = -∞]. [exp] and [log] are {!Nx_kernel.Prog.Exp}'s
+    and {!Nx_kernel.Prog.Log}'s. So a value at a pair hidden from a row,
+    finite or not, never reaches its [o], and a row's bits depend on its
+    own pairs, [dk], [dv] and the dtypes alone.
+
+    The program runs, as [map] computes it, for the pairs of the blocks the
+    kernel reads: its output 0 for a block before its keys are read, its
+    output 1 on the block's scores. A program whose output 0 is the
+    constant [true], or whose output 1 is its operand 0, runs no node for
+    it. Where output 0 reads neither the score, nor a coordinate of the
+    lead axes or the heads, nor a load that steps along one, it runs first
+    at lead index 0 and head 0 alone, and a block whose pairs it shows all
+    or hides all is read, or skipped, without running it again.
+
+    Float32 values whose dimension steps one element are read in place;
+    keys, and other values, are copied into float32 by blocks. Each thread
+    holds at most [4 (128 dk + 192 dv + 8192) + 12288] bytes of host memory
+    for the call, and the call at most [tq ⌈tk / 64⌉] bytes where a mask
+    is shared so.
+
+    For a row that reads [t] keys in [n = ⌈t / 64⌉] blocks, barring
+    overflow and underflow, to first order in float32's unit roundoff [u],
+    [lse] is within [(6 n + 14 + 10 ln t) u + u |lse|] of the exact
+    log-sum-exp of the row's computed scores: the bound {!Nx.attention}
+    reads as its [ε]. *)
+
 (** {1:matrices Matrices}
 
     [cholesky], [lu], [qr], [solve_triangular], [eigh], [svd] and [eig]

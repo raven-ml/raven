@@ -526,3 +526,20 @@ let targets = targets_c ()
 let with_target t f =
   let was = swap_target t in
   Fun.protect ~finally:(fun () -> ignore (swap_target was : string)) f
+
+(* Attention *)
+
+external attention_c :
+  Nx_kernel.Prog.t ->
+  float ->
+  ('v, 's) Nx_array.t ->
+  (float, Nx_array.Dtype.float32_elt) Nx_array.t ->
+  (int64, Nx_array.Dtype.int64_elt) Nx_array.t option ->
+  ('v, 's) Nx_array.t ->
+  (('v, 's) Nx_array.t, (int64, Nx_array.Dtype.int64_elt) Nx_array.t)
+  Nx_kernel.kv ->
+  Nx_array.any array ->
+  Nx_array.answer = "nx_cpu_attention_byte" "nx_cpu_attention"
+
+let attention p ~scale ~o ~lse ?lengths q kv loads =
+  attention_c p scale o lse lengths q kv loads

@@ -349,6 +349,42 @@ val full_precision : ('v, 's) Nx_array.Dtype.t -> bool
     [complex64] or [complex128], the dtypes the matrix routines,
     {!S.cholesky} to {!S.solve_triangular}, take. *)
 
+(** {1:attention Attention}
+
+    Attention reads query rows [q] [[lead…; hq; tq; dk]] against keys and
+    values of [hk] key heads, [hk] dividing [hq], query head [h] reading key
+    head [h / (hq / hk)]. Its loop is [[lead…; hq; tq; tk]], a {e pair} at
+    each index: a query row and a key. A pair's {e score} is [s × q·k],
+    [s] the scale rounded to [float32] and [q·k] the sum of the row's and
+    the key's products, each element widened to [float32], in an
+    association its library states. A program over the pair computes two
+    outputs from its operand [0], the score, and its loads, operands [1]
+    on, each of the loop's shape: output [0], a [bool], and output [1], a
+    [float32]. Its [Coord] nodes read the loop's axes: [rank - 2] the query
+    row, [rank - 1] the key.
+
+    A pair is {e visible} where its key is before its lead index's length,
+    [tk] without lengths, where a paged key's table entry is in \[[0],
+    [pages]), and where output [0] holds. A row's [lse] is the log-sum-exp
+    of output [1] over its visible pairs, and its [o] the sum of their
+    values weighted by [exp (x - lse)], [x] each one's output [1]. A row of
+    no visible pair, or of only [-∞] outputs, has [o = +0] and [lse = -∞].
+    A visible pair's value counts where its weight underflows to [0]: a
+    NaN there makes the row's [o] a NaN. A value whose key is past the
+    row's length, or whose table entry is outside \[[0], [pages]), is never
+    read. Whether a NaN or an infinity at another hidden pair reaches [o]
+    is the library's to state. *)
+
+(** The type for keys and values. [Dense] holds [k] [[lead…; hk; tk; dk]]
+    and [v] [[lead…; hk; tk; dv]]. [Paged] holds pools [k]
+    [[pages; hk; page; dk]] and [v] [[pages; hk; page; dv]] read through
+    [table] [[lead…; max_pages]]: key [t] of lead index [b] is the pools'
+    entry [table[b; t / page]] at [t mod page], and
+    [tk = max_pages · page]. *)
+type ('a, 'i) kv =
+  | Dense of { k : 'a; v : 'a }
+  | Paged of { k : 'a; v : 'a; table : 'i }
+
 (** {1:shapes Shapes} *)
 
 (** Shapes of destinations.
@@ -475,6 +511,17 @@ module Shape : sig
   val solve_triangular : t -> t -> t result
   (** [solve_triangular a b] is [b], [[…; n; r]], for [a] square of [n] and
       [b] of [a]'s batch. *)
+
+  (** {1:attention Attention} *)
+
+  val attention :
+    t -> (t, t) kv -> lengths:t option -> t array -> (t * t) result
+  (** [attention q kv ~lengths loads] is the shapes of attention's [o] and
+      [lse], [[lead…; hq; tq; dv]] and [[lead…; hq; tq]], for [q]
+      [[lead…; hq; tq; dk]]. It is an [Error] unless [q] has at least three
+      axes, [kv]'s arrays have the shapes {!type-kv} states, [hk] divides
+      [hq] (zero heads divide zero), [lengths] are [[lead…]], each load is
+      [[lead…; hq; tq; tk]] and [tk] is one a layout admits. *)
 end
 
 (** {1:contract The contract} *)
@@ -484,9 +531,10 @@ end
     the dtypes, the attributes, the device model and the extents of the
     axes along which one result element reads every index: a reduction's,
     a scan's, a sort's or a transform's axes, the contracted extent, a
-    routine's matrices, a gather's or a scatter's axis, and the axes a
-    padded load or a fold pads or windows. Each library states whether
-    several domains may call its kernels concurrently. *)
+    routine's matrices, a gather's or a scatter's axis, attention's keys
+    and their two dimensions, and the axes a padded load or a fold pads or
+    windows. Each library states whether several domains may call its
+    kernels concurrently. *)
 module type S = sig
   type answer := Nx_array.answer
   type any := Nx_array.any
@@ -803,4 +851,27 @@ module type S = sig
       [a x = b], or [aᴴ x = b] under [adjoint]. It reads [a]'s triangle [t],
       without its diagonal under [unit_diagonal], whose ones it takes instead.
       A zero on a diagonal it reads makes that matrix's [x] NaN. *)
+
+  (** {1:attention Attention} *)
+
+  val attention :
+    Prog.t ->
+    scale:float ->
+    o:('v, 's) a ->
+    lse:(float, Nx_array.Dtype.float32_elt) a ->
+    ?lengths:index ->
+    ('v, 's) a ->
+    (('v, 's) a, index) kv ->
+    any array ->
+    answer
+  (** [attention p ~scale ~o ~lse ?lengths q kv loads] stores the attention
+      of [q]'s rows over [kv] ({!section-attention}), [p] the pair's
+      program over its loads [loads], into [o] in [q]'s dtype and [lse] in
+      [float32]. [lengths], [[lead…]], bounds each lead index's keys. The
+      scores, their maxima and sums, the weights and [lse] compute in
+      [float32], and each element of [o] rounds once. [q], [k] and [v] are
+      of one dtype, [float16], [bfloat16] or [float32], [p]'s operand [0]
+      and output [1] are [float32] and its output [0] [bool]: it answers
+      [Wrong_dtype] otherwise. Each library states its association and its
+      bounds. *)
 end

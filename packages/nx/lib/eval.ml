@@ -213,7 +213,7 @@ and donated : type r. by:string -> r prim -> r =
       Handle { donor; over }
   | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _
   | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _
-  | Place _ | Check _ -> (
+  | Place _ | Check _ | Attention _ -> (
       (* Routed before the claim: an operation its rule refuses neither takes
          a handle's memory nor shows another domain a handle dead. Once
          claimed, the donors stay dead whatever the kernels answer. *)

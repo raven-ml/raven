@@ -820,6 +820,44 @@ let rule (type r) n held i ~by (op : r Prim.t) : r =
             Nx.logical_or ok (Nx.logical_not (along r ok))
       in
       Prim.eval ~by (Check { ok; data = data i n d; fail })
+  | Attention a ->
+      (* The lanes as a lead axis: the program's coordinates shift, and
+         pools of lanes of their own are one pool of every lane's pages. *)
+      let kv : _ Nx.kv =
+        match a.kv with
+        | Dense { k; v } -> Dense { k = b k; v = b v }
+        | Paged { k; v; table } when not (owned i k || owned i v) ->
+            Paged { k; v; table = b table }
+        | Paged { k; v; table } ->
+            let k = b k and v = b v and table = b table in
+            let pages = Nx.dim 1 k in
+            let pooled x =
+              Nx.reshape (Array.append [| n * pages |] (Array.sub (Nx.shape x) 2 3)) x
+            in
+            let lane =
+              Nx.reshape
+                (Array.init (Nx.ndim table) (fun j -> if j = 0 then n else 1))
+                (Nx.arange_at (Nx.beside table) Nx.int64 0 (n * pages) pages)
+            in
+            let within =
+              Nx.logical_and (Nx.greater_equal_s table 0L)
+                (Nx.less_s table (Int64.of_int pages))
+            in
+            let table =
+              Nx.where within (Nx.add table lane) (Nx.full_like table (-1L))
+            in
+            Paged { k = pooled k; v = pooled v; table }
+      in
+      batched
+        (Attention
+           {
+             a with
+             prog = shift_coords a.prog;
+             q = b a.q;
+             kv;
+             lengths = Option.map b a.lengths;
+             loads = Iarray.map (fun (Prim.Any x) -> Prim.Any (b x)) a.loads;
+           })
 
 (* Constructs *)
 

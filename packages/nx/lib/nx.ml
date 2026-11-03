@@ -5658,7 +5658,7 @@ let conv_transpose ?stride ?padding ?dilation ?groups x w =
 
 (* Attention *)
 
-type ('v, 's, 'd) kv =
+type ('v, 's, 'd) kv = ('v, 's, 'd) Value.kv =
   | Dense of { k : ('v, 's, 'd) t; v : ('v, 's, 'd) t }
   | Paged of { k : ('v, 's, 'd) t; v : ('v, 's, 'd) t; table : 'd int64_t }
 
@@ -5816,26 +5816,27 @@ let recorded (type d) ~(at : d Devices.placement) ~tq ?mask ?score () =
   in
   (st, Option.map result m, Option.map result s)
 
-(* The program at each pair of a loop of [rank] axes, the last two the query
-   and the key: operand 0 the unscaled score, 1 the row's length, 2 with
-   [paged] the key's position in its pool, then the captures [captures], each
-   a number and a dtype. Its output is [score]'s cell, or the scaled score,
-   where [mask]'s cell holds and the key is visible, and [-∞] elsewhere. *)
-let pair_program ~rank ~scale ~paged st ~mask ~score captures =
+(* The pair program over the loop [[lead…; hq; tq; tk]] ({!Nx_kernel}'s
+   attention): operand 0 the scaled score, then the captures [captures],
+   each a number and a dtype, then, at [length] where given, the rows'
+   lengths; output 0 [mask]'s cell, or [true], output 1 [score]'s cell, or
+   the score. A pair's length reads that operand, or the constant [tk]. *)
+let pair_program ~rank ~tk ?length st ~mask ~score captures =
   let nodes = ref [] and count = ref 0 in
   let add (n : P.node) =
     nodes := n :: !nodes;
     incr count;
     !count - 1
   in
-  let f32 x = add (Const (D.Any D.Float32, P.bits D.Float32 x)) in
-  let raw = add (In 0) and len = add (In 1) in
-  let first = if paged then 3 else 2 in
-  let position = if paged then Some (add (In 2)) else None in
+  let score_in = add (In 0) in
   let operands =
-    List.mapi (fun j (c, _) -> (c, add (In (first + j)))) captures
+    List.mapi (fun j (c, _) -> (c, add (In (1 + j)))) captures
   in
-  let scaled = add (Op2 (Binary Mul, raw, f32 scale)) in
+  let len =
+    match length with
+    | Some j -> add (In j)
+    | None -> add (Const (D.Any D.Int64, P.bits D.Int64 (Int64.of_int tk)))
+  in
   let query = add (Coord (rank - 2)) and key = add (Coord (rank - 1)) in
   let cells = Array.of_list (List.rev st.cells) in
   let at = Array.make (Array.length cells) (-1) in
@@ -5844,7 +5845,7 @@ let pair_program ~rank ~scale ~paged st ~mask ~score captures =
     else
       let n =
         match cells.(c) with
-        | Leaf Score -> scaled
+        | Leaf Score -> score_in
         | Leaf Query -> query
         | Leaf Key -> key
         | Leaf Length -> len
@@ -5866,73 +5867,38 @@ let pair_program ~rank ~scale ~paged st ~mask ~score captures =
       at.(c) <- n;
       n
   in
-  let out = match score with None -> scaled | Some c -> node c in
-  let visible = add (Op2 (Compare Less, key, len)) in
-  let visible =
-    match position with
-    | None -> visible
-    | Some p ->
-        let zero = add (Const (D.Any D.Int64, P.bits D.Int64 0L)) in
-        add (Op2 (Binary And, visible, add (Op2 (Compare Less_equal, zero, p))))
-  in
   let visible =
     match mask with
-    | None -> visible
-    | Some c -> add (Op2 (Binary And, visible, node c))
+    | None -> add (Const (D.Any D.Bool, P.bits D.Bool true))
+    | Some c -> node c
   in
-  let out = add (Op3 (Where, visible, out, f32 Float.neg_infinity)) in
+  let out = match score with None -> score_in | Some c -> node c in
   let ins =
-    D.Any D.Float32 :: D.Any D.Int64
-    :: (if paged then [ D.Any D.Int64 ] else [])
+    (D.Any D.Float32 :: List.map snd captures)
+    @ match length with Some _ -> [ D.Any D.Int64 ] | None -> []
   in
-  let ins = Iarray.of_list (ins @ List.map snd captures) in
   let nodes = Iarray.of_list (List.rev !nodes) in
-  P.v ~ins nodes ~outs:[| out |]
+  P.v ~ins:(Iarray.of_list ins) nodes ~outs:[| visible; out |]
 
-let scores = Pattern.v "... (h g) i d, ... h j d -> ... h g i j | d"
-let weighted = Pattern.v "... (h g) i j, ... h j e -> ... h g i e | j"
-let pooled = Pattern.v "p h s d -> h (p s) d"
-
-(* Each key's position in its pool flattened as [[hk; pages · page; d]], or
-   [-1] where its table entry is outside [[0, pages)]: [[lead…; tk]]. *)
-let pool_positions ~by ~pages ~page table =
-  let s = shape table in
-  let r = Array.length s in
-  let lead = Array.sub s 0 (r - 1) and max_pages = s.(r - 1) in
-  let entries = Array.append lead [| max_pages; page |] in
-  let t =
-    Eval.broadcast ~by entries
-      (Eval.reshape ~by (Array.append lead [| max_pages; 1 |]) table)
+(* Whether [cell] of [st], or a cell it reads, is a pair's length. *)
+let reads_length st cells =
+  let all = Array.of_list (List.rev st.cells) in
+  let seen = Array.make (Array.length all) false in
+  let rec reads c =
+    if seen.(c) then false
+    else begin
+      seen.(c) <- true;
+      match all.(c) with
+      | Leaf Length -> true
+      | Leaf _ | Capture _ -> false
+      | Node (Op1 (_, _, a)) -> reads a
+      | Node (Op2 (_, a, b)) -> reads a || reads b
+      | Node (Op3 (_, a, b, d)) -> reads a || reads b || reads d
+      | Node _ -> false
+    end
   in
-  let e = E.input 0 D.Int64 in
-  let p = E.((e * i64 page) + coord r) in
-  let y =
-    elementwise ~by D.Int64 [ Any t ]
-      E.(where (i64 0 <= e && e < i64 pages) p (i64 (-1)))
-  in
-  Eval.reshape ~by (Array.append lead [| max_pages * page |]) y
+  List.exists reads cells
 
-(* The pool [[pages; hk; page; d]] read at [positions], [[lead…; tk]]:
-   [[lead…; hk; tk; d]], zero at a position of [-1]. *)
-let paged_read ~by positions pool =
-  let lead = Array.sub (shape positions) 0 (ndim positions - 1) in
-  let tk = dim (-1) positions in
-  let flat = rearrange_by ~by pooled pool in
-  let units = Array.map (fun _ -> 1) lead in
-  take_along ~by (Array.length lead + 1)
-    (Eval.reshape ~by (Array.append lead [| 1; tk; 1 |]) positions)
-    (Eval.reshape ~by (Array.append units (shape flat)) flat)
-
-(* The bound nx.mli states, step by step, to first order in float32's [u].
-   A score's contraction errs by [γ(dk + 1, 2u) Σ |q k|] (contract's bound),
-   and the roundings of [scale] to float32 and of its product add [u |s|]
-   each: [η = (2dk + 4) u a]. The log-sum-exp of the computed scores is
-   within [η] of the exact one, and the kernels' reduction adds [ε]. The
-   exponent of a weight [exp (s - lse)] then errs by [η + (η + ε)], plus
-   [u (lse - s) <= (2b + ln tk) u] from the subtraction, and [exp]'s 2 ulps
-   add [5u]: the weight errs by a relative [e^w - 1]. The contraction for
-   [o] adds [γ(tk + 1, 2u) Σ p |v|], and the rounding to [q]'s dtype
-   [u_q |o|]. *)
 let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     (q : (v, s, d) t) : (v, s, d) t * d float32_t =
   let by = "Nx.attention" in
@@ -5955,7 +5921,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     if ndim x <> n then
       invalid_argf "%s: the %s %a do not have %d axes" by name pp_value x n
   in
-  let hk, tk, dv, kv_operands =
+  let hk, tk, kv_operands =
     match kv with
     | Dense { k; v } ->
         rank "keys" k r;
@@ -5963,7 +5929,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
         let hk = dim (-3) k and tk = dim (-2) k in
         expect "keys" k (with_lead [| hk; tk; dk |]);
         expect "values" v (with_lead [| hk; tk; dim (-1) v |]);
-        (hk, tk, dim (-1) v, [ Value.Any k; Value.Any v ])
+        (hk, tk, [ Value.Any k; Value.Any v ])
     | Paged { k; v; table } ->
         rank "key pool" k 4;
         rank "value pool" v 4;
@@ -5973,12 +5939,10 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
         expect "value pool" v [| pages; hk; page; dim (-1) v |];
         expect "page table" table (with_lead [| dim (-1) table |]);
         let tk = times ~by table (dim (-1) table) page in
-        (hk, tk, dim (-1) v, [ Value.Any k; Value.Any v; Value.Any table ])
+        (hk, tk, [ Value.Any k; Value.Any v; Value.Any table ])
   in
   if (hk = 0 && hq <> 0) || (hk > 0 && hq mod hk <> 0) then
     invalid_argf "%s: %d key heads do not divide %d query heads" by hk hq;
-  let g = if hk = 0 then 1 else hq / hk in
-  let groups = [ ("g", g) ] in
   let f = with_lead [| hq; tq; tk |] in
   Option.iter (fun l -> expect "lengths" l lead) lengths;
   let scale =
@@ -6010,9 +5974,17 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     (fun (Captured (_, x)) -> fits "a captured array of shape" (shape x))
     captures;
   let cell (n, _, _) = n in
+  let cells = List.filter_map (Option.map cell) [ mask; score ] in
+  (* A pair's length is an operand of its program where lengths are given
+     and the mask or the score reads it. *)
+  let length =
+    match lengths with
+    | Some l when reads_length st cells -> Some l
+    | Some _ | None -> None
+  in
   let prog =
-    pair_program ~rank:r ~scale
-      ~paged:(match kv with Paged _ -> true | Dense _ -> false)
+    pair_program ~rank:r ~tk
+      ?length:(Option.map (fun _ -> 1 + List.length captures) length)
       st ~mask:(Option.map cell mask) ~score:(Option.map cell score)
       (List.map (fun (Captured (c, x)) -> (c, D.Any (dtype x))) captures)
   in
@@ -6024,72 +5996,21 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     @ List.map (fun (Captured (_, x)) -> Value.Any x) captures
   in
   alive_all ~by operands;
-  let read = Donate.lent in
-  let k, v, positions =
-    match kv with
-    | Dense { k; v } -> (read k, read v, None)
-    | Paged { k; v; table } ->
-        let pages = dim 0 k and page = dim 2 k in
-        let p = pool_positions ~by ~pages ~page (read table) in
-        (paged_read ~by p (read k), paged_read ~by p (read v), Some p)
+  (* A capture is lent: one returned from [mask] or [score] lives, as one
+     an operation of theirs reads does. *)
+  let load (Captured (_, x)) =
+    Value.Any (Eval.broadcast ~by f (Donate.lent x))
   in
-  let length =
-    match lengths with
-    | None -> scalar_beside ~by q D.Int64 (Int64.of_int tk)
-    | Some l -> Eval.reshape ~by (with_lead [| 1; 1; 1 |]) (read l)
-  in
-  (* Values past a row's length are zeroed: a hidden NaN there would reach
-     [p v]. *)
-  let v =
-    match lengths with
-    | None -> v
-    | Some _ ->
-        let dt = dtype v in
-        let before = E.(coord Stdlib.(r - 2) < operand 1 length) in
-        elementwise ~by dt [ Any v; Any length ]
-          E.(where before (operand 0 v) (const dt (D.zero dt)))
-  in
-  let s =
-    Eval.reshape ~by f
-      (Contraction.contract ~by ~sizes:groups D.Float32 scores
-         (read q) k)
+  let length_load l =
+    Value.Any
+      (Eval.broadcast ~by f (Eval.reshape ~by (with_lead [| 1; 1; 1 |]) l))
   in
   let loads =
-    Value.Plain s
-    :: Value.Plain (Eval.broadcast ~by f length)
-    :: (match positions with
-       | None -> []
-       | Some p ->
-           let p = Eval.reshape ~by (with_lead [| 1; 1; tk |]) p in
-           [ Value.Plain (Eval.broadcast ~by f p) ])
+    List.map load captures @ Option.to_list (Option.map length_load length)
   in
-  let load (Captured (_, x)) = Value.Plain (Eval.broadcast ~by f (read x)) in
-  let loads = Iarray.of_list (loads @ List.map load captures) in
-  let layout = Nx_array.Layout.contiguous (Iarray.of_array f) in
-  let m, () =
-    let outs = Value.[ D.Float32 ] in
-    Eval.eval ~by (Value.Map { layout; prog; outs; loads; at = None })
-  in
-  let lse = reduce_by_one ~by (Logsumexp (0, D.Float32)) [| r - 1 |] m in
-  (* A row whose [lse] is [-∞] has no visible key, or only [-∞] scores: its
-     weights and [o] are zero, whatever its values hold. *)
-  let row = Eval.reshape ~by (with_lead [| hq; tq; 1 |]) lse in
-  let hidden = E.(operand 1 row = const D.Float32 Float.neg_infinity) in
-  let p =
-    elementwise ~by D.Float32 [ Any m; Any row ]
-      E.(where hidden (const D.Float32 0.) (exp (operand 0 m - operand 1 row)))
-  in
-  let dt = dtype q in
-  let o =
-    Eval.reshape ~by
-      (with_lead [| hq; tq; dv |])
-      (Contraction.contract ~by ~sizes:groups dt weighted p v)
-  in
-  let o =
-    elementwise ~by dt [ Any o; Any row ]
-      E.(where hidden (const dt (D.zero dt)) (operand 0 o))
-  in
-  (o, lse)
+  Eval.eval ~by
+    (Value.Attention
+       { prog; scale; q; kv; lengths; loads = Iarray.of_list loads })
 
 (* Fourier transforms *)
 
@@ -7124,6 +7045,15 @@ module Prim = struct
         fail : int array -> 'e -> exn;
       }
         -> unit t
+    | Attention : {
+        prog : Nx_kernel.Prog.t;
+        scale : float;
+        q : ('v, 's, 'd) Value.t;
+        kv : ('v, 's, 'd) kv;
+        lengths : 'd index option;
+        loads : 'd any iarray;
+      }
+        -> (('v, 's, 'd) Value.t * (float, Dtype.float32_elt, 'd) Value.t) t
 
   type operands = Prim.operands = Operands : 'd any list -> operands
 

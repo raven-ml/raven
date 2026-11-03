@@ -1052,6 +1052,8 @@ let rule (type r) name i ~by (op : r Prim.t) : r =
       | Some t -> dual i ~fresh:false y (Prim.eval ~by (Place (q, t)))
       | None -> y)
   | Check _ -> Prim.eval ~by (Prim.map (fun x -> primal i x) op)
+  (* Given its meaning in [run], which [attention] composes. *)
+  | Attention _ -> invalid_arg "Jvp.rule: attention reaches [run]'s rule"
 
 (* Constructs *)
 
@@ -2400,6 +2402,48 @@ and derive ?totals ~name ~tape i p xs =
           | _ -> (Program.V y, None))
         out)
 
+(* Attention as its composition ({!Attention}), differentiated by a
+   differentiation like [i] seeded from [i]'s tangents; any other operation
+   by [rule]. *)
+and attention : type r.
+    name:string ->
+    tape:Prim.interpretation option ->
+    Prim.interpretation ->
+    by:string ->
+    r Prim.t ->
+    r =
+ fun ~name ~tape i ~by op ->
+  match op with
+  | Attention a ->
+      run ~name ?tape (fun j ->
+          let seeded x =
+            match Prim.payload i x with
+            | Some (Dual d) -> seed j d.primal d.tangent
+            | _ -> x
+          in
+          let kv : _ Nx.kv =
+            match a.kv with
+            | Dense { k; v } -> Dense { k = seeded k; v = seeded v }
+            | Paged { k; v; table } ->
+                Paged { k = seeded k; v = seeded v; table = seeded table }
+          in
+          let loads =
+            Iarray.map (fun (Prim.Any x) -> Prim.Any (seeded x)) a.loads
+          in
+          let o, lse =
+            Attention.compose
+              { eval = (fun op -> Prim.eval ~by op) }
+              ~prog:a.prog ~scale:a.scale (seeded a.q) kv
+              (Option.map seeded a.lengths) loads
+          in
+          let back y =
+            match Prim.payload j y with
+            | Some (Dual d) -> dual i ~fresh:true d.primal d.tangent
+            | _ -> y
+          in
+          (back o, back lse))
+  | _ -> rule name i ~by op
+
 and run :
     'a.
     name:string ->
@@ -2435,7 +2479,7 @@ and run :
   Effect.Deep.match_with
     (fun () ->
       Prim.interpret ~name Values
-        (fun i ~by op -> rule name i ~by op)
+        (fun i ~by op -> attention ~name ~tape i ~by op)
         (fun i ->
           owner := Some i;
           f i))

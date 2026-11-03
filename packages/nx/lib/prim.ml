@@ -334,6 +334,7 @@ let name : type r. r prim -> string = function
   | Bitcast _ -> "Bitcast"
   | Place _ -> "Place"
   | Check _ -> "Check"
+  | Attention _ -> "Attention"
 
 let load_any (type d) (l : d load) : d any =
   match l with Plain x -> Any x | Padded { x; _ } -> Any x
@@ -383,6 +384,20 @@ let contract_rest (type v s d) (init : (v, s, d) t option) a_scale b_scale
   @ some scale_any b_scale
   @ some (fun g -> Any (offsets g)) segments
 
+(* Attention's operands: [q], [k], [v], the page table where paged, the
+   lengths where given, then the loads. *)
+let attention_operands (type v s d) (q : (v, s, d) t) (kv : (v, s, d) kv)
+    (lengths : d index option) (loads : d any iarray) : d any list =
+  let kv : d any list =
+    match kv with
+    | Dense { k; v } -> List.[ Any k; Any v ]
+    | Paged { k; v; table } -> List.[ Any k; Any v; Any table ]
+  in
+  let lengths : d any list =
+    match lengths with Some l -> List.[ Any l ] | None -> List.[]
+  in
+  List.cons (Any q) (kv @ lengths @ Iarray.to_list loads)
+
 let operands : type r. r prim -> operands = function
   | Map { loads; _ } -> Operands (Iarray.to_list (Iarray.map load_any loads))
   | Reduce { loads; _ } -> Operands (Iarray.to_list (Iarray.map load_any loads))
@@ -404,6 +419,8 @@ let operands : type r. r prim -> operands = function
   | Bitcast (_, x) -> Operands [ Any x ]
   | Place (_, x) -> Operands [ Any x ]
   | Check { ok; data; _ } -> Operands (Any ok :: data_any data)
+  | Attention { q; kv; lengths; loads; _ } ->
+      Operands (attention_operands q kv lengths loads)
 
 (* Whether [r] covers all [d] elements of an axis in order. *)
 let fills (r : Nx_array.Move.range) d =
@@ -445,7 +462,7 @@ let own_index : type r. r prim -> (int list * L.t * D.any) option =
       Some ([ 0 ], L.contiguous shape, D.Any dtype)
   | Map _ | Reduce _ | Scan _ | Gather _ | Contract _ | Sort _ | Fft _
   | Linalg _ | Fold _ | Assemble _ | Copy _ | Move _ | Bitcast _ | Place _
-  | Check _ ->
+  | Check _ | Attention _ ->
       None
 
 (* [l] with its operand mapped by [m i]. *)
@@ -551,6 +568,15 @@ let fold : type e a r.
       List.fold_left
         (fun acc (Any x) -> f e acc x)
         (f e acc ok) (data_any data)
+  | Attention { q; kv; lengths; loads; _ } ->
+      let acc = f e acc q in
+      let acc =
+        match kv with
+        | Dense { k; v } -> f e (f e acc k) v
+        | Paged { k; v; table } -> f e (f e (f e acc k) v) table
+      in
+      let acc = match lengths with Some l -> f e acc l | None -> acc in
+      Iarray.fold_left (fun acc (Any x) -> f e acc x) acc loads
 
 (* An operand function as [fold]'s [e], unboxed so passing it allocates
    nothing. *)
@@ -694,6 +720,42 @@ let mapi : type r.
       let ok = m 0 c.ok in
       let data = map_data m 1 c.data in
       if ok == c.ok && data == c.data then op else Check { c with ok; data }
+  | Attention a ->
+      (* The table, the lengths and the loads follow [q], [k] and [v], each
+         at the next position where it is present. *)
+      let q = m 0 a.q in
+      let kv, i =
+        match a.kv with
+        | Dense d ->
+            let k = m 1 d.k in
+            let v = m 2 d.v in
+            ((if k == d.k && v == d.v then a.kv else Dense { k; v }), 3)
+        | Paged d ->
+            let k = m 1 d.k in
+            let v = m 2 d.v in
+            let table = m 3 d.table in
+            ( (if k == d.k && v == d.v && table == d.table then a.kv
+               else Paged { k; v; table }),
+              4 )
+      in
+      let lengths = map_some m i a.lengths in
+      let i = i + present a.lengths in
+      let changed = ref false in
+      let loads =
+        Iarray.mapi
+          (fun j (Any x as l) ->
+            let y = m (i + j) x in
+            if y == x then l
+            else begin
+              changed := true;
+              Any y
+            end)
+          a.loads
+      in
+      let loads = if !changed then loads else a.loads in
+      if q == a.q && kv == a.kv && lengths == a.lengths && loads == a.loads
+      then op
+      else Attention { a with q; kv; lengths; loads }
 
 let map : type r.
     ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
@@ -981,6 +1043,12 @@ let pp : type r. Format.formatter -> r prim -> unit =
   | Linalg l -> Format.fprintf ppf " %s" (routine_name l)
   | Fold { shape; _ } -> Format.fprintf ppf " into %a" pp_ints shape
   | Assemble { shape; _ } -> Format.fprintf ppf " into %a" pp_ints shape
+  | Attention { prog; scale; _ } ->
+      let outs = Iarray.to_list prog.outs in
+      let pr = printer prog outs in
+      Format.fprintf ppf "%a [%a] at scale %h" pr.bindings ()
+        (Format.pp_print_list ~pp_sep:sep pr.expr)
+        outs scale
   | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ -> ());
   List.iteri (fun i x -> Format.fprintf ppf " (x%d: %a)" i pp_operand x) xs
 
@@ -1256,7 +1324,8 @@ let loop_rule : type r. r prim -> int array -> Route.rule =
         rows ~scanned:axis [||] [||]
       else rows [||] (padded layout loads [| axis |])
   | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
-  | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ ->
+  | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _
+  | Attention _ ->
       invalid_arg "Prim.loop_rule: not a loop"
 
 (* A fold's rule: the axes of its operand that the padded load it sums back
@@ -1373,6 +1442,44 @@ let bitcast_rule dt x =
   else if bits < from then Route.Axes [| reading [||] (rank x) |]
   else Route.Elementwise
 
+(* Attention's results [[lead…; hq; tq; dv]] and [[lead…; hq; tq]] take
+   [q]'s lead axes, its heads and its rows; [k] and [v] give their lead
+   axes and their key heads, which become [q]'s where they are as many and
+   regroup into them in tiles otherwise, a query head reading the key head
+   of its group; a page table and the lengths their lead axes; a load its
+   lead axes, heads and rows. Every other axis, the keys and the
+   dimensions, a pool's and [o]'s, is read whole. *)
+let attention_rule (type v s d) (q : (v, s, d) t) (kv : (v, s, d) kv)
+    (lengths : d index option) (loads : d any iarray) =
+  let r = rank q in
+  let lead = r - 3 in
+  let hq = dim q lead in
+  let row n f = Array.init n (fun a -> if a < lead then Route.Becomes a else f a)
+  in
+  let whole _ = Route.Whole in
+  let heads x =
+    let hk = dim x lead in
+    row r (fun a ->
+        if a <> lead then Route.Whole
+        else if hk = hq then Becomes lead
+        else if hk > 1 && hq > 1 then Regroups { axis = lead; extent = hq }
+        else Whole)
+  in
+  let pairs _ = row r (fun a -> if a < r - 1 then Route.Becomes a else Whole) in
+  let kv =
+    match kv with
+    | Dense { k; v } -> [| heads k; heads v |]
+    | Paged _ ->
+        let pool = Array.make 4 Route.Whole in
+        [| pool; pool; row (lead + 1) whole |]
+  in
+  let lengths =
+    match lengths with Some _ -> [| row lead whole |] | None -> [||]
+  in
+  Route.Axes
+    (Array.concat
+       [ [| pairs () |]; kv; lengths; Array.map pairs (Iarray.to_array loads) ])
+
 let rule : type r. r prim -> Route.rule =
  fun op ->
   match op with
@@ -1442,6 +1549,7 @@ let rule : type r. r prim -> Route.rule =
   | Move (m, x) -> move_rule m x
   | Bitcast (dt, x) -> bitcast_rule dt x
   | Place _ | Check _ -> Elementwise
+  | Attention { q; kv; lengths; loads; _ } -> attention_rule q kv lengths loads
 
 (* Whether [p] holds the whole value on each of its devices. *)
 let uncut p =
@@ -1603,7 +1711,7 @@ let terms (type r) (op : r prim) summed : Route.terms =
       else if c.sum || summed 0 || summed 1 then Sums
       else Closes
   | Reduce _ | Scan _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _
-  | Assemble _ | Bitcast _ | Place _ | Check _ ->
+  | Assemble _ | Bitcast _ | Place _ | Check _ | Attention _ ->
       Closes
 
 let summable (type v s) ~by (dt : (v, s) D.t) =
@@ -1788,6 +1896,12 @@ let offset : type r. r prim -> origin -> r prim =
     | Map m -> Map { m with prog = with_offsets m.prog start }
     | Reduce m -> Reduce { m with prog = with_offsets m.prog start }
     | Scan m -> Scan { m with prog = with_offsets m.prog start }
+    | Attention a ->
+        (* [o]'s window starts its loop's but along the keys, which no
+           window cuts: [o]'s last axis is its values' dimension. *)
+        let first = Array.copy start in
+        first.(Array.length first - 1) <- 0;
+        Attention { a with prog = with_offsets a.prog first }
     | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
     | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ ->
         op
@@ -1803,7 +1917,8 @@ let within : type r. r prim -> Nx_array.Move.range array -> r prim * origin =
   | Reduce m -> (Reduce { m with layout }, origin m.layout)
   | Scan m -> (Scan { m with layout }, origin m.layout)
   | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
-  | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ ->
+  | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _
+  | Attention _ ->
       invalid_arg "Prim.within: not a loop"
 
 (* A movement's window: a reshape's and a broadcast's operand window holds
@@ -1858,6 +1973,8 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim * origin =
       ( Assemble
           { a with shape = Route.extents w; pieces = List.map piece a.pieces },
         no_origin )
+  (* Its program's coordinates are offset to the window ({!offset}). *)
+  | Attention _ -> (op, { no_origin with start = starts w })
   | Gather _ | Scatter _ | Sort _ | Fft _ | Linalg _ | Contract _ | Copy _
   | Bitcast _ | Place _ | Check _ ->
       (op, no_origin)
@@ -2060,6 +2177,62 @@ let linalg_results : type d r.
 (* [op]'s results' layouts, by its rule: one per result of a factorisation,
    one that every result of another operation shares, none for a check.
    Raises naming [by] where [op]'s operands break the rule. *)
+(* Attention's rule: [q], [k] and [v] of one float dtype it takes, the
+   program's operands the score in float32 then the loads' dtypes, its
+   outputs a bool then a float32 and its coordinates along the loop's axes;
+   its results' shapes. *)
+let attention_shapes (type v s d) ~by (prog : P.t) (q : (v, s, d) t)
+    (kv : (v, s, d) kv) (lengths : d index option) (loads : d any iarray) =
+  (match dtype q with
+  | D.Float16 | D.Bfloat16 | D.Float32 -> ()
+  | dt ->
+      invalid_argf "%s: attention of %s, not float16, bfloat16 or float32" by
+        (D.name dt));
+  let n = Iarray.length loads in
+  if Iarray.length prog.ins <> n + 1 then
+    invalid_argf "%s: a pair's program of %d operands over a score and %d loads"
+      by (Iarray.length prog.ins) n;
+  let (D.Any score) = Iarray.get prog.ins 0 in
+  if not (same_dtype score D.Float32) then
+    invalid_argf "%s: a pair's program reads its score as %s, not float32" by
+      (D.name score);
+  Iarray.iteri
+    (fun i (Any x) ->
+      let (D.Any want) = Iarray.get prog.ins (i + 1) in
+      if not (same_dtype want (dtype x)) then
+        invalid_argf "%s: load %d is %s where the program reads %s" by i
+          (D.name (dtype x)) (D.name want))
+    loads;
+  let outs = Iarray.length prog.outs in
+  let out k = P.dtype prog (Iarray.get prog.outs k) in
+  (match if outs = 2 then Some (out 0, out 1) else None with
+  | Some (D.Any D.Bool, D.Any D.Float32) -> ()
+  | _ ->
+      invalid_argf
+        "%s: a pair's program gives a bool and a float32, not %d outputs of %s"
+        by outs
+        (String.concat ", "
+           (List.init outs (fun k ->
+                let (D.Any dt) = out k in
+                D.name dt))));
+  let r = rank q in
+  Iarray.iter
+    (function
+      | P.Coord a when a >= r ->
+          invalid_argf "%s: a coordinate along axis %d of pairs of rank %d" by
+            a r
+      | _ -> ())
+    prog.nodes;
+  let kv : (Shape.t, Shape.t) Nx_kernel.kv =
+    match kv with
+    | Dense { k; v } -> Dense { k = shape k; v = shape v }
+    | Paged { k; v; table } ->
+        Paged { k = shape k; v = shape v; table = shape table }
+  in
+  let loads = Array.map (fun (Any x) -> shape x) (Iarray.to_array loads) in
+  shaped ~by
+    (Shape.attention (shape q) kv ~lengths:(Option.map shape lengths) loads)
+
 let layouts : type r. by:string -> r prim -> L.t array =
  fun ~by op ->
   match op with
@@ -2115,6 +2288,9 @@ let layouts : type r. by:string -> r prim -> L.t array =
               (shape x) pp_shape s)
         (data_any data);
       [||]
+  | Attention { prog; q; kv; lengths; loads; _ } ->
+      let o, lse = attention_shapes ~by prog q kv lengths loads in
+      [| contiguous o; contiguous lse |]
 
 type routed = { route : unit Route.t option; layouts : L.t array }
 
@@ -2125,7 +2301,7 @@ let route : type r. by:string -> r prim -> routed =
   | Place _ | Check _ -> { route = None; layouts }
   | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _
   | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _
-    ->
+  | Attention _ ->
       { route = Some (route_of ~by op); layouts }
 
 let results_at : type r.
@@ -2159,6 +2335,9 @@ let results_at : type r.
   | Bitcast (dt, _) -> m 0 (of_layout dt layouts.(0) p)
   | Place (p, x) -> m 0 (of_layout (dtype x) layouts.(0) p)
   | Check _ -> ()
+  | Attention { q; _ } ->
+      let o = m 0 (of_layout (dtype q) layouts.(0) p) in
+      (o, m 1 (of_layout D.Float32 layouts.(1) p))
 
 (* Where [op]'s results lie, by its route: the operands' placement where they
    lie at one that cuts no axis, as {!route_of} decides there, without
@@ -2182,7 +2361,7 @@ let results : type r.
     | Place _ | Check _ -> host
     | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _
     | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _
-    | Bitcast _ ->
+    | Bitcast _ | Attention _ ->
         result_placement ~by op
   in
   results_at p layouts m op
@@ -2427,6 +2606,10 @@ let iter_results : type r.
   | Bitcast _ -> f r
   | Place _ -> f r
   | Check _ -> ()
+  | Attention _ ->
+      let o, lse = r in
+      f o;
+      f lse
 
 (* Zipping results *)
 
@@ -2525,6 +2708,9 @@ let zip : type r.
   | Bitcast _ -> f 0 rs
   | Place _ -> f 0 rs
   | Check _ -> ()
+  | Attention _ ->
+      let o = f 0 (fsts rs) in
+      (o, f 1 (snds rs))
 
 let any xs =
   Array.init (Iarray.length xs) (fun j -> Nx_array.Any (Iarray.get xs j))

@@ -325,5 +325,5 @@ let op ?dst ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
       [| values; positions |]
   | Linalg l -> Lower_linalg.op ~device node l
   | Fft f -> [| fft node f |]
-  | Check _ ->
+  | Check _ | Attention _ ->
       unlowered (P.name o)

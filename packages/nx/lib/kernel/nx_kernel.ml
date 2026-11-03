@@ -94,6 +94,10 @@ let full_precision (type v s) (dt : (v, s) D.t) =
   | Float32 | Float64 | Complex64 | Complex128 -> true
   | _ -> false
 
+type ('a, 'i) kv =
+  | Dense of { k : 'a; v : 'a }
+  | Paged of { k : 'a; v : 'a; table : 'i }
+
 module Shape = struct
   type t = int array
 
@@ -488,6 +492,71 @@ module Shape = struct
        || Array.sub b 0 (Array.length b - 1) <> Array.append batch [| n |]
     then errorf "right-hand sides %a for a matrix %a" pp b pp a
     else Ok b
+
+  (* [lead] then [tail]. *)
+  let with_lead lead tail = Array.append lead tail
+
+  let expect what x s =
+    if x = s then Ok () else errorf "%s %a, not %a" what pp x pp s
+
+  let attention q kv ~lengths loads =
+    let r = Array.length q in
+    if r < 3 then errorf "queries %a of fewer than three axes" pp q
+    else
+      let lead = Array.sub q 0 (r - 3) in
+      let hq = q.(r - 3) and tq = q.(r - 2) and dk = q.(r - 1) in
+      let rank4 what x =
+        if Array.length x = 4 then Ok () else errorf "%s %a not of rank 4" what pp x
+      in
+      let* hk, tk, dv =
+        match kv with
+        | Dense { k; v } ->
+            if Array.length k <> r || Array.length v <> r then
+              errorf "keys %a and values %a not of the queries' rank %d" pp k
+                pp v r
+            else
+              let hk = k.(r - 3) and tk = k.(r - 2) and dv = v.(r - 1) in
+              let* () = expect "keys" k (with_lead lead [| hk; tk; dk |]) in
+              let* () = expect "values" v (with_lead lead [| hk; tk; dv |]) in
+              Ok (hk, tk, dv)
+        | Paged { k; v; table } ->
+            let* () = rank4 "a key pool" k in
+            let* () = rank4 "a value pool" v in
+            let pages = k.(0) and hk = k.(1) and page = k.(2) in
+            let* () = expect "a key pool" k [| pages; hk; page; dk |] in
+            let* () = expect "a value pool" v [| pages; hk; page; v.(3) |] in
+            let rt = Array.length table in
+            if rt <> r - 2 then
+              errorf "a page table %a not of rank %d" pp table (r - 2)
+            else
+              let* () =
+                expect "a page table" table
+                  (with_lead lead [| table.(rt - 1) |])
+              in
+              let max_pages = table.(rt - 1) in
+              if page > 0 && max_pages > L.max_numel / page then
+                errorf "%d pages of %d keys" max_pages page
+              else Ok (hk, max_pages * page, v.(3))
+      in
+      if (hk = 0 && hq <> 0) || (hk > 0 && hq mod hk <> 0) then
+        errorf "%d key heads for %d query heads" hk hq
+      else
+        let* () =
+          match lengths with
+          | None -> Ok ()
+          | Some l -> expect "lengths" l lead
+        in
+        let pairs = with_lead lead [| hq; tq; tk |] in
+        let* () =
+          Array.fold_left
+            (fun acc x ->
+              let* () = acc in
+              expect "a load" x pairs)
+            (Ok ()) loads
+        in
+        let* o = admit "attention's o" (with_lead lead [| hq; tq; dv |]) in
+        let* lse = admit "attention's lse" (with_lead lead [| hq; tq |]) in
+        Ok (o, lse)
 end
 
 module type S = sig
@@ -581,5 +650,16 @@ module type S = sig
     dst:('v, 's) a ->
     ('v, 's) a ->
     ('v, 's) a ->
+    answer
+
+  val attention :
+    Prog.t ->
+    scale:float ->
+    o:('v, 's) a ->
+    lse:(float, Nx_array.Dtype.float32_elt) a ->
+    ?lengths:index ->
+    ('v, 's) a ->
+    (('v, 's) a, index) kv ->
+    any array ->
     answer
 end

@@ -2,5 +2,5 @@
  (name rune)
  (public_name rune)
  (private_modules program trace scalar memo factor custom jvp linear vmap cache
-  pieces compile jit loop)
+  pieces compile jit loop attention)
  (libraries nx nx_array nx_kernel tolk rig tolk.engine))

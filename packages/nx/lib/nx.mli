@@ -2820,13 +2820,11 @@ val attention :
     A hidden pair's score never changes [o] or [lse], and a table entry
     outside [\[0, pages)] reads no page. A finite value at a hidden key never
     changes [o]: its weight is exactly zero. Values past a row's length are
-    zeroed, so they never change [o]. A NaN or an infinity at a key hidden
-    from a row but within its length makes that row's [o] NaN, since [o]
-    reads it at weight zero; a kernel library that skips hidden blocks may
-    give a finite [o] instead, and says so in its own documentation. The
-    weights are float32, and a visible key whose weight underflows to zero
-    still counts: a NaN in its value makes the row's [o] NaN. A sum of zeros
-    is [+0].
+    never read. Whether a NaN or an infinity at a key hidden from a row but
+    within its length makes that row's [o] NaN is the kernel library's to
+    state: nx.cpu's never does. The weights are float32, and a visible key
+    whose weight underflows to zero still counts: a NaN in its value makes
+    the row's [o] NaN. A sum of zeros is [+0].
 
     [mask] and [score] are plain [Nx] code over 0-d values, applied once to
     stand-ins and kept as programs that run at each pair. Their results, and
@@ -2855,7 +2853,8 @@ val attention :
     [w = (1 + u) (2η + ε) + (2b + ln tk + 5) u]. Here [M] is the element's
     [Σ p |v|] over the row's visible keys at their exact weights [p], at
     most its greatest [|v|], [ε] is the bound the kernels' library states
-    for a [Logsumexp] of [tk] terms, and [γ] is as {!contract} defines it.
+    for attention's [lse] of [tk] keys, and [γ] is as {!contract} defines
+    it.
     Without [score], [η] is [((1 + u)² (1 + γ(dk + 1, 2u)) - 1) a], about
     [(2dk + 4) u a], and [b] is at most [a], where [a] is the greatest
     [|scale| Σ |q k|] of a visible key. The bound holds where a set's
@@ -2863,14 +2862,11 @@ val attention :
     compiler such as [Rune.jit], the compiler's bounds compose the same
     way.
 
-    It computes as a contraction for the scores, a map and a reduction for
-    the visible scores' log-sum-exp, a map for the weights and a contraction
-    for [o]. Each call stores three float32 arrays of
-    [[lead…; hq; tq; tk]]: the scores, the visible scores and the weights.
-    With [lengths], it copies [v] with its keys past each row's length
-    zeroed; with [Paged], it copies the keys and values the table reads into
-    dense [[lead…; hk; tk; dk]] and [[lead…; hk; tk; dv]] arrays. An
-    interpretation receives these operations; none is attention's own.
+    It is one operation, {!Prim.Attention}, whose [mask] and [score] are
+    one program of two outputs over a pair. The set's kernel library
+    computes it ({!Nx_kernel.S.attention}), reading paged keys and values
+    in place; nx.cpu stores no array of [[lead…; hq; tq; tk]]. An
+    interpretation receives it whole.
 
     Raises [Invalid_argument] if [q]'s dtype is another, [q] has fewer than
     three axes, extents disagree, [hk] does not divide [hq], [lengths] is not
@@ -5605,6 +5601,21 @@ module Prim : sig
             reduces nothing: its flag is that element, read on the device
             that holds it, and its first index is [0], so it needs no
             kernels. *)
+    | Attention : {
+        prog : Nx_kernel.Prog.t;
+        scale : float;
+        q : ('v, 's, 'd) nx;
+        kv : ('v, 's, 'd) kv;
+        lengths : (int64, Dtype.int64_elt, 'd) nx option;
+        loads : 'd any iarray;
+      }
+        -> (('v, 's, 'd) nx * (float, Dtype.float32_elt, 'd) nx) t
+        (** {!attention} of [q] over [kv], bounded by [lengths], at [scale],
+            its mask and score the pair program [prog] over its [loads],
+            each of shape [[lead…; hq; tq; tk]], as
+            {!Nx_kernel.S.attention} states: [o], C-contiguous of
+            [[lead…; hq; tq; dv]] in [q]'s dtype, and [lse], of
+            [[lead…; hq; tq]] in float32. *)
 
   type operands = Operands : 'd any list -> operands
 

@@ -170,7 +170,8 @@ typedef struct {
    position at[k], stepping s0[k] along a row and s1[k] across rows; and
    the arena its values are held in, slot k at arena + k·bytes. Where
    [term] is an output, its values go to [terms], C-contiguous, and no
-   output is stored into its destination. */
+   output is stored into its destination. Where [own] is a load, its
+   values are read from [own_v] in place of its array (nx_cpu_prog_tile). */
 typedef struct {
   int64_t n0, n1;
   const int64_t *at, *s0, *s1;
@@ -179,6 +180,8 @@ typedef struct {
   int term; /* an output, or -1 */
   uint8_t *terms;
   view *v; /* each node's value, written by the node that computes it */
+  int own;  /* a loop operand, or -1 */
+  view own_v;
 } plane;
 
 static uint8_t *slot(const plane *f, int k) { return f->arena + k * f->bytes; }
@@ -587,6 +590,7 @@ static inline __attribute__((always_inline)) void run(const prog *j,
   const step *s = &j->s[i];
   if (s->plain) plain(j, f, i);
   else if (s->tag == NX_NODE_CONST) f->v[i] = (view){(uint8_t *)s->bits, 0, 0};
+  else if (s->tag == NX_NODE_IN && s->k == f->own) f->v[i] = f->own_v;
   else if (s->tag == NX_NODE_IN && in_place(s, f)) {
     int64_t w = s->wh;
     f->v[i] = (view){j->a[s->k].base + f->at[s->k] * w, f->s0[s->k],
@@ -692,10 +696,10 @@ typedef struct {
 /* Runs [j] over the block [b], its outputs stored into their destinations,
    or output [term] into [terms] where it is one. [t] holds two tables of
    the operands, which each plane's first positions and steps along a row
-   are written into. */
+   are written into. Operand [own], where it is one, reads [own_v]. */
 static inline __attribute__((always_inline)) void planes(
     const block_tables *b, const prog *j, int term, uint8_t *terms,
-    int64_t *t) {
+    int64_t *t, int own, view own_v) {
   /* The arena, as long as the block needs, on a cache line, its slots and
      then its views: on the stack up to ARENA bytes, else from the heap. */
   int64_t bytes = (b->n0 * b->n1 * j->w + LINE - 1) & -(int64_t)LINE;
@@ -708,7 +712,8 @@ static inline __attribute__((always_inline)) void planes(
   uint8_t *arena = room + (LINE - (uintptr_t)room % LINE) % LINE;
   /* Each node's view is written by run before any node reads it. */
   view *v = (view *)(arena + slots);
-  plane f = {b->n0, b->n1, b->at, b->s0, b->s1, arena, bytes, term, terms, v};
+  plane f = {b->n0, b->n1, b->at, b->s0,  b->s1, arena,
+             bytes, term,  terms, v,     own,   own_v};
   /* A row of one element steps nowhere: every operand's is contiguous. */
   if (b->n0 == 1) {
     for (int k = 0; k < j->n; k++) s0[k] = 1;
@@ -728,7 +733,7 @@ static inline __attribute__((always_inline)) void planes(
 static void block(const nx_cpu_block *b, void *ctx) {
   int64_t t[2 * NX_MAX_OPERANDS];
   block_tables x = {b->n0, b->n1, b->n2, b->at, b->s0, b->s1, b->s2};
-  planes(&x, ctx, -1, NULL, t);
+  planes(&x, ctx, -1, NULL, t, -1, (view){NULL, 0, 0});
 }
 
 /* Wide maps
@@ -757,7 +762,7 @@ static void wide_block(const nx_cpu_block *b, void *ctx) {
   nx_cpu_places_along(&w->pl, b->s1[v], t + 2 * n);
   nx_cpu_places_along(&w->pl, b->s2[v], t + 3 * n);
   block_tables x = {b->n0, b->n1, b->n2, t, t + n, t + 2 * n, t + 3 * n};
-  planes(&x, j, -1, NULL, t + 4 * n);
+  planes(&x, j, -1, NULL, t + 4 * n, -1, (view){NULL, 0, 0});
   arena_give(j->tabs, t);
 }
 
@@ -1265,6 +1270,34 @@ int nx_cpu_prog_product(const nx_cpu_prog *g, int o, int *k) {
   return k[0] >= 0 && k[1] >= 0 ? dt : -1;
 }
 
+void nx_cpu_prog_reads(const nx_cpu_prog *g, int o, uint8_t *loads,
+                       uint8_t *axes) {
+  const step *s = g->s;
+  int nn = g->nn;
+  uint8_t local[STEPS], *seen = nn <= STEPS ? local : calloc((size_t)nn, 1);
+  if (seen == NULL) {
+    memset(loads, 1, (size_t)g->nins);
+    memset(axes, 1, NX_MAX_RANK);
+    return;
+  }
+  memset(seen, 0, (size_t)nn);
+  seen[g->outs[o]] = 1;
+  /* Operands precede the nodes that read them: one pass from the last. */
+  for (int i = nn - 1; i >= 0; i--) {
+    if (!seen[i]) continue;
+    const step *t = &s[i];
+    switch (t->tag) {
+      case NX_NODE_IN: loads[t->x[0]] = 1; break;
+      case NX_NODE_COORD: axes[t->x[0]] = 1; break;
+      case NX_NODE_CONST: break;
+      case NX_NODE_OP1: seen[t->x[0]] = 1; break;
+      case NX_NODE_OP2: seen[t->x[0]] = seen[t->x[1]] = 1; break;
+      default: seen[t->x[0]] = seen[t->x[1]] = seen[t->x[2]] = 1;
+    }
+  }
+  if (seen != local) free(seen);
+}
+
 int nx_cpu_prog_failed(const nx_cpu_prog *g) {
   return __atomic_load_n(&g->heap.failed, __ATOMIC_RELAXED) ||
          __atomic_load_n(&g->tabs.failed, __ATOMIC_RELAXED);
@@ -1292,9 +1325,10 @@ double nx_cpu_prog_cost(const nx_cpu_prog *g) {
   return element_cost(g->s, g->nn);
 }
 
-void nx_cpu_prog_terms(const nx_cpu_prog *g, const nx_cpu_places *pl,
-                       int o, int64_t p, int64_t s0, int64_t n0, int64_t s1,
-                       int64_t n1, uint8_t *out) {
+/* nx_cpu_prog_tile, load [own] read as [own_v] where it is one. */
+static void terms_of(const nx_cpu_prog *g, const nx_cpu_places *pl, int o,
+                     int64_t p, int64_t s0, int64_t n0, int64_t s1,
+                     int64_t n1, uint8_t *out, int own, view own_v) {
   const prog *j = &g->j;
   int n = j->n, nouts = g->nouts;
   /* The block's tables, the first positions of each piece, and the two
@@ -1324,9 +1358,25 @@ void nx_cpu_prog_terms(const nx_cpu_prog *g, const nx_cpu_places *pl,
                         b0,
                         b1,
                         b1};
-      planes(&x, j, o, out + (r * n0 + i) * w, t + 4 * n);
+      /* A piece of a tile's rows reads the tile from its own first. */
+      view v = own_v;
+      if (own >= 0) v.p += r * own_v.s1 + i * (int64_t)sizeof(float);
+      planes(&x, j, o, out + (r * n0 + i) * w, t + 4 * n, own, v);
     }
   if (t != local) arena_give(j->tabs, t);
+}
+
+void nx_cpu_prog_terms(const nx_cpu_prog *g, const nx_cpu_places *pl,
+                       int o, int64_t p, int64_t s0, int64_t n0, int64_t s1,
+                       int64_t n1, uint8_t *out) {
+  terms_of(g, pl, o, p, s0, n0, s1, n1, out, -1, (view){NULL, 0, 0});
+}
+
+void nx_cpu_prog_tile(const nx_cpu_prog *g, const nx_cpu_places *pl, int o,
+                      int64_t p, int64_t n0, int64_t s1, int64_t n1,
+                      uint8_t *out, int k, const float *x, int64_t xs1) {
+  terms_of(g, pl, o, p, 1, n0, s1, n1, out, g->nouts + k,
+           (view){(uint8_t *)x, 1, xs1 * (int64_t)sizeof(float)});
 }
 
 /* Whether a node of the steps [s], of [nn] nodes, reads a coordinate,

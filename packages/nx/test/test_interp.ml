@@ -640,6 +640,10 @@ let same_results : type r. string -> r Nx.Prim.t -> r -> r -> unit =
   | Bitcast _ -> same_form ~msg a b
   | Place _ -> same_form ~msg a b
   | Check _ -> ()
+  | Attention _ ->
+      let (o, l), (o', l') = (a, b) in
+      same_form ~msg o o';
+      same_form ~msg l l'
 
 let law_forms (shape, a, b, k) =
   cover "a creation" (a = Created || b = Created);
@@ -1124,6 +1128,7 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
       let p, t = parts i x in
       dual i (Nx.place q p) (Nx.place q t)
   | Check _ -> Nx.Prim.eval ~by (primal op)
+  | Attention _ -> invalid_arg (by ^ ": test.jvp has no derivative of attention")
 
 let jvp f x v =
   Nx.Prim.interpret ~name:"test.jvp" Values jvp_rule (fun i ->
