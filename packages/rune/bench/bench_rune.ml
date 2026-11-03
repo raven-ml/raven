@@ -214,12 +214,23 @@ let jacobian_rows () =
   ]
 
 (* Attention's backward pieces: the gradient of a softmax over 8 × 256 rows
-   of 256 scores. *)
+   of 256 scores, and of products over the first 256, 512, 768 and 1024 of
+   8 × 1024 keys, whose slices' transposes are summed. *)
 let attention_rows () =
   let s = normal 12 [| 8; 256; 256 |] and w = normal 13 [| 8; 256; 256 |] in
+  let k = normal 14 [| 8; 1024; 64 |] and u = normal 15 [| 8; 1024; 64 |] in
+  let prefixes k =
+    List.fold_left
+      (fun acc n ->
+        let first x = Nx.slice [ A; R (0, n) ] x in
+        Nx.add acc (Nx.sum (Nx.mul (first k) (first u))))
+      (Nx.scalar_like k 0.) [ 256; 512; 768; 1024 ]
+  in
   [
     Thumper.bench "softmax-grad-8x256x256" (fun () ->
         synced (Rune.grad' (fun s -> Nx.sum (Nx.mul w (Nx.softmax s))) s));
+    Thumper.bench "prefixes-grad-8x1024x64" (fun () ->
+        synced (Rune.grad' prefixes k));
   ]
 
 (* Hmc: one leapfrog trajectory of 20 steps on a Gaussian over 16 floats, as a

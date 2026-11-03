@@ -53,8 +53,10 @@ let folded = List.filter (fun (D.Any d) -> not (D.is D.Boolean d)) D.all
 (* How a case's first axis leads: as drawn; unwindowed and unpadded, so
    that the fold's units are slabs of the result; or unwindowed and padded,
    so that the fold starts the whole result first. The last two window the
-   last axis, of a result of two or three axes. *)
-type lead = Drawn | Slabs | Padded
+   last axis, of a result of two or three axes. [Pad] draws no window and no
+   interior padding on any axis: the fold is a pad, as a slice's transpose
+   is. *)
+type lead = Drawn | Slabs | Padded | Pad
 
 (* The complex and sub-byte dtypes, which the laws cover, drawn more often than
    the others, so that every run of a hundred cases reaches them. *)
@@ -67,11 +69,16 @@ let case_gen ?(dtypes = folded) ?last () =
   let* d = frequency (List.map (fun d -> (weight d, constant d)) dtypes) in
   let* lead =
     frequency
-      [ (2, constant Drawn); (1, constant Slabs); (1, constant Padded) ]
+      [
+        (2, constant Drawn);
+        (1, constant Slabs);
+        (1, constant Padded);
+        (1, constant Pad);
+      ]
   in
   let* shape =
     match lead with
-    | Drawn -> array ~size:(int_range 0 3) (int_range 0 5)
+    | Drawn | Pad -> array ~size:(int_range 0 3) (int_range 0 5)
     | Slabs | Padded ->
         map
           (fun s -> Array.mapi (fun a v -> if a = 0 then max v 2 else v) s)
@@ -94,13 +101,20 @@ let case_gen ?(dtypes = folded) ?last () =
   let* sizes = array ~size:(constant r) (int_range 1 3) in
   let* steps = array ~size:(constant r) (int_range 1 3) in
   let* dilations = array ~size:(constant r) (int_range 1 2) in
-  let first a v z = if lead <> Drawn && a = 0 then z else v in
+  let leads = lead = Slabs || lead = Padded in
+  let first a v z = if leads && a = 0 then z else v in
   let lo0 = if lead = Padded then 1 else 0 in
   let lo = Array.mapi (fun a v -> first a v lo0) lo in
   let hi = Array.mapi (fun a v -> first a v (max v 0)) hi in
-  let interior = Array.mapi (fun a v -> first a v 0) interior in
+  let interior =
+    Array.mapi (fun a v -> if lead = Pad then 0 else first a v 0) interior
+  in
   let on =
-    Array.mapi (fun a v -> (lead <> Drawn && a = r - 1) || first a v false) on
+    Array.mapi
+      (fun a v ->
+        lead <> Pad
+        && ((leads && a = r - 1) || first a v false))
+      on
   in
   let windows =
     Array.of_list
@@ -248,6 +262,14 @@ let law_reference (b : Support.backend) = function
       in
       let units = total (Array.sub c.shape 0 n) in
       cover "windows" (Iarray.length c.pad.windows > 0);
+      cover "a pad of whole bytes"
+        (Iarray.length c.pad.windows = 0
+        && Iarray.for_all (( = ) 0) c.pad.interior
+        && total c.shape > 1
+        && total (shape_of c.x) > 0
+        &&
+        let (D.Any d) = dtype_of c.x in
+        D.bits d >= 8);
       cover "interior" (Iarray.exists (fun i -> i > 0) c.pad.interior);
       cover "cropped" (Iarray.exists (fun l -> l < 0) c.pad.lo);
       cover "slabs started per unit" (work && n > 0 && units > 1 && slabs c);
@@ -535,6 +557,14 @@ let law_guards (b : Support.backend) (c, side) =
   | Some c ->
       let after = side = Support.After in
       cover "windows" (Iarray.length c.pad.windows > 0);
+      cover "a pad of whole bytes"
+        (Iarray.length c.pad.windows = 0
+        && Iarray.for_all (( = ) 0) c.pad.interior
+        && total c.shape > 1
+        && total (shape_of c.x) > 0
+        &&
+        let (D.Any d) = dtype_of c.x in
+        D.bits d >= 8);
       cover "sub-byte" (let (D.Any dt) = dtype_of c.x in D.bits dt < 8);
       cover "a stepped operand at the page before"
         ((not after) && List.mem "stepped" c.views);

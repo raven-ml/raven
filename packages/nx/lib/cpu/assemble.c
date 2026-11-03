@@ -194,6 +194,32 @@ static void pad_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
+/* Pads the piece a[1] into the result a[0], of [total] elements of whole
+   bytes: [from] holds the result's [r] extents, the piece's box [lo, hi)
+   in it, and the result's and the piece's steps, as padding's. Answers 0,
+   doing nothing, where the axes merge into none, a result of one element
+   the piece covers. */
+static int pad_job(const nx_array *a, const uint8_t *fill, int r,
+                   const int64_t *const *from, int64_t total, double cost) {
+  int64_t ax[5][NX_MAX_RANK];
+  for (int k = 0; k < 5; k++)
+    memcpy(ax[k], from[k], sizeof(int64_t) * (size_t)r);
+  int m = pad_axes(r, ax);
+  if (m == 0) return 0;
+  padding pd = {.a = a,
+                .f = {&a[0], fill},
+                .r = m,
+                .parts = (ax[0][m - 1] + PAD_PART - 1) / PAD_PART,
+                .shape = ax[0],
+                .lo = ax[1],
+                .hi = ax[2],
+                .sd = ax[3],
+                .sp = ax[4]};
+  int64_t bytes = 2 * total * (nx_dtype_row_of(a[0].dtype).bits / 8);
+  nx_cpu_job(total / ax[0][m - 1] * pd.parts, bytes, cost, pad_units, &pd);
+  return 1;
+}
+
 /* The regions of unit steps, as [lo, hi) per axis, in [lo] and [hi]: 0 if
    one steps otherwise. */
 static int intervals(int np, int r, const int64_t *ranges, int64_t (*lo)[NX_MAX_RANK],
@@ -377,23 +403,8 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
                bits >= 8;
   if (padded) {
     /* The piece covers some axis in part, so one axis at least is left. */
-    int64_t ax[5][NX_MAX_RANK];
     const int64_t *from[5] = {shape, lo[0], hi[0], step, a[1].dim + r};
-    for (int k = 0; k < 5; k++)
-      memcpy(ax[k], from[k], sizeof(int64_t) * (size_t)r);
-    int m = pad_axes(r, ax);
-    padding pd = {.a = a,
-                  .f = {&a[0], fill},
-                  .r = m,
-                  .parts = (ax[0][m - 1] + PAD_PART - 1) / PAD_PART,
-                  .shape = ax[0],
-                  .lo = ax[1],
-                  .hi = ax[2],
-                  .sd = ax[3],
-                  .sp = ax[4]};
-    int64_t bytes = 2 * total * (bits / 8);
-    nx_cpu_job(total / ax[0][m - 1] * pd.parts, bytes, moves_cost(dt, moved),
-               pad_units, &pd);
+    pad_job(a, fill, r, from, total, moves_cost(dt, moved));
   }
   if (!e && total > 0 && !covered && !padded) {
     if (unit && np == 1) {
@@ -788,6 +799,30 @@ static int unreached_zeros(const folder *f, const int64_t *shape,
   return 0;
 }
 
+/* A fold of no window has one tap, which lands each element of the
+   operand's box on one of the result's. Without interior padding, as a
+   slice's transpose has none, the fold is the pad of that box with +0,
+   -0 + x being x: it runs as one (pad_job), each element written once, at
+   the speed of a copy, where its units would each start, add and zero
+   one element. Answers 0, doing nothing, for a sub-byte dtype, interior
+   padding ([s], each axis's interior + 1), or a result of one element. */
+static int pads(const folder *f, const int64_t *s, const int64_t *shape,
+                int64_t total, double cost) {
+  static const uint8_t zero[16] = {0};
+  if (nx_dtype_row_of(f->a[0].dtype).bits < 8) return 0;
+  int64_t lo[NX_MAX_RANK], hi[NX_MAX_RANK];
+  nx_array a[2] = {f->a[0], f->a[1]};
+  for (int i = 0; i < f->r; i++) {
+    const span *b = &f->boxes[0][i];
+    if (s[i] != 1) return 0;
+    lo[i] = b->d0;
+    hi[i] = b->d0 + b->count;
+    a[1].offset += b->x0 * f->sx[i];
+  }
+  const int64_t *from[5] = {shape, lo, hi, f->sd, f->sx};
+  return pad_job(a, zero, f->r, from, total, cost);
+}
+
 value nx_cpu_fold_pad(value vpad, value vd, value vx) {
   CAMLparam3(vpad, vd, vx);
   int dt = nx_array_dtype(vx);
@@ -867,10 +902,18 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
                           shape[ax]);
       }
     }
+    if (nw == 0 && pads(&f, s, shape, total, adds)) {
+      free(f.boxes);
+      free(f.tap_px);
+      nx_cpu_reacquire(released);
+      nx_done(2, a);
+      CAMLreturn(Val_int(NX_OK));
+    }
     /* The leading axes no window takes have one span for every tap: their
-       indices cut the work into units of disjoint results. */
+       indices cut the work into units of disjoint results, each holding
+       whole rows of the last axis, which its adds take at once. */
     int64_t units = 1, slab = 1;
-    while (f.leading < r && !windowed[f.leading])
+    while (f.leading < r - 1 && !windowed[f.leading])
       units *= f.boxes[0][f.leading++].count;
     for (int i = f.leading; i < r; i++) slab *= shape[i];
     /* Where the units miss some slab, the whole result starts at -0 first,

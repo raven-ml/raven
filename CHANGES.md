@@ -1725,6 +1725,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On nx.cpu, a fold with no window or interior padding, as rune's
+  transpose of a slice, runs as a pad at a copy's speed, where it took about
+  250 instructions an element.
 - Under a differentiation, `Nx.softmax` and `Nx.log_softmax` pass no
   derivative through the greatest element each lane is shifted by, whose
   terms cancel. Values keep their bits; gradients change by rounding.
