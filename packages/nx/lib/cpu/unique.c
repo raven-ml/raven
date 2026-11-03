@@ -26,11 +26,17 @@
    partition's. A key's number is its first row's rank among every key's
    first rows, read from a bit per row set at each first row, and a pass
    over the ids maps the provisional numbers to the final ones. One thread
-   needs neither the merge nor the pass. */
+   needs neither the merge nor the pass.
+
+   The hash is keyed by a seed drawn once a process from the system's
+   random source (nx_cpu.ml), so that no keys chosen in advance share their
+   hashes and make the probes long. The numbers follow first appearance
+   alone, so the results are the same under any seed. */
 
 #include <stdlib.h>
 #include <string.h>
 
+#include <caml/alloc.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -42,8 +48,10 @@
 #define ID_BITS 40
 #define ID_MASK ((1ull << ID_BITS) - 1)
 
-/* Fibonacci hashing's multiplier, 2^64 over the golden ratio. */
+/* Fibonacci hashing's multiplier, 2^64 over the golden ratio, and
+   SplitMix64's finishing multiplier. */
 #define GOLDEN 0x9E3779B97F4A7C15ull
+#define FINISH 0xBF58476D1CE4E5B9ull
 
 /* A table's first slots, and a block's first room for groups. */
 #define FIRST_LOG 10
@@ -99,20 +107,56 @@ typedef struct {
   int64_t m;
   int64_t *first_out, *counts_out;
   uint64_t *span;   /* each block's least and greatest of each column */
+  uint64_t start, end; /* the hash's keys: its first state, its finish */
 } numbering;
 
 /* Hashes */
+
+/* The seed's two keys: the state a hash starts from, and the word its
+   finish mixes in. */
+static uint64_t seed_start, seed_end;
 
 static inline uint64_t mix(uint64_t h, uint64_t k) {
   h = (h ^ k) * GOLDEN;
   return h ^ (h >> 32);
 }
 
+/* A bijection of the state: equal hashes are equal states. */
+static inline uint64_t finish(uint64_t h, uint64_t end) {
+  h = (h ^ end) * FINISH;
+  return h ^ (h >> 31);
+}
+
 static inline __attribute__((always_inline)) uint64_t hash_of(
-    const uint64_t *row, int w) {
-  uint64_t h = (uint64_t)w;
+    const numbering *u, const uint64_t *row, int w) {
+  uint64_t h = u->start;
   for (int j = 0; j < w; j++) h = mix(h, row[j]);
-  return h;
+  return finish(h, u->end);
+}
+
+/* Sets the seed: its keys are SplitMix64's next two outputs from it. */
+value nx_cpu_unique_seed(value v) {
+  uint64_t x = (uint64_t)Int64_val(v), k[2];
+  for (int i = 0; i < 2; i++) {
+    x += GOLDEN;
+    uint64_t z = x;
+    z = (z ^ (z >> 30)) * FINISH;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    k[i] = z ^ (z >> 31);
+  }
+  __atomic_store_n(&seed_start, k[0], __ATOMIC_RELAXED);
+  __atomic_store_n(&seed_end, k[1], __ATOMIC_RELAXED);
+  return Val_unit;
+}
+
+/* The hash's state after the words of the OCaml int64 array [vw], under
+   the seed: rows whose words leave one state hash alike. */
+value nx_cpu_unique_state(value vw) {
+  CAMLparam1(vw);
+  uint64_t h = __atomic_load_n(&seed_start, __ATOMIC_RELAXED);
+  for (mlsize_t j = 0; j < Wosize_val(vw); j++)
+    h = mix(h, (uint64_t)Int64_val(Field(vw, j)));
+  CAMLreturn(caml_copy_int64((int64_t)h));
 }
 
 /* Groups */
@@ -275,7 +319,7 @@ static inline __attribute__((always_inline)) int direct_rows(
     int64_t q = direct[at];
     if (q < 0) {
       const uint64_t *row = row_at(u, i, buf);
-      q = fresh(g, merged ? hash_of(row, w) : 0, row, i);
+      q = fresh(g, merged ? hash_of(u, row, w) : 0, row, i);
       if (q < 0) return -1;
       direct[at] = (int32_t)q;
       count = g->count;
@@ -297,7 +341,7 @@ static inline __attribute__((always_inline)) int hashed_rows(
   int shift = 64 - g->log;
   for (int64_t i = lo; i < hi; i++) {
     const uint64_t *row = row_at(u, i, buf);
-    uint64_t h = hash_of(row, w), tag = h << ID_BITS, at = h >> shift;
+    uint64_t h = hash_of(u, row, w), tag = h << ID_BITS, at = h >> shift;
     int64_t q = -1;
     for (;; at = (at + 1) & mask) {
       uint64_t e = slot[at];
@@ -624,7 +668,9 @@ value nx_cpu_unique(value vids, value vfirst, value vcounts, value vcount,
                  .blocks = 1,
                  .m = m,
                  .first_out = (int64_t *)a[1].base + a[1].offset,
-                 .counts_out = (int64_t *)a[2].base + a[2].offset};
+                 .counts_out = (int64_t *)a[2].base + a[2].offset,
+                 .start = __atomic_load_n(&seed_start, __ATOMIC_RELAXED),
+                 .end = __atomic_load_n(&seed_end, __ATOMIC_RELAXED)};
   int64_t *count = (int64_t *)a[3].base + a[3].offset;
   int64_t bytes = n * (8 * w + 8) + 16 * m;
   double past = n > CACHED_ROWS ? (double)(n - CACHED_ROWS) : 0;

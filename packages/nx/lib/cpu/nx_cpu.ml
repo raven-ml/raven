@@ -355,6 +355,13 @@ external unique :
   (int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   Nx_array.answer = "nx_cpu_unique"
 
+external unique_seed : int64 -> unit = "nx_cpu_unique_seed" [@@noalloc]
+external unique_state : int64 array -> int64 = "nx_cpu_unique_state"
+
+(* The hash's seed, from the system's random source through the runtime's
+   self-initialisation (/dev/urandom on Unix, BCryptGenRandom on Windows). *)
+let () = unique_seed (Random.State.bits64 (Random.State.make_self_init ()))
+
 (* Contractions (gemm.c) *)
 
 (* [contract_c ~batch ~contracting acc ~dst ~init a b sa sb segs]

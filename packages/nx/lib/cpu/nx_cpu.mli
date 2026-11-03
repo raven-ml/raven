@@ -288,7 +288,12 @@
     as the blocks' tables, and each key is numbered by its first row's rank
     among the keys' first rows, from a bit a row. A last pass maps each
     row's number in its block to its key's, one more read and write of 8
-    bytes a row. *)
+    bytes a row.
+
+    The hash is keyed by a seed drawn from the system's random source when
+    the library initialises, so that keys chosen in advance cannot share
+    their hashes and lengthen the probes. The results follow first
+    appearance alone: the same bits under any seed, on every run. *)
 
 (** {1:transforms Fourier transforms}
 
@@ -462,5 +467,15 @@ val with_target : string -> (unit -> 'a) -> 'a
     kernels while [f] runs, on every thread. Raises [Invalid_argument] where
     [t] is not in {!targets}. For tests, while no other domain calls
     nx.cpu. *)
+
+val unique_seed : int64 -> unit
+(** [unique_seed s] keys [unique]'s hash by [s] for the calls that start
+    after it. For tests. *)
+
+val unique_state : int64 array -> int64
+(** [unique_state ws] is the state of [unique]'s hash after the words [ws]
+    under the current seed. Rows whose words leave one state hash alike: a
+    row [[|a; c lxor unique_state [|a|]|]] has the hash of every other such
+    row of the same [c]. For tests. *)
 
 (**/**)
