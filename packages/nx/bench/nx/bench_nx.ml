@@ -593,14 +593,18 @@ let plan_row n =
   Thumper.bench_with_setup (Printf.sprintf "einsum-plan-%d" n)
     ~setup:operands (fun xs -> Nx.Repr.array (Nx.einsum p xs))
 
-(* A weight gradient's product: 16 × 16 outputs over 65536 rows of
-   activations read transposed, few outputs over a long depth, which the
-   threads share. *)
+(* Gradients' products, an operand read transposed: a weight gradient's,
+   16 × 16 outputs over 65536 rows of activations, few outputs over a long
+   depth, which the threads share; and attention's value gradient, pᵀ do,
+   1024 × 64 outputs, fewer columns than rows, over 1024 queries. *)
 let gradient_rows =
   [
     Thumper.bench_with_setup "matmul-f32-tn-16x16x65536"
       ~setup:(pair D.Float32 [| 65536; 16 |] [| 65536; 16 |] 1.)
       (fun (x, dy) -> Nx.Repr.array (Nx.matmul (Nx.transpose x) dy));
+    Thumper.bench_with_setup "matmul-f32-tn-1024x64x1024"
+      ~setup:(pair D.Float32 [| 1024; 1024 |] [| 1024; 64 |] 1.)
+      (fun (p, d) -> Nx.Repr.array (Nx.matmul (Nx.transpose p) d));
   ]
 
 (* Products at the dtypes beside float32. *)

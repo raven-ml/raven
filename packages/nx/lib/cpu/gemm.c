@@ -60,10 +60,12 @@
    A product of few rows (streams) packs a whole and then streams b: each
    unit packs a sliver of b and adds it in along all of k, so that b is
    read once, in one job. One of fewer columns than rows is computed as its
-   transpose where that streams, unless a is read in place: then a is read
-   where it lies, as BLIS's small products read it (bli_gemmsup), in chain
-   order's blocks of rows, which give the threads units where b's few
-   slivers would not. Where a table names other kernels, a product runs on
+   transpose where that streams, unless a is read in place, or the
+   transpose would write R's tiles apart (writes_apart), as BLIS fixes a
+   product's orientation by C's storage. Where a is read in place, it is
+   read where it lies, as BLIS's small products read it (bli_gemmsup), in
+   chain order's blocks of rows, which give the threads units where b's
+   few slivers would not. Where a table names other kernels, a product runs on
    those that take less time for its rows, or on one thread where it runs
    alone (fastest): on the M1, the cores' vector units take products of
    few rows, and small ones, from its matrix unit.
@@ -1618,6 +1620,17 @@ static int init_is_dst(const problem *p) {
   return 1;
 }
 
+/* Whether [p]'s tiles write R through a buffer (tile_apart): where R's
+   columns are apart. A narrow product's R, C-contiguous, has them
+   adjacent; computed as its transpose, it would have them apart, and each
+   tile of each KC block would be copied out of the buffer, and back in
+   after the first: in the gradient of attention at 2048 keys, its
+   products 64 columns wide took 343M instructions in those copies against
+   3,658M in the kernels. */
+static int writes_apart(const problem *p) {
+  return p->op[DST].st[COL] != 1 && p->ext[COL] > 1;
+}
+
 /* Chain order's products: streamed past all of a, or in chain's blocks. */
 static void products(problem *p) {
   if (streams(p) && !p->keeps_a) few_rows(p);
@@ -1671,8 +1684,9 @@ int nx_gemm_contract_with(const nx_cpu_gemm *g, int acc, int order,
     int narrow = p.ext[COL] < p.ext[ROW];
     p.keeps_a = narrow && in_place(&p, A);
     if (narrow && !p.keeps_a) {
+      int apart = writes_apart(&p);
       nx_gemm_transpose(&p);
-      if (!streams(&p)) nx_gemm_transpose(&p);
+      if (!streams(&p) || writes_apart(&p) > apart) nx_gemm_transpose(&p);
     }
     fastest(&p);
     p.a_in = in_place(&p, A);

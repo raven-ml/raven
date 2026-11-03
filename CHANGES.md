@@ -1725,6 +1725,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On nx.cpu, a product of fewer columns than rows, as attention's `p · v`
+  and `pᵀ · do`, writes its tiles in place, where it copied each through a
+  buffer.
 - On nx.cpu, a fold with no window or interior padding, as rune's
   transpose of a slice, runs as a pad at a copy's speed, where it took about
   250 instructions an element.
