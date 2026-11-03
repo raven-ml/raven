@@ -1717,6 +1717,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- On x86-64, nx.cpu's float32 and float64 contractions in chain order run
+  their tiles of 6 rows four steps of k an iteration: 1.78 instructions per
+  vector FMA where they ran 2.14. On one thread a 2048³ float32 `Nx.matmul`
+  runs 17% fewer instructions, attention's `[8; 2048; 64]` scores 21%.
+  Results keep their bits.
 - `Nx.unique` without `~size` numbers keys whose rows take at most as many
   values as there are rows, read from each column's least and greatest order
   keys, in a few passes and no sort: a million int64 keys of 100 values take

@@ -1726,7 +1726,7 @@ let guard_cases =
        if by_rows then
          frequency
            [ (2, int_range 1 140); (1, map (fun s -> 16 * s) (int_range 1 8)) ]
-       else int_range 1 140
+       else frequency [ (2, int_range 1 140); (1, int_range 1 9) ]
      in
      let* tiles = int_range 0 2 in
      let* edge =
@@ -1832,6 +1832,15 @@ let law_guards (b : Support.backend) g =
     (g.by_rows && g.m < 4 && g.side = Support.After && g.c0 + g.n = g.cols);
   cover "b by rows, a depth of whole steps of lanes"
     (g.by_rows && g.k mod 16 = 0);
+  (* Chain order's tiles of 6 rows by a sliver run k four steps at a
+     time, then one at a time. *)
+  let tiles = (not g.by_rows) && g.m >= 6 && g.n >= 2 * half in
+  cover "tiles, a depth of fewer than four steps" (tiles && g.k < 4);
+  cover "tiles, a depth of whole blocks of four steps" (tiles && g.k mod 4 = 0);
+  cover "tiles, a depth of blocks of four steps and more"
+    (tiles && g.k > 4 && g.k mod 4 <> 0);
+  cover "tiles, b's window ending at the page"
+    (tiles && g.side = Support.After && g.c0 + g.n = g.cols);
   if g.f64 then guarded_product b D.Float64 g
   else guarded_product b D.Float32 g
 
@@ -1864,6 +1873,40 @@ let order_edges =
       (4, 16, 8); (5, 13, 8); (16, 4, 8); (13, 5, 8); (5, 12, 8); (7, 9, 8);
       (8, 8, 8); (8, 8, 8191); (8, 8, 8192);
     ]
+
+(* Chain order's tiles, which add several steps of k an iteration, either
+   side of those blocks: depths of 1 to 9 and 67, and in float32 and
+   float64 385, past a block of 256 or 384 steps; 13 rows, two tiles of 6
+   and one row, by 37 columns, two slivers of 16 and an edge of 5; a and b
+   read in place, stored transposed, or both; with and without init; at
+   each float dtype each accumulator holds, a complex one's depth twice as
+   many parts. *)
+let unroll_examples =
+  let plain = Elements.plain 2 and rows = swap 2 in
+  let layouts = [ (plain, plain); (plain, rows); (rows, plain); (rows, rows) ] in
+  let dtypes =
+    D.
+      [
+        (Any Float32, Any Float32); (Any Float32, Any Bfloat16);
+        (Any Float32, Any Float16); (Any Float64, Any Float64);
+        (Any Float64, Any Float32); (Any Complex64, Any Complex64);
+        (Any Complex128, Any Complex128);
+      ]
+  in
+  List.concat_map
+    (fun (acc, dt) ->
+      List.concat_map
+        (fun k ->
+          List.mapi
+            (fun i (va, vb) ->
+              let init = if (i + k) mod 2 = 1 then Some plain else None in
+              make ~acc ~out:acc ([||], [| 13 |], [| 37 |], [| k |]) (dt, va)
+                (dt, vb) init (i + k))
+            layouts)
+        ([ 1; 2; 3; 4; 5; 6; 7; 8; 9; 67 ]
+        @ if acc = dt && List.mem acc D.[ Any Float32; Any Float64 ] then [ 385 ]
+          else []))
+    dtypes
 
 (* One row and few rows against b stored [n × k], adjacent along k, as a
    weight or attention's keys are, in lane order: at each float dtype each
@@ -1939,8 +1982,8 @@ let cpu (b : Support.backend) =
           b.around (test_acc_refused b));
       prop
         ~examples:
-          (examples @ large_examples @ order_edges @ few_rows_examples
-         @ edge_examples)
+          (examples @ large_examples @ order_edges @ unroll_examples
+         @ few_rows_examples @ edge_examples)
         "each output adds its products in the order nx_cpu.mli states"
         computed (run (law_order b));
       prop ~count:16 ~examples:deep_examples

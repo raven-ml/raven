@@ -10,7 +10,9 @@
    6 × 8 of float64: 12 accumulators, two vectors of b and one broadcast of
    a, 15 of the 16 vector registers. Each output adds a[i] · b[j] by VFMADD,
    one rounding, in increasing k. Two FMA ports with a latency of four want
-   eight independent accumulators; twelve leave room for the loads. The
+   eight independent accumulators; twelve leave room for the loads. A tile
+   of 6 rows of every column runs in assembly, four steps of k an
+   iteration (ASM_TILE); others in intrinsics, a step an iteration, whose
    accumulators are named variables: gcc keeps an array of them in memory
    and stores each at every step.
 
@@ -76,13 +78,149 @@ static const int64_t ones64[8] = {-1, -1, -1, -1};
     MSTORE(y + i * ldc + W, m1, c##i##1);      \
   }
 
+/* Tiles of MR rows of every column whose a's elements are adjacent
+   along k, as a packed block's and an operand's read in place are, run
+   in assembly, four steps of k an iteration. The loop follows BLIS's sup
+   kernel for 6 × 16 float32 outputs from a's rows in place
+   (bli_sgemmsup_rv_haswell_asm_6x16, BSD-3; none of its code is copied
+   here): each row's element and b's vectors at constant offsets from two
+   pointers, a's rows rs, 2·rs, 3·rs, 4·rs and 5·rs past the first, so
+   that a step is its 20 loads and FMAs and an iteration of four costs 4
+   instructions more, 84 for 48 FMAs, where the loop of one step ran 25
+   for 12. gcc 14, given the four steps in intrinsics, advanced a pointer
+   for each and moved and spilled accumulators: 102 instructions. A tile
+   costs about 60 more: its outputs loaded and stored, the next tile's
+   lines prefetched, the steps past the last four one at a time. The
+   accumulators are ymm4 to ymm15, row i's in 4 + 2i and 5 + 2i, b's
+   vectors ymm0 and ymm1, a's broadcast ymm2. Each output's chain is the
+   one-step loop's. */
+#define KU 4
+#define ASM_ROW(BC, FMA, d, at, c0, c1)                              \
+  BC " " #d at ", %%ymm2\n\t" FMA " %%ymm0, %%ymm2, %%ymm" #c0 "\n\t" \
+  FMA " %%ymm1, %%ymm2, %%ymm" #c1 "\n\t"
+#define ASM_STEP(BC, FMA, d, bat)                    \
+  "vmovups " bat ", %%ymm0\n\t"                      \
+  "vmovups 32" bat ", %%ymm1\n\t"                    \
+  ASM_ROW(BC, FMA, d, "(%[a])", 4, 5)                \
+  ASM_ROW(BC, FMA, d, "(%[a],%[rs],1)", 6, 7)        \
+  ASM_ROW(BC, FMA, d, "(%[a],%[rs],2)", 8, 9)        \
+  ASM_ROW(BC, FMA, d, "(%[a],%[r3],1)", 10, 11)      \
+  ASM_ROW(BC, FMA, d, "(%[a],%[rs],4)", 12, 13)      \
+  ASM_ROW(BC, FMA, d, "(%[a],%[r5],1)", 14, 15)
+/* [M] on each of the six rows from [p], [s] apart, r3 and r5 holding 3·s
+   and 5·s, with the accumulators of the row where it takes them. */
+#define ASM_SIX(M, p, s)                       \
+  M("(%[" p "])", 4, 5)                        \
+  M("(%[" p "],%[" s "],1)", 6, 7)             \
+  M("(%[" p "],%[" s "],2)", 8, 9)             \
+  M("(%[" p "],%[r3],1)", 10, 11)              \
+  M("(%[" p "],%[" s "],4)", 12, 13)           \
+  M("(%[" p "],%[r5],1)", 14, 15)
+#define ASM_LOAD(at, c0, c1) \
+  "vmovups " at ", %%ymm" #c0 "\n\tvmovups 32" at ", %%ymm" #c1 "\n\t"
+#define ASM_STORE(at, c0, c1) \
+  "vmovups %%ymm" #c0 ", " at "\n\tvmovups %%ymm" #c1 ", 32" at "\n\t"
+#define ASM_ZERO(at, c0, c1)                                 \
+  "vxorps %%ymm" #c0 ", %%ymm" #c0 ", %%ymm" #c0 "\n\t"     \
+  "vxorps %%ymm" #c1 ", %%ymm" #c1 ", %%ymm" #c1 "\n\t"
+#define ASM_FETCH(at, c0, c1) "prefetcht0 " at "\n\t"
+#define ASM_TIMES(s)                    \
+  "lea (%[" s "],%[" s "],2), %[r3]\n\t" \
+  "lea (%[" s "],%[" s "],4), %[r5]\n\t"
+/* The tile from [START], each accumulator's start: [BC] and [FMA] are
+   the dtype's broadcast and VFMADD231, [d1] to [d3] the bytes of 1 to 3
+   elements and [d4] of 4. Where [pf], the next tile's rows of a and of
+   the outputs, 6·rs and 6·ldc on, are prefetched, b3 pointing at each. */
+#define ASM_TILE(START, BC, FMA, d1, d2, d3, d4)  \
+  ASM_TIMES("ldc")                                \
+  ASM_SIX(START, "y", "ldc")                      \
+  "test %[pf], %[pf]\n\t"                         \
+  "jz 5f\n\t"                                     \
+  "lea (%[y],%[r3],2), %[b3]\n\t"                 \
+  ASM_SIX(ASM_FETCH, "b3", "ldc")                 \
+  ASM_TIMES("rs")                                 \
+  "lea (%[a],%[r3],2), %[b3]\n\t"                 \
+  ASM_SIX(ASM_FETCH, "b3", "rs")                  \
+  "jmp 6f\n\t"                                    \
+  "5:\n\t"                                        \
+  ASM_TIMES("rs")                                 \
+  "6:\n\t"                                        \
+  "lea (%[bk],%[bk],2), %[b3]\n\t"                \
+  "test %[nb], %[nb]\n\t"                         \
+  "jz 2f\n\t"                                     \
+  "1:\n\t"                                        \
+  ASM_STEP(BC, FMA, , "(%[b])")                   \
+  ASM_STEP(BC, FMA, d1, "(%[b],%[bk],1)")         \
+  ASM_STEP(BC, FMA, d2, "(%[b],%[bk],2)")         \
+  ASM_STEP(BC, FMA, d3, "(%[b],%[b3],1)")         \
+  "add $" #d4 ", %[a]\n\t"                        \
+  "lea (%[b],%[bk],4), %[b]\n\t"                  \
+  "dec %[nb]\n\t"                                 \
+  "jnz 1b\n\t"                                    \
+  "2:\n\t"                                        \
+  "test %[nr], %[nr]\n\t"                         \
+  "jz 4f\n\t"                                     \
+  "3:\n\t"                                        \
+  ASM_STEP(BC, FMA, , "(%[b])")                   \
+  "add $" #d1 ", %[a]\n\t"                        \
+  "add %[bk], %[b]\n\t"                           \
+  "dec %[nr]\n\t"                                 \
+  "jnz 3b\n\t"                                    \
+  "4:\n\t"                                        \
+  ASM_TIMES("ldc")                                \
+  ASM_SIX(ASM_STORE, "y", "ldc")
+#define ASM_RUN(START, BC, FMA, d1, d2, d3, d4)                         \
+  __asm__ volatile(ASM_TILE(START, BC, FMA, d1, d2, d3, d4)             \
+                   : [a] "+r"(a), [b] "+r"(b), [nb] "+r"(nb),           \
+                     [nr] "+r"(nr), [r3] "=&r"(r3), [r5] "=&r"(r5),     \
+                     [b3] "=&r"(b3)                                     \
+                   : [y] "r"(y), [rs] "r"(rs), [bk] "r"(bk),            \
+                     [ldc] "r"(lc), [pf] "r"(pf)                        \
+                   : "cc", "memory", "xmm0", "xmm1", "xmm2", "xmm4",    \
+                     "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10",   \
+                     "xmm11", "xmm12", "xmm13", "xmm14", "xmm15")
+
+/* [name] adds a tile of MR rows of a, a_row elements apart, its elements
+   along k adjacent, and b's [k] steps, b_k apart, into the MR × NR
+   outputs at [y], ldc apart, from [from]; the next tile's lines
+   prefetched where [pf]. */
+#define ASM_KERNEL(name, T, BC, FMA, d1, d2, d3, d4)                         \
+  static inline __attribute__((always_inline)) void name(                   \
+      const T *a, int64_t a_row, const T *b, int64_t b_k, int64_t k, T *y,  \
+      int64_t ldc, nx_cpu_from from, int64_t pf) {                          \
+    int64_t nb = k / KU, nr = k % KU, r3, r5, b3;                           \
+    int64_t rs = a_row * (int64_t)sizeof(T), bk = b_k * (int64_t)sizeof(T), \
+            lc = ldc * (int64_t)sizeof(T);                                  \
+    if (from == NX_CPU_FROM_ZERO)                                           \
+      ASM_RUN(ASM_ZERO, BC, FMA, d1, d2, d3, d4);                           \
+    else ASM_RUN(ASM_LOAD, BC, FMA, d1, d2, d3, d4);                        \
+  }
+ASM_KERNEL(tile_asm_f32, float, "vbroadcastss", "vfmadd231ps", 4, 8, 12, 16)
+ASM_KERNEL(tile_asm_f64, double, "vbroadcastsd", "vfmadd231pd", 8, 16, 24,
+           32)
+#define NO_ASM(a, a_row, b, b_k, k, y, ldc, from, pf)
+
+/* [name]: tiles of MR rows by [TILE] where it reads b whole and a's
+   elements along k are adjacent ([FAST]); others, and a last tile of
+   fewer rows, one step of k at a time. Before a tile, the next tile's
+   first lines of a and of the outputs are prefetched. */
 #define KERNEL(name, T, V, W, MASK, LOAD, MLOAD, BLOAD, STORE, MSTORE,      \
-               BCAST, FMA, ZERO)                                            \
+               BCAST, FMA, ZERO, FAST, TILE)                                \
   static void name(int64_t m, int64_t n, int64_t k, const void *va,         \
                    int64_t a_row, int64_t a_k, const void *vb, int64_t b_k, \
                    void *vc, int64_t ldc, nx_cpu_from from) {               \
     __m256i m0 = MASK(n < W ? n : W), m1 = MASK(n > W ? n - W : 0);         \
-    for (int64_t i0 = 0; i0 < m; i0 += MR) {                                \
+    int64_t i0 = 0;                                                         \
+    for (; FAST && a_k == 1 && i0 + MR <= m; i0 += MR) {                    \
+      const T *a = (const T *)va + i0 * a_row;                              \
+      T *y = (T *)vc + i0 * ldc;                                            \
+      for (int64_t i = MR; i0 + 2 * MR > m && i0 + i < m; i++) {            \
+        _mm_prefetch((const char *)(a + i * a_row), _MM_HINT_T0);           \
+        _mm_prefetch((const char *)(y + i * ldc), _MM_HINT_T0);             \
+      }                                                                     \
+      TILE(a, a_row, vb, b_k, k, y, ldc, from, i0 + 2 * MR <= m);           \
+    }                                                                       \
+    for (; i0 < m; i0 += MR) {                                              \
       int64_t rows = m - i0 < MR ? m - i0 : MR;                             \
       const T *a = (const T *)va + i0 * a_row, *b = vb;                     \
       T *y = (T *)vc + i0 * ldc;                                            \
@@ -114,19 +252,21 @@ static const int64_t ones64[8] = {-1, -1, -1, -1};
 
 KERNEL(whole_f32, float, __m256, 8, MASK32, _mm256_loadu_ps,
        _mm256_maskload_ps, WHOLE32, _mm256_storeu_ps, _mm256_maskstore_ps,
-       _mm256_broadcast_ss, _mm256_fmadd_ps, _mm256_setzero_ps())
+       _mm256_broadcast_ss, _mm256_fmadd_ps, _mm256_setzero_ps(), 1,
+       tile_asm_f32)
 KERNEL(edge_f32, float, __m256, 8, MASK32, _mm256_loadu_ps,
        _mm256_maskload_ps, _mm256_maskload_ps, _mm256_storeu_ps,
        _mm256_maskstore_ps, _mm256_broadcast_ss, _mm256_fmadd_ps,
-       _mm256_setzero_ps())
+       _mm256_setzero_ps(), 0, NO_ASM)
 TILES(kernel_f32, f32, 16)
 KERNEL(whole_f64, double, __m256d, 4, MASK64, _mm256_loadu_pd,
        _mm256_maskload_pd, WHOLE64, _mm256_storeu_pd, _mm256_maskstore_pd,
-       _mm256_broadcast_sd, _mm256_fmadd_pd, _mm256_setzero_pd())
+       _mm256_broadcast_sd, _mm256_fmadd_pd, _mm256_setzero_pd(), 1,
+       tile_asm_f64)
 KERNEL(edge_f64, double, __m256d, 4, MASK64, _mm256_loadu_pd,
        _mm256_maskload_pd, _mm256_maskload_pd, _mm256_storeu_pd,
        _mm256_maskstore_pd, _mm256_broadcast_sd, _mm256_fmadd_pd,
-       _mm256_setzero_pd())
+       _mm256_setzero_pd(), 0, NO_ASM)
 TILES(kernel_f64, f64, 8)
 
 /* The integers' kernels, modulo their width, as unsigned numbers, which
