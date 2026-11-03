@@ -215,13 +215,14 @@ and rune), raven / llama.cpp b12048 Vulkan:
 
 ## talon, hugin, brot, munin, quill
 
-- talon benches: record the query suite's DuckDB/Polars baselines on fudge
-  (H2O 1e7/1e8, decision support SF1/SF10; none committed), and bless
-  `Talon_csv/read-mixed` on fudge and the Mac
-- talon perf, machine and commit unrecorded: vs the faster of
-  DuckDB/Polars, decision support SF1 13.2x, H2O group-by and join 2.8x;
-  vs pandas 1.36x on filter, 2.05x on join. Re-measure on fudge once the
-  query baselines exist
+- talon benches: record the query suite's DuckDB/Polars baselines on a
+  quiet fudge (`baseline.py` refuses loaded runs; H2O 1e8 needs more than
+  a run's 16 GiB), and bless `Talon_csv/read-mixed` on the Mac
+- talon perf on fudge (c51b4b858, 14 threads, load 5-71, DuckDB 1.5.6,
+  Polars 1.44.2), geomean vs the faster engine: decision support SF1
+  11.7x, SF10 22.0x, H2O 1e7 group-by 7.9x, join 7.1x. talon's group-by
+  runs on about one core (94% of a CPU) where the engines use all 14;
+  SF10 q13 peaks at 14.45 GiB. Logs: ~/wt/tmp/talon-baselines on fudge
 - talon 1.0 plan (_plans/talon/product/plan.md, on the Mac): windows and
   ewm, as-of and interval joins, interval sets and folds, zoned time,
   hash/sample/shuffle, Pivot and nesting, dense round trips, partial
