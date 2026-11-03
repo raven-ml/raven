@@ -435,7 +435,6 @@ let settings =
     number Setting.reduceop_split_size;
     switch Setting.mv;
     switch Setting.dmc;
-    switch Setting.allow_half8;
     switch Setting.expand_ssa;
     switch Setting.beam_padto;
     number Setting.beam_uops_max;
@@ -496,7 +495,6 @@ let getenv_defaults =
     ("REDUCEOP_SPLIT_SIZE", "22");
     ("MV", "1");
     ("DMC", "0");
-    ("ALLOW_HALF8", "0");
     ("EXPAND_SSA", "0");
     ("BEAM_PADTO", "0");
     ("BEAM_UOPS_MAX", "3000");
@@ -545,7 +543,6 @@ let holds_tinygrad_default s =
    compiler is made, whose cache key names its tools. *)
 let output_settings =
   [
-    "ALLOW_HALF8";
     "ALLOW_TF32";
     "BEAM";
     "BEAM_ESTIMATE";

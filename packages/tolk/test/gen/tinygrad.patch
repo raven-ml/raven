@@ -1082,7 +1082,7 @@ index 48f88612f..441546e62 100644
    # if we got a WARP, set the local_max to it so it does not fold with other dims
    local_max = (local_shape[0],)+ctx.local_max[1:] if ctx.local_max is not None and local_dims and \
 diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
-index 65fb29491..db4738232 100644
+index 65fb29491..25c5a2cc6 100644
 --- a/tinygrad/codegen/late/coalesce.py
 +++ b/tinygrad/codegen/late/coalesce.py
 @@ -39,7 +39,9 @@ def _drop_valid_stmts(valid:UOp, idx:UOp, height:int, width:int) -> list[UOp]:
@@ -1096,11 +1096,13 @@ index 65fb29491..db4738232 100644
    return None if idx is start_idx or idx is start_idx.simplify() else buf.index(idx.valid(valid))
  
  def simplify_valid_image_load(buf:UOp, idx_y:UOp, idx_x:UOp, valid:UOp) -> UOp|None:
-@@ -139,7 +141,18 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+@@ -139,9 +141,20 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
      if ctx.target.device == "DSP":
        lengths = [128,64,32,16,8,4]
        must_divide = False
 -    elif buf.dtype in (dtypes.float, dtypes.half, dtypes.int, dtypes.uint, *dtypes.fp8s) and ctx.supports_float4:
+-      # TODO: a better way to get this than ctx
+-      lengths = [8,4,2] if buf.dtype == dtypes.half and getenv("ALLOW_HALF8") else [4,2]
 +    # where the target's vector registers are known, an access fills up to one: clang packs a kernel's values into registers as the stores
 +    # it reads them from, so a store of four floats leaves half of a 32-byte register empty. doubles merge there too
 +    # doubles computed lane by lane are stored one by one: merged, clang packs the computations behind them, which ran twice as slow on a
@@ -1113,9 +1115,11 @@ index 65fb29491..db4738232 100644
 +    # products 1.5 times slower than its float16 ones
 +    elif (buf.dtype in (dtypes.float, dtypes.half, dtypes.int, dtypes.uint, *dtypes.fp8s) or
 +          (buf.dtype == dtypes.bfloat16 and ctx.target.device != "CPU")) and ctx.supports_float4:
-       # TODO: a better way to get this than ctx
-       lengths = [8,4,2] if buf.dtype == dtypes.half and getenv("ALLOW_HALF8") else [4,2]
++      # 16-bit floats merge to 16 bytes where the target writes vectors of eight: a copy of 16 bytes is one instruction
++      lengths = [8,4,2] if buf.dtype in (dtypes.half, dtypes.bfloat16) and ctx.half8 else [4,2]
      lengths.append(1)  # worst case, it's not folded
+     # do the grouping
+     for _,group in itertools.groupby(enumerate(sorted(offsets.keys())), lambda x: x[1]-x[0]):
 diff --git a/tinygrad/codegen/late/linearizer.py b/tinygrad/codegen/late/linearizer.py
 index 0838d70c9..dadd54ab5 100644
 --- a/tinygrad/codegen/late/linearizer.py
@@ -2243,13 +2247,15 @@ index 34d111b14..80db84b3d 100644
    def cumsum(self, axis:int=0) -> Self:
      """
 diff --git a/tinygrad/renderer/__init__.py b/tinygrad/renderer/__init__.py
-index 7fb5ccac2..8847cd221 100644
+index 7fb5ccac2..733b483e3 100644
 --- a/tinygrad/renderer/__init__.py
 +++ b/tinygrad/renderer/__init__.py
-@@ -67,12 +67,20 @@ class Renderer:
+@@ -67,12 +67,22 @@ class Renderer:
    inline_prefix: str|None = None
    # TODO: make this generic with a list of supported types
    supports_float4: bool = True
++  # vectors of eight 16-bit floats are written, so 16 bytes of them merge into one access
++  half8: bool = False
 +  # the target's vector registers, their number and the bytes of each, if known: a merged access fills up to one, and on the host
 +  # they bound the lanes a kernel's accumulators hold
 +  registers: tuple[int, int]|None = None
@@ -2268,7 +2274,7 @@ index 7fb5ccac2..8847cd221 100644
    tensor_cores: list[TensorCore] = []
    extra_matcher: PatternMatcher|None = None
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 6eec3e198..a2003b811 100644
+index 6eec3e198..a07980e42 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -2583,7 +2589,7 @@ index 6eec3e198..a2003b811 100644
    def __init__(self, target:Target):
      super().__init__(target)
      from tinygrad.runtime.ops_metal import MetalCompiler
-@@ -415,6 +581,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
+@@ -415,9 +581,11 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
  _nms = list("xyzwabcdefghijkl") + [f'v{i}' for i in range(16, 32)]
  
  class CUDARenderer(CStyleLanguage):
@@ -2591,7 +2597,11 @@ index 6eec3e198..a2003b811 100644
    global_max = (2147483647, 65535, 65535)
    local_max = (1024, 1024, 64)
    shared_max = 49152
-@@ -441,14 +608,15 @@ class CUDARenderer(CStyleLanguage):
++  half8 = True
+ 
+   def __init__(self, target:Target, use_nvcc=False):
+     super().__init__(target)
+@@ -441,14 +609,15 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
@@ -2609,7 +2619,7 @@ index 6eec3e198..a2003b811 100644
       if x.addrspace not in (AddrSpace.GLOBAL, AddrSpace.LOCAL) else None),
    ]) + base_rewrite
  
-@@ -465,6 +633,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -465,6 +634,8 @@ class CUDARenderer(CStyleLanguage):
      if any(dt in dtypes.fp8s for dt, _ in used_dtypes): prefix.append("#include <cuda_fp8.h>")
      if any(dt == dtypes.half for dt, _ in used_dtypes): prefix.append("#include <cuda_fp16.h>")
      if any(dt == dtypes.bfloat16 for dt, _ in used_dtypes): prefix.append("#include <cuda_bf16.h>")
@@ -2618,7 +2628,15 @@ index 6eec3e198..a2003b811 100644
      prefix += [self.render_vector_prefix(dt, count) for dt, count in used_dtypes if (count in (4,8) and dt in {dtypes.half, dtypes.bfloat16})
        or (count in (2,4,8,16) and dt in dtypes.fp8s)]
      dt_map_in = { dtypes.f32: "tf32", dtypes.f16: "f16", dtypes.bf16: "bf16", dtypes.fp8e4m3: "e4m3", dtypes.fp8e5m2: "e5m2" }
-@@ -521,8 +691,9 @@ class HIPRenderer(CStyleLanguage):
+@@ -501,6 +672,7 @@ def _ocml(op): return lambda x,dtype: f"__ocml_{op}_f{ {dtypes.half:16, dtypes.d
+ 
+ class HIPRenderer(CStyleLanguage):
+   shared_max = 65536
++  half8 = True
+   # NOTE: this is only really needed on gfx12, even though gfx11 reports the same limitation
+   global_max = (2147483647, 65535, 65535)
+   global_prod_max = (0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF)
+@@ -521,8 +693,9 @@ class HIPRenderer(CStyleLanguage):
      if amd_fp8s(target.arch):
        self.extra_matcher += tc.pm_wmma_fp8(dtypes.uint64 if self.is_cdna(target.arch) else dtypes.uint32)
        self.string_rewrite = PatternMatcher([
@@ -2630,7 +2648,7 @@ index 6eec3e198..a2003b811 100644
            f" {fp8_index(x.dtype)})"),
          (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
            lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
-@@ -538,7 +709,8 @@ class HIPRenderer(CStyleLanguage):
+@@ -538,7 +711,8 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),

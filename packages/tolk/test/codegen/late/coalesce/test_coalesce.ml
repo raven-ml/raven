@@ -16,6 +16,12 @@ let scalar = Renderer.v ~supports_float4:false cpu
    starts; the CPU device's are aligned to their element. *)
 let gpu = Renderer.v (Result.get_ok (Helpers.Target.of_string "CUDA:CUDA:sm_89"))
 
+(* A GPU that writes vectors of eight 16-bit floats, as CUDA's renderer
+   does. *)
+let gpu8 =
+  Renderer.v ~half8:true
+    (Result.get_ok (Helpers.Target.of_string "CUDA:CUDA:sm_89"))
+
 let coalesce ?(renderer = vector) sink =
   Coalesce.memory_coalescing sink renderer
 
@@ -219,8 +225,8 @@ let lengths =
             (List.init 4 (fun k -> Ops.index merged [ Ops.int k ]))
             lanes);
       test
-        "without ALLOW_HALF8 or known registers, eight halves are two loads of \
-         four" (fun () ->
+        "without vectors of eight halves or known registers, eight halves are \
+         two loads of four" (fun () ->
           let half = Shape.param ~shape:[ Int 64 ] 2 Float16 in
           equal runs
             [ (0, 4); (4, 4) ]
@@ -710,34 +716,35 @@ let readme =
                (coalesce ~renderer:dsp (loads char [ 0; 1; 2; 3 ]))));
     ]
 
-(* The variables are read once per process, so the stanza runs these groups in
-   processes of their own, with the variable set. *)
-
-let allow_half8 =
-  let half8 name =
-    Golden.graph (name ^ "_allow_half8.golden") (fun () ->
-        coalesce (kernel name))
+(* A GPU that writes vectors of eight 16-bit floats merges 16 bytes of them. *)
+let half8 =
+  let on_gpu8 name =
+    Golden.graph (name ^ "_cuda.golden") (fun () ->
+        coalesce ~renderer:gpu8 (kernel name))
   in
-  tag "allow_half8"
-  @@ group "ALLOW_HALF8"
-       [
-         test "the suite runs this group with ALLOW_HALF8=1" (fun () ->
-             equal (option string) (Some "1") (Sys.getenv_opt "ALLOW_HALF8"));
-         half8 "half";
-         half8 "half8";
-         hand_built "accesses_allow_half8.golden" vector;
-         prop "coalescing preserves the kernel's writes" kernels_of_runs
-           (preserves_writes vector);
-         test "eight halves are one load of eight" (fun () ->
-             let half = Shape.param ~shape:[ Int 64 ] 2 Float16 in
-             equal runs
-               [ (0, 8) ]
-               (accesses Op.Load (coalesce (loads half (List.init 8 Fun.id)))));
-         test "eight floats are still two loads of four" (fun () ->
-             equal runs
-               [ (0, 4); (4, 4) ]
-               (accesses Op.Load (coalesce (loads buf (List.init 8 Fun.id)))));
-       ]
+  group "vectors of eight 16-bit floats"
+    [
+      on_gpu8 "half";
+      on_gpu8 "half8";
+      hand_built "accesses_cuda.golden" gpu8;
+      prop "coalescing preserves the kernel's writes" kernels_of_runs
+        (preserves_writes gpu8);
+      cases "eight 16-bit floats are one load of eight" ~id:Dtype.name
+        [ Dtype.Float16; Dtype.Bfloat16 ] (fun dt ->
+          let half = Shape.param ~shape:[ Int 64 ] 2 dt in
+          equal runs
+            [ (0, 8) ]
+            (accesses Op.Load
+               (coalesce ~renderer:gpu8 (loads half (List.init 8 Fun.id)))));
+      test "eight floats are still two loads of four" (fun () ->
+          equal runs
+            [ (0, 4); (4, 4) ]
+            (accesses Op.Load
+               (coalesce ~renderer:gpu8 (loads buf (List.init 8 Fun.id)))));
+    ]
+
+(* DMC is read once per process, so the stanza runs this group in a process
+   of its own, with the variable set. *)
 
 let dmc =
   let same name sink =
@@ -771,6 +778,6 @@ let () =
          laws;
          indexing_simplify;
          readme;
-         allow_half8;
+         half8;
          dmc;
        ])

@@ -329,7 +329,6 @@ let reduceop_split_threshold =
 let reduceop_split_size = int ~reach:Output "REDUCEOP_SPLIT_SIZE" 22
 let mv = bool ~reach:Output "MV" true
 let dmc = bool ~reach:Output "DMC" false
-let allow_half8 = bool ~reach:Output "ALLOW_HALF8" false
 let expand_ssa = bool ~reach:Output "EXPAND_SSA" false
 let beam_padto = bool ~reach:Output "BEAM_PADTO" false
 let beam_uops_max = int ~reach:Output "BEAM_UOPS_MAX" 3000

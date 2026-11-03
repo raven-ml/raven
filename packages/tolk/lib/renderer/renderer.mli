@@ -179,6 +179,9 @@ type t = private {
   supports_float4 : bool;
       (** Loads and stores of consecutive elements may be merged into one vector
           access. *)
+  half8 : bool;
+      (** Vectors of eight 16-bit floats are written, so that an access of
+          16 bytes of them merges into one ({!Coalesce.memory_coalescing}). *)
   registers : unit -> registers option;
       (** [registers ()] is the target's vector register file, if known, asked
           when first needed. It sets the widest merged access
@@ -232,6 +235,7 @@ val v :
   ?name:string ->
   ?suffix:string ->
   ?supports_float4:bool ->
+  ?half8:bool ->
   ?registers:(unit -> registers option) ->
   ?vector_alu:bool ->
   ?has_local:bool ->
@@ -254,7 +258,7 @@ val v :
     describe a target that renders nothing:
     - [name] is ["Renderer"] and [suffix] is [""];
     - [supports_float4], [has_local] and [has_shared] are [true], [registers]
-      gives [None], and [vector_alu] is [false];
+      gives [None], and [half8] and [vector_alu] are [false];
     - [global_max] and [local_max] are [0x8FFFFFFF] on each axis, the greatest
       size a 32-bit signed index holds, and [global_prod_max] is [None];
     - [shared_max] is [32768];

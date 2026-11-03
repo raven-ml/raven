@@ -206,11 +206,12 @@ let memory_coalescing sink (r : Renderer.t) =
               let gpu_bfloat16 =
                 Dtype.equal dt Dtype.Bfloat16 && r.target.device <> "CPU"
               in
+              (* 16-bit floats merge to 16 bytes where the target writes
+                 vectors of eight: a copy of 16 bytes is one instruction, as a
+                 tensor core's operands staged through shared memory take. *)
+              let sixteen_bits = Dtype.mem dt Dtype.[ Float16; Bfloat16 ] in
               (if (Dtype.mem dt merged || gpu_bfloat16) && r.supports_float4
-               then
-                 if dt = Dtype.Float16 && Setting.value Setting.allow_half8 then
-                   [ 8; 4; 2 ]
-                 else [ 4; 2 ]
+               then if sixteen_bits && r.half8 then [ 8; 4; 2 ] else [ 4; 2 ]
                else [])
               @ [ 1 ]
         in

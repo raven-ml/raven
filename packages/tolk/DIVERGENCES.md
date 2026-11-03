@@ -1577,7 +1577,7 @@ Withdrawn: multi-device is out of scope, see README.
   library's sources, which dune computes when it builds the library: an
   entry is a function of the code that made it. Every variable is a setting
   declared with its reach (D114), among them those tinygrad reads with
-  `getenv` where it compiles (`ALLOW_HALF8`, `BEAM_ESTIMATE`,
+  `getenv` where it compiles (`BEAM_ESTIMATE`,
   `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS`, `BEAM_PADTO`, `BEAM_UOPS_MAX`,
   `BEAM_UPCAST_MAX`, `DMC`, `EXPAND_SSA`, `HCQ_NUM_SDMA`, `JITBEAM`, and the
   `MV` and `REDUCEOP_SPLIT` variables), and the keys take every one that reaches
@@ -5594,7 +5594,8 @@ and an initial value is added after it (D260).
 
 - **tinygrad:** `codegen/late/coalesce.py:136-145` (`memory_coalescing`'s
   lengths: 4 or 2 elements of float32, float16, int32, uint32 and the 8-bit
-  floats, 8 of float16 under `ALLOW_HALF8`, none of the others).
+  floats, 8 of float16 under `ALLOW_HALF8`, none of the others; D261 makes
+  that 8 the renderer's).
 - **tolk:** `Coalesce.memory_coalescing`, through `Renderer.registers`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the
   goldens are recorded.
@@ -5636,8 +5637,8 @@ and an initial value is added after it (D260).
   and runs 2.99-3.15 ms with it against 3.50-3.62 without. Timed as in D186.
 - **Pinned by:** the Coalesce suite's `lengths › eight consecutive stores fill
   registers of` (every case), `› eight consecutive stores of lanes computed
-  apart, on 32 bytes, are` (every case) and `› without ALLOW_HALF8 or known
-  registers, eight halves are two loads of four`, and its kernels' goldens,
+  apart, on 32 bytes, are` (every case) and `› without vectors of eight
+  halves or known registers, eight halves are two loads of four`, and its kernels' goldens,
   recorded from the equally patched tinygrad for SSE's 16 bytes; the tolk
   bench's `host/*/heuristic` rows on fudge.
 
@@ -6755,6 +6756,29 @@ and an initial value is added after it (D260).
   a trip` (fails unfolded), and `stages › … › matmul_{half,half_big,
   half_tile,bf16_tile,tc}_{cuda,hip}` and `matmul_tc_unroll_metal`; the
   cstyle and renderer goldens of each core.
+
+## D261. 16-bit floats merge to 16 bytes where the target writes vectors of eight
+
+- **tinygrad:** `codegen/late/coalesce.py:142` (`memory_coalescing`: a GPU
+  merges `half` accesses into vectors of 8 under `ALLOW_HALF8`, an
+  environment setting off by default, and of 4 and 2 otherwise).
+- **tolk:** `Coalesce.memory_coalescing`; `Renderer.t.half8`, set by
+  `Cstyle.cuda` and `Cstyle.hip`; `test/gen/tinygrad.patch`, which gives
+  tinygrad's renderers the same attribute and its coalescing the same rule
+  before the goldens are generated. `Setting.allow_half8` is withdrawn.
+- **Differs:** on a renderer that writes vectors of eight 16-bit floats (CUDA
+  and HIP; Metal's vectors hold at most four), adjacent `float16` and
+  `bfloat16` accesses merge into vectors of 8, 4 and 2, 16 bytes at most;
+  elsewhere they merge into 4 and 2, as before. No setting changes it.
+- **Reason:** (d): a tensor core's operands staged through shared memory
+  (D262) are copied 16 bytes a thread, which PTX's `cp.async` copies in one
+  instruction (D263); copied 8 bytes at a time, they take twice the
+  instructions and no asynchronous copy. GPU time below, as D262 measures.
+- **Pinned by:** the Coalesce suite's `vectors of eight 16-bit floats` group
+  (`half_cuda`, `half8_cuda` and `accesses_cuda`, generated from tinygrad
+  with this rule, and `eight 16-bit floats are one load of eight`, of
+  `float16` and `bfloat16`); the goldens of every CUDA and HIP kernel whose
+  16-bit accesses now merge.
 
 ## D265. No axis a call or custom code reads runs as lanes or takes padding
 

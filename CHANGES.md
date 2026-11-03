@@ -969,6 +969,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On CUDA and HIP, adjacent `float16` and `bfloat16` accesses merge into
+  16-byte vectors (`Renderer.t.half8`); the `ALLOW_HALF8` setting
+  (`Setting.allow_half8`) is removed.
+
 - A tensor core accumulates a contraction's running sum whatever its lanes'
   arrangement, and the cores of a K axis unrolled past the core chain in K
   order (`Codegen.full_rewrite_to_sink`): a contraction's bits no longer

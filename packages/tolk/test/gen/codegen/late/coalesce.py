@@ -4,17 +4,16 @@ and merging accesses to consecutive elements into vector accesses.
 `<kernel>.golden` is the sink that `memory_coalescing` receives when a kernel is
 compiled, and `<kernel>_coalesced.golden` its result, for a renderer that
 supports vector accesses. `<kernel>_scalar.golden` is the result for one that
-does not, and `<kernel>_allow_half8.golden` the result with ALLOW_HALF8=1.
+does not, and `<kernel>_cuda.golden` the result for CUDA's, which writes
+vectors of eight 16-bit floats.
 
 The hand-built cases come as a table naming each case by its position
 (`accesses`), an input sink whose sources are the cases (`accesses_input`),
 each case a sink of its own, and the sinks of their results in the same order
-(`accesses_coalesced`, `accesses_scalar`, `accesses_allow_half8`). The cases of
+(`accesses_coalesced`, `accesses_scalar`, `accesses_cuda`). The cases of
 `indexing_simplify` follow the same shape (`indices`, `indices_input`,
 `indices_simplified`).
 """
-
-import os
 
 import tinygrad.codegen
 from golden import graph, table
@@ -23,7 +22,7 @@ from tinygrad import Tensor, Variable, dtypes
 from tinygrad.codegen.late.coalesce import indexing_simplify, memory_coalescing
 from tinygrad.codegen.opt import Opt, OptOps
 from tinygrad.dtype import AddrSpace
-from tinygrad.helpers import Target, getenv
+from tinygrad.helpers import Target
 from tinygrad.renderer.cstyle import ClangRenderer, CUDARenderer
 from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp, graph_rewrite
 
@@ -31,12 +30,6 @@ CPU = ClangRenderer(Target("CPU", "CLANG", "x86_64,x86-64"))
 CUDA = CUDARenderer(Target("CUDA", "CUDA", "sm_80"))
 SCALAR = ClangRenderer(Target("CPU", "CLANG", "x86_64,x86-64"))
 SCALAR.supports_float4 = False
-
-
-def allow_half8(sink):
-    os.environ["ALLOW_HALF8"] = "1"
-    getenv.cache_clear()
-    return memory_coalescing(sink, CPU)
 
 
 def given(kernel, renderer):
@@ -124,9 +117,9 @@ def declare(name, kernel, opts, renderer):
         return given(with_opts(*opts)(k) if opts is not None else k, renderer)
     def coalesced(): return memory_coalescing(sink(), CPU)
     def scalar(): return memory_coalescing(sink(), SCALAR)
-    def half8(): return allow_half8(sink())
+    def half8(): return memory_coalescing(sink(), CUDA)
     sink.__name__, coalesced.__name__, scalar.__name__, half8.__name__ = \
-        name, f"{name}_coalesced", f"{name}_scalar", f"{name}_allow_half8"
+        name, f"{name}_coalesced", f"{name}_scalar", f"{name}_cuda"
     graph(sink)
     graph(coalesced)
     graph(scalar)
@@ -235,7 +228,7 @@ def accesses_scalar(): return UOp.sink(*[memory_coalescing(u, SCALAR) for _, u i
 
 
 @graph
-def accesses_allow_half8(): return UOp.sink(*[allow_half8(u) for _, u in cases()])
+def accesses_cuda(): return UOp.sink(*[memory_coalescing(u, CUDA) for _, u in cases()])
 
 
 # indexing_simplify

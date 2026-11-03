@@ -281,10 +281,6 @@ val dmc : bool t
     elements into vector accesses ({!Coalesce.memory_coalescing}), from [DMC].
     Defaults to [false]. *)
 
-val allow_half8 : bool t
-(** [allow_half8] lets that merging make accesses of eight 16-bit floats, from
-    [ALLOW_HALF8]. Defaults to [false]. *)
-
 val expand_ssa : bool t
 (** [expand_ssa] makes C-style code generation ({!Cstyle}) give every value a
     local variable, from [EXPAND_SSA]. Otherwise a value read once is written

@@ -879,8 +879,8 @@ codegen/gpudims/range_to_special_globals_and_locals.golden
 codegen/gpudims/range_to_special_keeps_a_loop.golden
 codegen/gpudims/range_to_special_splits_its_ends.golden
 codegen/late/coalesce/accesses.golden
-codegen/late/coalesce/accesses_allow_half8.golden
 codegen/late/coalesce/accesses_coalesced.golden
+codegen/late/coalesce/accesses_cuda.golden
 codegen/late/coalesce/accesses_input.golden
 codegen/late/coalesce/accesses_scalar.golden
 codegen/late/coalesce/aligned_variable.golden
@@ -915,11 +915,11 @@ codegen/late/coalesce/grouped_store_coalesced.golden
 codegen/late/coalesce/grouped_store_scalar.golden
 codegen/late/coalesce/half.golden
 codegen/late/coalesce/half8.golden
-codegen/late/coalesce/half8_allow_half8.golden
 codegen/late/coalesce/half8_coalesced.golden
+codegen/late/coalesce/half8_cuda.golden
 codegen/late/coalesce/half8_scalar.golden
-codegen/late/coalesce/half_allow_half8.golden
 codegen/late/coalesce/half_coalesced.golden
+codegen/late/coalesce/half_cuda.golden
 codegen/late/coalesce/half_scalar.golden
 codegen/late/coalesce/heterogeneous.golden
 codegen/late/coalesce/heterogeneous_coalesced.golden

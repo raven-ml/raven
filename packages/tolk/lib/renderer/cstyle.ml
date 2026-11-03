@@ -1725,7 +1725,7 @@ let cuda (target : Helpers.Target.t) =
       ~cache_key:(String.lowercase_ascii target.device)
       arch
   in
-  Renderer.v ~name:"CUDARenderer"
+  Renderer.v ~name:"CUDARenderer" ~half8:true
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~tensor_cores
     ~extra_matcher:cuda_extra_matcher ~code_for_op:cuda_lang.code_for_op ~native
@@ -2072,7 +2072,7 @@ let hip (target : Helpers.Target.t) =
   in
   (* the global limit is only really needed on gfx12, though gfx11 reports the
      same *)
-  Renderer.v ~name:"HIPRenderer" ~shared_max:65536
+  Renderer.v ~name:"HIPRenderer" ~half8:true ~shared_max:65536
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~global_prod_max:[ 0xFFFFFFFF; 0xFFFFFFFF; 0xFFFFFFFF ]
     ~tensor_cores ~extra_matcher:(hip_extra_matcher arch)

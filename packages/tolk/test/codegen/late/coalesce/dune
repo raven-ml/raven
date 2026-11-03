@@ -1,5 +1,5 @@
-; DMC and ALLOW_HALF8 are read once per process, so their groups run in
-; processes of their own, with the variable set.
+; DMC is read once per process, so its group runs in a process of its own,
+; with the variable set.
 
 (test
  (name test_coalesce)
@@ -9,16 +9,7 @@
   (glob_files *.golden))
  (action
   (progn
-   (run
-    %{test}
-    --exclude-tag
-    allow_half8
-    --exclude-tag
-    dmc)
-   (setenv
-    ALLOW_HALF8
-    1
-    (run %{test} --tag allow_half8))
+   (run %{test} --exclude-tag dmc)
    (setenv
     DMC
     1
