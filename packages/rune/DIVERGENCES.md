@@ -827,12 +827,27 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **nx:** `nx_kernel.mli`, `scatter`: `into` where no update lands, bits
   unchanged.
 - **Class:** exact; rounded sum for float `Add`.
-- **Reason:** (b); the kernel that walks the updates past the bound (d), by
-  `Jit/take-grad-1024-of-4096x64` (an embedding's gradient) and
-  `Jit/scatter-1024-rows-into-donated-4096x64` (a donated table) in
-  `rune.thumper`. Below the bound, into a carry's or a donated argument's
-  storage: none, since no row's baseline was recorded with the kernel there.
-  The bound of 16 itself: none, a cost model's.
+- **Reason:** (b).
+  - The kernel that walks the updates past the bound: (d), by
+    `Jit/take-grad-1024-of-4096x64` (an embedding's gradient) and
+    `Jit/scatter-1024-rows-into-donated-4096x64` (a donated table) in
+    `rune.thumper`.
+  - Below the bound, into a carry's or a donated argument's storage: none
+    until wall-time baselines of `Jit/scatter-16-rows-into-donated-4096x64`
+    and `JitLoops/iterate-64-rows-into-4096x64-replay` are recorded with the
+    kernel, the first's being the comparison's and the second's missing;
+    then (d) by them. On fudge, three interleaved runs each, they take 1.6
+    to 6.9 µs and 158 to 276 µs, against 766 to 1040 µs and 1.02 to 1.89 ms
+    with the comparison of every element.
+  - The bound of 16 itself: none, and timing contradicts it. In a probe on
+    fudge's host (medians of 11, two interleaved runs), a fresh scatter of
+    `k` updates into 1024 elements takes 2.3 to 2.5 µs looped from `k = 2`
+    against 3.2 to 8.0 µs compared up to `k = 16`; `k` rows of 64 into 4096
+    take 66 to 94 µs looped against 212 to 573 µs compared from `k = 8` to
+    16. At `k = 1`, and at 4 rows, the runs overlap. On the RTX 5000 Ada
+    both forms take 10 to 28 µs up to 17 updates, within each other's
+    noise. Lowering the bound, or one looped form for every scatter, needs
+    a design.
 - **Pinned by:** `Lower_index › gathers and scatters › a scatter by Set, Max
   or Min gives eager's bits`, `› a scatter by Add wraps integers and holds its
   float bound`, `› a scatter by Set, Max or Min past 16 times eager's work
