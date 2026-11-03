@@ -6156,7 +6156,8 @@ and an initial value is added after it (D260).
   `schedule/rangeify.py:321-336` (`split_store`, one kernel per store or
   end).
 - **tolk:** `Schedule.merge_calls`, `Schedule.merge_linear`,
-  `Schedule.member`, `Schedule.merged` and `Schedule.storage_taken`, which
+  `Schedule.shape`, `Schedule.member`, `Schedule.merged` and
+  `Schedule.storage_taken`, which
   `Schedule.create_linear_with_vars` runs after `pm_copy_from_store`, after
   the schedule cache.
 - **Differs:** in a schedule, two kernel calls run as one call when each is

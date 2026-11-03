@@ -1301,14 +1301,15 @@ let storage_taken e =
   List.filter (fun b -> addrspace b <> Some Dtype.Alu) (Memory.taken e)
 
 (* A kernel call that can run with others: its device, its domain (the ranges
-   its stores end, by position), the stores of its body, and the storage it
-   writes. *)
+   its stores end, by position), the stores of its body, the storage it writes,
+   and the parameters of its body that its arguments fill. *)
 type member = {
   device : string;
   domain : (Axis_type.t * t) list;
   ranges : t list;
   stores : t list;
   writes : t list;
+  params : t list;
 }
 
 module Domain = Hashtbl.Make (struct
@@ -1321,29 +1322,60 @@ module Domain = Hashtbl.Make (struct
   let hash (d, a) = Hashtbl.hash (d, List.map (fun (x, u) -> (x, Ops.hash u)) a)
 end)
 
-(* The member that the kernel call [si] is, if it is a kernel of the default
-   kind whose body ends its stores over ranges of constant sizes and reduces
-   nothing, and all of whose storage lies on one device. A size a call passes
-   is a parameter whose slot the merge renumbers, so two such sizes cannot be
-   compared before it. *)
-let member si =
-  let kernel = kernel_info () in
+(* What a kernel body [b] gives a call of it that can run with others: the
+   ranges its stores end, its stores and its parameters filled by arguments,
+   if it is a kernel of the default kind whose body ends its stores over ranges
+   of constant sizes and reduces nothing. A size a call passes is a parameter
+   whose slot the merge renumbers, so two such sizes cannot be compared before
+   it. *)
+let shape b =
+  let plain = match arg b with Kernel k -> k = kernel_info () | _ -> false in
+  match src b with
+  | [ r ] when plain ->
+      let body, ranges =
+        if op r = Op.End then (nth r 0, List.tl (src r)) else (r, [])
+      in
+      let stores =
+        if is_group body then List.tl (src body)
+        else if op body = Op.Store then [ body ]
+        else []
+      in
+      let nodes = toposort ~calls:Skip b in
+      let ranged u = op u = Op.Range && not (List.memq u ranges) in
+      let filled v =
+        match arg v with
+        | Param p -> op v = Op.Param && p.name = None && p.slot >= 0
+        | _ -> false
+      in
+      if
+        stores = []
+        || List.exists (fun st -> op st <> Op.Store) stores
+        || List.exists
+             (fun r -> op r <> Op.Range || op (nth r 0) <> Op.Const)
+             ranges
+        || List.exists (fun u -> op u = Op.Reduce || ranged u) nodes
+      then None
+      else Some (ranges, stores, List.filter filled nodes)
+  | _ -> None
+
+(* The member that the kernel call [si] is, if its body has a [shape], it
+   writes storage through each store and all its storage, [storage], lies on
+   one device. [shapes] holds the shapes of the bodies met so far: the calls of
+   a schedule share bodies, as a scan calls one each step. *)
+let member shapes si storage =
   match (op si, src si) with
   | Op.Call, b :: args when op b = Op.Sink -> (
-      let plain = match arg b with Kernel k -> k = kernel | _ -> false in
-      let root = match src b with [ r ] -> Some r | _ -> None in
-      match root with
-      | Some r when plain -> (
-          let body, ranges =
-            if op r = Op.End then (nth r 0, List.tl (src r)) else (r, [])
-          in
-          let stores =
-            if is_group body then List.tl (src body)
-            else if op body = Op.Store then [ body ]
-            else []
-          in
-          let nodes = toposort ~calls:Skip b in
-          let ranged u = op u = Op.Range && not (List.memq u ranges) in
+      let shape =
+        match Tbl.find_opt shapes b with
+        | Some s -> s
+        | None ->
+            let s = shape b in
+            Tbl.replace shapes b s;
+            s
+      in
+      match shape with
+      | None -> None
+      | Some (ranges, stores, params) -> (
           let args = Array.of_list args in
           let written st =
             match arg (buf_uop (nth st 0)) with
@@ -1352,18 +1384,11 @@ let member si =
             | _ -> None
           in
           let writes = List.filter_map written stores in
-          let storage = storage_taken si in
           let devices =
             List.sort_uniq String.compare (List.filter_map device storage)
           in
           if
-            stores = []
-            || List.exists (fun st -> op st <> Op.Store) stores
-            || List.compare_lengths writes stores <> 0
-            || List.exists
-                 (fun r -> op r <> Op.Range || op (nth r 0) <> Op.Const)
-                 ranges
-            || List.exists (fun u -> op u = Op.Reduce || ranged u) nodes
+            List.compare_lengths writes stores <> 0
             || List.exists (fun b -> Option.is_none (device b)) storage
           then None
           else
@@ -1372,9 +1397,8 @@ let member si =
                 let domain =
                   List.map (fun r -> (axis_type r, nth r 0)) ranges
                 in
-                Some { device; domain; ranges; stores; writes }
-            | _ -> None)
-      | _ -> None)
+                Some { device; domain; ranges; stores; writes; params }
+            | _ -> None))
   | _ -> None
 
 (* The calls [calls], each with its member, as one call: arguments that are one
@@ -1405,16 +1429,13 @@ let merged calls =
       List.filter_map
         (fun v ->
           match arg v with
-          | Param p
-            when op v = Op.Param
-                 && p.name = None && p.slot >= 0
-                 && p.slot < Array.length own ->
+          | Param p when p.slot < Array.length own ->
               Some
                 ( v,
                   replace v ~arg:(Param { p with slot = slot_of own.(p.slot) })
                 )
           | _ -> None)
-        (toposort ~calls:Skip (body si))
+        m.params
     in
     let ranges = List.combine m.ranges first.ranges in
     let subs = List.filter (fun (x, y) -> x != y) (params @ ranges) in
@@ -1463,18 +1484,19 @@ let at_or_after k bound =
 (* The entries of [linear] with the calls that can run as one merged, and the
    loops' bodies too. [held] is the storage the schedule is given, which
    outlives it; [free] is whether every storage lives for the whole scope, as in
-   a loop's body. Each entry is weighed once, in order: it joins the earliest
-   open group of its device and domain that starts past the last entry it
-   conflicts with and past the first use of any storage whose life may not start
-   earlier, the positions being those after the merges. *)
-let rec merge_linear ~held ~free linear =
+   a loop's body; [shapes] holds the shapes of the bodies met ({!member}). Each
+   entry is weighed once, in order: it joins the earliest open group of its
+   device and domain that starts past the last entry it conflicts with and past
+   the first use of any storage whose life may not start earlier, the positions
+   being those after the merges. *)
+let rec merge_linear ~shapes ~held ~free linear =
   let entries =
     Array.of_list
       (List.map
          (fun e ->
            match op e with
            | (Op.End | Op.Backedge) when op (nth e 0) = Op.Linear ->
-               let body = merge_linear ~held ~free:true (nth e 0) in
+               let body = merge_linear ~shapes ~held ~free:true (nth e 0) in
                replace e ~src:(body :: List.tl (src e))
            | _ -> e)
          (src linear))
@@ -1507,7 +1529,7 @@ let rec merge_linear ~held ~free linear =
   for i = 0 to n - 1 do
     let e = entries.(i) in
     let taken = storage_taken e in
-    let kernel = member e in
+    let kernel = member shapes e taken in
     let writes = match kernel with Some m -> m.writes | None -> taken in
     (* At the top level, only calls of one element join: the storage of a call
        of many elements would live longer. *)
@@ -1597,7 +1619,7 @@ let rec merge_linear ~held ~free linear =
 let merge_calls ~held linear =
   let tbl = Tbl.create 16 in
   List.iter (fun b -> Tbl.replace tbl b ()) held;
-  merge_linear ~held:tbl ~free:false linear
+  merge_linear ~shapes:(Tbl.create 16) ~held:tbl ~free:false linear
 
 (* Schedules *)
 
