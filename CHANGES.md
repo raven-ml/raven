@@ -40,6 +40,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- A Metal launch of exactly 4,096 bytes of parameters takes them from the
+  parameter arena instead of `setBytes`, which Apple documents for data
+  smaller than 4 KB. A parameter arena Metal places off 256 bytes now
+  faults the device instead of misaligning parameters `rig_metal.mli`
+  states start on 256 bytes.
 - AMD GPUs copy a box of two rows or more in one SDMA sub-window packet
   per 2^14 rows (2^16 on GFX12) where it took one packet per row: on an
   R9700, `Rig.Buffer.submit_copy` of 65,536 rows of 4 bytes takes 153 µs

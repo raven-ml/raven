@@ -153,7 +153,10 @@ void rig_metal_release(struct rig_metal_run *r) {
    (caml_rig_nv_hand): a growth that finds one as large made makes none,
    and one that makes a smaller one gives it back. The handed arena is read
    under [grown_mutex], since room installs and may release it meanwhile.
-   0, or the bytes Metal made no buffer of. */
+   The launches' parameters in it start on ARENA_ALIGN, which Apple does
+   not document for a buffer's first byte, so an arena Metal places off it
+   is given back. 0, the bytes Metal made no buffer of, or the negated
+   address, GPU or host, of an arena placed off ARENA_ALIGN. */
 value caml_rig_metal_grow(value v_d) {
   struct rig_metal_run *r = Run_val(v_d);
   uint64_t n = ARENA_MIN;
@@ -168,6 +171,14 @@ value caml_rig_metal_grow(value v_d) {
                              options:MTLResourceStorageModeShared |
                                      MTLResourceHazardTrackingModeUntracked];
   if (b == nil) return Val_long((intnat)n);
+  uint64_t at = b.gpuAddress, host = (uint64_t)(uintptr_t)b.contents;
+  uint64_t off = 0;
+  if (at % ARENA_ALIGN != 0) off = at;
+  else if (host % ARENA_ALIGN != 0) off = host;
+  if (off != 0) {
+    [b release];
+    return Val_long(-(intnat)off);
+  }
   pthread_mutex_lock(&r->grown_mutex);
   id<MTLBuffer> lost = b;
   if (r->grown == nil || r->grown.length < n) {

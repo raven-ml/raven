@@ -620,9 +620,20 @@ external grow_arena : int -> int = "caml_rig_metal_grow"
 
 let dma _ _ ~fn:_ = Error "Metal gives no other device DMA to its buffers"
 
-(* Its room answers RIG_GROW for parameters its arena does not hold. *)
+(* Its room answers RIG_GROW for parameters its arena does not hold. An arena
+   Metal places off 256 bytes, where the launches' parameters start, faults
+   the device. *)
 let grow d =
-  match grow_arena d.self with 0 -> Rig_edge.Grown | n -> Short n
+  match grow_arena d.self with
+  | 0 -> Rig_edge.Grown
+  | n when n > 0 -> Short n
+  | at ->
+      raise
+        (Fault
+           (Printf.sprintf
+              "Metal placed a parameter arena at 0x%x, off the 256 bytes its \
+               launches' parameters start on"
+              (-at)))
 
 module Driver = struct
   type nonrec t = t
