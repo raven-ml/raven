@@ -2,18 +2,19 @@
 
 goalpost: jit-compiled gpt-oss at least as fast as {tinygrad,JAX,llama.cpp/vLLM} on {NVIDIA,NV,AMD}.
 
-gpt-oss-20b, RTX 5000 Ada (fudge, 31aa4521b, the new nx and rune), raven
-CUDA / NV / llama.cpp b12032 CUDA, at a load of 33 to 65:
-- decode 11.0 / 10.7 ms of GPU time (bench medians 15.5 / 12.0 ms) /
-  6.83 ms at depth 512; with Q8_0 attention and head 23.4 / 22.8 ms
-- prefill-512 0.186 s on CUDA (f2af3251b; NV not measured again) / 56.0 ms
-- first call 0.45 / 0.37 to 0.54 s (12 tokens, kernels cached; 1.36 /
-  1.47 s at the first run) / 75 ms (59 to 151 ms, no warmup)
+gpt-oss-20b, RTX 5000 Ada (fudge, under load), raven CUDA / NV /
+llama.cpp b12032 CUDA; NV and the first run last measured at 31aa4521b:
+- decode at position 512 of a 1024 cache 10.2 ms, GPU time and wall
+  (8ef1902f3) / 10.7 ms of GPU time (bench median 12.0 ms) / 6.83 ms at
+  depth 512; with Q8_0 attention and head 8.1-8.3 ms (f2af3251b) / 22.8 ms
+- prefill-512 0.186 s (f2af3251b) / not measured again / 56.0 ms
+- first call 0.37-0.39 s (c29acaee3) / 0.37 to 0.54 s (12 tokens, kernels
+  cached; 1.36 / 1.47 s at the first run) / 75 ms (59 to 151 ms, no warmup)
 
-gpt-oss-20b, AMD gfx1201 (nonnormal, f24925ed77, the new nx and rune),
-raven / llama.cpp b12048 Vulkan:
+gpt-oss-20b, AMD gfx1201 (nonnormal, f24925ed77 unless stated, the new nx
+and rune), raven / llama.cpp b12048 Vulkan:
 - decode 20.3 ms / 9.40 ms
-- prefill-512 1.61 s / 0.308 s
+- prefill-512 1.13 s (baf728633, one run) / 0.308 s
 - first call 1.47 s (12 tokens, kernels cached; 2.39 s compiling them) /
   0.136 s (2.19 s without Mesa's shader cache)
 - llama.cpp's ROCm build needs HIP libraries nonnormal lacks; tinygrad
@@ -71,9 +72,7 @@ raven / llama.cpp b12048 Vulkan:
 - divergences: tolk's entries are audited against tinygrad HEAD; rune's
   DIVERGENCES.md is not audited yet
 - compile speed: float64 sin/cos inline the full Payne–Hanek reduction
-  (40-170 KB kernels); parallel compile saturates at ~4 domains (a shard
-  lock per node, domains spawned per `Worker.map`); Metal builds run one at
-  a time
+  (40-170 KB kernels); Metal builds run one at a time
 - gpt-oss bf16 prefill-12's first call is ~70 ms slower in wall time
   since `Heuristic.stream` (0.28-0.34 s against 0.35-0.47 s, fudge CUDA)
   though its kernels take 22 ms less GPU time; warm calls are unchanged.
@@ -96,10 +95,10 @@ raven / llama.cpp b12048 Vulkan:
   (routing ids from outside the jit); no recorded kernel carries one yet,
   so the general path's cost there is unmeasured. Its unroll law passes
   vacuously where no contracted loop is left
-- first call of a cached program (gpt-oss on CUDA: 0.44 s against 0.22 s
-  on the old stack): `create_linear_with_vars` on a hit spends ~10 ms on the
-  key digest and ~24 ms in other passes; the engine assembles 4 programs in
-  28-57 ms
+- first call of a cached program (gpt-oss's 12-token prefill on CUDA:
+  0.37-0.39 s under load against 0.22 s on the old stack):
+  `create_linear_with_vars` on a hit spends ~10 ms on the key digest and
+  ~24 ms in other passes; the engine assembles 4 programs in 28-57 ms
 - loop fusion's rows (5e509c7f1, 7c2af9d96: NUTS on CUDA 1,305 -> 498
   launches a transition, warm step 2.4 -> 1.4-1.9 ms; host schedule
   entries 368 -> 162; aperture gradient cold 22-28 -> 14-15 CPU-s) have no
@@ -124,17 +123,16 @@ raven / llama.cpp b12048 Vulkan:
 - `r_32_3_2_4_3_400` (lorenz) runs 1.57x slower than beam's choice because
   the heuristic's candidates, tinygrad's, offer no output upcast; no lane
   bound fixes it
-- apply_experts' contractions run 56 ms against the block path's 36 ms:
-  one route row per thread group, so decoded weights are not shared across
-  rows (D89's runs). No layout rule can share reuse the gather hides:
-  nx.quant should present routes in blocks as `Nx.map_segments` does,
-  blocks past 32 rows on a tensor core. At prefill-512 (CUDA) the
-  decoded weights are stored, 64 rows an expert (D163): E_8294400_32_2
-  writes 2.1 GB in 4.74 ms for gate_up, which a layout sharing them across
-  rows could keep in the gated per-group loads
+- `Nx_quant.apply_experts` of gpt-oss's gate and up projection at 512
+  tokens takes 26.4-27.6 ms on fudge's CUDA against 3.14-3.23 ms through
+  `Nx.map_segments`' blocks: one route row per thread group, so no decoded
+  weight is shared across rows, and no layout rule can share reuse the
+  gather hides. rune's lowering of the segmented contraction owns the
+  blocks, 64 rows of one expert
+  (_plans/tolk-campaign/routed-experts/adjudication.md)
 - D163 counts repeats pooled over a shared range, which overestimates `c`,
-  and a collapsed read counts every range of its sum, which can overcount:
-  tighten both if a case shows a wrong store
+  and a collapsed read of a stage that reads storage counts every range of
+  its sum, which can overcount: tighten both if a case shows a wrong store
 - Metal groups: after D137, lorenz-step-batch-1024's r_3_256_16_64_64 went
   10.7 -> 18.9 ms (loads stride across 16 threads). Decided without Apple
   timing (maintainer, 2026-10-31): a rule for loads that stride across a
@@ -148,19 +146,18 @@ raven / llama.cpp b12048 Vulkan:
   NVRTC's cache disabled. Move comgr to
   serving workers once nonnormal times search/amd and a first call both
   ways
-- CUDA contractions with a gathered operand run at 2-8% of the RTX 5000's
-  SIMT float32 peak with DRAM under 46 GB/s: gpt-oss's MXFP4 expert
-  products hold 4 rows x 1 column per thread, split K across 32 lanes and
-  issue 20 predicated, half-coalesced x loads per 20 FMAs; a dense float32
-  weight of the same shape runs at 1.39 TFLOPS holding one row per thread.
-  Decide with D89's matrix-vector layout, by tinygrad's heuristic at HEAD
-  and a fudge bench row
+- a float32 routed product on CUDA, which no core takes, runs at 7.4% of
+  the RTX 5000's SIMT float32 peak: 17.4-17.9 ms at 512 tokens streamed in
+  blocks of 16 rows (kaun `Quant/cuda/routed-product-512-tokens`), 54-55
+  ms under the general rules in blocks of 64, the size rune's lowering is
+  to take. One token's gathered products stream at 74-93% of DRAM and
+  bfloat16 blocks of 64 take the cores; what is left is tolk's no-core
+  layout past 32 rows (the GPU contraction rules' 8 x 8 outputs a thread),
+  on that row
 - loops bounded by a loaded value fail Spec: upcasting an axis that an
   inner loop's loaded bound reads makes a vector bound (`Lidx1 < long16`),
   and a bare loaded bound makes an AFTER of a LOAD, which tinygrad's spec
   refuses too. Decide what such loops lower to before one reaches users
-- decode's values kernel takes 23.6 us against 12 us in the formula form: a
-  core reduce split, or `decoded` covering float widening
 - device facts (762ad1c31): `core_threads = 16384` and `stream_threads =
   32768` are fudge's (sm_89, 100 SMs); a small part (an RTX 4060-class
   sm_89) may lose 1.4-2x by the model: a row owed there, and values for
