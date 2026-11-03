@@ -160,6 +160,17 @@ and rune), raven / llama.cpp b12048 Vulkan:
   same-device tie-break in `Schedule.storage_order` made 1016 but raised four
   of rune's five `fully sharded` peaks over their bounds; find a tie-break
   that cuts the submissions and keeps the five peaks
+- custom code and calls, after D265 and D271: inline custom expressions
+  (`Op.Customi`) still take vector lanes; a plain store such as
+  `n[0] = n[0] + 1` in a kernel with a thread axis it does not read runs
+  once a workgroup; the heuristic's stride and tile checks still read only
+  bare constants, so a typed range gets slower kernels (D270 fixed the
+  splits)
+- comgr may compile with LLVM's verifier off, as Clang did before D275:
+  check `Compiler_amd`'s commands on a ROCm build and keep the verifier on
+- LLVM 20+ and Apple Clang keep the straight-line vectorizer that D167
+  turns off under LLVM 18 and 19: run the reduced kernel of 73455ffe7
+  through them (the Mac's Homebrew LLVM) and extend D167 if they miscompile
 
 ## rune, kaun, vega
 
@@ -172,6 +183,12 @@ and rune), raven / llama.cpp b12048 Vulkan:
   moves a chunk between every pair of devices: time it against tinygrad's
   ring and hierarchical allreduce on a machine with several GPUs, and if
   it is slower, write those in nx's partition
+- jera: the gradient's bound in `Tol`'s scaled norm is loose when the
+  scales differ, so `Tol.v ~rel:1e-10` with the absolute term `jera.mli`
+  recommends can report `Stalled` at an exact minimum; bounding by |g|₂ over
+  the least unscaled curvature would fix it (a design). `a quasi-Newton
+  answer on a quadratic is within its bound` failed once at
+  `r1:AAAAhLXGkPmZqIiAAQHww_2h6YC7gMABBQAFAQAAAJSi3ILumYEYAJbEtdX8toeowAEA:f306f12a`
 
 ## nx
 
