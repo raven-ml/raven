@@ -101,9 +101,8 @@ rune lowers each nx kernel operation to tolk's UOps (`lower*.ml`). Where
 tinygrad's `Tensor` builds the same operation, the lowering builds tinygrad's
 decomposition if it computes what nx states. This section lists every place
 where it builds something else, or builds what tinygrad has no source for,
-except these, not yet recorded: the complex kinds (`lower_complex.ml`), the
-transforms (`lower_fft.ml`), `eigh`, logsumexp and moments, and scaled
-contractions.
+except these, not yet recorded: the transforms (`lower_fft.ml`), `eigh`,
+logsumexp and moments, and scaled contractions.
 
 An entry is admitted for one of four reasons only:
 
@@ -496,6 +495,50 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   float32, 23 at float64`, `› log1p within 5 ulps at float32, 5 at float64`,
   whose points include Annex F's specials.
 
+### A26. Complex kinds
+
+- **Reference:** none: tinygrad has no complex dtype (`dtype.py:183`).
+- **Raven:** `lower_complex.ml` (`unary`, `binary`, `compare`, `mul`, `fdiv`,
+  `smith`, `sign_raw`, `sqrt_raw`, `exp_raw`, `exp2_raw`, `log_abs`,
+  `pow_raw`, `sinh_raw`, `cosh_raw`, `tanh_raw`, `asin_raw`, `acos_raw`,
+  `atanh_raw`); `lower_arith.ml` (`parts`, `of_parts`, `cast_parts`, `raw`).
+- **No source:** a number is a pair of float nodes, its real part first, each
+  kind a composition of `Lower_real`'s kinds.
+  - `Neg`, `Add` and `Sub` act on each part. `Maximum`, `Minimum` and the
+    comparisons order by real part, then imaginary part, and treat a number
+    with a NaN part as a NaN. The comparisons compare each part as IEEE 754
+    does, `-0.` equal to `0.`; `Maximum` and `Minimum` take `-0.` below
+    `0.`.
+  - `Mul` is the textbook product, each part one fma over the other product.
+    `Fdiv` is Smith's algorithm, a dividend whose parts are below the least
+    normal over `u` scaled by `2^25` or `2^54` first and the quotient back.
+    `Recip` is `(1 + 0i) / z`.
+  - `Exp` and `Exp2` multiply `cis y` by `2^(hi + lo)` split at the nearest
+    integer `k`, `2^k` applied last, so that a part overflows only with the
+    result. `Log` is `log |z| + i atan2 (y, x)`, `log |z|` by `log1p` of
+    exact products near the unit circle. `Sqrt` is Kahan's. `Pow` is
+    `e^(w log z)`; a real `w` multiplies `log z`'s parts alone, and `z^0` is
+    1. `Sign` is `z / |z|` of `z` scaled by a power of two.
+  - The hyperbolic kinds take their real parts' `sinh` and `cosh` and, past
+    `hyp_far`, the polar form; `Tanh` is Kahan's. `Asin` and `Acos` are
+    Kahan's from `sqrt (1 - z)` and `sqrt (1 + z)`, with their leading terms
+    at infinity past `2^13` (`float32`) or `2^28` (`float64`). `Atanh` is
+    Kahan's. The circular kinds turn the hyperbolic ones by `i`, and `Asinh`
+    and `Acosh` turn `Asin` and `Acos`.
+  - A cast from a complex number reads its real part; one into it sets the
+    imaginary part to `+0.`. A `complex64`'s bits are its real part's in the
+    low word.
+- **nx:** `prog.mli`, Domains and Results, Complex numbers.
+- **Class:** exact for `Neg`, `Add`, `Sub`, `Maximum`, `Minimum` and the
+  comparisons; stated bound: `lower_complex.mli`'s normwise table for the
+  others.
+- **Reason:** (b).
+- **Pinned by:** `Lower_complex › special values › *`, `Lower_complex ›
+  bounds › *`, each over every kind at `complex64` and `complex128`;
+  `Lower_arith › exact unary kinds give eager's bits`, `› exact binary kinds,
+  comparisons, where and fma give eager's bits`, `› casts into complex128 give
+  eager's values in both parts`.
+
 ### R1. A float sum adds +0.
 
 - **Reference:** `mixin/reduce.py:20` (`sum`), `mixin/op.py:781`
@@ -590,6 +633,44 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b).
 - **Pinned by:** `Lower_index › sorts › sorts give eager's values and
   positions`.
+
+### R6. Complex reductions, scans and contractions by parts
+
+- **Reference:** none: tinygrad has no complex dtype (`dtype.py:183`).
+- **Raven:** `lower_reduce.ml` (`refuse`, `extreme`, `fold`, `position`,
+  `products`), `lower_index.ml` (`keys`).
+- **No source:**
+  - A sum adds each part as a float sum, as R1 and R2.
+  - An extreme orders by real part, then imaginary part, on R3's keys. With
+    `float32` parts, each key is biased to unsigned and the real key packed
+    above the imaginary one in a `uint64`, whose `Max` is the extreme. With
+    `float64` parts, a `Max` of the real keys, then a `Max` of the imaginary
+    keys of the terms whose real key is it. A term with a NaN part takes the
+    greatest key, and the extreme then has two NaN parts. An arg is R4's
+    position, a term matching where each part has the extreme's bits, or
+    where both have a NaN part.
+  - A sort orders R5's keys of the real part, then the imaginary part, a
+    number with a NaN part the greatest.
+  - A contraction sums, per product, `ar br - ai bi` and `ar bi + ai br`,
+    each rounded before the sum takes it; otherwise as L1.
+  - A `Prod` reduction or scan, and a `complex128` `Max`, `Min` or `Arg`
+    scan, whose second `Max` a scan cannot take, are refused, and the
+    program runs uncompiled.
+- **nx:** `nx_kernel.mli`, Reductions: a complex `Sum` adds each part as a
+  float sum, and to every other reduction a number with a NaN part is a NaN;
+  Contraction: a complex product's terms; `prog.mli`, Domains: the order.
+- **Class:** exact for extremes, args and sorts; rounded sum for sums;
+  `lower_reduce.mli`'s complex bound for contractions.
+- **Reason:** (b). The refusals: none.
+- **Pinned by:** `Lower_reduce › reductions › extremes give eager's values`,
+  `› complex sums add their parts`, `Lower_reduce › scans › extreme scans
+  give eager's values`, `› complex running sums add their parts`,
+  `Lower_reduce › logsumexp, moments and arg › an arg gives eager's values and
+  positions`, `› a running arg gives eager's values and positions`,
+  `Lower_reduce › contractions › complex contractions hold their bound`,
+  `Lower_reduce › cases › a complex product is refused`, `› a complex running
+  product is refused`, `› a complex128 running maximum is refused`,
+  `Lower_index › sorts › sorts give eager's values and positions`.
 
 ### I2. Pieces are selected as their bits
 
