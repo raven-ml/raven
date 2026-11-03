@@ -1682,3 +1682,8 @@ val cache_key : string -> int64 * int64
 val cache_hashes : int64 -> int64 -> int * int
 (** [cache_hashes k0 k1] is the hash a pretoken cache indexes the key words [k0]
     and [k1] by, as OCaml computes it and as the C kernels do. For tests. *)
+
+val run_chunks : domains:int -> int array -> (int -> unit) -> unit
+(** [run_chunks ~domains sizes work] is [work c] for every chunk [c] of the
+    [sizes] in bytes, on [domains] domains as the batch encoders spread their
+    work, raising what a chunk raised. For tests. *)

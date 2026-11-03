@@ -1276,6 +1276,30 @@ let test_batch_worker_failure () =
   equal ~msg:"encodings too" int (List.length good)
     (List.length (encode_batch tokenizer ~domains:6 good))
 
+(* A chunk raising on a spawned domain stops the batch: the others finish the
+   chunk they hold and start no other. The first chunk a spawned domain takes
+   raises; every other chunk waits for that, then takes 20 ms, so a domain
+   that kept taking chunks would run all 63. Each of the three others holds
+   one chunk when it learns of the failure, and a second only if the failure
+   took a whole chunk to publish. *)
+let test_batch_failure_stops_domains () =
+  let caller = Domain.self () in
+  let raised = Atomic.make false and done_ = Atomic.make 0 in
+  let work _ =
+    if Domain.self () <> caller && Atomic.compare_and_set raised false true
+    then failwith "chunk"
+    else begin
+      while not (Atomic.get raised) do
+        Domain.cpu_relax ()
+      done;
+      Unix.sleepf 0.02;
+      Atomic.incr done_
+    end
+  in
+  raises ~msg:"the batch fails" (Failure "chunk") (fun () ->
+      Brot.run_chunks ~domains:4 (Array.make 64 1) work);
+  at_most ~msg:"chunks run after the failure" int ~than:6 (Atomic.get done_)
+
 let test_batch_domains_at_least_one () =
   with_pretrained "gpt2" (fun tokenizer ->
       let refused = Invalid_argument "domains must be at least one" in
@@ -1286,6 +1310,8 @@ let test_batch_domains_at_least_one () =
 
 let batch_tests =
   [
+    test "a failing chunk stops the other domains"
+      test_batch_failure_stops_domains;
     test "batch ids agree with encode_ids (gpt2)"
       (test_batch_ids_matches_encode_ids "gpt2");
     test "batch ids agree with encode_ids (bert)"

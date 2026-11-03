@@ -1137,10 +1137,11 @@ let domain_count = function
 (* [work] over every chunk, on [domains] domains at once. Chunks are claimed one
    at a time through a single counter, largest first, so that a domain drawing
    the longest chunk is not left holding the batch on its own. The caller's
-   domain works too. Whatever a domain raises — or a spawn that fails — is
-   re-raised to the caller once every domain spawned has been joined, and the
-   handout stops there: a batch leaves no domain running and no result comes out
-   of a failure. *)
+   domain works too. The first chunk to raise — or a spawn that fails — stops
+   the handout at once: every domain finishes the chunk it holds and claims no
+   other. The failure is re-raised to the caller once every domain spawned has
+   been joined: a batch leaves no domain running and no result comes out of a
+   failure. *)
 let run_chunks ~domains chunks work =
   let count = Array.length chunks in
   let order = Array.init count Fun.id in
@@ -1148,34 +1149,30 @@ let run_chunks ~domains chunks work =
   if min domains count <= 1 then Array.iter work order
   else begin
     let cursor = Atomic.make 0 in
-    let pull () =
-      let claim = ref (Atomic.fetch_and_add cursor 1) in
-      while !claim < count do
-        work order.(!claim);
-        claim := Atomic.fetch_and_add cursor 1
-      done
-    in
-    let failure = ref None in
+    let failure = Atomic.make None in
     let failed e =
-      if Option.is_none !failure then begin
-        failure := Some (e, Printexc.get_raw_backtrace ());
-        Atomic.set cursor count
-      end
+      let backtrace = Printexc.get_raw_backtrace () in
+      ignore (Atomic.compare_and_set failure None (Some (e, backtrace)) : bool);
+      Atomic.set cursor count
+    in
+    let pull () =
+      try
+        let claim = ref (Atomic.fetch_and_add cursor 1) in
+        while !claim < count do
+          work order.(!claim);
+          claim := Atomic.fetch_and_add cursor 1
+        done
+      with e -> failed e
     in
     let spawned = Array.make (min domains count - 1) None in
     (try
        for i = 0 to Array.length spawned - 1 do
          spawned.(i) <- Some (Domain.spawn pull)
-       done;
-       pull ()
+       done
      with e -> failed e);
-    Array.iter
-      (function
-        | None -> ()
-        | Some domain -> (
-            match Domain.join domain with () -> () | exception e -> failed e))
-      spawned;
-    match !failure with
+    pull ();
+    Array.iter (Option.iter Domain.join) spawned;
+    match Atomic.get failure with
     | None -> ()
     | Some (e, backtrace) -> Printexc.raise_with_backtrace e backtrace
   end
@@ -2159,3 +2156,8 @@ let cache_set = Pretoken_cache.set_index
 
 let cache_key = Pretoken_cache.key_words
 let cache_hashes k0 k1 = (Pretoken_cache.hash k0 k1, Kernel.cache_hash k0 k1)
+
+let run_chunks ~domains sizes work =
+  run_chunks ~domains
+    (Array.mapi (fun i bytes -> { first = i; stop = i + 1; bytes }) sizes)
+    work

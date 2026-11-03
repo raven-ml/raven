@@ -2405,6 +2405,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- A batch encoder whose document raises on one domain stops its other domains
+  at their next chunk; they used to encode the rest of the batch before the
+  failure reached the caller.
 - The pretoken cache of BPE, WordPiece and Unigram models no longer sends the
   words that agree in their first five bytes to one place, where `▁the`,
   `▁they`, `▁them` and `▁their` evicted each other: Mistral merged 169k words
