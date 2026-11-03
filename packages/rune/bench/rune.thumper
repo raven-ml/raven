@@ -5,9 +5,12 @@
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed WarmStart/donated-step-4096 WarmStart/transposed-matmul-64 under load 42.0 on 14 cores
+# forced: blessed Cuda/kv-append-4096 Cuda/kv-append-4096-copied under load 27.0 on 14 cores
 
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	alloc_words	exact	52810
 Bodies/grad-scan-in-a-rule-in-a-total-scope-eager	wall_time	batch=32	n=20	2.070e-04	2.020e-04 2.025e-04 2.025e-04 2.028e-04 2.033e-04 2.034e-04 2.037e-04 2.057e-04 2.057e-04 2.061e-04 2.079e-04 2.088e-04 2.093e-04 2.095e-04 2.101e-04 2.105e-04 2.108e-04 2.108e-04 2.109e-04 2.116e-04
+Cuda/kv-append-4096	wall_time	batch=1024	n=20	8.666e-06	8.444e-06 8.487e-06 8.585e-06 8.592e-06 8.599e-06 8.602e-06 8.629e-06 8.634e-06 8.664e-06 8.665e-06 8.667e-06 8.677e-06 8.680e-06 8.684e-06 8.686e-06 8.705e-06 8.792e-06 8.833e-06 9.134e-06 1.011e-05
+Cuda/kv-append-4096-copied	wall_time	batch=128	n=20	5.583e-05	2.327e-05 2.335e-05 2.342e-05 2.351e-05 2.367e-05 2.475e-05 5.421e-05 5.436e-05 5.463e-05 5.582e-05 5.585e-05 5.588e-05 5.608e-05 5.655e-05 8.092e-05 8.400e-05 1.097e-04 1.849e-04 2.527e-04 3.107e-04
 Custom/custom-jvp-call	alloc_words	exact	5244
 Custom/custom-jvp-call	wall_time	batch=256	n=40	2.282e-05	2.243e-05 2.250e-05 2.251e-05 2.252e-05 2.253e-05 2.254e-05 2.255e-05 2.259e-05 2.260e-05 2.262e-05 2.262e-05 2.262e-05 2.263e-05 2.264e-05 2.267e-05 2.267e-05 2.270e-05 2.272e-05 2.273e-05 2.280e-05 2.284e-05 2.285e-05 2.285e-05 2.289e-05 2.294e-05 2.295e-05 2.296e-05 2.297e-05 2.298e-05 2.299e-05 2.299e-05 2.301e-05 2.304e-05 2.304e-05 2.305e-05 2.306e-05 2.307e-05 2.308e-05 2.309e-05 2.312e-05
 Custom/custom-vjp-grad-grad	alloc_words	exact	70907

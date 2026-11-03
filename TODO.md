@@ -210,10 +210,6 @@ raven / llama.cpp b12048 Vulkan:
   First add and record `attention/host-*` on the composition, and
   `gpu/*/attention-4096-causal` under `Rune.jit`; the family lands only if its kernels beat it by 2x on each,
   forward and cotangent
-- donation's kill criterion, at least 2x over the copy on CUDA and AMD:
-  `dispatch/kv-append-4096` and its `-copied` twin read 3.4 and 44.5 µs on
-  fudge's host, 25.9 and 43.4 µs under `Rune.jit` on AMD (1.7x); record
-  them on CUDA under `Rune.jit`
 - nx.cpu's thread splits follow the call prices (179ea5cc5, 82e42b78d) and
   the kind tables of f6876a0ad, measured under load 1.3-4.7: time them
   quiet on fudge, with a row of a costly kind where its threads change
