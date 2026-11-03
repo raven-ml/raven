@@ -51,12 +51,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
 
 ## tolk
 
-- masked axes upcast to up to 49 lanes once gave Clang straight-line
-  blocks whose scheduling took seconds (rune's test_iterate, float64
-  [4;2;2] over 3 lanes, 4.8 s in Clang), but one run's 8205 host kernels
-  (seed `s1:c80c8eab911c4a5e`) reach at most 16 masked lanes: find the
-  property draw that makes 48, then time Clang and a replay at 48, 24 and
-  8 lanes
 - placement on hybrid cores: nx's P-core cap, on fudge's CPU model
   (kimchi, 2026-10-01), timed large GEMMs at x0.96-1.04 and batched
   64x32x32 at x1.59 slower. The Mac's cap closes on fudge's numbers
@@ -71,10 +65,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML
 - compile speed: float64 sin/cos inline the full Payne–Hanek reduction
   (40-170 KB kernels); Metal builds run one at a time
-- gpt-oss bf16 prefill-12's first call is ~70 ms slower in wall time
-  since `Heuristic.stream` (0.28-0.34 s against 0.35-0.47 s, fudge CUDA)
-  though its kernels take 22 ms less GPU time; warm calls are unchanged.
-  Unmeasured guess: larger cached programs take longer to load
 - the host after D163's decode count (4dab9494e): inlined decoded
   products lose on the host (dense MXFP4 1024² 3-5x slower, a 256-wide MoE
   layer at 512 tokens 60-67 against 30-36 ms, fudge under load), because
