@@ -62,7 +62,12 @@ raven / llama.cpp b12048 Vulkan:
   (seed `s1:c80c8eab911c4a5e`) reach at most 16 masked lanes: find the
   property draw that makes 48, then time Clang and a replay at 48, 24 and
   8 lanes
-- a compile on 10 domains takes about twice the CPU of one domain. At load
+- a compile on 10 domains takes about twice the CPU of one domain. On
+  fudge (2026-11-03), a linearize-only probe without Clang: 14 domains cost
+  1.7-3.7x one domain's CPU and ran slower than 4; with
+  `OCAMLRUNPARAM=s=4M` the 14-domain wall fell from 70-160 to 13-38 ms,
+  pointing at minor-GC stop-the-world, not the shard lock (a 1M-word minor
+  heap on Worker's domains alone did not clearly help). At load
   25-40 on the M1 Max, a jera tsit5 solve of y'' = -sin y took 18 s of CPU on
   10 domains, 8.9 s on 1 and 10 s on 10 with `OCAMLRUNPARAM=s=4M`; of
   y'' = -tanh y, 5.0, 3.4 and 3.8 s. Counts: minor collections do not grow
