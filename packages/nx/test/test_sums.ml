@@ -446,8 +446,12 @@ let contraction =
   let* m = int_range 0 4 in
   let* kk = int_range 0 6 in
   let* n = int_range 0 4 in
+  (* Every sum is exact. Elements of magnitude [r], four terms of [a] and
+     [k <= 6] give products within [24 r^2 + r] with init, every partial
+     sum too; bfloat16 holds each integer up to 2^8, so [r = 3] there. *)
+  let r = match k.dt with D.Bfloat16 -> 3 | _ -> 8 in
   let elt =
-    frequency [ (1, constant k.zero); (4, map k.of_int (int_range (-8) 8)) ]
+    frequency [ (1, constant k.zero); (4, map k.of_int (int_range (-r) r)) ]
   in
   let values c = array ~size:(constant c) elt in
   let* a =
