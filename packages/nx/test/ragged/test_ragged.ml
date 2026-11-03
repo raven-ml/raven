@@ -638,8 +638,11 @@ let shared_rows value =
   let open Gen in
   let* bases = list ~size:(constant 3) (array ~size:(int_range 0 140) value) in
   let bases = Array.of_list bases in
+  (* No rows one draw in five: one in thirteen left the cover of no row
+     unreached over some seeds' 100 cases. *)
   let* rows =
-    array ~size:(int_range 0 12)
+    array
+      ~size:(frequency [ (1, constant 0); (4, int_range 1 12) ])
       (let* b = int_range 0 2 in
        let base = bases.(b) in
        let* cut =
