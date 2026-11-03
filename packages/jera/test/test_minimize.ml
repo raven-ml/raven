@@ -1428,13 +1428,16 @@ let termination_tests =
         (* The converse of the resolution: an absolute term of [ε κ |x*|∞],
            [κ] the bound by Gershgorin's discs, is met however small a
            component is; 16 of them leave room for the gradient's bound and
-           the last step, each about one. *)
+           the last step, each about one. The tolerance has no relative term:
+           the gradient's bound is measured in [tol]'s scaled norm, where a
+           gradient at its rounding bounds the error by the resolution times
+           the ratio of the largest scale to the least. A relative term makes
+           that ratio about [10⁻¹⁰ / (ε κ)] here, and the bound fails [tol]
+           at a minimum the search reaches exactly. *)
         let n = Nx.dim 0 xstar in
         let kappa = Float.of_int ((3 * n) + 1) /. 2. in
         let top = Nx.item [] (Nx.max (Nx.abs xstar)) in
-        let tol =
-          Tol.v ~rel:1e-10 ~abs:(16. *. kappa *. Float.epsilon *. top)
-        in
+        let tol = Tol.abs (16. *. kappa *. Float.epsilon *. top) in
         cover "a component below 10⁻⁶ of the largest"
           (Array.exists
              (fun v -> v <> 0. && Float.abs v < 1e-6 *. top)
