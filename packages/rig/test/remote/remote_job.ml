@@ -433,3 +433,42 @@ let copy_on_host ~value ~bytes (src, src_at) (dst, dst_at) =
   let run = u64 bytes ^ u64 1 ^ u64 bytes ^ u64 bytes in
   u64 0 ^ u64 value ^ u32 0 ^ u32 1 ^ u8 1 ^ run ^ region src src_at
   ^ region dst dst_at
+
+(* Forked children *)
+
+(* [in_child what f] is [f ()], run in a forked child, so that what one
+   attempt leaves, a failed job of the process among it, never changes the
+   next one. It fails with the child's failure. *)
+let in_child what f =
+  Rig_support.needs_fork ();
+  let r, w = Unix.pipe ~cloexec:true () in
+  match Unix.fork () with
+  | 0 ->
+      Unix.close r;
+      let answer =
+        match f () with v -> Ok v | exception e -> Error (Printexc.to_string e)
+      in
+      let oc = Unix.out_channel_of_descr w in
+      Marshal.to_channel oc (answer : ('a, string) result) [];
+      close_out oc;
+      Unix._exit 0
+  | pid -> (
+      Unix.close w;
+      let ic = Unix.in_channel_of_descr r in
+      let answer = In_channel.input_all ic in
+      close_in ic;
+      match (answer, snd (Unix.waitpid [] pid)) with
+      | "", (WEXITED n | WSIGNALED n | WSTOPPED n) ->
+          failf "the child ended (%d) without answering%s" n what
+      | answer, _ -> (
+          match (Marshal.from_string answer 0 : ('a, string) result) with
+          | Ok v -> v
+          | Error e -> failf "%s%s" e what))
+
+(* The child's start: a thread's [Exit], a landing's, ends it without a word,
+   and a write to a connection the agent closed raises [EPIPE]. *)
+let child_start () =
+  Thread.set_uncaught_exception_handler (function
+    | Exit -> ()
+    | e -> prerr_endline ("a thread raised " ^ Printexc.to_string e));
+  Sys.set_signal Sys.sigpipe Sys.Signal_ignore

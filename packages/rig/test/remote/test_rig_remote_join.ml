@@ -95,6 +95,76 @@ let unjoined () =
           equal ~msg:"the first agent, told the job failed" int 2
             (fst (finish a1)))
 
+module Wire = Rig_remote_proxy.Wire
+
+(* A connection to the agent at [port] of the loopback, and the handshake's
+   answer to [self] dialing it as [peer]. Each read gives up after
+   [patience]. *)
+let dial port self peer =
+  let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Rig_support.recv_timeout fd patience;
+  Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, port));
+  (fd, Wire.dial fd ~key ~self ~peer)
+
+(* Closes the job of the controller's [fd]: sends its close, and reads [fd]
+   to its end once the agent's close or abort came. *)
+let close_job fd =
+  send fd (frame k_close "");
+  let rec closed () =
+    match next_frame fd with
+    | Some (k, _) when k = k_close || k = k_abort -> ()
+    | Some _ -> closed ()
+    | None -> ()
+  in
+  closed ();
+  (try Unix.shutdown fd Unix.SHUTDOWN_SEND with Unix.Unix_error _ -> ());
+  let rec drain () = match next_frame fd with Some _ -> drain () | None -> () in
+  drain ();
+  Unix.close fd
+
+(* An agent replies to its controller before it serves the job, and the
+   controller then joins the job's agents, which dial each other. A dial that
+   comes in between is admitted once the agent serves: here the job's second
+   agent is held after its reply while the first dials it, in a child, since
+   a job this process serves is no other test's state. *)
+let dialled_while_replying () =
+  in_child "" @@ fun () ->
+  child_start ();
+  let a =
+    match Rig_remote.listen ~key:(as_key key) "127.0.0.1" 0 with
+    | Ok a -> a
+    | Error why -> failf "listen: %s" why
+  in
+  let port = Rig_remote.port a in
+  let served = ref None in
+  let serving =
+    Thread.create (fun () -> served := Some (Rig_remote.serve a [])) ()
+  in
+  let answer = ref None in
+  Rig_remote.Probe.arm ();
+  let controller, dialling =
+    Fun.protect ~finally:Rig_remote.Probe.resume @@ fun () ->
+    let controller, replied = dial port Wire.Controller (Wire.Agent 2) in
+    equal ~msg:"the controller's handshake" (result unit string) (Ok ())
+      replied;
+    equal ~msg:"held after the reply" bool true (Rig_remote.Probe.held ());
+    let dialling =
+      Thread.create
+        (fun () -> answer := Some (dial port (Wire.Agent 1) (Wire.Agent 2)))
+        ()
+    in
+    equal ~msg:"the dial's admission started" bool true
+      (Rig_remote.Probe.dialled ());
+    (controller, dialling)
+  in
+  Thread.join dialling;
+  let peer, admitted = Option.get !answer in
+  equal ~msg:"the dial" (result unit string) (Ok ()) admitted;
+  close_job controller;
+  Thread.join serving;
+  Unix.close peer;
+  equal ~msg:"serve" (option (result unit string)) (Some (Ok ())) !served
+
 let () =
   Watchdog.start ();
   exit
@@ -103,6 +173,8 @@ let () =
          group ~timeout:60. "rig_remote"
            [
              test "a join dials its later agents at once" held;
+             test "an agent's dial during the controller's reply is admitted"
+               dialled_while_replying;
              test "two agents that cannot reach each other fail the join"
                unjoined;
            ];

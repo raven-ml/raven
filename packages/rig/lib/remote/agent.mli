@@ -97,3 +97,13 @@ val dial_tcp : s:float -> string -> int -> (Unix.file_descr, string) result
 val join_s : float
 (** [join_s] is 10: the seconds a connection may take, and the seconds the
     job's other agents may take to connect to each other. *)
+
+(**/**)
+
+(** {!Rig_remote.Probe}. *)
+module Probe : sig
+  val arm : unit -> unit
+  val held : unit -> bool
+  val dialled : unit -> bool
+  val resume : unit -> unit
+end

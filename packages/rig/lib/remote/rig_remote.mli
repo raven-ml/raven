@@ -374,3 +374,26 @@ val serve :
     opener. A job [a] serves then, if it has not ended, fails, its root
     cause [Sys.Break]'s text if [Sys.Break] ended [serve], and as for
     [Error why], the process's devices are lost ({!Rig.fail}). *)
+
+(**/**)
+
+(* For rig's tests: holds the handshake of the next controller an agent of
+   this process admits, once the agent replied and before it serves the job,
+   until [resume], and observes another agent's dial reaching its admission.
+   Each observation waits at most five seconds. Only one scenario may run at
+   once. *)
+module Probe : sig
+  (* [arm ()] holds the next controller's handshake there, and starts
+     counting the agents' dials whose admission starts. *)
+  val arm : unit -> unit
+
+  (* [held ()] observes the held handshake, or [false] on timeout. *)
+  val held : unit -> bool
+
+  (* [dialled ()] observes an agent's dial whose admission started, or
+     [false] on timeout. *)
+  val dialled : unit -> bool
+
+  (* [resume ()] releases the hold and disarms the probe. *)
+  val resume : unit -> unit
+end

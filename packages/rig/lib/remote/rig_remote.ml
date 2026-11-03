@@ -571,6 +571,8 @@ let listen = Agent.listen
 let port = Agent.port
 let serve = Agent.serve
 
+module Probe = Agent.Probe
+
 (* Keys *)
 
 type key = string

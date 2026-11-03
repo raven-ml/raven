@@ -369,16 +369,80 @@ let listen ~key host port =
 
 let port a = a.port
 
+(* For rig's tests: holds a controller's handshake once the agent replied,
+   before it serves the job, until [resume], and counts the agents' dials
+   whose admission starts. *)
+module Probe = struct
+  let patience = 5.
+  let armed = Atomic.make false
+  let holding = Atomic.make false
+  let dials = Atomic.make 0
+
+  (* Whether [cond ()] holds within [patience]. *)
+  let within cond =
+    let until = Unix.gettimeofday () +. patience in
+    while (not (cond ())) && Unix.gettimeofday () < until do
+      Thread.delay 0.001
+    done;
+    cond ()
+
+  let arm () =
+    Atomic.set holding false;
+    Atomic.set dials 0;
+    Atomic.set armed true
+
+  let held () = within (fun () -> Atomic.get holding)
+  let dialled () = within (fun () -> Atomic.get dials > 0)
+  let resume () = Atomic.set armed false
+
+  let replied () =
+    if Atomic.get armed && Atomic.compare_and_set holding false true then
+      while Atomic.get armed do
+        Thread.delay 0.001
+      done
+
+  let admits () = if Atomic.get armed then Atomic.incr dials
+end
+
 (* A handshake's state, made before its thread: the job its controller's
    admission made, and whether a step took its connection. *)
 type shake = { mutable mine : Link.job option; mutable handed : bool }
 
-(* Admits one controller, then the agents of its job before this one. A
-   controller's admission makes the job, which [st] keeps for its handshake: a
-   second controller finds it. An exception between the job's making and the
-   stores that record it closes it, which would otherwise refuse every later
-   job of the process; the stores come after the last allocation. *)
+(* The count of [a]'s changes while the handshake of a controller [a] admitted
+   has not ended, or [-1] while none is in its handshake. *)
+let admitting a () =
+  Mutex.lock a.lock;
+  let n =
+    match a.phase with
+    | Admitting _ -> count a.changes
+    | Claimed | Serving _ -> -1
+  in
+  Mutex.unlock a.lock;
+  n
+
+(* Waits until no controller is in its handshake. The agent replies to its
+   controller before it serves the job, and the controller then joins the
+   job's agents, whose dials may come in between. The handshake ends within
+   its own bound. *)
+let rec await_handshake a =
+  let n = admitting a () in
+  if n >= 0 then begin
+    await a.changes n;
+    await_handshake a
+  end
+
+(* Admits one controller, then the agents of its job before this one, once
+   the controller's handshake has ended. A controller's admission makes the
+   job, which [st] keeps for its handshake: a second controller finds it. An
+   exception between the job's making and the stores that record it closes
+   it, which would otherwise refuse every later job of the process; the
+   stores come after the last allocation. *)
 let admit a st p =
+  (match p with
+  | Wire.Agent _ ->
+      Probe.admits ();
+      await_handshake a
+  | Wire.Controller -> ());
   Mutex.protect a.lock @@ fun () ->
   match (p, a.phase) with
   | Wire.Controller, Claimed when Option.is_some a.broken ->
@@ -432,6 +496,7 @@ let shake a st fd =
     | _, None -> give fd
   in
   let r = Wire.accept fd ~key:a.key ~admit:(admit a st) in
+  (match r with Ok (Wire.Controller, _) -> Probe.replied () | _ -> ());
   Mutex.protect a.lock (resolve r)
 
 (* Takes back the admission [st] made if [a] still admits it: whether it
