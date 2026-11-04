@@ -128,9 +128,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   cost: `conv` on AVX2 lost 12% (576 to 192 lanes) though it compiled in
   0.08 s at 576; a vector operation past 256 lanes split into 16-lane
   vectors is untested (lane by lane ran `paired_products` 1.57x slower)
-- `Heuristic.block`'s unroll of the last reduce dimension can pick an
-  argmax's range instead of the contraction's (speed only; patched
-  tinygrad does the same)
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
   rule: unmeasured on nonnormal
 - `wmma_accumulate`'s branch for a nonzero accumulator (D24's `(c + acc)
