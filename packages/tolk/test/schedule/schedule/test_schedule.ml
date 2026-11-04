@@ -3016,6 +3016,27 @@ let loop_equal_states () =
   let e = Ops.end_ (Ops.call ~precompile:true body [ x2; x1 ]) [ r ] in
   ignore (keeps_values [ Ops.after x2 [ e ] ])
 
+(* [x]'s two values [a] and [b] stored crossed into the columns of [p] and
+   [q], 4 rows by 2, as two assemblies [[a; b]] and [[b; a]] along a new last
+   axis are: the stores of one value, [a] into [p]'s first column and [q]'s
+   second, are one kernel, which both [p]'s and [q]'s writes list, and so are
+   [b]'s. *)
+let crossed () =
+  let x = f32 1 and p = f32 ~n:8 2 and q = f32 ~n:8 3 in
+  let column b j =
+    Shape.shrink
+      (Shape.reshape b [ Int 4; Int 2 ])
+      [ None; Some (Int j, Int (j + 1)) ]
+  in
+  let col v = Shape.reshape v [ Int 4; Int 1 ] in
+  let a = col Ops.O.(x * fl 0.25) and b = col Ops.O.(x + fl 1.) in
+  let assembled buf first second =
+    Ops.after buf
+      [ Ops.store (column buf 0) first; Ops.store (column buf 1) second ]
+  in
+  let linear = keeps_values [ assembled p a b; assembled q b a ] in
+  equal int ~msg:"one call a column" 2 (List.length (Ops.src linear))
+
 let writes =
   group "create_linear_with_vars › writes"
     [
@@ -3029,6 +3050,7 @@ let writes =
         loop_reader;
       test "custom kernels reading one buffer write nothing over it"
         kernels_apart;
+      test "stores crossed into two buffers write both" crossed;
     ]
 
 (* Laws
@@ -3209,14 +3231,16 @@ let values_law =
       cover "a copy" (made > 0);
       cover "no copy" (made = 0))
 
-(* Kernel graphs drawn over four storages of clone's copy kernel: each kernel
-   copies into a storage's current state from a state of another, or of the
-   same, possibly older or read through a join, and reads one more such state
+(* Kernel graphs drawn over four storages of four floats. Each write overwrites
+   the current states of one storage or two with one kernel, which copies a
+   state into each, or with two, which copy one into each half: the Afters of
+   both storages then list both. A kernel copies from a state of any storage,
+   possibly older or read through a join, and is passed one more such state
    beside. A copy is made exactly when the kernels, related as below, form a
-   cycle: a kernel follows the writers of the states it reads and what the
-   joins it reads through wait for, and precedes every other writer over a
-   state it reads; a kernel writing a state that it reads through another
-   argument precedes itself. *)
+   cycle: a kernel follows the writers of the states it is given and what the
+   joins it reads through wait for, and precedes the kernels of every write
+   over a state it reads of which it is no part; a kernel writing a state that
+   it reads through another argument precedes itself. *)
 
 let gen_graph =
   let open Gen in
@@ -3227,27 +3251,72 @@ let gen_graph =
     (b, back, join)
   in
   let gen_kernel =
-    let* into = int_range 0 3 in
     let* from = gen_ref in
     let+ beside = option gen_ref in
-    (into, from, beside)
+    (from, beside)
   in
-  list ~size:(int_range 1 6) gen_kernel
+  let gen_write =
+    let* into = int_range 0 3 in
+    let* also =
+      frequency [ (3, constant None); (1, map Option.some (int_range 1 3)) ]
+    in
+    let+ kernels =
+      list ~size:(frequency [ (3, constant 1); (1, constant 2) ]) gen_kernel
+    in
+    let targets =
+      match also with
+      | Some d -> [ into; (into + d) mod 4 ]
+      | None -> [ into ]
+    in
+    (targets, kernels)
+  in
+  list ~size:(int_range 1 6) gen_write
 
-let pp_graph ppf ks =
+let pp_graph ppf ws =
   let r (b, back, join) =
     Printf.sprintf "%d@-%d%s" b back
       (match join with Some j -> Printf.sprintf " after %d" j | None -> "")
   in
+  let kernel (from, beside) =
+    r from ^ match beside with Some b -> ", " ^ r b | None -> ""
+  in
   List.iter
-    (fun (into, from, beside) ->
-      Format.fprintf ppf "@ %d := %s%s;" into (r from)
-        (match beside with Some b -> ", " ^ r b | None -> ""))
-    ks
+    (fun (targets, kernels) ->
+      Format.fprintf ppf "@ %s := %s;"
+        (String.concat "," (List.map string_of_int targets))
+        (String.concat " | " (List.map kernel kernels)))
+    ws
+
+(* A parameter of the copy kernel's, of slot [slot]. *)
+let kernel_param slot =
+  let p =
+    List.find
+      (fun n ->
+        match (Ops.op n, Ops.arg n) with
+        | Param, Param p -> p.slot = 0
+        | _ -> false)
+      (Ops.toposort ~calls:Skip copy_kernel)
+  in
+  match Ops.arg p with
+  | Param a -> Ops.replace ~arg:(Param { a with slot }) p
+  | _ -> assert false
+
+(* A kernel that copies its argument [n] into its arguments [0] to [n - 1], at
+   the elements [lo] to [lo + count - 1]. *)
+let copies_into n ~lo ~count =
+  let r = Ops.range ~axis_type:Weak (Int count) [ 0 ] in
+  let i = Ops.O.(r + int lo) in
+  let from = Ops.index (kernel_param n) [ i ] in
+  Ops.replace
+    ~src:
+      (List.init n (fun t ->
+           Ops.end_ (Ops.store (Ops.index (kernel_param t) [ i ]) from) [ r ]))
+    copy_kernel
 
 (* The graph, and whether its kernels form a cycle. *)
-let graph ks =
+let graph ws =
   let storage = [| x; y; z; w |] in
+  let size = Shape.max_numel x in
   let states = Array.map (fun s -> [ s ]) storage in
   let state (b, back, join) =
     let l = states.(b) in
@@ -3257,38 +3326,55 @@ let graph ks =
         Ops.after s [ List.hd states.(j) ]
     | _ -> s
   in
-  (* Each kernel, the states it reads with the kernels it waits for through
-     joins, and the state it writes over. *)
-  let kernels = ref [] in
+  (* Each kernel, the states it overwrites, and the states it reads with the
+     kernels it waits for through joins; each write, its kernels and the
+     states they overwrite. *)
+  let kernels = ref [] and writes = ref [] in
   List.iter
-    (fun (into, from, beside) ->
-      let cur = List.hd states.(into) in
-      let read = List.map state (from :: Option.to_list beside) in
-      let k = reads ~into:cur ~from:(List.hd read) (List.tl read) in
-      kernels := (k, cur, read) :: !kernels;
-      states.(into) <- Ops.after cur [ k ] :: states.(into))
-    ks;
+    (fun (targets, ks) ->
+      let curs = List.map (fun b -> List.hd states.(b)) targets in
+      let n = List.length targets and count = size / List.length ks in
+      let made =
+        List.mapi
+          (fun j (from, beside) ->
+            let read = List.map state (from :: Option.to_list beside) in
+            let body = copies_into n ~lo:(j * count) ~count in
+            let k =
+              Ops.replace ~src:((body :: curs) @ read) copy_call
+            in
+            kernels := (k, curs, read) :: !kernels;
+            k)
+          ks
+      in
+      writes := (made, curs) :: !writes;
+      List.iter
+        (fun b -> states.(b) <- Ops.after (List.hd states.(b)) made :: states.(b))
+        targets)
+    ws;
   let kernels = List.rev !kernels in
   let rec value s = if Ops.is_join s then value (Ops.nth s 0) else s in
   let rec waits s =
-    (if Ops.op s = After && not (Ops.is_join s) then [ Ops.nth s 1 ] else [])
+    (if Ops.op s = After && not (Ops.is_join s) then List.tl (Ops.src s)
+     else [])
     @ if Ops.is_join s then List.concat_map waits (Ops.src s) else []
   in
   (* Edges from a kernel to those that must run after it. *)
-  let succ (k, cur, read) =
+  let succ (k, curs, read) =
     let war =
       List.concat_map
         (fun s ->
-          List.filter_map
-            (fun (t, cur', _) -> if t != k && cur' == value s then Some t else None)
-            kernels)
+          List.concat_map
+            (fun (made, curs') ->
+              if List.memq (value s) curs' && not (List.memq k made) then made
+              else [])
+            !writes)
         read
     in
-    let own = List.exists (fun s -> value s == cur) read in
+    let own = List.exists (fun s -> List.memq (value s) curs) read in
     war @ (if own then [ k ] else [])
     @ List.filter_map
-        (fun (t, cur', read') ->
-          if List.exists (fun s -> List.memq k (waits s)) (cur' :: read') then
+        (fun (t, curs', read') ->
+          if List.exists (fun s -> List.memq k (waits s)) (curs' @ read') then
             Some t
           else None)
         kernels
@@ -3306,14 +3392,18 @@ let graph ks =
 let copy_iff_cycle =
   prop "a schedule copies a state iff its kernels form a cycle"
     (Gen.with_pp pp_graph gen_graph)
-    (fun ks ->
-      let kg, cycle = graph ks in
+    (fun ws ->
+      let kg, cycle = graph ws in
       let allocs =
         List.filter (fun n -> Ops.op n = Alloc)
           (Ops.toposort ~calls:Skip (Schedule.create_schedule kg))
       in
       cover "a cycle" cycle;
       cover "no cycle" (not cycle);
+      cover "a kernel that two Afters list beside another kernel"
+        (List.exists
+           (fun (targets, ks) -> List.length targets = 2 && List.length ks = 2)
+           ws);
       equal bool ~msg:"a copy" cycle (allocs <> []);
       keeps kg)
 

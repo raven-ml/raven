@@ -465,10 +465,11 @@ let written_over u ks =
 
    A kernel reads the states its arguments name, and writes the states the
    Afters that list it are over. It runs after the kernels that write the
-   states it reads, and before every other kernel that writes over them,
-   whichever elements each touches. Where these orders form a cycle, no order
-   runs every kernel at its place: one read on the cycle reads instead a copy
-   of its state, made before the state's overwrite, and the cycle is gone.
+   states it reads, and before the kernels of every write over them of which
+   it is no part, whichever elements each touches. Where these orders form a
+   cycle, no order runs every kernel at its place: one read on the cycle
+   reads instead a copy of its state, made before the state's overwrite, and
+   the cycle is gone.
 
      a --write--> a'        b reads a, waits for c (through a'),
      b(a, c')               and c overwrites a: b -> c -> b
@@ -590,8 +591,8 @@ let rec schedule ~by_storage ~copies sched_sink =
     edges := (t, k, war) :: !edges;
     Ordered.replace in_degree k (Option.get (Ordered.find_opt in_degree k) + 1)
   in
-  (* Each written state, with the afters that write over it and their kernels,
-     and each read of a state; both last first. *)
+  (* Each written state with the kernels that write over it, and each read of
+     a state by a kernel, last first. *)
   let writes = Tbl.create 64 and reads = ref [] and seen = Tbl.create 16 in
   (* The kernels a reader of [x] waits for: the writers of the state it reads,
      and what each join on the way to it waits for. *)
@@ -612,14 +613,13 @@ let rec schedule ~by_storage ~copies sched_sink =
         let kernels, after_deps = split_after u in
         if kernels <> [] then begin
           let prev = written_over u kernels in
-          let others = Option.value (Tbl.find_opt writes prev) ~default:[] in
           (* No storage holds two successors of one state. *)
-          let same ks = List.equal ( == ) ks kernels in
-          if List.exists (fun (_, ks) -> not (same ks)) others then
-            invalid_arg
-              (Format.asprintf "two writes over one state of %a" pp
-                 (buf_uop prev));
-          Tbl.replace writes prev ((u, kernels) :: others)
+          match Tbl.find_opt writes prev with
+          | Some ks when not (List.equal ( == ) ks kernels) ->
+              invalid_arg
+                (Format.asprintf "two writes over one state of %a" pp
+                   (buf_uop prev))
+          | _ -> Tbl.replace writes prev kernels
         end;
         List.iter
           (fun k ->
@@ -633,36 +633,37 @@ let rec schedule ~by_storage ~copies sched_sink =
                     (List.tl (src call)))
                 (calls_of k)
             in
+            (* A kernel that several Afters list reads its arguments once. *)
+            let read_deps = if Tbl.mem seen k then [] else kernel_deps in
+            Tbl.replace seen k ();
             reads :=
               List.rev_append
-                (List.map (fun s -> (u, k, state_of s)) kernel_deps)
+                (List.map (fun s -> (k, state_of s)) read_deps)
                 !reads;
             (* Read after write: a kernel runs after the kernels that wrote
                the states it reads, and those its after waits for. *)
-            let read_deps = if Tbl.mem seen k then [] else kernel_deps in
-            Tbl.replace seen k ();
             List.iter (fun t -> add_child t k)
               (List.concat_map waits (read_deps @ after_deps)))
           kernels
       end)
     (toposort ~calls:Skip ~gate:in_graph sched_sink);
-  (* Write after read: a kernel reading a state runs before every other write
-     over it. A kernel writing the state it reads through another argument
-     runs before itself, a cycle of one kernel. *)
+  (* Write after read: a kernel reading a state runs before every write over
+     it of which it is no part. The kernels of one write run in any order, as
+     the stores of an assembly's regions do, whichever Afters list each: a
+     kernel storing into [p] and [q] reads [q] as the store it makes there,
+     beside the write's other kernels. A kernel writing the state it reads
+     through another argument runs before itself, a cycle of one kernel. *)
   List.iter
-    (fun (u, k, s) ->
-      List.iter
-        (fun (a, write_kernels) ->
-          List.iter
-            (fun t ->
-              let war = { reader = k; state = s } in
-              if t == k then begin
-                if List.exists (fun c -> aliases c s) (calls_of k) then
-                  add_child ~war k k
-              end
-              else if a != u then add_child ~war k t)
-            write_kernels)
-        (List.rev (Option.value (Tbl.find_opt writes s) ~default:[])))
+    (fun (k, s) ->
+      match Tbl.find_opt writes s with
+      | None -> ()
+      | Some write_kernels ->
+          let war = { reader = k; state = s } in
+          if List.memq k write_kernels then begin
+            if List.exists (fun c -> aliases c s) (calls_of k) then
+              add_child ~war k k
+          end
+          else List.iter (fun t -> add_child ~war k t) write_kernels)
     (List.rev !reads);
   match linearize ~by_storage ~children sched_sink in_degree with
   | linear -> linear

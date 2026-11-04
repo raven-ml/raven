@@ -3027,10 +3027,10 @@ index 7ead5c9c6..fbd544e06 100644
 +  return sched_sink.substitute(rebuilt)
 +
 +# a kernel reads the states its arguments name and writes the states the AFTERs that list it are over. it runs after the
-+# kernels that write the states it reads, and before every other kernel that writes over them. where these orders form a
-+# cycle, one read on it reads a copy of its state, made before the state's overwrite. a cycle is found where Kahn's order
-+# stops, walking back through kernels not run; the read cut is one whose state is copied already, else the one of fewest
-+# bytes, of storage that can be copied first
++# kernels that write the states it reads, and before the kernels of every write over them of which it is no part. where
++# these orders form a cycle, one read on it reads a copy of its state, made before the state's overwrite. a cycle is
++# found where Kahn's order stops, walking back through kernels not run; the read cut is one whose state is copied
++# already, else the one of fewest bytes, of storage that can be copied first
 +# the state the kernels ks of the AFTER u write over: the latest state of u's storage their calls are given, as a loop is
 +# given its carry's first state while its AFTER names the storage alone; else the state u is after
 +def _written_over(u:UOp, ks:tuple[UOp, ...]) -> UOp:
@@ -3121,8 +3121,8 @@ index 7ead5c9c6..fbd544e06 100644
 -    # supersedes its immediate prior state; join members already present in that prior state are ordering deps, not writes
 +        for t in [t for s in (() if k in seen else kernel_deps)+after_deps for t in waits(s)]: edge(t, k)
 +        seen.add(k)
-+    # WAR deps: a kernel reading a state runs before every other write over it. a kernel writing the state it reads
-+    # through another argument runs before itself, a cycle of one kernel
++    # WAR deps: a kernel reading a state runs before every write over it of which it is no part, whichever AFTERs list it.
++    # a kernel writing the state it reads through another argument runs before itself, a cycle of one kernel
      for u, k, s in reads:
        for a, write_kernels in writes.get(s, []):
 -        if a is u: continue
@@ -3132,7 +3132,7 @@ index 7ead5c9c6..fbd544e06 100644
 -            in_degree[t] += 1
 +          if t is k:
 +            if _aliases(k.src[0] if k.op is Ops.END else k, s): edge(k, k, (k, s))
-+          elif a is not u: edge(k, t, (k, s))
++          elif k not in write_kernels: edge(k, t, (k, s))
 +    if cut := _cuts(list(in_degree), in_degree, edges, parents, copies): return _schedule(_copy_before_overwrites(sched_sink, cut), False)
  
    with cpu_profile(TracingKey("linearize schedule")):

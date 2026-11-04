@@ -1108,6 +1108,18 @@ let assembled set shape regions =
   let int4 y = Nx.cast Nx.int4 (Nx.mul_s y 3.) in
   assembly set Nx.int4 int4 (-5) shape regions
 
+(* Two assemblies of the same computed pieces, crossed, as [[a; b]] and
+   [[b; a]], on each device of a cut argument, give eager's bits, each piece
+   correctly rounded. *)
+let crossed set =
+  let x = Nx.place (at set (Split 0)) (value [| 8 |]) in
+  let f x _ =
+    let a = Nx.mul_s x 0.25 and b = Nx.add_s x 1. in
+    Nx.sub (Nx.stack ~axis:1 [ a; b ]) (Nx.stack ~axis:1 [ b; a ])
+  in
+  let eager = outcome (fun () -> f x x) in
+  equal (outcome_t codes_t) (omap codes eager) (omap codes (compiled f x x))
+
 (* Gathers
 
    A program that places an argument so that a device holds more of it, a cut
@@ -1706,7 +1718,11 @@ let () =
               (fun (name, shape, regions) ->
                 test name (fun () ->
                     over 2 { law = (fun s -> assembled s shape regions) }))
-              assemblies);
+              assemblies
+           @ [
+               test "crossed assemblies of computed pieces" (fun () ->
+                   over 2 { law = crossed });
+             ]);
          group "other sets"
            [
              prop ~count:20 ~examples:elsewhere_examples

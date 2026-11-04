@@ -1004,6 +1004,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- Kernels that each store into regions of the same two buffers, as the
+  stores of crossed assemblies `[a; b]` and `[b; a]` over several devices
+  do, schedule: `Schedule.create_schedule` ordered each before the other and
+  raised "cycle detected in assign graph", so `Rune.jit` evaluated such a
+  program uncompiled, and over a set of GPUs raised.
 - `Renderer.t` gains `stream_threads` and `local_workgroups`, the threads
   that keep a part's memory busy and the fewest workgroups a split leaves,
   which `Heuristic` read as constants and rune's attention lowering reads too.

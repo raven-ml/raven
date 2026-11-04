@@ -37,9 +37,12 @@ val create_schedule : ?by_storage:bool -> Ops.t -> Ops.t
     A kernel reads the states its arguments name, a join ({!Ops.is_join})
     being the state under it, and writes the states the {!Op.After}s that list
     it are over. It runs after the kernels that write the states it reads and
-    those the joins it reads through wait for, and before every other kernel
-    that writes over a state it reads, whichever elements each touches. A
-    call that writes a state through an argument its body writes
+    those the joins it reads through wait for, and before the kernels of
+    every write over a state it reads of which it is no part, whichever
+    elements each touches. The kernels of one write, whichever {!Op.After}s
+    list each, run in any order: one of them must read the elements another
+    writes only where it writes their state too, which it then reads as it
+    was. A call that writes a state through an argument its body writes
     ({!Shape.written_params}) and reads it through another reads it as it was
     before the call. Where these orders form a cycle, one read on the cycle
     reads instead a copy of its whole state into call-local storage

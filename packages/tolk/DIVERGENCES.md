@@ -4279,7 +4279,8 @@ does. A Windows host's code is compiled for Windows' convention by D178.
   a call. A kernel reads the states its arguments name, a join being the
   state under it (D202), and writes the states the Afters that list it are
   over. It runs after the kernels that write the states it reads, and before
-  every other kernel that writes over them, whichever elements each touches.
+  the kernels of every write over them of which it is no part (D330),
+  whichever elements each touches.
   Where these orders form a cycle, the cycle is cut: one read on it reads a
   copy of its whole state, which a kernel of its own makes into call-local
   storage before the state's overwrite, and the schedule is made again from
@@ -7539,3 +7540,32 @@ and an initial value is added after it (D260).
   through an `After` of the loop (D280), `› a store valid at one point
   runs there` (they skip without a GPU). The Gpudims suite:
   `group_gpudims_masks_a_store_by_its_missing_global.golden`.
+
+## D330. The kernels of one write are unordered whichever Afters list them
+
+- **tinygrad:** `schedule/__init__.py:56-64` (`create_schedule`'s
+  write-after-read edges), which orders a kernel reading a state before the
+  other kernels of every `AFTER` over that state but the `AFTER` the read
+  was listed under (`if a is u: continue`), and raises "cycle detected in
+  assign graph" (`:78`) where those edges form a cycle. One kernel per store
+  (`schedule/rangeify.py:321-336`, `split_store`) lists each kernel under
+  one `AFTER`, so its stores never meet the case.
+- **tolk:** `Schedule.schedule`; `test/gen/tinygrad.patch`, which gives
+  tinygrad the same edges.
+- **Differs:** a kernel reading a state runs before the kernels of every
+  write over it of which it is no part. A kernel that two `AFTER`s list, as one whose stores
+  share their loops (D137) into `p` and `q`, reads `q` as the store it makes
+  there, beside the other kernels of `q`'s write, and is ordered before none
+  of them, as it would be listed under that write alone. tinygrad orders it,
+  through its read listed under `p`'s write, before them.
+- **Reason:** (b): rune's split program `[a; b] - [b; a]`, two assemblies of
+  the same computed pieces stored into their regions of two buffers, makes
+  two kernels, each storing a column of both. Each was ordered before the
+  other, and no copy cuts the cycle, since each read is the kernel's own
+  store; the program was declined, and over a set of GPUs, which have no
+  eager kernels, it raises.
+- **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › laws › a
+  schedule copies a state iff its kernels form a cycle`, whose writes may
+  have two kernels that two Afters list, and `create_linear_with_vars ›
+  writes › stores crossed into two buffers write both`; rune's `Jit_devices
+  › assemblies give eager's bits › crossed assemblies of computed pieces`.
