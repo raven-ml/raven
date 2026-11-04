@@ -32,6 +32,8 @@ and rune), raven / llama.cpp b12048 Vulkan:
   the host pays one 8-11 ms `cuMemHostRegister`, and gpt-oss's prefill
   pays 17-19 ms of `cuMemHostUnregister` for weight buffers the GC freed
   just before; registration and release belong in rig's staging
+- `Pinned` memory on a discrete GPU counts in the host's budget but is
+  paced by the GPU's room and allocated bytes
 
 ### limits and size
 
@@ -122,6 +124,19 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - programs that share a cubin load it once each (31 of 74 loads in a
   gpt-oss first call, about 1.8 ms): sharing needs `Rig.Image.load` to drop
   its promise of module variables per load (D146)
+- the host's lane cap (D241, 512 lanes) stands in for Clang's compile
+  cost: `conv` on AVX2 lost 12% (576 to 192 lanes) though it compiled in
+  0.08 s at 576; a vector operation past 256 lanes split into 16-lane
+  vectors is untested (lane by lane ran `paired_products` 1.57x slower)
+- `Heuristic.block`'s unroll of the last reduce dimension can pick an
+  argmax's range instead of the contraction's (speed only; patched
+  tinygrad does the same)
+- hand-built kernels with a reduce of 0 or 1 trips, or a parameter of size
+  0, fail in tolk before any optimisation
+- `simplify.ml`'s `mark_gated` and `coalesce.ml` read only a bare
+  `Op.Const` where a typed constant (`Ops.is_literal`) also holds (speed)
+- HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
+  rule: unmeasured on nonnormal
 
 ## rune, kaun, vega
 
@@ -134,6 +149,20 @@ and rune), raven / llama.cpp b12048 Vulkan:
   moves a chunk between every pair of devices: time it against tinygrad's
   ring and hierarchical allreduce on a machine with several GPUs, and if
   it is slower, write those in nx's partition
+- attention under `Rune.jit`: tensor-core backward kernels (the
+  derivative traces the composition; fused SIMT backward kernels ran 2-3x
+  slower); host f32 decode is slower than the composition (L11); causal
+  saves little (one wave of uneven workgroups); RDNA4 and Metal core paths
+- compiled `exp` in the sigmoid is 9 ulps where eager's is 3: check against
+  rune.mli's stated bound
+- a compiled selection on a GPU set was once declined, so the set raised (1
+  of 4 runs of 16 matvecs): a nondeterministic decline is a crash on a set
+  without eager kernels
+- a fresh process's first calls fault 72-188 pages each for 1 MiB results
+  until rig's buffer cache warms
+- `Jit/scatter-1024x16` runs 18.8-25.0 µs against its 7.98 µs baseline
+- jera's compiled rows gain 2-8 words, one launch per stored piece of an
+  assembly
 
 ## nx
 
