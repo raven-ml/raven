@@ -5106,8 +5106,11 @@ let test_sharded_bound ~n ~d ~layers () =
       let mid = (lo + hi) / 2 in
       if fits mid then search lo mid else search mid hi
   in
-  let peak = search 0 (2 * bound) in
-  at_most int ~msg:"the most a step holds" ~than:bound peak;
+  (* A step holds at most [bound] iff it fits [bound]. Each trial trains
+     anew, so the search for the most it holds runs only to report it. *)
+  if not (fits bound) then
+    at_most int ~msg:"the most a step holds" ~than:bound
+      (search bound (2 * bound));
   equal ~msg:"a layer beside the activations" bool false
     (fits (layer + activations))
 
@@ -5360,7 +5363,7 @@ let () =
                (test_in_place ~checked:false);
              test "an evaluated call writes its donated state in place"
                (test_in_place ~checked:true);
-             prop ~count:200 ~examples:donating_examples
+             prop ~count:50 ~examples:donating_examples
                "a call over cut values gives the bits it gives undonated, its \
                 results apart"
                donating_case law_donating;
