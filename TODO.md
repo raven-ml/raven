@@ -125,26 +125,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   rule: unmeasured on nonnormal
 - `Bigint.of_string` is quadratic on long decimal strings (CPython limits
   that conversion too)
-- `block_ops = 2^18` in the host block split (D80) looks too large: lorenz's
-  `r_32_3_2_4_3_400` runs 8.3-10.2 µs at twice the blocks against 15.2;
-  rig exports no free-core count for tolk to size launches against on a
-  loaded host
-- `wmma_accumulate`'s branch for a nonzero accumulator (D24's `(c + acc)
-  + P`) has no test and no library caller since D260: pin it with a reduce
-  over a hand-built core or delete it
-- lowering tests and goldens on `Cstyle.metal` or HIP renderers need the
-  vendor compiler, so they run only where it exists (macOS, ROCm hosts):
-  build those renderers without their compilers, as `Renderer.v` does for
-  the tensor-core tables, so Linux CI runs them
-- C-style renderers leave `Truncdiv`/`Truncmod` of the minimum by -1 and
-  shift counts at or past the width undefined (rune guards division, so nx
-  users don't reach them); `Bigint.of_string` is quadratic on long decimal
-  strings (CPython limits that conversion too)
-- D340's `Shape.written_params` change (call bodies lowered inside a kernel
-  write their stores) is not mirrored in tinygrad.patch: the generator failed
-  on a schedule-level call body
-- the host decode (D92, D348) loads a code's 32 bytes as 32 `vpinsrb`, so
-  1-row products are bound by the decode
 - integer division by zero is left to rune and D145; tolk's C renderers
   define every other integer case (D342, D346)
 - memory-bound host kernels split at 2^18 bytes (D80): a threshold between
