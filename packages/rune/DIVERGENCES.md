@@ -1168,7 +1168,20 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b): nx states attention as one operation over pairs whose
   kernels store nothing of the pair loop's shape; tinygrad's composition
   stores the scores and computes the weights in the query's dtype, which
-  nx's bound does not allow.
+  nx's bound does not allow. (d): rune's `Cuda/attention/*` rows on
+  fudge's RTX 5000 Ada, the composition against these kernels, three
+  interleaved rounds: bfloat16 8 heads of 2048 rows of 64, 2.46-2.49 ms
+  to 110-115 us full and to 90-92 us causal; 4096 causal 10.94-10.97 ms
+  to 276-277 us, in a window of 128 keys 10.93-10.96 ms to 60-61 us;
+  float32 2048 full 2.81-2.84 to 1.62-1.63 ms; a decode step of 8 heads
+  over 4096 keys 52-55 to 15 us in bfloat16 and 52.3-53.5 to 54.8-55.0
+  us in float32, a SIMT row a thread folding 128 runs of 32 keys whose
+  combine is a second launch of about 4 us; gpt-oss's decode, 64 heads over 8, 315-319 to 15-16 us, and
+  kaun's `GptOss/prefill-512` 163.4-163.6 to 144.8-145.8 ms. On
+  the host, `Attention/jit-f32-8x512x64-causal` 3.8-5.8 to 2.5-4.5 ms,
+  and `Attention/jit-f32-decode-8x4096x64` 120-146 to 196-238 us: a
+  decode step's 8 rows are 8 host threads folding 4096 keys each, where
+  the composition's contractions spread the keys over the threads.
 - **Pinned by:** `rune attention › jit within nx's bound of a float64
   reference › every dtype`; `Rune.jit on a GPU › attention › jit holds nx's
-  bound against a float64 reference`.
+  bound against a float64 reference`; the rows above.

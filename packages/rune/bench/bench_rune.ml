@@ -1226,6 +1226,50 @@ let on_gpu g name c =
           c.at D.on)
     (fun call -> call ())
 
+(* Attention compiled: o of [hq] query heads over [hk] key heads of [tk]
+   keys, [tq] query rows of 64, at [dt], accumulating in float32, under no
+   mask, a causal one or a causal window of 128 keys. *)
+type mask = Full | Causal | Window
+
+let attention_call (type s) (dt : (float, s) Nx.dtype) ~hq ~hk ~tq ~tk mask =
+  {
+    at =
+      (fun (type d) (at : d Nx.Placement.t) ->
+        let draw i s =
+          Nx.place at
+            (Nx.cast dt (Nx.Rng.normal ~key:(Nx.Rng.key i) f32 s))
+        in
+        let q = draw 80 [| 1; hq; tq; 64 |] in
+        let k = draw 81 [| 1; hk; tk; 64 |] and v = draw 82 [| 1; hk; tk; 64 |] in
+        let mask : (d Nx.pair -> d Nx.bool_t) option =
+          match mask with
+          | Full -> None
+          | Causal -> Some Nx.causal
+          | Window ->
+              Some
+                (fun p ->
+                  Nx.logical_and (Nx.causal p) (Nx.less p.q (Nx.add_s p.k 128L)))
+        in
+        let f =
+          Rune.jit
+            Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+            (fun q k v ->
+              fst (Nx.attention ?mask ~acc:f32 ~kv:(Nx.Dense { k; v }) q))
+        in
+        fun () -> ignore (synced (f q k v)));
+  }
+
+(* Attention compiled on the host: a causal prefill of 8 heads of 512 rows
+   and a decode step of one row a head over 4096 keys, float32. *)
+let host_attention_rows () =
+  let row name c = Thumper.bench name (c.at Nx.Host.on) in
+  [
+    row "jit-f32-8x512x64-causal"
+      (attention_call f32 ~hq:8 ~hk:8 ~tq:512 ~tk:512 Causal);
+    row "jit-f32-decode-8x4096x64"
+      (attention_call f32 ~hq:8 ~hk:8 ~tq:1 ~tk:4096 Full);
+  ]
+
 (* A decode step's cache update, nx's dispatch/kv-append-4096 compiled: one
    row written at a position held in data into gpt-oss's keys of one layer, a
    [1; 8; 4096; 64] bfloat16 cache, each call updating the last call's result.
@@ -1379,6 +1423,25 @@ let gpu_rows g =
               in
               fun () -> ignore (synced (f q k)));
         };
+      (* Attention: a prefill of 8 heads, 2048 and 4096 rows, full, causal
+         and in a window of 128 keys; a decode step of one row a head over
+         4096 keys; gpt-oss's decode, 64 query heads over 8 key heads. *)
+      on_gpu g "attention/jit-bf16-8x2048x64-full"
+        (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
+      on_gpu g "attention/jit-bf16-8x2048x64-causal"
+        (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Causal);
+      on_gpu g "attention/jit-bf16-8x4096x64-causal"
+        (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:4096 ~tk:4096 Causal);
+      on_gpu g "attention/jit-bf16-8x4096x64-window128"
+        (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:4096 ~tk:4096 Window);
+      on_gpu g "attention/jit-f32-8x2048x64-full"
+        (attention_call f32 ~hq:8 ~hk:8 ~tq:2048 ~tk:2048 Full);
+      on_gpu g "attention/jit-bf16-decode-8x4096x64"
+        (attention_call Nx.bfloat16 ~hq:8 ~hk:8 ~tq:1 ~tk:4096 Full);
+      on_gpu g "attention/jit-f32-decode-8x4096x64"
+        (attention_call f32 ~hq:8 ~hk:8 ~tq:1 ~tk:4096 Full);
+      on_gpu g "attention/jit-bf16-gqa-64x8x4096x64-decode"
+        (attention_call Nx.bfloat16 ~hq:64 ~hk:8 ~tq:1 ~tk:4096 Full);
       on_gpu g "kv-append-4096" (kv_append ~donated:true);
       on_gpu g "kv-append-4096-copied" (kv_append ~donated:false);
     ]
@@ -1406,7 +1469,7 @@ let () =
          Thumper.group "MlpGrad" (mlp_rows ());
          Thumper.group "PerSampleGrads" (per_sample_rows ());
          Thumper.group "Jacobians" (jacobian_rows ());
-         Thumper.group "Attention" (attention_rows ());
+         Thumper.group "Attention" (attention_rows () @ host_attention_rows ());
          Thumper.group "Hmc" (hmc_rows ());
          Thumper.group "Custom" (custom_rows ());
          Thumper.group "JitLoops" (jit_loop_rows ());
