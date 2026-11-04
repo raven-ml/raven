@@ -2290,6 +2290,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.attention` on nx.cpu gives `+0`, as a sum of zeros, where a row's
+  weights in earlier blocks of keys underflow to zero beside a later
+  block's: a negative value there left `-0` in `o`.
 - **Breaking:** `Nx_ragged.unique` groups equal rows as `Nx.unique` groups
   keys, each group's first row and count with its ids, and replaces
   `Nx_ragged.ids`, which is `(Nx_ragged.unique ~size:0 r).ids`.

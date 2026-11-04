@@ -903,6 +903,33 @@ let test_zero () =
   check Nx.float32;
   check Nx.float64
 
+(* Keys [0, 64) of value [-1] and a score [under] beside key 64's score of
+   0, of value [-0.]: the first keys' weights underflow to zero in the
+   accumulator, so every product is zero and [o] is +0. On nx.cpu the
+   first keys fill a block (nx_cpu.mli) whose weights a later block
+   rescales to zero. *)
+let test_zero_weights () =
+  let check (type a) (acc : (float, a) D.t) under =
+    let tk = 65 in
+    let first j a b = if j < 64 then a else b in
+    let q = Nx.create acc [| 1; 1; 1 |] [| 1. |] in
+    let k = Nx.create acc [| 1; tk; 1 |] (Array.make tk 0.) in
+    let v =
+      Nx.create acc [| 1; tk; 1 |] (Array.init tk (fun j -> first j (-1.) (-0.)))
+    in
+    let bias =
+      Nx.create acc [| 1; 1; tk |] (Array.init tk (fun j -> first j under 0.))
+    in
+    let o, _ =
+      Nx.attention
+        ~score:(fun _ s -> Nx.add s bias)
+        ~acc ~kv:(Nx.Dense { k; v }) q
+    in
+    equal ~msg:(D.name acc) same_bits [| 0. |] (Nx.to_array o)
+  in
+  check Nx.float32 (-200.);
+  check Nx.float64 (-800.)
+
 (* A program whose visibility reads the score: [Nx.Prim.eval] raises, and
    nx.cpu answers [Shape_mismatch]. *)
 let test_scored_visibility () =
@@ -1185,6 +1212,7 @@ let () =
          test "only infinite scores" test_infinite_scores;
          test "empty extents" test_empty_extents;
          test "a sum of zeros" test_zero;
+         test "a sum of weights underflowed to zero" test_zero_weights;
          test "rejections" test_rejections;
          test "lengths past the keys" test_long_lengths;
          test "visibility that reads the score" test_scored_visibility;

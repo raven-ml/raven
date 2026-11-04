@@ -71,13 +71,13 @@
    The ε nx.mli reads covers 3 and 4 there:
    (13n + 9 + (λ + 2) ln t) u + u |lse|.
 
-   At the end o = acc / l, rounded once to o's dtype, and lse = m + log l;
-   a row of l = 0 has o = +0 and lse = -inf. Scores, weights, sums and
-   accumulators are in the accumulator, lse's dtype, float32 or float64;
-   narrower operands are widened on load. Values of the accumulator's dtype
-   whose dimension steps one element are read in place; keys are staged
-   transposed, or for few rows of float32 read in place where of unit
-   steps. Each accumulator's units are attention_body.h's. */
+   At the end o = acc / l + 0, rounded once to o's dtype, and
+   lse = m + log l; a row of l = 0 has o = +0 and lse = -inf. Scores,
+   weights, sums and accumulators are in the accumulator, lse's dtype,
+   float32 or float64; narrower operands are widened on load. Values of the
+   accumulator's dtype whose dimension steps one element are read in place;
+   keys are staged transposed, or for few rows of float32 read in place
+   where of unit steps. Each accumulator's units are attention_body.h's. */
 
 #include <math.h>
 #include <stdatomic.h>

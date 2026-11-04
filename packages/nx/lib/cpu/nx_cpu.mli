@@ -364,13 +364,14 @@
       pair's weight [0] included; where a value of the block hidden from
       the row is a NaN or an infinity, over its visible pairs alone.
     A block in which the row has no visible pair leaves its state as it
-    was. At the end, [o = a / l] in the accumulator, rounded once to [o]'s
-    dtype,
-    and [lse = m + log l], [+∞] where [m] is; a row of [l = 0] has
-    [o = +0] and [lse = -∞]. [exp] and [log] are {!Nx_kernel.Prog.Exp}'s
-    and {!Nx_kernel.Prog.Log}'s. So a value at a pair hidden from a row,
-    finite or not, never reaches its [o], and a row's bits depend on its
-    own pairs, [dk], [dv] and the dtypes alone.
+    was. At the end, [o = a / l + 0] in the accumulator, rounded once to
+    [o]'s dtype: the [+0] makes [+0] a [-0] that [α a] leaves of zero
+    products, as [α = 0] does of a negative [a]. [lse = m + log l], [+∞]
+    where [m] is; a row of [l = 0] has [o = +0] and [lse = -∞]. [exp] and
+    [log] are {!Nx_kernel.Prog.Exp}'s and {!Nx_kernel.Prog.Log}'s. So a
+    value at a pair hidden from a row, finite or not, never reaches its
+    [o], and a row's bits depend on its own pairs, [dk], [dv] and the
+    dtypes alone.
 
     The program runs, as [map] computes it, for the pairs of the blocks the
     kernel reads: its output 0 for a block before its keys are read, its

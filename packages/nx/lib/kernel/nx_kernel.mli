@@ -364,8 +364,9 @@ val full_precision : ('v, 's) Nx_array.Dtype.t -> bool
     [tk] without lengths, where a paged key's table entry is in \[[0],
     [pages]), and where output [0] holds. A row's [lse] is the log-sum-exp
     of output [1] over its visible pairs, and its [o] the sum of their
-    values weighted by [exp (x - lse)], [x] each one's output [1]. A row of
-    no visible pair, or of only [-∞] outputs, has [o = +0] and [lse = -∞].
+    values weighted by [exp (x - lse)], [x] each one's output [1], a sum
+    that starts from [+0], so a sum of zeros is [+0]. A row of no visible
+    pair, or of only [-∞] outputs, has [o = +0] and [lse = -∞].
     A visible pair's value counts where its weight underflows to [0]: a
     NaN there makes the row's [o] a NaN. A value whose key is past the
     row's length, or whose table entry is outside \[[0], [pages]), is never

@@ -360,7 +360,9 @@ static void F(unit)(att *c, F(scratch) *x, int64_t u) {
       if (pick) F(picked)(c, x, i, nr, nk);
     }
   }
-  /* o = acc / l, rounded once to o's dtype, and lse. */
+  /* o = acc / l + 0, rounded once to o's dtype, and lse. The +0 makes +0
+     a -0 that α acc leaves of zero products, as α = 0 does of a negative
+     acc: a sum of zeros is +0 (nx.mli). */
   nx_cpu_run store = nx_cpu_convert(DT, c->odt);
   const nx_array *o = &c->a[O], *lse = &c->a[LSE];
   for (int hh = 0; hh < nh; hh++)
@@ -374,7 +376,7 @@ static void F(unit)(att *c, F(scratch) *x, int64_t u) {
         memset(acc, 0, sizeof(T) * (size_t)dv);
         y = -INFINITY;
       } else {
-        for (int64_t e = 0; e < dv; e++) acc[e] = acc[e] / l;
+        for (int64_t e = 0; e < dv; e++) acc[e] = acc[e] / l + 0;
         y = m == INFINITY ? m : m + LOG(l);
       }
       store(acc, o->base + (o->offset + at * dv) * c->w, dv);
