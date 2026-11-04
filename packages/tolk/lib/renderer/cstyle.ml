@@ -1727,7 +1727,7 @@ let metal_kernel ?(prefix = []) l ~name kernel bufs uops =
   (* Its own definitions first, then the functions it calls. *)
   render_kernel l ~prefix:(defines @ prefix) ~name kernel bufs uops
 
-let metal (target : Helpers.Target.t) =
+let metal_with compiler (target : Helpers.Target.t) =
   let arch = target.arch in
   let family =
     if not (String.starts_with ~prefix:"Apple" arch) then None
@@ -1747,7 +1747,9 @@ let metal (target : Helpers.Target.t) =
     ~code_for_op:metal_lang.code_for_op
     ~native
     ~render:(render metal_kernel metal_lang)
-    ~compiler:(Compiler_metal.compiler ()) target
+    ~compiler:(compiler ()) target
+
+let metal target = metal_with Compiler_metal.compiler target
 
 (* CUDA *)
 
@@ -2044,7 +2046,7 @@ let cuda_kernel ?(copies = false) ?(marked = false) ?(prefix = []) l ~name
   (* Its own definitions first, then the functions it calls. *)
   render_kernel l ~prefix:(defines @ prefix) ~name kernel bufs uops
 
-let cuda_renderer ~sync (target : Helpers.Target.t) =
+let cuda_renderer ~sync compiler (target : Helpers.Target.t) =
   let arch = target.arch in
   let tensor_cores = Tc.cuda arch in
   let ver =
@@ -2058,16 +2060,7 @@ let cuda_renderer ~sync (target : Helpers.Target.t) =
     && ((not (Dtype.mem dt Dtype.fp8_ocp)) || ver >= 89)
     && not (Dtype.mem dt Dtype.fp8_fnuz)
   in
-  (* A cubin on every device: the disk cache keeps the GPU's code, which the
-     driver loads as it is, where it would translate PTX at each load and keep
-     its work only in a cache of its own. NVRTC is given the device's
-     architecture either way, and refuses one it does not know in either
-     form. *)
-  let compiler =
-    Compiler_cuda.nvrtc ~ptx:false
-      ~cache_key:(String.lowercase_ascii target.device)
-      arch
-  in
+  let compiler = compiler () in
   (* cp.async "Requires sm_80 or higher" (PTX ISA §9.7.10.28.3.1). A kernel
      that copies asynchronously renders its barriers to wait for the copies. *)
   let async_copy = ver >= 80 && not sync in
@@ -2108,8 +2101,16 @@ let cuda_renderer ~sync (target : Helpers.Target.t) =
     ~extra_matcher:cuda_extra_matcher ~code_for_op:cuda_lang.code_for_op ~native
     ~render ~compiler target
 
-let cuda target = cuda_renderer ~sync:false target
-let cuda_sync target = cuda_renderer ~sync:true target
+(* A cubin on every device: the disk cache keeps the GPU's code, which the
+   driver loads as it is, where it would translate PTX at each load and keep its
+   work only in a cache of its own. NVRTC is given the device's architecture
+   either way, and refuses one it does not know in either form. *)
+let nvrtc (target : Helpers.Target.t) () =
+  Compiler_cuda.nvrtc ~ptx:false
+    ~cache_key:(String.lowercase_ascii target.device)
+    target.arch
+
+let cuda target = cuda_renderer ~sync:false (nvrtc target) target
 
 (* HIP *)
 
@@ -2444,7 +2445,7 @@ let hip_kernel arch tensor_cores ?(prefix = []) l ~name kernel bufs uops =
   (* Its own definitions first, then the functions it calls. *)
   render_kernel l ~prefix:(defines @ prefix) ~name kernel bufs uops
 
-let hip (target : Helpers.Target.t) =
+let hip_with compiler (target : Helpers.Target.t) =
   (* gfx942 => MI300, gfx1100 => RX 7900, gfx1201 => RX 9700 *)
   let arch = target.arch in
   let tensor_cores = Tc.amd arch and lang = hip_lang arch in
@@ -2459,4 +2460,19 @@ let hip (target : Helpers.Target.t) =
     ~tensor_cores ~extra_matcher:(hip_extra_matcher arch)
     ~code_for_op:lang.code_for_op ~native
     ~render:(render (hip_kernel arch tensor_cores) lang)
-    ~compiler:(Compiler_amd.hip arch) target
+    ~compiler:(compiler arch) target
+
+let hip target = hip_with Compiler_amd.hip target
+
+(* Renderers for tests *)
+
+let source = Renderer.Compiler.v Fun.id
+let cuda_sync target = cuda_renderer ~sync:true (fun () -> source) target
+
+let without_compiler (target : Helpers.Target.t) =
+  match target.renderer with
+  | "CLANG" -> Renderer.with_compiler source (clang target)
+  | "METAL" -> metal_with (fun () -> source) target
+  | "CUDA" -> cuda_renderer ~sync:false (fun () -> source) target
+  | "HIP" -> hip_with (fun _ -> source) target
+  | r -> invalid_arg (strf "no renderer named %s" r)

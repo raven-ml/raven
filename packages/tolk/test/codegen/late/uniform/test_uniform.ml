@@ -26,20 +26,17 @@ let n = Ops.variable "n" (Dtype.Value.of_int 0) (Dtype.Value.of_int 8)
 let kernel name effects =
   Ops.sink ~kernel:(Ops.kernel_info ~name ~opts_to_apply:[] ()) effects
 
-(* HIP's renderer, which lowering needs and compiling would not: making it finds
-   comgr, which the suite's COMGR_PATH stands in for. *)
+(* HIP's renderer, which lowering needs and compiling would not. *)
 let hip =
   lazy
-    (Renderer.with_compiler
-       (Renderer.Compiler.v Fun.id)
-       (Cstyle.hip
-          {
-            Helpers.Target.device = "AMD";
-            renderer = "HIP";
-            arch = "gfx1100";
-            interface = "";
-            indices = "";
-          }))
+    (Cstyle.without_compiler
+       {
+         Helpers.Target.device = "AMD";
+         renderer = "HIP";
+         arch = "gfx1100";
+         interface = "";
+         indices = "";
+       })
 
 let lowered k = Codegen.full_rewrite_to_sink k (Lazy.force hip)
 

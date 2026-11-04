@@ -10,8 +10,6 @@ module K = Postrange.Scheduler
 (* Goldens *)
 
 (* No program is compiled: a program's binary is its source's bytes. *)
-let uncompiled = Renderer.Compiler.v Fun.id
-
 let renderer_of_row cell =
   let t =
     {
@@ -22,34 +20,14 @@ let renderer_of_row cell =
       indices = "";
     }
   in
-  let r =
-    match t.renderer with
-    | "CLANG" -> Cstyle.clang t
-    | "METAL" -> Cstyle.metal t
-    | "CUDA" -> Cstyle.cuda t
-    | "HIP" -> Cstyle.hip t
-    | r -> failf "no renderer %s" r
-  in
-  Renderer.with_compiler uncompiled r
+  Cstyle.without_compiler t
 
-(* A GPU's renderer is made with its compiler, which finds its vendor's library
-   or raises Failure: [renderer] skips the test on a machine without it, and
-   [made] tells whether the machine makes a target's. *)
 let renderers =
   List.map
-    (fun cell ->
-      ( cell "target",
-        match renderer_of_row cell with
-        | r -> Ok r
-        | exception Failure why -> Error why ))
+    (fun cell -> (cell "target", renderer_of_row cell))
     (Golden.rows "targets.golden")
 
-let renderer target =
-  match List.assoc target renderers with
-  | Ok r -> r
-  | Error why -> skip ~reason:why ()
-
-let made target = Result.is_ok (List.assoc target renderers)
+let renderer target = List.assoc target renderers
 let kernels = Hashtbl.create 16
 
 let kernel name =
@@ -478,7 +456,7 @@ let small_searches =
         Format.fprintf ppf "%s on %s, width %d" kernel target amt)
       (triple
          (of_list [ "add_small"; "sum_rows"; "variable_rows"; "symbolic" ])
-         (of_list (List.filter made [ "clang"; "metal" ]))
+         (of_list [ "clang"; "metal" ])
          (int_range 1 3)))
 
 let links_once =
@@ -836,11 +814,7 @@ let counting arch =
       indices = "";
     }
   in
-  let m =
-    match Cstyle.metal t with
-    | m -> m
-    | exception Failure why -> skip ~reason:why ()
-  in
+  let m = Cstyle.without_compiler t in
   let compile src =
     count compiled src;
     src

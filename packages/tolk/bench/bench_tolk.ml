@@ -379,16 +379,9 @@ let gated () =
    kernels one action makes of it, each optimised as a candidate is. *)
 let linearized = 8
 
-(* The renderer is made with NVRTC's compiler, which needs NVRTC: the search
-   rows run where it is found, as the gpt_oss rows run where a CUDA GPU
-   opens. *)
 let cuda_renderer =
-  match
-    Cstyle.cuda
-      { target with device = "CUDA"; renderer = "CUDA"; arch = "sm_89" }
-  with
-  | r -> Some (Renderer.with_compiler (Renderer.Compiler.v Fun.id) r)
-  | exception Failure _ -> None
+  Cstyle.without_compiler
+    { target with device = "CUDA"; renderer = "CUDA"; arch = "sm_89" }
 
 (* The scheduler of a lorenz kernel that a search is handed. A kernel that
    reaches no search never calls the hook, and fails here by name. *)
@@ -613,11 +606,11 @@ let suite () =
       gated ();
       launch ();
       Thumper.group "search"
-        (searches
-        ::
-        (match cuda_renderer with
-        | Some r -> [ linearize_candidates r; kernel_actions r ]
-        | None -> []));
+        [
+          searches;
+          linearize_candidates cuda_renderer;
+          kernel_actions cuda_renderer;
+        ];
     ]
 
 let () =

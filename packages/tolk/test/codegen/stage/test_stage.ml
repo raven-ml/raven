@@ -114,13 +114,10 @@ let one_stage (r : Renderer.t) =
 let target device renderer arch =
   { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
 
-(* CUDA's renderer of an sm_89, which compiles nothing, skipping where it
-   cannot be made. *)
+(* CUDA's renderer of an sm_89, which compiles nothing. *)
 let sm89 ?(sync = false) () =
   let t = target "CUDA" "CUDA" "sm_89" in
-  match if sync then Cstyle.cuda_sync t else Cstyle.cuda t with
-  | r -> Renderer.with_compiler (Renderer.Compiler.v Fun.id) r
-  | exception Failure why -> skip ~reason:why ()
+  if sync then Cstyle.cuda_sync t else Cstyle.without_compiler t
 
 (* Programs *)
 
@@ -373,10 +370,7 @@ type target = Cuda of int | Hip of string
 
 let renderer_of = function
   | Cuda depth -> sm89 ~sync:(depth = 1) ()
-  | Hip arch -> (
-      match Cstyle.hip (target "AMD" "HIP" arch) with
-      | r -> Renderer.with_compiler (Renderer.Compiler.v Fun.id) r
-      | exception Failure why -> skip ~reason:why ())
+  | Hip arch -> Cstyle.without_compiler (target "AMD" "HIP" arch)
 
 let ordered (p, t) =
   let r = renderer_of t in

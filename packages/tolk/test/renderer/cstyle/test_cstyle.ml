@@ -18,18 +18,21 @@ let contains s sub =
 let target device renderer arch =
   { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
 
-(* A GPU's renderer is made with its compiler, which finds its vendor's library
-   or raises Failure: [renderer_for] skips the test on a machine without it, and
-   [available] holds the renderers the machine makes. *)
-let make (t : Helpers.Target.t) =
-  match t.renderer with
-  | "CLANG" -> Cstyle.clang t
-  | "METAL" -> Cstyle.metal t
-  | "CUDA" -> Cstyle.cuda t
-  | "HIP" -> Cstyle.hip t
-  | r -> invalid_arg ("no renderer " ^ r)
+(* A target's renderer, made without its toolchain: it renders on any
+   machine. *)
+let renderer_for = Cstyle.without_compiler
 
-let renderer_for t =
+(* A GPU's renderer with its compiler, which finds its vendor's library or
+   raises Failure: [compiling] skips the test on a machine without it. *)
+let compiling (t : Helpers.Target.t) =
+  let make =
+    match t.renderer with
+    | "CLANG" -> Cstyle.clang
+    | "METAL" -> Cstyle.metal
+    | "CUDA" -> Cstyle.cuda
+    | "HIP" -> Cstyle.hip
+    | r -> invalid_arg ("no renderer " ^ r)
+  in
   match make t with r -> r | exception Failure why -> skip ~reason:why ()
 
 (* The target of a golden row, written in its columns device, renderer and
@@ -49,9 +52,7 @@ let renderers =
   [ ("clang", fun () -> clang); ("metal", metal); ("cuda", cuda); ("hip", hip) ]
 
 let available =
-  List.filter_map
-    (fun t -> match make t with r -> Some r | exception Failure _ -> None)
-    [ clang_target; metal_target; cuda_target; hip_target ]
+  List.map renderer_for [ clang_target; metal_target; cuda_target; hip_target ]
 let render (r : Renderer.t) uops = r.render uops
 
 (* Sources *)
@@ -220,6 +221,7 @@ let declarations =
       declared "cachekey" (fun r cell ->
           (* tinygrad's table, then the digest of the toolchain and its
              options. *)
+          let r = compiling r.target in
           let table = Option.get (Renderer.Compiler.cachekey r.compiler) in
           let prefix = cell ^ "_" in
           let n = Int.min (String.length prefix) (String.length table) in
@@ -508,7 +510,7 @@ let rejected =
 let compiles_with_its_toolchain row =
   let t =
     test (row "case") (fun () ->
-        let r = renderer_of_row row in
+        let r = compiling (target_of_row row) in
         match Renderer.Compiler.compile r.compiler (render r (kernel row)) with
         | _ -> ()
         | exception Renderer.Compiler.Compile_error why when lacks_toolchain why
@@ -545,11 +547,11 @@ let cuda_binaries =
     [
       slow
       @@ test "the CUDA device's kernels compile to a cubin" (fun () ->
-          compiled (cuda ()) (starts_with ~prefix:"\x7fELF"));
+          compiled (compiling cuda_target) (starts_with ~prefix:"\x7fELF"));
       slow
       @@ test "the NV device's kernels compile to a cubin" (fun () ->
           compiled
-            (renderer_for (target "NV" "CUDA" "sm_89"))
+            (compiling (target "NV" "CUDA" "sm_89"))
             (starts_with ~prefix:"\x7fELF"));
     ]
 
@@ -590,7 +592,7 @@ let compiles_its_truncation () =
         Uop_weak.pm_commit_weak; Uop_weak.pm_lower_weak; Uop_weak.pm_cast_const;
       ]
   in
-  let metal = metal () in
+  let metal = compiling metal_target in
   match
     Renderer.Compiler.compile metal.compiler
       (render metal (Linearizer.linearize sink))

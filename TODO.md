@@ -123,10 +123,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   its promise of module variables per load (D146)
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
   rule: unmeasured on nonnormal
-- lowering tests and goldens on `Cstyle.metal` or HIP renderers need the
-  vendor compiler, so they run only where it exists (macOS, ROCm hosts):
-  build those renderers without their compilers, as `Renderer.v` does for
-  the tensor-core tables, so Linux CI runs them
 - `Bigint.of_string` is quadratic on long decimal strings (CPython limits
   that conversion too)
 - `block_ops = 2^18` in the host block split (D80) looks too large: lorenz's

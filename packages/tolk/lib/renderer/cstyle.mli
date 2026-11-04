@@ -152,6 +152,16 @@ val hip : Helpers.Target.t -> Renderer.t
 (**/**)
 
 val cuda_sync : Helpers.Target.t -> Renderer.t
-(** [cuda_sync target] is {!cuda} without asynchronous copies, named apart, as
-    a capability below 80 renders: a test's kernel staged in one stage of copies
-    through registers. *)
+(** [cuda_sync target] is {!without_compiler}'s {!cuda} without asynchronous
+    copies, named apart, as a capability below 80 renders: a test's kernel
+    staged in one stage of copies through registers. *)
+
+val without_compiler : Helpers.Target.t -> Renderer.t
+(** [without_compiler target] is the renderer {!clang}, {!metal}, {!cuda} or
+    {!hip} makes for [target], as its renderer names it, with a compiler that
+    returns its source ({!Renderer.Compiler.v}): it is made without the
+    target's toolchain, so a test lowers and renders for any target on any
+    machine.
+
+    Raises [Invalid_argument] as that renderer does, or if [target] names
+    another renderer. *)

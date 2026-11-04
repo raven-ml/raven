@@ -30,20 +30,9 @@ let target device renderer arch =
 (* The goldens record no binary: a program's binary is its source's bytes. *)
 let uncompiled = Renderer.Compiler.v Fun.id
 
-(* A GPU's renderer is made with its compiler, which finds its vendor's library
-   or raises Failure: [renderer_for] skips the test on a machine without it. *)
-let make (t : Helpers.Target.t) =
-  match t.renderer with
-  | "CLANG" -> Cstyle.clang t
-  | "METAL" -> Cstyle.metal t
-  | "CUDA" -> Cstyle.cuda t
-  | "HIP" -> Cstyle.hip t
-  | r -> invalid_arg ("no renderer " ^ r)
-
+(* A target's renderer, made without its toolchain, with [compiler]. *)
 let renderer_for ?(compiler = uncompiled) t =
-  match make t with
-  | r -> Renderer.with_compiler compiler r
-  | exception Failure why -> skip ~reason:why ()
+  Renderer.with_compiler compiler (Cstyle.without_compiler t)
 
 let clang_target = target "CPU" "CLANG" "x86_64,x86-64"
 let clang = renderer_for clang_target
@@ -3682,12 +3671,7 @@ let on_a_vector_of_lanes u =
 let applies_operations_to_vectors_of_lanes row =
   equal (list Uops.uop) [] (List.filter on_a_vector_of_lanes (instructions row))
 
-(* A renderer the machine cannot make computes on no vector here: its row's
-   test skips. *)
-let computes_on_vectors row =
-  match make (target (row "device") (row "renderer") (row "arch")) with
-  | r -> r.vector_lanes > 1
-  | exception Failure _ -> false
+let computes_on_vectors row = (renderer_of_row row).vector_lanes > 1
 
 let lanes_of u =
   let lanes = function Ops.Int n -> n | Ops.Sym _ -> 0 in

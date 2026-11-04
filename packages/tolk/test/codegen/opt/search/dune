@@ -10,16 +10,12 @@
  (libraries windtrap tolk tolk_test unix)
  (deps
   (sandbox always)
-  comgr_stand_in
   (glob_files *.golden))
  (action
   (setenv
    CACHEDB
    cache
-   (setenv
-    COMGR_PATH
-    ./comgr_stand_in
-    (progn
+   (progn
      (run %{test} --exclude-tag environment)
      (setenv
       BEAM_PADTO
@@ -39,7 +35,7 @@
           (setenv
            BEAM_DEBUG
            2
-           (run %{test} --tag environment))))))))))))
+           (run %{test} --tag environment)))))))))))
 
 ; The searches of kernels on the host compile each candidate with its C
 ; compiler and time it through the engine.
@@ -56,11 +52,3 @@
   (glob_files *.golden))
  (action
   (run %{exe:test_search_exec.exe})))
-
-; No machine here has comgr, which making a HIP renderer finds: COMGR_PATH
-; names a file that stands in for it, so that HIP's searches run everywhere.
-
-(rule
- (target comgr_stand_in)
- (action
-  (write-file %{target} "This file stands in for comgr.\n")))
