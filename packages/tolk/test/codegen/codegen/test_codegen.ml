@@ -2781,6 +2781,573 @@ let fixed_threads =
         [ true; false ] neighbours_on_cuda;
     ]
 
+(* Reduces under a uniform gate
+
+   [out[i, j]] is the sum, or the maximum, over [k] of [a[i, k] * b[k, j]] where
+   a gate holds and another value, or none, elsewhere. Rows come in blocks of
+   [gate_block]: [fl[i / gate_block]] counts the rows of [i]'s block that hold a
+   value, 0 for a block of padding. Rows past their block's count, and every row
+   of a block of padding, read NaN and infinities from [a], which no value read
+   may show. *)
+
+let gate_block = 64
+
+type gate =
+  | Stored  (** [where (fl <> 0, Σ, Invalid)]: [out] keeps its sentinel. *)
+  | Selected  (** [where (fl <> 0, Σ, -1)]. *)
+  | Rejected  (** [where (fl = 0, -1, Σ)]. *)
+  | Per_row  (** [where (fl <> 0 && i % 64 < fl, Σ, Invalid)]. *)
+  | Maximum  (** [where (fl <> 0, max, Invalid)]. *)
+
+let gate_name = function
+  | Stored -> "stored"
+  | Selected -> "selected"
+  | Rejected -> "rejected"
+  | Per_row -> "per row"
+  | Maximum -> "maximum"
+
+let gates = [ Stored; Selected; Rejected; Per_row; Maximum ]
+let rest_value = -1.
+
+module Gated = struct
+  open Ops.O
+
+  let i32 n = Ops.int ~dtype:Int32 n
+  let ld b i = Ops.load (Ops.index b [ i ]) []
+  let param slot n dt = Shape.param ~shape:[ Int n ] slot dt
+
+  let f32 x =
+    if Dtype.equal (Ops.dtype x) Float32 then x else Ops.cast x Float32
+
+  (* [gated gate ~fl ~i r] is [r] under [gate], read at row [i]. *)
+  let gated gate ~fl ~i r =
+    let count = ld fl (i // int gate_block) in
+    let on = count <> i32 0 in
+    let rest = Ops.float ~dtype:Float32 rest_value in
+    let none = Shape.const_like r `Invalid in
+    match gate with
+    | Stored | Maximum -> Ops.where on r none
+    | Selected -> Ops.where on r rest
+    | Rejected -> Ops.where (Ops.eq count (i32 0)) rest r
+    | Per_row ->
+        let row = Ops.cast (i % int gate_block) Int32 in
+        Ops.where (on land (row < count)) r none
+
+  let kernel ?opts_to_apply stores =
+    Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ()) stores
+
+  let product ?opts_to_apply gate ~dt (m, k, n) =
+    let out = param 0 Stdlib.(m * n) Float32
+    and a = param 1 Stdlib.(m * k) dt
+    and b = param 2 Stdlib.(k * n) dt
+    and fl = param 3 Stdlib.(m / gate_block) Int32 in
+    let i = Ops.range (Int m) [ 0 ] and j = Ops.range (Int n) [ 1 ] in
+    let kk = Ops.range (Int k) [ 2 ] in
+    let x = f32 (ld a ((i * int k) + kk)) * f32 (ld b ((kk * int n) + j)) in
+    let rop = match gate with Maximum -> Op.Max | _ -> Op.Add in
+    let v = gated gate ~fl ~i (Ops.reduce x rop [ kk ]) in
+    let store = Ops.store (Ops.index out [ (i * int n) + j ]) v in
+    kernel ?opts_to_apply [ Ops.end_ store [ i; j ] ]
+
+  (* [out] gated as [Stored], and [out2[i, j] = Σ a[i, k] b2[k, j]] ungated: two
+     sums over one loop. *)
+  let shared (m, k, n) =
+    let out = param 0 Stdlib.(m * n) Float32
+    and a = param 1 Stdlib.(m * k) Float32
+    and b = param 2 Stdlib.(k * n) Float32
+    and fl = param 3 Stdlib.(m / gate_block) Int32
+    and out2 = param 4 Stdlib.(m * n) Float32
+    and b2 = param 5 Stdlib.(k * n) Float32 in
+    let i = Ops.range (Int m) [ 0 ] and j = Ops.range (Int n) [ 1 ] in
+    let kk = Ops.range (Int k) [ 2 ] in
+    let sum b =
+      Ops.reduce
+        (ld a ((i * int k) + kk) * ld b ((kk * int n) + j))
+        Op.Add [ kk ]
+    in
+    let at = (i * int n) + j in
+    let stores =
+      Ops.group
+        [
+          Ops.store (Ops.index out [ at ]) (gated Stored ~fl ~i (sum b));
+          Ops.store (Ops.index out2 [ at ]) (sum b2);
+        ]
+    in
+    kernel [ Ops.end_ stores [ i; j ] ]
+
+  (* [out[i] = Σ a[i, k] x[k]], gated as [Stored]. *)
+  let matvec ?opts_to_apply (m, k) =
+    let out = param 0 m Float32
+    and a = param 1 Stdlib.(m * k) Float32
+    and x = param 2 k Float32
+    and fl = param 3 Stdlib.(m / gate_block) Int32 in
+    let i = Ops.range (Int m) [ 0 ] and kk = Ops.range (Int k) [ 1 ] in
+    let sum = Ops.reduce (ld a ((i * int k) + kk) * ld x kk) Op.Add [ kk ] in
+    let store = Ops.store (Ops.index out [ i ]) (gated Stored ~fl ~i sum) in
+    kernel ?opts_to_apply [ Ops.end_ store [ i ] ]
+
+  (* [out[i, j] = Σ a[i, k] b[k, j]] for the rows [i >= h], whose loads of [a]
+     the same condition gates, and [-1] for the others: the gate's clause bounds
+     the loop it gates loads in. No optimisation makes [i] lanes. *)
+  let last_rows h (m, k, n) =
+    let out = param 0 Stdlib.(m * n) Float32
+    and a = param 1 Stdlib.(m * k) Float32
+    and b = param 2 Stdlib.(k * n) Float32 in
+    let i = Ops.range (Int m) [ 0 ] and j = Ops.range (Int n) [ 1 ] in
+    let kk = Ops.range (Int k) [ 2 ] in
+    let before = i < int h in
+    let at =
+      Ops.where (Ops.logical_not before)
+        ((i * int k) + kk)
+        (Shape.const_like i `Invalid)
+    in
+    let x = Ops.load (Ops.index a [ at ]) [] * ld b ((kk * int n) + j) in
+    let sum = Ops.reduce x Op.Add [ kk ] in
+    let rest = Ops.float ~dtype:Float32 rest_value in
+    let v = Ops.where before rest sum in
+    let store = Ops.store (Ops.index out [ (i * int n) + j ]) v in
+    kernel ~opts_to_apply:[] [ Ops.end_ store [ i; j ] ]
+end
+
+(* Whether row [i] holds a value under [gate] and the counts [fl]. *)
+let holds gate fl i =
+  let count = fl.(i / gate_block) in
+  match gate with
+  | Per_row -> count <> 0 && i mod gate_block < count
+  | Stored | Selected | Rejected | Maximum -> count <> 0
+
+(* [size] of -2, -1, 1 and 2: no product is a zero, whose sign a maximum of
+   zeros leaves open, and every sum of at most 256 is exact. *)
+let nonzero seed size =
+  let st = Random.State.make [| seed |] in
+  Array.init size (fun _ -> [| -2.; -1.; 1.; 2. |].(Random.State.int st 4))
+
+(* [m] rows of [k] {!nonzero}, NaN and infinities in the rows that hold no value
+   under [gate] if [poisoned]. *)
+let gated_rows ?(poisoned = true) gate fl (m, k) seed =
+  let poison = [| Float.nan; Float.infinity; Float.neg_infinity |] in
+  Array.mapi
+    (fun e x ->
+      if (not poisoned) || holds gate fl (e / k) then x else poison.(e mod 3))
+    (nonzero seed (m * k))
+
+(* [out[i, j]] of [gate] over [a] and [b], the sum of [k] products, or their
+   maximum, from the reduce's identity. *)
+let gated_expected gate fl (m, k, n) a b =
+  Array.init (m * n) (fun e ->
+      let i = e / n and j = e mod n in
+      let reduce f identity =
+        let acc = ref identity in
+        for q = 0 to k - 1 do
+          acc := f !acc (a.((i * k) + q) *. b.((q * n) + j))
+        done;
+        `Float !acc
+      in
+      match gate with
+      | (Selected | Rejected) when not (holds gate fl i) -> `Float rest_value
+      | _ when not (holds gate fl i) -> `Float sentinel
+      | Maximum -> reduce Float.max Float.neg_infinity
+      | _ -> reduce ( +. ) 0.)
+
+(* The counts of [blocks] blocks: none, all, or one off and the others some or
+   all of their rows. *)
+type pattern = All_off | All_on | One_off
+
+let pattern_counts blocks = function
+  | All_off -> Array.make blocks 0
+  | All_on -> Array.make blocks gate_block
+  | One_off ->
+      Array.init blocks (fun b ->
+          if b = 1 mod blocks then 0
+          else if b mod 2 = 0 then gate_block
+          else 23 + b)
+
+let floats a = Array.map (fun x -> `Float x) a
+let ints a = Array.map (fun n -> `Int (Bigint.of_int n)) a
+
+(* [gated_run run gate (m, k, n) fl] checks the product [run] of [gate] and the
+   shape against the reference, on the counts [fl]. *)
+let gated_run run gate (m, k, n) fl =
+  let a = gated_rows gate fl (m, k) (m + k + n) in
+  let b = nonzero (k + n) (k * n) in
+  equal ~msg:"out" (array Dtypes.value)
+    (gated_expected gate fl (m, k, n) a b)
+    (List.assoc 0
+       (run
+          [
+            (0, floats (Array.make (m * n) sentinel));
+            (1, floats a);
+            (2, floats b);
+            (3, ints fl);
+          ]))
+
+type gated_device = Host | Cuda
+
+(* The run of a program of the kernel [k] on [device]. *)
+let gated_runner device k =
+  match device with
+  | Host -> Run.on_host (Codegen.to_program k (Lazy.force host))
+  | Cuda ->
+      let d, r = on_cuda () in
+      Run.on d (compiled_for r k)
+
+let gated_n = 16
+
+(* Each device's run of each gate's product of a type and shape, compiled
+   once. *)
+let gated_programs = Hashtbl.create 16
+
+let gated_program device gate dt shape =
+  let key = (device, gate, Format.asprintf "%a" Dtype.pp dt, shape) in
+  match Hashtbl.find_opt gated_programs key with
+  | Some run -> run
+  | None ->
+      let run = gated_runner device (Gated.product gate ~dt shape) in
+      Hashtbl.add gated_programs key run;
+      run
+
+let gated_id (g, blocks, k) =
+  Printf.sprintf "%s, %d blocks, k = %d" (gate_name g) blocks k
+
+let gated_shapes ks =
+  List.concat_map
+    (fun k -> List.map (fun g -> (g, 3, k)) gates @ [ (Stored, 1, k) ])
+    ks
+
+let equals_reference device dt (g, blocks, k) =
+  let m = blocks * gate_block in
+  let run = gated_program device g dt (m, k, gated_n) in
+  List.iter
+    (fun p -> gated_run run g (m, k, gated_n) (pattern_counts blocks p))
+    [ All_off; All_on; One_off ]
+
+(* Counts of 8 blocks, each off, on, or on for some rows; every block off, and
+   every block on, a sixth of the draws each. *)
+let counts_gen =
+  let block =
+    Gen.frequency
+      [
+        (1, Gen.constant 0);
+        (1, Gen.constant gate_block);
+        (1, Gen.int_range 1 (gate_block - 1));
+      ]
+  in
+  let print ppf fl =
+    Format.fprintf ppf "[%s]"
+      (String.concat "; " (Array.to_list (Array.map string_of_int fl)))
+  in
+  Gen.with_pp print
+    (Gen.frequency
+       [
+         (1, Gen.constant (Array.make 8 0));
+         (1, Gen.constant (Array.make 8 gate_block));
+         (4, Gen.array ~size:(Gen.constant 8) block);
+       ])
+
+let gate_gen =
+  Gen.of_list ~pp:(fun ppf g -> Format.pp_print_string ppf (gate_name g)) gates
+
+let random_counts device dt (gate, fl) =
+  cover "every block off" (Array.for_all (( = ) 0) fl);
+  cover "every block on" (Array.for_all (( <> ) 0) fl);
+  cover "some blocks off and some on"
+    (Array.exists (( = ) 0) fl && Array.exists (( <> ) 0) fl);
+  let shape = (8 * gate_block, 64, gated_n) in
+  gated_run (gated_program device gate dt shape) gate shape fl
+
+(* Two sums over one loop, one gated: neither changes the other. *)
+let shared_sums device =
+  let m, k, n = (3 * gate_block, 64, gated_n) in
+  let fl = pattern_counts 3 One_off in
+  let a = gated_rows ~poisoned:false Stored fl (m, k) 1 in
+  let b = Array.map Float.of_int (small_integers 2 (k * n)) in
+  let b2 = Array.map Float.of_int (small_integers 3 (k * n)) in
+  let out =
+    gated_runner device
+      (Gated.shared (m, k, n))
+      [
+        (0, floats (Array.make (m * n) sentinel));
+        (1, floats a);
+        (2, floats b);
+        (3, ints fl);
+        (5, floats b2);
+      ]
+  in
+  equal ~msg:"gated" (array Dtypes.value)
+    (gated_expected Stored fl (m, k, n) a b)
+    (List.assoc 0 out);
+  equal ~msg:"ungated" (array Dtypes.value)
+    (gated_expected Selected (Array.make 3 gate_block) (m, k, n) a b2)
+    (List.assoc 4 out)
+
+(* The rows from [h] of a product whose loads the same condition gates, on the
+   host. *)
+let last_rows h =
+  let m, k, n = (3 * gate_block, 64, gated_n) in
+  let a = nonzero 6 (m * k) and b = nonzero 7 (k * n) in
+  let all = Array.make m gate_block in
+  let reference = gated_expected Selected all (m, k, n) a b in
+  let expected =
+    Array.mapi
+      (fun e x -> if e / n >= h then x else `Float rest_value)
+      reference
+  in
+  equal (array Dtypes.value) expected
+    (List.assoc 0
+       (gated_runner Host
+          (Gated.last_rows h (m, k, n))
+          [ (1, floats a); (2, floats b) ]))
+
+let group_opt top = Opt.Split { axis = 1; amount = 16; target = Local; top }
+
+(* A gated matrix-vector product whose sum a workgroup's threads share. *)
+let grouped_sum opts_to_apply =
+  let m, k = (3 * gate_block, 256) in
+  let fl = pattern_counts 3 One_off in
+  let a = gated_rows Stored fl (m, k) 4 in
+  let x = Array.map Float.of_int (small_integers 5 k) in
+  let out =
+    gated_runner Cuda
+      (Gated.matvec ?opts_to_apply (m, k))
+      [
+        (0, floats (Array.make m sentinel));
+        (1, floats a);
+        (2, floats x);
+        (3, ints fl);
+      ]
+  in
+  equal (array Dtypes.value)
+    (gated_expected Stored fl (m, k, 1) a x)
+    (List.assoc 0 out)
+
+(* The lowered program of [k] for the renderer [r]: its loops whose bound
+   selects between their trips and none, its matrix multiply-accumulates, and
+   its source. *)
+let lowered r k =
+  let prg = Codegen.compile (Codegen.linearize k r) r in
+  let linear = Ops.src (Ops.nth prg 1) in
+  (* a bound may wait, through an after, for what the loop reads *)
+  let rec bound u = if is After u then bound (Ops.nth u 0) else u in
+  let gated u = is Range u && is Where (bound (Ops.nth u 0)) in
+  (List.filter gated linear, List.filter (is Wmma) linear, source prg)
+
+(* Whether a [for] of the source [src] runs to a bound the source selects
+   between a count and none, as [int alu3 = ((val6==0)?0:64);]. *)
+let selected_bound src =
+  let lines = String.split_on_char '\n' src in
+  let name c = c = '_' || Char.Ascii.is_alphanum c in
+  let bound line =
+    match String.index_opt line '<' with
+    | Some at when says "for (" line ->
+        let rest = String.sub line (at + 1) (String.length line - at - 1) in
+        let b = String.trim (List.hd (String.split_on_char ';' rest)) in
+        if b <> "" && String.for_all name b && not (Char.Ascii.is_digit b.[0])
+        then Some b
+        else None
+    | _ -> None
+  in
+  let selects b l = says (" " ^ b ^ " = (") l && says "?" l in
+  List.exists
+    (fun b -> List.exists (selects b) lines)
+    (List.filter_map bound lines)
+
+let bounded_loop (_, r, k, cores) =
+  let gated, wmmas, src = lowered (r ()) (k ()) in
+  if cores then less ~msg:"tensor cores" int ~than:(List.length wmmas) 0;
+  equal ~msg:"loops bounded by the gate" int 1 (List.length gated);
+  equal ~msg:"a loop's bound in the source is selected" bool true
+    (selected_bound src)
+
+let unbounded_loop (_, r, k) =
+  let gated, _, src = lowered (r ()) (k ()) in
+  equal ~msg:"loops bounded by the gate" int 0 (List.length gated);
+  equal ~msg:"a loop's bound in the source is selected" bool false
+    (selected_bound src)
+
+(* A bfloat16 product a staged tensor core takes, as rune's kernels read their
+   operands, gated by blocks of [staged_block] rows: a staged core's workgroup
+   of 128 rows takes a block whole, so its loop, which holds the staging's
+   barriers, gets the gate. *)
+let staged_block = 128
+
+let staged_product (m, k, n) =
+  let open Ops.O in
+  let param slot size dt = Shape.param ~shape:[ Int size ] slot dt in
+  let out = param 0 Stdlib.(m * n) Float32
+  and a = param 1 Stdlib.(m * k) Bfloat16
+  and b = param 2 Stdlib.(k * n) Bfloat16
+  and fl = param 3 Stdlib.(m / staged_block) Int32 in
+  let i = Ops.range (Int m) [ 1 ] and j = Ops.range (Int n) [ 2 ] in
+  let kk = Ops.range (Int k) [ 0 ] in
+  let at x idx = Ops.cast (Ops.index x [ idx ]) Float32 in
+  let sum =
+    Ops.reduce (at a ((i * int k) + kk) * at b ((kk * int n) + j)) Add [ kk ]
+  in
+  let flag = Ops.index fl [ i // int staged_block ] in
+  let v =
+    Ops.where
+      (flag <> Ops.int ~dtype:Int32 0)
+      sum
+      (Shape.const_like sum `Invalid)
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ (i * int n) + j ]) v) [ i; j ] ]
+
+(* Whether a barrier of the linear program [linear] runs inside the loop [r]:
+   between [r] and the end that closes it. *)
+let barrier_inside linear r =
+  let at u = Option.get (List.find_index (fun x -> x == u) linear) in
+  let ends =
+    List.filter (fun u -> is End u && List.memq r (Ops.src u)) linear
+  in
+  List.exists
+    (fun e ->
+      List.exists (fun u -> is Barrier u && at u > at r && at u < at e) linear)
+    ends
+
+let staged_on_cuda pattern =
+  let d, r = on_cuda () in
+  let m, k, n = (16 * staged_block, 256, 256) in
+  let blocks = m / staged_block in
+  let prg = compiled_for r (staged_product (m, k, n)) in
+  let linear = Ops.src (Ops.nth prg 1) in
+  let rec bound u = if is After u then bound (Ops.nth u 0) else u in
+  let gated =
+    List.filter (fun u -> is Range u && is Where (bound (Ops.nth u 0))) linear
+  in
+  less ~msg:"tensor cores" int
+    ~than:(List.length (List.filter (is Wmma) linear))
+    0;
+  equal ~msg:"loops bounded by the gate" int 1 (List.length gated);
+  equal ~msg:"a barrier runs in the bounded loop" bool true
+    (barrier_inside linear (List.hd gated));
+  let counts =
+    match pattern with
+    | All_off -> Array.make blocks 0
+    | All_on -> Array.make blocks 1
+    | One_off -> Array.init blocks (fun b -> if b = 1 then 0 else 1)
+  in
+  let a = nonzero 8 (m * k) and b = nonzero 9 (k * n) in
+  let expected =
+    Array.init (m * n) (fun e ->
+        let i = e / n and j = e mod n in
+        if counts.(i / staged_block) = 0 then `Float sentinel
+        else
+          let acc = ref 0. in
+          for q = 0 to k - 1 do
+            acc := !acc +. (a.((i * k) + q) *. b.((q * n) + j))
+          done;
+          `Float !acc)
+  in
+  equal (array Dtypes.value) expected
+    (List.assoc 0
+       (Run.on d prg
+          [
+            (0, floats (Array.make (m * n) sentinel));
+            (1, floats a);
+            (2, floats b);
+            (3, ints counts);
+          ]))
+
+let cuda_renderer () = renderer_for (target "CUDA" "CUDA" "sm_89")
+let host_renderer () = Lazy.force host_uncompiled
+
+let reduces_under_gates =
+  group "reduces under a uniform gate"
+    [
+      cases
+        "on the host, equal the reference with every block off, every block \
+         on, and one off"
+        ~id:gated_id
+        (gated_shapes [ 16; 17; 256 ])
+        (equals_reference Host Float32);
+      cases
+        "on CUDA, equal the reference with every block off, every block on, \
+         and one off"
+        ~id:(fun (dt, s) -> Format.asprintf "%a, %s" Dtype.pp dt (gated_id s))
+        (List.concat_map
+           (fun dt ->
+             List.map (fun s -> (dt, s)) (gated_shapes [ 16; 17; 256 ]))
+           [ Dtype.Float32; Dtype.Bfloat16 ])
+        (fun (dt, s) -> equals_reference Cuda dt s);
+      cases
+        "a product a staged core takes, its barriers in the bounded loop, \
+         equals the reference on CUDA with"
+        ~id:(function
+          | All_off -> "every block off"
+          | All_on -> "every block on"
+          | One_off -> "one block off")
+        [ All_off; All_on; One_off ]
+        staged_on_cuda;
+      prop "on the host, equal the reference for any counts"
+        (Gen.pair gate_gen counts_gen)
+        (random_counts Host Float32);
+      prop "on CUDA, equal the reference for any counts"
+        (Gen.pair gate_gen counts_gen)
+        (random_counts Cuda Dtype.Bfloat16);
+      cases "two sums over one loop, one gated, are each the reference, on"
+        ~id:(function Host -> "the host" | Cuda -> "CUDA")
+        [ Host; Cuda ] shared_sums;
+      cases
+        "a sum gated by a clause its loads are gated by too, on the host, is \
+         the reference from"
+        ~id:(Printf.sprintf "row %d") [ 0; 1; 100; 191; 192 ] last_rows;
+      cases "a sum a workgroup's threads share is the reference, on CUDA, with"
+        ~id:(function
+          | None -> "the hand-coded optimisations"
+          | Some [ Opt.Split { top = true; _ } ] -> "a group from the top"
+          | Some _ -> "a group")
+        [ None; Some [ group_opt false ]; Some [ group_opt true ] ]
+        grouped_sum;
+      cases "runs its serial loop only where the gate holds, for"
+        ~id:(fun (n, _, _, _) -> n)
+        [
+          ( "the host, a stored sum",
+            host_renderer,
+            (fun () ->
+              Gated.product Stored ~dt:Float32 (4 * gate_block, 256, 256)),
+            false );
+          ( "the host, a gated maximum",
+            host_renderer,
+            (fun () ->
+              Gated.product Maximum ~dt:Float32 (4 * gate_block, 256, 64)),
+            false );
+          ( "CUDA, a bfloat16 product on a tensor core",
+            cuda_renderer,
+            (fun () ->
+              Gated.product Stored ~dt:Bfloat16 (8 * gate_block, 256, 256)),
+            true );
+          ( "CUDA, the uniform clause of a gate per row",
+            cuda_renderer,
+            (fun () ->
+              Gated.product Per_row ~dt:Bfloat16 (8 * gate_block, 256, 256)),
+            true );
+        ]
+        bounded_loop;
+      cases "keeps its serial loop whole, for"
+        ~id:(fun (n, _, _) -> n)
+        [
+          ( "two sums over it",
+            host_renderer,
+            fun () -> Gated.shared (3 * gate_block, 256, gated_n) );
+          ( "a gate that varies between a workgroup's threads",
+            cuda_renderer,
+            fun () ->
+              let threads =
+                Opt.Split
+                  {
+                    axis = 0;
+                    amount = 2 * gate_block;
+                    target = Local;
+                    top = false;
+                  }
+              in
+              Gated.product ~opts_to_apply:[ threads ] Stored ~dt:Float32
+                (2 * gate_block, 256, gated_n) );
+        ]
+        unbounded_loop;
+    ]
+
 (* Reductions over a variable size
 
    A kernel reduces [x], of [hi] floats, over a range whose size is a variable
@@ -5981,4 +6548,5 @@ let () =
          int_powers;
          effects;
          folded_effects;
+         reduces_under_gates;
        ])

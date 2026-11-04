@@ -41,6 +41,11 @@
    [contract] runs, on the first CUDA GPU, dense contractions as rune compiles
    them, with the hand-coded optimisations, each summed in float32: products
    of bfloat16 on tensor cores, and of float32 in registers. Without a CUDA GPU
+   the group is empty.
+
+   [gated] runs, on the first CUDA GPU, a 2048-cubed bfloat16 product stored
+   only where its block of 128 rows is flagged, with 5 of its 16 blocks off and
+   with every block on: a block flagged off skips its loop. Without a CUDA GPU
    the group is empty. *)
 
 open Tolk
@@ -302,6 +307,62 @@ let stream () = gpu_rows "stream" Stream_kernels.all
 
 let contract () = gpu_rows "contract" Contract_kernels.all
 
+(* Gated contractions *)
+
+(* [out[i, j] = Σ_k a[i, k] b[k, j]] of [n]-square bfloat16 operands summed in
+   float32, stored only where [i]'s block of 128 rows is flagged, as a routed
+   product's blocks of padding hold no value: a block a staged core's workgroup
+   takes whole. *)
+let gated_product n =
+  let open Ops.O in
+  let param slot size dt = Shape.param ~shape:[ Int size ] slot dt in
+  let out = param 0 Stdlib.(n * n) Float32
+  and a = param 1 Stdlib.(n * n) Bfloat16
+  and b = param 2 Stdlib.(n * n) Bfloat16
+  and fl = param 3 Stdlib.(n / 128) Int32 in
+  let i = Ops.range (Int n) [ 1 ] and j = Ops.range (Int n) [ 2 ] in
+  let k = Ops.range (Int n) [ 0 ] in
+  let ld x at = Ops.cast (Ops.index x [ at ]) Float32 in
+  let sum =
+    Ops.reduce (ld a ((i * int n) + k) * ld b ((k * int n) + j)) Add [ k ]
+  in
+  let flag = Ops.index fl [ i // int 128 ] in
+  let v =
+    Ops.where
+      (flag <> Ops.int ~dtype:Int32 0)
+      sum
+      (Shape.const_like sum `Invalid)
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ (i * int n) + j ]) v) [ i; j ] ]
+
+(* The gated product of 2048 with [off] of its 16 blocks flagged off, spread
+   over the rows, with the hand-coded optimisations. *)
+let gated () =
+  let n = 2048 in
+  let blocks = n / 128 in
+  let flags off =
+    Array.init blocks (fun b ->
+        `Int (Bigint.of_int (if b * off mod blocks < off then 0 else 1)))
+  in
+  let case (row, off) =
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        let scratch d dt size =
+          if Dtype.equal dt Int32 then Run.buffer d dt (flags off)
+          else filled d dt size
+        in
+        compiled ~scratch (cuda ()) (gated_product n))
+      row
+      (fun run -> run ())
+  in
+  Thumper.group "gated"
+    ~metrics:[ Thumper.Metric.wall_time ]
+    (if cuda_opens () then
+       List.map case
+         [ ("bf16-2048-5-of-16-blocks-off", 5); ("bf16-2048-all-on", 0) ]
+     else [])
+
 (* Searches *)
 
 (* A search's candidates of a lorenz kernel, lowered for a CUDA renderer that
@@ -443,6 +504,7 @@ let suite () =
       gpt_oss ();
       stream ();
       contract ();
+      gated ();
       Thumper.group "search"
         (searches
         ::
@@ -463,7 +525,14 @@ let () =
         (Thumper.measure
            ~config:Thumper.Config.(default |> samples 3 |> warmup 0.)
            ~filter:
-             (`Or [ `Id "lorenz/"; `Id "host/"; `Id "gpt_oss/"; `Id "stream/" ])
+             (`Or
+               [
+                 `Id "lorenz/";
+                 `Id "host/";
+                 `Id "gpt_oss/";
+                 `Id "stream/";
+                 `Id "gated/";
+               ])
            (suite ()))
   | _ ->
       Thumper.run "tolk"

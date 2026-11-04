@@ -985,6 +985,11 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A reduce whose result a gate the same for a whole workgroup selects or
+  stores runs its loop only where the gate holds (`Codegen`, through
+  `Uniform.varying`): a routed product's blocks of padding skip their
+  products, and a 2048-cubed bfloat16 product with 5 of its 16 blocks off
+  runs in 83 µs against 120 on an RTX 5000 Ada.
 - The CUDA device's kernels compile to cubins (`Cstyle.cuda`), which the disk
   cache keeps and the driver loads as they are: a later process no longer
   waits for the driver to translate PTX where its own cache misses (a

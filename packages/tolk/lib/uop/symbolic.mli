@@ -22,8 +22,9 @@ val uop_given_valid : ?try_simplex:bool -> Ops.t -> Ops.t -> Ops.t
     [not (e < c)], is assumed by replacing [e] with a variable of those bounds.
     With [try_simplex] (default [true]), a clause stating that a sum of
     irreducible terms is at least [1] also tries each term at least [1] in turn,
-    and keeps the result they all agree on. The result has [u]'s values wherever
-    [valid] holds. *)
+    and keeps the result they all agree on. A loop's range stays as it is, its
+    bound included: assumed inside the bound, a clause would make another loop.
+    The result has [u]'s values wherever [valid] holds. *)
 
 val simplify_valid : Ops.t -> Ops.t option
 (** [simplify_valid valid] is the conjunction [valid] with each clause

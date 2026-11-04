@@ -570,6 +570,14 @@ codegen/codegen/uint64_clang.golden
 codegen/codegen/uint64_cuda.golden
 codegen/codegen/uint64_hip.golden
 codegen/codegen/uint64_metal.golden
+codegen/codegen/uniform_gate_reduce_clang.golden
+codegen/codegen/uniform_gate_reduce_cuda.golden
+codegen/codegen/uniform_gate_reduce_hip.golden
+codegen/codegen/uniform_gate_reduce_metal.golden
+codegen/codegen/uniform_gate_store_clang.golden
+codegen/codegen/uniform_gate_store_cuda.golden
+codegen/codegen/uniform_gate_store_hip.golden
+codegen/codegen/uniform_gate_store_metal.golden
 codegen/codegen/upcast_with_locals_clang.golden
 codegen/codegen/upcast_with_locals_cuda.golden
 codegen/codegen/upcast_with_locals_hip.golden
@@ -581,6 +589,9 @@ codegen/codegen/var_mean_clang.golden
 codegen/codegen/var_mean_cuda.golden
 codegen/codegen/var_mean_hip.golden
 codegen/codegen/var_mean_metal.golden
+codegen/codegen/varying_gate_reduce_cuda.golden
+codegen/codegen/varying_gate_reduce_hip.golden
+codegen/codegen/varying_gate_reduce_metal.golden
 codegen/codegen/warp_reduce_cuda.golden
 codegen/codegen/warp_reduce_hip.golden
 codegen/codegen/warp_reduce_metal.golden

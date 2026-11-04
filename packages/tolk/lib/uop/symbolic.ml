@@ -46,6 +46,26 @@ let parse_valid v =
     else if neg then Some (a, false, V.to_z (vmin (nth lt 1)))
     else Some (a, true, Bigint.pred (V.to_z (vmax (nth lt 1))))
 
+(* A range is a loop, whatever the values it computes with: assuming a valid
+   inside one's bound would make another loop of the same identity, which runs
+   apart. A substitution leaves each range it does not replace whole. *)
+let keep_ranges =
+  Pattern_matcher.append
+    (pm (fun () ->
+         [
+           Pattern_matcher.rule_ctx (Upat.op Op.Range ~name:"r") (fun subs m ->
+               if Tbl.mem subs (m "r") then None else raise Bottom_up_gate);
+         ]))
+    pm_substitute
+
+let assuming u subs =
+  let tbl = Tbl.create 8 in
+  List.iter (fun (k, x) -> if k != x then Tbl.replace tbl k x) subs;
+  if Tbl.length tbl = 0 then u
+  else
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:tbl u
+      (Before_sources keep_ranges)
+
 let uop_given_valid ?(try_simplex = true) valid u =
   (* first, parse valid into [expr, (lower bound, upper bound)] *)
   let bound bounds stmt =
@@ -91,11 +111,7 @@ let uop_given_valid ?(try_simplex = true) valid u =
       if List.exists (fun (t, _) -> not (Nodes.mem t slice)) candidate then u
       else
         let given (x, nx) =
-          simplify
-            (substitute ~calls:Skip ~pass:Fixed_point
-               (simplify
-                  (substitute ~calls:Skip ~pass:Fixed_point u [ (x, nx) ]))
-               [ (nx, x) ])
+          simplify (assuming (simplify (assuming u [ (x, nx) ])) [ (nx, x) ])
         in
         match List.map given candidate with
         | n :: news when List.for_all (( == ) n) news -> n
@@ -109,12 +125,9 @@ let uop_given_valid ?(try_simplex = true) valid u =
   let u = List.fold_left simplex u exprs in
   (* try all the valids together (but only the whole expressions) *)
   let subs = List.map (fun (i, e, lo, hi) -> (e, fake i e lo hi)) exprs in
-  let s = substitute ~calls:Skip ~pass:Fixed_point u subs in
+  let s = assuming u subs in
   if s == u then u
-  else
-    simplify
-      (substitute ~calls:Skip ~pass:Fixed_point (simplify s)
-         (List.map (fun (e, x) -> (x, e)) subs))
+  else simplify (assuming (simplify s) (List.map (fun (e, x) -> (x, e)) subs))
 
 (* prioritize dependencies, then tighter bounds, so weaker clauses don't hide
    useful simplifications *)

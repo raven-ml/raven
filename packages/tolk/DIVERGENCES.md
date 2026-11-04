@@ -7336,3 +7336,53 @@ and an initial value is added after it (D260).
   with the driver's cache off, and where PTX adds the driver's 40 ms;
   their wall-clock baselines are missing until fudge's scheduled
   recording of every suite.
+
+## D305. A reduce under a uniform gate runs its loop only where the gate holds
+
+- **tinygrad:** `codegen/__init__.py:281-286` (`full_rewrite_to_sink`),
+  which runs the post-optimisation symbolic pass and then the expander: a
+  reduce whose result a gate selects, or whose store a gate guards, runs
+  every trip of its loops in every workgroup, where the gate fails too.
+- **tolk:** `Codegen.lift_uniform_gates`, after the post-optimisation
+  symbolic pass, through `Uniform.varying`; `Symbolic.uop_given_valid`,
+  whose substitutions leave each range whole; `test/gen/tinygrad.patch`,
+  which gives tinygrad's `full_rewrite_to_sink` the same rewrite
+  (`pm_lift_uniform_gates`, `varying_fn`) and its `uop_given_valid` the same
+  substitutions (`_keep_ranges`) before the goldens are recorded.
+- **Differs:** a value computed by casts and arithmetic from one reduce,
+  which `where (g, v, e)` selects where `g` holds (or where it fails) or a
+  store through `where (g, i, Invalid)` writes, gets the reduce's outermost
+  serial loop bounded by `where (c, n, 0)`: `c` the conjunction of the
+  clauses of `g` that are the same for every thread of a workgroup and read
+  only ranges the reduce runs inside. A workgroup whose clauses fail skips
+  the loop and its loads; the reduce's identity it then holds is never
+  read. Each arm of a selection is bounded alone. The rewrite declines when
+  no clause is uniform, when the reduce has no bounded serial loop, or when a
+  node of the reduce that computes from the loop is read outside it, as by a
+  second reduce over the loop.
+  rune's routed product (`Lower_reduce`, blocks of 64 rows of one group)
+  states a block of padding as `Invalid`, which the gated store carries.
+  Simplifying an index under its gate no longer rewrites a range's bound:
+  a load in the loop gated by the clause that bounds it would make a second
+  loop of the range's identity, which the host renders as nested loops of
+  one name.
+- **Reason:** (d) rune's routed product, whose blocks past the groups' hold
+  only padding rows that no row reads: kaun's
+  `GptOss/experts-at-prefill-512`, 3.78-3.80 ms without the rewrite and
+  3.60-3.76 ms with it; and the tolk bench's
+  `gated/bf16-2048-5-of-16-blocks-off`, a 2048-cubed bfloat16 product on a
+  staged tensor core whose gate leaves 5 of its 16 blocks of 128 rows
+  without a value, 119.5-120.0 µs to 82.8-83.5 µs, and
+  `gated/bf16-2048-all-on` 120.8-121.9 µs to 119.8-120.7 µs; fudge's RTX
+  5000 Ada, three interleaved rounds each. The rows' wall-clock baselines
+  wait for the scheduled re-record. Leaving a range whole in
+  `uop_given_valid` is (e): without it the lift's kernels with a load gated
+  by the loop's own clause do not compile.
+- **Pinned by:** `Tolk.Codegen`'s `reduces under a uniform gate` (values
+  equal to the reference on the host and CUDA with every block off, every
+  block on, one off and any counts; the bounded loop in the lowered
+  program and its source; two sums over one loop and a gate that varies
+  between threads keep the loop whole; a sum gated by a clause its loads are
+  gated by too); the goldens `uniform_gate_reduce`, `uniform_gate_store`
+  and `varying_gate_reduce`; rune's `rows in blocks give eager's integers and
+  hold their bound`; the bench rows above.

@@ -14,7 +14,7 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index f4535a4f7..80bf0b4c6 100644
+index f4535a4f7..1d4d4a536 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,31 +2,31 @@ from dataclasses import replace, dataclass, field
@@ -29,7 +29,7 @@ index f4535a4f7..80bf0b4c6 100644
  from tinygrad.renderer import Renderer, Estimates
  from tinygrad.renderer.x86 import ISARenderer, IselContext
 -from tinygrad.dtype import dtypes, AddrSpace
-+from tinygrad.dtype import dtypes, AddrSpace, DType
++from tinygrad.dtype import dtypes, AddrSpace, DType, Invalid
  
  # import all pattern matchers here
  from tinygrad.codegen.gpudims import pm_group_gpudims, pm_range_to_special
@@ -366,7 +366,7 @@ index f4535a4f7..80bf0b4c6 100644
    # fix group for reduce
    (UPat(Ops.REDUCE, name="x"), fix_group_for_reduce),
    # remove reduces
-@@ -251,6 +467,38 @@ pm_implicit_barriers = PatternMatcher([
+@@ -251,6 +467,151 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
@@ -402,10 +402,123 @@ index f4535a4f7..80bf0b4c6 100644
 +                          if e.op is Ops.END and moved in e.src})
 +  return sink.replace(arg=replace(sink.arg, split=(n.ssimplify(), slot, slot+1)))
 +
++# ** a reduce whose result a workgroup-uniform gate selects or stores runs its outer serial loop only where the gate holds **
++# the cause of a value differing between a workgroup's threads (tolk's Uniform.varying): the thread or lane ranges it varies with, or None for any
++def varying_fn(sink:UOp):
++  launched = isinstance(sink.arg, KernelInfo) and sink.arg.kernel
++  nodes = list(sink.toposort())
++  def storage(p:UOp) -> UOp|None: return b if (b:=p.buf_uop).op in GroupOp.Defines else None
++  def space(b:UOp): return b.arg.addrspace if isinstance(b.arg, ParamArg) else None
++  writes: dict[UOp, list[UOp]] = {}
++  for u in nodes:
++    if u.op is Ops.STORE and (b:=storage(u.src[0])) is not None: writes.setdefault(b, []).append(u)
++    elif u.op in {Ops.CALL, Ops.CUSTOM}:
++      for a in (u.src[1:] if u.op is Ops.CALL else u.src):
++        if a.addrspace in (AddrSpace.GLOBAL, AddrSpace.LOCAL, AddrSpace.REG) and (b:=storage(a)) is not None: writes.setdefault(b, []).append(u)
++  regs = [(b, ws) for b,ws in writes.items() if space(b) is AddrSpace.REG]
++  backedges = [u for u in nodes if u.op is Ops.BACKEDGE]
++  def join(a, b): return None if a is None or b is None else a | b
++  serial = lambda r: r.op is Ops.RANGE and r.axis_type in (AxisType.WEAK, AxisType.LOOP)
++  def ordered(ws, load):
++    before = [b.backward_slice_with_self for b in load.src[0].backward_slice if b.op is Ops.BARRIER]
++    return all(any(w in bs for bs in before) for w in ws)
++  def causes(marked:set):
++    c: dict[UOp, frozenset|None] = {}
++    for u in nodes:
++      srcs = functools.reduce(join, [c[s] for s in u.src if s in c], frozenset())
++      if u.op in {Ops.CONST, Ops.BINARY, Ops.BUFFER, Ops.ALLOC}: c[u] = frozenset()
++      elif u.op in {Ops.PARAM, Ops.REFPARAM}: c[u] = frozenset() if launched else None
++      elif u.op is Ops.SPECIAL: c[u] = frozenset() if u.arg.startswith("gidx") else None
++      elif u.op is Ops.RANGE:
++        if u.axis_type is AxisType.GLOBAL: c[u] = frozenset()
++        elif u.axis_type in (AxisType.LOCAL, AxisType.WARP, AxisType.UPCAST): c[u] = frozenset([u])
++        elif u.axis_type is AxisType.PLACEHOLDER: c[u] = None
++        else: c[u] = None if (u in marked if u.dtype == dtypes.void else c[u.src[0]] != frozenset()) else frozenset()
++      elif u.op is Ops.AFTER: c[u] = c[u.src[0]]
++      elif u.op in {Ops.WMMA, Ops.INS, Ops.CUSTOM, Ops.CUSTOMI, Ops.CALL}: c[u] = None
++      elif u.op is Ops.REDUCE:
++        closed = u.ended_ranges
++        x = c[u.src[0]]
++        c[u] = None if x is None or any(serial(r) and c[r] != frozenset() for r in closed) else frozenset(r for r in x if r not in closed)
++      elif u.op is Ops.LOAD:
++        if (b:=storage(u.src[0])) is None: m = None
++        elif b.op is Ops.BINARY: m = frozenset()
++        elif space(b) is AddrSpace.GLOBAL and isinstance(b.arg, ParamArg): m = None if b.arg.volatile or b in writes else frozenset()
++        elif space(b) is AddrSpace.LOCAL: m = frozenset() if ordered(writes.get(b, []), u) else None
++        elif space(b) is AddrSpace.REG: m = None if b in marked else frozenset()
++        else: m = None
++        c[u] = join(srcs, m)
++      else: c[u] = srcs
++    return c
++  # the least fixpoint: register buffers and unbounded loops are marked varying, from none, until a round marks no more
++  marked: set = set()
++  while True:
++    c = causes(marked)
++    nxt = {e.src[1] for e in backedges if c[e.src[2]] != frozenset()}
++    nxt |= {b for b,ws in regs if any(w.op is not Ops.STORE or c[w] != frozenset() or any(serial(r) and c[r] != frozenset() for r in w.ranges) for w in ws)}
++    if len(nxt) == len(marked): return lambda u: c.get(u) != frozenset()
++    marked = nxt
++
++def _clauses(g:UOp) -> list[UOp]: return _clauses(g.src[0]) + _clauses(g.src[1]) if g.op is Ops.AND and g.dtype == dtypes.bool else [g]
++
++# v, read once and computed by casts and arithmetic from one reduce only it reads, with the reduce's outermost serial loop bounded by those
++# conditions of read that are uniform and read only ranges the reduce runs inside: ("holds", clauses) all hold, or ("fails", gate) does not
++def _bounded(ctx, read, v:UOp) -> UOp|None:
++  varying, users = ctx
++  def once(x, by=None): return len(us:=users.get(x, [])) == 1 and (by is None or us[0] is by)
++  def reduce_in(u:UOp) -> UOp|None:
++    if u.op is Ops.REDUCE: return u
++    if not (u.op is Ops.CAST or u.op in GroupOp.ALU): return None
++    xs = [x for x in u.src if x.op_in_backward_slice_with_self(Ops.REDUCE)]
++    return reduce_in(xs[0]) if len(xs) == 1 and once(xs[0], u) else None
++  if not once(v) or (r:=reduce_in(v)) is None: return None
++  known = lambda q: not varying(q) and all(x in r.ranges for x in q.ranges)
++  serial = sorted([q for q in r.src[1:] if q.op is Ops.RANGE and q.axis_type in (AxisType.WEAK, AxisType.LOOP) and q.dtype != dtypes.void],
++                  key=lambda q: q.arg)
++  if not serial: return None
++  rho, inside = serial[0], r.backward_slice_with_self
++  # the loop is r's alone: each node of r that computes from it is read inside r only
++  from_rho: set[UOp] = set()
++  for u in r.toposort():
++    if u is rho or any(x in from_rho for x in u.src):
++      from_rho.add(u)
++      if u is not r and not all(c in inside for c in users.get(u, [])): return None
++  n = rho.src[0]
++  if read[0] == "holds":
++    if not (kept:=[q for q in read[1] if known(q)]): return None
++    bound = functools.reduce(lambda a,b: a&b, kept).where(n, n.const_like(0))
++  elif known(read[1]): bound = read[1].where(n.const_like(0), n)
++  else: return None
++  return v.substitute({rho: rho.replace(src=(bound,))})
++
++def _lift_where(ctx, w:UOp):
++  # each arm is read only where the selection takes it, so each is bounded alone
++  g, x, e = w.src
++  if x is e: return None
++  x2, e2 = _bounded(ctx, ("holds", _clauses(g)), x), _bounded(ctx, ("fails", g), e)
++  if x2 is None and e2 is None: return None
++  return w.replace(src=(g, x if x2 is None else x2, e if e2 is None else e2))
++
++def _lift_store(ctx, st:UOp, w:UOp, v:UOp):
++  if w.op is not Ops.WHERE or w.src[2].op is not Ops.CONST or w.src[2].arg is not Invalid: return None
++  if (v2:=_bounded(ctx, ("holds", _clauses(w.src[0])), v)) is None: return None
++  return st.replace(src=(st.src[0], v2)+st.src[2:])
++
++pm_lift_uniform_gates = PatternMatcher([
++  (UPat(Ops.WHERE, name="w"), _lift_where),
++  (UPat(Ops.STORE, src=(UPat(Ops.INDEX, src=(UPat(), UPat.var("w"))), UPat.var("v")), allow_any_len=True, name="st"), _lift_store),
++])
++
++def consumers(sink:UOp) -> dict[UOp, list[UOp]]:
++  ret: dict[UOp, list[UOp]] = {}
++  for u in sink.toposort():
++    for s in dict.fromkeys(u.src): ret.setdefault(s, []).append(u)
++  return ret
++
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if DEBUG >= 5: print(render_uir(ast))
    if SPEC: type_verify(ast, spec_tensor)
-@@ -260,6 +508,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -260,6 +621,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # preprocess
    sink = graph_rewrite(sink, pm_mops, name="early movement ops", bottom_up=True)
@@ -414,16 +527,18 @@ index f4535a4f7..80bf0b4c6 100644
  
    # first we optimize
    if optimize:
-@@ -280,7 +530,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -280,7 +643,9 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # ** expander (expand_rewrite) **
    # reduce_unparented: a REDUCE whose src folded to a CONST (e.g. x*0) has no parented ranges, collapse it before the expander
 -  sink = graph_rewrite(sink, sym+pm_move_where_on_load+pm_flatten_range+pm_reduce_unparented, name="postopt symbolic")
 +  sink = graph_rewrite(sink, sym+pm_move_where_on_load+pm_flatten_range+pm_reduce_unparented+pm_unpin_effects, name="postopt symbolic")
++  # a reduce whose result a workgroup-uniform gate selects or stores runs its outer serial loop only where the gate holds
++  sink = graph_rewrite(sink, pm_lift_uniform_gates, ctx=(varying_fn(sink), consumers(sink)), name="lift uniform gates")
  
    # expand
    sink = graph_rewrite(sink, expander, ctx=build_range_map(sink), name="expander")
-@@ -288,7 +538,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -288,7 +653,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -432,7 +547,7 @@ index f4535a4f7..80bf0b4c6 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -301,7 +551,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -301,7 +666,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
@@ -441,7 +556,7 @@ index f4535a4f7..80bf0b4c6 100644
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -326,11 +576,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -326,11 +691,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -456,7 +571,7 @@ index f4535a4f7..80bf0b4c6 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -345,11 +597,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -345,11 +712,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -470,7 +585,7 @@ index f4535a4f7..80bf0b4c6 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -443,9 +696,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -443,9 +811,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -495,7 +610,7 @@ index f4535a4f7..80bf0b4c6 100644
  
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp|None:
    if getattr(type(ctx), "asm") is Renderer.asm: return None
-@@ -493,7 +760,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
+@@ -493,7 +875,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
      full_sink = full_rewrite_to_sink(ast, renderer, optimize=not ast.arg.optimized)
      prog_info = ProgramInfo.from_sink(full_sink, renderer.target)
      if (isinstance(renderer, ISARenderer) or renderer.packed_args) and full_sink.arg.estimates is None:
@@ -4362,7 +4477,7 @@ index c359a697f..1b9fad6d6 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index c99bf3c34..e455de578 100644
+index c99bf3c34..9c8d751cb 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -4372,7 +4487,7 @@ index c99bf3c34..e455de578 100644
  from collections import defaultdict
 -from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype, identity_element
 -from tinygrad.dtype import PyConst, ConstFloat, dtypes, can_lossless_cast, Invalid, bitcast, truncate
-+from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype, exact, identity_element, cr_log2
++from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype, exact, identity_element, cr_log2, BottomUpGate
 +from tinygrad.dtype import AddrSpace, PyConst, ConstFloat, dtypes, can_lossless_cast, Invalid, exact_bitcast, truncate
  from tinygrad.helpers import partition, all_same, prod, flatten, IMAGE, dedup, ceildiv
  from tinygrad.uop.divandmod import div_and_mod_symbolic
@@ -4638,7 +4753,40 @@ index c99bf3c34..e455de578 100644
    # the rules above key on bare CONSTs, so a redundantly committed const has to be uncast in the same fixpoint
  ])+div_and_mod_symbolic+pm_uncast_const
  
-@@ -399,8 +462,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
+@@ -351,6 +414,12 @@ def parse_valid(v:UOp) -> tuple[UOp, bool, int]|None:
+   if (a:=lt.src[0]).op is Ops.CONST: return lt.src[1], neg, int(a.val) + (0 if neg else 1)
+   return a, not neg, int(lt.src[1].vmin) if neg else int(lt.src[1].vmax)-1
+ 
++# a range is a loop whatever the values it computes with: assuming a valid inside one's bound would make another loop of the same identity
++def _keep_range(ctx:dict, r:UOp):
++  if r not in ctx: raise BottomUpGate
++  return None
++_keep_ranges = PatternMatcher([(UPat(Ops.RANGE, name="r"), _keep_range)])
++
+ def uop_given_valid(valid:UOp, uop:UOp, try_simplex=True) -> UOp:
+   # return simplified uop (might be the same as input)
+ 
+@@ -371,15 +440,16 @@ def uop_given_valid(valid:UOp, uop:UOp, try_simplex=True) -> UOp:
+       # For X0 + X1 + ... > 0, check whether every Xi > 0 gives the same simplified output.
+       candidate = [(Xi, UOp.variable(f"fake{i}", 1, Xi.vmax, Xi.dtype)) for Xi in expr.split_uop(Ops.ADD)]
+       if any(X not in uop.backward_slice_with_self for X,_ in candidate): continue
+-      newuops = [uop.substitute({X:newX}).simplify().substitute({newX:X}).simplify() for X,newX in candidate]
++      newuops = [uop.substitute({X:newX}, extra_pm=_keep_ranges).simplify().substitute({newX:X}, extra_pm=_keep_ranges).simplify()
++                 for X,newX in candidate]
+       if all_same(newuops): uop = newuops[0]
+       elif uop.op is Ops.STACK and len(uop.src) == 2:
+         if all_same([uops.src[0] for uops in newuops]): uop = uop.replace(src=(newuops[0].src[0], uop.src[1]))
+         if all_same([uops.src[1] for uops in newuops]): uop = uop.replace(src=(uop.src[0], newuops[0].src[1]))
+ 
+   # try all the valids together (but only the whole expressions)
+-  if (s_uop:=uop.substitute(sub_dict:=dict(all_candidates))) is not uop:
+-    uop = s_uop.simplify().substitute({newX:X for X,newX in sub_dict.items()}).simplify()
++  if (s_uop:=uop.substitute(sub_dict:=dict(all_candidates), extra_pm=_keep_ranges)) is not uop:
++    uop = s_uop.simplify().substitute({newX:X for X,newX in sub_dict.items()}, extra_pm=_keep_ranges).simplify()
+   return uop
+ 
+ def _valid_priority(v: UOp, valids:list[UOp]) -> tuple[int, int]:
+@@ -399,8 +469,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
  
  # ******** phase 3 is the complete symbolic ********
  
@@ -4649,7 +4797,7 @@ index c99bf3c34..e455de578 100644
    # max(x*m) = max(x)*m needs x*m monotone in x, and an unsigned multiply wraps
    if r.arg[0] is Ops.MAX and dtypes.is_unsigned(r.dtype): return None
    inside, outside = [], []
-@@ -409,7 +473,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
+@@ -409,7 +480,14 @@ def reduce_mul_chain(r:UOp) -> UOp|None:
      if m not in r.src[1:] and all(r not in m_parents for r in r.src[1:]) and (r.arg[0] != Ops.MAX or m.vmin >= 0): outside.append(m)
      else: inside.append(m)
    if len(outside) == 0: return None
@@ -4665,7 +4813,7 @@ index c99bf3c34..e455de578 100644
  
  def drop_and_clauses(cond:UOp, x:UOp, i:UOp) -> UOp|None:
    keep, drop = partition(cond.split_uop(Ops.AND), lambda c: any(r in x.ranges for r in c.ranges))
-@@ -432,10 +503,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
+@@ -432,10 +510,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
    return UOp.const(True).uprod(*keep).where(ret_idx, ret_idx.const_like(0))
  
  # where after gated load becomes alt value, TODO: this is sort of duplicated with rules in devectorizer
@@ -4681,7 +4829,7 @@ index c99bf3c34..e455de578 100644
  ])
  
  def gated_given_valid(cond:UOp, x:UOp, i:UOp) -> UOp|None:
-@@ -475,9 +548,6 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -475,9 +555,6 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),

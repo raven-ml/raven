@@ -302,6 +302,15 @@ def gated_store():
     return c.index(r).store(value).end(r).sink(arg=ki("gated_store"))
 
 
+def gate_on_rows(name, axis_type, store):
+    # a reduce under a gate of its rows: the uniform clause bounds its loop, a gate of threads leaves it whole
+    a, out = param(0, 256), param(1, 8)
+    i, j = UOp.range(8, 0, axis_type), UOp.range(32, 1, AxisType.WEAK)
+    red = UOp(Ops.REDUCE, src=(a.index(i * 32 + j).load(), j), arg=(Ops.ADD, 0))
+    value = (i < 5).where(red, UOp.invalid() if store else UOp.const(0.0, dtypes.float))
+    return out.index(i).store(value).end(i).sink(arg=ki(name, opts_to_apply=()))
+
+
 def no_optimize():
     a, b, c = param(0, 256), param(1, 256), param(2, 256)
     r = UOp.range(256, 0, AxisType.LOOP)
@@ -657,6 +666,9 @@ HAND = {
     "no_optimize": no_optimize,
     "two_outputs": two_outputs,
     "gated_store": gated_store,
+    "uniform_gate_reduce": lambda: gate_on_rows("uniform_gate_reduce", AxisType.LOOP, False),
+    "uniform_gate_store": lambda: gate_on_rows("uniform_gate_store", AxisType.LOOP, True),
+    "varying_gate_reduce": lambda: gate_on_rows("varying_gate_reduce", AxisType.LOCAL, False),
     "elementwise_where": relu,
     "elementwise_cast_f16": mixed_cast,
     "elementwise_sqrt": lambda: unary("elementwise_sqrt", lambda x: UOp(Ops.SQRT, src=(x,))),
@@ -744,7 +756,7 @@ SETTINGS = {
 
 # The targets of a case, where it is not every target: kernels with thread axes
 # of their own need a target with threads.
-ON_GPUS = {"gated_threads", "group_reduce_split_range", "nested_group_reduce", "local_reduce", "warp_reduce",
+ON_GPUS = {"gated_threads", "varying_gate_reduce", "group_reduce_split_range", "nested_group_reduce", "local_reduce", "warp_reduce",
            "stage_then_reduce", "stage_in_thread_range", "matmul_small", "elementwise_2d", "default_global_reversed", "two_grouped_stores_local",
            "failure_beam_mnist", "shared_loop_barrier", "shared_backedge_barrier", "shared_backedge_two_buffers",
            "shared_backedge_barrier_kept", "explicit_local_slots", "anonymous_local", "shared_local_axis_loop"}

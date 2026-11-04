@@ -877,6 +877,15 @@ let rows ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
       let contracting = shift contracting in
       let y = sum ~batch:pairs ~contracting ~acc ~out a' b' laid in
       let y = move ~src:nb ~dst:j y in
+      (* The groups take the first blocks, each at least one row: a block past
+         them holds only padding, whose slots no row reads, so it holds no value
+         and its products need not run. *)
+      let used = Shape.rop r.spans Op.Add [ nb ] in
+      let s = extents (List.hd (Arith.parts out y)) in
+      let beta = lay (Shape.arange ~dtype:Int64 blocks) [ j ] s in
+      let held = Ops.lt beta (lay used r_sides s) in
+      let held u = Ops.where held u (Shape.const_like u `Invalid) in
+      let y = Arith.of_parts out (List.map held (Arith.parts out y)) in
       let merge u =
         let s = List.mapi (fun x e -> if x = j then e * c else e) (extents u) in
         let s = List.filteri (fun x _ -> x <> j + 1) s in

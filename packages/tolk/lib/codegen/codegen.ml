@@ -1187,6 +1187,166 @@ let split_blocks sink =
       let split = { iterations = ssimplify n; lo = slots; hi = slots + 1 } in
       replace sink ~arg:(Kernel { k with split = Some split })
 
+(* Uniform gates
+
+   A reduce whose result is read only where a gate holds need not run where it
+   fails: [where (g, Σ, e)] reads [Σ] only where [g] holds, and a store through
+   [where (g, i, Invalid)] writes it only there. When some clauses of [g] are
+   the same for every thread of a workgroup ({!Uniform.varying}) and known
+   outside the reduce, the reduce's outermost serial loop runs only where they
+   hold: a workgroup with nothing to compute skips the loop and its loads, and
+   the value it then holds, the reduce's identity, is never read. This runs
+   after the optimisations, which decide what a workgroup holds: a gate of
+   blocks of 64 rows is uniform over a workgroup of 64 rows, not of 128.
+
+   out[i] = where (fl[i / 64] <> 0 && i % 64 < m, Σ_ρ<n a·b, Invalid)
+
+   becomes, [fl[i / 64] <> 0] uniform over a workgroup of 64 rows,
+
+   out[i] = where (..., Σ_ρ<where (fl[i / 64] <> 0, n, 0) a·b, Invalid) *)
+
+(* Where a reduce's result is read: where [Holds] clauses all hold, or where the
+   uniform [Fails] gate does not. *)
+type read_where = Holds of t list | Fails of t
+
+let rec clauses g =
+  if is Op.And g && Dtype.equal (dtype g) Dtype.Bool then
+    clauses (nth g 0) @ clauses (nth g 1)
+  else [ g ]
+
+(* The consumers of each node of [sink], each once. *)
+let consumers sink =
+  let tbl = Tbl.create 256 in
+  List.iter
+    (fun u ->
+      List.iter
+        (fun s ->
+          let us = Option.value ~default:[] (Tbl.find_opt tbl s) in
+          if not (List.memq u us) then Tbl.replace tbl s (u :: us))
+        (src u))
+    (toposort ~calls:Skip sink);
+  tbl
+
+(* The nodes from [u] down to the reduce it computes from, through casts and
+   arithmetic whose other sources read no reduce. *)
+let rec reduce_chain u =
+  if is Op.Reduce u then Some [ u ]
+  else if not (is Op.Cast u || Op.Set.mem (op u) Op.Set.alu) then None
+  else
+    let reads x = op_in_backward_slice_with_self ~calls:Skip x [ Op.Reduce ] in
+    match List.filter reads (src u) with
+    | [ x ] -> Option.map (List.cons u) (reduce_chain x)
+    | _ -> None
+
+let serial_range q =
+  is Op.Range q
+  && List.mem (axis_type q) Axis_type.[ Weak; Loop ]
+  && not (Dtype.equal (dtype q) Dtype.Void)
+
+(* Whether the loop [rho] of the reduce [r] is [r]'s alone: each node of [r]
+   that computes from it is read inside [r] only, so that a new bound inside [r]
+   leaves no node of the old loop elsewhere. *)
+let own_loop read_by r rho =
+  let inside = backward_slice_with_self ~calls:Skip r in
+  let from_rho = Tbl.create 16 in
+  List.for_all
+    (fun u ->
+      let reads = u == rho || List.exists (Tbl.mem from_rho) (src u) in
+      if reads then Tbl.replace from_rho u ();
+      (not reads) || u == r
+      || List.for_all (fun c -> Nodes.mem c inside) (read_by u))
+    (toposort ~calls:Skip r)
+
+(* [bounded (varying, users) read v] is [v], read once, computed by casts and
+   arithmetic from one reduce that only it reads, with the reduce's outermost
+   serial loop bounded to run only where [read] says, through those of its
+   conditions that are uniform and that read only ranges the reduce runs inside.
+   It is [None] when [v] is not such a value, when no condition is, or when the
+   loop has no bound or is not the reduce's alone, as when another reduce runs
+   over it. *)
+let bounded (varying, users) read v =
+  let ( let* ) = Option.bind in
+  let* path = reduce_chain v in
+  let r = List.nth path (List.length path - 1) in
+  let* rho =
+    List.nth_opt
+      (List.sort compare_range_arg (List.filter serial_range (srcs r)))
+      0
+  in
+  let users = Lazy.force users in
+  let read_by x = Option.value ~default:[] (Tbl.find_opt users x) in
+  (* each node of the path read by the one above it alone, [v] once *)
+  let rec once = function
+    | u :: (x :: _ as rest) -> (
+        match read_by x with [ c ] -> c == u && once rest | _ -> false)
+    | _ -> true
+  in
+  let* () =
+    if
+      List.compare_length_with (read_by v) 1 = 0
+      && once path && own_loop read_by r rho
+    then Some ()
+    else None
+  in
+  let varying = Lazy.force varying in
+  let outside = ranges r in
+  let known q =
+    (not (varying q))
+    && Nodes.fold (fun x ok -> ok && Nodes.mem x outside) (ranges q) true
+  in
+  let n = nth rho 0 in
+  let zero = const_like n (`Int Bigint.zero) in
+  let* trips =
+    match read with
+    | Holds cs -> (
+        match List.filter known cs with
+        | [] -> None
+        | c :: cs ->
+            Some (where (List.fold_left (fun a q -> O.(a land q)) c cs) n zero))
+    | Fails g -> if known g then Some (where g zero n) else None
+  in
+  let rho' = replace rho ~src:[ trips ] in
+  Some (substitute ~calls:Skip ~pass:Fixed_point v [ (rho, rho') ])
+
+(* Each arm of a selection is read only where the selection takes it, so each is
+   bounded alone; a store through an invalid index writes only where its gate
+   holds. *)
+let pm_lift_uniform_gates =
+  pm (fun () ->
+      [
+        rule_ctx (Upat.op Op.Where ~name:"w") (fun ctx m ->
+            let w = m "w" in
+            let g = nth w 0 and x = nth w 1 and e = nth w 2 in
+            if x == e then None
+            else
+              match
+                (bounded ctx (Holds (clauses g)) x, bounded ctx (Fails g) e)
+              with
+              | None, None -> None
+              | x', e' ->
+                  let x = Option.value ~default:x x'
+                  and e = Option.value ~default:e e' in
+                  Some (replace w ~src:[ g; x; e ]));
+        rule_ctx
+          (Upat.op Op.Store ~name:"st" ~allow_any_len:true
+             ~src:Upat.[ op Op.Index ~src:[ wild; var "w" ]; var "v" ])
+          (fun ctx m ->
+            let w = m "w" and st = m "st" in
+            if not (is Op.Where w && is_invalid (nth w 2)) then None
+            else
+              Option.map
+                (fun v ->
+                  replace st
+                    ~src:
+                      (List.mapi (fun i s -> if i = 1 then v else s) (src st)))
+                (bounded ctx (Holds (clauses (nth w 0))) (m "v")));
+      ])
+
+let lift_uniform_gates sink =
+  graph_rewrite ~calls:Skip ~pass:Once
+    ~ctx:(lazy (Uniform.varying sink), lazy (consumers sink))
+    sink (After_sources pm_lift_uniform_gates)
+
 let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   if setting Setting.debug >= 5 then
     print_endline (Render.render_uir (toposort ~calls:Enter ast));
@@ -1233,6 +1393,9 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
          ])
       sink
   in
+  (* a reduce whose result a workgroup-uniform gate selects or stores runs its
+     outer serial loop only where the gate holds *)
+  let sink = lift_uniform_gates sink in
   let sink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(build_range_map sink) sink
       (After_sources expander)

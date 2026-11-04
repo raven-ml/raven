@@ -2137,6 +2137,12 @@ let blocked_rows =
         (any (fun o -> List.exists (fun e -> count o e > 64) groups));
       cover "an empty group"
         (any (fun o -> List.exists (fun e -> count o e = 0) groups));
+      (* Rows in blocks take as many blocks as their groups could need, at
+         least one a group: with a group empty, a block holds padding
+         alone. *)
+      cover "a block of padding alone"
+        (n >= 4 * g
+        && any (fun o -> List.exists (fun e -> count o e = 0) groups));
       cover "a row in no group"
         (any (fun o -> List.fold_left (fun k e -> k + count o e) 0 groups < n));
       cover "a batch axis" (Array.length c.eb > 0);
