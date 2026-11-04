@@ -13,23 +13,17 @@ let unlowered what =
 
 (* Work
 
-   A scatter meets each update at every position along its axis, [n·k] work
-   against eager's [n + k], and an assembly selects each of its [p] pieces at
-   every element, [p·N] against eager's [N + m] for pieces of [m] elements in
-   all. Past [work_bound] times eager's work, a scatter combines in a loop of
-   its own (below), and an assembly is [crowded]: the jit evaluates its
-   program uncompiled where the host can. The bound is a cost model's: below
-   it the extra work is a few comparisons and selects per unit on elements the
-   kernel holds, which the model takes as about what moving each element
-   through memory costs a host core, and as hidden on a GPU. Past it the work
-   outgrows what compiling the rest of the program saves: an embedding's
-   gradient, 512 updates over 50000 rows, would make 2.6e7 comparisons per
-   feature against eager's 5e4. Timed on a host core, the model places
-   neither crossing: a looped scatter is faster from 2 updates into 1024
-   elements and from 8 rows into 4096, and a compiled stack of copied rows
-   is as fast as evaluating it past the bound, while one of rows that
-   compute, which the selections compute again at every element, is ten
-   times slower below it. *)
+   An assembly selects each of its [p] pieces at every element, [p·N] work
+   against eager's [N + m] for pieces of [m] elements in all. Past
+   [work_bound] times eager's work an assembly is [crowded]: the jit
+   evaluates its program uncompiled where the host can. The bound is a cost
+   model's: below it the extra work is a few selects per unit on elements
+   the kernel holds, which the model takes as about what moving each element
+   through memory costs a host core, and as hidden on a GPU. Timed on a host
+   core, the model places no crossing: a compiled stack of copied rows is as
+   fast as evaluating it past the bound, while one of rows that compute,
+   which the selections compute again at every element, is ten times slower
+   below it. *)
 let work_bound = 16
 
 let extents u = List.init (Shape.ndim u) (Bits.extent u)
@@ -49,18 +43,6 @@ let laid s axis v =
   let along = List.init r (fun i -> if i = axis then List.nth s i else 1) in
   Shape.expand (Shape.reshape v (dims along)) (dims s)
 
-(* [joined axis a b] is [a] then [b] along [axis]. Floats join as their bits:
-   tolk's Shape.cat of pieces of unequal extents along the axis adds them, each
-   zero-padded to the whole, and adding the padding's [+0] turns a [-0] into
-   [+0] and quiets a signalling NaN. A Shape.cat that selected each element
-   from its piece would let floats join as they are. *)
-let joined axis a b =
-  match Ops.dtype a with
-  | t when Dtype.is_float t ->
-      let u = Bits.unsigned t in
-      Ops.bitcast (Shape.cat ~axis (Ops.bitcast a u) [ Ops.bitcast b u ]) t
-  | _ -> Shape.cat ~axis a [ b ]
-
 (* [negative_zero u] is whether the float [u] is [-0]: its sign bit alone. *)
 let negative_zero u =
   let b = Bits.bits u in
@@ -74,55 +56,25 @@ let gather d ~axis idx x =
 
 (* Scatters
 
-   Each element of [into] meets each update along [axis] in a mask along a new
-   last axis, true where the update's position is the element's: n x k work for
-   n positions and k updates along [axis]. Updates that land on one element
-   differ only along [axis], so C order of updates is their order along it. *)
-
-(* [summed ca ~landed xs us] is, in the carrier [ca], the sum of each element of
-   [xs] and the updates [us] that land on it, [landed] their mask along a last
-   axis. It is [-0] where every term is, which a sum from tolk's [+0]
-   accumulator would make [+0]. *)
-let summed ca ~landed xs us =
-  let r = Shape.ndim landed - 1 in
-  let terms x u = joined r x (Ops.where landed u (int u 0)) in
-  let sums =
-    Lower_reduce.reduce (Monoid Sum) [ r ] ~src:ca ca
-      (Arith.of_parts ca (List.map2 terms xs us))
-  in
-  let signed (x, u) y =
-    if not (Dtype.is_float (Ops.dtype y)) then y
-    else
-      let other =
-        Ops.bitwise_and landed (Ops.logical_not (negative_zero u))
-      in
-      let other = Shape.rop (Ops.cast other Uint8) Op.Max [ r ] in
-      let x = Shape.reshape x (Shape.shape other) in
-      let none = Ops.eq other (int other 0) in
-      let all = Ops.bitwise_and (negative_zero x) none in
-      Ops.where all (Shape.const_like y (`Float (-0.))) y
-  in
-  Arith.of_parts ca
-    (List.map2 signed (List.combine xs us) (Arith.parts ca (List.hd sums)))
-
-(* Looped scatters
-
-   Past [work_bound], a scatter updates in place, in a kernel of its own,
-   storage that holds [into]: its caller's [dst], such as a fresh buffer that a
-   kernel stored [into] into, one element per thread, or a donated target's own
-   storage, which needs no copy. Storage that holds [into] already, such as a
-   loop's carry, is updated so whatever the bound: a loop's trip then writes
-   only the updates, where a comparison would rewrite every element each trip.
-   [into] is [p·n·q] elements, an axis of [n] between [p] and [q], and the
-   updates [p·k·q]. The axis is cut into runs of positions. For each index of
-   the axes before the axis and each run, a thread walks the [k] updates in C
-   order and combines each that lands in its run with the element it lands
-   on: every element meets its updates in eager's order, and no two threads
-   write one element. Work is [runs·k + n] at each index of the other axes. On
-   the host, the axes after the axis are a serial loop inside the walk, so
-   that an update writes a contiguous row, and positions an expansion repeats
-   along them are read once a row. On a GPU they are threads too, adjacent
-   ones at adjacent addresses.
+   A scatter updates in place, in a kernel of its own, storage that holds
+   [into]: its caller's [dst], such as a fresh buffer that a kernel stored
+   [into] into, one element per thread, or a donated target's or a loop's
+   carry's own storage, which needs no copy: a loop's trip then writes only
+   the updates. [into] is [p·n·q] elements, an axis of [n] between [p] and
+   [q], and the updates [p·k·q]. The axis is cut into runs of positions. For
+   each index of the axes before the axis and each run, a thread walks the
+   [k] updates in C order and combines each that lands in its run with the
+   element it lands on: every element meets its updates in eager's order,
+   and no two threads write one element. Work is [runs·k + n] at each index
+   of the other axes, where a comparison of each element with each update
+   would make [n·k]: 2.6e7 per feature for an embedding's gradient of 512
+   updates over 50000 rows, against eager's 5e4. On the host, the axes after
+   the axis are a serial loop inside the walk, so that an update writes a
+   contiguous row, and positions an expansion repeats along them are read
+   once a row. On a GPU they are threads too, adjacent ones at adjacent
+   addresses. The kernel fuses with neither the one that computes [into] nor
+   its readers: on an RTX 5000 Ada a scatter of a few updates costs one or
+   two launches of about 1.8 µs more than a comparison fused with both.
 
    The host takes one run: at 1024 rows of 64 floats into 4096, one thread's
    walk takes 6 µs, and 16 runs split among its threads take 37 µs. A GPU
@@ -171,11 +123,11 @@ let isqrt k =
   done;
   !r
 
-(* [plan ~host ~threads ~p ~n ~q ~k] is the runs of positions and the chunks
-   of updates a walk takes, for [threads] threads that keep the device busy:
-   chunks where they shorten the walk by more than the two launches they
-   add. *)
-let plan ~host ~threads ~p ~n ~q ~k =
+(* The runs of positions and the chunks of updates a walk takes, for the
+   renderer's [stream_threads] threads that keep the device busy: chunks
+   where they shorten the walk by more than the two launches they add. *)
+let plan ~host (ren : Renderer.t) ~p ~n ~q ~k =
+  let threads = ren.stream_threads in
   let runs c =
     if host then 1
     else Int.min n (Int.min (ceil_div k c) (Int.max 1 (threads / (p * q * c))))
@@ -544,7 +496,7 @@ let looped ~dst ~host (ren : Renderer.t) device (D.Any dt as d)
     | Filled f -> f (flat into)
     | Holding s -> s
   in
-  let runs, chunks = plan ~host ~threads:ren.stream_threads ~p ~n ~q ~k in
+  let runs, chunks = plan ~host ren ~p ~n ~q ~k in
   (* A GPU's thread that carries its element in registers writes its mark
      whether or not an update landed, as does a GPU's merge: their marks need
      no fill. *)
@@ -585,76 +537,12 @@ let looped ~dst ~host (ren : Renderer.t) device (D.Any dt as d)
     let hit = Shape.reshape (List.nth outs 3) (dims s) in
     Ops.where (Ops.ne hit (int hit 0)) (Arith.cast ~src:ca d y) into
 
-let scatter ?dst ~host ren device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
-    ~idx ~updates into =
+let scatter ?dst ~host ren device d c ~axis ~idx ~updates into =
   let s = extents (List.hd (Arith.parts d into)) and t = extents idx in
-  let r = List.length s in
-  let n = List.nth s axis and k = List.nth t axis in
-  let narrow = c = Add && D.is D.Float dt && D.bits dt < 32 in
-  let holding =
-    match dst with Some (Holding _) -> not narrow | _ -> false
-  in
-  if n = 0 || numel t = 0 then into
-  else if holding || n * k > work_bound * (n + k) then
+  if List.nth s axis = 0 || numel t = 0 then into
+  else
     let dst = Option.value dst ~default:(Filled (fresh device)) in
     looped ~dst ~host ren device d c ~axis ~idx ~updates into
-  else
-    let wide = s @ [ k ] in
-    (* A node of [idx]'s shape moved to [wide], its axis [axis] last. *)
-    let spread u =
-      let others = List.filter (( <> ) axis) (List.init r Fun.id) in
-      let one = List.mapi (fun i e -> if i = axis then 1 else e) s @ [ k ] in
-      Shape.expand
-        (Shape.reshape (Shape.permute u (others @ [ axis ])) (dims one))
-        (dims wide)
-    in
-    let own u = Shape.reshape u (dims (s @ [ 1 ])) in
-    let mask =
-      Ops.eq (spread idx) (laid wide axis (Shape.arange ~dtype:Int64 n))
-    in
-    let landed =
-      let m = Shape.rop (Ops.cast mask Uint8) Op.Max [ r ] in
-      Ops.ne m (int m 0)
-    in
-    let kept y =
-      Arith.of_parts d
-        (List.map2 (Ops.where landed) (Arith.parts d y) (Arith.parts d into))
-    in
-    let extreme m =
-      (* [into]'s element, first, then each update, the element standing in
-         for one that does not land. *)
-      let terms x u =
-        let x = own x in
-        joined r x (Ops.where mask (spread u) (Shape.expand x (dims wide)))
-      in
-      let xs = List.map2 terms (Arith.parts d into) (Arith.parts d updates) in
-      let y = Lower_reduce.reduce (Monoid m) [ r ] ~src:d d in
-      kept (List.hd (y (Arith.of_parts d xs)))
-    in
-    match c with
-    | Set ->
-        (* The last update to land, of highest position along [axis], wins:
-           its bits are picked among zeros by an unsigned maximum. *)
-        let order = laid wide r (Shape.arange ~dtype:Int64 k) in
-        let latest =
-          Shape.rop (Ops.where mask order (int order (-1))) Op.Max [ r ]
-        in
-        let last = Ops.eq order (Shape.expand (own latest) (dims wide)) in
-        let pick u =
-          let b = Bits.bits (spread u) in
-          let b = Shape.rop (Ops.where last b (int b 0)) Op.Max [ r ] in
-          Ops.bitcast b (Ops.dtype u)
-        in
-        kept (Arith.of_parts d (List.map pick (Arith.parts d updates)))
-    | Max -> extreme Max
-    | Min -> extreme Min
-    | Add ->
-        if D.is D.Boolean dt then unlowered "a boolean Add Scatter";
-        let ca = Nx_kernel.carrier d in
-        let lift u = Arith.parts ca (Arith.cast ~src:d ca u) in
-        let xs = List.map own (lift into) in
-        let us = List.map spread (lift updates) in
-        kept (Arith.cast ~src:ca d (summed ca ~landed:mask xs us))
 
 (* Folds
 

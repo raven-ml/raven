@@ -23,8 +23,7 @@ val pp : Format.formatter -> t -> unit
 
 val cases : t list
 (** [cases] holds each 16-bit float and [float32] under each combine, at
-    [n = 4] and at [n = 40], past 16 times eager's work, each plain and
-    transposed. *)
+    [n = 4] and at [n = 40], each plain and transposed. *)
 
 val law : (module Nx.Devices) -> t -> unit
 (** [law s c] checks that a scatter compiled on [s]'s first device, with no

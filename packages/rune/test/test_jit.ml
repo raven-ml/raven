@@ -2439,7 +2439,7 @@ let test_pools () =
   done
 
 (* A gather of 1000 reads from 99 positions: its gradient scatters 1000
-   updates into 99 positions, past 16 times eager's work, and compiles. *)
+   updates into 99 positions, and compiles. *)
 let test_dense_scatter () =
   let n = 99 and k = 1000 in
   let at j = Int64.of_int (j * 37 mod n) in
@@ -2455,7 +2455,7 @@ let test_dense_scatter () =
     expected
     (compiled (fun () -> Nx.to_array (Rune.jit' f x)))
 
-(* Scatters past the work bound into a donated target
+(* Scatters into a donated target
 
    A scatter of 48 updates into 40 positions combines in its target's memory:
    the result takes it, and another result that reads the target reads it as
@@ -5389,15 +5389,14 @@ let () =
              test "a gather's gradient into fewer positions compiles"
                test_dense_scatter;
              prop ~count:12 ~examples:Scatters.examples
-               "a scatter past 16 times eager's work compiles to eager's values"
+               "a scatter compiles to eager's values"
                (Gen.with_pp Scatters.pp Scatters.gen)
                (Scatters.law (module Nx.Host));
              Windtrap.cases ~id:(Format.asprintf "%a" Unreached.pp)
                "a scatter keeps the bits of each element no update lands on"
                Unreached.cases
                (Unreached.law (module Nx.Host));
-             test "a scatter past its work bound combines in a donated target"
-               test_long_donated;
+             test "a scatter combines in a donated target" test_long_donated;
              test "a scatter returned twice takes a donated target once"
                test_long_twice;
              test "a scatter into a donated target reshaped combines there"

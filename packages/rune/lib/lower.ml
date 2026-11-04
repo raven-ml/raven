@@ -329,3 +329,5 @@ let op ?dst ~renderer ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t
   | Attention _ ->
       Lower_attention.lower ~device ~renderer:(Lazy.force renderer) node o
   | Check _ -> unlowered (P.name o)
+
+let scatter_plan = Lower_index.plan

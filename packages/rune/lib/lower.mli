@@ -57,3 +57,10 @@ val op :
     scaled in an accumulator other than [float32] or [float64], a reduction
     or a scan of a complex [Prod], and a scan of a [complex128] [Max], [Min]
     or [Arg]. *)
+
+(**/**)
+
+val scatter_plan :
+  host:bool -> Renderer.t -> p:int -> n:int -> q:int -> k:int -> int * int
+(** [scatter_plan] is {!Lower_index.plan}: the runs of positions and the
+    chunks of updates a [Scatter] takes. *)

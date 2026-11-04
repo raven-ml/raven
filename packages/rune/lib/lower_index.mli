@@ -14,10 +14,10 @@
     sort move elements, so they give the bits of nx's kernels, a NaN's sign and
     payload included. So does a scatter where no update lands. A scatter by
     [Max] or [Min] gives nx's bits except at a NaN result, whose sign and
-    payload are unspecified, and a complex one has two NaN parts. A scatter by
-    [Add] wraps integers exactly. Where [n] updates [u1], …, [un] land on an
-    element [x], the float sum of [x] and those updates adds in the carrier
-    ({!Nx_kernel.carrier}) in an association tolk chooses, and rounds once.
+    payload are unspecified. A scatter by [Add] wraps integers exactly. Where
+    [n] updates [u1], …, [un] land on an element [x], the float sum of [x] and
+    those updates adds in the carrier ({!Nx_kernel.carrier}) in an
+    association {!scatter} chooses, and rounds once.
     Before that rounding it is within [γ(n) (|x| + Σ |ui|)] of the exact sum,
     where [γ] is as {!Nx_kernel.section-bounds} defines it for the carrier. Each
     part of a complex sum is such a sum. The sum is [-0] where [x] and every
@@ -27,10 +27,9 @@
     narrow float once, from [float32], while nx's kernel rounds each of its
     additions.
 
-    {b Work.} The work of a scatter and of an assembly grows with their updates
-    or pieces and exceeds that of nx's kernels. Where it would be more than 16
-    times the kernel's, a scatter combines its updates in a loop of its own
-    instead, within that bound ({!scatter}), and an assembly is {!crowded}. *)
+    {b Work.} The work of an assembly grows with its pieces and exceeds that
+    of nx's kernel. Where it would be more than 16 times the kernel's, the
+    assembly is {!crowded}. A scatter's work is {!scatter}'s. *)
 
 open Tolk
 
@@ -40,7 +39,7 @@ val gather : Nx_array.Dtype.any -> axis:int -> Ops.t -> Ops.t -> Ops.t
     and zero bits where a position lies outside the axis. Each element is one
     indexed load. *)
 
-(** The storage a scatter that combines in a kernel of its own combines into. *)
+(** The storage a scatter combines into. *)
 type dst =
   | Filled of (Ops.t -> Ops.t)
       (** [Filled f]: [f v], where [v] is [into]'s parts flat in C order, is
@@ -64,39 +63,38 @@ val scatter :
   updates:Ops.t ->
   Ops.t ->
   Ops.t
-(** [scatter ~dst ~host ren device d c ~axis ~idx ~updates into] is [into], a
-    value of [d], with [updates] combined by [c] at the positions [idx] holds
-    along [axis], as {!Nx_kernel.S.scatter} states, for a program on [device],
-    whose kernels compile for the host's processors where [host] holds
-    ({!Tolk_engine.target}) and are rendered by [ren]. Under [Set], the last
-    update in C order of [updates] wins, whether or not the targets are
-    promised distinct.
+(** [scatter ~dst ~host ren device d combine ~axis ~idx ~updates into] is
+    [into], a value of [d], with [updates] combined by [combine] at the
+    positions [idx] holds along [axis], as {!Nx_kernel.S.scatter} states, for
+    a program on [device], whose kernels compile for the host's processors
+    where [host] holds ({!Tolk_engine.target}) and are rendered by [ren].
+    Under [Set], the last update in C order of [updates] wins, whether or not
+    the targets are promised distinct.
 
     For [n] positions and [k] updates along [axis], nx's kernel stores [n + k]
-    elements. Where [n k <= 16 (n + k)], unless [dst] is [Holding] and the
-    scatter is not a narrow float's [Add], the scatter compares each element of
-    [into] with each update along [axis], [n k] comparisons, in kernels it
-    shares with its neighbours. Otherwise it combines the updates in a kernel of
-    its own, into storage that holds [into], each element taking its updates in
-    C order: [n + k] work at each index of the other axes where [host] holds,
-    and at most [n + r k] elsewhere, for [r <= min n k] runs of positions,
-    as many as keep [ren]'s [stream_threads] busy; [n] of it fills the
-    storage, none where [dst] is [Holding]. Where the [m] elements of [into]
-    are fewer than [stream_threads], about [√k] chunks of consecutive updates,
-    [c] chunks with [c m <= stream_threads], each combine apart into storage
-    of their own, and the chunks combine in their order: [c m] more work, and
+    elements. The scatter combines the updates in a kernel of its own, into
+    storage that holds [into], each thread walking its updates in C order:
+    [n + k] work at each index of the other axes where [host] holds, and at
+    most [n + r k] elsewhere, for [r <= min n k] runs of positions, as many as
+    keep [ren]'s [stream_threads] busy; [n] of it fills the storage, none
+    where [dst] is [Holding]. Where the [m] elements of [into] are fewer than
+    [stream_threads], threads take [h] chunks of about [√k] consecutive
+    updates, [h m <= stream_threads], each chunk combined apart into storage
+    of its own, then the chunks in their order: [h m] more work, and up to
     two more kernels, where the chunks shorten each thread's walk by more
-    than those kernels cost. There, a narrow float's [Add] sums in a
-    [float32] copy of [into] and marks where updates land in a byte per
-    element of [into].
+    than those kernels cost ({!plan}). An element then takes [Set]'s last
+    update and [Max]'s or [Min]'s extreme as in C order, and [Add]'s sum of
+    each chunk's updates in C order, the chunks' sums in order. A narrow
+    float's [Add] sums in a [float32] copy of [into] and marks where updates
+    land in a byte per element of [into].
 
-    Every other combine of that form combines into [dst]'s storage, and the
-    result is that storage once combined. The scatter writes over it, so no
-    value but the result may lie in it once the scatter's kernel runs: it is
-    fresh storage, a donated argument's that the result takes, or a carry's
-    that the result replaces, each value that reads the argument or carry as it
-    was reading it before. [dst] defaults to [Filled] by a fresh buffer that
-    [into] is stored into.
+    Other combines combine into [dst]'s storage, and the result is that
+    storage once combined. The scatter writes over it, so no value but the
+    result may lie in it once the scatter's kernel runs: it is fresh storage,
+    a donated argument's that the result takes, or a carry's that the result
+    replaces, each value that reads the argument or carry as it was reading it
+    before. [dst] defaults to [Filled] by a fresh buffer that [into] is stored
+    into.
 
     Raises [Invalid_argument] for a boolean [Add]. *)
 
@@ -148,11 +146,20 @@ val sort :
 
 val unique :
   host:bool -> Renderer.t -> Ops.device -> size:int -> Ops.t -> Ops.t array
-(** [unique ~host ~threads device ~size keys] is the numbering of the rows of the
+(** [unique ~host ren device ~size keys] is the numbering of the rows of the
     [int64] node [keys], of [[n; w]], as {!Nx_kernel.S.unique} states: [ids],
     [first] and [counts] of [size] entries, and [count], 0-d, for a program
     on [device] whose kernels compile for the host's processors where [host]
-    holds, keeping it busy with [threads] threads. It sorts the rows stably by {!sort}, a sort of [n] [uint64] words
-    for each column, then scatters by {!scatter}: [O(w n log² n)] work.
+    holds and are rendered by [ren]. It sorts the rows stably by {!sort}, a
+    sort of [n] [uint64] words for each column, then scatters by {!scatter}:
+    [O(w n log² n)] work.
 
     Raises [Invalid_argument] for more than [2{^31}] rows. *)
+
+(**/**)
+
+val plan :
+  host:bool -> Renderer.t -> p:int -> n:int -> q:int -> k:int -> int * int
+(** [plan ~host ren ~p ~n ~q ~k] is the runs of positions and the chunks of
+    updates that {!scatter} takes for [into] of [p·n·q] elements, an axis of
+    [n] between [p] and [q], under [p·k·q] updates. *)

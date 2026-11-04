@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (** Scatters along the middle axis of three: 33 to 48 updates over 33 to 40
-    positions, 1800 to 2400 updates over 17 to 20 positions, which
-    threads take in chunks, and scatters into a donated target, updated in place, of
-    1 to 48 updates. *)
+    positions, 1800 to 2400 updates over 1, 2 or 17 to 20 positions, which
+    threads take in chunks, and scatters into a donated target, updated in
+    place, of 1 to 48 updates. *)
 
 (** The type for how the positions reach the scatter: as drawn, or broadcast
     or transposed inside the traced function from fewer elements. *)
@@ -46,7 +46,7 @@ val examples : t list
     kind of {!positions}, with its target donated, of one or a few updates
     into a donated target, with its updates an offset view, of each narrow
     float's [Add] and each complex combine, and of many updates into few
-    targets. *)
+    targets and into 200. *)
 
 val law : ?flushes:bool -> (module Nx.Devices) -> t -> unit
 (** [law ~flushes s c] checks that a compiled call on [s]'s first device gives

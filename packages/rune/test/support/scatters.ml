@@ -144,9 +144,11 @@ let gen =
   (* A quarter of the cases scatter many updates into few targets, which the
      threads take in chunks. *)
   let* few = frequency [ (3, constant false); (1, constant true) ] in
-  let* n = if few then int_range 17 20 else int_range 33 40 in
-  (* A donated target is updated in place whatever the bound, so it also
-     draws few updates. *)
+  let* n =
+    if few then frequency [ (1, int_range 1 2); (1, int_range 17 20) ]
+    else int_range 33 40
+  in
+  (* A donated target is updated in place, so it also draws few updates. *)
   let* donated = bool in
   let* k =
     if few then int_range 1800 2400
@@ -199,7 +201,7 @@ let example i (d, (combine : Nx.combine), positions, offset, donated, n, k) =
     if offset then operand (Offset 2) (numel t + 2) else operand Plain (numel t)
   in
   let updates =
-    if exactly d combine && n <= 20 then quiet d updates else updates
+    if exactly d combine && k >= 1800 then quiet d updates else updates
   in
   let m = numel (drawn positions t) in
   {
@@ -234,11 +236,13 @@ let examples =
         (Any Nx.bfloat16, Set, Trailing, false, true, 33, 1);
         (Any Nx.int32, Add, Full, false, true, 33, 3);
         (Any Nx.float32, Add, Full, false, false, 17, 2000);
-        (Any Nx.float16, Add, Trailing, true, true, 20, 1999);
-        (Any Nx.complex64, Max, Leading, false, false, 18, 2001);
+        (Any Nx.float16, Add, Trailing, true, true, 2, 1999);
+        (Any Nx.complex64, Max, Leading, false, false, 2, 2001);
         (Any Nx.int32, Set, Transposed, false, true, 17, 2000);
-        (Any Nx.uint64, Min, Full, false, false, 19, 1800);
-        (Any Nx.bool, Set, Trailing, false, false, 17, 1900);
+        (Any Nx.uint64, Min, Full, false, false, 1, 1800);
+        (Any Nx.bool, Set, Trailing, false, false, 2, 1900);
+        (Any Nx.float32, Add, Full, false, false, 200, 2000);
+        (Any Nx.int32, Set, Trailing, false, true, 200, 2000);
       ]
 
 (* The law *)

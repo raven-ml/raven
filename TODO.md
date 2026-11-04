@@ -162,7 +162,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   saves little (one wave of uneven workgroups); RDNA4 and Metal core paths
 - a fresh process's first calls fault 72-188 pages each for 1 MiB results
   until rig's buffer cache warms
-- `Jit/scatter-1024x16` runs 18.8-25.0 µs against its 7.98 µs baseline
 - jera's compiled rows gain 2-8 words, one launch per stored piece of an
   assembly
 

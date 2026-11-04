@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Rune.jit on this machine's first GPU: a scatter or an assembly past its
-   work bound gives the host's eager values, a scatter keeps the bits of each
+(* Rune.jit on this machine's first GPU: a scatter, and an assembly past its
+   work bound, give the host's eager values, a scatter keeps the bits of each
    element no update lands on, a cast between float32 and a 16-bit float gives
    eager's bits at every code and tie, a product of narrow floats or of MXFP4
    weights holds its bound, a call's check raises at the next wait, so the
@@ -907,7 +907,7 @@ let () =
          group "scatters"
            [
              prop ~count:4 ~examples:Scatters.examples
-               "a scatter past 16 times eager's work compiles to eager's values"
+               "a scatter compiles to eager's values"
                (Gen.with_pp Scatters.pp Scatters.gen)
                law;
              Windtrap.cases ~id:(Format.asprintf "%a" Unreached.pp)

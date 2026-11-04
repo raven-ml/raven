@@ -649,36 +649,46 @@ let distinct n t axis pos =
   done;
   pos
 
-(* Many updates into few targets: 17 to 20 positions under 1800 to 2400
-   updates, enough that the host's threads take the updates in chunks
-   ({!Rune.Lower_index.scatter}). *)
-let few_targets = 20
+(* The kinds of scatters drawn: of shapes as drawn; of 33 to 40 positions
+   under 33 to 48 updates, along an axis between two others; of 1, 2 or 17 to
+   20 positions under 1800 to 2400 updates, enough that the host's threads
+   take the updates in chunks ({!Rune.Lower_index.scatter}). *)
+type kind = Drawn | Long | Few
 
-(* [scatter_case ~long dts combines] draws a scatter of [dts] by [combines].
-   Where [long], its axis has 33 to 40 positions under 33 to 48 updates, past
-   16 times eager's work: [n k > 16 (n + k)] iff [(n - 16) (k - 16) > 256].
-   Otherwise a third of the cases scatter many updates into few targets. *)
-let scatter_case ?(long = false) dts combines =
+let few_targets = 20
+let host_renderer = lazy (Tolk_engine.renderer Rig.host)
+
+(* [scatter_case dts combines] draws a scatter of [dts] by [combines], of each
+   kind. *)
+let scatter_case dts combines =
   let open Gen in
   let* d = among dts in
   let* combine = among combines in
   let* unique = bool in
-  let* few =
-    if long then constant false
-    else frequency [ (2, constant false); (1, constant true) ]
+  let* kind =
+    frequency [ (3, constant Drawn); (1, constant Long); (2, constant Few) ]
   in
-  let* s = if few then map (Array.map (min 2)) shape else shape in
+  let* s =
+    match kind with
+    | Drawn -> shape
+    | Long -> map Array.of_list (list ~size:(constant 3) extent)
+    | Few -> map (Array.map (min 2)) shape
+  in
   let* view = among views in
-  let* axis = int_range 0 (Array.length s - 1) in
+  let* axis =
+    if kind = Long then constant 1 else int_range 0 (Array.length s - 1)
+  in
   let* n =
-    if long then int_range 33 40
-    else if few then int_range 17 few_targets
-    else constant s.(axis)
+    match kind with
+    | Drawn -> constant s.(axis)
+    | Long -> int_range 33 40
+    | Few -> frequency [ (1, int_range 1 2); (1, int_range 17 few_targets) ]
   in
   let* m =
-    if long then int_range 33 48
-    else if few then int_range 1800 2400
-    else extent
+    match kind with
+    | Drawn -> extent
+    | Long -> int_range 33 48
+    | Few -> int_range 1800 2400
   in
   let s = Array.mapi (fun i e -> if i = axis then n else e) s in
   let t = Array.mapi (fun i n -> if i = axis then m else n) s in
@@ -754,7 +764,17 @@ let scattered (type v s) (dt : (v, s) D.t) c =
   in
   (into, updates, op)
 
-let cover_scatter ?booleans ?(long = false) c =
+(* Whether the host's plan, which Lowered compiles for, takes [c]'s updates in
+   chunks. *)
+let chunked c =
+  let s = c.s_shape and axis = c.s_axis in
+  let n = s.(axis) and k = c.s_idx.(axis) in
+  let p = numel (Array.sub s 0 axis) in
+  let q = numel (Array.sub s (axis + 1) (Array.length s - axis - 1)) in
+  let plan = Rune.Lower.scatter_plan ~host:true (Lazy.force host_renderer) in
+  numel c.s_idx > 0 && n * p * q > 0 && snd (plan ~p ~n ~q ~k) > 1
+
+let cover_scatter ?booleans c =
   dtype_covers ?booleans c.s_dt;
   cover_floats c.s_dt (Array.append c.s_into c.s_updates);
   cover "a strided or broadcast view" (c.s_view <> Plain);
@@ -763,15 +783,17 @@ let cover_scatter ?booleans ?(long = false) c =
   cover "two updates on one element" (collide c);
   cover "unique" c.s_unique;
   cover "no update" (numel c.s_idx = 0);
-  if not long then begin
-    let n = c.s_shape.(c.s_axis) and k = c.s_idx.(c.s_axis) in
-    cover "one target" (n = 1 && numel c.s_idx > 0);
-    cover "few targets under many updates"
-      (n >= 17 && n <= few_targets && k >= 1800 && numel c.s_idx > 0)
-  end;
-  if long then
-    cover "an axis between two others"
-      (c.s_axis > 0 && c.s_axis < Array.length c.s_shape - 1)
+  let n = c.s_shape.(c.s_axis) and k = c.s_idx.(c.s_axis) in
+  let some = numel c.s_idx > 0 in
+  cover "one target" (n = 1 && some);
+  cover "one or two targets under many updates" (n <= 2 && k >= 1800 && some);
+  cover "17 to 20 targets under many updates"
+    (n >= 17 && n <= few_targets && k >= 1800 && some);
+  cover "updates taken in chunks" (chunked c);
+  cover "an axis between two others, past 32 positions and updates"
+    (c.s_axis > 0
+    && c.s_axis < Array.length c.s_shape - 1
+    && n > 32 && k > 32 && some)
 
 let scatter_example i d combine =
   let s = [| 3; 4 |] and axis = i mod 2 in
@@ -819,9 +841,9 @@ let scatter_examples dts combines =
         scatter_example i d (List.nth combines (i mod List.length combines)))
       dts
 
-let moved ?long combines c =
+let moved combines c =
   let (D.Any dt) = c.s_dt in
-  cover_scatter ?long c;
+  cover_scatter c;
   List.iter (fun k -> cover (combine_name k) (c.s_combine = k)) combines;
   let _, _, op = scattered dt c in
   let e, l = exact dt op in
@@ -834,13 +856,14 @@ let moved ?long combines c =
   in
   equal (array string) (Array.mapi shown e) (Array.mapi shown l)
 
-(* Each dtype past the work bound, along an axis between two others, the
-   combines in turn; a float32 target of both zeros and a signalling NaN under
-   40 [-0] updates, all on its first two elements, for each combine; and a
-   target without elements. *)
-let long_examples dts combines =
-  let example i d =
-    let s = [| 2; 33; 3 |] and t = [| 2; 40; 3 |] in
+(* Each dtype along an axis between two others of 33 positions under 40
+   updates, and into 2 positions under 1900, the combines in turn; a float32
+   target of both zeros and a signalling NaN under [-0] updates, all on its
+   first two elements, 40 of them and 1900, for each combine; and a target
+   without elements. *)
+let kind_examples dts combines =
+  let example ~n ~k i d =
+    let s = [| 2; n; 3 |] and t = [| 2; k; 3 |] in
     let view = List.nth views (i mod 4) in
     {
       s_dt = d;
@@ -850,28 +873,28 @@ let long_examples dts combines =
       s_view = view;
       s_axis = 1;
       s_idx = t;
-      s_pos = example_positions 33 (numel t);
+      s_pos = example_positions n (numel t);
       s_into = cycled ~i d (numel (base view s));
       s_updates = cycled ~i:(i + 3) d (numel t);
     }
   in
-  let zeros combine =
+  let zeros ~n ~k combine =
     let z = zero_example combine in
-    let into = Array.make 33 0x3f800000L in
+    let into = Array.make n 0x3f800000L in
     into.(0) <- 0x80000000L;
     into.(1) <- 0L;
     into.(2) <- 0x7f800001L;
     {
       z with
-      s_shape = [| 33 |];
-      s_idx = [| 40 |];
-      s_pos = Array.init 40 (fun j -> Int64.of_int (j mod 2));
+      s_shape = [| n |];
+      s_idx = [| k |];
+      s_pos = Array.init k (fun j -> Int64.of_int (j mod 2));
       s_into = into;
-      s_updates = Array.make 40 0x80000000L;
+      s_updates = Array.make k 0x80000000L;
     }
   in
   let none =
-    let e = example 0 (List.hd dts) in
+    let e = example ~n:33 ~k:40 0 (List.hd dts) in
     {
       e with
       s_shape = [| 0; 33; 3 |];
@@ -882,22 +905,19 @@ let long_examples dts combines =
       s_updates = [||];
     }
   in
-  none :: List.map zeros combines @ List.mapi example dts
+  (none :: List.map (zeros ~n:33 ~k:40) combines)
+  @ List.map (zeros ~n:3 ~k:1900) combines
+  @ List.mapi (example ~n:33 ~k:40) dts
+  @ List.mapi (example ~n:2 ~k:1900) dts
 
 let scatters_moved =
-  prop ~count:40
-    ~examples:(scatter_examples D.all [ Set; Max; Min ])
+  prop ~count:60
+    ~examples:
+      (scatter_examples D.all [ Set; Max; Min ]
+      @ kind_examples D.all [ Set; Max; Min ])
     "a scatter by Set, Max or Min gives eager's bits"
     (Gen.with_pp pp_scatter (scatter_case D.all [ Set; Max; Min ]))
     (moved [ Set; Max; Min ])
-
-let scatters_moved_long =
-  prop ~count:40
-    ~examples:(long_examples D.all [ Set; Max; Min ])
-    "a scatter by Set, Max or Min past 16 times eager's work gives eager's \
-     bits"
-    (Gen.with_pp pp_scatter (scatter_case ~long:true D.all [ Set; Max; Min ]))
-    (moved ~long:true [ Set; Max; Min ])
 
 let addable = List.filter (fun d -> not (is_bool d)) D.all
 
@@ -927,9 +947,9 @@ let zero_target ~negative c into updates =
       List.exists hit (List.init (Array.length x) Fun.id))
     (parts64 into) (parts64 updates)
 
-let added ?long c =
+let added c =
   let (D.Any dt) = c.s_dt in
-  cover_scatter ?long ~booleans:false c;
+  cover_scatter ~booleans:false c;
   cover "a narrow float" (is_narrow c.s_dt);
   let into, updates, op = scattered dt c in
   let floats = is_float c.s_dt || is_complex c.s_dt in
@@ -953,18 +973,11 @@ let added ?long c =
   end
 
 let scatter_adds =
-  prop ~count:40
-    ~examples:(scatter_examples addable [ Add ])
+  prop ~count:60
+    ~examples:(scatter_examples addable [ Add ] @ kind_examples addable [ Add ])
     "a scatter by Add wraps integers and holds its float bound"
     (Gen.with_pp pp_scatter (scatter_case addable [ Add ]))
     added
-
-let scatter_adds_long =
-  prop ~count:40
-    ~examples:(long_examples addable [ Add ])
-    "a scatter by Add past 16 times eager's work holds its bound"
-    (Gen.with_pp pp_scatter (scatter_case ~long:true addable [ Add ]))
-    (added ~long:true)
 
 (* Elements no update lands on
 
@@ -1022,20 +1035,18 @@ let signalling =
       Any Complex128;
     ]
 
-(* A scatter by any combine, a quarter of them past 16 times eager's work, and
-   whether it is. *)
+(* A scatter of each kind ({!scatter_case}) by any combine. *)
 let unreached_case =
   let open Gen in
   let dts = D.all @ List.concat (List.init 4 (fun _ -> signalling)) in
-  let* long = frequency [ (3, constant false); (1, constant true) ] in
-  let* c = scatter_case ~long dts [ Set; Add; Max; Min ] in
+  let* c = scatter_case dts [ Set; Add; Max; Min ] in
   let c =
     if is_bool c.s_dt && c.s_combine = Add then { c with s_combine = Set }
     else c
   in
   let n = raws_of c.s_dt (numel (base c.s_view c.s_shape)) in
   let+ into = array ~size:(constant n) (marked c.s_dt) in
-  (long, { c with s_into = into })
+  { c with s_into = into }
 
 (* For each 16-bit float and each combine, a target of [[4; 4; 4]] read
    transposed, its elements cycling through signalling NaNs of both signs, a
@@ -1045,19 +1056,18 @@ let unreached_case =
 let unreached_examples =
   let example (d, pool, update) combine =
     let s = [| 4; 4; 4 |] in
-    ( false,
-      {
-        s_dt = d;
-        s_combine = combine;
-        s_unique = false;
-        s_shape = s;
-        s_view = Transposed;
-        s_axis = 0;
-        s_idx = s;
-        s_pos = Array.make 64 0L;
-        s_into = Array.init 64 (fun j -> pool.(j mod Array.length pool));
-        s_updates = Array.make 64 update;
-      } )
+    {
+      s_dt = d;
+      s_combine = combine;
+      s_unique = false;
+      s_shape = s;
+      s_view = Transposed;
+      s_axis = 0;
+      s_idx = s;
+      s_pos = Array.make 64 0L;
+      s_into = Array.init 64 (fun j -> pool.(j mod Array.length pool));
+      s_updates = Array.make 64 update;
+    }
   in
   List.concat_map
     (fun d -> List.map (example d) [ K.Set; Add; Max; Min ])
@@ -1083,18 +1093,14 @@ let negative_zero (type v s) (dt : (v, s) D.t) h =
   | _ -> false
 
 let unreached =
-  let pp ppf (long, c) =
-    Format.fprintf ppf "%s%a" (if long then "long " else "") pp_scatter c
-  in
   prop ~count:60 ~examples:unreached_examples
     "a scatter keeps the bits of each element no update lands on"
-    (Gen.with_pp pp unreached_case)
-    (fun (long, c) ->
+    (Gen.with_pp pp_scatter unreached_case) (fun c ->
       let (D.Any dt) = c.s_dt in
       List.iter
         (fun k -> cover (combine_name k) (c.s_combine = k))
         [ K.Set; Add; Max; Min ];
-      cover "past 16 times eager's work" long;
+      cover "updates taken in chunks" (chunked c);
       cover "a strided or broadcast view" (c.s_view <> Plain);
       let into, _, op = scattered dt c in
       let count = landed c in
@@ -1662,27 +1668,9 @@ let spots p () =
          pieces = List.init p piece;
        })
 
-(* A scatter of [k] updates by [combine] over a line of [n] positions. *)
-let line_by combine n k () =
-  let into = Nx.create D.Float32 [| n |] (Array.make n 0.) in
-  let idx =
-    Nx.create D.Int64 [| k |] (Array.init k (fun j -> Int64.of_int (j mod n)))
-  in
-  let updates = Nx.create D.Float32 [| k |] (Array.init k Float.of_int) in
-  P.eval ~by:"t"
-    (P.Scatter { combine; unique = false; axis = 0; idx; updates; into })
-
 let work_bounds =
-  test
-    "a scatter or an assembly past 16 times eager's work gives eager's bits"
-    (fun () ->
-      (* [32·32 = 16 (32 + 32) < 33·33], [21·64 <= 16 (64 + 21) < 22·64]. *)
-      List.iter
-        (fun c ->
-          same_bits D.Float32 (line_by c 32 32);
-          same_bits D.Float32 (line_by c 33 33);
-          same_bits D.Float32 (line_by c 99 1000))
-        [ K.Set; Add; Max; Min ];
+  test "an assembly past 16 times eager's work gives eager's bits" (fun () ->
+      (* [21·64 <= 16 (64 + 21) < 22·64]. *)
       same_bits D.Float32 (spots 21);
       same_bits D.Float32 (spots 22))
 
@@ -1691,14 +1679,7 @@ let () =
     (run "Lower_index"
        [
          group "gathers and scatters"
-           [
-             gathers;
-             scatters_moved;
-             scatter_adds;
-             scatters_moved_long;
-             scatter_adds_long;
-             unreached;
-           ];
+           [ gathers; scatters_moved; scatter_adds; unreached ];
          group "folds and assemblies" [ folds; assemblies ];
          group "sorts" [ sorts ];
          group "work bounds" [ work_bounds ];

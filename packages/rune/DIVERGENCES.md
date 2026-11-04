@@ -732,7 +732,7 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 
 - **Reference:** `mixin/op.py:773` (`cat`: each piece zero-padded to the whole,
   the pieces summed).
-- **Raven:** `lower_index.ml` (`assemble`, `placed`, `joined`, `crowded`);
+- **Raven:** `lower_index.ml` (`assemble`, `placed`, `crowded`);
   `compile.ml` (`issue`, `assembled`).
 - **Differs:** an assembly places each piece at its region and selects it with
   `where` over the pieces before it, floats as their bits; empty pieces are
@@ -777,8 +777,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
     (three interleaved runs each). Trading the memory against that time
     needs a design.
 - **Pinned by:** `Lower_index › folds and assemblies › an assembly gives
-  eager's bits`, `Lower_index › work bounds › a scatter or an assembly past
-  16 times eager's work gives eager's bits`, `Jit › jit › a stack of 33 rows
+  eager's bits`, `Lower_index › work bounds › an assembly past 16 times
+  eager's work gives eager's bits`, `Jit › jit › a stack of 33 rows
   on the host is evaluated`, `Jit_gpu › assemblies › an assembly past 16
   times eager's work compiles to eager's bits`,
   `Jit_devices › assemblies give eager's bits › *`, `Jit › fully sharded ›
@@ -805,57 +805,45 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reference:** `mixin/op.py:1100` (`_pre_scatter`), `:1150`
   (`scatter_reduce` sum: the masked updates summed, then `x` added), `:1191`
   (`scatter` through `_masked_merge`, one `where` per update along the axis).
-- **Raven:** `lower_index.ml` (`scatter`, `summed`, `looped`, `walk`).
-- **Differs:** each element meets each update along the axis in a mask.
-  - A position no update reaches is `x`'s element, selected on the mask of
-    reached positions; the reference adds `x` to a sum of zeros there, which
-    turns a `-0.` into `+0.`.
-  - `Add`: `x` and its updates summed in the carrier and rounded once, `-0.`
-    where every term is; integers wrap on the unsigned pattern (R2).
-  - `Set`: the bits of the update of highest position along the axis that
-    reaches a position, picked among zeros by an unsigned `Max` in one
-    reduction. The reference's chain of one `where` per update grows the graph
-    with the updates.
-  - `Max`, `Min`: R3's extreme of `x` and the updates that reach it.
-  - Past 16 times eager's work (`n k > 16 (n + k)`, `n` positions and `k`
-    updates along the axis), or where the destination's storage holds `x`
-    already, as a loop's carry or a donated argument does, the scatter
-    updates that storage in place in a kernel of its own (`looped`, `walk`):
-    each thread takes a run of positions and walks the updates in C order,
-    combining each that lands in its run, for `runs k + n` work. The
-    reference has no such kernel.
+- **Raven:** `lower_index.ml` (`scatter`, `looped`, `walk`, `merge`).
+- **Differs:** every scatter combines in a kernel of its own, into storage
+  that holds `x`, where the reference meets each element with each update
+  in a mask, `n k` work for `n` positions and `k` updates along the axis.
+  - Threads take runs of positions and walk the updates in C order,
+    combining each that lands in their run, for `runs k + n` work; a
+    position no update reaches keeps `x`'s bits, which the reference's sum
+    of zeros turns from `-0.` into `+0.`.
+  - Where the targets are few, threads take chunks of the updates in C
+    order, each combined apart, and the chunks combine in chunk order.
+  - `Set`: the last update in C order that reaches a position. `Max`,
+    `Min`: the extreme of `x` and those updates, as `Nx.maximum` and
+    `Nx.minimum` compile.
+  - `Add`: from `x`, in the carrier, each chunk's updates in C order, then
+    the chunks' sums in order; integers wrap on the unsigned pattern (R2).
 - **nx:** `nx_kernel.mli`, `scatter`: `into` where no update lands, bits
-  unchanged.
-- **Class:** exact; rounded sum for float `Add`.
-- **Reason:** (b).
-  - The kernel that walks the updates past the bound: (d), by
-    `Jit/take-grad-1024-of-4096x64` (an embedding's gradient) and
-    `Jit/scatter-1024-rows-into-donated-4096x64` (a donated table) in
-    `rune.thumper`.
-  - Below the bound, into a carry's or a donated argument's storage: none
-    until wall-time baselines of `Jit/scatter-16-rows-into-donated-4096x64`
-    and `JitLoops/iterate-64-rows-into-4096x64-replay` are recorded with the
-    kernel, the first's being the comparison's and the second's missing;
-    then (d) by them. On fudge, three interleaved runs each, they take 1.6
-    to 6.9 µs and 158 to 276 µs, against 766 to 1040 µs and 1.02 to 1.89 ms
-    with the comparison of every element.
-  - The bound of 16 itself: none, and timing contradicts it. In a probe on
-    fudge's host (medians of 11, two interleaved runs), a fresh scatter of
-    `k` updates into 1024 elements takes 2.3 to 2.5 µs looped from `k = 2`
-    against 3.2 to 8.0 µs compared up to `k = 16`; `k` rows of 64 into 4096
-    take 66 to 94 µs looped against 212 to 573 µs compared from `k = 8` to
-    16. At `k = 1`, and at 4 rows, the runs overlap. On the RTX 5000 Ada
-    both forms take 10 to 28 µs up to 17 updates, within each other's
-    noise. Lowering the bound, or one looped form for every scatter, needs
-    a design.
+  unchanged; `Add` from `x`, its association the library's.
+- **Class:** exact for `Set`, `Max` and `Min`, a NaN result's bits as
+  `rune.mli` states; a rounded sum within `γ(n)` for float `Add`.
+- **Reason:** (b) for `Set`'s last update and `Add` from `x`; (d) for the
+  kernel of its own, by `Jit/take-grad-1024-of-4096x64` (an embedding's
+  gradient), `Jit/scatter-1024-rows-into-donated-4096x64` (a donated
+  table), `Jit/scatter-1024x16`, `Jit/scatter-add-1048576-into-16` (host
+  and `Cuda/`) and `Jit/scan-scatter-64-trips` in `rune.thumper`, the last
+  three and `Jit/scatter-16-rows-into-donated-4096x64` once their
+  baselines are recorded with the kernel. On fudge, interleaved, the
+  comparison of every element with every update took 2.8 to 3.1 ms on the
+  RTX 5000 Ada and 1.4 to 4.1 ms on the host for 2^20 updates into 16
+  targets, the chunked walk 63 to 65 µs and 109 to 264 µs; on the GPU a
+  scatter of a few updates costs one or two launches more than a
+  comparison fused with its target and reader, and a scan's step that
+  scatters into a fresh target two more a trip.
 - **Pinned by:** `Lower_index › gathers and scatters › a scatter by Set, Max
   or Min gives eager's bits`, `› a scatter by Add wraps integers and holds its
-  float bound`, `› a scatter by Set, Max or Min past 16 times eager's work
-  gives eager's bits`, `› a scatter by Add past 16 times eager's work holds
-  its bound`, `› a scatter keeps the bits of each element no update lands
-  on`; `Lower_index › work bounds › a scatter or an assembly past 16 times
-  eager's work gives eager's bits`; `Rune.jit`'s `a scatter keeps the bits of
-  each element no update lands on`, on the host and on a GPU.
+  float bound`, `› a scatter keeps the bits of each element no update lands
+  on`; `Jit › jit › a scatter compiles to eager's values`; `Rune.jit on a GPU
+  › scatters › a scatter compiles to eager's values`; `Rune.jit`'s `a scatter
+  keeps the bits of each element no update lands on`, on the host and on a
+  GPU.
 
 ### I6. Fold
 

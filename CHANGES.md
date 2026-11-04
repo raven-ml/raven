@@ -373,13 +373,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
-- A scatter under `Rune.jit` that combines in a kernel of its own takes many
-  updates into few targets in chunks, combined apart then in order, and on a
-  GPU fills workgroups, where one thread walked every update of a target.
+- `Rune.jit` walks every scatter's updates in a kernel of its own, many updates
+  into few targets in chunks, where it compared each element with each update:
+  2^20 updates into 16 targets take 0.06 ms on an RTX 5000 Ada, against 2.8.
 - A compiled `Nx.scatter` of a float16 on the host keeps a signalling NaN
   where no update lands. One of its forms selected the target's elements in
   float32, which quieted it.
-
 - `Nx.attention` differentiates through one construct of its own, linear in
   the tangents and transposed by flipping it, which recomputes each pair's
   weight from `lse`: reverse mode keeps the call's operands, `o` and `lse`,
