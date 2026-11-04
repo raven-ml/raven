@@ -1,0 +1,23 @@
+#!/bin/sh
+#---------------------------------------------------------------------------
+#  Copyright (c) 2026 The Raven authors. All rights reserved.
+#  SPDX-License-Identifier: ISC
+#---------------------------------------------------------------------------
+
+# [state PID STATE] returns once ps shows process PID in STATE, such as T,
+# stopped, or Z, exited and not reaped. A signal is pending when kill
+# returns, and takes effect only once the process runs: a test that stops
+# a process waits here before what the stop must precede. After 60 s it
+# fails, printing the process: a hang guard, never a bound on the code's
+# time.
+
+i=0
+until ps -o stat= -p "$1" | grep -q "^[[:space:]]*$2"; do
+  i=$((i + 1))
+  if [ $i -gt 600 ]; then
+    echo "state: process $1 not in state $2 after 60 s:" >&2
+    ps -o pid,ppid,stat,command -p "$1" >&2
+    exit 1
+  fi
+  sleep 0.1
+done

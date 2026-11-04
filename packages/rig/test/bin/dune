@@ -12,6 +12,7 @@
   support/ssh
   support/curl
   support/await
+  support/state
   support/gone
   support/ctl.exe
   support/firmware_test.exe

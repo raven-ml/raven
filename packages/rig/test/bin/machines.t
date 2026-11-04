@@ -51,7 +51,9 @@ finds no other agent there.
   rig: b answers; restarting the job (1 of 3)
 
 The same, with the old agent stopped instead: the job learns of it from
-its silence, and b's new agent waits until the old one ends.
+its silence, and b's new agent waits until the old one ends. The test
+waits for the stop to take effect before it kills the half, whose end
+would otherwise end an agent still running.
 
   $ rm attempts out err
   $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
@@ -59,6 +61,7 @@ its silence, and b's new agent waits until the old one ends.
   $ ./support/await out joined
   $ old=$(agent_of b)
   $ kill -STOP $old
+  $ ./support/state $old T
   $ kill -KILL $(cat machines/b/pid)
   $ ./support/await err "rig: b runs another agent"
   $ kill -KILL $old

@@ -11,28 +11,16 @@ until the runner resumes and reaps it.
   $ host b 127.0.0.1
   $ host c ::1
   $ agent_of() { cat machines/$1/rig-agent-$(id -u).lock; }
-  $ await_state() {
-  >   i=0
-  >   until ps -o stat= -p "$1" | grep -q "^[[:space:]]*$2"; do
-  >     i=$((i + 1))
-  >     if [ "$i" -ge 600 ]; then
-  >       echo "process $1 did not reach state $2:" >&2
-  >       ps -o pid,ppid,stat,command -p "$1" >&2
-  >       return 1
-  >     fi
-  >     sleep 0.1
-  >   done
-  > }
 
   $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
   $ ./support/await out joined
   $ b=$(cat machines/b/pid); c=$(cat machines/c/pid)
   $ kill -STOP $run $b
-  $ await_state $run T
-  $ await_state $b T
+  $ ./support/state $run T
+  $ ./support/state $b T
   $ kill -KILL $(agent_of c)
-  $ await_state $c Z
+  $ ./support/state $c Z
   $ ./support/await err 'Fatal error:'
   $ kill -CONT $run
   $ wait $run
