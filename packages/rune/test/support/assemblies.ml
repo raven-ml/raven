@@ -15,15 +15,23 @@ type piece = {
   computed : bool;  (** The exclusive or of two arguments' bits. *)
 }
 
-type t = Case : ('v, 's) Nx.dtype * int array * piece list * int -> t
+type t =
+  | Case : {
+      dtype : ('v, 's) Nx.dtype;
+      shape : int array;
+      pieces : piece list;
+      flipped : bool;  (** Whether the program returns the value flipped. *)
+      seed : int;
+    }
+      -> t
 
-let dtype (Case (dt, _, _, _)) = Nx.Dtype.Any dt
+let dtype (Case c) = Nx.Dtype.Any c.dtype
 let range start count step = { M.start; count; step }
 
 let pp_range ppf (r : M.range) =
   Format.fprintf ppf "%d+%d*%d" r.start r.count r.step
 
-let pp ppf (Case (dt, s, pieces, seed)) =
+let pp ppf (Case { dtype = dt; shape = s; pieces; flipped; seed }) =
   let piece ppf p =
     Format.fprintf ppf "(%a %a%s%s)"
       (Format.pp_print_array
@@ -33,10 +41,12 @@ let pp ppf (Case (dt, s, pieces, seed)) =
       (if p.offset then " offset" else "")
       (if p.computed then " computed" else "")
   in
-  Format.fprintf ppf "%a %a, %d pieces %a, seed %d" Nx.pp_dtype dt pp_shape s
-    (List.length pieces)
+  Format.fprintf ppf "%a %a, %d pieces %a%s, seed %d" Nx.pp_dtype dt pp_shape
+    s (List.length pieces)
     (Format.pp_print_list ~pp_sep:Format.pp_print_space piece)
-    pieces seed
+    pieces
+    (if flipped then ", flipped" else "")
+    seed
 
 let counts rs = Array.map (fun (r : M.range) -> r.count) rs
 
@@ -109,8 +119,8 @@ let whole s =
        (Array.to_list s) back)
 
 (* Up to three pieces at random regions of a drawn shape, after a piece that
-   covers it 1 in 3; or many pieces of one element into 64, or as many rows of
-   a stack, from 2 to 64. *)
+   covers it 1 in 3; or many pieces of one element into 64, or as many rows
+   or columns of a stack, from 2 to 64. *)
 let gen =
   let open Gen in
   let few =
@@ -138,14 +148,21 @@ let gen =
           (1, constant 64);
         ]
     in
-    let* rows = bool in
-    if rows then
+    let* kind = int_range 0 2 in
+    if kind = 0 then
       let* w = int_range 1 4 in
       let+ ps =
         every
           (List.init p (fun i -> piece_at [| range i 1 1; range 0 w 1 |]))
       in
       ([| p; w |], ps)
+    else if kind = 1 then
+      let* w = int_range 2 4 in
+      let+ ps =
+        every
+          (List.init p (fun i -> piece_at [| range 0 w 1; range i 1 1 |]))
+      in
+      ([| w; p |], ps)
     else
       let+ ps =
         list ~size:(constant p)
@@ -156,8 +173,9 @@ let gen =
   in
   let* s, pieces = frequency [ (1, few); (1, many) ] in
   let+ (Nx.Dtype.Any dt) = of_list Nx.Dtype.all
+  and+ flipped = bool
   and+ seed = int_range 0 1_000_000 in
-  Case (dt, s, pieces, seed)
+  Case { dtype = dt; shape = s; pieces; flipped; seed }
 
 let examples =
   let piece ?(computed = false) i region =
@@ -167,10 +185,14 @@ let examples =
     List.init p (fun i -> piece i [| range i 1 1; range 0 w 1 |])
   in
   let spots p = List.init p (fun i -> piece 0 [| range (3 * i) 1 1 |]) in
+  let columns p w =
+    List.init p (fun i ->
+        piece ~computed:(i mod 3 = 0) i [| range 0 w 1; range i 1 1 |])
+  in
   List.mapi
     (fun i (Nx.Dtype.Any dt) ->
       let s, pieces =
-        match i mod 7 with
+        match i mod 9 with
         | 0 -> ([| 33; 3 |], rows 33 3)
         | 1 -> ([| 64 |], spots 22)
         | 2 -> ([| 5; 5 |], [ piece 2 [| range 4 2 (-3); range 0 3 2 |] ])
@@ -188,12 +210,35 @@ let examples =
                 piece 1 [| range 2 4 1 |];
                 piece ~computed:true 2 [| range 5 3 (-2) |];
               ] )
-        | _ ->
+        | 6 ->
             ( [| 3; 4 |],
               [ piece ~computed:true 3 [| range 1 2 1; range 3 2 (-2) |] ] )
+        | 7 -> ([| 3; 5 |], columns 5 3)
+        | _ ->
+            ( [| 4; 5 |],
+              [ piece ~computed:true 4 [| range 1 2 1; range 1 3 1 |] ] )
       in
-      Case (dt, s, pieces, i))
+      Case
+        { dtype = dt; shape = s; pieces; flipped = i mod 2 = 1; seed = i })
     Nx.Dtype.all
+  @ [
+      (* A complex stack of columns, one backwards and one in two pieces by
+         steps. *)
+      Case
+        {
+          dtype = Nx.complex64;
+          shape = [| 4; 3 |];
+          pieces =
+            [
+              piece ~computed:true 1 [| range 3 4 (-1); range 0 1 1 |];
+              piece 2 [| range 0 2 2; range 1 1 1 |];
+              piece ~computed:true 3 [| range 1 2 2; range 1 1 1 |];
+              piece 4 [| range 0 4 1; range 2 1 1 |];
+            ];
+          flipped = false;
+          seed = 99;
+        };
+    ]
 
 (* The law *)
 
@@ -212,7 +257,8 @@ let mixed (type v s d) (dt : (v, s) Nx.dtype) (a : (v, s, d) Nx.t)
   match unsigned with
   | Any u -> Nx.bitcast dt (Nx.bitwise_xor (Nx.bitcast u a) (Nx.bitcast u b))
 
-let law (module S : Nx.Devices) (Case (dt, s, pieces, seed)) =
+let law (module S : Nx.Devices)
+    (Case { dtype = dt; shape = s; pieces; flipped; seed }) =
   let st = Random.State.make [| seed |] in
   let regions = List.map (fun p -> p.region) pieces in
   let held = List.filter (fun r -> numel (counts r) > 0) regions in
@@ -250,6 +296,34 @@ let law (module S : Nx.Devices) (Case (dt, s, pieces, seed)) =
            r s)
        held);
   cover "33 pieces or more" (List.length held > 32);
+  (* The minor axis: the last longer than one, after another. *)
+  let minor =
+    let rec last k = if k < 0 || s.(k) > 1 then k else last (k - 1) in
+    last (Array.length s - 1)
+  in
+  let stack =
+    minor > 0 && held <> []
+    && List.for_all (fun (r : M.range array) -> r.(minor).count = 1) held
+    && Array.for_all (fun n -> n = 1) h
+  in
+  cover "a stack along the minor axis" stack;
+  cover "a complex stack along the minor axis"
+    (stack && Nx.Dtype.is Complex dt);
+  cover "a stack along the minor axis with a region by steps or backwards"
+    (stack
+    && List.exists
+         (fun r ->
+           Array.exists (fun (r : M.range) -> r.step <> 1 && r.count > 1) r)
+         held);
+  let dense (r : M.range array) =
+    Array.for_all (fun (r : M.range) -> abs r.step = 1 || r.count <= 1) r
+  in
+  cover "dense pieces over gaps of the fill"
+    (over <> [] && List.length over = List.length held
+    && List.for_all dense over
+    && Array.exists (fun n -> n = 0) h
+    && List.exists (fun p -> p.computed && List.memq p.region over) pieces);
+  cover "the value read flipped" flipped;
   cover "a sub-byte dtype" (Nx.Dtype.bits dt < 8);
   cover "a complex dtype" (Nx.Dtype.is Complex dt);
   let fill = (Nx.to_array (random_bits dt [| 1 |] st)).(0) in
@@ -284,8 +358,11 @@ let law (module S : Nx.Devices) (Case (dt, s, pieces, seed)) =
       | _ :: _, [] -> invalid_arg "Assemblies.law"
     in
     let shape = Iarray.of_array s in
-    Nx.Prim.eval ~by:"assembly"
-      (Assemble { dtype = dt; shape; fill; pieces = take pieces xs })
+    let y =
+      Nx.Prim.eval ~by:"assembly"
+        (Assemble { dtype = dt; shape; fill; pieces = take pieces xs })
+    in
+    if flipped then Nx.flip y else y
   in
   let args = List.concat args in
   let eager = raw (f (List.map fst args)) in

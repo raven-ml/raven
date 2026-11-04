@@ -907,12 +907,31 @@ let moved u d =
    of sines computed 64 sines an element. Storage's cost is a write and a
    read of the result.
 
-   The storage holds first its background: the covering piece, or else the
-   fill unless the pieces hold each element once. Then the pieces: the stores
-   of those whose regions meet no earlier one's are of one state, which tolk
-   runs as one launch, and a piece whose region may meet an earlier one's is
-   stored in a later state, so that the later piece's elements stand, as
-   {!Lower_index.assemble} states. Each store writes exactly its piece's
+   The storage holds first a piece that covers the value, where one does.
+   Then the pieces: the stores of those whose regions meet no earlier one's
+   are of one state, which tolk runs as one launch, and a piece whose region
+   may meet an earlier one's is stored in a later state, so that the later
+   piece's elements stand, as {!Lower_index.assemble} states. Where no piece
+   covers the value, the fill is stores of the regions no piece holds
+   ({!complement}), in the first state, so that no element is written twice:
+   a fill under the pieces would be a pass of its own over the whole value.
+   A piece by steps leaves elements between its steps, so where one does,
+   the fill is a state of its own over the whole value, before the pieces.
+
+   On one GPU the threads of a group write neighbouring elements of a store
+   at once, which memory takes as one transaction where they lie together. A
+   stack along the minor axis, each piece one element along the last axis
+   longer than one, would write one element every [p] in each store: its
+   storage holds that axis first ({!order}), each piece's store writes a run,
+   and the value is a permuted view of the storage, which its readers read
+   as any view and a result copies into its own. On an RTX 5000 Ada, the
+   launch of four pieces of [[4096; 64]] stacked along their last axis took
+   24.6 us written in place and 11.3 permuted, and of 16 pieces of [[65536]]
+   35.8 written in place against 8.2 permuted, the result's copy 8.7 more.
+   On the host a store writes its elements one by one either way, and the
+   copy is a pass more.
+
+   Each store writes exactly its piece's
    elements, a region by steps through a view of the storage that keeps
    every step-th element, a reversed one through a flip, and reads one piece,
    which its last reader frees; a piece copied from another device is copied
@@ -969,6 +988,44 @@ let tile s bs =
     | b :: rest -> List.for_all (fun c -> not (meet b c)) rest && apart rest
   in
   apart bs && List.fold_left (fun k b -> k + elements b) 0 bs = numel s
+
+(* The regions of a value of shape [s] that no region of [bs] holds, all of
+   them dense: the value less each region in turn, a region [b] less a region
+   [c] it meets being, along each axis in turn, the parts of [b] before and
+   after [c], over [b]'s span of the axes after it and [c]'s of those before:
+   at most two regions an axis. *)
+let complement s bs =
+  let less c b =
+    if not (meet b c) then [ b ]
+    else
+      let rec cut i b parts =
+        if i = Array.length b then parts
+        else
+          let x = b.(i) and y = c.(i) in
+          let lo = max x.first y.first in
+          let hi = min (x.first + x.count) (y.first + y.count) in
+          let along first count =
+            let b = Array.copy b in
+            b.(i) <- { first; count; step = 1; back = false };
+            b
+          in
+          let parts =
+            if lo > x.first then along x.first (lo - x.first) :: parts
+            else parts
+          in
+          let parts =
+            if hi < x.first + x.count then
+              along hi (x.first + x.count - hi) :: parts
+            else parts
+          in
+          cut (i + 1) (along lo (hi - lo)) parts
+      in
+      cut 0 b []
+  in
+  let value =
+    Array.map (fun n -> { first = 0; count = n; step = 1; back = false }) s
+  in
+  List.fold_left (fun rest c -> List.concat_map (less c) rest) [ value ] bs
 
 (* The pieces [ps], each a region and its node, in states, in order: each
    piece in the state after the latest that holds a piece it may meet, so
@@ -1127,16 +1184,69 @@ let rec fitting s (b, u) =
         { a with first = a.first + (k * a.step); count = 1; step = 1 };
       fitting s (head, along 0 k) @ fitting s (last, along k a.count)
 
-(* [assembled ~device dt fill shape pieces] is the node of the assembly of
-   [dt] and [shape] of its visible [pieces] ({!visible}), each a region and
-   its node, its storage on [device], and that storage once filled. *)
-let assembled ~device (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
+(* The axes of the storage of an assembly of shape [s] and visible pieces
+   [ps], in order: where the pieces are a stack along the minor axis, the
+   last longer than one, after another (each holds one element along it and
+   together they hold each element once), that axis first. *)
+let order s ps =
+  let all = List.init (Array.length s) Fun.id in
+  let rec minor k = if k < 0 || s.(k) > 1 then k else minor (k - 1) in
+  let m = minor (Array.length s - 1) in
+  if
+    m > 0
+    && List.for_all (fun (b, _) -> b.(m).count = 1) ps
+    && tile s (List.map fst ps)
+  then m :: List.filter (( <> ) m) all
+  else all
+
+(* [assembled ~device ~one_gpu dt fill shape pieces] is the node of the
+   assembly of [dt] and [shape] of its visible [pieces] ({!visible}), each a
+   region and its node, its storage on [device], that storage once filled,
+   and whether the node permutes the storage ({!order}), as a program on one
+   GPU does. *)
+let assembled ~device ~one_gpu (type v s) (dt : (v, s) D.t) (fill : v) shape
+    pieces =
   let s = Iarray.to_array shape in
-  let dims = Arith.dims (D.Any dt) s in
-  let buf = Ops.new_buffer device (numel s * parts dt) (tdtype dt) in
-  let whole u = Shape.reshape u dims in
   let pieces = List.map (fun (rs, u) -> (axes rs, u)) pieces in
-  let all = List.map fst pieces in
+  let all = List.init (Array.length s) Fun.id in
+  let order = if one_gpu then order s pieces else all in
+  let permuted = order <> all in
+  let dims =
+    Arith.dims (D.Any dt) (Array.of_list (List.map (Array.get s) order))
+  in
+  let buf = Ops.new_buffer device (numel s * parts dt) (tdtype dt) in
+  (* The storage's axes in the value's order, a trailing axis of parts
+     where the dtype has two. *)
+  let back =
+    List.mapi
+      (fun j _ -> Option.value (List.find_index (( = ) j) order) ~default:j)
+      dims
+  in
+  let whole u =
+    let u = Shape.reshape u dims in
+    if permuted then Shape.permute u back else u
+  in
+  let background, over =
+    match pieces with
+    | p :: rest when covers s (fst p) -> (Some p, rest)
+    | ps -> (None, ps)
+  in
+  (* The fill's regions beside the pieces, where it is no state of its own:
+     each a region and the fill's node of its shape. *)
+  let gaps =
+    if background <> None || not (List.for_all (fun (b, _) -> dense b) over)
+    then None
+    else
+      let gap b =
+        let n = Iarray.of_array (Array.map (fun a -> a.count) b) in
+        (b, Lower_index.assemble dt fill n [])
+      in
+      let held b = elements b > 0 in
+      let regions = complement s (List.map fst over) in
+      Some (List.map gap (List.filter held regions))
+  in
+  let over = Option.value gaps ~default:[] @ over in
+  let all = List.map fst (Option.to_list background @ over) in
   (* A piece's stores into [state]'s storage: reversed along the axes it runs
      backwards, its region by steps through {!stepped}. *)
   let stores state (b, u) =
@@ -1159,15 +1269,10 @@ let assembled ~device (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
     in
     List.map store (fitting s (b, u))
   in
-  let background, over =
-    match pieces with
-    | p :: rest when covers s (fst p) -> (Some p, rest)
-    | ps -> (None, ps)
-  in
   let start =
     match background with
     | Some p -> Ops.after buf (stores buf p)
-    | None when tile s (List.map fst over) -> buf
+    | None when gaps <> None || tile s (List.map fst over) -> buf
     | None ->
         Ops.after buf
           [ Ops.store (whole buf) (Lower_index.assemble dt fill shape []) ]
@@ -1177,7 +1282,7 @@ let assembled ~device (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
       (fun state ps -> Ops.after state (List.concat_map (stores state) ps))
       start (states over)
   in
-  (whole filled, buf, filled)
+  (whole filled, buf, filled, permuted)
 
 (* [ys], the nodes of a value placed at [q], each a copy where it lies on
    another device. *)
@@ -1243,13 +1348,17 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
             if (not (st.split && pieces <> [])) && selects st s pieces then
               [| Lower_index.assemble dtype fill shape pieces |]
             else
-              let y, buf, filled =
-                assembled ~device dtype fill shape pieces
+              let y, buf, filled, permuted =
+                assembled ~device ~one_gpu:(not (host || st.split)) dtype
+                  fill shape pieces
               in
               (* A result takes the storage as its own, but for a dtype
                  narrower than a byte, whose result packs the storage's byte
-                 an element. *)
-              if not (packed dtype) then
+                 an element, and for permuted storage, which a result copies
+                 into its own. A split program's storage keeps its axes: a
+                 piece copied from another device lands in place where its
+                 region is a run. *)
+              if not (packed dtype || permuted) then
                 Ops.Tbl.replace st.dsts (unshaped y)
                   { buf; filled; into = filled; reads = List.map snd pieces };
               [| y |]

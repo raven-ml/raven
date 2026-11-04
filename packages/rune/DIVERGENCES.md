@@ -738,7 +738,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   the pieces summed) and `mixin/op.py:305` (`_pad_constant`: the padded piece
   selected with `where` on its valid range).
 - **Raven:** `compile.ml` (`issue`, `visible`, `selects`, `viewed`,
-  `assembled`, `states`, `stepped`); `lower_index.ml` (`assemble`, `placed`).
+  `assembled`, `order`, `complement`, `states`, `stepped`); `lower_index.ml`
+  (`assemble`, `placed`).
 - **Differs:** empty pieces, and those a later piece covering the value
   hides, are dropped first. On one device, an assembly of at most one piece
   over its background (the fill, or a first piece whose region is the whole
@@ -746,13 +747,18 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   reference's `pad` without the sum: the piece placed at its region and
   selected with `where`, floats as their bits. Every other assembly, and
   every assembly of a piece or more over several devices, is storage of its
-  own: the background first (the covering piece, or the fill unless the
-  pieces hold each element once), then the pieces whose regions do not meet
-  as stores of one state, which tolk runs as one launch (D338), and a piece
-  whose region may meet an earlier one's in a later state. Each store writes
-  exactly its piece's elements, a region by steps through a view that keeps
-  every step-th element, a reversed one through a flip. The reference's sum
-  turns a `-0.` into `+0.` and quiets a signalling NaN.
+  own: the covering piece first, where one holds every element; then the
+  pieces whose regions do not meet as stores of one state, which tolk runs as
+  one launch (D338), beside stores of the fill into the regions no piece
+  holds, where every piece is dense (where one lies by steps, the fill is a
+  state of its own before them); and a piece whose region may meet an
+  earlier one's in a later state. Each store writes exactly its piece's
+  elements, a region by steps through a view that keeps every step-th
+  element, a reversed one through a flip. On one GPU, a stack along the
+  minor axis (pieces of one element along the last axis longer than one,
+  after another, that hold each element once) is stored with that axis first and read through a
+  permutation; a result is copied out of it. The reference's sum turns a
+  `-0.` into `+0.` and quiets a signalling NaN.
 - **nx:** `nx_kernel.mli`, `assemble`: the last piece holding each index, or
   the fill, bits copied.
 - **Class:** exact.
@@ -769,20 +775,39 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   45.3-45.6 against 18.7); the base evaluated the first three on the host
   uncompiled. A sum over a stack of 16 sines along its first and last axes
   took 8,319-8,323 µs selected on the RTX 5000 against 49.6-53.3 stored.
-  Stated losses, storage against the selection: on the RTX 5000, pieces
-  along the minor axis, whose stores write a piece every [p] elements:
-  `Cuda/stack-4-minor-axis` 35.4-35.5 against 13.0 (+22.5), 16 sines
-  stacked along the last axis 66.7-69.5 against 42.5-42.9 (+25); a sum of
-  16 stacked sines along the stack 47.2-47.8 against 32.5-32.6; rotary
-  halves read by a row dot 13.4 against 9.1-9.2; a set of a computed row
-  19.5-19.6 against 13.8-13.9; a pad of [x + 1] 41.5-41.9 against
-  34.9-35.3. On the host, rotary halves read by a row dot 55.8-59.9 against
-  28.5-32.1, a pad of [x + 1] by one column 67.7-89.2 against 46.2-63.4, and
-  three views concatenated and doubled, `Jit/cat-3-views-scaled-4096x64`,
-  35.4-38.1 against 28.8-29.5. Read by attention
-  (`Jit/rope-in-attention-512x128`, kaun's workload), the rotary halves
-  overlap on the host and take 1.02 times as long on the RTX 5000. A
-  one-view selection keeps `Jit/wide-sum-1e6`,
+  Pieces along the minor axis, whose stores wrote one element every [p]
+  where a GPU's threads write neighbouring elements as one transaction
+  (CUDA C++ Best Practices Guide, 10.2.1, "Global memory loads and stores
+  by threads of a warp are coalesced by the device into as few as possible
+  transactions"), are stored with that axis first: on the RTX 5000 the
+  stores of `Cuda/stack-4-minor-axis` take 18.3-18.4 µs of kernels a call
+  against 31.6-32.6 in place, and 16 sines stacked along the last axis and
+  returned 15.4-17.3 (the stores and the result's copy) against 33.8-35.8.
+  The fill beside the pieces is a pass fewer: a pad of [x + 1] by a column
+  on each side, doubled, takes 10.2 µs of kernels against 13.9 filled first,
+  and by 16 columns 10.2 against 14.3; a pad of 8 nested sines by 960
+  columns 31.7-33.8 in one launch against 29.7-31.7 in two, the fill's
+  members each a call. On the host a store writes its elements one by one in
+  either order, so the axes stay; the fill beside the pieces moves its
+  kernel time within noise.
+  Stated losses, storage against the selection, kernel time a call on the
+  RTX 5000: `Cuda/stack-4-minor-axis` 18.3-18.4 against 9.2 (its bench row
+  21.2 µs a call against the selection's 13.0), 16 sines stacked along the
+  last axis 15.4-17.3 against 9.2, a sum of 16 stacked sines along the
+  stack 26.5-28.6 against 12.0, rotary halves read by a row dot 10.3-10.4
+  against 5.1, a set of a computed row 18.4-18.6 against 10.1, three views
+  concatenated and doubled 8.2-9.2 against 4.1, and a pad of [x + 1] by 16
+  columns, doubled, 10.2 against 4.1 (by one column, 10.2 against 12.3, a
+  gain). On the host, rotary
+  halves read by a row dot 55.8-59.9 against 28.5-32.1: the stores' launch
+  and the row dot each move their bytes in the 8 blocks the bytes rule
+  gives (D80), against 22 for the selection's operations; a pad of [x + 1]
+  by one column 67.7-89.2 against 46.2-63.4, and three views concatenated
+  and doubled, `Jit/cat-3-views-scaled-4096x64`, 35.4-38.1 against
+  28.8-29.5, a kernel and its write and read more than the selection. Read
+  by attention (`Jit/rope-in-attention-512x128`, kaun's workload), the
+  rotary halves overlap on the host and take 1.02 times as long on the RTX
+  5000. A one-view selection keeps `Jit/wide-sum-1e6`,
   `Jit/set-row-of-1024x1024-summed` and `Jit/kv-concat-decode` as they were
   (overlapping ranges).
   For storage over several devices, (e): the fully sharded bound rune.mli
@@ -798,7 +823,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   background holds no storage`, `› a concatenation of doubled rows compiles
   at any count`, `› two assemblies of alike pieces compile`; `Jit_gpu ›
   assemblies › *`; `Jit_devices › assemblies give eager's bits › *`; `Jit ›
-  fully sharded › *`; the rows above in `rune.thumper`, their baselines
+  fully sharded › *`; the rows above and
+  `Jit/pad-columns-of-computed-4096x64` in `rune.thumper`, their baselines
   pending the scheduled re-record.
 
 ### I3. Gather by an index

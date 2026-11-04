@@ -170,8 +170,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   and Metal core paths
 - a fresh process's first calls fault 72-188 pages each for 1 MiB results
   until rig's buffer cache warms
-- jera's compiled rows gain 2-8 words, one launch per stored piece of an
-  assembly
 - the scatter walk (I4) on a GPU: a scatter of a few updates pays one or
   two launches more than the comparison it replaced (7 rows, 1.5-3 µs);
   writing the walk's first chunk over the target (no fill) would remove one.

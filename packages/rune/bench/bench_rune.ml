@@ -1492,6 +1492,18 @@ let assembly_calls =
                   e
             | _ -> invalid_arg "stack-4-minor-axis");
         } );
+    (* A [4096; 64] piece plus one, padded by a column on each side and
+       doubled: a computed piece within its fill. *)
+    ( "pad-columns-of-computed-4096x64",
+      over_values
+        [ [| 4096; 64 |] ]
+        {
+          f =
+            (fun xs ->
+              Nx.mul_s
+                (Nx.pad [| (0, 0); (1, 1) |] 0. (Nx.add_s (List.hd xs) 1.))
+                2.);
+        } );
     (* A row set into a [1024; 1024] matrix at a position the program holds,
        read by a sum: one view over another. *)
     ( "set-row-of-1024x1024-summed",

@@ -373,6 +373,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` on a GPU stores a stack along the last axis with that axis
+  first, so that each piece writes neighbouring elements: 4 pieces of
+  `[4096; 64]` stacked along a new last axis wrote one element every 4, and
+  their stores took twice as long. A stored assembly of dense pieces writes
+  its fill only where no piece lies, beside the pieces, where it filled every
+  element first.
 - `Rune.jit` stores an assembly (`Nx.stack`, `Nx.concatenate`, `Nx.set`,
   `Nx.pad`) unless it is one view over its background: selected, every piece
   computed at each element, and the host ran 33 stacked rows uncompiled.
@@ -1045,6 +1051,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   body that bind one name to several values run as one kernel, bodies that
   differ in their bound values alone are one program, and a name of one value
   read only in a loop no longer raises that the variable is unbound.
+- `Tolk_engine.run` allocates nothing for the variables a call binds: it
+  allocated two words for each, as `Rune.jit`'s calls of programs whose
+  stores bind a region's start did.
 - A kernel given as code (`Shape.custom_kernel`) or a precompiled call
   (`Ops.call ~precompile:true`) that writes an argument other than storage,
   a run of it from the first element or a row a loop moves along raises

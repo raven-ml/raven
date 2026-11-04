@@ -1395,15 +1395,19 @@ val jit :
     a capture or a stored value, or a constant, is selected in its reader's
     kernel: each element loads at most two values and computes only its
     background. Every other assembly is storage of its own: first the
-    covering piece, or the fill unless the pieces hold each element once, then
-    its pieces, each computed once and written to exactly its elements, those
-    whose regions do not meet together, a piece over an earlier one's elements
-    after them. A stack of [p] computed rows so costs
+    covering piece, where one holds every element, then its pieces, each
+    computed once and written to exactly its elements, those whose regions do
+    not meet together, a piece over an earlier one's elements after them.
+    Where the pieces do not hold every element once, the fill is written to
+    the elements no piece holds, beside the pieces, or, where a piece lies by
+    steps, to every element before them. A program on one GPU stores a stack
+    along the last axis longer than one with that axis first, so that each
+    piece's store writes neighbouring elements, and reads it permuted; a
+    result is then copied out of it. A stack of [p] computed rows so costs
     their work once and a write and a read of the result, where selecting
     every row at each element would cost [p] times their work. Where few
-    pieces compute little the write and the read can cost more than the
-    selection would: four pieces of [[4096; 64]] stacked along a new last axis
-    and scaled take 22 µs more on an RTX 5000 Ada, 2.7 times as long.
+    pieces compute little, as a few pieces stacked along a new last axis,
+    the write and the read can cost more than the selection would.
 
     {b Several devices.} A program whose values lie on several devices of one
     set, cut across them ({!Nx.Placement.split}, {!Nx.Placement.mesh}), whole on

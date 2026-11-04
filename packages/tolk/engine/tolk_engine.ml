@@ -1175,14 +1175,15 @@ let check_slots t slots =
 let words t ~vars =
   let env = t.env in
   Array.fill env.set 0 (Array.length env.set) false;
-  (* The first binding of a name binds it. *)
+  (* The first binding of a name binds it. [Hashtbl.find] allocates no
+     option, so a run allocates nothing for its variables. *)
   List.iter
     (fun (name, v) ->
-      match Hashtbl.find_opt t.cells name with
-      | Some i when not env.set.(i) ->
+      match Hashtbl.find t.cells name with
+      | i when not env.set.(i) ->
           env.values.(i) <- v;
           env.set.(i) <- true
-      | Some _ | None -> ())
+      | _ | (exception Not_found) -> ())
     vars;
   let ints = t.frame.ints in
   for w = 0 to Array.length t.words - 1 do
