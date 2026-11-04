@@ -8000,6 +8000,24 @@ and an initial value is added after it (D260).
   and their values (reads after, a register read after, a write before,
   writes by a call and by code), the local splits refused, the range a
   read-only call keeps global, and a lowered body's writes.
+
+## D341. A range states its axis type
+
+- **tinygrad:** `uop/ops.py:614` (`UOp.range`, whose `axis_type` defaults
+  to `AxisType.WEAK`).
+- **tolk:** `Ops.range`.
+- **Differs:** `Ops.range` takes `~axis_type` with no default, so each
+  builder states whether a range's trips are independent (`Weak`, D333) or
+  run in turn (`Loop`). tinygrad makes a range weak where its builder names
+  no type.
+- **Reason:** (e): a default promises independence that the builder never
+  stated. At the pinned commit `C[0] += 1`, read through `After (C, [r])`
+  over an untyped `r < 8` upcast by 4, counts 2 for 8; tinygrad's kernels
+  `slice_sum` and `simple_qkv` carry a register across untyped ranges,
+  which tinygrad's own tests type `LOOP` from `78d482262`.
+- **Pinned by:** the type of `Ops.range`: a call without `~axis_type` does
+  not compile.
+
 ## D342. A signed operation that may overflow computes in its unsigned type
 
 - **tinygrad:** `renderer/cstyle.py:153-160` (`code_for_op`, which writes

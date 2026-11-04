@@ -2732,7 +2732,7 @@ let call_apart () =
 (* A kernel reversing its argument 1 into its argument 0, by element. *)
 let reverse = function
   | [ o; i ] ->
-      let r = Ops.range (Int 4) [ 0 ] in
+      let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
       Ops.sink
         [ Ops.end_ (Ops.store (Ops.index o [ r ]) (Ops.index i [ Ops.O.(int 3 - r) ])) [ r ] ]
   | _ -> failwith "two arguments"
@@ -3773,7 +3773,7 @@ let mixed =
 let kernel_views ~n ~at ~args expected () =
   let kernel = function
     | [ o; i ] ->
-        let r = Ops.range (Int n) [ 0 ] in
+        let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
         Ops.sink
           [ Ops.end_ (Ops.store (Ops.index o [ r ]) (Ops.index (flat i) [ at r ])) [ r ] ]
     | _ -> assert false

@@ -604,7 +604,7 @@ let exceptions =
 let counts_to_loaded () =
   let x = Shape.param ~shape:[ Int 16 ] 1 Int64
   and out = Shape.param ~shape:[ Int 16 ] 0 Int64 in
-  let i = Ops.range (Int 16) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 16) [ 0 ] in
   let count = Ops.load (Ops.index x [ Ops.int 0 ]) [] in
   let bound =
     Ops.cast (Ops.alu count Op.Max [ Ops.int ~dtype:Int64 0 ]) Weak_int

@@ -25,9 +25,9 @@ let other = Ops.O.(b < int 2)
 let f = Shape.param 0 Dtype.Float32
 let g = Shape.param 1 Dtype.Float32
 let buf = Shape.param ~shape:[ Int 16 ] 2 Dtype.Float32
-let r0 = Ops.range (Int 4) [ 0 ]
-let r1 = Ops.range (Int 4) [ 1 ]
-let reduce_range = Ops.range (Int 4) [ 2 ]
+let r0 = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+let r1 = Ops.range ~axis_type:Weak (Int 4) [ 1 ]
+let reduce_range = Ops.range ~axis_type:Weak (Int 4) [ 2 ]
 let int32 n = Ops.int ~dtype:Int32 n
 let cast_bool dt = Ops.cast cond dt
 
@@ -851,9 +851,11 @@ let bounds =
       test "a hardware index of one value is 0" (fun () ->
           by_symbolic (Ops.special (Int 1) "gidx0") (Ops.int 0));
       test "a range of a constant end with one value is 0" (fun () ->
-          by_symbolic (Ops.range (Int 1) [ 0 ]) (Ops.int 0));
+          by_symbolic (Ops.range ~axis_type:Weak (Int 1) [ 0 ]) (Ops.int 0));
       test "a range of a symbolic end is not folded" (fun () ->
-          let r = Ops.range (Sym (Ops.cast cond Weak_int)) [ 0 ] in
+          let r =
+            Ops.range ~axis_type:Weak (Sym (Ops.cast cond Weak_int)) [ 0 ]
+          in
           by_symbolic r r);
       test "a maximum of operands whose bounds do not overlap is the greater"
         (fun () ->
@@ -1024,7 +1026,7 @@ let wrapping =
          -112 over r < 2 is 0, where 1 * -112 is -112. *)
       test "a factor leaves a maximum only where it is not negative" (fun () ->
           let p = var ~dtype:Int8 "p" 0 50 and q = var ~dtype:Int8 "q" 0 50 in
-          let r = Ops.range (Int 2) [ 3 ] in
+          let r = Ops.range ~axis_type:Weak (Int 2) [ 3 ] in
           let red = Ops.reduce Ops.O.(Ops.cast r Int8 * p * q) Max [ r ] in
           keeps_machine_value red
             [ [ ("p", i 2); ("q", i 3) ]; [ ("p", i 12); ("q", i 12) ] ]);
@@ -1225,7 +1227,7 @@ let floats =
               + Ops.where cond (float tiny) (float 0.)
               + Ops.where cond (float tiny) (float 0.))
             [ [ 0.; 1. ] ];
-          let r = Ops.range (Int 3) [ 2 ] in
+          let r = Ops.range ~axis_type:Weak (Int 3) [ 2 ] in
           keeps_float_bits
             (Ops.reduce Ops.O.(Ops.cast r Float32 * f * g) Add [ r ])
             [ [ 2e38; 0.25 ] ]);
@@ -1276,7 +1278,7 @@ let floats =
     ]
 
 let ranges =
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   group "ranges"
     [
       test "a range modulo its end is the range" (fun () ->
@@ -1285,7 +1287,7 @@ let ranges =
           by_symbolic Ops.O.(r // int 8) (Ops.int 0));
       test "a range of a symbolic end modulo and divided by its end" (fun () ->
           let n = Ops.O.(var "n" 1 10 + int 2) in
-          let r = Ops.range (Sym n) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Sym n) [ 0 ] in
           by_symbolic Ops.O.(r % n) r;
           by_symbolic Ops.O.(r // n) (Ops.int 0));
     ]
@@ -1381,7 +1383,8 @@ let ordering =
           by_symbolic (raw After [ f ]) f;
           by_symbolic (raw End [ store ]) store);
       test "an end of constant ranges only is its store" (fun () ->
-          by_symbolic (Ops.end_ store [ Ops.range (Int 1) [ 1 ] ]) store);
+          let r = Ops.range ~axis_type:Weak (Int 1) [ 1 ] in
+          by_symbolic (Ops.end_ store [ r ]) store);
       test "a backedge keeps a constant condition" (fun () ->
           let edge =
             Ops.backedge store ~loop:(Ops.loop 3) ~cond:(Ops.bool false)
@@ -1389,7 +1392,7 @@ let ordering =
           by_symbolic edge edge);
       test "an end drops the ranges that became constants" (fun () ->
           by_symbolic
-            (Ops.end_ store [ r0; Ops.range (Int 1) [ 1 ] ])
+            (Ops.end_ store [ r0; Ops.range ~axis_type:Weak (Int 1) [ 1 ] ])
             (Ops.end_ store [ r0 ]));
     ]
 
@@ -1539,7 +1542,7 @@ let simplify_valid =
           equal some None
             (Symbolic.simplify_valid Ops.O.((a + b < int 5) land (a < int 2))));
       test "the clauses simplify whatever their order" (fun () ->
-          let r = Ops.range (Int 2) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
           let first = Ops.O.(r < int 1)
           and second = Ops.O.(((r * int 5) + int 1) % int 6 < int 5) in
           let expected = Some (Ops.uprod first [ Ops.bool true ]) in
@@ -1903,9 +1906,9 @@ let other_tests =
             (Shape.simplify (Ops.reciprocal (Ops.float 0.))));
       test "an index simplified under its gate keeps its value where it holds"
         (fun () ->
-          let r0 = Ops.range (Int 30) [ 0 ]
-          and r1 = Ops.range (Int 7) [ 1 ]
-          and r2 = Ops.range (Int 2) [ 2 ] in
+          let r0 = Ops.range ~axis_type:Weak (Int 30) [ 0 ]
+          and r1 = Ops.range ~axis_type:Weak (Int 7) [ 1 ]
+          and r2 = Ops.range ~axis_type:Weak (Int 2) [ 2 ] in
           let alu11 = Ops.O.(r1 + r2) in
           let idx =
             Ops.O.(

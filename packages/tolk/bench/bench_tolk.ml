@@ -327,8 +327,9 @@ let gated_product n =
   and a = param 1 Stdlib.(n * n) Bfloat16
   and b = param 2 Stdlib.(n * n) Bfloat16
   and fl = param 3 Stdlib.(n / 128) Int32 in
-  let i = Ops.range (Int n) [ 1 ] and j = Ops.range (Int n) [ 2 ] in
-  let k = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 2 ] in
+  let k = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let ld x at = Ops.cast (Ops.index x [ at ]) Float32 in
   let sum =
     Ops.reduce (ld a ((i * int n) + k) * ld b ((k * int n) + j)) Add [ k ]

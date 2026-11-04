@@ -655,7 +655,7 @@ let rows_beside_call () =
   let f =
     Ops.sink [ Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.int ~dtype:Int32 1) ]
   in
-  let i = Ops.range (Int 64) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 64) [ 0 ] in
   let v = Ops.O.(Ops.index a [ i ] + Ops.float 1.) in
   Ops.sink ~kernel:(Ops.kernel_info ())
     [
@@ -1186,8 +1186,8 @@ let doubles =
 let incremented dt =
   let out = Shape.param ~shape:[ Ops.Int 1024 ] 0 Float32
   and a = Shape.param ~shape:[ Ops.Int 1024 ] 1 Float32 in
-  let i = Ops.range ~dtype:dt (Int 64) [ 0 ]
-  and j = Ops.range ~dtype:dt (Int 16) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak ~dtype:dt (Int 64) [ 0 ]
+  and j = Ops.range ~axis_type:Weak ~dtype:dt (Int 16) [ 1 ] in
   let at x = Ops.index x [ Ops.O.((i * Ops.int ~dtype:dt 16) + j) ] in
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.end_ (Ops.store (at out) Ops.O.(at a + Ops.float 1.)) [ i; j ] ]
@@ -1558,8 +1558,10 @@ let triple_products =
   let out = Shape.param ~shape:[ Ops.Int (n * n * n) ] 0 Float32 in
   let operand slot = Shape.param ~shape:[ Ops.Int (n * k) ] slot Float32 in
   let a = operand 1 and b = operand 2 and c = operand 3 in
-  let i = Ops.range (Int n) [ 0 ] and j = Ops.range (Int n) [ 1 ] in
-  let l = Ops.range (Int n) [ 2 ] and r = Ops.range (Int k) [ 3 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
+  let l = Ops.range ~axis_type:Weak (Int n) [ 2 ]
+  and r = Ops.range ~axis_type:Weak (Int k) [ 3 ] in
   let open Ops.O in
   let at x row = Ops.index x [ (row * int k) + r ] in
   let column = Ops.index c [ (r * int n) + l ] in

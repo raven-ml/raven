@@ -1341,8 +1341,8 @@ let scrub_width = 32768
    words. *)
 let scrub_kernel rows =
   let words slot n = Shape.placeholder ~slot [ n ] Dtype.Uint32 in
-  let i = Ops.range (Int scrub_width) [ 0 ] in
-  let j = Ops.range (Int rows) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int scrub_width) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak (Int rows) [ 1 ] in
   let word =
     Ops.index (words 1 (rows * scrub_width)) Ops.O.[ (j * int scrub_width) + i ]
   in

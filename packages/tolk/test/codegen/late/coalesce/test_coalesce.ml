@@ -513,7 +513,7 @@ let memory_coalescing =
 type place = { scale : int; gated : bool; start : int }
 type run = { dst : place; count : int; srcs : place list }
 
-let r = Ops.range (Int 4) [ 0 ]
+let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
 
 let index { scale; gated; start } j =
   let i =
@@ -673,7 +673,7 @@ let laws =
 (* A gather through a pad: element [r] of slot 2 is [xs.(ids.(r - 4))] from
    [r = 4] and [0] before it. Slot 0's index is loaded under the pad's gate. *)
 let padded_gather =
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let ids = Shape.param ~shape:[ Int 4 ] 0 Int32 in
   let xs = Shape.param ~shape:[ Int 4 ] 1 Float32 in
   let out = Shape.param ~shape:[ Int 8 ] 2 Float32 in
@@ -711,7 +711,8 @@ let readme =
     [
       test "an image access, through two indices, is not simplified" (fun () ->
           let image = Shape.param ~shape:[ Int 4; Int 4; Int 4 ] 1 Float32 in
-          let r0 = Ops.range (Int 4) [ 0 ] and r1 = Ops.range (Int 4) [ 1 ] in
+          let r0 = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+          and r1 = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
           let gate = Ops.O.(r0 < int 3) in
           let y = Shape.valid Ops.O.(r0 + int 1) gate
           and x = Shape.valid Ops.O.(r1 * int 2) gate in

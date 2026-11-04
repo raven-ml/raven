@@ -567,7 +567,7 @@ let contiguous_views =
               equal bool ~msg:"the offset, the start's rows" true
                 (Ops.equal_sint offset (Shape.ssimplify Ops.O.(start * int 8)))
           | None -> failf "no view");
-      (let r = Ops.range (Int 2) [ 0 ] in
+      (let r = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
        case "rows from a range's start are no view" None
          (Shape.shrink x [ Some (Ops.Sym r, Ops.Sym Ops.O.(r + int 2)); None ]));
       (let ints = Shape.param ~device:cpu ~shape:[ Int 8 ] 1 Int32 in

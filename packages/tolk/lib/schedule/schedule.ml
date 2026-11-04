@@ -188,7 +188,7 @@ let copy_call ~slot s =
   let align, phase = Shape.storage_phase buf in
   let arg = param_arg ~slot ~device ~phase ~align (dtype buf) in
   let dst = v Op.Alloc ~src:[ size_src (Some n) ] ~arg:(Param arg) in
-  let r = range (Int n) [ 0 ] in
+  let r = range ~axis_type:Weak (Int n) [ 0 ] in
   (* The kernel's parameters name no device: its call's arguments do. *)
   let param u slot =
     let align, phase = Shape.storage_phase u in

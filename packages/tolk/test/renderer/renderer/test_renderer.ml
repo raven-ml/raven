@@ -27,7 +27,7 @@ let f32 x = Ops.float ~dtype:Dtype.Float32 x
 let buffer ?(dtype = Dtype.Float32) slot size =
   Shape.param ~shape:[ Int size ] slot dtype
 
-let range ?(axis = 0) size = Ops.range (Int size) [ axis ]
+let range ?(axis = 0) size = Ops.range ~axis_type:Weak (Int size) [ axis ]
 let at buf i = Ops.index buf [ i ]
 let load buf i = Ops.load (at buf i) []
 
@@ -101,7 +101,7 @@ let nested_ranges () =
 (* [j < i + 1] inside [i < 3] runs 3 times its greatest count of trips, 3. *)
 let a_triangular_loop_counts_its_greatest_trips () =
   let buf = buffer ~dtype:Dtype.Int32 0 6 and i = range 3 in
-  let j = Ops.range (Sym Ops.O.(i + Ops.int 1)) [ 1 ] in
+  let j = Ops.range ~axis_type:Weak (Sym Ops.O.(i + Ops.int 1)) [ 1 ] in
   let idx = Ops.O.((i * (i + Ops.int 1) // Ops.int 2) + j) in
   let st = Ops.store (at buf idx) (Ops.cast j Dtype.Int32) in
   let kernel = Ops.end_ st [ j; i ] in
@@ -112,7 +112,9 @@ let a_triangular_loop_counts_its_greatest_trips () =
    which no [int] count holds. *)
 let a_loaded_bound_counts_exactly () =
   let x = buffer ~dtype:Dtype.Int64 1 3 and i = range 3 in
-  let j = Ops.range (Sym (Ops.cast (load x i) Dtype.Weak_int)) [ 1 ] in
+  let j =
+    Ops.range ~axis_type:Weak (Sym (Ops.cast (load x i) Dtype.Weak_int)) [ 1 ]
+  in
   let body = Ops.O.(f32 1. + Ops.cast j Dtype.Float32) in
   let kernel = Ops.end_ body [ j; i ] in
   let e = Renderer.Estimates.of_uops (Ops.toposort ~calls:Skip kernel) in
@@ -129,7 +131,7 @@ let a_loaded_bound_counts_exactly () =
 let a_bound_loaded_outside_ranges_counts_its_greatest () =
   let x = buffer ~dtype:Dtype.Int64 1 3 and i = range 3 in
   let bound = Ops.cast (load x (Ops.int 0)) Dtype.Weak_int in
-  let j = Ops.range (Sym bound) [ 1 ] in
+  let j = Ops.range ~axis_type:Weak (Sym bound) [ 1 ] in
   let body = Ops.O.(f32 1. + Ops.cast j Dtype.Float32) in
   let kernel = Ops.end_ body [ j; i ] in
   let inner = List.filter (fun u -> u != i) (Ops.toposort ~calls:Skip kernel) in
@@ -146,8 +148,10 @@ let a_bound_loaded_outside_ranges_counts_its_greatest () =
    many, beside the 4 bytes its bound loads on each of [i]'s, do not. *)
 let a_count_past_an_int_after_its_ranges () =
   let x = buffer ~dtype:Dtype.Int32 1 4 and out = buffer ~dtype:Dtype.Int32 0 4 in
-  let i = range (1 lsl 31) in
-  let j = Ops.range (Sym (Ops.cast (load x i) Dtype.Weak_int)) [ 1 ] in
+  let i = Ops.range ~axis_type:Loop (Int (1 lsl 31)) [ 0 ] in
+  let j =
+    Ops.range ~axis_type:Loop (Sym (Ops.cast (load x i) Dtype.Weak_int)) [ 1 ]
+  in
   let st = Ops.store (at out (Ops.int 0)) (Ops.cast j Dtype.Int32) in
   let kernel = Ops.end_ st [ j; i ] in
   let e = Renderer.Estimates.of_uops (Ops.toposort ~calls:Skip kernel) in
@@ -281,7 +285,7 @@ let an_index_after_a_loop () =
        (Ops.toposort ~calls:Enter (Ops.sink [ stored ])))
       .ops
   in
-  let r = range 4 and loop = Ops.loop 1 in
+  let r = Ops.range ~axis_type:Loop (Int 4) [ 0 ] and loop = Ops.loop 1 in
   let update i = Ops.store cell Ops.O.(Ops.load cell [] + i) in
   equal sint ~msg:"a range" (Int 4) (ops (Ops.end_ (update r) [ r ]));
   equal sint ~msg:"a loop" (Int 1)
@@ -393,7 +397,7 @@ let recorded_kernels =
 (* estimates of symbolic kernels *)
 
 let symbolic_trip_count () =
-  let r = Ops.range (Sym n) [ 0 ] and a = f32 1. in
+  let r = Ops.range ~axis_type:Weak (Sym n) [ 0 ] and a = f32 1. in
   let first = Ops.O.(a + a) in
   let second = Ops.neg first in
   let ops =
@@ -406,14 +410,14 @@ let symbolic_trip_count () =
 
 let cancelling_trip_count () =
   let size = Ops.O.(n + int 3 - n) in
-  let r = Ops.range (Sym size) [ 0 ] and a = f32 1. in
+  let r = Ops.range ~axis_type:Weak (Sym size) [ 0 ] and a = f32 1. in
   let body = Ops.O.(a + a) in
   equal sint (Int 3)
     (Renderer.Estimates.of_uops [ r; a; body; Ops.end_ body [ r ] ]).ops
 
 let symbolic_reads_are_capped () =
   let buf = buffer 0 4 and zero = Ops.int 0 in
-  let r = Ops.range (Sym n) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Sym n) [ 0 ] in
   let x = load buf zero in
   let e =
     Renderer.Estimates.of_uops
@@ -425,7 +429,8 @@ let symbolic_reads_are_capped () =
 
 let trip_count_of_a_hardware_index () =
   let gidx = Ops.special (Int 4) "gidx0" in
-  let r = Ops.range (Sym Ops.O.(gidx + int 3)) [ 0 ] and a = f32 1. in
+  let r = Ops.range ~axis_type:Weak (Sym Ops.O.(gidx + int 3)) [ 0 ]
+  and a = f32 1. in
   let body = Ops.O.(a + a) in
   equal sint
     (Int (4 * 3))

@@ -10,7 +10,7 @@ let devices name = List.assoc name (Run.devices ())
 (* The capture of a kernel adding [c] to four floats on the host. A kernel is
    searched once per process, so each test lowers a kernel of its own. *)
 let captured c =
-  let i = Ops.range (Int 4) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   let at slot = Ops.index (Shape.placeholder ~slot [ 4 ] Float32) [ i ] in
   let kernel =
     Ops.sink

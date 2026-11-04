@@ -492,7 +492,9 @@ let bounds_group =
             if Dtype.equal dt Uint8 then table else Ops.bitcast table dt
           in
           let r =
-            Ops.range (Int (String.length data / Dtype.itemsize dt)) [ 0 ]
+            Ops.range ~axis_type:Weak
+              (Int (String.length data / Dtype.itemsize dt))
+              [ 0 ]
           in
           check_bounds
             (Ops.load (Ops.index table [ r ]) [])
@@ -748,7 +750,7 @@ let bounds_group =
             (int_bounds 0 9);
           check_bounds (Ops.special (Int 0) "lidx0") (int_bounds 0 (-1)));
       test "an empty range divides to 0" (fun () ->
-          let r = Ops.range (Int 0) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 0) [ 0 ] in
           check_bounds r (int_bounds 0 (-1));
           check_bounds Ops.O.(r // int 4) (int_bounds 0 0);
           check_bounds Ops.O.(r % int 4) (int_bounds 0 0));
@@ -773,9 +775,8 @@ let bounds_group =
           check_bounds Ops.O.(v // int 32) (int_bounds (-67108864) 67108863));
       test "a load from constant bytes spans the bytes" (fun () ->
           let table = Ops.v ~arg:(Bytes "\x03\x09\x01") Op.Binary in
-          check_bounds
-            (Ops.load (Ops.index table [ Ops.range (Int 3) [ 0 ] ]) [])
-            (int_bounds 1 9));
+          let r = Ops.range ~axis_type:Weak (Int 3) [ 0 ] in
+          check_bounds (Ops.load (Ops.index table [ r ]) []) (int_bounds 1 9));
       test "a pad adds zeros to the bounds" (fun () ->
           let x = Shape.expand (Ops.int ~dtype:Int32 5) (ints [ 2 ]) in
           check_bounds (Shape.pad x [ Some (Int 1, Int 1) ]) (int_bounds 0 5));
@@ -848,8 +849,9 @@ let bounds_group =
                  Op.Binary)
               Float32
           in
+          let r = Ops.range ~axis_type:Weak (Int 3) [ 0 ] in
           check_bounds
-            (Ops.load (Ops.index table [ Ops.range (Int 3) [ 0 ] ]) [])
+            (Ops.load (Ops.index table [ r ]) [])
             (Dtype.min Float32, Dtype.max Float32));
       test "exact is whether committed integer values fit their type" (fun () ->
           is_true (Ops.exact Int8 [ i (-128); i 127 ]);
@@ -1119,7 +1121,9 @@ let inference =
             (Shape.sym_infer (Sym Ops.O.(Shape.bind n (i 7) + int 1)) [ ("n", 8) ]));
       test "an ordered value is its first source" (fun () ->
           let n = weak_var "n" 0 100 in
-          let loop = Ops.end_ (Ops.v Op.Noop) [ Ops.range (Int 4) [ 0 ] ] in
+          let loop =
+            Ops.end_ (Ops.v Op.Noop) [ Ops.range ~axis_type:Weak (Int 4) [ 0 ] ]
+          in
           equal int 7
             (Shape.sym_infer
                (Sym (Ops.after Ops.O.((n * int 2) + int 1) [ loop ]))

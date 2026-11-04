@@ -364,7 +364,8 @@ let reductions () =
     ]
 
 let constants_like () =
-  let p = param [ 2; 3 ] 0 Float32 and r = range (Int 4) [ 0 ] in
+  let p = param [ 2; 3 ] 0 Float32
+  and r = range ~axis_type:Weak (Int 4) [ 0 ] in
   sink
     [
       const_like p (i 0);
@@ -378,7 +379,7 @@ let constants_like () =
 
 let kernel_nodes () =
   let buf = param [ 16 ] 0 Float32 in
-  let r = range (Int 16) [ 0 ] in
+  let r = range ~axis_type:Weak (Int 16) [ 0 ] in
   let red = reduce (load (index buf [ r ]) []) Op.Add [ r ] in
   let gidx = special (Int 4) "gidx0" in
   let st =
@@ -406,7 +407,7 @@ let kernel_nodes () =
     ]
 
 let validity () =
-  let r = range (Int 10) [ 0 ] in
+  let r = range ~axis_type:Weak (Int 10) [ 0 ] in
   let v = valid r O.(r < int 5) in
   sink
     [
@@ -457,14 +458,14 @@ let storage_like () =
     ]
 
 let sets () =
-  let p = param [ 4 ] 0 Float32 and r = range (Int 4) [ 0 ] in
+  let p = param [ 4 ] 0 Float32 and r = range ~axis_type:Weak (Int 4) [ 0 ] in
   let q = reshape p (ints [ 2; 2 ]) in
   let idx = index p [ r ] in
   sink
     [ set ~ends:[ r ] idx (const_like idx (f 1.)); set q (const_like q (f 2.)) ]
 
 let calls () =
-  let r = range (Int 4) [ 0 ] in
+  let r = range ~axis_type:Weak (Int 4) [ 0 ] in
   let idx = index (param [ 4 ] 0 Float32) [ r ] in
   let body = sink [ end_ (store idx (const_like idx (f 1.))) [ r ] ] in
   let a = param ~device:"CPU" [ 4 ] 0 Float32 in
@@ -481,7 +482,7 @@ let custom_kernels () =
   let b = param ~device:"CPU" [ 4 ] 1 Float32 in
   let copy = function
     | [ x; y ] ->
-        let r = range (Int 4) [ 0 ] in
+        let r = range ~axis_type:Weak (Int 4) [ 0 ] in
         sink [ end_ (store (index x [ r ]) (load (index y [ r ]) [])) [ r ] ]
     | _ -> invalid_arg "copy takes two placeholders"
   in
@@ -668,7 +669,7 @@ let printed_nodes () =
     O.((one + one) * (one + one));
     n;
     sink ~kernel:(kernel_info ()) O.[ n + int 1; n * int 2 ];
-    range (Int 4) [ 0 ];
+    range ~axis_type:Weak (Int 4) [ 0 ];
     int ~dtype:Int32 3;
     float 1.5;
     param [ 2; 3 ] 0 Float32;
@@ -691,7 +692,7 @@ let reprs () =
     ("bool", bool true);
     ("invalid", invalid);
     ("dtype", cast (int 1) Float16);
-    ("range", range (Int 4) [ 0 ]);
+    ("range", range ~axis_type:Weak (Int 4) [ 0 ]);
     ("range with sub-axes", range ~axis_type:Upcast (Int 4) [ 1; 0 ]);
     ("negative range", range ~axis_type:Loop (Int 4) [ -1 ]);
     ( "reduce",

@@ -75,7 +75,8 @@ let interpreter =
     ]
 
 let leaves =
-  let r = Ops.range (Int 4) [ 0 ] and g = Ops.special (Int 8) "gidx0" in
+  let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+  and g = Ops.special (Int 8) "gidx0" in
   group "leaves"
     [
       test "a range and a hardware index are the values bound to their names"
@@ -86,7 +87,7 @@ let leaves =
                Ops.O.((r * int 10) + g)));
       test "a range is named after its identity" (fun () ->
           equal (option string) (Some "r1_2")
-            (Interpreter.name (Ops.range (Int 4) [ 1; 2 ])));
+            (Interpreter.name (Ops.range ~axis_type:Weak (Int 4) [ 1; 2 ])));
       test "a bound variable is its bound value, unless vars binds it"
         (fun () ->
           let b = Shape.bind (var "i") (int 2) in
@@ -159,9 +160,9 @@ let commits =
     ]
 
 let reductions =
-  let r = Ops.range (Int 4) [ 0 ]
-  and s = Ops.range (Int 3) [ 1 ]
-  and o = Ops.range (Int 5) [ 2 ] in
+  let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+  and s = Ops.range ~axis_type:Weak (Int 3) [ 1 ]
+  and o = Ops.range ~axis_type:Weak (Int 5) [ 2 ] in
   let over rs op u = Ops.reduce u op rs in
   let int32 u = Ops.cast u Dtype.Int32 in
   group "reductions"
@@ -184,12 +185,12 @@ let reductions =
           equal const (int 6)
             (eval ~vars:[ ("r0", int 3) ] (over [ r ] Add (int32 r))));
       test "a reduction over an empty range is its identity" (fun () ->
-          let empty = Ops.range (Int 0) [ 3 ] in
+          let empty = Ops.range ~axis_type:Weak (Int 0) [ 3 ] in
           equal const (int 0) (eval (over [ empty ] Add (int32 empty)));
           equal const (int (-2147483648))
             (eval (over [ empty ] Max (int32 empty))));
       test "a range's end may be a variable" (fun () ->
-          let n = Ops.range (Sym (var "n")) [ 4 ] in
+          let n = Ops.range ~axis_type:Weak (Sym (var "n")) [ 4 ] in
           equal const (int 10)
             (eval ~vars:[ ("n", int 5) ] (over [ n ] Add (int32 n))));
       test "a reduction of an invalid value is invalid" (fun () ->
@@ -274,7 +275,8 @@ let storage =
 
 let kernels =
   let out = Shape.param ~shape:[ Int 16 ] 0 Dtype.Int32 in
-  let r = Ops.range (Int 4) [ 0 ] and s = Ops.range (Int 2) [ 1 ] in
+  let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+  and s = Ops.range ~axis_type:Weak (Int 2) [ 1 ] in
   let store ?gate index value =
     Ops.store ?gate (Ops.index out [ index ]) value
   in
@@ -305,12 +307,13 @@ let kernels =
           let u = Ops.end_ (store ~gate:Ops.O.(r < int 1) r (int32 r)) [ r ] in
           equal (list write) [ (0, 0, int 0) ] (writes u));
       test "a store repeated with the same value is one write" (fun () ->
+          let l = Ops.range ~axis_type:Loop (Int 4) [ 0 ] in
           equal (list write)
             [ (0, 3, int 7) ]
             (writes
                (Ops.end_
                   (store (Ops.int 3) (Ops.int ~dtype:Dtype.Int32 7))
-                  [ r ])));
+                  [ l ])));
       test "a store's value may read storage and reduce" (fun () ->
           let table = Shape.param ~shape:[ Int 4 ] 1 Dtype.Int32 in
           let total = Ops.reduce (Ops.index table [ s ]) Add [ s ] in
@@ -328,7 +331,7 @@ let kernels =
             (writes (Ops.end_ (store r Ops.O.(scaled + count)) [ r ])));
       test "a reduction's range ends read the store's ranges at each value"
         (fun () ->
-          let t = Ops.range (Sym Ops.O.(r + int 1)) [ 2 ] in
+          let t = Ops.range ~axis_type:Weak (Sym Ops.O.(r + int 1)) [ 2 ] in
           let count = Ops.reduce (Ops.int ~dtype:Dtype.Int32 1) Add [ t; r ] in
           equal (list write)
             [ (0, 0, int 4); (0, 1, int 8); (0, 2, int 12); (0, 3, int 16) ]

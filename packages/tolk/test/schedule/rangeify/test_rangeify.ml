@@ -1371,7 +1371,7 @@ let copies =
    [width] of [read i k]. *)
 let kernels_reducing ~width read =
   let o = Shape.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
-  let i = loop 16 9 and k = Ops.range (Int width) [ 10 ] in
+  let i = loop 16 9 and k = Ops.range ~axis_type:Weak (Int width) [ 10 ] in
   let store = Ops.store (Ops.index o [ i ]) (Ops.reduce (read i k) Add [ k ]) in
   kernels
     (Rangeify.get_kernel_graph
@@ -1481,8 +1481,8 @@ let kernels_routed ~experts ~rows v =
   let o = Shape.param ~device:cpu ~shape:[ Int (2 * n) ] 0 Float32 in
   let ids = Shape.param ~device:cpu ~shape:[ Int n ] 2 Int32 in
   let x = Shape.param ~device:cpu ~shape:[ Int (4 * n) ] 3 Float32 in
-  let r = loop (2 * n) 9 and k = Ops.range (Int 4) [ 10 ] in
-  let e = Ops.range (Int experts) [ 11 ] in
+  let r = loop (2 * n) 9 and k = Ops.range ~axis_type:Weak (Int 4) [ 10 ] in
+  let e = Ops.range ~axis_type:Weak (Int experts) [ 11 ] in
   let row = Ops.O.(r // int 2) in
   let selected = Ops.eq (Ops.index ids [ row ]) (Ops.cast e Dtype.Int32) in
   let read = Ops.index v [ e; Ops.O.(r % int 2); k ] in
@@ -1600,7 +1600,7 @@ let stage sizes v =
 let kernels_rows ~rows read =
   let o = Shape.param ~device:cpu ~shape:[ Int 256 ] 0 Float32 in
   let r = Ops.range ~axis_type:Loop rows [ 9 ] in
-  let k = Ops.range (Int 16) [ 10 ] in
+  let k = Ops.range ~axis_type:Weak (Int 16) [ 10 ] in
   let store = Ops.store (Ops.index o [ r ]) (Ops.reduce (read r k) Add [ k ]) in
   kernels
     (Rangeify.get_kernel_graph
@@ -1679,7 +1679,7 @@ let digit_cases =
 let kernels_out ~rows read v =
   let o = Shape.param ~device:cpu ~shape:[ Int 4096 ] 0 Float32 in
   let rs = List.mapi (fun i n -> loop n (20 + i)) rows in
-  let k = Ops.range (Int 16) [ 10 ] in
+  let k = Ops.range ~axis_type:Weak (Int 16) [ 10 ] in
   let at =
     List.fold_left2 (fun a r n -> Ops.O.((a * int n) + r)) (Ops.O.int 0) rs rows
   in
@@ -1795,13 +1795,13 @@ let kernels_scaled ~experts ~rows ~width form v =
   let x = Shape.param ~device:cpu ~shape:[ Int (4 * n) ] 3 Float32 in
   let y = Shape.param ~device:cpu ~shape:[ Int width ] 4 Float32 in
   let r = loop (2 * n) 9 and m = loop width 12 in
-  let k = Ops.range (Int 4) [ 10 ] in
+  let k = Ops.range ~axis_type:Weak (Int 4) [ 10 ] in
   let row = Ops.O.(r // int 2) in
   let scale = Ops.index y [ m ] in
   let term =
     match form with
     | Selected ->
-        let e = Ops.range (Int experts) [ 11 ] in
+        let e = Ops.range ~axis_type:Weak (Int experts) [ 11 ] in
         let selected =
           Ops.eq (Ops.index ids [ row ]) (Ops.cast e Dtype.Int32)
         in

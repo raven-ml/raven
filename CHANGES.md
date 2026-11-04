@@ -1028,6 +1028,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Ops.range` requires `~axis_type`: a range left untyped was `Weak`, which
+  promises independent trips the builder never stated. A loop whose trips
+  read each other's writes is a `Loop`.
 - A sum, difference, product, negation or left shift of a signed integer
   that may overflow computes in the unsigned integer of `int`'s width, or of
   `long long`'s for a 64-bit one (`Cstyle.clang`, `Cstyle.cuda`,

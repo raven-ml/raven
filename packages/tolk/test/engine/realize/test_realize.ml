@@ -37,7 +37,7 @@ let buffer ?(dtype = Dtype.Float32) slot n =
    slot 0. *)
 let map_kernel ?(name = "map") ?(beam = 0) ?(n = 4) ?(src = 1) f =
   let out = buffer 0 n and inp = buffer src n in
-  let i = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let store = Ops.store (Ops.index out [ i ]) (f (Ops.index inp [ i ])) in
   Ops.sink ~kernel:(Ops.kernel_info ~name ~beam ()) [ Ops.end_ store [ i ] ]
 

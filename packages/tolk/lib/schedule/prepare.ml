@@ -219,7 +219,9 @@ let split_reduceop reduce x =
       else
         (* An axis is expanded if its range does not reach the index into the
            base. *)
-        let rngs = List.mapi (fun i s -> range (Int s) [ i ]) xs in
+        let rngs =
+          List.mapi (fun i s -> range ~axis_type:Weak (Int s) [ i ]) xs
+        in
         let rec through idxs u =
           if Op.Set.mem (op u) Op.Set.movement then
             through
@@ -407,7 +409,7 @@ let pm_stop_at_effects =
    elements of the source, at a constant offset. *)
 let rec contiguous_view u =
   let numel = numel u in
-  let rng = range numel [ 0 ] in
+  let rng = range ~axis_type:Weak numel [ 0 ] in
   let out =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() (index (flatten u) [ rng ])
       (Around_sources

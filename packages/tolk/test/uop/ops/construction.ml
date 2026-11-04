@@ -272,10 +272,10 @@ let kernel_nodes =
           let b = var "b" 0 1 in
           equal uops [ b; a; b ] (Ops.src (Ops.sink [ b; a; b ])));
       test "contract rejects a range that is not upcast" (fun () ->
-          let r = Ops.range (Int 2) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
           rejects (fun () -> Shape.contract Ops.O.(r + int 1) [ r ]));
       test "range defaults to a weak integer loop of weak role" (fun () ->
-          let r = Ops.range (Int 4) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
           equal dtype Weak_int (Ops.dtype r);
           is_true (Ops.axis_type r = Weak);
           equal uop (Ops.int 4) (Ops.nth r 0));
@@ -855,7 +855,7 @@ let calls =
           rejects (fun () -> Ops.call (Ops.int 1) [ arg ]);
           rejects (fun () -> Ops.call Ops.O.(arg + float 1.) []));
       test "call rejects a range leaking out of its body" (fun () ->
-          let r = Ops.range (Int 4) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
           rejects (fun () ->
               Ops.call
                 (Ops.sink

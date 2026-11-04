@@ -515,7 +515,7 @@ let clang = lazy (Cstyle.clang (Engine.target Rig.host))
 
 let compiled name f =
   let kernel n =
-    let i = Ops.range (Int n) [ 0 ] in
+    let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
     let at slot = Ops.index (Shape.placeholder ~slot [ n ] Float32) [ i ] in
     Codegen.to_program
       (Ops.sink
@@ -561,7 +561,7 @@ let capture_of d =
 
 let inc_phased =
   lazy
-    (let i = Ops.range (Int 4) [ 0 ] in
+    (let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
      let out = Shape.placeholder ~slot:0 [ 4 ] Float32
      and src = Shape.param ~shape:[ Ops.Int 4 ] ~phase:4 1 Float32 in
      let at b = Ops.index b [ i ] in
@@ -630,7 +630,7 @@ let variable name =
 (* A kernel that adds its variable, in slot 1, to slot 2 into slot 0. *)
 let add_variable name = function
   | [ out; v; src ] ->
-      let i = Ops.range (Int 4) [ 0 ] in
+      let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
       Ops.sink
         ~kernel:(Ops.kernel_info ~name:("add_" ^ name) ())
         [

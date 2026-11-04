@@ -33,10 +33,10 @@ let kernel ?opts_to_apply p =
   let rows = p.m + p.k and mk = p.m * p.k and kn = p.k * p.n
   and mn = p.m * p.n in
   let open Ops.O in
-  let z = Ops.range (Int p.batch) [ 0 ]
-  and i = Ops.range (Int p.m) [ 1 ]
-  and j = Ops.range (Int p.n) [ 2 ]
-  and r = Ops.range (Int p.k) [ 3 ] in
+  let z = Ops.range ~axis_type:Weak (Int p.batch) [ 0 ]
+  and i = Ops.range ~axis_type:Weak (Int p.m) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Int p.n) [ 2 ]
+  and r = Ops.range ~axis_type:Weak (Int p.k) [ 3 ] in
   let at x idx = Ops.cast (Ops.index x [ idx ]) Float32 in
   let ai =
     if p.toeplitz then (z * int rows) + i + r

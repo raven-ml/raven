@@ -319,7 +319,9 @@ let checks =
           ("its workgroup's flag holds, is accepted", O.(ld x g <> i32 0), false);
         ]
         (fun (_, cond, refused) ->
-          let r = Ops.range ~dtype:Void (Sym (Ops.v Op.Noop)) [ 2 ] in
+          let r =
+            Ops.range ~axis_type:Loop ~dtype:Void (Sym (Ops.v Op.Noop)) [ 2 ]
+          in
           let b = local 10 ls Float32 in
           let w = st b l (ld (Ops.after inp_of_loop [ r ]) l) in
           let loop = Ops.backedge (Ops.barrier w []) ~loop:r ~cond in

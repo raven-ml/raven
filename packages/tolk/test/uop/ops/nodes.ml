@@ -446,7 +446,7 @@ let identity =
       test "a node nothing references is collected" (fun () ->
           let cell = Weak.create 2 in
           let[@inline never] build () =
-            let r = Ops.range (Int 9127) [ 9127 ] in
+            let r = Ops.range ~axis_type:Weak (Int 9127) [ 9127 ] in
             let c = Ops.O.(r < int 4) in
             ignore
               ( Ops.ranges c,
@@ -1101,7 +1101,7 @@ let shapes =
                   (Shape.param ~shape:(ints [ 4 ]) 0 Float32)
                   [ Ops.int 0; Ops.int 1 ])));
       test "a stage puts its ranges' sizes in front" (fun () ->
-          let r = Ops.range (Int 3) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 3) [ 0 ] in
           equal shape
             (ints [ 3; 2 ])
             (Shape.shape (Ops.bufferize (Shape.consts [ f 1.; f 2. ]) [ r ])));
@@ -1280,7 +1280,7 @@ let ranges =
                 (After, None);
               ]);
       test "an end closes its ranges, and an after ordered on it too" (fun () ->
-          let r = Ops.range (Int 10) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 10) [ 0 ] in
           let c = Ops.O.(r + int 1) in
           is_true (Ops.Nodes.mem r (Ops.ranges c));
           let e = Ops.end_ (Ops.v Op.Noop) [ r ] in
@@ -1290,8 +1290,10 @@ let ranges =
           is_true (Shape.simplify group == Ops.after (Ops.v Op.Stack) [ e ]);
           is_false (Ops.Nodes.mem r (Ops.ranges (Ops.after c [ e ]))));
       test "ranges lists the node first, then its sources' ranges" (fun () ->
-          let r0 = Ops.range (Int 4) [ 0 ] in
-          let r1 = Ops.range (Sym (Ops.after (Ops.int 4) [ r0 ])) [ 1 ] in
+          let r0 = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+          let r1 =
+            Ops.range ~axis_type:Weak (Sym (Ops.after (Ops.int 4) [ r0 ])) [ 1 ]
+          in
           equal uops [ r1; r0 ] (list_ranges r1);
           equal int 2 (Ops.Nodes.cardinal (Ops.ranges r1));
           equal uops [ r0; r1 ]
@@ -1299,11 +1301,11 @@ let ranges =
       test
         "a launch knows a bound of constants and variables, ordered after \
          effects or not, and not one that reads a range or memory" (fun () ->
-          let i = Ops.range (Int 4) [ 0 ] in
+          let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
           let x = Shape.param ~shape:[ Int 4 ] 0 Int32 in
           let one = Ops.int ~dtype:Int32 1 in
           let loop = Ops.end_ (Ops.store (Ops.index x [ i ]) one) [ i ] in
-          let bounded b = Ops.range (Sym b) [ 1 ] in
+          let bounded b = Ops.range ~axis_type:Weak (Sym b) [ 1 ] in
           List.iter
             (fun (msg, b, known) ->
               equal ~msg bool known (Ops.known_at_launch (bounded b)))
@@ -1321,10 +1323,10 @@ let ranges =
             (function Invalid_argument _ -> true | _ -> false)
             (fun () -> Ops.known_at_launch (Ops.int 4)));
       test "a range runs inside itself" (fun () ->
-          let r = Ops.range (Int 10) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 10) [ 0 ] in
           equal uops [ r ] (list_ranges r));
       test "a call keeps its arguments' ranges" (fun () ->
-          let r = Ops.range ~dtype:Int32 (Int 4) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak ~dtype:Int32 (Int 4) [ 0 ] in
           let foreign =
             Ops.call
               (Ops.custom_function ~dtype:Int32 "external" [])
@@ -1335,7 +1337,8 @@ let ranges =
           equal uops ~msg:"a kernel" [ r ] (list_ranges kernel));
       test "a backedge closes its loop and keeps the condition's other ranges"
         (fun () ->
-          let outer = Ops.range (Int 4) [ 0 ] and inner = Ops.loop 1 in
+          let outer = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+          and inner = Ops.loop 1 in
           let e =
             Ops.backedge (Ops.int 1) ~loop:inner ~cond:Ops.O.(outer < int 2)
           in
@@ -1343,7 +1346,7 @@ let ranges =
           equal uops [ outer ]
             (list_ranges (Ops.after Ops.O.(outer + int 1) [ e ])));
       test "an after of a barrier over an end closes the ended range" (fun () ->
-          let range axis = Ops.range (Int 4) [ axis ] in
+          let range axis = Ops.range ~axis_type:Weak (Int 4) [ axis ] in
           let first = range 1 and closed = range 2 and last = range 3 in
           let barrier = Ops.barrier (Ops.end_ closed [ closed ]) [] in
           let root =
@@ -1352,7 +1355,7 @@ let ranges =
           equal uops [ first; last ] (list_ranges root));
       test "an external call keeps the ranges it is given, whatever its body"
         (fun () ->
-          let r = Ops.range (Int 4) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
           equal uops [ r ]
             (list_ranges (Ops.call (Ops.custom_function "f" []) [ r ]));
           equal uops [ r ]
@@ -1360,15 +1363,19 @@ let ranges =
                (Ops.call (Ops.custom_function "f" [ Ops.int 0 ]) [ r ])));
       test "an end closes its range only, not the ranges it runs inside"
         (fun () ->
-          let outer = Ops.range (Int 4) [ 0 ] in
-          let inner = Ops.range (Sym (Ops.after (Ops.int 4) [ outer ])) [ 1 ] in
+          let outer = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+          let inner =
+            Ops.range ~axis_type:Weak
+              (Sym (Ops.after (Ops.int 4) [ outer ]))
+              [ 1 ]
+          in
           equal uops [ outer ]
             (list_ranges (Ops.end_ Ops.O.(outer + inner) [ inner ])));
       test "a linear program closes the ranges it lays out" (fun () ->
-          let r = Ops.range (Int 4) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
           is_false (Ops.Nodes.mem r (Ops.ranges (Ops.v ~src:[ r ] Op.Linear))));
       test "a barrier closes what its sources close" (fun () ->
-          let r = Ops.range (Int 4) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
           let ended = Ops.end_ Ops.O.(r + int 1) [ r ] in
           equal uops [ r ] (Ops.ended_ranges (Ops.barrier ended [])));
       test "axis_id and axis_type read a range and reject anything else"
@@ -1381,10 +1388,12 @@ let ranges =
       test
         "range_str writes the identity with underscores and m for a negative \
          part" (fun () ->
-          equal string "0_1" (Ops.range_str (Ops.range (Int 4) [ 0; 1 ]));
+          equal string "0_1"
+            (Ops.range_str (Ops.range ~axis_type:Weak (Int 4) [ 0; 1 ]));
           equal string "m1"
             (Ops.range_str (Ops.range ~axis_type:Loop (Int 4) [ -1 ]));
-          equal string "2_m3" (Ops.range_str (Ops.range (Int 4) [ 2; -3 ])));
+          equal string "2_m3"
+            (Ops.range_str (Ops.range ~axis_type:Weak (Int 4) [ 2; -3 ])));
       test "range_str paints in the axis colour on request" (fun () ->
           let r = Ops.range ~axis_type:Upcast (Int 4) [ 3 ] in
           equal string

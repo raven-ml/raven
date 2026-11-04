@@ -20,7 +20,7 @@ let clang =
 (* [add dt n] stores into slot 0 the sum of slots 1 and 2, of [n] elements of
    [dt]. *)
 let add dt n =
-  let r = Ops.range (Int n) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let at slot = Ops.index (Shape.param ~shape:[ Int n ] slot dt) [ r ] in
   let sum = Ops.add (Ops.load (at 1) []) (Ops.load (at 2) []) in
   Ops.sink ~kernel:(Ops.kernel_info ())

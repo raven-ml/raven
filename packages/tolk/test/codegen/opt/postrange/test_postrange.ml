@@ -245,7 +245,8 @@ let upcast_4 = split 0 4 Upcast
 (* Kernels over [a[r0 * 8 + r1]] whose reduction, or end, closes
    [closes r0 r1]. *)
 let closing ~by_end closes =
-  let r0 = Ops.range (Int 4) [ 0 ] and r1 = Ops.range (Int 8) [ 1 ] in
+  let r0 = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+  and r1 = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
   let out = Shape.param ~shape:[ Int 32 ] 0 Float32
   and a = Shape.param ~shape:[ Int 32 ] 1 Float32 in
   let i = Ops.O.((r0 * Ops.int 8) + r1) in
@@ -349,7 +350,8 @@ let schedulers =
 
 (* [out[i * 8 + n] = j * j] over [j < x[i]], for four [i] and eight [n]. *)
 let bounded_rows () =
-  let i = Ops.range (Int 4) [ 0 ] and n = Ops.range (Int 8) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+  and n = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
   let x = Shape.param ~shape:[ Int 4 ] 1 Int32
   and out = Shape.param ~shape:[ Int 32 ] 0 Int32 in
   let count = Ops.load (Ops.index x [ i ]) [] in
@@ -442,7 +444,7 @@ let bounded_loops =
 
 (* [out[i] = i] over 3 [i] of type [dt]. *)
 let typed_rows dt =
-  let i = Ops.range ~dtype:dt (Int 3) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak ~dtype:dt (Int 3) [ 0 ] in
   let out = Shape.param ~shape:[ Int 4 ] 0 Int32 in
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.cast i Int32)) [ i ] ]
@@ -500,7 +502,8 @@ let opaque_id o = Format.asprintf "%a" Op.pp o
 
 (* [o] on [&x[i]] and [out[i * 8 + n] = n], for four [i] and eight [n]. *)
 let called_rows o =
-  let i = Ops.range (Int 4) [ 0 ] and n = Ops.range (Int 8) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+  and n = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
   let x = Shape.param ~shape:[ Int 4 ] 1 Int32
   and out = Shape.param ~shape:[ Int 32 ] 0 Int32 in
   let at = Ops.index out [ Ops.O.((i * Ops.int 8) + n) ] in
@@ -744,7 +747,7 @@ let without_opts ast =
 let fixed_by reason =
   let open Ops.O in
   let buffer slot = Shape.param ~shape:[ Int 256 ] slot Float32 in
-  let i = Ops.range (Int 256) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 256) [ 0 ] in
   let at b j = Ops.index b [ j ] in
   let value = Ops.load (at (buffer 1) i) [] in
   let through space n j =

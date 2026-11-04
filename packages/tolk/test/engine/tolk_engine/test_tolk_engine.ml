@@ -112,7 +112,7 @@ let kernel ?(name = "axpy") ?(size = 4) ?bound () =
     | Some v -> Shape.bind n (`Int (Bigint.of_int v))
     | None -> n
   in
-  let i = Ops.range (Int size) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int size) [ 0 ] in
   let at b = Ops.index (buffer b) [ i ] in
   Ops.sink ~kernel:(Ops.kernel_info ~name ())
     [ Ops.end_ (Ops.store (at 0) ((at 1 * Ops.cast n Float32) + at 2)) [ i ] ]
@@ -173,7 +173,7 @@ let phased_kernel () =
     Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
       (Dtype.Value.of_int 100)
   in
-  let i = Ops.range (Int 4) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   let at b = Ops.index (buffer b) [ i ] in
   let sink =
     Ops.sink
@@ -208,7 +208,7 @@ let shifted_axpy =
        Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
          (Dtype.Value.of_int 100)
      in
-     let i = Ops.range (Int 4) [ 0 ] in
+     let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
      let at b = Ops.index b [ i ] in
      let a_i = Ops.index a [ i + Ops.int 3 ] in
      let sink =
@@ -314,7 +314,7 @@ let extremes dt =
 let signed_kernel dt op n =
   let open Ops.O in
   let buffer slot dt = Shape.placeholder ~slot [ n ] dt in
-  let i = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let at slot dt = Ops.index (buffer slot dt) [ i ] in
   let a = at 2 dt and b = at 3 dt in
   let r = if Op.equal op Neg then Ops.alu a Neg [] else Ops.alu a op [ b ] in
@@ -464,8 +464,8 @@ let on_the_host =
 let sums ?(name = "sums") ?opts m k =
   let buffer slot n = Shape.placeholder ~slot [ n ] Float32 in
   let a = buffer 1 (m * k) and b = buffer 2 k in
-  let i = Ops.range (Int m) [ 0 ] in
-  let j = Ops.range (Int k) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak (Int k) [ 1 ] in
   let term =
     let open Ops.O in
     Ops.index a [ (i * Ops.int k) + j ] * Ops.index b [ j ]
@@ -559,7 +559,7 @@ let same_bits_in_any_blocks (m, blocks, seed) =
    operation. *)
 let doubled m =
   let buffer slot = Shape.placeholder ~slot [ m ] Float32 in
-  let i = Ops.range (Int m) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:(Printf.sprintf "doubled_%d" m) ())
     [
@@ -1084,7 +1084,7 @@ let stores_rows_read_elsewhere () =
    floats. *)
 let add_one =
   let open Ops.O in
-  let i = Ops.range (Int 4) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   let at slot = Ops.index (Shape.placeholder ~slot [ 4 ] Float32) [ i ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"add_one" ())
@@ -1095,7 +1095,7 @@ let runs_once_per_trip () =
   let one = add_one in
   let out = Ops.new_buffer "CPU" 12 Float32
   and src = Ops.new_buffer "CPU" 12 Float32 in
-  let r = Ops.range (Int 3) [ 7 ] in
+  let r = Ops.range ~axis_type:Weak (Int 3) [ 7 ] in
   let trip b =
     Shape.shrink b
       [ Some (Sym (r * Ops.int 4), Sym ((r * Ops.int 4) + Ops.int 4)) ]
@@ -1317,7 +1317,7 @@ let loops_while_a_flag_holds ?(devices = devices) d (limit, max) =
 (* A kernel that stores [f] of the one element of its parameter 1, of dtype
    [src], into the one element of its parameter 0, of dtype [dst]. *)
 let scalar_kernel name ~dst ~src f =
-  let i = Ops.range (Int 1) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 1) [ 0 ] in
   let at slot dt = Ops.index (Shape.placeholder ~slot [ 1 ] dt) [ i ] in
   Ops.sink ~kernel:(Ops.kernel_info ~name ())
     [ Ops.end_ (Ops.store (at 0 dst) (f (at 1 src))) [ i ] ]
@@ -1885,7 +1885,7 @@ let plans_the_buffers_of_a_range ~through_a_view ~loop () =
 
 (* A kernel that stores false into its parameter 0, one boolean. *)
 let set_false =
-  let i = Ops.range (Int 1) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 1) [ 0 ] in
   let flag = Ops.index (Shape.placeholder ~slot:0 [ 1 ] Bool) [ i ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"set_false" ())
@@ -2492,7 +2492,7 @@ let per_run_add =
   lazy
     (let open Ops.O in
      let buffer slot = Shape.placeholder ~slot [ per_run_size ] Float32 in
-     let i = Ops.range (Int per_run_size) [ 0 ] in
+     let i = Ops.range ~axis_type:Weak (Int per_run_size) [ 0 ] in
      let at b = Ops.index (buffer b) [ i ] in
      Codegen.to_program
        (Ops.sink ~kernel:(Ops.kernel_info ~name:"per_run_add" ())
@@ -2536,7 +2536,7 @@ let system_add y z (c : calls) =
 let system_loop y z y' z' (c : calls) =
   let first, nodes = added y z c.nodes in
   let second, nodes = added y' z' nodes in
-  let r = Ops.range (Int 2) [ 100 + List.length c.nodes ] in
+  let r = Ops.range ~axis_type:Loop (Int 2) [ 100 + List.length c.nodes ] in
   let loop = Ops.end_ (Ops.v Op.Linear ~src:[ first; second ]) [ r ] in
   { nodes; calls = loop :: c.calls }
 
@@ -2825,7 +2825,7 @@ let spans_each_kernel () =
 
 (* A kernel on [d] that fills four floats with [x]. *)
 let fill d x =
-  let i = Ops.range (Int 4) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   let out = Shape.placeholder ~slot:0 [ 4 ] Float32 in
   let kernel =
     Ops.sink
@@ -3230,7 +3230,7 @@ let timing =
 (* A kernel that fills four floats with the variable [name], whose bounds are
    those a split of its loop would give its block's bounds. *)
 let fill_with name d =
-  let i = Ops.range (Int 4) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   let out = Shape.placeholder ~slot:0 [ 4 ] Float32 in
   let v =
     Ops.variable ~dtype:Int32 name (Dtype.Value.of_int 0) (Dtype.Value.of_int 4)
@@ -3306,7 +3306,7 @@ let x_dtype l = if l.count = Bare then Dtype.Int32 else Int64
 let counts_to_loaded ?(d = "CPU") ?opts l =
   let x = Shape.placeholder ~slot:1 [ 4 ] (x_dtype l)
   and out = Shape.placeholder ~slot:0 [ 4 ] Float32 in
-  let i = Ops.range (Int 4) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   let count () =
     Ops.load (Ops.index x [ (if l.own then i else Ops.int 0) ]) []
   in
@@ -3387,7 +3387,7 @@ let writes_loaded_trips ?(devices = devices) ?(d = "CPU") ~optimized () =
   let x = Shape.placeholder ~slot:1 [ 4 ] Int32
   and out = Shape.placeholder ~slot:0 [ 4 ] Float32 in
   let count = Ops.load (Ops.index x [ Ops.int 0 ]) [] in
-  let j = Ops.range ~dtype:Int32 (Sym count) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak ~dtype:Int32 (Sym count) [ 0 ] in
   let jf = Ops.cast j Float32 in
   let kernel =
     Ops.sink
@@ -3414,7 +3414,7 @@ let writes_loaded_trips ?(devices = devices) ?(d = "CPU") ~optimized () =
 let follows_a_loop ?(devices = devices) ?(d = "CPU") () =
   let x = Shape.placeholder ~slot:1 [ 4 ] Int32
   and out = Shape.placeholder ~slot:0 [ 4 ] Int32 in
-  let i = Ops.range (Int 4) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   let k = Ops.range ~axis_type:Loop ~dtype:Int32 (Int 2) [ 1 ] in
   let at = Ops.index out [ i ] in
   let first =
@@ -3456,9 +3456,9 @@ let sums_loaded_products ?(devices = devices) ?(d = "CPU") () =
   and a = Shape.placeholder ~slot:2 [ 4 * rows ] Float32
   and b = Shape.placeholder ~slot:3 [ 4 ] Float32
   and out = Shape.placeholder ~slot:0 [ rows ] Float32 in
-  let i = Ops.range (Int rows) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
   let count = Ops.load (Ops.index x [ i ]) [] in
-  let j = Ops.range (Sym (Ops.cast count Weak_int)) [ 1 ] in
+  let j = Ops.range ~axis_type:Weak (Sym (Ops.cast count Weak_int)) [ 1 ] in
   let ai = Ops.load (Ops.index a [ Ops.O.((j * Ops.int rows) + i) ]) []
   and bj = Ops.load (Ops.index b [ j ]) [] in
   let sum = Ops.reduce Ops.O.(ai * bj) Op.Add [ j ] in

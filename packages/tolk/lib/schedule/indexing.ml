@@ -46,7 +46,7 @@ let new_range ctx (s : sint) =
   match s with
   | Sym r when op r = Op.Range -> r
   | _ when Sint.(resolve (s <> Int 1)) ->
-      let r = range s [ ctx.range_idx ] in
+      let r = range ~axis_type:Weak s [ ctx.range_idx ] in
       ctx.range_idx <- ctx.range_idx + 1;
       r
   | _ -> int 0

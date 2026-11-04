@@ -65,7 +65,7 @@ let scalar_arguments =
         Shape.param ~addrspace:Alu ~vmin_vmax:(z (-7), z (-1)) slot Int32
       in
       let output = Shape.param ~shape:[ Ops.Int 4 ] 0 Float32 in
-      let r = Ops.range (Int 4) [ 0 ] in
+      let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
       let value = Ops.cast (Ops.add named positional) Float32 in
       let ast =
         Ops.sink
@@ -116,9 +116,10 @@ let loaded_trips ?beam () =
   let rows = 4 and width = 64 in
   let x = Shape.placeholder ~slot:1 [ width ] Uint8
   and out = Shape.placeholder ~slot:0 [ rows * width ] Float32 in
-  let r = Ops.range (Int rows) [ 0 ] and i = Ops.range (Int width) [ 1 ] in
+  let r = Ops.range ~axis_type:Weak (Int rows) [ 0 ]
+  and i = Ops.range ~axis_type:Weak (Int width) [ 1 ] in
   let bound = Ops.cast (Ops.load (Ops.index x [ i ]) []) Int32 in
-  let j = Ops.range ~dtype:Int32 (Sym bound) [ 2 ] in
+  let j = Ops.range ~axis_type:Weak ~dtype:Int32 (Sym bound) [ 2 ] in
   let sum = Ops.reduce (Ops.cast j Float32) Op.Add [ j ] in
   let at = Ops.index out [ Ops.O.((r * Ops.int width) + i) ] in
   Ops.sink

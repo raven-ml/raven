@@ -611,7 +611,7 @@ let fresh = Atomic.make 1000
 let fresh_kernel ?opts_to_apply () =
   let value = Float.of_int (Atomic.fetch_and_add fresh 1) in
   let out = Shape.param ~shape:[ Int 16 ] 0 Float32 in
-  let r = Ops.range (Int 16) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 16) [ 0 ] in
   let store =
     Ops.store (Ops.index out [ r ]) (Ops.float ~dtype:Float32 value)
   in
@@ -771,7 +771,8 @@ let serves_commuted_index () =
   let kernel index =
     let out = Shape.param ~shape:[ Int 16 ] 0 Float32 in
     let x = Shape.param ~shape:[ Int 16 ] 1 Float32 in
-    let r0 = Ops.range (Int 4) [ 0 ] and r1 = Ops.range (Int 4) [ 1 ] in
+    let r0 = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+    and r1 = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
     let read =
       Ops.add (Ops.index x [ index r0 r1 ]) (Ops.float ~dtype:Float32 value)
     in
@@ -1281,7 +1282,7 @@ let one_name_twice () =
    entry copies the structure of its n + 1 pointers and its bounds. *)
 let sum_of n =
   let x k = Ops.index (Shape.param ~shape:[ Int 1024 ] k Float32) in
-  let i = Ops.range (Int 1024) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 1024) [ 0 ] in
   let xs = List.init n (fun k -> x (k + 1) [ i ]) in
   let out = Shape.param ~shape:[ Int 1024 ] 0 Float32 in
   let sum = List.fold_left Ops.add (List.hd xs) (List.tl xs) in
@@ -1925,13 +1926,17 @@ let divisions =
           Setting.context fast_idiv (fun () ->
               lacks Shr
                 (instructions_of
-                   [ Ops.alu (Ops.range (Int 20) [ 0 ]) o [ Ops.int d ] ])));
+                   [
+                     Ops.alu
+                       (Ops.range ~axis_type:Weak (Int 20) [ 0 ])
+                       o [ Ops.int d ];
+                   ])));
       test "a remainder the fast division declines stays a remainder" (fun () ->
           Setting.context fast_idiv (fun () ->
               has Truncmod
                 (instructions_of
                    [
-                     Ops.alu (Ops.range (Int 30) [ 0 ]) Truncmod
+                     Ops.alu (Ops.range ~axis_type:Weak (Int 30) [ 0 ]) Truncmod
                        [ loaded ~size:4 Int32 0 ];
                    ]);
               has Truncmod
@@ -1958,7 +1963,7 @@ let divisions =
       test "a division by 7 times 64 shifts out the 64 first, in 32 bits"
         (fun () ->
           Setting.context fast_idiv (fun () ->
-              let r = Ops.range (Int (1 lsl 20)) [ 0 ] in
+              let r = Ops.range ~axis_type:Weak (Int (1 lsl 20)) [ 0 ] in
               let uops =
                 instructions_of
                   [ Ops.div ~rounding:`Floor r (Ops.int (7 * 64)) ]
@@ -1997,7 +2002,7 @@ let ends_at n uops =
   | [ r ] -> equal Uops.uop (lowered_end n) (Ops.nth r 0)
   | rs -> failf "one range, not %d" (List.length rs)
 
-let r = Ops.range (Int 204) [ 0 ]
+let r = Ops.range ~axis_type:Weak (Int 204) [ 0 ]
 let table = Shape.param ~shape:[ Int 1024 ] 0 Float32
 
 let gated_load bound =
@@ -2089,9 +2094,9 @@ let widened_product ?opts_to_apply ?(out = fun dt -> dt) dt (m, k, n) =
   and a = Shape.param ~shape:[ Ops.Int (m * k) ] 1 dt
   and b = Shape.param ~shape:[ Ops.Int (k * n) ] 2 dt in
   let open Ops.O in
-  let i = Ops.range (Int m) [ 0 ]
-  and j = Ops.range (Int n) [ 1 ]
-  and r = Ops.range (Int k) [ 2 ] in
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and r = Ops.range ~axis_type:Weak (Int k) [ 2 ] in
   let at x idx = Ops.cast (Ops.index x [ idx ]) Float32 in
   let sum =
     Ops.reduce (at a ((i * int k) + r) * at b ((r * int n) + j)) Add [ r ]
@@ -2185,7 +2190,7 @@ let bfloat16_sum lanes =
   let c = Shape.param ~shape:[ Ops.Int n ] 0 Bfloat16
   and a = Shape.param ~shape:[ Ops.Int n ] 1 Bfloat16
   and b = Shape.param ~shape:[ Ops.Int n ] 2 Bfloat16 in
-  let i = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let at x = Ops.index x [ i ] in
   let opts_to_apply =
     [ Opt.Split { axis = 0; amount = lanes; target = Upcast; top = false } ]
@@ -2219,9 +2224,9 @@ let mixed_product (m, k, n) =
   and a = Shape.param ~shape:[ Ops.Int (m * k) ] 1 Float32
   and b = Shape.param ~shape:[ Ops.Int (k * n) ] 2 Bfloat16 in
   let open Ops.O in
-  let i = Ops.range (Int m) [ 0 ]
-  and j = Ops.range (Int n) [ 1 ]
-  and r = Ops.range (Int k) [ 2 ] in
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and r = Ops.range ~axis_type:Weak (Int k) [ 2 ] in
   let x = Ops.index a [ (i * int k) + r ]
   and y = Ops.cast (Ops.index b [ (r * int n) + j ]) Float32 in
   let sum = Ops.reduce (x * y) Add [ r ] in
@@ -2773,8 +2778,9 @@ module Gated = struct
     and a = param 1 Stdlib.(m * k) dt
     and b = param 2 Stdlib.(k * n) dt
     and fl = param 3 Stdlib.(m / gate_block) Int32 in
-    let i = Ops.range (Int m) [ 0 ] and j = Ops.range (Int n) [ 1 ] in
-    let kk = Ops.range (Int k) [ 2 ] in
+    let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+    and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
+    let kk = Ops.range ~axis_type:Weak (Int k) [ 2 ] in
     let x = f32 (ld a ((i * int k) + kk)) * f32 (ld b ((kk * int n) + j)) in
     let rop = match gate with Maximum -> Op.Max | _ -> Op.Add in
     let v = gated gate ~fl ~i (Ops.reduce x rop [ kk ]) in
@@ -2790,8 +2796,9 @@ module Gated = struct
     and fl = param 3 Stdlib.(m / gate_block) Int32
     and out2 = param 4 Stdlib.(m * n) Float32
     and b2 = param 5 Stdlib.(k * n) Float32 in
-    let i = Ops.range (Int m) [ 0 ] and j = Ops.range (Int n) [ 1 ] in
-    let kk = Ops.range (Int k) [ 2 ] in
+    let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+    and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
+    let kk = Ops.range ~axis_type:Weak (Int k) [ 2 ] in
     let sum b =
       Ops.reduce
         (ld a ((i * int k) + kk) * ld b ((kk * int n) + j))
@@ -2813,7 +2820,8 @@ module Gated = struct
     and a = param 1 Stdlib.(m * k) Float32
     and x = param 2 k Float32
     and fl = param 3 Stdlib.(m / gate_block) Int32 in
-    let i = Ops.range (Int m) [ 0 ] and kk = Ops.range (Int k) [ 1 ] in
+    let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+    and kk = Ops.range ~axis_type:Weak (Int k) [ 1 ] in
     let sum = Ops.reduce (ld a ((i * int k) + kk) * ld x kk) Op.Add [ kk ] in
     let store = Ops.store (Ops.index out [ i ]) (gated Stored ~fl ~i sum) in
     kernel ?opts_to_apply [ Ops.end_ store [ i ] ]
@@ -2825,8 +2833,9 @@ module Gated = struct
     let out = param 0 Stdlib.(m * n) Float32
     and a = param 1 Stdlib.(m * k) Float32
     and b = param 2 Stdlib.(k * n) Float32 in
-    let i = Ops.range (Int m) [ 0 ] and j = Ops.range (Int n) [ 1 ] in
-    let kk = Ops.range (Int k) [ 2 ] in
+    let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+    and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
+    let kk = Ops.range ~axis_type:Weak (Int k) [ 2 ] in
     let before = i < int h in
     let at =
       Ops.where (Ops.logical_not before)
@@ -3109,8 +3118,9 @@ let staged_product (m, k, n) =
   and a = param 1 Stdlib.(m * k) Bfloat16
   and b = param 2 Stdlib.(k * n) Bfloat16
   and fl = param 3 Stdlib.(m / staged_block) Int32 in
-  let i = Ops.range (Int m) [ 1 ] and j = Ops.range (Int n) [ 2 ] in
-  let kk = Ops.range (Int k) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int m) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 2 ] in
+  let kk = Ops.range ~axis_type:Weak (Int k) [ 0 ] in
   let at x idx = Ops.cast (Ops.index x [ idx ]) Float32 in
   let sum =
     Ops.reduce (at a ((i * int k) + kk) * at b ((kk * int n) + j)) Add [ kk ]
@@ -3304,7 +3314,9 @@ let few_kernel { shape = m, k, n; index; rop; gate; heuristic } =
   and a = param 1 Stdlib.(m * k)
   and b = param 2 Stdlib.(k * n)
   and fl = Shape.param ~shape:[ Int m ] 3 Int32 in
-  let range size axis = Ops.range ~dtype:index (Int size) [ axis ] in
+  let range size axis =
+    Ops.range ~axis_type:Weak ~dtype:index (Int size) [ axis ]
+  in
   let i = range m 0 and j = range n 1 and kk = range k 2 in
   let ld buf at = Ops.load (Ops.index buf [ at ]) [] in
   let x = ld a ((i * int k) + kk) * ld b ((kk * int n) + j) in
@@ -3391,7 +3403,7 @@ let reduction_by_size rop index hi =
   let out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
   let x = Shape.param ~shape:[ Int hi ] 1 Float32 in
   let n = Ops.variable "n" (`Int Bigint.zero) (`Int (Bigint.of_int hi)) in
-  let r = Ops.range (Sym n) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Sym n) [ 0 ] in
   let at = match index with Each -> r | Halved -> Ops.O.(r // int 2) in
   let reduced = Ops.reduce (Ops.index x [ at ]) rop [ r ] in
   Ops.sink ~kernel:(Ops.kernel_info ())
@@ -3433,7 +3445,7 @@ let reduces_by_size (rop, index, hi) =
 let max_of_a_product hi =
   let out = Shape.param ~shape:[ Int 1 ] 0 Int32 in
   let n = Ops.variable "n" (`Int Bigint.zero) (`Int (Bigint.of_int hi)) in
-  let r = Ops.range (Sym n) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Sym n) [ 0 ] in
   let doubled = Ops.O.(Ops.cast r Int32 * Ops.int ~dtype:Int32 2) in
   Ops.sink ~kernel:(Ops.kernel_info ())
     [
@@ -3488,7 +3500,7 @@ let dot n =
   let out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
   let a = Shape.param ~shape:[ Int n ] 1 Float32 in
   let b = Shape.param ~shape:[ Int n ] 2 Float32 in
-  let r = Ops.range (Int n) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let sum =
     Ops.reduce (Ops.mul (Ops.index a [ r ]) (Ops.index b [ r ])) Op.Add [ r ]
   in
@@ -3502,8 +3514,8 @@ let matvec ~rows n =
   let out = Shape.param ~shape:[ Int rows ] 0 Float32 in
   let a = Shape.param ~shape:[ Int (rows * n) ] 1 Float32 in
   let b = Shape.param ~shape:[ Int n ] 2 Float32 in
-  let i = Ops.range (Int rows) [ 0 ] in
-  let k = Ops.range (Int n) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  let k = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
   let a_ik = Ops.index a [ Ops.O.((i * Ops.int n) + k) ] in
   let sum = Ops.reduce (Ops.mul a_ik (Ops.index b [ k ])) Op.Add [ k ] in
   let split axis target = Opt.Split { axis; amount = 4; target; top = false } in
@@ -3515,7 +3527,7 @@ let matvec ~rows n =
 let muladd n =
   let out = Shape.param ~shape:[ Int n ] 0 Float32 in
   let x k = Ops.index (Shape.param ~shape:[ Int n ] k Float32) in
-  let i = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let value = Ops.add (Ops.mul (x 1 [ i ]) (x 2 [ i ])) (x 3 [ i ]) in
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) value) [ i ] ]
@@ -3590,8 +3602,8 @@ let multiply_adds =
 let max_and_sum () =
   let out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
   let a = Shape.param ~shape:[ Int 5 ] 1 Float32 in
-  let i = Ops.range (Int 3) [ 0 ] in
-  let k = Ops.range (Int 5) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int 3) [ 0 ] in
+  let k = Ops.range ~axis_type:Weak (Int 5) [ 1 ] in
   let a_k = Ops.index a [ k ] in
   let max = Ops.reduce (Ops.add a_k (Ops.cast i Float32)) Op.Max [ i; k ] in
   let sum = Ops.reduce a_k Op.Add [ k ] in
@@ -3755,8 +3767,8 @@ let six_lanes_kernel () =
   let open Ops.O in
   let out = Shape.param ~shape:[ Int 3 ] 0 Uint8 in
   let x = Shape.param ~shape:[ Int 6 ] 1 Uint8 in
-  let l = Ops.range (Int 3) [ 0 ] in
-  let r = Ops.range (Int 2) [ 1 ] in
+  let l = Ops.range ~axis_type:Weak (Int 3) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 2) [ 1 ] in
   let byte = Ops.index x [ (l * int 2) + r ] in
   let nibble =
     (byte lsr Ops.int ~dtype:Uint8 4) land Ops.int ~dtype:Uint8 15
@@ -3778,8 +3790,8 @@ let rows_kernel rows cols =
   let out = Shape.param ~shape:[ Int n ] 0 Float32 in
   let x = Shape.param ~shape:[ Int n ] 1 Float32 in
   let y = Shape.param ~shape:[ Int cols ] 2 Float32 in
-  let i = Ops.range (Int rows) [ 0 ] in
-  let j = Ops.range (Int cols) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak (Int cols) [ 1 ] in
   let at = (i * int cols) + j in
   let a = Ops.index x [ at ] and b = Ops.index y [ j ] in
   let whole axis =
@@ -3813,7 +3825,7 @@ let lanes_kernel n =
   let open Ops.O in
   let param slot = Shape.param ~shape:[ Int n ] slot Float32 in
   let out = param 0 and x = param 1 and y = param 2 in
-  let i = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let a = Ops.index x [ i ] and b = Ops.index y [ i ] in
   let whole = Opt.Split { axis = 0; amount = 0; target = Upcast; top = false } in
   Ops.sink
@@ -3857,8 +3869,8 @@ let held_kernel rows cols =
   let out = Shape.param ~shape:[ Int n ] 0 Float32 in
   let x = Shape.param ~shape:[ Int n ] 1 Float32 in
   let y = Shape.param ~shape:[ Int cols ] 2 Float32 in
-  let i = Ops.range (Int rows) [ 0 ] in
-  let j = Ops.range (Int cols) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak (Int cols) [ 1 ] in
   let at = (i * int cols) + j in
   let a = Ops.index x [ at ] and flag = Ops.index y [ j ] in
   let held = flag * flag < float 1. in
@@ -3925,8 +3937,8 @@ let dot_kernel n =
   let out = Shape.param ~shape:[ Int 2 ] 0 Float64 in
   let x = Shape.param ~shape:[ Int size ] 1 Float64 in
   let y = Shape.param ~shape:[ Int size ] 2 Float64 in
-  let l = Ops.range (Int 2) [ 0 ] in
-  let r = Ops.range (Int n) [ 1 ] in
+  let l = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
   let at p = Ops.index p [ (l * int n) + r ] in
   let sum = Ops.reduce (at x * at y) Op.Add [ r ] in
   let whole axis target = Opt.Split { axis; amount = 0; target; top = false } in
@@ -3977,7 +3989,7 @@ let compare_select cmp dt n =
   let param slot dt = Shape.param ~shape:[ Int n ] slot dt in
   let out = param 0 dt and a = param 1 cmp and b = param 2 cmp in
   let c = param 3 dt and d = param 4 dt in
-  let i = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let at p = Ops.index p [ i ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
@@ -4040,8 +4052,8 @@ let vector_select_kernel () =
   let out = Shape.param ~shape:[ Int 2 ] 0 Int8 in
   let x = Shape.param ~shape:[ Int 4 ] 1 Int8 in
   let l = Ops.range ~axis_type:Weak (Int 2) [ 2 ] in
-  let r0 = Ops.range (Int 2) [ 0 ] in
-  let r1 = Ops.range (Int 4) [ 1 ] in
+  let r0 = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
+  let r1 = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
   let j = (r1 * int 3) + int 1 in
   let gate =
     ((r0 * int 2) + l < int 3)
@@ -4084,7 +4096,8 @@ let wide_kernel dt (rows, cols) =
   let param slot = Shape.param ~shape:[ Int n ] slot dt in
   let out = param 0 and a = param 1 and b = param 2 in
   let c = Shape.param ~shape:[ Int cols ] 3 dt in
-  let i = Ops.range (Int rows) [ 0 ] and j = Ops.range (Int cols) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int cols) [ 1 ] in
   let at p =
     if p == c then Ops.index c [ j ] else Ops.index p [ (i * int cols) + j ]
   in
@@ -4418,7 +4431,7 @@ let nan_constants =
 let cast_to_bfloat16 from n =
   let out = Shape.param ~shape:[ Int n ] 0 Bfloat16 in
   let x = Shape.param ~shape:[ Int n ] 1 from in
-  let i = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let store =
     Ops.store (Ops.index out [ i ]) (Ops.cast (Ops.index x [ i ]) Bfloat16)
   in
@@ -4479,7 +4492,7 @@ let select_bfloat16 n =
   let c = Shape.param ~shape:[ Int n ] 1 Float32 in
   let a = Shape.param ~shape:[ Int n ] 2 Bfloat16 in
   let b = Shape.param ~shape:[ Int n ] 3 Bfloat16 in
-  let i = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let pick =
     Ops.where
       (Ops.index c [ i ] > float 0.)
@@ -4515,7 +4528,7 @@ let take_bfloat16 n =
   let out = Shape.param ~shape:[ Int n ] 0 Bfloat16 in
   let x = Shape.param ~shape:[ Int n ] 1 Bfloat16 in
   let ids = Shape.param ~shape:[ Int n ] 2 Int32 in
-  let i = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let k = Ops.index ids [ i ] in
   let inside = k < int n in
   let read = Ops.index x [ Shape.valid k inside ] in
@@ -4545,8 +4558,8 @@ let invalid_lanes_kernel () =
   let out = Shape.param ~shape:[ Int 3 ] 0 Float32 in
   let x = Shape.param ~shape:[ Int 4 ] 1 Float32 in
   let o = Ops.range ~axis_type:Weak (Int 3) [ 2 ] in
-  let r0 = Ops.range (Int 4) [ 0 ] in
-  let r1 = Ops.range (Int 4) [ 1 ] in
+  let r0 = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+  let r1 = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
   let j = (r0 * int 3) + o and k = (r1 * int 3) + int 1 in
   let inside = (r1 < int 3) land (j < int 10) in
   let gate =
@@ -4583,7 +4596,7 @@ let square_kernel ~opts dtype c =
   let open Ops.O in
   let out = Shape.param ~shape:[ Int 8 ] 0 dtype in
   let x = Shape.param ~shape:[ Int 8 ] 1 dtype in
-  let i = Ops.range (Int 8) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let c = Ops.const ~dtype (`Int c) in
   let p = Ops.index x [ i ] * c in
   Ops.sink ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
@@ -4628,7 +4641,7 @@ let like_terms_kernel dtype c0 c1 =
   let open Ops.O in
   let out = Shape.param ~shape:[ Int 8 ] 0 dtype in
   let x = Shape.param ~shape:[ Int 8 ] 1 dtype in
-  let i = Ops.range (Int 8) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let v = Ops.index x [ i ] in
   let s = (v * Ops.const c0) + (v * Ops.const c1) in
   Ops.sink ~kernel:(Ops.kernel_info ())
@@ -4666,7 +4679,7 @@ let like_terms_wrap () =
    [opts]. *)
 let divide_kernel ~opts dtype ops c =
   let x = Shape.param ~shape:[ Int 8 ] 4 dtype in
-  let i = Ops.range (Int 8) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let store k op =
     let out = Shape.param ~shape:[ Int 8 ] k dtype in
     let q = Ops.alu (Ops.index x [ i ]) op [ Ops.const (`Int c) ] in
@@ -4758,7 +4771,7 @@ let unselected_sum_kernel () =
   let out = Shape.param ~shape:[ Int 3 ] 0 Int32 in
   let x = Shape.param ~shape:[ Int 64 ] 1 Int32 in
   let l = Ops.range ~axis_type:Weak (Int 3) [ 1 ] in
-  let r = Ops.range (Int 64) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 64) [ 0 ] in
   let gate = (l * l) % int 3 > int 1 in
   let value = Ops.where gate (Ops.index x [ r ]) (Ops.int ~dtype:Int32 0) in
   let sum = Ops.reduce value Op.Add [ r ] in
@@ -4887,8 +4900,8 @@ let stores_before =
 let weak_max_kernel () =
   let open Ops.O in
   let out = Shape.param ~shape:[ Int 1 ] 0 Int32 in
-  let r1 = Ops.range (Int 5) [ 1 ] in
-  let r0 = Ops.range (Int 3) [ 0 ] in
+  let r1 = Ops.range ~axis_type:Weak (Int 5) [ 1 ] in
+  let r0 = Ops.range ~axis_type:Weak (Int 3) [ 0 ] in
   let inner = Ops.where (r0 < int 2) (int 0) (Ops.const `Invalid) in
   let inner = Ops.reduce inner Op.Max [ r0 ] in
   let outer = Ops.reduce (Ops.where (r1 < int 4) inner (int 0)) Op.Max [ r1 ] in
@@ -5188,7 +5201,7 @@ let in_blocks uops =
 let floats n slot = Shape.param ~shape:[ Int n ] slot Float32
 
 let splits_the_output_loop () =
-  let i = Ops.range (Int 1024) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 1024) [ 0 ] in
   let a = Ops.index (floats 1024 1) [ i ] in
   let prg =
     in_blocks [ Ops.end_ (Ops.store (Ops.index (floats 1024 0) [ i ]) a) [ i ] ]
@@ -5205,7 +5218,7 @@ let splits_the_output_loop () =
    the block's bounds take the first two slots past the buffers', and the
    variable the first past theirs, so that a launch finds each by its slot. *)
 let numbers_past_a_skipped_slot () =
-  let i = Ops.range (Int 1022) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 1022) [ 0 ] in
   let n =
     Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
       (Dtype.Value.of_int 100)
@@ -5235,7 +5248,8 @@ let numbers_past_a_skipped_slot () =
    store, and splitting either would run the other's whole loop in every
    block. *)
 let leaves_separate_loops () =
-  let i = Ops.range (Int 1024) [ 0 ] and j = Ops.range (Int 512) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int 1024) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int 512) [ 1 ] in
   let copy slot r n =
     Ops.end_
       (Ops.store
@@ -5247,7 +5261,7 @@ let leaves_separate_loops () =
     (split_of (in_blocks [ copy 0 i 1024; copy 1 j 512 ]))
 
 let leaves_a_store_of_no_loop () =
-  let i = Ops.range (Int 1024) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 1024) [ 0 ] in
   let a = Ops.index (floats 1024 2) [ i ] in
   equal (option sint) None
     (split_of
@@ -5267,7 +5281,7 @@ let leaves_a_serial_loop () =
           [ Ops.end_ (Ops.store (Ops.index (floats 1024 0) [ i ]) a) [ i ] ]))
 
 let leaves_a_reduction () =
-  let j = Ops.range (Int 4096) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak (Int 4096) [ 0 ] in
   let sum = Ops.reduce (Ops.index (floats 4096 1) [ j ]) Op.Add [ j ] in
   equal (option sint) None
     (split_of
@@ -5276,7 +5290,7 @@ let leaves_a_reduction () =
 (* A store of a value valid where r < 4 shrinks its loop to 4 iterations and
    drops the guard; the split keeps both. *)
 let keeps_a_shrunk_loop () =
-  let r = Ops.range (Int 204) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 204) [ 0 ] in
   let x = Ops.where (Ops.lt r (Ops.int 4)) (Ops.float 1.) Ops.invalid in
   let prg =
     Setting.context
@@ -5292,7 +5306,7 @@ let keeps_a_shrunk_loop () =
    up to 127 would multiply, stays 32 bits wide. *)
 let keeps_narrow_indices () =
   let n = 1 lsl 25 in
-  let i = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let a = Ops.index (floats n 1) [ i ] in
   let prg =
     in_blocks [ Ops.end_ (Ops.store (Ops.index (floats n 0) [ i ]) a) [ i ] ]
@@ -5305,8 +5319,8 @@ let keeps_narrow_indices () =
    operations: past the 32-bit index type a block's count is kept in. *)
 let counts_a_large_loop () =
   let n = 1 lsl 16 in
-  let i = Ops.range (Int n) [ 0 ] in
-  let j = Ops.range (Int n) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
   let x =
     Ops.mul (Ops.index (floats n 1) [ i ]) (Ops.index (floats n 2) [ j ])
   in
@@ -5416,7 +5430,7 @@ let call_optimised () =
     Ops.sink [ Ops.store (first p) Ops.O.((first q * i32 3) + v) ]
   in
   let c = int_param ~name:"C" 0 16 and a = int_param ~name:"A" 1 16 in
-  let i = Ops.range (Int 16) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 16) [ 0 ] in
   let call =
     Ops.call ~name:"mul_add" mul_add [ at c i; at a i; Ops.cast i Int32 ]
   in
@@ -5543,7 +5557,7 @@ let call_then_sum () =
   in
   let c = int_param ~name:"C" 0 2 and a = int_param ~name:"A" 1 4 in
   let call = Ops.call ~name:"incr" incr [ first c; first a ] in
-  let r = Ops.range (Int 4) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   kernel "call_then_sum"
     [
       call;
@@ -6157,7 +6171,7 @@ let group_custom () =
 (* [C[r] += 1] in the target's language, beside [D[r] = 1], over 16 [r] in a
    kernel the heuristic optimises. *)
 let optimised_custom () =
-  let r = Ops.range (Int 16) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 16) [ 0 ] in
   let c = int_param ~name:"C" 0 16 and d = int_param ~name:"D" 1 16 in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"optimised_custom" ())
@@ -6624,7 +6638,7 @@ let counted_beside_rows o () =
   let out = int_param ~name:"out" 0 64
   and a = int_param ~name:"A" 1 64
   and n = int_param ~name:"n" 2 1 in
-  let i = Ops.range (Int 64) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int 64) [ 0 ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"counted_beside_rows" ())
     [
@@ -6638,7 +6652,7 @@ let counted_beside_sum o () =
   let out = int_param ~name:"out" 0 1
   and a = int_param ~name:"A" 1 4096
   and n = int_param ~name:"n" 2 1 in
-  let r = Ops.range (Int 4096) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 4096) [ 0 ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"counted_beside_sum" ())
     [ Ops.store (first out) (Ops.reduce (at a r) Op.Add [ r ]); counted o n ]
@@ -6652,7 +6666,7 @@ let stored_beside_rows () =
   let out = int_param ~name:"out" 0 rows
   and a = int_param ~name:"A" 1 rows
   and n = int_param ~name:"n" 2 1 in
-  let i = Ops.range (Int rows) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"stored_beside_rows" ())
     [
@@ -6667,7 +6681,7 @@ let gated_beside_rows () =
   let out = int_param ~name:"out" 0 rows
   and a = int_param ~name:"A" 1 rows
   and n = int_param ~name:"n" 2 1 in
-  let i = Ops.range (Int rows) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"gated_beside_rows" ())
     [
@@ -6689,7 +6703,7 @@ let pinned_beside_rows () =
   let out = int_param ~name:"out" 0 rows
   and a = int_param ~name:"A" 1 rows
   and n = int_param ~name:"n" 2 1 in
-  let i = Ops.range (Int rows) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
   let r = Ops.range ~axis_type:Loop (Int 8) [ 1 ] in
   let cell = at n Ops.O.(r // Ops.int 8) in
   Ops.sink
@@ -6795,7 +6809,7 @@ let sum_counter ?opts axis_type () =
 (* [C[r // 8] += 1] over a weak [r < 8]: the index is [C[0]] before any
    optimisation, the store bound to [r] through its storage. *)
 let folded_counter () =
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let cell = at (int_param ~name:"C" 0 1) Ops.O.(r // int 8) in
   weak_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
 
@@ -6803,40 +6817,42 @@ let folded_counter () =
    3: at each [n], distinct cells. *)
 let shared_variable () =
   let n = bounded_var "n" 3 in
-  let r = Ops.range (Sym n) [ 0 ]
-  and s = Ops.range (Sym Ops.O.(int 4 - n)) [ 1 ] in
+  let r = Ops.range ~axis_type:Weak (Sym n) [ 0 ]
+  and s = Ops.range ~axis_type:Weak (Sym Ops.O.(int 4 - n)) [ 1 ] in
   let o = int_param ~name:"O" 0 5 in
   weak_kernel
     [ Ops.end_ (Ops.store (at o Ops.O.(r + (s * int 2))) (i32 1)) [ r; s ] ]
 
 (* [O[j] = r] over a weak [r < 2] and a weak [j] of no trip: nothing runs. *)
 let no_trip () =
-  let r = Ops.range (Int 2) [ 0 ] and j = Ops.range (Int 0) [ 1 ] in
+  let r = Ops.range ~axis_type:Weak (Int 2) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int 0) [ 1 ] in
   let o = int_param ~name:"O" 0 1 in
   weak_kernel [ Ops.end_ (Ops.store (at o j) (Ops.cast r Int32)) [ r; j ] ]
 
 (* [C[0] += 1] ordered after a weak [r < 8]. *)
 let counter_after () =
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let cell = first (Ops.after (int_param ~name:"C" 0 1) [ r ]) in
   weak_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
 
 (* [O[cell r] = value r] over a weak [r < 16], [O] of [n] cells. *)
 let weak_store n cell value () =
-  let r = Ops.range (Int 16) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 16) [ 0 ] in
   let o = int_param ~name:"O" 0 n in
   weak_kernel [ Ops.end_ (Ops.store (at o (cell r)) (value r)) [ r ] ]
 
 (* [C[16 (r // 8)] += 1] over a weak [r < 16]: two cells, 16 apart. *)
 let strided_counter () =
-  let r = Ops.range (Int 16) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 16) [ 0 ] in
   let cell = at (int_param ~name:"C" 0 17) Ops.O.(int 16 * (r // int 8)) in
   weak_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
 
 (* [O[2i + 2j] = 1] over weak [i, j < 4]: each range alone names 4 cells, both
    together 7 for 16 points. *)
 let even_sum () =
-  let i = Ops.range (Int 4) [ 0 ] and j = Ops.range (Int 4) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
   let o = int_param ~name:"O" 0 16 in
   let cell = Ops.O.((i * int 2) + (j * int 2)) in
   weak_kernel [ Ops.end_ (Ops.store (at o cell) (i32 1)) [ i; j ] ]
@@ -6846,7 +6862,7 @@ let even_sum () =
 let staged_under_weak () =
   let a = int_param ~name:"A" 1 32 and o = int_param ~name:"O" 0 32 in
   let l = Shape.placeholder ~slot:2 ~addrspace:Local [ 8 ] Int32 in
-  let g = Ops.range (Int 4) [ 0 ]
+  let g = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
   and t = Ops.range ~axis_type:Local (Int 8) [ 1 ] in
   let row x = Ops.O.((g * int 8) + x) in
   let w = Ops.store (at l t) (Ops.load (at a (row t)) []) in
@@ -6856,8 +6872,8 @@ let staged_under_weak () =
 (* [O[i(i + 1) / 2 + j] = 1] over weak [i < 4] and [j < i + 1]: ten points,
    ten cells. *)
 let packed_triangle () =
-  let i = Ops.range (Int 4) [ 0 ] in
-  let j = Ops.range (Sym Ops.O.(i + int 1)) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak (Sym Ops.O.(i + int 1)) [ 1 ] in
   let o = int_param ~name:"O" 0 10 in
   let cell = Ops.O.(((i * (i + int 1)) // int 2) + j) in
   weak_kernel [ Ops.end_ (Ops.store (at o cell) (i32 1)) [ i; j ] ]
@@ -6865,7 +6881,7 @@ let packed_triangle () =
 (* [O[0] = r] at the one point [r = 2] of a weak [r < 4], by the store's gate
    or by its index's validity. *)
 let stored_at_two ?opts ~gate () =
-  let r = Ops.range (Int 4) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   let o = int_param ~name:"O" 0 1 in
   let two = Ops.eq r (Ops.int 2) in
   let store =
@@ -6877,13 +6893,15 @@ let stored_at_two ?opts ~gate () =
 (* [O[j % 4] = j] over a weak [j < X[0]]. *)
 let loaded_bound () =
   let x = int_param ~name:"X" 1 1 and o = int_param ~name:"O" 0 4 in
-  let j = Ops.range ~dtype:Int32 (Sym (Ops.load (first x) [])) [ 0 ] in
+  let j =
+    Ops.range ~axis_type:Weak ~dtype:Int32 (Sym (Ops.load (first x) [])) [ 0 ]
+  in
   weak_kernel
     [ Ops.end_ (Ops.store (at o Ops.O.(j % int 4)) (Ops.cast j Int32)) [ j ] ]
 
 (* [O[r] = r] over a weak [r < n], [n <= 8]. *)
 let variable_bound () =
-  let r = Ops.range (Sym (bounded_var "n" 8)) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Sym (bounded_var "n" 8)) [ 0 ] in
   let o = int_param ~name:"O" 0 8 in
   weak_kernel [ Ops.end_ (Ops.store (at o r) (Ops.cast r Int32)) [ r ] ]
 
@@ -6893,7 +6911,7 @@ let scattered () =
   let o = int_param ~name:"O" 0 8
   and idx = int_param ~name:"I" 1 8
   and v = int_param ~name:"V" 2 8 in
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let cell = Ops.cast (Ops.load (at idx r) []) Weak_int in
   weak_kernel
     [ Ops.end_ (Ops.store (at o cell) (Ops.load (at v r) [])) [ r ] ]
@@ -6901,8 +6919,8 @@ let scattered () =
 (* [C[i] += 1] over a weak [i < 2] and a weak [j < 4(i + 1)], [j] upcast by
    4. *)
 let row_counted_trips () =
-  let i = Ops.range (Int 2) [ 0 ] in
-  let j = Ops.range (Sym Ops.O.(int 4 * (i + int 1))) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
+  let j = Ops.range ~axis_type:Weak (Sym Ops.O.(int 4 * (i + int 1))) [ 1 ] in
   let cell = at (int_param ~name:"C" 0 2) i in
   weak_kernel ~opts:[ upcast 1 4 ]
     [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ i; j ] ]
@@ -7042,7 +7060,7 @@ let iota n = [ (1, int_values (List.init n Fun.id)) ]
 let scratch ?(n = 1) cell opts () =
   let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
   let rg = reg 2 n in
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let set = Ops.store (at rg (cell r)) Ops.O.(at a r + i32 1) in
   let got = Ops.load (at (Ops.after rg [ set ]) (cell r)) [] in
   weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) got) [ r ] ]
@@ -7055,7 +7073,8 @@ let scratch_quarter = scratch ~n:2 (fun r -> Ops.O.(r // int 4))
 let scratch_two opts () =
   let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
   let rg = reg 2 8 in
-  let x = Ops.range (Int 2) [ 0 ] and y = Ops.range (Int 4) [ 1 ] in
+  let x = Ops.range ~axis_type:Weak (Int 2) [ 0 ]
+  and y = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
   let cell = Ops.O.((x * int 2) + y) and flat = Ops.O.((x * int 4) + y) in
   let set = Ops.store (at rg cell) (at a flat) in
   let got = Ops.load (at (Ops.after rg [ set ]) cell) [] in
@@ -7065,7 +7084,7 @@ let scratch_two opts () =
 let scratch_next opts () =
   let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
   let rg = reg 2 9 in
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let s1 = Ops.store (at rg r) (at a r) in
   let s2 = Ops.store (at (Ops.after rg [ s1 ]) Ops.O.(r + int 1)) (i32 100) in
   let got = Ops.load (at (Ops.after rg [ s1; s2 ]) r) [] in
@@ -7077,7 +7096,7 @@ let scratch_next opts () =
 let table opts () =
   let d = int_param ~name:"D" 0 8 in
   let t = reg 2 8 and s = reg 3 1 in
-  let r = Ops.range (Int 8) [ 0 ] and j = loop 8 1 in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] and j = loop 8 1 in
   let tr = Ops.after t [ r ] in
   let fill = Ops.end_ (Ops.store (at tr j) (Ops.cast j Int32)) [ j ] in
   let sr = Ops.after s [ r ] in
@@ -7091,7 +7110,7 @@ let table opts () =
 let counter bound opts () =
   let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
   let cnt = reg 2 1 and t = reg 3 4 in
-  let r = Ops.range (Int 4) [ 0 ] and l = Ops.loop 1 in
+  let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] and l = Ops.loop 1 in
   let tr = Ops.after t [ r ] in
   let fills = List.init 4 (fun e -> Ops.store (at tr (Ops.int e)) (i32 (e + 1))) in
   let tw = Ops.after tr fills in
@@ -7116,7 +7135,7 @@ let to_table = counter (fun r t -> Ops.load (at t r) [])
 let valid_where_low_load opts () =
   let d = int_param ~name:"D" 0 8 in
   let t = reg 2 2 and s = reg 3 1 in
-  let r = Ops.range (Int 8) [ 0 ] and j = loop 2 1 in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] and j = loop 2 1 in
   let tr = Ops.after t [ r ] in
   let fill =
     Ops.end_ (Ops.store (at tr j) Ops.O.(Ops.cast j Int32 + i32 1)) [ j ]
@@ -7134,7 +7153,7 @@ let valid_where_low_load opts () =
 let valid_where_low opts () =
   let d = int_param ~name:"D" 0 8 in
   let rg = reg 2 1 in
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let low = Ops.O.(r < int 4) in
   let valid u = Shape.valid u low in
   let set = Ops.store (at (Ops.after rg [ r ]) (valid (Ops.int 0))) (i32 5) in
@@ -7146,7 +7165,7 @@ let valid_where_low opts () =
 let through_other opts () =
   let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
   let s = reg 2 1 and rg = reg 3 1 in
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let ss = Ops.store (first (Ops.after s [ r ])) (i32 5) in
   let set =
     Ops.store (first rg) Ops.O.(Ops.load (first (Ops.after s [ ss ])) [] + i32 1)
@@ -7160,7 +7179,7 @@ let ordered_after opts () =
   let d = int_param ~name:"D" 0 8 and g = int_param ~name:"G" 2 8 in
   let a = int_param ~name:"A" 1 8 in
   let rg = reg 3 1 in
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let gs = Ops.store (at g r) (Ops.cast r Int32) in
   let set = Ops.store (first (Ops.after rg [ gs ])) (i32 5) in
   let got = Ops.load (first (Ops.after rg [ set ])) [] in
@@ -7172,7 +7191,8 @@ let ordered_after opts () =
 let then_reduce opts () =
   let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 32 in
   let rg = reg 2 1 in
-  let i = Ops.range (Int 4) [ 0 ] and j = Ops.range (Int 8) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
   let ri = Ops.after rg [ i ] in
   let set = Ops.store (first ri) (at a Ops.O.(i * int 8)) in
   let sum = Ops.reduce (at a Ops.O.((i * int 8) + j)) Op.Add [ j ] in
@@ -7184,7 +7204,8 @@ let then_reduce opts () =
 let reduced_into opts () =
   let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 32 in
   let rg = reg 2 1 in
-  let i = Ops.range (Int 4) [ 0 ] and j = Ops.range (Int 8) [ 1 ] in
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
   let ri = Ops.after rg [ i ] in
   let sum = Ops.reduce (at a Ops.O.((i * int 8) + j)) Op.Add [ j ] in
   let set = Ops.store (first ri) sum in
@@ -7195,7 +7216,7 @@ let reduced_into opts () =
 let read_after ?opts n () =
   let d = int_param ~name:"D" 0 1 and a = int_param ~name:"A" 1 n in
   let g = int_param ~name:"G" 2 n in
-  let r = Ops.range (Int n) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let e = Ops.end_ (Ops.store (at g r) (at a r)) [ r ] in
   weak_kernel ?opts
     [ e; Ops.store (first d) (at (Ops.after g [ e ]) (Ops.int (n - 1))) ]
@@ -7204,7 +7225,7 @@ let read_after ?opts n () =
 let live_out ?opts () =
   let d = int_param ~name:"D" 0 1 and a = int_param ~name:"A" 1 8 in
   let rg = reg 2 1 in
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let e = Ops.end_ (Ops.store (first rg) (at a r)) [ r ] in
   weak_kernel ?opts
     [ e; Ops.store (first d) (Ops.load (first (Ops.after rg [ e ])) []) ]
@@ -7213,7 +7234,7 @@ let live_out ?opts () =
 let written_before ?opts n () =
   let d = int_param ~name:"D" 0 n and a = int_param ~name:"A" 1 n in
   let g = int_param ~name:"G" 2 1 in
-  let r = Ops.range (Int n) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let set = Ops.store (first g) (i32 5) in
   let v = Ops.O.(first (Ops.after g [ set ]) + at a r) in
   weak_kernel ?opts [ Ops.end_ (Ops.store (at d r) v) [ r ] ]
@@ -7227,7 +7248,7 @@ let copy_call dst src =
 let effect_then_read write ?opts n () =
   let d = int_param ~name:"D" 0 1 and a = int_param ~name:"A" 1 n in
   let g = int_param ~name:"G" 2 n in
-  let r = Ops.range (Int n) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let e = Ops.end_ (write (at g r) (at a r)) [ r ] in
   weak_kernel ?opts
     [ e; Ops.store (first d) (at (Ops.after g [ e ]) (Ops.int (n - 1))) ]
@@ -7240,7 +7261,7 @@ let by_code = effect_then_read (fun g a -> code "{0}[0] = {1}[0];" [ g; a ])
 let call_beside_read ?opts () =
   let d = int_param ~name:"D" 0 1 and a = int_param ~name:"A" 1 8 in
   let o = int_param ~name:"O" 2 8 in
-  let r = Ops.range (Int 8) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   weak_kernel ?opts
     [ Ops.end_ (copy_call (at o r) (at a r)) [ r ]; Ops.store (first d) (first a) ]
 

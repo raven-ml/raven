@@ -33,7 +33,9 @@ let flattening =
             (Ops.end_ at [ r0; r1 ])
             (flatten (Ops.end_ at [ r0; r1; Ops.O.(r0 + Ops.int 1) ])));
       test "ranges keep the order they are listed in" (fun () ->
-          let late = Ops.range (Sym Ops.O.(r0 + Ops.int 1)) [ 4 ] in
+          let late =
+            Ops.range ~axis_type:Weak (Sym Ops.O.(r0 + Ops.int 1)) [ 4 ]
+          in
           let u =
             Ops.end_ (store_at Ops.O.((r0 * Ops.int 4) + late) one) [ late; r0 ]
           in
@@ -135,7 +137,7 @@ let shrinking =
         ~id:(Format.asprintf "%a" Dtype.pp)
         Dtype.[ Int32; Int64; Uint32 ]
         (fun dt ->
-          let r = Ops.range ~dtype:dt (Int 204) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak ~dtype:dt (Int 204) [ 0 ] in
           let guard = Ops.O.(r < Ops.int ~dtype:dt 4) in
           equal (list int) [ 4 ] (shrunk (Ops.end_ (gated_load guard r) [ r ])));
       test "a range shrinks to the greatest of its guards" (fun () ->
@@ -204,7 +206,7 @@ let splitting =
         ~id:(Format.asprintf "%a" Dtype.pp)
         Dtype.[ Int32; Int64; Uint32 ]
         (fun dt ->
-          let r = Ops.range ~dtype:dt (Int 8) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak ~dtype:dt (Int 8) [ 0 ] in
           let u =
             kernel
               [ Ops.end_ (store_at r Ops.O.(r % Ops.int 2)) [ r ] ]
@@ -231,7 +233,7 @@ let splitting =
           in
           equal uop u (split u));
       test "a range of symbolic size stays" (fun () ->
-          let r = Ops.range (Sym (var "n" 1 16)) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Sym (var "n" 1 16)) [ 0 ] in
           let u = modulo r 2 in
           equal uop u (split u));
       test "a warp range stays" (fun () ->
@@ -266,7 +268,7 @@ let pp_reduction (rop, x, hi) =
    reduction and its rewrite are one of the two; every other value is one. *)
 let reduces_by_size (rop, x, hi) =
   let n = var "n" 0 hi and value = Shape.param 0 Float32 in
-  let r = Ops.range (Sym n) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Sym n) [ 0 ] in
   let u = Ops.reduce value rop [ r ] in
   let at size u =
     let vars = [ ("n", i size) ] and params = [ (0, `Float x) ] in
@@ -488,7 +490,7 @@ let reduce_simplifying =
         ~id:(Format.asprintf "%a" Dtype.pp)
         Dtype.[ Int32; Int64; Uint32 ]
         (fun dt ->
-          let one = Ops.range ~dtype:dt (Int 1) [ 2 ] in
+          let one = Ops.range ~axis_type:Weak ~dtype:dt (Int 1) [ 2 ] in
           let below = Ops.O.(one < Ops.int ~dtype:dt 1) in
           sums_to (`Float 2.)
             (reduce_simplify (sum (Ops.where below two zero) [ one ])));

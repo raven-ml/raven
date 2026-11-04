@@ -125,7 +125,7 @@ let lower ?default_float name u =
   rewrites ?default_float Uop_weak.pm_lower_weak name (Ops.sink [ u ])
 
 let pm_lower_weak =
-  let range = Ops.range (Int 16) [ 0 ] in
+  let range = Ops.range ~axis_type:Weak (Int 16) [ 0 ] in
   let gated_index size hi =
     let idx = Ops.variable ~dtype:Int64 "i" (i 0) (`Int hi) in
     Ops.index (Shape.param ~shape:[ Int size ] 0 Float32) [ Shape.valid idx flag ]

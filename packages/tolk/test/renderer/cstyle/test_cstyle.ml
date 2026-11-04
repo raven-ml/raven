@@ -1236,7 +1236,7 @@ let product_by_reciprocal i =
    0, 1 and 2. *)
 let division =
   let n = Array.length dividends in
-  let i = Ops.range (Int n) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let at slot = Ops.index (Shape.placeholder ~slot [ n ] Float32) [ i ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"fdiv" ())

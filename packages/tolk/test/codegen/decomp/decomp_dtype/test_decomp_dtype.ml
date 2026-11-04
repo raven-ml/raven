@@ -305,7 +305,7 @@ let overflow =
    of the elements [r] of the storage of [ins], in slots 0, 1, and so on, at
    element [r] of the [out] storage in the next slot. *)
 let kernel ins out n f =
-  let r = Ops.range (Int n) [ 0 ] in
+  let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let at slot dt = Ops.index (Shape.param ~shape:[ Int n ] slot dt) [ r ] in
   let xs = List.mapi (fun slot dt -> Ops.load (at slot dt) []) ins in
   Ops.sink [ Ops.end_ (Ops.store (at (List.length ins) out) (f xs)) [ r ] ]

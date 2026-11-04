@@ -255,7 +255,7 @@ let upat =
           let a = var "a" 0 4 and x = fvar "x" in
           let p = Shape.param ~shape:(ints [ 4 ]) 0 Float32 in
           let idx = Ops.index p [ a ] in
-          let r = Ops.range (Int 4) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
           List.iter
             (fun (name, pat, u) -> is_true ~msg:name (matches pat u))
             [
@@ -304,7 +304,7 @@ let upat =
               ("bitcast", P.bitcast ~dtype:Uint32 P.wild, Ops.bitcast a Uint32);
             ]);
       test "a reduce pattern names its operation in the argument" (fun () ->
-          let r = Ops.range (Int 4) [ 0 ] in
+          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
           is_false
             (matches
                (P.reduce ~op:Op.Mul P.wild [ P.wild ])

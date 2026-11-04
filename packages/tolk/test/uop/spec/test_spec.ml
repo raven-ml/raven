@@ -330,7 +330,7 @@ let call_on_rows ~align stride =
   let start = Ops.O.(r * int stride) in
   let row = Shape.shrink rows [ Some (Sym start, Sym Ops.O.(start + int 4)) ] in
   let p = Shape.param ~shape:[ Int 4 ] ~align 0 Float32 in
-  let k = Ops.range (Int 4) [ 0 ] in
+  let k = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   let one = Ops.float ~dtype:Float32 1. in
   let body =
     Ops.sink ~kernel:(Ops.kernel_info ())
