@@ -8161,3 +8161,42 @@ and an initial value is added after it (D260).
   that writes a broadcast argument; the stores through an expand that only
   adds axes of one and through a transpose, against the values they write;
   and an expand that empties an axis, not refused.
+
+## D346. A division that may overflow and a shift past the width are defined
+
+- **tinygrad:** `renderer/cstyle.py:159-160` (`code_for_op`, which writes
+  `/`, `%`, `<<` and `>>` whatever their operands).
+- **tolk:** `Cstyle.pm_defined_div_shift`, in the extra matchers of
+  `Cstyle.clang`, `Cstyle.cuda`, `Cstyle.hip` and `Cstyle.metal`.
+- **Differs:** C leaves undefined a signed division of the least value by
+  -1, its quotient's and its remainder's, and a shift by a count at or past
+  the width of the promoted operand; CUDA, HIP and Metal follow C++, which
+  does the same, and a vector lane of a narrow type, which C does not
+  promote, is undefined from its own width. x86 traps on that division,
+  scalar or in a lane. tolk's integers wrap at their width
+  (`Ops.exec_alu`), as nx states its values: the quotient is the least
+  value, the remainder 0, a left shift and an unsigned right shift past the
+  width 0, and a signed right shift 0 or -1. A `Truncdiv` or `Truncmod` of
+  a signed type whose operands' bounds (`Ops.operand_bounds`) reach the
+  least value and -1 divides the magnitudes in the unsigned type of its
+  width and takes the quotient's sign from the operands' or the
+  remainder's from the dividend's. A `Shl` or `Shr` whose count's bounds,
+  in the count's own type (a `Uint32` count of a narrow value included),
+  leave 0 to the width less one shifts by the count's low bits and selects
+  0 past the width, or for a signed right shift shifts by the count capped
+  at the width less one. D342's shift reads its count so too. An index's division by a positive constant and a
+  shift by a constant count keep tinygrad's source. A zero divisor is
+  outside this entry: rune selects 1 for it (`Lower_arith.int_div`), and
+  D145 does on padding. tinygrad's sources move with the rule, through
+  `test/gen/tinygrad.patch`.
+- **Reason:** (e): at the pinned commit, the host's kernel of an int32
+  division of the least value by -1 dies with SIGFPE, and on the host's
+  vector lanes a uint8 shifted right by 8 is itself, where it is 0.
+- **Pinned by:** the Tolk_engine suite's `divisions and shifts at the
+  extremes compute as the interpreter`, on the host (`kernels on the
+  host`) and on each GPU (`GPUs ›`, run on fudge's CUDA and NV): every
+  integer type's quotient, remainder and shifts of operands drawn at its
+  extremes, -1 to 2, and counts either side of its width, 32 and 64, in
+  scalars and in vectors of 4 lanes, against `Ops.exec_alu`; and `a narrow
+  type shifted by a uint32 count computes as the interpreter`, by constant
+  counts of 8 to 65537.

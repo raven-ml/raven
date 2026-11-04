@@ -385,6 +385,202 @@ let wraps_on d dt op =
 let wraps_signed d () =
   List.iter (fun dt -> List.iter (wraps_on d dt) signed_ops) Dtype.sints
 
+(* Divisions and shifts at the extremes
+
+   A signed type's least value divided by -1 and a shift by a count at or past
+   the type's width have values: the quotient wraps to the least value and the
+   remainder is 0; a left shift and an unsigned right shift give 0, a signed
+   right shift 0 or -1 by the sign. C leaves each undefined, and x86 traps on
+   that division. A kernel of one integer type writes [a / b], [a mod b],
+   [a << k] and [a >> k] of [lanes] loaded operands, drawn at the type's
+   extremes, which the interpreter's values must match. It runs in scalars, and
+   in vectors of 4 lanes, which C does not promote to [int]. *)
+
+let lanes = 64
+
+let in_vectors = [ Opt.Split { axis = 0; amount = 4; target = Upcast; top = false } ]
+
+let extreme_kernel ~opts dt =
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int lanes) [ 0 ] in
+  let at slot = Ops.index (Shape.placeholder ~slot [ lanes ] dt) [ i ] in
+  let a = at 4 and b = at 5 and k = at 6 in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"extremes" ~opts_to_apply:opts ())
+    [
+      Ops.end_
+        (Ops.group
+           [
+             Ops.store (at 0) (Ops.alu a Truncdiv [ b ]);
+             Ops.store (at 1) (Ops.alu a Truncmod [ b ]);
+             Ops.store (at 2) (a lsl k);
+             Ops.store (at 3) (a lsr k);
+           ])
+        [ i ];
+    ]
+
+(* [extreme_kernel ~opts dt] compiled for [d]'s target, once for each. *)
+let extreme_program =
+  let compiled = Hashtbl.create 16 in
+  fun d ~opts dt ->
+    let key = (Engine.target d, opts, dt) in
+    match Hashtbl.find_opt compiled key with
+    | Some prg -> prg
+    | None ->
+        let k = extreme_kernel ~opts dt in
+        let prg = Codegen.to_program k (Engine.renderer d) in
+        Hashtbl.replace compiled key prg;
+        prg
+
+let of_int dt n = Dtype.truncate dt (`Int (Bigint.of_int n))
+
+(* The least and greatest values, their neighbours, and -1 to 2. *)
+let edges dt =
+  let near v d = Dtype.truncate dt Dtype.Value.(v + of_int d) in
+  [ Dtype.min dt; near (Dtype.min dt) 1; of_int dt (-1); of_int dt 0;
+    of_int dt 1; of_int dt 2; near (Dtype.max dt) (-1); Dtype.max dt ]
+
+let divisors dt =
+  List.filter (fun v -> not Dtype.Value.(v = of_int 0)) (edges dt)
+
+(* Counts either side of the type's width and of the widths C computes in. *)
+let counts dt =
+  let w = Dtype.bitsize dt in
+  List.filter_map
+    (fun n ->
+      if Dtype.Value.(of_int n <= Dtype.max dt) then Some (of_int dt n)
+      else None)
+    (List.sort_uniq Int.compare
+       [ 0; 1; w - 1; w; w + 1; 31; 32; 33; 63; 64; 65; 127 ])
+
+type extremes = {
+  dt : Dtype.t;
+  a : Dtype.value array;
+  b : Dtype.value array;
+  k : Dtype.value array;
+}
+
+let pp_extremes ppf e =
+  let vs = Testable.pp (array Dtypes.value) in
+  Format.fprintf ppf "%a: a %a, b %a, k %a" Dtype.pp e.dt vs e.a vs e.b vs
+    e.k
+
+(* Each type's every pair of an edge and a divisor, and its counts in turn. *)
+let extreme_examples =
+  List.map
+    (fun dt ->
+      let e = Array.of_list (edges dt) and d = Array.of_list (divisors dt) in
+      let c = Array.of_list (counts dt) in
+      let pair j = j mod (Array.length e * Array.length d) in
+      {
+        dt;
+        a = Array.init lanes (fun j -> e.(pair j / Array.length d));
+        b = Array.init lanes (fun j -> d.(pair j mod Array.length d));
+        k = Array.init lanes (fun j -> c.(j mod Array.length c));
+      })
+    Dtype.ints
+
+let extreme_gen =
+  let open Gen in
+  let* dt = of_list Dtype.ints in
+  let drawn l random = frequency [ (3, of_list l); (1, random) ] in
+  let any = map (of_int dt) int in
+  let nonzero =
+    map (fun v -> if Dtype.Value.(v = of_int 0) then of_int dt 1 else v) any
+  in
+  let max_count =
+    if Dtype.bitsize dt > 8 then 200 else Dtype.Value.to_int (Dtype.max dt)
+  in
+  let lane l random = array ~size:(constant lanes) (drawn l random) in
+  let+ a = lane (edges dt) any
+  and+ b = lane (divisors dt) nonzero
+  and+ k = lane (counts dt) (map (of_int dt) (int_range 0 max_count)) in
+  { dt; a; b; k }
+
+let extremes_compute d { dt; a; b; k } =
+  let w = Dtype.bitsize dt in
+  let is v n = Dtype.Value.( = ) v (of_int dt n) in
+  let signed = List.mem dt Dtype.sints in
+  cover "the least value by -1"
+    (signed
+    && Array.exists2 (fun x y -> Dtype.Value.(x = Dtype.min dt) && is y (-1)) a b);
+  cover "a count of the width" (Array.exists (fun n -> is n w) k);
+  cover "a count of 64 or more"
+    (Array.exists (fun n -> Dtype.Value.(of_int 64 <= n)) k);
+  cover "a signed type" signed;
+  cover "an unsigned type" (not signed);
+  cover "a 64-bit type" (w = 64);
+  let each op x y = Array.map2 (fun x y -> exec dt op [ x; y ]) x y in
+  let zeros = Array.make lanes (of_int dt 0) in
+  List.iter
+    (fun (how, opts) ->
+      let out =
+        Run.on d
+          (extreme_program d ~opts dt)
+          [
+            (0, zeros); (1, zeros); (2, zeros); (3, zeros); (4, a); (5, b);
+            (6, k);
+          ]
+      in
+      let msg = Format.asprintf "%a in %s" Dtype.pp dt how in
+      equal ~msg:(msg ^ ": a / b") values (each Truncdiv a b) (List.assoc 0 out);
+      equal ~msg:(msg ^ ": a mod b") values (each Truncmod a b)
+        (List.assoc 1 out);
+      equal ~msg:(msg ^ ": a << k") values (each Shl a k) (List.assoc 2 out);
+      equal ~msg:(msg ^ ": a >> k") values (each Shr a k) (List.assoc 3 out))
+    [ ("scalars", []); ("vectors", in_vectors) ]
+
+let extremes_prop name d =
+  prop name ~examples:extreme_examples
+    (Gen.with_pp pp_extremes extreme_gen)
+    (fun e -> extremes_compute (d ()) e)
+
+(* A shift's count may be a uint32 whatever the shifted type: the constant
+   counts past a narrow type's width, 32 and 65536 shift its extremes as the
+   interpreter does, in scalars. *)
+let wide_counts = [ 8; 16; 32; 256; 257; 65536; 65537 ]
+
+let wide_count_kernel dt =
+  let n = List.length (edges dt) in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let at slot = Ops.index (Shape.placeholder ~slot [ n ] dt) [ i ] in
+  let a = at 0 in
+  let shifts =
+    List.concat_map
+      (fun c ->
+        let k = Ops.int ~dtype:Uint32 c in
+        [ Ops.alu a Shl [ k ]; Ops.alu a Shr [ k ] ])
+      wide_counts
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"wide_counts" ~opts_to_apply:[] ())
+    [
+      Ops.end_
+        (Ops.group (List.mapi (fun j v -> Ops.store (at (j + 1)) v) shifts))
+        [ i ];
+    ]
+
+let shifts_by_wide_counts d dt =
+  let a = Array.of_list (edges dt) in
+  let prg = Codegen.to_program (wide_count_kernel dt) (Engine.renderer d) in
+  let out = Run.on d prg [ (0, a) ] in
+  List.iteri
+    (fun j c ->
+      let k = Dtype.Value.of_int c in
+      let msg op = Format.asprintf "%a %s %d" Dtype.pp dt op c in
+      equal ~msg:(msg "<<") values
+        (Array.map (fun x -> exec dt Shl [ x; k ]) a)
+        (List.assoc ((2 * j) + 1) out);
+      equal ~msg:(msg ">>") values
+        (Array.map (fun x -> exec dt Shr [ x; k ]) a)
+        (List.assoc ((2 * j) + 2) out))
+    wide_counts
+
+let wide_count_cases name d =
+  cases name ~id:(Format.asprintf "%a" Dtype.pp)
+    Dtype.[ Int8; Uint8; Int16; Uint16 ]
+    (fun dt -> shifts_by_wide_counts (d ()) dt)
+
 let on_the_host =
   group "kernels on the host"
     [
@@ -393,6 +589,10 @@ let on_the_host =
       test "a variable left out of vars takes its bound value"
         takes_the_bound_value;
       test "signed arithmetic wraps as the interpreter" (wraps_signed host);
+      extremes_prop "divisions and shifts at the extremes compute as the \
+         interpreter" (fun () -> host);
+      wide_count_cases "a narrow type shifted by a uint32 count computes as \
+         the interpreter" (fun () -> host);
       group "loops"
         (List.map counts_in_a_loop
            [
@@ -3624,6 +3824,12 @@ let on_a_gpu (kind, _) =
       group "custom kernels with variables" (custom_kernel_scalars ~devices ());
       test "signed arithmetic wraps as the interpreter" (fun () ->
           wraps_signed (devices "CPU:1") ());
+      extremes_prop
+        "divisions and shifts at the extremes compute as the interpreter"
+        (fun () -> devices "CPU:1");
+      wide_count_cases
+        "a narrow type shifted by a uint32 count computes as the interpreter"
+        (fun () -> devices "CPU:1");
       group "loops bounded by a loaded value"
         (loaded_bounds ~devices ~d:"CPU:1" ());
       group "aranges" [ arange_windows ~devices "CPU:1" ];

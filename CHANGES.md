@@ -1037,6 +1037,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   (`Prepare.prepare_rangeify`), through an inline call's argument too: its
   elements share cells, so the store wrote each cell once per element, in no
   order.
+- A signed division of the least value by -1, and a shift by a count at or
+  past the width, compute what `Ops.exec_alu` gives (`Cstyle.clang`,
+  `Cstyle.cuda`, `Cstyle.hip`, `Cstyle.metal`): C leaves both undefined,
+  and such a division killed a host kernel with SIGFPE.
 - A host program splits a loop into blocks only when every store to memory,
   call and piece of custom code depends on it (`Postrange.misses`): code
   beside the loop ran once per block, an atomic counter counting 8 for 1.

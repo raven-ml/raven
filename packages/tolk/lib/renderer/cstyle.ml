@@ -519,7 +519,9 @@ let pm_wrap_signed =
         List.for_all
           (fun v -> inside v && inside (v + lo) && inside (v + hi))
           (corners ( * ) p q)
-    | Op.Shl, [ (lo, hi); (k0, k1) ] ->
+    | Op.Shl, [ (lo, hi); _ ] ->
+        (* a count of another type keeps its own bounds *)
+        let k0 = vmin (nth x 1) and k1 = vmax (nth x 1) in
         of_int 0 <= lo
         && of_int 0 <= k0
         && k1 < of_int (Dtype.bitsize c)
@@ -539,6 +541,70 @@ let pm_wrap_signed =
             let u = snd (computed (dtype x)) in
             let wide = List.map (fun s -> cast s u) (src x) in
             Some (cast (replace x ~src:wide) (dtype x)));
+    ])
+
+let unsigned_of (dt : Dtype.t) =
+  match dt with
+  | Int8 -> Dtype.Uint8
+  | Int16 -> Uint16
+  | Int32 -> Uint32
+  | Int64 -> Uint64
+  | dt -> dt
+
+(* C leaves a signed division of the least value by -1 undefined, and x86 traps
+   on it, on a vector lane of any width too; a shift by a count at or past the
+   width of its operand, or of its lane, is undefined as well. tolk's quotient
+   wraps to the least value and the remainder is 0, and such a shift is the
+   exact shift wrapped: 0, or -1 for a negative value shifted right. A division
+   whose operands' bounds reach both computes on magnitudes in the unsigned type
+   and takes its sign after: -2^31 / -1 is 2^31 / 1, negated to -2^31. A shift
+   whose count's bounds leave the width shifts by the count's low bits and
+   selects the result past it. *)
+let pm_defined_div_shift =
+  let reaches v (lo, hi) = Dtype.Value.(lo <= v && v <= hi) in
+  let division x =
+    let a = nth x 0 and b = nth x 1 and dt = dtype x in
+    if
+      not
+        (reaches (Dtype.min dt) (operand_bounds x a)
+        && reaches (Dtype.Value.of_int (-1)) (operand_bounds x b))
+    then None
+    else
+      let negative v = O.(v < int 0) and minus v = alu v Op.Neg [] in
+      let magnitude v =
+        let w = cast v (unsigned_of dt) in
+        where (negative v) (minus w) w
+      in
+      let r = alu (magnitude a) (op x) [ magnitude b ] in
+      let sign =
+        if Op.equal (op x) Op.Truncdiv then
+          alu (negative a) Op.Cmpne [ negative b ]
+        else negative a
+      in
+      Some (cast (where sign (minus r) r) dt)
+  in
+  let shift x =
+    let a = nth x 0 and k = nth x 1 and dt = dtype x in
+    let w = Dtype.bitsize dt in
+    if Dtype.Value.(of_int 0 <= vmin k && vmax k < of_int w) then None
+    else
+      let last = O.int (w - 1) in
+      let inside = O.(k < int w) and low n = O.(n land last) in
+      if Op.equal (op x) Op.Shr && List.mem dt Dtype.sints then
+        Some (replace x ~src:[ a; low (where inside k last) ])
+      else Some (where inside (replace x ~src:[ a; low k ]) (O.int 0))
+  in
+  Pattern_matcher.v
+    (fun () -> [
+      rule
+        (Upat.v
+           ~op:(Op.Set.of_list Op.[ Truncdiv; Truncmod ])
+           ~dtype:Dtype.sints ~name:"x" ())
+        (fun m -> division (m "x"));
+      rule
+        (Upat.v ~op:(Op.Set.of_list Op.[ Shl; Shr ]) ~dtype:Dtype.ints
+           ~name:"x" ())
+        (fun m -> shift (m "x"));
     ])
 
 let create_non_native_float_pats ?(casting = true) dts =
@@ -1416,6 +1482,7 @@ let clang_extra_matcher =
     [
       pm_narrow_uint;
       pm_wrap_signed;
+      pm_defined_div_shift;
       Pattern_matcher.v
         (fun () -> [
           rule
@@ -1617,6 +1684,7 @@ let metal_extra_matcher =
     [
       pm_narrow_uint;
       pm_wrap_signed;
+      pm_defined_div_shift;
       Pattern_matcher.v (fun () -> [
           rule
             (Upat.v
@@ -1865,6 +1933,7 @@ let cuda_extra_matcher =
     [
       pm_narrow_uint;
       pm_wrap_signed;
+      pm_defined_div_shift;
       create_non_native_float_pats ~casting:false Dtype.fp8s;
       Pattern_matcher.v (fun () -> [
           rule
@@ -2190,6 +2259,7 @@ let hip_extra_matcher arch =
     ([
        pm_narrow_uint;
        pm_wrap_signed;
+       pm_defined_div_shift;
        create_non_native_float_pats (Dtype.Bfloat16 :: Dtype.fp8s);
      ]
     @

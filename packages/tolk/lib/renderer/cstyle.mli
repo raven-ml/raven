@@ -55,6 +55,15 @@
     bounds ({!Ops.operand_bounds}) keep each exact result it forms in that
     type and a shifted value from being negative, as an index's do.
 
+    A signed division of the least value by -1 and a shift by a count at or
+    past the width are what {!Ops.exec_alu} computes too: the quotient is the
+    least value and the remainder 0, a left shift and an unsigned right shift
+    give 0, and a signed right shift 0 or -1. The languages leave each
+    undefined, so a quotient or remainder whose operands' bounds reach both
+    divides their magnitudes in the unsigned integer of its width and takes
+    its sign after, and a shift whose count's own bounds leave the width
+    shifts by the count's low bits and selects the result past it.
+
     A floating-point division ({!Op.Fdiv}) is the language's [/] on every
     target, whether or not the target lists it among its native operations: that
     list only decides whether code generation turns a reciprocal into a
