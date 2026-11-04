@@ -7201,18 +7201,24 @@ and an initial value is added after it (D260).
   a range whose bound is a `CONST`; `codegen/opt/heuristic.py:174-175`, which
   gives threads only to such ranges, and `129-130`, which sums only a `CONST`
   stride; `codegen/simplify.py:68-71` (`mark_range_mod`), which splits only
-  such ranges.
+  such ranges; `codegen/simplify.py:47` (`mark_gated`), which shrinks a
+  range only to a `CONST` guard; `codegen/late/coalesce.py:125-127`
+  (`memory_coalescing`), which reads only a `CONST` index or term as an
+  access's offset.
 - **tolk:** `Ops.is_literal`; `Shape.divides`; `Postrange.Scheduler.apply_opt`
   and its tensor core's tiles; `Heuristic.hand_coded_optimizations`, its
   strides, tiles and divisors; `Simplify.pm_split_ranges`;
-  `test/gen/tinygrad.patch`, which gives tinygrad the same reading, its
-  heuristic's own checks and those tolk adds to it.
+  `Simplify.pm_simplify_ranges`'s guards; `Coalesce.memory_coalescing`'s
+  offsets; `test/gen/tinygrad.patch`, which gives tinygrad the same reading,
+  its heuristic's own checks and those tolk adds to it.
 - **Differs:** a constant of a type other than the weak ones is a cast of
   one, as a range of `Int32` has for its bound. tolk reads it as a constant
   wherever these read a range's bound or a stride, tile or divisor of an
   index, so such a range is split, padded, given threads and split by a
   remainder as a range of the weak integer is, and a kernel indexed in
   `Int32` takes the optimisations of the same kernel in the weak integer.
+  A range shrinks to a typed guard `r < c`, and accesses at typed constant
+  offsets merge into vectors, as with weak ones.
   tinygrad refuses every split of it, and sums no typed stride.
 - **Reason:** (e): tinygrad's heuristic raises on a kernel whose ranges are
   of `Int32`, `out[16i + j] = a[16i + j] + 1` over 64 `i` and 16 `j`: its
@@ -7224,14 +7230,18 @@ and an initial value is added after it (D260).
   constant is a constant, one read as unknown chose by the index's type, and
   119 of the heuristic's 431 recorded cases, indexed in `Int32`, took other
   optimisations, a matmul upcasting its rows where it upcasts its columns, a
-  routed product refusing its tensor core.
+  routed product refusing its tensor core. A typed guard left its range
+  whole, and loads at typed constant indices loaded one element each.
 - **Pinned by:** the Heuristic suite: `a range of a typed integer is split
   as one of the weak integer` (`Int32`, `Int64` and `Uint32`, on the host
   and on CUDA), `a kernel indexed in a typed integer is optimised as in the
   weak one` (each recorded case). The Postrange suite: `apply_opt pads a range of a typed integer as
   a weak one`, and the golden case `split_int32_axis`, which applies. The
   Simplify suite: `pm_split_ranges › a range of a typed integer splits as a
-  weak one`.
+  weak one` and `pm_simplify_ranges › shrinking › a range of a typed integer
+  shrinks to its guard as a weak one`. The Coalesce suite:
+  `memory_coalescing › lengths › loads at typed offsets merge as at weak
+  ones, for`.
 
 ## D271. No axis a call or custom code does not read takes threads
 

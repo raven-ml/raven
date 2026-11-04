@@ -185,9 +185,31 @@ let hand_built file renderer =
             (coalesce ~renderer (case "accesses_input.golden" cell)));
     ]
 
+(* Loads of [buf] at [x * 4 + k] for each [k] of [ks], or at [k] alone, in
+   integers of [dtype]: the weak integer's constants are bare, any other's are
+   casts of them. *)
+let typed_loads ?dtype ~base ks =
+  let int k = Ops.int ?dtype k in
+  let x = Ops.variable ?dtype "x" (`Int Bigint.zero) (`Int (Bigint.of_int 8)) in
+  let at k = if base then Ops.O.((x * int 4) + int k) else int k in
+  Ops.sink (List.map (fun k -> Ops.load (Ops.index buf [ at k ]) []) ks)
+
 let lengths =
   group "lengths"
     [
+      cases "loads at typed offsets merge as at weak ones, for"
+        ~id:(fun (dt, base) ->
+          Format.asprintf "%a, %s" Dtype.pp dt
+            (if base then "a variable plus constants" else "constants"))
+        (List.concat_map
+           (fun dt -> [ (dt, false); (dt, true) ])
+           Dtype.[ Int32; Int64; Uint32 ])
+        (fun (dtype, base) ->
+          let ks = [ 0; 1; 2; 3; 5; 6 ] in
+          let weak = vectors (coalesce (typed_loads ~base ks)) in
+          equal ~msg:"weak" (pair int int) (1, 0) weak;
+          equal (pair int int) weak
+            (vectors (coalesce (typed_loads ~dtype ~base ks))));
       test "four consecutive loads from offset 0 are one load of four"
         (fun () ->
           equal runs

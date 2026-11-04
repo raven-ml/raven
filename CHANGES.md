@@ -1019,6 +1019,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A kernel indexed in a typed integer, such as `Int32`, shrinks a range to
+  its guard and merges loads and stores at constant offsets into vectors, as
+  one indexed in the weak integer does.
 - Kernels built by hand whose reduce runs one trip, or whose rows, columns
   or reduce are empty, compile and run: a sum over one trip raised "some
   reduce srcs aren't ranges", a product of no row did not terminate, and

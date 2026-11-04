@@ -1232,7 +1232,7 @@ index 48f88612f..10d74c422 100644
          assert len(idx.src) == 2, "index has 2 sources"
          mask: UOp = UOp.uprod(*[x.eq(0) for x in missing_locals])
 diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
-index 65fb29491..6766d5d4d 100644
+index 65fb29491..512e9b17f 100644
 --- a/tinygrad/codegen/late/coalesce.py
 +++ b/tinygrad/codegen/late/coalesce.py
 @@ -39,7 +39,9 @@ def _drop_valid_stmts(valid:UOp, idx:UOp, height:int, width:int) -> list[UOp]:
@@ -1246,7 +1246,16 @@ index 65fb29491..6766d5d4d 100644
    return None if idx is start_idx or idx is start_idx.simplify() else buf.index(idx.valid(valid))
  
  def simplify_valid_image_load(buf:UOp, idx_y:UOp, idx_x:UOp, valid:UOp) -> UOp|None:
-@@ -110,7 +112,11 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+@@ -103,6 +105,8 @@ pm_simplify_add_image = PatternMatcher([
+   (UPat(Ops.INDEX, dtype=dtypes.float, name="x").store(UPat(name="d", dtype=dtypes.half)), store_image),
+ ])
+ 
++def literal(u:UOp) -> bool: return u.op is Ops.CONST or (u.op is Ops.CAST and u.src[0].op is Ops.CONST)
++
+ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+   if getenv("DMC"): return sink
+ 
+@@ -110,7 +114,11 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
    memory: defaultdict[tuple[Ops, UOp, UOp|None, UOp, object, int|tuple[int, int]], dict[int, list[UOp]]] = defaultdict(dict)
    # depth[u] is the lexicographically largest (GLOBAL stores, LOCAL stores) count on any chain u waits on, u included
    depth: dict[UOp, tuple[int, int]] = {}
@@ -1258,7 +1267,18 @@ index 65fb29491..6766d5d4d 100644
      depth[u] = waits = max([depth[s] for s in u.src_without_body], default=(0, 0))
      if u.op is Ops.STORE: depth[u] = (waits[0]+(u.src[0].addrspace is AddrSpace.GLOBAL), waits[1]+(u.src[0].addrspace is AddrSpace.LOCAL))
      if u.op in {Ops.LOAD, Ops.STORE}:
-@@ -130,6 +136,10 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+@@ -122,14 +130,18 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+       idx, valid = idx_u.get_idx(), idx_u.get_valid()
+       if idx.is_invalid: continue
+       root_src: UOp|None
+-      if idx.op is Ops.ADD and idx.src[1].op is Ops.CONST: root_src, arg = idx.src[0], idx.src[1].val
+-      elif idx.op is Ops.ADD and idx.src[0].op is Ops.CONST: root_src, arg = idx.src[1], idx.src[0].val
+-      elif idx.op is Ops.CONST: root_src, arg = None, idx.val
++      if idx.op is Ops.ADD and literal(idx.src[1]): root_src, arg = idx.src[0], idx.src[1].val
++      elif idx.op is Ops.ADD and literal(idx.src[0]): root_src, arg = idx.src[1], idx.src[0].val
++      elif literal(idx): root_src, arg = None, idx.val
+       else: root_src, arg = idx, 0
+       # loads/stores only coalesce with others carrying the same arg (e.g. the nontemporal flag)
        # and the same depth (GLOBAL count only for GLOBAL accesses), so no merge closes a dependency cycle
        memory[(u.op, buf, root_src, valid, u.arg, waits[0] if buf.addrspace is AddrSpace.GLOBAL else waits)].setdefault(arg, []).append(u)
  
@@ -1269,7 +1289,7 @@ index 65fb29491..6766d5d4d 100644
    # build replacements
    replacements = {}
    for (op,buf,_,_,ld_arg,_),offsets in memory.items():
-@@ -139,9 +149,22 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+@@ -139,9 +151,22 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
      if ctx.target.device == "DSP":
        lengths = [128,64,32,16,8,4]
        must_divide = False
@@ -2194,7 +2214,7 @@ index af2199821..901f0054c 100644
      uops = prg.src[1].src
      if len(uops) >= (uops_max:=getenv("BEAM_UOPS_MAX", 3000)) > 0:
 diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
-index b68c1d948..f9f3e1f7b 100644
+index b68c1d948..3bff7a59e 100644
 --- a/tinygrad/codegen/simplify.py
 +++ b/tinygrad/codegen/simplify.py
 @@ -1,9 +1,9 @@
@@ -2209,7 +2229,17 @@ index b68c1d948..f9f3e1f7b 100644
  
  def flatten_range(r:UOp) -> UOp|None:
    off = range_start[r.op]
-@@ -68,7 +68,7 @@ pm_simplify_ranges = PatternMatcher([
+@@ -44,7 +44,8 @@ def mark_gated(ctx, u:UOp):
+   if idx.op is Ops.INDEX and len(idx.src) > 1 and idx.src[1].op is Ops.WHERE:
+     x, cond = idx.src[1].get_idx(), idx.src[1].get_valid()
+     # get all ranges r with guards "r < c" for some const c
+-    guards = {r:c for v in cond.split_uop(Ops.AND) if v.op is Ops.CMPLT and (r:=v.src[0]).op is Ops.RANGE and (c:=v.src[1]).op is Ops.CONST}
++    guards = {r:c for v in cond.split_uop(Ops.AND) if v.op is Ops.CMPLT and (r:=v.src[0]).op is Ops.RANGE and
++              ((c:=v.src[1]).op is Ops.CONST or (c.op is Ops.CAST and c.src[0].op is Ops.CONST))}
+   else: x, guards = idx, {}
+   # ensure that we choose max(c_i) for all i where r < c_i
+   ctx |= {r:c.minimum(r.src[0]) for r,c in guards.items() if (r not in ctx or ctx[r].vmax < c.val)}
+@@ -68,7 +69,7 @@ pm_simplify_ranges = PatternMatcher([
  def mark_range_mod(ctx:dict[UOp, UOp|None], r:UOp, c:UOp) -> None:
    # ranges that aren't looped over can't be split
    if r not in ctx and r.axis_type not in {AxisType.WARP, AxisType.DEVICE} \
@@ -2218,7 +2248,7 @@ index b68c1d948..f9f3e1f7b 100644
  
  pm_split_ranges = PatternMatcher([
    (UPat(Ops.RANGE, name="r")%UPat.cvar("c"), mark_range_mod),
-@@ -80,6 +80,55 @@ pm_split_ranges = PatternMatcher([
+@@ -80,6 +81,55 @@ pm_split_ranges = PatternMatcher([
  
  def no_range(u:UOp) -> bool: return not u.op_in_backward_slice_with_self(Ops.RANGE)
  
@@ -2274,7 +2304,7 @@ index b68c1d948..f9f3e1f7b 100644
  def reduce_unparented(red:UOp) -> UOp|None:
    assert all(x.op is Ops.RANGE for x in red.src[1:]), "some reduce srcs aren't ranges"
    reduce_parented, reduce_unparented = partition(red.src[1:], lambda x: x in red.src[0].ranges)
-@@ -98,36 +147,39 @@ pm_reduce_unparented = PatternMatcher([
+@@ -98,36 +148,39 @@ pm_reduce_unparented = PatternMatcher([
  pm_reduce_collapse = pm_reduce_unparented + PatternMatcher([
    # lift x+y out of reduce on lt
    (UPat(Ops.ADD, dtypes.sints+(dtypes.weakint,), [UPat.var("x"), UPat.var("y")]) < UPat.var("c"),

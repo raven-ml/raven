@@ -159,11 +159,9 @@ let memory_coalescing sink (r : Renderer.t) =
               then begin
                 let base, offset =
                   match (op idx, src idx) with
-                  | Op.Add, [ b; c ] when op c = Op.Const ->
-                      (Some b, int_value c)
-                  | Op.Add, [ c; b ] when op c = Op.Const ->
-                      (Some b, int_value c)
-                  | Op.Const, _ -> (None, int_value idx)
+                  | Op.Add, [ b; c ] when is_literal c -> (Some b, int_value c)
+                  | Op.Add, [ c; b ] when is_literal c -> (Some b, int_value c)
+                  | _ when is_literal idx -> (None, int_value idx)
                   | _ -> (Some idx, Bigint.zero)
                 in
                 let depth =

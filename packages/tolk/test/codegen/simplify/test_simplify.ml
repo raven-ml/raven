@@ -131,6 +131,13 @@ let shrinking =
         (fun () ->
           equal (list int) [ 4 ]
             (shrunk (Ops.end_ (gated_load Ops.O.(r < Ops.int 4) r) [ r ])));
+      cases "a range of a typed integer shrinks to its guard as a weak one"
+        ~id:(Format.asprintf "%a" Dtype.pp)
+        Dtype.[ Int32; Int64; Uint32 ]
+        (fun dt ->
+          let r = Ops.range ~dtype:dt (Int 204) [ 0 ] in
+          let guard = Ops.O.(r < Ops.int ~dtype:dt 4) in
+          equal (list int) [ 4 ] (shrunk (Ops.end_ (gated_load guard r) [ r ])));
       test "a range shrinks to the greatest of its guards" (fun () ->
           let load c = gated_load Ops.O.(r < Ops.int c) r in
           equal (list int) [ 8 ]

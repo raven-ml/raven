@@ -145,7 +145,7 @@ let mark_gated ctx u =
           (fun g ->
             match src g with
             | [ r; c ]
-              when op g = Op.Cmplt && op r = Op.Range && op c = Op.Const ->
+              when op g = Op.Cmplt && op r = Op.Range && is_literal c ->
                 Tbl.replace guards r c
             | _ -> ())
           (split_uop (get_valid v) Op.And);
