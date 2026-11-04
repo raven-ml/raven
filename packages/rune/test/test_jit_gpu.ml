@@ -10,8 +10,9 @@
    next wait, so the call returns while its work runs, a key split there has
    the host's words, and a program over the GPU and a memory device, devices
    of two targets, compiles to eager's values with replicas equal bit for bit,
-   and a running operation of a prefix is the prefix of its result, and
-   attention holds its bound against a float64 reference. It skips
+   a running operation of a prefix is the prefix of its result, attention
+   holds its bound against a float64 reference, and exp holds its bound in
+   ulps of the correctly rounded result. It skips
    without a GPU, or without the compiler the GPU's kernels need. *)
 
 open Windtrap
@@ -884,6 +885,19 @@ let quant_law c =
   near "compiled on the GPU"
     (compiled (Nx_quant.place S.on w) (Nx.place S.on x))
 
+(* Exp at rune.mli's bound for a device whose exp2 is within 4 ulps, as
+   CUDA's exp2f is within 2 (CUDA C++ Programming Guide, Mathematical
+   Functions), against libm's float64 exp rounded once (Exps). Measured over
+   every float32 on an RTX 5000 Ada: 3 ulps at most, at 18 operands. Every
+   float16 and bfloat16 code is within one ulp. *)
+let exp_law codes =
+  let d, s = on_gpu () in
+  Exps.law s ~ulps:9 ~flushes:(flushes d) codes
+
+let exp16 dt () =
+  let d, s = on_gpu () in
+  Exps.law16 s ~flushes:(flushes d) dt
+
 let () =
   exit
     (run "Rune.jit on a GPU"
@@ -907,6 +921,14 @@ let () =
              test "an assembly past 16 times eager's work compiles to eager's \
                    bits"
                test_stack;
+           ];
+         group "exp"
+           [
+             prop ~count:24 "exp within 9 ulps at float32" Exps.gen exp_law;
+             test "exp of every float16 code within one ulp"
+               (exp16 Nx.float16);
+             test "exp of every bfloat16 code within one ulp"
+               (exp16 Nx.bfloat16);
            ];
          group "16-bit casts"
            [

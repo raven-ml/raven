@@ -88,7 +88,7 @@
 (test
  (name test_lower_real)
  (modules test_lower_real)
- (libraries nx nx_array nx_kernel rune windtrap)
+ (libraries nx nx_array nx_kernel rune rune_support windtrap)
  (deps
   (glob_files golden/lower_real/*.golden)))
 

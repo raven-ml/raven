@@ -10,9 +10,11 @@
    is within its host bound in ulps of the correctly rounded result (rune.mli,
    Numerics) at the points of golden/lower_real, which gen/lower_real.py writes
    from mpmath; where every operand is a zero, an infinity or a NaN, it gives
-   Annex F's zero, infinity, ±1 or NaN, stated below. *)
+   Annex F's zero, infinity, ±1 or NaN, stated below. Exp holds its bound over
+   drawn float32 operands and every 16-bit code too. *)
 
 open Windtrap
+module Exps = Rune_support.Exps
 module D = Nx_array.Dtype
 module K = Nx_kernel.Prog
 module P = Nx.Prim
@@ -587,12 +589,29 @@ let bounded (name, kind, (b32, b64)) =
         (at D.Float32 false (Float.of_int b32)
         @ at D.Float64 true (Float.of_int b64)))
 
+(* Drawn operands
+
+   Exp over drawn float32 operands and every 16-bit code, against libm's
+   float64 exp rounded once (Exps). Measured over every float32 on fudge
+   (Intel Core Ultra 5 235): 2 ulps at most, at 129 operands. Every float16
+   and bfloat16 code is within one ulp. *)
+let drawn =
+  [
+    prop "exp within 2 ulps at float32" Exps.gen
+      (Exps.law (module Nx.Host) ~ulps:2 ~flushes:false);
+    test "exp of every float16 code within one ulp" (fun () ->
+        Exps.law16 (module Nx.Host) ~flushes:false Nx.float16);
+    test "exp of every bfloat16 code within one ulp" (fun () ->
+        Exps.law16 (module Nx.Host) ~flushes:false Nx.bfloat16);
+  ]
+
 let () =
   exit
     (run "Lower_real"
        [
          group "exact" (List.map law (unary @ binary @ compare @ [ fma ]));
          group "transcendental" transcendental;
+         group "drawn operands" drawn;
          group "bounded arguments"
            (List.map bounded
               [ ("cos", K.Cos, (2, 9)); ("tan", K.Tan, (19, 19)) ]);

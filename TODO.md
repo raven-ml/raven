@@ -153,8 +153,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   derivative traces the composition; fused SIMT backward kernels ran 2-3x
   slower); host f32 decode is slower than the composition (L11); causal
   saves little (one wave of uneven workgroups); RDNA4 and Metal core paths
-- compiled `exp` in the sigmoid is 9 ulps where eager's is 3: check against
-  rune.mli's stated bound
 - a compiled selection on a GPU set was once declined, so the set raised (1
   of 4 runs of 16 matvecs): a nondeterministic decline is a crash on a set
   without eager kernels
