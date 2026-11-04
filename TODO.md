@@ -171,9 +171,14 @@ and rune), raven / llama.cpp b12048 Vulkan:
   columns, datasets and writer, talon.arrow, talon.jsont, complex and
   validity columns, HTML display
 - brot vs gigatoken cd5ee648c6 on fudge (bench README, "Against
-  gigatoken"): GPT-2 runs at 0.34 of its speed on one thread (1.4x its
-  instructions, 11x its mispredicts, 6x its last-level misses, in
-  `brot_byte_level_encode_ids32` and `mask_refill`) and 0.36 on eight
+  gigatoken"): GPT-2 runs at 0.58 of its speed on one thread over 100 MB
+  (1.1x its instructions, 2.1x its mispredicts, 3.0x its last-level
+  misses); its pretoken table sits on 4 KB pages where gigatoken's takes
+  2 MB pages (an madvise from brot's C, which brot's C rule does not allow
+  yet)
+- brot's Unigram (T5) splits runs of dashes or underscores unlike HF:
+  "\n\n-----------" gives `-` `---` `---` against HF's `---` `---` `-`
+  (3 of 1003 OpenWebText documents)
 
 ## repo
 
