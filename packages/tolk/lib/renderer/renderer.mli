@@ -221,6 +221,15 @@ type t = private {
           operand, a crossover of the target's achieved rates. It moves the
           order of a sum, so it is fixed per target, never read from a
           device. *)
+  stream_threads : int;
+      (** The threads that keep a part's memory busy: as many loads in flight
+          as its latency times its bandwidth. A kernel that streams an operand
+          runs about as many ({!Heuristic}). It moves the order of a sum, so it
+          is fixed per target, never read from a device. *)
+  local_workgroups : int;
+      (** The fewest workgroups a split of threads into larger workgroups
+          leaves, so that each compute unit of a part takes about as many
+          ({!Heuristic}). Fixed per target, as [stream_threads] is. *)
   extra_matcher : (unit, Ops.t) Ops.Pattern_matcher.t;
       (** The rewrites the target needs after every other. *)
   packed_args : bool;
@@ -258,6 +267,8 @@ val v :
   ?load_matrix:bool ->
   ?tensor_cores:Tc.t list ->
   ?per_byte_first:int ->
+  ?stream_threads:int ->
+  ?local_workgroups:int ->
   ?extra_matcher:(unit, Ops.t) Ops.Pattern_matcher.t ->
   ?packed_args:bool ->
   ?code_for_op:(Op.t * (string list -> Dtype.t -> string)) list ->
@@ -277,8 +288,9 @@ val v :
       [false];
     - [tensor_cores] and [code_for_op] are empty, and so are the rules of
       [extra_matcher];
-    - [per_byte_first] is [64], [sm_89]'s crossover, which every target
-      takes until its own is measured;
+    - [per_byte_first] is [64], [sm_89]'s crossover, [stream_threads] is
+      [32768] and [local_workgroups] [256], [sm_89]'s, which every target
+      takes until its own are measured;
     - [packed_args] is [false];
     - [native] holds for every data type;
     - [render] raises [Invalid_argument];

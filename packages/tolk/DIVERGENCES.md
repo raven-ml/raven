@@ -2179,7 +2179,7 @@ Withdrawn: multi-device is out of scope, see README.
   split of a reduce axis whose reduction runs inside a weak range that a
   reduction closes, a serial reduce).
 - **tolk:** `Heuristic.lanes`, `Heuristic.rows`, `Heuristic.columns`,
-  `Heuristic.sector_lanes`, `Heuristic.stream_threads`, `Heuristic.in_flight`,
+  `Heuristic.sector_lanes`, `Renderer.t.stream_threads`, `Heuristic.in_flight`,
   `Heuristic.in_flight_held`, `Heuristic.stream_first`,
   `Heuristic.upcast_max`, `Heuristic.summed`, `Renderer.t.per_byte_first`,
   `Heuristic.per_byte`, `Heuristic.run`,
@@ -2254,7 +2254,9 @@ Withdrawn: multi-device is out of scope, see README.
     `core_threads` each move the order of a sum. They are fixed per target,
     never read from a device: a value read from the part would give two
     parts of one target different bits, and the program key names the
-    target alone (D170). `per_byte_first` is a field of the renderer, since
+    target alone (D170). `stream_threads` and D175's `local_workgroups` are
+    fields of the renderer, since a second reader, rune's attention
+    lowering, sizes its grid by them. `per_byte_first` is one, since
     a second target measured another crossover: nonnormal's R9700 (gfx1201)
     streams gpt-oss-20b's routed blocks at 149 a byte faster than its cores
     (gate and up 20.6-22.1 against 26.7-28.0 ms a layer, down 10.2-11.1
@@ -5200,7 +5202,7 @@ the walk of `Rangeify.fix_store_hazard`.
   without `TC_MIN_GLOBALS`: after the core, M and N are upcast and N split
   into local threads, by the first size that divides them, whatever the
   workgroups left; the same at `6b7b018da`).
-- **tolk:** `Heuristic.core_threads`, `Heuristic.local_workgroups` and
+- **tolk:** `Heuristic.core_threads`, `Renderer.t.local_workgroups` and
   `Heuristic.tensor_cores`; `test/gen/tinygrad.patch`, which gives tinygrad's
   heuristic the same rule before the goldens are generated.
 - **Differs:** each upcast applies only while the kernel keeps at least

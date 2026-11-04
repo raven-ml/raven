@@ -105,14 +105,14 @@ let core_threads = 16384
    staged core takes its own tile ([staged_tile]). *)
 let accumulators = 160
 
-(* The fewest workgroups a local split of a tensor core's [N] leaves. The split
-   keeps the threads and packs a workgroup's warps onto one compute unit,
-   which balances the units coarser: on an RTX 5000 Ada's 100 SMs a split
-   that left 512 workgroups ran as fast as one that left 256, and 128 or 144
-   lost up to 1.34 times. Fitted to sm_89's parts, as [core_threads] is. It
-   governs a core whose operands are not staged: a staged core's local split
-   shares each copied tile among its warps, which [staged_tile] decides. *)
-let local_workgroups = 256
+(* A local split of a tensor core's [N] leaves at least the renderer's
+   [local_workgroups]. The split keeps the threads and packs a workgroup's
+   warps onto one compute unit, which balances the units coarser: on an RTX
+   5000 Ada's 100 SMs a split that left 512 workgroups ran as fast as one that
+   left 256, and 128 or 144 lost up to 1.34 times. Fitted to sm_89's parts, as
+   [core_threads] is. It governs a core whose operands are not staged: a
+   staged core's local split shares each copied tile among its warps, which
+   [staged_tile] decides. *)
 
 (* The outputs a lane of [k] holds: the product of the sizes of the upcast axes
    its stored addresses read. A tensor core's upcasts of its reduce do not
@@ -388,7 +388,7 @@ let tensor_cores ~core_threads k =
                  and leaves [local_workgroups]. *)
               let local size =
                 Option.is_some (first_dividing rngs.(0) [ size ])
-                && leaves ~default:true local_workgroups size
+                && leaves ~default:true (K.ren k).local_workgroups size
               in
               Option.iter
                 (fun size -> split 0 size Opt.Local)
@@ -443,9 +443,8 @@ let columns = 2
    bfloat16 columns read a 32-byte sector, memory's unit of transfer. *)
 let sector_lanes = 8
 
-(* The threads the columns layout runs: as many loads in flight as keep memory
-   busy. The same standing as [core_threads]. *)
-let stream_threads = 32768
+(* The columns layout runs the renderer's [stream_threads]: as many loads in
+   flight as keep memory busy. The same standing as [core_threads]. *)
 
 (* The loads of its row a thread keeps in flight, at most, and with rows held,
    each of which multiplies them. More is slower: an MXFP4 matrix of 16384 by
@@ -791,7 +790,7 @@ let stream k (w, x, reuse) =
     let first = List.hd (contracted k) in
     let wanted =
       match prod_at k (K.upcastable_dims k) with
-      | Int n -> pow2_above (stream_threads * columns / max n 1)
+      | Int n -> pow2_above ((K.ren k).stream_threads * columns / max n 1)
       | Sym _ -> 1
     in
     (* A workgroup holds [lanes * lanes] threads. Few outputs take fewer of

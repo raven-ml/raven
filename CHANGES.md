@@ -990,6 +990,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Renderer.t` gains `stream_threads` and `local_workgroups`, the threads
+  that keep a part's memory busy and the fewest workgroups a split leaves,
+  which `Heuristic` read as constants and rune's attention lowering reads too.
 - A kernel whose index computes in a typed integer, such as `Int32`, takes
   the optimisations of the same kernel in the weak integer: `Heuristic` read
   a stride, tile or divisor of a typed constant as unknown, so 119 of its
