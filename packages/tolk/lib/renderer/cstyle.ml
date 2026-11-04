@@ -1285,6 +1285,47 @@ let opaque_zeros ~reg zeros =
                 (List.assoc_opt (op x) ctx.lang.code_for_op));
       ])
 
+(* Clang holds a [__fp16] as a storage format: C computes a selection between
+   two of them, [c ? a : b], in float, and narrowing the result back quiets a
+   signalling NaN, as x86's vcvtph2ps does, wherever LLVM's folds leave that
+   round trip. A backend without bfloat16 registers may move a [__bf16]
+   through float32 too: riscv64's, in clang 19, narrows a selected one with
+   [__truncsfbf2]. A selection moves its value: a scalar one of the 16-bit
+   floats [dts], and the merge of a gated load with its alternative, choose
+   between the values' bits. Vectors are not promoted. *)
+
+(* [bit_select l dt c a b] is [c ? a : b], of the 16-bit float [dt], chosen
+   between the arms' bits. *)
+let bit_select l dt c a b =
+  let t = render_scalar l dt and u = render_scalar l Dtype.Uint16 in
+  let bits v = l.bitcast u t v in
+  l.bitcast t u (strf "(%s?%s:%s)" c (bits a) (bits b))
+
+let bit_where dts l =
+  let where = List.assoc Op.Where l.code_for_op in
+  ( Op.Where,
+    fun args dt ->
+      match args with
+      | [ c; a; b ] when Dtype.mem dt dts -> bit_select l dt c a b
+      | _ -> where args dt )
+
+let bit_loads dts =
+  Pattern_matcher.fold (fun () ->
+      [
+        rule_ctx
+          (Upat.op ~dtype:dts ~name:"x"
+             ~src:[ Upat.var "bidx"; Upat.var "var"; Upat.var "gate" ]
+             Op.Load)
+          (fun ctx m ->
+            let x = m "x" in
+            if max_numel x > 1 then None
+            else
+              Some
+                (bit_select ctx.lang (dtype x) ctx.%{m "gate"}
+                   (render_access ctx (m "bidx"))
+                   ctx.%{m "var"}));
+      ])
+
 (* LLVM legalizes a double to half cast on CPUs without native support (such as
    x86 without AVX512-FP16) into a compiler-rt libcall *)
 let clang_extra_matcher =
@@ -1363,7 +1404,8 @@ let clang (target : Helpers.Target.t) =
 
      A float zero hidden from the backend is held in a register of the
      target's float class: [w] on arm64, [x] on x86 and [f] on riscv64. x86 and
-     riscv64 compare a bfloat16 in float32. *)
+     riscv64 compare a bfloat16 in float32. A selection of a half, and of a
+     bfloat16 where it is a [__bf16], chooses between bits. *)
   let lang =
     if
       String.starts_with ~prefix:"arm64" arch
@@ -1417,11 +1459,23 @@ let clang (target : Helpers.Target.t) =
         suffix64 = "ll";
       }
   in
+  let held =
+    if String.starts_with ~prefix:"x86" arch then [ Dtype.Float16 ]
+    else Dtype.[ Float16; Bfloat16 ]
+  in
+  let lang =
+    {
+      lang with
+      code_for_op = override lang.code_for_op [ bit_where held lang ];
+      string_rewrite =
+        Pattern_matcher.append (bit_loads held) lang.string_rewrite;
+    }
+  in
   Renderer.v ~name:"ClangRenderer"
     ~registers:(fun () -> Compiler_cpu.registers arch)
     ~vector_alu:true ~has_local:false ~global_max:[ 1; 0; 0 ]
     ~extra_matcher:clang_extra_matcher ~packed_args:true
-    ~code_for_op:clang_lang.code_for_op ~native
+    ~code_for_op:lang.code_for_op ~native
     ~render:(render (clang_kernel ~cpu:(target.device = "CPU")) lang)
     ~compiler:(Compiler_cpu.clang arch) target
 

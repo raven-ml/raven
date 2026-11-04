@@ -300,6 +300,18 @@ def reinterpreted(retype):
     return idx.store(retype(idx).load() & UOp.const(0xffffff00).cast(dtypes.uint32)).sink(arg=KernelInfo(name="packed"))
 
 
+def selected_half():
+    """A selection between a loaded half and one narrowed from a float, and a
+    gated load of a half."""
+    out, a, b = UOp.param(0, dtypes.half, 2), UOp.param(1, dtypes.half, 1), UOp.param(2, dtypes.float, 1)
+    c, h = UOp.param(3, dtypes.bool, 1), UOp.param(4, dtypes.half, 2)
+    cond = c.index(int32(0)).load()
+    selected = cond.where(a.index(int32(0)).load(), b.index(int32(0)).load().cast(dtypes.half))
+    gated = h.index(int32(1).valid(cond)).load()
+    return UOp.sink(out.index(int32(0)).store(selected), out.index(int32(1)).store(gated),
+                    arg=KernelInfo(name="selected_half"))
+
+
 def slotted(v, slot):
     """The variable `v` as the parameter of `slot`, as a kernel numbers it."""
     return v.replace(arg=replace(v.arg, slot=slot))
@@ -507,7 +519,7 @@ def cases_of(name):
             # The kernels of null/test_compile_failures.py
             *[(f"interpolate_atari_{i}", tensors(lambda: [atari().interpolate((64, 64))], opts=[up(1, 4)], index=i)) for i in range(2)],
             ("add_max_uchar", tensors(lambda: [(empty(1024, dtype=dtypes.uint8) + empty(1024, dtype=dtypes.uint8)).max()])),
-            ("table", ast(binary))] + host_vectors()
+            ("table", ast(binary)), ("selected_half", ast(selected_half))] + host_vectors()
     if name in ("metal", "cuda", "hip"):
         extra = [("nontemporal", ast(nontemporal))] if name == "hip" else []
         if name == "metal":

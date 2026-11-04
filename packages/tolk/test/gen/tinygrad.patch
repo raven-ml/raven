@@ -2556,7 +2556,7 @@ index 7fb5ccac2..733b483e3 100644
    tensor_cores: list[TensorCore] = []
    extra_matcher: PatternMatcher|None = None
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 6eec3e198..a07980e42 100644
+index 6eec3e198..8b96614c8 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -2698,7 +2698,7 @@ index 6eec3e198..a07980e42 100644
  
      # NOTE: this relies on bufs dict preserving order
      return (name, kernel, list(bufs.values()))
-@@ -284,7 +324,112 @@ class CStyleLanguage(Renderer):
+@@ -284,7 +324,123 @@ class CStyleLanguage(Renderer):
                '\n'.join(inlines[b][1]) + "\n}" for b in bodies]
      return self.render_kernel(*self._render(uops), uops+[u for b in inlines for u in b.src], prefix or None)
  
@@ -2793,6 +2793,17 @@ index 6eec3e198..a07980e42 100644
 +   if _is_mask(x) else None),
 +])
 +
++# clang holds a __fp16 as a storage format: c ? a : b of two of them computes in float, and narrowing the result back quiets a
++# signalling nan, as x86's vcvtph2ps does, wherever llvm's folds leave that round trip. a backend without bfloat16 registers may move
++# a __bf16 through float32 too: riscv64's, in clang 19, narrows a selected one with __truncsfbf2. a scalar selection of the 16-bit
++# floats dts, and the merge of a gated load with its alternative, choose between the values' bits. vectors are not promoted
++def _bit_select(ren, dt:DType, c:str, a:str, b:str) -> str:
++  t, u = ren._render_dtype(dt), ren._render_dtype(dtypes.ushort)
++  return ren.render_bitcast(t, u, f"({c}?{ren.render_bitcast(u, t, a)}:{ren.render_bitcast(u, t, b)})")
++def bit_loads(dts) -> PatternMatcher:
++  return PatternMatcher([(UPat(Ops.LOAD, dtype=dts, src=(UPat.var("bidx"), UPat.var("var"), UPat.var("gate")), name="x"),
++    lambda ctx,x,bidx,var,gate: None if x.max_numel() > 1 else _bit_select(ctx, x.dtype, ctx[gate], ctx.render_access(bidx), ctx[var]))])
++
 +def clang_registers(compiler) -> tuple[int, int]|None:
 +  # the vector registers of the processor clang compiles for, from the macros it defines, as the statement names the processor alone: on
 +  # x86_64 16, 32 with avx512, of 32 bytes with avx and 16 without (avx512's 64 bytes are taken at 32 until a processor with them is
@@ -2811,7 +2822,7 @@ index 6eec3e198..a07980e42 100644
    float4 = "(float4)"
    float4_style = ('{', '}')
    gep_arr_threshold = 0
-@@ -301,7 +446,8 @@ class ClangRenderer(CStyleLanguage):
+@@ -301,7 +457,8 @@ class ClangRenderer(CStyleLanguage):
    code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.RECIP]}),
                   Ops.SQRT: lambda x,dtype: f"__builtin_sqrt({x})" if dtype == dtypes.float64 else f"__builtin_sqrtf({x})",
                   Ops.TRUNC: lambda x,dtype: f"__builtin_trunc({x})" if dtype == dtypes.float64 else f"__builtin_truncf({x})",
@@ -2821,7 +2832,7 @@ index 6eec3e198..a07980e42 100644
  
    # LLVM legalizes double => half cast on systems that don't support it natively (like x86 cpus without AVX512-FP16) into a compiler-rt libcall.
    extra_matcher = PatternMatcher([(UPat.var("x", dtypes.float64).cast(dtypes.float16), lambda x: x.cast(dtypes.float32).cast(dtypes.float16))]) \
-@@ -313,7 +459,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -313,7 +470,15 @@ class ClangRenderer(CStyleLanguage):
      vec = self._render_dtype(dt, count, AddrSpace.REG)
      return f"typedef {self.render_dtype(dt)} {vec} __attribute__((aligned({alignment}),ext_vector_type({count})));"
  
@@ -2838,7 +2849,7 @@ index 6eec3e198..a07980e42 100644
    def _render_body(self, function_name, kernel, bufs, uops, pref=None) -> str: return super().render_kernel(function_name, kernel, bufs, uops, pref)
    def _render_entry(self, function_name:str, bufs:list[tuple[str,tuple[UOp,bool]]]) -> str: return ""
  
-@@ -328,6 +482,16 @@ class ClangRenderer(CStyleLanguage):
+@@ -328,6 +493,21 @@ class ClangRenderer(CStyleLanguage):
      super().__init__(target)
      from tinygrad.runtime.support.compiler_cpu import ClangCompiler
      self.compiler = ClangCompiler(target.arch.split(","))
@@ -2852,10 +2863,15 @@ index 6eec3e198..a07980e42 100644
 +      # an avx512 cpu that prefers 256-bit vectors makes 512-bit types illegal, and llvm 18 crashes splitting a negation,
 +      # an absolute value or a copysign of more than 16 halves: a kernel that uses 512-bit vectors makes them legal
 +      self.kernel_typedef = "__attribute__((min_vector_width(512))) void"
++    # a selection of a half, and of a bfloat16 where it is a __bf16, chooses between bits
++    held, where = (dtypes.half,) if target.arch.startswith("x86") else (dtypes.half, dtypes.bfloat16), self.code_for_op[Ops.WHERE]
++    self.code_for_op = {**self.code_for_op,
++                        Ops.WHERE: lambda a,b,c,dtype: _bit_select(self, dtype, a, b, c) if dtype in held else where(a, b, c, dtype)}
++    self.string_rewrite = bit_loads(held) + self.string_rewrite
  
  class OpenCLRenderer(CStyleLanguage):
    # language options
-@@ -337,6 +501,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -337,6 +517,7 @@ class OpenCLRenderer(CStyleLanguage):
    smem_prefix = "__local "
    barrier = "barrier(CLK_LOCAL_MEM_FENCE);"
    float4 = "(float4)"
@@ -2863,7 +2879,7 @@ index 6eec3e198..a07980e42 100644
    code_for_workitem = {"g": lambda x: f"get_group_id({x})", "l": lambda x: f"get_local_id({x})"}
    type_map = {**CStyleLanguage.type_map, dtypes.i8: "char", dtypes.u8: "uchar", dtypes.u32: "uint", dtypes.u16: "ushort",
                dtypes.u64: "ulong", dtypes.bf16: "ushort"}
-@@ -364,6 +529,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -364,6 +545,7 @@ class OpenCLRenderer(CStyleLanguage):
                                        (d != dtypes.double or "cl_khr_fp64" in self.target.arch) and d not in dtypes.fp8s}
  
  class MetalRenderer(CStyleLanguage):
@@ -2871,7 +2887,7 @@ index 6eec3e198..a07980e42 100644
    def __init__(self, target:Target):
      super().__init__(target)
      from tinygrad.runtime.ops_metal import MetalCompiler
-@@ -415,9 +581,11 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
+@@ -415,9 +597,11 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
  _nms = list("xyzwabcdefghijkl") + [f'v{i}' for i in range(16, 32)]
  
  class CUDARenderer(CStyleLanguage):
@@ -2883,7 +2899,7 @@ index 6eec3e198..a07980e42 100644
  
    def __init__(self, target:Target, use_nvcc=False):
      super().__init__(target)
-@@ -441,14 +609,15 @@ class CUDARenderer(CStyleLanguage):
+@@ -441,14 +625,15 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
@@ -2901,7 +2917,7 @@ index 6eec3e198..a07980e42 100644
       if x.addrspace not in (AddrSpace.GLOBAL, AddrSpace.LOCAL) else None),
    ]) + base_rewrite
  
-@@ -465,6 +634,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -465,6 +650,8 @@ class CUDARenderer(CStyleLanguage):
      if any(dt in dtypes.fp8s for dt, _ in used_dtypes): prefix.append("#include <cuda_fp8.h>")
      if any(dt == dtypes.half for dt, _ in used_dtypes): prefix.append("#include <cuda_fp16.h>")
      if any(dt == dtypes.bfloat16 for dt, _ in used_dtypes): prefix.append("#include <cuda_bf16.h>")
@@ -2910,7 +2926,7 @@ index 6eec3e198..a07980e42 100644
      prefix += [self.render_vector_prefix(dt, count) for dt, count in used_dtypes if (count in (4,8) and dt in {dtypes.half, dtypes.bfloat16})
        or (count in (2,4,8,16) and dt in dtypes.fp8s)]
      dt_map_in = { dtypes.f32: "tf32", dtypes.f16: "f16", dtypes.bf16: "bf16", dtypes.fp8e4m3: "e4m3", dtypes.fp8e5m2: "e5m2" }
-@@ -501,6 +672,7 @@ def _ocml(op): return lambda x,dtype: f"__ocml_{op}_f{ {dtypes.half:16, dtypes.d
+@@ -501,6 +688,7 @@ def _ocml(op): return lambda x,dtype: f"__ocml_{op}_f{ {dtypes.half:16, dtypes.d
  
  class HIPRenderer(CStyleLanguage):
    shared_max = 65536
@@ -2918,7 +2934,7 @@ index 6eec3e198..a07980e42 100644
    # NOTE: this is only really needed on gfx12, even though gfx11 reports the same limitation
    global_max = (2147483647, 65535, 65535)
    global_prod_max = (0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF)
-@@ -521,8 +693,9 @@ class HIPRenderer(CStyleLanguage):
+@@ -521,8 +709,9 @@ class HIPRenderer(CStyleLanguage):
      if amd_fp8s(target.arch):
        self.extra_matcher += tc.pm_wmma_fp8(dtypes.uint64 if self.is_cdna(target.arch) else dtypes.uint32)
        self.string_rewrite = PatternMatcher([
@@ -2930,7 +2946,7 @@ index 6eec3e198..a07980e42 100644
            f" {fp8_index(x.dtype)})"),
          (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
            lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
-@@ -538,7 +711,8 @@ class HIPRenderer(CStyleLanguage):
+@@ -538,7 +727,8 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),
@@ -2941,7 +2957,7 @@ index 6eec3e198..a07980e42 100644
    smem_prefix_for_cast: bool = False
    barrier = '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");' + '__builtin_amdgcn_s_barrier();' + \
 diff --git a/tinygrad/schedule/__init__.py b/tinygrad/schedule/__init__.py
-index 7ead5c9c6..fbd544e06 100644
+index 7ead5c9c6..9db88bbed 100644
 --- a/tinygrad/schedule/__init__.py
 +++ b/tinygrad/schedule/__init__.py
 @@ -2,7 +2,7 @@ import time, inspect

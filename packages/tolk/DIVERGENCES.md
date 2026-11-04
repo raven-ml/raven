@@ -7541,6 +7541,39 @@ and an initial value is added after it (D260).
   runs there` (they skip without a GPU). The Gpudims suite:
   `group_gpudims_masks_a_store_by_its_missing_global.golden`.
 
+## D325. Clang selects a 16-bit float by its bits
+
+- **tinygrad:** `renderer/cstyle.py:161` (`CStyleLanguage.code_for_op`'s
+  `Ops.WHERE`, `(c?a:b)`) and `:59-60` (`base_rewrite`'s gated `Ops.LOAD`,
+  `(gate?*p:alt)`), under `ClangRenderer`'s `type_map` of `:300`, which
+  renders a half as `__fp16`; a bfloat16 is a `__bf16` off x86.
+- **tolk:** `Cstyle.bit_where`, Clang's `code_for_op` of `Op.Where`, and
+  `Cstyle.bit_loads`, in its rewrite, for `Float16`, and for `Bfloat16` where
+  it is a `__bf16`; `test/gen/tinygrad.patch`, which gives
+  `ClangRenderer.__init__` the same `code_for_op` and rule (`bit_loads`)
+  before the goldens are recorded.
+- **Differs:** a scalar selection of such a value, and a gated load's merge
+  with its alternative, choose between the arms' bits:
+  `__builtin_bit_cast(__fp16, (unsigned short)((c?A:B)))`, each arm read as
+  an `unsigned short`. Clang computes `c?a:b` of two `__fp16`s in float, a
+  storage format's promotion, and narrows the result back; on x86 the
+  conversions are `vcvtph2ps` and `vcvtps2ph`, which quiet a signalling
+  NaN, wherever LLVM's folds leave the round trip. A `__bf16` is not
+  promoted, but riscv64's backend, in clang 19, moves a selected one
+  through float32 and narrows it with `__truncsfbf2`; arm64's keeps its
+  bits, and takes the rule for one form across targets. Vector selections
+  are not promoted and are unchanged. Clang's `code_for_op` writes the
+  scalar selection, as `written.golden`'s row of a half `Ops.WHERE` shows.
+- **Reason:** (e): a move keeps a NaN's bits. rune's scatter selects an
+  element no update reaches from its target, and for a half `Add` on the
+  host, in the kernel its comparison form makes, `0x7c01` came back
+  `0x7e01`.
+- **Pinned by:** the Cstyle suite's `selections of 16-bit floats` (the
+  source of each Clang target); the goldens `clang_selected_half` and
+  `written`; rune's `Lower_index › gathers and scatters › a scatter keeps the
+  bits of each element no update lands on` and `Rune.jit`'s `a scatter keeps
+  the bits of each element no update lands on`, on the host and on a GPU.
+
 ## D330. The kernels of one write are unordered whichever Afters list them
 
 - **tinygrad:** `schedule/__init__.py:56-64` (`create_schedule`'s

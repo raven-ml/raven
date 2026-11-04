@@ -373,6 +373,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.scatter` of a float16 on the host keeps a signalling NaN
+  where no update lands. One of its forms selected the target's elements in
+  float32, which quieted it.
+
 - `Nx.attention` differentiates through one construct of its own, linear in
   the tangents and transposed by flipping it, which recomputes each pair's
   weight from `lse`: reverse mode keeps the call's operands, `o` and `lse`,
@@ -1003,6 +1007,10 @@ their difference from the focus, and its machine's readings. A run's state
 word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
+
+- Clang selects a half by its bits, in a selection and in a gated load
+  (`Cstyle.clang`): C computed `c ? a : b` of two `__fp16`s in float, which
+  could quiet a signalling NaN. A `__bf16` takes the same form.
 
 - Kernels that each store into regions of the same two buffers, as the
   stores of crossed assemblies `[a; b]` and `[b; a]` over several devices

@@ -2533,6 +2533,7 @@ renderer/cstyle/clang_padded.golden
 renderer/cstyle/clang_rand.golden
 renderer/cstyle/clang_register_cast.golden
 renderer/cstyle/clang_scalar_params.golden
+renderer/cstyle/clang_selected_half.golden
 renderer/cstyle/clang_shrunk.golden
 renderer/cstyle/clang_sum.golden
 renderer/cstyle/clang_table.golden

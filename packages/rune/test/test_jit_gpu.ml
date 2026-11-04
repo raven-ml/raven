@@ -4,16 +4,17 @@
   ---------------------------------------------------------------------------*)
 
 (* Rune.jit on this machine's first GPU: a scatter or an assembly past its
-   work bound gives the host's eager values, a cast between float32 and a
-   16-bit float gives eager's bits at every code and tie, a product of narrow
-   floats or of MXFP4 weights holds its bound, a call's check raises at the
-   next wait, so the call returns while its work runs, a key split there has
-   the host's words, and a program over the GPU and a memory device, devices
-   of two targets, compiles to eager's values with replicas equal bit for bit,
-   a running operation of a prefix is the prefix of its result, attention
-   holds its bound against a float64 reference, and exp holds its bound in
-   ulps of the correctly rounded result. It skips
-   without a GPU, or without the compiler the GPU's kernels need. *)
+   work bound gives the host's eager values, a scatter keeps the bits of each
+   element no update lands on, a cast between float32 and a 16-bit float gives
+   eager's bits at every code and tie, a product of narrow floats or of MXFP4
+   weights holds its bound, a call's check raises at the next wait, so the
+   call returns while its work runs, a key split there has the host's words,
+   and a program over the GPU and a memory device, devices of two targets,
+   compiles to eager's values with replicas equal bit for bit, a running
+   operation of a prefix is the prefix of its result, attention holds its
+   bound against a float64 reference, and exp holds its bound in ulps of the
+   correctly rounded result. It skips without a GPU, or without the compiler
+   the GPU's kernels need. *)
 
 open Windtrap
 open Rune_support
@@ -84,6 +85,7 @@ let law c =
   if Nx.Dtype.equal dt Nx.float64 then assume (has_float64 d);
   Scatters.law ~flushes:(flushes d) s c
 
+let unreached c = Unreached.law (snd (on_gpu ())) c
 let casts16 dt () = Casts16.law (snd (on_gpu ())) dt
 
 (* The attention law on the GPU, a float64 case discarded where its kernels
@@ -908,6 +910,9 @@ let () =
                "a scatter past 16 times eager's work compiles to eager's values"
                (Gen.with_pp Scatters.pp Scatters.gen)
                law;
+             Windtrap.cases ~id:(Format.asprintf "%a" Unreached.pp)
+               "a scatter keeps the bits of each element no update lands on"
+               Unreached.cases unreached;
            ];
          group "running operations"
            [

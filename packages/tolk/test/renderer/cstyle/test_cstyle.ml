@@ -1448,6 +1448,67 @@ let zeros_compared =
           | _ -> failf "one float");
     ]
 
+(* Selections of 16-bit floats *)
+
+(* [data0[0] = c ? x : y] and [data0[1] = c ? data4[1] : 0], [x] the bits of
+   [data1[0]] as a [dt], [y] [data2[0]] narrowed to [dt] and [c] [data3[0]]:
+   a selection and a gated load of [dt], stored as their bits. The golden
+   [clang_selected_half] holds x86_64's source of such a kernel. *)
+let selected dt =
+  let at slot dt i = Ops.index (Shape.param ~shape:[ Int 2 ] slot dt) [ i ] in
+  let i n = Ops.int ~dtype:Int32 n in
+  let c = Ops.load (at 3 Bool (i 0)) [] in
+  let x = Ops.bitcast (Ops.load (at 1 Uint16 (i 0)) []) dt in
+  let y = Ops.cast (Ops.load (at 2 Float32 (i 0)) []) dt in
+  let gated = Ops.load (at 4 dt (i 1)) [ Ops.float ~dtype:dt 0.; c ] in
+  let bits v = Ops.bitcast v Uint16 in
+  Linearizer.linearize
+    (Ops.sink
+       ~kernel:(Ops.kernel_info ~name:"selected" ())
+       [
+         Ops.store (at 0 Uint16 (i 0)) (bits (Ops.where c x y));
+         Ops.store (at 0 Uint16 (i 1)) (bits gated);
+       ])
+
+(* Each Clang target and the 16-bit floats it holds as a storage format, a
+   [__fp16] or a [__bf16]: x86_64 holds a bfloat16 as its bits. *)
+let held =
+  Dtype.
+    [
+      ("arm64", arm64, [ Float16; Bfloat16 ]);
+      ("x86_64", clang, [ Float16 ]);
+      ("riscv64", riscv64, [ Float16; Bfloat16 ]);
+    ]
+  |> List.concat_map (fun (name, r, dts) ->
+      List.map (fun dt -> (name ^ ", " ^ Dtype.name dt, r, dt)) dts)
+
+(* The occurrences of [sub] in [s]. *)
+let occurrences s sub =
+  let n = String.length sub in
+  let rec go i k =
+    if i + n > String.length s then k
+    else if String.sub s i n = sub then go (i + n) (k + 1)
+    else go (i + 1) k
+  in
+  go 0 0
+
+let selections =
+  group "selections of 16-bit floats"
+    [
+      cases
+        "a selection and a gated load of a 16-bit float held as a storage \
+         format choose between bits"
+        ~id:(fun (name, _, _) -> name)
+        held
+        (fun (_, r, dt) ->
+          let src = render r (selected dt) in
+          let t = if Dtype.equal dt Float16 then "__fp16" else "__bf16" in
+          let pick =
+            Printf.sprintf "__builtin_bit_cast(%s, (unsigned short)((" t
+          in
+          equal ~msg:("in\n" ^ src) int 2 (occurrences src pick));
+    ]
+
 (* x86_64 Windows
 
    An object for x86_64 Windows calls by Windows' convention, where a [long]
@@ -1623,5 +1684,6 @@ let () =
          execution;
          division_group;
          zeros_compared;
+         selections;
          windows_group;
        ])

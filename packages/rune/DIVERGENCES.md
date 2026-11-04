@@ -852,8 +852,10 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   or Min gives eager's bits`, `› a scatter by Add wraps integers and holds its
   float bound`, `› a scatter by Set, Max or Min past 16 times eager's work
   gives eager's bits`, `› a scatter by Add past 16 times eager's work holds
-  its bound`; `Lower_index › work bounds › a scatter or an assembly past 16
-  times eager's work gives eager's bits`.
+  its bound`, `› a scatter keeps the bits of each element no update lands
+  on`; `Lower_index › work bounds › a scatter or an assembly past 16 times
+  eager's work gives eager's bits`; `Rune.jit`'s `a scatter keeps the bits of
+  each element no update lands on`, on the host and on a GPU.
 
 ### I6. Fold
 

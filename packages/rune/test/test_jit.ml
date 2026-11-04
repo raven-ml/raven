@@ -5392,6 +5392,10 @@ let () =
                "a scatter past 16 times eager's work compiles to eager's values"
                (Gen.with_pp Scatters.pp Scatters.gen)
                (Scatters.law (module Nx.Host));
+             Windtrap.cases ~id:(Format.asprintf "%a" Unreached.pp)
+               "a scatter keeps the bits of each element no update lands on"
+               Unreached.cases
+               (Unreached.law (module Nx.Host));
              test "a scatter past its work bound combines in a donated target"
                test_long_donated;
              test "a scatter returned twice takes a donated target once"

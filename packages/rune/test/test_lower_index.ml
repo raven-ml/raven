@@ -942,6 +942,145 @@ let scatter_adds_long =
     (Gen.with_pp pp_scatter (scatter_case ~long:true addable [ Add ]))
     (added ~long:true)
 
+(* Elements no update lands on
+
+   Whatever its form, a scatter keeps the bits of each element no update lands
+   on ([nx_kernel.mli]'s [scatter]): a selection or a copy of a narrow float
+   through [float32] quiets a signalling NaN. *)
+
+(* A float of [dt] that a move keeps bit for bit and a computation may not:
+   a signalling NaN of either sign, where [dt] has them, and [-0], each two
+   times in five, or a subnormal of either sign. *)
+let delicate (type s) (dt : (float, s) D.t) =
+  let e, f = format dt in
+  let top = (1 lsl e) - 1 and mask = Int64.pred (Int64.shift_left 1L f) in
+  let field sign ex fr =
+    let s = if sign then Int64.shift_left 1L (e + f) else 0L in
+    Int64.(logor s (logor (shift_left (of_int ex) f) fr))
+  in
+  let zero = (2, Gen.constant (field true 0 0L)) in
+  let subnormal = (1, among [ field false 0 1L; field true 0 mask ]) in
+  match dt with
+  | D.Float8_e4m3fn | D.Float4_e2m1fn -> Gen.frequency [ zero; subnormal ]
+  | _ ->
+      let nan = among [ field false top 1L; field true top 1L ] in
+      Gen.frequency [ (2, nan); zero; subnormal ]
+
+(* A raw of [d], three times in four a delicate float or part. *)
+let marked (D.Any dt as d) =
+  match D.kind dt with
+  | D.Float -> Gen.frequency [ (3, delicate dt); (1, raw d) ]
+  | D.Complex -> Gen.frequency [ (3, delicate D.Float64); (1, raw d) ]
+  | _ -> raw d
+
+(* [eager_bits dt x] is the bits of each element of [x], read as [exact] reads
+   them, eagerly. *)
+let eager_bits (type v s) (dt : (v, s) D.t) (x : (v, s, Nx.host) Nx.t) =
+  let as_ it = Array.map (hex it) (Nx.to_array (Nx.bitcast it x)) in
+  match dt with
+  | D.Float32 -> as_ D.Int32
+  | D.Complex64 -> as_ D.Int64
+  | D.Float16 | D.Bfloat16 -> as_ D.Uint16
+  | D.Float8_e4m3fn | D.Float8_e5m2 -> as_ D.Uint8
+  | _ -> Array.map (hex dt) (Nx.to_array x)
+
+(* The dtypes that hold signalling NaNs, drawn five times as often as the
+   others, so that every run meets one where no update lands. A [complex64]
+   made from [float64] parts holds none. *)
+let signalling =
+  D.
+    [
+      Any Float64;
+      Any Float32;
+      Any Float16;
+      Any Bfloat16;
+      Any Float8_e5m2;
+      Any Complex128;
+    ]
+
+(* A scatter by any combine, a quarter of them past 16 times eager's work, and
+   whether it is. *)
+let unreached_case =
+  let open Gen in
+  let dts = D.all @ List.concat (List.init 4 (fun _ -> signalling)) in
+  let* long = frequency [ (3, constant false); (1, constant true) ] in
+  let* c = scatter_case ~long dts [ Set; Add; Max; Min ] in
+  let c =
+    if is_bool c.s_dt && c.s_combine = Add then { c with s_combine = Set }
+    else c
+  in
+  let n = raws_of c.s_dt (numel (base c.s_view c.s_shape)) in
+  let+ into = array ~size:(constant n) (marked c.s_dt) in
+  (long, { c with s_into = into })
+
+(* For each 16-bit float and each combine, a target of [[4; 4; 4]] read
+   transposed, its elements cycling through signalling NaNs of both signs, a
+   quiet NaN, both zeros, subnormals of both signs and [1], whose updates all
+   land on its first row: a narrow float's [Add] selected each element in
+   [float32] here, which quieted a signalling NaN. *)
+let unreached_examples =
+  let example (d, pool, update) combine =
+    let s = [| 4; 4; 4 |] in
+    ( false,
+      {
+        s_dt = d;
+        s_combine = combine;
+        s_unique = false;
+        s_shape = s;
+        s_view = Transposed;
+        s_axis = 0;
+        s_idx = s;
+        s_pos = Array.make 64 0L;
+        s_into = Array.init 64 (fun j -> pool.(j mod Array.length pool));
+        s_updates = Array.make 64 update;
+      } )
+  in
+  List.concat_map
+    (fun d -> List.map (example d) [ K.Set; Add; Max; Min ])
+    [
+      ( D.Any D.Float16,
+        [| 0x7c01L; 0xfc15L; 0x7e01L; 0x8000L; 0L; 1L; 0x83ffL; 0x3c00L |],
+        0x3400L );
+      ( D.Any D.Bfloat16,
+        [| 0x7f81L; 0xff95L; 0x7fc1L; 0x8000L; 0L; 1L; 0x807fL; 0x3f80L |],
+        0x3e80L );
+    ]
+
+(* Whether the element [h] of [dt] is [-0], or a part of it is. *)
+let negative_zero (type v s) (dt : (v, s) D.t) h =
+  match D.kind dt with
+  | D.Float ->
+      let e, f = format dt in
+      Int64.of_string ("0x" ^ h) = Int64.shift_left 1L (e + f)
+  | D.Complex ->
+      let w = String.length h / 2 in
+      let z = "8" ^ String.make (w - 1) '0' in
+      String.sub h 0 w = z || String.sub h w w = z
+  | _ -> false
+
+let unreached =
+  let pp ppf (long, c) =
+    Format.fprintf ppf "%s%a" (if long then "long " else "") pp_scatter c
+  in
+  prop ~count:60 ~examples:unreached_examples
+    "a scatter keeps the bits of each element no update lands on"
+    (Gen.with_pp pp unreached_case)
+    (fun (long, c) ->
+      let (D.Any dt) = c.s_dt in
+      List.iter
+        (fun k -> cover (combine_name k) (c.s_combine = k))
+        [ K.Set; Add; Max; Min ];
+      cover "past 16 times eager's work" long;
+      cover "a strided or broadcast view" (c.s_view <> Plain);
+      let into, _, op = scattered dt c in
+      let count = landed c in
+      let alone a = List.filteri (fun o _ -> count.(o) = 0) (Array.to_list a) in
+      let kept = alone (eager_bits dt into) and _, l = exact dt op in
+      cover "a signalling NaN where no update lands"
+        (List.exists (fun h -> List.mem `Signalling (nans dt h)) kept);
+      cover "a -0 where no update lands" (List.exists (negative_zero dt) kept);
+      equal (list string) kept (alone l))
+
 (* Folds *)
 
 module M = Nx_array.Move
@@ -1534,6 +1673,7 @@ let () =
              scatter_adds;
              scatters_moved_long;
              scatter_adds_long;
+             unreached;
            ];
          group "folds and assemblies" [ folds; assemblies ];
          group "sorts" [ sorts ];
