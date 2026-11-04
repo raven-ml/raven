@@ -1155,18 +1155,18 @@ let int_vmax u = match vmax u with `Int z -> Bigint.to_int z | _ -> 0
 (* A host program's launch runs blocks of one loop on the host's cores at once
    (rig's host code). A loop qualifies when it is an output loop no optimisation
    claimed (Weak), whose bound the launch computes, as those a GPU makes global
-   are, and every store to memory
-   reads it in its address: the scheduler lets no index of such a loop read what
-   another writes, so its blocks are independent, and a block computes exactly
-   what the whole loop would for its indices. A serial loop (Loop), whose
-   iterations may read each other's writes, never qualifies. The largest
-   qualifying loop splits. It runs [block_lo + r] for [r] below [block_hi -
-   block_lo], two parameters the host entry sets for each block ([host_entry]);
-   the passes before kept the loop's own bounds, so this is done once the kernel
-   is final. The entry knows the two by their slots, the first past those
-   already taken, which the numbering of the kernel's other variables keeps;
-   their names, fresh among the kernel's variables, only name them in its
-   source. *)
+   are, and no store to memory, call or code misses it ({!Postrange.misses}):
+   each block runs every effect of the kernel, so one that missed the loop
+   would run once per block. A weak loop's steps are independent, so a block
+   computes exactly what the whole loop would for its indices. A serial loop
+   (Loop), whose iterations may read each other's writes, never qualifies. The
+   largest qualifying loop splits. It runs [block_lo + r] for [r] below
+   [block_hi - block_lo], two parameters the host entry sets for each block
+   ([host_entry]); the passes before kept the loop's own bounds, so this is
+   done once the kernel is final. The entry knows the two by their slots, the
+   first past those already taken, which the numbering of the kernel's other
+   variables keeps; their names, fresh among the kernel's variables, only name
+   them in its source. *)
 let split_blocks sink =
   let all = Nodes.to_list (backward_slice_with_self ~calls:Skip sink) in
   let slots, names =
@@ -1183,17 +1183,21 @@ let split_blocks sink =
     let name = if i = 0 then base else base ^ "_" ^ string_of_int i in
     if List.mem name names then fresh ~i:(i + 1) base else name
   in
-  let stores = List.filter (fun u -> is Op.Store u && writes_memory u) all in
-  let addressed r st = Nodes.mem r (backward_slice ~calls:Skip (nth st 0)) in
+  let effects =
+    List.filter
+      (fun u ->
+        (is Op.Store u && writes_memory u) || is Op.Call u || is Op.Custom u)
+      all
+  in
   let qualifies r =
     is Op.Range r
     && axis_type r = Axis_type.Weak
     && known_at_launch r
     && int_vmax (nth r 0) >= 2
-    && List.for_all (addressed r) stores
+    && not (List.exists (Postrange.misses r) effects)
   in
   let larger a b = if int_vmax (nth b 0) > int_vmax (nth a 0) then b else a in
-  match (stores, List.filter qualifies all) with
+  match (effects, List.filter qualifies all) with
   | [], _ | _, [] -> sink
   | _, r :: rs ->
       let r = List.fold_left larger r rs in

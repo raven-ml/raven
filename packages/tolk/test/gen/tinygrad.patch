@@ -14,7 +14,7 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index f4535a4f7..50912b607 100644
+index f4535a4f7..20d176975 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,31 +2,31 @@ from dataclasses import replace, dataclass, field
@@ -394,12 +394,13 @@ index f4535a4f7..50912b607 100644
    # fix group for reduce
    (UPat(Ops.REDUCE, name="x"), fix_group_for_reduce),
    # remove reduces
-@@ -251,6 +495,151 @@ pm_implicit_barriers = PatternMatcher([
+@@ -251,6 +495,155 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
-+# A host program's launch runs blocks of its largest output loop that every store to memory reads in its address on the
-+# host's cores at once. The loop runs block_lo + r for r below block_hi - block_lo, two variables the launch sets for each block.
++# A host program's launch runs, on the host's cores at once, blocks of its largest output loop that every store to memory,
++# call and code depends on: each block runs every effect, and one that missed the loop would run once per block. The loop
++# runs block_lo + r for r below block_hi - block_lo, two variables the launch sets for each block.
 +# The launch knows the two by their slots, the first past those already taken; their names, fresh among the kernel's
 +# variables, only name them in its source.
 +def writes_memory(st:UOp) -> bool:
@@ -408,12 +409,15 @@ index f4535a4f7..50912b607 100644
 +
 +def split_blocks(sink:UOp) -> UOp:
 +  nodes = list(sink.backward_slice_with_self)
-+  stores = [u for u in nodes if u.op is Ops.STORE and writes_memory(u)]
++  effects = [u for u in nodes if (u.op is Ops.STORE and writes_memory(u)) or u.op in (Ops.CALL, Ops.CUSTOM)]
++  # an effect misses r when r is none of the ranges of a store's index, or of a call's arguments or code's sources
++  def misses(r:UOp, e:UOp) -> bool:
++    return not any(r in s.ranges for s in ((e.src[0],) if e.op is Ops.STORE else e.src[1:] if e.op is Ops.CALL else e.src))
 +  def qualifies(r:UOp) -> bool:
 +    return r.op is Ops.RANGE and r.axis_type == AxisType.WEAK and not r.src[0].ranges and int(r.src[0].vmax) >= 2 and \
-+      all(r in st.src[0].backward_slice for st in stores)
++      not any(misses(r, e) for e in effects)
 +  cands = [r for r in nodes if qualifies(r)]
-+  if not stores or not cands: return sink
++  if not effects or not cands: return sink
 +  r = cands[0]
 +  for c in cands[1:]:
 +    if int(c.src[0].vmax) > int(r.src[0].vmax): r = c
@@ -546,7 +550,7 @@ index f4535a4f7..50912b607 100644
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if DEBUG >= 5: print(render_uir(ast))
    if SPEC: type_verify(ast, spec_tensor)
-@@ -260,6 +649,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -260,6 +653,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # preprocess
    sink = graph_rewrite(sink, pm_mops, name="early movement ops", bottom_up=True)
@@ -555,7 +559,7 @@ index f4535a4f7..50912b607 100644
  
    # first we optimize
    if optimize:
-@@ -280,7 +671,9 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -280,7 +675,9 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # ** expander (expand_rewrite) **
    # reduce_unparented: a REDUCE whose src folded to a CONST (e.g. x*0) has no parented ranges, collapse it before the expander
@@ -566,7 +570,7 @@ index f4535a4f7..50912b607 100644
  
    # expand
    sink = graph_rewrite(sink, expander, ctx=build_range_map(sink), name="expander")
-@@ -288,7 +681,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -288,7 +685,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -575,7 +579,7 @@ index f4535a4f7..50912b607 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -301,7 +694,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -301,7 +698,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
@@ -584,7 +588,7 @@ index f4535a4f7..50912b607 100644
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -326,11 +719,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -326,11 +723,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -599,7 +603,7 @@ index f4535a4f7..50912b607 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -345,11 +740,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -345,11 +744,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -613,7 +617,7 @@ index f4535a4f7..50912b607 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -443,9 +839,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -443,9 +843,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -638,7 +642,7 @@ index f4535a4f7..50912b607 100644
  
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp|None:
    if getattr(type(ctx), "asm") is Renderer.asm: return None
-@@ -493,7 +903,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
+@@ -493,7 +907,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
      full_sink = full_rewrite_to_sink(ast, renderer, optimize=not ast.arg.optimized)
      prog_info = ProgramInfo.from_sink(full_sink, renderer.target)
      if (isinstance(renderer, ISARenderer) or renderer.packed_args) and full_sink.arg.estimates is None:

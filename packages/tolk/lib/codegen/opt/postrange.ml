@@ -47,6 +47,11 @@ let known_size = function
 let mem_ranges r u = Nodes.mem r (ranges u)
 let special_name u = match arg u with String s -> s | _ -> ""
 
+let misses r e =
+  match (op e, src e) with
+  | Op.Store, at :: _ -> not (mem_ranges r at)
+  | _ -> not (List.exists (mem_ranges r) (src_without_body e))
+
 (* Lanes and threads
 
    Which ranges take no lanes, because lanes share their thread's registers,
@@ -332,16 +337,17 @@ module Scheduler = struct
             (ranges a) acc)
         [] (src_without_body u)
     in
-    let read = List.map reads opaque in
     let read_by_opaque =
       List.fold_left
         (List.fold_left (fun acc r -> if List.memq r acc then acc else r :: acc))
-        [] (read @ List.map reads expressions)
+        [] (List.map reads (opaque @ expressions))
     in
     let unread_by_opaque =
-      List.filter
-        (fun r -> op r = Op.Range && List.exists (fun rs -> not (List.memq r rs)) read)
-        slice
+      if opaque = [] then []
+      else
+        List.filter
+          (fun r -> op r = Op.Range && List.exists (misses r) opaque)
+          slice
     in
     let lane_bound =
       if List.exists (fun u -> is_reg u || op u = Op.Backedge) slice then

@@ -5185,8 +5185,9 @@ let cleanups =
 
 (* Host programs in blocks
 
-   A host program splits the largest loop that every store to memory reads in
-   its address into blocks, which the host's cores run at once. *)
+   A host program splits into blocks, which the host's cores run at once, the
+   largest weak loop that every store to memory, call and piece of custom code
+   depends on. *)
 
 let split_of prg =
   Option.map
@@ -6770,6 +6771,110 @@ let counted_once =
           | _ -> assert false);
     ]
 
+(* Calls and custom code beside host blocks
+
+   A host program runs the blocks of its split loop at once, each running
+   every effect of the kernel that does not depend on the loop. A loop
+   splits only when every store to memory, call and piece of custom code
+   depends on it. *)
+
+(* [n[cell] += 1], [cell] 0 by default, atomic so that it counts every run:
+   by code, or by a call of a body of that code. *)
+let counted_on_host ?(cell = Ops.int 0) o n =
+  let incr x = code "__atomic_fetch_add({0}, 1, __ATOMIC_RELAXED);" [ x ] in
+  match o with
+  | Op.Call ->
+      let p = int_param ~name:"p" 0 1 in
+      Ops.call ~name:"incr" (Ops.sink [ incr (first p) ]) [ at n cell ]
+  | _ -> incr (at n cell)
+
+(* [out[i] = a[i] + 1] over [rows] [i], beside [n[0] += 1]
+   ({!counted_on_host}), which does not depend on [i]. *)
+let counted_beside_blocks o () =
+  let out = int_param ~name:"out" 0 rows
+  and a = int_param ~name:"A" 1 rows
+  and n = int_param ~name:"n" 2 1 in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"counted_beside_blocks" ())
+    [
+      Ops.end_ (Ops.store (at out i) Ops.O.(at a i + i32 1)) [ i ];
+      counted_on_host o n;
+    ]
+
+(* [out[i] = a[i] + 1] and [n[i] += 1] by code, over [rows] [i]: the code
+   depends on [i]. *)
+let counted_in_blocks () =
+  let out = int_param ~name:"out" 0 rows
+  and a = int_param ~name:"A" 1 rows
+  and n = int_param ~name:"n" 2 rows in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"counted_in_blocks" ())
+    [
+      Ops.end_
+        (Ops.group
+           [
+             Ops.store (at out i) Ops.O.(at a i + i32 1);
+             code "{0}[0] += 1;" [ at n i ];
+           ])
+        [ i ];
+    ]
+
+(* [n[i] += 1] over [rows] [i] ({!counted_on_host}), the kernel's only
+   effect, which depends on [i]. *)
+let counted_alone o () =
+  let n = int_param ~name:"n" 0 rows in
+  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"counted_alone" ())
+    [ Ops.end_ (counted_on_host ~cell:i o n) [ i ] ]
+
+let host_split k =
+  Option.map
+    (fun (s : Ops.split) -> s.iterations)
+    (kernel_info (Ops.nth (Codegen.to_program (k ()) (Lazy.force host)) 0))
+      .split
+
+let counted_beside_host_blocks =
+  let opaque_id o = Format.asprintf "%a" Op.pp o in
+  let a = List.init rows Fun.id in
+  group "calls and custom code beside host blocks"
+    [
+      cases "a loop beside one that does not depend on it does not split"
+        ~id:opaque_id [ Op.Call; Op.Custom ] (fun o ->
+          equal (option sint) None (host_split (counted_beside_blocks o)));
+      cases "one beside a loop runs once" ~id:opaque_id [ Op.Call; Op.Custom ]
+        (fun o ->
+          let k = counted_beside_blocks o in
+          match effects_of k [ (1, int_values a) ] [ 0; 2 ] with
+          | [ out; n ] ->
+              equal (array Dtypes.value) ~msg:"n" (int_values [ 1 ]) n;
+              equal (array Dtypes.value) ~msg:"out"
+                (int_values (List.map succ a))
+                out
+          | _ -> assert false);
+      cases "a loop that one depends on splits, beside no store"
+        ~id:opaque_id [ Op.Call; Op.Custom ] (fun o ->
+          let k = counted_alone o in
+          equal (option sint) (Some (Int rows)) (host_split k);
+          equal
+            (list (array Dtypes.value))
+            [ int_values (List.map (fun _ -> 1) a) ]
+            (effects_of k [] [ 0 ]));
+      test "a loop that code depends on splits" (fun () ->
+          equal (option sint) (Some (Int rows)) (host_split counted_in_blocks);
+          match effects_of counted_in_blocks [ (1, int_values a) ] [ 0; 2 ] with
+          | [ out; n ] ->
+              equal (array Dtypes.value) ~msg:"n"
+                (int_values (List.map (fun _ -> 1) a))
+                n;
+              equal (array Dtypes.value) ~msg:"out"
+                (int_values (List.map succ a))
+                out
+          | _ -> assert false);
+    ]
+
 (* Weak ranges
 
    A weak range is its builder's promise that two points of the kernel whose
@@ -7432,6 +7537,7 @@ let () =
          fixed_threads;
          bfloat16_vectors_on_cuda;
          counted_once;
+         counted_beside_host_blocks;
          weak_ranges;
          lanes_and_threads;
          variable_sizes;

@@ -248,6 +248,7 @@ let group_gpudims (r : Renderer.t) s =
           in
           let subs = Tbl.create 16 and masks = Tbl.create 4 in
           let axes = global_dims @ local_dims in
+          let axis_ranges = List.map range axes in
           List.iter
             (fun x ->
               (* A global store whose index does not use every workgroup and
@@ -261,11 +262,9 @@ let group_gpudims (r : Renderer.t) s =
                  match src idx with
                  | buf :: _ when addrspace buf = Some Dtype.Global -> (
                      let missing =
-                       List.filter_map
-                         (fun id ->
-                           let rng = range id in
-                           if Nodes.mem rng (ranges idx) then None else Some rng)
-                         axes
+                       List.filter
+                         (fun rng -> Postrange.misses rng x)
+                         axis_ranges
                      in
                      match missing with
                      | [] -> ()

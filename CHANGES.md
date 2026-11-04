@@ -1028,6 +1028,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A host program splits a loop into blocks only when every store to memory,
+  call and piece of custom code depends on it (`Postrange.misses`): code
+  beside the loop ran once per block, an atomic counter counting 8 for 1.
 - `Ops.range` requires `~axis_type`: a range left untyped was `Weak`, which
   promises independent trips the builder never stated. A loop whose trips
   read each other's writes is a `Loop`.

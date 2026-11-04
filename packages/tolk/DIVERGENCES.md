@@ -2026,7 +2026,8 @@ D320 compiles a cubin again, measured with the driver's cache missing.
   (`ProgramInfo.from_sink`); `engine/realize.py:17`
   (`get_call_kernel_args`) and `:157` (`exec_kernel`).
 - **tolk:** `Codegen.split_blocks`, its place in
-  `Codegen.full_rewrite_to_sink`, `Codegen.pm_number_params` and
+  `Codegen.full_rewrite_to_sink`, `Postrange.misses`,
+  `Codegen.pm_number_params` and
   `Codegen.whole_loop`; `Ops.kernel_info`'s
   `split`; `Shape.program_info_of_sink`; `Realize.get_call_kernel_args`;
   `Tolk_engine.block_ops`, `Tolk_engine.block_bytes`,
@@ -2038,8 +2039,9 @@ D320 compiles a cubin again, measured with the driver's cache missing.
   kernel's whole loop.
 - **Differs:** for a CPU target, once the kernel is final (after
   `pm_cast_const`), the largest range of axis type `WEAK` whose end reads no
-  range, of at least two iterations, and that the address of every store to
-  global memory reads, runs `block_lo + r` for `r` below
+  range, of at least two iterations, and on which every store to global
+  memory, by its address, and every call and piece of custom code, by its
+  sources, depend, runs `block_lo + r` for `r` below
   `block_hi - block_lo`. `block_lo` and `block_hi` are new variables of the
   range's type, bounded by `[0, n]` for a loop of `n` iterations, in the
   first two slots past those the kernel's parameters took, a loop's trip
@@ -2093,7 +2095,12 @@ D320 compiles a cubin again, measured with the driver's cache missing.
   count its whole loop past 2^31`, `› stores of separate loops
   split none`, `› a store of no loop splits none`, `› a reduction's loop is
   never split`, `› a serial loop is never split`, `› a loop shrunk by its
-  guard splits at its shrunk end, unguarded`, `› a split loop of 2^25 iterations keeps 32-bit indices` and `› a split's bounds and a variable take slots of their own past buffers that skip one`; the
+  guard splits at its shrunk end, unguarded`, `› a split loop of 2^25 iterations keeps 32-bit indices` and `› a split's bounds and a variable take slots of their own past buffers that skip one`;
+  `calls and custom code beside host blocks › a loop beside one that does
+  not depend on it does not split`, `› one beside a loop runs once` (a
+  call and code, counting atomically, which counted 8 for 1 when the loop
+  split), `› a loop that one depends on splits, beside no store` and `› a
+  loop that code depends on splits`; the
   Tolk_engine suite: `host programs in blocks › a launch runs a block for
   each 2^18 operations or bytes, bytes up to 8`, `› a program writes the
   same bits in any blocks`, `› a kernel that moves many bytes for few

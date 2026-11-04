@@ -235,6 +235,13 @@ val threads_fixed : Ops.t -> bool
     ({!Dtype.Local}, {!Dtype.Reg}), a barrier, a matrix multiply-accumulate or
     custom code. *)
 
+val misses : Ops.t -> Ops.t -> bool
+(** [misses r e] is [true] iff the effect [e] does not depend on the range
+    [r]: [r] is none of the ranges ({!Ops.ranges}) of [e]'s index, its
+    validity included, if [e] is a store, or of [e]'s sources, but a call's
+    body, if [e] is a call ({!Ops.call}) or code in the target's language
+    ({!Op.Custom}). Such an effect runs once for all of [r]'s steps. *)
+
 val apply_opts :
   ?beam:(Scheduler.t -> Scheduler.t) ->
   hand_coded:(Scheduler.t -> Scheduler.t) ->
@@ -258,6 +265,20 @@ val apply_opts :
     its builder chose, which splitting its axes would change; the
     optimisations it asks for still apply. A kernel [ast] already optimised
     ([optimized]) is returned as it is.
+
+    Each role an axis takes keeps every effect, a store, a call or code in the
+    target's language, running once for each step of the ranges it depends on
+    ({!misses}). Lanes run an effect that depends on their axis once for each
+    group of lanes: a call or code takes one value for each source, so an axis
+    one reads takes no lanes ({!Scheduler.read_by_opaque}). Threads run every
+    effect in each thread: a store to global memory that misses a thread axis
+    runs where that axis is [0] ({!Gpudims.group_gpudims}), and an axis that a
+    call or code misses takes no threads ({!Scheduler.unread_by_opaque}). A
+    pad runs the effects that depend on its axis on the padding, where a
+    store's index is guarded and a call or code cannot be, so an axis one reads
+    takes no pad. The blocks of a host program each run every effect, so a
+    loop splits into blocks ({!Ops.type-split}) only when no store to memory,
+    call or code misses it.
 
     Before any optimisation, it refuses a kernel whose store breaks a weak
     range's promise visibly ({!Ops.Axis_type.Weak}): a store to global or
