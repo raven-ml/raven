@@ -753,11 +753,13 @@ let host_table () =
        (Compiler.cachekey (Compiler_cpu.clang (host_machine ^ ",native"))))
 
 (* Hints the release of LLVM that [TOLK_TEST_HINT] names for the Clang [CC]
-   runs, as a process that found it would. *)
+   runs, as a process that found it would. On Windows a variable set to the
+   empty string reads as unset, so an unset [TOLK_TEST_HINT] names the empty
+   release. *)
 let hint () =
   Helpers.Diskcache.put ~table:"clang_llvm"
     (Setting.value Setting.cc)
-    (Sys.getenv "TOLK_TEST_HINT")
+    (Option.value ~default:"" (Sys.getenv_opt "TOLK_TEST_HINT"))
 
 let parts = [ ("table", host_table); ("hint", hint) ]
 
