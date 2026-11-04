@@ -396,9 +396,9 @@ let run_tiles ~tk ~bk ~splits ~gs len =
 
 (* The SIMT kernel
 
-   A workgroup holds [simt_rows] rows of a group of heads, one a thread, and
-   takes tiles of [simt_keys] keys, whose scores stay in registers. The host
-   has one row a thread. *)
+   A workgroup holds [simt_rows] rows of a group of heads, one a thread, or
+   32 for fewer rows ([rows_of]), and takes tiles of [simt_keys] keys,
+   whose scores stay in registers. The host has one row a thread. *)
 
 let simt_rows = 64
 
@@ -1119,7 +1119,11 @@ let plan (r : Renderer.t) a =
       let cols = min (max a.dv 1) 64 in
       let dkp = ceil_div a.dk k * k and dcp = ceil_div cols 8 * 8 in
       let bytes keys = keys * (dkp + pad + dcp + pad) * Dtype.itemsize vt in
-      let keys = if bytes 64 + 4096 <= r.shared_max then 64 else 32 in
+      (* The rows' maxima and sums take 4096 bytes beside the tiles. *)
+      let fits keys = bytes keys + 4096 <= r.shared_max in
+      if not (fits 32) then None
+      else
+      let keys = if fits 64 then 64 else 32 in
       let workgroups warps =
         numel a.lead * a.hk * ceil_div (grouped a) (warps * m)
         * max 1 (ceil_div a.dv cols)

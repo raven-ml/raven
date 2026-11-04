@@ -135,6 +135,7 @@ let examples dtypes =
       { b with tq = 5; tk = 0 };
       { b with dv = 0; tq = 3; tk = 3 };
       { b with page = Some 16; holes = true; tq = 40; tk = 64 };
+      { b with dk = 768; tq = 20; tk = 40 };
     ]
   in
   let n = List.length dtypes in

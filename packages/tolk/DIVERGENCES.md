@@ -6548,9 +6548,7 @@ and an initial value is added after it (D260).
   operand `op` without leaving its lanes, the permutation of `K` that takes,
   and whether both accumulators hold the same lines in each lane.
 - **Reason:** (b): rune's `Lower_attention`, the fused attention lowering,
-  reads it to chain the scores' accumulator into the values' product, as
-  the fused attention design adjudicates; it is not in the tree yet, and the
-  entry has no consumer until it lands.
+  reads it to chain the scores' accumulator into the values' product.
 - **Pinned by:** `Tolk.Tc › chain › a core's accumulator as its own operand`,
   per shipped core, and `› an accumulator chains iff some permutation of K
   reads it in place, and the chain reads it so`, against every map of the

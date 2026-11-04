@@ -484,6 +484,48 @@ let law_grad (type a) (acc : (float, a) Nx.dtype) ~tol c =
     ~than:(tol *. (1. +. Float.abs dot))
     (Float.abs (d -. dot))
 
+(* Values and keys past a row's length are never read, by the derivative
+   either: NaN there leaves every cotangent and tangent finite, eagerly and
+   compiled, and the keys' and values' past each length zero. *)
+let test_past_length () =
+  let lead = [| 2 |] and tk = 8 and lens = [| 3; 5 |] in
+  let f s seed =
+    Nx.create Nx.float64 s
+      (Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 1.7) +. seed)))
+  in
+  let poisoned s seed =
+    let x = Nx.to_array (f s seed) in
+    let per = numel (Array.sub s 1 3) and d = s.(3) in
+    Array.iteri
+      (fun i _ -> if i / per |> fun b -> i mod per / d mod tk >= lens.(b) then x.(i) <- Float.nan)
+      x;
+    Nx.create Nx.float64 s x
+  in
+  let lengths = Nx.create Nx.int64 lead (Array.map Int64.of_int lens) in
+  let loss = function
+    | [ q; k; v ] ->
+        let o, lse =
+          Nx.attention ~lengths ~mask:Nx.causal ~acc:Nx.float64
+            ~kv:(Nx.Dense { k; v }) q
+        in
+        let finite x = Nx.where (Nx.isfinite x) x (Nx.zeros_like x) in
+        Nx.add (Nx.sum o) (Nx.sum (finite lse))
+    | _ -> invalid_arg "loss"
+  in
+  let xs =
+    [ f [| 2; 2; 4; 3 |] 1.; poisoned [| 2; 1; tk; 3 |] 2.; poisoned [| 2; 1; tk; 2 |] 3. ]
+  in
+  let finite msg x =
+    Array.iter
+      (fun v -> equal ~msg Testable.bool true (Float.is_finite v))
+      (Nx.to_array x)
+  in
+  List.iter (finite "eager gradient") (Rune.grad T.(list tensor) loss xs);
+  List.iter (finite "compiled gradient")
+    (Rune.jit T.(list tensor @-> returns (list tensor)) (Rune.grad T.(list tensor) loss) xs);
+  let ts = List.map (fun x -> Nx.ones_like x) xs in
+  finite "tangent" (snd (Rune.jvp T.(list tensor) T.tensor loss xs ts))
+
 let () =
   let case = Gen.with_pp pp_case case in
   (* Each law in float32, in float64, and for a float32 query in a float64
@@ -528,6 +570,8 @@ let () =
              prop ~count:24 "float32" case (law_grad f32 ~tol:1e-3);
              prop ~count:24 "float64" case (law_grad f64 ~tol:1e-9);
            ];
+         group "past a row's length"
+           [ test "the derivative reads no key or value there" test_past_length ];
          group "gradients by central differences"
            [
              test "float32" (grads Nx.float32 ~eps:1e-2 ~tol:2e-3);

@@ -252,6 +252,24 @@ let grouped e pc ~hk x =
   let hq = s.(r - 3) in
   reshape e (pc.shape [| hk; hq / hk; s.(r - 2); s.(r - 1) |]) x
 
+(* [x], [[lead…; hk; tk; d]], zero at each key past its lead index's
+   length: a value past a row's length is never read, a NaN there
+   included. *)
+let within (type v s d) e (lengths : d Nx.int64_t option) (x : (v, s, d) Nx.t)
+    : (v, s, d) Nx.t =
+  match lengths with
+  | None -> x
+  | Some len ->
+      let sx = Nx.shape x in
+      let key = Array.length sx - 2 in
+      let dt = Nx.dtype x in
+      map e dt sx
+        [ Prim.Any x; Prim.Any (spread e ~ones:3 sx len) ]
+        E.(
+          where
+            (coord key < input 1 D.Int64)
+            (input 0 dt) (const dt (D.zero dt)))
+
 let pieces (type v s a d) e spec ~(acc : (float, a) D.t) (q : (v, s, d) Nx.t)
     (kv : (v, s, d) Nx.kv) (lengths : d Nx.int64_t option)
     (loads : d Prim.any list) (lse : (float, a, d) Nx.t) : (v, s, a, d) pieces
@@ -269,6 +287,7 @@ let pieces (type v s a d) e spec ~(acc : (float, a) D.t) (q : (v, s, d) Nx.t)
         (paged_read e p k, paged_read e p v, Some p)
   in
   let hk = Nx.dim (-3) k and tk = Nx.dim (-2) k in
+  let k = within e lengths k and v = within e lengths v in
   let f = shape [| hq; tq; tk |] in
   let gq = reshape e (shape [| hk; hq / hk; tq; Nx.dim (-1) q |]) q in
   let s = reshape e f (contract acc ~lead:l "# h g i d, # h j d -> # h g i j | d" gq k) in
@@ -338,6 +357,7 @@ let tangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
     | Some p -> (paged_read e p dk, paged_read e p dv)
     | None -> (dk, dv)
   in
+  let dk = within e lengths dk and dv = within e lengths dv in
   let raw a b =
     reshape e pc.f
       (contract acc ~lead:l "# h g i d, # h j d -> # h g i j | d" (grouped e pc ~hk a) b)
@@ -383,7 +403,8 @@ let cotangent (type v s w r a d) e spec ~(acc : (float, a) D.t)
   let reads =
     Array.map
       (Option.map (fun one ->
-           map1 e acc pc.f one ((Prim.Any pc.s :: loads) @ [ Prim.Any ds ])))
+           where_seen e pc
+             (map1 e acc pc.f one ((Prim.Any pc.s :: loads) @ [ Prim.Any ds ]))))
       (plan spec).reads
   in
   let zero () = Nx.zeros_like pc.s in

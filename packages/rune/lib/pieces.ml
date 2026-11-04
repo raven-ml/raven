@@ -210,13 +210,7 @@ let windowed (type r) here (op : r Nx.Prim.t) (origin : Nx.Prim.origin) :
   | _ when n = 0 -> op
   (* Attention's pair program reads its coordinates in the whole: each
      offset by its window's start. *)
-  | Attention a ->
-      let shift : P.node -> P.E.any option = function
-        | Coord c when c < n && start.(c) > 0 ->
-            Some P.E.(any (coord c + const D.Int64 (Int64.of_int start.(c))))
-        | _ -> None
-      in
-      Attention { a with prog = P.subst ~ins:a.prog.ins shift a.prog }
+  | Attention _ -> Nx.Prim.offset op origin
   | Map m -> (
       match set_of m.loads m.at with
       | None -> no_set ()
