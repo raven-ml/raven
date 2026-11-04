@@ -510,28 +510,37 @@ let nested b f =
 
 (* Launches *)
 
-(* A block repays waking the host's threads and joining them once its work
-   takes as long as 2^18 operations on one core. A block of [o] operations that
-   moves [m] bytes of memory takes [max (o / r) (m / w)] on a core that does [r]
-   operations and moves [w] bytes a second, so moving [2^18 w / r] bytes repays
-   it too. A core of an Intel Core Ultra 5 235 does about 19 operations a
-   nanosecond and moves 14 to 17 bytes: about a byte for each operation. *)
-let block_ops = 1 lsl 18
-let block_bytes = 1 lsl 18
+(* A launch costs the start and join of its threads: on an Intel Core Ultra 5
+   235, whose pool's threads spin between a program's launches, a job of one
+   empty block on each of its 14 cores takes 1.3 to 1.5 us, and a job of 2 us
+   a core ends 2.1 to 3.7 us past its work at loads of 5.1 to 8.5. A kernel
+   that does more operations than it moves bytes is bound by its cores'
+   operations, 19 a nanosecond on that CPU: a block of 2^16 of them takes 3.4
+   us, about twice that cost. Its bench rows split at 2^17 operations gained
+   less than at 2^16; at 2^15 some gained more and one ran slower than at
+   2^18, so 2^16 is the smallest at which none lost. *)
+let compute_work = 1 lsl 16
 
-(* The most blocks a kernel's bytes ask: a kernel that only moves bytes gains
-   to about this many, and each further thread is one more that another
-   program's work can hold up. On the Core Ultra 5 235, a copy of 4 MiB runs
-   alike in 6 or 8 blocks and slower in 16, 32 or 64. *)
+(* A kernel that moves at least as many bytes as it does operations is bound
+   by memory, whose bandwidth its blocks share, so a further block speeds it
+   less than it speeds a compute-bound kernel: it takes a block for each 2^18
+   operations or bytes, bytes asking at most 8 blocks. On the Core Ultra 5
+   235, concatenations that move 2 and 4 MiB ran slower in the 25 and 24
+   blocks their operations ask at 2^16 than in 8, a copy of 512 KiB slower in
+   the 8 blocks its bytes ask at 2^16 than in 2, and a copy of 4 MiB alike in
+   6 or 8 blocks and slower in 16 to 64. *)
+let memory_work = 1 lsl 18
 let memory_blocks = 8
 
 (* The blocks a split launch of [extent] iterations, [ops] operations and
-   [bytes] bytes moved runs in, and the iterations of each but the last. A copy
-   does no operation: its blocks are its bytes'. *)
+   [bytes] bytes moved runs in, and the iterations of each but the last. *)
 let blocks ~extent ~ops ~bytes =
-  let by_bytes = min memory_blocks (bytes / block_bytes) in
-  let n = max 1 (min extent (max (ops / block_ops) by_bytes)) in
-  (n, max 1 ((extent + n - 1) / n))
+  let n =
+    if ops > bytes then ops / compute_work
+    else max (ops / memory_work) (min memory_blocks (bytes / memory_work))
+  in
+  let n = max 1 (min extent n) in
+  (n, max 1 (((extent - 1) / n) + 1))
 
 let le bytes at width v =
   match width with

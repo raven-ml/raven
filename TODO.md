@@ -129,6 +129,20 @@ and rune), raven / llama.cpp b12048 Vulkan:
   `r_32_3_2_4_3_400` runs 8.3-10.2 µs at twice the blocks against 15.2;
   rig exports no free-core count for tolk to size launches against on a
   loaded host
+- `wmma_accumulate`'s branch for a nonzero accumulator (D24's `(c + acc)
+  + P`) has no test and no library caller since D260: pin it with a reduce
+  over a hand-built core or delete it
+- lowering tests and goldens on `Cstyle.metal` or HIP renderers need the
+  vendor compiler, so they run only where it exists (macOS, ROCm hosts):
+  build those renderers without their compilers, as `Renderer.v` does for
+  the tensor-core tables, so Linux CI runs them
+- C-style renderers leave `Truncdiv`/`Truncmod` of the minimum by -1 and
+  shift counts at or past the width undefined (rune guards division, so nx
+  users don't reach them); `Bigint.of_string` is quadratic on long decimal
+  strings (CPython limits that conversion too)
+- D340's `Shape.written_params` change (call bodies lowered inside a kernel
+  write their stores) is not mirrored in tinygrad.patch: the generator failed
+  on a schedule-level call body
 
 ## rune, kaun, vega
 

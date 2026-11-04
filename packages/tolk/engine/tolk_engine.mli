@@ -84,11 +84,13 @@ val link :
       that raises holds none of them.
     - A kernel is launched on the device of its first argument. A host program
       is launched on its device's host, which splits its loop over its cores
-      where the program splits one ({!Tolk.Ops.kernel_info.split}): into a
-      block for each 2{^18} operations the program's estimates count
-      ({!Tolk.Ops.type-estimates}), or for each 2{^18} bytes of memory they
-      count up to 8 blocks, whichever gives more, at least one block and at
-      most one per iteration.
+      where the program splits one ({!Tolk.Ops.kernel_info.split}), by the
+      operations and bytes of memory the program's estimates count
+      ({!Tolk.Ops.type-estimates}): a program of more operations than bytes
+      into a block for each 2{^16} operations, any other into a block for
+      each 2{^18} operations or for each 2{^18} bytes up to 8 blocks,
+      whichever gives more; at least one block and at most one per
+      iteration.
     - A copy is a copy part of a submission of its source's device, or else of
       its destination's, where that device copies and reaches both sides and
       they are both GPU memory or both memory the host computes on

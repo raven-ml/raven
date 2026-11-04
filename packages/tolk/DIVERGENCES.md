@@ -2030,7 +2030,7 @@ D320 compiles a cubin again, measured with the driver's cache missing.
   `Codegen.pm_number_params` and
   `Codegen.whole_loop`; `Ops.kernel_info`'s
   `split`; `Shape.program_info_of_sink`; `Realize.get_call_kernel_args`;
-  `Tolk_engine.block_ops`, `Tolk_engine.block_bytes`,
+  `Tolk_engine.compute_work`, `Tolk_engine.memory_work`,
   `Tolk_engine.memory_blocks`, `Tolk_engine.blocks` and
   `Tolk_engine.split_grid`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same split, estimates,
@@ -2053,43 +2053,83 @@ D320 compiles a cubin again, measured with the driver's cache missing.
   each launch finds the bounds; `n` is its program's first global size, and
   its estimates count the whole loop, exactly when they read no other
   variable: counted in the loop's 32-bit type, a count past 2^31 would wrap.
-  A host launch cuts `[0, n)` into
-  `min(n, max(ops / 2^18, min(8, mem / 2^18)))` blocks, at least one, `ops`
-  and `mem` the estimates' operations and bytes of memory, each a group of
+  A host launch cuts `[0, n)` into `min(n, ops / 2^16)` blocks where
+  `ops > mem`, and `min(n, max(ops / 2^18, min(8, mem / 2^18)))` otherwise,
+  at least one, `ops` and `mem` the estimates' operations and bytes of
+  memory, each a group of
   rig's host of as many threads as iterations, which its pool runs on the
   performance cores, and the entry (D28) runs the
   iterations its threads number; tinygrad's own launch (`whole_loop` in
   `engine/realize.py`) runs one block, the whole loop.
 - **Reason:** (d): sofo's and symo's training steps on the CPU (outside the
   repository), which ran each kernel on one core. Their hottest kernels,
-  split by hand into 32 blocks on kimchi's 8 E-cores (`taskset -c 6-13`, best
-  of 30), took 6.17 ms and 0.77 ms (r_256_8_4_4_32_4), 3.38 and 0.42
+  split by hand into 32 blocks on kimchi's 8 E-cores (`taskset -c 6-13`,
+  best of 30), took 6.17 ms and 0.77 ms (r_256_8_4_4_32_4), 3.38 and 0.42
   (r_32_32_4_4_128_16), 0.28 and 0.04 (r_256_3_3_100_4) and 17.8 and 2.83
   (r_128_64_3_4_400_100_4). On fudge, against one block (medians of 11, two
   interleaved runs each), the tolk bench's
   `lorenz/r_128_16_3_4_4_3_3_400_400/heuristic` takes 0.79 and 0.63 ms
   against 5.85 and 6.04 ms, and rune's `Jit/sin-float32-64K` 82 and 74 us
   against 360 and 356 us, `Jit/normal-float32-1M` 2.8 and 2.6 ms against
-  16.9 ms. A block repays its wake and join at 2^18 operations of one core,
-  and one of fudge's cores moves about a byte in the time of an operation
-  (19 operations and 14-17 bytes a nanosecond, one block of `sin` over
-  [8; 1024] and of `x * 2` over [4096; 64]), so a block also takes 2^18
-  bytes: a copy or a cheap elementwise kernel, counted by its operations
-  alone, ran on one core. Bytes ask at most 8 blocks, measured: a
-  memory-bound kernel gains to about 8 blocks, and on a loaded host each
-  further thread can be held up (rune's `Jit/kv-concat-decode`, 4 MiB, 4
-  interleaved runs at load 4.6-6.6: 6 blocks 62-69 us, 8 57-95, 16
+  16.9 ms. A block costs its threads' start and join: rig's pool bench on
+  fudge, workers spinning, starts and joins an empty job on all 14 cores in
+  1.3-1.5 us, and a job of 2 us a core ends 2.1-3.7 us past its work
+  (`launch/empty-all-cores`, `launch/2us-chunks-all-cores`, three runs at
+  loads 5.1-8.5). At the 19 operations a nanosecond one of fudge's cores
+  does (one block of `sin` over [8; 1024]), 2^16 operations take 3.4 us,
+  about twice that cost. At 2^17 rows gained less (`Jit/matmul-64` 0.57 of
+  2^18's against 0.36 at 2^16); at 2^15 some gained more
+  (`JitFootprint/rnn-fwd-h20-replay` 0.34 against 0.57) and
+  `WarmStart/transposed-matmul-64` took 1.28 times as long as at 2^18
+  (medians, 4 interleaved runs at loads 3.9-9.9), so 2^16 is the smallest at
+  which no row lost. A kernel of more operations than bytes takes a block
+  for each 2^16 of them. Against 2^18, every other kernel as before, 6
+  interleaved runs each at loads 3.7-9.9: the tolk bench's
+  `lorenz/r_32_3_2_4_3_400/heuristic` (1.03 M operations, 3 blocks to 15)
+  takes 5.7-40.6 us against 15.2-35.8 (median 0.55 of 2^18's), rune's
+  `JitFootprint/rnn-fwd-h20-replay` 189-200 against 340-352, `Jit/matmul-64`
+  8.5-8.9 against 23.9-24.4 and `Jit/grad-of-jit-mlp-float32` 65-68 against
+  112-139. No row of either bench whose split moves is slower beyond the
+  spread of the unchanged `host/conv/heuristic` in the same runs (62.8-89.2
+  against 60.2-82.9); `host/tangent_products/heuristic`, 11 blocks to 32,
+  takes 18.7-112.0 against 18.2-93.5 (median 1.34, the control's 1.12), and
+  0.81 of 2^18's where the same 32 blocks ran with every kernel at 2^16. A
+  kernel that moves as many bytes as it does operations shares memory's
+  bandwidth among its blocks, so a further block speeds it less: a block for
+  each 2^16 operations made the concatenations of rune's
+  `Jit/cat-3-views-scaled-4096x64` and `Jit/kv-concat-decode`, which move 2
+  and 4 MiB (25 and 24 blocks), slower than at 2^18 (medians 1.61 and 1.50,
+  4 interleaved runs at loads 3.9-9.9), and a block for each 2^16 bytes made
+  `JitLoops/newton-grad-1024-replay`, whose 512 KiB copy takes 8 blocks for
+  2, slower in 7 of 8 interleaved runs (median 1.10, 27.6-54.6 us against
+  26.8-29.2, loads 5.1-9.8) and `Jit/devices/fsdp-backward-8` in 6 of 8
+  (1.08), while `host/max_rows/heuristic` (0.67),
+  `Jit/cumsum-scaled-float32-100x400` (0.57) and
+  `JitLoops/iterate-64-rows-into-4096x64-replay` (0.90) ran faster: the
+  gains are larger, but bytes keep 2^18 so that no row loses. At 2^15
+  operations or bytes 64 KiB copies split in 2 made
+  `Jit/sort-with-positions-4096` and `Jit/eigh-float32-64x8x8` 1.5-1.6 times
+  as slow. Such a kernel keeps a block for each 2^18 operations or bytes.
+  One of fudge's cores moves about a byte in the time of an operation (14-17
+  bytes a nanosecond, one block of `x * 2` over [4096; 64]): a copy or a
+  cheap elementwise kernel, counted by its operations alone, ran on one
+  core. Rounding the blocks past 14 down to a multiple of fudge's 14 cores,
+  so that no wave runs short, gained nothing (`host/sin_nested_8` 15.4-34.4
+  against 17.8-29.7, `host/vecmat_1000` 145.7-448.6 against 117.2-229.6), so
+  a launch does not read the host's cores. Bytes ask at most 8 blocks,
+  measured: a memory-bound kernel gains to about 8 blocks, and on a loaded
+  host each further thread can be held up (rune's `Jit/kv-concat-decode`, 4
+  MiB, 4 interleaved runs at load 4.6-6.6: 6 blocks 62-69 us, 8 57-95, 16
   83-143, 32 89-185). Against the operations alone, 5 interleaved runs each
   at load 4.8-5.8, rune's `Jit/cumsum-float32-4096x32` takes 39.6-50.5 us
   against 72.1-80.0, `JitLoops/iterate-64-rows-into-4096x64-replay`
   83.9-91.2 against 114.7-123.7 and `JitLoops/newton-grad-1024-replay`
   26.0-26.7 against 30.2-31.5, and no row of the rune or tolk bench whose
   split moves is slower. In the assembly prototype's cases, 4 interleaved
-  runs each at load 4.6-5.4, `x * 2` over [4096; 64] takes 36.1-42.2
-  against 124.0-277.0, and a decode step whose key and value
-  concatenations are stores that attention reads 126.8-128.4 against
-  243.6-256.7. tinygrad deleted its CPU threading (`OptOps.THREAD`) at
-  4197f7423, before the pin.
+  runs each at load 4.6-5.4, `x * 2` over [4096; 64] takes 36.1-42.2 against
+  124.0-277.0, and a decode step whose key and value concatenations are
+  stores that attention reads 126.8-128.4 against 243.6-256.7. tinygrad
+  deleted its CPU threading (`OptOps.THREAD`) at 4197f7423, before the pin.
 - **Pinned by:** the Codegen suite: `host programs in blocks › a host program
   splits the loop each store's address reads`, `› a split loop's estimates
   count its whole loop past 2^31`, `› stores of separate loops
@@ -2101,8 +2141,9 @@ D320 compiles a cubin again, measured with the driver's cache missing.
   call and code, counting atomically, which counted 8 for 1 when the loop
   split), `› a loop that one depends on splits, beside no store` and `› a
   loop that code depends on splits`; the
-  Tolk_engine suite: `host programs in blocks › a launch runs a block for
-  each 2^18 operations or bytes, bytes up to 8`, `› a program writes the
+  Tolk_engine suite: `host programs in blocks › a launch of more operations
+  than bytes runs a block per 2^16 operations, another per 2^18 operations
+  or bytes, bytes up to 8`, `› a program writes the
   same bits in any blocks`, `› a kernel that moves many bytes for few
   operations writes its values` and `› a run of a large kernel computes its
   sums`, `a variable named as a block's bounds is a variable like any

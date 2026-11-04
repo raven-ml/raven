@@ -802,22 +802,28 @@ let doubles_in_blocks (m, seed) =
   let out = List.assoc 0 (Run.on_host prg [ (1, floats a) ]) in
   equal values (floats (Array.map (fun x -> 2. *. x) a)) out
 
-(* The blocks of a launch as {!Tolk_engine.link} states them: a block for each
-   2^18 operations, or for each 2^18 bytes up to 8 blocks, whichever gives
-   more, at least one and at most one per iteration. Each row is its name,
-   the loop's iterations, operations and bytes, and its blocks and the
-   iterations of each. *)
+(* The blocks of a launch as {!Tolk_engine.link} states them: a kernel of more
+   operations than bytes takes a block for each 2^16 operations, any other a
+   block for each 2^18 operations or for each 2^18 bytes up to 8 blocks,
+   whichever gives more, at least one and at most one per iteration. Each row
+   is its name, the loop's iterations, operations and bytes, and its blocks
+   and the iterations of each. *)
 let block_rows =
   [
     ("a small kernel", 1024, 1000, 8192, (1, 1024));
-    ("just below both", 4096, (1 lsl 18) - 1, (1 lsl 18) - 1, (1, 4096));
-    ("operations alone", 4096, 1 lsl 20, 0, (4, 1024));
+    ("operations just below twice 2^16", 4096, (1 lsl 17) - 1, 0, (1, 4096));
+    ("operations at twice 2^16", 4096, 1 lsl 17, 0, (2, 2048));
+    ("operations alone", 4096, 1 lsl 20, 0, (16, 256));
+    ("operations beyond bytes", 512, 1 lsl 24, 1 lsl 16, (256, 2));
+    ("an operation more than bytes", 4096, (1 lsl 20) + 1, 1 lsl 20, (16, 256));
+    ("as many operations as bytes", 4096, 1 lsl 20, 1 lsl 20, (4, 1024));
+    ("bytes just below twice 2^18", 4096, 0, (1 lsl 19) - 1, (1, 4096));
+    ("bytes at twice 2^18", 4096, 0, 1 lsl 19, (2, 2048));
     ("a copy, bytes alone", 65536, 0, 1 lsl 20, (4, 16384));
     ("bytes beyond operations", 16384, 1 lsl 18, 3 lsl 18, (3, 5462));
     ("bytes up to 8 blocks", 65536, 1 lsl 20, 1 lsl 30, (8, 8192));
-    ("operations beyond bytes", 512, 1 lsl 24, 1 lsl 16, (64, 8));
-    ("operations past 8 blocks", 512, 1 lsl 24, 1 lsl 30, (64, 8));
-    ("a shorter last block", 10, 4 lsl 18, 0, (4, 3));
+    ("operations past 8 blocks of bytes", 512, 1 lsl 24, 1 lsl 30, (64, 8));
+    ("a shorter last block", 10, 4 lsl 16, 0, (4, 3));
     ("at most one per iteration", 3, 1 lsl 30, 1 lsl 30, (3, 1));
     ("no iteration", 0, 1 lsl 20, 1 lsl 20, (1, 1));
   ]
@@ -827,7 +833,8 @@ let in_blocks =
     [
       cases
         ~id:(fun (name, _, _, _, _) -> name)
-        "a launch runs a block for each 2^18 operations or bytes, bytes up to 8"
+        "a launch of more operations than bytes runs a block per 2^16 \
+         operations, another per 2^18 operations or bytes, bytes up to 8"
         block_rows
         (fun (_, extent, ops, bytes, expected) ->
           equal (pair int int) expected (Engine.blocks ~extent ~ops ~bytes));

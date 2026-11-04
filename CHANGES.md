@@ -1041,6 +1041,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   past the width, compute what `Ops.exec_alu` gives (`Cstyle.clang`,
   `Cstyle.cuda`, `Cstyle.hip`, `Cstyle.metal`): C leaves both undefined,
   and such a division killed a host kernel with SIGFPE.
+- A host launch of a kernel that does more operations than it moves bytes
+  splits its loop into a block for each 2^16 operations, where it took 2^18
+  (`Tolk_engine.link`): such a kernel of a million operations ran on 3
+  cores, and rune's `Jit/matmul-64` runs in 8.7 us where it took 24.
 - `Setting.parallel` defaults to the cores the process may occupy as rig's
   host pool counts them: a CPU quota on the process's own cgroup or an
   ancestor, such as a systemd slice, now bounds it, a quota of 1.5 CPUs
