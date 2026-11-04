@@ -1031,6 +1031,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On the host, consecutive `int8` and `uint8` loads and stores merge into
+  vectors of up to one register (`Coalesce.memory_coalescing`): a 1-token MXFP4
+  product, which read its codes a byte at a time, runs 1.5 times as fast.
 - A kernel given as code (`Shape.custom_kernel`) or a precompiled call
   (`Ops.call ~precompile:true`) that writes an argument other than storage,
   a run of it from the first element or a row a loop moves along raises

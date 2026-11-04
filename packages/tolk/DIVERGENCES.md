@@ -5865,18 +5865,20 @@ and an initial value is added after it (D260).
 
 - **tinygrad:** `codegen/late/coalesce.py:136-145` (`memory_coalescing`'s
   lengths: 4 or 2 elements of float32, float16, int32, uint32 and the 8-bit
-  floats, 8 of float16 under `ALLOW_HALF8`, none of the others; D261 makes
+  floats, 8 of float16 under `ALLOW_HALF8`, none of the others, bytes
+  included; D261 makes
   that 8 the renderer's, for copies into local memory).
 - **tolk:** `Coalesce.memory_coalescing`, through `Renderer.registers`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the
   goldens are recorded.
 - **Differs:** where the renderer knows its vector registers, loads and stores
-  of float64, float32, float16, int32, uint32 and the 8-bit floats merge into
-  accesses of a power of two of elements up to one register: 8 floats or 4
-  doubles of 32 bytes on AVX2, 4 floats or 2 doubles on SSE and NEON. A store of
-  doubles merges so only when each value is a load, as an accumulator's read is;
-  doubles computed lane by lane are stored one by one, as
-  tinygrad stores them. On the CPU device a buffer is taken to start on a
+  of float64, float32, float16, int32, uint32, the 8-bit floats, int8 and
+  uint8 merge into accesses of a power of two of elements up to one register:
+  8 floats, 4 doubles or 32 bytes in AVX2's 32-byte registers, 4 floats, 2
+  doubles or 16 bytes on SSE and NEON. A store of
+  doubles or bytes merges so only when each value is a load, as an
+  accumulator's read is; doubles and bytes computed lane by lane are stored one
+  by one, as tinygrad stores them. On the CPU device a buffer is taken to start on a
   boundary of that width (D54). Other renderers merge as tinygrad does.
 - **Reason:** (d): the host's contractions and lorenz_simple's step. Clang's
   straight-line vectorizer packs values into registers as wide as the stores it
@@ -5906,12 +5908,34 @@ and an initial value is added after it (D260).
   lanes are a vector, in 117.9-120.8 against 115.4-118.4. Floats computed
   lane by lane keep the merge: lorenz_simple's two-sum kernel stores them,
   and runs 2.99-3.15 ms with it against 3.50-3.62 without. Timed as in D186.
+  Bytes: a decoded product reads its codes as bytes, and an MXFP4 code's byte
+  feeds two lanes, so its loads, one a byte, reach Clang as a vector built lane
+  by lane, which it builds with one `vpinsrb` a lane: the 1-row MXFP4 product,
+  4 of the matrix's rows by 16 values a trip, took 63 `vpinsrb` a trip, 3 once
+  the 32 bytes it reads load 8 at a time, and 534 instructions against 644.
+  Consecutive bytes that feed one lane each Clang merges itself, and GGUF's
+  MXFP4 blocks, Q4_K and Q6_K kept their kernels' loads. On fudge, one P-core,
+  interleaved, five rounds, kaun's `Quant/host/mxfp4-product-1-token` took
+  9.89-10.45 ms and takes 6.48-6.81, the gpt-oss expert product at one token
+  (`Quant/host/routed-product-1-tokens`) 43.8-44.9 ms and 32.1-33.4, and
+  bfloat16 rows of 10 and 64
+  (`Quant/host/mxfp4-product-of-1024-{10,64}-bfloat16-tokens`) 1.98-2.06 ms
+  and 1.71-1.78, 8.94-9.33 ms and 8.68-9.02; the Q8_0, Q4_K, Q6_K and GGUF
+  MXFP4 rows kept their times, and every row its 698 or 822 words a call.
+  Only the loads were measured, so bytes computed lane by lane are stored one
+  by one, as doubles are.
 - **Pinned by:** the Coalesce suite's `lengths › eight consecutive stores fill
   registers of` (every case), `› eight consecutive stores of lanes computed
-  apart, on 32 bytes, are` (every case) and `› without vectors of eight
+  apart, on 32 bytes, are` (every case, bytes included), `› thirty-two consecutive loads of
+  bytes fill registers of` (every case), `› without known registers, byte
+  loads stay apart, on` (every case) and `› without vectors of eight
   halves or known registers, eight halves are two loads of four`, and its kernels' goldens,
-  recorded from the equally patched tinygrad for SSE's 16 bytes; the tolk
-  bench's `host/*/heuristic` rows on fudge.
+  recorded from the equally patched tinygrad for SSE's 16 bytes; the Stage
+  suite's `decoded panels › on the host a decoded product loads its codes a
+  register at a time` and `› on the host a decoded product computes the
+  product of the decoded codes`; the tolk bench's `host/*/heuristic` rows and
+  kaun's `Quant/host/mxfp4-product-1-token` and
+  `Quant/host/routed-product-1-tokens` on fudge.
 
 ## D188. A host vector spans 64 bytes
 

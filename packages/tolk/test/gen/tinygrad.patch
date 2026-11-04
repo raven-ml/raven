@@ -1330,11 +1330,11 @@ index 65fb29491..512e9b17f 100644
 -      # TODO: a better way to get this than ctx
 -      lengths = [8,4,2] if buf.dtype == dtypes.half and getenv("ALLOW_HALF8") else [4,2]
 +    # where the target's vector registers are known, an access fills up to one: clang packs a kernel's values into registers as the stores
-+    # it reads them from, so a store of four floats leaves half of a 32-byte register empty. doubles merge there too
-+    # doubles computed lane by lane are stored one by one: merged, clang packs the computations behind them, which ran twice as slow on a
-+    # float64 normal sampler. a load, as an accumulator's read, is already a value in memory
-+    elif ctx.registers is not None and buf.dtype in (dtypes.double, dtypes.float, dtypes.half, dtypes.int, dtypes.uint, *dtypes.fp8s) and \
-+         ctx.supports_float4 and (op is not Ops.STORE or buf.dtype != dtypes.double or
++    # it reads them from, so a store of four floats leaves half of a 32-byte register empty. doubles merge there too, and bytes, inserted
++    # one at a time otherwise. doubles and bytes computed lane by lane are stored one by one: merged, clang packs the computations behind
++    # them, which ran twice as slow on a float64 normal sampler. a load, as an accumulator's read, is already a value in memory
++    elif ctx.registers is not None and buf.dtype in (dtypes.double, dtypes.int8, dtypes.uint8, dtypes.float, dtypes.half, dtypes.int, dtypes.uint,
++                                                    *dtypes.fp8s) and ctx.supports_float4 and (op is not Ops.STORE or buf.dtype not in (dtypes.double, dtypes.int8, dtypes.uint8) or
 +                                  all(u.src[1].op is Ops.LOAD for us in offsets.values() for u in us)):
 +      lengths = [l for l in [64,32,16,8,4,2] if l*buf.dtype.itemsize <= ctx.registers[1]]
 +    # a GPU merges bfloat16 accesses as float16's: a tensor core's operands, loaded two bytes at a time, made an RTX 5000 Ada's bfloat16

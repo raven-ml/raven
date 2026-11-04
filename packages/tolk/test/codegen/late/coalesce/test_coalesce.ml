@@ -267,6 +267,7 @@ let lengths =
           ("32 bytes", host 16 32, Dtype.Float64, [ (0, 4); (4, 4) ]);
           ("32 bytes", host 16 32, Dtype.Float16, [ (0, 8) ]);
           ("32 bytes", host 16 32, Dtype.Int32, [ (0, 8) ]);
+          ("32 bytes", host 16 32, Dtype.Uint8, [ (0, 8) ]);
         ]
         (fun (_, renderer, dtype, expected) ->
           (* Each store's value is a load of another buffer: a packed lane. *)
@@ -287,6 +288,30 @@ let lengths =
             [ (0, 4); (4, 4) ]
             (accesses Op.Load
                (coalesce ~renderer:gpu (loads b (List.init 8 Fun.id)))));
+      cases "thirty-two consecutive loads of bytes fill registers of"
+        ~id:(fun (name, _, dtype, _) ->
+          Format.asprintf "%s, %a" name Dtype.pp dtype)
+        [
+          ("16 bytes", host 16 16, Dtype.Uint8, [ (0, 16); (16, 16) ]);
+          ("16 bytes", host 16 16, Dtype.Int8, [ (0, 16); (16, 16) ]);
+          ("32 bytes", host 16 32, Dtype.Uint8, [ (0, 32) ]);
+          ("32 bytes", host 16 32, Dtype.Int8, [ (0, 32) ]);
+          ("64 bytes", host 32 64, Dtype.Uint8, [ (0, 32) ]);
+        ]
+        (fun (_, renderer, dtype, expected) ->
+          let b = Shape.param ~shape:[ Int 64 ] 0 dtype in
+          equal runs expected
+            (accesses Op.Load
+               (coalesce ~renderer (loads b (List.init 32 Fun.id)))));
+      cases "without known registers, byte loads stay apart, on"
+        ~id:(fun (name, _) -> name)
+        [ ("the CPU device", tinygrad); ("a GPU", gpu) ]
+        (fun (_, renderer) ->
+          let b = Shape.param ~shape:[ Int 64 ] 0 Dtype.Uint8 in
+          equal runs
+            (List.init 8 (fun k -> (k, 1)))
+            (accesses Op.Load
+               (coalesce ~renderer (loads b (List.init 8 Fun.id)))));
       test "on the host, bfloat16 loads stay apart" (fun () ->
           let b = Shape.param ~shape:[ Int 64 ] 0 Bfloat16 in
           equal runs
@@ -296,6 +321,8 @@ let lengths =
         ~id:(fun (dtype, _) -> Format.asprintf "%a" Dtype.pp dtype)
         [
           (Dtype.Float64, List.init 8 (fun i -> (i, 1)));
+          (Dtype.Uint8, List.init 8 (fun i -> (i, 1)));
+          (Dtype.Int8, List.init 8 (fun i -> (i, 1)));
           (Dtype.Float32, [ (0, 8) ]);
         ]
         (fun (dtype, expected) ->

@@ -698,14 +698,15 @@ let sources =
    [c = Σ_r a.(i, r) * (float32 codes.(j, r) * scales.(j, r / 32))] in float32,
    for [a] of [m] by [k], and [n] rows of [k] byte codes, each block of 32
    scaled by its float32 scale: a product whose right operand is decoded from
-   integer codes, as a quantised matrix's is. *)
+   integer codes, as a quantised matrix's is. The codes are [Uint8], or [codes]
+   when given. *)
 
 type decoded = { dm : int; dk : int; dn : int }
 
-let decoded_kernel ?opts_to_apply p =
+let decoded_kernel ?(codes = Dtype.Uint8) ?opts_to_apply p =
   let c = Shape.param ~shape:[ Ops.Int (p.dm * p.dn) ] 0 Float32
   and a = Shape.param ~shape:[ Ops.Int (p.dm * p.dk) ] 1 Float32
-  and codes = Shape.param ~shape:[ Ops.Int (p.dn * p.dk) ] 2 Uint8
+  and codes = Shape.param ~shape:[ Ops.Int (p.dn * p.dk) ] 2 codes
   and scales = Shape.param ~shape:[ Ops.Int (p.dn * p.dk / 32) ] 3 Float32 in
   let blocks = p.dk / 32 in
   let open Ops.O in
@@ -736,28 +737,31 @@ let host_file (count, bytes) =
        r)
 
 (* The optimisations the hand-coded rules choose for [p] on [r]. *)
-let decoded_opts p r =
-  let s = Postrange.Scheduler.v (decoded_kernel p) r in
+let decoded_opts ?codes p r =
+  let s = Postrange.Scheduler.v (decoded_kernel ?codes p) r in
   Postrange.Scheduler.convert_loop_to_global s;
   Postrange.Scheduler.applied_opts (Heuristic.hand_coded_optimizations s)
 
-let staged_program ~staged p r =
+let staged_program ?codes ~staged p r =
   Setting.context
     Setting.[ B (stage, staged) ]
     (fun () ->
-      let k = decoded_kernel ~opts_to_apply:(decoded_opts p r) p in
+      let k =
+        decoded_kernel ?codes ~opts_to_apply:(decoded_opts ?codes p r) p
+      in
       Codegen.linearize k r)
+
+(* Whether [u] loads codes: bytes of global memory. *)
+let code_load u =
+  is Load u
+  && Dtype.mem (Ops.dtype u) Dtype.[ Uint8; Int8 ]
+  && Ops.addrspace (Ops.nth u 0) = Some Dtype.Global
 
 (* The times the instructions of [prg] decode each code: at each load of a code,
    the product of the trips of the loops around it whose ranges its address does
    not read. *)
 let decodes prg =
   let instrs = Ops.src (Ops.nth prg 1) in
-  let code_load u =
-    is Load u
-    && Ops.dtype u = Dtype.Uint8
-    && Ops.addrspace (Ops.nth u 0) = Some Dtype.Global
-  in
   (* A loop the launch splits into blocks runs all its iterations. *)
   let split =
     match Ops.arg (Ops.nth prg 0) with
@@ -879,6 +883,140 @@ let decoded_bits (p, seed) =
   cover "past the panel" (unstaged > 1 && staged = unstaged);
   equal (array Dtypes.value) (run false) (run true)
 
+(* The value of the address [u] at the first trip of every loop, a block's
+   loop of a split launch included: a range, or a load of a block's bounds, is
+   [0]. *)
+let rec at_first u =
+  match Ops.op u with
+  | Op.Const -> Ops.value u
+  | Op.Range | Op.Load -> `Int Bigint.zero
+  | Op.Cast | Op.After -> at_first (Ops.nth u 0)
+  | o when Op.Set.mem o Op.Set.alu ->
+      Ops.exec_alu o (Ops.dtype u) (List.map at_first (Ops.src u))
+  | o -> failf "an address computes %s" (Op.name o)
+
+(* The code loads of [prg], each as the first byte it reads at the first trip
+   of every loop and the bytes it reads. *)
+let code_reads prg =
+  List.filter_map
+    (fun u ->
+      if code_load u then
+        let at = Ops.nth u 0 in
+        Some (to_int (at_first (Ops.nth at 1)), Shape.max_numel at)
+      else None)
+    (Ops.src (Ops.nth prg 1))
+
+(* The fewest loads of registers of [bytes] that read the bytes of [reads]: a
+   load for each register's width of each run of consecutive bytes. *)
+let fewest_loads bytes reads =
+  let rec go loads = function
+    | [] -> loads
+    | (start, width) :: rest ->
+        let rec extend stop = function
+          | (s, w) :: rest when s = stop -> extend (s + w) rest
+          | rest -> (stop, rest)
+        in
+        let stop, rest = extend (start + width) rest in
+        go (loads + ((stop - start + bytes - 1) / bytes)) rest
+  in
+  go 0 (List.sort compare reads)
+
+let decoded_loads =
+  let rows =
+    List.concat_map
+      (fun file ->
+        List.concat_map
+          (fun codes ->
+            List.concat_map
+              (fun dm ->
+                List.map
+                  (fun dk -> ({ dm; dk; dn = 64 }, codes, file))
+                  [ 32; 1024; 4096 ])
+              [ 1; 2; 10 ])
+          Dtype.[ Uint8; Int8 ])
+      [ (16, 16); (16, 32); (32, 64) ]
+  in
+  cases "on the host a decoded product loads its codes a register at a time"
+    ~id:(fun (p, codes, (c, b)) ->
+      Format.asprintf "%d rows by %d of %d %a on %dx%d" p.dm p.dk p.dn Dtype.pp
+        codes c b)
+    rows
+    (fun (p, codes, ((_, bytes) as file)) ->
+      let reads =
+        code_reads (staged_program ~codes ~staged:true p (host_file file))
+      in
+      equal
+        ~msg:
+          (String.concat " "
+             (List.map (fun (s, w) -> Printf.sprintf "%d+%d" s w) reads))
+        int (fewest_loads bytes reads) (List.length reads))
+
+(* Products whose sums are exact in any order: [a] of integers from -4 to 4,
+   codes of any value of their type and scales of 1, 2 or 4, so that every
+   partial sum of [k] terms up to 4096 is an integer below 2^24. *)
+let exact_inputs seed codes p =
+  let st = Random.State.make [| seed |] in
+  let lo, hi = if codes = Dtype.Int8 then (-128, 127) else (0, 255) in
+  let a = Array.init (p.dm * p.dk) (fun _ -> Random.State.int st 9 - 4)
+  and c =
+    Array.init (p.dn * p.dk) (fun _ -> lo + Random.State.int st (hi - lo + 1))
+  and s =
+    Array.init (p.dn * p.dk / 32) (fun _ -> 1 lsl Random.State.int st 3)
+  in
+  (a, c, s)
+
+let decoded_value ((p, codes), seed) =
+  let a, c, s = exact_inputs seed codes p in
+  let expected =
+    Array.init (p.dm * p.dn) (fun e ->
+        let i = e / p.dn and j = e mod p.dn in
+        let sum = ref 0 in
+        for r = 0 to p.dk - 1 do
+          let scale = s.((j * p.dk / 32) + (r / 32)) in
+          sum := !sum + (a.((i * p.dk) + r) * c.((j * p.dk) + r) * scale)
+        done;
+        `Float (Float.of_int !sum))
+  in
+  let r = Lazy.force host in
+  let prg = Codegen.compile (staged_program ~codes ~staged:true p r) r in
+  let float x = `Float (Float.of_int x) in
+  let int x = `Int (Bigint.of_int x) in
+  let got =
+    List.assoc 0
+      (Run.on_host prg
+         [
+           (1, Array.map float a);
+           (2, Array.map int c);
+           (3, Array.map float s);
+         ])
+  in
+  equal (array Dtypes.value) expected got
+
+let decoded_values =
+  let gen =
+    let open Gen in
+    let+ dm = of_list [ 1; 2; 3; 10 ]
+    and+ dk = of_list [ 32; 96; 1024; 4096 ]
+    and+ dn = of_list [ 4; 8; 64 ]
+    and+ codes = of_list Dtype.[ Uint8; Int8 ]
+    and+ seed = int_range 0 1_000_000 in
+    (({ dm; dk; dn }, codes), seed)
+  in
+  prop ~count:12
+    ~examples:
+      [
+        (({ dm = 1; dk = 1024; dn = 64 }, Dtype.Uint8), 1);
+        (({ dm = 1; dk = 4096; dn = 8 }, Dtype.Int8), 2);
+        (({ dm = 10; dk = 32; dn = 64 }, Dtype.Uint8), 3);
+      ]
+    "on the host a decoded product computes the product of the decoded codes"
+    (Gen.with_pp
+       (fun ppf ((p, codes), seed) ->
+         Format.fprintf ppf "%d rows by [%d; %d] of %a, seed %d" p.dm p.dn p.dk
+           Dtype.pp codes seed)
+       gen)
+    decoded_value
+
 let decoded_law =
   let gen =
     let open Gen in
@@ -919,5 +1057,11 @@ let () =
          ldmatrix_rows;
          sources;
          group "decoded panels"
-           [ decoded_law; decoded_cases; decoded_stage_off ];
+           [
+             decoded_law;
+             decoded_cases;
+             decoded_stage_off;
+             decoded_loads;
+             decoded_values;
+           ];
        ])

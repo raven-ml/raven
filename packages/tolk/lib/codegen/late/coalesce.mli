@@ -27,8 +27,9 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
     - where [r] knows its vector registers ({!Renderer.t.registers}), of a
       power of two elements that fills at most one register, if the buffer's
       elements are {!Dtype.Float64}, {!Dtype.Float32}, {!Dtype.Float16},
-      {!Dtype.Int32}, {!Dtype.Uint32} or 8-bit floats, but for a store of
-      doubles whose values are not all loads, which merges as below;
+      {!Dtype.Int32}, {!Dtype.Uint32}, {!Dtype.Int8}, {!Dtype.Uint8} or 8-bit
+      floats, but for a store of doubles or bytes whose values are not all
+      loads, which merges as below;
     - otherwise of [4] or [2] elements, if they are {!Dtype.Float32},
       {!Dtype.Float16}, {!Dtype.Int32}, {!Dtype.Uint32} or 8-bit floats, or
       {!Dtype.Bfloat16} for a renderer other than the [CPU] device's; [8],
