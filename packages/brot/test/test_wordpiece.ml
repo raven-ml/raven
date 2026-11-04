@@ -223,6 +223,18 @@ let test_wordpiece_hf_semantics () =
   (* A word over budget is unknown even when every piece is in the
      vocabulary. *)
   case ~max:5 "unable" [ "[UNK]" ];
+  (* A byte that opens no whole character counts as one character, a stray
+     continuation byte too: four letters and two of them are over a budget of
+     five, though entries cover them. *)
+  let stray =
+    wordpiece
+      ~vocab:[ ("[UNK]", 0); ("a", 1); ("##a", 2); ("##\x80", 3) ]
+      ~unk_token:"[UNK]" ~max_input_chars_per_word:5 ()
+  in
+  equal ~msg:"stray bytes count" (list string) [ "[UNK]" ]
+    (Array.to_list (Encoding.tokens (encode stray "aaaa\x80\x80")));
+  equal ~msg:"within the budget" (list string) [ "a"; "##a"; "##a"; "##\x80" ]
+    (Array.to_list (Encoding.tokens (encode stray "aaa\x80")));
   case ~max:100 "" []
 
 (* Pretoken cache. A Bert word is cut greedily, the longest entry first; a word

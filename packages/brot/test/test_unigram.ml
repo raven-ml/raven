@@ -96,7 +96,12 @@ let test_unknown_characters () =
   (* The fused run stands for every byte of the characters it covers. *)
   spans t "a\xe2\x80\x8b\xe2\x80\x8cb" [ (0, 1); (1, 7); (7, 8) ];
   spans t "ab\xe2\x80\x8b\xe2\x80\x8cab"
-    [ (0, 1); (1, 2); (2, 8); (8, 9); (9, 10) ]
+    [ (0, 1); (1, 2); (2, 8); (8, 9); (9, 10) ];
+  (* A byte that opens no whole character is unknown alone: a lead without
+     its continuation bytes takes in none of the bytes after it. *)
+  case t "\xe9ab" [ 0; 1; 2 ];
+  case t "a\xe2\x80b" [ 1; 0; 2 ];
+  spans t "a\xf0\x9fb" [ (0, 1); (1, 3); (3, 4) ]
 
 (* Byte fallback spells the whole fused run out, one token per byte, and only
    when the vocabulary holds every one of them. *)

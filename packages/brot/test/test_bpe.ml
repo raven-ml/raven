@@ -664,8 +664,10 @@ let test_truncated_utf8 () =
       ~vocab:[ ("<unk>", 0); ("a", 1) ]
       ~merges:[] ~unk_token:"<unk>" ~end_of_word_suffix:"</w>" ()
   in
+  (* A lead cut short is a character of one byte, and so is the continuation
+     byte after it, each unknown. *)
   equal ~msg:"a truncated character under a suffix" (list string)
-    [ "a"; "<unk>" ] (tokens unk "a\xE2\x82")
+    [ "a"; "<unk>"; "<unk>" ] (tokens unk "a\xE2\x82")
 
 (* Words of more than [max_linear] symbols leave the rank scan for the heap;
    both must merge in the order HuggingFace merges in — by rank, then by

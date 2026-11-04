@@ -223,9 +223,10 @@ let add_unknown model ids ~opaque ~len =
 let encode_into model ids ~opaque text ~pos ~len =
   if Hashtbl.length model.vocab > 0 && len > 0 then begin
     let stop = pos + len in
-    let chars = ref 0 in
-    for k = pos to stop - 1 do
-      if Char.code (String.unsafe_get text k) land 0xC0 <> 0x80 then incr chars
+    let chars = ref 0 and k = ref pos in
+    while !k < stop do
+      k := !k + Char_class.length text !k ~stop;
+      incr chars
     done;
     if !chars > model.max_input_chars_per_word then
       add_unknown model ids ~opaque ~len

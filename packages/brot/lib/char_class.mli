@@ -47,6 +47,11 @@ val at : string -> int -> stop:int -> int
     continuation bytes are not continuation bytes are each one byte of category
     {!other}. *)
 
+val length : string -> int -> stop:int -> int
+(** [length s i ~stop] is the byte length of the character starting at byte [i]
+    of [s], as {!at} reads it, without its class: a lead byte with all the
+    continuation bytes it asks for before [stop], or else that one byte. *)
+
 val at_len : int -> int
 (** [at_len d] is the byte length of the character in the result [d] of {!at}.
 *)

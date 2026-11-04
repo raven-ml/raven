@@ -235,14 +235,6 @@ let grow st needed =
     st.path <- Array.make capacity 0
   end
 
-let utf8_len_table =
-  Array.init 256 (fun b ->
-      if b land 0x80 = 0 then 1
-      else if b land 0xE0 = 0xC0 then 2
-      else if b land 0xF0 = 0xE0 then 3
-      else if b land 0xF8 = 0xF0 then 4
-      else 1)
-
 let err_missing_unk =
   "Unigram.encode_into: the text holds a character the vocabulary does not \
    have, and the model has no unk_id to stand in for it"
@@ -349,13 +341,7 @@ let encode_into model st ids ~opaque text ~pos ~len =
     let at = ref 0 in
     while !at < len do
       let here = Array.unsafe_get score !at in
-      let width =
-        let w =
-          Array.unsafe_get utf8_len_table
-            (Char.code (String.unsafe_get text (pos + !at)))
-        in
-        if !at + w <= len then w else 1
-      in
+      let width = Char_class.length text (pos + !at) ~stop:(pos + len) in
       (* Every entry of the vocabulary that starts here, scored against the best
          path into this position. *)
       let covered = ref false in

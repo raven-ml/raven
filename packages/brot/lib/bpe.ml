@@ -499,16 +499,6 @@ let merge_linear model word rank =
   end;
   compact word
 
-let utf8_byte_len_table =
-  Array.init 256 (fun b ->
-      if b land 0x80 = 0 then 1
-      else if b land 0xE0 = 0xC0 then 2
-      else if b land 0xF0 = 0xE0 then 3
-      else if b land 0xF8 = 0xF0 then 4
-      else 1)
-
-let[@inline] utf8_byte_len b = Array.unsafe_get utf8_byte_len_table b
-
 let[@inline] pack_char_key text pos byte_len =
   let b0 = Char.code (String.unsafe_get text pos) in
   match byte_len with
@@ -538,13 +528,13 @@ let build_char_table vocab ~prefix ~suffix =
   let entries = ref [] in
   Hashtbl.iter
     (fun key id ->
-      let char_len = String.length key - plen - slen in
+      let n = String.length key - plen - slen in
       if
-        char_len >= 1 && char_len <= 4
+        n >= 1 && n <= 4
         && String.starts_with ~prefix key
         && String.ends_with ~suffix key
-        && utf8_byte_len (Char.code (String.unsafe_get key plen)) = char_len
-      then entries := (pack_char_key key plen char_len, id) :: !entries)
+        && Char_class.length key plen ~stop:(plen + n) = n
+      then entries := (pack_char_key key plen n, id) :: !entries)
     vocab;
   { ascii; multi = Merge_map.create !entries }
 
@@ -623,15 +613,10 @@ let init_word_fast model word text pos stop =
   let pending = ref 0 in
   while !i < stop do
     let b = Char.code (String.unsafe_get text !i) in
-    (* A truncated character is taken as the bytes that are left of it: the key
-       it packs is not the key of any whole character, so it falls through to
-       the fallback or to the unknown token. *)
-    let byte_len =
-      if b < 128 then 1
-      else
-        let width = utf8_byte_len b in
-        if width > stop - !i then stop - !i else width
-    in
+    (* A byte that opens no whole character is a character of its own, whose
+       key is no whole character's, so it falls through to the fallback or to
+       the unknown token. *)
+    let byte_len = if b < 128 then 1 else Char_class.length text !i ~stop in
     let id =
       if b < 128 then Array.unsafe_get ascii b
       else Merge_map.find multi (pack_char_key text !i byte_len)
@@ -682,34 +667,30 @@ let init_word_slow model word text pos stop =
   in
   while !i < stop do
     let b = Char.code (String.unsafe_get text !i) in
-    if b land 0xC0 = 0x80 then incr i
-    else begin
-      let start = !i in
-      let width = utf8_byte_len b in
-      let byte_len = if width > stop - start then stop - start else width in
-      let is_first = start = pos in
-      let is_last = start + byte_len >= stop in
-      i := start + byte_len;
-      let table =
-        if is_first then if is_last then model.suffixed_chars else model.chars
-        else if is_last then model.prefixed_suffixed_chars
-        else model.prefixed_chars
-      in
-      let id =
-        if b < 128 then Array.unsafe_get table.ascii b
-        else Merge_map.find table.multi (pack_char_key text start byte_len)
-      in
-      if id >= 0 then begin
-        flush_unk ();
-        add_symbol word id byte_len
-      end
-      else if model.byte_fallback then begin
-        let s = affixed_char model text start byte_len ~is_first ~is_last in
-        if not (try_byte_fallback model word s 0 (String.length s)) then
-          handle_unk byte_len
-      end
-      else handle_unk byte_len
+    let start = !i in
+    let byte_len = Char_class.length text start ~stop in
+    let is_first = start = pos in
+    let is_last = start + byte_len >= stop in
+    i := start + byte_len;
+    let table =
+      if is_first then if is_last then model.suffixed_chars else model.chars
+      else if is_last then model.prefixed_suffixed_chars
+      else model.prefixed_chars
+    in
+    let id =
+      if b < 128 then Array.unsafe_get table.ascii b
+      else Merge_map.find table.multi (pack_char_key text start byte_len)
+    in
+    if id >= 0 then begin
+      flush_unk ();
+      add_symbol word id byte_len
     end
+    else if model.byte_fallback then begin
+      let s = affixed_char model text start byte_len ~is_first ~is_last in
+      if not (try_byte_fallback model word s 0 (String.length s)) then
+        handle_unk byte_len
+    end
+    else handle_unk byte_len
   done;
   flush_unk ()
 

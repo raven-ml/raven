@@ -2951,6 +2951,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- A byte that opens no whole character, a lead byte without the continuation
+  bytes it asks for or a continuation byte with no lead, is a character of
+  one byte to BPE, Unigram and WordPiece models, as it is to the
+  pre-tokenizers and to offsets: BPE and Unigram took the next one to three
+  bytes in with it, a space or a `▁` among them, which changed the ids and
+  dropped text from the decode.
 - A BPE model's pretoken cache starts small and doubles as it fills, as
   WordPiece's and Unigram's do, up to `cache_capacity` entries, whose default
   rises from 262,144 to 4,194,304 (128 MB at most) for every model: a BPE

@@ -1021,9 +1021,12 @@ let spaced_merges =
 
 let spaced_alphabet =
   [ "a"; "the"; "q q"; "b"; " "; "  "; "   "; sp_mark; sp_mark ^ sp_mark;
-    " " ^ sp_mark; "."; ","; "a.b"; "959"; "9588"; "😀"; "
-";
-    "<s>"; "aaaaaaaaaaaaaaaaaaaa"; " xxxxxxxxxxxxxxx" ]
+    " " ^ sp_mark; "."; ","; "a.b"; "\195\169"; "\195\188"; "\240\159\152\128";
+    "\n"; "<s>"; "aaaaaaaaaaaaaaaaaaaa"; " xxxxxxxxxxxxxxx";
+    (* Bytes that open no whole character: leads without their continuation
+       bytes, a lone continuation byte, and a lead cut short. *)
+    "\233"; "\195"; "\226"; "\226\150"; "\240\159"; "\128"; "\150\129";
+    "zz"; " zz " ]
 [@@ocamlformat "disable"]
 
 let spaced_case =
@@ -1031,7 +1034,7 @@ let spaced_case =
   let+ text =
     map (String.concat "")
       (list ~size:(int_range 0 60) (of_list spaced_alphabet))
-  and+ pipeline = int_range 0 3
+  and+ pipeline = int_range 0 5
   and+ byte_fallback = bool in
   (text, pipeline, byte_fallback)
 
@@ -1042,17 +1045,29 @@ let spaced_case =
   in
   Gen.with_pp pp spaced_case
 
-(* The spaced pipeline and its marked twin: the normalizer Llama spells, then a
-   metaspace prepending on [`First], on [`Always] and never. *)
+(* The spaced pipeline and its marked twin: the normalizer Llama spells, a
+   metaspace prepending on [`First], on [`Always] and never, the marking
+   followed by a prepend, and Llama's normalizer under a normalized added
+   token that takes in the white space beside it, which keeps its pipeline
+   marked: read spaced, it would take in the spaces too. *)
 let spaced_pair pipeline ~byte_fallback =
+  let stripping =
+    if pipeline = 5 then
+      [
+        Brot.added_token ~special:false ~normalized:true ~lstrip:true
+          ~rstrip:true "zz";
+      ]
+    else []
+  in
   let make ?normalizer ?pre () =
     Brot.bpe ?normalizer ?pre ~vocab:spaced_vocab ~merges:spaced_merges
       ~unk_token:"<unk>" ~byte_fallback ~fuse_unk:true
       ~added_tokens:
-        [
-          Brot.added_token ~special:true "<s>";
-          Brot.added_token ~special:false ~normalized:true "q q";
-        ]
+        ([
+           Brot.added_token ~special:true "<s>";
+           Brot.added_token ~special:false ~normalized:true "q q";
+         ]
+        @ stripping)
       ()
   in
   let marking =
@@ -1065,10 +1080,13 @@ let spaced_pair pipeline ~byte_fallback =
   let metaspace prepend_scheme =
     Brot.Pre_tokenizer.metaspace ~prepend_scheme ~split:false ()
   in
+  let twins marking =
+    ( make ~normalizer:(Brot.Normalizer.sequence marking) (),
+      make ~normalizer:(Brot.Normalizer.sequence (marking @ [ noop ])) () )
+  in
   match pipeline with
-  | 0 ->
-      ( make ~normalizer:(Brot.Normalizer.sequence marking) (),
-        make ~normalizer:(Brot.Normalizer.sequence (marking @ [ noop ])) () )
+  | 0 | 5 -> twins marking
+  | 4 -> twins (List.rev marking)
   | n ->
       let scheme = List.nth [ `First; `Always; `Never ] (n - 1) in
       ( make ~pre:(metaspace scheme) (),
@@ -1081,8 +1099,13 @@ let spaced_law =
       cover "a space run" (has_sub text "  ");
       cover "a ▁ next to a space" (has_sub text (" " ^ sp_mark));
       cover "a unit past the key" (has_sub text "aaaaaaaaaaaaaaaaaaaa");
-      cover "a character with fallback bytes" (has_sub text "9588");
+      cover "a character with fallback bytes" (has_sub text "\195\188");
+      cover "a byte that opens no whole character"
+        (not (String.is_valid_utf_8 text));
       cover "an added token" (has_sub text "<s>" || has_sub text "q q");
+      cover "a prepend after the marking" (pipeline = 4);
+      cover "an added token taking in white space"
+        (pipeline = 5 && has_sub text "  zz");
       cover "a text that opens with a space"
         (String.length text > 0 && text.[0] = ' ');
       let encode t = Brot.encode t ~add_special_tokens:false text in
@@ -1101,6 +1124,25 @@ let spaced_law =
           equal ~msg:(msg "again in a batch") (array int) (Brot.Encoding.ids b)
             y
       | _ -> failf "two rows expected")
+
+(* A byte that opens no whole character is a character of its own, so the
+   bytes after it, here the space Llama's normalizer marks, stay what they
+   are: decoded, the stray byte is the replacement character and the rest of
+   the text comes back. *)
+let test_stray_lead_byte () =
+  Fixture.with_tokenizer_file "llama" (fun path ->
+      match Brot.from_file path with
+      | Error e -> failf "%s: %s" path e
+      | Ok tok ->
+          List.iter
+            (fun (text, expected) ->
+              equal ~msg:(Printf.sprintf "%S" text) string expected
+                (Brot.decode tok (ids tok text)))
+            [
+              ("caf\xE9 au lait", "caf\xEF\xBF\xBD au lait");
+              ("a\xF0\x9F b", "a\xEF\xBF\xBD\xEF\xBF\xBD b");
+              ("\xC3 x\x80 y", "\xEF\xBF\xBD x\xEF\xBF\xBD y");
+            ])
 
 (* A cache starts at 512 entries and doubles while the kernels fill it, from
    their stores and from OCaml's hand-backs, moving under the kernels' tables
@@ -1238,6 +1280,8 @@ let () =
          group "laws"
            [
              spaced_law;
+             test "a stray lead byte takes in nothing after it"
+               test_stray_lead_byte;
              grown_law;
              law "gpt2" gpt2_reference;
              law "mistral" mistral_reference;

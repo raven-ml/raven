@@ -144,6 +144,23 @@ let[@inline never] decode s i stop =
           4
   else stray
 
+let length s i ~stop =
+  let c = Char.code (String.unsafe_get s i) in
+  if c < 0xC2 then 1
+  else
+    let n =
+      if c < 0xE0 then 2 else if c < 0xF0 then 3 else if c < 0xF8 then 4 else 1
+    in
+    if n = 1 || i + n > stop then 1
+    else begin
+      let whole = ref true in
+      for k = 1 to n - 1 do
+        if Char.code (String.unsafe_get s (i + k)) land 0xC0 <> 0x80 then
+          whole := false
+      done;
+      if !whole then n else 1
+    end
+
 let[@inline] at s i ~stop =
   let c = Char.code (String.unsafe_get s i) in
   if c < 0x80 then (Char.code (Bytes.unsafe_get ascii c) lsl 3) lor 1

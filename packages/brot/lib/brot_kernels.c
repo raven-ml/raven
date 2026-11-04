@@ -2387,14 +2387,18 @@ static BROT_INLINE intnat sp_next(sp_walker *u, intnat b)
   }
 }
 
-/* Bpe.utf8_byte_len. */
-static inline intnat utf8_len(intnat b)
+/* Char_class.length: the byte length of the character at [p], of the [left] bytes
+   that are left: a lead byte with all the continuation bytes it asks for, or
+   else that one byte, so a stray byte never takes in the bytes after it. */
+static inline intnat char_len(const unsigned char *p, intnat left)
 {
-  if ((b & 0x80) == 0) return 1;
-  if ((b & 0xE0) == 0xC0) return 2;
-  if ((b & 0xF0) == 0xE0) return 3;
-  if ((b & 0xF8) == 0xF0) return 4;
-  return 1;
+  intnat b = p[0], n, k;
+  if (b < 0xC2) return 1;
+  n = b < 0xE0 ? 2 : b < 0xF0 ? 3 : b < 0xF8 ? 4 : 1;
+  if (n == 1 || n > left) return 1;
+  for (k = 1; k < n; k++)
+    if ((p[k] & 0xC0) != 0x80) return 1;
+  return n;
 }
 
 /* Bpe.pack_char_key. */
@@ -2414,8 +2418,9 @@ static inline intnat pack_char_key(const unsigned char *p, intnat blen)
    with a direct piece or a byte fallback for each of their bytes, then the
    shared merge run. Returns the id count, or -1 when the unit must go back
    to OCaml: a character with neither (the unknown token's semantics stay
-   there; a truncated character packs no whole character's key and lands
-   on its fallback or here too), or the merge-run refusal. A fallback symbol
+   there; a byte that opens no whole character is a character of its own,
+   whose key is no whole character's, and lands on its fallback or here
+   too), or the merge-run refusal. A fallback symbol
    accounts for its one byte, so it never trips that refusal. The character
    map is probed with merge_find: the two maps share the Merge_map
    layout. */
@@ -2432,8 +2437,7 @@ static int sp_merge_short(const tables *t, const value *ascii_ids,
       blen = 1;
       id = Long_val(ascii_ids[b]);
     } else {
-      blen = utf8_len(b);
-      if (blen > len - k) blen = len - k;
+      blen = char_len(s + pos + k, len - k);
       id = merge_find(ckeys, cvals, cmask, pack_char_key(s + pos + k, blen));
     }
     if (id >= 0) {
