@@ -355,16 +355,18 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b).
 - **Pinned by:** `Lower_real › exact › fdiv`.
 
-### A16. Integer quotient and remainder by 0 and -1
+### A16. Integer quotient and remainder by 0
 
 - **Reference:** `mixin/elementwise.py:228,215` (`Ops.TRUNCDIV`,
   `Ops.TRUNCMOD`).
 - **Raven:** `lower_arith.ml` (`int_div`).
-- **Differs:** a quotient by 0 is 0 and a remainder by 0 the dividend; a
-  quotient by -1 is the modular negation, so the least integer's is itself,
-  and a remainder by -1 is 0. The divisor is made 1 in those lanes before
-  dividing, since a kernel computes both sides of a selection and C traps or
-  leaves them undefined.
+- **Differs:** a quotient by 0 is 0 and a remainder by 0 the dividend. The
+  divisor is made 1 in those lanes before dividing, since a kernel computes
+  both sides of a selection and C traps or leaves it undefined. A quotient
+  by -1 is the modular negation, so the least integer's is itself, and a
+  remainder by -1 is 0: tolk's `Truncdiv` and `Truncmod` give those values
+  on every target (tolk's D346), so the lowering divides by -1 as by any
+  other divisor.
 - **nx:** `prog.mli`, `Idiv`, `Mod`.
 - **Class:** exact.
 - **Reason:** (b).

@@ -66,7 +66,6 @@ let int n = `Int (Bigint.of_int n)
    narrower ones to [int], whose sums carry past their width. *)
 
 let num ?dtype u n = Shape.const_like ?dtype u (int n)
-let truth u b = Shape.const_like ~dtype:Bool u (`Bool b)
 let where = Ops.where
 let not_ = Ops.logical_not
 let ( && ) = Ops.bitwise_and
@@ -294,11 +293,12 @@ let int_pow d x e =
     in
     where (e < num e 0) inverse power
 
-(* Integer division. A zero divisor gives 0, and the remainder the dividend; -1
-   gives the negation and a remainder of 0. Both sides of a selection compute,
-   so the divisor is made safe before it divides, unless its bounds hold
-   neither: then the bounds of the result are the quotient's, as a later
-   reduction reads them. *)
+(* Integer division. A zero divisor gives 0, and the remainder the dividend.
+   Both sides of a selection compute, so the divisor is made safe before it
+   divides, unless its bounds hold no zero: then the bounds of the result are
+   the quotient's, as a later reduction reads them. tolk's quotient of the
+   least value by -1 wraps to the least value, its negation, and its remainder
+   is 0, as nx's are. *)
 let int_div d ~rem x y =
   let vx = value d x and vy = value d y in
   let back v = store d (if is_wide d then bits v else Ops.bitcast v Uint32) in
@@ -307,16 +307,12 @@ let int_div d ~rem x y =
   in
   let lo = Ops.vmin vy and hi = Ops.vmax vy in
   let below = Dtype.Value.( < ) in
-  if Stdlib.(below (`Int Bigint.zero) lo || below hi (`Int Bigint.minus_one))
-  then back (divide vy)
+  if Stdlib.(below (`Int Bigint.zero) lo || below hi (`Int Bigint.zero)) then
+    back (divide vy)
   else
     let zero = vy = num vy 0 in
-    let minus = if is_signed d then vy = num vy (-1) else truth vy false in
-    let safe = where (zero || minus) (num vy 1) vy in
-    if rem then where zero x (where minus (num x 0) (back (divide safe)))
-    else
-      let neg = store d (num (lift d x) 0 - lift d x) in
-      where zero (num x 0) (where minus neg (back (divide safe)))
+    let safe = where zero (num vy 1) vy in
+    where zero (if rem then x else num x 0) (back (divide safe))
 
 (* Threefry-2x32 with 20 rounds: the counter and the key are word pairs, the low
    word first, and so is the result. Each group of four rounds gives its
