@@ -5,5 +5,5 @@ kernel void E_4_4(device int* data0_16, device float* data1_16, uint3 gid [[thre
   int lidx0 = lid.x; /* 4 */
   int alu0 = (lidx0<<2);
   float4 val0 = (*((device float4*)((data1_16+alu0))));
-  *((device int4*)((data0_16+alu0))) = int4((as_type<int>((float)(val0.x))+1),(as_type<int>((float)(val0.y))+1),(as_type<int>((float)(val0.z))+1),(as_type<int>((float)(val0.w))+1));
+  *((device int4*)((data0_16+alu0))) = int4(((int)((((uint)(as_type<int>((float)(val0.x))))+1u))),((int)((((uint)(as_type<int>((float)(val0.y))))+1u))),((int)((((uint)(as_type<int>((float)(val0.z))))+1u))),((int)((((uint)(as_type<int>((float)(val0.w))))+1u))));
 }

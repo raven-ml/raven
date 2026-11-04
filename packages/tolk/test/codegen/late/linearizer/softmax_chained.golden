@@ -91,26 +91,36 @@
 89 Ops.CONST dtypes.weakint [] 127
 90 Ops.CAST dtypes.i32 [89] dtypes.i32
 91 Ops.ADD dtypes.i32 [88, 90]
-92 Ops.CONST dtypes.weakint [] 23
-93 Ops.CAST dtypes.i32 [92] dtypes.i32
-94 Ops.SHL dtypes.i32 [91, 93]
-95 Ops.BITCAST dtypes.f32 [94] dtypes.f32
-96 Ops.MUL dtypes.f32 [85, 95]
-97 Ops.SUB dtypes.i32 [59, 88]
-98 Ops.ADD dtypes.i32 [97, 90]
-99 Ops.SHL dtypes.i32 [98, 93]
-100 Ops.BITCAST dtypes.f32 [99] dtypes.f32
-101 Ops.MUL dtypes.f32 [96, 100]
-102 Ops.WHERE dtypes.f32 [40, 42, 101]
-103 Ops.WHERE dtypes.f32 [32, 34, 102]
-104 Ops.WHERE dtypes.f32 [27, 29, 103]
-105 Ops.PARAM dtypes.f32 [2] ParamArg(slot=3, dtype=dtypes.f32)
-106 Ops.INDEX dtypes.f32 [105, 4]
-107 Ops.LOAD dtypes.f32 [106]
-108 Ops.FDIV dtypes.f32 [84, 107]
-109 Ops.MUL dtypes.f32 [104, 108]
-110 Ops.STORE dtypes.void [16, 109]
-111 Ops.END dtypes.void [110, 13]
-112 Ops.END dtypes.void [111, 4]
-113 Ops.SINK dtypes.void [112] KernelInfo(name="E_4_256", optimized=True, split=(256, 4, 5))
+92 Ops.CAST dtypes.u32 [91] dtypes.u32
+93 Ops.CONST dtypes.weakint [] 23
+94 Ops.CAST dtypes.u32 [93] dtypes.u32
+95 Ops.SHL dtypes.u32 [92, 94]
+96 Ops.CAST dtypes.i32 [95] dtypes.i32
+97 Ops.BITCAST dtypes.f32 [96] dtypes.f32
+98 Ops.MUL dtypes.f32 [85, 97]
+99 Ops.CAST dtypes.u32 [59] dtypes.u32
+100 Ops.CAST dtypes.u32 [88] dtypes.u32
+101 Ops.SUB dtypes.u32 [99, 100]
+102 Ops.CAST dtypes.i32 [101] dtypes.i32
+103 Ops.CAST dtypes.u32 [102] dtypes.u32
+104 Ops.CAST dtypes.u32 [89] dtypes.u32
+105 Ops.ADD dtypes.u32 [103, 104]
+106 Ops.CAST dtypes.i32 [105] dtypes.i32
+107 Ops.CAST dtypes.u32 [106] dtypes.u32
+108 Ops.SHL dtypes.u32 [107, 94]
+109 Ops.CAST dtypes.i32 [108] dtypes.i32
+110 Ops.BITCAST dtypes.f32 [109] dtypes.f32
+111 Ops.MUL dtypes.f32 [98, 110]
+112 Ops.WHERE dtypes.f32 [40, 42, 111]
+113 Ops.WHERE dtypes.f32 [32, 34, 112]
+114 Ops.WHERE dtypes.f32 [27, 29, 113]
+115 Ops.PARAM dtypes.f32 [2] ParamArg(slot=3, dtype=dtypes.f32)
+116 Ops.INDEX dtypes.f32 [115, 4]
+117 Ops.LOAD dtypes.f32 [116]
+118 Ops.FDIV dtypes.f32 [84, 117]
+119 Ops.MUL dtypes.f32 [114, 118]
+120 Ops.STORE dtypes.void [16, 119]
+121 Ops.END dtypes.void [120, 13]
+122 Ops.END dtypes.void [121, 4]
+123 Ops.SINK dtypes.void [122] KernelInfo(name="E_4_256", optimized=True, split=(256, 4, 5))
 

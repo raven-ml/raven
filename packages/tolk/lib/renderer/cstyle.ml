@@ -491,6 +491,56 @@ let pm_narrow_uint =
           Some (cast (replace x ~src:wide) (dtype x)));
     ])
 
+(* C computes an operation on a signed integer in [int], or in [long long] for
+   a 64-bit one, and leaves its overflow undefined, as it does a left shift of
+   a negative value: a compiler takes either for impossible, and folds
+   [x + y < x] to [y < 0]. Such an operation computes in the unsigned type of
+   that width, which wraps, and converts back. One whose operands' bounds keep
+   its exact result in the type and a shifted value from being negative, as an
+   index's do, stays as it is. *)
+let pm_wrap_signed =
+  let computed dt =
+    if Dtype.itemsize dt = 8 then (Dtype.Int64, Dtype.Uint64)
+    else (Dtype.Int32, Dtype.Uint32)
+  in
+  let defined x =
+    let open Dtype.Value in
+    let c = fst (computed (dtype x)) in
+    let inside v = Dtype.min c <= v && v <= Dtype.max c in
+    let corners f (lo0, hi0) (lo1, hi1) =
+      [ f lo0 lo1; f lo0 hi1; f hi0 lo1; f hi0 hi1 ]
+    in
+    match (op x, List.map (operand_bounds x) (src x)) with
+    | Op.Add, [ p; q ] -> List.for_all inside (corners ( + ) p q)
+    | Op.Sub, [ p; q ] -> List.for_all inside (corners ( - ) p q)
+    | Op.Mul, [ p; q ] -> List.for_all inside (corners ( * ) p q)
+    | Op.Neg, [ (lo, hi) ] -> inside (-lo) && inside (-hi)
+    | Op.Mulacc, [ p; q; (lo, hi) ] ->
+        List.for_all
+          (fun v -> inside v && inside (v + lo) && inside (v + hi))
+          (corners ( * ) p q)
+    | Op.Shl, [ (lo, hi); (k0, k1) ] ->
+        of_int 0 <= lo
+        && of_int 0 <= k0
+        && k1 < of_int (Dtype.bitsize c)
+        && inside (hi * `Int (Bigint.shift_left Bigint.one (to_int k1)))
+    | _ -> false
+  in
+  Pattern_matcher.v
+    (fun () -> [
+      rule
+        (Upat.v
+           ~op:(Op.Set.of_list Op.[ Add; Sub; Mul; Neg; Shl; Mulacc ])
+           ~dtype:Dtype.sints ~name:"x" ())
+        (fun m ->
+          let x = m "x" in
+          if defined x then None
+          else
+            let u = snd (computed (dtype x)) in
+            let wide = List.map (fun s -> cast s u) (src x) in
+            Some (cast (replace x ~src:wide) (dtype x)));
+    ])
+
 let create_non_native_float_pats ?(casting = true) dts =
   let in_dts u = Dtype.mem (dtype u) dts in
   let x = Upat.var ~dtype:dts "x" and y = Upat.var ~dtype:dts "y" in
@@ -1365,6 +1415,7 @@ let clang_extra_matcher =
   Pattern_matcher.concat
     [
       pm_narrow_uint;
+      pm_wrap_signed;
       Pattern_matcher.v
         (fun () -> [
           rule
@@ -1565,6 +1616,7 @@ let metal_extra_matcher =
   Pattern_matcher.concat
     [
       pm_narrow_uint;
+      pm_wrap_signed;
       Pattern_matcher.v (fun () -> [
           rule
             (Upat.v
@@ -1812,6 +1864,7 @@ let cuda_extra_matcher =
   Pattern_matcher.concat
     [
       pm_narrow_uint;
+      pm_wrap_signed;
       create_non_native_float_pats ~casting:false Dtype.fp8s;
       Pattern_matcher.v (fun () -> [
           rule
@@ -2136,6 +2189,7 @@ let hip_extra_matcher arch =
   Pattern_matcher.concat
     ([
        pm_narrow_uint;
+       pm_wrap_signed;
        create_non_native_float_pats (Dtype.Bfloat16 :: Dtype.fp8s);
      ]
     @

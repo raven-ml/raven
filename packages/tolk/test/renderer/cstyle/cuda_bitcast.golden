@@ -7,5 +7,5 @@ extern "C" __global__ void __launch_bounds__(4) E_4_4(int* data0_16, float* data
   int lidx0 = threadIdx.x; /* 4 */
   int alu0 = (lidx0<<2);
   float4 val0 = (*((float4*)((data1_16+alu0))));
-  *((int4*)((data0_16+alu0))) = make_int4((tg_bitcast<int>((float)(val0.x))+1),(tg_bitcast<int>((float)(val0.y))+1),(tg_bitcast<int>((float)(val0.z))+1),(tg_bitcast<int>((float)(val0.w))+1));
+  *((int4*)((data0_16+alu0))) = make_int4(((int)((((uint)(tg_bitcast<int>((float)(val0.x))))+1u))),((int)((((uint)(tg_bitcast<int>((float)(val0.y))))+1u))),((int)((((uint)(tg_bitcast<int>((float)(val0.z))))+1u))),((int)((((uint)(tg_bitcast<int>((float)(val0.w))))+1u))));
 }

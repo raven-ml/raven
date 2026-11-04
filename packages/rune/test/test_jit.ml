@@ -5356,6 +5356,10 @@ let () =
                test_sibling_constant;
              test "a jit inside a jit" test_nested;
              test "an integer maximum of a running sum wraps" test_wrapped_max;
+             prop ~count:20 ~examples:Wraps.examples
+               "add, sub, mul, neg and abs wrap as eager's"
+               (Gen.with_pp Wraps.pp Wraps.gen)
+               (Wraps.law (module Nx.Host));
              test "results are fresh" test_fresh;
              test "an evaluated program lets each value go"
                test_evaluated_memory;

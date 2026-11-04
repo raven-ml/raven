@@ -18,19 +18,21 @@
 16 Ops.AFTER dtypes.i32 [8, 15, 13]
 17 Ops.INDEX dtypes.i32 [16, 3]
 18 Ops.LOAD dtypes.i32 [17]
-19 Ops.CAST dtypes.i32 [0] dtypes.i32
-20 Ops.ADD dtypes.i32 [18, 19]
-21 Ops.STORE dtypes.void [9, 20]
-22 Ops.CONST dtypes.weakint [] 3
-23 Ops.CAST dtypes.i32 [22] dtypes.i32
-24 Ops.MUL dtypes.i32 [13, 23]
-25 Ops.ADD dtypes.i32 [23, 24]
-26 Ops.CMPLT dtypes.bool [20, 25]
-27 Ops.BACKEDGE dtypes.void [21, 15, 26]
-28 Ops.END dtypes.void [27, 13]
-29 Ops.AFTER dtypes.i32 [8, 28]
-30 Ops.INDEX dtypes.i32 [29, 3]
-31 Ops.LOAD dtypes.i32 [30]
-32 Ops.STORE dtypes.void [4, 31]
-33 Ops.SINK dtypes.void [32] KernelInfo(name="nested_loop", optimized=True)
+19 Ops.CAST dtypes.u32 [18] dtypes.u32
+20 Ops.CAST dtypes.u32 [0] dtypes.u32
+21 Ops.ADD dtypes.u32 [19, 20]
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.STORE dtypes.void [9, 22]
+24 Ops.CONST dtypes.weakint [] 3
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.MUL dtypes.i32 [13, 25]
+27 Ops.ADD dtypes.i32 [25, 26]
+28 Ops.CMPLT dtypes.bool [22, 27]
+29 Ops.BACKEDGE dtypes.void [23, 15, 28]
+30 Ops.END dtypes.void [29, 13]
+31 Ops.AFTER dtypes.i32 [8, 30]
+32 Ops.INDEX dtypes.i32 [31, 3]
+33 Ops.LOAD dtypes.i32 [32]
+34 Ops.STORE dtypes.void [4, 33]
+35 Ops.SINK dtypes.void [34] KernelInfo(name="nested_loop", optimized=True)
 

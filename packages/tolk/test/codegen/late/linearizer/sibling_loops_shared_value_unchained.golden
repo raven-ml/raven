@@ -21,16 +21,19 @@
 19 Ops.RANGE dtypes.i32 [18] (AxisType.WEAK, 1)
 20 Ops.ADD dtypes.i32 [10, 19]
 21 Ops.INDEX dtypes.i32 [1, 20]
-22 Ops.ADD dtypes.i32 [16, 7]
-23 Ops.STORE dtypes.void [21, 22]
-24 Ops.END dtypes.void [23, 19]
-25 Ops.AFTER dtypes.i32 [18, 24]
-26 Ops.RANGE dtypes.i32 [25] (AxisType.WEAK, 2)
-27 Ops.ADD dtypes.i32 [10, 26]
-28 Ops.ADD dtypes.i32 [27, 9]
-29 Ops.INDEX dtypes.i32 [1, 28]
-30 Ops.STORE dtypes.void [29, 22]
-31 Ops.END dtypes.void [30, 26]
-32 Ops.END dtypes.void [31, 6]
-33 Ops.SINK dtypes.void [32] KernelInfo(name="E_2", optimized=True, split=(2, 2, 3))
+22 Ops.CAST dtypes.u32 [16] dtypes.u32
+23 Ops.CAST dtypes.u32 [7] dtypes.u32
+24 Ops.ADD dtypes.u32 [22, 23]
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.STORE dtypes.void [21, 25]
+27 Ops.END dtypes.void [26, 19]
+28 Ops.AFTER dtypes.i32 [18, 27]
+29 Ops.RANGE dtypes.i32 [28] (AxisType.WEAK, 2)
+30 Ops.ADD dtypes.i32 [10, 29]
+31 Ops.ADD dtypes.i32 [30, 9]
+32 Ops.INDEX dtypes.i32 [1, 31]
+33 Ops.STORE dtypes.void [32, 25]
+34 Ops.END dtypes.void [33, 29]
+35 Ops.END dtypes.void [34, 6]
+36 Ops.SINK dtypes.void [35] KernelInfo(name="E_2", optimized=True, split=(2, 2, 3))
 

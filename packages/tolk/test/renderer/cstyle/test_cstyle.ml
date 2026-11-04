@@ -1644,7 +1644,7 @@ let windows_group =
         (fun () ->
           let src = on_windows (find_case "clang_dtype_i64") in
           Windtrap.contains ~sub:"long long " src;
-          Windtrap.contains ~sub:"*3ll)" src);
+          Windtrap.contains ~sub:"*3ull)" src);
       test
         "an object is compiled for Windows' triple and calls no stack probe"
         (fun () ->

@@ -1028,6 +1028,12 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- A sum, difference, product, negation or left shift of a signed integer
+  that may overflow computes in the unsigned integer of `int`'s width, or of
+  `long long`'s for a 64-bit one (`Cstyle.clang`, `Cstyle.cuda`,
+  `Cstyle.hip`, `Cstyle.metal`): C leaves signed overflow undefined, and
+  NVRTC compiled `x + y < x` of int32 as `y < 0`. Such values now wrap as
+  `Ops.exec_alu` computes them.
 - `Bigint.to_string` refuses an integer of more than 4300 digits with
   `Invalid_argument`, and so do `Dtype.pp_const` and `Render.render`, which
   hung for minutes on an expression that folds to millions of bits.

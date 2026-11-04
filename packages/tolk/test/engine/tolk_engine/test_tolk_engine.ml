@@ -291,6 +291,100 @@ let with_binary bytes prg =
       (List.filteri (fun i _ -> i < 3) srcs
       @ [ Ops.v Op.Binary ~arg:(Ops.Bytes bytes) ])
 
+(* Signed arithmetic
+
+   An operation on a signed integer wraps at its width, as the interpreter
+   computes it, also where C's would overflow: C leaves that undefined, and a
+   compiler that takes it for impossible folds [x + y < x] to [y < 0]. A kernel
+   of one operation [op] on a signed type writes [op a b] and [op a b < a] for
+   every pair of the type's extremes, their neighbours and [-1], [0], [1] and
+   [2], and [b * 4], which the compiler shifts. Of [m] and [k], [a] and [b]
+   masked to their non-negative bits, whose bounds are narrowed but still let
+   a sum or a shift leave the type, it writes [m + k < m] and
+   [(m << 1) >> 1 < m]. *)
+
+let signed_ops = Op.[ Add; Sub; Mul; Neg ]
+
+let extremes dt =
+  let lo = Dtype.min dt and hi = Dtype.max dt in
+  let near v d = Dtype.Value.(v + of_int d) in
+  let n = Dtype.Value.of_int in
+  [ lo; near lo 1; n (-1); n 0; n 1; n 2; near hi (-1); hi ]
+
+let signed_kernel dt op n =
+  let open Ops.O in
+  let buffer slot dt = Shape.placeholder ~slot [ n ] dt in
+  let i = Ops.range (Int n) [ 0 ] in
+  let at slot dt = Ops.index (buffer slot dt) [ i ] in
+  let a = at 2 dt and b = at 3 dt in
+  let r = if Op.equal op Neg then Ops.alu a Neg [] else Ops.alu a op [ b ] in
+  let four = Ops.int ~dtype:dt 4 and one = Ops.int ~dtype:dt 1 in
+  let mask x = x land Ops.const ~dtype:dt (Dtype.max dt :> Dtype.const) in
+  let m = mask a and k = mask b in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"wraps" ())
+    [
+      Ops.end_
+        (Ops.group
+           [
+             Ops.store (at 0 dt) r;
+             Ops.store (at 1 Bool) (r < a);
+             Ops.store (at 4 dt) (b * four);
+             Ops.store (at 5 Bool) (m + k < m);
+             Ops.store (at 6 Bool) ((m lsl one) lsr one < m);
+           ])
+        [ i ];
+    ]
+
+(* [op] of the integer type [dt] on constants, wrapped at its width. *)
+let exec dt op args =
+  match Ops.exec_alu op dt (args :> Dtype.const list) with
+  | #Dtype.value as v -> v
+  | `Invalid -> invalid_arg "an integer operation gave Invalid"
+
+let wraps_on d dt op =
+  let e = extremes dt in
+  let each f = Array.of_list (List.concat_map f e) in
+  let a = each (fun x -> List.map (fun _ -> x) e) and b = each (fun _ -> e) in
+  let n = Array.length a in
+  let r =
+    Array.map2
+      (fun x y -> exec dt op (if Op.equal op Neg then [ x ] else [ x; y ]))
+      a b
+  in
+  let less = Array.map2 (fun r x -> `Bool Dtype.Value.(r < x)) r a in
+  let four = Array.map (fun y -> exec dt Mul [ y; Dtype.Value.of_int 4 ]) b in
+  let mask = Array.map (fun x -> exec dt And [ x; Dtype.max dt ]) in
+  let m = mask a and k = mask b in
+  let below f = Array.map2 (fun x y -> `Bool Dtype.Value.(f x y < x)) m k in
+  let one = Dtype.Value.of_int 1 in
+  let sum x y = exec dt Add [ x; y ]
+  and shifted x _ = exec dt Shr [ exec dt Shl [ x; one ]; one ] in
+  let zeros dt = Array.make n (Dtype.truncate dt (`Int Bigint.zero)) in
+  let prg = Codegen.to_program (signed_kernel dt op n) (Engine.renderer d) in
+  let out =
+    Run.on d prg
+      [
+        (0, zeros dt);
+        (1, zeros Bool);
+        (2, a);
+        (3, b);
+        (4, zeros dt);
+        (5, zeros Bool);
+        (6, zeros Bool);
+      ]
+  in
+  let msg = Format.asprintf "%a %a" Dtype.pp dt Op.pp op in
+  equal ~msg values r (List.assoc 0 out);
+  equal ~msg:(msg ^ " < a") values less (List.assoc 1 out);
+  equal ~msg:(msg ^ ": b * 4") values four (List.assoc 4 out);
+  equal ~msg:(msg ^ ": m + k < m") values (below sum) (List.assoc 5 out);
+  equal ~msg:(msg ^ ": (m << 1) >> 1 < m") values (below shifted)
+    (List.assoc 6 out)
+
+let wraps_signed d () =
+  List.iter (fun dt -> List.iter (wraps_on d dt) signed_ops) Dtype.sints
+
 let on_the_host =
   group "kernels on the host"
     [
@@ -298,6 +392,7 @@ let on_the_host =
         runs_a_kernel;
       test "a variable left out of vars takes its bound value"
         takes_the_bound_value;
+      test "signed arithmetic wraps as the interpreter" (wraps_signed host);
       group "loops"
         (List.map counts_in_a_loop
            [
@@ -3527,6 +3622,8 @@ let on_a_gpu (kind, _) =
   group kind
     [
       group "custom kernels with variables" (custom_kernel_scalars ~devices ());
+      test "signed arithmetic wraps as the interpreter" (fun () ->
+          wraps_signed (devices "CPU:1") ());
       group "loops bounded by a loaded value"
         (loaded_bounds ~devices ~d:"CPU:1" ());
       group "aranges" [ arange_windows ~devices "CPU:1" ];

@@ -8,5 +8,5 @@ extern "C" __global__ void __launch_bounds__(4) E_4_4(float* data0_16, float* da
   int alu0 = (lidx0<<2);
   int4 val0 = (*((int4*)((data2_16+alu0))));
   float4 val1 = (*((float4*)((data1_16+alu0))));
-  *((float4*)((data0_16+alu0))) = make_float4(((float)(((((int)(val1.x))+val0.x)*3))),((float)(((((int)(val1.y))+val0.y)*3))),((float)(((((int)(val1.z))+val0.z)*3))),((float)(((((int)(val1.w))+val0.w)*3))));
+  *((float4*)((data0_16+alu0))) = make_float4(((float)(((int)((((uint)(((int)((((uint)(((int)(val1.x))))+((uint)(val0.x)))))))*3u))))),((float)(((int)((((uint)(((int)((((uint)(((int)(val1.y))))+((uint)(val0.y)))))))*3u))))),((float)(((int)((((uint)(((int)((((uint)(((int)(val1.z))))+((uint)(val0.z)))))))*3u))))),((float)(((int)((((uint)(((int)((((uint)(((int)(val1.w))))+((uint)(val0.w)))))))*3u))))));
 }

@@ -930,6 +930,13 @@ let () =
                "a scatter keeps the bits of each element no update lands on"
                Unreached.cases unreached;
            ];
+         group "integers"
+           [
+             prop ~count:20 ~examples:Wraps.examples
+               "add, sub, mul, neg and abs wrap as eager's"
+               (Gen.with_pp Wraps.pp Wraps.gen)
+               (fun c -> Wraps.law (snd (on_gpu ())) c);
+           ];
          group "running operations"
            [
              prop ~count:4 ~examples:Prefixes.examples

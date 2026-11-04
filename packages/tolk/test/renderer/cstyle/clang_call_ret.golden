@@ -3,6 +3,6 @@
 extern void sqrt();
 __attribute__((min_vector_width(512))) void call_ret(int* restrict data0_1) {
   double alu0 = ((double(*)(double))(sqrt))((double)(16.0));
-  *(data0_1+0) = (((int)(alu0))<<1);
+  *(data0_1+0) = ((int)((((unsigned int)(((int)(alu0))))<<1u)));
 }
 

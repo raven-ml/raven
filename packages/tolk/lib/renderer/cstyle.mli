@@ -46,6 +46,15 @@
     its parameter's type. The choices {!cuda} makes for a program, its
     asynchronous copies and matrix loads, read the bodies it calls too.
 
+    A sum, difference, product, negation, left shift or multiply-add of a
+    signed integer wraps at its width, as {!Ops.exec_alu} computes it. These
+    languages leave the overflow of a signed integer undefined, and a left
+    shift of a negative one, which a compiler may take for impossible: such an
+    operation is computed in the unsigned integer of [int]'s width, or of
+    [long long]'s for a 64-bit one, and converted back, unless its operands'
+    bounds ({!Ops.operand_bounds}) keep each exact result it forms in that
+    type and a shifted value from being negative, as an index's do.
+
     A floating-point division ({!Op.Fdiv}) is the language's [/] on every
     target, whether or not the target lists it among its native operations: that
     list only decides whether code generation turns a reciprocal into a

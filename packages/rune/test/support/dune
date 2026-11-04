@@ -22,5 +22,6 @@
   quants
   prefixes
   attentions
+  wraps
   unreached)
  (libraries nx nx_array nx_kernel nx_quant nx_support rig rune windtrap))

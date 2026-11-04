@@ -8000,3 +8000,45 @@ and an initial value is added after it (D260).
   and their values (reads after, a register read after, a write before,
   writes by a call and by code), the local splits refused, the range a
   read-only call keeps global, and a lowered body's writes.
+## D342. A signed operation that may overflow computes in its unsigned type
+
+- **tinygrad:** `renderer/cstyle.py:153-160` (`code_for_op`, which writes
+  `+`, `-`, `*`, a unary `-` and `<<` whatever the integer type);
+  `:86-87` (`pm_narrow_uint`, for an unsigned char or short alone);
+  `runtime/support/compiler_cpu.py:21` (Clang, without `-fwrapv`);
+  `codegen/decomp/op.py:88` (a product by a power of two becomes a left
+  shift, of a signed operand too).
+- **tolk:** `Cstyle.pm_wrap_signed`, in the extra matchers of
+  `Cstyle.clang`, `Cstyle.cuda`, `Cstyle.hip` and `Cstyle.metal`.
+- **Differs:** C computes an operation on a signed integer in `int`, or in
+  `long long` for a 64-bit one, and leaves its overflow undefined, as it
+  does a left shift of a negative value; CUDA, HIP and Metal follow C++,
+  which does the same. A compiler takes either for impossible: NVRTC
+  compiles `(x + y) < x` of int32 as `y < 0`. tolk's integers wrap at their
+  width (`Ops.exec_alu`). An `Add`, `Sub`, `Mul`, `Neg`, `Shl` or `Mulacc`
+  of a signed type computes in the unsigned type of `int`'s or `long
+  long`'s width, its operands converted, and converts back, unless its
+  operands' bounds (`Ops.operand_bounds`) keep its exact result in that
+  type and, for a shift, the shifted value at or above 0 and the count
+  below the width. An index, whose bounds chose its width, keeps tinygrad's
+  source; a value loaded, or decomposed from a float's bits, does not. The
+  conversion back of a value past the signed type keeps its low bits on
+  every compiler tolk targets, as D17's narrowing does. `-fwrapv` would
+  cover Clang alone: NVRTC's library holds no such option. tinygrad's
+  sources move with the rule, through `test/gen/tinygrad.patch`. On fudge,
+  the kernels of the bench rows it changes (`host/sin_nested_8`,
+  `host/normal_f64`, `gpt_oss/gpt_oss_decode_values`, `stream/decode-keys`,
+  `stream/routed-argmax-16-bf16`) compile to the same machine code, host
+  and SASS, as before; the stages that linearize and render a kernel with
+  such operations allocate up to 14% more words (`embedding/render`), for
+  the casts.
+- **Reason:** (e): at the pinned commit, a CUDA kernel computes
+  `x + y < x` of int32 as `y < 0`, true where `x + y` wraps below `x`.
+- **Pinned by:** the Tolk_engine suite's `signed arithmetic wraps as the
+  interpreter`, on the host (`kernels on the host`) and on each GPU
+  (`GPUs ›`, run on fudge's CUDA and NV): each operation of each signed type
+  over its extremes' pairs, its comparison with its first operand, a
+  product by 4, which becomes a shift, and a sum and a shift of a value
+  masked to its non-negative bits, whose bounds are narrowed but still let
+  them overflow; rune's `jit › add, sub, mul, neg and abs wrap as eager's`,
+  shifts included, and its GPU suite's `integers ›` the same law.
