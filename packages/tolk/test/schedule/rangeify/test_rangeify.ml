@@ -606,6 +606,39 @@ let shared =
           in
           let back o = Ops.after o [ Ops.store o (flip (flip o)) ] in
           equal int 0 (kernels_of (Ops.sink [ back a; back b ])));
+      test "outputs that bind one variable to two values run as two kernels"
+        (fun () ->
+          (* Each stores at [k * 4] of its storage, [k] bound to [j]: one
+             kernel would pass [k] one value. *)
+          let hi, lo = two_sum (input ~shape:[ 4 ] 1) (input ~shape:[ 4 ] 2) in
+          let k = Ops.variable "k" (`Int Bigint.zero) (`Int Bigint.one) in
+          let at slot j v =
+            let o = Shape.param ~device:cpu ~shape:[ Int 8 ] slot Float32 in
+            let start = Ops.O.(Shape.bind k (`Int (Bigint.of_int j)) * int 4) in
+            let region = Some (Ops.Sym start, Ops.Sym Ops.O.(start + int 4)) in
+            Ops.after o [ Ops.store (Shape.shrink o [ region ]) v ]
+          in
+          equal int 2 (kernels_of (Ops.sink [ at 0 0 hi; at 4 1 lo ]));
+          equal int 1 (kernels_of (Ops.sink [ at 0 1 hi; at 4 1 lo ])));
+      test "outputs that share a computation over such stores run as one kernel"
+        (fun () ->
+          (* The stores of a state bind [k] to 0 and 1; two outputs that share
+             a computation over the state bind nothing themselves. *)
+          let k = Ops.variable "k" (`Int Bigint.zero) (`Int Bigint.one) in
+          let b = Shape.param ~device:cpu ~shape:[ Int 8 ] 8 Float32 in
+          let at j v =
+            let start = Ops.O.(Shape.bind k (`Int (Bigint.of_int j)) * int 4) in
+            let region = Some (Ops.Sym start, Ops.Sym Ops.O.(start + int 4)) in
+            Ops.store (Shape.shrink b [ region ]) v
+          in
+          let state =
+            Ops.after b
+              [ at 0 Ops.O.(input ~shape:[ 4 ] 1 * float 2.);
+                at 1 Ops.O.(input ~shape:[ 4 ] 2 * float 3.) ]
+          in
+          let c = Ops.exp2 state in
+          let sink = stores2 ~size:8 Ops.O.(c + float 1.) Ops.O.(c * float 2.) in
+          equal int 3 (kernels_of sink));
       test "outputs that share only a load run as two kernels" (fun () ->
           equal int 2 (kernels_of (stores2 Ops.O.(x + x) Ops.O.(x * x))));
       test "outputs that share a reduction run as one kernel" (fun () ->

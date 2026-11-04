@@ -373,6 +373,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` stores an assembly (`Nx.stack`, `Nx.concatenate`, `Nx.set`,
+  `Nx.pad`) unless it is one view over its background: selected, every piece
+  computed at each element, and the host ran 33 stacked rows uncompiled.
 - `Rune.jit` raises the `Failure` that names a missing compiler library, as
   NVRTC's, and any failure inside the compiler, at the call, where it
   evaluated the program uncompiled. On a set of GPUs, which has no eager

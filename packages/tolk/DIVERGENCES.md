@@ -3488,7 +3488,8 @@ driver signals its own (D146).
   (`merge_reduce_ends`, which already makes one loop of the reductions that
   close one range).
 - **tolk:** for stores, `Indexing.region`, `Indexing.views`,
-  `Indexing.waits_over`, `Indexing.share_loops` (its `crossed`),
+  `Indexing.waits_over`, `Indexing.binds_apart`, `Indexing.share_loops` (its
+  `crossed`),
   `Indexing.loops_of` and `Indexing.end_shared` (which
   `Indexing.bufferize_and_index` returns for each store of a group), with
   `Indexing.data_srcs`, `Indexing.create_bufferize_and_index_based_on_ranges`
@@ -3525,8 +3526,13 @@ driver signals its own (D146).
   all. A group whose every store is dropped, as a store of a value into itself
   is, leaves the empty stack, which waits on nothing and makes no kernel,
   where tinygrad, whose stores end apart, drops a noop and the end of one.
-  Outputs that share only loads stay apart; finished calls of one domain may
-  still share a launch (D199).
+  Two stores that bind a variable of one name to two values in what their
+  kernels compute (not past a state) stay apart, as rune's stores of alike
+  pieces of two assemblies, each region at [k step] for its own [k], do: one
+  kernel passes a name one value. No recorded graph
+  binds a name to two values, so the patch leaves this out. Outputs that
+  share only loads stay apart; finished calls of one domain may still share a
+  launch (D199).
 
   Reductions: a reduction whose output is indexed by the same ranges as an
   earlier one's in the walk, and that reduces axes of the same sizes, takes
@@ -3576,7 +3582,8 @@ driver signals its own (D146).
   runs each).
 - **Pinned by:** for stores, the Rangeify suite (`test/schedule/rangeify`):
   `get_kernel_graph › outputs that share a computation` (every test, `slices
-  of one product through two views run as two kernels`, `slices that also
+  of one product through two views run as two kernels`, `outputs that bind
+  one variable to two values run as two kernels`, `slices that also
   share a computation run as two kernels`, `outputs that read a product
   through one view run as one kernel` and `outputs that store their own
   storage back are no kernel` among them); its recorded
@@ -6341,7 +6348,8 @@ and an initial value is added after it (D260).
   `schedule/rangeify.py:321-336` (`split_store`, one kernel per store or
   end).
 - **tolk:** `Schedule.merge_calls`, `Schedule.merge_linear`,
-  `Schedule.shape`, `Schedule.member`, `Schedule.merged` and
+  `Schedule.shape`, `Schedule.member`, `Schedule.merged`, `Schedule.binds`,
+  `Schedule.agree` and
   `Schedule.storage_taken`, which
   `Schedule.create_linear_with_vars` runs after `pm_copy_from_store`, after
   the schedule cache.
@@ -6350,7 +6358,10 @@ and an initial value is added after it (D260).
   its ranges, all their storage lies on one device, their domains are the
   same ranges by position (constant sizes and kinds), neither reads or
   writes storage the other writes (storage compared by `Ops.storage_base`,
-  so two views of one buffer conflict), the later moves up to the group's
+  so two views of one buffer conflict), their bodies bind no variable of one
+  name to two values, since the merged call passes a name one value (rune's
+  stores of alike pieces bind one name to each piece's start), the later
+  moves up to the group's
   first call only past calls it does not conflict with, and the merged call
   passes at most `MAX_KERNEL_BUFFERS` buffers when that is set. A call moves
   earlier only where every storage whose life that starts earlier is storage
@@ -6392,7 +6403,8 @@ and an initial value is added after it (D260).
   by norn's `nuts/schools/4` on the host; a CUDA row of the hand-written
   density is pending.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
-  `create_linear_with_vars › merged calls` (every test: independent calls in
+  `create_linear_with_vars › merged calls` (every test, `calls that bind one
+  variable to two values run apart` among them: independent calls in
   a loop and of one element at the top level run as one, calls of many
   elements at the top level, a reader of another's output, an overwriter of
   what another reads, two runs of one buffer, a reduction and two devices

@@ -1388,6 +1388,23 @@ val jit :
     storage of the values it computes from its first call on, so that a call
     allocates only its results.
 
+    An {e assembly} is a value made of pieces at regions of it, as {!Nx.stack},
+    {!Nx.concatenate}, {!Nx.set} and {!Nx.pad} make one. On one device, an
+    assembly of at most one piece over its background, the fill or a first
+    piece that holds every element, where that piece is a view of an argument,
+    a capture or a stored value, or a constant, is selected in its reader's
+    kernel: each element loads at most two values and computes only its
+    background. Every other assembly is storage of its own: first the
+    covering piece, or the fill unless the pieces hold each element once, then
+    its pieces, each computed once and written to exactly its elements, those
+    whose regions do not meet together, a piece over an earlier one's elements
+    after them. A stack of [p] computed rows so costs
+    their work once and a write and a read of the result, where selecting
+    every row at each element would cost [p] times their work. Where few
+    pieces compute little the write and the read can cost more than the
+    selection would: four pieces of [[4096; 64]] stacked along a new last axis
+    and scaled take 22 µs more on an RTX 5000 Ada, 2.7 times as long.
+
     {b Several devices.} A program whose values lie on several devices of one
     set, cut across them ({!Nx.Placement.split}, {!Nx.Placement.mesh}), whole on
     each ({!Nx.Placement.on}) or each whole on one of them, computes each
@@ -1401,14 +1418,14 @@ val jit :
     it. A program for one device serves every device of its target, so the
     devices of a set compile each kernel once: a window moves between devices,
     and a kernel reads the coordinates of its window, from a start each
-    device's launch of it passes. A value a device assembles from pieces, as a
-    closing or a gather does, is storage of its own, each piece stored or
-    copied into its region. Where every window of a cut has one shape, the
-    kernels a program makes do not grow with the number of devices: they
-    are the same from 4 devices on, and over 2 or 3 at most those. A {!scan} or
-    an {!iterate} over such values is one loop, each trip running every
-    device's kernels and moves of its step; each device reads its piece of a
-    row from its piece of the rows. Each argument's piece on a device is an
+    device's launch of it passes. Every assembly of a piece or more over
+    several devices, as a closing or a gather makes, is storage of its own,
+    each piece stored or copied into its region and freed by its last reader.
+    Where every window of a cut has one shape, the kernels a program makes do
+    not grow with the number of devices: they are the same from 4 devices on,
+    and over 2 or 3 at most those. A {!scan} or an {!iterate} over such values
+    is one loop, each trip running every device's kernels and moves of its
+    step; each device reads its piece of a row from its piece of the rows. Each argument's piece on a device is an
     argument of its own for the variant, which a donated argument's piece
     lends to the result's piece on that device ({!section-donation}). Such a
     program holds no memory
@@ -1790,10 +1807,6 @@ val jit :
     - the tangents of a {!custom_vjp}'s results, which a {!jvp} of it makes and
       which then raise as eagerly;
     - an operation the compiler does not lower;
-    - on a device that runs on the host ({!Rig.runs_on_host}), an assembly
-      whose selections would make more than 16 times the work of nx's kernel,
-      as {!Nx.stack} of 33 rows or more does: compiled, every element would
-      select among all the pieces;
     - a check whose flags lie on another set than the program's first argument,
       or else its first result, which raises at a wait on that set;
     - no value, or an argument or a result with an element on a device other
@@ -1854,21 +1867,22 @@ val jit :
     Written with placement, the three cut along axis 0 and each layer's
     weights placed whole on every device inside its calls, one call
     forward, one backward by {!vjp} and one update per layer, its state
-    donated ({!Nx.donate}), such a step evaluates over the devices, its
-    forward and backward calls gathering a cut argument, and its update
-    compiles. Each evaluated call lets a value go after its last read
-    ({!section-evaluated}), nx reduces each gradient's partial sums in
-    pieces of at most [C = 256] KiB ({!Nx.section-reductions}), and the
-    update writes each piece of its results over the piece of the state it
-    is donated on that device ({!section-donation}), with the bits it gives
-    undonated. Adam's update, written elementwise, so holds beside the state
-    at most one temporary of a share.
-    For layers [relu (h w)] of [L] bytes of weights, a step so holds on
-    each device at most [(P + G + O) / n], its share of the activations it
-    keeps and of the cotangent it carries back, and what closing a layer's
-    gradient holds, its partial sum, its share and a piece:
-    [(1 + 1 / n) (L + min (L, C))], under two layers where [L] holds
-    [C (n + 1) / (n - 1)] or more. *)
+    donated ({!Nx.donate}), each call of such a step compiles over the
+    devices, its forward and backward calls gathering a cut argument. A
+    gathered value is an assembly, storage of its own, each piece freed by
+    its last reader ({!section-compiled}); a call reduces each gradient's
+    partial sums in pieces of at most [C = 256] KiB, as nx does
+    ({!Nx.section-reductions}); and the update writes each piece of its
+    results over the piece of the state it is donated on that device
+    ({!section-donation}), with the bits it gives undonated. Adam's update,
+    written elementwise, so holds beside the state at most one temporary of
+    a share. For layers [relu (h w)] of [L] bytes of weights, a step so
+    holds on each device at most [(P + G + O) / n], its share of the
+    activations it keeps and of the cotangent it carries back, and what
+    closing a layer's gradient holds, its partial sum, its share and a
+    piece: [(1 + 1 / n) (L + min (L, C))], under two layers where [L] holds
+    [C (n + 1) / (n - 1)] or more. Each call allocates the storage of each
+    value it assembles afresh. *)
 
 (** {2:inspect Inspecting a trace} *)
 

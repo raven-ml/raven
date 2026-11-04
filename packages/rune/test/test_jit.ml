@@ -127,67 +127,6 @@ type bitcast_case =
       ('v, 's) Nx.dtype * ('w, 'r) Nx.dtype * view * bool * int
       -> bitcast_case
 
-(* [random_bits dt s st] is a value of [dt] and shape [s] of random bits. *)
-let random_bits (type v s) (dt : (v, s) Nx.dtype) s st : (v, s, Nx.host) Nx.t =
-  let n = numel s in
-  let byte () = Random.State.int st 256 in
-  match Nx.Dtype.bits dt with
-  | 1 ->
-      Nx.bitcast dt
-        (Nx.create Nx.bit s (Array.init n (fun _ -> Random.State.bool st)))
-  | 4 ->
-      Nx.bitcast dt
-        (Nx.create Nx.uint4 s (Array.init n (fun _ -> Random.State.int st 16)))
-  | 8 -> Nx.bitcast dt (Nx.create Nx.uint8 s (Array.init n (fun _ -> byte ())))
-  | b ->
-      let w = b / 8 in
-      Nx.bitcast dt
-        (Nx.create Nx.uint8 (Array.append s [| w |])
-           (Array.init (n * w) (fun _ -> byte ())))
-
-(* [viewed v ~offset s make] is a value of shape [s] as the view [v] of one
-   [make] gives: its last axis stepped by 2 where strided, its first broadcast,
-   its storage's first element skipped where [offset]. *)
-let viewed v ~offset s make =
-  let r = Array.length s in
-  let make s =
-    if not offset then make s
-    else
-      let n = numel s in
-      Nx.reshape s (Nx.slice [ Nx.R (1, n + 1) ] (make [| n + 1 |]))
-  in
-  match v with
-  | Flipped -> Nx.flip (make s)
-  | Strided when r > 0 ->
-      let s' = Array.copy s in
-      s'.(r - 1) <- 2 * s.(r - 1);
-      let step i = if i = r - 1 then Nx.Rs (0, s'.(i), 2) else Nx.A in
-      Nx.slice (List.init r step) (make s')
-  | Broadcast when r > 0 && s.(0) > 0 ->
-      let s1 = Array.copy s in
-      s1.(0) <- 1;
-      Nx.broadcast_to s (make s1)
-  | Permuted when r > 1 ->
-      let rev = Array.init r (fun i -> s.(r - 1 - i)) in
-      Nx.transpose (make rev)
-  | Offset _ -> invalid_arg "viewed: an offset is [~offset]"
-  | Plain | Strided | Broadcast | Permuted -> make s
-
-(* [raw x] is [x]'s shape and each element's bits, read through a bitcast to the
-   unsigned integers of its width, a complex128's as two [uint64]s. *)
-let raw (type v s d) (x : (v, s, d) Nx.t) =
-  let each f y = Array.map f (Nx.to_array y) in
-  let elements =
-    match Nx.Dtype.bits (Nx.dtype x) with
-    | 1 -> each (fun b -> if b then "1" else "0") (Nx.bitcast Nx.bit x)
-    | 4 -> each string_of_int (Nx.bitcast Nx.uint4 x)
-    | 8 -> each string_of_int (Nx.bitcast Nx.uint8 x)
-    | 16 -> each string_of_int (Nx.bitcast Nx.uint16 x)
-    | 32 -> each (Printf.sprintf "%lx") (Nx.bitcast Nx.uint32 x)
-    | _ -> each (Printf.sprintf "%Lx") (Nx.bitcast Nx.uint64 x)
-  in
-  (Nx.shape x, elements)
-
 let views = [ Plain; Flipped; Strided; Broadcast; Permuted ]
 
 (* Every pair of dtypes, the views and offsets in turn. *)
@@ -332,25 +271,221 @@ let law_rshift (Shift_case (dt, n, seed)) =
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal ~msg:"jit" int64s expected (ints y)
 
-(* A stack of 33 rows on the host, past the bound on an assembly's
-   selections, is evaluated, giving eager's bits; one of 32 compiles. *)
-let test_stack_evaluated () =
+(* Assemblies on the host
+
+   On the host an assembly compiles to eager's bits ({!Nx.Prim.Assemble}: the
+   last piece's element where pieces overlap, the fill where none holds the
+   index) at every number of pieces, no call evaluated ({!Assemblies.law}). *)
+
+(* A stack of rows on the host compiles to eager's bits, a [-0.] and a
+   signalling NaN among them, at 32, 33 and 256 rows. *)
+let test_stack () =
   let row i =
-    Nx.create Nx.float32 [| 4 |]
-      (Array.init 4 (fun j ->
-           if i = 3 && j = 1 then -0. else sin (Float.of_int ((i * 4) + j))))
+    Nx.bitcast Nx.float32
+      (Nx.create Nx.int32 [| 4 |]
+         (Array.init 4 (fun j ->
+              if i = 3 && j = 1 then Int32.bits_of_float (-0.)
+              else if i = 5 && j = 2 then 0x7f800001l
+              else Int32.bits_of_float (sin (Float.of_int ((i * 4) + j))))))
   in
-  let bits x = Nx.to_array (Nx.bitcast Nx.int32 x) in
-  let stack rows =
+  let f = Rune.jit T.(list tensor @-> returns tensor) Nx.stack in
+  List.iter
+    (fun p ->
+      let rows = List.init p row in
+      let before = Rune.evaluations () in
+      let y = f rows in
+      equal ~msg:(Printf.sprintf "%d rows compiled" p) int 0
+        (Rune.evaluations () - before);
+      equal
+        ~msg:(Printf.sprintf "%d rows" p)
+        codes_t
+        (raw (Nx.stack rows))
+        (raw y))
+    [ 32; 33; 256 ]
+
+(* A concatenation of each row of a [[2; k; 9]] float64 value, doubled,
+   compiles on the host to eager's bits at 46, 47 and 100 rows: each piece is
+   a store into the result's storage, which the stores share. *)
+let test_doubled_rows () =
+  List.iter
+    (fun k ->
+      let x =
+        Nx.create Nx.float64 [| 2; k; 9 |]
+          (Array.init (2 * k * 9) Float.of_int)
+      in
+      let f x =
+        Nx.concatenate ~axis:1
+          (List.init k (fun i ->
+               Nx.mul_s (Nx.slice [ Nx.A; Nx.R (i, i + 1); Nx.A ] x) 2.))
+      in
+      let before = Rune.evaluations () in
+      let y = Rune.jit' f x in
+      equal ~msg:(Printf.sprintf "%d rows compiled" k) int 0
+        (Rune.evaluations () - before);
+      equal ~msg:(Printf.sprintf "%d rows" k) codes_t (raw (f x)) (raw y))
+    [ 46; 47; 100 ]
+
+(* Two assemblies of the same computed pieces, crossed, as [[a; b]] and
+   [[b; a]], compile on the host to eager's bits, each piece correctly
+   rounded. *)
+let test_crossed () =
+  let x = Nx.create f32 [| 3 |] [| 0.3; -1.1; 0.7 |] in
+  let f x =
+    let a = Nx.mul_s x 0.25 and b = Nx.add_s x 1. in
+    Nx.sub (Nx.stack ~axis:1 [ a; b ]) (Nx.stack ~axis:1 [ b; a ])
+  in
+  let before = Rune.evaluations () in
+  let y = Rune.jit' f x in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+  equal codes_t (raw (f x)) (raw y)
+
+(* A loop's step that assembles its carry anew from pieces of it, a roll and
+   a set of one element, compiles to eager's bits, in a scan and in an
+   iterate: each trip's stores read the carry as the trip began. So does a
+   step whose assembly holds a piece no trip changes, the double of a value
+   the loop reads, beside one each trip computes. *)
+let test_loop_assembly () =
+  let x = Nx.create f32 [| 6 |] [| 1.; -0.; 3.; 4.; 5.; 6. |] in
+  let xs = Nx.create f32 [| 4 |] [| 0.5; 0.25; -2.; 8. |] in
+  let w = Nx.create f32 [| 2 |] [| -0.; 1.5 |] in
+  let rolled c r =
+    Nx.set [ Nx.I 0 ] (Nx.add (Nx.get [ 5 ] c) r) (Nx.roll 1 (Nx.mul_s c 2.))
+  in
+  let joined c r =
+    Nx.concatenate ~axis:0
+      [ Nx.mul_s w 2.; Nx.add (Nx.mul_s (Nx.slice [ Nx.R (1, 5) ] c) 2.) r ]
+  in
+  let check name ~at ~above step =
+    let scanned x xs =
+      fst
+        (Rune.scan T.tensor T.tensor T.unit
+           (fun c r -> (step c r, ()))
+           ~init:x xs)
+    in
+    let iterated x =
+      Rune.iterate' ~max:20
+        ~until:(fun c -> Nx.greater_s (Nx.get [ at ] c) above)
+        (fun c -> step c (Nx.get [ 1 ] c))
+        x
+    in
     let before = Rune.evaluations () in
-    let f = Rune.jit Nx.Ptree.(list tensor @-> returns tensor) Nx.stack in
-    let y = f rows in
-    equal ~msg:"bits" (Testable.array Testable.int32)
-      (bits (Nx.stack rows)) (bits y);
-    Rune.evaluations () - before
+    let y = Rune.jit (pair_fn ()) scanned x xs in
+    let z = Rune.jit' iterated x in
+    equal ~msg:(name ^ " compiled") int 0 (Rune.evaluations () - before);
+    equal ~msg:(name ^ " scan") codes_t (raw (scanned x xs)) (raw y);
+    equal ~msg:(name ^ " iterate") codes_t (raw (iterated x)) (raw z)
   in
-  equal ~msg:"32 rows compiled" int 0 (stack (List.init 32 row));
-  equal ~msg:"33 rows evaluated" int 1 (stack (List.init 33 row))
+  check "rolled" ~at:0 ~above:1000. rolled;
+  check "joined" ~at:5 ~above:50. joined
+
+(* Two assemblies whose pieces are of one shape, columns [[3; 3]] of
+   [[3; 6]], each with a piece computed from one value at another region, the
+   triangles below and above its diagonal, compile to eager's bits, at the top
+   level, in a loop's step and from two calls of one function: one kernel of
+   both pieces would store them at one region. *)
+let test_alike_assemblies () =
+  let value k =
+    Nx.create f32 [| 3; 3 |] (Array.init 9 (fun i -> Float.of_int (i + k)))
+  in
+  let x = value 0 and y = value 10 and z = value 20 in
+  let both x y z =
+    let lower = Nx.tril ~k:(-1) (Nx.transpose x) in
+    let a = Nx.concatenate ~axis:1 [ Nx.neg y; lower ] in
+    let b = Nx.concatenate ~axis:1 [ Nx.triu ~k:1 x; z ] in
+    Nx.sub a b
+  in
+  let rows = Nx.stack [ y; z ] in
+  let scanned x rows =
+    fst
+      (Rune.scan T.tensor T.tensor T.unit
+         (fun c r ->
+           let s = both c r (Nx.neg r) in
+           (Nx.slice [ Nx.A; Nx.R (0, 3) ] s, ()))
+         ~init:x rows)
+  in
+  (* One assembling function called twice inside a program, its pieces
+     crossed: each call is an assembly of its own. *)
+  let stacked = Rune.remat T.(list tensor @-> returns tensor) Nx.stack in
+  let twice x =
+    let a = Nx.mul_s x 0.25 and b = Nx.add_s x 1. in
+    Nx.sub (stacked [ a; b ]) (stacked [ b; a ])
+  in
+  let three = T.(tensor @-> tensor @-> tensor @-> returns tensor) in
+  let before = Rune.evaluations () in
+  let top = Rune.jit three both x y z in
+  let looped = Rune.jit (pair_fn ()) scanned x rows in
+  let called = Rune.jit' twice x in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+  equal ~msg:"top level" codes_t (raw (both x y z)) (raw top);
+  equal ~msg:"loop" codes_t (raw (scanned x rows)) (raw looped);
+  equal ~msg:"called twice" codes_t (raw (twice x)) (raw called)
+
+(* A stack of 64 rows of sines on one device holds no row beside its result:
+   each row's sines are stored into the result as they compute. A call fits a
+   budget of its result's bytes above what the device held after a first
+   call, and leaves them alone held.
+   Summed, the stack is a value the program holds from its first call on, so
+   a call fits half the stack's bytes. *)
+let test_stack_memory () =
+  let n = 256 and rows = 64 in
+  let bytes = 4 * n * rows in
+  let xs =
+    List.init rows (fun i ->
+        Nx.place Memory.On.on (Nx.full f32 [| n |] (Float.of_int i)))
+  in
+  let sines xs = Nx.stack (List.map Nx.sin xs) in
+  let kept = ref [] in
+  let within budget f =
+    let call () = kept := f xs :: !kept in
+    call ();
+    kept := [];
+    let before = Memory.settled () in
+    Rig.set_budget Memory.device (before + budget);
+    Fun.protect
+      ~finally:(fun () -> Rig.set_budget Memory.device max_int)
+      (fun () ->
+        let calls = Rune.evaluations () in
+        call ();
+        equal ~msg:"compiled" int 0 (Rune.evaluations () - calls));
+    let held = Memory.settled () - before in
+    kept := [];
+    held
+  in
+  let stack = Rune.jit T.(list tensor @-> returns tensor) sines in
+  equal ~msg:"the stack held" int bytes (within bytes stack);
+  let summed =
+    Rune.jit T.(list tensor @-> returns tensor) (fun xs -> Nx.sum (sines xs))
+  in
+  at_most int ~msg:"the sum held" ~than:(bytes / 2) (within (bytes / 2) summed);
+  ignore (Sys.opaque_identity xs)
+
+(* One view over its background is selected in its reader's kernel: a pad
+   of an argument, a row set into an argument and a pad of zeros made like an
+   argument, a constant converted, each read by a sum, hold no storage of the
+   assembly, so a first call fits a budget of less than
+   the argument's bytes above what the device held before it. *)
+let test_selection_memory () =
+  let n = 1024 in
+  let x = Nx.place Memory.On.on (Nx.full f32 [| n |] 0.5) in
+  let m = Nx.place Memory.On.on (Nx.full f32 [| 32; 32 |] 0.25) in
+  let v = Nx.place Memory.On.on (Nx.full f32 [| 32 |] 2.) in
+  let first budget f =
+    let before = Memory.settled () in
+    Rig.set_budget Memory.device (before + budget);
+    Fun.protect
+      ~finally:(fun () -> Rig.set_budget Memory.device max_int)
+      (fun () ->
+        let calls = Rune.evaluations () in
+        ignore (Sys.opaque_identity (Nx.to_array (f ())));
+        equal ~msg:"compiled" int 0 (Rune.evaluations () - calls))
+  in
+  first ((4 * n) - 1) (fun () ->
+      Rune.jit' (fun x -> Nx.sum (Nx.pad [| (0, 3 * n) |] 0. x)) x);
+  first ((4 * 32 * 32) - 1) (fun () ->
+      Rune.jit (pair_fn ()) (fun m v -> Nx.sum (Nx.set [ Nx.I 3 ] v m)) m v);
+  first ((4 * n) - 1) (fun () ->
+      let zeros x = Nx.pad [| (0, 3 * n) |] 0. (Nx.zeros_like x) in
+      Rune.jit' (fun x -> Nx.sum (zeros x)) x)
 
 (* [square (c * y)] at each integer width where [c * c] wraps to 0, [c] being
    2^(bits / 2) or the greatest power of two, the least signed value: every
@@ -5353,8 +5488,22 @@ let () =
              prop "a key argument draws eager's values, one program per shape"
                (Gen.pair Gen.int Gen.int) law_key_argument;
              test "captures are read as they were traced" test_captures;
-             test "a stack of 33 rows on the host is evaluated"
-               test_stack_evaluated;
+             test "a stack compiles to eager's bits at any number of rows"
+               test_stack;
+             prop ~count:40 ~examples:Assemblies.examples
+               "an assembly on the host compiles to eager's bits"
+               (Gen.with_pp Assemblies.pp Assemblies.gen)
+               (Assemblies.law (module Nx.Host));
+             test "a stack of computing rows holds its result alone"
+               test_stack_memory;
+             test "one view over its background holds no storage"
+               test_selection_memory;
+             test "a concatenation of doubled rows compiles at any count"
+               test_doubled_rows;
+             test "crossed assemblies of computed pieces compile"
+               test_crossed;
+             test "a loop's step assembles its carry anew" test_loop_assembly;
+             test "two assemblies of alike pieces compile" test_alike_assemblies;
              prop ~count:24 ~examples:sliced_examples
                "a scatter at a slice of a capture sliced again gives eager's \
                 values"

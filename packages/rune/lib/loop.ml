@@ -99,7 +99,10 @@ let cut ?(hoist = true) ~own next args body =
   let weak u = List.exists (Dtype.equal (Ops.dtype u)) Dtype.weaks in
   (* Without hoisting, only storage itself is passed, a buffer or another
      call's parameter: what reads it stays, and so does a value after the
-     work that writes it, such as a nested loop's carry. *)
+     work that writes it, such as a nested loop's carry. A store is no value
+     to pass: it stays, with what it writes and where passed where they do
+     not vary, as an assembly's store of a piece no trip changes beside one
+     each trip computes. *)
   let stored u =
     match Ops.op u with
     | Op.Buffer -> true
@@ -116,6 +119,7 @@ let cut ?(hoist = true) ~own next args body =
             || reads_storage u
                && (Op.Set.mem (Ops.op u) Op.Set.movement
                   || weak u
+                  || Ops.op u = Op.Store
                   || ((not hoist) && not (stored u)))
           then
             let src = List.map rebuild (sources u) in

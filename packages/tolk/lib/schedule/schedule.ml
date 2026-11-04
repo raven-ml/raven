@@ -1716,13 +1716,35 @@ let merged calls =
   call (sink ~kernel:(kernel_info ()) root) args
 
 (* A group of calls: the position of its first, its members, last first, the
-   storage they are passed, and whether it still takes calls. *)
+   storage they are passed, the variables they bind, and whether it still
+   takes calls. *)
 type group = {
   first : int;
   mutable members : (t * member) list;
   passed : unit Tbl.t;
+  mutable bound : (string * Dtype.value) list;
   mutable open_ : bool;
 }
+
+(* The variables the body of the call [si] binds, by name, with their
+   values. *)
+let binds si =
+  List.filter_map
+    (fun u ->
+      match (op u, arg u) with
+      | Op.Param, Param { name = Some n; bound = Some v; _ } -> Some (n, v)
+      | _ -> None)
+    (toposort ~calls:Skip (body si))
+
+(* Whether the binds [bs] give no name of [bound] another value: a merged
+   call passes a name one value. *)
+let agree bound bs =
+  List.for_all
+    (fun (n, v) ->
+      match List.assoc_opt n bound with
+      | Some w -> Dtype.equal_const v w
+      | None -> true)
+    bs
 
 (* The groups of one device and domain, in the order of their first calls, each
    with the next that may be open past it. *)
@@ -1788,8 +1810,9 @@ let rec merge_linear ~shapes ~held ~free linear =
     in
     Tbl.length g.passed + List.length fresh <= limit
   in
-  let join g si m =
+  let join g si m bs =
     g.members <- (si, m) :: g.members;
+    g.bound <- bs @ g.bound;
     List.iter
       (fun a -> if addrspace a <> Some Dtype.Alu then Tbl.replace g.passed a ())
       (List.tl (src si))
@@ -1835,12 +1858,16 @@ let rec merge_linear ~shapes ~held ~free linear =
                 Domain.replace groups key k;
                 k
           in
+          (* A group whose call would bind a name to two values is passed
+             over and stays open; one past the buffer limit closes. *)
+          let bs = binds e in
           let rec pick j =
             let j = open_from k j in
             if j >= Dynarray.length k.gs then None
             else
               let g = Dynarray.get k.gs j in
-              if fits g e then Some g
+              if not (agree g.bound bs) then pick (j + 1)
+              else if fits g e then Some g
               else begin
                 g.open_ <- false;
                 pick (j + 1)
@@ -1848,14 +1875,20 @@ let rec merge_linear ~shapes ~held ~free linear =
           in
           match pick (at_or_after k bound) with
           | Some g ->
-              join g e m;
+              join g e m bs;
               joined.(i) <- true;
               g.first
           | None ->
               let g =
-                { first = i; members = []; passed = Tbl.create 8; open_ = true }
+                {
+                  first = i;
+                  members = [];
+                  passed = Tbl.create 8;
+                  bound = [];
+                  open_ = true;
+                }
               in
-              join g e m;
+              join g e m bs;
               Dynarray.add_last k.gs g;
               Dynarray.add_last k.next (Dynarray.length k.gs);
               opened.(i) <- Some g;

@@ -157,6 +157,69 @@ let make (type v s) (dt : (v, s) D.t) s o : (v, s, Nx.host) Nx.t =
       if s.(0) = 0 then create s [||]
       else Nx.broadcast_to s (create s1 o.values)
 
+(* Bits *)
+
+(* [random_bits dt s st] is a value of [dt] and shape [s] of random bits. *)
+let random_bits (type v s) (dt : (v, s) Nx.dtype) s st : (v, s, Nx.host) Nx.t =
+  let n = numel s in
+  let byte () = Random.State.int st 256 in
+  match Nx.Dtype.bits dt with
+  | 1 ->
+      Nx.bitcast dt
+        (Nx.create Nx.bit s (Array.init n (fun _ -> Random.State.bool st)))
+  | 4 ->
+      Nx.bitcast dt
+        (Nx.create Nx.uint4 s (Array.init n (fun _ -> Random.State.int st 16)))
+  | 8 -> Nx.bitcast dt (Nx.create Nx.uint8 s (Array.init n (fun _ -> byte ())))
+  | b ->
+      let w = b / 8 in
+      Nx.bitcast dt
+        (Nx.create Nx.uint8 (Array.append s [| w |])
+           (Array.init (n * w) (fun _ -> byte ())))
+
+(* [viewed v ~offset s make] is a value of shape [s] as the view [v] of one
+   [make] gives: its last axis stepped by 2 where strided, its first broadcast,
+   its storage's first element skipped where [offset]. *)
+let viewed v ~offset s make =
+  let r = Array.length s in
+  let make s =
+    if not offset then make s
+    else
+      let n = numel s in
+      Nx.reshape s (Nx.slice [ Nx.R (1, n + 1) ] (make [| n + 1 |]))
+  in
+  match v with
+  | Flipped -> Nx.flip (make s)
+  | Strided when r > 0 ->
+      let s' = Array.copy s in
+      s'.(r - 1) <- 2 * s.(r - 1);
+      let step i = if i = r - 1 then Nx.Rs (0, s'.(i), 2) else Nx.A in
+      Nx.slice (List.init r step) (make s')
+  | Broadcast when r > 0 && s.(0) > 0 ->
+      let s1 = Array.copy s in
+      s1.(0) <- 1;
+      Nx.broadcast_to s (make s1)
+  | Permuted when r > 1 ->
+      let rev = Array.init r (fun i -> s.(r - 1 - i)) in
+      Nx.transpose (make rev)
+  | Offset _ -> invalid_arg "viewed: an offset is [~offset]"
+  | Plain | Strided | Broadcast | Permuted -> make s
+
+(* [raw x] is [x]'s shape and each element's bits, read through a bitcast to the
+   unsigned integers of its width, a complex128's as two [uint64]s. *)
+let raw (type v s d) (x : (v, s, d) Nx.t) =
+  let each f y = Array.map f (Nx.to_array y) in
+  let elements =
+    match Nx.Dtype.bits (Nx.dtype x) with
+    | 1 -> each (fun b -> if b then "1" else "0") (Nx.bitcast Nx.bit x)
+    | 4 -> each string_of_int (Nx.bitcast Nx.uint4 x)
+    | 8 -> each string_of_int (Nx.bitcast Nx.uint8 x)
+    | 16 -> each string_of_int (Nx.bitcast Nx.uint16 x)
+    | 32 -> each (Printf.sprintf "%lx") (Nx.bitcast Nx.uint32 x)
+    | _ -> each (Printf.sprintf "%Lx") (Nx.bitcast Nx.uint64 x)
+  in
+  (Nx.shape x, elements)
+
 (* Placements *)
 
 module Two =

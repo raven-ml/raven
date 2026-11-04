@@ -102,7 +102,7 @@ tinygrad's `Tensor` builds the same operation, the lowering builds tinygrad's
 decomposition if it computes what nx states. This section lists every place
 where it builds something else, or builds what tinygrad has no source for.
 
-An entry is admitted for one of four reasons only:
+An entry is admitted for one of five reasons only:
 
 - **(a) an OCaml constraint;**
 - **(b) nx's stated meaning:** the operation's contract in `Nx_kernel`
@@ -110,7 +110,9 @@ An entry is admitted for one of four reasons only:
   kernels compute;
 - **(c) the engine's contract:** rig's submission protocol;
 - **(d) measured speed:** of a named raven workload, pinned by a bench row on
-  fudge whose baseline would catch the regression.
+  fudge whose baseline would catch the regression;
+- **(e) a promise `rune.mli` states from a reference it cites,** pinned by
+  its test.
 
 A part of an entry whose reason is missing says "Reason: none" until it is
 measured, withdrawn or redesigned.
@@ -730,61 +732,74 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   their bounds`, `› running moments hold their bounds`, `Lower_reduce › cases
   › a running variance that overflows is +∞`.
 
-### I2. Pieces are selected as their bits
+### I2. An assembly is one view selected, or storage
 
-- **Reference:** `mixin/op.py:773` (`cat`: each piece zero-padded to the whole,
-  the pieces summed).
-- **Raven:** `lower_index.ml` (`assemble`, `placed`, `crowded`);
-  `compile.ml` (`issue`, `assembled`).
-- **Differs:** an assembly places each piece at its region and selects it with
-  `where` over the pieces before it, floats as their bits; empty pieces are
-  dropped first. The reference's sum turns a `-0.` into `+0.` and quiets a
-  signalling NaN. In a program on one device that runs on the host, an
-  assembly whose selections exceed 16 times eager's work (`p N > 16 (N +
-  m)`, `p` pieces of `m` elements in all over `N`) is declined, and the
-  program runs uncompiled. On another device, as a GPU, which has no eager
-  kernels to run it, the selections compile whatever the work, as the
-  reference sums any number of pieces. In a program over several devices an
-  assembly is storage of its own (`compile.ml`, `assembled`): pieces that hold each element once
-  are each stored into their region; otherwise the fill is stored over it,
-  then each piece in order, a region by steps as its box with the piece
-  selected over what the box held. Each store reads one piece, where a
-  selection reads all of them in one kernel.
+- **Reference:** `mixin/op.py:754` (`cat`: each piece zero-padded to the whole,
+  the pieces summed) and `mixin/op.py:305` (`_pad_constant`: the padded piece
+  selected with `where` on its valid range).
+- **Raven:** `compile.ml` (`issue`, `visible`, `selects`, `viewed`,
+  `assembled`, `states`, `stepped`); `lower_index.ml` (`assemble`, `placed`).
+- **Differs:** empty pieces, and those a later piece covering the value
+  hides, are dropped first. On one device, an assembly of at most one piece
+  over its background (the fill, or a first piece whose region is the whole
+  value), where that piece is a view of storage or a constant, is the
+  reference's `pad` without the sum: the piece placed at its region and
+  selected with `where`, floats as their bits. Every other assembly, and
+  every assembly of a piece or more over several devices, is storage of its
+  own: the background first (the covering piece, or the fill unless the
+  pieces hold each element once), then the pieces whose regions do not meet
+  as stores of one state, which tolk runs as one launch (D338), and a piece
+  whose region may meet an earlier one's in a later state. Each store writes
+  exactly its piece's elements, a region by steps through a view that keeps
+  every step-th element, a reversed one through a flip. The reference's sum
+  turns a `-0.` into `+0.` and quiets a signalling NaN.
 - **nx:** `nx_kernel.mli`, `assemble`: the last piece holding each index, or
   the fill, bits copied.
 - **Class:** exact.
-- **Reason:** (b).
-  - The decline on the host: none until a baseline of
-    `Jit/stack-64-sines-of-64` in `rune.thumper`, 64 rows of 64 sines
-    stacked, is recorded; then (d) by it. On fudge, three interleaved runs
-    each, the row takes 52 to 87 µs evaluated against 0.83 to 4.2 ms
-    compiled, since the selections compute every row's sines at each
-    element.
-  - The bound of 16 itself: none. It counts selections alone, and timing
-    places the crossing elsewhere. In a probe on fudge (medians of 11, two
-    interleaved runs), a compiled stack of copied rows of 64, past the bound,
-    took 10.7 µs at 33 rows against 17.6 evaluated and 306 µs at 256 against
-    301 to 379 in the quieter run, and a stack of 32 rows of sines, below the
-    bound, 334 to 706 µs compiled against 44 to 68 µs evaluated. Placing the
-    decline needs a cost model of the selected work, a design not yet made.
-  - The stores over several devices: none. They keep a fully sharded step
-    within the bound `rune.mli` states (Fully sharded training): the most a
-    step holds above its state, over 2, 4 and 8 devices at `d = 512`, is
-    2,231,040, 1,774,080 and 1,544,320 bytes, against 3,082,240, 2,590,720
-    and 2,346,880 with one selecting kernel per device and bounds of
-    2,293,760, 1,802,240 and 1,556,480. No admitted reason covers memory,
-    and they cost speed: `Jit/devices/dp-step-16` takes 4.9 to 6.2 ms
-    against 1.19 to 1.22 ms with the selection, and
-    `Jit/devices/fsdp-backward-8` 20.9 to 24.9 ms against 14.3 to 25.7 ms
-    (three interleaved runs each). Trading the memory against that time
-    needs a design.
+- **Reason:** (b) for the selection by bits. For storage, (d): a selection
+  computes each piece that computes at every element it does not hold, which
+  tolk avoids only where its heuristic folds the masks, and storage costs a
+  write and a read of the result. On fudge, the base's selection against
+  storage, three interleaved rounds under the timing lock, load 2.1-8.2, µs a
+  call: `Jit/stack-16-matvecs` 2140-2260 against 20.7-21.2 (RTX 5000
+  167.8-178.5 against 11.6), `Jit/stack-64-sines-of-64` 49.7-50.4 against
+  19.4-23.4 (RTX 5000 20.9-21.0 against 18.4-18.6),
+  `Jit/stack-256-rows-of-64` 161.3-162.2 against 79.9-81.3,
+  `Jit/cat-unequal-64-sines` 36.2-36.4 against 19.3-19.6 (RTX 5000
+  45.3-45.6 against 18.7); the base evaluated the first three on the host
+  uncompiled. A sum over a stack of 16 sines along its first and last axes
+  took 8,319-8,323 µs selected on the RTX 5000 against 49.6-53.3 stored.
+  Stated losses, storage against the selection: on the RTX 5000, pieces
+  along the minor axis, whose stores write a piece every [p] elements:
+  `Cuda/stack-4-minor-axis` 35.4-35.5 against 13.0 (+22.5), 16 sines
+  stacked along the last axis 66.7-69.5 against 42.5-42.9 (+25); a sum of
+  16 stacked sines along the stack 47.2-47.8 against 32.5-32.6; rotary
+  halves read by a row dot 13.4 against 9.1-9.2; a set of a computed row
+  19.5-19.6 against 13.8-13.9; a pad of [x + 1] 41.5-41.9 against
+  34.9-35.3. On the host, rotary halves read by a row dot 55.8-59.9 against
+  28.5-32.1, a pad of [x + 1] by one column 67.7-89.2 against 46.2-63.4, and
+  three views concatenated and doubled, `Jit/cat-3-views-scaled-4096x64`,
+  35.4-38.1 against 28.8-29.5. Read by attention
+  (`Jit/rope-in-attention-512x128`, kaun's workload), the rotary halves
+  overlap on the host and take 1.02 times as long on the RTX 5000. A
+  one-view selection keeps `Jit/wide-sum-1e6`,
+  `Jit/set-row-of-1024x1024-summed` and `Jit/kv-concat-decode` as they were
+  (overlapping ranges).
+  For storage over several devices, (e): the fully sharded bound rune.mli
+  states (Fully sharded training), from ZeRO, which it cites: the most a
+  step holds above its state, over 2, 4 and 8 devices at `d = 512`, is
+  2,231,040, 1,774,080 and 1,544,320 bytes, against 3,082,240, 2,590,720
+  and 2,346,880 with one selecting kernel per device and bounds of
+  2,293,760, 1,802,240 and 1,556,480.
 - **Pinned by:** `Lower_index › folds and assemblies › an assembly gives
-  eager's bits`, `Lower_index › work bounds › an assembly past 16 times
-  eager's work gives eager's bits`, `Jit › jit › a stack of 33 rows
-  on the host is evaluated`, `Jit_gpu › assemblies › an assembly past 16
-  times eager's work compiles to eager's bits`,
-  `Jit_devices › assemblies give eager's bits › *`, `Jit › fully sharded ›
-  *`.
+  eager's bits`; `Jit › jit › an assembly on the host compiles to eager's
+  bits`, `› a stack compiles to eager's bits at any number of rows`, `› a
+  stack of computing rows holds its result alone`, `› one view over its
+  background holds no storage`, `› a concatenation of doubled rows compiles
+  at any count`, `› two assemblies of alike pieces compile`; `Jit_gpu ›
+  assemblies › *`; `Jit_devices › assemblies give eager's bits › *`; `Jit ›
+  fully sharded › *`; the rows above in `rune.thumper`, their baselines
+  pending the scheduled re-record.
 
 ### I3. Gather by an index
 

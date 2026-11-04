@@ -25,11 +25,7 @@
     terms [ti] sums them as a scatter's [Add] does, within [γ(m - 1) Σ |ti|]. It
     is [-0] where every [ti] is [-0], and [+0] where it has no term. It rounds a
     narrow float once, from [float32], while nx's kernel rounds each of its
-    additions.
-
-    {b Work.} The work of an assembly grows with its pieces and exceeds that
-    of nx's kernel. Where it would be more than 16 times the kernel's, the
-    assembly is {!crowded}. A scatter's work is {!scatter}'s. *)
+    additions. *)
 
 open Tolk
 
@@ -108,12 +104,6 @@ val fold :
 
     Raises {!Lower_arith.Unlowered} for a boolean [d]. *)
 
-val crowded : int iarray -> Nx_array.Move.range iarray list -> bool
-(** [crowded shape regions] is whether an assembly into [shape] of pieces at
-    [regions] makes more than 16 times the work of nx's kernel ({!assemble}):
-    [p N > 16 (N + m)] for the [p] pieces that hold an element, [m] elements
-    in all, into [N] elements. *)
-
 val assemble :
   ('v, 's) Nx_array.Dtype.t ->
   'v ->
@@ -124,8 +114,12 @@ val assemble :
     [pieces], as {!Nx_kernel.S.assemble} states. Its element at an index is that
     of the last piece whose region holds the index, or [fill] where none does.
     Each piece selects its elements over the earlier ones, making [p N] selects
-    for [p] pieces of [m] elements in all into [N] elements. nx's kernel stores
-    [N + m]. *)
+    for [p] pieces of [m] elements in all into [N] elements, each over every
+    piece's node at that element: a kernel computes each piece at every element
+    unless tolk folds its mask away. nx's kernel stores [N + m]. For no piece,
+    or one over its background (the fill, or a first piece whose region is all
+    of [shape]) that reads storage as it lies, each element loads at most two
+    values and computes only its background. *)
 
 val sort :
   Nx_array.Dtype.any ->

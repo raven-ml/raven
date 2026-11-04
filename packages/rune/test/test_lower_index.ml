@@ -1476,7 +1476,16 @@ let assembly_examples =
     }
   in
   let empty = [ piece 0 f32 Plain [| r 0 0 1; r 1 2 1 |] ] in
-  snan :: snan64
+  (* 22 pieces of one element into 64, each selected at every element. *)
+  let spots =
+    {
+      a_dt = f32;
+      a_shape = [| 64 |];
+      a_fill = cycled ~i:1 f32 1;
+      a_pieces = List.init 22 (fun i -> piece i f32 Plain [| r (2 * i) 1 1 |]);
+    }
+  in
+  snan :: snan64 :: spots
   :: { (each 0 f32) with a_pieces = empty }
   :: { (each 0 f32) with a_pieces = [] }
   :: List.mapi each D.all
@@ -1672,29 +1681,6 @@ let wide_unique =
           (fun () -> ignore (Lowered.kernels (unique_rows ((1 lsl 31) + 1)))));
   ]
 
-(* Work bounds *)
-
-(* An assembly of [p] pieces of one element into 64. *)
-let spots p () =
-  let piece i =
-    ( Iarray.of_list [ { M.start = i; count = 1; step = 1 } ],
-      Nx.create D.Float32 [| 1 |] [| Float.of_int i |] )
-  in
-  P.eval ~by:"t"
-    (P.Assemble
-       {
-         dtype = D.Float32;
-         shape = Iarray.of_list [ 64 ];
-         fill = -1.;
-         pieces = List.init p piece;
-       })
-
-let work_bounds =
-  test "an assembly past 16 times eager's work gives eager's bits" (fun () ->
-      (* [21·64 <= 16 (64 + 21) < 22·64]. *)
-      same_bits D.Float32 (spots 21);
-      same_bits D.Float32 (spots 22))
-
 let () =
   exit
     (run "Lower_index"
@@ -1704,5 +1690,4 @@ let () =
          group "folds and assemblies" [ folds; assemblies ];
          group "sorts" [ sorts ];
          group "numbering" wide_unique;
-         group "work bounds" [ work_bounds ];
        ])

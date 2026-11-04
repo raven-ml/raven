@@ -73,6 +73,27 @@ val make : ('v, 's) Nx.dtype -> int array -> t -> ('v, 's, Nx.host) Nx.t
 (** [make dt s o] is [o] at [dt] and shape [s], each element made by {!value}. A
     0-d operand is plain but for {!Offset}. *)
 
+(** {1:bits Random bits} *)
+
+val random_bits :
+  ('v, 's) Nx.dtype -> int array -> Random.State.t -> ('v, 's, Nx.host) Nx.t
+(** [random_bits dt s st] is a value of [dt] and shape [s] whose storage holds
+    random bytes. *)
+
+val viewed :
+  view -> offset:bool -> int array -> (int array -> ('v, 's, 'd) Nx.t) ->
+  ('v, 's, 'd) Nx.t
+(** [viewed v ~offset s make] is a value of shape [s] as the view [v] of one
+    [make] gives: its last axis stepped by 2 where [Strided], its first
+    broadcast where [Broadcast], its storage's first element skipped where
+    [offset]. [make] is called once.
+
+    Raises [Invalid_argument] for an {!Offset} view. *)
+
+val raw : ('v, 's, 'd) Nx.t -> int array * string array
+(** [raw x] is [x]'s shape and each element's bits, read through a bitcast to
+    the unsigned integers of its width, a complex128's as two [uint64]s. *)
+
 (** {1:placements Placements} *)
 
 module Two : Nx.Devices

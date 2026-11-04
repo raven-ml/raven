@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Rune.jit on this machine's first GPU: a scatter, and an assembly past its
-   work bound, give the host's eager values, a scatter keeps the bits of each
+(* Rune.jit on this machine's first GPU: a scatter and an assembly of any
+   pieces give the host's eager values, a scatter keeps the bits of each
    element no update lands on, a cast between float32 and a 16-bit float gives
    eager's bits at every code and tie, a product of narrow floats or of MXFP4
    weights holds its bound, a call's check raises at the next wait, so the
@@ -121,9 +121,17 @@ let prefixes (Prefixes.Case { dt; _ } as c) =
   if Nx.Dtype.equal dt Nx.float64 then assume (has_float64 d);
   Prefixes.law s c
 
-(* An assembly past 16 times eager's work, a stack of 64 rows of 64, compiles
-   on the GPU, which has no eager kernels to evaluate it, to the host's eager
-   bits. *)
+(* The assembly law on the GPU, a float64 or complex128 case discarded where
+   its kernels lack float64. *)
+let assembly c =
+  let d, s = on_gpu () in
+  let (Nx.Dtype.Any dt) = Assemblies.dtype c in
+  if Nx.Dtype.bits dt = 64 && Nx.Dtype.is Float dt then assume (has_float64 d);
+  if Nx.Dtype.equal dt Nx.complex128 then assume (has_float64 d);
+  Assemblies.law s c
+
+(* A stack of 64 rows of 64, each computed on the GPU, compiles to the host's
+   eager bits. Doubling is exact, a [-0.] kept. *)
 let test_stack () =
   let _, (module S) = on_gpu () in
   let row i =
@@ -133,11 +141,12 @@ let test_stack () =
   in
   let rows = List.init 64 row in
   let bits x = Nx.to_array (Nx.bitcast Nx.int32 (Nx.place Nx.Host.on x)) in
-  let f = Rune.jit Nx.Ptree.(list tensor @-> returns tensor) Nx.stack in
+  let doubled rows = Nx.stack (List.map (fun r -> Nx.mul_s r 2.) rows) in
+  let f = Rune.jit Nx.Ptree.(list tensor @-> returns tensor) doubled in
   let before = Rune.evaluations () in
   let y = f (List.map (Nx.place S.on) rows) in
   equal ~msg:"compiled" Testable.int 0 (Rune.evaluations () - before);
-  equal (Testable.array Testable.int32) (bits (Nx.stack rows)) (bits y)
+  equal (Testable.array Testable.int32) (bits (doubled rows)) (bits y)
 
 exception Big of int array * float
 
@@ -946,9 +955,12 @@ let () =
            ];
          group "assemblies"
            [
-             test "an assembly past 16 times eager's work compiles to eager's \
-                   bits"
+             test "a stack of computed rows compiles to eager's bits"
                test_stack;
+             prop ~count:8 ~examples:Assemblies.examples
+               "an assembly compiles to eager's bits"
+               (Gen.with_pp Assemblies.pp Assemblies.gen)
+               assembly;
            ];
          group "exp"
            [

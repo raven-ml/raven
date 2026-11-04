@@ -12,21 +12,6 @@ let unlowered what =
   let why = Printf.sprintf "Rune.Lower.op: %s is not lowered" what in
   raise (Lower_arith.Unlowered why)
 
-(* Work
-
-   An assembly selects each of its [p] pieces at every element, [p·N] work
-   against eager's [N + m] for pieces of [m] elements in all. Past
-   [work_bound] times eager's work an assembly is [crowded]: the jit
-   evaluates its program uncompiled where the host can. The bound is a cost
-   model's: below it the extra work is a few selects per unit on elements
-   the kernel holds, which the model takes as about what moving each element
-   through memory costs a host core, and as hidden on a GPU. Timed on a host
-   core, the model places no crossing: a compiled stack of copied rows is as
-   fast as evaluating it past the bound, while one of rows that compute,
-   which the selections compute again at every element, is ten times slower
-   below it. *)
-let work_bound = 16
-
 let extents u = List.init (Shape.ndim u) (Bits.extent u)
 let dims s = List.map (fun n -> Ops.Int n) s
 let numel s = List.fold_left ( * ) 1 s
@@ -718,11 +703,6 @@ let words (type v s) (dt : (v, s) D.t) (x : v) =
 (* The elements a region keeps. *)
 let size ranges =
   Iarray.fold_left (fun m (r : Nx_array.Move.range) -> m * r.count) 1 ranges
-
-let crowded shape regions =
-  let sizes = List.filter (fun n -> n > 0) (List.map size regions) in
-  let p = List.length sizes and total = numel (Iarray.to_list shape) in
-  p * total > work_bound * (total + List.fold_left ( + ) 0 sizes)
 
 (* A float assembles as its bits. Where a float constant fill meets a padded
    piece in an Ops.where, tolk quiets a signalling NaN constant before it

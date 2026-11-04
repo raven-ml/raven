@@ -2382,6 +2382,22 @@ let merged_calls =
               ]
           in
           equal int 1 (List.length (calls_in_loop big)));
+      test "calls that bind one variable to two values run apart" (fun () ->
+          (* Each adds [k], bound to 0 in one and 1 in the other: one call
+             would pass [k] one value. *)
+          let k = Ops.variable "k" (`Int Bigint.zero) (`Int Bigint.one) in
+          let plus j u =
+            Ops.O.(u + Ops.cast (Shape.bind k (`Int (Bigint.of_int j))) Float32)
+          in
+          let big j =
+            looped
+              [
+                (0, [ 0 ], fun p -> plus 0 Ops.O.(p 0 * float 2.));
+                (1, [ 1 ], fun p -> plus j (Ops.exp2 (p 1)));
+              ]
+          in
+          equal ~msg:"bound apart" int 2 (List.length (calls_in_loop (big 1)));
+          equal ~msg:"bound alike" int 1 (List.length (calls_in_loop (big 0))));
       test "calls of one element at the top level run as one" (fun () ->
           let x = element () and y = element () in
           let o = element () and o' = element () in

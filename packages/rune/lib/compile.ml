@@ -248,9 +248,6 @@ type state = {
       (** Whether the program is a split one ({!Pieces}), each of its values
           on one device of its own, so that each operation computes on its
           values' device and a placement onto another device copies. *)
-  evaluates : bool;
-      (** Whether each device of the program runs on the host, which can then
-          evaluate it where the compiler declines it. *)
   mutable captures : (value * Ops.t) list;
   mutable bound : (Ops.t * Rig.Buffer.t) list;
   uploads : (value * A.any) list ref;
@@ -897,100 +894,171 @@ let moved u d =
   | Some d' when not (String.equal d' d) -> Ops.copy_to_device u d
   | Some _ | None -> u
 
-(* Assemblies in storage
+(* Assemblies
 
-   An assembly in a split program is storage of its own. Pieces that hold each
-   of its elements once are each stored into their region of the buffer, in
-   any order; otherwise the fill is stored over it, then each piece over the
-   state the earlier ones left, so that a later piece's elements stand where
-   two overlap, as {!Lower_index.assemble} states. Each store reads one piece,
-   which its last reader frees, and a piece copied from another device is
-   copied into its region; a select chain would read every piece in one
-   kernel, each live beside the result until then. A copy into a region of the
-   buffer that is a run of its elements lands in place. Every other store
-   starts its region, along each axis it does not cover, at a multiple of the
-   step at which the pieces of its shape start, a variable bound to that
-   multiple: each device's call passes its own, as a move's window's start
-   ({!moving}), so pieces of one shape are one program wherever they lie, and
-   their kernel knows of a start what all of theirs share, its alignment
-   included. *)
+   An assembly of at most one piece over its background, the fill or a first
+   piece that covers it, where that piece is a view of storage or a constant,
+   is a selection ({!Lower_index.assemble}) in its reader's kernel: each
+   element loads at most two values and computes only its background. Every
+   other assembly, and every one of a split program, is storage of its own.
+   A selection over a piece that computes would compute it at every element
+   of the fill, and over two pieces or more each piece at elements it does
+   not hold, unless tolk's heuristic folds the masks away: a stack of 64 rows
+   of sines computed 64 sines an element. Storage's cost is a write and a
+   read of the result.
 
-(* A region's box along an axis: its first index, its extent, whether it runs
-   backwards, and the size of its step. *)
-let box (r : A.Move.range) =
-  let size = abs r.step in
-  let first =
-    if r.step < 0 then r.start + ((r.count - 1) * r.step) else r.start
-  in
-  (first, ((r.count - 1) * size) + 1, r.step < 0, size)
+   The storage holds first its background: the covering piece, or else the
+   fill unless the pieces hold each element once. Then the pieces: the stores
+   of those whose regions meet no earlier one's are of one state, which tolk
+   runs as one launch, and a piece whose region may meet an earlier one's is
+   stored in a later state, so that the later piece's elements stand, as
+   {!Lower_index.assemble} states. Each store writes exactly its piece's
+   elements, a region by steps through a view of the storage that keeps
+   every step-th element, a reversed one through a flip, and reads one piece,
+   which its last reader frees; a piece copied from another device is copied
+   into its region. A copy into a region of the buffer that is a run of its
+   elements lands in place. Every other store of a region of steps of one
+   starts it, along each axis it does not cover, at a multiple of the step
+   at which the pieces of its shape start, a variable bound to that multiple:
+   each store, or each device's call, passes its own, as a move's window's
+   start ({!moving}), so pieces of one shape are one program wherever they
+   lie, and their kernel knows of a start what all of theirs share, its
+   alignment included. *)
 
-let dense b = Array.for_all (fun (_, _, _, size) -> size = 1) b
+(* A region along an axis, ascending: its first index, its count, its step,
+   [1] where it holds one element, and whether the piece runs backwards. *)
+type axis = { first : int; count : int; step : int; back : bool }
 
-(* Whether the regions [rs], each holding an element, hold each element of a
-   value of shape [s] once: each a box within it, no two meeting, as many
-   elements in all as it holds. *)
-let tiles s (rs : A.Move.range iarray list) =
-  let boxes = List.map (fun r -> Array.map box (Iarray.to_array r)) rs in
-  let inside b =
-    Array.for_all2
-      (fun (first, n, _, _) e -> first >= 0 && first + n <= e)
-      b s
-  in
-  let apart a b =
-    Array.exists2
-      (fun (f, n, _, _) (g, m, _, _) -> f + n <= g || g + m <= f)
-      a b
-  in
-  let rec disjoint = function
-    | [] -> true
-    | b :: rest -> List.for_all (apart b) rest && disjoint rest
-  in
-  let count b = Array.fold_left (fun k (_, n, _, _) -> k * n) 1 b in
-  List.for_all (fun b -> dense b && inside b) boxes
-  && disjoint boxes
-  && List.fold_left (fun k b -> k + count b) 0 boxes = numel s
+let axis (r : A.Move.range) =
+  if r.count <= 1 then
+    { first = r.start; count = r.count; step = 1; back = false }
+  else
+    let step = abs r.step and back = r.step < 0 in
+    let first = if back then r.start + ((r.count - 1) * r.step) else r.start in
+    { first; count = r.count; step; back }
+
+let axes (rs : A.Move.range iarray) = Array.map axis (Iarray.to_array rs)
+let extent a = ((a.count - 1) * a.step) + 1
+let dense b = Array.for_all (fun a -> a.step = 1) b
+let elements b = Array.fold_left (fun k a -> k * a.count) 1 b
+
+let rec gcd a b = if b = 0 then abs a else gcd b (a mod b)
 
 (* Whether a piece's region holds an element. *)
 let holds ((rs : A.Move.range iarray), _) =
   Iarray.for_all (fun (r : A.Move.range) -> r.count > 0) rs
 
-(* Whether the boxes [b] of a value of shape [s] are a run of its elements:
+(* Whether the region [b] holds each element of a value of shape [s]. *)
+let covers s b =
+  Array.for_all2 (fun a n -> a.first = 0 && a.count = n && a.step = 1) b s
+
+(* Whether two regions may share an element: along every axis their spans
+   meet and their steps leave a common index. *)
+let meet b c =
+  Array.for_all2
+    (fun x y ->
+      x.first < y.first + extent y
+      && y.first < x.first + extent x
+      && (y.first - x.first) mod gcd x.step y.step = 0)
+    b c
+
+(* Whether the regions [bs] hold each element of a value of shape [s] once. *)
+let tile s bs =
+  let rec apart = function
+    | [] -> true
+    | b :: rest -> List.for_all (fun c -> not (meet b c)) rest && apart rest
+  in
+  apart bs && List.fold_left (fun k b -> k + elements b) 0 bs = numel s
+
+(* The pieces [ps], each a region and its node, in states, in order: each
+   piece in the state after the latest that holds a piece it may meet, so
+   that no two pieces of a state meet. *)
+let states ps =
+  let placed =
+    List.fold_left
+      (fun placed ((b, _) as p) ->
+        let later k (j, (c, _)) = if meet b c then max k (j + 1) else k in
+        (List.fold_left later 0 placed, p) :: placed)
+      [] ps
+  in
+  let n = List.fold_left (fun n (k, _) -> max n (k + 1)) 0 placed in
+  List.init n (fun k ->
+      List.rev
+        (List.filter_map (fun (j, p) -> if j = k then Some p else None) placed))
+
+(* The pieces [ps] that hold an element, from the last that covers a value of
+   shape [s] on: it hides the pieces before it. *)
+let visible s ps =
+  let ps = List.filter holds ps in
+  let rec from = function
+    | [] -> None
+    | p :: rest -> (
+        match from rest with
+        | Some _ as l -> l
+        | None -> if covers s (axes (fst p)) then Some (p :: rest) else None)
+  in
+  Option.value (from ps) ~default:ps
+
+(* Whether [u] is a constant: a view of one, or of its conversion, as
+   [Nx.zeros_like] of a float makes. *)
+let rec constant u =
+  let b = Ops.base u in
+  match Ops.op b with
+  | Tolk.Op.Const -> true
+  | Cast | Bitcast -> constant (Ops.nth b 0)
+  | _ -> false
+
+(* Whether [u] reads storage as it lies or is a constant: a view of an
+   argument or a capture, of storage rune states (an assembly's, a scatter's,
+   a stored value's), or of a bitcast of one. *)
+let rec viewed st u =
+  let b = Ops.base u in
+  constant u
+  || Ops.Tbl.mem st.views b
+  ||
+  match Ops.op b with
+  | Tolk.Op.Param | Buffer | After | Stage -> true
+  | Bitcast -> viewed st (Ops.nth b 0)
+  | _ -> false
+
+(* Whether the visible pieces [ps] of an assembly of shape [s] are a
+   selection: at most one over the first where it covers [s], a view. *)
+let selects st s ps =
+  let over =
+    match ps with p :: rest when covers s (axes (fst p)) -> rest | ps -> ps
+  in
+  match over with [] -> true | [ (_, u) ] -> viewed st u | _ -> false
+
+(* Whether the region [b] of a value of shape [s] is a run of its elements:
    one element along each axis before some axis, all of each after it. *)
 let run s b =
   let n = Array.length s in
-  let extent k =
-    let _, e, _, _ = b.(k) in
-    e
-  in
-  let rec whole k = k = n || (extent k = s.(k) && whole (k + 1)) in
+  let rec whole k = k = n || (b.(k).count = s.(k) && whole (k + 1)) in
   let rec ones k =
-    k = n || if extent k = 1 then ones (k + 1) else whole (k + 1)
+    k = n || if b.(k).count = 1 then ones (k + 1) else whole (k + 1)
   in
   ones 0
 
-let rec gcd a b = if b = 0 then a else gcd b (a mod b)
-
-(* The step of the starts of [boxes] along each axis, among those of [b]'s
-   extents: the greatest divisor of them all, [0] where all start at [0]. *)
-let steps boxes b =
-  let extents b = Array.map (fun (_, n, _, _) -> n) b in
-  let alike = List.filter (fun c -> extents c = extents b) boxes in
-  let first i c =
-    let f, _, _, _ = c.(i) in
-    f
-  in
+(* The step of the starts of the regions [bs] of [b]'s shape along each
+   axis, [b]'s own among them: the greatest divisor of them all, [0] where
+   all start at [0]. *)
+let steps bs b =
+  let shape b = Array.map (fun a -> (a.count, a.step)) b in
+  let alike = List.filter (fun c -> shape c = shape b) bs in
   Array.mapi
-    (fun i _ -> List.fold_left (fun g c -> gcd g (first i c)) 0 alike)
+    (fun i a -> List.fold_left (fun g c -> gcd g c.(i).first) a.first alike)
     b
 
-(* The bounds of the boxes [b] of a value of shape [s] along each axis: [first]
-   to [first + n] where they cover the axis or [fixed], else [k step] to
-   [k step + n] for the start's [step] ({!steps}) and a variable [k], named by
-   the axis, the step and its bound, bound to [first / step]. *)
+(* The bounds of the region [b] of steps of one in a value of shape [s] along
+   each axis: [first] to [first + count] where it covers the axis or [fixed],
+   else [k step] to [k step + count] for the start's [step] ({!steps}) and a
+   variable [k], named by the axis, the step and its bound, bound to
+   [first / step]. *)
 let region ~fixed ~step s b =
-  let axis i (first, n, _, _) =
+  let axis i a =
+    let n = a.count in
     if fixed || n = s.(i) || step.(i) = 0 then
-      Some (Ops.Int first, Ops.Int (first + n))
+      Some (Ops.Int a.first, Ops.Int (a.first + n))
     else
       let last = (s.(i) - n) / step.(i) in
       let k =
@@ -999,77 +1067,115 @@ let region ~fixed ~step s b =
           (Tolk.Dtype.Value.of_int 0)
           (Tolk.Dtype.Value.of_int last)
       in
-      let k = Shape.bind k (Tolk.Dtype.Value.of_int (first / step.(i))) in
+      let k = Shape.bind k (Tolk.Dtype.Value.of_int (a.first / step.(i))) in
       let start = Ops.O.(k * int step.(i)) in
       Some (Ops.Sym start, Ops.Sym Ops.O.(start + int n))
   in
   List.mapi axis (Array.to_list b)
 
+(* [stepped v s b] is the elements of the region [b] by steps of [v], a value
+   of shape [s] and maybe a trailing axis of parts: along each axis of a step
+   [m] past one, a window of [count m] elements that starts at the region's
+   first, or ends at the axis's end where it would pass it, read as two axes
+   [[count; m]] of which one index is kept. Each window fits in its axis:
+   [count m <= s] ({!fitting}). *)
+let stepped v s b =
+  let r = Array.length b in
+  let skip a n = max 0 (a.first + (a.count * a.step) - n) in
+  let window i a =
+    if a.step = 1 then Some (Ops.Int a.first, Ops.Int (a.first + a.count))
+    else
+      let start = a.first - skip a s.(i) in
+      Some (Ops.Int start, Ops.Int (start + (a.count * a.step)))
+  in
+  let trailing = List.init (Shape.ndim v - r) (fun _ -> None) in
+  let rest = List.filteri (fun j _ -> j >= r) (Shape.shape v) in
+  let windowed =
+    Shape.shrink v (List.mapi window (Array.to_list b) @ trailing)
+  in
+  let split a = if a.step = 1 then [ a.count ] else [ a.count; a.step ] in
+  let split = List.concat_map split (Array.to_list b) in
+  let kept i a =
+    if a.step = 1 then [ None ]
+    else
+      let k = skip a s.(i) in
+      [ None; Some (Ops.Int k, Ops.Int (k + 1)) ]
+  in
+  let kept = List.concat (List.mapi kept (Array.to_list b)) in
+  let u = Shape.reshape windowed (ints split @ rest) in
+  let u = Shape.shrink u (kept @ trailing) in
+  Shape.reshape u (ints (Array.to_list (Array.map (fun a -> a.count) b)) @ rest)
+
+(* [fitting s (b, u)] is the region [b] of a value of shape [s] and its node
+   [u], ascending, as regions whose windows by steps fit in [s]: along an
+   axis of a step [m] where [count m] exceeds the axis, its last element
+   apart. *)
+let rec fitting s (b, u) =
+  let over i = b.(i).step > 1 && b.(i).count * b.(i).step > s.(i) in
+  match List.find_opt over (List.init (Array.length b) Fun.id) with
+  | None -> [ (b, u) ]
+  | Some i ->
+      let a = b.(i) and n = Shape.ndim u in
+      let along lo hi =
+        let at j = if j = i then Some (Ops.Int lo, Ops.Int hi) else None in
+        Shape.shrink u (List.init n at)
+      in
+      let head = Array.copy b and last = Array.copy b in
+      let k = a.count - 1 in
+      head.(i) <- { a with count = k; step = (if k = 1 then 1 else a.step) };
+      last.(i) <-
+        { a with first = a.first + (k * a.step); count = 1; step = 1 };
+      fitting s (head, along 0 k) @ fitting s (last, along k a.count)
+
 (* [assembled ~device dt fill shape pieces] is the node of the assembly of
-   [dt] and [shape] of [pieces], each a region and its node, its storage on
-   [device], and that storage once filled. *)
+   [dt] and [shape] of its visible [pieces] ({!visible}), each a region and
+   its node, its storage on [device], and that storage once filled. *)
 let assembled ~device (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
   let s = Iarray.to_array shape in
   let dims = Arith.dims (D.Any dt) s in
-  let pieces = List.filter holds pieces in
   let buf = Ops.new_buffer device (numel s * parts dt) (tdtype dt) in
   let whole u = Shape.reshape u dims in
-  let boxes (rs : A.Move.range iarray) = Array.map box (Iarray.to_array rs) in
-  let all = List.map (fun (rs, _) -> boxes rs) pieces in
-  (* Each piece stored into its box of [state]'s storage: itself where its
-     steps are of one, reversed along the axes it runs backwards, else the box
-     as [state] holds it with the piece selected over it. *)
-  let store state ((rs : A.Move.range iarray), u) =
-    let boxes = boxes rs in
+  let pieces = List.map (fun (rs, u) -> (axes rs, u)) pieces in
+  let all = List.map fst pieces in
+  (* A piece's stores into [state]'s storage: reversed along the axes it runs
+     backwards, its region by steps through {!stepped}. *)
+  let stores state (b, u) =
     let copied = Ops.op (unshaped u) = Tolk.Op.Copy in
-    let bounds =
-      region
-        ~fixed:(copied && dense boxes && run s boxes)
-        ~step:(steps all boxes) s boxes
-      @ if parts dt = 2 then [ None ] else []
+    let backwards =
+      List.filter (fun i -> b.(i).back) (List.init (Array.length b) Fun.id)
     in
-    let value =
-      if dense boxes then (
-        let backwards i =
-          let _, _, b, _ = boxes.(i) in
-          b
-        in
-        let axes = List.init (Array.length boxes) Fun.id in
-        match List.filter backwards axes with
-        | [] -> u
-        | axes -> Shape.flip u axes)
-      else
-        let extent =
-          Iarray.of_array (Array.map (fun (_, n, _, _) -> n) boxes)
-        in
-        let all =
-          Iarray.map (fun count -> { A.Move.start = 0; count; step = 1 }) extent
-        in
-        let within =
-          Iarray.mapi
-            (fun i (r : A.Move.range) ->
-              let first, _, _, _ = boxes.(i) in
-              { r with start = r.start - first })
-            rs
-        in
-        let was = Shape.shrink (whole state) bounds in
-        Lower_index.assemble dt fill extent [ (all, was); (within, u) ]
+    let u = if backwards = [] then u else Shape.flip u backwards in
+    let b = Array.map (fun a -> { a with back = false }) b in
+    let parts = if parts dt = 2 then [ None ] else [] in
+    let store (b, u) =
+      let target =
+        if dense b then
+          let fixed = copied && run s b in
+          let bounds = region ~fixed ~step:(steps all b) s b in
+          Shape.shrink (whole state) (bounds @ parts)
+        else stepped (whole state) s b
+      in
+      Ops.store target u
     in
-    Ops.store (Shape.shrink (whole state) bounds) value
+    List.map store (fitting s (b, u))
   in
-  (* Pieces that tile it are stored apart, each into its run of the buffer;
-     others over the fill and the pieces before them, in order. *)
-  let filled =
-    if tiles s (List.map fst pieces) then
-      Ops.after buf (List.map (store buf) pieces)
-    else
-      let start =
+  let background, over =
+    match pieces with
+    | p :: rest when covers s (fst p) -> (Some p, rest)
+    | ps -> (None, ps)
+  in
+  let start =
+    match background with
+    | Some p -> Ops.after buf (stores buf p)
+    | None when tile s (List.map fst over) -> buf
+    | None ->
         Ops.after buf
           [ Ops.store (whole buf) (Lower_index.assemble dt fill shape []) ]
-      in
-      List.fold_left
-        (fun state piece -> Ops.after state [ store state piece ])
-        start pieces
+  in
+  let filled =
+    List.fold_left
+      (fun state ps -> Ops.after state (List.concat_map (stores state) ps))
+      start (states over)
   in
   (whole filled, buf, filled)
 
@@ -1129,25 +1235,24 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
         | Move (Slice rs, x)
           when st.split && env.windows.(base) && Iarray.for_all step1 rs ->
             [| moving x (Iarray.to_array rs) (read x) |]
-        | Assemble { dtype; shape; fill; pieces }
-          when st.split && List.exists holds pieces ->
-            let pieces = List.map (fun (r, x) -> (r, read x)) pieces in
-            let y, buf, filled = assembled ~device dtype fill shape pieces in
-            (* A result takes the storage as its own, but for a dtype narrower
-               than a byte, whose result packs the storage's byte an
-               element. *)
-            if not (packed dtype) then
-              Ops.Tbl.replace st.dsts (unshaped y)
-                { buf; filled; into = filled; reads = List.map snd pieces };
-            [| y |]
-        (* Past the bound on its selections, an assembly is declined where
-           the host can evaluate the program, which is faster where its
-           pieces compute: the selections compute every piece at each
-           element. A GPU has no eager kernels, so it selects. *)
-        | Assemble { shape; pieces; _ }
-          when st.evaluates && Lower_index.crowded shape (List.map fst pieces)
-          ->
-            decline "an Assemble past 16 times eager's work"
+        | Assemble { dtype; shape; fill; pieces } ->
+            let s = Iarray.to_array shape in
+            let pieces =
+              visible s (List.map (fun (r, x) -> (r, read x)) pieces)
+            in
+            if (not (st.split && pieces <> [])) && selects st s pieces then
+              [| Lower_index.assemble dtype fill shape pieces |]
+            else
+              let y, buf, filled =
+                assembled ~device dtype fill shape pieces
+              in
+              (* A result takes the storage as its own, but for a dtype
+                 narrower than a byte, whose result packs the storage's byte
+                 an element. *)
+              if not (packed dtype) then
+                Ops.Tbl.replace st.dsts (unshaped y)
+                  { buf; filled; into = filled; reads = List.map snd pieces };
+              [| y |]
         | _ -> (
             let ys =
               let renderer = lazy (Engine.renderer rig) in
@@ -2269,7 +2374,6 @@ let lower ~rigs ~split ~uploads (p : Program.t) (forms : form array) ~layouts
       device = Rig.name rig;
       issued = issued p forms;
       split;
-      evaluates = List.for_all Rig.runs_on_host rigs;
       captures = [];
       bound = [];
       uploads;
