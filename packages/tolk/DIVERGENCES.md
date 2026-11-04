@@ -6912,7 +6912,18 @@ and an initial value is added after it (D260).
   unroll by 8 to 4, and `matmul_1000` ran 1.02-1.06 times as long there.
   Computing a vector operation wider than 256 lanes lane by lane instead,
   in the renderer (D141), compiled the contraction in 0.26 s but ran it in
-  25.5 µs against 21.4 and `paired_products` in 177 µs against 113.
+  25.5 µs against 21.4 and `paired_products` in 177 µs against 113. In
+  vectors of 16 lanes instead, Clang took 0.07 s on the contraction against
+  1.11-1.15 s and 0.05 s on `paired_products` against 0.19-0.20 s (CPU
+  time), and they ran in 19.8-20.6 µs against 20.5-21.4 and 108-113 µs
+  either way, one P-core, interleaved. `conv` holds no vector that wide, so
+  its lanes are the bound's alone: at 576 it ran 529-555 µs against
+  596-604, but a bound of 1024 took three of rune's products from 16 output
+  lanes unrolled whole to 32 lanes and no unroll, 2724-2726 µs against
+  2301-2310, 2416-2417 against 2029-2078 and 2948-3004 against 2754-2848,
+  and another to 1024 lanes, 672-685 µs against 659-669, though with the
+  split Clang took at most 0.2 s on each of the 28 suite kernels it or that
+  bound changes. The split is not taken: it leaves `conv` as it is.
 - **Pinned by:** the Heuristic suite's `the host's lanes › on AVX2 a
   recorded host kernel's conversions take their lanes` and `› on the host a
   conversion computes at most 64 lanes`, over every recorded kernel and
