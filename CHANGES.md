@@ -2293,6 +2293,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 - **Breaking:** `Nx_ragged.unique` groups equal rows as `Nx.unique` groups
   keys, each group's first row and count with its ids, and replaces
   `Nx_ragged.ids`, which is `(Nx_ragged.unique ~size:0 r).ids`.
+- A take of whole rows picks its copy once a run of rows in place of once a
+  row: the 8-byte windows `Nx_ragged.unique` packs short text into take 12
+  instructions a row where they took 28, and talon's H2O group-by q01 at
+  1e6 rows takes 95 instructions a row where it took 111.
 - `Nx.reduce_segments` and `Nx.scatter` of floats and narrow floats by
   `Max` or `Min` into few targets fold each thread's share of the updates
   into targets of its own, as integers' do, in place of sorting them by

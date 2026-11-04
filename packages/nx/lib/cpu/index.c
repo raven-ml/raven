@@ -147,37 +147,43 @@ GATHER_ROW(gather_4, uint32_t)
 GATHER_ROW(gather_8, uint64_t)
 GATHER_ROW(gather_16, u128)
 
-/* Copies the [n] bytes of a row at [s] to [d]: a row of a few words in
-   loads and stores of its own size, others by memcpy. */
-static inline void copy_row(uint8_t *d, const uint8_t *s, int64_t n) {
-  switch (n) {
-    case 4: memcpy(d, s, 4); return;
-    case 8: memcpy(d, s, 8); return;
-    case 16: memcpy(d, s, 16); return;
-    case 32: memcpy(d, s, 32); return;
-    case 64: memcpy(d, s, 64); return;
-    default: memcpy(d, s, (size_t)n);
+/* Copies [m] rows of [n] bytes, the destination's from [d] stepping [sd]
+   bytes, each from the source's row p at x + p sa, p read from [idx]
+   stepping [si], [x] stepping [sx] bytes; zeros for a p outside [dim]. A
+   constant [n] makes a row one load and one store of its size. */
+static inline __attribute__((always_inline)) void copy_rows(
+    uint8_t *d, const int64_t *idx, const uint8_t *x, int64_t m, int64_t sd,
+    int64_t si, int64_t sx, int64_t sa, uint64_t dim, int64_t n) {
+  for (int64_t j = 0; j < m; j++, d += sd, idx += si, x += sx) {
+    uint64_t p = (uint64_t)*idx;
+    if (p < dim) memcpy(d, x + (int64_t)p * sa, (size_t)n);
+    else memset(d, 0, (size_t)n);
   }
 }
 
 /* A block of a row take, whose positions step 0 along its rows of
    contiguous elements in the destination and the source: a copy a row.
-   A short row's copy is a few loads and stores, where a call a row and
-   its memcpy cost several times them: ragged rows packed into words take
-   windows of 8 to 64 bytes. */
+   Ragged rows packed into words take windows of 8 to 64 bytes, whose copy
+   is a few loads and stores, where a call a row and its memcpy cost several
+   times them. The row's size picks its loop once a run of rows: picked a
+   row, with offsets recomputed a row, a row of 8 bytes took 28
+   instructions, and takes 12 (fudge, 2026-11-04). */
 static void take_rows(const nx_cpu_block *b, const gather *g) {
   const nx_array *a = g->a;
   const int64_t *idx = (const int64_t *)a[1].base;
   int64_t w = g->w, n = b->n0 * w, sa = g->sa * w;
+  int64_t sd = b->s1[0] * w, si = b->s1[1], sx = b->s1[2] * w, m = b->n1;
   for (int64_t q = 0; q < b->n2; q++) {
-    int64_t pd = b->at[0] + q * b->s2[0], pi = b->at[1] + q * b->s2[1];
-    int64_t px = b->at[2] + q * b->s2[2];
-    for (int64_t j = 0; j < b->n1;
-         j++, pd += b->s1[0], pi += b->s1[1], px += b->s1[2]) {
-      uint64_t p = (uint64_t)idx[pi];
-      uint8_t *d = a[0].base + pd * w;
-      if (p < g->dim) copy_row(d, a[2].base + px * w + (int64_t)p * sa, n);
-      else memset(d, 0, (size_t)n);
+    uint8_t *d = a[0].base + (b->at[0] + q * b->s2[0]) * w;
+    const int64_t *i = idx + b->at[1] + q * b->s2[1];
+    const uint8_t *x = a[2].base + (b->at[2] + q * b->s2[2]) * w;
+    switch (n) {
+      case 4: copy_rows(d, i, x, m, sd, si, sx, sa, g->dim, 4); break;
+      case 8: copy_rows(d, i, x, m, sd, si, sx, sa, g->dim, 8); break;
+      case 16: copy_rows(d, i, x, m, sd, si, sx, sa, g->dim, 16); break;
+      case 32: copy_rows(d, i, x, m, sd, si, sx, sa, g->dim, 32); break;
+      case 64: copy_rows(d, i, x, m, sd, si, sx, sa, g->dim, 64); break;
+      default: copy_rows(d, i, x, m, sd, si, sx, sa, g->dim, n);
     }
   }
 }
