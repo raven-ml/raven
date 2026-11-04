@@ -2956,7 +2956,8 @@ word comes from its lock and from samples the dashboard saw arrive.
   one byte to BPE, Unigram and WordPiece models, as it is to the
   pre-tokenizers and to offsets: BPE and Unigram took the next one to three
   bytes in with it, a space or a `▁` among them, which changed the ids and
-  dropped text from the decode.
+  dropped text from the decode, and BPE with a `continuing_subword_prefix` or
+  an `end_of_word_suffix` dropped a lone continuation byte.
 - A BPE model's pretoken cache starts small and doubles as it fills, as
   WordPiece's and Unigram's do, up to `cache_capacity` entries, whose default
   for BPE rises from 262,144 to 1,048,576 (32 MB at most a cache): a BPE cache

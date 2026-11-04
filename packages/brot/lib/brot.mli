@@ -1072,7 +1072,8 @@ val wordpiece :
     - [unk_token]: token for out-of-vocabulary words. Default: ["[UNK]"].
     - [continuing_subword_prefix]: prefix for non-initial subwords. Default:
       ["##"].
-    - [max_input_chars_per_word]: words longer than this are replaced with
+    - [max_input_chars_per_word]: words of more characters than this, a byte
+      that opens no whole character counting as one, are replaced with
       [unk_token]. Default: [100].
     - [cache_capacity]: the most entries of a pretoken cache, which keeps the
       ids of pretokens of up to 15 bytes so that one seen before is not
@@ -1291,6 +1292,10 @@ val encode :
     ["<|endoftext|>"] does not end the text. The model can still give a special
     token's ID when its vocabulary holds that token's text as a piece, as
     T5's holds ["</s>"].
+
+    [text] need not be valid UTF-8: a byte that opens no whole character, a
+    lead byte without the continuation bytes it asks for or a continuation
+    byte with no lead, is read by every stage as a character of one byte.
 
     {!Encoding.offsets} are byte spans of [text] itself, not of the normalized
     form: a token of ["café"] under a normalizer that strips accents reports the
