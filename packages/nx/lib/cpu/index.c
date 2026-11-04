@@ -168,11 +168,16 @@ static inline __attribute__((always_inline)) void copy_rows(
    times them. The row's size picks its loop once a run of rows: picked a
    row, with offsets recomputed a row, a row of 8 bytes took 28
    instructions, and takes 12 (fudge, 2026-11-04). */
-static void take_rows(const nx_cpu_block *b, const gather *g) {
+static void take_rows(const nx_cpu_block *b, const gather *g, int across) {
   const nx_array *a = g->a;
   const int64_t *idx = (const int64_t *)a[1].base;
-  int64_t w = g->w, n = b->n0 * w, sa = g->sa * w;
-  int64_t sd = b->s1[0] * w, si = b->s1[1], sx = b->s1[2] * w, m = b->n1;
+  /* A row lies along the block's inner axis, or, [across], along its rows:
+     the walk puts an axis shorter than its SHORT outside a longer one, as
+     the rows of a take of two int64 bounds a row lie. */
+  const int64_t *between = across ? b->s0 : b->s1;
+  int64_t w = g->w, n = (across ? b->n1 : b->n0) * w, sa = g->sa * w;
+  int64_t sd = between[0] * w, si = between[1], sx = between[2] * w;
+  int64_t m = across ? b->n0 : b->n1;
   for (int64_t q = 0; q < b->n2; q++) {
     uint8_t *d = a[0].base + (b->at[0] + q * b->s2[0]) * w;
     const int64_t *i = idx + b->at[1] + q * b->s2[1];
@@ -193,7 +198,12 @@ static void gather_block(const nx_cpu_block *b, void *ctx) {
   const nx_array *a = g->a;
   const int64_t *idx = (const int64_t *)a[1].base;
   if (g->w > 0 && b->s0[1] == 0 && b->s0[0] == 1 && b->s0[2] == 1) {
-    take_rows(b, g);
+    take_rows(b, g, 0);
+    return;
+  }
+  if (g->w > 0 && b->n1 > 1 && b->s1[1] == 0 && b->s1[0] == 1 &&
+      b->s1[2] == 1) {
+    take_rows(b, g, 1);
     return;
   }
   for (int64_t q = 0; q < b->n2; q++)

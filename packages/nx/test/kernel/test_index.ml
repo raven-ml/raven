@@ -443,12 +443,45 @@ let finite_adds =
 let int_gathers =
   Gen.with_pp pp_gather (gather_gen ~dtypes:[ D.Any D.Int64 ] ())
 
+(* A take of rows of [w] elements, fewer than the walk's SHORT, at [m]
+   positions, at least 8, the positions stepping 0 along each row: each row
+   is the source's row at its position, zeros outside the axis. The walk
+   puts the rows' axis outside the positions'. *)
+let short_rows (b : Support.backend) (w, dt) () =
+  let n = 6 and m = 16 in
+  let rs = Random.State.make [| w |] in
+  let x = operand dt [| n; w |] (plain 2) (fun _ -> element dt rs) in
+  let p = Array.init m (fun i -> Int64.of_int ((i * 5 mod (n + 3)) - 1)) in
+  let at = ref 0 in
+  let idx =
+    int64s [| m; w |] { (plain 2) with broadcast = [ 1 ] } (fun () ->
+        let v = p.(!at) in
+        incr at;
+        v)
+  in
+  let xs = elements x in
+  let want =
+    Array.init (m * w) (fun i ->
+        let q = Int64.to_int p.(i / w) in
+        if q >= 0 && q < n then xs.((q * w) + (i mod w)) else zero dt)
+  in
+  match gather_on b ~axis:0 idx x with
+  | None -> failf "%s declined a take" b.name
+  | Some y -> equal (array string) want (elements y)
+
 (* The suite *)
 
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
     [
+      cases "a take of rows shorter than the walk's SHORT copies each row"
+        ~id:(fun (w, D.Any dt) -> Printf.sprintf "%d %s" w (D.name dt))
+        [
+          (2, D.Any D.Int64); (3, D.Any D.Float32); (5, D.Any D.Uint8);
+          (7, D.Any D.Complex128); (2, D.Any D.Int4);
+        ]
+        (fun c -> b.around (short_rows b c));
       prop "a gather and an add-scatter are adjoint" int_gathers
         (run (law_adjoint b));
       prop "a scatter into its own operand gives the fresh result" scatters

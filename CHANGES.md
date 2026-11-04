@@ -2290,6 +2290,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- A take of rows shorter than the axis they are taken along, as a take of
+  rows of two int64s, copies each row whole where it gathered element by
+  element: 12 instructions a row of two int64s where it took 26.
 - `Nx.attention` on nx.cpu gives `+0`, as a sum of zeros, where a row's
   weights in earlier blocks of keys underflow to zero beside a later
   block's: a negative value there left `-0` in `o`.
