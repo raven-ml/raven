@@ -121,9 +121,12 @@ let position call u =
   in
   find 0 (Ops.src call)
 
-(* A variable by its name, a bound value by its value. *)
+(* A free variable by its name, a bound value, a bound variable's included,
+   by its value. *)
 let variable u =
   match Ops.arg u with
+  | Param { bound = Some x; _ } ->
+      Format.asprintf "%a" Dtype.pp_const (x :> Dtype.const)
   | Param { name = Some name; _ } -> name
   | Const c -> Format.asprintf "%a" Dtype.pp_const c
   | _ -> Format.asprintf "%a" Ops.pp_arg (Ops.arg u)
@@ -193,7 +196,7 @@ let kernel_args =
   group "get_call_kernel_args"
     [
       test
-        "is the constant a call binds each variable to, in the program's order"
+        "is the variable a call binds to each name, in the program's order"
         (fun () ->
           let prg = program (scaled_kernel [ n; m ]) in
           let a = storage 1 in
@@ -205,7 +208,7 @@ let kernel_args =
                  if Ops.addrspace p = Some Alu then variable p else "b0")
                (Shape.kernel_params prg));
           equal uops
-            [ a; Ops.int 2; Ops.int 5 ]
+            [ a; bound n 2; bound m 5 ]
             (Realize.get_call_kernel_args call prg));
       test "is the variable itself, at no slot, where the call leaves it free"
         (fun () ->
@@ -216,14 +219,14 @@ let kernel_args =
               equal string "n" (variable free);
               equal int (-1)
                 (match Ops.arg free with Param p -> p.slot | _ -> -2);
-              equal uop (Ops.int 5) five
+              equal uop (bound m 5) five
           | us -> failf "three values, not %d" (List.length us));
       test "is the call's argument in the slot of a scalar parameter" (fun () ->
           let index = Shape.param ~addrspace:Alu 1 Int32 in
           let prg = program (scaled_kernel [ n; index ]) in
           let trip = Ops.O.((loop * int 2) + int 1) and a = storage 1 in
           let call = Ops.call prg [ a; trip; bound n 4 ] in
-          equal uops [ a; trip; Ops.int 4 ]
+          equal uops [ a; trip; bound n 4 ]
             (Realize.get_call_kernel_args call prg));
       test "is each buffer's argument for a program of no variable" (fun () ->
           let prg = program (scaled_kernel []) and a = storage 1 in

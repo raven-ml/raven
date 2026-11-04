@@ -6431,8 +6431,8 @@ and an initial value is added after it (D260).
   are one node of the merged kernel. A custom kernel's variable, named in a
   slot of its own (`Shape.custom_kernel`), becomes a nameless parameter in
   the merged call's slot of its argument: a kernel's named variable takes
-  one value a name, the first its call binds to that name or else the run's
-  (`Realize.get_call_kernel_args`), where members may pass one name two
+  one value a name, the run's or else the first its call binds to that name
+  (`Realize.get_call_kernel_args`, D356), where members may pass one name two
   values or another member read it by name. A schedule's variables count
   the names its calls pass as well as those its kernels read
   (`Schedule.create_linear_with_vars`), so a name of one value stays one a
@@ -8443,3 +8443,34 @@ and an initial value is added after it (D260).
   specification checks on; a view stored whole for a parameter 4 bytes past
   a boundary refused); the Spec suite's `tensor › arguments against their
   parameters`.
+
+## D356. A run's binding of a name holds over the value a call binds it to
+
+- **tinygrad:** `engine/realize.py:17-22` (`get_call_kernel_args`, which
+  passes a variable its call binds as a constant of its value) and `:162`
+  (`exec_kernel`, whose arguments and launch sizes read a call's bound
+  values over the run's `var_vals`); `engine/jit.py:30-31`, where a capture
+  unbinds its input variables so that each run binds them.
+- **tolk:** `Realize.get_call_kernel_args`; `Tolk_engine.launch`, whose
+  launch sizes and estimates read the variable as its arguments do;
+  `Tolk_engine.var_word` and `Tolk_engine.reader`.
+- **Differs:** a call that binds a variable a program reads by name, such as
+  a custom kernel's (`Shape.custom_kernel`), passes the bound variable, and
+  a run reads it, in the program's arguments, its launch sizes and its
+  estimates, as the run's binding of its name, or else as its bound value.
+  tinygrad passes the bound value, whatever the run binds. A schedule
+  that was not captured keeps such a binding, and lists the name among the
+  variables a run binds (`Schedule.create_linear_with_vars`): a run of
+  `Tolk_engine.run ~vars` that bound `k` to 7 computed the schedule's
+  kernels that read `k` with 7, and a custom kernel binding `k` to 3 with 3.
+- **Reason:** (c): a linked schedule runs many times
+  (`Tolk_engine.link`, `Tolk_engine.run`), each run binding the
+  schedule's variables, where tinygrad realizes a schedule once with the
+  values it was built with.
+- **Pinned by:** the Tolk_engine suite: `link and run › custom kernels with
+  variables › a custom kernel reads the run's binding of its variable` and
+  `› a custom kernel sized by its variable runs the run's binding`, and the
+  same on each GPU; the Realize suite: `get_call_kernel_args › is the
+  variable a call binds to each name, in the program's order`, `› is the
+  variable itself, at no slot, where the call leaves it free` and `› is the
+  call's argument in the slot of a scalar parameter`.

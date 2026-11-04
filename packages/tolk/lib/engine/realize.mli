@@ -23,8 +23,9 @@ val get_call_kernel_args : Ops.t -> Ops.t -> Ops.t list
     of the program [prg] ({!Shape.kernel_params}), in the order the program
     takes them: for a buffer, [call]'s argument in its slot; for a scalar
     parameter that a slot names, [call]'s argument in that slot, an expression
-    of the loops around [call]; for a named variable, the constant [call] binds
-    it to, or else the variable, at slot [-1], that a run binds by name. The
+    of the loops around [call]; for a named variable, the variable [call]
+    binds to its name, whose value holds where a run does not bind the name,
+    or else the variable, at slot [-1], that a run binds by name. The
     bounds of a split program's block ({!Ops.kernel_info.split}) are those of
     its whole loop.
 

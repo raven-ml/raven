@@ -1179,9 +1179,84 @@ let custom_kernel_beside_one_by_name ?(devices = devices) () =
   equal values ~msg:"the custom kernel's" plus (contents (of_node o1));
   equal values ~msg:"the schedule's" plus (contents (of_node o2))
 
+(* A custom kernel on CPU:1 that adds [k], bound to 3, to [a], of four
+   elements: a run that binds [k] adds the run's value, and a run that does not
+   adds 3. *)
+let custom_kernel_rebound ?(devices = devices) () =
+  let k = Ops.variable "k" (Dtype.Value.of_int 0) (Dtype.Value.of_int 8) in
+  let add = function
+    | [ out; v; src ] ->
+        let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+        let at b = Ops.index b [ i ] in
+        Ops.sink
+          ~kernel:(Ops.kernel_info ())
+          [ Ops.end_ (Ops.store (at out) Ops.O.(at src + v)) [ i ] ]
+    | _ -> invalid_arg "add takes three arguments"
+  in
+  let a = Ops.new_buffer "CPU:1" 4 Int32
+  and o = Ops.new_buffer "CPU:1" 4 Int32 in
+  let bound = Shape.bind k (`Int (Bigint.of_int 3)) in
+  let big = Ops.sink [ List.hd (Shape.custom_kernel [ o; bound; a ] add) ] in
+  let s, vars, storage = linked ~devices big in
+  equal (list (pair string int)) ~msg:"the run's variables" [ ("k", 3) ] vars;
+  let of_node u = List.find (fun s -> s.node == u) storage in
+  let xs = Array.map Dtype.Value.to_int (of_node a).before in
+  let plus v = Array.map (fun x -> `Int (Bigint.of_int (x + v))) xs in
+  List.iter
+    (fun (run, v) ->
+      Engine.run ~vars:run s [||];
+      equal values ~msg:(Printf.sprintf "k = %d" v) (plus v)
+        (contents (of_node o)))
+    [ ([ ("k", 1) ], 1); ([ ("k", 7) ], 7); ([], 3) ]
+
+(* A custom kernel on CPU:1 that adds one to the first [k] of eight elements
+   of [a], [k] bound to 3, its range [k] long: a run that binds [k] adds to
+   the run's number of elements, and a run that does not to 3, leaving the
+   others as [o] held them. *)
+let custom_kernel_sized_by_variable ?(devices = devices) () =
+  let k = Ops.variable "k" (Dtype.Value.of_int 1) (Dtype.Value.of_int 8) in
+  let add = function
+    | [ out; v; src ] ->
+        let i = Ops.range ~axis_type:Weak (Sym v) [ 0 ] in
+        let at b = Ops.index b [ i ] in
+        Ops.sink
+          ~kernel:(Ops.kernel_info ())
+          [
+            Ops.end_
+              (Ops.store (at out) Ops.O.(at src + Ops.int ~dtype:Int32 1))
+              [ i ];
+          ]
+    | _ -> invalid_arg "add takes three arguments"
+  in
+  let a = Ops.new_buffer "CPU:1" 8 Int32
+  and o = Ops.new_buffer "CPU:1" 8 Int32 in
+  let bound = Shape.bind k (`Int (Bigint.of_int 3)) in
+  let big = Ops.sink [ List.hd (Shape.custom_kernel [ o; bound; a ] add) ] in
+  let s, vars, storage = linked ~devices big in
+  equal (list (pair string int)) ~msg:"the run's variables" [ ("k", 3) ] vars;
+  let of_node u = List.find (fun s -> s.node == u) storage in
+  let xs = Array.map Dtype.Value.to_int (of_node a).before in
+  let before = (of_node o).before in
+  List.iter
+    (fun (run, n) ->
+      refill storage;
+      Engine.run ~vars:run s [||];
+      let want =
+        Array.mapi
+          (fun j x ->
+            if j < n then `Int (Bigint.of_int (x + 1)) else before.(j))
+          xs
+      in
+      equal values ~msg:(Printf.sprintf "k = %d" n) want (contents (of_node o)))
+    [ ([ ("k", 5) ], 5); ([], 3) ]
+
 (* The custom kernels whose variable sits among their buffers. *)
 let custom_kernel_scalars ?(devices = devices) () =
   [
+    test "a custom kernel reads the run's binding of its variable"
+      (custom_kernel_rebound ~devices);
+    test "a custom kernel sized by its variable runs the run's binding"
+      (custom_kernel_sized_by_variable ~devices);
     test
       "custom kernels run as one that read one name at two values read each \
        its own" (custom_kernels_of_one_name ~devices ~n:1 (3, 5));

@@ -1037,6 +1037,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Tolk_engine.run ~vars` binds a custom kernel's variable
+  (`Shape.custom_kernel`) to the run's value, where the kernel read the value
+  its call bound.
 - Custom kernels (`Shape.custom_kernel`) that pass one variable two values
   and run as one merged kernel read each its own value, where both read one.
 - On the host, consecutive `int8` and `uint8` loads and stores merge into

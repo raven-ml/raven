@@ -1714,7 +1714,7 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 | tinygrad: engine/realize.py `pm_validate`, `exec_validate`, `VALIDATE_WITH_CPU` | | dropped: excluded (ruling) |
 | tinygrad: engine/realize.py `get_call_name`'s `encdec` and `get_call_outs_ins`'s | | dropped: the video decoder queue is excluded |
 | tinygrad: engine/realize.py the `HCQInfo` branches of `get_call_outs_ins` and `estimate_uop` | | dropped: a call that submits queues is excluded (README) |
-| tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots | a compiled program keeps its own variable slots | `R › get_call_kernel_args › is the constant a call binds each variable to, in the program's order` (a program's variables are read by name, whatever the call's slots) |
+| tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots | a compiled program keeps its own variable slots | `R › get_call_kernel_args › is the variable a call binds to each name, in the program's order` (a program's variables are read by name, whatever the call's slots) |
 | tinygrad: null/test_call.py::TestCallCodegen::test_call_stack_pointer | a custom-function call's arguments in C | dropped here: Cstyle's rendering of `CALL` |
 | tinygrad: null/test_call.py (TestCall, TestCallShape, TestCallSchedule, TestArgOrder) | call construction and scheduling | dropped here: `Ops`' `call`/`call_with_outputs` and Schedule's sections |
 | tinygrad: null/test_method_cache.py (3 tests) | a program compiled once is not compiled again | `R › lower_and_compile › compiles each kernel once`; the cache is `Codegen.to_program`'s (Codegen's section, D5) |

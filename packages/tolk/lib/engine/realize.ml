@@ -17,21 +17,18 @@ let get_call_kernel_args call prg =
   let args = src_without_body call in
   let bound =
     List.filter_map
-      (fun s ->
-        match arg s with
-        | Param { bound = Some v; _ } when is_bound_var s ->
-            Some (expr s, const (v :> Dtype.const))
-        | _ -> None)
+      (fun s -> if is_bound_var s then Some (expr s, s) else None)
       args
   in
   (* A nameless scalar is the call's argument in its slot; a variable, the
-     constant the call binds it to, or else the variable a run binds. *)
+     variable the call binds, whose value is a default the run's binding of
+     its name overrides, or else the variable a run binds. *)
   let named v =
     match arg v with
     | Param { name = None; slot; _ } -> List.nth args slot
     | Param p -> (
         match List.assoc_opt (expr v) bound with
-        | Some c -> c
+        | Some b -> b
         | None -> replace v ~arg:(Param { p with slot = -1 }))
     | _ -> v
   in

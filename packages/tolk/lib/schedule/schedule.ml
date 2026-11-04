@@ -1715,8 +1715,8 @@ let merged calls =
   let slot_of a = Tbl.find slots a in
   let first = snd (List.hd calls) in
   (* A custom kernel's variable loses its name and reads the slot of its
-     argument: a kernel's named variable takes one value a name, the one its
-     call binds to that name or else the run's, where members may pass one
+     argument: a kernel's named variable takes one value a name, the run's or
+     else the one its call binds to that name, where members may pass one
      name two values, or another member read it by name. *)
   let rebuilt (si, m) =
     let own = Array.of_list (List.tl (src si)) in

@@ -761,8 +761,12 @@ let launch b call prg d =
          fields offsets)
   in
   (* A grid, as a split loop's size, reads a nameless scalar as its call
-     passes it, in its slot. *)
+     passes it, in its slot, and a variable its call binds as the call's bound
+     variable, as its arguments do ({!Realize.get_call_kernel_args}). *)
   let args = Ops.src_without_body call in
+  let bound name =
+    List.find_opt (fun a -> Shape.is_bound_var a && Ops.expr a = name) args
+  in
   let passed : Ops.sint -> Ops.sint = function
     | Int n -> Int n
     | Sym u ->
@@ -771,6 +775,9 @@ let launch b call prg d =
           | Ops.Param { name = None; slot; addrspace = Dtype.Alu; _ }
             when slot >= 0 && slot < List.length args ->
               Some (v, List.nth args slot)
+          | Ops.Param { name = Some _; addrspace = Dtype.Alu; bound = None; _ }
+            ->
+              Option.map (fun a -> (v, a)) (bound (Ops.expr v))
           | _ -> None
         in
         let subs = List.filter_map slotted (Ops.toposort ~calls:Skip u) in
