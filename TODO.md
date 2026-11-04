@@ -153,9 +153,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   derivative traces the composition; fused SIMT backward kernels ran 2-3x
   slower); host f32 decode is slower than the composition (L11); causal
   saves little (one wave of uneven workgroups); RDNA4 and Metal core paths
-- a compiled selection on a GPU set was once declined, so the set raised (1
-  of 4 runs of 16 matvecs): a nondeterministic decline is a crash on a set
-  without eager kernels
 - a fresh process's first calls fault 72-188 pages each for 1 MiB results
   until rig's buffer cache warms
 - `Jit/scatter-1024x16` runs 18.8-25.0 µs against its 7.98 µs baseline
