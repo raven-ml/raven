@@ -2076,130 +2076,6 @@ let checks_what_it_lowers () =
           Codegen.full_rewrite_to_sink ~optimize:false
             (Lazy.force marker_kernel) breaking))
 
-(* Tensor-core accumulators *)
-
-(* A Metal tensor core's product added, from the constant accumulator [c], to
-   two floats the kernel loads: [out[i] = (wmma a b c)[i] + acc[i]], where
-   [acc], of slot 2, stands for the running sum of a tensor-core loop. *)
-let lane slot dt i =
-  Ops.index (Shape.param ~shape:[ Int 2 ] slot dt) [ Ops.int ~dtype:Int32 i ]
-
-let lanes slot dt =
-  Shape.stack (List.init 2 (fun i -> Ops.load (lane slot dt i) []))
-
-let accumulated c =
-  let c = Ops.float ~dtype:Float32 c in
-  let product =
-    Ops.wmma (lanes 0 Float16) (lanes 1 Float16)
-      ~acc:(Shape.stack [ c; c ])
-      ~dims:(8, 8, 8) ~threads:32
-  in
-  let sum = Ops.add product (lanes 2 Float32) in
-  Ops.sink ~kernel:(Ops.kernel_info ())
-    (List.init 2 (fun i ->
-         Ops.store (lane 3 Float32 i) (Ops.index sum [ Ops.int ~dtype:Int32 i ])))
-
-let lowered_on_metal k =
-  Setting.context
-    [ B (Setting.spec, 0) ]
-    (fun () -> Codegen.full_rewrite_to_sink ~optimize:false k (metal ()))
-
-(* A tensor core computes its accumulator plus a product that does not depend on
-   it: each tensor core of [u] stands here for its accumulator plus the two
-   floats of slot 4. *)
-let with_products u =
-  let products = lanes 4 Float32 in
-  Ops.substitute ~calls:Skip ~pass:Fixed_point u
-    (List.filter_map
-       (fun w ->
-         if is Wmma w then Some (w, Ops.add (Ops.nth w 2) products) else None)
-       (Ops.toposort ~calls:Enter u))
-
-(* The kernel of [c] and its lowering, each tensor core standing for its sum,
-   lowered once for every case of a property. *)
-let standing_in =
-  let made = Hashtbl.create 4 in
-  fun c ->
-    (* -0. and 0. are two kernels. *)
-    let key = Int64.bits_of_float c in
-    match Hashtbl.find_opt made key with
-    | Some pair -> pair
-    | None ->
-        let k = accumulated c in
-        let pair = (with_products k, with_products (lowered_on_metal k)) in
-        Hashtbl.replace made key pair;
-        pair
-
-let zero_sign_apart v0 v1 =
-  match (v0, v1) with
-  | `Float f0, `Float f1 when f0 = 0. && f1 = 0. -> true
-  | v0, v1 -> Testable.equal Dtypes.value v0 v1
-
-let written =
-  Testable.make ~pp:(Testable.pp Kernel_opts.write)
-    ~equal:(fun (s0, i0, v0) (s1, i1, v1) ->
-      s0 = s1 && i0 = i1 && zero_sign_apart v0 v1)
-
-(* The sum of [c], the accumulator and the products, whose rounding is fixed for
-   a zero accumulator and left open otherwise, as tinygrad reassociates it. *)
-let keeps_the_value (c, (acc, products)) =
-  let buffers =
-    [
-      (0, Array.make 2 (`Float 1.));
-      (1, Array.make 2 (`Float 1.));
-      (2, Array.of_list acc);
-      (3, Array.make 2 (`Float 0.));
-      (4, Array.of_list products);
-    ]
-  in
-  let k, lowered = standing_in c in
-  equal (list written)
-    (Interpreter.writes ~buffers k)
-    (Interpreter.writes ~buffers lowered)
-
-let keeps_a_zero_accumulator_value (c, (acc, products)) =
-  cover "an accumulator at -0."
-    (List.exists (Testable.equal Dtypes.value (`Float (-0.))) acc);
-  cover "an accumulator that starts at -0." (1. /. c < 0.);
-  keeps_the_value (c, (acc, products))
-
-(* Two floats, signed zeros often among them. *)
-let float32s =
-  Gen.list ~size:(Gen.constant 2)
-    (Gen.frequency
-       [
-         (3, Dtypes.value_of Float32);
-         ( 1,
-           Gen.of_list ~pp:(Testable.pp Dtypes.value)
-             [ `Float (-0.); `Float 0. ] );
-       ])
-
-let zeros = Gen.of_list ~pp:Format.pp_print_float [ 0.; -0. ]
-let float_constant u = is Const u && Dtype.is_float (Ops.dtype u)
-
-let replaces_a_zero c =
-  List.iter
-    (fun w ->
-      equal (list Uops.uop) []
-        (List.filter float_constant (Ops.toposort ~calls:Enter (Ops.nth w 2))))
-    (List.filter (is Wmma)
-       (Ops.toposort ~calls:Enter (lowered_on_metal (accumulated c))))
-
-let accumulators =
-  group "tensor-core accumulators"
-    [
-      cases "the running sum replaces a zero accumulator" ~id:string_of_float
-        [ 0.; -0. ] replaces_a_zero;
-      test
-        "the running sum is added to an accumulator that is not zero, which \
-         keeps a sum computed exactly" (fun () ->
-          keeps_the_value
-            (1.5, ([ `Float 2.; `Float (-3.) ], [ `Float 4.; `Float 0.5 ])));
-      prop "the lowering keeps a tensor core's value, apart from a zero's sign"
-        (Gen.pair zeros (Gen.pair float32s float32s))
-        keeps_a_zero_accumulator_value;
-    ]
-
 (* Tensor cores on CUDA
 
    [c = cast dt (Σ_r float32 a.(i, r) * float32 b.(r, j) + 0)] for an [m] by [k]
@@ -2382,6 +2258,62 @@ let unrolled ast r =
       in
       core @ [ Opt.Split { axis; amount = 2; target = Upcast; top = false } ]
   | _ -> failwith "no tensor core"
+
+(* Tensor-core accumulators
+
+   A sum of tensor cores starts each core from a zero accumulator, which the
+   running sum replaces: no loop adds [+0.] to it. The rule is codegen's, so a
+   renderer that has only a target's tensor cores, and no compiler, states it
+   on any machine. *)
+
+let tensor_core_targets =
+  [
+    ("Metal", target "METAL" "METAL" "Apple9", Tc.metal);
+    ("CUDA sm_75", target "CUDA" "CUDA" "sm_75", Tc.cuda_sm75);
+    ("CUDA sm_80", target "CUDA" "CUDA" "sm_80", Tc.cuda_sm80);
+    ("CUDA sm_89", target "CUDA" "CUDA" "sm_89", Tc.cuda_sm89);
+    ("RDNA 3", target "AMD" "HIP" "gfx1100", Tc.amd_rdna3);
+    ("RDNA 4", target "AMD" "HIP" "gfx1201", Tc.amd_rdna4);
+    ("CDNA 3", target "AMD" "HIP" "gfx942", Tc.amd_cdna3);
+    ("CDNA 4", target "AMD" "HIP" "gfx950", Tc.amd_cdna4);
+  ]
+
+(* The float constants and additions an accumulator is computed from, short of
+   storage read after other nodes ([After]), which holds neither, and of other
+   cores, each looked at on its own. *)
+let zero_terms acc =
+  let enter u = not (is After u || is Wmma u) in
+  List.filter
+    (fun u -> Dtype.is_float (Ops.dtype u) && (is Const u || is Add u))
+    (Ops.toposort ~gate:enter ~calls:Enter acc)
+
+(* A float16 product of 32 by 128 by 32 summed in float32 from its tensor
+   cores, [steps] steps of K a trip (1 or 2), in a loop of two trips or more. *)
+let replaces_a_zero ((_, t, cores), steps) =
+  let r = Renderer.v ~tensor_cores:cores t in
+  let shape = (32, 128, 32) in
+  let opts_to_apply =
+    if steps = 2 then unrolled (widened_product Float16 shape) r else core
+  in
+  let k = widened_product ~opts_to_apply Float16 shape in
+  let wmmas =
+    List.filter (is Wmma)
+      (Ops.toposort ~calls:Enter (Codegen.full_rewrite_to_sink k r))
+  in
+  greater ~msg:"tensor cores" int ~than:0 (List.length wmmas);
+  List.iter
+    (fun w -> equal (list Uops.uop) [] (zero_terms (Ops.nth w 2)))
+    wmmas
+
+let accumulators =
+  group "tensor-core accumulators"
+    [
+      cases "the running sum replaces a zero accumulator"
+        ~id:(fun ((name, _, _), steps) ->
+          Printf.sprintf "%s, %d steps a trip" name steps)
+        (List.concat_map (fun t -> [ (t, 1); (t, 2) ]) tensor_core_targets)
+        replaces_a_zero;
+    ]
 
 (* Floats of magnitudes from [2^-8] to [2^8]: the sums of their products
    round, so that a sum's order shows in its bits. *)
@@ -4142,6 +4074,8 @@ let padding_computed ?flip fill before after xs =
          (Tensors.eval ~buffers:[ (1, floats xs) ] value))
   in
   equal (list Dtypes.value) expected written
+
+let zeros = Gen.of_list ~pp:Format.pp_print_float [ 0.; -0. ]
 
 let signed_zero_pads =
   Gen.map

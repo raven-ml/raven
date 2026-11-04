@@ -788,8 +788,11 @@ scope, see README.
     `Tolk.Cstyle › sources › by default › metal_tc_*`, `hip_tc_*` and
     `metal_matmul`, whose loops add nothing to the accumulator, as tinygrad's;
     `Tolk.Codegen › tensor-core accumulators › the running sum
-    replaces a zero accumulator` and `› the lowering keeps a tensor core's value, apart from a
-    zero's sign`, which draws accumulators at `-0.`;
+    replaces a zero accumulator`, which lowers a contraction on each
+    target's tensor cores, one or two steps of K a trip; and the values of
+    folded sums on CUDA's cores, `Tolk.Codegen › tensor cores on CUDA › a
+    float16 or bfloat16 product of 1 to 4 tiles a side, summed in float32
+    from 0, is the exact product`;
   - the goldens, generated from the patched tinygrad.
 
 ## D25. A product and a sum round apart, except into a sum
@@ -6958,9 +6961,10 @@ and an initial value is added after it (D260).
   shared-memory staging design runs them).
 - **Pinned by:** the Codegen suite, `tensor cores on CUDA › a product summed
   in float32 has the same bits whether the core takes one or two steps of K
-  a trip` (fails unfolded), and `stages › … › matmul_{half,half_big,
-  half_tile,bf16_tile,tc}_{cuda,hip}` and `matmul_tc_unroll_metal`; the
-  cstyle and renderer goldens of each core.
+  a trip` (fails unfolded), `tensor-core accumulators › the running sum
+  replaces a zero accumulator` (fails unfolded, on every target's cores),
+  and `stages › … › matmul_{half,half_big,half_tile,bf16_tile,tc}_{cuda,hip}`
+  and `matmul_tc_unroll_metal`; the cstyle and renderer goldens of each core.
 
 ## D261. 16-bit floats copied into shared memory merge to 16 bytes
 
