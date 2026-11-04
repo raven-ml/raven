@@ -117,9 +117,12 @@ and rune), raven / llama.cpp b12048 Vulkan:
 - LLVM 20+ and Apple Clang keep the straight-line vectorizer that D167
   turns off under LLVM 18 and 19: run the reduced kernel of 73455ffe7
   through them (the Mac's Homebrew LLVM) and extend D167 if they miscompile
-- programs that share a cubin load it once each (31 of 74 loads in a
-  gpt-oss first call, about 1.8 ms): sharing needs `Rig.Image.load` to drop
-  its promise of module variables per load (D146)
+- programs that share a kernel load its binary once each (D146): rig could
+  share a binary with no module variables and keep its promise, but on
+  fudge that saves at most 1-1.5 ms of a 70 ms gpt-oss first call on CUDA
+  and 2.5 ms of 60 ms on NV, against a driver function and an image table
+  (about 80 lines); NV's cost is an allocation and map per image, and
+  AMD's loads are unmeasured
 - HIP's unstaged tensor-core operands load 8 bytes again since D261's copy
   rule: unmeasured on nonnormal
 - D355's guard constants are built with `vconst_like` in tolk and now in
