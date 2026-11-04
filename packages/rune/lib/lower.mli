@@ -56,7 +56,8 @@ val op :
     [float32] and [float64] or whose result's precision is not its operand's,
     a [Contract] scaled in an accumulator other than [float32] or [float64], a
     reduction or a scan of a complex [Prod], and a scan of a [complex128]
-    [Max], [Min] or [Arg]. *)
+    [Max], [Min] or [Arg]; [Invalid_argument] for a [Gather_ranges], which a
+    program holds as a [Gather] at its positions. *)
 
 (**/**)
 

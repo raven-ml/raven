@@ -623,6 +623,7 @@ let same_results : type r. string -> r Nx.Prim.t -> r -> r -> unit =
   | Reduce { reductions; _ } -> same_reductions msg reductions a b
   | Scan { reduction; _ } -> same_reduction msg reduction a b
   | Gather _ -> same_form ~msg a b
+  | Gather_ranges _ -> same_form ~msg a b
   | Scatter _ -> same_form ~msg a b
   | Sort _ ->
       let (v, p), (v', p') = (a, b) in
@@ -1085,6 +1086,13 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
       (* Linear in [x]: the positions carry no tangent. *)
       let idx = fst (parts i g.idx) in
       both (fun y -> Nx.Prim.eval ~by (Gather { g with idx; x = y })) g.x
+  | Gather_ranges g ->
+      (* Linear in [x]: the starts and ends carry no tangent. *)
+      let starts = fst (parts i g.starts) and ends = fst (parts i g.ends) in
+      let gather y =
+        Nx.Prim.eval ~by (Gather_ranges { g with starts; ends; x = y })
+      in
+      both gather g.x
   | Scatter ({ combine = Set | Add; _ } as s) ->
       (* Linear in the updates and the target. *)
       let idx = fst (parts i s.idx) in

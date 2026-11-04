@@ -824,6 +824,11 @@ let rule (type r) n held i ~by (op : r Prim.t) : r =
              carry = Option.map (fun (Prim.Any c) -> Prim.Any (b c)) s.carry;
            })
   | Gather g -> batched (Gather { axis = g.axis + 1; idx = b g.idx; x = b g.x })
+  (* The lanes become a lead axis of the runs and the source. *)
+  | Gather_ranges g ->
+      batched
+        (Gather_ranges
+           { g with starts = b g.starts; ends = b g.ends; x = b g.x })
   | Scatter s ->
       batched
         (Scatter

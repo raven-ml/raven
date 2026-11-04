@@ -5556,6 +5556,21 @@ module Prim : sig
         (** [x] read at the positions [idx] holds along [axis]: [idx] has [x]'s
             rank and its extents off [axis], and the result [idx]'s shape. A
             position outside [x]'s axis reads the element of zero bits. *)
+    | Gather_ranges : {
+        size : int;
+        starts : (int64, Dtype.int64_elt, 'd) nx;
+        ends : (int64, Dtype.int64_elt, 'd) nx;
+        x : ('v, 's, 'd) nx;
+      }
+        -> ('v, 's, 'd) nx t
+        (** Runs of [x] along axis [a = rank starts - 1], packed into [size]
+            elements there, as {!Nx_kernel.S.gather_ranges} says: [starts]
+            and [ends] have one shape, [[lead…; k]], and [x] [[lead…; n;
+            cells…]]; the result is [x] with [size] elements along [a].
+            Position [p] belongs to the first run whose end exceeds it and
+            reads [x] at [starts.{j} + p - ends.{j - 1}] modulo [2{^64}]; a
+            position outside [x]'s axis or past every end reads the element
+            of zero bits: the bits of a {!Gather} at those positions. *)
     | Scatter : {
         combine : Nx_kernel.combine;
         unique : bool;

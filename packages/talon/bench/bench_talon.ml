@@ -191,6 +191,13 @@ let take_random =
   let t = Talon.v [ ("key", nullable ~valid:key_valid key_values) ] in
   fun () -> Talon.take indices t
 
+(* The text column [s] at 2^18 random rows: each row's bytes are copied
+   once. *)
+let take_text =
+  let indices = Nx.slice [ R (0, 1 lsl 18) ] (ints 12 n) in
+  let t = Talon.v [ ("s", strings) ] in
+  fun () -> Talon.take indices t
+
 (* [text_layout ()] is the layout of 2^20 ASCII texts, ["s0"] to ["s99999"],
    which [Column.of_layout] checks as a text column: offsets and UTF-8. It is
    made in the case's worker, so that no other case's process holds it. *)
@@ -319,6 +326,7 @@ let () =
           Thumper.bench "Nulls/kleene-or" (fun () ->
               kleene Expr.(Col.bool "a" || Col.bool "b"));
           Thumper.bench "Nulls/take-random" take_random;
+          Thumper.bench "Nulls/take-random-text" take_text;
           Thumper.bench "Nulls/concat-3" concat_3;
           Thumper.bench_with_setup ~setup:text_layout "Layout/text-1M" (fun l ->
               Column.of_layout (Type.Any Type.string) l);

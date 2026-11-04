@@ -48,6 +48,10 @@ module Counting = struct
     Atomic.incr count;
     Nx_cpu.gather ~axis ~dst idx x
 
+  let gather_ranges ~dst ~starts ~ends x =
+    Atomic.incr count;
+    Nx_cpu.gather_ranges ~dst ~starts ~ends x
+
   let scatter c ~unique ~axis ~dst ~into idx u =
     Atomic.incr count;
     Nx_cpu.scatter c ~unique ~axis ~dst ~into idx u

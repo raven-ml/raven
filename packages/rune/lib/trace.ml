@@ -345,6 +345,13 @@ let rule (type r) st i ~by (op : r Nx.Prim.t) : r =
       reduce_parts st i ~by layout axes prog reductions loads
   | Tape, Scan { layout; axis; prog; reduction; loads; carry } ->
       scan_part st i ~by layout axis prog reduction loads carry
+  (* A program holds a range gather as the gather at its positions, which
+     the compiler lowers; a tape keeps the operation, so that a derivative
+     builds no position on it ({!Ranges}). *)
+  | (Body | Jit | Staged), Gather_ranges { size; starts; ends; x } ->
+      Ranges.compose
+        { eval = (fun op -> record_op st i ~by op) }
+        ~size starts ends x
   | _ -> record_op st i ~by op
 
 let owned i (V x) = owns i x

@@ -195,6 +195,9 @@ let call : type r.
           { array = A.Any (one b); scale = Option.map scale b_scale }
     | Value.Gather { axis; idx; x } ->
         K.gather ~axis ~dst:(one r) (one idx) (one x)
+    | Value.Gather_ranges { starts; ends; x; _ } ->
+        K.gather_ranges ~dst:(one r) ~starts:(one starts) ~ends:(one ends)
+          (one x)
     | Value.Scatter { combine; unique; axis; idx; updates; into } ->
         K.scatter combine ~unique ~axis ~dst:(one r) ~into:(one into)
           (one idx) (one updates)
@@ -620,9 +623,9 @@ let windows : type r d.
     when Iarray.length loads = 0 && Devices.bare p ->
       created ~by p layouts op
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
-  | Value.Scatter _ | Value.Sort _ | Value.Unique _ | Value.Fold _ | Value.Fft _
-  | Value.Linalg _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
-  | Value.Attention _ ->
+  | Value.Gather_ranges _ | Value.Scatter _ | Value.Sort _ | Value.Unique _
+  | Value.Fold _ | Value.Fft _ | Value.Linalg _ | Value.Assemble _
+  | Value.Contract _ | Value.Copy _ | Value.Attention _ ->
       (* Fresh results on the route's one device, computed there by its
          kernels over the operands, which lie there. *)
       let r = Prim.results_at p layouts (fun k f -> alloc ?into k f) op in

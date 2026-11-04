@@ -234,6 +234,20 @@ module Shape = struct
     else if off_axis axis idx x then Ok idx
     else errorf "positions %a do not fit %a along axis %d" pp idx pp x axis
 
+  let gather_ranges ~size starts ends x =
+    let r = Array.length starts in
+    let a = r - 1 in
+    if r = 0 then errorf "0-d starts"
+    else if starts <> ends then
+      errorf "starts %a and ends %a differ" pp starts pp ends
+    else if Array.length x <= a || Array.sub x 0 a <> Array.sub starts 0 a
+    then errorf "runs %a do not fit %a along axis %d" pp starts pp x a
+    else if size < 0 then errorf "a size of %d" size
+    else
+      let y = Array.copy x in
+      y.(a) <- size;
+      admit "a range gather" y
+
   let scatter ~axis into idx u =
     if axis < 0 || axis >= Array.length into then
       errorf "axis %d of a target of rank %d" axis (Array.length into)
@@ -591,6 +605,9 @@ module type S = sig
     answer
 
   val gather : axis:int -> dst:('v, 's) a -> index -> ('v, 's) a -> answer
+
+  val gather_ranges :
+    dst:('v, 's) a -> starts:index -> ends:index -> ('v, 's) a -> answer
 
   val scatter :
     combine ->

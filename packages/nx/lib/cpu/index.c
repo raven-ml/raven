@@ -309,6 +309,375 @@ value nx_cpu_gather(value vaxis, value vd, value vi, value vx) {
   CAMLreturn(Val_int(NX_OK));
 }
 
+/* Range gathers
+
+   A range gather writes its destination one row at a time, a row being
+   one position p along the ranged axis at one lead index, with its cells.
+   Row p belongs to run j, the first whose end exceeds p: the runs that
+   hold rows hold them in order, each from where the ends before it reached,
+   so one forward walk over the ends finds every row's run. Run j's rows
+   read x from position w = starts[j] + p - ends[j - 1], modulo 2^64; the
+   rows whose position lies in [0, n) are one span, copied as one memcpy
+   where x's rows lie one after the other, else as a box (nx_copy_box), and
+   the rows before and after it are zeros, as are the rows past every end.
+
+   Threads split the rows into units that start on whole cache lines of the
+   destination, so that no two threads write one byte, sub-byte dtypes'
+   included. A serial pass over the ends finds the run each unit starts
+   in. */
+
+/* The most units a range gather's job cuts its rows into. */
+#define RANGE_UNITS 512
+
+/* What a run costs on top of its bytes (Calls and jobs, scalar): finding
+   it, its position's clip and its copy. A run of one byte took 2.0 ns,
+   one core's copy of about 140 bytes (fudge alone, quiet, 2026-11-04). */
+#define RUN_COST 256
+
+/* A unit's first row: its lead index, its run, its position. */
+typedef struct {
+  int64_t lead, j, p;
+} range_at;
+
+typedef struct {
+  const nx_array *a;    /* the destination, the starts, the ends, the source */
+  int lr;               /* the lead axes, before the ranged one */
+  int64_t lead, k, n;   /* lead indices, runs, the source's positions */
+  int64_t size, cells;  /* the destination's rows per lead index, cells a row */
+  int64_t sa;           /* the source's stride along the ranged axis */
+  int nc;               /* the source's cell axes, coalesced */
+  int64_t ce[NX_MAX_RANK], cs[NX_MAX_RANK]; /* their extents and strides */
+  int line;             /* the source's rows are one run of cells */
+  int64_t units;
+  int64_t first[RANGE_UNITS + 1]; /* each unit's first row, then the end */
+  range_at at[RANGE_UNITS];
+} ranges;
+
+/* The positions of lead index [lead] in the starts, the ends and the
+   source, into [o]. */
+static void lead_at(const ranges *g, int64_t lead, int64_t *o) {
+  const nx_array *a = g->a;
+  o[0] = a[1].offset, o[1] = a[2].offset, o[2] = a[3].offset;
+  for (int i = g->lr - 1; i >= 0; i--) {
+    int64_t d = a[1].dim[i], q = lead % d;
+    lead /= d;
+    o[0] += q * a[1].dim[a[1].rank + i];
+    o[1] += q * a[2].dim[a[2].rank + i];
+    o[2] += q * a[3].dim[a[3].rank + i];
+  }
+}
+
+/* Zeros at the destination's [m] elements from element [d]. */
+static void range_zeros(const ranges *g, int64_t d, int64_t m) {
+  const nx_array *y = &g->a[0];
+  if (y->bits >= 8)
+    memset(y->base + d * (y->bits / 8), 0, (size_t)(m * (y->bits / 8)));
+  else nx_sub_fill_run(y->base, y->bits, d, m, 0);
+}
+
+/* Copies [m] rows of the source from its element [s] to the destination's
+   element [d]. */
+static void range_copy(const ranges *g, int64_t d, int64_t s, int64_t m) {
+  const nx_array *a = g->a;
+  int bits = a[0].bits;
+  if (g->line || (m == 1 && g->nc == 0)) {
+    int64_t e = m * g->cells;
+    if (bits >= 8) {
+      int64_t w = bits / 8;
+      memcpy(a[0].base + d * w, a[3].base + s * w, (size_t)(e * w));
+    }
+    else nx_sub_copy_run(a[0].base, d, a[3].base, s, 1, e, bits);
+    return;
+  }
+  /* A box of the rows and the last two cell axes, for each index of the
+     cell axes before those. */
+  int nc = g->nc;
+  nx_box b = {.first = {d, s}};
+  if (nc == 0) {
+    b.extent[0] = 1, b.extent[1] = 1, b.extent[2] = m;
+    b.step[0][2] = 1, b.step[1][2] = g->sa;
+    nx_copy_box(a[0].base, a[3].base, &b, bits);
+    return;
+  }
+  if (nc == 1) {
+    b.extent[0] = 1, b.extent[1] = m, b.extent[2] = g->ce[0];
+    b.step[0][1] = g->cells, b.step[0][2] = 1;
+    b.step[1][1] = g->sa, b.step[1][2] = g->cs[0];
+    nx_copy_box(a[0].base, a[3].base, &b, bits);
+    return;
+  }
+  int64_t c1 = g->ce[nc - 2], c2 = g->ce[nc - 1], plane = c1 * c2;
+  b.extent[0] = m, b.extent[1] = c1, b.extent[2] = c2;
+  b.step[0][0] = g->cells, b.step[0][1] = c2, b.step[0][2] = 1;
+  b.step[1][0] = g->sa, b.step[1][1] = g->cs[nc - 2];
+  b.step[1][2] = g->cs[nc - 1];
+  for (int64_t o = 0; o < g->cells / plane; o++) {
+    int64_t at = s, q = o;
+    for (int i = nc - 3; i >= 0; i--) {
+      at += (q % g->ce[i]) * g->cs[i];
+      q /= g->ce[i];
+    }
+    b.first[0] = d + o * plane, b.first[1] = at;
+    nx_copy_box(a[0].base, a[3].base, &b, bits);
+  }
+}
+
+/* The [m] rows from row [p] of lead index [lead] that read the source from
+   position [w] on, its lead index's elements from [xo]: zeros, the span
+   inside [0, n), zeros. */
+static void range_piece(const ranges *g, int64_t lead, int64_t p, int64_t m,
+                        uint64_t w, int64_t xo) {
+  uint64_t n = (uint64_t)g->n, lo, hi;
+  /* The offsets i in the run of w + i inside [0, n), modulo 2^64: from 0
+     where w is inside, else from where w + i wraps past 2^64. */
+  if (w < n) lo = 0, hi = n - w;
+  else lo = -w, hi = lo + n;
+  if (lo > (uint64_t)m) lo = (uint64_t)m;
+  if (hi > (uint64_t)m) hi = (uint64_t)m;
+  int64_t d = g->a[0].offset + (lead * g->size + p) * g->cells;
+  int64_t c = g->cells;
+  if (lo > 0) range_zeros(g, d, (int64_t)lo * c);
+  if (hi > lo)
+    range_copy(g, d + (int64_t)lo * c, xo + (int64_t)(w + lo) * g->sa,
+               (int64_t)(hi - lo));
+  if ((uint64_t)m > hi)
+    range_zeros(g, d + (int64_t)hi * c, (m - (int64_t)hi) * c);
+}
+
+/* Copies [n] bytes from [s] to [d]: up to 32 as two loads and two stores
+   that overlap, so that a short row, as a text's, costs a few
+   instructions where memcpy's call costs several times them. */
+static inline __attribute__((always_inline)) void copy_bytes(
+    uint8_t *d, const uint8_t *s, size_t n) {
+  if (n > 32) {
+    memcpy(d, s, n);
+    return;
+  }
+  if (n > 16) {
+    uint64_t x[2], y[2];
+    memcpy(x, s, 16), memcpy(y, s + n - 16, 16);
+    memcpy(d, x, 16), memcpy(d + n - 16, y, 16);
+  }
+  else if (n >= 8) {
+    uint64_t x, y;
+    memcpy(&x, s, 8), memcpy(&y, s + n - 8, 8);
+    memcpy(d, &x, 8), memcpy(d + n - 8, &y, 8);
+  }
+  else if (n >= 4) {
+    uint32_t x, y;
+    memcpy(&x, s, 4), memcpy(&y, s + n - 4, 4);
+    memcpy(d, &x, 4), memcpy(d + n - 4, &y, 4);
+  }
+  else if (n > 0) {
+    uint8_t x = s[0], y = s[n / 2], z = s[n - 1];
+    d[0] = x, d[n / 2] = y, d[n - 1] = z;
+  }
+}
+
+/* A run's [m] rows at [d], [row] bytes each, that read the source's rows
+   at [src] from position [w] on, modulo 2^64, past the source's [n]: zeros,
+   the span inside [0, n), zeros. Out of line: a run inside the axis, as
+   every run of a take is, never reaches it. */
+static __attribute__((noinline)) void lines_clipped(uint8_t *d,
+                                                    const uint8_t *src,
+                                                    uint64_t w, uint64_t m,
+                                                    uint64_t n, int64_t row) {
+  uint64_t lo, hi;
+  /* The offsets i of the run whose w + i lies inside [0, n): from 0 where
+     w does, else from where w + i wraps past 2^64. */
+  if (w < n) lo = 0, hi = n - w;
+  else lo = -w, hi = lo + n;
+  if (lo > m) lo = m;
+  if (hi > m) hi = m;
+  size_t r = (size_t)row;
+  if (lo > 0) memset(d, 0, lo * r);
+  if (hi > lo) memcpy(d + lo * r, src + (w + lo) * r, (hi - lo) * r);
+  if (m > hi) memset(d + hi * r, 0, (m - hi) * r);
+}
+
+/* The rows [p, stop) of one lead index from run [j], its rows at [dst]
+   and the source's at [src], the runs' starts at [st] and ends at [en]
+   stepping [ss] and [se], where the source's rows lie one after the
+   other, of whole bytes: each run's span is one copy. It keeps few values
+   live, in locals, so that the compiler holds them in registers. Answers
+   the run it stops in. */
+static int64_t lead_lines(const ranges *g, uint8_t *dst, const uint8_t *src,
+                          const int64_t *st, int64_t ss, const int64_t *en,
+                          int64_t se, int64_t j, int64_t p, int64_t stop) {
+  const int64_t k = g->k, row = g->cells * (g->a[0].bits / 8);
+  const uint64_t n = (uint64_t)g->n;
+  int64_t before = j > 0 ? en[(j - 1) * se] : 0;
+  const int64_t *sp = st + j * ss, *ep = en + j * se;
+  uint8_t *d = dst + p * row;
+  /* Run j holds rows [p, e) where its end e exceeds p, and none else; a run
+     the unit's stop cuts is the next unit's first. */
+  for (; j < k && p < stop; j++, ep += se, sp += ss) {
+    int64_t e = *ep;
+    if (e > p) {
+      int64_t q = e < stop ? e : stop;
+      uint64_t m = (uint64_t)(q - p);
+      uint64_t w = (uint64_t)*sp + (uint64_t)p - (uint64_t)before;
+      if (w < n && m <= n - w)
+        copy_bytes(d, src + w * row, m * (uint64_t)row);
+      else lines_clipped(d, src, w, m, n, row);
+      d += m * row;
+      p = q;
+      if (q < e) return j;
+    }
+    before = e;
+  }
+  if (p < stop) memset(d, 0, (size_t)((stop - p) * row));
+  return j;
+}
+
+/* lead_lines for any source and dtype: each run's span through
+   range_piece. */
+static int64_t lead_pieces(const ranges *g, int64_t lead, const int64_t *o,
+                           int64_t j, int64_t p, int64_t stop) {
+  const nx_array *a = g->a;
+  int64_t k = g->k;
+  int64_t ss = a[1].dim[a[1].rank + g->lr], se = a[2].dim[a[2].rank + g->lr];
+  const int64_t *st = (const int64_t *)a[1].base + o[0];
+  const int64_t *en = (const int64_t *)a[2].base + o[1];
+  while (p < stop) {
+    while (j < k && en[j * se] <= p) j++;
+    if (j == k) {
+      range_zeros(g, a[0].offset + (lead * g->size + p) * g->cells,
+                  (stop - p) * g->cells);
+      return j;
+    }
+    int64_t e = en[j * se], q = e < stop ? e : stop;
+    uint64_t before = j > 0 ? (uint64_t)en[(j - 1) * se] : 0;
+    uint64_t w = (uint64_t)st[j * ss] + (uint64_t)p - before;
+    range_piece(g, lead, p, q - p, w, o[2]);
+    p = q;
+  }
+  return j;
+}
+
+/* Unit [u]'s rows, from its first to the next unit's. */
+static void range_unit(const ranges *g, int64_t u) {
+  const nx_array *a = g->a;
+  int64_t lead = g->at[u].lead, j = g->at[u].j, p = g->at[u].p;
+  int64_t end = g->first[u + 1], size = g->size;
+  int lines = g->line && a[0].bits >= 8;
+  int64_t w = a[0].bits / 8;
+  int64_t ss = a[1].dim[a[1].rank + g->lr], se = a[2].dim[a[2].rank + g->lr];
+  while (lead * size + p < end) {
+    int64_t o[3];
+    lead_at(g, lead, o);
+    int64_t stop = end - lead * size;
+    if (stop > size) stop = size;
+    if (lines)
+      j = lead_lines(g,
+                     a[0].base + (a[0].offset + lead * size * g->cells) * w,
+                     a[3].base + o[2] * w, (const int64_t *)a[1].base + o[0],
+                     ss, (const int64_t *)a[2].base + o[1], se, j, p, stop);
+    else j = lead_pieces(g, lead, o, j, p, stop);
+    p = stop;
+    if (p < size) break;
+    lead++, j = 0, p = 0;
+  }
+}
+
+static void range_units(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  for (int64_t u = lo; u < hi; u++) range_unit(ctx, u);
+}
+
+static int64_t gcd64(int64_t a, int64_t b) {
+  while (b) {
+    int64_t t = a % b;
+    a = b, b = t;
+  }
+  return a;
+}
+
+/* Cuts the rows into [units] units of about as many rows each, each first
+   row one whose first bit begins a cache line of the destination, and
+   finds the run each starts in: the first whose end exceeds its row. */
+static void range_plan(ranges *g, int64_t units) {
+  const nx_array *a = g->a;
+  int64_t rows = g->lead * g->size;
+  int64_t row_bits = g->cells * a[0].bits;
+  int64_t grain = 512 / gcd64(512, row_bits);
+  int64_t u = 0;
+  for (int64_t i = 0; i < units; i++) {
+    int64_t r = (int64_t)((double)rows * (double)i / (double)units);
+    r = (r + grain - 1) / grain * grain;
+    if (r > rows) r = rows;
+    if (u > 0 && r <= g->first[u - 1]) continue;
+    if (r == rows) break;
+    g->first[u++] = r;
+  }
+  g->first[u] = rows;
+  g->units = u;
+  int64_t se = a[2].dim[a[2].rank + g->lr];
+  const int64_t *en = (const int64_t *)a[2].base;
+  int64_t j = 0, lead = -1, o[3] = {0, 0, 0};
+  for (int64_t i = 0; i < u; i++) {
+    int64_t l = g->first[i] / g->size, p = g->first[i] % g->size;
+    if (l != lead) lead = l, j = 0, lead_at(g, lead, o);
+    while (j < g->k && en[o[1] + j * se] <= p) j++;
+    g->at[i] = (range_at){lead, j, p};
+  }
+}
+
+value nx_cpu_gather_ranges(value vd, value vs, value ve, value vx) {
+  CAMLparam4(vd, vs, ve, vx);
+  int dt = nx_array_dtype(vx);
+  int64_t ys[NX_MAX_RANK], ss[NX_MAX_RANK], es[NX_MAX_RANK], xs[NX_MAX_RANK];
+  int ry = shape_of(vd, ys), rs = shape_of(vs, ss), re = shape_of(ve, es),
+      rx = shape_of(vx, xs);
+  int ax = rs - 1;
+  if (rs < 1 || !same_shape(ss, rs, es, re) || rx <= ax ||
+      !fits_off_axis(ys, ry, xs, rx, ax))
+    CAMLreturn(Val_int(NX_SHAPE));
+  for (int i = 0; i < ax; i++)
+    if (ss[i] != xs[i]) CAMLreturn(Val_int(NX_SHAPE));
+  nx_operand in[4] = {
+      {vd, dt, 1}, {vs, NX_INT64, 0}, {ve, NX_INT64, 0}, {vx, dt, 0}};
+  nx_array a[4];
+  int e = nx_read(4, in, a);
+  if (e) CAMLreturn(Val_int(e));
+  ranges plan, *g = &plan;
+  g->a = a, g->lr = ax;
+  g->lead = 1;
+  for (int i = 0; i < ax; i++) g->lead *= ys[i];
+  g->k = ss[ax], g->n = xs[ax], g->size = ys[ax];
+  g->sa = a[3].dim[rx + ax];
+  /* The cell axes, those of one element dropped, each merged into the one
+     before it where the source steps through both as one. */
+  g->nc = 0, g->cells = 1;
+  for (int i = ax + 1; i < rx; i++) {
+    int64_t d = xs[i], s = a[3].dim[rx + i];
+    g->cells *= d;
+    if (d == 1) continue;
+    if (g->nc > 0 && g->cs[g->nc - 1] == s * d) {
+      g->ce[g->nc - 1] *= d, g->cs[g->nc - 1] = s;
+      continue;
+    }
+    g->ce[g->nc] = d, g->cs[g->nc] = s, g->nc++;
+  }
+  g->line = (g->nc == 0 && g->sa == 1) ||
+            (g->nc == 1 && g->cs[0] == 1 && g->sa == g->ce[0]);
+  int64_t rows = g->lead * g->size;
+  if (rows > 0 && g->cells > 0) {
+    double bytes = (double)rows * g->cells * nx_cpu_width(dt);
+    double cost = (double)g->lead * g->k * RUN_COST +
+                  bytes * (g->line ? 1 : NX_CPU_STRIDED_COST);
+    int released = nx_cpu_release(cost);
+    int threads = nx_cpu_threads((int64_t)bytes, cost);
+    int64_t units = threads > 1 ? (int64_t)threads * NX_CPU_CHUNKS : 1;
+    if (units > RANGE_UNITS) units = RANGE_UNITS;
+    range_plan(g, units);
+    nx_cpu_job(g->units, (int64_t)bytes, cost, range_units, g);
+    nx_cpu_reacquire(released);
+  }
+  nx_done(4, a);
+  CAMLreturn(Val_int(NX_OK));
+}
+
 /* Scatters */
 
 typedef struct scatter scatter;

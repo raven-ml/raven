@@ -7023,6 +7023,13 @@ module Prim = struct
         x : ('v, 's, 'd) Value.t;
       }
         -> ('v, 's, 'd) Value.t t
+    | Gather_ranges : {
+        size : int;
+        starts : (int64, Dtype.int64_elt, 'd) Value.t;
+        ends : (int64, Dtype.int64_elt, 'd) Value.t;
+        x : ('v, 's, 'd) Value.t;
+      }
+        -> ('v, 's, 'd) Value.t t
     | Scatter : {
         combine : Nx_kernel.combine;
         unique : bool;

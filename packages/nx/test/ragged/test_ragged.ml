@@ -362,6 +362,100 @@ let taken =
       in
       (d, i))
 
+(* Values of a dtype, cells and bits a take must keep: bytes, int4, and
+   float64 with -0 and NaNs of distinct payloads, in cells of none or
+   [[2; 3]]; their elements as int64 bits in C order. *)
+type elt = Bytes | Int4 | Float64
+
+type elts = Elt : ('v, 's) Nx.dtype * ('v -> int64) * (int -> 'v) -> elts
+
+let elts = function
+  | Bytes -> Elt (Nx.uint8, Int64.of_int, fun i -> (i * 7) land 255)
+  | Int4 -> Elt (Nx.int4, Int64.of_int, fun i -> (i mod 16) - 8)
+  | Float64 ->
+      let f i =
+        match i mod 4 with
+        | 0 -> -0.
+        | 1 ->
+            Int64.float_of_bits (Int64.add 0x7FF8000000000001L (Int64.of_int i))
+        | _ -> Float.of_int i
+      in
+      Elt (Nx.float64, Int64.bits_of_float, f)
+
+(* Rows of [d] over values of [e] in cells [cells], a [sub] of them from
+   row [o], taken at [i]. *)
+let typed_take =
+  Gen.with_pp
+    (fun ppf (d, i, e, cells, o) ->
+      Format.fprintf ppf "%a at %a, %s cells %a from row %d" pp_drawn d
+        pp_int64s i
+        (match e with Bytes -> "bytes" | Int4 -> "int4" | Float64 -> "float64")
+        pp_ints cells o)
+    Gen.(
+      let* d, i = taken in
+      let* e = of_list [ Bytes; Int4; Float64 ] in
+      let* cells = of_list [ [||]; [| 2; 3 |] ] in
+      let+ o = int_range 0 (Array.length d.lengths) in
+      (d, i, e, cells, o))
+
+let law_typed_take ((d : drawn), i, e, cells, o) =
+  let (Elt (dt, bits, make)) = elts e in
+  let per = Array.fold_left ( * ) 1 cells in
+  let n = rows_of_values d in
+  let flat = Array.init (n * per) make in
+  let values = Nx.create dt (Array.append [| n |] cells) flat in
+  let all = Nx_ragged.v ~offsets:(int64s (offsets d)) values in
+  let rows = Array.length d.lengths - o in
+  let r = Nx_ragged.sub all ~offset:o ~length:rows in
+  cover "a sub from a later row" (o > 0 && rows > 0);
+  cover "an index at the sub's last row"
+    (Array.exists (fun k -> k = Int64.of_int (rows - 1)) i);
+  cover "an index past the sub's rows"
+    (Array.exists (fun k -> k >= Int64.of_int rows) i);
+  let off = offsets d in
+  let row k =
+    if k < 0L || k >= Int64.of_int rows then [||]
+    else
+      let j = Int64.to_int k + o in
+      let lo = Int64.to_int off.(j) * per
+      and hi = Int64.to_int off.(j + 1) * per in
+      Array.map bits (Array.sub flat lo (hi - lo))
+  in
+  let expected = Array.concat (Array.to_list (Array.map row i)) in
+  let t = Nx_ragged.take ~indices:(int64s i) r in
+  let lengths = Array.map (fun k -> Array.length (row k) / per) i in
+  equal ~msg:"lengths" (array int)
+    lengths
+    (Array.map Int64.to_int (Nx.to_array (Nx_ragged.lengths t)));
+  equal ~msg:"bits" (array int64) expected
+    (Array.map bits (Nx.to_array (Nx_ragged.values t)));
+  exactly_rows t
+
+(* A take by a permutation, then by its inverse, gives the rows back, their
+   values from offset 0. *)
+let permuted =
+  Gen.with_pp
+    (fun ppf (d, p) -> Format.fprintf ppf "%a by %a" pp_drawn d pp_ints p)
+    Gen.(
+      let* d = drawn in
+      let+ p =
+        permutation ~pp:Format.pp_print_int
+          (List.init (Array.length d.lengths) Fun.id)
+      in
+      (d, Array.of_list p))
+
+let law_round_trip (d, p) =
+  let inv = Array.make (Array.length p) 0 in
+  Array.iteri (fun i k -> inv.(k) <- i) p;
+  let at a = int64s (Array.map Int64.of_int a) in
+  let r = ragged d in
+  let back =
+    Nx_ragged.take ~indices:(at inv) (Nx_ragged.take ~indices:(at p) r)
+  in
+  cover "values before the first offset" (d.pre > 0);
+  equal same_rows (rows r) (rows back);
+  exactly_rows back
+
 let transforming =
   group "transforming"
     [
@@ -436,6 +530,12 @@ let transforming =
           let r = Nx_ragged.take ~indices:(int64s i) (ragged d) in
           equal same_rows expected (rows r);
           exactly_rows r);
+      prop
+        "take keeps each row's bits over any dtype, cells and sub, and an \
+         empty row outside"
+        typed_take law_typed_take;
+      prop "a take by a permutation then its inverse gives the rows back"
+        permuted law_round_trip;
       cases "take refuses what it cannot take" ~id:fst
         [
           ( "indices of two axes",

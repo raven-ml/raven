@@ -185,18 +185,18 @@ let sub r ~offset ~length:k =
     err "sub" "rows %d to %d of %d rows" offset (offset + k) l;
   { r with offsets = Nx.slice [ R (offset, offset + k + 1) ] r.offsets }
 
-(* Position [k] of the result reads the values at [k + shift.{j}], [j] its
-   row and [shift.{j}] the row's old start less its new one. The positions are
-   a running sum of ones, plus at each row's new start the change of [shift]
-   from the row before, as from a [shift] of 1 before the first: rows that
-   start together are empty but the last, and their changes add up to the
-   last one's. A row starting at the end writes nothing. Each position is
-   written once as a one, scanned once and read once by the gather. *)
+(* Each index's row is one run of the values, from its start, ending in the
+   result at the running sum of the rows' lengths: a range gather of the
+   values, which copies each row's elements once. An index outside the rows
+   takes a start and an end of zero from {!Nx.take}, an empty row. *)
 let take ~indices r =
   if Nx.ndim indices <> 1 then
     err "take" "indices of shape %s, not 1-D" (pp_shape (Nx.shape indices));
-  let lens = Nx.take indices (lengths r) in
-  let sums = Nx.cumsum lens in
+  let bounds =
+    Nx.take ~axis:0 indices (Nx.sliding_window ~axis:0 ~window:2 r.offsets)
+  in
+  let starts = Nx.slice [ A; I 0 ] bounds in
+  let sums = Nx.cumsum (Nx.sub (Nx.slice [ A; I 1 ] bounds) starts) in
   let offsets = Nx.pad [| (1, 0) |] 0L sums in
   let total =
     if Nx.dim 0 indices = 0 then 0
@@ -211,17 +211,11 @@ let take ~indices r =
             read.(0)
       | read -> Int64.to_int read.(0)
   in
-  if total = 0 then { offsets; values = Nx.slice [ R (0, 0) ] r.values }
-  else
-    let begins = starts offsets in
-    let shift = Nx.sub (Nx.take indices (starts r.offsets)) begins in
-    let change = Nx.sub shift (Nx.pad [| (1, 0) |] 1L (starts shift)) in
-    let ones = Nx.ones_at (Nx.beside lens) Nx.int64 [| total |] in
-    let steps =
-      Nx.scatter ~combine:Add ~axis:0 begins change (Nx.donate ones)
-    in
-    let at = Nx.cumsum steps in
-    { offsets; values = Nx.take ~axis:0 at r.values }
+  let values =
+    Nx.Prim.eval ~by:"Nx_ragged.take"
+      (Gather_ranges { size = total; starts; ends = sums; x = r.values })
+  in
+  { offsets; values }
 
 let cells r = Array.sub (Nx.shape r.values) 1 (Nx.ndim r.values - 1)
 

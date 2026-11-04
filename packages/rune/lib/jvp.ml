@@ -962,6 +962,8 @@ let rule (type r) name i ~by (op : r Prim.t) : r =
       scan_rule i ~by layout axis prog reduction loads carry
   | Gather g ->
       both ~fresh:true (fun x -> Prim.eval ~by (Gather { g with x })) g.x
+  | Gather_ranges g ->
+      both ~fresh:true (fun x -> Prim.eval ~by (Gather_ranges { g with x })) g.x
   | Scatter ({ combine = Add | Set; _ } as s) -> (
       let scatter updates into =
         Prim.eval ~by (Scatter { s with updates; into })

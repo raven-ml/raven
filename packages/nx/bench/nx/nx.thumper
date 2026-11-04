@@ -259,8 +259,8 @@ ragged/ids-text-1M-of-5B-100-values	alloc_words	exact	3318
 ragged/ids-text-1M-of-5B-100-values	wall_time	batch=1	n=20	3.371e-03	2.268e-03 2.271e-03 2.607e-03 2.686e-03 2.715e-03 2.838e-03 3.075e-03 3.084e-03 3.184e-03 3.238e-03 3.503e-03 3.519e-03 3.686e-03 3.720e-03 3.742e-03 4.263e-03 4.416e-03 4.506e-03 4.710e-03 4.913e-03
 ragged/ids-text-64K-of-4-to-20B	alloc_words	exact	4427
 ragged/ids-text-64K-of-4-to-20B	wall_time	batch=1	n=20	4.908e-03	3.856e-03 4.091e-03 4.225e-03 4.423e-03 4.477e-03 4.571e-03 4.590e-03 4.747e-03 4.753e-03 4.790e-03 5.025e-03 5.120e-03 5.237e-03 5.426e-03 5.758e-03 5.801e-03 6.261e-03 6.544e-03 6.772e-03 7.442e-03
-ragged/take-text-1K-of-512-to-1536B	alloc_words	exact	2661
-ragged/take-text-64K-of-4-to-20B	alloc_words	exact	2661
+ragged/take-text-1K-of-512-to-1536B	alloc_words	exact	1615
+ragged/take-text-64K-of-4-to-20B	alloc_words	exact	1615
 rng/bernoulli-f32-1Kx1K	alloc_words	exact	1220
 rng/bernoulli-f32-1M	alloc_words	exact	1148
 rng/beta-f32-1	alloc_words	exact	13501

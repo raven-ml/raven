@@ -509,6 +509,23 @@ let gather_rule env ~axis idx x (V w) =
       let y = scatter ~by:env.name Add ~unique:false ~axis idx ct into in
       env.give x (fresh (V y))
 
+(* A range gather's transpose: a scatter's [Add] of the cotangent at the
+   positions the gather reads, each broadcast over the cells, one outside
+   [x]'s axis dropped. *)
+let ranges_rule env ~size starts ends x (V w) =
+  let starts = env.const starts and ends = env.const ends in
+  let a = Nx.ndim starts - 1 in
+  let eval = { Ranges.eval = (fun op -> Prim.eval ~by:env.name op) } in
+  let pos = Ranges.positions eval ~size starts ends in
+  let cells = Nx.ndim x - a - 1 in
+  let shape = Array.copy (Nx.shape x) in
+  shape.(a) <- size;
+  let pos =
+    Nx.broadcast_to shape
+      (Nx.reshape (Array.append (Nx.shape pos) (Array.make cells 1)) pos)
+  in
+  gather_rule env ~axis:a pos x (V w)
+
 let scatter_rule env (combine : Nx_kernel.combine) ~unique ~axis idx updates
     into (V w) =
   match reference [ V (env.const idx); V w ] with
@@ -1039,6 +1056,8 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
       scan_rule env layout axis prog reduction loads carry cts
   | Gather { axis; idx; x } ->
       first (fun w -> if env.lin x then gather_rule env ~axis idx x w)
+  | Gather_ranges { size; starts; ends; x } ->
+      first (fun w -> if env.lin x then ranges_rule env ~size starts ends x w)
   | Scatter { combine; unique; axis; idx; updates; into } ->
       first (scatter_rule env combine ~unique ~axis idx updates into)
   | Sort { x; _ } ->

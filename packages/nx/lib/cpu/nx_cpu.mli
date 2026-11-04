@@ -238,8 +238,13 @@
 
 (** {1:scatters Gathers and scatters}
 
-    [gather] and [scatter] compute every case, at every dtype, and refuse with
-    [Shape_mismatch] operands and destinations whose shapes do not fit. A
+    [gather], [gather_ranges] and [scatter] compute every case, at every
+    dtype, and refuse with [Shape_mismatch] operands and destinations whose
+    shapes do not fit. [gather_ranges] walks each lead index's ends once in
+    order, and copies each run's rows inside the source's axis as one
+    [memcpy] where the source's rows lie one after the other, else as a
+    copy of strided elements; it splits the destination among threads at
+    whole cache lines, so that no two write one byte. A
     scatter's [Add] adds a target's updates left to right,
     [(… ((x + u1) + u2) + …) + un]. A {e slice} is the updates at one index
     off the scattered axis, with their positions and targets; a {e row of

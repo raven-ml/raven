@@ -242,6 +242,12 @@
     as the dtype, so have the bits of the gather on one device, a NaN's
     included.
 
+    A [Gather_ranges] of [x] cut along its ranged axis closes so too: a
+    device gathers the runs from its tile, their starts moved by the
+    tile's start. A run's positions are [int64] sums modulo [2{^64}], which
+    the move shifts as it shifts each of them, so each lies in the one
+    tile it lies in on one device.
+
     {1:scatters Scatters}
 
     A [Scatter] into an [into] cut along its axis computes on each device its
@@ -334,7 +340,8 @@
     [Scan], a device receives the totals of the other tiles of its group
     holding terms, one row of its window off the axis each, two for an
     [Arg]. A [Gather] moves its slots as a [Reduce] of one reduction does,
-    and no part of its positions. A [Scatter] into a cut target moves
+    and no part of its positions, a [Gather_ranges] so too. A [Scatter]
+    into a cut target moves
     nothing; an [Add] of cut updates moves its slots as a [Reduce] of one
     reduction does, and no part of its positions or updates. No part of an
     operand moves. A contraction asked for its sum moves nothing. A sum's
@@ -355,7 +362,8 @@
     map adding the slots and, where the carrier is not the dtype, one
     casting the result. A [Gather] runs on each
     device one map shifting its positions where its tile starts past [0],
-    one gather and one bitcast, and one bitcast over the results. *)
+    one gather and one bitcast, and one bitcast over the results; a
+    [Gather_ranges] shifts its starts so. *)
 
 val place :
   Partition.engine ->
@@ -375,7 +383,8 @@ val run : Partition.engine -> by:string -> unit Route.t -> 'r Value.prim -> 'r
 
     Raises what [e]'s steps raise, naming [by], and
     [Invalid_argument] as an internal fault for an operation other than a
-    [Reduce], a [Scan] of no carry, a [Gather], a [Scatter] or a [Contract]
+    [Reduce], a [Scan] of no carry, a [Gather], a [Gather_ranges], a
+    [Scatter] or a [Contract]
     of no segments or of [Rows], since no route computes another by partials,
     and where the result's grid and the folded operand's are not of one
     mesh ({!Grid.cut_like}). *)

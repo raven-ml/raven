@@ -129,33 +129,42 @@ and partitioned : type r d.
 
 (* [op] with the positions [route] gathers moved where it reads them
    ({!Route.gathers}). Only a gather's and a scatter's positions, operand
-   [0], move, so other operations check nothing, and positions read where
-   they lie check one placement. *)
+   [0], and a range gather's starts and ends, operands [0] and [1], move, so
+   other operations check nothing, and positions read where they lie check
+   one placement each. *)
 and gather : type r.
     Partition.engine -> by:string -> unit Route.t -> r prim -> r prim =
  fun e ~by route op ->
   match op with
-  | Gather g when moves route g.idx ->
-      Gather { g with idx = moved e ~by route g.idx }
-  | Scatter s when moves route s.idx ->
-      Scatter { s with idx = moved e ~by route s.idx }
+  | Gather g when moves route 0 g.idx ->
+      Gather { g with idx = moved e ~by route 0 g.idx }
+  | Scatter s when moves route 0 s.idx ->
+      Scatter { s with idx = moved e ~by route 0 s.idx }
+  | Gather_ranges g when moves route 0 g.starts || moves route 1 g.ends ->
+      let at i x = if moves route i x then moved e ~by route i x else x in
+      let starts = at 0 g.starts in
+      Gather_ranges { g with starts; ends = at 1 g.ends }
   | _ -> op
 
-and moves : type v s d. unit Route.t -> (v, s, d) t -> bool =
- fun route x ->
+and moves : type v s d. unit Route.t -> int -> (v, s, d) t -> bool =
+ fun route i x ->
   let p = Prim.placement x in
-  (not (Grid.equal (Devices.grid p) (Devices.grid route.operands.(0))))
-  && Route.gathers route 0 p (Prim.shape x)
+  (not (Grid.equal (Devices.grid p) (Devices.grid route.operands.(i))))
+  && Route.gathers route i p (Prim.shape x)
 
 (* [x] where [route] reads it. An axis that [x]'s placement does not cut and
    that each of its pieces repeats moves one element long, whole on each
    device, and is stretched back by a view, so that only [x]'s own elements
    move. *)
 and moved : type v s d.
-    Partition.engine -> by:string -> unit Route.t -> (v, s, d) t -> (v, s, d) t
-    =
- fun e ~by route x ->
-  let q = Devices.grid route.operands.(0) in
+    Partition.engine ->
+    by:string ->
+    unit Route.t ->
+    int ->
+    (v, s, d) t ->
+    (v, s, d) t =
+ fun e ~by route i x ->
+  let q = Devices.grid route.operands.(i) in
   let s = Prim.shape x in
   let at = Prim.placement x in
   let set = Devices.set at in
@@ -211,9 +220,9 @@ and donated : type r. by:string -> r prim -> r =
         | Shards _ | Handle _ | Traced _ -> moved ()
       in
       Handle { donor; over }
-  | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Unique _
-  | Fft _ | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _
-  | Bitcast _ | Place _ | Check _ | Attention _ -> (
+  | Map _ | Reduce _ | Scan _ | Gather _ | Gather_ranges _ | Scatter _
+  | Sort _ | Unique _ | Fft _ | Linalg _ | Fold _ | Assemble _ | Contract _
+  | Copy _ | Move _ | Bitcast _ | Place _ | Check _ | Attention _ -> (
       (* Routed before the claim: an operation its rule refuses neither takes
          a handle's memory nor shows another domain a handle dead. Once
          claimed, the donors stay dead whatever the kernels answer. *)

@@ -329,6 +329,8 @@ let op ?dst ~renderer ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t
   | Fft f -> [| fft node f |]
   | Attention _ ->
       Lower_attention.lower ~device ~renderer:(Lazy.force renderer) node o
+  | Gather_ranges _ ->
+      invalid_arg "Rune.Lower.op: a program holds a range gather as a gather"
   | Check _ -> unlowered (P.name o)
 
 let scatter_plan = Lower_index.plan

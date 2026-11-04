@@ -652,6 +652,23 @@ let test_index_shapes () =
   refuses ~msg:"sort: k past the axis" (so (Some 6) [| 2; 5 |]);
   refuses ~msg:"sort: an axis past the rank" (so None [| 2 |])
 
+(* A range gather's shape: [x] with [size] elements along the runs' axis. *)
+let test_ranges_shapes () =
+  let r ?(size = 6) s e x = Shape.gather_ranges ~size s e x in
+  fits ~msg:"ranges: size along the axis" [ 6 ] (r [| 3 |] [| 3 |] [| 4 |]);
+  fits ~msg:"ranges: cells kept" [ 2; 6; 3; 0 ]
+    (r [| 2; 5 |] [| 2; 5 |] [| 2; 4; 3; 0 |]);
+  fits ~msg:"ranges: no run, no element" [ 0 ]
+    (r ~size:0 [| 0 |] [| 0 |] [| 0 |]);
+  refuses ~msg:"ranges: 0-d runs" (r [||] [||] [| 4 |]);
+  refuses ~msg:"ranges: starts and ends differ" (r [| 3 |] [| 4 |] [| 4 |]);
+  refuses ~msg:"ranges: another lead extent"
+    (r [| 2; 3 |] [| 2; 3 |] [| 3; 4 |]);
+  refuses ~msg:"ranges: no ranged axis in x" (r [| 2; 3 |] [| 2; 3 |] [| 2 |]);
+  refuses ~msg:"ranges: a negative size" (r ~size:(-1) [| 3 |] [| 3 |] [| 4 |]);
+  refuses ~msg:"ranges: more elements than a layout admits"
+    (r ~size:max_int [| 3 |] [| 3 |] [| 4; 2 |])
+
 (* Assemblies *)
 
 type assemble_case = { shape : int array; regions : M.range array array }
@@ -1017,6 +1034,7 @@ let tests =
       [
         test "refuse axes outside the rank and a negative k" test_index_refuses;
         test "state each family's shapes" test_index_shapes;
+        test "state a range gather's shape" test_ranges_shapes;
       ];
     group "assemblies"
       [

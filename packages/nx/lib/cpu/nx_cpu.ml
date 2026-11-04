@@ -318,6 +318,13 @@ external gather :
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_gather"
 
+external gather_ranges :
+  dst:('v, 's) Nx_array.t ->
+  starts:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
+  ends:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
+  ('v, 's) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_gather_ranges"
+
 external scatter_c :
   Nx_kernel.combine ->
   int ->

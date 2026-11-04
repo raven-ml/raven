@@ -1451,6 +1451,43 @@ let gather (type v s d) eng ~by (route : unit Route.t) rule axis
   let y = reduced eng ~by cl bits u (Monoid (Max, 0, u)) s in
   on eng ~by y (Value.Bitcast (dt, y))
 
+(* A range gather of [x] cut along its axis [a] closes as a gather does:
+   device [j] gathers the runs from its tile, their starts moved to the
+   tile's start, so that each position reads its element in the one tile
+   holding it and zero bits in every other. Positions are [int64] sums
+   modulo 2^64, so the move commutes with them however they wrap. *)
+let gather_ranges (type v s d) eng ~by (route : unit Route.t) rule size
+    (starts : d Value.index) (ends : d Value.index) (x : (v, s, d) Value.t) :
+    (v, s, d) Value.t =
+  let p = route.result in
+  let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
+  let ss = Prim.shape starts and sx = Prim.shape x in
+  let a = Array.length ss - 1 in
+  let out = Array.copy sx in
+  out.(a) <- size;
+  let dt = Prim.dtype x in
+  let (D.Any u) = bits_of dt in
+  let parts = D.bits dt / D.bits u in
+  let bits = if parts = 1 then out else Array.append out [| parts |] in
+  let tiles = tiles ~by route ~operand:2 sx [| a |] in
+  let cl =
+    closing ~by route ~operand:2 ~axes:[ a ] ~extent:(fun _ -> sx.(a)) out
+  in
+  let own j =
+    let w = Devices.window ~by p out j and t = tiles.(j).(0) in
+    let here = Devices.one set ks.(j) in
+    let runs i y = view eng ~by ks.(j) (Route.window rule ~operand:i ss w) y in
+    let s = Value.Any (runs 0 starts) in
+    let s = shift eng ~by E.( - ) t.start sx.(a) s in
+    let starts = Prim.expect D.Int64 s and ends = runs 1 ends in
+    let x = view eng ~by ks.(j) (reads rule 2 sx w (fun _ -> t)) x in
+    let y = at eng ~by here (Value.Gather_ranges { size; starts; ends; x }) in
+    at eng ~by here (Value.Bitcast (u, y))
+  in
+  let s = stack eng ~by cl u bits own in
+  let y = reduced eng ~by cl bits u (Monoid (Max, 0, u)) s in
+  on eng ~by y (Value.Bitcast (dt, y))
+
 (* Scatters *)
 
 let scatter (type v s d) eng ~by (route : unit Route.t) rule combine unique axis
@@ -1670,6 +1707,8 @@ let run (type r) eng ~by route (op : r Value.prim) : r =
   let rule = Prim.rule op in
   match op with
   | Value.Gather { axis; idx; x } -> gather eng ~by route rule axis idx x
+  | Value.Gather_ranges { size; starts; ends; x } ->
+      gather_ranges eng ~by route rule size starts ends x
   | Value.Scatter { combine; unique; axis; idx; updates; into } ->
       (* The updates are read cut along the axis only where the route
          closes their tiles by partials. *)

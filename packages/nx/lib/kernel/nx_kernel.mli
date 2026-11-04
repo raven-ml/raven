@@ -28,8 +28,8 @@
     values, the result's {e terms}, which the operation's doc numbers. A
     reduction or a scan combines terms in their dtype's {e carrier}
     ({!carrier}), a dtype that holds every element of theirs. A {e move}
-    copies bits: a gather, a scatter by [Set], a sort, an assembly, and a
-    map of [Copy] or [Bitcast]. A {e routine} is a kernel of
+    copies bits: a gather, a range gather, a scatter by [Set], a sort, an
+    assembly, and a map of [Copy] or [Bitcast]. A {e routine} is a kernel of
     {!S.section-linalg}. The sections below define each operation's types
     and rules, then {!Shape}, the shapes of every kernel's destinations,
     then {!S}.
@@ -428,6 +428,13 @@ module Shape : sig
       shape [idx]: [idx], which has [x]'s rank and extents but along
       [axis]. *)
 
+  val gather_ranges : size:int -> t -> t -> t -> t result
+  (** [gather_ranges ~size starts ends x] is the shape of a range gather's
+      destination: [x] with [size] elements along axis [a = rank starts - 1].
+      It is an [Error] unless [starts] and [ends] have one shape of at least
+      one axis, [x] has more than [a] axes and [starts]' extents before
+      [a], and [size] is not negative. *)
+
   val scatter : axis:int -> t -> t -> t -> t result
   (** [scatter ~axis into idx updates] is the shape of a scatter into [into]:
       [into]. [idx] and [updates] have one shape, [into]'s but along
@@ -538,9 +545,10 @@ end
     axes along which one result element reads every index: a reduction's,
     a scan's, a sort's or a transform's axes, a numbering's keys, the
     contracted extent, a routine's matrices, a gather's or a scatter's
-    axis, attention's keys and their two dimensions, and the axes a padded
-    load or a fold pads or windows. Each library states whether several
-    domains may call its kernels concurrently. *)
+    axis, a range gather's runs, attention's keys and their two
+    dimensions, and the axes a padded load or a fold pads or windows. Each
+    library states whether several domains may call its kernels
+    concurrently. *)
 module type S = sig
   type answer := Nx_array.answer
   type any := Nx_array.any
@@ -645,6 +653,22 @@ module type S = sig
       element at [j] with axis [axis] replaced by [idx]'s element at [j]. A
       position outside \[[0], [d]), [d] [x]'s extent along [axis], reads the
       element of zero bits: [+0], [false], [0 + 0i]. *)
+
+  val gather_ranges :
+    dst:('v, 's) a -> starts:index -> ends:index -> ('v, 's) a -> answer
+  (** [gather_ranges ~dst ~starts ~ends x] packs runs of [x] along its axis
+      [a = rank starts - 1] into [dst]. [starts] and [ends] are
+      [[lead…; k]], [x] is [[lead…; n; cells…]] and [dst]
+      [[lead…; size; cells…]] ({!Shape.gather_ranges}). At each lead index,
+      position [p] of [dst] along [a] belongs to the first run [j] whose end
+      [ends.{j}] exceeds [p], and reads [x] at [starts.{j} + p - e], [e]
+      being [ends.{j - 1}], or [0] for [j = 0], computed in [int64] modulo
+      [2{^64}]: it reads what the exact sum would, but where [starts.{j}]
+      and [e] lie near opposite extremes of [int64]. A position past every
+      end, or outside \[[0], [n]), reads the element of zero bits. So for
+      [ends] the running sums of lengths that are not negative, run [j]
+      copies its [ends.{j} - e] elements from [starts.{j}], cut at [size].
+      It is a move: [dst] is {!gather} of [x] at these positions. *)
 
   val scatter :
     combine ->

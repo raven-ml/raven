@@ -2290,6 +2290,13 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- **Breaking:** `Nx_kernel.S` gains `gather_ranges`, which every kernel
+  library implements, and `Nx.Prim.t` gains `Gather_ranges`: runs of an
+  array packed along an axis. `Nx_ragged.take` copies each row's elements
+  once through it, where it built an int64 position for every element: a
+  take of 64K texts of 4 to 20 bytes allocates 1,615 words where it
+  allocated 2,667. Rune compiles, differentiates and maps it as a gather at
+  the positions its runs read.
 - A take of rows shorter than the axis they are taken along, as a take of
   rows of two int64s, copies each row whole where it gathered element by
   element: 12 instructions a row of two int64s where it took 26.
@@ -3786,6 +3793,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- Gathering text (a join's output, a filter, a sort, `Talon.take`) copies
+  each row's bytes once: decision-support query 2 at scale factor 1 runs
+  1.6 billion instructions where it ran 4.7, and each bench row that
+  gathers a text column allocates 1,052 fewer words.
 - A group-by on one text, tensor, list or record column without nulls
   takes its groups from `Nx_ragged.unique`, in place of two segment
   scatters over its ids: H2O group-by q01 at 1e6 rows takes 111

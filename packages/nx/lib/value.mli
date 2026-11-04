@@ -177,6 +177,13 @@ and _ prim =
       x : ('v, 's, 'd) t;
     }
       -> ('v, 's, 'd) t prim
+  | Gather_ranges : {
+      size : int;
+      starts : 'd index;
+      ends : 'd index;
+      x : ('v, 's, 'd) t;
+    }
+      -> ('v, 's, 'd) t prim
   | Scatter : {
       combine : Nx_kernel.combine;
       unique : bool;

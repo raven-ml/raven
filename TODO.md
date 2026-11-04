@@ -176,13 +176,12 @@ and rune), raven / llama.cpp b12048 Vulkan:
   H2O 1e7 group-by geomean 2.4x at 673340f4e (q04 4.8-7.0x, q01
   2.8-4.0x before 5441600cd took it from 148 to 96 instructions a row);
   decision support SF1 at cfef1ad82 q19 ~16x, q12 ~18x, q07 ~15x, q02
-  ~40x (45% of its instructions are per-byte positions in
-  `Nx_ragged.take`: the range-copy op, _plans/todo-campaign/design/
-  ragged-copy.md). What is left: integer sums cast to int64 before
+  ~40x. What is left: integer sums cast to int64 before
   summing, one pass per aggregate, Parquet text decoded per row
   (talon-dict-text.adjudication.md), sort-based joins. The 2026-11-03
-  engine logs ran 2-4x slow; the SF1/H2O data was deleted on 2026-11-04
-  (regenerate with queries/{decision,h2o}_data.py)
+  engine logs ran 2-4x slow; the H2O data was deleted on 2026-11-04
+  (regenerate with queries/h2o_data.py); decision support SF1 and SF0.1
+  are in fudge's ~/wt/tmp/talon-data
 - talon 1.0 plan (_plans/talon/product/plan.md, on the Mac): windows and
   ewm, as-of and interval joins, interval sets and folds, zoned time,
   hash/sample/shuffle, Pivot and nesting, dense round trips, partial

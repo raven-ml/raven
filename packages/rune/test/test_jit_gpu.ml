@@ -12,8 +12,9 @@
    and a program over the GPU and a memory device, devices of two targets,
    compiles to eager's values with replicas equal bit for bit, a running
    operation of a prefix is the prefix of its result, attention holds its
-   bound against a float64 reference, and exp holds its bound in ulps of the
-   correctly rounded result. It skips without a GPU, or without the compiler
+   bound against a float64 reference, exp holds its bound in ulps of the
+   correctly rounded result, and a range gather and its gradient compile to
+   eager's bits. It skips without a GPU, or without the compiler
    the GPU's kernels need. *)
 
 open Windtrap
@@ -147,6 +148,41 @@ let test_stack () =
   let y = f (List.map (Nx.place S.on) rows) in
   equal ~msg:"compiled" Testable.int 0 (Rune.evaluations () - before);
   equal (Testable.array Testable.int32) (bits (doubled rows)) (bits y)
+
+(* A range gather compiles on the GPU, as a gather at its runs' positions,
+   to the host's eager bits, and so does its gradient: runs that straddle
+   the source's ends, an empty run, overlapping runs, and a start near
+   int64's greatest after an end near its least, which reads the axis only
+   modulo 2^64. *)
+let test_ranges () =
+  let _, (module S) = on_gpu () in
+  let runs a = Nx.create Nx.int64 [| 2; 4 |] a in
+  let starts =
+    runs [| -2L; 10L; 10L; 45L; Int64.sub Int64.max_int 1L; 3L; 0L; 0L |]
+  and ends =
+    runs [| 5L; 5L; 12L; 20L; Int64.add Int64.min_int 2L; 9L; 9L; 15L |]
+  in
+  let x =
+    Nx.create Nx.float32 [| 2; 50; 3 |]
+      (Array.init 300 (fun i -> Float.of_int ((i * 7 mod 23) - 11)))
+  in
+  let w = Nx.create Nx.float32 [| 2; 18; 3 |] (Array.init 108 Float.of_int) in
+  let gather (starts, ends) x =
+    Nx.Prim.eval ~by:"test" (Gather_ranges { size = 18; starts; ends; x })
+  in
+  let loss runs w x = Nx.sum (Nx.mul w (gather runs x)) in
+  let on v = Nx.place S.on v in
+  let placed = (on starts, on ends) in
+  let bits y = Nx.to_array (Nx.bitcast Nx.int32 (Nx.place Nx.Host.on y)) in
+  let ints = Testable.array Testable.int32 in
+  let before = Rune.evaluations () in
+  let y = Rune.jit' (gather placed) (on x) in
+  let g = Rune.jit' (Rune.grad' (loss placed (on w))) (on x) in
+  equal ~msg:"compiled" Testable.int 0 (Rune.evaluations () - before);
+  equal ~msg:"gather" ints (bits (gather (starts, ends) x)) (bits y);
+  equal ~msg:"gradient" ints
+    (bits (Rune.grad' (loss (starts, ends) w) x))
+    (bits g)
 
 exception Big of int array * float
 
@@ -957,6 +993,8 @@ let () =
            [
              test "a stack of computed rows compiles to eager's bits"
                test_stack;
+             test "a range gather and its gradient compile to eager's bits"
+               test_ranges;
              prop ~count:8 ~examples:Assemblies.examples
                "an assembly compiles to eager's bits"
                (Gen.with_pp Assemblies.pp Assemblies.gen)

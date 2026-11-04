@@ -1045,6 +1045,223 @@ let test_gather_rank (Ranked (dt, r, whole)) =
       (bytes (Nx.take_along_axis ~axis:0 p x))
       (bytes (gather ()))
 
+(* Range gathers along cut axes *)
+
+(* A value's dtype, shape, its lead axes (0 or 1) and elements, where it
+   lies, the result's size along the ranged axis, and the runs' starts and
+   ends, [[lead…; k]] in C order. *)
+type rcase =
+  | Rcase :
+      ('v, 's) reduced
+      * int array
+      * int
+      * 'v array
+      * where
+      * int
+      * int array
+      * int64 array
+      * int64 array
+      -> rcase
+
+let pp_int64s ppf a =
+  Format.fprintf ppf "[%s]"
+    (String.concat "; " (Array.to_list (Array.map Int64.to_string a)))
+
+let pp_rcase ppf (Rcase (k, s, lead, data, w, size, rs, st, en)) =
+  Format.fprintf ppf "%s %a [%s] at %a, %d lead, size %d, runs %a %a %a"
+    (D.name k.rdtype) pp_ints s
+    (String.concat "; " (Array.to_list (Array.map k.rshow data)))
+    pp_where w lead size pp_ints rs pp_int64s st pp_int64s en
+
+(* Starts within and around the axis, and near int64's greatest, which pair
+   with ends near its least into positions inside the axis only modulo
+   2^64. *)
+let start_gen n =
+  let open Gen in
+  frequency
+    [
+      (6, map Int64.of_int (int_range (-2) (n + 1)));
+      (1, of_list [ Int64.min_int; Int64.max_int ]);
+      (3, map (Int64.sub Int64.max_int) (map Int64.of_int (int_range 0 2)));
+    ]
+
+(* A run's end: a length past the end before it, one near int64's least,
+   or one of its own. *)
+type step = Length of int | Least of int | At of int
+
+let step_gen =
+  let open Gen in
+  frequency
+    [
+      (6, map (fun l -> Length l) (int_range (-1) 4));
+      (3, map (fun c -> Least c) (int_range 0 2));
+    ]
+
+(* The ends of [rows] rows of [k] runs each, by their steps. *)
+let ends_of rows k steps =
+  let e = Array.make (rows * k) 0L in
+  for r = 0 to rows - 1 do
+    let last = ref 0L in
+    for j = 0 to k - 1 do
+      let v =
+        match steps.((r * k) + j) with
+        | Length l -> Int64.add !last (Int64.of_int l)
+        | Least c -> Int64.add Int64.min_int (Int64.of_int c)
+        | At e -> Int64.of_int e
+      in
+      e.((r * k) + j) <- v;
+      last := v
+    done
+  done;
+  e
+
+let ranges_case =
+  let open Gen in
+  with_pp pp_rcase
+    (let* lead = int_range 0 1 in
+     let* n = of_list [ 0; 1; 2; 3; 5; 7; 11 ] in
+     let* l = of_list [ 1; 2; 3 ] in
+     let* c = of_list [ 1; 2 ] in
+     let s = if lead = 1 then [| l; n |] else [| n; c |] in
+     let rows = if lead = 1 then l else 1 in
+     let* k = int_range 0 5 in
+     let* w = where_of 2 in
+     let* size = int_range 0 12 in
+     let* st = array ~size:(constant (rows * k)) (start_gen n) in
+     let* steps = array ~size:(constant (rows * k)) step_gen in
+     (* Half the cases pair, in every odd run, a start near int64's
+        greatest with an end before it near its least: the run reads the
+        axis from position [p - 1 - c] on, modulo 2^64. *)
+     let* wrap = bool in
+     let* cs = array ~size:(constant (rows * k)) (int_range 0 2) in
+     let* ats = array ~size:(constant (rows * k)) (int_range 3 12) in
+     let odd i = wrap && i mod k mod 2 = 1 in
+     let steps =
+       Array.mapi
+         (fun i c ->
+           if not wrap then steps.(i)
+           else if odd i then At ats.(i)
+           else Least c)
+         cs
+     in
+     let st =
+       Array.mapi
+         (fun i s ->
+           if odd i then Int64.sub Int64.max_int (Int64.of_int cs.(i)) else s)
+         st
+     in
+     let* (Reduced kd) = of_list gathered_kinds in
+     let+ data =
+       array ~size:(constant (Array.fold_left ( * ) 1 s)) (of_list kd.rvalues)
+     in
+     let rs = if lead = 1 then [| l; k |] else [| k |] in
+     Rcase (kd, s, lead, data, w, size, rs, st, ends_of rows k steps))
+
+(* Whether a run of [st] and [en], [k] a row, reads a position inside
+   [\[0, n)] that exact sums would put outside: a start at least 0 whose sum
+   with the position's offset wraps past 2^64. *)
+let wraps ~k ~size ~n st en =
+  let found = ref false in
+  for r = 0 to (Array.length st / max 1 k) - 1 do
+    for p = 0 to size - 1 do
+      let p64 = Int64.of_int p in
+      let rec run j =
+        if j < k && Int64.compare en.((r * k) + j) p64 <= 0 then run (j + 1)
+        else j
+      in
+      let j = run 0 in
+      if j < k then begin
+        let s = st.((r * k) + j) in
+        let before = if j = 0 then 0L else en.((r * k) + j - 1) in
+        let w = Int64.add s (Int64.sub p64 before) in
+        if
+          Int64.compare s 0L >= 0
+          && Int64.unsigned_compare w s < 0
+          && Int64.compare w 0L >= 0
+          && Int64.compare w (Int64.of_int n) < 0
+        then found := true
+      end
+    done
+  done;
+  !found
+
+(* A range gather of a value at any placement, its runs whole on each of
+   its devices, gives its bits on one device: each position lies in the
+   one tile it lies in there, its sum modulo 2^64 included. *)
+let law_ranges (Rcase (kd, s, lead, data, w, size, rs, st, en), runs_at) =
+  let cut = List.map fst (tiles w) in
+  let a = lead in
+  let k = rs.(Array.length rs - 1) in
+  cover "a cut of the ranged axis" (List.mem a cut);
+  cover "a cut of the ranged axis with an empty tile"
+    (List.exists (fun (c, t) -> c = a && s.(a) > 0 && s.(a) < t) (tiles w));
+  cover "a cut of another axis" (List.exists (( <> ) a) cut);
+  cover "a position inside the axis only modulo 2^64"
+    (List.mem a cut && wraps ~k ~size ~n:s.(a) st en);
+  cover "a sub-byte dtype" (D.bits kd.rdtype < 8);
+  cover "a signalling NaN" (signals kd.rdtype data);
+  let r = Array.length rs in
+  let runs_at = match runs_at with Some i when i < r -> Some i | _ -> None in
+  cover "runs split along their axis" (runs_at = Some (r - 1));
+  cover "runs split along a lead axis" (r = 2 && runs_at = Some 0);
+  let x = signalling kd.rdtype s data in
+  let host a =
+    Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 (Iarray.of_array rs) a)
+  in
+  let gather (type d) (starts : d Nx.int64_t) ends (x : (_, _, d) Nx.t) =
+    shown_bits kd
+      (Nx.Prim.eval ~by:"test" (Gather_ranges { size; starts; ends; x }))
+  in
+  let expected = gather (host st) (host en) x in
+  (* The runs whole on each of [x]'s devices, or split over them, which
+     moves them where the route reads them. *)
+  let run (type d) (q : d Nx.Placement.t) =
+    let at =
+      match runs_at with
+      | None -> Nx.Placement.uncut q
+      | Some i -> Nx.Placement.split ~axis:i (Nx.Placement.devices q)
+    in
+    gather (Nx.place at (host st)) (Nx.place at (host en)) (Nx.place q x)
+  in
+  let actual =
+    match w with
+    | Split3 c -> run (Set3.split ~axis:c)
+    | Split4 c -> run (Set4.split ~axis:c)
+    | Cuts (c, d) ->
+        let cuts =
+          if c = d then [ (c, [ "a"; "b" ]) ]
+          else [ (c, [ "a" ]); (d, [ "b" ]) ]
+        in
+        run (Nx.Placement.mesh mesh4 cuts)
+    | Minor c -> run (Nx.Placement.mesh mesh4 [ (c, [ "b" ]) ])
+  in
+  equal (array string) expected actual
+
+(* An [x] whose tiles' results would stack past the greatest rank is read
+   whole along the ranged axis, which raises where it is cut there; one of
+   an axis fewer gathers where it lies. *)
+let test_ranges_rank (Ranked (dt, r, whole)) =
+  let s = Array.init r (fun i -> if i = 0 then 4 else 1) in
+  let x = Nx.cast dt (Nx.reshape s (Nx.arange D.Float32 0 4 1)) in
+  let runs a =
+    Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 [| 2 |] a)
+  in
+  let gather starts ends x =
+    Nx.Prim.eval ~by:"Nx.test"
+      (Gather_ranges { size = 4; starts; ends; x })
+  in
+  let st = runs [| 2L; 0L |] and en = runs [| 2L; 4L |] in
+  let y = Nx.place (Set4.split ~axis:0) x in
+  let on v = Nx.place (Nx.beside y) v in
+  let cut () = gather (on st) (on en) y in
+  if whole then
+    raises
+      (Invalid_argument
+         "Nx.test: operand 2 lies at split ~axis:0 [m0; m1; m2; m3] and is \
+          read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) z")
+      cut
+  else equal (array int) (bytes (gather st en x)) (bytes (cut ()))
+
 (* [take] without an axis reads the flattening, which keeps the cut of the
    leading axis in tiles that divide both extents. *)
 let test_take_flat () =
@@ -3533,6 +3750,18 @@ let placed =
         test_positions_finer;
       cases "a gather past the greatest rank reads its axis whole"
         ~id:ranked_name ranked test_gather_rank;
+      prop ~count:1000
+        "a range gather of a value at any placement, its runs whole or split, \
+         gives its bits on one device"
+        (Gen.pair ranges_case
+           (Gen.frequency
+              [
+                (2, Gen.constant None);
+                (2, Gen.map Option.some (Gen.int_range 0 1));
+              ]))
+        law_ranges;
+      cases "a range gather past the greatest rank reads its axis whole"
+        ~id:ranked_name ranked test_ranges_rank;
       prop ~count:1000
         "a scatter into a target at any placement, of positions and updates \
          whole on each of its devices or cut alike off the scattered axis, \
