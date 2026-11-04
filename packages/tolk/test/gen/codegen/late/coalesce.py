@@ -142,6 +142,9 @@ def stores(buf, idxs):
     return [at(buf, i).store(UOp.variable(f"v{k}", -1.0, 1.0, buf.dtype)) for k, i in enumerate(idxs)]
 
 
+def copy(src, dst, n): return [at(dst, UOp.const(k)).store(at(src, UOp.const(k)).load()) for k in range(n)]
+
+
 def access_cases():
     buf = UOp.param(0, dtypes.float, 64)
     other = UOp.param(1, dtypes.float, 64)
@@ -197,6 +200,11 @@ def access_cases():
         ("sixteen_half", loads(param(dtypes.half), [c(k) for k in range(16)])),
         ("six_half_from_two", loads(param(dtypes.half), [c(k) for k in range(2, 8)])),
         ("eight_half_stores", stores(param(dtypes.half), [c(k) for k in range(8)])),
+        # 16-bit floats copied from global into local memory, and elsewhere
+        *[(f"eight_{repr(dt).removeprefix('dtypes.')}_copied_to_{name}", copy(param(dt), into(dt), 8))
+          for dt in (dtypes.half, dtypes.bfloat16)
+          for name, into in (("local", lambda dt: UOp.placeholder((64,), dt, 3, addrspace=AddrSpace.LOCAL)),
+                             ("global", lambda dt: UOp.param(4, dt, 64)))],
         # storage left alone, and storage that is not
         ("register", loads(UOp.placeholder((16,), dtypes.float, 3, addrspace=AddrSpace.REG), [c(k) for k in range(4)])),
         ("local", loads(UOp.placeholder((16,), dtypes.float, 3, addrspace=AddrSpace.LOCAL), [c(k) for k in range(4)])),

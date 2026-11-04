@@ -105,8 +105,23 @@ let memory_coalescing sink (r : Renderer.t) =
     let later ((g, l) as d) ((g', l') as d') =
       if g > g' || (g = g' && l >= l') then d else d'
     in
+    (* The loads of 16-bit floats read other than as the value a store puts
+       in local memory: those copied there may merge further. *)
+    let sixteen_bits dt = Dtype.mem dt Dtype.[ Float16; Bfloat16 ] in
+    let read = Tbl.create 16 in
+    let note u =
+      List.iteri
+        (fun i s ->
+          let copy =
+            op u = Op.Store && i = 1 && addrspace (nth u 0) = Some Dtype.Local
+          in
+          if op s = Op.Load && sixteen_bits (dtype s) && not copy then
+            Tbl.replace read s ())
+        (src u)
+    in
     List.iter
       (fun u ->
+        if r.half8 then note u;
         let waits =
           List.fold_left
             (fun d s -> later d (depth_of s))
@@ -160,6 +175,17 @@ let memory_coalescing sink (r : Renderer.t) =
           | _ -> invalid_arg "an index of memory needs a buffer and one index"
         end)
       (toposort ~calls:Skip sink);
+    (* A load of global memory read only by a store into local memory, and
+       that store, copy an element into shared memory. *)
+    let copied u =
+      op u = Op.Load
+      && addrspace (nth u 0) = Some Dtype.Global
+      && not (Tbl.mem read u)
+    in
+    let copies u =
+      if op u = Op.Load then copied u
+      else addrspace (nth u 0) = Some Dtype.Local && copied (nth u 1)
+    in
     (* Build the replacements. *)
     let replacements = ref [] in
     List.iter
@@ -206,12 +232,18 @@ let memory_coalescing sink (r : Renderer.t) =
               let gpu_bfloat16 =
                 Dtype.equal dt Dtype.Bfloat16 && r.target.device <> "CPU"
               in
-              (* 16-bit floats merge to 16 bytes where the target writes
-                 vectors of eight: a copy of 16 bytes is one instruction, as a
-                 tensor core's operands staged through shared memory take. *)
-              let sixteen_bits = Dtype.mem dt Dtype.[ Float16; Bfloat16 ] in
+              (* 16-bit floats copied into shared memory merge to 16 bytes
+                 where the target writes vectors of eight: a copy of 16 bytes
+                 is one instruction, as a tensor core's operands staged there
+                 take. Elsewhere 16 bytes gained as often as they lost: an
+                 attention's product of probabilities by bfloat16 values ran
+                 1.4 times slower, ptxas issuing fewer of its loads ahead. *)
+              let copy () =
+                sixteen_bits dt && r.half8
+                && List.for_all (fun (_, us) -> List.for_all copies us) offsets
+              in
               (if (Dtype.mem dt merged || gpu_bfloat16) && r.supports_float4
-               then if sixteen_bits && r.half8 then [ 8; 4; 2 ] else [ 4; 2 ]
+               then if copy () then [ 8; 4; 2 ] else [ 4; 2 ]
                else [])
               @ [ 1 ]
         in

@@ -1060,8 +1060,9 @@ word comes from its lock and from samples the dashboard saw arrive.
   products on an RTX 5000 Ada run 1.35 to 3 times faster (2048 cubed 188 to
   137 us). `STAGE=0` (`Setting.stage`) keeps the unstaged kernels.
 
-- On CUDA and HIP, adjacent `float16` and `bfloat16` accesses merge into
-  16-byte vectors (`Renderer.t.half8`); the `ALLOW_HALF8` setting
+- On CUDA and HIP, adjacent `float16` and `bfloat16` elements copied from
+  global into shared memory merge into 16-byte vectors (`Renderer.t.half8`),
+  other accesses of them into 8-byte ones; the `ALLOW_HALF8` setting
   (`Setting.allow_half8`) is removed.
 
 - A tensor core accumulates a contraction's running sum whatever its lanes'

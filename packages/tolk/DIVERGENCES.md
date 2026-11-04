@@ -5735,7 +5735,7 @@ and an initial value is added after it (D260).
 - **tinygrad:** `codegen/late/coalesce.py:136-145` (`memory_coalescing`'s
   lengths: 4 or 2 elements of float32, float16, int32, uint32 and the 8-bit
   floats, 8 of float16 under `ALLOW_HALF8`, none of the others; D261 makes
-  that 8 the renderer's).
+  that 8 the renderer's, for copies into local memory).
 - **tolk:** `Coalesce.memory_coalescing`, through `Renderer.registers`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the
   goldens are recorded.
@@ -6900,7 +6900,7 @@ and an initial value is added after it (D260).
   half_tile,bf16_tile,tc}_{cuda,hip}` and `matmul_tc_unroll_metal`; the
   cstyle and renderer goldens of each core.
 
-## D261. 16-bit floats merge to 16 bytes where the target writes vectors of eight
+## D261. 16-bit floats copied into shared memory merge to 16 bytes
 
 - **tinygrad:** `codegen/late/coalesce.py:142` (`memory_coalescing`: a GPU
   merges `half` accesses into vectors of 8 under `ALLOW_HALF8`, an
@@ -6910,22 +6910,37 @@ and an initial value is added after it (D260).
   tinygrad's renderers the same attribute and its coalescing the same rule
   before the goldens are generated. `Setting.allow_half8` is withdrawn.
 - **Differs:** on a renderer that writes vectors of eight 16-bit floats (CUDA
-  and HIP; Metal's vectors hold at most four), adjacent `float16` and
-  `bfloat16` accesses merge into vectors of 8, 4 and 2, 16 bytes at most;
-  elsewhere they merge into 4 and 2, as before. No setting changes it.
+  and HIP; Metal's vectors hold at most four), adjacent `float16` or
+  `bfloat16` accesses of a group every access of which copies from global
+  into local memory (loads of global memory whose only use is the value of a
+  store into local memory, or those stores) merge into vectors of 8, 4 and 2,
+  16 bytes at most; every other access of them merges into 4 and 2, as
+  float16's do in tinygrad without `ALLOW_HALF8` (bfloat16 by D210). No
+  setting changes it.
 - **Reason:** (d): a tensor core's operands staged through shared memory
   (D262) are copied 16 bytes a thread, which PTX's `cp.async` copies in one
   instruction (D263); 8 bytes at a time they take twice the copies and no
-  asynchronous one. Alone it moves no row: GPU time on fudge's RTX 5000 Ada,
-  three interleaved rounds, bfloat16, us, before and after: 2048 cubed
-  187.4-189.4 and 188.4-189.5, 512 by 4096 over 2880 163.8-165.7 and
-  162.8-165.7, 512 by 512 over 2880 77.8-79.9 and 74.6-76.8, 4096 cubed
-  1391-1444 and 1397-1442.
+  asynchronous one. Elsewhere 16 bytes gained as often as they lost. Merged
+  everywhere, they changed three kernels of gpt-oss-20b's prefill of 512
+  tokens and no staged contraction (2048 cubed and the projections compile to
+  the same source either way). GPU time on fudge's RTX 5000 Ada through nsys,
+  three interleaved rounds, us a launch, 16 bytes against 8: the full
+  attention layers' product of probabilities by values (12 a prefill)
+  785-791 against 562-564, its sliding-window twin 769-772 against 798-800,
+  the router 27.8-28.0 against 28.9-29.0; kaun's `GptOss/prefill-512`
+  174.0-176.7 ms against 171.8-172.9. In the full product both forms hold
+  128 registers, and ptxas issues 6 of its loop's 12 loads at the top with
+  16-byte value loads, against 12 of 16 with 8-byte ones, the rest of the
+  probabilities' loads one at a time between the multiply-adds. Run alone,
+  with its operands moved by 0 to 3072 bytes, the 16-byte form takes
+  737-773 us and the 8-byte form 709-870: more loads in flight pay where the
+  probabilities' addresses spread over the memory's channels, as they do in
+  the prefill.
 - **Pinned by:** the Coalesce suite's `vectors of eight 16-bit floats` group
-  (`half_cuda`, `half8_cuda` and `accesses_cuda`, generated from tinygrad
-  with this rule, and `eight 16-bit floats are one load of eight`, of
-  `float16` and `bfloat16`); the goldens of every CUDA and HIP kernel whose
-  16-bit accesses now merge.
+  (`the runs of eight 16-bit floats' loads and stores`, of `float16` and
+  `bfloat16`; `half_cuda`, `half8_cuda` and `accesses_cuda`, generated from
+  tinygrad with this rule); the Stage suite's `sources` (`cp.async`); kaun's
+  `GptOss/prefill-512`.
 
 ## D262. A tensor core's operands are staged through shared memory
 

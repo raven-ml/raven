@@ -716,7 +716,55 @@ let readme =
                (coalesce ~renderer:dsp (loads char [ 0; 1; 2; 3 ]))));
     ]
 
-(* A GPU that writes vectors of eight 16-bit floats merges 16 bytes of them. *)
+(* Elements of [dt] accessed in each way a kernel accesses memory: each
+   case's name, element type, sink, and runs of loads and of stores on a GPU
+   that writes vectors of eight 16-bit floats. *)
+let sixteen_bits dt =
+  let global = Shape.param ~shape:[ Int 64 ] 2 dt
+  and other = Shape.param ~shape:[ Int 64 ] 3 dt
+  and local = Shape.placeholder ~slot:1 ~addrspace:Local [ 64 ] dt
+  and scratch = Shape.placeholder ~slot:4 ~addrspace:Local [ 64 ] dt in
+  let eight = List.init 8 Fun.id and fours = [ (0, 4); (4, 4) ] in
+  let copy into =
+    List.map (fun i -> Ops.store (at into (Ops.int i)) (load_at global i)) eight
+  in
+  [
+    ( "a copy from global into local memory",
+      dt,
+      Ops.sink (copy local),
+      ([ (0, 8) ], [ (0, 8) ]) );
+    ( "a copy between global buffers",
+      dt,
+      Ops.sink (copy other),
+      (fours, fours) );
+    ("loads of global memory", dt, loads global eight, (fours, []));
+    ("stores into global memory", dt, stores global eight, ([], fours));
+    ("loads of local memory", dt, loads local eight, (fours, []));
+    ("stores into local memory", dt, stores local eight, ([], fours));
+    ( "a copy into local memory whose loads are read elsewhere",
+      dt,
+      Ops.sink (copy local @ List.map (load_at global) eight),
+      (fours, fours) );
+    ( "a copy between local buffers",
+      dt,
+      Ops.sink
+        (List.map
+           (fun i -> Ops.store (at local (Ops.int i)) (load_at scratch i))
+           eight),
+      (fours, fours) );
+    ( "sixteen copies into local memory, one load read elsewhere",
+      dt,
+      Ops.sink
+        (List.map
+           (fun i -> Ops.store (at local (Ops.int i)) (load_at global i))
+           (List.init 16 Fun.id)
+        @ [ load_at global 15 ]),
+      ( [ (0, 4); (4, 4); (8, 4); (12, 4) ],
+        [ (0, 4); (4, 4); (8, 4); (12, 4) ] ) );
+  ]
+
+(* A GPU that writes vectors of eight 16-bit floats merges 16 bytes of them
+   where they are copied from global into local memory. *)
 let half8 =
   let on_gpu8 name =
     Golden.graph (name ^ "_cuda.golden") (fun () ->
@@ -729,13 +777,13 @@ let half8 =
       hand_built "accesses_cuda.golden" gpu8;
       prop "coalescing preserves the kernel's writes" kernels_of_runs
         (preserves_writes gpu8);
-      cases "eight 16-bit floats are one load of eight" ~id:Dtype.name
-        [ Dtype.Float16; Dtype.Bfloat16 ] (fun dt ->
-          let half = Shape.param ~shape:[ Int 64 ] 2 dt in
-          equal runs
-            [ (0, 8) ]
-            (accesses Op.Load
-               (coalesce ~renderer:gpu8 (loads half (List.init 8 Fun.id)))));
+      cases "the runs of eight 16-bit floats' loads and stores"
+        ~id:(fun (name, dt, _, _) -> name ^ ", " ^ Dtype.name dt)
+        (List.concat_map sixteen_bits [ Dtype.Float16; Dtype.Bfloat16 ])
+        (fun (_, _, sink, expected) ->
+          let merged = coalesce ~renderer:gpu8 sink in
+          equal (pair runs runs) expected
+            (accesses Op.Load merged, accesses Op.Store merged));
       test "eight floats are still two loads of four" (fun () ->
           equal runs
             [ (0, 4); (4, 4) ]

@@ -869,8 +869,8 @@ The suite is `Tolk.Coalesce` (`codegen/late/coalesce/`), written `C`
 below. `<kernel>.golden` is the sink that `memory_coalescing` receives when
 tinygrad compiles a kernel (for Clang, and for CUDA where the kernel needs
 workgroups), and `_coalesced`, `_scalar` and `_cuda` its result for a
-renderer with vector accesses, one without, and CUDA's, which writes vectors
-of eight 16-bit floats. The hand-built cases are `accesses.golden` for
+renderer with vector accesses, one without, and CUDA's, which merges 16-bit
+floats copied into local memory into vectors of eight. The hand-built cases are `accesses.golden` for
 `memory_coalescing` and `indices.golden` for `indexing_simplify`. `DMC` is
 read once per process, so the group tagged `dmc` runs in a process of its own
 with the variable set.
@@ -898,7 +898,7 @@ with the variable set.
 | tinygrad: `null/test_simplify_valid_idx.py::TestImageSimplification` (16 tests), `test_drop_non_monotonic_window`, `test_drop_gate_committed_in_the_index_pass`, `TestImageStore::test_half_store_converts_lane_by_lane` | image indices, image valid dimensions and image stores | dropped: image paths are excluded (README); `C › README › an image access, through two indices, is not simplified` pins the exclusion |
 | tinygrad: `null/test_simplify_valid_idx.py::TestDropTrueGate::test_drop_true_gate_on_index` | an index gated by `True` loses its gate | `C › indexing_simplify › indices.golden › case=true_gate`: `indexing_simplify` alone keeps the gate; `sym`, which tinygrad composes with it, drops it (Symbolic's section) |
 | tinygrad: `null/test_simplify_valid_idx.py::TestDropTrueGate::test_const_gate_clause_is_not_moved_to_load`, `TestRangeShrink` (8 tests) | `pm_move_where_on_load`, range shrinking | dropped here: Symbolic's and Simplify's sections |
-| tinygrad: `codegen/late/coalesce.py` `memory_coalescing`, lines 111-167 | the grouping key (op, buffer, base, gate, argument), the lengths per element type, `must_divide`, `DMC`; narrowed (D261): `ALLOW_HALF8` is the renderer's `half8` | `C › memory_coalescing › accesses` (54 cases, each against `accesses_coalesced`, `accesses_scalar` and `accesses_cuda`); `C › memory_coalescing › lengths`; `C › vectors of eight 16-bit floats`; `C › DMC` |
+| tinygrad: `codegen/late/coalesce.py` `memory_coalescing`, lines 111-167 | the grouping key (op, buffer, base, gate, argument), the lengths per element type, `must_divide`, `DMC`; narrowed (D261): `ALLOW_HALF8` is the renderer's `half8`, for copies into local memory | `C › memory_coalescing › accesses` (58 cases, each against `accesses_coalesced`, `accesses_scalar` and `accesses_cuda`); `C › memory_coalescing › lengths`; `C › vectors of eight 16-bit floats`; `C › DMC` |
 | tinygrad: `codegen/late/coalesce.py` `memory_coalescing`, the DSP lengths (`:138`) | 128 down to 4 elements, unaligned | `C › README › a DSP renderer merges as any other: aligned runs of four at most`, `C › README › a DSP renderer leaves 8-bit integers alone` (README: DSP excluded) |
 
 ## Postrange

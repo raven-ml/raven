@@ -180,8 +180,9 @@ type t = private {
       (** Loads and stores of consecutive elements may be merged into one vector
           access. *)
   half8 : bool;
-      (** Vectors of eight 16-bit floats are written, so that an access of
-          16 bytes of them merges into one ({!Coalesce.memory_coalescing}). *)
+      (** Vectors of eight 16-bit floats are written, so that a copy of
+          16 bytes of them from global into local memory merges into one
+          ({!Coalesce.memory_coalescing}). *)
   registers : unit -> registers option;
       (** [registers ()] is the target's vector register file, if known, asked
           when first needed. It sets the widest merged access

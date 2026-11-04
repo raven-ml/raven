@@ -1220,7 +1220,7 @@ index 48f88612f..441546e62 100644
    # if we got a WARP, set the local_max to it so it does not fold with other dims
    local_max = (local_shape[0],)+ctx.local_max[1:] if ctx.local_max is not None and local_dims and \
 diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
-index 65fb29491..25c5a2cc6 100644
+index 65fb29491..6766d5d4d 100644
 --- a/tinygrad/codegen/late/coalesce.py
 +++ b/tinygrad/codegen/late/coalesce.py
 @@ -39,7 +39,9 @@ def _drop_valid_stmts(valid:UOp, idx:UOp, height:int, width:int) -> list[UOp]:
@@ -1234,7 +1234,30 @@ index 65fb29491..25c5a2cc6 100644
    return None if idx is start_idx or idx is start_idx.simplify() else buf.index(idx.valid(valid))
  
  def simplify_valid_image_load(buf:UOp, idx_y:UOp, idx_x:UOp, valid:UOp) -> UOp|None:
-@@ -139,9 +141,20 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+@@ -110,7 +112,11 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+   memory: defaultdict[tuple[Ops, UOp, UOp|None, UOp, object, int|tuple[int, int]], dict[int, list[UOp]]] = defaultdict(dict)
+   # depth[u] is the lexicographically largest (GLOBAL stores, LOCAL stores) count on any chain u waits on, u included
+   depth: dict[UOp, tuple[int, int]] = {}
++  # the loads read other than as the value a store puts in LOCAL memory
++  read: set[UOp] = set()
+   for u in sink.toposort():
++    read.update(s for i,s in enumerate(u.src) if s.op is Ops.LOAD and
++                not (u.op is Ops.STORE and i == 1 and u.src[0].addrspace is AddrSpace.LOCAL))
+     depth[u] = waits = max([depth[s] for s in u.src_without_body], default=(0, 0))
+     if u.op is Ops.STORE: depth[u] = (waits[0]+(u.src[0].addrspace is AddrSpace.GLOBAL), waits[1]+(u.src[0].addrspace is AddrSpace.LOCAL))
+     if u.op in {Ops.LOAD, Ops.STORE}:
+@@ -130,6 +136,10 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
+       # and the same depth (GLOBAL count only for GLOBAL accesses), so no merge closes a dependency cycle
+       memory[(u.op, buf, root_src, valid, u.arg, waits[0] if buf.addrspace is AddrSpace.GLOBAL else waits)].setdefault(arg, []).append(u)
+ 
++  # a GLOBAL load read only by a store into LOCAL memory, and that store, copy an element into shared memory
++  def copied(u:UOp) -> bool: return u.op is Ops.LOAD and u.src[0].addrspace is AddrSpace.GLOBAL and u not in read
++  def copies(u:UOp) -> bool: return copied(u) if u.op is Ops.LOAD else u.src[0].addrspace is AddrSpace.LOCAL and copied(u.src[1])
++
+   # build replacements
+   replacements = {}
+   for (op,buf,_,_,ld_arg,_),offsets in memory.items():
+@@ -139,9 +149,22 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
      if ctx.target.device == "DSP":
        lengths = [128,64,32,16,8,4]
        must_divide = False
@@ -1253,8 +1276,10 @@ index 65fb29491..25c5a2cc6 100644
 +    # products 1.5 times slower than its float16 ones
 +    elif (buf.dtype in (dtypes.float, dtypes.half, dtypes.int, dtypes.uint, *dtypes.fp8s) or
 +          (buf.dtype == dtypes.bfloat16 and ctx.target.device != "CPU")) and ctx.supports_float4:
-+      # 16-bit floats merge to 16 bytes where the target writes vectors of eight: a copy of 16 bytes is one instruction
-+      lengths = [8,4,2] if buf.dtype in (dtypes.half, dtypes.bfloat16) and ctx.half8 else [4,2]
++      # 16-bit floats copied into shared memory merge to 16 bytes where the target writes vectors of eight: a copy of 16 bytes is one
++      # instruction. elsewhere 16 bytes gain nothing
++      lengths = [8,4,2] if buf.dtype in (dtypes.half, dtypes.bfloat16) and ctx.half8 and \
++        all(copies(u) for us in offsets.values() for u in us) else [4,2]
      lengths.append(1)  # worst case, it's not folded
      # do the grouping
      for _,group in itertools.groupby(enumerate(sorted(offsets.keys())), lambda x: x[1]-x[0]):
@@ -1273,7 +1298,7 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..54e3caec0 100644
+index ec97cac6f..47b805aa6 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
 @@ -1,9 +1,321 @@
@@ -3624,7 +3649,7 @@ index 9a24394a6..159972ddf 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 8238ec207..259725566 100644
+index 8238ec207..2dee3b587 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,13 +1,13 @@

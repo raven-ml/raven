@@ -33,7 +33,10 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
       {!Dtype.Float16}, {!Dtype.Int32}, {!Dtype.Uint32} or 8-bit floats, or
       {!Dtype.Bfloat16} for a renderer other than the [CPU] device's; [8],
       [4] or [2] for those 16-bit floats where [r] writes vectors of eight
-      ({!Renderer.t.half8}).
+      ({!Renderer.t.half8}) and every access of the group (one operation,
+      buffer, base index, gate, argument and depth) copies into local
+      memory: a load of global memory whose only use is as the value of a
+      store into local memory, or that store.
 
     The longest length that fits is taken first. A group starts at an element
     whose count from the boundary behind the buffer's first element, a multiple
