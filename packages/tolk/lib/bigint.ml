@@ -486,22 +486,37 @@ let to_float n =
     let x = Float.ldexp (Int64.to_float (low_int64 q)) shift in
     if sign n < 0 then -.x else x
 
+(* Writing in decimal divides once per nine digits, each division as long as
+   the number: time quadratic in its length, minutes for 9 million bits. *)
+let max_digits = 4300
+
+let too_long () =
+  invalid_arg
+    (Printf.sprintf "Bigint.to_string: more than %d digits" max_digits)
+
 let to_string n =
   if is_small n then Int.to_string (to_small n)
   else
-    let rec chunks m acc =
-      if sign m = 0 then acc
-      else
-        let q, r = short_div (limbs m) 1_000_000_000 in
-        chunks q (r :: acc)
-    in
-    match chunks (abs n) [] with
-    | first :: rest ->
-        String.concat ""
-          ((if sign n < 0 then "-" else "")
-          :: Int.to_string first
-          :: List.map (Printf.sprintf "%09d") rest)
-    | [] -> assert false
+    (* [|n| >= 2^(numbits n - 1)], which is past [10^max_digits] here. *)
+    if Float.of_int (numbits n - 1) > Float.of_int max_digits *. Float.log2 10.
+    then too_long ()
+    else
+      let rec chunks m acc =
+        if sign m = 0 then acc
+        else
+          let q, r = short_div (limbs m) 1_000_000_000 in
+          chunks q (r :: acc)
+      in
+      match chunks (abs n) [] with
+      | first :: rest ->
+          let first = Int.to_string first in
+          if String.length first + (9 * List.length rest) > max_digits then
+            too_long ();
+          String.concat ""
+            ((if sign n < 0 then "-" else "")
+            :: first
+            :: List.map (Printf.sprintf "%09d") rest)
+      | [] -> assert false
 
 let pp_print ppf n = Format.pp_print_string ppf (to_string n)
 

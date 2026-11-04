@@ -242,6 +242,16 @@ let conversions =
           List.iter
             (fun s -> raises_match Exn.invalid_arg (fun () -> B.of_string s))
             [ ""; "-"; "0x"; "_1"; "12a"; " 1"; "0b2" ]);
+      test ~timeout:5. "to_string writes at most 4300 digits" (fun () ->
+          let ten = B.pow (B.of_int 10) 4300 and nines = String.make 4300 '9' in
+          equal string nines (B.to_string (B.pred ten));
+          equal string ("-" ^ nines) (B.to_string (B.neg (B.pred ten)));
+          List.iter
+            (fun n ->
+              raises_match
+                (Exn.invalid_arg ~sub:"4300 digits")
+                (fun () -> B.to_string n))
+            [ ten; B.neg ten; two_to 9_437_208 ]);
     ]
 
 (* Boundaries of the int fast paths *)

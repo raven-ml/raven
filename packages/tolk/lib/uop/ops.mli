@@ -345,7 +345,9 @@ val pp_arg : Format.formatter -> arg -> unit
       removable=True, broadcast=False)], [removable] [False] for {!Whole}
       only and [broadcast] [True] for {!Broadcast} only;
     - {!Custom_function}: [CustomFunction(name='f', dtype=dtypes.i32)];
-    - {!Call}: [CallInfo(None, 'f', False, False)]. *)
+    - {!Call}: [CallInfo(None, 'f', False, False)].
+
+    Raises [Invalid_argument] on an integer that {!Bigint.to_string} refuses. *)
 
 (** {1:nodes Nodes} *)
 
@@ -408,17 +410,21 @@ val pp : Format.formatter -> t -> unit
       x0,))
     v}
     A node reached more than once is named [xN:=] where first printed and [xN]
-    afterwards. The argument prints as {!pp_arg}. *)
+    afterwards. The argument prints as {!pp_arg}, and raises as it does. *)
 
 val compare_structure : t -> t -> int
 (** [compare_structure u0 u1] orders by operation, then argument as {!pp_arg}
     prints it, then data type, then sources, recursively. The order does not
-    depend on how or when the nodes were built. *)
+    depend on how or when the nodes were built.
+
+    Raises as {!pp_arg} does where it prints an argument. *)
 
 val key : t -> string
 (** [key u] is a digest of [u]'s operation, type, argument and sources,
     recursively: equal for equal graphs, whenever and wherever they are built,
-    and different for NaN constants of different bits. *)
+    and different for NaN constants of different bits.
+
+    Raises as {!pp_arg} does on an argument of [u]. *)
 
 val key_with : arg:(t -> arg option) -> t -> string
 (** [key_with ~arg u] is the {!key} of the graph [u] would be with each node
@@ -426,7 +432,9 @@ val key_with : arg:(t -> arg option) -> t -> string
     building that graph. Each such [a] must be an argument [n]'s operation
     takes and keep [n]'s data type, as a storage parameter's slot does: the
     key is not that of a graph whose types it would change. [arg] is called
-    once on each node of [u]. *)
+    once on each node of [u].
+
+    Raises as {!key} does. *)
 
 module Tbl : Hashtbl.S with type key = t
 (** Hash tables keyed by nodes. *)

@@ -119,16 +119,25 @@ let leaf =
       Gen.map Ops.int (Gen.int_range (-3) 9);
     ]
 
+(* A shift count is a leaf or one operation of leaves, at most 18: a count that
+   is itself a shift folds to an integer of millions of bits, which takes
+   seconds to multiply and gigabytes to shift by. *)
+let shift operand =
+  let open Gen in
+  let+ op = of_list ~pp:Op.pp Op.[ Shl; Shr ]
+  and+ l = operand
+  and+ r = one_of [ leaf; binary Op.[ Add; Sub; And; Or; Xor ] leaf ] in
+  Ops.v op ~src:[ l; r ]
+
 let rec integer depth =
   if depth = 0 then leaf
   else
+    let operand = integer (depth - 1) in
     Gen.frequency
       [
-        (1, leaf);
-        ( 3,
-          binary
-            Op.[ Add; Sub; Mul; Div; Mod; Shl; Shr; And; Or; Xor ]
-            (integer (depth - 1)) );
+        (5, leaf);
+        (12, binary Op.[ Add; Sub; Mul; Div; Mod; And; Or; Xor ] operand);
+        (3, shift operand);
       ]
 
 let comparison = binary Op.[ Cmplt; Cmpne ] (integer 2)
@@ -177,6 +186,14 @@ let simplified_tree cell =
       raises Division_by_zero (fun () -> Render.render u)
   | rendered -> equal string rendered (Render.render u)
 
+(* [(18<<18)*2 << (18<<18)*2] simplifies to [9437184 * 2^9437184], an integer
+   of 2840883 digits. *)
+let huge_shift =
+  let x = Ops.O.(Ops.int 3 * Ops.int 6) in
+  let y = Ops.shl x x in
+  let z = Ops.add y y in
+  Ops.shl z z
+
 let simplified =
   group "render after simplifying"
     [
@@ -188,15 +205,22 @@ let simplified =
           equal string (cell "render") (Render.render ~simplify:false u);
           equal string (cell "simplified") (Render.render u));
       Golden.cases "trees_rendered.golden" simplified_tree;
-      prop "writes the simplified node, or raises as simplifying does"
+      prop "writes the simplified node, or raises as simplifying it does"
         expression (fun u ->
-          match Shape.simplify u with
+          match Render.render ~simplify:false (Shape.simplify u) with
           | s ->
               cover "renders" true;
-              equal string (Render.render ~simplify:false s) (Render.render u)
+              equal string s (Render.render u)
           | exception e ->
               cover "raises" true;
               raises e (fun () -> Render.render u));
+      cases ~timeout:5. "an integer past 4300 digits is refused"
+        ~id:(Render.render ~simplify:false)
+        [ huge_shift ]
+        (fun u ->
+          raises_match
+            (Exn.invalid_arg ~sub:"4300 digits")
+            (fun () -> Render.render u));
     ]
 
 (* srender *)

@@ -77,10 +77,13 @@ val to_float : t -> float
     is past the greatest float. *)
 
 val to_string : t -> string
-(** [to_string n] is [n] in decimal, with a [-] if negative. *)
+(** [to_string n] is [n] in decimal, with a [-] if negative.
+
+    Raises [Invalid_argument] if [n] has more than 4300 digits: writing them
+    takes time quadratic in their number. *)
 
 val pp_print : Format.formatter -> t -> unit
-(** [pp_print] formats integers as {!to_string} does. *)
+(** [pp_print] formats integers as {!to_string} does, and raises as it does. *)
 
 (** {1:order Predicates and comparisons} *)
 

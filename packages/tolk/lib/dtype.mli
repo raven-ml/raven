@@ -43,7 +43,9 @@ val pp_const : Format.formatter -> [< const ] -> unit
     integer in decimal, and a float in the fewest significant digits that read
     back as the same float. A float has a [.0] if it has no fractional digit, is
     in exponent notation below [1e-4] and from [1e16] in magnitude ([1e-05],
-    [1.5e+16]), and is [inf], [-inf] or [nan] if it is not finite. *)
+    [1.5e+16]), and is [inf], [-inf] or [nan] if it is not finite.
+
+    Raises [Invalid_argument] on an integer that {!Bigint.to_string} refuses. *)
 
 (** {2:arith Arithmetic on values} *)
 

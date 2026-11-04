@@ -50,7 +50,7 @@ val render : ?simplify:bool -> Ops.t -> string
 
     Raises [Invalid_argument] if [simplify] and the symbolic rules are not
     installed, as {!Shape.simplify}; so does writing a movement whose argument
-    sizes are nodes. *)
+    sizes are nodes, or an integer that {!Bigint.to_string} refuses. *)
 
 val srender : Ops.sint -> string
 (** [srender s] is an integer [s] in decimal, and a node [s] as {!render} writes

@@ -1028,6 +1028,9 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- `Bigint.to_string` refuses an integer of more than 4300 digits with
+  `Invalid_argument`, and so do `Dtype.pp_const` and `Render.render`, which
+  hung for minutes on an expression that folds to millions of bits.
 - The stores of one state, as an assembly's pieces into the regions of one
   buffer, run as one launch whose members are their kernels
   (`Shape.launch`), each lowered and optimised as its own; alike pieces share
