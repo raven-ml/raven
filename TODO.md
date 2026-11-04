@@ -147,12 +147,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   moves a chunk between every pair of devices: time it against tinygrad's
   ring and hierarchical allreduce on a machine with several GPUs, and if
   it is slower, write those in nx's partition
-- jera: the gradient's bound in `Tol`'s scaled norm is loose when the
-  scales differ, so `Tol.v ~rel:1e-10` with the absolute term `jera.mli`
-  recommends can report `Stalled` at an exact minimum; bounding by |g|₂ over
-  the least unscaled curvature would fix it (a design). `a quasi-Newton
-  answer on a quadratic is within its bound` failed once at
-  `r1:AAAAhLXGkPmZqIiAAQHww_2h6YC7gMABBQAFAQAAAJSi3ILumYEYAJbEtdX8toeowAEA:f306f12a`
 
 ## nx
 

@@ -811,30 +811,51 @@ let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
       | None -> s.fx
       | Some b -> Nx.sub s.x (project b (Nx.sub s.x s.fx))
     in
-    let curvature = if m.curvature then Some mu else None in
-    let s, at_limit =
-      Search.judge tol s ~map:delta ~mu:curvature
-        ~resolution:
-          (Some
-             (resolution box
-                ~kappa:(Search.condition curvatures)
-                ~x:s.x ~g:s.fx delta))
-        ~f:(Search.Paired g) delta
+    let resolution =
+      Some
+        (resolution box
+           ~kappa:(Search.condition curvatures)
+           ~x:s.x ~g:s.fx delta)
     in
-    let run = searching s.st in
+    let judge mu =
+      Search.judge tol s ~map:delta ~mu ~resolution ~f:(Search.Paired g) delta
+    in
     let downhill = Search.descends s.fx delta in
-    let st = settle s.st (Nx.logical_not downhill) Stalled in
-    let run' = Nx.logical_and run (searching st) in
-    let q, found, tries = search ~running:run' in
-    (* A step below the floats' resolution is no decrease. *)
-    let found =
-      Nx.logical_and found
-        (Nx.logical_not (Nx.all ~axes:[ -1 ] (Nx.equal q.x s.x)))
+    (* The search from the lanes [running], and those it moved: a step below
+       the floats' resolution is no decrease. *)
+    let searched running =
+      let q, found, tries = search ~running in
+      let found =
+        Nx.logical_and found
+          (Nx.logical_not (Nx.all ~axes:[ -1 ] (Nx.equal q.x s.x)))
+      in
+      (q, Nx.logical_and running found, tries)
     in
-    let moved = Nx.logical_and run' found in
-    let s = Search.limit { s with st } at_limit ~at:(Nx.logical_not found) in
+    (* A quasi-Newton step is judged after its search, which measures the
+       curvature along it: a lane converges only with that curvature in its
+       bound. *)
+    let s, at_limit, (q, moved, tries), mu =
+      if m.curvature then
+        let ((q, moved, _) as search) =
+          searched (Nx.logical_and (searching s.st) downhill)
+        in
+        let c = Search.quotient tol ~x:s.x ~x':q.x (Nx.sub q.g s.fx) in
+        let c = Nx.where moved c (Nx.full_like c Float.nan) in
+        let mu = Search.least mu c in
+        let s, at_limit =
+          judge (Some (mu, Nx.logical_not (Nx.isnan c)))
+        in
+        (s, at_limit, search, mu)
+      else
+        let s, at_limit = judge None in
+        (s, at_limit, searched (Nx.logical_and (searching s.st) downhill), mu)
+    in
+    let st = settle s.st (Nx.logical_not downhill) Stalled in
+    let s = Search.limit { s with st } at_limit ~at:(Nx.logical_not moved) in
     let st = s.st in
-    let memory' = m.update (Nx.sub q.x s.x) (Nx.sub q.g s.fx) memory in
+    let moved = Nx.logical_and moved (searching st) in
+    let d = Nx.sub q.x s.x and y = Nx.sub q.g s.fx in
+    let memory' = m.update d y memory in
     let memory =
       Nx.Ptree.map2 m.memory (fun _ a b -> Search.hold moved a b) memory' memory
     in
@@ -846,16 +867,11 @@ let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
         n = Nx.add s.n tries;
       },
       ( ( Search.hold moved q.value value,
-          ( (if m.curvature then
-               Search.hold moved
-                 (Search.least tol mu ~x:s.x ~x':q.x (Nx.sub q.g s.fx))
-                 mu
-             else mu),
+          ( mu,
             Nx.Ptree.map2
               Nx.Ptree.(pair tensor tensor)
               (fun _ a b -> Search.hold moved a b)
-              (Search.curvature curvatures ~step:(Nx.sub q.x s.x)
-                 (Nx.sub q.g s.fx))
+              (Search.curvature curvatures ~step:d y)
               curvatures ) ),
         memory ) )
   in

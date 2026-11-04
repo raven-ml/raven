@@ -723,6 +723,13 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.bfgs` and `lbfgs` converge a lane only once their search measured
+  the curvature along the step it is judged on: a soft component left after
+  the stiff ones converged ended `Converged` up to 7000 times `tol` off.
+  This costs a converging lane one more search.
+- `jera.mli` names the absolute term `bfgs` and `lbfgs` need beside a relative
+  term `r`, `√(r ε κ) |x|∞`: the resolution `ε κ |x|∞` it named could stall
+  them at a minimum they had reached.
 - `Minimize.bfgs` and `lbfgs` no longer converge past `tol` at a minimum
   whose tolerance scale squared is below the floats' range: the gradient's
   bound rounded to 0 there, and L-BFGS converged 12 times `tol` from a

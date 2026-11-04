@@ -641,15 +641,22 @@ module Minimize : sig
       the gradient's bound to meet [tol]: [|σ ∇f| / (μ √n)] times each
       component's scale [σ] at the answer, with [μ] the least curvature [yᵀs /
       |s / σ|²] their accepted steps [s] measured, each with the scale at its
-      step brought to the largest component of [σ], and no bound before one
-      did.
-      It is the distance in [tol]'s scaled norm where [f]'s curvature near the
-      minimum is at least [μ], an estimate since the steps sample the curvature
-      only along their path. Their error is also at most [|δ|] plus this bound,
-      whatever the readings: the bound estimates [x]'s distance to the minimum
-      and [δ] moves the answer from [x], so a lane whose readings do not
-      contract, as where the curvature estimate overshoots a component, still
-      converges once both are small. A gradient method's error, and
+      step brought to the largest component of [σ], and no bound before one did;
+      a lane converges only once its search measured the curvature along the
+      step [δ] it is judged on, which costs a converging lane one more search,
+      or at the floats' limit, where its step is an exact zero or its search
+      finds no decrease. It is the distance in [tol]'s scaled norm where [f]'s curvature near the
+      minimum is at least [μ]. Each measured curvature is at least the least, so
+      the bound is an estimate that understates the error by up to the ratio of
+      [f]'s largest curvature to its least in [tol]'s coordinates [x / σ]: it
+      holds where the error lies along a direction a step measured, as along
+      [δ], and not where it lies along a softer direction than any measured
+      while [δ] points elsewhere, as at a stiff component still near [tol]
+      beside a soft one far from its minimum. Their error is also at most [|δ|]
+      plus this bound, whatever the readings: the bound estimates [x]'s distance
+      to the minimum and [δ] moves the answer from [x], so a lane whose readings
+      do not contract, as where the curvature estimate overshoots a component,
+      still converges once both are small. A gradient method's error, and
       {!levenberg_marquardt}'s, is also at least [ε κ |x|∞] in each component,
       [κ] the ratio of the larger to the smaller of the curvatures [yᵀs / sᵀs]
       its two newest moves measured, 1 before two, and for
@@ -664,11 +671,17 @@ module Minimize : sig
       or not, since a gradient's value cannot tell: a relative tolerance [r]
       fails at each component below [ε κ |x|∞ / r], as [Tol.rel 1e-10] does at a
       component of [10⁻⁷] beside one of 1, and [Tol.ulps k] at any component
-      below [κ / k] times the largest; an absolute term of [ε κ |x|∞] in [tol]
-      avoids it. Under a tolerance finer than the resolution a lane ends
-      [Stalled] even where it lands on the minimum, and [Converged] states only
-      what the floats can show. A lane whose error does not meet [tol] ends
-      [Stalled] as in {!System}, and at a step that is not downhill; a
+      below [κ / k] times the largest; an absolute term in [tol] avoids it. It
+      is [ε κ |x|∞] alone, and beside a relative term [r], for {!bfgs} and
+      {!lbfgs}, [√(r ε κ) |x|∞]: at a gradient at its rounding their gradient's
+      bound is the resolution over the absolute term times the ratio of the
+      largest scale to the least, [(r / (M ε κ) + 1) / M] for a term of [M ε κ
+      |x|∞], about 1 from [M = √(r / (ε κ))], and a term of [ε κ |x|∞] can stall
+      them at a minimum they reached. Under a tolerance finer than the
+      resolution a lane ends [Stalled] even where it lands on the minimum, and
+      [Converged] states only what the floats can show. A lane whose error does
+      not meet [tol] ends [Stalled] as in {!System}, and at a step that is not
+      downhill; a
       non-finite [f] or gradient at the start ends it [Not_finite]; [budget]
       iterations end it [Budget_spent]. At the floats' limit the gradient is
       rounding, and a step its slopes accept raises [f] as readily as it lowers

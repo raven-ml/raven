@@ -1091,6 +1091,80 @@ let resolution_ulps p =
   kappa *. Float.max (Float.abs a) (Float.abs b)
   /. Float.min (Float.abs a) (Float.abs b)
 
+let status s =
+  List.find
+    (fun st -> Nx.item [] (Solution.is st s))
+    Solution.[ Converged; Budget_spent; Not_finite; Stalled ]
+
+let status_t =
+  Testable.make
+    ~pp:(fun ppf st ->
+      Format.pp_print_string ppf
+        (match st with
+        | Solution.Converged -> "Converged"
+        | Budget_spent -> "Budget_spent"
+        | Not_bracketed -> "Not_bracketed"
+        | Not_finite -> "Not_finite"
+        | Stalled -> "Stalled"))
+    ~equal:( = )
+
+(* [½ (x₁ − c₁)² + ½ 10⁶ (x₂ − c₂)²] from [x0] under [Tol.rel 1e-8]: each
+   quasi-Newton method converges, its answer within [tol] and its last step's
+   one further. *)
+let stiff_soft ~c ~x0 =
+  let c = vec c in
+  let d = vec [| 1.; 1e6 |] in
+  let f x = Nx.mul_s (Nx.sum (Nx.mul d (Nx.square (Nx.sub x c)))) 0.5 in
+  List.iter
+    (fun (name, m) ->
+      let s = Minimize.solve one m ~tol:(Tol.rel 1e-8) ~budget:200 f (vec x0) in
+      equal ~msg:name status_t Converged (status s);
+      let x = Solution.best s in
+      let e =
+        Oracle.floats (Nx.div (Nx.sub x c) (Nx.mul_s (Nx.abs x) 1e-8))
+      in
+      let rms =
+        sqrt (Array.fold_left (fun acc v -> acc +. (v *. v)) 0. e /. 2.)
+      in
+      at_most float_exact ~msg:name ~than:2. rms)
+    [
+      ("lbfgs 1", Minimize.lbfgs ~memory:1 ~linear:Linear.dense);
+      ("lbfgs 3", Minimize.lbfgs ~memory:3 ~linear:Linear.dense);
+      ("bfgs", Minimize.bfgs ~linear:Linear.dense);
+    ]
+
+(* [Σ dᵢ (xᵢ − cᵢ)² / 2] with curvatures [d] in [e^±7] and [|c|] in [0.5, 2],
+   from a warm start: each component of curvature below the median within
+   [10⁻⁷] to [10⁻³] of [cᵢ], relatively, and each other within 1. Its minimum
+   is [c], exactly. *)
+let warm_starts =
+  let open Gen in
+  (let* n = int_range 2 6 in
+   let+ d = list ~size:(constant n) (float_range (-7.) 7.)
+   and+ c = list ~size:(constant n) (pair (float_range 0.5 2.) bool)
+   and+ near = list ~size:(constant n) (pair (float_range (-7.) (-3.)) bool)
+   and+ far = list ~size:(constant n) (float_range (-1.) 1.) in
+   let d = Array.of_list (List.map exp d) in
+   let c = Array.of_list (List.map (fun (c, s) -> if s then c else -.c) c) in
+   let median =
+     let s = Array.copy d in
+     Array.sort Float.compare s;
+     s.(n / 2)
+   in
+   let near = Array.of_list near and far = Array.of_list far in
+   let x0 =
+     Array.mapi
+       (fun i c ->
+         if d.(i) < median then
+           let e, s = near.(i) in
+           c *. (1. +. ((if s then 1. else -1.) *. (10. ** e)))
+         else c +. far.(i))
+       c
+   in
+   (vec d, (vec c, vec x0)))
+  |> with_pp (fun ppf (d, (c, x0)) ->
+      Format.fprintf ppf "d = %a@ c = %a@ x0 = %a" Nx.pp d Nx.pp c Nx.pp x0)
+
 let law_tests =
   [
     prop ~count:60 "a quasi-Newton answer on a quadratic is within its bound"
@@ -1104,6 +1178,56 @@ let law_tests =
         List.iter
           (fun (name, converged) -> cover (name ^ " converges") converged)
           (within_its_bound q));
+    prop ~count:50 "a warm start's converged answer is within its bound"
+      warm_starts (fun (d, (c, x0)) ->
+        (* Under [Tol.rel 1e-8] the curvatures in [tol]'s coordinates are
+           [dᵢ (10⁻⁸ cᵢ)²] near the answer, and every curvature a step
+           measures is a Rayleigh quotient, at least the least: the
+           gradient's bound puts [x] within [κ] of [tol], [κ] the ratio of the
+           largest of those curvatures to the least, and the answer one [tol]
+           and its rounding further. *)
+        let dc =
+          Array.map2
+            (fun d c -> d *. c *. c)
+            (Oracle.floats d) (Oracle.floats c)
+        in
+        let kappa =
+          Array.fold_left Float.max 0. dc
+          /. Array.fold_left Float.min infinity dc
+        in
+        let spread =
+          let d = Oracle.floats d in
+          Array.fold_left Float.max 0. d /. Array.fold_left Float.min infinity d
+        in
+        cover "curvatures that differ by 10⁴ or more" (spread >= 1e4);
+        let f x = Nx.mul_s (Nx.sum (Nx.mul d (Nx.square (Nx.sub x c)))) 0.5 in
+        List.iter
+          (fun (name, m) ->
+            let s = Minimize.solve one m ~tol:(Tol.rel 1e-8) ~budget:500 f x0 in
+            cover (name ^ " converges") (is Converged s);
+            if is Converged s then
+              let x = Solution.best s in
+              let e =
+                Oracle.floats (Nx.div (Nx.sub x c) (Nx.mul_s (Nx.abs x) 1e-8))
+              in
+              let rms =
+                sqrt
+                  (Array.fold_left (fun acc v -> acc +. (v *. v)) 0. e
+                  /. Float.of_int (Array.length e))
+              in
+              at_most float_exact ~msg:name ~than:(kappa +. 2.) rms)
+          [
+            ("lbfgs 1", Minimize.lbfgs ~memory:1 ~linear:Linear.dense);
+            ("lbfgs 3", Minimize.lbfgs ~memory:3 ~linear:Linear.dense);
+            ("bfgs", Minimize.bfgs ~linear:Linear.dense);
+          ]);
+    test "a soft component left last converges within tol" (fun () ->
+        (* The steps measure the stiff curvature 10⁶ while the stiff
+           component converges; the soft one, 10⁻⁴ from its minimum, is then
+           the error, along a curvature of 1. *)
+        stiff_soft ~c:[| 1.; 1. |] ~x0:[| 1.0001; 2. |]);
+    test "a stiff component near 0 converges within tol" (fun () ->
+        stiff_soft ~c:[| 1.; 1e-3 |] ~x0:[| 1.00002; 1.001 |]);
     test "a quasi-Newton answer whose scale's square underflows is within its \
           bound" (fun () ->
         (* Squares of [tol]'s scale at this minimum are below the floats'
@@ -1350,22 +1474,11 @@ let rotated =
   |> Gen.with_pp (fun ppf (h, a) ->
       Format.fprintf ppf "h = %a@ a = %a" Nx.pp h Nx.pp a)
 
-let status s =
-  List.find
-    (fun st -> Nx.item [] (Solution.is st s))
-    Solution.[ Converged; Budget_spent; Not_finite; Stalled ]
-
-let status_t =
-  Testable.make
-    ~pp:(fun ppf st ->
-      Format.pp_print_string ppf
-        (match st with
-        | Solution.Converged -> "Converged"
-        | Budget_spent -> "Budget_spent"
-        | Not_bracketed -> "Not_bracketed"
-        | Not_finite -> "Not_finite"
-        | Stalled -> "Stalled"))
-    ~equal:( = )
+(* The condition of a symmetric positive-definite [a]: the ratio of its
+   largest eigenvalue to its least. *)
+let condition a =
+  let l = Oracle.floats (Nx.eigvalsh f64 a) in
+  Array.fold_left Float.max 0. l /. Array.fold_left Float.min infinity l
 
 let termination_tests =
   [
@@ -1477,6 +1590,54 @@ let termination_tests =
             equal ~msg:name status_t Converged
               (status
                  (Minimize.solve one m ~tol ~budget:200
+                    (exact_objective a xstar ~boxed:false 0.)
+                    (Nx.full_like xstar 0.5))))
+          methods);
+    test "the absolute term jera.mli names converges at a minimum near 0"
+      (fun () ->
+        (* Its zero component starts 0.5 from the minimum; with an absolute
+           term of [5 ε |x*|∞] alone beside [Tol.rel 1e-10], 5 the bound by
+           Gershgorin's discs on [a]'s condition, both searches stall within
+           0.0025 of [tol] of it. *)
+        let a =
+          Nx.create f64 [| 3; 3 |] [| 8.; 1.; 1.; 1.; 4.; 0.; 1.; 0.; 7. |]
+        and xstar =
+          vec [| 7.171183824539185e-08; 0.; -5.811452865600586e-07 |]
+        in
+        let abs =
+          Float.sqrt (1e-10 *. Float.epsilon *. condition a)
+          *. 5.811452865600586e-07
+        in
+        List.iter
+          (fun (name, m) ->
+            equal ~msg:name status_t Converged
+              (status
+                 (Minimize.solve one m ~tol:(Tol.v ~rel:1e-10 ~abs)
+                    ~budget:200
+                    (exact_objective a xstar ~boxed:false 0.)
+                    (Nx.full_like xstar 0.5))))
+          methods);
+    prop "beside a relative term the absolute term jera.mli names converges"
+      Gen.(pair spread_minima (float_range (-12.) (-6.)))
+      (fun ((a, xstar), e) ->
+        (* [Tol.v ~rel:r ~abs:(√(r ε κ) |x*|∞)], [κ] the condition of the
+           Hessian [a]: a gradient at its rounding, about [ε κ |x*|∞] times the
+           least curvature, bounds the error in [tol]'s scaled norm by
+           [(r / (M ε κ) + 1) / M] for an absolute term of [M ε κ |x*|∞], the
+           resolution over that term times the ratio of the largest scale to
+           the least, which [M = √(r / (ε κ))] holds near 1. *)
+        let r = 10. ** e in
+        let kappa = condition a in
+        let top = Nx.item [] (Nx.max (Nx.abs xstar)) in
+        let abs = Float.sqrt (r *. Float.epsilon *. kappa) *. top in
+        cover "scales that differ by 10³ or more"
+          (Array.exists (fun v -> Float.abs v *. r < abs) (Oracle.floats xstar)
+          && (r *. top) +. abs >= 1e3 *. abs);
+        List.iter
+          (fun (name, m) ->
+            equal ~msg:name status_t Converged
+              (status
+                 (Minimize.solve one m ~tol:(Tol.v ~rel:r ~abs) ~budget:200
                     (exact_objective a xstar ~boxed:false 0.)
                     (Nx.full_like xstar 0.5))))
           methods);

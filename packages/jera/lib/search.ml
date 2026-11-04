@@ -493,13 +493,31 @@ let still x step =
    from step to step, so a lane can meet [tol] by the steps' contraction far
    from its minimum. Its gradient bounds the error instead, a test Kelley calls
    reasonable for any gradient method (Iterative Methods for Optimization,
-   1999, §2.3.2). In [tol]'s scaled coordinates [u = x / σ], [σ] the scale, a
-   function whose curvature is at least [μ] has [|u − u*| ≤ |σ g| / μ], and [μ]
-   is estimated by the least curvature the method's accepted steps [d]
-   measured, [yᵀd / |d / σ|²], which is at least the least one. Each component
-   carries [|σ g| / (μ √n)] of its scale at the answer, whose root mean square
-   is that bound: zero where the gradient is, or before any step measured a
-   curvature.
+   1999, §2.3.2).
+
+   In [tol]'s scaled coordinates [u = x / σ], [σ] the scale at the answer,
+   the gradient is [σ g], and it is [Ĥ] times [u − u*], [Ĥ] the mean of the
+   Hessian in [u] on the segment from [u*] to [u]. Where [Ĥ]'s eigenvalues
+   are at least [μ], [|u − u*|₂ ≤ |σ g|₂ / μ], and the root mean square [tol]
+   measures, [|u − u*|₂ / √n], is at most [|σ g|₂ / (μ √n)]. Each component
+   carries that times its scale, whose root mean square is the bound: zero
+   where the gradient is, or before any step measured a curvature.
+
+   [μ] is not known. It is estimated by the least curvature the accepted
+   steps [d] measured, [yᵀd / |d / σ|²]: [y = Ĥ' d] over each step, [Ĥ'] the
+   mean Hessian along it, so each is a Rayleigh quotient, at least the least
+   eigenvalue there. The estimate is therefore at least [μ], and the bound at
+   most the distance: it is the distance where the error lies along a
+   direction of the least curvature measured, and understates it by up to
+   [κ], the ratio of the largest curvature to the least, elsewhere. The
+   method's step [δ] is its own estimate of [x* − x], so {!judge} converges a
+   lane only once its search measured the curvature along the [δ] it judges:
+   an error along a direction the path never sampled, as a soft component
+   left after the stiff ones converged, then counts at its own curvature.
+   That quotient is the curvature along [δ] alone. Where [δ] points mostly
+   elsewhere, as at a stiff component still near [tol] beside a soft one
+   whose curvature the method's model overstates, the bound still
+   understates the error, by up to [κ].
 
    The scale enters as its shape [σ̂ = σ / m], [m] its largest component,
    and the bound is [|σ̂ g| / (μ̂ m)] with [μ̂ = μ / m²] measured in [x / σ̂]:
@@ -522,14 +540,17 @@ let gradient_bound ~scale ~mu g =
 (* [(σ y)ᵀ ŵ / |w|] with [w = d / σ] and [ŵ] its direction, [σ] the scale's
    shape at the move's larger end, whose terms neither underflow nor
    overflow. *)
-let least tol mu ~x ~x' y =
+let quotient tol ~x ~x' y =
   let sigma = floored tol (Nx.maximum (Nx.abs x) (Nx.abs x')) in
   let sigma = Nx.div sigma (largest sigma) in
   let w = Nx.div (Nx.sub x' x) sigma in
   let size = norm w in
   let c = Nx.div (dot (Nx.mul sigma y) (Nx.div w (column size))) size in
   let measured = Nx.logical_and (Nx.isfinite c) (Nx.greater_s c 0.) in
-  Nx.where measured (Nx.where (Nx.isnan mu) c (Nx.minimum mu c)) mu
+  Nx.where measured c (Nx.full_like c Float.nan)
+
+let least mu c =
+  Nx.where (Nx.isnan c) mu (Nx.where (Nx.isnan mu) c (Nx.minimum mu c))
 
 type ('q, 'd) limit = {
   error : (float, 'q, 'd) Nx.t;
@@ -572,7 +593,7 @@ let judge tol s ~map ~mu ~resolution ~f delta =
     let e =
       match (mu, f) with
       | None, _ -> e
-      | Some mu, (Paired g | Solved g) ->
+      | Some (mu, _), (Paired g | Solved g) ->
           let floor = Nx.clamp ~min:(Num.tiny (Nx.dtype g)) scale in
           let b = gradient_bound ~scale:floor ~mu g in
           Nx.minimum (Nx.maximum e b) (Nx.add step b)
@@ -599,7 +620,16 @@ let judge tol s ~map ~mu ~resolution ~f delta =
              (every (Nx.less_equal (Nx.abs map) ulp)))
   in
   let e = Nx.where (column stuck) newest (error (contraction s)) in
-  let converged = Nx.logical_and run (within ~scale e) in
+  (* A quasi-Newton lane converges once the curvature along its step was
+     measured, at the floats' limit, or where its step is an exact zero. *)
+  let measured =
+    match mu with
+    | None -> run
+    | Some (_, along) -> Nx.logical_or along (Nx.logical_or stuck (every exact))
+  in
+  let converged =
+    Nx.logical_and (Nx.logical_and run measured) (within ~scale e)
+  in
   let st = settle s.st converged Converged in
   ( {
       s with
