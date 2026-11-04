@@ -158,8 +158,8 @@ and rune), raven / llama.cpp b12048 Vulkan:
   it is slower, write those in nx's partition
 - attention under `Rune.jit`: tensor-core backward kernels (the
   derivative traces the composition; fused SIMT backward kernels ran 2-3x
-  slower); host f32 decode is slower than the composition (L11); causal
-  saves little (one wave of uneven workgroups); RDNA4 and Metal core paths
+  slower); causal saves little (one wave of uneven workgroups); RDNA4 and
+  Metal core paths
 - a fresh process's first calls fault 72-188 pages each for 1 MiB results
   until rig's buffer cache warms
 - jera's compiled rows gain 2-8 words, one launch per stored piece of an

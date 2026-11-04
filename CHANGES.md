@@ -379,6 +379,10 @@ All notable changes to this project will be documented in this file.
 - A compiled `Nx.scatter` of a float16 on the host keeps a signalling NaN
   where no update lands. One of its forms selected the target's elements in
   float32, which quieted it.
+- `Rune.jit` on the host computes `Nx.attention` a vector of each row's
+  columns at a time, and splits a decode step's keys across the cores:
+  8 heads decoding over 4096 float32 keys take 0.10 ms where they took
+  0.22.
 - `Nx.attention` differentiates through one construct of its own, linear in
   the tangents and transposed by flipping it, which recomputes each pair's
   weight from `lse`: reverse mode keeps the call's operands, `o` and `lse`,

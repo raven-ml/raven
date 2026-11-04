@@ -1137,8 +1137,8 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reference:** `mixin/rand.py:298-330` (`scaled_dot_product_attention`:
   the scores' product in float32, cast to the query's dtype, `softmax`,
   then the product with the values, each a kernel and the scores stored).
-- **Raven:** `lower_attention.ml` (`lower`, `simt`, `core`, `plan`,
-  `classes`, `skipping`, `run_tiles`, `combine`).
+- **Raven:** `lower_attention.ml` (`lower`, `simt`, `simt_width`, `core`,
+  `plan`, `classes`, `skipping`, `run_tiles`, `combine`, `host_combine`).
 - **Differs:** one kernel folds each query row over its keys in tiles of
   32 or 64 with a running maximum, sum and accumulator in base 2 (online
   softmax), never storing a score; the rows of a group of query heads
@@ -1147,8 +1147,9 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   and bfloat16 attention computes both products on the core and rounds
   each weight once to the values' dtype. A tile the mask's ranges over the
   tile's pairs hide is skipped; one they leave unknown runs where a
-  workgroup's vote finds a visible pair. Few workgroups split each row's
-  keys into runs, folded in order by a second kernel.
+  workgroup's vote finds a visible pair. Few workgroups, or on the host
+  few rows, split each row's keys into runs, folded in order by a second
+  kernel; a host thread adds a vector of its row's columns at a time.
 - **nx:** `nx_kernel.mli` (attention: the pair program, visibility,
   [o] and [lse]), `nx.mli` (`attention`: the bound, the weights rounded
   once to [v]'s dtype for float16 and bfloat16, and a skipped hidden key's
@@ -1169,9 +1170,12 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   combine is a second launch of about 4 us; gpt-oss's decode, 64 heads over 8, 315-319 to 15-16 us, and
   kaun's `GptOss/prefill-512` 163.4-163.6 to 144.8-145.8 ms. On
   the host, `Attention/jit-f32-8x512x64-causal` 3.8-5.8 to 2.5-4.5 ms,
-  and `Attention/jit-f32-decode-8x4096x64` 120-146 to 196-238 us: a
-  decode step's 8 rows are 8 host threads folding 4096 keys each, where
-  the composition's contractions spread the keys over the threads.
+  and `Attention/jit-f32-decode-8x4096x64` 120-146 to 196-238 us, a
+  decode step's 8 rows 8 host threads each adding its 64 columns one
+  chain at a time; with each thread's columns a vector and the keys of
+  fewer rows than `local_workgroups` split, four interleaved rounds
+  against those kernels, 2.94-3.40 to 2.12-2.27 ms and 216-233 to 96-120
+  us.
 - **Pinned by:** `rune attention › jit within nx's bound of a float64
   reference › every dtype`; `Rune.jit on a GPU › attention › jit holds nx's
   bound against a float64 reference`; the rows above.

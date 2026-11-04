@@ -398,7 +398,9 @@ let run_tiles ~tk ~bk ~splits ~gs len =
 
    A workgroup holds [simt_rows] rows of a group of heads, one a thread, or
    32 for fewer rows ([rows_of]), and takes tiles of [simt_keys] keys,
-   whose scores stay in registers. The host has one row a thread. *)
+   whose scores stay in registers. The host has one row a thread, whose
+   accumulator's columns are adjacent and added a vector at a time
+   ({!simt_width}). *)
 
 let simt_rows = 64
 
@@ -408,7 +410,17 @@ let simt_rows = 64
 let rows_of a = if grouped a <= 32 then 32 else simt_rows
 let simt_keys = 32
 
-let simt ~local ~splits a xs =
+(* The values' columns a SIMT thread adds at a time: one on a GPU, whose
+   threads are its vector, and on the host as many as fill one of its
+   vector registers. Each column's sum keeps its order at any width. *)
+let simt_width (r : Renderer.t) a =
+  if r.has_local then 1
+  else
+    match r.registers () with
+    | Some { bytes; _ } -> max 1 (bytes / Dtype.itemsize (Arith.dtype a.acc))
+    | None -> 1
+
+let simt ~local ~width ~splits a xs =
   let x = args ~scratch:true a xs in
   let sum = Option.get x.sum in
   let acc = Arith.dtype a.acc in
@@ -444,12 +456,18 @@ let simt ~local ~splits a xs =
   let m, m_init = reg slot_m 1 acc (fl acc Float.neg_infinity) ~at in
   let ls, l_init = reg slot_l 1 acc (fl acc 0.) ~at in
   let m_j = Ops.after m [ m_init; jr ] and l_j = Ops.after ls [ l_init; jr ] in
-  let slot c = (int c * int rows) + part in
+  (* A row's accumulators: on a GPU value [c] of row [r] at [c · rows + r],
+     so that a workgroup's threads touch adjacent elements; on the host a
+     row's values adjacent, so that a thread's run of columns is a
+     vector. *)
+  let slot c =
+    if local then (c * int rows) + part else (part * int a.dv) + c
+  in
   (* The accumulator starts at zero: the rows' values, before the loop. *)
   let sum0 =
     Ops.group
       (List.init a.dv (fun c ->
-           Ops.store (Ops.index sum [ Ops.where live (slot c) Ops.invalid ]) (fl acc 0.)))
+           Ops.store (Ops.index sum [ Ops.where live (slot (int c)) Ops.invalid ]) (fl acc 0.)))
   in
   let sum_j = Ops.after sum (if a.dv = 0 then [ jr ] else [ sum0; jr ]) in
   let key i = (j * int bk) + int i in
@@ -492,26 +510,34 @@ let simt ~local ~splits a xs =
     let m_old = ld (inside m_j) (int 0) and l_old = ld (inside l_j) (int 0) in
     let m_new, alpha, p = softmax acc m_old x2 in
     let l_new = Array.fold_left ( + ) (l_old * alpha) p in
-    (* Values: acc = α acc + Σ p_j v_j, the products added in key order. *)
+    (* Values: acc = α acc + Σ p_j v_j, the products added in key order,
+       [width] columns at a time: each column's sum is a chain of additions,
+       which a vector of columns runs side by side. *)
     let values =
       if a.dv = 0 then []
       else
-        let c = range Loop (Int a.dv) 5 in
-        let sum_c = Ops.after (inside sum_j) [ c ] in
-        let at_c = (c * int rows) + part in
-        let old = ld_gated sum_c at_c live in
+        let cg = range Loop (Int (ceil_div a.dv width)) 5 in
+        let e = if Stdlib.(width = 1) then int 0 else range Upcast (Int width) 10 in
+        let sum_c = Ops.after (inside sum_j) [ cg ] in
+        let col = (cg * int width) + e in
+        let ok_c = live &&: (col < int a.dv) in
+        let old = ld_gated sum_c (slot col) ok_c in
         let next =
           Array.fold_left ( + ) (old * alpha)
             (Array.mapi
                (fun i p ->
                  let ok, at = keys.(i) in
-                 p * Ops.cast (ld_gated vs ((at * int a.dv) + c) ok) acc)
+                 p
+                 * Ops.cast
+                     (ld_gated vs ((at * int a.dv) + col) (ok &&: (col < int a.dv)))
+                     acc)
                p)
         in
+        let ranges = if Stdlib.(width = 1) then [ cg ] else [ e; cg ] in
         [
           Ops.end_
-            (Ops.store (Ops.index sum_c [ Ops.where live at_c Ops.invalid ]) next)
-            [ c ];
+            (Ops.store (Ops.index sum_c [ Ops.where ok_c (slot col) Ops.invalid ]) next)
+            ranges;
         ]
     in
     Ops.group
@@ -553,11 +579,11 @@ let simt ~local ~splits a xs =
       :: List.init a.dv (fun c ->
              Ops.store
                (Ops.index x.o [ at_row ((part * int a.dv) + int c) ])
-               (ld_gated sum (slot c) live))
+               (ld_gated sum (slot (int c)) live))
     else
       Ops.store (Ops.index x.lse [ at_row row.index ]) (lse_of acc ~m ~l:lsum)
       :: List.init a.dv (fun c ->
-             let v = o_of acc ~l:lsum (ld_gated sum (slot c) live) in
+             let v = o_of acc ~l:lsum (ld_gated sum (slot (int c)) live) in
              Ops.store
                (Ops.index x.o [ at_row ((row.index * int a.dv) + int c) ])
                (Ops.cast v out))
@@ -1039,6 +1065,42 @@ let splits_for ~stream ~workgroups ~threads ~tiles =
   in
   max 1 (min (go 1) tiles)
 
+(* The host's combine kernel: {!combine}'s sums, one thread a row, which
+   computes the runs' weights once and adds each run's values to its
+   columns, [width] columns at a time ({!simt_width}). *)
+let host_combine ~splits ~width a o lse sums parts =
+  let acc = Arith.dtype a.acc and out = Arith.dtype a.out in
+  let rows = numel a.lead * a.hq * a.tq in
+  let open Ops.O in
+  let row = range Weak (Int rows) 0 in
+  let part s = (row * int splits) + int s in
+  let ms = List.init splits (fun s -> ld parts (int 2 * part s)) in
+  let m = List.fold_left Ops.maximum (fl acc Float.neg_infinity) ms in
+  let mu = Ops.where (Ops.eq m (fl acc Float.neg_infinity)) (fl acc 0.) m in
+  let ws = List.map (fun ms -> Ops.exp2 (ms - mu)) ms in
+  let lsum =
+    List.fold_left ( + ) (fl acc 0.)
+      (List.mapi (fun s w -> w * ld parts ((int 2 * part s) + int 1)) ws)
+  in
+  let lse_st = Ops.store (Ops.index lse [ row ]) (lse_of acc ~m ~l:lsum) in
+  let cg = range Loop (Int (max 1 (ceil_div a.dv width))) 1 in
+  let e = if Stdlib.(width = 1) then int 0 else range Upcast (Int width) 2 in
+  let c = (cg * int width) + e in
+  let ok = c < int a.dv in
+  let v =
+    List.fold_left ( + ) (fl acc 0.)
+      (List.mapi (fun s w -> w * ld_gated sums ((part s * int a.dv) + c) ok) ws)
+  in
+  let o_st =
+    Ops.end_
+      (Ops.store
+         (Ops.index o [ Ops.where ok ((row * int a.dv) + c) Ops.invalid ])
+         (Ops.cast (o_of acc ~l:lsum v) out))
+      (if Stdlib.(width = 1) then [ cg ] else [ e; cg ])
+  in
+  let kernel = Ops.kernel_info ~name:"attention_combine" ~opts_to_apply:[] () in
+  Ops.sink ~kernel [ Ops.end_ (Ops.group [ lse_st; o_st ]) [ row ] ]
+
 (* The combine kernel
 
    One thread a column of a row folds the row's [splits] runs in order: [M]
@@ -1046,8 +1108,10 @@ let splits_for ~stream ~workgroups ~threads ~tiles =
    and, at the row's first column, [lse = (M + log₂ L) ln 2]. Arguments:
    [o], [lse], [sums], [parts]. *)
 
-let combine ~local ~splits a xs =
+let combine ~local ~width ~splits a xs =
   match xs with
+  | [ o; lse; sums; parts ] when not local ->
+      host_combine ~splits ~width a o lse sums parts
   | [ o; lse; sums; parts ] ->
       let acc = Arith.dtype a.acc and out = Arith.dtype a.out in
       let rows = numel a.lead * a.hq * a.tq in
@@ -1334,14 +1398,22 @@ let lower ~device ~(renderer : Renderer.t)
             let outs = Shape.custom_kernel (sums :: parts :: scratch @ inputs) kernel in
             Shape.custom_kernel
               [ o; lse; List.nth outs 0; List.nth outs 1 ]
-              (combine ~local ~splits a)
+              (combine ~local ~width:(simt_width renderer a) ~splits a)
         in
         let outs =
           match plan renderer a with
           | Some c -> launch c.splits (core c a) ~scratch:[]
           | None ->
+              (* A GPU's runs fill [stream_threads] threads. The host's
+                 threads, a row each, run on its cores, so its runs fill
+                 [local_workgroups] of them, as many as leave each core
+                 about as many: a decode step's 8 rows ran on 8 of fudge's
+                 14 cores. *)
               let splits =
-                if not local then 1
+                if not local then
+                  splits_for ~stream:renderer.local_workgroups
+                    ~workgroups:(numel lead * a.hk * grouped a)
+                    ~threads:1 ~tiles:(ceil_div tk simt_keys)
                 else
                   splits_for ~stream:renderer.stream_threads
                     ~workgroups:(numel lead * a.hk * ceil_div (grouped a) (rows_of a))
@@ -1350,7 +1422,8 @@ let lower ~device ~(renderer : Renderer.t)
               let sum =
                 Ops.new_buffer device (max 1 (rows * splits * dv)) acc_t
               in
-              launch splits (simt ~local ~splits a) ~scratch:[ sum ]
+              launch splits (simt ~local ~width:(simt_width renderer a) ~splits a)
+                ~scratch:[ sum ]
         in
         let o =
           if dv = 0 then fill a.out (`Float 0.) o_shape
