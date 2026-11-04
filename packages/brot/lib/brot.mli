@@ -1025,9 +1025,12 @@ val bpe :
       at any time, in use or not, for as long as it lives; an encoding past
       that runs without one. Each starts at 16 KB, grows to hold the
       vocabulary's short entries, and doubles as the pretokens it meets fill
-      half of it, up to 32 bytes per entry: about 32 MB over 100 MB of web
-      text, 128 MB over a gigabyte. Default: [4194304] (128 MB each at most).
-      [0] disables caching.
+      half of it, up to 32 bytes per entry, and never shrinks: about 32 MB
+      over 100 MB of web text. While it doubles, the table it leaves is held
+      too, half the size of the new one. Default: [1048576]: 32 MB each at
+      most, 48 MB while the last doubling runs, so a tokenizer's caches hold
+      at most [Domain.recommended_domain_count ()] times 32 MB (448 MB on 14
+      cores). [0] disables caching.
     - [dropout]: probability \[[0]; [1]\] of skipping merges (data
       augmentation). Default: none (no dropout).
     - [continuing_subword_prefix]: prefix for non-initial subwords (e.g.,
@@ -1076,7 +1079,7 @@ val wordpiece :
       most [Domain.recommended_domain_count ()] of them at any time, in use or
       not, for as long as it lives; an encoding past that runs without one.
       Each starts at 144 KB and doubles as it fills, up to 128 KB plus 32
-      bytes per entry. [0] disables them. Default: [4194304] (128 MB each at
+      bytes per entry. [0] disables them. Default: [262144] (8 MB each at
       most).
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
@@ -1151,7 +1154,7 @@ val unigram :
       most [Domain.recommended_domain_count ()] of them at any time, in use or
       not, for as long as it lives; an encoding past that runs without one.
       Each starts at 144 KB and doubles as it fills, up to 128 KB plus 32
-      bytes per entry. [0] disables them. Default: [4194304] (128 MB each at
+      bytes per entry. [0] disables them. Default: [262144] (8 MB each at
       most).
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],

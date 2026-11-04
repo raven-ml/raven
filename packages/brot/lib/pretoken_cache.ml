@@ -100,7 +100,7 @@ let initial_sets = 256
 (* The smallest string the runtime allocates as a large block: over 256 words
    (Max_young_wosize), the most the minor heap takes. *)
 let large_bytes = 257 * 8
-let default_capacity = 4194304
+let default_capacity = 262144
 
 type t = {
   front : Bytes.t;

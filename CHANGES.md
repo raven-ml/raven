@@ -2959,10 +2959,10 @@ word comes from its lock and from samples the dashboard saw arrive.
   dropped text from the decode.
 - A BPE model's pretoken cache starts small and doubles as it fills, as
   WordPiece's and Unigram's do, up to `cache_capacity` entries, whose default
-  rises from 262,144 to 4,194,304 (128 MB at most) for every model: a BPE
-  cache took 8 MB from its first encoding, and over a large corpus merged again
-  the pretokens it had evicted. Over 100 MB of OpenWebText, GPT-2's passes
-  after the first take a third less time.
+  for BPE rises from 262,144 to 1,048,576 (32 MB at most a cache): a BPE cache
+  took 8 MB from its first encoding, and over a large corpus merged again the
+  pretokens it had evicted. Over 100 MB of OpenWebText, GPT-2's passes after
+  the first take a third less time.
 - SentencePiece BPE models behind Llama's normalizer or a metaspace that does
   not split read the text with its spaces in place of `▁`, so encoding no
   longer copies the text to mark them: Llama and Mistral take 29% fewer

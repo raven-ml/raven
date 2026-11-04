@@ -1182,6 +1182,10 @@ let grown_case =
     (list ~size:(int_range 2000 4000)
        (frequency [ (20, word (int_range 1 6)); (1, word (constant 18)) ]))
 
+let live_words () =
+  Gc.full_major ();
+  (Gc.stat ()).live_words
+
 let grown_law =
   prop ~count:10 "a cache grown by the kernels finds what it held" grown_case
     (fun words ->
@@ -1196,7 +1200,37 @@ let grown_law =
       in
       check ~msg:"byte-level" grown_byte_level (String.concat " " words);
       check ~msg:"sentencepiece" grown_sp
-        (String.concat "" (List.map (( ^ ) sp_mark) words)))
+        (String.concat "" (List.map (( ^ ) sp_mark) words));
+      (* Words of at most six letters are kept by the kernel alone, which
+         hands nothing back to OCaml. A thousand distinct ones and the seeds
+         are over half the 1024 entries the table holds once seeded, so it
+         doubles at least once, 32 KB more than a tokenizer holds after as
+         many words of the same lengths that are all one word. *)
+      let short = List.filter (fun w -> String.length w <= 6) words in
+      let distinct = List.length (List.sort_uniq String.compare short) in
+      cover "a thousand distinct short words" (distinct >= 1000);
+      if distinct >= 1000 then begin
+        let same =
+          List.map (fun w -> String.make (String.length w) 'a') short
+        in
+        List.iter
+          (fun (msg, make, join) ->
+            let held words =
+              let t = make None in
+              ignore (ids t (join words) : int array);
+              Brot.hold_cache t live_words
+            in
+            let one = held same in
+            greater ~msg int ~than:(one + 2048) (held short))
+          [
+            ( "the byte-level kernel grew the cache",
+              grown_byte_level,
+              String.concat " " );
+            ( "the sentencepiece kernel grew the cache",
+              grown_sp,
+              fun words -> String.concat "" (List.map (( ^ ) sp_mark) words) );
+          ]
+      end)
 
 (* The tokenizer and the reference are read once, on the first case. *)
 let law ?(text = law_text) ?(cover = cover_law) name make =

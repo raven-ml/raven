@@ -59,9 +59,8 @@ val stored : t -> int -> unit
     one, and doubles [t]'s back table when {!encode} would have. *)
 
 val default_capacity : int
-(** [default_capacity] is the capacity models default to: 4194304 entries, 128
-    MB once full, which a cache reaches only for the million or so distinct
-    pretokens of about a gigabyte of web text. *)
+(** [default_capacity] is the capacity WordPiece and Unigram models default to:
+    262144 entries, 8 MB once full. *)
 
 val max_key_len : int
 (** [max_key_len] is the length of the longest pretoken a cache holds: 15. *)

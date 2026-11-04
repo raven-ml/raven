@@ -1493,8 +1493,12 @@ let char_id chars c =
   if n = 1 then chars.ascii.(Char.code c.[0])
   else Merge_map.find chars.multi (pack_char_key c 0 n)
 
+(* About the distinct pretokens of 100 MB of web text, 320k for GPT-2, at
+   which a table doubles past half full. *)
+let default_cache_capacity = 1048576
+
 let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
-    ?(cache_capacity = Cache.default_capacity) ?dropout ?unk_token
+    ?(cache_capacity = default_cache_capacity) ?dropout ?unk_token
     ?continuing_subword_prefix ?end_of_word_suffix ?(fuse_unk = false)
     ?(byte_fallback = false) ?(ignore_merges = false) () : t =
   (* Tokenizer files spell "no prefix" and "no suffix" as [""]. *)

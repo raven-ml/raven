@@ -86,9 +86,9 @@ val create :
       Each entry costs 32 bytes and each state of the model (see {!with_state})
       holds a table of its own, which starts at 512 entries, takes the
       vocabulary's seeds and doubles once half its entries are live, as
-      {!Pretoken_cache.create} grows it. Defaults to
-      {!Pretoken_cache.default_capacity} (128 MB at most). Set to [0] to
-      disable caching. Pretokens over 4096 bytes are never cached.
+      {!Pretoken_cache.create} grows it, and never shrinks. Defaults to
+      [1048576] (32 MB at most). Set to [0] to disable caching. Pretokens over
+      4096 bytes are never cached.
     - [dropout] is the probability of randomly skipping a merge during
       tokenization (BPE-dropout regularization). Defaults to [0.] (no dropout).
       A non-zero value disables the cache and [ignore_merges], both of which
