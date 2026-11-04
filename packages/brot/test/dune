@@ -15,6 +15,7 @@
   test_unicode
   test_bpe
   test_unigram
+  test_unigram_load
   test_wordpiece
   test_hf_tokenizers
   test_processors
@@ -29,6 +30,7 @@
   test_unicode
   test_bpe
   test_unigram
+  test_unigram_load
   test_wordpiece
   test_hf_tokenizers
   test_processors

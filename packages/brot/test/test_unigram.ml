@@ -238,6 +238,213 @@ let test_json_round_trip () =
   equal ~msg:"model json" (result string string)
     (Ok {|{"type":"Unigram","unk_id":0,"byte_fallback":true}|}) model_text
 
+(* Ties. With [a] at [s] and [k] of them as one piece at [k s], every cut of a
+   run of [a]s sums to the same total exactly, [s] being a whole number of
+   quarters. The cut kept is the one whose last piece starts first, and so on
+   leftwards, which puts the single [a]s left over at the front. *)
+let tie_props =
+  [
+    prop ~count:300 "ties: the last piece starts first"
+      Gen.(
+        quad (int_range 0 40) (int_range 2 5) (int_range 1 16) (int_range 0 2))
+      (fun (n, k, m, j) ->
+        let s = -.Float.ldexp (Float.of_int m) (-j) in
+        let piece = String.make k 'a' in
+        let t =
+          unigram
+            ~vocab:[ ("<unk>", 0.0); ("a", s); (piece, Float.of_int k *. s) ]
+            ~unk_id:0 ()
+        in
+        cover ~share:0.02 "shorter than the long piece" (n < k);
+        cover ~share:0.3 "single pieces left over" (n >= k && n mod k > 0);
+        cover ~share:0.1 "long pieces only" (n >= k && n mod k = 0);
+        let expected =
+          List.init (n mod k) (fun _ -> 1) @ List.init (n / k) (fun _ -> 2)
+        in
+        equal
+          ~msg:(Printf.sprintf "%d a at %g, a*%d" n s k)
+          (list int) expected
+          (Array.to_list (encode_ids t (String.make n 'a'))));
+  ]
+
+(* Scores in [tokenizer.json]. The fixture holds texts of numbers and the
+   doubles HuggingFace reads off them, which ties are decided by; its generator
+   documents the rows. *)
+
+type score_rows = {
+  read : (string * float) list;
+  refused : string list;
+  saved : (float * string * float) list;
+}
+
+let score_rows =
+  lazy
+    (let rows = { read = []; refused = []; saved = [] } in
+     Fixture.read "support/parity/unigram_scores.txt"
+     |> String.split_on_char '\n'
+     |> List.fold_left
+          (fun rows line ->
+            match String.split_on_char ' ' line with
+            | [ "READ"; text; value ] ->
+                { rows with read = (text, float_of_string value) :: rows.read }
+            | [ "ERROR"; text ] -> { rows with refused = text :: rows.refused }
+            | [ "SAVED"; x; text; value ] ->
+                let row = (float_of_string x, text, float_of_string value) in
+                { rows with saved = row :: rows.saved }
+            | [ "" ] -> rows
+            | _ when line.[0] = '#' -> rows
+            | _ -> failf "bad row %S" line)
+          rows
+     |> fun rows ->
+     {
+       read = List.rev rows.read;
+       refused = List.rev rows.refused;
+       saved = List.rev rows.saved;
+     })
+
+(* A [tokenizer.json] whose Unigram scores are [texts], written as they are. *)
+let unigram_file texts =
+  let entry i text = Printf.sprintf {|["t%d",%s]|} i text in
+  Printf.sprintf
+    {|{"version":"1.0","model":{"type":"Unigram","unk_id":0,"vocab":[["<unk>",0.0],%s]}}|}
+    (String.concat "," (List.mapi entry texts))
+
+let with_file contents f =
+  let path = Filename.temp_file "brot" ".json" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Out_channel.with_open_bin path (fun oc ->
+          Out_channel.output_string oc contents);
+      f path)
+
+let json_member name = function
+  | Jsont.Object (members, _) -> (
+      match Jsont.Json.find_mem name members with
+      | Some (_, value) -> value
+      | None -> failf "no %s member" name)
+  | _ -> failf "not an object"
+
+(* The scores of a Unigram tokenizer, past its unknown token. *)
+let scores t =
+  match json_member "vocab" (json_member "model" (to_json t)) with
+  | Jsont.Array (_ :: entries, _) ->
+      List.map
+        (function
+          | Jsont.Array ([ _; Jsont.Number (score, _) ], _) -> score
+          | _ -> failf "bad vocab entry")
+        entries
+  | _ -> failf "no vocab"
+
+let load path =
+  match from_file path with Ok t -> t | Error msg -> failf "%s" msg
+
+let hex = Printf.sprintf "%h"
+
+let test_scores_read_as_huggingface () =
+  let rows = (Lazy.force score_rows).read in
+  let texts = List.map fst rows in
+  with_file (unigram_file texts) (fun path ->
+      equal
+        (list (pair string string))
+        (List.map (fun (text, value) -> (text, hex value)) rows)
+        (List.combine texts (List.map hex (scores (load path)))))
+
+let test_scores_out_of_range () =
+  let refused = (Lazy.force score_rows).refused in
+  let loaded text =
+    with_file (unigram_file [ text ]) (fun path ->
+        Result.map (fun _ -> ()) (from_file path))
+  in
+  equal
+    (list (pair string (result unit string)))
+    (List.map (fun text -> (text, Error "number out of range")) refused)
+    (List.map (fun text -> (text, loaded text)) refused)
+
+(* A tokenizer brot saves reads back as HuggingFace reads the same file. *)
+let test_saved_scores () =
+  let rows = (Lazy.force score_rows).saved in
+  let vocab =
+    ("<unk>", 0.0)
+    :: List.mapi (fun i (x, _, _) -> (Printf.sprintf "t%d" i, x)) rows
+  in
+  let dir = Filename.temp_dir "brot" "" in
+  let path = Filename.concat dir "tokenizer.json" in
+  Fun.protect
+    ~finally:(fun () ->
+      if Sys.file_exists path then Sys.remove path;
+      Sys.rmdir dir)
+    (fun () ->
+      save_pretrained (unigram ~vocab ~unk_id:0 ()) ~path:dir;
+      let text = In_channel.with_open_bin path In_channel.input_all in
+      let written =
+        match Jsont_bytesrw.decode_string ~locs:true Jsont.json text with
+        | Error e -> failf "%s" e
+        | Ok json -> (
+            match json_member "vocab" (json_member "model" json) with
+            | Jsont.Array (_ :: entries, _) ->
+                List.map
+                  (function
+                    | Jsont.Array ([ _; Jsont.Number (_, meta) ], _) ->
+                        let loc = Jsont.Meta.textloc meta in
+                        let first = Jsont.Textloc.first_byte loc in
+                        String.sub text first
+                          (Jsont.Textloc.last_byte loc - first + 1)
+                    | _ -> failf "bad vocab entry")
+                  entries
+            | _ -> failf "no vocab")
+      in
+      equal ~msg:"texts written" (list string)
+        (List.map (fun (_, text, _) -> text) rows)
+        written;
+      equal ~msg:"scores read back" (list string)
+        (List.map (fun (_, _, value) -> hex value) rows)
+        (List.map hex (scores (load path))))
+
+(* [of_json] takes the numbers of a tree as given. *)
+let test_of_json_takes_numbers_as_given () =
+  let text = unigram_file [ "-12.130167007446289" ] in
+  match Jsont_bytesrw.decode_string Jsont.json text with
+  | Error e -> failf "%s" e
+  | Ok json -> (
+      match of_json json with
+      | Error msg -> failf "%s" msg
+      | Ok t ->
+          equal (list string)
+            [ hex (-12.130167007446289) ]
+            (List.map hex (scores t)))
+
+(* T5's [---] reads one unit in the last place above its decimal, so a run of
+   dashes no longer ties: HuggingFace's cuts, read off tokenizers 0.23.1 with
+   the full pipeline. *)
+let test_t5_dashes () =
+  Fixture.with_tokenizer_file "t5_base" (fun path ->
+      let t =
+        match from_file path with Ok t -> t | Error msg -> failf "%s" msg
+      in
+      let case text tokens =
+        equal ~msg:(Printf.sprintf "%S" text) (list string) tokens
+          (Array.to_list
+             (Encoding.tokens (encode t ~add_special_tokens:false text)))
+      in
+      let d = "-" and d3 = "---" in
+      case "-" [ "\u{2581}"; d ];
+      case "--" [ "\u{2581}--" ];
+      case "---" [ "\u{2581}"; d3 ];
+      case "----" [ "\u{2581}"; d; d3 ];
+      case "-----" [ "\u{2581}--"; d3 ];
+      case "------" [ "\u{2581}"; d3; d3 ];
+      case "-------" [ "\u{2581}"; d3; d3; d ];
+      case "--------" [ "\u{2581}--"; d3; d3 ];
+      case "---------" [ "\u{2581}"; d3; d3; d3 ];
+      case "----------" [ "\u{2581}"; d3; d3; d; d3 ];
+      case "-----------" [ "\u{2581}--"; d3; d3; d3 ];
+      case "------------" [ "\u{2581}"; d3; d3; d3; d3 ];
+      case "-------------" [ "\u{2581}"; d3; d3; d; d3; d3 ];
+      case "\n\n-----------" [ "\u{2581}--"; d3; d3; d3 ];
+      case "a -------" [ "\u{2581}"; "a"; "\u{2581}"; d3; d3; d ];
+      case "----a----" [ "\u{2581}"; d; d3; "a"; d; d3 ])
+
 (* Pretoken cache. A word answered from the cache is encoded as it was the
    first time, unknown characters and byte fallback included, and as it is with
    no cache: the first round meets each word cold, the second finds all of
@@ -350,6 +557,15 @@ let () =
              test "unk_id outside the vocabulary"
                test_unk_id_outside_the_vocabulary;
              test "JSON round trip" test_json_round_trip;
+             test "scores read as HuggingFace reads them"
+               test_scores_read_as_huggingface;
+             test "scores out of range" test_scores_out_of_range;
+             test "saved scores read back as HuggingFace reads them"
+               test_saved_scores;
+             test "of_json takes numbers as given"
+               test_of_json_takes_numbers_as_given;
+             test "T5's runs of dashes" test_t5_dashes;
            ];
+         group "ties" tie_props;
          group "cache" cache_props;
        ])

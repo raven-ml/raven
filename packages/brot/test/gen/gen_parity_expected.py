@@ -53,16 +53,6 @@ need and checks against these rows:
 - `mistral_nemo` — Mistral's Tekken pattern: o200k's words without
   contractions, and numbers one at a time.
 
-A Unigram model is rebuilt from the file's scores as Python reads them (see
-`load_tokenizer`). `Tokenizer.from_file` reads them through a decimal
-conversion that is off by one unit in the last place for about a quarter of
-them (serde_json without its `float_roundtrip` feature: 8334 of T5's 32100
-scores). A segmentation is a sum of scores compared for the maximum, and a run
-of one repeated character can tie exactly between two orders of the same pieces
-— `▁ - --- ---` against `▁ --- --- -` — where that last place decides. brot
-reads the numbers as written, so the reference is made to score the same
-vocabulary; the ids `from_file` gives differ from these only on such ties.
-
 Corpora
 -------
 
@@ -143,7 +133,7 @@ import sys
 from pathlib import Path
 
 import tokenizers
-from tokenizers import Tokenizer, models
+from tokenizers import Tokenizer
 
 CORPORA = ("sample", "edge_cases")
 REGEX_SPLIT_CORPORA = (*CORPORA, "unicode_code")
@@ -196,21 +186,6 @@ def ints(values: list[int]) -> list[str]:
     return [str(value) for value in values]
 
 
-def load_tokenizer(path: Path) -> Tokenizer:
-    """The tokenizer at `path`, a Unigram model rebuilt from the scores as
-    Python reads them rather than as `from_file` reads them (see above)."""
-    tokenizer = Tokenizer.from_file(str(path))
-    with path.open(encoding="utf-8") as file:
-        model = json.load(file)["model"]
-    if model.get("type") == "Unigram" or "unk_id" in model:
-        tokenizer.model = models.Unigram(
-            [(token, score) for token, score in model["vocab"]],
-            unk_id=model["unk_id"],
-            byte_fallback=model.get("byte_fallback", False),
-        )
-    return tokenizer
-
-
 def rows(tokenizer: Tokenizer, text: str) -> list[str]:
     """The rows of the expected encodings of corpus `text` by `tokenizer`."""
     lines = []
@@ -251,7 +226,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        tokenizer = load_tokenizer(model)
+        tokenizer = Tokenizer.from_file(str(model))
 
         for corpus in corpora:
             text = (parity_dir / f"{corpus}.txt").read_bytes().decode("utf-8")

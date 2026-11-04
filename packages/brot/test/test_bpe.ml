@@ -82,6 +82,30 @@ let test_dropout_overrides_ignore_merges () =
   equal ~msg:"dropout leaves 'ab' unmerged" (list string) [ "a"; "b" ]
     (encode tokenizer "ab" |> Encoding.tokens |> Array.to_list)
 
+(* HuggingFace holds a dropout in single precision: [0.1] is the single nearest
+   it, 0x1.99999ap-4. *)
+let test_dropout_in_single_precision () =
+  let text =
+    {|{"model":{"type":"BPE","dropout":0.1,"vocab":{"a":0},"merges":[]}}|}
+  in
+  let dropout json =
+    match json with
+    | Jsont.Object (members, _) -> (
+        match Jsont.Json.find_mem "model" members with
+        | Some (_, Jsont.Object (model, _)) -> (
+            match Jsont.Json.find_mem "dropout" model with
+            | Some (_, Jsont.Number (p, _)) -> Printf.sprintf "%h" p
+            | _ -> failf "no dropout")
+        | _ -> failf "no model")
+    | _ -> failf "not an object"
+  in
+  match Jsont_bytesrw.decode_string Jsont.json text with
+  | Error e -> failf "%s" e
+  | Ok json -> (
+      match of_json json with
+      | Error msg -> failf "%s" msg
+      | Ok t -> equal string "0x1.99999ap-4" (dropout (to_json t)))
+
 let test_empty_affixes () =
   (* Tokenizer files spell "no prefix" and "no suffix" as [""]. *)
   let vocab = [ ("a", 0); ("b", 1); ("ab", 2) ] in
@@ -1240,6 +1264,8 @@ let () =
              test "ignore_merges" test_ignore_merges;
              test "dropout overrides ignore_merges"
                test_dropout_overrides_ignore_merges;
+             test "dropout in single precision"
+               test_dropout_in_single_precision;
              test "empty prefix and suffix" test_empty_affixes;
              test "save and load" test_bpe_save_load;
              test "end-of-word suffix" test_suffix_only;

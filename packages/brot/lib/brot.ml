@@ -2187,9 +2187,22 @@ let json_to_string = function
   | Jsont.String (s, _) -> s
   | _ -> failwith "Expected string"
 
-let json_to_float = function
-  | Jsont.Number (f, _) -> f
+(* A number as tokenizers reads its text, in [text] where the tree records the
+   number's bytes, else as given. tokenizers' reading can differ in the last
+   place from the double the text names, and a Unigram segmentation that ties
+   on the written scores is decided by that place. *)
+let json_to_float ?text = function
+  | Jsont.Number (f, meta) -> (
+      let loc = Jsont.Meta.textloc meta in
+      match text with
+      | Some text when not (Jsont.Textloc.is_none loc) ->
+          Hf_number.read text ~first:(Jsont.Textloc.first_byte loc)
+            ~last:(Jsont.Textloc.last_byte loc)
+      | _ -> f)
   | _ -> failwith "Expected number"
+
+(* tokenizers holds a BPE dropout in single precision. *)
+let single x = Int32.float_of_bits (Int32.bits_of_float x)
 
 let json_has_field name j =
   match json_mem name j with Jsont.Null _ -> false | _ -> true
@@ -2219,7 +2232,7 @@ let parse_merge = function
       | _ -> failwith "Invalid merge string format")
   | _ -> failwith "Invalid merge entry"
 
-let alg_of_json ~byte_level ~spaces mj =
+let alg_of_json ?text ~byte_level ~spaces mj =
   let mem name = json_mem name mj in
   let str name = json_string_or_null (mem name) in
   let flag name = match mem name with Jsont.Bool (b, _) -> b | _ -> false in
@@ -2228,7 +2241,9 @@ let alg_of_json ~byte_level ~spaces mj =
       let vocab_list = json_to_assoc (mem "vocab") in
       let merges = json_to_list (mem "merges") |> List.map parse_merge in
       let dropout =
-        match mem "dropout" with Jsont.Number (f, _) -> Some f | _ -> None
+        match mem "dropout" with
+        | Jsont.Number _ as f -> Some (single (json_to_float ?text f))
+        | _ -> None
       in
       let vocab = vocab_to_hashtbl vocab_list in
       let continuing_subword_prefix = str "continuing_subword_prefix" in
@@ -2267,7 +2282,8 @@ let alg_of_json ~byte_level ~spaces mj =
         json_to_list (mem "vocab")
         |> List.map (fun arr ->
             match json_to_list arr with
-            | [ token; score ] -> (json_to_string token, json_to_float score)
+            | [ token; score ] ->
+                (json_to_string token, json_to_float ?text score)
             | _ -> failwith "Invalid unigram vocab format")
       in
       let unk_id =
@@ -2280,7 +2296,7 @@ let alg_of_json ~byte_level ~spaces mj =
   | "Chars" -> Alg_chars (Chars.create ())
   | s -> failwith (strf "Unsupported model type: %s" s)
 
-let of_json json =
+let of_json_in ?text json =
   try
     let mem name = json_mem name json in
     let normalizer =
@@ -2299,7 +2315,7 @@ let of_json json =
       | _ -> []
     in
     let algorithm =
-      alg_of_json ~byte_level:(byte_level_pipeline pre)
+      alg_of_json ?text ~byte_level:(byte_level_pipeline pre)
         ~spaces:(spaces ~normalizer ~pre ~added_tokens)
         (mem "model")
     in
@@ -2307,6 +2323,13 @@ let of_json json =
   with
   | Failure msg -> Error msg
   | exn -> Error (Printexc.to_string exn)
+
+let of_json json = of_json_in json
+
+let is_unigram json =
+  match infer_model_type (json_mem "model" json) with
+  | model -> model = "Unigram"
+  | exception Failure _ -> false
 
 (* File I/O *)
 
@@ -2323,8 +2346,16 @@ let from_file path =
         (fun () -> really_input_string ic (in_channel_length ic))
     in
     match Jsont_bytesrw.decode_string Jsont.json s with
-    | Ok json -> of_json json
     | Error e -> Error e
+    | Ok json when not (is_unigram json) -> of_json json
+    | Ok _ -> (
+        (* A Unigram model reads its scores from their text, whose bytes the
+           tree records only when decoded with locations. Locations nearly
+           double the decoding of a large BPE file, so only a Unigram file is
+           decoded again with them. *)
+        match Jsont_bytesrw.decode_string ~locs:true Jsont.json s with
+        | Error e -> Error e
+        | Ok json -> of_json_in ~text:s json)
   with
   | Sys_error msg -> Error ("File error: " ^ msg)
   | exn -> Error (Printexc.to_string exn)

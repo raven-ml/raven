@@ -17,6 +17,7 @@
   encoding
   grapheme
   grapheme_data
+  hf_number
   ints
   kernel
   normalizer

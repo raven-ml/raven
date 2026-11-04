@@ -73,7 +73,7 @@ from pathlib import Path
 import tokenizers
 from tokenizers import Tokenizer
 
-from gen_parity_expected import TOKENIZERS, documents, load_tokenizer, rows
+from gen_parity_expected import TOKENIZERS, documents, rows
 from gen_stride_expected import PAIR, SINGLE
 
 COMMITTED = (
@@ -252,7 +252,7 @@ def trim_unigram(model: dict, kept_ids: set[int], seen: set[str]) -> None:
 
 
 def trim(name: str, full: Path, parity_dir: Path) -> dict:
-    tokenizer = load_tokenizer(full)
+    tokenizer = Tokenizer.from_file(str(full))
     with full.open(encoding="utf-8") as file:
         data = json.load(file)
     model = data["model"]
@@ -315,8 +315,8 @@ def dump(data: dict) -> str:
 def check(name: str, full: Path, trimmed: Path, parity_dir: Path) -> bool:
     """Whether the reference gives every recorded row again from `trimmed`,
     and the ids `full` gives for `EXTRA`."""
-    tokenizer = load_tokenizer(trimmed)
-    reference = load_tokenizer(full)
+    tokenizer = Tokenizer.from_file(str(trimmed))
+    reference = Tokenizer.from_file(str(full))
     same = True
     for text in EXTRA:
         for specials in (False, True):

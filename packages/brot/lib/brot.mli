@@ -1134,9 +1134,11 @@ val unigram :
 (** [unigram ()] is a Unigram tokenizer. Used by AlBERT, T5, mBART.
 
     A pretoken is cut into the vocabulary pieces whose scores add up to the
-    most, rather than into the longest match at each byte. A character no piece
-    covers costs an unknown token, scored ten below the rarest piece of the
-    vocabulary.
+    most, rather than into the longest match at each byte. The scores are summed
+    from the left, and of the cuts whose sums are equal the one whose last piece
+    starts first is kept, then the one whose piece before that starts first, and
+    so on. A character no piece covers costs an unknown token, scored ten below
+    the rarest piece of the vocabulary.
 
     - [vocab]: initial vocabulary as [(token, score)] pairs where scores are
       log-probabilities (negative numbers). An entry is identified by its
@@ -1719,11 +1721,26 @@ val save_model_files : ?prefix:string -> t -> folder:string -> string list
 
 val from_file : string -> (t, string) result
 (** [from_file path] is a tokenizer loaded from a HuggingFace [tokenizer.json]
-    file. Errors if the file cannot be read or has invalid format. *)
+    file. Errors if the file cannot be read or has invalid format.
+
+    A Unigram model's scores are read from their text as HuggingFace's
+    tokenizers reads them. It rounds the digits, as a 64-bit integer, to a
+    double, and scales that by one multiplication or division by the double
+    nearest a power of ten, dividing by 10{^ 308} first for as long as the
+    exponent is below -308. The roundings can land one unit in the last place
+    from the double the text names: T5's [-12.130167007446289] reads as
+    [-12.130167007446287]. That unit can decide a tie between two cuts, and the
+    cut follows tokenizers. A score tokenizers refuses as out of range is an
+    error. *)
 
 val of_json : Jsont.json -> (t, string) result
 (** [of_json json] is a tokenizer deserialized from HuggingFace JSON format.
     Errors if [json] has a missing or unknown model type, or invalid parameters.
+
+    The numbers of [json] are taken as given. A tree decoded from text holds
+    each number as the double its text names, which can differ in the last
+    place from what {!from_file} reads off the same text. Either way a BPE
+    dropout is held in single precision, as tokenizers holds it.
 
     The [added_tokens] member gives the tokens matched atomically in the input.
     A missing [special] member reads as [true], and a missing [normalized] as

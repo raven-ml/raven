@@ -11,9 +11,10 @@
     A pretoken is cut into the pieces whose scores add up to the most: every
     entry of the vocabulary that starts at a byte is found through a
     double-array trie, one step per byte whatever the fanout, and the best path
-    through them is read off by dynamic programming. Where no entry is a whole
-    character, the path may spend an unknown token on it, scored ten below the
-    rarest entry of the vocabulary. *)
+    through them is read off by dynamic programming, with scores summed from the
+    left. Of paths that tie, the one whose last piece starts first is kept, and
+    so on leftwards. Where no entry is a whole character, the path may spend an
+    unknown token on it, scored ten below the rarest entry of the vocabulary. *)
 
 type t
 (** The type for unigram models. What a model encodes to is fixed at creation,

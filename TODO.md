@@ -187,9 +187,6 @@ and rune), raven / llama.cpp b12048 Vulkan:
   misses); its pretoken table sits on 4 KB pages where gigatoken's takes
   2 MB pages (an madvise from brot's C, which brot's C rule does not allow
   yet)
-- brot's Unigram (T5) splits runs of dashes or underscores unlike HF:
-  "\n\n-----------" gives `-` `---` `---` against HF's `---` `---` `-`
-  (3 of 1003 OpenWebText documents)
 
 ## repo
 

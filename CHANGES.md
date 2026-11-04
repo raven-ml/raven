@@ -3182,6 +3182,10 @@ word comes from its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `from_file` reads a Unigram model's scores from their text as
+  HuggingFace's tokenizers does, which puts some one unit in the last place
+  off the double the text names, so T5 now cuts runs of `-` as tokenizers
+  does (`---` `---` `-`). A BPE dropout is held in single precision, as there.
 - A byte that opens no whole character, a lead byte without the continuation
   bytes it asks for or a continuation byte with no lead, is a character of
   one byte to BPE, Unigram and WordPiece models, as it is to the
