@@ -1037,6 +1037,11 @@ word comes from its lock and from samples the dashboard saw arrive.
   `Heuristic.hand_coded_optimizations` upcast an empty kernel into vectors
   past its storage. A kernel holding a range of no trip takes no hand-coded
   optimisation.
+- A store that reads its destination at another index, beside a call whose
+  argument another kernel reads, schedules: `Rangeify.get_kernel_graph`
+  indexed its stage by that kernel's ranges and failed its kernel-graph
+  check, so `Rune.jit` evaluated such a program, as a vmap of SMC,
+  uncompiled.
 - Clang selects a half by its bits, in a selection and in a gated load
   (`Cstyle.clang`): C computed `c ? a : b` of two `__fp16`s in float, which
   could quiet a signalling NaN. A `__bf16` takes the same form.

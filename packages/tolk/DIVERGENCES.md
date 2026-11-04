@@ -7677,3 +7677,31 @@ and an initial value is added after it (D260).
   suite's `pm_reduce_simplify › a sum over a range of size 1 is its value
   where the range is 0` and `› a sum over a typed range of size 1 is its
   value where it is 0`.
+
+## D332. A call's arguments lose their indices once ranges are applied
+
+- **tinygrad:** `schedule/rangeify.py:138-157` (`no_indexing_calls`: "sometimes
+  if call srcs have children the call will get an INDEX. we remove it
+  here"), applied at `:355`, after `pm_limit_bufs` (`:348`) has staged
+  values: `stage` (`:171-174`) and `fix_store_hazard` (`:190-192`) index a
+  stage by `s.ranges`.
+- **tolk:** `Rangeify.get_kernel_graph`, which applies
+  `pm_no_indexing_calls` right after `Indexing.run_rangeify` too;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same pass.
+- **Differs:** a movement of storage that a call takes and another kernel
+  reads is one node, which applying ranges indexes by that kernel's ranges,
+  for the call too. Until the call drops the index, those ranges are among
+  the ranges of every value that reads the call's results. A store that
+  reads its destination at another index stages its value over its
+  ranges, so the stage was indexed by the other kernel's ranges, which no
+  kernel ends, and tinygrad's kernel-graph check refuses the graph. tolk
+  drops the index before any pass reads the ranges.
+- **Reason:** (b): norn's `evidence › a conjugate normal`, a jit of a vmap
+  of SMC, which stores a value gathered from its destination beside a
+  loop's call whose argument another kernel reads, failed the check and
+  raised.
+- **Pinned by:** `Tolk.Rangeify › get_kernel_graph › recorded ›
+  assign_flipped_beside_call_1_kernels.golden` and the kernel-graph laws
+  over `assign_flipped_beside_call_1`: `x.assign(x.flip(1) + f(a))` beside
+  `a * 3`, `f` a function compiled on its own; norn's `Norn.Smc › evidence ›
+  a conjugate normal`.

@@ -46,6 +46,8 @@ let programs =
     "argmax";
     "assign";
     "assign_double_diamond";
+    "assign_flipped_beside_call";
+    "assign_flipped_beside_call_1";
     "assign_permuted";
     "assigned_contiguous";
     "assigned_read_twice";
@@ -280,6 +282,7 @@ let keeps_writes name =
    which Tensors does not run. *)
 let unevaluated =
   [
+    "assign_flipped_beside_call_1";
     "custom_kernel";
     "custom_kernel_in_place";
     "custom_kernel_of_views";

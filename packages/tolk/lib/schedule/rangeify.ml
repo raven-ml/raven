@@ -1325,6 +1325,13 @@ let get_kernel_graph tsink =
   let tsink =
     Indexing.run_rangeify ~debug:(setting Setting.debug_rangeify) tsink
   in
+  (* An argument of a call that another kernel reads is indexed by that
+     kernel's ranges, which would reach every value that reads the call's
+     results: a stage of such a value would index its storage by them. *)
+  let tsink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
+      (After_sources pm_no_indexing_calls)
+  in
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(stage_reads tsink) tsink
       (After_sources pm_cleanups)

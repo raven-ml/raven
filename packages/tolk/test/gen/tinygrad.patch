@@ -3726,7 +3726,7 @@ index 9a24394a6..159972ddf 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 8238ec207..2dee3b587 100644
+index 8238ec207..dc9252d67 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,13 +1,13 @@
@@ -4042,7 +4042,7 @@ index 8238ec207..2dee3b587 100644
    (UPat((Ops.BUFFER, Ops.ALLOC, Ops.MSTACK, Ops.MSELECT), name="buf"), add_buf),
    # Only storage parameters get kernel-local slots; scalar parameters retain their enclosing call's slots.
    (UPat(Ops.PARAM, name="buf"), lambda ctx, buf:
-@@ -329,12 +510,92 @@ def split_store(x:UOp) -> UOp|None:
+@@ -329,23 +510,107 @@ def split_store(x:UOp) -> UOp|None:
    ret = graph_rewrite(ret, pm_renumber_range, ctx={a:i for i,a in enumerate(lctx.ranges)}, walk=True)
  
    # create the Kernel. NOTE: buffers can be on different devices here now, they are compiled to SDMA copies later by schedule
@@ -4136,7 +4136,9 @@ index 8238ec207..2dee3b587 100644
  @rewrite_group(new_ctx=False)
  def get_kernel_graph(tsink:UOp) -> UOp:
    # convert movement ops to ranges
-@@ -342,10 +603,12 @@ def get_kernel_graph(tsink:UOp) -> UOp:
+   tsink = run_rangeify(tsink, bool(DEBUG_RANGEIFY))
++  # a call's argument that another kernel reads is indexed by that kernel's ranges: the call reads its storage
++  tsink = graph_rewrite(tsink, pm_no_indexing_calls, name="remove indexing from call args")
  
    # cleanups for speed and runability
    tsink = graph_rewrite(tsink,

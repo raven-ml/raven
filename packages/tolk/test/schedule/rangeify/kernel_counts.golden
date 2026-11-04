@@ -133,6 +133,8 @@ custom_kernel_permuted	2
 custom_kernel_in_place	1
 precompiled_function	1
 precompiled_function_1	1
+assign_flipped_beside_call	1
+assign_flipped_beside_call_1	3
 two_outputs	2
 empty_sum	1
 long_cumsum	4

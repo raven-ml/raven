@@ -144,6 +144,15 @@ def precompiled_function():
     return f(empty(4, 4)) + 1
 
 
+def assign_flipped_beside_call():
+    """A store that reads its destination flipped, and the result of a function of an argument that another kernel
+    reads too: that kernel's ranges index the argument, which the call reads whole."""
+    @function(precompile=True)
+    def f(a): return a * 2 + 1
+    a, x = empty(2, 4), empty(2, 4)
+    return x.assign(x.flip(1) + f(a)), a * 3
+
+
 def read_at_offsets():
     """A value of some forty nodes over three buffers, read at 32 offsets: inlined, its copies would be over a thousand
     nodes."""
@@ -442,6 +451,7 @@ PROGRAMS = {
     "custom_kernel_permuted": lambda: Tensor.custom_kernel(empty(4, 4), empty(4, 4).permute(1, 0), fxn=add_one)[0],
     "custom_kernel_in_place": lambda: (lambda x: Tensor.custom_kernel(x, x, fxn=add_one)[0])(empty(4, 4)),
     "precompiled_function": precompiled_function,
+    "assign_flipped_beside_call": assign_flipped_beside_call,
     "two_outputs": lambda: (lambda x: (x + 1, x * 2))(empty(4, 4)),
     "empty_sum": lambda: empty(0, 4).sum(0) + 1,
     "long_cumsum": lambda: empty(1024).cumsum(),
